@@ -130,6 +130,10 @@ impl AttackRecord {
     }
 }
 
+/// Attack-record victim ids at and above this name a weapon-pool slot
+/// (`victim_gobj` is a weapon); fighters use their port.
+pub const WEAPON_RECORD_BASE: u8 = 0x80;
+
 /// `GMATTACKREC_NUM_MAX`.
 pub const ATTACK_RECORDS: usize = 4;
 
@@ -318,6 +322,13 @@ pub struct FrameHits {
     pub damage_lr: f32,
     pub damage_index: usize,
     pub damage_kind: DamageKind,
+    /// `reflect_lr`: a reflector turned a weapon back (`+1` when the weapon
+    /// was to the fighter's right).
+    pub reflect_lr: f32,
+    /// `reflect_damage`: a weapon beat the reflector's `damage_resist`.
+    pub reflect_damage: i32,
+    /// `absorb_lr`: PSI Magnet took a weapon.
+    pub absorb_lr: f32,
 }
 
 impl Default for FrameHits {
@@ -341,8 +352,235 @@ impl Default for FrameHits {
             damage_lr: 0.0,
             damage_index: 0,
             damage_kind: DamageKind::Default,
+            reflect_lr: 0.0,
+            reflect_damage: 0,
+            absorb_lr: 0.0,
         }
     }
+}
+
+/// `nFTSpecialCollKind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecialCollKind {
+    FoxReflector,
+    NessAbsorb,
+    NessReflector,
+}
+
+/// `FTSpecialColl`: the reflector or absorber sphere a status attaches
+/// (`fp->special_coll`), tested against weapons with
+/// `gmCollisionCheckWeaponAttackSpecialCollide`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpecialColl {
+    pub kind: SpecialCollKind,
+    /// `FTStruct::joints` index.
+    pub joint: u8,
+    pub offset: Vec3,
+    pub size: Vec3,
+    /// A weapon doing more damage than this breaks the reflector.
+    pub damage_resist: i32,
+}
+
+/// `dFoxMainMotion_LwReflectorFTSpecialColl`.
+pub const FOX_REFLECTOR: SpecialColl = SpecialColl {
+    kind: SpecialCollKind::FoxReflector,
+    joint: 4,
+    offset: Vec3::new(0.0, 60.0, 0.0),
+    size: Vec3::new(350.0, 350.0, 350.0),
+    damage_resist: 50,
+};
+/// `dNessMainMotion_AttackS4ReflectorFTSpecialColl`.
+pub const NESS_BAT_REFLECTOR: SpecialColl = SpecialColl {
+    kind: SpecialCollKind::NessReflector,
+    joint: 0,
+    offset: Vec3::new(0.0, 150.0, 0.0),
+    size: Vec3::new(300.0, 300.0, 300.0),
+    damage_resist: 1000,
+};
+/// `dNessMainMotion_LwAbsorbFTSpecialColl` (US size 430; JP 400).
+pub const NESS_ABSORB: SpecialColl = SpecialColl {
+    kind: SpecialCollKind::NessAbsorb,
+    joint: 0,
+    offset: Vec3::new(300.0, 195.0, 0.0),
+    size: Vec3::new(430.0, 430.0, 430.0),
+    damage_resist: 0,
+};
+
+/// `is_reflect` with its `special_coll`: Fox's reflector statuses
+/// (`ftFoxSpecialLw{Loop,Turn,Hit}` set it) and Ness's forward smash while
+/// its script's flag 1 is up (`ftCommonAttackS4ProcUpdate`). `ftMainSetStatus`
+/// clears the flag, so any other status has none.
+pub fn reflector(f: &Fighter) -> Option<SpecialColl> {
+    use crate::status::FoxStatus as Fx;
+    match f.status.status {
+        AnyStatus::Fox(
+            Fx::SpecialLwLoop
+            | Fx::SpecialLwTurn
+            | Fx::SpecialLwHit
+            | Fx::SpecialAirLwLoop
+            | Fx::SpecialAirLwTurn
+            | Fx::SpecialAirLwHit,
+        ) => Some(FOX_REFLECTOR),
+        AnyStatus::Common(Status::AttackS4)
+            if base_kind(f.kind) == FighterKind::Ness && f.motion_script.flags[1] != 0 =>
+        {
+            Some(NESS_BAT_REFLECTOR)
+        }
+        _ => None,
+    }
+}
+
+/// `is_absorb` with its `special_coll`: PSI Magnet's hold and hit statuses.
+pub fn absorber(f: &Fighter) -> Option<SpecialColl> {
+    crate::ness::absorbing(f).then_some(NESS_ABSORB)
+}
+
+fn base_kind(kind: FighterKind) -> FighterKind {
+    kind.polygon_base().unwrap_or(kind)
+}
+
+/// The special collision's joint, or TopN's facing transform at the root
+/// when the caller supplied no pose (host tests).
+fn special_transform(f: &Fighter, joint: u8) -> JointTransform {
+    f.joint_transforms
+        .get(joint as usize)
+        .copied()
+        .flatten()
+        .unwrap_or_else(|| {
+            let s = f.facing.sign();
+            JointTransform {
+                axes: [
+                    Vec3::new(0.0, 0.0, -s),
+                    Vec3::new(0.0, 1.0, 0.0),
+                    Vec3::new(s, 0.0, 0.0),
+                ],
+                origin: f.pos,
+            }
+        })
+}
+
+/// `gmCollisionCheckWeaponAttackSpecialCollide`: the weapon's sphere (swept
+/// from `pos_prev`) against the special collision's ellipsoid.
+pub fn special_contact(
+    f: &Fighter,
+    coll: &SpecialColl,
+    pos_curr: Vec3,
+    pos_prev: Vec3,
+    radius: f32,
+) -> bool {
+    let t = special_transform(f, coll.joint);
+    crate::hurtbox::test_sphere(
+        &t,
+        pos_curr,
+        pos_prev,
+        radius,
+        weapon_state(pos_curr, pos_prev),
+        coll.offset,
+        coll.size,
+    )
+}
+
+/// A weapon hitbox's attack state: a still hitbox tests its position only.
+fn weapon_state(pos_curr: Vec3, pos_prev: Vec3) -> AttackState {
+    if pos_curr == pos_prev {
+        AttackState::Transfer
+    } else {
+        AttackState::Interpolate
+    }
+}
+
+/// `damage_lr`-style side of a weapon: `+1` when it is to the fighter's
+/// right (`fp->reflect_lr`, `fp->absorb_lr`).
+pub fn weapon_side(f: &Fighter, weapon_pos: Vec3) -> f32 {
+    if f.pos.x < weapon_pos.x {
+        1.0
+    } else {
+        -1.0
+    }
+}
+
+/// The outcome of a weapon meeting a reflector
+/// (`ftMainUpdateReflectorStatWeapon`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReflectOutcome {
+    /// Turned back: the weapon changes owner.
+    Reflected,
+    /// Too strong: the reflector breaks and the weapon takes it as a
+    /// normal hit (`hit_normal_damage`).
+    Broke,
+}
+
+/// `ftMainUpdateReflectorStatWeapon`, the fighter's half. `damage` is the
+/// weapon's staled damage.
+pub fn reflect_weapon(
+    f: &mut Fighter,
+    coll: &SpecialColl,
+    damage: i32,
+    weapon_pos: Vec3,
+) -> ReflectOutcome {
+    f.hits.reflect_lr = weapon_side(f, weapon_pos);
+    if coll.damage_resist < damage {
+        f.hits.reflect_damage = damage;
+        ReflectOutcome::Broke
+    } else {
+        ReflectOutcome::Reflected
+    }
+}
+
+/// `ftMainUpdateAbsorbStatWeapon`, the fighter's half: heals twice the
+/// weapon's staled damage at once (`can_not_heal` is never set).
+pub fn absorb_weapon(f: &mut Fighter, damage: i32, weapon_pos: Vec3) {
+    f.hits.absorb_lr = weapon_side(f, weapon_pos);
+    let heal = (damage as f32 * 2.0) as i32;
+    f.damage = (i32::from(f.damage) - heal).max(0) as u16;
+}
+
+/// `ftMainSearchHitWeapon`'s attack-versus-weapon branch for one weapon
+/// hitbox: the fighter's live attack collisions that reach the weapon's
+/// situation and have not recorded it (`weapon_id`) are tested against it.
+/// On contact, `ftMainUpdateAttackStatWeapon`: a weapon doing more than the
+/// attack's damage minus 10 records itself on the attack and rebounds the
+/// fighter; an attack doing more than the weapon's damage minus 10 beats the
+/// weapon (`hit_attack_damage`). Returns whether the weapon lost, which ends
+/// its search against this fighter.
+pub fn weapon_attack_clank(
+    f: &mut Fighter,
+    w: &WeaponAttack,
+    weapon_id: u8,
+    weapon_grounded: bool,
+) -> bool {
+    let mut detect = [false; 4];
+    for (i, coll) in f.attack_colls.iter().enumerate() {
+        detect[i] = coll.state != AttackState::Off
+            && coll.reaches(!weapon_grounded)
+            && coll.record(weapon_id).group_id == NO_GROUP;
+    }
+    if !detect.contains(&true) {
+        return false;
+    }
+    let damage = w.hitbox.damage;
+    let w_state = weapon_state(w.pos_curr, w.pos_prev);
+    for j in 0..f.attack_colls.len() {
+        if !detect[j] {
+            continue;
+        }
+        let coll = f.attack_colls[j];
+        if !crate::hurtbox::attacks_collide(
+            (w.pos_curr, w.pos_prev, w.hitbox.radius, w_state),
+            (coll.pos_curr, coll.pos_prev, coll.size, coll.state),
+        ) {
+            continue;
+        }
+        if coll.damage - 10 < damage {
+            let mut scratch = detect;
+            set_hit_interact(f, coll.group, weapon_id, HitType::Attack(0), &mut scratch);
+            set_hit_rebound(f, &coll, w.pos_curr.x);
+        }
+        if damage - 10 < coll.damage {
+            return true;
+        }
+    }
+    false
 }
 
 /// `FTAttributes` fields the hit pipeline reads.
@@ -382,7 +620,7 @@ fn body_hitstatus(f: &Fighter) -> HitStatus {
 }
 
 /// `FTStruct::throw_gobj`: the Kirby that spat this fighter out as a star.
-fn throw_port(f: &Fighter) -> Option<u8> {
+pub(crate) fn throw_port(f: &Fighter) -> Option<u8> {
     if crate::capture_kirby::is_star(f.status.status) {
         f.kirby_capture.thrower
     } else {
@@ -437,6 +675,14 @@ fn in_range(pos: Vec3, target: Vec3, range: [f32; 3], size: f32) -> bool {
         || dx > range[2] + size
         || dy < -range[1] - size
         || dy > range[0] + size)
+}
+
+/// `gmCollisionCheckWeaponInFighterRange`: the weapon hitbox (either end of
+/// its sweep) within the fighter's `hit_detect_range`.
+pub fn weapon_in_range(f: &Fighter, w: &WeaponAttack) -> bool {
+    let range = crate::motion::combat_attrs(f.kind).map_or([f32::MAX; 3], |a| a.hit_detect_range);
+    in_range(w.pos_curr, f.pos, range, w.hitbox.radius)
+        || in_range(w.pos_prev, f.pos, range, w.hitbox.radius)
 }
 
 fn attack_in_fighter_range(coll: &AttackColl, f: &Fighter) -> bool {
@@ -751,12 +997,21 @@ fn update_damage_stat(
     }
 }
 
+/// `ftMainUpdateShieldStatWeapon`'s writes to the weapon:
+/// `shield_collide_angle` and the sign of `shield_collide_dir.z`, which
+/// `proc_hop` reads.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShieldCollide {
+    pub angle: f32,
+    pub dir_z: f32,
+}
+
 /// What a weapon hitbox did to a fighter (`ftMainSearchHitWeapon`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WeaponContact {
     Missed,
     /// Recorded by the shield.
-    Shielded,
+    Shielded(ShieldCollide),
     /// Touched a hurtbox; `true` when it will deal damage.
     Hurt(bool),
 }
@@ -789,10 +1044,20 @@ pub fn weapon_hit(victim: &mut Fighter, w: WeaponAttack) -> WeaponContact {
     {
         return WeaponContact::Missed;
     }
-    if is_shield(victim)
-        && w.can_shield
-        && attack_hits_shield(w.pos_curr, w.pos_prev, w.hitbox.radius, state, victim)
-    {
+    let shield = if is_shield(victim) && w.can_shield {
+        crate::hurtbox::test_sphere_angle(
+            &shield_transform(victim),
+            w.pos_curr,
+            w.pos_prev,
+            w.hitbox.radius,
+            state,
+            Vec3::ZERO,
+            Vec3::new(30.0, 30.0, 30.0),
+        )
+    } else {
+        None
+    };
+    if let Some((angle, dir)) = shield {
         // `ftMainUpdateShieldStatWeapon`.
         victim.hits.shield_damage_total += w.hitbox.damage + w.hitbox.shield_damage;
         if victim.hits.shield_damage < w.hitbox.damage {
@@ -811,7 +1076,21 @@ pub fn weapon_hit(victim: &mut Fighter, w: WeaponAttack) -> WeaponContact {
                 }
             };
         }
-        return WeaponContact::Shielded;
+        // `shield_collide_dir = { 0, 0, lr == +1 ? -dir.x : dir.x }`,
+        // normalised.
+        let z = if victim.facing.sign() > 0.0 {
+            -dir.x
+        } else {
+            dir.x
+        };
+        let dir_z = if z > 0.0 {
+            1.0
+        } else if z < 0.0 {
+            -1.0
+        } else {
+            0.0
+        };
+        return WeaponContact::Shielded(ShieldCollide { angle, dir_z });
     }
     if is_body_intangible(victim) {
         return WeaponContact::Missed;
@@ -944,6 +1223,14 @@ const SHIELD_BREAK_RESET: f32 = 30.0;
 /// fighter's search. Returns whether this fighter's own attack landed
 /// (`proc_hit`).
 pub fn proc_params(f: &mut Fighter) -> bool {
+    proc_params_with(f, None)
+}
+
+/// [`proc_params`] with the fighter's grab partner (`catch_gobj` or
+/// `capture_gobj`), whose same-frame hit `ftCommonDamageUpdateMain` reads
+/// and writes. A partner already processed this frame reads as unhit, as in
+/// the source, where `ftMainProcParams` clears `damage_knockback`.
+pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool {
     let mut damage = 0;
     let mut is_shieldbreak = false;
     let status_before = f.status.status;
@@ -980,7 +1267,7 @@ pub fn proc_params(f: &mut Fighter) -> bool {
             DamageKind::Status => goto_damage_status(f),
             DamageKind::ColAnim => {}
             DamageKind::Catch => update_catch_resist(f),
-            DamageKind::Default => update_main(f),
+            DamageKind::Default => update_main(f, partner),
         }
         damage = f.hits.damage_lag;
         is_knockback_paused = true;
@@ -1003,6 +1290,21 @@ pub fn proc_params(f: &mut Fighter) -> bool {
         crate::captain::on_kick_hit(f);
         crate::capture_kirby::on_star_hit(f);
         damage = f.hits.attack_damage;
+    } else if f.hits.reflect_damage != 0 {
+        // `ftCommonShieldBreakFlyReflectorSetStatus`.
+        crate::reaction::set_shield_break_fly(f);
+    } else if f.hits.reflect_lr != 0.0 {
+        if base_kind(f.kind) == FighterKind::Fox {
+            // `ftFoxSpecialLwHitSetStatus`: `lr = reflect_lr`.
+            f.facing = if f.hits.reflect_lr > 0.0 {
+                crate::fighter::Facing::Right
+            } else {
+                crate::fighter::Facing::Left
+            };
+            status::set_fox_special_lw_hit(f);
+        }
+    } else if f.hits.absorb_lr != 0.0 {
+        crate::ness::proc_absorb(f, f.hits.absorb_lr);
     }
     if damage != 0 {
         f.hitlag = hitlag_frames(damage, status_before, f.hits.hitlag_mul);
@@ -1086,21 +1388,44 @@ pub fn goto_damage_status(f: &mut Fighter) {
     attack::init_damage_vars_full(f, None, kb, angle, lr, index, element, true);
 }
 
+/// `ftCommonDamageCheckCatchResist`.
+fn catch_resist(f: &Fighter) -> bool {
+    if crate::grab::is_cargo(f.status.status) {
+        only_flashes_cargo(f)
+    } else {
+        only_flashes(f)
+    }
+}
+
 /// `ftCommonDamageUpdateMain`, for a fighter that holds or is held by
-/// another, then the ordinary case.
-fn update_main(f: &mut Fighter) {
+/// another, then the ordinary case. `partner` is the other side of the grab
+/// when the caller has it; its `hits` are its unprocessed same-frame hit.
+fn update_main(f: &mut Fighter, partner: Option<&mut Fighter>) {
     if f.status.status == Status::YoshiEgg {
         crate::capture_yoshi::on_hit(f, f.hits.damage_queue);
         return;
     }
+    let partner = partner.filter(|p| Some(p.port) == f.grab.catch.or(f.grab.capture));
     if f.grab.catch.is_some() {
-        // The partner's own knockback is not visible from here; the
-        // catcher's reaction follows the source's single-hit branches.
-        if crate::grab::is_cargo(f.status.status) && only_flashes_cargo(f) {
-            update_catch_resist(f);
+        if let Some(held) = partner.filter(|p| p.hits.damage_knockback != 0.0) {
+            // Both sides of the grab were hit this frame.
+            if catch_resist(f) && attack::capture_keep_hold(held.hits.damage_queue) {
+                held.hits.damage_lag = f.hits.damage_lag;
+                held.hits.hitlag_mul = f.hits.hitlag_mul;
+                update_catch_resist(f);
+                held.hits.damage_kind = DamageKind::ColAnim;
+                return;
+            }
+            if !catch_resist(f) && attack::capture_keep_hold(held.hits.damage_queue) {
+                crate::grab::thrown_update_damage_stats(held, f);
+            }
+            crate::grab::lose_grip_pair(f, held);
+            goto_damage_status(f);
+            held.hits.damage_kind = DamageKind::Status;
             return;
         }
-        if only_flashes(f) {
+        if catch_resist(f) {
+            update_catch_resist(f);
             return;
         }
         crate::grab::release_on_hit(f);
@@ -1108,9 +1433,35 @@ fn update_main(f: &mut Fighter) {
         return;
     }
     if f.grab.capture.is_some() {
-        if attack::capture_keep_hold(f.hits.damage_queue) {
-            // The hold survives; the catcher takes the hitlag
-            // (`grab_fp->hitlag_tics`), delivered through the grab link.
+        let keep = attack::capture_keep_hold(f.hits.damage_queue);
+        if let Some(catcher) = partner {
+            if catcher.hits.damage_knockback != 0.0 {
+                if keep && catch_resist(catcher) {
+                    f.hits.damage_lag = catcher.hits.damage_lag;
+                    f.hits.hitlag_mul = catcher.hits.hitlag_mul;
+                    catcher.hits.damage_kind = DamageKind::Catch;
+                    return;
+                }
+                if keep {
+                    crate::grab::thrown_update_damage_stats(f, catcher);
+                }
+                crate::grab::lose_grip_pair(catcher, f);
+                goto_damage_status(f);
+                catcher.hits.damage_kind = DamageKind::Status;
+                return;
+            }
+            if keep {
+                // `grab_fp->hitlag_tics = ftParamGetHitLag(...)`.
+                catcher.hitlag = hitlag_frames(
+                    f.hits.damage_lag,
+                    catcher.status.status,
+                    catcher.hits.hitlag_mul,
+                );
+                return;
+            }
+        } else if keep {
+            // The hold survives; the catcher takes the hitlag, delivered
+            // through the grab link.
             crate::grab::send_catcher_hitlag(f, f.hits.damage_lag);
             return;
         }
@@ -1179,9 +1530,19 @@ pub fn finish_frame(fighters: &mut [&mut Fighter]) -> [bool; 4] {
             }
         }
     }
+    // `ftMainProcParams` runs fighter by fighter, and a grab link reads and
+    // writes the partner's unprocessed hit.
     let mut landed = [false; 4];
-    for (i, f) in fighters.iter_mut().enumerate() {
-        let hit = proc_params(f);
+    for i in 0..n {
+        let link = fighters[i].grab.catch.or(fighters[i].grab.capture);
+        let partner = link.and_then(|port| (0..n).find(|&j| j != i && fighters[j].port == port));
+        let hit = match partner {
+            Some(j) => {
+                let (a, b) = pair_mut(fighters, i, j);
+                proc_params_with(a, Some(b))
+            }
+            None => proc_params(fighters[i]),
+        };
         if i < 4 {
             landed[i] = hit;
         }

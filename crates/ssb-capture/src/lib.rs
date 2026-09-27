@@ -287,6 +287,9 @@ pub enum GameScene {
     Shadows,
     /// `grab`: Training plus a Z+A grab of the dummy, frozen while held.
     Grab,
+    /// `jab`: the grab scene's route onto the dummy's platform, then a jab
+    /// that lands, frozen in the dummy's damage status.
+    Jab,
     /// `costume1`..`costume3`: Fox in Training after a C-Right, C-Down or
     /// C-Left costume pick on the Training menu entry.
     Costume1,
@@ -295,13 +298,14 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 9] = [
+    pub const ALL: [GameScene; 10] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
         GameScene::Fox,
         GameScene::Shadows,
         GameScene::Grab,
+        GameScene::Jab,
         GameScene::Costume1,
         GameScene::Costume2,
         GameScene::Costume3,
@@ -315,6 +319,7 @@ impl GameScene {
             GameScene::Fox => "fox",
             GameScene::Shadows => "shadows",
             GameScene::Grab => "grab",
+            GameScene::Jab => "jab",
             GameScene::Costume1 => "costume1",
             GameScene::Costume2 => "costume2",
             GameScene::Costume3 => "costume3",

@@ -210,8 +210,9 @@ fn set_thunder_end(f: &mut Fighter) {
 fn down_bounce(f: &mut Fighter) {
     f.physics.vel_air = Vec3::ZERO;
     f.physics.vel_ground.x = 0.0;
-    // Shared DownBounce update/clip is still unported, as for other fighters.
-    status::set_status(f, Status::DownBounceD, 0.0, StatusTiming::unknown());
+    // `ftCommonDownBounceSetStatus`: face up or down from the posed pitch.
+    let y = f.pos.y;
+    crate::reaction::set_down_bounce(f, y);
 }
 pub(crate) fn map_down_bounce(f: &mut Fighter) {
     down_bounce(f);
@@ -341,17 +342,10 @@ pub fn absorbing(f: &Fighter) -> bool {
         )
     )
 }
-/// `FTSpecialColl` on TopN: source offset {300,195,0}, radii 430 (US).
-pub(crate) fn absorb_contact(f: &Fighter, pos: Vec3, radius: f32) -> bool {
-    if !absorbing(f) {
-        return false;
-    }
-    let center = f.joint_world(0, Vec3::new(300.0, 195.0, 0.0));
-    (pos - center).length_squared() <= (430.0 + radius) * (430.0 + radius)
-}
-pub(crate) fn absorb(f: &mut Fighter, pos: Vec3, damage: i32) {
-    f.damage = f.damage.saturating_sub((damage.max(0) * 2) as u16);
-    f.facing = if f.pos.x < pos.x {
+/// `ftNessSpecialLwProcAbsorb`, from `ftMainProcParams` after PSI Magnet
+/// took a weapon: face the weapon's side and play the hit.
+pub fn proc_absorb(f: &mut Fighter, absorb_lr: f32) {
+    f.facing = if absorb_lr > 0.0 {
         Facing::Right
     } else {
         Facing::Left
@@ -364,16 +358,6 @@ pub(crate) fn absorb(f: &mut Fighter, pos: Vec3, damage: i32) {
             N::SpecialAirLwHit
         },
     );
-}
-pub(crate) fn bat_contact(f: &Fighter, pos: Vec3, radius: f32) -> bool {
-    if !is_ness(f.kind)
-        || f.status.status != AnyStatus::Common(Status::AttackS4)
-        || !(16.0..22.0).contains(&f.status.anim_frame)
-    {
-        return false;
-    }
-    let center = f.joint_world(0, Vec3::new(0.0, 150.0, 0.0));
-    (pos - center).length_squared() <= (300.0 + radius) * (300.0 + radius)
 }
 pub fn update(f: &mut Fighter) {
     let AnyStatus::Ness(s) = f.status.status else {

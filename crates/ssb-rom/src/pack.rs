@@ -197,7 +197,13 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 38 uses CollisionVertex's trailing u16 for the original vertex-data ID.
 // Original map endpoint connectivity compares IDs, so the zero padding in
 // older packs cannot recover authored topology even when coordinates match.
-pub const VERSION: u32 = 38;
+//
+// 39 adds the 25 shared reaction animation slots (`anim::SLOT_WALL_DAMAGE`
+// on: WallDamage, StopCeil, the Down/Passive family, Rebound, EscapeF/B and
+// the ShieldBreak chain) for all twelve fighters (RE-351). `SLOT_COUNT` is
+// 471; a v38 runtime rejects the new slots, and a v39 runtime reading a v38
+// pack would find no clip for them.
+pub const VERSION: u32 = 39;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

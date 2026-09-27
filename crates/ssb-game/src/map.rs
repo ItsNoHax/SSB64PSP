@@ -46,13 +46,23 @@ pub struct AirOptions {
     pub ignore_line: Option<u16>,
     pub skip_pass: bool,
     pub cliff: Option<CliffQuery>,
+    /// `MAP_PROC_TYPE_CEILHEAVY` with `vel_air.y >= 30`
+    /// ([`CEILHEAVY_VEL_Y_MIN`]): a ceiling contact stops the sweep and
+    /// reports [`AirMoved::ceil_stop`].
+    pub ceil_heavy: bool,
 }
+
+/// `mpCommonRunFighterSpecialCollisions`: the rise speed at which a ceiling
+/// contact counts as a heavy bonk (`ftCommonStopCeilSetStatus`).
+pub const CEILHEAVY_VEL_Y_MIN: f32 = 30.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AirMoved {
     pub moved: Moved,
     pub contacts: Contacts,
     pub cliff: Option<(u16, Vec2)>,
+    /// `mask_curr & MAP_FLAG_CEILHEAVY`.
+    pub ceil_stop: bool,
 }
 
 pub fn floors<I>(surfaces: I) -> impl Iterator<Item = (u16, Segment)>
@@ -377,6 +387,69 @@ where
     hit
 }
 
+/// What one substep's ceiling test found: whether the body touched a ceiling
+/// (`mpProcessCheckTestCeilCollisionAdjNew`), and the contact recorded once
+/// `mpProcessRunCeilCollisionAdjNew` placed it.
+struct CeilStep {
+    touched: bool,
+    /// The ceiling line the sweep crossed (`ceil_line_id`/`ceil_angle`).
+    hit: Option<Contact>,
+    contact: Option<Contact>,
+}
+
+/// The ceiling half of a substep, shared by [`move_air`] and
+/// [`move_damage`].
+fn ceiling_step<I, F>(
+    surfaces: &F,
+    coll: BodyColl,
+    prev: Vec3,
+    pos: &mut Vec3,
+    current: &Contacts,
+) -> CeilStep
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let mut out = CeilStep {
+        touched: false,
+        hit: None,
+        contact: None,
+    };
+    let top = Vec2::new(0.0, coll.top);
+    let ceil = query(surfaces, Kind::Ceiling, point(prev, top), point(*pos, top))
+        .map(|(h, _)| h)
+        .or_else(|| adjacent_horizontal(surfaces, current, Kind::Ceiling, *pos, coll.top));
+    if let Some(hit) = ceil {
+        out.touched = true;
+        out.hit = Some(hit);
+        if let Some((y, h)) = height(surfaces, Kind::Ceiling, hit.line, pos.x) {
+            pos.y = y - coll.top;
+            out.hit = Some(h);
+            out.contact = Some(h);
+            adjust_edges(surfaces, coll, pos, Kind::Ceiling, h);
+        } else if let Some((corner, _)) = edge(
+            surfaces,
+            Kind::Ceiling,
+            hit.line,
+            pos.x > edge(surfaces, Kind::Ceiling, hit.line, false).map_or(pos.x, |e| e.0.x),
+        ) {
+            pos.y = corner.y - coll.top;
+            let right = pos.x > corner.x;
+            if neighbor(surfaces, Kind::Ceiling, hit.line, right).is_some_and(|(k, _)| {
+                k == if right {
+                    Kind::LeftWall
+                } else {
+                    Kind::RightWall
+                }
+            }) {
+                pos.x = corner.x;
+                out.contact = Some(hit);
+            }
+        }
+    }
+    out
+}
+
 /// Static air path of `mpCommonRunFighterSpecialCollisions`.
 pub fn move_air<I, F>(
     coll: &BodyColl,
@@ -397,6 +470,7 @@ where
     );
     let mut pos = from;
     let mut contacts = Contacts::default();
+    let mut ceil_stop = false;
     for _ in 0..steps {
         let prev = pos;
         pos += step;
@@ -411,34 +485,14 @@ where
             contacts.right_wall = Some(hit);
             current.right_wall = Some(hit);
         }
-        let top = Vec2::new(0.0, coll.top);
-        let ceil = query(&surfaces, Kind::Ceiling, point(prev, top), point(pos, top))
-            .map(|(h, _)| h)
-            .or_else(|| adjacent_horizontal(&surfaces, &current, Kind::Ceiling, pos, coll.top));
-        if let Some(hit) = ceil {
-            if let Some((y, h)) = height(&surfaces, Kind::Ceiling, hit.line, pos.x) {
-                pos.y = y - coll.top;
-                contacts.ceiling = Some(h);
-                adjust_edges(&surfaces, *coll, &mut pos, Kind::Ceiling, h);
-            } else if let Some((corner, _)) = edge(
-                &surfaces,
-                Kind::Ceiling,
-                hit.line,
-                pos.x > edge(&surfaces, Kind::Ceiling, hit.line, false).map_or(pos.x, |e| e.0.x),
-            ) {
-                pos.y = corner.y - coll.top;
-                let right = pos.x > corner.x;
-                if neighbor(&surfaces, Kind::Ceiling, hit.line, right).is_some_and(|(k, _)| {
-                    k == if right {
-                        Kind::LeftWall
-                    } else {
-                        Kind::RightWall
-                    }
-                }) {
-                    pos.x = corner.x;
-                    contacts.ceiling = Some(hit);
-                }
-            }
+        let ceil = ceiling_step(&surfaces, *coll, prev, &mut pos, &current);
+        if let Some(hit) = ceil.contact {
+            contacts.ceiling = Some(hit);
+        }
+        if ceil.touched && options.ceil_heavy {
+            // `MAP_PROC_TYPE_CEILHEAVY`: a fast rise into a ceiling ends
+            // the sweep after this substep (`is_coll_end`).
+            ceil_stop = true;
         }
         let bottom = Vec2::new(0.0, coll.bottom);
         let floor = query(
@@ -474,6 +528,7 @@ where
                 moved,
                 contacts,
                 cliff: None,
+                ceil_stop,
             };
         }
         if let Some(check) = options.cliff {
@@ -485,15 +540,20 @@ where
                         moved: Moved { pos, floor: None },
                         contacts,
                         cliff: Some((line, corner)),
+                        ceil_stop,
                     };
                 }
             }
+        }
+        if ceil_stop {
+            break;
         }
     }
     AirMoved {
         moved: Moved { pos, floor: None },
         contacts,
         cliff: None,
+        ceil_stop,
     }
 }
 
@@ -777,6 +837,218 @@ where
     (distance < 800.0).then_some((hit.line, corner))
 }
 
+/// `MAP_FLAG_LWALL`, `MAP_FLAG_RWALL`, `MAP_FLAG_CEIL` and `MAP_FLAG_FLOOR`,
+/// as the damage statuses keep them in `status_vars.common.damage.coll_mask_*`.
+pub const MASK_LWALL: u16 = 1 << 0;
+pub const MASK_RWALL: u16 = 1 << 5;
+pub const MASK_CEIL: u16 = 1 << 10;
+pub const MASK_FLOOR: u16 = 1 << 11;
+
+/// `mpCommonProcFighterDamage`: a surface bounces a tumbling fighter only when
+/// the frame's movement is longer than this…
+pub const DAMAGE_COLLIDE_SPEED_MIN: f32 = 30.0;
+/// …and meets the surface's normal at more than 110° (`F_CLC_DTOR32(110)`),
+/// compared through its cosine.
+const DAMAGE_COLLIDE_COS_MAX: f32 = -0.342_020_15;
+
+/// Result of [`move_damage`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DamageMoved {
+    /// Where the body ended up; `floor` is set only by a landing.
+    pub moved: Moved,
+    pub contacts: Contacts,
+    /// `coll_mask_curr`: the surfaces the fighter struck head-on this frame.
+    pub mask_curr: u16,
+    /// `mpCommonCheckFighterDamageCollision`'s return: the last substep's
+    /// `is_collide`.
+    pub collide: bool,
+    /// The struck surfaces' normals (`lwall_angle`, `rwall_angle`,
+    /// `ceil_angle`), for `ftCommonWallDamageCheckGoto`.
+    pub lwall_normal: Vec2,
+    pub rwall_normal: Vec2,
+    pub ceil_normal: Vec2,
+}
+
+/// `syVectorAngleDiff3D(pos_diff, normal) > 110°` with the length gate.
+fn strikes(diff: Vec3, normal: Vec2) -> bool {
+    let mag2 = ssb_engine::math::sqrt(diff.x * diff.x + diff.y * diff.y);
+    if mag2 <= DAMAGE_COLLIDE_SPEED_MIN {
+        return false;
+    }
+    faces(diff, normal)
+}
+
+fn faces(diff: Vec3, normal: Vec2) -> bool {
+    let n = normal.length();
+    let d = diff.length();
+    if n == 0.0 || d == 0.0 {
+        return false;
+    }
+    (diff.x * normal.x + diff.y * normal.y) / (n * d) < DAMAGE_COLLIDE_COS_MAX
+}
+
+/// `mpProcessSetCollideFloor` for an airborne body: put it on the floor line
+/// without landing. Past either end it drops to the corner, and slides onto
+/// it only where a wall hangs below that end.
+fn collide_floor<I, F>(surfaces: &F, coll: BodyColl, pos: &mut Vec3, hit: Contact) -> bool
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    if let Some((y, h)) = height(surfaces, Kind::Floor, hit.line, pos.x) {
+        pos.y = y - coll.bottom;
+        adjust_edges(surfaces, coll, pos, Kind::Floor, h);
+        return true;
+    }
+    let Some((low, _)) = edge(surfaces, Kind::Floor, hit.line, false) else {
+        return false;
+    };
+    let (corner, right) = if pos.x <= low.x {
+        (low, false)
+    } else {
+        match edge(surfaces, Kind::Floor, hit.line, true) {
+            Some((high, _)) => (high, true),
+            None => return false,
+        }
+    };
+    let wall = if right {
+        Kind::LeftWall
+    } else {
+        Kind::RightWall
+    };
+    pos.y = corner.y - coll.bottom;
+    if neighbor(surfaces, Kind::Floor, hit.line, right).is_some_and(|(k, _)| k == wall) {
+        pos.x = corner.x;
+        adjust_edges(surfaces, coll, pos, Kind::Floor, hit);
+        return true;
+    }
+    false
+}
+
+/// `mpCommonCheckFighterDamageCollision` + `mpCommonProcFighterDamage`, the
+/// map sweep of the airborne damage statuses (`DamageE2`, the `DamageFly*`
+/// family and `WallDamage`). Walls and the ceiling stop the body as usual,
+/// but one struck head-on (see [`strikes`]) that was not already struck last
+/// frame (`prev_mask`) ends the sweep and is reported in
+/// [`DamageMoved::mask_curr`]. A floor is landed on only when the movement
+/// meets it at more than 110° and the fighter is out of hitlag; a grazing
+/// floor, or any floor during hitlag, carries the body along without landing.
+pub fn move_damage<I, F>(
+    coll: &BodyColl,
+    from: Vec3,
+    to: Vec3,
+    prev_mask: u16,
+    hitlag: bool,
+    ignore_line: Option<u16>,
+    surfaces: F,
+) -> DamageMoved
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let diff = to - from;
+    let steps = ground::substep_count(from, to);
+    let step = Vec3::new(
+        diff.x / steps as f32,
+        diff.y / steps as f32,
+        diff.z / steps as f32,
+    );
+    let mut out = DamageMoved {
+        moved: Moved {
+            pos: from,
+            floor: None,
+        },
+        contacts: Contacts::default(),
+        mask_curr: 0,
+        collide: false,
+        lwall_normal: Vec2::ZERO,
+        rwall_normal: Vec2::ZERO,
+        ceil_normal: Vec2::ZERO,
+    };
+    let mut pos = from;
+    for _ in 0..steps {
+        let prev = pos;
+        pos += step;
+        let mut collide = false;
+        let mut current = Contacts::default();
+        let lwalls = walls(&surfaces, *coll, prev, pos, Kind::LeftWall, None);
+        if let Some(hit) = correct_wall(&surfaces, *coll, &mut pos, Kind::LeftWall, lwalls) {
+            out.contacts.left_wall = Some(hit);
+            current.left_wall = Some(hit);
+            out.lwall_normal = hit.normal;
+            if prev_mask & MASK_LWALL == 0 && strikes(diff, hit.normal) {
+                out.mask_curr |= MASK_LWALL;
+                collide = true;
+            }
+        }
+        let rwalls = walls(&surfaces, *coll, prev, pos, Kind::RightWall, None);
+        if let Some(hit) = correct_wall(&surfaces, *coll, &mut pos, Kind::RightWall, rwalls) {
+            out.contacts.right_wall = Some(hit);
+            current.right_wall = Some(hit);
+            out.rwall_normal = hit.normal;
+            if prev_mask & MASK_RWALL == 0 && strikes(diff, hit.normal) {
+                out.mask_curr |= MASK_RWALL;
+                collide = true;
+            }
+        }
+        let ceil = ceiling_step(&surfaces, *coll, prev, &mut pos, &current);
+        if let Some(hit) = ceil.contact {
+            out.contacts.ceiling = Some(hit);
+        }
+        if let Some(hit) = ceil.hit {
+            out.ceil_normal = hit.normal;
+            if prev_mask & MASK_CEIL == 0 && strikes(diff, hit.normal) {
+                out.mask_curr |= MASK_CEIL;
+                collide = true;
+            }
+        }
+        let bottom = Vec2::new(0.0, coll.bottom);
+        let floor = query(
+            &surfaces,
+            Kind::Floor,
+            point(prev, bottom),
+            point(pos, bottom),
+        )
+        .map(|(h, _)| h)
+        .or_else(|| adjacent_horizontal(&surfaces, &current, Kind::Floor, pos, coll.bottom))
+        .filter(|h| h.flags & collision::flags::PASS == 0 || Some(h.line) != ignore_line);
+        if let Some(hit) = floor {
+            if !hitlag && faces(diff, hit.normal) {
+                // `mpProcessSetLandingFloor`.
+                let mut moved = ground::land(coll, pos, hit.line, hit.flags, hit.normal, || {
+                    floors(surfaces())
+                });
+                if let Some(floor) = moved.floor {
+                    adjust_edges(
+                        &surfaces,
+                        *coll,
+                        &mut moved.pos,
+                        Kind::Floor,
+                        Contact {
+                            line: floor.line,
+                            flags: floor.flags,
+                            normal: floor.normal,
+                        },
+                    );
+                    out.contacts.floor = true;
+                    out.mask_curr |= MASK_FLOOR;
+                    out.moved = moved;
+                    out.collide = true;
+                    return out;
+                }
+            } else if collide_floor(&surfaces, *coll, &mut pos, hit) {
+                out.contacts.floor = true;
+            }
+        }
+        out.collide = collide;
+        if collide {
+            break;
+        }
+    }
+    out.moved = Moved { pos, floor: None };
+    out
+}
+
 pub(crate) fn stops_at_edge(s: AnyStatus) -> bool {
     matches!(
         s,
@@ -786,6 +1058,25 @@ pub(crate) fn stops_at_edge(s: AnyStatus) -> bool {
             )
             | AnyStatus::Kirby(KirbyStatus::SpecialHi)
             | AnyStatus::Common(Status::Catch)
+    )
+}
+
+/// The statuses on `mpCommonProcFighterCliffFloorCeil`, whose ceiling test
+/// is `MAP_PROC_TYPE_CEILHEAVY`.
+pub fn is_ceil_heavy_status(s: AnyStatus) -> bool {
+    matches!(
+        s,
+        AnyStatus::Common(
+            Status::JumpF
+                | Status::JumpB
+                | Status::JumpAerialF
+                | Status::JumpAerialB
+                | Status::Fall
+                | Status::FallAerial
+                | Status::Pass
+                | Status::GuardPass
+                | Status::StopCeil
+        )
     )
 }
 

@@ -6833,6 +6833,7 @@ fn jumptest(path: &Path, opts: &[&str]) -> Res {
     let mut jump_tick = 10u32;
     let mut jump2_tick: Option<u32> = None;
     let mut attack_tick: Option<u32> = None;
+    let mut catch_tick: Option<u32> = None;
     let mut stick_switch_tick = 0u32;
     let mut stick_release_tick = u32::MAX;
     let mut stick_x: i8 = -80;
@@ -6876,6 +6877,14 @@ fn jumptest(path: &Path, opts: &[&str]) -> Res {
                         .ok_or("--attack-tick needs a value")?
                         .parse()
                         .map_err(|_| "bad --attack-tick")?,
+                )
+            }
+            "--catch-tick" => {
+                catch_tick = Some(
+                    it.next()
+                        .ok_or("--catch-tick needs a value")?
+                        .parse()
+                        .map_err(|_| "bad --catch-tick")?,
                 )
             }
             "--stick-release-tick" => {
@@ -6944,6 +6953,10 @@ fn jumptest(path: &Path, opts: &[&str]) -> Res {
         if attack_tick == Some(tick) {
             buttons.set(ssb_engine::input::N64Buttons::A, true);
         }
+        if catch_tick == Some(tick) {
+            buttons.set(ssb_engine::input::N64Buttons::Z, true);
+            buttons.set(ssb_engine::input::N64Buttons::A, true);
+        }
         let input = ControllerState {
             buttons,
             stick_x: cur_stick_x,
@@ -6952,6 +6965,26 @@ fn jumptest(path: &Path, opts: &[&str]) -> Res {
         };
         f.set_input(input, tapped, released);
         f.tick(floors);
+        dummy.set_input(ControllerState::default(), false, false);
+        dummy.tick(floors);
+        ssb_game::grab::exchange(&mut f, &mut dummy);
+        ssb_game::grab::exchange(&mut dummy, &mut f);
+        if ssb_game::grab::search_catch(&mut f, &dummy) {
+            println!("  *** CATCH at tick {tick} ***");
+        }
+        ssb_game::grab::exchange(&mut f, &mut dummy);
+
+        // The frame's real hit pipeline (search, hit log, `ftMainProcParams`)
+        // with the unposed hurtbox and attack fallbacks: `psp-game` samples
+        // real joints, so this measures reach, not the exact frame.
+        let damage_before = dummy.damage;
+        ssb_game::combat::resolve_frame(&mut [&mut f, &mut dummy]);
+        if dummy.damage != damage_before {
+            println!(
+                "  *** DAMAGE: dummy {} -> {} at tick {tick} ({:?}) ***",
+                damage_before, dummy.damage, dummy.status.status
+            );
+        }
 
         // The jab's live attack collisions, from its motion script.
         ssb_game::combat::update_attack_positions(&mut f);
@@ -9238,19 +9271,8 @@ fn joint_table(data: &[u8]) -> Option<Vec<u32>> {
     let word = |at: usize| -> Option<u32> {
         Some(u32::from_be_bytes(data.get(at..at + 4)?.try_into().ok()?))
     };
-    let mut first = 0;
-    let mut at = 0;
-    while let Some(p) = word(at) {
-        if p != 0 {
-            first = p;
-            break;
-        }
-        at += 4;
-    }
-    if first == 0 || first % 4 != 0 || first as usize > data.len() {
-        return None;
-    }
-    (0..first as usize / 4).map(|i| word(i * 4)).collect()
+    let len = ssb_rom::anim::joint_table_len(data)?;
+    (0..len).map(|i| word(i * 4)).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -10187,6 +10209,67 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
 
 #[cfg(test)]
 mod tests {
+    /// The reaction statuses' slots, by name, and their pack lengths
+    /// against the motion descs `ssb-game` reads (`motion::anim_length`):
+    /// two independent transcriptions of the same figatrees.
+    #[test]
+    fn reaction_slots_and_lengths_match_the_anim_table() {
+        use ssb_game::fighter::FighterKind;
+        use ssb_game::status::{AnyStatus, Status};
+        let named = [
+            (Status::WallDamage, "WallDamage"),
+            (Status::StopCeil, "StopCeil"),
+            (Status::DownBounceD, "DownBounceD"),
+            (Status::DownBounceU, "DownBounceU"),
+            (Status::DownWaitD, "DownBounceD"),
+            (Status::DownWaitU, "DownBounceU"),
+            (Status::DownStandD, "DownStandD"),
+            (Status::DownStandU, "DownStandU"),
+            (Status::PassiveStandF, "PassiveStandF"),
+            (Status::PassiveStandB, "PassiveStandB"),
+            (Status::DownForwardD, "DownForwardD"),
+            (Status::DownForwardU, "DownForwardU"),
+            (Status::DownBackD, "DownBackD"),
+            (Status::DownBackU, "DownBackU"),
+            (Status::DownAttackD, "DownAttackD"),
+            (Status::DownAttackU, "DownAttackU"),
+            (Status::Passive, "Passive"),
+            (Status::ReboundWait, "Rebound"),
+            (Status::Rebound, "Rebound"),
+            (Status::EscapeF, "EscapeF"),
+            (Status::EscapeB, "EscapeB"),
+            (Status::ShieldBreakFly, "ShieldBreakFly"),
+            (Status::ShieldBreakFall, "ShieldBreakFall"),
+            (Status::ShieldBreakDownD, "ShieldBreakDownD"),
+            (Status::ShieldBreakDownU, "ShieldBreakDownU"),
+            (Status::ShieldBreakStandD, "ShieldBreakStandD"),
+            (Status::ShieldBreakStandU, "ShieldBreakStandU"),
+            (Status::FuraFura, "FuraFura"),
+        ];
+        for (status, name) in named {
+            let slot = AnyStatus::Common(status).anim_slot();
+            assert_eq!(ssb_rom::anim::SLOT_NAMES[slot], name, "{status:?}");
+            assert!(slot >= ssb_rom::anim::SLOT_WALL_DAMAGE);
+        }
+        for (row, kind) in FighterKind::PLAYABLE.iter().enumerate() {
+            for (status, _) in named {
+                if matches!(
+                    status,
+                    Status::DownWaitD | Status::DownWaitU | Status::ReboundWait
+                ) {
+                    continue;
+                }
+                let slot = AnyStatus::Common(status).anim_slot();
+                let table = ssb_rom::anim::EXPECTED_FRAMES[row][slot];
+                let motion = ssb_game::motion::anim_length(*kind, status.into());
+                match motion {
+                    Some(len) => assert_eq!(f32::from(table), len, "{kind:?} {status:?}"),
+                    None => assert_eq!(table, 0, "{kind:?} {status:?} loops"),
+                }
+            }
+        }
+    }
+
     /// `ssb-game` repeats the pack's slot numbering and the thrown
     /// figatree lengths, because Layer A must not depend on `ssb-rom`. This
     /// pins both copies to the generated table.

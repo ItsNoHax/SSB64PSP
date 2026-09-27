@@ -62,6 +62,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
         GameScene::Grab => 118,
+        // A at tick 108 lands on tick 109 (host `romtool jumptest`); the
+        // dummy's hitlag is over and it is in `DamageN1`.
+        GameScene::Jab => 118,
         // Both fighters have settled on Dream Land's main floor.
         GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3 => 40,
     }
@@ -160,6 +163,15 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
+    // The jab scene takes the grab's route and taps A where the grab
+    // pressed Z+A (RE-351).
+    if scene == GameScene::Jab {
+        return match tick {
+            4 | 8 | 108 => N64Buttons(N64Buttons::A),
+            13 | 30 => N64Buttons(N64Buttons::C_UP),
+            _ => N64Buttons(0),
+        };
+    }
 
     match tick {
         4 | 8 => N64Buttons(N64Buttons::A),
@@ -177,7 +189,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
-    if scene == GameScene::Grab {
+    if matches!(scene, GameScene::Grab | GameScene::Jab) {
         return if (14..52).contains(&tick) { -30 } else { 0 };
     }
     if matches!(
@@ -570,6 +582,26 @@ unsafe fn run() -> ! {
         #[cfg(feature = "headless_capture")]
         if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
             emit_headless_screenshot();
+            // One line for the capture log: whether the scripted attack
+            // landed is not always visible (RE-351).
+            if let (Some(dummy), Some(player)) = (dummy_state.as_ref(), play_state.as_ref()) {
+                let line = alloc::format!(
+                    "capture tick={} player_status={:?} player_catch={:?} dummy_damage={} dummy_status={:?} dummy_capture={:?}\n",
+                    sim_frame_index,
+                    player.fighter.status.status,
+                    player.fighter.grab.catch,
+                    dummy.fighter.damage,
+                    dummy.fighter.status.status,
+                    dummy.fighter.grab.capture,
+                );
+                unsafe {
+                    psp::sys::sceIoWrite(
+                        psp::sys::sceKernelStdout(),
+                        line.as_ptr() as *const core::ffi::c_void,
+                        line.len(),
+                    );
+                }
+            }
             headless_capture_sent = true;
         }
         #[cfg(feature = "golden_capture")]

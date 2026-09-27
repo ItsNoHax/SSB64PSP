@@ -683,6 +683,7 @@ impl Fighter {
         // `proc_passive`: an electric hit's `DamageE` hands over to the
         // real damage status once hitlag is over.
         crate::attack::update_damage_e(self);
+        crate::reaction::check_set_invincible(self);
         if self.is_in_hitlag() {
             // `proc_lagupdate`: Smash DI nudges a fighter frozen by a hit.
             self.smash_di(&surfaces);
@@ -729,6 +730,16 @@ impl Fighter {
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
+        let damage_air = matches!(
+            self.status.status,
+            crate::status::AnyStatus::Common(s) if crate::reaction::is_damage_air(s)
+        );
+        if damage_air {
+            // `proc_map` runs in hitlag too: without a nudge the sweep has
+            // no movement, so all it does is roll the damage masks.
+            self.reaction.coll_mask_prev = self.reaction.coll_mask_curr;
+            self.reaction.coll_mask_curr = 0;
+        }
         if !self.is_smash_di || self.hitlag == 0 {
             return;
         }
@@ -763,6 +774,10 @@ impl Fighter {
                     self.floor = Some(f);
                 }
             }
+            _ if damage_air => {
+                self.reaction.coll_mask_curr = self.reaction.coll_mask_prev;
+                self.tick_damage_map(self.pos, want, surfaces);
+            }
             _ => {
                 let result = crate::map::move_air(
                     &self.coll,
@@ -772,11 +787,43 @@ impl Fighter {
                         ignore_line: self.ignore_line,
                         skip_pass: false,
                         cliff: None,
+                        ceil_heavy: false,
                     },
                     surfaces,
                 );
                 self.pos = result.moved.pos;
             }
+        }
+    }
+
+    /// `ftCommonDamageAirCommonProcMap`: the damage sweep
+    /// ([`crate::map::move_damage`]), then the surface reaction.
+    fn tick_damage_map<I, F>(&mut self, from: Vec3, want: Vec3, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        // `mpCommonCheckFighterDamageCollision` rolls the masks first.
+        self.reaction.coll_mask_prev = self.reaction.coll_mask_curr;
+        let result = crate::map::move_damage(
+            &self.coll,
+            from,
+            want,
+            self.reaction.coll_mask_prev,
+            self.hitlag > 0,
+            self.ignore_line,
+            surfaces,
+        );
+        self.reaction.coll_mask_curr = result.mask_curr;
+        self.map_contacts = result.contacts;
+        self.pos = result.moved.pos;
+        if let Some(floor) = result.moved.floor {
+            self.floor = Some(floor);
+            self.ignore_line = None;
+        }
+        crate::reaction::damage_air_proc_map(self, &result);
+        if self.situation == Situation::Air {
+            self.floor = None;
         }
     }
 
@@ -1018,6 +1065,8 @@ impl Fighter {
         );
         let donkey_special_hi = self.status.status
             == crate::status::AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialAirHi);
+        // `StopCeil` has no `proc_physics`: the bonk holds its velocity.
+        let stop_ceil = self.status.status == crate::status::Status::StopCeil;
         // `ftCommonDamageCommonProcPhysics`: until hitstun runs out a hit
         // reaction takes gravity and air friction but no drift and no
         // fast-fall input (`ftPhysicsApplyAirVelFriction`).
@@ -1051,10 +1100,12 @@ impl Fighter {
             && !crate::ness::skips_fast_fall(self)
             && !crate::capture_kirby::is_star(self.status.status)
             && !damage_hitstun
+            && !stop_ceil
         {
             crate::status::check_set_fast_fall(self);
         }
-        if special_air_hi {
+        if stop_ceil {
+        } else if special_air_hi {
             crate::status::apply_mario_special_air_hi_physics(self);
         } else if special_air_lw {
             crate::status::apply_mario_special_lw_air_physics(self);
@@ -1156,6 +1207,13 @@ impl Fighter {
             skip_pass
         };
         let from = self.pos;
+        if matches!(
+            self.status.status,
+            crate::status::AnyStatus::Common(s) if crate::reaction::is_damage_air(s)
+        ) {
+            self.tick_damage_map(from, want, &surfaces);
+            return;
+        }
         let cliff = crate::map::allows_cliff(self).then_some(crate::map::CliffQuery {
             facing: self.facing.sign(),
             wait: self.cliffcatch_wait,
@@ -1170,6 +1228,8 @@ impl Fighter {
                 ignore_line: self.ignore_line,
                 skip_pass,
                 cliff,
+                ceil_heavy: crate::map::is_ceil_heavy_status(self.status.status)
+                    && self.physics.vel_air.y >= crate::map::CEILHEAVY_VEL_Y_MIN,
             },
             &surfaces,
         );
@@ -1182,6 +1242,13 @@ impl Fighter {
             self.pos.y = moved.pos.y;
             if let Some((line, corner)) = result.cliff {
                 crate::status::set_cliff_catch(self, line, corner);
+                return;
+            }
+            // `mpCommonProcFighterCliffFloorCeil`: no ledge and no floor,
+            // but a heavy ceiling bonk.
+            if result.ceil_stop {
+                crate::reaction::set_stop_ceil(self);
+                self.floor = None;
                 return;
             }
             crate::map::air_callback(self);

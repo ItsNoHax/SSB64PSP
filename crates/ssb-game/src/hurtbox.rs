@@ -1411,6 +1411,82 @@ pub fn test_sphere(
     (0.0..=1.0).contains(&t1) || (0.0..=1.0).contains(&t2) || t1 * t2 < 0.0
 }
 
+/// `gmCollisionTestSphere` with `sphit_kind` 1 (the shield): on contact, the
+/// angle between the swept segment and the entry point, both in the joint's
+/// Y/Z plane, and their normalised cross product (`shield_collide_angle`
+/// and the hop axis). A still or new attack reports 180° about +X.
+pub fn test_sphere_angle(
+    t: &JointTransform,
+    pos_curr: Vec3,
+    pos_prev: Vec3,
+    radius: f32,
+    state: AttackState,
+    offset: Vec3,
+    size: Vec3,
+) -> Option<(f32, Vec3)> {
+    const STILL: (f32, Vec3) = (core::f32::consts::PI, Vec3::new(1.0, 0.0, 0.0));
+    if !test_sphere(t, pos_curr, pos_prev, radius, state, offset, size) {
+        return None;
+    }
+    if state == AttackState::Transfer || pos_curr == pos_prev {
+        return Some(STILL);
+    }
+    let scale = [t.axes[0].length(), t.axes[1].length(), t.axes[2].length()];
+    let c = Vec3::new(
+        size.x + radius / scale[0],
+        size.y + radius / scale[1],
+        size.z + radius / scale[2],
+    );
+    let norm = |p: Vec3| {
+        let p = p - offset;
+        Vec3::new(p.x / c.x, p.y / c.y, p.z / c.z)
+    };
+    let c1 = norm(to_joint_space(t, pos_curr)?);
+    let c2 = norm(to_joint_space(t, pos_prev)?);
+    let d = c1 - c2;
+    let a = d.x * d.x + d.y * d.y + d.z * d.z;
+    if a == 0.0 {
+        return Some(STILL);
+    }
+    let b = d.x * c2.x + d.y * c2.y + d.z * c2.z;
+    let k = a * ((c2.x * c2.x + c2.y * c2.y + c2.z * c2.z) - 1.0);
+    let disc = b * b - k;
+    let t_hit = if disc == 0.0 {
+        -b / a
+    } else {
+        let root = ssb_engine::math::sqrt(disc);
+        ((root - b) / a).min((-b - root) / a)
+    };
+    let sub = Vec3::new(0.0, d.y, d.z);
+    let at = Vec3::new(0.0, d.y * t_hit + c2.y, d.z * t_hit + c2.z);
+    if at.y == 0.0 && at.z == 0.0 {
+        return Some(STILL);
+    }
+    let (ls, la) = (sub.length(), at.length());
+    if ls == 0.0 {
+        return Some(STILL);
+    }
+    // `syVectorAngleDiff3D`.
+    let cos = ((sub.x * at.x + sub.y * at.y + sub.z * at.z) / (ls * la)).clamp(-1.0, 1.0);
+    let angle = ssb_engine::math::atan2(ssb_engine::math::sqrt(1.0 - cos * cos), cos);
+    if angle == core::f32::consts::PI {
+        return Some(STILL);
+    }
+    // `syVectorNormCross3D`.
+    let cross = Vec3::new(
+        sub.y * at.z - sub.z * at.y,
+        sub.z * at.x - sub.x * at.z,
+        sub.x * at.y - sub.y * at.x,
+    );
+    let len = cross.length();
+    let axis = if len == 0.0 {
+        cross
+    } else {
+        cross * (1.0 / len)
+    };
+    Some((angle, axis))
+}
+
 /// `gmCollisionCheckFighterAttacksCollide`: a broad box test, then the
 /// first attack against the second's swept capsule in the second's frame.
 pub fn attacks_collide(

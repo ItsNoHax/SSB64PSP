@@ -538,6 +538,36 @@ impl Status {
             Status::ThrownFoxB => 122,
             // `ssb_rom::anim::SLOT_FURA_SLEEP`.
             Status::FuraSleep => 404,
+            // The reaction slots (`ssb_rom::anim::SLOT_WALL_DAMAGE` on).
+            // `DownWaitD`/`U` have no motion of their own (script id -2):
+            // they keep the bounce's clip ([`AnyStatus::keeps_motion`]).
+            Status::WallDamage => 446,
+            Status::StopCeil => 447,
+            Status::DownBounceD | Status::DownWaitD => 448,
+            Status::DownBounceU | Status::DownWaitU => 449,
+            Status::DownStandD => 450,
+            Status::DownStandU => 451,
+            Status::PassiveStandF => 452,
+            Status::PassiveStandB => 453,
+            Status::DownForwardD => 454,
+            Status::DownForwardU => 455,
+            Status::DownBackD => 456,
+            Status::DownBackU => 457,
+            Status::DownAttackD => 458,
+            Status::DownAttackU => 459,
+            Status::Passive => 460,
+            // `ReboundWait` (script id -1) keeps the clanked attack's clip
+            // for its single frame.
+            Status::ReboundWait | Status::Rebound => 461,
+            Status::EscapeF => 462,
+            Status::EscapeB => 463,
+            Status::ShieldBreakFly => 464,
+            Status::ShieldBreakFall => 465,
+            Status::ShieldBreakDownD => 466,
+            Status::ShieldBreakDownU => 467,
+            Status::ShieldBreakStandD => 468,
+            Status::ShieldBreakStandU => 469,
+            Status::FuraFura => 470,
             // Every other status (the bulk of the just-added common table,
             // `Status` doc comment): no animation is extracted for it yet.
             // Same fallback as `Attack11` — keep the current pose rather than
@@ -601,6 +631,7 @@ impl Status {
                 | Status::DamageAir3
                 | Status::DamageE2
                 | Status::WallDamage
+                | Status::StopCeil
                 | Status::GuardPass
                 | Status::DamageFlyHi
                 | Status::DamageFlyN
@@ -1156,8 +1187,13 @@ impl AnyStatus {
     pub fn keeps_motion(self) -> bool {
         matches!(
             self,
-            AnyStatus::Common(Status::CatchWait | Status::CaptureWait)
-                | AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop)
+            AnyStatus::Common(
+                Status::CatchWait
+                    | Status::CaptureWait
+                    | Status::DownWaitD
+                    | Status::DownWaitU
+                    | Status::ReboundWait
+            ) | AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop)
                 | AnyStatus::Pikachu(
                     PikachuStatus::SpecialHiStart | PikachuStatus::SpecialAirHiStart
                 )
@@ -1902,9 +1938,17 @@ pub fn set_guard_set_off(f: &mut Fighter, hit_damage: f32, shield_lr: f32) {
 
 /// `FTCOMMON_DEAD_WAIT`/`FTCOMMON_DEADUP_WAIT` — `ft/ftcommon.h`.
 pub const DEAD_WAIT: f32 = 45.0;
-/// `ftCommonDeadUpStarProcUpdate`'s two `FTCOMMON_DEADUP_WAIT` phases (fly
-/// off-screen, star flash) collapsed into one wait — see [`set_dead_up_star`].
-pub const DEADUP_TOTAL_WAIT: f32 = 180.0 * 2.0 + DEAD_WAIT;
+/// `FTCOMMON_DEADUP_WAIT`.
+pub const DEADUP_WAIT: f32 = 180.0;
+/// `ftCommonDeadUpStarProcUpdate`/`ftCommonDeadUpFallProcUpdate`'s phases
+/// collapsed into one wait — see [`set_dead_up_star`]. The setter's
+/// `wait = 1` expires on the first update (phase 0 then waits
+/// `FTCOMMON_DEADUP_WAIT`), phase 1 waits `FTCOMMON_DEAD_WAIT`, and phase 2
+/// calls `ftCommonDeadCheckRebirth`.
+pub const DEADUP_TOTAL_WAIT: f32 = 1.0 + DEADUP_WAIT + DEAD_WAIT;
+/// `ftCommonDeadCheckInterruptCommon`: a top-out explodes in the foreground
+/// (`DeadUpFall`) one time in six.
+pub const DEADUP_FALL_CHANCE: f32 = 1.0 / 6.0;
 pub const REBIRTH_INVINCIBLE_FRAMES: u16 = 120;
 /// `FTCOMMON_REBIRTH_HALO_DESPAWN_WAIT` minus `..._STAND_WAIT`: how long
 /// `RebirthDown`'s halo-lowering phase actually runs before the original
@@ -1932,10 +1976,9 @@ pub struct BlastZone {
 /// the ordinary (non-1P-team, non-`is_limit_map_bounds`, non-`is_ghost`)
 /// case — the other branches are 1P-mode/camera-bound/already-dead special
 /// cases this codebase has no equivalent state for yet. Order matches the
-/// original: bottom, then right, then left, then top. Always picks
-/// `DeadUpStar` for a top-out — the original's 1-in-6 `DeadUpFall` branch
-/// needs an RNG source this crate does not have yet (same gap as
-/// `crate::attack`'s `DamageFlyRoll`).
+/// original: bottom, then right, then left, then top. A top-out draws one
+/// `syUtilsRandFloat` from the shared generator ([`crate::rng`]): below
+/// [`DEADUP_FALL_CHANCE`] it is `DeadUpFall`, otherwise `DeadUpStar`.
 ///
 /// Stocks are decremented immediately on death (`ftCommonDeadUpdateScore`,
 /// called from every `DeadXxxSetStatus`), not at respawn time — matching
@@ -1946,7 +1989,11 @@ pub fn check_dead(f: &mut Fighter, bounds: BlastZone) -> bool {
     } else if f.pos.x > bounds.right || f.pos.x < bounds.left {
         set_dead_left_right(f);
     } else if f.pos.y > bounds.top {
-        set_dead_up_star(f);
+        if crate::rng::rand_float() < DEADUP_FALL_CHANCE {
+            set_dead_up_fall(f);
+        } else {
+            set_dead_up_star(f);
+        }
     } else {
         return false;
     }
@@ -1984,6 +2031,13 @@ pub fn set_dead_up_star(f: &mut Fighter) {
     enter_dead(f, Status::DeadUpStar, DEADUP_TOTAL_WAIT);
 }
 
+/// `ftCommonDeadUpFallSetStatus`: the same three phases as
+/// [`set_dead_up_star`] (a fall toward the camera, then the explosion), so the
+/// same collapsed wait.
+pub fn set_dead_up_fall(f: &mut Fighter) {
+    enter_dead(f, Status::DeadUpFall, DEADUP_TOTAL_WAIT);
+}
+
 /// `ftCommonDeadCheckRebirth` @ `ftcommondead.c:95`, restricted to the
 /// stock-match case (no 1P-mode enemy-team respawn). Call once a Dead-family
 /// status's wait has elapsed ([`StatusState::animation_ended`]) — `update`
@@ -1995,7 +2049,9 @@ pub fn set_dead_up_star(f: &mut Fighter) {
 pub fn try_rebirth(f: &mut Fighter, respawn_pos: Vec3) -> bool {
     let in_dead_family = matches!(
         f.status.status,
-        AnyStatus::Common(Status::DeadDown | Status::DeadLeftRight | Status::DeadUpStar)
+        AnyStatus::Common(
+            Status::DeadDown | Status::DeadLeftRight | Status::DeadUpStar | Status::DeadUpFall
+        )
     );
     if !in_dead_family || !f.status.animation_ended() {
         return false;
@@ -3387,6 +3443,7 @@ pub fn set_any_status_preserve(
     f.damage_knockback_stack = 0.0;
     f.damage_mul = 1.0;
     f.damage_e_status = None;
+    f.reaction.is_passive_invincible = false;
     // `ftMainSetStatus`: `is_shield = FALSE`; the guard setters raise it.
     f.guard.is_shield = false;
     f.is_smash_di = false;
@@ -7090,6 +7147,38 @@ mod tests {
         left.pos.x = -301.0;
         assert!(check_dead(&mut left, bounds()));
         assert_eq!(left.status.status, Status::DeadLeftRight);
+    }
+
+    #[test]
+    fn a_top_out_explodes_one_time_in_six_on_the_shared_generator() {
+        crate::rng::set_seed(1);
+        let mut fall = 0;
+        for _ in 0..1200 {
+            let mut f = mario();
+            f.pos.y = 201.0;
+            assert!(check_dead(&mut f, bounds()));
+            match f.status.status {
+                AnyStatus::Common(Status::DeadUpFall) => fall += 1,
+                AnyStatus::Common(Status::DeadUpStar) => {}
+                other => panic!("{other:?}"),
+            }
+        }
+        // 1/6 of 1,200 is 200; other tests share the generator, so allow
+        // the sampling spread rather than an exact count.
+        assert!((140..260).contains(&fall), "{fall}");
+    }
+
+    #[test]
+    fn a_top_out_rebirths_after_one_plus_the_two_source_waits() {
+        let mut f = mario();
+        set_dead_up_fall(&mut f);
+        let mut updates = 0;
+        while !try_rebirth(&mut f, Vec3::ZERO) {
+            update(&mut f);
+            updates += 1;
+            assert!(updates < 1000);
+        }
+        assert_eq!(updates, 1 + 180 + 45);
     }
 
     #[test]

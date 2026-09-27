@@ -805,6 +805,32 @@ impl LinkBoomerang {
         }
     }
 
+    /// `wpLinkBoomerangProcSetOff`: an attack that beat it sends it back.
+    fn set_off(&mut self) {
+        if !self.is_reflect && !self.is_return {
+            self.set_return(true);
+        }
+    }
+
+    /// `wpProcessProcHitCollisions`'s shield branch for the Boomerang
+    /// (`can_hop`, always airborne): a glancing shield contact (under 135°)
+    /// hops it by twice the contact angle less 90°
+    /// (`wpLinkBoomerangProcHop`); otherwise `wpLinkBoomerangProcShield`
+    /// sends it back.
+    fn on_shield(&mut self, shield: crate::combat::ShieldCollide) {
+        if shield.angle < WEAPON_HOP_ANGLE_DEFAULT {
+            let angle = (shield.angle - DEG_90).max(0.0);
+            if shield.dir_z > 0.0 {
+                self.default_angle += angle * 2.0;
+            } else {
+                self.default_angle -= angle * 2.0;
+            }
+            self.default_angle = clamp_angle_360(self.default_angle);
+        } else {
+            self.set_off();
+        }
+    }
+
     /// `wpLinkBoomerangProcReflector`, then the reflect damage bonus.
     fn reflect(&mut self, reflector: &Fighter) {
         if !self.is_reflect {
@@ -1336,26 +1362,148 @@ pub struct WeaponPool {
     landed: [Option<(u8, crate::stale::MotionAttackId, u16)>; MAX_WEAPONS],
 }
 
-fn reflector_contact(f: &Fighter, position: Vec3, radius: f32) -> bool {
-    let fox = f.kind == crate::fighter::FighterKind::Fox
-        && matches!(
-            f.status.status,
-            crate::status::AnyStatus::Fox(
-                crate::status::FoxStatus::SpecialLwLoop
-                    | crate::status::FoxStatus::SpecialLwTurn
-                    | crate::status::FoxStatus::SpecialAirLwLoop
-                    | crate::status::FoxStatus::SpecialAirLwTurn
-            )
-        );
-    let dx = position.x - f.pos.x;
-    let dy = position.y - (f.pos.y + 60.0);
-    fox && dx * dx + dy * dy <= 350.0 * 350.0 || crate::ness::bat_contact(f, position, radius)
+/// `WEAPON_HOP_ANGLE_DEFAULT`: `F_CLC_DTOR32(135.0F)`.
+const WEAPON_HOP_ANGLE_DEFAULT: f32 = 2.356_194_5;
+
+/// The `WPAttributes` interaction bits `ftMainSearchHitWeapon` and
+/// `wpProcessProcHitCollisions` read. Transcribed from the relocData
+/// attribute words (bitfields packed in 32-bit units, big-endian).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WeaponFlags {
+    can_setoff: bool,
+    can_hop: bool,
+    can_reflect: bool,
+    can_absorb: bool,
 }
-fn reflector_hit(f: &mut Fighter) {
-    if f.kind == crate::fighter::FighterKind::Fox {
-        crate::status::set_fox_special_lw_hit(f);
+
+const fn wflags(
+    can_setoff: bool,
+    can_hop: bool,
+    can_reflect: bool,
+    can_absorb: bool,
+) -> WeaponFlags {
+    WeaponFlags {
+        can_setoff,
+        can_hop,
+        can_reflect,
+        can_absorb,
     }
 }
+
+impl Weapon {
+    /// `wp->attack_coll.can_*`.
+    fn flags(&self) -> WeaponFlags {
+        match self {
+            // Mario and Luigi Fireball, Charge Shot, Yoshi Star, PK Fire,
+            // aerial Thunder Jolt.
+            Weapon::Fireball(_) | Weapon::ChargeShot(_) | Weapon::Star(_) | Weapon::PKFire(_) => {
+                wflags(true, true, true, true)
+            }
+            Weapon::Jolt(j) => wflags(true, j.surface.is_none(), true, true),
+            Weapon::Blaster(_) => wflags(false, true, true, true),
+            Weapon::Bomb(_) => wflags(false, true, false, false),
+            Weapon::Boomerang(_) | Weapon::Egg(_) => wflags(true, true, true, false),
+            Weapon::Cutter(_) | Weapon::PKThunder(_) => wflags(true, false, true, true),
+            Weapon::Thunder(_) | Weapon::Trail(_) | Weapon::PKTrail(_) => {
+                wflags(false, false, false, false)
+            }
+        }
+    }
+
+    /// `wp->ga == nMPKineticsGround`: a Thunder Jolt crawling on a surface
+    /// and a Final Cutter wave on the floor (`wpMapSetGround`).
+    fn is_grounded(&self) -> bool {
+        match self {
+            Weapon::Jolt(j) => j.surface.is_some(),
+            Weapon::Cutter(c) => c.floor.is_some(),
+            _ => false,
+        }
+    }
+}
+
+/// What `ftMainSearchHitWeapon` did with a weapon before its shield and
+/// hurtbox tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreHit {
+    /// Nothing; test the shield and hurtboxes.
+    None,
+    /// A fighter attack beat it (`hit_attack_damage`, `proc_setoff`).
+    SetOff,
+    /// Turned back by a reflector (`reflect_gobj`, `proc_reflector`).
+    Reflected,
+    /// Broke the reflector; the weapon takes a normal hit (`proc_hit`).
+    ReflectorBroke,
+    /// Taken by PSI Magnet (`absorb_gobj`, `proc_absorb`).
+    Absorbed,
+}
+
+/// `ftMainSearchHitWeapon` up to the shield: the attack-versus-weapon clank,
+/// then the reflector and absorber special collisions. `damage` is the
+/// weapon's staled damage and `slot` identifies it in attack records.
+#[allow(clippy::too_many_arguments)]
+fn pre_hit(
+    defender: &mut Fighter,
+    flags: WeaponFlags,
+    grounded: bool,
+    owner: u8,
+    slot: usize,
+    hitbox: Hitbox,
+    position: Vec3,
+    velocity: Vec3,
+) -> PreHit {
+    let w = crate::combat::WeaponAttack {
+        hitbox,
+        pos_curr: position,
+        pos_prev: position - velocity,
+        source: crate::combat::HitSource::Weapon { vel_x: velocity.x },
+        handicap: crate::stale::HANDICAP_DEFAULT,
+        can_shield: true,
+    };
+    let reflector = crate::combat::reflector(defender).filter(|_| flags.can_reflect);
+    if flags.can_setoff
+        && !defender.grab.is_catchstatus
+        && crate::combat::throw_port(defender) != Some(owner)
+        && reflector.is_none()
+        && crate::combat::weapon_attack_clank(
+            defender,
+            &w,
+            crate::combat::WEAPON_RECORD_BASE + slot as u8,
+            grounded,
+        )
+    {
+        return PreHit::SetOff;
+    }
+    if !crate::combat::weapon_in_range(defender, &w) {
+        return PreHit::None;
+    }
+    if let Some(r) = reflector {
+        if crate::combat::special_contact(defender, &r, w.pos_curr, w.pos_prev, hitbox.radius) {
+            return match crate::combat::reflect_weapon(defender, &r, hitbox.damage, position) {
+                crate::combat::ReflectOutcome::Reflected => PreHit::Reflected,
+                crate::combat::ReflectOutcome::Broke => PreHit::ReflectorBroke,
+            };
+        }
+    }
+    if let Some(a) = crate::combat::absorber(defender).filter(|_| flags.can_absorb) {
+        if crate::combat::special_contact(defender, &a, w.pos_curr, w.pos_prev, hitbox.radius) {
+            crate::combat::absorb_weapon(defender, hitbox.damage, position);
+            return PreHit::Absorbed;
+        }
+    }
+    PreHit::None
+}
+
+/// `wpMainReflectorSetLR` and the reflect bonus for the straight shots:
+/// turn X toward the reflector's facing, take its ownership and deal
+/// `damage * 1.8 + 0.99` (US), at most 100.
+fn reflect_shot(velocity: &mut Vec3, owner: &mut u8, damage: &mut i32, reflector: &Fighter) {
+    *owner = reflector.port;
+    if velocity.x * reflector.facing.sign() < 0.0 {
+        velocity.x = -velocity.x;
+    }
+    *damage = ((*damage as f32 * 1.8 + 0.99) as i32).min(100);
+}
+
 /// One weapon hitbox against one fighter: `wpMainGetStaledDamage`, then
 /// `ftMainSearchHitWeapon`'s shield and hurtbox tests. The hit is recorded in
 /// the fighter's frame ([`crate::combat`]) and lands in its
@@ -1386,6 +1534,32 @@ fn stale_hit(
         *landed = Some((owner, stale.attack_id, stale.motion_count));
     }
     outcome
+}
+
+/// [`stale_hit`], keeping the shield's hop data.
+fn stale_contact(
+    hitbox: &Hitbox,
+    position: Vec3,
+    velocity: Vec3,
+    stale: crate::stale::WeaponStale,
+    defender: &mut Fighter,
+    landed: &mut Option<(u8, crate::stale::MotionAttackId, u16)>,
+    owner: u8,
+) -> crate::combat::WeaponContact {
+    let mut hitbox = *hitbox;
+    hitbox.damage = stale.damage(hitbox.damage);
+    let contact = attack::register_hitbox_contact(
+        &hitbox,
+        position,
+        position - velocity,
+        crate::combat::HitSource::Weapon { vel_x: velocity.x },
+        crate::stale::HANDICAP_DEFAULT,
+        defender,
+    );
+    if contact == crate::combat::WeaponContact::Hurt(true) {
+        *landed = Some((owner, stale.attack_id, stale.motion_count));
+    }
+    contact
 }
 
 impl Default for WeaponPool {
@@ -1491,21 +1665,38 @@ impl WeaponPool {
                     if spark.owner_port == defender.port {
                         continue;
                     }
-                    if crate::ness::absorb_contact(defender, spark.position, ness::SPARK_HIT.radius)
-                    {
-                        crate::ness::absorb(
-                            defender,
-                            spark.position,
-                            self.stale[i].damage(spark.damage),
-                        );
-                        *slot = None;
-                        free_slots += 1;
-                        continue;
-                    }
-                    if reflector_contact(defender, spark.position, ness::SPARK_HIT.radius) {
-                        spark.reflect(defender);
-                        reflector_hit(defender);
-                        continue;
+                    let mut hit = ness::SPARK_HIT;
+                    hit.damage = self.stale[i].damage(spark.damage);
+                    let flags = wflags(true, true, true, true);
+                    match pre_hit(
+                        defender,
+                        flags,
+                        false,
+                        spark.owner_port,
+                        i,
+                        hit,
+                        spark.position,
+                        spark.velocity,
+                    ) {
+                        PreHit::None => {}
+                        // `wpNessPKFireProcReflector`.
+                        PreHit::Reflected => {
+                            spark.reflect(defender);
+                            continue;
+                        }
+                        // `proc_hit` (`wpNessPKFireProcHit`): the pillar.
+                        PreHit::SetOff | PreHit::ReflectorBroke => {
+                            pillars[i] = Some((spark.pillar(), self.stale[i]));
+                            *slot = None;
+                            free_slots += 1;
+                            continue;
+                        }
+                        // `wpNessPKFireProcAbsorb`.
+                        PreHit::Absorbed => {
+                            *slot = None;
+                            free_slots += 1;
+                            continue;
+                        }
                     }
                     let mut hit = ness::SPARK_HIT;
                     hit.damage = spark.damage;
@@ -1530,26 +1721,39 @@ impl WeaponPool {
                     if h.owner_port == defender.port {
                         continue;
                     }
-                    if crate::ness::absorb_contact(defender, h.position, ness::HEAD_HIT.radius) {
-                        crate::ness::absorb(defender, h.position, self.stale[i].damage(h.damage));
-                        *slot = None;
-                        free_slots += 1;
-                        continue;
-                    }
-                    if reflector_contact(defender, h.position, ness::HEAD_HIT.radius) {
-                        // First reflection allocates a new descriptor before ejecting
-                        // the old head. Allocation failure still consumes the old one.
-                        if !h.reflected && free_slots == 0 {
-                            *slot = None;
-                            free_slots += 1;
-                            reflector_hit(defender);
+                    let mut hit = ness::HEAD_HIT;
+                    hit.damage = self.stale[i].damage(h.damage);
+                    match pre_hit(
+                        defender,
+                        wflags(true, false, true, true),
+                        false,
+                        h.owner_port,
+                        i,
+                        hit,
+                        h.position,
+                        h.velocity,
+                    ) {
+                        PreHit::None => {}
+                        PreHit::Reflected => {
+                            // First reflection allocates a new descriptor before ejecting
+                            // the old head. Allocation failure still consumes the old one.
+                            if !h.reflected && free_slots == 0 {
+                                *slot = None;
+                                free_slots += 1;
+                                continue;
+                            }
+                            let group = self.next_group;
+                            self.next_group = self.next_group.wrapping_add(1);
+                            h.reflect(defender, group);
                             continue;
                         }
-                        let group = self.next_group;
-                        self.next_group = self.next_group.wrapping_add(1);
-                        h.reflect(defender, group);
-                        reflector_hit(defender);
-                        continue;
+                        // `wpNessPKThunderHeadProcHit` for set-off, a broken
+                        // reflector and absorption alike.
+                        PreHit::SetOff | PreHit::ReflectorBroke | PreHit::Absorbed => {
+                            *slot = None;
+                            free_slots += 1;
+                            continue;
+                        }
                     }
                     let mut hit = ness::HEAD_HIT;
                     hit.damage = h.damage;
@@ -1908,34 +2112,36 @@ impl WeaponPool {
                 continue;
             }
             let bit = 1u8 << (defender.port & 7);
-            let absorb_damage = match weapon {
-                Weapon::Fireball(f) => Some(f.damage),
-                Weapon::Blaster(b) => Some(b.damage),
-                Weapon::ChargeShot(c) => Some(c.damage),
-                Weapon::Jolt(j) => Some(j.damage),
-                _ => None,
+            // The weapon's attack record: once it has met this fighter in any
+            // way, it passes through.
+            let recorded = match weapon {
+                Weapon::Boomerang(b) => b.hit_ports,
+                Weapon::Cutter(c) => c.hit_ports,
+                Weapon::Egg(e) => e.hit_ports,
+                Weapon::Bomb(b) => b.hit_ports,
+                _ => 0,
             };
-            if let Some(damage) = absorb_damage {
-                if crate::ness::absorb_contact(defender, position, hitbox.radius) {
-                    crate::ness::absorb(defender, position, self.stale[i].damage(damage));
-                    *slot = None;
-                    continue;
+            if recorded & bit != 0 {
+                continue;
+            }
+            hitbox.damage = match weapon {
+                Weapon::Jolt(j) => j.damage,
+                Weapon::PKFire(_) | Weapon::PKThunder(_) | Weapon::PKTrail(_) => {
+                    unreachable!("handled separately")
                 }
-            }
-            if matches!(weapon, Weapon::Boomerang(b) if b.hit_ports & bit != 0) {
-                continue;
-            }
-            if matches!(weapon, Weapon::Cutter(c) if c.hit_ports & bit != 0) {
-                continue;
-            }
-            // The Bomb's `WPAttributes::can_reflect` is clear, and its attack
-            // record outlives the explosion.
-            // The exploding egg can no longer be reflected, and it keeps the
-            // record of what the egg hit.
+                Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("handled above"),
+                Weapon::Fireball(f) => f.damage,
+                Weapon::Blaster(b) => b.damage,
+                Weapon::ChargeShot(c) => c.damage,
+                Weapon::Bomb(_) => hitbox.damage,
+                Weapon::Boomerang(b) => b.damage,
+                Weapon::Egg(e) => e.damage,
+                Weapon::Star(s) => s.damage,
+                Weapon::Cutter(c) => c.damage,
+            };
+            // The exploding egg keeps the record of what the egg hit and is
+            // only a hurtbox test now.
             if let Weapon::Egg(egg) = weapon {
-                if egg.hit_ports & bit != 0 {
-                    continue;
-                }
                 if egg.exploded {
                     if stale_hit(
                         &hitbox,
@@ -1953,11 +2159,9 @@ impl WeaponPool {
                     continue;
                 }
             }
+            // The Bomb can neither clank, be reflected nor be absorbed, and
+            // its attack record outlives the explosion.
             if let Weapon::Bomb(bomb) = weapon {
-                let bit = 1u8 << (defender.port & 7);
-                if bomb.hit_ports & bit != 0 {
-                    continue;
-                }
                 if stale_hit(
                     &hitbox,
                     position,
@@ -1976,63 +2180,105 @@ impl WeaponPool {
                 }
                 continue;
             }
-            if reflector_contact(defender, position, hitbox.radius) {
-                // `wpMainReflectorSetLR`: turn X toward Fox's facing,
-                // transfer ownership, and apply the US 1.8x + 0.99 bonus.
-                match weapon {
-                    Weapon::Fireball(f) => {
-                        f.owner_port = defender.port;
-                        if f.velocity.x * defender.facing.sign() < 0.0 {
-                            f.velocity.x = -f.velocity.x;
+            let mut staled = hitbox;
+            staled.damage = self.stale[i].damage(hitbox.damage);
+            let pre = pre_hit(
+                defender,
+                weapon.flags(),
+                weapon.is_grounded(),
+                owner,
+                i,
+                staled,
+                position,
+                velocity,
+            );
+            match pre {
+                PreHit::None => {}
+                // `proc_setoff`.
+                PreHit::SetOff => {
+                    match weapon {
+                        // `wpLinkBoomerangProcSetOff`.
+                        Weapon::Boomerang(b) => {
+                            b.hit_ports |= bit;
+                            b.set_off();
                         }
-                        f.lifetime = f.attributes().lifetime;
-                        f.damage = ((f.damage as f32 * 1.8 + 0.99) as i32).min(100);
-                    }
-                    Weapon::Blaster(b) => {
-                        b.owner_port = defender.port;
-                        if b.velocity.x * defender.facing.sign() < 0.0 {
-                            b.velocity.x = -b.velocity.x;
+                        // `wpYoshiEggThrowProcHit`: it explodes in place.
+                        Weapon::Egg(e) => {
+                            e.hit_ports |= bit;
+                            e.explode();
                         }
-                        b.scale_x = 1.0;
-                        b.damage = ((b.damage as f32 * 1.8 + 0.99) as i32).min(100);
+                        // `wpYoshiStarProcHit` without `hit_normal_damage`.
+                        Weapon::Star(_) => {}
+                        // `wpKirbyCutterProcSetOff` and every `ProcHit` that
+                        // returns TRUE.
+                        _ => *slot = None,
                     }
-                    Weapon::ChargeShot(c) => {
-                        c.owner_port = defender.port;
-                        if c.velocity.x * defender.facing.sign() < 0.0 {
-                            c.velocity.x = -c.velocity.x;
-                        }
-                        c.damage = ((c.damage as f32 * 1.8 + 0.99) as i32).min(100);
-                    }
-                    Weapon::Bomb(_) => unreachable!("bombs skip the reflector"),
-                    Weapon::Boomerang(b) => b.reflect(defender),
-                    Weapon::Egg(e) => e.reflect(defender),
-                    Weapon::Star(s) => s.reflect(defender),
-                    Weapon::Cutter(c) => c.reflect(defender),
-                    Weapon::Jolt(j) => j.reflect(defender),
-                    Weapon::PKFire(_) | Weapon::PKThunder(_) | Weapon::PKTrail(_) => {
-                        unreachable!("handled separately")
-                    }
-                    Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("not reflectable"),
+                    continue;
                 }
-                reflector_hit(defender);
-                continue;
+                PreHit::Reflected => {
+                    match weapon {
+                        Weapon::Fireball(f) => {
+                            reflect_shot(
+                                &mut f.velocity,
+                                &mut f.owner_port,
+                                &mut f.damage,
+                                defender,
+                            );
+                            f.lifetime = f.attributes().lifetime;
+                        }
+                        Weapon::Blaster(b) => {
+                            reflect_shot(
+                                &mut b.velocity,
+                                &mut b.owner_port,
+                                &mut b.damage,
+                                defender,
+                            );
+                            b.scale_x = 1.0;
+                        }
+                        Weapon::ChargeShot(c) => {
+                            reflect_shot(
+                                &mut c.velocity,
+                                &mut c.owner_port,
+                                &mut c.damage,
+                                defender,
+                            );
+                        }
+                        Weapon::Boomerang(b) => b.reflect(defender),
+                        Weapon::Egg(e) => e.reflect(defender),
+                        Weapon::Star(s) => s.reflect(defender),
+                        Weapon::Cutter(c) => c.reflect(defender),
+                        Weapon::Jolt(j) => j.reflect(defender),
+                        _ => unreachable!("not reflectable"),
+                    }
+                    continue;
+                }
+                // `hit_normal_damage`: the weapon's `proc_hit`.
+                PreHit::ReflectorBroke => {
+                    match weapon {
+                        Weapon::Boomerang(b) => {
+                            b.hit_ports |= bit;
+                            b.on_hit();
+                        }
+                        Weapon::Cutter(c) => c.hit_ports |= bit,
+                        Weapon::Egg(e) => {
+                            e.hit_ports |= bit;
+                            e.explode();
+                        }
+                        _ => *slot = None,
+                    }
+                    continue;
+                }
+                // `proc_absorb`: the Cutter's is its `ProcShield` (it flies
+                // on); every other absorbable weapon is destroyed.
+                PreHit::Absorbed => {
+                    match weapon {
+                        Weapon::Cutter(c) => c.hit_ports |= bit,
+                        _ => *slot = None,
+                    }
+                    continue;
+                }
             }
-            hitbox.damage = match weapon {
-                Weapon::Jolt(j) => j.damage,
-                Weapon::PKFire(_) | Weapon::PKThunder(_) | Weapon::PKTrail(_) => {
-                    unreachable!("handled separately")
-                }
-                Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("handled above"),
-                Weapon::Fireball(f) => f.damage,
-                Weapon::Blaster(b) => b.damage,
-                Weapon::ChargeShot(c) => c.damage,
-                Weapon::Bomb(_) => hitbox.damage,
-                Weapon::Boomerang(b) => b.damage,
-                Weapon::Egg(e) => e.damage,
-                Weapon::Star(s) => s.damage,
-                Weapon::Cutter(c) => c.damage,
-            };
-            if stale_hit(
+            let contact = stale_contact(
                 &hitbox,
                 position,
                 velocity,
@@ -2040,9 +2286,15 @@ impl WeaponPool {
                 defender,
                 &mut self.landed[i],
                 owner,
-            )
-            .registered()
-            {
+            );
+            if let crate::combat::WeaponContact::Shielded(shield) = contact {
+                if let Weapon::Boomerang(b) = weapon {
+                    b.hit_ports |= bit;
+                    b.on_shield(shield);
+                    continue;
+                }
+            }
+            if attack::HitOutcome::of(contact).registered() {
                 // The Boomerang survives a hit and turns back.
                 if let Weapon::Boomerang(b) = weapon {
                     b.hit_ports |= bit;
@@ -2469,6 +2721,219 @@ mod tests {
         assert_eq!(
             fox.status.status,
             crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialLwHit)
+        );
+    }
+
+    fn fireball_at(pos: Vec3, facing: f32) -> WeaponPool {
+        let mut weapons = WeaponPool::default();
+        assert!(weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::MarioFireball,
+            owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: pos,
+            facing,
+        }));
+        weapons
+    }
+
+    /// A grounded fighter with one live attack collision at `pos`.
+    fn swinging(kind: FighterKind, damage: i32, pos: Vec3) -> Fighter {
+        let mut f = Fighter::new(kind, 1, 3);
+        f.situation = Situation::Ground;
+        f.floor = Some(crate::ground::Standing {
+            line: 0,
+            flags: 0,
+            normal: Vec2::new(0.0, 1.0),
+        });
+        f.attack_colls[0] = crate::combat::AttackColl {
+            state: crate::combat::AttackState::Transfer,
+            damage,
+            can_rebound: true,
+            size: 60.0,
+            is_hit_air: true,
+            is_hit_ground: true,
+            pos_curr: pos,
+            pos_prev: pos,
+            ..Default::default()
+        };
+        f
+    }
+
+    /// `ftMainUpdateAttackStatWeapon`: a 15-damage attack against the
+    /// 7-damage Fireball. `15 - 10 < 7`, so the attack records the weapon
+    /// and rebounds; `7 - 10 < 15`, so the Fireball loses (`proc_setoff`
+    /// destroys it) and never reaches the hurtboxes.
+    #[test]
+    fn an_attack_clanks_with_a_fireball_and_both_recoil_by_the_ten_rule() {
+        let at = Vec3::new(120.0, 100.0, 0.0);
+        let mut weapons = fireball_at(at, -1.0);
+        let mut f = swinging(FighterKind::Mario, 15, at);
+        weapons.apply_hits(&mut f);
+        assert_eq!(weapons.active_count(), 0);
+        assert_eq!(f.hits.attack_shield_push, 15);
+        assert_ne!(f.attack_colls[0].records[0].group_id, 7);
+        crate::combat::resolve(&mut f);
+        assert_eq!(f.damage, 0);
+        assert_eq!(f.status.status, crate::status::Status::ReboundWait);
+        // 20 damage: `20 - 10 < 7` fails, so no rebound; the Fireball
+        // still loses.
+        let mut weapons = fireball_at(at, -1.0);
+        let mut f = swinging(FighterKind::Mario, 20, at);
+        weapons.apply_hits(&mut f);
+        assert_eq!(weapons.active_count(), 0);
+        assert_eq!(f.hits.attack_shield_push, 0);
+        // 2 damage: `7 - 10 < 2` holds too; a weaker attack still beats a
+        // Fireball within ten.
+        let mut weapons = fireball_at(at, -1.0);
+        let mut f = swinging(FighterKind::Mario, 2, at);
+        weapons.apply_hits(&mut f);
+        assert_eq!(weapons.active_count(), 0);
+        assert_eq!(f.hits.attack_shield_push, 2);
+    }
+
+    /// The Blaster's `can_setoff` is clear: it passes through attacks.
+    #[test]
+    fn a_blaster_ignores_attacks_and_hits_the_body() {
+        let mut f = swinging(FighterKind::Mario, 15, Vec3::ZERO);
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::FoxBlaster,
+            owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::ZERO,
+            facing: -1.0,
+        });
+        weapons.apply_hits(&mut f);
+        assert_eq!(f.hits.attack_shield_push, 0);
+        crate::combat::resolve(&mut f);
+        assert!(f.damage > 0);
+    }
+
+    /// `wpLinkBoomerangProcSetOff`: a clank turns the Boomerang back instead
+    /// of destroying it, and its record keeps it off that fighter.
+    #[test]
+    fn a_clanked_boomerang_returns() {
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::LinkBoomerang {
+                is_smash: false,
+                stick_x: 0,
+                stick_y: 0,
+            },
+            owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        });
+        let b = weapons.boomerangs().next().unwrap();
+        let mut f = swinging(FighterKind::Mario, 30, b.position);
+        f.pos = b.position - Vec3::new(0.0, 100.0, 0.0);
+        weapons.apply_hits(&mut f);
+        let b = weapons.boomerangs().next().expect("survives");
+        assert!(b.is_return);
+        assert_ne!(b.hit_ports & 2, 0);
+    }
+
+    /// `wpLinkBoomerangProcHop` / `ProcShield`.
+    #[test]
+    fn a_shielded_boomerang_hops_on_a_glancing_contact_and_returns_head_on() {
+        let spawn = WeaponSpawn {
+            kind: WeaponKind::LinkBoomerang {
+                is_smash: false,
+                stick_x: 0,
+                stick_y: 0,
+            },
+            owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        };
+        let mut b = LinkBoomerang::new(spawn, false, 0, 0);
+        let angle = b.default_angle;
+        b.on_shield(crate::combat::ShieldCollide {
+            angle: 100.0 * core::f32::consts::PI / 180.0,
+            dir_z: 1.0,
+        });
+        assert!(!b.is_return);
+        let expected = clamp_angle_360(angle + 2.0 * 10.0 * core::f32::consts::PI / 180.0);
+        assert!((b.default_angle - expected).abs() < 1e-5);
+        b.on_shield(crate::combat::ShieldCollide {
+            angle: core::f32::consts::PI,
+            dir_z: 0.0,
+        });
+        assert!(b.is_return);
+        // Live: a still Boomerang inside a raised shield reports 180 degrees
+        // and turns back.
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(spawn);
+        let pos = weapons.boomerangs().next().unwrap().position;
+        let mut f = Fighter::new(FighterKind::Mario, 1, 3);
+        f.situation = Situation::Ground;
+        f.pos = pos;
+        f.guard.is_shield = true;
+        f.guard.shield_health = 55.0;
+        weapons.apply_hits(&mut f);
+        assert!(f.hits.shield_damage > 0);
+        let b = weapons
+            .boomerangs()
+            .next()
+            .expect("the shield does not destroy it");
+        assert!(b.is_return);
+    }
+
+    /// Fox's reflector is on in `SpecialLwHit` too, and a weapon doing more
+    /// than its `damage_resist` of 50 breaks it (`reflect_damage`,
+    /// `ftCommonShieldBreakFlyReflectorSetStatus`).
+    #[test]
+    fn a_strong_weapon_breaks_foxs_reflector() {
+        let mut fox = Fighter::new(FighterKind::Fox, 1, 3);
+        fox.situation = Situation::Ground;
+        crate::status::set_fox_special_lw_hit(&mut fox);
+        assert!(crate::combat::reflector(&fox).is_some());
+        let mut weapons = fireball_at(Vec3::new(100.0, 60.0, 0.0), -1.0);
+        for w in weapons.slots.iter_mut().flatten() {
+            if let Weapon::Fireball(f) = w {
+                f.damage = 51;
+            }
+        }
+        weapons.apply_hits(&mut fox);
+        assert_eq!(fox.hits.reflect_damage, 51);
+        assert_eq!(weapons.active_count(), 0);
+        crate::combat::resolve(&mut fox);
+        assert_eq!(fox.status.status, crate::status::Status::ShieldBreakFly);
+        assert_eq!(fox.damage, 0);
+    }
+
+    /// `ftMainUpdateAbsorbStatWeapon`: a Yoshi Star is absorbed and gone; a
+    /// Final Cutter wave's `proc_absorb` is its `ProcShield`, so it flies on.
+    #[test]
+    fn psi_magnet_takes_stars_and_lets_cutter_waves_through() {
+        let mut ness = Fighter::new(FighterKind::Ness, 1, 3);
+        ness.situation = Situation::Ground;
+        ness.damage = 50;
+        crate::status::set_any_status(
+            &mut ness,
+            crate::status::AnyStatus::Ness(crate::status::NessStatus::SpecialLwHold),
+            0.0,
+            crate::status::StatusTiming::unknown(),
+        );
+        let center = ness.joint_world(0, Vec3::new(300.0, 195.0, 0.0));
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::KirbyCutter { grounded: false },
+            owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: center,
+            facing: -1.0,
+        });
+        weapons.apply_hits(&mut ness);
+        assert_eq!(weapons.active_count(), 1, "the wave survives");
+        assert!(ness.hits.absorb_lr != 0.0);
+        assert!(ness.damage < 50);
+        crate::combat::resolve(&mut ness);
+        assert_eq!(
+            ness.status.status,
+            crate::status::AnyStatus::Ness(crate::status::NessStatus::SpecialLwHit)
         );
     }
 

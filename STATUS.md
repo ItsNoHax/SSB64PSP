@@ -7,47 +7,44 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports; shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Next batch:** damage map responses (`WallDamage`, `StopCeil`,
-  `DownBounceD`, surface reflections) and pack clips for the reaction
-  statuses (RE-350).
+- **Next batch:** items and the remaining map inputs: general item system
+  (`ftMainSearchHitItem`, Link's Bomb, PK Fire flame damage), moving map
+  groups and changing diamonds, and authored cliff poses.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
-| Combat audit 2 | Motion scripts for all 12 fighters drive attacks, hit status and flags; per-frame hit log with clank, shields, rebound, elements, `damage_resist`, Smash DI; knockdown/tech/roll; shared RNG; all hurtboxes; weapon attributes fixed. Host-only | RE-350 |
-| Shared static fighter map collision | Diamond wall/ceiling/floor processing, platform passes, topology/edge stops, authored cliff reach and two-fighter occupancy; Fire Fox, Quick Attack, PK Thunder blast, Falcon Kick and Kirby star responses | RE-348 |
+| Damage map callbacks, reaction clips, weapon clank and reflectors | Damage sweep with `WallDamage`/`StopCeil`/`DownBounce` and techs; 25 reaction pack slots (v39) with TransN rolls; weapon–attack clank, `FTSpecialColl` reflector/absorb, Boomerang set-off/hop; overrun invincibility; same-frame catcher/held hits; `DeadUpFall`; Samus roll length fixed | RE-351 |
+| Combat audit 2 | Motion scripts drive attacks for all 12 fighters; per-frame hit log, clank, shields, rebound, knockdown/tech/roll, shared RNG | RE-350 |
 
 ## Verification baseline
 
-- `cargo test --workspace` without `SSB64_ROM`: 1,108 pass (RE-350; the
-  removed move tables took their tests). Last ROM run: 1,120 (RE-349).
-  Clippy (`--workspace --all-targets -- -D warnings`), host rustfmt and
-  no-default-features workspace build pass.
-- Map and combat regressions include independent Dream Land ROM geometry.
+- `cargo +1.98.0 test --workspace` with `SSB64_ROM`: 1,130 pass.
+  Clippy (`--workspace --all-targets -- -D warnings`), rustfmt and the
+  `no_std` builds of `ssb-engine`/`ssb-game`/`ssb-rom` pass.
+- `romtool anims --verify`: 27 fighters, 1,053 lengths agree with the decomp.
+- Pack v39: 24,254,352 bytes, SHA-256
+  `2e0ce44b126adf1de7c7d7f0deb6c06c7150443019420712ed65839d87efa984`,
+  27/27 fighters, 1,392 clips. Rebuilt locally; no ROM-derived output
+  committed.
 - Both PSP builds pass; `psp-game` also with `strict_render`.
-- Pack v38 unchanged: 23,659,808 bytes, SHA-256
-  `0353ac343aa59236e88317b36539f1152902567fcf0dc6cd9e7503e7809c8f4b`.
-  No asset-pipeline changes or ROM-derived output committed.
-- PPSSPPHeadless `f1-training-fireball` smoke matched at RE-349; not rerun
-  after RE-350, which changes attack timing and hit resolution (no ROM or
-  PPSSPP in that environment).
-- Physical PSP last checked in RE-341: PSP-2000 Slim, firmware 6.61 ARK,
-  PSPLink v3.2.1. Training simulation 1.74 ms/tick, loop 33.4 ms/tick
-  (30 Hz). This batch has no physical-PSP validation.
+- PPSSPPHeadless: 73 of 73 goldens match twice. New `f1-training-jab`
+  (dummy 2%, `DamageN1` in the capture log); `r2-stage-bonus1-luigi`
+  rebaselined (stale since RE-350).
+- Physical PSP last checked in RE-341 (PSP-2000 Slim, 6.61 ARK, pack v37).
+  No hardware run this batch.
 
 ## Blockers
 
-- Map processing uses static groups and a fixed collision diamond. Moving
-  surface velocities, changing diamonds and damage map callbacks
-  (`WallDamage`, `StopCeil`, `DownBounceD`) remain (RE-347–348).
-- The pack has no clips for Escape, Down, Passive, ShieldBreak, FuraFura
-  and Rebound; roll and tech root motion needs them (RE-350).
-- Cliff root placement and clip clocks still need authored poses/TransN.
-- Weapon–attack clank, reflector collisions and general items remain.
-- RE-350 needs a ROM run, goldens and a PPSSPP smoke test.
-- Samus through Ness are host-only; PSP selection and weapon/effect drawing
-  remain. `DeadUpFall` still needs the RNG.
+- The Training `grab` scene whiffs in PPSSPP (posed catch boxes) while the
+  host catch search lands on the same route; its golden pins the whiff.
+- Damage statuses and most normals (Mario's jab included) have no pack
+  clips, so hits are not visible in captures.
+- Items are unported: no item clank, Link's Bomb, PK Fire flame damage.
+- Moving map groups, changing diamonds and authored cliff poses remain.
+- Samus through Ness are host-only in `psp-game`; weapon/effect drawing
+  remains.
 - Four-player VS exceeds the ~700 KiB texture pool; Training runs at 30 Hz
   on hardware (RE-341).

@@ -29,11 +29,10 @@ or evidence record covers it.
 | Weapon map-bound removal | `wpProcessProcWeaponMain` deletes weapons outside `map_bound_*`; the pool keeps a missed Blaster or Charge Shot until a map contact | RE-333 |
 | Boomerang off-camera removal | `wpLinkBoomerangCheckOffCamera` needs the battle camera's projection; the pool keeps the Boomerang until its lifetime ends | RE-335 |
 | Item system | Link's Bomb (`itLinkBomb`) and the item-throw branch of his down special need held items and `ftCommonItemThrow*` | RE-335 |
-| Weapon shield and hop callbacks | Weapons meet shields through the hit log with their source `sd`; the Boomerang's own `ProcShield`/`ProcHop` are not reached | RE-335, RE-350 |
-| Catcher branches on a same-frame partner hit | `ftCommonDamageUpdateMain`'s catcher branches read the held partner's same-frame `damage_knockback`; each fighter resolves without the other's state, so the catcher takes the single-hit path | RE-339, RE-350 |
-| Pack clips for reaction statuses | Escape, Down (bounce/wait/stand/attack/roll), Passive, ShieldBreak, FuraFura and Rebound have figatree lengths from the motion descs but no pack animation slots; roll and tech root motion comes from those clips. Adding slots changes the pack layout | RE-350 |
-| Weapon clank and reflector collisions | Weapon–attack clank (`ftMainSearchHitWeapon`'s attack branch), reflector/absorb special collisions as attack collisions and the one-frame invincibility after a knockback overrun are not ported | RE-350 |
-| Training capture scripts land no hit | The RE-341 build never damaged the dummy in 3,600 ticks. Re-measure with joint hurtboxes, scripted attack timing and the per-frame hit log; a matching screenshot alone does not prove hit resolution | RE-341, RE-349, RE-350 |
+| Weapon hop callbacks | The Boomerang's `ProcShield`/`ProcHop` run from the shield's contact angle (RE-351); the other `can_hop` weapons (Fireball, Blaster, Charge Shot, Bomb, Egg, Star, air Thunder Jolt, PK Fire) keep their plain shield handling | RE-335, RE-351 |
+| Training `grab` scene whiffs on PSP | In PPSSPP the player stays in `Catch` without a catch (RE-351 capture log) while host `romtool jumptest --catch-tick 100` on the same route catches on tick 106; the golden already pins the whiff. Compare the posed catch box and the dummy's grabbable boxes against the unposed fallbacks | RE-341, RE-351 |
+| Clips for damage statuses and normals | `DamageHi1`…`DamageFlyRoll`, `DamageFall` and most fighters' normals (Mario's jab included) map to the Wait slot, so a landed hit is invisible in captures (RE-351's `jab` golden relies on its log line) | RE-351 |
+| Item hit search | `ftMainSearchHitItem` (item clank, reflect and absorb) is unported, so PK Fire flames neither clank nor are reflected | RE-347, RE-351 |
 | `psp-game` runs Training at 30 Hz on hardware | One tick per loop, and the loop takes two vsyncs (33.4 ms) on the PSP-2000 while simulation takes 1.74 ms; the draw side needs profiling or a fixed-step clock like the viewer's | RE-341 |
 
 ## Hardware acceptance
@@ -42,7 +41,7 @@ Deferred by user instruction.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v38, with Ness and copy slots) is 23,659,808 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327, RE-344–347 |
+| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v39, with the reaction slots) is 24,254,352 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327, RE-344–347, RE-351 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
 | Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object, RE-326 three v35 stages and RE-341 the six `psp-game` scenes, not the viewer matrix | RE-320, RE-326, RE-341 |
 | Hand-input gameplay checks on hardware | R shield and grab, live throws, a held fighter hit by a Fireball and hand costume picks need a person at the controller | RE-339, RE-341 |
