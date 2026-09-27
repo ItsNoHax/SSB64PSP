@@ -7,9 +7,9 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** Training at 60 Hz on the PSP-2000 (RE-360).
-  Per-frame pack table scans are gone, a hoisted-NaN FPU trap on Training
-  entry is fixed, and the display list is cache-line aligned.
+- **Completed batch:** framebuffer capture coherency (RE-361). The
+  transition and wallpaper capture buffers are cache-line aligned and
+  written back after each capture.
 - **Next gameplay batch:** the match stage loader: map stage kinds,
   controller initialization and ground hazard descriptors onto packed data.
   Remaining controller geometry and material animation are in `TODO.md`.
@@ -19,8 +19,8 @@ Current snapshot. History lives in git and `docs/evidence/`.
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Capture buffer coherency | D-cache writeback and 64-byte alignment; goldens unchanged; PSP-2000 transition capture unchanged | RE-361 |
 | Training at 60 Hz on hardware | Loop 33.4 → 16.7 ms on the PSP-2000; draw-list build 19.4 → 7.4 ms; goldens unchanged | RE-360 |
-| Overall buttons | Correct repeat-axis origins; unchanged textures; 41 reviewed goldens refreshed | RE-359 |
 
 ## Verification baseline
 
@@ -29,7 +29,7 @@ Current snapshot. History lives in git and `docs/evidence/`.
   rustfmt and ROM thumb `no_std` check pass.
 - Both PSP release builds pass. Interactive outputs are restored after
   captures. Existing viewer warnings remain.
-- PPSSPPHeadless: **73 of 73 goldens match twice**, unchanged by RE-360.
+- PPSSPPHeadless: **73 of 73 goldens match twice**, unchanged by RE-361.
 - Training golden scenes supply the integration smoke. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
   (RE-360).
@@ -37,7 +37,7 @@ Current snapshot. History lives in git and `docs/evidence/`.
   `b83c6d37131e0e88de51a4c02d163c93c2db4bc93a1d4bc905b049e33e84098f`.
   Only UV bytes change: 567 vertices in 30 meshes. All 1,881 textures
   match the prior v43; strict check reports zero unresolved.
-- Physical PSP last checked in RE-360 (PSP-2000 Slim, 6.61 ARK, pack v43).
+- Physical PSP last checked in RE-361 (PSP-2000 Slim, 6.61 ARK, pack v43).
 
 ## Blockers and remaining scope
 
