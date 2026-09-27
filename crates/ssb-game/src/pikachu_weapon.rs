@@ -577,7 +577,7 @@ mod tests {
     fn thunder_head_is_harmless_and_trails_share_one_hit_record() {
         let mut pool = WeaponPool::default();
         pool.spawn(spawn(WeaponKind::PikachuThunder, 0.0, 1500.0));
-        pool.tick(|| []);
+        pool.tick(|| [], None);
         assert_eq!(pool.thunder_heads().next().unwrap().position.y, 1050.0);
         assert_eq!(pool.thunder_trails().next().unwrap().position.y, 1500.0);
         let mut defender = Fighter::new(FighterKind::Mario, 1, 3);
@@ -586,7 +586,7 @@ mod tests {
         crate::combat::resolve(&mut defender);
         assert_eq!(defender.damage, 12);
         // New trail at 1050 inherits the group's record stored in the head.
-        pool.tick(|| []);
+        pool.tick(|| [], None);
         defender.pos = Vec3::new(0.0, 1050.0, 0.0);
         pool.apply_hits(&mut defender);
         crate::combat::resolve(&mut defender);
@@ -596,7 +596,7 @@ mod tests {
         pool.apply_hits(&mut other);
         crate::combat::resolve(&mut other);
         assert_eq!(other.damage, 0, "head has no attack collision");
-        pool.tick(|| []);
+        pool.tick(|| [], None);
         other.pos = Vec3::new(0.0, 1050.0, 0.0);
         pool.apply_hits(&mut other);
         crate::combat::resolve(&mut other);
@@ -643,12 +643,12 @@ mod tests {
         let mut pool = WeaponPool::default();
         pool.spawn(f.take_weapon_spawn().unwrap());
         pool.observe_owner(&f);
-        pool.tick(|| []);
+        pool.tick(|| [], None);
         pool.sync_owner(&mut f);
         crate::pikachu::update(&mut f);
         assert!(f.pikachu.thunder_collide);
         pool.observe_owner(&f);
-        pool.tick(|| []);
+        pool.tick(|| [], None);
         assert_eq!(pool.thunder_heads().count(), 0);
         assert!(pool.thunder_trails().next().is_some());
     }
@@ -666,7 +666,7 @@ mod tests {
         f.status.status = crate::status::Status::DamageFlyN.into();
         pool.observe_owner(&f);
         for _ in 0..40 {
-            pool.tick(|| []);
+            pool.tick(|| [], None);
         }
         assert_eq!(pool.thunder_heads().count(), 0);
         assert!(!pool.thunder_destroyed[0]);

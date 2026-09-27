@@ -64,7 +64,7 @@ mod tests {
         assert_eq!(shot.lifetime, 80);
         assert_eq!(shot.damage, 6);
         assert_eq!(shot.velocity.x, 36.0);
-        pool.tick(core::iter::empty);
+        pool.tick(core::iter::empty, None);
         assert_eq!(pool.first_fireball().unwrap().velocity.y, 0.0);
     }
 

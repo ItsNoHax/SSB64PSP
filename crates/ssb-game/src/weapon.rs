@@ -12,6 +12,7 @@ use crate::attack::{self, Hitbox};
 use crate::collision::Segment;
 use crate::fighter::Fighter;
 use crate::ground::BodyColl;
+use crate::status::BlastZone;
 #[path = "ness_weapon.rs"]
 mod ness;
 #[path = "pikachu_weapon.rs"]
@@ -565,6 +566,8 @@ pub const BOOMERANG_ANGLE_STICK_THRESHOLD: i32 = 10;
 pub const BOOMERANG_LIFETIME_SMASH: u16 = 190;
 pub const BOOMERANG_LIFETIME_TILT: u16 = 160;
 pub const BOOMERANG_LIFETIME_REFLECT: u16 = 100;
+/// `wpLinkBoomerangMakeWeapon`'s `homing_delay`.
+pub const BOOMERANG_HOMING_DELAY: u8 = 130;
 /// `wpLinkBoomerangCheckOwnerCatch`: catch distance from the owner's TopN
 /// plus 290 up.
 pub const BOOMERANG_CATCH_DIST: f32 = 180.0;
@@ -644,6 +647,12 @@ pub struct LinkBoomerang {
     pub lr: f32,
     /// Ports in the attack record. `can_rehit_fighter` is clear.
     pub hit_ports: u8,
+    /// `weapon_vars.boomerang.homing_delay`: frames before
+    /// [`Self::check_off_camera`] starts sampling the camera.
+    pub homing_delay: u8,
+    /// `weapon_vars.boomerang.adjust_angle_delay`: the camera is sampled
+    /// every ninth frame.
+    pub adjust_angle_delay: u8,
 }
 
 impl LinkBoomerang {
@@ -675,7 +684,29 @@ impl LinkBoomerang {
             damage: LINK_BOOMERANG_HITBOX.damage,
             lr,
             hit_ports: 0,
+            homing_delay: BOOMERANG_HOMING_DELAY,
+            adjust_angle_delay: 0,
         }
+    }
+
+    /// `wpLinkBoomerangCheckOffCamera`: after its homing delay, every ninth
+    /// frame, whether the camera sees it more than 40 pixels outside the
+    /// viewport. Without a camera the delays still run.
+    fn check_off_camera(&mut self, camera: Option<&crate::camera::Camera>) -> bool {
+        if self.homing_delay > 0 {
+            self.homing_delay -= 1;
+            return false;
+        }
+        self.adjust_angle_delay += 1;
+        if self.adjust_angle_delay <= 8 {
+            return false;
+        }
+        self.adjust_angle_delay = 0;
+        let Some(camera) = camera else { return false };
+        let (x, y) = camera.project(self.position);
+        let bound_x = crate::camera::BATTLE_VIEWPORT_WIDTH / 2.0 + 40.0;
+        let bound_y = crate::camera::BATTLE_VIEWPORT_HEIGHT / 2.0 + 40.0;
+        x < -bound_x || x > bound_x || y < -bound_y || y > bound_y
     }
 
     /// The angle half of `wpLinkBoomerangGetAngleSetVel`: up to 30 degrees
@@ -786,13 +817,18 @@ impl LinkBoomerang {
     /// `wpLinkBoomerangProcUpdate`, the manager's move, then
     /// `wpLinkBoomerangProcMap`. Returns `(alive, caught)`, where `caught`
     /// reports a catch by a parent whose `is_special_interrupt` is set.
-    fn tick<I, F>(&mut self, surfaces: F, parent: Option<OwnerView>) -> (bool, bool)
+    fn tick<I, F>(
+        &mut self,
+        surfaces: F,
+        parent: Option<OwnerView>,
+        camera: Option<&crate::camera::Camera>,
+    ) -> (bool, bool)
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
         self.lifetime -= 1;
-        if self.lifetime == 0 {
+        if self.lifetime == 0 || self.check_off_camera(camera) {
             return (false, false);
         }
         if self.is_reflect {
@@ -845,23 +881,15 @@ impl LinkBoomerang {
         }
     }
 
-    /// `wpProcessProcHitCollisions`'s shield branch for the Boomerang
-    /// (`can_hop`, always airborne): a glancing shield contact (under 135°)
-    /// hops it by twice the contact angle less 90°
-    /// (`wpLinkBoomerangProcHop`); otherwise `wpLinkBoomerangProcShield`
-    /// sends it back.
-    fn on_shield(&mut self, shield: crate::combat::ShieldCollide) {
-        if shield.angle < WEAPON_HOP_ANGLE_DEFAULT {
-            let angle = (shield.angle - DEG_90).max(0.0);
-            if shield.dir_z > 0.0 {
-                self.default_angle += angle * 2.0;
-            } else {
-                self.default_angle -= angle * 2.0;
-            }
-            self.default_angle = clamp_angle_360(self.default_angle);
+    /// `wpLinkBoomerangProcHop`: it turns its flight angle rather than its
+    /// velocity.
+    fn hop(&mut self, angle: f32, dir_z: f32) {
+        if dir_z > 0.0 {
+            self.default_angle += angle * 2.0;
         } else {
-            self.set_off();
+            self.default_angle -= angle * 2.0;
         }
+        self.default_angle = clamp_angle_360(self.default_angle);
     }
 
     /// `wpLinkBoomerangProcReflector`, then the reflect damage bonus.
@@ -1366,6 +1394,8 @@ impl MarioFireball {
             {
                 return false;
             }
+        } else {
+            self.position = wanted;
         }
         true
     }
@@ -1403,6 +1433,9 @@ pub struct WeaponPool {
     /// A slot's hit that registered damage this frame, as `(owner port,
     /// motion)`, for [`Self::record_landed`].
     landed: [Option<(u8, crate::stale::MotionAttackId, u16)>; MAX_WEAPONS],
+    /// The battle camera as last drawn (`gGMCameraMatrix`), from
+    /// [`Self::observe_camera`].
+    camera: Option<crate::camera::Camera>,
 }
 
 /// `WEAPON_HOP_ANGLE_DEFAULT`: `F_CLC_DTOR32(135.0F)`.
@@ -1476,9 +1509,114 @@ impl Weapon {
         match self {
             Weapon::Jolt(j) => j.surface.is_some(),
             Weapon::Cutter(c) => c.floor.is_some(),
+            Weapon::Bomb(b) => b.floor.is_some(),
             _ => false,
         }
     }
+
+    /// `DObjGetStruct(weapon_gobj)->translate`.
+    fn position(&self) -> Vec3 {
+        match self {
+            Weapon::Fireball(w) => w.position,
+            Weapon::Blaster(w) => w.position,
+            Weapon::ChargeShot(w) => w.position,
+            Weapon::Bomb(w) => w.position,
+            Weapon::Boomerang(w) => w.position,
+            Weapon::Egg(w) => w.position,
+            Weapon::Star(w) => w.position,
+            Weapon::Cutter(w) => w.position,
+            Weapon::Jolt(w) => w.position,
+            Weapon::Thunder(w) => w.position,
+            Weapon::Trail(w) => w.position,
+            Weapon::PKFire(w) => w.position,
+            Weapon::PKThunder(w) => w.position,
+            Weapon::PKTrail(w) => w.position,
+        }
+    }
+
+    /// `wpProcessProcHitCollisions`'s shield branch after
+    /// `ftMainUpdateShieldStatWeapon` recorded the fighter: an airborne
+    /// `can_hop` weapon that met the shield under 135 degrees hops, any
+    /// other runs its `proc_shield`. Returns whether the weapon lives on.
+    fn on_shield(&mut self, shield: crate::combat::ShieldCollide) -> bool {
+        // The Bomb's explosion clears `proc_hop` and `proc_shield`.
+        if matches!(self, Weapon::Bomb(b) if b.exploded) {
+            return true;
+        }
+        let hops = self.flags().can_hop && !self.is_grounded();
+        if hops && shield.angle < WEAPON_HOP_ANGLE_DEFAULT {
+            self.hop((shield.angle - DEG_90).max(0.0), shield.dir_z);
+            return true;
+        }
+        match self {
+            // `wpLinkBoomerangProcShield`.
+            Weapon::Boomerang(b) => b.set_off(),
+            // `wpKirbyCutterProcShield` returns FALSE.
+            Weapon::Cutter(_) => {}
+            // `wpYoshiEggThrowProcHit` and `wpSamusBombProcHit`.
+            Weapon::Egg(e) => e.explode(),
+            Weapon::Bomb(b) => b.explode(),
+            // Every other `proc_shield` returns TRUE, PK Fire's
+            // `wpNessPKFireProcAbsorb` included.
+            _ => return false,
+        }
+        true
+    }
+
+    /// `wpProcessProcHitCollisions`'s hop branch: the kind's `proc_hop`,
+    /// with `shield_collide_angle` already less 90 degrees. Every hop turns
+    /// `vel_air` by twice that angle about `shield_collide_dir`; the rest of
+    /// each callback is the facing it rederives. Model pitch and roll
+    /// (`wpMainVelSetModelPitch`, the Blaster's and Star's `rotate.z`, PK
+    /// Fire's negated roll) are presentation that nothing draws yet.
+    fn hop(&mut self, angle: f32, dir_z: f32) {
+        let turn = |v: Vec3| hop_velocity(v, angle, dir_z);
+        match self {
+            Weapon::Boomerang(b) => b.hop(angle, dir_z),
+            // `wpMarioFireballProcHop`.
+            Weapon::Fireball(f) => f.velocity = turn(f.velocity),
+            // `wpFoxBlasterProcHop`: the shot is drawn unstretched again.
+            Weapon::Blaster(b) => {
+                b.velocity = turn(b.velocity);
+                b.scale_x = 1.0;
+            }
+            // `wpSamusChargeShotProcHop`: its spin reads the new velocity.
+            Weapon::ChargeShot(c) => c.velocity = turn(c.velocity),
+            // `wpSamusBombProcHop`: `wpMainVelSetLR`.
+            Weapon::Bomb(b) => {
+                b.velocity = turn(b.velocity);
+                b.set_lr();
+            }
+            // `wpYoshiEggThrowProcHop`.
+            Weapon::Egg(e) => e.velocity = turn(e.velocity),
+            // `wpYoshiStarProcHop`: facing from a strictly positive X.
+            Weapon::Star(s) => {
+                s.velocity = turn(s.velocity);
+                s.lr = if s.velocity.x > 0.0 { 1.0 } else { -1.0 };
+            }
+            // `wpPikachuThunderJoltAirProcHop`.
+            Weapon::Jolt(j) => j.velocity = turn(j.velocity),
+            // `wpNessPKFireProcHop`.
+            Weapon::PKFire(p) => p.velocity = turn(p.velocity),
+            _ => unreachable!("no proc_hop"),
+        }
+    }
+}
+
+/// `syVectorRotateAbout3D(&vel_air, &shield_collide_dir, angle * 2)`, where
+/// the direction is `{ 0, 0, dir_z }`.
+fn hop_velocity(v: Vec3, angle: f32, dir_z: f32) -> Vec3 {
+    crate::item::rotate_about(v, Vec3::new(0.0, 0.0, dir_z), angle * 2.0)
+}
+
+/// `wpProcessProcWeaponMain`'s blast-zone test, strict on every edge.
+fn out_of_bounds(b: BlastZone, p: Vec3) -> bool {
+    p.y < b.bottom
+        || p.x > b.right
+        || p.x < b.left
+        || p.y > b.top
+        || p.z < -20_000.0
+        || p.z > 20_000.0
 }
 
 /// What `ftMainSearchHitWeapon` did with a weapon before its shield and
@@ -1635,12 +1773,13 @@ impl Default for WeaponPool {
             next_group: 1,
             stale: [crate::stale::WeaponStale::FRESH; MAX_WEAPONS],
             landed: [None; MAX_WEAPONS],
+            camera: None,
         }
     }
 }
 
 impl WeaponPool {
-    fn tick_pk_thunder<I, F>(&mut self, surfaces: F)
+    fn tick_pk_thunder<I, F>(&mut self, surfaces: F, bounds: Option<BlastZone>)
     where
         F: Fn() -> I + Copy,
         I: IntoIterator<Item = MapSurface>,
@@ -1649,7 +1788,10 @@ impl WeaponPool {
         for (i, slot) in self.slots.iter_mut().enumerate() {
             if let Some(Weapon::PKThunder(h)) = slot {
                 let owner = self.owners.get(h.owner_port as usize).copied().flatten();
-                if !h.tick(surfaces, owner) {
+                // `wpNessPKThunderHeadProcDead` destroys the trails with the
+                // head; the owner learns of it from the missing head.
+                if !h.tick(surfaces, owner) || bounds.is_some_and(|b| out_of_bounds(b, h.position))
+                {
                     *slot = None;
                 } else if h.trail_spawn {
                     pending[i] = Some((PKThunderTrail::new(*h, 0), self.stale[i]));
@@ -1724,7 +1866,9 @@ impl WeaponPool {
                     }
                 }
                 Weapon::PKFire(spark) => {
-                    if spark.owner_port == defender.port {
+                    if spark.owner_port == defender.port
+                        || recorded_fighter_ports(&self.hit_records[i]) & bit != 0
+                    {
                         continue;
                     }
                     let mut hit = ness::SPARK_HIT;
@@ -1762,7 +1906,7 @@ impl WeaponPool {
                     }
                     let mut hit = ness::SPARK_HIT;
                     hit.damage = spark.damage;
-                    let outcome = stale_hit(
+                    let contact = stale_contact(
                         &hit,
                         spark.position,
                         spark.velocity,
@@ -1771,6 +1915,15 @@ impl WeaponPool {
                         &mut self.landed[i],
                         spark.owner_port,
                     );
+                    if let crate::combat::WeaponContact::Shielded(shield) = contact {
+                        record_weapon_victim(&mut self.hit_records[i], defender.port);
+                        if !w.on_shield(shield) {
+                            *slot = None;
+                            free_slots += 1;
+                        }
+                        continue;
+                    }
+                    let outcome = attack::HitOutcome::of(contact);
                     if outcome.registered() {
                         if outcome == attack::HitOutcome::Damaged {
                             pillars[i] = Some(spark.item_spawn(self.stale[i]));
@@ -2157,6 +2310,13 @@ impl WeaponPool {
         }
     }
 
+    /// Records the battle camera the Boomerang's off-camera check projects
+    /// through. `gGMCameraMatrix` is built when the camera draws, so call it
+    /// before the camera advances this frame.
+    pub fn observe_camera(&mut self, camera: &crate::camera::Camera) {
+        self.camera = Some(*camera);
+    }
+
     /// Delivers the pool's writes to a fighter after [`Self::tick`]:
     /// `wpLinkBoomerangCheckOwnerCatch`'s catch status, and
     /// `wpLinkBoomerangClearGObjs`, which clears the thrower's
@@ -2209,15 +2369,26 @@ impl WeaponPool {
             .any(|w| matches!(w, Weapon::Boomerang(b) if b.parent_port == Some(f.port)));
     }
 
-    /// Advances each weapon's source physics and map callback once. Call this
-    /// once per match frame, before [`Self::apply_hits`].
-    pub fn tick<I, F>(&mut self, surfaces: F)
+    /// Advances each weapon's source physics and map callback once, then
+    /// deletes a weapon outside `bounds` (`MPGroundData.map_bound_*`). Call
+    /// this once per match frame, before [`Self::apply_hits`].
+    ///
+    /// `wpProcessProcWeaponMain` tests the bounds after the move and before
+    /// `proc_map`; this tests the position the map callback left. A map
+    /// contact only moves a weapon onto a stage surface, and every surface
+    /// lies inside the blast zone, so the two orders delete the same
+    /// weapons. Every `proc_dead` here returns TRUE: the Egg is a weapon
+    /// only once thrown, the Charge Shot's owner link is always NULL, and
+    /// the Boomerang's and PK Thunder's owner links are rederived from the
+    /// pool.
+    pub fn tick<I, F>(&mut self, surfaces: F, bounds: Option<BlastZone>)
     where
         F: Fn() -> I + Copy,
         I: IntoIterator<Item = MapSurface>,
     {
         let owners = self.owners;
-        self.tick_pk_thunder(surfaces);
+        let camera = self.camera;
+        self.tick_pk_thunder(surfaces, bounds);
         let mut trails = [None; MAX_WEAPONS];
         for (i, slot) in self.slots.iter_mut().enumerate() {
             if let Some(weapon) = slot.as_mut() {
@@ -2242,7 +2413,10 @@ impl WeaponPool {
                             if head.lifetime > 1 {
                                 trails[i] = Some((ThunderTrail::new(*head), self.stale[i]));
                             }
-                            let alive = head.tick(surfaces);
+                            // `wpPikachuThunderHeadProcDead` notifies
+                            // the owner like an expired head.
+                            let alive = head.tick(surfaces)
+                                && !bounds.is_some_and(|b| out_of_bounds(b, head.position));
                             if !alive && head.notify_destroy {
                                 if let Some(flag) =
                                     self.thunder_destroyed.get_mut(head.owner_port as usize)
@@ -2261,7 +2435,7 @@ impl WeaponPool {
                         let parent = boomerang
                             .parent_port
                             .and_then(|port| owners.get(usize::from(port)).copied().flatten());
-                        let (alive, caught) = boomerang.tick(surfaces, parent);
+                        let (alive, caught) = boomerang.tick(surfaces, parent, camera.as_ref());
                         if caught {
                             if let Some(port) = boomerang.parent_port {
                                 self.caught[usize::from(port)] = true;
@@ -2273,6 +2447,9 @@ impl WeaponPool {
                     Weapon::Star(star) => star.tick(),
                     Weapon::Cutter(cutter) => cutter.tick(surfaces),
                 };
+                let alive = alive
+                    && (matches!(weapon, Weapon::Thunder(_))
+                        || !bounds.is_some_and(|b| out_of_bounds(b, weapon.position())));
                 if !alive {
                     *slot = None;
                 }
@@ -2366,15 +2543,8 @@ impl WeaponPool {
             }
             let bit = 1u8 << (defender.port & 7);
             // The weapon's attack record: once it has met this fighter in any
-            // way, it passes through.
-            let recorded = match weapon {
-                Weapon::Boomerang(b) => b.hit_ports,
-                Weapon::Cutter(c) => c.hit_ports,
-                Weapon::Egg(e) => e.hit_ports,
-                Weapon::Bomb(b) => b.hit_ports,
-                _ => 0,
-            };
-            if recorded & bit != 0 {
+            // way, it passes through. A hopped shot keeps its shield record.
+            if ports & bit != 0 {
                 continue;
             }
             hitbox.damage = match weapon {
@@ -2416,7 +2586,7 @@ impl WeaponPool {
             // The Bomb can neither clank, be reflected nor be absorbed, and
             // its attack record outlives the explosion.
             if let Weapon::Bomb(bomb) = weapon {
-                if stale_hit(
+                let contact = stale_contact(
                     &hitbox,
                     position,
                     velocity,
@@ -2424,9 +2594,13 @@ impl WeaponPool {
                     defender,
                     &mut self.landed[i],
                     owner,
-                )
-                .registered()
-                {
+                );
+                if let crate::combat::WeaponContact::Shielded(shield) = contact {
+                    record_weapon_victim(records, defender.port);
+                    weapon.on_shield(shield);
+                    continue;
+                }
+                if attack::HitOutcome::of(contact).registered() {
                     record_weapon_victim(records, defender.port);
                     bomb.hit_ports |= bit;
                     if !bomb.exploded {
@@ -2552,13 +2726,15 @@ impl WeaponPool {
                 &mut self.landed[i],
                 owner,
             );
+            // `ftMainUpdateShieldStatWeapon` records the fighter; then
+            // `wpProcessProcHitCollisions` hops the weapon or runs its
+            // `proc_shield`.
             if let crate::combat::WeaponContact::Shielded(shield) = contact {
-                if let Weapon::Boomerang(b) = weapon {
-                    record_weapon_victim(records, defender.port);
-                    b.hit_ports |= bit;
-                    b.on_shield(shield);
-                    continue;
+                record_weapon_victim(records, defender.port);
+                if !weapon.on_shield(shield) {
+                    *slot = None;
                 }
+                continue;
             }
             if attack::HitOutcome::of(contact).registered() {
                 // The Boomerang survives a hit and turns back.
@@ -2954,7 +3130,7 @@ mod tests {
         assert!(fireball.velocity.x > 49.0);
         assert!(fireball.velocity.y < 0.0);
 
-        weapons.tick(open_air);
+        weapons.tick(open_air, None);
         let fireball = weapons.first_fireball().unwrap();
         assert_eq!(fireball.lifetime, MARIO_FIREBALL_LIFETIME - 1);
         let (sin, _) = sin_cos(MARIO_FIREBALL_ANGLE);
@@ -2962,6 +3138,8 @@ mod tests {
             fireball.velocity.y,
             MARIO_FIREBALL_SPEED * sin - MARIO_FIREBALL_GRAVITY
         );
+        // `wpProcessProcWeaponMain` moves it by `vel_air` in open air.
+        assert_eq!(fireball.position, fireball.velocity);
     }
 
     #[test]
@@ -2977,7 +3155,7 @@ mod tests {
             position: Vec3::ZERO,
             facing: 1.0,
         }));
-        weapons.tick(open_air);
+        weapons.tick(open_air, None);
         let egg = weapons.eggs().next().unwrap();
         assert!(egg.is_spin);
         assert_eq!(egg.hitbox().damage, 14);
@@ -3031,7 +3209,7 @@ mod tests {
             position: Vec3::ZERO,
             facing: 1.0,
         }));
-        weapons.tick(open_air);
+        weapons.tick(open_air, None);
         let egg = weapons.eggs().next().unwrap();
         let mut target = Fighter::new(FighterKind::Mario, 1, 3);
         target.pos = egg.position;
@@ -3060,7 +3238,7 @@ mod tests {
             facing: 1.0,
         }));
         assert_eq!(weapons.blasters().next().unwrap().velocity.x, 160.0);
-        weapons.tick(open_air);
+        weapons.tick(open_air, None);
         let shot = weapons.blasters().next().unwrap();
         assert_eq!(shot.position.x, 160.0);
         assert_eq!(shot.scale_x, 1.0 + 16.0 / 3.0);
@@ -3235,19 +3413,26 @@ mod tests {
             position: Vec3::ZERO,
             facing: 1.0,
         };
-        let mut b = LinkBoomerang::new(spawn, false, 0, 0);
+        let b = LinkBoomerang::new(spawn, false, 0, 0);
         let angle = b.default_angle;
-        b.on_shield(crate::combat::ShieldCollide {
+        let mut w = Weapon::Boomerang(b);
+        assert!(w.on_shield(crate::combat::ShieldCollide {
             angle: 100.0 * core::f32::consts::PI / 180.0,
             dir_z: 1.0,
-        });
+        }));
+        let Weapon::Boomerang(b) = w else {
+            unreachable!()
+        };
         assert!(!b.is_return);
         let expected = clamp_angle_360(angle + 2.0 * 10.0 * core::f32::consts::PI / 180.0);
         assert!((b.default_angle - expected).abs() < 1e-5);
-        b.on_shield(crate::combat::ShieldCollide {
+        assert!(w.on_shield(crate::combat::ShieldCollide {
             angle: core::f32::consts::PI,
             dir_z: 0.0,
-        });
+        }));
+        let Weapon::Boomerang(b) = w else {
+            unreachable!()
+        };
         assert!(b.is_return);
         // Live: a still Boomerang inside a raised shield reports 180 degrees
         // and turns back.
@@ -3364,9 +3549,9 @@ mod tests {
         assert_eq!(shot.hitbox().damage, 26);
         assert_eq!(shot.hitbox().radius, 130.0);
         let wall = [surface(MapSurfaceKind::RightWall, -100, -500, -100, 500)];
-        weapons.tick(|| wall);
+        weapons.tick(|| wall, None);
         assert_eq!(weapons.active_count(), 1);
-        weapons.tick(|| wall);
+        weapons.tick(|| wall, None);
         assert_eq!(weapons.active_count(), 0);
     }
 
@@ -3381,10 +3566,10 @@ mod tests {
             facing: 1.0,
         });
         for _ in 0..99 {
-            weapons.tick(open_air);
+            weapons.tick(open_air, None);
         }
         assert!(!weapons.bombs().next().unwrap().exploded);
-        weapons.tick(open_air);
+        weapons.tick(open_air, None);
         let bomb = weapons.bombs().next().unwrap();
         assert!(bomb.exploded);
         assert_eq!(bomb.hitbox().radius, SAMUS_BOMB_EXPLODE_SIZE);
@@ -3398,10 +3583,10 @@ mod tests {
         crate::combat::resolve(&mut target);
         assert_eq!(target.damage, 9);
         for _ in 0..5 {
-            weapons.tick(open_air);
+            weapons.tick(open_air, None);
         }
         assert_eq!(weapons.active_count(), 1);
-        weapons.tick(open_air);
+        weapons.tick(open_air, None);
         assert_eq!(weapons.active_count(), 0);
     }
 
@@ -3418,7 +3603,7 @@ mod tests {
         let floor = [surface(MapSurfaceKind::Floor, -1000, 0, 1000, 0)];
         let mut settled = None;
         for tick in 0..90 {
-            weapons.tick(|| floor);
+            weapons.tick(|| floor, None);
             let bomb = weapons.bombs().next().unwrap();
             if bomb.floor.is_some() {
                 settled = Some(tick);
@@ -3428,7 +3613,7 @@ mod tests {
         assert!(settled.is_some(), "the bomb comes to rest before its fuse");
         let bomb = weapons.bombs().next().unwrap();
         assert!((bomb.position.y - 75.0).abs() < 1.0);
-        weapons.tick(|| floor);
+        weapons.tick(|| floor, None);
         let bomb = weapons.bombs().next().unwrap();
         assert!(bomb.floor.is_some());
         assert_eq!(bomb.position.y, 75.0);
@@ -3462,7 +3647,7 @@ mod tests {
         let mut frames = 0;
         while !weapons.boomerangs().next().unwrap().is_return {
             weapons.observe_owner(&link);
-            weapons.tick(open_air);
+            weapons.tick(open_air, None);
             weapons.sync_owner(&mut link);
             frames += 1;
         }
@@ -3473,7 +3658,7 @@ mod tests {
         assert!(link.link.boomerang_out);
         while weapons.active_count() == 1 {
             weapons.observe_owner(&link);
-            weapons.tick(open_air);
+            weapons.tick(open_air, None);
             weapons.sync_owner(&mut link);
         }
         assert!(!link.link.boomerang_out);
@@ -3527,7 +3712,7 @@ mod tests {
         let floor = [surface(MapSurfaceKind::Floor, -5000, 0, 5000, 0)];
         let mut reflected = false;
         for _ in 0..20 {
-            weapons.tick(|| floor);
+            weapons.tick(|| floor, None);
             let b = weapons.boomerangs().next().unwrap();
             assert!(!b.is_return);
             if b.velocity.y > 0.0 {
@@ -3542,7 +3727,7 @@ mod tests {
         weapons.spawn(boomerang_spawn(false, 0, 1.0));
         let wall = [surface(MapSurfaceKind::LeftWall, 400, -500, 400, 1000)];
         for _ in 0..10 {
-            weapons.tick(|| wall);
+            weapons.tick(|| wall, None);
         }
         let b = weapons.boomerangs().next().unwrap();
         assert!(b.is_return);
@@ -3608,5 +3793,173 @@ mod tests {
             );
             assert!(reflected.x * delta.x + reflected.y * delta.y < 0.0);
         }
+    }
+
+    fn shield_at(degrees: f32, dir_z: f32) -> crate::combat::ShieldCollide {
+        crate::combat::ShieldCollide {
+            angle: degrees * core::f32::consts::PI / 180.0,
+            dir_z,
+        }
+    }
+
+    /// `wpMarioFireballProcHop` below 135 degrees; its `proc_shield`
+    /// (`wpMarioFireballProcHit`) from 135 degrees up.
+    #[test]
+    fn a_glancing_shield_turns_a_fireball_and_a_head_on_one_destroys_it() {
+        let weapons = fireball_at(Vec3::ZERO, 1.0);
+        let mut w = weapons.slots[0].unwrap();
+        let Weapon::Fireball(before) = w else {
+            unreachable!()
+        };
+        // 120 degrees hops by twice (120 - 90).
+        assert!(w.on_shield(shield_at(120.0, 1.0)));
+        let Weapon::Fireball(after) = w else {
+            unreachable!()
+        };
+        let (sin, cos) = sin_cos(60.0f32.to_radians());
+        let v = before.velocity;
+        assert!((after.velocity.x - (v.x * cos - v.y * sin)).abs() < 1e-3);
+        assert!((after.velocity.y - (v.x * sin + v.y * cos)).abs() < 1e-3);
+        // The negative direction turns the other way.
+        let mut w = weapons.slots[0].unwrap();
+        assert!(w.on_shield(shield_at(120.0, -1.0)));
+        let Weapon::Fireball(after) = w else {
+            unreachable!()
+        };
+        assert!((after.velocity.y - (-v.x * sin + v.y * cos)).abs() < 1e-3);
+        // Under 90 degrees the angle clamps to zero.
+        let mut w = weapons.slots[0].unwrap();
+        assert!(w.on_shield(shield_at(60.0, 1.0)));
+        let Weapon::Fireball(after) = w else {
+            unreachable!()
+        };
+        assert!((after.velocity - v).length() < 1e-4);
+        let mut w = weapons.slots[0].unwrap();
+        assert!(!w.on_shield(shield_at(135.0, 1.0)));
+    }
+
+    /// The per-kind `proc_hop` facing writes and `proc_shield` results.
+    #[test]
+    fn each_hop_callback_rederives_its_facing() {
+        let spawn = |kind| WeaponSpawn {
+            kind,
+            owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        };
+        // `wpYoshiStarProcHop`: 134 degrees less 90, doubled, turns the
+        // rising star back over the top.
+        let mut w = Weapon::Star(YoshiStar::new(spawn(WeaponKind::YoshiStars), 1.0));
+        assert!(w.on_shield(shield_at(134.0, 1.0)));
+        let Weapon::Star(s) = w else { unreachable!() };
+        assert!(s.velocity.x < 0.0);
+        assert_eq!(s.lr, -1.0);
+        assert!(!Weapon::Star(s).on_shield(shield_at(135.0, 1.0)));
+        // `wpFoxBlasterProcHop` draws the shot unstretched again.
+        let mut blaster = FoxBlaster::new(spawn(WeaponKind::FoxBlaster));
+        blaster.scale_x = 20.0;
+        let mut w = Weapon::Blaster(blaster);
+        assert!(w.on_shield(shield_at(100.0, 1.0)));
+        let Weapon::Blaster(b) = w else {
+            unreachable!()
+        };
+        assert_eq!(b.scale_x, 1.0);
+        // A Bomb on the floor is not airborne: `wpSamusBombProcHit`
+        // explodes it. The explosion ignores the shield.
+        let mut bomb = SamusBomb::new(spawn(WeaponKind::SamusBomb));
+        bomb.floor = Some((surface(MapSurfaceKind::Floor, -500, 0, 500, 0), 0.0));
+        let mut w = Weapon::Bomb(bomb);
+        assert!(w.on_shield(shield_at(100.0, 1.0)));
+        let Weapon::Bomb(b) = w else { unreachable!() };
+        assert!(b.exploded);
+        let lifetime = b.lifetime;
+        assert!(w.on_shield(shield_at(170.0, 1.0)));
+        let Weapon::Bomb(b) = w else { unreachable!() };
+        assert_eq!(b.lifetime, lifetime);
+        // An airborne Bomb hops and faces its new velocity.
+        let mut bomb = SamusBomb::new(spawn(WeaponKind::SamusBomb));
+        bomb.velocity = Vec3::new(10.0, 5.0, 0.0);
+        let mut w = Weapon::Bomb(bomb);
+        assert!(w.on_shield(shield_at(134.0, 1.0)));
+        let Weapon::Bomb(b) = w else { unreachable!() };
+        assert!(!b.exploded);
+        assert!(b.velocity.x < 0.0);
+        assert_eq!(b.lr, -1.0);
+        // A grounded Thunder Jolt cannot hop: `proc_shield` destroys it.
+        let mut jolt = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt));
+        jolt.surface = Some(surface(MapSurfaceKind::Floor, -500, 0, 500, 0));
+        assert!(!Weapon::Jolt(jolt).on_shield(shield_at(100.0, 1.0)));
+        // The Final Cutter wave cannot hop and flies on.
+        let cutter = KirbyCutter::new(spawn(WeaponKind::KirbyCutter { grounded: false }), false);
+        assert!(Weapon::Cutter(cutter).on_shield(shield_at(100.0, 1.0)));
+    }
+
+    /// `ftMainUpdateShieldStatWeapon`'s record keeps a hopped shot from
+    /// meeting the same fighter again.
+    #[test]
+    fn a_recorded_fighter_lets_any_weapon_pass() {
+        let mut weapons = fireball_at(Vec3::ZERO, 1.0);
+        weapons.hit_records[0][0] = Some(1);
+        let mut target = Fighter::new(FighterKind::Mario, 1, 3);
+        target.situation = Situation::Ground;
+        weapons.apply_hits(&mut target);
+        crate::combat::resolve(&mut target);
+        assert_eq!(target.damage, 0);
+        assert_eq!(weapons.active_count(), 1);
+    }
+
+    /// `wpProcessProcWeaponMain`: strictly outside any edge deletes it.
+    #[test]
+    fn a_weapon_past_the_blast_zone_is_deleted() {
+        let bounds = BlastZone {
+            top: 5000.0,
+            bottom: -5000.0,
+            left: -5000.0,
+            right: 5000.0,
+        };
+        let mut weapons = fireball_at(Vec3::new(4900.0, 0.0, 0.0), 1.0);
+        let step = weapons.first_fireball().unwrap().velocity.x;
+        assert!(step > 0.0);
+        let mut frames = 0;
+        while weapons.active_count() == 1 {
+            let x = weapons.first_fireball().unwrap().position.x;
+            assert!(x <= bounds.right);
+            weapons.tick(open_air, Some(bounds));
+            frames += 1;
+            assert!(frames < 10);
+        }
+        // Without bounds the same shot flies on.
+        let mut weapons = fireball_at(Vec3::new(4900.0, 0.0, 0.0), 1.0);
+        for _ in 0..frames {
+            weapons.tick(open_air, None);
+        }
+        assert_eq!(weapons.active_count(), 1);
+    }
+
+    /// `wpLinkBoomerangCheckOffCamera`: after the 130-frame homing delay the
+    /// camera is sampled every ninth frame, 40 pixels past the viewport.
+    #[test]
+    fn an_off_camera_boomerang_is_removed_on_a_sampled_frame() {
+        let camera = crate::camera::Camera::default();
+        let mut b = LinkBoomerang::new(boomerang_spawn(true, 0, 1.0), true, 0, 0);
+        b.position = Vec3::new(1.0e6, 0.0, 0.0);
+        for _ in 0..BOOMERANG_HOMING_DELAY + 8 {
+            assert!(!b.check_off_camera(Some(&camera)));
+        }
+        assert!(b.check_off_camera(Some(&camera)));
+        assert_eq!(b.adjust_angle_delay, 0);
+        // A sampled frame with the Boomerang in view keeps it.
+        b.position = camera.at;
+        for _ in 0..8 {
+            assert!(!b.check_off_camera(Some(&camera)));
+        }
+        assert!(!b.check_off_camera(Some(&camera)));
+        // Without a camera the delays still run.
+        let mut b = LinkBoomerang::new(boomerang_spawn(true, 0, 1.0), true, 0, 0);
+        for _ in 0..BOOMERANG_HOMING_DELAY + 9 {
+            assert!(!b.check_off_camera(None));
+        }
+        assert_eq!(b.adjust_angle_delay, 0);
     }
 }

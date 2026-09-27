@@ -343,3 +343,10 @@ the capture log reads `dummy_damage=2 dummy_status=Common(DamageN1)`. The
 image cannot show the hit (no damage or jab clips). `r2-stage-bonus1-luigi`
 was rebaselined (160 pixels at 2x): it had been stale since RE-350, and a
 build of `c97ed46` renders the same pixels. 73 of 73 then match twice.
+
+## 2026-09-27 RE-354 Fireball free flight
+
+Pack v40 unchanged (`a3e1a831…`). The Fireball had moved only on a map
+contact. It now moves by `vel_air` every frame. `f1-training-fireball`
+changed by 2,476 pixels at 2x and was rebaselined: the shot leaves Mario's
+hand and rebounds. The other six `f1-training` goldens match.

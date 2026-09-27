@@ -214,7 +214,43 @@ impl Camera {
         // gmCameraApplyFOV: `self.fovy_degrees` above already *is* the
         // value a caller reads, unlike the real `CObj`/`GMCamera` split.
     }
+
+    /// `func_ovl2_800EB924` through `gGMCameraMatrix`: a world point's
+    /// offset from the battle viewport's centre in N64 pixels, Y up.
+    ///
+    /// `gGMCameraMatrix` is `syMatrixLookAtReflectF` (`guLookAtF`, up +Y)
+    /// times `syMatrixPerspFastF`. Only the X, Y and W columns matter, and
+    /// the perspective's `scale` cancels between them except in the
+    /// `|w| < 0.1` clamp; this keeps the default scale of 1.
+    /// `gmCameraLookAtFuncMatrix` lowers it only when a matrix element passes
+    /// 32000.
+    pub fn project(&self, p: Vec3) -> (f32, f32) {
+        let aspect = BATTLE_VIEWPORT_WIDTH / BATTLE_VIEWPORT_HEIGHT;
+        let cot = 1.0 / original_tan(self.fovy_degrees.to_radians() * 0.5);
+        // `guLookAtF`: Look points from `at` back to the eye.
+        let look = (self.at - self.eye).normalized() * -1.0;
+        let right = Vec3::Y.cross(look).normalized();
+        let up = look.cross(right).normalized();
+        let rel = p - self.eye;
+        let x = rel.dot(right) * (cot / aspect);
+        let y = rel.dot(up) * cot;
+        let mut w = -rel.dot(look);
+        if w.abs() < 0.1 {
+            w = if w < 0.0 { -0.1 } else { 0.1 };
+        }
+        // `viewport.vp.vscale / 4`: half the viewport in pixels.
+        (
+            BATTLE_VIEWPORT_WIDTH * 0.5 * (x / w),
+            BATTLE_VIEWPORT_HEIGHT * 0.5 * (y / w),
+        )
+    }
 }
+
+/// `gmCameraSetViewportDimensions(10, 10, 310, 230)`, which every battle
+/// scene makes: `gGMCameraStruct.viewport_width` and `viewport_height`.
+/// The camera's `persp.aspect` is their ratio.
+pub const BATTLE_VIEWPORT_WIDTH: f32 = 300.0;
+pub const BATTLE_VIEWPORT_HEIGHT: f32 = 220.0;
 
 /// `gmCameraUpdateInterests`: clamp and union every fighter's asymmetric box.
 fn calculate_interest(interests: &[Interest], bounds: Bounds) -> (Vec3, f32, f32) {

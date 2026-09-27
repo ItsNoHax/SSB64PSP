@@ -523,6 +523,8 @@ unsafe fn run() -> ! {
                     });
                     items.publish(&mut pl.fighter);
                     pl.tick_fighter_map(p, &stage, controller, jump_held, groups);
+                    // The Boomerang projects through the camera last drawn.
+                    weapons.observe_camera(&pl.camera);
                     pl.tick_camera(&stage, None);
                     items.take_requests(&mut pl.fighter, || {
                         ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
@@ -549,21 +551,23 @@ unsafe fn run() -> ! {
                         }
                         weapons.observe_owner(&pl.fighter);
                         weapons.observe_owner(&dummy.fighter);
-                        weapons.tick(|| {
-                            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
-                        });
+                        let blast_zone = ssb_game::status::BlastZone {
+                            top: stage.bounds.top as f32,
+                            bottom: stage.bounds.bottom as f32,
+                            left: stage.bounds.left as f32,
+                            right: stage.bounds.right as f32,
+                        };
+                        weapons.tick(
+                            || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups),
+                            Some(blast_zone),
+                        );
                         weapons.sync_owner(&mut pl.fighter);
                         weapons.sync_owner(&mut dummy.fighter);
                         items.observe_owner(&pl.fighter);
                         items.observe_owner(&dummy.fighter);
                         items.tick(
                             || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups),
-                            Some(ssb_game::status::BlastZone {
-                                top: stage.bounds.top as f32,
-                                bottom: stage.bounds.bottom as f32,
-                                left: stage.bounds.left as f32,
-                                right: stage.bounds.right as f32,
-                            }),
+                            Some(blast_zone),
                         );
                         items.sync_owner(&mut pl.fighter);
                         items.sync_owner(&mut dummy.fighter);
