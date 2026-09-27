@@ -210,7 +210,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 42 adds the stage controller object animations (`AnimDesc::GROUND`,
 // keyed by `ground_obj::ANIMS` index; RE-357). A v41 runtime finds none and
 // runs Dream Land without Whispy.
-pub const VERSION: u32 = 42;
+// 43 preserves borrowed RSP vertices' loading joints and local positions.
+// MeshDesc grows by a blob offset; old packs cannot animate joint seams.
+pub const VERSION: u32 = 43;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -309,6 +311,42 @@ pub struct PackedVertex {
     pub x: i16,
     pub y: i16,
     pub z: i16,
+}
+
+/// Reconstruct a borrowed cache slot in the drawing joint's animated space.
+/// UVs and resolved material colour stay attached to the slot.
+pub fn pose_cached_vertex(
+    mut vertex: PackedVertex,
+    binding: &[u8],
+    inverse_current: crate::scene::Mat4,
+    source: crate::scene::Mat4,
+) -> PackedVertex {
+    let pos = [2, 4, 6].map(|i| i16::from_le_bytes([binding[i], binding[i + 1]]) as f32);
+    let mut relative = inverse_current.mul(&source);
+    // GE i16 positions are normalized by 32768, whereas packed/posed joint
+    // matrices already have normalized translations. Work in source units.
+    for c in &mut relative.0[12..15] {
+        *c *= MODEL_SCALE;
+    }
+    let round = |c: f32| (if c < 0.0 { c - 0.5 } else { c + 0.5 }) as i16;
+    let p = relative.transform_point(pos).map(round);
+    [vertex.x, vertex.y, vertex.z] = p;
+    // Normals were loaded under the same source matrix as the positions.
+    // Express their inverse-transpose transform in the destination frame so
+    // its GE lighting matrix reconstructs the source joint's lighting.
+    if let Some(inv) = relative.inverse_affine() {
+        let n = [vertex.nx as f32, vertex.ny as f32, vertex.nz as f32];
+        let transformed =
+            [0, 4, 8].map(|i| inv.0[i] * n[0] + inv.0[i + 1] * n[1] + inv.0[i + 2] * n[2]);
+        let length = libm::sqrtf(transformed.iter().map(|v| v * v).sum());
+        let original = libm::sqrtf(n.iter().map(|v| v * v).sum());
+        if length > 0.0 {
+            let n = transformed
+                .map(|v| round(v * original / length).clamp(i8::MIN as i16, i8::MAX as i16) as i8);
+            [vertex.nx, vertex.ny, vertex.nz] = n;
+        }
+    }
+    vertex
 }
 
 /// Material flags, kept as a bitfield so a primitive's state fits in one word.
@@ -628,10 +666,14 @@ pub struct MeshDesc {
     pub source_file: u32,
     /// Byte offset of the source display list, for debugging.
     pub source_offset: u32,
+    /// Eight bytes per vertex: loading node (u16), source position (3 i16).
+    /// u32::MAX means no borrowed vertices. Node u16::MAX means this mesh;
+    /// u16::MAX - 1 means the object root, before any joint matrix.
+    pub binding_offset: u32,
 }
 
 impl MeshDesc {
-    pub const SIZE: usize = 24;
+    pub const SIZE: usize = 28;
 }
 
 /// A texture, stored ready for `sceGuTexImage`.
@@ -2005,6 +2047,19 @@ impl PackWriter {
             verts.extend_from_slice(&[0u8; 2]);
         }
         let vertex_offset = self.push_blob(&verts);
+        let binding_offset = if mesh.vertices.iter().any(|v| v.binding.is_some()) {
+            let mut bindings = Vec::with_capacity(mesh.vertices.len() * 8);
+            for v in &mesh.vertices {
+                let (node, pos) = v.binding.unwrap_or((u16::MAX, v.pos));
+                bindings.extend_from_slice(&node.to_le_bytes());
+                for c in pos {
+                    bindings.extend_from_slice(&c.to_le_bytes());
+                }
+            }
+            self.push_blob(&bindings)
+        } else {
+            u32::MAX
+        };
 
         let first_prim = self.prims.len() as u32;
         for (i, p) in mesh.primitives.iter().enumerate() {
@@ -2174,6 +2229,7 @@ impl PackWriter {
             prim_count: mesh.primitives.len() as u32,
             source_file,
             source_offset,
+            binding_offset,
         });
         (self.meshes.len() - 1) as u32
     }
@@ -2618,6 +2674,7 @@ impl PackWriter {
                 m.prim_count,
                 m.source_file,
                 m.source_offset,
+                m.binding_offset,
             ] {
                 out.extend_from_slice(&v.to_le_bytes());
             }
@@ -3475,6 +3532,7 @@ impl<'a> Pack<'a> {
             prim_count: u32_at(self.data, at + 12),
             source_file: u32_at(self.data, at + 16),
             source_offset: u32_at(self.data, at + 20),
+            binding_offset: u32_at(self.data, at + 24),
         })
     }
 
@@ -3730,6 +3788,13 @@ impl<'a> Pack<'a> {
         self.blob(m.vertex_offset, m.vertex_count as usize * VERTEX_SIZE)
     }
 
+    pub fn vertex_bindings(&self, m: &MeshDesc) -> Option<&'a [u8]> {
+        if m.binding_offset == u32::MAX {
+            return None;
+        }
+        self.blob(m.binding_offset, m.vertex_count as usize * 8)
+    }
+
     /// Raw index bytes for a primitive.
     pub fn indices(&self, p: &PrimDesc) -> Option<&'a [u8]> {
         self.blob(p.index_offset, p.index_count as usize * 2)
@@ -3758,18 +3823,21 @@ mod tests {
             vertices: alloc::vec![
                 MeshVertex {
                     pos: [1, 2, 3],
+                    binding: None,
                     uv: [32, 64],
                     rgba: [0x11, 0x22, 0x33, 0x44],
                     lit: false,
                 },
                 MeshVertex {
                     pos: [4, 5, 6],
+                    binding: None,
                     uv: [0, 0],
                     rgba: [255, 255, 255, 255],
                     lit: false,
                 },
                 MeshVertex {
                     pos: [7, 8, 9],
+                    binding: None,
                     uv: [1, 2],
                     rgba: [0, 0, 0, 255],
                     lit: false,
@@ -3785,6 +3853,52 @@ mod tests {
                 indices: alloc::vec![0, 1, 2],
             }],
         }
+    }
+
+    #[test]
+    fn borrowed_cache_vertex_tracks_loading_joint_after_pack_roundtrip() {
+        use crate::scene::Mat4;
+        let mut mesh = sample_mesh();
+        mesh.vertices[0].binding = Some((3, [12, 0, 0]));
+        mesh.vertices[0].pos = [-88, 0, 0]; // rest draw joint is +100
+        let mut writer = PackWriter::new();
+        writer.add_mesh(&mesh, 296, 0x1F10, |_| None, |_| None);
+        let bytes = writer.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let desc = pack.mesh(0).unwrap();
+        let bindings = pack.vertex_bindings(&desc).unwrap();
+        assert_eq!(u16::from_le_bytes([bindings[0], bindings[1]]), 3);
+        assert_eq!(&bindings[8..10], &u16::MAX.to_le_bytes());
+        let current = Mat4::from_trs([100.0 / MODEL_SCALE, 0.0, 0.0], [0.0; 3], [1.0; 3]);
+        let v = PackedVertex {
+            nx: 127,
+            ..Default::default()
+        };
+        let rest = pose_cached_vertex(
+            v,
+            bindings,
+            current.inverse_affine().unwrap(),
+            Mat4::IDENTITY,
+        );
+        assert_eq!([rest.x, rest.y, rest.z], [-88, 0, 0]);
+        let source = Mat4::from_trs(
+            [0.0, 30.0 / MODEL_SCALE, 0.0],
+            [0.0, 0.0, core::f32::consts::FRAC_PI_2],
+            [1.0; 3],
+        );
+        let animated = pose_cached_vertex(v, bindings, current.inverse_affine().unwrap(), source);
+        assert_eq!([animated.x, animated.y, animated.z], [-100, 42, 0]);
+        assert_eq!([animated.nx, animated.ny, animated.nz], [0, 127, 0]);
+        assert_eq!(animated.u, v.u);
+        assert_eq!(animated.color, v.color);
+        let negative = PackedVertex { nx: -128, ..v };
+        let unchanged = pose_cached_vertex(
+            negative,
+            bindings,
+            current.inverse_affine().unwrap(),
+            Mat4::IDENTITY,
+        );
+        assert_eq!(unchanged.nx, -128);
     }
 
     #[test]

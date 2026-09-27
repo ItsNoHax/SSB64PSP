@@ -22,7 +22,7 @@ new evidence contradicts it.
 - [D-011](docs/decisions/D-011.md): Extern Relocations — Zeroed in Pack, Patched at Runtime Load
 - [D-012](docs/decisions/D-012.md): DObjDesc Arrays — Depth-Tagged Flattened Tree
 - [D-013](docs/decisions/D-013.md): DObj Display List Field — Undiscriminated Union
-- [D-014](docs/decisions/D-014.md): Fighter Vertex Cache — Shared Across Joints (Rest Pose Only)
+- [D-014](docs/decisions/D-014.md): Fighter Vertex Cache — Shared Across Joints
 - [D-015](docs/decisions/D-015.md): Fighter Palette — Named by FTCommonPart Parallel to DObjDesc
 - [D-016](docs/decisions/D-016.md): Stage Material Table — One Word Further in MPGroundDesc
 - [D-017](docs/decisions/D-017.md): Stage Collision — 2D Polylines, vertex2 Is Count

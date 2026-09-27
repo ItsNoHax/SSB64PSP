@@ -1329,7 +1329,17 @@ pub unsafe fn draw_mesh(
     let Some(verts) = pack.vertices(mesh) else {
         return 0;
     };
+    draw_mesh_vertices(pack, mesh, verts, st, mat_anim, effect_mat_anim)
+}
 
+unsafe fn draw_mesh_vertices(
+    pack: &Pack<'_>,
+    mesh: &MeshDesc,
+    verts: &[u8],
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
+) -> u32 {
     let mut tris = 0u32;
     for i in 0..mesh.prim_count {
         let Some(p) = pack.prim(mesh.first_prim + i) else {
@@ -1795,6 +1805,48 @@ unsafe fn draw_object_posed_filtered(
         // matrix, so it has to be captured after the branch above -- both
         // arms leave a different matrix on the stack.
         st.note_model_matrix();
+        if !posed.is_empty() {
+            if let (Some(bindings), Some(verts), Some(inverse)) = (
+                pack.vertex_bindings(&mesh),
+                pack.vertices(&mesh),
+                ssb_rom::scene::Mat4(node.world).inverse_affine(),
+            ) {
+                // Arena memory remains alive until the GE finishes this frame.
+                // Only meshes borrowing RSP slots need a transient buffer.
+                let dynamic = sys::sceGuGetMemory(verts.len() as i32) as *mut u8;
+                core::ptr::copy_nonoverlapping(verts.as_ptr(), dynamic, verts.len());
+                for (index, binding) in bindings.chunks_exact(8).enumerate() {
+                    let source_node = u16::from_le_bytes([binding[0], binding[1]]);
+                    if source_node == u16::MAX {
+                        continue;
+                    }
+                    let source = if source_node == u16::MAX - 1 {
+                        ssb_rom::scene::Mat4::IDENTITY
+                    } else {
+                        posed.get(source_node as usize).copied().unwrap_or_else(|| {
+                            pack.node(object.first_node + u32::from(source_node))
+                                .map_or(ssb_rom::scene::Mat4::IDENTITY, |n| {
+                                    ssb_rom::scene::Mat4(n.world)
+                                })
+                        })
+                    };
+                    let vertex =
+                        dynamic.add(index * ssb_rom::pack::VERTEX_SIZE) as *mut PackedVertex;
+                    vertex.write(ssb_rom::pack::pose_cached_vertex(
+                        *vertex, binding, inverse, source,
+                    ));
+                }
+                tris += draw_mesh_vertices(
+                    pack,
+                    &mesh,
+                    core::slice::from_raw_parts(dynamic, verts.len()),
+                    st,
+                    mat_anim,
+                    effect_mat_anim,
+                );
+                continue;
+            }
+        }
         tris += draw_mesh(pack, &mesh, st, mat_anim, effect_mat_anim);
     }
     tris

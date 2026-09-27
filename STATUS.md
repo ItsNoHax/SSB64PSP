@@ -7,12 +7,11 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** pack and draw stage controller objects (RE-357).
-  Pack v42 carries 29 clips for Whispy, flowers, barrel and gate. Training
-  runs Whispy through packed object clocks and draws its face and flowers.
-  `G_MODIFYVTX` ST writes fix the flowers and DK/Link texture regions.
-- **Next batch:** the match stage loader: map stage kinds, controller
-  initialization and ground hazard descriptors onto packed stage data.
+- **Completed batch:** animated shared-joint geometry (RE-358).
+  Borrowed RSP vertices retain their loading joint through pack v43.
+  Mario's knees and other fighter seams now follow the authored animation.
+- **Next gameplay batch:** the match stage loader: map stage kinds,
+  controller initialization and ground hazard descriptors onto packed data.
   Remaining controller geometry and material animation are in `TODO.md`.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
@@ -20,24 +19,24 @@ Current snapshot. History lives in git and `docs/evidence/`.
 
 | Batch | Result | Evidence |
 |---|---|---|
-| Stage controller objects | Six object bindings, 29 clips; clock/pose/flag checks; runtime port and Training Whispy; display-link order; cached ST writes | RE-357 |
-| Stage controllers and hazards | Eight host VS controllers; hazard registries, wind and damage floors; split fighter tick at stage slot | RE-356 |
+| Animated fighter seams | Source-joint bindings, posed positions/normals; unchanged textures; 40 reviewed goldens refreshed | RE-358 |
+| Stage controller objects | Six bindings, 29 clips; runtime clocks and Training Whispy/flowers; cached ST writes | RE-357 |
 
 ## Verification baseline
 
-- `cargo +1.98.0 test --workspace` with absolute `SSB64_ROM`: **1,190 pass**,
-  including 518 gameplay tests. Clippy (`--workspace --all-targets --
-  -D warnings`), workspace rustfmt and thumb `no_std` builds pass.
-- Both PSP release builds pass; game also with
-  `regression_capture,strict_render`. Existing viewer warnings remain.
-  Both outputs are restored to interactive builds.
-- Full PPSSPPHeadless golden matrix: **73 of 73 match**. Ten reviewed
-  goldens refreshed with two byte-identical captures (RE-357).
-- Interactive PPSSPP Training runs at 60 FPS through a 45-second smoke.
-  A temporary tick-1,200 probe confirms live wind push and looping flowers;
-  probe edits reverted. No PPSSPP process remains. No hardware run.
-- Pack v42: 25,231,232 bytes, SHA-256
-  `3ac8ccc850cc389e475dd24e6282d20d73d1b708ac4f9e902ba7c69b1e83b76b`.
+- Workspace tests with absolute `SSB64_ROM`, one test thread:
+  **1,192 pass**, including 518 gameplay tests. Clippy with warnings denied,
+  rustfmt and ROM thumb `no_std` check pass.
+- Both PSP release builds pass. Interactive outputs are restored after
+  captures. Existing viewer warnings remain.
+- PPSSPPHeadless: **73 of 73 goldens match**. Forty seam changes refreshed
+  with byte-identical repeat captures. Disabling only vertex reconstruction
+  with the new pack reproduces all 73 old goldens twice (RE-358).
+- Training golden scenes supply the integration smoke. No hardware run.
+  RE-357's prior interactive Training smoke ran 45 seconds at 60 FPS.
+- Pack v43: 25,288,432 bytes, SHA-256
+  `2dd4324b8e7b620f802dcc3e93e9f1017b7e88e3a4cb79c2dd9ae72167428e48`.
+  All 1,881 textures match v42; strict check reports zero unresolved.
 - Physical PSP last checked in RE-341 (PSP-2000 Slim, 6.61 ARK, pack v37).
 
 ## Blockers and remaining scope
