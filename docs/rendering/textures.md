@@ -66,8 +66,11 @@ addressing, transcribed from `angrylion-rdp-plus`.
 - **Mirror**: the GE has no mirror wrap, so mirrored axes are pre-baked for
   every period the drawn rectangle spans (RE-067, RE-221). 0 of 810 mirror+clamp
   axes diverge from the reference.
-- **Clamp**: native `sceGuTexWrap(Clamp)` after per-axis tile-origin rebasing
-  (RE-102, RE-152).
+- **Tile origin**: subtract `uls`/`ult` on every axis before clamp, mask and
+  mirror. Repeating axes also use tile-relative phase; omitting the origin
+  hid Mario/Luigi's overall buttons (RE-359).
+- **Clamp**: native `sceGuTexWrap(Clamp)` after tile-origin rebasing
+  (RE-102, RE-152, RE-359).
 - **Power-of-two padding**: filled with repeated edge texels, not zeros, so
   linear filtering at the logical edge matches (RE-222).
 - **512 limit**: the GE addresses at most 512 texels per axis, and rust-psp's
@@ -186,7 +189,7 @@ PSP lowering:
   authored-UV path ([D-040](../decisions/D-040.md)). Conversion truncates,
   matching BattleShip and n64psp (RE-229).
 - `PrimDesc` carries the `gSPTexture` scale and tile origin; the origin
-  applies on clamped axes only.
+  applies on every axis before wrap/mirror/clamp (RE-359).
 
 Remaining: 164 cross-node vertex reuses with differing transforms (measured,
 non-blocking). No pixel-exact comparison with N64 output is claimed.

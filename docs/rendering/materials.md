@@ -51,7 +51,9 @@ blend, `PrimColor`, `Light1Color`, `Light2Color`.
   through the GE texture mapping (RE-301). `MaterialUv::ge_affine`
   reproduces the RDP's truncated quarter-texel origin, its 12-bit field and
   the uploaded dimension; every packed vertex lands on the RDP's texel for
-  tile 0 and tile 1 (RE-326).
+  tile 0 and tile 1 (RE-326). Packed UVs have the rest origin removed on
+  every axis; the affine restores it before applying live scale and origin,
+  including repeating axes (RE-359).
 - `TextureIDCurrent` selects a packed texture; `PaletteID` selects its CLUT.
   Each applies only while the primitive's `MObj` still owns that state
   (`IMAGE_ANIM`, `PALETTE_ANIM`, `TILE0_ANIM`, `SCALE_ANIM`): a later

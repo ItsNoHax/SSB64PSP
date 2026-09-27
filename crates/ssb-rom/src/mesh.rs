@@ -138,7 +138,8 @@ pub struct TextureRef {
     /// origin, still in raw S10.2 fixed point (quarter-texel units, the same
     /// form `dl::Cmd::SetTileSize` decodes). A framebuffer binding always
     /// needs this rebased to its small runtime capture (RE-108/RE-109).
-    /// Ordinary ROM textures need it on a clamped axis too: the RDP clamps
+    /// Ordinary ROM textures need it on every axis: the RDP subtracts the
+    /// origin before clamp, mask and mirror (RE-359). The RDP clamps
     /// against the tile's absolute `uls..lrs`/`ult..lrt` window, whereas the
     /// PSP clamps against an uploaded image whose first texel is coordinate
     /// zero. RE-152 identified this on Fox's lower-face texture, whose real
@@ -2277,16 +2278,12 @@ impl Builder {
         if let Some(t) = self.material.texture {
             // `origin_s`/`origin_t` are raw S10.2 (quarter-texel);
             // `v.uv` is S10.5, so align scales with `* 8`. A runtime
-            // framebuffer always starts at zero. An ordinary clamped axis
-            // also starts at zero on the PSP, unlike the RDP's absolute tile
-            // window. Repeat axes keep absolute coordinates because their
-            // mask phase is already meaningful (RE-152).
-            if t.framebuffer || t.clamp_s {
-                v.uv[0] = (v.uv[0] as i32 - t.origin_s as i32 * 8) as i16;
-            }
-            if t.framebuffer || t.clamp_t {
-                v.uv[1] = (v.uv[1] as i32 - t.origin_t as i32 * 8) as i16;
-            }
+            // framebuffer and every ordinary tile start at zero on the PSP.
+            // RDP TRELATIVE subtracts the origin before clamp/mask/mirror,
+            // including repeating axes. Keeping their absolute coordinates
+            // flips Mario/Luigi's mirrored torso texture by one period.
+            v.uv[0] = (v.uv[0] as i32 - t.origin_s as i32 * 8) as i16;
+            v.uv[1] = (v.uv[1] as i32 - t.origin_t as i32 * 8) as i16;
         }
         if let Some(&i) = self.seen.get(&v) {
             return Ok(i);
@@ -5278,7 +5275,7 @@ mod tests {
     }
 
     #[test]
-    fn an_ordinary_repeat_axis_keeps_its_absolute_mask_phase() {
+    fn an_ordinary_repeat_axis_rebases_before_masking() {
         let file = vertex_data_uv(3, 3057, 4577);
         let cmds = [
             Cmd::SetTimg {
@@ -5321,7 +5318,7 @@ mod tests {
             Cmd::End,
         ];
         let mesh = convert(&cmds, Source::bare(&file)).unwrap();
-        assert_eq!(mesh.vertices[0].uv, [3056, 0]);
+        assert_eq!(mesh.vertices[0].uv, [0, 0]);
     }
 
     #[test]

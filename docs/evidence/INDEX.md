@@ -292,7 +292,7 @@ editing a record.
 | RE-280 | Root cause found: `Ci4`/`PsmT4` packing uses the wrong nibble order for the PSP GE | COMPLETE — fix applied and confirmed, see RE-281 | texture, fighter, hardware, visual-regression, asset-pipeline |  |
 | RE-281 | RE-280's `Ci4`/`PsmT4` nibble-order fix applied, pack rebuilt, 18/22 goldens refreshed and explained | COMPLETE | texture, fighter, hardware, visual-regression, asset-pipeline |  |
 | RE-282 | Physical-hardware confirmation of RE-281's `Ci4`/`PsmT4` fix (Mario) | COMPLETE | texture, fighter, hardware, visual-regression |  |
-| RE-283 | Post-RE-281 texture/geometry defects survive across most playable fighters | COMPLETE (software-traced) — Fox's wrist defect, Samus's chest "black square", and |  |  |
+| RE-283 | Post-RE-281 texture/geometry defects survive across most playable fighters | COMPLETE (software-traced) — Fox's wrist defect and Samus's chest "black square" |  |  |
 | RE-284 | 30-minute physical-hardware sustained run, extending past the prior 10-minute sample | COMPLETE | hardware, visual-regression |  |
 | RE-285 | New stage golden: Peach's Castle (scene 10), physically confirmed | COMPLETE | stage, visual-regression, hardware |  |
 | RE-286 | Remaining 37 stage goldens added in one batch (software-only | COMPLETE (software); physical-PSP confirmation deferred as a follow-up batch | stage, visual-regression |  |
@@ -368,3 +368,4 @@ editing a record.
 | RE-356 | Stage controllers and ground hazards | IMPLEMENTED (decomp, US ROM data checks, host tests, both PSP builds, PPSSPPHeadless Training goldens; no physical PSP) | gameplay, stages, collision, combat, animation, status machine |  |
 | RE-357 | Pack and draw stage controller objects | IMPLEMENTED (decomp, US ROM, packed clock/pose/flag tests, both PSP builds, full PPSSPPHeadless goldens and live wind probe; no physical PSP) | gameplay, stages, animation, pack, asset-pipeline, rendering, texture, visual-regression |  |
 | RE-358 | Animated RSP cache vertices close fighter joint seams | IMPLEMENTED (decomp, US ROM, host tests and PPSSPP software; no physical PSP) | geometry, fighter, animation, pack, rendering, visual-regression |  |
+| RE-359 | Tile-relative mirror phase restores Mario and Luigi's buttons | IMPLEMENTED (US ROM, RDP reference, host regression and PPSSPP software; no physical PSP) | texture, geometry, fighter, pack, rendering, visual-regression |  |

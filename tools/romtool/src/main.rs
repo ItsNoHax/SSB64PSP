@@ -11142,6 +11142,83 @@ mod tests {
     }
 
     #[test]
+    fn mario_and_luigi_buttons_use_tile_relative_mirror_phase() {
+        use std::collections::BTreeMap;
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        for (id, graph_offset, pos, uv) in [
+            (296, 0x2200, [-39, -1, 71], [-174, 156]),
+            (323, 0x2410, [-24, 58, 61], [-130, 435]),
+        ] {
+            let file = loaded.files[id].as_ref().unwrap();
+            let graph = loaded.graphs[&(id as u32)]
+                .iter()
+                .find(|g| g.offset == graph_offset)
+                .unwrap();
+            let plan = super::plan_draw_order(graph, &ssb_rom::scene::DlResolver::new(file));
+            let converted = super::convert_graph_at(
+                &loaded,
+                file,
+                graph.offset,
+                &plan,
+                &loaded.materials(file, graph),
+                &mut BTreeMap::new(),
+                ssb_rom::mesh::InitialMaterial::FIGHTER_EXTERNAL,
+            );
+            let mut checked = 0;
+            for (p, mesh) in plan.iter().zip(converted) {
+                if p.node != 2 {
+                    continue;
+                }
+                checked += 1;
+                let mesh = mesh.unwrap();
+                let vertex = mesh
+                    .vertices
+                    .iter()
+                    .filter(|v| v.pos == pos)
+                    .min_by_key(|v| v.uv[0])
+                    .unwrap();
+                // Independent ROM Vtx/G_TEXTURE/SETTILESIZE decode: these
+                // front torso corners lie just left of the mirrored origin.
+                assert_eq!(vertex.uv, uv, "file {id}: mirrored S must subtract uls=128");
+                let t = mesh.primitives[0].material.texture.unwrap();
+                assert!(t.mirror_s && !t.clamp_s);
+                assert_eq!(t.origin_s, 128);
+                for v in &mesh.vertices {
+                    let axis = ssb_rom::n64_addressing::TileAxis {
+                        shift: 0,
+                        origin_q2: 128,
+                        far_edge_q2: 380,
+                        mask: 5,
+                        mirror: true,
+                        clamp_bit: false,
+                    };
+                    let relative = i32::from(v.uv[0]);
+                    assert_eq!(
+                        ssb_rom::n64_addressing::address_axis(&axis, relative + 1024),
+                        ssb_rom::n64_addressing::psp_lowering_axis(relative, 32, 64, true, false)
+                    );
+                }
+                if id == 296 {
+                    let palette_at = t.palette_offset.unwrap() as usize;
+                    let palette =
+                        ssb_rom::texture::parse_tlut(&file.data[palette_at..palette_at + 32]);
+                    let image = super::decode_texture(&file.data, &t, &palette).unwrap();
+                    // At this front corner, relative S=-174 mirrors to texel
+                    // 5 and T=156 samples row 4: the authored yellow button.
+                    let rgb = image.get(4 * 32 + 5);
+                    assert_eq!(rgb, [247, 222, 0, 255]);
+                }
+            }
+            assert_eq!(checked, 1, "file {id}: the torso list must be checked");
+        }
+    }
+
+    #[test]
     fn mario_knees_retain_thigh_cache_vertices() {
         use std::collections::BTreeMap;
         let Some(path) = std::env::var_os("SSB64_ROM") else {
@@ -12155,7 +12232,7 @@ mod tests {
                     primitives_examined += 1;
                     let home = t.data_file.map_or(id, u32::from);
 
-                    for (mask, mirror, clamp_bit, origin_q2, drawn, axis_idx) in [
+                    for (mask, mirror, clamp_bit, _origin_q2, drawn, axis_idx) in [
                         (
                             t.mask_s,
                             t.mirror_s,
@@ -12246,13 +12323,10 @@ mod tests {
                                     clamp_bit,
                                 ));
                                 m0.clamp_bit_clear += 1;
-                                // `clamp_bit` is clear here, so `mesh.rs`
-                                // only subtracted the origin if this was a
-                                // framebuffer binding (excluded above) --
-                                // the coordinate is still absolute.
+                                // Every packed authored coordinate is now
+                                // relative to the tile origin (RE-359).
                                 let out_of_bounds = [min_c, max_c].into_iter().any(|c| {
-                                    let rel = c - (origin_q2 << 3);
-                                    let idx = rel.div_euclid(32);
+                                    let idx = c.div_euclid(32);
                                     idx < 0 || idx > drawn as i32 - 1
                                 });
                                 if out_of_bounds {
@@ -12713,11 +12787,8 @@ mod tests {
     /// against `address_axis`'s hardware-model result for the same tile.
     /// RE-230 (T6) measured every real texgen tile clamped on both axes
     /// (`cm` only ever `(2,2)`/`(3,2)`/`(2,3)`); a non-clamp axis is flagged
-    /// rather than silently skipped, since `texgen_s10_5_addressed` only
-    /// subtracts the tile origin on a clamp axis and this test has not
-    /// established the non-clamp+nonzero-origin case is even meaningful for
-    /// texgen (`texgen_addressing_reference_cases_for_material_combinations_not_seen_in_the_real_archive`,
-    /// below, covers non-clamp addressing synthetically with origin 0).
+    /// rather than silently skipped. RE-359 also covers nonzero repeating
+    /// origins synthetically in the reference cases below.
     ///
     /// RE-231 measured a real, narrow divergence -- 9 of 34 real
     /// clamp-without-mirror axis instances whose mask genuinely narrows
@@ -12807,11 +12878,8 @@ mod tests {
     /// above) -- repeat+mask and mirror+repeat with no clamp bit, which the
     /// real archive never exercises for texgen but which `address_axis`/
     /// `psp_lowering_axis` must still agree on, since a future asset or a
-    /// currently-undiscovered display list could use them. Origin is held
-    /// at 0 for every non-clamp case: `texgen_s10_5_addressed` only
-    /// subtracts the tile origin on a clamp axis (RE-228), so a non-clamp
-    /// axis with a nonzero origin is a real, currently-unsupported gap, not
-    /// something this synthetic case should paper over.
+    /// currently-undiscovered display list could use them. Nonzero origins
+    /// test TRELATIVE before both repeating and mirrored addressing (RE-359).
     #[test]
     fn texgen_addressing_reference_cases_for_material_combinations_not_seen_in_the_real_archive() {
         // (name, mask, mirror, clamp_bit, origin, dim, scale)
@@ -12836,6 +12904,24 @@ mod tests {
             ),
             ("repeat + mask, no clamp", 5, false, false, 0, 32, 0x07C0),
             ("mirror + repeat, no clamp", 5, true, false, 0, 32, 0x07C0),
+            (
+                "repeat + fractional origin",
+                5,
+                false,
+                false,
+                39,
+                32,
+                0x07C0,
+            ),
+            (
+                "mirror + one-period origin",
+                5,
+                true,
+                false,
+                128,
+                32,
+                0x07C0,
+            ),
             ("mirror + clamp", 5, true, true, 0, 32, 0x07C0),
             (
                 "padded PSP dim (42, non-power-of-two), clamp",
@@ -12849,11 +12935,8 @@ mod tests {
         ];
 
         for &(name, mask, mirror, clamp_bit, origin, dim, scale) in cases {
-            let (origin_q2, far_edge_q2) = if clamp_bit {
-                (0, (dim as i32 - 1) << 2)
-            } else {
-                (origin as i32, origin as i32 + ((dim as i32 - 1) << 2))
-            };
+            let origin_q2 = origin as i32;
+            let far_edge_q2 = origin_q2 + ((dim as i32 - 1) << 2);
             let model = ssb_rom::n64_addressing::TileAxis {
                 shift: 0,
                 origin_q2,
@@ -12882,14 +12965,10 @@ mod tests {
                     };
                     let coord = u as i32;
 
-                    let hw = ssb_rom::n64_addressing::address_axis(&model, coord);
-                    let psp_rel = if clamp_bit {
-                        coord
-                    } else {
-                        coord - origin as i32 * 8
-                    };
+                    let hw =
+                        ssb_rom::n64_addressing::address_axis(&model, coord + origin as i32 * 8);
                     let psp = ssb_rom::n64_addressing::psp_lowering_axis(
-                        psp_rel, period, dim as u32, mirror, clamp_bit,
+                        coord, period, dim as u32, mirror, clamp_bit,
                     );
                     assert_eq!(
                         hw, psp,

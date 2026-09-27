@@ -555,12 +555,12 @@ impl MaterialUv {
 
     /// The GE texture scale and offset that move a primitive packed at the
     /// rest window to this live one (RE-326). `dims` are the dimensions
-    /// handed to `sceGuTexImage` and `clamp` the texture's clamped axes; the
-    /// offset is in the GE's normalised units, added after the scale.
+    /// handed to `sceGuTexImage`; the offset is in the GE's normalised
+    /// units, added after the scale. Clamp affects sampling, not this affine.
     ///
     /// Per axis, in texels, a packed coordinate `x` is the vertex loaded
-    /// under the rest `gSPTexture` scale, less the rest tile origin on a
-    /// clamped axis (`mesh::Builder::push_vertex`, as `mobj::read` clamps
+    /// under the rest `gSPTexture` scale, less the rest tile origin on every
+    /// axis (`mesh::Builder::push_vertex`, as `mobj::read` clamps
     /// it). The RDP samples the vertex under the live scale less the live
     /// origin, which `gDPSetTileSize` holds in a 12-bit field:
     ///
@@ -571,7 +571,7 @@ impl MaterialUv {
     /// `k` is `base_sca / sca`, after the `unk10 == 1` halving: the `u16`
     /// truncation of `gSPTexture`'s scale is not modelled, as `unk08` is
     /// not packed.
-    pub fn ge_affine(&self, dims: (u32, u32), clamp: (bool, bool)) -> UvAffine {
+    pub fn ge_affine(&self, dims: (u32, u32), _clamp: (bool, bool)) -> UvAffine {
         const EPS: f32 = 1.0 / 65535.0;
         let (_, live) = self.drawn([self.trau, self.trav], [self.scau, self.scav]);
         let (_, rest) = self.drawn(
@@ -591,17 +591,12 @@ impl MaterialUv {
             [self.base_scau, self.base_scav],
         );
         let live = self.tile_origin([self.trau, self.trav], [self.scau, self.scav]);
-        let clamped = [clamp.0, clamp.1];
         let dim = [dims.0.max(1) as f32, dims.1.max(1) as f32];
         let offset = |axis: usize| {
             if self.mode & 3 == 0 {
                 return 0.0;
             }
-            let baked = if clamped[axis] {
-                rest[axis].clamp(0, 0xFFFF) as f32 / 4.0
-            } else {
-                0.0
-            };
+            let baked = rest[axis].clamp(0, 0xFFFF) as f32 / 4.0;
             (baked * k[axis] - (live[axis] & 0xFFF) as f32 / 4.0) / dim[axis]
         };
         UvAffine {
@@ -1534,7 +1529,7 @@ mod tests {
     }
 
     #[test]
-    fn a_clamped_axis_restores_the_origin_the_packer_baked_out() {
+    fn every_axis_restores_the_origin_the_packer_baked_out() {
         // Rest origin 2 texels, live 3, scale doubled by `gSPTexture`:
         // `(x + 2) * 2 - 3 = 2x + 1`.
         let base = MaterialUv {
@@ -1546,9 +1541,9 @@ mod tests {
         let a = base.ge_affine((128, 128), (true, false));
         assert_eq!(a.scale_s, 2.0);
         assert_eq!(a.offset_s, 1.0 / 128.0);
-        // Repeating, the packed coordinate kept the absolute position.
+        // Repeating coordinates have the same rest origin baked out.
         let a = base.ge_affine((128, 128), (false, false));
-        assert_eq!(a.offset_s, -3.0 / 128.0);
+        assert_eq!(a.offset_s, 1.0 / 128.0);
     }
 
     #[test]

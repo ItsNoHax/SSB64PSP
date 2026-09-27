@@ -113,6 +113,12 @@ attribution are in [RE-357](../evidence/re/RE-357.md).
 
 ## Scenes
 
+RE-359 refreshes 41 goldens for tile-relative repeating/mirrored UVs.
+Mario and Luigi regain their overall buttons; DK's head texture changes
+slightly. Other changes are on Mario in stage and Training views. All
+textures are unchanged, and the old pack with the new runtime reproduces
+all 73 previous goldens twice. Counts and controls: [RE-359](../evidence/re/RE-359.md).
+
 RE-358 refreshes 40 goldens for animated shared-joint geometry. Mario's
 knees and Pikachu's torso/limb seams close; stage-view differences are on
 the small Mario model. Disabling only the new vertex reconstruction with

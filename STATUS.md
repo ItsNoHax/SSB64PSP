@@ -7,9 +7,9 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** animated shared-joint geometry (RE-358).
-  Borrowed RSP vertices retain their loading joint through pack v43.
-  Mario's knees and other fighter seams now follow the authored animation.
+- **Completed batch:** tile-relative mirror phase (RE-359).
+  Mario and Luigi's overall buttons render from their authored textures.
+  Repeat axes now subtract the tile origin before masking and mirroring.
 - **Next gameplay batch:** the match stage loader: map stage kinds,
   controller initialization and ground hazard descriptors onto packed data.
   Remaining controller geometry and material animation are in `TODO.md`.
@@ -19,24 +19,26 @@ Current snapshot. History lives in git and `docs/evidence/`.
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Overall buttons | Correct repeat-axis origins; unchanged textures; 41 reviewed goldens refreshed | RE-359 |
 | Animated fighter seams | Source-joint bindings, posed positions/normals; unchanged textures; 40 reviewed goldens refreshed | RE-358 |
-| Stage controller objects | Six bindings, 29 clips; runtime clocks and Training Whispy/flowers; cached ST writes | RE-357 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread:
-  **1,192 pass**, including 518 gameplay tests. Clippy with warnings denied,
+  **1,193 pass**, including 518 gameplay tests. Pinned 1.98.0 Clippy with warnings denied,
   rustfmt and ROM thumb `no_std` check pass.
 - Both PSP release builds pass. Interactive outputs are restored after
   captures. Existing viewer warnings remain.
-- PPSSPPHeadless: **73 of 73 goldens match**. Forty seam changes refreshed
-  with byte-identical repeat captures. Disabling only vertex reconstruction
-  with the new pack reproduces all 73 old goldens twice (RE-358).
+- PPSSPPHeadless: **73 of 73 goldens match twice**. Forty-one UV changes
+  refreshed with byte-identical repeats. The old pack with the new runtime
+  reproduces all 73 old goldens twice. Torso-UV-only controls reproduce
+  the rebuilt Mario and Luigi captures (RE-359).
 - Training golden scenes supply the integration smoke. No hardware run.
   RE-357's prior interactive Training smoke ran 45 seconds at 60 FPS.
 - Pack v43: 25,288,432 bytes, SHA-256
-  `2dd4324b8e7b620f802dcc3e93e9f1017b7e88e3a4cb79c2dd9ae72167428e48`.
-  All 1,881 textures match v42; strict check reports zero unresolved.
+  `b83c6d37131e0e88de51a4c02d163c93c2db4bc93a1d4bc905b049e33e84098f`.
+  Only UV bytes change: 567 vertices in 30 meshes. All 1,881 textures
+  match the prior v43; strict check reports zero unresolved.
 - Physical PSP last checked in RE-341 (PSP-2000 Slim, 6.61 ARK, pack v37).
 
 ## Blockers and remaining scope
