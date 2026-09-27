@@ -2,6 +2,15 @@
 
 Part of [rendering.md](../rendering.md).
 
+## Stage visibility
+
+`StageJoint` retains `SetFlags` commands. Bit 0 suppresses the node's mesh;
+bit 1 suppresses its whole subtree, following `gcDrawDObjTree`. Siblings
+remain visible. Training draws the same animated poses that supply map-group
+translation and speed; On/Off collision groups skip their own animation
+callback. Collision Hidden/Show transitions follow zero/nonzero source flags
+(RE-353).
+
 ## Billboards
 
 Status: complete (109 nodes; RE-131–145).

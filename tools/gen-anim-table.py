@@ -645,12 +645,19 @@ REACTION_SLOTS = [
     ("FuraFura",         164),
 ]
 
+CLIFF_SLOTS = [(name, status) for status, name in enumerate([
+    "CliffCatch", "CliffWait", "CliffQuick", "CliffClimbQuick1",
+    "CliffClimbQuick2", "CliffSlow", "CliffClimbSlow1", "CliffClimbSlow2",
+    "CliffAttackQuick1", "CliffAttackQuick2", "CliffAttackSlow1", "CliffAttackSlow2",
+    "CliffEscapeQuick1", "CliffEscapeQuick2", "CliffEscapeSlow1", "CliffEscapeSlow2",
+], 84)]
+
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
              + [(name, status, None) for name, status in GRAB_SLOTS]
              + [(name, None, None) for name, _, _ in LATE_SPECIAL_SLOTS]
              + [(name, status, None) for name, status in LATE_COMMON_SLOTS]
              + [(name, None, None) for name, _, _ in POST_SPECIAL_SLOTS]
-             + [(name, status, None) for name, status in REACTION_SLOTS])
+             + [(name, status, None) for name, status in REACTION_SLOTS + CLIFF_SLOTS])
 
 # The slots whose animation ends on its own, and whose length the status
 # machine therefore reads (RE-035). Everything after them loops until it is
@@ -952,7 +959,7 @@ def resolve(refs):
             common(slot, status)
         for slot, target, sym in POST_SPECIAL_SLOTS:
             special(slot, target, sym)
-        for slot, status in REACTION_SLOTS:
+        for slot, status in REACTION_SLOTS + CLIFF_SLOTS:
             common(slot, status)
         rows.append((fighter, entry))
     return rows, problems

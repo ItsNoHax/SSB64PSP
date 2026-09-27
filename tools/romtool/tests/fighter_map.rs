@@ -8,6 +8,37 @@ use ssb_rom::archive::Archive;
 use ssb_rom::collision::LineKind;
 
 #[test]
+fn cliff_rom_joint_inventory() {
+    let Ok(path) = std::env::var("SSB64_ROM") else {
+        return;
+    };
+    let rom = std::fs::read(path).unwrap();
+    let info = ssb_rom::rom::identify(&rom).unwrap();
+    let archive = Archive::open(&rom, info.region).unwrap();
+    for kind in 0..12 {
+        let entry_file = ssb_rom::fighter::FIGHTER_FILES[kind as usize];
+        let main = archive.load(entry_file.file).unwrap();
+        let fighter = ssb_rom::fighter::decode_file(entry_file, &main).unwrap();
+        let mask = fighter.setup_parts;
+        let entry = &ssb_rom::anim::FIGHTER_ANIMS[kind as usize];
+        assert_eq!(
+            fighter.attributes.cliff_air_mask,
+            if matches!(kind, 0 | 3 | 4 | 11) { 2 } else { 0 }
+        );
+        for slot in ssb_rom::anim::SLOT_CLIFF_CATCH..ssb_rom::anim::SLOT_COUNT {
+            let file = archive.load(entry.files[slot] as u32).unwrap();
+            let count = ssb_rom::anim::joint_table_len(&file.data).unwrap();
+            assert!(ssb_rom::anim::LEADING_RUNTIME_JOINT[kind as usize][slot]);
+            assert!(
+                count as u32 > mask.count_ones(),
+                "fighter {kind}, {}",
+                ssb_rom::anim::SLOT_NAMES[slot]
+            );
+        }
+    }
+}
+
+#[test]
 fn dream_land_rom_geometry_drives_floor_wall_ceiling_and_cliff_queries() {
     let Ok(path) = std::env::var("SSB64_ROM") else {
         return;
@@ -28,6 +59,7 @@ fn dream_land_rom_geometry_drives_floor_wall_ceiling_and_cliff_queries() {
         };
         for (point, pair) in line.points.windows(2).enumerate() {
             surfaces.push(MapSurface {
+                motion: None,
                 kind,
                 segment: Segment {
                     x1: pair[0].pos[0],

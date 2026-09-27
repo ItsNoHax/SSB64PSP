@@ -360,6 +360,9 @@ pub struct Fighter {
     /// handle, so host gameplay tests can provide it directly and `ssb-game`
     /// remains runtime-independent.
     pub root_motion: RootMotion,
+    /// Current authored TransN translation, sampled by the animation runtime.
+    pub transn: Vec3,
+    pub cliff_air_mask: u32,
 }
 
 impl Fighter {
@@ -427,6 +430,14 @@ impl Fighter {
             weapon_spawn_anchor: None,
             joint_transforms: [None; FIGHTER_JOINTS],
             root_motion: RootMotion::default(),
+            transn: Vec3::ZERO,
+            cliff_air_mask: match kind {
+                FighterKind::Mario
+                | FighterKind::Luigi
+                | FighterKind::Samus
+                | FighterKind::Ness => 2,
+                _ => 0,
+            },
             motion_script: crate::motion::MotionState::default(),
             attack_colls: [crate::combat::AttackColl::default(); 4],
             hitstatus: crate::combat::HitStatus::Normal,
@@ -677,13 +688,14 @@ impl Fighter {
         self.tick_map(|| floors().into_iter().map(crate::map::floor_surface));
     }
 
-    /// Full static map input, shared by host matches and the PSP runtime.
+    /// Full map input, shared by host matches and the PSP runtime.
     pub fn tick_map<I, F>(&mut self, surfaces: F)
     where
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         self.tick_timers();
+        self.resolve_cliff_release(&surfaces);
         // `proc_passive`: an electric hit's `DamageE` hands over to the
         // real damage status once hitlag is over.
         crate::attack::update_damage_e(self);
@@ -698,6 +710,7 @@ impl Fighter {
         // ground and air (a jumpsquat ending, a platform drop), so the
         // situation is re-read afterwards rather than captured before.
         crate::status::update(self);
+        self.resolve_cliff_release(&surfaces);
 
         // `ftCommonYoshiEggProcPhysics`'s own half, ahead of the common
         // physics it ends with.
@@ -714,14 +727,111 @@ impl Fighter {
         }
         self.map_contacts_prev = self.map_contacts;
         self.map_contacts = crate::map::Contacts::default();
-        match self.situation {
-            Situation::Ground => self.tick_ground(surfaces),
-            Situation::Air => self.tick_air(surfaces),
+        if !self.tick_cliff(&surfaces) {
+            match self.situation {
+                Situation::Ground => self.tick_ground(surfaces),
+                Situation::Air => self.tick_air(surfaces),
+            }
         }
         // Root motion is an input sample, not persistent fighter state. This
         // prevents a missed runtime sample from replaying an old displacement.
         self.root_motion = RootMotion::default();
         self.weapon_spawn_anchor = None;
+    }
+
+    /// Finish a cliff damage callback in the match's hit-resolution pass.
+    pub fn resolve_cliff_release<I, F>(&mut self, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        if let Some(previous) = self.cliff.release_previous.take() {
+            let result = crate::map::move_air(
+                &self.coll,
+                previous,
+                self.pos,
+                crate::map::AirOptions::default(),
+                surfaces,
+            );
+            self.pos = result.moved.pos;
+        }
+    }
+
+    fn tick_cliff<I, F>(&mut self, surfaces: &F) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        use crate::map;
+        if !map::is_cliff_hold(self.status.status) && !map::is_cliff_phase2(self.status.status) {
+            return false;
+        }
+        let Some(corner) = map::cliff_corner(surfaces, self.cliff.line, self.facing.sign()) else {
+            self.floor = None;
+            self.cliffcatch_wait = crate::status::CLIFF_CATCH_WAIT;
+            crate::status::set_fall(self);
+            return false;
+        };
+        self.cliff.corner = corner;
+        if map::is_cliff_hold(self.status.status) {
+            self.physics = PhysicsState::default();
+            self.pos.x = corner.x + self.transn.z * self.facing.sign() * self.attributes.size;
+            self.pos.y = corner.y + self.transn.y * self.attributes.size;
+            return true;
+        }
+        if self.cliff.place_phase2 {
+            self.pos.x = corner.x + 5.0 * self.facing.sign();
+            if let Some((y, floor)) = map::floor_point(surfaces, self.cliff.line, self.pos.x) {
+                self.pos.y = y;
+                self.floor = Some(floor);
+            }
+            self.cliff.place_phase2 = false;
+        }
+        let mut motion = self.root_motion;
+        motion.delta *= self.attributes.size;
+        if self.is_grounded() {
+            crate::physics::apply_ground_vel_transn(&mut self.physics, motion, self.facing.sign());
+            let want =
+                self.pos + Vec3::new(self.physics.vel_ground.x, 0.0, self.physics.vel_ground.z);
+            let stop = !matches!(
+                self.status.status,
+                crate::status::AnyStatus::Common(
+                    crate::status::Status::CliffClimbQuick2
+                        | crate::status::Status::CliffClimbSlow2
+                )
+            );
+            let (moved, contacts) =
+                map::move_ground(&self.coll, self.pos, want, self.cliff.line, stop, surfaces);
+            self.pos = moved.pos;
+            self.floor = moved.floor;
+            self.map_contacts = contacts;
+            if self.floor.is_none() {
+                crate::status::set_fall(self);
+            }
+        } else {
+            crate::physics::apply_air_vel_transn_all(&mut self.physics, motion, self.facing.sign());
+            let mut want = self.pos + self.physics.vel_air;
+            let speed = map::line_speed(surfaces, self.cliff.line);
+            if let Some((y, _)) = map::floor_point(surfaces, self.cliff.line, want.x + speed.x) {
+                want.x += speed.x;
+                want.y = y + self.transn.y;
+                self.physics.vel_air = want - self.pos;
+            }
+            let result = map::move_air(
+                &self.coll,
+                self.pos,
+                want,
+                map::AirOptions::default(),
+                surfaces,
+            );
+            self.pos = result.moved.pos;
+            self.map_contacts = result.contacts;
+            if let Some(floor) = result.moved.floor {
+                self.floor = Some(floor);
+                self.land(self.pos.y);
+            }
+        }
+        true
     }
 
     /// `ftCommonDamageCommonProcLagUpdate`: during a hit's hitlag, a fresh
@@ -744,25 +854,23 @@ impl Fighter {
             self.reaction.coll_mask_prev = self.reaction.coll_mask_curr;
             self.reaction.coll_mask_curr = 0;
         }
-        if !self.is_smash_di || self.hitlag == 0 {
-            return;
-        }
         let (x, y) = (self.stick.x as i32, self.stick.y as i32);
-        if x * x + y * y < SMASH_DI_RANGE_MIN * SMASH_DI_RANGE_MIN {
-            return;
-        }
-        if self.stick.tap_x >= SMASH_DI_BUFFER_TICS_MAX
-            && self.stick.tap_y >= SMASH_DI_BUFFER_TICS_MAX
-        {
-            return;
-        }
-        self.stick.tap_x = crate::status::STICKBUFFER_MAX;
-        self.stick.tap_y = crate::status::STICKBUFFER_MAX;
-        let want = Vec3::new(
-            self.pos.x + x as f32 * SMASH_DI_RANGE_MUL,
-            self.pos.y + y as f32 * SMASH_DI_RANGE_MUL,
-            self.pos.z,
-        );
+        let nudge = self.is_smash_di
+            && self.hitlag != 0
+            && x * x + y * y >= SMASH_DI_RANGE_MIN * SMASH_DI_RANGE_MIN
+            && (self.stick.tap_x < SMASH_DI_BUFFER_TICS_MAX
+                || self.stick.tap_y < SMASH_DI_BUFFER_TICS_MAX);
+        let want = if nudge {
+            self.stick.tap_x = crate::status::STICKBUFFER_MAX;
+            self.stick.tap_y = crate::status::STICKBUFFER_MAX;
+            Vec3::new(
+                self.pos.x + x as f32 * SMASH_DI_RANGE_MUL,
+                self.pos.y + y as f32 * SMASH_DI_RANGE_MUL,
+                self.pos.z,
+            )
+        } else {
+            self.pos
+        };
         match (self.situation, self.floor) {
             (Situation::Ground, Some(standing)) => {
                 let (moved, _) = crate::map::move_ground(

@@ -144,6 +144,7 @@ fn blocks(opcode: u32) -> bool {
 #[derive(Clone, Copy)]
 pub struct StageJoint {
     tracks: [Aobj; TRACK_COUNT],
+    pub flags: u16,
     anim_wait: f32,
     pc: usize,
     ended: bool,
@@ -155,6 +156,7 @@ impl StageJoint {
     pub fn start(script: u32, frame: f32) -> Self {
         StageJoint {
             tracks: [Aobj::default(); TRACK_COUNT],
+            flags: 0,
             anim_wait: -frame,
             pc: script as usize,
             ended: false,
@@ -224,7 +226,10 @@ impl StageJoint {
                 // `dobj->flags = command.flags`, then the command's *own*
                 // payload is the wait — `AObjAnimAdvance` post-increments, so
                 // the read is from this word, not the next one.
-                OP_SET_FLAGS => self.anim_wait += payload,
+                OP_SET_FLAGS => {
+                    self.flags = flags;
+                    self.anim_wait += payload;
+                }
                 // Ages the named tracks without setting a key.
                 OP_ADD_LENGTH => {
                     for i in 0..TRACK_COUNT {
@@ -448,6 +453,22 @@ mod tests {
             "got {}",
             pose.rotate[0]
         );
+    }
+
+    #[test]
+    fn flags_command_holds_then_restores_visibility() {
+        let data = script(&[
+            cmd(OP_SET_FLAGS, 2, 2),
+            cmd(OP_SET_FLAGS, 0, 0),
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut joint = StageJoint::start(0, 0.0);
+        let mut pose = JointPose::default();
+        joint.tick(&data, 1.0, &mut pose).unwrap();
+        assert_eq!(joint.flags, 2);
+        joint.tick(&data, 1.0, &mut pose).unwrap();
+        assert_eq!(joint.flags, 0);
+        assert!(joint.ended());
     }
 
     #[test]

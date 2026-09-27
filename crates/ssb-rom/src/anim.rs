@@ -118,7 +118,8 @@ pub const SLOT_KIRBY_COPY_NESS_SPECIAL_N: usize = 444;
 /// `FuraFura`, in `ftCommonStatus` order.
 pub const SLOT_WALL_DAMAGE: usize = 446;
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 471;
+pub const SLOT_CLIFF_CATCH: usize = 471;
+pub const SLOT_COUNT: usize = 487;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -597,7 +598,8 @@ mod tests {
             }
         }
         assert_eq!(SLOT_NAMES[SLOT_WALL_DAMAGE], "WallDamage");
-        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "FuraFura");
+        assert_eq!(SLOT_NAMES[SLOT_CLIFF_CATCH - 1], "FuraFura");
+        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "CliffEscapeSlow2");
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")

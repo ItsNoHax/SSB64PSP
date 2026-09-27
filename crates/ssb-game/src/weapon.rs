@@ -35,12 +35,32 @@ pub enum MapSurfaceKind {
 }
 
 /// One stage segment presented to a weapon map query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MapSurface {
     pub kind: MapSurfaceKind,
     pub segment: Segment,
     /// Original vertex identity and polyline position for map-bound weapons.
     pub topology: Option<SurfaceTopology>,
+    /// Current group translation and this tick's displacement. None is static.
+    pub motion: Option<SurfaceMotion>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SurfaceMotion {
+    pub offset: Vec2,
+    pub speed: Vec3,
+}
+
+impl MapSurface {
+    pub fn coords(self) -> [f32; 4] {
+        let o = self.motion.map_or(Vec2::ZERO, |m| m.offset);
+        [
+            self.segment.x1 as f32 + o.x,
+            self.segment.y1 as f32 + o.y,
+            self.segment.x2 as f32 + o.x,
+            self.segment.y2 as f32 + o.y,
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,7 +398,7 @@ pub struct SamusBomb {
     /// `lr`, set from the launch and after every rebound.
     pub lr: f32,
     /// The floor line while grounded, with `vel_ground`.
-    pub floor: Option<(Segment, f32)>,
+    pub floor: Option<(MapSurface, f32)>,
     /// Ports already in the attack record.
     pub hit_ports: u8,
     /// `bomb_blink_timer` and the current palette, presentation only.
@@ -439,6 +459,9 @@ impl SamusBomb {
             self.explode();
             return true;
         }
+        self.floor = self
+            .floor
+            .and_then(|(old, v)| refresh_surface(surfaces(), old).map(|s| (s, v)));
         match self.floor {
             None => {
                 self.velocity.y -= SAMUS_BOMB_WAIT_GRAVITY;
@@ -451,7 +474,7 @@ impl SamusBomb {
             }
             Some((segment, vel_ground)) => {
                 // `wpMainVelGroundTransferAir` along the floor line.
-                let normal = surface_normal(MapSurfaceKind::Floor, segment);
+                let normal = surface_normal(MapSurfaceKind::Floor, segment.segment);
                 self.velocity.x = self.lr * normal.y * vel_ground;
                 self.velocity.y = self.lr * -normal.x * vel_ground;
             }
@@ -468,15 +491,13 @@ impl SamusBomb {
             };
         }
 
-        let wanted = self.position + self.velocity;
+        let mut wanted = self.position + self.velocity;
         if let Some((segment, _)) = self.floor {
             // `wpMapTestLRWallCheckFloor`: slide along the line until it ends.
-            let (lo, hi) = if segment.x1 <= segment.x2 {
-                (segment.x1, segment.x2)
-            } else {
-                (segment.x2, segment.x1)
-            };
-            if wanted.x < f32::from(lo) || wanted.x > f32::from(hi) {
+            wanted += segment.motion.map_or(Vec3::ZERO, |m| m.speed);
+            let [x1, _, x2, _] = segment.coords();
+            let (lo, hi) = (x1.min(x2), x1.max(x2));
+            if wanted.x < lo || wanted.x > hi {
                 self.floor = None;
                 self.position = wanted;
             } else {
@@ -498,7 +519,7 @@ impl SamusBomb {
                     let speed = Vec2::new(self.velocity.x, self.velocity.y).length();
                     if speed < SAMUS_BOMB_GROUND_MIN_SPEED {
                         // `wpMapSetGround`.
-                        self.floor = Some((hit.segment, self.velocity.x * self.lr));
+                        self.floor = Some((hit.surface, self.velocity.x * self.lr));
                     }
                 } else {
                     self.velocity.x *= SAMUS_BOMB_WAIT_COLLIDE_MOD_VEL;
@@ -512,12 +533,24 @@ impl SamusBomb {
     }
 }
 
-fn segment_y(s: Segment, x: f32) -> f32 {
-    let dx = f32::from(s.x2 - s.x1);
-    if dx == 0.0 {
-        return f32::from(s.y1);
+fn refresh_surface(
+    surfaces: impl IntoIterator<Item = MapSurface>,
+    old: MapSurface,
+) -> Option<MapSurface> {
+    surfaces
+        .into_iter()
+        .find(|s| match (s.topology, old.topology) {
+            (Some(a), Some(b)) => a.line == b.line && a.point == b.point,
+            _ => s.kind == old.kind && s.segment == old.segment,
+        })
+}
+
+fn segment_y(s: MapSurface, x: f32) -> f32 {
+    let [x1, y1, x2, y2] = s.coords();
+    if x1 == x2 {
+        return y1;
     }
-    f32::from(s.y1) + (x - f32::from(s.x1)) * f32::from(s.y2 - s.y1) / dx
+    y1 + (x - x1) * (y2 - y1) / (x2 - x1)
 }
 
 /// `wpvars.h` Boomerang constants.
@@ -1148,7 +1181,7 @@ pub struct KirbyCutter {
     pub damage: i32,
     /// Resolve the floor line under the spawn on the first tick.
     pub seek_floor: bool,
-    pub floor: Option<Segment>,
+    pub floor: Option<MapSurface>,
     pub hit_ports: u8,
 }
 
@@ -1181,10 +1214,10 @@ impl KirbyCutter {
             self.floor = surfaces()
                 .into_iter()
                 .filter(|s| s.kind == MapSurfaceKind::Floor)
-                .map(|s| s.segment)
                 .filter(|seg| {
-                    let (lo, hi) = (seg.x1.min(seg.x2), seg.x1.max(seg.x2));
-                    self.position.x >= f32::from(lo) && self.position.x <= f32::from(hi)
+                    let [x1, _, x2, _] = seg.coords();
+                    let (lo, hi) = (x1.min(x2), x1.max(x2));
+                    self.position.x >= lo && self.position.x <= hi
                 })
                 .map(|seg| {
                     (
@@ -1200,14 +1233,17 @@ impl KirbyCutter {
         if self.lifetime == 0 {
             return false;
         }
+        self.floor = self.floor.and_then(|s| refresh_surface(surfaces(), s));
         if let Some(segment) = self.floor {
             // `wpMainVelGroundTransferAir` along the floor line.
-            let normal = surface_normal(MapSurfaceKind::Floor, segment);
+            let normal = surface_normal(MapSurfaceKind::Floor, segment.segment);
             self.velocity.x = self.lr * normal.y * KIRBY_CUTTER_VEL;
             self.velocity.y = self.lr * -normal.x * KIRBY_CUTTER_VEL;
-            let wanted = self.position + self.velocity;
-            let (lo, hi) = (segment.x1.min(segment.x2), segment.x1.max(segment.x2));
-            if wanted.x < f32::from(lo) || wanted.x > f32::from(hi) {
+            let wanted =
+                self.position + self.velocity + segment.motion.map_or(Vec3::ZERO, |m| m.speed);
+            let [x1, _, x2, _] = segment.coords();
+            let (lo, hi) = (x1.min(x2), x1.max(x2));
+            if wanted.x < lo || wanted.x > hi {
                 // `wpMapSetAir`: the wave keeps flying along the line.
                 self.floor = None;
                 self.position = wanted;
@@ -1221,7 +1257,7 @@ impl KirbyCutter {
         match map_contact(surfaces(), self.position, wanted, KIRBY_CUTTER_MAP_COLL) {
             Some(hit) if hit.kind == MapSurfaceKind::Floor => {
                 // `wpMapTestAllCheckFloor` then `wpMapSetGround`.
-                self.floor = Some(hit.segment);
+                self.floor = Some(hit.surface);
                 self.position = hit.position;
                 true
             }
@@ -2663,7 +2699,7 @@ pub(crate) struct MapContact {
     normal: Vec2,
     time: f32,
     kind: MapSurfaceKind,
-    segment: Segment,
+    surface: MapSurface,
 }
 
 /// Finds the first one-sided contact of a weapon's authored map-collision
@@ -2684,16 +2720,18 @@ where
 
     for surface in surfaces {
         let normal = surface_normal(surface.kind, surface.segment);
+        let speed = surface.motion.map_or(Vec3::ZERO, |m| m.speed);
+        let relative = Vec2::new(delta.x - speed.x, delta.y - speed.y);
         // `wpMapCheckAllRebound` only reflects an incoming velocity
         // (`lbCommonSim2D(vel, angle) < 0`). This also excludes a point left
         // touching a surface after the preceding frame's rebound.
-        if delta.x * normal.x + delta.y * normal.y >= 0.0 {
+        if relative.x * normal.x + relative.y * normal.y >= 0.0 {
             continue;
         }
         let support = diamond_support_toward_surface(normal, coll);
-        let probe_from = Vec2::new(from.x + support.x, from.y + support.y);
+        let probe_from = Vec2::new(from.x + support.x + speed.x, from.y + support.y + speed.y);
         let probe_to = Vec2::new(to.x + support.x, to.y + support.y);
-        let Some(time) = swept_segment_intersection(probe_from, probe_to, surface.segment) else {
+        let Some(time) = swept_coords_intersection(probe_from, probe_to, surface.coords()) else {
             continue;
         };
         if first.is_some_and(|known| time >= known.time) {
@@ -2704,7 +2742,7 @@ where
             normal,
             time,
             kind: surface.kind,
-            segment: surface.segment,
+            surface,
         });
     }
     first
@@ -2759,11 +2797,12 @@ pub(crate) fn surface_normal(kind: MapSurfaceKind, s: Segment) -> Vec2 {
 
 /// Returns the movement fraction where the moving point meets the static
 /// segment. The `0.001` edge slack is shared with `mpcollision.c`.
-pub(crate) fn swept_segment_intersection(from: Vec2, to: Vec2, s: Segment) -> Option<f32> {
+pub(crate) fn swept_coords_intersection(from: Vec2, to: Vec2, coords: [f32; 4]) -> Option<f32> {
     const EPS: f32 = 0.001;
     let r = Vec2::new(to.x - from.x, to.y - from.y);
-    let q = Vec2::new(s.x1 as f32, s.y1 as f32);
-    let v = Vec2::new(s.x2 as f32 - s.x1 as f32, s.y2 as f32 - s.y1 as f32);
+    let [x1, y1, x2, y2] = coords;
+    let q = Vec2::new(x1, y1);
+    let v = Vec2::new(x2 - x1, y2 - y1);
     let cross = |a: Vec2, b: Vec2| a.x * b.y - a.y * b.x;
     let denom = cross(r, v);
     if denom.abs() <= EPS {
@@ -3512,6 +3551,7 @@ mod tests {
 
     fn surface(kind: MapSurfaceKind, x1: i16, y1: i16, x2: i16, y2: i16) -> MapSurface {
         MapSurface {
+            motion: None,
             topology: None,
             kind,
             segment: Segment {

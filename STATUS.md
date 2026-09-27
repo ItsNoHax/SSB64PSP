@@ -7,38 +7,39 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports; shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** general item system (`ftMainSearchHitItem`, Link's
-  Bomb, PK Fire flame damage, item throws and pickup).
-- **Next batch:** moving map groups, changing fighter diamonds and authored
-  cliff poses. These map inputs were explicitly deferred from this batch.
+- **Completed batch:** moving map groups and authored cliff recovery.
+  Original fighter diamonds alias their current shape; copied collision
+  inputs now accept a separate previous shape (RE-353).
+- **Next batch:** weapon lifecycle and shield-hop callbacks: map-bound
+  removal, Boomerang off-camera removal and the remaining weapon hop responses.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
-| General item system | Shared 16-slot item pool, fighter/item/weapon hit searches, Bomb lifecycle and self-hit explosions, PK Fire damage/lifetime, script-driven throws/pickup, guard/escape windows, damage drops and death destruction; PSP frame integration | RE-352 |
-| Damage map callbacks, reaction clips, weapon clank and reflectors | Damage sweep and reactions; pack v39; weapon clank/reflectors; overrun invincibility; same-frame catcher/held hits; `DeadUpFall` | RE-351 |
+| Moving map groups and cliff recovery | Relative sweeps, float group offsets, first-substep carry including hitlag, group visibility, shared PSP stage poses; all 16 cliff clips, live TransN anchors, authored dispatch/action clocks and per-fighter phase-two kinetics | RE-353 |
+| General item system | Shared item pool, Link Bomb lifecycle, PK Fire damage, throws/pickup, hit searches and PSP integration | RE-352 |
 
 ## Verification baseline
 
-- `cargo +1.98.0 test --workspace` with absolute `SSB64_ROM`: **1,152 pass**,
-  including 491 gameplay tests. Clippy (`--workspace --all-targets --
-  -D warnings`), rustfmt and the engine/game/ROM no_std target builds pass.
+- `cargo +1.98.0 test --workspace` with absolute `SSB64_ROM`: **1,165 pass**,
+  including 501 gameplay tests. Clippy (`--workspace --all-targets --
+  -D warnings`), workspace rustfmt and engine/game/ROM no_std target builds pass.
 - Both PSP release builds pass; game also with
-  `regression_capture,strict_render`. Item process boundaries remain out of
-  line to avoid PSP LTO's MIPS branch-range overflow (RE-352).
+  `regression_capture,strict_render`. Existing viewer warnings remain.
 - Scripted Training smoke via `tools/run-ppsspp.sh`: valid software-rendered
   Dream Land screenshot with both fighters; PPSSPP terminated afterwards.
   Interactive game EBOOT rebuilt. No hardware or full golden run this batch.
-- Pack v39 unchanged: 24,254,352 bytes, SHA-256
-  `2e0ce44b126adf1de7c7d7f0deb6c06c7150443019420712ed65839d87efa984`.
-  Last animation verification and full 73-scene golden matrix: RE-351.
+- Rebuilt pack v40: 24,593,552 bytes, SHA-256
+  `a3e1a8313eafe260f553b4a4989554723172e2036f1a7eb55a35e26b07a399d9`.
+  All 192 playable fighter cliff files checked independently from the ROM.
+  Last full 73-scene golden matrix: RE-351.
 - Physical PSP last checked in RE-341 (PSP-2000 Slim, 6.61 ARK, pack v37).
 
 ## Blockers and remaining scope
 
-- Moving map groups, changing diamonds and authored cliff poses are next.
+- Stage-specific map controllers/hazards and moving-floor shadow placement remain.
 - Training `grab` whiffs in PPSSPP while the host route catches (RE-351).
 - Damage statuses and most normals lack pack clips; hits are not visible.
 - Samus through Ness remain host-only in `psp-game`; item/weapon/effect

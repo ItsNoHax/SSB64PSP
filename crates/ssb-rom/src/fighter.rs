@@ -183,6 +183,9 @@ pub struct FighterAttributes {
     pub map_coll: ObjectColl,
     /// Ledge-grab box, as `(width, height)`.
     pub cliffcatch_coll: (f32, f32),
+    /// Six cliff recovery kinetics words at 0x2B8, including the zero word
+    /// named `unused_0x2CC` which EscapeSlow indexes as entry five.
+    pub cliff_air_mask: u32,
 }
 
 /// What went wrong decoding a fighter.
@@ -280,6 +283,14 @@ impl FighterAttributes {
                 width: f(42),
             },
             cliffcatch_coll: (f(43), f(44)),
+            cliff_air_mask: (0..6).fold(0, |mask, i| {
+                let word = at + 0x2B8 + i * 4;
+                mask | if word + 4 <= data.len() && i32_be(data, word) == 1 {
+                    1 << i
+                } else {
+                    0
+                }
+            }),
         })
     }
 

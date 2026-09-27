@@ -203,7 +203,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 // the ShieldBreak chain) for all twelve fighters (RE-351). `SLOT_COUNT` is
 // 471; a v38 runtime rejects the new slots, and a v39 runtime reading a v38
 // pack would find no clip for them.
-pub const VERSION: u32 = 39;
+// 40 adds sixteen cliff clips per playable fighter (slots 471..487).
+pub const VERSION: u32 = 40;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1293,6 +1294,8 @@ pub struct FighterDesc {
     pub squatrv_anim_length: f32,
     pub landing_anim_length: f32,
     pub pass_anim_length: f32,
+    /// Bit per cliff recovery kind (Climb/Attack/Escape, Quick then Slow).
+    pub cliff_air_mask: u32,
 }
 
 /// Float fields carried per fighter: 43 from `FTAttributes` plus the seven
@@ -1301,7 +1304,7 @@ const SCALARS: usize = 50;
 
 impl FighterDesc {
     /// 56 words: 5 integers, then the 50 floats [`fighter_scalars`] lists,
-    /// then one word of padding to keep the stride 16-byte aligned.
+    /// then the cliff kinetics mask in the former padding word; stride stays 16-byte aligned.
     ///
     /// The floats are the 43 scalars of the original `FTAttributes` head
     /// (`jumps_max` and `is_metallic` moved up into the integer group so no
@@ -1375,6 +1378,7 @@ fn fighter_from_parts(
     source_offset: u32,
     jumps_max: i32,
     is_metallic: u32,
+    cliff_air_mask: u32,
     s: [f32; SCALARS],
 ) -> FighterDesc {
     FighterDesc {
@@ -1383,6 +1387,7 @@ fn fighter_from_parts(
         source_offset,
         jumps_max,
         is_metallic,
+        cliff_air_mask,
         size: s[0],
         walkslow_anim_length: s[1],
         walkmiddle_anim_length: s[2],
@@ -2460,6 +2465,7 @@ impl PackWriter {
             source_offset: f.file.offset,
             jumps_max: a.jumps_max,
             is_metallic: a.is_metallic as u32,
+            cliff_air_mask: a.cliff_air_mask,
             size: a.size,
             walkslow_anim_length: a.walkslow_anim_length,
             walkmiddle_anim_length: a.walkmiddle_anim_length,
@@ -2724,7 +2730,7 @@ impl PackWriter {
             for v in fighter_scalars(d) {
                 out.extend_from_slice(&v.to_le_bytes());
             }
-            out.extend_from_slice(&0u32.to_le_bytes());
+            out.extend_from_slice(&d.cliff_air_mask.to_le_bytes());
         }
 
         for a in &self.anims {
@@ -3143,6 +3149,7 @@ impl<'a> Pack<'a> {
             u32_at(self.data, at + 8),
             u32_at(self.data, at + 12) as i32,
             u32_at(self.data, at + 16),
+            u32_at(self.data, at + 220),
             s,
         ))
     }
@@ -5300,6 +5307,7 @@ mod tests {
                     width: 150.0,
                 },
                 cliffcatch_coll: (400.0, 360.0),
+                cliff_air_mask: 2,
             },
         }
     }

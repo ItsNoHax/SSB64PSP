@@ -1,4 +1,4 @@
-//! `itmap.c`: the item map callbacks, over the shared static map sweeps of
+//! `itmap.c`: the item map callbacks, over the shared map sweeps of
 //! [`crate::map`]. An airborne item takes `mpProcessUpdateMain` with
 //! `itMapProcAllCheckCollisionFlag` ([`crate::map::move_air`]), a grounded
 //! one `itMapProcLRWallCheckFloor` ([`crate::map::move_ground`]); the
@@ -40,7 +40,7 @@ where
     let (moved, contacts) = crate::map::move_ground(
         &item.coll,
         item.pos_prev,
-        item.pos,
+        item.pos - crate::map::line_speed(surfaces, floor.line),
         floor.line,
         false,
         surfaces,

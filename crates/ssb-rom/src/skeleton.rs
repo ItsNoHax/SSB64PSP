@@ -306,11 +306,49 @@ impl StageAnimator {
         (i < self.count).then(|| (self.nodes[i], &self.poses[i]))
     }
 
+    /// Source DObj flags: bit 0 hides this mesh; bit 1 hides its subtree.
+    pub fn flags(&self, node: u32) -> u16 {
+        (0..self.count)
+            .find(|&i| self.nodes[i] == node)
+            .map_or(0, |i| self.joints[i].flags)
+    }
+
+    pub fn visible(&self, pack: &Pack<'_>, node: u32) -> bool {
+        if self.flags(node) & 1 != 0 {
+            return false;
+        }
+        let mut ancestor = node;
+        for _ in 0..MAX_NODES {
+            if self.flags(ancestor) & 2 != 0 {
+                return false;
+            }
+            let Some(parent) = pack.node(ancestor).map(|n| n.parent) else {
+                return true;
+            };
+            if parent == u32::MAX {
+                return true;
+            }
+            ancestor = parent;
+        }
+        false
+    }
+
     /// Advances every joint one tick. `script` is the animation file's bytes,
     /// which the joint offsets index into.
     pub fn tick(&mut self, script: &[u8]) -> Result<(), crate::objanim::AnimError> {
+        self.tick_nodes(script, |_| true)
+    }
+
+    /// Stage collision On/Off groups skip their own animation callbacks.
+    pub fn tick_nodes(
+        &mut self,
+        script: &[u8],
+        enabled: impl Fn(u32) -> bool,
+    ) -> Result<(), crate::objanim::AnimError> {
         for i in 0..self.count {
-            self.joints[i].tick(script, 1.0, &mut self.poses[i])?;
+            if enabled(self.nodes[i]) {
+                self.joints[i].tick(script, 1.0, &mut self.poses[i])?;
+            }
         }
         Ok(())
     }
@@ -1235,6 +1273,25 @@ mod tests {
             posed[2], rest[2],
             "its child must inherit motion without its own script"
         );
+    }
+
+    #[test]
+    fn stage_flags_hide_mesh_or_subtree_without_hiding_the_parent() {
+        let bytes = packed(&chain());
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let mut animator = StageAnimator::new();
+        animator.count = 1;
+        animator.nodes[0] = 1;
+        animator.joints[0].flags = 1;
+        assert!(animator.visible(&pack, 0));
+        assert!(!animator.visible(&pack, 1));
+        assert!(animator.visible(&pack, 2));
+        animator.joints[0].flags = 2;
+        assert!(animator.visible(&pack, 0));
+        assert!(!animator.visible(&pack, 1));
+        assert!(!animator.visible(&pack, 2));
+        animator.joints[0].flags = 0;
+        assert!(animator.visible(&pack, 2));
     }
 
     #[test]

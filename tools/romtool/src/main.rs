@@ -3011,8 +3011,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             // disabled trailing model part can also leave one more script
             // than active joints; treating that as a leading joint shifts
             // every model transform and sinks the visible fighter (RE-331).
+            // Runtime motions can also include trailing unused entries (Kirby's
+            // cliff escape), so the descriptor remains authoritative beyond +1.
             let hidden_joint =
-                table.len() == nodes.len() + 1 && ssb_rom::anim::LEADING_RUNTIME_JOINT[kind][slot];
+                table.len() > nodes.len() && ssb_rom::anim::LEADING_RUNTIME_JOINT[kind][slot];
             let joints: Vec<(Option<u32>, Option<u32>)> = table
                 .iter()
                 .enumerate()

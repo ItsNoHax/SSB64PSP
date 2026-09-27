@@ -529,3 +529,49 @@ fn bounds_destroy_items_strictly_outside_each_edge() {
         Vec3::new(100.0, 100.0, 0.0)
     );
 }
+
+#[test]
+fn ground_item_carries_during_hitlag_before_the_bounds_gate() {
+    let mut pool = ItemPool::default();
+    let slot = make_flame(&mut pool);
+    let item = pool.slots[slot as usize].as_mut().unwrap();
+    item.ga = Ga::Ground;
+    item.floor = Some(crate::ground::Standing {
+        line: 0,
+        flags: 0,
+        normal: Vec2::new(0.0, 1.0),
+    });
+    item.pos = Vec3::ZERO;
+    item.vel_air = Vec3::ZERO;
+    item.hitlag_tics = 4;
+    let surface = crate::map::floor_surface((
+        0,
+        crate::collision::Segment {
+            x1: -100,
+            y1: 0,
+            x2: 100,
+            y2: 0,
+            flags: 0,
+        },
+    ));
+    let surface = MapSurface {
+        motion: Some(crate::weapon::SurfaceMotion {
+            offset: Vec2::new(12.5, 20.25),
+            speed: Vec3::new(12.5, 20.25, 0.0),
+        }),
+        ..surface
+    };
+    pool.tick(|| [surface], None);
+    let item = pool.slots[slot as usize].as_ref().unwrap();
+    assert_eq!(item.pos, Vec3::new(12.5, 20.25, 0.0));
+    pool.tick(
+        || [surface],
+        Some(BlastZone {
+            left: -100.0,
+            right: 24.0,
+            bottom: -100.0,
+            top: 100.0,
+        }),
+    );
+    assert!(pool.slots[slot as usize].is_none());
+}
