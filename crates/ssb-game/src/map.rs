@@ -1,7 +1,7 @@
-//! Static fighter map processing from `mpcommon.c` and `mpprocess.c`.
+//! Fighter map processing from `mpcommon.c` and `mpprocess.c`.
 //! Queries retain the source order: LWall, RWall, ceiling, floor, cliff.
-//! Moving-group speed and changing collision diamonds require match inputs
-//! which the current runtime does not supply.
+//! Moving groups retain local integer vertices and float translations.
+//! Previous collision diamonds are explicit when the source copies collision state.
 
 use crate::collision::{self, Segment};
 use crate::fighter::{Facing, Fighter};
@@ -16,6 +16,44 @@ use ssb_engine::math::{Vec2, Vec3};
 #[cfg(test)]
 #[path = "map_tests.rs"]
 mod tests;
+
+/// `MPYakumonoStatus`, independent of render-node visibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GroupStatus {
+    #[default]
+    None,
+    On,
+    Show,
+    Off,
+    Hidden,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MapGroup {
+    pub status: GroupStatus,
+    pub animated: bool,
+    pub translate: Vec3,
+    pub speed: Vec3,
+}
+
+impl MapGroup {
+    pub fn exists(self) -> bool {
+        !matches!(self.status, GroupStatus::Off | GroupStatus::Hidden)
+    }
+    pub fn motion(self) -> Option<crate::weapon::SurfaceMotion> {
+        (self.animated || self.status != GroupStatus::None).then_some(
+            crate::weapon::SurfaceMotion {
+                offset: Vec2::new(self.translate.x, self.translate.y),
+                speed: self.speed,
+            },
+        )
+    }
+    /// `mpCollisionSetYakumonoPosID`: a direct stage-script movement.
+    pub fn set_position(&mut self, pos: Vec3) {
+        self.speed = pos - self.translate;
+        self.translate = pos;
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Contact {
@@ -78,6 +116,7 @@ where
 /// Compatibility adapter for host fixtures that provide floors only.
 pub fn floor_surface((line, segment): (u16, Segment)) -> MapSurface {
     MapSurface {
+        motion: None,
         kind: Kind::Floor,
         segment,
         topology: Some(SurfaceTopology {
@@ -117,9 +156,10 @@ fn transform(kind: Kind, p: Vec2) -> Vec2 {
     }
 }
 
-fn transformed(kind: Kind, s: Segment) -> [f32; 4] {
-    let a = transform(kind, Vec2::new(s.x1 as f32, s.y1 as f32));
-    let b = transform(kind, Vec2::new(s.x2 as f32, s.y2 as f32));
+fn transformed(kind: Kind, s: MapSurface) -> [f32; 4] {
+    let [x1, y1, x2, y2] = s.coords();
+    let a = transform(kind, Vec2::new(x1, y1));
+    let b = transform(kind, Vec2::new(x2, y2));
     [a.x, a.y, b.x, b.y]
 }
 
@@ -128,7 +168,28 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
-    let a = transform(kind, from);
+    query_at(surfaces, kind, from, to, false)
+}
+
+fn sweep<I, F>(surfaces: &F, kind: Kind, from: Vec2, to: Vec2) -> Option<(Contact, Vec2)>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    query_at(surfaces, kind, from, to, true)
+}
+
+fn query_at<I, F>(
+    surfaces: &F,
+    kind: Kind,
+    from: Vec2,
+    to: Vec2,
+    moving: bool,
+) -> Option<(Contact, Vec2)>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
     let b = transform(kind, to);
     let mut best = None;
     let mut distance = f32::MAX;
@@ -136,7 +197,13 @@ where
         if s.kind != kind {
             continue;
         }
-        let Some(p) = collision::check_floor_coords(transformed(kind, s.segment), a, b) else {
+        let speed = if moving {
+            s.motion.map_or(Vec3::ZERO, |m| m.speed)
+        } else {
+            Vec3::ZERO
+        };
+        let a = transform(kind, Vec2::new(from.x + speed.x, from.y + speed.y));
+        let Some(p) = collision::check_floor_coords(transformed(kind, s), a, b) else {
             continue;
         };
         let d = (p.y - a.y).abs();
@@ -160,11 +227,18 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
+    let offset = surfaces()
+        .into_iter()
+        .enumerate()
+        .find(|(i, s)| s.kind == kind && line_id(*i, *s) == line)?
+        .1
+        .motion
+        .map_or(Vec2::ZERO, |m| m.offset);
     let f = collision::floor_height(
         surfaces().into_iter().enumerate().filter_map(|(i, s)| {
             (s.kind == kind && line_id(i, s) == line).then_some((line, s.segment))
         }),
-        x,
+        x - offset.x,
     )?;
     let normal = if kind == Kind::Ceiling {
         Vec2::new(-f.normal.x, -f.normal.y)
@@ -172,7 +246,7 @@ where
         f.normal
     };
     Some((
-        f.y,
+        f.y + offset.y,
         Contact {
             line,
             flags: f.flags,
@@ -193,10 +267,8 @@ where
             continue;
         }
         let ids = s.topology.map_or([u16::MAX; 2], |t| [t.vertex1, t.vertex2]);
-        for (p, id) in [
-            (Vec2::new(s.segment.x1 as f32, s.segment.y1 as f32), ids[0]),
-            (Vec2::new(s.segment.x2 as f32, s.segment.y2 as f32), ids[1]),
-        ] {
+        let [x1, y1, x2, y2] = s.coords();
+        for (p, id) in [(Vec2::new(x1, y1), ids[0]), (Vec2::new(x2, y2), ids[1])] {
             let axis = |v: Vec2| {
                 if matches!(kind, Kind::Floor | Kind::Ceiling) {
                     v.x
@@ -245,6 +317,7 @@ where
 fn walls<I, F>(
     surfaces: &F,
     coll: BodyColl,
+    previous: BodyColl,
     from: Vec3,
     to: Vec3,
     kind: Kind,
@@ -258,6 +331,9 @@ where
     let waist = Vec2::new(side * coll.width, coll.center);
     let bottom = Vec2::new(0.0, coll.bottom);
     let top = Vec2::new(0.0, coll.top);
+    let prev_waist = Vec2::new(side * previous.width, previous.center);
+    let prev_bottom = Vec2::new(0.0, previous.bottom);
+    let prev_top = Vec2::new(0.0, previous.top);
     let mut lines = [None; 5];
     let exclude = ground_line
         .and_then(|line| neighbor(surfaces, Kind::Floor, line, kind == Kind::RightWall))
@@ -272,14 +348,17 @@ where
             }
         }
     };
-    for (a, b) in [
-        (point(from, waist), point(to, waist)),
-        (point(from, bottom), point(to, bottom)),
-        (point(from, top), point(to, top)),
+    for (probe, (a, b)) in [
+        (point(from, prev_waist), point(to, waist)),
+        (point(from, prev_bottom), point(to, bottom)),
+        (point(from, prev_top), point(to, top)),
         (point(to, bottom), point(to, waist)),
         (point(to, top), point(to, waist)),
-    ] {
-        if let Some((hit, _)) = query(surfaces, kind, a, b) {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if let Some((hit, _)) = query_at(surfaces, kind, a, b, probe < 3) {
             add(hit.line);
         }
     }
@@ -289,14 +368,14 @@ where
     // A waist sweep across a neighboring ceiling/floor can touch a wall
     // even when none of the three vertical probes crosses the wall itself.
     for (other, tip) in [(Kind::Ceiling, top), (Kind::Floor, bottom)] {
-        if let Some((hit, _)) = query(surfaces, other, point(from, waist), point(to, waist)) {
+        if let Some((hit, _)) = sweep(surfaces, other, point(from, waist), point(to, waist)) {
             if other == Kind::Floor && hit.flags & collision::flags::PASS != 0 {
                 continue;
             }
             let high = kind == Kind::RightWall;
             if let Some((neighbor_kind, line)) = neighbor(surfaces, other, hit.line, high) {
                 if neighbor_kind == kind
-                    && query(surfaces, other, point(from, tip), point(to, tip))
+                    && sweep(surfaces, other, point(from, tip), point(to, tip))
                         .is_none_or(|(h, _)| h.line != hit.line)
                     && query(surfaces, other, point(to, tip), point(to, waist))
                         .is_none_or(|(h, _)| h.line != hit.line)
@@ -346,27 +425,22 @@ where
                 consider(lower.x);
                 continue;
             }
-            let seg = s.segment;
+            let [x1, y1, x2, y2] = s.coords();
             for (offset, width) in [
                 (coll.bottom, 0.0),
                 (coll.center, coll.width),
                 (coll.top, 0.0),
             ] {
                 let y = pos.y + offset;
-                let lo = (seg.y1 as f32).min(seg.y2 as f32);
-                let hi = (seg.y1 as f32).max(seg.y2 as f32);
-                if y >= lo - 0.001 && y <= hi + 0.001 && seg.y1 != seg.y2 {
+                let lo = (y1).min(y2);
+                let hi = (y1).max(y2);
+                if y >= lo - 0.001 && y <= hi + 0.001 && y1 != y2 {
                     let y = y.clamp(lo, hi);
-                    let x = seg.x1 as f32
-                        + (y - seg.y1 as f32) * (seg.x2 as f32 - seg.x1 as f32)
-                            / (seg.y2 as f32 - seg.y1 as f32);
+                    let x = x1 + (y - y1) * (x2 - x1) / (y2 - y1);
                     consider(x - side * width);
                 }
             }
-            for (x, y) in [
-                (seg.x1 as f32, seg.y1 as f32),
-                (seg.x2 as f32, seg.y2 as f32),
-            ] {
+            for (x, y) in [(x1, y1), (x2, y2)] {
                 let y = y - pos.y;
                 let width = if y >= coll.bottom && y <= coll.center && coll.center != coll.bottom {
                     Some((y - coll.bottom) * coll.width / (coll.center - coll.bottom))
@@ -402,6 +476,7 @@ struct CeilStep {
 fn ceiling_step<I, F>(
     surfaces: &F,
     coll: BodyColl,
+    previous: BodyColl,
     prev: Vec3,
     pos: &mut Vec3,
     current: &Contacts,
@@ -416,9 +491,14 @@ where
         contact: None,
     };
     let top = Vec2::new(0.0, coll.top);
-    let ceil = query(surfaces, Kind::Ceiling, point(prev, top), point(*pos, top))
-        .map(|(h, _)| h)
-        .or_else(|| adjacent_horizontal(surfaces, current, Kind::Ceiling, *pos, coll.top));
+    let ceil = sweep(
+        surfaces,
+        Kind::Ceiling,
+        point(prev, Vec2::new(0.0, previous.top)),
+        point(*pos, top),
+    )
+    .map(|(h, _)| h)
+    .or_else(|| adjacent_horizontal(surfaces, current, Kind::Ceiling, *pos, coll.top));
     if let Some(hit) = ceil {
         out.touched = true;
         out.hit = Some(hit);
@@ -462,6 +542,23 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
+    move_air_from_shape(coll, coll, from, to, options, surfaces)
+}
+
+/// `p_map_coll` may name another body's diamond during a copied-data sweep.
+/// Ordinary fighter processing aliases it to `map_coll`, including substeps.
+pub fn move_air_from_shape<I, F>(
+    coll: &BodyColl,
+    previous: &BodyColl,
+    from: Vec3,
+    to: Vec3,
+    options: AirOptions,
+    surfaces: F,
+) -> AirMoved
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
     let steps = ground::substep_count(from, to);
     let step = Vec3::new(
         (to.x - from.x) / steps as f32,
@@ -475,17 +572,25 @@ where
         let prev = pos;
         pos += step;
         let mut current = Contacts::default();
-        let lwalls = walls(&surfaces, *coll, prev, pos, Kind::LeftWall, None);
+        let lwalls = walls(&surfaces, *coll, *previous, prev, pos, Kind::LeftWall, None);
         if let Some(hit) = correct_wall(&surfaces, *coll, &mut pos, Kind::LeftWall, lwalls) {
             contacts.left_wall = Some(hit);
             current.left_wall = Some(hit);
         }
-        let rwalls = walls(&surfaces, *coll, prev, pos, Kind::RightWall, None);
+        let rwalls = walls(
+            &surfaces,
+            *coll,
+            *previous,
+            prev,
+            pos,
+            Kind::RightWall,
+            None,
+        );
         if let Some(hit) = correct_wall(&surfaces, *coll, &mut pos, Kind::RightWall, rwalls) {
             contacts.right_wall = Some(hit);
             current.right_wall = Some(hit);
         }
-        let ceil = ceiling_step(&surfaces, *coll, prev, &mut pos, &current);
+        let ceil = ceiling_step(&surfaces, *coll, *previous, prev, &mut pos, &current);
         if let Some(hit) = ceil.contact {
             contacts.ceiling = Some(hit);
         }
@@ -495,10 +600,10 @@ where
             ceil_stop = true;
         }
         let bottom = Vec2::new(0.0, coll.bottom);
-        let floor = query(
+        let floor = sweep(
             &surfaces,
             Kind::Floor,
-            point(prev, bottom),
+            point(prev, Vec2::new(0.0, previous.bottom)),
             point(pos, bottom),
         )
         .map(|(h, _)| h)
@@ -508,9 +613,7 @@ where
                 || (!options.skip_pass && Some(h.line) != options.ignore_line)
         }) {
             contacts.floor = true;
-            let mut moved = ground::land(coll, pos, hit.line, hit.flags, hit.normal, || {
-                floors(surfaces())
-            });
+            let mut moved = land(&surfaces, coll, pos, hit);
             if let Some(floor) = moved.floor {
                 adjust_edges(
                     &surfaces,
@@ -671,6 +774,67 @@ where
     }
 }
 
+pub fn line_speed<I, F>(surfaces: F, line: u16) -> Vec3
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    surfaces()
+        .into_iter()
+        .enumerate()
+        .find(|(i, s)| line_id(*i, *s) == line)
+        .and_then(|(_, s)| s.motion)
+        .map_or(Vec3::ZERO, |m| m.speed)
+}
+
+fn follow_floor<I, F>(surfaces: &F, coll: &BodyColl, pos: Vec3, line: u16) -> Moved
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    match height(surfaces, Kind::Floor, line, pos.x) {
+        Some((y, h)) => Moved {
+            pos: Vec3::new(pos.x, y - coll.bottom, pos.z),
+            floor: Some(Standing {
+                line,
+                flags: h.flags,
+                normal: h.normal,
+            }),
+        },
+        None => Moved { pos, floor: None },
+    }
+}
+
+fn land<I, F>(surfaces: &F, coll: &BodyColl, pos: Vec3, hit: Contact) -> Moved
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let moved = follow_floor(surfaces, coll, pos, hit.line);
+    if moved.floor.is_some() {
+        return moved;
+    }
+    let high = pos.x > edge(surfaces, Kind::Floor, hit.line, false).map_or(pos.x, |e| e.0.x);
+    let pos = edge(surfaces, Kind::Floor, hit.line, high)
+        .map_or(pos, |(p, _)| Vec3::new(p.x, p.y - coll.bottom, pos.z));
+    Moved {
+        pos,
+        floor: Some(Standing {
+            line: hit.line,
+            flags: hit.flags,
+            normal: hit.normal,
+        }),
+    }
+}
+
+pub fn cliff_corner<I, F>(surfaces: F, line: u16, facing: f32) -> Option<Vec2>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    edge(&surfaces, Kind::Floor, line, facing < 0.0).map(|e| e.0)
+}
+
 pub fn move_ground<I, F>(
     coll: &BodyColl,
     from: Vec3,
@@ -683,7 +847,8 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
-    let steps = ground::substep_count(from, to);
+    let speed = line_speed(&surfaces, line);
+    let steps = ground::substep_count(from, to + speed);
     let step = Vec3::new(
         (to.x - from.x) / steps as f32,
         0.0,
@@ -691,11 +856,14 @@ where
     );
     let mut pos = from;
     let mut contacts = Contacts::default();
-    for _ in 0..steps {
+    for i in 0..steps {
         let prev = pos;
+        if i == 0 {
+            pos += speed;
+        }
         pos += step;
         for kind in [Kind::LeftWall, Kind::RightWall] {
-            let lines = walls(&surfaces, *coll, prev, pos, kind, Some(line));
+            let lines = walls(&surfaces, *coll, *coll, prev, pos, kind, Some(line));
             if let Some(hit) = correct_wall(&surfaces, *coll, &mut pos, kind, lines) {
                 if kind == Kind::LeftWall {
                     contacts.left_wall = Some(hit);
@@ -704,7 +872,7 @@ where
                 }
             }
         }
-        let mut moved = ground::move_ground(coll, pos, line, || floors(surfaces()));
+        let mut moved = follow_floor(&surfaces, coll, pos, line);
         if moved.floor.is_none() {
             if let Some((corner, _)) = edge(
                 &surfaces,
@@ -721,18 +889,23 @@ where
                         Kind::RightWall
                     }
                 }) {
-                    moved = ground::move_ground(
+                    moved = follow_floor(
+                        &surfaces,
                         coll,
                         Vec3::new(corner.x, moved.pos.y, pos.z),
                         line,
-                        || floors(surfaces()),
                     );
                 }
             }
         }
         if moved.floor.is_none() && stop_edge {
-            if let Some(corner) =
-                collision::line_edge(floors(surfaces()).filter(|(l, _)| *l == line), pos.x)
+            if let Some(corner) = edge(
+                &surfaces,
+                Kind::Floor,
+                line,
+                pos.x > edge(&surfaces, Kind::Floor, line, false).map_or(pos.x, |e| e.0.x),
+            )
+            .map(|e| e.0)
             {
                 let side = if pos.x <= corner.x { 1.0 } else { -1.0 };
                 let kind = if side > 0.0 {
@@ -751,12 +924,8 @@ where
                 )
                 .is_none()
                 {
-                    moved = ground::move_ground(
-                        coll,
-                        Vec3::new(corner.x, corner.y, pos.z),
-                        line,
-                        || floors(surfaces()),
-                    );
+                    moved =
+                        follow_floor(&surfaces, coll, Vec3::new(corner.x, corner.y, pos.z), line);
                 }
             }
         }
@@ -774,7 +943,7 @@ where
             );
         }
         let bottom = Vec2::new(0.0, coll.bottom);
-        if let Some((hit, _)) = query(
+        if let Some((hit, _)) = sweep(
             &surfaces,
             Kind::Floor,
             point(prev, bottom),
@@ -782,9 +951,7 @@ where
         )
         .filter(|(h, _)| h.line != line)
         {
-            moved = ground::land(coll, moved.pos, hit.line, hit.flags, hit.normal, || {
-                floors(surfaces())
-            });
+            moved = land(&surfaces, coll, moved.pos, hit);
             contacts.floor = moved.floor.is_some();
             return (moved, contacts);
         }
@@ -794,7 +961,7 @@ where
             return (moved, contacts);
         }
     }
-    let moved = ground::move_ground(coll, pos, line, || floors(surfaces()));
+    let moved = follow_floor(&surfaces, coll, pos, line);
     contacts.floor = moved.floor.is_some();
     (moved, contacts)
 }
@@ -817,7 +984,7 @@ where
         return None;
     }
     let offset = Vec2::new(reach.x * facing, reach.y);
-    let (hit, crossing) = query(
+    let (hit, crossing) = sweep(
         &surfaces,
         Kind::Floor,
         point(from, offset),
@@ -971,7 +1138,7 @@ where
         pos += step;
         let mut collide = false;
         let mut current = Contacts::default();
-        let lwalls = walls(&surfaces, *coll, prev, pos, Kind::LeftWall, None);
+        let lwalls = walls(&surfaces, *coll, *coll, prev, pos, Kind::LeftWall, None);
         if let Some(hit) = correct_wall(&surfaces, *coll, &mut pos, Kind::LeftWall, lwalls) {
             out.contacts.left_wall = Some(hit);
             current.left_wall = Some(hit);
@@ -981,7 +1148,7 @@ where
                 collide = true;
             }
         }
-        let rwalls = walls(&surfaces, *coll, prev, pos, Kind::RightWall, None);
+        let rwalls = walls(&surfaces, *coll, *coll, prev, pos, Kind::RightWall, None);
         if let Some(hit) = correct_wall(&surfaces, *coll, &mut pos, Kind::RightWall, rwalls) {
             out.contacts.right_wall = Some(hit);
             current.right_wall = Some(hit);
@@ -991,7 +1158,7 @@ where
                 collide = true;
             }
         }
-        let ceil = ceiling_step(&surfaces, *coll, prev, &mut pos, &current);
+        let ceil = ceiling_step(&surfaces, *coll, *coll, prev, &mut pos, &current);
         if let Some(hit) = ceil.contact {
             out.contacts.ceiling = Some(hit);
         }
@@ -1003,7 +1170,7 @@ where
             }
         }
         let bottom = Vec2::new(0.0, coll.bottom);
-        let floor = query(
+        let floor = sweep(
             &surfaces,
             Kind::Floor,
             point(prev, bottom),
@@ -1015,9 +1182,7 @@ where
         if let Some(hit) = floor {
             if !hitlag && faces(diff, hit.normal) {
                 // `mpProcessSetLandingFloor`.
-                let mut moved = ground::land(coll, pos, hit.line, hit.flags, hit.normal, || {
-                    floors(surfaces())
-                });
+                let mut moved = land(&surfaces, coll, pos, hit);
                 if let Some(floor) = moved.floor {
                     adjust_edges(
                         &surfaces,
@@ -1156,6 +1321,8 @@ pub fn is_cliff_hold(s: AnyStatus) -> bool {
         AnyStatus::Common(
             Status::CliffCatch
                 | Status::CliffWait
+                | Status::CliffQuick
+                | Status::CliffSlow
                 | Status::CliffClimbQuick1
                 | Status::CliffClimbSlow1
                 | Status::CliffAttackQuick1
@@ -1164,6 +1331,37 @@ pub fn is_cliff_hold(s: AnyStatus) -> bool {
                 | Status::CliffEscapeSlow1
         )
     )
+}
+
+pub fn is_cliff_phase2(s: AnyStatus) -> bool {
+    matches!(
+        s,
+        AnyStatus::Common(
+            Status::CliffClimbQuick2
+                | Status::CliffClimbSlow2
+                | Status::CliffAttackQuick2
+                | Status::CliffAttackSlow2
+                | Status::CliffEscapeQuick2
+                | Status::CliffEscapeSlow2
+        )
+    )
+}
+
+pub fn floor_point<I, F>(surfaces: F, line: u16, x: f32) -> Option<(f32, Standing)>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    height(&surfaces, Kind::Floor, line, x).map(|(y, h)| {
+        (
+            y,
+            Standing {
+                line,
+                flags: h.flags,
+                normal: h.normal,
+            },
+        )
+    })
 }
 
 pub(crate) fn ground_callback(f: &mut Fighter, floor: Option<Standing>) -> bool {

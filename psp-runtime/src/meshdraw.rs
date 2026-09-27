@@ -1599,6 +1599,7 @@ pub unsafe fn draw_object_posed(
         effect_mat_anim,
         costume,
         None,
+        None,
     )
 }
 
@@ -1631,6 +1632,7 @@ pub unsafe fn draw_object_node(
         None,
         0,
         Some(global_node),
+        None,
     )
 }
 
@@ -1646,10 +1648,14 @@ unsafe fn draw_object_posed_filtered(
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
     costume: u32,
     only_node: Option<u32>,
+    stage_anim: Option<&ssb_rom::skeleton::StageAnimator>,
 ) -> u32 {
     let mut tris = 0;
     for i in 0..object.node_count {
         let global_node = object.first_node + i;
+        if stage_anim.is_some_and(|a| !a.visible(pack, global_node)) {
+            continue;
+        }
         if only_node.is_some_and(|selected| selected != global_node) {
             continue;
         }
@@ -2302,7 +2308,7 @@ pub unsafe fn draw_stage_animated(
                 let n = a.compose(pack, &object, &mut posed);
                 let scale_count = a.billboard_scales(pack, &object, &mut billboard_scales);
                 debug_assert_eq!(n, scale_count);
-                draw_object_posed(
+                draw_object_posed_filtered(
                     pack,
                     &object,
                     base,
@@ -2312,6 +2318,8 @@ pub unsafe fn draw_stage_animated(
                     mat_anim,
                     None,
                     0,
+                    None,
+                    Some(a),
                 )
             }
             None => draw_object(pack, &object, base, st, mat_anim, 0),

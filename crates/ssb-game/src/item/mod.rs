@@ -1226,7 +1226,13 @@ where
     if item.hitlag_tics == 0 {
         item.pos += item.vel_air;
     }
-    // Static maps have no line speed (`mpCollisionGetSpeedLineID`).
+    // `itProcessProcItemMain` carries ground attachments before the bounds gate,
+    // including hitlag frames. The map callback consumes this carried target.
+    if item.ga == Ga::Ground {
+        if let Some(floor) = item.floor {
+            item.pos += crate::map::line_speed(surfaces, floor.line);
+        }
+    }
     if let Some(b) = bounds {
         if item.pos.y < b.bottom
             || item.pos.x > b.right

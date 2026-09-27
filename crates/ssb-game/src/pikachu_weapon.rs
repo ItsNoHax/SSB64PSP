@@ -127,10 +127,7 @@ impl ThunderJolt {
                     JOLT_COLL,
                 );
                 if let Some(hit) = hit {
-                    let s = surfaces()
-                        .into_iter()
-                        .find(|s| s.kind == kind && s.segment == hit.segment)
-                        .expect("contact came from these surfaces");
+                    let s = hit.surface;
                     let pos = project(s, hit.position).unwrap_or(hit.position);
                     let angle = ssb_engine::math::atan2(hit.normal.y, hit.normal.x);
                     let direction = match kind {
@@ -173,7 +170,10 @@ impl ThunderJolt {
             .map_or(wanted, |hit| hit.position);
             return true;
         }
-        let current = self.surface.unwrap();
+        let Some(current) = refresh_surface(surfaces(), self.surface.unwrap()) else {
+            return false;
+        };
+        self.surface = Some(current);
         self.velocity.x = self.normal.y * 55.0;
         self.velocity.y = -self.normal.x * 55.0;
         if current.kind == MapSurfaceKind::Floor {
@@ -233,10 +233,10 @@ impl ThunderJolt {
             .into_iter()
             .filter(|s| s.kind == collision_kind)
             .filter_map(|s| {
-                let t = swept_segment_intersection(
+                let t = swept_coords_intersection(
                     Vec2::new(from.x, from.y),
                     Vec2::new(projected.x, projected.y),
-                    s.segment,
+                    s.coords(),
                 )?;
                 let n = surface_normal(s.kind, s.segment);
                 if (projected.x - from.x) * n.x + (projected.y - from.y) * n.y >= 0.0 {
@@ -320,11 +320,11 @@ impl ThunderJolt {
             return Some(false);
         }
         let t = s.topology.unwrap();
-        let segment = s.segment;
+        let [x1, y1, x2, y2] = s.coords();
         let pos = if t.vertex1 == vertex {
-            Vec3::new(segment.x1 as f32, segment.y1 as f32, from.z)
+            Vec3::new(x1, y1, from.z)
         } else {
-            Vec3::new(segment.x2 as f32, segment.y2 as f32, from.z)
+            Vec3::new(x2, y2, from.z)
         };
         self.attach(s, pos, dir);
         Some(true)
@@ -337,8 +337,7 @@ fn same_line(a: MapSurface, b: MapSurface) -> bool {
     }
 }
 fn project(s: MapSurface, p: Vec3) -> Option<Vec3> {
-    let a = s.segment;
-    let (x1, y1, x2, y2) = (a.x1 as f32, a.y1 as f32, a.x2 as f32, a.y2 as f32);
+    let [x1, y1, x2, y2] = s.coords();
     if matches!(s.kind, MapSurfaceKind::Floor | MapSurfaceKind::Ceiling) {
         if p.x < x1.min(x2) - 0.001 || p.x > x1.max(x2) + 0.001 || x1 == x2 {
             return None;
@@ -363,12 +362,12 @@ where
     let mut ends = [None, None];
     for s in surfaces().into_iter().filter(|s| same_line(*s, current)) {
         let Some(t) = s.topology else { continue };
-        let a = s.segment;
+        let [x1, y1, x2, y2] = s.coords();
         if t.point == 0 {
-            ends[0] = Some((Vec2::new(a.x1 as f32, a.y1 as f32), t.vertex1));
+            ends[0] = Some((Vec2::new(x1, y1), t.vertex1));
         }
         if t.point + 1 == t.segments {
-            ends[1] = Some((Vec2::new(a.x2 as f32, a.y2 as f32), t.vertex2));
+            ends[1] = Some((Vec2::new(x2, y2), t.vertex2));
         }
     }
     let (a, b) = (ends[0]?, ends[1]?);
@@ -477,6 +476,7 @@ mod tests {
         b: (i16, i16, u16),
     ) -> MapSurface {
         MapSurface {
+            motion: None,
             kind,
             segment: Segment {
                 x1: a.0,

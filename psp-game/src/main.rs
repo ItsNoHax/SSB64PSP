@@ -359,6 +359,15 @@ unsafe fn run() -> ! {
     if let Some(p) = pack.as_ref() {
         material_anim.start(p);
     }
+    let mut stage_map = pack.as_ref().and_then(|p| {
+        p.stage(TRAINING_STAGE_INDEX).map(|stage| {
+            alloc::boxed::Box::new(ssb_psp_runtime::scene::StageMap::new(
+                p,
+                TRAINING_STAGE_INDEX,
+                &stage,
+            ))
+        })
+    });
 
     let mut draw_state = meshdraw::DrawState::default();
     // Created once, on first entry to Training Mode (below) -- a fighter
@@ -486,6 +495,12 @@ unsafe fn run() -> ! {
             if let (Screen::Training, Some(p), Some(pl)) = (screen, &pack, play_state.as_mut()) {
                 material_anim.tick(p);
                 if let Some(stage) = p.stage(TRAINING_STAGE_INDEX) {
+                    if let Some(map) = stage_map.as_mut() {
+                        let _ = map.tick(p);
+                    }
+                    let groups = stage_map
+                        .as_ref()
+                        .map_or(&[][..], |map| map.groups.as_slice());
                     // Real `sceCtrl` stick input drives real movement/physics/
                     // animation against the real stage collision, the same
                     // `Play::tick` `psp-asset-viewer/`'s own gameplay slice uses. Under
@@ -507,9 +522,10 @@ unsafe fn run() -> ! {
                             .then_some((dummy.fighter.cliff.line, dummy.fighter.facing))
                     });
                     items.publish(&mut pl.fighter);
-                    pl.tick(p, &stage, controller, jump_held, None);
+                    pl.tick_fighter_map(p, &stage, controller, jump_held, groups);
+                    pl.tick_camera(&stage, None);
                     items.take_requests(&mut pl.fighter, || {
-                        ssb_psp_runtime::scene::MapSegments::new(p, &stage)
+                        ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
                     });
                     if let Some(spawn) = pl.fighter.take_weapon_spawn() {
                         weapons.spawn(spawn);
@@ -523,9 +539,9 @@ unsafe fn run() -> ! {
                         // (`ssb_game::grab` module docs).
                         ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
                         items.publish(&mut dummy.fighter);
-                        dummy.tick(p, &stage);
+                        dummy.tick_map(p, &stage, groups);
                         items.take_requests(&mut dummy.fighter, || {
-                            ssb_psp_runtime::scene::MapSegments::new(p, &stage)
+                            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
                         });
                         ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
                         if let Some(spawn) = dummy.fighter.take_weapon_spawn() {
@@ -533,13 +549,15 @@ unsafe fn run() -> ! {
                         }
                         weapons.observe_owner(&pl.fighter);
                         weapons.observe_owner(&dummy.fighter);
-                        weapons.tick(|| ssb_psp_runtime::scene::MapSegments::new(p, &stage));
+                        weapons.tick(|| {
+                            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
+                        });
                         weapons.sync_owner(&mut pl.fighter);
                         weapons.sync_owner(&mut dummy.fighter);
                         items.observe_owner(&pl.fighter);
                         items.observe_owner(&dummy.fighter);
                         items.tick(
-                            || ssb_psp_runtime::scene::MapSegments::new(p, &stage),
+                            || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups),
                             Some(ssb_game::status::BlastZone {
                                 top: stage.bounds.top as f32,
                                 bottom: stage.bounds.bottom as f32,
@@ -565,17 +583,21 @@ unsafe fn run() -> ! {
                         ssb_game::link::apply_spin_attack_hits(&mut dummy.fighter, &mut pl.fighter);
                         items.search_hurt(&mut [&mut pl.fighter, &mut dummy.fighter], &mut weapons);
                         ssb_game::combat::finish_frame(&mut [&mut pl.fighter, &mut dummy.fighter]);
+                        let map =
+                            || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups);
+                        pl.fighter.resolve_cliff_release(&map);
+                        dummy.fighter.resolve_cliff_release(&map);
                         items.take_requests(&mut pl.fighter, || {
-                            ssb_psp_runtime::scene::MapSegments::new(p, &stage)
+                            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
                         });
                         items.take_requests(&mut dummy.fighter, || {
-                            ssb_psp_runtime::scene::MapSegments::new(p, &stage)
+                            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
                         });
                         items.resolve(&[&pl.fighter, &dummy.fighter]);
                         items.sync_owner(&mut pl.fighter);
                         items.sync_owner(&mut dummy.fighter);
                         items.take_weapon_spawns(&mut weapons, || {
-                            ssb_psp_runtime::scene::MapSegments::new(p, &stage)
+                            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
                         });
                         items.record_landed(&mut pl.fighter);
                         items.record_landed(&mut dummy.fighter);
@@ -607,6 +629,7 @@ unsafe fn run() -> ! {
                     dummy_state.as_ref(),
                     &weapons,
                     Some(&material_anim),
+                    stage_map.as_ref().map(|map| &map.animator),
                     no_pack_color,
                 );
             }
@@ -692,6 +715,7 @@ unsafe fn draw_training(
     dummy_state: Option<&play::Dummy>,
     weapons: &ssb_game::weapon::WeaponPool,
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    stage_anim: Option<&ssb_rom::skeleton::StageAnimator>,
     no_pack_color: Color,
 ) {
     let scene = pack
@@ -727,7 +751,7 @@ unsafe fn draw_training(
     // `sc1PGameFuncLights`: the stage light that animated stage light
     // colours are evaluated under (RE-322).
     draw_state.set_stage_light(stage.light_angle_xy);
-    meshdraw::draw_stage(p, &stage, &base, draw_state, material_anim);
+    meshdraw::draw_stage_animated(p, &stage, &base, stage_anim, draw_state, material_anim);
 
     // The N64 puts shadows on their own display link between the stage and
     // fighters.  Resolve each independently from its live floor/air state;

@@ -64,12 +64,18 @@ impl Dummy {
     /// the same `Fighter::tick` path the player's own scene drives, just with
     /// no input source and no camera (`FighterScene::tick_fighter`, not
     /// `FighterScene::tick`).
-    pub fn tick(&mut self, pack: &Pack<'_>, stage: &StageDesc) {
-        self.scene.tick_fighter(
+    pub fn tick_map(
+        &mut self,
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        groups: &[ssb_game::map::MapGroup],
+    ) {
+        self.scene.tick_fighter_map(
             pack,
             stage,
             ssb_engine::input::ControllerState::default(),
             false,
+            groups,
         );
     }
 }

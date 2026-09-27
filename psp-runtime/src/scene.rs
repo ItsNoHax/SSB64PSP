@@ -90,6 +90,107 @@ pub struct FloorSegments<'a, 'p> {
 
 /// Walks every static stage collision segment with its authored one-sided
 /// kind. Fighters and weapons share this allocation-free static map input.
+pub struct StageMap {
+    pub animator: ssb_rom::skeleton::StageAnimator,
+    pub groups: alloc::vec::Vec<ssb_game::map::MapGroup>,
+    anim: Option<ssb_rom::pack::AnimDesc>,
+    first_node: u32,
+    previous_flags: alloc::vec::Vec<u16>,
+}
+
+impl StageMap {
+    pub fn new(pack: &Pack<'_>, index: u32, stage: &StageDesc) -> Self {
+        let anim = pack.stage_anim(index);
+        let mut animator = ssb_rom::skeleton::StageAnimator::new();
+        if let Some(anim) = anim {
+            animator.start(pack, &anim);
+        }
+        let first_node = pack
+            .object(stage.layers[1])
+            .map_or(u32::MAX, |o| o.first_node);
+        let count = pack
+            .stage_lines(stage)
+            .map(|l| l.yakumono as usize + 1)
+            .max()
+            .unwrap_or(0);
+        let mut groups = alloc::vec![ssb_game::map::MapGroup::default(); count];
+        for (i, group) in groups.iter_mut().enumerate() {
+            if let Some(node) = first_node.checked_add(i as u32).and_then(|n| pack.node(n)) {
+                group.translate = ssb_engine::math::Vec3::new(
+                    node.rest_translate[0],
+                    node.rest_translate[1],
+                    node.rest_translate[2],
+                );
+            }
+            group.animated = (0..animator.joint_count()).any(|j| {
+                animator
+                    .joint(j)
+                    .is_some_and(|(n, _)| n == first_node.saturating_add(i as u32))
+            });
+        }
+        Self {
+            animator,
+            groups,
+            anim,
+            first_node,
+            previous_flags: alloc::vec![0; count],
+        }
+    }
+
+    pub fn tick(&mut self, pack: &Pack<'_>) -> Result<(), ssb_rom::objanim::AnimError> {
+        let Some(anim) = self.anim else {
+            return Ok(());
+        };
+        let Some(script) = pack.anim_script(&anim) else {
+            return Ok(());
+        };
+        let first = self.first_node;
+        for (i, flag) in self.previous_flags.iter_mut().enumerate() {
+            *flag = self.animator.flags(first.saturating_add(i as u32));
+        }
+        let groups = &self.groups;
+        self.animator.tick_nodes(script, |node| {
+            node.checked_sub(first)
+                .and_then(|i| groups.get(i as usize))
+                .is_none_or(|g| {
+                    !matches!(
+                        g.status,
+                        ssb_game::map::GroupStatus::On | ssb_game::map::GroupStatus::Off
+                    )
+                })
+        })?;
+        for i in 0..self.animator.joint_count() {
+            let Some((node, pose)) = self.animator.joint(i) else {
+                continue;
+            };
+            let Some(group) = node
+                .checked_sub(first)
+                .and_then(|i| self.groups.get_mut(i as usize))
+            else {
+                continue;
+            };
+            if !matches!(
+                group.status,
+                ssb_game::map::GroupStatus::On | ssb_game::map::GroupStatus::Off
+            ) {
+                let flags = self.animator.flags(node);
+                let old_flags = self.previous_flags[(node - first) as usize];
+                if old_flags == 0 && flags != 0 {
+                    group.status = ssb_game::map::GroupStatus::Hidden;
+                } else if old_flags != 0 && flags == 0 {
+                    group.status = ssb_game::map::GroupStatus::Show;
+                }
+                group.set_position(ssb_engine::math::Vec3::new(
+                    pose.translate[0],
+                    pose.translate[1],
+                    pose.translate[2],
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 pub struct MapSegments<'a, 'p> {
     pack: &'a Pack<'p>,
     stage: &'a StageDesc,
@@ -97,6 +198,7 @@ pub struct MapSegments<'a, 'p> {
     current: Option<LineDesc>,
     point: u16,
     prev: Option<(i16, i16, u16, u16)>,
+    groups: &'a [ssb_game::map::MapGroup],
 }
 
 impl<'a, 'p> MapSegments<'a, 'p> {
@@ -108,6 +210,17 @@ impl<'a, 'p> MapSegments<'a, 'p> {
             current: None,
             point: 0,
             prev: None,
+            groups: &[],
+        }
+    }
+    pub fn with_groups(
+        pack: &'a Pack<'p>,
+        stage: &'a StageDesc,
+        groups: &'a [ssb_game::map::MapGroup],
+    ) -> Self {
+        Self {
+            groups,
+            ..Self::new(pack, stage)
         }
     }
 }
@@ -123,7 +236,13 @@ impl Iterator for MapSegments<'_, '_> {
                 }
                 let candidate = self.pack.line(self.stage.first_line + self.line);
                 self.line += 1;
-                if let Some(candidate) = candidate.filter(|line| line.vertex_count >= 2) {
+                if let Some(candidate) = candidate.filter(|line| {
+                    line.vertex_count >= 2
+                        && self
+                            .groups
+                            .get(line.yakumono as usize)
+                            .is_none_or(|g| g.exists())
+                }) {
                     self.current = Some(candidate);
                     self.point = 0;
                     self.prev = None;
@@ -155,6 +274,10 @@ impl Iterator for MapSegments<'_, '_> {
                 _ => continue,
             };
             return Some(MapSurface {
+                motion: self
+                    .groups
+                    .get(line.yakumono as usize)
+                    .and_then(|g| g.motion()),
                 topology: Some(SurfaceTopology {
                     line: line.id,
                     point: self.point - 2,
@@ -733,6 +856,7 @@ impl FighterScene {
             fighter.coll = body_of(&d);
             fighter.cliff_reach =
                 ssb_engine::math::Vec2::new(d.cliffcatch_width, d.cliffcatch_height);
+            fighter.cliff_air_mask = d.cliff_air_mask;
             fighter.anim = anim_of(&d);
             cam_offset_y = d.cam_offset_y;
             camera_zoom_frame = d.camera_zoom;
@@ -791,6 +915,17 @@ impl FighterScene {
         input: ssb_engine::input::ControllerState,
         jump_held: bool,
     ) {
+        self.tick_fighter_map(pack, stage, input, jump_held, &[]);
+    }
+
+    pub fn tick_fighter_map(
+        &mut self,
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        input: ssb_engine::input::ControllerState,
+        jump_held: bool,
+        groups: &[ssb_game::map::MapGroup],
+    ) {
         let tapped = jump_held && !self.jump_was_held;
         let released = !jump_held && self.jump_was_held;
         self.jump_was_held = jump_held;
@@ -826,6 +961,7 @@ impl FighterScene {
                     | ssb_game::status::MarioStatus::SpecialAirHi
             ) | AnyStatus::Samus(ssb_game::status::SamusStatus::SpecialHi)
         ) || ssb_game::reaction::moves_by_transn(self.fighter.status.status)
+            || ssb_game::map::is_cliff_phase2(self.fighter.status.status)
             || self.fighter.status.status == ssb_game::status::Status::LightThrowDash
         {
             if let (Some(before), Some(current)) =
@@ -841,7 +977,8 @@ impl FighterScene {
                 });
             }
         }
-        self.fighter.tick_map(|| MapSegments::new(pack, stage));
+        self.fighter
+            .tick_map(|| MapSegments::with_groups(pack, stage, groups));
         if self.fighter.is_grounded() {
             self.airborne_ticks = 0;
         } else {
@@ -856,6 +993,23 @@ impl FighterScene {
             self.root_motion_before_tick = self.skeleton.pose(0).copied();
         }
         self.sample_held_child_offset();
+        if (ssb_game::map::is_cliff_hold(self.fighter.status.status)
+            || ssb_game::map::is_cliff_phase2(self.fighter.status.status))
+            && self.skeleton.joint_node(0).is_none()
+        {
+            if let Some(pose) = self.skeleton.pose(0) {
+                self.fighter.transn = ssb_engine::math::Vec3::new(
+                    pose.translate[0],
+                    pose.translate[1],
+                    pose.translate[2],
+                );
+                if ssb_game::map::is_cliff_hold(self.fighter.status.status) {
+                    let f = &mut self.fighter;
+                    f.pos.x = f.cliff.corner.x + f.transn.z * f.facing.sign() * f.attributes.size;
+                    f.pos.y = f.cliff.corner.y + f.transn.y * f.attributes.size;
+                }
+            }
+        }
         ssb_game::grab::refresh_held_attachment(&mut self.fighter);
         self.sample_gameplay_joints(pack);
         // A held fighter hangs from this fighter's `joint_itemheavy_id`; the

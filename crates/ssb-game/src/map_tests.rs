@@ -11,6 +11,7 @@ const BODY: BodyColl = BodyColl {
 
 fn surface(kind: Kind, line: u16, a: (i16, i16), b: (i16, i16), flags: u16) -> MapSurface {
     MapSurface {
+        motion: None,
         kind,
         segment: Segment {
             x1: a.0,
@@ -473,17 +474,201 @@ fn a_live_fighter_tick_reaches_the_wall_callback() {
 }
 
 #[test]
-fn a_held_cliff_does_not_run_air_gravity_or_map_queries() {
+fn a_held_cliff_uses_its_authored_pose_without_air_gravity() {
     let mut f = fighter(
         FighterKind::Mario,
         AnyStatus::Common(Status::CliffWait),
         Vec3::ZERO,
     );
     f.cliff.fall_wait = 100;
-    f.pos = Vec3::new(100.0, 0.0, 0.0);
-    f.tick_map(core::iter::empty);
-    assert_eq!(f.pos, Vec3::new(100.0, 0.0, 0.0));
+    f.cliff.line = 3;
+    f.transn = Vec3::new(0.0, -180.0, -100.0);
+    let floor = surface(Kind::Floor, 3, (100, 0), (1000, 0), 0);
+    f.tick_map(|| [floor]);
+    assert_eq!(f.pos, Vec3::new(0.0, -180.0, 0.0));
     assert_eq!(f.physics.vel_air, Vec3::ZERO);
+}
+
+fn moving(mut s: MapSurface, offset: Vec2, speed: Vec3) -> MapSurface {
+    s.motion = Some(crate::weapon::SurfaceMotion { offset, speed });
+    s
+}
+
+#[test]
+fn rising_fractional_floor_lands_a_stationary_body() {
+    let floor = moving(
+        surface(Kind::Floor, 3, (-1000, 0), (1000, 0), 0),
+        Vec2::new(0.25, 100.5),
+        Vec3::new(0.25, 100.5, 0.0),
+    );
+    let pos = Vec3::new(0.0, 50.0, 0.0);
+    let out = move_air(&BodyColl::MARIO, pos, pos, AirOptions::default(), || {
+        [floor]
+    });
+    assert_eq!(out.moved.floor.unwrap().line, 3);
+    assert_eq!(out.moved.pos.y, 100.5);
+}
+
+#[test]
+fn moving_wall_and_ceiling_use_relative_sweeps_and_world_correction() {
+    let wall = moving(
+        surface(Kind::LeftWall, 1, (500, -1000), (500, 1000), 0),
+        Vec2::new(-200.5, 0.0),
+        Vec3::new(-200.5, 0.0, 0.0),
+    );
+    let from = Vec3::new(200.0, 0.0, 0.0);
+    let out = move_air(&BodyColl::MARIO, from, from, AirOptions::default(), || {
+        [wall]
+    });
+    assert_eq!(out.contacts.left_wall.unwrap().line, 1);
+    assert_eq!(out.moved.pos.x, 149.5);
+    let ceil = moving(
+        surface(Kind::Ceiling, 2, (-1000, 500), (1000, 500), 0),
+        Vec2::new(0.0, -200.25),
+        Vec3::new(0.0, -200.25, 0.0),
+    );
+    let out = move_air(
+        &BodyColl::MARIO,
+        Vec3::ZERO,
+        Vec3::ZERO,
+        AirOptions::default(),
+        || [ceil],
+    );
+    assert_eq!(out.moved.pos.y, -20.25);
+    assert_eq!(out.contacts.ceiling.unwrap().line, 2);
+}
+
+#[test]
+fn group_carry_is_added_on_the_first_substep() {
+    let floor = moving(
+        surface(Kind::Floor, 3, (-2000, 0), (2000, 0), 0),
+        Vec2::new(300.0, 0.0),
+        Vec3::new(300.0, 0.0, 20.0),
+    );
+    let wall = surface(Kind::LeftWall, 4, (400, -1000), (400, 1000), 0);
+    let body = BodyColl {
+        top: 100.0,
+        center: 50.0,
+        bottom: 0.0,
+        width: 20.0,
+    };
+    let (out, contact) = move_ground(
+        &body,
+        Vec3::ZERO,
+        Vec3::new(1000.0, 0.0, 60.0),
+        3,
+        false,
+        || [floor, wall],
+    );
+    assert_eq!(out.pos, Vec3::new(380.0, 0.0, 30.0));
+    assert!(contact.left_wall.is_some());
+}
+
+#[test]
+fn copied_diamond_sweeps_previous_bottom_to_current_bottom() {
+    let floor = surface(Kind::Floor, 3, (-1000, -50), (1000, -50), 0);
+    let previous = BodyColl::MARIO;
+    let current = BodyColl {
+        bottom: -100.0,
+        ..previous
+    };
+    let out = move_air_from_shape(
+        &current,
+        &previous,
+        Vec3::ZERO,
+        Vec3::ZERO,
+        AirOptions::default(),
+        || [floor],
+    );
+    assert_eq!(out.moved.pos.y, 50.0);
+    assert!(out.moved.floor.is_some());
+    assert!(move_air(
+        &current,
+        Vec3::ZERO,
+        Vec3::ZERO,
+        AirOptions::default(),
+        || [floor]
+    )
+    .moved
+    .floor
+    .is_none());
+}
+
+#[test]
+fn group_states_gate_translation_and_collision() {
+    let mut group = MapGroup {
+        translate: Vec3::new(25.5, 100.25, 0.0),
+        ..MapGroup::default()
+    };
+    assert!(group.exists());
+    assert!(group.motion().is_none());
+    group.status = GroupStatus::On;
+    assert_eq!(group.motion().unwrap().offset, Vec2::new(25.5, 100.25));
+    group.set_position(Vec3::new(30.0, 99.75, 2.0));
+    assert_eq!(group.speed, Vec3::new(4.5, -0.5, 2.0));
+    for status in [GroupStatus::Off, GroupStatus::Hidden] {
+        group.status = status;
+        assert!(!group.exists());
+    }
+    group.status = GroupStatus::Show;
+    assert!(group.exists());
+}
+
+#[test]
+fn hitlag_keeps_fighter_attached_to_moving_floor() {
+    let floor = moving(
+        surface(Kind::Floor, 3, (-2000, 0), (2000, 0), 0),
+        Vec2::new(12.5, 20.25),
+        Vec3::new(12.5, 20.25, 0.0),
+    );
+    let mut f = fighter(FighterKind::Mario, Status::Wait.into(), Vec3::ZERO);
+    f.place_on_stage([(3, floor.segment)]);
+    f.hitlag = 10;
+    f.tick_map(|| [floor]);
+    assert_eq!(f.pos, Vec3::new(12.5, 20.25, 0.0));
+}
+
+#[test]
+fn hanging_pose_follows_group_and_releases_when_group_is_disabled() {
+    let floor = moving(
+        surface(Kind::Floor, 3, (100, 0), (1000, 0), 0),
+        Vec2::new(10.5, 25.25),
+        Vec3::new(10.5, 25.25, 0.0),
+    );
+    let mut f = fighter(FighterKind::Mario, Status::CliffWait.into(), Vec3::ZERO);
+    f.cliff.line = 3;
+    f.cliff.fall_wait = 100;
+    f.attributes.size = 2.0;
+    f.transn = Vec3::new(0.0, -100.0, -50.0);
+    f.tick_map(|| [floor]);
+    assert_eq!(f.pos, Vec3::new(10.5, -174.75, 0.0));
+    f.tick_map(core::iter::empty);
+    assert_eq!(f.status.status, Status::Fall);
+    assert!(f.floor.is_none());
+}
+
+#[test]
+fn cliff_phase_two_places_on_the_current_corner_and_follows_transn() {
+    let floor = moving(
+        surface(Kind::Floor, 3, (100, 0), (1000, 0), 0),
+        Vec2::new(10.5, 25.25),
+        Vec3::ZERO,
+    );
+    let mut f = fighter(
+        FighterKind::Fox,
+        Status::CliffClimbQuick2.into(),
+        Vec3::new(-400.0, -100.0, 0.0),
+    );
+    f.cliff.line = 3;
+    f.cliff.place_phase2 = true;
+    f.set_root_motion(crate::physics::RootMotion {
+        delta: Vec3::new(0.0, 0.0, 12.0),
+        rotate_z: 0.0,
+    });
+    f.tick_map(|| [floor]);
+    assert_eq!(f.pos, Vec3::new(127.5, 25.25, 0.0));
+    assert!(f.is_grounded());
+    assert_eq!(f.floor.unwrap().line, 3);
 }
 
 #[test]
@@ -822,4 +1007,23 @@ fn ness_jibaku_bounces_through_the_shared_down_bounce() {
     assert_eq!(f.damage_mul, 0.5);
     let len = crate::motion::anim_length(FighterKind::Ness, Status::DownBounceU.into());
     assert_eq!(f.status.timing.anim_length, len);
+}
+
+#[test]
+fn cliff_release_sweeps_from_the_outside_corner_into_the_live_pose() {
+    let wall = surface(Kind::LeftWall, 1, (0, -100), (0, 100), 0);
+    let mut f = fighter(
+        FighterKind::Mario,
+        AnyStatus::Common(Status::CliffWait),
+        Vec3::new(0.0, -10.0, 0.0),
+    );
+    f.cliff.corner = Vec2::ZERO;
+    f.cliff.line = 3;
+    status::cliff_release_position(&mut f);
+    assert_eq!(f.pos.x, 0.0, "the source changes pos_prev, not TopN");
+    status::set_fall(&mut f);
+    f.hitlag = 4;
+    f.tick_map(|| [wall]);
+    assert_eq!(f.pos.x, -BODY.width);
+    assert!(f.cliff.release_previous.is_none());
 }

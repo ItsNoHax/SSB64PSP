@@ -258,6 +258,9 @@ pub fn init_damage_vars_full(
     element: crate::combat::Element,
     allow_losecopy: bool,
 ) {
+    if crate::map::is_cliff_hold(f.status.status) {
+        crate::status::cliff_release_position(f);
+    }
     let airborne = !f.is_grounded();
     let angle = sakurai_angle_radians(angle_i, airborne, knockback);
     let (sin, cos) = sin_cos(angle);
