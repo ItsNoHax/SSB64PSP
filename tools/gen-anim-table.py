@@ -652,12 +652,47 @@ CLIFF_SLOTS = [(name, status) for status, name in enumerate([
     "CliffEscapeQuick1", "CliffEscapeQuick2", "CliffEscapeSlow1", "CliffEscapeSlow2",
 ], 84)]
 
+# The damage statuses (`ftcommondamage.c`, `ftcommondamagefall.c`,
+# `ftcommonfallspecial.c`, `ftcommonlandingfallspecial.c`) and the common
+# attack statuses from `Appeal` to `LandingAirNull` (`ftcommonattack*.c`,
+# `ftcommonlandingair.c`), for every playable fighter through the common
+# status -> motion pairing. Several fighters already carry some of the
+# attacks in per-fighter slots above; those resolve to the same files, which
+# the pack stores once. A null motion (Mario has no mid-angle forward tilt)
+# leaves the slot empty. `WallDamage` (56) is a reaction slot already.
+COMMON_MOVE_SLOTS = [(f"Damage{name}", status) for status, name in enumerate([
+    "Hi1", "Hi2", "Hi3", "N1", "N2", "N3", "Lw1", "Lw2", "Lw3",
+    "Air1", "Air2", "Air3", "E1", "E2", "FlyHi", "FlyN", "FlyLw", "FlyTop", "FlyRoll",
+], 37)] + [
+    ("DamageFall",         57),
+    ("FallSpecial",        58),
+    ("LandingFallSpecial", 59),
+] + [(name, status) for status, name in enumerate([
+    "Appeal", "Attack11", "Attack12", "AttackDash",
+    "AttackS3Hi", "AttackS3HiS", "AttackS3", "AttackS3LwS", "AttackS3Lw",
+    "AttackHi3F", "AttackHi3", "AttackHi3B", "AttackLw3",
+    "AttackS4Hi", "AttackS4HiS", "AttackS4", "AttackS4LwS", "AttackS4Lw",
+    "AttackHi4", "AttackLw4",
+    "AttackAirN", "AttackAirF", "AttackAirB", "AttackAirHi", "AttackAirLw",
+    "LandingAirN", "LandingAirF", "LandingAirB", "LandingAirHi", "LandingAirLw",
+    "LandingAirNull",
+], 189)]
+
+# The jab finisher Mario and Luigi share (`MarioStatus::Attack13`). Luigi's
+# earlier slot names the same figatree but is packed for Luigi only; this
+# one serves both, so the status needs no per-fighter slot.
+FINAL_SPECIAL_SLOTS = [
+    ("MarioAttack13", ("Mario", "Luigi"), "FTMarioAnimJab3"),
+]
+
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
              + [(name, status, None) for name, status in GRAB_SLOTS]
              + [(name, None, None) for name, _, _ in LATE_SPECIAL_SLOTS]
              + [(name, status, None) for name, status in LATE_COMMON_SLOTS]
              + [(name, None, None) for name, _, _ in POST_SPECIAL_SLOTS]
-             + [(name, status, None) for name, status in REACTION_SLOTS + CLIFF_SLOTS])
+             + [(name, status, None) for name, status in REACTION_SLOTS + CLIFF_SLOTS
+                + COMMON_MOVE_SLOTS]
+             + [(name, None, None) for name, _, _ in FINAL_SPECIAL_SLOTS])
 
 # The slots whose animation ends on its own, and whose length the status
 # machine therefore reads (RE-035). Everything after them loops until it is
@@ -836,9 +871,20 @@ def file_frames(path):
 def motion_enum(refs):
     src = open(os.path.join(refs, "src/ft/ftdef.h")).read()
     body = re.search(r"typedef enum FTCommonMotion\s*\{(.*?)\}", src, re.S).group(1)
+    body = COMMENT_RE.sub(" ", body)
+    # C enumerator semantics: an explicit value is either a number or an
+    # earlier enumerator (`AttackAirN = AttackAirStart`, `AttackAirEnd =
+    # AttackAirLw`); anything else is the previous value plus one. Reading
+    # the alias's right-hand side as another enumerator would shift every
+    # motion after `AttackAirStart` by one per alias.
     out, nxt = {}, 0
-    for name, val in re.findall(r"(nFTCommonMotion\w+)\s*(?:=\s*(-?\d+))?", body):
-        nxt = int(val) if val else nxt
+    for item in body.split(","):
+        m = re.match(r"\s*(nFTCommonMotion\w+)\s*(?:=\s*(\S+))?\s*$", item)
+        if not m:
+            continue
+        name, val = m.groups()
+        if val is not None:
+            nxt = out[val] if val in out else int(val, 0)
         out[name] = nxt
         nxt += 1
     return out
@@ -959,8 +1005,10 @@ def resolve(refs):
             common(slot, status)
         for slot, target, sym in POST_SPECIAL_SLOTS:
             special(slot, target, sym)
-        for slot, status in REACTION_SLOTS + CLIFF_SLOTS:
+        for slot, status in REACTION_SLOTS + CLIFF_SLOTS + COMMON_MOVE_SLOTS:
             common(slot, status)
+        for slot, target, sym in FINAL_SPECIAL_SLOTS:
+            special(slot, target, sym)
         rows.append((fighter, entry))
     return rows, problems
 

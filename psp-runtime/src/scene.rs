@@ -29,7 +29,6 @@ use ssb_game::ground::BodyColl;
 use ssb_game::physics::PhysicsAttributes;
 use ssb_game::status::AnimLengths;
 use ssb_game::status::AnyStatus;
-use ssb_game::status::MarioStatus;
 use ssb_game::status::Status;
 use ssb_game::weapon::{MapSurface, MapSurfaceKind, SurfaceTopology};
 use ssb_rom::pack::ObjectDesc;
@@ -485,237 +484,24 @@ pub fn tick_skeleton_animation(
     pack: &Pack<'_>,
     kind: u32,
     status: AnyStatus,
+    speed: f32,
     skeleton: &mut ssb_rom::skeleton::Skeleton,
     started: &mut Option<AnyStatus>,
 ) -> Option<ssb_rom::figatree::JointPose> {
-    let slot = if kind == FighterKind::Fox as u32 {
-        match status {
-            AnyStatus::Common(Status::Attack11) => 26,
-            AnyStatus::Common(Status::Attack12) => 27,
-            AnyStatus::Common(Status::AttackDash) => 31,
-            AnyStatus::Common(Status::AttackS3Hi) => 32,
-            AnyStatus::Common(Status::AttackS3HiS) => 33,
-            AnyStatus::Common(Status::AttackS3) => 34,
-            AnyStatus::Common(Status::AttackS3LwS) => 35,
-            AnyStatus::Common(Status::AttackS3Lw) => 36,
-            AnyStatus::Common(Status::AttackHi3) => 37,
-            AnyStatus::Common(Status::AttackLw3) => 38,
-            AnyStatus::Common(Status::AttackS4) => 39,
-            AnyStatus::Common(Status::AttackHi4) => 40,
-            AnyStatus::Common(Status::AttackLw4) => 41,
-            AnyStatus::Common(Status::AttackAirN) => 42,
-            AnyStatus::Common(Status::AttackAirF) => 43,
-            AnyStatus::Common(Status::AttackAirB) => 44,
-            AnyStatus::Common(Status::AttackAirHi) => 45,
-            AnyStatus::Common(Status::AttackAirLw) => 46,
-            _ => status.anim_slot(),
-        }
-    } else if kind == FighterKind::Donkey as u32 {
-        match status {
-            AnyStatus::Common(Status::Attack11) => 68,
-            AnyStatus::Common(Status::Attack12) => 69,
-            AnyStatus::Common(Status::AttackDash) => 70,
-            AnyStatus::Common(Status::AttackS3Hi) => 71,
-            AnyStatus::Common(Status::AttackS3) => 72,
-            AnyStatus::Common(Status::AttackS3Lw) => 73,
-            AnyStatus::Common(Status::AttackHi3) => 74,
-            AnyStatus::Common(Status::AttackLw3) => 75,
-            AnyStatus::Common(Status::AttackS4Hi) => 76,
-            AnyStatus::Common(Status::AttackS4HiS) => 77,
-            AnyStatus::Common(Status::AttackS4) => 78,
-            AnyStatus::Common(Status::AttackS4LwS) => 79,
-            AnyStatus::Common(Status::AttackS4Lw) => 80,
-            AnyStatus::Common(Status::AttackHi4) => 81,
-            AnyStatus::Common(Status::AttackLw4) => 82,
-            AnyStatus::Common(Status::AttackAirN) => 83,
-            AnyStatus::Common(Status::AttackAirF) => 84,
-            AnyStatus::Common(Status::AttackAirB) => 85,
-            AnyStatus::Common(Status::AttackAirHi) => 86,
-            AnyStatus::Common(Status::AttackAirLw) => 87,
-            _ => status.anim_slot(),
-        }
-    } else if kind == FighterKind::Link as u32 {
-        // `ssb_rom::anim::SLOT_LINK_ATTACK11` onward. Link has one forward
-        // tilt and one forward smash; his own statuses use `anim_slot`.
-        match status {
-            AnyStatus::Common(Status::Attack11) => 175,
-            AnyStatus::Common(Status::Attack12) => 176,
-            AnyStatus::Common(Status::AttackDash) => 177,
-            AnyStatus::Common(Status::AttackS3) => 178,
-            AnyStatus::Common(Status::AttackHi3) => 179,
-            AnyStatus::Common(Status::AttackLw3) => 180,
-            AnyStatus::Common(Status::AttackS4) => 181,
-            AnyStatus::Common(Status::AttackHi4) => 182,
-            AnyStatus::Common(Status::AttackLw4) => 183,
-            AnyStatus::Common(Status::AttackAirN) => 184,
-            AnyStatus::Common(Status::AttackAirF) => 185,
-            AnyStatus::Common(Status::AttackAirB) => 186,
-            AnyStatus::Common(Status::AttackAirHi) => 187,
-            AnyStatus::Common(Status::AttackAirLw) => 188,
-            _ => status.anim_slot(),
-        }
-    } else if kind == FighterKind::Yoshi as u32 {
-        // `ssb_rom::anim::SLOT_YOSHI_ATTACK11` onward; specials use
-        // `AnyStatus::anim_slot`.
-        match status {
-            AnyStatus::Common(Status::Attack11) => 204,
-            AnyStatus::Common(Status::Attack12) => 205,
-            AnyStatus::Common(Status::AttackDash) => 206,
-            AnyStatus::Common(Status::AttackS3Hi) => 207,
-            AnyStatus::Common(Status::AttackS3) => 208,
-            AnyStatus::Common(Status::AttackS3Lw) => 209,
-            AnyStatus::Common(Status::AttackHi3) => 210,
-            AnyStatus::Common(Status::AttackLw3) => 211,
-            AnyStatus::Common(Status::AttackS4Hi) => 212,
-            AnyStatus::Common(Status::AttackS4) => 213,
-            AnyStatus::Common(Status::AttackS4Lw) => 214,
-            AnyStatus::Common(Status::AttackHi4) => 215,
-            AnyStatus::Common(Status::AttackLw4) => 216,
-            AnyStatus::Common(Status::AttackAirN) => 217,
-            AnyStatus::Common(Status::AttackAirF) => 218,
-            AnyStatus::Common(Status::AttackAirB) => 219,
-            AnyStatus::Common(Status::AttackAirHi) => 220,
-            AnyStatus::Common(Status::AttackAirLw) => 221,
-            _ => status.anim_slot(),
-        }
-    } else if kind == FighterKind::Pikachu as u32 {
-        match status {
-            AnyStatus::Common(s) => {
-                ssb_game::pikachu::common_anim_slot(s).unwrap_or_else(|| status.anim_slot())
-            }
-            _ => status.anim_slot(),
-        }
-    } else if kind == FighterKind::Ness as u32 {
-        match status {
-            AnyStatus::Common(s) => {
-                ssb_game::ness::common_anim_slot(s).unwrap_or_else(|| status.anim_slot())
-            }
-            _ => status.anim_slot(),
-        }
-    } else if kind == FighterKind::Purin as u32 {
-        // `SLOT_PURIN_ATTACK11` through `LandingAirB`.
-        match status {
-            AnyStatus::Common(s) => {
-                ssb_game::purin::common_anim_slot(s).unwrap_or_else(|| status.anim_slot())
-            }
-            _ => status.anim_slot(),
-        }
-    } else if kind == FighterKind::Kirby as u32 {
-        // `SLOT_KIRBY_ATTACK11` through `LandingAirB`; the extended statuses
-        // use `AnyStatus::anim_slot`.
-        match status {
-            AnyStatus::Common(Status::Attack11) => 268,
-            AnyStatus::Common(Status::Attack12) => 269,
-            AnyStatus::Common(Status::AttackDash) => 270,
-            AnyStatus::Common(Status::AttackS3Hi) => 271,
-            AnyStatus::Common(Status::AttackS3) => 272,
-            AnyStatus::Common(Status::AttackS3Lw) => 273,
-            AnyStatus::Common(Status::AttackHi3) => 274,
-            AnyStatus::Common(Status::AttackLw3) => 275,
-            AnyStatus::Common(Status::AttackS4) => 276,
-            AnyStatus::Common(Status::AttackHi4) => 277,
-            AnyStatus::Common(Status::AttackLw4) => 278,
-            AnyStatus::Common(Status::AttackAirN) => 279,
-            AnyStatus::Common(Status::AttackAirF) => 280,
-            AnyStatus::Common(Status::AttackAirB) => 281,
-            AnyStatus::Common(Status::AttackAirHi) => 282,
-            AnyStatus::Common(Status::AttackAirLw) => 283,
-            AnyStatus::Common(Status::LandingAirF) => 284,
-            AnyStatus::Common(Status::LandingAirB) => 285,
-            _ => status.anim_slot(),
-        }
-    } else if kind == FighterKind::Captain as u32 {
-        // `SLOT_CAPTAIN_ATTACK11` through `AttackAirLw`; the extended
-        // statuses use `AnyStatus::anim_slot`.
-        match status {
-            AnyStatus::Common(Status::Attack11) => 233,
-            AnyStatus::Common(Status::Attack12) => 234,
-            AnyStatus::Common(Status::AttackDash) => 235,
-            AnyStatus::Common(Status::AttackS3Hi) => 236,
-            AnyStatus::Common(Status::AttackS3HiS) => 237,
-            AnyStatus::Common(Status::AttackS3) => 238,
-            AnyStatus::Common(Status::AttackS3LwS) => 239,
-            AnyStatus::Common(Status::AttackS3Lw) => 240,
-            AnyStatus::Common(Status::AttackHi3) => 241,
-            AnyStatus::Common(Status::AttackLw3) => 242,
-            AnyStatus::Common(Status::AttackS4Hi) => 243,
-            AnyStatus::Common(Status::AttackS4) => 244,
-            AnyStatus::Common(Status::AttackS4Lw) => 245,
-            AnyStatus::Common(Status::AttackHi4) => 246,
-            AnyStatus::Common(Status::AttackLw4) => 247,
-            AnyStatus::Common(Status::AttackAirN) => 248,
-            AnyStatus::Common(Status::AttackAirF) => 249,
-            AnyStatus::Common(Status::AttackAirB) => 250,
-            AnyStatus::Common(Status::AttackAirHi) => 251,
-            AnyStatus::Common(Status::AttackAirLw) => 252,
-            _ => status.anim_slot(),
-        }
-    } else if kind == FighterKind::Luigi as u32 {
-        // `ssb_rom::anim::SLOT_LUIGI_ATTACK11` onward. Luigi has no
-        // mid-angle forward tilts.
-        match status {
-            AnyStatus::Common(Status::Attack11) => 154,
-            AnyStatus::Common(Status::Attack12) => 155,
-            AnyStatus::Mario(MarioStatus::Attack13) => 156,
-            AnyStatus::Common(Status::AttackDash) => 157,
-            AnyStatus::Common(Status::AttackS3Hi) => 158,
-            AnyStatus::Common(Status::AttackS3) => 159,
-            AnyStatus::Common(Status::AttackS3Lw) => 160,
-            AnyStatus::Common(Status::AttackHi3) => 161,
-            AnyStatus::Common(Status::AttackLw3) => 162,
-            AnyStatus::Common(Status::AttackS4Hi) => 163,
-            AnyStatus::Common(Status::AttackS4HiS) => 164,
-            AnyStatus::Common(Status::AttackS4) => 165,
-            AnyStatus::Common(Status::AttackS4LwS) => 166,
-            AnyStatus::Common(Status::AttackS4Lw) => 167,
-            AnyStatus::Common(Status::AttackHi4) => 168,
-            AnyStatus::Common(Status::AttackLw4) => 169,
-            AnyStatus::Common(Status::AttackAirN) => 170,
-            AnyStatus::Common(Status::AttackAirF) => 171,
-            AnyStatus::Common(Status::AttackAirB) => 172,
-            AnyStatus::Common(Status::AttackAirHi) => 173,
-            AnyStatus::Common(Status::AttackAirLw) => 174,
-            _ => status.anim_slot(),
-        }
-    } else if kind == FighterKind::Samus as u32 {
-        match status {
-            AnyStatus::Common(Status::Attack11) => 123,
-            AnyStatus::Common(Status::Attack12) => 124,
-            AnyStatus::Common(Status::AttackDash) => 125,
-            AnyStatus::Common(Status::AttackS3Hi) => 126,
-            AnyStatus::Common(Status::AttackS3HiS) => 127,
-            AnyStatus::Common(Status::AttackS3) => 128,
-            AnyStatus::Common(Status::AttackS3LwS) => 129,
-            AnyStatus::Common(Status::AttackS3Lw) => 130,
-            AnyStatus::Common(Status::AttackHi3) => 131,
-            AnyStatus::Common(Status::AttackLw3) => 132,
-            AnyStatus::Common(Status::AttackS4Hi) => 133,
-            AnyStatus::Common(Status::AttackS4HiS) => 134,
-            AnyStatus::Common(Status::AttackS4) => 135,
-            AnyStatus::Common(Status::AttackS4LwS) => 136,
-            AnyStatus::Common(Status::AttackS4Lw) => 137,
-            AnyStatus::Common(Status::AttackHi4) => 138,
-            AnyStatus::Common(Status::AttackLw4) => 139,
-            AnyStatus::Common(Status::AttackAirN) => 140,
-            AnyStatus::Common(Status::AttackAirF) => 141,
-            AnyStatus::Common(Status::AttackAirB) => 142,
-            AnyStatus::Common(Status::AttackAirHi) => 143,
-            AnyStatus::Common(Status::AttackAirLw) => 144,
-            _ => status.anim_slot(),
-        }
-    } else {
-        status.anim_slot()
-    } as u32;
+    // The pack row is the fighter's; the slot is the status's. Common
+    // statuses use the shared slots, which resolve per fighter through the
+    // status -> motion pairing (`ssb_rom::anim::SLOT_APPEAL`).
+    let slot = status.anim_slot() as u32;
     if *started != Some(status) {
         *started = Some(status);
         // A status with no motion of its own (`CatchWait`, `CaptureWait`)
         // keeps playing the previous one; its slot is that status's slot.
         if status.keeps_motion() {
             // Yoshi Bomb's fall keeps the start clip at speed zero.
-            skeleton.speed = status.anim_speed();
+            skeleton.speed = speed;
         } else {
             if let Some(anim) = pack.fighter_anim(kind, slot) {
-                skeleton.start(pack, &anim, 0.0, status.anim_speed());
+                skeleton.start(pack, &anim, 0.0, speed);
             }
         }
     }
@@ -1094,6 +880,7 @@ impl FighterScene {
             pack,
             self.fighter.kind as u32,
             self.fighter.status.status,
+            ssb_game::status::clip_speed(&self.fighter),
             &mut self.skeleton,
             &mut self.started,
         );

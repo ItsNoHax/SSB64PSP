@@ -10211,6 +10211,96 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
 
 #[cfg(test)]
 mod tests {
+    /// The shared damage and attack slots, by name, and their pack lengths
+    /// against `motion::anim_length` for every playable fighter. A fighter
+    /// without the motion has neither a file nor a length.
+    #[test]
+    fn damage_and_attack_slots_match_the_anim_table() {
+        use ssb_game::fighter::FighterKind;
+        use ssb_game::status::{AnyStatus, MarioStatus, Status};
+        use Status::*;
+        let statuses = [
+            DamageHi1,
+            DamageHi2,
+            DamageHi3,
+            DamageN1,
+            DamageN2,
+            DamageN3,
+            DamageLw1,
+            DamageLw2,
+            DamageLw3,
+            DamageAir1,
+            DamageAir2,
+            DamageAir3,
+            DamageE1,
+            DamageE2,
+            DamageFlyHi,
+            DamageFlyN,
+            DamageFlyLw,
+            DamageFlyTop,
+            DamageFlyRoll,
+            DamageFall,
+            FallSpecial,
+            LandingFallSpecial,
+            Appeal,
+            Attack11,
+            Attack12,
+            AttackDash,
+            AttackS3Hi,
+            AttackS3HiS,
+            AttackS3,
+            AttackS3LwS,
+            AttackS3Lw,
+            AttackHi3F,
+            AttackHi3,
+            AttackHi3B,
+            AttackLw3,
+            AttackS4Hi,
+            AttackS4HiS,
+            AttackS4,
+            AttackS4LwS,
+            AttackS4Lw,
+            AttackHi4,
+            AttackLw4,
+            AttackAirN,
+            AttackAirF,
+            AttackAirB,
+            AttackAirHi,
+            AttackAirLw,
+            LandingAirN,
+            LandingAirF,
+            LandingAirB,
+            LandingAirHi,
+            LandingAirLw,
+            LandingAirNull,
+        ];
+        for status in &statuses {
+            let slot = AnyStatus::Common(*status).anim_slot();
+            assert_eq!(ssb_rom::anim::SLOT_NAMES[slot], format!("{status:?}"));
+            assert!(slot >= ssb_rom::anim::SLOT_DAMAGE_HI1);
+        }
+        let mario13 = AnyStatus::Mario(MarioStatus::Attack13);
+        assert_eq!(mario13.anim_slot(), ssb_rom::anim::SLOT_MARIO_ATTACK13);
+        for (row, kind) in FighterKind::PLAYABLE.iter().enumerate() {
+            let mut all: Vec<AnyStatus> = statuses.iter().map(|&s| s.into()).collect();
+            if *kind == FighterKind::Mario {
+                all.push(mario13);
+            }
+            for status in all {
+                let slot = status.anim_slot();
+                let file = ssb_rom::anim::FIGHTER_ANIMS[row].files[slot];
+                let table = ssb_rom::anim::EXPECTED_FRAMES[row][slot];
+                match ssb_game::motion::anim_length(*kind, status) {
+                    Some(len) => {
+                        assert_ne!(file, 0, "{kind:?} {status:?}");
+                        assert_eq!(f32::from(table), len, "{kind:?} {status:?}");
+                    }
+                    None => assert_eq!(table, 0, "{kind:?} {status:?}"),
+                }
+            }
+        }
+    }
+
     /// The reaction statuses' slots, by name, and their pack lengths
     /// against the motion descs `ssb-game` reads (`motion::anim_length`):
     /// two independent transcriptions of the same figatrees.
