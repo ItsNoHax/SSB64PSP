@@ -417,7 +417,7 @@ const TOLERANCE: f64 = 1.0 / 64.0;
 /// RDP samples under `gcDrawMObjForDObj`'s live window.
 ///
 /// The RDP side starts from the packed coordinate: the packer loaded it
-/// under the rest `gSPTexture` scale and, on a clamped axis, subtracted the
+/// under the rest `gSPTexture` scale and, on every axis, subtracted the
 /// rest tile origin (`mesh::Builder::push_vertex`). A live frame loads the
 /// same vertex under the live scale and subtracts the live origin, which
 /// `gDPSetTileSize` holds in a 12-bit field. A repeating axis compares
@@ -468,7 +468,7 @@ pub(crate) fn check_uv(
                 t.wrap & TextureDesc::CLAMP_S != 0,
                 t.wrap & TextureDesc::CLAMP_T != 0,
             ];
-            // The origin the packer baked out of a clamped axis: the rest
+            // The origin the packer baked out of every axis: the rest
             // `uls`/`ult`, as `mobj::read` clamps it.
             let baked = rest_origin.map(|o| o.clamp(0, 0xFFFF) as f64 / 4.0);
             let idx = pack.indices(&p).unwrap_or(&[]);
@@ -489,7 +489,7 @@ pub(crate) fn check_uv(
                 // `G_TEXTURE_GEN` replaces the vertex coordinate with
                 // `((dot + 1) / 4) * scale` (S10.5) before the same tile
                 // origin and window apply; sample its range, less the
-                // origin the texture matrix bakes out of a clamped axis.
+                // origin the texture matrix bakes out of every axis.
                 tally.texgen += 1;
                 let origin = [p.texgen_origin_s, p.texgen_origin_t];
                 let gscale = [p.texgen_scale_s, p.texgen_scale_t];
@@ -497,11 +497,7 @@ pub(crate) fn check_uv(
                     .map(|q| {
                         let g = |axis: usize| {
                             let s10_5 = (q as f64 / 8.0) * 0.5 * gscale[axis] as f64;
-                            let c = if clamp[axis] {
-                                origin[axis] as f64 * 8.0
-                            } else {
-                                0.0
-                            };
+                            let c = origin[axis] as f64 * 8.0;
                             (s10_5 - c) as i16
                         };
                         (g(0), g(1))
@@ -518,7 +514,7 @@ pub(crate) fn check_uv(
             };
             // N64: the vertex under `scale`, less `origin`'s 12-bit field.
             let n64 = |x: f64, axis: usize, origin: [i32; 2], k: f64| {
-                let c = if clamp[axis] { baked[axis] } else { 0.0 };
+                let c = baked[axis];
                 (x + c) * k - (origin[axis] & 0xFFF) as f64 / 4.0
             };
             let mut first: Option<String> = None;
@@ -642,14 +638,10 @@ pub(crate) fn check_uv_tile1(
             if p.mat_anim != i || p.flags & flags::LOD_BLEND == 0 {
                 continue;
             }
-            let Some(t0) = pack.texture(p.texture) else {
+            if pack.texture(p.texture).is_none() {
                 continue;
-            };
+            }
             tally.tile1_prims += 1;
-            let clamp0 = [
-                t0.wrap & TextureDesc::CLAMP_S != 0,
-                t0.wrap & TextureDesc::CLAMP_T != 0,
-            ];
             let baked = rest_origin
                 .unwrap_or([0, 0])
                 .map(|o| o.clamp(0, 0xFFFF) as f64 / 4.0);
@@ -694,7 +686,7 @@ pub(crate) fn check_uv_tile1(
                 for &(u, v) in &coords {
                     for (axis, q) in [(0, u), (1, v)] {
                         let x = q as f64 / 32.0;
-                        let c = if clamp0[axis] { baked[axis] } else { 0.0 };
+                        let c = baked[axis];
                         let want = (x + c) * k[axis] - (origin[axis] & 0xFFF) as f64 / 4.0;
                         let ge = x * a[axis] + dim[axis] * b[axis];
                         let e = if clamp1[axis] {

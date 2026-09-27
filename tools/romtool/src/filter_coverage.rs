@@ -344,7 +344,7 @@ pub(super) struct TexgenPrimitive<'a> {
     pub normals: &'a [[[i8; 3]; 3]],
     /// `gSPTexture`'s raw `scale_s`/`scale_t`.
     pub scale: [u16; 2],
-    /// The render tile's origin, S10.2, applied on clamped axes only.
+    /// The render tile's origin, S10.2, applied before clamp/mask/mirror.
     pub origin: [u16; 2],
     pub clamp: [bool; 2],
 }
@@ -530,11 +530,7 @@ pub(super) fn texgen_bound(p: &TexgenPrimitive<'_>) -> TexgenBound {
         }
     };
     let axis = |i: usize| {
-        let shift = if p.clamp[i] {
-            p.origin[i] as i32 * 8
-        } else {
-            0
-        };
+        let shift = p.origin[i] as i32 * 8;
         let at = |d: f32| (curve(d) * p.scale[i] as f32) as i32 - shift;
         (at(-r) - 1, at(r) + 1)
     };

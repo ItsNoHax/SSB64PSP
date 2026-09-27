@@ -170,8 +170,8 @@ fn fold_period_mirror(s: i32, period: i32, mirror: bool) -> i32 {
 /// of the real decoded texture ends up sampled.
 ///
 /// `coord_rel_s10_5` must already be relative to the tile origin, matching
-/// what `mesh::Builder::push_vertex` bakes into `MeshVertex::uv` for a
-/// clamped axis (RE-152) -- the same basis [`address_axis`] uses when called
+/// what `mesh::Builder::push_vertex` bakes into `MeshVertex::uv` for
+/// every axis (RE-359) -- the same basis [`address_axis`] uses when called
 /// with `origin_q2: 0`.
 pub fn psp_lowering_axis(
     coord_rel_s10_5: i32,

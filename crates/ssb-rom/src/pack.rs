@@ -614,9 +614,9 @@ pub struct PrimDesc {
     ///
     /// The RDP subtracts the tile origin from *any* texture coordinate before
     /// addressing TMEM, generated ones included. `mesh::Builder::push_vertex`
-    /// bakes that subtraction into authored UVs at pack time (on a clamped
-    /// axis, RE-152) — a generated coordinate has no pack-time value to bake
-    /// it into, so the same shift has to be applied at draw time through
+    /// bakes that subtraction into authored UVs at pack time (RE-359) —
+    /// a generated coordinate has no pack-time value to bake it into,
+    /// so the same shift has to be applied at draw time through
     /// `sceGuTexOffset`. Measured (`romtool texgen`): 57 of 3012 texgen
     /// triangles bind a tile with a nonzero origin, all in `StageMetalFile2`
     /// and all on a clamped axis, ranging from 0.5 to 3 texels.

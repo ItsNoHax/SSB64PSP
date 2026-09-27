@@ -326,7 +326,7 @@ pub fn regular_texgen_curve(dot: f32) -> f32 {
 /// [`regular_texgen_curve`]) converted into the pack's raw S10.5 fixed-point
 /// unit (`PackedVertex::u`/`v`, 32 units per texel) -- the same unit
 /// `S10.5 = u * gSPTexture_scale` `env_map_tex_scale`'s doc comment uses --
-/// and addressed against the render tile's origin on a clamped axis, exactly
+/// and addressed against the render tile's origin on every axis, exactly
 /// parallel to `mesh::Builder::push_vertex`'s authored-UV bake
 /// (`v.uv[0] -= origin_s * 8`). The `* 8` there and here is the same
 /// S10.2-to-S10.5 scale alignment; see `push_vertex`'s own comment for the
@@ -342,9 +342,9 @@ pub fn regular_texgen_curve(dot: f32) -> f32 {
 /// `(int32_t)(dotx * texture_scaling_factor.s)`). An earlier version of this
 /// function added `0.5` before casting (round-half-up); T5's boundary tests
 /// below pin the corrected truncating behavior.
-fn texgen_s10_5_addressed(curve: f32, gsp_texture_scale: u16, origin: u16, clamp: bool) -> i16 {
+fn texgen_s10_5_addressed(curve: f32, gsp_texture_scale: u16, origin: u16, _clamp: bool) -> i16 {
     let s10_5 = (curve * gsp_texture_scale as f32) as i32;
-    let addressed = s10_5 - if clamp { origin as i32 * 8 } else { 0 };
+    let addressed = s10_5 - origin as i32 * 8;
     addressed.clamp(i16::MIN as i32, i16::MAX as i32) as i16
 }
 
@@ -435,19 +435,14 @@ pub fn regular_texgen_uv(
 pub fn regular_texgen_matrix_coeffs(
     gsp_texture_scale: u16,
     origin: u16,
-    clamp: bool,
+    _clamp: bool,
     uploaded_dim: u32,
 ) -> (f32, f32) {
     const NORMAL_SCALE_COMPENSATION: f32 = 128.0 / 127.0;
     let half_scale = 0.5 * env_map_tex_scale(gsp_texture_scale, uploaded_dim);
     let a = half_scale * NORMAL_SCALE_COMPENSATION;
-    let shift = if clamp {
-        // `origin` is quarter-texel S10.2; normalise against the uploaded
-        // dimension the coordinate is expressed in.
-        -(origin as f32 / 4.0) / uploaded_dim.max(1) as f32
-    } else {
-        0.0
-    };
+    // TRELATIVE applies before wrap/mirror as well as clamp (RE-359).
+    let shift = -(origin as f32 / 4.0) / uploaded_dim.max(1) as f32;
     let b = half_scale + shift;
     (a, b)
 }
@@ -1305,7 +1300,7 @@ mod tests {
         assert_eq!(u as i32, want_u);
         assert_eq!(v as i32, want_v);
 
-        // Unclamped: the origin shift must not apply.
+        // Unclamped: TRELATIVE still subtracts the origin before masking.
         let (u_unclamped, _) = linear_texgen_uv(
             [127, 0, 0],
             [1.0, 0.0, 0.0],
@@ -1317,7 +1312,7 @@ mod tests {
             false,
             true,
         );
-        assert_eq!(u_unclamped as i32, (scale_s as f32 / 2.0).round() as i32);
+        assert_eq!(u_unclamped as i32, want_u);
     }
 
     #[test]
@@ -1783,11 +1778,7 @@ mod tests {
             let (a, _) = regular_texgen_matrix_coeffs(scale, origin, clamp, dim);
             // The pre-RE-228 formula: `b = a + shift` instead of
             // `half_scale + shift`.
-            let shift = if clamp {
-                -(origin as f32 / 4.0) / dim.max(1) as f32
-            } else {
-                0.0
-            };
+            let shift = -(origin as f32 / 4.0) / dim.max(1) as f32;
             let uncorrected_b = a + shift;
 
             let (reference, _) =
