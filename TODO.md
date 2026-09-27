@@ -20,7 +20,6 @@ or evidence record covers it.
 | Draw Samus's Charge Shot and Bomb | Gameplay weapons exist; their meshes (`dSamusSpecial3` and the `SamusModel` bomb display list with palette blink) are not packed or drawn | RE-333 |
 | Select and draw Samus, Luigi, Link, Yoshi, Captain Falcon and Kirby in `psp-game` | The movesets are host-only; Luigi's Fireball needs Mario's mesh with palette frame 1; Link's Boomerang and Spin Attack effect, Yoshi's Egg Throw and Bomb stars, and Kirby's Final Cutter wave, copy hats and stars are not drawn | RE-333–335, RE-337–338, RE-343 |
 | Select and draw Ness in `psp-game` | Host moveset and copied PK Fire exist; PK Fire spark/flame, PK Thunder head/trails, Magnet and bat visuals need runtime integration | RE-347 |
-| PK Fire incoming item damage and moving floors | The unpickable flame has its own allocation table, gravity, floor/wall response, shrinking hitboxes and rehit clock; source damage reduces life by three times the highest queued damage, and moving map groups need per-frame surface speed | RE-347 |
 | Select and draw Pikachu and Jigglypuff in `psp-game` | The movesets are host-only; Thunder Jolt, Thunder head/trails, Quick Attack effects and Sing's notes need gameplay render integration | RE-345–346 |
 | Kirby Inhale downward wiggle | The captured victim's downward mash/drop-through path needs its source floor flags and ignored-line linkage; Final Cutter cliff catches and star reflections now use the shared map solver | RE-343, RE-348 |
 | Moving map groups and changing fighter diamonds | Static geometry is resolved with authored vertex identity; moving-surface speed, group attachment and per-frame collision-box changes need match inputs | RE-345, RE-348 |
@@ -28,11 +27,10 @@ or evidence record covers it.
 | Yoshi Egg Lay victim collision and effect | Laying omits the wall/ceiling sweep, damaging-floor escape needs hazards, and the break effect is represented by a 10-frame clock | RE-337 |
 | Weapon map-bound removal | `wpProcessProcWeaponMain` deletes weapons outside `map_bound_*`; the pool keeps a missed Blaster or Charge Shot until a map contact | RE-333 |
 | Boomerang off-camera removal | `wpLinkBoomerangCheckOffCamera` needs the battle camera's projection; the pool keeps the Boomerang until its lifetime ends | RE-335 |
-| Item system | Link's Bomb (`itLinkBomb`) and the item-throw branch of his down special need held items and `ftCommonItemThrow*` | RE-335 |
+| Other item kinds and item presentation | Bomb and PK Fire use the shared item system; heavy/swing/shoot/consume items, team checks, item models, effects, sound, spin, throw-turn joint yaw and pickup arrows remain | RE-352 |
 | Weapon hop callbacks | The Boomerang's `ProcShield`/`ProcHop` run from the shield's contact angle (RE-351); the other `can_hop` weapons (Fireball, Blaster, Charge Shot, Bomb, Egg, Star, air Thunder Jolt, PK Fire) keep their plain shield handling | RE-335, RE-351 |
 | Training `grab` scene whiffs on PSP | In PPSSPP the player stays in `Catch` without a catch (RE-351 capture log) while host `romtool jumptest --catch-tick 100` on the same route catches on tick 106; the golden already pins the whiff. Compare the posed catch box and the dummy's grabbable boxes against the unposed fallbacks | RE-341, RE-351 |
 | Clips for damage statuses and normals | `DamageHi1`…`DamageFlyRoll`, `DamageFall` and most fighters' normals (Mario's jab included) map to the Wait slot, so a landed hit is invisible in captures (RE-351's `jab` golden relies on its log line) | RE-351 |
-| Item hit search | `ftMainSearchHitItem` (item clank, reflect and absorb) is unported, so PK Fire flames neither clank nor are reflected | RE-347, RE-351 |
 | `psp-game` runs Training at 30 Hz on hardware | One tick per loop, and the loop takes two vsyncs (33.4 ms) on the PSP-2000 while simulation takes 1.74 ms; the draw side needs profiling or a fixed-step clock like the viewer's | RE-341 |
 
 ## Hardware acceptance

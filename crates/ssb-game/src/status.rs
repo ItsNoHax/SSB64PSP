@@ -654,6 +654,14 @@ impl Status {
                 | Status::AttackAirB
                 | Status::AttackAirHi
                 | Status::AttackAirLw
+                | Status::LightThrowAirF
+                | Status::LightThrowAirB
+                | Status::LightThrowAirHi
+                | Status::LightThrowAirLw
+                | Status::LightThrowAirF4
+                | Status::LightThrowAirB4
+                | Status::LightThrowAirHi4
+                | Status::LightThrowAirLw4
                 | Status::FallSpecial
                 // `ftCommonThrownSetStatusQueue`/`...Immediate` put the held
                 // fighter in the air (`ga = nMPKineticsAir`).
@@ -1544,6 +1552,8 @@ pub struct StickState {
     pub tap_y: u8,
     /// `hold_stick_x`: the same count as `tap_x`, which no status consumes.
     pub hold_x: u8,
+    /// `hold_stick_y`: unlike `tap_y`, interrupt checks never consume it.
+    pub hold_y: u8,
     /// Jump buttons pressed this frame, and released this frame.
     pub jump_tapped: bool,
     pub jump_released: bool,
@@ -1555,6 +1565,7 @@ impl StickState {
             tap_x: STICKBUFFER_MAX,
             tap_y: STICKBUFFER_MAX,
             hold_x: STICKBUFFER_MAX,
+            hold_y: STICKBUFFER_MAX,
             ..Default::default()
         }
     }
@@ -1572,6 +1583,7 @@ impl StickState {
         self.tap_x = step_tap(self.tap_x, self.x as i32, self.prev_x as i32);
         self.hold_x = step_tap(self.hold_x, self.x as i32, self.prev_x as i32);
         self.tap_y = step_tap(self.tap_y, self.y as i32, self.prev_y as i32);
+        self.hold_y = step_tap(self.hold_y, self.y as i32, self.prev_y as i32);
         self.jump_tapped = jump_tapped;
         self.jump_released = jump_released;
     }
@@ -1678,6 +1690,8 @@ pub const GUARD_HEAL_INTERVAL: f32 = 10.0;
 /// instead because nothing else needs them split.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GuardState {
+    /// `status_vars.common.guard.slide_tics`: dash/run throw window.
+    pub slide_tics: i32,
     pub shield_health: f32,
     /// The damage of the hit that last triggered `GuardSetOff` — drives its
     /// pushback and stun length. `shield_damage_total`'s per-frame
@@ -1704,6 +1718,7 @@ pub struct GuardState {
 impl Default for GuardState {
     fn default() -> Self {
         GuardState {
+            slide_tics: 0,
             shield_health: GUARD_HEALTH_MAX,
             shield_damage: 0.0,
             release_lag: 0,
@@ -1789,6 +1804,13 @@ fn guard_timing(f: &Fighter, status: Status) -> StatusTiming {
 /// `ftCommonGuardOnSetStatus` @ `ftcommonguard1.c:415`. `slide_tics` (a
 /// shield out of a dash or run) is only read by item throws.
 pub fn set_guard_on(f: &mut Fighter) {
+    let slide_tics = if f.status.status == Status::Dash {
+        (20.0 - f.status.anim_frame) as i32
+    } else if f.status.status == Status::Run {
+        4
+    } else {
+        0
+    };
     let t = guard_timing(f, Status::GuardOn);
     set_status(f, Status::GuardOn, 0.0, t);
     play_anim_events(f);
@@ -1803,6 +1825,7 @@ pub fn set_guard_on(f: &mut Fighter) {
     f.guard.decay_wait = GUARD_DECAY_INT;
     f.guard.is_release = false;
     f.guard.is_setoff = false;
+    f.guard.slide_tics = slide_tics;
 }
 
 /// `ftCommonGuardOnCheckInterruptCommon` @ `ftcommonguard1.c:460`. Sits
@@ -1854,10 +1877,10 @@ pub fn check_guard_from_escape(f: &mut Fighter) -> bool {
     true
 }
 
-/// `ftCommonGuardCheckInterrupt`: roll, grab, jump or drop through out of
-/// the shield (items aside).
+/// `ftCommonGuardCheckInterrupt`: item throw, roll, grab, jump or drop through.
 fn guard_interrupt(f: &mut Fighter) -> bool {
-    crate::reaction::check_escape_guard(f)
+    crate::item_throw::check_guard(f)
+        || crate::reaction::check_escape_guard(f)
         || crate::grab::check_catch_guard(f)
         || check_guard_kneebend(f)
         || check_guard_pass(f)
@@ -2002,6 +2025,10 @@ pub fn check_dead(f: &mut Fighter, bounds: BlastZone) -> bool {
 }
 
 fn enter_dead(f: &mut Fighter, status: Status, wait: f32) {
+    if f.items.held.is_some() {
+        f.items.request(crate::item::ItemRequest::Destroy);
+        f.items.held = None;
+    }
     // `ftCommonDeadResetCommonVars` → `ftCommonThrownDecideDeadResult`.
     crate::grab::release_on_dead(f);
     set_status(f, status, 0.0, StatusTiming::frames(wait));
@@ -3821,6 +3848,13 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
         return set_landing(f);
     };
     match current {
+        s if crate::item_throw::is_throw(s) => {
+            if f.physics.vel_air.y > ATTACKAIR_SKIPLANDING_VEL_Y_MAX {
+                set_wait(f);
+            } else {
+                set_landing(f);
+            }
+        }
         // `ftCommonAttackAirProcMap` @ `ftcommonattackair.c:50`: while the
         // script's flag 1 holds a landing-lag speed and Z was not tapped in
         // the last 10 frames (no smooth landing), the aerial's own
@@ -3892,6 +3926,9 @@ pub fn set_pass_status(f: &mut Fighter, status: Status) {
 /// per-character status beyond the common 0..=219 table this codebase does
 /// not have an extension point for yet.
 pub fn set_attack11(f: &mut Fighter) {
+    if crate::item_throw::check_get(f) {
+        return;
+    }
     set_status(
         f,
         Status::Attack11,
@@ -3930,6 +3967,9 @@ fn attack11_followup_frames(kind: crate::fighter::FighterKind) -> f32 {
 /// fighter this batch covers, so the original's per-`fkind` `switch` that
 /// all resolves to the same constant is not reproduced as one).
 pub fn set_attack12(f: &mut Fighter) {
+    if crate::item_throw::check_get(f) {
+        return;
+    }
     if crate::grab::base_kind(f.kind) == crate::fighter::FighterKind::Pikachu {
         return set_attack11(f);
     }
@@ -4053,6 +4093,9 @@ fn set_rapid_start(f: &mut Fighter) {
 }
 
 fn set_fox_rapid_start(f: &mut Fighter) {
+    if crate::item_throw::check_get(f) {
+        return;
+    }
     // ROM figatree file 753, `FTFoxAnimJabLoopStart`: 8 frames.
     set_any_status(
         f,
@@ -4136,6 +4179,9 @@ fn fsmash_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
 
 /// `ftCommonAttackS3SetStatus` @ `ftcommonattacks3.c:10`.
 pub fn set_ftilt(f: &mut Fighter) {
+    if crate::item_throw::check_get(f) {
+        return;
+    }
     let x = f.stick.x as f32;
     let y = f.stick.y as f32;
     let variants = ftilt_variants(f.kind);
@@ -4171,6 +4217,9 @@ pub fn set_utilt(f: &mut Fighter) {
 
 /// `ftCommonAttackLw3SetStatus` @ `ftcommonattacklw3.c:59`.
 pub fn set_dtilt(f: &mut Fighter) {
+    if crate::item_throw::check_get(f) {
+        return;
+    }
     f.ness.dtilt_requested = false;
     let len = attack_length(f, Status::AttackLw3);
     set_status(f, Status::AttackLw3, 0.0, StatusTiming::frames(len));
@@ -4319,18 +4368,21 @@ pub fn check_pass(f: &mut Fighter) -> bool {
     false
 }
 
-/// `ftCommonAttackDashCheckInterruptCommon` @ `ftcommonattackdash.c:24`,
-/// minus the item-swing/light-throw branches (no items yet).
+/// `ftCommonAttackDashCheckInterruptCommon` @ `ftcommonattackdash.c:24`.
+/// Swing items are not ported; held throwable items use `LightThrowDash`.
 pub fn check_attack_dash(f: &mut Fighter) -> bool {
     if f.button_tap().contains(N64Buttons::A) {
+        if crate::item_throw::check_item_type_throw(f) {
+            crate::item_throw::set_item_throw(f, Status::LightThrowDash);
+            return true;
+        }
         set_dash_attack(f);
         return true;
     }
     false
 }
 
-/// `ftCommonAttackS4CheckInterruptCommon` @ `ftcommonattacks4.c:216`, minus
-/// the item branches.
+/// `ftCommonAttackS4CheckInterruptCommon` @ `ftcommonattacks4.c:216`.
 pub fn check_fsmash(f: &mut Fighter) -> bool {
     if !f.button_tap().contains(N64Buttons::A) {
         return false;
@@ -4340,12 +4392,20 @@ pub fn check_fsmash(f: &mut Fighter) -> bool {
     {
         return false;
     }
-    set_fsmash(f);
+    if crate::item_throw::check_item_type_throw(f) {
+        let s = if f.stick.x as f32 * f.facing.sign() >= 0.0 {
+            Status::LightThrowF4
+        } else {
+            Status::LightThrowB4
+        };
+        crate::item_throw::set_item_throw(f, s);
+    } else {
+        set_fsmash(f);
+    }
     true
 }
 
-/// `ftCommonAttackHi4CheckInterruptCommon` @ `ftcommonattackhi4.c:60`, minus
-/// the light-throw branch.
+/// `ftCommonAttackHi4CheckInterruptCommon` @ `ftcommonattackhi4.c:60`.
 pub fn check_usmash(f: &mut Fighter) -> bool {
     if !f.button_tap().contains(N64Buttons::A) {
         return false;
@@ -4354,12 +4414,15 @@ pub fn check_usmash(f: &mut Fighter) -> bool {
     {
         return false;
     }
-    set_usmash(f);
+    if crate::item_throw::check_item_type_throw(f) {
+        crate::item_throw::set_item_throw(f, Status::LightThrowHi4);
+    } else {
+        set_usmash(f);
+    }
     true
 }
 
-/// `ftCommonAttackLw4CheckInterruptCommon` @ `ftcommonattacklw4.c:60`, minus
-/// the light-throw branch.
+/// `ftCommonAttackLw4CheckInterruptCommon` @ `ftcommonattacklw4.c:60`.
 pub fn check_dsmash(f: &mut Fighter) -> bool {
     if !f.button_tap().contains(N64Buttons::A) {
         return false;
@@ -4368,12 +4431,16 @@ pub fn check_dsmash(f: &mut Fighter) -> bool {
     {
         return false;
     }
-    set_dsmash(f);
+    if crate::item_throw::check_item_type_throw(f) {
+        crate::item_throw::set_item_throw(f, Status::LightThrowLw4);
+    } else {
+        set_dsmash(f);
+    }
     true
 }
 
-/// `ftCommonAttackS3CheckInterruptCommon` @ `ftcommonattacks3.c:39`, minus
-/// the item branches. `ftParamGetStickAngleRads`'s `atan2(y, |x|)` gate
+/// `ftCommonAttackS3CheckInterruptCommon` @ `ftcommonattacks3.c:39`.
+/// `ftParamGetStickAngleRads`'s `atan2(y, |x|)` gate
 /// (`|angle| <= 50°`) is reframed as `|y| <= tan(50°) * |x|`, the same
 /// slope-comparison trick [`CLIFF_MOTION_ANGLE_TAN_50`] uses.
 pub fn check_ftilt(f: &mut Fighter) -> bool {
@@ -4388,12 +4455,15 @@ pub fn check_ftilt(f: &mut Fighter) -> bool {
     if y.abs() > CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
         return false;
     }
-    set_ftilt(f);
+    if crate::item_throw::check_item_type_throw(f) {
+        crate::item_throw::set_item_throw(f, Status::LightThrowF);
+    } else {
+        set_ftilt(f);
+    }
     true
 }
 
-/// `ftCommonAttackHi3CheckInterruptCommon` @ `ftcommonattackhi3.c:29`, minus
-/// the light-throw branch.
+/// `ftCommonAttackHi3CheckInterruptCommon` @ `ftcommonattackhi3.c:29`.
 pub fn check_utilt(f: &mut Fighter) -> bool {
     if !f.button_tap().contains(N64Buttons::A) {
         return false;
@@ -4406,12 +4476,15 @@ pub fn check_utilt(f: &mut Fighter) -> bool {
     if y <= CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
         return false;
     }
-    set_utilt(f);
+    if crate::item_throw::check_item_type_throw(f) {
+        crate::item_throw::set_item_throw(f, Status::LightThrowHi);
+    } else {
+        set_utilt(f);
+    }
     true
 }
 
-/// `ftCommonAttackLw3CheckInterruptCommon` @ `ftcommonattacklw3.c:70`, minus
-/// the light-throw branch.
+/// `ftCommonAttackLw3CheckInterruptCommon` @ `ftcommonattacklw3.c:70`.
 pub fn check_dtilt(f: &mut Fighter) -> bool {
     if !f.button_tap().contains(N64Buttons::A) {
         return false;
@@ -4424,18 +4497,26 @@ pub fn check_dtilt(f: &mut Fighter) -> bool {
     if y >= -CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
         return false;
     }
-    set_dtilt(f);
+    if crate::item_throw::check_item_type_throw(f) {
+        crate::item_throw::set_item_throw(f, Status::LightThrowLw);
+    } else {
+        set_dtilt(f);
+    }
     true
 }
 
-/// `ftCommonAttackAirCheckInterruptCommon` @ `ftcommonattackair.c:71`, minus
-/// the item/hammer branches. Neutral (both axes under the range minimum)
+/// `ftCommonAttackAirCheckInterruptCommon` @ `ftcommonattackair.c:71`.
+/// Held throwable items use the light-air-throw branch. Neutral normals
+/// (both axes under the range minimum)
 /// goes to `AttackAirN`; otherwise the same `tan(50°)` angle split as the
 /// ground tilts picks up/down, and forward-relative-to-facing picks
 /// forward/back.
 pub fn check_attack_air(f: &mut Fighter) -> bool {
     if !f.button_tap().contains(N64Buttons::A) {
         return false;
+    }
+    if crate::item_throw::check_item_type_throw(f) {
+        return crate::item_throw::check_air(f);
     }
     let x = f.stick.x as f32;
     let y = f.stick.y as f32;
@@ -4459,11 +4540,20 @@ pub fn check_attack_air(f: &mut Fighter) -> bool {
     true
 }
 
-/// `ftCommonAttack1CheckInterruptCommon` @ `ftcommonattack1.c:244`, restricted
-/// to the no-item case (`fp->item_gobj == NULL`), which is every fighter in
-/// this slice — Training has no items.
+/// `ftCommonAttack1CheckInterruptCommon` @ `ftcommonattack1.c:244`:
+/// held throwables precede the normal jab and its followups.
 pub fn check_attack1(f: &mut Fighter) -> bool {
     if f.button_tap().contains(N64Buttons::A) {
+        if let Some(i) = f.items.held {
+            if i.ty == crate::item::ItemType::Throw {
+                crate::item_throw::set_item_throw(f, Status::LightThrowF);
+                return true;
+            }
+            if f.input.buttons.contains(N64Buttons::Z) {
+                crate::item_throw::set_item_throw(f, Status::LightThrowDrop);
+                return true;
+            }
+        }
         if f.attack1.followup_frames != 0.0 {
             match f.attack1.status_id {
                 Some(AnyStatus::Common(Status::Attack11)) => {
@@ -4662,6 +4752,10 @@ pub fn update(f: &mut Fighter) {
         update_extended(f);
         return;
     };
+
+    if crate::item_throw::update(f, current) {
+        return;
+    }
 
     if crate::reaction::update(f, current) {
         return;
@@ -5332,6 +5426,9 @@ pub fn attack13_status(kind: crate::fighter::FighterKind) -> Option<AnyStatus> {
 /// per-character status in the original; [`attack13_status`] is this
 /// codebase's equivalent of that `switch`).
 pub fn set_attack13(f: &mut Fighter, status: AnyStatus) {
+    if crate::item_throw::check_get(f) {
+        return;
+    }
     let len = crate::motion::anim_length(f.kind, status).unwrap_or(0.0);
     set_any_status(f, status, 0.0, StatusTiming::frames(len));
     play_anim_events(f);

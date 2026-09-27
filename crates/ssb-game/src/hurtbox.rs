@@ -1354,6 +1354,36 @@ pub fn test_rectangle(
     clip_segment(curr, prev, c, prev - curr)
 }
 
+/// `gmCollisionTestRectangle` with no matrix: a world-axis box `size`
+/// either side of `center`, grown by the attack radius over `scale` (an
+/// item's DObj scale; its damage collision).
+pub fn test_rectangle_world(
+    pos_curr: Vec3,
+    pos_prev: Vec3,
+    radius: f32,
+    state: AttackState,
+    center: Vec3,
+    size: Vec3,
+    scale: Vec3,
+) -> bool {
+    let c = Vec3::new(
+        size.x + radius / scale.x,
+        size.y + radius / scale.y,
+        size.z + radius / scale.z,
+    );
+    let curr = pos_curr - center;
+    if state != AttackState::Interpolate {
+        return -c.x <= curr.x
+            && curr.x <= c.x
+            && -c.y <= curr.y
+            && curr.y <= c.y
+            && -c.z <= curr.z
+            && curr.z <= c.z;
+    }
+    let prev = pos_prev - center;
+    clip_segment(curr, prev, c, prev - curr)
+}
+
 /// `gmCollisionTestSphere` (`sphit_kind` 2): an ellipsoid `size` about
 /// `offset` in the joint's space, grown by the attack radius over the
 /// joint's scale, against the attack's position or swept segment.

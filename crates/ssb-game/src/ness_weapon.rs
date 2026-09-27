@@ -1,7 +1,7 @@
-//! PK Fire and PK Thunder (US). PK Fire's unpickable items have their own
-//! source-sized allocation table, tick and records, hosted by the match pool.
-//! General item damage and weapon shields await shared systems.
-use super::{map_contact, BodyColl, Hitbox, MapSurface, MapSurfaceKind, OwnerView, WeaponSpawn};
+//! PK Fire and PK Thunder (US). PK Fire's flame is an item
+//! (`crate::item::pk_fire`): the spark's hit callback queues it for the item
+//! pool.
+use super::{map_contact, BodyColl, Hitbox, MapSurface, OwnerView, WeaponSpawn};
 use crate::fighter::Fighter;
 use ssb_engine::math::{atan2, sin_cos, Vec2, Vec3};
 
@@ -38,101 +38,13 @@ pub const TRAIL_HIT: Hitbox = Hitbox {
     element: crate::combat::Element::Electric,
     shield_damage: 1,
 };
-pub const PILLAR_HIT: Hitbox = Hitbox {
-    damage: 3,
-    offset: Vec3::ZERO,
-    radius: 100.0,
-    angle: 70,
-    kb_scale: 10,
-    kb_weight: 0,
-    kb_base: 4,
-    element: crate::combat::Element::Fire,
-    shield_damage: 0,
+/// The spark's `WPAttributes` map collision box.
+const SPARK_MAP_COLL: BodyColl = BodyColl {
+    top: 10.0,
+    center: 0.0,
+    bottom: -10.0,
+    width: 10.0,
 };
-
-/// `ITEM_ALLOC_MAX`, independent of the weapon manager's capacity.
-const MAX_PK_FIRE_ITEMS: usize = 16;
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct PKFireItem {
-    pillar: PKFirePillar,
-    stale: crate::stale::WeaponStale,
-    landed: Option<(u8, crate::stale::MotionAttackId, u16)>,
-}
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct PKFireItems {
-    slots: [Option<PKFireItem>; MAX_PK_FIRE_ITEMS],
-}
-impl Default for PKFireItems {
-    fn default() -> Self {
-        Self {
-            slots: [None; MAX_PK_FIRE_ITEMS],
-        }
-    }
-}
-impl PKFireItems {
-    pub(super) fn insert(&mut self, pillar: PKFirePillar, stale: crate::stale::WeaponStale) {
-        if let Some(slot) = self.slots.iter_mut().find(|s| s.is_none()) {
-            *slot = Some(PKFireItem {
-                pillar,
-                stale,
-                landed: None,
-            });
-        }
-    }
-    pub(super) fn tick<I, F>(&mut self, surfaces: F)
-    where
-        F: Fn() -> I + Copy,
-        I: IntoIterator<Item = MapSurface>,
-    {
-        for slot in &mut self.slots {
-            if let Some(item) = slot {
-                if !item.pillar.tick(surfaces) {
-                    *slot = None;
-                }
-            }
-        }
-    }
-    pub(super) fn apply_hits(&mut self, defender: &mut Fighter) {
-        let port = (defender.port & 7) as usize;
-        for item in self.slots.iter_mut().flatten() {
-            let p = &mut item.pillar;
-            if p.owner_port == defender.port || p.rehit[port] != 0 {
-                continue;
-            }
-            let mut hit = PILLAR_HIT;
-            hit.radius *= p.scale;
-            for y in [100.0, 350.0] {
-                if super::stale_hit(
-                    &hit,
-                    p.position + Vec3::new(0.0, y * p.scale, 0.0),
-                    p.velocity,
-                    item.stale,
-                    defender,
-                    &mut item.landed,
-                    p.owner_port,
-                )
-                .registered()
-                {
-                    p.rehit[port] = 16;
-                    break;
-                }
-            }
-        }
-    }
-    pub(super) fn record_landed(&mut self, owner: &mut Fighter) {
-        for item in self.slots.iter_mut().flatten() {
-            if let Some((port, id, count)) = item.landed {
-                if port == owner.port {
-                    owner.stale.push(id, count);
-                    item.landed = None;
-                }
-            }
-        }
-    }
-    pub(super) fn pillars(&self) -> impl Iterator<Item = PKFirePillar> + '_ {
-        self.slots.iter().flatten().map(|item| item.pillar)
-    }
-}
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PKFire {
     pub owner_port: u8,
@@ -167,19 +79,7 @@ impl PKFire {
             return false;
         }
         let wanted = self.position + self.velocity;
-        if map_contact(
-            surfaces(),
-            self.position,
-            wanted,
-            BodyColl {
-                top: 10.0,
-                center: 0.0,
-                bottom: -10.0,
-                width: 10.0,
-            },
-        )
-        .is_some()
-        {
+        if map_contact(surfaces(), self.position, wanted, SPARK_MAP_COLL).is_some() {
             return false;
         }
         self.position = wanted;
@@ -193,90 +93,16 @@ impl PKFire {
         self.lifetime = 20;
         self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
     }
-    pub(super) fn pillar(&self) -> PKFirePillar {
-        PKFirePillar {
+    /// `wpNessPKFireProcHit`: the flame goes 160 units along the spark's
+    /// travel (`WPPKFIRE_POS_MUL`) and is projected from the spark.
+    pub(super) fn item_spawn(&self, stale: crate::stale::WeaponStale) -> crate::item::PKFireSpawn {
+        crate::item::PKFireSpawn {
             owner_port: self.owner_port,
-            position: self.position + self.velocity.normalized() * 160.0,
-            velocity: Vec3::ZERO,
-            lifetime: 100,
-            scale: 1.0,
-            floor: None,
-            rehit: [0; 8],
-            initialized: false,
+            pos: self.position + self.velocity.normalized() * 160.0,
+            weapon_pos: self.position,
+            weapon_coll: SPARK_MAP_COLL,
+            stale,
         }
-    }
-}
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PKFirePillar {
-    pub owner_port: u8,
-    pub position: Vec3,
-    pub velocity: Vec3,
-    pub lifetime: i32,
-    pub scale: f32,
-    pub(super) floor: Option<MapSurface>,
-    pub(super) rehit: [u8; 8],
-    initialized: bool,
-}
-impl PKFirePillar {
-    pub(super) fn tick<I, F>(&mut self, surfaces: F) -> bool
-    where
-        F: Fn() -> I,
-        I: IntoIterator<Item = MapSurface>,
-    {
-        // itProcessUpdateAttackRecords runs even on the initial status change.
-        for timer in &mut self.rehit {
-            *timer = timer.saturating_sub(1);
-        }
-        // The item descriptor's initial update just selects Fall.
-        if !self.initialized {
-            self.initialized = true;
-            self.velocity.x = 0.0;
-            self.velocity.y = 0.0;
-            return true;
-        }
-        self.scale = (self.lifetime as f32 * 0.5 / 100.0) + 0.5;
-        self.lifetime -= 1;
-        if self.lifetime < 0 {
-            return false;
-        }
-        if self
-            .floor
-            .is_some_and(|floor| !surfaces().into_iter().any(|s| s == floor))
-        {
-            self.floor = None;
-            self.velocity.x = 0.0;
-            self.velocity.y = 0.0;
-        }
-        if self.floor.is_none() {
-            self.velocity.y = (self.velocity.y - 0.45).max(-55.0);
-            let wanted = self.position + self.velocity;
-            if let Some(hit) = map_contact(
-                surfaces(),
-                self.position,
-                wanted,
-                BodyColl {
-                    top: 400.0,
-                    center: 200.0,
-                    bottom: 0.0,
-                    width: 100.0,
-                },
-            ) {
-                self.position = hit.position;
-                if hit.kind == MapSurfaceKind::Floor {
-                    self.floor = surfaces()
-                        .into_iter()
-                        .find(|s| s.kind == hit.kind && s.segment == hit.segment);
-                    self.velocity = Vec3::ZERO;
-                } else {
-                    let dot = self.velocity.x * hit.normal.x + self.velocity.y * hit.normal.y;
-                    self.velocity.x = (self.velocity.x - 2.0 * dot * hit.normal.x) * 0.2;
-                    self.velocity.y = (self.velocity.y - 2.0 * dot * hit.normal.y) * 0.2;
-                }
-            } else {
-                self.position = wanted;
-            }
-        }
-        true
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq)]

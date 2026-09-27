@@ -100,7 +100,7 @@ pub enum AttackState {
 }
 
 /// `GMHitFlags::group_id` for "no clank recorded".
-const NO_GROUP: u8 = 7;
+pub(crate) const NO_GROUP: u8 = 7;
 
 /// `GMAttackRecord`, keyed by the victim's player port.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +125,7 @@ impl Default for AttackRecord {
 
 impl AttackRecord {
     /// Whether this record still lets the attack touch its victim.
-    fn is_clear(&self) -> bool {
+    pub(crate) fn is_clear(&self) -> bool {
         !self.is_interact_hurt && !self.is_interact_shield && self.group_id == NO_GROUP
     }
 }
@@ -173,7 +173,7 @@ impl AttackColl {
         self.records = [AttackRecord::default(); ATTACK_RECORDS];
     }
 
-    fn record(&self, victim: u8) -> AttackRecord {
+    pub(crate) fn record(&self, victim: u8) -> AttackRecord {
         self.records
             .iter()
             .find(|r| r.victim == Some(victim))
@@ -182,7 +182,7 @@ impl AttackColl {
     }
 
     /// Whether this collision may touch a fighter in situation `airborne`.
-    fn reaches(&self, airborne: bool) -> bool {
+    pub(crate) fn reaches(&self, airborne: bool) -> bool {
         if airborne {
             self.is_hit_air
         } else {
@@ -215,7 +215,7 @@ pub fn clear_attack_colls(f: &mut Fighter) {
 
 /// Which way `ftMainSetHitInteractStats` marks a record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HitType {
+pub(crate) enum HitType {
     Damage,
     Shield,
     Attack(u8),
@@ -224,7 +224,7 @@ enum HitType {
 /// `ftMainSetHitInteractStats`: records the contact on every live collision
 /// of the group, then drops those collisions from `detect` for the rest of
 /// this search.
-fn set_hit_interact(
+pub(crate) fn set_hit_interact(
     attacker: &mut Fighter,
     group: u8,
     victim: u8,
@@ -668,7 +668,7 @@ pub fn update_attack_positions(f: &mut Fighter) {
 }
 
 /// `gmCollisionCheckAttackInFighterRange` against `hit_detect_range`.
-fn in_range(pos: Vec3, target: Vec3, range: [f32; 3], size: f32) -> bool {
+pub(crate) fn in_range(pos: Vec3, target: Vec3, range: [f32; 3], size: f32) -> bool {
     let dx = pos.x - target.x;
     let dy = pos.y - target.y;
     !(dx < -range[2] - size
@@ -755,7 +755,7 @@ fn attack_hits_shield(
 
 /// `ftMainCheckGetUpdateDamage`: a `damage_resist` pool (Kirby's Stone)
 /// soaks the hit, and only its overflow reaches `damage_queue`.
-fn check_get_update_damage(f: &mut Fighter, damage: i32) -> bool {
+pub(crate) fn check_get_update_damage(f: &mut Fighter, damage: i32) -> bool {
     let mut damage = damage;
     if f.kirby.is_damage_resist {
         f.kirby.damage_resist -= damage;
@@ -774,7 +774,7 @@ fn check_get_update_damage(f: &mut Fighter, damage: i32) -> bool {
     true
 }
 
-fn push_log(f: &mut Fighter, entry: HitLogEntry) {
+pub(crate) fn push_log(f: &mut Fighter, entry: HitLogEntry) {
     if f.hits.log_len < HIT_LOG_MAX {
         f.hits.log[f.hits.log_len] = Some(entry);
         f.hits.log_len += 1;
@@ -782,7 +782,7 @@ fn push_log(f: &mut Fighter, entry: HitLogEntry) {
 }
 
 /// `ftMainSetHitRebound`.
-fn set_hit_rebound(fp: &mut Fighter, coll: &AttackColl, victim_x: f32) {
+pub(crate) fn set_hit_rebound(fp: &mut Fighter, coll: &AttackColl, victim_x: f32) {
     if fp.hits.attack_shield_push < coll.damage {
         fp.hits.attack_shield_push = coll.damage;
         if coll.can_rebound && fp.is_grounded() {
@@ -1262,6 +1262,15 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
             f.hits.damage_knockback = 0.0;
         }
         f.add_damage(f.hits.damage_queue);
+        if f.items.held.is_some()
+            && f.hits.damage_knockback != 0.0
+            && (f.hitlag == 0
+                || !f.is_knockback_paused
+                || f.hits.damage_knockback >= f.damage_knockback_stack + 30.0)
+            && f.hits.damage_queue > crate::rng::rand_int_range(60)
+        {
+            crate::item_throw::drop_item(f);
+        }
         match f.hits.damage_kind {
             DamageKind::None => {}
             DamageKind::Status => goto_damage_status(f),

@@ -47,6 +47,7 @@ const STICK_ANGLE_50: f32 = 0.872_664_6;
 /// Per-status counters (`status_vars.common.downbounce/downwait/rebound`).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ReactionState {
+    pub itemthrow_buffer_tics: u8,
     /// `downbounce.attack_buffer`.
     pub attack_buffer: i32,
     /// `downwait.stand_wait`.
@@ -684,6 +685,7 @@ pub fn escape_status(f: &Fighter) -> Option<Status> {
 
 /// `ftCommonEscapeSetStatus`.
 pub fn set_escape(f: &mut Fighter, status: Status) {
+    f.reaction.itemthrow_buffer_tics = 0;
     // `ftCommonEscapeProcStatus`.
     f.motion_script.flags[1] = 0;
     set(f, status);
@@ -695,6 +697,7 @@ pub fn check_escape_guard(f: &mut Fighter) -> bool {
     match escape_status(f) {
         Some(status) => {
             set_escape(f, status);
+            f.reaction.itemthrow_buffer_tics = 5;
             true
         }
         None => false,
@@ -726,6 +729,8 @@ fn update_escape(f: &mut Fighter) {
         if f.kind != FighterKind::Yoshi || !status::check_guard_from_escape(f) {
             status::set_wait(f);
         }
+    } else {
+        crate::item_throw::check_escape(f);
     }
 }
 

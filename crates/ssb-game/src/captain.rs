@@ -114,6 +114,9 @@ fn set(f: &mut Fighter, s: CaptainStatus, frame: f32, length: f32) {
 }
 
 pub fn set_attack100_start(f: &mut Fighter) {
+    if crate::item_throw::check_get(f) {
+        return;
+    }
     set(f, CaptainStatus::Attack100Start, 0.0, 6.0);
     f.captain.rapid_is_anim_end = false;
     f.captain.rapid_is_goto_loop = false;

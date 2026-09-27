@@ -16,8 +16,9 @@
 //! The port keeps it as [`LinkState::spin`] and resolves its hits with
 //! [`apply_spin_attack_hits`]. It therefore takes no slot in the weapon pool.
 //!
-//! The Bomb is an item (`itLinkBomb`). The item system is not ported, so the
-//! Bomb statuses play their pull motion and create nothing.
+//! The Bomb is a match-owned item (`crate::item`). Its pull script requests
+//! creation in Link's hand; down-B with a Bomb held uses the common forward
+//! smash item throw, while any other held item suppresses the move.
 
 use ssb_engine::input::N64Buttons;
 use ssb_engine::math::{sin_cos, Vec2, Vec3};
@@ -74,8 +75,6 @@ const SPECIAL_LW_LENGTH: f32 = 45.0;
 
 /// `MissingBoomerang` (`0x1D2C`): `WaitAsync(26)` then `SetFlag0(1)`.
 const BOOMERANG_SPAWN_FRAME: f32 = 26.0;
-/// `Bomb`: `WaitAsync(29)` then `SetFlag0(1)`.
-const BOMB_PULL_FRAME: f32 = 29.0;
 /// `UpSpecial`: `SetFlag1(1)` at frame 12 restores full gravity.
 const SPIN_FLAG1_FRAME: f32 = 12.0;
 /// `UpSpecial`'s `SetFlag2` events: frame and weapon radius. `None` turns
@@ -398,29 +397,59 @@ fn update_spin_vars(f: &mut Fighter) {
     }
 }
 
-/// `ftLinkSpecialLwSetStatus`. Holding an item would throw it instead; no
-/// item can be held yet.
+/// `ftLinkSpecialLwCheckGotoItemThrow`.
+fn check_goto_item_throw(f: &mut Fighter, is_ground: bool) -> bool {
+    let Some(item) = f.items.held else {
+        return false;
+    };
+    if item.kind == crate::item::ItemKind::LinkBomb {
+        crate::item_throw::set_item_throw(
+            f,
+            if is_ground {
+                status::Status::LightThrowF4
+            } else {
+                status::Status::LightThrowAirF4
+            },
+        );
+    }
+    true
+}
+
+/// `ftLinkSpecialLwSetStatus`.
 pub fn set_special_lw(f: &mut Fighter) {
+    if check_goto_item_throw(f, true) {
+        return;
+    }
+    f.motion_script.flags[0] = 0;
     f.link.flag0_done = false;
     set(f, LinkStatus::SpecialLw, 0.0, SPECIAL_LW_LENGTH);
 }
 
 /// `ftLinkSpecialAirLwSetStatus`.
 pub fn set_special_air_lw(f: &mut Fighter) {
+    if check_goto_item_throw(f, false) {
+        return;
+    }
+    f.motion_script.flags[0] = 0;
     f.link.flag0_done = false;
     set(f, LinkStatus::SpecialAirLw, 0.0, SPECIAL_LW_LENGTH);
 }
 
-/// `ftLinkSpecialLwMakeBomb`. `itLinkBombMakeItem` needs the item system,
-/// so the flag is consumed with no item.
+/// `ftLinkSpecialLwMakeBomb`.
 fn make_bomb(f: &mut Fighter) {
-    if !f.link.flag0_done && f.status.anim_frame >= BOMB_PULL_FRAME {
+    if f.motion_script.flags[0] != 0 {
+        f.motion_script.flags[0] = 0;
         f.link.flag0_done = true;
+        f.items
+            .request(crate::item::ItemRequest::MakeLinkBomb { pos: f.pos });
     }
 }
 
 /// `ftCommonAttack100StartSetStatus`'s Link case.
 pub fn set_attack100_start(f: &mut Fighter) {
+    if crate::item_throw::check_get(f) {
+        return;
+    }
     set(f, LinkStatus::Attack100Start, 0.0, ATTACK100_START_LENGTH);
     f.link.rapid_is_anim_end = false;
     f.link.rapid_is_goto_loop = false;
