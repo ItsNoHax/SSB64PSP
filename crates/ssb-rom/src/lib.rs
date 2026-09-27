@@ -20,6 +20,7 @@ pub mod effect;
 pub mod figatree;
 pub mod fighter;
 pub mod filter_compensation;
+pub mod ground_obj;
 pub mod lod_blend;
 pub mod matanim;
 pub mod mesh;

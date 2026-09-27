@@ -1740,6 +1740,7 @@ unsafe fn run() -> ! {
                         &stage,
                         &base,
                         scenery,
+                        None,
                         &mut draw_state,
                         Some(&material_anim),
                     );

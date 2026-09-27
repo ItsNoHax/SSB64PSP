@@ -98,6 +98,12 @@ pub enum Cmd {
         dest_index: u8,
         addr: SegAddr,
     },
+    /// Change one already-transformed vertex cache field (`gSPModifyVertex`).
+    ModifyVtx {
+        index: u16,
+        field: u8,
+        value: u32,
+    },
     /// One triangle, by vertex-cache index.
     Tri1([u8; 3]),
     /// Two triangles in one command.
@@ -344,6 +350,15 @@ pub fn decode(raw: &[u8]) -> Result<Cmd> {
                 addr: SegAddr(w1),
             }
         }
+
+        // `gSPModifyVertex`: field in bits 16..23, cache index * 2 in
+        // bits 0..15 (`PR/gbi.h`). Dream Land's flower heads rewrite ST
+        // on the bottom vertices loaded by their parent stems (RE-357).
+        G_MODIFYVTX => Cmd::ModifyVtx {
+            index: (w0 & 0xFFFF) as u16 / 2,
+            field: ((w0 >> 16) & 0xFF) as u8,
+            value: w1,
+        },
 
         // Triangle indices are stored as index*2.
         G_TRI1 => Cmd::Tri1(tri(w0 >> 16, w0 >> 8, w0)),
@@ -606,6 +621,18 @@ mod tests {
     fn decodes_tri1_halving_indices() {
         // Vertices 0, 1, 2 are encoded as 0, 2, 4.
         assert_eq!(cmd(0x0500_0204, 0), Cmd::Tri1([0, 1, 2]));
+    }
+
+    #[test]
+    fn decodes_modify_vertex_st_from_dream_land_flowers() {
+        assert_eq!(
+            cmd(0x0214_0002, 0x0FFF_0000),
+            Cmd::ModifyVtx {
+                index: 1,
+                field: 0x14,
+                value: 0x0FFF_0000,
+            }
+        );
     }
 
     #[test]

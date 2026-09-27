@@ -2536,6 +2536,22 @@ fn walk(
                 }
             }
 
+            Cmd::ModifyVtx {
+                index,
+                field: 0x14,
+                value,
+            } => {
+                // G_MWO_POINT_ST writes the cached, already-scaled S10.5
+                // pair. Do not apply G_TEXTURE's load-time scale again.
+                // The vertex remains in its original loading space.
+                let entry = state
+                    .cache
+                    .get_mut(index as usize)
+                    .and_then(Option::as_mut)
+                    .ok_or(MeshError::EmptyCacheSlot(index.min(u8::MAX as u16) as u8))?;
+                entry.vertex.uv = [(value >> 16) as i16, value as i16];
+            }
+
             Cmd::Tri1(t) => emit_tri(builder, state, t)?,
             Cmd::Tri2(a, b) => {
                 emit_tri(builder, state, a)?;
@@ -3041,6 +3057,61 @@ mod tests {
         assert_eq!(mesh.triangle_count(), 1);
         assert_eq!(mesh.vertex_count(), 3);
         assert_eq!(mesh.primitives[0].indices, [0, 1, 2]);
+    }
+
+    #[test]
+    fn modify_vertex_st_updates_borrowed_vertices_without_rescaling() {
+        use crate::scene::Mat4;
+        let file = vertex_data_uv(3, 64, 96);
+        let stem = [
+            Cmd::Texture {
+                scale_s: 0x8000,
+                scale_t: 0x8000,
+                level: 0,
+                tile: 0,
+                on: true,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let head = [
+            Cmd::ModifyVtx {
+                index: 1,
+                field: 0x14,
+                value: 0x0FFF_FFE0,
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let meshes = convert_sequence(
+            &[
+                SequenceItem {
+                    cmds: &stem,
+                    world: Mat4::IDENTITY,
+                    mobjs: &[],
+                    mat_anims: &[],
+                    depth_seed: None,
+                    stream: 0,
+                },
+                SequenceItem {
+                    cmds: &head,
+                    world: Mat4::from_trs([10.0, 0.0, 0.0], [0.0; 3], [1.0; 3]),
+                    mobjs: &[],
+                    mat_anims: &[],
+                    depth_seed: None,
+                    stream: 0,
+                },
+            ],
+            Source::bare(&file),
+            InitialMaterial::default(),
+        );
+        let stem = meshes[0].as_ref().unwrap();
+        let head = meshes[1].as_ref().unwrap();
+        assert_eq!(stem.vertices[1].uv, [32, 48]);
+        assert_eq!(head.vertices[1].uv, [4095, -32]);
+        assert_eq!(head.vertices[0].uv, [32, 48]);
+        assert_eq!(head.vertices[1].pos, [0, 0, 0]);
     }
 
     #[test]

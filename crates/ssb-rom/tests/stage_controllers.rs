@@ -108,6 +108,212 @@ impl StageObjects for RomWhispy<'_> {
     }
 }
 
+struct PackWhispy<'a, 'p> {
+    pack: &'a ssb_rom::pack::Pack<'p>,
+    objects: ssb_rom::ground_obj::GroundObjects,
+}
+
+impl StageObjects for PackWhispy<'_, '_> {
+    fn play(&mut self, anim: StageAnim) {
+        use ssb_rom::ground_obj as g;
+        let slot = match anim {
+            StageAnim::WhispyEyes { lr, status } => g::whispy_eyes(lr, status == EyesAnim::Blink),
+            StageAnim::WhispyMouth { lr, status } => g::whispy_mouth(
+                lr,
+                match status {
+                    MouthAnim::Stretch => 0,
+                    MouthAnim::Turn => 1,
+                    MouthAnim::Open => 2,
+                    MouthAnim::Close => 3,
+                },
+            ),
+            StageAnim::FlowersBack { lr, phase } => g::flowers_back(lr, phase),
+            StageAnim::FlowersFront { lr, phase } => g::flowers_front(lr, phase),
+            _ => panic!("not a Dream Land animation"),
+        };
+        assert!(self.objects.has(slot));
+        self.objects.play(self.pack, slot).unwrap();
+    }
+
+    fn anim_frame(&self, obj: StageObj) -> f32 {
+        self.objects.get(index(obj) as u8).unwrap().frame
+    }
+}
+
+#[test]
+fn whispy_blows_on_the_packed_animation_clocks() {
+    if std::env::var_os("SSB64_ROM").is_none() {
+        return;
+    }
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    if !path.exists() {
+        return;
+    }
+    let bytes = std::fs::read(path).unwrap();
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let mut objects = PackWhispy {
+        pack: &pack,
+        objects: ssb_rom::ground_obj::GroundObjects::new(&pack, ssb_rom::ground_obj::PUPUPU_FILE),
+    };
+    assert_eq!(objects.objects.iter().count(), 4);
+    assert!(objects.objects.iter().all(|o| o.object.source_file == 152));
+    objects.play(StageAnim::FlowersFront { lr: 0, phase: 0 });
+    let mut start_clip = 0u32;
+    while objects.anim_frame(StageObj::FlowersFront) > 0.0 || start_clip == 0 {
+        objects.objects.advance(&pack).unwrap();
+        start_clip += 1;
+        assert!(start_clip < 1000, "the packed start clip never ends");
+    }
+    assert_eq!(start_clip, 37);
+
+    ssb_game::rng::set_seed(1);
+    let mut w = Pupupu::new();
+    let mut a = Fighter::new(FighterKind::Mario, 0, 3);
+    a.pos.x = -1200.0;
+    let mut b = Fighter::new(FighterKind::Mario, 1, 3);
+    b.pos.x = -900.0;
+    let mut blows = Vec::new();
+    let mut blowing_since = None;
+    let mut duration = 0u32;
+    let mut status = w.status;
+    for frame in 0..20_000u32 {
+        objects.objects.advance(&pack).unwrap();
+        a.hazard.vel_push = Default::default();
+        w.tick(&mut [&mut a, &mut b], &mut objects, true);
+        if w.status == WindStatus::Blow && status != WindStatus::Blow {
+            duration = u32::from(w.wind_duration);
+        }
+        status = w.status;
+        match (blowing_since, a.hazard.vel_push.x != 0.0) {
+            (None, true) => blowing_since = Some(frame),
+            (Some(start), false) => {
+                blows.push((start, frame - start, duration));
+                blowing_since = None;
+            }
+            _ => {}
+        }
+    }
+    eprintln!("packed front start clip {start_clip}; pushes: {blows:?}");
+    assert!(blows.len() >= 3, "{blows:?}");
+    for &(_, len, duration) in &blows {
+        assert_eq!(len, duration - start_clip - 1, "{blows:?}");
+    }
+    assert_eq!(w.lr_players, 0);
+    assert!(a.hazard.vel_push.x <= 0.0);
+}
+
+/// Check all controller clips against the source file, including NULL table
+/// entries and the barrel's single-child replacement. Poses and flags persist
+/// across changes; only table replacements restart the owning GObj clock.
+#[test]
+fn packed_controller_poses_match_the_rom() {
+    let Some(path) = std::env::var_os("SSB64_ROM") else {
+        return;
+    };
+    let pack_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    if !pack_path.exists() {
+        return;
+    }
+    let bytes = std::fs::read(pack_path).unwrap();
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let rom = std::fs::read(path).unwrap();
+    let info = ssb_rom::rom::identify(&rom).unwrap();
+    let archive = Archive::open(&rom, info.region).unwrap();
+    use ssb_rom::ground_obj::{self as g, AnimTarget};
+    for (object_index, asset) in g::OBJECTS.iter().enumerate() {
+        let mut objects = g::GroundObjects::new(&pack, asset.gr_file);
+        let packed = objects.get(object_index as u8).unwrap();
+        let header_file = archive.load(asset.gr_file).unwrap();
+        let headers = ssb_rom::stage::find_ground_data(&header_file, |_, _| true);
+        let header = headers.iter().find(|header| header.offset == 0x14).unwrap();
+        let (nodes_file, map_head) = header.map_nodes.unwrap();
+        assert_eq!(map_head, asset.map_head);
+        assert_eq!(packed.object.source_file, nodes_file);
+        let file = archive.load(nodes_file).unwrap();
+        let graph = find_scene_graphs(&file)
+            .into_iter()
+            .find(|graph| graph.offset == asset.graph)
+            .unwrap();
+        let mut poses: Vec<_> = graph
+            .nodes
+            .iter()
+            .map(|node| JointPose {
+                rotate: node.desc.rotate,
+                translate: node.desc.translate,
+                scale: node.desc.scale,
+            })
+            .collect();
+        let mut joints = vec![None::<StageJoint>; poses.len()];
+        let mut flags = vec![0u16; poses.len()];
+        let mut clock = 0.0;
+        for (slot, anim) in g::ANIMS
+            .iter()
+            .enumerate()
+            .filter(|(_, anim)| anim.object as usize == object_index)
+        {
+            let scripts = match anim.target {
+                AnimTarget::Table => joint_scripts(&file.data, anim.script, poses.len()),
+                AnimTarget::Node(node) => {
+                    let mut scripts = vec![None; poses.len()];
+                    scripts[node as usize] = Some(anim.script);
+                    scripts
+                }
+            };
+            if anim.target == AnimTarget::Table {
+                clock = 0.0;
+            }
+            for (i, script) in scripts.into_iter().enumerate() {
+                if anim.target == AnimTarget::Table || anim.target == AnimTarget::Node(i as u8) {
+                    joints[i] = script.map(|script| {
+                        let mut joint = StageJoint::start_changed(script, 0.0);
+                        joint.flags = flags[i];
+                        joint
+                    });
+                }
+            }
+            objects.play(&pack, slot).unwrap();
+            for tick in 0..120 {
+                for (i, joint) in joints.iter_mut().enumerate() {
+                    if tick == 0
+                        && anim.target != AnimTarget::Table
+                        && anim.target != AnimTarget::Node(i as u8)
+                    {
+                        continue;
+                    }
+                    if let Some(joint) = joint {
+                        joint.tick(&file.data, 1.0, &mut poses[i]).unwrap();
+                        flags[i] = joint.flags;
+                        if let Some(frame) = joint.gobj_frame() {
+                            clock = frame;
+                        }
+                    }
+                }
+                if tick != 0 {
+                    objects.advance(&pack).unwrap();
+                }
+                let packed = objects.get(object_index as u8).unwrap();
+                assert_eq!(packed.frame, clock, "{} tick {tick} clock", anim.name);
+                for (i, pose) in poses.iter().enumerate() {
+                    assert_eq!(
+                        packed.pose(i),
+                        Some(pose),
+                        "{} tick {tick} node {i}",
+                        anim.name
+                    );
+                    assert_eq!(
+                        packed.flags(i),
+                        flags[i],
+                        "{} tick {tick} flags {i}",
+                        anim.name
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn whispy_file(archive: &Archive<'_>) -> File {
     // `map_head` is `map_nodes - llGRPupupuMapMapHead`: whichever file holds
     // all four object graphs at their labels.

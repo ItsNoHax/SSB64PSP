@@ -11,6 +11,17 @@ translation and speed; On/Off collision groups skip their own animation
 callback. Collision Hidden/Show transitions follow zero/nonzero source flags
 (RE-353).
 
+Controller objects are separate from the four render layers (RE-357).
+`GroundObjects` plays packed DObj clips and retains node poses and flags
+across replacements. `StageObjectsPort` exposes their GObj clocks and root
+translations to gameplay. Training advances them at priority 5 before
+fighter interrupts and the priority-4 stage controller.
+
+Draw order follows the original display links: layers 4, 6, 13, 17;
+Whispy eyes/mouth and back flowers follow layer 4, front flowers use 16,
+and barrel/gate use 6. Per-object Whispy and cloud material animation is
+deferred; Whispy currently draws rest materials.
+
 ## Billboards
 
 Status: complete (109 nodes; RE-131–145).

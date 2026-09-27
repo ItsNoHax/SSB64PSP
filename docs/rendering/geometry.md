@@ -7,6 +7,7 @@ Part of [rendering.md](../rendering.md).
 | F3DEX2 | Meaning | PSP |
 |---|---|---|
 | `G_VTX(count, dest, addr)` | Load into the 32-entry vertex cache | Append to vertex buffer, record cache mapping |
+| `G_MODIFYVTX` ST | Rewrite cached texture coordinates | Replace the cached S10.5 pair, preserve its loading space |
 | `G_TRI1` / `G_TRI2` | 1 / 2 triangles from cache indices | 3 / 6 indices |
 | `G_DL` | Call or branch | Inlined at conversion |
 | `G_MTX` / `G_POPMTX` | Modelview stack | `DObj` hierarchy transform |
@@ -89,7 +90,13 @@ Emitted opcodes (RE-119):
 | `G_SETCOMBINE` | 1,660 | | |
 | `G_TEXTURE` | 1,596 | | |
 
-Never emitted: `G_QUAD`, `G_CULLDL`, `G_BRANCH_Z`, `G_MODIFYVTX`, `G_TEXRECT`,
+The controller flower lists and fighter continuations use `G_MODIFYVTX`
+ST writes (RE-357). These overwrite already-scaled cached coordinates;
+`G_TEXTURE` scale is not applied again. They fix Dream Land's flower beds
+and texture regions on Donkey Kong and Link. Other modify-vertex fields
+are not translated.
+
+Never emitted in the RE-119 census: `G_QUAD`, `G_CULLDL`, `G_BRANCH_Z`, `G_TEXRECT`,
 `G_FILLRECT`, `G_LOADTILE`, `G_SETSCISSOR`, `G_MOVEMEM`.
 
 Geometry-mode set counts: `G_LIGHTING` 539, `G_SHADING_SMOOTH` 449,

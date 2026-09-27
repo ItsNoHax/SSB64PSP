@@ -378,6 +378,7 @@ impl Inventory {
 fn opcode_of(cmd: &Cmd) -> u8 {
     match *cmd {
         Cmd::Vtx { .. } => dl::G_VTX,
+        Cmd::ModifyVtx { .. } => dl::G_MODIFYVTX,
         Cmd::Tri1(_) => dl::G_TRI1,
         Cmd::Tri2(..) => dl::G_TRI2,
         Cmd::Call(_) | Cmd::Branch(_) => dl::G_DL,

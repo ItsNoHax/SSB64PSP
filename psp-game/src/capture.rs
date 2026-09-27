@@ -31,11 +31,17 @@ pub fn select() -> Option<Capture> {
                 .and_then(ssb_capture::spec_line)
                 .and_then(GameScene::parse)
             {
-                return Some(Capture { scene, from_file: true });
+                return Some(Capture {
+                    scene,
+                    from_file: true,
+                });
             }
         }
     }
-    default_scene().map(|scene| Capture { scene, from_file: false })
+    default_scene().map(|scene| Capture {
+        scene,
+        from_file: false,
+    })
 }
 
 /// The scene named by the old per-scene Cargo features, in the order the old

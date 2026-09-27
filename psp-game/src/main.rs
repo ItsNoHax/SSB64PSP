@@ -384,9 +384,9 @@ unsafe fn run() -> ! {
     // and the stage collision iterator.
     let mut weapons = ssb_game::weapon::WeaponPool::default();
     let mut items = ssb_game::item::ItemPool::default();
-    // The stage controller slot (`grMainSetupMakeGround`). Dream Land's
-    // Whispy needs its stage objects' animation clocks, which the pack does
-    // not carry yet, so Training runs the slot empty (RE-356).
+    // The stage controller slot (`grMainSetupMakeGround`), backed by the
+    // packed objects' priority-5 animation clocks in Training (RE-357).
+    let mut stage_objects = ssb_rom::ground_obj::GroundObjects::empty();
     let mut stage_ctl = ssb_game::stage::Stage::none();
 
     let mut screen = Screen::Intro;
@@ -468,6 +468,47 @@ unsafe fn run() -> ! {
                         if play_state.is_none() {
                             weapons = ssb_game::weapon::WeaponPool::default();
                             items = ssb_game::item::ItemPool::default();
+                            if let Some((p, stage)) = pack
+                                .as_ref()
+                                .and_then(|p| p.stage(TRAINING_STAGE_INDEX).map(|stage| (p, stage)))
+                            {
+                                stage_objects =
+                                    ssb_rom::ground_obj::GroundObjects::new(p, stage.source_file);
+                                if stage.source_file == ssb_rom::ground_obj::PUPUPU_FILE {
+                                    let map_objects: alloc::vec::Vec<_> = p
+                                        .stage_points(&stage)
+                                        .map(|point| ssb_game::stage::MapObject {
+                                            kind: point.kind,
+                                            pos: ssb_engine::math::Vec3::new(
+                                                point.x as f32,
+                                                point.y as f32,
+                                                0.0,
+                                            ),
+                                        })
+                                        .collect();
+                                    let mut empty = [];
+                                    let groups = stage_map
+                                        .as_mut()
+                                        .map_or(&mut empty[..], |map| map.groups.as_mut_slice());
+                                    stage_ctl = ssb_game::stage::Stage::new(
+                                        &ssb_game::stage::StageInit {
+                                            kind: ssb_game::stage::StageKind::Pupupu,
+                                            map_objects: &map_objects,
+                                            bound_bottom: stage.bounds.bottom as f32,
+                                            hazard_attack: None,
+                                            hazard_throw: None,
+                                            acid_surface_y: 0.0,
+                                        },
+                                        groups,
+                                        &mut ssb_psp_runtime::scene::StageObjectsPort {
+                                            pack: p,
+                                            objects: &mut stage_objects,
+                                        },
+                                    );
+                                } else {
+                                    stage_ctl = ssb_game::stage::Stage::none();
+                                }
+                            }
                             play_state = pack.as_ref().and_then(|p| {
                                 p.stage(TRAINING_STAGE_INDEX).map(|s| {
                                     let mut scene = play::FighterScene::at_spawn(
@@ -499,6 +540,9 @@ unsafe fn run() -> ! {
             if let (Screen::Training, Some(p), Some(pl)) = (screen, &pack, play_state.as_mut()) {
                 material_anim.tick(p);
                 if let Some(stage) = p.stage(TRAINING_STAGE_INDEX) {
+                    // Priority 5, Ground link: `gcPlayAnimAll` precedes
+                    // every fighter interrupt and the priority-4 controller.
+                    let _ = stage_objects.advance(p);
                     if let Some(map) = stage_map.as_mut() {
                         let _ = map.tick(p);
                     }
@@ -556,7 +600,10 @@ unsafe fn run() -> ! {
                             &mut fighters,
                             ssb_game::stage::TickInput {
                                 groups: groups_mut,
-                                objects: &mut ssb_game::stage::NoObjects,
+                                objects: &mut ssb_psp_runtime::scene::StageObjectsPort {
+                                    pack: p,
+                                    objects: &mut stage_objects,
+                                },
                                 // The groups are being written, so the
                                 // controller sees the static map; only the
                                 // Twister queries it, on a static floor.
@@ -632,7 +679,10 @@ unsafe fn run() -> ! {
                         ssb_game::hazard::search_hit_hazard(
                             &mut pl.fighter,
                             &mut stage_ctl,
-                            &mut ssb_game::stage::NoObjects,
+                            &mut ssb_psp_runtime::scene::StageObjectsPort {
+                                pack: p,
+                                objects: &mut stage_objects,
+                            },
                             &dummy_status,
                         );
                         ssb_game::grab::search_catch(&mut pl.fighter, &dummy.fighter);
@@ -640,7 +690,10 @@ unsafe fn run() -> ! {
                         ssb_game::hazard::search_hit_hazard(
                             &mut dummy.fighter,
                             &mut stage_ctl,
-                            &mut ssb_game::stage::NoObjects,
+                            &mut ssb_psp_runtime::scene::StageObjectsPort {
+                                pack: p,
+                                objects: &mut stage_objects,
+                            },
                             &pl_status,
                         );
                         ssb_game::grab::search_catch(&mut dummy.fighter, &pl.fighter);
@@ -705,6 +758,7 @@ unsafe fn run() -> ! {
                     &weapons,
                     Some(&material_anim),
                     stage_map.as_ref().map(|map| &map.animator),
+                    Some(&stage_objects),
                     no_pack_color,
                 );
             }
@@ -791,6 +845,7 @@ unsafe fn draw_training(
     weapons: &ssb_game::weapon::WeaponPool,
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     stage_anim: Option<&ssb_rom::skeleton::StageAnimator>,
+    stage_objects: Option<&ssb_rom::ground_obj::GroundObjects>,
     no_pack_color: Color,
 ) {
     let scene = pack
@@ -826,7 +881,15 @@ unsafe fn draw_training(
     // `sc1PGameFuncLights`: the stage light that animated stage light
     // colours are evaluated under (RE-322).
     draw_state.set_stage_light(stage.light_angle_xy);
-    meshdraw::draw_stage_animated(p, &stage, &base, stage_anim, draw_state, material_anim);
+    meshdraw::draw_stage_animated(
+        p,
+        &stage,
+        &base,
+        stage_anim,
+        stage_objects,
+        draw_state,
+        material_anim,
+    );
 
     // The N64 puts shadows on their own display link between the stage and
     // fighters.  Resolve each independently from its live floor/air state;

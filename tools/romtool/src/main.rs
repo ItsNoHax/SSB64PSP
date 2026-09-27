@@ -3156,6 +3156,73 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         );
     }
 
+    // Stage controller objects (RE-357): the GObjs a `gr*.c` controller
+    // makes from `MPGroundData::map_nodes` and animates itself. Each label
+    // is an offset into the file `map_nodes` lands in, and only once
+    // `map_nodes` is confirmed to point at the label the controller
+    // subtracts. Keyed by `ground_obj::ANIMS` index.
+    let mut ground_anims = 0usize;
+    let mut ground_anim_joints = 0usize;
+    for (anim_index, anim) in ssb_rom::ground_obj::ANIMS.iter().enumerate() {
+        let asset = &ssb_rom::ground_obj::OBJECTS[anim.object as usize];
+        let ground = loaded
+            .stages
+            .iter()
+            .find(|g| g.file == asset.gr_file)
+            .ok_or_else(|| format!("ground {}: no header in file {}", anim.name, asset.gr_file))?;
+        let (file_id, head) = ground
+            .map_nodes
+            .ok_or_else(|| format!("ground {}: no map_nodes", anim.name))?;
+        if head != asset.map_head {
+            return Err(format!(
+                "ground {}: map_nodes at 0x{head:X}, controller subtracts 0x{:X}",
+                anim.name, asset.map_head
+            )
+            .into());
+        }
+        let file = loaded
+            .files
+            .get(file_id as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("ground {}: file {file_id} missing", anim.name))?;
+        let graph = loaded
+            .graphs
+            .get(&file_id)
+            .and_then(|graphs| graphs.iter().find(|graph| graph.offset == asset.graph))
+            .ok_or_else(|| format!("ground {}: graph 0x{:X} missing", asset.name, asset.graph))?;
+        let object = object_index
+            .get(&(file_id, asset.graph))
+            .and_then(|&index| writer.object(index))
+            .ok_or_else(|| format!("ground {}: packed object missing", asset.name))?;
+        let joints: Vec<_> = match anim.target {
+            ssb_rom::ground_obj::AnimTarget::Table => {
+                ssb_rom::objanim::joint_scripts(&file.data, anim.script, graph.nodes.len())
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(node, script)| {
+                        script.map(|script| (Some(script), Some(object.first_node + node as u32)))
+                    })
+                    .collect()
+            }
+            ssb_rom::ground_obj::AnimTarget::Node(node) => {
+                vec![(Some(anim.script), Some(object.first_node + node as u32))]
+            }
+        };
+        if joints.is_empty() {
+            return Err(format!("ground {}: no animation scripts", anim.name).into());
+        }
+        ground_anim_joints += joints.len();
+        ground_anims += 1;
+        writer.add_anim(
+            ssb_rom::pack::AnimDesc::GROUND,
+            anim_index as u32,
+            file_id,
+            0,
+            &file.data,
+            &joints,
+        );
+    }
+
     // Independent LBParticle banks live outside relocData. Decode and convert
     // them after scene work so their frame textures append without disturbing
     // any existing material texture indices (RE-180/181).
@@ -3312,6 +3379,9 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         ssb_rom::transition::ASSETS.len()
     );
     println!("  effect anims {effect_anims} effect(s), {effect_anim_joints} animated node(s)");
+    println!(
+        "  ground anims {ground_anims} controller clip(s), {ground_anim_joints} animated node(s)"
+    );
     println!(
         "  particles   {} bank(s), {particle_scripts} script(s), {particle_textures} texture series, {particle_frames} frame(s)",
         pack.particle_bank_count()

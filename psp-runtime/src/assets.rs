@@ -116,7 +116,13 @@ pub fn read_capture_scene(buf: &mut [u8]) -> Option<usize> {
         if fd.0 < 0 {
             continue;
         }
-        let read = unsafe { sys::sceIoRead(fd, buf.as_mut_ptr() as *mut core::ffi::c_void, buf.len() as u32) };
+        let read = unsafe {
+            sys::sceIoRead(
+                fd,
+                buf.as_mut_ptr() as *mut core::ffi::c_void,
+                buf.len() as u32,
+            )
+        };
         unsafe { sys::sceIoClose(fd) };
         return (read > 0).then_some(read as usize);
     }
