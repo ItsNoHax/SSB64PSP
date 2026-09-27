@@ -439,7 +439,14 @@ fn magnet_delay_and_ground_air_switches_preserve_state() {
 #[test]
 fn bat_reflects_projectile_only_in_the_flag_window_without_changing_status() {
     let mut f = fighter(FighterKind::Ness, 0, true);
-    status::set_status(&mut f, Status::AttackS4, 16.0, StatusTiming::frames(50.0));
+    status::set_status(&mut f, Status::AttackS4, 0.0, StatusTiming::frames(50.0));
+    // `ftMotionCommandSetFlag1(1)` at frame 16, `(0)` at 22.
+    for _ in 0..15 {
+        status::update(&mut f);
+        assert!(crate::combat::reflector(&f).is_none());
+    }
+    status::update(&mut f);
+    assert_eq!(f.status.anim_frame, 16.0);
     let owner = fighter(FighterKind::Mario, 1, true);
     let mut pool = WeaponPool::default();
     pool.spawn(request(
@@ -451,8 +458,11 @@ fn bat_reflects_projectile_only_in_the_flag_window_without_changing_status() {
     crate::combat::resolve(&mut f);
     assert_eq!(pool.first_fireball().unwrap().owner_port, 0);
     assert_eq!(f.status.status, AnyStatus::Common(Status::AttackS4));
-    f.status.anim_frame = 22.0;
-    assert!(!bat_contact(&f, f.pos, 100.0));
+    assert!(crate::combat::reflector(&f).is_some());
+    for _ in 0..6 {
+        status::update(&mut f);
+    }
+    assert!(crate::combat::reflector(&f).is_none());
 }
 #[test]
 fn pk_fire_hit_creates_independent_shrinking_pillar_with16_frame_rehit() {

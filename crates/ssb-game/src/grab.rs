@@ -1536,6 +1536,30 @@ pub fn release_on_hit(f: &mut Fighter) {
     }
 }
 
+/// `ftCommonThrownUpdateDamageStats`: the held fighter takes its catcher's
+/// staled `throw_desc[1]` damage, which stales the catcher's move.
+pub fn thrown_update_damage_stats(held: &mut Fighter, catcher: &mut Fighter) {
+    let desc = catcher
+        .grab
+        .throw_desc
+        .map(|d| d[1])
+        .unwrap_or(MARIO_CATCH[1]);
+    let staled = StaledThrow::of(catcher, desc.damage);
+    held.add_damage(staled.damage);
+    if catcher.port != held.port {
+        catcher.stale.push(staled.attack_id, staled.motion_count);
+    }
+}
+
+/// `ftCommonThrownDecideFighterLoseGrip(catcher, held)`: both links drop at
+/// once. Each fighter then takes its own damage status.
+pub fn lose_grip_pair(catcher: &mut Fighter, held: &mut Fighter) {
+    catcher.grab.catch = None;
+    catcher.grab.catch_kind = None;
+    catcher.grab.capture_immune = false;
+    lose_grip(held);
+}
+
 /// The held side of `ftCommonDamageUpdateMain`'s capture branch when the hit
 /// breaks the hold: `ftCommonThrownDecideFighterLoseGrip(catcher, held)`
 /// drops both links, and the catcher is told to take
@@ -3036,6 +3060,95 @@ mod tests {
         // the queue holds that one motion once.
         assert_eq!(mario.stale.next, 1);
         assert_eq!(mario.stale.entries[0].0, MotionAttackId::ThrowB);
+    }
+
+    fn strong_hit(damage: i32) -> crate::attack::Hitbox {
+        crate::attack::Hitbox {
+            damage,
+            kb_base: 120,
+            kb_scale: 100,
+            ..crate::weapon::MARIO_FIREBALL_HITBOX
+        }
+    }
+
+    /// `ftCommonDamageUpdateMain` with both sides of a grab hit in one frame:
+    /// neither resists, so the held fighter first takes its catcher's
+    /// `throw_desc[1]` (`ftCommonThrownUpdateDamageStats`), the grip drops
+    /// on both sides, and each enters its own damage status. The result is
+    /// the same whichever fighter's `ftMainProcParams` runs first.
+    #[test]
+    fn a_catcher_and_its_held_fighter_hit_together_both_fly() {
+        for held_first in [false, true] {
+            let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+            let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+            grab(&mut mario, &mut dummy);
+            to_catch_wait(&mut mario, &mut dummy);
+            let desc = mario.grab.throw_desc.map_or(MARIO_CATCH[1], |d| d[1]);
+            let throw = crate::stale::staled_damage(&mario, desc.damage);
+            let lr = 1.0;
+            let at = mario.pos;
+            assert!(crate::combat::direct_hit(
+                &mut mario,
+                strong_hit(20),
+                at,
+                lr,
+                9
+            ));
+            // Held fighters take half (`ftParamGetCapturedDamage`): 4 < 6
+            // keeps the hold (`ftCommonDamageCheckCaptureKeepHold`).
+            assert!(crate::combat::direct_hit(
+                &mut dummy,
+                strong_hit(8),
+                at,
+                lr,
+                9
+            ));
+            assert_eq!(dummy.hits.damage_queue, 4);
+            if held_first {
+                crate::combat::finish_frame(&mut [&mut dummy, &mut mario]);
+            } else {
+                crate::combat::finish_frame(&mut [&mut mario, &mut dummy]);
+            }
+            assert_eq!(mario.grab.catch, None, "held_first={held_first}");
+            assert_eq!(dummy.grab.capture, None);
+            assert!(mario.hitstun > 0 && dummy.hitstun > 0);
+            assert!(!matches!(
+                mario.status.status,
+                AnyStatus::Common(Status::CatchWait)
+            ));
+            assert!(!matches!(
+                dummy.status.status,
+                AnyStatus::Common(Status::CaptureWait)
+            ));
+            assert_eq!(mario.damage, 20);
+            assert_eq!(i32::from(dummy.damage), 4 + throw);
+        }
+    }
+
+    /// The held side alone: a light hit keeps the hold and freezes the
+    /// catcher for the hit's hitlag in the same frame
+    /// (`grab_fp->hitlag_tics = ftParamGetHitLag(...)`).
+    #[test]
+    fn a_light_hit_on_the_held_fighter_freezes_its_catcher_at_once() {
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+        grab(&mut mario, &mut dummy);
+        to_catch_wait(&mut mario, &mut dummy);
+        let at = mario.pos;
+        assert!(crate::combat::direct_hit(
+            &mut dummy,
+            strong_hit(8),
+            at,
+            1.0,
+            9
+        ));
+        crate::combat::finish_frame(&mut [&mut mario, &mut dummy]);
+        assert_eq!(mario.grab.catch, Some(1));
+        assert_eq!(dummy.grab.capture, Some(0));
+        let lag = crate::combat::hitlag_frames(4, mario.status.status, 1.0);
+        assert!(lag > 0);
+        assert_eq!(mario.hitlag, lag);
+        assert_eq!(dummy.hitlag, lag);
     }
 
     /// Fox's back throw makes two boxes on joint 20 for frames 11..19.

@@ -609,11 +609,48 @@ POST_SPECIAL_SLOTS = [
     ("KirbyCopyNessSpecialAirN", "Kirby", "FTKirbyAnimPKFireAir"),
 ]
 
+# Shared reaction statuses (`ftcommonwalldamage.c`, `ftcommonstopceil.c`,
+# `ftcommondown*.c`, `ftcommonpassive*.c`, `ftcommonrebound.c`,
+# `ftcommonescape.c`, `ftcommonshieldbreak*.c`, `ftcommonfurafura.c`), in
+# `ftCommonStatus` order after every earlier slot so existing ordinals stay
+# stable. They resolve through the common status -> motion pairing, for the
+# same fighters as `GRAB_SLOTS`. `DownWaitD`/`U` (motion -2) keep the
+# bounce's clip and `ReboundWait` (-1) the pose it clanked in, so they have
+# no slot.
+REACTION_SLOTS = [
+    ("WallDamage",        56),
+    ("StopCeil",          66),
+    ("DownBounceD",       67),
+    ("DownBounceU",       68),
+    ("DownStandD",        71),
+    ("DownStandU",        72),
+    ("PassiveStandF",     73),
+    ("PassiveStandB",     74),
+    ("DownForwardD",      75),
+    ("DownForwardU",      76),
+    ("DownBackD",         77),
+    ("DownBackU",         78),
+    ("DownAttackD",       79),
+    ("DownAttackU",       80),
+    ("Passive",           81),
+    ("Rebound",           83),
+    ("EscapeF",          156),
+    ("EscapeB",          157),
+    ("ShieldBreakFly",   158),
+    ("ShieldBreakFall",  159),
+    ("ShieldBreakDownD", 160),
+    ("ShieldBreakDownU", 161),
+    ("ShieldBreakStandD", 162),
+    ("ShieldBreakStandU", 163),
+    ("FuraFura",         164),
+]
+
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
              + [(name, status, None) for name, status in GRAB_SLOTS]
              + [(name, None, None) for name, _, _ in LATE_SPECIAL_SLOTS]
              + [(name, status, None) for name, status in LATE_COMMON_SLOTS]
-             + [(name, None, None) for name, _, _ in POST_SPECIAL_SLOTS])
+             + [(name, None, None) for name, _, _ in POST_SPECIAL_SLOTS]
+             + [(name, status, None) for name, status in REACTION_SLOTS])
 
 # The slots whose animation ends on its own, and whose length the status
 # machine therefore reads (RE-035). Everything after them loops until it is
@@ -770,6 +807,17 @@ def file_frames(path):
         end = src.index("};", m.end())
         lengths.append(script_frames(expand(src[m.end():end])))
     if not lengths:
+        # Some files are transcribed as the joint pointer table plus
+        # `_script<N>_<M>` arrays, with unreferenced bytes before the table
+        # disassembled as scripts too. Only the scripts the table points at
+        # are joints, so follow it.
+        table = re.search(r"^u16\s*\*\s*d\w+_ptrs\d+\s*\[\d+\]\s*=\s*\{(.*?)\};", src, re.M | re.S)
+        if table:
+            for name in re.findall(r"\b(d\w+_script\d+_\d+)\b", table.group(1)):
+                m = re.search(r"^u16\s+" + name + r"\s*\[\d+\]\s*=\s*\{", src, re.M)
+                end = src.index("};", m.end())
+                lengths.append(script_frames(expand(src[m.end():end])))
+    if not lengths:
         raise ValueError(f"{path}: no joint scripts")
     if len(set(lengths)) != 1:
         raise ValueError(f"{path}: joints disagree: {sorted(set(lengths))}")
@@ -904,6 +952,8 @@ def resolve(refs):
             common(slot, status)
         for slot, target, sym in POST_SPECIAL_SLOTS:
             special(slot, target, sym)
+        for slot, status in REACTION_SLOTS:
+            common(slot, status)
         rows.append((fighter, entry))
     return rows, problems
 

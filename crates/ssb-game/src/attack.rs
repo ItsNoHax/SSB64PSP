@@ -342,6 +342,7 @@ pub fn init_damage_vars_full(
     let timing = anim_timing(f, status_set);
     status::set_any_status(f, status_set, 0.0, timing);
     status::play_anim_events(f);
+    f.reaction.is_knockback_over = knockback >= crate::reaction::KNOCKBACK_OVER;
     f.damage_e_status = if matches!(
         f.status.status,
         AnyStatus::Common(Status::DamageE1 | Status::DamageE2)
@@ -350,6 +351,9 @@ pub fn init_damage_vars_full(
     } else {
         None
     };
+    // `proc_passive`: `ftCommonDamageSetStatus` for an electric hit,
+    // `ftCommonDamageCheckSetInvincible` otherwise.
+    f.reaction.is_passive_invincible = f.damage_e_status.is_none();
     f.physics.vel_ground = Vec3::ZERO;
     f.physics.vel_air = Vec3::ZERO;
     f.physics.is_fastfall = false;
@@ -361,6 +365,7 @@ pub fn init_damage_vars_full(
     f.damage_knockback_stack = knockback;
     f.tics_since_last_z = crate::status::ZTRIGLAST_TICS_MAX;
     f.is_smash_di = true;
+    f.reaction.coll_mask_curr = 0;
 }
 
 /// A status's figatree length as its timing.
@@ -393,6 +398,10 @@ pub fn update_damage_e(f: &mut Fighter) {
     f.physics.vel_knockback = vel;
     f.physics.vel_damage_ground = ground;
     f.hitstun = hitstun;
+    if f.reaction.is_knockback_over {
+        f.reaction.is_knockback_over = false;
+        crate::reaction::set_timed_invincible(f, 1);
+    }
 }
 
 /// `ftParamGetHitStun` @ `ftparam.c:1505`.
@@ -575,6 +584,15 @@ impl HitOutcome {
     pub fn registered(self) -> bool {
         self != HitOutcome::Missed
     }
+
+    pub fn of(contact: crate::combat::WeaponContact) -> Self {
+        match contact {
+            crate::combat::WeaponContact::Missed => HitOutcome::Missed,
+            crate::combat::WeaponContact::Shielded(_) => HitOutcome::Shielded,
+            crate::combat::WeaponContact::Hurt(false) => HitOutcome::Touched,
+            crate::combat::WeaponContact::Hurt(true) => HitOutcome::Damaged,
+        }
+    }
 }
 
 /// `FTCOMMON_DAMAGE_CATCH_RELEASE_THRESHOLD`: a held fighter whose queued
@@ -643,7 +661,26 @@ pub fn register_hitbox(
     attack_handicap: u8,
     defender: &mut Fighter,
 ) -> HitOutcome {
-    let contact = crate::combat::weapon_hit(
+    HitOutcome::of(register_hitbox_contact(
+        hitbox,
+        pos_curr,
+        pos_prev,
+        source,
+        attack_handicap,
+        defender,
+    ))
+}
+
+/// [`register_hitbox`], keeping the shield's hop data.
+pub fn register_hitbox_contact(
+    hitbox: &Hitbox,
+    pos_curr: Vec3,
+    pos_prev: Vec3,
+    source: crate::combat::HitSource,
+    attack_handicap: u8,
+    defender: &mut Fighter,
+) -> crate::combat::WeaponContact {
+    crate::combat::weapon_hit(
         defender,
         crate::combat::WeaponAttack {
             hitbox: *hitbox,
@@ -653,13 +690,7 @@ pub fn register_hitbox(
             handicap: attack_handicap,
             can_shield: true,
         },
-    );
-    match contact {
-        crate::combat::WeaponContact::Missed => HitOutcome::Missed,
-        crate::combat::WeaponContact::Shielded => HitOutcome::Shielded,
-        crate::combat::WeaponContact::Hurt(false) => HitOutcome::Touched,
-        crate::combat::WeaponContact::Hurt(true) => HitOutcome::Damaged,
-    }
+    )
 }
 
 /// Applies one already-positioned hitbox to a defender at once: registers

@@ -112,8 +112,13 @@ pub const SLOT_FURA_SLEEP: usize = 404;
 pub const SLOT_NESS_ATTACK11: usize = 405;
 pub const SLOT_NESS_ATTACK13: usize = 424;
 pub const SLOT_KIRBY_COPY_NESS_SPECIAL_N: usize = 444;
+/// First of the 25 shared reaction slots: `WallDamage`, `StopCeil`,
+/// `DownBounceD` through `Rebound` without the two `DownWait`s and
+/// `ReboundWait` (which keep the previous motion), then `EscapeF` through
+/// `FuraFura`, in `ftCommonStatus` order.
+pub const SLOT_WALL_DAMAGE: usize = 446;
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 446;
+pub const SLOT_COUNT: usize = 471;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -271,6 +276,42 @@ fn script_length(data: &[u8], start: usize) -> Option<AnimLength> {
     }
 }
 
+fn first_pointer(data: &[u8]) -> u32 {
+    (0..data.len() / 4)
+        .map(|i| u32_be(data, i * 4))
+        .find(|&p| p != 0)
+        .unwrap_or(0)
+}
+
+/// How many joint pointers open a figatree file.
+///
+/// The table normally runs up to the first script it points at. A few files
+/// (Samus's `RollF`/`RollB`) keep unreferenced bytes between the table and
+/// that script, so the table also ends at the first word that cannot be a
+/// script pointer: odd (scripts are `u16` streams), or past the end of the
+/// file. The game's
+/// own parser never needs the length -- it reads one pointer per skeleton
+/// joint.
+pub fn joint_table_len(data: &[u8]) -> Option<usize> {
+    let first = first_pointer(data);
+    if first == 0 || !first.is_multiple_of(4) || first as usize > data.len() {
+        return None;
+    }
+    let mut end = first as usize / 4;
+    let mut len = 0;
+    while len < end {
+        let ptr = u32_be(data, len * 4);
+        if ptr != 0 {
+            if !ptr.is_multiple_of(2) || ptr as usize >= data.len() {
+                break;
+            }
+            end = end.min(ptr as usize / 4);
+        }
+        len += 1;
+    }
+    (len != 0 && len <= MAX_JOINTS).then_some(len)
+}
+
 /// Reads an animation's length out of a figatree file.
 ///
 /// Requires every joint script to agree, so a mis-decode surfaces as
@@ -285,29 +326,12 @@ pub fn decode_length(file_id: u32, file: &File) -> Result<AnimLength, AnimError>
         });
     }
 
-    // The table runs up to the first script it points at.
-    let mut first = 0u32;
-    let mut at = 0;
-    while at + 4 <= data.len() {
-        let ptr = u32_be(data, at);
-        if ptr != 0 {
-            first = ptr;
-            break;
-        }
-        at += 4;
-    }
-    let joints = first as usize / 4;
-    if first == 0
-        || !first.is_multiple_of(4)
-        || joints == 0
-        || joints > MAX_JOINTS
-        || first as usize > data.len()
-    {
+    let Some(joints) = joint_table_len(data) else {
         return Err(AnimError::BadTable {
             file: file_id,
-            first,
+            first: first_pointer(data),
         });
-    }
+    };
 
     let mut agreed: Option<AnimLength> = None;
     for joint in 0..joints {
@@ -449,6 +473,31 @@ mod tests {
     }
 
     #[test]
+    fn unreferenced_bytes_after_the_table_do_not_lengthen_it() {
+        // Samus's `RollF`: a gap between the table and the first script. The
+        // first gap word is a command, not a pointer into the file.
+        let script = [cmd(1, 0, 1), 7, cmd(0, 0, 0)];
+        let gap = [cmd(8, 0x3FF, 1), 1234, 0, 0];
+        let mut data = Vec::new();
+        let table = 2 * 4;
+        let first = (table + gap.len() * 2) as u32;
+        let second = first + (script.len() * 2) as u32;
+        data.extend_from_slice(&first.to_be_bytes());
+        data.extend_from_slice(&second.to_be_bytes());
+        for w in gap.iter().chain(&script).chain(&script) {
+            data.extend_from_slice(&w.to_be_bytes());
+        }
+        assert_eq!(joint_table_len(&data), Some(2));
+        let f = File {
+            id: 1,
+            data,
+            extern_relocs: Vec::new(),
+            intern_relocs: Vec::new(),
+        };
+        assert_eq!(decode_length(1, &f), Ok(AnimLength::Frames(7)));
+    }
+
+    #[test]
     fn joints_that_disagree_are_an_error_rather_than_a_first_answer() {
         let a = [cmd(1, 0, 1), 7, cmd(0, 0, 0)];
         let b = [cmd(1, 0, 1), 9, cmd(0, 0, 0)];
@@ -532,10 +581,23 @@ mod tests {
             .iter()
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
+        // The 25 reaction slots exist for all twelve, and for none of the
+        // other fifteen rows.
         assert_eq!(
-            missing, 10950,
-            "Twelve ported fighters have character and grab slots"
+            missing,
+            10950 + 15 * (SLOT_COUNT - SLOT_WALL_DAMAGE),
+            "Twelve ported fighters have character, grab and reaction slots"
         );
+        for a in &FIGHTER_ANIMS[..12] {
+            for (file, name) in a.files[SLOT_WALL_DAMAGE..]
+                .iter()
+                .zip(&SLOT_NAMES[SLOT_WALL_DAMAGE..])
+            {
+                assert_ne!(*file, 0, "{} has no {}", a.name, name);
+            }
+        }
+        assert_eq!(SLOT_NAMES[SLOT_WALL_DAMAGE], "WallDamage");
+        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "FuraFura");
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")

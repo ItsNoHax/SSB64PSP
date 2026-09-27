@@ -29,7 +29,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  A full run of all 72 scenes takes about 17 s (RE-316).
+  A full run of all 73 scenes takes about 17 s (RE-316).
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
   of golden, candidate and mask with changed scenes first.
@@ -135,6 +135,7 @@ builds the same scene as its default.
 | `regression_capture_shadows` (`psp-game`) | `f1-training-shadows` | Grounded and airborne fighter shadows | RE-302 |
 | `golden_capture` (`psp-game`, scene `grab`) | `f1-training-grab` | Mario holding the Training dummy on Dream Land's left platform after a Z+A catch, with held TopN placement and joint rotation | RE-330–332 |
 | `golden_capture` (`psp-game`, scenes `costume1`–`costume3`) | `f1-training-costume-1`–`3` | Fox after a C-Right, C-Down or C-Left pick on the Training entry: costumes 1–3 in `psp-game` | RE-341 |
+| `golden_capture` (`psp-game`, scene `jab`) | `f1-training-jab` | Mario's jab from the grab route landing on the Training dummy; the hit is in the capture log (`dummy_damage=2 dummy_status=Common(DamageN1)`, `PPSSPPHeadless --log`), not the image | RE-351 |
 
 Stage sweep example:
 
@@ -332,3 +333,13 @@ goldens changed: `f1-training-fireball` 2,124, `f1-training-shadows` 432 and
 `f1-training-grab` 2,296 pixels at 2x, all on the dummy. 72 of 72 then match
 twice. The PSP-2000 ran the six `psp-game` scenes; the captures agree with
 PPSSPP apart from edge noise (counts in RE-341).
+
+## 2026-09-27 RE-351 jab scene and bonus-stage rebaseline
+
+Pack v39 (`2e0ce44b…`). The five scripted Training scenes still land no hit:
+their jab route misses the dummy's platform, and the `grab` scene's catch
+whiffs (capture log). New `f1-training-jab` takes the grab route and taps A;
+the capture log reads `dummy_damage=2 dummy_status=Common(DamageN1)`. The
+image cannot show the hit (no damage or jab clips). `r2-stage-bonus1-luigi`
+was rebaselined (160 pixels at 2x): it had been stale since RE-350, and a
+build of `c97ed46` renders the same pixels. 73 of 73 then match twice.

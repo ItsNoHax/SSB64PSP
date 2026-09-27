@@ -821,7 +821,8 @@ impl FighterScene {
                 ssb_game::status::MarioStatus::SpecialHi
                     | ssb_game::status::MarioStatus::SpecialAirHi
             ) | AnyStatus::Samus(ssb_game::status::SamusStatus::SpecialHi)
-        ) {
+        ) || ssb_game::reaction::moves_by_transn(self.fighter.status.status)
+        {
             if let (Some(before), Some(current)) =
                 (self.root_motion_before_tick, self.skeleton.pose(0))
             {

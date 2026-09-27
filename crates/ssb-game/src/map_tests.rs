@@ -595,3 +595,231 @@ fn aerial_jump_and_recovery_cliff_gates_follow_their_source_callbacks() {
     f.status.anim_frame = 5.0;
     assert!(allows_cliff(&f));
 }
+
+// ---------------------------------------------------------------------------
+// Damage sweep (`mpCommonProcFighterDamage`) and the surface reactions
+// ---------------------------------------------------------------------------
+
+fn damage(s: &[MapSurface], from: Vec3, to: Vec3, prev: u16, hitlag: bool) -> DamageMoved {
+    move_damage(&BODY, from, to, prev, hitlag, None, || s.iter().copied())
+}
+
+#[test]
+fn a_head_on_wall_is_struck_only_above_30_units_and_once() {
+    let wall = surface(Kind::LeftWall, 1, (100, -100), (100, 100), 0);
+    let fast = damage(
+        &[wall],
+        Vec3::new(50.0, 0.0, 0.0),
+        Vec3::new(131.0, 0.0, 0.0),
+        0,
+        false,
+    );
+    assert!(fast.collide);
+    assert_eq!(fast.mask_curr, MASK_LWALL);
+    assert_eq!(fast.moved.pos.x, 90.0);
+    assert_eq!(fast.lwall_normal, Vec2::new(-1.0, 0.0));
+    // `lbCommonMag2D(&pos_diff) > 30.0F`: 30 exactly only stops.
+    let slow = damage(
+        &[wall],
+        Vec3::new(70.0, 0.0, 0.0),
+        Vec3::new(100.0, 0.0, 0.0),
+        0,
+        false,
+    );
+    assert!(!slow.collide);
+    assert_eq!(slow.moved.pos.x, 90.0);
+    // Already struck last frame (`coll_mask_prev`): no second bounce.
+    let again = damage(
+        &[wall],
+        Vec3::new(50.0, 0.0, 0.0),
+        Vec3::new(131.0, 0.0, 0.0),
+        MASK_LWALL,
+        false,
+    );
+    assert!(!again.collide);
+}
+
+#[test]
+fn a_wall_is_struck_only_beyond_110_degrees_from_its_normal() {
+    let wall = surface(Kind::LeftWall, 1, (100, -500), (100, 500), 0);
+    // 100 across, 250 up: 111.8 degrees from (-1, 0).
+    let steep = damage(
+        &[wall],
+        Vec3::new(50.0, 0.0, 0.0),
+        Vec3::new(150.0, 250.0, 0.0),
+        0,
+        false,
+    );
+    assert_eq!(steep.mask_curr, MASK_LWALL);
+    // 100 across, 300 up: 108.4 degrees, a graze.
+    let graze = damage(
+        &[wall],
+        Vec3::new(50.0, 0.0, 0.0),
+        Vec3::new(150.0, 300.0, 0.0),
+        0,
+        false,
+    );
+    assert_eq!(graze.mask_curr, 0);
+    assert_eq!(graze.moved.pos.x, 90.0);
+}
+
+#[test]
+fn a_damage_floor_lands_steep_falls_and_carries_grazes_and_hitlag() {
+    let floor = surface(Kind::Floor, 2, (-1000, 0), (1000, 0), 0);
+    let steep = damage(
+        &[floor],
+        Vec3::new(0.0, 40.0, 0.0),
+        Vec3::new(20.0, -40.0, 0.0),
+        0,
+        false,
+    );
+    assert!(steep.collide);
+    assert_eq!(steep.mask_curr, MASK_FLOOR);
+    assert_eq!(steep.moved.floor.unwrap().line, 2);
+    assert_eq!(steep.moved.pos.y, 0.0);
+    // 200 across, 40 down is 11 degrees below the floor: carried along it,
+    // still airborne (`mpProcessSetCollideFloor`).
+    let graze = damage(
+        &[floor],
+        Vec3::new(0.0, 20.0, 0.0),
+        Vec3::new(200.0, -20.0, 0.0),
+        0,
+        false,
+    );
+    assert!(!graze.collide);
+    assert!(graze.moved.floor.is_none());
+    assert!(graze.contacts.floor);
+    assert_eq!(graze.moved.pos, Vec3::new(200.0, 0.0, 0.0));
+    let lag = damage(
+        &[floor],
+        Vec3::new(0.0, 40.0, 0.0),
+        Vec3::new(0.0, -40.0, 0.0),
+        0,
+        true,
+    );
+    assert!(lag.moved.floor.is_none());
+    assert_eq!(lag.moved.pos.y, 0.0);
+}
+
+#[test]
+fn a_struck_wall_bounces_a_tumble_into_wall_damage() {
+    let mut f = fighter(
+        FighterKind::Mario,
+        AnyStatus::Common(Status::DamageFlyN),
+        Vec3::new(10.0, 0.0, 0.0),
+    );
+    f.physics.vel_knockback = Vec3::new(90.0, -20.0, 0.0);
+    crate::reaction::set_wall_damage(&mut f, Vec2::new(-1.0, 0.0));
+    assert_eq!(f.status.status, AnyStatus::Common(Status::WallDamage));
+    // `lbCommonReflect2D` of (100, -20) off (-1, 0), scaled by 0.8.
+    assert_eq!(f.physics.vel_knockback, Vec3::new(-80.0, -16.0, 0.0));
+    assert_eq!(f.physics.vel_air, Vec3::ZERO);
+    assert_eq!(f.facing, Facing::Right);
+    let kb = ssb_engine::math::sqrt(80.0 * 80.0 + 16.0 * 16.0);
+    assert_eq!(f.hitstun, (kb / 1.875) as u16);
+    assert_eq!(f.damage_knockback_stack, kb);
+    assert_eq!(f.intangible_frames, 15);
+    assert_eq!(f.status.timing.anim_speed, 2.0);
+}
+
+#[test]
+fn a_live_tumble_into_a_wall_bounces_and_falls_when_hitstun_ends() {
+    let wall = surface(Kind::LeftWall, 1, (100, -500), (100, 500), 0);
+    let mut f = fighter(
+        FighterKind::Mario,
+        AnyStatus::Common(Status::DamageFlyN),
+        Vec3::ZERO,
+    );
+    f.physics.vel_knockback = Vec3::new(120.0, 0.0, 0.0);
+    f.hitstun = 60;
+    f.tick_map(|| [wall]);
+    assert_eq!(f.status.status, AnyStatus::Common(Status::WallDamage));
+    assert!(f.physics.vel_knockback.x < 0.0);
+    assert_eq!(f.reaction.coll_mask_curr, MASK_LWALL);
+    let hitstun = f.hitstun;
+    for _ in 0..hitstun {
+        f.tick_map(|| [wall]);
+    }
+    assert_eq!(f.status.status, AnyStatus::Common(Status::DamageFall));
+}
+
+#[test]
+fn a_steep_tumble_landing_knocks_down_or_techs() {
+    let floor = surface(Kind::Floor, 2, (-1000, 0), (1000, 0), 0);
+    let mut f = fighter(
+        FighterKind::Mario,
+        AnyStatus::Common(Status::DamageFlyN),
+        Vec3::ZERO,
+    );
+    f.pos.y = 30.0;
+    f.physics.vel_knockback = Vec3::new(10.0, -60.0, 0.0);
+    f.hitstun = 30;
+    let mut tech = f.clone();
+    f.tick_map(|| [floor]);
+    assert_eq!(f.status.status, AnyStatus::Common(Status::DownBounceU));
+    assert!(f.is_grounded());
+    assert_eq!(f.pos.y, 0.0);
+    tech.tics_since_last_z = 5;
+    tech.tick_map(|| [floor]);
+    assert_eq!(tech.status.status, AnyStatus::Common(Status::Passive));
+}
+
+#[test]
+fn a_fast_rise_into_a_ceiling_stops_ceil_then_falls() {
+    let ceil = surface(Kind::Ceiling, 4, (-1000, 100), (1000, 100), 0);
+    let mut f = fighter(
+        FighterKind::Mario,
+        AnyStatus::Common(Status::JumpF),
+        Vec3::new(5.0, 45.0, 0.0),
+    );
+    f.pos.y = 60.0;
+    let mut slow = f.clone();
+    f.tick_map(|| [ceil]);
+    assert_eq!(f.status.status, AnyStatus::Common(Status::StopCeil));
+    assert!(!f.is_grounded());
+    assert_eq!(f.physics.vel_air.y, 0.0);
+    // No `proc_physics`: the bonk neither falls nor slows.
+    let (x, vx) = (f.pos.x, f.physics.vel_air.x);
+    assert!(vx > 0.0);
+    f.tick_map(|| [ceil]);
+    assert_eq!(f.physics.vel_air, Vec3::new(vx, 0.0, 0.0));
+    assert_eq!(f.pos.x, x + vx);
+    let len = crate::motion::anim_length(FighterKind::Mario, Status::StopCeil.into()).unwrap();
+    for _ in 0..len as usize {
+        f.tick_map(|| [ceil]);
+    }
+    assert_eq!(f.status.status, AnyStatus::Common(Status::Fall));
+    // After gravity the rise is below `CEILHEAVY_VEL_Y_MIN`.
+    slow.physics.vel_air.y = 31.0;
+    slow.tick_map(|| [ceil]);
+    assert_eq!(slow.status.status, AnyStatus::Common(Status::JumpF));
+}
+
+#[test]
+fn damage_fall_catches_a_ledge() {
+    let floor = surface(Kind::Floor, 3, (-100, 0), (100, 0), collision::flags::CLIFF);
+    let mut f = fighter(
+        FighterKind::Mario,
+        AnyStatus::Common(Status::DamageFall),
+        Vec3::new(0.0, -20.0, 0.0),
+    );
+    f.pos = Vec3::new(-150.0, -40.0, 0.0);
+    f.cliff_reach = Vec2::new(100.0, 50.0);
+    f.tick_map(|| [floor]);
+    assert_eq!(f.status.status, AnyStatus::Common(Status::CliffCatch));
+}
+
+#[test]
+fn ness_jibaku_bounces_through_the_shared_down_bounce() {
+    let mut f = fighter(
+        FighterKind::Ness,
+        AnyStatus::Ness(NessStatus::SpecialHiJibaku),
+        Vec3::ZERO,
+    );
+    f.situation = Situation::Ground;
+    crate::ness::map_down_bounce(&mut f);
+    assert_eq!(f.status.status, AnyStatus::Common(Status::DownBounceU));
+    assert_eq!(f.damage_mul, 0.5);
+    let len = crate::motion::anim_length(FighterKind::Ness, Status::DownBounceU.into());
+    assert_eq!(f.status.timing.anim_length, len);
+}

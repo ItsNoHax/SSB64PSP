@@ -10,9 +10,10 @@
 //! ([`crate::motion::anim_length`]); hit-status windows (a roll's or a tech's
 //! intangibility, a getup attack's hitboxes) come from their motion scripts.
 //!
-//! Not ported: wall and ceiling bounces (`WallDamage`, `StopCeil`) need the
-//! wall solver, and a `DamageFall` that reaches a ledge does not catch it
-//! (fighter ledge detection is caller-driven).
+//! Surface reactions (`ftcommonwalldamage.c`, `ftcommonstopceil.c` and
+//! `ftCommonDamageAirCommonProcMap`) run on the shared map solver's damage
+//! sweep ([`crate::map::move_damage`]); `DamageFall` catches ledges through
+//! [`crate::map::allows_cliff`] like the other falls.
 
 use ssb_engine::input::N64Buttons;
 
@@ -54,6 +55,51 @@ pub struct ReactionState {
     pub rebound_timer: f32,
     /// `rebound.anim_speed`.
     pub rebound_speed: f32,
+    /// `damage.is_knockback_over`: the hit's knockback reached
+    /// [`KNOCKBACK_OVER`]. A status variable, so a status change keeps it.
+    pub is_knockback_over: bool,
+    /// `proc_passive == ftCommonDamageCheckSetInvincible`: set by
+    /// `ftCommonDamageInitDamageVars` for a non-electric damage status,
+    /// cleared by the next status (`ftMainSetStatus` clears `proc_passive`).
+    pub is_passive_invincible: bool,
+    /// `damage.coll_mask_curr` / `coll_mask_prev`: the surfaces struck this
+    /// frame and last ([`crate::map::MASK_LWALL`] and friends). Status
+    /// variables: `WallDamage` inherits the mask of the hit that made it, so
+    /// the same wall cannot bounce the fighter twice in a row.
+    /// (`coll_mask_ignore` and `wall_collide_angle` are written but never
+    /// read in the source, so they are not kept.)
+    pub coll_mask_curr: u16,
+    pub coll_mask_prev: u16,
+}
+
+/// `FTCOMMON_WALLDAMAGE_INTANGIBLE_TIMER`.
+pub const WALLDAMAGE_INTANGIBLE_TIMER: u16 = 15;
+/// `ftCommonWallDamageSetStatus` plays `WallDamage` at double speed.
+pub const WALLDAMAGE_ANIM_SPEED: f32 = 2.0;
+/// `lbCommonScale2D(&vel_air, 0.8F)`: a bounce keeps 80% of the speed.
+pub const WALLDAMAGE_VEL_MUL: f32 = 0.8;
+
+/// `ftCommonDamageInitDamageVars`: knockback at or above this sets
+/// `is_knockback_over`, which grants one frame of invincibility once hitlag
+/// ends.
+pub const KNOCKBACK_OVER: f32 = 65000.0;
+
+/// `ftCommonDamageCheckSetInvincible`, the damage statuses' `proc_passive`:
+/// after the hitlag of a knockback overrun, one frame of hit invincibility
+/// (`ftParamSetTimedHitStatusInvincible(fp, 1)`). Runs after the timers
+/// count down, as `ftMainProcUpdateMain` calls `proc_passive` after them.
+pub fn check_set_invincible(f: &mut Fighter) {
+    if f.reaction.is_passive_invincible && f.hitlag == 0 && f.reaction.is_knockback_over {
+        f.reaction.is_knockback_over = false;
+        set_timed_invincible(f, 1);
+    }
+}
+
+/// `ftParamSetTimedHitStatusInvincible`.
+pub fn set_timed_invincible(f: &mut Fighter, frames: u16) {
+    if f.invincible_frames < frames {
+        f.invincible_frames = frames;
+    }
 }
 
 /// The status's figatree length as its timing.
@@ -193,6 +239,82 @@ pub fn set_damage_fall_from_cliff_wait(f: &mut Fighter) {
 }
 
 // ---------------------------------------------------------------------------
+// Surface reactions
+// ---------------------------------------------------------------------------
+
+/// `ftCommonDamageAirCommonProcMap`, after the damage sweep: a struck wall or
+/// ceiling bounces the fighter (`ftCommonWallDamageCheckGoto`), a struck
+/// floor techs or knocks it down.
+pub fn damage_air_proc_map(f: &mut Fighter, sweep: &crate::map::DamageMoved) {
+    if !sweep.collide || wall_damage_check_goto(f, sweep) {
+        return;
+    }
+    if sweep.mask_curr & crate::map::MASK_FLOOR != 0 {
+        let y = f.pos.y;
+        if !check_passive_stand(f, y) && !check_passive(f, y) {
+            set_down_bounce(f, y);
+        }
+    }
+}
+
+/// `ftCommonWallDamageCheckGoto`: left wall, then right wall, then ceiling.
+fn wall_damage_check_goto(f: &mut Fighter, sweep: &crate::map::DamageMoved) -> bool {
+    let mask = sweep.mask_curr;
+    let normal = if mask & crate::map::MASK_LWALL != 0 {
+        sweep.lwall_normal
+    } else if mask & crate::map::MASK_RWALL != 0 {
+        sweep.rwall_normal
+    } else if mask & crate::map::MASK_CEIL != 0 {
+        sweep.ceil_normal
+    } else {
+        return false;
+    };
+    set_wall_damage(f, normal);
+    true
+}
+
+/// `ftCommonWallDamageSetStatus`: the fighter's whole velocity reflects off
+/// the surface at 80% as damage velocity, with fresh hitstun for that speed
+/// and 15 frames of intangibility. It faces away from its new direction.
+pub fn set_wall_damage(f: &mut Fighter, normal: ssb_engine::math::Vec2) {
+    let mut vx = f.physics.vel_air.x + f.physics.vel_knockback.x;
+    let mut vy = f.physics.vel_air.y + f.physics.vel_knockback.y;
+    // `lbCommonReflect2D`.
+    let d = (normal.x * vx + normal.y * vy) * -2.0;
+    vx += normal.x * d;
+    vy += normal.y * d;
+    vx *= WALLDAMAGE_VEL_MUL;
+    vy *= WALLDAMAGE_VEL_MUL;
+    // `vel_damage_air = vel_air` copies the air velocity's Z as well.
+    f.physics.vel_knockback = ssb_engine::math::Vec3::new(vx, vy, f.physics.vel_air.z);
+    f.physics.vel_air = ssb_engine::math::Vec3::ZERO;
+    f.facing = if vx < 0.0 {
+        Facing::Right
+    } else {
+        Facing::Left
+    };
+    let knockback = ssb_engine::math::sqrt(vx * vx + vy * vy);
+    let hitstun = crate::attack::hitstun_frames(knockback) as i32;
+    let (vel, ground) = (f.physics.vel_knockback, f.physics.vel_damage_ground);
+    let t = timing_at(f, Status::WallDamage, WALLDAMAGE_ANIM_SPEED);
+    status::set_status(f, Status::WallDamage, 0.0, t);
+    f.physics.vel_knockback = vel;
+    f.physics.vel_damage_ground = ground;
+    f.hitstun = hitstun.max(0) as u16;
+    f.damage_knockback_stack = knockback;
+    // `ftParamSetTimedHitStatusIntangible`.
+    f.intangible_frames = f.intangible_frames.max(WALLDAMAGE_INTANGIBLE_TIMER);
+}
+
+/// `ftCommonStopCeilSetStatus`: a fast rise into a ceiling stops dead.
+pub fn set_stop_ceil(f: &mut Fighter) {
+    set(f, Status::StopCeil);
+    status::play_anim_events(f);
+    f.physics.vel_air.y = 0.0;
+    f.physics.vel_air.z = 0.0;
+}
+
+// ---------------------------------------------------------------------------
 // Status updates
 // ---------------------------------------------------------------------------
 
@@ -210,6 +332,20 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
                 } else {
                     air_interrupt(f);
                 }
+            }
+        }
+        // `ftCommonWallDamageProcUpdate`: the bounce lasts its hitstun, not
+        // its animation. The fall's interrupt runs as the new status's.
+        Status::WallDamage => {
+            if f.hitstun == 0 {
+                set_damage_fall(f);
+                air_interrupt(f);
+            }
+        }
+        // `ftAnimEndSetFall`.
+        Status::StopCeil => {
+            if f.status.animation_ended() {
+                status::set_fall(f);
             }
         }
         // `ftCommonDamageAirCommonProcUpdate` / `ProcInterrupt`.
@@ -289,8 +425,10 @@ pub fn on_landing(f: &mut Fighter, floor_y: f32) -> bool {
         return false;
     };
     match current {
-        // `ftCommonDamageAirCommonProcMap` and `ftCommonDamageFallProcMap`.
-        s if is_damage_air(s) || s == Status::DamageFall => {
+        // `ftCommonDamageFallProcMap`'s floor half (its ledge half is the
+        // shared cliff sweep). The airborne damage statuses land through
+        // [`damage_air_proc_map`] instead.
+        Status::DamageFall => {
             if !check_passive_stand(f, floor_y) && !check_passive(f, floor_y) {
                 set_down_bounce(f, floor_y);
             }
@@ -305,11 +443,11 @@ pub fn on_landing(f: &mut Fighter, floor_y: f32) -> bool {
     }
 }
 
-/// Ground physics for the reactions that move by their animation
-/// (`ftPhysicsApplyGroundVelTransN`). Returns whether it applied.
-pub fn apply_ground_physics(f: &mut Fighter) -> bool {
-    if !matches!(
-        f.status.status,
+/// The reactions whose `proc_physics` is `ftPhysicsApplyGroundVelTransN`:
+/// the runtime samples their clip's TransN into [`Fighter::root_motion`].
+pub fn moves_by_transn(s: AnyStatus) -> bool {
+    matches!(
+        s,
         AnyStatus::Common(
             Status::EscapeF
                 | Status::EscapeB
@@ -320,7 +458,13 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
                 | Status::DownBackD
                 | Status::DownBackU
         )
-    ) {
+    )
+}
+
+/// Ground physics for the reactions that move by their animation
+/// (`ftPhysicsApplyGroundVelTransN`). Returns whether it applied.
+pub fn apply_ground_physics(f: &mut Fighter) -> bool {
+    if !moves_by_transn(f.status.status) {
         return false;
     }
     crate::physics::apply_ground_vel_transn(&mut f.physics, f.root_motion, f.facing.sign());
@@ -717,9 +861,9 @@ mod tests {
     }
 
     #[test]
-    fn a_tumble_landing_without_a_tech_bounces_then_waits_down() {
+    fn a_damage_fall_landing_without_a_tech_bounces_then_waits_down() {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
-        status::set_status(&mut f, Status::DamageFlyN, 0.0, StatusTiming::unknown());
+        status::set_status(&mut f, Status::DamageFall, 0.0, StatusTiming::unknown());
         f.tics_since_last_z = status::ZTRIGLAST_TICS_MAX;
         assert!(on_landing(&mut f, 0.0));
         assert_eq!(f.status.status, Status::DownBounceU);
@@ -728,6 +872,52 @@ mod tests {
             step(&mut f);
         }
         assert_eq!(f.status.status, Status::DownWaitU);
+    }
+
+    #[test]
+    fn a_knockback_overrun_is_invincible_for_one_frame_after_hitlag() {
+        for (kb, expect) in [(65000.0, true), (64999.0, false)] {
+            let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+            crate::attack::init_damage_vars_full(
+                &mut f,
+                None,
+                kb,
+                45,
+                1.0,
+                0,
+                crate::combat::Element::Normal,
+                false,
+            );
+            assert_eq!(f.reaction.is_knockback_over, expect);
+            f.hitlag = 2;
+            f.tick_timers();
+            check_set_invincible(&mut f);
+            assert_eq!(f.invincible_frames, 0, "not during hitlag");
+            f.tick_timers();
+            check_set_invincible(&mut f);
+            assert_eq!(f.invincible_frames, u16::from(expect));
+            assert!(!f.reaction.is_knockback_over);
+            f.tick_timers();
+            check_set_invincible(&mut f);
+            assert_eq!(f.invincible_frames, 0, "one frame only");
+        }
+        // Electric: `ftCommonDamageSetStatus` grants it when `DamageE`
+        // hands over.
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        crate::attack::init_damage_vars_full(
+            &mut f,
+            None,
+            70000.0,
+            45,
+            1.0,
+            0,
+            crate::combat::Element::Electric,
+            false,
+        );
+        assert_eq!(f.status.status, Status::DamageE2);
+        assert!(!f.reaction.is_passive_invincible);
+        crate::attack::update_damage_e(&mut f);
+        assert_eq!(f.invincible_frames, 1);
     }
 
     #[test]
