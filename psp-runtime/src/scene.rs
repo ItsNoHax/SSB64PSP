@@ -1011,3 +1011,82 @@ pub fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
         ssb_game::fighter::Facing::Left => -core::f32::consts::FRAC_PI_2,
     }
 }
+
+/// The runtime half of the stage controller's objects (RE-357): the pack's
+/// controller objects, played through [`ssb_rom::ground_obj::GroundObjects`].
+///
+/// Objects or clips the pack lacks behave as `NoObjects` does: nothing
+/// animates and every clock reads 0.
+pub struct StageObjectsPort<'a, 'p> {
+    pub pack: &'a Pack<'p>,
+    pub objects: &'a mut ssb_rom::ground_obj::GroundObjects,
+}
+
+/// The [`ssb_rom::ground_obj::ANIMS`] index of a controller's animation.
+pub fn ground_anim(anim: ssb_game::stage::StageAnim) -> Option<usize> {
+    use ssb_game::stage::pupupu::{EyesAnim, MouthAnim};
+    use ssb_game::stage::StageAnim;
+    use ssb_rom::ground_obj as g;
+    let lr = |lr: u8| (lr <= 1).then_some(lr);
+    let phase = |phase: u8| (phase <= 2).then_some(phase);
+    Some(match anim {
+        StageAnim::WhispyEyes { lr: l, status } => {
+            g::whispy_eyes(lr(l)?, status == EyesAnim::Blink)
+        }
+        StageAnim::WhispyMouth { lr: l, status } => g::whispy_mouth(
+            lr(l)?,
+            match status {
+                MouthAnim::Stretch => 0,
+                MouthAnim::Turn => 1,
+                MouthAnim::Open => 2,
+                MouthAnim::Close => 3,
+            },
+        ),
+        StageAnim::FlowersBack { lr: l, phase: p } => g::flowers_back(lr(l)?, phase(p)?),
+        StageAnim::FlowersFront { lr: l, phase: p } => g::flowers_front(lr(l)?, phase(p)?),
+        StageAnim::TaruCannDefault => g::TARUCANN_DEFAULT,
+        StageAnim::TaruCannFill => g::TARUCANN_FILL,
+        StageAnim::TaruCannShoot => g::TARUCANN_SHOOT,
+        StageAnim::GateOpen => g::GATE_OPEN,
+        StageAnim::GateClose => g::GATE_CLOSE,
+        _ => return None,
+    })
+}
+
+/// The [`ssb_rom::ground_obj::OBJECTS`] index of a controller's object.
+pub fn ground_object(obj: ssb_game::stage::StageObj) -> Option<u8> {
+    use ssb_game::stage::StageObj;
+    use ssb_rom::ground_obj as g;
+    Some(match obj {
+        StageObj::WhispyEyes => g::WHISPY_EYES,
+        StageObj::WhispyMouth => g::WHISPY_MOUTH,
+        StageObj::FlowersBack => g::FLOWERS_BACK,
+        StageObj::FlowersFront => g::FLOWERS_FRONT,
+        StageObj::TaruCann => g::TARUCANN,
+        StageObj::Gate => g::GATE,
+        _ => return None,
+    })
+}
+
+impl ssb_game::stage::StageObjects for StageObjectsPort<'_, '_> {
+    fn play(&mut self, anim: ssb_game::stage::StageAnim) {
+        if let Some(i) = ground_anim(anim) {
+            // A clip that fails to parse leaves the object where it is.
+            let _ = self.objects.play(self.pack, i);
+        }
+    }
+    fn anim_frame(&self, obj: ssb_game::stage::StageObj) -> f32 {
+        ground_object(obj)
+            .and_then(|o| self.objects.get(o))
+            .map_or(0.0, |o| o.frame)
+    }
+    fn translate(&self, obj: ssb_game::stage::StageObj) -> ssb_engine::math::Vec3 {
+        ground_object(obj).and_then(|o| self.objects.get(o)).map_or(
+            ssb_engine::math::Vec3::ZERO,
+            |o| {
+                let [x, y, z] = o.translate();
+                ssb_engine::math::Vec3::new(x, y, z)
+            },
+        )
+    }
+}

@@ -105,6 +105,12 @@ tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/scr
   physical PSP captures are separate, qualitative tiers.
 - Never pass a camera photo of a PSP screen to the pixel comparator.
 
+RE-357 refreshes the seven Training goldens for Whispy's face and flower
+beds, plus DK and the two Link goldens for previously ignored cached ST
+writes. All ten changes were visually reviewed and captured twice with
+identical pixels; the full 73-scene matrix passes. Pixel counts and source
+attribution are in [RE-357](../evidence/re/RE-357.md).
+
 ## Scenes
 
 `psp-asset-viewer` unless noted. The scene spec for each golden is in

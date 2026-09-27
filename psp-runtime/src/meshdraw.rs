@@ -1648,12 +1648,12 @@ unsafe fn draw_object_posed_filtered(
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
     costume: u32,
     only_node: Option<u32>,
-    stage_anim: Option<&ssb_rom::skeleton::StageAnimator>,
+    hidden: Option<&dyn Fn(u32) -> bool>,
 ) -> u32 {
     let mut tris = 0;
     for i in 0..object.node_count {
         let global_node = object.first_node + i;
-        if stage_anim.is_some_and(|a| !a.visible(pack, global_node)) {
+        if hidden.is_some_and(|hidden| hidden(global_node)) {
             continue;
         }
         if only_node.is_some_and(|selected| selected != global_node) {
@@ -2271,7 +2271,7 @@ pub unsafe fn draw_stage(
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) -> (u32, u32) {
-    draw_stage_animated(pack, stage, base, None, st, mat_anim)
+    draw_stage_animated(pack, stage, base, None, None, st, mat_anim)
 }
 
 /// Draws a stage, optionally posed by its scenery animation.
@@ -2281,6 +2281,12 @@ pub unsafe fn draw_stage(
 /// exactly [`draw_stage`] — the still and moving paths are one piece of code,
 /// which is what stops a bug in one hiding in the other (RE-051).
 ///
+/// `objects` are the stage controller's own objects (RE-357). Each draws
+/// after the render layer whose display link precedes its own, as the
+/// original's link order does: layers use links 4, 6, 13 and 17
+/// (`dGRDisplayDescs`), and a controller object made later on the same link
+/// draws after that layer.
+///
 /// # Safety
 ///
 /// Same as [`draw_mesh`].
@@ -2289,44 +2295,95 @@ pub unsafe fn draw_stage_animated(
     stage: &ssb_rom::pack::StageDesc,
     base: &ScePspFMatrix4,
     anim: Option<&ssb_rom::skeleton::StageAnimator>,
+    objects: Option<&ssb_rom::ground_obj::GroundObjects>,
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) -> (u32, u32) {
+    /// `dGRDisplayDescs[layer].dl_link`.
+    const LAYER_LINKS: [u8; 4] = [4, 6, 13, 17];
     let mut tris = 0;
     let mut drawn = 0;
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
     let mut billboard_scales = [[1.0; 2]; ssb_rom::skeleton::MAX_NODES];
-    for slot in stage.layers {
-        if slot == ssb_rom::pack::StageDesc::NO_LAYER {
-            continue;
-        }
-        let Some(object) = pack.object(slot) else {
-            continue;
-        };
-        tris += match anim {
-            Some(a) => {
-                let n = a.compose(pack, &object, &mut posed);
-                let scale_count = a.billboard_scales(pack, &object, &mut billboard_scales);
-                debug_assert_eq!(n, scale_count);
-                draw_object_posed_filtered(
-                    pack,
-                    &object,
-                    base,
-                    &posed[..n],
-                    Some(&billboard_scales[..scale_count]),
-                    st,
-                    mat_anim,
-                    None,
-                    0,
-                    None,
-                    Some(a),
-                )
+    let draw_objects = |links: core::ops::Range<u8>, st: &mut DrawState| {
+        let mut tris = 0;
+        for o in objects.into_iter().flat_map(|o| o.iter()) {
+            let link = ssb_rom::ground_obj::OBJECTS[o.asset as usize].dl_link;
+            if links.contains(&link) {
+                tris += draw_ground_object(pack, o, base, st, mat_anim);
             }
-            None => draw_object(pack, &object, base, st, mat_anim, 0),
-        };
-        drawn += 1;
+        }
+        tris
+    };
+    tris += draw_objects(0..LAYER_LINKS[0], st);
+    for (layer, slot) in stage.layers.into_iter().enumerate() {
+        let next_link = LAYER_LINKS.get(layer + 1).copied().unwrap_or(u8::MAX);
+        let object = (slot != ssb_rom::pack::StageDesc::NO_LAYER)
+            .then(|| pack.object(slot))
+            .flatten();
+        if let Some(object) = object {
+            tris += match anim {
+                Some(a) => {
+                    let n = a.compose(pack, &object, &mut posed);
+                    let scale_count = a.billboard_scales(pack, &object, &mut billboard_scales);
+                    debug_assert_eq!(n, scale_count);
+                    let hidden = |node: u32| !a.visible(pack, node);
+                    draw_object_posed_filtered(
+                        pack,
+                        &object,
+                        base,
+                        &posed[..n],
+                        Some(&billboard_scales[..scale_count]),
+                        st,
+                        mat_anim,
+                        None,
+                        0,
+                        None,
+                        Some(&hidden),
+                    )
+                }
+                None => draw_object(pack, &object, base, st, mat_anim, 0),
+            };
+            drawn += 1;
+        }
+        tris += draw_objects(LAYER_LINKS[layer]..next_link, st);
     }
     (tris, drawn)
+}
+
+/// Draws one stage controller object in its live pose, hiding the nodes
+/// its `DObj` flags hide.
+///
+/// # Safety
+///
+/// Same as [`draw_mesh`].
+pub unsafe fn draw_ground_object(
+    pack: &Pack<'_>,
+    object: &ssb_rom::ground_obj::GroundObject,
+    base: &ScePspFMatrix4,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) -> u32 {
+    let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::ground_obj::MAX_OBJECT_NODES];
+    let n = object.compose(pack, &mut posed);
+    let first = object.object.first_node;
+    let hidden = |node: u32| {
+        node.checked_sub(first)
+            .is_none_or(|i| !object.visible(pack, i as usize))
+    };
+    draw_object_posed_filtered(
+        pack,
+        &object.object,
+        base,
+        &posed[..n],
+        None,
+        st,
+        mat_anim,
+        None,
+        0,
+        None,
+        Some(&hidden),
+    )
 }
 
 /// Draws a stage's collision polylines over its geometry.

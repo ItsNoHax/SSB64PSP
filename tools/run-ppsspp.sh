@@ -302,11 +302,11 @@ cleanup() {
   flatpak kill org.ppsspp.PPSSPP 2>/dev/null || true
   # Confirm rather than assume; escalate if the polite kill did not land.
   sleep 1
-  if pgrep -f PPSSPPSDL >/dev/null 2>&1; then
-    pkill -9 -f PPSSPPSDL 2>/dev/null || true
+  if pgrep -x PPSSPPSDL >/dev/null 2>&1; then
+    pkill -9 -x PPSSPPSDL 2>/dev/null || true
     sleep 1
   fi
-  if pgrep -f PPSSPPSDL >/dev/null 2>&1; then
+  if pgrep -x PPSSPPSDL >/dev/null 2>&1; then
     echo "warning: PPSSPP survived cleanup - kill it manually" >&2
   fi
   # Put the user's config back: PPSSPP persists whatever --appendconfig set.

@@ -207,7 +207,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 41 adds the shared damage and attack slots (`anim::SLOT_DAMAGE_HI1` and
 // `anim::SLOT_APPEAL`, 487..540) for all twelve fighters and Mario's
 // `Attack13` (540).
-pub const VERSION: u32 = 41;
+// 42 adds the stage controller object animations (`AnimDesc::GROUND`,
+// keyed by `ground_obj::ANIMS` index; RE-357). A v41 runtime finds none and
+// runs Dream Land without Whispy.
+pub const VERSION: u32 = 42;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -882,6 +885,10 @@ pub struct AnimDesc {
 }
 
 impl AnimDesc {
+    /// `fighter` value marking a stage controller object's animation.
+    /// `slot` is the index into `ground_obj::ANIMS` (RE-357).
+    pub const GROUND: u32 = u32::MAX - 3;
+
     /// `fighter` value marking an effect-manager DObj animation. `slot` is
     /// the index into `effect::MANAGER_EFFECT_KEYS` (RE-174).
     pub const EFFECT: u32 = u32::MAX - 2;
@@ -3200,6 +3207,13 @@ impl<'a> Pack<'a> {
         (0..self.anim_count)
             .filter_map(|i| self.anim(i))
             .find(|a| a.fighter == AnimDesc::STAGE && a.slot == stage)
+    }
+
+    /// A stage controller object's animation, by `ground_obj::ANIMS` index.
+    pub fn ground_anim(&self, anim: u32) -> Option<AnimDesc> {
+        (0..self.anim_count)
+            .filter_map(|i| self.anim(i))
+            .find(|a| a.fighter == AnimDesc::GROUND && a.slot == anim)
     }
 
     /// A results-screen wipe animation in original descriptor-table order.
@@ -5853,6 +5867,37 @@ mod tests {
         let pack = Pack::open(&bytes).unwrap();
         assert_eq!(pack.effect_anim(12).unwrap().source_file, 85);
         assert_eq!(pack.effect_anim(11), None);
+    }
+
+    #[test]
+    fn ground_animation_round_trips_by_controller_slot() {
+        let mut w = PackWriter::new();
+        w.add_anim(
+            AnimDesc::GROUND,
+            18,
+            152,
+            0,
+            &[0u8; 8],
+            &[(Some(0), Some(7))],
+        );
+        // Other animation namespaces may carry the same slot.
+        w.add_anim(
+            AnimDesc::EFFECT,
+            18,
+            85,
+            0,
+            &[0u8; 8],
+            &[(Some(0), Some(9))],
+        );
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let anim = pack.ground_anim(18).unwrap();
+        assert_eq!(anim.fighter, AnimDesc::GROUND);
+        assert_eq!(anim.source_file, 152);
+        assert_eq!(pack.anim_joint(anim.first_joint).unwrap().node, 7);
+        assert_eq!(pack.anim_script(&anim), Some(&[0u8; 8][..]));
+        assert_eq!(pack.ground_anim(17), None);
+        assert_eq!(pack.effect_anim(18).unwrap().source_file, 85);
     }
 
     #[test]
