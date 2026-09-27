@@ -95,3 +95,11 @@ textures, display lists) must be flushed with
 `sceKernelDcacheWritebackRange` or written through an uncached pointer.
 `psp::Align16` handles alignment, not coherency. Missing flushes cause
 intermittent corruption that looks like a race.
+
+Statics the GE reads (`DISPLAY_LIST`, `TRANSITION_PHOTO`,
+`WALLPAPER_PHOTO` in `psp-runtime/src/gu.rs`) use 64-byte
+`CacheLineAligned` storage, a whole number of lines long. A 16-byte
+aligned buffer can share a D-cache line with a cached `.bss` neighbour,
+and that line's writeback overwrites GE-visible data (RE-360). The two
+capture buffers are CPU-filled and written back after each capture
+(RE-361).

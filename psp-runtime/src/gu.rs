@@ -20,7 +20,7 @@ use psp::sys::{
     GuPrimitive, GuState, GuSyncBehavior, GuSyncMode, ShadingModel, TexturePixelFormat, VertexType,
 };
 use psp::vram_alloc::get_vram_allocator;
-use psp::{Align16, BUF_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH};
+use psp::{BUF_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 use ssb_engine::renderer::Color;
 
@@ -233,8 +233,15 @@ const TRANSITION_PHOTO_REAL_ROWS: usize = 6;
 /// this is a plain block copy with no conversion, and a screen-colour smear
 /// has no need for the original's 16-bit precision. An accepted format
 /// deviation, not a fidelity gap that matters here.
-static mut TRANSITION_PHOTO: Align16<[u32; TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_HEIGHT]> =
-    Align16([0; TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_HEIGHT]);
+///
+/// The CPU fills this through the D-cache and the GE samples it by DMA, so
+/// [`Gpu::capture_transition_photo`] writes it back after each copy. The
+/// 64-byte alignment keeps that writeback from spilling into, or being
+/// spilled into by, a `.bss` neighbour's cache line, the RE-360 failure
+/// shape. The size (16 KiB) is a whole number of lines.
+static mut TRANSITION_PHOTO: CacheLineAligned<
+    [u32; TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_HEIGHT],
+> = CacheLineAligned([0; TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_HEIGHT]);
 
 /// Bytes the GE should read for the transition photo capture.
 ///
@@ -283,8 +290,12 @@ const WALLPAPER_PHOTO_PADDED_HEIGHT: usize = 256;
 /// Rows [`WALLPAPER_PHOTO_HEIGHT`]..[`WALLPAPER_PHOTO_PADDED_HEIGHT`] are
 /// never written and stay zero for the process's whole life -- harmless,
 /// since [`Gpu::draw_wallpaper_sprite`] never samples past the real content.
-static mut WALLPAPER_PHOTO: Align16<[u32; WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_PADDED_HEIGHT]> =
-    Align16([0; WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_PADDED_HEIGHT]);
+/// Cache-line aligned and written back after each capture for the same
+/// reason as [`TRANSITION_PHOTO`]; the size (512 KiB) is a whole number of
+/// lines.
+static mut WALLPAPER_PHOTO: CacheLineAligned<
+    [u32; WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_PADDED_HEIGHT],
+> = CacheLineAligned([0; WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_PADDED_HEIGHT]);
 
 /// Bytes captured for the wallpaper snapshot, padded height included (the
 /// shape [`Gpu::draw_wallpaper_sprite`]'s `sceGuTexImage` call needs). Same
@@ -490,6 +501,11 @@ impl Gpu {
             let dst_row = dst.add(y * TRANSITION_PHOTO_STRIDE);
             core::ptr::copy_nonoverlapping(dst.add(wrap_from), dst_row, TRANSITION_PHOTO_WIDTH);
         }
+        // The GE reads this buffer by DMA and does not see the D-cache.
+        // PPSSPP does not model the cache, so only hardware shows the
+        // stale texels this prevents.
+        let bytes = transition_photo_data();
+        sys::sceKernelDcacheWritebackRange(bytes.as_ptr() as *const c_void, bytes.len() as u32);
     }
 
     /// Requests that the frame currently in flight be copied into the
@@ -522,6 +538,9 @@ impl Gpu {
             let dst_row = dst.add(y * WALLPAPER_PHOTO_STRIDE);
             core::ptr::copy_nonoverlapping(src_row, dst_row, WALLPAPER_PHOTO_WIDTH);
         }
+        // Same GE DMA coherency requirement as the transition capture.
+        let bytes = wallpaper_photo_data();
+        sys::sceKernelDcacheWritebackRange(bytes.as_ptr() as *const c_void, bytes.len() as u32);
     }
 
     /// Debug-only proof that [`WALLPAPER_PHOTO`] holds real pixel data:
