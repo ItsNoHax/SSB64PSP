@@ -40,6 +40,8 @@ pub const MARIO_FIREBALL_SOURCE_FILE: u32 = 297;
 pub const MARIO_FIREBALL_SOURCE_OFFSET: u32 = 0x1D8;
 
 /// Finds the packed Mario Fireball mesh by its stable source identity.
+/// This and the lookups below scan whole descriptor tables; resolve them
+/// once per pack, never per frame (RE-360).
 pub fn mario_fireball_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
     (0..pack.mesh_count())
         .filter_map(|i| pack.mesh(i))

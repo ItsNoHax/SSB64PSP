@@ -369,6 +369,7 @@ unsafe fn run() -> ! {
         })
     });
 
+    let draw_assets = pack.as_ref().map(DrawAssets::resolve).unwrap_or_default();
     let mut draw_state = meshdraw::DrawState::default();
     // Created once, on first entry to Training Mode (below) -- a fighter
     // spawned on the training stage, ticked with real physics/animation/
@@ -756,6 +757,7 @@ unsafe fn run() -> ! {
                     play_state.as_ref(),
                     dummy_state.as_ref(),
                     &weapons,
+                    &draw_assets,
                     Some(&material_anim),
                     stage_map.as_ref().map(|map| &map.animator),
                     Some(&stage_objects),
@@ -825,6 +827,28 @@ fn draw_menu(gpu: &mut Gpu, cursor: usize) {
     }
 }
 
+/// Pack descriptors `draw_training` needs every frame. Each lookup scans a
+/// whole descriptor table, which cost the PSP-2000 about 12 ms per frame
+/// when done per draw (RE-360), so `run` resolves them once.
+#[derive(Default)]
+struct DrawAssets {
+    shadow_texture: Option<ssb_rom::pack::TextureDesc>,
+    fireball_mesh: Option<ssb_rom::pack::MeshDesc>,
+    blaster_mesh: Option<ssb_rom::pack::MeshDesc>,
+    reflector: Option<ssb_rom::pack::ObjectDesc>,
+}
+
+impl DrawAssets {
+    fn resolve(p: &Pack<'_>) -> Self {
+        DrawAssets {
+            shadow_texture: meshdraw::fighter_shadow_texture(p),
+            fireball_mesh: ssb_psp_runtime::scene::mario_fireball_mesh(p),
+            blaster_mesh: ssb_psp_runtime::scene::fox_blaster_mesh(p),
+            reflector: ssb_psp_runtime::scene::fox_reflector_object(p),
+        }
+    }
+}
+
 /// Draws the training scene: the real stage and the real spawned fighter,
 /// through the real battle camera (`play::FighterScene::camera`) -- the first
 /// `psp-game` content built from `meshdraw`'s 3D pipeline rather than
@@ -843,6 +867,7 @@ unsafe fn draw_training(
     play_state: Option<&play::FighterScene>,
     dummy_state: Option<&play::Dummy>,
     weapons: &ssb_game::weapon::WeaponPool,
+    assets: &DrawAssets,
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     stage_anim: Option<&ssb_rom::skeleton::StageAnimator>,
     stage_objects: Option<&ssb_rom::ground_obj::GroundObjects>,
@@ -895,29 +920,37 @@ unsafe fn draw_training(
     // fighters.  Resolve each independently from its live floor/air state;
     // the fixed scratch is copied into GE memory by the renderer, so it is
     // safe to reuse for both players without a per-frame allocation.
-    let mut shadow_verts = [meshdraw::TexQuadVertex::default(); 18];
-    let player_shadow =
-        ssb_psp_runtime::scene::fighter_shadow(p, &stage, &pl.fighter, pl.shadow_size);
-    meshdraw::draw_fighter_shadow(
-        p,
-        &player_shadow,
-        [0x00, 0x00, 0x00, 0xA0],
-        &mut shadow_verts,
-        draw_state,
-    );
-    if let Some(dummy) = dummy_state {
-        let dummy_shadow =
-            ssb_psp_runtime::scene::fighter_shadow(p, &stage, &dummy.fighter, dummy.shadow_size);
+    if let Some(shadow_texture) = assets.shadow_texture.as_ref() {
+        let mut shadow_verts = [meshdraw::TexQuadVertex::default(); 18];
+        let player_shadow =
+            ssb_psp_runtime::scene::fighter_shadow(p, &stage, &pl.fighter, pl.shadow_size);
         meshdraw::draw_fighter_shadow(
             p,
-            &dummy_shadow,
+            shadow_texture,
+            &player_shadow,
             [0x00, 0x00, 0x00, 0xA0],
             &mut shadow_verts,
             draw_state,
         );
+        if let Some(dummy) = dummy_state {
+            let dummy_shadow = ssb_psp_runtime::scene::fighter_shadow(
+                p,
+                &stage,
+                &dummy.fighter,
+                dummy.shadow_size,
+            );
+            meshdraw::draw_fighter_shadow(
+                p,
+                shadow_texture,
+                &dummy_shadow,
+                [0x00, 0x00, 0x00, 0xA0],
+                &mut shadow_verts,
+                draw_state,
+            );
+        }
     }
 
-    if let Some(fireball_mesh) = ssb_psp_runtime::scene::mario_fireball_mesh(p) {
+    if let Some(fireball_mesh) = assets.fireball_mesh.as_ref() {
         for fireball in weapons.fireballs() {
             // `wpMainVelSetModelPitch` uses +/-90 degrees around Y from
             // horizontal velocity; the packed direct-display-list mesh gets
@@ -936,11 +969,11 @@ unsafe fn draw_training(
                 [0.0, yaw, 0.0],
                 meshdraw::MODEL_SCALE,
             );
-            meshdraw::draw_mesh(p, &fireball_mesh, draw_state, None, None);
+            meshdraw::draw_mesh(p, fireball_mesh, draw_state, None, None);
         }
     }
 
-    if let Some(blaster_mesh) = ssb_psp_runtime::scene::fox_blaster_mesh(p) {
+    if let Some(blaster_mesh) = assets.blaster_mesh.as_ref() {
         for shot in weapons.blasters() {
             let pitch = ssb_engine::math::atan2(shot.velocity.y, shot.velocity.x);
             gpu.model_transform_xyz(
@@ -952,7 +985,7 @@ unsafe fn draw_training(
                     meshdraw::MODEL_SCALE,
                 ],
             );
-            meshdraw::draw_mesh(p, &blaster_mesh, draw_state, None, None);
+            meshdraw::draw_mesh(p, blaster_mesh, draw_state, None, None);
         }
     }
 
@@ -971,14 +1004,14 @@ unsafe fn draw_training(
                 | ssb_game::status::FoxStatus::SpecialAirLwEnd
         )
     ) {
-        if let Some(reflector) = ssb_psp_runtime::scene::fox_reflector_object(p) {
+        if let Some(reflector) = assets.reflector.as_ref() {
             gpu.model_transform(
                 [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
                 [0.0, play::facing_turn(pl.fighter.facing), 0.0],
                 meshdraw::MODEL_SCALE,
             );
             let base = gpu.model_matrix();
-            meshdraw::draw_object(p, &reflector, &base, draw_state, None, 0);
+            meshdraw::draw_object(p, reflector, &base, draw_state, None, 0);
         }
     }
 

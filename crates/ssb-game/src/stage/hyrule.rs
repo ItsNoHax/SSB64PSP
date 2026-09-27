@@ -255,6 +255,10 @@ impl Hyrule {
     }
 
     /// `grHyruleTwisterCheckGetDamageKind` @ 0x8010AB74.
+    // Out of line: inlined into `Stage::check_obstacles`, LLVM hoists these
+    // compares above the `Controller::Hyrule` match and reads another
+    // variant's bytes as floats; a NaN pattern traps the PSP FPU (RE-360).
+    #[inline(never)]
     pub fn check_twister(&self, f: &Fighter) -> bool {
         if f.hazard.twister_wait != 0
             || f.status.status == AnyStatus::Common(Status::Twister)

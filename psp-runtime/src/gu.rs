@@ -29,7 +29,18 @@ use ssb_engine::renderer::Color;
 /// 256 KiB of command space. Smash submits a lot of small draws, and running
 /// out mid-frame corrupts the display silently rather than failing loudly, so
 /// this is sized generously until profiling says otherwise.
-static mut DISPLAY_LIST: Align16<[u32; 0x40000]> = Align16([0; 0x40000]);
+///
+/// `sceGuStart` writes commands through the uncached alias, so no cached
+/// variable may share a 64-byte D-cache line with this buffer. With only
+/// 16-byte alignment, `.bss` neighbours written through the cache
+/// (`CURRENT_MATRIX_UPDATE`, `VRAM_ALLOCATOR`) shared the first line. Its
+/// writeback replaced the init list's `FramebufPixFormat` command, and the
+/// PSP rendered every frame as RGB565 into the RGBA8888 buffer (RE-360).
+static mut DISPLAY_LIST: CacheLineAligned<[u32; 0x40000]> = CacheLineAligned([0; 0x40000]);
+
+/// Aligns a GE buffer to the Allegrex's 64-byte D-cache line.
+#[repr(C, align(64))]
+struct CacheLineAligned<T>(T);
 
 /// A vertex laid out the way the GE wants it.
 ///
