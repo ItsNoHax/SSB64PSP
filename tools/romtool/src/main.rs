@@ -2025,7 +2025,20 @@ fn convert_graph_at(
             stream: u8::from(p.list_id == Some(1)),
         })
         .collect();
-    mesh::convert_sequence(&items, mesh::Source::of(file), initial)
+    let mut converted = mesh::convert_sequence(&items, mesh::Source::of(file), initial);
+    for m in converted.iter_mut().filter_map(|m| m.as_mut().ok()) {
+        map_vertex_bindings(m, plan);
+    }
+    converted
+}
+
+fn map_vertex_bindings(mesh: &mut ssb_rom::mesh::Mesh, plan: &[PlannedList]) {
+    for v in &mut mesh.vertices {
+        if let Some((item, pos)) = v.binding {
+            let node = plan[item as usize].space.map_or(u16::MAX - 1, |n| n as u16);
+            v.binding = Some((node, pos));
+        }
+    }
 }
 
 /// Long enough that a looping script proves it loops (RE-089's own budget
@@ -2583,7 +2596,8 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 mesh::Source::of(file),
                 initial,
             )) {
-                let Ok(m) = converted else { continue };
+                let Ok(mut m) = converted else { continue };
+                map_vertex_bindings(&mut m, plan);
                 if m.triangle_count() == 0 {
                     continue;
                 }
@@ -11125,6 +11139,40 @@ mod tests {
             "no skeleton-graph vertices were checked at all -- fighter_skeleton_graphs or \
              common_parts likely regressed"
         );
+    }
+
+    #[test]
+    fn mario_knees_retain_thigh_cache_vertices() {
+        use std::collections::BTreeMap;
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        let file = loaded.files[296].as_ref().unwrap();
+        let graph = loaded.graphs[&296]
+            .iter()
+            .find(|g| g.offset == 0x2200)
+            .unwrap();
+        let plan = super::plan_draw_order(graph, &ssb_rom::scene::DlResolver::new(file));
+        let converted = super::convert_graph_at(
+            &loaded,
+            file,
+            graph.offset,
+            &plan,
+            &loaded.materials(file, graph),
+            &mut BTreeMap::new(),
+            ssb_rom::mesh::InitialMaterial::FIGHTER_EXTERNAL,
+        );
+        for (dl, thigh) in [(0x1F10, 15), (0x20D0, 20)] {
+            let i = plan.iter().position(|p| p.dl == dl).unwrap();
+            let mesh = converted[i].as_ref().unwrap();
+            let borrowed: Vec<_> = mesh.vertices.iter().filter_map(|v| v.binding).collect();
+            assert_eq!(borrowed.len(), 5, "shin {dl:X} must retain the thigh ring");
+            assert!(borrowed.iter().all(|(node, _)| *node == thigh));
+            assert_eq!(mesh.triangle_count(), 15);
+        }
     }
 
     /// `R2.2`/C2 (RE-243): the same "external, per-object `G_LIGHTING`" gap

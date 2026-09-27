@@ -60,6 +60,14 @@ The pack is larger (2,722 meshes, 47,696 triangles) because the packer walks
 each scene graph through one shared vertex cache and reaches continuation
 lists a standalone conversion cannot (RE-025, RE-026).
 
+Borrowed RSP cache vertices retain their loading joint and original local
+position in pack v43 (RE-358). Posed drawing reconstructs each borrowed
+position under the loading joint's animated matrix, then expresses it in
+the drawing joint's space. Normals follow the same source matrix through
+the relative inverse transpose. This closes animated seams such as Mario's
+knees. Static drawing keeps the baked rest rebase. Integer positions and
+signed-byte normals round at the GE submission boundary.
+
 Build-time wins: indexing undoes the RSP's 32-entry cache re-uploads, 16-bit
 components halve vertex size, and adjacent primitives with the same material
 merge into one draw without reordering (RE-252).

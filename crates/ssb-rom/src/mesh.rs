@@ -54,6 +54,9 @@ pub struct MeshVertex {
     /// own parameter): `false` for everything except a fighter's two
     /// `common_parts` skeleton graphs.
     pub lit: bool,
+    /// Borrowed RSP cache vertex: loading sequence item and original position.
+    /// The packer maps the item to its graph node before serialization.
+    pub binding: Option<(u16, [i16; 3])>,
 }
 
 /// Which texture a primitive samples, identified by where it lives.
@@ -1591,6 +1594,7 @@ impl State {
         let p = e.vertex.pos.map(|c| c as f32);
         let local = self.inv_current.transform_point(world.transform_point(p));
         MeshVertex {
+            binding: Some((e.space, e.vertex.pos)),
             pos: local.map(|c| {
                 // `as` saturates on overflow and truncates towards zero, so
                 // round explicitly first.
@@ -2392,9 +2396,9 @@ pub struct SequenceItem<'a> {
 /// Because `G_VTX` bakes in the modelview at load time, such a triangle spans
 /// two joint spaces. Each result is still a mesh in its own node's space, with
 /// borrowed vertices carried across by `inv(world_here) * world_there`. That is
-/// exact for the rest pose. It cannot survive animation — under a moving joint
-/// the seam would tear — but reproducing that needs the runtime to keep the
-/// cache, which is a decision for when animation lands.
+/// exact for the rest pose. `MeshVertex::binding` also retains the loading
+/// item and original position, so the packer can map it to a joint and the
+/// runtime can reconstruct that vertex under the animated source matrix.
 ///
 /// RDP material state is threaded too, not just the cache — the hardware keeps
 /// it, so a list that draws before setting a texture is drawing with whatever
@@ -2529,6 +2533,7 @@ fn walk(
                                 // when this command runs, not later when a
                                 // triangle references the slot.
                                 lit: state.material.lit,
+                                binding: None,
                             },
                             space: state.space,
                         });
@@ -3176,6 +3181,9 @@ mod tests {
         // must be untouched.
         let xs: Vec<i16> = mesh.vertices.iter().map(|v| v.pos[0]).collect();
         assert_eq!(xs, [-100, -90, 20]);
+        assert_eq!(mesh.vertices[0].binding, Some((0, [0, 0, 0])));
+        assert_eq!(mesh.vertices[1].binding, Some((0, [10, 0, 0])));
+        assert_eq!(mesh.vertices[2].binding, None);
     }
 
     /// A CI4 joint list the way a fighter writes one: the palette's `G_SETTIMG`

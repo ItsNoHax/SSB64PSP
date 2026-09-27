@@ -113,6 +113,12 @@ attribution are in [RE-357](../evidence/re/RE-357.md).
 
 ## Scenes
 
+RE-358 refreshes 40 goldens for animated shared-joint geometry. Mario's
+knees and Pikachu's torso/limb seams close; stage-view differences are on
+the small Mario model. Disabling only the new vertex reconstruction with
+pack v43 reproduces all 73 previous goldens twice. Textures are unchanged.
+Counts and source attribution: [RE-358](../evidence/re/RE-358.md).
+
 `psp-asset-viewer` unless noted. The scene spec for each golden is in
 [`tests/golden/scenes.tsv`](../../tests/golden/scenes.tsv); the feature
 builds the same scene as its default.

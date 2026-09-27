@@ -530,6 +530,7 @@ mod tests {
             uv: [u as i16, 0],
             rgba: [255, 255, 255, 255],
             lit: false,
+            binding: None,
         }
     }
 
