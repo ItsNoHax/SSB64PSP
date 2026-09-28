@@ -14,6 +14,8 @@ use ssb_engine::math::Vec3;
 pub const SCALE_GROUPS: [u8; 2] = [1, 2];
 /// The scale height at which both platforms fall.
 pub const SCALE_ALT_MAX: f32 = 1100.0;
+/// `scale[i].string_dobj`: `map_dobjs[4]` and `map_dobjs[2]`.
+pub const STRING_NODES: [u8; 2] = [4, 2];
 
 /// `grInishieScaleStatus`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +41,8 @@ pub struct Inishie {
     /// Each platform `DObj`'s translation.
     pub platform: [Vec3; 2],
     pub platform_base_y: [f32; 2],
+    /// `scale[i].string_length`: the string node's parent height.
+    pub string_length: [f32; 2],
     pub alt: f32,
     pub accelerate: f32,
     pub wait: u16,
@@ -62,11 +66,20 @@ impl Inishie {
         groups: &mut [MapGroup],
         objects: &mut dyn StageObjects,
     ) -> Self {
+        // `grInishieMakeScale` @ 0x801094A0: the strings hang from
+        // `map_dobjs[0]` through `map_dobjs[3]` (left) and `[1]` (right).
+        let node_y = |node: u8| {
+            objects
+                .node_translate(StageObj::ScaleStrings, node)
+                .map_or(0.0, |t| t.y)
+        };
+        let string_length = [node_y(0) + node_y(3), node_y(0) + node_y(1)];
         let mut platform = [Vec3::ZERO; 2];
         for (i, kind) in [mapobj::SCALE_L, mapobj::SCALE_R].into_iter().enumerate() {
             platform[i] = objects_of(init.map_objects, kind)
                 .next()
                 .unwrap_or(Vec3::ZERO);
+            objects.set_translate(StageObj::Scale(i as u8), platform[i]);
             if let Some(g) = groups.get_mut(SCALE_GROUPS[i] as usize) {
                 g.status = GroupStatus::On;
             }
@@ -90,6 +103,7 @@ impl Inishie {
         Inishie {
             platform,
             platform_base_y: [platform[0].y, platform[1].y],
+            string_length,
             alt: 0.0,
             accelerate: 0.0,
             wait: 0,
@@ -139,13 +153,24 @@ impl Inishie {
         pressure
     }
 
-    fn place(&mut self) {
+    /// The platforms at `alt`, and each string node following its
+    /// platform.
+    fn place(&mut self, objects: &mut dyn StageObjects) {
         self.platform[0].y = self.platform_base_y[0] + self.alt;
         self.platform[1].y = self.platform_base_y[1] - self.alt;
+        for (i, node) in STRING_NODES.into_iter().enumerate() {
+            let y = self.platform[i].y - self.string_length[i];
+            objects.set_node_translate_y(StageObj::ScaleStrings, node, y);
+        }
     }
 
     /// `grInishieScaleUpdateWait` @ 0x801085E0.
-    fn update_wait<F>(&mut self, fighters: &[&mut Fighter], map: &MapQuery<'_, F>) {
+    fn update_wait<F>(
+        &mut self,
+        fighters: &[&mut Fighter],
+        objects: &mut dyn StageObjects,
+        map: &MapQuery<'_, F>,
+    ) {
         self.update_players(fighters);
         let l = self.pressure(fighters, map, SCALE_GROUPS[0]);
         let r = self.pressure(fighters, map, SCALE_GROUPS[1]);
@@ -178,7 +203,7 @@ impl Inishie {
             };
             self.status = ScaleStatus::Fall;
         }
-        self.place();
+        self.place(objects);
     }
 
     /// `grInishieScaleProcUpdate` @ 0x801093EC.
@@ -190,7 +215,7 @@ impl Inishie {
         map: &MapQuery<'_, F>,
     ) {
         match self.status {
-            ScaleStatus::Wait => self.update_wait(fighters, map),
+            ScaleStatus::Wait => self.update_wait(fighters, objects, map),
             ScaleStatus::Fall => {
                 self.accelerate = (self.accelerate + 3.0).min(70.0);
                 self.platform[0].y -= self.accelerate;
@@ -236,10 +261,11 @@ impl Inishie {
                     }
                     self.status = ScaleStatus::Wait;
                 }
-                self.place();
+                self.place(objects);
             }
         }
         for (i, id) in SCALE_GROUPS.into_iter().enumerate() {
+            objects.set_translate(StageObj::Scale(i as u8), self.platform[i]);
             if let Some(g) = groups.get_mut(id as usize) {
                 g.set_position(self.platform[i]);
             }

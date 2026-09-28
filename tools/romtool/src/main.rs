@@ -2287,8 +2287,7 @@ fn ground_mat_scripts(
         .iter()
         .enumerate()
         .filter(|(_, m)| {
-            m.object
-                .is_some_and(|o| ssb_rom::ground_obj::OBJECTS[o as usize].graph == graph_offset)
+            m.graph == graph_offset
                 && ground_map_file(loaded, m.gr_file, m.map_head) == Some(file.id)
         })
         .map(|(slot, m)| {
@@ -3408,7 +3407,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
 
     // Their material animations (RE-364), keyed by `ground_obj::MAT_ANIMS`
     // index. Each joint names the `MatAnimDesc` its `MObj`'s primitives
-    // carry; a cloud has no packed mesh, so its joint names none.
+    // carry; a cloud's names its leaf's (RE-365).
     let mut ground_mats = 0usize;
     let mut ground_mat_joints = 0usize;
     for (slot, asset) in ssb_rom::ground_obj::MAT_ANIMS.iter().enumerate() {
@@ -3424,50 +3423,39 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             .and_then(Option::as_ref)
             .ok_or_else(|| format!("ground material {}: file {file_id} missing", asset.name))?;
         let mut joints = Vec::new();
-        match asset.object {
-            Some(object) => {
-                let graph_at = ssb_rom::ground_obj::OBJECTS[object as usize].graph;
-                let graph = loaded
-                    .graphs
-                    .get(&file_id)
-                    .and_then(|graphs| graphs.iter().find(|graph| graph.offset == graph_at))
-                    .ok_or_else(|| {
-                        format!(
-                            "ground material {}: graph 0x{graph_at:X} missing",
-                            asset.name
-                        )
-                    })?;
-                let materials = loaded.materials(file, graph);
-                let tables = ground_mat_scripts(&loaded, file, graph_at, &materials);
-                let (_, table) = tables
-                    .iter()
-                    .find(|(s, _)| *s == slot)
-                    .ok_or_else(|| format!("ground material {}: table unresolved", asset.name))?;
-                for (node, chain) in table.iter().enumerate() {
-                    for (m, script) in chain.iter().enumerate() {
-                        let Some(script) = *script else { continue };
-                        let base = ground_mat_base(&tables, node, m).unwrap_or(script);
-                        let key = ssb_rom::mesh::MatAnimRef {
-                            source_file: file_id,
-                            script: base,
-                            source_mobj: materials[node][m].at,
-                        };
-                        let target = mat_anim_index.get(&key).ok_or_else(|| {
-                            format!(
-                                "ground material {}: node {node} MObj {m} has no packed MatAnimDesc",
-                                asset.name
-                            )
-                        })?;
-                        joints.push((Some(script), Some(*target)));
-                    }
-                }
-            }
-            None => {
-                let script = ssb_rom::matanim::resolve_scripts(file, asset.table, 1, |_| 1)
-                    .first()
-                    .and_then(|chain| chain.first().copied().flatten())
-                    .ok_or_else(|| format!("ground material {}: no script", asset.name))?;
-                joints.push((Some(script), None));
+        let graph_at = asset.graph;
+        let graph = loaded
+            .graphs
+            .get(&file_id)
+            .and_then(|graphs| graphs.iter().find(|graph| graph.offset == graph_at))
+            .ok_or_else(|| {
+                format!(
+                    "ground material {}: graph 0x{graph_at:X} missing",
+                    asset.name
+                )
+            })?;
+        let materials = loaded.materials(file, graph);
+        let tables = ground_mat_scripts(&loaded, file, graph_at, &materials);
+        let (_, table) = tables
+            .iter()
+            .find(|(s, _)| *s == slot)
+            .ok_or_else(|| format!("ground material {}: table unresolved", asset.name))?;
+        for (node, chain) in table.iter().enumerate() {
+            for (m, script) in chain.iter().enumerate() {
+                let Some(script) = *script else { continue };
+                let base = ground_mat_base(&tables, node, m).unwrap_or(script);
+                let key = ssb_rom::mesh::MatAnimRef {
+                    source_file: file_id,
+                    script: base,
+                    source_mobj: materials[node][m].at,
+                };
+                let target = mat_anim_index.get(&key).ok_or_else(|| {
+                    format!(
+                        "ground material {}: node {node} MObj {m} has no packed MatAnimDesc",
+                        asset.name
+                    )
+                })?;
+                joints.push((Some(script), Some(*target)));
             }
         }
         if joints.is_empty() {
@@ -5947,7 +5935,58 @@ fn load_all(archive: &Archive) -> Loaded {
         .flat_map(|f| ssb_rom::stage::find_ground_data(f, is_graph))
         .collect();
 
+    // Stage controller objects the controller does not build from a
+    // `DObjDesc` array (RE-365): one node per label, as for the direct
+    // manager effects above. Labels are offsets into the file `map_nodes`
+    // lands in, once it lands on the label the controller subtracts.
+    let mut leaf_tables = Vec::new();
+    for asset in &ssb_rom::ground_obj::OBJECTS {
+        let Some((file, _)) = stages
+            .iter()
+            .find(|g| g.file == asset.gr_file)
+            .and_then(|g| g.map_nodes)
+            .filter(|&(_, head)| head == asset.map_head)
+        else {
+            continue;
+        };
+        let mut one = |offset: u32, id: u32, dl: Option<u32>| {
+            let file_graphs = graphs.entry(file).or_default();
+            if file_graphs.iter().all(|graph| graph.offset != offset) {
+                file_graphs.push(scene::SceneGraph {
+                    offset,
+                    nodes: vec![scene::DObjNode {
+                        desc: scene::DObjDesc {
+                            id,
+                            dl,
+                            translate: [0.0; 3],
+                            rotate: [0.0; 3],
+                            scale: [1.0; 3],
+                        },
+                        parent: None,
+                    }],
+                });
+            }
+        };
+        match asset.build {
+            ssb_rom::ground_obj::Build::Desc => {}
+            ssb_rom::ground_obj::Build::Dl => one(asset.graph, 0, Some(asset.graph)),
+            ssb_rom::ground_obj::Build::Empty => one(asset.graph, 0, None),
+        }
+        if let Some(leaf) = asset.leaf {
+            one(leaf.dl, ssb_rom::ground_obj::LEAF_DESC_ID, Some(leaf.dl));
+            leaf_tables.push((file, leaf.dl, leaf.mobjsub));
+        }
+    }
+
     let mut tables = tables;
+    for (file, graph, table) in leaf_tables {
+        let parses = files[file as usize]
+            .as_ref()
+            .is_some_and(|f| mobj::read_table(f, table, 1).is_some());
+        if parses {
+            tables.insert(file, graph, table);
+        }
+    }
     for &(file, graph, table) in DIRECT_MANAGER_EFFECT_MOBJ_PAIRS {
         let nodes = graphs
             .get(&file)

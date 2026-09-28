@@ -45,6 +45,7 @@ impl Yoster {
         let clouds = core::array::from_fn(|i| {
             let id = CLOUD_GROUPS[i];
             let pos = group(groups, id).map_or(Vec3::ZERO, |g| g.translate);
+            objects.set_translate(StageObj::Cloud(i as u8), pos);
             if let Some(g) = group(groups, id) {
                 g.status = GroupStatus::On;
             }
@@ -59,9 +60,10 @@ impl Yoster {
                 evaporate_wait: 0,
             }
         });
-        // `gcAddAnimJointAll(llGRYosterMap_1E0_AnimJoint)` per cloud; the
-        // material animations are added by the first tick.
-        let _ = objects;
+        // `gcAddAnimJointAll(llGRYosterMap_1E0_AnimJoint)` per cloud is not
+        // played: its scripts write only scale, and every cloud `DObj` has
+        // only a `nGCMatrixKindTra` matrix (RE-365). The material
+        // animations are added by the first tick.
         Yoster { clouds }
     }
 
@@ -110,6 +112,7 @@ impl Yoster {
                         }
                     }
                     cloud.pos.y = cloud.altitude - cloud.pressure;
+                    objects.set_translate_y(StageObj::Cloud(i as u8), cloud.pos.y);
                     if let Some(g) = group(groups, id) {
                         g.set_position(cloud.pos);
                     }

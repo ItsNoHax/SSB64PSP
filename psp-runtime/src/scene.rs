@@ -1095,24 +1095,49 @@ pub fn ground_anim(anim: ssb_game::stage::StageAnim) -> Option<usize> {
         StageAnim::GateOpen => g::GATE_OPEN,
         StageAnim::GateClose => g::GATE_CLOSE,
         StageAnim::Acid => g::ACID_ANIM,
+        StageAnim::ScaleRetract(_) => g::SCALE_RETRACT,
+        StageAnim::CastleGround => g::CASTLE_GROUND_ANIM,
         _ => return None,
     })
 }
 
-/// The [`ssb_rom::ground_obj::OBJECTS`] index of a controller's object.
-pub fn ground_object(obj: ssb_game::stage::StageObj) -> Option<u8> {
+/// The [`ssb_rom::ground_obj::OBJECTS`] index and instance of a
+/// controller's object.
+pub fn ground_object(obj: ssb_game::stage::StageObj) -> Option<(u8, u8)> {
     use ssb_game::stage::StageObj;
     use ssb_rom::ground_obj as g;
     Some(match obj {
-        StageObj::WhispyEyes => g::WHISPY_EYES,
-        StageObj::WhispyMouth => g::WHISPY_MOUTH,
-        StageObj::FlowersBack => g::FLOWERS_BACK,
-        StageObj::FlowersFront => g::FLOWERS_FRONT,
-        StageObj::TaruCann => g::TARUCANN,
-        StageObj::Gate => g::GATE,
-        StageObj::Acid => g::ACID,
-        _ => return None,
+        StageObj::WhispyEyes => (g::WHISPY_EYES, 0),
+        StageObj::WhispyMouth => (g::WHISPY_MOUTH, 0),
+        StageObj::FlowersBack => (g::FLOWERS_BACK, 0),
+        StageObj::FlowersFront => (g::FLOWERS_FRONT, 0),
+        StageObj::TaruCann => (g::TARUCANN, 0),
+        StageObj::Gate => (g::GATE, 0),
+        StageObj::Acid => (g::ACID, 0),
+        StageObj::Cloud(i) => (g::CLOUD, i),
+        StageObj::Scale(i) => (g::SCALE_PLATFORM, i),
+        StageObj::ScaleStrings => (g::SCALE_STRINGS, 0),
+        StageObj::CastleGround => (g::CASTLE_GROUND, 0),
     })
+}
+
+impl StageObjectsPort<'_, '_> {
+    fn get(&self, obj: ssb_game::stage::StageObj) -> Option<&ssb_rom::ground_obj::GroundObject> {
+        let (asset, instance) = ground_object(obj)?;
+        self.objects.instance(asset, instance)
+    }
+
+    fn get_mut(
+        &mut self,
+        obj: ssb_game::stage::StageObj,
+    ) -> Option<&mut ssb_rom::ground_obj::GroundObject> {
+        let (asset, instance) = ground_object(obj)?;
+        self.objects.instance_mut(asset, instance)
+    }
+}
+
+fn vec3([x, y, z]: [f32; 3]) -> ssb_engine::math::Vec3 {
+    ssb_engine::math::Vec3::new(x, y, z)
 }
 
 impl ssb_game::stage::StageObjects for StageObjectsPort<'_, '_> {
@@ -1129,43 +1154,58 @@ impl ssb_game::stage::StageObjects for StageObjectsPort<'_, '_> {
                     .play_cloud(self.pack, i as usize, g::CLOUD_EVAPORATE_MAT)
             }
             _ => {
-                if let Some(i) = ground_anim(anim) {
+                let instance = match anim {
+                    StageAnim::ScaleRetract(i) => i,
+                    _ => 0,
+                };
+                if let Some(a) = ground_anim(anim) {
                     // A clip that fails to parse leaves the object where it is.
-                    let _ = self.objects.play(self.pack, i);
+                    let _ = self.objects.play_on(self.pack, a, instance);
                 }
             }
         }
     }
+    fn stop(&mut self, obj: ssb_game::stage::StageObj) {
+        if let Some(o) = self.get_mut(obj) {
+            o.stop();
+        }
+    }
     fn mat_anim_idle(&self, obj: ssb_game::stage::StageObj) -> bool {
         match obj {
-            ssb_game::stage::StageObj::Cloud(i) => self.objects.cloud_idle(i as usize),
+            ssb_game::stage::StageObj::Cloud(i) => self.objects.cloud_idle(self.pack, i as usize),
             _ => true,
         }
     }
     fn anim_frame(&self, obj: ssb_game::stage::StageObj) -> f32 {
-        ground_object(obj)
-            .and_then(|o| self.objects.get(o))
-            .map_or(0.0, |o| o.frame)
+        self.get(obj).map_or(0.0, |o| o.frame)
     }
     fn translate(&self, obj: ssb_game::stage::StageObj) -> ssb_engine::math::Vec3 {
-        ground_object(obj).and_then(|o| self.objects.get(o)).map_or(
-            ssb_engine::math::Vec3::ZERO,
-            |o| {
-                let [x, y, z] = o.translate();
-                ssb_engine::math::Vec3::new(x, y, z)
-            },
-        )
+        self.get(obj)
+            .map_or(ssb_engine::math::Vec3::ZERO, |o| vec3(o.translate()))
     }
     fn set_translate_y(&mut self, obj: ssb_game::stage::StageObj, y: f32) {
-        if let Some(o) = ground_object(obj).and_then(|o| self.objects.get_mut(o)) {
+        if let Some(o) = self.get_mut(obj) {
             o.set_translate_y(y);
         }
     }
+    fn set_translate(&mut self, obj: ssb_game::stage::StageObj, pos: ssb_engine::math::Vec3) {
+        if let Some(o) = self.get_mut(obj) {
+            o.set_translate([pos.x, pos.y, pos.z]);
+        }
+    }
+    fn node_translate(
+        &self,
+        obj: ssb_game::stage::StageObj,
+        node: u8,
+    ) -> Option<ssb_engine::math::Vec3> {
+        self.get(obj)?.node_translate(node as usize).map(vec3)
+    }
+    fn set_node_translate_y(&mut self, obj: ssb_game::stage::StageObj, node: u8, y: f32) {
+        if let Some(o) = self.get_mut(obj) {
+            o.set_node_translate_y(node as usize, y);
+        }
+    }
     fn child_translate(&self, obj: ssb_game::stage::StageObj) -> Option<ssb_engine::math::Vec3> {
-        let [x, y, z] = self
-            .objects
-            .get(ground_object(obj)?)?
-            .child_translate(self.pack)?;
-        Some(ssb_engine::math::Vec3::new(x, y, z))
+        self.get(obj)?.child_translate(self.pack).map(vec3)
     }
 }

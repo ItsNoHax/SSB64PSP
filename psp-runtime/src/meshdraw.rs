@@ -2426,7 +2426,7 @@ pub unsafe fn draw_ground_object(
         node.checked_sub(first)
             .is_none_or(|i| !object.visible(pack, i as usize))
     };
-    draw_object_posed_filtered(
+    let mut tris = draw_object_posed_filtered(
         pack,
         &object.object,
         base,
@@ -2438,7 +2438,29 @@ pub unsafe fn draw_ground_object(
         0,
         None,
         Some(&hidden),
-    )
+    );
+    // A leaf (RE-365) is a one-node object at its parent's matrix: its own
+    // `nGCMatrixKindTra` translate is zero, and its `Kind48` node faces the
+    // camera from there.
+    if let Some(leaf) = object.leaf.as_ref() {
+        for parent in object.leaf_parents(pack) {
+            if !object.visible(pack, parent) || parent >= n {
+                continue;
+            }
+            tris += draw_object_posed(
+                pack,
+                leaf,
+                base,
+                &posed[parent..=parent],
+                None,
+                st,
+                mat_anim,
+                Some(object.materials()),
+                0,
+            );
+        }
+    }
+    tris
 }
 
 /// Draws a stage's collision polylines over its geometry.
