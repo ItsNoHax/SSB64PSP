@@ -1940,6 +1940,12 @@ fn lb_transition_graphs() -> std::collections::BTreeSet<(u32, u32)> {
         .collect()
 }
 
+/// Weapon `DObjDesc` trees whose lists set no render mode, so they draw
+/// under `wpDisplayDrawNormal`'s state (`G_ZBUFFER` cleared,
+/// `G_RM_AA_XLU_SURF`). Kirby's Final Cutter wave (328 + 0x1D388) sets only
+/// alpha compare and cycle type (RE-378).
+const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[(328, 0x1D388)];
+
 /// The seed a [`ssb_rom::mesh::convert_sequence`] call for `(file,
 /// graph_offset)` must use -- see [`fighter_skeleton_graphs`],
 /// [`ground_layer1_graphs`] and [`lb_transition_graphs`].
@@ -1956,6 +1962,8 @@ fn initial_material_for(
         ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL
     } else if lb_transition_graphs.contains(&(file, graph_offset)) {
         ssb_rom::mesh::InitialMaterial::LB_TRANSITION_EXTERNAL
+    } else if WEAPON_SEEDED_GRAPHS.contains(&(file, graph_offset)) {
+        ssb_rom::mesh::InitialMaterial::WEAPON_EXTERNAL
     } else {
         ssb_rom::mesh::InitialMaterial::default()
     }
@@ -3543,15 +3551,32 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     // (`wpManagerMakeWeapon` -> `gcAddAnimAll`). Link's Boomerang
     // (`226_LinkSpecial1.c`) names file 325's graph at 0x610 and its table
     // at 0x6C0, whose one script spins node 1 about X.
-    // `(slot, file, graph, anim_joints)`.
-    const WEAPON_ANIMS: &[(u32, u32, u32, u32)] = &[(
-        ssb_rom::pack::AnimDesc::WEAPON_ANIM_LINK_BOOMERANG,
-        325,
-        0x610,
-        0x6C0,
-    )];
+    // Kirby's Final Cutter wave (`llKirbyMainCutterWeaponAttributes`, file
+    // 229 + 0x08) names file 328's graph at 0x1D388 and its table at
+    // 0x1D410, whose one script flips node 1's `RotZ` and `ScaZ` each frame.
+    // File 328 is Kirby's whole model, so only the table and its script
+    // (0x1D410..0x1D4B8) are packed, rebased to the window's start.
+    // `(slot, file, graph, anim_joints, script window end)`; `None` packs
+    // the whole file.
+    const WEAPON_ANIMS: &[(u32, u32, u32, u32, Option<u32>)] = &[
+        (
+            ssb_rom::pack::AnimDesc::WEAPON_ANIM_LINK_BOOMERANG,
+            325,
+            0x610,
+            0x6C0,
+            None,
+        ),
+        (
+            ssb_rom::pack::AnimDesc::WEAPON_ANIM_KIRBY_CUTTER,
+            328,
+            0x1D388,
+            0x1D410,
+            Some(0x1D4B8),
+        ),
+    ];
     let mut weapon_anims = 0usize;
-    for &(slot, file_id, graph_at, anim_at) in WEAPON_ANIMS {
+    let mut weapon_anim_rebased = 0usize;
+    for &(slot, file_id, graph_at, anim_at, window_end) in WEAPON_ANIMS {
         let file = loaded
             .files
             .get(file_id as usize)
@@ -3566,8 +3591,37 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             .get(&(file_id, graph_at))
             .and_then(|&index| writer.object(index))
             .ok_or_else(|| format!("weapon anim {slot}: packed object missing"))?;
+        // The script window and the offset its pointers are rebased by. Every
+        // internal pointer slot inside the window must target the window.
+        let (base, blob) = match window_end {
+            None => (0, file.data.clone()),
+            Some(end) => {
+                let mut blob = file
+                    .data
+                    .get(anim_at as usize..end as usize)
+                    .ok_or_else(|| format!("weapon anim {slot}: window past file end"))?
+                    .to_vec();
+                for reloc in file
+                    .intern_relocs
+                    .iter()
+                    .filter(|r| (anim_at..end).contains(&r.at))
+                {
+                    if !(anim_at..end).contains(&reloc.target) {
+                        return Err(format!(
+                            "weapon anim {slot}: pointer at 0x{:X} leaves the window",
+                            reloc.at
+                        )
+                        .into());
+                    }
+                    let at = (reloc.at - anim_at) as usize;
+                    blob[at..at + 4].copy_from_slice(&(reloc.target - anim_at).to_be_bytes());
+                    weapon_anim_rebased += 1;
+                }
+                (anim_at, blob)
+            }
+        };
         let joints: Vec<_> =
-            ssb_rom::objanim::joint_scripts(&file.data, anim_at, graph.nodes.len())
+            ssb_rom::objanim::joint_scripts(&blob, anim_at - base, graph.nodes.len())
                 .into_iter()
                 .enumerate()
                 .filter_map(|(node, script)| {
@@ -3583,7 +3637,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             slot,
             file_id,
             0,
-            &file.data,
+            &blob,
             &joints,
         );
     }
@@ -3938,7 +3992,9 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         ssb_rom::transition::ASSETS.len()
     );
     println!("  effect anims {effect_anims} effect(s), {effect_anim_joints} animated node(s)");
-    println!("  weapon anims {weapon_anims} weapon(s)");
+    println!(
+        "  weapon anims {weapon_anims} weapon(s), {weapon_anim_rebased} windowed pointer(s) rebased"
+    );
     println!(
         "  ground anims {ground_anims} controller clip(s), {ground_anim_joints} animated node(s)"
     );

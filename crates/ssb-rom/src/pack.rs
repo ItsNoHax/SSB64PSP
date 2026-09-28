@@ -243,7 +243,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // Boomerang spin, file 325's `anim_joints` at 0x6C0.
 // 54 adds Yoshi's Bomb star: file 86's list at 0x5458 under the weapon
 // seed, keyed (247, 0x40) by the attributes record that names it.
-pub const VERSION: u32 = 54;
+// 55 converts Kirby's Final Cutter wave tree (328, 0x1D388) under the
+// weapon seed and adds its `anim_joints` (328 + 0x1D410) as weapon slot 1.
+pub const VERSION: u32 = 55;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -986,6 +988,9 @@ impl AnimDesc {
 
     /// [`Self::WEAPON`] slot of Link's Boomerang (file 325's table at 0x6C0).
     pub const WEAPON_ANIM_LINK_BOOMERANG: u32 = 0;
+    /// [`Self::WEAPON`] slot of Kirby's Final Cutter wave (file 328's table
+    /// at 0x1D410).
+    pub const WEAPON_ANIM_KIRBY_CUTTER: u32 = 1;
 
     /// `shield_anim_joints` has one table per 45-degree stick sector.
     pub const SHIELD_SECTORS: u32 = 8;

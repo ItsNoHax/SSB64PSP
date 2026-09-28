@@ -166,6 +166,17 @@ pub fn captain_falcon_punch_effect(pack: &Pack<'_>) -> Option<ObjectDesc> {
         })
 }
 
+/// Kirby's Final Cutter wave (`llKirbyMainCutterWeaponAttributes`, file
+/// 229 + 0x08): file 328's two-node `DObjDesc` tree, packed under the weapon
+/// seed (RE-378).
+pub const KIRBY_CUTTER_SOURCE: (u32, u32) = (328, 0x1D388);
+
+pub fn kirby_cutter_object(pack: &Pack<'_>) -> Option<ObjectDesc> {
+    (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|object| (object.source_file, object.source_offset) == KIRBY_CUTTER_SOURCE)
+}
+
 /// `dEFManagerCaptainFalconKickEffectDesc`: file 350's two-node flame tree,
 /// at slot 29 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
 pub const CAPTAIN_FALCON_KICK_EFFECT_KEY: (u32, u32) = (350, 0x0B08);
@@ -890,28 +901,20 @@ impl FighterScene {
                 self.fighter.set_weapon_spawn_anchor(anchor);
             }
         }
-        if matches!(
-            self.fighter.status.status,
-            AnyStatus::Mario(
-                ssb_game::status::MarioStatus::SpecialHi
-                    | ssb_game::status::MarioStatus::SpecialAirHi
-            ) | AnyStatus::Samus(ssb_game::status::SamusStatus::SpecialHi)
-        ) || ssb_game::reaction::moves_by_transn(self.fighter.status.status)
-            || ssb_game::map::is_cliff_phase2(self.fighter.status.status)
-            || self.fighter.status.status == ssb_game::status::Status::LightThrowDash
+        // Every status gets its TransN sample: `ssb-game`'s physics reads it
+        // only where the source's `proc_physics` applies TransN, so a list
+        // here could only miss statuses (Final Cutter, the Falcon Kick,
+        // RE-378).
+        if let (Some(before), Some(current)) = (self.root_motion_before_tick, self.skeleton.pose(0))
         {
-            if let (Some(before), Some(current)) =
-                (self.root_motion_before_tick, self.skeleton.pose(0))
-            {
-                self.fighter.set_root_motion(ssb_game::physics::RootMotion {
-                    delta: ssb_engine::math::Vec3::new(
-                        current.translate[0] - before.translate[0],
-                        current.translate[1] - before.translate[1],
-                        current.translate[2] - before.translate[2],
-                    ),
-                    rotate_z: current.rotate[2],
-                });
-            }
+            self.fighter.set_root_motion(ssb_game::physics::RootMotion {
+                delta: ssb_engine::math::Vec3::new(
+                    current.translate[0] - before.translate[0],
+                    current.translate[1] - before.translate[1],
+                    current.translate[2] - before.translate[2],
+                ),
+                rotate_z: current.rotate[2],
+            });
         }
         self.fighter
             .tick_interrupt(&|| MapSegments::with_groups(pack, stage, groups));

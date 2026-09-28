@@ -17,7 +17,7 @@ or evidence record covers it.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| Select and draw Kirby in `psp-game` | The moveset is host-only; Final Cutter wave, copy hats, stars and the copied Falcon Punch flame (joint 30) are not drawn | RE-343, RE-376 |
+| Draw Kirby's copy hats, stars and copied specials' effects in `psp-game` | Kirby draws in Training with his Final Cutter wave (RE-378); copy hats, the Inhale/spit stars and the copied Falcon Punch flame (joint 30) are not drawn | RE-343, RE-376, RE-378 |
 | Draw Yoshi's Egg Lay egg and his egg/star hit effects in `psp-game` | Yoshi draws in Training with his Egg Throw egg and Bomb stars (RE-375); the captured victim's egg and the shatter, egg-break and sparkle effects remain | RE-337, RE-375 |
 | Draw Link's Bomb item in `psp-game` | Link draws in Training with his Boomerang and Spin Attack swirl (RE-374); item visuals remain | RE-352, RE-374 |
 | Select and draw Ness in `psp-game` | Host moveset and copied PK Fire exist; PK Fire spark/flame, PK Thunder head/trails, Magnet and bat visuals need runtime integration | RE-347 |

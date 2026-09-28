@@ -1267,6 +1267,23 @@ pub struct KirbyCutter {
     pub seek_floor: bool,
     pub floor: Option<MapSurface>,
     pub hit_ports: u8,
+    /// `wpMainVelSetModelPitch`'s root `rotate.y`: +90 degrees for a
+    /// rightward `vel_air.x`, else -90. Presentation only.
+    pub model_rotate_y: f32,
+    /// Root `rotate.z`: `wpKirbyCutterProcUpdate` sets it to the floor's
+    /// slope while grounded. Presentation only.
+    pub rotate_z: f32,
+    /// `gcPlayAnimAll` calls on the tree, one per update.
+    pub anim_ticks: u16,
+}
+
+/// `wpMainVelSetModelPitch`.
+fn model_pitch(vel_x: f32) -> f32 {
+    if vel_x >= 0.0 {
+        core::f32::consts::FRAC_PI_2
+    } else {
+        -core::f32::consts::FRAC_PI_2
+    }
 }
 
 impl KirbyCutter {
@@ -1282,6 +1299,9 @@ impl KirbyCutter {
             seek_floor: grounded,
             floor: None,
             hit_ports: 0,
+            model_rotate_y: model_pitch(lr),
+            rotate_z: 0.0,
+            anim_ticks: 0,
         }
     }
 
@@ -1313,9 +1333,17 @@ impl KirbyCutter {
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(seg, _)| seg);
         }
+        // `wpProcessProcWeaponMain` plays the DObj animation before
+        // `proc_update`.
+        self.anim_ticks = self.anim_ticks.wrapping_add(1);
         self.lifetime -= 1;
         if self.lifetime == 0 {
             return false;
+        }
+        if let Some(segment) = self.floor {
+            // `-syUtilsArcTan2(floor_angle.x, floor_angle.y)`.
+            let normal = surface_normal(MapSurfaceKind::Floor, segment.segment);
+            self.rotate_z = -ssb_engine::math::atan2(normal.x, normal.y);
         }
         self.floor = self.floor.and_then(|s| refresh_surface(surfaces(), s));
         if let Some(segment) = self.floor {
@@ -1362,6 +1390,7 @@ impl KirbyCutter {
             self.velocity.y = -self.velocity.y;
         }
         self.lr = -self.lr;
+        self.model_rotate_y = model_pitch(self.velocity.x);
         self.hit_ports = 0;
         self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
     }
@@ -3975,6 +4004,30 @@ mod tests {
         assert!((after.velocity - v).length() < 1e-4);
         let mut w = weapons.slots[0].unwrap();
         assert!(!w.on_shield(shield_at(135.0, 1.0)));
+    }
+
+    /// `wpMainVelSetModelPitch`'s yaw, `wpKirbyCutterProcUpdate`'s slope
+    /// roll and one animation tick per update.
+    #[test]
+    fn cutter_wave_yaw_follows_its_velocity_and_roll_its_floor() {
+        let spawn = |facing| WeaponSpawn {
+            kind: WeaponKind::KirbyCutter { grounded: true },
+            owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::new(0.0, 100.0, 0.0),
+            facing,
+        };
+        let left = KirbyCutter::new(spawn(-1.0), true);
+        assert_eq!(left.model_rotate_y, -core::f32::consts::FRAC_PI_2);
+        // A floor rising 100 over 1000 to the right.
+        let slope = [surface(MapSurfaceKind::Floor, -1000, 0, 1000, 200)];
+        let mut c = KirbyCutter::new(spawn(1.0), true);
+        assert_eq!(c.model_rotate_y, core::f32::consts::FRAC_PI_2);
+        assert!(c.tick(|| slope));
+        assert_eq!(c.anim_ticks, 1);
+        assert!(c.floor.is_some());
+        let want = ssb_engine::math::atan2(100.0, 1000.0);
+        assert!((c.rotate_z - want).abs() < 1e-4, "{} vs {want}", c.rotate_z);
     }
 
     /// The per-kind `proc_hop` facing writes and `proc_shield` results.
