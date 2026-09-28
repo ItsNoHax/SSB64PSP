@@ -162,6 +162,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `jab`) | `f1-training-jab` | Mario's jab from the grab route landing on the Training dummy; the hit is in the capture log (`dummy_damage=2 dummy_status=Common(DamageN1)`, `PPSSPPHeadless --log`), not the image | RE-351 |
 | `golden_capture` (`psp-game`, scene `luigi`) | `f1-training-luigi` | Luigi in Training after one B tap: his Fireball in flight with `palettes[1]` (green) | RE-372 |
 | `golden_capture` (`psp-game`, scenes `samus`, `samusshot`, `samusbomb`) | `f1-training-samus`, `-samus-shot`, `-samus-bomb` | Samus's level-2 charging shot on her arm cannon; a released level-1 shot; her Bomb on the floor after she walks off it | RE-373 |
+| `golden_capture` (`psp-game`, scenes `link`, `linkspin`) | `f1-training-link`, `-link-spin` | Link's Boomerang in flight; 13 frames into a ground Spin Attack, whose swirl shows edge-on as a thin arc | RE-374 |
 | `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center. The bubble visual is not drawn | RE-367, RE-369 |
 
 Stage sweep example:
@@ -391,3 +392,9 @@ Pack v52 (`e814f589…`) adds Samus's Charge Shot mesh and two Bomb blink
 meshes. The new `f1-training-samus`, `f1-training-samus-shot` and
 `f1-training-samus-bomb` goldens were each identical in both captures.
 78 of 78 goldens match twice.
+
+## 2026-09-28 RE-374 Link Training scenes
+
+Pack v53 (`290e996d…`) adds Link's Boomerang weapon animation. The new
+`f1-training-link` and `f1-training-link-spin` goldens were each identical
+in both captures. 80 of 80 goldens match twice.

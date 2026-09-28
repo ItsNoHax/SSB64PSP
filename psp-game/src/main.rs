@@ -70,6 +70,12 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // rests under Samus. She walks right from tick 80, uncovering it
         // with some 30 frames of its 100-frame fuse left.
         GameScene::SamusBomb => 100,
+        // B at tick 20; `SpecialN` throws the Boomerang on frame 26, and it
+        // has flown some 14 frames here.
+        GameScene::Link => 60,
+        // Up+B at tick 20 enters `SpecialHi` with the swirl; 13 swirl
+        // frames later its primitive alpha is 204 (RE-324).
+        GameScene::LinkSpin => 33,
         GameScene::Training => 106,
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
@@ -156,10 +162,14 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
-    // The Samus scenes stay on the spawn floor: no jump route.
+    // The Samus and Link scenes stay on the spawn floor: no jump route.
     if matches!(
         scene,
-        GameScene::Samus | GameScene::SamusShot | GameScene::SamusBomb
+        GameScene::Samus
+            | GameScene::SamusShot
+            | GameScene::SamusBomb
+            | GameScene::Link
+            | GameScene::LinkSpin
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -242,6 +252,8 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::Costume3
             | GameScene::Samus
             | GameScene::SamusShot
+            | GameScene::Link
+            | GameScene::LinkSpin
     ) {
         return 0;
     }
@@ -261,7 +273,9 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
     if scene == GameScene::Shield && (50..=60).contains(&tick) {
         40
-    } else if scene == GameScene::Superjump && tick == 150 {
+    } else if (scene == GameScene::Superjump && tick == 150)
+        || (scene == GameScene::LinkSpin && tick == 20)
+    {
         80
     } else if scene == GameScene::SamusBomb && tick == 20 {
         // `ftSamusSpecialLwCheck`'s downward stick with the B edge.
@@ -285,8 +299,8 @@ const JUMP_BUTTON_MASK: u16 =
 const MENU_STICK_NAV_MIN: i8 = 40;
 
 /// The fighter Training spawns for the player: Fox for the Fox capture
-/// scene, Luigi for the Luigi scene, Samus for the Samus scenes, Mario
-/// otherwise.
+/// scene, Luigi for the Luigi scene, Samus for the Samus scenes, Link for
+/// the Link scenes, Mario otherwise.
 fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter::FighterKind {
     // The costume scenes use Fox so that no pick can collide with the Mario
     // dummy's costume.
@@ -298,6 +312,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Samus | GameScene::SamusShot | GameScene::SamusBomb) => {
             ssb_game::fighter::FighterKind::Samus
         }
+        Some(GameScene::Link | GameScene::LinkSpin) => ssb_game::fighter::FighterKind::Link,
         _ => ssb_game::fighter::FighterKind::Mario,
     }
 }
@@ -428,6 +443,7 @@ unsafe fn run() -> ! {
     });
 
     let draw_assets = pack.as_ref().map(DrawAssets::resolve).unwrap_or_default();
+    let mut link_visuals = LinkVisuals::default();
     let mut draw_state = meshdraw::DrawState::default();
     // Created once, on first entry to Training Mode (below) -- a fighter
     // spawned on the training stage, ticked with real physics/animation/
@@ -794,6 +810,9 @@ unsafe fn run() -> ! {
                 draw_menu(&mut gpu, cursor);
             }
             Screen::Training => {
+                if let (Some(p), Some(pl)) = (pack.as_ref(), play_state.as_ref()) {
+                    link_visuals.sync(p, &draw_assets, &pl.fighter, &weapons);
+                }
                 draw_training(
                     &mut gpu,
                     &mut draw_state,
@@ -802,6 +821,7 @@ unsafe fn run() -> ! {
                     dummy_state.as_ref(),
                     &weapons,
                     &draw_assets,
+                    &link_visuals,
                     Some(&material_anim),
                     stage_map.as_ref().map(|map| &map.animator),
                     Some(&stage_objects),
@@ -914,6 +934,10 @@ struct DrawAssets {
     charge_shot_mesh: Option<ssb_rom::pack::MeshDesc>,
     /// Indexed by `SamusBomb::blink_palette`.
     bomb_meshes: [Option<ssb_rom::pack::MeshDesc>; 2],
+    /// Link's Boomerang tree and its `anim_joints` spin.
+    boomerang: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// The Spin Attack swirl and its transform animation.
+    spin_effect: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
 }
 
 impl DrawAssets {
@@ -925,6 +949,88 @@ impl DrawAssets {
             reflector: ssb_psp_runtime::scene::fox_reflector_object(p),
             charge_shot_mesh: ssb_psp_runtime::scene::samus_charge_shot_mesh(p),
             bomb_meshes: ssb_psp_runtime::scene::samus_bomb_meshes(p),
+            boomerang: ssb_psp_runtime::scene::link_boomerang_object(p)
+                .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_LINK_BOOMERANG)),
+            spin_effect: ssb_psp_runtime::scene::link_spin_attack_effect(p)
+                .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
+        }
+    }
+}
+
+/// The animation players for Link's Boomerang and Spin Attack swirl. The
+/// game state counts each one's `gcPlayAnimAll` calls; [`Self::sync`]
+/// plays the players up to that count, restarting when it goes back.
+#[derive(Default)]
+struct LinkVisuals {
+    boomerang: ssb_rom::skeleton::StageAnimator,
+    boomerang_ticks: Option<u16>,
+    spin: ssb_rom::skeleton::StageAnimator,
+    spin_materials: ssb_rom::skeleton::EffectMaterialAnimator,
+    spin_ticks: Option<u16>,
+}
+
+/// `(restart, ticks)` that bring a player at `clock` to `target`.
+fn catch_up(clock: &mut Option<u16>, target: Option<u16>) -> Option<(bool, u16)> {
+    let Some(target) = target else {
+        *clock = None;
+        return None;
+    };
+    let step = match *clock {
+        Some(at) if at <= target => (false, target - at),
+        _ => (true, target),
+    };
+    *clock = Some(target);
+    Some(step)
+}
+
+impl LinkVisuals {
+    fn sync(
+        &mut self,
+        p: &Pack<'_>,
+        assets: &DrawAssets,
+        player: &ssb_game::fighter::Fighter,
+        weapons: &ssb_game::weapon::WeaponPool,
+    ) {
+        // `ftLinkSpecialNProcUpdate` allows one Boomerang per Link, and
+        // Training has one Link.
+        let boomerang = weapons.boomerangs().next().map(|b| b.anim_ticks);
+        if let (Some((restart, ticks)), Some((_, anim))) = (
+            catch_up(&mut self.boomerang_ticks, boomerang),
+            assets.boomerang.as_ref(),
+        ) {
+            if restart {
+                self.boomerang.start(p, anim);
+            }
+            if let Some(script) = p.anim_script(anim) {
+                for _ in 0..ticks {
+                    let _ = self.boomerang.tick(script);
+                }
+            }
+        }
+
+        let spin = ssb_game::link::spin_effect_ticks(player);
+        if let (Some((restart, ticks)), Some((object, anim))) = (
+            catch_up(&mut self.spin_ticks, spin),
+            assets.spin_effect.as_ref(),
+        ) {
+            if restart {
+                self.spin.start(p, anim);
+                // `gcAddAnimAll`'s material half, over the swirl's own
+                // bound primitives (RE-175).
+                let mat_anims = (0..object.node_count)
+                    .filter_map(|n| p.node(object.first_node + n))
+                    .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                    .filter_map(|n| p.mesh(n.mesh))
+                    .flat_map(|m| (0..m.prim_count).filter_map(move |i| p.prim(m.first_prim + i)))
+                    .map(|prim| prim.mat_anim);
+                self.spin_materials.start(p, mat_anims);
+            }
+            if let Some(script) = p.anim_script(anim) {
+                for _ in 0..ticks {
+                    let _ = self.spin.tick(script);
+                    self.spin_materials.tick(p);
+                }
+            }
         }
     }
 }
@@ -948,6 +1054,7 @@ unsafe fn draw_training(
     dummy_state: Option<&play::Dummy>,
     weapons: &ssb_game::weapon::WeaponPool,
     assets: &DrawAssets,
+    link_visuals: &LinkVisuals,
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     stage_anim: Option<&ssb_rom::skeleton::StageAnimator>,
     stage_objects: Option<&ssb_rom::ground_obj::GroundObjects>,
@@ -1118,6 +1225,74 @@ unsafe fn draw_training(
             meshdraw::MODEL_SCALE,
         );
         meshdraw::draw_mesh(p, bomb_mesh, draw_state, None, None);
+    }
+
+    // Link's Boomerang is a `WEAPON_FLAG_DOBJDESC` tree. Its root takes the
+    // weapon's position in place of the `DObjDesc` translate, and
+    // `wpMainVelSetModelPitch`'s `rotate.y`; node 1 spins under the
+    // `anim_joints` stream. The return hides node 2 (`DOBJ_FLAG_NOTEXTURE`).
+    if let Some((object, _)) = assets.boomerang.as_ref() {
+        for boomerang in weapons.boomerangs() {
+            let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
+            let n = link_visuals.boomerang.compose(p, object, &mut posed);
+            if let Some(root) = p.node(object.first_node) {
+                let t = root.rest_translate.map(|v| -v / meshdraw::MODEL_SCALE);
+                let unplace = ssb_rom::scene::Mat4::from_trs(t, [0.0; 3], [1.0; 3]);
+                for m in &mut posed[..n] {
+                    *m = unplace.mul(m);
+                }
+            }
+            gpu.model_transform(
+                [
+                    boomerang.position.x,
+                    boomerang.position.y,
+                    boomerang.position.z,
+                ],
+                [0.0, boomerang.model_rotate_y, 0.0],
+                meshdraw::MODEL_SCALE,
+            );
+            let base = gpu.model_matrix();
+            let grandchild = object.first_node + 2;
+            let hidden = |node: u32| boomerang.grandchild_hidden && node == grandchild;
+            meshdraw::draw_object_posed_hiding(
+                p,
+                object,
+                &base,
+                &posed[..n],
+                draw_state,
+                None,
+                &hidden,
+            );
+        }
+    }
+
+    // The Spin Attack swirl's root is battle matrix function 80 - 66 = 14,
+    // `func_ovl0_800C99CC`: a translation to TopN's world position. Its
+    // second transform, `RotRpyR`, applies the 30- or 210-degree yaw
+    // `efManagerLinkSpinAttackMakeEffect` sets.
+    if let (Some(_), Some((object, _))) = (
+        ssb_game::link::spin_effect_ticks(&pl.fighter),
+        assets.spin_effect.as_ref(),
+    ) {
+        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
+        let n = link_visuals.spin.compose(p, object, &mut posed);
+        gpu.model_transform(
+            [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
+            [0.0, ssb_game::link::spin_effect_rotate_y(&pl.fighter), 0.0],
+            meshdraw::MODEL_SCALE,
+        );
+        let base = gpu.model_matrix();
+        meshdraw::draw_object_posed(
+            p,
+            object,
+            &base,
+            &posed[..n],
+            None,
+            draw_state,
+            material_anim,
+            Some(&link_visuals.spin_materials),
+            0,
+        );
     }
 
     if matches!(

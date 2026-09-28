@@ -3487,6 +3487,55 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         );
     }
 
+    // Weapon DObj trees animate through `WPAttributes.anim_joints`
+    // (`wpManagerMakeWeapon` -> `gcAddAnimAll`). Link's Boomerang
+    // (`226_LinkSpecial1.c`) names file 325's graph at 0x610 and its table
+    // at 0x6C0, whose one script spins node 1 about X.
+    // `(slot, file, graph, anim_joints)`.
+    const WEAPON_ANIMS: &[(u32, u32, u32, u32)] = &[(
+        ssb_rom::pack::AnimDesc::WEAPON_ANIM_LINK_BOOMERANG,
+        325,
+        0x610,
+        0x6C0,
+    )];
+    let mut weapon_anims = 0usize;
+    for &(slot, file_id, graph_at, anim_at) in WEAPON_ANIMS {
+        let file = loaded
+            .files
+            .get(file_id as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("weapon anim {slot}: file {file_id} missing"))?;
+        let graph = loaded
+            .graphs
+            .get(&file_id)
+            .and_then(|graphs| graphs.iter().find(|graph| graph.offset == graph_at))
+            .ok_or_else(|| format!("weapon anim {slot}: graph 0x{graph_at:X} missing"))?;
+        let object = object_index
+            .get(&(file_id, graph_at))
+            .and_then(|&index| writer.object(index))
+            .ok_or_else(|| format!("weapon anim {slot}: packed object missing"))?;
+        let joints: Vec<_> =
+            ssb_rom::objanim::joint_scripts(&file.data, anim_at, graph.nodes.len())
+                .into_iter()
+                .enumerate()
+                .filter_map(|(node, script)| {
+                    script.map(|script| (Some(script), Some(object.first_node + node as u32)))
+                })
+                .collect();
+        if joints.is_empty() {
+            return Err(format!("weapon anim {slot}: no animation scripts").into());
+        }
+        weapon_anims += 1;
+        writer.add_anim(
+            ssb_rom::pack::AnimDesc::WEAPON,
+            slot,
+            file_id,
+            0,
+            &file.data,
+            &joints,
+        );
+    }
+
     // Stage controller objects (RE-357): the GObjs a `gr*.c` controller
     // makes from `MPGroundData::map_nodes` and animates itself. Each label
     // is an offset into the file `map_nodes` lands in, and only once
@@ -3837,6 +3886,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         ssb_rom::transition::ASSETS.len()
     );
     println!("  effect anims {effect_anims} effect(s), {effect_anim_joints} animated node(s)");
+    println!("  weapon anims {weapon_anims} weapon(s)");
     println!(
         "  ground anims {ground_anims} controller clip(s), {ground_anim_joints} animated node(s)"
     );

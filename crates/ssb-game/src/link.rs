@@ -181,6 +181,10 @@ pub struct LinkState {
     pub flag0_done: bool,
     /// `status_vars.link.specialhi.spin_attack_gobj`.
     pub spin: Option<SpinAttack>,
+    /// The `efManagerLinkSpinAttackMakeEffect` swirl: how many
+    /// `gcPlayAnimAll` calls it has run. Presentation only; read it through
+    /// [`spin_effect_ticks`], which drops it once the status ends.
+    pub spin_effect: Option<u16>,
     /// `status_vars.common.attack100.is_anim_end` and `.is_goto_loop`.
     pub rapid_is_anim_end: bool,
     pub rapid_is_goto_loop: bool,
@@ -336,6 +340,7 @@ pub fn set_special_hi(f: &mut Fighter) {
     spin.step();
     f.link.spin = Some(spin);
     f.link.flag0_done = true;
+    make_spin_effect(f);
 }
 
 /// `ftLinkSpecialAirHiSetStatus`. The aerial Spin Attack makes no weapon
@@ -344,8 +349,40 @@ pub fn set_special_air_hi(f: &mut Fighter) {
     destroy_spin(f);
     set(f, LinkStatus::SpecialAirHi, 0.0, SPECIAL_AIR_HI_LENGTH);
     f.link.flag0_done = true;
+    make_spin_effect(f);
     f.physics.vel_air.y = SPINATTACK_AIR_VEL_Y;
     f.physics.jumps_used = f.attributes.jumps_max;
+}
+
+/// `efManagerLinkSpinAttackMakeEffect`, from `ftLinkSpecialHiMakeWeapon`
+/// on both Spin Attacks' flag-0 frame. The effect's own update plays its
+/// animation once on the frame it is made.
+fn make_spin_effect(f: &mut Fighter) {
+    f.link.spin_effect = Some(1);
+}
+
+/// The Spin Attack swirl's played animation frames, while it exists.
+///
+/// `ftMainSetStatus` stops it on any status change except the
+/// `SpecialHi` to `SpecialAirHi` switch, which passes
+/// `FTSTATUS_PRESERVE_EFFECT`. Its animation outlasts both statuses.
+pub fn spin_effect_ticks(f: &Fighter) -> Option<u16> {
+    f.link.spin_effect.filter(|_| {
+        matches!(
+            f.status.status,
+            AnyStatus::Link(LinkStatus::SpecialHi | LinkStatus::SpecialAirHi)
+        )
+    })
+}
+
+/// `efManagerLinkSpinAttackMakeEffect`'s root `rotate.y`: 30 degrees
+/// facing right, 210 facing left.
+pub fn spin_effect_rotate_y(f: &Fighter) -> f32 {
+    if f.facing.sign() > 0.0 {
+        30.0f32.to_radians()
+    } else {
+        210.0f32.to_radians()
+    }
 }
 
 /// `ftLinkSpecialHiEndSetStatus`.
@@ -469,6 +506,11 @@ pub fn update(f: &mut Fighter) {
     let AnyStatus::Link(current) = f.status.status else {
         return;
     };
+    // `efManagerHaveStructProcUpdate`; `ftParamProcPauseEffect` holds it
+    // through hitlag.
+    if spin_effect_ticks(f).is_some() && !f.is_in_hitlag() {
+        f.link.spin_effect = f.link.spin_effect.map(|t| t.saturating_add(1));
+    }
     match current {
         // `ftCommonAttack13ProcUpdate`: the `Attack100` branch is Captain's.
         LinkStatus::Attack13 | LinkStatus::Attack100End | LinkStatus::SpecialNGet => {
@@ -876,6 +918,29 @@ mod tests {
         }
         assert_eq!(f.status.status, Status::Wait);
         assert!(f.link.spin.is_none());
+    }
+
+    #[test]
+    fn spin_attack_swirl_plays_through_special_hi_and_stops_at_its_end() {
+        let mut f = link(true);
+        set_special_hi(&mut f);
+        // Made on the flag-0 frame, whose effect update plays it once.
+        assert_eq!(spin_effect_ticks(&f), Some(1));
+        assert_eq!(spin_effect_rotate_y(&f), 30.0f32.to_radians());
+        for frame in 2..=12 {
+            status::update(&mut f);
+            assert_eq!(spin_effect_ticks(&f), Some(frame));
+        }
+        f.hitlag = 2;
+        status::update(&mut f);
+        assert_eq!(spin_effect_ticks(&f), Some(12), "paused by hitlag");
+        f.hitlag = 0;
+        while f.status.status == AnyStatus::Link(LinkStatus::SpecialHi) {
+            status::update(&mut f);
+        }
+        // `SpecialHiEnd` is set with `FTSTATUS_PRESERVE_NONE`.
+        assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::SpecialHiEnd));
+        assert_eq!(spin_effect_ticks(&f), None);
     }
 
     #[test]
