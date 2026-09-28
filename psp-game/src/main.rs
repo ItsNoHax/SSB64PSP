@@ -79,16 +79,20 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Up+B at tick 20; Egg Throw makes the egg on frame 4 and throws it
         // on frame 23, and it has flown some 16 frames here.
         GameScene::Yoshi => 60,
-        // Down+B at tick 20; the Yoshi Bomb hops, drops and lands near tick
-        // 51, and `SpecialLwLanding` frame 3 makes the two stars. They are
-        // some 6 of their 16 frames old here.
-        GameScene::YoshiBomb => 60,
+        // Down+B at tick 20; the Yoshi Bomb hops on its TransN, drops and
+        // lands near tick 59, and `SpecialLwLanding` frame 3 makes the two
+        // stars. They are some 6 of their 16 frames old here (RE-378).
+        GameScene::YoshiBomb => 68,
         // B at tick 20; `SpecialN` makes the flame on frame 42 and stops it
         // on frame 55. It has played some 7 frames here.
         GameScene::Captain => 69,
         // Down+B at tick 20; `SpecialLw` makes the flame on frame 12 and
         // stops it on frame 32. It has played some 12 frames here.
         GameScene::CaptainKick => 44,
+        // Up+B at tick 20; Final Cutter rises on its TransN, lands on the
+        // top platform near tick 77, and `SpecialHiLanding` frame 3 makes
+        // the wave. It is some 6 of its 20 frames old here.
+        GameScene::Kirby => 83,
         GameScene::Training => 106,
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
@@ -188,6 +192,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::YoshiBomb
             | GameScene::Captain
             | GameScene::CaptainKick
+            | GameScene::Kirby
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -276,6 +281,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::YoshiBomb
             | GameScene::Captain
             | GameScene::CaptainKick
+            | GameScene::Kirby
     ) {
         return 0;
     }
@@ -296,7 +302,10 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
     if scene == GameScene::Shield && (50..=60).contains(&tick) {
         40
     } else if (scene == GameScene::Superjump && tick == 150)
-        || (matches!(scene, GameScene::LinkSpin | GameScene::Yoshi) && tick == 20)
+        || (matches!(
+            scene,
+            GameScene::LinkSpin | GameScene::Yoshi | GameScene::Kirby
+        ) && tick == 20)
     {
         80
     } else if matches!(
@@ -343,6 +352,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Captain | GameScene::CaptainKick) => {
             ssb_game::fighter::FighterKind::Captain
         }
+        Some(GameScene::Kirby) => ssb_game::fighter::FighterKind::Kirby,
         _ => ssb_game::fighter::FighterKind::Mario,
     }
 }
@@ -901,6 +911,24 @@ unsafe fn run() -> ! {
                         );
                     }
                 }
+                if capture_scene == Some(GameScene::Kirby) {
+                    let line = alloc::format!(
+                        "kirby status={:?} anim_frame={:.1} cutters={:?}\n",
+                        player.fighter.status.status,
+                        player.fighter.status.anim_frame,
+                        weapons
+                            .cutters()
+                            .map(|c| (c.lifetime, c.anim_ticks, c.position.x))
+                            .collect::<alloc::vec::Vec<_>>(),
+                    );
+                    unsafe {
+                        psp::sys::sceIoWrite(
+                            psp::sys::sceKernelStdout(),
+                            line.as_ptr() as *const core::ffi::c_void,
+                            line.len(),
+                        );
+                    }
+                }
                 if matches!(
                     capture_scene,
                     Some(GameScene::Captain | GameScene::CaptainKick)
@@ -1006,6 +1034,8 @@ struct DrawAssets {
     yoshi_star_mesh: Option<ssb_rom::pack::MeshDesc>,
     /// The Falcon Punch flame (material animation only).
     falcon_punch: Option<ssb_rom::pack::ObjectDesc>,
+    /// Kirby's Final Cutter wave tree and its `anim_joints` flicker.
+    cutter: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The Falcon Kick flame tree and its transform animation.
     falcon_kick: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
 }
@@ -1026,14 +1056,17 @@ impl DrawAssets {
             yoshi_egg_mesh: ssb_psp_runtime::scene::yoshi_egg_mesh(p),
             yoshi_star_mesh: ssb_psp_runtime::scene::yoshi_star_mesh(p),
             falcon_punch: ssb_psp_runtime::scene::captain_falcon_punch_effect(p),
+            cutter: ssb_psp_runtime::scene::kirby_cutter_object(p)
+                .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_KIRBY_CUTTER)),
             falcon_kick: ssb_psp_runtime::scene::captain_falcon_kick_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
         }
     }
 }
 
-/// The animation players for Link's Boomerang and Spin Attack swirl and
-/// Captain Falcon's Falcon Punch and Falcon Kick flames. The game state counts each one's
+/// The animation players for Link's Boomerang and Spin Attack swirl,
+/// Captain Falcon's Falcon Punch and Falcon Kick flames and Kirby's Final
+/// Cutter wave. The game state counts each one's
 /// `gcPlayAnimAll` calls; [`Self::sync`] plays the players up to that
 /// count, restarting when it goes back.
 #[derive(Default)]
@@ -1048,6 +1081,8 @@ struct EffectVisuals {
     kick: ssb_rom::skeleton::StageAnimator,
     kick_materials: ssb_rom::skeleton::EffectMaterialAnimator,
     kick_ticks: Option<u16>,
+    cutter: ssb_rom::skeleton::StageAnimator,
+    cutter_ticks: Option<u16>,
 }
 
 /// `gcAddAnimAll`'s material half: the material scripts bound to an
@@ -1100,6 +1135,23 @@ impl EffectVisuals {
             if let Some(script) = p.anim_script(anim) {
                 for _ in 0..ticks {
                     let _ = self.boomerang.tick(script);
+                }
+            }
+        }
+
+        // `ftKirbySpecialHiLanding` makes one wave per Final Cutter, and
+        // Training has one Kirby.
+        let cutter = weapons.cutters().next().map(|c| c.anim_ticks);
+        if let (Some((restart, ticks)), Some((_, anim))) = (
+            catch_up(&mut self.cutter_ticks, cutter),
+            assets.cutter.as_ref(),
+        ) {
+            if restart {
+                self.cutter.start(p, anim);
+            }
+            if let Some(script) = p.anim_script(anim) {
+                for _ in 0..ticks {
+                    let _ = self.cutter.tick(script);
                 }
             }
         }
@@ -1423,6 +1475,46 @@ unsafe fn draw_training(
                 draw_state,
                 None,
                 &hidden,
+            );
+        }
+    }
+
+    // Kirby's Final Cutter wave is a `WEAPON_FLAG_DOBJDESC` tree. Its root
+    // takes the weapon's position in place of the desc translate, and
+    // `RotRpyR` of `wpMainVelSetModelPitch`'s yaw and the floor slope; node 1
+    // flickers under the `anim_joints` stream.
+    if let Some((object, _)) = assets.cutter.as_ref() {
+        for cutter in weapons.cutters() {
+            let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
+            let n = effect_visuals.cutter.compose(p, object, &mut posed);
+            if let Some(root) = p.node(object.first_node) {
+                let t = root.rest_translate.map(|v| -v / meshdraw::MODEL_SCALE);
+                let place = ssb_rom::scene::Mat4::from_trs(
+                    [0.0; 3],
+                    [0.0, cutter.model_rotate_y, cutter.rotate_z],
+                    [1.0; 3],
+                )
+                .mul(&ssb_rom::scene::Mat4::from_trs(t, [0.0; 3], [1.0; 3]));
+                for m in &mut posed[..n] {
+                    *m = place.mul(m);
+                }
+            }
+            gpu.model_transform(
+                [cutter.position.x, cutter.position.y, cutter.position.z],
+                [0.0; 3],
+                meshdraw::MODEL_SCALE,
+            );
+            let base = gpu.model_matrix();
+            meshdraw::draw_object_posed(
+                p,
+                object,
+                &base,
+                &posed[..n],
+                None,
+                draw_state,
+                None,
+                None,
+                0,
             );
         }
     }
