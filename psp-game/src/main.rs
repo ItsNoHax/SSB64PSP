@@ -103,6 +103,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::PikachuAir => 56,
         // Up+B at tick 20; Sing makes its notes on its first update.
         GameScene::Purin => 50,
+        // B at tick 20 starts the Giant Punch; it is charging here.
+        GameScene::Donkey => 60,
         GameScene::Training => 106,
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
@@ -205,6 +207,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::Kirby
             | GameScene::Pikachu
             | GameScene::Purin
+            | GameScene::Donkey
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -305,6 +308,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::Pikachu
             | GameScene::PikachuAir
             | GameScene::Purin
+            | GameScene::Donkey
     ) {
         return 0;
     }
@@ -378,6 +382,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Kirby) => ssb_game::fighter::FighterKind::Kirby,
         Some(GameScene::Pikachu | GameScene::PikachuAir) => ssb_game::fighter::FighterKind::Pikachu,
         Some(GameScene::Purin) => ssb_game::fighter::FighterKind::Purin,
+        Some(GameScene::Donkey) => ssb_game::fighter::FighterKind::Donkey,
         _ => ssb_game::fighter::FighterKind::Mario,
     }
 }
@@ -952,6 +957,20 @@ unsafe fn run() -> ! {
                                 j.position.x
                             ))
                             .collect::<alloc::vec::Vec<_>>(),
+                    );
+                    unsafe {
+                        psp::sys::sceIoWrite(
+                            psp::sys::sceKernelStdout(),
+                            line.as_ptr() as *const core::ffi::c_void,
+                            line.len(),
+                        );
+                    }
+                }
+                if capture_scene == Some(GameScene::Donkey) {
+                    let line = alloc::format!(
+                        "donkey status={:?} anim_frame={:.1}\n",
+                        player.fighter.status.status,
+                        player.fighter.status.anim_frame,
                     );
                     unsafe {
                         psp::sys::sceIoWrite(

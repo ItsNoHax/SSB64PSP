@@ -312,6 +312,8 @@ pub enum GameScene {
     PikachuAir,
     /// `purin`: Jigglypuff in Training, mid Sing with its notes.
     Purin,
+    /// `donkey`: Donkey Kong in Training, charging a Giant Punch.
+    Donkey,
     /// `shadows`: first jump's apex, player airborne.
     Shadows,
     /// `grab`: Training plus a Z+A grab of the dummy, frozen while held.
@@ -329,7 +331,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 25] = [
+    pub const ALL: [GameScene; 26] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -348,6 +350,7 @@ impl GameScene {
         GameScene::Pikachu,
         GameScene::PikachuAir,
         GameScene::Purin,
+        GameScene::Donkey,
         GameScene::Shadows,
         GameScene::Grab,
         GameScene::Jab,
@@ -377,6 +380,7 @@ impl GameScene {
             GameScene::Pikachu => "pikachu",
             GameScene::PikachuAir => "pikachuair",
             GameScene::Purin => "purin",
+            GameScene::Donkey => "donkey",
             GameScene::Shadows => "shadows",
             GameScene::Grab => "grab",
             GameScene::Jab => "jab",
