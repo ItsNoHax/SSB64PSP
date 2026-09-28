@@ -529,3 +529,32 @@ fn blast_hit_record_survives_floor_switch_and_invincibility_ends_at10() {
     steps(&mut f, 10);
     assert!(crate::combat::is_body_normal(&f));
 }
+#[test]
+fn magnet_field_starts_on_hold_and_ends_with_the_end_status() {
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    input(&mut f, N64Buttons::B, 0, -80);
+    set_special_lw(&mut f);
+    let mut first = None;
+    for frame in 1..=40 {
+        status::update(&mut f);
+        if first.is_none() && absorbing(&f) {
+            first = Some(frame);
+            // Made on the Hold entry, with one play.
+            assert_eq!(magnet_effect_ticks(&f), Some(1));
+        }
+    }
+    let first = first.expect("reaches Hold");
+    assert_eq!(magnet_effect_ticks(&f), Some(1 + (40 - first) as u16));
+    // A Hit keeps the one field; the return to Hold does not make another.
+    proc_absorb(&mut f, 1.0);
+    let before = magnet_effect_ticks(&f).unwrap();
+    steps(&mut f, 14);
+    assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialAirLwHold));
+    assert_eq!(magnet_effect_ticks(&f), Some(before + 14));
+    input(&mut f, 0, 0, 0);
+    while absorbing(&f) {
+        status::update(&mut f);
+    }
+    assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialAirLwEnd));
+    assert_eq!(magnet_effect_ticks(&f), None);
+}

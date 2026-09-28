@@ -314,6 +314,12 @@ pub enum GameScene {
     Purin,
     /// `donkey`: Donkey Kong in Training, charging a Giant Punch.
     Donkey,
+    /// `ness`: Ness in Training, one PK Fire spark in flight.
+    Ness,
+    /// `nessthunder`: Ness in Training, PK Thunder's head and trails.
+    NessThunder,
+    /// `nessmagnet`: Ness in Training, holding PSI Magnet.
+    NessMagnet,
     /// `shadows`: first jump's apex, player airborne.
     Shadows,
     /// `grab`: Training plus a Z+A grab of the dummy, frozen while held.
@@ -331,7 +337,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 26] = [
+    pub const ALL: [GameScene; 29] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -351,6 +357,9 @@ impl GameScene {
         GameScene::PikachuAir,
         GameScene::Purin,
         GameScene::Donkey,
+        GameScene::Ness,
+        GameScene::NessThunder,
+        GameScene::NessMagnet,
         GameScene::Shadows,
         GameScene::Grab,
         GameScene::Jab,
@@ -381,6 +390,9 @@ impl GameScene {
             GameScene::PikachuAir => "pikachuair",
             GameScene::Purin => "purin",
             GameScene::Donkey => "donkey",
+            GameScene::Ness => "ness",
+            GameScene::NessThunder => "nessthunder",
+            GameScene::NessMagnet => "nessmagnet",
             GameScene::Shadows => "shadows",
             GameScene::Grab => "grab",
             GameScene::Jab => "jab",

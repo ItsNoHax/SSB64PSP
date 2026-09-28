@@ -250,7 +250,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // material scripts, both under the weapon seed, with weapon slots 2 and 3.
 // It also re-pairs the ThunderJolt effect (342, 0x2258) with its own MObjSub
 // table (0x20A0).
-pub const VERSION: u32 = 56;
+// 57 adds Ness's PK Fire spark (336, 0x168) and PK Thunder trail
+// (335, 0x8B40) as one-node objects and the PK Thunder head tree
+// (335, 0x7C98), with their MObjSub tables and material scripts under the
+// weapon seed, and the head's scale pulse as weapon slot 4.
+pub const VERSION: u32 = 57;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1003,6 +1007,8 @@ impl AnimDesc {
     pub const WEAPON_ANIM_PIKACHU_JOLT_AIR: u32 = 2;
     /// [`Self::WEAPON`] slot of the ground Thunder Jolt (342 + 0x1A20).
     pub const WEAPON_ANIM_PIKACHU_JOLT_GROUND: u32 = 3;
+    /// [`Self::WEAPON`] slot of Ness's PK Thunder head (335 + 0x7D20).
+    pub const WEAPON_ANIM_NESS_PK_THUNDER: u32 = 4;
 
     /// `shield_anim_joints` has one table per 45-degree stick sector.
     pub const SHIELD_SECTORS: u32 = 8;

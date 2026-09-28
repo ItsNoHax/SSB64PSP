@@ -1947,19 +1947,38 @@ fn lb_transition_graphs() -> std::collections::BTreeSet<(u32, u32)> {
 /// under the same state: the aerial list (342 + 0x270) sets its own render
 /// mode but not `G_ZBUFFER`, and the ground tree's lists (342 + 0x1888) set
 /// neither (RE-379).
-const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[(328, 0x1D388), (342, 0x270), (342, 0x1888)];
+/// Ness's PK Fire spark (336 + 0x168), PK Thunder head (335 + 0x7C98) and
+/// trail (335 + 0x8B40) draw the same way (RE-381).
+const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[
+    (328, 0x1D388),
+    (342, 0x270),
+    (342, 0x1888),
+    (336, 0x168),
+    (335, 0x7C98),
+    (335, 0x8B40),
+];
 
 /// Weapons whose `WPAttributes.data` is a direct display list with its own
 /// `anim_joints`, so they need a one-node graph for the animation to bind
 /// to, as [`DIRECT_MANAGER_EFFECT_ASSETS`] gives direct effects. Pikachu's
 /// aerial Thunder Jolt (`llPikachuSpecial1ThunderJoltAirWeaponAttributes`,
-/// file 244 + 0x00) names file 342's list at 0x270 (RE-379).
-const DIRECT_WEAPON_GRAPHS: &[(u32, u32)] = &[(342, 0x270)];
+/// file 244 + 0x00) names file 342's list at 0x270 (RE-379). Ness's PK Fire
+/// spark (`llNessSpecial1PKFireWeaponAttributes`, file 240 + 0x00) names
+/// file 336's list at 0x168, and the PK Thunder trail
+/// (`llNessMainPKThunderTrailWeaponAttributes`, file 239 + 0x40) file 335's
+/// `DObjDLLink` array at 0x8B40 (RE-381).
+const DIRECT_WEAPON_GRAPHS: &[(u32, u32)] = &[(342, 0x270), (336, 0x168), (335, 0x8B40)];
 
 /// `WPAttributes.p_matanim_joints` for weapon trees, keyed by graph. The
 /// ground Thunder Jolt (file 244 + 0x34) names file 342's table at 0x1AE0
 /// (RE-379).
-const WEAPON_MAT_ANIM_JOINTS: &[((u32, u32), u32)] = &[((342, 0x1888), 0x1AE0)];
+/// The PK Fire spark (file 240 + 0x00) names file 336's 0x1E0 and the PK
+/// Thunder head (file 239 + 0x0C) file 335's 0x7D70 (RE-381).
+const WEAPON_MAT_ANIM_JOINTS: &[((u32, u32), u32)] = &[
+    ((342, 0x1888), 0x1AE0),
+    ((336, 0x168), 0x1E0),
+    ((335, 0x7C98), 0x7D70),
+];
 
 /// The seed a [`ssb_rom::mesh::convert_sequence`] call for `(file,
 /// graph_offset)` must use -- see [`fighter_skeleton_graphs`],
@@ -3624,6 +3643,15 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             0x1888,
             0x1A20,
             Some(0x1AE0),
+        ),
+        // Ness's PK Thunder head (RE-381): the root's scale pulse
+        // (335 + 0x7D20..0x7D70).
+        (
+            ssb_rom::pack::AnimDesc::WEAPON_ANIM_NESS_PK_THUNDER,
+            335,
+            0x7C98,
+            0x7D20,
+            Some(0x7D70),
         ),
     ];
     let mut weapon_anims = 0usize;
@@ -6633,6 +6661,10 @@ fn load_all(archive: &Archive) -> Loaded {
         // Jolt tree below, whose `WPAttributes.p_mobjsubs` names it.
         (342u32, 0x2258u32, 0x20A0u32), // PikachuSpecial3 ThunderJoltMObjSub
         (342u32, 0x1888u32, 0x1018u32), // PikachuSpecial3 ground Thunder Jolt, file 244 + 0x34
+        // RE-381: Ness's weapons, each named by its `WPAttributes.p_mobjsubs`.
+        (336u32, 0x168u32, 0x0u32), // NessSpecial3 PK Fire spark, file 240 + 0x00
+        (335u32, 0x7C98u32, 0x7AF8u32), // NessModel PK Thunder head, file 239 + 0x0C
+        (335u32, 0x8B40u32, 0x89C8u32), // NessModel PK Thunder trail, file 239 + 0x40
     ] {
         let nodes = graphs
             .get(&file)
@@ -11522,7 +11554,9 @@ mod tests {
                 }
             }
         }
-        assert_eq!(total, 103);
+        // 104 since RE-381 synthesised the PK Thunder trail's one-node graph
+        // (335 + 0x8B40), whose one list is on link 1 and sets no mode.
+        assert_eq!(total, 104);
         assert_eq!(mode_writers, 3);
     }
 

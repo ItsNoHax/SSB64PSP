@@ -1683,7 +1683,10 @@ impl Weapon {
             // `wpPikachuThunderJoltAirProcHop`.
             Weapon::Jolt(j) => j.velocity = turn(j.velocity),
             // `wpNessPKFireProcHop`.
-            Weapon::PKFire(p) => p.velocity = turn(p.velocity),
+            Weapon::PKFire(p) => {
+                p.velocity = turn(p.velocity);
+                p.rotate_z = -p.rotate_z;
+            }
             _ => unreachable!("no proc_hop"),
         }
     }

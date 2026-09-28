@@ -189,6 +189,27 @@ pub fn object_keyed(pack: &Pack<'_>, key: (u32, u32)) -> Option<ObjectDesc> {
         .find(|object| (object.source_file, object.source_offset) == key)
 }
 
+/// Ness's PK Fire spark (file 240 + 0x00): file 336's direct list at 0x168,
+/// packed as a one-node object (RE-381).
+pub const NESS_PK_FIRE_SOURCE: (u32, u32) = (336, 0x168);
+/// The PK Thunder head (file 239 + 0x0C): file 335's two-node tree.
+pub const NESS_PK_THUNDER_SOURCE: (u32, u32) = (335, 0x7C98);
+/// The PK Thunder trail (file 239 + 0x40): file 335's `DObjDLLink` array,
+/// packed as a one-node object.
+pub const NESS_PK_TRAIL_SOURCE: (u32, u32) = (335, 0x8B40);
+
+/// `dEFManagerNessPsychicMagnetEffectDesc`: file 352's field tree, at slot
+/// 33 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
+pub const NESS_PSI_MAGNET_EFFECT_KEY: (u32, u32) = (352, 0x09A8);
+
+/// The PSI Magnet field's object and its manager-effect inventory slot.
+pub fn ness_psi_magnet_effect(pack: &Pack<'_>) -> Option<(ObjectDesc, u32)> {
+    let slot = ssb_rom::effect::MANAGER_EFFECT_KEYS
+        .iter()
+        .position(|&key| key == NESS_PSI_MAGNET_EFFECT_KEY)?;
+    Some((object_keyed(pack, NESS_PSI_MAGNET_EFFECT_KEY)?, slot as u32))
+}
+
 /// `dEFManagerPurinSingEffectDesc`: file 351's six-node note tree, at slot
 /// 32 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
 pub const PURIN_SING_EFFECT_KEY: (u32, u32) = (351, 0x2130);
