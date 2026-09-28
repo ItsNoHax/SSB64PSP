@@ -1214,6 +1214,8 @@ struct DrawAssets {
     /// The PK Fire flame and Link's Bomb items and their `anim_joints`.
     pk_fire_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     link_bomb_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// The shield bubble.
+    shield: Option<ssb_rom::pack::ObjectDesc>,
     /// Ness's PSI Magnet field and its transform animation.
     magnet: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Jigglypuff's Sing notes and their transform animation.
@@ -1273,6 +1275,7 @@ impl DrawAssets {
                 ssb_psp_runtime::scene::LINK_BOMB_ITEM_SOURCE,
             )
             .zip(p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_LINK_BOMB)),
+            shield: ssb_psp_runtime::scene::object_keyed(p, ssb_psp_runtime::scene::SHIELD_EFFECT_KEY),
             magnet: ssb_psp_runtime::scene::ness_psi_magnet_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             sing: ssb_psp_runtime::scene::purin_sing_effect(p)
@@ -2271,6 +2274,54 @@ unsafe fn draw_items_weapons_effects(
                 meshdraw::MODEL_SCALE,
             );
             meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+        }
+    }
+
+    // The shield bubble (`efManagerShieldMakeEffect`, RE-384). Its root is
+    // battle matrix function 79, `YRotN`'s whole matrix, which the guard
+    // scales by the shield size; the drawn node adds kind 44, a camera-facing
+    // quad sized by that accumulated scale. `efManagerShieldProcDisplay` sets
+    // PRIM white and ENV the player's colour, both at alpha 0xC0. Yoshi's
+    // egg shield is a different effect and is not drawn.
+    if let Some(object) = assets.shield.as_ref() {
+        let fighters = core::iter::once(&pl.fighter).chain(dummy_state.map(|d| &d.fighter));
+        for f in fighters.filter(|f| f.guard.is_shield && f.kind != ssb_game::fighter::FighterKind::Yoshi) {
+            let joint = ssb_game::combat::shield_transform(f);
+            let size = joint.axes[0].length();
+            let (prim, env) = ssb_psp_runtime::scene::SHIELD_COLORS[usize::from(f.port).min(3)];
+            draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
+                prim: Some([prim[0], prim[1], prim[2], 0xC0]),
+                env: Some([env[0], env[1], env[2], 0xC0]),
+                ..Default::default()
+            });
+            for n in 0..object.node_count {
+                let Some(node) = p.node(object.first_node + n) else {
+                    continue;
+                };
+                let Some(mesh) = (node.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                    .then(|| p.mesh(node.mesh))
+                    .flatten()
+                else {
+                    continue;
+                };
+                let offset = ssb_engine::math::Vec3::new(
+                    node.rest_translate[0],
+                    node.rest_translate[1],
+                    node.rest_translate[2],
+                );
+                gpu.model_transform_billboard(
+                    joint.point(offset),
+                    pl.camera.eye,
+                    pl.camera.at,
+                    0.0,
+                    [
+                        meshdraw::MODEL_SCALE * size * node.rest_scale[0],
+                        meshdraw::MODEL_SCALE * size * node.rest_scale[1],
+                    ],
+                );
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+            }
+            draw_state.color_override = None;
         }
     }
 
