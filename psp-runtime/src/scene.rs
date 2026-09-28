@@ -866,6 +866,7 @@ impl FighterScene {
         let mut placed = false;
         if let Some(spawn) = pack.spawn(stage, spawn_index) {
             fighter.pos = ssb_engine::math::Vec3::new(spawn.x as f32, spawn.y as f32, 0.0);
+            fighter.facing = ssb_game::fighter::Facing::at_spawn_x(fighter.pos.x);
             placed = ssb_game::collision::project_floor(
                 FloorSegments::new(pack, stage),
                 ssb_engine::math::Vec2::new(fighter.pos.x, fighter.pos.y),

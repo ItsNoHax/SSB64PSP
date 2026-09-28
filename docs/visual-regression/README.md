@@ -477,3 +477,10 @@ golden was identical in both captures. 94 of 94 goldens match twice.
 Pack v60. The costume scenes' picks moved from a menu C-button tap to preset
 scene data with no golden change. The new `f1-training-fighter-select`
 golden was identical in both captures. 95 of 95 goldens match twice.
+
+## 2026-09-28 RE-387 spawn facing
+
+Pack v60. Fighters now face the stage centre from their spawn, so 47
+goldens were rebaselined: 28 `psp-game` Training scenes and 19 asset-viewer
+scenes whose only change is Mario's facing. `f1-training-grab` lost its
+tick-98 turn tap. 95 of 95 goldens match twice.
