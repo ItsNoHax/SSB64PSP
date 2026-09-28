@@ -89,6 +89,12 @@ pub struct CaptainState {
     /// `gcPlayAnimAll` calls it has run. Presentation only; read it through
     /// [`punch_effect_ticks`], which drops it once the status ends.
     pub punch_effect: Option<u16>,
+    /// The `efManagerCaptainFalconKickMakeEffect` flame's played frames;
+    /// read it through [`kick_effect_ticks`].
+    pub kick_effect: Option<u16>,
+    /// The flame was made in `SpecialAirLw`, which tilts it by
+    /// `-lr * 60` degrees about Z.
+    pub kick_effect_air: bool,
 }
 
 impl Default for CaptainState {
@@ -105,6 +111,8 @@ impl Default for CaptainState {
             dive_target_pos: None,
             dive_target_kind: None,
             punch_effect: None,
+            kick_effect: None,
+            kick_effect_air: false,
         }
     }
 }
@@ -198,15 +206,73 @@ pub const PUNCH_EFFECT_JOINT: u8 = 16;
 
 pub fn set_special_lw(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialLw, 0.0, 85.0);
-    f.captain.kick_scale = 1.0;
-    f.captain.kick_hit_count = 0;
+    init_special_lw(f);
 }
 
 pub fn set_special_air_lw(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialAirLw, 0.0, 50.0);
+    init_special_lw(f);
+}
+
+/// `ftCaptainSpecialLwProcStatus`. `ftMainSetStatus` with
+/// `FTSTATUS_PRESERVE_NONE` has already stopped any flame.
+fn init_special_lw(f: &mut Fighter) {
     f.captain.kick_scale = 1.0;
     f.captain.kick_hit_count = 0;
+    f.captain.kick_effect = None;
+    f.motion_script.flags = [0; 4];
 }
+
+/// `ftCaptainSpecialLwUpdateEffect`, from the `SpecialLw`, `SpecialLwAir`
+/// and `SpecialAirLw` `proc_physics`. Both kicks run one script: flag 2 goes
+/// to 1 at motion frame 12, which makes the flame, and to 2 at frame 32,
+/// which stops it.
+fn update_kick_effect(f: &mut Fighter) {
+    if f.captain.kick_effect.is_none() {
+        if f.motion_script.flags[2] == 1 {
+            // Made with one `gcPlayAnimAll`, as the Falcon Punch flame.
+            f.captain.kick_effect = Some(1);
+            f.captain.kick_effect_air =
+                f.status.status == AnyStatus::Captain(CaptainStatus::SpecialAirLw);
+            f.motion_script.flags[2] = 0;
+        }
+    } else if f.motion_script.flags[2] == 2 {
+        f.captain.kick_effect = None;
+        f.motion_script.flags[2] = 0;
+    }
+}
+
+/// The Falcon Kick flame's played animation frames, while it exists. Only
+/// the `SpecialLw` to `SpecialLwAir` switch passes
+/// `FTSTATUS_PRESERVE_EFFECT`.
+pub fn kick_effect_ticks(f: &Fighter) -> Option<u16> {
+    f.captain.kick_effect.filter(|_| {
+        matches!(
+            f.status.status,
+            AnyStatus::Captain(
+                CaptainStatus::SpecialLw
+                    | CaptainStatus::SpecialLwAir
+                    | CaptainStatus::SpecialAirLw
+            )
+        )
+    })
+}
+
+/// `efManagerCaptainFalconKickMakeEffect`'s root `rotate`: `lr * 90`
+/// degrees about Y, and `-lr * 60` about Z when made in `SpecialAirLw`.
+pub fn kick_effect_rotate(f: &Fighter) -> [f32; 3] {
+    let lr = f.facing.sign();
+    let z = if f.captain.kick_effect_air {
+        -lr * 60.0f32.to_radians()
+    } else {
+        0.0
+    };
+    [0.0, lr * 90.0f32.to_radians(), z]
+}
+
+/// `efManagerCaptainFalconKickMakeEffect`'s attach joint,
+/// `fp->joints[23]`.
+pub const KICK_EFFECT_JOINT: u8 = 23;
 
 pub fn set_special_hi(f: &mut Fighter) {
     // Grounded Falcon Dive first enters air, and spends every jump.
@@ -297,8 +363,13 @@ pub fn update(f: &mut Fighter) {
     };
     // `efManagerNoEjectProcUpdate`; `ftParamProcPauseEffect` holds it
     // through hitlag.
-    if punch_effect_ticks(f).is_some() && !f.is_in_hitlag() {
-        f.captain.punch_effect = f.captain.punch_effect.map(|t| t.saturating_add(1));
+    if !f.is_in_hitlag() {
+        if punch_effect_ticks(f).is_some() {
+            f.captain.punch_effect = f.captain.punch_effect.map(|t| t.saturating_add(1));
+        }
+        if kick_effect_ticks(f).is_some() {
+            f.captain.kick_effect = f.captain.kick_effect.map(|t| t.saturating_add(1));
+        }
     }
     match current {
         CaptainStatus::Attack13 => {
@@ -396,6 +467,13 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
                 update_punch_effect(f);
             }
             physics::apply_ground_vel_transn(&mut f.physics, f.root_motion, f.facing.sign());
+            // `ftCaptainSpecialLwProcPhysics` updates the flame last.
+            if matches!(
+                f.status.status,
+                AnyStatus::Captain(CaptainStatus::SpecialLw | CaptainStatus::SpecialLwAir)
+            ) {
+                update_kick_effect(f);
+            }
             true
         }
         _ => false,
@@ -467,6 +545,17 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
             ) {
                 f.physics.vel_air.x *= f.captain.kick_scale;
                 f.physics.vel_air.y *= f.captain.kick_scale;
+            }
+            // `ftCaptainSpecialLwProcPhysics` updates the flame last,
+            // `ftCaptainSpecialAirLwProcPhysics` first; nothing between
+            // reads it.
+            if matches!(
+                current,
+                CaptainStatus::SpecialLw
+                    | CaptainStatus::SpecialLwAir
+                    | CaptainStatus::SpecialAirLw
+            ) {
+                update_kick_effect(f);
             }
         }
         CaptainStatus::SpecialHi | CaptainStatus::SpecialAirHi => {
@@ -631,6 +720,38 @@ mod tests {
         assert_eq!(punch_effect_ticks(&f), Some(3));
         status::set_fall(&mut f);
         assert_eq!(punch_effect_ticks(&f), None);
+    }
+
+    #[test]
+    fn kick_flame_lives_from_script_frame_12_to_32() {
+        for air in [false, true] {
+            let mut f = captain();
+            if air {
+                f.become_airborne();
+                set_special_air_lw(&mut f);
+            } else {
+                set_special_lw(&mut f);
+            }
+            let (mut made, mut stopped) = (None, None);
+            while matches!(f.status.status, AnyStatus::Captain(_)) && stopped.is_none() {
+                status::update(&mut f);
+                if air {
+                    apply_air_physics(&mut f);
+                } else {
+                    apply_ground_physics(&mut f);
+                }
+                let live = kick_effect_ticks(&f).is_some();
+                if live && made.is_none() {
+                    made = Some(f.status.anim_frame);
+                    assert_eq!(kick_effect_ticks(&f), Some(1));
+                } else if !live && made.is_some() {
+                    stopped = Some(f.status.anim_frame);
+                }
+            }
+            assert_eq!((made, stopped), (Some(12.0), Some(32.0)), "air {air}");
+            let z = if air { -60.0f32.to_radians() } else { 0.0 };
+            assert_eq!(kick_effect_rotate(&f), [0.0, 90.0f32.to_radians(), z]);
+        }
     }
 
     #[test]

@@ -164,7 +164,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scenes `samus`, `samusshot`, `samusbomb`) | `f1-training-samus`, `-samus-shot`, `-samus-bomb` | Samus's level-2 charging shot on her arm cannon; a released level-1 shot; her Bomb on the floor after she walks off it | RE-373 |
 | `golden_capture` (`psp-game`, scenes `link`, `linkspin`) | `f1-training-link`, `-link-spin` | Link's Boomerang in flight; 13 frames into a ground Spin Attack, whose swirl shows edge-on as a thin arc | RE-374 |
 | `golden_capture` (`psp-game`, scenes `yoshi`, `yoshibomb`) | `f1-training-yoshi`, `-yoshi-bomb` | Yoshi's Egg Throw egg 16 frames into its flight; the Yoshi Bomb's two stars 6 frames after they appear | RE-375 |
-| `golden_capture` (`psp-game`, scene `captain`) | `f1-training-captain` | Captain Falcon's ground Falcon Punch, some 7 frames after its flame appears at joint 16 | RE-376 |
+| `golden_capture` (`psp-game`, scenes `captain`, `captainkick`) | `f1-training-captain`, `-captain-kick` | Captain Falcon's ground Falcon Punch, some 7 frames after its flame appears at joint 16; a ground Falcon Kick some 12 frames into its flame | RE-376–377 |
 | `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center. The bubble visual is not drawn | RE-367, RE-369 |
 
 Stage sweep example:
@@ -411,3 +411,8 @@ identical in both captures. 82 of 82 goldens match twice.
 
 Pack v54 is unchanged. The new `f1-training-captain` golden was identical
 in both captures. 83 of 83 goldens match twice.
+
+## 2026-09-28 RE-377 Captain Falcon Kick scene
+
+Pack v54 is unchanged. The new `f1-training-captain-kick` golden was
+identical in both captures. 84 of 84 goldens match twice.
