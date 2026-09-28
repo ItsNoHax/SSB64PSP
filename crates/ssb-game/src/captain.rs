@@ -85,6 +85,10 @@ pub struct CaptainState {
     /// Grounded Falcon Dive victim's TopN, held still during the catch.
     pub dive_target_pos: Option<Vec3>,
     pub dive_target_kind: Option<crate::fighter::FighterKind>,
+    /// The `efManagerCaptainFalconPunchMakeEffect` flame: how many
+    /// `gcPlayAnimAll` calls it has run. Presentation only; read it through
+    /// [`punch_effect_ticks`], which drops it once the status ends.
+    pub punch_effect: Option<u16>,
 }
 
 impl Default for CaptainState {
@@ -100,6 +104,7 @@ impl Default for CaptainState {
             dive_cliff_wait: 15,
             dive_target_pos: None,
             dive_target_kind: None,
+            punch_effect: None,
         }
     }
 }
@@ -135,13 +140,61 @@ fn crossed(f: &Fighter, at: f32) -> bool {
 
 pub fn set_special_n(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialN, 0.0, 90.0);
-    f.captain.punch_launched = false;
+    init_special_n(f);
 }
 
 pub fn set_special_air_n(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialAirN, 0.0, 90.0);
-    f.captain.punch_launched = false;
+    init_special_n(f);
 }
+
+/// `ftCaptainSpecialNInitStatusVars`. `ftMainSetStatus` with
+/// `FTSTATUS_PRESERVE_NONE` has already stopped any flame.
+fn init_special_n(f: &mut Fighter) {
+    f.captain.punch_launched = false;
+    f.captain.punch_effect = None;
+    f.motion_script.flags[..3].fill(0);
+}
+
+/// `ftCaptainSpecialNUpdateEffect`, from both Falcon Punches'
+/// `proc_physics`. Script flag 0 goes to 1 at motion frame 42, which makes
+/// the flame, and again at frame 55, which stops it.
+fn update_punch_effect(f: &mut Fighter) {
+    if f.captain.punch_effect.is_none() {
+        if f.motion_script.flags[0] == 1 {
+            // The effect's own update plays its animation once on the
+            // frame it is made.
+            f.captain.punch_effect = Some(1);
+            f.motion_script.flags[0] = 0;
+        }
+    } else if f.motion_script.flags[0] == 1 {
+        f.captain.punch_effect = None;
+        f.motion_script.flags[0] = 2;
+    }
+}
+
+/// The Falcon Punch flame's played animation frames, while it exists.
+///
+/// `ftMainSetStatus` stops it on any status change except the
+/// `SpecialN`/`SpecialAirN` switches, which pass `FTSTATUS_PRESERVE_EFFECT`.
+pub fn punch_effect_ticks(f: &Fighter) -> Option<u16> {
+    f.captain.punch_effect.filter(|_| {
+        matches!(
+            f.status.status,
+            AnyStatus::Captain(CaptainStatus::SpecialN | CaptainStatus::SpecialAirN)
+        )
+    })
+}
+
+/// `efManagerCaptainFalconPunchMakeEffect`'s `rotate.y`: `lr * -90`
+/// degrees.
+pub fn punch_effect_rotate_y(f: &Fighter) -> f32 {
+    f.facing.sign() * (-90.0f32).to_radians()
+}
+
+/// `efManagerCaptainFalconPunchMakeEffect`'s attach joint for Captain
+/// (`fp->joints[16]`); Kirby's copy uses joint 30.
+pub const PUNCH_EFFECT_JOINT: u8 = 16;
 
 pub fn set_special_lw(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialLw, 0.0, 85.0);
@@ -242,6 +295,11 @@ pub fn update(f: &mut Fighter) {
     let AnyStatus::Captain(current) = f.status.status else {
         return;
     };
+    // `efManagerNoEjectProcUpdate`; `ftParamProcPauseEffect` holds it
+    // through hitlag.
+    if punch_effect_ticks(f).is_some() && !f.is_in_hitlag() {
+        f.captain.punch_effect = f.captain.punch_effect.map(|t| t.saturating_add(1));
+    }
     match current {
         CaptainStatus::Attack13 => {
             status::rapid_input(f);
@@ -334,6 +392,9 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
             | CaptainStatus::SpecialLwAir
             | CaptainStatus::SpecialLwLanding,
         ) => {
+            if f.status.status == AnyStatus::Captain(CaptainStatus::SpecialN) {
+                update_punch_effect(f);
+            }
             physics::apply_ground_vel_transn(&mut f.physics, f.root_motion, f.facing.sign());
             true
         }
@@ -358,6 +419,7 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
                 f.physics.vel_air.x = cos * f.facing.sign() * PUNCH_VEL_BASE;
                 f.physics.vel_air.y = sin * PUNCH_VEL_BASE;
             }
+            update_punch_effect(f);
             match f.status.anim_frame {
                 frame if frame < 40.0 => {
                     physics::apply_gravity_default(&mut f.physics, &f.attributes);
@@ -532,6 +594,43 @@ mod tests {
         apply_air_physics(&mut f);
         assert!(f.captain.punch_launched);
         assert!((f.physics.vel_air.x - 65.0 * 0.92).abs() < 0.001);
+    }
+
+    #[test]
+    fn punch_flame_lives_from_script_frame_42_to_55() {
+        let mut f = captain();
+        set_special_n(&mut f);
+        let mut made = None;
+        let mut stopped = None;
+        while f.status.status == AnyStatus::Captain(CaptainStatus::SpecialN) {
+            status::update(&mut f);
+            apply_ground_physics(&mut f);
+            let live = punch_effect_ticks(&f).is_some();
+            if live && made.is_none() {
+                made = Some(f.status.anim_frame);
+                assert_eq!(punch_effect_ticks(&f), Some(1));
+            } else if !live && made.is_some() && stopped.is_none() {
+                stopped = Some(f.status.anim_frame);
+            }
+        }
+        assert_eq!(made, Some(42.0));
+        assert_eq!(stopped, Some(55.0));
+        assert_eq!(punch_effect_rotate_y(&f), (-90.0f32).to_radians());
+    }
+
+    #[test]
+    fn punch_flame_survives_the_air_switch_only() {
+        let mut f = captain();
+        set_special_n(&mut f);
+        f.captain.punch_effect = Some(3);
+        on_ground_lost(&mut f);
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Captain(CaptainStatus::SpecialAirN)
+        );
+        assert_eq!(punch_effect_ticks(&f), Some(3));
+        status::set_fall(&mut f);
+        assert_eq!(punch_effect_ticks(&f), None);
     }
 
     #[test]

@@ -152,6 +152,20 @@ pub fn link_spin_attack_effect(pack: &Pack<'_>) -> Option<(ObjectDesc, u32)> {
     Some((object, slot as u32))
 }
 
+/// `dEFManagerCaptainFalconPunchEffectDesc`: file 333's single-DObj flame
+/// (a direct display list, no `EFFECT_FLAG` tree bit), at slot 31 of
+/// `ssb_rom::effect::MANAGER_EFFECT_KEYS`. It has a material animation and
+/// no transform animation.
+pub const CAPTAIN_FALCON_PUNCH_EFFECT_KEY: (u32, u32) = (333, 0x0760);
+
+pub fn captain_falcon_punch_effect(pack: &Pack<'_>) -> Option<ObjectDesc> {
+    (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|object| {
+            (object.source_file, object.source_offset) == CAPTAIN_FALCON_PUNCH_EFFECT_KEY
+        })
+}
+
 /// Fox Special2's three-entry Reflector effect hierarchy.
 pub fn fox_reflector_object(pack: &Pack<'_>) -> Option<ObjectDesc> {
     (0..pack.object_count())
