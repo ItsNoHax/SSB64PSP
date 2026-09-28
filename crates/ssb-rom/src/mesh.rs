@@ -2425,7 +2425,12 @@ pub fn convert_sequence(
     // `func_80016338` seeds a camera's task head 1 with this render mode.
     // Archive census: the only three head-1 graphs that change render mode
     // restore XLU before returning, so later graphs inherit this same mode.
-    streams[1].set_render_mode(RENDER_MODE_AA_ZB_XLU_SURF);
+    // A weapon's `wpDisplayDrawNormal` resets head 1 itself (`G_ZBUFFER`
+    // cleared, `G_RM_AA_XLU_SURF`) before its lists run, so its seed is
+    // already head 1's state (RE-379).
+    if initial != InitialMaterial::WEAPON_EXTERNAL {
+        streams[1].set_render_mode(RENDER_MODE_AA_ZB_XLU_SURF);
+    }
     streams[1].texture_lut = LutState::Known(crate::texture::TextureLut::None);
     for state in &mut streams {
         state.spaces = spaces.clone();

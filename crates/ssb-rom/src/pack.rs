@@ -245,7 +245,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // seed, keyed (247, 0x40) by the attributes record that names it.
 // 55 converts Kirby's Final Cutter wave tree (328, 0x1D388) under the
 // weapon seed and adds its `anim_joints` (328 + 0x1D410) as weapon slot 1.
-pub const VERSION: u32 = 55;
+// 56 adds Pikachu's Thunder Jolt: the aerial list (342, 0x270) as a
+// one-node object and the ground tree (342, 0x1888) with its MObjSub and
+// material scripts, both under the weapon seed, with weapon slots 2 and 3.
+// It also re-pairs the ThunderJolt effect (342, 0x2258) with its own MObjSub
+// table (0x20A0).
+pub const VERSION: u32 = 56;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -528,7 +533,10 @@ pub enum AlphaGate {
 ///
 /// * [`flags::ALPHA_TEST`] is the `CVG_X_ALPHA | ALPHA_CVG_SEL` cutout, whose
 ///   real multisampled-coverage behaviour the GE cannot reproduce; this port
-///   approximates it as `alpha > 0`, following `sf64-psp`.
+///   approximates it as `alpha > 0`, following `sf64-psp`. It is issued as
+///   `alpha >= 1`, the same test on 8-bit alpha: PPSSPP's software renderer
+///   rewrites `GREATER 0` to `NOTEQUAL 0`, treats that as a no-op test on its
+///   rectangle path and draws alpha-0 texels there (RE-379).
 /// * [`flags::ALPHA_COMPARE_THRESHOLD`] is `G_AC_THRESHOLD`, a real
 ///   comparison of final pixel alpha against `G_SETBLENDCOLOR`'s alpha.
 ///
@@ -552,12 +560,12 @@ pub fn alpha_gate(prim_flags: u32, alpha_compare_ref: u32) -> AlphaGate {
         // Only the alpha channel of the packed ABGR reference is meaningful.
         let reference = ((alpha_compare_ref >> 24) & 0xFF) as u8;
         if cutout && reference == 0 {
-            return AlphaGate::Greater(0);
+            return AlphaGate::GreaterOrEqual(1);
         }
         return AlphaGate::GreaterOrEqual(reference);
     }
     if cutout {
-        return AlphaGate::Greater(0);
+        return AlphaGate::GreaterOrEqual(1);
     }
     AlphaGate::Off
 }
@@ -991,6 +999,10 @@ impl AnimDesc {
     /// [`Self::WEAPON`] slot of Kirby's Final Cutter wave (file 328's table
     /// at 0x1D410).
     pub const WEAPON_ANIM_KIRBY_CUTTER: u32 = 1;
+    /// [`Self::WEAPON`] slot of the aerial Thunder Jolt (342 + 0x360).
+    pub const WEAPON_ANIM_PIKACHU_JOLT_AIR: u32 = 2;
+    /// [`Self::WEAPON`] slot of the ground Thunder Jolt (342 + 0x1A20).
+    pub const WEAPON_ANIM_PIKACHU_JOLT_GROUND: u32 = 3;
 
     /// `shield_anim_joints` has one table per 45-degree stick sector.
     pub const SHIELD_SECTORS: u32 = 8;
@@ -4258,7 +4270,7 @@ mod tests {
         // Cutout alone: the `alpha > 0` approximation.
         assert_eq!(
             alpha_gate(flags::ALPHA_TEST, 0),
-            AlphaGate::Greater(0),
+            AlphaGate::GreaterOrEqual(1),
             "the cutout approximation rejects only fully transparent texels"
         );
 
@@ -4277,7 +4289,7 @@ mod tests {
         // silently discard the cutout, so the comparison must stay `> 0`.
         assert_eq!(
             alpha_gate(flags::ALPHA_TEST | flags::ALPHA_COMPARE_THRESHOLD, 0),
-            AlphaGate::Greater(0)
+            AlphaGate::GreaterOrEqual(1)
         );
 
         // Overlap, nonzero reference: `alpha >= reference` already implies
@@ -4324,7 +4336,7 @@ mod tests {
         assert_eq!((p.alpha_compare_ref >> 24) & 0xFF, 0);
         assert_eq!(
             alpha_gate(p.flags, p.alpha_compare_ref),
-            AlphaGate::Greater(0)
+            AlphaGate::GreaterOrEqual(1)
         );
     }
 

@@ -58,7 +58,25 @@ pub struct ThunderJolt {
     /// `lr`: ±1 on floor; 2 ascending, 3 descending on wall.
     pub direction: i8,
     normal: Vec2,
+    /// Counts `gcAddAnimAll` calls: the aerial weapon's own, then the ground
+    /// weapon's at its creation and at every restart. Presentation only.
+    pub anim_epoch: u16,
+    /// `gcPlayAnimAll` calls since the last `gcAddAnimAll`.
+    pub anim_ticks: u16,
+    /// The ground weapon's `GObj::anim_frame`, at `gcSetAllAnimSpeed`'s 0.5.
+    anim_frame: f32,
+    /// The next play only parses the new scripts (`AOBJ_ANIM_CHANGED`).
+    anim_fresh: bool,
+    /// The ground weapon's root `rotate.y`: 180 or 0 degrees, set when it is
+    /// made and on a reflect. Presentation only.
+    pub model_rotate_y: f32,
 }
+
+/// `gcSetAllAnimSpeed(new_gobj, 0.5F)` in `wpPikachuThunderJoltGroundMakeWeapon`.
+pub const JOLT_GROUND_ANIM_SPEED: f32 = 0.5;
+/// `WPPIKACHUJOLT_ANIM_PUSH_FRAME`.
+const JOLT_ANIM_PUSH_FRAME: f32 = 7.5;
+const DEG_180: f32 = core::f32::consts::PI;
 impl ThunderJolt {
     pub(super) fn new(s: WeaponSpawn) -> Self {
         let (sin, cos) = sin_cos(-core::f32::consts::FRAC_PI_4);
@@ -71,7 +89,25 @@ impl ThunderJolt {
             surface: None,
             direction: if s.facing < 0.0 { -1 } else { 1 },
             normal: Vec2::ZERO,
+            anim_epoch: 0,
+            anim_ticks: 0,
+            anim_frame: 0.0,
+            anim_fresh: true,
+            model_rotate_y: 0.0,
         }
+    }
+    /// The ground weapon's root `rotate.z`: `wpPikachuThunderJoltGroundProcMap`
+    /// sets it to `atan2(-angle.x, angle.y)` of the line it rides.
+    pub fn rotate_z(&self) -> f32 {
+        ssb_engine::math::atan2(-self.normal.x, self.normal.y)
+    }
+    /// `wpPikachuThunderJoltGroundAddAnim`: restart the animation and play it
+    /// once.
+    fn restart_anim(&mut self) {
+        self.anim_epoch = self.anim_epoch.wrapping_add(1);
+        self.anim_ticks = 1;
+        self.anim_frame = 0.0;
+        self.anim_fresh = false;
     }
     pub(super) fn hit(&self) -> (Hitbox, Vec3) {
         if self.surface.is_some() {
@@ -92,6 +128,8 @@ impl ThunderJolt {
         }
         if self.surface.is_some() {
             self.direction = if self.velocity.x >= 0.0 { 1 } else { -1 };
+            // `wpPikachuThunderJoltGroundProcReflector`.
+            self.model_rotate_y = if self.velocity.x >= 0.0 { DEG_180 } else { 0.0 };
         }
         self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
     }
@@ -106,6 +144,17 @@ impl ThunderJolt {
         F: Fn() -> I + Copy,
         I: IntoIterator<Item = MapSurface>,
     {
+        // `wpProcessProcWeaponMain` plays the DObj animation before
+        // `proc_update`. The first play after `gcAddAnimAll` only parses.
+        self.anim_ticks = self.anim_ticks.wrapping_add(1);
+        if core::mem::take(&mut self.anim_fresh) {
+        } else if self.surface.is_some() {
+            self.anim_frame += JOLT_GROUND_ANIM_SPEED;
+        }
+        // `wpPikachuThunderJoltGroundProcUpdate`, ahead of the lifetime.
+        if self.surface.is_some() && self.anim_frame == JOLT_ANIM_PUSH_FRAME {
+            self.restart_anim();
+        }
         self.lifetime = self.lifetime.saturating_sub(1);
         if self.lifetime == 0 {
             return false;
@@ -156,6 +205,18 @@ impl ThunderJolt {
                     };
                     self.damage = 7;
                     self.attach(s, pos, direction);
+                    // `wpPikachuThunderJoltGroundMakeWeapon`: a new weapon,
+                    // whose `wpManagerMakeWeapon` adds the ground animation.
+                    self.anim_epoch = self.anim_epoch.wrapping_add(1);
+                    self.anim_ticks = 0;
+                    self.anim_frame = 0.0;
+                    self.anim_fresh = true;
+                    self.model_rotate_y = match (kind, direction) {
+                        (MapSurfaceKind::Floor, d) if d >= 0 => DEG_180,
+                        (MapSurfaceKind::Floor, _) => 0.0,
+                        (MapSurfaceKind::LeftWall, 3) | (MapSurfaceKind::RightWall, 2) => 0.0,
+                        _ => DEG_180,
+                    };
                     return true;
                 }
             }
@@ -269,6 +330,7 @@ impl ThunderJolt {
                 2
             };
             self.attach(s, pos, dir);
+            self.restart_anim();
             return true;
         }
         if let Some((s, pos)) = on_line {
@@ -327,6 +389,7 @@ impl ThunderJolt {
             Vec3::new(x2, y2, from.z)
         };
         self.attach(s, pos, dir);
+        self.restart_anim();
         Some(true)
     }
 }
@@ -511,6 +574,33 @@ mod tests {
         let x = j.position.x;
         assert!(j.tick(|| floor));
         assert_eq!(j.position.x - x, 55.0);
+    }
+    #[test]
+    fn ground_jolt_restarts_its_animation_every_push_frame() {
+        let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 0.0, 70.0));
+        let floor = [surface(
+            MapSurfaceKind::Floor,
+            0,
+            (-10000, 0, 0),
+            (10000, 0, 1),
+        )];
+        assert!(j.tick(|| floor));
+        // A new ground weapon: its animation is added, not yet played.
+        assert_eq!((j.anim_epoch, j.anim_ticks), (1, 0));
+        assert_eq!(j.model_rotate_y, core::f32::consts::PI);
+        assert_eq!(j.rotate_z(), 0.0);
+        // The first play only parses; each later one adds 0.5, and
+        // `anim_frame == 7.5` restarts it with one play.
+        for ticks in 1..=15 {
+            assert!(j.tick(|| floor));
+            assert_eq!((j.anim_epoch, j.anim_ticks), (1, ticks));
+        }
+        assert!(j.tick(|| floor));
+        assert_eq!((j.anim_epoch, j.anim_ticks), (2, 1));
+        for _ in 0..15 {
+            assert!(j.tick(|| floor));
+        }
+        assert_eq!((j.anim_epoch, j.anim_ticks), (3, 1));
     }
     #[test]
     fn air_jolt_resolves_ceiling_without_converting_and_expires_on_tick_100() {

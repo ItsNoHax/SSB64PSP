@@ -164,6 +164,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scenes `samus`, `samusshot`, `samusbomb`) | `f1-training-samus`, `-samus-shot`, `-samus-bomb` | Samus's level-2 charging shot on her arm cannon; a released level-1 shot; her Bomb on the floor after she walks off it | RE-373 |
 | `golden_capture` (`psp-game`, scenes `link`, `linkspin`) | `f1-training-link`, `-link-spin` | Link's Boomerang in flight; 13 frames into a ground Spin Attack, whose swirl shows edge-on as a thin arc | RE-374 |
 | `golden_capture` (`psp-game`, scenes `yoshi`, `yoshibomb`) | `f1-training-yoshi`, `-yoshi-bomb` | Yoshi's Egg Throw egg 16 frames into its flight; the Yoshi Bomb's two stars 6 frames after they appear (retimed for the hop in RE-378) | RE-375, RE-378 |
+| `golden_capture` (`psp-game`, scenes `pikachu`, `pikachuair`) | `f1-training-pikachu`, `-pikachu-air` | Pikachu's ground Thunder Jolt 8 plays into its first push cycle; an aerial jolt 11 frames into its flight | RE-379 |
 | `golden_capture` (`psp-game`, scene `kirby`) | `f1-training-kirby` | Kirby after a grounded Final Cutter lands on the top platform; its wave 6 frames old | RE-378 |
 | `golden_capture` (`psp-game`, scenes `captain`, `captainkick`) | `f1-training-captain`, `-captain-kick` | Captain Falcon's ground Falcon Punch, some 7 frames after its flame appears at joint 16; a ground Falcon Kick some 12 frames into its flame | RE-376–377 |
 | `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center. The bubble visual is not drawn | RE-367, RE-369 |
@@ -425,4 +426,14 @@ seed. `psp-game` now samples TransN for every status, which changed
 `f1-training-captain`, `-captain-kick` and `-yoshi-bomb` (the Yoshi Bomb
 capture moved from tick 60 to 68). Those three and the new
 `f1-training-kirby` were each identical in both captures. 85 of 85 goldens
+match twice.
+
+## 2026-09-28 RE-379 Pikachu scenes, weapon pass order and cutout gate
+
+Pack v56 (`8c65430a…`). Weapons and effects now draw after the fighters,
+and the cutout alpha gate is issued as `>= 1` to sidestep PPSSPP's
+`GREATER 0` shortcut. That changed `f1-training-fireball`, `-samus`,
+`-link-spin`, `-captain`, `-captain-kick` and `r2-saffron-city-gate`
+(RE-379 lists why). They and the new `f1-training-pikachu` and
+`-pikachu-air` were each identical in both captures. 87 of 87 goldens
 match twice.

@@ -305,6 +305,11 @@ pub enum GameScene {
     CaptainKick,
     /// `kirby`: Kirby in Training, one Final Cutter wave on the floor.
     Kirby,
+    /// `pikachu`: Pikachu in Training, one Thunder Jolt crawling the floor.
+    Pikachu,
+    /// `pikachuair`: Pikachu in Training, one aerial Thunder Jolt after a
+    /// jump.
+    PikachuAir,
     /// `shadows`: first jump's apex, player airborne.
     Shadows,
     /// `grab`: Training plus a Z+A grab of the dummy, frozen while held.
@@ -322,7 +327,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 22] = [
+    pub const ALL: [GameScene; 24] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -338,6 +343,8 @@ impl GameScene {
         GameScene::Captain,
         GameScene::CaptainKick,
         GameScene::Kirby,
+        GameScene::Pikachu,
+        GameScene::PikachuAir,
         GameScene::Shadows,
         GameScene::Grab,
         GameScene::Jab,
@@ -364,6 +371,8 @@ impl GameScene {
             GameScene::Captain => "captain",
             GameScene::CaptainKick => "captainkick",
             GameScene::Kirby => "kirby",
+            GameScene::Pikachu => "pikachu",
+            GameScene::PikachuAir => "pikachuair",
             GameScene::Shadows => "shadows",
             GameScene::Grab => "grab",
             GameScene::Jab => "jab",

@@ -177,6 +177,18 @@ pub fn kirby_cutter_object(pack: &Pack<'_>) -> Option<ObjectDesc> {
         .find(|object| (object.source_file, object.source_offset) == KIRBY_CUTTER_SOURCE)
 }
 
+/// Pikachu's aerial Thunder Jolt (file 244 + 0x00): file 342's direct list
+/// at 0x270, packed as a one-node object under the weapon seed (RE-379).
+pub const PIKACHU_JOLT_AIR_SOURCE: (u32, u32) = (342, 0x270);
+/// The ground Thunder Jolt (file 244 + 0x34): file 342's eight-node tree.
+pub const PIKACHU_JOLT_GROUND_SOURCE: (u32, u32) = (342, 0x1888);
+
+pub fn object_keyed(pack: &Pack<'_>, key: (u32, u32)) -> Option<ObjectDesc> {
+    (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|object| (object.source_file, object.source_offset) == key)
+}
+
 /// `dEFManagerCaptainFalconKickEffectDesc`: file 350's two-node flame tree,
 /// at slot 29 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
 pub const CAPTAIN_FALCON_KICK_EFFECT_KEY: (u32, u32) = (350, 0x0B08);
