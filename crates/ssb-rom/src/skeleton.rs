@@ -898,6 +898,12 @@ pub const MAX_EFFECT_MAT_ANIMS: usize = 8;
 /// [`Self::start`] is that boundary; a caller restarts a fresh
 /// `EffectMaterialAnimator` (or calls [`Self::start`] again) whenever the
 /// effect itself restarts.
+///
+/// A stage controller object uses the same player (RE-364): it starts a
+/// script per `MObj` with [`Self::restart`] whenever its controller calls
+/// `gcAddAnimAll`, and an `MObj` no script has reached draws its rest
+/// material.
+#[derive(Clone, Copy)]
 pub struct EffectMaterialAnimator {
     slots: [(u32, crate::matanim::MaterialJoint); MAX_EFFECT_MAT_ANIMS],
     count: usize,
@@ -992,6 +998,41 @@ impl EffectMaterialAnimator {
             self.slots[self.count] = (i, crate::matanim::MaterialJoint::start(script, 0.0));
             self.count += 1;
         }
+    }
+
+    /// `gcAddMObjMatAnimJoint(mobj, script, 0)`: restarts `mat_anim`'s
+    /// joint on `script`, which may be any script in the same file as the
+    /// entry's own, and leaves every other slot as it is. Returns `false`
+    /// when `mat_anim` is new and every slot is taken.
+    pub fn restart(&mut self, mat_anim: u32, script: u32) -> bool {
+        let joint = crate::matanim::MaterialJoint::start(script, 0.0);
+        if let Some(slot) = self.slots[..self.count]
+            .iter_mut()
+            .find(|(i, _)| *i == mat_anim)
+        {
+            slot.1 = joint;
+            return true;
+        }
+        if self.count >= MAX_EFFECT_MAT_ANIMS {
+            return false;
+        }
+        self.slots[self.count] = (mat_anim, joint);
+        self.count += 1;
+        true
+    }
+
+    /// How many joints this player ticks.
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// The joint playing `mat_anim`, if one was started.
+    pub fn joint_for(&self, mat_anim: u32) -> Option<&crate::matanim::MaterialJoint> {
+        self.joint(mat_anim)
     }
 
     /// Advances every tracked script one tick, each against its own source

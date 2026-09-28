@@ -217,7 +217,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // has neither, so a v44 runtime would run Zebes acid with no damage.
 // 45 adds the Zebes acid object's animation (`ground_obj::ACID_ANIM`, ground
 // slot 29). A v44 pack has none, so its acid would neither draw nor move.
-pub const VERSION: u32 = 45;
+// 46 adds the controllers' material animations (`AnimDesc::GROUND_MAT`) and
+// attaches `MatAnimDesc`s to Whispy's eyes and mouth and the acid. A v45
+// pack has none, so those objects would keep their rest materials.
+pub const VERSION: u32 = 46;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -935,6 +938,13 @@ impl AnimDesc {
     /// `fighter` value marking a stage controller object's animation.
     /// `slot` is the index into `ground_obj::ANIMS` (RE-357).
     pub const GROUND: u32 = u32::MAX - 3;
+
+    /// `fighter` value marking a stage controller's material animation.
+    /// `slot` is the index into `ground_obj::MAT_ANIMS` (RE-364). Each
+    /// joint's `node` is not a node: it names the [`MatAnimDesc`] of the
+    /// `MObj` the script restarts, or [`AnimJoint::NO_NODE`] for an `MObj`
+    /// with no packed mesh (a Yoshi's Island cloud).
+    pub const GROUND_MAT: u32 = u32::MAX - 4;
 
     /// `fighter` value marking an effect-manager DObj animation. `slot` is
     /// the index into `effect::MANAGER_EFFECT_KEYS` (RE-174).
