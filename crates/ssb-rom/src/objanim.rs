@@ -202,8 +202,19 @@ impl StageJoint {
     /// contract [`figatree::JointAnim::tick`](crate::figatree::JointAnim::tick)
     /// has.
     pub fn tick(&mut self, data: &[u8], speed: f32, pose: &mut JointPose) -> Result<(), AnimError> {
+        self.tick_scaled(data, speed, pose, [1.0; 3])
+    }
+
+    /// Play translation tracks through the fighter's per-joint scale.
+    pub fn tick_scaled(
+        &mut self,
+        data: &[u8],
+        speed: f32,
+        pose: &mut JointPose,
+        translate_scale: [f32; 3],
+    ) -> Result<(), AnimError> {
         self.parse(data, speed)?;
-        self.play(speed, pose);
+        self.play(speed, pose, translate_scale);
         Ok(())
     }
 
@@ -376,7 +387,7 @@ impl StageJoint {
     }
 
     /// `gcPlayDObjAnimJoint`: advance every live track and write the pose.
-    fn play(&mut self, speed: f32, pose: &mut JointPose) {
+    fn play(&mut self, speed: f32, pose: &mut JointPose, translate_scale: [f32; 3]) {
         for (track, aobj) in self.tracks.iter_mut().enumerate() {
             if aobj.kind == Kind::None {
                 continue;
@@ -387,7 +398,7 @@ impl StageJoint {
             let value = aobj.value();
             match track {
                 0..=2 => pose.rotate[track] = value,
-                4..=6 => pose.translate[track - 4] = value,
+                4..=6 => pose.translate[track - 4] = value * translate_scale[track - 4],
                 7..=9 => pose.scale[track - 7] = value,
                 // TraI, the spline-translation fraction, needs the control
                 // points opcode 12 would set; nothing reads it here.

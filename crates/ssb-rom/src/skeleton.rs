@@ -42,6 +42,18 @@ pub const MAX_JOINTS: usize = 40;
 /// The biggest scene graph in the archive is well under this.
 pub const MAX_NODES: usize = 64;
 
+/// One big-endian `Vec3f` in `FTAttributes.translate_scales`.
+pub fn translation_scale(bytes: &[u8], joint: usize) -> [f32; 3] {
+    let at = joint * 12;
+    core::array::from_fn(|axis| {
+        bytes
+            .get(at + axis * 4..at + axis * 4 + 4)
+            .and_then(|b| b.try_into().ok())
+            .map(|b: [u8; 4]| f32::from_be_bytes(b))
+            .unwrap_or(1.0)
+    })
+}
+
 /// One object's animation state: a clock and a pose per joint.
 ///
 /// Fixed-size and `Copy`-free but allocation-free, so it can live in a
@@ -145,9 +157,29 @@ impl Skeleton {
     /// and the error is returned once every joint has been given its tick —
     /// a half-posed skeleton is worse than a fully posed one with a bad joint.
     pub fn tick(&mut self, script: &[u8]) -> Result<(), Desynchronised> {
+        self.tick_scaled(script, None, 0)
+    }
+
+    /// Play fighter translation tracks with the source joint's scale vector.
+    /// Model joint zero is FTParts joint 4; a leading runtime joint has no
+    /// packed node and uses the identity vector.
+    pub fn tick_scaled(
+        &mut self,
+        script: &[u8],
+        scales: Option<&[u8]>,
+        first_node: u32,
+    ) -> Result<(), Desynchronised> {
         let mut failed = None;
         for i in 0..self.joint_count {
-            if let Err(e) = self.anims[i].tick(script, self.speed, &mut self.poses[i]) {
+            let scale = scales.map_or([1.0; 3], |bytes| {
+                if self.nodes[i] == AnimJoint::NO_NODE || self.nodes[i] < first_node {
+                    [1.0; 3]
+                } else {
+                    translation_scale(bytes, (self.nodes[i] - first_node) as usize + 4)
+                }
+            });
+            if let Err(e) = self.anims[i].tick_scaled(script, self.speed, &mut self.poses[i], scale)
+            {
                 self.anims[i] = JointAnim::inert();
                 failed.get_or_insert(e);
             }
@@ -268,7 +300,7 @@ pub fn shield_lookup(script: &[u8], anim: &AnimDesc, joint: u32) -> Option<([f32
 /// frame starts from this pose.
 ///
 /// Luigi's `translate_scales` variant (`ftCommonGuardGetJointTransformScale`)
-/// is not applied.
+/// scales both the scripted and neutral translations.
 pub fn apply_shield_pose(
     pack: &Pack<'_>,
     anim: &AnimDesc,
@@ -281,6 +313,7 @@ pub fn apply_shield_pose(
     let Some(script) = pack.anim_script(anim) else {
         return;
     };
+    let scales = pack.fighter_translate_scales(anim.slot / AnimDesc::SHIELD_SECTORS);
     let last = anim.joint_count.saturating_sub(1);
     let first = match joints {
         ShieldJoints::ShieldJoint => last,
@@ -307,12 +340,15 @@ pub fn apply_shield_pose(
         // `InitJoints` sets `is_anim_joint`, so `ftParamUpdateAnimKeys` parses
         // these with `gcParseDObjAnimJoint`: the 32-bit event stream.
         let mut player = crate::objanim::StageJoint::start_changed(joint.script, frame);
-        if player.tick(script, 1.0, pose).is_err() {
+        let scale_joint = if j == last { 3 } else { (j + 3) as usize };
+        let scale = scales.map_or([1.0; 3], |bytes| translation_scale(bytes, scale_joint));
+        if player.tick_scaled(script, 1.0, pose, scale).is_err() {
             continue;
         }
         for k in 0..3 {
             pose.rotate[k] = (pose.rotate[k] - rotate[k]) * range + rotate[k];
-            pose.translate[k] = (pose.translate[k] - translate[k]) * range + translate[k];
+            let neutral = translate[k] * scale[k];
+            pose.translate[k] = (pose.translate[k] - neutral) * range + neutral;
         }
     }
 }

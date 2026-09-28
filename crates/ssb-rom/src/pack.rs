@@ -233,7 +233,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 49 adds the fighters' shield poses (`AnimDesc::SHIELD_POSE`, RE-367): eight
 // stick-sector tables per fighter from its `*ShieldPose` file. A v48 pack has
 // none, so its shield would hold `GuardOn`'s last frame.
-pub const VERSION: u32 = 49;
+// 50 adds the ROM's per-joint translation scale vectors for Luigi, stored as
+// an animation data row (`AnimDesc::TRANSLATE_SCALES`).
+pub const VERSION: u32 = 50;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -965,6 +967,10 @@ impl AnimDesc {
     /// fighter's joints in order. `frames` is not a length: it is the byte
     /// offset of `dobj_lookup`, the neutral pose, within the script bytes.
     pub const SHIELD_POSE: u32 = u32::MAX - 5;
+
+    /// Per-joint big-endian `Vec3f` translation scales. `slot` is `FTKind`,
+    /// and `script` contains exactly the scale array from `FTAttributes`.
+    pub const TRANSLATE_SCALES: u32 = u32::MAX - 6;
 
     /// `shield_anim_joints` has one table per 45-degree stick sector.
     pub const SHIELD_SECTORS: u32 = 8;
@@ -3325,6 +3331,15 @@ impl<'a> Pack<'a> {
             .rev()
             .filter_map(|i| self.anim(i))
             .find(|a| a.fighter == AnimDesc::SHIELD_POSE && a.slot == slot)
+    }
+
+    /// The original fighter's `FTAttributes.translate_scales` vectors.
+    pub fn fighter_translate_scales(&self, fighter: u32) -> Option<&'a [u8]> {
+        let anim = (0..self.anim_count)
+            .rev()
+            .filter_map(|i| self.anim(i))
+            .find(|a| a.fighter == AnimDesc::TRANSLATE_SCALES && a.slot == fighter)?;
+        self.anim_script(&anim)
     }
 
     /// A stage's joint animation, if it has one.
