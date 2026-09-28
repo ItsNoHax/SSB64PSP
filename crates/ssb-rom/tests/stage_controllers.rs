@@ -452,3 +452,154 @@ fn hazard_descriptors_sit_where_the_controllers_read_them() {
     assert_eq!(graph.nodes[1].parent, Some(0));
     eprintln!("acid surface y {}", graph.nodes[1].desc.translate[1]);
 }
+
+/// The match loader's path: every VS `GR*Map` file maps to its `GRKind`,
+/// and only the four hazard stages yield a descriptor, of the struct their
+/// controller reads.
+#[test]
+fn vs_ground_files_yield_their_kind_and_hazard() {
+    use ssb_game::stage::StageKind;
+    let Some(path) = std::env::var_os("SSB64_ROM") else {
+        return;
+    };
+    let data = std::fs::read(path).unwrap();
+    let info = ssb_rom::rom::identify(&data).unwrap();
+    let archive = Archive::open(&data, info.region).unwrap();
+    let mut kinds = Vec::new();
+    for (gkind, &id) in ssb_rom::stage::VS_GROUND_FILES.iter().enumerate() {
+        assert_eq!(ssb_rom::stage::vs_ground_kind(id), Some(gkind as u8));
+        let file = archive.load(id).unwrap();
+        let heads = ssb_rom::stage::find_ground_data(&file, |_, _| true);
+        assert!(heads.iter().any(|h| h.offset == 0x14), "file {id:#x}");
+        let kind = StageKind::from_gkind(gkind as u8).unwrap();
+        let (attack, throw) =
+            ssb_rom::stage::hazard_words(&file).map_or((None, None), |w| kind.hazard_descs(w));
+        kinds.push((kind, attack.map(|a| a.damage), throw.map(|t| t.angle)));
+    }
+    assert_eq!(
+        kinds,
+        [
+            (StageKind::Castle, None, None),
+            (StageKind::Sector, None, None),
+            (StageKind::Jungle, None, Some(90)),
+            (StageKind::Zebes, Some(16), None),
+            (StageKind::Hyrule, None, Some(90)),
+            (StageKind::Yoster, None, None),
+            (StageKind::Pupupu, None, None),
+            (StageKind::Yamabuki, None, None),
+            (StageKind::Inishie, Some(20), None),
+        ]
+    );
+    assert_eq!(ssb_rom::stage::vs_ground_kind(0x10A), None);
+}
+
+/// The pack carries each VS stage's hazard data where the loader reads it.
+#[test]
+fn packed_vs_stages_carry_their_hazard_data() {
+    if std::env::var_os("SSB64_ROM").is_none() {
+        return;
+    }
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    if !path.exists() {
+        return;
+    }
+    let bytes = std::fs::read(path).unwrap();
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    #[rustfmt::skip]
+    let expected: [[i32; 7]; 9] = [
+        [0; 7],
+        [0; 7],
+        [3, 0, 90, 0, 0, 180, 0],   // Jungle barrel
+        [0, 16, 80, 130, 0, 30, 1], // Zebes acid
+        [2, 14, 90, 60, 0, 115, 0], // Hyrule twister
+        [0; 7],
+        [0; 7],
+        [0; 7],
+        [1, 20, 90, 130, 0, 30, 0], // Inishie POW
+    ];
+    for (gkind, &file) in ssb_rom::stage::VS_GROUND_FILES.iter().enumerate() {
+        let i = pack.stage_of_file(file).expect("VS stage packed");
+        let s = pack.stage(i).unwrap();
+        assert_eq!(s.source_offset, 0x14, "file {file:#x}");
+        assert_eq!(s.hazard, expected[gkind], "file {file:#x}");
+        if gkind == 3 {
+            assert!(
+                (s.hazard_surface_y - -282.725).abs() < 1e-3,
+                "{}",
+                s.hazard_surface_y
+            );
+        } else {
+            assert_eq!(s.hazard_surface_y, 0.0, "file {file:#x}");
+        }
+    }
+}
+
+/// Every VS stage builds its controller from packed data alone and runs a
+/// minute of ticks with no fighters and no object runtime: the loader path
+/// `psp-runtime::scene::StageSetup` feeds `Stage::new`.
+#[test]
+fn every_packed_vs_stage_builds_and_runs_its_controller() {
+    use ssb_game::stage::{
+        Controller, MapObject, NoObjects, Stage, StageInit, StageKind, TickInput,
+    };
+    if std::env::var_os("SSB64_ROM").is_none() {
+        return;
+    }
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    if !path.exists() {
+        return;
+    }
+    let bytes = std::fs::read(path).unwrap();
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    for (gkind, &file) in ssb_rom::stage::VS_GROUND_FILES.iter().enumerate() {
+        let s = pack.stage(pack.stage_of_file(file).unwrap()).unwrap();
+        let kind = StageKind::from_gkind(gkind as u8).unwrap();
+        let map_objects: Vec<MapObject> = pack
+            .stage_points(&s)
+            .map(|p| MapObject {
+                kind: p.kind,
+                pos: ssb_engine::math::Vec3::new(p.x as f32, p.y as f32, 0.0),
+            })
+            .collect();
+        let (hazard_attack, hazard_throw) = kind.hazard_descs(s.hazard);
+        let init = StageInit {
+            kind,
+            map_objects: &map_objects,
+            bound_bottom: s.bounds.bottom as f32,
+            hazard_attack,
+            hazard_throw,
+            acid_surface_y: s.hazard_surface_y,
+        };
+        let count = pack
+            .stage_lines(&s)
+            .map(|l| l.yakumono as usize + 1)
+            .max()
+            .unwrap_or(0);
+        let mut groups = vec![ssb_game::map::MapGroup::default(); count];
+        let mut stage = Stage::new(&init, &mut groups, &mut NoObjects);
+        assert_eq!(stage.attack, hazard_attack);
+        assert_eq!(stage.throw, hazard_throw);
+        assert_eq!(
+            matches!(stage.controller, Controller::None),
+            kind == StageKind::Sector,
+            "{kind:?}"
+        );
+        let line_group = |_: u16| None;
+        for _ in 0..3600 {
+            stage.tick(
+                &mut [],
+                TickInput {
+                    groups: &mut groups,
+                    objects: &mut NoObjects,
+                    map: ssb_game::stage::MapQuery {
+                        surfaces: || core::iter::empty::<ssb_game::weapon::MapSurface>(),
+                        line_group: &line_group,
+                    },
+                    started: true,
+                },
+            );
+        }
+    }
+}

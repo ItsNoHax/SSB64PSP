@@ -475,40 +475,26 @@ unsafe fn run() -> ! {
                             {
                                 stage_objects =
                                     ssb_rom::ground_obj::GroundObjects::new(p, stage.source_file);
-                                if stage.source_file == ssb_rom::ground_obj::PUPUPU_FILE {
-                                    let map_objects: alloc::vec::Vec<_> = p
-                                        .stage_points(&stage)
-                                        .map(|point| ssb_game::stage::MapObject {
-                                            kind: point.kind,
-                                            pos: ssb_engine::math::Vec3::new(
-                                                point.x as f32,
-                                                point.y as f32,
-                                                0.0,
-                                            ),
-                                        })
-                                        .collect();
-                                    let mut empty = [];
-                                    let groups = stage_map
-                                        .as_mut()
-                                        .map_or(&mut empty[..], |map| map.groups.as_mut_slice());
-                                    stage_ctl = ssb_game::stage::Stage::new(
-                                        &ssb_game::stage::StageInit {
-                                            kind: ssb_game::stage::StageKind::Pupupu,
-                                            map_objects: &map_objects,
-                                            bound_bottom: stage.bounds.bottom as f32,
-                                            hazard_attack: None,
-                                            hazard_throw: None,
-                                            acid_surface_y: 0.0,
-                                        },
-                                        groups,
-                                        &mut ssb_psp_runtime::scene::StageObjectsPort {
-                                            pack: p,
-                                            objects: &mut stage_objects,
-                                        },
-                                    );
-                                } else {
-                                    stage_ctl = ssb_game::stage::Stage::none();
-                                }
+                                // `grMainSetupMakeGround`: any VS stage gets its
+                                // controller; others run an empty slot.
+                                stage_ctl = match ssb_psp_runtime::scene::StageSetup::new(p, &stage)
+                                {
+                                    Some(setup) => {
+                                        let mut empty = [];
+                                        let groups = stage_map.as_mut().map_or(&mut empty[..], |map| {
+                                            map.groups.as_mut_slice()
+                                        });
+                                        ssb_game::stage::Stage::new(
+                                            &setup.init(),
+                                            groups,
+                                            &mut ssb_psp_runtime::scene::StageObjectsPort {
+                                                pack: p,
+                                                objects: &mut stage_objects,
+                                            },
+                                        )
+                                    }
+                                    None => ssb_game::stage::Stage::none(),
+                                };
                             }
                             play_state = pack.as_ref().and_then(|p| {
                                 p.stage(TRAINING_STAGE_INDEX).map(|s| {

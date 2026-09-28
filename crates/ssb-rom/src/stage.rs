@@ -284,6 +284,54 @@ pub fn read_ground_data(
     })
 }
 
+/// The nine VS stages' `GR*Map` files (`ll*MapFileID`, US), in `GRKind`
+/// order: the first nine rows of `dMPCollisionGroundFileInfos`. Each file
+/// holds its `MPGroundData` at `ll*MapMapHeader` (0x14).
+pub const VS_GROUND_FILES: [u32; 9] = [
+    0x103, // Castle
+    0x106, // Sector
+    0x105, // Jungle
+    0x101, // Zebes
+    0x109, // Hyrule
+    0x107, // Yoster
+    0xFF,  // Pupupu
+    0x108, // Yamabuki
+    0x104, // Inishie
+];
+
+/// `GRKind` of a VS stage's `GR*Map` file.
+pub fn vs_ground_kind(file: u32) -> Option<u8> {
+    VS_GROUND_FILES
+        .iter()
+        .position(|&f| f == file)
+        .map(|k| k as u8)
+}
+
+/// `llGRZebesMapAcidGRAttackColl`, `llGRInishieMapPowerBlockGRAttackColl`,
+/// `llGRJungleMapTaruCannThrowHitDesc` and `llGRHyruleMapTwisterThrowHitDesc`:
+/// the one descriptor each hazard controller reads, directly after the
+/// header (`0x14 + GROUND_DATA_SIZE`).
+pub const HAZARD_DESC: u32 = 0xBC;
+
+/// The `GRKind`s whose controller reads [`HAZARD_DESC`]: Jungle, Zebes,
+/// Hyrule and Inishie.
+const HAZARD_KINDS: [u8; 4] = [2, 3, 4, 8];
+
+/// The seven big-endian words at [`HAZARD_DESC`] of a hazard stage's
+/// `GR*Map` file (`GRAttackColl` or `FTThrowHitDesc`, both seven `s32`s).
+/// `None` for any other file.
+pub fn hazard_words(file: &File) -> Option<[i32; 7]> {
+    let kind = vs_ground_kind(file.id)?;
+    if !HAZARD_KINDS.contains(&kind) {
+        return None;
+    }
+    let mut words = [0i32; 7];
+    for (i, w) in words.iter_mut().enumerate() {
+        *w = read_u32(&file.data, HAZARD_DESC + i as u32 * 4)? as i32;
+    }
+    Some(words)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

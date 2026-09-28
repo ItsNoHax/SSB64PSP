@@ -2885,6 +2885,29 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         let stage_index = writer.add_stage(ground, map.as_ref(), |file, offset| {
             object_index.get(&(file, offset)).copied()
         });
+        // The hazard controllers' descriptor (RE-356). Zebes also needs its
+        // acid surface: `grZebesMakeAcid` builds `llGRZebesMapAcidDObjDesc`,
+        // the graph `map_nodes` names, and the surface is its node 1.
+        if let Some(words) = loaded
+            .files
+            .get(ground.file as usize)
+            .and_then(Option::as_ref)
+            .filter(|_| ground.offset == 0x14)
+            .and_then(ssb_rom::stage::hazard_words)
+        {
+            let mut surface_y = 0.0;
+            if ssb_rom::stage::vs_ground_kind(ground.file) == Some(3) {
+                surface_y = ground
+                    .map_nodes
+                    .and_then(|(f, at)| {
+                        let graph = loaded.graphs.get(&f)?.iter().find(|g| g.offset == at)?;
+                        let node = graph.nodes.get(1).filter(|n| n.parent == Some(0))?;
+                        Some(node.desc.translate[1])
+                    })
+                    .ok_or("Zebes: no acid graph at map_nodes")?;
+            }
+            writer.set_stage_hazard(stage_index, words, surface_y);
+        }
 
         // Stage scenery animates through the 32-bit event stream (RE-050).
         // Each layer names one script per graph node, so the joint entries are
