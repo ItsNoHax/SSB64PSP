@@ -189,6 +189,18 @@ pub fn object_keyed(pack: &Pack<'_>, key: (u32, u32)) -> Option<ObjectDesc> {
         .find(|object| (object.source_file, object.source_offset) == key)
 }
 
+/// `dEFManagerPurinSingEffectDesc`: file 351's six-node note tree, at slot
+/// 32 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
+pub const PURIN_SING_EFFECT_KEY: (u32, u32) = (351, 0x2130);
+
+/// The Sing notes' object and their manager-effect inventory slot.
+pub fn purin_sing_effect(pack: &Pack<'_>) -> Option<(ObjectDesc, u32)> {
+    let slot = ssb_rom::effect::MANAGER_EFFECT_KEYS
+        .iter()
+        .position(|&key| key == PURIN_SING_EFFECT_KEY)?;
+    Some((object_keyed(pack, PURIN_SING_EFFECT_KEY)?, slot as u32))
+}
+
 /// `dEFManagerCaptainFalconKickEffectDesc`: file 350's two-node flame tree,
 /// at slot 29 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
 pub const CAPTAIN_FALCON_KICK_EFFECT_KEY: (u32, u32) = (350, 0x0B08);

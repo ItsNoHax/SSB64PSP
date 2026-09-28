@@ -20,8 +20,6 @@
 //! * **Hit status.** Rest's intangibility, down smash's per-part
 //!   intangibility and the throws' `SetHitStatusAll(2)` come from the motion
 //!   scripts ([`crate::motion`]).
-//! * **Effects.** Sing's note effect (`efManagerPurinSingMakeEffect`) is not
-//!   drawn.
 
 use ssb_engine::input::N64Buttons;
 use ssb_engine::math::sin_cos;
@@ -60,6 +58,10 @@ pub struct PurinState {
     pub pound_count: i32,
     /// Pound's motion flag 1 was consumed.
     pub pound_boosted: bool,
+    /// The `efManagerPurinSingMakeEffect` notes: how many `gcPlayAnimAll`
+    /// calls they have run. Presentation only; read it through
+    /// [`sing_effect_ticks`].
+    pub sing_effect: Option<u16>,
 }
 
 pub fn is_purin(kind: FighterKind) -> bool {
@@ -204,6 +206,21 @@ pub fn set_special_hi(f: &mut Fighter) {
         P::SpecialAirHi
     };
     set(f, s, 0.0, SING_LENGTH);
+    // `FTSTATUS_PRESERVE_NONE` stops any earlier notes.
+    f.purin.sing_effect = None;
+}
+
+/// The Sing notes' played animation frames, while they exist. The
+/// `SpecialHi`/`SpecialAirHi` switches pass `FTSTATUS_PRESERVE_EFFECT`; any
+/// other status change stops them. `efManagerHaveStructProcUpdate` also
+/// ejects them when their animation ends, which the renderer's player sees.
+pub fn sing_effect_ticks(f: &Fighter) -> Option<u16> {
+    f.purin.sing_effect.filter(|_| {
+        matches!(
+            f.status.status,
+            AnyStatus::Purin(P::SpecialHi | P::SpecialAirHi)
+        )
+    })
 }
 
 /// `ftPurinSpecialLwSetStatus` / `ftPurinSpecialAirLwSetStatus`.
@@ -280,6 +297,17 @@ pub fn update(f: &mut Fighter) {
     let AnyStatus::Purin(current) = f.status.status else {
         return;
     };
+    // `efManagerHaveStructProcUpdate`; `ftParamProcPauseEffect` holds it
+    // through hitlag.
+    if sing_effect_ticks(f).is_some() && !f.is_in_hitlag() {
+        f.purin.sing_effect = f.purin.sing_effect.map(|t| t.saturating_add(1));
+    }
+    // `ftPurinSpecialHiProcUpdate`: both Sing scripts set flag 1 at time
+    // zero. The effect plays its animation once when it is made.
+    if matches!(current, P::SpecialHi | P::SpecialAirHi) && f.motion_script.flags[1] == 1 {
+        f.purin.sing_effect = Some(1);
+        f.motion_script.flags[1] = 0;
+    }
     match current {
         P::JumpAerialF1 | P::JumpAerialF2 | P::JumpAerialF3 | P::JumpAerialF4 | P::JumpAerialF5 => {
             update_jump_aerial_turn(f);
@@ -574,6 +602,27 @@ mod tests {
         assert_eq!(target.damage, 20);
         steps(&mut dummy, 30);
         assert!(!crate::combat::is_body_intangible(&dummy));
+    }
+
+    #[test]
+    fn sing_notes_start_on_the_first_update_and_survive_the_air_switch() {
+        for ground in [true, false] {
+            let mut f = purin(ground);
+            set_special_hi(&mut f);
+            assert_eq!(sing_effect_ticks(&f), None);
+            status::update(&mut f);
+            assert_eq!(sing_effect_ticks(&f), Some(1), "ground {ground}");
+            steps(&mut f, 9);
+            assert_eq!(sing_effect_ticks(&f), Some(10));
+        }
+        let mut f = purin(true);
+        set_special_hi(&mut f);
+        steps(&mut f, 3);
+        on_ground_lost(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Purin(P::SpecialAirHi));
+        assert_eq!(sing_effect_ticks(&f), Some(3));
+        status::set_fall(&mut f);
+        assert_eq!(sing_effect_ticks(&f), None);
     }
 
     #[test]

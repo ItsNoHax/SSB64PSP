@@ -22,7 +22,7 @@ or evidence record covers it.
 | Draw Link's Bomb item in `psp-game` | Link draws in Training with his Boomerang and Spin Attack swirl (RE-374); item visuals remain | RE-352, RE-374 |
 | Select and draw Ness in `psp-game` | Host moveset and copied PK Fire exist; PK Fire spark/flame, PK Thunder head/trails, Magnet and bat visuals need runtime integration | RE-347 |
 | Draw Pikachu's Thunder head/trails and the Thunder Jolt, Quick Attack effects in `psp-game` | Pikachu draws in Training with both Thunder Jolt forms (RE-379); ground-jolt node 4's texture script is declined by `resolve_one_mat_anim` | RE-345, RE-379 |
-| Select and draw Jigglypuff in `psp-game` | The moveset is host-only; Sing's notes need gameplay render integration | RE-346 |
+| Select and draw Donkey Kong in `psp-game` | Host moveset exists; his 32-bit mipmapped textures need a texture-pool check in Training | RE-341 |
 | Kirby Inhale downward wiggle | The captured victim's downward mash/drop-through path needs its source floor flags and ignored-line linkage; Final Cutter cliff catches and star reflections now use the shared map solver | RE-343, RE-348 |
 | Stage selection | `StageSetup` builds any VS stage's controller from pack v44 (RE-362) and every controller object from v47 (RE-365), but the game has no stage select; Training loads Dream Land. The Dream Land capture script walks off other stages, and Training has no respawn | RE-362, RE-365 |
 | Acid tile-1 sprite variants | The acid script's `TextureIDNext` reaches sprites 1–3, but its primitive has no two-tile blend, so only sprite 0 draws. Pack v46 still converts all four 384×384 variants (523 KB unreachable). Converting only sprites a primitive can sample would change every stage's shared `MatAnimDesc` conversion | RE-364 |

@@ -7,12 +7,11 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** Pikachu in `psp-game` Training (RE-379). Pack v56
-  packs both Thunder Jolt forms. Weapons and effects now draw after the
-  fighters, the weapon seed now holds on DL link 1, and the cutout alpha
-  gate is `>= 1` (PPSSPP drops `> 0` on rectangles).
-- **Next gameplay batch:** bring Jigglypuff into `psp-game` Training
-  (TODO). Stage and fighter select remain
+- **Completed batch:** Jigglypuff in `psp-game` Training (RE-380). The
+  Sing notes start on Sing's first update. Their nodes draw as billboards
+  under TopN's matrix, with the ring spun by its animation.
+- **Next gameplay batch:** bring Donkey Kong, then Ness, into `psp-game`
+  Training (TODO). Stage and fighter select remain
   deferred.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
@@ -20,18 +19,18 @@ Current snapshot. History lives in git and `docs/evidence/`.
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Jigglypuff in Training | New `f1-training-purin` golden; 88 of 88 goldens match twice | RE-380 |
 | Pikachu in Training | Pack v56; draw order and cutout gate rebaselined six goldens; two new Pikachu goldens; 87 of 87 match twice | RE-379 |
-| Kirby in Training | Pack v55; TransN for every status rebaselined three goldens; new `f1-training-kirby` golden; 85 of 85 goldens match twice | RE-378 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
   Pinned 1.98.0 Clippy with warnings denied and workspace rustfmt passed in
-  RE-379 (psp-crate rustfmt flags only older, untouched spots);
+  RE-380 (psp-crate rustfmt flags only older, untouched spots);
   the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: all 87 goldens match twice (RE-379), including the
-  two Pikachu scenes. No golden passes through a platform or respawns.
+- PPSSPPHeadless: all 88 goldens match twice (RE-380), including the
+  new Jigglypuff scene. No golden passes through a platform or respawns.
 - `psp-game` reaches scripted Training in PPSSPP. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
   (RE-360).
@@ -46,8 +45,8 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - Sector Z Arwing, bonus stages and stage items (Bumper, POW Block,
   Piranha Plant) remain; Twister/TaruCann have no clip.
 - The shield bubble is not drawn (RE-369).
-- Only Mario, Fox, Luigi, Samus, Link, Yoshi, Captain Falcon, Kirby and
-  Pikachu draw in `psp-game`, and only capture scenes pick the others.
+- Donkey Kong and Ness do not draw in `psp-game` yet; capture scenes pick
+  the other ten.
   Kirby's copy hats and Pikachu's Thunder are not drawn. Link's Bomb item, the Egg Lay
   victim's egg and the egg/star hit effects are not drawn. The Fireball does not spin (RE-372;
   its kind 71 is `func_ovl0_800CA5C8`, RE-373). A released Charge Shot

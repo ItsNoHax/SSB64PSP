@@ -101,6 +101,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // makes the aerial jolt near tick 45. It is some 11 frames into its
         // flight here, still in the air.
         GameScene::PikachuAir => 56,
+        // Up+B at tick 20; Sing makes its notes on its first update.
+        GameScene::Purin => 50,
         GameScene::Training => 106,
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
@@ -202,6 +204,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::CaptainKick
             | GameScene::Kirby
             | GameScene::Pikachu
+            | GameScene::Purin
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -301,6 +304,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::Kirby
             | GameScene::Pikachu
             | GameScene::PikachuAir
+            | GameScene::Purin
     ) {
         return 0;
     }
@@ -323,7 +327,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
     } else if (scene == GameScene::Superjump && tick == 150)
         || (matches!(
             scene,
-            GameScene::LinkSpin | GameScene::Yoshi | GameScene::Kirby
+            GameScene::LinkSpin | GameScene::Yoshi | GameScene::Kirby | GameScene::Purin
         ) && tick == 20)
     {
         80
@@ -373,6 +377,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         }
         Some(GameScene::Kirby) => ssb_game::fighter::FighterKind::Kirby,
         Some(GameScene::Pikachu | GameScene::PikachuAir) => ssb_game::fighter::FighterKind::Pikachu,
+        Some(GameScene::Purin) => ssb_game::fighter::FighterKind::Purin,
         _ => ssb_game::fighter::FighterKind::Mario,
     }
 }
@@ -1082,6 +1087,8 @@ struct DrawAssets {
     /// Pikachu's aerial and ground Thunder Jolts with their `anim_joints`.
     jolt_air: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     jolt_ground: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// Jigglypuff's Sing notes and their transform animation.
+    sing: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Kirby's Final Cutter wave tree and its `anim_joints` flicker.
     cutter: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The Falcon Kick flame tree and its transform animation.
@@ -1114,6 +1121,8 @@ impl DrawAssets {
                 ssb_psp_runtime::scene::PIKACHU_JOLT_GROUND_SOURCE,
             )
             .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_PIKACHU_JOLT_GROUND)),
+            sing: ssb_psp_runtime::scene::purin_sing_effect(p)
+                .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             cutter: ssb_psp_runtime::scene::kirby_cutter_object(p)
                 .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_KIRBY_CUTTER)),
             falcon_kick: ssb_psp_runtime::scene::captain_falcon_kick_effect(p)
@@ -1124,7 +1133,7 @@ impl DrawAssets {
 
 /// The animation players for Link's Boomerang and Spin Attack swirl,
 /// Captain Falcon's Falcon Punch and Falcon Kick flames, Kirby's Final
-/// Cutter wave and Pikachu's Thunder Jolts. The game state counts each one's
+/// Cutter wave, Pikachu's Thunder Jolts and Jigglypuff's Sing notes. The game state counts each one's
 /// `gcPlayAnimAll` calls; [`Self::sync`] plays the players up to that
 /// count, restarting when it goes back.
 #[derive(Default)]
@@ -1142,6 +1151,20 @@ struct EffectVisuals {
     cutter: ssb_rom::skeleton::StageAnimator,
     cutter_ticks: Option<u16>,
     jolts: [JoltVisual; MAX_JOLT_VISUALS],
+    sing: ssb_rom::skeleton::StageAnimator,
+    sing_materials: ssb_rom::skeleton::EffectMaterialAnimator,
+    sing_ticks: Option<u16>,
+}
+
+/// The pose a stage player has reached for `node`, if it drives it.
+fn stage_pose(
+    anim: &ssb_rom::skeleton::StageAnimator,
+    node: u32,
+) -> Option<ssb_rom::figatree::JointPose> {
+    (0..anim.joint_count())
+        .filter_map(|i| anim.joint(i))
+        .find(|&(n, _)| n == node)
+        .map(|(_, pose)| *pose)
 }
 
 /// Thunder Jolts drawn at once; `ftPikachuSpecialNProcUpdate` fires one per
@@ -1261,6 +1284,22 @@ impl EffectVisuals {
                     let _ = visual.anim.tick_speed(script, speed);
                     visual.materials.tick_speed(p, speed);
                     visual.ticks += 1;
+                }
+            }
+        }
+
+        let sing = ssb_game::purin::sing_effect_ticks(player);
+        if let (Some((restart, ticks)), Some((object, anim))) =
+            (catch_up(&mut self.sing_ticks, sing), assets.sing.as_ref())
+        {
+            if restart {
+                self.sing.start(p, anim);
+                self.sing_materials.start(p, object_mat_anims(p, object));
+            }
+            if let Some(script) = p.anim_script(anim) {
+                for _ in 0..ticks {
+                    let _ = self.sing.tick(script);
+                    self.sing_materials.tick(p);
                 }
             }
         }
@@ -1734,6 +1773,58 @@ unsafe fn draw_training(
                 Some(&visual.materials),
                 &hidden,
             );
+        }
+    }
+
+    // Jigglypuff's Sing notes. The root is battle matrix function 79 - 66 =
+    // 13, `func_ovl0_800C994C`: TopN's whole world matrix. Node 1 adds kind
+    // 70 (`func_ovl0_800CA194`), a camera-facing spin by `rotate.z`; nodes
+    // 3-5 add kind 42, a camera-facing quad. Neither keeps any scale, so
+    // each drawn node is a billboard at its composed position. Node 2's
+    // `RotRpyR` swings the notes around it. `efManagerHaveStructProcUpdate`
+    // ejects the effect when its animation ends.
+    if let (Some(_), Some((object, _))) = (
+        ssb_game::purin::sing_effect_ticks(&pl.fighter),
+        assets.sing.as_ref(),
+    ) {
+        if !effect_visuals.sing.ended() {
+            let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 8];
+            let n = effect_visuals.sing.compose(p, object, &mut posed);
+            for (i, local) in posed[..n].iter().enumerate() {
+                let node_index = object.first_node + i as u32;
+                let Some(mesh) = p
+                    .node(node_index)
+                    .filter(|node| node.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                    .and_then(|node| p.mesh(node.mesh))
+                else {
+                    continue;
+                };
+                let offset = ssb_engine::math::Vec3::new(
+                    local.0[12] * meshdraw::MODEL_SCALE,
+                    local.0[13] * meshdraw::MODEL_SCALE,
+                    local.0[14] * meshdraw::MODEL_SCALE,
+                );
+                let pos = pl.fighter.joint_world(0, offset);
+                let spin = if i == 1 {
+                    stage_pose(&effect_visuals.sing, node_index).map_or(0.0, |pose| pose.rotate[2])
+                } else {
+                    0.0
+                };
+                gpu.model_transform_billboard(
+                    pos,
+                    pl.camera.eye,
+                    pl.camera.at,
+                    spin,
+                    [meshdraw::MODEL_SCALE; 2],
+                );
+                meshdraw::draw_mesh(
+                    p,
+                    &mesh,
+                    draw_state,
+                    None,
+                    Some(&effect_visuals.sing_materials),
+                );
+            }
         }
     }
 
