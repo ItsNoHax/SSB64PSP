@@ -124,6 +124,8 @@ pub enum StageObj {
     Gate,
     /// Peach's Castle's animated ground GObj that carries the Bumper.
     CastleGround,
+    /// Planet Zebes' acid (`gGRCommonStruct.zebes.map_gobj`).
+    Acid,
 }
 
 /// A source animation the controller starts. Each names a
@@ -166,6 +168,8 @@ pub enum StageAnim {
     GateClose,
     /// `map_nodes`' animation on the Castle ground GObj.
     CastleGround,
+    /// `llGRZebesMapAcidAnimJoint` on the acid.
+    Acid,
 }
 
 /// Stage items a controller makes (`itManagerMakeItemSetupCommon`).
@@ -200,6 +204,13 @@ pub trait StageObjects {
     fn translate(&self, _obj: StageObj) -> Vec3 {
         Vec3::ZERO
     }
+    /// `DObjGetStruct(gobj)->translate.vec.f.y = y`.
+    fn set_translate_y(&mut self, _obj: StageObj, _y: f32) {}
+    /// `DObjGetStruct(gobj)->child->translate`, or `None` when the runtime
+    /// has no such object.
+    fn child_translate(&self, _obj: StageObj) -> Option<Vec3> {
+        None
+    }
     /// Returns a handle, or `None` when the item cannot be made.
     fn make_item(&mut self, _item: StageItem, _pos: Vec3) -> Option<u32> {
         None
@@ -225,7 +236,9 @@ pub struct StageInit<'a> {
     pub hazard_attack: Option<GroundAttack>,
     /// `llGRHyruleMapTwisterThrowHitDesc` or `llGRJungleMapTaruCannThrowHitDesc`.
     pub hazard_throw: Option<HazardThrow>,
-    /// The acid `DObj`'s child translation Y (`llGRZebesMapAcidDObjDesc[1]`).
+    /// The acid `DObj`'s child rest translation Y
+    /// (`llGRZebesMapAcidDObjDesc[1]`), read while the runtime has no acid
+    /// object to animate it.
     pub acid_surface_y: f32,
 }
 
@@ -368,7 +381,7 @@ impl Stage {
             StageKind::Castle => Controller::Castle(castle::Castle::new(init, objects)),
             StageKind::Sector => Controller::None,
             StageKind::Jungle => Controller::Jungle(jungle::Jungle::new(objects, &mut registry)),
-            StageKind::Zebes => Controller::Zebes(zebes::Zebes::new(init, &mut registry)),
+            StageKind::Zebes => Controller::Zebes(zebes::Zebes::new(init, objects, &mut registry)),
             StageKind::Hyrule => Controller::Hyrule(hyrule::Hyrule::new(init)),
             StageKind::Yoster => Controller::Yoster(yoster::Yoster::new(groups, objects)),
             StageKind::Pupupu => Controller::Pupupu(pupupu::Pupupu::new()),
@@ -412,7 +425,7 @@ impl Stage {
             Controller::None => {}
             Controller::Castle(c) => c.tick(objects),
             Controller::Jungle(c) => c.tick(),
-            Controller::Zebes(c) => c.tick(started),
+            Controller::Zebes(c) => c.tick(started, objects),
             Controller::Hyrule(c) => c.tick(fighters, &mut self.registry, &map, started),
             Controller::Yoster(c) => c.tick(fighters, groups, objects, &map),
             Controller::Pupupu(c) => c.tick(fighters, objects, started),

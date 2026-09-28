@@ -30,6 +30,7 @@ fn obj_of(anim: StageAnim) -> StageObj {
         StageAnim::ScaleRetract(i) => StageObj::Scale(i),
         StageAnim::GateOpen | StageAnim::GateClose => StageObj::Gate,
         StageAnim::CastleGround => StageObj::CastleGround,
+        StageAnim::Acid => StageObj::Acid,
     }
 }
 
@@ -236,15 +237,15 @@ fn acid_rises_to_its_next_level_and_burns() {
     assert_eq!(z.level, -3000.0);
     z.status = zebes::AcidStatus::Normal;
     z.wait = 1;
-    z.tick(true);
+    z.tick(true, &mut NoObjects);
     assert_eq!(z.status, zebes::AcidStatus::Shake);
     for _ in 0..18 {
-        z.tick(true);
+        z.tick(true, &mut NoObjects);
     }
     assert_eq!(z.status, zebes::AcidStatus::Rise);
     let target = z.level + z.level_step * 240.0;
     for _ in 0..240 {
-        z.tick(true);
+        z.tick(true, &mut NoObjects);
     }
     assert_eq!(z.status, zebes::AcidStatus::Normal);
     assert!((z.level - target).abs() < 0.5);
@@ -264,6 +265,69 @@ fn acid_rises_to_its_next_level_and_burns() {
     assert_eq!(f.hits.log_len, before);
     // Above the surface is safe.
     let mut g = airborne(Vec3::new(0.0, level + 150.0, 0.0));
+    hazard::search_ground_hit(&mut g, &stage);
+    assert_eq!(g.hits.log_len, 0);
+}
+
+/// The acid object the source writes and reads: root Y is the level, the
+/// surface is the root plus the child's animated Y.
+#[derive(Default)]
+struct AcidObject {
+    played: Vec<StageAnim>,
+    root_y: Vec<f32>,
+    child_y: f32,
+}
+
+impl StageObjects for AcidObject {
+    fn play(&mut self, anim: StageAnim) {
+        self.played.push(anim);
+    }
+    fn set_translate_y(&mut self, obj: StageObj, y: f32) {
+        assert_eq!(obj, StageObj::Acid);
+        self.root_y.push(y);
+    }
+    fn child_translate(&self, obj: StageObj) -> Option<Vec3> {
+        (obj == StageObj::Acid).then(|| Vec3::new(0.0, self.child_y, 0.0))
+    }
+}
+
+#[test]
+fn acid_writes_its_root_and_reads_its_animated_surface() {
+    let objects = [];
+    let mut i = init(StageKind::Zebes, &objects);
+    i.hazard_attack = Some(hazard::GroundAttack::from_words([0, 10, 90, 100, 0, 60, 1]));
+    i.acid_surface_y = 100.0;
+    let mut acid = AcidObject {
+        child_y: -270.0,
+        ..Default::default()
+    };
+    let mut stage = Stage::new(&i, &mut [], &mut acid);
+    assert_eq!(acid.played, [StageAnim::Acid]);
+    assert_eq!(acid.root_y, [-3000.0]);
+    let Controller::Zebes(z) = &mut stage.controller else {
+        panic!()
+    };
+    assert_eq!(z.surface_y, -270.0);
+    // Waiting and Normal leave the root alone; the child still moves.
+    acid.child_y = 180.0;
+    z.tick(false, &mut acid);
+    assert_eq!(z.surface_y, 180.0);
+    z.status = zebes::AcidStatus::Normal;
+    z.wait = 1;
+    for _ in 0..19 {
+        z.tick(true, &mut acid);
+    }
+    assert_eq!(z.status, zebes::AcidStatus::Rise);
+    assert_eq!(acid.root_y.len(), 1);
+    // Each Rise frame writes the new level.
+    z.tick(true, &mut acid);
+    assert_eq!(acid.root_y, [-3000.0, z.level]);
+
+    let (level, surface) = (z.level, z.surface_y);
+    let mut f = airborne(Vec3::new(0.0, level + surface - 1.0, 0.0));
+    hazard::search_ground_hit(&mut f, &stage);
+    assert_eq!(f.hits.log_len, 1);
+    let mut g = airborne(Vec3::new(0.0, level + surface + 1.0, 0.0));
     hazard::search_ground_hit(&mut g, &stage);
     assert_eq!(g.hits.log_len, 0);
 }

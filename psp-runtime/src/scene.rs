@@ -1094,6 +1094,7 @@ pub fn ground_anim(anim: ssb_game::stage::StageAnim) -> Option<usize> {
         StageAnim::TaruCannShoot => g::TARUCANN_SHOOT,
         StageAnim::GateOpen => g::GATE_OPEN,
         StageAnim::GateClose => g::GATE_CLOSE,
+        StageAnim::Acid => g::ACID_ANIM,
         _ => return None,
     })
 }
@@ -1109,6 +1110,7 @@ pub fn ground_object(obj: ssb_game::stage::StageObj) -> Option<u8> {
         StageObj::FlowersFront => g::FLOWERS_FRONT,
         StageObj::TaruCann => g::TARUCANN,
         StageObj::Gate => g::GATE,
+        StageObj::Acid => g::ACID,
         _ => return None,
     })
 }
@@ -1133,5 +1135,14 @@ impl ssb_game::stage::StageObjects for StageObjectsPort<'_, '_> {
                 ssb_engine::math::Vec3::new(x, y, z)
             },
         )
+    }
+    fn set_translate_y(&mut self, obj: ssb_game::stage::StageObj, y: f32) {
+        if let Some(o) = ground_object(obj).and_then(|o| self.objects.get_mut(o)) {
+            o.set_translate_y(y);
+        }
+    }
+    fn child_translate(&self, obj: ssb_game::stage::StageObj) -> Option<ssb_engine::math::Vec3> {
+        let [x, y, z] = self.objects.get(ground_object(obj)?)?.child_translate(self.pack)?;
+        Some(ssb_engine::math::Vec3::new(x, y, z))
     }
 }

@@ -22,7 +22,8 @@
 //! [`GroundObjects`] is the runtime half: one object per entry, its `DObj`
 //! clocks ([`StageJoint`]) and poses, and the `GObj::anim_frame` the
 //! controllers poll. Material animation (`MatAnimJoint`: Whispy's eye and
-//! mouth textures) is not played; the objects draw their rest materials.
+//! mouth textures, the acid's) is not played; the objects draw their rest
+//! materials.
 
 use crate::figatree::JointPose;
 use crate::objanim::{AnimError, StageJoint};
@@ -67,10 +68,12 @@ pub struct GroundAnimAsset {
     pub target: AnimTarget,
 }
 
-/// `llGRPupupuMapFileID`, `llGRJungleMapFileID`, `llGRYamabukiMapFileID`.
+/// `llGRPupupuMapFileID`, `llGRJungleMapFileID`, `llGRYamabukiMapFileID`,
+/// `llGRZebesMapFileID`.
 pub const PUPUPU_FILE: u32 = 0xFF;
 pub const JUNGLE_FILE: u32 = 0x105;
 pub const YAMABUKI_FILE: u32 = 0x108;
+pub const ZEBES_FILE: u32 = 0x101;
 
 /// `llGRPupupuMapMapHead`.
 const PUPUPU_HEAD: u32 = 0x10F0;
@@ -81,9 +84,11 @@ pub const FLOWERS_BACK: u8 = 2;
 pub const FLOWERS_FRONT: u8 = 3;
 pub const TARUCANN: u8 = 4;
 pub const GATE: u8 = 5;
+pub const ACID: u8 = 6;
 
-/// `grPupupuInitAll`, `grJungleMakeTaruCann`, `grYamabukiMakeGate`.
-pub const OBJECTS: [GroundObjectAsset; 6] = [
+/// `grPupupuInitAll`, `grJungleMakeTaruCann`, `grYamabukiMakeGate`,
+/// `grZebesMakeAcid`.
+pub const OBJECTS: [GroundObjectAsset; 7] = [
     GroundObjectAsset {
         name: "WhispyEyes",
         gr_file: PUPUPU_FILE,
@@ -126,6 +131,14 @@ pub const OBJECTS: [GroundObjectAsset; 6] = [
         graph: 0x8A0,
         dl_link: 6,
     },
+    // `llGRZebesMapAcidDObjDesc` is both the map head and the graph.
+    GroundObjectAsset {
+        name: "Acid",
+        gr_file: ZEBES_FILE,
+        map_head: 0xB08,
+        graph: 0xB08,
+        dl_link: 12,
+    },
 ];
 
 const fn table(name: &'static str, object: u8, script: u32) -> GroundAnimAsset {
@@ -139,7 +152,7 @@ const fn table(name: &'static str, object: u8, script: u32) -> GroundAnimAsset {
 
 /// Every animation the ported controllers start. The order is the index
 /// the lookup functions below compute; do not reorder.
-pub const ANIMS: [GroundAnimAsset; 29] = [
+pub const ANIMS: [GroundAnimAsset; 30] = [
     // `dGRPupupuWhispyEyesAnims[lr][status][0]`: Turn, Blink.
     table("WhispyEyesLeftTurn", WHISPY_EYES, 0x11A0),
     table("WhispyEyesLeftBlink", WHISPY_EYES, 0x12B0),
@@ -186,6 +199,8 @@ pub const ANIMS: [GroundAnimAsset; 29] = [
     // `grYamabukiGateAddAnimOffset`.
     table("GateOpen", GATE, 0x9B0),
     table("GateClose", GATE, 0xA20),
+    // `grZebesMakeAcid`: `llGRZebesMapAcidAnimJoint`.
+    table("Acid", ACID, 0xB90),
 ];
 
 /// `dGRPupupuWhispyEyesAnims[lr][blink]`.
@@ -207,6 +222,7 @@ pub const TARUCANN_FILL: usize = 25;
 pub const TARUCANN_SHOOT: usize = 26;
 pub const GATE_OPEN: usize = 27;
 pub const GATE_CLOSE: usize = 28;
+pub const ACID_ANIM: usize = 29;
 
 /// Nodes one controller object may have, counting the extra leaves the
 /// packer adds for display lists a node could not carry (identity locals
@@ -266,6 +282,21 @@ impl GroundObject {
     /// The root `DObj`'s translation, in game units.
     pub fn translate(&self) -> [f32; 3] {
         self.poses[0].translate
+    }
+
+    /// `DObjGetStruct(gobj)->translate.vec.f.y = y`: a controller write.
+    /// A root with no script keeps it; a scripted root would overwrite it
+    /// on its next parse, as the source's would.
+    pub fn set_translate_y(&mut self, y: f32) {
+        self.poses[0].translate[1] = y;
+    }
+
+    /// `DObjGetStruct(gobj)->child->translate`: the root's first child is
+    /// node 1 in tree order.
+    pub fn child_translate(&self, pack: &Pack<'_>) -> Option<[f32; 3]> {
+        let child = pack.node(self.object.first_node + 1)?;
+        (self.count > 1 && child.parent == self.object.first_node)
+            .then_some(self.poses[1].translate)
     }
 
     /// Node `i`'s current local transform.
@@ -434,7 +465,7 @@ impl GroundObjects {
         self.iter().find(|o| o.asset == asset)
     }
 
-    fn get_mut(&mut self, asset: u8) -> Option<&mut GroundObject> {
+    pub fn get_mut(&mut self, asset: u8) -> Option<&mut GroundObject> {
         self.objects.iter_mut().flatten().find(|o| o.asset == asset)
     }
 

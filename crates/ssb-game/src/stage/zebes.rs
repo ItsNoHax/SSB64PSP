@@ -1,6 +1,6 @@
 //! Planet Zebes: the rising acid (`grzebes.c`).
 
-use super::{Hazard, Registry, StageInit};
+use super::{Hazard, Registry, StageAnim, StageInit, StageObj, StageObjects};
 use crate::fighter::Fighter;
 use crate::rng;
 
@@ -60,13 +60,21 @@ pub struct Zebes {
     pub status: AcidStatus,
     pub attr_id: u8,
     pub rumble_wait: u8,
-    /// The acid `DObj`'s child translation, the surface above the root.
+    /// The acid `DObj`'s child translation Y, the surface above the root.
+    /// `llGRZebesMapAcidAnimJoint` moves it; [`Zebes::tick`] reads it after
+    /// the priority-5 animation, before any fighter's hit search.
     pub surface_y: f32,
 }
 
 impl Zebes {
     /// `grZebesMakeGround` @ 0x80108448: `grZebesMakeAcid`, then the hazard.
-    pub fn new(init: &StageInit<'_>, registry: &mut Registry) -> Self {
+    pub fn new(
+        init: &StageInit<'_>,
+        objects: &mut dyn StageObjects,
+        registry: &mut Registry,
+    ) -> Self {
+        // `grZebesMakeAcid` @ 0x801080EC: `gcAddAnimAll` + `gcPlayAnimAll`.
+        objects.play(StageAnim::Acid);
         let mut z = Zebes {
             level: ACID_STEPS[ACID_STEPS.len() - 1].level,
             level_step: 0.0,
@@ -77,8 +85,17 @@ impl Zebes {
             surface_y: init.acid_surface_y,
         };
         z.set_random_wait();
+        objects.set_translate_y(StageObj::Acid, z.level);
+        z.read_surface(objects);
         registry.add_hazard(Hazard::Acid);
         z
+    }
+
+    /// The acid child's animated Y; the rest value when there is no object.
+    fn read_surface(&mut self, objects: &dyn StageObjects) {
+        if let Some(t) = objects.child_translate(StageObj::Acid) {
+            self.surface_y = t.y;
+        }
     }
 
     /// `grZebesAcidSetRandomWait` @ 0x80108088.
@@ -104,7 +121,8 @@ impl Zebes {
     }
 
     /// `grZebesProcUpdate` @ 0x801083C4.
-    pub fn tick(&mut self, started: bool) {
+    pub fn tick(&mut self, started: bool, objects: &mut dyn StageObjects) {
+        self.read_surface(objects);
         match self.status {
             AcidStatus::Wait => {
                 if started {
@@ -130,6 +148,7 @@ impl Zebes {
             }
             AcidStatus::Rise => {
                 self.level += self.level_step;
+                objects.set_translate_y(StageObj::Acid, self.level);
                 self.wait = self.wait.wrapping_sub(1);
                 if self.wait == 0 {
                     self.status = AcidStatus::Normal;
@@ -142,11 +161,6 @@ impl Zebes {
                 self.rumble();
             }
         }
-    }
-
-    /// The acid `DObj`'s translation Y, which the controller writes.
-    pub fn root_y(&self) -> f32 {
-        self.level
     }
 
     /// `grZebesAcidCheckGetDamageKind` @ 0x801084AC.
