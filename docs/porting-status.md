@@ -78,7 +78,7 @@ Detail per domain: [`rendering.md`](rendering.md).
 |---|---|---|
 | Mario | Normals and specials | No `Attack100` by design; attack timing, landing lag and Z-cancel from the motion scripts |
 | Fox | Normals and specials | Fire Fox first-contact floor/wall/ceiling redirection, pass timer and cliff catch implemented (RE-348) |
-| Donkey Kong | Normals, specials, grabs and cargo throws | Every source attack box from the motion scripts; Giant Punch charge damage (RE-350) |
+| Donkey Kong | Normals, specials, grabs and cargo throws | Drawn in `psp-game` Training through the `donkey` capture scene; his specials have no manager effects; every source attack box from the motion scripts; Giant Punch charge damage (RE-350) |
 | Samus | Normals, specials, grabs and throws | Drawn in `psp-game` Training through the `samus`, `samusshot` and `samusbomb` capture scenes, with her Charge Shot and blinking Bomb (RE-373); charge loop rolls out; scripted intangibility |
 | Luigi | Normals, specials, grabs and throws | Drawn in `psp-game` Training through the `luigi` capture scene, with the green Fireball palette (RE-372); shares Mario's special statuses; scripted intangibility |
 | Link | Normals, rapid jab, specials, grabs and throws | Drawn in `psp-game` Training through the `link` and `linkspin` capture scenes, with his spinning Boomerang and the Spin Attack swirl (RE-374); Bomb pull/hold/throw/fuse/explosion and down-B item branch ported (RE-352); the Bomb item is not drawn |
