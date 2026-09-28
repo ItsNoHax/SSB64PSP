@@ -351,10 +351,14 @@ pub enum GameScene {
     Vs,
     /// `vstimeup`: a one-minute VS battle run to its results.
     VsTimeUp,
+    /// `cpuwalk`: the Training dummy under the CPU's Walk behaviour.
+    CpuWalk,
+    /// `cpujump`: the Training dummy under the CPU's Jump behaviour.
+    CpuJump,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 35] = [
+    pub const ALL: [GameScene; 37] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -390,6 +394,8 @@ impl GameScene {
         GameScene::Rebirth,
         GameScene::Vs,
         GameScene::VsTimeUp,
+        GameScene::CpuWalk,
+        GameScene::CpuJump,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -429,6 +435,8 @@ impl GameScene {
             GameScene::Rebirth => "rebirth",
             GameScene::Vs => "vs",
             GameScene::VsTimeUp => "vstimeup",
+            GameScene::CpuWalk => "cpuwalk",
+            GameScene::CpuJump => "cpujump",
         }
     }
 

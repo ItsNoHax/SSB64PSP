@@ -9,6 +9,7 @@
 //! interpreter writes [`Computer::buttons`] and [`Computer::stick`], and
 //! the host hands them to the fighter as its controller state.
 
+pub mod behave;
 mod scripts;
 
 use ssb_engine::input::{ControllerState, N64Buttons};
@@ -110,6 +111,29 @@ pub struct Computer {
     pub buttons: N64Buttons,
     /// `fp->input.cp.stick_range`.
     pub stick: (i8, i8),
+    pub objective: behave::Objective,
+    pub behavior_change_wait: u16,
+    /// `target_user`: an index into [`behave::World::opponents`].
+    pub target_user: Option<usize>,
+    pub target_dist: f32,
+    pub stand_pos: Vec2,
+    pub stand_stop_wait: u16,
+    pub is_stop_stand: bool,
+    pub target_find_wait: u16,
+    pub jump_wait: u16,
+    pub is_attempt_specialhi_recovery: bool,
+    pub is_within_vertical_bounds: bool,
+    /// `ftcom_flags_0x49_b3`: this damage fall's landing was considered.
+    pub landing_checked: bool,
+    /// `ftcom_flags_0x4A_b0`: this descent's fast fall was considered.
+    pub fastfall_checked: bool,
+    pub is_counterattack: bool,
+    pub is_shield_item_weapon: bool,
+    /// `unk_ftcom_0x38`: frames until a predicted hit.
+    pub hit_predict: f32,
+    /// `cliff_left_pos`/`cliff_right_pos`: the lowest outer edges.
+    pub cliff_left: Vec2,
+    pub cliff_right: Vec2,
 }
 
 impl Computer {

@@ -142,6 +142,10 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // later sudden death starts, says "Go" 90 ticks on, and both
         // fighters stand at 300%.
         GameScene::VsTimeUp => 4200,
+        // The dummy's CPU has paced for some 190 ticks, or jumped several
+        // times.
+        GameScene::CpuWalk => 200,
+        GameScene::CpuJump => 120,
     }
 }
 
@@ -227,6 +231,12 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     // The VS scenes move the menu cursor down to VS at tick 6
     // (`scripted_stick_y`) and confirm it at 8.
     if matches!(scene, GameScene::Vs | GameScene::VsTimeUp) {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            _ => N64Buttons(0),
+        };
+    }
+    if matches!(scene, GameScene::CpuWalk | GameScene::CpuJump) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
             _ => N64Buttons(0),
@@ -355,7 +365,10 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if scene == GameScene::Rebirth {
         return if (20..=100).contains(&tick) { -80 } else { 0 };
     }
-    if matches!(scene, GameScene::Vs | GameScene::VsTimeUp) {
+    if matches!(
+        scene,
+        GameScene::Vs | GameScene::VsTimeUp | GameScene::CpuWalk | GameScene::CpuJump
+    ) {
         return 0;
     }
     if matches!(scene, GameScene::Grab | GameScene::Jab) {
@@ -681,6 +694,8 @@ unsafe fn training_step(
         // separate wiring here: `Fighter::tick`'s own status
         // machine reads `stick_y` directly.
         let jump_held = controller.buttons.contains(JUMP_BUTTON_MASK);
+        // The VS countdown locks every fighter's control, the CPU's too.
+        let locked = !started;
         // Priority 5: every fighter's `ftMainProcUpdateInterrupt`.
         // Grab events land before the partner's own half,
         // matching the original's direct status writes
@@ -696,7 +711,8 @@ unsafe fn training_step(
         if let Some(dummy) = dummy_state.as_mut() {
             ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
             items.publish(&mut dummy.fighter);
-            dummy.tick_interrupt(p, &stage, groups);
+            let opponents = [ssb_game::computer::behave::opponent(&pl.fighter)];
+            dummy.tick_interrupt(p, &stage, groups, &opponents, locked);
             ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
             after_interrupt(&mut dummy.fighter, Some(&pl.fighter));
         }
@@ -1027,6 +1043,15 @@ fn capture_training_scene(scene: GameScene) -> ssb_game::fighter_select::SceneDa
             .unwrap_or(0),
         com_kind: Some(dummy.kind),
         com_costume: dummy.costume,
+    }
+}
+
+/// The CPU behaviour a capture scene gives the Training dummy.
+fn capture_cpu_behavior(scene: GameScene) -> Option<ssb_game::computer::Behavior> {
+    match scene {
+        GameScene::CpuWalk => Some(ssb_game::computer::Behavior::Walk),
+        GameScene::CpuJump => Some(ssb_game::computer::Behavior::Jump),
+        _ => None,
     }
 }
 
@@ -1449,6 +1474,13 @@ unsafe fn run() -> ! {
                                 },
                             );
                             scene_gkind = CAPTURE_STAGE_GKIND;
+                            // Training's CPU menu (`dSC1PTrainingModeDummyBehaviors`)
+                            // is not ported; these scenes pick its behaviour.
+                            if let (Some(d), Some(b)) =
+                                (dummy_state.as_mut(), capture_scene.and_then(capture_cpu_behavior))
+                            {
+                                d.computer.behavior = b;
+                            }
                             screen = Screen::Training;
                         } else if route == Some(CaptureRoute::StageSelect) {
                             stage_select = ssb_game::stage_select::StageSelect::new(maps_training_gkind, 0);

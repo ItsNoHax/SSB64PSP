@@ -166,6 +166,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scenes `yoshi`, `yoshibomb`) | `f1-training-yoshi`, `-yoshi-bomb` | Yoshi's Egg Throw egg 16 frames into its flight; the Yoshi Bomb's two stars 6 frames after they appear (retimed for the hop in RE-378) | RE-375, RE-378 |
 | `golden_capture` (`psp-game`, scenes `ness`, `nessthunder`, `nessmagnet`) | `f1-training-ness`, `-ness-thunder`, `-ness-magnet` | Ness's PK Fire spark in flight; PK Thunder's head with four trails; PSI Magnet held | RE-381 |
 | `golden_capture` (`psp-game`, scene `linkbomb`) | `f1-training-link-bomb` | Link holding a freshly pulled Bomb | RE-383 |
+| `golden_capture` (`psp-game`, scenes `cpuwalk`, `cpujump`) | `f1-training-cpu-walk`, `f1-training-cpu-jump` | The Training dummy under the CPU's Walk and Jump behaviours (in `WalkMiddle` and `JumpF` at the freeze) | RE-390 |
 | `golden_capture` (`psp-game`, scene `vs`) | `f1-vs-countdown` | A VS battle's countdown on Dream Land, both fighters locked until "Go" | RE-389 |
 | `golden_capture` (`psp-game`, scene `vstimeup`) | `f1-vs-sudden-death` | A one-minute VS battle timed out in a tie, in sudden death with both fighters at 300% | RE-389 |
 | `golden_capture` (`psp-game`, scene `rebirth`) | `f1-training-rebirth` | Mario after a KO below Dream Land, standing at the rebirth point in `RebirthStand` (the halo is not drawn) | RE-388 |
@@ -500,3 +501,9 @@ twice.
 Pack v60. The new `f1-vs-countdown` and `f1-vs-sudden-death` goldens were
 each identical in both captures; `vstimeup` runs 4,200 ticks. 98 of 98
 goldens match twice.
+
+## 2026-09-29 RE-390 CPU Training behaviours
+
+Pack v60. The dummy now runs the CPU's Stand behaviour with no golden
+change. The new `f1-training-cpu-walk` and `f1-training-cpu-jump` goldens
+were each identical in both captures. 100 of 100 goldens match twice.
