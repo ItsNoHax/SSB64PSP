@@ -19,6 +19,7 @@ pub mod capture_kirby;
 pub mod capture_yoshi;
 pub mod collision;
 pub mod combat;
+pub mod computer;
 pub mod costume;
 pub mod dead;
 pub mod fighter;

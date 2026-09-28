@@ -10,10 +10,14 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Completed batch:** the VS battle's game status, countdown, timer, KO
   credit and sudden death (RE-389), run from the menu's VS entry. Before
   it: KOs and rebirth (RE-388) and spawn facing (RE-387).
-- **Next gameplay batch:** CPU AI, part 1 (`P4`): `ftkey.c` input
-  playback and `ftcomputer.c`'s target and objective choice, host-tested,
-  so the VS CPU moves. The Appear entry is parked with its findings in
-  TODO (32-bit clips, three leading runtime joints).
+- **In progress:** CPU AI (`P4`). Landed: `ssb_game::computer`'s state,
+  movement predictions, the generated input scripts
+  (`tools/gen-computer-scripts.py`) and the command interpreter, with 7
+  host tests. Not wired to a fighter yet.
+- **Next gameplay batch:** the Training CPU modes on top of it:
+  `ftComputerGetObjectiveStatus`, the Stand/Walk/Evade/Jump behaviours and
+  the Walk, Evade and Recover objectives, then the dummy runs them. The
+  Appear entry is parked with its findings in TODO.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
