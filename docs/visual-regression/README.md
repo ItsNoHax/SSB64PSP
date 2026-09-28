@@ -157,7 +157,7 @@ builds the same scene as its default.
 | `regression_capture_object` | none (A/B only) | Any graph, chosen by `SSB64_CAPTURE_OBJECT=<file>:<hex graph>` | RE-312 |
 | `regression_capture_fireball` (`psp-game`) | `f1-training-fireball` | Translucent Fireball weapon in Training | RE-300 |
 | `regression_capture_shadows` (`psp-game`) | `f1-training-shadows` | Grounded and airborne fighter shadows | RE-302 |
-| `golden_capture` (`psp-game`, scene `grab`) | `f1-training-grab` | Mario turns toward and catches the Training dummy on Dream Land's left platform; the capture log confirms the linked statuses | RE-330–332, RE-370 |
+| `golden_capture` (`psp-game`, scene `grab`) | `f1-training-grab` | Mario turns toward and catches the Training dummy on Dream Land's left platform; the held fighter keeps its own TopN facing under the catcher's hand joint | RE-330–332, RE-370–371 |
 | `golden_capture` (`psp-game`, scenes `costume1`–`costume3`) | `f1-training-costume-1`–`3` | Fox after a C-Right, C-Down or C-Left pick on the Training entry: costumes 1–3 in `psp-game` | RE-341 |
 | `golden_capture` (`psp-game`, scene `jab`) | `f1-training-jab` | Mario's jab from the grab route landing on the Training dummy; the hit is in the capture log (`dummy_damage=2 dummy_status=Common(DamageN1)`, `PPSSPPHeadless --log`), not the image | RE-351 |
 | `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center. The bubble visual is not drawn | RE-367, RE-369 |

@@ -781,12 +781,14 @@ unsafe fn run() -> ! {
             // landed is not always visible (RE-351).
             if let (Some(dummy), Some(player)) = (dummy_state.as_ref(), play_state.as_ref()) {
                 let line = alloc::format!(
-                    "capture tick={} player_status={:?} player_catch={:?} dummy_damage={} dummy_status={:?} dummy_capture={:?}\n",
+                    "capture tick={} player_status={:?} player_facing={:?} player_catch={:?} dummy_damage={} dummy_status={:?} dummy_facing={:?} dummy_capture={:?}\n",
                     sim_frame_index,
                     player.fighter.status.status,
+                    player.fighter.facing,
                     player.fighter.grab.catch,
                     dummy.fighter.damage,
                     dummy.fighter.status.status,
+                    dummy.fighter.facing,
                     dummy.fighter.grab.capture,
                 );
                 unsafe {
@@ -1060,7 +1062,12 @@ unsafe fn draw_training(
             .and_then(|h| h.anchor_transform)
             .filter(|_| ssb_game::grab::is_held(pl.fighter.status.status))
         {
-            gpu.model_transform_joint(pl.fighter.pos, joint, meshdraw::MODEL_SCALE);
+            gpu.model_transform_joint(
+                pl.fighter.pos,
+                joint,
+                pl.fighter.facing,
+                meshdraw::MODEL_SCALE,
+            );
         } else {
             gpu.model_transform(
                 [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
@@ -1103,7 +1110,12 @@ unsafe fn draw_training(
                 .and_then(|h| h.anchor_transform)
                 .filter(|_| ssb_game::grab::is_held(dummy.fighter.status.status))
             {
-                gpu.model_transform_joint(dummy.fighter.pos, joint, meshdraw::MODEL_SCALE);
+                gpu.model_transform_joint(
+                    dummy.fighter.pos,
+                    joint,
+                    dummy.fighter.facing,
+                    meshdraw::MODEL_SCALE,
+                );
             } else {
                 gpu.model_transform(
                     [
