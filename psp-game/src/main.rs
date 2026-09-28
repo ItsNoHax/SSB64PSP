@@ -105,6 +105,15 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::Purin => 50,
         // B at tick 20 starts the Giant Punch; it is charging here.
         GameScene::Donkey => 60,
+        // B at tick 20; PK Fire's spark appears near tick 45 and is in
+        // flight here.
+        GameScene::Ness => 50,
+        // Up+B at tick 20; PK Thunder's head rises with its four trails
+        // while Ness holds `SpecialHiHold`.
+        GameScene::NessThunder => 60,
+        // Down+B at tick 20, held; PSI Magnet's field is up in
+        // `SpecialLwHold`.
+        GameScene::NessMagnet => 50,
         GameScene::Training => 106,
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
@@ -208,11 +217,16 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::Pikachu
             | GameScene::Purin
             | GameScene::Donkey
+            | GameScene::Ness
+            | GameScene::NessThunder
+            | GameScene::NessMagnet
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
             20 => N64Buttons(N64Buttons::B),
             60 if scene == GameScene::SamusShot => N64Buttons(N64Buttons::B),
+            // PSI Magnet lasts while B is held.
+            t if scene == GameScene::NessMagnet && t > 20 => N64Buttons(N64Buttons::B),
             _ => N64Buttons(0),
         };
     }
@@ -309,6 +323,9 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::PikachuAir
             | GameScene::Purin
             | GameScene::Donkey
+            | GameScene::Ness
+            | GameScene::NessThunder
+            | GameScene::NessMagnet
     ) {
         return 0;
     }
@@ -331,14 +348,19 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
     } else if (scene == GameScene::Superjump && tick == 150)
         || (matches!(
             scene,
-            GameScene::LinkSpin | GameScene::Yoshi | GameScene::Kirby | GameScene::Purin
+            GameScene::LinkSpin
+                | GameScene::Yoshi
+                | GameScene::Kirby
+                | GameScene::Purin
+                | GameScene::NessThunder
         ) && tick == 20)
     {
         80
-    } else if matches!(
+    } else if (matches!(
         scene,
         GameScene::SamusBomb | GameScene::YoshiBomb | GameScene::CaptainKick
-    ) && tick == 20
+    ) && tick == 20)
+        || (scene == GameScene::NessMagnet && tick >= 20)
     {
         // The special-low check's downward stick with the B edge.
         -80
@@ -383,6 +405,9 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Pikachu | GameScene::PikachuAir) => ssb_game::fighter::FighterKind::Pikachu,
         Some(GameScene::Purin) => ssb_game::fighter::FighterKind::Purin,
         Some(GameScene::Donkey) => ssb_game::fighter::FighterKind::Donkey,
+        Some(GameScene::Ness | GameScene::NessThunder | GameScene::NessMagnet) => {
+            ssb_game::fighter::FighterKind::Ness
+        }
         _ => ssb_game::fighter::FighterKind::Mario,
     }
 }
@@ -966,11 +991,22 @@ unsafe fn run() -> ! {
                         );
                     }
                 }
-                if capture_scene == Some(GameScene::Donkey) {
+                if matches!(
+                    capture_scene,
+                    Some(
+                        GameScene::Donkey
+                            | GameScene::Ness
+                            | GameScene::NessThunder
+                            | GameScene::NessMagnet
+                    )
+                ) {
                     let line = alloc::format!(
-                        "donkey status={:?} anim_frame={:.1}\n",
+                        "fighter status={:?} anim_frame={:.1} sparks={} heads={} trails={}\n",
                         player.fighter.status.status,
                         player.fighter.status.anim_frame,
+                        weapons.pk_fires().count(),
+                        weapons.pk_thunders().count(),
+                        weapons.pk_trails().count(),
                     );
                     unsafe {
                         psp::sys::sceIoWrite(
@@ -1106,6 +1142,13 @@ struct DrawAssets {
     /// Pikachu's aerial and ground Thunder Jolts with their `anim_joints`.
     jolt_air: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     jolt_ground: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// Ness's PK Fire spark, PK Thunder head (with its scale pulse) and
+    /// trail.
+    pk_fire: Option<ssb_rom::pack::ObjectDesc>,
+    pk_thunder: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    pk_trail: Option<ssb_rom::pack::ObjectDesc>,
+    /// Ness's PSI Magnet field and its transform animation.
+    magnet: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Jigglypuff's Sing notes and their transform animation.
     sing: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Kirby's Final Cutter wave tree and its `anim_joints` flicker.
@@ -1140,6 +1183,21 @@ impl DrawAssets {
                 ssb_psp_runtime::scene::PIKACHU_JOLT_GROUND_SOURCE,
             )
             .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_PIKACHU_JOLT_GROUND)),
+            pk_fire: ssb_psp_runtime::scene::object_keyed(
+                p,
+                ssb_psp_runtime::scene::NESS_PK_FIRE_SOURCE,
+            ),
+            pk_thunder: ssb_psp_runtime::scene::object_keyed(
+                p,
+                ssb_psp_runtime::scene::NESS_PK_THUNDER_SOURCE,
+            )
+            .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_NESS_PK_THUNDER)),
+            pk_trail: ssb_psp_runtime::scene::object_keyed(
+                p,
+                ssb_psp_runtime::scene::NESS_PK_TRAIL_SOURCE,
+            ),
+            magnet: ssb_psp_runtime::scene::ness_psi_magnet_effect(p)
+                .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             sing: ssb_psp_runtime::scene::purin_sing_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             cutter: ssb_psp_runtime::scene::kirby_cutter_object(p)
@@ -1152,7 +1210,8 @@ impl DrawAssets {
 
 /// The animation players for Link's Boomerang and Spin Attack swirl,
 /// Captain Falcon's Falcon Punch and Falcon Kick flames, Kirby's Final
-/// Cutter wave, Pikachu's Thunder Jolts and Jigglypuff's Sing notes. The game state counts each one's
+/// Cutter wave, Pikachu's Thunder Jolts, Jigglypuff's Sing notes and Ness's
+/// PK Fire spark, PK Thunder head and PSI Magnet field. The game state counts each one's
 /// `gcPlayAnimAll` calls; [`Self::sync`] plays the players up to that
 /// count, restarting when it goes back.
 #[derive(Default)]
@@ -1173,6 +1232,14 @@ struct EffectVisuals {
     sing: ssb_rom::skeleton::StageAnimator,
     sing_materials: ssb_rom::skeleton::EffectMaterialAnimator,
     sing_ticks: Option<u16>,
+    pk_fire_materials: ssb_rom::skeleton::EffectMaterialAnimator,
+    pk_fire_ticks: Option<u16>,
+    pk_thunder: ssb_rom::skeleton::StageAnimator,
+    pk_thunder_materials: ssb_rom::skeleton::EffectMaterialAnimator,
+    pk_thunder_ticks: Option<u16>,
+    magnet: ssb_rom::skeleton::StageAnimator,
+    magnet_materials: ssb_rom::skeleton::EffectMaterialAnimator,
+    magnet_ticks: Option<u16>,
 }
 
 /// The pose a stage player has reached for `node`, if it drives it.
@@ -1303,6 +1370,54 @@ impl EffectVisuals {
                     let _ = visual.anim.tick_speed(script, speed);
                     visual.materials.tick_speed(p, speed);
                     visual.ticks += 1;
+                }
+            }
+        }
+
+        // One PK Fire and one PK Thunder per Ness, and Training has one Ness.
+        let pk_fire = weapons.pk_fires().next().map(|w| w.anim_ticks);
+        if let (Some((restart, ticks)), Some(object)) = (
+            catch_up(&mut self.pk_fire_ticks, pk_fire),
+            assets.pk_fire.as_ref(),
+        ) {
+            if restart {
+                self.pk_fire_materials.start(p, object_mat_anims(p, object));
+            }
+            for _ in 0..ticks {
+                self.pk_fire_materials.tick(p);
+            }
+        }
+        let pk_thunder = weapons.pk_thunders().next().map(|w| w.anim_ticks);
+        if let (Some((restart, ticks)), Some((object, anim))) = (
+            catch_up(&mut self.pk_thunder_ticks, pk_thunder),
+            assets.pk_thunder.as_ref(),
+        ) {
+            if restart {
+                self.pk_thunder.start(p, anim);
+                self.pk_thunder_materials
+                    .start(p, object_mat_anims(p, object));
+            }
+            if let Some(script) = p.anim_script(anim) {
+                for _ in 0..ticks {
+                    let _ = self.pk_thunder.tick(script);
+                    self.pk_thunder_materials.tick(p);
+                }
+            }
+        }
+
+        let magnet = ssb_game::ness::magnet_effect_ticks(player);
+        if let (Some((restart, ticks)), Some((object, anim))) = (
+            catch_up(&mut self.magnet_ticks, magnet),
+            assets.magnet.as_ref(),
+        ) {
+            if restart {
+                self.magnet.start(p, anim);
+                self.magnet_materials.start(p, object_mat_anims(p, object));
+            }
+            if let Some(script) = p.anim_script(anim) {
+                for _ in 0..ticks {
+                    let _ = self.magnet.tick(script);
+                    self.magnet_materials.tick(p);
                 }
             }
         }
@@ -1791,6 +1906,120 @@ unsafe fn draw_training(
                 draw_state,
                 Some(&visual.materials),
                 &hidden,
+            );
+        }
+    }
+
+    // Ness's PK Fire spark and PK Thunder head are `Tra` then kind 46: a
+    // camera-facing quad spun by `rotate.z`. The head's root pulses its
+    // scale; its child, the drawn node, adds its own kind 46 at scale 1. The
+    // trail is one `TraRotRpyRSca` DObj turned about Z along its path.
+    let first_mesh = |object: &ssb_rom::pack::ObjectDesc, node: u32| {
+        p.node(object.first_node + node)
+            .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+            .and_then(|n| p.mesh(n.mesh))
+    };
+    if let Some(mesh) = assets.pk_fire.as_ref().and_then(|o| first_mesh(o, 0)) {
+        for spark in weapons.pk_fires() {
+            gpu.model_transform_billboard(
+                spark.position,
+                pl.camera.eye,
+                pl.camera.at,
+                spark.rotate_z,
+                [meshdraw::MODEL_SCALE; 2],
+            );
+            meshdraw::draw_mesh(
+                p,
+                &mesh,
+                draw_state,
+                None,
+                Some(&effect_visuals.pk_fire_materials),
+            );
+        }
+    }
+    if let Some((object, _)) = assets.pk_thunder.as_ref() {
+        if let Some(mesh) = first_mesh(object, 1) {
+            let scale = stage_pose(&effect_visuals.pk_thunder, object.first_node)
+                .map_or([1.0, 1.0], |pose| [pose.scale[0], pose.scale[1]]);
+            for head in weapons.pk_thunders() {
+                gpu.model_transform_billboard(
+                    head.position,
+                    pl.camera.eye,
+                    pl.camera.at,
+                    head.rotate_z(),
+                    [
+                        meshdraw::MODEL_SCALE * scale[0],
+                        meshdraw::MODEL_SCALE * scale[1],
+                    ],
+                );
+                meshdraw::draw_mesh(
+                    p,
+                    &mesh,
+                    draw_state,
+                    None,
+                    Some(&effect_visuals.pk_thunder_materials),
+                );
+            }
+        }
+    }
+    if let Some(mesh) = assets.pk_trail.as_ref().and_then(|o| first_mesh(o, 0)) {
+        for trail in weapons.pk_trails() {
+            gpu.model_transform(
+                [trail.position.x, trail.position.y, trail.position.z],
+                [0.0, 0.0, trail.rotation()],
+                meshdraw::MODEL_SCALE,
+            );
+            meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+        }
+    }
+
+    // Ness's PSI Magnet field. The root is battle matrix function 80, a pure
+    // translation to TopN's world position; each child is `Tra` then kind
+    // 46, a camera-facing quad spun by its `rotate.z` and sized by its
+    // `scale.x`/`scale.y`. So each drawn node is a billboard at TopN plus
+    // its composed offset, in world axes.
+    if let (Some(_), Some((object, _))) = (
+        ssb_game::ness::magnet_effect_ticks(&pl.fighter),
+        assets.magnet.as_ref(),
+    ) {
+        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 8];
+        let n = effect_visuals.magnet.compose(p, object, &mut posed);
+        let top = pl.fighter.joint_world(0, ssb_engine::math::Vec3::ZERO);
+        for (i, local) in posed[..n].iter().enumerate() {
+            let node_index = object.first_node + i as u32;
+            let Some(mesh) = p
+                .node(node_index)
+                .filter(|node| node.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                .and_then(|node| p.mesh(node.mesh))
+            else {
+                continue;
+            };
+            let pos = top
+                + ssb_engine::math::Vec3::new(
+                    local.0[12] * meshdraw::MODEL_SCALE,
+                    local.0[13] * meshdraw::MODEL_SCALE,
+                    local.0[14] * meshdraw::MODEL_SCALE,
+                );
+            let (spin, scale) = stage_pose(&effect_visuals.magnet, node_index)
+                .map_or((0.0, [1.0, 1.0]), |pose| {
+                    (pose.rotate[2], [pose.scale[0], pose.scale[1]])
+                });
+            gpu.model_transform_billboard(
+                pos,
+                pl.camera.eye,
+                pl.camera.at,
+                spin,
+                [
+                    meshdraw::MODEL_SCALE * scale[0],
+                    meshdraw::MODEL_SCALE * scale[1],
+                ],
+            );
+            meshdraw::draw_mesh(
+                p,
+                &mesh,
+                draw_state,
+                None,
+                Some(&effect_visuals.magnet_materials),
             );
         }
     }

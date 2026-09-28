@@ -52,6 +52,11 @@ pub struct PKFire {
     pub velocity: Vec3,
     pub lifetime: u16,
     pub damage: i32,
+    /// Kind 46's spin: `wpNessPKFireMakeWeapon` sets `(angle + 90°) * lr`,
+    /// and the hop and reflector negate it. Presentation only.
+    pub rotate_z: f32,
+    /// `gcPlayAnimAll` calls on its material animation, one per update.
+    pub anim_ticks: u16,
 }
 impl PKFire {
     pub fn new(spawn: WeaponSpawn, grounded: bool) -> Self {
@@ -60,13 +65,19 @@ impl PKFire {
         } else {
             (-38.0, 95.0)
         };
-        let (sin, cos) = sin_cos(angle * core::f32::consts::PI / 180.0);
+        let radians = angle * core::f32::consts::PI / 180.0;
+        let (sin, cos) = sin_cos(radians);
+        let velocity = Vec3::new(cos * speed * spawn.facing, sin * speed, 0.0);
+        // `wpMainVelSetLR`.
+        let lr = if velocity.x >= 0.0 { 1.0 } else { -1.0 };
         Self {
             owner_port: spawn.owner_port,
             position: spawn.position,
-            velocity: Vec3::new(cos * speed * spawn.facing, sin * speed, 0.0),
+            velocity,
             lifetime: 20,
             damage: 4,
+            rotate_z: (radians + core::f32::consts::FRAC_PI_2) * lr,
+            anim_ticks: 0,
         }
     }
     pub(super) fn tick<I, F>(&mut self, surfaces: F) -> bool
@@ -74,6 +85,8 @@ impl PKFire {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
+        // `wpProcessProcWeaponMain` plays the animation first.
+        self.anim_ticks = self.anim_ticks.wrapping_add(1);
         self.lifetime = self.lifetime.saturating_sub(1);
         if self.lifetime == 0 {
             return false;
@@ -92,6 +105,7 @@ impl PKFire {
         }
         self.lifetime = 20;
         self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
+        self.rotate_z = -self.rotate_z;
     }
     /// `wpNessPKFireProcHit`: the flame goes 160 units along the spark's
     /// travel (`WPPKFIRE_POS_MUL`) and is projected from the spark.
@@ -119,6 +133,9 @@ pub struct PKThunder {
     pub(super) history: [Vec2; 12],
     pub(super) cursor: usize,
     pub(super) trail_spawn: bool,
+    /// `gcPlayAnimAll` calls on the head since its weapon was made (a
+    /// reflect makes a new one). Presentation only.
+    pub anim_ticks: u16,
 }
 impl PKThunder {
     pub fn new(spawn: WeaponSpawn, group: u16) -> Self {
@@ -135,6 +152,16 @@ impl PKThunder {
             history: [Vec2::ZERO; 12],
             cursor: 0,
             trail_spawn: false,
+            anim_ticks: 0,
+        }
+    }
+    /// The head's kind-46 spin: `angle - 90°` while steered;
+    /// `wpNessPKThunderReflectHeadMakeWeapon` sets `atan2(vel_air)`.
+    pub fn rotate_z(&self) -> f32 {
+        if self.reflected {
+            atan2(self.velocity.y, self.velocity.x)
+        } else {
+            self.angle - core::f32::consts::FRAC_PI_2
         }
     }
     pub(super) fn tick<I, F>(&mut self, surfaces: F, owner: Option<OwnerView>) -> bool
@@ -142,6 +169,8 @@ impl PKThunder {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
+        // `wpProcessProcWeaponMain` plays the DObj animation first.
+        self.anim_ticks = self.anim_ticks.wrapping_add(1);
         self.trail_spawn = self.lifetime == 158;
         self.lifetime = self.lifetime.saturating_sub(1);
         if self.lifetime == 0 {
@@ -209,6 +238,9 @@ impl PKThunder {
         self.lifetime = 160;
         self.group = group;
         if first {
+            // `wpNessPKThunderReflectHeadMakeWeapon`: a new weapon, whose
+            // `wpManagerMakeWeapon` adds the animation afresh.
+            self.anim_ticks = 0;
             let direction = self.position - (f.pos + Vec3::new(0.0, 250.0, 0.0));
             self.velocity = direction.normalized() * 60.0;
             self.velocity.z = 0.0;
@@ -261,6 +293,11 @@ impl PKThunderTrail {
             self.position = Vec3::new(pos.x, pos.y, 0.0);
             self.rotation = atan2(pos.y - prev.y, pos.x - prev.x) - core::f32::consts::FRAC_PI_2;
         }
+    }
+    /// Root `rotate.z`: the direction from the previous trail sample, less
+    /// 90 degrees.
+    pub fn rotation(&self) -> f32 {
+        self.rotation
     }
     pub(super) fn hit_position(&self) -> Vec3 {
         let (sin, cos) = sin_cos(self.rotation);

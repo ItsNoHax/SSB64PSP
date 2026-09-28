@@ -30,6 +30,10 @@ pub struct NessState {
     pub released: bool,
     pub jump_velocity_x: f32,
     pub dtilt_requested: bool,
+    /// The `efManagerNessPsychicMagnetMakeEffect` field: how many
+    /// `gcPlayAnimAll` calls it has run. Presentation only; read it through
+    /// [`magnet_effect_ticks`].
+    pub magnet_effect: Option<u16>,
 }
 pub fn is_ness(k: FighterKind) -> bool {
     crate::grab::base_kind(k) == FighterKind::Ness
@@ -305,11 +309,28 @@ pub fn set_special_lw(f: &mut Fighter) {
     f.ness.release_lag = 30;
     f.ness.released = false;
     f.ness.gravity_delay = 4;
+    // `FTSTATUS_PRESERVE_NONE` stops any earlier field.
+    f.ness.magnet_effect = None;
     if !ground {
         f.physics.vel_air.x /= 2.0;
         f.physics.vel_air.y = 0.0;
     }
 }
+/// The PSI Magnet field's played animation frames, while it exists. The
+/// Hold and Hit statuses and their ground/air switches pass
+/// `FTSTATUS_PRESERVE_EFFECT`; `SpecialLwEnd` does not.
+pub fn magnet_effect_ticks(f: &Fighter) -> Option<u16> {
+    f.ness.magnet_effect.filter(|_| absorbing(f))
+}
+
+/// `ftNessSpecialLwInitVars`, from both Hold setters: the field is made
+/// once, and plays its animation once when it is made.
+fn make_magnet_effect(f: &mut Fighter) {
+    if f.ness.magnet_effect.is_none() {
+        f.ness.magnet_effect = Some(1);
+    }
+}
+
 pub fn absorbing(f: &Fighter) -> bool {
     matches!(
         f.status.status,
@@ -339,6 +360,10 @@ pub fn update(f: &mut Fighter) {
     let AnyStatus::Ness(s) = f.status.status else {
         return;
     };
+    // The field's own `gcPlayAnimAll`; nothing pauses it.
+    if magnet_effect_ticks(f).is_some() {
+        f.ness.magnet_effect = f.ness.magnet_effect.map(|t| t.saturating_add(1));
+    }
     match s {
         N::SpecialHiStart | N::SpecialAirHiStart => {
             if f.status.animation_ended() {
@@ -379,6 +404,7 @@ pub fn update(f: &mut Fighter) {
                         N::SpecialAirLwHold
                     },
                 );
+                make_magnet_effect(f);
             }
         }
         N::SpecialLwHold | N::SpecialAirLwHold => {
@@ -407,6 +433,7 @@ pub fn update(f: &mut Fighter) {
                         N::SpecialAirLwHold
                     },
                 );
+                make_magnet_effect(f);
             }
         }
         N::SpecialAirHiEnd | N::SpecialAirHiBound => {
