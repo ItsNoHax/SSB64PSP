@@ -166,6 +166,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scenes `yoshi`, `yoshibomb`) | `f1-training-yoshi`, `-yoshi-bomb` | Yoshi's Egg Throw egg 16 frames into its flight; the Yoshi Bomb's two stars 6 frames after they appear (retimed for the hop in RE-378) | RE-375, RE-378 |
 | `golden_capture` (`psp-game`, scenes `ness`, `nessthunder`, `nessmagnet`) | `f1-training-ness`, `-ness-thunder`, `-ness-magnet` | Ness's PK Fire spark in flight; PK Thunder's head with four trails; PSI Magnet held | RE-381 |
 | `golden_capture` (`psp-game`, scene `linkbomb`) | `f1-training-link-bomb` | Link holding a freshly pulled Bomb | RE-383 |
+| `golden_capture` (`psp-game`, scene `fighterselect`) | `f1-training-fighter-select` | Kirby placed on the character select, then Peach's Castle on the stage select; Kirby and a Mario dummy standing on the castle | RE-386 |
 | `golden_capture` (`psp-game`, scene `stageselect`) | `f1-training-stage-select` | Mario and the dummy standing on Hyrule Castle, picked on the stage select; every other `psp-game` scene skips the select and loads Dream Land | RE-385 |
 | `golden_capture` (`psp-game`, scene `donkey`) | `f1-training-donkey` | Donkey Kong winding up a Giant Punch (`SpecialNLoop`) | — |
 | `golden_capture` (`psp-game`, scene `purin`) | `f1-training-purin` | Jigglypuff 30 frames into Sing, with its rings and three notes | RE-380 |
@@ -470,3 +471,9 @@ golden was identical in both captures. 93 of 93 goldens match twice.
 Pack v60 (`81cf9a09…`). `f1-training-shield` was rebaselined for the
 shield bubble; no other golden changed. The new `f1-training-stage-select`
 golden was identical in both captures. 94 of 94 goldens match twice.
+
+## 2026-09-28 RE-386 character select
+
+Pack v60. The costume scenes' picks moved from a menu C-button tap to preset
+scene data with no golden change. The new `f1-training-fighter-select`
+golden was identical in both captures. 95 of 95 goldens match twice.

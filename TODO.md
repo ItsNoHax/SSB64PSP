@@ -20,7 +20,7 @@ or evidence record covers it.
 | Draw Kirby's copy hats, stars and copied specials' effects in `psp-game` | Kirby draws in Training with his Final Cutter wave (RE-378); copy hats, the Inhale/spit stars and the copied Falcon Punch flame (joint 30) are not drawn | RE-343, RE-376, RE-378 |
 | Draw Yoshi's Egg Lay egg and his egg/star hit effects in `psp-game` | Yoshi draws in Training with his Egg Throw egg and Bomb stars (RE-375); the captured victim's egg and the shatter, egg-break and sparkle effects remain | RE-337, RE-375 |
 | Reach the PK Fire flame in a `psp-game` capture | The flame draws (RE-382) but no capture scene lands a spark on the dummy; the Bomb's critical colour flash and held bloat are not drawn (RE-383) | RE-352, RE-382, RE-383 |
-| Keep `run` inside MIPS branch range | `psp-game`'s `run` is 111 KB after RE-385 moved the Training setup out, under the ±128 KB branch reach but close; more growth can bring back `out of range PC16 fixup` | RE-382, RE-385 |
+| Keep `run` inside MIPS branch range | `psp-game`'s `run` is 114 KB after RE-386 (126 KB before its menu draws went out of line), under the ±128 KB branch reach but close; more growth can bring back `out of range PC16 fixup` | RE-382, RE-385, RE-386 |
 | Window material-animation blobs | A material script packs its whole source file: file 335 (50 KB) came in for PK Thunder's texture blink (RE-381), as weapon animations did before RE-378's window | RE-378, RE-381 |
 | Draw Pikachu's Thunder head/trails and the Thunder Jolt, Quick Attack effects in `psp-game` | Pikachu draws in Training with both Thunder Jolt forms (RE-379); ground-jolt node 4's texture script is declined by `resolve_one_mat_anim` | RE-345, RE-379 |
 | Kirby Inhale downward wiggle | The captured victim's downward mash/drop-through path needs its source floor flags and ignored-line linkage; Final Cutter cliff catches and star reflections now use the shared map solver | RE-343, RE-348 |
@@ -30,7 +30,8 @@ or evidence record covers it.
 | Twister and Barrel Cannon clips | Both statuses keep the previous pose; `nFTCommonMotionTwister` needs a shared slot, and TaruCann has none (`-1`) | RE-356 |
 | Yoshi Egg Lay victim collision and effect | Laying omits the wall/ceiling sweep, the damaging-floor escape is not wired to the ported ground hits (RE-356), and the break effect is represented by a 10-frame clock | RE-337 |
 | Fireball spin | `wpMarioFireballProcUpdate` adds `rotate_speed` (20° Mario, 25° Luigi) to the DObj X rotation each frame; the port draws only the ±90° yaw. The DObj's second transform kind (0x47) is an undecoded battle-scene custom matrix function | RE-372 |
-| Training fighter select | Only capture scenes pick Fox or Luigi; real pad input always spawns Mario | RE-372 |
+| Spawn facing | `sc1PTrainingModeFuncStart` faces a fighter left when its spawn `x >= 0`; `FighterScene::at_spawn` always faces right, so the Dream Land player (x = 0) and the Peach's Castle dummy face the wrong way. The fix changes nearly every Training golden and the scripted routes | RE-386 |
+| Save data and unlocks | No save data: Luigi, Captain Falcon, Ness, Jigglypuff and Mushroom Kingdom stay locked on the selects; the character select draws plain portraits and pucks without models, names or the ready banner | RE-385, RE-386 |
 | Other item kinds and item presentation | Bomb and PK Fire use the shared item system; heavy/swing/shoot/consume items, team checks, item models, effects, sound, spin, throw-turn joint yaw and pickup arrows remain | RE-352 |
 
 ## Hardware acceptance

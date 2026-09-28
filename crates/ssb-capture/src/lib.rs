@@ -340,10 +340,13 @@ pub enum GameScene {
     /// stage select. Every other scene skips the select and loads Dream
     /// Land.
     StageSelect,
+    /// `fighterselect`: Kirby picked on the character select, then Peach's
+    /// Castle on the stage select, in Training.
+    FighterSelect,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 31] = [
+    pub const ALL: [GameScene; 32] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -375,6 +378,7 @@ impl GameScene {
         GameScene::Costume2,
         GameScene::Costume3,
         GameScene::StageSelect,
+        GameScene::FighterSelect,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -410,6 +414,7 @@ impl GameScene {
             GameScene::Costume2 => "costume2",
             GameScene::Costume3 => "costume3",
             GameScene::StageSelect => "stageselect",
+            GameScene::FighterSelect => "fighterselect",
         }
     }
 
