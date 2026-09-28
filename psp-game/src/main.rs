@@ -131,6 +131,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Hyrule Castle is confirmed at tick 30; both fighters have
         // settled on its floor.
         GameScene::StageSelect => 70,
+        // Peach's Castle is confirmed at tick 115; Kirby and the dummy have
+        // settled.
+        GameScene::FighterSelect => 160,
     }
 }
 
@@ -201,17 +204,26 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
-    // The costume scenes tap one C-button on the Training entry at tick 6,
-    // between the Intro and Training confirms (`mnPlayers1PTrainingUpdateCostume`).
-    if let Some(pick) = match scene {
-        GameScene::Costume1 => Some(N64Buttons::C_RIGHT),
-        GameScene::Costume2 => Some(N64Buttons::C_DOWN),
-        GameScene::Costume3 => Some(N64Buttons::C_LEFT),
-        _ => None,
-    } {
+    // Tick 8 opens the character select; its first tick is tick 9. The
+    // stick (`scripted_stick_x`/`_y`) carries the held puck onto Kirby's
+    // portrait, A at 32 places it, and START at 72 (select tick 64, past
+    // its 60-tick guard) proceeds 30 ticks later, at 102, to the stage
+    // select on Peach's Castle. A at 115 (its thirteenth tick) confirms.
+    if scene == GameScene::FighterSelect {
+        return match tick {
+            4 | 8 | 32 | 115 => N64Buttons(N64Buttons::A),
+            72 => N64Buttons(N64Buttons::START),
+            _ => N64Buttons(0),
+        };
+    }
+    // The costume scenes only confirm into Training; their pick is preset
+    // (`capture_training_scene`).
+    if matches!(
+        scene,
+        GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3
+    ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
-            6 => N64Buttons(pick),
             _ => N64Buttons(0),
         };
     }
@@ -310,6 +322,10 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
+    // Eleven ticks at 80 move the cursor 44 pixels right, from x 70 to 114.
+    if scene == GameScene::FighterSelect {
+        return if (12..=22).contains(&tick) { 80 } else { 0 };
+    }
     if scene == GameScene::Shield {
         return if (50..=60).contains(&tick) { 40 } else { 0 };
     }
@@ -361,6 +377,11 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
+    // Seventeen ticks at 80 move the cursor 68 pixels up, from y 170 to
+    // 102: the held puck's centre lands on Kirby's portrait.
+    if scene == GameScene::FighterSelect {
+        return if (12..=28).contains(&tick) { 80 } else { 0 };
+    }
     if scene == GameScene::Shield && (50..=60).contains(&tick) {
         40
     } else if (scene == GameScene::Superjump && tick == 150)
@@ -841,6 +862,9 @@ fn psp_main() {
 enum Screen {
     Intro,
     Menu,
+    /// The Training character select (`mnPlayers1PTraining`,
+    /// `ssb_game::fighter_select`).
+    FighterSelect,
     /// The Training stage select (`mnMaps`, `ssb_game::stage_select`).
     StageSelect,
     /// Training Mode: a real stage and a real, physics-ticked fighter now
@@ -881,22 +905,80 @@ const BG_TRAINING_STRICT_FAILED: Color = Color::rgba(200, 0, 100, 255);
 const ENTRY_SELECTED: Color = Color::rgba(255, 200, 40, 255);
 const ENTRY_ENABLED: Color = Color::rgba(200, 200, 200, 255);
 const ENTRY_DISABLED: Color = Color::rgba(70, 70, 70, 255);
+/// The character select's player puck (the 1P cursor's red), CPU puck and
+/// cursor.
+const PUCK_PLAYER: Color = Color::rgba(224, 21, 21, 255);
+const PUCK_CPU: Color = Color::rgba(150, 150, 150, 255);
+const CURSOR_COLOR: Color = Color::rgba(255, 255, 255, 255);
 
 /// The stage every capture scene but `stageselect` loads, skipping the
 /// stage select: Dream Land, where the Training goldens were captured.
 const CAPTURE_STAGE_GKIND: u8 = ssb_game::stage_select::gkind::PUPUPU;
 
-/// The `GRKind` a capture scene loads without the stage select; `None`
-/// sends it through the select.
-fn capture_stage_gkind(scene: GameScene) -> Option<u8> {
-    (scene != GameScene::StageSelect).then_some(CAPTURE_STAGE_GKIND)
+/// Which selects a capture scene passes through from the Training entry.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CaptureRoute {
+    /// Straight into Training on Dream Land with [`capture_training_scene`].
+    Direct,
+    /// The stage select only, with [`capture_training_scene`].
+    StageSelect,
+    /// Both selects, from their first-visit state.
+    Selects,
 }
 
-/// `syUtilsRandTimeUCharRange(9)`: the low byte of the clock, scaled to
-/// 0..9.
+fn capture_route(scene: GameScene) -> CaptureRoute {
+    match scene {
+        GameScene::StageSelect => CaptureRoute::StageSelect,
+        GameScene::FighterSelect => CaptureRoute::Selects,
+        _ => CaptureRoute::Direct,
+    }
+}
+
+/// The character select's scene data for a scene that skips it: the
+/// scene's fighter against a Mario dummy. The dummy takes the first royal
+/// costume the player's default costume leaves free, and the costume
+/// scenes then pick with C-Right, C-Down or C-Left
+/// (`mnPlayers1PTrainingUpdateCostume`).
+#[inline(never)]
+fn capture_training_scene(scene: GameScene) -> ssb_game::fighter_select::SceneData {
+    use ssb_game::fighter::FighterKind;
+    let kind = training_fighter_kind(Some(scene));
+    let dummy = ssb_game::costume::Slot {
+        kind: FighterKind::Mario,
+        costume: ssb_game::costume::free_costume(
+            FighterKind::Mario,
+            ssb_game::costume::Slot { kind, costume: 0 },
+        ),
+    };
+    let button = match scene {
+        GameScene::Costume1 => Some(1),
+        GameScene::Costume2 => Some(2),
+        GameScene::Costume3 => Some(3),
+        _ => None,
+    };
+    ssb_game::fighter_select::SceneData {
+        man_kind: Some(kind),
+        man_costume: button
+            .and_then(|b| ssb_game::costume::pick(kind, b, dummy))
+            .unwrap_or(0),
+        com_kind: Some(dummy.kind),
+        com_costume: dummy.costume,
+    }
+}
+
+/// `gSCManagerBackupData.fighter_mask` with no save data
+/// (`dSCManagerDefaultBackupData`): Luigi, Captain Falcon, Ness and
+/// Jigglypuff are locked.
+const FIGHTER_MASK: u16 = 0;
+
+/// `osGetTime() & 0xFF`: the clock's low byte.
+fn clock_byte() -> u8 {
+    unsafe { psp::sys::sceKernelGetSystemTimeLow() as u8 }
+}
+
+/// `syUtilsRandTimeUCharRange(9)`: the clock's low byte, scaled to 0..9.
 fn stage_select_rand() -> u8 {
-    let low = unsafe { psp::sys::sceKernelGetSystemTimeLow() } & 0xFF;
-    (low * 9 / 256) as u8
+    (u32::from(clock_byte()) * 9 / 256) as u8
 }
 
 /// What Training owns across frames, rebuilt on each stage entry.
@@ -917,11 +999,10 @@ struct TrainingWorld<'w> {
 fn enter_training(
     pack: Option<&Pack<'_>>,
     gkind: u8,
-    capture_scene: Option<GameScene>,
-    player_costume: u8,
-    dummy_costume: u8,
+    fighters: ssb_game::fighter_select::SceneData,
     world: &mut TrainingWorld<'_>,
 ) -> u32 {
+    use ssb_game::fighter::FighterKind;
     *world.weapons = ssb_game::weapon::WeaponPool::default();
     *world.items = ssb_game::item::ItemPool::default();
     let Some((p, index, stage)) = pack.and_then(|p| {
@@ -954,11 +1035,16 @@ fn enter_training(
         }
         None => ssb_game::stage::Stage::none(),
     };
-    let mut scene =
-        play::FighterScene::at_spawn(p, &stage, training_fighter_kind(capture_scene), 0);
-    scene.fighter.costume = player_costume;
+    let kind = fighters.man_kind.unwrap_or(FighterKind::Mario);
+    let mut scene = play::FighterScene::at_spawn(p, &stage, kind, 0);
+    scene.fighter.costume = fighters.man_costume;
     *world.play_state = Some(scene);
-    *world.dummy_state = play::Dummy::at_spawn(p, &stage, dummy_costume);
+    *world.dummy_state = play::Dummy::at_spawn(
+        p,
+        &stage,
+        fighters.com_kind.unwrap_or(FighterKind::Mario),
+        fighters.com_costume,
+    );
     index
 }
 
@@ -1038,20 +1124,10 @@ unsafe fn run() -> ! {
 
     let mut screen = Screen::Intro;
     let mut cursor: usize = 0;
-    // The player's costume, picked with a C-button tap on the Training
-    // entry (`mnPlayers1PTrainingUpdateCostume`, `ssb_game::costume`).
-    let mut player_costume: u8 = 0;
-    // The dummy's costume: `mnPlayers1PTrainingInitVars` fills the player's
-    // slot first, then gives the CPU slot the first royal costume the player
-    // is not wearing (`mnPlayers1PTrainingGetFreeCostume`). It keeps that
-    // costume while the player picks.
-    let dummy_costume = ssb_game::costume::free_costume(
-        ssb_game::fighter::FighterKind::Mario,
-        ssb_game::costume::Slot {
-            kind: training_fighter_kind(capture_scene),
-            costume: player_costume,
-        },
-    );
+    // `gSCManagerSceneData`'s Training fighters, both `nFTKindNull` until
+    // the character select saves them.
+    let mut training_scene = ssb_game::fighter_select::SceneData::default();
+    let mut fighter_select: Option<ssb_game::fighter_select::FighterSelect> = None;
     let mut sim_frame_index: u64 = 0;
     #[cfg(feature = "headless_capture")]
     let mut headless_capture_sent = false;
@@ -1093,33 +1169,18 @@ unsafe fn run() -> ! {
                         cursor = (cursor + 1) % MENU_ENTRIES;
                     } else if menu_stick_up_pressed(previous_controller, controller) {
                         cursor = (cursor + MENU_ENTRIES - 1) % MENU_ENTRIES;
-                    } else if let (Some(button), true) = (
-                        ssb_game::costume::select_button(pressed),
-                        cursor == TRAINING_ENTRY && play_state.is_none(),
-                    ) {
-                        // The Training select's C-button costume pick,
-                        // denied when the dummy already wears that costume.
-                        let dummy = ssb_game::costume::Slot {
-                            kind: ssb_game::fighter::FighterKind::Mario,
-                            costume: dummy_costume,
-                        };
-                        if let Some(costume) = ssb_game::costume::pick(
-                            training_fighter_kind(capture_scene),
-                            button,
-                            dummy,
-                        ) {
-                            player_costume = costume;
-                        }
                     } else if pressed.contains(N64Buttons::A) && cursor == TRAINING_ENTRY {
+                        let route = capture_scene.map(capture_route);
+                        if let Some(scene) = capture_scene.filter(|_| route != Some(CaptureRoute::Selects)) {
+                            training_scene = capture_training_scene(scene);
+                        }
                         if play_state.is_some() {
                             screen = Screen::Training;
-                        } else if let Some(gkind) = capture_scene.and_then(capture_stage_gkind) {
+                        } else if route == Some(CaptureRoute::Direct) {
                             training_stage = enter_training(
                                 pack.as_ref(),
-                                gkind,
-                                capture_scene,
-                                player_costume,
-                                dummy_costume,
+                                CAPTURE_STAGE_GKIND,
+                                training_scene,
                                 &mut TrainingWorld {
                                     play_state: &mut play_state,
                                     dummy_state: &mut dummy_state,
@@ -1131,13 +1192,43 @@ unsafe fn run() -> ! {
                                 },
                             );
                             screen = Screen::Training;
+                        } else if route == Some(CaptureRoute::StageSelect) {
+                            stage_select = ssb_game::stage_select::StageSelect::new(maps_training_gkind, 0);
+                            screen = Screen::StageSelect;
                         } else {
+                            // Captures read the frame counter for the CPU's
+                            // random fighter, so they stay deterministic.
+                            let time_byte = sim_frame_index as u8;
+                            fighter_select = Some(ssb_game::fighter_select::FighterSelect::new(
+                                training_scene,
+                                FIGHTER_MASK,
+                                || if capture_scene.is_some() { time_byte } else { clock_byte() },
+                            ));
+                            screen = Screen::FighterSelect;
+                        }
+                    }
+                }
+                Screen::FighterSelect => {
+                    use ssb_game::fighter_select::Outcome;
+                    match fighter_select.as_mut().and_then(|s| s.tick(controller, pressed)) {
+                        Some(Outcome::Proceed(data)) => {
+                            training_scene = data;
                             // `mnMapsInitVars`: the cursor starts on the
                             // Training stage picked last. The host has no
                             // save data, so Mushroom Kingdom stays locked.
                             stage_select = ssb_game::stage_select::StageSelect::new(maps_training_gkind, 0);
                             screen = Screen::StageSelect;
                         }
+                        // The menu stands in for the 1P mode menu.
+                        Some(Outcome::Back(data)) => {
+                            training_scene = data;
+                            screen = Screen::Menu;
+                        }
+                        Some(Outcome::Timeout(data)) => {
+                            training_scene = data;
+                            screen = Screen::Intro;
+                        }
+                        None => {}
                     }
                 }
                 Screen::StageSelect => match stage_select.tick(controller, pressed) {
@@ -1148,9 +1239,7 @@ unsafe fn run() -> ! {
                         training_stage = enter_training(
                             pack.as_ref(),
                             saved.gkind,
-                            capture_scene,
-                            player_costume,
-                            dummy_costume,
+                            training_scene,
                             &mut TrainingWorld {
                                 play_state: &mut play_state,
                                 dummy_state: &mut dummy_state,
@@ -1163,14 +1252,19 @@ unsafe fn run() -> ! {
                         );
                         screen = Screen::Training;
                     }
-                    // B returns to the character select, for which the menu
-                    // stands in. B and the idle return also save the scene
+                    // B returns to the character select, with the fighters
+                    // it saved. B and the idle return also save the scene
                     // data.
                     Some(ssb_game::stage_select::Outcome::Back) => {
                         let saved = stage_select.save(scene_gkind, stage_select_rand);
                         maps_training_gkind = saved.remembered;
                         scene_gkind = saved.gkind;
-                        screen = Screen::Menu;
+                        fighter_select = Some(ssb_game::fighter_select::FighterSelect::new(
+                            training_scene,
+                            FIGHTER_MASK,
+                            clock_byte,
+                        ));
+                        screen = Screen::FighterSelect;
                     }
                     Some(ssb_game::stage_select::Outcome::Timeout) => {
                         let saved = stage_select.save(scene_gkind, stage_select_rand);
@@ -1215,6 +1309,13 @@ unsafe fn run() -> ! {
                 gpu.set_viewport_fullscreen();
                 gpu.begin_frame(Some(BG_MENU));
                 draw_menu(&mut gpu, cursor);
+            }
+            Screen::FighterSelect => {
+                gpu.set_viewport_fullscreen();
+                gpu.begin_frame(Some(BG_MENU));
+                if let Some(select) = fighter_select.as_ref() {
+                    draw_fighter_select(&mut gpu, select);
+                }
             }
             Screen::StageSelect => {
                 gpu.set_viewport_fullscreen();
@@ -1277,6 +1378,7 @@ unsafe fn run() -> ! {
 /// `ENTRY_ENABLED` when not selected, and the stubbed entries dimmed. No text
 /// yet (`gu.rs`'s module doc explains why), so entries are distinguished by
 /// screen position and enabled/disabled colour rather than a label.
+#[inline(never)]
 fn draw_menu(gpu: &mut Gpu, cursor: usize) {
     const ENTRY_HEIGHT: i32 = 32;
     const ENTRY_GAP: i32 = 16;
@@ -1297,9 +1399,51 @@ fn draw_menu(gpu: &mut Gpu, cursor: usize) {
     }
 }
 
+/// Draws the character select in N64 screen coordinates scaled onto the
+/// PSP screen: the portrait grid (locked portraits dimmed, a placed
+/// fighter's portrait lit), the pucks and the cursor. The portraits,
+/// models and names are not drawn.
+#[inline(never)]
+fn draw_fighter_select(gpu: &mut Gpu, select: &ssb_game::fighter_select::FighterSelect) {
+    use ssb_game::fighter_select as fs;
+    // 320×240 onto 480×272 at 17/15, centred horizontally.
+    let map = |x: f32, y: f32| ((59.0 + x * 17.0 / 15.0) as i32, (y * 17.0 / 15.0) as i32);
+    let rect = |gpu: &mut Gpu, x: f32, y: f32, w: f32, h: f32, color: Color| {
+        let (x0, y0) = map(x, y);
+        let (x1, y1) = map(x + w, y + h);
+        gpu.draw_rect(x0, y0, x1, y1, color);
+    };
+    for (i, kind) in fs::PORTRAIT_KINDS.iter().enumerate() {
+        let x = fs::PORTRAIT_LEFT + (i % 6) as f32 * fs::PORTRAIT_WIDTH;
+        let y = fs::PORTRAIT_TOP + (i / 6) as f32 * fs::PORTRAIT_HEIGHT;
+        let placed = select
+            .slots
+            .iter()
+            .any(|s| s.is_fighter_selected && s.kind == Some(*kind));
+        let color = if fs::is_locked(*kind, FIGHTER_MASK) {
+            ENTRY_DISABLED
+        } else if placed {
+            ENTRY_SELECTED
+        } else {
+            ENTRY_ENABLED
+        };
+        rect(gpu, x + 1.0, y + 1.0, fs::PORTRAIT_WIDTH - 2.0, fs::PORTRAIT_HEIGHT - 2.0, color);
+    }
+    for (i, slot) in select.slots.iter().enumerate() {
+        if select.puck_visible(i) {
+            let color = if i == fs::MAN { PUCK_PLAYER } else { PUCK_CPU };
+            let (x, y) = slot.puck;
+            rect(gpu, x, y, fs::PUCK_WIDTH, fs::PUCK_HEIGHT, color);
+        }
+    }
+    let (x, y) = select.slots[fs::MAN].cursor;
+    rect(gpu, x + 20.0, y, 10.0, 10.0, CURSOR_COLOR);
+}
+
 /// Draws the stage select as `mnMaps`'s two rows of five slots, the random
 /// slot last. The cursor's slot is in `ENTRY_SELECTED` and a locked slot in
 /// `ENTRY_DISABLED`. The names, emblems and stage previews are not drawn.
+#[inline(never)]
 fn draw_stage_select(gpu: &mut Gpu, select: &ssb_game::stage_select::StageSelect) {
     const SLOT_WIDTH: i32 = 64;
     const SLOT_HEIGHT: i32 = 48;

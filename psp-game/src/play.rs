@@ -52,9 +52,14 @@ impl Dummy {
     /// [`FighterScene::at_spawn`] itself has no such distinction (it always
     /// returns a scene, `placed: false` when nothing to stand on), so that
     /// check stays here.
-    pub fn at_spawn(pack: &Pack<'_>, stage: &StageDesc, costume: u8) -> Option<Dummy> {
+    pub fn at_spawn(
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        kind: FighterKind,
+        costume: u8,
+    ) -> Option<Dummy> {
         pack.spawn(stage, 1)?;
-        let mut scene = FighterScene::at_spawn(pack, stage, FighterKind::Mario, 1);
+        let mut scene = FighterScene::at_spawn(pack, stage, kind, 1);
         scene.fighter.costume = costume;
         Some(Dummy { scene })
     }

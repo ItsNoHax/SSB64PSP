@@ -20,6 +20,7 @@ pub mod collision;
 pub mod combat;
 pub mod costume;
 pub mod fighter;
+pub mod fighter_select;
 pub mod grab;
 pub mod ground;
 pub mod hazard;
