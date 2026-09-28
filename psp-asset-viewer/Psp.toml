@@ -5,3 +5,10 @@ title = "Super Smash Bros. 64"
 # of 32MB) on PSP-2000/3000 (Slim/Brite) hardware -- ignored on PSP-1000
 # (Fat). Standard PSP homebrew SDK PARAM.SFO key.
 memsize = 1
+
+# XMB presentation (docs/xmb-assets.md). ICON1.PMF is generated from
+# ICON1_source.mp4 by tools/make-pmf.py and committed. No SND0.AT3 yet.
+xmb_icon_png = "xmb/ICON0.PNG"
+xmb_icon_pmf = "xmb/ICON1.PMF"
+xmb_background_overlay_png = "xmb/PIC0.PNG"
+xmb_background_png = "xmb/PIC1.PNG"

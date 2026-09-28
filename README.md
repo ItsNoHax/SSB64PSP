@@ -50,6 +50,8 @@ cargo test --workspace
 
 Copy `EBOOT.PBP` and `ssb64.pak` into the same `PSP/GAME/<folder>/`. The pack
 needs the 64 MiB mode of a PSP-2000 or later; it does not fit on a PSP-1000.
+The XMB icon, animated icon and backgrounds come from each crate's `xmb/`
+([XMB assets](docs/xmb-assets.md)).
 
 ## Run
 
