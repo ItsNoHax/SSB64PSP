@@ -495,9 +495,7 @@ impl Status {
             Status::Turn => 1,
             Status::RunBrake => 2,
             Status::Squat => 3,
-            // SquatRv — rising out of a crouch — is the animation the original
-            // plays when the crouch ends; the status machine reaches it
-            // through SquatWait rather than having a state of its own.
+            Status::SquatRv => 4,
             Status::LandingLight | Status::LandingHeavy => 5,
             Status::Pass => 6,
             Status::Wait => 7,
@@ -583,6 +581,48 @@ impl Status {
             s if (Status::Appeal as u16..=Status::LandingAirNull as u16).contains(&(s as u16)) => {
                 509 + s as usize - Status::Appeal as usize
             }
+            // The remaining shared slots (`ssb_rom::anim::SLOT_REBIRTH_DOWN`
+            // on). A status with motion -1/-2 maps to the slot of the clip
+            // it keeps ([`AnyStatus::keeps_motion`]): `DokanWait` follows
+            // `DokanStart`, `LiftWait`/`LiftTurn` follow `HeavyGet`, and
+            // `Guard`/`GuardSetOff` keep `GuardOn`.
+            Status::RebirthDown => 541,
+            Status::RebirthStand => 542,
+            Status::RebirthWait => 543,
+            Status::WalkEnd => 544,
+            Status::TurnRun => 545,
+            Status::GuardKneeBend => 546,
+            Status::GuardPass => 547,
+            Status::OttottoWait => 548,
+            Status::Ottotto => 549,
+            Status::Twister => 550,
+            Status::DokanStart | Status::DokanWait => 551,
+            Status::DokanEnd => 552,
+            Status::DokanWalk => 553,
+            Status::LightGet => 554,
+            Status::HeavyGet | Status::LiftWait | Status::LiftTurn => 555,
+            s if (Status::LightThrowDrop as u16..=Status::HammerWait as u16)
+                .contains(&(s as u16)) =>
+            {
+                556 + s as usize - Status::LightThrowDrop as usize
+            }
+            // `HammerTurn` through `HammerLanding` all name `HammerWalk`.
+            s if (Status::HammerWalk as u16..=Status::HammerLanding as u16)
+                .contains(&(s as u16)) =>
+            {
+                599
+            }
+            Status::GuardOn | Status::Guard | Status::GuardSetOff => 600,
+            Status::GuardOff => 601,
+            // `CaptureKirby` names `DamageFall` and `CaptureYoshi`
+            // `CapturePulled`; `CaptureWaitKirby` keeps `DamageFall`.
+            Status::CaptureKirby | Status::CaptureWaitKirby => 506,
+            Status::CaptureYoshi => 114,
+            Status::ThrownKirbyStar => 602,
+            Status::ThrownCopyStar => 603,
+            Status::YoshiEgg => 604,
+            Status::CaptureCaptain => 605,
+            Status::ThrownDonkeyUnk => 606,
             // Every other status: no animation is extracted for it yet. Keep
             // the current pose rather than guess a clip —
             // `tick_skeleton_animation` treats a slot the pack lacks as "keep
@@ -1215,6 +1255,12 @@ impl AnyStatus {
             AnyStatus::Common(
                 Status::CatchWait
                     | Status::CaptureWait
+                    | Status::CaptureWaitKirby
+                    | Status::DokanWait
+                    | Status::LiftWait
+                    | Status::LiftTurn
+                    | Status::Guard
+                    | Status::GuardSetOff
                     | Status::DownWaitD
                     | Status::DownWaitU
                     | Status::ReboundWait
