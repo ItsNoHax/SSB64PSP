@@ -1580,6 +1580,30 @@ where
     best
 }
 
+/// `mpCollisionGet{Floor,Ceil}Edge{L,R}` and `mpCollisionGet{L,R}WallEdge{D,U}`:
+/// a line's low or high end along its own axis (x for floors and ceilings,
+/// y for walls).
+pub fn line_edge<I, F>(surfaces: &F, kind: Kind, line: u16, high: bool) -> Option<Vec2>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    edge(surfaces, kind, line, high).map(|(p, _)| p)
+}
+
+/// Every segment of one kind with the line id it belongs to, in the order
+/// `gMPCollisionLineGroups[kind]` lists them.
+pub fn lines_of<I>(surfaces: I, kind: Kind) -> impl Iterator<Item = (u16, MapSurface)>
+where
+    I: IntoIterator<Item = MapSurface>,
+{
+    surfaces
+        .into_iter()
+        .enumerate()
+        .filter(move |(_, s)| s.kind == kind)
+        .map(|(i, s)| (line_id(i, s), s))
+}
+
 /// `mpCollisionGetFloorEdgeL` / `...R`.
 pub fn floor_edge<I, F>(surfaces: &F, line: u16, right: bool) -> Option<Vec2>
 where

@@ -30,6 +30,10 @@ pub use ssb_psp_runtime::scene::{facing_turn, FighterScene};
 /// player's own fighter minus the input source and the camera.
 pub struct Dummy {
     scene: FighterScene,
+    /// The CPU player driving it (`ftComputerSetupAll`, RE-390):
+    /// Training's `nFTComputerBehaviorStand` at level 3
+    /// (`sc1PTrainingModeInitVars`).
+    pub computer: ssb_game::computer::Computer,
 }
 
 impl Deref for Dummy {
@@ -61,25 +65,71 @@ impl Dummy {
         pack.spawn(stage, 1)?;
         let mut scene = FighterScene::at_spawn(pack, stage, kind, 1);
         scene.fighter.costume = costume;
-        Some(Dummy { scene })
+        let mut computer = ssb_game::computer::Computer::setup(&scene.fighter, TRAINING_CPU_LEVEL);
+        computer.behavior = ssb_game::computer::Behavior::Stand;
+        let surfaces = || ssb_psp_runtime::scene::MapSegments::new(pack, stage);
+        let world = cpu_world(stage, surfaces, &[]);
+        computer.setup_world(&scene.fighter, &world);
+        Some(Dummy { scene, computer })
     }
 
-    /// The priority-5 half of a tick with permanently neutral input (no AI,
-    /// no player control) -- the same path the player's own scene drives,
-    /// just with no input source and no camera. The physics half is
-    /// [`FighterScene::tick_fighter_physics`].
+    /// The priority-5 half of a tick, driven by the CPU: `ftComputerProcessAll`
+    /// sets `fp->input.cp` and the fighter reads it as its controller. The
+    /// physics half is [`FighterScene::tick_fighter_physics`].
     pub fn tick_interrupt(
         &mut self,
         pack: &Pack<'_>,
         stage: &StageDesc,
         groups: &[ssb_game::map::MapGroup],
+        opponents: &[ssb_game::computer::behave::Opponent],
+        locked: bool,
     ) {
-        self.scene.tick_fighter_interrupt(
-            pack,
-            stage,
-            ssb_engine::input::ControllerState::default(),
-            false,
-            groups,
-        );
+        let surfaces = || ssb_psp_runtime::scene::MapSegments::with_groups(pack, stage, groups);
+        let world = cpu_world(stage, surfaces, opponents);
+        self.computer.process(&self.scene.fighter, &world);
+        let controller = if locked {
+            ssb_engine::input::ControllerState::default()
+        } else {
+            self.computer.controller()
+        };
+        self.scene
+            .tick_fighter_interrupt(pack, stage, controller, false, groups);
+    }
+}
+
+/// `gSCManagerBattleState->players[dummy].level` in Training.
+pub const TRAINING_CPU_LEVEL: u8 = 3;
+
+/// The map, bounds and opponents a CPU reads this frame. Items, the
+/// Twister and the Zebes acid are not reported yet.
+fn cpu_world<'a, F, I>(
+    stage: &StageDesc,
+    surfaces: F,
+    opponents: &'a [ssb_game::computer::behave::Opponent],
+) -> ssb_game::computer::behave::World<'a, F>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = ssb_game::weapon::MapSurface>,
+{
+    let zone = |e: &ssb_rom::pack::Extent| ssb_game::status::BlastZone {
+        top: f32::from(e.top),
+        bottom: f32::from(e.bottom),
+        left: f32::from(e.left),
+        right: f32::from(e.right),
+    };
+    let geometry = ssb_game::computer::behave::geometry_bounds(surfaces());
+    ssb_game::computer::behave::World {
+        surfaces,
+        geometry,
+        stage: ssb_game::dead::StageBounds {
+            map: zone(&stage.bounds),
+            camera: zone(&stage.camera),
+            rebirth: ssb_engine::math::Vec2::new(0.0, 0.0),
+        },
+        gkind: ssb_rom::stage::vs_ground_kind(stage.source_file),
+        opponents,
+        item_attacks: &[],
+        twister: None,
+        acid: None,
     }
 }
