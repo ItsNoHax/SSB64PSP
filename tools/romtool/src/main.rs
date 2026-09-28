@@ -3612,8 +3612,9 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     // (0x1D410..0x1D4B8) are packed, rebased to the window's start.
     // `(slot, file, graph, anim_joints, script window end)`; `None` packs
     // the whole file.
-    const WEAPON_ANIMS: &[(u32, u32, u32, u32, Option<u32>)] = &[
+    const WEAPON_ANIMS: &[(u32, u32, u32, u32, u32, Option<u32>)] = &[
         (
+            ssb_rom::pack::AnimDesc::WEAPON,
             ssb_rom::pack::AnimDesc::WEAPON_ANIM_LINK_BOOMERANG,
             325,
             0x610,
@@ -3621,6 +3622,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             None,
         ),
         (
+            ssb_rom::pack::AnimDesc::WEAPON,
             ssb_rom::pack::AnimDesc::WEAPON_ANIM_KIRBY_CUTTER,
             328,
             0x1D388,
@@ -3631,6 +3633,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         // spins and pulses it (342 + 0x360..0x3F8); the ground tree's table
         // sweeps node 1 and blinks nodes 2-7 (342 + 0x1A20..0x1AE0).
         (
+            ssb_rom::pack::AnimDesc::WEAPON,
             ssb_rom::pack::AnimDesc::WEAPON_ANIM_PIKACHU_JOLT_AIR,
             342,
             0x270,
@@ -3638,6 +3641,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             Some(0x3F8),
         ),
         (
+            ssb_rom::pack::AnimDesc::WEAPON,
             ssb_rom::pack::AnimDesc::WEAPON_ANIM_PIKACHU_JOLT_GROUND,
             342,
             0x1888,
@@ -3647,16 +3651,29 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         // Ness's PK Thunder head (RE-381): the root's scale pulse
         // (335 + 0x7D20..0x7D70).
         (
+            ssb_rom::pack::AnimDesc::WEAPON,
             ssb_rom::pack::AnimDesc::WEAPON_ANIM_NESS_PK_THUNDER,
             335,
             0x7C98,
             0x7D20,
             Some(0x7D70),
         ),
+        // Items animate through `ITAttributes.anim_joints` the same way
+        // (`itManagerMakeItem` -> `gcAddAnimAll`), RE-382: the PK Fire flame
+        // (file 240 + 0x34) names file 336's tree at 0xA08 and table at
+        // 0xAF0.
+        (
+            ssb_rom::pack::AnimDesc::ITEM,
+            ssb_rom::pack::AnimDesc::ITEM_ANIM_NESS_PK_FIRE,
+            336,
+            0xA08,
+            0xAF0,
+            None,
+        ),
     ];
     let mut weapon_anims = 0usize;
     let mut weapon_anim_rebased = 0usize;
-    for &(slot, file_id, graph_at, anim_at, window_end) in WEAPON_ANIMS {
+    for &(stream, slot, file_id, graph_at, anim_at, window_end) in WEAPON_ANIMS {
         let file = loaded
             .files
             .get(file_id as usize)
@@ -3712,14 +3729,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             return Err(format!("weapon anim {slot}: no animation scripts").into());
         }
         weapon_anims += 1;
-        writer.add_anim(
-            ssb_rom::pack::AnimDesc::WEAPON,
-            slot,
-            file_id,
-            0,
-            &blob,
-            &joints,
-        );
+        writer.add_anim(stream, slot, file_id, 0, &blob, &joints);
     }
 
     // Stage controller objects (RE-357): the GObjs a `gr*.c` controller
@@ -4073,7 +4083,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     );
     println!("  effect anims {effect_anims} effect(s), {effect_anim_joints} animated node(s)");
     println!(
-        "  weapon anims {weapon_anims} weapon(s), {weapon_anim_rebased} windowed pointer(s) rebased"
+        "  weapon anims {weapon_anims} weapon and item stream(s), {weapon_anim_rebased} windowed pointer(s) rebased"
     );
     println!(
         "  ground anims {ground_anims} controller clip(s), {ground_anim_joints} animated node(s)"

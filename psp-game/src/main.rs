@@ -382,6 +382,381 @@ const JUMP_BUTTON_MASK: u16 =
 /// button identities.
 const MENU_STICK_NAV_MIN: i8 = 40;
 
+/// The capture log's state lines (RE-351): whether a scripted attack landed
+/// and which weapons, items and statuses a scene reached is not always
+/// visible. Kept out of `run` so its code does not push `run`'s branches out
+/// of MIPS range.
+#[cfg(feature = "headless_capture")]
+#[inline(never)]
+fn log_capture_state(
+    capture_scene: Option<GameScene>,
+    sim_frame_index: u64,
+    player: &play::FighterScene,
+    dummy: &play::Dummy,
+    weapons: &ssb_game::weapon::WeaponPool,
+    items: &ssb_game::item::ItemPool,
+) {
+    let line = alloc::format!(
+        "capture tick={} player_status={:?} player_facing={:?} player_catch={:?} dummy_damage={} dummy_status={:?} dummy_facing={:?} dummy_capture={:?}\n",
+        sim_frame_index,
+        player.fighter.status.status,
+        player.fighter.facing,
+        player.fighter.grab.catch,
+        dummy.fighter.damage,
+        dummy.fighter.status.status,
+        dummy.fighter.facing,
+        dummy.fighter.grab.capture,
+    );
+    unsafe {
+        psp::sys::sceIoWrite(
+            psp::sys::sceKernelStdout(),
+            line.as_ptr() as *const core::ffi::c_void,
+            line.len(),
+        );
+    }
+    if matches!(capture_scene, Some(GameScene::Yoshi | GameScene::YoshiBomb)) {
+        let line = alloc::format!(
+            "yoshi anim_frame={:.1} egg_held={} eggs={} stars={}\n",
+            player.fighter.status.anim_frame,
+            player.fighter.yoshi.egg_held,
+            weapons.eggs().count(),
+            weapons.stars().count(),
+        );
+        unsafe {
+            psp::sys::sceIoWrite(
+                psp::sys::sceKernelStdout(),
+                line.as_ptr() as *const core::ffi::c_void,
+                line.len(),
+            );
+        }
+    }
+    if matches!(
+        capture_scene,
+        Some(GameScene::Pikachu | GameScene::PikachuAir)
+    ) {
+        let line = alloc::format!(
+            "pikachu status={:?} jolts={:?}\n",
+            player.fighter.status.status,
+            weapons
+                .jolts()
+                .map(|j| (
+                    j.surface.is_some(),
+                    j.anim_epoch,
+                    j.anim_ticks,
+                    j.position.x
+                ))
+                .collect::<alloc::vec::Vec<_>>(),
+        );
+        unsafe {
+            psp::sys::sceIoWrite(
+                psp::sys::sceKernelStdout(),
+                line.as_ptr() as *const core::ffi::c_void,
+                line.len(),
+            );
+        }
+    }
+    if matches!(
+        capture_scene,
+        Some(GameScene::Donkey | GameScene::Ness | GameScene::NessThunder | GameScene::NessMagnet)
+    ) {
+        let line = alloc::format!(
+            "fighter status={:?} anim_frame={:.1} items={:?} sparks={} heads={} trails={}\n",
+            player.fighter.status.status,
+            player.fighter.status.anim_frame,
+            items
+                .items()
+                .map(|i| (i.kind, i.anim_ticks, i.pos.x, i.scale.x, i.hidden))
+                .collect::<alloc::vec::Vec<_>>(),
+            weapons.pk_fires().count(),
+            weapons.pk_thunders().count(),
+            weapons.pk_trails().count(),
+        );
+        unsafe {
+            psp::sys::sceIoWrite(
+                psp::sys::sceKernelStdout(),
+                line.as_ptr() as *const core::ffi::c_void,
+                line.len(),
+            );
+        }
+    }
+    if capture_scene == Some(GameScene::Kirby) {
+        let line = alloc::format!(
+            "kirby status={:?} anim_frame={:.1} cutters={:?}\n",
+            player.fighter.status.status,
+            player.fighter.status.anim_frame,
+            weapons
+                .cutters()
+                .map(|c| (c.lifetime, c.anim_ticks, c.position.x))
+                .collect::<alloc::vec::Vec<_>>(),
+        );
+        unsafe {
+            psp::sys::sceIoWrite(
+                psp::sys::sceKernelStdout(),
+                line.as_ptr() as *const core::ffi::c_void,
+                line.len(),
+            );
+        }
+    }
+    if matches!(
+        capture_scene,
+        Some(GameScene::Captain | GameScene::CaptainKick)
+    ) {
+        let line = alloc::format!(
+            "captain anim_frame={:.1} punch_effect={:?} kick_effect={:?}\n",
+            player.fighter.status.anim_frame,
+            ssb_game::captain::punch_effect_ticks(&player.fighter),
+            ssb_game::captain::kick_effect_ticks(&player.fighter),
+        );
+        unsafe {
+            psp::sys::sceIoWrite(
+                psp::sys::sceKernelStdout(),
+                line.as_ptr() as *const core::ffi::c_void,
+                line.len(),
+            );
+        }
+    }
+    if capture_scene == Some(GameScene::Shield) {
+        let joint = player.fighter.joint_transforms[3];
+        let shield = ssb_game::combat::shield_transform(&player.fighter);
+        let line = alloc::format!(
+            "shield raised={} joint_present={} angle_sector={} angle_frame={:.2} range={:.3} player=({:.2},{:.2},{:.2}) center=({:.2},{:.2},{:.2}) axis_x=({:.2},{:.2},{:.2})\n",
+            player.fighter.guard.is_shield,
+            joint.is_some(),
+            player.fighter.guard.angle_i,
+            player.fighter.guard.angle_f,
+            player.fighter.guard.shield_rotate_range,
+            player.fighter.pos.x,
+            player.fighter.pos.y,
+            player.fighter.pos.z,
+            shield.origin.x,
+            shield.origin.y,
+            shield.origin.z,
+            shield.axes[0].x,
+            shield.axes[0].y,
+            shield.axes[0].z,
+        );
+        unsafe {
+            psp::sys::sceIoWrite(
+                psp::sys::sceKernelStdout(),
+                line.as_ptr() as *const core::ffi::c_void,
+                line.len(),
+            );
+        }
+    }
+}
+
+/// One Training simulation frame: the stage controllers, both fighters'
+/// interrupt, physics and map passes, and the weapon and item pools. Kept
+/// out of [`run`] so `run` stays inside MIPS branch range.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn training_step(
+    p: &Pack<'_>,
+    pl: &mut play::FighterScene,
+    dummy_state: &mut Option<play::Dummy>,
+    weapons: &mut ssb_game::weapon::WeaponPool,
+    items: &mut ssb_game::item::ItemPool,
+    material_anim: &mut ssb_rom::skeleton::MaterialAnimator,
+    stage_objects: &mut ssb_rom::ground_obj::GroundObjects,
+    stage_map: &mut Option<alloc::boxed::Box<ssb_psp_runtime::scene::StageMap>>,
+    stage_ctl: &mut ssb_game::stage::Stage,
+    controller: ControllerState,
+) {
+    material_anim.tick(p);
+    if let Some(stage) = p.stage(TRAINING_STAGE_INDEX) {
+        // Priority 5, Ground link: `gcPlayAnimAll` precedes
+        // every fighter interrupt and the priority-4 controller.
+        let _ = stage_objects.advance(p);
+        if let Some(map) = stage_map.as_mut() {
+            let _ = map.tick(p);
+        }
+        let groups = stage_map
+            .as_ref()
+            .map_or(&[][..], |map| map.groups.as_slice());
+        // Real `sceCtrl` stick input drives real movement/physics/
+        // animation against the real stage collision, the same
+        // `Play::tick` `psp-asset-viewer/`'s own gameplay slice uses. Under
+        // `regression_capture`, real pad state is replaced by the
+        // scripted script (RE-295) rather than zeroed -- a
+        // deterministic capture of gameplay input (the jab, now
+        // the jump) needs to actually *drive* that input, not
+        // discard it; only the source is scripted, not the game
+        // logic it feeds.
+        // Real jump binding (RE-295): any N64 C-button tap is a
+        // real `FTCOMMON_KNEEBEND` button-jump input
+        // (`ftCommonKneeBendCheckButtonTap`). An upward stick
+        // flick is the game's other real jump input and needs no
+        // separate wiring here: `Fighter::tick`'s own status
+        // machine reads `stick_y` directly.
+        let jump_held = controller.buttons.contains(JUMP_BUTTON_MASK);
+        // Priority 5: every fighter's `ftMainProcUpdateInterrupt`.
+        // Grab events land before the partner's own half,
+        // matching the original's direct status writes
+        // (`ssb_game::grab` module docs).
+        items.publish(&mut pl.fighter);
+        pl.tick_fighter_interrupt(p, &stage, controller, jump_held, groups);
+        if let Some(dummy) = dummy_state.as_mut() {
+            ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
+            items.publish(&mut dummy.fighter);
+            dummy.tick_interrupt(p, &stage, groups);
+            ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
+        }
+        // Priority 4, Ground link: the stage controller.
+        {
+            let mut empty: [ssb_game::map::MapGroup; 0] = [];
+            let groups_mut = stage_map
+                .as_mut()
+                .map_or(&mut empty[..], |map| map.groups.as_mut_slice());
+            // `mpCollisionSetDObjNoID`: a floor's original
+            // line id to its collision group.
+            let line_group = |line: u16| {
+                p.stage_lines(&stage)
+                    .find(|l| l.id == line)
+                    .map(|l| l.yakumono as u8)
+            };
+            let mut fighters: alloc::vec::Vec<&mut ssb_game::fighter::Fighter> =
+                alloc::vec::Vec::with_capacity(2);
+            fighters.push(&mut pl.fighter);
+            if let Some(dummy) = dummy_state.as_mut() {
+                fighters.push(&mut dummy.fighter);
+            }
+            stage_ctl.tick(
+                &mut fighters,
+                ssb_game::stage::TickInput {
+                    groups: groups_mut,
+                    objects: &mut ssb_psp_runtime::scene::StageObjectsPort {
+                        pack: p,
+                        objects: stage_objects,
+                    },
+                    // The groups are being written, so the
+                    // controller sees the static map; only the
+                    // Twister queries it, on a static floor.
+                    map: ssb_game::stage::MapQuery {
+                        surfaces: || ssb_psp_runtime::scene::MapSegments::new(p, &stage),
+                        line_group: &line_group,
+                    },
+                    started: true,
+                },
+            );
+        }
+        let groups = stage_map
+            .as_ref()
+            .map_or(&[][..], |map| map.groups.as_slice());
+        // Priority 4, Fighter link: `ftMainProcPhysicsMap`.
+        pl.fighter.occupied_cliff = dummy_state.as_ref().and_then(|dummy| {
+            ssb_game::map::is_cliff_hold(dummy.fighter.status.status)
+                .then_some((dummy.fighter.cliff.line, dummy.fighter.facing))
+        });
+        pl.tick_fighter_physics(p, &stage, groups);
+        // The Boomerang projects through the camera last drawn.
+        weapons.observe_camera(&pl.camera);
+        pl.tick_camera(&stage, None);
+        items.take_requests(&mut pl.fighter, || {
+            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
+        });
+        if let Some(spawn) = pl.fighter.take_weapon_spawn() {
+            weapons.spawn(spawn);
+        }
+        if let Some(dummy) = dummy_state.as_mut() {
+            dummy.fighter.occupied_cliff = ssb_game::map::is_cliff_hold(pl.fighter.status.status)
+                .then_some((pl.fighter.cliff.line, pl.fighter.facing));
+            ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
+            dummy.tick_fighter_physics(p, &stage, groups);
+            items.take_requests(&mut dummy.fighter, || {
+                ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
+            });
+            ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
+            if let Some(spawn) = dummy.fighter.take_weapon_spawn() {
+                weapons.spawn(spawn);
+            }
+            weapons.observe_owner(&pl.fighter);
+            weapons.observe_owner(&dummy.fighter);
+            let blast_zone = ssb_game::status::BlastZone {
+                top: stage.bounds.top as f32,
+                bottom: stage.bounds.bottom as f32,
+                left: stage.bounds.left as f32,
+                right: stage.bounds.right as f32,
+            };
+            weapons.tick(
+                || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups),
+                Some(blast_zone),
+            );
+            weapons.sync_owner(&mut pl.fighter);
+            weapons.sync_owner(&mut dummy.fighter);
+            items.observe_owner(&pl.fighter);
+            items.observe_owner(&dummy.fighter);
+            items.tick(
+                || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups),
+                Some(blast_zone),
+            );
+            items.sync_owner(&mut pl.fighter);
+            items.sync_owner(&mut dummy.fighter);
+            // `ftMainProcSearchCatch`, then `ftMainProcSearchHitAll`
+            // (fighters, then weapons), then `ftMainProcParams` for
+            // every fighter -- the original's process priorities.
+            // `ftMainProcSearchCatch` opens with the obstacle
+            // search (`ftMainSearchHitHazard`).
+            let dummy_status = [dummy.fighter.status.status];
+            ssb_game::hazard::search_hit_hazard(
+                &mut pl.fighter,
+                stage_ctl,
+                &mut ssb_psp_runtime::scene::StageObjectsPort {
+                    pack: p,
+                    objects: stage_objects,
+                },
+                &dummy_status,
+            );
+            ssb_game::grab::search_catch(&mut pl.fighter, &dummy.fighter);
+            let pl_status = [pl.fighter.status.status];
+            ssb_game::hazard::search_hit_hazard(
+                &mut dummy.fighter,
+                stage_ctl,
+                &mut ssb_psp_runtime::scene::StageObjectsPort {
+                    pack: p,
+                    objects: stage_objects,
+                },
+                &pl_status,
+            );
+            ssb_game::grab::search_catch(&mut dummy.fighter, &pl.fighter);
+            ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
+            ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
+            ssb_game::combat::search_all(&mut [&mut pl.fighter, &mut dummy.fighter]);
+            items.search_fighter(&mut pl.fighter);
+            items.search_fighter(&mut dummy.fighter);
+            weapons.apply_hits(&mut pl.fighter);
+            weapons.apply_hits(&mut dummy.fighter);
+            ssb_game::link::apply_spin_attack_hits(&mut pl.fighter, &mut dummy.fighter);
+            ssb_game::link::apply_spin_attack_hits(&mut dummy.fighter, &mut pl.fighter);
+            items.search_hurt(&mut [&mut pl.fighter, &mut dummy.fighter], weapons);
+            // `ftMainSearchGroundHit`, last of `ftMainProcSearchHitAll`.
+            ssb_game::hazard::search_ground_hit(&mut pl.fighter, &stage_ctl);
+            ssb_game::hazard::search_ground_hit(&mut dummy.fighter, &stage_ctl);
+            ssb_game::combat::finish_frame(&mut [&mut pl.fighter, &mut dummy.fighter]);
+            let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups);
+            pl.fighter.resolve_cliff_release(&map);
+            dummy.fighter.resolve_cliff_release(&map);
+            items.take_requests(&mut pl.fighter, || {
+                ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
+            });
+            items.take_requests(&mut dummy.fighter, || {
+                ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
+            });
+            items.resolve(&[&pl.fighter, &dummy.fighter]);
+            items.sync_owner(&mut pl.fighter);
+            items.sync_owner(&mut dummy.fighter);
+            items.take_weapon_spawns(weapons, || {
+                ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
+            });
+            items.record_landed(&mut pl.fighter);
+            items.record_landed(&mut dummy.fighter);
+            weapons.record_landed(&mut pl.fighter);
+            weapons.record_landed(&mut dummy.fighter);
+            ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
+            ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
+        }
+    }
+}
+
 /// The fighter Training spawns for the player: Fox for the Fox capture
 /// scene, Luigi for the Luigi scene, Samus, Link, Yoshi or Captain Falcon
 /// for their own scenes, Mario otherwise.
@@ -650,9 +1025,10 @@ unsafe fn run() -> ! {
                                 {
                                     Some(setup) => {
                                         let mut empty = [];
-                                        let groups = stage_map.as_mut().map_or(&mut empty[..], |map| {
-                                            map.groups.as_mut_slice()
-                                        });
+                                        let groups =
+                                            stage_map.as_mut().map_or(&mut empty[..], |map| {
+                                                map.groups.as_mut_slice()
+                                            });
                                         ssb_game::stage::Stage::new(
                                             &setup.init(),
                                             groups,
@@ -694,203 +1070,18 @@ unsafe fn run() -> ! {
             }
 
             if let (Screen::Training, Some(p), Some(pl)) = (screen, &pack, play_state.as_mut()) {
-                material_anim.tick(p);
-                if let Some(stage) = p.stage(TRAINING_STAGE_INDEX) {
-                    // Priority 5, Ground link: `gcPlayAnimAll` precedes
-                    // every fighter interrupt and the priority-4 controller.
-                    let _ = stage_objects.advance(p);
-                    if let Some(map) = stage_map.as_mut() {
-                        let _ = map.tick(p);
-                    }
-                    let groups = stage_map
-                        .as_ref()
-                        .map_or(&[][..], |map| map.groups.as_slice());
-                    // Real `sceCtrl` stick input drives real movement/physics/
-                    // animation against the real stage collision, the same
-                    // `Play::tick` `psp-asset-viewer/`'s own gameplay slice uses. Under
-                    // `regression_capture`, real pad state is replaced by the
-                    // scripted script (RE-295) rather than zeroed -- a
-                    // deterministic capture of gameplay input (the jab, now
-                    // the jump) needs to actually *drive* that input, not
-                    // discard it; only the source is scripted, not the game
-                    // logic it feeds.
-                    // Real jump binding (RE-295): any N64 C-button tap is a
-                    // real `FTCOMMON_KNEEBEND` button-jump input
-                    // (`ftCommonKneeBendCheckButtonTap`). An upward stick
-                    // flick is the game's other real jump input and needs no
-                    // separate wiring here: `Fighter::tick`'s own status
-                    // machine reads `stick_y` directly.
-                    let jump_held = controller.buttons.contains(JUMP_BUTTON_MASK);
-                    // Priority 5: every fighter's `ftMainProcUpdateInterrupt`.
-                    // Grab events land before the partner's own half,
-                    // matching the original's direct status writes
-                    // (`ssb_game::grab` module docs).
-                    items.publish(&mut pl.fighter);
-                    pl.tick_fighter_interrupt(p, &stage, controller, jump_held, groups);
-                    if let Some(dummy) = dummy_state.as_mut() {
-                        ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
-                        items.publish(&mut dummy.fighter);
-                        dummy.tick_interrupt(p, &stage, groups);
-                        ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
-                    }
-                    // Priority 4, Ground link: the stage controller.
-                    {
-                        let mut empty: [ssb_game::map::MapGroup; 0] = [];
-                        let groups_mut = stage_map
-                            .as_mut()
-                            .map_or(&mut empty[..], |map| map.groups.as_mut_slice());
-                        // `mpCollisionSetDObjNoID`: a floor's original
-                        // line id to its collision group.
-                        let line_group = |line: u16| {
-                            p.stage_lines(&stage)
-                                .find(|l| l.id == line)
-                                .map(|l| l.yakumono as u8)
-                        };
-                        let mut fighters: alloc::vec::Vec<&mut ssb_game::fighter::Fighter> =
-                            alloc::vec::Vec::with_capacity(2);
-                        fighters.push(&mut pl.fighter);
-                        if let Some(dummy) = dummy_state.as_mut() {
-                            fighters.push(&mut dummy.fighter);
-                        }
-                        stage_ctl.tick(
-                            &mut fighters,
-                            ssb_game::stage::TickInput {
-                                groups: groups_mut,
-                                objects: &mut ssb_psp_runtime::scene::StageObjectsPort {
-                                    pack: p,
-                                    objects: &mut stage_objects,
-                                },
-                                // The groups are being written, so the
-                                // controller sees the static map; only the
-                                // Twister queries it, on a static floor.
-                                map: ssb_game::stage::MapQuery {
-                                    surfaces: || {
-                                        ssb_psp_runtime::scene::MapSegments::new(p, &stage)
-                                    },
-                                    line_group: &line_group,
-                                },
-                                started: true,
-                            },
-                        );
-                    }
-                    let groups = stage_map
-                        .as_ref()
-                        .map_or(&[][..], |map| map.groups.as_slice());
-                    // Priority 4, Fighter link: `ftMainProcPhysicsMap`.
-                    pl.fighter.occupied_cliff = dummy_state.as_ref().and_then(|dummy| {
-                        ssb_game::map::is_cliff_hold(dummy.fighter.status.status)
-                            .then_some((dummy.fighter.cliff.line, dummy.fighter.facing))
-                    });
-                    pl.tick_fighter_physics(p, &stage, groups);
-                    // The Boomerang projects through the camera last drawn.
-                    weapons.observe_camera(&pl.camera);
-                    pl.tick_camera(&stage, None);
-                    items.take_requests(&mut pl.fighter, || {
-                        ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
-                    });
-                    if let Some(spawn) = pl.fighter.take_weapon_spawn() {
-                        weapons.spawn(spawn);
-                    }
-                    if let Some(dummy) = dummy_state.as_mut() {
-                        dummy.fighter.occupied_cliff =
-                            ssb_game::map::is_cliff_hold(pl.fighter.status.status)
-                                .then_some((pl.fighter.cliff.line, pl.fighter.facing));
-                        ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
-                        dummy.tick_fighter_physics(p, &stage, groups);
-                        items.take_requests(&mut dummy.fighter, || {
-                            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
-                        });
-                        ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
-                        if let Some(spawn) = dummy.fighter.take_weapon_spawn() {
-                            weapons.spawn(spawn);
-                        }
-                        weapons.observe_owner(&pl.fighter);
-                        weapons.observe_owner(&dummy.fighter);
-                        let blast_zone = ssb_game::status::BlastZone {
-                            top: stage.bounds.top as f32,
-                            bottom: stage.bounds.bottom as f32,
-                            left: stage.bounds.left as f32,
-                            right: stage.bounds.right as f32,
-                        };
-                        weapons.tick(
-                            || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups),
-                            Some(blast_zone),
-                        );
-                        weapons.sync_owner(&mut pl.fighter);
-                        weapons.sync_owner(&mut dummy.fighter);
-                        items.observe_owner(&pl.fighter);
-                        items.observe_owner(&dummy.fighter);
-                        items.tick(
-                            || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups),
-                            Some(blast_zone),
-                        );
-                        items.sync_owner(&mut pl.fighter);
-                        items.sync_owner(&mut dummy.fighter);
-                        // `ftMainProcSearchCatch`, then `ftMainProcSearchHitAll`
-                        // (fighters, then weapons), then `ftMainProcParams` for
-                        // every fighter -- the original's process priorities.
-                        // `ftMainProcSearchCatch` opens with the obstacle
-                        // search (`ftMainSearchHitHazard`).
-                        let dummy_status = [dummy.fighter.status.status];
-                        ssb_game::hazard::search_hit_hazard(
-                            &mut pl.fighter,
-                            &mut stage_ctl,
-                            &mut ssb_psp_runtime::scene::StageObjectsPort {
-                                pack: p,
-                                objects: &mut stage_objects,
-                            },
-                            &dummy_status,
-                        );
-                        ssb_game::grab::search_catch(&mut pl.fighter, &dummy.fighter);
-                        let pl_status = [pl.fighter.status.status];
-                        ssb_game::hazard::search_hit_hazard(
-                            &mut dummy.fighter,
-                            &mut stage_ctl,
-                            &mut ssb_psp_runtime::scene::StageObjectsPort {
-                                pack: p,
-                                objects: &mut stage_objects,
-                            },
-                            &pl_status,
-                        );
-                        ssb_game::grab::search_catch(&mut dummy.fighter, &pl.fighter);
-                        ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
-                        ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
-                        ssb_game::combat::search_all(&mut [&mut pl.fighter, &mut dummy.fighter]);
-                        items.search_fighter(&mut pl.fighter);
-                        items.search_fighter(&mut dummy.fighter);
-                        weapons.apply_hits(&mut pl.fighter);
-                        weapons.apply_hits(&mut dummy.fighter);
-                        ssb_game::link::apply_spin_attack_hits(&mut pl.fighter, &mut dummy.fighter);
-                        ssb_game::link::apply_spin_attack_hits(&mut dummy.fighter, &mut pl.fighter);
-                        items.search_hurt(&mut [&mut pl.fighter, &mut dummy.fighter], &mut weapons);
-                        // `ftMainSearchGroundHit`, last of `ftMainProcSearchHitAll`.
-                        ssb_game::hazard::search_ground_hit(&mut pl.fighter, &stage_ctl);
-                        ssb_game::hazard::search_ground_hit(&mut dummy.fighter, &stage_ctl);
-                        ssb_game::combat::finish_frame(&mut [&mut pl.fighter, &mut dummy.fighter]);
-                        let map =
-                            || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups);
-                        pl.fighter.resolve_cliff_release(&map);
-                        dummy.fighter.resolve_cliff_release(&map);
-                        items.take_requests(&mut pl.fighter, || {
-                            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
-                        });
-                        items.take_requests(&mut dummy.fighter, || {
-                            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
-                        });
-                        items.resolve(&[&pl.fighter, &dummy.fighter]);
-                        items.sync_owner(&mut pl.fighter);
-                        items.sync_owner(&mut dummy.fighter);
-                        items.take_weapon_spawns(&mut weapons, || {
-                            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
-                        });
-                        items.record_landed(&mut pl.fighter);
-                        items.record_landed(&mut dummy.fighter);
-                        weapons.record_landed(&mut pl.fighter);
-                        weapons.record_landed(&mut dummy.fighter);
-                        ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
-                        ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
-                    }
-                }
+                training_step(
+                    p,
+                    pl,
+                    &mut dummy_state,
+                    &mut weapons,
+                    &mut items,
+                    &mut material_anim,
+                    &mut stage_objects,
+                    &mut stage_map,
+                    &mut stage_ctl,
+                    controller,
+                );
             }
         }
 
@@ -906,7 +1097,7 @@ unsafe fn run() -> ! {
             }
             Screen::Training => {
                 if let (Some(p), Some(pl)) = (pack.as_ref(), play_state.as_ref()) {
-                    effect_visuals.sync(p, &draw_assets, &pl.fighter, &weapons);
+                    effect_visuals.sync(p, &draw_assets, &pl.fighter, &weapons, &items);
                 }
                 draw_training(
                     &mut gpu,
@@ -915,6 +1106,7 @@ unsafe fn run() -> ! {
                     play_state.as_ref(),
                     dummy_state.as_ref(),
                     &weapons,
+                    &items,
                     &draw_assets,
                     &effect_visuals,
                     Some(&material_anim),
@@ -932,154 +1124,14 @@ unsafe fn run() -> ! {
             // One line for the capture log: whether the scripted attack
             // landed is not always visible (RE-351).
             if let (Some(dummy), Some(player)) = (dummy_state.as_ref(), play_state.as_ref()) {
-                let line = alloc::format!(
-                    "capture tick={} player_status={:?} player_facing={:?} player_catch={:?} dummy_damage={} dummy_status={:?} dummy_facing={:?} dummy_capture={:?}\n",
+                log_capture_state(
+                    capture_scene,
                     sim_frame_index,
-                    player.fighter.status.status,
-                    player.fighter.facing,
-                    player.fighter.grab.catch,
-                    dummy.fighter.damage,
-                    dummy.fighter.status.status,
-                    dummy.fighter.facing,
-                    dummy.fighter.grab.capture,
+                    player,
+                    dummy,
+                    &weapons,
+                    &items,
                 );
-                unsafe {
-                    psp::sys::sceIoWrite(
-                        psp::sys::sceKernelStdout(),
-                        line.as_ptr() as *const core::ffi::c_void,
-                        line.len(),
-                    );
-                }
-                if matches!(capture_scene, Some(GameScene::Yoshi | GameScene::YoshiBomb)) {
-                    let line = alloc::format!(
-                        "yoshi anim_frame={:.1} egg_held={} eggs={} stars={}\n",
-                        player.fighter.status.anim_frame,
-                        player.fighter.yoshi.egg_held,
-                        weapons.eggs().count(),
-                        weapons.stars().count(),
-                    );
-                    unsafe {
-                        psp::sys::sceIoWrite(
-                            psp::sys::sceKernelStdout(),
-                            line.as_ptr() as *const core::ffi::c_void,
-                            line.len(),
-                        );
-                    }
-                }
-                if matches!(
-                    capture_scene,
-                    Some(GameScene::Pikachu | GameScene::PikachuAir)
-                ) {
-                    let line = alloc::format!(
-                        "pikachu status={:?} jolts={:?}\n",
-                        player.fighter.status.status,
-                        weapons
-                            .jolts()
-                            .map(|j| (
-                                j.surface.is_some(),
-                                j.anim_epoch,
-                                j.anim_ticks,
-                                j.position.x
-                            ))
-                            .collect::<alloc::vec::Vec<_>>(),
-                    );
-                    unsafe {
-                        psp::sys::sceIoWrite(
-                            psp::sys::sceKernelStdout(),
-                            line.as_ptr() as *const core::ffi::c_void,
-                            line.len(),
-                        );
-                    }
-                }
-                if matches!(
-                    capture_scene,
-                    Some(
-                        GameScene::Donkey
-                            | GameScene::Ness
-                            | GameScene::NessThunder
-                            | GameScene::NessMagnet
-                    )
-                ) {
-                    let line = alloc::format!(
-                        "fighter status={:?} anim_frame={:.1} sparks={} heads={} trails={}\n",
-                        player.fighter.status.status,
-                        player.fighter.status.anim_frame,
-                        weapons.pk_fires().count(),
-                        weapons.pk_thunders().count(),
-                        weapons.pk_trails().count(),
-                    );
-                    unsafe {
-                        psp::sys::sceIoWrite(
-                            psp::sys::sceKernelStdout(),
-                            line.as_ptr() as *const core::ffi::c_void,
-                            line.len(),
-                        );
-                    }
-                }
-                if capture_scene == Some(GameScene::Kirby) {
-                    let line = alloc::format!(
-                        "kirby status={:?} anim_frame={:.1} cutters={:?}\n",
-                        player.fighter.status.status,
-                        player.fighter.status.anim_frame,
-                        weapons
-                            .cutters()
-                            .map(|c| (c.lifetime, c.anim_ticks, c.position.x))
-                            .collect::<alloc::vec::Vec<_>>(),
-                    );
-                    unsafe {
-                        psp::sys::sceIoWrite(
-                            psp::sys::sceKernelStdout(),
-                            line.as_ptr() as *const core::ffi::c_void,
-                            line.len(),
-                        );
-                    }
-                }
-                if matches!(
-                    capture_scene,
-                    Some(GameScene::Captain | GameScene::CaptainKick)
-                ) {
-                    let line = alloc::format!(
-                        "captain anim_frame={:.1} punch_effect={:?} kick_effect={:?}\n",
-                        player.fighter.status.anim_frame,
-                        ssb_game::captain::punch_effect_ticks(&player.fighter),
-                        ssb_game::captain::kick_effect_ticks(&player.fighter),
-                    );
-                    unsafe {
-                        psp::sys::sceIoWrite(
-                            psp::sys::sceKernelStdout(),
-                            line.as_ptr() as *const core::ffi::c_void,
-                            line.len(),
-                        );
-                    }
-                }
-                if capture_scene == Some(GameScene::Shield) {
-                    let joint = player.fighter.joint_transforms[3];
-                    let shield = ssb_game::combat::shield_transform(&player.fighter);
-                    let line = alloc::format!(
-                        "shield raised={} joint_present={} angle_sector={} angle_frame={:.2} range={:.3} player=({:.2},{:.2},{:.2}) center=({:.2},{:.2},{:.2}) axis_x=({:.2},{:.2},{:.2})\n",
-                        player.fighter.guard.is_shield,
-                        joint.is_some(),
-                        player.fighter.guard.angle_i,
-                        player.fighter.guard.angle_f,
-                        player.fighter.guard.shield_rotate_range,
-                        player.fighter.pos.x,
-                        player.fighter.pos.y,
-                        player.fighter.pos.z,
-                        shield.origin.x,
-                        shield.origin.y,
-                        shield.origin.z,
-                        shield.axes[0].x,
-                        shield.axes[0].y,
-                        shield.axes[0].z,
-                    );
-                    unsafe {
-                        psp::sys::sceIoWrite(
-                            psp::sys::sceKernelStdout(),
-                            line.as_ptr() as *const core::ffi::c_void,
-                            line.len(),
-                        );
-                    }
-                }
             }
             headless_capture_sent = true;
         }
@@ -1147,6 +1199,8 @@ struct DrawAssets {
     pk_fire: Option<ssb_rom::pack::ObjectDesc>,
     pk_thunder: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     pk_trail: Option<ssb_rom::pack::ObjectDesc>,
+    /// The PK Fire flame item and its `anim_joints`.
+    pk_fire_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Ness's PSI Magnet field and its transform animation.
     magnet: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Jigglypuff's Sing notes and their transform animation.
@@ -1196,6 +1250,11 @@ impl DrawAssets {
                 p,
                 ssb_psp_runtime::scene::NESS_PK_TRAIL_SOURCE,
             ),
+            pk_fire_item: ssb_psp_runtime::scene::object_keyed(
+                p,
+                ssb_psp_runtime::scene::NESS_PK_FIRE_ITEM_SOURCE,
+            )
+            .zip(p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_NESS_PK_FIRE)),
             magnet: ssb_psp_runtime::scene::ness_psi_magnet_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             sing: ssb_psp_runtime::scene::purin_sing_effect(p)
@@ -1240,6 +1299,35 @@ struct EffectVisuals {
     magnet: ssb_rom::skeleton::StageAnimator,
     magnet_materials: ssb_rom::skeleton::EffectMaterialAnimator,
     magnet_ticks: Option<u16>,
+    items: [ItemVisual; MAX_ITEM_VISUALS],
+}
+
+/// Items drawn at once: Training has at most one PK Fire flame and one Bomb
+/// per fighter.
+const MAX_ITEM_VISUALS: usize = 4;
+
+/// One item's players, keyed by its kind and restarted when its play count
+/// goes back.
+#[derive(Default)]
+struct ItemVisual {
+    kind: Option<ssb_game::item::ItemKind>,
+    ticks: u16,
+    anim: ssb_rom::skeleton::StageAnimator,
+    materials: ssb_rom::skeleton::EffectMaterialAnimator,
+}
+
+impl DrawAssets {
+    fn item(
+        &self,
+        kind: ssb_game::item::ItemKind,
+    ) -> Option<&(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)> {
+        match kind {
+            ssb_game::item::ItemKind::NessPKFire => self.pk_fire_item.as_ref(),
+            // Not drawn yet (RE-382): the held Bomb hangs under a hand-joint
+            // parent (kind 0x52) that is not ported.
+            ssb_game::item::ItemKind::LinkBomb => None,
+        }
+    }
 }
 
 /// The pose a stage player has reached for `node`, if it drives it.
@@ -1296,13 +1384,41 @@ fn catch_up(clock: &mut Option<u16>, target: Option<u16>) -> Option<(bool, u16)>
 }
 
 impl EffectVisuals {
+    #[inline(never)]
     fn sync(
         &mut self,
         p: &Pack<'_>,
         assets: &DrawAssets,
         player: &ssb_game::fighter::Fighter,
         weapons: &ssb_game::weapon::WeaponPool,
+        items: &ssb_game::item::ItemPool,
     ) {
+        // The items in pool order; a kind change or a play count that went
+        // back restarts a player.
+        let mut live = items.items();
+        for visual in &mut self.items {
+            let Some(item) = live.next() else {
+                visual.kind = None;
+                continue;
+            };
+            let Some((object, anim)) = assets.item(item.kind) else {
+                continue;
+            };
+            if visual.kind != Some(item.kind) || visual.ticks > item.anim_ticks {
+                visual.kind = Some(item.kind);
+                visual.ticks = 0;
+                visual.anim.start(p, anim);
+                visual.materials.start(p, object_mat_anims(p, object));
+            }
+            if let Some(script) = p.anim_script(anim) {
+                while visual.ticks < item.anim_ticks {
+                    let _ = visual.anim.tick(script);
+                    visual.materials.tick(p);
+                    visual.ticks += 1;
+                }
+            }
+        }
+
         // `ftLinkSpecialNProcUpdate` allows one Boomerang per Link, and
         // Training has one Link.
         let boomerang = weapons.boomerangs().next().map(|b| b.anim_ticks);
@@ -1498,6 +1614,7 @@ impl EffectVisuals {
 /// signal `plans/gameplay/F1.md`'s "Scene loading" section established (no
 /// `sceFont` text exists yet to say so in words), now distinguishing the
 /// failure reason too (RE-296).
+#[inline(never)]
 unsafe fn draw_training(
     gpu: &mut Gpu,
     draw_state: &mut meshdraw::DrawState,
@@ -1505,6 +1622,7 @@ unsafe fn draw_training(
     play_state: Option<&play::FighterScene>,
     dummy_state: Option<&play::Dummy>,
     weapons: &ssb_game::weapon::WeaponPool,
+    items: &ssb_game::item::ItemPool,
     assets: &DrawAssets,
     effect_visuals: &EffectVisuals,
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
@@ -1668,6 +1786,80 @@ unsafe fn draw_training(
                 u32::from(dummy.fighter.costume),
             );
             draw_state.finish_fighter_light();
+        }
+    }
+
+    draw_items_weapons_effects(
+        gpu,
+        draw_state,
+        p,
+        pl,
+        weapons,
+        items,
+        assets,
+        effect_visuals,
+        material_anim,
+    );
+}
+
+/// The item pass (DL link 11) and the weapon and effect pass (links 13 to 15)
+/// that follow the fighters. Kept out of [`draw_training`] so neither
+/// function outgrows MIPS branch range.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_items_weapons_effects(
+    gpu: &mut Gpu,
+    draw_state: &mut meshdraw::DrawState,
+    p: &Pack<'_>,
+    pl: &play::FighterScene,
+    weapons: &ssb_game::weapon::WeaponPool,
+    items: &ssb_game::item::ItemPool,
+    assets: &DrawAssets,
+    effect_visuals: &EffectVisuals,
+    material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) {
+    // Items (DL link 11) draw in the fighters' camera pass, under the
+    // camera's default head modes. The PK Fire flame is a
+    // `TraRotRpyRSca` tree scaled by its lifetime (`itNessPKFireProcUpdate`);
+    // its node 3 is a ROM billboard. Link's Bomb is `Tra` then kind 46 on the
+    // root and its child: the child draws as a camera-facing quad at the
+    // item's position plus its own translate, sized by the root's scale times
+    // its own and spun by its own `rotate.z` (`gcPrepDObjMatrix` kind 46
+    // rewrites only the MVP's rotation rows and carries `gGCScaleX` down).
+    for (item, visual) in items.items().zip(effect_visuals.items.iter()) {
+        if item.hidden {
+            continue;
+        }
+        let Some((object, _)) = assets.item(item.kind) else {
+            continue;
+        };
+        match item.kind {
+            ssb_game::item::ItemKind::NessPKFire => {
+                let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 8];
+                let n = visual.anim.compose(p, object, &mut posed);
+                gpu.model_transform_xyz(
+                    [item.pos.x, item.pos.y, item.pos.z],
+                    [0.0; 3],
+                    [
+                        meshdraw::MODEL_SCALE * item.scale.x,
+                        meshdraw::MODEL_SCALE * item.scale.y,
+                        meshdraw::MODEL_SCALE * item.scale.z,
+                    ],
+                );
+                let base = gpu.model_matrix();
+                meshdraw::draw_object_posed(
+                    p,
+                    object,
+                    &base,
+                    &posed[..n],
+                    None,
+                    draw_state,
+                    None,
+                    Some(&visual.materials),
+                    0,
+                );
+            }
+            ssb_game::item::ItemKind::LinkBomb => {}
         }
     }
 

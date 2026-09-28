@@ -210,6 +210,10 @@ pub fn ness_psi_magnet_effect(pack: &Pack<'_>) -> Option<(ObjectDesc, u32)> {
     Some((object_keyed(pack, NESS_PSI_MAGNET_EFFECT_KEY)?, slot as u32))
 }
 
+/// Ness's PK Fire flame item (file 240 + 0x34): file 336's four-node tree
+/// (RE-382).
+pub const NESS_PK_FIRE_ITEM_SOURCE: (u32, u32) = (336, 0x0A08);
+
 /// `dEFManagerPurinSingEffectDesc`: file 351's six-node note tree, at slot
 /// 32 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
 pub const PURIN_SING_EFFECT_KEY: (u32, u32) = (351, 0x2130);
