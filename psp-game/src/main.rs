@@ -146,6 +146,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // times.
         GameScene::CpuWalk => 200,
         GameScene::CpuJump => 120,
+        // After "Go" the CPU closes in: a down air at tick 610, then a grab
+        // and a forward throw, the player in `ThrownCommon` at 690.
+        GameScene::VsCpu => 690,
     }
 }
 
@@ -230,7 +233,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     }
     // The VS scenes move the menu cursor down to VS at tick 6
     // (`scripted_stick_y`) and confirm it at 8.
-    if matches!(scene, GameScene::Vs | GameScene::VsTimeUp) {
+    if matches!(scene, GameScene::Vs | GameScene::VsTimeUp | GameScene::VsCpu) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
             _ => N64Buttons(0),
@@ -367,7 +370,11 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     }
     if matches!(
         scene,
-        GameScene::Vs | GameScene::VsTimeUp | GameScene::CpuWalk | GameScene::CpuJump
+        GameScene::Vs
+            | GameScene::VsTimeUp
+            | GameScene::VsCpu
+            | GameScene::CpuWalk
+            | GameScene::CpuJump
     ) {
         return 0;
     }
@@ -414,7 +421,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
-    if matches!(scene, GameScene::Vs | GameScene::VsTimeUp) {
+    if matches!(scene, GameScene::Vs | GameScene::VsTimeUp | GameScene::VsCpu) {
         return if tick == 6 { -80 } else { 0 };
     }
     // Seventeen ticks at 80 move the cursor 68 pixels up, from y 170 to
@@ -494,8 +501,9 @@ fn log_capture_state(
         }
     }
     let line = alloc::format!(
-        "capture tick={} player_status={:?} player_facing={:?} player_catch={:?} dummy_damage={} dummy_status={:?} dummy_facing={:?} dummy_capture={:?}\n",
+        "capture tick={} player_damage={} player_status={:?} player_facing={:?} player_catch={:?} dummy_damage={} dummy_status={:?} dummy_facing={:?} dummy_capture={:?}\n",
         sim_frame_index,
+        player.fighter.damage,
         player.fighter.status.status,
         player.fighter.facing,
         player.fighter.grab.catch,
@@ -1051,6 +1059,8 @@ fn capture_cpu_behavior(scene: GameScene) -> Option<ssb_game::computer::Behavior
     match scene {
         GameScene::CpuWalk => Some(ssb_game::computer::Behavior::Walk),
         GameScene::CpuJump => Some(ssb_game::computer::Behavior::Jump),
+        // A time-up tie needs a CPU that never lands a hit.
+        GameScene::VsTimeUp => Some(ssb_game::computer::Behavior::Stand),
         _ => None,
     }
 }
@@ -1175,12 +1185,22 @@ fn start_sudden_death(
         time_limit: sudden.time_limit,
         stocks: 0,
     };
+    // A capture scene's CPU behaviour carries over; in play it is the VS
+    // default either way.
+    let cpu = world
+        .dummy_state
+        .as_ref()
+        .map(|d| (d.computer.behavior, d.computer.trait_kind));
     let index = enter_training(pack, gkind, fighters, Some(rules), battle, world);
     if let Some(pl) = world.play_state.as_mut() {
         pl.fighter.damage = ssb_game::battle::SUDDEN_DEATH_DAMAGE;
     }
     if let Some(d) = world.dummy_state.as_mut() {
         d.fighter.damage = ssb_game::battle::SUDDEN_DEATH_DAMAGE;
+        if let Some((behavior, trait_kind)) = cpu {
+            d.computer.behavior = behavior;
+            d.computer.trait_kind = trait_kind;
+        }
     }
     *battle = Some(sudden);
     index
@@ -1296,6 +1316,9 @@ fn enter_training(
                 ssb_game::battle::start_facing(d.fighter.pos.x, spawn_x(0).into_iter());
             d.fighter.dead.stock_rule = stock_rule;
             d.fighter.stocks = rules.stocks;
+            // A VS CPU runs the default trait and behaviour: it fights.
+            d.computer.trait_kind = ssb_game::computer::attack::Trait::Default;
+            d.computer.behavior = ssb_game::computer::Behavior::Default;
         }
         let mut players = [ssb_game::battle::Player::default(); 4];
         players[0] = ssb_game::battle::Player {
@@ -1480,6 +1503,7 @@ unsafe fn run() -> ! {
                                 (dummy_state.as_mut(), capture_scene.and_then(capture_cpu_behavior))
                             {
                                 d.computer.behavior = b;
+                                d.computer.trait_kind = ssb_game::computer::attack::Trait::None;
                             }
                             screen = Screen::Training;
                         } else if route == Some(CaptureRoute::StageSelect) {

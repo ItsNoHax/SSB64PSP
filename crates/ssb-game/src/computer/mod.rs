@@ -9,6 +9,7 @@
 //! interpreter writes [`Computer::buttons`] and [`Computer::stick`], and
 //! the host hands them to the fighter as its controller state.
 
+pub mod attack;
 pub mod behave;
 mod scripts;
 
@@ -134,6 +135,34 @@ pub struct Computer {
     /// `cliff_left_pos`/`cliff_right_pos`: the lowest outer edges.
     pub cliff_left: Vec2,
     pub cliff_right: Vec2,
+    /// `trait`.
+    pub trait_kind: attack::Trait,
+    /// `objective_base`: what `ftComputerProcDefault` falls back to.
+    pub objective_base: behave::Objective,
+    pub item_track_wait: u16,
+    pub item_throw_wait: u16,
+    /// `is_opponent_ra`: a reflector answers an incoming weapon.
+    pub is_opponent_ra: bool,
+    /// `fighter_follow_since`/`_wait`/`_end`: the follow pacing.
+    pub follow_since: u16,
+    pub follow_wait: u16,
+    pub follow_end: u16,
+    /// `target_gobj` and `target_damage_percent` of
+    /// `ftComputerWaitGetTarget`.
+    pub wait_target: Option<usize>,
+    pub wait_target_damage: u16,
+    pub wiggle_wait: u16,
+    /// `unk_ftcom_0x35`: projectile specials fired in a row.
+    pub projectile_count: u8,
+    /// `unk_ftcom_0x20`: ticks left in a walking burst.
+    pub walk_burst: u16,
+    pub walk_stop_wait: u16,
+    pub edge_pos: Vec2,
+    /// `input_kind`: the last attack script chosen.
+    pub input_kind: Option<usize>,
+    pub input_repeat_count: u8,
+    /// The per-attack weight counters.
+    pub attack_counts: attack::AttackCounts,
 }
 
 impl Computer {
@@ -152,8 +181,11 @@ impl Computer {
     /// Called when the fighter spawns. The cliff positions it also takes
     /// come with the recovery objective.
     pub fn setup(f: &Fighter, level: u8) -> Computer {
+        // The US build's first behaviour change; `trait` and `behavior`
+        // start at their defaults.
         let mut com = Computer {
             level,
+            behavior_change_wait: 1440u16.saturating_sub(u16::from(level) * 240),
             ..Computer::default()
         };
         com.origin_pos = Vec2::new(f.pos.x, f.pos.y);

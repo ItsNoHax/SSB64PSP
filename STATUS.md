@@ -7,30 +7,31 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** the CPU's Training behaviours (RE-390): the dummy
-  runs `ftcomputer.c`'s Stand behaviour through the ported interpreter,
-  objective status and Walk, Evade, Recover and CounterAttack objectives.
-  Before it: the VS battle rules (RE-389).
-- **Next gameplay batch:** CPU AI part 3, `ftComputerProcDefault`: the
-  per-fighter attack tables and the Attack objective, so the VS CPU
-  fights. The Appear entry is parked with its findings in TODO.
+- **Completed batch:** the VS CPU fights (RE-391): `ftComputerProcDefault`,
+  the default trait's behaviour changes, the generated per-fighter attack
+  tables and the Attack, Unknown1, Ally and Patrol objectives. Before it:
+  the CPU's Training behaviours (RE-390).
+- **Next gameplay batch:** the VS HUD: the countdown, timer and stock and
+  damage displays (`ifCommon*`), so a VS battle shows its state. The
+  CPU's item objectives wait for items in VS. The Appear entry is parked
+  with its findings in TODO.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| VS CPU fights | `computer::attack`, 10 host tests; VS CPU on trait Default; new `f1-vs-cpu` | RE-391 |
 | CPU Training behaviours | `ssb_game::computer`, 21 host tests; the dummy runs Stand; new `f1-training-cpu-walk`, `-jump` | RE-390 |
-| VS battle | `ssb_game::battle`, `damage_player`; 9 host tests; new `f1-vs-countdown`, `f1-vs-sudden-death` | RE-389 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
   Pinned 1.98.0 Clippy with warnings denied and workspace rustfmt passed in
-  RE-390; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
+  RE-391; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: all 95 goldens match twice (RE-390), including the
-  two CPU scenes. No golden passes through a platform.
+- PPSSPPHeadless: all 101 goldens match twice (RE-391), including the
+  VS CPU scene. No golden passes through a platform.
 - `psp-game` reaches scripted Training in PPSSPP. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
   (RE-360).
