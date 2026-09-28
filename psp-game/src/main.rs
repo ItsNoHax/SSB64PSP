@@ -134,6 +134,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Peach's Castle is confirmed at tick 115; Kirby and the dummy have
         // settled.
         GameScene::FighterSelect => 160,
+        GameScene::Rebirth => 300,
     }
 }
 
@@ -213,6 +214,12 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         return match tick {
             4 | 8 | 32 | 115 => N64Buttons(N64Buttons::A),
             72 => N64Buttons(N64Buttons::START),
+            _ => N64Buttons(0),
+        };
+    }
+    if scene == GameScene::Rebirth {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
             _ => N64Buttons(0),
         };
     }
@@ -328,6 +335,10 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     }
     if scene == GameScene::Shield {
         return if (50..=60).contains(&tick) { 40 } else { 0 };
+    }
+    // Held left, Mario dashes off the main floor's left end.
+    if scene == GameScene::Rebirth {
+        return if (20..=100).contains(&tick) { -80 } else { 0 };
     }
     if matches!(scene, GameScene::Grab | GameScene::Jab) {
         return if (14..52).contains(&tick) { -30 } else { 0 };
@@ -634,13 +645,20 @@ unsafe fn training_step(
         // Grab events land before the partner's own half,
         // matching the original's direct status writes
         // (`ssb_game::grab` module docs).
+        // `DeadUpFall` drops from above `gGMCameraGObj`'s eye.
+        pl.fighter.dead.camera_eye = pl.camera.eye;
+        if let Some(dummy) = dummy_state.as_mut() {
+            dummy.fighter.dead.camera_eye = pl.camera.eye;
+        }
         items.publish(&mut pl.fighter);
         pl.tick_fighter_interrupt(p, &stage, controller, jump_held, groups);
+        after_interrupt(&mut pl.fighter, dummy_state.as_ref().map(|d| &d.fighter));
         if let Some(dummy) = dummy_state.as_mut() {
             ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
             items.publish(&mut dummy.fighter);
             dummy.tick_interrupt(p, &stage, groups);
             ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
+            after_interrupt(&mut dummy.fighter, Some(&pl.fighter));
         }
         // Priority 4, Ground link: the stage controller.
         {
@@ -689,6 +707,9 @@ unsafe fn training_step(
                 .then_some((dummy.fighter.cliff.line, dummy.fighter.facing))
         });
         pl.tick_fighter_physics(p, &stage, groups);
+        if core::mem::take(&mut pl.fighter.dead.died) {
+            weapons.destroy_boomerang(pl.fighter.port);
+        }
         // The Boomerang projects through the camera last drawn.
         weapons.observe_camera(&pl.camera);
         pl.tick_camera(&stage, None);
@@ -703,6 +724,9 @@ unsafe fn training_step(
                 .then_some((pl.fighter.cliff.line, pl.fighter.facing));
             ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
             dummy.tick_fighter_physics(p, &stage, groups);
+            if core::mem::take(&mut dummy.fighter.dead.died) {
+                weapons.destroy_boomerang(dummy.fighter.port);
+            }
             items.take_requests(&mut dummy.fighter, || {
                 ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
             });
@@ -974,6 +998,17 @@ fn clock_byte() -> u8 {
 /// `syUtilsRandTimeUCharRange(9)`: the clock's low byte, scaled to 0..9.
 fn stage_select_rand() -> u8 {
     (u32::from(clock_byte()) * 9 / 256) as u8
+}
+
+/// The half of `ftCommonDeadCheckRebirth` a fighter cannot do itself: the
+/// rebirth takes the lowest halo the other fighter is not using.
+fn after_interrupt(f: &mut ssb_game::fighter::Fighter, other: Option<&ssb_game::fighter::Fighter>) {
+    if f.dead.rebirth_pending {
+        let halo = ssb_game::dead::halo_number(
+            other.map(|o| (o.status.status, o.dead.rebirth.halo_number)).into_iter(),
+        );
+        ssb_game::dead::rebirth_down(f, halo);
+    }
 }
 
 /// What Training owns across frames, rebuilt on each stage entry.
@@ -2005,7 +2040,9 @@ unsafe fn draw_training(
         }
     }
 
-    if let Some(obj) = p.object(pl.object) {
+    // `FTStruct::is_invisible` (a KO, a Kirby or Yoshi capture) skips the
+    // model.
+    if let Some(obj) = p.object(pl.object).filter(|_| !pl.fighter.is_invisible) {
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
         let n = pl.compose_model(p, &obj, &mut posed);
         if let Some(joint) = pl
@@ -2048,7 +2085,7 @@ unsafe fn draw_training(
     // (RE-164) -- just with no camera interest of its own (F1's target
     // doesn't move, so it never influences framing).
     if let Some(dummy) = dummy_state {
-        if let Some(obj) = p.object(dummy.object) {
+        if let Some(obj) = p.object(dummy.object).filter(|_| !dummy.fighter.is_invisible) {
             let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
             let n = dummy.compose_model(p, &obj, &mut posed);
             if let Some(joint) = dummy

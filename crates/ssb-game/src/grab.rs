@@ -2142,7 +2142,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
 /// [`exchange`]. Yoshi's Egg Lay searches with its own box and
 /// `proc_catch`/`proc_capture` pair.
 pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
-    if !catcher.grab.is_catchstatus {
+    if !catcher.grab.is_catchstatus || other.dead.is_ghost {
         return false;
     }
     let egg_lay = crate::yoshi::egg_lay_searching(catcher);

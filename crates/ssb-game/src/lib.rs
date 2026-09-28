@@ -19,6 +19,7 @@ pub mod capture_yoshi;
 pub mod collision;
 pub mod combat;
 pub mod costume;
+pub mod dead;
 pub mod fighter;
 pub mod fighter_select;
 pub mod grab;

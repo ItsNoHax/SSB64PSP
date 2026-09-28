@@ -2399,6 +2399,16 @@ impl WeaponPool {
         }
     }
 
+    /// `ftManagerDestroyFighterWeapons`, as a fighter dies: only Link's
+    /// Boomerang (`boomerang_gobj`, the one it homes back to) goes.
+    pub fn destroy_boomerang(&mut self, port: u8) {
+        for slot in self.slots.iter_mut() {
+            if matches!(slot, Some(Weapon::Boomerang(b)) if b.parent_port == Some(port)) {
+                *slot = None;
+            }
+        }
+    }
+
     /// Records the battle camera the Boomerang's off-camera check projects
     /// through. `gGMCameraMatrix` is built when the camera draws, so call it
     /// before the camera advances this frame.
@@ -2553,6 +2563,10 @@ impl WeaponPool {
     /// Blaster both delete on registered contact; invincibility leaves the
     /// shot live, exactly like a non-registered source hitbox.
     pub fn apply_hits(&mut self, defender: &mut Fighter) {
+        // `ftMainProcSearchHitAll` skips a ghost.
+        if defender.dead.is_ghost {
+            return;
+        }
         self.apply_pk_hits(defender);
         let mut thunder_groups = [None; MAX_WEAPONS];
         for (i, slot) in self.slots.iter_mut().enumerate() {

@@ -2108,34 +2108,8 @@ pub fn set_guard_set_off(f: &mut Fighter, hit_damage: f32, shield_lr: f32) {
 }
 
 // ---------------------------------------------------------------------------
-// KO / death / respawn
+// KO / death / respawn: the statuses live in `crate::dead`.
 // ---------------------------------------------------------------------------
-
-/// `FTCOMMON_DEAD_WAIT`/`FTCOMMON_DEADUP_WAIT` — `ft/ftcommon.h`.
-pub const DEAD_WAIT: f32 = 45.0;
-/// `FTCOMMON_DEADUP_WAIT`.
-pub const DEADUP_WAIT: f32 = 180.0;
-/// `ftCommonDeadUpStarProcUpdate`/`ftCommonDeadUpFallProcUpdate`'s phases
-/// collapsed into one wait — see [`set_dead_up_star`]. The setter's
-/// `wait = 1` expires on the first update (phase 0 then waits
-/// `FTCOMMON_DEADUP_WAIT`), phase 1 waits `FTCOMMON_DEAD_WAIT`, and phase 2
-/// calls `ftCommonDeadCheckRebirth`.
-pub const DEADUP_TOTAL_WAIT: f32 = 1.0 + DEADUP_WAIT + DEAD_WAIT;
-/// `ftCommonDeadCheckInterruptCommon`: a top-out explodes in the foreground
-/// (`DeadUpFall`) one time in six.
-pub const DEADUP_FALL_CHANCE: f32 = 1.0 / 6.0;
-pub const REBIRTH_INVINCIBLE_FRAMES: u16 = 120;
-/// `FTCOMMON_REBIRTH_HALO_DESPAWN_WAIT` minus `..._STAND_WAIT`: how long
-/// `RebirthDown`'s halo-lowering phase actually runs before the original
-/// moves on to `RebirthStand` — `ftCommonRebirthDownProcUpdate`'s
-/// `halo_despawn_wait == DESPAWN_WAIT - STAND_WAIT` test.
-pub const REBIRTH_DOWN_WAIT: f32 = 390.0 - 75.0;
-/// `ftCommonRebirthDownSetStatus`'s `frame_begin`.
-pub const REBIRTH_DOWN_FRAME_BEGIN: f32 = 100.0;
-/// The remaining `FTCOMMON_REBIRTH_HALO_STAND_WAIT`, absorbed into
-/// `RebirthWait` here since `RebirthStand`'s own exit is gated on an
-/// unextracted animation length (see [`set_rebirth_stand`]).
-pub const REBIRTH_WAIT_WAIT: f32 = 75.0;
 
 /// A stage's blast-zone extents — `MPGroundData.map_bound_*`
 /// (`ssb_rom::pack::StageDesc::bounds`). Passed in by the caller (mirroring
@@ -2147,152 +2121,6 @@ pub struct BlastZone {
     pub bottom: f32,
     pub left: f32,
     pub right: f32,
-}
-
-/// `ftCommonDeadCheckInterruptCommon` @ `ftcommondead.c:533`, restricted to
-/// the ordinary (non-1P-team, non-`is_limit_map_bounds`, non-`is_ghost`)
-/// case — the other branches are 1P-mode/camera-bound/already-dead special
-/// cases this codebase has no equivalent state for yet. Order matches the
-/// original: bottom, then right, then left, then top. A top-out draws one
-/// `syUtilsRandFloat` from the shared generator ([`crate::rng`]): below
-/// [`DEADUP_FALL_CHANCE`] it is `DeadUpFall`, otherwise `DeadUpStar`.
-///
-/// Stocks are decremented immediately on death (`ftCommonDeadUpdateScore`,
-/// called from every `DeadXxxSetStatus`), not at respawn time — matching
-/// [`try_rebirth`]'s later read of `f.stocks`.
-pub fn check_dead(f: &mut Fighter, bounds: BlastZone) -> bool {
-    if f.pos.y < bounds.bottom {
-        set_dead_down(f);
-    } else if f.pos.x > bounds.right || f.pos.x < bounds.left {
-        set_dead_left_right(f);
-    } else if f.pos.y > bounds.top {
-        if crate::rng::rand_float() < DEADUP_FALL_CHANCE {
-            set_dead_up_fall(f);
-        } else {
-            set_dead_up_star(f);
-        }
-    } else {
-        return false;
-    }
-    f.stocks -= 1;
-    true
-}
-
-fn enter_dead(f: &mut Fighter, status: Status, wait: f32) {
-    if f.items.held.is_some() {
-        f.items.request(crate::item::ItemRequest::Destroy);
-        f.items.held = None;
-    }
-    // `ftCommonDeadResetCommonVars` → `ftCommonThrownDecideDeadResult`.
-    crate::grab::release_on_dead(f);
-    set_status(f, status, 0.0, StatusTiming::frames(wait));
-    f.physics = crate::physics::PhysicsState::default();
-    f.situation = Situation::Air;
-}
-
-/// `ftCommonDeadDownSetStatus` @ `ftcommondead.c:194`, minus the
-/// score/rumble/screen-flash/sound/camera-bound-clamp side effects (module
-/// docs' usual rendering/scene-manager scope cut).
-pub fn set_dead_down(f: &mut Fighter) {
-    enter_dead(f, Status::DeadDown, DEAD_WAIT);
-}
-
-/// `ftCommonDeadRightSetStatus`/`...LeftSetStatus` @ `ftcommondead.c:235,277`
-/// — both enter the same `DeadLeftRight` ordinal in the original.
-pub fn set_dead_left_right(f: &mut Fighter) {
-    enter_dead(f, Status::DeadLeftRight, DEAD_WAIT);
-}
-
-/// `ftCommonDeadUpStarSetStatus` @ `ftcommondead.c:740`, collapsed to a
-/// single wait of [`DEADUP_TOTAL_WAIT`] frames instead of the original's two
-/// `motion_vars.flags.flag1`-driven phases (off-screen flight with a
-/// position/colour tween, then a star-flash pause) — both phases are purely
-/// visual on top of the same real frame counts, which this sum preserves.
-pub fn set_dead_up_star(f: &mut Fighter) {
-    enter_dead(f, Status::DeadUpStar, DEADUP_TOTAL_WAIT);
-}
-
-/// `ftCommonDeadUpFallSetStatus`: the same three phases as
-/// [`set_dead_up_star`] (a fall toward the camera, then the explosion), so the
-/// same collapsed wait.
-pub fn set_dead_up_fall(f: &mut Fighter) {
-    enter_dead(f, Status::DeadUpFall, DEADUP_TOTAL_WAIT);
-}
-
-/// `ftCommonDeadCheckRebirth` @ `ftcommondead.c:95`, restricted to the
-/// stock-match case (no 1P-mode enemy-team respawn). Call once a Dead-family
-/// status's wait has elapsed ([`StatusState::animation_ended`]) — `update`
-/// cannot do this itself because, unlike every other status transition in
-/// this module, it needs the stage's respawn point from outside.
-///
-/// Returns `false` and leaves the status alone if `f` is not in a
-/// finished Dead status, so callers can poll it unconditionally each tick.
-pub fn try_rebirth(f: &mut Fighter, respawn_pos: Vec3) -> bool {
-    let in_dead_family = matches!(
-        f.status.status,
-        AnyStatus::Common(
-            Status::DeadDown | Status::DeadLeftRight | Status::DeadUpStar | Status::DeadUpFall
-        )
-    );
-    if !in_dead_family || !f.status.animation_ended() {
-        return false;
-    }
-    if f.stocks < 0 {
-        // `ftCommonSleepSetStatus`: out of stocks, out of the match. No
-        // callback exists for `Sleep` yet (module docs) — parking here is
-        // the same "ordinal-only, no behaviour" gap every other unwired
-        // status has.
-        set_status(f, Status::Sleep, 0.0, StatusTiming::unknown());
-    } else {
-        set_rebirth_down(f, respawn_pos);
-    }
-    true
-}
-
-/// `ftCommonRebirthDownSetStatus` @ `ftcommonrebirth.c:20`, minus the halo
-/// map-object lookup/spacing (multiple simultaneous respawns are offset
-/// sideways in the original so their halos do not overlap — cosmetic) and
-/// the halo-drop animation itself: the fighter is placed at `respawn_pos`
-/// immediately rather than tweened down from above. `damage = 0` on respawn
-/// is real (`dFTManagerDefaultFighterDesc`'s reset), not a simplification.
-pub fn set_rebirth_down(f: &mut Fighter, respawn_pos: Vec3) {
-    f.pos = respawn_pos;
-    f.damage = 0;
-    f.physics = crate::physics::PhysicsState::default();
-    f.situation = Situation::Ground;
-    // The clip starts at frame 100; the halo wait, not the clip, ends the
-    // status, so the length counts from there.
-    set_status(
-        f,
-        Status::RebirthDown,
-        REBIRTH_DOWN_FRAME_BEGIN,
-        StatusTiming::frames(REBIRTH_DOWN_FRAME_BEGIN + REBIRTH_DOWN_WAIT),
-    );
-}
-
-/// `ftCommonRebirthStandSetStatus` @ `ftcommonrebirth.c:157`. No animation
-/// length is extracted for the landing pose, so — like [`set_guard_on`] —
-/// this resolves into `RebirthWait` on its very next update tick rather than
-/// waiting for the original's `ftAnimEndCheckSetStatus`.
-pub fn set_rebirth_stand(f: &mut Fighter) {
-    set_status(f, Status::RebirthStand, 0.0, StatusTiming::unknown());
-}
-
-/// `ftCommonRebirthWaitSetStatus` @ `ftcommonrebirth.c:198`.
-pub fn set_rebirth_wait(f: &mut Fighter) {
-    set_status(
-        f,
-        Status::RebirthWait,
-        0.0,
-        StatusTiming::frames(REBIRTH_WAIT_WAIT),
-    );
-}
-
-/// `ftCommonRebirthWaitProcUpdate`'s exit @ `ftcommonrebirth.c:173`: back
-/// under normal control, with a window of hit-invincibility.
-fn end_rebirth(f: &mut Fighter) {
-    f.invincible_frames = REBIRTH_INVINCIBLE_FRAMES;
-    set_fall(f);
 }
 
 // ---------------------------------------------------------------------------
@@ -3656,7 +3484,8 @@ pub fn set_any_status_preserve(
     // The two stage captors are listed as grounded but never touch `ga`
     // (`ftCommonTwisterSetStatus` leaves the air itself beforehand).
     let keeps_situation = matches!(status, AnyStatus::Common(s) if s.keeps_situation())
-        || crate::hazard::is_captured(status);
+        || crate::hazard::is_captured(status)
+        || crate::dead::keeps_situation(status);
     match (f.situation, status.is_grounded()) {
         _ if keeps_situation => {}
         (Situation::Ground, false) => f.become_airborne(),
@@ -3684,6 +3513,7 @@ pub fn set_any_status_preserve(
     // so rendering has one display gate and capture systems can use it too.
     f.is_shadow_hidden = crate::shadow::status_hides_shadow(status);
     f.is_invisible = false;
+    crate::dead::on_set_status(f);
     f.status.anim_frame = anim_frame_begin;
     f.status.anim_frame_begin = anim_frame_begin;
     f.status.entry = f.status.entry.wrapping_add(1);
@@ -4950,6 +4780,9 @@ pub fn update(f: &mut Fighter) {
     if crate::hazard::update(f, current) {
         return;
     }
+    if crate::dead::update(f, current) {
+        return;
+    }
     match current {
         Status::KneeBend | Status::GuardKneeBend => update_kneebend(f),
         Status::Dash => update_dash(f),
@@ -5112,29 +4945,6 @@ pub fn update(f: &mut Fighter) {
                 } else {
                     set_guard(f);
                 }
-            }
-        }
-        // `ftCommonRebirthDownProcUpdate` @ `ftcommonrebirth.c:124`, minus
-        // the camera-mode switch it also does partway through (cosmetic).
-        Status::RebirthDown => {
-            if f.status.animation_ended() {
-                set_rebirth_stand(f);
-            }
-        }
-        // `ftCommonRebirthStandProcUpdate` @ `ftcommonrebirth.c:150`: see
-        // `set_rebirth_stand`'s docs for why this collapses to one tick.
-        Status::RebirthStand => {
-            set_rebirth_wait(f);
-        }
-        // `ftCommonRebirthWaitProcUpdate`/`...ProcInterrupt` @
-        // `ftcommonrebirth.c:173,187`: the player can cancel the respawn
-        // wait early by acting, which grants the same invincibility window
-        // immediately rather than waiting out the rest of the timer.
-        Status::RebirthWait => {
-            if ground_interrupt(f) {
-                f.invincible_frames = REBIRTH_INVINCIBLE_FRAMES;
-            } else if f.status.animation_ended() {
-                end_rebirth(f);
             }
         }
         // `ftCommonCliffCatchProcUpdate` @ `ftcommoncliffcatchwait.c:10`: see
@@ -7441,149 +7251,36 @@ mod tests {
         assert_eq!(f.status.status, Status::Wait);
     }
 
-    fn bounds() -> BlastZone {
-        BlastZone {
-            top: 200.0,
-            bottom: -200.0,
-            left: -300.0,
-            right: 300.0,
+    fn rebirth_bounds() -> crate::dead::StageBounds {
+        let zone = BlastZone {
+            top: 3000.0,
+            bottom: -2000.0,
+            left: -4000.0,
+            right: 4000.0,
+        };
+        crate::dead::StageBounds {
+            map: zone,
+            camera: zone,
+            rebirth: ssb_engine::math::Vec2::new(0.0, 0.0),
         }
-    }
-
-    #[test]
-    fn falling_below_the_blast_zone_kills_and_costs_a_stock() {
-        let mut f = mario();
-        f.pos.y = -201.0;
-        let stocks_before = f.stocks;
-        assert!(check_dead(&mut f, bounds()));
-        assert_eq!(f.status.status, Status::DeadDown);
-        assert_eq!(f.stocks, stocks_before - 1);
-    }
-
-    #[test]
-    fn crossing_either_side_enters_the_shared_left_right_status() {
-        let mut right = mario();
-        right.pos.x = 301.0;
-        assert!(check_dead(&mut right, bounds()));
-        assert_eq!(right.status.status, Status::DeadLeftRight);
-
-        let mut left = mario();
-        left.pos.x = -301.0;
-        assert!(check_dead(&mut left, bounds()));
-        assert_eq!(left.status.status, Status::DeadLeftRight);
-    }
-
-    #[test]
-    fn a_top_out_explodes_one_time_in_six_on_the_shared_generator() {
-        crate::rng::set_seed(1);
-        let mut fall = 0;
-        for _ in 0..1200 {
-            let mut f = mario();
-            f.pos.y = 201.0;
-            assert!(check_dead(&mut f, bounds()));
-            match f.status.status {
-                AnyStatus::Common(Status::DeadUpFall) => fall += 1,
-                AnyStatus::Common(Status::DeadUpStar) => {}
-                other => panic!("{other:?}"),
-            }
-        }
-        // 1/6 of 1,200 is 200; other tests share the generator, so allow
-        // the sampling spread rather than an exact count.
-        assert!((140..260).contains(&fall), "{fall}");
-    }
-
-    #[test]
-    fn a_top_out_rebirths_after_one_plus_the_two_source_waits() {
-        let mut f = mario();
-        set_dead_up_fall(&mut f);
-        let mut updates = 0;
-        while !try_rebirth(&mut f, Vec3::ZERO) {
-            update(&mut f);
-            updates += 1;
-            assert!(updates < 1000);
-        }
-        assert_eq!(updates, 1 + 180 + 45);
-    }
-
-    #[test]
-    fn staying_inside_the_blast_zone_does_not_kill() {
-        let mut f = mario();
-        assert!(!check_dead(&mut f, bounds()));
-        assert_eq!(f.status.status, Status::Wait);
-        assert_eq!(f.stocks, 3);
-    }
-
-    #[test]
-    fn a_dead_fighter_respawns_after_its_wait_with_damage_reset() {
-        let mut f = mario();
-        f.damage = 80;
-        f.pos.y = -201.0;
-        check_dead(&mut f, bounds());
-        let stocks_after_death = f.stocks;
-
-        for _ in 0..(DEAD_WAIT as i32 - 1) {
-            update(&mut f);
-            assert!(!try_rebirth(&mut f, Vec3::ZERO));
-        }
-        update(&mut f);
-        assert!(try_rebirth(&mut f, Vec3::new(5.0, 5.0, 0.0)));
-        assert_eq!(f.status.status, Status::RebirthDown);
-        assert_eq!(f.damage, 0);
-        assert_eq!(f.pos, Vec3::new(5.0, 5.0, 0.0));
-        assert_eq!(f.stocks, stocks_after_death);
-    }
-
-    #[test]
-    fn running_out_of_stocks_sleeps_instead_of_respawning() {
-        let mut f = mario();
-        f.stocks = 0;
-        f.pos.y = -201.0;
-        check_dead(&mut f, bounds()); // stocks: 0 -> -1
-        for _ in 0..(DEAD_WAIT as i32) {
-            update(&mut f);
-        }
-        assert!(try_rebirth(&mut f, Vec3::ZERO));
-        assert_eq!(f.status.status, Status::Sleep);
-    }
-
-    #[test]
-    fn the_full_rebirth_sequence_ends_grounded_and_invincible() {
-        let mut f = mario();
-        set_rebirth_down(&mut f, Vec3::new(1.0, 2.0, 0.0));
-        assert_eq!(f.situation, Situation::Ground);
-
-        for _ in 0..(REBIRTH_DOWN_WAIT as i32 - 1) {
-            update(&mut f);
-            assert_eq!(f.status.status, Status::RebirthDown);
-        }
-        update(&mut f); // RebirthDown's wait ends -> RebirthStand
-        assert_eq!(f.status.status, Status::RebirthStand);
-        update(&mut f); // RebirthStand collapses straight to RebirthWait
-        assert_eq!(f.status.status, Status::RebirthWait);
-
-        for _ in 0..(REBIRTH_WAIT_WAIT as i32 - 1) {
-            update(&mut f);
-            assert_eq!(f.status.status, Status::RebirthWait);
-        }
-        update(&mut f);
-        assert_eq!(f.status.status, Status::Fall);
-        assert_eq!(f.invincible_frames, REBIRTH_INVINCIBLE_FRAMES);
     }
 
     #[test]
     fn acting_during_rebirth_wait_cancels_it_early_with_invincibility() {
         let mut f = mario();
-        set_rebirth_down(&mut f, Vec3::ZERO);
-        for _ in 0..(REBIRTH_DOWN_WAIT as i32) {
+        f.dead.bounds = Some(rebirth_bounds());
+        crate::dead::rebirth_down(&mut f, 0);
+        let mut ticks = 0;
+        while f.status.status != Status::RebirthWait {
             update(&mut f);
+            ticks += 1;
+            assert!(ticks < 390);
         }
-        update(&mut f); // -> RebirthWait
-        assert_eq!(f.status.status, Status::RebirthWait);
 
         tap_a(&mut f); // jabs, which runs through ground_interrupt
         update(&mut f);
         assert_eq!(f.status.status, Status::Attack11);
-        assert_eq!(f.invincible_frames, REBIRTH_INVINCIBLE_FRAMES);
+        assert_eq!(f.invincible_frames, crate::dead::REBIRTH_INVINCIBLE_FRAMES);
     }
 
     /// A level, ledge-grabbable line from -2318 to 2318 — the same shape as
@@ -8063,7 +7760,11 @@ mod tests {
         set_pass(&mut f);
         assert_eq!(f.status.anim_frame_begin, 1.0);
         // `ftCommonRebirthDownSetStatus` starts the clip at frame 100.
-        set_rebirth_down(&mut f, Vec3::ZERO);
-        assert_eq!(f.status.anim_frame_begin, REBIRTH_DOWN_FRAME_BEGIN);
+        f.dead.bounds = Some(rebirth_bounds());
+        crate::dead::rebirth_down(&mut f, 0);
+        assert_eq!(
+            f.status.anim_frame_begin,
+            crate::dead::REBIRTH_DOWN_FRAME_BEGIN
+        );
     }
 }

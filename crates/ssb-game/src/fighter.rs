@@ -377,6 +377,8 @@ pub struct Fighter {
     pub cliff_air_mask: u32,
     /// Stage hazard timers, wind and captor state ([`crate::hazard`]).
     pub hazard: crate::hazard::HazardState,
+    /// Blast-zone deaths and the rebirth halo ([`crate::dead`]).
+    pub dead: crate::dead::DeadState,
 }
 
 impl Fighter {
@@ -469,6 +471,7 @@ impl Fighter {
             reaction: crate::reaction::ReactionState::default(),
             is_smash_di: false,
             hazard: crate::hazard::HazardState::default(),
+            dead: crate::dead::DeadState::default(),
         }
     }
 
@@ -750,9 +753,17 @@ impl Fighter {
         if self.is_in_hitlag() {
             // `proc_lagupdate`: Smash DI nudges a fighter frozen by a hit.
             self.smash_di(surfaces);
+            crate::dead::check(self);
             return;
         }
         let surfaces = || surfaces();
+        // The dead and rebirth statuses have no `proc_physics`, and their
+        // `proc_map` (if any) replaces the map step.
+        if crate::dead::tick_status(self) {
+            self.root_motion = RootMotion::default();
+            self.weapon_spawn_anchor = None;
+            return;
+        }
 
         // `ftCommonYoshiEggProcPhysics`'s own half, ahead of the common
         // physics it ends with.
@@ -765,6 +776,7 @@ impl Fighter {
         if crate::grab::tick_held(self, || crate::map::floors(surfaces())) {
             self.root_motion = RootMotion::default();
             self.weapon_spawn_anchor = None;
+            crate::dead::check(self);
             return;
         }
         self.map_contacts_prev = self.map_contacts;
@@ -772,6 +784,7 @@ impl Fighter {
         if crate::hazard::tick_status(self, &surfaces) {
             self.root_motion = RootMotion::default();
             self.weapon_spawn_anchor = None;
+            crate::dead::check(self);
             return;
         }
         if !self.tick_cliff(&surfaces) {
@@ -780,6 +793,10 @@ impl Fighter {
                 Situation::Air => self.tick_air(surfaces),
             }
         }
+        // `ftCommonDeadCheckInterruptCommon` runs between the position step
+        // and `proc_map` in `ftMainProcPhysicsMap`; here the ground and air
+        // ticks do both, so it runs after the map step.
+        crate::dead::check(self);
         // Root motion is an input sample, not persistent fighter state. This
         // prevents a missed runtime sample from replaying an old displacement.
         self.root_motion = RootMotion::default();

@@ -218,6 +218,9 @@ pub const NESS_PK_FIRE_ITEM_SOURCE: (u32, u32) = (336, 0x0A08);
 /// 353's three-node tree (RE-383).
 pub const LINK_BOMB_ITEM_SOURCE: (u32, u32) = (353, 0x18D8);
 
+/// `nMPMapObjKindRebirth`: the map point a respawn's halo lowers onto.
+pub const MAP_OBJ_KIND_REBIRTH: u16 = 0x20;
+
 /// `dEFManagerShieldEffectDesc`: file 163's shield tree
 /// (`llFTManagerCommonShieldDObjDesc`), slot 14 of
 /// `ssb_rom::effect::MANAGER_EFFECT_KEYS` (RE-384).
@@ -872,6 +875,27 @@ impl FighterScene {
                 ssb_engine::math::Vec2::new(fighter.pos.x, fighter.pos.y),
             )
             .is_some();
+        }
+        // `MPGroundData`'s `map_bound_*` and `camera_bound_*`, and the
+        // `nMPMapObjKindRebirth` point the halo lowers the fighter onto.
+        {
+            let zone = |e: &ssb_rom::pack::Extent| ssb_game::status::BlastZone {
+                top: f32::from(e.top),
+                bottom: f32::from(e.bottom),
+                left: f32::from(e.left),
+                right: f32::from(e.right),
+            };
+            let rebirth = pack
+                .stage_points(stage)
+                .find(|p| p.kind == MAP_OBJ_KIND_REBIRTH)
+                .map_or(ssb_engine::math::Vec2::new(0.0, 0.0), |p| {
+                    ssb_engine::math::Vec2::new(f32::from(p.x), f32::from(p.y))
+                });
+            fighter.dead.bounds = Some(ssb_game::dead::StageBounds {
+                map: zone(&stage.bounds),
+                camera: zone(&stage.camera),
+                rebirth,
+            });
         }
         FighterScene {
             fighter,
