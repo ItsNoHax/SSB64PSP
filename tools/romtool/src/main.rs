@@ -2929,6 +2929,117 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             }
         }
 
+        // Samus Special1's `WPAttributes.data` relocates to file 321 + 0x270,
+        // with no `MObjSub` table: the list loads its own texture and draws
+        // one 30x30 quad (vertices at 0x230). The decomp's symbol split
+        // labels 0x230..0x2A0 as seven vertices; the bytes from 0x270 are
+        // display-list words that run on to the `G_ENDDL` at 0x348.
+        if id == 321 {
+            const CHARGE_SHOT_DISPLAY_LIST: u32 = 0x270;
+            if let Some(Ok(shot)) = file
+                .data
+                .get(CHARGE_SHOT_DISPLAY_LIST as usize..)
+                .and_then(|data| ssb_rom::dl::decode_list_at(data, CHARGE_SHOT_DISPLAY_LIST).ok())
+                .and_then(|cmds| {
+                    mesh::convert_sequence(
+                        &[mesh::SequenceItem {
+                            cmds: &cmds,
+                            world: ssb_rom::scene::Mat4::IDENTITY,
+                            mobjs: &[],
+                            mat_anims: &[],
+                            depth_seed: None,
+                            stream: 0,
+                        }],
+                        mesh::Source::of(file),
+                        mesh::InitialMaterial::WEAPON_EXTERNAL,
+                    )
+                    .into_iter()
+                    .next()
+                })
+            {
+                if shot.triangle_count() != 0 {
+                    pack_mesh(
+                        &mut writer,
+                        &mut tex_index,
+                        &mut mat_anim_index,
+                        &mat_anim_data,
+                        Texels {
+                            home: file,
+                            all: &loaded.files,
+                        },
+                        id,
+                        CHARGE_SHOT_DISPLAY_LIST,
+                        &shot,
+                        swizzle,
+                    );
+                    meshes += 1;
+                    triangles += shot.triangle_count();
+                }
+            }
+        }
+
+        // Samus's Bomb (`llSamusMainBombWeaponAttributes`, file 217 + 0x0C)
+        // names file 320's direct list at 0xE0D8 and the `MObjSub` table at
+        // 0xE008. `wpSamusBombProcUpdate` blinks by toggling
+        // `mobj->palette_id` between 0 and 1, so both palettes get a mesh.
+        // The second is keyed by the palette it binds (`palettes[1]`, file
+        // offset 0xDF38), as Luigi's Fireball is.
+        if id == 320 {
+            const BOMB_MOBJ_TABLE: u32 = 0xE008;
+            const BOMB_DISPLAY_LIST: u32 = 0xE0D8;
+            const BOMB_BLINK_KEY: u32 = 0xDF38;
+            if let (Some(materials), Some(Ok(cmds))) = (
+                ssb_rom::mobj::read_table(file, BOMB_MOBJ_TABLE, 1),
+                file.data
+                    .get(BOMB_DISPLAY_LIST as usize..)
+                    .map(|data| ssb_rom::dl::decode_list_at(data, BOMB_DISPLAY_LIST)),
+            ) {
+                let palettes = materials.nodes[0]
+                    .first()
+                    .and_then(|sub| ssb_rom::mobj::read_palettes(file, sub.at, 2))
+                    .expect("file 320 Bomb MObjSub has two blink palettes");
+                for (palette, key) in palettes.iter().zip([BOMB_DISPLAY_LIST, BOMB_BLINK_KEY]) {
+                    let mut mobjs = materials.nodes[0].clone();
+                    mobjs[0].palette = Some(*palette);
+                    let item = mesh::SequenceItem {
+                        cmds: &cmds,
+                        world: ssb_rom::scene::Mat4::IDENTITY,
+                        mobjs: &mobjs,
+                        mat_anims: &[],
+                        depth_seed: None,
+                        stream: 0,
+                    };
+                    let Some(Ok(bomb)) = mesh::convert_sequence(
+                        &[item],
+                        mesh::Source::of(file),
+                        mesh::InitialMaterial::WEAPON_EXTERNAL,
+                    )
+                    .into_iter()
+                    .next() else {
+                        continue;
+                    };
+                    if bomb.triangle_count() != 0 {
+                        pack_mesh(
+                            &mut writer,
+                            &mut tex_index,
+                            &mut mat_anim_index,
+                            &mat_anim_data,
+                            Texels {
+                                home: file,
+                                all: &loaded.files,
+                            },
+                            id,
+                            key,
+                            &bomb,
+                            swizzle,
+                        );
+                        meshes += 1;
+                        triangles += bomb.triangle_count();
+                    }
+                }
+            }
+        }
+
         for (gi, graph) in graphs.iter().enumerate() {
             node_dls += graph.display_lists().count();
             placed_meshes += node_mesh[gi].iter().filter(|m| m.is_some()).count();

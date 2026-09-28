@@ -74,6 +74,33 @@ pub fn fox_blaster_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
         })
 }
 
+/// Samus Special1's `WPAttributes.data`: file 321's 30x30 quad list.
+pub const SAMUS_CHARGE_SHOT_SOURCE_FILE: u32 = 321;
+pub const SAMUS_CHARGE_SHOT_SOURCE_OFFSET: u32 = 0x270;
+
+pub fn samus_charge_shot_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
+    (0..pack.mesh_count())
+        .filter_map(|i| pack.mesh(i))
+        .find(|mesh| {
+            mesh.source_file == SAMUS_CHARGE_SHOT_SOURCE_FILE
+                && mesh.source_offset == SAMUS_CHARGE_SHOT_SOURCE_OFFSET
+        })
+}
+
+/// Samus's Bomb: file 320's direct list at 0xE0D8 with `palettes[0]`; the
+/// `palettes[1]` blink copy is keyed by that palette's offset, 0xDF38.
+pub const SAMUS_BOMB_SOURCE_FILE: u32 = 320;
+pub const SAMUS_BOMB_SOURCE_OFFSETS: [u32; 2] = [0xE0D8, 0xDF38];
+
+/// The packed Bomb mesh for each `SamusBomb::blink_palette`.
+pub fn samus_bomb_meshes(pack: &Pack<'_>) -> [Option<MeshDesc>; 2] {
+    SAMUS_BOMB_SOURCE_OFFSETS.map(|offset| {
+        (0..pack.mesh_count())
+            .filter_map(|i| pack.mesh(i))
+            .find(|mesh| mesh.source_file == SAMUS_BOMB_SOURCE_FILE && mesh.source_offset == offset)
+    })
+}
+
 /// Fox Special2's three-entry Reflector effect hierarchy.
 pub fn fox_reflector_object(pack: &Pack<'_>) -> Option<ObjectDesc> {
     (0..pack.object_count())

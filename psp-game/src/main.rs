@@ -60,6 +60,16 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::Fox => 46,
         // B at tick 20, as in the Fox scene; the Fireball is in flight.
         GameScene::Luigi => 46,
+        // B at tick 20; `SpecialNStart` runs 16 frames, then the charge
+        // grows a level every 20 frames. Level 2 is on the arm cannon here.
+        GameScene::Samus => 80,
+        // A second B at tick 60 ends the charge; the level-1 shot is in
+        // flight a few frames later.
+        GameScene::SamusShot => 64,
+        // Down+B at tick 20; the Bomb spawns on `SpecialLw` frame 10 and
+        // rests under Samus. She walks right from tick 80, uncovering it
+        // with some 30 frames of its 100-frame fuse left.
+        GameScene::SamusBomb => 100,
         GameScene::Training => 106,
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
@@ -146,6 +156,18 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
+    // The Samus scenes stay on the spawn floor: no jump route.
+    if matches!(
+        scene,
+        GameScene::Samus | GameScene::SamusShot | GameScene::SamusBomb
+    ) {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            20 => N64Buttons(N64Buttons::B),
+            60 if scene == GameScene::SamusShot => N64Buttons(N64Buttons::B),
+            _ => N64Buttons(0),
+        };
+    }
     if matches!(scene, GameScene::Fox | GameScene::Luigi) && tick == 20 {
         return N64Buttons(N64Buttons::B);
     }
@@ -215,9 +237,16 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     }
     if matches!(
         scene,
-        GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3
+        GameScene::Costume1
+            | GameScene::Costume2
+            | GameScene::Costume3
+            | GameScene::Samus
+            | GameScene::SamusShot
     ) {
         return 0;
+    }
+    if scene == GameScene::SamusBomb {
+        return if (80..100).contains(&tick) { 80 } else { 0 };
     }
     if (34..90).contains(&tick) {
         -30
@@ -234,6 +263,9 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
         40
     } else if scene == GameScene::Superjump && tick == 150 {
         80
+    } else if scene == GameScene::SamusBomb && tick == 20 {
+        // `ftSamusSpecialLwCheck`'s downward stick with the B edge.
+        -80
     } else {
         0
     }
@@ -253,7 +285,8 @@ const JUMP_BUTTON_MASK: u16 =
 const MENU_STICK_NAV_MIN: i8 = 40;
 
 /// The fighter Training spawns for the player: Fox for the Fox capture
-/// scene, Luigi for the Luigi scene, Mario otherwise.
+/// scene, Luigi for the Luigi scene, Samus for the Samus scenes, Mario
+/// otherwise.
 fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter::FighterKind {
     // The costume scenes use Fox so that no pick can collide with the Mario
     // dummy's costume.
@@ -262,6 +295,9 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
             ssb_game::fighter::FighterKind::Fox
         }
         Some(GameScene::Luigi) => ssb_game::fighter::FighterKind::Luigi,
+        Some(GameScene::Samus | GameScene::SamusShot | GameScene::SamusBomb) => {
+            ssb_game::fighter::FighterKind::Samus
+        }
         _ => ssb_game::fighter::FighterKind::Mario,
     }
 }
@@ -875,6 +911,9 @@ struct DrawAssets {
     fireball_meshes: [Option<ssb_rom::pack::MeshDesc>; 2],
     blaster_mesh: Option<ssb_rom::pack::MeshDesc>,
     reflector: Option<ssb_rom::pack::ObjectDesc>,
+    charge_shot_mesh: Option<ssb_rom::pack::MeshDesc>,
+    /// Indexed by `SamusBomb::blink_palette`.
+    bomb_meshes: [Option<ssb_rom::pack::MeshDesc>; 2],
 }
 
 impl DrawAssets {
@@ -884,6 +923,8 @@ impl DrawAssets {
             fireball_meshes: ssb_psp_runtime::scene::fireball_meshes(p),
             blaster_mesh: ssb_psp_runtime::scene::fox_blaster_mesh(p),
             reflector: ssb_psp_runtime::scene::fox_reflector_object(p),
+            charge_shot_mesh: ssb_psp_runtime::scene::samus_charge_shot_mesh(p),
+            bomb_meshes: ssb_psp_runtime::scene::samus_bomb_meshes(p),
         }
     }
 }
@@ -1031,6 +1072,52 @@ unsafe fn draw_training(
             );
             meshdraw::draw_mesh(p, blaster_mesh, draw_state, None, None);
         }
+    }
+
+    // The Charge Shot is `gcPrepDObjMatrix` kind 46: a camera-facing quad
+    // spun by `rotate.z` and scaled by its level's `gfx_size / 30`, both
+    // while it charges on Samus's arm and after release.
+    if let Some(shot_mesh) = assets.charge_shot_mesh.as_ref() {
+        let mut draw_shot = |pos: ssb_engine::math::Vec3, spin: f32, scale: f32| {
+            gpu.model_transform_billboard(
+                pos,
+                pl.camera.eye,
+                pl.camera.at,
+                spin,
+                [meshdraw::MODEL_SCALE * scale; 2],
+            );
+            meshdraw::draw_mesh(p, shot_mesh, draw_state, None, None);
+        };
+        if ssb_game::samus::is_charging(&pl.fighter) {
+            draw_shot(
+                ssb_game::samus::charge_shot_position(&pl.fighter),
+                ssb_game::samus::charge_shot_rotate_z(&pl.fighter),
+                ssb_game::weapon::samus_charge_shot_scale(pl.fighter.samus.charge_level),
+            );
+        }
+        for shot in weapons.charge_shots() {
+            draw_shot(shot.position, shot.rotate_z, shot.scale());
+        }
+    }
+
+    // The Bomb's second transform is battle matrix function 70 - 66 = 4,
+    // `func_ovl0_800CA194` (`dLBCommonFuncMatrixList`): it keeps the
+    // translation and replaces rotation and scale with a spin about world Z.
+    // The explosion clears the DObj's display list, so it draws nothing.
+    for bomb in weapons.bombs().filter(|bomb| !bomb.exploded) {
+        let Some(bomb_mesh) = assets
+            .bomb_meshes
+            .get(usize::from(bomb.blink_palette))
+            .and_then(Option::as_ref)
+        else {
+            continue;
+        };
+        gpu.model_transform(
+            [bomb.position.x, bomb.position.y, bomb.position.z],
+            [0.0, 0.0, bomb.rotate_z],
+            meshdraw::MODEL_SCALE,
+        );
+        meshdraw::draw_mesh(p, bomb_mesh, draw_state, None, None);
     }
 
     if matches!(

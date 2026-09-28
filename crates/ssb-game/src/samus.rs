@@ -78,6 +78,10 @@ pub struct SamusState {
     pub charge_int: u8,
     /// `charge_gobj != NULL`: a charging shot follows joint 16.
     pub charge_shot: bool,
+    /// Updates the charging shot has run, presentation only. Each one
+    /// subtracts `WPCHARGESHOT_ROTATE_SPEED * lr` from its `rotate.z`; see
+    /// [`charge_shot_rotate_z`].
+    pub charge_spin: u16,
     /// `proc_damage == ftSamusSpecialNProcDamage`.
     pub damage_resets_charge: bool,
     /// Motion flag 0 of `Shooting`/`ShootingAir` was consumed.
@@ -129,6 +133,7 @@ fn set_special_n_loop(f: &mut Fighter) {
     f.samus.damage_resets_charge = true;
     f.samus.charge_int = CHARGE_INT;
     f.samus.charge_shot = true;
+    f.samus.charge_spin = 0;
 }
 
 /// `ftSamusSpecialNEndSetStatus`.
@@ -176,6 +181,14 @@ pub fn on_damage(f: &mut Fighter) {
 /// `ftSamusSpecialNGetChargeShotPosition`: joint 16 plus 180 along its X.
 pub fn charge_shot_position(f: &Fighter) -> Vec3 {
     f.joint_world(CHARGE_JOINT, Vec3::new(CHARGE_OFF_X, 0.0, 0.0))
+}
+
+/// `rotate.z` of the charging shot: `wpSamusChargeShotProcUpdate` spins it
+/// every update, whether or not it is released.
+pub fn charge_shot_rotate_z(f: &Fighter) -> f32 {
+    -crate::weapon::SAMUS_CHARGE_SHOT_ROTATE_SPEED
+        * f32::from(f.samus.charge_spin)
+        * f.facing.sign()
 }
 
 /// The flag-0 half of `ftSamusSpecialNEndProcUpdate`.
@@ -287,6 +300,9 @@ pub fn update(f: &mut Fighter) {
     let AnyStatus::Samus(current) = f.status.status else {
         return;
     };
+    if f.samus.charge_shot {
+        f.samus.charge_spin = f.samus.charge_spin.wrapping_add(1);
+    }
     match current {
         SamusStatus::SpecialNStart | SamusStatus::SpecialAirNStart => {
             if f.status.animation_ended() {
@@ -591,7 +607,12 @@ mod tests {
         }
         assert_eq!(f.status.status, AnyStatus::Samus(SamusStatus::SpecialNLoop));
         assert!(is_charging(&f));
-        for _ in 0..20 {
+        assert_eq!(charge_shot_rotate_z(&f), 0.0);
+        press(&mut f, 0);
+        status::update(&mut f);
+        let step = -charge_shot_rotate_z(&f) * f.facing.sign();
+        assert!((step - crate::weapon::SAMUS_CHARGE_SHOT_ROTATE_SPEED).abs() < 1e-6);
+        for _ in 0..19 {
             press(&mut f, 0);
             status::update(&mut f);
         }

@@ -161,6 +161,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scenes `costume1`–`costume3`) | `f1-training-costume-1`–`3` | Fox after a C-Right, C-Down or C-Left pick on the Training entry: costumes 1–3 in `psp-game` | RE-341 |
 | `golden_capture` (`psp-game`, scene `jab`) | `f1-training-jab` | Mario's jab from the grab route landing on the Training dummy; the hit is in the capture log (`dummy_damage=2 dummy_status=Common(DamageN1)`, `PPSSPPHeadless --log`), not the image | RE-351 |
 | `golden_capture` (`psp-game`, scene `luigi`) | `f1-training-luigi` | Luigi in Training after one B tap: his Fireball in flight with `palettes[1]` (green) | RE-372 |
+| `golden_capture` (`psp-game`, scenes `samus`, `samusshot`, `samusbomb`) | `f1-training-samus`, `-samus-shot`, `-samus-bomb` | Samus's level-2 charging shot on her arm cannon; a released level-1 shot; her Bomb on the floor after she walks off it | RE-373 |
 | `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center. The bubble visual is not drawn | RE-367, RE-369 |
 
 Stage sweep example:
@@ -383,3 +384,10 @@ Pack v51 (`9f8a292d…`) adds Luigi's Fireball mesh. New `f1-training-luigi`
 shows Luigi after one B tap with a green Fireball in flight; its two
 captures were identical. 75 of 75 goldens match twice, and
 `f1-training-fireball` (Mario's red palette) is unchanged.
+
+## 2026-09-28 RE-373 Samus Training scenes
+
+Pack v52 (`e814f589…`) adds Samus's Charge Shot mesh and two Bomb blink
+meshes. The new `f1-training-samus`, `f1-training-samus-shot` and
+`f1-training-samus-bomb` goldens were each identical in both captures.
+78 of 78 goldens match twice.
