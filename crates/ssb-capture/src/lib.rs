@@ -295,6 +295,10 @@ pub enum GameScene {
     Link,
     /// `linkspin`: Link in Training, mid ground Spin Attack.
     LinkSpin,
+    /// `yoshi`: Yoshi in Training, one Egg Throw egg in flight.
+    Yoshi,
+    /// `yoshibomb`: Yoshi in Training, the Yoshi Bomb's two landing stars.
+    YoshiBomb,
     /// `shadows`: first jump's apex, player airborne.
     Shadows,
     /// `grab`: Training plus a Z+A grab of the dummy, frozen while held.
@@ -312,7 +316,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 17] = [
+    pub const ALL: [GameScene; 19] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -323,6 +327,8 @@ impl GameScene {
         GameScene::SamusBomb,
         GameScene::Link,
         GameScene::LinkSpin,
+        GameScene::Yoshi,
+        GameScene::YoshiBomb,
         GameScene::Shadows,
         GameScene::Grab,
         GameScene::Jab,
@@ -344,6 +350,8 @@ impl GameScene {
             GameScene::SamusBomb => "samusbomb",
             GameScene::Link => "link",
             GameScene::LinkSpin => "linkspin",
+            GameScene::Yoshi => "yoshi",
+            GameScene::YoshiBomb => "yoshibomb",
             GameScene::Shadows => "shadows",
             GameScene::Grab => "grab",
             GameScene::Jab => "jab",

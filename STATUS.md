@@ -7,37 +7,36 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** Link in `psp-game` Training (RE-374). Pack v53
-  adds `AnimDesc::WEAPON` with the Boomerang's spin. The Boomerang draws
-  as its three-node tree, and its return hides node 2. The Spin Attack
-  swirl follows TopN (battle matrix function 80) and plays its transform
-  and material animations until the status ends.
-- **Next gameplay batch:** bring Yoshi into `psp-game` Training, with his
-  Egg Throw egg and Egg Lay/Bomb stars (TODO). Stage and fighter select
-  remain deferred.
+- **Completed batch:** Yoshi in `psp-game` Training (RE-375). The Egg
+  Throw egg draws as a kind-46 billboard, in hand and in flight, and spins
+  by the throw's force. Pack v54 adds the Yoshi Bomb star under the weapon
+  seed; the stars spin and shrink as the source updates them.
+- **Next gameplay batch:** bring Captain Falcon into `psp-game` Training,
+  with his Falcon Punch effect (TODO). Stage and fighter select remain
+  deferred.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Yoshi in Training | Pack v54 adds the weapon-seeded star; new `f1-training-yoshi` and `-yoshi-bomb` goldens; 82 of 82 goldens match twice | RE-375 |
 | Link in Training | Pack v53 adds the Boomerang animation; new `f1-training-link` and `-link-spin` goldens; 80 of 80 goldens match twice | RE-374 |
-| Samus in Training | Pack v52 adds Charge Shot and Bomb meshes; three new `f1-training-samus*` goldens; 78 of 78 goldens match twice | RE-373 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
   Pinned 1.98.0 Clippy with warnings denied and workspace rustfmt passed in
-  RE-374 (psp-crate rustfmt still flags two older, untouched spots);
+  RE-375 (psp-crate rustfmt flags only older, untouched spots);
   the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: all 80 goldens match twice (RE-374), including the
-  two Link scenes. No golden passes through a platform or respawns.
+- PPSSPPHeadless: all 82 goldens match twice (RE-375), including the
+  two Yoshi scenes. No golden passes through a platform or respawns.
 - `psp-game` reaches scripted Training in PPSSPP. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
   (RE-360).
-- Pack v53: 27,089,392 bytes, SHA-256
-  `290e996db16ede28c31d798c56e8aa97fa7215eed7e5f2f39105da85e4a5a264`.
+- Pack v54: 27,096,032 bytes, SHA-256
+  `8580875d40d2203de7d4762316f770ccad58df0885d586403fab2e6d265f3392`.
 - Physical PSP last checked in RE-361 (PSP-2000 Slim, 6.61 ARK, pack v43).
 
 ## Blockers and remaining scope
@@ -47,8 +46,9 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - Sector Z Arwing, bonus stages and stage items (Bumper, POW Block,
   Piranha Plant) remain; Twister/TaruCann have no clip.
 - The shield bubble is not drawn (RE-369).
-- Only Mario, Fox, Luigi, Samus and Link draw in `psp-game`, and only
-  capture scenes pick the others. Link's Bomb item is not drawn. The Fireball does not spin (RE-372;
+- Only Mario, Fox, Luigi, Samus, Link and Yoshi draw in `psp-game`, and
+  only capture scenes pick the others. Link's Bomb item, the Egg Lay
+  victim's egg and the egg/star hit effects are not drawn. The Fireball does not spin (RE-372;
   its kind 71 is `func_ovl0_800CA5C8`, RE-373). A released Charge Shot
   restarts its spin (RE-373). The other
   fighters remain host-only; item/weapon/effect

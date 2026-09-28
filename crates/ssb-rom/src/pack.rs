@@ -241,7 +241,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // palettes, keyed (320, 0xE0D8) and (320, 0xDF38).
 // 53 adds weapon DObj animations (`AnimDesc::WEAPON`): slot 0 is Link's
 // Boomerang spin, file 325's `anim_joints` at 0x6C0.
-pub const VERSION: u32 = 53;
+// 54 adds Yoshi's Bomb star: file 86's list at 0x5458 under the weapon
+// seed, keyed (247, 0x40) by the attributes record that names it.
+pub const VERSION: u32 = 54;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

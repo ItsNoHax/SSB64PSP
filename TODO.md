@@ -17,7 +17,8 @@ or evidence record covers it.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| Select and draw Yoshi, Captain Falcon and Kirby in `psp-game` | The movesets are host-only; Yoshi's Egg Throw and Bomb stars, and Kirby's Final Cutter wave, copy hats and stars are not drawn | RE-337–338, RE-343 |
+| Select and draw Captain Falcon and Kirby in `psp-game` | The movesets are host-only; Kirby's Final Cutter wave, copy hats and stars are not drawn | RE-338, RE-343 |
+| Draw Yoshi's Egg Lay egg and his egg/star hit effects in `psp-game` | Yoshi draws in Training with his Egg Throw egg and Bomb stars (RE-375); the captured victim's egg and the shatter, egg-break and sparkle effects remain | RE-337, RE-375 |
 | Draw Link's Bomb item in `psp-game` | Link draws in Training with his Boomerang and Spin Attack swirl (RE-374); item visuals remain | RE-352, RE-374 |
 | Select and draw Ness in `psp-game` | Host moveset and copied PK Fire exist; PK Fire spark/flame, PK Thunder head/trails, Magnet and bat visuals need runtime integration | RE-347 |
 | Select and draw Pikachu and Jigglypuff in `psp-game` | The movesets are host-only; Thunder Jolt, Thunder head/trails, Quick Attack effects and Sing's notes need gameplay render integration | RE-345–346 |

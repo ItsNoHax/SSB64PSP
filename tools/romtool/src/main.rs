@@ -3040,6 +3040,58 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             }
         }
 
+        // Yoshi's Bomb star (`llYoshiMainStarWeaponAttributes`, file 247 +
+        // 0x40) names file 86's direct list at 0x5458, with no `MObjSub`
+        // table. The list sets its own combiner but no render mode, so it
+        // draws under `wpDisplayDrawNormal`'s `G_RM_AA_XLU_SURF` without
+        // `G_ZBUFFER`, like the Fireball. Discovery already packs the same
+        // list, keyed (86, 0x5458), under the default seed, so this copy is
+        // keyed by the attributes record that names it: (247, 0x40).
+        if id == 86 {
+            const STAR_DISPLAY_LIST: u32 = 0x5458;
+            const STAR_KEY: (u32, u32) = (247, 0x40);
+            if let Some(Ok(star)) = file
+                .data
+                .get(STAR_DISPLAY_LIST as usize..)
+                .and_then(|data| ssb_rom::dl::decode_list_at(data, STAR_DISPLAY_LIST).ok())
+                .and_then(|cmds| {
+                    mesh::convert_sequence(
+                        &[mesh::SequenceItem {
+                            cmds: &cmds,
+                            world: ssb_rom::scene::Mat4::IDENTITY,
+                            mobjs: &[],
+                            mat_anims: &[],
+                            depth_seed: None,
+                            stream: 0,
+                        }],
+                        mesh::Source::of(file),
+                        mesh::InitialMaterial::WEAPON_EXTERNAL,
+                    )
+                    .into_iter()
+                    .next()
+                })
+            {
+                if star.triangle_count() != 0 {
+                    pack_mesh(
+                        &mut writer,
+                        &mut tex_index,
+                        &mut mat_anim_index,
+                        &mat_anim_data,
+                        Texels {
+                            home: file,
+                            all: &loaded.files,
+                        },
+                        STAR_KEY.0,
+                        STAR_KEY.1,
+                        &star,
+                        swizzle,
+                    );
+                    meshes += 1;
+                    triangles += star.triangle_count();
+                }
+            }
+        }
+
         for (gi, graph) in graphs.iter().enumerate() {
             node_dls += graph.display_lists().count();
             placed_meshes += node_mesh[gi].iter().filter(|m| m.is_some()).count();
