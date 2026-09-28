@@ -7,41 +7,43 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** Zebes acid object (RE-363). The controller writes
-  the acid root Y and reads the animated child Y as the hazard surface.
-  Pack v45 carries the acid clip.
-- **Next gameplay batch:** per-object stage material animation:
-  `MatAnimJoint` playback for Whispy's eyes and mouth, the Yoshi's Island
-  clouds (`mat_anim_idle`) and the acid. Stage selection is in `TODO.md`.
+- **Completed batch:** stage controller material animation (RE-364).
+  Whispy's eye and mouth textures, the acid material and the cloud fades
+  play on per-object clocks. The cloud fade gates its line through
+  `mat_anim_idle`. Pack v46 carries 13 `GROUND_MAT` tables.
+- **Next gameplay batch:** controller geometry built from display lists:
+  the Yoshi's Island clouds (which already have material clocks), the
+  Mushroom Kingdom scales and the Castle ground. Stage selection is in
+  `TODO.md`.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
-| Zebes acid object | Acid graph and clip packed; root Y follows the level; surface follows the animated child (−720..180), not the rest Y; goldens unchanged; acid drawn in a PPSSPP Zebes probe | RE-363 |
-| Match stage loader | Kind from `GR*Map` file; `0xBC` descriptors and acid surface packed; all nine VS controllers build from pack data; goldens unchanged; Zebes probe in PPSSPP | RE-362 |
+| Controller material animation | 13 tables packed; 11 object tables match a ROM replay track for track; cloud fades idle after 101 ticks; goldens unchanged | RE-364 |
+| Zebes acid object | Acid graph and clip packed; root Y follows the level; surface follows the animated child (−720..180) | RE-363 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread:
-  **1,199 pass**, including 519 gameplay tests. Pinned 1.98.0 Clippy with warnings denied,
-  rustfmt and ROM thumb `no_std` check pass.
-- Both PSP release builds pass. Interactive outputs are restored after
-  captures. Existing viewer warnings remain.
-- PPSSPPHeadless: **73 of 73 goldens match twice**, unchanged by RE-363.
-- Training golden scenes supply the integration smoke. On the PSP-2000 a
+  **1,201 pass**, including 519 gameplay tests. Pinned 1.98.0 Clippy with
+  warnings denied, rustfmt and ROM thumb `no_std` check pass.
+- Both PSP release builds pass. Existing viewer warnings remain.
+- PPSSPPHeadless: **73 of 73 goldens match twice**, unchanged by RE-364.
+  No capture shows Whispy's animated textures.
+- `psp-game` boots to the Intro at 60 FPS in PPSSPP. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
   (RE-360).
-- Pack v45: 25,293,312 bytes, SHA-256
-  `745fe70c4943e3de479701ad4666a6ba4199115ee4aab5daab225e183bcfd2a0`.
-  Adds ground clip slot 29 (acid); the format does not change.
+- Pack v46: 26,016,160 bytes, SHA-256
+  `b2dbfa6320dd5c437e5d5086de6ecc462db99bb3ab20dc95b0475d11f54fb78e`.
+  Adds `AnimDesc::GROUND_MAT`; the layout does not change.
 - Physical PSP last checked in RE-361 (PSP-2000 Slim, 6.61 ARK, pack v43).
 
 ## Blockers and remaining scope
 
-- Castle ground, clouds and scales, per-object material animation and
-  stage selection remain (TODO).
+- Castle ground, cloud and scale geometry and stage selection remain (TODO).
+- The acid packs three 384×384 tile-1 sprites it never draws (523 KB).
 - Sector Z Arwing, bonus stages and stage items remain; Twister/TaruCann
   have no clip.
 - Training `grab` whiffs in PPSSPP while the host route catches (RE-351).

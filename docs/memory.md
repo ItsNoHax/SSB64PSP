@@ -8,7 +8,7 @@
 | Video memory | shared | 2 MiB VRAM | 2 MiB VRAM |
 | Fast scratch | 4 KiB TMEM | 16 KiB scratchpad | 16 KiB scratchpad |
 
-- The current asset pack (v39, with the reaction clips) is 24,254,352 bytes (RE-351). It needs
+- The current asset pack (v46, with the controller material tables) is 26,016,160 bytes (RE-364). It needs
   `PARAM.SFO` `MEMSIZE=1` (64 MiB process mode). v34 ran on a PSP-2000 via
   PSPLink (RE-322), v33 before it (RE-321); the earlier stock v32 pack loaded on a PSP-2000 via PSPLink (RE-320); the mode was also
   confirmed with earlier packs (RE-255, RE-260).

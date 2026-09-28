@@ -2261,6 +2261,147 @@ fn resolve_mat_anims(
     refs
 }
 
+/// The file `map_nodes` names for a controller's `GR*Map` file, once
+/// `map_nodes` is confirmed to land on the label the controller subtracts
+/// (RE-357).
+fn ground_map_file(loaded: &Loaded, gr_file: u32, map_head: u32) -> Option<u32> {
+    loaded
+        .stages
+        .iter()
+        .find(|g| g.file == gr_file)?
+        .map_nodes
+        .filter(|&(_, head)| head == map_head)
+        .map(|(file, _)| file)
+}
+
+/// The `ground_obj::MAT_ANIMS` tables a controller plays on the object
+/// packed from `(file, graph_offset)`, each resolved to one script per
+/// `(node, MObj-chain-position)` (RE-364). Empty for any other graph.
+fn ground_mat_scripts(
+    loaded: &Loaded,
+    file: &ssb_rom::archive::File,
+    graph_offset: u32,
+    materials: &[ssb_rom::mobj::NodeMaterials],
+) -> Vec<(usize, Vec<Vec<Option<u32>>>)> {
+    ssb_rom::ground_obj::MAT_ANIMS
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| {
+            m.object
+                .is_some_and(|o| ssb_rom::ground_obj::OBJECTS[o as usize].graph == graph_offset)
+                && ground_map_file(loaded, m.gr_file, m.map_head) == Some(file.id)
+        })
+        .map(|(slot, m)| {
+            let scripts = ssb_rom::matanim::resolve_scripts(file, m.table, materials.len(), |n| {
+                materials[n].len()
+            });
+            (slot, scripts)
+        })
+        .collect()
+}
+
+/// The script whose `MatAnimDesc` a ground object's `MObj` carries: the
+/// first one, in `MAT_ANIMS` order, of all the controller may start on it.
+/// The others restart the same entry at run time.
+fn ground_mat_base(
+    tables: &[(usize, Vec<Vec<Option<u32>>>)],
+    node: usize,
+    m: usize,
+) -> Option<u32> {
+    tables
+        .iter()
+        .find_map(|(_, t)| t.get(node).and_then(|c| c.get(m)).copied().flatten())
+}
+
+/// A ground object's material animations (RE-364). Several controller
+/// tables can restart one `MObj` (Whispy's mouth has eight), but a
+/// primitive names one `MatAnimDesc`. Every script shares the `MObj`'s
+/// sprite and palette arrays, so the entry keeps the first script and the
+/// widest arrays any of them reaches. A script that cycles palettes is
+/// declined when another shares its `MObj`: the palettes reachable from the
+/// first script alone are the ones [`pack_mesh`] converts.
+fn resolve_ground_mat_anims(
+    file: &ssb_rom::archive::File,
+    tables: &[(usize, Vec<Vec<Option<u32>>>)],
+    materials: &[ssb_rom::mobj::NodeMaterials],
+    mat_anim_data: &mut BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>,
+) -> Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> {
+    let sub_at = |node: usize, m: usize| {
+        materials
+            .get(node)?
+            .get(m)
+            .map(|s| (s.at, s.palette_entries))
+    };
+    let mut refs: Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> =
+        materials.iter().map(|c| vec![None; c.len()]).collect();
+    for (node, chain) in materials.iter().enumerate() {
+        for (m, material) in chain.iter().enumerate() {
+            let Some(base) = ground_mat_base(tables, node, m) else {
+                continue;
+            };
+            let key = ssb_rom::mesh::MatAnimRef {
+                source_file: file.id,
+                script: base,
+                source_mobj: material.at,
+            };
+            if mat_anim_data.contains_key(&key) {
+                refs[node][m] = Some(key);
+                continue;
+            }
+            let mut scripts: Vec<u32> = Vec::new();
+            for (_, t) in tables {
+                if let Some(s) = t.get(node).and_then(|c| c.get(m)).copied().flatten() {
+                    if !scripts.contains(&s) {
+                        scripts.push(s);
+                    }
+                }
+            }
+            let resolve = |script: u32| {
+                resolve_one_mat_anim(
+                    file,
+                    node,
+                    m,
+                    script,
+                    &sub_at,
+                    material.mat_anim_tracks,
+                    material.mat_anim_uv_mode,
+                    material.mat_anim_tile_params,
+                )
+            };
+            let Some((r, mut data)) = resolve(base) else {
+                continue;
+            };
+            let mut declined = false;
+            for &s in &scripts[1..] {
+                let Some((_, other)) = resolve(s) else {
+                    continue;
+                };
+                if !data.palettes.is_empty() || !other.palettes.is_empty() {
+                    declined = true;
+                    break;
+                }
+                if other.sprites.len() > data.sprites.len() {
+                    data.sprites = other.sprites;
+                }
+                data.drives_lod |= other.drives_lod;
+                data.max_current = data.max_current.max(other.max_current);
+                data.uv_static &= other.uv_static;
+            }
+            if declined {
+                eprintln!(
+                    "ground material file {} MObj 0x{:X}: palette script shares its MObj; not attached",
+                    file.id, material.at
+                );
+                continue;
+            }
+            refs[node][m] = Some(r);
+            data.uv_half = material.mat_anim_uv_half;
+            mat_anim_data.insert(key, data);
+        }
+    }
+    refs
+}
+
 /// For a scene graph's own material animation (a stage layer's
 /// `MPGroundDesc::p_matanim_joints`, or one of the 26 manager-effect
 /// `EFDesc::o_matanim_joint` tables with a non-NULL entry -- RE-175), resolves
@@ -2282,6 +2423,11 @@ fn resolve_layer_mat_anims(
     mat_anim_data: &mut BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>,
 ) -> Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> {
     let empty = || materials.iter().map(|c| vec![None; c.len()]).collect();
+
+    let ground = ground_mat_scripts(loaded, file, graph_offset, materials);
+    if !ground.is_empty() {
+        return resolve_ground_mat_anims(file, &ground, materials, mat_anim_data);
+    }
 
     // Manager effects: `materials` is already resolved through whichever
     // `o_mobjsub` table applies (`Loaded::materials`, fed by `PartTables`/
@@ -3260,6 +3406,85 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         );
     }
 
+    // Their material animations (RE-364), keyed by `ground_obj::MAT_ANIMS`
+    // index. Each joint names the `MatAnimDesc` its `MObj`'s primitives
+    // carry; a cloud has no packed mesh, so its joint names none.
+    let mut ground_mats = 0usize;
+    let mut ground_mat_joints = 0usize;
+    for (slot, asset) in ssb_rom::ground_obj::MAT_ANIMS.iter().enumerate() {
+        let file_id = ground_map_file(&loaded, asset.gr_file, asset.map_head).ok_or_else(|| {
+            format!(
+                "ground material {}: map_nodes does not land on 0x{:X}",
+                asset.name, asset.map_head
+            )
+        })?;
+        let file = loaded
+            .files
+            .get(file_id as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("ground material {}: file {file_id} missing", asset.name))?;
+        let mut joints = Vec::new();
+        match asset.object {
+            Some(object) => {
+                let graph_at = ssb_rom::ground_obj::OBJECTS[object as usize].graph;
+                let graph = loaded
+                    .graphs
+                    .get(&file_id)
+                    .and_then(|graphs| graphs.iter().find(|graph| graph.offset == graph_at))
+                    .ok_or_else(|| {
+                        format!(
+                            "ground material {}: graph 0x{graph_at:X} missing",
+                            asset.name
+                        )
+                    })?;
+                let materials = loaded.materials(file, graph);
+                let tables = ground_mat_scripts(&loaded, file, graph_at, &materials);
+                let (_, table) = tables
+                    .iter()
+                    .find(|(s, _)| *s == slot)
+                    .ok_or_else(|| format!("ground material {}: table unresolved", asset.name))?;
+                for (node, chain) in table.iter().enumerate() {
+                    for (m, script) in chain.iter().enumerate() {
+                        let Some(script) = *script else { continue };
+                        let base = ground_mat_base(&tables, node, m).unwrap_or(script);
+                        let key = ssb_rom::mesh::MatAnimRef {
+                            source_file: file_id,
+                            script: base,
+                            source_mobj: materials[node][m].at,
+                        };
+                        let target = mat_anim_index.get(&key).ok_or_else(|| {
+                            format!(
+                                "ground material {}: node {node} MObj {m} has no packed MatAnimDesc",
+                                asset.name
+                            )
+                        })?;
+                        joints.push((Some(script), Some(*target)));
+                    }
+                }
+            }
+            None => {
+                let script = ssb_rom::matanim::resolve_scripts(file, asset.table, 1, |_| 1)
+                    .first()
+                    .and_then(|chain| chain.first().copied().flatten())
+                    .ok_or_else(|| format!("ground material {}: no script", asset.name))?;
+                joints.push((Some(script), None));
+            }
+        }
+        if joints.is_empty() {
+            return Err(format!("ground material {}: no scripts", asset.name).into());
+        }
+        ground_mat_joints += joints.len();
+        ground_mats += 1;
+        writer.add_anim(
+            ssb_rom::pack::AnimDesc::GROUND_MAT,
+            slot as u32,
+            file_id,
+            0,
+            &file.data,
+            &joints,
+        );
+    }
+
     // Independent LBParticle banks live outside relocData. Decode and convert
     // them after scene work so their frame textures append without disturbing
     // any existing material texture indices (RE-180/181).
@@ -3419,6 +3644,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     println!(
         "  ground anims {ground_anims} controller clip(s), {ground_anim_joints} animated node(s)"
     );
+    println!("  ground mats {ground_mats} material table(s), {ground_mat_joints} MObj script(s)");
     println!(
         "  particles   {} bank(s), {particle_scripts} script(s), {particle_textures} texture series, {particle_frames} frame(s)",
         pack.particle_bank_count()

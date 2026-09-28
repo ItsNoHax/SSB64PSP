@@ -709,3 +709,155 @@ fn packed_acid_follows_the_zebes_controller() {
     assert!(wave_high - wave_low > 100.0, "{wave_low} {wave_high}");
     eprintln!("acid level {low}..{high}, surface {wave_low}..{wave_high}");
 }
+
+/// RE-364: every controller material table plays on its object's own
+/// clocks. Each packed `GROUND_MAT` joint restarts the `MatAnimDesc` the
+/// object's primitives carry, and its track values follow an independent
+/// replay of the same script on the archive file, tick for tick. An `MObj`
+/// the controller has not reached keeps no clock (its rest material).
+#[test]
+fn packed_ground_materials_replay_the_rom() {
+    use ssb_rom::ground_obj::{self as g, GroundObjects};
+    use ssb_rom::matanim::MaterialJoint;
+    use ssb_rom::pack::{AnimDesc, AnimJoint, Pack};
+    let Some(rom) = std::env::var_os("SSB64_ROM") else {
+        return;
+    };
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    if !path.exists() {
+        return;
+    }
+    let data = std::fs::read(rom).unwrap();
+    let info = ssb_rom::rom::identify(&data).unwrap();
+    let archive = Archive::open(&data, info.region).unwrap();
+    let bytes = std::fs::read(path).unwrap();
+    let pack = Pack::open(&bytes).unwrap();
+
+    let descs: Vec<AnimDesc> = (0..pack.anim_count())
+        .filter_map(|i| pack.anim(i))
+        .filter(|a| a.fighter == AnimDesc::GROUND_MAT)
+        .collect();
+    assert_eq!(descs.len(), g::MAT_ANIMS.len());
+    let mut checked = 0usize;
+    for (anim, _) in g::ANIMS.iter().enumerate() {
+        let Some(slot) = g::mat_anim_of(anim) else {
+            continue;
+        };
+        let asset = &g::MAT_ANIMS[slot];
+        let object = asset.object.unwrap();
+        let desc = descs.iter().find(|d| d.slot == slot as u32).unwrap();
+        let file = archive.load(desc.source_file).unwrap();
+        let joints: Vec<AnimJoint> = (0..desc.joint_count)
+            .map(|j| pack.anim_joint(desc.first_joint + j).unwrap())
+            .collect();
+        let mut objects = GroundObjects::new(&pack, asset.gr_file);
+        let obj = objects.get(object).unwrap();
+        assert!(
+            obj.materials().is_empty(),
+            "{}: a clock before any play",
+            asset.name
+        );
+        // The targets are the entries the object's primitives carry.
+        let od = obj.object;
+        let carried: Vec<u32> = (0..od.node_count)
+            .filter_map(|n| pack.node(od.first_node + n))
+            .filter_map(|n| pack.mesh(n.mesh))
+            .flat_map(|m| (0..m.prim_count).map(move |p| m.first_prim + p))
+            .filter_map(|p| pack.prim(p))
+            .map(|p| p.mat_anim)
+            .collect();
+        for j in &joints {
+            assert!(
+                carried.contains(&j.node),
+                "{}: target {} not drawn",
+                asset.name,
+                j.node
+            );
+        }
+        objects.play(&pack, anim).unwrap();
+        let mut refs: Vec<(u32, MaterialJoint)> = joints
+            .iter()
+            .map(|j| (j.node, MaterialJoint::start(j.script, 0.0)))
+            .collect();
+        for tick in 0..240 {
+            if tick > 0 {
+                objects.advance(&pack).unwrap();
+            }
+            let obj = objects.get(object).unwrap();
+            for (target, r) in refs.iter_mut() {
+                r.tick(&file.data, 1.0).unwrap();
+                let live = obj.materials().joint_for(*target).unwrap();
+                for track in 0..ssb_rom::matanim::TICK_TRACK_COUNT {
+                    assert_eq!(
+                        live.track_value(track).map(f32::to_bits),
+                        r.track_value(track).map(f32::to_bits),
+                        "{} tick {tick} track {track}",
+                        asset.name
+                    );
+                }
+                let id = r.track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT);
+                if let Some(id) = id {
+                    let m = pack.mat_anim(*target).unwrap();
+                    assert_eq!(
+                        obj.materials().resolved_texture(&pack, *target),
+                        Some(m.textures[(id.max(0.0) as usize).min(m.texture_count as usize - 1)]),
+                        "{} tick {tick}",
+                        asset.name
+                    );
+                }
+            }
+        }
+        checked += 1;
+    }
+    assert_eq!(checked, 11);
+}
+
+/// RE-364: a cloud's `MObj` idles until its first script, runs the fade
+/// for as long as the ROM replay does, and idles again on the parse that
+/// reads `End`. Only the next `gcPlayAnimAll` parses a new script.
+#[test]
+fn packed_cloud_fades_end_when_the_rom_replay_does() {
+    use ssb_rom::ground_obj::{self as g, GroundObjects};
+    use ssb_rom::matanim::{resolve_scripts, MaterialJoint};
+    use ssb_rom::pack::Pack;
+    let Some(rom) = std::env::var_os("SSB64_ROM") else {
+        return;
+    };
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    if !path.exists() {
+        return;
+    }
+    let data = std::fs::read(rom).unwrap();
+    let info = ssb_rom::rom::identify(&data).unwrap();
+    let archive = Archive::open(&data, info.region).unwrap();
+    // `llGRYosterMapMapHead` (0x100) in the `map_nodes` file.
+    let file = archive.load(154).unwrap();
+    let bytes = std::fs::read(path).unwrap();
+    let pack = Pack::open(&bytes).unwrap();
+    let mut objects = GroundObjects::new(&pack, g::YOSTER_FILE);
+    for mat in [g::CLOUD_SOLID_MAT, g::CLOUD_EVAPORATE_MAT] {
+        assert!(objects.has_mat(mat));
+        let script = resolve_scripts(&file, g::MAT_ANIMS[mat].table, 1, |_| 1)[0][0].unwrap();
+        let mut r = MaterialJoint::start(script, 0.0);
+        let mut rom_ticks = 0u32;
+        while !r.ended() {
+            r.tick(&file.data, 1.0).unwrap();
+            rom_ticks += 1;
+            assert!(rom_ticks < 1000);
+        }
+        assert!((0..g::CLOUD_COUNT).all(|c| objects.cloud_idle(c)));
+        objects.play_cloud(&pack, 1, mat);
+        assert!(!objects.cloud_idle(1));
+        assert!(objects.cloud_idle(0) && objects.cloud_idle(2));
+        let mut ticks = 0u32;
+        while !objects.cloud_idle(1) {
+            objects.advance(&pack).unwrap();
+            ticks += 1;
+            assert!(ticks < 1000);
+        }
+        assert_eq!(ticks, rom_ticks, "{}", g::MAT_ANIMS[mat].name);
+        assert_eq!(ticks, 101, "{}", g::MAT_ANIMS[mat].name);
+    }
+}

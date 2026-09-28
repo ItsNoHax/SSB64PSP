@@ -21,14 +21,21 @@
 //!
 //! [`GroundObjects`] is the runtime half: one object per entry, its `DObj`
 //! clocks ([`StageJoint`]) and poses, and the `GObj::anim_frame` the
-//! controllers poll. Material animation (`MatAnimJoint`: Whispy's eye and
-//! mouth textures, the acid's) is not played; the objects draw their rest
-//! materials.
+//! controllers poll.
+//!
+//! [`MAT_ANIMS`] are the material animations (`p_matanim_joints`) the same
+//! controllers start: Whispy's eye and mouth textures, the acid's scroll and
+//! the Yoshi's Island cloud fades. Packed ones are keyed by their
+//! [`MAT_ANIMS`] index ([`crate::pack::AnimDesc::GROUND_MAT`]). Each object
+//! plays them on its own clock ([`GroundObject::materials`]); a primitive
+//! whose script has not started draws its `MObjSub` rest material.
 
 use crate::figatree::JointPose;
+use crate::matanim::{MatAnimError, MaterialJoint};
 use crate::objanim::{AnimError, StageJoint};
 use crate::pack::{AnimDesc, AnimJoint, ObjectDesc, Pack, MODEL_SCALE};
 use crate::scene::Mat4;
+use crate::skeleton::EffectMaterialAnimator;
 
 /// One controller-made object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +81,8 @@ pub const PUPUPU_FILE: u32 = 0xFF;
 pub const JUNGLE_FILE: u32 = 0x105;
 pub const YAMABUKI_FILE: u32 = 0x108;
 pub const ZEBES_FILE: u32 = 0x101;
+/// `llGRYosterMapFileID`.
+pub const YOSTER_FILE: u32 = 0x107;
 
 /// `llGRPupupuMapMapHead`.
 const PUPUPU_HEAD: u32 = 0x10F0;
@@ -203,6 +212,87 @@ pub const ANIMS: [GroundAnimAsset; 30] = [
     table("Acid", ACID, 0xB90),
 ];
 
+/// One material-animation table a controller starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroundMatAnimAsset {
+    pub name: &'static str,
+    /// Index into [`OBJECTS`], or `None` for a Yoshi's Island cloud: its
+    /// `DObj` is built from a display list, not a packed graph, so its
+    /// script is played for the controller's `anim_wait` test only.
+    pub object: Option<u8>,
+    /// The `GR*Map` file and the label its controller subtracts from
+    /// `map_nodes`, as in [`GroundObjectAsset`].
+    pub gr_file: u32,
+    pub map_head: u32,
+    /// The `AObjEvent32 ***` table: one entry per `DObj` in tree order,
+    /// each an array parallel to that node's `MObj` chain.
+    pub table: u32,
+}
+
+const fn mat(name: &'static str, object: u8, table: u32) -> GroundMatAnimAsset {
+    let asset = &OBJECTS[object as usize];
+    GroundMatAnimAsset {
+        name,
+        object: Some(object),
+        gr_file: asset.gr_file,
+        map_head: asset.map_head,
+        table,
+    }
+}
+
+const fn cloud_mat(name: &'static str, table: u32) -> GroundMatAnimAsset {
+    GroundMatAnimAsset {
+        name,
+        object: None,
+        gr_file: YOSTER_FILE,
+        map_head: YOSTER_HEAD,
+        table,
+    }
+}
+
+/// `llGRYosterMapMapHead`.
+const YOSTER_HEAD: u32 = 0x100;
+
+/// Every material animation the ported controllers start. The order is
+/// the index [`mat_anim_of`] and the cloud constants name; do not reorder.
+pub const MAT_ANIMS: [GroundMatAnimAsset; 13] = [
+    // `dGRPupupuWhispyEyesAnims[lr][Turn][1]`; Blink has none.
+    mat("WhispyEyesLeftTurn", WHISPY_EYES, 0x11E0),
+    mat("WhispyEyesRightTurn", WHISPY_EYES, 0x1270),
+    // `dGRPupupuWhispyMouthAnims[lr][status][1]`.
+    mat("WhispyMouthLeftStretch", WHISPY_MOUTH, 0x1A00),
+    mat("WhispyMouthLeftTurn", WHISPY_MOUTH, 0x1CE0),
+    mat("WhispyMouthLeftOpen", WHISPY_MOUTH, 0x20B0),
+    mat("WhispyMouthLeftClose", WHISPY_MOUTH, 0x22A0),
+    mat("WhispyMouthRightStretch", WHISPY_MOUTH, 0x1BA0),
+    mat("WhispyMouthRightTurn", WHISPY_MOUTH, 0x1E30),
+    mat("WhispyMouthRightOpen", WHISPY_MOUTH, 0x2540),
+    mat("WhispyMouthRightClose", WHISPY_MOUTH, 0x2740),
+    // `grZebesMakeAcid`: `llGRZebesMapAcidMatAnimJoint`.
+    mat("Acid", ACID, 0xBD0),
+    // `dGRYosterCloudMatAnimJoints`.
+    cloud_mat("CloudSolid", 0x670),
+    cloud_mat("CloudEvaporate", 0x690),
+];
+
+pub const CLOUD_SOLID_MAT: usize = 11;
+pub const CLOUD_EVAPORATE_MAT: usize = 12;
+/// `ARRAY_COUNT(gGRCommonStruct.yoster.clouds)`.
+pub const CLOUD_COUNT: usize = 3;
+
+/// The [`MAT_ANIMS`] table the controller passes alongside [`ANIMS`]`[anim]`
+/// to `gcAddAnimAll`, or `None` when it passes NULL (Whispy's blink) or
+/// starts only a joint animation (`gcAddAnimJointAll`).
+pub const fn mat_anim_of(anim: usize) -> Option<usize> {
+    match anim {
+        0 => Some(0), // WhispyEyesLeftTurn
+        2 => Some(1), // WhispyEyesRightTurn
+        4..=11 => Some(anim - 2),
+        ACID_ANIM => Some(10),
+        _ => None,
+    }
+}
+
 /// `dGRPupupuWhispyEyesAnims[lr][blink]`.
 pub const fn whispy_eyes(lr: u8, blink: bool) -> usize {
     lr as usize * 2 + blink as usize
@@ -248,6 +338,9 @@ pub struct GroundObject {
     /// The animation file's bytes in the pack blob (offset, length); every
     /// animation of one object comes from the same file.
     script: Option<(u32, u32)>,
+    /// Its `MObj`s' material clocks, keyed by the primitives'
+    /// `MatAnimDesc` index.
+    materials: EffectMaterialAnimator,
 }
 
 impl GroundObject {
@@ -272,7 +365,13 @@ impl GroundObject {
             poses,
             frame: 0.0,
             script: None,
+            materials: EffectMaterialAnimator::new(),
         }
+    }
+
+    /// The material player the object's primitives resolve against.
+    pub fn materials(&self) -> &EffectMaterialAnimator {
+        &self.materials
     }
 
     pub fn node_count(&self) -> usize {
@@ -386,8 +485,11 @@ impl GroundObject {
         Ok(())
     }
 
-    /// `gcPlayAnimAll`: every node in tree order.
+    /// `gcPlayAnimAll`: every node in tree order, then its `MObj`s. No
+    /// material parse reads or writes a node's clock, so the material
+    /// clocks can tick after the whole tree.
     fn tick(&mut self, pack: &Pack<'_>) -> Result<(), AnimError> {
+        self.materials.tick(pack);
         let Some((at, len)) = self.script else {
             return Ok(());
         };
@@ -401,10 +503,24 @@ impl GroundObject {
     }
 }
 
+/// One Yoshi's Island cloud's `MObj` clock (`clouds[i].dobj[0]->mobj`).
+/// The three meshes of a cloud share one script start, so one clock stands
+/// for all three.
+#[derive(Clone, Copy)]
+struct CloudMaterial {
+    joint: MaterialJoint,
+    /// The script file's bytes in the pack blob.
+    file: (u32, u32),
+}
+
 /// A stage's controller objects and the animations its controller may start.
 pub struct GroundObjects {
     objects: [Option<GroundObject>; MAX_STAGE_OBJECTS],
     anims: [Option<AnimDesc>; ANIMS.len()],
+    mat_anims: [Option<AnimDesc>; MAT_ANIMS.len()],
+    /// `None` until the cloud's first script: `anim_wait` is
+    /// `AOBJ_ANIM_NULL` from `gcAddMObjForDObj`.
+    clouds: [Option<CloudMaterial>; CLOUD_COUNT],
 }
 
 impl GroundObjects {
@@ -413,6 +529,8 @@ impl GroundObjects {
         GroundObjects {
             objects: [None; MAX_STAGE_OBJECTS],
             anims: [None; ANIMS.len()],
+            mat_anims: [None; MAT_ANIMS.len()],
+            clouds: [None; CLOUD_COUNT],
         }
     }
 
@@ -432,6 +550,18 @@ impl GroundObjects {
             };
             if OBJECTS[asset.object as usize].gr_file == gr_file {
                 this.anims[a.slot as usize] = Some(a);
+            }
+        }
+        for i in 0..pack.anim_count() {
+            let Some(a) = pack.anim(i) else { continue };
+            if a.fighter != AnimDesc::GROUND_MAT {
+                continue;
+            }
+            if MAT_ANIMS
+                .get(a.slot as usize)
+                .is_some_and(|m| m.gr_file == gr_file)
+            {
+                this.mat_anims[a.slot as usize] = Some(a);
             }
         }
         let mut n = 0;
@@ -482,6 +612,7 @@ impl GroundObjects {
         else {
             return Ok(());
         };
+        let mat = mat_anim_of(anim).and_then(|m| self.mat_anims[m]);
         let Some(obj) = self.get_mut(asset.object) else {
             return Ok(());
         };
@@ -502,6 +633,17 @@ impl GroundObjects {
                 for i in 0..obj.count {
                     obj.set_script(i, script_of(obj.object.first_node + i as u32));
                 }
+                // Its `p_matanim_joints`: each non-NULL entry restarts its
+                // `MObj`; a NULL table or entry leaves the `MObj` as it is.
+                if let Some(mat) = mat {
+                    for j in
+                        (0..mat.joint_count).filter_map(|j| pack.anim_joint(mat.first_joint + j))
+                    {
+                        if j.node != AnimJoint::NO_NODE && j.script != AnimJoint::NO_SCRIPT {
+                            obj.materials.restart(j.node, j.script);
+                        }
+                    }
+                }
                 obj.tick(pack)
             }
             AnimTarget::Node(n) => {
@@ -521,6 +663,50 @@ impl GroundObjects {
         for obj in self.objects.iter_mut().flatten() {
             obj.tick(pack)?;
         }
+        for cloud in self.clouds.iter_mut().flatten() {
+            let Some(data) = pack.blob(cloud.file.0, cloud.file.1 as usize) else {
+                continue;
+            };
+            // A script that fails to parse stops where it is.
+            let _: Result<(), MatAnimError> = cloud.joint.tick(data, 1.0);
+        }
         Ok(())
+    }
+
+    /// `grYosterUpdateCloudAnim`: `lbCommonAddTreeDObjsAnimAll` with
+    /// [`MAT_ANIMS`]`[mat]` on cloud `cloud`. Only the `DObj` plays at once
+    /// (`gcPlayDObjAnimJoint`); the `MObj` parses on the next
+    /// [`Self::advance`]. A script the pack lacks leaves the cloud as it is.
+    pub fn play_cloud(&mut self, pack: &Pack<'_>, cloud: usize, mat: usize) {
+        let Some(Some(desc)) = self.mat_anims.get(mat).copied() else {
+            return;
+        };
+        let Some(script) = (0..desc.joint_count)
+            .filter_map(|j| pack.anim_joint(desc.first_joint + j))
+            .find(|j| j.script != AnimJoint::NO_SCRIPT)
+            .map(|j| j.script)
+        else {
+            return;
+        };
+        if let Some(slot) = self.clouds.get_mut(cloud) {
+            *slot = Some(CloudMaterial {
+                joint: MaterialJoint::start(script, 0.0),
+                file: (desc.script_offset, desc.script_len),
+            });
+        }
+    }
+
+    /// `clouds[cloud].dobj[0]->mobj->anim_wait == AOBJ_ANIM_NULL`: the
+    /// cloud has no script, or its script ended on an earlier parse.
+    pub fn cloud_idle(&self, cloud: usize) -> bool {
+        self.clouds
+            .get(cloud)
+            .and_then(|c| c.as_ref())
+            .is_none_or(|c| c.joint.ended())
+    }
+
+    /// Whether the pack carries [`MAT_ANIMS`]`[mat]` for this stage.
+    pub fn has_mat(&self, mat: usize) -> bool {
+        self.mat_anims.get(mat).is_some_and(Option::is_some)
     }
 }

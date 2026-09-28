@@ -2405,7 +2405,9 @@ pub unsafe fn draw_stage_animated(
 }
 
 /// Draws one stage controller object in its live pose, hiding the nodes
-/// its `DObj` flags hide.
+/// its `DObj` flags hide. Its materials resolve against the object's own
+/// clocks (RE-364), never the pack-lifetime `mat_anim`; an `MObj` whose
+/// script has not started draws its rest material.
 ///
 /// # Safety
 ///
@@ -2432,7 +2434,7 @@ pub unsafe fn draw_ground_object(
         None,
         st,
         mat_anim,
-        None,
+        Some(object.materials()),
         0,
         None,
         Some(&hidden),

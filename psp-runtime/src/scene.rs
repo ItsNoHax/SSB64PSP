@@ -1117,9 +1117,29 @@ pub fn ground_object(obj: ssb_game::stage::StageObj) -> Option<u8> {
 
 impl ssb_game::stage::StageObjects for StageObjectsPort<'_, '_> {
     fn play(&mut self, anim: ssb_game::stage::StageAnim) {
-        if let Some(i) = ground_anim(anim) {
-            // A clip that fails to parse leaves the object where it is.
-            let _ = self.objects.play(self.pack, i);
+        use ssb_game::stage::StageAnim;
+        use ssb_rom::ground_obj as g;
+        match anim {
+            StageAnim::CloudSolid(i) => {
+                self.objects
+                    .play_cloud(self.pack, i as usize, g::CLOUD_SOLID_MAT)
+            }
+            StageAnim::CloudEvaporate(i) => {
+                self.objects
+                    .play_cloud(self.pack, i as usize, g::CLOUD_EVAPORATE_MAT)
+            }
+            _ => {
+                if let Some(i) = ground_anim(anim) {
+                    // A clip that fails to parse leaves the object where it is.
+                    let _ = self.objects.play(self.pack, i);
+                }
+            }
+        }
+    }
+    fn mat_anim_idle(&self, obj: ssb_game::stage::StageObj) -> bool {
+        match obj {
+            ssb_game::stage::StageObj::Cloud(i) => self.objects.cloud_idle(i as usize),
+            _ => true,
         }
     }
     fn anim_frame(&self, obj: ssb_game::stage::StageObj) -> f32 {
@@ -1142,7 +1162,10 @@ impl ssb_game::stage::StageObjects for StageObjectsPort<'_, '_> {
         }
     }
     fn child_translate(&self, obj: ssb_game::stage::StageObj) -> Option<ssb_engine::math::Vec3> {
-        let [x, y, z] = self.objects.get(ground_object(obj)?)?.child_translate(self.pack)?;
+        let [x, y, z] = self
+            .objects
+            .get(ground_object(obj)?)?
+            .child_translate(self.pack)?;
         Some(ssb_engine::math::Vec3::new(x, y, z))
     }
 }
