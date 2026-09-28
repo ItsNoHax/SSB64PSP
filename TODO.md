@@ -29,7 +29,8 @@ or evidence record covers it.
 | Yoshi Egg Lay victim collision and effect | Laying omits the wall/ceiling sweep, the damaging-floor escape is not wired to the ported ground hits (RE-356), and the break effect is represented by a 10-frame clock | RE-337 |
 | Other item kinds and item presentation | Bomb and PK Fire use the shared item system; heavy/swing/shoot/consume items, team checks, item models, effects, sound, spin, throw-turn joint yaw and pickup arrows remain | RE-352 |
 | Training `grab` scene whiffs on PSP | In PPSSPP the player stays in `Catch` without a catch (RE-351 capture log) while host `romtool jumptest --catch-tick 100` on the same route catches on tick 106; the golden already pins the whiff. Compare the posed catch box and the dummy's grabbable boxes against the unposed fallbacks | RE-341, RE-351 |
-| Clips for guard, teeter and item statuses | `GuardOn`/`Guard`/`GuardOff`, `Ottotto`, `Dokan*`, item pickup/throw, Star Rod, Fire Flower and Hammer statuses still map to the Wait slot and keep the previous pose. They resolve through the same common pairing as RE-355's slots | RE-355 |
+| Shield tilt pose | `Guard`/`GuardSetOff` hold `GuardOn`'s last frame. The original layers the per-fighter `shield_anim_joints[angle]` events onto the joints, blended by `shield_rotate_range` (`ftCommonGuardUpdateJoints`, `ftCommonGuardInitJoints`) | RE-366 |
+| Clip start frame | `set_status` drops `anim_frame_begin`, so every clip starts at frame 0. `RebirthDown` (100), hammer statuses, gun and Fire Flower shots, walks and `Pass` start later in the original | RE-366 |
 
 ## Hardware acceptance
 
@@ -37,7 +38,7 @@ Deferred by user instruction.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v41, with damage and attack clips) is 25,197,920 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327, RE-344–347, RE-351, RE-355 |
+| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v48, with every shared status clip) is 26,905,648 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327, RE-344–347, RE-351, RE-355, RE-366 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
 | Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object, RE-326 three v35 stages and RE-341 the six `psp-game` scenes, not the viewer matrix | RE-320, RE-326, RE-341 |
 | Hand-input gameplay checks on hardware | R shield and grab, live throws, a held fighter hit by a Fireball and hand costume picks need a person at the controller | RE-339, RE-341 |

@@ -225,7 +225,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `ScaleRetract` and `CastleGround` clips (ground slots 30 and 31), and
 // names the cloud leaf's `MatAnimDesc` in the cloud fades. A v46 cloud fade
 // names none, so its clouds would skip the solid fade.
-pub const VERSION: u32 = 47;
+// 48 adds the 66 remaining shared status clips (`anim::SLOT_REBIRTH_DOWN`
+// on, 541..607; RE-366): Rebirth, WalkEnd, TurnRun, the guard and teeter
+// motions, Twister, the pipe, item pickup, throw, swing, shoot and hammer
+// motions, and five thrown statuses. `SLOT_COUNT` is 607, so every stage
+// animation key moves; a v47 runtime would read them at the wrong keys.
+pub const VERSION: u32 = 48;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

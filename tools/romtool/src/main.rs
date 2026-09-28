@@ -10734,6 +10734,140 @@ mod tests {
         }
     }
 
+    /// The remaining shared slots (RE-366), by name, and their pack
+    /// lengths against `motion::anim_length`. Statuses with motion -1/-2
+    /// name the slot of the clip they keep.
+    #[test]
+    fn remaining_common_slots_match_the_anim_table() {
+        use ssb_game::fighter::FighterKind;
+        use ssb_game::status::{AnyStatus, Status};
+        use Status::*;
+        let own = [
+            RebirthDown,
+            RebirthStand,
+            RebirthWait,
+            WalkEnd,
+            TurnRun,
+            GuardKneeBend,
+            GuardPass,
+            OttottoWait,
+            Ottotto,
+            Twister,
+            DokanStart,
+            DokanEnd,
+            DokanWalk,
+            LightGet,
+            HeavyGet,
+            LightThrowDrop,
+            LightThrowDash,
+            LightThrowF,
+            LightThrowB,
+            LightThrowHi,
+            LightThrowLw,
+            LightThrowF4,
+            LightThrowB4,
+            LightThrowHi4,
+            LightThrowLw4,
+            LightThrowAirF,
+            LightThrowAirB,
+            LightThrowAirHi,
+            LightThrowAirLw,
+            LightThrowAirF4,
+            LightThrowAirB4,
+            LightThrowAirHi4,
+            LightThrowAirLw4,
+            HeavyThrowF,
+            HeavyThrowB,
+            HeavyThrowF4,
+            HeavyThrowB4,
+            SwordSwing1,
+            SwordSwing3,
+            SwordSwing4,
+            SwordSwingDash,
+            BatSwing1,
+            BatSwing3,
+            BatSwing4,
+            BatSwingDash,
+            HarisenSwing1,
+            HarisenSwing3,
+            HarisenSwing4,
+            HarisenSwingDash,
+            StarRodSwing1,
+            StarRodSwing3,
+            StarRodSwing4,
+            StarRodSwingDash,
+            LGunShoot,
+            LGunShootAir,
+            FireFlowerShoot,
+            FireFlowerShootAir,
+            HammerWait,
+            HammerWalk,
+            GuardOn,
+            GuardOff,
+            ThrownKirbyStar,
+            ThrownCopyStar,
+            YoshiEgg,
+            CaptureCaptain,
+            ThrownDonkeyUnk,
+        ];
+        assert_eq!(
+            own.len(),
+            ssb_rom::anim::SLOT_COUNT - ssb_rom::anim::SLOT_REBIRTH_DOWN
+        );
+        for status in own {
+            let slot = AnyStatus::Common(status).anim_slot();
+            assert_eq!(ssb_rom::anim::SLOT_NAMES[slot], format!("{status:?}"));
+            assert!(slot >= ssb_rom::anim::SLOT_REBIRTH_DOWN);
+        }
+        let shared = [
+            (SquatRv, "SquatRv"),
+            (DokanWait, "DokanStart"),
+            (LiftWait, "HeavyGet"),
+            (LiftTurn, "HeavyGet"),
+            (HammerTurn, "HammerWalk"),
+            (HammerKneeBend, "HammerWalk"),
+            (HammerFall, "HammerWalk"),
+            (HammerLanding, "HammerWalk"),
+            (Guard, "GuardOn"),
+            (GuardSetOff, "GuardOn"),
+            (CaptureKirby, "DamageFall"),
+            (CaptureWaitKirby, "DamageFall"),
+            (CaptureYoshi, "CapturePulled"),
+        ];
+        for (status, name) in shared {
+            let slot = AnyStatus::Common(status).anim_slot();
+            assert_eq!(ssb_rom::anim::SLOT_NAMES[slot], name, "{status:?}");
+        }
+        for status in [
+            DokanWait,
+            LiftWait,
+            LiftTurn,
+            Guard,
+            GuardSetOff,
+            CaptureWaitKirby,
+        ] {
+            assert!(AnyStatus::Common(status).keeps_motion(), "{status:?}");
+        }
+        for (row, kind) in FighterKind::PLAYABLE.iter().enumerate() {
+            let statuses = own
+                .iter()
+                .chain(shared.iter().map(|(s, _)| s))
+                .filter(|s| !AnyStatus::Common(**s).keeps_motion());
+            for &status in statuses {
+                let slot = AnyStatus::Common(status).anim_slot();
+                let file = ssb_rom::anim::FIGHTER_ANIMS[row].files[slot];
+                let table = ssb_rom::anim::EXPECTED_FRAMES[row][slot];
+                match ssb_game::motion::anim_length(*kind, status.into()) {
+                    Some(len) => {
+                        assert_ne!(file, 0, "{kind:?} {status:?}");
+                        assert_eq!(f32::from(table), len, "{kind:?} {status:?}");
+                    }
+                    None => assert_eq!(table, 0, "{kind:?} {status:?} loops"),
+                }
+            }
+        }
+    }
+
     /// `ssb-game` repeats the pack's slot numbering and the thrown
     /// figatree lengths, because Layer A must not depend on `ssb-rom`. This
     /// pins both copies to the generated table.

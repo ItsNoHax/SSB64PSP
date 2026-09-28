@@ -685,6 +685,58 @@ FINAL_SPECIAL_SLOTS = [
     ("MarioAttack13", ("Mario", "Luigi"), "FTMarioAnimJab3"),
 ]
 
+# The remaining shared statuses that name a motion of their own
+# (`ftcommonrebirth.c`, `ftcommonwalk.c`, `ftcommonturnrun.c`,
+# `ftcommonkneebend.c`, `ftcommonpass.c`, `ftcommonottotto.c`,
+# `ftcommontwister.c`, `ftcommondokan.c`, `ftcommonget.c`,
+# `ftcommonitemthrow.c`, `ftcommonitemswing.c`, `ftcommonitemshoot.c`,
+# `ftcommonhammer*.c`, `ftcommonguard*.c`, `ftcommonthrown*.c`), in
+# `ftCommonStatus` order, for every playable fighter through the common
+# status -> motion pairing. Statuses with motion -1/-2 (`TaruCann`,
+# `DokanWait`, `LiftWait`, `LiftTurn`, `Guard`, `GuardSetOff`,
+# `CaptureWaitKirby`) keep the previous clip and have no slot. The five
+# hammer statuses after `HammerWalk` all name `HammerWalk`, and
+# `CaptureKirby`/`CaptureYoshi` name `DamageFall`/`CapturePulled`, so they
+# reuse those slots.
+TAIL_COMMON_SLOTS = [
+    ("RebirthDown",     7),
+    ("RebirthStand",    8),
+    ("RebirthWait",     9),
+    ("WalkEnd",        14),
+    ("TurnRun",        19),
+    ("GuardKneeBend",  21),
+    ("GuardPass",      34),
+    ("OttottoWait",    35),
+    ("Ottotto",        36),
+    ("Twister",        60),
+    ("DokanStart",     62),
+    ("DokanEnd",       64),
+    ("DokanWalk",      65),
+    ("LightGet",      100),
+    ("HeavyGet",      101),
+] + [(name, status) for status, name in enumerate([
+    "LightThrowDrop", "LightThrowDash", "LightThrowF", "LightThrowB",
+    "LightThrowHi", "LightThrowLw", "LightThrowF4", "LightThrowB4",
+    "LightThrowHi4", "LightThrowLw4", "LightThrowAirF", "LightThrowAirB",
+    "LightThrowAirHi", "LightThrowAirLw", "LightThrowAirF4", "LightThrowAirB4",
+    "LightThrowAirHi4", "LightThrowAirLw4", "HeavyThrowF", "HeavyThrowB",
+    "HeavyThrowF4", "HeavyThrowB4",
+    "SwordSwing1", "SwordSwing3", "SwordSwing4", "SwordSwingDash",
+    "BatSwing1", "BatSwing3", "BatSwing4", "BatSwingDash",
+    "HarisenSwing1", "HarisenSwing3", "HarisenSwing4", "HarisenSwingDash",
+    "StarRodSwing1", "StarRodSwing3", "StarRodSwing4", "StarRodSwingDash",
+    "LGunShoot", "LGunShootAir", "FireFlowerShoot", "FireFlowerShootAir",
+    "HammerWait", "HammerWalk",
+], 104)] + [
+    ("GuardOn",       152),
+    ("GuardOff",      154),
+    ("ThrownKirbyStar", 175),
+    ("ThrownCopyStar",  176),
+    ("YoshiEgg",        178),
+    ("CaptureCaptain",  179),
+    ("ThrownDonkeyUnk", 180),
+]
+
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
              + [(name, status, None) for name, status in GRAB_SLOTS]
              + [(name, None, None) for name, _, _ in LATE_SPECIAL_SLOTS]
@@ -692,7 +744,8 @@ ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
              + [(name, None, None) for name, _, _ in POST_SPECIAL_SLOTS]
              + [(name, status, None) for name, status in REACTION_SLOTS + CLIFF_SLOTS
                 + COMMON_MOVE_SLOTS]
-             + [(name, None, None) for name, _, _ in FINAL_SPECIAL_SLOTS])
+             + [(name, None, None) for name, _, _ in FINAL_SPECIAL_SLOTS]
+             + [(name, status, None) for name, status in TAIL_COMMON_SLOTS])
 
 # The slots whose animation ends on its own, and whose length the status
 # machine therefore reads (RE-035). Everything after them loops until it is
@@ -1009,6 +1062,8 @@ def resolve(refs):
             common(slot, status)
         for slot, target, sym in FINAL_SPECIAL_SLOTS:
             special(slot, target, sym)
+        for slot, status in TAIL_COMMON_SLOTS:
+            common(slot, status)
         rows.append((fighter, entry))
     return rows, problems
 
@@ -1031,7 +1086,7 @@ def emit(rows, out):
     w("];\n\n")
     w("/// Whether a motion's extra figatree entry is a leading runtime joint.\n")
     w("/// Read from `FTMotionDesc.anim_desc` in `ftdata.c`.\n")
-    w("#[rustfmt::skip]\npub const LEADING_RUNTIME_JOINT: "
+    w("#[rustfmt::skip]\n#[allow(clippy::large_const_arrays)]\npub const LEADING_RUNTIME_JOINT: "
       f"[[bool; SLOT_COUNT]; {len(rows)}] = [\n")
     for fighter, entry in rows:
         flags = ", ".join("true" if runtime else "false" for _, _, _, _, runtime in entry)

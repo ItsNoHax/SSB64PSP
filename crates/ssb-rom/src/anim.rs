@@ -129,8 +129,17 @@ pub const SLOT_DAMAGE_HI1: usize = 487;
 pub const SLOT_APPEAL: usize = 509;
 /// Mario's jab finisher (`MarioStatus::Attack13`).
 pub const SLOT_MARIO_ATTACK13: usize = 540;
+/// First of the 66 remaining shared slots: `RebirthDown` through
+/// `HeavyGet`, the item throws, swings and shots, the two hammer motions,
+/// `GuardOn`, `GuardOff`, then the five thrown statuses the grab slots do not
+/// cover, in `ftCommonStatus` order.
+pub const SLOT_REBIRTH_DOWN: usize = 541;
+/// First of the 42 item slots, `LightThrowDrop` through `FireFlowerShootAir`.
+pub const SLOT_LIGHT_THROW_DROP: usize = 556;
+/// `GuardOn`, which `Guard` and `GuardSetOff` keep playing.
+pub const SLOT_GUARD_ON: usize = 600;
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 541;
+pub const SLOT_COUNT: usize = 607;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -597,10 +606,11 @@ mod tests {
         // none of the other fifteen rows. The attack slots lack the 106
         // motions the twelve do not have (mid-angle tilts and smashes,
         // `AttackHi3F`/`B`, null `LandingAirX`), and only Mario and Luigi have
-        // `MarioAttack13`.
+        // `MarioAttack13`. The remaining shared slots exist for all twelve,
+        // except that Pikachu has no `YoshiEgg` motion.
         assert_eq!(
             missing,
-            10950 + 15 * (SLOT_COUNT - SLOT_WALL_DAMAGE) + 106 + 10,
+            10950 + 15 * (SLOT_REBIRTH_DOWN - SLOT_WALL_DAMAGE) + 106 + 10 + 15 * 66 + 1,
             "Twelve ported fighters have character, grab, reaction and move slots"
         );
         for a in &FIGHTER_ANIMS[..12] {
@@ -625,7 +635,15 @@ mod tests {
         assert_eq!(SLOT_NAMES[SLOT_APPEAL + 1], "Attack11");
         assert_eq!(SLOT_NAMES[SLOT_MARIO_ATTACK13 - 1], "LandingAirNull");
         assert_eq!(SLOT_NAMES[SLOT_MARIO_ATTACK13], "MarioAttack13");
-        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "MarioAttack13");
+        assert_eq!(SLOT_NAMES[SLOT_REBIRTH_DOWN - 1], "MarioAttack13");
+        assert_eq!(SLOT_NAMES[SLOT_REBIRTH_DOWN], "RebirthDown");
+        assert_eq!(SLOT_NAMES[SLOT_LIGHT_THROW_DROP - 1], "HeavyGet");
+        assert_eq!(SLOT_NAMES[SLOT_LIGHT_THROW_DROP], "LightThrowDrop");
+        assert_eq!(SLOT_NAMES[SLOT_LIGHT_THROW_DROP + 41], "FireFlowerShootAir");
+        assert_eq!(SLOT_NAMES[SLOT_GUARD_ON - 1], "HammerWalk");
+        assert_eq!(SLOT_NAMES[SLOT_GUARD_ON], "GuardOn");
+        assert_eq!(SLOT_NAMES[SLOT_GUARD_ON + 1], "GuardOff");
+        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "ThrownDonkeyUnk");
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")
