@@ -603,3 +603,109 @@ fn every_packed_vs_stage_builds_and_runs_its_controller() {
         }
     }
 }
+
+/// The packed acid under the Zebes controller: the controller owns the root
+/// Y (`grZebesMakeAcid`, `grZebesAcidUpdateRise`) and the surface it tests
+/// is the child's `llGRZebesMapAcidAnimJoint` Y, read after the animation.
+#[test]
+fn packed_acid_follows_the_zebes_controller() {
+    use ssb_game::stage::{Controller, Stage, StageInit, StageKind, TickInput};
+    use ssb_rom::ground_obj::{self as g, GroundObjects};
+    use ssb_rom::pack::Pack;
+    struct Port<'a, 'p> {
+        pack: &'a Pack<'p>,
+        objects: &'a mut GroundObjects,
+    }
+    impl StageObjects for Port<'_, '_> {
+        fn play(&mut self, anim: StageAnim) {
+            assert_eq!(anim, StageAnim::Acid);
+            self.objects.play(self.pack, g::ACID_ANIM).unwrap();
+        }
+        fn set_translate_y(&mut self, obj: StageObj, y: f32) {
+            assert_eq!(obj, StageObj::Acid);
+            self.objects.get_mut(g::ACID).unwrap().set_translate_y(y);
+        }
+        fn child_translate(&self, obj: StageObj) -> Option<ssb_engine::math::Vec3> {
+            assert_eq!(obj, StageObj::Acid);
+            let [x, y, z] = self.objects.get(g::ACID)?.child_translate(self.pack)?;
+            Some(ssb_engine::math::Vec3::new(x, y, z))
+        }
+    }
+    if std::env::var_os("SSB64_ROM").is_none() {
+        return;
+    }
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    if !path.exists() {
+        return;
+    }
+    let bytes = std::fs::read(path).unwrap();
+    let pack = Pack::open(&bytes).unwrap();
+    let s = pack
+        .stage(pack.stage_of_file(g::ZEBES_FILE).unwrap())
+        .unwrap();
+    let (hazard_attack, hazard_throw) = StageKind::Zebes.hazard_descs(s.hazard);
+    let init = StageInit {
+        kind: StageKind::Zebes,
+        map_objects: &[],
+        bound_bottom: s.bounds.bottom as f32,
+        hazard_attack,
+        hazard_throw,
+        acid_surface_y: s.hazard_surface_y,
+    };
+    let mut objects = GroundObjects::new(&pack, g::ZEBES_FILE);
+    let mut stage = Stage::new(
+        &init,
+        &mut [],
+        &mut Port {
+            pack: &pack,
+            objects: &mut objects,
+        },
+    );
+    let acid = objects.get(g::ACID).expect("acid packed");
+    assert_eq!(acid.node_count(), 2);
+    let surface = |stage: &Stage| match &stage.controller {
+        Controller::Zebes(z) => (z.level, z.surface_y),
+        _ => panic!(),
+    };
+    // The immediate parse moves the child off its rest -282.725 to the
+    // script's first key, -270.
+    let (level, surface_y) = surface(&stage);
+    assert_eq!(level, -3000.0);
+    assert_eq!(surface_y, -270.0);
+    assert_eq!(acid.translate()[1], level);
+    let line_group = |_: u16| None;
+    let (mut low, mut high) = (f32::MAX, f32::MIN);
+    let (mut wave_low, mut wave_high) = (f32::MAX, f32::MIN);
+    for _ in 0..3600 {
+        objects.advance(&pack).unwrap();
+        stage.tick(
+            &mut [],
+            TickInput {
+                groups: &mut [],
+                objects: &mut Port {
+                    pack: &pack,
+                    objects: &mut objects,
+                },
+                map: ssb_game::stage::MapQuery {
+                    surfaces: || core::iter::empty::<ssb_game::weapon::MapSurface>(),
+                    line_group: &line_group,
+                },
+                started: true,
+            },
+        );
+        let (level, surface_y) = surface(&stage);
+        let acid = objects.get(g::ACID).unwrap();
+        assert_eq!(acid.translate()[1], level);
+        assert_eq!(acid.pose(1).unwrap().translate[1], surface_y);
+        low = low.min(level);
+        high = high.max(level);
+        wave_low = wave_low.min(surface_y);
+        wave_high = wave_high.max(surface_y);
+    }
+    // A minute includes the first 1,200-frame wait and at least one rise,
+    // and the surface script loops the whole time.
+    assert!(high > low, "{low} {high}");
+    assert!(wave_high - wave_low > 100.0, "{wave_low} {wave_high}");
+    eprintln!("acid level {low}..{high}, surface {wave_low}..{wave_high}");
+}

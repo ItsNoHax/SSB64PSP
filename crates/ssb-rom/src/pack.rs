@@ -215,7 +215,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 44 appends the hazard controller data to `StageDesc` (72 -> 104): the
 // seven words at `GR*Map` + 0xBC and the Zebes acid surface. A v43 stage
 // has neither, so a v44 runtime would run Zebes acid with no damage.
-pub const VERSION: u32 = 44;
+// 45 adds the Zebes acid object's animation (`ground_obj::ACID_ANIM`, ground
+// slot 29). A v44 pack has none, so its acid would neither draw nor move.
+pub const VERSION: u32 = 45;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
