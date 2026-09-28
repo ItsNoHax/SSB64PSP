@@ -1794,6 +1794,15 @@ fn held_attachment(f: &Fighter, holder: Holder) -> Vec3 {
     }
 }
 
+/// `func_ovl2_800EDA0C`, as `ftCommonCapturePulledProcPhysics` applies it:
+/// the held fighter's root rotation is the catcher's heavy-item joint with
+/// its scale removed. That root DObj is also `joints[TopN]`, so this rotation
+/// replaces the `lr * 90°` yaw `ftMainSetStatus` wrote; the held fighter's
+/// own facing adds nothing to its drawn orientation (RE-371).
+pub fn held_root_axes(joint: JointTransform) -> [Vec3; 3] {
+    joint.axes.map(|axis| axis.normalized())
+}
+
 /// `this_pos = -child->translate * TopN->scale`, component by component.
 /// TopN's scale is uniform (`ftManagerMakeFighter` writes `attr->size` to
 /// all three axes).
@@ -2555,6 +2564,45 @@ mod tests {
         held.status.status = Status::ThrownCommon.into();
         refresh_held_attachment(&mut held);
         assert_eq!(held.pos, Vec3::new(40.0, 150.0, 0.0));
+    }
+
+    /// RE-371: the captured fighter faces away from its catcher in gameplay,
+    /// but its drawn root takes only the catcher joint's normalized rotation.
+    /// Composing the held fighter's `±90°` facing yaw onto that joint (the
+    /// wrong RE-371 reading) would move its X and Z axes.
+    #[test]
+    fn held_root_uses_only_the_catcher_joint_rotation() {
+        let joint = JointTransform {
+            axes: [
+                Vec3::new(0.0, 0.0, -2.0),
+                Vec3::new(0.0, 2.0, 0.0),
+                Vec3::new(2.0, 0.0, 0.0),
+            ],
+            origin: Vec3::new(100.0, 200.0, 0.0),
+        };
+        let unit = [
+            Vec3::new(0.0, 0.0, -1.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        ];
+        for catcher_facing in [Facing::Left, Facing::Right] {
+            let mut catcher = grounded(FighterKind::Mario, 0, 0.0);
+            catcher.facing = catcher_facing;
+            catcher.grab.anchor = Some(joint.origin);
+            catcher.grab.anchor_transform = Some(joint);
+            let mut held = grounded(FighterKind::Mario, 1, 0.0);
+            capture_pulled(&mut held, catcher.port, holder_of(&catcher));
+            assert_eq!(held.facing, catcher_facing.flipped());
+
+            let axes = held_root_axes(held.grab.holder.unwrap().anchor_transform.unwrap());
+            assert_eq!(axes, unit);
+            let yaw = match held.facing {
+                Facing::Right => 1.0,
+                Facing::Left => -1.0,
+            };
+            let with_facing = [unit[2] * -yaw, unit[1], unit[0] * yaw];
+            assert_ne!(axes, with_facing);
+        }
     }
 
     /// `ftCommonCapturePulledRotateScale` multiplies the child translation

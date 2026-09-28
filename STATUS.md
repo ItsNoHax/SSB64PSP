@@ -7,9 +7,10 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** held fighter facing (RE-371). The caught Mario's
-  TopN now keeps its opposite facing rotation under the catcher's hand
-  joint. The grab golden shows the corrected pose.
+- **Completed batch:** held fighter orientation (RE-371, corrected). The
+  held fighter's TopN takes only the catcher's normalized hand-joint
+  rotation; the extra facing yaw from `b287dfc` is removed. The grab golden
+  is back to the RE-370 image.
 - **Next gameplay batch:** bring Luigi into `psp-game` Training selection,
   including his Fireball's appearance. Stage selection remains deferred.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
@@ -18,14 +19,15 @@ Current snapshot. History lives in git and `docs/evidence/`.
 
 | Batch | Result | Evidence |
 |---|---|---|
-| Held fighter facing | Restored TopN yaw under the catcher joint; grab and jab goldens match twice | RE-371 |
+| Held fighter orientation | Removed the composed facing yaw; held draw uses only the catcher joint; grab and jab goldens match twice | RE-371 |
 | Live Training grab | Corrected scripted facing; capture links both fighters; grab and jab goldens match twice | RE-370 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
-  Pinned 1.98.0 Clippy with warnings denied, rustfmt and the
-  `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
+  Pinned 1.98.0 Clippy with warnings denied and workspace rustfmt passed in
+  RE-371 (psp-crate rustfmt still flags two older, untouched spots);
+  the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
 - PPSSPPHeadless: Training grab and jab goldens match twice; the grab
   capture logs opposite fighter facings, `CatchWait`, `CaptureWait`, and

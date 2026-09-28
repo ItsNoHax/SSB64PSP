@@ -830,19 +830,19 @@ impl Gpu {
         self.model_transform_xyz(pos, rot_radians, [scale; 3]);
     }
 
-    /// Loads a held fighter's root rotation from its catcher's sampled joint,
-    /// then applies the held fighter's TopN facing rotation. The source
-    /// extracts the former from the joint matrix but keeps the latter as a
-    /// child rotation set from the held fighter's opposite `lr`.
+    /// Loads a held fighter's TopN transform from its catcher's sampled joint.
+    /// The source extracts rotation from the joint matrix after removing
+    /// scale and writes it over TopN's facing yaw, so no facing rotation
+    /// follows (RE-371); the held fighter's own model scale remains `scale`.
     pub fn model_transform_joint(
         &mut self,
         pos: ssb_engine::math::Vec3,
         joint: ssb_game::fighter::JointTransform,
-        facing: ssb_game::fighter::Facing,
         scale: f32,
     ) {
+        let axes = ssb_game::grab::held_root_axes(joint);
         let axis = |i: usize| {
-            let v = joint.axes[i].normalized() * scale;
+            let v = axes[i] * scale;
             sys::ScePspFVector4 {
                 x: v.x,
                 y: v.y,
@@ -864,11 +864,6 @@ impl Gpu {
         unsafe {
             sys::sceGumMatrixMode(sys::MatrixMode::Model);
             sys::sceGumLoadMatrix(&matrix);
-            sys::sceGumRotateXYZ(&sys::ScePspFVector3 {
-                x: 0.0,
-                y: crate::scene::facing_turn(facing),
-                z: 0.0,
-            });
         }
     }
 
