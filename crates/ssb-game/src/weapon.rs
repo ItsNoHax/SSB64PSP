@@ -1745,6 +1745,7 @@ fn pre_hit(
         source: crate::combat::HitSource::Weapon { vel_x: velocity.x },
         handicap: crate::stale::HANDICAP_DEFAULT,
         can_shield: true,
+        owner: Some(owner),
     };
     let reflector = crate::combat::reflector(defender).filter(|_| flags.can_reflect);
     if flags.can_setoff

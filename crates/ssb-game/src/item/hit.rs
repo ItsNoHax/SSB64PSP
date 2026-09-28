@@ -554,6 +554,7 @@ fn update_damage_stat(item: &mut Item, f: &mut Fighter, hit: crate::hurtbox::Hur
                 attacker_pos: item.pos,
                 attack_handicap: item.handicap,
                 placement: hit.placement,
+                attacker: combat::DamageBy::owner(item.player, f.port),
             },
         );
         return true;

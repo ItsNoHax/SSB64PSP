@@ -3428,20 +3428,28 @@ pub struct Preserve {
     pub hit: bool,
     /// `FTSTATUS_PRESERVE_HITSTATUS`: keep intangibility/invincibility.
     pub hitstatus: bool,
+    /// `FTSTATUS_PRESERVE_DAMAGEPLAYER`: a grounded status keeps
+    /// `damage_player`.
+    pub damage_player: bool,
 }
 
 impl Preserve {
     pub const NONE: Preserve = Preserve {
         hit: false,
         hitstatus: false,
+        damage_player: false,
     };
     pub const HIT: Preserve = Preserve {
         hit: true,
-        hitstatus: false,
+        ..Preserve::NONE
     };
     pub const HITSTATUS: Preserve = Preserve {
-        hit: false,
         hitstatus: true,
+        ..Preserve::NONE
+    };
+    pub const DAMAGE_PLAYER: Preserve = Preserve {
+        damage_player: true,
+        ..Preserve::NONE
     };
 }
 
@@ -3497,6 +3505,10 @@ pub fn set_any_status_preserve(
             f.samus.charge_recoil = 0;
         }
         _ => {}
+    }
+    // `ftMainSetStatus`: a grounded fighter forgets who hit it last.
+    if f.situation == Situation::Ground && !preserve.damage_player {
+        f.damage_player = None;
     }
     f.status.status = status;
     // `ftMainSetStatus` clears it; the setters that allow a boomerang catch

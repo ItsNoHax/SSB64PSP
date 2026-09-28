@@ -7,29 +7,29 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** blast-zone KOs and rebirth (RE-388), live in
-  Training. Before it: spawn facing (RE-387) and the character and stage
-  selects (RE-385, RE-386).
-- **Next gameplay batch:** the VS match under `P3`: the VS start's
-  facing and spawns, stocks and time, the timer, and the results and
-  restart (PLAN).
+- **Completed batch:** the VS battle's game status, countdown, timer, KO
+  credit and sudden death (RE-389), run from the menu's VS entry. Before
+  it: KOs and rebirth (RE-388) and spawn facing (RE-387).
+- **Next gameplay batch:** the fighters' Appear entry (VS starts skip it):
+  pack the 32-bit `AnimJoint` clips and port `ftcommonentry.c` (TODO).
+  The CPU AI (`P4`) is what makes VS playable.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| VS battle | `ssb_game::battle`, `damage_player`; 9 host tests; new `f1-vs-countdown`, `f1-vs-sudden-death` | RE-389 |
 | KO and rebirth | `ssb_game::dead` replaces the simplified port; 11 host tests; new `f1-training-rebirth` | RE-388 |
-| Spawn facing | `Facing::at_spawn_x`; 47 goldens rebaselined; grab route lost its turn tap | RE-387 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
   Pinned 1.98.0 Clippy with warnings denied and workspace rustfmt passed in
-  RE-388; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
+  RE-389; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: all 95 goldens match twice (RE-388), including the
-  new rebirth scene. No golden passes through a platform.
+- PPSSPPHeadless: all 95 goldens match twice (RE-389), including the
+  two VS scenes. No golden passes through a platform.
 - `psp-game` reaches scripted Training in PPSSPP. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
   (RE-360).

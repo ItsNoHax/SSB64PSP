@@ -12,6 +12,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub mod attack;
+pub mod battle;
 pub mod camera;
 pub mod captain;
 pub mod capture_kirby;

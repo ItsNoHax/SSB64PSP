@@ -379,6 +379,10 @@ pub struct Fighter {
     pub hazard: crate::hazard::HazardState,
     /// Blast-zone deaths and the rebirth halo ([`crate::dead`]).
     pub dead: crate::dead::DeadState,
+    /// `FTStruct::damage_player`: the player whose attack hit this fighter
+    /// last, credited with a KO. `None` for -1 and for
+    /// `GMCOMMON_PLAYERS_MAX` (the stage, or the fighter's own weapon).
+    pub damage_player: Option<u8>,
 }
 
 impl Fighter {
@@ -472,6 +476,7 @@ impl Fighter {
             is_smash_di: false,
             hazard: crate::hazard::HazardState::default(),
             dead: crate::dead::DeadState::default(),
+            damage_player: None,
         }
     }
 
