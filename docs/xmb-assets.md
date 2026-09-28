@@ -9,7 +9,7 @@ its own set in `xmb/`, and `Psp.toml` points `cargo psp` at it:
 | `ICON1` | `xmb/ICON1.PMF` | 144 × 80 H.264 PMF, 29.97 fps, seamless loop |
 | `PIC0` | `xmb/PIC0.PNG` | 310 × 180 RGBA PNG, transparent background, drawn over `PIC1` |
 | `PIC1` | `xmb/PIC1.PNG` | 480 × 272 RGB PNG |
-| `SND0` | — | not made yet |
+| `SND0` | `psp-game/xmb/SND0.AT3` | ATRAC3 66 kbps (LP4), 44.1 kHz stereo, RIFF; shared by both crates |
 
 The loops are 7.2 s for the game and 4.8 s for the viewer. The PNGs are
 committed exactly as delivered. `ICON0` and `PIC0` keep their alpha channel
@@ -46,7 +46,8 @@ ffprobe -v error -count_frames -show_entries stream=profile,level,nb_read_frames
 
 ffmpeg decoding the file does not prove the XMB will play it. The console's
 own decoder is stricter than ffmpeg. Only a physical PSP shows the animated
-icon.
+icon. Both generated icons animate in the XMB of a PSP Slim with firmware
+6.61 and ARK, tested on 2026-09-28 with commit `e1acd5d`.
 
 ## Checking a built EBOOT
 
@@ -65,9 +66,34 @@ PY
 
 ## SND0
 
-The delivered assets do not include music. When music is added, follow
-AngleZero's `scripts/encode_music.sh` and `docs/assets.md`. ffmpeg has no
-ATRAC3 encoder, so AngleZero builds a patched atracdenc. That patch limits
-the encoder to three QMF bands, because the XMB rejects frames that code a
-fourth band. The result is ATRAC3 at 66 kbps in a RIFF container, with no
-`fact` chunk.
+The music is an original 25.6 s loop: 150 BPM in E minor, 16 bars, with
+drums, bass, chord stabs and a lead melody. `tools/make-snd0-loop.py`
+synthesizes it from nothing; it uses no samples and no music from the
+original game ([D-037](decisions/D-037.md)). The loop is seamless because
+note and echo tails that run past the end wrap around to the start. The
+viewer's `Psp.toml` points at the game's file, so both EBOOTs play the same
+track.
+
+```bash
+python3 tools/make-snd0-loop.py /tmp/snd0.wav
+tools/encode-snd0.sh /tmp/snd0.wav psp-game/xmb/SND0.AT3
+```
+
+ffmpeg has no ATRAC3 encoder. `tools/encode-snd0.sh` is AngleZero's
+`scripts/encode_music.sh`, ported. It builds libsndfile and atracdenc in a
+scratch directory and applies `tools/patches/atracdenc-psp-bands.patch`. It
+then low-passes the source at 15.5 kHz, encodes LP4 in a RIFF container and
+drops the `fact` chunk. Last, it rejects the file unless every frame codes
+exactly three QMF bands. The XMB plays nothing if a frame codes a fourth
+band, although ffmpeg decodes such a file without complaint. The script
+passes `CMAKE_POLICY_VERSION_MINIMUM=3.5`, because CMake 4 refuses
+libsndfile's and atracdenc's old minimum versions.
+
+A good encode ends like this:
+
+```
+>> 1103 frames, all with bands_coded=2
+>> psp-game/xmb/SND0.AT3 — atrac3, 66144bps, 25.613923s, 211836 bytes
+```
+
+The XMB limits SND0 to about 500 KB and 55 s.
