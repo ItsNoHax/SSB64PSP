@@ -222,6 +222,99 @@ impl Skeleton {
             .find(|&i| self.nodes[i] == node)
             .map(|i| &self.poses[i])
     }
+
+    /// Stops the joint driving `node` and hands back its pose, for code that
+    /// sets the pose itself. `anim_wait = AOBJ_ANIM_NULL` in the original.
+    pub fn take_node(&mut self, node: u32) -> Option<&mut JointPose> {
+        let i = (0..self.joint_count).find(|&i| self.nodes[i] == node)?;
+        self.anims[i] = JointAnim::inert();
+        Some(&mut self.poses[i])
+    }
+}
+
+/// Which joints a shield pose writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShieldJoints {
+    /// `ftCommonGuardUpdateJoints`: `YRotN` only.
+    ShieldJoint,
+    /// `ftCommonGuardInitJoints`: every joint the sector table names.
+    All,
+}
+
+/// The neutral shield pose of shield-table entry `joint`: the translate and
+/// rotate of `dobj_lookup[joint]`, read from the script bytes at
+/// [`AnimDesc::frames`] (RE-367).
+pub fn shield_lookup(script: &[u8], anim: &AnimDesc, joint: u32) -> Option<([f32; 3], [f32; 3])> {
+    let at = anim.frames as usize + joint as usize * crate::fighter::DOBJDESC_SIZE as usize;
+    let f = |k: usize| -> Option<f32> {
+        let b = script.get(at + 8 + 4 * k..at + 12 + 4 * k)?;
+        Some(f32::from_bits(u32::from_be_bytes(b.try_into().ok()?)))
+    };
+    Some(([f(0)?, f(1)?, f(2)?], [f(3)?, f(4)?, f(5)?]))
+}
+
+/// Poses a fighter's shield from one stick-sector table (RE-367).
+///
+/// Each named joint restarts its sector script at `frame` (`angle_f`) and
+/// plays one tick on top of its current pose, as `gcAddDObjAnimJoint` and
+/// `ftMainPlayAnim` do. The scripts are `AObjEvent32` streams, not figatree. `ftCommonGuardGetJointTransform` then pulls its
+/// rotate and translate toward the `dobj_lookup` pose by `range`
+/// (`shield_rotate_range`): the stick at rest gives the neutral shield pose.
+/// A joint the table leaves null keeps its pose.
+///
+/// Entry 0 is `XRotN`, which no packed node represents. Only Link's tables
+/// name it, and only to hold it at rest. The last entry is `YRotN`, the shield's joint, kept in
+/// `yrotn`. The fighter joints between stop their own clip, so the next
+/// frame starts from this pose.
+///
+/// Luigi's `translate_scales` variant (`ftCommonGuardGetJointTransformScale`)
+/// is not applied.
+pub fn apply_shield_pose(
+    pack: &Pack<'_>,
+    anim: &AnimDesc,
+    frame: f32,
+    range: f32,
+    joints: ShieldJoints,
+    skeleton: &mut Skeleton,
+    yrotn: &mut JointPose,
+) {
+    let Some(script) = pack.anim_script(anim) else {
+        return;
+    };
+    let last = anim.joint_count.saturating_sub(1);
+    let first = match joints {
+        ShieldJoints::ShieldJoint => last,
+        ShieldJoints::All => 1,
+    };
+    for j in first..anim.joint_count {
+        let Some(joint) = pack.anim_joint(anim.first_joint + j) else {
+            continue;
+        };
+        if joint.script == AnimJoint::NO_SCRIPT {
+            continue;
+        }
+        let Some((translate, rotate)) = shield_lookup(script, anim, j) else {
+            continue;
+        };
+        let pose = if j == last {
+            &mut *yrotn
+        } else {
+            match skeleton.take_node(joint.node) {
+                Some(pose) => pose,
+                None => continue,
+            }
+        };
+        // `InitJoints` sets `is_anim_joint`, so `ftParamUpdateAnimKeys` parses
+        // these with `gcParseDObjAnimJoint`: the 32-bit event stream.
+        let mut player = crate::objanim::StageJoint::start_changed(joint.script, frame);
+        if player.tick(script, 1.0, pose).is_err() {
+            continue;
+        }
+        for k in 0..3 {
+            pose.rotate[k] = (pose.rotate[k] - rotate[k]) * range + rotate[k];
+            pose.translate[k] = (pose.translate[k] - translate[k]) * range + translate[k];
+        }
+    }
 }
 
 /// The most animated nodes a stage layer set is allowed. The busiest in the

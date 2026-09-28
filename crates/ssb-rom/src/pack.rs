@@ -230,7 +230,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // motions, Twister, the pipe, item pickup, throw, swing, shoot and hammer
 // motions, and five thrown statuses. `SLOT_COUNT` is 607, so every stage
 // animation key moves; a v47 runtime would read them at the wrong keys.
-pub const VERSION: u32 = 48;
+// 49 adds the fighters' shield poses (`AnimDesc::SHIELD_POSE`, RE-367): eight
+// stick-sector tables per fighter from its `*ShieldPose` file. A v48 pack has
+// none, so its shield would hold `GuardOn`'s last frame.
+pub const VERSION: u32 = 49;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -955,6 +958,16 @@ impl AnimDesc {
     /// `MObj` the script restarts, or [`AnimJoint::NO_NODE`] for an `MObj`
     /// with no packed mesh (a Yoshi's Island cloud).
     pub const GROUND_MAT: u32 = u32::MAX - 4;
+
+    /// `fighter` value marking a fighter's shield pose (RE-367). `slot` is
+    /// `kind * SHIELD_SECTORS + sector`, one per `shield_anim_joints` entry.
+    /// Joint 0 is `XRotN`, the last is `YRotN`, and the rest drive the
+    /// fighter's joints in order. `frames` is not a length: it is the byte
+    /// offset of `dobj_lookup`, the neutral pose, within the script bytes.
+    pub const SHIELD_POSE: u32 = u32::MAX - 5;
+
+    /// `shield_anim_joints` has one table per 45-degree stick sector.
+    pub const SHIELD_SECTORS: u32 = 8;
 
     /// `fighter` value marking an effect-manager DObj animation. `slot` is
     /// the index into `effect::MANAGER_EFFECT_KEYS` (RE-174).
@@ -3300,6 +3313,18 @@ impl<'a> Pack<'a> {
         (0..self.anim_count)
             .filter_map(|i| self.anim(i))
             .find(|a| a.fighter == fighter && a.slot == slot)
+    }
+
+    /// A fighter's shield pose for stick sector `sector` (RE-367).
+    pub fn shield_pose(&self, fighter: u32, sector: u32) -> Option<AnimDesc> {
+        if sector >= AnimDesc::SHIELD_SECTORS {
+            return None;
+        }
+        let slot = fighter * AnimDesc::SHIELD_SECTORS + sector;
+        (0..self.anim_count)
+            .rev()
+            .filter_map(|i| self.anim(i))
+            .find(|a| a.fighter == AnimDesc::SHIELD_POSE && a.slot == slot)
     }
 
     /// A stage's joint animation, if it has one.
