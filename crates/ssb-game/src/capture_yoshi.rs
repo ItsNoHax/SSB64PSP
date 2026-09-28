@@ -146,7 +146,13 @@ fn escape(f: &mut Fighter) {
     f.pos.z = 0.0;
     f.pos.y += ESCAPE_OFF_Y;
     f.become_airborne();
-    status::set_status(f, Status::Fall, 0.0, StatusTiming::unknown());
+    status::set_any_status_preserve(
+        f,
+        Status::Fall.into(),
+        0.0,
+        StatusTiming::unknown(),
+        status::Preserve::DAMAGE_PLAYER,
+    );
     f.grab.capture_immune = false;
     // `ftParamSetTimedHitStatusIntangible`: the port's timed invincibility
     // is the one that lets attacks pass through.

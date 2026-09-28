@@ -117,6 +117,9 @@ pub struct DeadState {
     pub explode: Option<(Vec3, ExplodeKind)>,
     /// `gSCManagerBattleState->players[].falls`.
     pub falls: u16,
+    /// Set when `ftCommonDeadUpdateScore` runs, for the host to report the
+    /// fall and `damage_player` to the battle ([`crate::battle`]).
+    pub scored: bool,
 }
 
 /// `ftMainSetStatus`'s resets of the fields this module owns.
@@ -201,6 +204,7 @@ fn reset_special_stats(f: &mut Fighter) {
 /// `ftCommonDeadUpdateScore`: a stock match takes a stock.
 fn update_score(f: &mut Fighter) {
     f.dead.falls = f.dead.falls.saturating_add(1);
+    f.dead.scored = true;
     if f.dead.stock_rule {
         f.stocks -= 1;
     }

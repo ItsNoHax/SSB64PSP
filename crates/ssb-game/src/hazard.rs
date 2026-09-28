@@ -303,6 +303,14 @@ fn update_damage_stat_ground(f: &mut Fighter, attack: GroundAttack, kind: i32, h
             attacker_pos: f.pos,
             attack_handicap: handicap,
             placement: 0,
+            // Acid keeps `damage_player`; the other stage attacks set
+            // `GMCOMMON_PLAYERS_MAX`. The POW Block's `damage_port` is not
+            // ported.
+            attacker: if kind == ENV_ACID {
+                combat::DamageBy::Keep
+            } else {
+                combat::DamageBy::World
+            },
         };
         combat::push_log(f, entry);
     }

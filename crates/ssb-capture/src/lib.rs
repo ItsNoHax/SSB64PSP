@@ -346,10 +346,15 @@ pub enum GameScene {
     /// `rebirth`: Mario dashes off Dream Land, is KO'd below the stage and
     /// comes back under the rebirth halo.
     Rebirth,
+    /// `vs`: a VS battle's countdown, Mario against a Mario that stands
+    /// still.
+    Vs,
+    /// `vstimeup`: a one-minute VS battle run to its results.
+    VsTimeUp,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 33] = [
+    pub const ALL: [GameScene; 35] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -383,6 +388,8 @@ impl GameScene {
         GameScene::StageSelect,
         GameScene::FighterSelect,
         GameScene::Rebirth,
+        GameScene::Vs,
+        GameScene::VsTimeUp,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -420,6 +427,8 @@ impl GameScene {
             GameScene::StageSelect => "stageselect",
             GameScene::FighterSelect => "fighterselect",
             GameScene::Rebirth => "rebirth",
+            GameScene::Vs => "vs",
+            GameScene::VsTimeUp => "vstimeup",
         }
     }
 

@@ -298,7 +298,13 @@ pub fn set_wall_damage(f: &mut Fighter, normal: ssb_engine::math::Vec2) {
     let hitstun = crate::attack::hitstun_frames(knockback) as i32;
     let (vel, ground) = (f.physics.vel_knockback, f.physics.vel_damage_ground);
     let t = timing_at(f, Status::WallDamage, WALLDAMAGE_ANIM_SPEED);
-    status::set_status(f, Status::WallDamage, 0.0, t);
+    status::set_any_status_preserve(
+        f,
+        Status::WallDamage.into(),
+        0.0,
+        t,
+        status::Preserve::DAMAGE_PLAYER,
+    );
     f.physics.vel_knockback = vel;
     f.physics.vel_damage_ground = ground;
     f.hitstun = hitstun.max(0) as u16;
@@ -770,7 +776,7 @@ pub fn set_shield_break_fly(f: &mut Fighter) {
         f.become_airborne();
         f.floor = None;
     }
-    set(f, Status::ShieldBreakFly);
+    set_preserve(f, Status::ShieldBreakFly, status::Preserve::DAMAGE_PLAYER);
     status::play_anim_events(f);
     f.physics.vel_air.x = 0.0;
     f.physics.vel_air.y =
@@ -779,7 +785,15 @@ pub fn set_shield_break_fly(f: &mut Fighter) {
 
 /// `ftCommonShieldBreakFallSetStatus`.
 fn set_shield_break_fall(f: &mut Fighter) {
-    set_preserve(f, Status::ShieldBreakFall, status::Preserve::HITSTATUS);
+    set_preserve(
+        f,
+        Status::ShieldBreakFall,
+        status::Preserve {
+            hitstatus: true,
+            damage_player: true,
+            ..status::Preserve::NONE
+        },
+    );
     crate::physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
 }
 

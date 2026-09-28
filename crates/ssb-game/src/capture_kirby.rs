@@ -244,7 +244,13 @@ pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, thrower: u8) {
 
 /// `ftCommonThrownKirbyEscape`.
 fn escape(f: &mut Fighter) {
-    status::set_status(f, Status::Fall, 0.0, StatusTiming::unknown());
+    status::set_any_status_preserve(
+        f,
+        Status::Fall.into(),
+        0.0,
+        StatusTiming::unknown(),
+        status::Preserve::DAMAGE_PLAYER,
+    );
     f.kirby_capture.thrower = None;
     f.kirby_capture.intangible = false;
     f.grab.capture_immune = false;

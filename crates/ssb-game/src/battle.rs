@@ -1,0 +1,399 @@
+//! The battle's game status, countdown, timer, stocks and results —
+//! `if/ifcommon.c`'s `ifCommonBattle*`, `ifCommonTimer*`,
+//! `ifCommonEntryAllThread` and `ifCommonCountdownThread`, and
+//! `sc/sccommon/scvsbattle.c`'s start facing and sudden-death check.
+//!
+//! The host calls [`Battle::begin_frame`] once per frame, as
+//! `scVSBattleFuncUpdate` calls `ifCommonBattleUpdateInterfaceAll`. It says
+//! whether the world runs this frame and whether the scene is over. Fighter
+//! deaths reach the battle through [`Battle::on_fall`], the
+//! `ftCommonDeadUpdateScore` half the battle state owns.
+//!
+//! The countdown's sprites, announcer voices, the pause menu and its camera
+//! are presentation and stay with the host.
+
+use crate::fighter::Facing;
+
+/// `SCBATTLE_TIMELIMIT_INFINITE`.
+pub const TIMELIMIT_INFINITE: u8 = 100;
+/// `I_MIN_TO_TICS(1)`.
+pub const TICS_PER_MINUTE: u32 = 3600;
+/// `ifCommonEntryAllThread` sleeps 90 ticks before it makes the countdown.
+pub const ENTRY_WAIT: u32 = 90;
+/// `ifCommonCountdownThread`'s timer reads 120, 180 and 240 at "3", "2" and
+/// "1", and 300 (`I_SEC_TO_TICS(5)`) at "Go".
+pub const COUNTDOWN_THREE: u32 = 120;
+pub const COUNTDOWN_GO: u32 = 300;
+/// `ifCommonAnnounceTimeUpInitInterface` and `ifCommonAnnounceEndMessage`
+/// hold the "Time!"/"Game!" screen 90 ticks.
+pub const END_RESTORE_WAIT: u16 = 90;
+/// `ifCommonBattleInterfaceProcSet`: three more ticks before the next
+/// scene loads.
+pub const SET_RESTORE_WAIT: u16 = 3;
+
+/// `nSCBattleGameStatus*`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameStatus {
+    Wait,
+    Go,
+    Pause,
+    Unpause,
+    End,
+    BossDefeat,
+    Set,
+}
+
+/// `SCBATTLE_GAMERULE_TIME` or `_STOCK`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rule {
+    Time,
+    Stock,
+}
+
+/// Why the battle ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndKind {
+    /// `ifCommonAnnounceTimeUpInitInterface`.
+    TimeUp,
+    /// `ifCommonAnnounceEndMessage`: one player or team is left.
+    GameSet,
+}
+
+/// One `gSCManagerBattleState->players` entry, the fields the battle reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Player {
+    /// `pkind != nFTPlayerKindNot`.
+    pub present: bool,
+    /// `pkind == nFTPlayerKindMan`.
+    pub is_human: bool,
+    pub team: u8,
+    /// Lives left beyond the current one; -1 is out.
+    pub stock_count: i8,
+    /// KOs scored.
+    pub score: u16,
+    pub falls: u16,
+    pub self_destructs: u16,
+    /// `total_kos_players`.
+    pub kos: [u16; 4],
+    /// Final place, 0 first, for a stock battle's losers in the order they
+    /// went out.
+    pub place: u8,
+}
+
+/// What the world does this frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Frame {
+    /// `gcRunAll` with the world running.
+    Run,
+    /// The world is paused (`ifCommonBattleInterfaceProcUpdate`); only the
+    /// interface runs.
+    Frozen,
+    /// `syTaskmanSetLoadScene`: on to the results.
+    Done,
+}
+
+/// The battle state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Battle {
+    pub status: GameStatus,
+    pub rule: Rule,
+    pub is_team_battle: bool,
+    /// Minutes, or [`TIMELIMIT_INFINITE`].
+    pub time_limit: u8,
+    pub time_remain: u32,
+    pub time_passed: u32,
+    pub players: [Player; 4],
+    pub end: Option<EndKind>,
+    timer_started: bool,
+    /// `sIFCommonBattlePlace`: the place the next team to go out takes.
+    place: i32,
+    restore_wait: u16,
+    /// Ticks since the scene started, for the countdown threads.
+    clock: u32,
+    /// The frame "Go" lands on.
+    go_tick: u32,
+    /// `gSCManagerSceneData.is_suddendeath`.
+    pub is_sudden_death: bool,
+}
+
+impl Battle {
+    /// `scVSBattleStartBattle`'s battle half: `ifCommonBattleInitPlacement`,
+    /// `ifCommonEntryAllMakeInterface` (status Wait) and
+    /// `ifCommonTimerMakeInterface`.
+    pub fn new(rule: Rule, time_limit: u8, stocks: i8, players: [Player; 4]) -> Battle {
+        let mut players = players;
+        for p in players.iter_mut().filter(|p| p.present) {
+            p.stock_count = stocks;
+        }
+        let mut b = Battle {
+            status: GameStatus::Wait,
+            rule,
+            is_team_battle: false,
+            time_limit,
+            time_remain: u32::from(time_limit) * TICS_PER_MINUTE,
+            time_passed: 0,
+            players,
+            end: None,
+            timer_started: false,
+            place: 0,
+            restore_wait: 0,
+            clock: 0,
+            go_tick: Self::GO_TICK,
+            is_sudden_death: false,
+        };
+        b.init_placement();
+        b
+    }
+
+    /// `scVSBattleSetScoreCheckSuddenDeath`'s new battle for the tied
+    /// players: a stock battle with no stocks to spare
+    /// (`scVSBattleStartSuddenDeath`, where each fighter starts at 300%).
+    /// `ifCommonSuddenDeathThread` says "Go" after 90 ticks.
+    pub fn sudden_death_battle(&self) -> Option<Battle> {
+        let tied = self.sudden_death()?;
+        let mut players = [Player::default(); 4];
+        for (i, p) in players.iter_mut().enumerate() {
+            if tied[i] {
+                *p = Player {
+                    present: true,
+                    is_human: self.players[i].is_human,
+                    team: self.players[i].team,
+                    ..Player::default()
+                };
+            }
+        }
+        let mut b = Battle::new(Rule::Stock, self.time_limit, 0, players);
+        b.go_tick = 1 + ENTRY_WAIT;
+        b.is_sudden_death = true;
+        Some(b)
+    }
+
+    /// `ifCommonBattleInitPlacement`: one place per team (or player) in the
+    /// battle, counted from the last.
+    fn init_placement(&mut self) {
+        let mut members = [0u8; 5];
+        for p in self.players.iter().filter(|p| p.present) {
+            let i = if self.is_team_battle {
+                usize::from(p.team)
+            } else {
+                0
+            };
+            members[i.min(4)] += 1;
+        }
+        let teams = if self.is_team_battle {
+            members.iter().filter(|&&m| m != 0).count() as i32
+        } else {
+            self.players.iter().filter(|p| p.present).count() as i32
+        };
+        self.place = teams - 1;
+    }
+
+    fn timed(&self) -> bool {
+        self.rule == Rule::Time && self.time_limit != TIMELIMIT_INFINITE
+    }
+
+    /// The frame "Go" lands on, counting the scene's first frame as 1: the
+    /// entry thread first runs on frame 1 and sleeps 90, and the countdown
+    /// thread it then makes reads 300 another 300 frames on.
+    pub const GO_TICK: u32 = 1 + ENTRY_WAIT + COUNTDOWN_GO;
+
+    /// `ifCommonBattleUpdateInterfaceAll`, and the interface processes the
+    /// frame's `gcRunAll` runs: the countdown and the timer.
+    pub fn begin_frame(&mut self) -> Frame {
+        if self.status != GameStatus::Go {
+            self.timer_started = false;
+        } else if !self.timer_started {
+            // `sySchedulerSetTicCount(0)`: the first Go frame reads no time.
+            self.timer_started = true;
+            self.clock += 1;
+            return Frame::Run;
+        }
+        match self.status {
+            GameStatus::Wait => {
+                self.clock += 1;
+                // `ifCommonAnnounceGoSetStatus` unlocks every fighter.
+                if self.clock >= self.go_tick {
+                    self.status = GameStatus::Go;
+                }
+                Frame::Run
+            }
+            GameStatus::Go => {
+                self.clock += 1;
+                self.tick_timer();
+                // The time-up proc runs from the timer itself, inside the
+                // frame's `gcRunAll`.
+                Frame::Run
+            }
+            GameStatus::Pause | GameStatus::Unpause => Frame::Frozen,
+            // `ifCommonBattleEndUpdateInterface` pauses the world and falls
+            // through to `ifCommonBattleBossDefeatUpdateInterface`.
+            GameStatus::End | GameStatus::BossDefeat => {
+                self.status = GameStatus::BossDefeat;
+                if self.restore_wait != 0 {
+                    self.restore_wait -= 1;
+                } else {
+                    // `ifCommonBattleInterfaceProcSet`.
+                    self.status = GameStatus::Set;
+                    self.restore_wait = SET_RESTORE_WAIT;
+                }
+                Frame::Frozen
+            }
+            GameStatus::Set => {
+                if self.restore_wait != 0 {
+                    self.restore_wait -= 1;
+                    Frame::Frozen
+                } else {
+                    Frame::Done
+                }
+            }
+        }
+    }
+
+    /// `ifCommonTimerFuncRun` with one tic of scheduler time per frame.
+    fn tick_timer(&mut self) {
+        self.time_passed += 1;
+        if !self.timed() || self.time_remain == 0 {
+            return;
+        }
+        self.time_remain -= 1;
+        if self.time_remain == 0 {
+            self.set_end(EndKind::TimeUp);
+        }
+    }
+
+    /// `ifCommonBattleSetInterface`.
+    fn set_end(&mut self, kind: EndKind) {
+        if self.end.is_some() {
+            return;
+        }
+        self.status = GameStatus::End;
+        self.restore_wait = END_RESTORE_WAIT;
+        self.end = Some(kind);
+    }
+
+    /// The battle half of `ftCommonDeadUpdateScore`: `damage_player` is
+    /// credited with the KO, or the fall counts as a self-destruct, and a
+    /// stock battle takes a stock (`ifCommonBattleUpdateScoreStocks`).
+    pub fn on_fall(&mut self, player: u8, damage_player: Option<u8>) {
+        let i = usize::from(player).min(3);
+        self.players[i].falls += 1;
+        match damage_player {
+            Some(k) if usize::from(k) < 4 => {
+                self.players[usize::from(k)].score += 1;
+                self.players[usize::from(k)].kos[i] += 1;
+            }
+            _ => self.players[i].self_destructs += 1,
+        }
+        if self.rule == Rule::Stock {
+            self.players[i].stock_count -= 1;
+            self.update_score_stocks(i);
+        }
+    }
+
+    /// `ifCommonBattleUpdateScoreStocks`.
+    fn update_score_stocks(&mut self, i: usize) {
+        let team = if self.is_team_battle {
+            self.players[i].team
+        } else {
+            i as u8
+        };
+        let remain = self
+            .players
+            .iter()
+            .enumerate()
+            .filter(|(j, p)| {
+                p.present
+                    && (if self.is_team_battle {
+                        p.team
+                    } else {
+                        *j as u8
+                    }) == team
+                    && p.stock_count != -1
+            })
+            .count();
+        if remain == 0 {
+            let place = self.place.max(0) as u8;
+            if self.is_team_battle {
+                for p in self
+                    .players
+                    .iter_mut()
+                    .filter(|p| p.present && p.team == team)
+                {
+                    p.place = place;
+                }
+            } else {
+                self.players[usize::from(team)].place = place;
+            }
+            self.place -= 1;
+            if self.place == 0 {
+                self.set_end(EndKind::GameSet);
+            }
+        }
+    }
+
+    /// `scVSBattleSetScoreCheckSuddenDeath`, free-for-all: after a time
+    /// battle, the players tied on `score - falls` at the top, when there is
+    /// more than one.
+    pub fn sudden_death(&self) -> Option<[bool; 4]> {
+        if self.rule != Rule::Time {
+            return None;
+        }
+        let tko = |p: &Player| i32::from(p.score) - i32::from(p.falls);
+        let best = self.players.iter().filter(|p| p.present).map(tko).max()?;
+        let mut tied = [false; 4];
+        for (i, p) in self.players.iter().enumerate() {
+            tied[i] = p.present && tko(p) == best;
+        }
+        (tied.iter().filter(|&&t| t).count() >= 2).then_some(tied)
+    }
+
+    /// The results' winner: the best `score - falls` after a time battle
+    /// (a tie means sudden death), or the player still in after a stock
+    /// battle.
+    pub fn winner(&self) -> Option<usize> {
+        match self.rule {
+            Rule::Time => {
+                if self.sudden_death().is_some() {
+                    return None;
+                }
+                let tko = |p: &Player| i32::from(p.score) - i32::from(p.falls);
+                self.players
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| p.present)
+                    .max_by_key(|(_, p)| tko(p))
+                    .map(|(i, _)| i)
+            }
+            Rule::Stock => self
+                .players
+                .iter()
+                .position(|p| p.present && p.stock_count != -1),
+        }
+    }
+}
+
+/// `desc.damage` in `scVSBattleStartSuddenDeath`.
+pub const SUDDEN_DEATH_DAMAGE: u16 = 300;
+
+/// `scVSBattleGetStartPlayerLR`: a VS fighter starts facing the nearest
+/// other player's spawn, right when there is none or it is level.
+pub fn start_facing(this_x: f32, others_x: impl Iterator<Item = f32>) -> Facing {
+    let mut near_dist = 65536.0_f32;
+    let mut near_spawn = 0.0_f32;
+    for x in others_x {
+        let dist = (x - this_x).abs();
+        if near_dist > dist {
+            near_dist = dist;
+            near_spawn = x - this_x;
+        }
+    }
+    if near_spawn >= 0.0 {
+        Facing::Right
+    } else {
+        Facing::Left
+    }
+}
+
+#[cfg(test)]
+#[path = "battle_tests.rs"]
+mod tests;

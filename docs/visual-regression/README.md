@@ -166,6 +166,8 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scenes `yoshi`, `yoshibomb`) | `f1-training-yoshi`, `-yoshi-bomb` | Yoshi's Egg Throw egg 16 frames into its flight; the Yoshi Bomb's two stars 6 frames after they appear (retimed for the hop in RE-378) | RE-375, RE-378 |
 | `golden_capture` (`psp-game`, scenes `ness`, `nessthunder`, `nessmagnet`) | `f1-training-ness`, `-ness-thunder`, `-ness-magnet` | Ness's PK Fire spark in flight; PK Thunder's head with four trails; PSI Magnet held | RE-381 |
 | `golden_capture` (`psp-game`, scene `linkbomb`) | `f1-training-link-bomb` | Link holding a freshly pulled Bomb | RE-383 |
+| `golden_capture` (`psp-game`, scene `vs`) | `f1-vs-countdown` | A VS battle's countdown on Dream Land, both fighters locked until "Go" | RE-389 |
+| `golden_capture` (`psp-game`, scene `vstimeup`) | `f1-vs-sudden-death` | A one-minute VS battle timed out in a tie, in sudden death with both fighters at 300% | RE-389 |
 | `golden_capture` (`psp-game`, scene `rebirth`) | `f1-training-rebirth` | Mario after a KO below Dream Land, standing at the rebirth point in `RebirthStand` (the halo is not drawn) | RE-388 |
 | `golden_capture` (`psp-game`, scene `fighterselect`) | `f1-training-fighter-select` | Kirby placed on the character select, then Peach's Castle on the stage select; Kirby and a Mario dummy standing on the castle | RE-386 |
 | `golden_capture` (`psp-game`, scene `stageselect`) | `f1-training-stage-select` | Mario and the dummy standing on Hyrule Castle, picked on the stage select; every other `psp-game` scene skips the select and loads Dream Land | RE-385 |
@@ -492,3 +494,9 @@ Pack v60. The new `f1-training-rebirth` golden was identical in both
 captures. `r2-stage-bonus2-fox` was rebaselined: the viewer's Mario used to
 fall out of frame and is now KO'd and respawns. 96 of 96 goldens match
 twice.
+
+## 2026-09-29 RE-389 VS battle
+
+Pack v60. The new `f1-vs-countdown` and `f1-vs-sudden-death` goldens were
+each identical in both captures; `vstimeup` runs 4,200 ticks. 98 of 98
+goldens match twice.

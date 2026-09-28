@@ -343,7 +343,8 @@ pub fn init_damage_vars_full(
         }
     }
     let timing = anim_timing(f, status_set);
-    status::set_any_status(f, status_set, 0.0, timing);
+    // `ftCommonDamageInitDamageVars`: `FTSTATUS_PRESERVE_DAMAGEPLAYER`.
+    status::set_any_status_preserve(f, status_set, 0.0, timing, status::Preserve::DAMAGE_PLAYER);
     status::play_anim_events(f);
     f.reaction.is_knockback_over = knockback >= crate::reaction::KNOCKBACK_OVER;
     f.damage_e_status = if matches!(
@@ -396,7 +397,7 @@ pub fn update_damage_e(f: &mut Fighter) {
         f.hitstun,
     );
     let timing = anim_timing(f, status);
-    status::set_any_status(f, status, 0.0, timing);
+    status::set_any_status_preserve(f, status, 0.0, timing, status::Preserve::DAMAGE_PLAYER);
     status::play_anim_events(f);
     f.physics.vel_knockback = vel;
     f.physics.vel_damage_ground = ground;
@@ -692,6 +693,7 @@ pub fn register_hitbox_contact(
             source,
             handicap: attack_handicap,
             can_shield: true,
+            owner: None,
         },
     )
 }

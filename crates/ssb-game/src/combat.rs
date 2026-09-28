@@ -283,6 +283,30 @@ pub struct HitLogEntry {
     pub attack_handicap: u8,
     /// The hurtbox's `placement` column.
     pub placement: usize,
+    /// Who `ftParamUpdate1PGameDamageStats` records as `damage_player`
+    /// when this hit wins the frame.
+    pub attacker: DamageBy,
+}
+
+/// The `damage_player` a logged hit leaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DamageBy {
+    /// A player's fighter, weapon or item.
+    Player(u8),
+    /// `GMCOMMON_PLAYERS_MAX`: the stage, or a fighter's own weapon or item.
+    World,
+    /// Acid: `damage_player` stays as it was.
+    Keep,
+}
+
+impl DamageBy {
+    /// A weapon or item hit: its owner, unless the owner is the victim.
+    pub fn owner(owner: Option<u8>, victim: u8) -> DamageBy {
+        match owner {
+            Some(p) if p != victim => DamageBy::Player(p),
+            _ => DamageBy::World,
+        }
+    }
 }
 
 /// `sFTMainHitLogs` holds ten.
@@ -991,6 +1015,7 @@ fn update_damage_stat(
                 attacker_pos: attacker.pos,
                 attack_handicap: attacker.handicap,
                 placement: hit.placement,
+                attacker: DamageBy::Player(attacker.port),
             },
         );
         if attacker.port != victim.port {
@@ -1030,6 +1055,8 @@ pub struct WeaponAttack {
     pub source: HitSource,
     pub handicap: u8,
     pub can_shield: bool,
+    /// `wp->player`: the weapon's owner, for `damage_player`.
+    pub owner: Option<u8>,
 }
 
 /// `ftMainSearchHitWeapon`'s shield and damage halves for one weapon hitbox
@@ -1118,6 +1145,7 @@ pub fn weapon_hit(victim: &mut Fighter, w: WeaponAttack) -> WeaponContact {
                 attacker_pos: w.pos_curr,
                 attack_handicap: w.handicap,
                 placement: hit.placement,
+                attacker: DamageBy::owner(w.owner, victim.port),
             },
         );
         return WeaponContact::Hurt(true);
@@ -1133,6 +1161,7 @@ pub fn direct_hit(
     attacker_pos: Vec3,
     lr: f32,
     handicap: u8,
+    attacker: DamageBy,
 ) -> bool {
     if !is_body_normal(victim) {
         return false;
@@ -1147,6 +1176,7 @@ pub fn direct_hit(
             attacker_pos,
             attack_handicap: handicap,
             placement: attack::DAMAGE_INDEX_N,
+            attacker,
         },
     );
     true
@@ -1198,6 +1228,11 @@ pub fn process_hit_collision(this: &mut Fighter) {
     };
     this.hits.damage_index = entry.placement;
     this.hits.damage_knockback = best;
+    match entry.attacker {
+        DamageBy::Player(p) => this.damage_player = Some(p),
+        DamageBy::World => this.damage_player = None,
+        DamageBy::Keep => {}
+    }
     if this.hits.damage_element == Element::Electric {
         this.hits.hitlag_mul = 1.5;
     }

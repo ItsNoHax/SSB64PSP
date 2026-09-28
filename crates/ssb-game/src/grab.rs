@@ -3152,7 +3152,8 @@ mod tests {
                 strong_hit(20),
                 at,
                 lr,
-                9
+                9,
+                crate::combat::DamageBy::World,
             ));
             // Held fighters take half (`ftParamGetCapturedDamage`): 4 < 6
             // keeps the hold (`ftCommonDamageCheckCaptureKeepHold`).
@@ -3161,7 +3162,8 @@ mod tests {
                 strong_hit(8),
                 at,
                 lr,
-                9
+                9,
+                crate::combat::DamageBy::World,
             ));
             assert_eq!(dummy.hits.damage_queue, 4);
             if held_first {
@@ -3200,7 +3202,8 @@ mod tests {
             strong_hit(8),
             at,
             1.0,
-            9
+            9,
+            crate::combat::DamageBy::World,
         ));
         crate::combat::finish_frame(&mut [&mut mario, &mut dummy]);
         assert_eq!(mario.grab.catch, Some(1));
