@@ -7,8 +7,11 @@ title = "Super Smash Bros. 64"
 memsize = 1
 
 # XMB presentation (docs/xmb-assets.md). ICON1.PMF is generated from
-# ICON1_source.mp4 by tools/make-pmf.py and committed. No SND0.AT3 yet.
+# ICON1_source.mp4 by tools/make-pmf.py, SND0.AT3 by tools/make-snd0-loop.py
+# and tools/encode-snd0.sh; both are committed.
 xmb_icon_png = "xmb/ICON0.PNG"
 xmb_icon_pmf = "xmb/ICON1.PMF"
 xmb_background_overlay_png = "xmb/PIC0.PNG"
 xmb_background_png = "xmb/PIC1.PNG"
+# The viewer shares the game's music.
+xmb_music_at3 = "../psp-game/xmb/SND0.AT3"
