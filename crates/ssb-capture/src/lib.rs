@@ -283,6 +283,8 @@ pub enum GameScene {
     Superjump,
     /// `fox`: Fox in Training, one Blaster shot.
     Fox,
+    /// `luigi`: Luigi in Training, one Fireball.
+    Luigi,
     /// `shadows`: first jump's apex, player airborne.
     Shadows,
     /// `grab`: Training plus a Z+A grab of the dummy, frozen while held.
@@ -300,11 +302,12 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 11] = [
+    pub const ALL: [GameScene; 12] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
         GameScene::Fox,
+        GameScene::Luigi,
         GameScene::Shadows,
         GameScene::Grab,
         GameScene::Jab,
@@ -320,6 +323,7 @@ impl GameScene {
             GameScene::Fireball => "fireball",
             GameScene::Superjump => "superjump",
             GameScene::Fox => "fox",
+            GameScene::Luigi => "luigi",
             GameScene::Shadows => "shadows",
             GameScene::Grab => "grab",
             GameScene::Jab => "jab",

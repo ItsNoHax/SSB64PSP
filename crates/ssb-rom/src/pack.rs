@@ -235,7 +235,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // none, so its shield would hold `GuardOn`'s last frame.
 // 50 adds the ROM's per-joint translation scale vectors for Luigi, stored as
 // an animation data row (`AnimDesc::TRANSLATE_SCALES`).
-pub const VERSION: u32 = 50;
+// 51 adds Luigi's Fireball mesh: file 297's list bound to `palettes[1]`,
+// keyed (297, 0x08). A v50 pack has only Mario's palette.
+pub const VERSION: u32 = 51;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

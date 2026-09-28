@@ -39,16 +39,26 @@ use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, MeshDesc, Pack, StageDesc}
 pub const MARIO_FIREBALL_SOURCE_FILE: u32 = 297;
 pub const MARIO_FIREBALL_SOURCE_OFFSET: u32 = 0x1D8;
 
-/// Finds the packed Mario Fireball mesh by its stable source identity.
-/// This and the lookups below scan whole descriptor tables; resolve them
-/// once per pack, never per frame (RE-360).
-pub fn mario_fireball_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
-    (0..pack.mesh_count())
-        .filter_map(|i| pack.mesh(i))
-        .find(|mesh| {
-            mesh.source_file == MARIO_FIREBALL_SOURCE_FILE
-                && mesh.source_offset == MARIO_FIREBALL_SOURCE_OFFSET
-        })
+/// Luigi's Fireball: the same list bound to `palettes[1]`
+/// (`wpMarioFireballMakeWeapon`'s `palette_id = anim_frame`). romtool keys it
+/// by that palette's file offset, since the list is shared.
+pub const LUIGI_FIREBALL_SOURCE_OFFSET: u32 = 0x08;
+
+/// The packed Fireball mesh for each `FIREBALL_ATTRIBUTES` row: index 0 is
+/// Mario, index 1 Luigi. This and the lookups below scan whole descriptor
+/// tables; resolve them once per pack, never per frame (RE-360).
+pub fn fireball_meshes(pack: &Pack<'_>) -> [Option<MeshDesc>; 2] {
+    let find = |offset| {
+        (0..pack.mesh_count())
+            .filter_map(|i| pack.mesh(i))
+            .find(|mesh| {
+                mesh.source_file == MARIO_FIREBALL_SOURCE_FILE && mesh.source_offset == offset
+            })
+    };
+    [
+        find(MARIO_FIREBALL_SOURCE_OFFSET),
+        find(LUIGI_FIREBALL_SOURCE_OFFSET),
+    ]
 }
 
 /// Fox Special1's `WPAttributes.data` resolves to this direct weapon list.

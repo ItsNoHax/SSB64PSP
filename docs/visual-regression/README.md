@@ -160,6 +160,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `grab`) | `f1-training-grab` | Mario turns toward and catches the Training dummy on Dream Land's left platform; the held fighter's TopN takes only the catcher's hand-joint rotation, with no extra facing yaw | RE-330–332, RE-370–371 |
 | `golden_capture` (`psp-game`, scenes `costume1`–`costume3`) | `f1-training-costume-1`–`3` | Fox after a C-Right, C-Down or C-Left pick on the Training entry: costumes 1–3 in `psp-game` | RE-341 |
 | `golden_capture` (`psp-game`, scene `jab`) | `f1-training-jab` | Mario's jab from the grab route landing on the Training dummy; the hit is in the capture log (`dummy_damage=2 dummy_status=Common(DamageN1)`, `PPSSPPHeadless --log`), not the image | RE-351 |
+| `golden_capture` (`psp-game`, scene `luigi`) | `f1-training-luigi` | Luigi in Training after one B tap: his Fireball in flight with `palettes[1]` (green) | RE-372 |
 | `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center. The bubble visual is not drawn | RE-367, RE-369 |
 
 Stage sweep example:
@@ -375,3 +376,10 @@ Pack v40 unchanged (`a3e1a831…`). The Fireball had moved only on a map
 contact. It now moves by `vel_air` every frame. `f1-training-fireball`
 changed by 2,476 pixels at 2x and was rebaselined: the shot leaves Mario's
 hand and rebounds. The other six `f1-training` goldens match.
+
+## 2026-09-28 RE-372 Luigi Training scene
+
+Pack v51 (`9f8a292d…`) adds Luigi's Fireball mesh. New `f1-training-luigi`
+shows Luigi after one B tap with a green Fireball in flight; its two
+captures were identical. 75 of 75 goldens match twice, and
+`f1-training-fireball` (Mario's red palette) is unchanged.
