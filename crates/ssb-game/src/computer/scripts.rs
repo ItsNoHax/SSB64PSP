@@ -108,3 +108,370 @@ pub mod input {
     pub const YOSHI_SPECIAL_HI_AIM: usize = 47;
     pub const NESS_SPECIAL_HI_AIM: usize = 48;
 }
+
+/// One `FTComputerAttack` row: the input script, the hitbox's active
+/// frames and the box around the fighter where it connects.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Attack {
+    pub input: usize,
+    pub hit_start_frame: i32,
+    pub hit_end_frame: i32,
+    pub detect_near_x: f32,
+    pub detect_far_x: f32,
+    pub detect_near_y: f32,
+    pub detect_far_y: f32,
+}
+
+/// `dFTComputerAttacksMario`, grounded rows.
+#[rustfmt::skip]
+pub static ATTACKS_MARIO_GROUND: [Attack; 11] = [
+    Attack { input: 19, hit_start_frame: 2, hit_end_frame: 6, detect_near_x: 150.0, detect_far_x: 400.0, detect_near_y: 30.0, detect_far_y: 210.0 },
+    Attack { input: 5, hit_start_frame: 8, hit_end_frame: 17, detect_near_x: 45.0, detect_far_x: 560.0, detect_near_y: -45.0, detect_far_y: 270.0 },
+    Attack { input: 21, hit_start_frame: 16, hit_end_frame: 20, detect_near_x: 60.0, detect_far_x: 580.0, detect_near_y: 0.0, detect_far_y: 280.0 },
+    Attack { input: 23, hit_start_frame: 5, hit_end_frame: 16, detect_near_x: -140.0, detect_far_x: 470.0, detect_near_y: 120.0, detect_far_y: 640.0 },
+    Attack { input: 25, hit_start_frame: 7, hit_end_frame: 15, detect_near_x: -230.0, detect_far_x: 360.0, detect_near_y: 140.0, detect_far_y: 630.0 },
+    Attack { input: 32, hit_start_frame: 5, hit_end_frame: 11, detect_near_x: 130.0, detect_far_x: 720.0, detect_near_y: -90.0, detect_far_y: 170.0 },
+    Attack { input: 34, hit_start_frame: 9, hit_end_frame: 30, detect_near_x: -420.0, detect_far_x: 490.0, detect_near_y: -130.0, detect_far_y: 400.0 },
+    Attack { input: 9, hit_start_frame: 10, hit_end_frame: 15, detect_near_x: 400.0, detect_far_x: 1200.0, detect_near_y: 0.0, detect_far_y: 280.0 },
+    Attack { input: 13, hit_start_frame: 2, hit_end_frame: 23, detect_near_x: -120.0, detect_far_x: 950.0, detect_near_y: -120.0, detect_far_y: 2100.0 },
+    Attack { input: 27, hit_start_frame: 1, hit_end_frame: 44, detect_near_x: -250.0, detect_far_x: 250.0, detect_near_y: -70.0, detect_far_y: 500.0 },
+    Attack { input: 28, hit_start_frame: 7, hit_end_frame: 7, detect_near_x: 50.0, detect_far_x: 340.0, detect_near_y: 65.0, detect_far_y: 355.0 },
+];
+
+/// `dFTComputerAttacksMario`, aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS_MARIO_AIR: [Attack; 7] = [
+    Attack { input: 19, hit_start_frame: 3, hit_end_frame: 36, detect_near_x: -192.0, detect_far_x: 201.0, detect_near_y: -30.0, detect_far_y: 280.0 },
+    Attack { input: 21, hit_start_frame: 10, hit_end_frame: 19, detect_near_x: -443.0, detect_far_x: 147.0, detect_near_y: -5.0, detect_far_y: 381.0 },
+    Attack { input: 25, hit_start_frame: 2, hit_end_frame: 11, detect_near_x: -273.0, detect_far_x: 459.0, detect_near_y: -3.0, detect_far_y: 634.0 },
+    Attack { input: 34, hit_start_frame: 11, hit_end_frame: 33, detect_near_x: -60.0, detect_far_x: 438.0, detect_near_y: -153.0, detect_far_y: 404.0 },
+    Attack { input: 9, hit_start_frame: 10, hit_end_frame: 15, detect_near_x: 400.0, detect_far_x: 1200.0, detect_near_y: 0.0, detect_far_y: 280.0 },
+    Attack { input: 13, hit_start_frame: 2, hit_end_frame: 23, detect_near_x: -334.0, detect_far_x: 431.0, detect_near_y: -124.0, detect_far_y: 540.0 },
+    Attack { input: 27, hit_start_frame: 1, hit_end_frame: 46, detect_near_x: -250.0, detect_far_x: 250.0, detect_near_y: -90.0, detect_far_y: 470.0 },
+];
+
+/// `dFTComputerAttacksFox`, grounded rows.
+#[rustfmt::skip]
+pub static ATTACKS_FOX_GROUND: [Attack; 11] = [
+    Attack { input: 19, hit_start_frame: 3, hit_end_frame: 4, detect_near_x: 180.0, detect_far_x: 590.0, detect_near_y: 140.0, detect_far_y: 355.0 },
+    Attack { input: 5, hit_start_frame: 3, hit_end_frame: 8, detect_near_x: 180.0, detect_far_x: 590.0, detect_near_y: 140.0, detect_far_y: 355.0 },
+    Attack { input: 21, hit_start_frame: 12, hit_end_frame: 24, detect_near_x: 280.0, detect_far_x: 1020.0, detect_near_y: 35.0, detect_far_y: 460.0 },
+    Attack { input: 23, hit_start_frame: 6, hit_end_frame: 13, detect_near_x: -90.0, detect_far_x: 270.0, detect_near_y: 185.0, detect_far_y: 750.0 },
+    Attack { input: 25, hit_start_frame: 6, hit_end_frame: 21, detect_near_x: -390.0, detect_far_x: 425.0, detect_near_y: 60.0, detect_far_y: 790.0 },
+    Attack { input: 32, hit_start_frame: 6, hit_end_frame: 9, detect_near_x: 135.0, detect_far_x: 750.0, detect_near_y: -145.0, detect_far_y: 155.0 },
+    Attack { input: 34, hit_start_frame: 7, hit_end_frame: 11, detect_near_x: -465.0, detect_far_x: 470.0, detect_near_y: -100.0, detect_far_y: 180.0 },
+    Attack { input: 9, hit_start_frame: 5, hit_end_frame: 10, detect_near_x: 400.0, detect_far_x: 1200.0, detect_near_y: 35.0, detect_far_y: 460.0 },
+    Attack { input: 13, hit_start_frame: 43, hit_end_frame: 72, detect_near_x: -40.0, detect_far_x: 140.0, detect_near_y: 350.0, detect_far_y: 2500.0 },
+    Attack { input: 27, hit_start_frame: 1, hit_end_frame: 1, detect_near_x: -180.0, detect_far_x: 180.0, detect_near_y: 60.0, detect_far_y: 420.0 },
+    Attack { input: 28, hit_start_frame: 7, hit_end_frame: 7, detect_near_x: 200.0, detect_far_x: 460.0, detect_near_y: 110.0, detect_far_y: 370.0 },
+];
+
+/// `dFTComputerAttacksFox`, aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS_FOX_AIR: [Attack; 7] = [
+    Attack { input: 19, hit_start_frame: 4, hit_end_frame: 28, detect_near_x: -105.0, detect_far_x: 322.0, detect_near_y: 59.0, detect_far_y: 411.0 },
+    Attack { input: 21, hit_start_frame: 4, hit_end_frame: 27, detect_near_x: -466.0, detect_far_x: 299.0, detect_near_y: 53.0, detect_far_y: 418.0 },
+    Attack { input: 25, hit_start_frame: 6, hit_end_frame: 13, detect_near_x: -273.0, detect_far_x: 268.0, detect_near_y: -158.0, detect_far_y: 704.0 },
+    Attack { input: 34, hit_start_frame: 5, hit_end_frame: 24, detect_near_x: -132.0, detect_far_x: 276.0, detect_near_y: -90.0, detect_far_y: 329.0 },
+    Attack { input: 9, hit_start_frame: 5, hit_end_frame: 10, detect_near_x: 400.0, detect_far_x: 1200.0, detect_near_y: 35.0, detect_far_y: 460.0 },
+    Attack { input: 13, hit_start_frame: 43, hit_end_frame: 72, detect_near_x: -144.0, detect_far_x: 43.0, detect_near_y: 234.0, detect_far_y: 418.0 },
+    Attack { input: 27, hit_start_frame: 1, hit_end_frame: 1, detect_near_x: -180.0, detect_far_x: 180.0, detect_near_y: 60.0, detect_far_y: 420.0 },
+];
+
+/// `dFTComputerAttacksDonkey`, grounded rows.
+#[rustfmt::skip]
+pub static ATTACKS_DONKEY_GROUND: [Attack; 11] = [
+    Attack { input: 19, hit_start_frame: 5, hit_end_frame: 8, detect_near_x: 170.0, detect_far_x: 700.0, detect_near_y: 10.0, detect_far_y: 450.0 },
+    Attack { input: 5, hit_start_frame: 5, hit_end_frame: 8, detect_near_x: 170.0, detect_far_x: 700.0, detect_near_y: 10.0, detect_far_y: 450.0 },
+    Attack { input: 21, hit_start_frame: 27, hit_end_frame: 32, detect_near_x: 220.0, detect_far_x: 1060.0, detect_near_y: 50.0, detect_far_y: 465.0 },
+    Attack { input: 23, hit_start_frame: 4, hit_end_frame: 23, detect_near_x: -950.0, detect_far_x: 535.0, detect_near_y: 200.0, detect_far_y: 965.0 },
+    Attack { input: 25, hit_start_frame: 16, hit_end_frame: 18, detect_near_x: -275.0, detect_far_x: 255.0, detect_near_y: 485.0, detect_far_y: 985.0 },
+    Attack { input: 32, hit_start_frame: 11, hit_end_frame: 16, detect_near_x: 190.0, detect_far_x: 760.0, detect_near_y: -70.0, detect_far_y: 230.0 },
+    Attack { input: 34, hit_start_frame: 13, hit_end_frame: 32, detect_near_x: -580.0, detect_far_x: 635.0, detect_near_y: -100.0, detect_far_y: 265.0 },
+    Attack { input: 9, hit_start_frame: 23, hit_end_frame: 45, detect_near_x: -190.0, detect_far_x: 1440.0, detect_near_y: 10.0, detect_far_y: 450.0 },
+    Attack { input: 13, hit_start_frame: 3, hit_end_frame: 72, detect_near_x: -515.0, detect_far_x: 575.0, detect_near_y: 40.0, detect_far_y: 720.0 },
+    Attack { input: 27, hit_start_frame: 19, hit_end_frame: 30, detect_near_x: -825.0, detect_far_x: 1075.0, detect_near_y: -200.0, detect_far_y: 200.0 },
+    Attack { input: 28, hit_start_frame: 7, hit_end_frame: 7, detect_near_x: 220.0, detect_far_x: 690.0, detect_near_y: 155.0, detect_far_y: 480.0 },
+];
+
+/// `dFTComputerAttacksDonkey`, aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS_DONKEY_AIR: [Attack; 7] = [
+    Attack { input: 19, hit_start_frame: 4, hit_end_frame: 29, detect_near_x: -619.0, detect_far_x: 438.0, detect_near_y: 76.0, detect_far_y: 691.0 },
+    Attack { input: 21, hit_start_frame: 8, hit_end_frame: 15, detect_near_x: -146.0, detect_far_x: 599.0, detect_near_y: -133.0, detect_far_y: 1019.0 },
+    Attack { input: 25, hit_start_frame: 3, hit_end_frame: 20, detect_near_x: -858.0, detect_far_x: 559.0, detect_near_y: 102.0, detect_far_y: 1022.0 },
+    Attack { input: 34, hit_start_frame: 7, hit_end_frame: 30, detect_near_x: -307.0, detect_far_x: 127.0, detect_near_y: -310.0, detect_far_y: 257.0 },
+    Attack { input: 9, hit_start_frame: 23, hit_end_frame: 30, detect_near_x: -447.0, detect_far_x: 987.0, detect_near_y: 158.0, detect_far_y: 906.0 },
+    Attack { input: 13, hit_start_frame: 3, hit_end_frame: 72, detect_near_x: -615.0, detect_far_x: 604.0, detect_near_y: 23.0, detect_far_y: 639.0 },
+    Attack { input: 27, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+];
+
+/// `dFTComputerAttacksSamus`, grounded rows.
+#[rustfmt::skip]
+pub static ATTACKS_SAMUS_GROUND: [Attack; 11] = [
+    Attack { input: 19, hit_start_frame: 4, hit_end_frame: 5, detect_near_x: 170.0, detect_far_x: 650.0, detect_near_y: 240.0, detect_far_y: 450.0 },
+    Attack { input: 5, hit_start_frame: 4, hit_end_frame: 9, detect_near_x: 170.0, detect_far_x: 655.0, detect_near_y: 200.0, detect_far_y: 445.0 },
+    Attack { input: 21, hit_start_frame: 12, hit_end_frame: 15, detect_near_x: 65.0, detect_far_x: 670.0, detect_near_y: 200.0, detect_far_y: 445.0 },
+    Attack { input: 23, hit_start_frame: 8, hit_end_frame: 29, detect_near_x: -355.0, detect_far_x: 600.0, detect_near_y: -5.0, detect_far_y: 895.0 },
+    Attack { input: 25, hit_start_frame: 17, hit_end_frame: 34, detect_near_x: -535.0, detect_far_x: 435.0, detect_near_y: 335.0, detect_far_y: 950.0 },
+    Attack { input: 32, hit_start_frame: 8, hit_end_frame: 12, detect_near_x: 160.0, detect_far_x: 655.0, detect_near_y: -60.0, detect_far_y: 195.0 },
+    Attack { input: 34, hit_start_frame: 9, hit_end_frame: 23, detect_near_x: -525.0, detect_far_x: 545.0, detect_near_y: -100.0, detect_far_y: 270.0 },
+    Attack { input: 9, hit_start_frame: 10, hit_end_frame: 15, detect_near_x: 500.0, detect_far_x: 1500.0, detect_near_y: 200.0, detect_far_y: 445.0 },
+    Attack { input: 13, hit_start_frame: 4, hit_end_frame: 33, detect_near_x: -230.0, detect_far_x: 500.0, detect_near_y: -130.0, detect_far_y: 1860.0 },
+    Attack { input: 27, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+    Attack { input: 28, hit_start_frame: 21, hit_end_frame: 39, detect_near_x: 75.0, detect_far_x: 1275.0, detect_near_y: 135.0, detect_far_y: 350.0 },
+];
+
+/// `dFTComputerAttacksSamus`, aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS_SAMUS_AIR: [Attack; 7] = [
+    Attack { input: 19, hit_start_frame: 4, hit_end_frame: 27, detect_near_x: -129.0, detect_far_x: 308.0, detect_near_y: 121.0, detect_far_y: 488.0 },
+    Attack { input: 21, hit_start_frame: 5, hit_end_frame: 16, detect_near_x: -447.0, detect_far_x: 80.0, detect_near_y: -34.0, detect_far_y: 690.0 },
+    Attack { input: 25, hit_start_frame: 6, hit_end_frame: 19, detect_near_x: -165.0, detect_far_x: 346.0, detect_near_y: 177.0, detect_far_y: 703.0 },
+    Attack { input: 34, hit_start_frame: 5, hit_end_frame: 13, detect_near_x: -453.0, detect_far_x: 428.0, detect_near_y: -267.0, detect_far_y: 547.0 },
+    Attack { input: 9, hit_start_frame: 10, hit_end_frame: 15, detect_near_x: 500.0, detect_far_x: 1500.0, detect_near_y: 200.0, detect_far_y: 445.0 },
+    Attack { input: 13, hit_start_frame: 4, hit_end_frame: 31, detect_near_x: -230.0, detect_far_x: 230.0, detect_near_y: -70.0, detect_far_y: 370.0 },
+    Attack { input: 27, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+];
+
+/// `dFTComputerAttacksLuigi`, grounded rows.
+#[rustfmt::skip]
+pub static ATTACKS_LUIGI_GROUND: [Attack; 11] = [
+    Attack { input: 19, hit_start_frame: 2, hit_end_frame: 6, detect_near_x: 150.0, detect_far_x: 400.0, detect_near_y: 30.0, detect_far_y: 210.0 },
+    Attack { input: 5, hit_start_frame: 8, hit_end_frame: 17, detect_near_x: 45.0, detect_far_x: 560.0, detect_near_y: -45.0, detect_far_y: 270.0 },
+    Attack { input: 21, hit_start_frame: 16, hit_end_frame: 20, detect_near_x: 60.0, detect_far_x: 580.0, detect_near_y: 0.0, detect_far_y: 280.0 },
+    Attack { input: 23, hit_start_frame: 5, hit_end_frame: 16, detect_near_x: -140.0, detect_far_x: 470.0, detect_near_y: 120.0, detect_far_y: 640.0 },
+    Attack { input: 25, hit_start_frame: 7, hit_end_frame: 15, detect_near_x: -230.0, detect_far_x: 360.0, detect_near_y: 140.0, detect_far_y: 630.0 },
+    Attack { input: 32, hit_start_frame: 5, hit_end_frame: 11, detect_near_x: 130.0, detect_far_x: 720.0, detect_near_y: -90.0, detect_far_y: 170.0 },
+    Attack { input: 34, hit_start_frame: 9, hit_end_frame: 30, detect_near_x: -420.0, detect_far_x: 490.0, detect_near_y: -130.0, detect_far_y: 400.0 },
+    Attack { input: 9, hit_start_frame: 10, hit_end_frame: 15, detect_near_x: 400.0, detect_far_x: 1200.0, detect_near_y: 0.0, detect_far_y: 280.0 },
+    Attack { input: 13, hit_start_frame: 2, hit_end_frame: 23, detect_near_x: -120.0, detect_far_x: 950.0, detect_near_y: -120.0, detect_far_y: 2100.0 },
+    Attack { input: 27, hit_start_frame: 1, hit_end_frame: 44, detect_near_x: -250.0, detect_far_x: 250.0, detect_near_y: -70.0, detect_far_y: 500.0 },
+    Attack { input: 28, hit_start_frame: 7, hit_end_frame: 7, detect_near_x: 50.0, detect_far_x: 340.0, detect_near_y: 65.0, detect_far_y: 355.0 },
+];
+
+/// `dFTComputerAttacksLuigi`, aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS_LUIGI_AIR: [Attack; 7] = [
+    Attack { input: 19, hit_start_frame: 3, hit_end_frame: 36, detect_near_x: -192.0, detect_far_x: 201.0, detect_near_y: -30.0, detect_far_y: 280.0 },
+    Attack { input: 21, hit_start_frame: 10, hit_end_frame: 19, detect_near_x: -443.0, detect_far_x: 147.0, detect_near_y: -5.0, detect_far_y: 381.0 },
+    Attack { input: 25, hit_start_frame: 2, hit_end_frame: 11, detect_near_x: -273.0, detect_far_x: 459.0, detect_near_y: -3.0, detect_far_y: 634.0 },
+    Attack { input: 34, hit_start_frame: 11, hit_end_frame: 33, detect_near_x: -60.0, detect_far_x: 438.0, detect_near_y: -153.0, detect_far_y: 404.0 },
+    Attack { input: 9, hit_start_frame: 10, hit_end_frame: 15, detect_near_x: 400.0, detect_far_x: 1200.0, detect_near_y: 0.0, detect_far_y: 280.0 },
+    Attack { input: 13, hit_start_frame: 1, hit_end_frame: 23, detect_near_x: -239.0, detect_far_x: 449.0, detect_near_y: -109.0, detect_far_y: 560.0 },
+    Attack { input: 27, hit_start_frame: 1, hit_end_frame: 46, detect_near_x: -250.0, detect_far_x: 250.0, detect_near_y: 10.0, detect_far_y: 465.0 },
+];
+
+/// `dFTComputerAttacksLink`, grounded rows.
+#[rustfmt::skip]
+pub static ATTACKS_LINK_GROUND: [Attack; 11] = [
+    Attack { input: 19, hit_start_frame: 6, hit_end_frame: 9, detect_near_x: -5.0, detect_far_x: 595.0, detect_near_y: -25.0, detect_far_y: 380.0 },
+    Attack { input: 5, hit_start_frame: 15, hit_end_frame: 20, detect_near_x: -340.0, detect_far_x: 630.0, detect_near_y: -140.0, detect_far_y: 755.0 },
+    Attack { input: 21, hit_start_frame: 16, hit_end_frame: 25, detect_near_x: -610.0, detect_far_x: 770.0, detect_near_y: -65.0, detect_far_y: 885.0 },
+    Attack { input: 23, hit_start_frame: 8, hit_end_frame: 16, detect_near_x: -530.0, detect_far_x: 660.0, detect_near_y: -140.0, detect_far_y: 775.0 },
+    Attack { input: 25, hit_start_frame: 11, hit_end_frame: 35, detect_near_x: -500.0, detect_far_x: 500.0, detect_near_y: 90.0, detect_far_y: 940.0 },
+    Attack { input: 32, hit_start_frame: 12, hit_end_frame: 19, detect_near_x: 170.0, detect_far_x: 750.0, detect_near_y: -50.0, detect_far_y: 240.0 },
+    Attack { input: 34, hit_start_frame: 10, hit_end_frame: 24, detect_near_x: -655.0, detect_far_x: 740.0, detect_near_y: -100.0, detect_far_y: 380.0 },
+    Attack { input: 9, hit_start_frame: 10, hit_end_frame: 15, detect_near_x: 500.0, detect_far_x: 1500.0, detect_near_y: 0.0, detect_far_y: 400.0 },
+    Attack { input: 13, hit_start_frame: 8, hit_end_frame: 39, detect_near_x: -775.0, detect_far_x: 785.0, detect_near_y: 145.0, detect_far_y: 455.0 },
+    Attack { input: 27, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+    Attack { input: 28, hit_start_frame: 18, hit_end_frame: 29, detect_near_x: 220.0, detect_far_x: 1205.0, detect_near_y: 125.0, detect_far_y: 365.0 },
+];
+
+/// `dFTComputerAttacksLink`, aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS_LINK_AIR: [Attack; 7] = [
+    Attack { input: 19, hit_start_frame: 4, hit_end_frame: 29, detect_near_x: -195.0, detect_far_x: 341.0, detect_near_y: 18.0, detect_far_y: 361.0 },
+    Attack { input: 21, hit_start_frame: 6, hit_end_frame: 26, detect_near_x: -620.0, detect_far_x: 6.0, detect_near_y: 41.0, detect_far_y: 439.0 },
+    Attack { input: 25, hit_start_frame: 5, hit_end_frame: 29, detect_near_x: -211.0, detect_far_x: 201.0, detect_near_y: 366.0, detect_far_y: 779.0 },
+    Attack { input: 34, hit_start_frame: 6, hit_end_frame: 29, detect_near_x: -122.0, detect_far_x: 262.0, detect_near_y: -116.0, detect_far_y: 294.0 },
+    Attack { input: 9, hit_start_frame: 10, hit_end_frame: 15, detect_near_x: 500.0, detect_far_x: 1500.0, detect_near_y: 0.0, detect_far_y: 400.0 },
+    Attack { input: 13, hit_start_frame: 8, hit_end_frame: 39, detect_near_x: -707.0, detect_far_x: 730.0, detect_near_y: 190.0, detect_far_y: 516.0 },
+    Attack { input: 27, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+];
+
+/// `dFTComputerAttacksYoshi`, grounded rows.
+#[rustfmt::skip]
+pub static ATTACKS_YOSHI_GROUND: [Attack; 11] = [
+    Attack { input: 19, hit_start_frame: 3, hit_end_frame: 5, detect_near_x: 15.0, detect_far_x: 630.0, detect_near_y: -60.0, detect_far_y: 445.0 },
+    Attack { input: 5, hit_start_frame: 3, hit_end_frame: 5, detect_near_x: 15.0, detect_far_x: 630.0, detect_near_y: -60.0, detect_far_y: 445.0 },
+    Attack { input: 21, hit_start_frame: 18, hit_end_frame: 24, detect_near_x: 155.0, detect_far_x: 810.0, detect_near_y: -15.0, detect_far_y: 425.0 },
+    Attack { input: 23, hit_start_frame: 7, hit_end_frame: 10, detect_near_x: -240.0, detect_far_x: 435.0, detect_near_y: 100.0, detect_far_y: 710.0 },
+    Attack { input: 25, hit_start_frame: 9, hit_end_frame: 15, detect_near_x: -380.0, detect_far_x: 425.0, detect_near_y: 230.0, detect_far_y: 910.0 },
+    Attack { input: 32, hit_start_frame: 8, hit_end_frame: 10, detect_near_x: 130.0, detect_far_x: 645.0, detect_near_y: -40.0, detect_far_y: 245.0 },
+    Attack { input: 34, hit_start_frame: 7, hit_end_frame: 23, detect_near_x: -630.0, detect_far_x: 685.0, detect_near_y: -100.0, detect_far_y: 285.0 },
+    Attack { input: 9, hit_start_frame: 18, hit_end_frame: 23, detect_near_x: 225.0, detect_far_x: 1065.0, detect_near_y: 105.0, detect_far_y: 410.0 },
+    Attack { input: 47, hit_start_frame: 10, hit_end_frame: 20, detect_near_x: -900.0, detect_far_x: 900.0, detect_near_y: 800.0, detect_far_y: 2000.0 },
+    Attack { input: 27, hit_start_frame: 30, hit_end_frame: 41, detect_near_x: 630.0, detect_far_x: 1085.0, detect_near_y: -25.0, detect_far_y: 1755.0 },
+    Attack { input: 28, hit_start_frame: 16, hit_end_frame: 20, detect_near_x: 290.0, detect_far_x: 845.0, detect_near_y: 40.0, detect_far_y: 260.0 },
+];
+
+/// `dFTComputerAttacksYoshi`, aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS_YOSHI_AIR: [Attack; 7] = [
+    Attack { input: 19, hit_start_frame: 5, hit_end_frame: 30, detect_near_x: -186.0, detect_far_x: 258.0, detect_near_y: 20.0, detect_far_y: 356.0 },
+    Attack { input: 21, hit_start_frame: 10, hit_end_frame: 19, detect_near_x: -580.0, detect_far_x: 148.0, detect_near_y: 34.0, detect_far_y: 429.0 },
+    Attack { input: 25, hit_start_frame: 9, hit_end_frame: 10, detect_near_x: -171.0, detect_far_x: 187.0, detect_near_y: 302.0, detect_far_y: 819.0 },
+    Attack { input: 34, hit_start_frame: 5, hit_end_frame: 29, detect_near_x: -204.0, detect_far_x: 254.0, detect_near_y: -53.0, detect_far_y: 444.0 },
+    Attack { input: 9, hit_start_frame: 18, hit_end_frame: 23, detect_near_x: 224.0, detect_far_x: 1064.0, detect_near_y: 108.0, detect_far_y: 411.0 },
+    Attack { input: 13, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+    Attack { input: 27, hit_start_frame: 24, hit_end_frame: 31, detect_near_x: -230.0, detect_far_x: 230.0, detect_near_y: -54.0, detect_far_y: 406.0 },
+];
+
+/// `dFTComputerAttacksKirby`, grounded rows.
+#[rustfmt::skip]
+pub static ATTACKS_KIRBY_GROUND: [Attack; 11] = [
+    Attack { input: 19, hit_start_frame: 3, hit_end_frame: 4, detect_near_x: 110.0, detect_far_x: 495.0, detect_near_y: 35.0, detect_far_y: 255.0 },
+    Attack { input: 5, hit_start_frame: 3, hit_end_frame: 4, detect_near_x: 110.0, detect_far_x: 495.0, detect_near_y: 35.0, detect_far_y: 255.0 },
+    Attack { input: 21, hit_start_frame: 10, hit_end_frame: 23, detect_near_x: 215.0, detect_far_x: 1115.0, detect_near_y: 0.0, detect_far_y: 330.0 },
+    Attack { input: 23, hit_start_frame: 4, hit_end_frame: 11, detect_near_x: -230.0, detect_far_x: 480.0, detect_near_y: 80.0, detect_far_y: 750.0 },
+    Attack { input: 25, hit_start_frame: 14, hit_end_frame: 23, detect_near_x: -430.0, detect_far_x: 480.0, detect_near_y: 185.0, detect_far_y: 880.0 },
+    Attack { input: 32, hit_start_frame: 4, hit_end_frame: 10, detect_near_x: 105.0, detect_far_x: 745.0, detect_near_y: -115.0, detect_far_y: 245.0 },
+    Attack { input: 34, hit_start_frame: 8, hit_end_frame: 27, detect_near_x: -560.0, detect_far_x: 565.0, detect_near_y: -140.0, detect_far_y: 190.0 },
+    Attack { input: 9, hit_start_frame: 25, hit_end_frame: 59, detect_near_x: 45.0, detect_far_x: 470.0, detect_near_y: 80.0, detect_far_y: 370.0 },
+    Attack { input: 13, hit_start_frame: 23, hit_end_frame: 56, detect_near_x: 115.0, detect_far_x: 600.0, detect_near_y: 55.0, detect_far_y: 2350.0 },
+    Attack { input: 27, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+    Attack { input: 28, hit_start_frame: 7, hit_end_frame: 7, detect_near_x: 175.0, detect_far_x: 525.0, detect_near_y: 95.0, detect_far_y: 355.0 },
+];
+
+/// `dFTComputerAttacksKirby`, aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS_KIRBY_AIR: [Attack; 7] = [
+    Attack { input: 19, hit_start_frame: 3, hit_end_frame: 30, detect_near_x: -110.0, detect_far_x: 425.0, detect_near_y: -40.0, detect_far_y: 238.0 },
+    Attack { input: 21, hit_start_frame: 6, hit_end_frame: 25, detect_near_x: -416.0, detect_far_x: 86.0, detect_near_y: -49.0, detect_far_y: 331.0 },
+    Attack { input: 25, hit_start_frame: 10, hit_end_frame: 37, detect_near_x: -291.0, detect_far_x: 291.0, detect_near_y: -150.0, detect_far_y: 309.0 },
+    Attack { input: 34, hit_start_frame: 5, hit_end_frame: 33, detect_near_x: -124.0, detect_far_x: 284.0, detect_near_y: -303.0, detect_far_y: 180.0 },
+    Attack { input: 9, hit_start_frame: 25, hit_end_frame: 59, detect_near_x: 43.0, detect_far_x: 474.0, detect_near_y: 81.0, detect_far_y: 371.0 },
+    Attack { input: 13, hit_start_frame: 23, hit_end_frame: 56, detect_near_x: 125.0, detect_far_x: 625.0, detect_near_y: 25.0, detect_far_y: 525.0 },
+    Attack { input: 27, hit_start_frame: 23, hit_end_frame: 30, detect_near_x: -200.0, detect_far_x: 200.0, detect_near_y: -200.0, detect_far_y: 200.0 },
+];
+
+/// `dFTComputerAttacksPikachu`, grounded rows.
+#[rustfmt::skip]
+pub static ATTACKS_PIKACHU_GROUND: [Attack; 11] = [
+    Attack { input: 19, hit_start_frame: 2, hit_end_frame: 5, detect_near_x: -10.0, detect_far_x: 455.0, detect_near_y: -70.0, detect_far_y: 235.0 },
+    Attack { input: 5, hit_start_frame: 5, hit_end_frame: 14, detect_near_x: 20.0, detect_far_x: 490.0, detect_near_y: 10.0, detect_far_y: 375.0 },
+    Attack { input: 21, hit_start_frame: 22, hit_end_frame: 39, detect_near_x: 50.0, detect_far_x: 730.0, detect_near_y: -65.0, detect_far_y: 255.0 },
+    Attack { input: 23, hit_start_frame: 5, hit_end_frame: 14, detect_near_x: -360.0, detect_far_x: 370.0, detect_near_y: 95.0, detect_far_y: 675.0 },
+    Attack { input: 25, hit_start_frame: 10, hit_end_frame: 18, detect_near_x: -460.0, detect_far_x: 425.0, detect_near_y: 40.0, detect_far_y: 765.0 },
+    Attack { input: 32, hit_start_frame: 6, hit_end_frame: 13, detect_near_x: 5.0, detect_far_x: 465.0, detect_near_y: -70.0, detect_far_y: 245.0 },
+    Attack { input: 34, hit_start_frame: 11, hit_end_frame: 29, detect_near_x: -475.0, detect_far_x: 435.0, detect_near_y: -100.0, detect_far_y: 360.0 },
+    Attack { input: 9, hit_start_frame: 10, hit_end_frame: 15, detect_near_x: 400.0, detect_far_x: 1200.0, detect_near_y: -70.0, detect_far_y: 375.0 },
+    Attack { input: 13, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+    Attack { input: 27, hit_start_frame: 40, hit_end_frame: 48, detect_near_x: -350.0, detect_far_x: 350.0, detect_near_y: -65.0, detect_far_y: 635.0 },
+    Attack { input: 28, hit_start_frame: 7, hit_end_frame: 7, detect_near_x: 170.0, detect_far_x: 455.0, detect_near_y: 80.0, detect_far_y: 370.0 },
+];
+
+/// `dFTComputerAttacksPikachu`, aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS_PIKACHU_AIR: [Attack; 7] = [
+    Attack { input: 19, hit_start_frame: 3, hit_end_frame: 28, detect_near_x: -247.0, detect_far_x: 208.0, detect_near_y: 32.0, detect_far_y: 373.0 },
+    Attack { input: 21, hit_start_frame: 10, hit_end_frame: 21, detect_near_x: -549.0, detect_far_x: 56.0, detect_near_y: 14.0, detect_far_y: 387.0 },
+    Attack { input: 25, hit_start_frame: 3, hit_end_frame: 10, detect_near_x: -530.0, detect_far_x: 505.0, detect_near_y: -29.0, detect_far_y: 729.0 },
+    Attack { input: 34, hit_start_frame: 9, hit_end_frame: 26, detect_near_x: -284.0, detect_far_x: 187.0, detect_near_y: -267.0, detect_far_y: 387.0 },
+    Attack { input: 9, hit_start_frame: 10, hit_end_frame: 15, detect_near_x: 400.0, detect_far_x: 1200.0, detect_near_y: -70.0, detect_far_y: 375.0 },
+    Attack { input: 13, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+    Attack { input: 27, hit_start_frame: 40, hit_end_frame: 48, detect_near_x: -350.0, detect_far_x: 350.0, detect_near_y: -65.0, detect_far_y: 635.0 },
+];
+
+/// `dFTComputerAttacksCaptain`, grounded rows.
+#[rustfmt::skip]
+pub static ATTACKS_CAPTAIN_GROUND: [Attack; 11] = [
+    Attack { input: 19, hit_start_frame: 5, hit_end_frame: 8, detect_near_x: 25.0, detect_far_x: 495.0, detect_near_y: 280.0, detect_far_y: 510.0 },
+    Attack { input: 5, hit_start_frame: 9, hit_end_frame: 15, detect_near_x: 20.0, detect_far_x: 570.0, detect_near_y: 270.0, detect_far_y: 520.0 },
+    Attack { input: 21, hit_start_frame: 16, hit_end_frame: 23, detect_near_x: 250.0, detect_far_x: 1170.0, detect_near_y: 225.0, detect_far_y: 590.0 },
+    Attack { input: 23, hit_start_frame: 8, hit_end_frame: 23, detect_near_x: -395.0, detect_far_x: 700.0, detect_near_y: -85.0, detect_far_y: 955.0 },
+    Attack { input: 25, hit_start_frame: 4, hit_end_frame: 11, detect_near_x: -115.0, detect_far_x: 460.0, detect_near_y: 80.0, detect_far_y: 1000.0 },
+    Attack { input: 32, hit_start_frame: 8, hit_end_frame: 15, detect_near_x: -95.0, detect_far_x: 540.0, detect_near_y: -180.0, detect_far_y: 260.0 },
+    Attack { input: 34, hit_start_frame: 9, hit_end_frame: 23, detect_near_x: -630.0, detect_far_x: 670.0, detect_near_y: -260.0, detect_far_y: 300.0 },
+    Attack { input: 9, hit_start_frame: 42, hit_end_frame: 46, detect_near_x: 200.0, detect_far_x: 1045.0, detect_near_y: 100.0, detect_far_y: 440.0 },
+    Attack { input: 13, hit_start_frame: 13, hit_end_frame: 44, detect_near_x: 90.0, detect_far_x: 565.0, detect_near_y: 125.0, detect_far_y: 1985.0 },
+    Attack { input: 27, hit_start_frame: 12, hit_end_frame: 39, detect_near_x: -10.0, detect_far_x: 1720.0, detect_near_y: 320.0, detect_far_y: 0.0 },
+    Attack { input: 28, hit_start_frame: 7, hit_end_frame: 7, detect_near_x: 170.0, detect_far_x: 470.0, detect_near_y: 140.0, detect_far_y: 440.0 },
+];
+
+/// `dFTComputerAttacksCaptain`, aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS_CAPTAIN_AIR: [Attack; 7] = [
+    Attack { input: 19, hit_start_frame: 4, hit_end_frame: 27, detect_near_x: -144.0, detect_far_x: 311.0, detect_near_y: 119.0, detect_far_y: 407.0 },
+    Attack { input: 21, hit_start_frame: 7, hit_end_frame: 18, detect_near_x: -629.0, detect_far_x: -81.0, detect_near_y: 118.0, detect_far_y: 533.0 },
+    Attack { input: 25, hit_start_frame: 5, hit_end_frame: 13, detect_near_x: -604.0, detect_far_x: 568.0, detect_near_y: 128.0, detect_far_y: 1103.0 },
+    Attack { input: 34, hit_start_frame: 8, hit_end_frame: 25, detect_near_x: -249.0, detect_far_x: 192.0, detect_near_y: -150.0, detect_far_y: 426.0 },
+    Attack { input: 9, hit_start_frame: 42, hit_end_frame: 46, detect_near_x: 161.0, detect_far_x: 859.0, detect_near_y: 100.0, detect_far_y: 442.0 },
+    Attack { input: 13, hit_start_frame: 13, hit_end_frame: 44, detect_near_x: 89.0, detect_far_x: 570.0, detect_near_y: 123.0, detect_far_y: 423.0 },
+    Attack { input: 27, hit_start_frame: 12, hit_end_frame: 30, detect_near_x: -247.0, detect_far_x: 265.0, detect_near_y: -139.0, detect_far_y: 516.0 },
+];
+
+/// `dFTComputerAttacksPurin`, grounded rows.
+#[rustfmt::skip]
+pub static ATTACKS_PURIN_GROUND: [Attack; 11] = [
+    Attack { input: 19, hit_start_frame: 5, hit_end_frame: 6, detect_near_x: 100.0, detect_far_x: 500.0, detect_near_y: 50.0, detect_far_y: 270.0 },
+    Attack { input: 5, hit_start_frame: 7, hit_end_frame: 10, detect_near_x: 55.0, detect_far_x: 520.0, detect_near_y: 90.0, detect_far_y: 330.0 },
+    Attack { input: 21, hit_start_frame: 12, hit_end_frame: 19, detect_near_x: 310.0, detect_far_x: 1115.0, detect_near_y: 30.0, detect_far_y: 340.0 },
+    Attack { input: 23, hit_start_frame: 7, hit_end_frame: 14, detect_near_x: -455.0, detect_far_x: 220.0, detect_near_y: 110.0, detect_far_y: 745.0 },
+    Attack { input: 25, hit_start_frame: 8, hit_end_frame: 14, detect_near_x: -345.0, detect_far_x: 430.0, detect_near_y: -20.0, detect_far_y: 550.0 },
+    Attack { input: 32, hit_start_frame: 11, hit_end_frame: 15, detect_near_x: 30.0, detect_far_x: 610.0, detect_near_y: 25.0, detect_far_y: 255.0 },
+    Attack { input: 34, hit_start_frame: 8, hit_end_frame: 27, detect_near_x: -435.0, detect_far_x: 435.0, detect_near_y: -90.0, detect_far_y: 220.0 },
+    Attack { input: 9, hit_start_frame: 12, hit_end_frame: 27, detect_near_x: -255.0, detect_far_x: 805.0, detect_near_y: -115.0, detect_far_y: 335.0 },
+    Attack { input: 13, hit_start_frame: 28, hit_end_frame: 125, detect_near_x: -355.0, detect_far_x: 385.0, detect_near_y: -125.0, detect_far_y: 610.0 },
+    Attack { input: 27, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+    Attack { input: 28, hit_start_frame: 7, hit_end_frame: 7, detect_near_x: 210.0, detect_far_x: 550.0, detect_near_y: 130.0, detect_far_y: 370.0 },
+];
+
+/// `dFTComputerAttacksPurin`, aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS_PURIN_AIR: [Attack; 7] = [
+    Attack { input: 19, hit_start_frame: 6, hit_end_frame: 33, detect_near_x: -110.0, detect_far_x: 463.0, detect_near_y: -86.0, detect_far_y: 241.0 },
+    Attack { input: 21, hit_start_frame: 8, hit_end_frame: 21, detect_near_x: -354.0, detect_far_x: 145.0, detect_near_y: -20.0, detect_far_y: 267.0 },
+    Attack { input: 25, hit_start_frame: 8, hit_end_frame: 16, detect_near_x: -236.0, detect_far_x: 289.0, detect_near_y: 123.0, detect_far_y: 508.0 },
+    Attack { input: 34, hit_start_frame: 5, hit_end_frame: 33, detect_near_x: -117.0, detect_far_x: 285.0, detect_near_y: -306.0, detect_far_y: 180.0 },
+    Attack { input: 9, hit_start_frame: 12, hit_end_frame: 27, detect_near_x: -263.0, detect_far_x: 530.0, detect_near_y: -117.0, detect_far_y: 285.0 },
+    Attack { input: 13, hit_start_frame: 28, hit_end_frame: 125, detect_near_x: -358.0, detect_far_x: 387.0, detect_near_y: -127.0, detect_far_y: 611.0 },
+    Attack { input: 27, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+];
+
+/// `dFTComputerAttacksNess`, grounded rows.
+#[rustfmt::skip]
+pub static ATTACKS_NESS_GROUND: [Attack; 11] = [
+    Attack { input: 19, hit_start_frame: 2, hit_end_frame: 3, detect_near_x: 150.0, detect_far_x: 400.0, detect_near_y: 35.0, detect_far_y: 210.0 },
+    Attack { input: 5, hit_start_frame: 7, hit_end_frame: 11, detect_near_x: 220.0, detect_far_x: 580.0, detect_near_y: 70.0, detect_far_y: 300.0 },
+    Attack { input: 21, hit_start_frame: 18, hit_end_frame: 21, detect_near_x: 80.0, detect_far_x: 590.0, detect_near_y: -40.0, detect_far_y: 285.0 },
+    Attack { input: 23, hit_start_frame: 5, hit_end_frame: 19, detect_near_x: -250.0, detect_far_x: 250.0, detect_near_y: 215.0, detect_far_y: 665.0 },
+    Attack { input: 25, hit_start_frame: 13, hit_end_frame: 25, detect_near_x: -515.0, detect_far_x: 540.0, detect_near_y: 10.0, detect_far_y: 730.0 },
+    Attack { input: 32, hit_start_frame: 4, hit_end_frame: 8, detect_near_x: -5.0, detect_far_x: 380.0, detect_near_y: -100.0, detect_far_y: 140.0 },
+    Attack { input: 34, hit_start_frame: 14, hit_end_frame: 53, detect_near_x: -680.0, detect_far_x: 870.0, detect_near_y: -100.0, detect_far_y: 290.0 },
+    Attack { input: 9, hit_start_frame: 10, hit_end_frame: 15, detect_near_x: 500.0, detect_far_x: 1000.0, detect_near_y: -40.0, detect_far_y: 285.0 },
+    Attack { input: 13, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+    Attack { input: 27, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+    Attack { input: 28, hit_start_frame: 7, hit_end_frame: 7, detect_near_x: 50.0, detect_far_x: 360.0, detect_near_y: 95.0, detect_far_y: 405.0 },
+];
+
+/// `dFTComputerAttacksNess`, aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS_NESS_AIR: [Attack; 7] = [
+    Attack { input: 19, hit_start_frame: 5, hit_end_frame: 30, detect_near_x: -162.0, detect_far_x: 220.0, detect_near_y: -92.0, detect_far_y: 194.0 },
+    Attack { input: 21, hit_start_frame: 10, hit_end_frame: 19, detect_near_x: -457.0, detect_far_x: 148.0, detect_near_y: -92.0, detect_far_y: 296.0 },
+    Attack { input: 25, hit_start_frame: 8, hit_end_frame: 16, detect_near_x: -335.0, detect_far_x: 377.0, detect_near_y: -33.0, detect_far_y: 522.0 },
+    Attack { input: 34, hit_start_frame: 5, hit_end_frame: 21, detect_near_x: -129.0, detect_far_x: 192.0, detect_near_y: -192.0, detect_far_y: 129.0 },
+    Attack { input: 9, hit_start_frame: 10, hit_end_frame: 15, detect_near_x: 500.0, detect_far_x: 1000.0, detect_near_y: -40.0, detect_far_y: 285.0 },
+    Attack { input: 13, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+    Attack { input: 27, hit_start_frame: 0, hit_end_frame: 0, detect_near_x: 0.0, detect_far_x: 0.0, detect_near_y: 0.0, detect_far_y: 0.0 },
+];
+
+/// `dFTComputerAttackList` for the twelve playable fighters, in `nFTKind`
+/// order: the grounded and aerial rows.
+#[rustfmt::skip]
+pub static ATTACKS: [(&[Attack], &[Attack]); 12] = [
+    (&ATTACKS_MARIO_GROUND, &ATTACKS_MARIO_AIR),
+    (&ATTACKS_FOX_GROUND, &ATTACKS_FOX_AIR),
+    (&ATTACKS_DONKEY_GROUND, &ATTACKS_DONKEY_AIR),
+    (&ATTACKS_SAMUS_GROUND, &ATTACKS_SAMUS_AIR),
+    (&ATTACKS_LUIGI_GROUND, &ATTACKS_LUIGI_AIR),
+    (&ATTACKS_LINK_GROUND, &ATTACKS_LINK_AIR),
+    (&ATTACKS_YOSHI_GROUND, &ATTACKS_YOSHI_AIR),
+    (&ATTACKS_CAPTAIN_GROUND, &ATTACKS_CAPTAIN_AIR),
+    (&ATTACKS_KIRBY_GROUND, &ATTACKS_KIRBY_AIR),
+    (&ATTACKS_PIKACHU_GROUND, &ATTACKS_PIKACHU_AIR),
+    (&ATTACKS_PURIN_GROUND, &ATTACKS_PURIN_AIR),
+    (&ATTACKS_NESS_GROUND, &ATTACKS_NESS_AIR),
+];

@@ -109,7 +109,50 @@ def main():
         const = re.sub(r"(?<!^)(?=[A-Z])", "_", k[len("nFTComputerInput"):]).upper()
         const = re.sub(r"_(\d)", r"\1", const)
         w.append(f"    pub const {const}: usize = {v};\n")
-    w.append("}\n")
+    w.append("}\n\n")
+
+    # `dFTComputerAttacks<Name>`: one row per attack the CPU weighs.
+    w.append("/// One `FTComputerAttack` row: the input script, the hitbox's active\n")
+    w.append("/// frames and the box around the fighter where it connects.\n")
+    w.append("#[derive(Debug, Clone, Copy, PartialEq)]\n")
+    w.append("pub struct Attack {\n    pub input: usize,\n    pub hit_start_frame: i32,\n")
+    w.append("    pub hit_end_frame: i32,\n    pub detect_near_x: f32,\n    pub detect_far_x: f32,\n")
+    w.append("    pub detect_near_y: f32,\n    pub detect_far_y: f32,\n}\n\n")
+    tables = {}
+    for m in re.finditer(r"FTComputerAttack dFTComputerAttacks(\w+)\[\s*\]\s*=\s*\{(.*?)\n\};", src, re.S):
+        rows = []
+        for row in re.finditer(r"\{([^{}]*)\}", m.group(2)):
+            vals = [v.strip() for v in row.group(1).split(",") if v.strip()]
+            if len(vals) != 7:
+                raise ValueError(f"{m.group(1)}: row with {len(vals)} fields")
+            kind = kinds[vals[0]] if vals[0] in kinds else int(vals[0], 0)
+            fl = lambda v: float(v.rstrip("Ff"))
+            rows.append((kind, int(vals[1], 0), int(vals[2], 0), fl(vals[3]), fl(vals[4]), fl(vals[5]), fl(vals[6])))
+        tables[m.group(1)] = rows
+    # Each table holds the grounded attacks, an `input_kind == -1` row, then
+    # the aerial ones and another -1 row.
+    def emit_rows(label, rows):
+        w.append(f"#[rustfmt::skip]\npub static {label}: [Attack; {len(rows)}] = [\n")
+        for r in rows:
+            w.append(f"    Attack {{ input: {r[0]}, hit_start_frame: {r[1]}, hit_end_frame: {r[2]}, "
+                     f"detect_near_x: {r[3]!r}, detect_far_x: {r[4]!r}, detect_near_y: {r[5]!r}, detect_far_y: {r[6]!r} }},\n")
+        w.append("];\n\n")
+    for name, rows in tables.items():
+        cut = [i for i, r in enumerate(rows) if r[0] == -1]
+        if len(cut) != 2 or cut[1] != len(rows) - 1:
+            raise ValueError(f"{name}: unexpected separators {cut}")
+        w.append(f"/// `dFTComputerAttacks{name}`, grounded rows.\n")
+        emit_rows(f"ATTACKS_{name.upper()}_GROUND", rows[:cut[0]])
+        w.append(f"/// `dFTComputerAttacks{name}`, aerial rows.\n")
+        emit_rows(f"ATTACKS_{name.upper()}_AIR", rows[cut[0] + 1:cut[1]])
+    order = re.findall(r"dFTComputerAttacks(\w+),",
+                       re.search(r"FTComputerAttack \*dFTComputerAttackList\[\s*\]\s*=\s*\{(.*?)\};", src, re.S).group(1))[:12]
+    w.append("/// `dFTComputerAttackList` for the twelve playable fighters, in `nFTKind`\n")
+    w.append("/// order: the grounded and aerial rows.\n#[rustfmt::skip]\n")
+    w.append("pub static ATTACKS: [(&[Attack], &[Attack]); 12] = [\n")
+    for name in order:
+        w.append(f"    (&ATTACKS_{name.upper()}_GROUND, &ATTACKS_{name.upper()}_AIR),\n")
+    w.append("];\n")
     out = sys.stdout if args.out == "-" else open(args.out, "w")
     out.write("".join(w))
 

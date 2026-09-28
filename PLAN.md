@@ -15,7 +15,7 @@ per-subsystem state is in [`docs/porting-status.md`](docs/porting-status.md).
 | `P1` | Decomp compatibility: `GObj`/`DObj`/fighter state, callbacks and status tables, animation hooks, collision interfaces, globals, math/RNG/timing, asset references | In progress, merged with `P2` |
 | `P2` | Fighters: fighter-common code, then complete fighters — movement, attacks, specials, grabs/throws, shield, damage/hitstun/hitlag, knockback, ledges, tech/roll, death/respawn | In progress; all 12 host movesets ported, shared machinery and PSP integration remain; see [fighter status](docs/porting-status.md#fighters) |
 | `P3` | Match: stage loading, spawning, stocks, blast zones, KO, timer, character/stage select, results/restart | In progress: selects, KO/rebirth and the VS battle rules done; entry, VS menus and results remain |
-| `P4` | Remaining systems: items, CPU AI, effects integration, menus, UI, audio, other modes | Not started |
+| `P4` | Remaining systems: items, CPU AI, effects integration, menus, UI, audio, other modes | In progress: the CPU AI fights in VS (RE-391); items in VS, effects, HUD, audio and other modes remain |
 | `P5` | Fidelity and performance: physical-PSP profiling, measured optimization (VFPU, GU batching, memory), final visual regression, hardware acceptance matrix | Runs in parallel |
 
 `P5` never gates `P1`–`P4`. Optimize only against measured full-game

@@ -14,7 +14,8 @@ use crate::fighter::{Facing, Fighter, FighterKind, Situation};
 use crate::map;
 use crate::stage_select::gkind;
 use crate::status::{
-    AnyStatus, BlastZone, DonkeyStatus, KirbyStatus, NessStatus, PikachuStatus, SamusStatus, Status,
+    AnyStatus, BlastZone, DonkeyStatus, FoxStatus, KirbyStatus, NessStatus, PikachuStatus,
+    SamusStatus, Status,
 };
 use crate::weapon::{MapSurface, MapSurfaceKind};
 
@@ -50,6 +51,29 @@ pub struct Opponent {
     pub star_invincible: bool,
     /// Holding the Hammer.
     pub has_hammer: bool,
+    pub kind: FighterKind,
+    /// `damage_coll_size`; see [`damage_size`].
+    pub damage_size: Vec2,
+    pub tvel_base: f32,
+    pub gravity: f32,
+}
+
+/// A live weapon of another fighter, as `func_ovl3_80135B78` reads it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WeaponThreat {
+    /// One hit position, `attack_pos[i].pos_curr`.
+    pub pos: Vec2,
+    pub vel_x: f32,
+    /// The weapon's `lr` as +1 or -1.
+    pub lr: f32,
+    /// The hit's size (the diameter).
+    pub size: f32,
+}
+
+/// `damage_coll_size`, the hurtboxes' extent. The map body's width and top
+/// stand in for it.
+pub fn damage_size(f: &Fighter) -> Vec2 {
+    Vec2::new(f.coll.width, f.coll.top)
 }
 
 /// The world a CPU reads each frame.
@@ -65,6 +89,8 @@ pub struct World<'a, F> {
     pub opponents: &'a [Opponent],
     /// Live item attacks that can hit this fighter: position and size.
     pub item_attacks: &'a [(Vec2, f32)],
+    /// Other fighters' live weapons.
+    pub weapon_threats: &'a [WeaponThreat],
     /// `grHyruleTwisterCheckGetPosition`.
     pub twister: Option<Vec2>,
     /// `grZebesAcidGetLevelInfo`: level and step.
@@ -107,6 +133,10 @@ pub fn opponent(f: &Fighter) -> Opponent {
         damage: f.damage,
         star_invincible: false,
         has_hammer: false,
+        kind: f.kind,
+        damage_size: damage_size(f),
+        tvel_base: f.attributes.tvel_base,
+        gravity: f.attributes.gravity,
     }
 }
 
@@ -135,7 +165,7 @@ where
 
     /// `mpCollisionCheck{Ceil,LWall,RWall}LineCollisionSame`: the first line
     /// of `kind` the segment `from`→`to` crosses.
-    fn crossing(&self, kind: MapSurfaceKind, from: Vec2, to: Vec2) -> Option<u16> {
+    pub(super) fn crossing(&self, kind: MapSurfaceKind, from: Vec2, to: Vec2) -> Option<u16> {
         map::lines_of((self.surfaces)(), kind).find_map(|(line, s)| {
             let [x1, y1, x2, y2] = s.coords();
             segments_cross(from, to, Vec2::new(x1, y1), Vec2::new(x2, y2)).then_some(line)
@@ -232,9 +262,8 @@ impl Computer {
         }
     }
 
-    /// `ftComputerProcessAll` for the Training behaviours (`trait` is
-    /// `nFTComputerTraitNone`): count down, pick an objective when idle,
-    /// then run the command script.
+    /// `ftComputerProcessAll`: count down, pick a behaviour and an
+    /// objective when idle, then run the command script.
     pub fn process<F, I>(&mut self, f: &Fighter, world: &World<'_, F>)
     where
         F: Fn() -> I,
@@ -245,6 +274,7 @@ impl Computer {
         }
         self.behavior_change_wait = self.behavior_change_wait.saturating_sub(1);
         if self.input_wait == 0 {
+            self.process_trait();
             // `ftComputerProcessObjective`.
             let proceed = match self.behavior {
                 Behavior::Stand => self.proc_stand(f, world),
@@ -252,9 +282,7 @@ impl Computer {
                 Behavior::Evade => self.proc_evade(f, world),
                 Behavior::Jump => self.proc_jump(f, world),
                 Behavior::Unk5 => self.proc_origin(f, world),
-                // `ftComputerProcDefault` and its objectives are not
-                // ported yet; the other behaviours stand.
-                _ => self.proc_stand(f, world),
+                _ => self.proc_default(f, world),
             };
             if proceed != 0 {
                 self.follow_objective(f, world);
@@ -292,6 +320,9 @@ impl Computer {
             }
             Objective::Recover => self.follow_recover(f, world),
             Objective::CounterAttack => self.follow_counter_attack(f, world),
+            Objective::Attack | Objective::Unknown1 | Objective::Ally | Objective::Patrol => {
+                self.follow_attack(f, world, self.objective)
+            }
             _ => {}
         }
     }
@@ -339,7 +370,7 @@ impl Computer {
 
     /// `ftComputerGetObjectiveStatus`: 0 keeps the command just set, 1
     /// means a new objective was given, -1 lets the behaviour decide.
-    fn objective_status<F, I>(&mut self, f: &Fighter, world: &World<'_, F>) -> i32
+    pub(super) fn objective_status<F, I>(&mut self, f: &Fighter, world: &World<'_, F>) -> i32
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
@@ -960,7 +991,7 @@ impl Computer {
     /// special, Kirby's copied ones included. The source's switch reads
     /// Kirby's `copy_id` first; checking the copied statuses directly is the
     /// same test.
-    fn try_cancel_special_n(&mut self, f: &Fighter) -> bool {
+    pub(super) fn try_cancel_special_n(&mut self, f: &Fighter) -> bool {
         let charging = matches!(
             f.status.status,
             AnyStatus::Donkey(
@@ -1186,6 +1217,20 @@ impl Computer {
         if self.is_counterattack {
             self.set_command_immediate(input::BUTTON_Z2);
             self.is_counterattack = false;
+        } else if self.is_opponent_ra {
+            self.is_opponent_ra = false;
+            let scoping = match f.status.status {
+                AnyStatus::Fox(s) => (FoxStatus::SpecialLwStart as u16
+                    ..=FoxStatus::SpecialAirLwTurn as u16)
+                    .contains(&(s as u16)),
+                AnyStatus::Ness(s) => (NessStatus::SpecialLwStart as u16
+                    ..=NessStatus::SpecialAirLwEnd as u16)
+                    .contains(&(s as u16)),
+                _ => true,
+            };
+            if !scoping {
+                self.set_command_immediate(input::STICK_N_X_SMASH_LW_BUTTON_B_RELEASE_B_HOLD);
+            }
         } else if self.is_shield_item_weapon {
             self.is_shield_item_weapon = false;
             if !matches!(
@@ -1205,7 +1250,7 @@ impl Computer {
     fn counter_target(&mut self, f: &Fighter) {
         self.target_line = None;
         self.stop_at_ledged_target = false;
-        if self.is_counterattack {
+        if self.is_counterattack || self.is_opponent_ra {
             return;
         }
         if f.situation != Situation::Ground {

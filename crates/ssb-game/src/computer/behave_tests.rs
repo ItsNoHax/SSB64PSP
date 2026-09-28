@@ -40,6 +40,7 @@ fn world(opponents: &[Opponent]) -> World<'_, impl Fn() -> [MapSurface; 1]> {
         gkind: None,
         opponents,
         item_attacks: &[],
+        weapon_threats: &[],
         twister: None,
         acid: None,
     }
@@ -61,6 +62,7 @@ fn standing_mario(x: f32) -> Fighter {
 fn cpu(f: &Fighter, behavior: Behavior) -> Computer {
     let mut com = Computer::setup(f, 3);
     com.behavior = behavior;
+    com.trait_kind = super::super::attack::Trait::None;
     com.setup_cliffs(&world(&[]));
     com
 }
@@ -76,6 +78,10 @@ fn player_at(x: f32) -> Opponent {
         damage: 0,
         star_invincible: false,
         has_hammer: false,
+        kind: FighterKind::Mario,
+        damage_size: Vec2::new(150.0, 300.0),
+        tvel_base: 80.0,
+        gravity: 3.5,
     }
 }
 

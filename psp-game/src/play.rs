@@ -66,7 +66,9 @@ impl Dummy {
         let mut scene = FighterScene::at_spawn(pack, stage, kind, 1);
         scene.fighter.costume = costume;
         let mut computer = ssb_game::computer::Computer::setup(&scene.fighter, TRAINING_CPU_LEVEL);
+        // `sc1PTrainingModeUpdateDummyBehavior`: the menu's Stand, no trait.
         computer.behavior = ssb_game::computer::Behavior::Stand;
+        computer.trait_kind = ssb_game::computer::attack::Trait::None;
         let surfaces = || ssb_psp_runtime::scene::MapSegments::new(pack, stage);
         let world = cpu_world(stage, surfaces, &[]);
         computer.setup_world(&scene.fighter, &world);
@@ -129,6 +131,7 @@ where
         gkind: ssb_rom::stage::vs_ground_kind(stage.source_file),
         opponents,
         item_attacks: &[],
+        weapon_threats: &[],
         twister: None,
         acid: None,
     }
