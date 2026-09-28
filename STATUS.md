@@ -7,28 +7,29 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** scripted Training shield scene (RE-369). PPSSPP reaches
-  `Guard` at tick 60 with a tilted pose and a shield collision transform from
-  the posed `YRotN`. A new golden pins the frame.
-- **Next gameplay batch:** investigate the Training grab whiff in PPSSPP
-  against the host catch route (RE-351). Stage selection remains deferred.
+- **Completed batch:** Training grab route (RE-370). A one-frame left turn
+  makes Mario's posed frame-6 catch box meet the dummy; PPSSPP reaches
+  `CatchWait`/`CaptureWait` with linked fighters. The refreshed golden pins
+  the held pair.
+- **Next gameplay batch:** bring Luigi into `psp-game` Training selection,
+  including his Fireball's appearance. Stage selection remains deferred.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Live Training grab | Corrected scripted facing; capture links both fighters; grab and jab goldens match twice | RE-370 |
 | Live Training shield | Raised and tilted at tick 60; `YRotN` collision center logged; new golden and jab control match twice | RE-369 |
-| Luigi translation scales | 29 ROM vectors; clip and shield endpoints checked; Luigi golden updated, Mario control unchanged | RE-368 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
   Pinned 1.98.0 Clippy with warnings denied, rustfmt and the
-  `thumbv7em-none-eabi` `no_std` builds pass.
+  `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: Training shield and jab goldens match twice; the shield
-  capture logs `Guard`, a present `YRotN`, and center (75, 255, 0). No golden
+- PPSSPPHeadless: Training grab and jab goldens match twice; the grab
+  capture logs `CatchWait`, `CaptureWait`, and mutual grab links. No golden
   passes through a platform or respawns.
 - `psp-game` reaches scripted Training in PPSSPP. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
@@ -43,7 +44,6 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - The acid packs three 384×384 tile-1 sprites it never draws (523 KB).
 - Sector Z Arwing, bonus stages and stage items (Bumper, POW Block,
   Piranha Plant) remain; Twister/TaruCann have no clip.
-- Training `grab` whiffs in PPSSPP while the host route catches (RE-351).
 - The shield bubble is not drawn (RE-369).
 - Samus through Ness remain host-only in `psp-game`; item/weapon/effect
   drawing, other item kinds and team checks remain.

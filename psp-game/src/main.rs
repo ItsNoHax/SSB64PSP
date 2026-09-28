@@ -156,8 +156,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     // The grab scene has its own route onto the dummy's platform, found
     // with `romtool jumptest --jump-tick 5 --jump2-tick 22 --stick-x -30
     // --stick-switch-tick 6 --stick-release-tick 44` (local ticks): Mario
-    // lands at x -1253, 144 units right of the dummy, facing it. Tick 108
-    // is Z held with an A edge (`ftCommonCatchCheckInterruptCommon`).
+    // lands at x -1253, 144 units right of the dummy. A left tap at tick
+    // 98 turns Mario to face the dummy; tick 108 is Z held with an A edge
+    // (`ftCommonCatchCheckInterruptCommon`).
     if scene == GameScene::Grab {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -201,6 +202,11 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if scene == GameScene::Shield {
         return if (50..=60).contains(&tick) { 40 } else { 0 };
+    }
+    if scene == GameScene::Grab && tick == 98 {
+        // The route ends facing right. The active Catch pose reaches right,
+        // away from spawn 1, unless a fresh reverse tap completes a turn.
+        return -80;
     }
     if matches!(scene, GameScene::Grab | GameScene::Jab) {
         return if (14..52).contains(&tick) { -30 } else { 0 };
