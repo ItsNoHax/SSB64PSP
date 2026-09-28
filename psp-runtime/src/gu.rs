@@ -830,6 +830,52 @@ impl Gpu {
         self.model_transform_xyz(pos, rot_radians, [scale; 3]);
     }
 
+    /// Loads a screen-aligned model transform: `gcPrepDObjMatrix` kind 46
+    /// (`objdisplay.c`), which keeps the DObj's translated position, replaces
+    /// its rotation with the camera's own axes and spins it by `rotate.z` in
+    /// the screen plane. `eye`/`at` must be the ones given to the `look_at`
+    /// view (world up is Y), so the object's X/Y axes are the camera's
+    /// right/up. `scale` applies to X, Y and, as in the source, Z.
+    pub fn model_transform_billboard(
+        &mut self,
+        pos: ssb_engine::math::Vec3,
+        eye: ssb_engine::math::Vec3,
+        at: ssb_engine::math::Vec3,
+        spin: f32,
+        scale: [f32; 2],
+    ) {
+        let forward = (at - eye).normalized();
+        let right = forward.cross(ssb_engine::math::Vec3::Y).normalized();
+        let up = right.cross(forward);
+        let (s, c) = ssb_engine::math::sin_cos(spin);
+        // Column 0 is the object's X axis after the in-plane spin, column 1
+        // its Y axis, column 2 points back at the camera.
+        let x = right * c + up * s;
+        let y = up * c - right * s;
+        let z = -forward;
+        let axis = |v: ssb_engine::math::Vec3, k: f32| sys::ScePspFVector4 {
+            x: v.x * k,
+            y: v.y * k,
+            z: v.z * k,
+            w: 0.0,
+        };
+        let matrix = sys::ScePspFMatrix4 {
+            x: axis(x, scale[0]),
+            y: axis(y, scale[1]),
+            z: axis(z, scale[0]),
+            w: sys::ScePspFVector4 {
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
+                w: 1.0,
+            },
+        };
+        unsafe {
+            sys::sceGumMatrixMode(sys::MatrixMode::Model);
+            sys::sceGumLoadMatrix(&matrix);
+        }
+    }
+
     /// Loads a held fighter's TopN transform from its catcher's sampled joint.
     /// The source extracts rotation from the joint matrix after removing
     /// scale and writes it over TopN's facing yaw, so no facing rotation

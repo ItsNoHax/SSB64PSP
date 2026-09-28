@@ -292,6 +292,15 @@ pub const SAMUS_CHARGE_SHOT_HITBOX: Hitbox = Hitbox {
     shield_damage: 1,
 };
 
+/// A charge level's sprite scale, `gfx_size / WPCHARGESHOT_GFX_SIZE_DIV`.
+/// The charging shot takes it from the current level every update.
+pub fn samus_charge_shot_scale(charge: u8) -> f32 {
+    SAMUS_CHARGE_SHOT_LEVELS[usize::from(charge.min(7))].0 / SAMUS_CHARGE_SHOT_GFX_SIZE_DIV
+}
+
+/// `WPCHARGESHOT_ROTATE_SPEED`: the shot's in-plane spin per update.
+pub const SAMUS_CHARGE_SHOT_ROTATE_SPEED: f32 = 18.0 * core::f32::consts::PI / 180.0;
+
 /// Source `wpSamusChargeShot` after release: a straight shot that ends on
 /// any map contact (`wpMapTestAllCheckCollEnd`) or registered hit.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -329,7 +338,7 @@ impl SamusChargeShot {
 
     /// Display scale of the sprite, `gfx_size / 30`.
     pub fn scale(&self) -> f32 {
-        SAMUS_CHARGE_SHOT_LEVELS[usize::from(self.charge)].0 / SAMUS_CHARGE_SHOT_GFX_SIZE_DIV
+        samus_charge_shot_scale(self.charge)
     }
 
     fn tick<I, F>(&mut self, surfaces: F) -> bool
@@ -338,7 +347,7 @@ impl SamusChargeShot {
         I: IntoIterator<Item = MapSurface>,
     {
         let lr = if self.velocity.x < 0.0 { -1.0 } else { 1.0 };
-        self.rotate_z -= 18.0f32.to_radians() * lr;
+        self.rotate_z -= SAMUS_CHARGE_SHOT_ROTATE_SPEED * lr;
         let half = SAMUS_CHARGE_SHOT_LEVELS[usize::from(self.charge)].4 * 0.5;
         let coll = BodyColl {
             top: half,
@@ -365,6 +374,8 @@ pub const SAMUS_BOMB_WAIT_TVEL: f32 = 50.0;
 pub const SAMUS_BOMB_WAIT_COLLIDE_MOD_VEL: f32 = 0.9;
 pub const SAMUS_BOMB_FLOOR_MOD_VEL: f32 = 0.6;
 pub const SAMUS_BOMB_GROUND_MIN_SPEED: f32 = 8.0;
+pub const SAMUS_BOMB_WAIT_ROTATE_SPEED_AIR: f32 = 20.0 * core::f32::consts::PI / 180.0;
+pub const SAMUS_BOMB_WAIT_ROTATE_SPEED_GROUND: f32 = 10.0 * core::f32::consts::PI / 180.0;
 
 /// `llSamusMainBombWeaponAttributes` in `217_SamusMain.c` (the words at file
 /// offset 0x0C onward): size 160, angle 361, knockback 65/0/10, 9 damage.
@@ -405,6 +416,8 @@ pub struct SamusBomb {
     /// `bomb_blink_timer` and the current palette, presentation only.
     pub blink_timer: u16,
     pub blink_palette: u8,
+    /// `rotate.z`, presentation only.
+    pub rotate_z: f32,
 }
 
 impl SamusBomb {
@@ -420,6 +433,7 @@ impl SamusBomb {
             hit_ports: 0,
             blink_timer: 8,
             blink_palette: 0,
+            rotate_z: 0.0,
         }
     }
 
@@ -472,12 +486,14 @@ impl SamusBomb {
                     self.velocity.x *= scale;
                     self.velocity.y *= scale;
                 }
+                self.rotate_z -= SAMUS_BOMB_WAIT_ROTATE_SPEED_AIR * self.lr;
             }
             Some((segment, vel_ground)) => {
                 // `wpMainVelGroundTransferAir` along the floor line.
                 let normal = surface_normal(MapSurfaceKind::Floor, segment.segment);
                 self.velocity.x = self.lr * normal.y * vel_ground;
                 self.velocity.y = self.lr * -normal.x * vel_ground;
+                self.rotate_z -= SAMUS_BOMB_WAIT_ROTATE_SPEED_GROUND * self.lr;
             }
         }
         self.blink_timer -= 1;
@@ -3617,6 +3633,29 @@ mod tests {
         let bomb = weapons.bombs().next().unwrap();
         assert!(bomb.floor.is_some());
         assert_eq!(bomb.position.y, 75.0);
+        // `wpSamusBombProcUpdate` spins 10 degrees per grounded update.
+        let before = bomb.rotate_z;
+        weapons.tick(|| floor, None);
+        let bomb = weapons.bombs().next().unwrap();
+        let step = (before - bomb.rotate_z) * bomb.lr;
+        assert!((step - SAMUS_BOMB_WAIT_ROTATE_SPEED_GROUND).abs() < 1e-6);
+    }
+
+    #[test]
+    fn airborne_bomb_spins_twenty_degrees_per_update_toward_its_facing() {
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::SamusBomb,
+            owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::new(0.0, 2000.0, 0.0),
+            facing: -1.0,
+        });
+        for _ in 0..3 {
+            weapons.tick(core::iter::empty, None);
+        }
+        let bomb = weapons.bombs().next().unwrap();
+        assert!((bomb.rotate_z - 3.0 * SAMUS_BOMB_WAIT_ROTATE_SPEED_AIR).abs() < 1e-5);
     }
 
     fn boomerang_spawn(is_smash: bool, stick_y: i8, facing: f32) -> WeaponSpawn {

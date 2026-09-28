@@ -237,7 +237,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // an animation data row (`AnimDesc::TRANSLATE_SCALES`).
 // 51 adds Luigi's Fireball mesh: file 297's list bound to `palettes[1]`,
 // keyed (297, 0x08). A v50 pack has only Mario's palette.
-pub const VERSION: u32 = 51;
+// 52 adds Samus's Charge Shot mesh (321, 0x270) and her Bomb's two blink
+// palettes, keyed (320, 0xE0D8) and (320, 0xDF38).
+pub const VERSION: u32 = 52;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
