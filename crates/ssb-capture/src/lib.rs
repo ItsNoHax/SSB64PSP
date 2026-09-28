@@ -336,10 +336,14 @@ pub enum GameScene {
     Costume1,
     Costume2,
     Costume3,
+    /// `stageselect`: Mario in Training on Hyrule Castle, picked on the
+    /// stage select. Every other scene skips the select and loads Dream
+    /// Land.
+    StageSelect,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 30] = [
+    pub const ALL: [GameScene; 31] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -370,6 +374,7 @@ impl GameScene {
         GameScene::Costume1,
         GameScene::Costume2,
         GameScene::Costume3,
+        GameScene::StageSelect,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -404,6 +409,7 @@ impl GameScene {
             GameScene::Costume1 => "costume1",
             GameScene::Costume2 => "costume2",
             GameScene::Costume3 => "costume3",
+            GameScene::StageSelect => "stageselect",
         }
     }
 

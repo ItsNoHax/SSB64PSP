@@ -86,7 +86,7 @@ f1-training-costume-1	psp-game	costume1	pass	RE-341 RE-357 RE-358 RE-359
 f1-training-costume-2	psp-game	costume2	pass	RE-341 RE-357 RE-358 RE-359
 f1-training-costume-3	psp-game	costume3	pass	RE-341 RE-357 RE-358 RE-359
 f1-training-jab	psp-game	jab	pass	RE-351 RE-357 RE-358 RE-359
-f1-training-shield	psp-game	shield	pass	RE-367 RE-369
+f1-training-shield	psp-game	shield	pass	RE-367 RE-369 RE-384
 f1-training-luigi	psp-game	luigi	pass	RE-372
 f1-training-samus	psp-game	samus	pass	RE-373
 f1-training-samus-shot	psp-game	samusshot	pass	RE-373
@@ -106,3 +106,4 @@ f1-training-ness	psp-game	ness	pass	RE-381
 f1-training-ness-thunder	psp-game	nessthunder	pass	RE-381
 f1-training-ness-magnet	psp-game	nessmagnet	pass	RE-381
 f1-training-link-bomb	psp-game	linkbomb	pass	RE-383
+f1-training-stage-select	psp-game	stageselect	pass	RE-385

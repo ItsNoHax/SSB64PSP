@@ -128,6 +128,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::Shield => 60,
         // Both fighters have settled on Dream Land's main floor.
         GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3 => 40,
+        // Hyrule Castle is confirmed at tick 30; both fighters have
+        // settled on its floor.
+        GameScene::StageSelect => 70,
     }
 }
 
@@ -188,6 +191,16 @@ fn deterministic_capture_frozen(scene: Option<GameScene>, sim_frame_index: u64) 
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
+    // Tick 8 opens the stage select on Peach's Castle, which reads input
+    // from its tenth tick (18). D-Right at 20 and 24 moves the cursor to
+    // Kongo Jungle, then Hyrule Castle; A at 30 confirms it.
+    if scene == GameScene::StageSelect {
+        return match tick {
+            4 | 8 | 30 => N64Buttons(N64Buttons::A),
+            20 | 24 => N64Buttons(N64Buttons::D_RIGHT),
+            _ => N64Buttons(0),
+        };
+    }
     // The costume scenes tap one C-button on the Training entry at tick 6,
     // between the Intro and Training confirms (`mnPlayers1PTrainingUpdateCostume`).
     if let Some(pick) = match scene {
@@ -330,6 +343,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::NessThunder
             | GameScene::NessMagnet
             | GameScene::LinkBomb
+            | GameScene::StageSelect
     ) {
         return 0;
     }
@@ -562,6 +576,7 @@ fn log_capture_state(
 #[allow(clippy::too_many_arguments)]
 unsafe fn training_step(
     p: &Pack<'_>,
+    stage_index: u32,
     pl: &mut play::FighterScene,
     dummy_state: &mut Option<play::Dummy>,
     weapons: &mut ssb_game::weapon::WeaponPool,
@@ -573,7 +588,7 @@ unsafe fn training_step(
     controller: ControllerState,
 ) {
     material_anim.tick(p);
-    if let Some(stage) = p.stage(TRAINING_STAGE_INDEX) {
+    if let Some(stage) = p.stage(stage_index) {
         // Priority 5, Ground link: `gcPlayAnimAll` precedes
         // every fighter interrupt and the priority-4 controller.
         let _ = stage_objects.advance(p);
@@ -826,6 +841,8 @@ fn psp_main() {
 enum Screen {
     Intro,
     Menu,
+    /// The Training stage select (`mnMaps`, `ssb_game::stage_select`).
+    StageSelect,
     /// Training Mode: a real stage and a real, physics-ticked fighter now
     /// draw here (`draw_training`) -- no combat yet, see
     /// `plans/gameplay/F1.md` acceptance criteria 5-7 for what still has to
@@ -865,11 +882,85 @@ const ENTRY_SELECTED: Color = Color::rgba(255, 200, 40, 255);
 const ENTRY_ENABLED: Color = Color::rgba(200, 200, 200, 255);
 const ENTRY_DISABLED: Color = Color::rgba(70, 70, 70, 255);
 
-/// Which packed stage Training Mode loads. Dream Land (file 104) -- stage
-/// index 0, matching every other build in this project's own default/unset
-/// convention (`psp-asset-viewer/Cargo.toml`'s `regression_capture_stage_index` doc: "0
-/// (Dream Land) if unset").
-const TRAINING_STAGE_INDEX: u32 = 0;
+/// The stage every capture scene but `stageselect` loads, skipping the
+/// stage select: Dream Land, where the Training goldens were captured.
+const CAPTURE_STAGE_GKIND: u8 = ssb_game::stage_select::gkind::PUPUPU;
+
+/// The `GRKind` a capture scene loads without the stage select; `None`
+/// sends it through the select.
+fn capture_stage_gkind(scene: GameScene) -> Option<u8> {
+    (scene != GameScene::StageSelect).then_some(CAPTURE_STAGE_GKIND)
+}
+
+/// `syUtilsRandTimeUCharRange(9)`: the low byte of the clock, scaled to
+/// 0..9.
+fn stage_select_rand() -> u8 {
+    let low = unsafe { psp::sys::sceKernelGetSystemTimeLow() } & 0xFF;
+    (low * 9 / 256) as u8
+}
+
+/// What Training owns across frames, rebuilt on each stage entry.
+struct TrainingWorld<'w> {
+    play_state: &'w mut Option<play::FighterScene>,
+    dummy_state: &'w mut Option<play::Dummy>,
+    weapons: &'w mut ssb_game::weapon::WeaponPool,
+    items: &'w mut ssb_game::item::ItemPool,
+    stage_objects: &'w mut ssb_rom::ground_obj::GroundObjects,
+    stage_map: &'w mut Option<alloc::boxed::Box<ssb_psp_runtime::scene::StageMap>>,
+    stage_ctl: &'w mut ssb_game::stage::Stage,
+}
+
+/// Loads VS stage `gkind` for Training and spawns both fighters on it;
+/// returns the pack's stage index. Out of [`run`] so `run` stays inside
+/// MIPS branch range.
+#[inline(never)]
+fn enter_training(
+    pack: Option<&Pack<'_>>,
+    gkind: u8,
+    capture_scene: Option<GameScene>,
+    player_costume: u8,
+    dummy_costume: u8,
+    world: &mut TrainingWorld<'_>,
+) -> u32 {
+    *world.weapons = ssb_game::weapon::WeaponPool::default();
+    *world.items = ssb_game::item::ItemPool::default();
+    let Some((p, index, stage)) = pack.and_then(|p| {
+        let index = ssb_psp_runtime::scene::vs_stage_index(p, gkind)?;
+        Some((p, index, p.stage(index)?))
+    }) else {
+        return 0;
+    };
+    *world.stage_map = Some(alloc::boxed::Box::new(ssb_psp_runtime::scene::StageMap::new(
+        p, index, &stage,
+    )));
+    *world.stage_objects = ssb_rom::ground_obj::GroundObjects::new(p, stage.source_file);
+    // `grMainSetupMakeGround`: any VS stage gets its controller; others run
+    // an empty slot.
+    *world.stage_ctl = match ssb_psp_runtime::scene::StageSetup::new(p, &stage) {
+        Some(setup) => {
+            let mut empty = [];
+            let groups = world
+                .stage_map
+                .as_mut()
+                .map_or(&mut empty[..], |map| map.groups.as_mut_slice());
+            ssb_game::stage::Stage::new(
+                &setup.init(),
+                groups,
+                &mut ssb_psp_runtime::scene::StageObjectsPort {
+                    pack: p,
+                    objects: world.stage_objects,
+                },
+            )
+        }
+        None => ssb_game::stage::Stage::none(),
+    };
+    let mut scene =
+        play::FighterScene::at_spawn(p, &stage, training_fighter_kind(capture_scene), 0);
+    scene.fighter.costume = player_costume;
+    *world.play_state = Some(scene);
+    *world.dummy_state = play::Dummy::at_spawn(p, &stage, dummy_costume);
+    index
+}
 
 unsafe fn run() -> ! {
     // The scripted scene this run captures; `None` reads the real pad.
@@ -914,15 +1005,14 @@ unsafe fn run() -> ! {
     if let Some(p) = pack.as_ref() {
         material_anim.start(p);
     }
-    let mut stage_map = pack.as_ref().and_then(|p| {
-        p.stage(TRAINING_STAGE_INDEX).map(|stage| {
-            alloc::boxed::Box::new(ssb_psp_runtime::scene::StageMap::new(
-                p,
-                TRAINING_STAGE_INDEX,
-                &stage,
-            ))
-        })
-    });
+    // Built on each Training entry for the stage picked (`enter_training`).
+    let mut stage_map: Option<alloc::boxed::Box<ssb_psp_runtime::scene::StageMap>> = None;
+    let mut training_stage: u32 = 0;
+    // `gSCManagerSceneData.gkind` and `maps_training_gkind`, both
+    // `nGRKindCastle` in `dSCManagerDefaultSceneData`.
+    let mut scene_gkind = ssb_game::stage_select::DEFAULT_GKIND;
+    let mut maps_training_gkind = ssb_game::stage_select::DEFAULT_GKIND;
+    let mut stage_select = ssb_game::stage_select::StageSelect::new(maps_training_gkind, 0);
 
     let draw_assets = pack.as_ref().map(DrawAssets::resolve).unwrap_or_default();
     let mut effect_visuals = EffectVisuals::default();
@@ -1021,57 +1111,75 @@ unsafe fn run() -> ! {
                             player_costume = costume;
                         }
                     } else if pressed.contains(N64Buttons::A) && cursor == TRAINING_ENTRY {
-                        screen = Screen::Training;
-                        if play_state.is_none() {
-                            weapons = ssb_game::weapon::WeaponPool::default();
-                            items = ssb_game::item::ItemPool::default();
-                            if let Some((p, stage)) = pack
-                                .as_ref()
-                                .and_then(|p| p.stage(TRAINING_STAGE_INDEX).map(|stage| (p, stage)))
-                            {
-                                stage_objects =
-                                    ssb_rom::ground_obj::GroundObjects::new(p, stage.source_file);
-                                // `grMainSetupMakeGround`: any VS stage gets its
-                                // controller; others run an empty slot.
-                                stage_ctl = match ssb_psp_runtime::scene::StageSetup::new(p, &stage)
-                                {
-                                    Some(setup) => {
-                                        let mut empty = [];
-                                        let groups =
-                                            stage_map.as_mut().map_or(&mut empty[..], |map| {
-                                                map.groups.as_mut_slice()
-                                            });
-                                        ssb_game::stage::Stage::new(
-                                            &setup.init(),
-                                            groups,
-                                            &mut ssb_psp_runtime::scene::StageObjectsPort {
-                                                pack: p,
-                                                objects: &mut stage_objects,
-                                            },
-                                        )
-                                    }
-                                    None => ssb_game::stage::Stage::none(),
-                                };
-                            }
-                            play_state = pack.as_ref().and_then(|p| {
-                                p.stage(TRAINING_STAGE_INDEX).map(|s| {
-                                    let mut scene = play::FighterScene::at_spawn(
-                                        p,
-                                        &s,
-                                        training_fighter_kind(capture_scene),
-                                        0,
-                                    );
-                                    scene.fighter.costume = player_costume;
-                                    scene
-                                })
-                            });
-                            dummy_state = pack.as_ref().and_then(|p| {
-                                p.stage(TRAINING_STAGE_INDEX)
-                                    .and_then(|s| play::Dummy::at_spawn(p, &s, dummy_costume))
-                            });
+                        if play_state.is_some() {
+                            screen = Screen::Training;
+                        } else if let Some(gkind) = capture_scene.and_then(capture_stage_gkind) {
+                            training_stage = enter_training(
+                                pack.as_ref(),
+                                gkind,
+                                capture_scene,
+                                player_costume,
+                                dummy_costume,
+                                &mut TrainingWorld {
+                                    play_state: &mut play_state,
+                                    dummy_state: &mut dummy_state,
+                                    weapons: &mut weapons,
+                                    items: &mut items,
+                                    stage_objects: &mut stage_objects,
+                                    stage_map: &mut stage_map,
+                                    stage_ctl: &mut stage_ctl,
+                                },
+                            );
+                            screen = Screen::Training;
+                        } else {
+                            // `mnMapsInitVars`: the cursor starts on the
+                            // Training stage picked last. The host has no
+                            // save data, so Mushroom Kingdom stays locked.
+                            stage_select = ssb_game::stage_select::StageSelect::new(maps_training_gkind, 0);
+                            screen = Screen::StageSelect;
                         }
                     }
                 }
+                Screen::StageSelect => match stage_select.tick(controller, pressed) {
+                    Some(ssb_game::stage_select::Outcome::Confirm { .. }) => {
+                        let saved = stage_select.save(scene_gkind, stage_select_rand);
+                        maps_training_gkind = saved.remembered;
+                        scene_gkind = saved.gkind;
+                        training_stage = enter_training(
+                            pack.as_ref(),
+                            saved.gkind,
+                            capture_scene,
+                            player_costume,
+                            dummy_costume,
+                            &mut TrainingWorld {
+                                play_state: &mut play_state,
+                                dummy_state: &mut dummy_state,
+                                weapons: &mut weapons,
+                                items: &mut items,
+                                stage_objects: &mut stage_objects,
+                                stage_map: &mut stage_map,
+                                stage_ctl: &mut stage_ctl,
+                            },
+                        );
+                        screen = Screen::Training;
+                    }
+                    // B returns to the character select, for which the menu
+                    // stands in. B and the idle return also save the scene
+                    // data.
+                    Some(ssb_game::stage_select::Outcome::Back) => {
+                        let saved = stage_select.save(scene_gkind, stage_select_rand);
+                        maps_training_gkind = saved.remembered;
+                        scene_gkind = saved.gkind;
+                        screen = Screen::Menu;
+                    }
+                    Some(ssb_game::stage_select::Outcome::Timeout) => {
+                        let saved = stage_select.save(scene_gkind, stage_select_rand);
+                        maps_training_gkind = saved.remembered;
+                        scene_gkind = saved.gkind;
+                        screen = Screen::Intro;
+                    }
+                    None => {}
+                },
                 Screen::Training => {
                     // START is navigation-only here. B belongs to the fighter's
                     // source special-input path and must reach `pl.tick` below.
@@ -1084,6 +1192,7 @@ unsafe fn run() -> ! {
             if let (Screen::Training, Some(p), Some(pl)) = (screen, &pack, play_state.as_mut()) {
                 training_step(
                     p,
+                    training_stage,
                     pl,
                     &mut dummy_state,
                     &mut weapons,
@@ -1107,6 +1216,11 @@ unsafe fn run() -> ! {
                 gpu.begin_frame(Some(BG_MENU));
                 draw_menu(&mut gpu, cursor);
             }
+            Screen::StageSelect => {
+                gpu.set_viewport_fullscreen();
+                gpu.begin_frame(Some(BG_MENU));
+                draw_stage_select(&mut gpu, &stage_select);
+            }
             Screen::Training => {
                 if let (Some(p), Some(pl)) = (pack.as_ref(), play_state.as_ref()) {
                     effect_visuals.sync(p, &draw_assets, &pl.fighter, &weapons, &items);
@@ -1115,6 +1229,7 @@ unsafe fn run() -> ! {
                     &mut gpu,
                     &mut draw_state,
                     pack.as_ref(),
+                    training_stage,
                     play_state.as_ref(),
                     dummy_state.as_ref(),
                     &weapons,
@@ -1179,6 +1294,30 @@ fn draw_menu(gpu: &mut Gpu, cursor: usize) {
             ENTRY_DISABLED
         };
         gpu.draw_rect(LEFT, y0, LEFT + ENTRY_WIDTH, y0 + ENTRY_HEIGHT, color);
+    }
+}
+
+/// Draws the stage select as `mnMaps`'s two rows of five slots, the random
+/// slot last. The cursor's slot is in `ENTRY_SELECTED` and a locked slot in
+/// `ENTRY_DISABLED`. The names, emblems and stage previews are not drawn.
+fn draw_stage_select(gpu: &mut Gpu, select: &ssb_game::stage_select::StageSelect) {
+    const SLOT_WIDTH: i32 = 64;
+    const SLOT_HEIGHT: i32 = 48;
+    const GAP: i32 = 16;
+    const LEFT: i32 = 40;
+    const TOP: i32 = 120;
+
+    for slot in 0..=ssb_game::stage_select::RANDOM_SLOT {
+        let x0 = LEFT + (slot % 5) as i32 * (SLOT_WIDTH + GAP);
+        let y0 = TOP + (slot / 5) as i32 * (SLOT_HEIGHT + GAP);
+        let color = if slot == select.cursor_slot {
+            ENTRY_SELECTED
+        } else if select.is_locked(ssb_game::stage_select::slot_gkind(slot)) {
+            ENTRY_DISABLED
+        } else {
+            ENTRY_ENABLED
+        };
+        gpu.draw_rect(x0, y0, x0 + SLOT_WIDTH, y0 + SLOT_HEIGHT, color);
     }
 }
 
@@ -1638,6 +1777,7 @@ unsafe fn draw_training(
     gpu: &mut Gpu,
     draw_state: &mut meshdraw::DrawState,
     pack: Option<&Pack<'_>>,
+    stage_index: u32,
     play_state: Option<&play::FighterScene>,
     dummy_state: Option<&play::Dummy>,
     weapons: &ssb_game::weapon::WeaponPool,
@@ -1651,7 +1791,7 @@ unsafe fn draw_training(
 ) {
     let scene = pack
         .zip(play_state)
-        .and_then(|(p, pl)| p.stage(TRAINING_STAGE_INDEX).map(|s| (p, pl, s)));
+        .and_then(|(p, pl)| p.stage(stage_index).map(|s| (p, pl, s)));
 
     let Some((p, pl, stage)) = scene else {
         gpu.set_viewport_fullscreen();

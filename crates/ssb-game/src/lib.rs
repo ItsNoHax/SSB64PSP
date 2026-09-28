@@ -41,6 +41,7 @@ pub mod rng;
 pub mod samus;
 pub mod shadow;
 pub mod stage;
+pub mod stage_select;
 pub mod stale;
 pub mod status;
 pub mod weapon;
