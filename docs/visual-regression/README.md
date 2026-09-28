@@ -165,6 +165,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scenes `link`, `linkspin`) | `f1-training-link`, `-link-spin` | Link's Boomerang in flight; 13 frames into a ground Spin Attack, whose swirl shows edge-on as a thin arc | RE-374 |
 | `golden_capture` (`psp-game`, scenes `yoshi`, `yoshibomb`) | `f1-training-yoshi`, `-yoshi-bomb` | Yoshi's Egg Throw egg 16 frames into its flight; the Yoshi Bomb's two stars 6 frames after they appear (retimed for the hop in RE-378) | RE-375, RE-378 |
 | `golden_capture` (`psp-game`, scenes `ness`, `nessthunder`, `nessmagnet`) | `f1-training-ness`, `-ness-thunder`, `-ness-magnet` | Ness's PK Fire spark in flight; PK Thunder's head with four trails; PSI Magnet held | RE-381 |
+| `golden_capture` (`psp-game`, scene `linkbomb`) | `f1-training-link-bomb` | Link holding a freshly pulled Bomb | RE-383 |
 | `golden_capture` (`psp-game`, scene `donkey`) | `f1-training-donkey` | Donkey Kong winding up a Giant Punch (`SpecialNLoop`) | — |
 | `golden_capture` (`psp-game`, scene `purin`) | `f1-training-purin` | Jigglypuff 30 frames into Sing, with its rings and three notes | RE-380 |
 | `golden_capture` (`psp-game`, scenes `pikachu`, `pikachuair`) | `f1-training-pikachu`, `-pikachu-air` | Pikachu's ground Thunder Jolt 8 plays into its first push cycle; an aerial jolt 11 frames into its flight | RE-379 |
@@ -456,3 +457,9 @@ both captures. 89 of 89 goldens match twice.
 Pack v57 (`f0fbc6a7…`). The new `f1-training-ness`, `-ness-thunder` and
 `-ness-magnet` goldens were each identical in both captures. 92 of 92
 goldens match twice.
+
+## 2026-09-28 RE-382/RE-383 items
+
+Pack v59 (`77df9d76…`). `psp-game`'s `run` was split for
+MIPS branch range with no golden change. The new `f1-training-link-bomb`
+golden was identical in both captures. 93 of 93 goldens match twice.

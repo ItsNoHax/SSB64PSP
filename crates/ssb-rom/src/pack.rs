@@ -256,7 +256,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // weapon seed, and the head's scale pulse as weapon slot 4.
 // 58 adds item animations (`AnimDesc::ITEM`): slot 0 is the PK Fire flame
 // (336 + 0xAF0).
-pub const VERSION: u32 = 58;
+// 59 adds Link's Bomb as item slot 1 (353 + 0x1990), and pairs the Spin
+// Attack weapon graphic (324, 0x11908) with its MObjSub table (0x110A8).
+pub const VERSION: u32 = 59;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1006,6 +1008,8 @@ impl AnimDesc {
     /// [`Self::ITEM`] slot of Ness's PK Fire flame (file 336's table at
     /// 0xAF0).
     pub const ITEM_ANIM_NESS_PK_FIRE: u32 = 0;
+    /// [`Self::ITEM`] slot of Link's Bomb (file 353's table at 0x1990).
+    pub const ITEM_ANIM_LINK_BOMB: u32 = 1;
 
     /// [`Self::WEAPON`] slot of Link's Boomerang (file 325's table at 0x6C0).
     pub const WEAPON_ANIM_LINK_BOOMERANG: u32 = 0;

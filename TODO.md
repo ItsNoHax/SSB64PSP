@@ -19,7 +19,7 @@ or evidence record covers it.
 |---|---|---|
 | Draw Kirby's copy hats, stars and copied specials' effects in `psp-game` | Kirby draws in Training with his Final Cutter wave (RE-378); copy hats, the Inhale/spit stars and the copied Falcon Punch flame (joint 30) are not drawn | RE-343, RE-376, RE-378 |
 | Draw Yoshi's Egg Lay egg and his egg/star hit effects in `psp-game` | Yoshi draws in Training with his Egg Throw egg and Bomb stars (RE-375); the captured victim's egg and the shatter, egg-break and sparkle effects remain | RE-337, RE-375 |
-| Draw Link's Bomb and reach the PK Fire flame in `psp-game` | The flame draws (RE-382) but no capture scene lands a spark on the dummy; the Bomb needs the held-item hand parent (kind 0x52) and a look at why its strips draw as an orange smear | RE-352, RE-374, RE-382 |
+| Reach the PK Fire flame in a `psp-game` capture | The flame draws (RE-382) but no capture scene lands a spark on the dummy; the Bomb's critical colour flash and held bloat are not drawn (RE-383) | RE-352, RE-382, RE-383 |
 | Keep `run` inside MIPS branch range | `psp-game`'s `run` is 163 KB after RE-382's split, over the ±128 KB branch reach; more growth can bring back `out of range PC16 fixup` | RE-382 |
 | Window material-animation blobs | A material script packs its whole source file: file 335 (50 KB) came in for PK Thunder's texture blink (RE-381), as weapon animations did before RE-378's window | RE-378, RE-381 |
 | Draw Pikachu's Thunder head/trails and the Thunder Jolt, Quick Attack effects in `psp-game` | Pikachu draws in Training with both Thunder Jolt forms (RE-379); ground-jolt node 4's texture script is declined by `resolve_one_mat_anim` | RE-345, RE-379 |

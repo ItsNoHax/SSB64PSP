@@ -320,6 +320,8 @@ pub enum GameScene {
     NessThunder,
     /// `nessmagnet`: Ness in Training, holding PSI Magnet.
     NessMagnet,
+    /// `linkbomb`: Link in Training, a Bomb just pulled into his hand.
+    LinkBomb,
     /// `shadows`: first jump's apex, player airborne.
     Shadows,
     /// `grab`: Training plus a Z+A grab of the dummy, frozen while held.
@@ -337,7 +339,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 29] = [
+    pub const ALL: [GameScene; 30] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -360,6 +362,7 @@ impl GameScene {
         GameScene::Ness,
         GameScene::NessThunder,
         GameScene::NessMagnet,
+        GameScene::LinkBomb,
         GameScene::Shadows,
         GameScene::Grab,
         GameScene::Jab,
@@ -393,6 +396,7 @@ impl GameScene {
             GameScene::Ness => "ness",
             GameScene::NessThunder => "nessthunder",
             GameScene::NessMagnet => "nessmagnet",
+            GameScene::LinkBomb => "linkbomb",
             GameScene::Shadows => "shadows",
             GameScene::Grab => "grab",
             GameScene::Jab => "jab",
