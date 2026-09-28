@@ -58,6 +58,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // clearly visible.
         GameScene::Superjump => 156,
         GameScene::Fox => 46,
+        // B at tick 20, as in the Fox scene; the Fireball is in flight.
+        GameScene::Luigi => 46,
         GameScene::Training => 106,
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
@@ -144,7 +146,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
-    if scene == GameScene::Fox && tick == 20 {
+    if matches!(scene, GameScene::Fox | GameScene::Luigi) && tick == 20 {
         return N64Buttons(N64Buttons::B);
     }
     if scene == GameScene::Fireball && tick == 150 {
@@ -251,17 +253,16 @@ const JUMP_BUTTON_MASK: u16 =
 const MENU_STICK_NAV_MIN: i8 = 40;
 
 /// The fighter Training spawns for the player: Fox for the Fox capture
-/// scene, Mario otherwise.
+/// scene, Luigi for the Luigi scene, Mario otherwise.
 fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter::FighterKind {
     // The costume scenes use Fox so that no pick can collide with the Mario
     // dummy's costume.
-    if matches!(
-        capture_scene,
-        Some(GameScene::Fox | GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3)
-    ) {
-        ssb_game::fighter::FighterKind::Fox
-    } else {
-        ssb_game::fighter::FighterKind::Mario
+    match capture_scene {
+        Some(GameScene::Fox | GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3) => {
+            ssb_game::fighter::FighterKind::Fox
+        }
+        Some(GameScene::Luigi) => ssb_game::fighter::FighterKind::Luigi,
+        _ => ssb_game::fighter::FighterKind::Mario,
     }
 }
 
@@ -870,7 +871,8 @@ fn draw_menu(gpu: &mut Gpu, cursor: usize) {
 #[derive(Default)]
 struct DrawAssets {
     shadow_texture: Option<ssb_rom::pack::TextureDesc>,
-    fireball_mesh: Option<ssb_rom::pack::MeshDesc>,
+    /// Indexed by `MarioFireball::index`: Mario's palette, then Luigi's.
+    fireball_meshes: [Option<ssb_rom::pack::MeshDesc>; 2],
     blaster_mesh: Option<ssb_rom::pack::MeshDesc>,
     reflector: Option<ssb_rom::pack::ObjectDesc>,
 }
@@ -879,7 +881,7 @@ impl DrawAssets {
     fn resolve(p: &Pack<'_>) -> Self {
         DrawAssets {
             shadow_texture: meshdraw::fighter_shadow_texture(p),
-            fireball_mesh: ssb_psp_runtime::scene::mario_fireball_mesh(p),
+            fireball_meshes: ssb_psp_runtime::scene::fireball_meshes(p),
             blaster_mesh: ssb_psp_runtime::scene::fox_blaster_mesh(p),
             reflector: ssb_psp_runtime::scene::fox_reflector_object(p),
         }
@@ -987,27 +989,32 @@ unsafe fn draw_training(
         }
     }
 
-    if let Some(fireball_mesh) = assets.fireball_mesh.as_ref() {
-        for fireball in weapons.fireballs() {
-            // `wpMainVelSetModelPitch` uses +/-90 degrees around Y from
-            // horizontal velocity; the packed direct-display-list mesh gets
-            // that same model orientation here.
-            let yaw = if fireball.velocity.x >= 0.0 {
-                core::f32::consts::FRAC_PI_2
-            } else {
-                -core::f32::consts::FRAC_PI_2
-            };
-            gpu.model_transform(
-                [
-                    fireball.position.x,
-                    fireball.position.y,
-                    fireball.position.z,
-                ],
-                [0.0, yaw, 0.0],
-                meshdraw::MODEL_SCALE,
-            );
-            meshdraw::draw_mesh(p, fireball_mesh, draw_state, None, None);
-        }
+    for fireball in weapons.fireballs() {
+        let Some(fireball_mesh) = assets
+            .fireball_meshes
+            .get(usize::from(fireball.index))
+            .and_then(Option::as_ref)
+        else {
+            continue;
+        };
+        // `wpMainVelSetModelPitch` uses +/-90 degrees around Y from
+        // horizontal velocity; the packed direct-display-list mesh gets
+        // that same model orientation here.
+        let yaw = if fireball.velocity.x >= 0.0 {
+            core::f32::consts::FRAC_PI_2
+        } else {
+            -core::f32::consts::FRAC_PI_2
+        };
+        gpu.model_transform(
+            [
+                fireball.position.x,
+                fireball.position.y,
+                fireball.position.z,
+            ],
+            [0.0, yaw, 0.0],
+            meshdraw::MODEL_SCALE,
+        );
+        meshdraw::draw_mesh(p, fireball_mesh, draw_state, None, None);
     }
 
     if let Some(blaster_mesh) = assets.blaster_mesh.as_ref() {

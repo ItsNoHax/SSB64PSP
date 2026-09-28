@@ -2815,9 +2815,17 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         // Generic graph discovery correctly finds no object there, so retain
         // this explicit, source-proven asset instead of inventing a PSP-side
         // substitute primitive.
+        //
+        // Luigi's `WPAttributes` (file 222) names the same list and table.
+        // `wpMarioFireballMakeWeapon` only sets `mobj->palette_id` from the
+        // row's `anim_frame`: 0 for Mario, 1 for Luigi. Those two rows bound
+        // `palettes[]` to two entries, so each palette gets its own mesh. The
+        // shared list cannot key Luigi's copy, so it is keyed by the palette
+        // it binds (`palettes[1]`, file offset 0x08).
         if id == 297 {
             const FIREBALL_MOBJ_TABLE: u32 = 0xD8;
             const FIREBALL_DISPLAY_LIST: u32 = 0x1D8;
+            const LUIGI_FIREBALL_KEY: u32 = 0x08;
             if let (Some(materials), Ok(cmds)) = (
                 ssb_rom::mobj::read_table(file, FIREBALL_MOBJ_TABLE, 1),
                 ssb_rom::dl::decode_list_at(
@@ -2825,22 +2833,33 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     FIREBALL_DISPLAY_LIST,
                 ),
             ) {
-                let item = mesh::SequenceItem {
-                    cmds: &cmds,
-                    world: ssb_rom::scene::Mat4::IDENTITY,
-                    mobjs: &materials.nodes[0],
-                    mat_anims: &[],
-                    depth_seed: None,
-                    stream: 0,
-                };
-                if let Some(Ok(fireball)) = mesh::convert_sequence(
-                    &[item],
-                    mesh::Source::of(file),
-                    mesh::InitialMaterial::WEAPON_EXTERNAL,
-                )
-                .into_iter()
-                .next()
+                let palettes = materials.nodes[0]
+                    .first()
+                    .and_then(|sub| ssb_rom::mobj::read_palettes(file, sub.at, 2))
+                    .expect("file 297 Fireball MObjSub has Mario and Luigi palettes");
+                for (palette, key) in palettes
+                    .iter()
+                    .zip([FIREBALL_DISPLAY_LIST, LUIGI_FIREBALL_KEY])
                 {
+                    let mut mobjs = materials.nodes[0].clone();
+                    mobjs[0].palette = Some(*palette);
+                    let item = mesh::SequenceItem {
+                        cmds: &cmds,
+                        world: ssb_rom::scene::Mat4::IDENTITY,
+                        mobjs: &mobjs,
+                        mat_anims: &[],
+                        depth_seed: None,
+                        stream: 0,
+                    };
+                    let Some(Ok(fireball)) = mesh::convert_sequence(
+                        &[item],
+                        mesh::Source::of(file),
+                        mesh::InitialMaterial::WEAPON_EXTERNAL,
+                    )
+                    .into_iter()
+                    .next() else {
+                        continue;
+                    };
                     if fireball.triangle_count() != 0 {
                         pack_mesh(
                             &mut writer,
@@ -2852,7 +2871,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                                 all: &loaded.files,
                             },
                             id,
-                            FIREBALL_DISPLAY_LIST,
+                            key,
                             &fireball,
                             swizzle,
                         );
