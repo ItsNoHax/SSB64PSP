@@ -301,6 +301,8 @@ pub enum GameScene {
     YoshiBomb,
     /// `captain`: Captain Falcon in Training, mid Falcon Punch with its flame.
     Captain,
+    /// `captainkick`: Captain Falcon in Training, mid ground Falcon Kick.
+    CaptainKick,
     /// `shadows`: first jump's apex, player airborne.
     Shadows,
     /// `grab`: Training plus a Z+A grab of the dummy, frozen while held.
@@ -318,7 +320,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 20] = [
+    pub const ALL: [GameScene; 21] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -332,6 +334,7 @@ impl GameScene {
         GameScene::Yoshi,
         GameScene::YoshiBomb,
         GameScene::Captain,
+        GameScene::CaptainKick,
         GameScene::Shadows,
         GameScene::Grab,
         GameScene::Jab,
@@ -356,6 +359,7 @@ impl GameScene {
             GameScene::Yoshi => "yoshi",
             GameScene::YoshiBomb => "yoshibomb",
             GameScene::Captain => "captain",
+            GameScene::CaptainKick => "captainkick",
             GameScene::Shadows => "shadows",
             GameScene::Grab => "grab",
             GameScene::Jab => "jab",

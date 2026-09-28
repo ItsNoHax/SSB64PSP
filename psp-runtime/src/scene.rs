@@ -166,6 +166,23 @@ pub fn captain_falcon_punch_effect(pack: &Pack<'_>) -> Option<ObjectDesc> {
         })
 }
 
+/// `dEFManagerCaptainFalconKickEffectDesc`: file 350's two-node flame tree,
+/// at slot 29 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
+pub const CAPTAIN_FALCON_KICK_EFFECT_KEY: (u32, u32) = (350, 0x0B08);
+
+/// The Falcon Kick flame's object and its manager-effect inventory slot.
+pub fn captain_falcon_kick_effect(pack: &Pack<'_>) -> Option<(ObjectDesc, u32)> {
+    let slot = ssb_rom::effect::MANAGER_EFFECT_KEYS
+        .iter()
+        .position(|&key| key == CAPTAIN_FALCON_KICK_EFFECT_KEY)?;
+    let object = (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|object| {
+            (object.source_file, object.source_offset) == CAPTAIN_FALCON_KICK_EFFECT_KEY
+        })?;
+    Some((object, slot as u32))
+}
+
 /// Fox Special2's three-entry Reflector effect hierarchy.
 pub fn fox_reflector_object(pack: &Pack<'_>) -> Option<ObjectDesc> {
     (0..pack.object_count())
