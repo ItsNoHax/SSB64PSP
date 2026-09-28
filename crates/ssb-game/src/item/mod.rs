@@ -406,6 +406,9 @@ pub struct Item {
     pub event_id: u8,
     /// `GOBJ_FLAG_HIDDEN`: the despawn flash and the Bomb's explosion.
     pub hidden: bool,
+    /// `gcPlayAnimAll` calls on the item's DObjs: one when it is made, then
+    /// one per `itProcessProcItemMain` outside hitlag. Presentation only.
+    pub anim_ticks: u16,
     pub arrow_timer: u8,
     pub status: ItemStatus,
     pub vars: ItemVars,
@@ -514,6 +517,8 @@ impl Item {
             multi: 0,
             event_id: 0,
             hidden: false,
+            // `itManagerMakeItem` plays the animation it adds once.
+            anim_ticks: 1,
             arrow_timer: 0,
             status,
             vars: ItemVars::default(),
@@ -1188,6 +1193,9 @@ where
 {
     if item.hitlag_tics > 0 {
         item.hitlag_tics -= 1;
+    }
+    if item.hitlag_tics == 0 {
+        item.anim_ticks = item.anim_ticks.wrapping_add(1);
     }
     if item.hitlag_tics == 0 && !proc_update(item, owners, surfaces, effects) {
         return false;

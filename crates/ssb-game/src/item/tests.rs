@@ -575,3 +575,19 @@ fn ground_item_carries_during_hitlag_before_the_bounds_gate() {
     );
     assert!(pool.slots[slot as usize].is_none());
 }
+
+/// `itManagerMakeItem` plays the added animation once; each
+/// `itProcessProcItemMain` outside hitlag plays it again.
+#[test]
+fn item_animation_plays_once_at_creation_and_per_update_outside_hitlag() {
+    let mut pool = ItemPool::default();
+    let slot = make_flame(&mut pool);
+    // `make_flame` already ran one update after the creation play.
+    assert_eq!(pool.get(slot).unwrap().anim_ticks, 2);
+    pool.get_mut(slot).unwrap().hitlag_tics = 2;
+    pool.tick(core::iter::empty, None);
+    assert_eq!(pool.get(slot).unwrap().anim_ticks, 2);
+    pool.tick(core::iter::empty, None);
+    // The frame the hitlag runs out plays again.
+    assert_eq!(pool.get(slot).unwrap().anim_ticks, 3);
+}

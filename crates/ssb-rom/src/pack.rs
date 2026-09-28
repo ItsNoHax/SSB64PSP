@@ -254,7 +254,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // (335, 0x8B40) as one-node objects and the PK Thunder head tree
 // (335, 0x7C98), with their MObjSub tables and material scripts under the
 // weapon seed, and the head's scale pulse as weapon slot 4.
-pub const VERSION: u32 = 57;
+// 58 adds item animations (`AnimDesc::ITEM`): slot 0 is the PK Fire flame
+// (336 + 0xAF0).
+pub const VERSION: u32 = 58;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -997,6 +999,13 @@ impl AnimDesc {
     /// `fighter` value marking a weapon's `WPAttributes.anim_joints` stream.
     /// `slot` is one of the `WEAPON_ANIM_*` keys below.
     pub const WEAPON: u32 = u32::MAX - 7;
+
+    /// `fighter` value marking an item's `ITAttributes.anim_joints` stream.
+    /// `slot` is one of the `ITEM_ANIM_*` keys below.
+    pub const ITEM: u32 = u32::MAX - 8;
+    /// [`Self::ITEM`] slot of Ness's PK Fire flame (file 336's table at
+    /// 0xAF0).
+    pub const ITEM_ANIM_NESS_PK_FIRE: u32 = 0;
 
     /// [`Self::WEAPON`] slot of Link's Boomerang (file 325's table at 0x6C0).
     pub const WEAPON_ANIM_LINK_BOOMERANG: u32 = 0;
@@ -3410,6 +3419,13 @@ impl<'a> Pack<'a> {
         (0..self.anim_count)
             .filter_map(|i| self.anim(i))
             .find(|a| a.fighter == AnimDesc::WEAPON && a.slot == slot)
+    }
+
+    /// An item's DObj transform animation, by `AnimDesc::ITEM_ANIM_*` key.
+    pub fn item_anim(&self, slot: u32) -> Option<AnimDesc> {
+        (0..self.anim_count)
+            .filter_map(|i| self.anim(i))
+            .find(|a| a.fighter == AnimDesc::ITEM && a.slot == slot)
     }
 
     /// A manager effect's DObj transform animation in source inventory order.
