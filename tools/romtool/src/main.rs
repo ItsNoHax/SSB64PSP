@@ -7801,10 +7801,12 @@ fn jumptest(path: &Path, opts: &[&str]) -> Res {
     let p1 = pack.spawn(&stage, 0).ok_or("no spawn 0")?;
     let mut f = Fighter::new(FighterKind::Mario, 0, 3);
     f.pos = ssb_engine::math::Vec3::new(p1.x as f32, p1.y as f32, 0.0);
+    f.facing = ssb_game::fighter::Facing::at_spawn_x(f.pos.x);
 
     let p2 = pack.spawn(&stage, 1).ok_or("no spawn 1")?;
     let mut dummy = Fighter::new(FighterKind::Mario, 1, 3);
     dummy.pos = ssb_engine::math::Vec3::new(p2.x as f32, p2.y as f32, 0.0);
+    dummy.facing = ssb_game::fighter::Facing::at_spawn_x(dummy.pos.x);
     dummy.place_on_stage(floors());
     println!(
         "target (dummy spawn 1, settled): x={} y={}",

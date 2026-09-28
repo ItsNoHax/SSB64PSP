@@ -30,7 +30,6 @@ or evidence record covers it.
 | Twister and Barrel Cannon clips | Both statuses keep the previous pose; `nFTCommonMotionTwister` needs a shared slot, and TaruCann has none (`-1`) | RE-356 |
 | Yoshi Egg Lay victim collision and effect | Laying omits the wall/ceiling sweep, the damaging-floor escape is not wired to the ported ground hits (RE-356), and the break effect is represented by a 10-frame clock | RE-337 |
 | Fireball spin | `wpMarioFireballProcUpdate` adds `rotate_speed` (20° Mario, 25° Luigi) to the DObj X rotation each frame; the port draws only the ±90° yaw. The DObj's second transform kind (0x47) is an undecoded battle-scene custom matrix function | RE-372 |
-| Spawn facing | `sc1PTrainingModeFuncStart` faces a fighter left when its spawn `x >= 0`; `FighterScene::at_spawn` always faces right, so the Dream Land player (x = 0) and the Peach's Castle dummy face the wrong way. The fix changes nearly every Training golden and the scripted routes | RE-386 |
 | Save data and unlocks | No save data: Luigi, Captain Falcon, Ness, Jigglypuff and Mushroom Kingdom stay locked on the selects; the character select draws plain portraits and pucks without models, names or the ready banner | RE-385, RE-386 |
 | Other item kinds and item presentation | Bomb and PK Fire use the shared item system; heavy/swing/shoot/consume items, team checks, item models, effects, sound, spin, throw-turn joint yaw and pickup arrows remain | RE-352 |
 

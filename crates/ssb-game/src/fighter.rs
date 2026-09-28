@@ -142,6 +142,18 @@ pub enum Facing {
 }
 
 impl Facing {
+    /// `desc.lr = (desc.pos.x >= 0.0F) ? -1 : +1`: a fighter starting at
+    /// `x` faces the stage's centre (`sc1PTrainingModeFuncStart`; also the
+    /// 1P game, bonus, demo and How to Play starts). VS faces the nearest
+    /// opponent instead (`scVSBattleGetStartPlayerLR`).
+    pub fn at_spawn_x(x: f32) -> Facing {
+        if x >= 0.0 {
+            Facing::Left
+        } else {
+            Facing::Right
+        }
+    }
+
     pub fn sign(self) -> f32 {
         match self {
             Facing::Left => -1.0,
@@ -1487,6 +1499,13 @@ impl Fighter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_spawn_at_or_right_of_centre_faces_left() {
+        assert_eq!(Facing::at_spawn_x(0.0), Facing::Left);
+        assert_eq!(Facing::at_spawn_x(1110.0), Facing::Left);
+        assert_eq!(Facing::at_spawn_x(-1397.0), Facing::Right);
+    }
 
     #[test]
     fn joint_offset_uses_rotated_and_scaled_axes() {
