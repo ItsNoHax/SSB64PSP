@@ -120,6 +120,9 @@ pub enum StageObj {
     TaruCann,
     /// A Mushroom Kingdom scale platform, 0 left, 1 right.
     Scale(u8),
+    /// The Mushroom Kingdom pulley and strings
+    /// (`llGRInishieMapScaleDObjDesc`), five nodes in tree order.
+    ScaleStrings,
     /// The Saffron City gate.
     Gate,
     /// Peach's Castle's animated ground GObj that carries the Bumper.
@@ -206,6 +209,15 @@ pub trait StageObjects {
     }
     /// `DObjGetStruct(gobj)->translate.vec.f.y = y`.
     fn set_translate_y(&mut self, _obj: StageObj, _y: f32) {}
+    /// `DObjGetStruct(gobj)->translate.vec.f = pos`.
+    fn set_translate(&mut self, _obj: StageObj, _pos: Vec3) {}
+    /// Node `node`'s translation in tree order (`map_dobjs[node]`), or
+    /// `None` when the runtime has no such object.
+    fn node_translate(&self, _obj: StageObj, _node: u8) -> Option<Vec3> {
+        None
+    }
+    /// `map_dobjs[node]->translate.vec.f.y = y`.
+    fn set_node_translate_y(&mut self, _obj: StageObj, _node: u8, _y: f32) {}
     /// `DObjGetStruct(gobj)->child->translate`, or `None` when the runtime
     /// has no such object.
     fn child_translate(&self, _obj: StageObj) -> Option<Vec3> {

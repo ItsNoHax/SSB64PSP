@@ -15,6 +15,20 @@ struct Clocks {
     frames: Vec<(StageObj, f32, f32)>,
     played: Vec<StageAnim>,
     barrel: Vec3,
+    /// Each object's root translation as the controller last wrote it.
+    placed: Vec<(StageObj, Vec3)>,
+}
+
+impl Clocks {
+    fn placed(&self, obj: StageObj) -> Option<Vec3> {
+        self.placed.iter().find(|(o, _)| *o == obj).map(|(_, t)| *t)
+    }
+    fn place(&mut self, obj: StageObj) -> &mut Vec3 {
+        if self.placed(obj).is_none() {
+            self.placed.push((obj, Vec3::ZERO));
+        }
+        &mut self.placed.iter_mut().find(|(o, _)| *o == obj).unwrap().1
+    }
 }
 
 fn obj_of(anim: StageAnim) -> StageObj {
@@ -74,6 +88,12 @@ impl StageObjects for Clocks {
     }
     fn translate(&self, _obj: StageObj) -> Vec3 {
         self.barrel
+    }
+    fn set_translate(&mut self, obj: StageObj, pos: Vec3) {
+        *self.place(obj) = pos;
+    }
+    fn set_translate_y(&mut self, obj: StageObj, y: f32) {
+        self.place(obj).y = y;
     }
 }
 
@@ -394,6 +414,8 @@ fn clouds_sink_under_weight_then_evaporate_and_return() {
     let mut clocks = Clocks::with_len(1.0);
     let mut y = yoster::Yoster::new(&mut groups, &mut clocks);
     assert_eq!(groups[1].status, crate::map::GroupStatus::On);
+    // Each cloud object starts at its group (RE-365).
+    assert_eq!(clocks.placed(StageObj::Cloud(0)), Some(groups[1].translate));
     let line_group = |line: u16| (line == 7).then_some(1u8);
     let surfaces: [MapSurface; 0] = [];
     let map = query(&surfaces, &line_group);
@@ -410,6 +432,7 @@ fn clouds_sink_under_weight_then_evaporate_and_return() {
     assert_eq!(frames, 120 + 1);
     assert_eq!(y.clouds[0].pressure, 180.0);
     assert_eq!(groups[1].translate.y, 800.0 - 180.0);
+    assert_eq!(clocks.placed(StageObj::Cloud(0)), Some(groups[1].translate));
     clocks.advance();
     y.tick(&[&mut f], &mut groups, &mut clocks, &map);
     assert_eq!(groups[1].status, crate::map::GroupStatus::Off);

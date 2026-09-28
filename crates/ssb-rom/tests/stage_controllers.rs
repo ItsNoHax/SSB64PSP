@@ -232,19 +232,26 @@ fn packed_controller_poses_match_the_rom() {
         assert_eq!(map_head, asset.map_head);
         assert_eq!(packed.object.source_file, nodes_file);
         let file = archive.load(nodes_file).unwrap();
-        let graph = find_scene_graphs(&file)
-            .into_iter()
-            .find(|graph| graph.offset == asset.graph)
-            .unwrap();
-        let mut poses: Vec<_> = graph
-            .nodes
-            .iter()
-            .map(|node| JointPose {
-                rotate: node.desc.rotate,
-                translate: node.desc.translate,
-                scale: node.desc.scale,
-            })
-            .collect();
+        // A display-list object is one `DObj` at rest (RE-365).
+        let mut poses: Vec<_> = match asset.build {
+            g::Build::Desc => find_scene_graphs(&file)
+                .into_iter()
+                .find(|graph| graph.offset == asset.graph)
+                .unwrap()
+                .nodes
+                .iter()
+                .map(|node| JointPose {
+                    rotate: node.desc.rotate,
+                    translate: node.desc.translate,
+                    scale: node.desc.scale,
+                })
+                .collect(),
+            g::Build::Dl | g::Build::Empty => vec![JointPose {
+                rotate: [0.0; 3],
+                translate: [0.0; 3],
+                scale: [1.0; 3],
+            }],
+        };
         let mut joints = vec![None::<StageJoint>; poses.len()];
         let mut flags = vec![0u16; poses.len()];
         let mut clock = 0.0;
@@ -745,7 +752,7 @@ fn packed_ground_materials_replay_the_rom() {
             continue;
         };
         let asset = &g::MAT_ANIMS[slot];
-        let object = asset.object.unwrap();
+        let object = asset.object;
         let desc = descs.iter().find(|d| d.slot == slot as u32).unwrap();
         let file = archive.load(desc.source_file).unwrap();
         let joints: Vec<AnimJoint> = (0..desc.joint_count)
@@ -847,17 +854,353 @@ fn packed_cloud_fades_end_when_the_rom_replay_does() {
             rom_ticks += 1;
             assert!(rom_ticks < 1000);
         }
-        assert!((0..g::CLOUD_COUNT).all(|c| objects.cloud_idle(c)));
+        assert!((0..g::CLOUD_COUNT).all(|c| objects.cloud_idle(&pack, c)));
         objects.play_cloud(&pack, 1, mat);
-        assert!(!objects.cloud_idle(1));
-        assert!(objects.cloud_idle(0) && objects.cloud_idle(2));
+        assert!(!objects.cloud_idle(&pack, 1));
+        assert!(objects.cloud_idle(&pack, 0) && objects.cloud_idle(&pack, 2));
         let mut ticks = 0u32;
-        while !objects.cloud_idle(1) {
+        while !objects.cloud_idle(&pack, 1) {
             objects.advance(&pack).unwrap();
             ticks += 1;
             assert!(ticks < 1000);
         }
         assert_eq!(ticks, rom_ticks, "{}", g::MAT_ANIMS[mat].name);
         assert_eq!(ticks, 101, "{}", g::MAT_ANIMS[mat].name);
+    }
+}
+
+/// Opens the generated pack and the ROM archive, or `None` when either is
+/// missing.
+fn pack_and_rom() -> Option<(Vec<u8>, Vec<u8>)> {
+    let rom = std::env::var_os("SSB64_ROM")?;
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    Some((std::fs::read(path).ok()?, std::fs::read(rom).ok()?))
+}
+
+/// The runtime port `psp-runtime::scene::StageObjectsPort` implements,
+/// for the display-list objects (RE-365).
+struct ListPort<'a, 'p> {
+    pack: &'a ssb_rom::pack::Pack<'p>,
+    objects: &'a mut ssb_rom::ground_obj::GroundObjects,
+}
+
+impl ListPort<'_, '_> {
+    fn key(obj: StageObj) -> (u8, u8) {
+        use ssb_rom::ground_obj as g;
+        match obj {
+            StageObj::Cloud(i) => (g::CLOUD, i),
+            StageObj::Scale(i) => (g::SCALE_PLATFORM, i),
+            StageObj::ScaleStrings => (g::SCALE_STRINGS, 0),
+            StageObj::CastleGround => (g::CASTLE_GROUND, 0),
+            _ => panic!("not a display-list object: {obj:?}"),
+        }
+    }
+    fn get_mut(&mut self, obj: StageObj) -> &mut ssb_rom::ground_obj::GroundObject {
+        let (a, i) = Self::key(obj);
+        self.objects.instance_mut(a, i).expect("object packed")
+    }
+}
+
+impl StageObjects for ListPort<'_, '_> {
+    fn play(&mut self, anim: StageAnim) {
+        use ssb_rom::ground_obj as g;
+        match anim {
+            StageAnim::CloudSolid(i) => {
+                self.objects
+                    .play_cloud(self.pack, i as usize, g::CLOUD_SOLID_MAT)
+            }
+            StageAnim::CloudEvaporate(i) => {
+                self.objects
+                    .play_cloud(self.pack, i as usize, g::CLOUD_EVAPORATE_MAT)
+            }
+            StageAnim::ScaleRetract(i) => self
+                .objects
+                .play_on(self.pack, g::SCALE_RETRACT, i)
+                .unwrap(),
+            StageAnim::CastleGround => self.objects.play(self.pack, g::CASTLE_GROUND_ANIM).unwrap(),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    fn stop(&mut self, obj: StageObj) {
+        self.get_mut(obj).stop();
+    }
+    fn mat_anim_idle(&self, obj: StageObj) -> bool {
+        match obj {
+            StageObj::Cloud(i) => self.objects.cloud_idle(self.pack, i as usize),
+            _ => true,
+        }
+    }
+    fn translate(&self, obj: StageObj) -> ssb_engine::math::Vec3 {
+        let (a, i) = Self::key(obj);
+        let [x, y, z] = self.objects.instance(a, i).unwrap().translate();
+        ssb_engine::math::Vec3::new(x, y, z)
+    }
+    fn set_translate_y(&mut self, obj: StageObj, y: f32) {
+        self.get_mut(obj).set_translate_y(y);
+    }
+    fn set_translate(&mut self, obj: StageObj, pos: ssb_engine::math::Vec3) {
+        self.get_mut(obj).set_translate([pos.x, pos.y, pos.z]);
+    }
+    fn node_translate(&self, obj: StageObj, node: u8) -> Option<ssb_engine::math::Vec3> {
+        let (a, i) = Self::key(obj);
+        let [x, y, z] = self.objects.instance(a, i)?.node_translate(node as usize)?;
+        Some(ssb_engine::math::Vec3::new(x, y, z))
+    }
+    fn set_node_translate_y(&mut self, obj: StageObj, node: u8, y: f32) {
+        self.get_mut(obj).set_node_translate_y(node as usize, y);
+    }
+}
+
+/// RE-365: the objects the Yoshi's Island, Mushroom Kingdom and Castle
+/// controllers build from display lists pack as their controllers make
+/// them. Each cloud is `llGRYosterMapMapHead` (four nodes) with a
+/// `Kind48` leaf drawing `llGRYosterMapCloudDisplayList` under each of the
+/// three children, and the leaf's primitives carry the `MatAnimDesc` both
+/// cloud fades restart. The scale strings are the five-node
+/// `llGRInishieMapScaleDObjDesc`, each platform one node drawing
+/// `llGRInishieMapMapHead`, and the Castle ground one node with no mesh.
+#[test]
+fn packed_display_list_objects_build_as_the_controllers_do() {
+    use ssb_rom::ground_obj::{self as g, GroundObjects};
+    use ssb_rom::pack::{AnimDesc, NodeDesc, Pack};
+    let Some((bytes, _)) = pack_and_rom() else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    let meshes = |o: &ssb_rom::pack::ObjectDesc| {
+        (0..o.node_count)
+            .filter_map(|n| pack.node(o.first_node + n))
+            .filter_map(|n| pack.mesh(n.mesh))
+            .count()
+    };
+
+    let clouds = GroundObjects::new(&pack, g::YOSTER_FILE);
+    assert_eq!(clouds.iter().count(), g::CLOUD_COUNT);
+    let fade_targets: Vec<u32> = (0..pack.anim_count())
+        .filter_map(|i| pack.anim(i))
+        .filter(|a| {
+            a.fighter == AnimDesc::GROUND_MAT
+                && (a.slot as usize == g::CLOUD_SOLID_MAT
+                    || a.slot as usize == g::CLOUD_EVAPORATE_MAT)
+        })
+        .flat_map(|a| (0..a.joint_count).map(move |j| a.first_joint + j))
+        .map(|j| pack.anim_joint(j).unwrap().node)
+        .collect();
+    assert_eq!(fade_targets.len(), 2);
+    assert_eq!(fade_targets[0], fade_targets[1]);
+    for c in 0..g::CLOUD_COUNT as u8 {
+        let cloud = clouds.instance(g::CLOUD, c).expect("cloud packed");
+        assert_eq!(cloud.node_count(), 4);
+        assert_eq!(meshes(&cloud.object), 0);
+        assert_eq!(cloud.leaf_parents(&pack).collect::<Vec<_>>(), [1, 2, 3]);
+        let leaf = cloud.leaf.expect("leaf packed");
+        assert_eq!(leaf.node_count, 1);
+        let node = pack.node(leaf.first_node).unwrap();
+        assert_ne!(node.flags & NodeDesc::FLAG_BILLBOARD, 0);
+        assert_ne!(node.flags & NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED, 0);
+        let mesh = pack.mesh(node.mesh).expect("cloud mesh");
+        let carried: Vec<u32> = (0..mesh.prim_count)
+            .filter_map(|p| pack.prim(mesh.first_prim + p))
+            .map(|p| p.mat_anim)
+            .collect();
+        assert!(carried.contains(&fade_targets[0]), "{carried:?}");
+        // Nodes 2 and 3 rest at scale 1.093, but only their translation
+        // reaches a matrix (`nGCMatrixKindTra`).
+        assert!(cloud.pose(2).unwrap().scale[0] > 1.09);
+        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
+        cloud.compose(&pack, &mut posed);
+        for m in &posed {
+            let col = |c: usize| (0..3).map(|r| m.0[c * 4 + r].powi(2)).sum::<f32>().sqrt();
+            assert!((col(0) - 1.0).abs() < 1e-6 && (col(1) - 1.0).abs() < 1e-6);
+        }
+    }
+
+    let scales = GroundObjects::new(&pack, g::INISHIE_FILE);
+    let strings = scales.get(g::SCALE_STRINGS).expect("strings packed");
+    assert_eq!(strings.node_count(), 5);
+    assert_eq!(meshes(&strings.object), 5);
+    for i in 0..2 {
+        let platform = scales
+            .instance(g::SCALE_PLATFORM, i)
+            .expect("platform packed");
+        assert_eq!(platform.node_count(), 1);
+        assert_eq!(meshes(&platform.object), 1);
+    }
+    assert!(scales.has(g::SCALE_RETRACT));
+
+    let castle = GroundObjects::new(&pack, g::CASTLE_FILE);
+    let ground = castle.get(g::CASTLE_GROUND).expect("castle ground packed");
+    assert_eq!(ground.node_count(), 1);
+    assert_eq!(meshes(&ground.object), 0);
+    assert!(castle.has(g::CASTLE_GROUND_ANIM));
+}
+
+/// RE-365: the Castle ground root follows `map_nodes`' own table, replayed
+/// on the archive file: X sweeps 0, -1050, 1050, 0 and loops.
+#[test]
+fn packed_castle_ground_replays_the_rom() {
+    use ssb_game::stage::castle::Castle;
+    use ssb_game::stage::{StageInit, StageKind};
+    use ssb_rom::ground_obj::{self as g, GroundObjects};
+    use ssb_rom::pack::Pack;
+    let Some((bytes, rom)) = pack_and_rom() else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    let info = ssb_rom::rom::identify(&rom).unwrap();
+    let archive = Archive::open(&rom, info.region).unwrap();
+    // `map_nodes` for `llGRCastleMapMapHead` (0x0).
+    let file = archive.load(156).unwrap();
+    let script = joint_scripts(&file.data, 0x0, 1)[0].unwrap();
+    let mut r = StageJoint::start_changed(script, 0.0);
+    let mut pose = JointPose::default();
+
+    let mut objects = GroundObjects::new(&pack, g::CASTLE_FILE);
+    let init = StageInit {
+        kind: StageKind::Castle,
+        map_objects: &[],
+        bound_bottom: 0.0,
+        hazard_attack: None,
+        hazard_throw: None,
+        acid_surface_y: 0.0,
+    };
+    let mut castle = Castle::new(
+        &init,
+        &mut ListPort {
+            pack: &pack,
+            objects: &mut objects,
+        },
+    );
+    r.tick(&file.data, 1.0, &mut pose).unwrap();
+    let (mut low, mut high) = (f32::MAX, f32::MIN);
+    for tick in 0..6000 {
+        if tick > 0 {
+            objects.advance(&pack).unwrap();
+            r.tick(&file.data, 1.0, &mut pose).unwrap();
+        }
+        let x = objects.get(g::CASTLE_GROUND).unwrap().translate()[0];
+        assert_eq!(x.to_bits(), pose.translate[0].to_bits(), "tick {tick}");
+        castle.bumper = Some(0);
+        castle.tick(&ListPort {
+            pack: &pack,
+            objects: &mut objects,
+        });
+        assert_eq!(castle.bumper_x, x + castle.bumper_pos.x);
+        low = low.min(x);
+        high = high.max(x);
+    }
+    assert_eq!((low, high), (-1050.0, 1050.0));
+}
+
+/// RE-365: `llGRInishieMapScaleRetractAnimJoint` blinks one platform's
+/// subtree (flags 2 then 0, two ticks each) as its ROM replay does, and
+/// the controller's stop clears it. The Inishie controller places both
+/// platforms at their map objects and hangs each string node from its
+/// platform.
+#[test]
+fn packed_scales_follow_the_inishie_controller() {
+    use ssb_game::stage::inishie::{Inishie, STRING_NODES};
+    use ssb_game::stage::{MapObject, StageInit, StageKind};
+    use ssb_rom::ground_obj::{self as g, GroundObjects};
+    use ssb_rom::pack::Pack;
+    let Some((bytes, rom)) = pack_and_rom() else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    let info = ssb_rom::rom::identify(&rom).unwrap();
+    let archive = Archive::open(&rom, info.region).unwrap();
+    let file = archive.load(155).unwrap();
+
+    let mut objects = GroundObjects::new(&pack, g::INISHIE_FILE);
+    objects.play_on(&pack, g::SCALE_RETRACT, 1).unwrap();
+    let mut r = StageJoint::start_changed(0x734, 0.0);
+    let mut pose = JointPose::default();
+    r.tick(&file.data, 1.0, &mut pose).unwrap();
+    let mut hidden = 0;
+    // Tick 40 ends hidden, so the stop below has a flag to clear.
+    for tick in 0..41 {
+        if tick > 0 {
+            objects.advance(&pack).unwrap();
+            r.tick(&file.data, 1.0, &mut pose).unwrap();
+        }
+        let platform = objects.instance(g::SCALE_PLATFORM, 1).unwrap();
+        assert_eq!(platform.flags(0), r.flags, "tick {tick}");
+        assert_eq!(platform.visible(&pack, 0), r.flags & 2 == 0);
+        hidden += usize::from(!platform.visible(&pack, 0));
+        assert!(objects
+            .instance(g::SCALE_PLATFORM, 0)
+            .unwrap()
+            .visible(&pack, 0));
+    }
+    assert_eq!(hidden, 21);
+    assert_eq!(objects.instance(g::SCALE_PLATFORM, 1).unwrap().flags(0), 2);
+    objects.instance_mut(g::SCALE_PLATFORM, 1).unwrap().stop();
+    for _ in 0..4 {
+        objects.advance(&pack).unwrap();
+        let platform = objects.instance(g::SCALE_PLATFORM, 1).unwrap();
+        assert_eq!(platform.flags(0), 0);
+    }
+
+    let s = pack
+        .stage(pack.stage_of_file(g::INISHIE_FILE).unwrap())
+        .unwrap();
+    let map_objects: Vec<MapObject> = pack
+        .stage_points(&s)
+        .map(|p| MapObject {
+            kind: p.kind,
+            pos: ssb_engine::math::Vec3::new(p.x as f32, p.y as f32, 0.0),
+        })
+        .collect();
+    let init = StageInit {
+        kind: StageKind::Inishie,
+        map_objects: &map_objects,
+        bound_bottom: s.bounds.bottom as f32,
+        hazard_attack: None,
+        hazard_throw: None,
+        acid_surface_y: 0.0,
+    };
+    let mut objects = GroundObjects::new(&pack, g::INISHIE_FILE);
+    let mut groups = vec![ssb_game::map::MapGroup::default(); 4];
+    let mut inishie = Inishie::new(
+        &init,
+        &mut groups,
+        &mut ListPort {
+            pack: &pack,
+            objects: &mut objects,
+        },
+    );
+    // `map_dobjs[0].y + map_dobjs[3].y` and `map_dobjs[0].y + map_dobjs[1].y`.
+    assert_eq!(inishie.string_length[0], 2010.0 + -57.750_09);
+    assert_eq!(inishie.string_length[1], 2010.0 + -57.751_007);
+    let line_group = |_: u16| None;
+    inishie.tick(
+        &[],
+        &mut groups,
+        &mut ListPort {
+            pack: &pack,
+            objects: &mut objects,
+        },
+        &ssb_game::stage::MapQuery {
+            surfaces: || core::iter::empty::<ssb_game::weapon::MapSurface>(),
+            line_group: &line_group,
+        },
+        false,
+        &mut ssb_game::stage::Registry::default(),
+    );
+    let strings = objects.get(g::SCALE_STRINGS).unwrap();
+    for i in 0..2u8 {
+        let platform = objects.instance(g::SCALE_PLATFORM, i).unwrap();
+        let t = platform.translate();
+        assert_eq!(t[0], inishie.platform[i as usize].x);
+        assert_eq!(t[1], inishie.platform[i as usize].y);
+        assert_ne!(t[1], 0.0);
+        // The string node's world Y is its platform's.
+        let node = STRING_NODES[i as usize] as usize;
+        let parent = if node == 4 { 3 } else { 1 };
+        let world = strings.node_translate(0).unwrap()[1]
+            + strings.node_translate(parent).unwrap()[1]
+            + strings.node_translate(node).unwrap()[1];
+        assert!((world - t[1]).abs() < 1e-2, "{world} {}", t[1]);
     }
 }

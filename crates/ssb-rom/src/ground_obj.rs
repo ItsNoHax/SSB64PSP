@@ -29,9 +29,15 @@
 //! [`MAT_ANIMS`] index ([`crate::pack::AnimDesc::GROUND_MAT`]). Each object
 //! plays them on its own clock ([`GroundObject::materials`]); a primitive
 //! whose script has not started draws its `MObjSub` rest material.
+//!
+//! Not every controller object comes from a `DObjDesc` array ([`Build`]).
+//! The Mushroom Kingdom platforms are one `DObj` made straight from a
+//! display list, the Castle ground is one `DObj` with none, and each Yoshi's
+//! Island cloud adds a display-list `DObj` under every child of its graph
+//! ([`Leaf`]). The pack builder gives each of these a one-node graph keyed
+//! by the label the controller passes (RE-365).
 
 use crate::figatree::JointPose;
-use crate::matanim::{MatAnimError, MaterialJoint};
 use crate::objanim::{AnimError, StageJoint};
 use crate::pack::{AnimDesc, AnimJoint, ObjectDesc, Pack, MODEL_SCALE};
 use crate::scene::Mat4;
@@ -49,9 +55,52 @@ pub struct GroundObjectAsset {
     /// The object's `DObjDesc` array.
     pub graph: u32,
     /// The display link the controller draws it on (`gcAddGObjDisplay`).
-    /// Stage layers draw on 4, 6, 13 and 17 (`dGRDisplayDescs`).
+    /// Stage layers draw on 4, 6, 13 and 17 (`dGRDisplayDescs`);
+    /// [`NO_LINK`] for an object with no display.
     pub dl_link: u8,
+    /// How the controller makes the object's `DObj`s from `graph`.
+    pub build: Build,
+    /// A display-list `DObj` added under every child of the root.
+    pub leaf: Option<Leaf>,
+    /// Identical objects the controller makes from the same labels.
+    pub instances: u8,
+    /// Every `DObj` carries only a `nGCMatrixKindTra` matrix, so its
+    /// rotation and scale never reach a drawn matrix.
+    pub translate_only: bool,
 }
+
+/// An object with no display (`gcAddGObjDisplay` is never called).
+pub const NO_LINK: u8 = u8::MAX;
+
+/// How a controller builds an object's `DObj`s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Build {
+    /// `gcSetupCustomDObjs` / `grModelSetupGroundDObjs` on the `DObjDesc`
+    /// array at `graph`.
+    Desc,
+    /// `gcAddDObjForGObj(gobj, graph)`: one root `DObj` drawing the display
+    /// list at `graph`.
+    Dl,
+    /// `gcAddDObjForGObj(gobj, NULL)`: one root `DObj` with no display
+    /// list. `graph` only keys the packed node.
+    Empty,
+}
+
+/// `gcAddChildForDObj(child, dl)` on every child of the root, each with
+/// `nGCMatrixKindTra` and `nGCMatrixKind48` matrices and the `MObj`s of
+/// `lbCommonAddMObjForTreeDObjs(leaf, mobjsub)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Leaf {
+    /// The display list; also the key of its packed one-node graph.
+    pub dl: u32,
+    /// The `MObjSub ***` table for the one-node tree.
+    pub mobjsub: u32,
+}
+
+/// The `DObjDesc::id` the pack builder gives a [`Leaf`]: depth 0 with the
+/// `0x2000` bit, which `gcSetupCommonDObjs` turns into the same
+/// `nGCMatrixKindTra` + `nGCMatrixKind48` pair the controller adds.
+pub const LEAF_DESC_ID: u32 = 0x2000;
 
 /// Which `DObj`s an animation drives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +132,9 @@ pub const YAMABUKI_FILE: u32 = 0x108;
 pub const ZEBES_FILE: u32 = 0x101;
 /// `llGRYosterMapFileID`.
 pub const YOSTER_FILE: u32 = 0x107;
+/// `llGRInishieMapFileID`, `llGRCastleMapFileID`.
+pub const INISHIE_FILE: u32 = 0x104;
+pub const CASTLE_FILE: u32 = 0x103;
 
 /// `llGRPupupuMapMapHead`.
 const PUPUPU_HEAD: u32 = 0x10F0;
@@ -94,59 +146,75 @@ pub const FLOWERS_FRONT: u8 = 3;
 pub const TARUCANN: u8 = 4;
 pub const GATE: u8 = 5;
 pub const ACID: u8 = 6;
+pub const CLOUD: u8 = 7;
+pub const SCALE_STRINGS: u8 = 8;
+pub const SCALE_PLATFORM: u8 = 9;
+pub const CASTLE_GROUND: u8 = 10;
+
+/// `llGRInishieMapMapHead`: also the platform display list.
+const INISHIE_HEAD: u32 = 0x5F0;
+
+const fn desc(
+    name: &'static str,
+    gr_file: u32,
+    map_head: u32,
+    graph: u32,
+    dl_link: u8,
+) -> GroundObjectAsset {
+    GroundObjectAsset {
+        name,
+        gr_file,
+        map_head,
+        graph,
+        dl_link,
+        build: Build::Desc,
+        leaf: None,
+        instances: 1,
+        translate_only: false,
+    }
+}
 
 /// `grPupupuInitAll`, `grJungleMakeTaruCann`, `grYamabukiMakeGate`,
-/// `grZebesMakeAcid`.
-pub const OBJECTS: [GroundObjectAsset; 7] = [
-    GroundObjectAsset {
-        name: "WhispyEyes",
-        gr_file: PUPUPU_FILE,
-        map_head: PUPUPU_HEAD,
-        graph: 0x10F0,
-        dl_link: 4,
-    },
-    GroundObjectAsset {
-        name: "WhispyMouth",
-        gr_file: PUPUPU_FILE,
-        map_head: PUPUPU_HEAD,
-        graph: 0x1770,
-        dl_link: 4,
-    },
-    GroundObjectAsset {
-        name: "FlowersBack",
-        gr_file: PUPUPU_FILE,
-        map_head: PUPUPU_HEAD,
-        graph: 0x2A80,
-        dl_link: 4,
-    },
-    GroundObjectAsset {
-        name: "FlowersFront",
-        gr_file: PUPUPU_FILE,
-        map_head: PUPUPU_HEAD,
-        graph: 0x31F8,
-        dl_link: 16,
-    },
-    GroundObjectAsset {
-        name: "TaruCann",
-        gr_file: JUNGLE_FILE,
-        map_head: 0xA98,
-        graph: 0xA98,
-        dl_link: 6,
-    },
-    GroundObjectAsset {
-        name: "Gate",
-        gr_file: YAMABUKI_FILE,
-        map_head: 0x8A0,
-        graph: 0x8A0,
-        dl_link: 6,
-    },
+/// `grZebesMakeAcid`, `grYosterInitAll`, `grInishieMakeScale`,
+/// `grCastleInitAll`.
+pub const OBJECTS: [GroundObjectAsset; 11] = [
+    desc("WhispyEyes", PUPUPU_FILE, PUPUPU_HEAD, 0x10F0, 4),
+    desc("WhispyMouth", PUPUPU_FILE, PUPUPU_HEAD, 0x1770, 4),
+    desc("FlowersBack", PUPUPU_FILE, PUPUPU_HEAD, 0x2A80, 4),
+    desc("FlowersFront", PUPUPU_FILE, PUPUPU_HEAD, 0x31F8, 16),
+    desc("TaruCann", JUNGLE_FILE, 0xA98, 0xA98, 6),
+    desc("Gate", YAMABUKI_FILE, 0x8A0, 0x8A0, 6),
     // `llGRZebesMapAcidDObjDesc` is both the map head and the graph.
+    desc("Acid", ZEBES_FILE, 0xB08, 0xB08, 12),
+    // `llGRYosterMapMapHead` with `nGCMatrixKindTra` on every node, then
+    // `llGRYosterMapCloudDisplayList` under each of the three children.
     GroundObjectAsset {
-        name: "Acid",
-        gr_file: ZEBES_FILE,
-        map_head: 0xB08,
-        graph: 0xB08,
-        dl_link: 12,
+        leaf: Some(Leaf {
+            dl: 0x580,
+            mobjsub: 0x4B8,
+        }),
+        instances: CLOUD_COUNT as u8,
+        translate_only: true,
+        ..desc("Cloud", YOSTER_FILE, YOSTER_HEAD, YOSTER_HEAD, 6)
+    },
+    // `llGRInishieMapScaleDObjDesc` with `dGRInishieScaleTransformKinds`:
+    // `nGCMatrixKindTra` on all five nodes.
+    GroundObjectAsset {
+        translate_only: true,
+        ..desc("ScaleStrings", INISHIE_FILE, INISHIE_HEAD, 0x380, 6)
+    },
+    // `gcAddDObjForGObj(llGRInishieMapMapHead)` with `nGCMatrixKindTra`.
+    GroundObjectAsset {
+        build: Build::Dl,
+        instances: 2,
+        translate_only: true,
+        ..desc("ScalePlatform", INISHIE_FILE, INISHIE_HEAD, INISHIE_HEAD, 6)
+    },
+    // `gcAddDObjForGObj(NULL)`, animated by the table `map_nodes` names;
+    // it has no display.
+    GroundObjectAsset {
+        build: Build::Empty,
+        ..desc("CastleGround", CASTLE_FILE, 0x0, 0x0, NO_LINK)
     },
 ];
 
@@ -161,7 +229,7 @@ const fn table(name: &'static str, object: u8, script: u32) -> GroundAnimAsset {
 
 /// Every animation the ported controllers start. The order is the index
 /// the lookup functions below compute; do not reorder.
-pub const ANIMS: [GroundAnimAsset; 30] = [
+pub const ANIMS: [GroundAnimAsset; 32] = [
     // `dGRPupupuWhispyEyesAnims[lr][status][0]`: Turn, Blink.
     table("WhispyEyesLeftTurn", WHISPY_EYES, 0x11A0),
     table("WhispyEyesLeftBlink", WHISPY_EYES, 0x12B0),
@@ -210,16 +278,28 @@ pub const ANIMS: [GroundAnimAsset; 30] = [
     table("GateClose", GATE, 0xA20),
     // `grZebesMakeAcid`: `llGRZebesMapAcidAnimJoint`.
     table("Acid", ACID, 0xB90),
+    // `grInishieScaleUpdateStep`: `llGRInishieMapScaleRetractAnimJoint` on
+    // one platform's only `DObj`.
+    GroundAnimAsset {
+        name: "ScaleRetract",
+        object: SCALE_PLATFORM,
+        script: 0x734,
+        target: AnimTarget::Node(0),
+    },
+    // `grCastleInitAll`: the table at `map_nodes` itself.
+    table("CastleGround", CASTLE_GROUND, 0x0),
 ];
 
 /// One material-animation table a controller starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroundMatAnimAsset {
     pub name: &'static str,
-    /// Index into [`OBJECTS`], or `None` for a Yoshi's Island cloud: its
-    /// `DObj` is built from a display list, not a packed graph, so its
-    /// script is played for the controller's `anim_wait` test only.
-    pub object: Option<u8>,
+    /// Index into [`OBJECTS`].
+    pub object: u8,
+    /// The packed graph whose `MObj`s the table drives: the object's own,
+    /// or its [`Leaf`]'s for a cloud (`lbCommonAddTreeDObjsAnimAll` on the
+    /// leaf `DObj`).
+    pub graph: u32,
     /// The `GR*Map` file and the label its controller subtracts from
     /// `map_nodes`, as in [`GroundObjectAsset`].
     pub gr_file: u32,
@@ -233,19 +313,13 @@ const fn mat(name: &'static str, object: u8, table: u32) -> GroundMatAnimAsset {
     let asset = &OBJECTS[object as usize];
     GroundMatAnimAsset {
         name,
-        object: Some(object),
+        object,
+        graph: match asset.leaf {
+            Some(leaf) => leaf.dl,
+            None => asset.graph,
+        },
         gr_file: asset.gr_file,
         map_head: asset.map_head,
-        table,
-    }
-}
-
-const fn cloud_mat(name: &'static str, table: u32) -> GroundMatAnimAsset {
-    GroundMatAnimAsset {
-        name,
-        object: None,
-        gr_file: YOSTER_FILE,
-        map_head: YOSTER_HEAD,
         table,
     }
 }
@@ -271,8 +345,8 @@ pub const MAT_ANIMS: [GroundMatAnimAsset; 13] = [
     // `grZebesMakeAcid`: `llGRZebesMapAcidMatAnimJoint`.
     mat("Acid", ACID, 0xBD0),
     // `dGRYosterCloudMatAnimJoints`.
-    cloud_mat("CloudSolid", 0x670),
-    cloud_mat("CloudEvaporate", 0x690),
+    mat("CloudSolid", CLOUD, 0x670),
+    mat("CloudEvaporate", CLOUD, 0x690),
 ];
 
 pub const CLOUD_SOLID_MAT: usize = 11;
@@ -313,12 +387,15 @@ pub const TARUCANN_SHOOT: usize = 26;
 pub const GATE_OPEN: usize = 27;
 pub const GATE_CLOSE: usize = 28;
 pub const ACID_ANIM: usize = 29;
+pub const SCALE_RETRACT: usize = 30;
+pub const CASTLE_GROUND_ANIM: usize = 31;
 
 /// Nodes one controller object may have, counting the extra leaves the
 /// packer adds for display lists a node could not carry (identity locals
 /// under their node). The largest ported graph (the front flower bed) has 10.
 pub const MAX_OBJECT_NODES: usize = 32;
-/// Controller objects one stage may have (Dream Land's four).
+/// Controller objects one stage may have, counting instances (Dream
+/// Land's four).
 pub const MAX_STAGE_OBJECTS: usize = 4;
 
 /// One live controller object: its nodes' clocks and poses, and the
@@ -327,8 +404,14 @@ pub const MAX_STAGE_OBJECTS: usize = 4;
 pub struct GroundObject {
     /// Index into [`OBJECTS`].
     pub asset: u8,
+    /// Which of the asset's [`GroundObjectAsset::instances`] this is.
+    pub instance: u8,
     pub object: ObjectDesc,
+    /// The packed one-node graph of the asset's [`Leaf`], drawn under
+    /// every child of the root.
+    pub leaf: Option<ObjectDesc>,
     count: usize,
+    translate_only: bool,
     joints: [StageJoint; MAX_OBJECT_NODES],
     /// `anim_wait != AOBJ_ANIM_NULL`: the node has a script to run.
     live: [bool; MAX_OBJECT_NODES],
@@ -339,12 +422,19 @@ pub struct GroundObject {
     /// animation of one object comes from the same file.
     script: Option<(u32, u32)>,
     /// Its `MObj`s' material clocks, keyed by the primitives'
-    /// `MatAnimDesc` index.
+    /// `MatAnimDesc` index. A cloud's three leaves share one script start,
+    /// so one clock stands for all three.
     materials: EffectMaterialAnimator,
 }
 
 impl GroundObject {
-    fn new(pack: &Pack<'_>, asset: u8, object: ObjectDesc) -> Self {
+    fn new(
+        pack: &Pack<'_>,
+        asset: u8,
+        instance: u8,
+        object: ObjectDesc,
+        leaf: Option<ObjectDesc>,
+    ) -> Self {
         let count = (object.node_count as usize).min(MAX_OBJECT_NODES);
         let mut poses = [JointPose::default(); MAX_OBJECT_NODES];
         for (i, pose) in poses.iter_mut().enumerate().take(count) {
@@ -358,8 +448,11 @@ impl GroundObject {
         }
         GroundObject {
             asset,
+            instance,
             object,
+            leaf,
             count,
+            translate_only: OBJECTS[asset as usize].translate_only,
             joints: [StageJoint::start(0, 0.0); MAX_OBJECT_NODES],
             live: [false; MAX_OBJECT_NODES],
             poses,
@@ -390,6 +483,30 @@ impl GroundObject {
         self.poses[0].translate[1] = y;
     }
 
+    /// `DObjGetStruct(gobj)->translate.vec.f = t`.
+    pub fn set_translate(&mut self, t: [f32; 3]) {
+        self.poses[0].translate = t;
+    }
+
+    /// Node `i`'s translation, in game units.
+    pub fn node_translate(&self, i: usize) -> Option<[f32; 3]> {
+        self.poses[..self.count].get(i).map(|p| p.translate)
+    }
+
+    /// `dobjs[i]->translate.vec.f.y = y` on a node the controller kept.
+    pub fn set_node_translate_y(&mut self, i: usize, y: f32) {
+        if let Some(pose) = self.poses[..self.count].get_mut(i) {
+            pose.translate[1] = y;
+        }
+    }
+
+    /// `dobj->anim_wait = AOBJ_ANIM_NULL; dobj->flags = DOBJ_FLAG_NONE` on
+    /// the root.
+    pub fn stop(&mut self) {
+        self.live[0] = false;
+        self.joints[0].flags = 0;
+    }
+
     /// `DObjGetStruct(gobj)->child->translate`: the root's first child is
     /// node 1 in tree order.
     pub fn child_translate(&self, pack: &Pack<'_>) -> Option<[f32; 3]> {
@@ -412,6 +529,13 @@ impl GroundObject {
         }
     }
 
+    fn parent(&self, pack: &Pack<'_>, i: usize) -> Option<usize> {
+        pack.node(self.object.first_node + i as u32)
+            .and_then(|n| n.parent.checked_sub(self.object.first_node))
+            .map(|p| p as usize)
+            .filter(|&p| p < i)
+    }
+
     /// Whether node `i` (object-local) draws: neither it nor an ancestor
     /// hides it.
     pub fn visible(&self, pack: &Pack<'_>, i: usize) -> bool {
@@ -423,20 +547,24 @@ impl GroundObject {
             if self.flags(at) & 2 != 0 {
                 return false;
             }
-            let Some(parent) = pack
-                .node(self.object.first_node + at as u32)
-                .and_then(|n| n.parent.checked_sub(self.object.first_node))
-                .filter(|&p| (p as usize) < at)
-            else {
+            let Some(parent) = self.parent(pack, at) else {
                 return true;
             };
-            at = parent as usize;
+            at = parent;
         }
         true
     }
 
+    /// The nodes a [`Leaf`] hangs under: every child of the root, in tree
+    /// order.
+    pub fn leaf_parents<'a>(&'a self, pack: &'a Pack<'_>) -> impl Iterator<Item = usize> + 'a {
+        (1..self.count).filter(move |&i| self.leaf.is_some() && self.parent(pack, i) == Some(0))
+    }
+
     /// Composes every node's world matrix from the live poses, as
-    /// [`crate::skeleton::StageAnimator::compose`] does.
+    /// [`crate::skeleton::StageAnimator::compose`] does. A translate-only
+    /// object drops rotation and scale, as its `nGCMatrixKindTra` matrices
+    /// do.
     pub fn compose(&self, pack: &Pack<'_>, out: &mut [Mat4]) -> usize {
         let count = self.count.min(out.len());
         for i in 0..count {
@@ -446,13 +574,13 @@ impl GroundObject {
                 pose.translate[1] / MODEL_SCALE,
                 pose.translate[2] / MODEL_SCALE,
             ];
-            let local = Mat4::from_trs(t, pose.rotate, pose.scale);
-            let parent = pack
-                .node(self.object.first_node + i as u32)
-                .and_then(|n| n.parent.checked_sub(self.object.first_node))
-                .filter(|&p| (p as usize) < i);
-            out[i] = match parent {
-                Some(p) => out[p as usize].mul(&local),
+            let local = if self.translate_only {
+                Mat4::from_trs(t, [0.0; 3], [1.0; 3])
+            } else {
+                Mat4::from_trs(t, pose.rotate, pose.scale)
+            };
+            out[i] = match self.parent(pack, i) {
+                Some(p) => out[p].mul(&local),
                 None => local,
             };
         }
@@ -503,24 +631,11 @@ impl GroundObject {
     }
 }
 
-/// One Yoshi's Island cloud's `MObj` clock (`clouds[i].dobj[0]->mobj`).
-/// The three meshes of a cloud share one script start, so one clock stands
-/// for all three.
-#[derive(Clone, Copy)]
-struct CloudMaterial {
-    joint: MaterialJoint,
-    /// The script file's bytes in the pack blob.
-    file: (u32, u32),
-}
-
 /// A stage's controller objects and the animations its controller may start.
 pub struct GroundObjects {
     objects: [Option<GroundObject>; MAX_STAGE_OBJECTS],
     anims: [Option<AnimDesc>; ANIMS.len()],
     mat_anims: [Option<AnimDesc>; MAT_ANIMS.len()],
-    /// `None` until the cloud's first script: `anim_wait` is
-    /// `AOBJ_ANIM_NULL` from `gcAddMObjForDObj`.
-    clouds: [Option<CloudMaterial>; CLOUD_COUNT],
 }
 
 impl GroundObjects {
@@ -530,56 +645,58 @@ impl GroundObjects {
             objects: [None; MAX_STAGE_OBJECTS],
             anims: [None; ANIMS.len()],
             mat_anims: [None; MAT_ANIMS.len()],
-            clouds: [None; CLOUD_COUNT],
         }
     }
 
     /// The objects of the stage whose `MPGroundData` came from `gr_file`
-    /// (`StageDesc::source_file`), at rest. An object is found through its
-    /// packed animations: they name the file the scripts and the graph
-    /// share, and the object is the one packed from that graph.
+    /// (`StageDesc::source_file`), at rest. The stage's packed animations
+    /// name the file `map_nodes` points into; every object is the one
+    /// packed from its label in that file.
     pub fn new(pack: &Pack<'_>, gr_file: u32) -> Self {
         let mut this = Self::empty();
+        let mut file = None;
         for i in 0..pack.anim_count() {
             let Some(a) = pack.anim(i) else { continue };
-            if a.fighter != AnimDesc::GROUND {
-                continue;
-            }
-            let Some(asset) = ANIMS.get(a.slot as usize) else {
-                continue;
+            let gr = if a.fighter == AnimDesc::GROUND {
+                ANIMS
+                    .get(a.slot as usize)
+                    .map(|anim| OBJECTS[anim.object as usize].gr_file)
+            } else if a.fighter == AnimDesc::GROUND_MAT {
+                MAT_ANIMS.get(a.slot as usize).map(|m| m.gr_file)
+            } else {
+                None
             };
-            if OBJECTS[asset.object as usize].gr_file == gr_file {
-                this.anims[a.slot as usize] = Some(a);
-            }
-        }
-        for i in 0..pack.anim_count() {
-            let Some(a) = pack.anim(i) else { continue };
-            if a.fighter != AnimDesc::GROUND_MAT {
+            if gr != Some(gr_file) {
                 continue;
             }
-            if MAT_ANIMS
-                .get(a.slot as usize)
-                .is_some_and(|m| m.gr_file == gr_file)
-            {
+            file = Some(a.source_file);
+            if a.fighter == AnimDesc::GROUND {
+                this.anims[a.slot as usize] = Some(a);
+            } else {
                 this.mat_anims[a.slot as usize] = Some(a);
             }
         }
+        let Some(file) = file else { return this };
+        let find = |offset: u32| {
+            (0..pack.object_count())
+                .filter_map(|i| pack.object(i))
+                .find(|o| o.source_file == file && o.source_offset == offset)
+        };
         let mut n = 0;
         for (index, asset) in OBJECTS.iter().enumerate() {
-            if asset.gr_file != gr_file || n == MAX_STAGE_OBJECTS {
+            if asset.gr_file != gr_file {
                 continue;
             }
-            let file = ANIMS
-                .iter()
-                .zip(this.anims.iter())
-                .find(|(anim, desc)| anim.object as usize == index && desc.is_some())
-                .and_then(|(_, desc)| desc.map(|d| d.source_file));
-            let Some(file) = file else { continue };
-            let object = (0..pack.object_count())
-                .filter_map(|i| pack.object(i))
-                .find(|o| o.source_file == file && o.source_offset == asset.graph);
-            if let Some(object) = object {
-                this.objects[n] = Some(GroundObject::new(pack, index as u8, object));
+            let Some(object) = find(asset.graph) else {
+                continue;
+            };
+            let leaf = asset.leaf.and_then(|l| find(l.dl));
+            for instance in 0..asset.instances {
+                if n == MAX_STAGE_OBJECTS {
+                    return this;
+                }
+                this.objects[n] =
+                    Some(GroundObject::new(pack, index as u8, instance, object, leaf));
                 n += 1;
             }
         }
@@ -590,13 +707,26 @@ impl GroundObjects {
         self.objects.iter().flatten()
     }
 
-    /// The live object for an [`OBJECTS`] index.
+    /// The live object for an [`OBJECTS`] index (its first instance).
     pub fn get(&self, asset: u8) -> Option<&GroundObject> {
-        self.iter().find(|o| o.asset == asset)
+        self.instance(asset, 0)
     }
 
     pub fn get_mut(&mut self, asset: u8) -> Option<&mut GroundObject> {
-        self.objects.iter_mut().flatten().find(|o| o.asset == asset)
+        self.instance_mut(asset, 0)
+    }
+
+    /// Instance `instance` of an [`OBJECTS`] index.
+    pub fn instance(&self, asset: u8, instance: u8) -> Option<&GroundObject> {
+        self.iter()
+            .find(|o| o.asset == asset && o.instance == instance)
+    }
+
+    pub fn instance_mut(&mut self, asset: u8, instance: u8) -> Option<&mut GroundObject> {
+        self.objects
+            .iter_mut()
+            .flatten()
+            .find(|o| o.asset == asset && o.instance == instance)
     }
 
     /// Whether the pack carries animation `anim` for this stage.
@@ -604,16 +734,23 @@ impl GroundObjects {
         self.anims.get(anim).is_some_and(Option::is_some)
     }
 
-    /// Starts [`ANIMS`]`[anim]` and parses it at once, as the controller's
-    /// own `gcPlayAnimAll` (or `gcParseDObjAnimJoint`) call does. An
-    /// animation the pack lacks leaves the object as it is.
+    /// Starts [`ANIMS`]`[anim]` on the object's first instance; see
+    /// [`Self::play_on`].
     pub fn play(&mut self, pack: &Pack<'_>, anim: usize) -> Result<(), AnimError> {
+        self.play_on(pack, anim, 0)
+    }
+
+    /// Starts [`ANIMS`]`[anim]` on instance `instance` and parses it at
+    /// once, as the controller's own `gcPlayAnimAll` (or
+    /// `gcParseDObjAnimJoint`) call does. An animation the pack lacks
+    /// leaves the object as it is.
+    pub fn play_on(&mut self, pack: &Pack<'_>, anim: usize, instance: u8) -> Result<(), AnimError> {
         let (Some(asset), Some(Some(desc))) = (ANIMS.get(anim), self.anims.get(anim).copied())
         else {
             return Ok(());
         };
         let mat = mat_anim_of(anim).and_then(|m| self.mat_anims[m]);
-        let Some(obj) = self.get_mut(asset.object) else {
+        let Some(obj) = self.instance_mut(asset.object, instance) else {
             return Ok(());
         };
         let script_of = |node: u32| {
@@ -636,13 +773,7 @@ impl GroundObjects {
                 // Its `p_matanim_joints`: each non-NULL entry restarts its
                 // `MObj`; a NULL table or entry leaves the `MObj` as it is.
                 if let Some(mat) = mat {
-                    for j in
-                        (0..mat.joint_count).filter_map(|j| pack.anim_joint(mat.first_joint + j))
-                    {
-                        if j.node != AnimJoint::NO_NODE && j.script != AnimJoint::NO_SCRIPT {
-                            obj.materials.restart(j.node, j.script);
-                        }
-                    }
+                    restart_materials(pack, obj, &mat);
                 }
                 obj.tick(pack)
             }
@@ -663,50 +794,50 @@ impl GroundObjects {
         for obj in self.objects.iter_mut().flatten() {
             obj.tick(pack)?;
         }
-        for cloud in self.clouds.iter_mut().flatten() {
-            let Some(data) = pack.blob(cloud.file.0, cloud.file.1 as usize) else {
-                continue;
-            };
-            // A script that fails to parse stops where it is.
-            let _: Result<(), MatAnimError> = cloud.joint.tick(data, 1.0);
-        }
         Ok(())
     }
 
     /// `grYosterUpdateCloudAnim`: `lbCommonAddTreeDObjsAnimAll` with
-    /// [`MAT_ANIMS`]`[mat]` on cloud `cloud`. Only the `DObj` plays at once
-    /// (`gcPlayDObjAnimJoint`); the `MObj` parses on the next
+    /// [`MAT_ANIMS`]`[mat]` on every leaf of cloud `cloud`. Only the `DObj`
+    /// plays at once (`gcPlayDObjAnimJoint`); the `MObj` parses on the next
     /// [`Self::advance`]. A script the pack lacks leaves the cloud as it is.
     pub fn play_cloud(&mut self, pack: &Pack<'_>, cloud: usize, mat: usize) {
         let Some(Some(desc)) = self.mat_anims.get(mat).copied() else {
             return;
         };
-        let Some(script) = (0..desc.joint_count)
-            .filter_map(|j| pack.anim_joint(desc.first_joint + j))
-            .find(|j| j.script != AnimJoint::NO_SCRIPT)
-            .map(|j| j.script)
-        else {
-            return;
-        };
-        if let Some(slot) = self.clouds.get_mut(cloud) {
-            *slot = Some(CloudMaterial {
-                joint: MaterialJoint::start(script, 0.0),
-                file: (desc.script_offset, desc.script_len),
-            });
+        if let Some(obj) = self.instance_mut(CLOUD, cloud as u8) {
+            restart_materials(pack, obj, &desc);
         }
     }
 
     /// `clouds[cloud].dobj[0]->mobj->anim_wait == AOBJ_ANIM_NULL`: the
     /// cloud has no script, or its script ended on an earlier parse.
-    pub fn cloud_idle(&self, cloud: usize) -> bool {
-        self.clouds
-            .get(cloud)
-            .and_then(|c| c.as_ref())
-            .is_none_or(|c| c.joint.ended())
+    pub fn cloud_idle(&self, pack: &Pack<'_>, cloud: usize) -> bool {
+        let Some(obj) = self.instance(CLOUD, cloud as u8) else {
+            return true;
+        };
+        let Some(target) = self.mat_anims[CLOUD_SOLID_MAT]
+            .iter()
+            .flat_map(|d| (0..d.joint_count).filter_map(|j| pack.anim_joint(d.first_joint + j)))
+            .find(|j| j.node != AnimJoint::NO_NODE)
+            .map(|j| j.node)
+        else {
+            return true;
+        };
+        obj.materials.joint_for(target).is_none_or(|j| j.ended())
     }
 
     /// Whether the pack carries [`MAT_ANIMS`]`[mat]` for this stage.
     pub fn has_mat(&self, mat: usize) -> bool {
         self.mat_anims.get(mat).is_some_and(Option::is_some)
+    }
+}
+
+/// Restarts every `MObj` a packed material table names on `obj`.
+fn restart_materials(pack: &Pack<'_>, obj: &mut GroundObject, mat: &AnimDesc) {
+    for j in (0..mat.joint_count).filter_map(|j| pack.anim_joint(mat.first_joint + j)) {
+        if j.node != AnimJoint::NO_NODE && j.script != AnimJoint::NO_SCRIPT {
+            obj.materials.restart(j.node, j.script);
+        }
     }
 }

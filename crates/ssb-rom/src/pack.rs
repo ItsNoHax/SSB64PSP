@@ -220,7 +220,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 46 adds the controllers' material animations (`AnimDesc::GROUND_MAT`) and
 // attaches `MatAnimDesc`s to Whispy's eyes and mouth and the acid. A v45
 // pack has none, so those objects would keep their rest materials.
-pub const VERSION: u32 = 46;
+// 47 packs the display-list controller objects (RE-365): the Yoshi's Island
+// cloud leaf, the Mushroom Kingdom platform and the Castle ground root, the
+// `ScaleRetract` and `CastleGround` clips (ground slots 30 and 31), and
+// names the cloud leaf's `MatAnimDesc` in the cloud fades. A v46 cloud fade
+// names none, so its clouds would skip the solid fade.
+pub const VERSION: u32 = 47;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
