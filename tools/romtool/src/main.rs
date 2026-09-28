@@ -3142,6 +3142,11 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut anim_joints_packed = 0usize;
     let mut anims_failed: Vec<String> = Vec::new();
     let mut hidden_joint_anims = 0usize;
+    let mut deferred_shield_poses: Vec<(
+        u32,
+        ssb_rom::fighter::ShieldPoseRefs,
+        Vec<Vec<(Option<u32>, Option<u32>)>>,
+    )> = Vec::new();
     for (kind, entry) in ssb_rom::anim::FIGHTER_ANIMS.iter().enumerate() {
         let file_entry = ssb_rom::fighter::FIGHTER_FILES[kind];
         let nodes = loaded.files[file_entry.file as usize]
@@ -3222,6 +3227,20 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &joints,
             );
             packed_anims += 1;
+        }
+
+        // The shield poses (RE-367). Each sector table walks the tree from
+        // `XRotN`: `XRotN`, then every model joint, then `YRotN`. The
+        // `dobj_lookup` array has one `DObjDesc` per entry and ends right
+        // after `YRotN`, which checks that count.
+        if let Some(refs) = loaded.files[file_entry.file as usize]
+            .as_ref()
+            .and_then(|main| ssb_rom::fighter::shield_pose_refs(main, file_entry))
+        {
+            match shield_pose_joints(&loaded, refs, &nodes) {
+                Ok(tables) => deferred_shield_poses.push((kind as u32, refs, tables)),
+                Err(e) => anims_failed.push(format!("{}.ShieldPose: {e}", entry.name)),
+            }
         }
     }
 
@@ -3473,6 +3492,31 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         );
     }
 
+    // Shield poses go last, so every earlier animation keeps its index.
+    // `frames` carries the `dobj_lookup` offset: the neutral pose the
+    // runtime blends toward, read from the same file bytes as the scripts.
+    let mut shield_pose_anims = 0usize;
+    for (kind, refs, tables) in &deferred_shield_poses {
+        let Some(file) = loaded
+            .files
+            .get(refs.file as usize)
+            .and_then(Option::as_ref)
+        else {
+            continue;
+        };
+        for (angle, joints) in tables.iter().enumerate() {
+            writer.add_anim(
+                ssb_rom::pack::AnimDesc::SHIELD_POSE,
+                kind * ssb_rom::pack::AnimDesc::SHIELD_SECTORS + angle as u32,
+                refs.file,
+                refs.lookup,
+                &file.data,
+                joints,
+            );
+            shield_pose_anims += 1;
+        }
+    }
+
     // Independent LBParticle banks live outside relocData. Decode and convert
     // them after scene work so their frame textures append without disturbing
     // any existing material texture indices (RE-180/181).
@@ -3633,6 +3677,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         "  ground anims {ground_anims} controller clip(s), {ground_anim_joints} animated node(s)"
     );
     println!("  ground mats {ground_mats} material table(s), {ground_mat_joints} MObj script(s)");
+    println!(
+        "  shield      {} fighter(s), {shield_pose_anims} sector table(s)",
+        deferred_shield_poses.len()
+    );
     println!(
         "  particles   {} bank(s), {particle_scripts} script(s), {particle_textures} texture series, {particle_frames} frame(s)",
         pack.particle_bank_count()
@@ -9641,6 +9689,47 @@ fn joint_pose(
 ///
 /// The table's length is not stored: the first non-null pointer is the offset
 /// of the first script, which is exactly where the table ends.
+/// The eight sector tables of a fighter's shield pose, each entry paired
+/// with the node it drives. `XRotN` and `YRotN` drive no packed node.
+fn shield_pose_joints(
+    loaded: &Loaded,
+    refs: ssb_rom::fighter::ShieldPoseRefs,
+    nodes: &[u32],
+) -> Result<Vec<Vec<(Option<u32>, Option<u32>)>>, String> {
+    let file = loaded
+        .files
+        .get(refs.file as usize)
+        .and_then(Option::as_ref)
+        .ok_or_else(|| format!("file {} missing", refs.file))?;
+    let data = &file.data;
+    let word = |at: usize| -> Option<u32> {
+        Some(u32::from_be_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    };
+    let entries = nodes.len() + 2;
+    let end = refs.lookup as usize + entries * ssb_rom::fighter::DOBJDESC_SIZE as usize;
+    if word(end) != Some(ssb_rom::fighter::DOBJ_ARRAY_MAX) {
+        return Err(format!(
+            "dobj_lookup does not end after {entries} entries at 0x{end:X}"
+        ));
+    }
+    refs.tables
+        .iter()
+        .map(|&table| {
+            (0..entries)
+                .map(|j| {
+                    let at = word(table as usize + j * 4)
+                        .ok_or_else(|| format!("table 0x{table:X} truncated"))?;
+                    if at != 0 && at as usize >= data.len() {
+                        return Err(format!("table 0x{table:X} entry {j} points outside"));
+                    }
+                    let node = j.checked_sub(1).and_then(|k| nodes.get(k).copied());
+                    Ok(((at != 0).then_some(at), node))
+                })
+                .collect()
+        })
+        .collect()
+}
+
 fn joint_table(data: &[u8]) -> Option<Vec<u32>> {
     let word = |at: usize| -> Option<u32> {
         Some(u32::from_be_bytes(data.get(at..at + 4)?.try_into().ok()?))

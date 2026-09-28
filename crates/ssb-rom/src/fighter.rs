@@ -346,6 +346,60 @@ pub const COMMONPARTS_OFFSET: u32 = 0x2D4;
 /// Size of one `FTCommonPart`: three pointers and a `u8`, padded to 16.
 const COMMONPART_SIZE: u32 = 16;
 
+/// Byte offset of `dobj_lookup`, immediately after `commonparts_container`.
+pub const DOBJ_LOOKUP_OFFSET: u32 = 0x2D8;
+
+/// Byte offset of `shield_anim_joints[8]`, immediately after `dobj_lookup`.
+pub const SHIELD_ANIM_JOINTS_OFFSET: u32 = 0x2DC;
+
+/// Size of one `DObjDesc`: `id`, `dl`, then translate, rotate and scale.
+pub const DOBJDESC_SIZE: u32 = 44;
+
+/// `DOBJ_ARRAY_MAX`: the `id` that ends a `DObjDesc` array.
+pub const DOBJ_ARRAY_MAX: u32 = 18;
+
+/// Where a fighter's shield poses live.
+///
+/// `FTAttributes.dobj_lookup` and `shield_anim_joints[8]` both point into
+/// the fighter's `*ShieldPose` file. `dobj_lookup` is the neutral shield
+/// pose, one `DObjDesc` per joint from `XRotN` on. Each
+/// `shield_anim_joints[i]` is a joint table for the 45-degree stick sector
+/// `i`, in the same order (`ftCommonGuardInitJoints`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShieldPoseRefs {
+    /// The `*ShieldPose` file.
+    pub file: u32,
+    /// Byte offset of the `dobj_lookup` array.
+    pub lookup: u32,
+    /// Byte offset of each sector's joint table.
+    pub tables: [u32; 8],
+}
+
+/// Reads [`ShieldPoseRefs`] from a fighter's attributes. `None` when any of
+/// the nine pointers is not an extern relocation into one shared file.
+pub fn shield_pose_refs(file: &File, entry: FighterFile) -> Option<ShieldPoseRefs> {
+    let target = |at: u32| {
+        file.extern_relocs
+            .iter()
+            .find(|r| r.at == entry.offset + at)
+            .map(|r| (r.target_file as u32, r.target_offset))
+    };
+    let (pose_file, lookup) = target(DOBJ_LOOKUP_OFFSET)?;
+    let mut tables = [0; 8];
+    for (i, table) in tables.iter_mut().enumerate() {
+        let (f, at) = target(SHIELD_ANIM_JOINTS_OFFSET + 4 * i as u32)?;
+        if f != pose_file {
+            return None;
+        }
+        *table = at;
+    }
+    Some(ShieldPoseRefs {
+        file: pose_file,
+        lookup,
+        tables,
+    })
+}
+
 /// A fighter's skeleton: the `DObjDesc` array its `FTCommonPart` names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommonPart {

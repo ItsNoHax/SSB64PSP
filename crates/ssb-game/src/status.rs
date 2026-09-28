@@ -1697,6 +1697,13 @@ pub struct StatusState {
     pub is_shorthop: bool,
     /// Turn: the facing being turned toward, which a dash out of a turn uses.
     pub turn_toward: Facing,
+    /// The `frame_begin` the status was entered with. `ftMainSetStatus`
+    /// starts the figatree there (`lbCommonAddFighterPartsFigatree`).
+    pub anim_frame_begin: f32,
+    /// Counts status entries, so a renderer can restart the clip when a
+    /// status is entered again. `ftMainSetStatus` always restarts the
+    /// figatree, even for the same status.
+    pub entry: u32,
 }
 
 impl Default for StatusState {
@@ -1709,6 +1716,8 @@ impl Default for StatusState {
             jump_force: 0,
             is_shorthop: false,
             turn_toward: Facing::Right,
+            anim_frame_begin: 0.0,
+            entry: 0,
         }
     }
 }
@@ -1777,6 +1786,15 @@ pub struct GuardState {
     /// `FTStruct::is_shield`: the shield bubble is up and catches hits.
     /// It outlives the button by `release_lag` frames, into `GuardOff`.
     pub is_shield: bool,
+    /// `status_vars.common.guard.angle_i`: which 45-degree sector of
+    /// `shield_anim_joints` the stick points into.
+    pub angle_i: i32,
+    /// `angle_f`: degrees into that sector, the frame the sector's scripts
+    /// start at.
+    pub angle_f: f32,
+    /// `shield_rotate_range`: stick deflection, 0..=1. It blends the tilted
+    /// pose back toward the neutral shield pose.
+    pub shield_rotate_range: f32,
 }
 
 impl Default for GuardState {
@@ -1792,7 +1810,53 @@ impl Default for GuardState {
             heal_wait: GUARD_HEAL_INTERVAL,
             is_setoff: false,
             is_shield: false,
+            angle_i: 0,
+            angle_f: 0.0,
+            shield_rotate_range: 0.0,
         }
+    }
+}
+
+/// `FTCOMMON_GUARD_ANGLE_MAX`.
+pub const GUARD_ANGLE_MAX: f32 = 359.0;
+
+/// `ftCommonGuardUpdateShieldAngle` @ `ftcommonguard1.c:130`: the stick
+/// picks the shield tilt. The angle is measured from facing-forward, counter
+/// clockwise, and split into a 45-degree sector and the degrees into it.
+pub fn guard_update_shield_angle(f: &mut Fighter) {
+    let x = f32::from(f.input.stick_x);
+    let y = f32::from(f.input.stick_y);
+    let mut angle_r = ssb_engine::math::atan2(y, x * f.facing.sign());
+    if angle_r < 0.0 {
+        angle_r += 360.0 * (core::f32::consts::PI / 180.0);
+    }
+    let angle_d = (angle_r / core::f32::consts::PI * 180.0).clamp(0.0, GUARD_ANGLE_MAX);
+    f.guard.angle_i = (angle_d / 45.0) as i32;
+    f.guard.angle_f = angle_d - f.guard.angle_i as f32 * 45.0;
+    let range = ssb_engine::math::sqrt(x * x + y * y) / STICK_MAX as f32;
+    f.guard.shield_rotate_range = range.min(1.0);
+}
+
+/// Which of the guard joint updates the original runs for the fighter's
+/// status, for a renderer that poses the shield.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShieldPose {
+    /// `ftCommonGuardUpdateJoints`: `GuardOn` and `GuardOff` play their own
+    /// clip; only `YRotN`, the shield's joint, takes the sector script.
+    ShieldJoint,
+    /// `ftCommonGuardInitJoints`: `Guard` and `GuardSetOff` replace every
+    /// joint the sector script names, blended toward the neutral pose.
+    AllJoints,
+}
+
+/// The shield pose the current status calls for, if any.
+pub fn shield_pose(f: &Fighter) -> Option<ShieldPose> {
+    match f.status.status {
+        AnyStatus::Common(Status::Guard | Status::GuardSetOff) => Some(ShieldPose::AllJoints),
+        AnyStatus::Common(Status::GuardOn | Status::GuardOff) if f.guard.is_shield => {
+            Some(ShieldPose::ShieldJoint)
+        }
+        _ => None,
     }
 }
 
@@ -1885,6 +1949,7 @@ pub fn set_guard_on(f: &mut Fighter) {
             f.guard.is_shield = true;
         }
     }
+    guard_update_joints(f);
     f.guard.release_lag = GUARD_RELEASE_LAG;
     f.guard.decay_wait = GUARD_DECAY_INT;
     f.guard.is_release = false;
@@ -1907,7 +1972,24 @@ pub fn check_guard_on(f: &mut Fighter) -> bool {
 pub fn set_guard(f: &mut Fighter) {
     let t = guard_timing(f, Status::Guard);
     set_any_status_preserve(f, Status::Guard.into(), 0.0, t, Preserve::HITSTATUS);
+    guard_init_joints(f);
     f.guard.is_shield = true;
+}
+
+/// `ftCommonGuardUpdateJoints`' gameplay half: the angle, while the shield
+/// is up. The pose itself is the renderer's ([`shield_pose`]).
+fn guard_update_joints(f: &mut Fighter) {
+    if f.guard.is_shield {
+        guard_update_shield_angle(f);
+    }
+}
+
+/// `ftCommonGuardInitJoints`' gameplay half: `GuardSetOff` keeps the angle
+/// it was hit at.
+fn guard_init_joints(f: &mut Fighter) {
+    if f.status.status != Status::GuardSetOff {
+        guard_update_shield_angle(f);
+    }
 }
 
 /// `ftCommonGuardOffSetStatus` @ `ftcommonguard2.c:78`: the bubble stays up
@@ -1918,6 +2000,7 @@ pub fn set_guard_off(f: &mut Fighter) {
     set_any_status_preserve(f, Status::GuardOff.into(), 0.0, t, Preserve::HITSTATUS);
     play_anim_events(f);
     f.guard.is_shield = flag;
+    guard_update_joints(f);
 }
 
 /// `ftCommonGuardSetStatusFromEscape` / `ftCommonGuardCheckInterruptEscape`:
@@ -1933,9 +2016,14 @@ pub fn check_guard_from_escape(f: &mut Fighter) -> bool {
     if f.kind == crate::fighter::FighterKind::Yoshi {
         guard_yoshi_hit_status(f, false);
     }
+    if f.guard.shield_health > 0.0 {
+        f.guard.is_shield = true;
+    }
+    guard_update_joints(f);
     f.guard.release_lag = GUARD_RELEASE_LAG;
     f.guard.decay_wait = GUARD_DECAY_INT;
     f.guard.is_release = false;
+    f.guard.slide_tics = 0;
     f.guard.is_setoff = false;
     set_guard(f);
     true
@@ -2042,6 +2130,8 @@ pub const REBIRTH_INVINCIBLE_FRAMES: u16 = 120;
 /// moves on to `RebirthStand` — `ftCommonRebirthDownProcUpdate`'s
 /// `halo_despawn_wait == DESPAWN_WAIT - STAND_WAIT` test.
 pub const REBIRTH_DOWN_WAIT: f32 = 390.0 - 75.0;
+/// `ftCommonRebirthDownSetStatus`'s `frame_begin`.
+pub const REBIRTH_DOWN_FRAME_BEGIN: f32 = 100.0;
 /// The remaining `FTCOMMON_REBIRTH_HALO_STAND_WAIT`, absorbed into
 /// `RebirthWait` here since `RebirthStand`'s own exit is gated on an
 /// unextracted animation length (see [`set_rebirth_stand`]).
@@ -2170,11 +2260,13 @@ pub fn set_rebirth_down(f: &mut Fighter, respawn_pos: Vec3) {
     f.damage = 0;
     f.physics = crate::physics::PhysicsState::default();
     f.situation = Situation::Ground;
+    // The clip starts at frame 100; the halo wait, not the clip, ends the
+    // status, so the length counts from there.
     set_status(
         f,
         Status::RebirthDown,
-        0.0,
-        StatusTiming::frames(REBIRTH_DOWN_WAIT),
+        REBIRTH_DOWN_FRAME_BEGIN,
+        StatusTiming::frames(REBIRTH_DOWN_FRAME_BEGIN + REBIRTH_DOWN_WAIT),
     );
 }
 
@@ -3593,6 +3685,8 @@ pub fn set_any_status_preserve(
     f.is_shadow_hidden = crate::shadow::status_hides_shadow(status);
     f.is_invisible = false;
     f.status.anim_frame = anim_frame_begin;
+    f.status.anim_frame_begin = anim_frame_begin;
+    f.status.entry = f.status.entry.wrapping_add(1);
     f.status.timing = timing;
     crate::motion::start(f, anim_frame_begin);
 }
@@ -4004,7 +4098,9 @@ pub fn set_pass(f: &mut Fighter) {
 pub fn set_pass_status(f: &mut Fighter, status: Status) {
     f.ignore_line = f.floor.map(|s| s.line);
     let len = f.anim.pass;
-    set_status(f, status, 0.0, StatusTiming::animation(len, 1.0));
+    // `ftCommonSquatProcInterrupt` and `ftCommonGuardPassSetStatus` both
+    // pass `frame_begin` 1.
+    set_status(f, status, 1.0, StatusTiming::animation(len, 1.0));
     physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
     f.physics.vel_air.y = 0.0;
     f.stick.tap_y = STICKBUFFER_MAX;
@@ -4978,6 +5074,7 @@ pub fn update(f: &mut Fighter) {
                     guard_interrupt(f);
                 }
             } else {
+                guard_update_joints(f);
                 guard_interrupt(f);
             }
         }
@@ -4990,6 +5087,7 @@ pub fn update(f: &mut Fighter) {
             } else if f.guard.is_release || !f.guard.is_shield {
                 set_guard_off(f);
             } else {
+                guard_init_joints(f);
                 guard_interrupt(f);
             }
         }
@@ -5000,6 +5098,8 @@ pub fn update(f: &mut Fighter) {
                 set_shield_break_fly(f);
             } else if f.status.animation_ended() {
                 set_wait(f);
+            } else {
+                guard_update_joints(f);
             }
         }
         // `ftCommonGuardSetOffProcUpdate` @ `ftcommonguard2.c:93`.
@@ -7891,5 +7991,79 @@ mod tests {
             update(&mut f);
         }
         assert_eq!(f.status.status, AnyStatus::Common(Status::Wait));
+    }
+
+    #[test]
+    fn the_stick_picks_the_shield_sector_from_facing_forward() {
+        let cases = [
+            (Facing::Right, 80, 0, 0, 1.0),
+            (Facing::Right, 0, 80, 2, 1.0),
+            (Facing::Right, -80, 0, 4, 1.0),
+            (Facing::Left, -80, 0, 0, 1.0),
+            (Facing::Right, 0, -80, 6, 1.0),
+            (Facing::Right, 0, 0, 0, 0.0),
+            (Facing::Right, 0, 40, 2, 0.5),
+        ];
+        for (facing, x, y, sector, range) in cases {
+            let mut f = mario();
+            f.facing = facing;
+            hold(&mut f, x, y);
+            guard_update_shield_angle(&mut f);
+            assert_eq!(f.guard.angle_i, sector, "{facing:?} {x} {y}");
+            assert!(f.guard.angle_f.abs() < 1e-3, "{}", f.guard.angle_f);
+            assert!((f.guard.shield_rotate_range - range).abs() < 1e-6);
+        }
+        // Past the sector start, `angle_f` is the degrees into it.
+        let mut f = mario();
+        hold(&mut f, 80, 29);
+        guard_update_shield_angle(&mut f);
+        assert_eq!(f.guard.angle_i, 0);
+        assert!(
+            (f.guard.angle_f - 19.92).abs() < 0.05,
+            "{}",
+            f.guard.angle_f
+        );
+        assert_eq!(f.guard.shield_rotate_range, 1.0);
+    }
+
+    #[test]
+    fn guard_tilts_with_the_stick_but_a_setoff_keeps_its_angle() {
+        let mut f = mario();
+        f.input.buttons = N64Buttons(N64Buttons::Z);
+        set_guard_on(&mut f);
+        assert_eq!(shield_pose(&f), Some(ShieldPose::ShieldJoint));
+        set_guard(&mut f);
+        assert_eq!(shield_pose(&f), Some(ShieldPose::AllJoints));
+        // A slow push, so the stick does not read as a jump.
+        hold_stale(&mut f, 0, 80);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Guard);
+        assert_eq!(f.guard.angle_i, 2);
+        let lr = f.facing.sign();
+        set_guard_set_off(&mut f, 10.0, lr);
+        hold(&mut f, 0, -80);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::GuardSetOff);
+        assert_eq!(f.guard.angle_i, 2);
+        assert_eq!(shield_pose(&f), Some(ShieldPose::AllJoints));
+    }
+
+    #[test]
+    fn every_status_entry_counts_and_records_its_start_frame() {
+        let mut f = mario();
+        let entry = f.status.entry;
+        set_wait(&mut f);
+        set_wait(&mut f);
+        assert_eq!(f.status.entry, entry.wrapping_add(2));
+        assert_eq!(f.status.anim_frame_begin, 0.0);
+        set_walk(&mut f, 7.0);
+        assert_eq!(f.status.anim_frame_begin, 7.0);
+        // `ftCommonPassSetStatusParam` callers pass frame 1.
+        let mut f = mario();
+        set_pass(&mut f);
+        assert_eq!(f.status.anim_frame_begin, 1.0);
+        // `ftCommonRebirthDownSetStatus` starts the clip at frame 100.
+        set_rebirth_down(&mut f, Vec3::ZERO);
+        assert_eq!(f.status.anim_frame_begin, REBIRTH_DOWN_FRAME_BEGIN);
     }
 }

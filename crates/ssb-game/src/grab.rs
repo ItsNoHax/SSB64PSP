@@ -1444,8 +1444,12 @@ fn check_donkey_pass(f: &mut Fighter) -> bool {
         && f.stick.tap_y < status::PASS_BUFFER_TICS_MAX
         && passable
     {
+        // `ftDonkeyThrowFFallSetStatusPass`: `ftCommonPassSetStatusParam`
+        // starts the clip at frame 1.
         f.ignore_line = f.floor.map(|s| s.line);
-        set_donkey_throwf_fall(f);
+        f.become_airborne();
+        set_donkey(f, DonkeyStatus::ThrowFFall, 1.0, StatusTiming::unknown());
+        physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
         f.physics.vel_air.y = 0.0;
         f.stick.tap_y = status::STICKBUFFER_MAX;
         return true;

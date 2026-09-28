@@ -477,25 +477,30 @@ pub fn fighter_shadow(
 }
 
 /// Advances a fighter's skeleton pose for `status`. Shared by every fighter
-/// scene that owns a skeleton: restarted on a status *change* rather than
+/// scene that owns a skeleton: restarted on a status *entry* rather than
 /// every tick, since an animation carries its own clock and re-seeding it
-/// each frame would freeze every fighter on frame zero. A looping animation
+/// each frame would freeze every fighter on frame zero. `ftMainSetStatus`
+/// restarts the figatree on every entry, even into the same status, and
+/// starts it at the entry's `frame_begin`. A looping animation
 /// is left to loop; a finite one that has run out holds its last pose, which
 /// is what the original does when a status outlives its animation.
 pub fn tick_skeleton_animation(
     pack: &Pack<'_>,
     kind: u32,
-    status: AnyStatus,
+    status: &ssb_game::status::StatusState,
     speed: f32,
     skeleton: &mut ssb_rom::skeleton::Skeleton,
-    started: &mut Option<AnyStatus>,
+    started: &mut Option<(AnyStatus, u32)>,
 ) -> Option<ssb_rom::figatree::JointPose> {
+    let entry = status.entry;
+    let frame_begin = status.anim_frame_begin;
+    let status = status.status;
     // The pack row is the fighter's; the slot is the status's. Common
     // statuses use the shared slots, which resolve per fighter through the
     // status -> motion pairing (`ssb_rom::anim::SLOT_APPEAL`).
     let slot = status.anim_slot() as u32;
-    if *started != Some(status) {
-        *started = Some(status);
+    if *started != Some((status, entry)) {
+        *started = Some((status, entry));
         // A status with no motion of its own (`CatchWait`, `CaptureWait`)
         // keeps playing the previous one; its slot is that status's slot.
         if status.keeps_motion() {
@@ -503,7 +508,7 @@ pub fn tick_skeleton_animation(
             skeleton.speed = speed;
         } else {
             if let Some(anim) = pack.fighter_anim(kind, slot) {
-                skeleton.start(pack, &anim, 0.0, speed);
+                skeleton.start(pack, &anim, frame_begin, speed);
             }
         }
     }
@@ -566,7 +571,10 @@ pub struct FighterScene {
     /// `FTAttributes::shadow_size`, preserved separately from physics because
     /// it feeds `ftShadowProcDisplay`, not a gameplay calculation.
     pub shadow_size: f32,
-    started: Option<AnyStatus>,
+    started: Option<(AnyStatus, u32)>,
+    /// `YRotN`'s local pose, the shield's joint. Only the shield poses move
+    /// it (RE-367); the original keeps it between shields too.
+    shield_yrotn: ssb_rom::figatree::JointPose,
     /// TransN pose immediately before the last animation parser advance. On
     /// the next fighter tick it pairs with the current hidden pose to recover
     /// the exact `transn - anim_vel` delta the original physics reads.
@@ -681,6 +689,7 @@ impl FighterScene {
             camera_zoom_frame,
             shadow_size,
             started: None,
+            shield_yrotn: ssb_rom::figatree::JointPose::default(),
             root_motion_before_tick: None,
         }
     }
@@ -908,10 +917,38 @@ impl FighterScene {
         self.root_motion_before_tick = tick_skeleton_animation(
             pack,
             self.fighter.kind as u32,
-            self.fighter.status.status,
+            &self.fighter.status,
             ssb_game::status::clip_speed(&self.fighter),
             &mut self.skeleton,
             &mut self.started,
+        );
+        self.apply_shield_pose(pack);
+    }
+
+    /// `ftCommonGuardUpdateJoints` / `ftCommonGuardInitJoints`: the stick
+    /// tilts the shield and, in `Guard`, the whole fighter (RE-367).
+    fn apply_shield_pose(&mut self, pack: &Pack<'_>) {
+        use ssb_game::status::ShieldPose;
+        use ssb_rom::skeleton::ShieldJoints;
+        let Some(pose) = ssb_game::status::shield_pose(&self.fighter) else {
+            return;
+        };
+        let guard = &self.fighter.guard;
+        let Some(anim) = pack.shield_pose(self.fighter.kind as u32, guard.angle_i as u32) else {
+            return;
+        };
+        let joints = match pose {
+            ShieldPose::ShieldJoint => ShieldJoints::ShieldJoint,
+            ShieldPose::AllJoints => ShieldJoints::All,
+        };
+        ssb_rom::skeleton::apply_shield_pose(
+            pack,
+            &anim,
+            guard.angle_f,
+            guard.shield_rotate_range,
+            joints,
+            &mut self.skeleton,
+            &mut self.shield_yrotn,
         );
     }
 
@@ -974,6 +1011,19 @@ impl FighterScene {
                 axes: [axis(0), axis(1), axis(2)],
                 origin: self.fighter.pos
                     + Vec3::new(t[2] * scale * sign, t[1] * scale, -t[0] * scale * sign),
+            });
+        }
+        // `YRotN` hangs off `XRotN`, which nothing rotates, so its local
+        // pose is its model-space pose. Only a raised shield reads it.
+        if ssb_game::status::shield_pose(&self.fighter).is_some() {
+            let pose = &self.shield_yrotn;
+            let m = ssb_rom::scene::Mat4::from_trs([0.0; 3], pose.rotate, [1.0; 3]).0;
+            let axis =
+                |col: usize| Vec3::new(m[col * 4 + 2] * sign, m[col * 4 + 1], -m[col * 4] * sign);
+            let t = pose.translate;
+            self.fighter.joint_transforms[3] = Some(JointTransform {
+                axes: [axis(0), axis(1), axis(2)],
+                origin: self.fighter.pos + Vec3::new(t[2] * sign, t[1], -t[0] * sign),
             });
         }
     }
