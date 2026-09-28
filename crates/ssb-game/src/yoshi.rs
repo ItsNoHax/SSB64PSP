@@ -270,6 +270,12 @@ pub fn on_damage(f: &mut Fighter) {
     }
 }
 
+/// Where the held egg draws, presentation only: `ftYoshiSpecialHiUpdateEggVectors`
+/// puts it at the Egg Throw joint's world position in `proc_physics`.
+pub fn held_egg_position(f: &Fighter) -> Option<Vec3> {
+    (is_yoshi(f.kind) && f.yoshi.egg_held).then(|| f.joint_world(EGGTHROW_JOINT, Vec3::ZERO))
+}
+
 /// `ftYoshiSpecialHiUpdateEggThrowForce` and `ftYoshiSpecialHiUpdateEggVars`.
 fn update_egg(f: &mut Fighter) {
     if f.input.buttons.contains(N64Buttons::B) {

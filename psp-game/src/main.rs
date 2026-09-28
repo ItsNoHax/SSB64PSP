@@ -76,6 +76,13 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Up+B at tick 20 enters `SpecialHi` with the swirl; 13 swirl
         // frames later its primitive alpha is 204 (RE-324).
         GameScene::LinkSpin => 33,
+        // Up+B at tick 20; Egg Throw makes the egg on frame 4 and throws it
+        // on frame 23, and it has flown some 16 frames here.
+        GameScene::Yoshi => 60,
+        // Down+B at tick 20; the Yoshi Bomb hops, drops and lands near tick
+        // 51, and `SpecialLwLanding` frame 3 makes the two stars. They are
+        // some 6 of their 16 frames old here.
+        GameScene::YoshiBomb => 60,
         GameScene::Training => 106,
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
@@ -162,7 +169,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
-    // The Samus and Link scenes stay on the spawn floor: no jump route.
+    // The Samus, Link and Yoshi scenes stay on the spawn floor: no jump
+    // route.
     if matches!(
         scene,
         GameScene::Samus
@@ -170,6 +178,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::SamusBomb
             | GameScene::Link
             | GameScene::LinkSpin
+            | GameScene::Yoshi
+            | GameScene::YoshiBomb
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -254,6 +264,8 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::SamusShot
             | GameScene::Link
             | GameScene::LinkSpin
+            | GameScene::Yoshi
+            | GameScene::YoshiBomb
     ) {
         return 0;
     }
@@ -274,11 +286,11 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
     if scene == GameScene::Shield && (50..=60).contains(&tick) {
         40
     } else if (scene == GameScene::Superjump && tick == 150)
-        || (scene == GameScene::LinkSpin && tick == 20)
+        || (matches!(scene, GameScene::LinkSpin | GameScene::Yoshi) && tick == 20)
     {
         80
-    } else if scene == GameScene::SamusBomb && tick == 20 {
-        // `ftSamusSpecialLwCheck`'s downward stick with the B edge.
+    } else if matches!(scene, GameScene::SamusBomb | GameScene::YoshiBomb) && tick == 20 {
+        // The special-low check's downward stick with the B edge.
         -80
     } else {
         0
@@ -299,8 +311,8 @@ const JUMP_BUTTON_MASK: u16 =
 const MENU_STICK_NAV_MIN: i8 = 40;
 
 /// The fighter Training spawns for the player: Fox for the Fox capture
-/// scene, Luigi for the Luigi scene, Samus for the Samus scenes, Link for
-/// the Link scenes, Mario otherwise.
+/// scene, Luigi for the Luigi scene, Samus, Link or Yoshi for their own
+/// scenes, Mario otherwise.
 fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter::FighterKind {
     // The costume scenes use Fox so that no pick can collide with the Mario
     // dummy's costume.
@@ -313,6 +325,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
             ssb_game::fighter::FighterKind::Samus
         }
         Some(GameScene::Link | GameScene::LinkSpin) => ssb_game::fighter::FighterKind::Link,
+        Some(GameScene::Yoshi | GameScene::YoshiBomb) => ssb_game::fighter::FighterKind::Yoshi,
         _ => ssb_game::fighter::FighterKind::Mario,
     }
 }
@@ -855,6 +868,22 @@ unsafe fn run() -> ! {
                         line.len(),
                     );
                 }
+                if matches!(capture_scene, Some(GameScene::Yoshi | GameScene::YoshiBomb)) {
+                    let line = alloc::format!(
+                        "yoshi anim_frame={:.1} egg_held={} eggs={} stars={}\n",
+                        player.fighter.status.anim_frame,
+                        player.fighter.yoshi.egg_held,
+                        weapons.eggs().count(),
+                        weapons.stars().count(),
+                    );
+                    unsafe {
+                        psp::sys::sceIoWrite(
+                            psp::sys::sceKernelStdout(),
+                            line.as_ptr() as *const core::ffi::c_void,
+                            line.len(),
+                        );
+                    }
+                }
                 if capture_scene == Some(GameScene::Shield) {
                     let joint = player.fighter.joint_transforms[3];
                     let shield = ssb_game::combat::shield_transform(&player.fighter);
@@ -938,6 +967,8 @@ struct DrawAssets {
     boomerang: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The Spin Attack swirl and its transform animation.
     spin_effect: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    yoshi_egg_mesh: Option<ssb_rom::pack::MeshDesc>,
+    yoshi_star_mesh: Option<ssb_rom::pack::MeshDesc>,
 }
 
 impl DrawAssets {
@@ -953,6 +984,8 @@ impl DrawAssets {
                 .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_LINK_BOOMERANG)),
             spin_effect: ssb_psp_runtime::scene::link_spin_attack_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
+            yoshi_egg_mesh: ssb_psp_runtime::scene::yoshi_egg_mesh(p),
+            yoshi_star_mesh: ssb_psp_runtime::scene::yoshi_star_mesh(p),
         }
     }
 }
@@ -1204,6 +1237,49 @@ unsafe fn draw_training(
         }
         for shot in weapons.charge_shots() {
             draw_shot(shot.position, shot.rotate_z, shot.scale());
+        }
+    }
+
+    // Yoshi's egg is `TraRotRpyRSca` then kind 46. Kind 46 overwrites the
+    // rotation and scale with the camera-facing spin by `rotate.z`, so only
+    // the main transform's translation survives: the same billboard as the
+    // Charge Shot. In hand, `ftYoshiSpecialHiUpdateEggVectors` places it at
+    // the Egg Throw joint with that joint's scale (1 in the rest pose). The
+    // explosion clears its display list.
+    if let Some(egg_mesh) = assets.yoshi_egg_mesh.as_ref() {
+        let mut draw_egg = |pos: ssb_engine::math::Vec3, spin: f32| {
+            gpu.model_transform_billboard(
+                pos,
+                pl.camera.eye,
+                pl.camera.at,
+                spin,
+                [meshdraw::MODEL_SCALE; 2],
+            );
+            meshdraw::draw_mesh(p, egg_mesh, draw_state, None, None);
+        };
+        if let Some(pos) = ssb_game::yoshi::held_egg_position(&pl.fighter) {
+            draw_egg(pos, 0.0);
+        }
+        for egg in weapons.eggs().filter(|egg| !egg.exploded) {
+            draw_egg(egg.position, egg.rotate_z);
+        }
+    }
+
+    // Yoshi's star is a plain `TraRotRpyRSca` DObj: spun about Z and shrunk
+    // in X and Y by `wpYoshiStarGetScale`.
+    if let Some(star_mesh) = assets.yoshi_star_mesh.as_ref() {
+        for star in weapons.stars() {
+            let scale = star.scale();
+            gpu.model_transform_xyz(
+                [star.position.x, star.position.y, star.position.z],
+                [0.0, 0.0, star.rotate_z],
+                [
+                    meshdraw::MODEL_SCALE * scale,
+                    meshdraw::MODEL_SCALE * scale,
+                    meshdraw::MODEL_SCALE,
+                ],
+            );
+            meshdraw::draw_mesh(p, star_mesh, draw_state, None, None);
         }
     }
 

@@ -101,6 +101,28 @@ pub fn samus_bomb_meshes(pack: &Pack<'_>) -> [Option<MeshDesc>; 2] {
     })
 }
 
+fn mesh_keyed(pack: &Pack<'_>, file: u32, offset: u32) -> Option<MeshDesc> {
+    (0..pack.mesh_count())
+        .filter_map(|i| pack.mesh(i))
+        .find(|mesh| mesh.source_file == file && mesh.source_offset == offset)
+}
+
+/// Yoshi's Egg Throw `WPAttributes.data` (file 247 + 0x0C): file 338's
+/// direct list at 0xA860. The list sets its own render mode, so the
+/// discovered mesh draws as the weapon does.
+pub const YOSHI_EGG_SOURCE: (u32, u32) = (338, 0xA860);
+/// Yoshi's Bomb star: file 86's list at 0x5458 under the weapon seed,
+/// keyed by `llYoshiMainStarWeaponAttributes` (file 247 + 0x40).
+pub const YOSHI_STAR_SOURCE: (u32, u32) = (247, 0x40);
+
+pub fn yoshi_egg_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
+    mesh_keyed(pack, YOSHI_EGG_SOURCE.0, YOSHI_EGG_SOURCE.1)
+}
+
+pub fn yoshi_star_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
+    mesh_keyed(pack, YOSHI_STAR_SOURCE.0, YOSHI_STAR_SOURCE.1)
+}
+
 /// Link Special1's `WPAttributes.data`: file 325's three-node Boomerang
 /// `DObjDesc` tree.
 pub const LINK_BOOMERANG_SOURCE_FILE: u32 = 325;

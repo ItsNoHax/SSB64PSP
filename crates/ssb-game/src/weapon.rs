@@ -964,6 +964,10 @@ pub const EGGTHROW_VEL_ADD: f32 = 50.0;
 pub const EGGTHROW_VEL_FORCE_MUL: f32 = 2.3;
 pub const EGGTHROW_GRAVITY: f32 = 2.7;
 pub const EGGTHROW_TVEL: f32 = 120.0;
+/// `WPEGGTHROW_ANGLE_FORCE_MUL` and `WPEGGTHROW_ANGLE_ADD`, in degrees: the
+/// thrown egg's per-frame `rotate.z` step.
+pub const EGGTHROW_ANGLE_FORCE_MUL: f32 = -2.1;
+pub const EGGTHROW_ANGLE_ADD: f32 = -1.5;
 
 /// `llYoshiMainEggThrowWeaponAttributes` (the words at offset 0x0C of
 /// `247_YoshiMain.c`, US): size 200, angle 361, knockback 50/0/50, 14
@@ -1003,6 +1007,11 @@ pub struct YoshiEgg {
     pub stick_x: i8,
     pub lr: f32,
     pub hit_ports: u8,
+    /// The DObj's `rotate.z`, presentation only. `wpYoshiEggThrowProcUpdate`
+    /// adds [`Self::spin_step`] on every flight frame after the throw's.
+    pub rotate_z: f32,
+    /// `weapon_vars.egg_throw.angle`, radians, set at the throw.
+    pub spin_step: f32,
 }
 
 impl YoshiEgg {
@@ -1019,6 +1028,8 @@ impl YoshiEgg {
             stick_x,
             lr: if spawn.facing < 0.0 { -1.0 } else { 1.0 },
             hit_ports: 0,
+            rotate_z: 0.0,
+            spin_step: 0.0,
         }
     }
 
@@ -1079,6 +1090,7 @@ impl YoshiEgg {
                 self.explode();
                 return true;
             }
+            self.rotate_z += self.spin_step;
             self.velocity.y -= EGGTHROW_GRAVITY;
             let speed = Vec2::new(self.velocity.x, self.velocity.y).length();
             if speed > EGGTHROW_TVEL {
@@ -1088,6 +1100,9 @@ impl YoshiEgg {
         } else {
             self.is_spin = true;
             self.velocity = Self::launch_velocity(self.throw_force, self.stick_x, self.lr);
+            self.spin_step = (f32::from(self.throw_force) * EGGTHROW_ANGLE_FORCE_MUL
+                + EGGTHROW_ANGLE_ADD)
+                .to_radians();
             self.position.z = 0.0;
         }
         let wanted = self.position + self.velocity;
@@ -1121,6 +1136,7 @@ pub const YOSHISTAR_ANGLE: f32 = 30.0 * core::f32::consts::PI / 180.0;
 pub const YOSHISTAR_VEL: f32 = 30.0;
 pub const YOSHISTAR_OFF_X: f32 = 300.0;
 pub const YOSHISTAR_OFF_Y: f32 = 20.0;
+pub const YOSHISTAR_ROTATE_SPEED: f32 = 0.24;
 
 /// `llYoshiMainStarWeaponAttributes` (offset 0x40 of `247_YoshiMain.c`,
 /// US): size 160, angle 361, knockback 100/30/0, 4 damage.
@@ -1146,6 +1162,8 @@ pub struct YoshiStar {
     pub lifetime: u16,
     pub damage: i32,
     pub lr: f32,
+    /// The DObj's `rotate.z`, presentation only.
+    pub rotate_z: f32,
 }
 
 impl YoshiStar {
@@ -1159,6 +1177,7 @@ impl YoshiStar {
             lifetime: YOSHISTAR_LIFETIME,
             damage: YOSHI_STAR_HITBOX.damage,
             lr,
+            rotate_z: 0.0,
         }
     }
 
@@ -1174,6 +1193,7 @@ impl YoshiStar {
         if self.lifetime == 0 {
             return false;
         }
+        self.rotate_z += YOSHISTAR_ROTATE_SPEED * self.lr;
         let speed = Vec2::new(self.velocity.x, self.velocity.y).length();
         if speed > 0.0 {
             let slowed = if speed < YOSHISTAR_VEL_CLAMP {
@@ -1195,6 +1215,7 @@ impl YoshiStar {
         if self.velocity.x * reflector.facing.sign() < 0.0 {
             self.velocity.x = -self.velocity.x;
         }
+        self.rotate_z = ssb_engine::math::atan2(self.velocity.y, self.velocity.x);
         self.lr = -self.lr;
         self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
     }
@@ -1627,6 +1648,7 @@ impl Weapon {
             // `wpYoshiStarProcHop`: facing from a strictly positive X.
             Weapon::Star(s) => {
                 s.velocity = turn(s.velocity);
+                s.rotate_z = ssb_engine::math::atan2(s.velocity.y, s.velocity.x);
                 s.lr = if s.velocity.x > 0.0 { 1.0 } else { -1.0 };
             }
             // `wpPikachuThunderJoltAirProcHop`.
@@ -3217,6 +3239,45 @@ mod tests {
         assert_eq!(pair[0].hitbox().damage, 4);
         assert_eq!(pair[0].position.x, -pair[1].position.x);
         assert_eq!(pair[0].lifetime, YOSHISTAR_LIFETIME);
+    }
+
+    /// `wpYoshiEggThrowProcUpdate` adds `DTOR(force * -2.1 - 1.5)` to
+    /// `rotate.z` on every flight frame after the throw's, and
+    /// `wpYoshiStarProcUpdate` spins each star by `0.24 * lr`.
+    #[test]
+    fn the_egg_and_stars_spin_as_the_source_updates_them() {
+        let mut egg = YoshiEgg::new(
+            WeaponSpawn {
+                kind: WeaponKind::YoshiEgg {
+                    throw_force: 10,
+                    stick_x: 0,
+                },
+                owner_port: 0,
+                stale: crate::stale::WeaponStale::FRESH,
+                position: Vec3::ZERO,
+                facing: 1.0,
+            },
+            10,
+            0,
+        );
+        assert!(egg.tick(Vec::new));
+        assert_eq!(egg.rotate_z, 0.0);
+        let step = (10.0f32 * EGGTHROW_ANGLE_FORCE_MUL + EGGTHROW_ANGLE_ADD).to_radians();
+        assert!(egg.tick(Vec::new));
+        assert!(egg.tick(Vec::new));
+        assert!((egg.rotate_z - 2.0 * step).abs() < 1e-6);
+
+        let spawn = WeaponSpawn {
+            kind: WeaponKind::YoshiStars,
+            owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        };
+        let mut left = YoshiStar::new(spawn, -1.0);
+        assert!(left.tick());
+        assert!(left.tick());
+        assert!((left.rotate_z + 2.0 * YOSHISTAR_ROTATE_SPEED).abs() < 1e-6);
     }
 
     /// `wpManagerMakeWeapon` captures the owner's stale factor; the hit
