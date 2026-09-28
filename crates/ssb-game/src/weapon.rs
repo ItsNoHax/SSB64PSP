@@ -18,7 +18,7 @@ mod ness;
 #[path = "pikachu_weapon.rs"]
 mod pikachu;
 pub use ness::{PKFire, PKThunder, PKThunderTrail};
-pub use pikachu::{ThunderHead, ThunderJolt, ThunderTrail};
+pub use pikachu::{ThunderHead, ThunderJolt, ThunderTrail, JOLT_GROUND_ANIM_SPEED};
 
 /// The one-sided role a map segment has in the original collision tables.
 ///

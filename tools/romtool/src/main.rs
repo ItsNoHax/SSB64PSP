@@ -1943,8 +1943,23 @@ fn lb_transition_graphs() -> std::collections::BTreeSet<(u32, u32)> {
 /// Weapon `DObjDesc` trees whose lists set no render mode, so they draw
 /// under `wpDisplayDrawNormal`'s state (`G_ZBUFFER` cleared,
 /// `G_RM_AA_XLU_SURF`). Kirby's Final Cutter wave (328 + 0x1D388) sets only
-/// alpha compare and cycle type (RE-378).
-const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[(328, 0x1D388)];
+/// alpha compare and cycle type (RE-378). Pikachu's Thunder Jolt draws
+/// under the same state: the aerial list (342 + 0x270) sets its own render
+/// mode but not `G_ZBUFFER`, and the ground tree's lists (342 + 0x1888) set
+/// neither (RE-379).
+const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[(328, 0x1D388), (342, 0x270), (342, 0x1888)];
+
+/// Weapons whose `WPAttributes.data` is a direct display list with its own
+/// `anim_joints`, so they need a one-node graph for the animation to bind
+/// to, as [`DIRECT_MANAGER_EFFECT_ASSETS`] gives direct effects. Pikachu's
+/// aerial Thunder Jolt (`llPikachuSpecial1ThunderJoltAirWeaponAttributes`,
+/// file 244 + 0x00) names file 342's list at 0x270 (RE-379).
+const DIRECT_WEAPON_GRAPHS: &[(u32, u32)] = &[(342, 0x270)];
+
+/// `WPAttributes.p_matanim_joints` for weapon trees, keyed by graph. The
+/// ground Thunder Jolt (file 244 + 0x34) names file 342's table at 0x1AE0
+/// (RE-379).
+const WEAPON_MAT_ANIM_JOINTS: &[((u32, u32), u32)] = &[((342, 0x1888), 0x1AE0)];
 
 /// The seed a [`ssb_rom::mesh::convert_sequence`] call for `(file,
 /// graph_offset)` must use -- see [`fighter_skeleton_graphs`],
@@ -2449,6 +2464,26 @@ fn resolve_layer_mat_anims(
         let Some(mat) = ssb_rom::effect::MANAGER_EFFECT_MAT_ANIM_JOINTS[idx] else {
             return empty();
         };
+        return resolve_mat_anims(
+            file,
+            mat,
+            materials,
+            |node, m| {
+                materials
+                    .get(node)?
+                    .get(m)
+                    .map(|s| (s.at, s.palette_entries))
+            },
+            mat_anim_data,
+        );
+    }
+
+    // Weapon trees: `WPAttributes.p_matanim_joints`, against the materials
+    // its `p_mobjsubs` table already resolved, as for a manager effect.
+    if let Some(&(_, mat)) = WEAPON_MAT_ANIM_JOINTS
+        .iter()
+        .find(|(key, _)| *key == (file.id, graph_offset))
+    {
         return resolve_mat_anims(
             file,
             mat,
@@ -3572,6 +3607,23 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             0x1D388,
             0x1D410,
             Some(0x1D4B8),
+        ),
+        // Pikachu's Thunder Jolt (RE-379): the aerial list's one script
+        // spins and pulses it (342 + 0x360..0x3F8); the ground tree's table
+        // sweeps node 1 and blinks nodes 2-7 (342 + 0x1A20..0x1AE0).
+        (
+            ssb_rom::pack::AnimDesc::WEAPON_ANIM_PIKACHU_JOLT_AIR,
+            342,
+            0x270,
+            0x360,
+            Some(0x3F8),
+        ),
+        (
+            ssb_rom::pack::AnimDesc::WEAPON_ANIM_PIKACHU_JOLT_GROUND,
+            342,
+            0x1888,
+            0x1A20,
+            Some(0x1AE0),
         ),
     ];
     let mut weapon_anims = 0usize;
@@ -6259,6 +6311,24 @@ fn load_all(archive: &Archive) -> Loaded {
         .flatten()
         .map(|f| (f.id, scene::find_scene_graphs(f)))
         .collect();
+    for &(file, graph) in DIRECT_WEAPON_GRAPHS {
+        let file_graphs = graphs.entry(file).or_default();
+        if !file_graphs.iter().any(|g| g.offset == graph) {
+            file_graphs.push(scene::SceneGraph {
+                offset: graph,
+                nodes: vec![scene::DObjNode {
+                    desc: scene::DObjDesc {
+                        id: 0,
+                        dl: Some(graph),
+                        translate: [0.0; 3],
+                        rotate: [0.0; 3],
+                        scale: [1.0; 3],
+                    },
+                    parent: None,
+                }],
+            });
+        }
+    }
     for asset in DIRECT_MANAGER_EFFECT_ASSETS {
         let file_graphs = graphs.entry(asset.file).or_default();
         if file_graphs.iter().any(|graph| graph.offset == asset.graph) {
@@ -6557,7 +6627,12 @@ fn load_all(archive: &Archive) -> Loaded {
         (328u32, 0x49D8u32, 0x18u32), // KirbyModel, same slots
         (328u32, 0x16AB0u32, 0x18u32), // KirbyModel, same slots
         (328u32, 0x176D8u32, 0x18u32), // KirbyModel, same slots
-        (342u32, 0x2258u32, 0x101Cu32), // PikachuSpecial3 -- gap_0x0000_sub_0x1018[8], decomp-documented "2 NULL slots + 6 pointers"
+        // RE-379 corrects RE-125's 0x101C here: `dEFManagerPikachuThunderJoltEffectDesc`
+        // names `llPikachuSpecial3ThunderJoltMObjSub` (0x20A0, two slots)
+        // for this graph. The 0x1018 table belongs to the ground Thunder
+        // Jolt tree below, whose `WPAttributes.p_mobjsubs` names it.
+        (342u32, 0x2258u32, 0x20A0u32), // PikachuSpecial3 ThunderJoltMObjSub
+        (342u32, 0x1888u32, 0x1018u32), // PikachuSpecial3 ground Thunder Jolt, file 244 + 0x34
     ] {
         let nodes = graphs
             .get(&file)
@@ -11616,7 +11691,9 @@ mod tests {
     /// pair ever decodes two different ways archive-wide. It does not --
     /// this census measured 1 real format/size conflict and 46 real
     /// palette-shape conflicts, so all four fields are in `TexKey` (its own
-    /// doc comment) regardless. Kept as a permanent regression census, the
+    /// doc comment) regardless. RE-379 traced the one format/size conflict,
+    /// file 342's 0xC18 read as IA8 and as CI4, to RE-125's wrong MObjSub
+    /// pairing for the ThunderJolt effect; with the source pairing it is 0. Kept as a permanent regression census, the
     /// same shape RE-240's `census_lit_primitives_with_a_colour_baking_
     /// branch` already uses: these exact counts are what a fixed ROM
     /// produces today, and a future change to how tiles/palettes get
@@ -11693,9 +11770,9 @@ mod tests {
         // nonzero count here does not mean textures render wrong -- it means
         // this census's own baseline moved, worth a fresh look either way.
         assert_eq!(
-            data_conflicts, 1,
-            "format/size conflict count for a fixed (data_file, data_offset) changed from RE-253's \
-             measured baseline of 1"
+            data_conflicts, 0,
+            "format/size conflict count for a fixed (data_file, data_offset) changed from RE-379's \
+             measured baseline of 0"
         );
         assert_eq!(
             palette_conflicts, 46,

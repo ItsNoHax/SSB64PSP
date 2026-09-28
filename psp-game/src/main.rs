@@ -93,6 +93,14 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // top platform near tick 77, and `SpecialHiLanding` frame 3 makes
         // the wave. It is some 6 of its 20 frames old here.
         GameScene::Kirby => 83,
+        // B at tick 20; `SpecialN` makes the aerial jolt near tick 44, which
+        // lands on its first frame as the ground jolt. Its animation is 8
+        // plays into its first 15-frame push cycle here.
+        GameScene::Pikachu => 52,
+        // C-Up at tick 13 jumps; B at tick 24 enters `SpecialAirN`, which
+        // makes the aerial jolt near tick 45. It is some 11 frames into its
+        // flight here, still in the air.
+        GameScene::PikachuAir => 56,
         GameScene::Training => 106,
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
@@ -193,11 +201,20 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::Captain
             | GameScene::CaptainKick
             | GameScene::Kirby
+            | GameScene::Pikachu
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
             20 => N64Buttons(N64Buttons::B),
             60 if scene == GameScene::SamusShot => N64Buttons(N64Buttons::B),
+            _ => N64Buttons(0),
+        };
+    }
+    if scene == GameScene::PikachuAir {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            13 => N64Buttons(N64Buttons::C_UP),
+            24 => N64Buttons(N64Buttons::B),
             _ => N64Buttons(0),
         };
     }
@@ -282,6 +299,8 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::Captain
             | GameScene::CaptainKick
             | GameScene::Kirby
+            | GameScene::Pikachu
+            | GameScene::PikachuAir
     ) {
         return 0;
     }
@@ -353,6 +372,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
             ssb_game::fighter::FighterKind::Captain
         }
         Some(GameScene::Kirby) => ssb_game::fighter::FighterKind::Kirby,
+        Some(GameScene::Pikachu | GameScene::PikachuAir) => ssb_game::fighter::FighterKind::Pikachu,
         _ => ssb_game::fighter::FighterKind::Mario,
     }
 }
@@ -911,6 +931,31 @@ unsafe fn run() -> ! {
                         );
                     }
                 }
+                if matches!(
+                    capture_scene,
+                    Some(GameScene::Pikachu | GameScene::PikachuAir)
+                ) {
+                    let line = alloc::format!(
+                        "pikachu status={:?} jolts={:?}\n",
+                        player.fighter.status.status,
+                        weapons
+                            .jolts()
+                            .map(|j| (
+                                j.surface.is_some(),
+                                j.anim_epoch,
+                                j.anim_ticks,
+                                j.position.x
+                            ))
+                            .collect::<alloc::vec::Vec<_>>(),
+                    );
+                    unsafe {
+                        psp::sys::sceIoWrite(
+                            psp::sys::sceKernelStdout(),
+                            line.as_ptr() as *const core::ffi::c_void,
+                            line.len(),
+                        );
+                    }
+                }
                 if capture_scene == Some(GameScene::Kirby) {
                     let line = alloc::format!(
                         "kirby status={:?} anim_frame={:.1} cutters={:?}\n",
@@ -1034,6 +1079,9 @@ struct DrawAssets {
     yoshi_star_mesh: Option<ssb_rom::pack::MeshDesc>,
     /// The Falcon Punch flame (material animation only).
     falcon_punch: Option<ssb_rom::pack::ObjectDesc>,
+    /// Pikachu's aerial and ground Thunder Jolts with their `anim_joints`.
+    jolt_air: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    jolt_ground: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Kirby's Final Cutter wave tree and its `anim_joints` flicker.
     cutter: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The Falcon Kick flame tree and its transform animation.
@@ -1056,6 +1104,16 @@ impl DrawAssets {
             yoshi_egg_mesh: ssb_psp_runtime::scene::yoshi_egg_mesh(p),
             yoshi_star_mesh: ssb_psp_runtime::scene::yoshi_star_mesh(p),
             falcon_punch: ssb_psp_runtime::scene::captain_falcon_punch_effect(p),
+            jolt_air: ssb_psp_runtime::scene::object_keyed(
+                p,
+                ssb_psp_runtime::scene::PIKACHU_JOLT_AIR_SOURCE,
+            )
+            .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_PIKACHU_JOLT_AIR)),
+            jolt_ground: ssb_psp_runtime::scene::object_keyed(
+                p,
+                ssb_psp_runtime::scene::PIKACHU_JOLT_GROUND_SOURCE,
+            )
+            .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_PIKACHU_JOLT_GROUND)),
             cutter: ssb_psp_runtime::scene::kirby_cutter_object(p)
                 .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_KIRBY_CUTTER)),
             falcon_kick: ssb_psp_runtime::scene::captain_falcon_kick_effect(p)
@@ -1065,8 +1123,8 @@ impl DrawAssets {
 }
 
 /// The animation players for Link's Boomerang and Spin Attack swirl,
-/// Captain Falcon's Falcon Punch and Falcon Kick flames and Kirby's Final
-/// Cutter wave. The game state counts each one's
+/// Captain Falcon's Falcon Punch and Falcon Kick flames, Kirby's Final
+/// Cutter wave and Pikachu's Thunder Jolts. The game state counts each one's
 /// `gcPlayAnimAll` calls; [`Self::sync`] plays the players up to that
 /// count, restarting when it goes back.
 #[derive(Default)]
@@ -1083,6 +1141,20 @@ struct EffectVisuals {
     kick_ticks: Option<u16>,
     cutter: ssb_rom::skeleton::StageAnimator,
     cutter_ticks: Option<u16>,
+    jolts: [JoltVisual; MAX_JOLT_VISUALS],
+}
+
+/// Thunder Jolts drawn at once; `ftPikachuSpecialNProcUpdate` fires one per
+/// Thunder Jolt and each lives 100 frames.
+const MAX_JOLT_VISUALS: usize = 4;
+
+/// One Thunder Jolt's players, keyed by its animation epoch.
+#[derive(Default)]
+struct JoltVisual {
+    epoch: Option<u16>,
+    ticks: u16,
+    anim: ssb_rom::skeleton::StageAnimator,
+    materials: ssb_rom::skeleton::EffectMaterialAnimator,
 }
 
 /// `gcAddAnimAll`'s material half: the material scripts bound to an
@@ -1152,6 +1224,43 @@ impl EffectVisuals {
             if let Some(script) = p.anim_script(anim) {
                 for _ in 0..ticks {
                     let _ = self.cutter.tick(script);
+                }
+            }
+        }
+
+        // The jolts in pool order. A jolt whose epoch changed (it landed, or
+        // `wpPikachuThunderJoltGroundAddAnim` restarted it) replays from the
+        // start; the ground form plays at `gcSetAllAnimSpeed`'s 0.5.
+        let mut jolts = weapons.jolts();
+        for visual in &mut self.jolts {
+            let Some(jolt) = jolts.next() else {
+                visual.epoch = None;
+                continue;
+            };
+            let ground = jolt.surface.is_some();
+            let Some((object, anim)) = (if ground {
+                assets.jolt_ground.as_ref()
+            } else {
+                assets.jolt_air.as_ref()
+            }) else {
+                continue;
+            };
+            if visual.epoch != Some(jolt.anim_epoch) || visual.ticks > jolt.anim_ticks {
+                visual.epoch = Some(jolt.anim_epoch);
+                visual.ticks = 0;
+                visual.anim.start(p, anim);
+                visual.materials.start(p, object_mat_anims(p, object));
+            }
+            let speed = if ground {
+                ssb_game::weapon::JOLT_GROUND_ANIM_SPEED
+            } else {
+                1.0
+            };
+            if let Some(script) = p.anim_script(anim) {
+                while visual.ticks < jolt.anim_ticks {
+                    let _ = visual.anim.tick_speed(script, speed);
+                    visual.materials.tick_speed(p, speed);
+                    visual.ticks += 1;
                 }
             }
         }
@@ -1307,6 +1416,93 @@ unsafe fn draw_training(
         }
     }
 
+    if let Some(obj) = p.object(pl.object) {
+        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+        let n = pl.compose_model(p, &obj, &mut posed);
+        if let Some(joint) = pl
+            .fighter
+            .grab
+            .holder
+            .and_then(|h| h.anchor_transform)
+            .filter(|_| ssb_game::grab::is_held(pl.fighter.status.status))
+        {
+            gpu.model_transform_joint(pl.fighter.pos, joint, meshdraw::MODEL_SCALE);
+        } else {
+            gpu.model_transform(
+                [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
+                [0.0, play::facing_turn(pl.fighter.facing), 0.0],
+                meshdraw::MODEL_SCALE,
+            );
+        }
+        let m = gpu.model_matrix();
+        // `ftDisplayMainProcDisplay` rebuilds the fighter's one directional
+        // light from the active stage's `MPGroundData.light_angle.x/y`
+        // immediately before drawing each fighter (RE-164) -- matches
+        // `psp-asset-viewer/main.rs`'s own real-camera fighter draw.
+        draw_state.configure_fighter_light(stage.light_angle_xy);
+        meshdraw::draw_object_posed(
+            p,
+            &obj,
+            &m,
+            &posed[..n],
+            None,
+            draw_state,
+            None,
+            None,
+            u32::from(pl.fighter.costume),
+        );
+        draw_state.finish_fighter_light();
+    }
+
+    // The stationary dummy target (`play::Dummy`), drawn the same way as the
+    // player's fighter -- its own pose, its own per-fighter light rebuild
+    // (RE-164) -- just with no camera interest of its own (F1's target
+    // doesn't move, so it never influences framing).
+    if let Some(dummy) = dummy_state {
+        if let Some(obj) = p.object(dummy.object) {
+            let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+            let n = dummy.compose_model(p, &obj, &mut posed);
+            if let Some(joint) = dummy
+                .fighter
+                .grab
+                .holder
+                .and_then(|h| h.anchor_transform)
+                .filter(|_| ssb_game::grab::is_held(dummy.fighter.status.status))
+            {
+                gpu.model_transform_joint(dummy.fighter.pos, joint, meshdraw::MODEL_SCALE);
+            } else {
+                gpu.model_transform(
+                    [
+                        dummy.fighter.pos.x,
+                        dummy.fighter.pos.y,
+                        dummy.fighter.pos.z,
+                    ],
+                    [0.0, play::facing_turn(dummy.fighter.facing), 0.0],
+                    meshdraw::MODEL_SCALE,
+                );
+            }
+            let m = gpu.model_matrix();
+            draw_state.configure_fighter_light(stage.light_angle_xy);
+            meshdraw::draw_object_posed(
+                p,
+                &obj,
+                &m,
+                &posed[..n],
+                None,
+                draw_state,
+                None,
+                None,
+                u32::from(dummy.fighter.costume),
+            );
+            draw_state.finish_fighter_light();
+        }
+    }
+
+    // Weapons (DL link 14) and effects (DL link 15) draw in the camera's
+    // links-13-to-15 pass, after the pass that draws the fighters (link 9)
+    // and items (link 11): `gmCameraProcDisplay`'s `camera_mask` order.
+    // Most of them clear `G_ZBUFFER`, so a fighter drawn later would cover
+    // them (RE-379).
     for fireball in weapons.fireballs() {
         let Some(fireball_mesh) = assets
             .fireball_meshes
@@ -1474,6 +1670,68 @@ unsafe fn draw_training(
                 &posed[..n],
                 draw_state,
                 None,
+                &hidden,
+            );
+        }
+    }
+
+    // Pikachu's aerial Thunder Jolt is one DObj: `Tra` then kind 46, the
+    // camera-facing billboard spun by the animated `rotate.z` and sized by
+    // its `scale.x`/`scale.y`. The ground jolt is a `DObjDesc` tree whose
+    // root takes the position and `rotate` (0, `model_rotate_y`, the line's
+    // slope); nodes 2-7 blink through their `SetFlags` events.
+    for (jolt, visual) in weapons.jolts().zip(effect_visuals.jolts.iter()) {
+        if jolt.surface.is_none() {
+            let Some((object, _)) = assets.jolt_air.as_ref() else {
+                continue;
+            };
+            let Some(mesh) = p
+                .node(object.first_node)
+                .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                .and_then(|n| p.mesh(n.mesh))
+            else {
+                continue;
+            };
+            let pose = visual.anim.joint(0).map(|(_, pose)| *pose);
+            let (spin, scale) = pose.map_or((0.0, [1.0, 1.0]), |pose| {
+                (pose.rotate[2], [pose.scale[0], pose.scale[1]])
+            });
+            gpu.model_transform_billboard(
+                jolt.position,
+                pl.camera.eye,
+                pl.camera.at,
+                spin,
+                [
+                    meshdraw::MODEL_SCALE * scale[0],
+                    meshdraw::MODEL_SCALE * scale[1],
+                ],
+            );
+            meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&visual.materials));
+        } else if let Some((object, _)) = assets.jolt_ground.as_ref() {
+            let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 8];
+            let n = visual.anim.compose(p, object, &mut posed);
+            let place = ssb_rom::scene::Mat4::from_trs(
+                [0.0; 3],
+                [0.0, jolt.model_rotate_y, jolt.rotate_z()],
+                [1.0; 3],
+            );
+            for m in &mut posed[..n] {
+                *m = place.mul(m);
+            }
+            gpu.model_transform(
+                [jolt.position.x, jolt.position.y, jolt.position.z],
+                [0.0; 3],
+                meshdraw::MODEL_SCALE,
+            );
+            let base = gpu.model_matrix();
+            let hidden = |node: u32| !visual.anim.visible(p, node);
+            meshdraw::draw_object_posed_hiding(
+                p,
+                object,
+                &base,
+                &posed[..n],
+                draw_state,
+                Some(&visual.materials),
                 &hidden,
             );
         }
@@ -1647,88 +1905,6 @@ unsafe fn draw_training(
             );
             let base = gpu.model_matrix();
             meshdraw::draw_object(p, reflector, &base, draw_state, None, 0);
-        }
-    }
-
-    if let Some(obj) = p.object(pl.object) {
-        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-        let n = pl.compose_model(p, &obj, &mut posed);
-        if let Some(joint) = pl
-            .fighter
-            .grab
-            .holder
-            .and_then(|h| h.anchor_transform)
-            .filter(|_| ssb_game::grab::is_held(pl.fighter.status.status))
-        {
-            gpu.model_transform_joint(pl.fighter.pos, joint, meshdraw::MODEL_SCALE);
-        } else {
-            gpu.model_transform(
-                [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
-                [0.0, play::facing_turn(pl.fighter.facing), 0.0],
-                meshdraw::MODEL_SCALE,
-            );
-        }
-        let m = gpu.model_matrix();
-        // `ftDisplayMainProcDisplay` rebuilds the fighter's one directional
-        // light from the active stage's `MPGroundData.light_angle.x/y`
-        // immediately before drawing each fighter (RE-164) -- matches
-        // `psp-asset-viewer/main.rs`'s own real-camera fighter draw.
-        draw_state.configure_fighter_light(stage.light_angle_xy);
-        meshdraw::draw_object_posed(
-            p,
-            &obj,
-            &m,
-            &posed[..n],
-            None,
-            draw_state,
-            None,
-            None,
-            u32::from(pl.fighter.costume),
-        );
-        draw_state.finish_fighter_light();
-    }
-
-    // The stationary dummy target (`play::Dummy`), drawn the same way as the
-    // player's fighter -- its own pose, its own per-fighter light rebuild
-    // (RE-164) -- just with no camera interest of its own (F1's target
-    // doesn't move, so it never influences framing).
-    if let Some(dummy) = dummy_state {
-        if let Some(obj) = p.object(dummy.object) {
-            let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-            let n = dummy.compose_model(p, &obj, &mut posed);
-            if let Some(joint) = dummy
-                .fighter
-                .grab
-                .holder
-                .and_then(|h| h.anchor_transform)
-                .filter(|_| ssb_game::grab::is_held(dummy.fighter.status.status))
-            {
-                gpu.model_transform_joint(dummy.fighter.pos, joint, meshdraw::MODEL_SCALE);
-            } else {
-                gpu.model_transform(
-                    [
-                        dummy.fighter.pos.x,
-                        dummy.fighter.pos.y,
-                        dummy.fighter.pos.z,
-                    ],
-                    [0.0, play::facing_turn(dummy.fighter.facing), 0.0],
-                    meshdraw::MODEL_SCALE,
-                );
-            }
-            let m = gpu.model_matrix();
-            draw_state.configure_fighter_light(stage.light_angle_xy);
-            meshdraw::draw_object_posed(
-                p,
-                &obj,
-                &m,
-                &posed[..n],
-                None,
-                draw_state,
-                None,
-                None,
-                u32::from(dummy.fighter.costume),
-            );
-            draw_state.finish_fighter_light();
         }
     }
 }

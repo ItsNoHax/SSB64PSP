@@ -468,6 +468,19 @@ impl StageAnimator {
         self.tick_nodes(script, |_| true)
     }
 
+    /// [`Self::tick`] at a `DObj::anim_speed` other than 1
+    /// (`gcSetAllAnimSpeed`).
+    pub fn tick_speed(
+        &mut self,
+        script: &[u8],
+        speed: f32,
+    ) -> Result<(), crate::objanim::AnimError> {
+        for i in 0..self.count {
+            self.joints[i].tick(script, speed, &mut self.poses[i])?;
+        }
+        Ok(())
+    }
+
     /// Stage collision On/Off groups skip their own animation callbacks.
     pub fn tick_nodes(
         &mut self,
@@ -1167,12 +1180,18 @@ impl EffectMaterialAnimator {
     /// Advances every tracked script one tick, each against its own source
     /// file's bytes (mirrors [`MaterialAnimator::tick`]).
     pub fn tick(&mut self, pack: &Pack<'_>) {
+        self.tick_speed(pack, 1.0);
+    }
+
+    /// [`Self::tick`] at an `MObj::anim_speed` other than 1
+    /// (`gcSetAllAnimSpeed`).
+    pub fn tick_speed(&mut self, pack: &Pack<'_>, speed: f32) {
         for (i, j) in &mut self.slots[..self.count] {
             let Some(a) = pack.mat_anim(*i) else { continue };
             let Some(data) = pack.mat_anim_file(&a) else {
                 continue;
             };
-            let _ = j.tick(data, 1.0);
+            let _ = j.tick(data, speed);
         }
     }
 
