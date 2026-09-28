@@ -83,6 +83,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // 51, and `SpecialLwLanding` frame 3 makes the two stars. They are
         // some 6 of their 16 frames old here.
         GameScene::YoshiBomb => 60,
+        // B at tick 20; `SpecialN` makes the flame on frame 42 and stops it
+        // on frame 55. It has played some 7 frames here.
+        GameScene::Captain => 69,
         GameScene::Training => 106,
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
@@ -169,8 +172,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
-    // The Samus, Link and Yoshi scenes stay on the spawn floor: no jump
-    // route.
+    // The Samus, Link, Yoshi and Captain scenes stay on the spawn floor: no
+    // jump route.
     if matches!(
         scene,
         GameScene::Samus
@@ -180,6 +183,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::LinkSpin
             | GameScene::Yoshi
             | GameScene::YoshiBomb
+            | GameScene::Captain
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -266,6 +270,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::LinkSpin
             | GameScene::Yoshi
             | GameScene::YoshiBomb
+            | GameScene::Captain
     ) {
         return 0;
     }
@@ -311,8 +316,8 @@ const JUMP_BUTTON_MASK: u16 =
 const MENU_STICK_NAV_MIN: i8 = 40;
 
 /// The fighter Training spawns for the player: Fox for the Fox capture
-/// scene, Luigi for the Luigi scene, Samus, Link or Yoshi for their own
-/// scenes, Mario otherwise.
+/// scene, Luigi for the Luigi scene, Samus, Link, Yoshi or Captain Falcon
+/// for their own scenes, Mario otherwise.
 fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter::FighterKind {
     // The costume scenes use Fox so that no pick can collide with the Mario
     // dummy's costume.
@@ -326,6 +331,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         }
         Some(GameScene::Link | GameScene::LinkSpin) => ssb_game::fighter::FighterKind::Link,
         Some(GameScene::Yoshi | GameScene::YoshiBomb) => ssb_game::fighter::FighterKind::Yoshi,
+        Some(GameScene::Captain) => ssb_game::fighter::FighterKind::Captain,
         _ => ssb_game::fighter::FighterKind::Mario,
     }
 }
@@ -456,7 +462,7 @@ unsafe fn run() -> ! {
     });
 
     let draw_assets = pack.as_ref().map(DrawAssets::resolve).unwrap_or_default();
-    let mut link_visuals = LinkVisuals::default();
+    let mut effect_visuals = EffectVisuals::default();
     let mut draw_state = meshdraw::DrawState::default();
     // Created once, on first entry to Training Mode (below) -- a fighter
     // spawned on the training stage, ticked with real physics/animation/
@@ -824,7 +830,7 @@ unsafe fn run() -> ! {
             }
             Screen::Training => {
                 if let (Some(p), Some(pl)) = (pack.as_ref(), play_state.as_ref()) {
-                    link_visuals.sync(p, &draw_assets, &pl.fighter, &weapons);
+                    effect_visuals.sync(p, &draw_assets, &pl.fighter, &weapons);
                 }
                 draw_training(
                     &mut gpu,
@@ -834,7 +840,7 @@ unsafe fn run() -> ! {
                     dummy_state.as_ref(),
                     &weapons,
                     &draw_assets,
-                    &link_visuals,
+                    &effect_visuals,
                     Some(&material_anim),
                     stage_map.as_ref().map(|map| &map.animator),
                     Some(&stage_objects),
@@ -875,6 +881,20 @@ unsafe fn run() -> ! {
                         player.fighter.yoshi.egg_held,
                         weapons.eggs().count(),
                         weapons.stars().count(),
+                    );
+                    unsafe {
+                        psp::sys::sceIoWrite(
+                            psp::sys::sceKernelStdout(),
+                            line.as_ptr() as *const core::ffi::c_void,
+                            line.len(),
+                        );
+                    }
+                }
+                if capture_scene == Some(GameScene::Captain) {
+                    let line = alloc::format!(
+                        "captain anim_frame={:.1} punch_effect={:?}\n",
+                        player.fighter.status.anim_frame,
+                        ssb_game::captain::punch_effect_ticks(&player.fighter),
                     );
                     unsafe {
                         psp::sys::sceIoWrite(
@@ -969,6 +989,8 @@ struct DrawAssets {
     spin_effect: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     yoshi_egg_mesh: Option<ssb_rom::pack::MeshDesc>,
     yoshi_star_mesh: Option<ssb_rom::pack::MeshDesc>,
+    /// The Falcon Punch flame (material animation only).
+    falcon_punch: Option<ssb_rom::pack::ObjectDesc>,
 }
 
 impl DrawAssets {
@@ -986,20 +1008,39 @@ impl DrawAssets {
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             yoshi_egg_mesh: ssb_psp_runtime::scene::yoshi_egg_mesh(p),
             yoshi_star_mesh: ssb_psp_runtime::scene::yoshi_star_mesh(p),
+            falcon_punch: ssb_psp_runtime::scene::captain_falcon_punch_effect(p),
         }
     }
 }
 
-/// The animation players for Link's Boomerang and Spin Attack swirl. The
-/// game state counts each one's `gcPlayAnimAll` calls; [`Self::sync`]
-/// plays the players up to that count, restarting when it goes back.
+/// The animation players for Link's Boomerang and Spin Attack swirl and
+/// Captain Falcon's Falcon Punch flame. The game state counts each one's
+/// `gcPlayAnimAll` calls; [`Self::sync`] plays the players up to that
+/// count, restarting when it goes back.
 #[derive(Default)]
-struct LinkVisuals {
+struct EffectVisuals {
     boomerang: ssb_rom::skeleton::StageAnimator,
     boomerang_ticks: Option<u16>,
     spin: ssb_rom::skeleton::StageAnimator,
     spin_materials: ssb_rom::skeleton::EffectMaterialAnimator,
     spin_ticks: Option<u16>,
+    punch_materials: ssb_rom::skeleton::EffectMaterialAnimator,
+    punch_ticks: Option<u16>,
+}
+
+/// `gcAddAnimAll`'s material half: the material scripts bound to an
+/// effect object's own primitives (RE-175).
+fn object_mat_anims<'p>(
+    p: &'p Pack<'_>,
+    object: &ssb_rom::pack::ObjectDesc,
+) -> impl Iterator<Item = u32> + 'p {
+    let (first, count) = (object.first_node, object.node_count);
+    (0..count)
+        .filter_map(move |n| p.node(first + n))
+        .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+        .filter_map(move |n| p.mesh(n.mesh))
+        .flat_map(move |m| (0..m.prim_count).filter_map(move |i| p.prim(m.first_prim + i)))
+        .map(|prim| prim.mat_anim)
 }
 
 /// `(restart, ticks)` that bring a player at `clock` to `target`.
@@ -1016,7 +1057,7 @@ fn catch_up(clock: &mut Option<u16>, target: Option<u16>) -> Option<(bool, u16)>
     Some(step)
 }
 
-impl LinkVisuals {
+impl EffectVisuals {
     fn sync(
         &mut self,
         p: &Pack<'_>,
@@ -1048,21 +1089,26 @@ impl LinkVisuals {
         ) {
             if restart {
                 self.spin.start(p, anim);
-                // `gcAddAnimAll`'s material half, over the swirl's own
-                // bound primitives (RE-175).
-                let mat_anims = (0..object.node_count)
-                    .filter_map(|n| p.node(object.first_node + n))
-                    .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
-                    .filter_map(|n| p.mesh(n.mesh))
-                    .flat_map(|m| (0..m.prim_count).filter_map(move |i| p.prim(m.first_prim + i)))
-                    .map(|prim| prim.mat_anim);
-                self.spin_materials.start(p, mat_anims);
+                self.spin_materials.start(p, object_mat_anims(p, object));
             }
             if let Some(script) = p.anim_script(anim) {
                 for _ in 0..ticks {
                     let _ = self.spin.tick(script);
                     self.spin_materials.tick(p);
                 }
+            }
+        }
+
+        let punch = ssb_game::captain::punch_effect_ticks(player);
+        if let (Some((restart, ticks)), Some(object)) = (
+            catch_up(&mut self.punch_ticks, punch),
+            assets.falcon_punch.as_ref(),
+        ) {
+            if restart {
+                self.punch_materials.start(p, object_mat_anims(p, object));
+            }
+            for _ in 0..ticks {
+                self.punch_materials.tick(p);
             }
         }
     }
@@ -1087,7 +1133,7 @@ unsafe fn draw_training(
     dummy_state: Option<&play::Dummy>,
     weapons: &ssb_game::weapon::WeaponPool,
     assets: &DrawAssets,
-    link_visuals: &LinkVisuals,
+    effect_visuals: &EffectVisuals,
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     stage_anim: Option<&ssb_rom::skeleton::StageAnimator>,
     stage_objects: Option<&ssb_rom::ground_obj::GroundObjects>,
@@ -1310,7 +1356,7 @@ unsafe fn draw_training(
     if let Some((object, _)) = assets.boomerang.as_ref() {
         for boomerang in weapons.boomerangs() {
             let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
-            let n = link_visuals.boomerang.compose(p, object, &mut posed);
+            let n = effect_visuals.boomerang.compose(p, object, &mut posed);
             if let Some(root) = p.node(object.first_node) {
                 let t = root.rest_translate.map(|v| -v / meshdraw::MODEL_SCALE);
                 let unplace = ssb_rom::scene::Mat4::from_trs(t, [0.0; 3], [1.0; 3]);
@@ -1351,7 +1397,7 @@ unsafe fn draw_training(
         assets.spin_effect.as_ref(),
     ) {
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
-        let n = link_visuals.spin.compose(p, object, &mut posed);
+        let n = effect_visuals.spin.compose(p, object, &mut posed);
         gpu.model_transform(
             [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
             [0.0, ssb_game::link::spin_effect_rotate_y(&pl.fighter), 0.0],
@@ -1366,7 +1412,41 @@ unsafe fn draw_training(
             None,
             draw_state,
             material_anim,
-            Some(&link_visuals.spin_materials),
+            Some(&effect_visuals.spin_materials),
+            0,
+        );
+    }
+
+    // The Falcon Punch flame is one DObj: battle matrix function 80 places
+    // it at joint 16's world position, and `RotRpyR` applies the
+    // `lr * -90`-degree yaw `efManagerCaptainFalconPunchMakeEffect` sets.
+    if let (Some(_), Some(object)) = (
+        ssb_game::captain::punch_effect_ticks(&pl.fighter),
+        assets.falcon_punch.as_ref(),
+    ) {
+        let pos = pl.fighter.joint_world(
+            ssb_game::captain::PUNCH_EFFECT_JOINT,
+            ssb_engine::math::Vec3::ZERO,
+        );
+        gpu.model_transform(
+            [pos.x, pos.y, pos.z],
+            [
+                0.0,
+                ssb_game::captain::punch_effect_rotate_y(&pl.fighter),
+                0.0,
+            ],
+            meshdraw::MODEL_SCALE,
+        );
+        let base = gpu.model_matrix();
+        meshdraw::draw_object_posed(
+            p,
+            object,
+            &base,
+            &[],
+            None,
+            draw_state,
+            material_anim,
+            Some(&effect_visuals.punch_materials),
             0,
         );
     }
