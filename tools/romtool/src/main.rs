@@ -3661,13 +3661,22 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         // Items animate through `ITAttributes.anim_joints` the same way
         // (`itManagerMakeItem` -> `gcAddAnimAll`), RE-382: the PK Fire flame
         // (file 240 + 0x34) names file 336's tree at 0xA08 and table at
-        // 0xAF0.
+        // 0xAF0; Link's Bomb (`llLinkMainBombItemAttributes`, file 225 +
+        // 0x40) file 353's tree at 0x18D8 and table at 0x1990 (RE-383).
         (
             ssb_rom::pack::AnimDesc::ITEM,
             ssb_rom::pack::AnimDesc::ITEM_ANIM_NESS_PK_FIRE,
             336,
             0xA08,
             0xAF0,
+            None,
+        ),
+        (
+            ssb_rom::pack::AnimDesc::ITEM,
+            ssb_rom::pack::AnimDesc::ITEM_ANIM_LINK_BOMB,
+            353,
+            0x18D8,
+            0x1990,
             None,
         ),
     ];
@@ -6675,6 +6684,11 @@ fn load_all(archive: &Archive) -> Loaded {
         (336u32, 0x168u32, 0x0u32), // NessSpecial3 PK Fire spark, file 240 + 0x00
         (335u32, 0x7C98u32, 0x7AF8u32), // NessModel PK Thunder head, file 239 + 0x0C
         (335u32, 0x8B40u32, 0x89C8u32), // NessModel PK Thunder trail, file 239 + 0x40
+        // RE-383: Link's Spin Attack weapon graphic, named by
+        // `llLinkMainSpinAttackWeaponAttributes.p_mobjsubs` (file 225 +
+        // 0x0C). The decomp declares the table as a NULL placeholder; the ROM
+        // holds [NULL, 0x114E8].
+        (324u32, 0x11908u32, 0x110A8u32), // LinkModel Spin Attack weapon
     ] {
         let nodes = graphs
             .get(&file)

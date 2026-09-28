@@ -114,6 +114,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Down+B at tick 20, held; PSI Magnet's field is up in
         // `SpecialLwHold`.
         GameScene::NessMagnet => 50,
+        // Down+B at tick 20 pulls a Bomb; it is in Link's hand here.
+        GameScene::LinkBomb => 55,
         GameScene::Training => 106,
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
@@ -220,6 +222,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::Ness
             | GameScene::NessThunder
             | GameScene::NessMagnet
+            | GameScene::LinkBomb
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -326,6 +329,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::Ness
             | GameScene::NessThunder
             | GameScene::NessMagnet
+            | GameScene::LinkBomb
     ) {
         return 0;
     }
@@ -358,7 +362,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
         80
     } else if (matches!(
         scene,
-        GameScene::SamusBomb | GameScene::YoshiBomb | GameScene::CaptainKick
+        GameScene::SamusBomb | GameScene::YoshiBomb | GameScene::CaptainKick | GameScene::LinkBomb
     ) && tick == 20)
         || (scene == GameScene::NessMagnet && tick >= 20)
     {
@@ -457,7 +461,13 @@ fn log_capture_state(
     }
     if matches!(
         capture_scene,
-        Some(GameScene::Donkey | GameScene::Ness | GameScene::NessThunder | GameScene::NessMagnet)
+        Some(
+            GameScene::Donkey
+                | GameScene::Ness
+                | GameScene::NessThunder
+                | GameScene::NessMagnet
+                | GameScene::LinkBomb
+        )
     ) {
         let line = alloc::format!(
             "fighter status={:?} anim_frame={:.1} items={:?} sparks={} heads={} trails={}\n",
@@ -771,7 +781,9 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Samus | GameScene::SamusShot | GameScene::SamusBomb) => {
             ssb_game::fighter::FighterKind::Samus
         }
-        Some(GameScene::Link | GameScene::LinkSpin) => ssb_game::fighter::FighterKind::Link,
+        Some(GameScene::Link | GameScene::LinkSpin | GameScene::LinkBomb) => {
+            ssb_game::fighter::FighterKind::Link
+        }
         Some(GameScene::Yoshi | GameScene::YoshiBomb) => ssb_game::fighter::FighterKind::Yoshi,
         Some(GameScene::Captain | GameScene::CaptainKick) => {
             ssb_game::fighter::FighterKind::Captain
@@ -1199,8 +1211,9 @@ struct DrawAssets {
     pk_fire: Option<ssb_rom::pack::ObjectDesc>,
     pk_thunder: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     pk_trail: Option<ssb_rom::pack::ObjectDesc>,
-    /// The PK Fire flame item and its `anim_joints`.
+    /// The PK Fire flame and Link's Bomb items and their `anim_joints`.
     pk_fire_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    link_bomb_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Ness's PSI Magnet field and its transform animation.
     magnet: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Jigglypuff's Sing notes and their transform animation.
@@ -1255,6 +1268,11 @@ impl DrawAssets {
                 ssb_psp_runtime::scene::NESS_PK_FIRE_ITEM_SOURCE,
             )
             .zip(p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_NESS_PK_FIRE)),
+            link_bomb_item: ssb_psp_runtime::scene::object_keyed(
+                p,
+                ssb_psp_runtime::scene::LINK_BOMB_ITEM_SOURCE,
+            )
+            .zip(p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_LINK_BOMB)),
             magnet: ssb_psp_runtime::scene::ness_psi_magnet_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             sing: ssb_psp_runtime::scene::purin_sing_effect(p)
@@ -1323,9 +1341,7 @@ impl DrawAssets {
     ) -> Option<&(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)> {
         match kind {
             ssb_game::item::ItemKind::NessPKFire => self.pk_fire_item.as_ref(),
-            // Not drawn yet (RE-382): the held Bomb hangs under a hand-joint
-            // parent (kind 0x52) that is not ported.
-            ssb_game::item::ItemKind::LinkBomb => None,
+            ssb_game::item::ItemKind::LinkBomb => self.link_bomb_item.as_ref(),
         }
     }
 }
@@ -1794,6 +1810,7 @@ unsafe fn draw_training(
         draw_state,
         p,
         pl,
+        dummy_state,
         weapons,
         items,
         assets,
@@ -1812,6 +1829,7 @@ unsafe fn draw_items_weapons_effects(
     draw_state: &mut meshdraw::DrawState,
     p: &Pack<'_>,
     pl: &play::FighterScene,
+    dummy_state: Option<&play::Dummy>,
     weapons: &ssb_game::weapon::WeaponPool,
     items: &ssb_game::item::ItemPool,
     assets: &DrawAssets,
@@ -1821,7 +1839,13 @@ unsafe fn draw_items_weapons_effects(
     // Items (DL link 11) draw in the fighters' camera pass, under the
     // camera's default head modes. The PK Fire flame is a
     // `TraRotRpyRSca` tree scaled by its lifetime (`itNessPKFireProcUpdate`);
-    // its node 3 is a ROM billboard. Link's Bomb is `Tra` then kind 46 on the
+    // its node 3 is a ROM billboard. Link's Bomb is `Tra` then kind 46 on its
+    // root and child (RE-383): the child, the drawn node, is a camera-facing
+    // quad spun by its own `rotate.z` and sized by the accumulated
+    // `gGCScaleX` (root scale times its own). Its position is its translate
+    // under the root's modelview: the item position in world axes, or, held,
+    // the item joint under `itMainSetFighterHold`'s kind-82 parent
+    // (`func_ovl0_800C9F70`, the joint matrix with its scale divided out). Link's Bomb is `Tra` then kind 46 on the
     // root and its child: the child draws as a camera-facing quad at the
     // item's position plus its own translate, sized by the root's scale times
     // its own and spun by its own `rotate.z` (`gcPrepDObjMatrix` kind 46
@@ -1859,7 +1883,92 @@ unsafe fn draw_items_weapons_effects(
                     0,
                 );
             }
-            ssb_game::item::ItemKind::LinkBomb => {}
+            ssb_game::item::ItemKind::LinkBomb => {
+                let pose_of = |index: u32| {
+                    let node = object.first_node + index;
+                    stage_pose(&visual.anim, node).or_else(|| {
+                        p.node(node).map(|n| ssb_rom::figatree::JointPose {
+                            rotate: n.rest_rotate,
+                            translate: n.rest_translate,
+                            scale: n.rest_scale,
+                        })
+                    })
+                };
+                let mesh_of = |index: u32| {
+                    p.node(object.first_node + index)
+                        .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                        .and_then(|n| p.mesh(n.mesh))
+                };
+                let (Some(body), Some(spark)) = (pose_of(1), pose_of(2)) else {
+                    continue;
+                };
+                let owner = item.owner.and_then(|port| {
+                    if pl.fighter.port == port {
+                        Some(&pl.fighter)
+                    } else {
+                        dummy_state.map(|d| &d.fighter).filter(|f| f.port == port)
+                    }
+                });
+                let held = owner.filter(|_| item.is_hold).and_then(|f| {
+                    let joint = match item.weight {
+                        ssb_game::item::ItemWeight::Light => {
+                            Some(ssb_game::item_throw::itemlight_joint(f.kind))
+                        }
+                        ssb_game::item::ItemWeight::Heavy => {
+                            ssb_game::grab::itemheavy_joint(f.kind)
+                        }
+                    }?;
+                    f.joint_transforms[joint]
+                });
+                let v = |pose: &ssb_rom::figatree::JointPose| {
+                    ssb_engine::math::Vec3::new(
+                        pose.translate[0],
+                        pose.translate[1],
+                        pose.translate[2],
+                    )
+                };
+                let to_world = |local: ssb_engine::math::Vec3| match held {
+                    Some(joint) => {
+                        let axes = ssb_game::grab::held_root_axes(joint);
+                        joint.origin + axes[0] * local.x + axes[1] * local.y + axes[2] * local.z
+                    }
+                    None => item.pos + local,
+                };
+                // Held, `itMainSetFighterHold` resets the root to its desc
+                // scale; loose, the bloat scales the root.
+                let root_scale = if held.is_some() {
+                    [1.0, 1.0]
+                } else {
+                    [item.scale.x, item.scale.y]
+                };
+                if let Some(mesh) = mesh_of(1) {
+                    gpu.model_transform_billboard(
+                        to_world(v(&body)),
+                        pl.camera.eye,
+                        pl.camera.at,
+                        body.rotate[2],
+                        [
+                            meshdraw::MODEL_SCALE * root_scale[0] * body.scale[0],
+                            meshdraw::MODEL_SCALE * root_scale[1] * body.scale[1],
+                        ],
+                    );
+                    meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&visual.materials));
+                }
+                // Node 2 (the fuse spark) is plain `Tra`: no rotation or scale
+                // of its own, in the parent's frame.
+                if let Some(mesh) = mesh_of(2) {
+                    let pos = to_world(v(&body) + v(&spark));
+                    match held {
+                        Some(joint) => gpu.model_transform_joint(pos, joint, meshdraw::MODEL_SCALE),
+                        None => gpu.model_transform(
+                            [pos.x, pos.y, pos.z],
+                            [0.0; 3],
+                            meshdraw::MODEL_SCALE,
+                        ),
+                    }
+                    meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&visual.materials));
+                }
+            }
         }
     }
 
