@@ -65,6 +65,17 @@ impl StageKind {
             _ => return None,
         })
     }
+
+    /// The descriptor a hazard controller reads at `GRxxxMap` + 0xBC:
+    /// Zebes' acid and Inishie's POW Block take a `GRAttackColl`, Jungle's
+    /// barrel and Hyrule's Twister an `FTThrowHitDesc` (RE-356).
+    pub fn hazard_descs(self, words: [i32; 7]) -> (Option<GroundAttack>, Option<HazardThrow>) {
+        match self {
+            StageKind::Zebes | StageKind::Inishie => (Some(GroundAttack::from_words(words)), None),
+            StageKind::Jungle | StageKind::Hyrule => (None, Some(HazardThrow::from_words(words))),
+            _ => (None, None),
+        }
+    }
 }
 
 /// `nMPMapObjKind*` values the controllers look up.

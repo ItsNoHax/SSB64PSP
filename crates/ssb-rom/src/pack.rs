@@ -212,7 +212,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // runs Dream Land without Whispy.
 // 43 preserves borrowed RSP vertices' loading joints and local positions.
 // MeshDesc grows by a blob offset; old packs cannot animate joint seams.
-pub const VERSION: u32 = 43;
+// 44 appends the hazard controller data to `StageDesc` (72 -> 104): the
+// seven words at `GR*Map` + 0xBC and the Zebes acid surface. A v43 stage
+// has neither, so a v44 runtime would run Zebes acid with no damage.
+pub const VERSION: u32 = 44;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1193,11 +1196,18 @@ pub struct StageDesc {
     /// despite sharing a field with one. Was `_pad` (always `0`) before
     /// `VERSION` 17.
     pub camera_light_angle_z: f32,
+    /// The seven words at `GR*Map` + [`crate::stage::HAZARD_DESC`] for the
+    /// four hazard stages (`GRAttackColl` or `FTThrowHitDesc`), zero
+    /// elsewhere. Which struct they are depends on the stage kind (RE-356).
+    pub hazard: [i32; 7],
+    /// Planet Zebes: node 1's translation Y in `llGRZebesMapAcidDObjDesc`,
+    /// the acid surface above its root. Zero elsewhere.
+    pub hazard_surface_y: f32,
 }
 
 impl StageDesc {
-    /// `16 + 16 + 8 + 8 + 16 + 8`.
-    pub const SIZE: usize = 72;
+    /// `16 + 16 + 8 + 8 + 16 + 8 + 28 + 4`.
+    pub const SIZE: usize = 104;
     pub const NO_LAYER: u32 = u32::MAX;
 }
 
@@ -2507,8 +2517,19 @@ impl PackWriter {
             source_offset: ground.offset,
             light_angle_xy: [ground.light_angle[0], ground.light_angle[1]],
             camera_light_angle_z: ground.light_angle[2],
+            hazard: [0; 7],
+            hazard_surface_y: 0.0,
         });
         (self.stages.len() - 1) as u32
+    }
+
+    /// Records a stage's hazard controller data ([`StageDesc::hazard`],
+    /// [`StageDesc::hazard_surface_y`]).
+    pub fn set_stage_hazard(&mut self, stage: u32, words: [i32; 7], surface_y: f32) {
+        if let Some(s) = self.stages.get_mut(stage as usize) {
+            s.hazard = words;
+            s.hazard_surface_y = surface_y;
+        }
     }
 
     /// Serialises the pack.
@@ -2769,6 +2790,10 @@ impl PackWriter {
                 out.extend_from_slice(&v.to_le_bytes());
             }
             out.extend_from_slice(&s.camera_light_angle_z.to_le_bytes());
+            for v in s.hazard {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out.extend_from_slice(&s.hazard_surface_y.to_le_bytes());
         }
         for l in &self.lines {
             out.extend_from_slice(&l.first_vertex.to_le_bytes());
@@ -3617,7 +3642,14 @@ impl<'a> Pack<'a> {
                 f32::from_bits(u32_at(self.data, at + 64)),
             ],
             camera_light_angle_z: f32::from_bits(u32_at(self.data, at + 68)),
+            hazard: core::array::from_fn(|k| u32_at(self.data, at + 72 + k * 4) as i32),
+            hazard_surface_y: f32::from_bits(u32_at(self.data, at + 100)),
         })
+    }
+
+    /// The stage whose `MPGroundData` lives in `file`, if packed.
+    pub fn stage_of_file(&self, file: u32) -> Option<u32> {
+        (0..self.stage_count).find(|&i| self.stage(i).is_some_and(|s| s.source_file == file))
     }
 
     pub fn line(&self, i: u32) -> Option<LineDesc> {
@@ -5213,6 +5245,29 @@ mod tests {
             ],
         };
         (ground, map)
+    }
+
+    #[test]
+    fn stage_hazard_data_round_trips_per_stage() {
+        let (ground, map) = sample_stage();
+        let mut other = ground.clone();
+        other.file = 0x101;
+        let mut w = PackWriter::new();
+        w.add_stage(&ground, Some(&map), |_, _| None);
+        let zebes = w.add_stage(&other, None, |_, _| None);
+        w.set_stage_hazard(zebes, [0, 16, 80, 130, 0, 30, 1], -282.725);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        let plain = pack.stage(0).unwrap();
+        assert_eq!((plain.hazard, plain.hazard_surface_y), ([0; 7], 0.0));
+        assert_eq!(pack.stage_of_file(0x101), Some(1));
+        assert_eq!(pack.stage_of_file(0x102), None);
+        let s = pack.stage(1).unwrap();
+        assert_eq!(s.hazard, [0, 16, 80, 130, 0, 30, 1]);
+        assert_eq!(s.hazard_surface_y, -282.725);
+        // The trailing fields sit after the camera angle, not over it.
+        assert_eq!(s.camera_light_angle_z, plain.camera_light_angle_z);
     }
 
     #[test]

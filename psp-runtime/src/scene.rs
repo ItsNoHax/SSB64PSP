@@ -1014,6 +1014,49 @@ pub fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
     }
 }
 
+/// The file data `grMainSetupMakeGround` hands a VS stage's controller:
+/// its kind (`dMPCollisionGroundFileInfos` row), map objects, bottom bound
+/// and hazard descriptors.
+pub struct StageSetup {
+    pub kind: ssb_game::stage::StageKind,
+    pub map_objects: alloc::vec::Vec<ssb_game::stage::MapObject>,
+    pub bound_bottom: f32,
+    pub hazard: [i32; 7],
+    pub hazard_surface_y: f32,
+}
+
+impl StageSetup {
+    /// `None` for a stage that is not one of the nine VS stages.
+    pub fn new(pack: &Pack<'_>, stage: &StageDesc) -> Option<Self> {
+        let gkind = ssb_rom::stage::vs_ground_kind(stage.source_file)?;
+        Some(StageSetup {
+            kind: ssb_game::stage::StageKind::from_gkind(gkind)?,
+            map_objects: pack
+                .stage_points(stage)
+                .map(|point| ssb_game::stage::MapObject {
+                    kind: point.kind,
+                    pos: ssb_engine::math::Vec3::new(point.x as f32, point.y as f32, 0.0),
+                })
+                .collect(),
+            bound_bottom: stage.bounds.bottom as f32,
+            hazard: stage.hazard,
+            hazard_surface_y: stage.hazard_surface_y,
+        })
+    }
+
+    pub fn init(&self) -> ssb_game::stage::StageInit<'_> {
+        let (hazard_attack, hazard_throw) = self.kind.hazard_descs(self.hazard);
+        ssb_game::stage::StageInit {
+            kind: self.kind,
+            map_objects: &self.map_objects,
+            bound_bottom: self.bound_bottom,
+            hazard_attack,
+            hazard_throw,
+            acid_surface_y: self.hazard_surface_y,
+        }
+    }
+}
+
 /// The runtime half of the stage controller's objects (RE-357): the pack's
 /// controller objects, played through [`ssb_rom::ground_obj::GroundObjects`].
 ///

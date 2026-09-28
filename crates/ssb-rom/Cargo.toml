@@ -22,3 +22,4 @@ std = []
 # the ROM's own stage-object animations. `ssb-game` does not depend on this
 # crate, so there is no cycle.
 ssb-game = { workspace = true, features = ["std"] }
+ssb-engine = { workspace = true, features = ["std"] }
