@@ -122,6 +122,10 @@ impl ItemPool {
     /// `ftMainSearchHitItem`: every item's attack against `f`. Call from the
     /// search pass, after the fighter-versus-fighter search.
     pub fn search_fighter(&mut self, f: &mut Fighter) {
+        // `ftMainProcSearchHitAll` skips a ghost.
+        if f.dead.is_ghost {
+            return;
+        }
         let order = self.order;
         for &slot in &order[..self.order_len] {
             let Some(mut item) = self.slots[usize::from(slot)] else {

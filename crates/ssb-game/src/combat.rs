@@ -796,6 +796,10 @@ pub(crate) fn set_hit_rebound(fp: &mut Fighter, coll: &AttackColl, victim_x: f32
 /// against `this`. `other_after_this` is the fighter-list order; only then do
 /// the two fighters' attacks trade priority, so each pair clanks once.
 pub fn search_fighter_hits(this: &mut Fighter, other: &mut Fighter, other_after_this: bool) {
+    // `ftMainProcSearchHitAll` skips a ghost victim.
+    if this.dead.is_ghost {
+        return;
+    }
     if this.port == other.port || this.grab.capture == Some(other.port) || is_catchstatus(other) {
         return;
     }

@@ -112,7 +112,7 @@ fn damage_drop_obeys_the_hitlag_stack_gate_and_death_destroys_the_held_item() {
                 ItemStatus::LinkBomb(link_bomb::Status::Dropped)
             );
         } else {
-            status::set_dead_down(&mut link);
+            crate::dead::set_dead_down(&mut link);
             pool.take_requests(&mut link, core::iter::empty);
             assert!(link.items.held.is_none());
             assert!(pool.get(slot).is_none());

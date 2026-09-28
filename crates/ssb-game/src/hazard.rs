@@ -272,6 +272,10 @@ pub fn damage_floor(f: &Fighter) -> Option<GroundAttack> {
 
 /// `ftMainSearchGroundHit`, last in `ftMainProcSearchHitAll`.
 pub fn search_ground_hit(f: &mut Fighter, stage: &Stage) {
+    // `ftMainSearchHitHazard` and `ftMainProcSearchHitAll` skip a ghost.
+    if f.dead.is_ghost {
+        return;
+    }
     if f.hitlag == 0 {
         f.hazard.acid_wait = f.hazard.acid_wait.saturating_sub(1);
         f.hazard.damagefloor_wait = f.hazard.damagefloor_wait.saturating_sub(1);

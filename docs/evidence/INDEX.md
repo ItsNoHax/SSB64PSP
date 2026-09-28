@@ -397,3 +397,4 @@ editing a record.
 | RE-385 | The Training stage select | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless golden captured twice, workspace tests, both PSP builds; no physical PSP) | menu, stage, gameplay, visual-regression, psp-platform |  |
 | RE-386 | The Training character select, and the spawn facing it exposed | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless golden captured twice, workspace tests, both PSP builds; no physical PSP) | menu, fighter, gameplay, visual-regression |  |
 | RE-387 | Spawn facing: fighters face the stage centre | IMPLEMENTED (decomp source, host test, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | fighter, gameplay, visual-regression |  |
+| RE-388 | Blast-zone KOs and the rebirth halo in Training | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless golden captured twice, workspace tests, both PSP builds; no physical PSP) | fighter, gameplay, stage, visual-regression |  |

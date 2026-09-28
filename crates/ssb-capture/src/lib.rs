@@ -343,10 +343,13 @@ pub enum GameScene {
     /// `fighterselect`: Kirby picked on the character select, then Peach's
     /// Castle on the stage select, in Training.
     FighterSelect,
+    /// `rebirth`: Mario dashes off Dream Land, is KO'd below the stage and
+    /// comes back under the rebirth halo.
+    Rebirth,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 32] = [
+    pub const ALL: [GameScene; 33] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -379,6 +382,7 @@ impl GameScene {
         GameScene::Costume3,
         GameScene::StageSelect,
         GameScene::FighterSelect,
+        GameScene::Rebirth,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -415,6 +419,7 @@ impl GameScene {
             GameScene::Costume3 => "costume3",
             GameScene::StageSelect => "stageselect",
             GameScene::FighterSelect => "fighterselect",
+            GameScene::Rebirth => "rebirth",
         }
     }
 

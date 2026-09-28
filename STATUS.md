@@ -7,30 +7,29 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** spawn facing (RE-387). Fighters face the stage
-  centre from their spawn, and 47 goldens were rebaselined. Before it, the
-  character and stage selects (RE-385, RE-386): Training spawns any
-  unlocked fighter against a CPU pick on any VS stage.
-- **Next gameplay batch:** the match rules under `P3`: stocks, blast-zone
-  KOs and respawn, the timer and results (PLAN). Training has no respawn
-  yet.
+- **Completed batch:** blast-zone KOs and rebirth (RE-388), live in
+  Training. Before it: spawn facing (RE-387) and the character and stage
+  selects (RE-385, RE-386).
+- **Next gameplay batch:** the VS match under `P3`: the VS start's
+  facing and spawns, stocks and time, the timer, and the results and
+  restart (PLAN).
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| KO and rebirth | `ssb_game::dead` replaces the simplified port; 11 host tests; new `f1-training-rebirth` | RE-388 |
 | Spawn facing | `Facing::at_spawn_x`; 47 goldens rebaselined; grab route lost its turn tap | RE-387 |
-| Character select | `ssb_game::fighter_select`, 13 host tests; the CPU pick is the dummy; new `f1-training-fighter-select` (Kirby, Peach's Castle) | RE-386 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
   Pinned 1.98.0 Clippy with warnings denied and workspace rustfmt passed in
-  RE-387; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
+  RE-388; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: all 95 goldens match twice (RE-387), after the
-  spawn-facing rebaseline. No golden passes through a platform or respawns.
+- PPSSPPHeadless: all 95 goldens match twice (RE-388), including the
+  new rebirth scene. No golden passes through a platform.
 - `psp-game` reaches scripted Training in PPSSPP. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
   (RE-360).
