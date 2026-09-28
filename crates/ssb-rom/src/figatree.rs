@@ -419,8 +419,20 @@ impl JointAnim {
         speed: f32,
         pose: &mut JointPose,
     ) -> Result<(), Desynchronised> {
+        self.tick_scaled(data, speed, pose, [1.0; 3])
+    }
+
+    /// Luigi's `lbCommonPlayTranslateScaledDObjAnim`: scale only tracks
+    /// written this tick, leaving silent translation axes at their rest pose.
+    pub fn tick_scaled(
+        &mut self,
+        data: &[u8],
+        speed: f32,
+        pose: &mut JointPose,
+        translate_scale: [f32; 3],
+    ) -> Result<(), Desynchronised> {
         self.parse(data, speed)?;
-        self.play(speed, pose);
+        self.play(speed, pose, translate_scale);
         Ok(())
     }
 
@@ -568,7 +580,7 @@ impl JointAnim {
 
     /// `gcPlayDObjAnimJoint`: ages every live track by one tick and reads the
     /// pose back out of it.
-    fn play(&mut self, speed: f32, pose: &mut JointPose) {
+    fn play(&mut self, speed: f32, pose: &mut JointPose, translate_scale: [f32; 3]) {
         if self.clock == Clock::Inert {
             return;
         }
@@ -583,7 +595,8 @@ impl JointAnim {
             match track {
                 TRACK_ROT_X | TRACK_ROT_Y | TRACK_ROT_Z => pose.rotate[track] = value,
                 TRACK_TRA_X | TRACK_TRA_Y | TRACK_TRA_Z => {
-                    pose.translate[track - TRACK_TRA_X] = value
+                    pose.translate[track - TRACK_TRA_X] =
+                        value * translate_scale[track - TRACK_TRA_X]
                 }
                 TRACK_SCA_X | TRACK_SCA_Y | TRACK_SCA_Z => pose.scale[track - TRACK_SCA_X] = value,
                 // TraI needs opcode 12's control points, which no fighter
@@ -766,6 +779,29 @@ mod tests {
         let poses = run(&words, 2, 1.0);
         assert_eq!(poses[1].rotate[0], 1.0);
         assert_eq!(poses[1].translate[0], 4.0);
+    }
+
+    #[test]
+    fn scaled_play_multiplies_only_written_translation_tracks() {
+        let words = [
+            cmd(OP_SET_VAL_BLOCK, ROTX | TRAX, 1),
+            1,
+            512,
+            16,
+            cmd(OP_END, 0, 0),
+        ];
+        let data = script(&words);
+        let mut anim = JointAnim::start(0, 0.0);
+        let mut pose = JointPose {
+            translate: [1.0, 2.0, 3.0],
+            ..JointPose::default()
+        };
+        anim.tick_scaled(&data, 1.0, &mut pose, [2.0, 3.0, 4.0])
+            .unwrap();
+        anim.tick_scaled(&data, 1.0, &mut pose, [2.0, 3.0, 4.0])
+            .unwrap();
+        assert_eq!(pose.rotate[0], 1.0);
+        assert_eq!(pose.translate, [8.0, 2.0, 3.0]);
     }
 
     #[test]

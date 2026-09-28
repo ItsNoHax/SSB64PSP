@@ -3,7 +3,9 @@
 use ssb_rom::figatree::JointPose;
 use ssb_rom::objanim::StageJoint;
 use ssb_rom::pack::{AnimDesc, AnimJoint, Pack};
-use ssb_rom::skeleton::{apply_shield_pose, shield_lookup, ShieldJoints, Skeleton};
+use ssb_rom::skeleton::{
+    apply_shield_pose, shield_lookup, translation_scale, ShieldJoints, Skeleton,
+};
 
 const FOX: u32 = 1;
 const PLAYABLE: u32 = 12;
@@ -140,4 +142,114 @@ fn the_shield_joint_pose_leaves_the_body_alone() {
         assert_eq!(skeleton.pose(i), Some(pose));
     }
     assert_ne!(yrotn, JointPose::default());
+}
+
+#[test]
+fn luigi_scales_come_from_the_pack_and_scale_the_shield_neutral() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = Pack::open(&bytes).unwrap();
+    let scales = pack.fighter_translate_scales(4).expect("Luigi scales");
+    assert_eq!(scales.len(), 29 * 12);
+    assert_eq!(translation_scale(scales, 0), [1.0; 3]);
+    assert!((translation_scale(scales, 3)[1] - 1.1379).abs() < 0.0001);
+    assert!((translation_scale(scales, 12)[1] - 2.886).abs() < 0.0001);
+    for joint in 0..29 {
+        let vector = translation_scale(scales, joint);
+        assert_eq!([vector[0], vector[2]], [1.0; 2], "joint {joint}");
+        if ![3, 7, 11, 12, 13].contains(&joint) {
+            assert_eq!(vector[1], 1.0, "joint {joint}");
+        }
+    }
+    assert!(pack.fighter_translate_scales(0).is_none());
+
+    let anim = pack.shield_pose(4, 0).unwrap();
+    let script = pack.anim_script(&anim).unwrap();
+    let last = anim.joint_count - 1;
+    let (neutral, _) = shield_lookup(script, &anim, last).unwrap();
+    let mut skeleton = Skeleton::new();
+    skeleton.start(
+        &pack,
+        &pack.fighter_anim(4, SLOT_GUARD_ON).unwrap(),
+        0.0,
+        1.0,
+    );
+    let mut yrotn = JointPose::default();
+    apply_shield_pose(
+        &pack,
+        &anim,
+        0.0,
+        0.0,
+        ShieldJoints::ShieldJoint,
+        &mut skeleton,
+        &mut yrotn,
+    );
+    assert!((yrotn.translate[1] - neutral[1] * translation_scale(scales, 3)[1]).abs() < 0.001);
+
+    let yrotn_joint = pack.anim_joint(anim.first_joint + last).unwrap();
+    let mut unscaled = JointPose::default();
+    StageJoint::start_changed(yrotn_joint.script, 0.0)
+        .tick(script, 1.0, &mut unscaled)
+        .unwrap();
+    apply_shield_pose(
+        &pack,
+        &anim,
+        0.0,
+        1.0,
+        ShieldJoints::ShieldJoint,
+        &mut skeleton,
+        &mut yrotn,
+    );
+    assert!(
+        (yrotn.translate[1] - unscaled.translate[1] * translation_scale(scales, 3)[1]).abs()
+            < 0.001
+    );
+}
+
+#[test]
+fn luigi_clip_translation_uses_the_matching_model_joint_vector() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = Pack::open(&bytes).unwrap();
+    let scales = pack.fighter_translate_scales(4).unwrap();
+    let object_index = ssb_rom::scene_deps::fighter_object(&pack, 4).unwrap();
+    let first_node = pack.object(object_index).unwrap().first_node;
+    let mut observed = false;
+    for slot in 0..ssb_rom::anim::SLOT_COUNT as u32 {
+        let Some(anim) = pack.fighter_anim(4, slot) else {
+            continue;
+        };
+        let script = pack.anim_script(&anim).unwrap();
+        let mut plain = Skeleton::new();
+        let mut scaled = Skeleton::new();
+        plain.start(&pack, &anim, 0.0, 1.0);
+        scaled.start(&pack, &anim, 0.0, 1.0);
+        for _ in 0..5 {
+            plain.tick(script).unwrap();
+            scaled
+                .tick_scaled(script, Some(scales), first_node)
+                .unwrap();
+            for j in 0..plain.joint_count() {
+                let Some(node) = plain.joint_node(j) else {
+                    continue;
+                };
+                let scale = translation_scale(scales, (node - first_node) as usize + 4);
+                let a = plain.pose(j).unwrap();
+                let b = scaled.pose(j).unwrap();
+                assert_eq!(a.rotate, b.rotate);
+                assert_eq!(a.scale, b.scale);
+                for (k, factor) in scale.iter().enumerate() {
+                    if (a.translate[k] - b.translate[k]).abs() > 0.001 {
+                        assert!(
+                            (b.translate[k] - a.translate[k] * factor).abs() < 0.001,
+                            "slot {slot} joint {j} axis {k}"
+                        );
+                        observed = true;
+                    }
+                }
+            }
+        }
+        if observed {
+            break;
+        }
+    }
+    assert!(observed, "no scaled Luigi model translation was exercised");
 }

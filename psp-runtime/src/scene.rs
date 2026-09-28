@@ -487,6 +487,7 @@ pub fn fighter_shadow(
 pub fn tick_skeleton_animation(
     pack: &Pack<'_>,
     kind: u32,
+    first_node: u32,
     status: &ssb_game::status::StatusState,
     speed: f32,
     skeleton: &mut ssb_rom::skeleton::Skeleton,
@@ -518,7 +519,11 @@ pub fn tick_skeleton_animation(
     let root_before = skeleton.pose(0).copied();
     if let Some(anim) = pack.fighter_anim(kind, slot) {
         if let Some(script) = pack.anim_script(&anim) {
-            let _ = skeleton.tick(script);
+            let _ = skeleton.tick_scaled(
+                script,
+                pack.fighter_translate_scales(kind),
+                first_node,
+            );
         }
     }
     root_before
@@ -917,6 +922,7 @@ impl FighterScene {
         self.root_motion_before_tick = tick_skeleton_animation(
             pack,
             self.fighter.kind as u32,
+            pack.object(self.object).map_or(0, |o| o.first_node),
             &self.fighter.status,
             ssb_game::status::clip_speed(&self.fighter),
             &mut self.skeleton,

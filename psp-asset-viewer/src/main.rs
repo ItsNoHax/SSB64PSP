@@ -943,7 +943,12 @@ unsafe fn run() -> ! {
                     }
                     if let Some(a) = p.anim(anim_index) {
                         if let Some(script) = p.anim_script(&a) {
-                            let _ = skeleton.tick(script);
+                            let first_node = p.object(object_index).map_or(0, |o| o.first_node);
+                            let _ = skeleton.tick_scaled(
+                                script,
+                                p.fighter_translate_scales(a.fighter),
+                                first_node,
+                            );
                         }
                     }
                 }

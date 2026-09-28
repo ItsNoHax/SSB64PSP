@@ -3517,6 +3517,40 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         }
     }
 
+    // `FTAttributes.translate_scales` is an internal pointer into Luigi's
+    // *Main file. Read the actual ROM vectors instead of copying decomp data.
+    for entry in &ssb_rom::fighter::FIGHTER_FILES {
+        let Some(main) = loaded
+            .files
+            .get(entry.file as usize)
+            .and_then(Option::as_ref)
+        else {
+            continue;
+        };
+        let Some(reloc) = main
+            .intern_relocs
+            .iter()
+            .find(|r| r.at == entry.offset + 0x324)
+        else {
+            continue;
+        };
+        // FTPartsJoint enum: TopN, TransN, XRotN, YRotN, then 25
+        // model joints. Luigi's source array has 29 Vec3f entries.
+        let start = reloc.target as usize;
+        let end = start + 29 * 12;
+        let Some(scales) = main.data.get(start..end) else {
+            return Err(format!("{}: invalid translation scales", entry.name).into());
+        };
+        writer.add_anim(
+            ssb_rom::pack::AnimDesc::TRANSLATE_SCALES,
+            entry.kind as u32,
+            entry.file,
+            0,
+            scales,
+            &[],
+        );
+    }
+
     // Independent LBParticle banks live outside relocData. Decode and convert
     // them after scene work so their frame textures append without disturbing
     // any existing material texture indices (RE-180/181).

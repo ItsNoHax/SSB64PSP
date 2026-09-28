@@ -113,6 +113,11 @@ attribution are in [RE-357](../evidence/re/RE-357.md).
 
 ## Scenes
 
+RE-368 refreshes only `r2-luigi-fighter`: the ROM's translation scales
+retarget his shared Mario animation, changing 57,056 pixels at 2×. The
+new capture was visually reviewed and byte-identical twice. The Mario
+fighter control remains unchanged; both pass after rebaseline.
+
 RE-359 refreshes 41 goldens for tile-relative repeating/mirrored UVs.
 Mario and Luigi regain their overall buttons; DK's head texture changes
 slightly. Other changes are on Mario in stage and Training views. All
