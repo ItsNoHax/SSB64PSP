@@ -290,6 +290,8 @@ pub enum GameScene {
     /// `jab`: the grab scene's route onto the dummy's platform, then a jab
     /// that lands, frozen in the dummy's damage status.
     Jab,
+    /// `shield`: Mario holding a diagonally tilted shield in Training.
+    Shield,
     /// `costume1`..`costume3`: Fox in Training after a C-Right, C-Down or
     /// C-Left costume pick on the Training menu entry.
     Costume1,
@@ -298,7 +300,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 10] = [
+    pub const ALL: [GameScene; 11] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -306,6 +308,7 @@ impl GameScene {
         GameScene::Shadows,
         GameScene::Grab,
         GameScene::Jab,
+        GameScene::Shield,
         GameScene::Costume1,
         GameScene::Costume2,
         GameScene::Costume3,
@@ -320,6 +323,7 @@ impl GameScene {
             GameScene::Shadows => "shadows",
             GameScene::Grab => "grab",
             GameScene::Jab => "jab",
+            GameScene::Shield => "shield",
             GameScene::Costume1 => "costume1",
             GameScene::Costume2 => "costume2",
             GameScene::Costume3 => "costume3",

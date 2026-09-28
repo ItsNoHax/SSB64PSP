@@ -7,30 +7,29 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** Luigi translation scales (RE-368). Pack v50 carries
-  the ROM's 29 vectors. Figatree and shield-script translation tracks, plus
-  the shield's neutral lookup pose, now use them in game and viewer.
-- **Next gameplay batch:** a scripted PSP shield scene (TODO) to observe the
-  tilted pose and collision sphere in a live Training run. Stage selection
-  remains deferred.
+- **Completed batch:** scripted Training shield scene (RE-369). PPSSPP reaches
+  `Guard` at tick 60 with a tilted pose and a shield collision transform from
+  the posed `YRotN`. A new golden pins the frame.
+- **Next gameplay batch:** investigate the Training grab whiff in PPSSPP
+  against the host catch route (RE-351). Stage selection remains deferred.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Live Training shield | Raised and tilted at tick 60; `YRotN` collision center logged; new golden and jab control match twice | RE-369 |
 | Luigi translation scales | 29 ROM vectors; clip and shield endpoints checked; Luigi golden updated, Mario control unchanged | RE-368 |
-| Shield tilt pose and clip start frame | 208 sector tables for 26 fighters, checked against `dobj_lookup`; goldens unchanged | RE-367 |
 
 ## Verification baseline
 
-- Workspace tests with absolute `SSB64_ROM`, one test thread:
-  **1,214 pass**. Pinned 1.98.0 Clippy with warnings denied, rustfmt and
-  the `thumbv7em-none-eabi` `no_std` builds pass.
+- Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
+  Pinned 1.98.0 Clippy with warnings denied, rustfmt and the
+  `thumbv7em-none-eabi` `no_std` builds pass.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: Luigi fighter golden rebaselined (57,056 changed pixels
-  at 2×), then Luigi and Mario controls match twice. No golden raises a
-  shield, passes through a platform or respawns.
+- PPSSPPHeadless: Training shield and jab goldens match twice; the shield
+  capture logs `Guard`, a present `YRotN`, and center (75, 255, 0). No golden
+  passes through a platform or respawns.
 - `psp-game` reaches scripted Training in PPSSPP. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
   (RE-360).
@@ -45,7 +44,7 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - Sector Z Arwing, bonus stages and stage items (Bumper, POW Block,
   Piranha Plant) remain; Twister/TaruCann have no clip.
 - Training `grab` whiffs in PPSSPP while the host route catches (RE-351).
-- The shield is host-tested only; its bubble is not drawn (RE-367).
+- The shield bubble is not drawn (RE-369).
 - Samus through Ness remain host-only in `psp-game`; item/weapon/effect
   drawing, other item kinds and team checks remain.
 - Four-player VS exceeds the ~700 KiB texture pool. The stage draw costs

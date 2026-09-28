@@ -29,7 +29,8 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  A full run of all 73 scenes takes about 17 s (RE-316).
+  The manifest currently has 74 scenes; RE-316 measured about 17 s for an
+  earlier full run.
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
   of golden, candidate and mask with changed scenes first.
@@ -159,6 +160,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `grab`) | `f1-training-grab` | Mario holding the Training dummy on Dream Land's left platform after a Z+A catch, with held TopN placement and joint rotation | RE-330–332 |
 | `golden_capture` (`psp-game`, scenes `costume1`–`costume3`) | `f1-training-costume-1`–`3` | Fox after a C-Right, C-Down or C-Left pick on the Training entry: costumes 1–3 in `psp-game` | RE-341 |
 | `golden_capture` (`psp-game`, scene `jab`) | `f1-training-jab` | Mario's jab from the grab route landing on the Training dummy; the hit is in the capture log (`dummy_damage=2 dummy_status=Common(DamageN1)`, `PPSSPPHeadless --log`), not the image | RE-351 |
+| `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center. The bubble visual is not drawn | RE-367, RE-369 |
 
 Stage sweep example:
 
