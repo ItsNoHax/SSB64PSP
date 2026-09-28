@@ -218,6 +218,22 @@ pub const NESS_PK_FIRE_ITEM_SOURCE: (u32, u32) = (336, 0x0A08);
 /// 353's three-node tree (RE-383).
 pub const LINK_BOMB_ITEM_SOURCE: (u32, u32) = (353, 0x18D8);
 
+/// `dEFManagerShieldEffectDesc`: file 163's shield tree
+/// (`llFTManagerCommonShieldDObjDesc`), slot 14 of
+/// `ssb_rom::effect::MANAGER_EFFECT_KEYS` (RE-384).
+pub const SHIELD_EFFECT_KEY: (u32, u32) = (163, 0x0300);
+
+/// `dEFManagerShieldColors`: `(PRIM, ENV)` RGB per player, and the
+/// damaged-shield pair last. `efManagerShieldProcDisplay` sets both with
+/// alpha 0xC0.
+pub const SHIELD_COLORS: [([u8; 3], [u8; 3]); 5] = [
+    ([0xFF, 0xFF, 0xFF], [0xFF, 0x00, 0x00]),
+    ([0xFF, 0xFF, 0xFF], [0x00, 0xFF, 0x00]),
+    ([0xFF, 0xFF, 0xFF], [0x00, 0x00, 0xFF]),
+    ([0xFF, 0xFF, 0xFF], [0x00, 0x00, 0x00]),
+    ([0xFF, 0xFF, 0xFF], [0xC0, 0xC0, 0xC0]),
+];
+
 /// `dEFManagerPurinSingEffectDesc`: file 351's six-node note tree, at slot
 /// 32 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
 pub const PURIN_SING_EFFECT_KEY: (u32, u32) = (351, 0x2130);

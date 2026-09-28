@@ -1958,6 +1958,11 @@ const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[
     (335, 0x8B40),
 ];
 
+/// `dEFManagerShieldEffectDesc`'s tree (`llFTManagerCommonShieldDObjDesc`,
+/// file 163 + 0x300), drawn under `efManagerShieldProcDisplay`'s PRIM and
+/// ENV (RE-384).
+const SHIELD_GRAPH: (u32, u32) = (163, 0x300);
+
 /// Weapons whose `WPAttributes.data` is a direct display list with its own
 /// `anim_joints`, so they need a one-node graph for the animation to bind
 /// to, as [`DIRECT_MANAGER_EFFECT_ASSETS`] gives direct effects. Pikachu's
@@ -1998,6 +2003,8 @@ fn initial_material_for(
         ssb_rom::mesh::InitialMaterial::LB_TRANSITION_EXTERNAL
     } else if WEAPON_SEEDED_GRAPHS.contains(&(file, graph_offset)) {
         ssb_rom::mesh::InitialMaterial::WEAPON_EXTERNAL
+    } else if (file, graph_offset) == SHIELD_GRAPH {
+        ssb_rom::mesh::InitialMaterial::SHIELD_EXTERNAL
     } else {
         ssb_rom::mesh::InitialMaterial::default()
     }

@@ -258,7 +258,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // (336 + 0xAF0).
 // 59 adds Link's Bomb as item slot 1 (353 + 0x1990), and pairs the Spin
 // Attack weapon graphic (324, 0x11908) with its MObjSub table (0x110A8).
-pub const VERSION: u32 = 59;
+// 60 seeds the shield tree (163, 0x300) with `efManagerShieldProcDisplay`'s
+// ENV colour, so its prims carry the red-to-white texture blend (RE-384).
+pub const VERSION: u32 = 60;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

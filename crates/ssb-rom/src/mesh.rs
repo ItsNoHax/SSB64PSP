@@ -258,6 +258,9 @@ pub struct InitialMaterial {
     /// -- and this seed with it -- forever once any real `Cmd::SetCombine`
     /// is seen, exactly like every other `InitialMaterial` field.
     pub alpha_blend: Option<AlphaBlend>,
+    /// `G_SETENVCOLOR` an external wrapper issues before the graph's own
+    /// lists run (RE-384). `None` is the RDP reset's unknown register.
+    pub env_color: Option<[u8; 4]>,
 }
 
 impl InitialMaterial {
@@ -277,6 +280,7 @@ impl InitialMaterial {
         depth_mode: ZMode::Opaque,
         translucent: false,
         alpha_blend: None,
+        env_color: None,
     };
 
     /// `grDisplayLayer1PriProcDisplay`/`SecProcDisplay` (`refs/ssb-decomp-re/
@@ -310,6 +314,7 @@ impl InitialMaterial {
         depth_mode: ZMode::Opaque,
         translucent: false,
         alpha_blend: None,
+        env_color: None,
     };
 
     /// A third, structurally different external-seed mechanism (RE-246):
@@ -346,6 +351,7 @@ impl InitialMaterial {
         depth_mode: ZMode::Opaque,
         translucent: false,
         alpha_blend: None,
+        env_color: None,
     };
 
     /// `wpDisplayDrawNormal` clears `G_ZBUFFER` and sets
@@ -380,6 +386,22 @@ impl InitialMaterial {
         depth_mode: ZMode::Translucent,
         translucent: true,
         alpha_blend: Some(AlphaBlend::TexelOnly),
+        env_color: None,
+    };
+
+    /// `efManagerShieldProcDisplay` sets the shield's `G_SETPRIMCOLOR` and
+    /// `G_SETENVCOLOR` (`dEFManagerShieldColors[player]`, alpha 0xC0) before
+    /// `gcDrawDObjTreeDLLinksForGObj`. The list sets the same PRIM and reads
+    /// ENV, so ENV is seeded with player 1's; the renderer replaces it per
+    /// player at draw time (RE-384).
+    pub const SHIELD_EXTERNAL: InitialMaterial = InitialMaterial {
+        lit: false,
+        depth_test: false,
+        depth_write: false,
+        depth_mode: ZMode::Opaque,
+        translucent: false,
+        alpha_blend: None,
+        env_color: Some([0xFF, 0x00, 0x00, 0xC0]),
     };
 }
 
@@ -1543,6 +1565,7 @@ impl State {
                 depth_write: initial.depth_write,
                 depth_mode: initial.depth_mode,
                 translucent: initial.translucent,
+                env_color: initial.env_color,
                 ..MeshMaterial::rdp_default()
             },
             geometry_mode: RDP_DEFAULT_GEOMETRY_MODE,

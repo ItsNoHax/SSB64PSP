@@ -119,6 +119,10 @@ enum TextureFuncState {
 /// Tracks what state is already applied, so redundant sets are skipped.
 #[derive(Default)]
 pub struct DrawState {
+    /// Colour registers an effect's display callback sets for the whole draw
+    /// (`efManagerShieldProcDisplay`'s per-player PRIM and ENV, RE-384).
+    /// Takes the place of a material animation's live colours while set.
+    pub color_override: Option<ssb_rom::skeleton::EffectColors>,
     /// The bound texture and the [`Pack::mat_anim_palette`] entry its CLUT
     /// holds ([`TextureDesc::NO_ANIM`] for the baked one): primitives
     /// sharing a texture can each cycle their own `MObj`'s palettes
@@ -938,10 +942,14 @@ struct TextureMapping {
 /// (RE-322); a primitive that set its own colour after it keeps the packed
 /// value.
 fn material_colors(
+    color_override: Option<ssb_rom::skeleton::EffectColors>,
     p: &PrimDesc,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
 ) -> Option<ssb_rom::skeleton::EffectColors> {
+    if color_override.is_some() {
+        return color_override;
+    }
     if p.mat_anim == TextureDesc::NO_ANIM {
         return None;
     }
@@ -961,7 +969,7 @@ unsafe fn apply_material(
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
 ) {
-    let effect_colors = material_colors(p, mat_anim, effect_mat_anim);
+    let effect_colors = material_colors(st.color_override, p, mat_anim, effect_mat_anim);
     let light_scope = ssb_rom::anim_color::light_scope(
         p.flags,
         st.runtime_fighter_light,
@@ -1354,7 +1362,7 @@ unsafe fn draw_mesh_vertices(
 
         apply_material(pack, &p, st, mat_anim, effect_mat_anim);
 
-        let effect_colors = material_colors(&p, mat_anim, effect_mat_anim)
+        let effect_colors = material_colors(st.color_override, &p, mat_anim, effect_mat_anim)
             .filter(|c| c.prim.is_some() || c.env.is_some());
         let linear_texgen = p.flags & flags::TEXTURE_GEN_LINEAR != 0;
         let signed_clamp_uv = p.flags & flags::SIGNED_CLAMP_UV != 0;
