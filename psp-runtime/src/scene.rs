@@ -1272,6 +1272,15 @@ pub struct StageSetup {
     pub hazard_surface_y: f32,
 }
 
+/// The pack's stage whose `GR*Map` file is VS stage `gkind`
+/// (`ssb_rom::stage::VS_GROUND_FILES`).
+pub fn vs_stage_index(pack: &Pack<'_>, gkind: u8) -> Option<u32> {
+    (0..pack.stage_count()).find(|&i| {
+        pack.stage(i)
+            .is_some_and(|s| ssb_rom::stage::vs_ground_kind(s.source_file) == Some(gkind))
+    })
+}
+
 impl StageSetup {
     /// `None` for a stage that is not one of the nine VS stages.
     pub fn new(pack: &Pack<'_>, stage: &StageDesc) -> Option<Self> {

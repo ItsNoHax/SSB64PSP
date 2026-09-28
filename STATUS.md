@@ -7,29 +7,28 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** the shield bubble (RE-384). It draws on the posed
-  `YRotN` in the player's colour, through a packed ENV seed and a draw-time
-  PRIM/ENV override.
-- **Next gameplay batch:** stage selection (TODO). Stage and fighter
-  select remain deferred.
+- **Completed batch:** the Training stage select (RE-385). `mnMaps`'s
+  cursor, lock, random pick and idle return are ported; Training loads any
+  VS stage. The shield bubble draws (RE-384).
+- **Next gameplay batch:** the Training fighter select (TODO): real pad
+  input still always spawns Mario.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Stage select | `ssb_game::stage_select`; Training on the picked stage; new `f1-training-stage-select` (Hyrule Castle); `run` at 111 KB | RE-385 |
 | Shield bubble | Pack v60; shield ENV seed and colour override; `f1-training-shield` rebaselined; 93 of 93 match twice | RE-384 |
-| Link's Bomb | Pack v59; right attributes record, held parent; new `f1-training-link-bomb` golden; 93 of 93 match twice | RE-383 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
   Pinned 1.98.0 Clippy with warnings denied and workspace rustfmt passed in
-  RE-384;
-  the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
+  RE-385; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: all 93 goldens match twice (RE-384), including the
-  rebaselined shield scene. No golden passes through a platform or respawns.
+- PPSSPPHeadless: all 94 goldens match twice (RE-385), including the
+  new stage-select scene. No golden passes through a platform or respawns.
 - `psp-game` reaches scripted Training in PPSSPP. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
   (RE-360).
@@ -39,7 +38,8 @@ Current snapshot. History lives in git and `docs/evidence/`.
 
 ## Blockers and remaining scope
 
-- Stage selection remains (TODO); Training loads Dream Land only.
+- No stage draws its wallpaper, and the stage select has no names or
+  previews (TODO). Mushroom Kingdom stays locked: there is no save data.
 - The acid packs three 384×384 tile-1 sprites it never draws (523 KB).
 - Sector Z Arwing, bonus stages and stage items (Bumper, POW Block,
   Piranha Plant) remain; Twister/TaruCann have no clip.
