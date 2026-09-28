@@ -669,6 +669,16 @@ pub struct LinkBoomerang {
     /// `weapon_vars.boomerang.adjust_angle_delay`: the camera is sampled
     /// every ninth frame.
     pub adjust_angle_delay: u8,
+    /// The root DObj's `rotate.y`, which `wpMainVelSetModelPitch` sets once
+    /// from the launch velocity: +90 degrees toward +X, -90 otherwise.
+    /// Presentation only.
+    pub model_rotate_y: f32,
+    /// `wpLinkBoomerangSetReturnVars` sets `DOBJ_FLAG_NOTEXTURE` on the
+    /// root's grandchild, which stays hidden for the rest of the flight.
+    /// Presentation only.
+    pub grandchild_hidden: bool,
+    /// `gcPlayAnimAll` calls so far: one per update. Presentation only.
+    pub anim_ticks: u16,
 }
 
 impl LinkBoomerang {
@@ -702,6 +712,11 @@ impl LinkBoomerang {
             hit_ports: 0,
             homing_delay: BOOMERANG_HOMING_DELAY,
             adjust_angle_delay: 0,
+            // The launch velocity's X is `cos(angle) * speed * lr`, and the
+            // angle is within 30 degrees of level, so its sign is `lr`.
+            model_rotate_y: DEG_90 * lr,
+            grandchild_hidden: false,
+            anim_ticks: 0,
         }
     }
 
@@ -767,6 +782,7 @@ impl LinkBoomerang {
     /// `wpLinkBoomerangSetReturnVars`.
     fn set_return(&mut self, homing_max: bool) {
         self.is_return = true;
+        self.grandchild_hidden = true;
         self.damage = BOOMERANG_RETURN_DAMAGE;
         self.default_angle -= DEG_180;
         if self.default_angle < 0.0 {
@@ -843,6 +859,9 @@ impl LinkBoomerang {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
+        // `wpProcessProcWeaponMain` plays the DObj animation before
+        // `proc_update`.
+        self.anim_ticks = self.anim_ticks.wrapping_add(1);
         self.lifetime -= 1;
         if self.lifetime == 0 || self.check_off_camera(camera) {
             return (false, false);
@@ -3705,6 +3724,26 @@ mod tests {
             link.status.status,
             crate::status::AnyStatus::Link(crate::status::LinkStatus::SpecialNGet)
         );
+    }
+
+    #[test]
+    fn boomerang_keeps_its_launch_yaw_and_hides_its_grandchild_on_return() {
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(boomerang_spawn(false, 80, -1.0));
+        let b = weapons.boomerangs().next().unwrap();
+        // `wpMainVelSetModelPitch` from the leftward launch velocity.
+        assert_eq!(b.model_rotate_y, -DEG_90);
+        assert!(!b.grandchild_hidden);
+        assert_eq!(b.anim_ticks, 0);
+        let mut ticks = 0;
+        while !weapons.boomerangs().next().unwrap().is_return {
+            weapons.tick(open_air, None);
+            ticks += 1;
+        }
+        let b = weapons.boomerangs().next().unwrap();
+        assert!(b.grandchild_hidden);
+        assert_eq!(b.anim_ticks, ticks);
+        assert_eq!(b.model_rotate_y, -DEG_90, "set once, at launch");
     }
 
     #[test]

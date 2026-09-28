@@ -1613,6 +1613,37 @@ pub unsafe fn draw_object_posed(
     )
 }
 
+/// [`draw_object_posed`] without the nodes `hidden` names: the source's
+/// `DOBJ_FLAG_NOTEXTURE`, which skips a DObj's display list but still
+/// composes its matrix for its children.
+///
+/// # Safety
+///
+/// Same as [`draw_mesh`].
+pub unsafe fn draw_object_posed_hiding(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    base: &ScePspFMatrix4,
+    posed: &[ssb_rom::scene::Mat4],
+    st: &mut DrawState,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
+    hidden: &dyn Fn(u32) -> bool,
+) -> u32 {
+    draw_object_posed_filtered(
+        pack,
+        object,
+        base,
+        posed,
+        None,
+        st,
+        None,
+        effect_mat_anim,
+        0,
+        None,
+        Some(hidden),
+    )
+}
+
 /// Draws exactly one node from an object hierarchy.
 ///
 /// This is the device-side half of R0.12's per-node billboard audit: the

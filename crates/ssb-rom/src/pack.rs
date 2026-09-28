@@ -239,7 +239,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // keyed (297, 0x08). A v50 pack has only Mario's palette.
 // 52 adds Samus's Charge Shot mesh (321, 0x270) and her Bomb's two blink
 // palettes, keyed (320, 0xE0D8) and (320, 0xDF38).
-pub const VERSION: u32 = 52;
+// 53 adds weapon DObj animations (`AnimDesc::WEAPON`): slot 0 is Link's
+// Boomerang spin, file 325's `anim_joints` at 0x6C0.
+pub const VERSION: u32 = 53;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -975,6 +977,13 @@ impl AnimDesc {
     /// Per-joint big-endian `Vec3f` translation scales. `slot` is `FTKind`,
     /// and `script` contains exactly the scale array from `FTAttributes`.
     pub const TRANSLATE_SCALES: u32 = u32::MAX - 6;
+
+    /// `fighter` value marking a weapon's `WPAttributes.anim_joints` stream.
+    /// `slot` is one of the `WEAPON_ANIM_*` keys below.
+    pub const WEAPON: u32 = u32::MAX - 7;
+
+    /// [`Self::WEAPON`] slot of Link's Boomerang (file 325's table at 0x6C0).
+    pub const WEAPON_ANIM_LINK_BOOMERANG: u32 = 0;
 
     /// `shield_anim_joints` has one table per 45-degree stick sector.
     pub const SHIELD_SECTORS: u32 = 8;
@@ -3369,6 +3378,13 @@ impl<'a> Pack<'a> {
         (0..self.anim_count)
             .filter_map(|i| self.anim(i))
             .find(|a| a.fighter == AnimDesc::TRANSITION && a.slot == transition)
+    }
+
+    /// A weapon's DObj transform animation, by `AnimDesc::WEAPON_ANIM_*` key.
+    pub fn weapon_anim(&self, slot: u32) -> Option<AnimDesc> {
+        (0..self.anim_count)
+            .filter_map(|i| self.anim(i))
+            .find(|a| a.fighter == AnimDesc::WEAPON && a.slot == slot)
     }
 
     /// A manager effect's DObj transform animation in source inventory order.
@@ -6102,6 +6118,29 @@ mod tests {
         let pack = Pack::open(&bytes).unwrap();
         assert_eq!(pack.effect_anim(12).unwrap().source_file, 85);
         assert_eq!(pack.effect_anim(11), None);
+    }
+
+    #[test]
+    fn weapon_animation_is_selected_by_its_own_key() {
+        let mut w = PackWriter::new();
+        // An effect in the same slot must not answer a weapon lookup.
+        w.add_anim(AnimDesc::EFFECT, 0, 85, 0, &[0u8; 8], &[(Some(0), Some(0))]);
+        w.add_anim(
+            AnimDesc::WEAPON,
+            AnimDesc::WEAPON_ANIM_LINK_BOOMERANG,
+            325,
+            0,
+            &[0u8; 8],
+            &[(Some(0), Some(1))],
+        );
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let anim = pack
+            .weapon_anim(AnimDesc::WEAPON_ANIM_LINK_BOOMERANG)
+            .unwrap();
+        assert_eq!(anim.source_file, 325);
+        assert_eq!(pack.anim_joint(anim.first_joint).unwrap().node, 1);
+        assert_eq!(pack.weapon_anim(1), None);
     }
 
     #[test]

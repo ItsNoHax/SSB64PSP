@@ -101,6 +101,35 @@ pub fn samus_bomb_meshes(pack: &Pack<'_>) -> [Option<MeshDesc>; 2] {
     })
 }
 
+/// Link Special1's `WPAttributes.data`: file 325's three-node Boomerang
+/// `DObjDesc` tree.
+pub const LINK_BOOMERANG_SOURCE_FILE: u32 = 325;
+pub const LINK_BOOMERANG_SOURCE_OFFSET: u32 = 0x610;
+
+pub fn link_boomerang_object(pack: &Pack<'_>) -> Option<ObjectDesc> {
+    (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|object| {
+            object.source_file == LINK_BOOMERANG_SOURCE_FILE
+                && object.source_offset == LINK_BOOMERANG_SOURCE_OFFSET
+        })
+}
+
+/// `dEFManagerLinkSpinAttackEffectDesc`: file 353's two-node swirl, at
+/// slot 38 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
+pub const LINK_SPIN_ATTACK_EFFECT_KEY: (u32, u32) = (353, 0x11C0);
+
+/// The Spin Attack swirl's object and its manager-effect inventory slot.
+pub fn link_spin_attack_effect(pack: &Pack<'_>) -> Option<(ObjectDesc, u32)> {
+    let slot = ssb_rom::effect::MANAGER_EFFECT_KEYS
+        .iter()
+        .position(|&key| key == LINK_SPIN_ATTACK_EFFECT_KEY)?;
+    let object = (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|object| (object.source_file, object.source_offset) == LINK_SPIN_ATTACK_EFFECT_KEY)?;
+    Some((object, slot as u32))
+}
+
 /// Fox Special2's three-entry Reflector effect hierarchy.
 pub fn fox_reflector_object(pack: &Pack<'_>) -> Option<ObjectDesc> {
     (0..pack.object_count())

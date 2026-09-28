@@ -291,6 +291,10 @@ pub enum GameScene {
     SamusShot,
     /// `samusbomb`: Samus in Training, one Bomb on the floor.
     SamusBomb,
+    /// `link`: Link in Training, one Boomerang in flight.
+    Link,
+    /// `linkspin`: Link in Training, mid ground Spin Attack.
+    LinkSpin,
     /// `shadows`: first jump's apex, player airborne.
     Shadows,
     /// `grab`: Training plus a Z+A grab of the dummy, frozen while held.
@@ -308,7 +312,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 15] = [
+    pub const ALL: [GameScene; 17] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -317,6 +321,8 @@ impl GameScene {
         GameScene::Samus,
         GameScene::SamusShot,
         GameScene::SamusBomb,
+        GameScene::Link,
+        GameScene::LinkSpin,
         GameScene::Shadows,
         GameScene::Grab,
         GameScene::Jab,
@@ -336,6 +342,8 @@ impl GameScene {
             GameScene::Samus => "samus",
             GameScene::SamusShot => "samusshot",
             GameScene::SamusBomb => "samusbomb",
+            GameScene::Link => "link",
+            GameScene::LinkSpin => "linkspin",
             GameScene::Shadows => "shadows",
             GameScene::Grab => "grab",
             GameScene::Jab => "jab",
