@@ -65,6 +65,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // A at tick 108 lands on tick 109 (host `romtool jumptest`); the
         // dummy's hitlag is over and it is in `DamageN1`.
         GameScene::Jab => 118,
+        // Z begins at tick 40; the diagonal stick is applied after GuardOn
+        // has entered Guard, then frozen with the shield still raised.
+        GameScene::Shield => 60,
         // Both fighters have settled on Dream Land's main floor.
         GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3 => 40,
     }
@@ -172,6 +175,13 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
+    if scene == GameScene::Shield {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            40..=60 => N64Buttons(N64Buttons::Z),
+            _ => N64Buttons(0),
+        };
+    }
 
     match tick {
         4 | 8 => N64Buttons(N64Buttons::A),
@@ -189,6 +199,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
+    if scene == GameScene::Shield {
+        return if (50..=60).contains(&tick) { 40 } else { 0 };
+    }
     if matches!(scene, GameScene::Grab | GameScene::Jab) {
         return if (14..52).contains(&tick) { -30 } else { 0 };
     }
@@ -209,7 +222,9 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
-    if scene == GameScene::Superjump && tick == 150 {
+    if scene == GameScene::Shield && (50..=60).contains(&tick) {
+        40
+    } else if scene == GameScene::Superjump && tick == 150 {
         80
     } else {
         0
@@ -774,6 +789,34 @@ unsafe fn run() -> ! {
                         line.as_ptr() as *const core::ffi::c_void,
                         line.len(),
                     );
+                }
+                if capture_scene == Some(GameScene::Shield) {
+                    let joint = player.fighter.joint_transforms[3];
+                    let shield = ssb_game::combat::shield_transform(&player.fighter);
+                    let line = alloc::format!(
+                        "shield raised={} joint_present={} angle_sector={} angle_frame={:.2} range={:.3} player=({:.2},{:.2},{:.2}) center=({:.2},{:.2},{:.2}) axis_x=({:.2},{:.2},{:.2})\n",
+                        player.fighter.guard.is_shield,
+                        joint.is_some(),
+                        player.fighter.guard.angle_i,
+                        player.fighter.guard.angle_f,
+                        player.fighter.guard.shield_rotate_range,
+                        player.fighter.pos.x,
+                        player.fighter.pos.y,
+                        player.fighter.pos.z,
+                        shield.origin.x,
+                        shield.origin.y,
+                        shield.origin.z,
+                        shield.axes[0].x,
+                        shield.axes[0].y,
+                        shield.axes[0].z,
+                    );
+                    unsafe {
+                        psp::sys::sceIoWrite(
+                            psp::sys::sceKernelStdout(),
+                            line.as_ptr() as *const core::ffi::c_void,
+                            line.len(),
+                        );
+                    }
                 }
             }
             headless_capture_sent = true;
