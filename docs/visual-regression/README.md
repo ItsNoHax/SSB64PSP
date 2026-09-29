@@ -581,3 +581,8 @@ goldens match twice.
 
 Pack v62. The new `f1-vs-no-contest` golden was identical in both
 captures. 106 of 106 goldens match twice.
+
+## 2026-09-29 RE-401 entry clips
+
+Pack v63 (`8bfe1acc…`) adds the battle-entry clips, which nothing plays
+yet. 106 of 106 goldens match twice.

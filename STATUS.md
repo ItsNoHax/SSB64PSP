@@ -7,34 +7,34 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** `psp-game`'s `run` loop state moved into a
-  `Session`, with the screen logic (`session_frame`) and the draw
-  (`draw_frame`) out of line; no golden changed. Before it: the VS
-  results' rankings (RE-400).
-- **Next gameplay batch:** the Appear entry (parked in TODO with its
-  findings), then `mnPlayersVS`'s VS character select.
+- **Completed batch:** the battle-entry clips packed (RE-401, pack v63):
+  32-bit `AnimJoint` clips with one leading runtime joint. Before it: the
+  `run` refactor (no golden change).
+- **Next gameplay batch:** play the entry clips: a 32-bit mode for the
+  fighter skeleton, then the `Entry`/`Appear` statuses and the entry
+  focus timing (TODO "Fighter Appear entry").
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Entry clips | pack v63 `SLOT_APPEAR_*`, `objanim::script_end_tick`; goldens unchanged | RE-401 |
 | VS results | `ssb_game::results`, exit wait, no contest; new `f1-vs-no-contest` | RE-400 |
-| VS mode menu | `ssb_game::vs_mode`, VS screen; new `f1-vs-mode-menu` | RE-399 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
   Pinned 1.98.0 Clippy with warnings denied and workspace rustfmt passed in
-  RE-400; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
+  RE-401; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: all 106 goldens match twice (RE-400). Scene captures
+- PPSSPPHeadless: all 106 goldens match twice (RE-401). Scene captures
   time out at 60 s. No golden passes through a platform.
 - `psp-game` reaches scripted Training in PPSSPP. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
   (RE-360).
-- Pack v62: 28,096,032 bytes, SHA-256
-  `b41c195101349351f22c19e698372c08ed4d013bacb03cea723d573b23bbe7b4`.
+- Pack v63: 28,254,080 bytes, SHA-256
+  `8bfe1acc108ec0305fd7ab8b96c06077c2961d6d244bcb11d0bdfafef1130197`.
 - `run` is 104,304 bytes in release, 109,748 in `golden_capture`; the
   MIPS branch range is 128 KB.
 - Physical PSP last checked in RE-361 (PSP-2000 Slim, 6.61 ARK, pack v43).

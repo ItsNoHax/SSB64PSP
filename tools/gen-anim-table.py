@@ -737,6 +737,22 @@ TAIL_COMMON_SLOTS = [
     ("ThrownDonkeyUnk", 180),
 ]
 
+# The battle-entry clips (`ftCommonAppearSetStatus`, RE-390), last so every
+# earlier slot keeps its index. Each is one fighter status, resolved through
+# that fighter's own motion enum (`nFT<Name>Motion<Slot>`) into its motion
+# table, because the rows sit past `nFTCommonMotionSpecialStart`. They are
+# 32-bit `AnimJoint` clips (`FTANIM_FLAG_ANIMJOINT`), not figatrees, so no
+# length is read from their C source. Captain Falcon and Ness enter in phases.
+APPEAR_SLOTS = ["AppearR", "AppearL", "AppearRStart", "AppearLStart",
+                "AppearREnd", "AppearLEnd", "AppearWait"]
+
+# The fighter whose motion enum a table uses.
+MOTION_ENUM_OWNER = {"MMario": "Mario", "NMario": "Mario", "NFox": "Fox",
+                     "NDonkey": "Donkey", "GDonkey": "Donkey", "NSamus": "Samus",
+                     "NLuigi": "Luigi", "NLink": "Link", "NYoshi": "Yoshi",
+                     "NCaptain": "Captain", "NKirby": "Kirby",
+                     "NPikachu": "Pikachu", "NPurin": "Purin", "NNess": "Ness"}
+
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
              + [(name, status, None) for name, status in GRAB_SLOTS]
              + [(name, None, None) for name, _, _ in LATE_SPECIAL_SLOTS]
@@ -745,7 +761,8 @@ ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
              + [(name, status, None) for name, status in REACTION_SLOTS + CLIFF_SLOTS
                 + COMMON_MOVE_SLOTS]
              + [(name, None, None) for name, _, _ in FINAL_SPECIAL_SLOTS]
-             + [(name, status, None) for name, status in TAIL_COMMON_SLOTS])
+             + [(name, status, None) for name, status in TAIL_COMMON_SLOTS]
+             + [(name, None, None) for name in APPEAR_SLOTS])
 
 # The slots whose animation ends on its own, and whose length the status
 # machine therefore reads (RE-035). Everything after them loops until it is
@@ -990,6 +1007,31 @@ def motion_descs(refs):
     return out
 
 
+def fighter_motions(refs, name):
+    """`nFT<name>Motion*` -> motion id, from the fighter's own header."""
+    path = os.path.join(refs, f"src/ft/ftchar/ft{name.lower()}/ft{name.lower()}.h")
+    if not os.path.exists(path):
+        return {}
+    src = COMMENT_RE.sub(" ", open(path).read())
+    m = re.search(r"typedef enum \w*Motion\s*\{(.*?)\}", src, re.S)
+    if not m:
+        return {}
+    common = motion_enum(refs)
+    out, nxt = {}, 0
+    for item in m.group(1).split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" in item:
+            key, val = (x.strip() for x in item.split("=", 1))
+            nxt = common[val] if val in common else out.get(val, int(val, 0))
+        else:
+            key = item
+        out[key] = nxt
+        nxt += 1
+    return out
+
+
 def anim_files(refs):
     """Animation symbol -> (relocData file id, filename)."""
     reloc = os.path.join(refs, "src/relocData")
@@ -1064,6 +1106,16 @@ def resolve(refs):
             special(slot, target, sym)
         for slot, status in TAIL_COMMON_SLOTS:
             common(slot, status)
+        owner = MOTION_ENUM_OWNER.get(fighter, fighter)
+        motions = fighter_motions(refs, owner)
+        for slot in APPEAR_SLOTS:
+            motion = motions.get(f"nFT{owner}Motion{slot}")
+            sym, runtime = table[motion] if motion is not None and motion < len(table) else (None, False)
+            if sym is None:
+                entry.append((slot, 0, None, 0, False))
+                continue
+            fid, _ = files[sym]
+            entry.append((slot, fid, sym, 0, runtime))
         rows.append((fighter, entry))
     return rows, problems
 

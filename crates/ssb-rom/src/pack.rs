@@ -265,7 +265,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // through `lbCommonPrepSObjAttr`'s combiner. File 164's damage digits first.
 // 62 gives `SpriteDesc` an owning fighter and role (emblems and per-costume
 // stock icons) and `StageDesc` the emblem colours.
-pub const VERSION: u32 = 62;
+// 63 adds the battle-entry clips (`anim::SLOT_APPEAR_R` on, 607..614;
+// RE-401): 32-bit `AnimJoint` clips whose tables lead with one runtime
+// joint.
+pub const VERSION: u32 = 63;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

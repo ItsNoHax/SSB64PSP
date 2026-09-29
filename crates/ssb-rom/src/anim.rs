@@ -138,8 +138,24 @@ pub const SLOT_REBIRTH_DOWN: usize = 541;
 pub const SLOT_LIGHT_THROW_DROP: usize = 556;
 /// `GuardOn`, which `Guard` and `GuardSetOff` keep playing.
 pub const SLOT_GUARD_ON: usize = 600;
+/// First of the seven battle-entry slots (RE-401): `AppearR`, `AppearL`,
+/// then Captain Falcon's and Ness's phases `AppearRStart`, `AppearLStart`,
+/// `AppearREnd`, `AppearLEnd` and Ness's `AppearWait`. These are 32-bit
+/// `AnimJoint` clips (`FTANIM_FLAG_ANIMJOINT`), not figatrees.
+pub const SLOT_APPEAR_R: usize = 607;
+pub const SLOT_APPEAR_L: usize = 608;
+pub const SLOT_APPEAR_R_START: usize = 609;
+pub const SLOT_APPEAR_L_START: usize = 610;
+pub const SLOT_APPEAR_R_END: usize = 611;
+pub const SLOT_APPEAR_L_END: usize = 612;
+pub const SLOT_APPEAR_WAIT: usize = 613;
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 607;
+pub const SLOT_COUNT: usize = 614;
+
+/// Whether a slot holds a 32-bit `AnimJoint` clip rather than a figatree.
+pub const fn is_anim_joint_slot(slot: usize) -> bool {
+    slot >= SLOT_APPEAR_R && slot < SLOT_COUNT
+}
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -413,6 +429,22 @@ pub fn decode_fighter(
             file: id as u32,
             len: 0,
         })?;
+        // The entry slots hold 32-bit `AnimJoint` clips, not figatrees
+        // (RE-401): their length is the tick the first joint's stream ends
+        // on, less one. A malformed one is left at 0 rather than failing
+        // the fighter.
+        if is_anim_joint_slot(slot) {
+            let first = joint_table_len(&file.data).and_then(|len| {
+                crate::objanim::joint_scripts(&file.data, 0, len)
+                    .into_iter()
+                    .flatten()
+                    .next()
+            });
+            frames[slot] = first
+                .and_then(|at| crate::objanim::script_end_tick(&file.data, at, 4096))
+                .map_or(0, |t| t.saturating_sub(1) as u16);
+            continue;
+        }
         frames[slot] = decode_length(id as u32, &file)?.frames().unwrap_or(0);
     }
     Ok(FighterLengths {
@@ -607,10 +639,14 @@ mod tests {
         // motions the twelve do not have (mid-angle tilts and smashes,
         // `AttackHi3F`/`B`, null `LandingAirX`), and only Mario and Luigi have
         // `MarioAttack13`. The remaining shared slots exist for all twelve,
-        // except that Pikachu has no `YoshiEgg` motion.
+        // except that Pikachu has no `YoshiEgg` motion. Of the seven entry
+        // slots, 62 clips exist: two for each one-part entry, four for
+        // Captain Falcon's and five for Ness's, the twelve's 29 and 33 for
+        // Metal Mario, the Poly fighters and Giant Donkey Kong.
         assert_eq!(
             missing,
-            10950 + 15 * (SLOT_REBIRTH_DOWN - SLOT_WALL_DAMAGE) + 106 + 10 + 15 * 66 + 1,
+            10950 + 15 * (SLOT_REBIRTH_DOWN - SLOT_WALL_DAMAGE) + 106 + 10 + 15 * 66 + 1 + 27 * 7
+                - 62,
             "Twelve ported fighters have character, grab, reaction and move slots"
         );
         for a in &FIGHTER_ANIMS[..12] {
@@ -643,7 +679,9 @@ mod tests {
         assert_eq!(SLOT_NAMES[SLOT_GUARD_ON - 1], "HammerWalk");
         assert_eq!(SLOT_NAMES[SLOT_GUARD_ON], "GuardOn");
         assert_eq!(SLOT_NAMES[SLOT_GUARD_ON + 1], "GuardOff");
-        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "ThrownDonkeyUnk");
+        assert_eq!(SLOT_NAMES[SLOT_APPEAR_R - 1], "ThrownDonkeyUnk");
+        assert_eq!(SLOT_NAMES[SLOT_APPEAR_R], "AppearR");
+        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "AppearWait");
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")

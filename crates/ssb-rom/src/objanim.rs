@@ -413,6 +413,22 @@ impl StageJoint {
     }
 }
 
+/// Ticks one 32-bit stream from its start until its `End`: the tick it
+/// ends on, or `None` past `cap` ticks or on a bad stream. A fighter's
+/// `AnimJoint` clip (RE-401) plays every joint to the same end, and its
+/// `anim_frame` reaches zero there.
+pub fn script_end_tick(data: &[u8], script: u32, cap: u32) -> Option<u32> {
+    let mut joint = StageJoint::start_changed(script, 0.0);
+    let mut pose = crate::figatree::JointPose::default();
+    for tick in 1..=cap {
+        joint.tick(data, 1.0, &mut pose).ok()?;
+        if joint.ended() {
+            return Some(tick);
+        }
+    }
+    None
+}
+
 /// Reads the `AObjEvent32 *anim_joints[]` table for a layer of `nodes` nodes.
 ///
 /// Entry `i` belongs to graph node `i`, the way `gcAddAnimJointAll` hands them
