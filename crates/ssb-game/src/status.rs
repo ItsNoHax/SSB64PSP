@@ -781,6 +781,9 @@ impl Status {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 pub enum MarioStatus {
+    /// The battle entry (`ftCommonAppearSetStatus`, RE-402).
+    AppearR = 221,
+    AppearL = 222,
     /// `nFTMarioStatusAttack13` — the jab combo's third-hit finisher.
     Attack13 = 220,
     /// `nFTMarioStatusSpecialN` — Fireball from the ground.
@@ -801,6 +804,9 @@ pub enum MarioStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 pub enum FoxStatus {
+    /// The battle entry (`ftCommonAppearSetStatus`, RE-402).
+    AppearR = 223,
+    AppearL = 224,
     Attack100Start = 220,
     Attack100Loop = 221,
     Attack100End = 222,
@@ -831,6 +837,9 @@ pub enum FoxStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 pub enum DonkeyStatus {
+    /// The battle entry (`ftCommonAppearSetStatus`, RE-402).
+    AppearR = 220,
+    AppearL = 221,
     SpecialNStart = 222,
     SpecialAirNStart = 223,
     SpecialNLoop = 224,
@@ -863,6 +872,9 @@ pub enum DonkeyStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 pub enum SamusStatus {
+    /// The battle entry (`ftCommonAppearSetStatus`, RE-402).
+    AppearR = 220,
+    AppearL = 221,
     SpecialNStart = 222,
     SpecialNLoop = 223,
     SpecialNEnd = 224,
@@ -879,6 +891,9 @@ pub enum SamusStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 pub enum LinkStatus {
+    /// The battle entry (`ftCommonAppearSetStatus`, RE-402).
+    AppearR = 224,
+    AppearL = 225,
     Attack13 = 220,
     Attack100Start = 221,
     Attack100Loop = 222,
@@ -901,6 +916,9 @@ pub enum LinkStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 pub enum YoshiStatus {
+    /// The battle entry (`ftCommonAppearSetStatus`, RE-402).
+    AppearR = 220,
+    AppearL = 221,
     SpecialHi = 222,
     SpecialAirHi = 223,
     SpecialLwStart = 224,
@@ -920,6 +938,11 @@ pub enum YoshiStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 pub enum CaptainStatus {
+    /// The battle entry (`ftCommonAppearSetStatus`, RE-402).
+    AppearRStart = 224,
+    AppearLStart = 225,
+    AppearREnd = 226,
+    AppearLEnd = 227,
     Attack13 = 220,
     Attack100Start = 221,
     Attack100Loop = 222,
@@ -941,6 +964,9 @@ pub enum CaptainStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
 pub enum PikachuStatus {
+    /// The battle entry (`ftCommonAppearSetStatus`, RE-402).
+    AppearR = 220,
+    AppearL = 221,
     SpecialN = 222,
     SpecialAirN = 223,
     SpecialLwStart = 224,
@@ -964,6 +990,9 @@ pub enum PikachuStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
 pub enum PurinStatus {
+    /// The battle entry (`ftCommonAppearSetStatus`, RE-402).
+    AppearR = 228,
+    AppearL = 229,
     JumpAerialF1 = 223,
     JumpAerialF2 = 224,
     JumpAerialF3 = 225,
@@ -981,6 +1010,12 @@ pub enum PurinStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
 pub enum NessStatus {
+    /// The battle entry (`ftCommonAppearSetStatus`, RE-402).
+    AppearRStart = 221,
+    AppearLStart = 222,
+    AppearWait = 223,
+    AppearREnd = 224,
+    AppearLEnd = 225,
     Attack13 = 220,
     SpecialN = 226,
     SpecialAirN = 227,
@@ -1007,6 +1042,9 @@ pub enum NessStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 pub enum KirbyStatus {
+    /// The battle entry (`ftCommonAppearSetStatus`, RE-402).
+    AppearR = 250,
+    AppearL = 251,
     Attack100Start = 220,
     Attack100Loop = 221,
     Attack100End = 222,
@@ -1133,6 +1171,8 @@ impl AnyStatus {
 
     pub fn is_grounded(self) -> bool {
         match self {
+            // The battle entry runs in `crate::appear`.
+            AnyStatus::Mario(MarioStatus::AppearR | MarioStatus::AppearL) => false,
             AnyStatus::Common(s) => s.is_grounded(),
             // `Attack13` and Mario's ground specials are grounded variants.
             AnyStatus::Mario(
@@ -1276,7 +1316,14 @@ impl AnyStatus {
     /// dedicated extracted slots; other extended statuses keep the current
     /// pose until their clip is added to the pack.
     pub fn anim_slot(self) -> usize {
+        if let Some(slot) = crate::appear::slot(self) {
+            return slot;
+        }
         match self {
+            // The battle entry runs in `crate::appear`.
+            AnyStatus::Mario(MarioStatus::AppearR | MarioStatus::AppearL) => {
+                crate::appear::slot(self).unwrap_or(0)
+            }
             AnyStatus::Common(s) => s.anim_slot(),
             AnyStatus::Mario(MarioStatus::SpecialN) => 20,
             AnyStatus::Mario(MarioStatus::SpecialAirN) => 21,
@@ -1287,6 +1334,10 @@ impl AnyStatus {
             // `ssb_rom::anim::SLOT_MARIO_ATTACK13`.
             AnyStatus::Mario(MarioStatus::Attack13) => 540,
             AnyStatus::Fox(s) => match s {
+                // The battle entry runs in `crate::appear`.
+                FoxStatus::AppearR | FoxStatus::AppearL => {
+                    crate::appear::slot(AnyStatus::Fox(s)).unwrap_or(0)
+                }
                 FoxStatus::Attack100Start => 28,
                 FoxStatus::Attack100Loop => 29,
                 FoxStatus::Attack100End => 30,
@@ -1313,6 +1364,10 @@ impl AnyStatus {
                 FoxStatus::SpecialAirLwEnd => 67,
             },
             AnyStatus::Donkey(s) => match s {
+                // The battle entry runs in `crate::appear`.
+                DonkeyStatus::AppearR | DonkeyStatus::AppearL => {
+                    crate::appear::slot(AnyStatus::Donkey(s)).unwrap_or(0)
+                }
                 DonkeyStatus::SpecialNStart => 88,
                 DonkeyStatus::SpecialAirNStart => 89,
                 DonkeyStatus::SpecialNLoop => 90,
@@ -1337,6 +1392,10 @@ impl AnyStatus {
                 DonkeyStatus::ThrowAirFF => 109,
             },
             AnyStatus::Samus(s) => match s {
+                // The battle entry runs in `crate::appear`.
+                SamusStatus::AppearR | SamusStatus::AppearL => {
+                    crate::appear::slot(AnyStatus::Samus(s)).unwrap_or(0)
+                }
                 SamusStatus::SpecialNStart => 145,
                 SamusStatus::SpecialNLoop => 146,
                 SamusStatus::SpecialNEnd => 147,
@@ -1349,6 +1408,10 @@ impl AnyStatus {
             },
             // `ssb_rom::anim::SLOT_LINK_ATTACK13` onward.
             AnyStatus::Link(s) => match s {
+                // The battle entry runs in `crate::appear`.
+                LinkStatus::AppearR | LinkStatus::AppearL => {
+                    crate::appear::slot(AnyStatus::Link(s)).unwrap_or(0)
+                }
                 LinkStatus::Attack13 => 189,
                 LinkStatus::Attack100Start => 190,
                 LinkStatus::Attack100Loop => 191,
@@ -1368,6 +1431,10 @@ impl AnyStatus {
             // `ssb_rom::anim::SLOT_YOSHI_SPECIAL_HI` onward. The loop keeps
             // the start's figatree (`keeps_motion`); this slot is not read.
             AnyStatus::Yoshi(s) => match s {
+                // The battle entry runs in `crate::appear`.
+                YoshiStatus::AppearR | YoshiStatus::AppearL => {
+                    crate::appear::slot(AnyStatus::Yoshi(s)).unwrap_or(0)
+                }
                 YoshiStatus::SpecialHi => 222,
                 YoshiStatus::SpecialAirHi => 223,
                 YoshiStatus::SpecialLwStart => 224,
@@ -1381,6 +1448,13 @@ impl AnyStatus {
                 YoshiStatus::SpecialAirNRelease => 232,
             },
             AnyStatus::Captain(s) => match s {
+                // The battle entry runs in `crate::appear`.
+                CaptainStatus::AppearRStart
+                | CaptainStatus::AppearLStart
+                | CaptainStatus::AppearREnd
+                | CaptainStatus::AppearLEnd => {
+                    crate::appear::slot(AnyStatus::Captain(s)).unwrap_or(0)
+                }
                 CaptainStatus::Attack13 => 253,
                 CaptainStatus::Attack100Start => 254,
                 CaptainStatus::Attack100Loop => 255,
@@ -5107,7 +5181,14 @@ pub fn update(f: &mut Fighter) {
 /// whichever fighter-specific status a [`Fighter`] is currently in — see
 /// [`AnyStatus`].
 fn update_extended(f: &mut Fighter) {
+    if crate::appear::slot(f.status.status).is_some() {
+        return crate::appear::update(f);
+    }
     match f.status.status {
+        // The battle entry runs in `crate::appear`.
+        AnyStatus::Mario(MarioStatus::AppearR | MarioStatus::AppearL)
+        | AnyStatus::Fox(FoxStatus::AppearR | FoxStatus::AppearL)
+        | AnyStatus::Donkey(DonkeyStatus::AppearR | DonkeyStatus::AppearL) => {}
         AnyStatus::Samus(_) => crate::samus::update(f),
         AnyStatus::Link(_) => crate::link::update(f),
         AnyStatus::Yoshi(_) => crate::yoshi::update(f),

@@ -512,6 +512,8 @@ pub fn update(f: &mut Fighter) {
         f.link.spin_effect = f.link.spin_effect.map(|t| t.saturating_add(1));
     }
     match current {
+        // The battle entry runs in `crate::appear`.
+        LinkStatus::AppearR | LinkStatus::AppearL => {}
         // `ftCommonAttack13ProcUpdate`: the `Attack100` branch is Captain's.
         LinkStatus::Attack13 | LinkStatus::Attack100End | LinkStatus::SpecialNGet => {
             if f.status.animation_ended() {

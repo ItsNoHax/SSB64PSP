@@ -764,6 +764,10 @@ pub struct FighterScene {
     /// The real battle camera (RE-131), ticked alongside the fighter each
     /// frame in [`FighterScene::tick`].
     pub camera: ssb_game::camera::Camera,
+    /// The entry focus's zoom (`ifCommonEntryFocusThread`'s
+    /// `gmCameraSetStatusPlayerZoom`, RE-402): a target with its
+    /// `cam_offset_y` added and a distance. `None` runs the battle camera.
+    pub entry_zoom: Option<(ssb_engine::math::Vec3, f32)>,
     /// `FTAttributes.cam_offset_y` (`refs/ssb-decomp-re/src/ft/fttypes.h`) --
     /// deliberately *not* part of `PhysicsAttributes` (that struct's own doc
     /// comment already carves camera offsets out as belonging to "other
@@ -914,6 +918,7 @@ impl FighterScene {
             // begins is real, observable behaviour, not a startup glitch to
             // hide.
             camera: ssb_game::camera::Camera::default(),
+            entry_zoom: None,
             cam_offset_y,
             camera_zoom_frame,
             shadow_size,
@@ -1008,6 +1013,11 @@ impl FighterScene {
                     current.translate[2] - before.translate[2],
                 ),
                 rotate_z: current.rotate[2],
+                translate: ssb_engine::math::Vec3::new(
+                    current.translate[0],
+                    current.translate[1],
+                    current.translate[2],
+                ),
             });
         }
         self.fighter
@@ -1082,6 +1092,16 @@ impl FighterScene {
         stage: &StageDesc,
         additional_camera_interest: Option<ssb_game::camera::Interest>,
     ) {
+        if let Some((target, dist)) = self.entry_zoom {
+            self.camera.tick_player_zoom(
+                target,
+                (0.0, 0.0),
+                dist,
+                ssb_game::pause::ZOOM_PAN_SCALE,
+                ssb_game::appear::FOCUS_ZOOM_FOV,
+            );
+            return;
+        }
         let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
         let bounds = ssb_game::camera::Bounds {
             top: stage.camera.top as f32,
@@ -1284,6 +1304,13 @@ pub fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
         ssb_game::fighter::Facing::Right => core::f32::consts::FRAC_PI_2,
         ssb_game::fighter::Facing::Left => -core::f32::consts::FRAC_PI_2,
     }
+}
+
+/// A fighter's model yaw: [`facing_turn`], or none at all while it enters
+/// (`lr = 0` faces the camera; Captain Falcon's leftward entry turns
+/// around), `ssb_game::appear::model_yaw`.
+pub fn fighter_turn(f: &ssb_game::fighter::Fighter) -> f32 {
+    ssb_game::appear::model_yaw(f).unwrap_or_else(|| facing_turn(f.facing))
 }
 
 /// The file data `grMainSetupMakeGround` hands a VS stage's controller:

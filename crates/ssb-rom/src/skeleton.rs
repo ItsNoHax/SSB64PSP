@@ -27,6 +27,7 @@
 //! pose is a test of precisely that.
 
 use crate::figatree::{Desynchronised, JointAnim, JointPose};
+use crate::objanim::StageJoint;
 use crate::pack::{AnimDesc, AnimJoint, NodeDesc, ObjectDesc, Pack, MODEL_SCALE};
 use crate::scene::Mat4;
 
@@ -63,6 +64,12 @@ pub struct Skeleton {
     /// Absolute pack node each joint drives.
     nodes: [u32; MAX_JOINTS],
     anims: [JointAnim; MAX_JOINTS],
+    /// A 32-bit `AnimJoint` clip's per-joint streams (RE-402), used instead
+    /// of `anims` while `anim_joint` is set: the battle-entry slots.
+    joints32: [Option<StageJoint>; MAX_JOINTS],
+    anim_joint: bool,
+    /// `GObj::anim_frame` as the 32-bit parse last wrote it.
+    frame32: f32,
     /// Current local transform per joint, seeded from the node's rest pose.
     poses: [JointPose; MAX_JOINTS],
     joint_count: usize,
@@ -75,6 +82,9 @@ impl Default for Skeleton {
         Skeleton {
             nodes: [AnimJoint::NO_NODE; MAX_JOINTS],
             anims: core::array::from_fn(|_| JointAnim::inert()),
+            joints32: [None; MAX_JOINTS],
+            anim_joint: false,
+            frame32: 0.0,
             poses: [JointPose::default(); MAX_JOINTS],
             joint_count: 0,
             speed: 1.0,
@@ -97,6 +107,9 @@ impl Skeleton {
     /// machine tests (RE-035). Every joint of one animation runs the same
     /// clock, so reading the first is enough.
     pub fn frame(&self) -> f32 {
+        if self.anim_joint {
+            return self.frame32;
+        }
         self.anims
             .iter()
             .take(self.joint_count)
@@ -106,6 +119,12 @@ impl Skeleton {
 
     /// Whether every joint's script has run out.
     pub fn ended(&self) -> bool {
+        if self.anim_joint {
+            return self.joint_count == 0
+                || self.joints32[..self.joint_count]
+                    .iter()
+                    .all(|j| j.is_none_or(|j| j.ended()));
+        }
         self.joint_count == 0 || self.anims[..self.joint_count].iter().all(|a| a.ended())
     }
 
@@ -125,9 +144,15 @@ impl Skeleton {
     /// Carrying the previous animation's pose across instead would leave a
     /// joint wherever the last one left it on any track the new one is silent
     /// about.
+    ///
+    /// An entry slot's clip ([`crate::anim::is_anim_joint_slot`], RE-401)
+    /// plays its 32-bit streams instead: `gcAddDObjAnimJoint`, whose first
+    /// parse comes with the next tick.
     pub fn start(&mut self, pack: &Pack<'_>, anim: &AnimDesc, frame: f32, speed: f32) {
         self.joint_count = 0;
         self.speed = speed;
+        self.anim_joint = anim.fighter < 27 && crate::anim::is_anim_joint_slot(anim.slot as usize);
+        self.frame32 = frame;
         let count = (anim.joint_count as usize).min(MAX_JOINTS);
         for i in 0..count {
             let Some(joint) = pack.anim_joint(anim.first_joint + i as u32) else {
@@ -144,7 +169,13 @@ impl Skeleton {
             };
             self.anims[i] = match joint.script {
                 AnimJoint::NO_SCRIPT => JointAnim::inert(),
+                _ if self.anim_joint => JointAnim::inert(),
                 at => JointAnim::start(at as usize, frame),
+            };
+            self.joints32[i] = match joint.script {
+                AnimJoint::NO_SCRIPT => None,
+                at if self.anim_joint => Some(StageJoint::start_changed(at, frame)),
+                _ => None,
             };
             self.joint_count = i + 1;
         }
@@ -178,6 +209,24 @@ impl Skeleton {
                     translation_scale(bytes, (self.nodes[i] - first_node) as usize + 4)
                 }
             });
+            if self.anim_joint {
+                let Some(joint) = self.joints32[i].as_mut() else {
+                    continue;
+                };
+                if joint
+                    .tick_scaled(script, self.speed, &mut self.poses[i], scale)
+                    .is_err()
+                {
+                    self.joints32[i] = None;
+                    continue;
+                }
+                // The first joint to write it sets the fighter's
+                // `anim_frame`, which `ftCommonAppearProcUpdate` reads.
+                if let Some(f) = joint.gobj_frame() {
+                    self.frame32 = f;
+                }
+                continue;
+            }
             if let Err(e) = self.anims[i].tick_scaled(script, self.speed, &mut self.poses[i], scale)
             {
                 self.anims[i] = JointAnim::inert();
@@ -260,6 +309,7 @@ impl Skeleton {
     pub fn take_node(&mut self, node: u32) -> Option<&mut JointPose> {
         let i = (0..self.joint_count).find(|&i| self.nodes[i] == node)?;
         self.anims[i] = JointAnim::inert();
+        self.joints32[i] = None;
         Some(&mut self.poses[i])
     }
 }

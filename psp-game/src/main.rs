@@ -1238,8 +1238,46 @@ unsafe fn training_frame(
     }
     if let Some(b) = battle.as_deref() {
         tick_countdown(p, damage_hud, b);
+        entry_frame(p, pl, dummy_state, damage_hud, b);
     }
     false
+}
+
+/// `ifCommonEntryFocusThread`'s slice of the frame: each fighter's entry on
+/// its tick, and for the next frame the camera's zoom on the fighter the
+/// focus holds (RE-402).
+#[inline(never)]
+fn entry_frame(
+    p: &Pack<'_>,
+    pl: &mut play::FighterScene,
+    dummy_state: &mut Option<play::Dummy>,
+    hud: &Hud,
+    b: &ssb_game::battle::Battle,
+) {
+    pl.entry_zoom = None;
+    let Some(focus) = hud.entry_focus else { return };
+    let Some(t) = b.clock().checked_sub(1 + ssb_game::battle::ENTRY_WAIT) else {
+        return;
+    };
+    if t == focus.appear_tick(0) {
+        ssb_game::appear::appear_set_status(&mut pl.fighter);
+    }
+    if let Some(d) = dummy_state.as_mut() {
+        if t == focus.appear_tick(1) {
+            ssb_game::appear::appear_set_status(&mut d.fighter);
+        }
+    }
+    let target = |scene: &play::FighterScene| {
+        let mut pos = scene.fighter.pos;
+        pos.y += scene.cam_offset_y;
+        let dist = p.fighter(scene.fighter.kind as u32).map_or(1000.0, |d| d.closeup_camera_zoom);
+        (pos, dist)
+    };
+    pl.entry_zoom = match focus.zoom(t) {
+        Some(0) => Some(target(pl)),
+        Some(_) => dummy_state.as_ref().map(|d| target(d)),
+        None => None,
+    };
 }
 
 /// The battle HUD's state beside the world: the damage displays and the
@@ -1248,6 +1286,8 @@ struct Hud {
     damage: [ssb_game::hud::DamageDisplay; 2],
     countdown: Option<ssb_game::countdown::Countdown>,
     pause: Option<PauseState>,
+    /// `ifCommonEntryFocusThread`, from the countdown's frame.
+    entry_focus: Option<ssb_game::appear::EntryFocus>,
 }
 
 /// The pause menu's choices at the pause (`sIFCommonBattlePause*`).
@@ -1334,6 +1374,7 @@ impl Hud {
             ],
             countdown: None,
             pause: None,
+            entry_focus: None,
         }
     }
 }
@@ -1361,7 +1402,10 @@ fn tick_countdown(p: &Pack<'_>, hud: &mut Hud, b: &ssb_game::battle::Battle) {
         match hud.countdown.as_mut() {
             Some(c) if b.is_sudden_death => c.start_go(),
             None => {
-                let _ = ssb_game::rng::rand_int_range(3);
+                hud.entry_focus = Some(ssb_game::appear::EntryFocus {
+                    id: ssb_game::rng::rand_int_range(3) as u8,
+                    count: 2,
+                });
                 hud.countdown = Some(ssb_game::countdown::Countdown::new());
             }
             Some(_) => {}
@@ -1395,11 +1439,14 @@ fn start_sudden_death(
         .as_ref()
         .map(|d| (d.computer.behavior, d.computer.trait_kind));
     let index = enter_training(pack, gkind, fighters, Some(rules), battle, world);
+    // `is_skip_entry`: sudden death's fighters stand at once.
     if let Some(pl) = world.play_state.as_mut() {
         pl.fighter.damage = ssb_game::battle::SUDDEN_DEATH_DAMAGE;
+        ssb_game::status::set_wait(&mut pl.fighter);
     }
     if let Some(d) = world.dummy_state.as_mut() {
         d.fighter.damage = ssb_game::battle::SUDDEN_DEATH_DAMAGE;
+        ssb_game::status::set_wait(&mut d.fighter);
         if let Some((behavior, trait_kind)) = cpu {
             d.computer.behavior = behavior;
             d.computer.trait_kind = trait_kind;
@@ -1430,6 +1477,7 @@ fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game:
 fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     let damage = |f: Option<&ssb_game::fighter::Fighter>| f.map_or(0, |f| i32::from(f.damage));
     world.damage_hud.countdown = None;
+    world.damage_hud.entry_focus = None;
     world.damage_hud.damage[0] =
         ssb_game::hud::DamageDisplay::new(0, damage(world.play_state.as_ref().map(|s| &s.fighter)));
     world.damage_hud.damage[1] =
@@ -1562,6 +1610,9 @@ fn enter_training(
                 ssb_game::battle::start_facing(pl.fighter.pos.x, spawn_x(1).into_iter());
             pl.fighter.dead.stock_rule = stock_rule;
             pl.fighter.stocks = rules.stocks;
+            // `ftManagerMakeFighter`: a VS fighter waits hidden for its
+            // entry (`ftCommonEntrySetStatus`).
+            ssb_game::appear::entry_set_status(&mut pl.fighter);
         }
         if let Some(d) = world.dummy_state.as_mut() {
             d.fighter.facing =
@@ -1571,6 +1622,7 @@ fn enter_training(
             // A VS CPU runs the default trait and behaviour: it fights.
             d.computer.trait_kind = ssb_game::computer::attack::Trait::Default;
             d.computer.behavior = ssb_game::computer::Behavior::Default;
+            ssb_game::appear::entry_set_status(&mut d.fighter);
         }
         let mut players = [ssb_game::battle::Player::default(); 4];
         players[0] = ssb_game::battle::Player {
@@ -2846,7 +2898,7 @@ unsafe fn draw_training(
         } else {
             gpu.model_transform(
                 [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
-                [0.0, play::facing_turn(pl.fighter.facing), 0.0],
+                [0.0, play::fighter_turn(&pl.fighter), 0.0],
                 meshdraw::MODEL_SCALE,
             );
         }
@@ -2893,7 +2945,7 @@ unsafe fn draw_training(
                         dummy.fighter.pos.y,
                         dummy.fighter.pos.z,
                     ],
-                    [0.0, play::facing_turn(dummy.fighter.facing), 0.0],
+                    [0.0, play::fighter_turn(&dummy.fighter), 0.0],
                     meshdraw::MODEL_SCALE,
                 );
             }
@@ -3957,7 +4009,7 @@ unsafe fn draw_items_weapons_effects(
         if let Some(reflector) = assets.reflector.as_ref() {
             gpu.model_transform(
                 [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
-                [0.0, play::facing_turn(pl.fighter.facing), 0.0],
+                [0.0, play::fighter_turn(&pl.fighter), 0.0],
                 meshdraw::MODEL_SCALE,
             );
             let base = gpu.model_matrix();

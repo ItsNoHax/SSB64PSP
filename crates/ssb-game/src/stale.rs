@@ -325,12 +325,16 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
             _ => M::None,
         },
         AnyStatus::Mario(s) => match s {
+            // The battle entry runs in `crate::appear`.
+            MarioStatus::AppearR | MarioStatus::AppearL => M::None,
             MarioStatus::Attack13 => M::Attack13,
             MarioStatus::SpecialN | MarioStatus::SpecialAirN => M::SpecialN,
             MarioStatus::SpecialHi | MarioStatus::SpecialAirHi => M::SpecialHi,
             MarioStatus::SpecialLw | MarioStatus::SpecialAirLw => M::SpecialLw,
         },
         AnyStatus::Fox(s) => match s {
+            // The battle entry runs in `crate::appear`.
+            FoxStatus::AppearR | FoxStatus::AppearL => M::None,
             FoxStatus::Attack100Start | FoxStatus::Attack100Loop | FoxStatus::Attack100End => {
                 M::Attack100
             }
@@ -356,6 +360,8 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
             | FoxStatus::SpecialAirLwTurn => M::SpecialLw,
         },
         AnyStatus::Donkey(s) => match s {
+            // The battle entry runs in `crate::appear`.
+            DonkeyStatus::AppearR | DonkeyStatus::AppearL => M::None,
             DonkeyStatus::SpecialNStart
             | DonkeyStatus::SpecialAirNStart
             | DonkeyStatus::SpecialNLoop
@@ -381,6 +387,8 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
             | DonkeyStatus::ThrowAirFF => M::ThrowF,
         },
         AnyStatus::Samus(s) => match s {
+            // The battle entry runs in `crate::appear`.
+            SamusStatus::AppearR | SamusStatus::AppearL => M::None,
             SamusStatus::SpecialNStart
             | SamusStatus::SpecialNLoop
             | SamusStatus::SpecialNEnd
@@ -390,6 +398,8 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
             SamusStatus::SpecialLw | SamusStatus::SpecialAirLw => M::SpecialLw,
         },
         AnyStatus::Link(s) => match s {
+            // The battle entry runs in `crate::appear`.
+            LinkStatus::AppearR | LinkStatus::AppearL => M::None,
             LinkStatus::Attack13 => M::Attack13,
             LinkStatus::Attack100Start | LinkStatus::Attack100Loop | LinkStatus::Attack100End => {
                 M::Attack100
@@ -406,6 +416,8 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
             LinkStatus::SpecialLw | LinkStatus::SpecialAirLw => M::SpecialLw,
         },
         AnyStatus::Yoshi(s) => match s {
+            // The battle entry runs in `crate::appear`.
+            YoshiStatus::AppearR | YoshiStatus::AppearL => M::None,
             YoshiStatus::SpecialHi | YoshiStatus::SpecialAirHi => M::SpecialHi,
             YoshiStatus::SpecialLwStart
             | YoshiStatus::SpecialLwLanding
@@ -419,6 +431,11 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
             | YoshiStatus::SpecialAirNRelease => M::SpecialN,
         },
         AnyStatus::Captain(s) => match s {
+            // The battle entry runs in `crate::appear`.
+            CaptainStatus::AppearRStart
+            | CaptainStatus::AppearLStart
+            | CaptainStatus::AppearREnd
+            | CaptainStatus::AppearLEnd => M::None,
             CaptainStatus::Attack13 => M::Attack13,
             CaptainStatus::Attack100Start
             | CaptainStatus::Attack100Loop
@@ -466,6 +483,8 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
         AnyStatus::Purin(s) => {
             use crate::status::PurinStatus as P;
             match s {
+                // The battle entry runs in `crate::appear`.
+                P::AppearR | P::AppearL => M::None,
                 P::JumpAerialF1
                 | P::JumpAerialF2
                 | P::JumpAerialF3

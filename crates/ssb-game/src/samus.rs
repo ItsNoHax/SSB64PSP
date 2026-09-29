@@ -304,6 +304,8 @@ pub fn update(f: &mut Fighter) {
         f.samus.charge_spin = f.samus.charge_spin.wrapping_add(1);
     }
     match current {
+        // The battle entry runs in `crate::appear`.
+        SamusStatus::AppearR | SamusStatus::AppearL => {}
         SamusStatus::SpecialNStart | SamusStatus::SpecialAirNStart => {
             if f.status.animation_ended() {
                 if f.situation == Situation::Air {

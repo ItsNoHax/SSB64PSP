@@ -375,6 +375,8 @@ pub fn update(f: &mut Fighter) {
         return;
     };
     match current {
+        // The battle entry runs in `crate::appear`.
+        YoshiStatus::AppearR | YoshiStatus::AppearL => {}
         YoshiStatus::SpecialHi => {
             update_egg(f);
             if f.status.animation_ended() {

@@ -43,6 +43,10 @@ pub fn is_grounded(s: P) -> bool {
 }
 pub fn anim_slot(s: P) -> usize {
     359 + match s {
+        // The battle entry runs in `crate::appear`.
+        P::AppearR | P::AppearL => {
+            return crate::appear::slot(crate::status::AnyStatus::Pikachu(s)).unwrap_or(0)
+        }
         P::SpecialN => 0,
         P::SpecialAirN => 1,
         P::SpecialLwStart => 2,
@@ -225,6 +229,8 @@ pub fn update(f: &mut Fighter) {
     };
     let ground = is_grounded(s);
     match s {
+        // The battle entry runs in `crate::appear`.
+        P::AppearR | P::AppearL => {}
         P::SpecialN | P::SpecialAirN => {
             if !f.pikachu.spawned && f.status.anim_frame >= 21.0 {
                 f.pikachu.spawned = true;

@@ -235,6 +235,8 @@ pub struct Fighter {
     /// Common lifecycle transitions maintain it; capture/other visual systems
     /// can also set it without acquiring renderer knowledge.
     pub is_shadow_hidden: bool,
+    /// The battle entry's spawn point and end facing (`crate::appear`).
+    pub entry: crate::appear::Entry,
     pub input: ControllerState,
     pub prev_input: ControllerState,
     /// Collision offsets — `MPObjectColl`.
@@ -402,6 +404,7 @@ impl Fighter {
             invincible_frames: 0,
             is_invisible: false,
             is_shadow_hidden: false,
+            entry: crate::appear::Entry::default(),
             input: ControllerState::default(),
             prev_input: ControllerState::default(),
             coll: BodyColl::default(),
@@ -765,6 +768,12 @@ impl Fighter {
         // The dead and rebirth statuses have no `proc_physics`, and their
         // `proc_map` (if any) replaces the map step.
         if crate::dead::tick_status(self) {
+            self.root_motion = RootMotion::default();
+            self.weapon_spawn_anchor = None;
+            return;
+        }
+        // The battle entry places the fighter itself and skips the map.
+        if crate::appear::tick_status(self) {
             self.root_motion = RootMotion::default();
             self.weapon_spawn_anchor = None;
             return;

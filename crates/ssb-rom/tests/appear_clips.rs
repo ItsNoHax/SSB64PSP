@@ -76,3 +76,29 @@ fn every_fighter_has_an_entry_clip_over_its_model_joints() {
         30
     );
 }
+
+#[test]
+fn the_skeleton_plays_marios_entry_to_its_end() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = Pack::open(&bytes).unwrap();
+    let anim = pack.fighter_anim(0, SLOT_APPEAR_R as u32).unwrap();
+    let script = pack.anim_script(&anim).unwrap();
+    let mut skeleton = ssb_rom::skeleton::Skeleton::new();
+    skeleton.start(&pack, &anim, 0.0, 1.0);
+    let mut heights = Vec::new();
+    let mut ticks = 0;
+    while !skeleton.ended() && ticks < 400 {
+        skeleton.tick(script).unwrap();
+        heights.push(skeleton.pose(0).unwrap().translate[1]);
+        ticks += 1;
+    }
+    // Every joint ends on tick 121, and `anim_frame` is then at or below
+    // zero, where `ftCommonAppearProcUpdate` ends the entry.
+    assert_eq!(ticks, 121);
+    assert!(skeleton.frame() <= 0.0, "{}", skeleton.frame());
+    // The lead joint carries the entry's rise out of the pipe.
+    let (lo, hi) = heights
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(l, h), &v| (l.min(v), h.max(v)));
+    assert!(hi - lo > 100.0, "{lo}..{hi}");
+}

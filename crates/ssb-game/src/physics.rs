@@ -24,6 +24,9 @@ use ssb_engine::math::Vec3;
 pub struct RootMotion {
     pub delta: Vec3,
     pub rotate_z: f32,
+    /// TransN's translation itself, which the battle entry places the
+    /// fighter by (`ftCommonAppearProcPhysics`, RE-402).
+    pub translate: Vec3,
 }
 
 /// The subset of `FTAttributes` the physics functions read.
@@ -749,6 +752,7 @@ mod tests {
             RootMotion {
                 delta: Vec3::new(3.0, 5.0, 10.0),
                 rotate_z: core::f32::consts::FRAC_PI_2,
+                ..Default::default()
             },
             1.0,
         );
@@ -765,6 +769,7 @@ mod tests {
             RootMotion {
                 delta: Vec3::new(0.0, 0.0, 12.0),
                 rotate_z: 0.0,
+                ..Default::default()
             },
             -1.0,
         );

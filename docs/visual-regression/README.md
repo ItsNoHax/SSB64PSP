@@ -586,3 +586,10 @@ captures. 106 of 106 goldens match twice.
 
 Pack v63 (`8bfe1acc…`) adds the battle-entry clips, which nothing plays
 yet. 106 of 106 goldens match twice.
+
+## 2026-09-29 RE-402 VS entry
+
+Pack v63. VS fighters now enter through their Appear clips, so six VS
+goldens were rebaselined, each captured twice: `f1-vs-countdown` shows
+Mario mid-entry and the rest follow from the entry's timing. 106 of 106
+goldens match twice.

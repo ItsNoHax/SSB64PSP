@@ -141,7 +141,7 @@ fn blocks(opcode: u32) -> bool {
 }
 
 /// One node's animation clock and ten tracks.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct StageJoint {
     tracks: [Aobj; TRACK_COUNT],
     pub flags: u16,
