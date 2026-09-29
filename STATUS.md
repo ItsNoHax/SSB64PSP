@@ -7,11 +7,12 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** the VS results' rankings and exit, with no contest
-  after a reset (RE-400). Before it: the VS mode menu (RE-399).
-- **Next gameplay batch:** shrink `run` (move the screen handlers out of
-  line) to regain MIPS branch headroom, then the Appear entry parked in
-  TODO.
+- **Completed batch:** `psp-game`'s `run` loop state moved into a
+  `Session`, with the screen logic (`session_frame`) and the draw
+  (`draw_frame`) out of line; no golden changed. Before it: the VS
+  results' rankings (RE-400).
+- **Next gameplay batch:** the Appear entry (parked in TODO with its
+  findings), then `mnPlayersVS`'s VS character select.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
@@ -34,7 +35,7 @@ Current snapshot. History lives in git and `docs/evidence/`.
   (RE-360).
 - Pack v62: 28,096,032 bytes, SHA-256
   `b41c195101349351f22c19e698372c08ed4d013bacb03cea723d573b23bbe7b4`.
-- `run` is 121,804 bytes in release, 124,000 in `golden_capture`; the
+- `run` is 104,304 bytes in release, 109,748 in `golden_capture`; the
   MIPS branch range is 128 KB.
 - Physical PSP last checked in RE-361 (PSP-2000 Slim, 6.61 ARK, pack v43).
 
