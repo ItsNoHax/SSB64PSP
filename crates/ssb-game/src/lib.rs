@@ -44,6 +44,7 @@ pub mod physics;
 pub mod pikachu;
 pub mod purin;
 pub mod reaction;
+pub mod results;
 pub mod rng;
 pub mod samus;
 pub mod shadow;
