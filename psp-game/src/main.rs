@@ -146,8 +146,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // times.
         GameScene::CpuWalk => 200,
         GameScene::CpuJump => 120,
-        // After "Go" the CPU closes in: a down air at tick 610, then a grab
-        // and a forward throw, the player in `ThrownCommon` at 690.
+        // After "Go" the CPU closes in and lands hits (10%); at tick 690 it
+        // pulls the player into a grab (`CatchPull`, RE-394).
         GameScene::VsCpu => 690,
     }
 }
@@ -1139,7 +1139,7 @@ unsafe fn training_frame(
     stage_ctl: &mut ssb_game::stage::Stage,
     controller: ControllerState,
     mut battle: Option<&mut ssb_game::battle::Battle>,
-    damage_hud: &mut [ssb_game::hud::DamageDisplay; 2],
+    damage_hud: &mut Hud,
 ) -> bool {
     use ssb_game::battle::{Frame, GameStatus};
     let frame = battle.as_mut().map(|b| (b.begin_frame(), b.status));
@@ -1164,12 +1164,68 @@ unsafe fn training_frame(
         started,
     );
     let fell = report_falls(battle.as_deref_mut(), &mut pl.fighter);
-    update_damage_hud(&mut damage_hud[0], &pl.fighter, fell, started);
+    update_damage_hud(&mut damage_hud.damage[0], &pl.fighter, fell, started);
     if let Some(dummy) = dummy_state.as_mut() {
         let fell = report_falls(battle.as_deref_mut(), &mut dummy.fighter);
-        update_damage_hud(&mut damage_hud[1], &dummy.fighter, fell, started);
+        update_damage_hud(&mut damage_hud.damage[1], &dummy.fighter, fell, started);
+    }
+    if let Some(b) = battle.as_deref() {
+        tick_countdown(p, damage_hud, b);
     }
     false
+}
+
+/// The battle HUD's state beside the world: the damage displays and the
+/// countdown or sudden death's "GO!".
+struct Hud {
+    damage: [ssb_game::hud::DamageDisplay; 2],
+    countdown: Option<ssb_game::countdown::Countdown>,
+}
+
+impl Hud {
+    fn new() -> Hud {
+        Hud {
+            damage: [
+                ssb_game::hud::DamageDisplay::new(0, 0),
+                ssb_game::hud::DamageDisplay::new(1, 0),
+            ],
+            countdown: None,
+        }
+    }
+}
+
+/// File 82's sprite sizes, for the countdown's pop-ins.
+fn game_status_sizes(p: &Pack<'_>) -> [(u16, u16); 24] {
+    let f = &ssb_rom::sprite::GAME_STATUS;
+    core::array::from_fn(|i| {
+        f.offsets
+            .get(i)
+            .and_then(|&at| p.sprite(f.file, at))
+            .map_or((0, 0), |s| (s.width, s.height))
+    })
+}
+
+/// `ifCommonEntryAllThread` makes the countdown after its 90-tick sleep,
+/// drawing the entry focus's `syUtilsRandIntRange(3)` (the focus itself is
+/// not drawn); `ifCommonSuddenDeathThread` shows "GO!" at the same tick.
+fn tick_countdown(p: &Pack<'_>, hud: &mut Hud, b: &ssb_game::battle::Battle) {
+    let entry = 1 + ssb_game::battle::ENTRY_WAIT;
+    if b.clock() < entry {
+        return;
+    }
+    if b.clock() == entry {
+        match hud.countdown.as_mut() {
+            Some(c) if b.is_sudden_death => c.start_go(),
+            None => {
+                let _ = ssb_game::rng::rand_int_range(3);
+                hud.countdown = Some(ssb_game::countdown::Countdown::new());
+            }
+            Some(_) => {}
+        }
+    }
+    if let Some(c) = hud.countdown.as_mut() {
+        c.tick(&game_status_sizes(p));
+    }
 }
 
 /// `scVSBattleStartSuddenDeath`: the tied fighters again, at 300%, under
@@ -1206,8 +1262,9 @@ fn start_sudden_death(
         }
     }
     // `scVSBattleStartSuddenDeath` makes the damage display after the
-    // fighters are at 300%.
+    // fighters are at 300%, and `ifCommonSuddenDeathMakeInterface`.
     reset_damage_hud(world);
+    world.damage_hud.countdown = Some(ssb_game::countdown::Countdown::sudden_death());
     *battle = Some(sudden);
     index
 }
@@ -1228,9 +1285,10 @@ fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game:
 /// outside a battle.
 fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     let damage = |f: Option<&ssb_game::fighter::Fighter>| f.map_or(0, |f| i32::from(f.damage));
-    world.damage_hud[0] =
+    world.damage_hud.countdown = None;
+    world.damage_hud.damage[0] =
         ssb_game::hud::DamageDisplay::new(0, damage(world.play_state.as_ref().map(|s| &s.fighter)));
-    world.damage_hud[1] =
+    world.damage_hud.damage[1] =
         ssb_game::hud::DamageDisplay::new(1, damage(world.dummy_state.as_ref().map(|d| &d.fighter)));
 }
 
@@ -1277,7 +1335,7 @@ struct TrainingWorld<'w> {
     stage_objects: &'w mut ssb_rom::ground_obj::GroundObjects,
     stage_map: &'w mut Option<alloc::boxed::Box<ssb_psp_runtime::scene::StageMap>>,
     stage_ctl: &'w mut ssb_game::stage::Stage,
-    damage_hud: &'w mut [ssb_game::hud::DamageDisplay; 2],
+    damage_hud: &'w mut Hud,
 }
 
 /// Loads VS stage `gkind` for Training and spawns both fighters on it;
@@ -1430,10 +1488,7 @@ unsafe fn run() -> ! {
     let draw_assets = pack.as_ref().map(DrawAssets::resolve).unwrap_or_default();
     let mut effect_visuals = EffectVisuals::default();
     let mut draw_state = meshdraw::DrawState::default();
-    let mut damage_hud = [
-        ssb_game::hud::DamageDisplay::new(0, 0),
-        ssb_game::hud::DamageDisplay::new(1, 0),
-    ];
+    let mut damage_hud = Hud::new();
     // Created once, on first entry to Training Mode (below) -- a fighter
     // spawned on the training stage, ticked with real physics/animation/
     // camera every frame this screen is active (`play::FighterScene`, shared
@@ -2346,7 +2401,7 @@ unsafe fn draw_training(
     stage_anim: Option<&ssb_rom::skeleton::StageAnimator>,
     stage_objects: Option<&ssb_rom::ground_obj::GroundObjects>,
     no_pack_color: Color,
-    damage_hud: &[ssb_game::hud::DamageDisplay; 2],
+    damage_hud: &Hud,
 ) {
     let scene = pack
         .zip(play_state)
@@ -2526,7 +2581,10 @@ unsafe fn draw_training(
         Some((pl.fighter.kind, 0)),
         dummy_state.map(|d| (d.fighter.kind, ssb_game::hud::CPU_COLOR)),
     ];
-    draw_damage_hud(p, draw_state, damage_hud, fighters, stage_index);
+    draw_damage_hud(p, draw_state, &damage_hud.damage, fighters, stage_index);
+    if let Some(c) = damage_hud.countdown.as_ref() {
+        draw_countdown(p, draw_state, c);
+    }
 }
 
 /// `ifCommonPlayerDamageProcDisplay` for each fighter, over the 3D scene.
@@ -2557,7 +2615,16 @@ fn draw_damage_hud(
             let (x, y) = ssb_game::hud::emblem_origin(d.player, sprite.width, sprite.height);
             let [r, g, b] = colors[color];
             unsafe {
-                meshdraw::draw_sprite(p, &sprite, x, y, 1.0, [r, g, b, 0xFF], false, ATTR, draw_state);
+                let d = meshdraw::SObjDraw {
+                    x,
+                    y,
+                    scale: 1.0,
+                    prim: [r, g, b, 0xFF],
+                    env: [0; 3],
+                    solid: false,
+                    attr: ATTR,
+                };
+                meshdraw::draw_sprite(p, &sprite, &d, draw_state);
             }
         }
         for g in d.glyphs(false, &sizes) {
@@ -2566,8 +2633,44 @@ fn draw_damage_hud(
             };
             let [r, gr, b] = g.color;
             unsafe {
-                meshdraw::draw_sprite(p, &sprite, g.x, g.y, g.scale, [r, gr, b, 0xFF], g.solid, ATTR, draw_state);
+                let d = meshdraw::SObjDraw {
+                    x: g.x,
+                    y: g.y,
+                    scale: g.scale,
+                    prim: [r, gr, b, 0xFF],
+                    env: [0; 3],
+                    solid: g.solid,
+                    attr: ATTR,
+                };
+                meshdraw::draw_sprite(p, &sprite, &d, draw_state);
             }
+        }
+    }
+}
+
+/// `lbCommonDrawSObjAttr` over the countdown and "GO!" `SObj`s.
+#[inline(never)]
+fn draw_countdown(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, c: &ssb_game::countdown::Countdown) {
+    let f = &ssb_rom::sprite::GAME_STATUS;
+    for o in c.sobjs() {
+        let Some(sprite) = f
+            .offsets
+            .get(usize::from(o.sprite))
+            .and_then(|&at| p.sprite(f.file, at))
+        else {
+            continue;
+        };
+        let d = meshdraw::SObjDraw {
+            x: o.pos.0,
+            y: o.pos.1,
+            scale: o.scale,
+            prim: [o.prim[0], o.prim[1], o.prim[2], 0xFF],
+            env: o.env,
+            solid: false,
+            attr: o.attr,
+        };
+        unsafe {
+            meshdraw::draw_sprite(p, &sprite, &d, draw_state);
         }
     }
 }

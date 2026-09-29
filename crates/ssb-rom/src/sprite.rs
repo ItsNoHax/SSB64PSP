@@ -264,8 +264,24 @@ pub fn fighter_sprites(main: &File, attributes: u32) -> Option<FighterSprites> {
     })
 }
 
+/// File 82, `IFCommonGameStatus` (`gGMCommonFiles[1]`), in its sprite
+/// manifest's order: `OrangeLetterG`, `...O`, `OrangeExclamationMark`, the
+/// blue letters `T I M E U P S A G`, `Rod`, `Frame`, `RodShadow`, then the
+/// lamps `{Red,Yellow,Blue}Dim`, `...Light` and `...Contour`.
+pub const GAME_STATUS: SpriteFile = SpriteFile {
+    file: 82,
+    offsets: &[
+        0x4D78, 0xA730, 0xC370, 0xE4A8, 0xF740, 0x127E0, 0x144E0, 0x16EB8, 0x18FE8, 0x1B5F8,
+        0x1DE68, 0x20788, 0x20990, 0x21760, 0x21878, 0x21950, 0x21A10, 0x21BA8, 0x22128, 0x22588,
+        0x22F18, 0x23A28, 0x24620, 0x25290,
+    ],
+};
+
+/// `SP_CLOUD`: drawn with `G_RM_CLD_SURF`, blended like `SP_TRANSPARENT`.
+pub const SP_CLOUD: u16 = 0x1000;
+
 /// Every sprite file the pack converts.
-pub const FILES: &[SpriteFile] = &[PLAYER_DAMAGE];
+pub const FILES: &[SpriteFile] = &[PLAYER_DAMAGE, GAME_STATUS];
 
 /// Decodes every sprite of `f`.
 pub fn decode_all(file: &File, f: &SpriteFile) -> Result<Vec<Sprite>, SpriteError> {
@@ -316,6 +332,27 @@ mod tests {
         let s = fighter_sprites(&mario, crate::fighter::FIGHTER_FILES[0].offset).unwrap();
         assert_eq!(s.stock, (296, 0x72D0));
         assert_eq!(s.emblem, (296, 0x74C8));
+    }
+
+    #[test]
+    fn the_game_status_sprites_decode() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        let file = archive.load(GAME_STATUS.file).unwrap();
+        let sprites = decode_all(&file, &GAME_STATUS).unwrap();
+        for (i, s) in sprites.iter().enumerate() {
+            let rgba32 = (s.format, s.size) == (Format::Rgba, BitSize::Bits32);
+            // The letters are RGBA32; the rod, frame, shadow IA8; the lamps I.
+            match i {
+                0..=11 => assert!(rgba32, "sprite {i}"),
+                12..=14 => assert_eq!((s.format, s.size), (Format::Ia, BitSize::Bits8)),
+                _ => assert_eq!(s.format, Format::I),
+            }
+        }
     }
 
     #[test]

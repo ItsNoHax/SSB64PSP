@@ -531,3 +531,13 @@ damage display, so 35 `psp-game` goldens were rebaselined, each captured
 twice; every diff lies in the HUD band (y 438–498). `f1-vs-countdown` shows
 the emblems without digits, as `ifCommonPlayerDamageProcDisplay` draws the
 emblem before its show check. 101 of 101 goldens match twice.
+
+## 2026-09-29 RE-394 countdown
+
+Pack v62 (`4c1c7045…`) adds file 82's sprites. The VS countdown's traffic
+light and "GO!" draw, and the entry focus's `syUtilsRandIntRange(3)` now
+draws from the seed, which moved the VS CPU's choices: `f1-vs-cpu` now
+catches the player in `CatchPull` at 10%. Sprites tint through `Blend`,
+which shifts the Training HUD by at most one level per channel. 35
+`psp-game` goldens were rebaselined, each captured twice. 101 of 101
+goldens match twice.

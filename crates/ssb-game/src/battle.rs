@@ -197,6 +197,12 @@ impl Battle {
     /// thread it then makes reads 300 another 300 frames on.
     pub const GO_TICK: u32 = 1 + ENTRY_WAIT + COUNTDOWN_GO;
 
+    /// Frames since the scene started, counting the current one: the
+    /// clock the entry and countdown threads read.
+    pub fn clock(&self) -> u32 {
+        self.clock
+    }
+
     /// `ifCommonBattleUpdateInterfaceAll`, and the interface processes the
     /// frame's `gcRunAll` runs: the countdown and the timer.
     pub fn begin_frame(&mut self) -> Frame {
