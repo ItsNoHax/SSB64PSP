@@ -415,3 +415,4 @@ editing a record.
 | RE-403 | The fighters' entry effects | IMPLEMENTED (decomp source, pack probe, host test, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | fighter, effect, animation, match, visual-regression |  |
 | RE-404 | The VS character select | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless golden captured twice, workspace tests, both PSP builds; no physical PSP) | menu, match, visual-regression, psp-platform |  |
 | RE-405 | VS battles with up to four fighters | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | match, fighter, grab, hud, psp-platform, visual-regression |  |
+| RE-406 | The battle camera frames every fighter | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | camera, match, fighter, visual-regression |  |

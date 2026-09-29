@@ -946,7 +946,6 @@ fn physics_pass(
         if i == 0 {
             // The Boomerang projects through the camera last drawn.
             weapons.observe_camera(&f.camera);
-            f.tick_camera(stage, &[]);
         }
         items.take_requests(&mut f.fighter, map);
         let spawn = f.fighter.take_weapon_spawn();
@@ -955,6 +954,7 @@ fn physics_pass(
             weapons.spawn(spawn);
         }
     }
+    tick_battle_camera(stage, s);
     for f in s.iter().flatten() {
         weapons.observe_owner(&f.fighter);
     }
@@ -974,6 +974,23 @@ fn physics_pass(
     items.tick(map, Some(blast_zone));
     for f in s.iter_mut().flatten() {
         items.sync_owner(&mut f.fighter);
+    }
+}
+
+/// The battle camera's process (priority 3, after every fighter's
+/// physics): `gmCameraUpdateInterests` over the fighters in link order,
+/// through the player's camera.
+fn tick_battle_camera(stage: &ssb_rom::pack::StageDesc, s: &mut [Option<&mut play::FighterScene>; 4]) {
+    let mut others = [ssb_game::camera::Interest::default(); 3];
+    let mut count = 0;
+    for f in s[1..].iter().flatten() {
+        if let Some(interest) = f.camera_interest(stage) {
+            others[count] = interest;
+            count += 1;
+        }
+    }
+    if let Some(pl) = s[0].as_deref_mut() {
+        pl.tick_camera(stage, &others[..count]);
     }
 }
 
@@ -1352,7 +1369,7 @@ unsafe fn training_frame(
 ) -> bool {
     use ssb_game::battle::{Frame, GameStatus};
     if let Some(b) = battle.as_deref_mut() {
-        pause_frame(p, stage_index, pl, damage_hud, b, controller, pressed);
+        pause_frame(p, stage_index, pl, dummies, damage_hud, b, controller, pressed);
     }
     let frame = battle.as_mut().map(|b| (b.begin_frame(), b.status));
     // `ifCommonBattlePauseRestoreInterfaceAll`: the camera eases back while
@@ -1361,11 +1378,17 @@ unsafe fn training_frame(
         if status == GameStatus::Unpause && f == Frame::Frozen {
             ssb_game::pause::ease_back(&mut pl.camera.pause_eye, pause.origin);
             if let Some(stage) = p.stage(stage_index) {
-                pl.tick_camera(&stage, &[]);
+                tick_battle_camera(&stage, &mut scenes(pl, dummies));
             }
         } else if status == GameStatus::Go {
             pl.camera.pause_eye = pause.origin;
             damage_hud.pause = None;
+        }
+    }
+    // `ifCommonAnnounceGoSetStatus`: the entry camera mode ends at "Go".
+    if matches!(frame, Some((_, GameStatus::Go))) {
+        for f in scenes(pl, dummies).into_iter().flatten() {
+            ssb_game::appear::on_go(&mut f.fighter);
         }
     }
     let (started, locked) = match frame {
@@ -1459,10 +1482,12 @@ struct PauseState {
 /// on the player when in bounds; in the menu steer the view, resume on
 /// START, reset on A+B+R+Z, and run the zoom camera.
 #[inline(never)]
+#[allow(clippy::too_many_arguments)]
 fn pause_frame(
     p: &Pack<'_>,
     stage_index: u32,
     pl: &mut play::FighterScene,
+    dummies: &mut Dummies,
     hud: &mut Hud,
     b: &mut ssb_game::battle::Battle,
     controller: ControllerState,
@@ -1507,7 +1532,7 @@ fn pause_frame(
                 // `gmCameraPlayerZoomFuncCamera`: the battle camera while
                 // the player is out of bounds.
                 if pause::kind_for(pl.fighter.pos, bounds) == PauseKind::PlayerNA {
-                    pl.tick_camera(&stage, &[]);
+                    tick_battle_camera(&stage, &mut scenes(pl, dummies));
                 } else {
                     let mut pos = pl.fighter.pos;
                     pos.y += pl.cam_offset_y;

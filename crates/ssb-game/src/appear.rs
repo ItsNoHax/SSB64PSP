@@ -197,6 +197,16 @@ pub fn appear_set_status(f: &mut Fighter) {
         _ => return status::set_wait(f),
     };
     set(f, s);
+    // `ftCommonAppearInitStatusVars`.
+    f.dead.camera_mode = crate::dead::CameraMode::Entry;
+}
+
+/// `ifCommonAnnounceGoSetStatus`'s camera half: the entry's camera mode
+/// ends.
+pub fn on_go(f: &mut Fighter) {
+    if f.dead.camera_mode == crate::dead::CameraMode::Entry {
+        f.dead.camera_mode = crate::dead::CameraMode::Default;
+    }
 }
 
 /// The model's yaw while entering: `lr = 0` faces the camera, and Captain
