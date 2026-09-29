@@ -2598,6 +2598,11 @@ unsafe fn draw_training(
     }
     draw_damage_hud(p, draw_state, &damage_hud.damage, fighters, stage_index);
     if let Some(b) = battle {
+        let stocks = [
+            Some(&pl.fighter),
+            dummy_state.map(|d| &d.fighter),
+        ];
+        draw_stocks(p, draw_state, b, stocks);
         draw_timer(p, draw_state, b);
     }
     if let Some(c) = damage_hud.countdown.as_ref() {
@@ -2682,6 +2687,28 @@ fn draw_plain(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, sprite: &ssb_r
     };
     unsafe {
         meshdraw::draw_sprite(p, sprite, &d, draw_state);
+    }
+}
+
+/// `ifCommonPlayerStockSingleProcDisplay` in a time battle,
+/// `...MultiProcDisplay` in a stock one: each fighter's stock icon in its
+/// costume's palette.
+#[inline(never)]
+fn draw_stocks(
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    b: &ssb_game::battle::Battle,
+    fighters: [Option<&ssb_game::fighter::Fighter>; 2],
+) {
+    let single = b.rule == ssb_game::battle::Rule::Time;
+    for (player, f) in fighters.into_iter().enumerate() {
+        let Some(f) = f else { continue };
+        let Some(icon) = p.fighter_sprite(f.kind as u8, ssb_rom::pack::SpriteDesc::ROLE_STOCK, f.costume) else {
+            continue;
+        };
+        for (x, y) in ssb_game::hud::stock_icons(player, f.stocks, single, icon.width, icon.height) {
+            draw_plain(p, draw_state, &icon, x, y);
+        }
     }
 }
 

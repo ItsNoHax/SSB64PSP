@@ -146,3 +146,24 @@ fn the_timer_rounds_up_below_the_limit() {
 fn timer_glyphs_are_centred_on_their_slots() {
     assert_eq!(timer_origin(232.0, 13, 17), (225.0, 21.0));
 }
+
+#[test]
+fn stock_icons_sit_above_the_damage() {
+    // A time battle: one 8x10 icon, 55 - 24 - 4 across, 210 - 5 - 20 down.
+    let single: Vec<_> = stock_icons(0, 2, true, 8, 10).collect();
+    assert_eq!(single, [(27.0, 185.0)]);
+    // Three stocks left in a stock battle: four icons, ten apart.
+    let multi: Vec<_> = stock_icons(1, 3, false, 8, 10).collect();
+    assert_eq!(
+        multi,
+        [
+            (97.0, 185.0),
+            (107.0, 185.0),
+            (117.0, 185.0),
+            (127.0, 185.0)
+        ]
+    );
+    // Sudden death's last stock shows one icon; out of stocks, none.
+    assert_eq!(stock_icons(0, 0, false, 8, 10).count(), 1);
+    assert_eq!(stock_icons(0, -1, true, 8, 10).count(), 0);
+}

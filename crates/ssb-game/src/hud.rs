@@ -40,6 +40,41 @@ pub fn emblem_origin(player: usize, w: u16, h: u16) -> (f32, f32) {
     (x as i32 as f32, y as i32 as f32)
 }
 
+/// `dIFCommonPlayerStocksIconOffsetsX`: -24 for every player.
+const STOCK_ICON_X: i32 = -24;
+
+/// Where a fighter's stock icons sit (`ifCommonPlayerStock*`), top-left
+/// corners of `w` by `h` icons. A time battle's single icon
+/// (`is_single_stockicon`, `mnPlayersVS`) shows while the player has a
+/// stock count; a stock battle shows one per stock left, `stocks + 1`,
+/// ten apart, up to six. More than six switches to digits, which no VS
+/// menu setting reaches and is not ported.
+pub fn stock_icons(
+    player: usize,
+    stocks: i8,
+    single: bool,
+    w: u16,
+    h: u16,
+) -> impl Iterator<Item = (f32, f32)> {
+    let base_x = POSITION_X[player] + STOCK_ICON_X;
+    let y = ((POSITION_Y - (f32::from(h) * 0.5) as i32) - 20) as f32;
+    let count = if stocks < 0 {
+        0
+    } else if single {
+        1
+    } else {
+        (i32::from(stocks) + 1).min(6)
+    };
+    (0..count).map(move |order| {
+        let x = if single {
+            (base_x - (f32::from(w) * 0.5) as i32) as f32
+        } else {
+            (base_x + order * 10) as f32 - f32::from(w) * 0.5
+        };
+        (x, y)
+    })
+}
+
 /// `dIFCommonTimerDigitsSpritePositionsX`: the centres of `M M : S S`'s
 /// digits, and the colon's (`ifCommonTimerMakeDigits`).
 pub const TIMER_X: [f32; 4] = [232.0, 247.0, 273.0, 288.0];

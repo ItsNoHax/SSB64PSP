@@ -549,3 +549,9 @@ Pack v62 (`2e1289b8…`) adds file 165. A timed battle draws its timer, so
 `f1-vs-countdown` (03:00) and `f1-vs-cpu` (02:56) were rebaselined, each
 captured twice. The new `f1-vs-time-up` golden was identical in both
 captures. 102 of 102 goldens match twice.
+
+## 2026-09-29 RE-396 stock icons
+
+Pack v62. The four VS goldens gained each fighter's stock icon (636 pixels
+each) and were rebaselined, each captured twice. 102 of 102 goldens match
+twice.
