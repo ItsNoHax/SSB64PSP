@@ -15,6 +15,7 @@ fn stage() -> StageBounds {
             right: 3000.0,
         },
         rebirth: Vec2::new(100.0, 1200.0),
+        fog_color: [0x6E, 0xD2, 0xFF],
     }
 }
 

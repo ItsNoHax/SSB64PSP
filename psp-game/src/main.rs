@@ -52,6 +52,10 @@ use ssb_psp_runtime::meshdraw;
 /// no fighters yet, so they started after 640 and the fighters come after
 /// 760; Kirby's 161-frame Win clips have ended by 1041.
 const VS_RESULTS_CAPTURE_TICK: u64 = 1100;
+/// The capture tick on which the `rebirth` scenes' Mario falls past Dream
+/// Land's bottom blast line (`ftCommonDeadDownSetStatus`), logged from a
+/// capture build (RE-412).
+const REBIRTH_KO_TICK: u64 = 160;
 
 const fn capture_ticks(scene: GameScene) -> u64 {
     match scene {
@@ -142,6 +146,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // settled.
         GameScene::FighterSelect => 160,
         GameScene::Rebirth => 300,
+        // The KO below Dream Land is at tick REBIRTH_KO_TICK; a few ticks
+        // on, the blast and the screen flash are up.
+        GameScene::RebirthBlast => REBIRTH_KO_TICK + 8,
         // The battle's first frame is tick 8; "3" shows at tick 128 and
         // "Go" at 398.
         GameScene::Vs => 300,
@@ -304,7 +311,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
-    if scene == GameScene::Rebirth {
+    if matches!(scene, GameScene::Rebirth | GameScene::RebirthBlast) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
             _ => N64Buttons(0),
@@ -429,7 +436,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
         return if (50..=60).contains(&tick) { 40 } else { 0 };
     }
     // Held left, Mario dashes off the main floor's left end.
-    if scene == GameScene::Rebirth {
+    if matches!(scene, GameScene::Rebirth | GameScene::RebirthBlast) {
         return if (20..=100).contains(&tick) { -80 } else { 0 };
     }
     if matches!(
@@ -1462,6 +1469,12 @@ unsafe fn training_frame(
         if locked { ControllerState::default() } else { controller },
         started,
     );
+    // The effect and interface processes after the fighters': the KO
+    // explosions and the screen flash.
+    for f in scenes(pl, dummies).into_iter().flatten() {
+        damage_hud.ko.observe(&mut f.fighter);
+    }
+    damage_hud.ko.tick();
     for f in scenes(pl, dummies).into_iter().flatten() {
         let fell = report_falls(battle.as_deref_mut(), &mut f.fighter);
         if let Some(hud) = damage_hud.damage.get_mut(usize::from(f.fighter.port)) {
@@ -1521,6 +1534,8 @@ struct Hud {
     /// `players[].color` by port, the stage emblem colour each damage
     /// display takes (`ifCommonPlayerDamageInitInterface`).
     colors: [u8; 4],
+    /// The KO explosions and the screen flash (RE-412).
+    ko: ssb_game::ko::KoEffects,
 }
 
 /// The pause menu's choices at the pause (`sIFCommonBattlePause*`).
@@ -1608,6 +1623,7 @@ impl Hud {
             pause: None,
             entry_focus: None,
             colors: [0, 1, 2, 3],
+            ko: ssb_game::ko::KoEffects::default(),
         }
     }
 }
@@ -1719,6 +1735,7 @@ fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game:
 /// outside a battle.
 fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     world.damage_hud.countdown = None;
+    world.damage_hud.ko = ssb_game::ko::KoEffects::default();
     world.damage_hud.entry_focus = None;
     let mut damage = [0; 4];
     if let Some(pl) = world.play_state.as_ref() {
@@ -2143,6 +2160,12 @@ unsafe fn draw_frame(
                 effect_visuals.sync_entry(
                     p,
                     draw_assets,
+                    scenes_ref(pl, &s.dummies).map(|x| x.map(|x| &x.fighter)),
+                );
+                effect_visuals.sync_ko(
+                    p,
+                    draw_assets,
+                    &s.damage_hud.ko,
                     scenes_ref(pl, &s.dummies).map(|x| x.map(|x| &x.fighter)),
                 );
             }
@@ -3040,6 +3063,10 @@ struct DrawAssets {
     cutter: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The Falcon Kick flame tree and its transform animation.
     falcon_kick: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// The KO blast and the respawn halo, with their transform animations
+    /// (RE-412).
+    dead_explode: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    rebirth_halo: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
 }
 
 impl DrawAssets {
@@ -3102,6 +3129,8 @@ impl DrawAssets {
                 .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_KIRBY_CUTTER)),
             falcon_kick: ssb_psp_runtime::scene::captain_falcon_kick_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
+            dead_explode: ssb_psp_runtime::scene::manager_effect(p, ssb_psp_runtime::scene::DEAD_EXPLODE_EFFECT_KEY),
+            rebirth_halo: ssb_psp_runtime::scene::manager_effect(p, ssb_psp_runtime::scene::REBIRTH_HALO_EFFECT_KEY),
         }
     }
 }
@@ -3118,6 +3147,9 @@ struct EffectVisuals {
     /// [`Self::sync_entry`]: on the heap, since each part's players are
     /// some 25 KB and `run` keeps this on its stack.
     entry: alloc::vec::Vec<[EntryVisual; 2]>,
+    /// Each port's KO blast and respawn halo (RE-412), made on the first
+    /// [`Self::sync_ko`], on the heap for the same reason.
+    ko: alloc::vec::Vec<KoVisual>,
     boomerang: ssb_rom::skeleton::StageAnimator,
     boomerang_ticks: Option<u16>,
     spin: ssb_rom::skeleton::StageAnimator,
@@ -3158,6 +3190,7 @@ impl EffectVisuals {
         // `assume_init`, and none is read before then.
         unsafe {
             ptr::addr_of_mut!((*p).entry).write(Default::default());
+            ptr::addr_of_mut!((*p).ko).write(Default::default());
             ptr::addr_of_mut!((*p).boomerang).write(Default::default());
             ptr::addr_of_mut!((*p).boomerang_ticks).write(Default::default());
             ptr::addr_of_mut!((*p).spin).write(Default::default());
@@ -3325,6 +3358,191 @@ fn draw_entry_effects(
             }
         }
     }
+}
+
+/// One port's KO blast and respawn halo players, and the clocks they have
+/// caught up to.
+#[derive(Default)]
+struct KoVisual {
+    explode_ticks: Option<u16>,
+    explode: ssb_rom::skeleton::StageAnimator,
+    explode_materials: ssb_rom::skeleton::EffectMaterialAnimator,
+    halo_ticks: Option<u16>,
+    halo: ssb_rom::skeleton::StageAnimator,
+}
+
+/// The halo's `gcPlayAnimAll` calls: one on the frame
+/// `ftCommonRebirthDownSetStatus` makes it, then one a frame while the
+/// despawn wait counts down from 390.
+fn halo_ticks(f: &ssb_game::fighter::Fighter) -> Option<u16> {
+    ssb_game::dead::halo_scale(f)?;
+    let wait = f.dead.rebirth.halo_despawn_wait.clamp(0, ssb_game::dead::HALO_DESPAWN_WAIT);
+    Some((ssb_game::dead::HALO_DESPAWN_WAIT + 1 - wait) as u16)
+}
+
+impl EffectVisuals {
+    /// Plays each port's blast up to its clock (`Explosion::ticks`), on the
+    /// player's material scripts, and each halo up to [`halo_ticks`].
+    #[inline(never)]
+    fn sync_ko(
+        &mut self,
+        p: &Pack<'_>,
+        assets: &DrawAssets,
+        ko: &ssb_game::ko::KoEffects,
+        fighters: [Option<&ssb_game::fighter::Fighter>; 4],
+    ) {
+        if self.ko.len() < 4 {
+            self.ko.resize_with(4, Default::default);
+        }
+        for (i, v) in self.ko.iter_mut().enumerate() {
+            let blast = ko.explosions[i];
+            if let (Some((restart, ticks)), Some((object, anim))) = (
+                catch_up(&mut v.explode_ticks, blast.map(|e| e.ticks)),
+                assets.dead_explode.as_ref(),
+            ) {
+                if restart {
+                    v.explode.start(p, anim);
+                    v.explode_materials.start(p, object_mat_anims(p, object));
+                    // `dEFManagerDeadExplodeEffectDesc.o_matanim_joint =
+                    // dEFManagerDeadExplodeMatAnimJoints[player]`.
+                    let player = usize::from(blast.map_or(0, |e| e.player).min(3));
+                    let scripts = ssb_psp_runtime::scene::DEAD_EXPLODE_MAT_SCRIPTS[player];
+                    for (mat, &script) in object_mat_anims(p, object).zip(&scripts) {
+                        v.explode_materials.restart(mat, script);
+                    }
+                }
+                if let Some(script) = p.anim_script(anim) {
+                    for _ in 0..ticks {
+                        let _ = v.explode.tick(script);
+                        v.explode_materials.tick(p);
+                    }
+                }
+            }
+            let halo = fighters[i].and_then(halo_ticks);
+            if let (Some((restart, ticks)), Some((_, anim))) =
+                (catch_up(&mut v.halo_ticks, halo), assets.rebirth_halo.as_ref())
+            {
+                if restart {
+                    v.halo.start(p, anim);
+                }
+                if let Some(script) = p.anim_script(anim) {
+                    for _ in 0..ticks {
+                        let _ = v.halo.tick(script);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Draws each port's respawn halo and KO blast (RE-412).
+///
+/// The halo's root is matrix kind 0x50 (`func_ovl0_800C99CC`), a
+/// translation to TopN's world position, and
+/// `efManagerRebirthHaloMakeEffect` scales its child by the fighter's
+/// `halo_size`. Its rays are left out
+/// (`ssb_psp_runtime::scene::REBIRTH_HALO_RAYS_NODE`). The blast's root takes the clamped death point and its
+/// `rotate.z` by `ExplodeKind`; its first and third DObjs take the player's
+/// ENV colours, and all three the player's material scripts.
+#[inline(never)]
+fn draw_ko_effects(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    assets: &DrawAssets,
+    visuals: &EffectVisuals,
+    ko: &ssb_game::ko::KoEffects,
+    fighters: [Option<&ssb_game::fighter::Fighter>; 4],
+) {
+    use ssb_rom::scene::Mat4;
+    for (i, v) in visuals.ko.iter().enumerate() {
+        if let (Some(f), Some((object, _))) = (fighters[i], assets.rebirth_halo.as_ref()) {
+            if let (Some(scale), Some(_)) = (ssb_game::dead::halo_scale(f), v.halo_ticks) {
+                let mut posed = [Mat4::IDENTITY; 8];
+                let n = v.halo.compose(p, object, &mut posed);
+                // `child->scale = scale`, about the child's own origin.
+                if let Some(child) = p.node(object.first_node + 1) {
+                    let t = child.rest_translate.map(|x| x / meshdraw::MODEL_SCALE);
+                    let k = Mat4::from_trs(t, [0.0; 3], [1.0; 3])
+                        .mul(&Mat4::from_trs([0.0; 3], [0.0; 3], [scale; 3]))
+                        .mul(&Mat4::from_trs(t.map(|x| -x), [0.0; 3], [1.0; 3]));
+                    for m in posed.iter_mut().take(n).skip(1) {
+                        *m = k.mul(m);
+                    }
+                }
+                let top = f.joint_world(0, ssb_engine::math::Vec3::ZERO);
+                gpu.model_transform([top.x, top.y, top.z], [0.0; 3], meshdraw::MODEL_SCALE);
+                let base = gpu.model_matrix();
+                let rays = object.first_node + ssb_psp_runtime::scene::REBIRTH_HALO_RAYS_NODE;
+                unsafe {
+                    meshdraw::draw_object_posed_hiding(p, object, &base, &posed[..n], draw_state, None, &|g| g == rays);
+                }
+            }
+        }
+        let (Some(e), Some((object, _))) = (ko.explosions[i], assets.dead_explode.as_ref()) else {
+            continue;
+        };
+        if v.explode_ticks.is_none() || v.explode.ended() {
+            continue;
+        }
+        let mut posed = [Mat4::IDENTITY; 8];
+        let n = v.explode.compose(p, object, &mut posed);
+        gpu.model_transform(
+            [e.pos.x, e.pos.y, e.pos.z],
+            [0.0, 0.0, e.kind.rotate_z_degrees().to_radians()],
+            meshdraw::MODEL_SCALE,
+        );
+        let base = gpu.model_matrix();
+        let player = usize::from(e.player.min(3));
+        for node in 1..object.node_count {
+            let global = object.first_node + node;
+            let env = match node {
+                1 => Some(ssb_psp_runtime::scene::DEAD_EXPLODE_ENV_CHILD[player]),
+                3 => Some(ssb_psp_runtime::scene::DEAD_EXPLODE_ENV_SIBLING[player]),
+                _ => None,
+            };
+            let prim = p
+                .node(global)
+                .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                .and_then(|n| p.mesh(n.mesh))
+                .and_then(|m| p.prim(m.first_prim))
+                .and_then(|prim| v.explode_materials.resolved_colors(prim.mat_anim))
+                .and_then(|c| c.prim);
+            draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
+                prim,
+                env: env.map(|[r, g, b]| [r, g, b, 0xFF]),
+                ..Default::default()
+            });
+            unsafe {
+                meshdraw::draw_object_posed_hiding(
+                    p,
+                    object,
+                    &base,
+                    &posed[..n],
+                    draw_state,
+                    Some(&v.explode_materials),
+                    &|g| g != global,
+                );
+            }
+        }
+        draw_state.color_override = None;
+    }
+}
+
+/// `ifScreenFlashProcDisplay`: `color1` over `(10, 10)`–`(310, 230)` of the
+/// 320 x 240 screen, blended (`G_RM_AA_XLU_SURF`).
+#[inline(never)]
+fn draw_screen_flash(gpu: &mut Gpu, draw_state: &mut meshdraw::DrawState, ko: &ssb_game::ko::KoEffects) {
+    let Some([r, g, b, a]) = ko.flash_color() else {
+        return;
+    };
+    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
+    let px = |x: i16| (vx as f32 + f32::from(x) * k) as i32;
+    let py = |y: i16| (f32::from(y) * k) as i32;
+    // A one-cycle fill leaves out the lower-right edge.
+    gpu.draw_rect_translucent(px(10), py(10), px(310), py(230), Color::rgba(r, g, b, a));
+    draw_state.invalidate_all();
 }
 
 /// One Thunder Jolt's players, keyed by its animation epoch.
@@ -3682,7 +3900,7 @@ unsafe fn draw_training(
     // player's -- their own pose, their own per-fighter light rebuild
     // (RE-164).
     for f in fighters.iter().flatten() {
-        draw_fighter_model(gpu, p, &stage, draw_state, f);
+        draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera);
     }
 
     draw_items_weapons_effects(
@@ -3706,6 +3924,16 @@ unsafe fn draw_training(
         fighters.map(|x| x.map(|x| &x.fighter)),
         material_anim,
     );
+    draw_ko_effects(
+        gpu,
+        p,
+        draw_state,
+        assets,
+        effect_visuals,
+        &damage_hud.ko,
+        fighters.map(|x| x.map(|x| &x.fighter)),
+    );
+    draw_screen_flash(gpu, draw_state, &damage_hud.ko);
     // `players[].color`: in a free-for-all the human's port and a CPU's
     // `GMCOMMON_PLAYERS_MAX`, in a team battle the team's colour.
     let emblems = fighters.map(|x| {
@@ -3750,6 +3978,7 @@ unsafe fn draw_fighter_model(
     stage: &ssb_rom::pack::StageDesc,
     draw_state: &mut meshdraw::DrawState,
     f: &play::FighterScene,
+    camera: &ssb_game::camera::Camera,
 ) {
     let Some(obj) = p.object(f.object).filter(|_| !f.fighter.is_invisible) else {
         return;
@@ -3772,7 +4001,18 @@ unsafe fn draw_fighter_model(
         );
     }
     let m = gpu.model_matrix();
-    draw_state.configure_fighter_light(stage.light_angle_xy);
+    // `ftDisplayLightsDrawReflect`: a colour animation's light turns with
+    // the fighter (`lr * light_angle_x`).
+    let light = f.fighter.colanim.light.map_or(stage.light_angle_xy, |(x, y)| [f.fighter.facing.sign() * x, y]);
+    draw_state.configure_fighter_light(light);
+    // `ftDisplayMainCalcFogColor` with no shade: `G_RM_FOG_PRIM_A` blends
+    // the fighter towards `color1` by its alpha.
+    let fog = f.fighter.colanim.color();
+    if let Some(rgba) = fog {
+        let (eye, at) = (camera.eye, camera.at);
+        let view = (at - eye).normalized();
+        gpu.set_constant_fog((f.fighter.pos - eye).dot(view), rgba);
+    }
     meshdraw::draw_object_posed(
         p,
         &obj,
@@ -3784,6 +4024,9 @@ unsafe fn draw_fighter_model(
         None,
         u32::from(f.fighter.costume),
     );
+    if fog.is_some() {
+        gpu.clear_fog();
+    }
     draw_state.finish_fighter_light();
 }
 

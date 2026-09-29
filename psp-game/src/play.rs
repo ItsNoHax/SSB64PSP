@@ -133,6 +133,7 @@ where
             map: zone(&stage.bounds),
             camera: zone(&stage.camera),
             rebirth: ssb_engine::math::Vec2::new(0.0, 0.0),
+            fog_color: stage.fog_color,
         },
         gkind: ssb_rom::stage::vs_ground_kind(stage.source_file),
         opponents,

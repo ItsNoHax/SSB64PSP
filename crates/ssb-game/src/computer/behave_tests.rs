@@ -36,6 +36,7 @@ fn world(opponents: &[Opponent]) -> World<'_, impl Fn() -> [MapSurface; 1]> {
             map: zone(6000.0, -3000.0, -6000.0, 6000.0),
             camera: zone(4000.0, -1000.0, -4000.0, 4000.0),
             rebirth: Vec2::new(0.0, 2000.0),
+            fog_color: [0; 3],
         },
         gkind: None,
         opponents,

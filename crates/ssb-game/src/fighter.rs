@@ -386,6 +386,9 @@ pub struct Fighter {
     pub hazard: crate::hazard::HazardState,
     /// Blast-zone deaths and the rebirth halo ([`crate::dead`]).
     pub dead: crate::dead::DeadState,
+    /// `FTStruct::colanim`: the colour the fighter is fogged towards and
+    /// its light ([`crate::colanim`]).
+    pub colanim: crate::colanim::ColAnim,
     /// `FTStruct::damage_player`: the player whose attack hit this fighter
     /// last, credited with a KO. `None` for -1 and for
     /// `GMCOMMON_PLAYERS_MAX` (the stage, or the fighter's own weapon).
@@ -485,6 +488,7 @@ impl Fighter {
             is_smash_di: false,
             hazard: crate::hazard::HazardState::default(),
             dead: crate::dead::DeadState::default(),
+            colanim: crate::colanim::ColAnim::default(),
             damage_player: None,
         }
     }
@@ -748,6 +752,8 @@ impl Fighter {
         // The previous frame's push is spent; the stage sets a new one.
         self.hazard.vel_push = Vec3::ZERO;
         if self.is_in_hitlag() {
+            // `ftMainRunUpdateColAnim` runs in hitlag too.
+            self.colanim.run_update();
             return;
         }
 
