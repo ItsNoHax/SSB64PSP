@@ -389,6 +389,10 @@ pub struct Fighter {
     /// `FTStruct::colanim`: the colour the fighter is fogged towards and
     /// its light ([`crate::colanim`]).
     pub colanim: crate::colanim::ColAnim,
+    /// `ifScreenFlashSetColAnimID` from a strong hit
+    /// (`ftCommonDamageCheckMakeScreenFlash`), for the match's screen flash
+    /// ([`crate::ko::KoEffects::observe`]).
+    pub screen_flash: Option<crate::colanim::ColAnimId>,
     /// `FTStruct::damage_player`: the player whose attack hit this fighter
     /// last, credited with a KO. `None` for -1 and for
     /// `GMCOMMON_PLAYERS_MAX` (the stage, or the fighter's own weapon).
@@ -489,6 +493,7 @@ impl Fighter {
             hazard: crate::hazard::HazardState::default(),
             dead: crate::dead::DeadState::default(),
             colanim: crate::colanim::ColAnim::default(),
+            screen_flash: None,
             damage_player: None,
         }
     }
@@ -528,12 +533,21 @@ impl Fighter {
                 lag_ended = true;
             }
         }
-        // `intangible_tics`/`invincible_tics` run down in hitlag too.
+        // `intangible_tics`/`invincible_tics` run down in hitlag too. When
+        // the last one runs out, `ftMainProcUpdateInterrupt` ends a running
+        // `NoDamage` flicker after the frame's colour animation update
+        // ([`crate::colanim::run_update_interrupt`]).
         if self.intangible_frames > 0 {
             self.intangible_frames -= 1;
+            if self.intangible_frames == 0 {
+                self.colanim.is_nodamage_expired = true;
+            }
         }
         if self.invincible_frames > 0 {
             self.invincible_frames -= 1;
+            if self.invincible_frames == 0 && self.intangible_frames == 0 {
+                self.colanim.is_nodamage_expired = true;
+            }
         }
         if self.hitlag > 0 {
             return false;
@@ -753,7 +767,7 @@ impl Fighter {
         self.hazard.vel_push = Vec3::ZERO;
         if self.is_in_hitlag() {
             // `ftMainRunUpdateColAnim` runs in hitlag too.
-            self.colanim.run_update();
+            crate::colanim::run_update_interrupt(self);
             return;
         }
 

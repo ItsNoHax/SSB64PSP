@@ -684,3 +684,20 @@ win pose follow the source's random draws in the particle scripts and
 makers. A build restoring the seed around every particle call left those
 three matching their old goldens. The other 105 are unchanged. 111 of 111
 goldens match twice.
+
+## 2026-09-29 RE-414 colour animations
+
+Pack v66, 30,491,056 bytes (SHA-256 `d5e4ba74…`), with the electric-damage
+skeletons. Fighters now run their colour animations. Eleven goldens were
+rebaselined, identical in both captures: `f1-training-fireball` (2,508
+pixels at 2×, Mario red on the Fireball's first frame), `-luigi` (2,292)
+and `-samus-shot` (2,976), lit from the side by their specials' scripts,
+`-link-spin` (1,116), `-captain` (2,988), `-pikachu` (2,588),
+`-pikachu-air` (3,360), `-ness-thunder` (1,732) and `-ness-magnet`
+(1,544) with their specials' flashes, `f1-vs-cpu` (2,028, Mario white with
+`DamageCommon`) and `f1-vs-team` (1,984, Mario dark red with the
+shield-break flicker). Only fighter pixels changed; colour animations draw
+no random numbers. The new viewer goldens `r2-mario-skeleton`,
+`r2-samus-skeleton` and `r2-kirby-skeleton` (`skeleton NAME`) draw each
+fighter's skeleton set 1 and were seeded from their first capture. The
+other 100 are unchanged. 114 of 114 goldens match twice.

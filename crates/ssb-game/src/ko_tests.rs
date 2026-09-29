@@ -167,7 +167,7 @@ fn the_halo_and_the_glow_last_until_the_fighter_falls() {
     dead::check(&mut f);
     dead::rebirth_down(&mut f, 0);
     assert_eq!(dead::halo_scale(&f), Some(1.0));
-    assert_eq!(f.colanim.id, crate::colanim::ColAnimId::FighterRebirth);
+    assert_eq!(f.colanim.id, crate::colanim::ColAnimId::FIGHTER_REBIRTH);
     let mut saw_stand = false;
     let mut saw_wait = false;
     loop {
@@ -178,7 +178,7 @@ fn the_halo_and_the_glow_last_until_the_fighter_falls() {
         saw_stand |= f.status.status == AnyStatus::Common(Status::RebirthStand);
         saw_wait |= f.status.status == AnyStatus::Common(Status::RebirthWait);
         // RebirthStand and RebirthWait keep the glow.
-        assert_eq!(f.colanim.id, crate::colanim::ColAnimId::FighterRebirth);
+        assert_eq!(f.colanim.id, crate::colanim::ColAnimId::FIGHTER_REBIRTH);
         assert!(f.colanim.light.is_some() && f.colanim.color().is_some());
     }
     assert!(saw_stand && saw_wait);
@@ -187,8 +187,9 @@ fn the_halo_and_the_glow_last_until_the_fighter_falls() {
         AnyStatus::Common(Status::Fall | Status::FallAerial)
     ));
     assert_eq!(f.situation, Situation::Air);
-    assert_eq!(f.colanim.id, crate::colanim::ColAnimId::None);
-    assert_eq!(f.colanim.color(), None);
+    // `ftParamSetTimedHitStatusInvincible`'s flicker takes over.
+    assert_eq!(f.colanim.id, crate::colanim::ColAnimId::FIGHTER_NO_DAMAGE);
+    assert_eq!(f.invincible_frames, 120);
 }
 
 #[test]

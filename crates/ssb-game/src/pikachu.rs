@@ -83,6 +83,25 @@ fn set(f: &mut Fighter, s: P, frame: f32) {
     }
     status::set_any_status(f, AnyStatus::Pikachu(s), frame, timing);
 }
+/// A ground/air switch: every one of Pikachu's special switches keeps the
+/// hit status (`FTSTATUS_PRESERVE_HITSTATUS`, `ftpikachuspecial*.c`) and
+/// the colour animation ([`crate::colanim::preserved`]).
+fn switch(f: &mut Fighter, s: P, frame: f32) {
+    let mut timing = StatusTiming::frames(length(s));
+    if matches!(
+        s,
+        P::SpecialHiStart | P::SpecialAirHiStart | P::SpecialHi | P::SpecialAirHi
+    ) {
+        timing.anim_speed = 0.0;
+    }
+    status::set_any_status_preserve(
+        f,
+        AnyStatus::Pikachu(s),
+        frame,
+        timing,
+        status::Preserve::HITSTATUS,
+    );
+}
 pub fn set_special_n(f: &mut Fighter) {
     set(
         f,
@@ -133,6 +152,13 @@ pub fn set_special_hi(f: &mut Fighter) {
             P::SpecialAirHiStart
         },
         0.0,
+    );
+    // `ftPikachuSpecialHiInitMiscVars`.
+    crate::hurtbox::set_hit_status_all(f, crate::combat::HitStatus::Intangible);
+    crate::colanim::check_set(
+        f,
+        crate::colanim::ColAnimId::FIGHTER_PIKACHU_SPECIAL_HI_START,
+        0,
     );
 }
 fn set_stick_lr(f: &mut Fighter) {
@@ -243,6 +269,11 @@ pub fn update(f: &mut Fighter) {
                     facing: f.facing.sign(),
                     stale: crate::stale::WeaponStale::of(f),
                 });
+                crate::colanim::check_set(
+                    f,
+                    crate::colanim::ColAnimId::FIGHTER_PIKACHU_SPECIAL_N,
+                    0,
+                );
             }
             if f.status.animation_ended() {
                 if ground {
@@ -438,7 +469,7 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
     } else if !matches!(s, P::SpecialHiStart | P::SpecialHiEnd) {
         physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
     }
-    set(f, target, frame);
+    switch(f, target, frame);
     true
 }
 pub fn on_landing(f: &mut Fighter, y: f32, normal: Vec2) -> bool {
@@ -464,7 +495,7 @@ pub fn on_landing(f: &mut Fighter, y: f32, normal: Vec2) -> bool {
     let v = f.physics.vel_air;
     let frame = f.status.anim_frame;
     f.land(y);
-    set(f, target, frame);
+    switch(f, target, frame);
     if s == P::SpecialAirHi {
         f.physics.vel_ground.x = v.x;
         f.physics.vel_air = v;

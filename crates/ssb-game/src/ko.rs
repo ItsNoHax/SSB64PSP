@@ -60,7 +60,11 @@ impl KoEffects {
             });
         }
         if core::mem::take(&mut f.dead.flash) {
-            self.flash.check_set(ColAnimId::ScreenFlashDeadExplode, 0);
+            self.flash
+                .check_set(ColAnimId::SCREEN_FLASH_DEAD_EXPLODE, 0);
+        }
+        if let Some(id) = f.screen_flash.take() {
+            self.flash.check_set(id, 0);
         }
         // The sparkle is a particle script ([`Self::observe_with`]).
         f.dead.sparkle = None;

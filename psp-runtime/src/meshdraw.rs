@@ -1711,7 +1711,13 @@ unsafe fn draw_object_posed_filtered(
         let Some(node) = pack.node(global_node) else {
             continue;
         };
-        let mesh_index = pack.costume_mesh(global_node, costume).unwrap_or(node.mesh);
+        // An electric-damage skeleton (RE-414) draws only its own parts.
+        let fallback = if costume >= ssb_rom::pack::SKELETON_COSTUME_BASE {
+            NodeDesc::NO_MESH
+        } else {
+            node.mesh
+        };
+        let mesh_index = pack.costume_mesh(global_node, costume).unwrap_or(fallback);
         if mesh_index == NodeDesc::NO_MESH {
             continue; // pure transform: a joint with no geometry
         }

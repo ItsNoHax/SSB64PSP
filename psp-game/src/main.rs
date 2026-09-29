@@ -4090,12 +4090,32 @@ unsafe fn draw_fighter_model(
         draw_state,
         None,
         None,
-        u32::from(f.fighter.costume),
+        fighter_draw_costume(p, &obj, &f.fighter),
     );
     if fog.is_some() {
         gpu.clear_fog();
     }
     draw_state.finish_fighter_light();
+}
+
+/// The costume a fighter's model draws in: its own, or, while its colour
+/// animation shows a skeleton (`ftDisplayMainDrawAll`), that skeleton set's
+/// parts (RE-414) when the fighter has one.
+#[inline(never)]
+fn fighter_draw_costume(
+    p: &Pack<'_>,
+    obj: &ssb_rom::pack::ObjectDesc,
+    f: &ssb_game::fighter::Fighter,
+) -> u32 {
+    let id = u32::from(f.colanim.skeleton_id);
+    if id != 0 {
+        let key = ssb_rom::pack::SKELETON_COSTUME_BASE + id;
+        let nodes = obj.first_node..obj.first_node + obj.node_count;
+        if nodes.into_iter().any(|n| p.costume_mesh(n, key).is_some()) {
+            return key;
+        }
+    }
+    u32::from(f.costume)
 }
 
 /// `ifCommonPlayerDamageProcDisplay` for each fighter, over the 3D scene.

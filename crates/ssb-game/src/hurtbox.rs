@@ -1117,6 +1117,13 @@ pub fn set_hit_status_part_all(f: &mut Fighter, status: HitStatus) {
         *slot = status;
     }
     f.damage_colls.is_hitstatus_nodamage = status != HitStatus::Normal;
+    crate::colanim::set_hit_status_colanim(f, status);
+}
+
+/// `ftParamSetHitStatusAll`.
+pub fn set_hit_status_all(f: &mut Fighter, status: HitStatus) {
+    f.hitstatus = status;
+    crate::colanim::set_hit_status_colanim(f, status);
 }
 
 /// `ftParamSetHitStatusPartID`: the first box on `joint` only.
@@ -1157,7 +1164,9 @@ pub fn on_set_status(f: &mut Fighter, preserve_hitstatus: bool) {
         if f.damage_colls.is_hitstatus_nodamage {
             set_hit_status_part_all(f, HitStatus::Normal);
         }
-        f.hitstatus = HitStatus::Normal;
+        if f.hitstatus != HitStatus::Normal {
+            set_hit_status_all(f, HitStatus::Normal);
+        }
     }
     if f.damage_colls.is_modify {
         reset_damage_colls(f);

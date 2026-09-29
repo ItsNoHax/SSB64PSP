@@ -326,6 +326,11 @@ pub fn update(f: &mut Fighter) {
                 if f.samus.charge_level < CHARGE_MAX {
                     f.samus.charge_level += 1;
                     if f.samus.charge_level == CHARGE_MAX {
+                        crate::colanim::check_set(
+                            f,
+                            crate::colanim::ColAnimId::FIGHTER_COMMON_SPECIAL_N_CHARGE,
+                            0,
+                        );
                         destroy_charge_shot(f);
                         f.samus.damage_resets_charge = false;
                         status::set_wait(f);

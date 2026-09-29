@@ -96,11 +96,20 @@ pub fn check_set_invincible(f: &mut Fighter) {
     }
 }
 
-/// `ftParamSetTimedHitStatusInvincible`.
+/// `ftParamSetTimedHitStatusInvincible`, with its `NoDamage` flicker.
 pub fn set_timed_invincible(f: &mut Fighter, frames: u16) {
     if f.invincible_frames < frames {
         f.invincible_frames = frames;
     }
+    crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_NO_DAMAGE, 0);
+}
+
+/// `ftParamSetTimedHitStatusIntangible`, with its `NoDamage` flicker.
+pub fn set_timed_intangible(f: &mut Fighter, frames: u16) {
+    if f.intangible_frames < frames {
+        f.intangible_frames = frames;
+    }
+    crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_NO_DAMAGE, 0);
 }
 
 /// The status's figatree length as its timing.
@@ -309,8 +318,7 @@ pub fn set_wall_damage(f: &mut Fighter, normal: ssb_engine::math::Vec2) {
     f.physics.vel_damage_ground = ground;
     f.hitstun = hitstun.max(0) as u16;
     f.damage_knockback_stack = knockback;
-    // `ftParamSetTimedHitStatusIntangible`.
-    f.intangible_frames = f.intangible_frames.max(WALLDAMAGE_INTANGIBLE_TIMER);
+    set_timed_intangible(f, WALLDAMAGE_INTANGIBLE_TIMER);
 }
 
 /// `ftCommonStopCeilSetStatus`: a fast rise into a ceiling stops dead.
@@ -781,6 +789,7 @@ pub fn set_shield_break_fly(f: &mut Fighter) {
     f.physics.vel_air.x = 0.0;
     f.physics.vel_air.y =
         crate::motion::combat_attrs(f.kind).map_or(70.0, |a| a.shield_break_vel_y);
+    crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_SHIELD_BREAK_FLY, 0);
 }
 
 /// `ftCommonShieldBreakFallSetStatus`.
@@ -826,6 +835,7 @@ fn set_furafura(f: &mut Fighter) {
     let wait =
         (FURAFURA_BREAKOUT_WAIT_DEFAULT - i32::from(f.damage)).max(0) + FURAFURA_BREAKOUT_WAIT_MIN;
     crate::grab::init_breakout(f, wait);
+    crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_FURA_FURA, 0);
 }
 
 /// `ftCommonFuraFuraProcUpdate`: each mash counts four frames.
@@ -900,6 +910,7 @@ mod tests {
             crate::attack::init_damage_vars_full(
                 &mut f,
                 None,
+                0,
                 kb,
                 45,
                 1.0,
@@ -926,6 +937,7 @@ mod tests {
         crate::attack::init_damage_vars_full(
             &mut f,
             None,
+            0,
             70000.0,
             45,
             1.0,

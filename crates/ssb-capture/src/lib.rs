@@ -116,6 +116,9 @@ pub enum ViewerScene {
     Fighter(Fighter),
     /// `link_costume_1`: Link with costume 1.
     LinkCostume1,
+    /// `skeleton NAME`: the fighter's first electric-damage skeleton set
+    /// (RE-414) in place of its model.
+    Skeleton(Fighter),
     /// `mario_entry`: file 356 graph 0x608 in the effect browser.
     MarioEntry,
     /// `bonus_platform`: file 136 graph 0x3DA8.
@@ -150,6 +153,7 @@ impl ViewerScene {
             ("stage", Some(n)) => ViewerScene::Stage(parse_decimal(n)?),
             ("fighter", Some(name)) => ViewerScene::Fighter(Fighter::from_name(name)?),
             ("link_costume_1", None) => ViewerScene::LinkCostume1,
+            ("skeleton", Some(name)) => ViewerScene::Skeleton(Fighter::from_name(name)?),
             ("mario_entry", None) => ViewerScene::MarioEntry,
             ("bonus_platform", None) => ViewerScene::BonusPlatform,
             ("depth_mask", None) => ViewerScene::DepthMask,
@@ -162,7 +166,7 @@ impl ViewerScene {
     /// The fighter whose model, `Wait` animation and light this scene shows.
     pub const fn fighter(self) -> Option<Fighter> {
         match self {
-            ViewerScene::Fighter(f) => Some(f),
+            ViewerScene::Fighter(f) | ViewerScene::Skeleton(f) => Some(f),
             ViewerScene::LinkCostume1 => Some(Fighter::Link),
             _ => None,
         }
@@ -221,6 +225,7 @@ impl ViewerScene {
                 | ViewerScene::MetalTexgenLinear
                 | ViewerScene::MetalTexgenCameraRotated
                 | ViewerScene::Fighter(_)
+                | ViewerScene::Skeleton(_)
                 | ViewerScene::LinkCostume1
                 | ViewerScene::MarioEntry
                 | ViewerScene::BonusPlatform
@@ -242,6 +247,7 @@ impl ViewerScene {
                 | ViewerScene::MetalTexgenLinear
                 | ViewerScene::MetalTexgenCameraRotated
                 | ViewerScene::Fighter(_)
+                | ViewerScene::Skeleton(_)
                 | ViewerScene::LinkCostume1
                 | ViewerScene::DreamLandWater
         )
@@ -264,6 +270,7 @@ impl fmt::Display for ViewerScene {
             ViewerScene::Stage(n) => write!(f, "stage {n}"),
             ViewerScene::Fighter(fighter) => write!(f, "fighter {}", fighter.name()),
             ViewerScene::LinkCostume1 => f.write_str("link_costume_1"),
+            ViewerScene::Skeleton(fighter) => write!(f, "skeleton {}", fighter.name()),
             ViewerScene::MarioEntry => f.write_str("mario_entry"),
             ViewerScene::BonusPlatform => f.write_str("bonus_platform"),
             ViewerScene::DepthMask => f.write_str("depth_mask"),
