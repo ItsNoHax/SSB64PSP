@@ -7,33 +7,33 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** stock icons above the damage display (RE-396).
-  Before it: the battle timer and "TIME UP"/"GAME SET" (RE-395).
-- **Next gameplay batch:** the "SUDDEN DEATH" letters (file 37,
-  `ifCommonSuddenDeathMakeInterface`), then the pause menu
-  (`ifCommonBattlePause*`, file 197). The Appear entry is parked in TODO.
+- **Completed batch:** "SUDDEN DEATH!" (RE-397), the last announcement
+  a VS battle shows. Before it: stock icons (RE-396).
+- **Next gameplay batch:** the pause menu (`ifCommonBattlePause*`, file
+  197: START pauses a VS battle, with its border, decals and camera). The
+  Appear entry is parked in TODO.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Sudden death text | file 37 letters; new `f1-vs-sudden-death-sign` | RE-397 |
 | Stock icons | `hud::stock_icons`, per-costume icons; 4 goldens rebaselined | RE-396 |
-| Timer | file 165, `hud::timer_digits`, end letters; new `f1-vs-time-up` | RE-395 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
   Pinned 1.98.0 Clippy with warnings denied and workspace rustfmt passed in
-  RE-396; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
+  RE-397; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: all 102 goldens match twice (RE-396). Scene captures
+- PPSSPPHeadless: all 103 goldens match twice (RE-397). Scene captures
   time out at 60 s. No golden passes through a platform.
 - `psp-game` reaches scripted Training in PPSSPP. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
   (RE-360).
-- Pack v62: 27,794,784 bytes, SHA-256
-  `2e1289b855351122e5c8e76578f09f43c962b8c32839e04e81652a30be2214ea`.
+- Pack v62: 28,051,488 bytes, SHA-256
+  `0c2075edbf1e35e5eb11bdf9b9f73b2121e756775e35bb21f6ae3b2a740424f6`.
 - `run` is 119,512 bytes in release, about 124 KB in `golden_capture`;
   the MIPS branch range is 128 KB.
 - Physical PSP last checked in RE-361 (PSP-2000 Slim, 6.61 ARK, pack v43).
@@ -41,7 +41,7 @@ Current snapshot. History lives in git and `docs/evidence/`.
 ## Blockers and remaining scope
 
 - No stage draws its wallpaper; the selects draw plain slots (TODO). Converted
-  sprites: damage digits, emblems, stock icons, files 82 and 165.
+  sprites: damage digits, emblems, stock icons, files 37, 82 and 165.
   With no save data, Mushroom Kingdom and the four unlockable fighters
   stay locked.
 - The acid packs three 384×384 tile-1 sprites it never draws (523 KB).

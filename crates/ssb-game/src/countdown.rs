@@ -59,6 +59,24 @@ const GO: [(f32, f32, Sprite); 3] = [
     (214.0, 93.0, EXCLAMATION),
 ];
 
+/// `dIFCommonAnnounceSuddenDeathSpriteData`: "SUDDEN DEATH!" from file 37
+/// (`ssb_rom::sprite::ANNOUNCE_COMMON`: A is 0, "!" 26), primitive white
+/// and environment black (`dIFCommonAnnounceSuddenDeathSpriteColors`).
+pub const SUDDEN_DEATH: [(f32, f32, u8); 12] = [
+    (74.0, 67.0, 18),
+    (102.0, 67.0, 20),
+    (132.0, 67.0, 3),
+    (163.0, 67.0, 3),
+    (193.0, 67.0, 4),
+    (217.0, 67.0, 13),
+    (83.0, 113.0, 3),
+    (113.0, 113.0, 4),
+    (135.0, 113.0, 0),
+    (165.0, 113.0, 19),
+    (192.0, 113.0, 7),
+    (227.0, 113.0, 26),
+];
+
 /// The countdown thread's slide per tick.
 const SLIDE: f32 = 0.883_333_3;
 /// `I_SEC_TO_TICS(n)`.
@@ -97,6 +115,8 @@ pub struct Countdown {
     pub done: bool,
     /// Ticks the "GO!" letters have left (`ifCommonAnnounceThread`).
     go_wait: u32,
+    /// "SUDDEN DEATH!" shows until its thread makes "GO!".
+    pub sudden_death_letters: bool,
 }
 
 fn traffic(id: usize) -> SObj {
@@ -143,6 +163,7 @@ impl Countdown {
             scale: 1.0,
             done: false,
             go_wait: 0,
+            sudden_death_letters: false,
         };
         c.push(plain(ROD, 103.0, -57.0));
         c.push(plain(FRAME, 111.0, -23.0));
@@ -163,12 +184,15 @@ impl Countdown {
     pub fn sudden_death() -> Countdown {
         let mut c = Countdown::new();
         c.done = true;
+        c.sudden_death_letters = true;
         c
     }
 
     /// `ifCommonAnnounceGoMakeInterface` from `ifCommonSuddenDeathThread`.
     pub fn start_go(&mut self) {
         self.go_wait = 60;
+        // `gcEjectGObj(NULL)`: the thread's own letters go.
+        self.sudden_death_letters = false;
     }
 
     fn push(&mut self, s: SObj) -> usize {

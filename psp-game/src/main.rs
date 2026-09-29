@@ -144,6 +144,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::VsTimeUp => 4200,
         // "TIME UP" holds from tick 3999 for the 90-tick end wait.
         GameScene::VsTimeUpSign => 4040,
+        // Sudden death starts at 4093 and says "GO!" 90 ticks on.
+        GameScene::VsSuddenDeath => 4150,
         // The dummy's CPU has paced for some 190 ticks, or jumped several
         // times.
         GameScene::CpuWalk => 200,
@@ -237,7 +239,12 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     // (`scripted_stick_y`) and confirm it at 8.
     if matches!(
         scene,
-        GameScene::Vs | GameScene::VsTimeUp | GameScene::VsTimeUpSign | GameScene::VsCpu
+        GameScene::Vs
+            | GameScene::VsTimeUp
+            | GameScene::VsTimeUpSign
+            | GameScene::VsSuddenDeath
+            | GameScene::VsSuddenDeath
+            | GameScene::VsCpu
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -429,7 +436,11 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
     if matches!(
         scene,
-        GameScene::Vs | GameScene::VsTimeUp | GameScene::VsTimeUpSign | GameScene::VsCpu
+        GameScene::Vs
+            | GameScene::VsTimeUp
+            | GameScene::VsTimeUpSign
+            | GameScene::VsSuddenDeath
+            | GameScene::VsCpu
     ) {
         return if tick == 6 { -80 } else { 0 };
     }
@@ -1069,7 +1080,9 @@ fn capture_cpu_behavior(scene: GameScene) -> Option<ssb_game::computer::Behavior
         GameScene::CpuWalk => Some(ssb_game::computer::Behavior::Walk),
         GameScene::CpuJump => Some(ssb_game::computer::Behavior::Jump),
         // A time-up tie needs a CPU that never lands a hit.
-        GameScene::VsTimeUp | GameScene::VsTimeUpSign => Some(ssb_game::computer::Behavior::Stand),
+        GameScene::VsTimeUp | GameScene::VsTimeUpSign | GameScene::VsSuddenDeath => {
+            Some(ssb_game::computer::Behavior::Stand)
+        }
         _ => None,
     }
 }
@@ -1121,7 +1134,7 @@ impl VsRules {
 /// A capture scene's VS rules: `vstimeup` picks one minute.
 fn vs_rules(scene: GameScene) -> VsRules {
     match scene {
-        GameScene::VsTimeUp | GameScene::VsTimeUpSign => VsRules {
+        GameScene::VsTimeUp | GameScene::VsTimeUpSign | GameScene::VsSuddenDeath => VsRules {
             time_limit: 1,
             ..VsRules::DEFAULT
         },
@@ -2755,6 +2768,26 @@ fn draw_announce(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, end: ssb_ga
 /// `lbCommonDrawSObjAttr` over the countdown and "GO!" `SObj`s.
 #[inline(never)]
 fn draw_countdown(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, c: &ssb_game::countdown::Countdown) {
+    if c.sudden_death_letters {
+        let letters = &ssb_rom::sprite::ANNOUNCE_COMMON;
+        for &(x, y, i) in &ssb_game::countdown::SUDDEN_DEATH {
+            if let Some(s) = letters.offsets.get(usize::from(i)).and_then(|&at| p.sprite(letters.file, at)) {
+                // `ifCommonAnnounceSetColors`: white on black.
+                let d = meshdraw::SObjDraw {
+                    x,
+                    y,
+                    scale: 1.0,
+                    prim: [0xFF; 4],
+                    env: [0; 3],
+                    solid: false,
+                    attr: ssb_game::countdown::ATTR_TRANSPARENT,
+                };
+                unsafe {
+                    meshdraw::draw_sprite(p, &s, &d, draw_state);
+                }
+            }
+        }
+    }
     let f = &ssb_rom::sprite::GAME_STATUS;
     for o in c.sobjs() {
         let Some(sprite) = f
