@@ -2075,28 +2075,44 @@ struct SObjVertex {
     z: f32,
 }
 
-/// Draws a libultra `Sprite` the way `lbCommonDrawSObjNoAttr` does
-/// (RE-392): a texture rectangle at N64 screen position `(x, y)`, `scale`
-/// times its size, blended when `attr` (the live `sprite.attr`, which the
-/// game may rewrite) has `SP_TRANSPARENT`. `color` is the
-/// primitive colour a tinted sprite ([`ssb_rom::pack::SpriteDesc::TINTED`])
-/// multiplies by; `solid` draws the primitive colour through the texel's
-/// alpha instead (`G_CC(0, 0, 0, PRIMITIVE, 0, 0, 0, TEXEL0)`). The N64's
-/// 320x240 frame maps onto the pillarboxed viewport.
+/// One `SObj` draw: where, how big, and the `Sprite` fields the game sets
+/// at run time.
+#[derive(Clone, Copy)]
+pub struct SObjDraw {
+    /// Top-left corner in N64 screen pixels.
+    pub x: f32,
+    pub y: f32,
+    pub scale: f32,
+    /// `sprite.red`, `.green`, `.blue`, `.alpha`.
+    pub prim: [u8; 4],
+    /// `sobj->envcolor`, which the IA combiner blends from.
+    pub env: [u8; 3],
+    /// Draws the primitive colour through the texel's alpha
+    /// (`G_CC(0, 0, 0, PRIMITIVE, 0, 0, 0, TEXEL0)`).
+    pub solid: bool,
+    /// The live `sprite.attr`, which the game may rewrite.
+    pub attr: u16,
+}
+
+/// Draws a libultra `Sprite` the way `lbCommonPrepSObjDraw` does
+/// (RE-392): a texture rectangle at N64 screen coordinates, mapped onto
+/// the pillarboxed viewport, `scale` times its size, blended under
+/// `SP_TRANSPARENT` or `SP_CLOUD`.
+///
+/// The combiner follows `lbCommonPrepSObjAttr`: a tinted sprite
+/// ([`ssb_rom::pack::SpriteDesc::TINTED`], I and IA) uses `Blend`, whose
+/// `Cv * (1 - Ct) + Cc * Ct` with the vertex colour at `env` and the
+/// texture environment at `prim` is IA's `(PRIM - ENV) * TEXEL0 + ENV`; an
+/// I texture is baked white with alpha I, so it draws `PRIM`. RGBA and CI
+/// are `G_CC_DECALRGBA`: `Modulate` by white.
 ///
 /// # Safety
 ///
 /// Between `begin_frame` and `end_frame`; the pack must outlive the frame.
-#[allow(clippy::too_many_arguments)]
 pub unsafe fn draw_sprite(
     pack: &Pack<'_>,
     sprite: &ssb_rom::pack::SpriteDesc,
-    x: f32,
-    y: f32,
-    scale: f32,
-    color: [u8; 4],
-    solid: bool,
-    attr: u16,
+    d: &SObjDraw,
     draw_state: &mut DrawState,
 ) {
     let Some(t) = pack.texture(sprite.texture) else {
@@ -2107,20 +2123,24 @@ pub unsafe fn draw_sprite(
     sys::sceGuTexOffset(0.0, 0.0);
     sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
     let tinted = sprite.flags & ssb_rom::pack::SpriteDesc::TINTED != 0;
-    let rgba = if tinted || solid { color } else { [0xFF; 4] };
-    // `Add` with a white vertex colour saturates the colour and keeps
-    // `alpha * TEXEL0`: the solid-colour combiner for a white flash.
-    let effect = if solid {
-        sys::TextureEffect::Add
+    let vertex = if d.solid {
+        [d.prim[0], d.prim[1], d.prim[2], 0xFF]
+    } else if tinted {
+        [d.env[0], d.env[1], d.env[2], d.prim[3]]
     } else {
-        sys::TextureEffect::Modulate
+        [0xFF; 4]
     };
-    sys::sceGuTexFunc(effect, sys::TextureColorComponent::Rgba);
+    if d.solid || tinted {
+        sys::sceGuTexEnvColor(u32::from_le_bytes([d.prim[0], d.prim[1], d.prim[2], 0xFF]));
+        sys::sceGuTexFunc(sys::TextureEffect::Blend, sys::TextureColorComponent::Rgba);
+    } else {
+        sys::sceGuTexFunc(sys::TextureEffect::Modulate, sys::TextureColorComponent::Rgba);
+    }
     sys::sceGuDisable(GuState::Lighting);
     sys::sceGuDisable(GuState::DepthTest);
     sys::sceGuDisable(GuState::CullFace);
     sys::sceGuDisable(GuState::AlphaTest);
-    if attr & ssb_rom::sprite::SP_TRANSPARENT != 0 {
+    if d.attr & (ssb_rom::sprite::SP_TRANSPARENT | ssb_rom::sprite::SP_CLOUD) != 0 {
         sys::sceGuEnable(GuState::Blend);
         sys::sceGuBlendFunc(
             sys::BlendOp::Add,
@@ -2134,13 +2154,13 @@ pub unsafe fn draw_sprite(
     }
     let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
     let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
-    let abgr = u32::from_le_bytes(rgba);
+    let abgr = u32::from_le_bytes(vertex);
     let (w, h) = (f32::from(sprite.width), f32::from(sprite.height));
-    let x0 = vx as f32 + x * k;
-    let y0 = y * k;
+    let x0 = vx as f32 + d.x * k;
+    let y0 = d.y * k;
     let corners = [
         (0.0, 0.0, x0, y0),
-        (w, h, x0 + w * scale * k, y0 + h * scale * k),
+        (w, h, x0 + w * d.scale * k, y0 + h * d.scale * k),
     ];
     let verts = sys::sceGuGetMemory((2 * core::mem::size_of::<SObjVertex>()) as i32)
         as *mut SObjVertex;
