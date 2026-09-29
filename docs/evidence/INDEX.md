@@ -406,3 +406,4 @@ editing a record.
 | RE-394 | The VS countdown's traffic light and "GO!" | IMPLEMENTED (decomp source, ROM decode, host tests, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | interface, match, pack, psp-ge, visual-regression |  |
 | RE-395 | The battle timer and "TIME UP"/"GAME SET" | IMPLEMENTED (decomp source, ROM decode, host tests, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | interface, match, pack, visual-regression |  |
 | RE-396 | Stock icons above the damage display | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | interface, match, fighter, visual-regression |  |
+| RE-397 | "SUDDEN DEATH!" | IMPLEMENTED (decomp source, ROM decode, host tests, PPSSPPHeadless golden captured twice, workspace tests, both PSP builds; no physical PSP) | interface, match, pack, visual-regression |  |

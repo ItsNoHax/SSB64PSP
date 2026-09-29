@@ -288,11 +288,22 @@ pub const TIMER: SpriteFile = SpriteFile {
     ],
 };
 
+/// File 37, `IFCommonAnnounceCommon` (`gGMCommonFiles[7]`): `LetterA` to
+/// `LetterZ`, then `SymbolExclaim` and `SymbolPeriod`.
+pub const ANNOUNCE_COMMON: SpriteFile = SpriteFile {
+    file: 37,
+    offsets: &[
+        0x5E0, 0x9A8, 0xD80, 0x1268, 0x1628, 0x1A00, 0x1F08, 0x2408, 0x26B8, 0x2A90, 0x2F98,
+        0x3358, 0x3980, 0x3E88, 0x44B0, 0x4890, 0x4F10, 0x5418, 0x57F0, 0x5BD0, 0x60D8, 0x65D8,
+        0x6C00, 0x7108, 0x7608, 0x7AE8, 0x7D98, 0x7E50,
+    ],
+};
+
 /// `SP_CLOUD`: drawn with `G_RM_CLD_SURF`, blended like `SP_TRANSPARENT`.
 pub const SP_CLOUD: u16 = 0x1000;
 
 /// Every sprite file the pack converts.
-pub const FILES: &[SpriteFile] = &[PLAYER_DAMAGE, GAME_STATUS, TIMER];
+pub const FILES: &[SpriteFile] = &[PLAYER_DAMAGE, GAME_STATUS, TIMER, ANNOUNCE_COMMON];
 
 /// Decodes every sprite of `f`.
 pub fn decode_all(file: &File, f: &SpriteFile) -> Result<Vec<Sprite>, SpriteError> {
@@ -364,6 +375,38 @@ mod tests {
                 _ => assert_eq!(s.format, Format::I),
             }
         }
+    }
+
+    #[test]
+    fn the_announce_letters_decode() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        let file = archive.load(ANNOUNCE_COMMON.file).unwrap();
+        let sprites = decode_all(&file, &ANNOUNCE_COMMON).unwrap();
+        assert_eq!(sprites.len(), 28);
+        for (i, s) in sprites.iter().enumerate() {
+            let alpha: Vec<u8> = s
+                .image
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|p| p[3])
+                .collect();
+            assert!(alpha.iter().any(|&a| a > 0), "letter {i} is empty");
+        }
+        // IA capitals 36 to 39 texels tall (Q's tail is the 39); the period
+        // is the short one.
+        for (i, s) in sprites.iter().enumerate() {
+            assert_eq!(s.format, Format::Ia, "letter {i}");
+            let tall = if i == 27 { 11..=11 } else { 36..=39 };
+            assert!(tall.contains(&s.height), "letter {i}: {}", s.height);
+        }
+        assert_eq!((sprites[16].width, sprites[16].height), (37, 39));
     }
 
     #[test]

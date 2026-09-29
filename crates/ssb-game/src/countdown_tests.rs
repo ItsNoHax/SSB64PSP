@@ -113,7 +113,9 @@ fn it_slides_away_and_ends_at_seven_seconds() {
 fn sudden_death_shows_only_the_letters() {
     let mut c = Countdown::sudden_death();
     assert_eq!(c.sobjs().count(), 0);
+    assert!(c.sudden_death_letters);
     c.start_go();
+    assert!(!c.sudden_death_letters);
     c.tick(&SIZES);
     assert_eq!(
         c.sobjs().map(|s| s.sprite).collect::<Vec<_>>(),
