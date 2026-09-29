@@ -172,6 +172,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `vscpu`) | `f1-vs-cpu` | A VS battle's CPU forward-throwing the idle player at tick 690, after a down air; `vstimeup` pins its CPU to Stand to keep its tie | RE-391 |
 | `golden_capture` (`psp-game`, scene `vstimeupsign`) | `f1-vs-time-up` | `vstimeup` at tick 4,040: 00:00 and "TIME UP" during the end wait | RE-395 |
 | `golden_capture` (`psp-game`, scene `vssuddendeath`) | `f1-vs-sudden-death-sign` | `vstimeup` at tick 4,150: "SUDDEN DEATH!" before its "GO!", emblems and stock icons without digits | RE-397 |
+| `golden_capture` (`psp-game`, scene `vspause`) | `f1-vs-pause` | START at tick 500: the pause menu's zoom on Mario, border, "1P PAUSE" and decals at 560 | RE-398 |
 | `golden_capture` (`psp-game`, scene `rebirth`) | `f1-training-rebirth` | Mario after a KO below Dream Land, standing at the rebirth point in `RebirthStand` (the halo is not drawn) | RE-388 |
 | `golden_capture` (`psp-game`, scene `fighterselect`) | `f1-training-fighter-select` | Kirby placed on the character select, then Peach's Castle on the stage select; Kirby and a Mario dummy standing on the castle | RE-386 |
 | `golden_capture` (`psp-game`, scene `stageselect`) | `f1-training-stage-select` | Mario and the dummy standing on Hyrule Castle, picked on the stage select; every other `psp-game` scene skips the select and loads Dream Land | RE-385 |
@@ -561,3 +562,9 @@ twice.
 
 Pack v62 (`0c2075ed…`) adds file 37. The new `f1-vs-sudden-death-sign`
 golden was identical in both captures. 103 of 103 goldens match twice.
+
+## 2026-09-29 RE-398 pause menu
+
+Pack v62 (`b41c1951…`) adds file 197. The new `f1-vs-pause` golden was
+identical in both captures; `vssuddendeath` got an explicitly neutral stick
+with no golden change. 104 of 104 goldens match twice.

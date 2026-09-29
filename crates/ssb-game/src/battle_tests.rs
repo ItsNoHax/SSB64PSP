@@ -148,3 +148,49 @@ fn sudden_death_is_a_no_stock_battle_that_says_go_after_90_ticks() {
     b.on_fall(1, Some(0));
     assert!(b.sudden_death_battle().is_none());
 }
+
+fn go_battle() -> Battle {
+    let mut b = Battle::new(Rule::Time, 3, 2, two_players());
+    run_to_go(&mut b);
+    b
+}
+
+#[test]
+fn a_pause_freezes_the_clock_and_eases_back() {
+    let mut b = go_battle();
+    b.begin_frame();
+    b.begin_frame();
+    let remain = b.time_remain;
+    b.pause();
+    assert_eq!(b.status, GameStatus::Pause);
+    for _ in 0..50 {
+        assert_eq!(b.begin_frame(), Frame::Frozen);
+    }
+    assert_eq!(b.time_remain, remain);
+    b.unpause(true);
+    // Twenty frozen frames while the camera eases back, then Go on the
+    // 21st, which runs the world but reads no time.
+    for _ in 0..20 {
+        assert_eq!(b.begin_frame(), Frame::Frozen);
+    }
+    assert_eq!(b.begin_frame(), Frame::Run);
+    assert_eq!(b.status, GameStatus::Go);
+    assert_eq!(b.time_remain, remain);
+    // The first Go frame after it reads no time either (the timer
+    // restarts); the next ticks.
+    b.begin_frame();
+    b.begin_frame();
+    assert_eq!(b.time_remain, remain - 1);
+}
+
+#[test]
+fn a_reset_from_the_pause_menu_ends_the_battle() {
+    let mut b = go_battle();
+    b.pause();
+    b.reset();
+    assert!(b.is_reset);
+    for _ in 0..3 {
+        assert_eq!(b.begin_frame(), Frame::Frozen);
+    }
+    assert_eq!(b.begin_frame(), Frame::Done);
+}

@@ -14,8 +14,9 @@
 //! * **No entry/explain/dead-up modes.** Always the plain "watch the
 //!   fighter" case (`FTCamera`'s `default` arm), since this project has no
 //!   match-start/KO camera states yet.
-//! * **No pause-camera offset.** `gGMCameraPauseCameraEyeX`/`Y` are always
-//!   `0.0` outside the pause menu, which does not exist in this project yet.
+//! * **Pause camera.** [`Camera::pause_eye`] is `gGMCameraPauseCameraEyeX`/`Y`,
+//!   which the pause menu steers and [`Camera::tick_player_zoom`] reads
+//!   (`gmCameraPlayerZoomFuncCamera`, RE-398).
 
 use ssb_engine::math::Vec3;
 
@@ -97,6 +98,9 @@ pub struct Camera {
     pub at: Vec3,
     pub fovy_degrees: f32,
     target_dist: f32,
+    /// `gGMCameraPauseCameraEyeX`, `gGMCameraPauseCameraEyeY`: radians the
+    /// pause menu turns the view by.
+    pub pause_eye: (f32, f32),
 }
 
 impl Default for Camera {
@@ -106,6 +110,7 @@ impl Default for Camera {
             at: DEFAULT_AT,
             fovy_degrees: DEFAULT_FOVY_DEGREES,
             target_dist: DEFAULT_TARGET_DIST,
+            pause_eye: (0.0, 0.0),
         }
     }
 }
@@ -201,7 +206,7 @@ impl Camera {
         // func_ovl2_8010C3C0 + gmCameraGetAdjustAtAngle: a unit
         // eye-direction vector derived from `at` and the stage's own
         // light-angle nudge.
-        let direction = eye_direction(self.at, light_angle_z_radians);
+        let direction = eye_direction(self.at, light_angle_z_radians, self.pause_eye);
 
         // func_ovl2_8010C5C0: move the eye 10% of the way toward the ideal
         // position for the current `target_dist`/direction -- the same
@@ -213,6 +218,31 @@ impl Camera {
         // (nothing currently writes to it), so there is nothing to add.
         // gmCameraApplyFOV: `self.fovy_degrees` above already *is* the
         // value a caller reads, unlike the real `CObj`/`GMCamera` split.
+    }
+
+    /// `gmCameraUpdatePlayerZoom` (`gmCameraSetStatusPlayerZoom`'s camera):
+    /// close in on `pos` (with `cam_offset_y` added) at `dist`, easing the
+    /// field of view toward `fov`, panned by `pan_scale`, the eye turned by
+    /// [`Camera::pause_eye`] plus `eye` (`pzoom_eye_x`, `pzoom_eye_y`).
+    pub fn tick_player_zoom(
+        &mut self,
+        pos: Vec3,
+        eye: (f32, f32),
+        dist: f32,
+        pan_scale: f32,
+        fov: f32,
+    ) {
+        self.fovy_degrees += (fov - self.fovy_degrees) * 0.1;
+        self.target_dist = dist;
+        self.at = self.at.lerp(pos, pan_scale);
+        let turn_y = self.pause_eye.0 + eye.0;
+        let turn_x = self.pause_eye.1 + eye.1;
+        let mut vz = original_cos(turn_x);
+        let vy = -original_sin(turn_x);
+        let vx = original_sin(turn_y) * vz;
+        vz *= original_cos(turn_y);
+        let ideal_eye = self.at + Vec3::new(vx, vy, vz) * self.target_dist;
+        self.eye = self.eye.lerp(ideal_eye, 0.1);
     }
 
     /// `func_ovl2_800EB924` through `gGMCameraMatrix`: a world point's
@@ -336,20 +366,19 @@ fn approach_target_distance(current: f32, requested: f32) -> f32 {
 /// `func_ovl2_8010C3C0` + `gmCameraGetAdjustAtAngle` combined
 /// (`gm/gmcamera.c:507`/`320`): a unit eye-direction vector derived from
 /// the look-at point `at`, nudged by the stage's own `light_angle.z`.
-fn eye_direction(at: Vec3, light_angle_z_radians: f32) -> Vec3 {
+fn eye_direction(at: Vec3, light_angle_z_radians: f32, pause_eye: (f32, f32)) -> Vec3 {
     let y =
         (-((at.y - 900.0) / 133.0).to_radians()).clamp((-7.0f32).to_radians(), 5.0f32.to_radians());
     let x = (-(at.x / 133.0).to_radians()).clamp((-17.5f32).to_radians(), 17.5f32.to_radians());
 
-    // `gGMCameraPauseCameraEyeY`/`X` are always `0.0` outside the pause
-    // menu (not ported), so only `y`/`x` and the stage's own nudge remain.
-    let angle_x = y + light_angle_z_radians;
+    // `gmCameraGetAdjustAtAngle`: the pause turn, then the stage's nudge.
+    let angle_x = pause_eye.1 + y + light_angle_z_radians;
     let sin_x = original_sin(angle_x);
     let cos_x = original_cos(angle_x);
     let vy = -sin_x;
     let mut vz = cos_x;
 
-    let angle_y = x;
+    let angle_y = pause_eye.0 + x;
     let sin_y = original_sin(angle_y);
     let cos_y = original_cos(angle_y);
     let vx = sin_y * vz;

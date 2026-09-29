@@ -30,6 +30,9 @@ pub const END_RESTORE_WAIT: u16 = 90;
 /// `ifCommonBattleInterfaceProcSet`: three more ticks before the next
 /// scene loads.
 pub const SET_RESTORE_WAIT: u16 = 3;
+/// `ifCommonBattlePauseUpdateInterface`: the camera eases back for 20 ticks
+/// after an unpause that had zoomed on the player.
+pub const UNPAUSE_RESTORE_WAIT: u16 = 20;
 
 /// `nSCBattleGameStatus*`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +117,8 @@ pub struct Battle {
     go_tick: u32,
     /// `gSCManagerSceneData.is_suddendeath`.
     pub is_sudden_death: bool,
+    /// `gSCManagerSceneData.is_reset`: A+B+R+Z in the pause menu.
+    pub is_reset: bool,
 }
 
 impl Battle {
@@ -140,6 +145,7 @@ impl Battle {
             clock: 0,
             go_tick: Self::GO_TICK,
             is_sudden_death: false,
+            is_reset: false,
         };
         b.init_placement();
         b
@@ -230,7 +236,18 @@ impl Battle {
                 // frame's `gcRunAll`.
                 Frame::Run
             }
-            GameStatus::Pause | GameStatus::Unpause => Frame::Frozen,
+            GameStatus::Pause => Frame::Frozen,
+            // `ifCommonBattlePauseRestoreInterfaceAll`: the camera eases
+            // back, then Go resumes and the world runs that same frame.
+            GameStatus::Unpause => {
+                if self.restore_wait != 0 {
+                    self.restore_wait -= 1;
+                    Frame::Frozen
+                } else {
+                    self.status = GameStatus::Go;
+                    Frame::Run
+                }
+            }
             // `ifCommonBattleEndUpdateInterface` pauses the world and falls
             // through to `ifCommonBattleBossDefeatUpdateInterface`.
             GameStatus::End | GameStatus::BossDefeat => {
@@ -264,6 +281,32 @@ impl Battle {
         self.time_remain -= 1;
         if self.time_remain == 0 {
             self.set_end(EndKind::TimeUp);
+        }
+    }
+
+    /// `ifCommonBattlePauseInitInterface`: START during Go.
+    pub fn pause(&mut self) {
+        if self.status == GameStatus::Go {
+            self.status = GameStatus::Pause;
+        }
+    }
+
+    /// START in the pause menu: `restore` is whether the camera had zoomed
+    /// on the player and eases back (20 ticks) or snaps (0).
+    pub fn unpause(&mut self, restore: bool) {
+        if self.status == GameStatus::Pause {
+            self.status = GameStatus::Unpause;
+            self.restore_wait = if restore { UNPAUSE_RESTORE_WAIT } else { 0 };
+        }
+    }
+
+    /// A+B+R+Z in the pause menu: `is_reset`, then
+    /// `ifCommonBattleInterfaceProcSet`.
+    pub fn reset(&mut self) {
+        if self.status == GameStatus::Pause {
+            self.is_reset = true;
+            self.status = GameStatus::Set;
+            self.restore_wait = SET_RESTORE_WAIT;
         }
     }
 
