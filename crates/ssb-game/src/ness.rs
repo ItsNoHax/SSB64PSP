@@ -131,6 +131,7 @@ pub(crate) fn make_pk_fire(f: &mut Fighter, copied: bool) {
     f.weapon_spawn = Some(WeaponSpawn {
         kind: WeaponKind::NessPKFire { grounded: ground },
         owner_port: f.port,
+        team: f.team,
         position: pos,
         facing: f.facing.sign(),
         stale: crate::stale::WeaponStale::of(f),
@@ -176,6 +177,7 @@ fn set_thunder_hold(f: &mut Fighter) {
     f.weapon_spawn = Some(WeaponSpawn {
         kind: WeaponKind::NessPKThunder,
         owner_port: f.port,
+        team: f.team,
         position: pos,
         facing: f.facing.sign(),
         stale: crate::stale::WeaponStale::of(f),

@@ -416,3 +416,4 @@ editing a record.
 | RE-404 | The VS character select | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless golden captured twice, workspace tests, both PSP builds; no physical PSP) | menu, match, visual-regression, psp-platform |  |
 | RE-405 | VS battles with up to four fighters | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | match, fighter, grab, hud, psp-platform, visual-regression |  |
 | RE-406 | The battle camera frames every fighter | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | camera, match, fighter, visual-regression |  |
+| RE-407 | VS team battles | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | match, combat, items, weapons, cpu, hud, visual-regression |  |

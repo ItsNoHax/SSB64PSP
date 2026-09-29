@@ -39,6 +39,7 @@ fn make_flame(pool: &mut ItemPool) -> u8 {
     assert!(weapons.spawn(WeaponSpawn {
         kind: WeaponKind::NessPKFire { grounded: true },
         owner_port: ness.port,
+        team: ness.team,
         position: Vec3::ZERO,
         facing: 1.0,
         stale: crate::stale::WeaponStale::of(&ness),
@@ -198,6 +199,7 @@ fn seven_damage_explodes_while_six_damage_recoils() {
             -1.0,
             Attacker {
                 owner: Some(1),
+                team: 1,
                 player: Some(1),
                 handicap: 9,
             },
@@ -590,4 +592,70 @@ fn item_animation_plays_once_at_creation_and_per_update_outside_hitlag() {
     pool.tick(core::iter::empty, None);
     // The frame the hitlag runs out plays again.
     assert_eq!(pool.get(slot).unwrap().anim_ticks, 3);
+}
+
+/// `ftMainSearchHitItem`: a PK Fire pillar takes Ness's team
+/// (`itNessPKFireMakeItem`) and, with team attack off, spares his
+/// teammates.
+#[test]
+fn a_teammates_item_passes_through_only_with_team_attack_off() {
+    use crate::team::TeamRules;
+    let team_attack = TeamRules {
+        is_team_attack: true,
+        ..TeamRules::TEAMS
+    };
+    for (rules, victim_team, lands) in [
+        (TeamRules::TEAMS, 0, false),
+        (TeamRules::TEAMS, 1, true),
+        (team_attack, 0, true),
+        (TeamRules::FREE_FOR_ALL, 0, true),
+    ] {
+        let mut pool = ItemPool {
+            team_rules: rules,
+            ..ItemPool::default()
+        };
+        let slot = make_flame(&mut pool);
+        let pillar = *pool.get(slot).unwrap();
+        assert_eq!((pillar.owner, pillar.team), (Some(0), 0));
+        let mut victim = fighter(FighterKind::Mario, 2);
+        victim.team = victim_team;
+        victim.pos = pillar.pos + Vec3::new(0.0, 100.0, 0.0);
+        pool.search_fighter(&mut victim);
+        crate::combat::resolve(&mut victim);
+        assert_eq!(victim.damage > 0, lands, "{rules:?} team {victim_team}");
+    }
+}
+
+/// `itProcessSearchHitFighter`: with team attack off a fighter's attacks
+/// pass through its team's items.
+#[test]
+fn a_teammates_attack_passes_through_an_item_only_with_team_attack_off() {
+    use crate::team::TeamRules;
+    for (rules, attacker_team, lands) in [
+        (TeamRules::TEAMS, 0, false),
+        (TeamRules::TEAMS, 1, true),
+        (TeamRules::FREE_FOR_ALL, 0, true),
+    ] {
+        let mut pool = ItemPool {
+            team_rules: rules,
+            ..ItemPool::default()
+        };
+        let slot = make_flame(&mut pool);
+        let pillar = *pool.get(slot).unwrap();
+        let mut attacker = fighter(FighterKind::Mario, 2);
+        attacker.team = attacker_team;
+        attacker.attack_colls[0] = crate::combat::AttackColl {
+            state: crate::combat::AttackState::Transfer,
+            damage: 10,
+            size: 150.0,
+            is_hit_air: true,
+            is_hit_ground: true,
+            pos_curr: pillar.damage_coll_pos(),
+            pos_prev: pillar.damage_coll_pos(),
+            ..Default::default()
+        };
+        pool.search_hurt(&mut [&mut attacker], &mut WeaponPool::default());
+        let hit = pool.get(slot).map_or(0, |p| p.damage_queue);
+        assert_eq!(hit > 0, lands, "{rules:?} team {attacker_team}");
+    }
 }

@@ -443,6 +443,8 @@ pub fn halo_number(others: impl Iterator<Item = (AnyStatus, u8)> + Clone) -> u8 
 /// but the fighter's identity and loaded data goes back to its spawn state.
 fn reinit(f: &mut Fighter, pos: Vec3, facing: Facing) {
     let mut fresh = Fighter::new(f.kind, f.port, f.stocks);
+    // `ftManagerMakeFighter` sets `team`; `ftManagerInitFighter` keeps it.
+    fresh.team = f.team;
     fresh.attributes = f.attributes;
     fresh.coll = f.coll;
     fresh.cliff_reach = f.cliff_reach;

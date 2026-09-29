@@ -84,6 +84,7 @@ where
     map::run_default_collision(&mut item, spawn.weapon_pos, spawn.weapon_coll, surfaces);
     item.update_attack_positions();
     item.owner = Some(spawn.owner_port);
+    item.team = spawn.team;
     item.is_allow_pickup = false;
     item.is_hold = false;
     item.player = Some(spawn.owner_port);

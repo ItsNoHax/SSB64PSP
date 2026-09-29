@@ -197,3 +197,28 @@ fn the_nearest_player_on_stage_is_the_target() {
     assert_eq!(com.target_dist, 800.0);
     assert_eq!(com.target_line, Some(0));
 }
+
+/// `ftComputerCheckFindTarget` walks every fighter with another `team`:
+/// a nearer teammate is not a target, in a team battle or not.
+#[test]
+fn the_target_search_skips_a_teammate() {
+    let mut f = standing_mario(0.0);
+    f.team = 0;
+    let mut teammate = standing_mario(300.0);
+    teammate.port = 2;
+    teammate.team = 0;
+    let mut enemy = standing_mario(900.0);
+    enemy.port = 3;
+    enemy.team = 1;
+    assert!(!is_opponent(&f, &f));
+    let opponents: std::vec::Vec<_> = [&f, &teammate, &enemy]
+        .into_iter()
+        .filter(|o| is_opponent(&f, o))
+        .map(opponent)
+        .collect();
+    assert_eq!(opponents.len(), 1);
+    let w = world(&opponents);
+    let mut com = cpu(&f, Behavior::Stand);
+    assert!(com.find_target(&f, &w));
+    assert_eq!(com.target_pos.x, 900.0);
+}

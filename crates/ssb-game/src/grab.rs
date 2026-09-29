@@ -2133,7 +2133,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             record_throw(from, to, staled, staled.damage);
         }
         GrabEvent::KirbyStar { copy, vel } => {
-            crate::capture_kirby::set_star(to, copy, vel, from.port)
+            crate::capture_kirby::set_star(to, copy, vel, from.port, from.team)
         }
         GrabEvent::KirbyWiggle { up, push_x } => crate::kirby::on_wiggle(to, up, push_x),
         GrabEvent::KirbyBreakout => {
@@ -2159,8 +2159,8 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
 /// here and the grabbed fighter's `CapturePulled` is queued for
 /// [`exchange`]. Yoshi's Egg Lay searches with its own box and
 /// `proc_catch`/`proc_capture` pair.
-pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
-    if !catch_touches(catcher, other) {
+pub fn search_catch(catcher: &mut Fighter, other: &Fighter, rules: crate::team::TeamRules) -> bool {
+    if !catch_touches(catcher, other, rules) {
         return false;
     }
     let inhale = crate::kirby::inhale_searching(catcher);
@@ -2193,10 +2193,11 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
 pub fn nearest_catch<'a>(
     catcher: &Fighter,
     others: impl IntoIterator<Item = &'a Fighter>,
+    rules: crate::team::TeamRules,
 ) -> Option<u8> {
     let mut near: Option<(f32, u8)> = None;
     for other in others {
-        if other.port == catcher.port || !catch_touches(catcher, other) {
+        if other.port == catcher.port || !catch_touches(catcher, other, rules) {
             continue;
         }
         let dist = (other.pos.x - catcher.pos.x).abs();
@@ -2209,8 +2210,12 @@ pub fn nearest_catch<'a>(
 
 /// Whether `catcher`'s catch box finds `other` this frame
 /// (`ftMainSearchFighterCatch`'s tests for one fighter).
-fn catch_touches(catcher: &Fighter, other: &Fighter) -> bool {
+fn catch_touches(catcher: &Fighter, other: &Fighter, rules: crate::team::TeamRules) -> bool {
     if !catcher.grab.is_catchstatus || other.dead.is_ghost {
+        return false;
+    }
+    // Team attack off: nobody grabs a teammate.
+    if rules.spares(catcher.team, other.team) {
         return false;
     }
     let egg_lay = crate::yoshi::egg_lay_searching(catcher);
@@ -2260,6 +2265,7 @@ fn catch_touches(catcher: &Fighter, other: &Fighter) -> bool {
 mod tests {
     use super::*;
     use crate::fighter::FighterKind;
+    use crate::team::TeamRules;
 
     #[test]
     fn captain_capture_freezes_grounded_victim_and_pulls_airborne_victim() {
@@ -2327,7 +2333,7 @@ mod tests {
         exchange(a, b);
         tick(b);
         exchange(b, a);
-        search_catch(a, b);
+        search_catch(a, b, TeamRules::FREE_FOR_ALL);
         exchange(a, b);
     }
 
@@ -2467,7 +2473,7 @@ mod tests {
         let dummy = grounded(FighterKind::Mario, 1, 400.0);
         set_catch(&mut mario);
         mario.status.anim_frame = 6.0;
-        assert!(!search_catch(&mut mario, &dummy));
+        assert!(!search_catch(&mut mario, &dummy, TeamRules::FREE_FOR_ALL));
         mario.joint_transforms[28] = Some(JointTransform {
             axes: [
                 Vec3::new(0.0, 0.0, -1.0),
@@ -2476,7 +2482,7 @@ mod tests {
             ],
             origin: Vec3::new(400.0, 0.0, 0.0),
         });
-        assert!(search_catch(&mut mario, &dummy));
+        assert!(search_catch(&mut mario, &dummy, TeamRules::FREE_FOR_ALL));
     }
 
     #[test]
@@ -2487,13 +2493,50 @@ mod tests {
         set_catch(&mut mario);
         mario.status.anim_frame = 6.0;
         assert!(can_reach(&mario, &far) && can_reach(&mario, &near));
-        assert_eq!(nearest_catch(&mario, [&far, &near]), Some(2));
-        assert_eq!(nearest_catch(&mario, [&far]), Some(1));
-        assert_eq!(nearest_catch(&mario, [&mario.clone()]), None);
+        assert_eq!(
+            nearest_catch(&mario, [&far, &near], TeamRules::FREE_FOR_ALL),
+            Some(2)
+        );
+        assert_eq!(
+            nearest_catch(&mario, [&far], TeamRules::FREE_FOR_ALL),
+            Some(1)
+        );
+        assert_eq!(
+            nearest_catch(&mario, [&mario.clone()], TeamRules::FREE_FOR_ALL),
+            None
+        );
+    }
+
+    /// `ftMainSearchFighterCatch`: with team attack off the catch skips a
+    /// teammate for the next fighter it touches.
+    #[test]
+    fn the_catch_skips_a_teammate_with_team_attack_off() {
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let mut near = grounded(FighterKind::Mario, 1, 140.0);
+        let mut far = grounded(FighterKind::Mario, 2, 160.0);
+        mario.team = 0;
+        near.team = 0;
+        far.team = 1;
+        set_catch(&mut mario);
+        mario.status.anim_frame = 6.0;
+        assert_eq!(
+            nearest_catch(&mario, [&near, &far], TeamRules::TEAMS),
+            Some(2)
+        );
+        assert!(!search_catch(&mut mario.clone(), &near, TeamRules::TEAMS));
+        let team_attack = TeamRules {
+            is_team_attack: true,
+            ..TeamRules::TEAMS
+        };
+        assert_eq!(nearest_catch(&mario, [&near, &far], team_attack), Some(1));
+        assert_eq!(
+            nearest_catch(&mario, [&near, &far], TeamRules::FREE_FOR_ALL),
+            Some(1)
+        );
     }
 
     fn can_reach(catcher: &Fighter, other: &Fighter) -> bool {
-        catch_touches(catcher, other)
+        catch_touches(catcher, other, TeamRules::FREE_FOR_ALL)
     }
 
     #[test]
@@ -2519,7 +2562,10 @@ mod tests {
         for _ in 0..19 {
             press(&mut samus, 0, 0);
             tick(&mut samus);
-            assert!(!search_catch(&mut samus, &dummy), "no beam before frame 20");
+            assert!(
+                !search_catch(&mut samus, &dummy, TeamRules::FREE_FOR_ALL),
+                "no beam before frame 20"
+            );
         }
         press(&mut samus, 0, 0);
         tick(&mut samus);
@@ -2527,7 +2573,7 @@ mod tests {
         assert_eq!(samus.status.anim_frame, 21.0);
         // Flag2 = 9 over flag1 = 17 frames, one step already taken.
         assert_eq!(samus.grab.catch_pull_frame_begin, 9.0 - 9.0 / 17.0);
-        assert!(search_catch(&mut samus, &dummy));
+        assert!(search_catch(&mut samus, &dummy, TeamRules::FREE_FOR_ALL));
         assert_eq!(samus.status.status, Status::CatchPull);
         assert_eq!(samus.status.anim_frame, 9.0 - 9.0 / 17.0);
         assert_eq!(samus.status.timing.anim_length, Some(10.0));
@@ -2558,7 +2604,10 @@ mod tests {
         for _ in 0..16 {
             press(&mut link, 0, 0);
             tick(&mut link);
-            assert!(!search_catch(&mut link, &dummy), "no hook before frame 17");
+            assert!(
+                !search_catch(&mut link, &dummy, TeamRules::FREE_FOR_ALL),
+                "no hook before frame 17"
+            );
         }
         press(&mut link, 0, 0);
         tick(&mut link);
@@ -2566,7 +2615,7 @@ mod tests {
         assert_eq!(link.status.anim_frame, 18.0);
         // Flag2 = 5 over flag1 = 12 frames, one step already taken.
         assert_eq!(link.grab.catch_pull_frame_begin, 5.0 - 5.0 / 12.0);
-        assert!(search_catch(&mut link, &dummy));
+        assert!(search_catch(&mut link, &dummy, TeamRules::FREE_FOR_ALL));
         assert_eq!(link.status.status, Status::CatchPull);
         assert_eq!(link.status.timing.anim_length, Some(6.0));
         assert_eq!(catch_coll_frames(FighterKind::Link), 17.0..29.0);

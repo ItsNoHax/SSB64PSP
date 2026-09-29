@@ -211,6 +211,9 @@ pub struct Fighter {
     pub kind: FighterKind,
     /// Player slot, 0..=3.
     pub port: u8,
+    /// `FTStruct::team` ([`crate::team`]): the port unless a team battle or
+    /// Training sets it.
+    pub team: u8,
     pub pos: Vec3,
     pub facing: Facing,
     pub situation: Situation,
@@ -394,6 +397,7 @@ impl Fighter {
         Fighter {
             kind,
             port,
+            team: port,
             pos: Vec3::ZERO,
             facing: Facing::Right,
             situation: Situation::Air,

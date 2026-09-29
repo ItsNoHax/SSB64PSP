@@ -109,9 +109,14 @@ impl PKFire {
     }
     /// `wpNessPKFireProcHit`: the flame goes 160 units along the spark's
     /// travel (`WPPKFIRE_POS_MUL`) and is projected from the spark.
-    pub(super) fn item_spawn(&self, stale: crate::stale::WeaponStale) -> crate::item::PKFireSpawn {
+    pub(super) fn item_spawn(
+        &self,
+        stale: crate::stale::WeaponStale,
+        team: u8,
+    ) -> crate::item::PKFireSpawn {
         crate::item::PKFireSpawn {
             owner_port: self.owner_port,
+            team,
             pos: self.position + self.velocity.normalized() * 160.0,
             weapon_pos: self.position,
             weapon_coll: SPARK_MAP_COLL,

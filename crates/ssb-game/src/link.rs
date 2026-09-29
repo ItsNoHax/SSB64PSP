@@ -324,6 +324,7 @@ fn make_boomerang(f: &mut Fighter) {
             stick_y: f.input.stick_y,
         },
         owner_port: f.port,
+        team: f.team,
         stale: crate::stale::WeaponStale::of(f),
         position: f.joint_world(0, Vec3::ZERO),
         facing: f.facing.sign(),
@@ -757,8 +758,14 @@ pub fn skips_fast_fall(status: AnyStatus) -> bool {
 }
 
 /// The Spin Attack weapon's collision phase against one fighter.
-pub fn apply_spin_attack_hits(attacker: &mut Fighter, defender: &mut Fighter) {
-    if attacker.port == defender.port {
+/// `ftMainSearchHitWeapon`'s first test spares the owner and, with team
+/// attack off, its teammates.
+pub fn apply_spin_attack_hits(
+    attacker: &mut Fighter,
+    defender: &mut Fighter,
+    rules: crate::team::TeamRules,
+) {
+    if attacker.port == defender.port || rules.spares(defender.team, attacker.team) {
         return;
     }
     // `wp->handicap` is the owner's. The spin weapon lives inside one
@@ -957,11 +964,11 @@ mod tests {
         let mut target = Fighter::new(FighterKind::Mario, 1, 3);
         target.situation = Situation::Ground;
         target.pos = right;
-        apply_spin_attack_hits(&mut f, &mut target);
+        apply_spin_attack_hits(&mut f, &mut target, crate::team::TeamRules::FREE_FOR_ALL);
         crate::combat::resolve(&mut target);
         assert_eq!(target.damage, 5);
         target.hitlag = 0;
-        apply_spin_attack_hits(&mut f, &mut target);
+        apply_spin_attack_hits(&mut f, &mut target, crate::team::TeamRules::FREE_FOR_ALL);
         crate::combat::resolve(&mut target);
         assert_eq!(target.damage, 5);
     }

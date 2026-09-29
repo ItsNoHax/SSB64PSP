@@ -101,6 +101,9 @@ pub struct Battle {
     pub status: GameStatus,
     pub rule: Rule,
     pub is_team_battle: bool,
+    /// Team Attack: `dSCManagerDefaultBattleState`'s FALSE, as VS Options
+    /// is not ported.
+    pub is_team_attack: bool,
     /// Minutes, or [`TIMELIMIT_INFINITE`].
     pub time_limit: u8,
     pub time_remain: u32,
@@ -134,6 +137,7 @@ impl Battle {
             status: GameStatus::Wait,
             rule,
             is_team_battle: false,
+            is_team_attack: false,
             time_limit,
             time_remain: u32::from(time_limit) * TICS_PER_MINUTE,
             time_passed: 0,
@@ -149,6 +153,23 @@ impl Battle {
         };
         b.init_placement();
         b
+    }
+
+    /// The battle with `gSCManagerBattleState->is_team_battle` and
+    /// `is_team_attack` set, placed by team (`ifCommonBattleInitPlacement`).
+    pub fn with_teams(mut self, is_team_battle: bool, is_team_attack: bool) -> Battle {
+        self.is_team_battle = is_team_battle;
+        self.is_team_attack = is_team_attack;
+        self.init_placement();
+        self
+    }
+
+    /// The rule the hit, catch and CPU searches read ([`crate::team`]).
+    pub fn team_rules(&self) -> crate::team::TeamRules {
+        crate::team::TeamRules {
+            is_team_battle: self.is_team_battle,
+            is_team_attack: self.is_team_attack,
+        }
     }
 
     /// `scVSBattleSetScoreCheckSuddenDeath`'s new battle for the tied
@@ -168,7 +189,10 @@ impl Battle {
                 };
             }
         }
-        let mut b = Battle::new(Rule::Stock, self.time_limit, 0, players);
+        // `gSCManagerVSBattleState` is a copy of the transfer state: the
+        // team settings carry over.
+        let mut b = Battle::new(Rule::Stock, self.time_limit, 0, players)
+            .with_teams(self.is_team_battle, self.is_team_attack);
         b.go_tick = 1 + ENTRY_WAIT;
         b.is_sudden_death = true;
         Some(b)
@@ -380,20 +404,36 @@ impl Battle {
         }
     }
 
-    /// `scVSBattleSetScoreCheckSuddenDeath`, free-for-all: after a time
-    /// battle, the players tied on `score - falls` at the top, when there is
-    /// more than one.
+    /// `scVSBattleSetScoreCheckSuddenDeath`: after a time battle, the
+    /// players tied on `score - falls` at the top, when there is more than
+    /// one. A team battle sums each team's and takes every member of the
+    /// tied teams.
     pub fn sudden_death(&self) -> Option<[bool; 4]> {
         if self.rule != Rule::Time {
             return None;
         }
         let tko = |p: &Player| i32::from(p.score) - i32::from(p.falls);
-        let best = self.players.iter().filter(|p| p.present).map(tko).max()?;
+        let side = |i: usize| {
+            if self.is_team_battle {
+                usize::from(self.players[i].team).min(4)
+            } else {
+                i
+            }
+        };
+        let mut sides = [None::<i32>; 5];
+        for (i, p) in self.players.iter().enumerate().filter(|(_, p)| p.present) {
+            let total = sides[side(i)].get_or_insert(0);
+            *total += tko(p);
+        }
+        let best = sides.iter().flatten().copied().max()?;
+        if sides.iter().flatten().filter(|&&t| t == best).count() < 2 {
+            return None;
+        }
         let mut tied = [false; 4];
         for (i, p) in self.players.iter().enumerate() {
-            tied[i] = p.present && tko(p) == best;
+            tied[i] = p.present && sides[side(i)] == Some(best);
         }
-        (tied.iter().filter(|&&t| t).count() >= 2).then_some(tied)
+        Some(tied)
     }
 
     /// The results' winner: the best `score - falls` after a time battle

@@ -207,6 +207,7 @@ fn make_thunder(f: &mut Fighter) {
         f.weapon_spawn = Some(WeaponSpawn {
             kind: WeaponKind::PikachuThunder,
             owner_port: f.port,
+            team: f.team,
             position: Vec3::new(anchor.x, top - 500.0, anchor.z),
             facing: f.facing.sign(),
             stale: crate::stale::WeaponStale::of(f),
@@ -237,6 +238,7 @@ pub fn update(f: &mut Fighter) {
                 f.weapon_spawn = Some(WeaponSpawn {
                     kind: WeaponKind::PikachuThunderJolt,
                     owner_port: f.port,
+                    team: f.team,
                     position: f.joint_world(11, Vec3::ZERO),
                     facing: f.facing.sign(),
                     stale: crate::stale::WeaponStale::of(f),

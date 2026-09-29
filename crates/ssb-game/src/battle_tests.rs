@@ -194,3 +194,29 @@ fn a_reset_from_the_pause_menu_ends_the_battle() {
     }
     assert_eq!(b.begin_frame(), Frame::Done);
 }
+
+/// `scVSBattleSetScoreCheckSuddenDeath`'s team case: each team's
+/// `score - falls` is summed, and every member of a tied team plays on.
+#[test]
+fn a_team_tie_sends_both_whole_teams_to_sudden_death() {
+    let mut players = [Player::default(); 4];
+    for (i, p) in players.iter_mut().enumerate() {
+        *p = Player {
+            present: true,
+            is_human: i == 0,
+            team: [0, 0, 1, 1][i],
+            ..Player::default()
+        };
+    }
+    let mut b = Battle::new(Rule::Time, 3, 2, players).with_teams(true, false);
+    assert!(b.team_rules().spares(0, 0));
+    b.on_fall(2, Some(0));
+    b.on_fall(1, Some(3));
+    // Per player this is 1, -1, -1, 1; per team 0 and 0.
+    assert_eq!(b.sudden_death(), Some([true; 4]));
+    let sd = b.sudden_death_battle().unwrap();
+    assert!(sd.is_team_battle);
+    assert!(sd.players.iter().all(|p| p.present));
+    b.on_fall(3, Some(0));
+    assert_eq!(b.sudden_death(), None);
+}
