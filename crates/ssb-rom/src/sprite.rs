@@ -299,11 +299,29 @@ pub const ANNOUNCE_COMMON: SpriteFile = SpriteFile {
     ],
 };
 
+/// File 197, `IFCommonBattlePause` (`gGMCommonFiles[5]`): `PlayerNum1P` to
+/// `...4P`, then the decals `Pause`, `Plus`, `Reset`, `SmashBall`, `Retry`,
+/// `AButton`, `BButton`, `ZTrigger`, `RTrigger`, `Arrows`, `ControlStick`
+/// and `LTrigger`.
+pub const BATTLE_PAUSE: SpriteFile = SpriteFile {
+    file: 197,
+    offsets: &[
+        0x78, 0x138, 0x1F8, 0x2B8, 0x438, 0x4D8, 0x610, 0x6D8, 0x828, 0x958, 0xA88, 0xBD8, 0xCF8,
+        0x1538, 0x17A8, 0x18C8,
+    ],
+};
+
 /// `SP_CLOUD`: drawn with `G_RM_CLD_SURF`, blended like `SP_TRANSPARENT`.
 pub const SP_CLOUD: u16 = 0x1000;
 
 /// Every sprite file the pack converts.
-pub const FILES: &[SpriteFile] = &[PLAYER_DAMAGE, GAME_STATUS, TIMER, ANNOUNCE_COMMON];
+pub const FILES: &[SpriteFile] = &[
+    PLAYER_DAMAGE,
+    GAME_STATUS,
+    TIMER,
+    ANNOUNCE_COMMON,
+    BATTLE_PAUSE,
+];
 
 /// Decodes every sprite of `f`.
 pub fn decode_all(file: &File, f: &SpriteFile) -> Result<Vec<Sprite>, SpriteError> {
@@ -407,6 +425,35 @@ mod tests {
             assert!(tall.contains(&s.height), "letter {i}: {}", s.height);
         }
         assert_eq!((sprites[16].width, sprites[16].height), (37, 39));
+    }
+
+    #[test]
+    fn the_pause_menu_sprites_decode() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        let file = archive.load(BATTLE_PAUSE.file).unwrap();
+        let sprites = decode_all(&file, &BATTLE_PAUSE).unwrap();
+        for (i, s) in sprites.iter().enumerate() {
+            let alpha: Vec<u8> = s
+                .image
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|p| p[3])
+                .collect();
+            assert!(alpha.iter().any(|&a| a > 0), "pause sprite {i} is empty");
+            assert!(
+                s.width <= 128 && s.height <= 64,
+                "pause sprite {i}: {}x{}",
+                s.width,
+                s.height
+            );
+        }
     }
 
     #[test]

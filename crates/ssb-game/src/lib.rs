@@ -39,6 +39,7 @@ mod luigi;
 pub mod map;
 pub mod motion;
 pub mod ness;
+pub mod pause;
 pub mod physics;
 pub mod pikachu;
 pub mod purin;

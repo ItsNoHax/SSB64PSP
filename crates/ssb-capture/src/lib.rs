@@ -361,10 +361,12 @@ pub enum GameScene {
     VsTimeUpSign,
     /// `vssuddendeath`: `vstimeup`'s "SUDDEN DEATH!" before its "GO!".
     VsSuddenDeath,
+    /// `vspause`: a VS battle paused, the camera zoomed on the player.
+    VsPause,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 40] = [
+    pub const ALL: [GameScene; 41] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -405,6 +407,7 @@ impl GameScene {
         GameScene::VsCpu,
         GameScene::VsTimeUpSign,
         GameScene::VsSuddenDeath,
+        GameScene::VsPause,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -449,6 +452,7 @@ impl GameScene {
             GameScene::VsCpu => "vscpu",
             GameScene::VsTimeUpSign => "vstimeupsign",
             GameScene::VsSuddenDeath => "vssuddendeath",
+            GameScene::VsPause => "vspause",
         }
     }
 

@@ -146,6 +146,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::VsTimeUpSign => 4040,
         // Sudden death starts at 4093 and says "GO!" 90 ticks on.
         GameScene::VsSuddenDeath => 4150,
+        // Paused at tick 500; 60 ticks of the zoom.
+        GameScene::VsPause => 560,
         // The dummy's CPU has paced for some 190 ticks, or jumped several
         // times.
         GameScene::CpuWalk => 200,
@@ -243,11 +245,13 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsTimeUp
             | GameScene::VsTimeUpSign
             | GameScene::VsSuddenDeath
-            | GameScene::VsSuddenDeath
             | GameScene::VsCpu
+            | GameScene::VsPause
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
+            // `vspause`: START 109 ticks after "Go".
+            500 if scene == GameScene::VsPause => N64Buttons(N64Buttons::START),
             _ => N64Buttons(0),
         };
     }
@@ -385,7 +389,9 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
         GameScene::Vs
             | GameScene::VsTimeUp
             | GameScene::VsTimeUpSign
+            | GameScene::VsSuddenDeath
             | GameScene::VsCpu
+            | GameScene::VsPause
             | GameScene::CpuWalk
             | GameScene::CpuJump
     ) {
@@ -441,6 +447,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsTimeUpSign
             | GameScene::VsSuddenDeath
             | GameScene::VsCpu
+            | GameScene::VsPause
     ) {
         return if tick == 6 { -80 } else { 0 };
     }
@@ -1160,11 +1167,28 @@ unsafe fn training_frame(
     stage_map: &mut Option<alloc::boxed::Box<ssb_psp_runtime::scene::StageMap>>,
     stage_ctl: &mut ssb_game::stage::Stage,
     controller: ControllerState,
+    pressed: N64Buttons,
     mut battle: Option<&mut ssb_game::battle::Battle>,
     damage_hud: &mut Hud,
 ) -> bool {
     use ssb_game::battle::{Frame, GameStatus};
+    if let Some(b) = battle.as_deref_mut() {
+        pause_frame(p, stage_index, pl, damage_hud, b, controller, pressed);
+    }
     let frame = battle.as_mut().map(|b| (b.begin_frame(), b.status));
+    // `ifCommonBattlePauseRestoreInterfaceAll`: the camera eases back while
+    // the pause menu stays, then the turn is restored and the world runs.
+    if let (Some(pause), Some((f, status))) = (damage_hud.pause, frame) {
+        if status == GameStatus::Unpause && f == Frame::Frozen {
+            ssb_game::pause::ease_back(&mut pl.camera.pause_eye, pause.origin);
+            if let Some(stage) = p.stage(stage_index) {
+                pl.tick_camera(&stage, None);
+            }
+        } else if status == GameStatus::Go {
+            pl.camera.pause_eye = pause.origin;
+            damage_hud.pause = None;
+        }
+    }
     let (started, locked) = match frame {
         None => (true, false),
         Some((Frame::Run, status)) => (status != GameStatus::Wait, status == GameStatus::Wait),
@@ -1202,6 +1226,82 @@ unsafe fn training_frame(
 struct Hud {
     damage: [ssb_game::hud::DamageDisplay; 2],
     countdown: Option<ssb_game::countdown::Countdown>,
+    pause: Option<PauseState>,
+}
+
+/// The pause menu's choices at the pause (`sIFCommonBattlePause*`).
+#[derive(Clone, Copy)]
+struct PauseState {
+    kind: ssb_game::pause::PauseKind,
+    /// `sIFCommonBattlePauseCameraEyeXOrigin`/`YOrigin`.
+    origin: (f32, f32),
+}
+
+/// `ifCommonBattleGoUpdateInterface`'s START and
+/// `ifCommonBattlePauseUpdateInterface`: pause on START during Go, zooming
+/// on the player when in bounds; in the menu steer the view, resume on
+/// START, reset on A+B+R+Z, and run the zoom camera.
+#[inline(never)]
+fn pause_frame(
+    p: &Pack<'_>,
+    stage_index: u32,
+    pl: &mut play::FighterScene,
+    hud: &mut Hud,
+    b: &mut ssb_game::battle::Battle,
+    controller: ControllerState,
+    pressed: N64Buttons,
+) {
+    use ssb_game::battle::GameStatus;
+    use ssb_game::pause::{self, PauseKind};
+    let Some(stage) = p.stage(stage_index) else {
+        return;
+    };
+    let bounds = ssb_game::camera::Bounds {
+        top: f32::from(stage.camera.top),
+        bottom: f32::from(stage.camera.bottom),
+        left: f32::from(stage.camera.left),
+        right: f32::from(stage.camera.right),
+    };
+    match b.status {
+        GameStatus::Go if pressed.contains(N64Buttons::START) => {
+            hud.pause = Some(PauseState {
+                kind: pause::kind_for(pl.fighter.pos, bounds),
+                origin: pl.camera.pause_eye,
+            });
+            b.pause();
+        }
+        GameStatus::Pause => {
+            let Some(state) = hud.pause else { return };
+            if state.kind == PauseKind::Default {
+                pause::steer(&mut pl.camera.pause_eye, controller.stick_x, controller.stick_y);
+            }
+            if pressed.contains(N64Buttons::START) {
+                // `gmCameraSetStatusPrev`: back to the battle camera.
+                b.unpause(state.kind != PauseKind::PlayerNA);
+                return;
+            }
+            let held = controller.buttons;
+            let combo = N64Buttons::A | N64Buttons::B | N64Buttons::R | N64Buttons::Z;
+            if pressed.0 != 0 && held.contains(combo) {
+                b.reset();
+                return;
+            }
+            if state.kind != PauseKind::PlayerNA {
+                // `gmCameraPlayerZoomFuncCamera`: the battle camera while
+                // the player is out of bounds.
+                if pause::kind_for(pl.fighter.pos, bounds) == PauseKind::PlayerNA {
+                    pl.tick_camera(&stage, None);
+                } else {
+                    let mut pos = pl.fighter.pos;
+                    pos.y += pl.cam_offset_y;
+                    let dist = p.fighter(pl.fighter.kind as u32).map_or(1000.0, |d| d.closeup_camera_zoom);
+                    pl.camera
+                        .tick_player_zoom(pos, (0.0, 0.0), dist, pause::ZOOM_PAN_SCALE, pause::ZOOM_FOV);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 impl Hud {
@@ -1212,6 +1312,7 @@ impl Hud {
                 ssb_game::hud::DamageDisplay::new(1, 0),
             ],
             countdown: None,
+            pause: None,
         }
     }
 }
@@ -1719,7 +1820,7 @@ unsafe fn run() -> ! {
                 Screen::Training => {
                     // START is navigation-only here. B belongs to the fighter's
                     // source special-input path and must reach `pl.tick` below.
-                    // A VS battle has no pause menu yet, so START does nothing.
+                    // In a VS battle START is the pause menu's (`training_frame`).
                     if pressed.contains(N64Buttons::START) && vs_battle.is_none() {
                         screen = Screen::Menu;
                     }
@@ -1748,6 +1849,7 @@ unsafe fn run() -> ! {
                     &mut stage_map,
                     &mut stage_ctl,
                     controller,
+                    pressed,
                     vs_battle.as_mut(),
                     &mut damage_hud,
                 );
@@ -1755,9 +1857,10 @@ unsafe fn run() -> ! {
             // `scVSBattleStartScene`: a tied time battle goes to sudden
             // death on the same stage, then to the results.
             if vs_done {
+                let reset = vs_battle.as_ref().is_some_and(|b| b.is_reset);
                 let sudden = vs_battle
                     .as_ref()
-                    .filter(|b| !b.is_sudden_death)
+                    .filter(|b| !b.is_sudden_death && !b.is_reset)
                     .and_then(ssb_game::battle::Battle::sudden_death_battle);
                 match sudden {
                     Some(battle) => {
@@ -1778,6 +1881,13 @@ unsafe fn run() -> ! {
                                 damage_hud: &mut damage_hud,
                             },
                         );
+                    }
+                    // A reset from the pause menu leaves for the menu.
+                    None if reset => {
+                        play_state = None;
+                        dummy_state = None;
+                        vs_battle = None;
+                        screen = Screen::Menu;
                     }
                     None => screen = Screen::Results,
                 }
@@ -2605,8 +2715,14 @@ unsafe fn draw_training(
         Some((pl.fighter.kind, 0)),
         dummy_state.map(|d| (d.fighter.kind, ssb_game::hud::CPU_COLOR)),
     ];
-    // `ifCommonBattleInterfaceProcSet` hides every interface at Set.
+    // `ifCommonBattleInterfaceProcSet` hides every interface at Set, and
+    // `ifCommonBattlePauseInitInterface` while paused, when only the pause
+    // menu draws.
     if battle.is_some_and(|b| b.status == ssb_game::battle::GameStatus::Set) {
+        return;
+    }
+    if let Some(pause) = damage_hud.pause {
+        draw_pause_menu(gpu, p, draw_state, pause.kind);
         return;
     }
     draw_damage_hud(p, draw_state, &damage_hud.damage, fighters, stage_index);
@@ -2684,6 +2800,50 @@ fn draw_damage_hud(
                 meshdraw::draw_sprite(p, &sprite, &d, draw_state);
             }
         }
+    }
+}
+
+/// `ifCommonBattlePauseProcDisplay`'s white border, then the "1P" and the
+/// decals (`ifCommonBattlePauseMakeInterface`).
+#[inline(never)]
+fn draw_pause_menu(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    kind: ssb_game::pause::PauseKind,
+) {
+    use ssb_game::pause;
+    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
+    let px = |x: i16| (vx as f32 + f32::from(x) * k) as i32;
+    let py = |y: i16| (f32::from(y) * k) as i32;
+    for [ulx, uly, lrx, lry] in pause::BORDER {
+        // `G_CYC_FILL` covers both corners.
+        gpu.draw_rect(px(ulx), py(uly), px(lrx + 1), py(lry + 1), Color::rgba(0xFF, 0xFF, 0xFF, 0xFF));
+    }
+    draw_state.invalidate_all();
+    let f = &ssb_rom::sprite::BATTLE_PAUSE;
+    let sprite = |i: u8| f.offsets.get(usize::from(i)).and_then(|&at| p.sprite(f.file, at));
+    let mut draw = |i: u8, (x, y): (i16, i16), prim: [u8; 3], env: [u8; 3]| {
+        if let Some(s) = sprite(i) {
+            let d = meshdraw::SObjDraw {
+                x: f32::from(x),
+                y: f32::from(y),
+                scale: 1.0,
+                prim: [prim[0], prim[1], prim[2], 0xFF],
+                env,
+                solid: false,
+                attr: ssb_game::countdown::ATTR_TRANSPARENT,
+            };
+            unsafe {
+                meshdraw::draw_sprite(p, &s, &d, draw_state);
+            }
+        }
+    };
+    // Port 0 paused: "1P".
+    draw(0, pause::PLAYER_NUM_POS, [0xFF; 3], [0; 3]);
+    for d in pause::decals(kind) {
+        draw(d.sprite, d.pos, d.prim, d.env);
     }
 }
 
