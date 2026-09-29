@@ -148,6 +148,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::VsSuddenDeath => 4150,
         // Paused at tick 500; 60 ticks of the zoom.
         GameScene::VsPause => 560,
+        // The VS mode menu after its four inputs.
+        GameScene::VsModeMenu => 60,
         // The dummy's CPU has paced for some 190 ticks, or jumped several
         // times.
         GameScene::CpuWalk => 200,
@@ -247,9 +249,13 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsSuddenDeath
             | GameScene::VsCpu
             | GameScene::VsPause
+            | GameScene::VsModeMenu
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
+            // `vsmode`: Rule, to Stock, then Time/Stock, one more stock.
+            20 | 40 if scene == GameScene::VsModeMenu => N64Buttons(N64Buttons::D_DOWN),
+            30 | 50 if scene == GameScene::VsModeMenu => N64Buttons(N64Buttons::D_RIGHT),
             // `vspause`: START 109 ticks after "Go".
             500 if scene == GameScene::VsPause => N64Buttons(N64Buttons::START),
             _ => N64Buttons(0),
@@ -392,6 +398,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsSuddenDeath
             | GameScene::VsCpu
             | GameScene::VsPause
+            | GameScene::VsModeMenu
             | GameScene::CpuWalk
             | GameScene::CpuJump
     ) {
@@ -448,6 +455,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsSuddenDeath
             | GameScene::VsCpu
             | GameScene::VsPause
+            | GameScene::VsModeMenu
     ) {
         return if tick == 6 { -80 } else { 0 };
     }
@@ -979,6 +987,8 @@ enum Screen {
     StageSelect,
     /// A VS battle's results: the winner's slot lit (RE-389).
     Results,
+    /// The VS mode menu (`mnVSMode`, `ssb_game::vs_mode`, RE-399).
+    VsMode,
     /// Training Mode: a real stage and a real, physics-ticked fighter now
     /// draw here (`draw_training`) -- no combat yet, see
     /// `plans/gameplay/F1.md` acceptance criteria 5-7 for what still has to
@@ -1044,7 +1054,7 @@ enum CaptureRoute {
 fn capture_route(scene: GameScene) -> CaptureRoute {
     match scene {
         GameScene::StageSelect => CaptureRoute::StageSelect,
-        GameScene::FighterSelect => CaptureRoute::Selects,
+        GameScene::FighterSelect | GameScene::VsModeMenu => CaptureRoute::Selects,
         _ => CaptureRoute::Direct,
     }
 }
@@ -1641,6 +1651,10 @@ unsafe fn run() -> ! {
     let mut vs = false;
     let mut vs_battle: Option<ssb_game::battle::Battle> = None;
     let mut maps_vsmode_gkind = ssb_game::stage_select::DEFAULT_GKIND;
+    // `gSCManagerTransferBattleState`'s rule, time and stocks, which the VS
+    // mode menu edits and every VS battle reads.
+    let mut vs_menu_rules = VsRules::DEFAULT;
+    let mut vs_mode = ssb_game::vs_mode::VsMode::new(ssb_game::vs_mode::VsRule::Time, 3, 2, false);
     let mut fighter_select: Option<ssb_game::fighter_select::FighterSelect> = None;
     let mut sim_frame_index: u64 = 0;
     #[cfg(feature = "headless_capture")]
@@ -1730,17 +1744,35 @@ unsafe fn run() -> ! {
                         } else if route == Some(CaptureRoute::StageSelect) {
                             stage_select = ssb_game::stage_select::StageSelect::new(maps_training_gkind, 0);
                             screen = Screen::StageSelect;
+                        } else if vs {
+                            // `mnVSModeFuncStartVars` from the last settings.
+                            vs_mode = vs_mode_menu(vs_menu_rules);
+                            screen = Screen::VsMode;
                         } else {
-                            // Captures read the frame counter for the CPU's
-                            // random fighter, so they stay deterministic.
-                            let time_byte = sim_frame_index as u8;
-                            fighter_select = Some(ssb_game::fighter_select::FighterSelect::new(
-                                training_scene,
-                                FIGHTER_MASK,
-                                || if capture_scene.is_some() { time_byte } else { clock_byte() },
-                            ));
+                            fighter_select =
+                                Some(new_fighter_select(training_scene, capture_scene.is_some(), sim_frame_index));
                             screen = Screen::FighterSelect;
                         }
+                    }
+                }
+                Screen::VsMode => {
+                    use ssb_game::vs_mode::Action;
+                    match vs_mode_frame(&mut vs_mode, controller, pressed) {
+                        Action::Start => {
+                            // `mnVSModeSaveSettings`.
+                            vs_menu_rules = VsRules {
+                                rule: vs_mode.rule.battle_rule(),
+                                time_limit: vs_mode.time,
+                                stocks: vs_mode.stocks(),
+                            };
+                            fighter_select =
+                                Some(new_fighter_select(training_scene, capture_scene.is_some(), sim_frame_index));
+                            screen = Screen::FighterSelect;
+                        }
+                        Action::Back => screen = Screen::Menu,
+                        Action::Title => screen = Screen::Intro,
+                        // VS Options is not ported.
+                        Action::Options | Action::None => {}
                     }
                 }
                 Screen::FighterSelect => {
@@ -1780,7 +1812,7 @@ unsafe fn run() -> ! {
                             pack.as_ref(),
                             saved.gkind,
                             training_scene,
-                            vs.then_some(VsRules::DEFAULT),
+                            vs.then_some(vs_menu_rules),
                             &mut vs_battle,
                             &mut TrainingWorld {
                                 play_state: &mut play_state,
@@ -1904,6 +1936,11 @@ unsafe fn run() -> ! {
                 gpu.begin_frame(Some(BG_MENU));
                 draw_menu(&mut gpu, cursor);
             }
+            Screen::VsMode => {
+                gpu.set_viewport_fullscreen();
+                gpu.begin_frame(Some(BG_MENU));
+                draw_vs_mode(&mut gpu, &vs_mode);
+            }
             Screen::FighterSelect => {
                 gpu.set_viewport_fullscreen();
                 gpu.begin_frame(Some(BG_MENU));
@@ -1999,6 +2036,85 @@ fn draw_menu(gpu: &mut Gpu, cursor: usize) {
         };
         gpu.draw_rect(LEFT, y0, LEFT + ENTRY_WIDTH, y0 + ENTRY_HEIGHT, color);
     }
+}
+
+/// The character select from the last scene data. Captures read the frame
+/// counter for the CPU's random fighter, so they stay deterministic.
+#[inline(never)]
+fn new_fighter_select(
+    scene: ssb_game::fighter_select::SceneData,
+    capture: bool,
+    frame: u64,
+) -> ssb_game::fighter_select::FighterSelect {
+    let time_byte = frame as u8;
+    ssb_game::fighter_select::FighterSelect::new(scene, FIGHTER_MASK, || {
+        if capture { time_byte } else { clock_byte() }
+    })
+}
+
+/// One frame of `mnVSModeMain`. Out of [`run`] so `run` stays inside MIPS
+/// branch range.
+#[inline(never)]
+fn vs_mode_frame(
+    m: &mut ssb_game::vs_mode::VsMode,
+    controller: ControllerState,
+    pressed: N64Buttons,
+) -> ssb_game::vs_mode::Action {
+    m.tick(ssb_game::vs_mode::Input {
+        hold: controller.buttons.0,
+        tap: pressed.0,
+        stick_x: controller.stick_x,
+        stick_y: controller.stick_y,
+    })
+}
+
+/// `mnVSModeFuncStartVars`'s rule, time and stock from the battle settings.
+fn vs_mode_menu(rules: VsRules) -> ssb_game::vs_mode::VsMode {
+    use ssb_game::vs_mode::{VsMode, VsRule};
+    let rule = match rules.rule {
+        ssb_game::battle::Rule::Time => VsRule::Time,
+        ssb_game::battle::Rule::Stock => VsRule::Stock,
+    };
+    VsMode::new(rule, rules.time_limit, rules.stocks.max(0) as u8, false)
+}
+
+/// The VS mode menu as plain slots: the four buttons, the cursor's lit,
+/// the rule's four values with the chosen one lit, and the time or stock as
+/// a bar (full for an infinite time). The menu's sprites are not drawn.
+#[inline(never)]
+fn draw_vs_mode(gpu: &mut Gpu, m: &ssb_game::vs_mode::VsMode) {
+    use ssb_game::vs_mode::{Button, VsRule};
+    const LEFT: i32 = 40;
+    const TOP: i32 = 40;
+    const HEIGHT: i32 = 32;
+    const GAP: i32 = 16;
+    const WIDTH: i32 = 160;
+    let buttons = [Button::Start, Button::Rule, Button::TimeStock, Button::Options];
+    for (i, b) in buttons.into_iter().enumerate() {
+        let y0 = TOP + i as i32 * (HEIGHT + GAP);
+        let color = if b == m.cursor { ENTRY_SELECTED } else { ENTRY_ENABLED };
+        gpu.draw_rect(LEFT, y0, LEFT + WIDTH, y0 + HEIGHT, color);
+    }
+    let rules = [VsRule::Time, VsRule::Stock, VsRule::TimeTeam, VsRule::StockTeam];
+    let y0 = TOP + HEIGHT + GAP;
+    for (i, r) in rules.into_iter().enumerate() {
+        let x0 = LEFT + WIDTH + 16 + i as i32 * 40;
+        let color = if r == m.rule { ENTRY_SELECTED } else { ENTRY_DISABLED };
+        gpu.draw_rect(x0, y0, x0 + 32, y0 + HEIGHT, color);
+    }
+    let y0 = TOP + 2 * (HEIGHT + GAP);
+    let fraction = if m.rule.is_time() {
+        if m.time == ssb_game::battle::TIMELIMIT_INFINITE {
+            1.0
+        } else {
+            f32::from(m.time) / 99.0
+        }
+    } else {
+        f32::from(m.stock + 1) / 99.0
+    };
+    let x0 = LEFT + WIDTH + 16;
+    gpu.draw_rect(x0, y0, x0 + 152, y0 + HEIGHT, ENTRY_DISABLED);
+    gpu.draw_rect(x0, y0, x0 + (152.0 * fraction) as i32, y0 + HEIGHT, ENTRY_SELECTED);
 }
 
 /// Draws the character select in N64 screen coordinates scaled onto the
