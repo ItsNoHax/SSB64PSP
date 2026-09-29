@@ -176,7 +176,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `vsmode`) | `f1-vs-mode-menu` | The VS mode menu as plain slots after Rule → Stock and one more stock | RE-399 |
 | `golden_capture` (`psp-game`, scene `vsnocontest`) | `f1-vs-no-contest` | A VS battle reset from the pause menu, at results tic 117 (tick 640): the random blue wallpaper, the KOs and TKO rows, both Marios one row back clapping under their tags, and "NO CONTEST" | RE-400, RE-409, RE-410 |
 | `golden_capture` (`psp-game`, scene `vsresults`) | `f1-vs-results` | A one-stock battle Luigi loses by running off Dream Land, at tick 1100: Kirby in front holding his last Win frame, Luigi behind turned to him and clapping, over the blue wallpaper, with the tags, the Place and KOs rows, the bar, the header and "KIRBY WINS!" | RE-409, RE-410 |
-| `golden_capture` (`psp-game`, scene `vsplayers`) | `f1-vs-players` | The VS character select as plain slots: Yoshi placed, a CPU opened in port 2 | RE-404 |
+| `golden_capture` (`psp-game`, scene `vsplayers`) | `f1-vs-players` | The VS character select at select tic 65: Yoshi placed on port 1's red card, a CPU (Donkey Kong, in his Win1 clip) opened in port 2 with its CP level, the NA doors shut, the stone wallpaper, portraits, pucks, hand and the "Ready to fight" banner | RE-404, RE-411 |
 | `golden_capture` (`psp-game`, scene `vs4`) | `f1-vs-four` | Mario against three CPUs (Fox, Donkey Kong, Kirby) on Dream Land at tick 870, four damage displays | RE-405 |
 | `golden_capture` (`psp-game`, scene `vsteam`) | `f1-vs-team` | A team battle on Dream Land at tick 940: Mario and Kirby (red) against Fox and Donkey Kong (blue) in team costumes and emblem colours, Kirby's attack passing through Mario | RE-407 |
 | `golden_capture` (`psp-game`, scene `rebirth`) | `f1-training-rebirth` | Mario after a KO below Dream Land, standing at the rebirth point in `RebirthStand` (the halo is not drawn) | RE-388 |
@@ -650,3 +650,12 @@ has its rows. `f1-vs-results` (337,000 pixels at 2×) and
 `f1-vs-no-contest` (338,384) were rebaselined, identical in both captures.
 The other 108 goldens are unchanged by the new pack. 110 of 110 goldens
 match.
+
+## 2026-09-29 RE-411 VS character select
+
+Pack v64, now 30,405,424 bytes (SHA-256 `720bbc89…`) with the select's
+sprites. The VS character select draws its wallpaper, top bar, portraits,
+panels, pucks, cursors, banner and fighters. `f1-vs-players` (521,684
+pixels at 2×) was rebaselined, identical in both captures; its capture
+stays at tick 85. The other 109 goldens are unchanged by the new pack.
+110 of 110 goldens match.

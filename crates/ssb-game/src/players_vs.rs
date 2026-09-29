@@ -4,9 +4,11 @@
 //! picks and syncs, the free-for-all / team battle toggle, the team, CPU
 //! level and handicap buttons, the time or stock arrows, the back button,
 //! the ready check, and the battle settings saved on the way out
-//! (`mnPlayersVSSetSceneData`). The portraits, fighter models, names,
-//! gates and shutters, spotlight, puck glow, flashes, blinking and sounds
-//! are presentation and stay with the host.
+//! (`mnPlayersVSSetSceneData`). The display GObjs' state (portraits,
+//! gates and shutters, names, levels, flashes, blinking, puck glow, the
+//! ready banner and the fighters' turn and status) is [`layer`]'s (RE-411);
+//! the logic updates it at the source's call sites. Drawing, the spotlight
+//! and sounds stay with the host.
 //!
 //! One [`PlayersVs::tick`] runs the scene's processes in the original
 //! order: `mnPlayersVSFuncRun` (the scene GObj's `func_run`), then the
@@ -27,12 +29,7 @@
 //! used.
 //!
 //! Not ported:
-//! - The GObj display flags (`mnPlayersVSUpdatePuckDisplay`'s hide/show,
-//!   the spotlight, ready banner and arrow blinking, the portrait flash,
-//!   `mnPlayersVSFighterProcUpdate`'s turn and `is_status_selected`).
-//!   [`PlayersVs::puck_visible`] gives `mnPlayersVSPuckProcUpdate`'s rule.
-//! - The shutter doors' `door_offset`, which only moves sprites.
-//! - `mnPlayersVSGetNextPortraitX`'s slide-in of the portraits.
+//! - The spotlight (`mnPlayersVSMakeSpotlight`), a 3D model.
 //! - `func_800266A0_272A0` and every sound or announcer voice.
 
 use ssb_engine::input::{ControllerState, N64Buttons};
@@ -338,6 +335,8 @@ pub struct PlayersVs {
     /// `gSCManagerTransferBattleState` as this scene leaves it.
     saved: BattleState,
     pending: Option<Outcome>,
+    /// The display GObjs' state (RE-411).
+    pub view: layer::View,
 }
 
 /// `mnPlayersVSGetNextTimeValue`.
@@ -450,6 +449,7 @@ impl PlayersVs {
             seq: 0,
             saved: state,
             pending: None,
+            view: layer::View::default(),
         };
         for p in 0..PLAYERS {
             if state.is_reset_players {
@@ -463,6 +463,7 @@ impl PlayersVs {
         for p in 0..PLAYERS {
             select.init_slot(p);
         }
+        select.v_init();
         select
     }
 
@@ -792,6 +793,7 @@ impl PlayersVs {
         }
         self.puck_adjust();
         self.costume_sync();
+        self.view_tick();
         self.pending
     }
 
@@ -909,6 +911,7 @@ impl PlayersVs {
         self.update_puck_display(p);
         self.update_cursor_display(p);
         self.update_fighter(p);
+        self.v_update_name_and_emblem(p);
     }
 
     /// `mnPlayersVSRandFighterKind`: an unlocked fighter, with `p`'s puck
@@ -932,6 +935,8 @@ impl PlayersVs {
             h.is_selected = true;
             h.is_fighter_selected = true;
             self.update_cursor_placement_priorities(Some(p), held);
+            self.v_update_handicap_level(held);
+            self.v_make_portrait_flash(held);
         }
     }
 
@@ -948,6 +953,8 @@ impl PlayersVs {
                 s.held = Some(p);
                 self.update_cursor_grab_priorities(p, p);
                 self.slots[p].is_cursor_adjusting = false;
+                self.v_make_player_kind(p);
+                self.v_set_gate_lut(p);
             }
             PlayerKind::Com => {
                 self.release_held(p);
@@ -961,6 +968,8 @@ impl PlayersVs {
                     self.slots[p].fkind = Some(self.rand_fighter_kind(p, time_byte));
                 }
                 self.slots[p].is_cursor_adjusting = false;
+                self.v_make_player_kind(p);
+                self.v_set_gate_lut(p);
             }
             PlayerKind::Not => {
                 if let Some(holder) = self.slots[p].holder {
@@ -1017,6 +1026,7 @@ impl PlayersVs {
         let skip =
             s.has_fighter && (s.pkind == PlayerKind::Not || (s.fkind.is_none() && !s.is_selected));
         if skip {
+            self.v_hide_fighter(p);
             return;
         }
         self.slots[p].shade = self.shade(p);
@@ -1024,7 +1034,9 @@ impl PlayersVs {
             // `mnPlayersVSMakeFighter`.
             self.slots[p].costume = self.free_costume(kind, p);
             self.slots[p].has_fighter = true;
+            self.v_make_fighter(p);
         }
+        self.v_clear_status_selected(p);
     }
 
     /// `mnPlayersVSCheckPlayerKindSelect`: `p`'s cursor on `sel`'s
@@ -1048,7 +1060,11 @@ impl PlayersVs {
         self.refresh_player_kind(sel, time_byte);
         match self.slots[sel].pkind {
             PlayerKind::Man => self.slots[sel].holder = Some(sel),
-            PlayerKind::Com => self.slots[sel].holder = None,
+            PlayerKind::Com => {
+                self.slots[sel].holder = None;
+                self.v_update_handicap_level(sel);
+                self.v_make_portrait_flash(sel);
+            }
             PlayerKind::Not => {}
         }
         true
@@ -1149,6 +1165,7 @@ impl PlayersVs {
     /// `mnPlayersVSUpdateGateAll`'s costume and shade updates.
     fn update_gate_all(&mut self) {
         for i in 0..PLAYERS {
+            self.v_set_gate_lut(i);
             let Some(kind) = self.slots[i].fkind else {
                 continue;
             };
@@ -1172,6 +1189,8 @@ impl PlayersVs {
             if self.slots[i].pkind != PlayerKind::Not && team_select_in_range(c, i) {
                 let s = &mut self.slots[i];
                 s.team = if s.team == TEAM_GREEN { 0 } else { s.team + 1 };
+                self.v_set_gate_lut(i);
+                let s = &mut self.slots[i];
                 if let Some(kind) = s.fkind {
                     s.costume = costume_team_id(kind, s.team);
                     self.slots[i].shade = self.shade(i);
@@ -1203,12 +1222,14 @@ impl PlayersVs {
             if handicap_arrow_r_in_range(c, i) {
                 if *value < VALUE_MAX {
                     *value += 1;
+                    self.v_make_handicap_value(i);
                 }
                 return true;
             }
             if handicap_arrow_l_in_range(c, i) {
                 if *value > VALUE_MIN {
                     *value -= 1;
+                    self.v_make_handicap_value(i);
                 }
                 return true;
             }
@@ -1302,6 +1323,10 @@ impl PlayersVs {
         self.slots[p].cursor_status = CursorStatus::Hover;
         self.slots[p].held = None;
         self.slots[held].is_fighter_selected = true;
+        if self.handicap != Handicap::Off || self.slots[held].pkind == PlayerKind::Com {
+            self.v_update_handicap_level(held);
+        }
+        self.v_make_portrait_flash(held);
     }
 
     /// Moves a GObj in its display list (`gcMoveGObjDL`).
@@ -1383,6 +1408,9 @@ impl PlayersVs {
         let (px, py) = self.slots[held].puck;
         self.slots[p].cursor_pickup = (px - 11.0, py - -14.0);
         self.slots[p].is_cursor_adjusting = true;
+        self.v_destroy_handicap_level(held);
+        self.v_destroy_portrait_flash(held);
+        self.v_update_name_and_emblem(held);
     }
 
     /// `mnPlayersVSCheckCursorPuckGrab`: pucks are tried from slot 4 down;
@@ -1495,6 +1523,7 @@ impl PlayersVs {
 
     /// `mnPlayersVSPuckProcUpdate`.
     fn puck_update(&mut self, p: usize, time_byte: &mut dyn FnMut() -> u8) {
+        self.view.slots[p].puck_shown = self.puck_visible(p);
         match self.slots[p].holder {
             Some(holder) if !self.slots[p].is_selected => {
                 let h = &self.slots[holder];
@@ -1532,6 +1561,7 @@ impl PlayersVs {
         if !self.slots[p].is_selected && kind != self.slots[p].fkind {
             self.slots[p].fkind = kind;
             self.update_fighter(p);
+            self.v_update_name_and_emblem(p);
         }
     }
 
@@ -1628,6 +1658,9 @@ impl PlayersVs {
         }
     }
 }
+
+#[path = "players_vs_layer.rs"]
+pub mod layer;
 
 #[cfg(test)]
 #[path = "players_vs_tests.rs"]

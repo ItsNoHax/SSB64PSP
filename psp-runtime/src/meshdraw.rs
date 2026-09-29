@@ -2205,6 +2205,176 @@ pub unsafe fn draw_sprite_xy(
     draw_state.invalidate_all();
 }
 
+/// A wrapping `SObj` (`cms`/`cmt` `G_TX_WRAP` with `masks`/`maskt`): the
+/// sprite repeated over `size` N64 pixels from `(d.x, d.y)`, texel for
+/// pixel, as `lbCommonDrawSObjBitmap`'s single texture rectangle of `lrs`
+/// by `lrt` (RE-411). An axis the sprite already fills is clamped, so only
+/// a power-of-two axis may wrap.
+///
+/// # Safety
+///
+/// As [`draw_sprite`].
+pub unsafe fn draw_sprite_tiled(
+    pack: &Pack<'_>,
+    sprite: &ssb_rom::pack::SpriteDesc,
+    d: &SObjDraw,
+    size: [f32; 2],
+    draw_state: &mut DrawState,
+) {
+    let Some(t) = pack.texture(sprite.texture) else {
+        return;
+    };
+    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    sys::sceGuTexScale(1.0, 1.0);
+    sys::sceGuTexOffset(0.0, 0.0);
+    let wrap = |extent: f32, own: u16| {
+        if extent > f32::from(own) {
+            sys::GuTexWrapMode::Repeat
+        } else {
+            sys::GuTexWrapMode::Clamp
+        }
+    };
+    sys::sceGuTexWrap(wrap(size[0], sprite.width), wrap(size[1], sprite.height));
+    let (_, vertex) = sprite_combiner(sprite, d);
+    sprite_blend(d.attr);
+    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
+    let x0 = vx as f32 + d.x * k;
+    let y0 = d.y * k;
+    sobj_rect(
+        [(0.0, 0.0, x0, y0), (size[0], size[1], x0 + size[0] * k, y0 + size[1] * k)],
+        u32::from_le_bytes(vertex),
+    );
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuEnable(GuState::CullFace);
+    draw_state.invalidate_all();
+}
+
+/// `mnPlayersVSPuckProcDisplay`'s `(TEXEL0 - PRIMITIVE) * ENVIRONMENT +
+/// PRIMITIVE` with a white primitive and a grey `glow` environment, alpha
+/// `TEXEL0`, blended (RE-411): the texel lerped towards white by `1 -
+/// glow`. Drawn in two passes: the texel scaled by `glow` over the
+/// background, then white scaled by `1 - glow` added through the same
+/// alpha.
+///
+/// # Safety
+///
+/// As [`draw_sprite`].
+pub unsafe fn draw_sprite_glow(
+    pack: &Pack<'_>,
+    sprite: &ssb_rom::pack::SpriteDesc,
+    x: f32,
+    y: f32,
+    glow: u8,
+    draw_state: &mut DrawState,
+) {
+    let Some(t) = pack.texture(sprite.texture) else {
+        return;
+    };
+    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    sys::sceGuTexScale(1.0, 1.0);
+    sys::sceGuTexOffset(0.0, 0.0);
+    sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
+    sys::sceGuDisable(GuState::Lighting);
+    sys::sceGuDisable(GuState::DepthTest);
+    sys::sceGuDisable(GuState::CullFace);
+    sys::sceGuDisable(GuState::AlphaTest);
+    sys::sceGuEnable(GuState::Blend);
+    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
+    let (w, h) = (f32::from(sprite.width), f32::from(sprite.height));
+    let x0 = vx as f32 + x * k;
+    let y0 = y * k;
+    let corners = [(0.0, 0.0, x0, y0), (w, h, x0 + w * k, y0 + h * k)];
+    // The texel times `glow`, alpha-blended.
+    sys::sceGuTexFunc(sys::TextureEffect::Modulate, sys::TextureColorComponent::Rgba);
+    sys::sceGuBlendFunc(
+        sys::BlendOp::Add,
+        sys::BlendFactor::SrcAlpha,
+        sys::BlendFactor::OneMinusSrcAlpha,
+        0,
+        0,
+    );
+    sobj_rect(corners, u32::from_le_bytes([glow, glow, glow, 0xFF]));
+    // White times `1 - glow` through the texel's alpha, added.
+    let rest = 0xFF - glow;
+    sys::sceGuTexEnvColor(u32::from_le_bytes([rest, rest, rest, 0xFF]));
+    sys::sceGuTexFunc(sys::TextureEffect::Blend, sys::TextureColorComponent::Rgba);
+    sys::sceGuBlendFunc(sys::BlendOp::Add, sys::BlendFactor::SrcAlpha, sys::BlendFactor::Fix, 0, 0xFFFF_FFFF);
+    sobj_rect(corners, u32::from_le_bytes([rest, rest, rest, 0xFF]));
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuEnable(GuState::CullFace);
+    draw_state.invalidate_all();
+}
+
+/// `draw_sprite_xy`'s texture function: `Blend` for a tinted or solid
+/// sprite (vertex = environment, texture environment = primitive), else
+/// `Modulate` by white. Returns whether it tinted and the vertex colour.
+unsafe fn sprite_combiner(sprite: &ssb_rom::pack::SpriteDesc, d: &SObjDraw) -> (bool, [u8; 4]) {
+    let tinted = sprite.flags & ssb_rom::pack::SpriteDesc::TINTED != 0;
+    let vertex = if d.solid {
+        [d.prim[0], d.prim[1], d.prim[2], 0xFF]
+    } else if tinted {
+        [d.env[0], d.env[1], d.env[2], d.prim[3]]
+    } else {
+        [0xFF; 4]
+    };
+    if d.solid || tinted {
+        sys::sceGuTexEnvColor(u32::from_le_bytes([d.prim[0], d.prim[1], d.prim[2], 0xFF]));
+        sys::sceGuTexFunc(sys::TextureEffect::Blend, sys::TextureColorComponent::Rgba);
+    } else {
+        sys::sceGuTexFunc(sys::TextureEffect::Modulate, sys::TextureColorComponent::Rgba);
+    }
+    (tinted, vertex)
+}
+
+/// `draw_sprite_xy`'s render state: blended under `SP_TRANSPARENT` or
+/// `SP_CLOUD`, else opaque.
+unsafe fn sprite_blend(attr: u16) {
+    sys::sceGuDisable(GuState::Lighting);
+    sys::sceGuDisable(GuState::DepthTest);
+    sys::sceGuDisable(GuState::CullFace);
+    sys::sceGuDisable(GuState::AlphaTest);
+    if attr & (ssb_rom::sprite::SP_TRANSPARENT | ssb_rom::sprite::SP_CLOUD) != 0 {
+        sys::sceGuEnable(GuState::Blend);
+        sys::sceGuBlendFunc(
+            sys::BlendOp::Add,
+            sys::BlendFactor::SrcAlpha,
+            sys::BlendFactor::OneMinusSrcAlpha,
+            0,
+            0,
+        );
+    } else {
+        sys::sceGuDisable(GuState::Blend);
+    }
+}
+
+/// One `GU_SPRITES` rectangle from two `(u, v, x, y)` corners.
+unsafe fn sobj_rect(corners: [(f32, f32, f32, f32); 2], abgr: u32) {
+    let verts = sys::sceGuGetMemory((2 * core::mem::size_of::<SObjVertex>()) as i32)
+        as *mut SObjVertex;
+    for (i, (u, v, px, py)) in corners.into_iter().enumerate() {
+        verts.add(i).write(SObjVertex {
+            u,
+            v,
+            color: abgr,
+            x: px,
+            y: py,
+            z: 0.0,
+        });
+    }
+    sys::sceGuDrawArray(
+        GuPrimitive::Sprites,
+        VertexType::TEXTURE_32BITF
+            | VertexType::COLOR_8888
+            | VertexType::VERTEX_32BITF
+            | VertexType::TRANSFORM_2D,
+        2,
+        core::ptr::null(),
+        verts as *const c_void,
+    );
+}
+
 /// An untextured `gDPFillRectangle` over `[x0, y0, x1, y1)` in N64 screen
 /// pixels, mapped onto the pillarboxed viewport, blended by `rgba`'s alpha
 /// (`G_RM_AA_XLU_SURF`) below 0xFF.

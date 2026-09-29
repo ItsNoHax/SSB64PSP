@@ -7,43 +7,46 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** the VS results screen's 2D layer (RE-410): the
-  wallpaper, fades, player tags, winner text, tint and table from
-  `mnvsresults.c`, with their tics, positions and colours. Before it: the
-  results' fighters (RE-409).
-- **Next gameplay batch:** the VS character select's presentation
-  (`mn/mnplayers/mnplayersvs.c`: portraits, panels, names and the
-  fighters on the select), the last VS screen still drawn as plain slots.
+- **Completed batch:** the VS character select's presentation (RE-411):
+  `mnplayersvs.c`'s wallpaper, top bar, sliding portraits and flash,
+  panels with shutters, names, emblems, levels and arrows, glowing pucks,
+  cursors, ready banner, and each slot's fighter turning and playing its
+  selected clip.
+- **Next gameplay batch:** the KO presentation (`ftCommonDead*` and
+  `efManager`'s dead effects: the blast explosion, star KO sparkle, screen
+  flash and top-out fade, and the rebirth halo). VS item spawning waits
+  on the item kinds.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
-| Results layer | `ssb_game::results_layer`; sprite files 18, 34, 36, 38 packed; two goldens rebaselined | RE-410 |
-| Results fighters | `ssb_game::results_scene`, `psp-game` `results_screen`; new `f1-vs-results` golden, `f1-vs-no-contest` rebaselined | RE-409 |
+| VS select presentation | `players_vs::layer`, `players_screen`; sprite files 0, 17, 19–21 and eight gate LUTs packed; `f1-vs-players` rebaselined | RE-411 |
+| Results layer | `results_layer`; sprite files 18, 34, 36, 38 packed | RE-410 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
   Pinned 1.98.0 Clippy with warnings denied and workspace rustfmt passed in
-  RE-410; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
+  RE-411; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: all 110 goldens match (RE-410). Scene captures
-  time out at 60 s. No golden passes through a platform.
+- PPSSPPHeadless: all 110 goldens match (RE-411); captures time out at
+  60 s.
 - PSP-2000: scripted Training held 16,682 µs per frame (RE-360).
-- Pack v64: 29,127,792 bytes, SHA-256
-  `abb0b38a5e472408faadb64511613e5a6f03ca3e1e826cea3c58b2219946eb66`.
-- `run` is 20,800 bytes in release (RE-410); the MIPS branch range is
+- Pack v64: 30,405,424 bytes, SHA-256
+  `720bbc897adb249921a50ce9e2382d1ea75ecfcc1881308ed39c198e55e82e67`.
+- `run` is 20,956 bytes in release (RE-411); the MIPS branch range is
   128 KB. Its stack frame is about 4 KB; the largest frame is
   `enter_training` at about 128 KB, within the 256 KB main-thread stack.
-- Physical PSP last checked in RE-361 (PSP-2000 Slim, 6.61 ARK, pack v43).
+- Physical PSP last checked in RE-361 (PSP-2000, 6.61 ARK, pack v43).
 
 ## Blockers and remaining scope
 
-- No stage draws its wallpaper; the selects draw plain slots (TODO). Converted
-  sprites: damage digits, emblems, stock icons, files 18, 34, 36, 37, 38,
-  82, 165, 197. The results' emblem and confetti are not drawn (RE-410).
+- No stage draws its wallpaper; the Training and stage selects draw plain
+  slots (TODO). Converted sprites: damage digits, emblems, stock icons,
+  files 0, 17–21, 34, 36, 37, 38, 82, 165, 197. The results' emblem and
+  confetti and the VS select's spotlight are not drawn (RE-410, RE-411).
   With no save data, Mushroom Kingdom and the four unlockable fighters
   stay locked.
 - Sector Z Arwing, bonus stages and stage items (Bumper, POW Block,

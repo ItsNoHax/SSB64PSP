@@ -1209,6 +1209,9 @@ impl SpriteDesc {
     pub const ROLE_EMBLEM: u8 = 1;
     /// `FTSprites.stock_sprite` through `stock_luts[costume]`.
     pub const ROLE_STOCK: u8 = 2;
+    /// A sprite decoded through a swapped TLUT, `costume` naming which:
+    /// the VS gate card through `sprite::GATE_LUTS[costume]` (RE-411).
+    pub const ROLE_LUT: u8 = 3;
 }
 
 /// A per-costume mesh substitution for one node (RE-098).
@@ -4025,7 +4028,22 @@ impl<'a> Pack<'a> {
     pub fn sprite(&self, file: u32, offset: u32) -> Option<SpriteDesc> {
         (0..self.sprite_count)
             .filter_map(|i| self.sprite_at(i))
-            .find(|s| s.source_file == file && s.source_offset == offset)
+            .find(|s| {
+                s.source_file == file && s.source_offset == offset && s.role != SpriteDesc::ROLE_LUT
+            })
+    }
+
+    /// The sprite at `offset` of `file` through its `lut`th swapped TLUT
+    /// ([`SpriteDesc::ROLE_LUT`]).
+    pub fn sprite_lut(&self, file: u32, offset: u32, lut: u8) -> Option<SpriteDesc> {
+        (0..self.sprite_count)
+            .filter_map(|i| self.sprite_at(i))
+            .find(|s| {
+                s.source_file == file
+                    && s.source_offset == offset
+                    && s.role == SpriteDesc::ROLE_LUT
+                    && s.costume == lut
+            })
     }
 
     pub fn lod_blend_count(&self) -> u32 {
