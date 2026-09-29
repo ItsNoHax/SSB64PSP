@@ -224,7 +224,7 @@ fn cliff_is_tested_per_substep_and_an_occupied_corner_is_skipped() {
         facing: 1.0,
         wait: 0,
         reach: Vec2::new(100.0, 100.0),
-        occupied: None,
+        occupied: [None; 3],
     };
     let from = Vec3::new(-150.0, 100.0, 0.0);
     let to = Vec3::new(-150.0, -600.0, 0.0);
@@ -246,7 +246,7 @@ fn cliff_is_tested_per_substep_and_an_occupied_corner_is_skipped() {
         to,
         AirOptions {
             cliff: Some(CliffQuery {
-                occupied: Some((3, 1.0)),
+                occupied: [None, Some((3, 1.0)), None],
                 ..query
             }),
             ..AirOptions::default()
@@ -708,7 +708,7 @@ fn a_live_fighter_catches_with_hand_reach_and_respects_ledge_hog() {
     f.pos = Vec3::new(-150.0, -40.0, 0.0);
     f.cliff_reach = Vec2::new(100.0, 50.0);
     let mut occupied = f.clone();
-    occupied.occupied_cliff = Some((3, Facing::Right));
+    occupied.occupied_cliffs[0] = Some((3, Facing::Right));
     f.tick_map(|| [floor]);
     assert_eq!(f.status.status, AnyStatus::Common(Status::CliffCatch));
     assert_eq!(f.pos, Vec3::new(-100.0, 0.0, 0.0));

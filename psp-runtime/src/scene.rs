@@ -1130,14 +1130,27 @@ impl FighterScene {
         };
     }
 
+    /// This fighter as a battle-camera interest (`gmCameraUpdateInterests`'
+    /// per-fighter box): its position raised by `cam_offset_y`, its facing
+    /// and zoom, and whether it has idled long enough to zoom out.
+    pub fn camera_interest(&self) -> ssb_game::camera::Interest {
+        let mut target = self.fighter.pos;
+        target.y += self.cam_offset_y;
+        ssb_game::camera::Interest {
+            target_pos: target,
+            facing_left: matches!(self.fighter.facing, ssb_game::fighter::Facing::Left),
+            zoom_frame: self.camera_zoom_frame,
+            zoom_range: 1.0,
+            idle_zoomed_out: self.fighter.status.status == Status::Wait
+                && self.fighter.status.anim_frame >= 120.0,
+        }
+    }
+
     /// Advances the battle camera one tick from the fighter's current
-    /// position. `additional_camera_interest` is a second interest point
-    /// (e.g. a training dummy) the camera should also try to frame.
-    pub fn tick_camera(
-        &mut self,
-        stage: &StageDesc,
-        additional_camera_interest: Option<ssb_game::camera::Interest>,
-    ) {
+    /// position. `others` are up to three more interests (the other
+    /// fighters, [`FighterScene::camera_interest`]) the camera also frames;
+    /// any past the fourth interest are ignored.
+    pub fn tick_camera(&mut self, stage: &StageDesc, others: &[ssb_game::camera::Interest]) {
         if let Some((target, dist)) = self.entry_zoom {
             self.camera.tick_player_zoom(
                 target,
@@ -1155,24 +1168,12 @@ impl FighterScene {
             left: stage.camera.left as f32,
             right: stage.camera.right as f32,
         };
-        let mut target = self.fighter.pos;
-        target.y += self.cam_offset_y;
-        let primary = ssb_game::camera::Interest {
-            target_pos: target,
-            facing_left: matches!(self.fighter.facing, ssb_game::fighter::Facing::Left),
-            zoom_frame: self.camera_zoom_frame,
-            zoom_range: 1.0,
-            idle_zoomed_out: self.fighter.status.status == Status::Wait
-                && self.fighter.status.anim_frame >= 120.0,
-        };
-        let interests = [primary, additional_camera_interest.unwrap_or(primary)];
-        let interest_count = if additional_camera_interest.is_some() {
-            2
-        } else {
-            1
-        };
+        let primary = self.camera_interest();
+        let mut interests = [primary; 4];
+        let count = 1 + others.len().min(3);
+        interests[1..count].copy_from_slice(&others[..count - 1]);
         self.camera.tick_interests(
-            &interests[..interest_count],
+            &interests[..count],
             bounds,
             stage.camera_light_angle_z,
             vw as f32 / vh as f32,
@@ -1193,7 +1194,7 @@ impl FighterScene {
         additional_camera_interest: Option<ssb_game::camera::Interest>,
     ) {
         self.tick_fighter(pack, stage, input, jump_held);
-        self.tick_camera(stage, additional_camera_interest);
+        self.tick_camera(stage, additional_camera_interest.as_slice());
     }
 
     /// Starts the animation the current status calls for, then advances it.

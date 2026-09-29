@@ -161,6 +161,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // After "Go" the CPU closes in and lands hits (10%); at tick 690 it
         // pulls the player into a grab (`CatchPull`, RE-394).
         GameScene::VsCpu => 690,
+        // "Go" at 398. The camera frames the player alone, so this is a
+        // tick where the CPUs' fight has drawn all four into its view.
+        GameScene::Vs4 => 870,
     }
 }
 
@@ -191,7 +194,7 @@ fn deterministic_capture_frozen(scene: Option<GameScene>, sim_frame_index: u64) 
 /// Tick 4 confirms past the Intro screen. Tick 8 confirms Training: the menu
 /// cursor starts on `TRAINING_ENTRY` (`cursor: usize = 0` below), so no
 /// D-pad navigation is needed first. Training's first fighter tick is that
-/// same tick 8 (`play_state`/`dummy_state` are created and ticked once
+/// same tick 8 (`play_state`/`dummies` are created and ticked once
 /// within the same loop iteration as the confirm), so every tick below this
 /// point is expressed relative to that: "local tick N" (from
 /// `tools/romtool`'s `jumptest` subcommand, run against the real
@@ -256,6 +259,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsModeMenu
             | GameScene::VsNoContest
             | GameScene::VsPlayers
+            | GameScene::Vs4
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -421,6 +425,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsPause
             | GameScene::VsModeMenu
             | GameScene::VsNoContest
+            | GameScene::Vs4
             | GameScene::CpuWalk
             | GameScene::CpuJump
     ) {
@@ -487,6 +492,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsPause
             | GameScene::VsModeMenu
             | GameScene::VsNoContest
+            | GameScene::Vs4
     ) {
         return if tick == 6 { -80 } else { 0 };
     }
@@ -722,16 +728,76 @@ fn log_capture_state(
     }
 }
 
-/// One Training simulation frame: the stage controllers, both fighters'
-/// interrupt, physics and map passes, and the weapon and item pools. Kept
-/// out of [`run`] so `run` stays inside MIPS branch range.
+/// The CPU fighters beside the player's: `dummies[i]` is port `i + 1`.
+/// Boxed, since each [`play::Dummy`] is large and [`Session`] lives on
+/// `run`'s stack.
+type Dummies = [Option<alloc::boxed::Box<play::Dummy>>; 3];
+
+/// Every fighter's scene in port order (`gGCCommonLinks[nGCCommonLinkIDFighter]`,
+/// where `scVSBattleStartBattle` makes the fighters by player): the player's
+/// on port 0, then the CPUs'.
+fn scenes<'a>(pl: &'a mut play::FighterScene, dummies: &'a mut Dummies) -> [Option<&'a mut play::FighterScene>; 4] {
+    let [a, b, c] = dummies.each_mut();
+    let scene = |d: &'a mut Option<alloc::boxed::Box<play::Dummy>>| d.as_deref_mut().map(|d| &mut **d);
+    [Some(pl), scene(a), scene(b), scene(c)]
+}
+
+/// [`scenes`] for reading.
+fn scenes_ref<'a>(pl: &'a play::FighterScene, dummies: &'a Dummies) -> [Option<&'a play::FighterScene>; 4] {
+    let scene = |i: usize| dummies[i].as_deref().map(|d| &**d);
+    [Some(pl), scene(0), scene(1), scene(2)]
+}
+
+/// Fighters `a` and `b` of `s` at once, in that order.
+fn pair<'b>(
+    s: &'b mut [Option<&mut play::FighterScene>; 4],
+    a: usize,
+    b: usize,
+) -> Option<(&'b mut ssb_game::fighter::Fighter, &'b mut ssb_game::fighter::Fighter)> {
+    if a == b || a.max(b) >= s.len() {
+        return None;
+    }
+    let (lo, hi) = s.split_at_mut(a.max(b));
+    let low = &mut lo[a.min(b)].as_deref_mut()?.fighter;
+    let high = &mut hi[0].as_deref_mut()?.fighter;
+    Some(if a < b { (low, high) } else { (high, low) })
+}
+
+/// The index in `s` of the fighter on `port`.
+fn index_of(s: &[Option<&mut play::FighterScene>; 4], port: u8) -> Option<usize> {
+    s.iter().position(|x| x.as_deref().is_some_and(|x| x.fighter.port == port))
+}
+
+/// [`ssb_game::grab::exchange`] from fighter `from` to its grab partner
+/// (`ssb_game::grab::partner`, the fighter the original's direct writes
+/// reach through `catch_gobj` or `capture_gobj`), or to the first other
+/// fighter in port order when it has never been linked.
+fn exchange_from(s: &mut [Option<&mut play::FighterScene>; 4], from: usize) {
+    let Some(f) = s[from].as_deref() else { return };
+    let to = ssb_game::grab::partner(&f.fighter)
+        .and_then(|port| index_of(s, port))
+        .filter(|&to| to != from)
+        .or_else(|| (0..s.len()).find(|&i| i != from && s[i].is_some()));
+    if let Some((a, b)) = to.and_then(|to| pair(s, from, to)) {
+        ssb_game::grab::exchange(a, b);
+    }
+}
+
+/// Every fighter in `s` in port order, for the passes that take them all.
+fn fighters_mut<'b>(s: &'b mut [Option<&mut play::FighterScene>; 4]) -> alloc::vec::Vec<&'b mut ssb_game::fighter::Fighter> {
+    s.iter_mut().flatten().map(|x| &mut x.fighter).collect()
+}
+
+/// One Training simulation frame: the stage controllers, every fighter's
+/// interrupt, physics and map passes in port order, and the weapon and item
+/// pools. Kept out of [`run`] so `run` stays inside MIPS branch range.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
 unsafe fn training_step(
     p: &Pack<'_>,
     stage_index: u32,
     pl: &mut play::FighterScene,
-    dummy_state: &mut Option<play::Dummy>,
+    dummies: &mut Dummies,
     weapons: &mut ssb_game::weapon::WeaponPool,
     items: &mut ssb_game::item::ItemPool,
     material_anim: &mut ssb_rom::skeleton::MaterialAnimator,
@@ -742,213 +808,266 @@ unsafe fn training_step(
     started: bool,
 ) {
     material_anim.tick(p);
-    if let Some(stage) = p.stage(stage_index) {
-        // Priority 5, Ground link: `gcPlayAnimAll` precedes
-        // every fighter interrupt and the priority-4 controller.
-        let _ = stage_objects.advance(p);
-        if let Some(map) = stage_map.as_mut() {
-            let _ = map.tick(p);
-        }
-        let groups = stage_map
-            .as_ref()
-            .map_or(&[][..], |map| map.groups.as_slice());
-        // Real `sceCtrl` stick input drives real movement/physics/
-        // animation against the real stage collision, the same
-        // `Play::tick` `psp-asset-viewer/`'s own gameplay slice uses. Under
-        // `regression_capture`, real pad state is replaced by the
-        // scripted script (RE-295) rather than zeroed -- a
-        // deterministic capture of gameplay input (the jab, now
-        // the jump) needs to actually *drive* that input, not
-        // discard it; only the source is scripted, not the game
-        // logic it feeds.
-        // Real jump binding (RE-295): any N64 C-button tap is a
-        // real `FTCOMMON_KNEEBEND` button-jump input
-        // (`ftCommonKneeBendCheckButtonTap`). An upward stick
-        // flick is the game's other real jump input and needs no
-        // separate wiring here: `Fighter::tick`'s own status
-        // machine reads `stick_y` directly.
-        let jump_held = controller.buttons.contains(JUMP_BUTTON_MASK);
-        // The VS countdown locks every fighter's control, the CPU's too.
-        let locked = !started;
-        // Priority 5: every fighter's `ftMainProcUpdateInterrupt`.
-        // Grab events land before the partner's own half,
-        // matching the original's direct status writes
-        // (`ssb_game::grab` module docs).
-        // `DeadUpFall` drops from above `gGMCameraGObj`'s eye.
-        pl.fighter.dead.camera_eye = pl.camera.eye;
-        if let Some(dummy) = dummy_state.as_mut() {
-            dummy.fighter.dead.camera_eye = pl.camera.eye;
-        }
-        items.publish(&mut pl.fighter);
-        pl.tick_fighter_interrupt(p, &stage, controller, jump_held, groups);
-        after_interrupt(&mut pl.fighter, dummy_state.as_ref().map(|d| &d.fighter));
-        if let Some(dummy) = dummy_state.as_mut() {
-            ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
-            items.publish(&mut dummy.fighter);
-            let opponents = [ssb_game::computer::behave::opponent(&pl.fighter)];
-            dummy.tick_interrupt(p, &stage, groups, &opponents, locked);
-            ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
-            after_interrupt(&mut dummy.fighter, Some(&pl.fighter));
-        }
-        // Priority 4, Ground link: the stage controller.
-        {
-            let mut empty: [ssb_game::map::MapGroup; 0] = [];
-            let groups_mut = stage_map
-                .as_mut()
-                .map_or(&mut empty[..], |map| map.groups.as_mut_slice());
-            // `mpCollisionSetDObjNoID`: a floor's original
-            // line id to its collision group.
-            let line_group = |line: u16| {
-                p.stage_lines(&stage)
-                    .find(|l| l.id == line)
-                    .map(|l| l.yakumono as u8)
-            };
-            let mut fighters: alloc::vec::Vec<&mut ssb_game::fighter::Fighter> =
-                alloc::vec::Vec::with_capacity(2);
-            fighters.push(&mut pl.fighter);
-            if let Some(dummy) = dummy_state.as_mut() {
-                fighters.push(&mut dummy.fighter);
-            }
-            stage_ctl.tick(
-                &mut fighters,
-                ssb_game::stage::TickInput {
-                    groups: groups_mut,
-                    objects: &mut ssb_psp_runtime::scene::StageObjectsPort {
-                        pack: p,
-                        objects: stage_objects,
-                    },
-                    // The groups are being written, so the
-                    // controller sees the static map; only the
-                    // Twister queries it, on a static floor.
-                    map: ssb_game::stage::MapQuery {
-                        surfaces: || ssb_psp_runtime::scene::MapSegments::new(p, &stage),
-                        line_group: &line_group,
-                    },
-                    started,
+    let Some(stage) = p.stage(stage_index) else {
+        return;
+    };
+    // Priority 5, Ground link: `gcPlayAnimAll` precedes
+    // every fighter interrupt and the priority-4 controller.
+    let _ = stage_objects.advance(p);
+    if let Some(map) = stage_map.as_mut() {
+        let _ = map.tick(p);
+    }
+    let groups = stage_map
+        .as_ref()
+        .map_or(&[][..], |map| map.groups.as_slice());
+    interrupt_pass(p, &stage, groups, pl, dummies, items, controller, !started);
+    // Priority 4, Ground link: the stage controller.
+    {
+        let mut empty: [ssb_game::map::MapGroup; 0] = [];
+        let groups_mut = stage_map
+            .as_mut()
+            .map_or(&mut empty[..], |map| map.groups.as_mut_slice());
+        // `mpCollisionSetDObjNoID`: a floor's original
+        // line id to its collision group.
+        let line_group = |line: u16| {
+            p.stage_lines(&stage)
+                .find(|l| l.id == line)
+                .map(|l| l.yakumono as u8)
+        };
+        let mut s = scenes(pl, dummies);
+        let mut fighters = fighters_mut(&mut s);
+        stage_ctl.tick(
+            &mut fighters,
+            ssb_game::stage::TickInput {
+                groups: groups_mut,
+                objects: &mut ssb_psp_runtime::scene::StageObjectsPort {
+                    pack: p,
+                    objects: stage_objects,
                 },
-            );
+                // The groups are being written, so the
+                // controller sees the static map; only the
+                // Twister queries it, on a static floor.
+                map: ssb_game::stage::MapQuery {
+                    surfaces: || ssb_psp_runtime::scene::MapSegments::new(p, &stage),
+                    line_group: &line_group,
+                },
+                started,
+            },
+        );
+    }
+    let groups = stage_map
+        .as_ref()
+        .map_or(&[][..], |map| map.groups.as_slice());
+    let mut s = scenes(pl, dummies);
+    physics_pass(p, &stage, groups, &mut s, weapons, items);
+    hit_pass(p, &stage, groups, &mut s, weapons, items, stage_objects, stage_ctl);
+}
+
+/// Priority 5: every fighter's `ftMainProcUpdateInterrupt`, in port order,
+/// the player's from the pad and each CPU's from `ftComputerProcessAll`
+/// against every other fighter as it stands. Each fighter's grab events
+/// land before the next one's half, matching the original's direct status
+/// writes (`ssb_game::grab` module docs).
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn interrupt_pass(
+    p: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    groups: &[ssb_game::map::MapGroup],
+    pl: &mut play::FighterScene,
+    dummies: &mut Dummies,
+    items: &mut ssb_game::item::ItemPool,
+    controller: ControllerState,
+    // The VS countdown locks every fighter's control, the CPUs' too.
+    locked: bool,
+) {
+    // Real jump binding (RE-295): any N64 C-button tap is a
+    // real `FTCOMMON_KNEEBEND` button-jump input
+    // (`ftCommonKneeBendCheckButtonTap`). An upward stick
+    // flick is the game's other real jump input and needs no
+    // separate wiring here: `Fighter::tick`'s own status
+    // machine reads `stick_y` directly.
+    let jump_held = controller.buttons.contains(JUMP_BUTTON_MASK);
+    // `DeadUpFall` drops from above `gGMCameraGObj`'s eye.
+    let eye = pl.camera.eye;
+    for f in scenes(pl, dummies).into_iter().flatten() {
+        f.fighter.dead.camera_eye = eye;
+    }
+    for i in 0..4 {
+        if i == 0 {
+            items.publish(&mut pl.fighter);
+            pl.tick_fighter_interrupt(p, stage, controller, jump_held, groups);
+        } else {
+            let opponents: alloc::vec::Vec<_> = scenes_ref(pl, dummies)
+                .into_iter()
+                .enumerate()
+                .filter(|&(j, _)| j != i)
+                .filter_map(|(_, x)| x)
+                .map(|x| ssb_game::computer::behave::opponent(&x.fighter))
+                .collect();
+            let Some(d) = dummies[i - 1].as_deref_mut() else {
+                continue;
+            };
+            items.publish(&mut d.fighter);
+            d.tick_interrupt(p, stage, groups, &opponents, locked);
         }
-        let groups = stage_map
-            .as_ref()
-            .map_or(&[][..], |map| map.groups.as_slice());
-        // Priority 4, Fighter link: `ftMainProcPhysicsMap`.
-        pl.fighter.occupied_cliff = dummy_state.as_ref().and_then(|dummy| {
-            ssb_game::map::is_cliff_hold(dummy.fighter.status.status)
-                .then_some((dummy.fighter.cliff.line, dummy.fighter.facing))
-        });
-        pl.tick_fighter_physics(p, &stage, groups);
-        if core::mem::take(&mut pl.fighter.dead.died) {
-            weapons.destroy_boomerang(pl.fighter.port);
+        let mut s = scenes(pl, dummies);
+        after_interrupt(&mut s, i);
+        exchange_from(&mut s, i);
+    }
+}
+
+/// Priority 4, Fighter link: every fighter's `ftMainProcPhysicsMap` in port
+/// order, then the weapon and item pools.
+#[inline(never)]
+fn physics_pass(
+    p: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    groups: &[ssb_game::map::MapGroup],
+    s: &mut [Option<&mut play::FighterScene>; 4],
+    weapons: &mut ssb_game::weapon::WeaponPool,
+    items: &mut ssb_game::item::ItemPool,
+) {
+    let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, stage, groups);
+    for i in 0..s.len() {
+        let mut held = [None; 3];
+        let others = s.iter().enumerate().filter(|&(j, _)| j != i).filter_map(|(_, x)| x.as_deref());
+        for (slot, o) in held.iter_mut().zip(others) {
+            *slot = ssb_game::map::is_cliff_hold(o.fighter.status.status).then_some((o.fighter.cliff.line, o.fighter.facing));
         }
-        // The Boomerang projects through the camera last drawn.
-        weapons.observe_camera(&pl.camera);
-        pl.tick_camera(&stage, None);
-        items.take_requests(&mut pl.fighter, || {
-            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
-        });
-        if let Some(spawn) = pl.fighter.take_weapon_spawn() {
+        let Some(f) = s[i].as_deref_mut() else {
+            continue;
+        };
+        f.fighter.occupied_cliffs = held;
+        f.tick_fighter_physics(p, stage, groups);
+        if core::mem::take(&mut f.fighter.dead.died) {
+            weapons.destroy_boomerang(f.fighter.port);
+        }
+        if i == 0 {
+            // The Boomerang projects through the camera last drawn.
+            weapons.observe_camera(&f.camera);
+            f.tick_camera(stage, &[]);
+        }
+        items.take_requests(&mut f.fighter, map);
+        let spawn = f.fighter.take_weapon_spawn();
+        exchange_from(s, i);
+        if let Some(spawn) = spawn {
             weapons.spawn(spawn);
         }
-        if let Some(dummy) = dummy_state.as_mut() {
-            dummy.fighter.occupied_cliff = ssb_game::map::is_cliff_hold(pl.fighter.status.status)
-                .then_some((pl.fighter.cliff.line, pl.fighter.facing));
-            ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
-            dummy.tick_fighter_physics(p, &stage, groups);
-            if core::mem::take(&mut dummy.fighter.dead.died) {
-                weapons.destroy_boomerang(dummy.fighter.port);
-            }
-            items.take_requests(&mut dummy.fighter, || {
-                ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
-            });
-            ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
-            if let Some(spawn) = dummy.fighter.take_weapon_spawn() {
-                weapons.spawn(spawn);
-            }
-            weapons.observe_owner(&pl.fighter);
-            weapons.observe_owner(&dummy.fighter);
-            let blast_zone = ssb_game::status::BlastZone {
-                top: stage.bounds.top as f32,
-                bottom: stage.bounds.bottom as f32,
-                left: stage.bounds.left as f32,
-                right: stage.bounds.right as f32,
-            };
-            weapons.tick(
-                || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups),
-                Some(blast_zone),
-            );
-            weapons.sync_owner(&mut pl.fighter);
-            weapons.sync_owner(&mut dummy.fighter);
-            items.observe_owner(&pl.fighter);
-            items.observe_owner(&dummy.fighter);
-            items.tick(
-                || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups),
-                Some(blast_zone),
-            );
-            items.sync_owner(&mut pl.fighter);
-            items.sync_owner(&mut dummy.fighter);
-            // `ftMainProcSearchCatch`, then `ftMainProcSearchHitAll`
-            // (fighters, then weapons), then `ftMainProcParams` for
-            // every fighter -- the original's process priorities.
-            // `ftMainProcSearchCatch` opens with the obstacle
-            // search (`ftMainSearchHitHazard`).
-            let dummy_status = [dummy.fighter.status.status];
-            ssb_game::hazard::search_hit_hazard(
-                &mut pl.fighter,
-                stage_ctl,
-                &mut ssb_psp_runtime::scene::StageObjectsPort {
-                    pack: p,
-                    objects: stage_objects,
-                },
-                &dummy_status,
-            );
-            ssb_game::grab::search_catch(&mut pl.fighter, &dummy.fighter);
-            let pl_status = [pl.fighter.status.status];
-            ssb_game::hazard::search_hit_hazard(
-                &mut dummy.fighter,
-                stage_ctl,
-                &mut ssb_psp_runtime::scene::StageObjectsPort {
-                    pack: p,
-                    objects: stage_objects,
-                },
-                &pl_status,
-            );
-            ssb_game::grab::search_catch(&mut dummy.fighter, &pl.fighter);
-            ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
-            ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
-            ssb_game::combat::search_all(&mut [&mut pl.fighter, &mut dummy.fighter]);
-            items.search_fighter(&mut pl.fighter);
-            items.search_fighter(&mut dummy.fighter);
-            weapons.apply_hits(&mut pl.fighter);
-            weapons.apply_hits(&mut dummy.fighter);
-            ssb_game::link::apply_spin_attack_hits(&mut pl.fighter, &mut dummy.fighter);
-            ssb_game::link::apply_spin_attack_hits(&mut dummy.fighter, &mut pl.fighter);
-            items.search_hurt(&mut [&mut pl.fighter, &mut dummy.fighter], weapons);
-            // `ftMainSearchGroundHit`, last of `ftMainProcSearchHitAll`.
-            ssb_game::hazard::search_ground_hit(&mut pl.fighter, &stage_ctl);
-            ssb_game::hazard::search_ground_hit(&mut dummy.fighter, &stage_ctl);
-            ssb_game::combat::finish_frame(&mut [&mut pl.fighter, &mut dummy.fighter]);
-            let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups);
-            pl.fighter.resolve_cliff_release(&map);
-            dummy.fighter.resolve_cliff_release(&map);
-            items.take_requests(&mut pl.fighter, || {
-                ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
-            });
-            items.take_requests(&mut dummy.fighter, || {
-                ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
-            });
-            items.resolve(&[&pl.fighter, &dummy.fighter]);
-            items.sync_owner(&mut pl.fighter);
-            items.sync_owner(&mut dummy.fighter);
-            items.take_weapon_spawns(weapons, || {
-                ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
-            });
-            items.record_landed(&mut pl.fighter);
-            items.record_landed(&mut dummy.fighter);
-            weapons.record_landed(&mut pl.fighter);
-            weapons.record_landed(&mut dummy.fighter);
-            ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
-            ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
+    }
+    for f in s.iter().flatten() {
+        weapons.observe_owner(&f.fighter);
+    }
+    let blast_zone = ssb_game::status::BlastZone {
+        top: stage.bounds.top as f32,
+        bottom: stage.bounds.bottom as f32,
+        left: stage.bounds.left as f32,
+        right: stage.bounds.right as f32,
+    };
+    weapons.tick(map, Some(blast_zone));
+    for f in s.iter_mut().flatten() {
+        weapons.sync_owner(&mut f.fighter);
+    }
+    for f in s.iter().flatten() {
+        items.observe_owner(&f.fighter);
+    }
+    items.tick(map, Some(blast_zone));
+    for f in s.iter_mut().flatten() {
+        items.sync_owner(&mut f.fighter);
+    }
+}
+
+/// `ftMainProcSearchCatch`, then `ftMainProcSearchHitAll` (fighters, then
+/// weapons), then `ftMainProcParams` for every fighter -- the original's
+/// process priorities, each over the fighters in port order.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn hit_pass(
+    p: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    groups: &[ssb_game::map::MapGroup],
+    s: &mut [Option<&mut play::FighterScene>; 4],
+    weapons: &mut ssb_game::weapon::WeaponPool,
+    items: &mut ssb_game::item::ItemPool,
+    stage_objects: &mut ssb_rom::ground_obj::GroundObjects,
+    stage_ctl: &mut ssb_game::stage::Stage,
+) {
+    let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, stage, groups);
+    for i in 0..s.len() {
+        // `ftMainProcSearchCatch` opens with the obstacle search
+        // (`ftMainSearchHitHazard`), which reads the others' statuses.
+        let mut statuses = [ssb_game::status::AnyStatus::Common(ssb_game::status::Status::Wait); 3];
+        let mut count = 0;
+        for o in s.iter().enumerate().filter(|&(j, _)| j != i).filter_map(|(_, x)| x.as_deref()) {
+            statuses[count] = o.fighter.status.status;
+            count += 1;
         }
+        let Some(f) = s[i].as_deref_mut() else {
+            continue;
+        };
+        ssb_game::hazard::search_hit_hazard(
+            &mut f.fighter,
+            stage_ctl,
+            &mut ssb_psp_runtime::scene::StageObjectsPort {
+                pack: p,
+                objects: stage_objects,
+            },
+            &statuses[..count],
+        );
+        // `ftMainSearchFighterCatch` over the fighter link, then the
+        // catch of the nearest.
+        let others = s.iter().enumerate().filter(|&(j, _)| j != i).filter_map(|(_, x)| x.as_deref());
+        let caught = s[i]
+            .as_deref()
+            .and_then(|f| ssb_game::grab::nearest_catch(&f.fighter, others.map(|o| &o.fighter)))
+            .and_then(|port| index_of(s, port));
+        if let Some((catcher, other)) = caught.and_then(|j| pair(s, i, j)) {
+            ssb_game::grab::search_catch(catcher, other);
+        }
+    }
+    for i in 0..s.len() {
+        exchange_from(s, i);
+    }
+    ssb_game::combat::search_all(&mut fighters_mut(s));
+    for f in s.iter_mut().flatten() {
+        items.search_fighter(&mut f.fighter);
+    }
+    for f in s.iter_mut().flatten() {
+        weapons.apply_hits(&mut f.fighter);
+    }
+    for i in 0..s.len() {
+        for j in 0..s.len() {
+            if let Some((attacker, defender)) = pair(s, i, j) {
+                ssb_game::link::apply_spin_attack_hits(attacker, defender);
+            }
+        }
+    }
+    items.search_hurt(&mut fighters_mut(s), weapons);
+    // `ftMainSearchGroundHit`, last of `ftMainProcSearchHitAll`.
+    for f in s.iter_mut().flatten() {
+        ssb_game::hazard::search_ground_hit(&mut f.fighter, stage_ctl);
+    }
+    ssb_game::combat::finish_frame(&mut fighters_mut(s));
+    for f in s.iter_mut().flatten() {
+        f.fighter.resolve_cliff_release(&map);
+    }
+    for f in s.iter_mut().flatten() {
+        items.take_requests(&mut f.fighter, map);
+    }
+    let all: alloc::vec::Vec<&ssb_game::fighter::Fighter> = s.iter().flatten().map(|x| &x.fighter).collect();
+    items.resolve(&all);
+    for f in s.iter_mut().flatten() {
+        items.sync_owner(&mut f.fighter);
+    }
+    items.take_weapon_spawns(weapons, map);
+    for f in s.iter_mut().flatten() {
+        items.record_landed(&mut f.fighter);
+    }
+    for f in s.iter_mut().flatten() {
+        weapons.record_landed(&mut f.fighter);
+    }
+    for i in 0..s.len() {
+        exchange_from(s, i);
     }
 }
 
@@ -1153,13 +1272,20 @@ fn stage_select_rand() -> u8 {
     (u32::from(clock_byte()) * 9 / 256) as u8
 }
 
-/// The half of `ftCommonDeadCheckRebirth` a fighter cannot do itself: the
-/// rebirth takes the lowest halo the other fighter is not using.
-fn after_interrupt(f: &mut ssb_game::fighter::Fighter, other: Option<&ssb_game::fighter::Fighter>) {
+/// The half of `ftCommonDeadCheckRebirth` fighter `i` cannot do itself:
+/// the rebirth takes the lowest halo no other fighter is using.
+fn after_interrupt(s: &mut [Option<&mut play::FighterScene>; 4], i: usize) {
+    let mut others = [(ssb_game::status::AnyStatus::Common(ssb_game::status::Status::Wait), 0u8); 3];
+    let mut count = 0;
+    for o in s.iter().enumerate().filter(|&(j, _)| j != i).filter_map(|(_, x)| x.as_deref()) {
+        others[count] = (o.fighter.status.status, o.fighter.dead.rebirth.halo_number);
+        count += 1;
+    }
+    let Some(f) = s[i].as_deref_mut().map(|x| &mut x.fighter) else {
+        return;
+    };
     if f.dead.rebirth_pending {
-        let halo = ssb_game::dead::halo_number(
-            other.map(|o| (o.status.status, o.dead.rebirth.halo_number)).into_iter(),
-        );
+        let halo = ssb_game::dead::halo_number(others[..count].iter().copied());
         ssb_game::dead::rebirth_down(f, halo);
     }
 }
@@ -1171,8 +1297,6 @@ struct VsRules {
     rule: ssb_game::battle::Rule,
     time_limit: u8,
     stocks: i8,
-    /// The CPU's `level` from the VS character select.
-    cpu_level: u8,
 }
 
 impl VsRules {
@@ -1181,22 +1305,14 @@ impl VsRules {
         rule: ssb_game::battle::Rule::Time,
         time_limit: 3,
         stocks: 2,
-        cpu_level: 3,
     };
 
-    /// The rules `mnPlayersVSSetSceneData` left in the battle state, with
-    /// the first CPU's level.
+    /// The rules `mnPlayersVSSetSceneData` left in the battle state.
     fn of(state: &ssb_game::players_vs::BattleState) -> VsRules {
-        use ssb_game::players_vs::PlayerKind;
         VsRules {
             rule: state.rule,
             time_limit: state.time_limit,
             stocks: state.stocks as i8,
-            cpu_level: state
-                .players
-                .iter()
-                .find(|p| p.pkind == PlayerKind::Com && p.fkind.is_some())
-                .map_or(3, |p| p.level),
         }
     }
 }
@@ -1222,7 +1338,7 @@ unsafe fn training_frame(
     p: &Pack<'_>,
     stage_index: u32,
     pl: &mut play::FighterScene,
-    dummy_state: &mut Option<play::Dummy>,
+    dummies: &mut Dummies,
     weapons: &mut ssb_game::weapon::WeaponPool,
     items: &mut ssb_game::item::ItemPool,
     material_anim: &mut ssb_rom::skeleton::MaterialAnimator,
@@ -1245,7 +1361,7 @@ unsafe fn training_frame(
         if status == GameStatus::Unpause && f == Frame::Frozen {
             ssb_game::pause::ease_back(&mut pl.camera.pause_eye, pause.origin);
             if let Some(stage) = p.stage(stage_index) {
-                pl.tick_camera(&stage, None);
+                pl.tick_camera(&stage, &[]);
             }
         } else if status == GameStatus::Go {
             pl.camera.pause_eye = pause.origin;
@@ -1262,7 +1378,7 @@ unsafe fn training_frame(
         p,
         stage_index,
         pl,
-        dummy_state,
+        dummies,
         weapons,
         items,
         material_anim,
@@ -1272,15 +1388,15 @@ unsafe fn training_frame(
         if locked { ControllerState::default() } else { controller },
         started,
     );
-    let fell = report_falls(battle.as_deref_mut(), &mut pl.fighter);
-    update_damage_hud(&mut damage_hud.damage[0], &pl.fighter, fell, started);
-    if let Some(dummy) = dummy_state.as_mut() {
-        let fell = report_falls(battle.as_deref_mut(), &mut dummy.fighter);
-        update_damage_hud(&mut damage_hud.damage[1], &dummy.fighter, fell, started);
+    for f in scenes(pl, dummies).into_iter().flatten() {
+        let fell = report_falls(battle.as_deref_mut(), &mut f.fighter);
+        if let Some(hud) = damage_hud.damage.get_mut(usize::from(f.fighter.port)) {
+            update_damage_hud(hud, &f.fighter, fell, started);
+        }
     }
     if let Some(b) = battle.as_deref() {
         tick_countdown(p, damage_hud, b);
-        entry_frame(p, pl, dummy_state, damage_hud, b);
+        entry_frame(p, pl, dummies, damage_hud, b);
     }
     false
 }
@@ -1292,7 +1408,7 @@ unsafe fn training_frame(
 fn entry_frame(
     p: &Pack<'_>,
     pl: &mut play::FighterScene,
-    dummy_state: &mut Option<play::Dummy>,
+    dummies: &mut Dummies,
     hud: &Hud,
     b: &ssb_game::battle::Battle,
 ) {
@@ -1301,12 +1417,10 @@ fn entry_frame(
     let Some(t) = b.clock().checked_sub(1 + ssb_game::battle::ENTRY_WAIT) else {
         return;
     };
-    if t == focus.appear_tick(0) {
-        ssb_game::appear::appear_set_status(&mut pl.fighter);
-    }
-    if let Some(d) = dummy_state.as_mut() {
-        if t == focus.appear_tick(1) {
-            ssb_game::appear::appear_set_status(&mut d.fighter);
+    // The focus counts the fighters in link order.
+    for (i, f) in scenes(pl, dummies).into_iter().flatten().enumerate() {
+        if t == focus.appear_tick(i) {
+            ssb_game::appear::appear_set_status(&mut f.fighter);
         }
     }
     let target = |scene: &play::FighterScene| {
@@ -1315,17 +1429,17 @@ fn entry_frame(
         let dist = p.fighter(scene.fighter.kind as u32).map_or(1000.0, |d| d.closeup_camera_zoom);
         (pos, dist)
     };
-    pl.entry_zoom = match focus.zoom(t) {
-        Some(0) => Some(target(pl)),
-        Some(_) => dummy_state.as_ref().map(|d| target(d)),
-        None => None,
-    };
+    let zoom = focus
+        .zoom(t)
+        .and_then(|i| scenes_ref(pl, dummies).into_iter().flatten().nth(i).map(target));
+    pl.entry_zoom = zoom;
 }
 
 /// The battle HUD's state beside the world: the damage displays and the
 /// countdown or sudden death's "GO!".
 struct Hud {
-    damage: [ssb_game::hud::DamageDisplay; 2],
+    /// By port.
+    damage: [ssb_game::hud::DamageDisplay; 4],
     countdown: Option<ssb_game::countdown::Countdown>,
     pause: Option<PauseState>,
     /// `ifCommonEntryFocusThread`, from the countdown's frame.
@@ -1393,7 +1507,7 @@ fn pause_frame(
                 // `gmCameraPlayerZoomFuncCamera`: the battle camera while
                 // the player is out of bounds.
                 if pause::kind_for(pl.fighter.pos, bounds) == PauseKind::PlayerNA {
-                    pl.tick_camera(&stage, None);
+                    pl.tick_camera(&stage, &[]);
                 } else {
                     let mut pos = pl.fighter.pos;
                     pos.y += pl.cam_offset_y;
@@ -1410,10 +1524,7 @@ fn pause_frame(
 impl Hud {
     fn new() -> Hud {
         Hud {
-            damage: [
-                ssb_game::hud::DamageDisplay::new(0, 0),
-                ssb_game::hud::DamageDisplay::new(1, 0),
-            ],
+            damage: core::array::from_fn(|port| ssb_game::hud::DamageDisplay::new(port, 0)),
             countdown: None,
             pause: None,
             entry_focus: None,
@@ -1446,7 +1557,8 @@ fn tick_countdown(p: &Pack<'_>, hud: &mut Hud, b: &ssb_game::battle::Battle) {
             None => {
                 hud.entry_focus = Some(ssb_game::appear::EntryFocus {
                     id: ssb_game::rng::rand_int_range(3) as u8,
-                    count: 2,
+                    // `pl_count + cp_count`.
+                    count: b.players.iter().filter(|p| p.present).count() as u8,
                 });
                 hud.countdown = Some(ssb_game::countdown::Countdown::new());
             }
@@ -1459,35 +1571,42 @@ fn tick_countdown(p: &Pack<'_>, hud: &mut Hud, b: &ssb_game::battle::Battle) {
 }
 
 /// `scVSBattleStartSuddenDeath`: the tied fighters again, at 300%, under
-/// the sudden-death battle.
+/// the sudden-death battle. `None`, entering nothing, when the player on
+/// port 0 is not among them: the world needs the pad's fighter and its
+/// camera.
 #[inline(never)]
 fn start_sudden_death(
     pack: Option<&Pack<'_>>,
     gkind: u8,
-    fighters: ssb_game::fighter_select::SceneData,
+    roster: Roster,
     sudden: ssb_game::battle::Battle,
     battle: &mut Option<ssb_game::battle::Battle>,
     world: &mut TrainingWorld<'_>,
-) -> u32 {
+) -> Option<u32> {
+    if !sudden.players[0].present {
+        return None;
+    }
     let rules = VsRules {
         rule: ssb_game::battle::Rule::Stock,
         time_limit: sudden.time_limit,
         stocks: 0,
-        ..VsRules::DEFAULT
     };
+    // `gSCManagerVSBattleState`: only the tied players.
+    let tied: Roster = core::array::from_fn(|port| roster[port].filter(|_| sudden.players[port].present));
     // A capture scene's CPU behaviour carries over; in play it is the VS
     // default either way.
     let cpu = world
-        .dummy_state
-        .as_ref()
-        .map(|d| (d.computer.behavior, d.computer.trait_kind));
-    let index = enter_training(pack, gkind, fighters, Some(rules), battle, world);
+        .dummies
+        .each_ref()
+        .map(|d| d.as_ref().map(|d| (d.computer.behavior, d.computer.trait_kind)));
+    let index = enter_training(pack, gkind, tied, Some(rules), battle, world);
     // `is_skip_entry`: sudden death's fighters stand at once.
     if let Some(pl) = world.play_state.as_mut() {
         pl.fighter.damage = ssb_game::battle::SUDDEN_DEATH_DAMAGE;
         ssb_game::status::set_wait(&mut pl.fighter);
     }
-    if let Some(d) = world.dummy_state.as_mut() {
+    for (d, cpu) in world.dummies.iter_mut().zip(cpu) {
+        let Some(d) = d.as_deref_mut() else { continue };
         d.fighter.damage = ssb_game::battle::SUDDEN_DEATH_DAMAGE;
         ssb_game::status::set_wait(&mut d.fighter);
         if let Some((behavior, trait_kind)) = cpu {
@@ -1500,7 +1619,7 @@ fn start_sudden_death(
     reset_damage_hud(world);
     world.damage_hud.countdown = Some(ssb_game::countdown::Countdown::sudden_death());
     *battle = Some(sudden);
-    index
+    Some(index)
 }
 
 /// The battle half of `ftCommonDeadUpdateScore`. Returns whether the
@@ -1515,16 +1634,19 @@ fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game:
     fell
 }
 
-/// `ifCommonPlayerDamageInitInterface` for both fighters, shown at once
+/// `ifCommonPlayerDamageInitInterface` for every port, shown at once
 /// outside a battle.
 fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
-    let damage = |f: Option<&ssb_game::fighter::Fighter>| f.map_or(0, |f| i32::from(f.damage));
     world.damage_hud.countdown = None;
     world.damage_hud.entry_focus = None;
-    world.damage_hud.damage[0] =
-        ssb_game::hud::DamageDisplay::new(0, damage(world.play_state.as_ref().map(|s| &s.fighter)));
-    world.damage_hud.damage[1] =
-        ssb_game::hud::DamageDisplay::new(1, damage(world.dummy_state.as_ref().map(|d| &d.fighter)));
+    let mut damage = [0; 4];
+    if let Some(pl) = world.play_state.as_ref() {
+        damage[0] = i32::from(pl.fighter.damage);
+    }
+    for (d, damage) in world.dummies.iter().zip(&mut damage[1..]) {
+        *damage = d.as_ref().map_or(0, |d| i32::from(d.fighter.damage));
+    }
+    world.damage_hud.damage = core::array::from_fn(|port| ssb_game::hud::DamageDisplay::new(port, damage[port]));
 }
 
 /// One frame of `ifCommonPlayerDamageProcUpdate` for a fighter: the break
@@ -1576,7 +1698,7 @@ fn results_frame(results: &mut Option<ssb_game::results::Results>, pressed: N64B
 /// What Training owns across frames, rebuilt on each stage entry.
 struct TrainingWorld<'w> {
     play_state: &'w mut Option<play::FighterScene>,
-    dummy_state: &'w mut Option<play::Dummy>,
+    dummies: &'w mut Dummies,
     weapons: &'w mut ssb_game::weapon::WeaponPool,
     items: &'w mut ssb_game::item::ItemPool,
     stage_objects: &'w mut ssb_rom::ground_obj::GroundObjects,
@@ -1585,19 +1707,115 @@ struct TrainingWorld<'w> {
     damage_hud: &'w mut Hud,
 }
 
-/// Loads VS stage `gkind` for Training and spawns both fighters on it;
-/// returns the pack's stage index. Out of [`run`] so `run` stays inside
+/// One fighter a battle makes (`FTDesc`): its fighter and costume, its CPU
+/// level and handicap, its spawn point
+/// (`mpCollisionGetPlayerMapObjPosition(player)`), its `player` (the port,
+/// or the team in a team battle) and whether it is a human's.
+#[derive(Clone, Copy)]
+struct Entrant {
+    kind: ssb_game::fighter::FighterKind,
+    costume: u8,
+    level: u8,
+    handicap: u8,
+    spawn: u16,
+    team: u8,
+    human: bool,
+}
+
+/// A battle's fighters by port. The pad drives port 0: the host has one
+/// controller.
+type Roster = [Option<Entrant>; 4];
+
+/// Training's two fighters from the character select's scene data: the
+/// player on spawn 0 and the CPU dummy on spawn 1, at Training's level.
+fn training_roster(scene: ssb_game::fighter_select::SceneData) -> Roster {
+    let entrant = |kind: Option<ssb_game::fighter::FighterKind>, costume, port: u8| Entrant {
+        kind: kind.unwrap_or(ssb_game::fighter::FighterKind::Mario),
+        costume,
+        level: play::TRAINING_CPU_LEVEL,
+        handicap: ssb_game::stale::HANDICAP_DEFAULT,
+        spawn: u16::from(port),
+        team: port,
+        human: port == 0,
+    };
+    [
+        Some(entrant(scene.man_kind, scene.man_costume, 0)),
+        Some(entrant(scene.com_kind, scene.com_costume, 1)),
+        None,
+        None,
+    ]
+}
+
+/// `scVSBattleStartBattle`'s fighters from the VS battle state: every
+/// present player with a fighter, on the spawn of its own player index.
+/// The first human -- or, with none, the first fighter -- trades ports with
+/// player 0 so the pad drives it, keeping its own spawn; any other human
+/// runs as a CPU at its slot's level.
+fn vs_roster(state: &ssb_game::players_vs::BattleState) -> Roster {
+    use ssb_game::players_vs::PlayerKind;
+    let mut roster: Roster = [None; 4];
+    for (i, (entrant, p)) in roster.iter_mut().zip(&state.players).enumerate() {
+        let Some(kind) = p.fkind.filter(|_| p.pkind != PlayerKind::Not) else {
+            continue;
+        };
+        *entrant = Some(Entrant {
+            kind,
+            costume: p.costume,
+            level: p.level,
+            handicap: p.handicap,
+            spawn: i as u16,
+            team: p.player,
+            human: p.pkind == PlayerKind::Man,
+        });
+    }
+    let lead = roster
+        .iter()
+        .position(|e| e.is_some_and(|e| e.human))
+        .or_else(|| roster.iter().position(Option::is_some));
+    if let Some(i) = lead {
+        roster.swap(0, i);
+    }
+    for e in roster.iter_mut().skip(1).flatten() {
+        e.human = false;
+    }
+    roster
+}
+
+/// The fighters a capture scene that skips the selects starts with:
+/// `vs4`'s Mario against a Fox, a Donkey Kong and a Kirby at level 3, each
+/// in its first royal costume (`mnPlayersVSGetFreeCostumeRoyal` with no
+/// fighter repeated), and otherwise [`capture_training_scene`]'s pair.
+fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneData) -> Roster {
+    use ssb_game::fighter::FighterKind;
+    if scene != GameScene::Vs4 {
+        return training_roster(training);
+    }
+    let kinds = [FighterKind::Mario, FighterKind::Fox, FighterKind::Donkey, FighterKind::Kirby];
+    core::array::from_fn(|port| {
+        Some(Entrant {
+            kind: kinds[port],
+            costume: ssb_game::costume::costume_common_id(kinds[port], 0),
+            level: 3,
+            handicap: ssb_game::stale::HANDICAP_DEFAULT,
+            spawn: port as u16,
+            team: port as u8,
+            human: port == 0,
+        })
+    })
+}
+
+/// Loads VS stage `gkind` for Training and spawns the roster's fighters on
+/// it; returns the pack's stage index. Out of [`run`] so `run` stays inside
 /// MIPS branch range.
 #[inline(never)]
 fn enter_training(
     pack: Option<&Pack<'_>>,
     gkind: u8,
-    fighters: ssb_game::fighter_select::SceneData,
+    roster: Roster,
     vs: Option<VsRules>,
     battle: &mut Option<ssb_game::battle::Battle>,
     world: &mut TrainingWorld<'_>,
 ) -> u32 {
-    use ssb_game::fighter::FighterKind;
     *world.weapons = ssb_game::weapon::WeaponPool::default();
     *world.items = ssb_game::item::ItemPool::default();
     let Some((p, index, stage)) = pack.and_then(|p| {
@@ -1630,56 +1848,60 @@ fn enter_training(
         }
         None => ssb_game::stage::Stage::none(),
     };
-    let kind = fighters.man_kind.unwrap_or(FighterKind::Mario);
-    let mut scene = play::FighterScene::at_spawn(p, &stage, kind, 0);
-    scene.fighter.costume = fighters.man_costume;
+    // `ftManagerMakeFighter` for each player in turn.
+    let lead = roster[0].unwrap_or(training_roster(Default::default())[0].unwrap());
+    let mut scene = play::FighterScene::at_spawn(p, &stage, lead.kind, lead.spawn);
+    scene.fighter.port = 0;
+    scene.fighter.costume = lead.costume;
+    scene.fighter.handicap = lead.handicap;
     *world.play_state = Some(scene);
-    *world.dummy_state = play::Dummy::at_spawn(
-        p,
-        &stage,
-        fighters.com_kind.unwrap_or(FighterKind::Mario),
-        fighters.com_costume,
-        vs.map_or(play::TRAINING_CPU_LEVEL, |r| r.cpu_level),
-    );
+    *world.dummies = core::array::from_fn(|i| {
+        let e = roster[i + 1]?;
+        let port = i as u8 + 1;
+        let mut d = play::Dummy::at_spawn(p, &stage, e.kind, e.costume, e.level, e.spawn, port)?;
+        d.fighter.handicap = e.handicap;
+        Some(alloc::boxed::Box::new(d))
+    });
     // `ifCommonPlayerDamageInitInterface`; Training shows it at once
     // (`ifCommonPlayerDamageSetShowInterface`), VS at "Go".
     reset_damage_hud(world);
+    let Some(pl) = world.play_state.as_mut() else {
+        return index;
+    };
     *battle = vs.map(|rules| {
         // `scVSBattleStartBattle`: each fighter faces the nearest other
-        // spawn, and a stock battle's deaths take stocks.
-        let spawn_x = |i| p.spawn(&stage, i).map(|s| f32::from(s.x));
+        // player's spawn (`scVSBattleGetStartPlayerLR`), and a stock
+        // battle's deaths take stocks.
+        let spawn_x = |e: &Entrant| p.spawn(&stage, e.spawn).map(|s| f32::from(s.x));
         let stock_rule = rules.rule == ssb_game::battle::Rule::Stock;
-        if let Some(pl) = world.play_state.as_mut() {
-            pl.fighter.facing =
-                ssb_game::battle::start_facing(pl.fighter.pos.x, spawn_x(1).into_iter());
-            pl.fighter.dead.stock_rule = stock_rule;
-            pl.fighter.stocks = rules.stocks;
+        let mut players = [ssb_game::battle::Player::default(); 4];
+        for (port, f) in scenes(pl, world.dummies).into_iter().enumerate() {
+            let Some(f) = f else { continue };
+            let me = roster[port].unwrap_or(lead);
+            let others = roster
+                .iter()
+                .enumerate()
+                .filter(|&(j, e)| j != port && e.is_some_and(|e| e.team != me.team))
+                .filter_map(|(_, e)| e.as_ref().and_then(spawn_x));
+            f.fighter.facing = ssb_game::battle::start_facing(f.fighter.pos.x, others);
+            f.fighter.dead.stock_rule = stock_rule;
+            f.fighter.stocks = rules.stocks;
             // `ftManagerMakeFighter`: a VS fighter waits hidden for its
             // entry (`ftCommonEntrySetStatus`).
-            ssb_game::appear::entry_set_status(&mut pl.fighter);
+            ssb_game::appear::entry_set_status(&mut f.fighter);
+            players[port] = ssb_game::battle::Player {
+                present: true,
+                is_human: port == 0 && me.human,
+                team: me.team,
+                ..Default::default()
+            };
         }
-        if let Some(d) = world.dummy_state.as_mut() {
-            d.fighter.facing =
-                ssb_game::battle::start_facing(d.fighter.pos.x, spawn_x(0).into_iter());
-            d.fighter.dead.stock_rule = stock_rule;
-            d.fighter.stocks = rules.stocks;
-            // A VS CPU runs the default trait and behaviour: it fights.
+        // A VS CPU runs the default trait and behaviour: it fights.
+        for d in world.dummies.iter_mut().flatten() {
             d.computer.trait_kind = ssb_game::computer::attack::Trait::Default;
             d.computer.behavior = ssb_game::computer::Behavior::Default;
-            ssb_game::appear::entry_set_status(&mut d.fighter);
         }
-        let mut players = [ssb_game::battle::Player::default(); 4];
-        players[0] = ssb_game::battle::Player {
-            present: true,
-            is_human: true,
-            team: 0,
-            ..Default::default()
-        };
-        players[1] = ssb_game::battle::Player {
-            present: world.dummy_state.is_some(),
-            team: 1,
-            ..Default::default()
-        };
+        // Team battles are not ported: every battle is a free-for-all.
         ssb_game::battle::Battle::new(rules.rule, rules.time_limit, rules.stocks, players)
     });
     index
@@ -1742,7 +1964,7 @@ unsafe fn draw_frame(
                 effect_visuals.sync_entry(
                     p,
                     draw_assets,
-                    [Some(&pl.fighter), s.dummy_state.as_ref().map(|d| &d.fighter)],
+                    scenes_ref(pl, &s.dummies).map(|x| x.map(|x| &x.fighter)),
                 );
             }
             draw_training(
@@ -1751,7 +1973,7 @@ unsafe fn draw_frame(
                 pack.as_ref(),
                 s.training_stage,
                 s.play_state.as_ref(),
-                s.dummy_state.as_ref(),
+                &s.dummies,
                 &s.weapons,
                 &s.items,
                 draw_assets,
@@ -1802,38 +2024,25 @@ unsafe fn session_frame(
                     if s.cursor == VS_ENTRY || s.vs {
                         // A VS battle always starts over.
                         s.play_state = None;
-                        s.dummy_state = None;
+                        s.dummies = Default::default();
                     }
                     s.vs = s.cursor == VS_ENTRY;
                     let rules = s.vs.then(|| capture_scene.map_or(VsRules::DEFAULT, vs_rules));
                     if s.play_state.is_some() {
                         s.screen = Screen::Training;
                     } else if route == Some(CaptureRoute::Direct) {
-                        s.training_stage = enter_training(
-                            pack.as_ref(),
-                            CAPTURE_STAGE_GKIND,
-                            s.training_scene,
-                            rules,
-                            &mut s.vs_battle,
-                            &mut TrainingWorld {
-                                play_state: &mut s.play_state,
-                                dummy_state: &mut s.dummy_state,
-                                weapons: &mut s.weapons,
-                                items: &mut s.items,
-                                stage_objects: &mut s.stage_objects,
-                                stage_map: &mut s.stage_map,
-                                stage_ctl: &mut s.stage_ctl,
-                                damage_hud: &mut s.damage_hud,
-                            },
-                        );
+                        let roster = capture_scene.map_or(training_roster(s.training_scene), |scene| {
+                            capture_roster(scene, s.training_scene)
+                        });
+                        s.enter(pack.as_ref(), CAPTURE_STAGE_GKIND, roster, rules);
                         s.scene_gkind = CAPTURE_STAGE_GKIND;
                         // Training's CPU menu (`dSC1PTrainingModeDummyBehaviors`)
                         // is not ported; these scenes pick its behaviour.
-                        if let (Some(d), Some(b)) =
-                            (s.dummy_state.as_mut(), capture_scene.and_then(capture_cpu_behavior))
-                        {
-                            d.computer.behavior = b;
-                            d.computer.trait_kind = ssb_game::computer::attack::Trait::None;
+                        if let Some(b) = capture_scene.and_then(capture_cpu_behavior) {
+                            for d in s.dummies.iter_mut().flatten() {
+                                d.computer.behavior = b;
+                                d.computer.trait_kind = ssb_game::computer::attack::Trait::None;
+                            }
                         }
                         s.screen = Screen::Training;
                     } else if route == Some(CaptureRoute::StageSelect) {
@@ -1905,23 +2114,12 @@ unsafe fn session_frame(
                         s.maps_training_gkind = saved.remembered;
                     }
                     s.scene_gkind = saved.gkind;
-                    s.training_stage = enter_training(
-                        pack.as_ref(),
-                        saved.gkind,
-                        s.training_scene,
-                        s.vs.then_some(s.vs_menu_rules),
-                        &mut s.vs_battle,
-                        &mut TrainingWorld {
-                            play_state: &mut s.play_state,
-                            dummy_state: &mut s.dummy_state,
-                            weapons: &mut s.weapons,
-                            items: &mut s.items,
-                            stage_objects: &mut s.stage_objects,
-                            stage_map: &mut s.stage_map,
-                            stage_ctl: &mut s.stage_ctl,
-                            damage_hud: &mut s.damage_hud,
-                        },
-                    );
+                    let roster = if s.vs {
+                        vs_roster(&s.vs_state)
+                    } else {
+                        training_roster(s.training_scene)
+                    };
+                    s.enter(pack.as_ref(), saved.gkind, roster, s.vs.then_some(s.vs_menu_rules));
                     s.screen = Screen::Training;
                 }
                 // B returns to the character select, with the fighters
@@ -1967,7 +2165,7 @@ unsafe fn session_frame(
             Screen::Results => {
                 if results_frame(&mut s.vs_results, pressed) {
                     s.play_state = None;
-                    s.dummy_state = None;
+                    s.dummies = Default::default();
                     s.vs_battle = None;
                     s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind));
                     s.screen = Screen::PlayersVs;
@@ -1981,7 +2179,7 @@ unsafe fn session_frame(
                 p,
                 s.training_stage,
                 pl,
-                &mut s.dummy_state,
+                &mut s.dummies,
                 &mut s.weapons,
                 &mut s.items,
                 &mut s.material_anim,
@@ -2001,26 +2199,27 @@ unsafe fn session_frame(
                 .as_ref()
                 .filter(|b| !b.is_sudden_death && !b.is_reset)
                 .and_then(ssb_game::battle::Battle::sudden_death_battle);
-            match sudden {
-                Some(battle) => {
-                    s.training_stage = start_sudden_death(
-                        pack.as_ref(),
-                        s.scene_gkind,
-                        s.training_scene,
-                        battle,
-                        &mut s.vs_battle,
-                        &mut TrainingWorld {
-                            play_state: &mut s.play_state,
-                            dummy_state: &mut s.dummy_state,
-                            weapons: &mut s.weapons,
-                            items: &mut s.items,
-                            stage_objects: &mut s.stage_objects,
-                            stage_map: &mut s.stage_map,
-                            stage_ctl: &mut s.stage_ctl,
-                            damage_hud: &mut s.damage_hud,
-                        },
-                    );
-                }
+            let entered = sudden.and_then(|battle| {
+                start_sudden_death(
+                    pack.as_ref(),
+                    s.scene_gkind,
+                    s.roster,
+                    battle,
+                    &mut s.vs_battle,
+                    &mut TrainingWorld {
+                        play_state: &mut s.play_state,
+                        dummies: &mut s.dummies,
+                        weapons: &mut s.weapons,
+                        items: &mut s.items,
+                        stage_objects: &mut s.stage_objects,
+                        stage_map: &mut s.stage_map,
+                        stage_ctl: &mut s.stage_ctl,
+                        damage_hud: &mut s.damage_hud,
+                    },
+                )
+            });
+            match entered {
+                Some(index) => s.training_stage = index,
                 // A reset from the pause menu is a no contest.
                 None => {
                     s.vs_results = s.vs_battle.as_ref().map(make_results);
@@ -2040,7 +2239,7 @@ struct Session {
     stage_select: ssb_game::stage_select::StageSelect,
     damage_hud: Hud,
     play_state: Option<play::FighterScene>,
-    dummy_state: Option<play::Dummy>,
+    dummies: Dummies,
     weapons: ssb_game::weapon::WeaponPool,
     items: ssb_game::item::ItemPool,
     stage_objects: ssb_rom::ground_obj::GroundObjects,
@@ -2048,6 +2247,8 @@ struct Session {
     screen: Screen,
     cursor: usize,
     training_scene: ssb_game::fighter_select::SceneData,
+    /// The last battle's fighters, for its sudden death.
+    roster: Roster,
     vs: bool,
     vs_battle: Option<ssb_game::battle::Battle>,
     maps_vsmode_gkind: u8,
@@ -2058,6 +2259,31 @@ struct Session {
     /// `gSCManagerTransferBattleState` between the VS menus.
     vs_state: ssb_game::players_vs::BattleState,
     players_vs: Option<ssb_game::players_vs::PlayersVs>,
+}
+
+impl Session {
+    /// [`enter_training`] into this session's world with `roster`,
+    /// remembering it for a sudden death.
+    fn enter(&mut self, pack: Option<&Pack<'_>>, gkind: u8, roster: Roster, rules: Option<VsRules>) {
+        self.roster = roster;
+        self.training_stage = enter_training(
+            pack,
+            gkind,
+            roster,
+            rules,
+            &mut self.vs_battle,
+            &mut TrainingWorld {
+                play_state: &mut self.play_state,
+                dummies: &mut self.dummies,
+                weapons: &mut self.weapons,
+                items: &mut self.items,
+                stage_objects: &mut self.stage_objects,
+                stage_map: &mut self.stage_map,
+                stage_ctl: &mut self.stage_ctl,
+                damage_hud: &mut self.damage_hud,
+            },
+        );
+    }
 }
 
 unsafe fn run() -> ! {
@@ -2096,7 +2322,9 @@ unsafe fn run() -> ! {
         Some(p) if ssb_rom::strict::first_issue(&p).is_some() => (None, BG_TRAINING_STRICT_FAILED),
         p => (p, no_pack_color),
     };
-    let mut s = Session {
+    // On the heap: the main thread's stack is 256 KB (`psp::module!`), and
+    // the session alone is some 100 KB.
+    let mut s = alloc::boxed::Box::new(Session {
         material_anim: ssb_rom::skeleton::MaterialAnimator::new(),
         stage_map: None,
         training_stage: 0,
@@ -2105,7 +2333,7 @@ unsafe fn run() -> ! {
         stage_select: ssb_game::stage_select::StageSelect::new(ssb_game::stage_select::DEFAULT_GKIND, 0),
         damage_hud: Hud::new(),
         play_state: None,
-        dummy_state: None,
+        dummies: Default::default(),
         weapons: ssb_game::weapon::WeaponPool::default(),
         items: ssb_game::item::ItemPool::default(),
         stage_objects: ssb_rom::ground_obj::GroundObjects::empty(),
@@ -2113,6 +2341,7 @@ unsafe fn run() -> ! {
         screen: Screen::Intro,
         cursor: 0,
         training_scene: ssb_game::fighter_select::SceneData::default(),
+        roster: [None; 4],
         vs: false,
         vs_battle: None,
         maps_vsmode_gkind: ssb_game::stage_select::DEFAULT_GKIND,
@@ -2122,7 +2351,7 @@ unsafe fn run() -> ! {
         fighter_select: None,
         vs_state: ssb_game::players_vs::BattleState::default(),
         players_vs: None,
-    };
+    });
     // Stage MObj material joints are process-lifetime clocks in the original
     // layer setup. Start once with this pack and advance in the same simulation
     // branch as the stage/fighter tick; draw only reads the resulting state.
@@ -2134,7 +2363,8 @@ unsafe fn run() -> ! {
     // `nGRKindCastle` in `dSCManagerDefaultSceneData`.
 
     let draw_assets = pack.as_ref().map(DrawAssets::resolve).unwrap_or_default();
-    let mut effect_visuals = EffectVisuals::default();
+    // On the heap for the same reason (`EffectVisuals::new_boxed`).
+    let mut effect_visuals = EffectVisuals::new_boxed();
     let mut draw_state = meshdraw::DrawState::default();
     // Created once, on first entry to Training Mode (below) -- a fighter
     // spawned on the training stage, ticked with real physics/animation/
@@ -2144,7 +2374,7 @@ unsafe fn run() -> ! {
     // doc comment): spawned alongside `s.play_state` at the stage's second
     // spawn point, ticked with permanently neutral input.
     // Match-owned spawned s.weapons. Fighter statuses emit portable requests;
-    // Training owns the pool because it is the layer that has both fighters
+    // Training owns the pool because it is the layer that has every fighter
     // and the stage collision iterator.
     // The stage controller slot (`grMainSetupMakeGround`), backed by the
     // packed objects' priority-5 animation clocks in Training (RE-357).
@@ -2211,7 +2441,7 @@ unsafe fn run() -> ! {
             emit_headless_screenshot();
             // One line for the capture log: whether the scripted attack
             // landed is not always visible (RE-351).
-            if let (Some(dummy), Some(player)) = (s.dummy_state.as_ref(), s.play_state.as_ref()) {
+            if let (Some(dummy), Some(player)) = (s.dummies[0].as_deref(), s.play_state.as_ref()) {
                 log_capture_state(
                     capture_scene,
                     sim_frame_index,
@@ -2317,25 +2547,6 @@ fn new_players_vs(state: ssb_game::players_vs::BattleState, gkind: u8) -> ssb_ga
     )
 }
 
-/// The two fighters the host's battle runs from the VS battle state: the
-/// first human and the first other player with a fighter.
-fn vs_fighters(state: &ssb_game::players_vs::BattleState) -> ssb_game::fighter_select::SceneData {
-    use ssb_game::players_vs::PlayerKind;
-    let present = |p: &&ssb_game::players_vs::PlayerState| p.pkind != PlayerKind::Not && p.fkind.is_some();
-    let man = state.players.iter().filter(present).find(|p| p.pkind == PlayerKind::Man);
-    let com = state
-        .players
-        .iter()
-        .filter(present)
-        .find(|p| man.is_none_or(|m| !core::ptr::eq(*p, m)));
-    ssb_game::fighter_select::SceneData {
-        man_kind: man.and_then(|p| p.fkind),
-        man_costume: man.map_or(0, |p| p.costume),
-        com_kind: com.and_then(|p| p.fkind),
-        com_costume: com.map_or(0, |p| p.costume),
-    }
-}
-
 /// One frame of `mnPlayersVS` and where it leads. Out of [`run`] for
 /// branch range.
 #[inline(never)]
@@ -2380,7 +2591,6 @@ fn players_vs_frame(
     };
     s.vs_state = state;
     s.vs_menu_rules = VsRules::of(&state);
-    s.training_scene = vs_fighters(&state);
     match next {
         // `nSCKindMaps`: the cursor starts on the stage VS picked last.
         None => {
@@ -2390,23 +2600,7 @@ fn players_vs_frame(
         // `nSCKindVSBattle` on the random stage.
         Some(gkind) => {
             s.scene_gkind = gkind;
-            s.training_stage = enter_training(
-                pack.as_ref(),
-                gkind,
-                s.training_scene,
-                Some(s.vs_menu_rules),
-                &mut s.vs_battle,
-                &mut TrainingWorld {
-                    play_state: &mut s.play_state,
-                    dummy_state: &mut s.dummy_state,
-                    weapons: &mut s.weapons,
-                    items: &mut s.items,
-                    stage_objects: &mut s.stage_objects,
-                    stage_map: &mut s.stage_map,
-                    stage_ctl: &mut s.stage_ctl,
-                    damage_hud: &mut s.damage_hud,
-                },
-            );
+            s.enter(pack.as_ref(), gkind, vs_roster(&state), Some(s.vs_menu_rules));
             s.screen = Screen::Training;
         }
     }
@@ -2699,8 +2893,10 @@ impl DrawAssets {
 /// count, restarting when it goes back.
 #[derive(Default)]
 struct EffectVisuals {
-    /// Each fighter's entry effect parts (RE-403).
-    entry: [[EntryVisual; 2]; 2],
+    /// Each port's entry effect parts (RE-403), made on the first
+    /// [`Self::sync_entry`]: on the heap, since each part's players are
+    /// some 25 KB and `run` keeps this on its stack.
+    entry: alloc::vec::Vec<[EntryVisual; 2]>,
     boomerang: ssb_rom::skeleton::StageAnimator,
     boomerang_ticks: Option<u16>,
     spin: ssb_rom::skeleton::StageAnimator,
@@ -2726,6 +2922,53 @@ struct EffectVisuals {
     magnet_materials: ssb_rom::skeleton::EffectMaterialAnimator,
     magnet_ticks: Option<u16>,
     items: [ItemVisual; MAX_ITEM_VISUALS],
+}
+
+impl EffectVisuals {
+    /// The players, built in place on the heap one field at a time: the
+    /// whole is some 380 KB, past the main thread's 256 KB stack
+    /// (`psp::module!`), and `Box::default` builds it on the stack first.
+    #[inline(never)]
+    fn new_boxed() -> alloc::boxed::Box<EffectVisuals> {
+        use core::ptr;
+        let mut b = alloc::boxed::Box::<EffectVisuals>::new_uninit();
+        let p = b.as_mut_ptr();
+        // SAFETY: every field is written exactly once below before
+        // `assume_init`, and none is read before then.
+        unsafe {
+            ptr::addr_of_mut!((*p).entry).write(Default::default());
+            ptr::addr_of_mut!((*p).boomerang).write(Default::default());
+            ptr::addr_of_mut!((*p).boomerang_ticks).write(Default::default());
+            ptr::addr_of_mut!((*p).spin).write(Default::default());
+            ptr::addr_of_mut!((*p).spin_materials).write(Default::default());
+            ptr::addr_of_mut!((*p).spin_ticks).write(Default::default());
+            ptr::addr_of_mut!((*p).punch_materials).write(Default::default());
+            ptr::addr_of_mut!((*p).punch_ticks).write(Default::default());
+            ptr::addr_of_mut!((*p).kick).write(Default::default());
+            ptr::addr_of_mut!((*p).kick_materials).write(Default::default());
+            ptr::addr_of_mut!((*p).kick_ticks).write(Default::default());
+            ptr::addr_of_mut!((*p).cutter).write(Default::default());
+            ptr::addr_of_mut!((*p).cutter_ticks).write(Default::default());
+            for i in 0..MAX_JOLT_VISUALS {
+                ptr::addr_of_mut!((*p).jolts[i]).write(Default::default());
+            }
+            ptr::addr_of_mut!((*p).sing).write(Default::default());
+            ptr::addr_of_mut!((*p).sing_materials).write(Default::default());
+            ptr::addr_of_mut!((*p).sing_ticks).write(Default::default());
+            ptr::addr_of_mut!((*p).pk_fire_materials).write(Default::default());
+            ptr::addr_of_mut!((*p).pk_fire_ticks).write(Default::default());
+            ptr::addr_of_mut!((*p).pk_thunder).write(Default::default());
+            ptr::addr_of_mut!((*p).pk_thunder_materials).write(Default::default());
+            ptr::addr_of_mut!((*p).pk_thunder_ticks).write(Default::default());
+            ptr::addr_of_mut!((*p).magnet).write(Default::default());
+            ptr::addr_of_mut!((*p).magnet_materials).write(Default::default());
+            ptr::addr_of_mut!((*p).magnet_ticks).write(Default::default());
+            for i in 0..MAX_ITEM_VISUALS {
+                ptr::addr_of_mut!((*p).items[i]).write(Default::default());
+            }
+            b.assume_init()
+        }
+    }
 }
 
 /// Items drawn at once: Training has at most one PK Fire flame and one Bomb
@@ -2781,7 +3024,10 @@ impl EffectVisuals {
     /// Plays each fighter's entry effect up to its clock
     /// (`Entry::effect_ticks`), restarting on a new entry.
     #[inline(never)]
-    fn sync_entry(&mut self, p: &Pack<'_>, assets: &DrawAssets, fighters: [Option<&ssb_game::fighter::Fighter>; 2]) {
+    fn sync_entry(&mut self, p: &Pack<'_>, assets: &DrawAssets, fighters: [Option<&ssb_game::fighter::Fighter>; 4]) {
+        if self.entry.len() < fighters.len() {
+            self.entry.resize_with(fighters.len(), Default::default);
+        }
         for (visuals, f) in self.entry.iter_mut().zip(fighters) {
             let clock = f.and_then(|f| f.entry.effect_ticks);
             let parts = f.map_or(&[][..], ssb_psp_runtime::scene::entry_effect_parts);
@@ -2815,7 +3061,7 @@ fn draw_entry_effects(
     draw_state: &mut meshdraw::DrawState,
     assets: &DrawAssets,
     visuals: &EffectVisuals,
-    fighters: [Option<&ssb_game::fighter::Fighter>; 2],
+    fighters: [Option<&ssb_game::fighter::Fighter>; 4],
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) {
     for (vs, f) in visuals.entry.iter().zip(fighters) {
@@ -3136,7 +3382,7 @@ unsafe fn draw_training(
     pack: Option<&Pack<'_>>,
     stage_index: u32,
     play_state: Option<&play::FighterScene>,
-    dummy_state: Option<&play::Dummy>,
+    dummies: &Dummies,
     weapons: &ssb_game::weapon::WeaponPool,
     items: &ssb_game::item::ItemPool,
     assets: &DrawAssets,
@@ -3191,33 +3437,19 @@ unsafe fn draw_training(
         material_anim,
     );
 
+    let fighters = scenes_ref(pl, dummies);
     // The N64 puts shadows on their own display link between the stage and
     // fighters.  Resolve each independently from its live floor/air state;
     // the fixed scratch is copied into GE memory by the renderer, so it is
-    // safe to reuse for both players without a per-frame allocation.
+    // safe to reuse for every fighter without a per-frame allocation.
     if let Some(shadow_texture) = assets.shadow_texture.as_ref() {
         let mut shadow_verts = [meshdraw::TexQuadVertex::default(); 18];
-        let player_shadow =
-            ssb_psp_runtime::scene::fighter_shadow(p, &stage, &pl.fighter, pl.shadow_size);
-        meshdraw::draw_fighter_shadow(
-            p,
-            shadow_texture,
-            &player_shadow,
-            [0x00, 0x00, 0x00, 0xA0],
-            &mut shadow_verts,
-            draw_state,
-        );
-        if let Some(dummy) = dummy_state {
-            let dummy_shadow = ssb_psp_runtime::scene::fighter_shadow(
-                p,
-                &stage,
-                &dummy.fighter,
-                dummy.shadow_size,
-            );
+        for f in fighters.iter().flatten() {
+            let shadow = ssb_psp_runtime::scene::fighter_shadow(p, &stage, &f.fighter, f.shadow_size);
             meshdraw::draw_fighter_shadow(
                 p,
                 shadow_texture,
-                &dummy_shadow,
+                &shadow,
                 [0x00, 0x00, 0x00, 0xA0],
                 &mut shadow_verts,
                 draw_state,
@@ -3225,88 +3457,11 @@ unsafe fn draw_training(
         }
     }
 
-    // `FTStruct::is_invisible` (a KO, a Kirby or Yoshi capture) skips the
-    // model.
-    if let Some(obj) = p.object(pl.object).filter(|_| !pl.fighter.is_invisible) {
-        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-        let n = pl.compose_model(p, &obj, &mut posed);
-        if let Some(joint) = pl
-            .fighter
-            .grab
-            .holder
-            .and_then(|h| h.anchor_transform)
-            .filter(|_| ssb_game::grab::is_held(pl.fighter.status.status))
-        {
-            gpu.model_transform_joint(pl.fighter.pos, joint, meshdraw::MODEL_SCALE);
-        } else {
-            gpu.model_transform(
-                [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
-                [0.0, play::fighter_turn(&pl.fighter), 0.0],
-                meshdraw::MODEL_SCALE,
-            );
-        }
-        let m = gpu.model_matrix();
-        // `ftDisplayMainProcDisplay` rebuilds the fighter's one directional
-        // light from the active stage's `MPGroundData.light_angle.x/y`
-        // immediately before drawing each fighter (RE-164) -- matches
-        // `psp-asset-viewer/main.rs`'s own real-camera fighter draw.
-        draw_state.configure_fighter_light(stage.light_angle_xy);
-        meshdraw::draw_object_posed(
-            p,
-            &obj,
-            &m,
-            &posed[..n],
-            None,
-            draw_state,
-            None,
-            None,
-            u32::from(pl.fighter.costume),
-        );
-        draw_state.finish_fighter_light();
-    }
-
-    // The stationary dummy target (`play::Dummy`), drawn the same way as the
-    // player's fighter -- its own pose, its own per-fighter light rebuild
-    // (RE-164) -- just with no camera interest of its own (F1's target
-    // doesn't move, so it never influences framing).
-    if let Some(dummy) = dummy_state {
-        if let Some(obj) = p.object(dummy.object).filter(|_| !dummy.fighter.is_invisible) {
-            let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-            let n = dummy.compose_model(p, &obj, &mut posed);
-            if let Some(joint) = dummy
-                .fighter
-                .grab
-                .holder
-                .and_then(|h| h.anchor_transform)
-                .filter(|_| ssb_game::grab::is_held(dummy.fighter.status.status))
-            {
-                gpu.model_transform_joint(dummy.fighter.pos, joint, meshdraw::MODEL_SCALE);
-            } else {
-                gpu.model_transform(
-                    [
-                        dummy.fighter.pos.x,
-                        dummy.fighter.pos.y,
-                        dummy.fighter.pos.z,
-                    ],
-                    [0.0, play::fighter_turn(&dummy.fighter), 0.0],
-                    meshdraw::MODEL_SCALE,
-                );
-            }
-            let m = gpu.model_matrix();
-            draw_state.configure_fighter_light(stage.light_angle_xy);
-            meshdraw::draw_object_posed(
-                p,
-                &obj,
-                &m,
-                &posed[..n],
-                None,
-                draw_state,
-                None,
-                None,
-                u32::from(dummy.fighter.costume),
-            );
-            draw_state.finish_fighter_light();
-        }
+    // Each fighter in port order, the CPUs drawn the same way as the
+    // player's -- their own pose, their own per-fighter light rebuild
+    // (RE-164).
+    for f in fighters.iter().flatten() {
+        draw_fighter_model(gpu, p, &stage, draw_state, f);
     }
 
     draw_items_weapons_effects(
@@ -3314,7 +3469,7 @@ unsafe fn draw_training(
         draw_state,
         p,
         pl,
-        dummy_state,
+        dummies,
         weapons,
         items,
         assets,
@@ -3327,14 +3482,16 @@ unsafe fn draw_training(
         draw_state,
         assets,
         effect_visuals,
-        [Some(&pl.fighter), dummy_state.map(|d| &d.fighter)],
+        fighters.map(|x| x.map(|x| &x.fighter)),
         material_anim,
     );
     // `players[].color`: the human's port, a CPU's `GMCOMMON_PLAYERS_MAX`.
-    let fighters = [
-        Some((pl.fighter.kind, 0)),
-        dummy_state.map(|d| (d.fighter.kind, ssb_game::hud::CPU_COLOR)),
-    ];
+    let emblems = fighters.map(|x| {
+        x.map(|x| {
+            let human = x.fighter.port == pl.fighter.port;
+            (x.fighter.kind, if human { usize::from(x.fighter.port) } else { ssb_game::hud::CPU_COLOR })
+        })
+    });
     // `ifCommonBattleInterfaceProcSet` hides every interface at Set, and
     // `ifCommonBattlePauseInitInterface` while paused, when only the pause
     // menu draws.
@@ -3345,13 +3502,9 @@ unsafe fn draw_training(
         draw_pause_menu(gpu, p, draw_state, pause.kind);
         return;
     }
-    draw_damage_hud(p, draw_state, &damage_hud.damage, fighters, stage_index);
+    draw_damage_hud(p, draw_state, &damage_hud.damage, emblems, stage_index);
     if let Some(b) = battle {
-        let stocks = [
-            Some(&pl.fighter),
-            dummy_state.map(|d| &d.fighter),
-        ];
-        draw_stocks(p, draw_state, b, stocks);
+        draw_stocks(p, draw_state, b, fighters.map(|x| x.map(|x| &x.fighter)));
         draw_timer(p, draw_state, b);
     }
     if let Some(c) = damage_hud.countdown.as_ref() {
@@ -3362,13 +3515,63 @@ unsafe fn draw_training(
     }
 }
 
+/// One fighter's model: posed, placed on its catcher's joint while held,
+/// and lit by `ftDisplayMainProcDisplay`'s rebuild of its one directional
+/// light from the active stage's `MPGroundData.light_angle.x/y` immediately
+/// before drawing it (RE-164) -- matches `psp-asset-viewer/main.rs`'s own
+/// real-camera fighter draw. `FTStruct::is_invisible` (a KO, a Kirby or
+/// Yoshi capture) skips the model.
+#[inline(never)]
+unsafe fn draw_fighter_model(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    draw_state: &mut meshdraw::DrawState,
+    f: &play::FighterScene,
+) {
+    let Some(obj) = p.object(f.object).filter(|_| !f.fighter.is_invisible) else {
+        return;
+    };
+    let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+    let n = f.compose_model(p, &obj, &mut posed);
+    if let Some(joint) = f
+        .fighter
+        .grab
+        .holder
+        .and_then(|h| h.anchor_transform)
+        .filter(|_| ssb_game::grab::is_held(f.fighter.status.status))
+    {
+        gpu.model_transform_joint(f.fighter.pos, joint, meshdraw::MODEL_SCALE);
+    } else {
+        gpu.model_transform(
+            [f.fighter.pos.x, f.fighter.pos.y, f.fighter.pos.z],
+            [0.0, play::fighter_turn(&f.fighter), 0.0],
+            meshdraw::MODEL_SCALE,
+        );
+    }
+    let m = gpu.model_matrix();
+    draw_state.configure_fighter_light(stage.light_angle_xy);
+    meshdraw::draw_object_posed(
+        p,
+        &obj,
+        &m,
+        &posed[..n],
+        None,
+        draw_state,
+        None,
+        None,
+        u32::from(f.fighter.costume),
+    );
+    draw_state.finish_fighter_light();
+}
+
 /// `ifCommonPlayerDamageProcDisplay` for each fighter, over the 3D scene.
 #[inline(never)]
 fn draw_damage_hud(
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
-    hud: &[ssb_game::hud::DamageDisplay; 2],
-    fighters: [Option<(ssb_game::fighter::FighterKind, usize)>; 2],
+    hud: &[ssb_game::hud::DamageDisplay; 4],
+    fighters: [Option<(ssb_game::fighter::FighterKind, usize)>; 4],
     stage_index: u32,
 ) {
     // `ifCommonPlayerDamageSetDigitAttr`.
@@ -3491,11 +3694,11 @@ fn draw_stocks(
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
     b: &ssb_game::battle::Battle,
-    fighters: [Option<&ssb_game::fighter::Fighter>; 2],
+    fighters: [Option<&ssb_game::fighter::Fighter>; 4],
 ) {
     let single = b.rule == ssb_game::battle::Rule::Time;
-    for (player, f) in fighters.into_iter().enumerate() {
-        let Some(f) = f else { continue };
+    for f in fighters.into_iter().flatten() {
+        let player = usize::from(f.port);
         let Some(icon) = p.fighter_sprite(f.kind as u8, ssb_rom::pack::SpriteDesc::ROLE_STOCK, f.costume) else {
             continue;
         };
@@ -3602,7 +3805,7 @@ unsafe fn draw_items_weapons_effects(
     draw_state: &mut meshdraw::DrawState,
     p: &Pack<'_>,
     pl: &play::FighterScene,
-    dummy_state: Option<&play::Dummy>,
+    dummies: &Dummies,
     weapons: &ssb_game::weapon::WeaponPool,
     items: &ssb_game::item::ItemPool,
     assets: &DrawAssets,
@@ -3676,11 +3879,11 @@ unsafe fn draw_items_weapons_effects(
                     continue;
                 };
                 let owner = item.owner.and_then(|port| {
-                    if pl.fighter.port == port {
-                        Some(&pl.fighter)
-                    } else {
-                        dummy_state.map(|d| &d.fighter).filter(|f| f.port == port)
-                    }
+                    scenes_ref(pl, dummies)
+                        .into_iter()
+                        .flatten()
+                        .map(|x| &x.fighter)
+                        .find(|f| f.port == port)
                 });
                 let held = owner.filter(|_| item.is_hold).and_then(|f| {
                     let joint = match item.weight {
@@ -4054,7 +4257,7 @@ unsafe fn draw_items_weapons_effects(
     // PRIM white and ENV the player's colour, both at alpha 0xC0. Yoshi's
     // egg shield is a different effect and is not drawn.
     if let Some(object) = assets.shield.as_ref() {
-        let fighters = core::iter::once(&pl.fighter).chain(dummy_state.map(|d| &d.fighter));
+        let fighters = scenes_ref(pl, dummies).into_iter().flatten().map(|x| &x.fighter);
         for f in fighters.filter(|f| f.guard.is_shield && f.kind != ssb_game::fighter::FighterKind::Yoshi) {
             let joint = ssb_game::combat::shield_transform(f);
             let size = joint.axes[0].length();
