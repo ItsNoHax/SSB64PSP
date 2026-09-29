@@ -31,9 +31,7 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - Both PSP release builds pass. Existing viewer warnings remain.
 - PPSSPPHeadless: all 108 goldens match twice (RE-405). Scene captures
   time out at 60 s. No golden passes through a platform.
-- `psp-game` reaches scripted Training in PPSSPP. On the PSP-2000 a
-  live scripted Training run held 16,682 µs per frame for 3,600 frames
-  (RE-360).
+- PSP-2000: scripted Training held 16,682 µs per frame (RE-360).
 - Pack v63: 28,254,080 bytes, SHA-256
   `8bfe1acc108ec0305fd7ab8b96c06077c2961d6d244bcb11d0bdfafef1130197`.
 - `run` is 20,508 bytes in release (RE-405); the MIPS branch range is
@@ -47,7 +45,6 @@ Current snapshot. History lives in git and `docs/evidence/`.
   sprites: damage digits, emblems, stock icons, files 37, 82, 165, 197.
   With no save data, Mushroom Kingdom and the four unlockable fighters
   stay locked.
-- The acid packs three 384×384 tile-1 sprites it never draws (523 KB).
 - Sector Z Arwing, bonus stages and stage items (Bumper, POW Block,
   Piranha Plant) remain; Twister/TaruCann have no clip.
 - The one-frame grey damage shield and Yoshi's egg shield are not drawn (RE-384).
@@ -55,5 +52,6 @@ Current snapshot. History lives in git and `docs/evidence/`.
   hit effects are not drawn. The Fireball does not spin (RE-372; kind 71
   is `func_ovl0_800CA5C8`, RE-373), and a released Charge Shot restarts
   its spin (RE-373). Other item kinds and team checks remain.
-- Four-fighter VS scenes exceed the ~700 KiB VRAM texture pool (TODO). The stage draw costs
-  4.5 ms per frame on hardware (RE-360). Rendering performance remains `P5`.
+- Four-fighter VS exceeds the ~700 KiB VRAM texture pool (TODO). The
+  stage draw costs 4.5 ms per frame on hardware (RE-360); performance is
+  `P5`.
