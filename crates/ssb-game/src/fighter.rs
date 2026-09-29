@@ -245,8 +245,10 @@ pub struct Fighter {
     pub cliff_reach: ssb_engine::math::Vec2,
     pub map_contacts: crate::map::Contacts,
     pub map_contacts_prev: crate::map::Contacts,
-    /// Occupied `(floor line, facing)` supplied by the match before ticking.
-    pub occupied_cliff: Option<(u16, Facing)>,
+    /// Each other fighter's held `(floor line, facing)`, supplied by the
+    /// match before ticking: `mpCommonRunFighterSpecialCollisions` skips a
+    /// cliff another fighter holds facing the same way.
+    pub occupied_cliffs: [Option<(u16, Facing)>; 3],
     /// The floor being stood on, or `None` while airborne.
     pub floor: Option<Standing>,
     /// A drop-through platform being fallen past — `ignore_line_id`.
@@ -411,7 +413,7 @@ impl Fighter {
             cliff_reach: ssb_engine::math::Vec2::ZERO,
             map_contacts: crate::map::Contacts::default(),
             map_contacts_prev: crate::map::Contacts::default(),
-            occupied_cliff: None,
+            occupied_cliffs: [None; 3],
             floor: None,
             ignore_line: None,
             anim: crate::status::AnimLengths::default(),
@@ -1412,7 +1414,7 @@ impl Fighter {
             facing: self.facing.sign(),
             wait: self.cliffcatch_wait,
             reach: self.cliff_reach,
-            occupied: self.occupied_cliff.map(|(l, f)| (l, f.sign())),
+            occupied: self.occupied_cliffs.map(|c| c.map(|(l, f)| (l, f.sign()))),
         });
         let result = crate::map::move_air_pushed(
             &self.coll,

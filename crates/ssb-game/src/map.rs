@@ -76,7 +76,8 @@ pub struct CliffQuery {
     pub facing: f32,
     pub wait: u16,
     pub reach: Vec2,
-    pub occupied: Option<(u16, f32)>,
+    /// The other fighters' held `(line, facing)`.
+    pub occupied: [Option<(u16, f32)>; 3],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -675,7 +676,7 @@ where
             if let Some((line, corner)) =
                 cliff(&surfaces, check.facing, check.wait, check.reach, prev, pos)
             {
-                if check.occupied != Some((line, check.facing)) {
+                if !check.occupied.contains(&Some((line, check.facing))) {
                     return AirMoved {
                         moved: Moved { pos, floor: None },
                         contacts,

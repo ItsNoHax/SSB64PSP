@@ -50,21 +50,26 @@ impl DerefMut for Dummy {
 }
 
 impl Dummy {
-    /// Puts a fighter at the stage's second player spawn (`pack.spawn(stage,
-    /// 1)`), distinct from the player's own spawn 0. Returns `None` when the
-    /// stage has no second spawn point rather than guessing a position --
-    /// [`FighterScene::at_spawn`] itself has no such distinction (it always
-    /// returns a scene, `placed: false` when nothing to stand on), so that
-    /// check stays here.
+    /// Puts a CPU fighter at the stage's `spawn`th player spawn
+    /// (`mpCollisionGetPlayerMapObjPosition(player)`) on `port`, at CPU
+    /// `level`. Training's dummy takes spawn and port 1. Returns `None`
+    /// when the stage has no such spawn point rather than guessing a
+    /// position -- [`FighterScene::at_spawn`] itself has no such
+    /// distinction (it always returns a scene, `placed: false` when nothing
+    /// to stand on), so that check stays here.
+    #[allow(clippy::too_many_arguments)]
     pub fn at_spawn(
         pack: &Pack<'_>,
         stage: &StageDesc,
         kind: FighterKind,
         costume: u8,
         level: u8,
+        spawn: u16,
+        port: u8,
     ) -> Option<Dummy> {
-        pack.spawn(stage, 1)?;
-        let mut scene = FighterScene::at_spawn(pack, stage, kind, 1);
+        pack.spawn(stage, spawn)?;
+        let mut scene = FighterScene::at_spawn(pack, stage, kind, spawn);
+        scene.fighter.port = port;
         scene.fighter.costume = costume;
         let mut computer = ssb_game::computer::Computer::setup(&scene.fighter, level);
         // `sc1PTrainingModeUpdateDummyBehavior`: the menu's Stand, no trait.

@@ -754,6 +754,11 @@ pub struct GrabState {
     pub captain_no_update: bool,
     /// Events for the partner, drained by [`exchange`].
     pub outbox: [Option<GrabEvent>; OUTBOX],
+    /// Port of the fighter last linked by [`GrabState::catch`] or
+    /// [`GrabState::capture`], kept by [`exchange`] after the link drops: a
+    /// release is queued as the link is cleared, and [`partner`] still has
+    /// to find the fighter it is for.
+    pub partner: Option<u8>,
 }
 
 impl GrabState {
@@ -2037,6 +2042,19 @@ pub fn exchange(from: &mut Fighter, to: &mut Fighter) {
     if to.grab.capture == Some(from.port) {
         to.grab.holder = Some(holder_of(from));
     }
+    for f in [from, to] {
+        if let Some(port) = f.grab.catch.or(f.grab.capture) {
+            f.grab.partner = Some(port);
+        }
+    }
+}
+
+/// The port `f`'s queued events are for: the fighter it holds, the one
+/// holding it, or the one it was last linked to (`catch_gobj` and
+/// `capture_gobj`, which the original writes through directly). `None`
+/// when `f` has never been linked.
+pub fn partner(f: &Fighter) -> Option<u8> {
+    f.grab.catch.or(f.grab.capture).or(f.grab.partner)
 }
 
 /// `ftParamUpdateStaleQueue(capture_fp->player, this_fp->player, ...)`,
@@ -2142,6 +2160,56 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
 /// [`exchange`]. Yoshi's Egg Lay searches with its own box and
 /// `proc_catch`/`proc_capture` pair.
 pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
+    if !catch_touches(catcher, other) {
+        return false;
+    }
+    let inhale = crate::kirby::inhale_searching(catcher);
+    let egg_lay = crate::yoshi::egg_lay_searching(catcher);
+    let copy_egg_lay = crate::kirby_copy::egg_lay_searching(catcher);
+    let dive = crate::captain::dive_searching(catcher);
+    if inhale {
+        crate::kirby::inhale_catch(catcher, other);
+        catcher.grab.send(GrabEvent::CaptureKirby);
+    } else if dive {
+        crate::captain::dive_catch(catcher, other);
+    } else if egg_lay {
+        crate::yoshi::catch(catcher, other);
+        catcher.grab.send(GrabEvent::CaptureYoshi);
+    } else if copy_egg_lay {
+        crate::kirby_copy::egg_lay_catch(catcher, other);
+        catcher.grab.send(GrabEvent::CaptureYoshi);
+    } else {
+        catch_pull(catcher, other);
+        catcher.grab.send(GrabEvent::Capture);
+    }
+    true
+}
+
+/// `ftMainSearchFighterCatch` over every other fighter, in link order: the
+/// port of the one whose catchable hurtboxes the catch box touches nearest
+/// in x (`ftMainUpdateCatchStatFighter`'s `search_gobj_dist`; the first
+/// one wins a tie). [`search_catch`] then catches it, as
+/// `ftMainProcSearchCatch` calls `proc_catch` for `search_gobj` alone.
+pub fn nearest_catch<'a>(
+    catcher: &Fighter,
+    others: impl IntoIterator<Item = &'a Fighter>,
+) -> Option<u8> {
+    let mut near: Option<(f32, u8)> = None;
+    for other in others {
+        if other.port == catcher.port || !catch_touches(catcher, other) {
+            continue;
+        }
+        let dist = (other.pos.x - catcher.pos.x).abs();
+        if near.is_none_or(|(d, _)| dist < d) {
+            near = Some((dist, other.port));
+        }
+    }
+    near.map(|(_, port)| port)
+}
+
+/// Whether `catcher`'s catch box finds `other` this frame
+/// (`ftMainSearchFighterCatch`'s tests for one fighter).
+fn catch_touches(catcher: &Fighter, other: &Fighter) -> bool {
     if !catcher.grab.is_catchstatus || other.dead.is_ghost {
         return false;
     }
@@ -2185,25 +2253,7 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
             hitbox.radius,
         )
     });
-    if !hit {
-        return false;
-    }
-    if inhale {
-        crate::kirby::inhale_catch(catcher, other);
-        catcher.grab.send(GrabEvent::CaptureKirby);
-    } else if dive {
-        crate::captain::dive_catch(catcher, other);
-    } else if egg_lay {
-        crate::yoshi::catch(catcher, other);
-        catcher.grab.send(GrabEvent::CaptureYoshi);
-    } else if copy_egg_lay {
-        crate::kirby_copy::egg_lay_catch(catcher, other);
-        catcher.grab.send(GrabEvent::CaptureYoshi);
-    } else {
-        catch_pull(catcher, other);
-        catcher.grab.send(GrabEvent::Capture);
-    }
-    true
+    hit
 }
 
 #[cfg(test)]
@@ -2427,6 +2477,37 @@ mod tests {
             origin: Vec3::new(400.0, 0.0, 0.0),
         });
         assert!(search_catch(&mut mario, &dummy));
+    }
+
+    #[test]
+    fn the_catch_takes_the_nearest_fighter_it_touches() {
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let far = grounded(FighterKind::Mario, 1, 160.0);
+        let near = grounded(FighterKind::Mario, 2, 140.0);
+        set_catch(&mut mario);
+        mario.status.anim_frame = 6.0;
+        assert!(can_reach(&mario, &far) && can_reach(&mario, &near));
+        assert_eq!(nearest_catch(&mario, [&far, &near]), Some(2));
+        assert_eq!(nearest_catch(&mario, [&far]), Some(1));
+        assert_eq!(nearest_catch(&mario, [&mario.clone()]), None);
+    }
+
+    fn can_reach(catcher: &Fighter, other: &Fighter) -> bool {
+        catch_touches(catcher, other)
+    }
+
+    #[test]
+    fn a_release_still_finds_the_partner_after_the_link_drops() {
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 2, 150.0);
+        grab(&mut mario, &mut dummy);
+        assert_eq!(partner(&mario), Some(2));
+        assert_eq!(partner(&dummy), Some(0));
+        release_on_edge(&mut mario);
+        assert_eq!(mario.grab.catch, None);
+        assert_eq!(partner(&mario), Some(2));
+        exchange(&mut mario, &mut dummy);
+        assert_eq!(dummy.grab.capture, None);
     }
 
     #[test]
