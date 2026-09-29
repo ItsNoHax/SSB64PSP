@@ -3987,6 +3987,43 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let shadow = fighter_shadow_texture(&shadow_file.data, swizzle)?;
     writer.add_fighter_shadow_texture(&shadow);
 
+    // `SObj` sprites (RE-392): each through its format's combiner, in 8888,
+    // clamped on both axes like a texture rectangle.
+    let mut sprites = 0usize;
+    for f in ssb_rom::sprite::FILES {
+        let file = loaded
+            .files
+            .get(f.file as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("sprite file {} missing", f.file))?;
+        for &at in f.offsets {
+            let s = ssb_rom::sprite::decode(file, at)
+                .map_err(|e| format!("sprite {}+{at:#x}: {e:?}", f.file))?;
+            let image = ssb_rom::sprite::combined_image(&s);
+            let tex = ssb_rom::psp_texture::pack_rgba(
+                &image,
+                ssb_rom::psp_texture::Psm::Psm8888,
+                swizzle,
+            );
+            let texture = writer.add_texture(&tex, true, true);
+            writer.add_sprite(ssb_rom::pack::SpriteDesc {
+                source_file: f.file,
+                source_offset: at,
+                texture,
+                width: s.width,
+                height: s.height,
+                color: s.color,
+                attr: s.attr,
+                flags: if ssb_rom::sprite::uses_prim_color(s.format) {
+                    ssb_rom::pack::SpriteDesc::TINTED
+                } else {
+                    0
+                },
+            });
+            sprites += 1;
+        }
+    }
+
     let bytes = writer.finish();
     if let Some(dir) = out_path.parent() {
         fs::create_dir_all(dir)?;
@@ -4008,6 +4045,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         triangles as f64 / pack.prim_count().max(1) as f64
     );
     println!("  textures    {}", pack.texture_count());
+    println!("  sprites     {sprites}");
     println!(
         "  objects     {objects} ({} nodes, {placed_meshes}/{node_dls} node lists placed)",
         pack.node_count()

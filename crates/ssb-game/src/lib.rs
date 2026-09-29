@@ -27,6 +27,7 @@ pub mod fighter_select;
 pub mod grab;
 pub mod ground;
 pub mod hazard;
+pub mod hud;
 pub mod hurtbox;
 pub mod item;
 pub mod item_throw;

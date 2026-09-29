@@ -1139,6 +1139,7 @@ unsafe fn training_frame(
     stage_ctl: &mut ssb_game::stage::Stage,
     controller: ControllerState,
     mut battle: Option<&mut ssb_game::battle::Battle>,
+    damage_hud: &mut [ssb_game::hud::DamageDisplay; 2],
 ) -> bool {
     use ssb_game::battle::{Frame, GameStatus};
     let frame = battle.as_mut().map(|b| (b.begin_frame(), b.status));
@@ -1162,9 +1163,11 @@ unsafe fn training_frame(
         if locked { ControllerState::default() } else { controller },
         started,
     );
-    report_falls(battle.as_deref_mut(), &mut pl.fighter);
+    let fell = report_falls(battle.as_deref_mut(), &mut pl.fighter);
+    update_damage_hud(&mut damage_hud[0], &pl.fighter, fell, started);
     if let Some(dummy) = dummy_state.as_mut() {
-        report_falls(battle.as_deref_mut(), &mut dummy.fighter);
+        let fell = report_falls(battle.as_deref_mut(), &mut dummy.fighter);
+        update_damage_hud(&mut damage_hud[1], &dummy.fighter, fell, started);
     }
     false
 }
@@ -1202,17 +1205,48 @@ fn start_sudden_death(
             d.computer.trait_kind = trait_kind;
         }
     }
+    // `scVSBattleStartSuddenDeath` makes the damage display after the
+    // fighters are at 300%.
+    reset_damage_hud(world);
     *battle = Some(sudden);
     index
 }
 
-/// The battle half of `ftCommonDeadUpdateScore`.
-fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game::fighter::Fighter) {
-    if core::mem::take(&mut f.dead.scored) {
+/// The battle half of `ftCommonDeadUpdateScore`. Returns whether the
+/// fighter fell.
+fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game::fighter::Fighter) -> bool {
+    let fell = core::mem::take(&mut f.dead.scored);
+    if fell {
         if let Some(b) = battle {
             b.on_fall(f.port, f.damage_player);
         }
     }
+    fell
+}
+
+/// `ifCommonPlayerDamageInitInterface` for both fighters, shown at once
+/// outside a battle.
+fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
+    let damage = |f: Option<&ssb_game::fighter::Fighter>| f.map_or(0, |f| i32::from(f.damage));
+    world.damage_hud[0] =
+        ssb_game::hud::DamageDisplay::new(0, damage(world.play_state.as_ref().map(|s| &s.fighter)));
+    world.damage_hud[1] =
+        ssb_game::hud::DamageDisplay::new(1, damage(world.dummy_state.as_ref().map(|d| &d.fighter)));
+}
+
+/// One frame of `ifCommonPlayerDamageProcUpdate` for a fighter: the break
+/// on a fall (`ftCommonDeadUpdateScore`), its end at the rebirth
+/// (`ftCommonRebirthDownSetStatus`), then the update.
+fn update_damage_hud(hud: &mut ssb_game::hud::DamageDisplay, f: &ssb_game::fighter::Fighter, fell: bool, shown: bool) {
+    use ssb_game::status::{AnyStatus, Status};
+    if fell {
+        hud.start_break_anim();
+    }
+    if hud.is_update_anim && f.status.status == AnyStatus::Common(Status::RebirthDown) {
+        hud.stop_break_anim();
+    }
+    hud.is_show_interface |= shown;
+    hud.update(i32::from(f.damage), f.dead.stock_rule && f.stocks == -1);
 }
 
 /// The results in place of `mnVSResults`: one slot per player, the
@@ -1243,6 +1277,7 @@ struct TrainingWorld<'w> {
     stage_objects: &'w mut ssb_rom::ground_obj::GroundObjects,
     stage_map: &'w mut Option<alloc::boxed::Box<ssb_psp_runtime::scene::StageMap>>,
     stage_ctl: &'w mut ssb_game::stage::Stage,
+    damage_hud: &'w mut [ssb_game::hud::DamageDisplay; 2],
 }
 
 /// Loads VS stage `gkind` for Training and spawns both fighters on it;
@@ -1300,6 +1335,9 @@ fn enter_training(
         fighters.com_kind.unwrap_or(FighterKind::Mario),
         fighters.com_costume,
     );
+    // `ifCommonPlayerDamageInitInterface`; Training shows it at once
+    // (`ifCommonPlayerDamageSetShowInterface`), VS at "Go".
+    reset_damage_hud(world);
     *battle = vs.map(|rules| {
         // `scVSBattleStartBattle`: each fighter faces the nearest other
         // spawn, and a stock battle's deaths take stocks.
@@ -1392,6 +1430,10 @@ unsafe fn run() -> ! {
     let draw_assets = pack.as_ref().map(DrawAssets::resolve).unwrap_or_default();
     let mut effect_visuals = EffectVisuals::default();
     let mut draw_state = meshdraw::DrawState::default();
+    let mut damage_hud = [
+        ssb_game::hud::DamageDisplay::new(0, 0),
+        ssb_game::hud::DamageDisplay::new(1, 0),
+    ];
     // Created once, on first entry to Training Mode (below) -- a fighter
     // spawned on the training stage, ticked with real physics/animation/
     // camera every frame this screen is active (`play::FighterScene`, shared
@@ -1494,6 +1536,7 @@ unsafe fn run() -> ! {
                                     stage_objects: &mut stage_objects,
                                     stage_map: &mut stage_map,
                                     stage_ctl: &mut stage_ctl,
+                                    damage_hud: &mut damage_hud,
                                 },
                             );
                             scene_gkind = CAPTURE_STAGE_GKIND;
@@ -1569,6 +1612,7 @@ unsafe fn run() -> ! {
                                 stage_objects: &mut stage_objects,
                                 stage_map: &mut stage_map,
                                 stage_ctl: &mut stage_ctl,
+                                damage_hud: &mut damage_hud,
                             },
                         );
                         screen = Screen::Training;
@@ -1628,6 +1672,7 @@ unsafe fn run() -> ! {
                     &mut stage_ctl,
                     controller,
                     vs_battle.as_mut(),
+                    &mut damage_hud,
                 );
             }
             // `scVSBattleStartScene`: a tied time battle goes to sudden
@@ -1653,6 +1698,7 @@ unsafe fn run() -> ! {
                                 stage_objects: &mut stage_objects,
                                 stage_map: &mut stage_map,
                                 stage_ctl: &mut stage_ctl,
+                                damage_hud: &mut damage_hud,
                             },
                         );
                     }
@@ -1708,6 +1754,9 @@ unsafe fn run() -> ! {
                     Some(&stage_objects),
                     no_pack_color,
                 );
+                if let Some(p) = pack.as_ref() {
+                    draw_damage_hud(p, &mut draw_state, &damage_hud, dummy_state.is_some());
+                }
             }
         }
         gpu.end_frame();
@@ -2473,6 +2522,36 @@ unsafe fn draw_training(
         effect_visuals,
         material_anim,
     );
+}
+
+/// `ifCommonPlayerDamageProcDisplay` for each fighter, over the 3D scene.
+#[inline(never)]
+fn draw_damage_hud(
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    hud: &[ssb_game::hud::DamageDisplay; 2],
+    with_dummy: bool,
+) {
+    // `ifCommonPlayerDamageSetDigitAttr`.
+    const ATTR: u16 = ssb_rom::sprite::SP_TEXSHUF | ssb_rom::sprite::SP_TRANSPARENT;
+    let f = &ssb_rom::sprite::PLAYER_DAMAGE;
+    let mut sprites = [None; 12];
+    let mut sizes = [(0u16, 0u16); 12];
+    for (i, &at) in f.offsets.iter().enumerate() {
+        sprites[i] = p.sprite(f.file, at);
+        sizes[i] = sprites[i].map_or((0, 0), |s| (s.width, s.height));
+    }
+    for d in &hud[..if with_dummy { 2 } else { 1 }] {
+        for g in d.glyphs(false, &sizes) {
+            let Some(sprite) = sprites[usize::from(g.digit)] else {
+                continue;
+            };
+            let [r, gr, b] = g.color;
+            unsafe {
+                meshdraw::draw_sprite(p, &sprite, g.x, g.y, g.scale, [r, gr, b, 0xFF], g.solid, ATTR, draw_state);
+            }
+        }
+    }
 }
 
 /// The item pass (DL link 11) and the weapon and effect pass (links 13 to 15)
