@@ -3481,6 +3481,54 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 ));
                 continue;
             };
+            // The battle-entry slots are 32-bit `AnimJoint` clips (RE-401):
+            // their table leads with one runtime joint, then walks the
+            // model joints (Link's has one unused entry more), and their
+            // length is the tick every joint's stream ends on, less one.
+            if ssb_rom::anim::is_anim_joint_slot(slot) {
+                let ends: Vec<u32> = table
+                    .iter()
+                    .filter(|&&at| at != 0)
+                    .filter_map(|&at| ssb_rom::objanim::script_end_tick(&file.data, at, 4096))
+                    .collect();
+                let (Some(&first), true) = (ends.first(), table.len() > nodes.len()) else {
+                    anims_failed.push(format!(
+                        "{}.{}: AnimJoint",
+                        entry.name,
+                        ssb_rom::anim::SLOT_NAMES[slot]
+                    ));
+                    continue;
+                };
+                if ends.iter().any(|&e| e != first) {
+                    anims_failed.push(format!(
+                        "{}.{}: uneven ends",
+                        entry.name,
+                        ssb_rom::anim::SLOT_NAMES[slot]
+                    ));
+                    continue;
+                }
+                let joints: Vec<(Option<u32>, Option<u32>)> = table
+                    .iter()
+                    .enumerate()
+                    .map(|(j, &at)| {
+                        (
+                            (at != 0).then_some(at),
+                            j.checked_sub(1).and_then(|k| nodes.get(k).copied()),
+                        )
+                    })
+                    .collect();
+                anim_joints_packed += joints.len();
+                writer.add_anim(
+                    kind as u32,
+                    slot as u32,
+                    id as u32,
+                    first - 1,
+                    &file.data,
+                    &joints,
+                );
+                packed_anims += 1;
+                continue;
+            }
             let frames = ssb_rom::anim::decode_length(id as u32, &file)
                 .ok()
                 .and_then(|l| l.frames())
@@ -11475,7 +11523,7 @@ mod tests {
         ];
         assert_eq!(
             own.len(),
-            ssb_rom::anim::SLOT_COUNT - ssb_rom::anim::SLOT_REBIRTH_DOWN
+            ssb_rom::anim::SLOT_APPEAR_R - ssb_rom::anim::SLOT_REBIRTH_DOWN
         );
         for status in own {
             let slot = AnyStatus::Common(status).anim_slot();
