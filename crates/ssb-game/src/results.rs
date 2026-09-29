@@ -1,8 +1,9 @@
 //! The VS results' rankings — `mnVSResultsInitVars`,
 //! `mnVSResultsInitRankings`, `mnVSResultsGetWinPlayer` and
 //! `mnVSResultsCheckExit` in `mn/mnvsmode/mnvsresults.c`: each player's
-//! KOs, falls and points, the places they sort into, the winner, and when
-//! START may leave. The screen's models, text and confetti are not drawn.
+//! KOs, falls and points, the places they sort into, the winner, when the
+//! fighters appear and when START may leave. The fighters themselves are
+//! [`crate::results_scene`]; the text and confetti are not ported.
 
 use crate::battle::{Battle, Rule};
 
@@ -34,6 +35,14 @@ pub struct Results {
     pub total_tics: u32,
     /// `sMNVSResultsAllowExitWait`.
     pub allow_exit_wait: u32,
+    /// `sMNVSResultsDrawWallpaperTic`: 80, or 1 with no contest.
+    pub draw_wallpaper_tic: u32,
+    /// `sMNVSResultsMakeResultsTic`: 120, or 1 with no contest.
+    pub make_results_tic: u32,
+    /// `sMNVSResultsInitFightersAllTic`: 120, or 1 with no contest.
+    pub init_fighters_all_tic: u32,
+    /// `sMNVSResultsCharacterAlpha`: the fighters' fade-in, 0 to 0xFF.
+    pub character_alpha: i32,
 }
 
 /// `MNVSResultsScore`.
@@ -90,9 +99,11 @@ impl Results {
             (Rule::Stock, true) => Kind::StockTeam,
         };
         let mut allow_exit_wait = if b.rule == Rule::Time { 410 } else { 370 };
+        let mut tics = (80, 120, 120);
         if b.is_reset {
             kind = Kind::NoContest;
             allow_exit_wait = 200;
+            tics = (1, 1, 1);
         }
         let present = b.players.map(|p| p.present);
         let kos = b.players.map(|p| i32::from(p.score).min(999));
@@ -173,6 +184,10 @@ impl Results {
             shared_winner: [false; 4],
             total_tics: 0,
             allow_exit_wait,
+            draw_wallpaper_tic: tics.0,
+            make_results_tic: tics.1,
+            init_fighters_all_tic: tics.2,
+            character_alpha: 0,
         };
         r.winner = r.find_winner();
         r
@@ -224,11 +239,21 @@ impl Results {
         }
     }
 
-    /// A frame of `mnVSResultsFuncRun`'s exit check: START once
-    /// `allow_exit_wait` ticks have passed. Returns whether to leave.
+    /// A frame of `mnVSResultsFuncRun`: the tic count, the fighters'
+    /// fade-in once they are made (0x16 a tic), and the exit check, START
+    /// once `allow_exit_wait` ticks have passed. Returns whether to leave.
+    /// [`Results::fighters_due`] says whether this tic makes the fighters.
     pub fn tick(&mut self, start_tapped: bool) -> bool {
         self.total_tics += 1;
+        if self.init_fighters_all_tic < self.total_tics && self.character_alpha < 0xFF {
+            self.character_alpha = (self.character_alpha + 0x16).min(0xFF);
+        }
         self.total_tics >= self.allow_exit_wait && start_tapped
+    }
+
+    /// Whether this tic runs `mnVSResultsInitFightersAll`.
+    pub fn fighters_due(&self) -> bool {
+        self.total_tics == self.init_fighters_all_tic
     }
 }
 

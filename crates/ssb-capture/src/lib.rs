@@ -376,10 +376,14 @@ pub enum GameScene {
     /// `vsteam`: a VS team battle after "Go", Mario and a CPU on red
     /// against two CPUs on blue.
     VsTeam,
+    /// `vsresults`: a one-stock VS battle the player loses by running off
+    /// the stage, at its results: the winner in its Win pose, the player
+    /// clapping.
+    VsResults,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 46] = [
+    pub const ALL: [GameScene; 47] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -426,6 +430,7 @@ impl GameScene {
         GameScene::VsPlayers,
         GameScene::Vs4,
         GameScene::VsTeam,
+        GameScene::VsResults,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -476,6 +481,7 @@ impl GameScene {
             GameScene::VsPlayers => "vsplayers",
             GameScene::Vs4 => "vs4",
             GameScene::VsTeam => "vsteam",
+            GameScene::VsResults => "vsresults",
         }
     }
 

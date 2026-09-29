@@ -432,6 +432,25 @@ impl Gpu {
         }
     }
 
+    /// A camera's own N64 viewport (`syRdpSetViewport`'s `ulx, uly, lrx,
+    /// lry` on the 320 x 240 screen), placed inside the pillarboxed area
+    /// and scissored to it.
+    pub fn set_viewport_n64(&mut self, [ulx, uly, lrx, lry]: [f32; 4]) {
+        let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+        let (nw, nh) = ssb_engine::coord::N64_SCREEN;
+        let kx = vw as f32 / nw as f32;
+        let ky = vh as f32 / nh as f32;
+        let (x0, x1) = (vx as f32 + ulx * kx, vx as f32 + lrx * kx);
+        let (y0, y1) = (uly * ky, lry * ky);
+        // `init`'s offset puts the screen's centre at 2048.
+        let cx = 2048 - (SCREEN_WIDTH / 2) as i32 + ((x0 + x1) / 2.0) as i32;
+        let cy = 2048 - (SCREEN_HEIGHT / 2) as i32 + ((y0 + y1) / 2.0) as i32;
+        unsafe {
+            sys::sceGuViewport(cx, cy, (x1 - x0) as i32, (y1 - y0) as i32);
+            sys::sceGuScissor(x0 as i32, y0 as i32, x1 as i32, y1 as i32);
+        }
+    }
+
     /// Restores the full-screen viewport/scissor `init` set up, for flat 2D
     /// content (RE-289/290's pixel-confirmed evidence assumes this shape).
     /// Call when leaving a real 3D scene.

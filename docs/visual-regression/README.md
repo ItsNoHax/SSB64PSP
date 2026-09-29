@@ -174,7 +174,8 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `vssuddendeath`) | `f1-vs-sudden-death-sign` | `vstimeup` at tick 4,150: "SUDDEN DEATH!" before its "GO!", emblems and stock icons without digits | RE-397 |
 | `golden_capture` (`psp-game`, scene `vspause`) | `f1-vs-pause` | START at tick 500: the pause menu's zoom on Mario, border, "1P PAUSE" and decals at 560 | RE-398 |
 | `golden_capture` (`psp-game`, scene `vsmode`) | `f1-vs-mode-menu` | The VS mode menu as plain slots after Rule → Stock and one more stock | RE-399 |
-| `golden_capture` (`psp-game`, scene `vsnocontest`) | `f1-vs-no-contest` | A VS battle reset from the pause menu: the no-contest results, two level unlit slots | RE-400 |
+| `golden_capture` (`psp-game`, scene `vsnocontest`) | `f1-vs-no-contest` | A VS battle reset from the pause menu: the no-contest results, two level unlit slots along the top and both Marios one row back, clapping | RE-400, RE-409 |
+| `golden_capture` (`psp-game`, scene `vsresults`) | `f1-vs-results` | A one-stock battle Luigi loses by running off Dream Land, at tick 1100 of its results: Kirby in front holding his last Win frame, Luigi behind turned to him and clapping | RE-409 |
 | `golden_capture` (`psp-game`, scene `vsplayers`) | `f1-vs-players` | The VS character select as plain slots: Yoshi placed, a CPU opened in port 2 | RE-404 |
 | `golden_capture` (`psp-game`, scene `vs4`) | `f1-vs-four` | Mario against three CPUs (Fox, Donkey Kong, Kirby) on Dream Land at tick 870, four damage displays | RE-405 |
 | `golden_capture` (`psp-game`, scene `vsteam`) | `f1-vs-team` | A team battle on Dream Land at tick 940: Mario and Kirby (red) against Fox and Donkey Kong (blue) in team costumes and emblem colours, Kirby's attack passing through Mario | RE-407 |
@@ -631,3 +632,11 @@ in both captures. 109 of 109 goldens match twice.
 Pack v64 (`33fd7055…`) adds the fighters' Win and Lose demo clips, which
 nothing plays yet. All 109 goldens are unchanged. 109 of 109 goldens match
 twice.
+
+## 2026-09-29 RE-409 results fighters
+
+Pack v64. The results screen now draws its fighters under the results
+camera. `f1-vs-no-contest` was rebaselined (522,232 pixels at 2×,
+identical in both captures). The new `f1-vs-results` golden was seeded
+from its first verify run. The other 108 goldens are unchanged. 110 of 110
+goldens match twice.
