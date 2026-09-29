@@ -579,7 +579,7 @@ pub fn special_contact(
 }
 
 /// A weapon hitbox's attack state: a still hitbox tests its position only.
-fn weapon_state(pos_curr: Vec3, pos_prev: Vec3) -> AttackState {
+pub(crate) fn weapon_state(pos_curr: Vec3, pos_prev: Vec3) -> AttackState {
     if pos_curr == pos_prev {
         AttackState::Transfer
     } else {
@@ -1817,6 +1817,18 @@ pub fn finish_frame_with(
     fighters: &mut [&mut Fighter],
     effects: &mut dyn HitEffectSink,
 ) -> [bool; 4] {
+    finish_frame_between(fighters, effects, &mut |_| {})
+}
+
+/// [`finish_frame_with`], running `between` after every fighter's hit
+/// effects and before the first `ftMainProcParams`: the later priority-1
+/// processes (the weapons' clash search,
+/// [`crate::weapon::WeaponPool::flush_clash_effects`]).
+pub fn finish_frame_between(
+    fighters: &mut [&mut Fighter],
+    effects: &mut dyn HitEffectSink,
+    between: &mut dyn FnMut(&mut dyn HitEffectSink),
+) -> [bool; 4] {
     // The catch search's statuses (priority 2) made their effects first.
     for f in fighters.iter_mut() {
         effects.fighter(f);
@@ -1828,6 +1840,7 @@ pub fn finish_frame_with(
         }
         f.hits.effects_len = 0;
     }
+    between(effects);
     let n = fighters.len();
     for this in 0..n {
         for other in 0..n {

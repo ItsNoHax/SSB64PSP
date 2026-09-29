@@ -13,6 +13,7 @@ use crate::collision::Segment;
 use crate::fighter::Fighter;
 use crate::ground::BodyColl;
 use crate::status::BlastZone;
+use crate::wpeffect::{Emit, WeaponEffect as Fx};
 #[path = "ness_weapon.rs"]
 mod ness;
 #[path = "pikachu_weapon.rs"]
@@ -250,20 +251,31 @@ impl FoxBlaster {
         }
     }
 
-    fn tick<I, F>(&mut self, surfaces: F) -> bool
+    fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
         self.scale_x = (self.scale_x + 16.0 / 3.0).min(160.0 / 3.0);
         let wanted = self.position + self.velocity;
-        if map_contact(surfaces(), self.position, wanted, FOX_BLASTER_MAP_COLL).is_some() {
+        if let Some(hit) = map_contact(surfaces(), self.position, wanted, FOX_BLASTER_MAP_COLL) {
+            // `wpFoxBlasterProcMap`.
+            fx.push(Fx::FoxBlasterGlow(hit.position));
             return false;
         }
         self.position = wanted;
         true
     }
 }
+
+/// `WPAttributes::priority` of every ported weapon (`wpManagerMakeWeapon`),
+/// read from each `ll*WeaponAttributes` record
+/// (`crates/ssb-rom/tests/weapon_attributes.rs`).
+pub const WEAPON_PRIORITY: i32 = 1;
+
+/// `dWPSamusChargeShotWeaponAttributes[].priority` (US), which
+/// `wpSamusChargeShotLaunch` writes: only the full charge outranks.
+pub const SAMUS_CHARGE_SHOT_PRIORITIES: [i32; 8] = [1, 1, 1, 1, 1, 1, 1, 2];
 
 /// `dWPSamusChargeShotWeaponAttributes` (US): `(gfx size, X velocity,
 /// damage, attack size, map-collision size)` per charge level.
@@ -343,7 +355,7 @@ impl SamusChargeShot {
         samus_charge_shot_scale(self.charge)
     }
 
-    fn tick<I, F>(&mut self, surfaces: F) -> bool
+    fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
@@ -358,7 +370,9 @@ impl SamusChargeShot {
             width: half,
         };
         let wanted = self.position + self.velocity;
-        if map_contact(surfaces(), self.position, wanted, coll).is_some() {
+        if let Some(hit) = map_contact(surfaces(), self.position, wanted, coll) {
+            // `wpSamusChargeShotProcMap`.
+            fx.push(Fx::DustExpandSmall(hit.position));
             return false;
         }
         self.position = wanted;
@@ -463,7 +477,7 @@ impl SamusBomb {
     }
 
     /// `wpSamusBombProcUpdate` (or the explosion's) then `wpSamusBombProcMap`.
-    fn tick<I, F>(&mut self, surfaces: F) -> bool
+    fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
@@ -473,6 +487,7 @@ impl SamusBomb {
             return self.lifetime != 0;
         }
         if self.lifetime == 0 {
+            fx.push(Fx::SparkleWhiteMultiExplode(self.position));
             self.explode();
             return true;
         }
@@ -856,6 +871,7 @@ impl LinkBoomerang {
         surfaces: F,
         parent: Option<OwnerView>,
         camera: Option<&crate::camera::Camera>,
+        fx: &mut Emit,
     ) -> (bool, bool)
     where
         F: Fn() -> I,
@@ -893,6 +909,8 @@ impl LinkBoomerang {
         match map_contact(surfaces(), self.position, wanted, LINK_BOOMERANG_MAP_COLL) {
             Some(hit) => {
                 self.position = hit.position;
+                // `wpLinkBoomerangProcMap`: a newly touched surface.
+                fx.push(Fx::DustCollide(hit.position));
                 if self.bound(hit.normal) {
                     self.set_return(true);
                 }
@@ -1077,7 +1095,7 @@ impl YoshiEgg {
 
     /// `wpYoshiEggThrowProcUpdate` (or the explosion's), the manager's move,
     /// then `wpYoshiEggThrowProcMap`.
-    fn tick<I, F>(&mut self, surfaces: F) -> bool
+    fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
@@ -1089,6 +1107,9 @@ impl YoshiEgg {
         if self.is_spin {
             self.lifetime -= 1;
             if self.lifetime == 0 {
+                // `wpYoshiEggThrowProcUpdate`, then `wpYoshiEggExpireInitVars`.
+                fx.push(Fx::YoshiEggExplode(self.position));
+                fx.push(Fx::EggBreak(self.position));
                 self.explode();
                 return true;
             }
@@ -1111,6 +1132,11 @@ impl YoshiEgg {
         match map_contact(surfaces(), self.position, wanted, YOSHI_EGG_MAP_COLL) {
             Some(hit) => {
                 self.position = hit.position;
+                // `wpYoshiEggThrowProcMap`.
+                fx.push(Fx::Quake(2));
+                fx.push(Fx::YoshiEggExplode(hit.position));
+                fx.push(Fx::EggBreak(hit.position));
+                fx.push(Fx::DustExpandSmall(hit.position));
                 self.explode();
             }
             None => self.position = wanted,
@@ -1190,9 +1216,10 @@ impl YoshiStar {
     }
 
     /// `wpYoshiStarProcUpdate`, then the manager's move.
-    fn tick(&mut self) -> bool {
+    fn tick(&mut self, fx: &mut Emit) -> bool {
         self.lifetime -= 1;
         if self.lifetime == 0 {
+            fx.push(Fx::DustExpandSmall(self.position));
             return false;
         }
         self.rotate_z += YOSHISTAR_ROTATE_SPEED * self.lr;
@@ -1308,7 +1335,7 @@ impl KirbyCutter {
     }
 
     /// `wpKirbyCutterProcUpdate` then `wpKirbyCutterProcMap`.
-    fn tick<I, F>(&mut self, surfaces: F) -> bool
+    fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
@@ -1340,6 +1367,7 @@ impl KirbyCutter {
         self.anim_ticks = self.anim_ticks.wrapping_add(1);
         self.lifetime -= 1;
         if self.lifetime == 0 {
+            fx.push(Fx::DustExpandSmall(self.position));
             return false;
         }
         if let Some(segment) = self.floor {
@@ -1375,7 +1403,11 @@ impl KirbyCutter {
                 self.position = hit.position;
                 true
             }
-            Some(_) => false,
+            // A wall or the ceiling.
+            Some(hit) => {
+                fx.push(Fx::DustExpandSmall(hit.position));
+                false
+            }
             None => {
                 self.position = wanted;
                 true
@@ -1456,7 +1488,7 @@ impl MarioFireball {
     /// frame. The portable sweep supplies that same one-sided map contract
     /// without coupling the match-owned weapon pool to a particular stage
     /// format or runtime.
-    fn tick<I, F>(&mut self, surfaces: F) -> bool
+    fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
@@ -1466,6 +1498,8 @@ impl MarioFireball {
         }
         self.lifetime -= 1;
         if self.lifetime == 0 {
+            // `wpMarioFireballProcUpdate`.
+            fx.push(Fx::DustExpandSmall(self.position));
             return false;
         }
         let attr = self.attributes();
@@ -1476,11 +1510,14 @@ impl MarioFireball {
             let dot = self.velocity.x * hit.normal.x + self.velocity.y * hit.normal.y;
             self.velocity.x = (self.velocity.x - 2.0 * dot * hit.normal.x) * attr.rebound;
             self.velocity.y = (self.velocity.y - 2.0 * dot * hit.normal.y) * attr.rebound;
+            // `wpMarioFireballProcMap`.
             if self.velocity.x * self.velocity.x + self.velocity.y * self.velocity.y
                 < attr.vel_min * attr.vel_min
             {
+                fx.push(Fx::DustExpandSmall(self.position));
                 return false;
             }
+            fx.push(Fx::FireGrind(self.position));
         } else {
             self.position = wanted;
         }
@@ -1528,6 +1565,21 @@ pub struct WeaponPool {
     /// The battle camera as last drawn (`gGMCameraMatrix`), from
     /// [`Self::observe_camera`].
     camera: Option<crate::camera::Camera>,
+    /// Each slot's place in the weapon link (`GObj` make order), and the
+    /// next one to give.
+    seq: [u32; MAX_WEAPONS],
+    next_seq: u32,
+    /// The weapons' own effects, made at the end of the process that made
+    /// them ([`Self::flush_effects`]).
+    fx: crate::wpeffect::WeaponFx,
+    /// The clash search's set-offs ([`Self::flush_clash_effects`]).
+    clash_fx: crate::wpeffect::WeaponFx<{ crate::wpeffect::CLASH_FX_MAX }>,
+    /// `hit_attack_damage` from the clash search, for
+    /// [`Self::finish_clashes`].
+    clash_damage: [i32; MAX_WEAPONS],
+    /// A fighter's attack set the weapon off this frame (its `proc_setoff`
+    /// already ran), so a clash runs no second one.
+    set_off: [bool; MAX_WEAPONS],
 }
 
 /// `WEAPON_HOP_ANGLE_DEFAULT`: `F_CLC_DTOR32(135.0F)`.
@@ -1595,6 +1647,26 @@ impl Weapon {
         }
     }
 
+    /// `wp->attack_coll.priority`.
+    fn priority(&self) -> i32 {
+        match self {
+            Weapon::ChargeShot(c) => SAMUS_CHARGE_SHOT_PRIORITIES[usize::from(c.charge.min(7))],
+            _ => WEAPON_PRIORITY,
+        }
+    }
+
+    /// `wp->group_id`, non-zero for PK Thunder's and Thunder's heads and
+    /// trails (`wpManagerGetGroupID`).
+    fn group(&self) -> Option<u16> {
+        match self {
+            Weapon::PKThunder(h) => Some(h.group),
+            Weapon::PKTrail(t) => Some(t.group),
+            Weapon::Thunder(h) => Some(h.group),
+            Weapon::Trail(t) => Some(t.group),
+            _ => None,
+        }
+    }
+
     /// `wp->ga == nMPKineticsGround`: a Thunder Jolt crawling on a surface
     /// and a Final Cutter wave on the floor (`wpMapSetGround`).
     fn is_grounded(&self) -> bool {
@@ -1626,11 +1698,70 @@ impl Weapon {
         }
     }
 
+    /// The effects the kind's `proc_hit`, `proc_shield`, `proc_setoff` or
+    /// `proc_absorb` makes before it changes or destroys the weapon, at its
+    /// `DObj`'s translation. The shocks take `attack_coll.damage`.
+    fn proc_effects(&self, proc: Proc, fx: &mut Emit) {
+        let pos = self.position();
+        let shock = |size| Fx::ImpactShock { pos, size };
+        match self {
+            // `wpMarioFireballProcHit` for all four.
+            Weapon::Fireball(_) => fx.push(Fx::SparkleWhite(pos)),
+            // `wpFoxBlasterProcHit`.
+            Weapon::Blaster(_) => fx.push(Fx::FoxBlasterGlow(pos)),
+            // `wpSamusChargeShotProcHit`.
+            Weapon::ChargeShot(c) => fx.push(shock(c.damage)),
+            // `wpSamusBombProcHit` and `...ProcAbsorb`; the explosion
+            // clears them.
+            Weapon::Bomb(b) => {
+                if !b.exploded {
+                    fx.push(Fx::SparkleWhiteMultiExplode(pos));
+                }
+            }
+            // `wpLinkBoomerangProcHit`, `...ProcShield`, `...ProcSetOff`.
+            Weapon::Boomerang(_) => {}
+            // `wpYoshiEggThrowProcHit` (no `proc_absorb`); the explosion
+            // clears it.
+            Weapon::Egg(e) => {
+                if !e.exploded && proc != Proc::Absorb {
+                    fx.push(Fx::YoshiEggExplode(pos));
+                    fx.push(Fx::EggBreak(pos));
+                }
+            }
+            // `wpYoshiStarProcHit` and `...ProcShield`.
+            Weapon::Star(_) => fx.push(Fx::SparkleWhite(pos)),
+            // `wpKirbyCutterProcHit` and `...ProcSetOff`; its
+            // `...ProcShield` (also its `proc_absorb`) makes nothing.
+            Weapon::Cutter(_) => {
+                if matches!(proc, Proc::Hit | Proc::SetOff) {
+                    fx.push(Fx::SparkleWhite(pos));
+                }
+            }
+            // `wpPikachuThunderJoltAirProcHit` and `...GroundProcHit`.
+            Weapon::Jolt(j) => fx.push(shock(j.damage)),
+            // `wpNessPKFireProcHit` makes the pillar; `...ProcAbsorb`
+            // (also its `proc_shield`) a dust cloud.
+            Weapon::PKFire(_) => {
+                if matches!(proc, Proc::Shield | Proc::Absorb) {
+                    fx.push(Fx::DustExpandSmall(pos));
+                }
+            }
+            // `wpNessPKThunderHeadProcHit` and `wpNessPKReflectHeadProcHit`.
+            Weapon::PKThunder(h) => fx.push(shock(h.damage)),
+            // `wpNessPKThunderTrailProcHit` and `...ReflectTrailProcHit`.
+            Weapon::PKTrail(_) => fx.push(shock(ness::TRAIL_HIT.damage)),
+            // `wpPikachuThunderTrailProcHit`.
+            Weapon::Trail(_) => fx.push(shock(pikachu::TRAIL_HIT.damage)),
+            // The head has no callbacks.
+            Weapon::Thunder(_) => {}
+        }
+    }
+
     /// `wpProcessProcHitCollisions`'s shield branch after
     /// `ftMainUpdateShieldStatWeapon` recorded the fighter: an airborne
     /// `can_hop` weapon that met the shield under 135 degrees hops, any
     /// other runs its `proc_shield`. Returns whether the weapon lives on.
-    fn on_shield(&mut self, shield: crate::combat::ShieldCollide) -> bool {
+    fn on_shield(&mut self, shield: crate::combat::ShieldCollide, fx: &mut Emit) -> bool {
         // The Bomb's explosion clears `proc_hop` and `proc_shield`.
         if matches!(self, Weapon::Bomb(b) if b.exploded) {
             return true;
@@ -1638,8 +1769,13 @@ impl Weapon {
         let hops = self.flags().can_hop && !self.is_grounded();
         if hops && shield.angle < WEAPON_HOP_ANGLE_DEFAULT {
             self.hop((shield.angle - DEG_90).max(0.0), shield.dir_z);
+            // `wpFoxBlasterProcHop`.
+            if let Weapon::Blaster(b) = self {
+                fx.push(Fx::FoxBlasterGlow(b.position));
+            }
             return true;
         }
+        self.proc_effects(Proc::Shield, fx);
         match self {
             // `wpLinkBoomerangProcShield`.
             Weapon::Boomerang(b) => b.set_off(),
@@ -1697,6 +1833,42 @@ impl Weapon {
             _ => unreachable!("no proc_hop"),
         }
     }
+}
+
+/// One weapon's attack for the clash search ([`WeaponPool::search_weapons`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ClashAttack {
+    owner: u8,
+    team: u8,
+    /// `wpMainGetStaledDamage`.
+    damage: i32,
+    priority: i32,
+    pos_curr: Vec3,
+    pos_prev: Vec3,
+    size: f32,
+    state: crate::combat::AttackState,
+}
+
+/// Queues the effects of `w`'s callback `proc` under its link place `seq`.
+fn push_proc(fx: &mut crate::wpeffect::WeaponFx, seq: u32, w: &Weapon, proc: Proc) {
+    let mut emit = Emit::default();
+    w.proc_effects(proc, &mut emit);
+    fx.extend(seq, &emit);
+}
+
+/// Which of a weapon's collision callbacks runs ([`Weapon::proc_effects`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Proc {
+    Hit,
+    Shield,
+    SetOff,
+    Absorb,
+}
+
+/// The attack-record id naming weapon slot `i` as a victim
+/// (`victim_gobj` is a weapon; a clash records it).
+fn weapon_victim_id(i: usize) -> u8 {
+    crate::combat::WEAPON_RECORD_BASE + i as u8
 }
 
 /// `syVectorRotateAbout3D(&vel_air, &shield_collide_dir, angle * 2)`, where
@@ -1885,11 +2057,41 @@ impl Default for WeaponPool {
             team_rules: crate::team::TeamRules::FREE_FOR_ALL,
             landed: [None; MAX_WEAPONS],
             camera: None,
+            seq: [0; MAX_WEAPONS],
+            next_seq: 0,
+            fx: Default::default(),
+            clash_fx: Default::default(),
+            clash_damage: [0; MAX_WEAPONS],
+            set_off: [false; MAX_WEAPONS],
         }
     }
 }
 
 impl WeaponPool {
+    /// [`Self::default`] in place: the pool holds its effect queues, which a
+    /// temporary would put on the (256 KB) PSP main-thread stack.
+    pub fn reset(&mut self) {
+        self.slots = [None; MAX_WEAPONS];
+        self.item_spawns = [None; MAX_WEAPONS];
+        self.hit_records = [[None; 4]; MAX_WEAPONS];
+        self.pending_item_hits = [false; MAX_WEAPONS];
+        self.owners = [None; MAX_OWNERS];
+        self.caught = [false; MAX_OWNERS];
+        self.thunder_destroyed = [false; MAX_OWNERS];
+        self.next_group = 1;
+        self.stale = [crate::stale::WeaponStale::FRESH; MAX_WEAPONS];
+        self.teams = [crate::team::TEAM_DEFAULT; MAX_WEAPONS];
+        self.team_rules = crate::team::TeamRules::FREE_FOR_ALL;
+        self.landed = [None; MAX_WEAPONS];
+        self.camera = None;
+        self.seq = [0; MAX_WEAPONS];
+        self.next_seq = 0;
+        self.fx.clear();
+        self.clash_fx.clear();
+        self.clash_damage = [0; MAX_WEAPONS];
+        self.set_off = [false; MAX_WEAPONS];
+    }
+
     fn tick_pk_thunder<I, F>(&mut self, surfaces: F, bounds: Option<BlastZone>)
     where
         F: Fn() -> I + Copy,
@@ -1899,10 +2101,12 @@ impl WeaponPool {
         for (i, slot) in self.slots.iter_mut().enumerate() {
             if let Some(Weapon::PKThunder(h)) = slot {
                 let owner = self.owners.get(h.owner_port as usize).copied().flatten();
+                let mut emit = Emit::default();
+                let alive = h.tick(surfaces, owner, &mut emit);
+                self.fx.extend(self.seq[i], &emit);
                 // `wpNessPKThunderHeadProcDead` destroys the trails with the
                 // head; the owner learns of it from the missing head.
-                if !h.tick(surfaces, owner) || bounds.is_some_and(|b| out_of_bounds(b, h.position))
-                {
+                if !alive || bounds.is_some_and(|b| out_of_bounds(b, h.position)) {
                     *slot = None;
                 } else if h.trail_spawn {
                     pending[i] = Some((PKThunderTrail::new(*h, 0), self.stale[i], self.teams[i]));
@@ -1918,7 +2122,9 @@ impl WeaponPool {
         for (i, slot) in self.slots.iter_mut().enumerate() {
             if let Some(Weapon::PKTrail(t)) = slot {
                 if let Some(head) = heads.iter().flatten().find(|h| h.group == t.group) {
-                    t.tick(*head);
+                    let mut emit = Emit::default();
+                    t.tick(*head, &mut emit);
+                    self.fx.extend(self.seq[i], &emit);
                     if t.spawn_next {
                         let mut child = PKThunderTrail::new(*head, t.id + 1);
                         child.position = t.position;
@@ -1976,6 +2182,14 @@ impl WeaponPool {
                     {
                         t.hit_ports |= bit;
                         groups[i] = Some(t.group);
+                        // `wpNessPKThunderTrailProcHit`: the trail flies on.
+                        self.fx.push(
+                            self.seq[i],
+                            Fx::ImpactShock {
+                                pos: t.position,
+                                size: ness::TRAIL_HIT.damage,
+                            },
+                        );
                     }
                 }
                 Weapon::PKFire(spark) => {
@@ -2009,6 +2223,7 @@ impl WeaponPool {
                         }
                         // `proc_hit` (`wpNessPKFireProcHit`): the pillar.
                         PreHit::SetOff | PreHit::ReflectorBroke => {
+                            self.set_off[i] = true;
                             pillars[i] = Some(spark.item_spawn(self.stale[i], self.teams[i]));
                             *slot = None;
                             free_slots += 1;
@@ -2016,6 +2231,8 @@ impl WeaponPool {
                         }
                         // `wpNessPKFireProcAbsorb`.
                         PreHit::Absorbed => {
+                            self.fx
+                                .push(self.seq[i], Fx::DustExpandSmall(spark.position));
                             *slot = None;
                             free_slots += 1;
                             continue;
@@ -2035,7 +2252,10 @@ impl WeaponPool {
                     );
                     if let crate::combat::WeaponContact::Shielded(shield) = contact {
                         record_weapon_victim(&mut self.hit_records[i], defender.port);
-                        if !w.on_shield(shield) {
+                        let mut emit = Emit::default();
+                        let alive = w.on_shield(shield, &mut emit);
+                        self.fx.extend(self.seq[i], &emit);
+                        if !alive {
                             *slot = None;
                             free_slots += 1;
                         }
@@ -2079,13 +2299,27 @@ impl WeaponPool {
                             }
                             let group = self.next_group;
                             self.next_group = self.next_group.wrapping_add(1);
+                            if !h.reflected {
+                                // `wpNessPKReflectHeadMakeWeapon`: a new
+                                // weapon, last in the link.
+                                self.next_seq = self.next_seq.wrapping_add(1);
+                                self.seq[i] = self.next_seq;
+                            }
                             h.reflect(defender, group);
                             self.teams[i] = defender.team;
                             continue;
                         }
                         // `wpNessPKThunderHeadProcHit` for set-off, a broken
                         // reflector and absorption alike.
-                        PreHit::SetOff | PreHit::ReflectorBroke | PreHit::Absorbed => {
+                        pre @ (PreHit::SetOff | PreHit::ReflectorBroke | PreHit::Absorbed) => {
+                            self.set_off[i] |= pre == PreHit::SetOff;
+                            self.fx.push(
+                                self.seq[i],
+                                Fx::ImpactShock {
+                                    pos: h.position,
+                                    size: h.damage,
+                                },
+                            );
                             *slot = None;
                             free_slots += 1;
                             continue;
@@ -2104,6 +2338,13 @@ impl WeaponPool {
                     )
                     .registered()
                     {
+                        self.fx.push(
+                            self.seq[i],
+                            Fx::ImpactShock {
+                                pos: h.position,
+                                size: h.damage,
+                            },
+                        );
                         *slot = None;
                         free_slots += 1;
                     }
@@ -2187,7 +2428,19 @@ impl WeaponPool {
             }
             WeaponKind::MarioFireball => Weapon::Fireball(MarioFireball::new(spawn, 0)),
             WeaponKind::LuigiFireball => Weapon::Fireball(MarioFireball::new(spawn, 1)),
-            WeaponKind::FoxBlaster => Weapon::Blaster(FoxBlaster::new(spawn)),
+            WeaponKind::FoxBlaster => {
+                let made = self.insert_at(
+                    Weapon::Blaster(FoxBlaster::new(spawn)),
+                    spawn.stale,
+                    spawn.team,
+                );
+                // `wpFoxBlasterMakeWeapon`.
+                if let Some(i) = made {
+                    self.fx
+                        .push(self.seq[i], Fx::FoxBlasterGlow(spawn.position));
+                }
+                return made.is_some();
+            }
             WeaponKind::SamusChargeShot(charge) => {
                 Weapon::ChargeShot(SamusChargeShot::new(spawn, charge))
             }
@@ -2210,18 +2463,37 @@ impl WeaponPool {
     }
 
     fn insert(&mut self, weapon: Weapon, stale: crate::stale::WeaponStale, team: u8) -> bool {
-        match self.slots.iter().position(|slot| slot.is_none()) {
-            Some(i) => {
-                self.slots[i] = Some(weapon);
-                self.stale[i] = stale;
-                self.teams[i] = team;
-                self.landed[i] = None;
-                self.hit_records[i] = [None; 4];
-                self.pending_item_hits[i] = false;
-                true
+        self.insert_at(weapon, stale, team).is_some()
+    }
+
+    /// `wpManagerMakeWeapon`: the first free slot, placed last in the link.
+    fn insert_at(
+        &mut self,
+        weapon: Weapon,
+        stale: crate::stale::WeaponStale,
+        team: u8,
+    ) -> Option<usize> {
+        let i = self.slots.iter().position(|slot| slot.is_none())?;
+        self.slots[i] = Some(weapon);
+        self.stale[i] = stale;
+        self.teams[i] = team;
+        self.landed[i] = None;
+        self.hit_records[i] = [None; 4];
+        self.pending_item_hits[i] = false;
+        self.clash_damage[i] = 0;
+        self.set_off[i] = false;
+        self.next_seq = self.next_seq.wrapping_add(1);
+        self.seq[i] = self.next_seq;
+        // A record naming the slot's last weapon does not name this one.
+        let id = weapon_victim_id(i);
+        for records in &mut self.hit_records {
+            for r in records.iter_mut() {
+                if *r == Some(id) {
+                    *r = None;
+                }
             }
-            None => false,
         }
+        Some(i)
     }
 
     /// `ftMainUpdateDamageStatWeapon`'s `ftParamUpdateStaleQueue(wp->player,
@@ -2403,6 +2675,7 @@ impl WeaponPool {
         let stale = self.stale[i];
         let slot = &mut self.slots[i];
         let Some(weapon) = slot else { return };
+        push_proc(&mut self.fx, self.seq[i], weapon, Proc::Hit);
         match weapon {
             Weapon::Boomerang(b) => b.on_hit(),
             Weapon::Cutter(_) => {}
@@ -2536,11 +2809,13 @@ impl WeaponPool {
         let mut trails = [None; MAX_WEAPONS];
         for (i, slot) in self.slots.iter_mut().enumerate() {
             if let Some(weapon) = slot.as_mut() {
+                let mut emit = Emit::default();
+                let fx = &mut emit;
                 let alive = match weapon {
-                    Weapon::PKFire(spark) => spark.tick(surfaces),
+                    Weapon::PKFire(spark) => spark.tick(surfaces, fx),
                     Weapon::PKThunder(_) | Weapon::PKTrail(_) => true, // ticked together above
-                    Weapon::Jolt(jolt) => jolt.tick(surfaces),
-                    Weapon::Trail(trail) => trail.tick(),
+                    Weapon::Jolt(jolt) => jolt.tick(surfaces, fx),
+                    Weapon::Trail(trail) => trail.tick(fx),
                     Weapon::Thunder(head) => {
                         let owner = owners.get(head.owner_port as usize).copied().flatten();
                         if owner.is_some_and(|o| {
@@ -2551,6 +2826,9 @@ impl WeaponPool {
                         if owner.is_some_and(|o| {
                             o.thunder_collide && o.thunder_motion == head.motion_count
                         }) {
+                            // `wpPikachuThunderHeadProcUpdate`'s collide
+                            // branch: the last segment.
+                            fx.push(head.trail_effect(10, 3));
                             false
                         } else {
                             // ProcUpdate makes a stationary trail before head physics/map.
@@ -2560,7 +2838,7 @@ impl WeaponPool {
                             }
                             // `wpPikachuThunderHeadProcDead` notifies
                             // the owner like an expired head.
-                            let alive = head.tick(surfaces)
+                            let alive = head.tick(surfaces, fx)
                                 && !bounds.is_some_and(|b| out_of_bounds(b, head.position));
                             if !alive && head.notify_destroy {
                                 if let Some(flag) =
@@ -2572,15 +2850,15 @@ impl WeaponPool {
                             alive
                         }
                     }
-                    Weapon::Fireball(fireball) => fireball.tick(surfaces),
-                    Weapon::Blaster(blaster) => blaster.tick(surfaces),
-                    Weapon::ChargeShot(shot) => shot.tick(surfaces),
-                    Weapon::Bomb(bomb) => bomb.tick(surfaces),
+                    Weapon::Fireball(fireball) => fireball.tick(surfaces, fx),
+                    Weapon::Blaster(blaster) => blaster.tick(surfaces, fx),
+                    Weapon::ChargeShot(shot) => shot.tick(surfaces, fx),
+                    Weapon::Bomb(bomb) => bomb.tick(surfaces, fx),
                     Weapon::Boomerang(boomerang) => {
                         let parent = boomerang
                             .parent_port
                             .and_then(|port| owners.get(usize::from(port)).copied().flatten());
-                        let (alive, caught) = boomerang.tick(surfaces, parent, camera.as_ref());
+                        let (alive, caught) = boomerang.tick(surfaces, parent, camera.as_ref(), fx);
                         if caught {
                             if let Some(port) = boomerang.parent_port {
                                 self.caught[usize::from(port)] = true;
@@ -2588,10 +2866,11 @@ impl WeaponPool {
                         }
                         alive
                     }
-                    Weapon::Egg(egg) => egg.tick(surfaces),
-                    Weapon::Star(star) => star.tick(),
-                    Weapon::Cutter(cutter) => cutter.tick(surfaces),
+                    Weapon::Egg(egg) => egg.tick(surfaces, fx),
+                    Weapon::Star(star) => star.tick(fx),
+                    Weapon::Cutter(cutter) => cutter.tick(surfaces, fx),
                 };
+                self.fx.extend(self.seq[i], &emit);
                 let alive = alive
                     && (matches!(weapon, Weapon::Thunder(_))
                         || !bounds.is_some_and(|b| out_of_bounds(b, weapon.position())));
@@ -2664,6 +2943,14 @@ impl WeaponPool {
                     {
                         t.hit_ports |= bit;
                         thunder_groups[i] = Some(t.group);
+                        // `wpPikachuThunderTrailProcHit`.
+                        self.fx.push(
+                            self.seq[i],
+                            Fx::ImpactShock {
+                                pos: t.position,
+                                size: pikachu::TRAIL_HIT.damage,
+                            },
+                        );
                         break;
                     }
                 }
@@ -2751,13 +3038,18 @@ impl WeaponPool {
                 );
                 if let crate::combat::WeaponContact::Shielded(shield) = contact {
                     record_weapon_victim(records, defender.port);
-                    weapon.on_shield(shield);
+                    let mut emit = Emit::default();
+                    weapon.on_shield(shield, &mut emit);
+                    self.fx.extend(self.seq[i], &emit);
                     continue;
                 }
                 if attack::HitOutcome::of(contact).registered() {
                     record_weapon_victim(records, defender.port);
                     bomb.hit_ports |= bit;
                     if !bomb.exploded {
+                        // `wpSamusBombProcHit`.
+                        self.fx
+                            .push(self.seq[i], Fx::SparkleWhiteMultiExplode(bomb.position));
                         bomb.explode();
                     }
                 }
@@ -2779,8 +3071,16 @@ impl WeaponPool {
             );
             match pre {
                 PreHit::None => {}
+                PreHit::SetOff => push_proc(&mut self.fx, self.seq[i], weapon, Proc::SetOff),
+                PreHit::ReflectorBroke => push_proc(&mut self.fx, self.seq[i], weapon, Proc::Hit),
+                PreHit::Absorbed => push_proc(&mut self.fx, self.seq[i], weapon, Proc::Absorb),
+                PreHit::Reflected => {}
+            }
+            match pre {
+                PreHit::None => {}
                 // `proc_setoff`.
                 PreHit::SetOff => {
+                    self.set_off[i] = true;
                     match weapon {
                         // `wpLinkBoomerangProcSetOff`.
                         Weapon::Boomerang(b) => {
@@ -2891,12 +3191,17 @@ impl WeaponPool {
             // `proc_shield`.
             if let crate::combat::WeaponContact::Shielded(shield) = contact {
                 record_weapon_victim(records, defender.port);
-                if !weapon.on_shield(shield) {
+                let mut emit = Emit::default();
+                let alive = weapon.on_shield(shield, &mut emit);
+                self.fx.extend(self.seq[i], &emit);
+                if !alive {
                     *slot = None;
                 }
                 continue;
             }
             if attack::HitOutcome::of(contact).registered() {
+                // `proc_hit`, which makes its effects first.
+                push_proc(&mut self.fx, self.seq[i], weapon, Proc::Hit);
                 // The Boomerang survives a hit and turns back.
                 if let Weapon::Boomerang(b) = weapon {
                     record_weapon_victim(records, defender.port);
@@ -2932,6 +3237,234 @@ impl WeaponPool {
                 }
             }
         }
+    }
+
+    /// The live slots in link order.
+    fn link_order(&self) -> ([usize; MAX_WEAPONS], usize) {
+        let mut order = [0usize; MAX_WEAPONS];
+        let mut n = 0;
+        for (i, slot) in self.slots.iter().enumerate() {
+            if slot.is_some() {
+                order[n] = i;
+                n += 1;
+            }
+        }
+        order[..n].sort_unstable_by_key(|&i| self.seq[i]);
+        (order, n)
+    }
+
+    /// A slot's attack as `wpProcessProcSearchHitWeapon` reads it, or
+    /// `None` when it cannot clash (`can_setoff` clear, or no attack):
+    /// owner, staled damage, priority and its box
+    /// `(pos_curr, pos_prev, size, state)`.
+    fn clash_attack(&self, i: usize) -> Option<ClashAttack> {
+        let w = self.slots[i]?;
+        if !w.flags().can_setoff {
+            return None;
+        }
+        let (owner, hitbox, pos, vel) = self.item_attack(i)?;
+        let prev = pos - vel;
+        Some(ClashAttack {
+            owner,
+            team: self.teams[i],
+            damage: hitbox.damage,
+            priority: w.priority(),
+            pos_curr: pos,
+            pos_prev: prev,
+            size: hitbox.radius,
+            state: crate::combat::weapon_state(pos, prev),
+        })
+    }
+
+    /// `wpProcessUpdateHitInteractStats(.., nGMHitTypeAttack, 0)`: slot `i`
+    /// (and every weapon of its group) records weapon `victim`.
+    fn record_clash(&mut self, i: usize, victim: usize) {
+        let id = weapon_victim_id(victim);
+        match self.slots[i].and_then(|w| w.group()) {
+            Some(group) => {
+                for j in 0..MAX_WEAPONS {
+                    if self.slots[j].and_then(|w| w.group()) == Some(group) {
+                        record_weapon_victim(&mut self.hit_records[j], id);
+                    }
+                }
+            }
+            None => record_weapon_victim(&mut self.hit_records[i], id),
+        }
+    }
+
+    /// `wpProcessProcSearchHitWeapon` for every weapon, in link order (the
+    /// priority-1 process after the fighters' and items' searches). Each
+    /// weapon tests only the weapons after it in the link that are not its
+    /// owner's or, with team attack off, its team's, and that neither side
+    /// has recorded; the first pair of boxes that meet clashes
+    /// (`wpProcessUpdateAttackStatWeapon`): a side whose priority is not
+    /// above the other's records it, takes its staled damage as
+    /// `hit_attack_damage` and makes a set-off at the pair's midpoint, the
+    /// searched weapon's side first.
+    ///
+    /// Call it once a frame after [`Self::tick`] and before
+    /// [`Self::apply_hits`]: the source's weapons are still whole here (their
+    /// fighter hits land at priority 0), while the port's hit searches react
+    /// at once. The set-offs wait in a queue
+    /// ([`Self::flush_clash_effects`]) and the reactions for
+    /// [`Self::finish_clashes`].
+    pub fn search_weapons(&mut self) {
+        self.set_off = [false; MAX_WEAPONS];
+        self.clash_damage = [0; MAX_WEAPONS];
+        let (order, n) = self.link_order();
+        for a in 0..n {
+            let this = order[a];
+            let Some(this_attack) = self.clash_attack(this) else {
+                continue;
+            };
+            for &other in &order[a + 1..n] {
+                let Some(other_attack) = self.clash_attack(other) else {
+                    continue;
+                };
+                if this_attack.owner == other_attack.owner
+                    || self.team_rules.spares(this_attack.team, other_attack.team)
+                {
+                    continue;
+                }
+                if self.hit_records[other].contains(&Some(weapon_victim_id(this)))
+                    || self.hit_records[this].contains(&Some(weapon_victim_id(other)))
+                {
+                    continue;
+                }
+                // `gmCollisionCheckWeaponAttacksCollide(other_hit, i,
+                // this_attack_coll, j)`.
+                if !crate::hurtbox::attacks_collide(
+                    (
+                        other_attack.pos_curr,
+                        other_attack.pos_prev,
+                        other_attack.size,
+                        other_attack.state,
+                    ),
+                    (
+                        this_attack.pos_curr,
+                        this_attack.pos_prev,
+                        this_attack.size,
+                        this_attack.state,
+                    ),
+                ) {
+                    continue;
+                }
+                self.clash(other, &other_attack, this, &this_attack);
+            }
+        }
+    }
+
+    /// `wpProcessUpdateAttackStatWeapon(other, .., victim, ..)`.
+    fn clash(&mut self, other: usize, o: &ClashAttack, victim: usize, v: &ClashAttack) {
+        let pos = crate::combat::impact_point(
+            crate::combat::attack_point(v.pos_curr, v.pos_prev, v.state),
+            crate::combat::attack_point(o.pos_curr, o.pos_prev, o.state),
+        );
+        if v.priority <= o.priority {
+            self.record_clash(victim, other);
+            self.clash_damage[victim] = self.clash_damage[victim].max(v.damage);
+            self.clash_fx.push(
+                0,
+                Fx::SetOff {
+                    pos,
+                    size: v.damage,
+                },
+            );
+        }
+        if o.priority <= v.priority {
+            self.record_clash(other, victim);
+            self.clash_damage[other] = self.clash_damage[other].max(o.damage);
+            self.clash_fx.push(
+                0,
+                Fx::SetOff {
+                    pos,
+                    size: o.damage,
+                },
+            );
+        }
+    }
+
+    /// `wpProcessProcHitCollisions`'s `hit_attack_damage` branch for the
+    /// clashes: each weapon's `proc_setoff`, in link order, unless a
+    /// fighter's attack already set it off this frame. Call it after
+    /// [`Self::apply_hits`] and the item searches (their `proc_hit`s come
+    /// first in the source).
+    pub fn finish_clashes(&mut self) {
+        let (order, n) = self.link_order();
+        let mut thunder = false;
+        for &i in &order[..n] {
+            let damage = core::mem::take(&mut self.clash_damage[i]);
+            if damage == 0 || self.set_off[i] {
+                continue;
+            }
+            let seq = self.seq[i];
+            let stale = self.stale[i];
+            let team = self.teams[i];
+            let Some(weapon) = self.slots[i].as_mut() else {
+                continue;
+            };
+            push_proc(&mut self.fx, seq, weapon, Proc::SetOff);
+            let alive = match weapon {
+                // `wpLinkBoomerangProcSetOff`.
+                Weapon::Boomerang(b) => {
+                    b.set_off();
+                    true
+                }
+                // `wpYoshiEggThrowProcHit`; the explosion has none.
+                Weapon::Egg(e) => {
+                    if !e.exploded {
+                        e.explode();
+                    }
+                    true
+                }
+                // `wpYoshiStarProcHit` without `hit_normal_damage`.
+                Weapon::Star(_) => true,
+                // `wpNessPKFireProcHit`: the pillar.
+                Weapon::PKFire(p) => {
+                    let spawn = p.item_spawn(stale, team);
+                    self.queue_item_spawn(spawn);
+                    false
+                }
+                Weapon::PKThunder(_) => {
+                    thunder = true;
+                    false
+                }
+                // The Fireball's, Charge Shot's, Final Cutter's and Thunder
+                // Jolt's return TRUE.
+                _ => false,
+            };
+            if !alive {
+                self.slots[i] = None;
+            }
+        }
+        if thunder {
+            self.clear_pk_trails();
+        }
+    }
+
+    /// Makes the weapons' queued effects ([`crate::wpeffect`]) in link
+    /// order. Call it at the end of each weapon pass: after a fighter's
+    /// weapon is made, after [`Self::tick`] (and the items' pass, which
+    /// comes first in the source), and after the hit collisions
+    /// (`ftMainProcParams` of every fighter first).
+    pub fn flush_effects(&mut self, sink: &mut dyn crate::effect::HitEffectSink) {
+        for e in self.fx.drain_sorted() {
+            sink.weapon(&e);
+        }
+    }
+
+    /// Makes the clash search's set-offs, in the order it found them. Call
+    /// it after the fighters' hit effects and before any
+    /// `ftMainProcParams` ([`crate::combat::finish_frame_between`]).
+    pub fn flush_clash_effects(&mut self, sink: &mut dyn crate::effect::HitEffectSink) {
+        for e in self.clash_fx.drain() {
+            sink.weapon(&e);
+        }
+    }
+
+    /// Effects the queues had no room for.
+    pub fn effects_dropped(&self) -> u16 {
+        self.fx.dropped.saturating_add(self.clash_fx.dropped)
     }
 
     pub fn jolts(&self) -> impl Iterator<Item = ThunderJolt> + '_ {
@@ -3372,11 +3905,11 @@ mod tests {
             10,
             0,
         );
-        assert!(egg.tick(Vec::new));
+        assert!(egg.tick(Vec::new, &mut crate::wpeffect::Emit::default()));
         assert_eq!(egg.rotate_z, 0.0);
         let step = (10.0f32 * EGGTHROW_ANGLE_FORCE_MUL + EGGTHROW_ANGLE_ADD).to_radians();
-        assert!(egg.tick(Vec::new));
-        assert!(egg.tick(Vec::new));
+        assert!(egg.tick(Vec::new, &mut crate::wpeffect::Emit::default()));
+        assert!(egg.tick(Vec::new, &mut crate::wpeffect::Emit::default()));
         assert!((egg.rotate_z - 2.0 * step).abs() < 1e-6);
 
         let spawn = WeaponSpawn {
@@ -3388,8 +3921,8 @@ mod tests {
             facing: 1.0,
         };
         let mut left = YoshiStar::new(spawn, -1.0);
-        assert!(left.tick());
-        assert!(left.tick());
+        assert!(left.tick(&mut crate::wpeffect::Emit::default()));
+        assert!(left.tick(&mut crate::wpeffect::Emit::default()));
         assert!((left.rotate_z + 2.0 * YOSHISTAR_ROTATE_SPEED).abs() < 1e-6);
     }
 
@@ -3632,20 +4165,26 @@ mod tests {
         let b = LinkBoomerang::new(spawn, false, 0, 0);
         let angle = b.default_angle;
         let mut w = Weapon::Boomerang(b);
-        assert!(w.on_shield(crate::combat::ShieldCollide {
-            angle: 100.0 * core::f32::consts::PI / 180.0,
-            dir_z: 1.0,
-        }));
+        assert!(w.on_shield(
+            crate::combat::ShieldCollide {
+                angle: 100.0 * core::f32::consts::PI / 180.0,
+                dir_z: 1.0,
+            },
+            &mut crate::wpeffect::Emit::default()
+        ));
         let Weapon::Boomerang(b) = w else {
             unreachable!()
         };
         assert!(!b.is_return);
         let expected = clamp_angle_360(angle + 2.0 * 10.0 * core::f32::consts::PI / 180.0);
         assert!((b.default_angle - expected).abs() < 1e-5);
-        assert!(w.on_shield(crate::combat::ShieldCollide {
-            angle: core::f32::consts::PI,
-            dir_z: 0.0,
-        }));
+        assert!(w.on_shield(
+            crate::combat::ShieldCollide {
+                angle: core::f32::consts::PI,
+                dir_z: 0.0,
+            },
+            &mut crate::wpeffect::Emit::default()
+        ));
         let Weapon::Boomerang(b) = w else {
             unreachable!()
         };
@@ -4078,7 +4617,7 @@ mod tests {
             unreachable!()
         };
         // 120 degrees hops by twice (120 - 90).
-        assert!(w.on_shield(shield_at(120.0, 1.0)));
+        assert!(w.on_shield(shield_at(120.0, 1.0), &mut crate::wpeffect::Emit::default()));
         let Weapon::Fireball(after) = w else {
             unreachable!()
         };
@@ -4088,20 +4627,23 @@ mod tests {
         assert!((after.velocity.y - (v.x * sin + v.y * cos)).abs() < 1e-3);
         // The negative direction turns the other way.
         let mut w = weapons.slots[0].unwrap();
-        assert!(w.on_shield(shield_at(120.0, -1.0)));
+        assert!(w.on_shield(
+            shield_at(120.0, -1.0),
+            &mut crate::wpeffect::Emit::default()
+        ));
         let Weapon::Fireball(after) = w else {
             unreachable!()
         };
         assert!((after.velocity.y - (-v.x * sin + v.y * cos)).abs() < 1e-3);
         // Under 90 degrees the angle clamps to zero.
         let mut w = weapons.slots[0].unwrap();
-        assert!(w.on_shield(shield_at(60.0, 1.0)));
+        assert!(w.on_shield(shield_at(60.0, 1.0), &mut crate::wpeffect::Emit::default()));
         let Weapon::Fireball(after) = w else {
             unreachable!()
         };
         assert!((after.velocity - v).length() < 1e-4);
         let mut w = weapons.slots[0].unwrap();
-        assert!(!w.on_shield(shield_at(135.0, 1.0)));
+        assert!(!w.on_shield(shield_at(135.0, 1.0), &mut crate::wpeffect::Emit::default()));
     }
 
     /// `wpMainVelSetModelPitch`'s yaw, `wpKirbyCutterProcUpdate`'s slope
@@ -4122,7 +4664,7 @@ mod tests {
         let slope = [surface(MapSurfaceKind::Floor, -1000, 0, 1000, 200)];
         let mut c = KirbyCutter::new(spawn(1.0), true);
         assert_eq!(c.model_rotate_y, core::f32::consts::FRAC_PI_2);
-        assert!(c.tick(|| slope));
+        assert!(c.tick(|| slope, &mut crate::wpeffect::Emit::default()));
         assert_eq!(c.anim_ticks, 1);
         assert!(c.floor.is_some());
         let want = ssb_engine::math::atan2(100.0, 1000.0);
@@ -4143,16 +4685,17 @@ mod tests {
         // `wpYoshiStarProcHop`: 134 degrees less 90, doubled, turns the
         // rising star back over the top.
         let mut w = Weapon::Star(YoshiStar::new(spawn(WeaponKind::YoshiStars), 1.0));
-        assert!(w.on_shield(shield_at(134.0, 1.0)));
+        assert!(w.on_shield(shield_at(134.0, 1.0), &mut crate::wpeffect::Emit::default()));
         let Weapon::Star(s) = w else { unreachable!() };
         assert!(s.velocity.x < 0.0);
         assert_eq!(s.lr, -1.0);
-        assert!(!Weapon::Star(s).on_shield(shield_at(135.0, 1.0)));
+        assert!(!Weapon::Star(s)
+            .on_shield(shield_at(135.0, 1.0), &mut crate::wpeffect::Emit::default()));
         // `wpFoxBlasterProcHop` draws the shot unstretched again.
         let mut blaster = FoxBlaster::new(spawn(WeaponKind::FoxBlaster));
         blaster.scale_x = 20.0;
         let mut w = Weapon::Blaster(blaster);
-        assert!(w.on_shield(shield_at(100.0, 1.0)));
+        assert!(w.on_shield(shield_at(100.0, 1.0), &mut crate::wpeffect::Emit::default()));
         let Weapon::Blaster(b) = w else {
             unreachable!()
         };
@@ -4162,18 +4705,18 @@ mod tests {
         let mut bomb = SamusBomb::new(spawn(WeaponKind::SamusBomb));
         bomb.floor = Some((surface(MapSurfaceKind::Floor, -500, 0, 500, 0), 0.0));
         let mut w = Weapon::Bomb(bomb);
-        assert!(w.on_shield(shield_at(100.0, 1.0)));
+        assert!(w.on_shield(shield_at(100.0, 1.0), &mut crate::wpeffect::Emit::default()));
         let Weapon::Bomb(b) = w else { unreachable!() };
         assert!(b.exploded);
         let lifetime = b.lifetime;
-        assert!(w.on_shield(shield_at(170.0, 1.0)));
+        assert!(w.on_shield(shield_at(170.0, 1.0), &mut crate::wpeffect::Emit::default()));
         let Weapon::Bomb(b) = w else { unreachable!() };
         assert_eq!(b.lifetime, lifetime);
         // An airborne Bomb hops and faces its new velocity.
         let mut bomb = SamusBomb::new(spawn(WeaponKind::SamusBomb));
         bomb.velocity = Vec3::new(10.0, 5.0, 0.0);
         let mut w = Weapon::Bomb(bomb);
-        assert!(w.on_shield(shield_at(134.0, 1.0)));
+        assert!(w.on_shield(shield_at(134.0, 1.0), &mut crate::wpeffect::Emit::default()));
         let Weapon::Bomb(b) = w else { unreachable!() };
         assert!(!b.exploded);
         assert!(b.velocity.x < 0.0);
@@ -4181,10 +4724,12 @@ mod tests {
         // A grounded Thunder Jolt cannot hop: `proc_shield` destroys it.
         let mut jolt = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt));
         jolt.surface = Some(surface(MapSurfaceKind::Floor, -500, 0, 500, 0));
-        assert!(!Weapon::Jolt(jolt).on_shield(shield_at(100.0, 1.0)));
+        assert!(!Weapon::Jolt(jolt)
+            .on_shield(shield_at(100.0, 1.0), &mut crate::wpeffect::Emit::default()));
         // The Final Cutter wave cannot hop and flies on.
         let cutter = KirbyCutter::new(spawn(WeaponKind::KirbyCutter { grounded: false }), false);
-        assert!(Weapon::Cutter(cutter).on_shield(shield_at(100.0, 1.0)));
+        assert!(Weapon::Cutter(cutter)
+            .on_shield(shield_at(100.0, 1.0), &mut crate::wpeffect::Emit::default()));
     }
 
     /// `ftMainUpdateShieldStatWeapon`'s record keeps a hopped shot from

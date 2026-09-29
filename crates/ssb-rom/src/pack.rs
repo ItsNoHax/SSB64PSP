@@ -275,7 +275,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // which a star KO fades towards (RE-412).
 // 66 adds the electric-damage skeletons as costume overrides keyed
 // `SKELETON_COSTUME_BASE + set` (RE-414).
-pub const VERSION: u32 = 66;
+// 67 adds the quakes' animations (`AnimDesc::EFFECT` slots
+// `effect::QUAKE_ANIM_SLOT` + magnitude, file 83 at 0xCBC0 to 0xCDC0), one
+// node-less script each, whose translation shakes the camera (RE-416).
+pub const VERSION: u32 = 67;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

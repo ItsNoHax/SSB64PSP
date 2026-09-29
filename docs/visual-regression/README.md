@@ -715,3 +715,18 @@ dust behind Samus), `f1-training-rebirthblast` (23,380), and the battles
 `f1-training-cpu-walk` and `-cpu-jump`, which follow the effects' random
 draws: a seed-isolated build matched `HEAD` isolated the same way in all
 but `f1-vs-cpu`'s spark. The other 87 are unchanged. 114 of 114 match.
+
+## 2026-09-29 RE-416 weapon effects, clashes and the quake
+
+Pack v67, 30,491,216 bytes (SHA-256 `954ce580…`), with the quakes'
+animations. Weapons now make their own effects and clash, and a quake
+shakes the camera. Four goldens were rebaselined, identical in both
+captures: `f1-training-yoshi-bomb` (292,304 pixels at 2×), `-captain`
+(305,800) and `-kirby` (309,084), whose Bomb landing, Falcon Punch and
+Final Cutter landing quakes now shift the view, and `-ness-thunder`
+(1,320), where PK Thunder's trails draw their frames and a flash beside
+Ness takes other random numbers. A build restoring the seed around every
+weapon-effect flush, with the shake off, matched the old goldens in all
+four; with the shake on, the three quake scenes matched this build's
+captures exactly. No capture catches a weapon ending, so the new
+particles show in none. The other 110 are unchanged. 114 of 114 match.

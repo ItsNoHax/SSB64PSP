@@ -5,6 +5,7 @@
 use ssb_engine::math::Vec3;
 use ssb_game::effect::{self, EffectRuntime, Effects};
 use ssb_game::particle::{self as lb, flag, Banks, Particles, Script};
+use ssb_game::wpeffect::{self, WeaponEffect};
 use ssb_rom::pack::{Pack, ParticleBankDesc};
 
 fn pack_bytes() -> Option<Vec<u8>> {
@@ -236,6 +237,17 @@ fn every_match_maker_ends_without_the_unmodelled_features() {
         ("kirby star", |e, p, b| {
             e.generator_at(p, b, effect::script::KIRBY_STAR_GEN, Vec3::ZERO)
         }),
+        // RE-416: the weapons' own makers.
+        ("impact shock", |e, p, b| {
+            e.impact_shock(p, b, Vec3::ZERO, 12)
+        }),
+        ("dust collide", |e, p, b| e.dust_collide(p, b, Vec3::ZERO)),
+        ("fire grind", |e, p, b| {
+            e.ready_at(p, b, true, wpeffect::FIRE_GRIND_ID, Vec3::ZERO, 1.0)
+        }),
+        ("fox blaster glow", |e, p, b| {
+            e.common_at(p, b, false, wpeffect::FOX_BLASTER_GLOW_ID, Vec3::ZERO)
+        }),
     ];
     for &(name, make) in makers {
         ssb_game::rng::set_seed(1);
@@ -358,6 +370,80 @@ fn a_dusty_melee_stays_inside_the_source_pools() {
         p.used_max, p.xf_used_num
     );
     assert_eq!(refused_particles, 0);
+    assert!(usize::from(p.used_max) < lb::STRUCTS_NUM);
+    assert_eq!(e.displays_refused, 0);
+    assert!(displays_max < effect::DISPLAY_MAX);
+}
+
+/// RE-416: four fighters' weapons at once. For four seconds each fighter's
+/// weapons end every eight frames (a dust cloud, a glow, a shock and a
+/// set-off), two weapons rebound every sixteen (a Fireball's grind and a
+/// Boomerang's dust), an Egg lands and a Bomb explodes every 32 (the shell,
+/// the sparkles and a quake) and two Thunder segments fade out every frame,
+/// beside the fighters' dust of RE-415. Only the
+/// source's five-free rule refuses; the particle and display pools never
+/// run out.
+#[test]
+fn a_melee_of_weapons_stays_inside_the_source_pools() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = open(&bytes);
+    let banks = PackBanks {
+        pack: &pack,
+        common: pack.particle_bank(0).unwrap(),
+    };
+    ssb_game::rng::set_seed(1);
+    let mut p = Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut structs_max = 0;
+    let mut displays_max = 0;
+    for frame in 0..240 {
+        let mut fx = std::vec::Vec::new();
+        for player in 0..4u8 {
+            let at = Vec3::new(f32::from(player) * 300.0, 0.0, 0.0);
+            if frame % 8 == u32::from(player) * 2 {
+                fx.push(WeaponEffect::DustExpandSmall(at));
+                fx.push(WeaponEffect::FoxBlasterGlow(at));
+                fx.push(WeaponEffect::ImpactShock { pos: at, size: 10 });
+                fx.push(WeaponEffect::SetOff { pos: at, size: 7 });
+            }
+            if player < 2 {
+                fx.push(WeaponEffect::ThunderTrail {
+                    pos: at,
+                    lifetime: 6,
+                    texture: 0,
+                });
+                fx.push(WeaponEffect::TextureRand(3));
+            }
+            if frame % 4 == 0 {
+                e.dust_light(&mut p, &banks, at, 1, 1.0);
+            }
+            if player < 2 && frame % 16 == u32::from(player) * 8 {
+                fx.push(WeaponEffect::DustCollide(at));
+                fx.push(WeaponEffect::FireGrind(at));
+            }
+        }
+        if frame % 32 == 0 {
+            fx.push(WeaponEffect::Quake(2));
+            fx.push(WeaponEffect::EggBreak(Vec3::ZERO));
+            fx.push(WeaponEffect::SparkleWhiteMultiExplode(Vec3::ZERO));
+            fx.push(WeaponEffect::SparkleWhite(Vec3::ZERO));
+        }
+        for f in &fx {
+            wpeffect::make(f, &mut e, &mut p, &banks);
+        }
+        structs_max = structs_max.max(e.used());
+        displays_max = displays_max.max(e.displays().count());
+        EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &banks,
+        }
+        .frame();
+    }
+    println!(
+        "weapon melee: particles max {}, structs max {structs_max}, displays max {displays_max}",
+        p.used_max
+    );
     assert!(usize::from(p.used_max) < lb::STRUCTS_NUM);
     assert_eq!(e.displays_refused, 0);
     assert!(displays_max < effect::DISPLAY_MAX);

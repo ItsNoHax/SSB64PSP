@@ -3847,6 +3847,33 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         );
     }
 
+    // The quakes' single DObj (`gcAddDObjForGObj(effect_gobj, NULL)`) has no
+    // graph: each packs its one script with no node (RE-416).
+    {
+        let file_id = ssb_rom::effect::QUAKE_ANIM_FILE;
+        let file = loaded
+            .files
+            .get(file_id as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("quake: file {file_id} missing"))?;
+        for (m, &table) in ssb_rom::effect::QUAKE_ANIM_JOINTS.iter().enumerate() {
+            let script = ssb_rom::objanim::joint_scripts(&file.data, table, 1)
+                .first()
+                .copied()
+                .flatten()
+                .ok_or_else(|| format!("quake {m}: no script at 0x{table:X}"))?;
+            writer.add_anim(
+                ssb_rom::pack::AnimDesc::EFFECT,
+                ssb_rom::effect::QUAKE_ANIM_SLOT + m as u32,
+                file_id,
+                0,
+                &file.data,
+                &[(Some(script), None)],
+            );
+            effect_anims += 1;
+        }
+    }
+
     // Weapon DObj trees animate through `WPAttributes.anim_joints`
     // (`wpManagerMakeWeapon` -> `gcAddAnimAll`). Link's Boomerang
     // (`226_LinkSpecial1.c`) names file 325's graph at 0x610 and its table

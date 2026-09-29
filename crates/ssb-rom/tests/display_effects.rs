@@ -141,6 +141,19 @@ fn display_effect_lives_match_the_rom() {
         let kind = DisplayKind::Quake { magnitude: m as u8 };
         measured.push(("quake", n, kind.life().unwrap()));
     }
+    // RE-416: the packed quakes (their node-less `AnimDesc::EFFECT` slots)
+    // replay the archive's scripts.
+    for m in 0..3u32 {
+        let anim = pack
+            .effect_anim(ssb_rom::effect::QUAKE_ANIM_SLOT + m)
+            .expect("packed quake");
+        let joint = pack.anim_joint(anim.first_joint).unwrap();
+        assert_eq!(joint.node, ssb_rom::pack::AnimJoint::NO_NODE);
+        let data = pack.anim_script(&anim).unwrap();
+        let n = dobj_life(data, &[joint.script]);
+        let kind = DisplayKind::Quake { magnitude: m as u8 };
+        measured.push(("packed quake", n, kind.life().unwrap()));
+    }
     // The small shock's first `MObj`: `llEFCommonEffects2ShockSmallMatAnimJoint`
     // is `DObj -> MObj -> script`.
     let effects2 = archive.load(84).unwrap();

@@ -5,6 +5,15 @@
 //! The host pack verifier and the PSP audit build consume the same keys so an
 //! exhaustive visual run cannot silently drift from the source inventory.
 
+/// `llEFCommonEffects1QuakeMag0AnimJoint` to `...Mag3...` in file 83:
+/// the quakes' single-`DObj` animations (`efManagerQuakeMakeEffect`), whose
+/// translation moves the battle camera (RE-416).
+pub const QUAKE_ANIM_FILE: u32 = 83;
+pub const QUAKE_ANIM_JOINTS: [u32; 4] = [0xCBC0, 0xCC20, 0xCCF0, 0xCDC0];
+/// The `AnimDesc::EFFECT` slot of quake magnitude 0; the others follow.
+/// Past every [`MANAGER_EFFECT_KEYS`] slot.
+pub const QUAKE_ANIM_SLOT: u32 = 0x100;
+
 pub const MANAGER_EFFECT_KEYS: &[(u32, u32)] = &[
     (83, 0x7750),
     (83, 0x7E80),
