@@ -64,4 +64,5 @@ pub mod status;
 pub mod team;
 pub mod vs_mode;
 pub mod weapon;
+pub mod wpeffect;
 pub mod yoshi;

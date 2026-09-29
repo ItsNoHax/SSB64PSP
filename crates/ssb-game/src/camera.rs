@@ -104,7 +104,14 @@ pub struct Camera {
     /// `gGMCameraPauseCameraEyeX`, `gGMCameraPauseCameraEyeY`: radians the
     /// pause menu turns the view by.
     pub pause_eye: (f32, f32),
+    /// A quake's `gmCameraSetVelAt` since the last camera update: its
+    /// `DObj`'s translation `(y, z)` (`efManagerQuakeProcUpdate`), which
+    /// [`Self::vel_at`] scales and `gmCameraApplyVel` adds to `at`.
+    pub quake: Option<(f32, f32)>,
 }
+
+/// `EFCOMMON_QUAKE_MAGNITUDE`.
+pub const QUAKE_MAGNITUDE: f32 = 6500.0;
 
 impl Default for Camera {
     fn default() -> Self {
@@ -114,11 +121,29 @@ impl Default for Camera {
             fovy_degrees: DEFAULT_FOVY_DEGREES,
             target_dist: DEFAULT_TARGET_DIST,
             pause_eye: (0.0, 0.0),
+            quake: None,
         }
     }
 }
 
 impl Camera {
+    /// `gGMCameraStruct.vel_at` as `efManagerQuakeProcUpdate` set it, taken:
+    /// the quake's `(z, y)` translation, scaled by the eye's distance from
+    /// `at` past [`QUAKE_MAGNITUDE`]. The quake's process ran after the last
+    /// camera update, so the eye and `at` it read are the current ones.
+    pub fn vel_at(&mut self) -> Vec3 {
+        let Some((y, z)) = self.quake.take() else {
+            return Vec3::ZERO;
+        };
+        let mag = (self.at - self.eye).length();
+        let k = if mag > QUAKE_MAGNITUDE {
+            mag / QUAKE_MAGNITUDE
+        } else {
+            1.0
+        };
+        Vec3::new(z * k, y * k, 0.0)
+    }
+
     /// One frame of `gmCameraDefaultFuncCamera` (`gm/gmcamera.c:624`),
     /// ported call for call in the same order:
     /// `gmCameraUpdateInterests`, `gmCameraAdjustFOV`,
@@ -174,7 +199,10 @@ impl Camera {
         let count = interests.len().min(4);
         let (interest, hz, vt) = calculate_interest(&interests[..count], bounds);
 
+        let vel = self.vel_at();
         self.advance(interest, hz, vt, light_angle_z_radians, viewport_aspect);
+        // gmCameraApplyVel.
+        self.at += vel;
     }
 
     fn advance(
@@ -218,8 +246,7 @@ impl Camera {
         let ideal_eye = self.at + direction * self.target_dist;
         self.eye = self.eye.lerp(ideal_eye, 0.1);
 
-        // gmCameraApplyVel: no external velocity source is ported yet
-        // (nothing currently writes to it), so there is nothing to add.
+        // gmCameraApplyVel: the caller adds the quake's `vel_at`.
         // gmCameraApplyFOV: `self.fovy_degrees` above already *is* the
         // value a caller reads, unlike the real `CObj`/`GMCamera` split.
     }
@@ -236,6 +263,7 @@ impl Camera {
         pan_scale: f32,
         fov: f32,
     ) {
+        let vel = self.vel_at();
         self.fovy_degrees += (fov - self.fovy_degrees) * 0.1;
         self.target_dist = dist;
         self.at = self.at.lerp(pos, pan_scale);
@@ -247,6 +275,8 @@ impl Camera {
         vz *= original_cos(turn_y);
         let ideal_eye = self.at + Vec3::new(vx, vy, vz) * self.target_dist;
         self.eye = self.eye.lerp(ideal_eye, 0.1);
+        // gmCameraApplyVel.
+        self.at += vel;
     }
 
     /// `func_ovl2_800EB924` through `gGMCameraMatrix`: a world point's

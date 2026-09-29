@@ -139,7 +139,20 @@ impl ThunderJolt {
         self.normal = surface_normal(s.kind, s.segment);
         self.direction = direction;
     }
-    pub(super) fn tick<I, F>(&mut self, surfaces: F) -> bool
+    /// `wpPikachuThunderJoltAirProcUpdate`/`...GroundProcUpdate` and their
+    /// `proc_map`. Every end makes a small dust cloud where the jolt is.
+    pub(super) fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
+    where
+        F: Fn() -> I + Copy,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let alive = self.tick_map(surfaces);
+        if !alive {
+            fx.push(Fx::DustExpandSmall(self.position));
+        }
+        alive
+    }
+    fn tick_map<I, F>(&mut self, surfaces: F) -> bool
     where
         F: Fn() -> I + Copy,
         I: IntoIterator<Item = MapSurface>,
@@ -466,6 +479,14 @@ pub struct ThunderHead {
     pub notify_destroy: bool,
 }
 impl ThunderHead {
+    /// `wpPikachuThunderHeadMakeTrailEffect`'s effect branch.
+    pub(super) fn trail_effect(&self, lifetime: u8, texture: u8) -> Fx {
+        Fx::ThunderTrail {
+            pos: Vec3::new(self.position.x, self.position.y, 0.0),
+            lifetime,
+            texture,
+        }
+    }
     pub(super) fn new(s: WeaponSpawn, group: u16) -> Self {
         Self {
             owner_port: s.owner_port,
@@ -477,18 +498,24 @@ impl ThunderHead {
             notify_destroy: true,
         }
     }
-    pub(super) fn tick<I, F>(&mut self, surfaces: F) -> bool
+    pub(super) fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
         self.lifetime = self.lifetime.saturating_sub(1);
         if self.lifetime == 0 {
+            // `wpPikachuThunderHeadProcUpdate`: dust, then the last segment.
+            fx.push(Fx::DustExpandSmall(self.position));
+            fx.push(self.trail_effect(10, 3));
             return false;
         }
         let wanted = self.position + Vec3::new(0.0, -450.0, 0.0);
         if let Some(hit) = map_contact(surfaces(), self.position, wanted, HEAD_COLL) {
             self.position = hit.position;
+            // `wpPikachuThunderHeadProcMap`.
+            fx.push(Fx::Quake(1));
+            fx.push(Fx::SparkleWhite(self.position));
             return false;
         }
         self.position = wanted;
@@ -513,9 +540,21 @@ impl ThunderTrail {
             hit_ports: h.hit_ports,
         }
     }
-    pub(super) fn tick(&mut self) -> bool {
+    /// `wpPikachuThunderTrailProcUpdate`: under `WPPIKACHUTHUNDER_EXPIRE`
+    /// the segment becomes a fading effect; otherwise it picks a frame.
+    pub(super) fn tick(&mut self, fx: &mut Emit) -> bool {
         self.lifetime = self.lifetime.saturating_sub(1);
-        self.lifetime >= 6
+        if self.lifetime >= 6 {
+            fx.push(Fx::TextureRand(3));
+            true
+        } else {
+            fx.push(Fx::ThunderTrail {
+                pos: Vec3::new(self.position.x, self.position.y, 0.0),
+                lifetime: 6,
+                texture: 0,
+            });
+            false
+        }
     }
 }
 
@@ -567,13 +606,13 @@ mod tests {
             (-1000, 0, 0),
             (1000, 0, 1),
         )];
-        assert!(j.tick(|| floor));
+        assert!(j.tick(|| floor, &mut crate::wpeffect::Emit::default()));
         assert_eq!(j.lifetime, 99);
         assert_eq!(j.position.y, 0.0);
         assert_eq!(j.hit().0.damage, 7);
         assert_eq!(j.hit().1.y, 100.0);
         let x = j.position.x;
-        assert!(j.tick(|| floor));
+        assert!(j.tick(|| floor, &mut crate::wpeffect::Emit::default()));
         assert_eq!(j.position.x - x, 55.0);
     }
     #[test]
@@ -585,7 +624,7 @@ mod tests {
             (-10000, 0, 0),
             (10000, 0, 1),
         )];
-        assert!(j.tick(|| floor));
+        assert!(j.tick(|| floor, &mut crate::wpeffect::Emit::default()));
         // A new ground weapon: its animation is added, not yet played.
         assert_eq!((j.anim_epoch, j.anim_ticks), (1, 0));
         assert_eq!(j.model_rotate_y, core::f32::consts::PI);
@@ -593,13 +632,13 @@ mod tests {
         // The first play only parses; each later one adds 0.5, and
         // `anim_frame == 7.5` restarts it with one play.
         for ticks in 1..=15 {
-            assert!(j.tick(|| floor));
+            assert!(j.tick(|| floor, &mut crate::wpeffect::Emit::default()));
             assert_eq!((j.anim_epoch, j.anim_ticks), (1, ticks));
         }
-        assert!(j.tick(|| floor));
+        assert!(j.tick(|| floor, &mut crate::wpeffect::Emit::default()));
         assert_eq!((j.anim_epoch, j.anim_ticks), (2, 1));
         for _ in 0..15 {
-            assert!(j.tick(|| floor));
+            assert!(j.tick(|| floor, &mut crate::wpeffect::Emit::default()));
         }
         assert_eq!((j.anim_epoch, j.anim_ticks), (3, 1));
     }
@@ -613,13 +652,13 @@ mod tests {
             (-100, 50, 0),
             (100, 50, 1),
         )];
-        assert!(j.tick(|| ceiling));
+        assert!(j.tick(|| ceiling, &mut crate::wpeffect::Emit::default()));
         assert!(j.surface.is_none());
         assert_eq!(j.position.y, 0.0);
         for _ in 1..99 {
-            assert!(j.tick(|| []));
+            assert!(j.tick(|| [], &mut crate::wpeffect::Emit::default()));
         }
-        assert!(!j.tick(|| []));
+        assert!(!j.tick(|| [], &mut crate::wpeffect::Emit::default()));
     }
     #[test]
     fn convex_corner_follows_original_ids_and_wall_direction() {
@@ -627,24 +666,27 @@ mod tests {
         let wall = surface(MapSurfaceKind::RightWall, 5, (200, 0, 6), (200, -400, 0));
         let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 180.0, 0.0));
         j.attach(floor, j.position, 1);
-        assert!(j.tick(|| [floor, wall]));
+        assert!(j.tick(|| [floor, wall], &mut crate::wpeffect::Emit::default()));
         assert_eq!(j.surface.unwrap().kind, MapSurfaceKind::RightWall);
         assert_eq!(j.direction, 3);
         assert_eq!(j.position, Vec3::new(200.0, 0.0, 0.0));
-        assert!(j.tick(|| [floor, wall]));
+        assert!(j.tick(|| [floor, wall], &mut crate::wpeffect::Emit::default()));
         assert_eq!(j.position.y, -55.0);
         // Reflector's wpMainVelSetLR stores ±1 even on walls. Update treats
         // every value other than 2 as downward; it does not invent direction 3.
         j.reflect(&Fighter::new(FighterKind::Fox, 2, 3));
         assert_eq!(j.direction, 1);
-        assert!(j.tick(|| [floor, wall]));
+        assert!(j.tick(|| [floor, wall], &mut crate::wpeffect::Emit::default()));
         assert_eq!(j.position.y, -110.0);
         // Same coordinates, distinct original vertex IDs: no join exists.
         let mut disconnected = wall;
         disconnected.topology.as_mut().unwrap().vertex1 = 99;
         let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 180.0, 0.0));
         j.attach(floor, j.position, 1);
-        assert!(!j.tick(|| [floor, disconnected]));
+        assert!(!j.tick(
+            || [floor, disconnected],
+            &mut crate::wpeffect::Emit::default()
+        ));
     }
     #[test]
     fn neighbor_choice_uses_last_original_line_id_and_not_iterator_order() {
@@ -654,7 +696,10 @@ mod tests {
         assert_eq!(neighbor(|| [ceiling, floor, wall], Some(3), 6), Some(7));
         let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 180.0, 0.0));
         j.attach(floor, j.position, 1);
-        assert!(!j.tick(|| [ceiling, floor, wall]));
+        assert!(!j.tick(
+            || [ceiling, floor, wall],
+            &mut crate::wpeffect::Emit::default()
+        ));
     }
     #[test]
     fn descending_wall_ceiling_contact_destroys_jolt() {
@@ -662,7 +707,7 @@ mod tests {
         let ceiling = surface(MapSurfaceKind::Ceiling, 2, (-100, 50, 2), (100, 50, 3));
         let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 0.0, 25.0));
         j.attach(wall, j.position, 2);
-        assert!(!j.tick(|| [wall, ceiling]));
+        assert!(!j.tick(|| [wall, ceiling], &mut crate::wpeffect::Emit::default()));
     }
     #[test]
     fn thunder_head_is_harmless_and_trails_share_one_hit_record() {
@@ -700,10 +745,10 @@ mod tests {
             1,
         ));
         for _ in 0..4 {
-            assert!(t.tick());
+            assert!(t.tick(&mut crate::wpeffect::Emit::default()));
         }
         assert_eq!(t.lifetime, 6);
-        assert!(!t.tick());
+        assert!(!t.tick(&mut crate::wpeffect::Emit::default()));
         // Defender root-sphere centre is y=160, radius160. ±120 scaled
         // boxes of radius200 reach centre<=480; unscaled ±240 would hit550.
         let mut pool = WeaponPool::default();

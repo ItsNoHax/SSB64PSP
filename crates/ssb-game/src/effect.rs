@@ -71,6 +71,11 @@ const DEAD_EXPLODE_ROTATE_D: [f32; 4] = [0.0, 90.0, 180.0, 270.0];
 /// `EFCOMMON_DUSTEXPANDSMALL_VEL_X` and `_Y`.
 const DUST_EXPAND_SMALL_VEL: [f32; 2] = [0.0, 5.0];
 
+/// `EFCOMMON_DUSTCOLL_OFF_BASE`, `_OFF_ADD` and `_VEL_BASE`.
+const DUST_COLL_OFF_BASE: f32 = 300.0;
+const DUST_COLL_OFF_ADD: f32 = -150.0;
+const DUST_COLL_VEL: f32 = 15.0;
+
 /// Which `proc_dead` a struct's transform has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -144,6 +149,9 @@ pub struct Effects {
     /// Display effects the pool had no room for (none in any measured
     /// match; a test keeps it at zero).
     pub displays_refused: u16,
+    /// The quake whose `gmCameraSetVelAt` this frame's processes left last,
+    /// as `(magnitude, seq, gcPlayAnimAll count)` ([`Self::take_quake`]).
+    quake_write: Option<(u8, u32, u16)>,
 }
 
 impl Default for Effects {
@@ -164,6 +172,7 @@ impl Effects {
             displays: [None; DISPLAY_MAX],
             seq: 0,
             displays_refused: 0,
+            quake_write: None,
         };
         for i in 0..EFFECT_ALLOC_NUM {
             e.slots[i].next = if i + 1 < EFFECT_ALLOC_NUM {
@@ -506,6 +515,57 @@ impl Effects {
         pc
     }
 
+    /// `efManagerImpactShockMakeEffect`: a struct, the common bank's list-0
+    /// script 0x25, then a speed and an angle and the damage's scale.
+    pub fn impact_shock(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        pos: Vec3,
+        size: i32,
+    ) -> u8 {
+        let Some((pc, xf, ep)) = self.start(
+            p,
+            banks,
+            self.bank,
+            crate::wpeffect::IMPACT_SHOCK_ID,
+            TransformStatus::Default,
+            Kind::Default,
+        ) else {
+            return NIL;
+        };
+        p.transform_mut(xf).translate = pos;
+        self.aim(ep, rng::rand_float() * 8.0 + 2.0);
+        set_scale(p, xf, damage_scale(size, 10, -0.05, 0.15));
+        pc
+    }
+
+    /// `efManagerDustCollideMakeEffect`: the small dust (list 0) scattered
+    /// by `EFCOMMON_DUSTCOLL_OFF_*`, thrown at 45 to 135 degrees at 15 and
+    /// scaled by one to two.
+    pub fn dust_collide(&mut self, p: &mut Particles, banks: &dyn Banks, pos: Vec3) -> u8 {
+        let Some((pc, xf, ep)) = self.start(
+            p,
+            banks,
+            self.bank,
+            script::DUST_SMALL,
+            TransformStatus::Default,
+            Kind::Default,
+        ) else {
+            return NIL;
+        };
+        self.set_proc(ep, Proc::Mover);
+        let t = p.transform_mut(xf);
+        t.translate = pos;
+        t.translate.x += rng::rand_float() * DUST_COLL_OFF_BASE + DUST_COLL_OFF_ADD;
+        t.translate.y += rng::rand_float() * DUST_COLL_OFF_BASE + DUST_COLL_OFF_ADD;
+        let angle = rng::rand_float() * dtor(90.0) + dtor(45.0);
+        let (sin, cos) = sin_cos(angle);
+        self.slots[usize::from(ep)].vel = [cos * DUST_COLL_VEL, sin * DUST_COLL_VEL];
+        set_scale(p, xf, rng::rand_float() + 1.0);
+        pc
+    }
+
     /// `efManagerDeadExplodeMakeEffect`'s particle half: the player's
     /// streaks, turned like the blast, on list 2.
     pub fn dead_explode(
@@ -711,6 +771,20 @@ pub trait HitEffectSink {
 
     /// The effect processes (priority 3).
     fn process(&mut self) {}
+
+    /// The quake that moves the camera after this frame's processes
+    /// ([`Effects::take_quake`]).
+    fn take_quake(&mut self) -> Option<(u8, u16)> {
+        None
+    }
+
+    /// Makes one weapon effect ([`crate::wpeffect`]). Without a runtime a
+    /// thunder trail still draws its texture.
+    fn weapon(&mut self, e: &crate::wpeffect::WeaponEffect) {
+        if let crate::wpeffect::WeaponEffect::TextureRand(n) = *e {
+            rng::rand_int_range(i32::from(n));
+        }
+    }
 }
 
 /// Drops every effect (host tests, or a scene without particles).
@@ -739,6 +813,14 @@ impl HitEffectSink for EffectRuntime<'_> {
 
     fn process(&mut self) {
         self.effects.process(self.particles, self.banks);
+    }
+
+    fn weapon(&mut self, e: &crate::wpeffect::WeaponEffect) {
+        crate::wpeffect::make(e, self.effects, self.particles, self.banks);
+    }
+
+    fn take_quake(&mut self) -> Option<(u8, u16)> {
+        self.effects.take_quake()
     }
 }
 
@@ -856,6 +938,10 @@ pub enum DisplayKind {
     /// `dEFManagerFireSparkEffectDesc`: Samus's arm-cannon spark, attached
     /// to joint 16. Held for its animation; not drawn (RE-415).
     FireSpark,
+    /// `dEFManagerPikachuThunderTrailEffectDesc`: a Thunder segment fading
+    /// out, which ends by its own lifetime and picks a random frame while
+    /// its texture is not 3. Its model is Pikachu's; not drawn (RE-416).
+    ThunderTrail,
 }
 
 /// `gcPlayAnimAll` calls until each display effect's animation reaches its
@@ -895,7 +981,8 @@ impl DisplayKind {
             DisplayKind::SpawnOrbs
             | DisplayKind::FlyOrbs
             | DisplayKind::SpawnSparks
-            | DisplayKind::SpawnMDust => return None,
+            | DisplayKind::SpawnMDust
+            | DisplayKind::ThunderTrail => return None,
         })
     }
 
@@ -904,7 +991,10 @@ impl DisplayKind {
     fn animated(self) -> bool {
         !matches!(
             self,
-            DisplayKind::SpawnOrbs | DisplayKind::SpawnSparks | DisplayKind::SpawnMDust
+            DisplayKind::SpawnOrbs
+                | DisplayKind::SpawnSparks
+                | DisplayKind::SpawnMDust
+                | DisplayKind::ThunderTrail
         )
     }
 }
@@ -1054,6 +1144,16 @@ impl Effects {
                     return;
                 }
                 match d.kind {
+                    // `efManagerQuakeProcUpdate` writes the camera's
+                    // `vel_at` from its `DObj`'s translation. The processes
+                    // run at priority `3 - magnitude`, so the strongest
+                    // quake (the latest made among equals) writes last.
+                    DisplayKind::Quake { magnitude } => {
+                        let key = (magnitude, d.seq);
+                        if self.quake_write.is_none_or(|(m, seq, _)| (m, seq) < key) {
+                            self.quake_write = Some((magnitude, d.seq, d.ticks));
+                        }
+                    }
                     // `efManagerVelAddDestroyAnimEnd`.
                     DisplayKind::ShockSmall => {
                         d.translate.x += d.vel[0];
@@ -1082,6 +1182,23 @@ impl Effects {
                         d.translate.x += d.vel[0];
                     }
                     _ => {}
+                }
+                self.displays[i] = Some(d);
+            }
+            // `efManagerPikachuThunderTrailProcUpdate`.
+            DisplayKind::ThunderTrail => {
+                if d.lifetime == 0 {
+                    self.eject_display(i);
+                    return;
+                }
+                d.lifetime -= 1;
+                if d.index != 3 {
+                    if d.lifetime == 0 {
+                        d.index = 3;
+                        d.rotate.z = dtor(180.0);
+                    } else {
+                        d.index = rng::rand_int_range(3) as u8;
+                    }
                 }
                 self.displays[i] = Some(d);
             }
@@ -1271,6 +1388,28 @@ impl Effects {
     pub fn quake(&mut self, magnitude: u8) -> bool {
         self.make_display(DisplayKind::Quake { magnitude })
             .is_some()
+    }
+
+    /// The quake that wrote the camera's `vel_at` last in this frame's
+    /// processes: its magnitude and how many times its animation has
+    /// played, whose `DObj` translation the host reads from the quake's
+    /// animation ([`crate::camera::Camera::quake`]).
+    pub fn take_quake(&mut self) -> Option<(u8, u16)> {
+        self.quake_write.take().map(|(m, _, ticks)| (m, ticks))
+    }
+
+    /// `efManagerPikachuThunderTrailMakeEffect`: a struct and a `GObj` at
+    /// half scale, whose `index` is its texture (3, or else 0).
+    pub fn thunder_trail(&mut self, pos: Vec3, lifetime: u8, texture: u8) -> bool {
+        let Some(i) = self.make_display(DisplayKind::ThunderTrail) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.translate = pos;
+        d.scale = Vec3::splat(0.5);
+        d.lifetime = i32::from(lifetime);
+        d.index = if texture == 3 { 3 } else { 0 };
+        true
     }
 
     /// `efManagerFireSparkMakeEffect`: the struct and `GObj`, held for the

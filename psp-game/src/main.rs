@@ -895,7 +895,38 @@ unsafe fn training_step(
     // Priority 3, after the fighters', weapons' and items': the effects'
     // processes.
     effects.process();
+    // A quake's `gmCameraSetVelAt`, which the next camera update applies.
+    if let Some((magnitude, ticks)) = effects.take_quake() {
+        if let Some(f) = s[0].as_deref_mut() {
+            f.camera.quake = quake_translate(p, magnitude, ticks).or(f.camera.quake);
+        }
+    }
     hit_pass(p, &stage, groups, &mut s, weapons, items, stage_objects, stage_ctl, effects);
+}
+
+/// A new weapon pool on the heap, built in this frame rather than `run`'s.
+#[inline(never)]
+fn new_weapon_pool() -> alloc::boxed::Box<ssb_game::weapon::WeaponPool> {
+    alloc::boxed::Box::default()
+}
+
+/// `efManagerQuakeProcUpdate`'s `DObj` translation `(y, z)` after `ticks`
+/// plays of the quake's packed animation (RE-416).
+#[inline(never)]
+fn quake_translate(p: &Pack<'_>, magnitude: u8, ticks: u16) -> Option<(f32, f32)> {
+    let anim = p.effect_anim(ssb_rom::effect::QUAKE_ANIM_SLOT + u32::from(magnitude))?;
+    let joint = p.anim_joint(anim.first_joint)?;
+    let data = p.anim_script(&anim)?;
+    let mut j = ssb_rom::objanim::StageJoint::start_changed(joint.script, 0.0);
+    let mut pose = ssb_rom::figatree::JointPose {
+        rotate: [0.0; 3],
+        translate: [0.0; 3],
+        scale: [1.0; 3],
+    };
+    for _ in 0..ticks {
+        j.tick(data, 1.0, &mut pose).ok()?;
+    }
+    Some((pose.translate[1], pose.translate[2]))
 }
 
 /// Makes every fighter's queued effects (`ssb_game::fteffect`), in port
@@ -1004,6 +1035,9 @@ fn physics_pass(
         flush_fighter_effects(s, effects);
         if let Some(spawn) = spawn {
             weapons.spawn(spawn);
+            // A weapon's making effect (the Blaster's glow), in the
+            // fighter's process.
+            weapons.flush_effects(effects);
         }
     }
     tick_battle_camera(stage, s);
@@ -1027,6 +1061,9 @@ fn physics_pass(
     for f in s.iter_mut().flatten() {
         items.sync_owner(&mut f.fighter);
     }
+    // The weapons' main processes' effects: the weapon link runs after the
+    // item link (RE-416).
+    weapons.flush_effects(effects);
 }
 
 /// The battle camera's process (priority 3, after every fighter's
@@ -1104,6 +1141,9 @@ fn hit_pass(
     for f in s.iter_mut().flatten() {
         items.search_fighter(&mut f.fighter);
     }
+    // `wpProcessProcSearchHitWeapon` reads the weapons as they stand before
+    // any hit reacts (RE-416).
+    weapons.search_weapons();
     for f in s.iter_mut().flatten() {
         weapons.apply_hits(&mut f.fighter);
     }
@@ -1115,12 +1155,20 @@ fn hit_pass(
         }
     }
     items.search_hurt(&mut fighters_mut(s), weapons);
+    // The clashes' `proc_setoff`s, after every `proc_hit`.
+    weapons.finish_clashes();
     // `ftMainSearchGroundHit`, last of `ftMainProcSearchHitAll`.
     for f in s.iter_mut().flatten() {
         ssb_game::hazard::search_ground_hit(&mut f.fighter, stage_ctl);
     }
-    // The hit sparks, made in each fighter's `ftMainProcSearchHitAll`.
-    ssb_game::combat::finish_frame_with(&mut fighters_mut(s), effects);
+    // The hit sparks, made in each fighter's `ftMainProcSearchHitAll`, then
+    // the clash search's set-offs (weapon link, priority 1).
+    ssb_game::combat::finish_frame_between(&mut fighters_mut(s), effects, &mut |fx| {
+        weapons.flush_clash_effects(fx)
+    });
+    // The weapons' hit collisions (priority 0, after every
+    // `ftMainProcParams`).
+    weapons.flush_effects(effects);
     for f in s.iter_mut().flatten() {
         f.fighter.resolve_cliff_release(&map);
     }
@@ -2072,7 +2120,7 @@ fn enter_training(
     battle: &mut Option<ssb_game::battle::Battle>,
     world: &mut TrainingWorld<'_>,
 ) -> u32 {
-    *world.weapons = ssb_game::weapon::WeaponPool::default();
+    world.weapons.reset();
     *world.items = ssb_game::item::ItemPool::default();
     // `gSCManagerBattleState`'s team rule, which every hit search reads;
     // Training is a free-for-all.
@@ -2523,7 +2571,9 @@ struct Session {
     damage_hud: Hud,
     play_state: Option<play::FighterScene>,
     dummies: Dummies,
-    weapons: ssb_game::weapon::WeaponPool,
+    /// Boxed: the pool holds its effect queues (RE-416), which building the
+    /// session would otherwise copy through `run`'s frame.
+    weapons: alloc::boxed::Box<ssb_game::weapon::WeaponPool>,
     items: ssb_game::item::ItemPool,
     stage_objects: ssb_rom::ground_obj::GroundObjects,
     stage_ctl: ssb_game::stage::Stage,
@@ -2621,7 +2671,7 @@ unsafe fn run() -> ! {
         damage_hud: Hud::new(),
         play_state: None,
         dummies: Default::default(),
-        weapons: ssb_game::weapon::WeaponPool::default(),
+        weapons: new_weapon_pool(),
         items: ssb_game::item::ItemPool::default(),
         stage_objects: ssb_rom::ground_obj::GroundObjects::empty(),
         stage_ctl: ssb_game::stage::Stage::none(),
@@ -3241,7 +3291,7 @@ fn display_asset(kind: ssb_game::effect::DisplayKind) -> Option<usize> {
         K::FlySparks | K::StarRodSpark => 3,
         K::FlyMDust => 4,
         K::ShockSmall => 5,
-        K::SpawnOrbs | K::SpawnSparks | K::SpawnMDust | K::Quake { .. } | K::FireSpark => return None,
+        K::SpawnOrbs | K::SpawnSparks | K::SpawnMDust | K::Quake { .. } | K::FireSpark | K::ThunderTrail => return None,
     })
 }
 

@@ -3,6 +3,7 @@
 //! pool.
 use super::{map_contact, BodyColl, Hitbox, MapSurface, OwnerView, WeaponSpawn};
 use crate::fighter::Fighter;
+use crate::wpeffect::{Emit, WeaponEffect as Fx};
 use ssb_engine::math::{atan2, sin_cos, Vec2, Vec3};
 
 pub const SPARK_HIT: Hitbox = Hitbox {
@@ -80,7 +81,7 @@ impl PKFire {
             anim_ticks: 0,
         }
     }
-    pub(super) fn tick<I, F>(&mut self, surfaces: F) -> bool
+    pub(super) fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
@@ -89,10 +90,14 @@ impl PKFire {
         self.anim_ticks = self.anim_ticks.wrapping_add(1);
         self.lifetime = self.lifetime.saturating_sub(1);
         if self.lifetime == 0 {
+            // `wpNessPKFireProcUpdate`.
+            fx.push(Fx::DustExpandSmall(self.position));
             return false;
         }
         let wanted = self.position + self.velocity;
-        if map_contact(surfaces(), self.position, wanted, SPARK_MAP_COLL).is_some() {
+        if let Some(hit) = map_contact(surfaces(), self.position, wanted, SPARK_MAP_COLL) {
+            // `wpNessPKFireProcMap`.
+            fx.push(Fx::DustExpandSmall(hit.position));
             return false;
         }
         self.position = wanted;
@@ -169,7 +174,12 @@ impl PKThunder {
             self.angle - core::f32::consts::FRAC_PI_2
         }
     }
-    pub(super) fn tick<I, F>(&mut self, surfaces: F, owner: Option<OwnerView>) -> bool
+    pub(super) fn tick<I, F>(
+        &mut self,
+        surfaces: F,
+        owner: Option<OwnerView>,
+        fx: &mut Emit,
+    ) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
@@ -178,12 +188,29 @@ impl PKThunder {
         self.anim_ticks = self.anim_ticks.wrapping_add(1);
         self.trail_spawn = self.lifetime == 158;
         self.lifetime = self.lifetime.saturating_sub(1);
+        // `wpNessPKThunderHeadProcUpdate` tests `nWPNessPKThunderStatusCollide`
+        // (Ness caught it) before the lifetime: an impact shock. Its other
+        // ends make a small dust cloud.
+        let collide = !self.reflected && owner.is_some_and(|o| o.ness_collide);
+        let end = if collide {
+            Fx::ImpactShock {
+                pos: self.position,
+                size: self.damage,
+            }
+        } else {
+            Fx::DustExpandSmall(self.position)
+        };
         if self.lifetime == 0 {
+            fx.push(end);
             return false;
         }
         if !self.reflected {
-            let Some(owner) = owner else { return false };
+            let Some(owner) = owner else {
+                fx.push(end);
+                return false;
+            };
             if !owner.ness_control || owner.ness_motion != self.motion_count || owner.ness_collide {
+                fx.push(end);
                 return false;
             }
             self.cursor = (self.cursor + 1) % 12;
@@ -218,7 +245,7 @@ impl PKThunder {
             }
         }
         let wanted = self.position + self.velocity;
-        if map_contact(
+        if let Some(hit) = map_contact(
             surfaces(),
             self.position,
             wanted,
@@ -228,9 +255,9 @@ impl PKThunder {
                 bottom: -100.0,
                 width: 100.0,
             },
-        )
-        .is_some()
-        {
+        ) {
+            // `wpNessPKThunderHeadProcMap` and `wpNessPKReflectHeadProcMap`.
+            fx.push(Fx::DustExpandSmall(hit.position));
             return false;
         }
         self.position = wanted;
@@ -286,7 +313,7 @@ impl PKThunderTrail {
             spawn_next: false,
         }
     }
-    pub(super) fn tick(&mut self, head: PKThunder) {
+    pub(super) fn tick(&mut self, head: PKThunder, fx: &mut Emit) {
         self.spawn_next = self.id < 3 && self.lifetime == 158;
         self.lifetime = self.lifetime.saturating_sub(1);
         if head.reflected {
@@ -298,6 +325,9 @@ impl PKThunderTrail {
             self.position = Vec3::new(pos.x, pos.y, 0.0);
             self.rotation = atan2(pos.y - prev.y, pos.x - prev.x) - core::f32::consts::FRAC_PI_2;
         }
+        // `wpNessPKThunderTrailProcUpdate`'s (and the reflected trail's)
+        // frame: `syUtilsRandIntRange(WPPKTHUNDER_TEXTURES_NUM - 1)`.
+        fx.push(Fx::TextureRand(3));
     }
     /// Root `rotate.z`: the direction from the previous trail sample, less
     /// 90 degrees.
