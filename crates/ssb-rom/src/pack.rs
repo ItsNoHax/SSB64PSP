@@ -268,7 +268,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 63 adds the battle-entry clips (`anim::SLOT_APPEAR_R` on, 607..614;
 // RE-401): 32-bit `AnimJoint` clips whose tables lead with one runtime
 // joint.
-pub const VERSION: u32 = 63;
+// 64 adds the demo clips (`anim::SLOT_WIN1` to `SLOT_LOSE`, 614..619;
+// RE-408): the figatrees `nFTDemoStatusWin1` to `nFTDemoStatusLose` play on
+// the VS results screen and the character selects.
+pub const VERSION: u32 = 64;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

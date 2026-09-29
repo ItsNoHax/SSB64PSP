@@ -149,12 +149,22 @@ pub const SLOT_APPEAR_L_START: usize = 610;
 pub const SLOT_APPEAR_R_END: usize = 611;
 pub const SLOT_APPEAR_L_END: usize = 612;
 pub const SLOT_APPEAR_WAIT: usize = 613;
+/// First of the five demo slots (RE-408): `Win1` to `Win4` and `Lose`, the
+/// clips `nFTDemoStatusWin1` to `nFTDemoStatusLose` play on the VS results
+/// screen and the character selects. They come from the fighter's
+/// `dFT<Name>SubMotionDescs` rows 1 to 5 and are figatrees.
+pub const SLOT_WIN1: usize = 614;
+pub const SLOT_WIN2: usize = 615;
+pub const SLOT_WIN3: usize = 616;
+pub const SLOT_WIN4: usize = 617;
+pub const SLOT_LOSE: usize = 618;
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 614;
+pub const SLOT_COUNT: usize = 619;
 
-/// Whether a slot holds a 32-bit `AnimJoint` clip rather than a figatree.
+/// Whether a slot holds a 32-bit `AnimJoint` clip rather than a figatree:
+/// the seven entry slots only.
 pub const fn is_anim_joint_slot(slot: usize) -> bool {
-    slot >= SLOT_APPEAR_R && slot < SLOT_COUNT
+    slot >= SLOT_APPEAR_R && slot < SLOT_WIN1
 }
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
@@ -642,11 +652,15 @@ mod tests {
         // except that Pikachu has no `YoshiEgg` motion. Of the seven entry
         // slots, 62 clips exist: two for each one-part entry, four for
         // Captain Falcon's and five for Ness's, the twelve's 29 and 33 for
-        // Metal Mario, the Poly fighters and Giant Donkey Kong.
+        // Metal Mario, the Poly fighters and Giant Donkey Kong. The five demo
+        // slots exist for the twelve and Master Hand (his one default clip)
+        // and for none of the other fourteen, whose submotion rows 1 to 5
+        // are null or absent (RE-408).
         assert_eq!(
             missing,
             10950 + 15 * (SLOT_REBIRTH_DOWN - SLOT_WALL_DAMAGE) + 106 + 10 + 15 * 66 + 1 + 27 * 7
-                - 62,
+                - 62
+                + 14 * 5,
             "Twelve ported fighters have character, grab, reaction and move slots"
         );
         for a in &FIGHTER_ANIMS[..12] {
@@ -681,7 +695,11 @@ mod tests {
         assert_eq!(SLOT_NAMES[SLOT_GUARD_ON + 1], "GuardOff");
         assert_eq!(SLOT_NAMES[SLOT_APPEAR_R - 1], "ThrownDonkeyUnk");
         assert_eq!(SLOT_NAMES[SLOT_APPEAR_R], "AppearR");
-        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "AppearWait");
+        assert_eq!(SLOT_NAMES[SLOT_WIN1 - 1], "AppearWait");
+        assert_eq!(SLOT_NAMES[SLOT_WIN1], "Win1");
+        assert_eq!(SLOT_NAMES[SLOT_WIN4], "Win4");
+        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "Lose");
+        assert_eq!(SLOT_LOSE, SLOT_COUNT - 1);
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")
