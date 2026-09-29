@@ -2629,6 +2629,47 @@ fn residuals_cmd(path: &Path, opts: &[&str]) -> Res {
     residuals::run(&o)
 }
 
+/// A sprite's image through its combiner, in 8888, clamped like a texture
+/// rectangle (RE-392).
+fn add_sprite_texture(
+    writer: &mut ssb_rom::pack::PackWriter,
+    s: &ssb_rom::sprite::Sprite,
+    swizzle: bool,
+) -> u32 {
+    let image = ssb_rom::sprite::combined_image(s);
+    let tex = ssb_rom::psp_texture::pack_rgba(&image, ssb_rom::psp_texture::Psm::Psm8888, swizzle);
+    writer.add_texture(&tex, true, true)
+}
+
+fn sprite_desc(
+    file: u32,
+    at: u32,
+    s: &ssb_rom::sprite::Sprite,
+    texture: u32,
+    fighter: u8,
+    role: u8,
+    costume: u8,
+) -> ssb_rom::pack::SpriteDesc {
+    ssb_rom::pack::SpriteDesc {
+        source_file: file,
+        source_offset: at,
+        texture,
+        width: s.width,
+        height: s.height,
+        color: s.color,
+        attr: s.attr,
+        flags: if ssb_rom::sprite::uses_prim_color(s.format) {
+            ssb_rom::pack::SpriteDesc::TINTED
+        } else {
+            0
+        },
+        fighter,
+        role,
+        costume,
+        _pad: 0,
+    }
+}
+
 fn pack(path: &Path, opts: &[&str]) -> Res {
     use ssb_rom::{mesh, pack as fmt};
 
@@ -3999,27 +4040,60 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         for &at in f.offsets {
             let s = ssb_rom::sprite::decode(file, at)
                 .map_err(|e| format!("sprite {}+{at:#x}: {e:?}", f.file))?;
-            let image = ssb_rom::sprite::combined_image(&s);
-            let tex = ssb_rom::psp_texture::pack_rgba(
-                &image,
-                ssb_rom::psp_texture::Psm::Psm8888,
-                swizzle,
-            );
-            let texture = writer.add_texture(&tex, true, true);
-            writer.add_sprite(ssb_rom::pack::SpriteDesc {
-                source_file: f.file,
-                source_offset: at,
+            let texture = add_sprite_texture(&mut writer, &s, swizzle);
+            writer.add_sprite(sprite_desc(f.file, at, &s, texture, 0, 0, 0));
+            sprites += 1;
+        }
+    }
+    // Each playable fighter's `FTSprites` (RE-393): the emblem, and the stock
+    // icon once per `stock_luts` costume.
+    let file_of = |id: u32| {
+        loaded
+            .files
+            .get(id as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("file {id} missing"))
+    };
+    for e in ssb_rom::fighter::FIGHTER_FILES.iter().take(12) {
+        let main = file_of(e.file)?;
+        let fs = ssb_rom::sprite::fighter_sprites(main, e.offset)
+            .ok_or_else(|| format!("{}: no FTSprites", e.name))?;
+        let (file, at) = fs.emblem;
+        let s = ssb_rom::sprite::decode(file_of(file)?, at)
+            .map_err(|err| format!("{} emblem: {err:?}", e.name))?;
+        let texture = add_sprite_texture(&mut writer, &s, swizzle);
+        writer.add_sprite(sprite_desc(
+            file,
+            at,
+            &s,
+            texture,
+            e.kind,
+            ssb_rom::pack::SpriteDesc::ROLE_EMBLEM,
+            0,
+        ));
+        sprites += 1;
+        let (file, at) = fs.stock;
+        for (costume, &(lut_file, lut_at)) in fs.stock_luts.iter().enumerate() {
+            let lut = file_of(lut_file)?
+                .data
+                .get(lut_at as usize..lut_at as usize + 32)
+                .ok_or_else(|| format!("{} stock LUT {costume}", e.name))?;
+            let s = ssb_rom::sprite::decode_with_tlut(
+                file_of(file)?,
+                at,
+                &ssb_rom::texture::parse_tlut(lut),
+            )
+            .map_err(|err| format!("{} stock: {err:?}", e.name))?;
+            let texture = add_sprite_texture(&mut writer, &s, swizzle);
+            writer.add_sprite(sprite_desc(
+                file,
+                at,
+                &s,
                 texture,
-                width: s.width,
-                height: s.height,
-                color: s.color,
-                attr: s.attr,
-                flags: if ssb_rom::sprite::uses_prim_color(s.format) {
-                    ssb_rom::pack::SpriteDesc::TINTED
-                } else {
-                    0
-                },
-            });
+                e.kind,
+                ssb_rom::pack::SpriteDesc::ROLE_STOCK,
+                costume as u8,
+            ));
             sprites += 1;
         }
     }

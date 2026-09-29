@@ -5,8 +5,8 @@
 //!
 //! This module holds the per-player state machine and the glyphs it draws;
 //! the host draws each [`Glyph`] as sprite `digit` of file 164
-//! (`dIFCommonPlayerDamageDigitSpriteOffsets`). The fighter's series emblem
-//! behind the digits is not ported yet.
+//! (`dIFCommonPlayerDamageDigitSpriteOffsets`), after the fighter's series
+//! emblem at [`emblem_origin`].
 
 use crate::rng;
 
@@ -25,6 +25,20 @@ const COLORS_B: [u8; 5] = [0xF0, 0xF0, 0xFF, 0xFF, 0xFF];
 /// `ifCommonPlayerDamageSetDigitPositions`'s `player_pos_y`.
 pub const POSITION_X: [i32; 4] = [55, 125, 195, 265];
 pub const POSITION_Y: i32 = 210;
+
+/// `players[].color` of a CPU outside team battles, `GMCOMMON_PLAYERS_MAX`:
+/// its emblem takes the stage's fifth, grey colour.
+pub const CPU_COLOR: usize = 4;
+
+/// `dIFCommonPlayerDamageEmblemOffsets{X,Y}` (3, -3 for every player) and
+/// the scale of 1: where `ifCommonPlayerDamageInitInterface` puts a `w` by
+/// `h` emblem, truncated to whole pixels. It is drawn first, whether or not
+/// the digits show.
+pub fn emblem_origin(player: usize, w: u16, h: u16) -> (f32, f32) {
+    let x = (POSITION_X[player] as f32 - f32::from(w) * 0.5) + 3.0;
+    let y = (POSITION_Y as f32 - f32::from(h) * 0.5) - 3.0;
+    (x as i32 as f32, y as i32 as f32)
+}
 
 /// `IFDCharacter`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

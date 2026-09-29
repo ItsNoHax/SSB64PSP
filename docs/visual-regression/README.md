@@ -523,3 +523,11 @@ now draws under the stage in Training and, from "Go", in VS, so 34
 the HUD band (y 454–496 of the 960×544 capture). `f1-vs-countdown` is
 unchanged. A scene capture's timeout rose from 30 s to 60 s, since
 `vstimeup` exceeds 30 s under a full `-j`. 101 of 101 goldens match twice.
+
+## 2026-09-29 RE-393 fighter emblems
+
+Pack v62 (`f072a92c…`). Each fighter's series emblem now draws behind its
+damage display, so 35 `psp-game` goldens were rebaselined, each captured
+twice; every diff lies in the HUD band (y 438–498). `f1-vs-countdown` shows
+the emblems without digits, as `ifCommonPlayerDamageProcDisplay` draws the
+emblem before its show check. 101 of 101 goldens match twice.

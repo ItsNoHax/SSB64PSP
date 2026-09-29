@@ -83,6 +83,16 @@ fn deinterleave(data: &mut [u8], row_bytes: usize, rows: usize, unit: usize) {
 
 /// Decodes the `Sprite` at byte offset `at` of `file`.
 pub fn decode(file: &File, at: u32) -> Result<Sprite, SpriteError> {
+    decode_with(file, at, None)
+}
+
+/// [`decode`] with the TLUT replaced, as `ifCommonPlayerStockSetLUT` swaps
+/// a stock icon's `LUT` for the costume's.
+pub fn decode_with_tlut(file: &File, at: u32, tlut: &[u16]) -> Result<Sprite, SpriteError> {
+    decode_with(file, at, Some(tlut))
+}
+
+fn decode_with(file: &File, at: u32, tlut_override: Option<&[u16]>) -> Result<Sprite, SpriteError> {
     let d = &file.data;
     let base = at as usize;
     if base + SPRITE_SIZE > d.len() {
@@ -97,7 +107,9 @@ pub fn decode(file: &File, at: u32) -> Result<Sprite, SpriteError> {
     let (fmt, siz) = (d[base + 48], d[base + 49]);
     let format = Format::from_raw(fmt).ok_or(SpriteError::BadFormat(fmt, siz))?;
     let size = BitSize::from_raw(siz).ok_or(SpriteError::BadFormat(fmt, siz))?;
-    let tlut = if format == Format::Ci {
+    let tlut = if let Some(t) = tlut_override {
+        Some(t.to_vec())
+    } else if format == Format::Ci {
         let lut = pointer(file, at + 32)? as usize;
         let len = if size == BitSize::Bits4 { 32 } else { 512 };
         Some(texture::parse_tlut(
@@ -198,6 +210,60 @@ pub const PLAYER_DAMAGE: SpriteFile = SpriteFile {
     ],
 };
 
+/// `FTAttributes.sprites`, counted on from `translate_scales` at 0x324
+/// through `modelparts_container`, `accesspart`, `textureparts_container`,
+/// `joint_itemheavy_id`, `thrown_status` and `joint_itemlight_id`.
+pub const ATTR_SPRITES_OFFSET: u32 = 0x340;
+
+/// A place in the archive: file and byte offset.
+pub type Place = (u32, u32);
+
+/// `FTSprites`: a fighter's stock icon, its per-costume palettes and its
+/// series emblem, as places in the archive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FighterSprites {
+    pub stock: Place,
+    /// `stock_luts[costume]`.
+    pub stock_luts: Vec<Place>,
+    pub emblem: Place,
+}
+
+/// Where the pointer slot at `at` of `file` leads, in this file or another.
+pub fn pointer_place(file: &File, at: u32) -> Option<Place> {
+    if let Some(r) = file.intern_relocs.iter().find(|r| r.at == at) {
+        return Some((file.id, r.target));
+    }
+    file.extern_relocs
+        .iter()
+        .find(|r| r.at == at)
+        .map(|r| (u32::from(r.target_file), r.target_offset))
+}
+
+/// Follows `FTAttributes.sprites` in a fighter's main file. `stock_luts`
+/// ends at the first slot without a relocation (at most 8, `nFTCostume`'s
+/// room).
+pub fn fighter_sprites(main: &File, attributes: u32) -> Option<FighterSprites> {
+    let (file, sprites) = pointer_place(main, attributes + ATTR_SPRITES_OFFSET)?;
+    if file != main.id {
+        return None;
+    }
+    let stock = pointer_place(main, sprites)?;
+    let emblem = pointer_place(main, sprites + 8)?;
+    let (lut_file, luts) = pointer_place(main, sprites + 4)?;
+    let stock_luts = if lut_file == main.id {
+        (0..8)
+            .map_while(|i| pointer_place(main, luts + i * 4))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Some(FighterSprites {
+        stock,
+        stock_luts,
+        emblem,
+    })
+}
+
 /// Every sprite file the pack converts.
 pub const FILES: &[SpriteFile] = &[PLAYER_DAMAGE];
 
@@ -219,6 +285,37 @@ mod tests {
             &d[16..],
             &[20, 21, 22, 23, 16, 17, 18, 19, 28, 29, 30, 31, 24, 25, 26, 27]
         );
+    }
+
+    #[test]
+    fn every_fighter_has_an_emblem_and_stock_icons() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        for e in crate::fighter::FIGHTER_FILES.iter().take(12) {
+            let main = archive.load(e.file).unwrap();
+            let s = fighter_sprites(&main, e.offset).unwrap();
+            let emblem = decode(&archive.load(s.emblem.0).unwrap(), s.emblem.1).unwrap();
+            assert_eq!(
+                (emblem.format, emblem.size),
+                (Format::I, BitSize::Bits4),
+                "{}",
+                e.name
+            );
+            let model = archive.load(s.stock.0).unwrap();
+            let stock = decode(&model, s.stock.1).unwrap();
+            assert_eq!((stock.width, stock.height), (8, 10), "{}", e.name);
+            assert_eq!((stock.format, stock.size), (Format::Ci, BitSize::Bits4));
+            assert!((7..=8).contains(&s.stock_luts.len()), "{}", e.name);
+        }
+        // Mario's, named in `reloc_data.us.h`.
+        let mario = archive.load(203).unwrap();
+        let s = fighter_sprites(&mario, crate::fighter::FIGHTER_FILES[0].offset).unwrap();
+        assert_eq!(s.stock, (296, 0x72D0));
+        assert_eq!(s.emblem, (296, 0x74C8));
     }
 
     #[test]

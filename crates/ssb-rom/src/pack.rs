@@ -263,7 +263,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // ENV colour, so its prims carry the red-to-white texture blend (RE-384).
 // 61 adds `SpriteDesc`: libultra `Sprite`s for `SObj` draws, converted
 // through `lbCommonPrepSObjAttr`'s combiner. File 164's damage digits first.
-pub const VERSION: u32 = 61;
+// 62 gives `SpriteDesc` an owning fighter and role (emblems and per-costume
+// stock icons) and `StageDesc` the emblem colours.
+pub const VERSION: u32 = 62;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1181,12 +1183,26 @@ pub struct SpriteDesc {
     pub color: [u8; 4],
     pub attr: u16,
     pub flags: u16,
+    /// The `FTKind` of a fighter's sprite, with its [`SpriteDesc::role`]
+    /// (`VERSION` 62, RE-393).
+    pub fighter: u8,
+    pub role: u8,
+    /// A stock icon's costume, whose `stock_luts` entry it was decoded
+    /// through.
+    pub costume: u8,
+    pub _pad: u8,
 }
 
 impl SpriteDesc {
-    pub const SIZE: usize = 24;
+    pub const SIZE: usize = 28;
     /// The combiner reads the primitive colour (I and IA formats).
     pub const TINTED: u16 = 1 << 0;
+    /// No fighter owns this sprite.
+    pub const ROLE_NONE: u8 = 0;
+    /// `FTSprites.emblem`.
+    pub const ROLE_EMBLEM: u8 = 1;
+    /// `FTSprites.stock_sprite` through `stock_luts[costume]`.
+    pub const ROLE_STOCK: u8 = 2;
 }
 
 /// A per-costume mesh substitution for one node (RE-098).
@@ -1327,11 +1343,14 @@ pub struct StageDesc {
     /// Planet Zebes: node 1's translation Y in `llGRZebesMapAcidDObjDesc`,
     /// the acid surface above its root. Zero elsewhere.
     pub hazard_surface_y: f32,
+    /// `MPGroundData.emblem_colors` and the CPU's grey after it
+    /// (`VERSION` 62, RE-393).
+    pub emblem_colors: [[u8; 3]; 5],
 }
 
 impl StageDesc {
-    /// `16 + 16 + 8 + 8 + 16 + 8 + 28 + 4`.
-    pub const SIZE: usize = 104;
+    /// `16 + 16 + 8 + 8 + 16 + 8 + 28 + 4 + 15`, padded to 120.
+    pub const SIZE: usize = 120;
     pub const NO_LAYER: u32 = u32::MAX;
 }
 
@@ -2650,6 +2669,7 @@ impl PackWriter {
             camera_light_angle_z: ground.light_angle[2],
             hazard: [0; 7],
             hazard_surface_y: 0.0,
+            emblem_colors: ground.emblem_colors,
         });
         (self.stages.len() - 1) as u32
     }
@@ -2927,6 +2947,10 @@ impl PackWriter {
                 out.extend_from_slice(&v.to_le_bytes());
             }
             out.extend_from_slice(&s.hazard_surface_y.to_le_bytes());
+            for c in s.emblem_colors {
+                out.extend_from_slice(&c);
+            }
+            out.push(0);
         }
         for l in &self.lines {
             out.extend_from_slice(&l.first_vertex.to_le_bytes());
@@ -3069,6 +3093,7 @@ impl PackWriter {
             out.extend_from_slice(&sp.color);
             out.extend_from_slice(&sp.attr.to_le_bytes());
             out.extend_from_slice(&sp.flags.to_le_bytes());
+            out.extend_from_slice(&[sp.fighter, sp.role, sp.costume, 0]);
         }
 
         out.resize(blob_offset, 0);
@@ -3829,6 +3854,10 @@ impl<'a> Pack<'a> {
             camera_light_angle_z: f32::from_bits(u32_at(self.data, at + 68)),
             hazard: core::array::from_fn(|k| u32_at(self.data, at + 72 + k * 4) as i32),
             hazard_surface_y: f32::from_bits(u32_at(self.data, at + 100)),
+            emblem_colors: core::array::from_fn(|k| {
+                let c = at + 104 + k * 3;
+                [self.data[c], self.data[c + 1], self.data[c + 2]]
+            }),
         })
     }
 
@@ -3968,7 +3997,22 @@ impl<'a> Pack<'a> {
             color: [d[at + 16], d[at + 17], d[at + 18], d[at + 19]],
             attr: u16_at(d, at + 20),
             flags: u16_at(d, at + 22),
+            fighter: d[at + 24],
+            role: d[at + 25],
+            costume: d[at + 26],
+            _pad: 0,
         })
+    }
+
+    /// A fighter's emblem or its stock icon in one costume.
+    pub fn fighter_sprite(&self, fighter: u8, role: u8, costume: u8) -> Option<SpriteDesc> {
+        (0..self.sprite_count)
+            .filter_map(|i| self.sprite_at(i))
+            .find(|s| {
+                s.fighter == fighter
+                    && s.role == role
+                    && (role != SpriteDesc::ROLE_STOCK || s.costume == costume)
+            })
     }
 
     /// The sprite at `offset` of `file`: `lbRelocGetFileData(Sprite*, ...)`.
@@ -5415,6 +5459,13 @@ mod tests {
             // Deliberately non-zero in every component: a pack round-trip
             // must not silently retain only the camera's Z component.
             light_angle: [20.0, 45.0, -0.174_532_94],
+            emblem_colors: [
+                [0xFF, 0, 0],
+                [0, 0, 0xFF],
+                [0xFF, 0xFF, 0],
+                [0, 0xFF, 0],
+                [0xDC; 3],
+            ],
         };
 
         let v = |vertex_id, x, y, flags| V {
@@ -5499,6 +5550,9 @@ mod tests {
         assert_eq!(s.camera.top, 1600);
         assert_eq!(s.camera.left, -2400);
         assert_eq!(s.bounds.bottom, -1500);
+        assert_eq!(s.emblem_colors[1], [0, 0, 0xFF]);
+        assert_eq!(s.emblem_colors[3], [0, 0xFF, 0]);
+        assert_eq!(s.emblem_colors[4], [0xDC; 3]);
 
         let lines: alloc::vec::Vec<LineDesc> = pack.stage_lines(&s).collect();
         assert_eq!(lines.len(), 3);
@@ -6614,6 +6668,10 @@ mod tests {
             color: [0xFF, 0xF0, 0xF0, 0xFF],
             attr: 0x220,
             flags: SpriteDesc::TINTED,
+            fighter: 0,
+            role: SpriteDesc::ROLE_NONE,
+            costume: 0,
+            _pad: 0,
         };
         let percent = SpriteDesc {
             source_offset: 0x1458,
@@ -6621,16 +6679,31 @@ mod tests {
             flags: 0,
             ..digit
         };
+        let stock = SpriteDesc {
+            source_file: 296,
+            source_offset: 0x72D0,
+            texture: 7,
+            fighter: 3,
+            role: SpriteDesc::ROLE_STOCK,
+            costume: 2,
+            ..digit
+        };
         w.add_sprite(digit);
         w.add_sprite(percent);
+        w.add_sprite(stock);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
-        assert_eq!(pack.sprite_count(), 2);
+        assert_eq!(pack.sprite_count(), 3);
+        assert_eq!(
+            pack.fighter_sprite(3, SpriteDesc::ROLE_STOCK, 2),
+            Some(stock)
+        );
+        assert_eq!(pack.fighter_sprite(3, SpriteDesc::ROLE_STOCK, 1), None);
         assert_eq!(pack.sprite(164, 0x148), Some(digit));
         assert_eq!(pack.sprite(164, 0x1458), Some(percent));
         assert_eq!(pack.sprite(164, 0x2D8), None);
         assert_eq!(pack.lod_blend(3), Some(blend));
-        let expected_tables = Header::SIZE + LodBlendDesc::SIZE + 2 * SpriteDesc::SIZE;
+        let expected_tables = Header::SIZE + LodBlendDesc::SIZE + 3 * SpriteDesc::SIZE;
         assert_eq!(pack.blob_offset, align_up(expected_tables));
     }
 
