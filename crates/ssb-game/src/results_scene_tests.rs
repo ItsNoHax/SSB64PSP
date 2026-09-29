@@ -18,11 +18,13 @@ fn results(kind: Kind, places: &[i32], winner: Option<usize>) -> Results {
     }
     Results {
         kind,
+        is_team_battle: matches!(kind, Kind::TimeTeam | Kind::StockTeam),
         present,
         kos: [0; 4],
         tko: [0; 4],
         points: [0; 4],
         places: p,
+        team: [0; 4],
         winner,
         shared_winner: [false; 4],
         total_tics: 0,

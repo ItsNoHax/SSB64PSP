@@ -201,12 +201,12 @@ impl Scene {
 }
 
 /// `mnVSResultsGetPresentCount`.
-fn present_count(r: &Results) -> usize {
+pub(crate) fn present_count(r: &Results) -> usize {
     r.present.iter().filter(|&&p| p).count()
 }
 
 /// `mnVSResultsGetPresentLowerCount`: present players on lower ports.
-fn present_lower_count(r: &Results, player: usize) -> usize {
+pub(crate) fn present_lower_count(r: &Results, player: usize) -> usize {
     r.present[..player.min(4)].iter().filter(|&&p| p).count()
 }
 
@@ -216,7 +216,7 @@ fn place_player(r: &Results, place: i32) -> Option<usize> {
 }
 
 /// `mnVSResultsGetPlayerCountPlace`.
-fn count_place(r: &Results, place: i32) -> usize {
+pub(crate) fn count_place(r: &Results, place: i32) -> usize {
     (0..4)
         .filter(|&i| r.present[i] && r.places[i] == place)
         .count()
@@ -232,7 +232,7 @@ fn count_ahead(r: &Results, player: usize) -> i32 {
 /// `mnVSResultsGetPlayerDistanceID`: the column, left to right. It is the
 /// player's order among the present players, except that a sole winner
 /// takes a middle column and the player there takes its place.
-fn distance_id(r: &Results, player: usize) -> usize {
+pub(crate) fn distance_id(r: &Results, player: usize) -> usize {
     let mut foes = present_lower_count(r, player);
     if count_place(r, 0) == 1 {
         match present_count(r) {
@@ -269,7 +269,7 @@ fn distance_id(r: &Results, player: usize) -> usize {
 /// reads below `aheads` on its stack: in the US build (`addiu t0,sp,44`,
 /// `addiu t6,sp,64`) that is the end of `places`, whose last three entries
 /// are 1. So a negative index counts as 1 here.
-fn spot(r: &Results, player: usize) -> usize {
+pub(crate) fn spot(r: &Results, player: usize) -> usize {
     let place = r.places[player];
     let ahead = match place - count_ahead(r, player) {
         0 | 1 => 0,
