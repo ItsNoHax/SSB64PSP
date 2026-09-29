@@ -2115,6 +2115,22 @@ pub unsafe fn draw_sprite(
     d: &SObjDraw,
     draw_state: &mut DrawState,
 ) {
+    draw_sprite_xy(pack, sprite, d, [d.scale, d.scale], draw_state);
+}
+
+/// [`draw_sprite`] with `sprite.scalex` and `.scaley` apart; `d.scale` is
+/// ignored.
+///
+/// # Safety
+///
+/// As [`draw_sprite`].
+pub unsafe fn draw_sprite_xy(
+    pack: &Pack<'_>,
+    sprite: &ssb_rom::pack::SpriteDesc,
+    d: &SObjDraw,
+    [scale_x, scale_y]: [f32; 2],
+    draw_state: &mut DrawState,
+) {
     let Some(t) = pack.texture(sprite.texture) else {
         return;
     };
@@ -2160,7 +2176,7 @@ pub unsafe fn draw_sprite(
     let y0 = d.y * k;
     let corners = [
         (0.0, 0.0, x0, y0),
-        (w, h, x0 + w * d.scale * k, y0 + h * d.scale * k),
+        (w, h, x0 + w * scale_x * k, y0 + h * scale_y * k),
     ];
     let verts = sys::sceGuGetMemory((2 * core::mem::size_of::<SObjVertex>()) as i32)
         as *mut SObjVertex;
@@ -2180,6 +2196,62 @@ pub unsafe fn draw_sprite(
             | VertexType::COLOR_8888
             | VertexType::VERTEX_32BITF
             | VertexType::TRANSFORM_2D,
+        2,
+        core::ptr::null(),
+        verts as *const c_void,
+    );
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuEnable(GuState::CullFace);
+    draw_state.invalidate_all();
+}
+
+/// An untextured `gDPFillRectangle` over `[x0, y0, x1, y1)` in N64 screen
+/// pixels, mapped onto the pillarboxed viewport, blended by `rgba`'s alpha
+/// (`G_RM_AA_XLU_SURF`) below 0xFF.
+///
+/// # Safety
+///
+/// Between `begin_frame` and `end_frame`.
+pub unsafe fn fill_rect_n64(rect: [f32; 4], rgba: [u8; 4], draw_state: &mut DrawState) {
+    #[repr(C, align(4))]
+    struct FillVertex {
+        color: u32,
+        x: f32,
+        y: f32,
+        z: f32,
+    }
+    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
+    let color = u32::from_le_bytes(rgba);
+    let verts = sys::sceGuGetMemory((2 * core::mem::size_of::<FillVertex>()) as i32) as *mut FillVertex;
+    for (i, (x, y)) in [(rect[0], rect[1]), (rect[2], rect[3])].into_iter().enumerate() {
+        verts.add(i).write(FillVertex {
+            color,
+            x: vx as f32 + x * k,
+            y: y * k,
+            z: 0.0,
+        });
+    }
+    sys::sceGuDisable(GuState::Texture2D);
+    sys::sceGuDisable(GuState::Lighting);
+    sys::sceGuDisable(GuState::DepthTest);
+    sys::sceGuDisable(GuState::CullFace);
+    sys::sceGuDisable(GuState::AlphaTest);
+    if rgba[3] == 0xFF {
+        sys::sceGuDisable(GuState::Blend);
+    } else {
+        sys::sceGuEnable(GuState::Blend);
+        sys::sceGuBlendFunc(
+            sys::BlendOp::Add,
+            sys::BlendFactor::SrcAlpha,
+            sys::BlendFactor::OneMinusSrcAlpha,
+            0,
+            0,
+        );
+    }
+    sys::sceGuDrawArray(
+        GuPrimitive::Sprites,
+        VertexType::COLOR_8888 | VertexType::VERTEX_32BITF | VertexType::TRANSFORM_2D,
         2,
         core::ptr::null(),
         verts as *const c_void,

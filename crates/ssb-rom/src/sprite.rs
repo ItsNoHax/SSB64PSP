@@ -311,6 +311,39 @@ pub const BATTLE_PAUSE: SpriteFile = SpriteFile {
     ],
 };
 
+/// File 34, `MNVSResults` (`dMNVSResultsFileIDs[0]`): `TKOTextSprite`,
+/// `PlaceTextSprite`, `KOsTextSprite`, `PtsTextSprite`, `1PArrowSprite`
+/// to `4PArrowSprite`, `WallpaperSprite` and `WinnerSprite` (RE-410).
+pub const VS_RESULTS: SpriteFile = SpriteFile {
+    file: 34,
+    offsets: &[
+        0x358, 0x990, 0xD38, 0x10D8, 0x49E8, 0x4B08, 0x4C28, 0x4D48, 0xD5C8, 0xE2A0,
+    ],
+};
+
+/// File 18, `MNPlayersGameModes` (`dMNVSResultsFileIDs[2]`):
+/// `FreeForAllTextSprite` and `TeamBattleTextSprite` (RE-410).
+pub const GAME_MODES: SpriteFile = SpriteFile {
+    file: 18,
+    offsets: &[0x280, 0x4E0],
+};
+
+/// File 36, `IFCommonDigits` (`dMNVSResultsFileIDs[5]`): `Digits0Sprite`
+/// to `Digits9Sprite`, then `DigitsDashSprite` (RE-410).
+pub const DIGITS: SpriteFile = SpriteFile {
+    file: 36,
+    offsets: &[
+        0x68, 0x118, 0x1C8, 0x278, 0x328, 0x3D8, 0x488, 0x538, 0x5E8, 0x698, 0x710,
+    ],
+};
+
+/// File 38, `IFCommonPlayerTags` (`dMNVSResultsFileIDs[1]`):
+/// `PlayerTags1PSprite` to `...4PSprite`, then `...CPSprite` (RE-410).
+pub const PLAYER_TAGS: SpriteFile = SpriteFile {
+    file: 38,
+    offsets: &[0x258, 0x4F8, 0x798, 0xA38, 0xCD8],
+};
+
 /// `SP_CLOUD`: drawn with `G_RM_CLD_SURF`, blended like `SP_TRANSPARENT`.
 pub const SP_CLOUD: u16 = 0x1000;
 
@@ -321,6 +354,10 @@ pub const FILES: &[SpriteFile] = &[
     TIMER,
     ANNOUNCE_COMMON,
     BATTLE_PAUSE,
+    VS_RESULTS,
+    GAME_MODES,
+    DIGITS,
+    PLAYER_TAGS,
 ];
 
 /// Decodes every sprite of `f`.
@@ -393,6 +430,41 @@ mod tests {
                 _ => assert_eq!(s.format, Format::I),
             }
         }
+    }
+
+    #[test]
+    fn the_results_screen_sprites_decode() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        let formats = |f: &SpriteFile| {
+            let file = archive.load(f.file).unwrap();
+            decode_all(&file, f)
+                .unwrap()
+                .iter()
+                .map(|s| (s.width, s.height, s.format, s.size))
+                .collect::<Vec<_>>()
+        };
+        let results = formats(&VS_RESULTS);
+        // The row labels and arrows are IA8, the wallpaper I4, the
+        // first-place "winner" plate RGBA16.
+        assert_eq!(results[0], (62, 13, Format::Ia, BitSize::Bits8));
+        assert_eq!(results[1], (83, 17, Format::Ia, BitSize::Bits8));
+        assert_eq!(results[4], (15, 12, Format::Ia, BitSize::Bits8));
+        assert_eq!(results[8], (300, 220, Format::I, BitSize::Bits4));
+        assert_eq!(results[9], (42, 35, Format::Rgba, BitSize::Bits16));
+        let modes = formats(&GAME_MODES);
+        assert_eq!(modes[0], (112, 11, Format::I, BitSize::Bits4));
+        assert_eq!(modes[1], (110, 9, Format::I, BitSize::Bits4));
+        let digits = formats(&DIGITS);
+        assert_eq!(digits[0], (8, 10, Format::Ia, BitSize::Bits8));
+        assert_eq!(digits[1].0, 5, "the 1 is narrow");
+        assert_eq!(digits[10], (6, 3, Format::Ia, BitSize::Bits8));
+        let tags = formats(&PLAYER_TAGS);
+        assert!(tags.iter().all(|t| t.1 == 24 && t.2 == Format::Ia));
     }
 
     #[test]

@@ -3,7 +3,8 @@
 //! `mnVSResultsCheckExit` in `mn/mnvsmode/mnvsresults.c`: each player's
 //! KOs, falls and points, the places they sort into, the winner, when the
 //! fighters appear and when START may leave. The fighters themselves are
-//! [`crate::results_scene`]; the text and confetti are not ported.
+//! [`crate::results_scene`]; the text, table and wallpaper are
+//! [`crate::results_layer`]; the confetti is not ported.
 
 use crate::battle::{Battle, Rule};
 
@@ -22,6 +23,8 @@ pub enum Kind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Results {
     pub kind: Kind,
+    /// `sMNVSResultsIsTeamBattle`, kept with no contest.
+    pub is_team_battle: bool,
     pub present: [bool; 4],
     /// `score`, capped at 999.
     pub kos: [i32; 4],
@@ -30,6 +33,9 @@ pub struct Results {
     pub points: [i32; 4],
     /// 0 is first; everyone is 0 with no contest.
     pub places: [i32; 4],
+    /// `gSCManagerTransferBattleState.players[].team`: the team in a team
+    /// battle.
+    pub team: [u8; 4],
     pub winner: Option<usize>,
     pub shared_winner: [bool; 4],
     pub total_tics: u32,
@@ -175,11 +181,13 @@ impl Results {
         }
         let mut r = Results {
             kind,
+            is_team_battle: team,
             present,
             kos,
             tko,
             points,
             places,
+            team: b.players.map(|p| p.team),
             winner: None,
             shared_winner: [false; 4],
             total_tics: 0,

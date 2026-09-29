@@ -158,8 +158,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::VsModeMenu => 60,
         // The VS character select with Yoshi placed and a CPU opened.
         GameScene::VsPlayers => 85,
-        // Reset at 520; the results follow Set's three ticks.
-        GameScene::VsNoContest => 560,
+        // Reset at 520; the results follow Set's three ticks. By 640 the
+        // no-contest table has its KOs (tic 60) and falls (tic 80) rows.
+        GameScene::VsNoContest => 640,
         // The dummy's CPU has paced for some 190 ticks, or jumped several
         // times.
         GameScene::CpuWalk => 200,
@@ -1743,10 +1744,10 @@ fn update_damage_hud(hud: &mut ssb_game::hud::DamageDisplay, f: &ssb_game::fight
     hud.update(i32::from(f.damage), f.dead.stock_rule && f.stocks == -1);
 }
 
-/// The results in place of `mnVSResults`: one slot per player along the
-/// top, taller for a better place, the winner's (and a shared winner's)
-/// lit (RE-400), then the fighters (RE-409) over the black of
-/// `mnVSResultsFuncStart`'s default camera; the wallpaper is not drawn.
+/// `mnVSResults`' frame over the black of `mnVSResultsFuncStart`'s default
+/// camera: the wallpaper, the fighters (RE-409), then the text and table
+/// (RE-410), each player's kind, costume, tag colour and humanity from the
+/// battle's `roster`.
 #[inline(never)]
 unsafe fn draw_results(
     gpu: &mut Gpu,
@@ -1754,23 +1755,22 @@ unsafe fn draw_results(
     draw_state: &mut meshdraw::DrawState,
     results: Option<&ssb_game::results::Results>,
     fighters: Option<&results_screen::Fighters>,
+    roster: &Roster,
 ) {
     gpu.set_viewport_fullscreen();
     gpu.begin_frame(Some(BG_RESULTS));
-    let Some(r) = results else {
+    let (Some(p), Some(r), Some(f)) = (pack, results, fighters) else {
         return;
     };
-    for i in (0..4).filter(|&i| r.present[i]) {
-        let x0 = 60 + i as i32 * 100;
-        let lit = r.winner == Some(i) || r.shared_winner[i];
-        let color = if lit { ENTRY_SELECTED } else { ENTRY_ENABLED };
-        // First place stands tallest; no contest levels everyone.
-        let bottom = 40 - r.places[i] * 8;
-        gpu.draw_rect(x0, 8, x0 + 80, bottom, color);
-    }
-    if let (Some(p), Some(f)) = (pack, fighters) {
-        results_screen::draw(gpu, p, draw_state, f);
-    }
+    let players = roster.map(|e| {
+        e.map(|e| ssb_game::results_layer::Player {
+            kind: e.kind,
+            costume: e.costume,
+            human: e.human,
+            color: e.color,
+        })
+    });
+    results_screen::draw_all(gpu, p, draw_state, r, f, &players);
 }
 
 /// `mnVSResultsFuncStart`: the rankings (`mnVSResultsInitVars` and
@@ -2127,7 +2127,14 @@ unsafe fn draw_frame(
             draw_stage_select(gpu, &s.stage_select);
         }
         Screen::Results => {
-            draw_results(gpu, pack.as_ref(), draw_state, s.vs_results.as_ref(), s.vs_results_fighters.as_deref());
+            draw_results(
+                gpu,
+                pack.as_ref(),
+                draw_state,
+                s.vs_results.as_ref(),
+                s.vs_results_fighters.as_deref(),
+                &s.roster,
+            );
         }
         Screen::Training => {
             if let (Some(p), Some(pl)) = (pack.as_ref(), s.play_state.as_ref()) {
