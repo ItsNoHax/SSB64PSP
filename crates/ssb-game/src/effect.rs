@@ -83,6 +83,26 @@ enum Kind {
     Coin,
 }
 
+/// The priority-3 process a particle effect's `GObj` runs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Proc {
+    None,
+    /// `efManagerDefaultProcUpdate`.
+    Mover,
+    /// `efManagerDustLightProcUpdate`, with `effect_vars.dust_light`'s
+    /// `vel2` and `lifetime` (`vel1` is [`Slot::vel`]).
+    DustLight {
+        vel2: [f32; 2],
+        lifetime: u8,
+    },
+    /// `efManagerDustHeavyDoubleProcUpdate`, with
+    /// `effect_vars.dust_heavy`'s `anim_frame` and `lr`.
+    DustHeavyDouble {
+        frame: i32,
+        lr: i8,
+    },
+}
+
 /// One `EFStruct` and its effect `GObj`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Slot {
@@ -91,8 +111,9 @@ struct Slot {
     xf: u8,
     /// `effect_vars.common.vel`.
     vel: [f32; 2],
-    /// Whether `efManagerDefaultProcUpdate` runs on it.
-    moves: bool,
+    proc: Proc,
+    /// When its `GObj` was made: processes run in `GObj` order.
+    seq: u32,
 }
 
 impl Slot {
@@ -101,7 +122,8 @@ impl Slot {
         kind: Kind::Default,
         xf: NIL,
         vel: [0.0; 2],
-        moves: false,
+        proc: Proc::None,
+        seq: 0,
     };
 }
 
@@ -115,6 +137,13 @@ pub struct Effects {
     pub free_num: u8,
     /// `gEFManagerParticleBankID`: the common bank's id.
     pub bank: u8,
+    /// The display effects' `GObj`s ([`Display`]).
+    displays: [Option<Display>; DISPLAY_MAX],
+    /// The next `GObj`'s place in the process order.
+    seq: u32,
+    /// Display effects the pool had no room for (none in any measured
+    /// match; a test keeps it at zero).
+    pub displays_refused: u16,
 }
 
 impl Default for Effects {
@@ -132,6 +161,9 @@ impl Effects {
             free: 0,
             free_num: EFFECT_ALLOC_NUM as u8,
             bank,
+            displays: [None; DISPLAY_MAX],
+            seq: 0,
+            displays_refused: 0,
         };
         for i in 0..EFFECT_ALLOC_NUM {
             e.slots[i].next = if i + 1 < EFFECT_ALLOC_NUM {
@@ -156,9 +188,15 @@ impl Effects {
         let i = self.free;
         self.free = self.slots[usize::from(i)].next;
         self.slots[usize::from(i)] = Slot::EMPTY;
+        self.slots[usize::from(i)].seq = self.next_seq();
         self.live[usize::from(i)] = true;
         self.free_num -= 1;
         Some(i)
+    }
+
+    fn next_seq(&mut self) -> u32 {
+        self.seq = self.seq.wrapping_add(1);
+        self.seq
     }
 
     /// `efManagerSetPrevStructAlloc` and `gcEjectGObj`.
@@ -168,20 +206,77 @@ impl Effects {
             return;
         }
         self.live[s] = false;
-        self.slots[s].moves = false;
+        self.slots[s].proc = Proc::None;
         self.slots[s].next = self.free;
         self.free = i;
         self.free_num += 1;
     }
 
-    /// Every struct's `efManagerDefaultProcUpdate` (process priority 3):
-    /// the transform moves by the struct's velocity.
-    pub fn update(&self, p: &mut Particles) {
+    /// The effect processes (priority 3, after the fighters', weapons' and
+    /// items' of the same priority), in `GObj` order: each particle
+    /// struct's mover and each started display effect's `proc_update`.
+    /// A display effect made during this pass starts next frame.
+    pub fn process(&mut self, p: &mut Particles, banks: &dyn Banks) {
+        let mut order = [(0u32, 0u8); EFFECT_ALLOC_NUM + DISPLAY_MAX];
+        let mut n = 0;
         for (i, s) in self.slots.iter().enumerate() {
-            if self.live[i] && s.moves && s.xf != NIL {
+            if self.live[i] && s.proc != Proc::None && s.xf != NIL {
+                order[n] = (s.seq, i as u8);
+                n += 1;
+            }
+        }
+        for (i, d) in self.displays.iter().enumerate() {
+            if let Some(d) = d.filter(|d| d.started) {
+                order[n] = (d.seq, 0x80 | i as u8);
+                n += 1;
+            }
+        }
+        let order = &mut order[..n];
+        // `GObj` order is make order; the counter only wraps after years.
+        order.sort_unstable_by_key(|&(seq, _)| seq);
+        for &(_, tag) in order.iter() {
+            if tag & 0x80 != 0 {
+                self.display_proc(p, banks, usize::from(tag & 0x7F));
+            } else {
+                self.slot_proc(p, banks, tag);
+            }
+        }
+    }
+
+    fn slot_proc(&mut self, p: &mut Particles, banks: &dyn Banks, i: u8) {
+        let s = self.slots[usize::from(i)];
+        if !self.live[usize::from(i)] || s.xf == NIL {
+            return;
+        }
+        match s.proc {
+            Proc::None => {}
+            Proc::Mover => {
                 let t = p.transform_mut(s.xf);
                 t.translate.x += s.vel[0];
                 t.translate.y += s.vel[1];
+            }
+            Proc::DustLight { vel2, lifetime } => {
+                let t = p.transform_mut(s.xf);
+                t.translate.x += s.vel[0];
+                t.translate.y += s.vel[1];
+                if lifetime != 0 {
+                    let slot = &mut self.slots[usize::from(i)];
+                    slot.vel[0] += vel2[0];
+                    slot.vel[1] += vel2[1];
+                    slot.proc = Proc::DustLight {
+                        vel2,
+                        lifetime: lifetime - 1,
+                    };
+                }
+            }
+            Proc::DustHeavyDouble { frame, lr } => {
+                let frame = frame + 1;
+                self.slots[usize::from(i)].proc = Proc::DustHeavyDouble { frame, lr };
+                if frame == 2 {
+                    let mut pos = p.transform(s.xf).translate;
+                    pos.y -= DUST_HEAVY_OFF_Y;
+                    self.dust_heavy(p, banks, pos, -lr);
+                }
             }
         }
     }
@@ -233,7 +328,7 @@ impl Effects {
         let (sin, cos) = sin_cos(angle);
         let s = &mut self.slots[usize::from(ep)];
         s.vel = [cos * speed, sin * speed];
-        s.moves = true;
+        s.proc = Proc::Mover;
     }
 
     /// `efManagerDamageNormalLightMakeEffect`.
@@ -407,7 +502,7 @@ impl Effects {
         p.transform_mut(xf).translate = pos;
         let s = &mut self.slots[usize::from(ep)];
         s.vel = DUST_EXPAND_SMALL_VEL;
-        s.moves = true;
+        s.proc = Proc::Mover;
         pc
     }
 
@@ -424,10 +519,17 @@ impl Effects {
         let index = usize::from(kind % 2) * 4 + usize::from(player.min(3));
         let bank = self.bank | lb::genlink(1);
         let rotate_z = DEAD_EXPLODE_ROTATE_D[usize::from(kind % 4)] * core::f32::consts::PI / 180.0;
-        self.start_bare(p, banks, bank, DEAD_EXPLODE_IDS[index], |t| {
-            t.translate = pos;
-            t.rotate.z = rotate_z;
-        })
+        self.start_bare(
+            p,
+            banks,
+            bank,
+            DEAD_EXPLODE_IDS[index],
+            TransformStatus::Ready,
+            |t| {
+                t.translate = pos;
+                t.rotate.z = rotate_z;
+            },
+        )
     }
 
     /// `efManagerSparkleWhiteDeadMakeEffect`: the star KO's sparkle.
@@ -439,13 +541,20 @@ impl Effects {
         scale: f32,
     ) -> u8 {
         let bank = self.bank | lb::genlink(1);
-        self.start_bare(p, banks, bank, SPARKLE_WHITE_DEAD_ID, |t| {
-            t.translate = pos;
-            t.scale = Vec3::splat(scale);
-        })
+        self.start_bare(
+            p,
+            banks,
+            bank,
+            SPARKLE_WHITE_DEAD_ID,
+            TransformStatus::Ready,
+            |t| {
+                t.translate = pos;
+                t.scale = Vec3::splat(scale);
+            },
+        )
     }
 
-    /// A struct-less maker: the script under a `Ready` transform with no
+    /// A struct-less maker: the script under a transform with no
     /// `proc_dead`, the first update, then `place`.
     fn start_bare(
         &mut self,
@@ -453,13 +562,14 @@ impl Effects {
         banks: &dyn Banks,
         bank_id: u8,
         script: u16,
+        status: TransformStatus,
         place: impl FnOnce(&mut lb::Transform),
     ) -> u8 {
         let pc = lb::make_script_id(p, banks, bank_id, script);
         if pc == NIL {
             return NIL;
         }
-        let xf = p.add_transform_for_struct(pc, TransformStatus::Ready);
+        let xf = p.add_transform_for_struct(pc, status);
         if xf == NIL {
             lb::eject_struct(p, banks, self, pc);
             return NIL;
@@ -494,10 +604,18 @@ impl Effects {
             HitEffectKind::SetOff => {
                 self.set_off(p, banks, e.pos, e.damage);
             }
-            HitEffectKind::Slash { .. }
-            | HitEffectKind::SpawnOrbs
-            | HitEffectKind::SpawnSparks { .. }
-            | HitEffectKind::SpawnMDust { .. } => {}
+            HitEffectKind::Slash { rotate } => {
+                self.damage_slash(e.pos, e.damage, rotate);
+            }
+            HitEffectKind::SpawnOrbs => {
+                self.damage_spawn_orbs_random(e.pos);
+            }
+            HitEffectKind::SpawnSparks { lr } => {
+                self.damage_spawn_sparks_random(e.pos, lr as i8);
+            }
+            HitEffectKind::SpawnMDust { lr } => {
+                self.damage_spawn_mdust_random(e.pos, lr as i8);
+            }
         }
     }
 }
@@ -580,10 +698,19 @@ pub struct HitEffect {
     pub damage: i32,
 }
 
-/// Where the hit pipeline hands its effects, in the order the source
-/// makes them.
+/// Where the match hands its effects, in the order the source makes them:
+/// the hit pipeline's, each fighter's queued ones ([`crate::fteffect`]),
+/// and the effect processes' pass.
 pub trait HitEffectSink {
     fn make(&mut self, e: &HitEffect);
+
+    /// Makes (or, without a runtime, drops) the effects `f` queued.
+    fn fighter(&mut self, f: &mut crate::fighter::Fighter) {
+        f.effects.clear();
+    }
+
+    /// The effect processes (priority 3).
+    fn process(&mut self) {}
 }
 
 /// Drops every effect (host tests, or a scene without particles).
@@ -605,17 +732,823 @@ impl HitEffectSink for EffectRuntime<'_> {
     fn make(&mut self, e: &HitEffect) {
         self.effects.make_hit(self.particles, self.banks, e);
     }
+
+    fn fighter(&mut self, f: &mut crate::fighter::Fighter) {
+        crate::fteffect::flush(f, self);
+    }
+
+    fn process(&mut self) {
+        self.effects.process(self.particles, self.banks);
+    }
 }
 
 impl EffectRuntime<'_> {
     /// One frame's start: the particle and generator `func_run`s (link 0,
-    /// before every process), then each struct's move (priority 3).
+    /// before every process), then the effect link's: each display effect
+    /// made last frame gets its process (`efManagerFuncRun`).
     pub fn run(&mut self) {
         lb::run(self.particles, self.banks, self.effects);
-        self.effects.update(self.particles);
+        self.effects.func_run();
+    }
+
+    /// [`Self::run`] and the effect processes: a frame with nothing else
+    /// between (host tests).
+    pub fn frame(&mut self) {
+        self.run();
+        self.effects.process(self.particles, self.banks);
     }
 }
 
 #[cfg(test)]
 #[path = "effect_tests.rs"]
 mod tests;
+
+/// Display effects the pool holds: 38 struct-bearing ones at most, and the
+/// struct-less slashes a frame's hits add.
+pub const DISPLAY_MAX: usize = 64;
+
+/// `EFCOMMON_DUSTNORMAL_*`.
+const DUST_NORMAL_LIFETIME: u8 = 9;
+const DUST_NORMAL_OFF_Y: f32 = 39.375;
+const DUST_NORMAL_VEL_BASE: f32 = 36.0;
+/// `EFCOMMON_DUSTHEAVY_OFF_Y`.
+const DUST_HEAVY_OFF_Y: f32 = 126.0;
+/// `EFCOMMON_DUSTEXPANDLARGE_SCALE`.
+const DUST_EXPAND_LARGE_SCALE: f32 = 3.0;
+/// `EFCOMMON_DUSTDASH_OFF_Y`.
+const DUST_DASH_OFF_Y: f32 = 280.0;
+
+/// Particle scripts of the common bank (`ef/efmanager.c`).
+pub mod script {
+    /// `efManagerFlameLRMakeEffect`.
+    pub const FLAME_LR: u16 = 0x12;
+    /// `efManagerFlameRandomMakeEffect`, `...FlameStatic...`,
+    /// `...DustLight...` (`f_index` 1) and `...DustExpandSmall...`.
+    pub const DUST_SMALL: u16 = 0x55;
+    /// `efManagerDustLightMakeEffect` with `f_index` 2.
+    pub const DUST_SMALL_RAPID: u16 = 0x56;
+    /// `efManagerDustExpandLargeMakeEffect`.
+    pub const DUST_EXPAND_LARGE: u16 = 0x57;
+    /// `efManagerDustHeavyMakeEffect` and `...DustHeavyDouble...`.
+    pub const DUST_HEAVY: u16 = 0x58;
+    /// `efManagerDustHeavyDoubleMakeEffect` with `f_index` 1.7.
+    pub const DUST_HEAVY_RAPID: u16 = 0x59;
+    /// `efManagerDustDashMakeEffect`.
+    pub const DUST_DASH: u16 = 0x5A;
+    /// `efManagerSparkleWhiteScaleMakeEffect`.
+    pub const SPARKLE_WHITE_SCALE: u16 = 0x5B;
+    /// `efManagerSparkleWhiteMakeEffect`.
+    pub const SPARKLE_WHITE: u16 = 0x73;
+    /// `efManagerSparkleWhiteMultiMakeEffect`.
+    pub const SPARKLE_WHITE_MULTI: u16 = 0x1A;
+    /// `efManagerSparkleWhiteMultiExplodeMakeEffect`.
+    pub const SPARKLE_WHITE_MULTI_EXPLODE: u16 = 0x22;
+    /// `efManagerThunderAmpMakeEffect`.
+    pub const THUNDER_AMP: u16 = 0x74;
+    /// `efManagerHealSparklesMakeEffect`.
+    pub const HEAL_SPARKLES: u16 = 0x0E;
+    /// `efManagerEggBreakMakeEffect`.
+    pub const EGG_BREAK: u16 = 0x54;
+    /// `dEFManagerMusicNoteScriptIDs`.
+    pub const MUSIC_NOTES: [u16; 3] = [0x40, 0x41, 0x42];
+    /// `lbParticleMakeCommon` ids: `efManagerFuraSparkleMakeEffect` (on
+    /// list 1), `...Psionic...`, `...FlashSmall...`, `...Middle...` and
+    /// `...Large...`.
+    pub const FURA_SPARKLE: u16 = 0;
+    pub const PSIONIC: u16 = 7;
+    pub const FLASH_SMALL: u16 = 4;
+    pub const FLASH_MIDDLE: u16 = 5;
+    pub const FLASH_LARGE: u16 = 6;
+    /// Generators: `efManagerRippleMakeEffect` and `...KirbyStar...`.
+    pub const RIPPLE_GEN: u16 = 0x61;
+    pub const KIRBY_STAR_GEN: u16 = 0x0F;
+}
+
+/// A display effect: an `EFDesc` made through `efManagerMakeEffect`, its
+/// `DObj` drawn by the host from the packed manager-effect object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayKind {
+    /// `dEFManagerShockSmallEffectDesc` (`efManagerVelAddDestroyAnimEnd`).
+    ShockSmall,
+    /// `dEFManagerDamageSlashEffectDesc`: no `EFFECT_FLAG_USERDATA`, so no
+    /// struct.
+    Slash,
+    /// `dEFManagerDamageSpawnOrbsEffectDesc`: no `DObj`, spawns
+    /// [`Self::FlyOrbs`].
+    SpawnOrbs,
+    /// `dEFManagerDamageFlyOrbsEffectDesc`.
+    FlyOrbs,
+    /// `dEFManagerDamageSpawnSparksEffectDesc`: spawns [`Self::FlySparks`].
+    SpawnSparks,
+    /// `dEFManagerDamageFlySparksEffectDesc` (the common spark).
+    FlySparks,
+    /// `dEFManagerDamageSpawnMDustEffectDesc`: spawns [`Self::FlyMDust`].
+    SpawnMDust,
+    /// `dEFManagerDamageFlyMDustEffectDesc`.
+    FlyMDust,
+    /// `dEFManagerImpactWaveEffectDesc`.
+    ImpactWave,
+    /// `dEFManagerStarRodSparkEffectDesc` (the common spark).
+    StarRodSpark,
+    /// `efManagerQuakeMakeEffect`: a `DObj` whose animated translation
+    /// moves the camera; nothing is drawn.
+    Quake { magnitude: u8 },
+    /// `dEFManagerFireSparkEffectDesc`: Samus's arm-cannon spark, attached
+    /// to joint 16. Held for its animation; not drawn (RE-415).
+    FireSpark,
+}
+
+/// `gcPlayAnimAll` calls until each display effect's animation reaches its
+/// end and its `proc_update` ejects it (`anim_frame <= 0`), counting the
+/// one `efManagerMakeEffect` makes. Replayed from the ROM's scripts
+/// (`crates/ssb-rom/tests/display_effects.rs`, RE-415).
+pub mod life {
+    /// `llEFCommonEffects2ShockSmallMatAnimJoint` (the material's clock,
+    /// which its `SetAnim` loop zeroes).
+    pub const SHOCK_SMALL: u16 = 20;
+    /// `llEFCommonEffects1DamageSlashAnimJoint`.
+    pub const SLASH: u16 = 18;
+    /// `llEFCommonEffects1CommonSparkAnimJoint`.
+    pub const COMMON_SPARK: u16 = 18;
+    /// `llEFCommonEffects1DamageFlyMDustAnimJoint`.
+    pub const FLY_MDUST: u16 = 26;
+    /// `llEFCommonEffects1ImpactWaveAnimJoint`.
+    pub const IMPACT_WAVE: u16 = 13;
+    /// `llEFCommonEffects1QuakeMag0AnimJoint` to `...Mag2...`.
+    pub const QUAKE: [u16; 3] = [19, 31, 31];
+    /// `llEFCommonEffects2FireSparkAnimJoint`.
+    pub const FIRE_SPARK: u16 = 11;
+}
+
+impl DisplayKind {
+    /// The `gcPlayAnimAll` count at which the effect ends by its
+    /// animation, or `None` for one that ends by its own lifetime.
+    pub fn life(self) -> Option<u16> {
+        Some(match self {
+            DisplayKind::ShockSmall => life::SHOCK_SMALL,
+            DisplayKind::Slash => life::SLASH,
+            DisplayKind::FlySparks | DisplayKind::StarRodSpark => life::COMMON_SPARK,
+            DisplayKind::FlyMDust => life::FLY_MDUST,
+            DisplayKind::ImpactWave => life::IMPACT_WAVE,
+            DisplayKind::Quake { magnitude } => life::QUAKE[usize::from(magnitude.min(2))],
+            DisplayKind::FireSpark => life::FIRE_SPARK,
+            DisplayKind::SpawnOrbs
+            | DisplayKind::FlyOrbs
+            | DisplayKind::SpawnSparks
+            | DisplayKind::SpawnMDust => return None,
+        })
+    }
+
+    /// Whether `efManagerMakeEffect` gives it a `DObj` with an animation
+    /// (and so runs `gcPlayAnimAll` as it makes it).
+    fn animated(self) -> bool {
+        !matches!(
+            self,
+            DisplayKind::SpawnOrbs | DisplayKind::SpawnSparks | DisplayKind::SpawnMDust
+        )
+    }
+}
+
+/// `dEFManagerImpactWavePrimColor*` (the ENV colours are all zero).
+pub const IMPACT_WAVE_PRIM: [[u8; 3]; 5] = [
+    [0xFF, 0x00, 0x00],
+    [0x00, 0xFF, 0x00],
+    [0x00, 0x00, 0xFF],
+    [0xFF, 0xFF, 0x00],
+    [0xFF, 0xFF, 0xFF],
+];
+
+/// `dEFManagerDamageSpawnSparksAngles` and `...MDustAngles`, in degrees.
+const SPAWN_SPARK_ANGLES: [f32; 3] = [18.0, 0.0, -18.0];
+
+/// One display effect's `GObj`: its `DObj`'s transform, its animation
+/// clock and its `effect_vars`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Display {
+    pub kind: DisplayKind,
+    /// Its `EFStruct`, or [`NIL`] for a struct-less one.
+    ep: u8,
+    seq: u32,
+    /// Whether `efManagerFuncRun` has given it its process (the frame
+    /// after it is made).
+    started: bool,
+    /// `gcPlayAnimAll` calls so far.
+    pub ticks: u16,
+    /// The root `DObj`'s `translate`, `rotate` and `scale`.
+    pub translate: Vec3,
+    pub rotate: Vec3,
+    pub scale: Vec3,
+    /// `effect_vars.*.vel` (read by tests) and `.add`.
+    pub vel: [f32; 2],
+    add: [f32; 2],
+    add_timer: u16,
+    lifetime: i32,
+    lr: i8,
+    /// A spawner's point.
+    pos: Vec3,
+    /// `effect_vars.impact_wave`: its colour index and alpha.
+    pub index: u8,
+    pub alpha: f32,
+    decay: f32,
+    /// The fighter port a [`DisplayKind::FireSpark`] is attached to.
+    pub owner: u8,
+}
+
+impl Display {
+    fn new(kind: DisplayKind, ep: u8, seq: u32) -> Display {
+        Display {
+            kind,
+            ep,
+            seq,
+            started: false,
+            ticks: 0,
+            translate: Vec3::ZERO,
+            rotate: Vec3::ZERO,
+            scale: Vec3::splat(1.0),
+            vel: [0.0; 2],
+            add: [0.0; 2],
+            add_timer: 0,
+            lifetime: 0,
+            lr: 1,
+            pos: Vec3::ZERO,
+            index: 0,
+            alpha: 0.0,
+            decay: 0.0,
+            owner: 0,
+        }
+    }
+}
+
+/// `F_CLC_DTOR32`.
+fn dtor(degrees: f32) -> f32 {
+    degrees * core::f32::consts::PI / 180.0
+}
+
+impl Effects {
+    /// The live display effects, in pool order.
+    pub fn displays(&self) -> impl Iterator<Item = &Display> + '_ {
+        self.displays.iter().flatten()
+    }
+
+    /// The effect link's `func_run`s: every display effect made last frame
+    /// gets its process.
+    pub fn func_run(&mut self) {
+        for d in self.displays.iter_mut().flatten() {
+            d.started = true;
+        }
+    }
+
+    /// `efManagerMakeEffect(desc, FALSE)`: a struct when the desc has
+    /// `EFFECT_FLAG_USERDATA`, a `GObj`, and the creation's
+    /// `gcPlayAnimAll`. `None` as the source returns `NULL`.
+    fn make_display(&mut self, kind: DisplayKind) -> Option<usize> {
+        let slot = self.displays.iter().position(Option::is_none);
+        let Some(slot) = slot else {
+            self.displays_refused = self.displays_refused.saturating_add(1);
+            return None;
+        };
+        let ep = if kind == DisplayKind::Slash {
+            NIL
+        } else {
+            self.get_no_force()?
+        };
+        let seq = self.next_seq();
+        let mut d = Display::new(kind, ep, seq);
+        if kind.animated() {
+            d.ticks = 1;
+        }
+        self.displays[slot] = Some(d);
+        Some(slot)
+    }
+
+    fn display_mut(&mut self, i: usize) -> &mut Display {
+        self.displays[i].as_mut().expect("live display")
+    }
+
+    /// `efManagerSetPrevStructAlloc` and `gcEjectGObj`.
+    fn eject_display(&mut self, i: usize) {
+        if let Some(d) = self.displays[i].take() {
+            if d.ep != NIL {
+                self.release(d.ep);
+            }
+        }
+    }
+
+    /// One display effect's `proc_update`.
+    fn display_proc(&mut self, _p: &mut Particles, _banks: &dyn Banks, i: usize) {
+        let Some(mut d) = self.displays[i] else {
+            return;
+        };
+        match d.kind {
+            DisplayKind::ShockSmall
+            | DisplayKind::Slash
+            | DisplayKind::FlySparks
+            | DisplayKind::FlyMDust
+            | DisplayKind::ImpactWave
+            | DisplayKind::StarRodSpark
+            | DisplayKind::Quake { .. }
+            | DisplayKind::FireSpark => {
+                d.ticks = d.ticks.saturating_add(1);
+                if d.kind.life().is_some_and(|life| d.ticks >= life) {
+                    self.eject_display(i);
+                    return;
+                }
+                match d.kind {
+                    // `efManagerVelAddDestroyAnimEnd`.
+                    DisplayKind::ShockSmall => {
+                        d.translate.x += d.vel[0];
+                        d.translate.y += d.vel[1];
+                    }
+                    // `efManagerDamageFlySparksProcUpdate`.
+                    DisplayKind::FlySparks | DisplayKind::FlyMDust => {
+                        d.translate.x += d.vel[0];
+                        d.translate.y += d.vel[1];
+                        if d.add_timer != 0 {
+                            d.add_timer -= 1;
+                            d.vel[0] += d.add[0];
+                            d.vel[1] += d.add[1];
+                        }
+                    }
+                    // `efManagerImpactWaveProcUpdate`.
+                    DisplayKind::ImpactWave => {
+                        d.alpha = (d.alpha - d.decay).clamp(0.0, 255.0);
+                    }
+                    // `efManagerStarRodSparkProcUpdate`.
+                    DisplayKind::StarRodSpark => {
+                        if d.add_timer != 0 {
+                            d.add_timer -= 1;
+                            d.vel[0] += d.add[0];
+                        }
+                        d.translate.x += d.vel[0];
+                    }
+                    _ => {}
+                }
+                self.displays[i] = Some(d);
+            }
+            // `efManagerDamageFlyOrbsProcUpdate`.
+            DisplayKind::FlyOrbs => {
+                d.ticks = d.ticks.saturating_add(1);
+                d.lifetime -= 1;
+                if d.lifetime < 0 {
+                    self.eject_display(i);
+                    return;
+                }
+                d.translate.x += d.vel[0];
+                d.translate.y += d.vel[1];
+                d.vel[1] -= 10.0;
+                self.displays[i] = Some(d);
+            }
+            // `efManagerDamageSpawnOrbsProcUpdate`.
+            DisplayKind::SpawnOrbs => {
+                if d.lifetime % 4 == 0 {
+                    if let Some(j) = self.make_display(DisplayKind::FlyOrbs) {
+                        let o = self.display_mut(j);
+                        o.translate = d.pos;
+                        let scale = rng::rand_float() * 2.0 + 3.0;
+                        o.scale.x = scale;
+                        o.scale.y = scale;
+                        let vel = rng::rand_float() * 100.0 + 120.0;
+                        let angle = rng::rand_float() * dtor(60.0) + dtor(-30.0) + dtor(90.0);
+                        let (sin, cos) = sin_cos(angle);
+                        o.vel = [cos * vel, sin * vel];
+                        o.lifetime = rng::rand_int_range(4) + 12;
+                    }
+                }
+                self.spawner_tick(i, d);
+            }
+            // `efManagerDamageSpawnSparksProcUpdate` and `...MDust...`.
+            DisplayKind::SpawnSparks | DisplayKind::SpawnMDust => {
+                let lifetime = d.lifetime;
+                if lifetime % 4 == 0 {
+                    let fly = if d.kind == DisplayKind::SpawnSparks {
+                        DisplayKind::FlySparks
+                    } else {
+                        DisplayKind::FlyMDust
+                    };
+                    if let Some(j) = self.make_display(fly) {
+                        let o = self.display_mut(j);
+                        o.translate = d.pos;
+                        o.rotate.z = rng::rand_float() * dtor(360.0);
+                        let at = (2 - lifetime / 4).clamp(0, 2) as usize;
+                        let (sin, cos) = sin_cos(dtor(SPAWN_SPARK_ANGLES[at]));
+                        let lr = f32::from(d.lr);
+                        o.vel = [cos * 50.0 * lr, sin * 50.0];
+                        o.add = [-o.vel[0] * 0.004, -o.vel[1] * 0.004];
+                        o.add_timer = 250;
+                    }
+                }
+                self.spawner_tick(i, d);
+            }
+        }
+    }
+
+    /// A spawner's `lifetime--`, ejected below zero.
+    fn spawner_tick(&mut self, i: usize, mut d: Display) {
+        d.lifetime -= 1;
+        if d.lifetime < 0 {
+            self.eject_display(i);
+        } else {
+            self.displays[i] = Some(d);
+        }
+    }
+
+    /// `efManagerShockSmallMakeEffect`: five draws, the angle's wasted.
+    pub fn shock_small(&mut self, mut pos: Vec3) -> bool {
+        let Some(i) = self.make_display(DisplayKind::ShockSmall) else {
+            return false;
+        };
+        pos.x += rng::rand_float() * 300.0 - 150.0;
+        pos.y += rng::rand_float() * 300.0 - 150.0;
+        let _angle = rng::rand_float() * dtor(360.0);
+        let scale = rng::rand_float() * 0.5 + 0.75;
+        let rotate = rng::rand_float() * dtor(360.0);
+        let d = self.display_mut(i);
+        d.translate = pos;
+        d.vel = [0.0; 2];
+        d.scale.x = scale;
+        d.scale.y = scale;
+        d.rotate.z = rotate;
+        true
+    }
+
+    /// `efManagerDamageSlashMakeEffect`.
+    pub fn damage_slash(&mut self, pos: Vec3, size: i32, rotate: f32) -> bool {
+        let Some(i) = self.make_display(DisplayKind::Slash) else {
+            return false;
+        };
+        let scale = if size < 5 {
+            (5 - size) as f32 * -0.08 + 1.0
+        } else {
+            (size - 5) as f32 * 0.18 + 1.0
+        };
+        let d = self.display_mut(i);
+        d.translate = pos;
+        d.rotate.z = rotate;
+        d.scale.x = scale;
+        d.scale.y = scale;
+        true
+    }
+
+    /// `efManagerDamageSpawnOrbsMakeEffect`.
+    pub fn damage_spawn_orbs(&mut self, pos: Vec3) -> bool {
+        let Some(i) = self.make_display(DisplayKind::SpawnOrbs) else {
+            return false;
+        };
+        let lifetime = rng::rand_int_range(3) * 4 + 4;
+        let d = self.display_mut(i);
+        d.pos = pos;
+        d.lifetime = lifetime;
+        true
+    }
+
+    /// `efManagerDamageSpawnOrbsRandomMakeEffect`: one hit in four.
+    pub fn damage_spawn_orbs_random(&mut self, pos: Vec3) -> bool {
+        rng::rand_int_range(4) == 0 && self.damage_spawn_orbs(pos)
+    }
+
+    /// `efManagerDamageSpawnSparksMakeEffect` and `...MDust...`.
+    pub fn damage_spawn_sparks(&mut self, pos: Vec3, lr: i8, metal: bool) -> bool {
+        let kind = if metal {
+            DisplayKind::SpawnMDust
+        } else {
+            DisplayKind::SpawnSparks
+        };
+        let Some(i) = self.make_display(kind) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.pos = pos;
+        d.lifetime = 8;
+        d.lr = lr;
+        true
+    }
+
+    /// `efManagerDamageSpawnSparksRandomMakeEffect`: one hit in four.
+    pub fn damage_spawn_sparks_random(&mut self, pos: Vec3, lr: i8) -> bool {
+        rng::rand_int_range(4) == 0 && self.damage_spawn_sparks(pos, lr, false)
+    }
+
+    /// `efManagerDamageSpawnMDustRandomMakeEffect`: one hit in four.
+    pub fn damage_spawn_mdust_random(&mut self, pos: Vec3, lr: i8) -> bool {
+        rng::rand_int_range(4) == 0 && self.damage_spawn_sparks(pos, lr, true)
+    }
+
+    /// `efManagerImpactWaveMakeEffect` (and `...ImpactAirWave...` with no
+    /// turn).
+    pub fn impact_wave(&mut self, pos: Vec3, index: u8, rotate: f32) -> bool {
+        let Some(i) = self.make_display(DisplayKind::ImpactWave) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.translate = pos;
+        d.rotate.z = rotate;
+        d.index = index;
+        d.alpha = 255.0;
+        d.decay = 127.0 / 11.0;
+        true
+    }
+
+    /// `efManagerStarRodSparkMakeEffect`.
+    pub fn star_rod_spark(&mut self, pos: Vec3, lr: i8) -> bool {
+        let Some(i) = self.make_display(DisplayKind::StarRodSpark) else {
+            return false;
+        };
+        let rotate = rng::rand_float() * dtor(360.0);
+        let lr = f32::from(lr);
+        let d = self.display_mut(i);
+        d.translate = pos;
+        d.rotate.z = rotate;
+        d.scale.x = 0.75;
+        d.scale.y = 0.75;
+        d.vel[0] = lr * 25.0;
+        d.add[0] = lr * -0.4;
+        d.add_timer = 62;
+        true
+    }
+
+    /// `efManagerQuakeMakeEffect`: a struct held for the animation; the
+    /// camera shake is not ported (RE-412).
+    pub fn quake(&mut self, magnitude: u8) -> bool {
+        self.make_display(DisplayKind::Quake { magnitude })
+            .is_some()
+    }
+
+    /// `efManagerFireSparkMakeEffect`: the struct and `GObj`, held for the
+    /// animation; not drawn.
+    pub fn fire_spark(&mut self, owner: u8) -> bool {
+        let Some(i) = self.make_display(DisplayKind::FireSpark) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.translate.y = 160.0;
+        d.owner = owner;
+        true
+    }
+
+    /// The struct makers' shared tail: the process and the transform's
+    /// place.
+    fn set_proc(&mut self, ep: u8, proc: Proc) {
+        self.slots[usize::from(ep)].proc = proc;
+    }
+
+    /// `efManagerDustLightMakeEffect`.
+    pub fn dust_light(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        pos: Vec3,
+        lr: i8,
+        f_index: f32,
+    ) -> u8 {
+        let id = if f_index == 2.0 {
+            script::DUST_SMALL_RAPID
+        } else {
+            script::DUST_SMALL
+        };
+        let bank = self.bank | lb::genlink(0);
+        let Some((pc, xf, ep)) =
+            self.start(p, banks, bank, id, TransformStatus::Default, Kind::Default)
+        else {
+            return NIL;
+        };
+        let t = p.transform_mut(xf);
+        t.translate = pos;
+        t.translate.y += DUST_NORMAL_OFF_Y;
+        t.rotate.z = rng::rand_float() * dtor(360.0);
+        let angle = rng::rand_float() * dtor(30.0) + dtor(-15.0);
+        let (sin, cos) = sin_cos(angle);
+        let mut vel1 = [cos * DUST_NORMAL_VEL_BASE, sin * DUST_NORMAL_VEL_BASE];
+        if lr == 1 {
+            vel1[0] = -vel1[0];
+        }
+        let scatter = 1.0 / f32::from(DUST_NORMAL_LIFETIME);
+        self.slots[usize::from(ep)].vel = vel1;
+        self.set_proc(
+            ep,
+            Proc::DustLight {
+                vel2: [-vel1[0] * scatter, -vel1[1] * scatter],
+                lifetime: DUST_NORMAL_LIFETIME,
+            },
+        );
+        pc
+    }
+
+    /// `efManagerDustHeavyMakeEffect`: no struct and no first update.
+    pub fn dust_heavy(&mut self, p: &mut Particles, banks: &dyn Banks, pos: Vec3, lr: i8) -> u8 {
+        let bank = self.bank | lb::genlink(0);
+        let pc = lb::make_script_id(p, banks, bank, script::DUST_HEAVY);
+        if pc == NIL {
+            return NIL;
+        }
+        let xf = p.add_transform_for_struct(pc, TransformStatus::Default);
+        if xf == NIL {
+            lb::eject_struct(p, banks, self, pc);
+            return NIL;
+        }
+        let t = p.transform_mut(xf);
+        t.translate = pos;
+        t.translate.y += DUST_HEAVY_OFF_Y;
+        if lr == -1 {
+            t.rotate.y = core::f32::consts::PI;
+        }
+        pc
+    }
+
+    /// `efManagerDustHeavyDoubleMakeEffect`: a struct, no first update, and
+    /// a second, reversed cloud on its second frame.
+    pub fn dust_heavy_double(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        pos: Vec3,
+        lr: i8,
+        f_index: f32,
+    ) -> u8 {
+        let Some(ep) = self.get_no_force() else {
+            return NIL;
+        };
+        let id = if f_index == 1.7 {
+            script::DUST_HEAVY_RAPID
+        } else {
+            script::DUST_HEAVY
+        };
+        let bank = self.bank | lb::genlink(0);
+        let pc = lb::make_script_id(p, banks, bank, id);
+        if pc == NIL {
+            self.release(ep);
+            return NIL;
+        }
+        let xf = p.add_transform_for_struct(pc, TransformStatus::Default);
+        if xf == NIL {
+            lb::eject_struct(p, banks, self, pc);
+            self.release(ep);
+            return NIL;
+        }
+        self.slots[usize::from(ep)].xf = xf;
+        self.set_proc(ep, Proc::DustHeavyDouble { frame: 0, lr });
+        let t = p.transform_mut(xf);
+        t.translate = pos;
+        t.translate.y += DUST_HEAVY_OFF_Y;
+        if lr == -1 {
+            t.rotate.y = core::f32::consts::PI;
+        }
+        t.owner = ep;
+        t.has_proc_dead = true;
+        pc
+    }
+
+    /// `efManagerDustExpandLargeMakeEffect`.
+    pub fn dust_expand_large(&mut self, p: &mut Particles, banks: &dyn Banks, pos: Vec3) -> u8 {
+        let bank = self.bank | lb::genlink(0);
+        self.start_bare(
+            p,
+            banks,
+            bank,
+            script::DUST_EXPAND_LARGE,
+            TransformStatus::Ready,
+            |t| {
+                t.translate = pos;
+                t.scale = Vec3::splat(DUST_EXPAND_LARGE_SCALE);
+            },
+        )
+    }
+
+    /// `efManagerDustDashMakeEffect`.
+    pub fn dust_dash(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        pos: Vec3,
+        lr: i8,
+        scale: f32,
+    ) -> u8 {
+        let bank = self.bank | lb::genlink(0);
+        self.start_bare(
+            p,
+            banks,
+            bank,
+            script::DUST_DASH,
+            TransformStatus::Default,
+            |t| {
+                t.translate = pos;
+                t.scale = Vec3::splat(scale);
+                t.translate.y += DUST_DASH_OFF_Y;
+                if lr == -1 {
+                    t.rotate.y = core::f32::consts::PI;
+                }
+            },
+        )
+    }
+
+    /// A struct-less script under a `Ready` transform at `pos`: the white
+    /// sparkles, `ThunderAmp`, the heal sparkles and the egg break.
+    pub fn ready_at(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        genlink0: bool,
+        id: u16,
+        pos: Vec3,
+        scale: f32,
+    ) -> u8 {
+        let bank = if genlink0 {
+            self.bank | lb::genlink(0)
+        } else {
+            self.bank
+        };
+        self.start_bare(p, banks, bank, id, TransformStatus::Ready, |t| {
+            t.translate = pos;
+            if scale != 1.0 {
+                t.scale = Vec3::splat(scale);
+            }
+        })
+    }
+
+    /// `efManagerMusicNoteMakeEffect`: the note is drawn before it is made.
+    pub fn music_note(&mut self, p: &mut Particles, banks: &dyn Banks, pos: Vec3) -> u8 {
+        let id = script::MUSIC_NOTES[rng::rand_int_range(3) as usize];
+        self.ready_at(p, banks, true, id, pos, 1.0)
+    }
+
+    /// `efManagerFlameLRMakeEffect`.
+    pub fn flame_lr(&mut self, p: &mut Particles, banks: &dyn Banks, pos: Vec3, lr: i8) -> u8 {
+        let Some((pc, xf, ep)) = self.start(
+            p,
+            banks,
+            self.bank,
+            script::FLAME_LR,
+            TransformStatus::Default,
+            Kind::Default,
+        ) else {
+            return NIL;
+        };
+        self.set_proc(ep, Proc::Mover);
+        let t = p.transform_mut(xf);
+        t.translate = pos;
+        t.translate.x += rng::rand_float() * 300.0 - 150.0;
+        t.translate.y += rng::rand_float() * 200.0 - 150.0;
+        let angle = rng::rand_float() * dtor(90.0);
+        let (sin, cos) = sin_cos(angle);
+        self.slots[usize::from(ep)].vel = [cos * 20.0 * -f32::from(lr), sin * 20.0];
+        p.transform_mut(xf).scale = Vec3::splat(rng::rand_float() + 1.0);
+        pc
+    }
+
+    /// `efManagerFlameRandomMakeEffect` (`moving`) and
+    /// `efManagerFlameStaticMakeEffect`.
+    pub fn flame(&mut self, p: &mut Particles, banks: &dyn Banks, pos: Vec3, moving: bool) -> u8 {
+        let Some((pc, xf, ep)) = self.start(
+            p,
+            banks,
+            self.bank,
+            script::DUST_SMALL,
+            TransformStatus::Default,
+            Kind::Default,
+        ) else {
+            return NIL;
+        };
+        self.set_proc(ep, Proc::Mover);
+        p.transform_mut(xf).translate = pos;
+        self.slots[usize::from(ep)].vel = if moving {
+            let angle = rng::rand_float() * dtor(90.0) + dtor(45.0);
+            let (sin, cos) = sin_cos(angle);
+            [cos * 15.0, sin * 15.0]
+        } else {
+            [0.0; 2]
+        };
+        p.transform_mut(xf).scale = Vec3::splat(rng::rand_float() + 1.0);
+        pc
+    }
+
+    /// `lbParticleMakeCommon` at `pos`: `efManagerFuraSparkleMakeEffect`
+    /// (list 1), `...Psionic...` and the three flashes.
+    pub fn common_at(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        genlink0: bool,
+        id: u16,
+        pos: Vec3,
+    ) -> u8 {
+        let bank = if genlink0 {
+            self.bank | lb::genlink(0)
+        } else {
+            self.bank
+        };
+        let pc = lb::make_common(p, banks, self, bank, id);
+        if pc != NIL {
+            p.particle_mut(pc).pos = pos;
+        }
+        pc
+    }
+
+    /// A generator at `pos`: `efManagerRippleMakeEffect` and
+    /// `...KirbyStar...`.
+    pub fn generator_at(&mut self, p: &mut Particles, banks: &dyn Banks, id: u16, pos: Vec3) -> u8 {
+        let gn = lb::make_generator(p, banks, self.bank, id);
+        if gn != NIL {
+            p.generator_mut(gn).pos = pos;
+        }
+        gn
+    }
+}

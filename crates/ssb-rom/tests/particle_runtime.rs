@@ -103,7 +103,7 @@ fn run_until_empty(p: &mut Particles, e: &mut Effects, banks: &dyn Banks, census
             effects: e,
             banks,
         }
-        .run();
+        .frame();
     }
     panic!("the effect never ended");
 }
@@ -148,6 +148,93 @@ fn every_match_maker_ends_without_the_unmodelled_features() {
         }),
         ("sparkle", |e, p, b| {
             e.sparkle_white_dead(p, b, Vec3::ZERO, 5.0)
+        }),
+        // RE-415: `ftParamMakeEffect`'s particle makers.
+        ("dust light", |e, p, b| {
+            e.dust_light(p, b, Vec3::ZERO, 1, 1.0)
+        }),
+        ("dust light rapid", |e, p, b| {
+            e.dust_light(p, b, Vec3::ZERO, -1, 2.0)
+        }),
+        ("dust heavy", |e, p, b| e.dust_heavy(p, b, Vec3::ZERO, -1)),
+        ("dust heavy double", |e, p, b| {
+            e.dust_heavy_double(p, b, Vec3::ZERO, 1, 1.0)
+        }),
+        ("dust heavy double rapid", |e, p, b| {
+            e.dust_heavy_double(p, b, Vec3::ZERO, -1, 1.7)
+        }),
+        ("dust expand large", |e, p, b| {
+            e.dust_expand_large(p, b, Vec3::ZERO)
+        }),
+        ("dust dash", |e, p, b| {
+            e.dust_dash(p, b, Vec3::ZERO, -1, 1.5)
+        }),
+        ("sparkle white", |e, p, b| {
+            e.ready_at(p, b, true, effect::script::SPARKLE_WHITE, Vec3::ZERO, 1.0)
+        }),
+        ("sparkle white multi", |e, p, b| {
+            e.ready_at(
+                p,
+                b,
+                true,
+                effect::script::SPARKLE_WHITE_MULTI,
+                Vec3::ZERO,
+                1.0,
+            )
+        }),
+        ("sparkle white multi explode", |e, p, b| {
+            e.ready_at(
+                p,
+                b,
+                true,
+                effect::script::SPARKLE_WHITE_MULTI_EXPLODE,
+                Vec3::ZERO,
+                1.0,
+            )
+        }),
+        ("sparkle white scale", |e, p, b| {
+            e.ready_at(
+                p,
+                b,
+                false,
+                effect::script::SPARKLE_WHITE_SCALE,
+                Vec3::ZERO,
+                0.7,
+            )
+        }),
+        ("thunder amp", |e, p, b| {
+            e.ready_at(p, b, false, effect::script::THUNDER_AMP, Vec3::ZERO, 1.0)
+        }),
+        ("heal sparkles", |e, p, b| {
+            e.ready_at(p, b, true, effect::script::HEAL_SPARKLES, Vec3::ZERO, 1.0)
+        }),
+        ("egg break", |e, p, b| {
+            e.ready_at(p, b, false, effect::script::EGG_BREAK, Vec3::ZERO, 1.0)
+        }),
+        ("music note", |e, p, b| e.music_note(p, b, Vec3::ZERO)),
+        ("flame lr", |e, p, b| e.flame_lr(p, b, Vec3::ZERO, 1)),
+        ("flame random", |e, p, b| e.flame(p, b, Vec3::ZERO, true)),
+        ("flame static", |e, p, b| e.flame(p, b, Vec3::ZERO, false)),
+        ("fura sparkle", |e, p, b| {
+            e.common_at(p, b, true, effect::script::FURA_SPARKLE, Vec3::ZERO)
+        }),
+        ("psionic", |e, p, b| {
+            e.common_at(p, b, false, effect::script::PSIONIC, Vec3::ZERO)
+        }),
+        ("flash small", |e, p, b| {
+            e.common_at(p, b, false, effect::script::FLASH_SMALL, Vec3::ZERO)
+        }),
+        ("flash middle", |e, p, b| {
+            e.common_at(p, b, false, effect::script::FLASH_MIDDLE, Vec3::ZERO)
+        }),
+        ("flash large", |e, p, b| {
+            e.common_at(p, b, false, effect::script::FLASH_LARGE, Vec3::ZERO)
+        }),
+        ("ripple", |e, p, b| {
+            e.generator_at(p, b, effect::script::RIPPLE_GEN, Vec3::ZERO)
+        }),
+        ("kirby star", |e, p, b| {
+            e.generator_at(p, b, effect::script::KIRBY_STAR_GEN, Vec3::ZERO)
         }),
     ];
     for &(name, make) in makers {
@@ -202,7 +289,7 @@ fn a_four_player_melee_stays_inside_the_source_pools() {
             effects: &mut e,
             banks: &banks,
         }
-        .run();
+        .frame();
     }
     println!(
         "melee: {c:?}, structs used max {}, refused {refused}",
@@ -212,4 +299,66 @@ fn a_four_player_melee_stays_inside_the_source_pools() {
     assert!(usize::from(p.used_max) < lb::STRUCTS_NUM);
     assert!(usize::from(c.transforms_max) < lb::TRANSFORMS_NUM);
     let _ = effect::EFFECT_ALLOC_NUM;
+}
+
+/// RE-415: four fighters dashing, landing and trailing dust (a light
+/// cloud and a double heavy one every four frames each), each struck every
+/// eight frames with a heavy spark, a set-off, a slash and the orbs and
+/// sparks, while two are shocked (`ShockSmall` every other frame) and one
+/// quake plays. The particle pools never run out: only the source's own
+/// five-free rule refuses, and the display pool never does.
+#[test]
+fn a_dusty_melee_stays_inside_the_source_pools() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = open(&bytes);
+    let banks = PackBanks {
+        pack: &pack,
+        common: pack.particle_bank(0).unwrap(),
+    };
+    ssb_game::rng::set_seed(1);
+    let mut p = Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut refused_particles = 0;
+    let mut structs_max = 0;
+    let mut displays_max = 0;
+    for frame in 0..240 {
+        for player in 0..4u8 {
+            let at = Vec3::new(f32::from(player) * 300.0, 0.0, 0.0);
+            if frame % 4 == 0 {
+                e.dust_light(&mut p, &banks, at, 1, 1.0);
+                e.dust_heavy_double(&mut p, &banks, at, -1, 1.0);
+                refused_particles +=
+                    usize::from(e.dust_dash(&mut p, &banks, at, 1, 1.0) == lb::NIL);
+            }
+            if frame % 8 == 0 {
+                e.damage_normal_heavy(&mut p, &banks, at, player, 18);
+                e.set_off(&mut p, &banks, at, 18);
+                e.damage_slash(at, 18, 0.0);
+                e.damage_spawn_orbs(at);
+                e.damage_spawn_sparks(at, 1, false);
+            }
+            if player < 2 && frame % 2 == 0 {
+                e.shock_small(at);
+            }
+        }
+        if frame == 0 {
+            e.quake(1);
+        }
+        structs_max = structs_max.max(e.used());
+        displays_max = displays_max.max(e.displays().count());
+        let mut rt = EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &banks,
+        };
+        rt.frame();
+    }
+    println!(
+        "dusty melee: particles max {}, transforms max {}, structs max {structs_max}, displays max {displays_max}, refused {refused_particles}",
+        p.used_max, p.xf_used_num
+    );
+    assert_eq!(refused_particles, 0);
+    assert!(usize::from(p.used_max) < lb::STRUCTS_NUM);
+    assert_eq!(e.displays_refused, 0);
+    assert!(displays_max < effect::DISPLAY_MAX);
 }

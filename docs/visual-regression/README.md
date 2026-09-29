@@ -701,3 +701,17 @@ no random numbers. The new viewer goldens `r2-mario-skeleton`,
 `r2-samus-skeleton` and `r2-kirby-skeleton` (`skeleton NAME`) draw each
 fighter's skeleton set 1 and were seeded from their first capture. The
 other 100 are unchanged. 114 of 114 goldens match twice.
+
+## 2026-09-29 RE-415 fighter effects
+
+No pack change. Fighters now make their motion-script, colour-animation
+and status effects, and hits their slash, orbs and sparks. 27 goldens were
+rebaselined, identical in both captures: 21 Training scenes (for example
+`f1-training-fireball`, 4,556 pixels at 2×, a sparkle at Mario's hand and
+dust at his feet; `-captain`, 9,692, the Falcon Punch's dust and flames;
+`-kirby`, 9,628, landing dust and a star; `-samus-shot`, 7,732, the dash
+dust behind Samus), `f1-training-rebirthblast` (23,380), and the battles
+`f1-vs-cpu`, `-pause`, `-four`, `-team`, `-results` with
+`f1-training-cpu-walk` and `-cpu-jump`, which follow the effects' random
+draws: a seed-isolated build matched `HEAD` isolated the same way in all
+but `f1-vs-cpu`'s spark. The other 87 are unchanged. 114 of 114 match.

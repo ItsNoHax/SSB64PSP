@@ -852,7 +852,7 @@ unsafe fn training_step(
     let groups = stage_map
         .as_ref()
         .map_or(&[][..], |map| map.groups.as_slice());
-    interrupt_pass(p, &stage, groups, pl, dummies, items, controller, !started);
+    interrupt_pass(p, &stage, groups, pl, dummies, items, controller, !started, effects);
     // Priority 4, Ground link: the stage controller.
     {
         let mut empty: [ssb_game::map::MapGroup; 0] = [];
@@ -891,8 +891,20 @@ unsafe fn training_step(
         .as_ref()
         .map_or(&[][..], |map| map.groups.as_slice());
     let mut s = scenes(pl, dummies);
-    physics_pass(p, &stage, groups, &mut s, weapons, items);
+    physics_pass(p, &stage, groups, &mut s, weapons, items, effects);
+    // Priority 3, after the fighters', weapons' and items': the effects'
+    // processes.
+    effects.process();
     hit_pass(p, &stage, groups, &mut s, weapons, items, stage_objects, stage_ctl, effects);
+}
+
+/// Makes every fighter's queued effects (`ssb_game::fteffect`), in port
+/// order, where the process that asked for them ends.
+#[inline(never)]
+fn flush_fighter_effects(s: &mut [Option<&mut play::FighterScene>; 4], effects: &mut dyn ssb_game::effect::HitEffectSink) {
+    for f in s.iter_mut().flatten() {
+        effects.fighter(&mut f.fighter);
+    }
 }
 
 /// Priority 5: every fighter's `ftMainProcUpdateInterrupt`, in port order,
@@ -912,6 +924,7 @@ fn interrupt_pass(
     controller: ControllerState,
     // The VS countdown locks every fighter's control, the CPUs' too.
     locked: bool,
+    effects: &mut dyn ssb_game::effect::HitEffectSink,
 ) {
     // Real jump binding (RE-295): any N64 C-button tap is a
     // real `FTCOMMON_KNEEBEND` button-jump input
@@ -948,6 +961,7 @@ fn interrupt_pass(
         let mut s = scenes(pl, dummies);
         after_interrupt(&mut s, i);
         exchange_from(&mut s, i);
+        flush_fighter_effects(&mut s, effects);
     }
 }
 
@@ -961,6 +975,7 @@ fn physics_pass(
     s: &mut [Option<&mut play::FighterScene>; 4],
     weapons: &mut ssb_game::weapon::WeaponPool,
     items: &mut ssb_game::item::ItemPool,
+    effects: &mut dyn ssb_game::effect::HitEffectSink,
 ) {
     let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, stage, groups);
     for i in 0..s.len() {
@@ -984,6 +999,9 @@ fn physics_pass(
         items.take_requests(&mut f.fighter, map);
         let spawn = f.fighter.take_weapon_spawn();
         exchange_from(s, i);
+        // The motion scripts' effects, made at the end of this fighter's
+        // `ftMainProcPhysicsMap`.
+        flush_fighter_effects(s, effects);
         if let Some(spawn) = spawn {
             weapons.spawn(spawn);
         }
@@ -1124,6 +1142,7 @@ fn hit_pass(
     for i in 0..s.len() {
         exchange_from(s, i);
     }
+    flush_fighter_effects(s, effects);
 }
 
 /// The fighter Training spawns for the player: Fox for the Fox capture
@@ -1572,6 +1591,8 @@ struct Hud {
     particles: alloc::boxed::Box<ssb_game::particle::Particles>,
     /// The effect manager's structs (`efManagerInitEffects`).
     effects: ssb_game::effect::Effects,
+    /// The display effects' players ([`draw_display_effects`]).
+    display_scratch: alloc::boxed::Box<DisplayScratch>,
 }
 
 /// The pause menu's choices at the pause (`sIFCommonBattlePause*`).
@@ -1652,6 +1673,7 @@ fn pause_frame(
 }
 
 impl Hud {
+    #[inline(never)]
     fn new() -> Hud {
         Hud {
             damage: core::array::from_fn(|port| ssb_game::hud::DamageDisplay::new(port, 0)),
@@ -1662,6 +1684,7 @@ impl Hud {
             ko: ssb_game::ko::KoEffects::default(),
             particles: new_particles(),
             effects: ssb_game::effect::Effects::new(0),
+            display_scratch: new_display_scratch(),
         }
     }
 }
@@ -3119,6 +3142,9 @@ struct DrawAssets {
     /// (RE-412).
     dead_explode: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     rebirth_halo: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// The display effects' objects and transform animations (RE-415), by
+    /// [`display_asset`].
+    displays: [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 6],
 }
 
 impl DrawAssets {
@@ -3183,7 +3209,217 @@ impl DrawAssets {
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             dead_explode: ssb_psp_runtime::scene::manager_effect(p, ssb_psp_runtime::scene::DEAD_EXPLODE_EFFECT_KEY),
             rebirth_halo: ssb_psp_runtime::scene::manager_effect(p, ssb_psp_runtime::scene::REBIRTH_HALO_EFFECT_KEY),
+            displays: display_assets(p),
         }
+    }
+}
+
+/// The display effects' `EFDesc` objects (RE-415): the slash
+/// (`llEFCommonEffects1DamageSlashDObjDesc`), the flying orbs, the impact
+/// wave, the common spark (the flying sparks and the Star Rod spark), the
+/// metal dust and the small shock (`llEFCommonEffects2ShockSmallDObjDesc`).
+const DISPLAY_EFFECT_KEYS: [(u32, u32); 6] =
+    [(83, 0x7750), (83, 0x7E80), (83, 0x7C28), (83, 0x8FA0), (83, 0xCAC8), (84, 0x1500)];
+
+/// [`DISPLAY_EFFECT_KEYS`]' objects and transform animations.
+#[inline(never)]
+fn display_assets(p: &Pack<'_>) -> [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 6] {
+    DISPLAY_EFFECT_KEYS.map(|key| {
+        let slot = ssb_rom::effect::MANAGER_EFFECT_KEYS.iter().position(|&k| k == key)?;
+        Some((ssb_psp_runtime::scene::object_keyed(p, key)?, p.effect_anim(slot as u32)))
+    })
+}
+
+/// A display effect's slot in [`DISPLAY_EFFECT_KEYS`], or `None` for one
+/// that draws nothing.
+fn display_asset(kind: ssb_game::effect::DisplayKind) -> Option<usize> {
+    use ssb_game::effect::DisplayKind as K;
+    Some(match kind {
+        K::Slash => 0,
+        K::FlyOrbs => 1,
+        K::ImpactWave => 2,
+        K::FlySparks | K::StarRodSpark => 3,
+        K::FlyMDust => 4,
+        K::ShockSmall => 5,
+        K::SpawnOrbs | K::SpawnSparks | K::SpawnMDust | K::Quake { .. } | K::FireSpark => return None,
+    })
+}
+
+/// A display effect's players, replayed from the start to its clock each
+/// time it is drawn (RE-415): one set on the heap serves every effect.
+struct DisplayScratch {
+    anim: ssb_rom::skeleton::StageAnimator,
+    materials: ssb_rom::skeleton::EffectMaterialAnimator,
+}
+
+/// [`DisplayScratch`], built in place on the heap.
+#[inline(never)]
+fn new_display_scratch() -> alloc::boxed::Box<DisplayScratch> {
+    use core::ptr;
+    let mut b = alloc::boxed::Box::<DisplayScratch>::new_uninit();
+    let p = b.as_mut_ptr();
+    // SAFETY: both fields are written before `assume_init`.
+    unsafe {
+        ptr::addr_of_mut!((*p).anim).write(Default::default());
+        ptr::addr_of_mut!((*p).materials).write(Default::default());
+        b.assume_init()
+    }
+}
+
+/// `func_80010918(.., TRUE)` (matrix kind 40): the effect's `DObj` turned to
+/// face the camera's eye, at its translation. Its X axis is level, its Z
+/// axis points back along the line from the eye.
+fn eye_billboard(pos: ssb_engine::math::Vec3, eye: ssb_engine::math::Vec3) -> ssb_rom::scene::Mat4 {
+    let mut d = pos - eye;
+    let len = d.length();
+    if len > 0.0 {
+        d = d * (1.0 / len);
+    }
+    let r = ssb_engine::math::sqrt(d.x * d.x + d.z * d.z);
+    let (x, y, z) = if r != 0.0 {
+        let inv = 1.0 / r;
+        (
+            [-d.z * inv, 0.0, d.x * inv],
+            [-d.y * d.x * inv, r, -d.y * d.z * inv],
+            [-d.x, -d.y, -d.z],
+        )
+    } else {
+        ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0])
+    };
+    ssb_rom::scene::Mat4([
+        x[0], x[1], x[2], 0.0, //
+        y[0], y[1], y[2], 0.0, //
+        z[0], z[1], z[2], 0.0, //
+        pos.x, pos.y, pos.z, 1.0,
+    ])
+}
+
+fn psp_matrix(m: &ssb_rom::scene::Mat4) -> psp::sys::ScePspFMatrix4 {
+    let v = |c: usize| psp::sys::ScePspFVector4 {
+        x: m.0[c * 4],
+        y: m.0[c * 4 + 1],
+        z: m.0[c * 4 + 2],
+        w: m.0[c * 4 + 3],
+    };
+    psp::sys::ScePspFMatrix4 {
+        x: v(0),
+        y: v(1),
+        z: v(2),
+        w: v(3),
+    }
+}
+
+/// Draws the display effects (RE-415) through the battle camera: each
+/// replays its animations to its clock, then draws under its `EFDesc`'s
+/// matrix kinds. The root of all but the impact wave is kind 40
+/// ([`eye_billboard`]) with its second kind (`RotSca` 0x45, `Sca` or
+/// `RotRpyR`); a flag-1 desc's own `DObj` hangs under it with its kind
+/// (`Sca`, `RotSca` 0x45 or the scale-and-translate 0x44). The impact wave
+/// is a `TraRotRpyRSca` `DObj` in its index's primitive colour.
+#[inline(never)]
+fn draw_display_effects(
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    assets: &DrawAssets,
+    scratch: &mut DisplayScratch,
+    effects: &ssb_game::effect::Effects,
+    eye: ssb_engine::math::Vec3,
+) {
+    use ssb_game::effect::DisplayKind as K;
+    use ssb_rom::scene::Mat4;
+    let ms = meshdraw::MODEL_SCALE;
+    for d in effects.displays() {
+        let Some((object, anim)) = display_asset(d.kind).and_then(|i| assets.displays[i].as_ref()) else {
+            continue;
+        };
+        match anim {
+            Some(anim) => {
+                scratch.anim.start(p, anim);
+                if let Some(script) = p.anim_script(anim) {
+                    for _ in 0..d.ticks {
+                        let _ = scratch.anim.tick(script);
+                    }
+                }
+            }
+            None => scratch.anim = ssb_rom::skeleton::StageAnimator::new(),
+        }
+        scratch.materials.start(p, object_mat_anims(p, object));
+        for _ in 0..d.ticks {
+            scratch.materials.tick(p);
+        }
+        let pose = stage_pose(&scratch.anim, object.first_node);
+        let rot = [d.rotate.x, d.rotate.y, d.rotate.z];
+        let scale = [d.scale.x, d.scale.y, d.scale.z];
+        let world = |x: [f32; 3]| x.map(|v| v / ms);
+        let child = |kind: u8| -> Mat4 {
+            let Some(pose) = pose else {
+                return Mat4::IDENTITY;
+            };
+            match kind {
+                // `Sca`.
+                0 => Mat4::from_trs([0.0; 3], [0.0; 3], pose.scale),
+                // 0x45 `lbCommonRotScaFuncMatrix`.
+                1 => Mat4::from_trs([0.0; 3], pose.rotate, pose.scale),
+                // 0x44 `func_ovl0_800CA024`: scale and translate.
+                _ => Mat4::from_trs(world(pose.translate), [0.0; 3], pose.scale),
+            }
+        };
+        let units = Mat4::from_trs([0.0; 3], [0.0; 3], [ms; 3]);
+        let bill = eye_billboard(d.translate, eye);
+        let mut posed = [Mat4::IDENTITY; 8];
+        let (root, n) = match d.kind {
+            K::ImpactWave => {
+                let s = pose.map_or([1.0; 3], |p| p.scale);
+                let t = [d.translate.x, d.translate.y, d.translate.z];
+                (Mat4::from_trs(t, rot, s).mul(&units), 1)
+            }
+            K::ShockSmall => (bill.mul(&Mat4::from_trs([0.0; 3], rot, scale)).mul(&units), 1),
+            K::Slash => {
+                let n = scratch.anim.compose(p, object, &mut posed);
+                (bill.mul(&Mat4::from_trs([0.0; 3], rot, scale)).mul(&units), n)
+            }
+            K::FlyOrbs => {
+                posed[0] = child(0);
+                (bill.mul(&Mat4::from_trs([0.0; 3], [0.0; 3], scale)).mul(&units), 1)
+            }
+            K::FlySparks => {
+                posed[0] = child(1);
+                (bill.mul(&Mat4::from_trs([0.0; 3], rot, [1.0; 3])).mul(&units), 1)
+            }
+            K::StarRodSpark => {
+                posed[0] = child(1);
+                (bill.mul(&Mat4::from_trs([0.0; 3], rot, scale)).mul(&units), 1)
+            }
+            K::FlyMDust => {
+                posed[0] = child(2);
+                (bill.mul(&Mat4::from_trs([0.0; 3], rot, [1.0; 3])).mul(&units), 1)
+            }
+            _ => continue,
+        };
+        let n = n.min(object.node_count as usize).max(1);
+        if d.kind == K::ImpactWave {
+            let [r, g, b] = ssb_game::effect::IMPACT_WAVE_PRIM[usize::from(d.index.min(4))];
+            draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
+                prim: Some([r, g, b, d.alpha as u8]),
+                env: Some([0, 0, 0, 0xFF]),
+                ..Default::default()
+            });
+        }
+        let base = psp_matrix(&root);
+        unsafe {
+            meshdraw::draw_object_posed(
+                p,
+                object,
+                &base,
+                &posed[..n],
+                None,
+                draw_state,
+                None,
+                Some(&scratch.materials),
+                0,
+            );
+        }
+        draw_state.color_override = None;
     }
 }
 
@@ -3999,6 +4235,14 @@ unsafe fn draw_training(
         effect_visuals,
         &damage_hud.ko,
         fighters.map(|x| x.map(|x| &x.fighter)),
+    );
+    draw_display_effects(
+        p,
+        draw_state,
+        assets,
+        &mut damage_hud.display_scratch,
+        &damage_hud.effects,
+        pl.camera.eye,
     );
     draw_particles(p, pl, damage_hud, draw_state);
     draw_screen_flash(gpu, draw_state, &damage_hud.ko);

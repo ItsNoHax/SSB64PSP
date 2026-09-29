@@ -12,8 +12,8 @@
 //! One script thread is modelled: no script starts a parallel one
 //! (`nGMColEventSetParallelScript`), so `End` always ends the animation.
 //!
-//! The `Effect` events (`ftParamMakeEffect`) and `PlayFGM` are read and
-//! skipped: the port has none of their effect makers (RE-414).
+//! The `Effect` events queue `ftParamMakeEffect` on the fighter
+//! ([`crate::fteffect`], RE-415); `PlayFGM` is read and skipped.
 
 use crate::combat::{Element, HitStatus};
 use crate::fighter::{Fighter, FighterKind};
@@ -193,8 +193,15 @@ impl ColAnim {
     }
 
     /// `ftMainUpdateColAnim`: one frame. Returns `true` when the animation
-    /// ends (its script's `End`, or its `length` running out).
+    /// ends (its script's `End`, or its `length` running out). The
+    /// screen flash's animation runs no `Effect` event.
     pub fn update(&mut self) -> bool {
+        self.update_effects(&mut |_| {})
+    }
+
+    /// [`Self::update`], handing each `Effect` event to `effect` as it is
+    /// read.
+    pub fn update_effects(&mut self, effect: &mut dyn FnMut(ColEffect)) -> bool {
         if self.pc.is_some() && self.timer != 0 {
             self.timer -= 1;
         }
@@ -276,7 +283,8 @@ impl ColAnim {
                 ColEvent::SetLight(x, y) => self.light = Some((f32::from(x), f32::from(y))),
                 ColEvent::ClearLight => self.light = None,
                 ColEvent::SetSkeletonId(id) => self.skeleton_id = id,
-                ColEvent::Effect(_) | ColEvent::PlayFgm => {}
+                ColEvent::Effect(e) => effect(e),
+                ColEvent::PlayFgm => {}
             }
         }
         for (keys, used) in [
@@ -383,7 +391,31 @@ pub fn run_update(f: &mut Fighter) {
     // Every animation `reset_stat_update` starts loops; the cap only keeps
     // a data error from hanging the port.
     for _ in 0..8 {
-        if !f.colanim.update() {
+        let (kind, lr) = (f.kind, f.facing.sign() as i8);
+        let queue = &mut f.effects;
+        let ended = f.colanim.update_effects(&mut |e| {
+            // `ftParamMakeEffect(..., fp->lr, is_item_hold, flag)`.
+            queue.push(crate::fteffect::FighterEffect::Param(
+                crate::fteffect::EffectRequest {
+                    kind: u16::from(e.kind),
+                    joint: crate::fteffect::joint_id(kind, e.joint),
+                    offset: Some(ssb_engine::math::Vec3::new(
+                        f32::from(e.offset[0]),
+                        f32::from(e.offset[1]),
+                        f32::from(e.offset[2]),
+                    )),
+                    scatter: Some(ssb_engine::math::Vec3::new(
+                        f32::from(e.scatter[0]),
+                        f32::from(e.scatter[1]),
+                        f32::from(e.scatter[2]),
+                    )),
+                    lr,
+                    is_scale_pos: e.item_hold,
+                    flag: u16::from(e.flag),
+                },
+            ));
+        });
+        if !ended {
             return;
         }
         reset_stat_update(f);

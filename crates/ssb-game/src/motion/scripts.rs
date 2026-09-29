@@ -520,6 +520,8 @@ pub static MARIO_ATTRS: CombatAttrs = CombatAttrs {
     jostle_width: 112.5,
     jostle_x: 0.0,
     hit_detect_range: [900.0, 450.0, 900.0],
+    effect_joint_ids: [12, 15, 20, 25, 9],
+    joint_itemlight_id: 17,
 };
 
 pub static MARIO: FighterScripts = FighterScripts {
@@ -979,6 +981,8 @@ pub static FOX_ATTRS: CombatAttrs = CombatAttrs {
     jostle_width: 112.5,
     jostle_x: 0.0,
     hit_detect_range: [1100.0, 550.0, 1100.0],
+    effect_joint_ids: [12, 15, 20, 25, 9],
+    joint_itemlight_id: 17,
 };
 
 pub static FOX: FighterScripts = FighterScripts {
@@ -1458,6 +1462,8 @@ pub static DONKEY_ATTRS: CombatAttrs = CombatAttrs {
     jostle_width: 175.0,
     jostle_x: 0.0,
     hit_detect_range: [1200.0, 600.0, 1200.0],
+    effect_joint_ids: [12, 15, 21, 26, 9],
+    joint_itemlight_id: 17,
 };
 
 pub static DONKEY: FighterScripts = FighterScripts {
@@ -1937,6 +1943,8 @@ pub static SAMUS_ATTRS: CombatAttrs = CombatAttrs {
     jostle_width: 115.0,
     jostle_x: 0.0,
     hit_detect_range: [1200.0, 600.0, 1200.0],
+    effect_joint_ids: [13, 16, 28, 33, 9],
+    joint_itemlight_id: 11,
 };
 
 pub static SAMUS: FighterScripts = FighterScripts {
@@ -2378,6 +2386,8 @@ pub static LUIGI_ATTRS: CombatAttrs = CombatAttrs {
     jostle_width: 112.5,
     jostle_x: 0.0,
     hit_detect_range: [900.0, 450.0, 900.0],
+    effect_joint_ids: [12, 15, 20, 25, 9],
+    joint_itemlight_id: 17,
 };
 
 pub static LUIGI: FighterScripts = FighterScripts {
@@ -2865,6 +2875,8 @@ pub static LINK_ATTRS: CombatAttrs = CombatAttrs {
     jostle_width: 112.5,
     jostle_x: 0.0,
     hit_detect_range: [1200.0, 600.0, 1200.0],
+    effect_joint_ids: [23, 14, 27, 32, 9],
+    joint_itemlight_id: 16,
 };
 
 pub static LINK: FighterScripts = FighterScripts {
@@ -3290,6 +3302,8 @@ pub static YOSHI_ATTRS: CombatAttrs = CombatAttrs {
     jostle_width: 175.0,
     jostle_x: 90.0,
     hit_detect_range: [1200.0, 600.0, 1200.0],
+    effect_joint_ids: [7, 16, 23, 28, 12],
+    joint_itemlight_id: 18,
 };
 
 pub static YOSHI: FighterScripts = FighterScripts {
@@ -3769,6 +3783,8 @@ pub static CAPTAIN_ATTRS: CombatAttrs = CombatAttrs {
     jostle_width: 115.0,
     jostle_x: 0.0,
     hit_detect_range: [1200.0, 600.0, 1200.0],
+    effect_joint_ids: [12, 15, 21, 26, 9],
+    joint_itemlight_id: 17,
 };
 
 pub static CAPTAIN: FighterScripts = FighterScripts {
@@ -4374,6 +4390,8 @@ pub static KIRBY_ATTRS: CombatAttrs = CombatAttrs {
     jostle_width: 120.0,
     jostle_x: 0.0,
     hit_detect_range: [800.0, 400.0, 800.0],
+    effect_joint_ids: [6, 16, 22, 27, 11],
+    joint_itemlight_id: 17,
 };
 
 pub static KIRBY: FighterScripts = FighterScripts {
@@ -4799,6 +4817,8 @@ pub static PIKACHU_ATTRS: CombatAttrs = CombatAttrs {
     jostle_width: 115.0,
     jostle_x: 0.0,
     hit_detect_range: [800.0, 400.0, 800.0],
+    effect_joint_ids: [11, 18, 21, 26, 10],
+    joint_itemlight_id: 12,
 };
 
 pub static PIKACHU: FighterScripts = FighterScripts {
@@ -5223,6 +5243,8 @@ pub static PURIN_ATTRS: CombatAttrs = CombatAttrs {
     jostle_width: 120.0,
     jostle_x: 0.0,
     hit_detect_range: [900.0, 450.0, 900.0],
+    effect_joint_ids: [6, 15, 21, 26, 11],
+    joint_itemlight_id: 16,
 };
 
 pub static PURIN: FighterScripts = FighterScripts {
@@ -5660,6 +5682,8 @@ pub static NESS_ATTRS: CombatAttrs = CombatAttrs {
     jostle_width: 112.5,
     jostle_x: 0.0,
     hit_detect_range: [900.0, 900.0, 600.0],
+    effect_joint_ids: [12, 15, 20, 26, 9],
+    joint_itemlight_id: 17,
 };
 
 pub static NESS: FighterScripts = FighterScripts {

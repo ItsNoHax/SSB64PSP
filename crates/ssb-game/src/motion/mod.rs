@@ -13,11 +13,15 @@
 //! `ftMainUpdateMotionEventsForward` does.
 //!
 //! Only commands with gameplay effects act here: attack collisions,
-//! hit statuses, hurtbox edits, the four flags, the aerial-jump commands
-//! and the colour animations ([`crate::colanim`]).
-//! Effects, sounds, rumble, model/texture parts, slope
-//! contours and throw descriptors are decoded and skipped; the ported status
-//! code owns throws.
+//! hit statuses, hurtbox edits, the four flags, the aerial-jump commands,
+//! the colour animations ([`crate::colanim`]) and the effects
+//! ([`crate::fteffect`]). The effects follow the source's two copies of the
+//! scripts: from `ftMainProcUpdateInterrupt` to the end of
+//! `ftMainProcPhysicsMap` (`is_events_forward`) the status scripts skip
+//! them and [`forward_effect`] makes them from the copies after the map
+//! step; a status set outside those passes makes them at once.
+//! Sounds, rumble, model/texture parts, slope contours and throw
+//! descriptors are decoded and skipped; the ported status code owns throws.
 
 mod scripts;
 
@@ -71,6 +75,11 @@ pub struct CombatAttrs {
     pub jostle_x: f32,
     /// `hit_detect_range`: up, down, sideways reach from TopN.
     pub hit_detect_range: [f32; 3],
+    /// `effect_joint_ids`: the joints `ftParamGetEffectJointPosition`
+    /// cycles through for flames, sparks and shocks.
+    pub effect_joint_ids: [u8; 5],
+    /// `joint_itemlight_id`: `ftParamGetJointID`'s `-2`.
+    pub joint_itemlight_id: u8,
 }
 
 /// The fighter's [`CombatAttrs`], or `None` for an unported fighter.
@@ -170,13 +179,31 @@ impl Default for ScriptThread {
     }
 }
 
-/// `FTStruct::motion_scripts[0]` and `motion_vars.flags`.
+/// `FTStruct::motion_scripts` and `motion_vars.flags`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct MotionState {
-    /// `[0]` the status's script, `[1]` a `SetParallelScript` thread.
+    /// `motion_scripts[0]`: `[0]` the status's script, `[1]` a
+    /// `SetParallelScript` thread.
     pub threads: [ScriptThread; 2],
+    /// `motion_scripts[1]`: the copies whose `Effect` events
+    /// `ftMainUpdateMotionEventsForwardEffect` makes at the end of
+    /// `ftMainProcPhysicsMap`.
+    pub effect_threads: [ScriptThread; 2],
+    /// `is_events_forward`: set from `ftMainProcUpdateInterrupt` to the end
+    /// of `ftMainProcPhysicsMap`. While it is set the status scripts skip
+    /// their `Effect` events, which the effect copies make later.
+    pub is_events_forward: bool,
     /// `motion_vars.flags.flag0`..`flag3`.
     pub flags: [u32; 4],
+}
+
+/// How a pass reads the script (`ftMainUpdateMotionEventsAll`,
+/// `...Forward` and `...ForwardEffect`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    All,
+    Forward,
+    ForwardEffect,
 }
 
 /// The fighter's script table, or `None` for an unported fighter.
@@ -233,6 +260,7 @@ pub fn anim_length(kind: FighterKind, status: AnyStatus) -> Option<f32> {
 /// motion (`-1`/`-2`) leaves every thread stopped.
 pub fn start(f: &mut Fighter, frame_begin: f32) {
     f.motion_script.threads = [ScriptThread::default(); 2];
+    f.motion_script.effect_threads = [ScriptThread::default(); 2];
     let Some(desc) = motion_desc(f.kind, f.status.status) else {
         return;
     };
@@ -242,7 +270,14 @@ pub fn start(f: &mut Fighter, frame_begin: f32) {
         wait: speed - frame_begin,
         ..ScriptThread::default()
     };
-    run_all(f, frame_begin != 0.0);
+    f.motion_script.effect_threads[0] = f.motion_script.threads[0];
+    if frame_begin != 0.0 {
+        run_all(f, Pass::Forward);
+        // `ftMainUpdateMotionEventsForward` always copies.
+        f.motion_script.effect_threads = f.motion_script.threads;
+    } else {
+        advance(f);
+    }
     // `ftMainSetStatus`: a status that starts at frame 0 also runs a frame
     // of its colour animation.
     if frame_begin == 0.0 {
@@ -253,12 +288,40 @@ pub fn start(f: &mut Fighter, frame_begin: f32) {
 /// `ftMainUpdateMotionEventsAll`: one frame of every running thread. Call
 /// once per frame outside hitlag, after the animation clock advances.
 pub fn advance(f: &mut Fighter) {
-    run_all(f, false);
+    run_all(f, Pass::All);
+    if !f.motion_script.is_events_forward {
+        f.motion_script.effect_threads = f.motion_script.threads;
+    }
 }
 
-fn run_all(f: &mut Fighter, forward: bool) {
+/// `ftMainUpdateMotionEventsForwardEffect`: the effect copies run their
+/// flow and `Effect` events only. `ftMainProcPhysicsMap` runs it outside
+/// hitlag, after `proc_map`; `ftMainSetStatus` before a new status's
+/// scripts while the frame's passes run.
+pub fn forward_effect(f: &mut Fighter) {
+    run_all(f, Pass::ForwardEffect);
+}
+
+/// The end of `ftMainProcPhysicsMap`: the effect copies' pass outside
+/// hitlag, then `is_events_forward = FALSE`.
+pub fn end_physics(f: &mut Fighter) {
+    if !f.is_in_hitlag() {
+        forward_effect(f);
+    }
+    f.motion_script.is_events_forward = false;
+}
+
+fn run_all(f: &mut Fighter, pass: Pass) {
     for thread in 0..2 {
-        run(f, thread, forward);
+        run(f, thread, pass);
+    }
+}
+
+fn thread_mut(f: &mut Fighter, pass: Pass, thread: usize) -> &mut ScriptThread {
+    if pass == Pass::ForwardEffect {
+        &mut f.motion_script.effect_threads[thread]
+    } else {
+        &mut f.motion_script.threads[thread]
     }
 }
 
@@ -267,7 +330,7 @@ fn sign(value: u32, bits: u32) -> i32 {
     ((value << shift) as i32) >> shift
 }
 
-fn run(f: &mut Fighter, thread: usize, forward: bool) {
+fn run(f: &mut Fighter, thread: usize, pass: Pass) {
     let Some(table) = fighter_scripts(f.kind) else {
         return;
     };
@@ -275,7 +338,7 @@ fn run(f: &mut Fighter, thread: usize, forward: bool) {
     let speed = f.status.timing.anim_speed;
     let anim_frame = f.status.anim_frame;
     {
-        let t = &mut f.motion_script.threads[thread];
+        let t = thread_mut(f, pass, thread);
         if t.pc == NO_SCRIPT {
             return;
         }
@@ -286,57 +349,82 @@ fn run(f: &mut Fighter, thread: usize, forward: bool) {
     // A script that loops without waiting would hang the original too; the
     // cap only keeps a data error from hanging the port.
     for _ in 0..4096 {
-        let t = f.motion_script.threads[thread];
+        let t = *thread_mut(f, pass, thread);
         let (words, base) = if t.pc != NO_SCRIPT && t.pc & COMMON_BIT != 0 {
             (&scripts::COMMON_MOVESET_WORDS[..], COMMON_BIT)
         } else {
             (words, 0)
         };
         if t.pc == NO_SCRIPT || (t.pc - base) as usize >= words.len() {
-            f.motion_script.threads[thread].pc = NO_SCRIPT;
+            thread_mut(f, pass, thread).pc = NO_SCRIPT;
             return;
         }
         if t.wait == f32::MAX {
             if speed <= anim_frame {
                 return;
             }
-            f.motion_script.threads[thread].wait = -anim_frame;
+            thread_mut(f, pass, thread).wait = -anim_frame;
         } else if t.wait > 0.0 {
             return;
         }
         let pc = (t.pc - base) as usize;
         let w = words[pc];
         let opcode = w >> 26;
-        let skip = forward
-            && matches!(
-                opcode,
-                op::MAKE_ATTACK_COLL
-                    | op::MAKE_ATTACK_COLL_SCALED
-                    | op::SET_ATTACK_COLL_OFFSET
-                    | op::CLEAR_ATTACK_COLL_ID
-                    | op::CLEAR_ATTACK_COLL_ALL
-                    | op::SET_ATTACK_COLL_DAMAGE
-                    | op::SET_ATTACK_COLL_SIZE
-                    | op::SET_ATTACK_COLL_SOUND_LEVEL
-                    | op::REFRESH_ATTACK_COLL_ID
-                    | op::SET_FLAG0
-                    ..=23
-                        | op::SET_AIR_JUMP_ADD
-                        | op::SET_AIR_JUMP_MAX
-                        | op::SET_COL_ANIM
-                        | op::RESET_COL_ANIM
-            );
+        let is_effect = matches!(opcode, op::EFFECT | op::EFFECT_ITEM_HOLD);
+        let skip = match pass {
+            Pass::All => is_effect && f.motion_script.is_events_forward,
+            Pass::Forward => {
+                is_effect
+                    || matches!(
+                        opcode,
+                        op::MAKE_ATTACK_COLL
+                            | op::MAKE_ATTACK_COLL_SCALED
+                            | op::SET_ATTACK_COLL_OFFSET
+                            | op::CLEAR_ATTACK_COLL_ID
+                            | op::CLEAR_ATTACK_COLL_ALL
+                            | op::SET_ATTACK_COLL_DAMAGE
+                            | op::SET_ATTACK_COLL_SIZE
+                            | op::SET_ATTACK_COLL_SOUND_LEVEL
+                            | op::REFRESH_ATTACK_COLL_ID
+                            | op::SET_FLAG0
+                            ..=23
+                                | op::SET_AIR_JUMP_ADD
+                                | op::SET_AIR_JUMP_MAX
+                                | op::SET_COL_ANIM
+                                | op::RESET_COL_ANIM
+                    )
+            }
+            Pass::ForwardEffect => {
+                !(is_effect
+                    || matches!(
+                        opcode,
+                        op::END
+                            | op::SYNC_WAIT
+                            | op::ASYNC_WAIT
+                            | op::SET_DAMAGE_THROWN
+                            | op::LOOP_BEGIN
+                            | op::LOOP_END
+                            | op::SUBROUTINE
+                            | op::RETURN
+                            | op::GOTO
+                            | op::PAUSE_SCRIPT
+                    ))
+            }
+        };
         if skip {
-            f.motion_script.threads[thread].pc += command_words(opcode);
+            thread_mut(f, pass, thread).pc += command_words(opcode);
             continue;
         }
-        execute(f, thread, words, base, pc, w, opcode, anim_frame, speed);
+        execute(
+            f, pass, thread, words, base, pc, w, opcode, anim_frame, speed,
+        );
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn execute(
     f: &mut Fighter,
+    pass: Pass,
     thread: usize,
     words: &'static [u32],
     base: u32,
@@ -351,11 +439,11 @@ fn execute(
     let word = |i: usize| words.get(pc + i).copied().unwrap_or(0);
     match opcode {
         op::END => {
-            f.motion_script.threads[thread].pc = NO_SCRIPT;
+            thread_mut(f, pass, thread).pc = NO_SCRIPT;
             return;
         }
-        op::SYNC_WAIT => f.motion_script.threads[thread].wait += value as f32,
-        op::ASYNC_WAIT => f.motion_script.threads[thread].wait = value as f32 - anim_frame,
+        op::SYNC_WAIT => thread_mut(f, pass, thread).wait += value as f32,
+        op::ASYNC_WAIT => thread_mut(f, pass, thread).wait = value as f32 - anim_frame,
         op::MAKE_ATTACK_COLL | op::MAKE_ATTACK_COLL_SCALED => {
             make_attack_coll(f, [w, word(1), word(2), word(3), word(4)], opcode);
         }
@@ -448,7 +536,7 @@ fn execute(
             crate::hurtbox::modify_damage_coll(f, joint, offset, size);
         }
         op::LOOP_BEGIN => {
-            let t = &mut f.motion_script.threads[thread];
+            let t = thread_mut(f, pass, thread);
             if t.script_id + 2 <= STACK_MAX {
                 t.p_goto[t.script_id] = next;
                 t.loop_count[t.script_id] = value as i32;
@@ -456,7 +544,7 @@ fn execute(
             }
         }
         op::LOOP_END => {
-            let t = &mut f.motion_script.threads[thread];
+            let t = thread_mut(f, pass, thread);
             if t.script_id >= 2 {
                 let slot = t.script_id - 2;
                 t.loop_count[slot] -= 1;
@@ -469,7 +557,7 @@ fn execute(
         }
         op::SUBROUTINE => {
             let target = word(1);
-            let t = &mut f.motion_script.threads[thread];
+            let t = thread_mut(f, pass, thread);
             if target == NO_SCRIPT || t.script_id >= STACK_MAX {
                 // An item moveset outside this file: nothing of it runs.
                 t.pc = next;
@@ -481,7 +569,7 @@ fn execute(
             return;
         }
         op::RETURN => {
-            let t = &mut f.motion_script.threads[thread];
+            let t = thread_mut(f, pass, thread);
             if t.script_id == 0 {
                 t.pc = NO_SCRIPT;
                 return;
@@ -491,10 +579,35 @@ fn execute(
             return;
         }
         op::GOTO => {
-            f.motion_script.threads[thread].pc = word(1);
+            thread_mut(f, pass, thread).pc = word(1);
             return;
         }
-        op::PAUSE_SCRIPT => f.motion_script.threads[thread].wait = f32::MAX,
+        op::PAUSE_SCRIPT => thread_mut(f, pass, thread).wait = f32::MAX,
+        op::EFFECT | op::EFFECT_ITEM_HOLD => {
+            // `fp->is_effect_skip` is only set in Mushroom Kingdom's pipes.
+            let (w2, w3, w4) = (word(1), word(2), word(3));
+            let joint = crate::fteffect::joint_id(f.kind, sign((w >> 19) & 0x7F, 7) as i8);
+            crate::fteffect::request(
+                f,
+                crate::fteffect::EffectRequest {
+                    kind: ((w >> 10) & 0x1FF) as u16,
+                    joint,
+                    offset: Some(Vec3::new(
+                        sign(w2 >> 16, 16) as f32,
+                        sign(w2 & 0xFFFF, 16) as f32,
+                        sign(w3 >> 16, 16) as f32,
+                    )),
+                    scatter: Some(Vec3::new(
+                        sign(w3 & 0xFFFF, 16) as f32,
+                        sign(w4 >> 16, 16) as f32,
+                        sign(w4 & 0xFFFF, 16) as f32,
+                    )),
+                    lr: f.facing.sign() as i8,
+                    is_scale_pos: opcode == op::EFFECT_ITEM_HOLD,
+                    flag: (w & 0x3FF) as u16,
+                },
+            );
+        }
         op::SET_COL_ANIM => {
             // `ftMotionCommandSetColAnim(id, length)`: 8-bit id, 18-bit length.
             let id = crate::colanim::ColAnimId(((w >> 18) & 0xFF) as u8);
@@ -509,11 +622,12 @@ fn execute(
                     wait: speed - anim_frame,
                     ..ScriptThread::default()
                 };
+                f.motion_script.effect_threads[1] = f.motion_script.threads[1];
             }
         }
         _ => {}
     }
-    f.motion_script.threads[thread].pc = next;
+    thread_mut(f, pass, thread).pc = next;
 }
 
 /// `nFTMotionEventMakeAttackColl`: a new slot, or a slot whose group
