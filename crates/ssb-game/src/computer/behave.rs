@@ -85,11 +85,15 @@ pub struct World<'a, F> {
     pub stage: StageBounds,
     /// `gSCManagerBattleState->gkind`.
     pub gkind: Option<u8>,
-    /// Every fighter on another team.
+    /// Every fighter on another team ([`is_opponent`]).
     pub opponents: &'a [Opponent],
     /// Live item attacks that can hit this fighter: position and size.
+    /// `ftComputerCheckTargetItemOrTwister` and `func_ovl3_80135B78` skip
+    /// the CPU's own and, with team attack off, its team's
+    /// ([`crate::team::TeamRules::spares`]).
     pub item_attacks: &'a [(Vec2, f32)],
-    /// Other fighters' live weapons.
+    /// Other fighters' live weapons, less its team's with team attack off
+    /// (`func_ovl3_80135B78`).
     pub weapon_threats: &'a [WeaponThreat],
     /// `grHyruleTwisterCheckGetPosition`.
     pub twister: Option<Vec2>,
@@ -138,6 +142,16 @@ pub fn opponent(f: &Fighter) -> Opponent {
         tvel_base: f.attributes.tvel_base,
         gravity: f.attributes.gravity,
     }
+}
+
+/// Whether `other` belongs in `this` CPU's [`World::opponents`]: the
+/// fighter walks of `ftComputerCheckFindTarget`,
+/// `ftComputerCheckEvadeDistance`, `ftComputerWaitGetTarget`,
+/// `func_ovl3_80135B78` and `ftComputerCheckSetEvadeTarget` skip the CPU
+/// itself and every fighter with its `team`. They test no battle rule: a
+/// free-for-all's teams are the ports, so there only the CPU is skipped.
+pub fn is_opponent(this: &Fighter, other: &Fighter) -> bool {
+    other.port != this.port && other.team != this.team
 }
 
 /// Whether a status is at or past `nFTCommonStatusWait`: a fighter in play.

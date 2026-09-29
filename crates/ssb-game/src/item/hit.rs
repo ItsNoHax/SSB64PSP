@@ -18,6 +18,7 @@ use super::{
 };
 use crate::combat::{self, AttackState, HitLogEntry, HitSource, HitStatus};
 use crate::fighter::Fighter;
+use crate::team::TeamRules;
 
 /// An item attack's swept segment: a new or one-frame-old attack tests its
 /// position only.
@@ -67,6 +68,7 @@ fn victim_lr(attacker_vel_x: f32, attacker_x: f32, victim_x: f32) -> f32 {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Attacker {
     pub owner: Option<u8>,
+    pub team: u8,
     pub player: Option<u8>,
     pub handicap: u8,
 }
@@ -93,6 +95,7 @@ pub(crate) fn queue_damage(
         victim.damage_lr = lr;
         victim.damage_by = by.owner;
         victim.damage_port = by.player;
+        victim.damage_team = by.team;
         victim.damage_handicap = by.handicap;
     }
     // `is_allow_knockback` is never set for the ported kinds.
@@ -127,11 +130,12 @@ impl ItemPool {
             return;
         }
         let order = self.order;
+        let rules = self.team_rules;
         for &slot in &order[..self.order_len] {
             let Some(mut item) = self.slots[usize::from(slot)] else {
                 continue;
             };
-            let landed = search_item_on_fighter(&mut item, slot, f);
+            let landed = search_item_on_fighter(&mut item, slot, f, rules);
             if landed {
                 if let Some(player) = item.player {
                     if player != f.port {
@@ -165,7 +169,7 @@ impl ItemPool {
             }
             let id = ITEM_RECORD_BASE + slot;
             for f in fighters.iter_mut() {
-                fighter_attacks_item(f, &mut item, id);
+                fighter_attacks_item(f, &mut item, id, self.team_rules);
             }
             self.slots[usize::from(slot)] = Some(item);
             self.items_attack_item(n);
@@ -200,6 +204,9 @@ impl ItemPool {
             if this.owner == other.owner && !this.is_damage_all {
                 continue;
             }
+            if self.team_rules.spares(this.team, other.team) && !this.is_damage_all {
+                continue;
+            }
             if other.attack.state == AttackState::Off
                 || other.attack.interact_mask & INTERACT_ITEM == 0
                 || !other.attack.record(this_id).is_clear()
@@ -211,6 +218,7 @@ impl ItemPool {
                 && this.attack.can_setoff
                 && other.attack.can_setoff
                 && this.owner != other.owner
+                && !self.team_rules.spares(this.team, other.team)
                 && this.attack.state != AttackState::Off
                 && this.attack.interact_mask & INTERACT_ITEM != 0
                 && this.attack.record(other_id).is_clear()
@@ -293,6 +301,7 @@ fn update_damage_stat_item(attack: &mut Item, defend: &mut Item, defend_id: u8) 
         lr,
         Attacker {
             owner: attack.owner,
+            team: attack.team,
             player: attack.player,
             handicap: attack.handicap,
         },
@@ -301,11 +310,16 @@ fn update_damage_stat_item(attack: &mut Item, defend: &mut Item, defend_id: u8) 
 
 /// `itProcessSearchHitFighter` for one fighter: its live attacks that reach
 /// the item's situation and have not recorded it test the damage box.
-fn fighter_attacks_item(f: &mut Fighter, item: &mut Item, id: u8) {
+fn fighter_attacks_item(f: &mut Fighter, item: &mut Item, id: u8, rules: TeamRules) {
     if item.damage_coll.interact_mask & INTERACT_FIGHTER == 0 {
         return;
     }
     if item.owner == Some(f.port) && !item.is_damage_all {
+        return;
+    }
+    // Team attack off: a fighter, or one its teammate threw, spares its
+    // team's items.
+    if rules.spares(combat::hit_team(f), item.team) && !item.is_damage_all {
         return;
     }
     if f.grab.is_catchstatus {
@@ -346,6 +360,7 @@ fn fighter_attacks_item(f: &mut Fighter, item: &mut Item, id: u8) {
                 lr,
                 Attacker {
                     owner: Some(f.port),
+                    team: f.team,
                     player: Some(f.port),
                     handicap: f.handicap,
                 },
@@ -379,9 +394,10 @@ fn update_attack_stat_fighter(
 
 /// `ftMainSearchHitItem` for one item. Returns whether its hit registered
 /// damage (the stale-queue update).
-fn search_item_on_fighter(item: &mut Item, slot: u8, f: &mut Fighter) -> bool {
+fn search_item_on_fighter(item: &mut Item, slot: u8, f: &mut Fighter, rules: TeamRules) -> bool {
     let id = ITEM_RECORD_BASE + slot;
     if item.owner == Some(f.port)
+        || rules.spares(f.team, item.team)
         || item.attack.state == AttackState::Off
         || item.attack.interact_mask & INTERACT_FIGHTER == 0
         || !item.attack.record(f.port).is_clear()
@@ -391,9 +407,11 @@ fn search_item_on_fighter(item: &mut Item, slot: u8, f: &mut Fighter) -> bool {
     let reflector = combat::reflector(f);
     let is_reflect = reflector.is_some();
     let throw_port = combat::throw_port(f);
+    let thrown_spares = combat::throw_team(f)
+        .is_some_and(|throw_team| throw_port == item.owner || rules.spares(throw_team, item.team));
     if item.attack.can_setoff
         && !f.grab.is_catchstatus
-        && (throw_port.is_none() || throw_port != item.owner)
+        && !thrown_spares
         && (!is_reflect || !item.attack.can_reflect)
     {
         let item_air = item.ga == Ga::Air;

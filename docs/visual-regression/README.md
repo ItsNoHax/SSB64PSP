@@ -177,6 +177,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `vsnocontest`) | `f1-vs-no-contest` | A VS battle reset from the pause menu: the no-contest results, two level unlit slots | RE-400 |
 | `golden_capture` (`psp-game`, scene `vsplayers`) | `f1-vs-players` | The VS character select as plain slots: Yoshi placed, a CPU opened in port 2 | RE-404 |
 | `golden_capture` (`psp-game`, scene `vs4`) | `f1-vs-four` | Mario against three CPUs (Fox, Donkey Kong, Kirby) on Dream Land at tick 870, four damage displays | RE-405 |
+| `golden_capture` (`psp-game`, scene `vsteam`) | `f1-vs-team` | A team battle on Dream Land at tick 940: Mario and Kirby (red) against Fox and Donkey Kong (blue) in team costumes and emblem colours, Kirby's attack passing through Mario | RE-407 |
 | `golden_capture` (`psp-game`, scene `rebirth`) | `f1-training-rebirth` | Mario after a KO below Dream Land, standing at the rebirth point in `RebirthStand` (the halo is not drawn) | RE-388 |
 | `golden_capture` (`psp-game`, scene `fighterselect`) | `f1-training-fighter-select` | Kirby placed on the character select, then Peach's Castle on the stage select; Kirby and a Mario dummy standing on the castle | RE-386 |
 | `golden_capture` (`psp-game`, scene `stageselect`) | `f1-training-stage-select` | Mario and the dummy standing on Hyrule Castle, picked on the stage select; every other `psp-game` scene skips the select and loads Dream Land | RE-385 |
@@ -618,3 +619,9 @@ goldens match twice.
 Pack v63. The battle camera now frames every fighter, so 39 Training and
 VS goldens were rebaselined, each captured twice; scenes whose dummy sat
 inside the player's box are unchanged. 108 of 108 goldens match twice.
+
+## 2026-09-29 RE-407 team battles
+
+Pack v63. The team rule is inert in a free-for-all and in Training, so
+all 108 goldens are unchanged. The new `f1-vs-team` golden was identical
+in both captures. 109 of 109 goldens match twice.

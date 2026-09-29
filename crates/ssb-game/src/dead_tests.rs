@@ -157,6 +157,7 @@ fn a_rebirth_starts_at_the_top_and_resets_the_fighter() {
     let mut f = mario();
     f.damage = 120;
     f.costume = 2;
+    f.team = 3;
     f.facing = Facing::Left;
     f.pos.y = -2001.0;
     check(&mut f);
@@ -165,6 +166,7 @@ fn a_rebirth_starts_at_the_top_and_resets_the_fighter() {
     assert_eq!(f.pos, Vec3::new(100.0 - 1000.0, 3000.0, 0.0));
     assert_eq!(f.damage, 0);
     assert_eq!(f.costume, 2);
+    assert_eq!(f.team, 3);
     assert_eq!(f.facing, Facing::Left);
     assert_eq!(f.situation, Situation::Ground);
     assert!(f.dead.is_ghost && f.dead.is_rebirth && !f.is_invisible);

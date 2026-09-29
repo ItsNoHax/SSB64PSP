@@ -537,6 +537,7 @@ fn make_cutter(f: &mut Fighter) {
             grounded: f.is_grounded(),
         },
         owner_port: f.port,
+        team: f.team,
         stale: crate::stale::WeaponStale::of(f),
         position,
         facing: lr,

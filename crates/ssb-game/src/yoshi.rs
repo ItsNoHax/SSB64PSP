@@ -289,6 +289,7 @@ fn update_egg(f: &mut Fighter) {
                     stick_x: f.input.stick_x,
                 },
                 owner_port: f.port,
+                team: f.team,
                 stale: crate::stale::WeaponStale::of(f),
                 position: f.joint_world(EGGTHROW_JOINT, Vec3::ZERO),
                 facing: f.facing.sign(),
@@ -359,6 +360,7 @@ fn make_stars(f: &mut Fighter) {
     f.weapon_spawn = Some(WeaponSpawn {
         kind: WeaponKind::YoshiStars,
         owner_port: f.port,
+        team: f.team,
         stale: crate::stale::WeaponStale::of(f),
         position: f.joint_world(0, Vec3::ZERO),
         facing: f.facing.sign(),

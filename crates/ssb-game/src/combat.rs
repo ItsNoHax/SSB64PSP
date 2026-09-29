@@ -33,6 +33,7 @@ use crate::attack;
 use crate::fighter::{Fighter, FighterKind, JointTransform};
 use crate::stale::MotionAttackId;
 use crate::status::{self, AnyStatus, Status};
+use crate::team::TeamRules;
 
 /// `GMHitStatus`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -652,6 +653,17 @@ pub(crate) fn throw_port(f: &Fighter) -> Option<u8> {
     }
 }
 
+/// `FTStruct::throw_team`, while [`throw_port`] is set.
+pub(crate) fn throw_team(f: &Fighter) -> Option<u8> {
+    throw_port(f).map(|_| f.kirby_capture.thrower_team)
+}
+
+/// `(fp->throw_gobj != NULL) ? fp->throw_team : fp->team`: the team a
+/// thrown fighter's attacks count for.
+pub(crate) fn hit_team(f: &Fighter) -> u8 {
+    throw_team(f).unwrap_or(f.team)
+}
+
 /// `FTStruct::is_catchstatus`: a catch status's collisions only grab.
 pub fn is_catchstatus(f: &Fighter) -> bool {
     f.grab.is_catchstatus
@@ -819,12 +831,22 @@ pub(crate) fn set_hit_rebound(fp: &mut Fighter, coll: &AttackColl, victim_x: f32
 /// `ftMainSearchHitFighter` for one attacker: `other`'s attack collisions
 /// against `this`. `other_after_this` is the fighter-list order; only then do
 /// the two fighters' attacks trade priority, so each pair clanks once.
-pub fn search_fighter_hits(this: &mut Fighter, other: &mut Fighter, other_after_this: bool) {
+pub fn search_fighter_hits(
+    this: &mut Fighter,
+    other: &mut Fighter,
+    other_after_this: bool,
+    rules: TeamRules,
+) {
     // `ftMainProcSearchHitAll` skips a ghost victim.
     if this.dead.is_ghost {
         return;
     }
-    if this.port == other.port || this.grab.capture == Some(other.port) || is_catchstatus(other) {
+    if this.port == other.port || this.grab.capture == Some(other.port) {
+        return;
+    }
+    // Team attack off: a teammate's attacks, or those of a fighter a
+    // teammate threw, pass through.
+    if rules.spares(hit_team(other), this.team) || is_catchstatus(other) {
         return;
     }
     // A thrown star never hits the fighter that threw it.
@@ -847,7 +869,9 @@ pub fn search_fighter_hits(this: &mut Fighter, other: &mut Fighter, other_after_
         && other.is_grounded()
         && this.is_grounded()
         && !is_catchstatus(this)
-        && throw_port(this) != Some(other.port)
+        && throw_team(this).is_none_or(|team| {
+            throw_port(this) != Some(other.port) && !rules.spares(hit_team(other), team)
+        })
     {
         let mut attack_detect = [false; 4];
         let other_air = !other.is_grounded();
@@ -1541,14 +1565,14 @@ pub fn resolve(f: &mut Fighter) -> bool {
 /// Runs the whole pipeline for a set of fighters and returns, per fighter,
 /// whether its own attack landed (`proc_hit`). Weapons must be applied
 /// between the searches and [`finish_frame`]; this helper is for callers
-/// without a weapon pool.
+/// without a weapon pool, and runs a free-for-all.
 pub fn resolve_frame(fighters: &mut [&mut Fighter]) -> [bool; 4] {
-    search_all(fighters);
+    search_all(fighters, TeamRules::FREE_FOR_ALL);
     finish_frame(fighters)
 }
 
 /// The search pass: attack positions, then every pair.
-pub fn search_all(fighters: &mut [&mut Fighter]) {
+pub fn search_all(fighters: &mut [&mut Fighter], rules: TeamRules) {
     for f in fighters.iter_mut() {
         update_attack_positions(f);
     }
@@ -1559,7 +1583,7 @@ pub fn search_all(fighters: &mut [&mut Fighter]) {
                 continue;
             }
             let (a, b) = pair_mut(fighters, this, other);
-            search_fighter_hits(a, b, other > this);
+            search_fighter_hits(a, b, other > this, rules);
         }
     }
 }

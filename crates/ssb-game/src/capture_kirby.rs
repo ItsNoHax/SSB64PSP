@@ -67,6 +67,8 @@ pub struct CaptureKirbyState {
     pub flag2: u8,
     /// `throw_gobj`: the Kirby that spat this star, which it never hits.
     pub thrower: Option<u8>,
+    /// `throw_team`: that Kirby's team (`ftParamSetThrowParams`).
+    pub thrower_team: u8,
     /// `ftParamSetHitStatusAll(nGMHitStatusIntangible)`.
     pub intangible: bool,
 }
@@ -202,7 +204,7 @@ fn escape_breakout(f: &mut Fighter, holder: Holder) {
 
 /// `ftCommonThrownKirbyStarSetStatus` / `ftCommonThrownCopyStarSetStatus`
 /// and their `proc_status`: the victim leaves the link at `vel`.
-pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, thrower: u8) {
+pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, thrower: u8, thrower_team: u8) {
     let is_kirby = f.kirby_capture.is_kirby;
     grab::lose_grip(f);
     f.become_airborne();
@@ -235,6 +237,7 @@ pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, thrower: u8) {
         flag1: if copy { 10 } else { 30 },
         flag2: if copy { 1 } else { 2 },
         thrower: Some(thrower),
+        thrower_team,
         intangible: true,
     };
     if !copy {
@@ -378,7 +381,7 @@ mod tests {
             (crate::fighter::FighterKind::Yoshi, 25),
         ] {
             let mut f = Fighter::new(kind, 1, 3);
-            set_star(&mut f, false, Vec3::new(40.0, 0.0, 0.0), 0);
+            set_star(&mut f, false, Vec3::new(40.0, 0.0, 0.0), 0, 0);
             let live: std::vec::Vec<_> = f
                 .attack_colls
                 .iter()
@@ -400,7 +403,7 @@ mod tests {
     #[test]
     fn spit_star_travels_decelerates_then_pops_out() {
         let mut f = Fighter::new(FighterKind::Mario, 1, 4);
-        set_star(&mut f, false, Vec3::new(120.0, 0.0, 0.0), 0);
+        set_star(&mut f, false, Vec3::new(120.0, 0.0, 0.0), 0, 0);
         assert!(is_intangible(&f));
         apply_air_physics(&mut f);
         assert_eq!(f.physics.vel_air.x, 116.0);
@@ -427,7 +430,7 @@ mod tests {
         f.kirby_capture.is_kirby = true;
         // The copy star keeps the capture's breakout count.
         f.grab.breakout_wait = 400;
-        set_star(&mut f, true, Vec3::new(-26.0, 96.0, 0.0), 0);
+        set_star(&mut f, true, Vec3::new(-26.0, 96.0, 0.0), 0, 0);
         for _ in 0..10 {
             apply_air_physics(&mut f);
         }

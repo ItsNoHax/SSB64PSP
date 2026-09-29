@@ -5331,6 +5331,7 @@ fn update_extended(f: &mut Fighter) {
                 f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
                     kind,
                     owner_port: f.port,
+                    team: f.team,
                     stale: crate::stale::WeaponStale::of(f),
                     // `ftMarioSpecialNProcAccessory` asks the runtime for
                     // Mario joint 16's world position. Host-only gameplay
@@ -5411,6 +5412,7 @@ fn update_extended(f: &mut Fighter) {
                 f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
                     kind: crate::weapon::WeaponKind::FoxBlaster,
                     owner_port: f.port,
+                    team: f.team,
                     stale: crate::stale::WeaponStale::of(f),
                     position: f.weapon_spawn_anchor.unwrap_or(ssb_engine::math::Vec3::new(
                         f.pos.x + 60.0 * f.facing.sign(),
@@ -7599,6 +7601,7 @@ mod tests {
             Some(crate::weapon::WeaponSpawn {
                 kind: crate::weapon::WeaponKind::MarioFireball,
                 owner_port: 0,
+                team: 0,
                 stale,
                 position: Vec3::ZERO,
                 facing: -1.0,

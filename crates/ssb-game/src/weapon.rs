@@ -120,6 +120,8 @@ pub enum WeaponKind {
 pub struct WeaponSpawn {
     pub kind: WeaponKind,
     pub owner_port: u8,
+    /// `wp->team`: the owner's team (`wpManagerMakeWeapon`).
+    pub team: u8,
     pub position: Vec3,
     /// The owner's left/right direction at the motion-script event.
     pub facing: f32,
@@ -1515,6 +1517,11 @@ pub struct WeaponPool {
     next_group: u16,
     /// Each slot's [`WeaponSpawn::stale`].
     stale: [crate::stale::WeaponStale; MAX_WEAPONS],
+    /// Each slot's `wp->team`: its [`WeaponSpawn::team`], a parent weapon's
+    /// for a trail, and its reflector's once reflected.
+    teams: [u8; MAX_WEAPONS],
+    /// The battle's team-attack rule ([`crate::team`]).
+    pub team_rules: crate::team::TeamRules,
     /// A slot's hit that registered damage this frame, as `(owner port,
     /// motion)`, for [`Self::record_landed`].
     landed: [Option<(u8, crate::stale::MotionAttackId, u16)>; MAX_WEAPONS],
@@ -1726,13 +1733,16 @@ enum PreHit {
 
 /// `ftMainSearchHitWeapon` up to the shield: the attack-versus-weapon clank,
 /// then the reflector and absorber special collisions. `damage` is the
-/// weapon's staled damage and `slot` identifies it in attack records.
+/// weapon's staled damage and `slot` identifies it in attack records;
+/// `team` is the weapon's.
 #[allow(clippy::too_many_arguments)]
 fn pre_hit(
     defender: &mut Fighter,
     flags: WeaponFlags,
     grounded: bool,
     owner: u8,
+    team: u8,
+    rules: crate::team::TeamRules,
     slot: usize,
     hitbox: Hitbox,
     position: Vec3,
@@ -1748,9 +1758,14 @@ fn pre_hit(
         owner: Some(owner),
     };
     let reflector = crate::combat::reflector(defender).filter(|_| flags.can_reflect);
+    // A thrown fighter's attacks do not meet its thrower's weapons, nor,
+    // with team attack off, its thrower's teammates'.
+    let thrown_spares = crate::combat::throw_team(defender).is_some_and(|throw_team| {
+        crate::combat::throw_port(defender) == Some(owner) || rules.spares(throw_team, team)
+    });
     if flags.can_setoff
         && !defender.grab.is_catchstatus
-        && crate::combat::throw_port(defender) != Some(owner)
+        && !thrown_spares
         && reflector.is_none()
         && crate::combat::weapon_attack_clank(
             defender,
@@ -1862,6 +1877,8 @@ impl Default for WeaponPool {
             thunder_destroyed: [false; MAX_OWNERS],
             next_group: 1,
             stale: [crate::stale::WeaponStale::FRESH; MAX_WEAPONS],
+            teams: [crate::team::TEAM_DEFAULT; MAX_WEAPONS],
+            team_rules: crate::team::TeamRules::FREE_FOR_ALL,
             landed: [None; MAX_WEAPONS],
             camera: None,
         }
@@ -1884,7 +1901,7 @@ impl WeaponPool {
                 {
                     *slot = None;
                 } else if h.trail_spawn {
-                    pending[i] = Some((PKThunderTrail::new(*h, 0), self.stale[i]));
+                    pending[i] = Some((PKThunderTrail::new(*h, 0), self.stale[i], self.teams[i]));
                 }
             }
         }
@@ -1901,15 +1918,15 @@ impl WeaponPool {
                     if t.spawn_next {
                         let mut child = PKThunderTrail::new(*head, t.id + 1);
                         child.position = t.position;
-                        pending[i] = Some((child, self.stale[i]));
+                        pending[i] = Some((child, self.stale[i], self.teams[i]));
                     }
                 } else {
                     *slot = None;
                 }
             }
         }
-        for (trail, stale) in pending.into_iter().flatten() {
-            self.insert(Weapon::PKTrail(trail), stale);
+        for (trail, stale, team) in pending.into_iter().flatten() {
+            self.insert(Weapon::PKTrail(trail), stale, team);
         }
     }
     fn clear_pk_trails(&mut self) {
@@ -1926,6 +1943,7 @@ impl WeaponPool {
         }
     }
     fn apply_pk_hits(&mut self, defender: &mut Fighter) {
+        let rules = self.team_rules;
         let bit = 1u8 << (defender.port & 7);
         let mut groups = [None; MAX_WEAPONS];
         let mut pillars = [None; MAX_WEAPONS];
@@ -1935,6 +1953,7 @@ impl WeaponPool {
             match w {
                 Weapon::PKTrail(t) => {
                     if t.owner_port == defender.port
+                        || rules.spares(defender.team, self.teams[i])
                         || t.hit_ports & bit != 0
                         || groups.contains(&Some(t.group))
                     {
@@ -1957,6 +1976,7 @@ impl WeaponPool {
                 }
                 Weapon::PKFire(spark) => {
                     if spark.owner_port == defender.port
+                        || rules.spares(defender.team, self.teams[i])
                         || recorded_fighter_ports(&self.hit_records[i]) & bit != 0
                     {
                         continue;
@@ -1969,6 +1989,8 @@ impl WeaponPool {
                         flags,
                         false,
                         spark.owner_port,
+                        self.teams[i],
+                        rules,
                         i,
                         hit,
                         spark.position,
@@ -1978,11 +2000,12 @@ impl WeaponPool {
                         // `wpNessPKFireProcReflector`.
                         PreHit::Reflected => {
                             spark.reflect(defender);
+                            self.teams[i] = defender.team;
                             continue;
                         }
                         // `proc_hit` (`wpNessPKFireProcHit`): the pillar.
                         PreHit::SetOff | PreHit::ReflectorBroke => {
-                            pillars[i] = Some(spark.item_spawn(self.stale[i]));
+                            pillars[i] = Some(spark.item_spawn(self.stale[i], self.teams[i]));
                             *slot = None;
                             free_slots += 1;
                             continue;
@@ -2016,14 +2039,14 @@ impl WeaponPool {
                     let outcome = attack::HitOutcome::of(contact);
                     if outcome.registered() {
                         if outcome == attack::HitOutcome::Damaged {
-                            pillars[i] = Some(spark.item_spawn(self.stale[i]));
+                            pillars[i] = Some(spark.item_spawn(self.stale[i], self.teams[i]));
                         }
                         *slot = None;
                         free_slots += 1;
                     }
                 }
                 Weapon::PKThunder(h) => {
-                    if h.owner_port == defender.port {
+                    if h.owner_port == defender.port || rules.spares(defender.team, self.teams[i]) {
                         continue;
                     }
                     let mut hit = ness::HEAD_HIT;
@@ -2033,6 +2056,8 @@ impl WeaponPool {
                         wflags(true, false, true, true),
                         false,
                         h.owner_port,
+                        self.teams[i],
+                        rules,
                         i,
                         hit,
                         h.position,
@@ -2050,6 +2075,7 @@ impl WeaponPool {
                             let group = self.next_group;
                             self.next_group = self.next_group.wrapping_add(1);
                             h.reflect(defender, group);
+                            self.teams[i] = defender.team;
                             continue;
                         }
                         // `wpNessPKThunderHeadProcHit` for set-off, a broken
@@ -2126,8 +2152,16 @@ impl WeaponPool {
         if spawn.kind == WeaponKind::YoshiStars {
             // Two `wpManagerMakeWeapon` calls; each fails on its own.
             let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
-            let first = self.insert(Weapon::Star(YoshiStar::new(spawn, lr)), spawn.stale);
-            let second = self.insert(Weapon::Star(YoshiStar::new(spawn, -lr)), spawn.stale);
+            let first = self.insert(
+                Weapon::Star(YoshiStar::new(spawn, lr)),
+                spawn.stale,
+                spawn.team,
+            );
+            let second = self.insert(
+                Weapon::Star(YoshiStar::new(spawn, -lr)),
+                spawn.stale,
+                spawn.team,
+            );
             return first || second;
         }
         let weapon = match spawn.kind {
@@ -2167,14 +2201,15 @@ impl WeaponPool {
                 Weapon::Cutter(KirbyCutter::new(spawn, grounded))
             }
         };
-        self.insert(weapon, spawn.stale)
+        self.insert(weapon, spawn.stale, spawn.team)
     }
 
-    fn insert(&mut self, weapon: Weapon, stale: crate::stale::WeaponStale) -> bool {
+    fn insert(&mut self, weapon: Weapon, stale: crate::stale::WeaponStale, team: u8) -> bool {
         match self.slots.iter().position(|slot| slot.is_none()) {
             Some(i) => {
                 self.slots[i] = Some(weapon);
                 self.stale[i] = stale;
+                self.teams[i] = team;
                 self.landed[i] = None;
                 self.hit_records[i] = [None; 4];
                 self.pending_item_hits[i] = false;
@@ -2297,6 +2332,9 @@ impl WeaponPool {
             if item.owner == Some(owner) && !item.is_damage_all {
                 continue;
             }
+            if self.team_rules.spares(item.team, self.teams[i]) && !item.is_damage_all {
+                continue;
+            }
             if self.hit_records[i].contains(&Some(id)) {
                 continue;
             }
@@ -2334,6 +2372,7 @@ impl WeaponPool {
                 lr,
                 crate::item::Attacker {
                     owner: Some(owner),
+                    team: self.teams[i],
                     player: Some(owner),
                     handicap: crate::stale::HANDICAP_DEFAULT,
                 },
@@ -2373,7 +2412,7 @@ impl WeaponPool {
                 }
             }
             Weapon::PKFire(p) => {
-                let spawn = p.item_spawn(stale);
+                let spawn = p.item_spawn(stale, self.teams[i]);
                 *slot = None;
                 self.queue_item_spawn(spawn);
             }
@@ -2511,7 +2550,8 @@ impl WeaponPool {
                         } else {
                             // ProcUpdate makes a stationary trail before head physics/map.
                             if head.lifetime > 1 {
-                                trails[i] = Some((ThunderTrail::new(*head), self.stale[i]));
+                                trails[i] =
+                                    Some((ThunderTrail::new(*head), self.stale[i], self.teams[i]));
                             }
                             // `wpPikachuThunderHeadProcDead` notifies
                             // the owner like an expired head.
@@ -2555,8 +2595,8 @@ impl WeaponPool {
                 }
             }
         }
-        for (trail, stale) in trails.into_iter().flatten() {
-            self.insert(Weapon::Trail(trail), stale);
+        for (trail, stale, team) in trails.into_iter().flatten() {
+            self.insert(Weapon::Trail(trail), stale, team);
         }
     }
 
@@ -2569,6 +2609,7 @@ impl WeaponPool {
             return;
         }
         self.apply_pk_hits(defender);
+        let rules = self.team_rules;
         let mut thunder_groups = [None; MAX_WEAPONS];
         for (i, slot) in self.slots.iter_mut().enumerate() {
             let Some(weapon) = slot else { continue };
@@ -2596,6 +2637,7 @@ impl WeaponPool {
             if let Weapon::Trail(t) = weapon {
                 let bit = 1u8 << (defender.port & 7);
                 if t.owner_port == defender.port
+                    || rules.spares(defender.team, self.teams[i])
                     || t.hit_ports & bit != 0
                     || thunder_groups.contains(&Some(t.group))
                 {
@@ -2642,7 +2684,9 @@ impl WeaponPool {
                 Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position, s.velocity),
                 Weapon::Cutter(c) => (c.owner_port, KIRBY_CUTTER_HITBOX, c.position, c.velocity),
             };
-            if owner == defender.port {
+            // `ftMainSearchHitWeapon`: not its owner, nor, with team attack
+            // off, the owner's teammates.
+            if owner == defender.port || rules.spares(defender.team, self.teams[i]) {
                 continue;
             }
             let bit = 1u8 << (defender.port & 7);
@@ -2720,6 +2764,8 @@ impl WeaponPool {
                 weapon.flags(),
                 weapon.is_grounded(),
                 owner,
+                self.teams[i],
+                rules,
                 i,
                 staled,
                 position,
@@ -2785,6 +2831,8 @@ impl WeaponPool {
                         Weapon::Jolt(j) => j.reflect(defender),
                         _ => unreachable!("not reflectable"),
                     }
+                    // `wpProcessProcHitCollisions`: the reflector's team.
+                    self.teams[i] = defender.team;
                     continue;
                 }
                 // `hit_normal_damage`: the weapon's `proc_hit`.
@@ -3111,6 +3159,7 @@ mod tests {
             let pos = centre - Vec3::new(0.0, 200.0, 0.0);
             spawner.queue_item_spawn(crate::item::PKFireSpawn {
                 owner_port: 0,
+                team: 0,
                 pos,
                 weapon_pos: pos,
                 weapon_coll: BodyColl {
@@ -3133,6 +3182,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::MarioFireball,
             owner_port: 1,
+            team: 1,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3151,6 +3201,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::SamusBomb,
             owner_port: 1,
+            team: 1,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3168,6 +3219,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::KirbyCutter { grounded: false },
             owner_port: 1,
+            team: 1,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3201,6 +3253,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::KirbyCutter { grounded: false },
             owner_port: 1,
+            team: 1,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3225,6 +3278,7 @@ mod tests {
         assert!(weapons.spawn(WeaponSpawn {
             kind: WeaponKind::MarioFireball,
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3255,6 +3309,7 @@ mod tests {
                 stick_x: 0,
             },
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3277,6 +3332,7 @@ mod tests {
         assert!(stars.spawn(WeaponSpawn {
             kind: WeaponKind::YoshiStars,
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3300,6 +3356,7 @@ mod tests {
                     stick_x: 0,
                 },
                 owner_port: 0,
+                team: 0,
                 stale: crate::stale::WeaponStale::FRESH,
                 position: Vec3::ZERO,
                 facing: 1.0,
@@ -3317,6 +3374,7 @@ mod tests {
         let spawn = WeaponSpawn {
             kind: WeaponKind::YoshiStars,
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3348,6 +3406,7 @@ mod tests {
                 stick_x: 0,
             },
             owner_port: 0,
+            team: 0,
             stale,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3376,6 +3435,7 @@ mod tests {
         assert!(weapons.spawn(WeaponSpawn {
             kind: WeaponKind::FoxBlaster,
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3405,6 +3465,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::MarioFireball,
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::new(100.0, 60.0, 0.0),
             facing: -1.0,
@@ -3437,6 +3498,7 @@ mod tests {
         assert!(weapons.spawn(WeaponSpawn {
             kind: WeaponKind::MarioFireball,
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: pos,
             facing,
@@ -3507,6 +3569,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::FoxBlaster,
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: -1.0,
@@ -3529,6 +3592,7 @@ mod tests {
                 stick_y: 0,
             },
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3552,6 +3616,7 @@ mod tests {
                 stick_y: 0,
             },
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3637,6 +3702,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::KirbyCutter { grounded: false },
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: center,
             facing: -1.0,
@@ -3658,6 +3724,7 @@ mod tests {
         assert!(weapons.spawn(WeaponSpawn {
             kind: WeaponKind::MarioFireball,
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3683,6 +3750,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::SamusChargeShot(7),
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: -1.0,
@@ -3704,6 +3772,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::SamusBomb,
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
@@ -3739,6 +3808,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::SamusBomb,
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::new(0.0, 200.0, 0.0),
             facing: 1.0,
@@ -3774,6 +3844,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::SamusBomb,
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::new(0.0, 2000.0, 0.0),
             facing: -1.0,
@@ -3793,6 +3864,7 @@ mod tests {
                 stick_y,
             },
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing,
@@ -4031,6 +4103,7 @@ mod tests {
         let spawn = |facing| WeaponSpawn {
             kind: WeaponKind::KirbyCutter { grounded: true },
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::new(0.0, 100.0, 0.0),
             facing,
@@ -4054,6 +4127,7 @@ mod tests {
         let spawn = |kind| WeaponSpawn {
             kind,
             owner_port: 0,
+            team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,

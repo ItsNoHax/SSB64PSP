@@ -54,6 +54,7 @@ pub mod stage;
 pub mod stage_select;
 pub mod stale;
 pub mod status;
+pub mod team;
 pub mod vs_mode;
 pub mod weapon;
 pub mod yoshi;

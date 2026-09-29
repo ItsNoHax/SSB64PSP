@@ -345,6 +345,8 @@ pub struct Item {
     pub ty: ItemType,
     /// `owner_gobj`, a fighter port.
     pub owner: Option<u8>,
+    /// `team`: the owner's, or [`crate::team::TEAM_DEFAULT`] with none.
+    pub team: u8,
     /// `player` (`ITEM_PORT_DEFAULT` is `None`).
     pub player: Option<u8>,
     pub handicap: u8,
@@ -388,6 +390,7 @@ pub struct Item {
     /// `damage_gobj`'s port.
     pub damage_by: Option<u8>,
     pub damage_port: Option<u8>,
+    pub damage_team: u8,
     pub damage_handicap: u8,
     pub damage_lag: i32,
     pub lifetime: i32,
@@ -432,6 +435,7 @@ impl Item {
             kind,
             ty: attr.ty,
             owner: None,
+            team: crate::team::TEAM_DEFAULT,
             player: None,
             handicap: crate::stale::HANDICAP_DEFAULT,
             percent_damage: 0,
@@ -500,6 +504,7 @@ impl Item {
             damage_lr: 0.0,
             damage_by: None,
             damage_port: None,
+            damage_team: crate::team::TEAM_DEFAULT,
             damage_handicap: crate::stale::HANDICAP_DEFAULT,
             damage_lag: 0,
             lifetime: 0,
@@ -602,6 +607,7 @@ impl Item {
     pub(crate) fn clear_owner_stats(&mut self) {
         self.is_damage_all = true;
         self.owner = None;
+        self.team = crate::team::TEAM_DEFAULT;
     }
 
     /// `itMainSetStatus`'s common half: the procs come from `status`.
@@ -763,6 +769,8 @@ impl FighterItems {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PKFireSpawn {
     pub owner_port: u8,
+    /// `wp->team`, which `itNessPKFireMakeItem` copies.
+    pub team: u8,
     pub pos: Vec3,
     pub weapon_pos: Vec3,
     pub weapon_coll: BodyColl,
@@ -785,6 +793,8 @@ pub struct ItemPool {
     /// A registered hit to record in its thrower's stale queue:
     /// `(port, attack id, motion count)`.
     landed: [Option<(u8, MotionAttackId, u16)>; ITEM_ALLOC_MAX],
+    /// The battle's team-attack rule ([`crate::team`]).
+    pub team_rules: crate::team::TeamRules,
 }
 
 impl Default for ItemPool {
@@ -803,6 +813,7 @@ impl Default for ItemPool {
             owners: [None; 4],
             released: [false; 4],
             landed: [None; ITEM_ALLOC_MAX],
+            team_rules: crate::team::TeamRules::FREE_FOR_ALL,
         }
     }
 }
@@ -998,6 +1009,7 @@ impl ItemPool {
             return;
         };
         item.owner = Some(f.port);
+        item.team = f.team;
         item.is_allow_pickup = false;
         item.is_hold = true;
         item.player = Some(f.port);
@@ -1344,6 +1356,7 @@ fn hit_collisions(item: &mut Item, fighters: &[&Fighter]) -> bool {
         item.owner = Some(port);
         item.player = Some(port);
         if let Some(r) = reflector {
+            item.team = r.team;
             item.handicap = r.handicap;
         }
         let lr = reflector.map_or(1.0, |r| r.facing.sign());

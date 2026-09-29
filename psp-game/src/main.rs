@@ -164,6 +164,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // "Go" at 398. The camera frames the player alone, so this is a
         // tick where the CPUs' fight has drawn all four into its view.
         GameScene::Vs4 => 870,
+        // "Go" at 398. From tick 935 Kirby's attack overlaps Mario, his
+        // teammate, for 14 ticks and passes through (Team Attack off).
+        GameScene::VsTeam => 940,
     }
 }
 
@@ -260,6 +263,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsNoContest
             | GameScene::VsPlayers
             | GameScene::Vs4
+            | GameScene::VsTeam
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -426,6 +430,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsModeMenu
             | GameScene::VsNoContest
             | GameScene::Vs4
+            | GameScene::VsTeam
             | GameScene::CpuWalk
             | GameScene::CpuJump
     ) {
@@ -493,6 +498,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsModeMenu
             | GameScene::VsNoContest
             | GameScene::Vs4
+            | GameScene::VsTeam
     ) {
         return if tick == 6 { -80 } else { 0 };
     }
@@ -898,13 +904,15 @@ fn interrupt_pass(
             items.publish(&mut pl.fighter);
             pl.tick_fighter_interrupt(p, stage, controller, jump_held, groups);
         } else {
-            let opponents: alloc::vec::Vec<_> = scenes_ref(pl, dummies)
-                .into_iter()
-                .enumerate()
-                .filter(|&(j, _)| j != i)
-                .filter_map(|(_, x)| x)
-                .map(|x| ssb_game::computer::behave::opponent(&x.fighter))
-                .collect();
+            // The CPU's fighter walks skip itself and its team.
+            let all = scenes_ref(pl, dummies);
+            let opponents: alloc::vec::Vec<_> = all[i].map_or_else(alloc::vec::Vec::new, |me| {
+                all.into_iter()
+                    .flatten()
+                    .filter(|x| ssb_game::computer::behave::is_opponent(&me.fighter, &x.fighter))
+                    .map(|x| ssb_game::computer::behave::opponent(&x.fighter))
+                    .collect()
+            });
             let Some(d) = dummies[i - 1].as_deref_mut() else {
                 continue;
             };
@@ -1010,6 +1018,8 @@ fn hit_pass(
     stage_ctl: &mut ssb_game::stage::Stage,
 ) {
     let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, stage, groups);
+    // The battle's team rule, which `enter_training` gave the pools.
+    let rules = weapons.team_rules;
     for i in 0..s.len() {
         // `ftMainProcSearchCatch` opens with the obstacle search
         // (`ftMainSearchHitHazard`), which reads the others' statuses.
@@ -1036,16 +1046,16 @@ fn hit_pass(
         let others = s.iter().enumerate().filter(|&(j, _)| j != i).filter_map(|(_, x)| x.as_deref());
         let caught = s[i]
             .as_deref()
-            .and_then(|f| ssb_game::grab::nearest_catch(&f.fighter, others.map(|o| &o.fighter)))
+            .and_then(|f| ssb_game::grab::nearest_catch(&f.fighter, others.map(|o| &o.fighter), rules))
             .and_then(|port| index_of(s, port));
         if let Some((catcher, other)) = caught.and_then(|j| pair(s, i, j)) {
-            ssb_game::grab::search_catch(catcher, other);
+            ssb_game::grab::search_catch(catcher, other, rules);
         }
     }
     for i in 0..s.len() {
         exchange_from(s, i);
     }
-    ssb_game::combat::search_all(&mut fighters_mut(s));
+    ssb_game::combat::search_all(&mut fighters_mut(s), rules);
     for f in s.iter_mut().flatten() {
         items.search_fighter(&mut f.fighter);
     }
@@ -1055,7 +1065,7 @@ fn hit_pass(
     for i in 0..s.len() {
         for j in 0..s.len() {
             if let Some((attacker, defender)) = pair(s, i, j) {
-                ssb_game::link::apply_spin_attack_hits(attacker, defender);
+                ssb_game::link::apply_spin_attack_hits(attacker, defender, rules);
             }
         }
     }
@@ -1314,14 +1324,17 @@ struct VsRules {
     rule: ssb_game::battle::Rule,
     time_limit: u8,
     stocks: i8,
+    team_rules: ssb_game::team::TeamRules,
 }
 
 impl VsRules {
-    /// `dSCManagerDefaultBattleState`: a three-minute time battle, stocks 2.
+    /// `dSCManagerDefaultBattleState`: a three-minute free-for-all time
+    /// battle, stocks 2, Team Attack off.
     const DEFAULT: VsRules = VsRules {
         rule: ssb_game::battle::Rule::Time,
         time_limit: 3,
         stocks: 2,
+        team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL,
     };
 
     /// The rules `mnPlayersVSSetSceneData` left in the battle state.
@@ -1330,15 +1343,24 @@ impl VsRules {
             rule: state.rule,
             time_limit: state.time_limit,
             stocks: state.stocks as i8,
+            team_rules: ssb_game::team::TeamRules {
+                is_team_battle: state.is_team_battle,
+                is_team_attack: state.is_team_attack,
+            },
         }
     }
 }
 
-/// A capture scene's VS rules: `vstimeup` picks one minute.
+/// A capture scene's VS rules: `vstimeup` picks one minute, `vsteam` a
+/// team battle.
 fn vs_rules(scene: GameScene) -> VsRules {
     match scene {
         GameScene::VsTimeUp | GameScene::VsTimeUpSign | GameScene::VsSuddenDeath => VsRules {
             time_limit: 1,
+            ..VsRules::DEFAULT
+        },
+        GameScene::VsTeam => VsRules {
+            team_rules: ssb_game::team::TeamRules::TEAMS,
             ..VsRules::DEFAULT
         },
         _ => VsRules::DEFAULT,
@@ -1467,6 +1489,9 @@ struct Hud {
     pause: Option<PauseState>,
     /// `ifCommonEntryFocusThread`, from the countdown's frame.
     entry_focus: Option<ssb_game::appear::EntryFocus>,
+    /// `players[].color` by port, the stage emblem colour each damage
+    /// display takes (`ifCommonPlayerDamageInitInterface`).
+    colors: [u8; 4],
 }
 
 /// The pause menu's choices at the pause (`sIFCommonBattlePause*`).
@@ -1553,6 +1578,7 @@ impl Hud {
             countdown: None,
             pause: None,
             entry_focus: None,
+            colors: [0, 1, 2, 3],
         }
     }
 }
@@ -1615,6 +1641,7 @@ fn start_sudden_death(
         rule: ssb_game::battle::Rule::Stock,
         time_limit: sudden.time_limit,
         stocks: 0,
+        team_rules: sudden.team_rules(),
     };
     // `gSCManagerVSBattleState`: only the tied players.
     let tied: Roster = core::array::from_fn(|port| roster[port].filter(|_| sudden.players[port].present));
@@ -1734,8 +1761,9 @@ struct TrainingWorld<'w> {
 
 /// One fighter a battle makes (`FTDesc`): its fighter and costume, its CPU
 /// level and handicap, its spawn point
-/// (`mpCollisionGetPlayerMapObjPosition(player)`), its `player` (the port,
-/// or the team in a team battle) and whether it is a human's.
+/// (`mpCollisionGetPlayerMapObjPosition(player)`), its `team` (`FTDesc::team`:
+/// the port, or the team in a team battle), its `players[].color` and
+/// whether it is a human's.
 #[derive(Clone, Copy)]
 struct Entrant {
     kind: ssb_game::fighter::FighterKind,
@@ -1744,6 +1772,7 @@ struct Entrant {
     handicap: u8,
     spawn: u16,
     team: u8,
+    color: u8,
     human: bool,
 }
 
@@ -1761,6 +1790,8 @@ fn training_roster(scene: ssb_game::fighter_select::SceneData) -> Roster {
         handicap: ssb_game::stale::HANDICAP_DEFAULT,
         spawn: u16::from(port),
         team: port,
+        // The player's port colour; the dummy's CPU grey.
+        color: if port == 0 { 0 } else { ssb_game::hud::CPU_COLOR as u8 },
         human: port == 0,
     };
     [
@@ -1790,6 +1821,7 @@ fn vs_roster(state: &ssb_game::players_vs::BattleState) -> Roster {
             handicap: p.handicap,
             spawn: i as u16,
             team: p.player,
+            color: p.color,
             human: p.pkind == PlayerKind::Man,
         });
     }
@@ -1809,21 +1841,46 @@ fn vs_roster(state: &ssb_game::players_vs::BattleState) -> Roster {
 /// The fighters a capture scene that skips the selects starts with:
 /// `vs4`'s Mario against a Fox, a Donkey Kong and a Kirby at level 3, each
 /// in its first royal costume (`mnPlayersVSGetFreeCostumeRoyal` with no
-/// fighter repeated), and otherwise [`capture_training_scene`]'s pair.
+/// fighter repeated); `vsteam`'s Mario and Kirby on red against Fox and
+/// Donkey Kong on blue, in team costumes (`costume_team_id`) and team
+/// colours; and otherwise [`capture_training_scene`]'s pair.
 fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneData) -> Roster {
     use ssb_game::fighter::FighterKind;
-    if scene != GameScene::Vs4 {
-        return training_roster(training);
-    }
-    let kinds = [FighterKind::Mario, FighterKind::Fox, FighterKind::Donkey, FighterKind::Kirby];
+    let (kinds, teams) = match scene {
+        GameScene::Vs4 => (
+            [FighterKind::Mario, FighterKind::Fox, FighterKind::Donkey, FighterKind::Kirby],
+            None,
+        ),
+        GameScene::VsTeam => (
+            [FighterKind::Mario, FighterKind::Kirby, FighterKind::Fox, FighterKind::Donkey],
+            Some([0, 0, 1, 1]),
+        ),
+        _ => return training_roster(training),
+    };
     core::array::from_fn(|port| {
+        let (costume, team, color) = match teams {
+            Some(teams) => {
+                let team = teams[port];
+                (
+                    ssb_game::costume::costume_team_id(kinds[port], team),
+                    team,
+                    ssb_game::players_vs::TEAM_COLOR_IDS[usize::from(team)],
+                )
+            }
+            None => (
+                ssb_game::costume::costume_common_id(kinds[port], 0),
+                port as u8,
+                if port == 0 { 0 } else { ssb_game::hud::CPU_COLOR as u8 },
+            ),
+        };
         Some(Entrant {
             kind: kinds[port],
-            costume: ssb_game::costume::costume_common_id(kinds[port], 0),
+            costume,
             level: 3,
             handicap: ssb_game::stale::HANDICAP_DEFAULT,
             spawn: port as u16,
-            team: port as u8,
+            team,
+            color,
             human: port == 0,
         })
     })
@@ -1843,6 +1900,11 @@ fn enter_training(
 ) -> u32 {
     *world.weapons = ssb_game::weapon::WeaponPool::default();
     *world.items = ssb_game::item::ItemPool::default();
+    // `gSCManagerBattleState`'s team rule, which every hit search reads;
+    // Training is a free-for-all.
+    let team_rules = vs.map_or(ssb_game::team::TeamRules::FREE_FOR_ALL, |r| r.team_rules);
+    world.weapons.team_rules = team_rules;
+    world.items.team_rules = team_rules;
     let Some((p, index, stage)) = pack.and_then(|p| {
         let index = ssb_psp_runtime::scene::vs_stage_index(p, gkind)?;
         Some((p, index, p.stage(index)?))
@@ -1877,6 +1939,7 @@ fn enter_training(
     let lead = roster[0].unwrap_or(training_roster(Default::default())[0].unwrap());
     let mut scene = play::FighterScene::at_spawn(p, &stage, lead.kind, lead.spawn);
     scene.fighter.port = 0;
+    scene.fighter.team = lead.team;
     scene.fighter.costume = lead.costume;
     scene.fighter.handicap = lead.handicap;
     *world.play_state = Some(scene);
@@ -1884,12 +1947,14 @@ fn enter_training(
         let e = roster[i + 1]?;
         let port = i as u8 + 1;
         let mut d = play::Dummy::at_spawn(p, &stage, e.kind, e.costume, e.level, e.spawn, port)?;
+        d.fighter.team = e.team;
         d.fighter.handicap = e.handicap;
         Some(alloc::boxed::Box::new(d))
     });
     // `ifCommonPlayerDamageInitInterface`; Training shows it at once
     // (`ifCommonPlayerDamageSetShowInterface`), VS at "Go".
     reset_damage_hud(world);
+    world.damage_hud.colors = core::array::from_fn(|port| roster[port].map_or(port as u8, |e| e.color));
     let Some(pl) = world.play_state.as_mut() else {
         return index;
     };
@@ -1926,8 +1991,10 @@ fn enter_training(
             d.computer.trait_kind = ssb_game::computer::attack::Trait::Default;
             d.computer.behavior = ssb_game::computer::Behavior::Default;
         }
-        // Team battles are not ported: every battle is a free-for-all.
-        ssb_game::battle::Battle::new(rules.rule, rules.time_limit, rules.stocks, players)
+        ssb_game::battle::Battle::new(rules.rule, rules.time_limit, rules.stocks, players).with_teams(
+            rules.team_rules.is_team_battle,
+            rules.team_rules.is_team_attack,
+        )
     });
     index
 }
@@ -3510,11 +3577,12 @@ unsafe fn draw_training(
         fighters.map(|x| x.map(|x| &x.fighter)),
         material_anim,
     );
-    // `players[].color`: the human's port, a CPU's `GMCOMMON_PLAYERS_MAX`.
+    // `players[].color`: in a free-for-all the human's port and a CPU's
+    // `GMCOMMON_PLAYERS_MAX`, in a team battle the team's colour.
     let emblems = fighters.map(|x| {
         x.map(|x| {
-            let human = x.fighter.port == pl.fighter.port;
-            (x.fighter.kind, if human { usize::from(x.fighter.port) } else { ssb_game::hud::CPU_COLOR })
+            let color = damage_hud.colors[usize::from(x.fighter.port).min(3)];
+            (x.fighter.kind, usize::from(color))
         })
     });
     // `ifCommonBattleInterfaceProcSet` hides every interface at Set, and

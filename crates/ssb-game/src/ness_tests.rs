@@ -35,6 +35,7 @@ fn request(f: &Fighter, kind: WeaponKind, pos: Vec3) -> WeaponSpawn {
     WeaponSpawn {
         kind,
         owner_port: f.port,
+        team: f.team,
         position: pos,
         facing: f.facing.sign(),
         stale: crate::stale::WeaponStale::of(f),

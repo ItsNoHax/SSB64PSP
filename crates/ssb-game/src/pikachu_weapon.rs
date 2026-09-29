@@ -527,6 +527,7 @@ mod tests {
         WeaponSpawn {
             kind,
             owner_port: 0,
+            team: 0,
             position: Vec3::new(x, y, 0.0),
             facing: 1.0,
             stale: crate::stale::WeaponStale::FRESH,
@@ -712,6 +713,7 @@ mod tests {
                 1,
             ))),
             crate::stale::WeaponStale::FRESH,
+            0,
         );
         let mut f = Fighter::new(FighterKind::Mario, 1, 3);
         f.pos.y = 400.0;

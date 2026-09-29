@@ -58,7 +58,7 @@ pub const TEAM_GREEN: u8 = 2;
 const DEFAULT_TEAMS: [u8; PLAYERS] = [TEAM_RED, TEAM_RED, TEAM_BLUE, TEAM_BLUE];
 
 /// `dIFCommonPlayerTeamColorIDs` (`if/ifcommon.c`), indexed by team.
-const TEAM_COLOR_IDS: [u8; 5] = [0, 1, 3, 4, 0];
+pub const TEAM_COLOR_IDS: [u8; 5] = [0, 1, 3, 4, 0];
 
 /// `I_MIN_TO_TICS(5)`.
 const RETURN_TICS: i32 = 5 * 60 * 60;
@@ -165,6 +165,8 @@ pub struct PlayerState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BattleState {
     pub is_team_battle: bool,
+    /// `is_team_attack`, which only VS Options (not ported) changes.
+    pub is_team_attack: bool,
     /// `game_rules`: `SCBATTLE_GAMERULE_TIME` or `_STOCK`.
     pub rule: Rule,
     /// Minutes, or [`TIMELIMIT_INFINITE`].
@@ -201,6 +203,7 @@ impl Default for BattleState {
         };
         BattleState {
             is_team_battle: false,
+            is_team_attack: false,
             rule: Rule::Time,
             time_limit: 3,
             stocks: 2,

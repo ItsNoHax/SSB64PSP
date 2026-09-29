@@ -404,6 +404,7 @@ fn make_fireball(f: &mut Fighter) {
     f.weapon_spawn = Some(WeaponSpawn {
         kind,
         owner_port: f.port,
+        team: f.team,
         stale: crate::stale::WeaponStale::of(f),
         position: f.joint_world(FIREBALL_SPAWN_JOINT, Vec3::ZERO),
         facing: f.facing.sign(),
@@ -449,6 +450,7 @@ fn update_blaster(f: &mut Fighter, s: K) {
         f.weapon_spawn = Some(WeaponSpawn {
             kind: WeaponKind::FoxBlaster,
             owner_port: f.port,
+            team: f.team,
             stale: crate::stale::WeaponStale::of(f),
             position: f.joint_world(
                 BLASTER_SPAWN_JOINT,
@@ -546,6 +548,7 @@ fn fire_charge_shot(f: &mut Fighter) {
     f.weapon_spawn = Some(WeaponSpawn {
         kind: WeaponKind::SamusChargeShot(level),
         owner_port: f.port,
+        team: f.team,
         stale: crate::stale::WeaponStale::of(f),
         position: charge_shot_position(f),
         facing: f.facing.sign(),
@@ -713,6 +716,7 @@ fn make_boomerang(f: &mut Fighter) {
             stick_y: f.input.stick_y,
         },
         owner_port: f.port,
+        team: f.team,
         stale: crate::stale::WeaponStale::of(f),
         position: f.joint_world(BOOMERANG_SPAWN_JOINT, Vec3::ZERO),
         facing: f.facing.sign(),
@@ -840,6 +844,7 @@ fn make_thunder_jolt(f: &mut Fighter) {
     f.weapon_spawn = Some(WeaponSpawn {
         kind: WeaponKind::PikachuThunderJolt,
         owner_port: f.port,
+        team: f.team,
         stale: crate::stale::WeaponStale::of(f),
         position: f.joint_world(THUNDERJOLT_SPAWN_JOINT, Vec3::ZERO)
             + Vec3::new(
