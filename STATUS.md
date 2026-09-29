@@ -7,35 +7,35 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** the VS pause menu with its zoom camera, turn,
-  resume ease and reset (RE-398). Before it: "SUDDEN DEATH!" (RE-397).
-- **Next gameplay batch:** the VS mode menu (`mnVSMode`: rule, time and
-  stock settings) so stock battles and their multi stock display are
-  reachable, then `mnVSResults`. The Appear entry is parked in TODO.
+- **Completed batch:** the VS mode menu's rule, time and stock (RE-399),
+  so stock battles are playable. Before it: the pause menu (RE-398).
+- **Next gameplay batch:** `mnVSResults` (the results screen's logic),
+  or the Appear entry parked in TODO. `run` is near its 128 KB branch
+  range (123,808 in `golden_capture`), so keep new screen code out of line.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| VS mode menu | `ssb_game::vs_mode`, VS screen; new `f1-vs-mode-menu` | RE-399 |
 | Pause menu | `ssb_game::pause`, `Battle::pause`, `Camera::tick_player_zoom`; new `f1-vs-pause` | RE-398 |
-| Sudden death text | file 37 letters; new `f1-vs-sudden-death-sign` | RE-397 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
   Pinned 1.98.0 Clippy with warnings denied and workspace rustfmt passed in
-  RE-398; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
+  RE-399; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: all 104 goldens match twice (RE-398). Scene captures
+- PPSSPPHeadless: all 105 goldens match twice (RE-399). Scene captures
   time out at 60 s. No golden passes through a platform.
 - `psp-game` reaches scripted Training in PPSSPP. On the PSP-2000 a
   live scripted Training run held 16,682 µs per frame for 3,600 frames
   (RE-360).
 - Pack v62: 28,096,032 bytes, SHA-256
   `b41c195101349351f22c19e698372c08ed4d013bacb03cea723d573b23bbe7b4`.
-- `run` is 119,484 bytes in release, about 124 KB in `golden_capture`;
-  the MIPS branch range is 128 KB.
+- `run` is 121,264 bytes in release, 123,808 in `golden_capture`; the
+  MIPS branch range is 128 KB.
 - Physical PSP last checked in RE-361 (PSP-2000 Slim, 6.61 ARK, pack v43).
 
 ## Blockers and remaining scope
