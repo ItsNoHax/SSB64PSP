@@ -121,3 +121,17 @@ fn the_entry_focus_staggers_two_fighters() {
     assert_eq!(f(2).zoom(209), Some(1));
     assert_eq!(f(2).zoom(210), None);
 }
+
+#[test]
+fn the_entry_effect_clock_starts_with_the_entry() {
+    let mut f = standing(FighterKind::Mario, Facing::Right);
+    assert_eq!(f.entry.effect_ticks, None);
+    appear_set_status(&mut f);
+    assert_eq!(f.entry.effect_ticks, Some(0));
+    tick_effect_clock(&mut f);
+    tick_effect_clock(&mut f);
+    assert_eq!(f.entry.effect_ticks, Some(2));
+    let mut n = standing(FighterKind::Ness, Facing::Right);
+    appear_set_status(&mut n);
+    assert_eq!(n.entry.effect_ticks, None, "Ness makes no effect");
+}

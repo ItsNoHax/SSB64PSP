@@ -218,6 +218,52 @@ pub const NESS_PK_FIRE_ITEM_SOURCE: (u32, u32) = (336, 0x0A08);
 /// 353's three-node tree (RE-383).
 pub const LINK_BOMB_ITEM_SOURCE: (u32, u32) = (353, 0x18D8);
 
+/// The entry effects a manager `EFDesc` plays through its own `AnimJoint`
+/// table and ejects at its end (`efManagerHaveStructProcUpdate`, RE-403),
+/// keyed like `ssb_rom::effect::MANAGER_EFFECT_KEYS`: Mario's pipe
+/// (`llMarioSpecial2EntryDokanDObjDesc`), Donkey Kong's barrel, Samus's
+/// capsule, Link's wave and beam, Yoshi's egg and Kirby's star (whose
+/// packed table is the leftward one). The Arwing, the car and the Poké Ball
+/// run their own updates and are not listed.
+pub const ENTRY_EFFECT_KEYS: [(u32, u32); 7] = [
+    (356, 0x0608),
+    (355, 0x07C8),
+    (349, 0x0B90),
+    (353, 0x03F8),
+    (353, 0x07B8),
+    (354, 0x0530),
+    (348, 0x1DA8),
+];
+
+/// The [`ENTRY_EFFECT_KEYS`] indices a fighter's entry effect draws. Only
+/// Mario's pipe and Kirby's leftward star are packed: Luigi's pipe comes
+/// from his own file (`gFTDataLuigiSpecial2`) and the rightward star from
+/// `llKirbySpecial2EntryStarRAnimJoint`, so neither draws.
+pub fn entry_effect_parts(f: &ssb_game::fighter::Fighter) -> &'static [usize] {
+    use ssb_game::appear::EntryEffect as E;
+    use ssb_game::fighter::{Facing, FighterKind};
+    let Some(e) = ssb_game::appear::entry_effect(f.kind) else {
+        return &[];
+    };
+    match e {
+        E::Pipe if f.kind == FighterKind::Luigi => &[],
+        E::Star if f.entry.lr != Some(Facing::Left) => &[],
+        E::Pipe => &[0],
+        E::Barrel => &[1],
+        E::Point => &[2],
+        E::WaveAndBeam => &[3, 4],
+        E::Egg => &[5],
+        E::Star => &[6],
+        E::Arwing | E::PokeBall | E::Car => &[],
+    }
+}
+
+/// A manager effect's object and its transform animation.
+pub fn manager_effect(pack: &Pack<'_>, key: (u32, u32)) -> Option<(ObjectDesc, ssb_rom::pack::AnimDesc)> {
+    let slot = ssb_rom::effect::MANAGER_EFFECT_KEYS.iter().position(|&k| k == key)?;
+    Some((object_keyed(pack, key)?, pack.effect_anim(slot as u32)?))
+}
+
 /// `nMPMapObjKindRebirth`: the map point a respawn's halo lowers onto.
 pub const MAP_OBJ_KIND_REBIRTH: u16 = 0x20;
 

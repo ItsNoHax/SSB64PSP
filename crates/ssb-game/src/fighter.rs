@@ -758,6 +758,7 @@ impl Fighter {
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
+        crate::appear::tick_effect_clock(self);
         if self.is_in_hitlag() {
             // `proc_lagupdate`: Smash DI nudges a fighter frozen by a hit.
             self.smash_di(surfaces);

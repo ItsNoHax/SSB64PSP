@@ -38,6 +38,56 @@ pub struct Entry {
     pub floor_line: Option<u16>,
     /// Captain Falcon's leftward entry turns the model around.
     pub is_rotate: bool,
+    /// Ticks since the entry effect was made, `None` before any entry
+    /// (RE-403). The effect runs on after the fighter stands.
+    pub effect_ticks: Option<u16>,
+}
+
+/// The effect `ftCommonAppearSetStatus` makes for each fighter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryEffect {
+    /// `efManagerMarioEntryDokanMakeEffect` (Mario and Luigi).
+    Pipe,
+    /// `efManagerFoxEntryArwingMakeEffect`.
+    Arwing,
+    /// `efManagerDonkeyEntryTaruMakeEffect`.
+    Barrel,
+    /// `efManagerSamusEntryPointMakeEffect`.
+    Point,
+    /// `efManagerLinkEntryWaveMakeEffect` and `...BeamMakeEffect`.
+    WaveAndBeam,
+    /// `efManagerYoshiEntryEggMakeEffect`.
+    Egg,
+    /// `efManagerKirbyEntryStarMakeEffect`.
+    Star,
+    /// `efManagerMBallThrownMakeEffect` (Pikachu and Jigglypuff).
+    PokeBall,
+    /// `efManagerCaptainEntryCarMakeEffect`.
+    Car,
+}
+
+/// Which entry effect a fighter makes; Ness makes none.
+pub fn entry_effect(kind: FighterKind) -> Option<EntryEffect> {
+    Some(match kind {
+        FighterKind::Mario | FighterKind::Luigi => EntryEffect::Pipe,
+        FighterKind::Fox => EntryEffect::Arwing,
+        FighterKind::Donkey => EntryEffect::Barrel,
+        FighterKind::Samus => EntryEffect::Point,
+        FighterKind::Link => EntryEffect::WaveAndBeam,
+        FighterKind::Yoshi => EntryEffect::Egg,
+        FighterKind::Kirby => EntryEffect::Star,
+        FighterKind::Pikachu | FighterKind::Purin => EntryEffect::PokeBall,
+        FighterKind::Captain => EntryEffect::Car,
+        _ => return None,
+    })
+}
+
+/// Advances the entry effect's clock, once per frame from
+/// `ftMainProcPhysicsMap`'s slot (the effects' `gcPlayAnimAll`).
+pub fn tick_effect_clock(f: &mut Fighter) {
+    if let Some(t) = f.entry.effect_ticks.as_mut() {
+        *t = t.saturating_add(1);
+    }
 }
 
 /// The entry clip for a status, if it is one.
@@ -118,6 +168,7 @@ pub fn appear_set_status(f: &mut Fighter) {
         lr: Some(f.facing),
         floor_line: f.floor.map(|s| s.line),
         is_rotate: f.kind == FighterKind::Captain && !right,
+        effect_ticks: entry_effect(f.kind).map(|_| 0),
     };
     let s = match (f.kind, right) {
         (FighterKind::Mario | FighterKind::Luigi, true) => AnyStatus::Mario(MarioStatus::AppearR),
