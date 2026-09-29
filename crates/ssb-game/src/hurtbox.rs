@@ -1165,11 +1165,14 @@ pub fn on_set_status(f: &mut Fighter, preserve_hitstatus: bool) {
 }
 
 /// A hurtbox an attack touched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HurtHit {
     /// The `placement` column.
     pub placement: usize,
     pub hitstatus: HitStatus,
+    /// The box's centre in the world (`gmCollisionGetWorldPosition` of its
+    /// offset), which the hit effects' impact point takes.
+    pub center: Vec3,
 }
 
 /// `ftMainSearchHitFighter`'s damage-collision loop for one attack: the
@@ -1220,6 +1223,7 @@ pub fn search_attack(
             return Some(HurtHit {
                 placement: usize::from(desc.placement),
                 hitstatus,
+                center: t.point(offset),
             });
         }
     }
@@ -1233,6 +1237,7 @@ pub fn search_attack(
     touches.then_some(HurtHit {
         placement: DAMAGE_INDEX_N,
         hitstatus: f.damage_colls.hitstatus[0],
+        center: f.pos,
     })
 }
 

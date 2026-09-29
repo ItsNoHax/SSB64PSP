@@ -837,6 +837,7 @@ unsafe fn training_step(
     stage_ctl: &mut ssb_game::stage::Stage,
     controller: ControllerState,
     started: bool,
+    effects: &mut dyn ssb_game::effect::HitEffectSink,
 ) {
     material_anim.tick(p);
     let Some(stage) = p.stage(stage_index) else {
@@ -891,7 +892,7 @@ unsafe fn training_step(
         .map_or(&[][..], |map| map.groups.as_slice());
     let mut s = scenes(pl, dummies);
     physics_pass(p, &stage, groups, &mut s, weapons, items);
-    hit_pass(p, &stage, groups, &mut s, weapons, items, stage_objects, stage_ctl);
+    hit_pass(p, &stage, groups, &mut s, weapons, items, stage_objects, stage_ctl, effects);
 }
 
 /// Priority 5: every fighter's `ftMainProcUpdateInterrupt`, in port order,
@@ -1041,6 +1042,7 @@ fn hit_pass(
     items: &mut ssb_game::item::ItemPool,
     stage_objects: &mut ssb_rom::ground_obj::GroundObjects,
     stage_ctl: &mut ssb_game::stage::Stage,
+    effects: &mut dyn ssb_game::effect::HitEffectSink,
 ) {
     let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, stage, groups);
     // The battle's team rule, which `enter_training` gave the pools.
@@ -1099,7 +1101,8 @@ fn hit_pass(
     for f in s.iter_mut().flatten() {
         ssb_game::hazard::search_ground_hit(&mut f.fighter, stage_ctl);
     }
-    ssb_game::combat::finish_frame(&mut fighters_mut(s));
+    // The hit sparks, made in each fighter's `ftMainProcSearchHitAll`.
+    ssb_game::combat::finish_frame_with(&mut fighters_mut(s), effects);
     for f in s.iter_mut().flatten() {
         f.fighter.resolve_cliff_release(&map);
     }
@@ -1449,11 +1452,36 @@ unsafe fn training_frame(
             ssb_game::appear::on_go(&mut f.fighter);
         }
     }
+    let banks = ssb_psp_runtime::particles::PackBanks::new(p);
     let (started, locked) = match frame {
         None => (true, false),
         Some((Frame::Run, status)) => (status != GameStatus::Wait, status == GameStatus::Wait),
-        Some((Frame::Frozen, _)) => return false,
+        Some((Frame::Frozen, status)) => {
+            // `ifCommonBattleInterfaceProcUpdate`: at the battle's end the
+            // particles run on, lists 2 and 3 only.
+            if matches!(status, GameStatus::End | GameStatus::BossDefeat | GameStatus::Set) {
+                if let Some(b) = banks.as_ref() {
+                    damage_hud.particles.skip = !((1 << 2) | (1 << 3));
+                    ssb_game::particle::run(&mut damage_hud.particles, b, &mut damage_hud.effects);
+                }
+            }
+            return false;
+        }
         Some((Frame::Done, _)) => return true,
+    };
+    let mut none = ssb_game::effect::NoEffects;
+    let mut rt = banks.as_ref().map(|b| ssb_game::effect::EffectRuntime {
+        particles: &mut damage_hud.particles,
+        effects: &mut damage_hud.effects,
+        banks: b,
+    });
+    // Link 0's `func_run`s, before every process: the particles.
+    if let Some(rt) = rt.as_mut() {
+        rt.run();
+    }
+    let sink: &mut dyn ssb_game::effect::HitEffectSink = match rt.as_mut() {
+        Some(rt) => rt,
+        None => &mut none,
     };
     training_step(
         p,
@@ -1468,11 +1496,15 @@ unsafe fn training_frame(
         stage_ctl,
         if locked { ControllerState::default() } else { controller },
         started,
+        sink,
     );
     // The effect and interface processes after the fighters': the KO
-    // explosions and the screen flash.
+    // explosions (with their particles) and the screen flash.
     for f in scenes(pl, dummies).into_iter().flatten() {
-        damage_hud.ko.observe(&mut f.fighter);
+        match rt.as_mut() {
+            Some(rt) => damage_hud.ko.observe_with(&mut f.fighter, rt),
+            None => damage_hud.ko.observe(&mut f.fighter),
+        }
     }
     damage_hud.ko.tick();
     for f in scenes(pl, dummies).into_iter().flatten() {
@@ -1536,6 +1568,10 @@ struct Hud {
     colors: [u8; 4],
     /// The KO explosions and the screen flash (RE-412).
     ko: ssb_game::ko::KoEffects,
+    /// The match's particles (RE-413), on the heap: some 30 KB.
+    particles: alloc::boxed::Box<ssb_game::particle::Particles>,
+    /// The effect manager's structs (`efManagerInitEffects`).
+    effects: ssb_game::effect::Effects,
 }
 
 /// The pause menu's choices at the pause (`sIFCommonBattlePause*`).
@@ -1624,7 +1660,20 @@ impl Hud {
             entry_focus: None,
             colors: [0, 1, 2, 3],
             ko: ssb_game::ko::KoEffects::default(),
+            particles: new_particles(),
+            effects: ssb_game::effect::Effects::new(0),
         }
+    }
+}
+
+/// `efParticleInitAll`'s pools, built in place on the heap.
+#[inline(never)]
+fn new_particles() -> alloc::boxed::Box<ssb_game::particle::Particles> {
+    let mut b = alloc::boxed::Box::<ssb_game::particle::Particles>::new_uninit();
+    // SAFETY: `write_new` initialises every field.
+    unsafe {
+        ssb_game::particle::Particles::write_new(b.as_mut_ptr());
+        b.assume_init()
     }
 }
 
@@ -1736,6 +1785,9 @@ fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game:
 fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     world.damage_hud.countdown = None;
     world.damage_hud.ko = ssb_game::ko::KoEffects::default();
+    // `efParticleInitAll` and `efManagerInitEffects`: a new battle scene.
+    world.damage_hud.particles.reset();
+    world.damage_hud.effects = ssb_game::effect::Effects::new(0);
     world.damage_hud.entry_focus = None;
     let mut damage = [0; 4];
     if let Some(pl) = world.play_state.as_ref() {
@@ -2103,7 +2155,7 @@ fn enter_training(
 #[inline(never)]
 unsafe fn draw_frame(
     gpu: &mut Gpu,
-    s: &Session,
+    s: &mut Session,
     pack: &Option<Pack<'_>>,
     draw_state: &mut meshdraw::DrawState,
     effect_visuals: &mut EffectVisuals,
@@ -2184,7 +2236,7 @@ unsafe fn draw_frame(
                 s.stage_map.as_ref().map(|map| &map.animator),
                 Some(&s.stage_objects),
                 no_pack_color,
-                &s.damage_hud,
+                &mut s.damage_hud,
                 s.vs_battle.as_ref(),
             );
         }
@@ -2641,7 +2693,7 @@ unsafe fn run() -> ! {
 
         draw_frame(
             &mut gpu,
-            &s,
+            &mut s,
             &pack,
             &mut draw_state,
             &mut effect_visuals,
@@ -3529,6 +3581,21 @@ fn draw_ko_effects(
     }
 }
 
+/// `lbParticleDrawTextures` through the battle camera (RE-413), with the
+/// projection `draw_training` sets.
+#[inline(never)]
+fn draw_particles(p: &Pack<'_>, pl: &play::FighterScene, hud: &mut Hud, draw_state: &mut meshdraw::DrawState) {
+    let Some(banks) = ssb_psp_runtime::particles::PackBanks::new(p) else {
+        return;
+    };
+    let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let view = ssb_engine::math::Mat4::look_at(pl.camera.eye, pl.camera.at, ssb_engine::math::Vec3::Y);
+    let proj = ssb_engine::math::Mat4::perspective(38f32.to_radians(), vw as f32 / vh as f32, 1.0, 10_000.0);
+    unsafe {
+        ssb_psp_runtime::particles::draw(&banks, &mut hud.particles, &view, &proj, draw_state);
+    }
+}
+
 /// `ifScreenFlashProcDisplay`: `color1` over `(10, 10)`–`(310, 230)` of the
 /// 320 x 240 screen, blended (`G_RM_AA_XLU_SURF`).
 #[inline(never)]
@@ -3830,7 +3897,7 @@ unsafe fn draw_training(
     stage_anim: Option<&ssb_rom::skeleton::StageAnimator>,
     stage_objects: Option<&ssb_rom::ground_obj::GroundObjects>,
     no_pack_color: Color,
-    damage_hud: &Hud,
+    damage_hud: &mut Hud,
     battle: Option<&ssb_game::battle::Battle>,
 ) {
     let scene = pack
@@ -3933,6 +4000,7 @@ unsafe fn draw_training(
         &damage_hud.ko,
         fighters.map(|x| x.map(|x| &x.fighter)),
     );
+    draw_particles(p, pl, damage_hud, draw_state);
     draw_screen_flash(gpu, draw_state, &damage_hud.ko);
     // `players[].color`: in a free-for-all the human's port and a CPU's
     // `GMCOMMON_PLAYERS_MAX`, in a team battle the team's colour.

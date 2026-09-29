@@ -12,5 +12,6 @@ pub mod assets;
 pub mod gu;
 pub mod input;
 pub mod meshdraw;
+pub mod particles;
 pub mod scene;
 pub mod timing;

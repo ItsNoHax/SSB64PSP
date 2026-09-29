@@ -671,3 +671,16 @@ halo. The new `f1-training-rebirthblast` golden (`rebirthblast`, tick 168)
 was seeded from its first verify run. `f1-vs-results` is unchanged, as its
 battle is not captured. The other 109 goldens are unchanged. 111 of 111
 goldens match.
+
+## 2026-09-29 RE-413 particle runtime
+
+No pack change. Matches now run the particle runtime: hits draw their
+sparks and a KO its streaks. Six goldens were rebaselined, identical in
+both captures: `f1-training-jab` (2,436 pixels at 2×, a light spark at
+Mario's fist), `f1-training-rebirthblast` (12,184, stars rising along the
+blast), `f1-vs-cpu` (416, a small spark), and `f1-vs-four` (337,444),
+`f1-vs-team` (377,560) and `f1-vs-results` (11,592), whose battles and
+win pose follow the source's random draws in the particle scripts and
+makers. A build restoring the seed around every particle call left those
+three matching their old goldens. The other 105 are unchanged. 111 of 111
+goldens match twice.
