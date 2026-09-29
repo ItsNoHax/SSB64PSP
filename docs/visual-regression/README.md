@@ -593,3 +593,9 @@ Pack v63. VS fighters now enter through their Appear clips, so six VS
 goldens were rebaselined, each captured twice: `f1-vs-countdown` shows
 Mario mid-entry and the rest follow from the entry's timing. 106 of 106
 goldens match twice.
+
+## 2026-09-29 RE-403 entry effects
+
+Pack v63. The entry effects draw, so `f1-vs-countdown` was rebaselined,
+captured twice: it shows Mario's pipe under each spawn. 106 of 106
+goldens match twice.

@@ -1688,6 +1688,11 @@ unsafe fn draw_frame(
         Screen::Training => {
             if let (Some(p), Some(pl)) = (pack.as_ref(), s.play_state.as_ref()) {
                 effect_visuals.sync(p, draw_assets, &pl.fighter, &s.weapons, &s.items);
+                effect_visuals.sync_entry(
+                    p,
+                    draw_assets,
+                    [Some(&pl.fighter), s.dummy_state.as_ref().map(|d| &d.fighter)],
+                );
             }
             draw_training(
                 gpu,
@@ -2341,6 +2346,8 @@ fn draw_stage_select(gpu: &mut Gpu, select: &ssb_game::stage_select::StageSelect
 #[derive(Default)]
 struct DrawAssets {
     shadow_texture: Option<ssb_rom::pack::TextureDesc>,
+    /// `ssb_psp_runtime::scene::ENTRY_EFFECT_KEYS`' objects and animations.
+    entry_effects: [Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>; 7],
     /// Indexed by `MarioFireball::index`: Mario's palette, then Luigi's.
     fireball_meshes: [Option<ssb_rom::pack::MeshDesc>; 2],
     blaster_mesh: Option<ssb_rom::pack::MeshDesc>,
@@ -2383,6 +2390,8 @@ impl DrawAssets {
     fn resolve(p: &Pack<'_>) -> Self {
         DrawAssets {
             shadow_texture: meshdraw::fighter_shadow_texture(p),
+            entry_effects: ssb_psp_runtime::scene::ENTRY_EFFECT_KEYS
+                .map(|key| ssb_psp_runtime::scene::manager_effect(p, key)),
             fireball_meshes: ssb_psp_runtime::scene::fireball_meshes(p),
             blaster_mesh: ssb_psp_runtime::scene::fox_blaster_mesh(p),
             reflector: ssb_psp_runtime::scene::fox_reflector_object(p),
@@ -2449,6 +2458,8 @@ impl DrawAssets {
 /// count, restarting when it goes back.
 #[derive(Default)]
 struct EffectVisuals {
+    /// Each fighter's entry effect parts (RE-403).
+    entry: [[EntryVisual; 2]; 2],
     boomerang: ssb_rom::skeleton::StageAnimator,
     boomerang_ticks: Option<u16>,
     spin: ssb_rom::skeleton::StageAnimator,
@@ -2516,6 +2527,97 @@ fn stage_pose(
 /// Thunder Jolts drawn at once; `ftPikachuSpecialNProcUpdate` fires one per
 /// Thunder Jolt and each lives 100 frames.
 const MAX_JOLT_VISUALS: usize = 4;
+
+/// One entry effect part's players and the clock they have caught up to.
+#[derive(Default)]
+struct EntryVisual {
+    ticks: Option<u16>,
+    anim: ssb_rom::skeleton::StageAnimator,
+    materials: ssb_rom::skeleton::EffectMaterialAnimator,
+}
+
+impl EffectVisuals {
+    /// Plays each fighter's entry effect up to its clock
+    /// (`Entry::effect_ticks`), restarting on a new entry.
+    #[inline(never)]
+    fn sync_entry(&mut self, p: &Pack<'_>, assets: &DrawAssets, fighters: [Option<&ssb_game::fighter::Fighter>; 2]) {
+        for (visuals, f) in self.entry.iter_mut().zip(fighters) {
+            let clock = f.and_then(|f| f.entry.effect_ticks);
+            let parts = f.map_or(&[][..], ssb_psp_runtime::scene::entry_effect_parts);
+            for (i, v) in visuals.iter_mut().enumerate() {
+                let asset = parts.get(i).and_then(|&k| assets.entry_effects[k].as_ref());
+                let (Some((restart, ticks)), Some((object, anim))) = (catch_up(&mut v.ticks, clock), asset) else {
+                    continue;
+                };
+                if restart {
+                    v.anim.start(p, anim);
+                    v.materials.start(p, object_mat_anims(p, object));
+                }
+                if let Some(script) = p.anim_script(anim) {
+                    for _ in 0..ticks {
+                        let _ = v.anim.tick(script);
+                        v.materials.tick(p);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Draws each fighter's entry effect at its spawn: the root takes the
+/// entry position in place of its desc translate (`dobj->translate.vec.f =
+/// *pos`), and the effect is gone once its animation ends.
+#[inline(never)]
+fn draw_entry_effects(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    assets: &DrawAssets,
+    visuals: &EffectVisuals,
+    fighters: [Option<&ssb_game::fighter::Fighter>; 2],
+    material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) {
+    for (vs, f) in visuals.entry.iter().zip(fighters) {
+        let Some(f) = f else { continue };
+        if f.entry.effect_ticks.is_none() {
+            continue;
+        }
+        let parts = ssb_psp_runtime::scene::entry_effect_parts(f);
+        for (v, &k) in vs.iter().zip(parts) {
+            let Some((object, _)) = assets.entry_effects[k].as_ref() else {
+                continue;
+            };
+            if v.anim.ended() {
+                continue;
+            }
+            let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 16];
+            let n = v.anim.compose(p, object, &mut posed);
+            if let Some(root) = p.node(object.first_node) {
+                let t = root.rest_translate.map(|x| -x / meshdraw::MODEL_SCALE);
+                let place = ssb_rom::scene::Mat4::from_trs(t, [0.0; 3], [1.0; 3]);
+                for m in &mut posed[..n] {
+                    *m = place.mul(m);
+                }
+            }
+            let pos = f.entry.pos;
+            gpu.model_transform([pos.x, pos.y, pos.z], [0.0; 3], meshdraw::MODEL_SCALE);
+            let base = gpu.model_matrix();
+            unsafe {
+                meshdraw::draw_object_posed(
+                    p,
+                    object,
+                    &base,
+                    &posed[..n],
+                    None,
+                    draw_state,
+                    material_anim,
+                    Some(&v.materials),
+                    0,
+                );
+            }
+        }
+    }
+}
 
 /// One Thunder Jolt's players, keyed by its animation epoch.
 #[derive(Default)]
@@ -2976,6 +3078,15 @@ unsafe fn draw_training(
         items,
         assets,
         effect_visuals,
+        material_anim,
+    );
+    draw_entry_effects(
+        gpu,
+        p,
+        draw_state,
+        assets,
+        effect_visuals,
+        [Some(&pl.fighter), dummy_state.map(|d| &d.fighter)],
         material_anim,
     );
     // `players[].color`: the human's port, a CPU's `GMCOMMON_PLAYERS_MAX`.
