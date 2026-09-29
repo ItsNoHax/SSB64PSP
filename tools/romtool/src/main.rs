@@ -1907,6 +1907,91 @@ fn fighter_skeleton_graphs(loaded: &Loaded) -> std::collections::BTreeSet<(u32, 
         .collect()
 }
 
+/// The electric-damage skeleton sets (`FTAttributes::skeleton[1..=2]`,
+/// RE-414) of every fighter whose high-detail `FTCommonPart` is `graph` of
+/// `file`: `(fighter name, set id, parts)`.
+fn skeleton_sets_for(
+    loaded: &Loaded,
+    file: u32,
+    graph: &ssb_rom::scene::SceneGraph,
+) -> Vec<(&'static str, u32, Vec<ssb_rom::fighter::SkeletonPart>)> {
+    let mut out = Vec::new();
+    let Some(model) = loaded.files.get(file as usize).and_then(Option::as_ref) else {
+        return out;
+    };
+    for entry in &ssb_rom::fighter::FIGHTER_FILES {
+        let Some(main) = loaded.files[entry.file as usize].as_ref() else {
+            continue;
+        };
+        let Some(part) = ssb_rom::fighter::common_parts(main, *entry)[0] else {
+            continue;
+        };
+        if (part.model_file, part.graph) != (file, graph.offset) {
+            continue;
+        }
+        let Some(sk) = ssb_rom::fighter::skeletons(main, *entry, graph.nodes.len(), model) else {
+            continue;
+        };
+        for (i, set) in sk.sets.into_iter().enumerate() {
+            if let Some(parts) = set {
+                // Every list must be in the model file: the plan reads them
+                // from it.
+                if parts
+                    .iter()
+                    .flat_map(|p| p.dls)
+                    .flatten()
+                    .all(|(f, _)| f == file)
+                {
+                    out.push((entry.name, i as u32 + 1, parts));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// [`plan_draw_order`] for a skeleton set: each node draws its
+/// `FTSkeleton` entry instead of its own list, a `dls` pair's first half in
+/// the parent's space.
+fn plan_skeleton_order(
+    graph: &ssb_rom::scene::SceneGraph,
+    parts: &[ssb_rom::fighter::SkeletonPart],
+) -> Vec<PlannedList> {
+    use ssb_rom::scene::Mat4;
+    let worlds = graph.world_transforms();
+    let mut out = Vec::new();
+    for (i, (node, part)) in graph.nodes.iter().zip(parts).enumerate() {
+        let own = |dl| PlannedList {
+            node: i,
+            dl,
+            space: Some(i),
+            world: worlds[i],
+            list_id: None,
+        };
+        match part.flags & 0xF {
+            0 => {
+                if let Some((_, dl)) = part.dls[0] {
+                    out.push(own(dl));
+                }
+            }
+            1 => {
+                if let Some((_, dl)) = part.dls[0] {
+                    out.push(PlannedList {
+                        node: i,
+                        dl,
+                        space: node.parent,
+                        world: node.parent.map_or(Mat4::IDENTITY, |p| worlds[p]),
+                        list_id: None,
+                    });
+                }
+                out.push(own(part.dls[1].map_or(NO_LIST, |(_, dl)| dl)));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Every stage's render-layer-1 `(file, graph_offset)` (RE-245).
 ///
 /// `grDisplayLayer1PriProcDisplay`/`SecProcDisplay` set `G_ZBUFFER` and
@@ -2738,6 +2823,8 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut node_dls = 0usize;
     let mut extra_leaves = 0usize;
     let mut costume_overrides_added = 0usize;
+    let (mut skeleton_parts_added, mut skeleton_parts_dropped) = (0usize, 0usize);
+    let mut skeleton_fighters = std::collections::BTreeSet::new();
     // A stage names its render layers by the `DObjDesc` address they start at,
     // and `add_object` is given that same address -- so the layer lookup is an
     // exact match, never a search.
@@ -3293,8 +3380,71 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     }
                 }
             }
+
+            // RE-414: the electric-damage skeletons. Each set replaces every
+            // node's list with its `FTSkeleton` entry (or nothing), drawn under
+            // the node's own materials (`ftDisplayMainDrawSkeleton`); the
+            // converted meshes are keyed as costume overrides at
+            // `SKELETON_COSTUME_BASE + set`.
+            for (owner, set, parts) in skeleton_sets_for(&loaded, id, graph) {
+                let plan = plan_skeleton_order(graph, &parts);
+                let materials = loaded.materials(file, graph);
+                let initial = initial_material_for(
+                    &skeleton_graphs,
+                    &ground_graphs,
+                    &transition_graphs,
+                    id,
+                    graph.offset,
+                );
+                let converted = convert_graph_at(
+                    &loaded,
+                    file,
+                    graph.offset,
+                    &plan,
+                    &materials,
+                    &mut mat_anim_data,
+                    initial,
+                );
+                let first_node = writer.object(object).unwrap().first_node;
+                for (p, m) in plan.iter().zip(&converted) {
+                    let Ok(m) = m else { continue };
+                    if m.triangle_count() == 0 {
+                        continue;
+                    }
+                    if !p.own_space() {
+                        skeleton_parts_dropped += 1;
+                        continue;
+                    }
+                    let mesh = pack_mesh(
+                        &mut writer,
+                        &mut tex_index,
+                        &mut mat_anim_index,
+                        &mat_anim_data,
+                        Texels {
+                            home: file,
+                            all: &loaded.files,
+                        },
+                        id,
+                        p.dl,
+                        m,
+                        swizzle,
+                    );
+                    writer.add_costume_override(
+                        first_node + p.node as u32,
+                        ssb_rom::pack::SKELETON_COSTUME_BASE + set,
+                        mesh,
+                    );
+                    skeleton_parts_added += 1;
+                }
+                skeleton_fighters.insert(owner);
+            }
         }
     }
+    println!(
+        "  skeletons   {skeleton_parts_added} electric-skeleton part meshes for {} fighters \
+         ({skeleton_parts_dropped} pre-matrix lists with triangles dropped)",
+        skeleton_fighters.len()
+    );
 
     // Stages last: a layer can only be resolved once every object exists.
     let mut stage_layers = 0usize;

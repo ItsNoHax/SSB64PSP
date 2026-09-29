@@ -356,7 +356,7 @@ pub fn set_twister(f: &mut Fighter) {
 /// `ftCommonTaruCannSetStatus` @ 0x80143F30.
 pub fn set_tarucann(f: &mut Fighter) {
     enter(f, Status::TaruCann);
-    f.hitstatus = HitStatus::Intangible;
+    crate::hurtbox::set_hit_status_all(f, HitStatus::Intangible);
     f.is_invisible = true;
 }
 
@@ -422,6 +422,7 @@ fn shoot_twister(f: &mut Fighter, t: HazardThrow) {
     crate::attack::init_damage_vars_full(
         f,
         None,
+        damage,
         knockback,
         t.angle,
         f.facing.sign(),
@@ -458,6 +459,7 @@ fn shoot_tarucann(f: &mut Fighter, t: HazardThrow) {
     crate::attack::init_damage_vars_full(
         f,
         Some(AnyStatus::Common(Status::DamageFlyRoll)),
+        t.damage,
         knockback,
         angle,
         lr,

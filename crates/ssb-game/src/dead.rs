@@ -562,7 +562,7 @@ pub fn rebirth_down(f: &mut Fighter, halo_number: u8) {
     f.dead.is_rebirth = true;
     f.dead.camera_mode = CameraMode::Ghost;
     f.colanim
-        .check_set(crate::colanim::ColAnimId::FighterRebirth, 0);
+        .check_set(crate::colanim::ColAnimId::FIGHTER_REBIRTH, 0);
 }
 
 /// `FTSTATUS_PRESERVE_PLAYERTAG | FTSTATUS_PRESERVE_EFFECT |

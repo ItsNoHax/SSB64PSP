@@ -328,6 +328,12 @@ def main():
     refs = args.refs
     ftdef = open(os.path.join(refs, "src/ft/ftdef.h")).read()
     macros = Macros(ftdef)
+    # `SetColAnim` and `Effect` name their colour animation and effect by
+    # enum (`GMColAnimKind`, `gm/gmdef.h`; `efKind`, `ef/efdef.h`, US side).
+    for header, enum_name in (("src/gm/gmdef.h", "GMColAnimKind"), ("src/ef/efdef.h", "efKind")):
+        text = open(os.path.join(refs, header)).read()
+        block = re.search(r"typedef enum " + enum_name + r"\s*\{.*?\}", text, re.S).group(0)
+        macros.enums.update(enum_values(preprocess(block), enum_name))
     common_motion = enum_values(ftdef, "FTCommonMotion")
     common_status = enum_values(ftdef, "FTCommonStatus")
     special_start = common_status["nFTCommonStatusSpecialStart"]
@@ -418,7 +424,7 @@ def main():
                  f"    words: &{up}_WORDS,\n    motions: &{up}_MOTIONS,\n"
                  f"    special_status_motion: &{up}_SPECIAL_MOTION,\n}};\n\n")
     if macros.unknown:
-        print("note: identifiers read as 0:", " ".join(sorted(macros.unknown)[:40]),
+        print("note: identifiers read as 0:", " ".join(sorted(macros.unknown)),
               f"({len(macros.unknown)})", file=sys.stderr)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w") as f:

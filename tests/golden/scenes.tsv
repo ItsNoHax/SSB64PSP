@@ -37,6 +37,9 @@ r2-pikachu-fighter	psp-asset-viewer	fighter pikachu	pass	RE-265 RE-358
 r2-purin-fighter	psp-asset-viewer	fighter purin	pass	RE-265 RE-358
 r2-ness-fighter	psp-asset-viewer	fighter ness	pass	RE-265
 r2-link-costume-1	psp-asset-viewer	link_costume_1	pass	RE-301 RE-357 RE-358
+r2-mario-skeleton	psp-asset-viewer	skeleton mario	pass	RE-414
+r2-samus-skeleton	psp-asset-viewer	skeleton samus	pass	RE-414
+r2-kirby-skeleton	psp-asset-viewer	skeleton kirby	pass	RE-414
 r2-metal-mario-fighter	psp-asset-viewer	fighter metal_mario	pass	RE-311 RE-358
 r2-mario-entry-pipe	psp-asset-viewer	mario_entry	pass	RE-312
 r2-bonus-platform-small	psp-asset-viewer	bonus_platform	pass	RE-312

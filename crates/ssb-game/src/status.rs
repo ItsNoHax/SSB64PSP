@@ -2148,13 +2148,13 @@ pub const FURASLEEP_BREAKOUT_WAIT_DEFAULT: i32 = 300;
 pub const FURASLEEP_BREAKOUT_WAIT_MIN: i32 = 75;
 
 /// `ftCommonFuraSleepSetStatus`: Sing's target sleeps for longer the less
-/// damage it has taken, and mashes out through the capture breakout. The
-/// colour animation is presentation.
+/// damage it has taken, and mashes out through the capture breakout.
 pub fn set_fura_sleep(f: &mut Fighter) {
     set_status(f, Status::FuraSleep, 0.0, StatusTiming::unknown());
     let wait = (FURASLEEP_BREAKOUT_WAIT_DEFAULT - i32::from(f.damage)).max(0)
         + FURASLEEP_BREAKOUT_WAIT_MIN;
     crate::grab::init_breakout(f, wait);
+    crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_FURA_SLEEP, 0);
 }
 
 /// `ftCommonGuardSetOffSetStatus` @ `ftcommonguard2.c:113`: a hit landing on
@@ -2205,8 +2205,8 @@ pub struct BlastZone {
 pub const FASTFALL_STICK_RANGE_MIN: i32 = -53;
 pub const FASTFALL_BUFFER_TICS_MAX: u8 = 4;
 
-/// `ftPhysicsCheckSetFastFall` @ `ftphysics.c:231`, minus the
-/// collision-animation side effect (rendering, out of scope). A one-shot
+/// `ftPhysicsCheckSetFastFall` @ `ftphysics.c:231`, with its white
+/// `FastFall` flash (run at once when it starts). A one-shot
 /// per-airtime latch — `is_fastfall` only clears again on landing
 /// (`Fighter::land`) — so this only ever fires once per fall. Was
 /// previously never called from anywhere in this codebase: `Fighter::tick_air`
@@ -2222,6 +2222,9 @@ pub fn check_set_fast_fall(f: &mut Fighter) {
     {
         f.physics.is_fastfall = true;
         f.stick.tap_y = STICKBUFFER_MAX;
+        if crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_FAST_FALL, 0) {
+            crate::colanim::run_update(f);
+        }
     }
 }
 
@@ -2351,6 +2354,7 @@ pub fn set_fall_special(
         is_allow_interrupt,
         is_fall_accelerate,
     };
+    crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_FALL_SPECIAL, 0);
     f.is_special_interrupt = true;
 }
 
@@ -3550,7 +3554,9 @@ pub fn set_any_status_preserve(
         crate::combat::clear_attack_colls(f);
     }
     crate::hurtbox::on_set_status(f, preserve.hitstatus);
-    crate::colanim::on_set_status(&mut f.colanim, preserve.colanim);
+    let keep_colanim =
+        preserve.colanim || crate::colanim::preserved(f.kind, f.status.status, status);
+    crate::colanim::on_set_status(f, keep_colanim);
     f.damage_knockback_stack = 0.0;
     f.damage_mul = 1.0;
     f.damage_e_status = None;
@@ -4843,8 +4849,8 @@ pub fn update(f: &mut Fighter) {
         }
     }
     crate::motion::advance(f);
-    // `ftMainRunUpdateColAnim`.
-    f.colanim.run_update();
+    // `ftMainRunUpdateColAnim`, then the hit-status timers' end.
+    crate::colanim::run_update_interrupt(f);
 
     // Every extended (`AnyStatus::Mario`-style) status is handled
     // separately, in `update_extended` — unwrapping to a bare `Status` here
@@ -5224,6 +5230,11 @@ fn update_extended(f: &mut Fighter) {
                 if f.donkey_special_n.charging && f.donkey_special_n.charge_level < 10 {
                     f.donkey_special_n.charge_level += 1;
                     if f.donkey_special_n.charge_level == 10 {
+                        crate::colanim::check_set(
+                            f,
+                            crate::colanim::ColAnimId::FIGHTER_COMMON_SPECIAL_N_CHARGE,
+                            0,
+                        );
                         f.donkey_special_n.cancel = true;
                     }
                 }

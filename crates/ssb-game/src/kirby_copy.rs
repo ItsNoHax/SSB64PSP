@@ -639,6 +639,11 @@ fn giant_punch_loop_wrap(f: &mut Fighter, s: K) {
         copy.donkey_charge_level += 1;
         if copy.donkey_charge_level == GIANTPUNCH_CHARGE_MAX {
             copy.donkey_is_cancel = true;
+            crate::colanim::check_set(
+                f,
+                crate::colanim::ColAnimId::FIGHTER_COMMON_SPECIAL_N_CHARGE,
+                0,
+            );
         }
     }
     if f.kirby.copy.donkey_is_cancel {
@@ -854,6 +859,7 @@ fn make_thunder_jolt(f: &mut Fighter) {
             ),
         facing: f.facing.sign(),
     });
+    crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_PIKACHU_SPECIAL_N, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -911,6 +917,11 @@ pub fn update(f: &mut Fighter) {
                     copy.samus_charge_level += 1;
                     if copy.samus_charge_level == CHARGE_MAX {
                         copy.samus_charge_shot = false;
+                        crate::colanim::check_set(
+                            f,
+                            crate::colanim::ColAnimId::FIGHTER_COMMON_SPECIAL_N_CHARGE,
+                            0,
+                        );
                         status::set_wait(f);
                     }
                 }

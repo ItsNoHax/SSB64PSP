@@ -512,6 +512,79 @@ pub fn animlock(file: &File, entry: FighterFile) -> Option<u64> {
     joint_mask(file, entry.offset + ANIMLOCK_OFFSET)
 }
 
+/// `FTAttributes::skeleton` (`FTSkeleton **`), after `sprites` at 0x340.
+pub const SKELETON_OFFSET: u32 = 0x344;
+
+/// Size of one `FTSkeleton`: a display-list pointer and a `u8` of flags.
+const SKELETON_ENTRY_SIZE: u32 = 8;
+
+/// One joint of an electric-damage skeleton set (`FTSkeleton`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SkeletonPart {
+    /// `flags`: `& 0xF` is 0 for one list (`dl`), 1 for a pair (`dls`); the
+    /// upper bits are `FTPARTS_FLAG_*`.
+    pub flags: u8,
+    /// The display lists, as `(file, offset)`: `[dl, -]` for kind 0, and
+    /// `[dls[0], dls[1]]` for kind 1. `dls[0]` is drawn before the joint's
+    /// own matrix (in its parent's space), as `ftDisplayMainDrawSkeleton`
+    /// does.
+    pub dls: [Option<(u32, u32)>; 2],
+}
+
+/// A fighter's electric-damage skeletons (`ftDisplayMainDrawSkeleton`):
+/// `FTAttributes::skeleton[0]` is a joint id whose DObj must have a list
+/// for any skeleton to draw, and `skeleton[id]` (id 1 or 2) is an
+/// `FTSkeleton` per joint from `nFTPartsJointCommonStart` — that is, one per
+/// model descriptor, in the pack's node order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Skeletons {
+    pub gate_joint: u32,
+    /// `skeleton[1]` and `skeleton[2]`, `count` parts each when present.
+    pub sets: [Option<Vec<SkeletonPart>>; 2],
+}
+
+/// Follows `FTAttributes::skeleton`. `count` is the model's descriptor
+/// count (the arrays carry no length of their own). `model` resolves the
+/// `dls` pairs, which live in the model file.
+pub fn skeletons(main: &File, entry: FighterFile, count: usize, model: &File) -> Option<Skeletons> {
+    let (file, array) = crate::sprite::pointer_place(main, entry.offset + SKELETON_OFFSET)?;
+    if file != main.id {
+        return None;
+    }
+    let word = |f: &File, at: u32| -> Option<u32> {
+        let raw = f.data.get(at as usize..at as usize + 4)?;
+        Some(u32::from_be_bytes(raw.try_into().ok()?))
+    };
+    let gate_joint = word(main, array)?;
+    let mut sets = [None, None];
+    for (i, set) in sets.iter_mut().enumerate() {
+        let Some((sf, parts)) = crate::sprite::pointer_place(main, array + 4 + i as u32 * 4) else {
+            continue;
+        };
+        if sf != main.id {
+            continue;
+        }
+        let list = (0..count as u32)
+            .map(|j| {
+                let at = parts + j * SKELETON_ENTRY_SIZE;
+                let flags = main.data.get(at as usize + 4).copied().unwrap_or(0);
+                let target = crate::sprite::pointer_place(main, at);
+                let dls = match (flags & 0xF, target) {
+                    (0, Some(dl)) => [Some(dl), None],
+                    (1, Some((pf, pair))) if pf == model.id => [
+                        crate::sprite::pointer_place(model, pair),
+                        crate::sprite::pointer_place(model, pair + 4),
+                    ],
+                    _ => [None, None],
+                };
+                SkeletonPart { flags, dls }
+            })
+            .collect();
+        *set = Some(list);
+    }
+    Some(Skeletons { gate_joint, sets })
+}
+
 /// Decodes one fighter out of a loaded archive file.
 pub fn decode_file(entry: FighterFile, file: &File) -> Result<Fighter, FighterError> {
     let attributes = FighterAttributes::decode(&file.data, entry.file, entry.offset)?;
@@ -788,6 +861,56 @@ mod tests {
                 entry.name
             );
         }
+    }
+
+    /// `dFT<Name>Main_skeleton` in `relocData/2xx_*Main.c`: the gate joint,
+    /// which sets exist, and a few named lists (Fox's joint 1 is
+    /// `dFoxModel_gap_0x5A38_sub_0x808`, 0x6240; Samus's parts are `dls`
+    /// pairs; Kirby's second set is `dKirbyMain_sub_0x724`).
+    #[test]
+    fn real_rom_skeletons_match_the_decomp() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = Archive::open(&data, info.region).unwrap();
+        #[rustfmt::skip]
+        const EXPECTED: [(u32, usize, bool); 12] = [
+            (12, 25, false), (12, 27, false), (12, 26, false), (13, 33, false),
+            (12, 25, false), (23, 32, false), (7, 28, false), (12, 26, false),
+            (10, 27, true), (11, 27, false), (10, 26, true), (12, 27, false),
+        ];
+        for (entry, (gate, count, two)) in FIGHTER_FILES.iter().zip(EXPECTED) {
+            let main = archive.load(entry.file).unwrap();
+            let part = common_parts(&main, *entry)[0].unwrap();
+            let model = archive.load(part.model_file).unwrap();
+            let s = skeletons(&main, *entry, count, &model).unwrap();
+            assert_eq!(s.gate_joint, gate, "{}", entry.name);
+            assert!(s.sets[0].is_some(), "{}", entry.name);
+            assert_eq!(s.sets[1].is_some(), two, "{}", entry.name);
+            let lists = s.sets[0]
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter(|p| p.dls.iter().any(Option::is_some));
+            assert!(lists.count() > 3, "{}", entry.name);
+        }
+        let fox = &FIGHTER_FILES[1];
+        let main = archive.load(fox.file).unwrap();
+        let model = archive.load(313).unwrap();
+        let s = skeletons(&main, *fox, 27, &model).unwrap();
+        let set = s.sets[0].as_ref().unwrap();
+        assert_eq!(set[0].dls, [None, None]);
+        assert_eq!(set[1].dls, [Some((313, 0x5A38 + 0x808)), None]);
+        assert_eq!(set[8].dls, [Some((313, 0x66B0)), None]);
+        let samus = &FIGHTER_FILES[3];
+        let main = archive.load(samus.file).unwrap();
+        let model = archive.load(320).unwrap();
+        let s = skeletons(&main, *samus, 33, &model).unwrap();
+        let set = s.sets[0].as_ref().unwrap();
+        assert!(set.iter().all(|p| p.flags & 0xF == 1));
+        assert!(set[1].dls[1].is_some());
     }
 
     #[test]

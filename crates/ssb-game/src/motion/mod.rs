@@ -13,8 +13,9 @@
 //! `ftMainUpdateMotionEventsForward` does.
 //!
 //! Only commands with gameplay effects act here: attack collisions,
-//! hit statuses, hurtbox edits, the four flags and the aerial-jump commands.
-//! Effects, sounds, rumble, colour animations, model/texture parts, slope
+//! hit statuses, hurtbox edits, the four flags, the aerial-jump commands
+//! and the colour animations ([`crate::colanim`]).
+//! Effects, sounds, rumble, model/texture parts, slope
 //! contours and throw descriptors are decoded and skipped; the ported status
 //! code owns throws.
 
@@ -124,6 +125,8 @@ mod op {
     pub const PAUSE_SCRIPT: u32 = 37;
     pub const EFFECT: u32 = 38;
     pub const EFFECT_ITEM_HOLD: u32 = 39;
+    pub const SET_COL_ANIM: u32 = 44;
+    pub const RESET_COL_ANIM: u32 = 45;
     pub const SET_PARALLEL_SCRIPT: u32 = 46;
 }
 
@@ -243,7 +246,7 @@ pub fn start(f: &mut Fighter, frame_begin: f32) {
     // `ftMainSetStatus`: a status that starts at frame 0 also runs a frame
     // of its colour animation.
     if frame_begin == 0.0 {
-        f.colanim.run_update();
+        crate::colanim::run_update(f);
     }
 }
 
@@ -317,7 +320,11 @@ fn run(f: &mut Fighter, thread: usize, forward: bool) {
                     | op::SET_ATTACK_COLL_SOUND_LEVEL
                     | op::REFRESH_ATTACK_COLL_ID
                     | op::SET_FLAG0
-                    ..=23 | op::SET_AIR_JUMP_ADD | op::SET_AIR_JUMP_MAX
+                    ..=23
+                        | op::SET_AIR_JUMP_ADD
+                        | op::SET_AIR_JUMP_MAX
+                        | op::SET_COL_ANIM
+                        | op::RESET_COL_ANIM
             );
         if skip {
             f.motion_script.threads[thread].pc += command_words(opcode);
@@ -422,8 +429,7 @@ fn execute(
             crate::hurtbox::set_hit_status_part_id(f, joint, status);
         }
         op::SET_HIT_STATUS_ALL => {
-            // `ftParamSetHitStatusAll`.
-            f.hitstatus = HitStatus::from_raw(value);
+            crate::hurtbox::set_hit_status_all(f, HitStatus::from_raw(value));
         }
         op::RESET_DAMAGE_COLL_PART_ALL => crate::hurtbox::reset_damage_colls(f),
         op::SET_DAMAGE_COLL_PART_ID => {
@@ -489,6 +495,12 @@ fn execute(
             return;
         }
         op::PAUSE_SCRIPT => f.motion_script.threads[thread].wait = f32::MAX,
+        op::SET_COL_ANIM => {
+            // `ftMotionCommandSetColAnim(id, length)`: 8-bit id, 18-bit length.
+            let id = crate::colanim::ColAnimId(((w >> 18) & 0xFF) as u8);
+            crate::colanim::check_set(f, id, (w & 0x3_FFFF) as i32);
+        }
+        op::RESET_COL_ANIM => crate::colanim::reset_stat_update(f),
         op::SET_PARALLEL_SCRIPT => {
             let target = word(1);
             if thread == 0 && f.motion_script.threads[1].pc == NO_SCRIPT && target != NO_SCRIPT {

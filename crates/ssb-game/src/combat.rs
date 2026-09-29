@@ -1511,7 +1511,7 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         match f.hits.damage_kind {
             DamageKind::None => {}
             DamageKind::Status => goto_damage_status(f),
-            DamageKind::ColAnim => {}
+            DamageKind::ColAnim => set_damage_colanim(f),
             DamageKind::Catch => update_catch_resist(f),
             DamageKind::Default => update_main(f, partner),
         }
@@ -1587,7 +1587,9 @@ fn only_flashes(f: &Fighter) -> bool {
 /// `ftCommonDamageUpdateCatchResist`: Donkey Kong's cargo stance holds on
 /// unless the hit launches.
 fn update_catch_resist(f: &mut Fighter) {
-    if !only_flashes(f) {
+    if only_flashes(f) {
+        set_damage_colanim(f);
+    } else {
         let (kb, angle, lr) = (
             f.hits.damage_knockback,
             f.hits.damage_angle,
@@ -1631,7 +1633,8 @@ pub fn goto_damage_status(f: &mut Fighter) {
         status::set_fura_sleep(f);
         return;
     }
-    attack::init_damage_vars_full(f, None, kb, angle, lr, index, element, true);
+    let damage = f.hits.damage_queue;
+    attack::init_damage_vars_full(f, None, damage, kb, angle, lr, index, element, true);
 }
 
 /// `ftCommonDamageCheckCatchResist`.
@@ -1686,6 +1689,7 @@ fn update_main(f: &mut Fighter, partner: Option<&mut Fighter>) {
                     f.hits.damage_lag = catcher.hits.damage_lag;
                     f.hits.hitlag_mul = catcher.hits.hitlag_mul;
                     catcher.hits.damage_kind = DamageKind::Catch;
+                    set_damage_colanim(f);
                     return;
                 }
                 if keep {
@@ -1703,12 +1707,14 @@ fn update_main(f: &mut Fighter, partner: Option<&mut Fighter>) {
                     catcher.status.status,
                     catcher.hits.hitlag_mul,
                 );
+                set_damage_colanim(f);
                 return;
             }
         } else if keep {
             // The hold survives; the catcher takes the hitlag, delivered
             // through the grab link.
             crate::grab::send_catcher_hitlag(f, f.hits.damage_lag);
+            set_damage_colanim(f);
             return;
         }
         crate::grab::release_on_capture_hit(f);
@@ -1716,9 +1722,17 @@ fn update_main(f: &mut Fighter, partner: Option<&mut Fighter>) {
         return;
     }
     if only_flashes(f) {
+        set_damage_colanim(f);
         return;
     }
     goto_damage_status(f);
+}
+
+/// `ftCommonDamageSetDamageColAnim`: the hit flashes the fighter without
+/// changing its status.
+fn set_damage_colanim(f: &mut Fighter) {
+    let (kb, element) = (f.hits.damage_knockback, f.hits.damage_element);
+    crate::colanim::update_damage_colanim(f, kb, element);
 }
 
 /// `ftCommonDamageCheckCatchResist` for Donkey Kong's cargo statuses.

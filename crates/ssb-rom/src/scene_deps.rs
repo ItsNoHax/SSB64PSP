@@ -93,6 +93,14 @@ impl SceneDeps {
             if mesh != NodeDesc::NO_MESH {
                 self.add_mesh(pack, mesh);
             }
+            // The electric-damage skeletons (RE-414) can replace any node.
+            for set in 1..=2 {
+                if let Some(mesh) =
+                    pack.costume_mesh(node, crate::pack::SKELETON_COSTUME_BASE + set)
+                {
+                    self.add_mesh(pack, mesh);
+                }
+            }
         }
     }
 

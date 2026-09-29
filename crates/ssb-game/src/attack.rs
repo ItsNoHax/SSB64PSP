@@ -179,6 +179,7 @@ pub fn init_damage_vars(
     init_damage_vars_full(
         f,
         status_replace,
+        damage,
         knockback,
         angle_i,
         lr,
@@ -215,6 +216,7 @@ pub fn set_damage_status(
     init_damage_vars_full(
         f,
         status_replace,
+        0,
         knockback,
         angle_i,
         lr,
@@ -251,6 +253,7 @@ fn angle_between(a: Vec3, b: Vec3) -> f32 {
 pub fn init_damage_vars_full(
     f: &mut Fighter,
     status_replace: Option<AnyStatus>,
+    damage: i32,
     knockback: f32,
     angle_i: i32,
     lr: f32,
@@ -322,6 +325,14 @@ pub fn init_damage_vars_full(
         {
             status = Status::DamageFlyRoll;
         }
+    }
+    // `ftCommonDamageCheckElementSetColAnim` for a hit that did damage, then
+    // `ftCommonDamageCheckMakeScreenFlash`.
+    if damage != 0 {
+        crate::colanim::damage_element_colanim(f, element, level);
+    }
+    if let Some(flash) = crate::colanim::damage_screen_flash(knockback, element) {
+        f.screen_flash = Some(flash);
     }
     // `ftKirbySpecialNDamageCheckLoseCopy`: a tumble-level hit costs Kirby
     // its copy one time in twelve.

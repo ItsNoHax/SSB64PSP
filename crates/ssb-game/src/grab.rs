@@ -2129,6 +2129,9 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
         GrabEvent::CaptureKirby => crate::capture_kirby::capture(to, from.port, holder_of(from)),
         GrabEvent::KirbyEat { is_kirby } => crate::capture_kirby::on_eaten(to, is_kirby),
         GrabEvent::KirbyDamage { staled } => {
+            // `ftCommonDamageUpdateDamageColAnim(victim, knockback, 0)`: a
+            // normal-element hit is `DamageCommon` at any knockback.
+            crate::colanim::update_damage_colanim(to, 0.0, crate::combat::Element::Normal);
             to.add_damage(staled.damage);
             record_throw(from, to, staled, staled.damage);
         }

@@ -273,7 +273,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // the VS results screen and the character selects.
 // 65 gives `StageDesc` the stage's fog colour (`MPGroundData.fog_color`),
 // which a star KO fades towards (RE-412).
-pub const VERSION: u32 = 65;
+// 66 adds the electric-damage skeletons as costume overrides keyed
+// `SKELETON_COSTUME_BASE + set` (RE-414).
+pub const VERSION: u32 = 66;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1241,6 +1243,12 @@ pub struct CostumeOverride {
 impl CostumeOverride {
     pub const SIZE: usize = 12;
 }
+
+/// A [`CostumeOverride`] whose `costume` is `SKELETON_COSTUME_BASE + id` is
+/// the node's mesh in electric-damage skeleton set `id` (1 or 2,
+/// `FTAttributes::skeleton`, RE-414). A node with no such entry draws
+/// nothing while that skeleton shows.
+pub const SKELETON_COSTUME_BASE: u32 = 0x100;
 
 /// One original LBParticle bank. Script and texture IDs are bank-local.
 #[repr(C)]
@@ -3726,7 +3734,10 @@ impl<'a> Pack<'a> {
             if o.node >= node_end {
                 break;
             }
-            max_costume = max_costume.max(o.costume);
+            // The skeleton sets are not costumes.
+            if o.costume < SKELETON_COSTUME_BASE {
+                max_costume = max_costume.max(o.costume);
+            }
             i += 1;
         }
         max_costume + 1

@@ -652,10 +652,11 @@ unsafe fn run() -> ! {
     // Keep the normal viewer default at costume 0, but make one real
     // non-zero costume reproducible in the deterministic matrix. This uses
     // the existing object override path -- no second costume renderer.
-    let mut costume_index: u32 = if capture_scene.is(CaptureScene::LinkCostume1) {
-        1
-    } else {
-        0
+    let mut costume_index: u32 = match capture_scene {
+        Some(CaptureScene::LinkCostume1) => 1,
+        // RE-414: the first electric-damage skeleton set.
+        Some(CaptureScene::Skeleton(_)) => ssb_rom::pack::SKELETON_COSTUME_BASE + 1,
+        _ => 0,
     };
 
     // Stage view: a whole stage -- its render layers assembled, with its

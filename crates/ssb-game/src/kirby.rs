@@ -73,6 +73,10 @@ pub const STONE_SLIDE_TRACTION_MUL: f32 = 1.15;
 pub const STONE_SLIDE_VEL_MUL: f32 = 36.0;
 pub const STONE_SLIDE_CLAMP_VEL_X: f32 = 30.0;
 pub const STONE_HEALTH_MAX: i32 = 38;
+/// `FTKIRBY_STONE_HEALTH_MID` (US) and `..._LOW`: Stone flashes faster below
+/// each.
+pub const STONE_HEALTH_MID: i32 = 22;
+pub const STONE_HEALTH_LOW: i32 = 10;
 
 /// `FTCOMMON_ATTACKAIR_SKIPLANDING_VEL_Y_MAX`.
 const SKIPLANDING_VEL_Y_MAX: f32 = -20.0;
@@ -147,6 +151,9 @@ pub struct KirbyState {
     pub damage_resist: i32,
     /// `status_vars.kirby.speciallw.duration`.
     pub stone_duration: i32,
+    /// `status_vars.kirby.speciallw.colanim_id`: Stone's flash for its
+    /// remaining health.
+    pub stone_colanim: crate::colanim::ColAnimId,
     /// Stone's motion flags 1 and 2.
     pub stone_flag1: bool,
     pub stone_flag2: bool,
@@ -175,6 +182,7 @@ impl Default for KirbyState {
             is_damage_resist: false,
             damage_resist: 0,
             stone_duration: 0,
+            stone_colanim: crate::colanim::ColAnimId::NONE,
             stone_flag1: false,
             stone_flag2: false,
             release_lag: 0,
@@ -317,6 +325,7 @@ pub fn damage_check_lose_copy(f: &mut Fighter) {
 pub fn lose_copy(f: &mut Fighter) {
     crate::kirby_copy::init_passive_vars(f);
     f.kirby.copy_id = FighterKind::Kirby;
+    crate::colanim::reset_stat_update(f);
 }
 
 /// `FTKirbyCopy[27]` at `KirbyMainMotion` 0x0000: `(copy_id, star_damage)`
@@ -596,6 +605,31 @@ fn set_damage_resist(f: &mut Fighter) {
     f.kirby.is_damage_resist = true;
     f.kirby.damage_resist = STONE_HEALTH_MAX;
     f.kirby.stone_duration = STONE_DURATION_MAX;
+    f.kirby.stone_colanim = crate::colanim::ColAnimId::FIGHTER_KIRBY_SPECIAL_LW_HIGH;
+    crate::colanim::check_set(
+        f,
+        crate::colanim::ColAnimId::FIGHTER_KIRBY_SPECIAL_LW_HIGH,
+        0,
+    );
+}
+
+/// `ftKirbySpecialLwUpdateColAnim`: Stone's flash follows its remaining
+/// health.
+fn stone_update_colanim(f: &mut Fighter) {
+    use crate::colanim::ColAnimId;
+    let id = if f.kirby.damage_resist < STONE_HEALTH_MID {
+        if f.kirby.damage_resist < STONE_HEALTH_LOW {
+            ColAnimId::FIGHTER_KIRBY_SPECIAL_LW_LOW
+        } else {
+            ColAnimId::FIGHTER_KIRBY_SPECIAL_LW_MID
+        }
+    } else {
+        ColAnimId::FIGHTER_KIRBY_SPECIAL_LW_HIGH
+    };
+    if f.kirby.stone_colanim != id {
+        crate::colanim::check_set(f, id, 0);
+        f.kirby.stone_colanim = id;
+    }
 }
 
 fn set_stone(f: &mut Fighter, s: K, frame: f32) {
@@ -645,9 +679,12 @@ fn stone_unk_decide(f: &mut Fighter, grounded: bool) {
         f.kirby.stone_flag1 = false;
         f.kirby.stone_flag2 = true;
     }
-    if f.kirby.stone_flag2 && stone_check_release(f, false) {
-        set_stone_end(f, grounded);
-        f.kirby.stone_flag2 = false;
+    if f.kirby.stone_flag2 {
+        if stone_check_release(f, false) {
+            set_stone_end(f, grounded);
+            f.kirby.stone_flag2 = false;
+        }
+        stone_update_colanim(f);
     }
 }
 
@@ -656,6 +693,7 @@ fn stone_hold_decide(f: &mut Fighter, grounded: bool) {
     if stone_check_release(f, true) {
         set_stone_end(f, grounded);
     }
+    stone_update_colanim(f);
 }
 
 // ---------------------------------------------------------------------------

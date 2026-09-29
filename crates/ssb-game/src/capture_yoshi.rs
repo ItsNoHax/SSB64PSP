@@ -157,6 +157,7 @@ fn escape(f: &mut Fighter) {
     // `ftParamSetTimedHitStatusIntangible`: the port's timed invincibility
     // is the one that lets attacks pass through.
     f.invincible_frames = f.invincible_frames.max(INTANGIBLE_TIMER);
+    crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_NO_DAMAGE, 0);
 }
 
 /// The bookkeeping half of `ftCommonYoshiEggProcPhysics`, then the break
