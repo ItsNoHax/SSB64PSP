@@ -1589,6 +1589,357 @@ fn enter_training(
     index
 }
 
+/// The frame's draw for the current screen. Out of [`run`] so `run` stays
+/// inside MIPS branch range.
+#[inline(never)]
+unsafe fn draw_frame(
+    gpu: &mut Gpu,
+    s: &Session,
+    pack: &Option<Pack<'_>>,
+    draw_state: &mut meshdraw::DrawState,
+    effect_visuals: &mut EffectVisuals,
+    draw_assets: &DrawAssets,
+    no_pack_color: Color,
+) {
+    match s.screen {
+        Screen::Intro => {
+            gpu.set_viewport_fullscreen();
+            gpu.begin_frame(Some(BG_INTRO));
+        }
+        Screen::Menu => {
+            gpu.set_viewport_fullscreen();
+            gpu.begin_frame(Some(BG_MENU));
+            draw_menu(gpu, s.cursor);
+        }
+        Screen::VsMode => {
+            gpu.set_viewport_fullscreen();
+            gpu.begin_frame(Some(BG_MENU));
+            draw_vs_mode(gpu, &s.vs_mode);
+        }
+        Screen::FighterSelect => {
+            gpu.set_viewport_fullscreen();
+            gpu.begin_frame(Some(BG_MENU));
+            if let Some(select) = s.fighter_select.as_ref() {
+                draw_fighter_select(gpu, select);
+            }
+        }
+        Screen::StageSelect => {
+            gpu.set_viewport_fullscreen();
+            gpu.begin_frame(Some(BG_MENU));
+            draw_stage_select(gpu, &s.stage_select);
+        }
+        Screen::Results => {
+            gpu.set_viewport_fullscreen();
+            gpu.begin_frame(Some(BG_MENU));
+            draw_results(gpu, s.vs_results.as_ref());
+        }
+        Screen::Training => {
+            if let (Some(p), Some(pl)) = (pack.as_ref(), s.play_state.as_ref()) {
+                effect_visuals.sync(p, draw_assets, &pl.fighter, &s.weapons, &s.items);
+            }
+            draw_training(
+                gpu,
+                draw_state,
+                pack.as_ref(),
+                s.training_stage,
+                s.play_state.as_ref(),
+                s.dummy_state.as_ref(),
+                &s.weapons,
+                &s.items,
+                draw_assets,
+                effect_visuals,
+                Some(&s.material_anim),
+                s.stage_map.as_ref().map(|map| &map.animator),
+                Some(&s.stage_objects),
+                no_pack_color,
+                &s.damage_hud,
+                s.vs_battle.as_ref(),
+            );
+        }
+    }
+}
+
+/// One frame of the screens' logic and the world, when not frozen for a
+/// capture: the menus, the selects, the battle frame and what follows a
+/// battle. Out of [`run`] so `run` stays inside MIPS branch range.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn session_frame(
+    s: &mut Session,
+    pack: &Option<Pack<'_>>,
+    capture_scene: Option<GameScene>,
+    sim_frame_index: u64,
+    previous_controller: ControllerState,
+    controller: ControllerState,
+    pressed: N64Buttons,
+) {
+        match s.screen {
+            Screen::Intro => {
+                if pressed.contains(N64Buttons::A) || pressed.contains(N64Buttons::START) {
+                    s.screen = Screen::Menu;
+                }
+            }
+            Screen::Menu => {
+                if menu_stick_down_pressed(previous_controller, controller) {
+                    s.cursor = (s.cursor + 1) % MENU_ENTRIES;
+                } else if menu_stick_up_pressed(previous_controller, controller) {
+                    s.cursor = (s.cursor + MENU_ENTRIES - 1) % MENU_ENTRIES;
+                } else if pressed.contains(N64Buttons::A)
+                    && (s.cursor == TRAINING_ENTRY || s.cursor == VS_ENTRY)
+                {
+                    let route = capture_scene.map(capture_route);
+                    if let Some(scene) = capture_scene.filter(|_| route != Some(CaptureRoute::Selects)) {
+                        s.training_scene = capture_training_scene(scene);
+                    }
+                    if s.cursor == VS_ENTRY || s.vs {
+                        // A VS battle always starts over.
+                        s.play_state = None;
+                        s.dummy_state = None;
+                    }
+                    s.vs = s.cursor == VS_ENTRY;
+                    let rules = s.vs.then(|| capture_scene.map_or(VsRules::DEFAULT, vs_rules));
+                    if s.play_state.is_some() {
+                        s.screen = Screen::Training;
+                    } else if route == Some(CaptureRoute::Direct) {
+                        s.training_stage = enter_training(
+                            pack.as_ref(),
+                            CAPTURE_STAGE_GKIND,
+                            s.training_scene,
+                            rules,
+                            &mut s.vs_battle,
+                            &mut TrainingWorld {
+                                play_state: &mut s.play_state,
+                                dummy_state: &mut s.dummy_state,
+                                weapons: &mut s.weapons,
+                                items: &mut s.items,
+                                stage_objects: &mut s.stage_objects,
+                                stage_map: &mut s.stage_map,
+                                stage_ctl: &mut s.stage_ctl,
+                                damage_hud: &mut s.damage_hud,
+                            },
+                        );
+                        s.scene_gkind = CAPTURE_STAGE_GKIND;
+                        // Training's CPU menu (`dSC1PTrainingModeDummyBehaviors`)
+                        // is not ported; these scenes pick its behaviour.
+                        if let (Some(d), Some(b)) =
+                            (s.dummy_state.as_mut(), capture_scene.and_then(capture_cpu_behavior))
+                        {
+                            d.computer.behavior = b;
+                            d.computer.trait_kind = ssb_game::computer::attack::Trait::None;
+                        }
+                        s.screen = Screen::Training;
+                    } else if route == Some(CaptureRoute::StageSelect) {
+                        s.stage_select = ssb_game::stage_select::StageSelect::new(s.maps_training_gkind, 0);
+                        s.screen = Screen::StageSelect;
+                    } else if s.vs {
+                        // `mnVSModeFuncStartVars` from the last settings.
+                        s.vs_mode = vs_mode_menu(s.vs_menu_rules);
+                        s.screen = Screen::VsMode;
+                    } else {
+                        s.fighter_select =
+                            Some(new_fighter_select(s.training_scene, capture_scene.is_some(), sim_frame_index));
+                        s.screen = Screen::FighterSelect;
+                    }
+                }
+            }
+            Screen::VsMode => {
+                use ssb_game::vs_mode::Action;
+                match vs_mode_frame(&mut s.vs_mode, controller, pressed) {
+                    Action::Start => {
+                        // `mnVSModeSaveSettings`.
+                        s.vs_menu_rules = VsRules {
+                            rule: s.vs_mode.rule.battle_rule(),
+                            time_limit: s.vs_mode.time,
+                            stocks: s.vs_mode.stocks(),
+                        };
+                        s.fighter_select =
+                            Some(new_fighter_select(s.training_scene, capture_scene.is_some(), sim_frame_index));
+                        s.screen = Screen::FighterSelect;
+                    }
+                    Action::Back => s.screen = Screen::Menu,
+                    Action::Title => s.screen = Screen::Intro,
+                    // VS Options is not ported.
+                    Action::Options | Action::None => {}
+                }
+            }
+            Screen::FighterSelect => {
+                use ssb_game::fighter_select::Outcome;
+                match s.fighter_select.as_mut().and_then(|s| s.tick(controller, pressed)) {
+                    Some(Outcome::Proceed(data)) => {
+                        s.training_scene = data;
+                        // `mnMapsInitVars`: the s.cursor starts on the
+                        // stage this mode picked last. The host has no
+                        // save data, so Mushroom Kingdom stays locked.
+                        let remembered = if s.vs { s.maps_vsmode_gkind } else { s.maps_training_gkind };
+                        s.stage_select = ssb_game::stage_select::StageSelect::new(remembered, 0);
+                        s.screen = Screen::StageSelect;
+                    }
+                    // The menu stands in for the 1P mode menu.
+                    Some(Outcome::Back(data)) => {
+                        s.training_scene = data;
+                        s.screen = Screen::Menu;
+                    }
+                    Some(Outcome::Timeout(data)) => {
+                        s.training_scene = data;
+                        s.screen = Screen::Intro;
+                    }
+                    None => {}
+                }
+            }
+            Screen::StageSelect => match s.stage_select.tick(controller, pressed) {
+                Some(ssb_game::stage_select::Outcome::Confirm { .. }) => {
+                    let saved = s.stage_select.save(s.scene_gkind, stage_select_rand);
+                    if s.vs {
+                        s.maps_vsmode_gkind = saved.remembered;
+                    } else {
+                        s.maps_training_gkind = saved.remembered;
+                    }
+                    s.scene_gkind = saved.gkind;
+                    s.training_stage = enter_training(
+                        pack.as_ref(),
+                        saved.gkind,
+                        s.training_scene,
+                        s.vs.then_some(s.vs_menu_rules),
+                        &mut s.vs_battle,
+                        &mut TrainingWorld {
+                            play_state: &mut s.play_state,
+                            dummy_state: &mut s.dummy_state,
+                            weapons: &mut s.weapons,
+                            items: &mut s.items,
+                            stage_objects: &mut s.stage_objects,
+                            stage_map: &mut s.stage_map,
+                            stage_ctl: &mut s.stage_ctl,
+                            damage_hud: &mut s.damage_hud,
+                        },
+                    );
+                    s.screen = Screen::Training;
+                }
+                // B returns to the character select, with the fighters
+                // it saved. B and the idle return also save the scene
+                // data.
+                Some(ssb_game::stage_select::Outcome::Back) => {
+                    let saved = s.stage_select.save(s.scene_gkind, stage_select_rand);
+                    s.maps_training_gkind = saved.remembered;
+                    s.scene_gkind = saved.gkind;
+                    s.fighter_select = Some(ssb_game::fighter_select::FighterSelect::new(
+                        s.training_scene,
+                        FIGHTER_MASK,
+                        clock_byte,
+                    ));
+                    s.screen = Screen::FighterSelect;
+                }
+                Some(ssb_game::stage_select::Outcome::Timeout) => {
+                    let saved = s.stage_select.save(s.scene_gkind, stage_select_rand);
+                    s.maps_training_gkind = saved.remembered;
+                    s.scene_gkind = saved.gkind;
+                    s.screen = Screen::Intro;
+                }
+                None => {}
+            },
+            Screen::Training => {
+                // START is navigation-only here. B belongs to the fighter's
+                // source special-input path and must reach `pl.tick` below.
+                // In a VS battle START is the pause menu's (`training_frame`).
+                if pressed.contains(N64Buttons::START) && s.vs_battle.is_none() {
+                    s.screen = Screen::Menu;
+                }
+            }
+            // `mnVSResultsCheckExit`: START after the wait, on to the
+            // character select (`mnPlayersVS`'s stand-in).
+            Screen::Results => {
+                if results_frame(&mut s.vs_results, pressed) {
+                    s.play_state = None;
+                    s.dummy_state = None;
+                    s.vs_battle = None;
+                    s.fighter_select =
+                        Some(new_fighter_select(s.training_scene, capture_scene.is_some(), sim_frame_index));
+                    s.screen = Screen::FighterSelect;
+                }
+            }
+        }
+
+        let mut vs_done = false;
+        if let (Screen::Training, Some(p), Some(pl)) = (s.screen, &pack, s.play_state.as_mut()) {
+            vs_done = training_frame(
+                p,
+                s.training_stage,
+                pl,
+                &mut s.dummy_state,
+                &mut s.weapons,
+                &mut s.items,
+                &mut s.material_anim,
+                &mut s.stage_objects,
+                &mut s.stage_map,
+                &mut s.stage_ctl,
+                controller,
+                pressed,
+                s.vs_battle.as_mut(),
+                &mut s.damage_hud,
+            );
+        }
+        // `scVSBattleStartScene`: a tied time battle goes to sudden
+        // death on the same stage, then to the results.
+        if vs_done {
+            let sudden = s.vs_battle
+                .as_ref()
+                .filter(|b| !b.is_sudden_death && !b.is_reset)
+                .and_then(ssb_game::battle::Battle::sudden_death_battle);
+            match sudden {
+                Some(battle) => {
+                    s.training_stage = start_sudden_death(
+                        pack.as_ref(),
+                        s.scene_gkind,
+                        s.training_scene,
+                        battle,
+                        &mut s.vs_battle,
+                        &mut TrainingWorld {
+                            play_state: &mut s.play_state,
+                            dummy_state: &mut s.dummy_state,
+                            weapons: &mut s.weapons,
+                            items: &mut s.items,
+                            stage_objects: &mut s.stage_objects,
+                            stage_map: &mut s.stage_map,
+                            stage_ctl: &mut s.stage_ctl,
+                            damage_hud: &mut s.damage_hud,
+                        },
+                    );
+                }
+                // A reset from the pause menu is a no contest.
+                None => {
+                    s.vs_results = s.vs_battle.as_ref().map(make_results);
+                    s.screen = Screen::Results;
+                }
+            }
+        }
+}
+
+/// What `run` owns across frames: the screens' state and the world.
+struct Session {
+    material_anim: ssb_rom::skeleton::MaterialAnimator,
+    stage_map: Option<alloc::boxed::Box<ssb_psp_runtime::scene::StageMap>>,
+    training_stage: u32,
+    scene_gkind: u8,
+    maps_training_gkind: u8,
+    stage_select: ssb_game::stage_select::StageSelect,
+    damage_hud: Hud,
+    play_state: Option<play::FighterScene>,
+    dummy_state: Option<play::Dummy>,
+    weapons: ssb_game::weapon::WeaponPool,
+    items: ssb_game::item::ItemPool,
+    stage_objects: ssb_rom::ground_obj::GroundObjects,
+    stage_ctl: ssb_game::stage::Stage,
+    screen: Screen,
+    cursor: usize,
+    training_scene: ssb_game::fighter_select::SceneData,
+    vs: bool,
+    vs_battle: Option<ssb_game::battle::Battle>,
+    maps_vsmode_gkind: u8,
+    vs_menu_rules: VsRules,
+    vs_results: Option<ssb_game::results::Results>,
+    vs_mode: ssb_game::vs_mode::VsMode,
+    fighter_select: Option<ssb_game::fighter_select::FighterSelect>,
+}
+
 unsafe fn run() -> ! {
     // The scripted scene this run captures; `None` reads the real pad.
     let capture = capture::select();
@@ -1605,7 +1956,7 @@ unsafe fn run() -> ! {
     let pack_buf = loaded.as_ref().ok().map(|(b, _)| b);
     let opened = pack_buf.map(|b| Pack::open(b.as_slice()));
     // Which flat colour `draw_training` falls back to when there is no scene
-    // to draw -- distinguishes *why* (open/read failure vs. a rejected
+    // to draw -- distinguishes *why* (open/read failure s.vs. a rejected
     // header) without needing `sceFont` text, extending the pixel-provable
     // convention `plans/gameplay/F1.md`'s "Scene loading" section already
     // established for the plain not-loaded case.
@@ -1625,61 +1976,62 @@ unsafe fn run() -> ! {
         Some(p) if ssb_rom::strict::first_issue(&p).is_some() => (None, BG_TRAINING_STRICT_FAILED),
         p => (p, no_pack_color),
     };
+    let mut s = Session {
+        material_anim: ssb_rom::skeleton::MaterialAnimator::new(),
+        stage_map: None,
+        training_stage: 0,
+        scene_gkind: ssb_game::stage_select::DEFAULT_GKIND,
+        maps_training_gkind: ssb_game::stage_select::DEFAULT_GKIND,
+        stage_select: ssb_game::stage_select::StageSelect::new(ssb_game::stage_select::DEFAULT_GKIND, 0),
+        damage_hud: Hud::new(),
+        play_state: None,
+        dummy_state: None,
+        weapons: ssb_game::weapon::WeaponPool::default(),
+        items: ssb_game::item::ItemPool::default(),
+        stage_objects: ssb_rom::ground_obj::GroundObjects::empty(),
+        stage_ctl: ssb_game::stage::Stage::none(),
+        screen: Screen::Intro,
+        cursor: 0,
+        training_scene: ssb_game::fighter_select::SceneData::default(),
+        vs: false,
+        vs_battle: None,
+        maps_vsmode_gkind: ssb_game::stage_select::DEFAULT_GKIND,
+        vs_menu_rules: VsRules::DEFAULT,
+        vs_results: None,
+        vs_mode: ssb_game::vs_mode::VsMode::new(ssb_game::vs_mode::VsRule::Time, 3, 2, false),
+        fighter_select: None,
+    };
     // Stage MObj material joints are process-lifetime clocks in the original
     // layer setup. Start once with this pack and advance in the same simulation
     // branch as the stage/fighter tick; draw only reads the resulting state.
-    let mut material_anim = ssb_rom::skeleton::MaterialAnimator::new();
     if let Some(p) = pack.as_ref() {
-        material_anim.start(p);
+        s.material_anim.start(p);
     }
     // Built on each Training entry for the stage picked (`enter_training`).
-    let mut stage_map: Option<alloc::boxed::Box<ssb_psp_runtime::scene::StageMap>> = None;
-    let mut training_stage: u32 = 0;
-    // `gSCManagerSceneData.gkind` and `maps_training_gkind`, both
+    // `gSCManagerSceneData.gkind` and `s.maps_training_gkind`, both
     // `nGRKindCastle` in `dSCManagerDefaultSceneData`.
-    let mut scene_gkind = ssb_game::stage_select::DEFAULT_GKIND;
-    let mut maps_training_gkind = ssb_game::stage_select::DEFAULT_GKIND;
-    let mut stage_select = ssb_game::stage_select::StageSelect::new(maps_training_gkind, 0);
 
     let draw_assets = pack.as_ref().map(DrawAssets::resolve).unwrap_or_default();
     let mut effect_visuals = EffectVisuals::default();
     let mut draw_state = meshdraw::DrawState::default();
-    let mut damage_hud = Hud::new();
     // Created once, on first entry to Training Mode (below) -- a fighter
     // spawned on the training stage, ticked with real physics/animation/
-    // camera every frame this screen is active (`play::FighterScene`, shared
+    // camera every frame this s.screen is active (`play::FighterScene`, shared
     // with `psp-asset-viewer/` via `ssb_psp_runtime::scene`).
-    let mut play_state: Option<play::FighterScene> = None;
     // The stationary dummy target (`play::Dummy`, `psp-game`-only -- see its
-    // doc comment): spawned alongside `play_state` at the stage's second
+    // doc comment): spawned alongside `s.play_state` at the stage's second
     // spawn point, ticked with permanently neutral input.
-    let mut dummy_state: Option<play::Dummy> = None;
-    // Match-owned spawned weapons. Fighter statuses emit portable requests;
+    // Match-owned spawned s.weapons. Fighter statuses emit portable requests;
     // Training owns the pool because it is the layer that has both fighters
     // and the stage collision iterator.
-    let mut weapons = ssb_game::weapon::WeaponPool::default();
-    let mut items = ssb_game::item::ItemPool::default();
     // The stage controller slot (`grMainSetupMakeGround`), backed by the
     // packed objects' priority-5 animation clocks in Training (RE-357).
-    let mut stage_objects = ssb_rom::ground_obj::GroundObjects::empty();
-    let mut stage_ctl = ssb_game::stage::Stage::none();
-
-    let mut screen = Screen::Intro;
-    let mut cursor: usize = 0;
     // `gSCManagerSceneData`'s Training fighters, both `nFTKindNull` until
     // the character select saves them.
-    let mut training_scene = ssb_game::fighter_select::SceneData::default();
     // The VS path: the same selects, then `Battle` rules (RE-389).
-    // `maps_vsmode_gkind` defaults to Peach's Castle.
-    let mut vs = false;
-    let mut vs_battle: Option<ssb_game::battle::Battle> = None;
-    let mut maps_vsmode_gkind = ssb_game::stage_select::DEFAULT_GKIND;
+    // `s.maps_vsmode_gkind` defaults to Peach's Castle.
     // `gSCManagerTransferBattleState`'s rule, time and stocks, which the VS
     // mode menu edits and every VS battle reads.
-    let mut vs_menu_rules = VsRules::DEFAULT;
-    let mut vs_results: Option<ssb_game::results::Results> = None;
-    let mut vs_mode = ssb_game::vs_mode::VsMode::new(ssb_game::vs_mode::VsRule::Time, 3, 2, false);
-    let mut fighter_select: Option<ssb_game::fighter_select::FighterSelect> = None;
     let mut sim_frame_index: u64 = 0;
     #[cfg(feature = "headless_capture")]
     let mut headless_capture_sent = false;
@@ -1710,302 +2062,26 @@ unsafe fn run() -> ! {
         let pressed = newly_pressed(previous_controller.buttons, controller.buttons);
 
         if !deterministic_capture_frozen(capture_scene, sim_frame_index) {
-            match screen {
-                Screen::Intro => {
-                    if pressed.contains(N64Buttons::A) || pressed.contains(N64Buttons::START) {
-                        screen = Screen::Menu;
-                    }
-                }
-                Screen::Menu => {
-                    if menu_stick_down_pressed(previous_controller, controller) {
-                        cursor = (cursor + 1) % MENU_ENTRIES;
-                    } else if menu_stick_up_pressed(previous_controller, controller) {
-                        cursor = (cursor + MENU_ENTRIES - 1) % MENU_ENTRIES;
-                    } else if pressed.contains(N64Buttons::A)
-                        && (cursor == TRAINING_ENTRY || cursor == VS_ENTRY)
-                    {
-                        let route = capture_scene.map(capture_route);
-                        if let Some(scene) = capture_scene.filter(|_| route != Some(CaptureRoute::Selects)) {
-                            training_scene = capture_training_scene(scene);
-                        }
-                        if cursor == VS_ENTRY || vs {
-                            // A VS battle always starts over.
-                            play_state = None;
-                            dummy_state = None;
-                        }
-                        vs = cursor == VS_ENTRY;
-                        let rules = vs.then(|| capture_scene.map_or(VsRules::DEFAULT, vs_rules));
-                        if play_state.is_some() {
-                            screen = Screen::Training;
-                        } else if route == Some(CaptureRoute::Direct) {
-                            training_stage = enter_training(
-                                pack.as_ref(),
-                                CAPTURE_STAGE_GKIND,
-                                training_scene,
-                                rules,
-                                &mut vs_battle,
-                                &mut TrainingWorld {
-                                    play_state: &mut play_state,
-                                    dummy_state: &mut dummy_state,
-                                    weapons: &mut weapons,
-                                    items: &mut items,
-                                    stage_objects: &mut stage_objects,
-                                    stage_map: &mut stage_map,
-                                    stage_ctl: &mut stage_ctl,
-                                    damage_hud: &mut damage_hud,
-                                },
-                            );
-                            scene_gkind = CAPTURE_STAGE_GKIND;
-                            // Training's CPU menu (`dSC1PTrainingModeDummyBehaviors`)
-                            // is not ported; these scenes pick its behaviour.
-                            if let (Some(d), Some(b)) =
-                                (dummy_state.as_mut(), capture_scene.and_then(capture_cpu_behavior))
-                            {
-                                d.computer.behavior = b;
-                                d.computer.trait_kind = ssb_game::computer::attack::Trait::None;
-                            }
-                            screen = Screen::Training;
-                        } else if route == Some(CaptureRoute::StageSelect) {
-                            stage_select = ssb_game::stage_select::StageSelect::new(maps_training_gkind, 0);
-                            screen = Screen::StageSelect;
-                        } else if vs {
-                            // `mnVSModeFuncStartVars` from the last settings.
-                            vs_mode = vs_mode_menu(vs_menu_rules);
-                            screen = Screen::VsMode;
-                        } else {
-                            fighter_select =
-                                Some(new_fighter_select(training_scene, capture_scene.is_some(), sim_frame_index));
-                            screen = Screen::FighterSelect;
-                        }
-                    }
-                }
-                Screen::VsMode => {
-                    use ssb_game::vs_mode::Action;
-                    match vs_mode_frame(&mut vs_mode, controller, pressed) {
-                        Action::Start => {
-                            // `mnVSModeSaveSettings`.
-                            vs_menu_rules = VsRules {
-                                rule: vs_mode.rule.battle_rule(),
-                                time_limit: vs_mode.time,
-                                stocks: vs_mode.stocks(),
-                            };
-                            fighter_select =
-                                Some(new_fighter_select(training_scene, capture_scene.is_some(), sim_frame_index));
-                            screen = Screen::FighterSelect;
-                        }
-                        Action::Back => screen = Screen::Menu,
-                        Action::Title => screen = Screen::Intro,
-                        // VS Options is not ported.
-                        Action::Options | Action::None => {}
-                    }
-                }
-                Screen::FighterSelect => {
-                    use ssb_game::fighter_select::Outcome;
-                    match fighter_select.as_mut().and_then(|s| s.tick(controller, pressed)) {
-                        Some(Outcome::Proceed(data)) => {
-                            training_scene = data;
-                            // `mnMapsInitVars`: the cursor starts on the
-                            // stage this mode picked last. The host has no
-                            // save data, so Mushroom Kingdom stays locked.
-                            let remembered = if vs { maps_vsmode_gkind } else { maps_training_gkind };
-                            stage_select = ssb_game::stage_select::StageSelect::new(remembered, 0);
-                            screen = Screen::StageSelect;
-                        }
-                        // The menu stands in for the 1P mode menu.
-                        Some(Outcome::Back(data)) => {
-                            training_scene = data;
-                            screen = Screen::Menu;
-                        }
-                        Some(Outcome::Timeout(data)) => {
-                            training_scene = data;
-                            screen = Screen::Intro;
-                        }
-                        None => {}
-                    }
-                }
-                Screen::StageSelect => match stage_select.tick(controller, pressed) {
-                    Some(ssb_game::stage_select::Outcome::Confirm { .. }) => {
-                        let saved = stage_select.save(scene_gkind, stage_select_rand);
-                        if vs {
-                            maps_vsmode_gkind = saved.remembered;
-                        } else {
-                            maps_training_gkind = saved.remembered;
-                        }
-                        scene_gkind = saved.gkind;
-                        training_stage = enter_training(
-                            pack.as_ref(),
-                            saved.gkind,
-                            training_scene,
-                            vs.then_some(vs_menu_rules),
-                            &mut vs_battle,
-                            &mut TrainingWorld {
-                                play_state: &mut play_state,
-                                dummy_state: &mut dummy_state,
-                                weapons: &mut weapons,
-                                items: &mut items,
-                                stage_objects: &mut stage_objects,
-                                stage_map: &mut stage_map,
-                                stage_ctl: &mut stage_ctl,
-                                damage_hud: &mut damage_hud,
-                            },
-                        );
-                        screen = Screen::Training;
-                    }
-                    // B returns to the character select, with the fighters
-                    // it saved. B and the idle return also save the scene
-                    // data.
-                    Some(ssb_game::stage_select::Outcome::Back) => {
-                        let saved = stage_select.save(scene_gkind, stage_select_rand);
-                        maps_training_gkind = saved.remembered;
-                        scene_gkind = saved.gkind;
-                        fighter_select = Some(ssb_game::fighter_select::FighterSelect::new(
-                            training_scene,
-                            FIGHTER_MASK,
-                            clock_byte,
-                        ));
-                        screen = Screen::FighterSelect;
-                    }
-                    Some(ssb_game::stage_select::Outcome::Timeout) => {
-                        let saved = stage_select.save(scene_gkind, stage_select_rand);
-                        maps_training_gkind = saved.remembered;
-                        scene_gkind = saved.gkind;
-                        screen = Screen::Intro;
-                    }
-                    None => {}
-                },
-                Screen::Training => {
-                    // START is navigation-only here. B belongs to the fighter's
-                    // source special-input path and must reach `pl.tick` below.
-                    // In a VS battle START is the pause menu's (`training_frame`).
-                    if pressed.contains(N64Buttons::START) && vs_battle.is_none() {
-                        screen = Screen::Menu;
-                    }
-                }
-                // `mnVSResultsCheckExit`: START after the wait, on to the
-                // character select (`mnPlayersVS`'s stand-in).
-                Screen::Results => {
-                    if results_frame(&mut vs_results, pressed) {
-                        play_state = None;
-                        dummy_state = None;
-                        vs_battle = None;
-                        fighter_select =
-                            Some(new_fighter_select(training_scene, capture_scene.is_some(), sim_frame_index));
-                        screen = Screen::FighterSelect;
-                    }
-                }
-            }
-
-            let mut vs_done = false;
-            if let (Screen::Training, Some(p), Some(pl)) = (screen, &pack, play_state.as_mut()) {
-                vs_done = training_frame(
-                    p,
-                    training_stage,
-                    pl,
-                    &mut dummy_state,
-                    &mut weapons,
-                    &mut items,
-                    &mut material_anim,
-                    &mut stage_objects,
-                    &mut stage_map,
-                    &mut stage_ctl,
-                    controller,
-                    pressed,
-                    vs_battle.as_mut(),
-                    &mut damage_hud,
-                );
-            }
-            // `scVSBattleStartScene`: a tied time battle goes to sudden
-            // death on the same stage, then to the results.
-            if vs_done {
-                let sudden = vs_battle
-                    .as_ref()
-                    .filter(|b| !b.is_sudden_death && !b.is_reset)
-                    .and_then(ssb_game::battle::Battle::sudden_death_battle);
-                match sudden {
-                    Some(battle) => {
-                        training_stage = start_sudden_death(
-                            pack.as_ref(),
-                            scene_gkind,
-                            training_scene,
-                            battle,
-                            &mut vs_battle,
-                            &mut TrainingWorld {
-                                play_state: &mut play_state,
-                                dummy_state: &mut dummy_state,
-                                weapons: &mut weapons,
-                                items: &mut items,
-                                stage_objects: &mut stage_objects,
-                                stage_map: &mut stage_map,
-                                stage_ctl: &mut stage_ctl,
-                                damage_hud: &mut damage_hud,
-                            },
-                        );
-                    }
-                    // A reset from the pause menu is a no contest.
-                    None => {
-                        vs_results = vs_battle.as_ref().map(make_results);
-                        screen = Screen::Results;
-                    }
-                }
-            }
+            session_frame(
+                &mut s,
+                &pack,
+                capture_scene,
+                sim_frame_index,
+                previous_controller,
+                controller,
+                pressed,
+            );
         }
 
-        match screen {
-            Screen::Intro => {
-                gpu.set_viewport_fullscreen();
-                gpu.begin_frame(Some(BG_INTRO));
-            }
-            Screen::Menu => {
-                gpu.set_viewport_fullscreen();
-                gpu.begin_frame(Some(BG_MENU));
-                draw_menu(&mut gpu, cursor);
-            }
-            Screen::VsMode => {
-                gpu.set_viewport_fullscreen();
-                gpu.begin_frame(Some(BG_MENU));
-                draw_vs_mode(&mut gpu, &vs_mode);
-            }
-            Screen::FighterSelect => {
-                gpu.set_viewport_fullscreen();
-                gpu.begin_frame(Some(BG_MENU));
-                if let Some(select) = fighter_select.as_ref() {
-                    draw_fighter_select(&mut gpu, select);
-                }
-            }
-            Screen::StageSelect => {
-                gpu.set_viewport_fullscreen();
-                gpu.begin_frame(Some(BG_MENU));
-                draw_stage_select(&mut gpu, &stage_select);
-            }
-            Screen::Results => {
-                gpu.set_viewport_fullscreen();
-                gpu.begin_frame(Some(BG_MENU));
-                draw_results(&mut gpu, vs_results.as_ref());
-            }
-            Screen::Training => {
-                if let (Some(p), Some(pl)) = (pack.as_ref(), play_state.as_ref()) {
-                    effect_visuals.sync(p, &draw_assets, &pl.fighter, &weapons, &items);
-                }
-                draw_training(
-                    &mut gpu,
-                    &mut draw_state,
-                    pack.as_ref(),
-                    training_stage,
-                    play_state.as_ref(),
-                    dummy_state.as_ref(),
-                    &weapons,
-                    &items,
-                    &draw_assets,
-                    &effect_visuals,
-                    Some(&material_anim),
-                    stage_map.as_ref().map(|map| &map.animator),
-                    Some(&stage_objects),
-                    no_pack_color,
-                    &damage_hud,
-                    vs_battle.as_ref(),
-                );
-            }
-        }
+        draw_frame(
+            &mut gpu,
+            &s,
+            &pack,
+            &mut draw_state,
+            &mut effect_visuals,
+            &draw_assets,
+            no_pack_color,
+        );
         gpu.end_frame();
 
         #[cfg(feature = "headless_capture")]
@@ -2013,15 +2089,15 @@ unsafe fn run() -> ! {
             emit_headless_screenshot();
             // One line for the capture log: whether the scripted attack
             // landed is not always visible (RE-351).
-            if let (Some(dummy), Some(player)) = (dummy_state.as_ref(), play_state.as_ref()) {
+            if let (Some(dummy), Some(player)) = (s.dummy_state.as_ref(), s.play_state.as_ref()) {
                 log_capture_state(
                     capture_scene,
                     sim_frame_index,
                     player,
                     dummy,
-                    &weapons,
-                    &items,
-                    vs_battle.as_ref(),
+                    &s.weapons,
+                    &s.items,
+                    s.vs_battle.as_ref(),
                 );
             }
             headless_capture_sent = true;
