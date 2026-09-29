@@ -409,3 +409,4 @@ editing a record.
 | RE-397 | "SUDDEN DEATH!" | IMPLEMENTED (decomp source, ROM decode, host tests, PPSSPPHeadless golden captured twice, workspace tests, both PSP builds; no physical PSP) | interface, match, pack, visual-regression |  |
 | RE-398 | The VS pause menu and its camera | IMPLEMENTED (decomp source, ROM decode, host tests, PPSSPPHeadless golden captured twice, workspace tests, both PSP builds; no physical PSP) | interface, match, camera, pack, visual-regression |  |
 | RE-399 | The VS mode menu's rule, time and stock | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless golden captured twice, workspace tests, both PSP builds; no physical PSP) | menu, match, visual-regression, psp-platform |  |
+| RE-400 | The VS results' rankings and exit | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless golden captured twice, workspace tests, both PSP builds; no physical PSP) | menu, match, visual-regression, psp-platform |  |

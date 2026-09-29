@@ -150,6 +150,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::VsPause => 560,
         // The VS mode menu after its four inputs.
         GameScene::VsModeMenu => 60,
+        // Reset at 520; the results follow Set's three ticks.
+        GameScene::VsNoContest => 560,
         // The dummy's CPU has paced for some 190 ticks, or jumped several
         // times.
         GameScene::CpuWalk => 200,
@@ -250,6 +252,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsCpu
             | GameScene::VsPause
             | GameScene::VsModeMenu
+            | GameScene::VsNoContest
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -257,7 +260,13 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             20 | 40 if scene == GameScene::VsModeMenu => N64Buttons(N64Buttons::D_DOWN),
             30 | 50 if scene == GameScene::VsModeMenu => N64Buttons(N64Buttons::D_RIGHT),
             // `vspause`: START 109 ticks after "Go".
-            500 if scene == GameScene::VsPause => N64Buttons(N64Buttons::START),
+            500 if matches!(scene, GameScene::VsPause | GameScene::VsNoContest) => {
+                N64Buttons(N64Buttons::START)
+            }
+            // `vsnocontest`: A+B+R+Z in the pause menu resets the battle.
+            520 if scene == GameScene::VsNoContest => {
+                N64Buttons(N64Buttons::A | N64Buttons::B | N64Buttons::R | N64Buttons::Z)
+            }
             _ => N64Buttons(0),
         };
     }
@@ -399,6 +408,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsCpu
             | GameScene::VsPause
             | GameScene::VsModeMenu
+            | GameScene::VsNoContest
             | GameScene::CpuWalk
             | GameScene::CpuJump
     ) {
@@ -456,6 +466,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsCpu
             | GameScene::VsPause
             | GameScene::VsModeMenu
+            | GameScene::VsNoContest
     ) {
         return if tick == 6 { -80 } else { 0 };
     }
@@ -1440,23 +1451,35 @@ fn update_damage_hud(hud: &mut ssb_game::hud::DamageDisplay, f: &ssb_game::fight
     hud.update(i32::from(f.damage), f.dead.stock_rule && f.stocks == -1);
 }
 
-/// The results in place of `mnVSResults`: one slot per player, the
-/// winner's lit. Nothing is lit for a tie.
+/// The results in place of `mnVSResults` (RE-400): one slot per player,
+/// taller for a better place, the winner's (and a shared winner's) lit.
 #[inline(never)]
-fn draw_results(gpu: &mut Gpu, battle: Option<&ssb_game::battle::Battle>) {
-    let Some(b) = battle else {
+fn draw_results(gpu: &mut Gpu, results: Option<&ssb_game::results::Results>) {
+    let Some(r) = results else {
         return;
     };
-    let winner = b.winner();
-    for (i, _) in b.players.iter().enumerate().filter(|(_, p)| p.present) {
+    for i in (0..4).filter(|&i| r.present[i]) {
         let x0 = 60 + i as i32 * 100;
-        let color = if winner == Some(i) {
-            ENTRY_SELECTED
-        } else {
-            ENTRY_ENABLED
-        };
-        gpu.draw_rect(x0, 100, x0 + 80, 180, color);
+        let lit = r.winner == Some(i) || r.shared_winner[i];
+        let color = if lit { ENTRY_SELECTED } else { ENTRY_ENABLED };
+        // First place stands tallest; no contest levels everyone.
+        let top = 100 + r.places[i] * 20;
+        gpu.draw_rect(x0, top, x0 + 80, 180, color);
     }
+}
+
+/// `mnVSResultsInitVars` and its rankings. Out of [`run`] for branch range.
+#[inline(never)]
+fn make_results(b: &ssb_game::battle::Battle) -> ssb_game::results::Results {
+    ssb_game::results::Results::new(b)
+}
+
+/// One frame of the results' exit check. Out of [`run`] for branch range.
+#[inline(never)]
+fn results_frame(results: &mut Option<ssb_game::results::Results>, pressed: N64Buttons) -> bool {
+    results
+        .as_mut()
+        .is_some_and(|r| r.tick(pressed.contains(N64Buttons::START)))
 }
 
 /// What Training owns across frames, rebuilt on each stage entry.
@@ -1654,6 +1677,7 @@ unsafe fn run() -> ! {
     // `gSCManagerTransferBattleState`'s rule, time and stocks, which the VS
     // mode menu edits and every VS battle reads.
     let mut vs_menu_rules = VsRules::DEFAULT;
+    let mut vs_results: Option<ssb_game::results::Results> = None;
     let mut vs_mode = ssb_game::vs_mode::VsMode::new(ssb_game::vs_mode::VsRule::Time, 3, 2, false);
     let mut fighter_select: Option<ssb_game::fighter_select::FighterSelect> = None;
     let mut sim_frame_index: u64 = 0;
@@ -1857,12 +1881,16 @@ unsafe fn run() -> ! {
                         screen = Screen::Menu;
                     }
                 }
+                // `mnVSResultsCheckExit`: START after the wait, on to the
+                // character select (`mnPlayersVS`'s stand-in).
                 Screen::Results => {
-                    if pressed.contains(N64Buttons::A) || pressed.contains(N64Buttons::START) {
+                    if results_frame(&mut vs_results, pressed) {
                         play_state = None;
                         dummy_state = None;
                         vs_battle = None;
-                        screen = Screen::Menu;
+                        fighter_select =
+                            Some(new_fighter_select(training_scene, capture_scene.is_some(), sim_frame_index));
+                        screen = Screen::FighterSelect;
                     }
                 }
             }
@@ -1889,7 +1917,6 @@ unsafe fn run() -> ! {
             // `scVSBattleStartScene`: a tied time battle goes to sudden
             // death on the same stage, then to the results.
             if vs_done {
-                let reset = vs_battle.as_ref().is_some_and(|b| b.is_reset);
                 let sudden = vs_battle
                     .as_ref()
                     .filter(|b| !b.is_sudden_death && !b.is_reset)
@@ -1914,14 +1941,11 @@ unsafe fn run() -> ! {
                             },
                         );
                     }
-                    // A reset from the pause menu leaves for the menu.
-                    None if reset => {
-                        play_state = None;
-                        dummy_state = None;
-                        vs_battle = None;
-                        screen = Screen::Menu;
+                    // A reset from the pause menu is a no contest.
+                    None => {
+                        vs_results = vs_battle.as_ref().map(make_results);
+                        screen = Screen::Results;
                     }
-                    None => screen = Screen::Results,
                 }
             }
         }
@@ -1956,7 +1980,7 @@ unsafe fn run() -> ! {
             Screen::Results => {
                 gpu.set_viewport_fullscreen();
                 gpu.begin_frame(Some(BG_MENU));
-                draw_results(&mut gpu, vs_battle.as_ref());
+                draw_results(&mut gpu, vs_results.as_ref());
             }
             Screen::Training => {
                 if let (Some(p), Some(pl)) = (pack.as_ref(), play_state.as_ref()) {
