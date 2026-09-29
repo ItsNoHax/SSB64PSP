@@ -8,10 +8,10 @@
 //! effect and interface processes run. The host plays and draws the
 //! explosion up to [`Explosion::ticks`].
 //!
-//! Not ported: the explosion's `LBParticle` half
-//! (`lbParticleMakeScriptID(..., dEFManagerDeadExplodeGenID[...])`) and the
-//! star KO's sparkle (`efManagerSparkleWhiteDeadMakeEffect`), both particle
-//! scripts, which no match runs yet.
+//! The explosion's `LBParticle` half (`dEFManagerDeadExplodeGenID`'s
+//! streaks) and the star KO's sparkle (`efManagerSparkleWhiteDeadMakeEffect`)
+//! are particle scripts: [`KoEffects::observe_with`] makes them on the
+//! match's runtime ([`crate::effect`], RE-413).
 
 use ssb_engine::math::Vec3;
 
@@ -62,8 +62,24 @@ impl KoEffects {
         if core::mem::take(&mut f.dead.flash) {
             self.flash.check_set(ColAnimId::ScreenFlashDeadExplode, 0);
         }
-        // `efManagerSparkleWhiteDeadMakeEffect` is a particle script.
+        // The sparkle is a particle script ([`Self::observe_with`]).
         f.dead.sparkle = None;
+    }
+
+    /// [`Self::observe`], first making the explosion's particle half and
+    /// the star KO's sparkle (TopN, scale 5) on `rt`. They are made after
+    /// the fighters' processes rather than inside the dead status setters
+    /// (RE-413).
+    pub fn observe_with(&mut self, f: &mut Fighter, rt: &mut crate::effect::EffectRuntime<'_>) {
+        if let Some((pos, kind)) = f.dead.explode {
+            rt.effects
+                .dead_explode(rt.particles, rt.banks, pos, f.port.min(3), kind as u8);
+        }
+        if let Some(pos) = f.dead.sparkle {
+            rt.effects
+                .sparkle_white_dead(rt.particles, rt.banks, pos, 5.0);
+        }
+        self.observe(f);
     }
 
     /// One frame of the effect and interface processes: each explosion's

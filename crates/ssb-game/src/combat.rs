@@ -30,6 +30,7 @@
 use ssb_engine::math::Vec3;
 
 use crate::attack;
+use crate::effect::{HitEffect, HitEffectKind, HitEffectSink};
 use crate::fighter::{Fighter, FighterKind, JointTransform};
 use crate::stale::MotionAttackId;
 use crate::status::{self, AnyStatus, Status};
@@ -157,6 +158,9 @@ pub struct AttackColl {
     pub kb_weight: i32,
     pub kb_base: i32,
     pub shield_damage: i32,
+    /// `fgm_level`: the hit sound's strength, which also gates the orbs and
+    /// sparks of a normal hit.
+    pub fgm_level: u8,
     pub is_hit_air: bool,
     pub is_hit_ground: bool,
     /// `MakeAttackCollScaled`: the offset is divided by `FTAttributes::size`.
@@ -287,7 +291,47 @@ pub struct HitLogEntry {
     /// Who `ftParamUpdate1PGameDamageStats` records as `damage_player`
     /// when this hit wins the frame.
     pub attacker: DamageBy,
+    /// What `ftMainProcessHitCollisionStatsMain` makes its hit effect from;
+    /// `None` for a hit that makes none (a weapon without
+    /// `is_hitlag_victim`, the stage).
+    pub effect: Option<LogEffect>,
 }
+
+/// A logged hit's hit-effect inputs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LogEffect {
+    /// The impact point: halfway between the attack
+    /// (`gmCollisionGetFighterAttackPosition`) and the damage box's centre
+    /// (`gmCollisionGetCommonImpactPosition`).
+    pub pos: Vec3,
+    /// `hitlog->attacker_player`.
+    pub player: u8,
+    /// A fighter's attack, whose switch has the slash case and the orbs.
+    pub from_fighter: bool,
+    /// `attack_coll->fgm_level`.
+    pub fgm_level: u8,
+    /// `gmCollisionGetDamageSlashRotation`.
+    pub slash_rotate: f32,
+}
+
+/// `gmCollisionGetFighterAttackPosition`: a new attack's point, else the
+/// middle of its sweep.
+pub fn attack_point(pos_curr: Vec3, pos_prev: Vec3, state: AttackState) -> Vec3 {
+    if state == AttackState::Transfer {
+        pos_curr
+    } else {
+        (pos_curr + pos_prev) * 0.5
+    }
+}
+
+/// `gmCollisionGetCommonImpactPosition`.
+pub fn impact_point(a: Vec3, b: Vec3) -> Vec3 {
+    (a + b) * 0.5
+}
+
+/// The hit effects one frame of searches and hit processing queues for a
+/// fighter, in the order the source makes them.
+pub const EFFECT_QUEUE_MAX: usize = 48;
 
 /// The `damage_player` a logged hit leaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -354,6 +398,11 @@ pub struct FrameHits {
     pub reflect_damage: i32,
     /// `absorb_lr`: PSI Magnet took a weapon.
     pub absorb_lr: f32,
+    /// The hit effects this fighter's search and hit processing made
+    /// (`efManagerSetOffMakeEffect`, `efManagerDamage*MakeEffect`), for
+    /// [`finish_frame_with`] to hand on.
+    pub effects: [Option<HitEffect>; EFFECT_QUEUE_MAX],
+    pub effects_len: usize,
 }
 
 impl Default for FrameHits {
@@ -380,7 +429,31 @@ impl Default for FrameHits {
             reflect_lr: 0.0,
             reflect_damage: 0,
             absorb_lr: 0.0,
+            effects: [None; EFFECT_QUEUE_MAX],
+            effects_len: 0,
         }
+    }
+}
+
+impl FrameHits {
+    /// Queues one hit effect. The queue outsizes a frame's worst case
+    /// (ten logged hits of three effects each, and the clanks).
+    pub fn push_effect(&mut self, e: HitEffect) {
+        debug_assert!(self.effects_len < EFFECT_QUEUE_MAX, "hit effect queue full");
+        if self.effects_len < EFFECT_QUEUE_MAX {
+            self.effects[self.effects_len] = Some(e);
+            self.effects_len += 1;
+        }
+    }
+
+    /// Queues `efManagerSetOffMakeEffect(pos, damage)`.
+    pub fn push_set_off(&mut self, pos: Vec3, damage: i32) {
+        self.push_effect(HitEffect {
+            kind: HitEffectKind::SetOff,
+            pos,
+            player: 0,
+            damage,
+        });
     }
 }
 
@@ -964,6 +1037,12 @@ fn update_attack_stat(
 ) {
     let other_hit = other.attack_colls[oi];
     let this_hit = this.attack_colls[ti];
+    // `gmCollisionGetFighterAttacksPosition`. Both set-offs are made in
+    // `this` fighter's search.
+    let impact = impact_point(
+        attack_point(this_hit.pos_curr, this_hit.pos_prev, this_hit.state),
+        attack_point(other_hit.pos_curr, other_hit.pos_prev, other_hit.state),
+    );
     if this_hit.damage - 10 < other_hit.damage {
         set_hit_interact(
             this,
@@ -973,6 +1052,7 @@ fn update_attack_stat(
             attack_detect,
         );
         set_hit_rebound(this, &this_hit, other.pos.x);
+        this.hits.push_set_off(impact, this_hit.damage);
     }
     if other_hit.damage - 10 < this_hit.damage {
         set_hit_interact(
@@ -983,6 +1063,7 @@ fn update_attack_stat(
             damage_detect,
         );
         set_hit_rebound(other, &other_hit, this.pos.x);
+        this.hits.push_set_off(impact, other_hit.damage);
     }
 }
 
@@ -1007,6 +1088,15 @@ fn update_shield_stat(
             -1.0
         };
     }
+    // `gmCollisionGetFighterAttackShieldPosition`: the shield joint's
+    // world point at the fighter's depth.
+    let mut shield = victim.joint_transforms[JOINT_YROTN].map_or(victim.pos, |t| t.origin);
+    shield.z = victim.pos.z;
+    let pos = impact_point(
+        attack_point(coll.pos_curr, coll.pos_prev, coll.state),
+        shield,
+    );
+    victim.hits.push_set_off(pos, coll.damage);
 }
 
 /// `ftMainUpdateDamageStatFighter`. An invincible body or hurtbox still
@@ -1025,10 +1115,17 @@ fn update_damage_stat(
     if attacker.hits.attack_damage < damage {
         attacker.hits.attack_damage = damage;
     }
+    // `gmCollisionGetFighterAttackDamagePosition`.
+    let impact = impact_point(
+        attack_point(coll.pos_curr, coll.pos_prev, coll.state),
+        hit.center,
+    );
     if is_body_normal(victim)
         && hit.hitstatus == HitStatus::Normal
         && check_get_update_damage(victim, damage)
     {
+        // The thrower's player for a thrown fighter's attack.
+        let player = throw_port(attacker).unwrap_or(attacker.port);
         push_log(
             victim,
             HitLogEntry {
@@ -1040,6 +1137,13 @@ fn update_damage_stat(
                 attack_handicap: attacker.handicap,
                 placement: hit.placement,
                 attacker: DamageBy::Player(attacker.port),
+                effect: Some(LogEffect {
+                    pos: impact,
+                    player,
+                    from_fighter: true,
+                    fgm_level: coll.fgm_level,
+                    slash_rotate: slash_rotation(attacker, &coll),
+                }),
             },
         );
         if attacker.port != victim.port {
@@ -1047,7 +1151,24 @@ fn update_damage_stat(
                 .stale
                 .push(coll.motion_attack_id, coll.motion_count);
         }
+    } else {
+        // An invincible body or box, or damage a resist soaked.
+        victim.hits.push_set_off(impact, damage);
     }
+}
+
+/// `gmCollisionGetDamageSlashRotation`: the angle of the attacker's air
+/// velocity for a new attack, else of the attack's sweep.
+fn slash_rotation(attacker: &Fighter, coll: &AttackColl) -> f32 {
+    let (x, y) = if coll.state == AttackState::Transfer {
+        (attacker.physics.vel_air.x, attacker.physics.vel_air.y)
+    } else {
+        (
+            coll.pos_curr.x - coll.pos_prev.x,
+            coll.pos_curr.y - coll.pos_prev.y,
+        )
+    };
+    crate::particle::arc_tan2(y, x)
 }
 
 /// `ftMainUpdateShieldStatWeapon`'s writes to the weapon:
@@ -1170,6 +1291,9 @@ pub fn weapon_hit(victim: &mut Fighter, w: WeaponAttack) -> WeaponContact {
                 attack_handicap: w.handicap,
                 placement: hit.placement,
                 attacker: DamageBy::owner(w.owner, victim.port),
+                // No ported weapon sets `is_hitlag_victim` (only Link's
+                // Boomerang and two Pokemon do).
+                effect: None,
             },
         );
         return WeaponContact::Hurt(true);
@@ -1201,6 +1325,7 @@ pub fn direct_hit(
             attack_handicap: handicap,
             placement: attack::DAMAGE_INDEX_N,
             attacker,
+            effect: None,
         },
     );
     true
@@ -1231,6 +1356,9 @@ pub fn process_hit_collision(this: &mut Fighter) {
             entry.attack_handicap,
             this.handicap,
         );
+        if let Some(e) = entry.effect {
+            queue_hit_effects(this, &e, h.element, h.damage, kb);
+        }
         if best < kb {
             best = kb;
             index = i;
@@ -1259,6 +1387,52 @@ pub fn process_hit_collision(this: &mut Fighter) {
     }
     if this.hits.damage_element == Element::Electric {
         this.hits.hitlag_mul = 1.5;
+    }
+}
+
+/// The hit effects of one logged hit, by its element
+/// (`ftMainProcessHitCollisionStatsMain`'s switch): the fire, electric and
+/// coin sparks, a fighter's slash, and otherwise the normal spark, light
+/// under 180 knockback and heavy from it, with a fighter's orbs and sparks
+/// (metal dust for a metal fighter) when its hit sound is above the weakest.
+/// A weapon's or item's slash is a normal hit.
+pub fn queue_hit_effects(
+    this: &mut Fighter,
+    e: &LogEffect,
+    element: Element,
+    damage: i32,
+    knockback: f32,
+) {
+    let make = |kind| HitEffect {
+        kind,
+        pos: e.pos,
+        player: e.player,
+        damage,
+    };
+    match element {
+        Element::Fire => this.hits.push_effect(make(HitEffectKind::Fire)),
+        Element::Electric => this.hits.push_effect(make(HitEffectKind::Electric)),
+        Element::Coin => this.hits.push_effect(make(HitEffectKind::Coin)),
+        Element::Slash if e.from_fighter => this.hits.push_effect(make(HitEffectKind::Slash {
+            rotate: e.slash_rotate,
+        })),
+        _ => {
+            this.hits.push_effect(make(if knockback < 180.0 {
+                HitEffectKind::NormalLight
+            } else {
+                HitEffectKind::NormalHeavy
+            }));
+            if e.from_fighter && e.fgm_level > 0 {
+                this.hits.push_effect(make(HitEffectKind::SpawnOrbs));
+                let lr = this.facing.sign();
+                this.hits
+                    .push_effect(make(if this.kind == FighterKind::MetalMario {
+                        HitEffectKind::SpawnMDust { lr }
+                    } else {
+                        HitEffectKind::SpawnSparks { lr }
+                    }));
+            }
+        }
     }
 }
 
@@ -1590,8 +1764,23 @@ pub fn search_all(fighters: &mut [&mut Fighter], rules: TeamRules) {
 
 /// Processes each fighter's hit log, then runs `ftMainProcParams` for all.
 pub fn finish_frame(fighters: &mut [&mut Fighter]) -> [bool; 4] {
+    finish_frame_with(fighters, &mut crate::effect::NoEffects)
+}
+
+/// [`finish_frame`], handing each fighter's hit effects to `effects` after
+/// its hit processing and before any `ftMainProcParams`, in the order
+/// `ftMainProcSearchHitAll` makes them: the set-offs of its search, then
+/// its logged hits' effects.
+pub fn finish_frame_with(
+    fighters: &mut [&mut Fighter],
+    effects: &mut dyn HitEffectSink,
+) -> [bool; 4] {
     for f in fighters.iter_mut() {
         process_hit_collision(f);
+        for e in f.hits.effects[..f.hits.effects_len].iter().flatten() {
+            effects.make(e);
+        }
+        f.hits.effects_len = 0;
     }
     let n = fighters.len();
     for this in 0..n {

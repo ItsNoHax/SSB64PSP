@@ -489,7 +489,9 @@ fn search_item_on_fighter(item: &mut Item, slot: u8, f: &mut Fighter, rules: Tea
         }
         let (curr, prev, size, state) = sweep(item, i);
         if let Some(hit) = crate::hurtbox::search_attack(f, curr, prev, size, state) {
-            return update_damage_stat(item, f, hit);
+            // `gmCollisionGetItemAttackFighterDamagePosition`.
+            let impact = combat::impact_point(combat::attack_point(curr, prev, state), hit.center);
+            return update_damage_stat(item, f, hit, impact);
         }
     }
     false
@@ -541,7 +543,12 @@ fn update_shield_stat(item: &mut Item, f: &mut Fighter, angle: f32, dir: Vec3) {
 
 /// `ftMainUpdateDamageStatItem` for the non-touch items. Returns whether
 /// the damage was taken.
-fn update_damage_stat(item: &mut Item, f: &mut Fighter, hit: crate::hurtbox::HurtHit) -> bool {
+fn update_damage_stat(
+    item: &mut Item,
+    f: &mut Fighter,
+    hit: crate::hurtbox::HurtHit,
+    impact: Vec3,
+) -> bool {
     let output = item.damage_output();
     item.attack.set_hit_interact(
         f.port,
@@ -573,6 +580,14 @@ fn update_damage_stat(item: &mut Item, f: &mut Fighter, hit: crate::hurtbox::Hur
                 attack_handicap: item.handicap,
                 placement: hit.placement,
                 attacker: combat::DamageBy::owner(item.player, f.port),
+                // `ip->is_hitlag_victim` (`attr->is_give_hitlag`).
+                effect: item.attr.is_give_hitlag.then_some(combat::LogEffect {
+                    pos: impact,
+                    player: item.player.unwrap_or(0),
+                    from_fighter: false,
+                    fgm_level: 0,
+                    slash_rotate: 0.0,
+                }),
             },
         );
         return true;

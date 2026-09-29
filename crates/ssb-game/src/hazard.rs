@@ -311,6 +311,9 @@ fn update_damage_stat_ground(f: &mut Fighter, attack: GroundAttack, kind: i32, h
             } else {
                 combat::DamageBy::World
             },
+            // `ftMainProcessHitCollisionStatsMain` makes no effect for the
+            // stage.
+            effect: None,
         };
         combat::push_log(f, entry);
     }

@@ -2529,6 +2529,137 @@ pub unsafe fn draw_particle(
     draw_state.invalidate_all();
 }
 
+/// One in-game particle's texture rectangle (RE-413), as
+/// `lbParticleDrawTextures` lays it out: PSP screen pixels, the texture's
+/// start edge on each axis, and its combine and alpha gate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParticleRect {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+    /// `s`/`t` start at the far edge (a transform scaled negative).
+    pub flip_s: bool,
+    pub flip_t: bool,
+    /// `LBPARTICLE_FLAG_MASKS`/`MASKT`: `G_TX_MIRROR` with the step
+    /// doubled, so the rectangle holds the texture then its mirror image.
+    pub mirror_s: bool,
+    pub mirror_t: bool,
+    pub prim: [u8; 4],
+    /// `LBPARTICLE_FLAG_ENVCOLOR`'s ENV, for `(PRIM - ENV) * TEXEL0 + ENV`.
+    pub env: Option<[u8; 4]>,
+    /// `G_AC_THRESHOLD`'s blend alpha; `None` for `G_AC_DITHER`.
+    pub alpha_ref: Option<u8>,
+}
+
+/// Draws one in-game particle (RE-413): `gSPScisTextureRectangle` under
+/// `G_RM_CLD_SURF` (or `G_RM_XLU_SURF`), which blend by the pixel's alpha
+/// with no depth test.
+///
+/// The combine: `G_CC_MODULATEIA_PRIM` is `Modulate` by `PRIM`. With ENV,
+/// `(PRIM - ENV) * TEXEL0 + ENV` is `Blend` with the vertex colour at ENV
+/// and the texture environment at PRIM, as [`draw_sprite_xy`] does; its
+/// alpha, `(PRIM.a - ENV.a) * TEXEL0.a + ENV.a`, becomes `PRIM.a * TEXEL0.a`,
+/// exact while ENV's alpha is 0, as it is for every script a match makes.
+/// The threshold gate passes alpha at or above the blend alpha.
+///
+/// # Safety
+///
+/// Between `begin_frame` and `end_frame`; the pack must outlive the frame.
+pub unsafe fn draw_particle_rect(
+    pack: &Pack<'_>,
+    texture_index: u32,
+    r: &ParticleRect,
+    draw_state: &mut DrawState,
+) {
+    let Some(t) = pack.texture(texture_index) else {
+        return;
+    };
+    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    sys::sceGuTexScale(1.0, 1.0);
+    sys::sceGuTexOffset(0.0, 0.0);
+    sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
+    let vertex = match r.env {
+        Some(env) => {
+            sys::sceGuTexEnvColor(u32::from_le_bytes([r.prim[0], r.prim[1], r.prim[2], 0xFF]));
+            sys::sceGuTexFunc(sys::TextureEffect::Blend, sys::TextureColorComponent::Rgba);
+            [env[0], env[1], env[2], r.prim[3]]
+        }
+        None => {
+            sys::sceGuTexFunc(sys::TextureEffect::Modulate, sys::TextureColorComponent::Rgba);
+            r.prim
+        }
+    };
+    sys::sceGuDisable(GuState::Lighting);
+    sys::sceGuDisable(GuState::DepthTest);
+    sys::sceGuDisable(GuState::CullFace);
+    match r.alpha_ref {
+        Some(a) => {
+            sys::sceGuEnable(GuState::AlphaTest);
+            sys::sceGuAlphaFunc(sys::AlphaFunc::GreaterOrEqual, i32::from(a), 0xFF);
+        }
+        None => sys::sceGuDisable(GuState::AlphaTest),
+    }
+    sys::sceGuEnable(GuState::Blend);
+    sys::sceGuBlendFunc(
+        sys::BlendOp::Add,
+        sys::BlendFactor::SrcAlpha,
+        sys::BlendFactor::OneMinusSrcAlpha,
+        0,
+        0,
+    );
+    let abgr = u32::from_le_bytes(vertex);
+    let (w, h) = (f32::from(t.width), f32::from(t.height));
+    // Each axis: one span from the start edge to the far one, or, mirrored,
+    // two half spans, the second the first reversed.
+    let spans = |lo: f32, hi: f32, size: f32, flip: bool, mirror: bool| -> ([(f32, f32, f32, f32); 2], usize) {
+        let (a, b) = if flip { (size, 0.0) } else { (0.0, size) };
+        if mirror {
+            let mid = (lo + hi) * 0.5;
+            ([(lo, mid, a, b), (mid, hi, b, a)], 2)
+        } else {
+            ([(lo, hi, a, b), (0.0, 0.0, 0.0, 0.0)], 1)
+        }
+    };
+    let (xs, nx) = spans(r.x0, r.x1, w, r.flip_s, r.mirror_s);
+    let (ys, ny) = spans(r.y0, r.y1, h, r.flip_t, r.mirror_t);
+    let count = 2 * nx * ny;
+    let verts = sys::sceGuGetMemory((count * core::mem::size_of::<SObjVertex>()) as i32) as *mut SObjVertex;
+    let mut k = 0;
+    for &(y0, y1, v0, v1) in &ys[..ny] {
+        for &(x0, x1, u0, u1) in &xs[..nx] {
+            verts.add(k).write(SObjVertex {
+                u: u0,
+                v: v0,
+                color: abgr,
+                x: x0,
+                y: y0,
+                z: 0.0,
+            });
+            verts.add(k + 1).write(SObjVertex {
+                u: u1,
+                v: v1,
+                color: abgr,
+                x: x1,
+                y: y1,
+                z: 0.0,
+            });
+            k += 2;
+        }
+    }
+    sys::sceGuDrawArray(
+        GuPrimitive::Sprites,
+        VertexType::TEXTURE_32BITF | VertexType::COLOR_8888 | VertexType::VERTEX_32BITF | VertexType::TRANSFORM_2D,
+        count as i32,
+        core::ptr::null(),
+        verts as *const c_void,
+    );
+    sys::sceGuDisable(GuState::AlphaTest);
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuEnable(GuState::CullFace);
+    draw_state.invalidate_all();
+}
+
 /// Vertex layout for [`draw_texture_quad`].
 #[repr(C, align(4))]
 #[derive(Clone, Copy, Default)]

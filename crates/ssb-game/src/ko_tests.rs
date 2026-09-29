@@ -108,10 +108,56 @@ fn a_star_ko_fades_towards_the_fog_to_half_strength_then_sparkles() {
     assert_eq!(alphas[178], Some(127));
     assert_eq!(alphas[179], None);
     assert!(f.is_invisible);
-    // The sparkle is recorded at TopN; the host takes it.
+    // The sparkle is recorded at TopN and made on the particle runtime.
     assert_eq!(f.dead.sparkle, Some(f.pos));
-    KoEffects::default().observe(&mut f);
+    let (bank, mut p, mut e) = particles();
+    let mut rt = crate::effect::EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    KoEffects::default().observe_with(&mut f, &mut rt);
     assert_eq!(f.dead.sparkle, None);
+    let live: Vec<_> = p.list(2).collect();
+    assert_eq!(live.len(), 1);
+    let t = p.transform(live[0].1.xf);
+    assert_eq!((t.translate, t.scale), (f.pos, Vec3::splat(5.0)));
+}
+
+/// A runtime over a bank whose scripts each wait and last 20 frames.
+fn particles() -> (
+    crate::particle::tests::TestBank,
+    Box<crate::particle::Particles>,
+    crate::effect::Effects,
+) {
+    static WAIT: &[u8] = &[0x1F, 0xFF];
+    let s = crate::particle::tests::TestBank::particle(20, 10.0, WAIT);
+    (
+        crate::particle::tests::TestBank::new(&[s; 0x70]),
+        Box::new(crate::particle::Particles::new()),
+        crate::effect::Effects::new(0),
+    )
+}
+
+#[test]
+fn a_blast_makes_its_players_streaks_turned_like_the_blast() {
+    let mut ko = KoEffects::default();
+    let mut f = fighter(1);
+    f.pos = Vec3::new(-4001.0, 0.0, 0.0);
+    assert!(dead::check(&mut f));
+    let (bank, mut p, mut e) = particles();
+    let mut rt = crate::effect::EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    ko.observe_with(&mut f, &mut rt);
+    assert_eq!(ko.explosions[1].unwrap().kind, ExplodeKind::Left);
+    let live: Vec<_> = p.list(2).collect();
+    assert_eq!(live.len(), 1);
+    let t = p.transform(live[0].1.xf);
+    assert_eq!(t.translate, ko.explosions[1].unwrap().pos);
+    assert!((t.rotate.z - 270f32.to_radians()).abs() < 1e-5);
 }
 
 #[test]

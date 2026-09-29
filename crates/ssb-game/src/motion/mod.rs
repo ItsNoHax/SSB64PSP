@@ -379,6 +379,12 @@ fn execute(
                 coll.size = ((w >> 7) & 0xFFFF) as f32 * 0.5;
             }
         }
+        op::SET_ATTACK_COLL_SOUND_LEVEL => {
+            let id = ((w >> 23) & 7) as usize;
+            if let Some(coll) = f.attack_colls.get_mut(id) {
+                coll.fgm_level = ((w >> 20) & 7) as u8;
+            }
+        }
         op::REFRESH_ATTACK_COLL_ID => {
             // `ftParamRefreshAttackCollID`.
             if let Some(coll) = f.attack_colls.get_mut(value as usize) {
@@ -546,6 +552,7 @@ fn make_attack_coll(f: &mut Fighter, w: [u32; 5], opcode: u32) {
     coll.is_hit_air = w[3] & 1 != 0;
     coll.is_hit_ground = w[3] & 2 != 0;
     coll.shield_damage = sign(w[4] >> 24, 8);
+    coll.fgm_level = ((w[4] >> 21) & 7) as u8;
     coll.kb_base = ((w[4] >> 7) & 0x3FF) as i32;
     coll.is_scale_pos = opcode == op::MAKE_ATTACK_COLL_SCALED;
     coll.motion_attack_id = attack_id;
