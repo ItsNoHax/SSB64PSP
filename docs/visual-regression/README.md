@@ -175,6 +175,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `vspause`) | `f1-vs-pause` | START at tick 500: the pause menu's zoom on Mario, border, "1P PAUSE" and decals at 560 | RE-398 |
 | `golden_capture` (`psp-game`, scene `vsmode`) | `f1-vs-mode-menu` | The VS mode menu as plain slots after Rule → Stock and one more stock | RE-399 |
 | `golden_capture` (`psp-game`, scene `vsnocontest`) | `f1-vs-no-contest` | A VS battle reset from the pause menu: the no-contest results, two level unlit slots | RE-400 |
+| `golden_capture` (`psp-game`, scene `vsplayers`) | `f1-vs-players` | The VS character select as plain slots: Yoshi placed, a CPU opened in port 2 | RE-404 |
 | `golden_capture` (`psp-game`, scene `rebirth`) | `f1-training-rebirth` | Mario after a KO below Dream Land, standing at the rebirth point in `RebirthStand` (the halo is not drawn) | RE-388 |
 | `golden_capture` (`psp-game`, scene `fighterselect`) | `f1-training-fighter-select` | Kirby placed on the character select, then Peach's Castle on the stage select; Kirby and a Mario dummy standing on the castle | RE-386 |
 | `golden_capture` (`psp-game`, scene `stageselect`) | `f1-training-stage-select` | Mario and the dummy standing on Hyrule Castle, picked on the stage select; every other `psp-game` scene skips the select and loads Dream Land | RE-385 |
@@ -599,3 +600,8 @@ goldens match twice.
 Pack v63. The entry effects draw, so `f1-vs-countdown` was rebaselined,
 captured twice: it shows Mario's pipe under each spawn. 106 of 106
 goldens match twice.
+
+## 2026-09-29 RE-404 VS character select
+
+Pack v63. The new `f1-vs-players` golden was identical in both captures;
+the other 106 are unchanged. 107 of 107 goldens match twice.

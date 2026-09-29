@@ -61,11 +61,12 @@ impl Dummy {
         stage: &StageDesc,
         kind: FighterKind,
         costume: u8,
+        level: u8,
     ) -> Option<Dummy> {
         pack.spawn(stage, 1)?;
         let mut scene = FighterScene::at_spawn(pack, stage, kind, 1);
         scene.fighter.costume = costume;
-        let mut computer = ssb_game::computer::Computer::setup(&scene.fighter, TRAINING_CPU_LEVEL);
+        let mut computer = ssb_game::computer::Computer::setup(&scene.fighter, level);
         // `sc1PTrainingModeUpdateDummyBehavior`: the menu's Stand, no trait.
         computer.behavior = ssb_game::computer::Behavior::Stand;
         computer.trait_kind = ssb_game::computer::attack::Trait::None;

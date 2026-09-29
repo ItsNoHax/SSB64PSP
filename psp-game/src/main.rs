@@ -150,6 +150,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::VsPause => 560,
         // The VS mode menu after its four inputs.
         GameScene::VsModeMenu => 60,
+        // The VS character select with Yoshi placed and a CPU opened.
+        GameScene::VsPlayers => 85,
         // Reset at 520; the results follow Set's three ticks.
         GameScene::VsNoContest => 560,
         // The dummy's CPU has paced for some 190 ticks, or jumped several
@@ -253,9 +255,14 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsPause
             | GameScene::VsModeMenu
             | GameScene::VsNoContest
+            | GameScene::VsPlayers
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
+            // `vsplayers`: A on the VS mode menu's Start at 20; the
+            // select's first tick is 21. A at 46 places the held puck on
+            // Yoshi, and A at 62 on port 2's NA button opens a CPU.
+            20 | 46 | 62 if scene == GameScene::VsPlayers => N64Buttons(N64Buttons::A),
             // `vsmode`: Rule, to Stock, then Time/Stock, one more stock.
             20 | 40 if scene == GameScene::VsModeMenu => N64Buttons(N64Buttons::D_DOWN),
             30 | 50 if scene == GameScene::VsModeMenu => N64Buttons(N64Buttons::D_RIGHT),
@@ -388,6 +395,11 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
+    // The cursor moves 4 pixels a tick at 80: from (40, 170) to (84, 102)
+    // over Yoshi, then to (116, 134) on port 2's NA button.
+    if scene == GameScene::VsPlayers {
+        return if (24..=34).contains(&tick) || (50..=57).contains(&tick) { 80 } else { 0 };
+    }
     // Eleven ticks at 80 move the cursor 44 pixels right, from x 70 to 114.
     if scene == GameScene::FighterSelect {
         return if (12..=22).contains(&tick) { 80 } else { 0 };
@@ -457,6 +469,14 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
+    if scene == GameScene::VsPlayers {
+        return match tick {
+            6 => -80,
+            24..=40 => 80,
+            50..=57 => -80,
+            _ => 0,
+        };
+    }
     if matches!(
         scene,
         GameScene::Vs
@@ -1000,6 +1020,9 @@ enum Screen {
     Results,
     /// The VS mode menu (`mnVSMode`, `ssb_game::vs_mode`, RE-399).
     VsMode,
+    /// The VS character select (`mnPlayersVS`, `ssb_game::players_vs`,
+    /// RE-404).
+    PlayersVs,
     /// Training Mode: a real stage and a real, physics-ticked fighter now
     /// draw here (`draw_training`) -- no combat yet, see
     /// `plans/gameplay/F1.md` acceptance criteria 5-7 for what still has to
@@ -1065,7 +1088,7 @@ enum CaptureRoute {
 fn capture_route(scene: GameScene) -> CaptureRoute {
     match scene {
         GameScene::StageSelect => CaptureRoute::StageSelect,
-        GameScene::FighterSelect | GameScene::VsModeMenu => CaptureRoute::Selects,
+        GameScene::FighterSelect | GameScene::VsModeMenu | GameScene::VsPlayers => CaptureRoute::Selects,
         _ => CaptureRoute::Direct,
     }
 }
@@ -1148,6 +1171,8 @@ struct VsRules {
     rule: ssb_game::battle::Rule,
     time_limit: u8,
     stocks: i8,
+    /// The CPU's `level` from the VS character select.
+    cpu_level: u8,
 }
 
 impl VsRules {
@@ -1156,7 +1181,24 @@ impl VsRules {
         rule: ssb_game::battle::Rule::Time,
         time_limit: 3,
         stocks: 2,
+        cpu_level: 3,
     };
+
+    /// The rules `mnPlayersVSSetSceneData` left in the battle state, with
+    /// the first CPU's level.
+    fn of(state: &ssb_game::players_vs::BattleState) -> VsRules {
+        use ssb_game::players_vs::PlayerKind;
+        VsRules {
+            rule: state.rule,
+            time_limit: state.time_limit,
+            stocks: state.stocks as i8,
+            cpu_level: state
+                .players
+                .iter()
+                .find(|p| p.pkind == PlayerKind::Com && p.fkind.is_some())
+                .map_or(3, |p| p.level),
+        }
+    }
 }
 
 /// A capture scene's VS rules: `vstimeup` picks one minute.
@@ -1431,6 +1473,7 @@ fn start_sudden_death(
         rule: ssb_game::battle::Rule::Stock,
         time_limit: sudden.time_limit,
         stocks: 0,
+        ..VsRules::DEFAULT
     };
     // A capture scene's CPU behaviour carries over; in play it is the VS
     // default either way.
@@ -1596,6 +1639,7 @@ fn enter_training(
         &stage,
         fighters.com_kind.unwrap_or(FighterKind::Mario),
         fighters.com_costume,
+        vs.map_or(play::TRAINING_CPU_LEVEL, |r| r.cpu_level),
     );
     // `ifCommonPlayerDamageInitInterface`; Training shows it at once
     // (`ifCommonPlayerDamageSetShowInterface`), VS at "Go".
@@ -1673,6 +1717,13 @@ unsafe fn draw_frame(
             gpu.begin_frame(Some(BG_MENU));
             if let Some(select) = s.fighter_select.as_ref() {
                 draw_fighter_select(gpu, select);
+            }
+        }
+        Screen::PlayersVs => {
+            gpu.set_viewport_fullscreen();
+            gpu.begin_frame(Some(BG_MENU));
+            if let Some(select) = s.players_vs.as_ref() {
+                draw_players_vs(gpu, select);
             }
         }
         Screen::StageSelect => {
@@ -1790,7 +1841,7 @@ unsafe fn session_frame(
                         s.screen = Screen::StageSelect;
                     } else if s.vs {
                         // `mnVSModeFuncStartVars` from the last settings.
-                        s.vs_mode = vs_mode_menu(s.vs_menu_rules);
+                        s.vs_mode = vs_mode_menu(&s.vs_state);
                         s.screen = Screen::VsMode;
                     } else {
                         s.fighter_select =
@@ -1804,20 +1855,22 @@ unsafe fn session_frame(
                 match vs_mode_frame(&mut s.vs_mode, controller, pressed) {
                     Action::Start => {
                         // `mnVSModeSaveSettings`.
-                        s.vs_menu_rules = VsRules {
-                            rule: s.vs_mode.rule.battle_rule(),
-                            time_limit: s.vs_mode.time,
-                            stocks: s.vs_mode.stocks(),
-                        };
-                        s.fighter_select =
-                            Some(new_fighter_select(s.training_scene, capture_scene.is_some(), sim_frame_index));
-                        s.screen = Screen::FighterSelect;
+                        s.vs_state.rule = s.vs_mode.rule.battle_rule();
+                        s.vs_state.is_team_battle = s.vs_mode.rule.is_team();
+                        s.vs_state.time_limit = s.vs_mode.time;
+                        s.vs_state.stocks = s.vs_mode.stocks().max(0) as u8;
+                        s.vs_menu_rules = VsRules::of(&s.vs_state);
+                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind));
+                        s.screen = Screen::PlayersVs;
                     }
                     Action::Back => s.screen = Screen::Menu,
                     Action::Title => s.screen = Screen::Intro,
                     // VS Options is not ported.
                     Action::Options | Action::None => {}
                 }
+            }
+            Screen::PlayersVs => {
+                players_vs_frame(s, pack, capture_scene.is_some(), sim_frame_index, controller, pressed);
             }
             Screen::FighterSelect => {
                 use ssb_game::fighter_select::Outcome;
@@ -1876,14 +1929,22 @@ unsafe fn session_frame(
                 // data.
                 Some(ssb_game::stage_select::Outcome::Back) => {
                     let saved = s.stage_select.save(s.scene_gkind, stage_select_rand);
-                    s.maps_training_gkind = saved.remembered;
                     s.scene_gkind = saved.gkind;
-                    s.fighter_select = Some(ssb_game::fighter_select::FighterSelect::new(
-                        s.training_scene,
-                        FIGHTER_MASK,
-                        clock_byte,
-                    ));
-                    s.screen = Screen::FighterSelect;
+                    // `mnMapsFuncRun`: back to the select this mode came
+                    // from.
+                    if s.vs {
+                        s.maps_vsmode_gkind = saved.remembered;
+                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind));
+                        s.screen = Screen::PlayersVs;
+                    } else {
+                        s.maps_training_gkind = saved.remembered;
+                        s.fighter_select = Some(ssb_game::fighter_select::FighterSelect::new(
+                            s.training_scene,
+                            FIGHTER_MASK,
+                            clock_byte,
+                        ));
+                        s.screen = Screen::FighterSelect;
+                    }
                 }
                 Some(ssb_game::stage_select::Outcome::Timeout) => {
                     let saved = s.stage_select.save(s.scene_gkind, stage_select_rand);
@@ -1902,15 +1963,14 @@ unsafe fn session_frame(
                 }
             }
             // `mnVSResultsCheckExit`: START after the wait, on to the
-            // character select (`mnPlayersVS`'s stand-in).
+            // VS character select.
             Screen::Results => {
                 if results_frame(&mut s.vs_results, pressed) {
                     s.play_state = None;
                     s.dummy_state = None;
                     s.vs_battle = None;
-                    s.fighter_select =
-                        Some(new_fighter_select(s.training_scene, capture_scene.is_some(), sim_frame_index));
-                    s.screen = Screen::FighterSelect;
+                    s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind));
+                    s.screen = Screen::PlayersVs;
                 }
             }
         }
@@ -1995,6 +2055,9 @@ struct Session {
     vs_results: Option<ssb_game::results::Results>,
     vs_mode: ssb_game::vs_mode::VsMode,
     fighter_select: Option<ssb_game::fighter_select::FighterSelect>,
+    /// `gSCManagerTransferBattleState` between the VS menus.
+    vs_state: ssb_game::players_vs::BattleState,
+    players_vs: Option<ssb_game::players_vs::PlayersVs>,
 }
 
 unsafe fn run() -> ! {
@@ -2057,6 +2120,8 @@ unsafe fn run() -> ! {
         vs_results: None,
         vs_mode: ssb_game::vs_mode::VsMode::new(ssb_game::vs_mode::VsRule::Time, 3, 2, false),
         fighter_select: None,
+        vs_state: ssb_game::players_vs::BattleState::default(),
+        players_vs: None,
     };
     // Stage MObj material joints are process-lifetime clocks in the original
     // layer setup. Start once with this pack and advance in the same simulation
@@ -2226,13 +2291,189 @@ fn vs_mode_frame(
 }
 
 /// `mnVSModeFuncStartVars`'s rule, time and stock from the battle settings.
-fn vs_mode_menu(rules: VsRules) -> ssb_game::vs_mode::VsMode {
+fn vs_mode_menu(state: &ssb_game::players_vs::BattleState) -> ssb_game::vs_mode::VsMode {
+    use ssb_game::battle::Rule;
     use ssb_game::vs_mode::{VsMode, VsRule};
-    let rule = match rules.rule {
-        ssb_game::battle::Rule::Time => VsRule::Time,
-        ssb_game::battle::Rule::Stock => VsRule::Stock,
+    let rule = match (state.rule, state.is_team_battle) {
+        (Rule::Time, false) => VsRule::Time,
+        (Rule::Stock, false) => VsRule::Stock,
+        (Rule::Time, true) => VsRule::TimeTeam,
+        (Rule::Stock, true) => VsRule::StockTeam,
     };
-    VsMode::new(rule, rules.time_limit, rules.stocks.max(0) as u8, false)
+    VsMode::new(rule, state.time_limit, state.stocks, false)
+}
+
+/// `mnPlayersVSStartScene` from the battle state, with one controller
+/// plugged into port 1.
+fn new_players_vs(state: ssb_game::players_vs::BattleState, gkind: u8) -> ssb_game::players_vs::PlayersVs {
+    ssb_game::players_vs::PlayersVs::new(
+        state,
+        ssb_game::players_vs::SceneContext {
+            fighter_mask: FIGHTER_MASK,
+            unlock_mask: 0,
+            gkind,
+        },
+        [true, false, false, false],
+    )
+}
+
+/// The two fighters the host's battle runs from the VS battle state: the
+/// first human and the first other player with a fighter.
+fn vs_fighters(state: &ssb_game::players_vs::BattleState) -> ssb_game::fighter_select::SceneData {
+    use ssb_game::players_vs::PlayerKind;
+    let present = |p: &&ssb_game::players_vs::PlayerState| p.pkind != PlayerKind::Not && p.fkind.is_some();
+    let man = state.players.iter().filter(present).find(|p| p.pkind == PlayerKind::Man);
+    let com = state
+        .players
+        .iter()
+        .filter(present)
+        .find(|p| man.is_none_or(|m| !core::ptr::eq(*p, m)));
+    ssb_game::fighter_select::SceneData {
+        man_kind: man.and_then(|p| p.fkind),
+        man_costume: man.map_or(0, |p| p.costume),
+        com_kind: com.and_then(|p| p.fkind),
+        com_costume: com.map_or(0, |p| p.costume),
+    }
+}
+
+/// One frame of `mnPlayersVS` and where it leads. Out of [`run`] for
+/// branch range.
+#[inline(never)]
+fn players_vs_frame(
+    s: &mut Session,
+    pack: &Option<Pack<'_>>,
+    capture: bool,
+    frame: u64,
+    controller: ControllerState,
+    pressed: N64Buttons,
+) {
+    use ssb_game::players_vs::{Outcome, Pad};
+    let Some(select) = s.players_vs.as_mut() else {
+        return;
+    };
+    let pads = [
+        Pad {
+            state: controller,
+            taps: pressed,
+        },
+        Pad::default(),
+        Pad::default(),
+        Pad::default(),
+    ];
+    let time_byte = frame as u8;
+    let outcome = select.tick(&pads, &mut || if capture { time_byte } else { clock_byte() });
+    let (state, next) = match outcome {
+        None => return,
+        Some(Outcome::Maps(state)) => (state, None),
+        Some(Outcome::Battle { state, gkind }) => (state, Some(gkind)),
+        Some(Outcome::VsMode(state)) => {
+            s.vs_state = state;
+            s.vs_mode = vs_mode_menu(&s.vs_state);
+            s.screen = Screen::VsMode;
+            return;
+        }
+        Some(Outcome::Title(state)) => {
+            s.vs_state = state;
+            s.screen = Screen::Intro;
+            return;
+        }
+    };
+    s.vs_state = state;
+    s.vs_menu_rules = VsRules::of(&state);
+    s.training_scene = vs_fighters(&state);
+    match next {
+        // `nSCKindMaps`: the cursor starts on the stage VS picked last.
+        None => {
+            s.stage_select = ssb_game::stage_select::StageSelect::new(s.maps_vsmode_gkind, 0);
+            s.screen = Screen::StageSelect;
+        }
+        // `nSCKindVSBattle` on the random stage.
+        Some(gkind) => {
+            s.scene_gkind = gkind;
+            s.training_stage = enter_training(
+                pack.as_ref(),
+                gkind,
+                s.training_scene,
+                Some(s.vs_menu_rules),
+                &mut s.vs_battle,
+                &mut TrainingWorld {
+                    play_state: &mut s.play_state,
+                    dummy_state: &mut s.dummy_state,
+                    weapons: &mut s.weapons,
+                    items: &mut s.items,
+                    stage_objects: &mut s.stage_objects,
+                    stage_map: &mut s.stage_map,
+                    stage_ctl: &mut s.stage_ctl,
+                    damage_hud: &mut s.damage_hud,
+                },
+            );
+            s.screen = Screen::Training;
+        }
+    }
+}
+
+/// Draws the VS character select in N64 screen coordinates scaled onto
+/// the PSP screen: the portrait grid (locked portraits dimmed, a placed
+/// fighter's portrait lit), the game-mode, time and back buttons along the
+/// top, the four player panels with their HMN/CP/NA buttons (lit for a
+/// human, grey for a CPU, dark when closed), the pucks and the cursors.
+/// The portraits, gates, models, names and numbers are not drawn.
+#[inline(never)]
+fn draw_players_vs(gpu: &mut Gpu, select: &ssb_game::players_vs::PlayersVs) {
+    use ssb_game::fighter_select as fs;
+    use ssb_game::players_vs::PlayerKind;
+    let map = |x: f32, y: f32| ((59.0 + x * 17.0 / 15.0) as i32, (y * 17.0 / 15.0) as i32);
+    let rect = |gpu: &mut Gpu, x: f32, y: f32, w: f32, h: f32, color: Color| {
+        let (x0, y0) = map(x, y);
+        let (x1, y1) = map(x + w, y + h);
+        gpu.draw_rect(x0, y0, x1, y1, color);
+    };
+    for (i, kind) in fs::PORTRAIT_KINDS.iter().enumerate() {
+        let x = fs::PORTRAIT_LEFT + (i % 6) as f32 * fs::PORTRAIT_WIDTH;
+        let y = fs::PORTRAIT_TOP + (i / 6) as f32 * fs::PORTRAIT_HEIGHT;
+        let placed = select
+            .slots
+            .iter()
+            .any(|s| s.is_fighter_selected && s.fkind == Some(*kind));
+        let color = if fs::is_locked(*kind, FIGHTER_MASK) {
+            ENTRY_DISABLED
+        } else if placed {
+            ENTRY_SELECTED
+        } else {
+            ENTRY_ENABLED
+        };
+        rect(gpu, x + 1.0, y + 1.0, fs::PORTRAIT_WIDTH - 2.0, fs::PORTRAIT_HEIGHT - 2.0, color);
+    }
+    // `mnPlayersVSCheckGameModeInRange`, the time arrows and the back
+    // button's boxes.
+    let mode = if select.is_team_battle { ENTRY_SELECTED } else { ENTRY_ENABLED };
+    rect(gpu, 27.0, 14.0, 110.0, 21.0, mode);
+    rect(gpu, 140.0, 12.0, 20.0, 23.0, ENTRY_ENABLED);
+    rect(gpu, 210.0, 12.0, 20.0, 23.0, ENTRY_ENABLED);
+    rect(gpu, 244.0, 13.0, 48.0, 21.0, ENTRY_ENABLED);
+    for (i, slot) in select.slots.iter().enumerate() {
+        let x = (i * 69) as f32;
+        let (panel, button) = match slot.pkind {
+            PlayerKind::Man => (PUCK_PLAYER, ENTRY_SELECTED),
+            PlayerKind::Com => (PUCK_CPU, ENTRY_ENABLED),
+            PlayerKind::Not => (ENTRY_DISABLED, ENTRY_DISABLED),
+        };
+        rect(gpu, x + 22.0, 126.0, 64.0, 94.0, panel);
+        // `mnPlayersVSCheckPlayerKindSelectInRange`.
+        rect(gpu, x + 60.0, 127.0, 28.0, 18.0, button);
+    }
+    for (i, slot) in select.slots.iter().enumerate() {
+        if select.puck_visible(i) {
+            let color = if slot.pkind == PlayerKind::Man { PUCK_PLAYER } else { PUCK_CPU };
+            let (x, y) = slot.puck;
+            rect(gpu, x, y, fs::PUCK_WIDTH, fs::PUCK_HEIGHT, color);
+        }
+    }
+    for slot in &select.slots {
+        if let Some((x, y)) = slot.cursor {
+            rect(gpu, x + 20.0, y, 10.0, 10.0, CURSOR_COLOR);
+        }
+    }
 }
 
 /// The VS mode menu as plain slots: the four buttons, the cursor's lit,
