@@ -122,3 +122,10 @@ fn hidden_until_shown_and_gone_after_the_last_stock() {
     }
     assert_eq!(d.glyphs(true, &SIZES).count(), 0);
 }
+
+#[test]
+fn the_emblem_sits_behind_the_digits() {
+    // Mario's 27x25 emblem for player 1: 55 - 13.5 + 3, 210 - 12.5 - 3.
+    assert_eq!(emblem_origin(0, 27, 25), (44.0, 194.0));
+    assert_eq!(emblem_origin(1, 30, 24), (113.0, 195.0));
+}

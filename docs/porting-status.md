@@ -36,7 +36,7 @@ Detail per domain: [`rendering.md`](rendering.md).
 | Effects / particles | 90% | 46 display effects, 160 `LBParticle` scripts, 246 frames | Gameplay call sites | RE-172–189 |
 | Framebuffer effects | COMPLETE for renderer scope | LB-transition capture, 11 wipes, 1P wallpaper | Gameplay triggers | RE-146–149, RE-190–193 |
 | Fighter shadows | COMPLETE for Training | Source `ftShadowProcDisplay` floor strip, multi-fighter | Team colours, moving map groups | RE-302 |
-| UI | 10% | libultra `Sprite` decode, pack sprite table and a 2D `SObj` draw; the battle damage display with its swell, flash, shading and break (RE-392) | Emblems, stock icons, timer, countdown lamps, announcer text, pause, menus' sprites | RE-014, RE-392 |
+| UI | 15% | libultra `Sprite` decode, pack sprite table and a 2D `SObj` draw; the battle damage display with its swell, flash, shading and break (RE-392), and the fighter emblems behind it (RE-393) | Stock icons (packed, not drawn), timer, countdown lamps, announcer text, pause, menus' sprites | RE-014, RE-392 |
 
 ## Platform
 

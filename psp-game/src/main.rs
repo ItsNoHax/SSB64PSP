@@ -1753,10 +1753,8 @@ unsafe fn run() -> ! {
                     stage_map.as_ref().map(|map| &map.animator),
                     Some(&stage_objects),
                     no_pack_color,
+                    &damage_hud,
                 );
-                if let Some(p) = pack.as_ref() {
-                    draw_damage_hud(p, &mut draw_state, &damage_hud, dummy_state.is_some());
-                }
             }
         }
         gpu.end_frame();
@@ -2348,6 +2346,7 @@ unsafe fn draw_training(
     stage_anim: Option<&ssb_rom::skeleton::StageAnimator>,
     stage_objects: Option<&ssb_rom::ground_obj::GroundObjects>,
     no_pack_color: Color,
+    damage_hud: &[ssb_game::hud::DamageDisplay; 2],
 ) {
     let scene = pack
         .zip(play_state)
@@ -2522,6 +2521,12 @@ unsafe fn draw_training(
         effect_visuals,
         material_anim,
     );
+    // `players[].color`: the human's port, a CPU's `GMCOMMON_PLAYERS_MAX`.
+    let fighters = [
+        Some((pl.fighter.kind, 0)),
+        dummy_state.map(|d| (d.fighter.kind, ssb_game::hud::CPU_COLOR)),
+    ];
+    draw_damage_hud(p, draw_state, damage_hud, fighters, stage_index);
 }
 
 /// `ifCommonPlayerDamageProcDisplay` for each fighter, over the 3D scene.
@@ -2530,7 +2535,8 @@ fn draw_damage_hud(
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
     hud: &[ssb_game::hud::DamageDisplay; 2],
-    with_dummy: bool,
+    fighters: [Option<(ssb_game::fighter::FighterKind, usize)>; 2],
+    stage_index: u32,
 ) {
     // `ifCommonPlayerDamageSetDigitAttr`.
     const ATTR: u16 = ssb_rom::sprite::SP_TEXSHUF | ssb_rom::sprite::SP_TRANSPARENT;
@@ -2541,7 +2547,19 @@ fn draw_damage_hud(
         sprites[i] = p.sprite(f.file, at);
         sizes[i] = sprites[i].map_or((0, 0), |s| (s.width, s.height));
     }
-    for d in &hud[..if with_dummy { 2 } else { 1 }] {
+    let emblem_colors = p.stage(stage_index).map(|s| s.emblem_colors);
+    for (d, fighter) in hud.iter().zip(fighters) {
+        let Some((kind, color)) = fighter else {
+            continue;
+        };
+        let emblem = p.fighter_sprite(kind as u8, ssb_rom::pack::SpriteDesc::ROLE_EMBLEM, 0);
+        if let (Some(sprite), Some(colors)) = (emblem, emblem_colors) {
+            let (x, y) = ssb_game::hud::emblem_origin(d.player, sprite.width, sprite.height);
+            let [r, g, b] = colors[color];
+            unsafe {
+                meshdraw::draw_sprite(p, &sprite, x, y, 1.0, [r, g, b, 0xFF], false, ATTR, draw_state);
+            }
+        }
         for g in d.glyphs(false, &sizes) {
             let Some(sprite) = sprites[usize::from(g.digit)] else {
                 continue;

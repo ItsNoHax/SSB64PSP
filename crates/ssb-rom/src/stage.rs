@@ -67,6 +67,12 @@ const G_MAP_GEOMETRY: u32 = 0x40;
 /// directly to an already-radians angle with no `F_CLC_DTOR32()` conversion
 /// of its own — confirming the source, not just the sink, agrees.
 const G_LIGHT_ANGLE: u32 = 0x60;
+/// `SYColorRGB emblem_colors[4]`: after `wallpaper` (0x48) and
+/// `fog_color`/`fog_alpha` (0x4C). The decomp's `unused` word at 0x5C is a
+/// fifth colour: Training's dummy and VS CPUs have `color` 4
+/// (`GMCOMMON_PLAYERS_MAX`), which `ifCommonPlayerDamageInitInterface`
+/// reads as `emblem_colors[4]`, the grey there.
+const G_EMBLEM_COLORS: u32 = 0x50;
 const G_CAMERA_BOUNDS: u32 = 0x6C;
 const G_MAP_BOUNDS: u32 = 0x74;
 const G_BGM_ID: u32 = 0x7C;
@@ -141,6 +147,8 @@ pub struct GroundData {
     /// three stored floats, not a lighting angle at all despite living in
     /// the same field.
     pub light_angle: [f32; 3],
+    /// `emblem_colors`, with the CPU's fifth: each HUD emblem tint.
+    pub emblem_colors: [[u8; 3]; 5],
 }
 
 fn read_u32(data: &[u8], at: u32) -> Option<u32> {
@@ -271,6 +279,11 @@ pub fn read_ground_data(
         read_f32(&file.data, base + G_LIGHT_ANGLE + 8)?,
     ];
 
+    let emblem_at = (base + G_EMBLEM_COLORS) as usize;
+    let emblem = file.data.get(emblem_at..emblem_at + 15)?;
+    let emblem_colors =
+        core::array::from_fn(|i| [emblem[i * 3], emblem[i * 3 + 1], emblem[i * 3 + 2]]);
+
     Some(GroundData {
         file: file.id,
         offset: base,
@@ -281,6 +294,7 @@ pub fn read_ground_data(
         map_bounds,
         bgm_id: read_u32(&file.data, base + G_BGM_ID)?,
         light_angle,
+        emblem_colors,
     })
 }
 
@@ -454,5 +468,34 @@ mod tests {
         });
         let found = find_ground_data(&file, graphs);
         assert_eq!(found[0].map_geometry, Some((255, 0x90)));
+    }
+
+    #[test]
+    fn every_vs_stage_has_five_emblem_colours() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        for &id in &VS_GROUND_FILES {
+            let file = archive.load(id).unwrap();
+            let g = read_ground_data(&file, 0x14, |_, _| true).unwrap();
+            // Four distinct, non-black tints, one per player, and a grey
+            // for CPUs.
+            for (i, c) in g.emblem_colors.iter().enumerate() {
+                assert_ne!(*c, [0, 0, 0], "file {id:#x} player {i}");
+            }
+            let mut sorted = g.emblem_colors[..4].to_vec();
+            sorted.sort();
+            sorted.dedup();
+            assert_eq!(sorted.len(), 4, "file {id:#x}: {:?}", g.emblem_colors);
+            let [r, gr, b] = g.emblem_colors[4];
+            assert!(
+                r == gr && gr == b,
+                "file {id:#x}: CPU {:?}",
+                g.emblem_colors[4]
+            );
+        }
     }
 }
