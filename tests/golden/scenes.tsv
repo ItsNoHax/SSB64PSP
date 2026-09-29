@@ -114,3 +114,4 @@ f1-vs-sudden-death	psp-game	vstimeup	pass	RE-389
 f1-training-cpu-walk	psp-game	cpuwalk	pass	RE-390
 f1-training-cpu-jump	psp-game	cpujump	pass	RE-390
 f1-vs-cpu	psp-game	vscpu	pass	RE-391
+f1-vs-time-up	psp-game	vstimeupsign	pass	RE-395

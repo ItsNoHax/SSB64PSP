@@ -129,3 +129,20 @@ fn the_emblem_sits_behind_the_digits() {
     assert_eq!(emblem_origin(0, 27, 25), (44.0, 194.0));
     assert_eq!(emblem_origin(1, 30, 24), (113.0, 195.0));
 }
+
+#[test]
+fn the_timer_rounds_up_below_the_limit() {
+    let limit = 3 * 3600;
+    assert_eq!(timer_digits(limit, limit), [0, 3, 0, 0]);
+    // One tick in: 2:59 plus 59 ticks rounds to 3:00.
+    assert_eq!(timer_digits(limit - 1, limit), [0, 3, 0, 0]);
+    assert_eq!(timer_digits(limit - 60, limit), [0, 2, 5, 9]);
+    assert_eq!(timer_digits(1, limit), [0, 0, 0, 1]);
+    assert_eq!(timer_digits(0, limit), [0, 0, 0, 0]);
+    assert_eq!(timer_digits(10 * 3600, 10 * 3600), [1, 0, 0, 0]);
+}
+
+#[test]
+fn timer_glyphs_are_centred_on_their_slots() {
+    assert_eq!(timer_origin(232.0, 13, 17), (225.0, 21.0));
+}

@@ -40,6 +40,64 @@ pub fn emblem_origin(player: usize, w: u16, h: u16) -> (f32, f32) {
     (x as i32 as f32, y as i32 as f32)
 }
 
+/// `dIFCommonTimerDigitsSpritePositionsX`: the centres of `M M : S S`'s
+/// digits, and the colon's (`ifCommonTimerMakeDigits`).
+pub const TIMER_X: [f32; 4] = [232.0, 247.0, 273.0, 288.0];
+pub const TIMER_COLON_X: f32 = 260.0;
+/// Every timer glyph is centred on y 30.
+pub const TIMER_Y: f32 = 30.0;
+/// Glyph 10 of the timer file: the colon.
+pub const TIMER_COLON: u8 = 10;
+
+/// `ifCommonTimerProcDisplay`'s digits: tens of minutes, minutes, tens of
+/// seconds, seconds. Below the limit the count rounds up (`+ 59`), so the
+/// last second shows `0:01`; at zero it reads `0:00`.
+pub fn timer_digits(time_remain: u32, limit: u32) -> [u8; 4] {
+    const UNITS: [u32; 4] = [36000, 3600, 600, 60];
+    if time_remain == 0 {
+        return [0; 4];
+    }
+    let mut time = if time_remain == limit {
+        time_remain
+    } else {
+        time_remain + 59
+    };
+    UNITS.map(|u| {
+        let d = time / u;
+        time -= d * u;
+        d as u8
+    })
+}
+
+/// A timer glyph's top-left corner: `(s32)(x - w / 2)`, `(s32)(30 - h / 2)`.
+pub fn timer_origin(x: f32, w: u16, h: u16) -> (f32, f32) {
+    (
+        (x - f32::from(w) * 0.5) as i32 as f32,
+        (TIMER_Y - f32::from(h) * 0.5) as i32 as f32,
+    )
+}
+
+/// `dIFCommonAnnounceTimeUpSpriteData` and `...GameSetSpriteData`: file
+/// 82's blue letters (`ssb_rom::sprite::GAME_STATUS` indices) at their
+/// top-left corners.
+pub const TIME_UP: [(f32, f32, u8); 6] = [
+    (45.0, 95.0, 3),
+    (82.0, 95.0, 4),
+    (100.0, 95.0, 5),
+    (151.0, 95.0, 6),
+    (195.0, 95.0, 7),
+    (238.0, 95.0, 8),
+];
+pub const GAME_SET: [(f32, f32, u8); 7] = [
+    (22.0, 95.0, 11),
+    (62.0, 95.0, 10),
+    (104.0, 95.0, 5),
+    (154.0, 95.0, 6),
+    (191.0, 95.0, 9),
+    (230.0, 95.0, 6),
+    (262.0, 95.0, 3),
+];
+
 /// `IFDCharacter`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Char {
