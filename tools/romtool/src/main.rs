@@ -4093,6 +4093,27 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             sprites += 1;
         }
     }
+    // The VS gate card once per `mnPlayersVSSetGateLUT` TLUT (RE-411).
+    let common = loaded
+        .files
+        .get(ssb_rom::sprite::PLAYERS_COMMON.file as usize)
+        .and_then(Option::as_ref)
+        .ok_or("sprite file 17 missing")?;
+    for lut in 0..ssb_rom::sprite::GATE_LUTS.len() {
+        let s = ssb_rom::sprite::decode_gate(common, lut)
+            .map_err(|e| format!("gate card {lut}: {e:?}"))?;
+        let texture = add_sprite_texture(&mut writer, &s, swizzle);
+        writer.add_sprite(sprite_desc(
+            ssb_rom::sprite::PLAYERS_COMMON.file,
+            ssb_rom::sprite::GATE_CARD,
+            &s,
+            texture,
+            0,
+            ssb_rom::pack::SpriteDesc::ROLE_LUT,
+            lut as u8,
+        ));
+        sprites += 1;
+    }
     // Each playable fighter's `FTSprites` (RE-393): the emblem, and the stock
     // icon once per `stock_luts` costume.
     let file_of = |id: u32| {

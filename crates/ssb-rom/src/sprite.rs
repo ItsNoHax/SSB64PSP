@@ -344,6 +344,79 @@ pub const PLAYER_TAGS: SpriteFile = SpriteFile {
     offsets: &[0x258, 0x4F8, 0x798, 0xA38, 0xCD8],
 };
 
+/// File 17, `MNPlayersCommon` (`dMNPlayersVSFileIDs[0]`), the sprites the
+/// VS character select draws (RE-411), in `reloc_data.us.h`'s order:
+/// `1PText` to `4PText`, `CPText`, `HandicapText`, `CPLevelText`,
+/// `StartText`, `PressText`, the twelve names (`MarioText` to
+/// `JigglypuffText`), `InfinityDark`, `TimeSelector`, `StockSelector`,
+/// `0Dark` to `9Dark`, `HmnLabel`, `CPLabel`, `NALabel`, `CursorHandPoint`,
+/// `...Grab`, `...Hover`, `1PTextGradient` to `4PTextGradient`, `1PPuck`
+/// to `4PPuck`, `CPPuck`, `SmashLogoCardLeft`, `...Right`, `RedLabel`,
+/// `GreenLabel`, `BlueLabel`, `ArrowL`, `ArrowR`, `ReadyToFightText`,
+/// `ReadyBanner` and `BackButton`. `RedCard` is packed once per gate LUT
+/// ([`GATE_LUTS`]).
+pub const PLAYERS_COMMON: SpriteFile = SpriteFile {
+    file: 17,
+    offsets: &[
+        0x878, 0xA58, 0xC38, 0xE18, 0xFF8, 0x1108, 0x1218, 0x1378, 0x14D8, 0x1838, 0x1B18, 0x1FF8,
+        0x2358, 0x25B8, 0x28E8, 0x2BA0, 0x2ED8, 0x32F8, 0x35B0, 0x3998, 0x3DB8, 0x3EF0, 0x48B0,
+        0x5270, 0x5388, 0x5440, 0x5558, 0x5668, 0x5778, 0x5888, 0x5998, 0x5AA8, 0x5BB8, 0x5CC8,
+        0x6048, 0x63C8, 0x6748, 0x6F88, 0x76E8, 0x8168, 0x8268, 0x8368, 0x8468, 0x8568, 0x9048,
+        0x9B28, 0xA608, 0xB0E8, 0xBBC8, 0xCDB0, 0xDFA0, 0xE3C8, 0xE7E8, 0xEC08, 0xECE8, 0xEDC8,
+        0xF448, 0xF530, 0x115C8,
+    ],
+};
+
+/// File 17's `RedCardSprite`, the player panel `mnPlayersVSMakeGate` makes.
+pub const GATE_CARD: u32 = 0x104B0;
+
+/// The TLUTs `mnPlayersVSSetGateLUT` swaps into [`GATE_CARD`]:
+/// `man_offsets` (`GateMan1PLUT` to `...4PLUT`), then `com_offsets`
+/// (`GateCom1PLUT` to `...4PLUT`). The file stores 3P after 4P.
+pub const GATE_LUTS: [u32; 8] = [
+    0x103F8, 0x10420, 0x10470, 0x10448, 0x11378, 0x113A0, 0x113F0, 0x113C8,
+];
+
+/// File 0, `MNCommon` (`dMNPlayersVSFileIDs[1]`): `Digit0Sprite` to
+/// `Digit9Sprite`, then `ColonSprite` (RE-411).
+pub const MN_COMMON: SpriteFile = SpriteFile {
+    file: 0,
+    offsets: &[
+        0xD310, 0xD3E0, 0xD4B0, 0xD580, 0xD650, 0xD720, 0xD7F0, 0xD8C0, 0xD990, 0xDA60, 0xDCF0,
+    ],
+};
+
+/// File 19, `MNPlayersPortraits` (`dMNPlayersVSFileIDs[5]`):
+/// `WhiteSquare`, `PortraitQuestionMark`, `PortraitFireBg`, the twelve
+/// portraits in the file's order (`Mario`, `Luigi`, `Donkey`, `Samus`,
+/// `Fox`, `Kirby`, `Link`, `Yoshi`, `Pikachu`, `Ness`, `Captain`,
+/// `Purin`), then `CaptainShadow`, `LuigiShadow`, `NessShadow` and
+/// `PurinShadow` (RE-411).
+pub const PORTRAITS: SpriteFile = SpriteFile {
+    file: 19,
+    offsets: &[
+        0x6F0, 0xF68, 0x24D0, 0x4728, 0x6978, 0x8BC8, 0xAE18, 0xD068, 0xF2B8, 0x11508, 0x13758,
+        0x159A8, 0x17BF8, 0x19E48, 0x1C098, 0x1E2E8, 0x20538, 0x22788, 0x249D8,
+    ],
+};
+
+/// File 20, `FTEmblemSprites` (`dMNPlayersVSFileIDs[2]`): `Mario`,
+/// `Donkey`, `Metroid`, `Fox`, `Kirby`, `Zelda`, `Yoshi`, `FZero`,
+/// `PMonsters` and `Mother` (RE-411).
+pub const EMBLEM_SPRITES: SpriteFile = SpriteFile {
+    file: 20,
+    offsets: &[
+        0x618, 0xC78, 0x12D8, 0x1938, 0x1F98, 0x25F8, 0x2C58, 0x32B8, 0x3918, 0x3F78,
+    ],
+};
+
+/// File 21, `MNSelectCommon` (`dMNPlayersVSFileIDs[3]`):
+/// `StoneBackgroundSprite` (RE-411).
+pub const SELECT_COMMON: SpriteFile = SpriteFile {
+    file: 21,
+    offsets: &[0x440],
+};
+
 /// `SP_CLOUD`: drawn with `G_RM_CLD_SURF`, blended like `SP_TRANSPARENT`.
 pub const SP_CLOUD: u16 = 0x1000;
 
@@ -358,7 +431,19 @@ pub const FILES: &[SpriteFile] = &[
     GAME_MODES,
     DIGITS,
     PLAYER_TAGS,
+    PLAYERS_COMMON,
+    MN_COMMON,
+    PORTRAITS,
+    EMBLEM_SPRITES,
+    SELECT_COMMON,
 ];
+
+/// [`GATE_CARD`] decoded through `GATE_LUTS[lut]`.
+pub fn decode_gate(file: &File, lut: usize) -> Result<Sprite, SpriteError> {
+    let at = GATE_LUTS[lut] as usize;
+    let bytes = file.data.get(at..at + 32).ok_or(SpriteError::Truncated)?;
+    decode_with_tlut(file, GATE_CARD, &texture::parse_tlut(bytes))
+}
 
 /// Decodes every sprite of `f`.
 pub fn decode_all(file: &File, f: &SpriteFile) -> Result<Vec<Sprite>, SpriteError> {
@@ -465,6 +550,87 @@ mod tests {
         assert_eq!(digits[10], (6, 3, Format::Ia, BitSize::Bits8));
         let tags = formats(&PLAYER_TAGS);
         assert!(tags.iter().all(|t| t.1 == 24 && t.2 == Format::Ia));
+    }
+
+    #[test]
+    fn the_vs_select_sprites_decode() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        let formats = |f: &SpriteFile| {
+            let file = archive.load(f.file).unwrap();
+            decode_all(&file, f)
+                .unwrap()
+                .iter()
+                .map(|s| (s.width, s.height, s.format, s.size))
+                .collect::<Vec<_>>()
+        };
+        let common = formats(&PLAYERS_COMMON);
+        assert_eq!(common.len(), 59);
+        // The "1P" card text is I4, the names IA8, the selector RGBA16,
+        // the HMN label RGBA32, the hand IA16, the puck RGBA32, the doors
+        // IA8, the arrows and back button CI4, the banner an 8-texel IA8
+        // strip.
+        assert_eq!(common[0], (39, 16, Format::I, BitSize::Bits4));
+        assert_eq!(common[9], (47, 16, Format::Ia, BitSize::Bits8));
+        assert_eq!(common[22], (90, 13, Format::Rgba, BitSize::Bits16));
+        assert_eq!(common[34], (20, 10, Format::Rgba, BitSize::Bits32));
+        assert_eq!(common[37], (27, 36, Format::Ia, BitSize::Bits16));
+        assert_eq!(common[44], (26, 24, Format::Rgba, BitSize::Bits32));
+        assert_eq!(common[49], (41, 92, Format::Ia, BitSize::Bits8));
+        assert_eq!(common[54], (7, 11, Format::Ci, BitSize::Bits4));
+        assert_eq!(common[57], (8, 17, Format::Ia, BitSize::Bits8));
+        assert_eq!(common[58], (48, 11, Format::Ci, BitSize::Bits4));
+        assert_eq!(formats(&MN_COMMON)[10], (3, 9, Format::I, BitSize::Bits4));
+        let portraits = formats(&PORTRAITS);
+        assert!(portraits[3..]
+            .iter()
+            .all(|p| *p == (45, 43, Format::Rgba, BitSize::Bits32)));
+        assert_eq!(portraits[2], (45, 43, Format::Rgba, BitSize::Bits16));
+        assert!(formats(&EMBLEM_SPRITES)
+            .iter()
+            .all(|e| *e == (64, 48, Format::I, BitSize::Bits4)));
+        // The stone tile `mnPlayersVSMakeWallpaper` wraps with masks 6 and 5.
+        assert_eq!(
+            formats(&SELECT_COMMON)[0],
+            (64, 32, Format::Ci, BitSize::Bits4)
+        );
+        // Each gate LUT gives the card its port's colour: red, blue, yellow
+        // and green for a human, paler for a CPU.
+        let file = archive.load(PLAYERS_COMMON.file).unwrap();
+        let mean = |lut: usize| {
+            let s = decode_gate(&file, lut).unwrap();
+            assert_eq!((s.width, s.height), (66, 91));
+            let mut sum = [0u32; 3];
+            let mut n = 0;
+            for px in s
+                .image
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| p[3] > 0)
+            {
+                for i in 0..3 {
+                    sum[i] += u32::from(px[i]);
+                }
+                n += 1;
+            }
+            sum.map(|c| c / n)
+        };
+        let [r, g, b] = mean(0);
+        assert!(r > 2 * g && r > 2 * b, "1P red");
+        let [r, _, b] = mean(1);
+        assert!(b > 2 * r, "2P blue");
+        let [r, g, b] = mean(2);
+        assert!(r > 10 * b && g > 10 * b, "3P yellow");
+        let [r, g, _] = mean(3);
+        assert!(g > 2 * r, "4P green");
+        let [r, g, _] = mean(4);
+        assert!(r > g && r - g < 40, "the CPU's red is pale");
     }
 
     #[test]

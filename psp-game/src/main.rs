@@ -25,6 +25,7 @@ extern crate alloc;
 
 mod capture;
 mod play;
+mod players_screen;
 mod results_screen;
 
 use ssb_engine::input::{newly_pressed, ControllerState, Input, N64Buttons, SSB64_GAME_MAPPING};
@@ -2114,13 +2115,13 @@ unsafe fn draw_frame(
                 draw_fighter_select(gpu, select);
             }
         }
-        Screen::PlayersVs => {
-            gpu.set_viewport_fullscreen();
-            gpu.begin_frame(Some(BG_MENU));
-            if let Some(select) = s.players_vs.as_ref() {
-                draw_players_vs(gpu, select);
-            }
-        }
+        Screen::PlayersVs => draw_players_vs(
+            gpu,
+            pack.as_ref(),
+            draw_state,
+            s.players_vs.as_ref(),
+            s.players_vs_fighters.as_deref(),
+        ),
         Screen::StageSelect => {
             gpu.set_viewport_fullscreen();
             gpu.begin_frame(Some(BG_MENU));
@@ -2248,6 +2249,7 @@ unsafe fn session_frame(
                         s.vs_state.stocks = s.vs_mode.stocks().max(0) as u8;
                         s.vs_menu_rules = VsRules::of(&s.vs_state);
                         s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind));
+                        s.players_vs_fighters = None;
                         s.screen = Screen::PlayersVs;
                     }
                     Action::Back => s.screen = Screen::Menu,
@@ -2311,6 +2313,7 @@ unsafe fn session_frame(
                     if s.vs {
                         s.maps_vsmode_gkind = saved.remembered;
                         s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind));
+                        s.players_vs_fighters = None;
                         s.screen = Screen::PlayersVs;
                     } else {
                         s.maps_training_gkind = saved.remembered;
@@ -2347,6 +2350,7 @@ unsafe fn session_frame(
                     s.dummies = Default::default();
                     s.vs_battle = None;
                     s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind));
+                    s.players_vs_fighters = None;
                     s.screen = Screen::PlayersVs;
                 }
             }
@@ -2442,6 +2446,8 @@ struct Session {
     /// `gSCManagerTransferBattleState` between the VS menus.
     vs_state: ssb_game::players_vs::BattleState,
     players_vs: Option<ssb_game::players_vs::PlayersVs>,
+    /// The select's fighter poses (RE-411), on the heap.
+    players_vs_fighters: Option<alloc::boxed::Box<players_screen::Fighters>>,
 }
 
 impl Session {
@@ -2535,6 +2541,7 @@ unsafe fn run() -> ! {
         fighter_select: None,
         vs_state: ssb_game::players_vs::BattleState::default(),
         players_vs: None,
+        players_vs_fighters: None,
     });
     // Stage MObj material joints are process-lifetime clocks in the original
     // layer setup. Start once with this pack and advance in the same simulation
@@ -2757,6 +2764,8 @@ fn players_vs_frame(
     ];
     let time_byte = frame as u8;
     let outcome = select.tick(&pads, &mut || if capture { time_byte } else { clock_byte() });
+    let fighters = s.players_vs_fighters.get_or_insert_with(players_screen::start);
+    players_screen::tick(pack.as_ref(), select, fighters);
     let (state, next) = match outcome {
         None => return,
         Some(Outcome::Maps(state)) => (state, None),
@@ -2790,14 +2799,42 @@ fn players_vs_frame(
     }
 }
 
-/// Draws the VS character select in N64 screen coordinates scaled onto
-/// the PSP screen: the portrait grid (locked portraits dimmed, a placed
-/// fighter's portrait lit), the game-mode, time and back buttons along the
-/// top, the four player panels with their HMN/CP/NA buttons (lit for a
-/// human, grey for a CPU, dark when closed), the pucks and the cursors.
-/// The portraits, gates, models, names and numbers are not drawn.
+/// `mnPlayersVS`'s frame over the black of `mnPlayersVSFuncStart`'s
+/// default camera (RE-411): `players_screen` draws the select's sprites
+/// and fighters. Without a pack it falls back to plain slots.
 #[inline(never)]
-fn draw_players_vs(gpu: &mut Gpu, select: &ssb_game::players_vs::PlayersVs) {
+unsafe fn draw_players_vs(
+    gpu: &mut Gpu,
+    pack: Option<&Pack<'_>>,
+    draw_state: &mut meshdraw::DrawState,
+    select: Option<&ssb_game::players_vs::PlayersVs>,
+    fighters: Option<&players_screen::Fighters>,
+) {
+    gpu.set_viewport_fullscreen();
+    let Some(select) = select else {
+        gpu.begin_frame(Some(BG_MENU));
+        return;
+    };
+    match (pack, fighters) {
+        (Some(p), Some(f)) => {
+            gpu.begin_frame(Some(BG_RESULTS));
+            players_screen::draw_all(gpu, p, draw_state, select, f);
+        }
+        _ => {
+            gpu.begin_frame(Some(BG_MENU));
+            draw_players_vs_slots(gpu, select);
+        }
+    }
+}
+
+/// Draws the VS character select as plain slots in N64 screen coordinates
+/// scaled onto the PSP screen, for a run with no pack: the portrait grid
+/// (locked portraits dimmed, a placed fighter's portrait lit), the
+/// game-mode, time and back buttons along the top, the four player panels
+/// with their HMN/CP/NA buttons (lit for a human, grey for a CPU, dark when
+/// closed), the pucks and the cursors.
+#[inline(never)]
+fn draw_players_vs_slots(gpu: &mut Gpu, select: &ssb_game::players_vs::PlayersVs) {
     use ssb_game::fighter_select as fs;
     use ssb_game::players_vs::PlayerKind;
     let map = |x: f32, y: f32| ((59.0 + x * 17.0 / 15.0) as i32, (y * 17.0 / 15.0) as i32);
