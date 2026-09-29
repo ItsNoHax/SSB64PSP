@@ -298,6 +298,10 @@ pub fn init_damage_vars_full(
         } else if level == 3 {
             launch = true;
             if angle_diff > DAMAGE_BOUNCE_ANGLE {
+                let lr = f.facing.sign() as i8;
+                use crate::fteffect::{kind, request, EffectRequest};
+                request(f, EffectRequest::at_joint(kind::IMPACT_WAVE, 0, lr));
+                request(f, EffectRequest::at_joint(kind::QUAKE_MAG0, 0, lr));
                 (Vec3::new(vel.x, -vel.y * 0.8, 0.0), 0.0)
             } else {
                 (vel, 0.0)
@@ -381,6 +385,12 @@ pub fn init_damage_vars_full(
     f.tics_since_last_z = crate::status::ZTRIGLAST_TICS_MAX;
     f.is_smash_di = true;
     f.reaction.coll_mask_curr = 0;
+    // `ftCommonDamageSetDustEffectInterval`, the first cloud on the next
+    // frame.
+    crate::reaction::set_dust_effect_interval(f);
+    if f.reaction.dust_effect_int != 0 {
+        f.reaction.dust_effect_int = 1;
+    }
 }
 
 /// A status's figatree length as its timing.
@@ -695,6 +705,27 @@ pub fn register_hitbox_contact(
     attack_handicap: u8,
     defender: &mut Fighter,
 ) -> crate::combat::WeaponContact {
+    register_hitbox_contact_with(
+        hitbox,
+        pos_curr,
+        pos_prev,
+        source,
+        attack_handicap,
+        defender,
+        None,
+    )
+}
+
+/// [`register_hitbox_contact`] for a weapon that sets `is_hitlag_victim`.
+pub fn register_hitbox_contact_with(
+    hitbox: &Hitbox,
+    pos_curr: Vec3,
+    pos_prev: Vec3,
+    source: crate::combat::HitSource,
+    attack_handicap: u8,
+    defender: &mut Fighter,
+    is_hitlag_victim: Option<u8>,
+) -> crate::combat::WeaponContact {
     crate::combat::weapon_hit(
         defender,
         crate::combat::WeaponAttack {
@@ -705,6 +736,7 @@ pub fn register_hitbox_contact(
             handicap: attack_handicap,
             can_shield: true,
             owner: None,
+            is_hitlag_victim,
         },
     )
 }

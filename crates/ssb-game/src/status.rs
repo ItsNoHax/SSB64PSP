@@ -2314,6 +2314,8 @@ pub struct MarioSpecialLwState {
     pub friction: f32,
     pub rise_enabled: bool,
     pub rise_exhausted: bool,
+    /// `status_vars.mario.speciallw.dust_effect_int`.
+    pub dust_effect_int: i32,
 }
 
 impl Default for MarioSpecialLwState {
@@ -2322,6 +2324,7 @@ impl Default for MarioSpecialLwState {
             friction: 0.0,
             rise_enabled: false,
             rise_exhausted: false,
+            dust_effect_int: 0,
         }
     }
 }
@@ -3060,6 +3063,8 @@ pub fn apply_mario_special_hi_interrupt(f: &mut Fighter) {
 
 fn init_mario_tornado_status(f: &mut Fighter) {
     f.mario_special_lw.friction = 0.0;
+    // `ftMarioSpecialLwInitStatusVars`.
+    f.mario_special_lw.dust_effect_int = 5;
     // Both source motion scripts run SetFlag3(1) at frame zero. A ground ↔
     // air map transition deliberately does not call this helper, preserving
     // `ftMarioSpecialAirLwSetDisableRise`'s one-way gate.
@@ -3366,6 +3371,11 @@ pub fn set_cliff_catch(f: &mut Fighter, line: u16, corner: Vec2) {
         guard_timing(f, Status::CliffCatch),
     );
     play_anim_events(f);
+    // `efManagerFlashMiddleMakeEffect` at the floor's edge.
+    f.effects.push(crate::fteffect::FighterEffect::At {
+        kind: crate::fteffect::kind::FLASH_MIDDLE,
+        pos: Vec3::new(corner.x, corner.y, 0.0),
+    });
 }
 
 /// `ftCommonCliffWaitSetStatus` @ `ftcommoncliffcatchwait.c:98`.
@@ -3550,6 +3560,12 @@ pub fn set_any_status_preserve(
     timing: StatusTiming,
     preserve: Preserve,
 ) {
+    // `ftMainSetStatus` opens by making the old status's pending effects
+    // while the frame's passes run, on its own clock
+    // (`ftMainUpdateMotionEventsForwardEffect`).
+    if f.motion_script.is_events_forward {
+        crate::motion::forward_effect(f);
+    }
     if !preserve.hit {
         crate::combat::clear_attack_colls(f);
     }
@@ -5381,6 +5397,19 @@ fn update_extended(f: &mut Fighter) {
             }
         }
         AnyStatus::Mario(MarioStatus::SpecialLw) => {
+            // `ftMarioSpecialLwProcUpdate`: a dust cloud behind, then one
+            // ahead, every eight frames while flag 3 is up.
+            if f.motion_script.flags[3] != 0 {
+                f.mario_special_lw.dust_effect_int -= 1;
+                let lr = f.facing.sign() as i8;
+                use crate::fteffect::{kind, request, EffectRequest};
+                if f.mario_special_lw.dust_effect_int == 4 {
+                    request(f, EffectRequest::at_joint(kind::DUST_LIGHT, 0, -lr));
+                } else if f.mario_special_lw.dust_effect_int == 0 {
+                    request(f, EffectRequest::at_joint(kind::DUST_LIGHT, 0, lr));
+                    f.mario_special_lw.dust_effect_int = 8;
+                }
+            }
             if f.status.animation_ended() {
                 set_wait(f);
             }

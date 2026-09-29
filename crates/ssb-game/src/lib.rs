@@ -28,6 +28,7 @@ pub mod dead;
 pub mod effect;
 pub mod fighter;
 pub mod fighter_select;
+pub mod fteffect;
 pub mod grab;
 pub mod ground;
 pub mod hazard;

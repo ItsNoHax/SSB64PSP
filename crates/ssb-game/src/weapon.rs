@@ -1756,6 +1756,7 @@ fn pre_hit(
         handicap: crate::stale::HANDICAP_DEFAULT,
         can_shield: true,
         owner: Some(owner),
+        is_hitlag_victim: None,
     };
     let reflector = crate::combat::reflector(defender).filter(|_| flags.can_reflect);
     // A thrown fighter's attacks do not meet its thrower's weapons, nor,
@@ -1840,6 +1841,7 @@ fn stale_hit(
 }
 
 /// [`stale_hit`], keeping the shield's hop data.
+#[allow(clippy::too_many_arguments)]
 fn stale_contact(
     hitbox: &Hitbox,
     position: Vec3,
@@ -1848,16 +1850,18 @@ fn stale_contact(
     defender: &mut Fighter,
     landed: &mut Option<(u8, crate::stale::MotionAttackId, u16)>,
     owner: u8,
+    is_hitlag_victim: Option<u8>,
 ) -> crate::combat::WeaponContact {
     let mut hitbox = *hitbox;
     hitbox.damage = stale.damage(hitbox.damage);
-    let contact = attack::register_hitbox_contact(
+    let contact = attack::register_hitbox_contact_with(
         &hitbox,
         position,
         position - velocity,
         crate::combat::HitSource::Weapon { vel_x: velocity.x },
         crate::stale::HANDICAP_DEFAULT,
         defender,
+        is_hitlag_victim,
     );
     if contact == crate::combat::WeaponContact::Hurt(true) {
         *landed = Some((owner, stale.attack_id, stale.motion_count));
@@ -2027,6 +2031,7 @@ impl WeaponPool {
                         defender,
                         &mut self.landed[i],
                         spark.owner_port,
+                        None,
                     );
                     if let crate::combat::WeaponContact::Shielded(shield) = contact {
                         record_weapon_victim(&mut self.hit_records[i], defender.port);
@@ -2742,6 +2747,7 @@ impl WeaponPool {
                     defender,
                     &mut self.landed[i],
                     owner,
+                    None,
                 );
                 if let crate::combat::WeaponContact::Shielded(shield) = contact {
                     record_weapon_victim(records, defender.port);
@@ -2877,6 +2883,8 @@ impl WeaponPool {
                 defender,
                 &mut self.landed[i],
                 owner,
+                // `wpLinkBoomerangMakeWeapon` sets `is_hitlag_victim`.
+                matches!(weapon, Weapon::Boomerang(_)).then_some(owner),
             );
             // `ftMainUpdateShieldStatWeapon` records the fighter; then
             // `wpProcessProcHitCollisions` hops the weapon or runs its

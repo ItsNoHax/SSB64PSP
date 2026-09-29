@@ -397,6 +397,11 @@ pub struct Fighter {
     /// last, credited with a KO. `None` for -1 and for
     /// `GMCOMMON_PLAYERS_MAX` (the stage, or the fighter's own weapon).
     pub damage_player: Option<u8>,
+    /// Effects queued for the match to make ([`crate::fteffect`]).
+    pub effects: crate::fteffect::EffectQueue,
+    /// `effect_joint_array_id`: which of `effect_joint_ids` the next
+    /// flame, spark or shock uses.
+    pub effect_joint_array_id: u8,
 }
 
 impl Fighter {
@@ -495,6 +500,8 @@ impl Fighter {
             colanim: crate::colanim::ColAnim::default(),
             screen_flash: None,
             damage_player: None,
+            effects: crate::fteffect::EffectQueue::default(),
+            effect_joint_array_id: 0,
         }
     }
 
@@ -765,6 +772,9 @@ impl Fighter {
         crate::reaction::check_set_invincible(self);
         // The previous frame's push is spent; the stage sets a new one.
         self.hazard.vel_push = Vec3::ZERO;
+        // `is_events_forward = TRUE`, before `ftMainPlayAnimEventsAll`: the
+        // status scripts' effects wait for the end of the physics pass.
+        self.motion_script.is_events_forward = true;
         if self.is_in_hitlag() {
             // `ftMainRunUpdateColAnim` runs in hitlag too.
             crate::colanim::run_update_interrupt(self);
@@ -778,8 +788,19 @@ impl Fighter {
         self.resolve_cliff_release(surfaces);
     }
 
-    /// `ftMainProcPhysicsMap` (process priority 4), after the stage.
+    /// `ftMainProcPhysicsMap` (process priority 4), after the stage, ending
+    /// with the motion scripts' effects
+    /// (`ftMainUpdateMotionEventsForwardEffect`, [`crate::motion::end_physics`]).
     pub fn tick_physics_map<I, F>(&mut self, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        self.tick_physics_map_procs(surfaces);
+        crate::motion::end_physics(self);
+    }
+
+    fn tick_physics_map_procs<I, F>(&mut self, surfaces: &F)
     where
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
@@ -823,6 +844,7 @@ impl Fighter {
         self.map_contacts_prev = self.map_contacts;
         self.map_contacts = crate::map::Contacts::default();
         if crate::hazard::tick_status(self, &surfaces) {
+            crate::fteffect::kirby_map_star(self);
             self.root_motion = RootMotion::default();
             self.weapon_spawn_anchor = None;
             crate::dead::check(self);
@@ -834,6 +856,8 @@ impl Fighter {
                 Situation::Air => self.tick_air(surfaces),
             }
         }
+        // `ftParamKirbyTryMakeMapStarEffect`, after `proc_map`.
+        crate::fteffect::kirby_map_star(self);
         // `ftCommonDeadCheckInterruptCommon` runs between the position step
         // and `proc_map` in `ftMainProcPhysicsMap`; here the ground and air
         // ticks do both, so it runs after the map step.

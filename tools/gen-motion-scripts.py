@@ -263,7 +263,8 @@ MAIN_FILES = {
 }
 
 ATTR_FIELDS = ["size", "rebound_anim_length", "shield_size", "shield_break_vel_y",
-               "jostle_width", "jostle_x", "hit_detect_range"]
+               "jostle_width", "jostle_x", "hit_detect_range", "effect_joint_ids",
+               "joint_itemlight_id"]
 
 
 def fl(x):
@@ -419,7 +420,9 @@ def main():
                  f"    size: {fl(a['size'])},\n    rebound_anim_length: {fl(a['rebound_anim_length'])},\n"
                  f"    shield_size: {fl(a['shield_size'])},\n    shield_break_vel_y: {fl(a['shield_break_vel_y'])},\n"
                  f"    jostle_width: {fl(a['jostle_width'])},\n    jostle_x: {fl(a['jostle_x'])},\n"
-                 f"    hit_detect_range: [{fl(r[0])}, {fl(r[1])}, {fl(r[2])}],\n}};\n\n")
+                 f"    hit_detect_range: [{fl(r[0])}, {fl(r[1])}, {fl(r[2])}],\n"
+                 f"    effect_joint_ids: [{', '.join(str(int(j)) for j in a['effect_joint_ids'])}],\n"
+                 f"    joint_itemlight_id: {int(a['joint_itemlight_id'])},\n}};\n\n")
         w.append(f"pub static {up}: FighterScripts = FighterScripts {{\n"
                  f"    words: &{up}_WORDS,\n    motions: &{up}_MOTIONS,\n"
                  f"    special_status_motion: &{up}_SPECIAL_MOTION,\n}};\n\n")

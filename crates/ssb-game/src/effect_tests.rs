@@ -39,7 +39,7 @@ fn a_light_spark_is_placed_scaled_by_damage_and_drifts() {
         effects: &mut e,
         banks: &bank,
     };
-    rt.run();
+    rt.frame();
     let moved = rt.particles.transform(xf).translate - pos;
     let d = (moved.x * moved.x + moved.y * moved.y).sqrt();
     assert!((12.0..50.0).contains(&d), "{d}");
@@ -79,7 +79,7 @@ fn a_struct_is_freed_when_its_particles_end() {
         banks: &bank,
     };
     for _ in 0..3 {
-        rt.run();
+        rt.frame();
     }
     assert_eq!(rt.particles.used_num, 0);
     assert_eq!(rt.effects.used(), 0);
@@ -100,11 +100,11 @@ fn a_heavy_spark_ends_in_a_light_one_with_the_players_colours() {
         effects: &mut e,
         banks: &bank,
     };
-    rt.run();
+    rt.frame();
     let xf = rt.particles.particle(pc).xf;
     assert_eq!(rt.particles.transform(xf).translate, pos);
-    rt.run();
-    rt.run();
+    rt.frame();
+    rt.frame();
     // `efManagerDamageNormalHeavyProcDead`: a light spark at the heavy
     // one's point, from its struct's player and size.
     let live = scripts_on(rt.particles, 0);
@@ -125,8 +125,8 @@ fn a_coins_end_makes_a_dust_cloud_200_above() {
         effects: &mut e,
         banks: &bank,
     };
-    rt.run();
-    rt.run();
+    rt.frame();
+    rt.frame();
     // The dust is on list 1 (`LBPARTICLE_MASK_GENLINK(0)`). Made in the
     // particles' `func_run`, its priority-3 move runs the same frame.
     let dust = scripts_on(rt.particles, 1);

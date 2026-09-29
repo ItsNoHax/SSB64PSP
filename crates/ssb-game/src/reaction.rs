@@ -50,6 +50,8 @@ pub struct ReactionState {
     pub itemthrow_buffer_tics: u8,
     /// `downbounce.attack_buffer`.
     pub attack_buffer: i32,
+    /// `damage.dust_effect_int`: frames to the next dust cloud.
+    pub dust_effect_int: i32,
     /// `downwait.stand_wait`.
     pub stand_wait: i32,
     /// `rebound.rebound_timer`.
@@ -352,6 +354,7 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
         // `ftCommonWallDamageProcUpdate`: the bounce lasts its hitstun, not
         // its animation. The fall's interrupt runs as the new status's.
         Status::WallDamage => {
+            update_dust_effect(f);
             if f.hitstun == 0 {
                 set_damage_fall(f);
                 air_interrupt(f);
@@ -365,6 +368,7 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
         }
         // `ftCommonDamageAirCommonProcUpdate` / `ProcInterrupt`.
         s if is_damage_air(s) => {
+            update_dust_effect(f);
             if f.status.animation_ended() && f.hitstun == 0 {
                 set_damage_fall(f);
             } else if f.hitstun == 0 {
@@ -544,6 +548,49 @@ fn check_passive(f: &mut Fighter, floor_y: f32) -> bool {
 // Knockdown
 // ---------------------------------------------------------------------------
 
+/// `ftCommonDamageSetDustEffectInterval`: frames between the dust clouds a
+/// launched fighter trails, by its knockback speed.
+pub fn set_dust_effect_interval(f: &mut Fighter) {
+    let vel = if f.is_grounded() {
+        f.physics.vel_damage_ground.abs()
+    } else {
+        f.physics.vel_knockback.length()
+    };
+    f.reaction.dust_effect_int = if vel < 120.0 {
+        0
+    } else if vel < 150.0 {
+        8
+    } else if vel < 200.0 {
+        5
+    } else if vel < 300.0 {
+        3
+    } else if vel < 600.0 {
+        2
+    } else {
+        1
+    };
+}
+
+/// `ftCommonDamageUpdateDustEffect`: a large dust cloud at joint 4 each
+/// interval.
+fn update_dust_effect(f: &mut Fighter) {
+    if f.reaction.dust_effect_int != 0 {
+        f.reaction.dust_effect_int -= 1;
+        if f.reaction.dust_effect_int == 0 {
+            let lr = f.facing.sign() as i8;
+            crate::fteffect::request(
+                f,
+                crate::fteffect::EffectRequest::at_joint(
+                    crate::fteffect::kind::DUST_EXPAND_LARGE,
+                    4,
+                    lr,
+                ),
+            );
+            set_dust_effect_interval(f);
+        }
+    }
+}
+
 /// `ftCommonDownBounceSetStatus`.
 pub fn set_down_bounce(f: &mut Fighter, floor_y: f32) {
     set_ground(f, floor_y);
@@ -553,9 +600,20 @@ pub fn set_down_bounce(f: &mut Fighter, floor_y: f32) {
         Status::DownBounceU
     };
     set(f, status);
+    down_bounce_effects(f);
     f.reaction.attack_buffer = 0;
     f.damage_mul = 0.5;
     vel_damage_transfer_ground(f);
+}
+
+/// `ftCommonDownBounceUpdateEffects`: the impact wave (the sound and rumble
+/// are not ported).
+fn down_bounce_effects(f: &mut Fighter) {
+    let lr = f.facing.sign() as i8;
+    crate::fteffect::request(
+        f,
+        crate::fteffect::EffectRequest::at_joint(crate::fteffect::kind::IMPACT_WAVE, 0, lr),
+    );
 }
 
 fn is_down(f: &Fighter) -> bool {
@@ -815,6 +873,7 @@ fn set_shield_break_down(f: &mut Fighter, floor_y: f32) {
         Status::ShieldBreakDownU
     };
     set_preserve(f, status, status::Preserve::HITSTATUS);
+    down_bounce_effects(f);
 }
 
 /// `ftCommonShieldBreakStandSetStatus`.

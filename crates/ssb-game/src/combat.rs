@@ -669,12 +669,20 @@ pub fn weapon_attack_clank(
         ) {
             continue;
         }
+        // `ftMainUpdateAttackStatWeapon`: a set-off for each side that
+        // stops, at `gmCollisionGetWeaponAttackFighterAttackPosition`.
+        let impact = impact_point(
+            attack_point(w.pos_curr, w.pos_prev, w_state),
+            attack_point(coll.pos_curr, coll.pos_prev, coll.state),
+        );
         if coll.damage - 10 < damage {
             let mut scratch = detect;
             set_hit_interact(f, coll.group, weapon_id, HitType::Attack(0), &mut scratch);
             set_hit_rebound(f, &coll, w.pos_curr.x);
+            f.hits.push_set_off(impact, coll.damage);
         }
         if damage - 10 < coll.damage {
+            f.hits.push_set_off(impact, damage);
             return true;
         }
     }
@@ -1202,6 +1210,9 @@ pub struct WeaponAttack {
     pub can_shield: bool,
     /// `wp->player`: the weapon's owner, for `damage_player`.
     pub owner: Option<u8>,
+    /// `wp->is_hitlag_victim` (Link's Boomerang): the hit makes its spark,
+    /// in the colour of this player (`wp->player`).
+    pub is_hitlag_victim: Option<u8>,
 }
 
 /// `ftMainSearchHitWeapon`'s shield and damage halves for one weapon hitbox
@@ -1266,6 +1277,14 @@ pub fn weapon_hit(victim: &mut Fighter, w: WeaponAttack) -> WeaponContact {
         } else {
             0.0
         };
+        // `gmCollisionGetWeaponAttackShieldPosition`: halfway to the shield
+        // joint's point at the fighter's depth.
+        let mut shield = victim.joint_transforms[JOINT_YROTN].map_or(victim.pos, |t| t.origin);
+        shield.z = victim.pos.z;
+        let impact = impact_point(attack_point(w.pos_curr, w.pos_prev, state), shield);
+        victim
+            .hits
+            .push_set_off(impact, w.hitbox.shield_damage + w.hitbox.damage);
         return WeaponContact::Shielded(ShieldCollide { angle, dir_z });
     }
     if is_body_intangible(victim) {
@@ -1291,9 +1310,16 @@ pub fn weapon_hit(victim: &mut Fighter, w: WeaponAttack) -> WeaponContact {
                 attack_handicap: w.handicap,
                 placement: hit.placement,
                 attacker: DamageBy::owner(w.owner, victim.port),
-                // No ported weapon sets `is_hitlag_victim` (only Link's
-                // Boomerang and two Pokemon do).
-                effect: None,
+                // `is_hitlag_victim`: Link's Boomerang (and two Pokemon)
+                // make the hit's spark, at
+                // `gmCollisionGetWeaponAttackFighterDamagePosition`.
+                effect: w.is_hitlag_victim.map(|player| LogEffect {
+                    pos: impact_point(attack_point(w.pos_curr, w.pos_prev, state), hit.center),
+                    player,
+                    from_fighter: false,
+                    fgm_level: 0,
+                    slash_rotate: 0.0,
+                }),
             },
         );
         return WeaponContact::Hurt(true);
@@ -1784,11 +1810,17 @@ pub fn finish_frame(fighters: &mut [&mut Fighter]) -> [bool; 4] {
 /// [`finish_frame`], handing each fighter's hit effects to `effects` after
 /// its hit processing and before any `ftMainProcParams`, in the order
 /// `ftMainProcSearchHitAll` makes them: the set-offs of its search, then
-/// its logged hits' effects.
+/// its logged hits' effects. The fighters' queued effects
+/// ([`crate::fteffect`]) are made before the hits' and after each
+/// `ftMainProcParams`.
 pub fn finish_frame_with(
     fighters: &mut [&mut Fighter],
     effects: &mut dyn HitEffectSink,
 ) -> [bool; 4] {
+    // The catch search's statuses (priority 2) made their effects first.
+    for f in fighters.iter_mut() {
+        effects.fighter(f);
+    }
     for f in fighters.iter_mut() {
         process_hit_collision(f);
         for e in f.hits.effects[..f.hits.effects_len].iter().flatten() {
@@ -1818,6 +1850,10 @@ pub fn finish_frame_with(
             }
             None => proc_params(fighters[i]),
         };
+        // The damage statuses' effects, in this fighter's `ftMainProcParams`.
+        for f in fighters.iter_mut() {
+            effects.fighter(f);
+        }
         if i < 4 {
             landed[i] = hit;
         }
