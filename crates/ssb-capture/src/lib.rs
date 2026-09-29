@@ -368,10 +368,13 @@ pub enum GameScene {
     /// `vsnocontest`: a VS battle reset from the pause menu, at its
     /// no-contest results.
     VsNoContest,
+    /// `vsplayers`: the VS character select with the player's fighter
+    /// placed and a CPU opened.
+    VsPlayers,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 43] = [
+    pub const ALL: [GameScene; 44] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -415,6 +418,7 @@ impl GameScene {
         GameScene::VsPause,
         GameScene::VsModeMenu,
         GameScene::VsNoContest,
+        GameScene::VsPlayers,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -462,6 +466,7 @@ impl GameScene {
             GameScene::VsPause => "vspause",
             GameScene::VsModeMenu => "vsmode",
             GameScene::VsNoContest => "vsnocontest",
+            GameScene::VsPlayers => "vsplayers",
         }
     }
 

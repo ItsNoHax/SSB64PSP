@@ -571,21 +571,7 @@ impl FighterSelect {
 
     /// `mnPlayers1PTrainingGetPuckFighterKind`.
     fn puck_fighter_kind(&self, slot: usize) -> Option<FighterKind> {
-        let (px, py) = self.slots[slot].puck;
-        let x = px as i32 + 13;
-        let y = py as i32 + 12;
-        let row = if y > 35 && y < 79 {
-            0
-        } else if y > 78 && y < 122 {
-            6
-        } else {
-            return None;
-        };
-        if !(x > 24 && x < 295) {
-            return None;
-        }
-        let kind = PORTRAIT_KINDS[((x - 25) / 45) as usize + row];
-        (!is_locked(kind, self.fighter_mask)).then_some(kind)
+        puck_fighter_kind(self.slots[slot].puck, self.fighter_mask)
     }
 
     /// `mnPlayers1PTrainingPuckProcUpdate`.
@@ -677,24 +663,8 @@ impl FighterSelect {
         let Some(kind) = kind else {
             return;
         };
-        let p = portrait(kind);
-        let edge_x = (p % 6) as f32 * PORTRAIT_WIDTH + PORTRAIT_LEFT;
-        let edge_y = (p / 6) as f32 * PORTRAIT_HEIGHT + PORTRAIT_TOP;
         let s = &mut self.slots[slot];
-        let x = s.puck.0 + s.puck_vel.0 + 13.0;
-        let y = s.puck.1 + s.puck_vel.1 + 12.0;
-        if x < edge_x + 5.0 {
-            s.puck_vel.0 = ((edge_x + 5.0) - x) / 10.0;
-        }
-        if (edge_x + 45.0) - 5.0 < x {
-            s.puck_vel.0 = -(x - ((edge_x + 45.0) - 5.0)) / 10.0;
-        }
-        if y < edge_y + 5.0 {
-            s.puck_vel.1 = ((edge_y + 5.0) - y) / 10.0;
-        }
-        if (edge_y + 43.0) - 5.0 < y {
-            s.puck_vel.1 = -(y - ((edge_y + 43.0) - 5.0)) / 10.0;
-        }
+        s.puck_vel = portrait_edge_velocity(kind, s.puck, s.puck_vel);
     }
 
     /// `mnPlayers1PTrainingCostumeSyncProcUpdate`: a fighter only one slot
@@ -714,6 +684,56 @@ impl FighterSelect {
             }
         }
     }
+}
+
+/// `mnPlayers1PTrainingGetPuckFighterKind` (and the VS screen's
+/// `mnPlayersVSGetPuckFighterKind`): the unlocked fighter whose portrait
+/// holds the centre of a puck whose top-left corner is at `puck`.
+pub(crate) fn puck_fighter_kind(puck: (f32, f32), fighter_mask: u16) -> Option<FighterKind> {
+    let (px, py) = puck;
+    let x = px as i32 + 13;
+    let y = py as i32 + 12;
+    let row = if y > 35 && y < 79 {
+        0
+    } else if y > 78 && y < 122 {
+        6
+    } else {
+        return None;
+    };
+    if !(x > 24 && x < 295) {
+        return None;
+    }
+    let kind = PORTRAIT_KINDS[((x - 25) / 45) as usize + row];
+    (!is_locked(kind, fighter_mask)).then_some(kind)
+}
+
+/// `mnPlayers1PTrainingPuckAdjustPortraitEdge` (and
+/// `mnPlayersVSPuckAdjustPortraitEdge`): the velocity that keeps a placed
+/// puck's centre 5 pixels inside `kind`'s portrait.
+pub(crate) fn portrait_edge_velocity(
+    kind: FighterKind,
+    puck: (f32, f32),
+    vel: (f32, f32),
+) -> (f32, f32) {
+    let p = portrait(kind);
+    let edge_x = (p % 6) as f32 * PORTRAIT_WIDTH + PORTRAIT_LEFT;
+    let edge_y = (p / 6) as f32 * PORTRAIT_HEIGHT + PORTRAIT_TOP;
+    let mut vel = vel;
+    let x = puck.0 + vel.0 + 13.0;
+    let y = puck.1 + vel.1 + 12.0;
+    if x < edge_x + 5.0 {
+        vel.0 = ((edge_x + 5.0) - x) / 10.0;
+    }
+    if (edge_x + 45.0) - 5.0 < x {
+        vel.0 = -(x - ((edge_x + 45.0) - 5.0)) / 10.0;
+    }
+    if y < edge_y + 5.0 {
+        vel.1 = ((edge_y + 5.0) - y) / 10.0;
+    }
+    if (edge_y + 43.0) - 5.0 < y {
+        vel.1 = -(y - ((edge_y + 43.0) - 5.0)) / 10.0;
+    }
+    vel
 }
 
 /// `mnPlayers1PTrainingCenterPuckInPortrait`.

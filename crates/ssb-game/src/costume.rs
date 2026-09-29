@@ -1,6 +1,6 @@
-//! Costume selection — `dFTParamCostumeIDs` and `ftParamGetCostumeCommonID`
-//! (`ft/ftparam.c`), and the Training character select's C-button costume
-//! picks (`mnPlayers1PTrainingUpdateCostume`,
+//! Costume selection — `dFTParamCostumeIDs`, `ftParamGetCostumeCommonID`
+//! and `ftParamGetCostumeTeamID` (`ft/ftparam.c`), and the Training
+//! character select's C-button costume picks (`mnPlayers1PTrainingUpdateCostume`,
 //! `mnPlayers1PTrainingCheckCostumeUsed` and
 //! `mnPlayers1PTrainingGetFreeCostumeRoyal`, `mn/mnplayers/mnplayers1ptraining.c`).
 
@@ -25,6 +25,30 @@ const ROYAL: [[u8; 4]; 12] = [
     [0, 1, 2, 3], // Jigglypuff
     [0, 1, 2, 3], // Ness
 ];
+
+/// `FTCostume::team` from `dFTParamCostumeIDs`, indexed by the `nFTKind`
+/// order: the costume a fighter wears on the red, blue and green team.
+const TEAM: [[u8; 3]; 12] = [
+    [0, 3, 4], // Mario
+    [1, 2, 3], // Fox
+    [2, 3, 4], // Donkey Kong
+    [0, 4, 3], // Samus
+    [3, 2, 0], // Luigi
+    [2, 3, 0], // Link
+    [1, 2, 0], // Yoshi
+    [1, 5, 2], // Captain Falcon
+    [3, 2, 4], // Kirby
+    [1, 2, 3], // Pikachu
+    [1, 2, 3], // Jigglypuff
+    [0, 2, 3], // Ness
+];
+
+/// `ftParamGetCostumeTeamID(fkind, team)`.
+pub fn costume_team_id(kind: FighterKind, team: u8) -> u8 {
+    TEAM.get(kind as usize)
+        .map(|row| row[usize::from(team).min(2)])
+        .unwrap_or(0)
+}
 
 /// `ftParamGetCostumeCommonID(fkind, color)`.
 pub fn costume_common_id(kind: FighterKind, color: usize) -> u8 {

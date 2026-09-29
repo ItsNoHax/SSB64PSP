@@ -43,6 +43,7 @@ pub mod ness;
 pub mod pause;
 pub mod physics;
 pub mod pikachu;
+pub mod players_vs;
 pub mod purin;
 pub mod reaction;
 pub mod results;
