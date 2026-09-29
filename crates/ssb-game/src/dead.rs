@@ -54,8 +54,12 @@ pub enum CameraMode {
     Default,
     /// `nFTCameraModeDeadUp`: a top-out flies off screen.
     DeadUp,
-    /// `nFTCameraModeGhost`: a respawn's first 45 halo ticks.
+    /// `nFTCameraModeGhost`: a respawn's first 45 halo ticks, and a
+    /// fighter out of stocks (`ftCommonSleepSetStatus`).
     Ghost,
+    /// `nFTCameraModeEntry`: from `ftCommonAppearInitStatusVars` until
+    /// "Go" (`ifCommonAnnounceGoSetStatus`), framed at the entry position.
+    Entry,
 }
 
 /// Which way `efManagerDeadExplodeMakeEffect` points the blast.
@@ -102,6 +106,9 @@ pub struct DeadState {
     /// `FTStruct::is_rebirth`.
     pub is_rebirth: bool,
     pub camera_mode: CameraMode,
+    /// `status_vars.common.dead.pos`: where a top-out started, which the
+    /// camera frames at the top (`gmCameraSetDeadUpStarPosition`).
+    pub up_pos: Vec3,
     /// `status_vars.common.dead.wait`.
     pub wait: i32,
     /// `motion_vars.flags.flag1`: the top-out phases.
@@ -122,11 +129,14 @@ pub struct DeadState {
     pub scored: bool,
 }
 
-/// `ftMainSetStatus`'s resets of the fields this module owns.
+/// `ftMainSetStatus`'s resets of the fields this module owns. The entry's
+/// camera mode survives until "Go".
 pub(crate) fn on_set_status(f: &mut Fighter) {
     f.dead.is_ghost = false;
     f.dead.is_rebirth = false;
-    f.dead.camera_mode = CameraMode::Default;
+    if f.dead.camera_mode != CameraMode::Entry {
+        f.dead.camera_mode = CameraMode::Default;
+    }
 }
 
 /// Statuses whose setter owns the ground/air situation.
@@ -266,6 +276,7 @@ fn enter_up(f: &mut Fighter, status: Status) {
     };
     status::set_status(f, status, 0.0, timing);
     crate::physics::stop_all(&mut f.physics);
+    f.dead.up_pos = f.pos;
     f.dead.camera_mode = CameraMode::DeadUp;
     f.dead.wait = 1;
     f.dead.step = 0;
@@ -286,7 +297,10 @@ pub fn set_dead_up_fall(f: &mut Fighter) {
 /// the host respawns it.
 fn check_rebirth(f: &mut Fighter) {
     if f.dead.stock_rule && f.stocks == -1 {
+        // `ftCommonSleepSetStatus`.
         status::set_status(f, Status::Sleep, 0.0, StatusTiming::unknown());
+        f.dead.is_ghost = true;
+        f.dead.camera_mode = CameraMode::Ghost;
         return;
     }
     f.dead.rebirth_pending = true;

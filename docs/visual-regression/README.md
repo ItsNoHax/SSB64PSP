@@ -612,3 +612,9 @@ the other 106 are unchanged. 107 of 107 goldens match twice.
 Pack v63. The pair-to-loop refactor left all 107 goldens unchanged. The
 new `f1-vs-four` golden was identical in both captures. 108 of 108
 goldens match twice.
+
+## 2026-09-29 RE-406 battle camera interests
+
+Pack v63. The battle camera now frames every fighter, so 39 Training and
+VS goldens were rebaselined, each captured twice; scenes whose dummy sat
+inside the player's box are unchanged. 108 of 108 goldens match twice.

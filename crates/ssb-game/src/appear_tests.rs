@@ -135,3 +135,19 @@ fn the_entry_effect_clock_starts_with_the_entry() {
     appear_set_status(&mut n);
     assert_eq!(n.entry.effect_ticks, None, "Ness makes no effect");
 }
+
+#[test]
+fn the_entry_camera_mode_lasts_through_the_statuses_until_go() {
+    let mut f = standing(FighterKind::Mario, Facing::Right);
+    entry_set_status(&mut f);
+    assert_eq!(f.dead.camera_mode, crate::dead::CameraMode::Default);
+    appear_set_status(&mut f);
+    assert_eq!(f.dead.camera_mode, crate::dead::CameraMode::Entry);
+    // `ftMainSetStatus` keeps it: the fighter stands in Wait still framed
+    // at its entry.
+    run(&mut f, 130);
+    assert_eq!(f.status.status, AnyStatus::Common(Status::Wait));
+    assert_eq!(f.dead.camera_mode, crate::dead::CameraMode::Entry);
+    on_go(&mut f);
+    assert_eq!(f.dead.camera_mode, crate::dead::CameraMode::Default);
+}

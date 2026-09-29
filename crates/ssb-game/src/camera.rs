@@ -75,7 +75,7 @@ pub const DEFAULT_FOVY_DEGREES: f32 = 38.0;
 const DEFAULT_TARGET_DIST: f32 = 10000.0;
 
 /// One fighter entry consumed by `gmCameraUpdateInterests`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Interest {
     /// Fighter position with `FTAttributes.cam_offset_y` already applied.
     pub target_pos: Vec3,
@@ -87,6 +87,9 @@ pub struct Interest {
     pub zoom_range: f32,
     /// The original applies a further 0.75 multiplier after 120 Wait ticks.
     pub idle_zoomed_out: bool,
+    /// `nFTCameraModeDeadUp`: `target_pos` is already
+    /// `gmCameraSetDeadUpStarPosition`'s, which replaces the bounds clamp.
+    pub dead_up: bool,
 }
 
 /// The real camera's own smoothly-updated state -- one `CObj` plus
@@ -148,6 +151,7 @@ impl Camera {
                 zoom_frame: 1.0,
                 zoom_range: 1.0,
                 idle_zoomed_out: false,
+                dead_up: false,
             }],
             bounds,
             light_angle_z_radians,
@@ -288,7 +292,11 @@ fn calculate_interest(interests: &[Interest], bounds: Bounds) -> (Vec3, f32, f32
     let (mut gm_left, mut gm_right, mut gm_bottom, mut gm_top) =
         (65536.0f32, -65536.0f32, 65536.0f32, -65536.0f32);
     for interest in interests {
-        let target_pos = bounds.clamp(interest.target_pos);
+        let target_pos = if interest.dead_up {
+            interest.target_pos
+        } else {
+            bounds.clamp(interest.target_pos)
+        };
         let idle = if interest.idle_zoomed_out { 0.75 } else { 1.0 };
         let adjust = zoom * interest.zoom_frame * interest.zoom_range * idle;
         let (left_off, right_off) = if interest.facing_left {
@@ -602,12 +610,39 @@ mod tests {
                 zoom_frame: 1.0,
                 zoom_range: 1.0,
                 idle_zoomed_out: false,
+                dead_up: false,
             }],
             bounds,
             0.03,
             15.0 / 11.0,
         );
         assert_eq!(wrapped, general);
+    }
+
+    #[test]
+    fn a_dead_up_interest_skips_the_bounds_clamp() {
+        let bounds = Bounds {
+            top: 2000.0,
+            bottom: -2000.0,
+            left: -3000.0,
+            right: 3000.0,
+        };
+        let above = Interest {
+            target_pos: Vec3::new(0.0, 2600.0, 0.0),
+            zoom_frame: 1.0,
+            zoom_range: 1.0,
+            ..Interest::default()
+        };
+        let clamped = calculate_interest(&[above], bounds).0;
+        let star = calculate_interest(
+            &[Interest {
+                dead_up: true,
+                ..above
+            }],
+            bounds,
+        )
+        .0;
+        assert!(star.y > clamped.y);
     }
 
     #[test]
@@ -625,6 +660,7 @@ mod tests {
                 zoom_frame: 1.0,
                 zoom_range: 1.0,
                 idle_zoomed_out: false,
+                dead_up: false,
             },
             Interest {
                 target_pos: Vec3::new(1000.0, 250.0, 0.0),
@@ -632,6 +668,7 @@ mod tests {
                 zoom_frame: 1.0,
                 zoom_range: 1.0,
                 idle_zoomed_out: false,
+                dead_up: false,
             },
         ];
         let (interest, hz, vt) = calculate_interest(&interests, bounds);
@@ -665,6 +702,7 @@ mod tests {
                 zoom_frame: 1.0,
                 zoom_range: 1.0,
                 idle_zoomed_out: true,
+                dead_up: false,
             },
             Interest {
                 target_pos: Vec3::new(-1397.0, 1054.0, 0.0),
@@ -672,6 +710,7 @@ mod tests {
                 zoom_frame: 1.0,
                 zoom_range: 1.0,
                 idle_zoomed_out: true,
+                dead_up: false,
             },
         ];
         let mut camera = Camera::default();

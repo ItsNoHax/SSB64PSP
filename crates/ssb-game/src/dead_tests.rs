@@ -61,6 +61,9 @@ fn a_stock_match_takes_a_stock_and_sleeps_after_the_last() {
     }
     assert!(is(&f, Status::Sleep));
     assert!(!f.dead.rebirth_pending);
+    // `ftCommonSleepSetStatus`: out of the camera and the fight.
+    assert_eq!(f.dead.camera_mode, CameraMode::Ghost);
+    assert!(f.dead.is_ghost);
 }
 
 #[test]

@@ -7,29 +7,27 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** VS with up to four fighters (RE-405): the human
-  and up to three CPUs in port order, nearest-fighter catches, per-port
-  HUD, and the session and effect players moved off the 256 KB main
-  stack. Before it: the VS character select (RE-404).
-- **Next gameplay batch:** the multi-fighter battle camera
-  (`gmCameraUpdateInterests` over every fighter, entry and dead-up
-  modes), which rebaselines the VS goldens; then team battles.
+- **Completed batch:** the multi-fighter battle camera (RE-406): every
+  fighter framed by its camera mode (entry, dead-up star, ghost); 39
+  goldens rebaselined. Before it: four-fighter VS (RE-405).
+- **Next gameplay batch:** team battles (team attack, team costumes in
+  battle, team results), then the results' presentation.
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Battle camera | `CameraMode::Entry`, `camera_interest(stage)`, `tick_battle_camera`; 39 goldens rebaselined | RE-406 |
 | Four-fighter VS | port-order passes, `grab::nearest_catch`, `Roster`, boxed session; new `f1-vs-four` golden | RE-405 |
-| VS select | `ssb_game::players_vs`, `Screen::PlayersVs`, new `f1-vs-players` golden | RE-404 |
 
 ## Verification baseline
 
 - Workspace tests with absolute `SSB64_ROM`, one test thread: all pass.
   Pinned 1.98.0 Clippy with warnings denied and workspace rustfmt passed in
-  RE-405; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
+  RE-406; the `thumbv7em-none-eabi` `no_std` builds last passed in RE-369.
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: all 108 goldens match twice (RE-405). Scene captures
+- PPSSPPHeadless: all 108 goldens match twice (RE-406). Scene captures
   time out at 60 s. No golden passes through a platform.
 - PSP-2000: scripted Training held 16,682 µs per frame (RE-360).
 - Pack v63: 28,254,080 bytes, SHA-256
