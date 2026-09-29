@@ -13,7 +13,7 @@ use core::ops::{Deref, DerefMut};
 use ssb_game::fighter::FighterKind;
 use ssb_rom::pack::{Pack, StageDesc};
 
-pub use ssb_psp_runtime::scene::{facing_turn, FighterScene};
+pub use ssb_psp_runtime::scene::{fighter_turn, FighterScene};
 
 /// A stationary, physics-ticked dummy target for Training Mode
 /// (`plans/gameplay/F1.md`: "One player-controlled fighter vs. one

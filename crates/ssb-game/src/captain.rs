@@ -372,6 +372,11 @@ pub fn update(f: &mut Fighter) {
         }
     }
     match current {
+        // The battle entry runs in `crate::appear`.
+        CaptainStatus::AppearRStart
+        | CaptainStatus::AppearLStart
+        | CaptainStatus::AppearREnd
+        | CaptainStatus::AppearLEnd => {}
         CaptainStatus::Attack13 => {
             status::rapid_input(f);
             if f.motion_script.flags[1] != 0 && f.attack1.rapid_requested {

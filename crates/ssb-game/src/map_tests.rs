@@ -664,6 +664,7 @@ fn cliff_phase_two_places_on_the_current_corner_and_follows_transn() {
     f.set_root_motion(crate::physics::RootMotion {
         delta: Vec3::new(0.0, 0.0, 12.0),
         rotate_z: 0.0,
+        ..Default::default()
     });
     f.tick_map(|| [floor]);
     assert_eq!(f.pos, Vec3::new(127.5, 25.25, 0.0));

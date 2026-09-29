@@ -23,6 +23,7 @@ pub fn status_name(scene: &FighterScene) -> &'static str {
         AnyStatus::Mario(MarioStatus::SpecialAirHi) => return "sp-airhi",
         AnyStatus::Mario(MarioStatus::SpecialLw) => return "sp-lw   ",
         AnyStatus::Mario(MarioStatus::SpecialAirLw) => return "sp-airlw",
+        AnyStatus::Mario(MarioStatus::AppearR | MarioStatus::AppearL) => return "entry   ",
         AnyStatus::Fox(_) => return "fox-ext ",
         AnyStatus::Donkey(_) => return "dk-ext  ",
         AnyStatus::Samus(_) => return "sam-ext ",

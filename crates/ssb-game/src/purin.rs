@@ -78,6 +78,10 @@ pub fn is_grounded(s: P) -> bool {
 pub fn anim_slot(s: P) -> usize {
     const B: usize = 393;
     match s {
+        // The battle entry runs in `crate::appear`.
+        P::AppearR | P::AppearL => {
+            crate::appear::slot(crate::status::AnyStatus::Purin(s)).unwrap_or(0)
+        }
         P::JumpAerialF1 => B,
         P::JumpAerialF2 => B + 1,
         P::JumpAerialF3 => B + 2,
@@ -309,6 +313,8 @@ pub fn update(f: &mut Fighter) {
         f.motion_script.flags[1] = 0;
     }
     match current {
+        // The battle entry runs in `crate::appear`.
+        P::AppearR | P::AppearL => {}
         P::JumpAerialF1 | P::JumpAerialF2 | P::JumpAerialF3 | P::JumpAerialF4 | P::JumpAerialF5 => {
             update_jump_aerial_turn(f);
             if f.status.animation_ended() {

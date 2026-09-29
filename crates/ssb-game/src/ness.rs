@@ -55,6 +55,10 @@ pub fn is_grounded(s: N) -> bool {
 }
 pub fn anim_slot(s: N) -> usize {
     424 + match s {
+        // The battle entry runs in `crate::appear`.
+        N::AppearRStart | N::AppearLStart | N::AppearWait | N::AppearREnd | N::AppearLEnd => {
+            return crate::appear::slot(crate::status::AnyStatus::Ness(s)).unwrap_or(0)
+        }
         N::Attack13 => 0,
         N::SpecialN => 1,
         N::SpecialAirN => 2,
