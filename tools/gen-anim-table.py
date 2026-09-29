@@ -746,6 +746,19 @@ TAIL_COMMON_SLOTS = [
 APPEAR_SLOTS = ["AppearR", "AppearL", "AppearRStart", "AppearLStart",
                 "AppearREnd", "AppearLEnd", "AppearWait"]
 
+# The results screen's and the character selects' demo clips (RE-408), after
+# the entry slots. `ftMainSetStatus` sends a demo status (`nFTDemoStatusWin1`
+# on, `0x10000 + n`) through the shared demo status table
+# `D_ovl1_80390BE8[n]`, whose `motion_id - 0x10000` indexes the fighter's
+# `FTData.submotion` table, `dFT<Name>SubMotionDescs` in `scsubsys`. The
+# results screen plays Win1 to Win3 (Kirby Win1 and Win2) for the winner and
+# Lose for the rest; the selects play Win1 to Win4. They are figatrees (no
+# `FTANIM_FLAG_ANIMJOINT` in any of these rows), so their lengths come from
+# their C sources like every other figatree slot.
+DEMO_SLOTS = [("Win1", "nFTDemoStatusWin1"), ("Win2", "nFTDemoStatusWin2"),
+              ("Win3", "nFTDemoStatusWin3"), ("Win4", "nFTDemoStatusWin4"),
+              ("Lose", "nFTDemoStatusLose")]
+
 # The fighter whose motion enum a table uses.
 MOTION_ENUM_OWNER = {"MMario": "Mario", "NMario": "Mario", "NFox": "Fox",
                      "NDonkey": "Donkey", "GDonkey": "Donkey", "NSamus": "Samus",
@@ -762,7 +775,8 @@ ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
                 + COMMON_MOVE_SLOTS]
              + [(name, None, None) for name, _, _ in FINAL_SPECIAL_SLOTS]
              + [(name, status, None) for name, status in TAIL_COMMON_SLOTS]
-             + [(name, None, None) for name in APPEAR_SLOTS])
+             + [(name, None, None) for name in APPEAR_SLOTS]
+             + [(name, None, None) for name, _ in DEMO_SLOTS])
 
 # The slots whose animation ends on its own, and whose length the status
 # machine therefore reads (RE-035). Everything after them loops until it is
@@ -1032,6 +1046,62 @@ def fighter_motions(refs, name):
     return out
 
 
+def demo_status_motions(refs):
+    """`nFTDemoStatus*` -> submotion index, through `D_ovl1_80390BE8`.
+
+    The enum starts at `nFTDemoStatusNull = 0x10000` and counts up; entry
+    `status - 0x10000` of the shared demo table names the motion as
+    `0x10000 + index`.
+    """
+    src = COMMENT_RE.sub(" ", open(os.path.join(refs, "src/ft/ftdef.h")).read())
+    body = re.search(r"typedef enum FTDemoStatus\s*\{(.*?)\}", src, re.S).group(1)
+    names, nxt = {}, 0
+    for item in body.split(","):
+        m = re.match(r"\s*(nFTDemoStatus\w+)\s*(?:=\s*(\S+))?\s*$", item)
+        if not m:
+            continue
+        if m.group(2) is not None:
+            nxt = int(m.group(2), 0)
+        names[m.group(1)] = nxt
+        nxt += 1
+    data = COMMENT_RE.sub(" ", open(os.path.join(refs, "src/sc/scsubsys/scsubsysdata.c")).read())
+    table = re.search(r"FTOpeningDesc D_ovl1_80390BE8\[\d+\]\s*=\s*\{(.*?)\};", data, re.S)
+    words = [w.strip() for w in table.group(1).split(",") if w.strip()]
+    motions = [int(words[i], 0) - 0x10000 for i in range(0, len(words), 2)]
+    return {name: motions[value - 0x10000] for name, value in names.items()
+            if 0 <= value - 0x10000 < len(motions)}
+
+
+def sub_motion_descs(refs):
+    """Fighter -> [(animation symbol, leading runtime joint) per submotion].
+
+    Parsed from `dFT<Name>SubMotionDescs` the way `motion_descs` reads the
+    main tables: three words per `FTMotionDesc`. Also returns, per fighter,
+    whether each row sets `FTANIM_FLAG_ANIMJOINT`, which none of the demo
+    rows does.
+    """
+    out = {}
+    folder = os.path.join(refs, "src/sc/scsubsys")
+    for name in sorted(os.listdir(folder)):
+        if not name.startswith("scsubsysdata") or not name.endswith(".c"):
+            continue
+        src = COMMENT_RE.sub(" ", open(os.path.join(folder, name)).read())
+        for m in re.finditer(r"^FTMotionDesc dFT(\w+)SubMotionDescs\[\]\s*=\s*$", src, re.M):
+            start = src.index("{", m.end())
+            body = src[start + 1:src.index("\n};", start)]
+            words = [w.strip() for w in body.split(",") if w.strip()]
+            if len(words) % 3:
+                raise ValueError(f"{m.group(1)} submotion table: {len(words)} words")
+            entries = []
+            for i in range(0, len(words), 3):
+                sym = re.match(r"&ll(\w+?)FileID$", words[i])
+                flags = int(words[i + 2], 0)
+                entries.append((sym.group(1) if sym else None,
+                                flags & 0xE0000000 != 0, flags & 0x8 != 0))
+            out[m.group(1)] = entries
+    return out
+
+
 def anim_files(refs):
     """Animation symbol -> (relocData file id, filename)."""
     reloc = os.path.join(refs, "src/relocData")
@@ -1045,6 +1115,7 @@ def anim_files(refs):
 
 def resolve(refs):
     smot, descs, files = status_motions(refs), motion_descs(refs), anim_files(refs)
+    subdescs, demo = sub_motion_descs(refs), demo_status_motions(refs)
     cache, rows, problems = {}, [], []
     for fighter in FIGHTERS:
         table = descs[fighter]
@@ -1116,6 +1187,21 @@ def resolve(refs):
                 continue
             fid, _ = files[sym]
             entry.append((slot, fid, sym, 0, runtime))
+        # A table shorter than the demo index (Giant Donkey Kong, Poly Luigi
+        # and Poly Jigglypuff carry one row) or a null row has no clip.
+        sub = subdescs.get(fighter, [])
+        for slot, status in DEMO_SLOTS:
+            motion = demo[status]
+            sym, runtime, anim_joint = sub[motion] if motion < len(sub) else (None, False, False)
+            if sym is None:
+                entry.append((slot, 0, None, 0, False))
+                continue
+            if anim_joint:
+                problems.append(f"{fighter} {slot}: {sym} is an AnimJoint clip")
+            fid, path = files[sym]
+            if fid not in cache:
+                cache[fid] = file_frames(path)
+            entry.append((slot, fid, sym, cache[fid], runtime))
         rows.append((fighter, entry))
     return rows, problems
 

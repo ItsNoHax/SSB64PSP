@@ -625,3 +625,9 @@ inside the player's box are unchanged. 108 of 108 goldens match twice.
 Pack v63. The team rule is inert in a free-for-all and in Training, so
 all 108 goldens are unchanged. The new `f1-vs-team` golden was identical
 in both captures. 109 of 109 goldens match twice.
+
+## 2026-09-29 RE-408 demo clips
+
+Pack v64 (`33fd7055…`) adds the fighters' Win and Lose demo clips, which
+nothing plays yet. All 109 goldens are unchanged. 109 of 109 goldens match
+twice.

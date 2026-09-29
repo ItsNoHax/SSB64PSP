@@ -417,3 +417,4 @@ editing a record.
 | RE-405 | VS battles with up to four fighters | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | match, fighter, grab, hud, psp-platform, visual-regression |  |
 | RE-406 | The battle camera frames every fighter | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | camera, match, fighter, visual-regression |  |
 | RE-407 | VS team battles | IMPLEMENTED (decomp source, host tests, PPSSPPHeadless goldens captured twice, workspace tests, both PSP builds; no physical PSP) | match, combat, items, weapons, cpu, hud, visual-regression |  |
+| RE-408 | The results and select demo clips in the pack | IMPLEMENTED (decomp source, ROM decode, pack test, PPSSPPHeadless goldens unchanged, workspace tests, both PSP builds; no physical PSP) | animation, pack, fighter, asset-pipeline |  |
