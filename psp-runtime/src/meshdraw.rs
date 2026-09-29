@@ -2062,6 +2062,113 @@ pub unsafe fn draw_texture_quad(
     draw_state.invalidate_all();
 }
 
+/// A `GU_TRANSFORM_2D` textured vertex: texel UVs, ABGR colour, screen
+/// pixels.
+#[repr(C, align(4))]
+#[derive(Clone, Copy)]
+struct SObjVertex {
+    u: f32,
+    v: f32,
+    color: u32,
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+/// Draws a libultra `Sprite` the way `lbCommonDrawSObjNoAttr` does
+/// (RE-392): a texture rectangle at N64 screen position `(x, y)`, `scale`
+/// times its size, blended when `attr` (the live `sprite.attr`, which the
+/// game may rewrite) has `SP_TRANSPARENT`. `color` is the
+/// primitive colour a tinted sprite ([`ssb_rom::pack::SpriteDesc::TINTED`])
+/// multiplies by; `solid` draws the primitive colour through the texel's
+/// alpha instead (`G_CC(0, 0, 0, PRIMITIVE, 0, 0, 0, TEXEL0)`). The N64's
+/// 320x240 frame maps onto the pillarboxed viewport.
+///
+/// # Safety
+///
+/// Between `begin_frame` and `end_frame`; the pack must outlive the frame.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn draw_sprite(
+    pack: &Pack<'_>,
+    sprite: &ssb_rom::pack::SpriteDesc,
+    x: f32,
+    y: f32,
+    scale: f32,
+    color: [u8; 4],
+    solid: bool,
+    attr: u16,
+    draw_state: &mut DrawState,
+) {
+    let Some(t) = pack.texture(sprite.texture) else {
+        return;
+    };
+    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    sys::sceGuTexScale(1.0, 1.0);
+    sys::sceGuTexOffset(0.0, 0.0);
+    sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
+    let tinted = sprite.flags & ssb_rom::pack::SpriteDesc::TINTED != 0;
+    let rgba = if tinted || solid { color } else { [0xFF; 4] };
+    // `Add` with a white vertex colour saturates the colour and keeps
+    // `alpha * TEXEL0`: the solid-colour combiner for a white flash.
+    let effect = if solid {
+        sys::TextureEffect::Add
+    } else {
+        sys::TextureEffect::Modulate
+    };
+    sys::sceGuTexFunc(effect, sys::TextureColorComponent::Rgba);
+    sys::sceGuDisable(GuState::Lighting);
+    sys::sceGuDisable(GuState::DepthTest);
+    sys::sceGuDisable(GuState::CullFace);
+    sys::sceGuDisable(GuState::AlphaTest);
+    if attr & ssb_rom::sprite::SP_TRANSPARENT != 0 {
+        sys::sceGuEnable(GuState::Blend);
+        sys::sceGuBlendFunc(
+            sys::BlendOp::Add,
+            sys::BlendFactor::SrcAlpha,
+            sys::BlendFactor::OneMinusSrcAlpha,
+            0,
+            0,
+        );
+    } else {
+        sys::sceGuDisable(GuState::Blend);
+    }
+    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
+    let abgr = u32::from_le_bytes(rgba);
+    let (w, h) = (f32::from(sprite.width), f32::from(sprite.height));
+    let x0 = vx as f32 + x * k;
+    let y0 = y * k;
+    let corners = [
+        (0.0, 0.0, x0, y0),
+        (w, h, x0 + w * scale * k, y0 + h * scale * k),
+    ];
+    let verts = sys::sceGuGetMemory((2 * core::mem::size_of::<SObjVertex>()) as i32)
+        as *mut SObjVertex;
+    for (i, (u, v, px, py)) in corners.into_iter().enumerate() {
+        verts.add(i).write(SObjVertex {
+            u,
+            v,
+            color: abgr,
+            x: px,
+            y: py,
+            z: 0.0,
+        });
+    }
+    sys::sceGuDrawArray(
+        GuPrimitive::Sprites,
+        VertexType::TEXTURE_32BITF
+            | VertexType::COLOR_8888
+            | VertexType::VERTEX_32BITF
+            | VertexType::TRANSFORM_2D,
+        2,
+        core::ptr::null(),
+        verts as *const c_void,
+    );
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuEnable(GuState::CullFace);
+    draw_state.invalidate_all();
+}
+
 /// Draws one live `LBParticle` as a camera-facing quad (RE-183).
 ///
 /// `lbParticleDrawTextures` (`refs/ssb-decomp-re/src/lb/lbparticle.c:

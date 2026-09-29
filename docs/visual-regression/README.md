@@ -508,3 +508,18 @@ goldens match twice.
 Pack v60. The dummy now runs the CPU's Stand behaviour with no golden
 change. The new `f1-training-cpu-walk` and `f1-training-cpu-jump` goldens
 were each identical in both captures. 100 of 100 goldens match twice.
+
+## 2026-09-29 RE-391 VS CPU
+
+Pack v60. The VS CPU fights; `vstimeup` pins its CPU to Stand so its tie
+holds, and matches unchanged. The new `f1-vs-cpu` golden was identical in
+both captures. 101 of 101 goldens match twice.
+
+## 2026-09-29 RE-392 damage display
+
+Pack v61 (`47f8869d…`) adds the `SObj` sprite table. The damage display
+now draws under the stage in Training and, from "Go", in VS, so 34
+`psp-game` goldens were rebaselined, each captured twice. Every diff lies in
+the HUD band (y 454–496 of the 960×544 capture). `f1-vs-countdown` is
+unchanged. A scene capture's timeout rose from 30 s to 60 s, since
+`vstimeup` exceeds 30 s under a full `-j`. 101 of 101 goldens match twice.

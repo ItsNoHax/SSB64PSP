@@ -40,6 +40,7 @@
 //! ParticleScriptDesc[particle_script_count]
 //! ParticleTextureDesc[particle_texture_count]
 //! LodBlendDesc[lod_blend_count]
+//! SpriteDesc[sprite_count]
 //! ---- 16-byte aligned blob region ----
 //! vertex data | index data | texel data | palette data | animation scripts
 //! ```
@@ -260,7 +261,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // Attack weapon graphic (324, 0x11908) with its MObjSub table (0x110A8).
 // 60 seeds the shield tree (163, 0x300) with `efManagerShieldProcDisplay`'s
 // ENV colour, so its prims carry the red-to-white texture blend (RE-384).
-pub const VERSION: u32 = 60;
+// 61 adds `SpriteDesc`: libultra `Sprite`s for `SObj` draws, converted
+// through `lbCommonPrepSObjAttr`'s combiner. File 164's damage digits first.
+pub const VERSION: u32 = 61;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -282,7 +285,8 @@ pub const VERTEX_SIZE: usize = 20;
 /// Header. 64 bytes through `VERSION` 11; `mat_anim_count`/
 /// `mat_anim_palette_count` (`VERSION` 12) extend it to 72, and
 /// `costume_override_count` (`VERSION` 13) to 76, three particle counts
-/// (`VERSION` 25) to 88, and `lod_blend_count` (`VERSION` 33) to 92. The original 64 was a coincidence of having exactly
+/// (`VERSION` 25) to 88, `lod_blend_count` (`VERSION` 33) to 92, and
+/// `sprite_count` (`VERSION` 61) to 96. The original 64 was a coincidence of having exactly
 /// 16 `u32` fields, not a hard alignment requirement (only the blob region,
 /// computed separately via `blob_offset`, needs 16-byte alignment for GE DMA).
 #[repr(C)]
@@ -321,10 +325,12 @@ pub struct Header {
     pub particle_texture_count: u32,
     /// Two-tile fractional blend records (RE-321).
     pub lod_blend_count: u32,
+    /// `SObj` sprites (RE-392).
+    pub sprite_count: u32,
 }
 
 impl Header {
-    pub const SIZE: usize = 92;
+    pub const SIZE: usize = 96;
 }
 
 /// A vertex in the GE's expected layout.
@@ -1159,6 +1165,30 @@ impl LodBlendDesc {
     pub const SIZE: usize = 52;
 }
 
+/// A libultra `Sprite` an `SObj` draws, keyed by where it sits in its file
+/// (RE-392). `texture` holds the image already through the format's
+/// combiner ([`crate::sprite::combined_image`]); a draw modulates it by the
+/// primitive colour when [`SpriteDesc::TINTED`] is set, else by white.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpriteDesc {
+    pub source_file: u32,
+    pub source_offset: u32,
+    pub texture: u32,
+    pub width: u16,
+    pub height: u16,
+    /// `red`, `green`, `blue`, `alpha`.
+    pub color: [u8; 4],
+    pub attr: u16,
+    pub flags: u16,
+}
+
+impl SpriteDesc {
+    pub const SIZE: usize = 24;
+    /// The combiner reads the primitive colour (I and IA formats).
+    pub const TINTED: u16 = 1 << 0;
+}
+
 /// A per-costume mesh substitution for one node (RE-098).
 ///
 /// A fighter's alternate costumes share one baked `ObjectDesc`/`NodeDesc`
@@ -1714,6 +1744,7 @@ pub struct PackWriter {
     particle_scripts: Vec<ParticleScriptDesc>,
     particle_textures: Vec<ParticleTextureDesc>,
     lod_blends: Vec<LodBlendDesc>,
+    sprites: Vec<SpriteDesc>,
     blob: Vec<u8>,
 }
 
@@ -2352,6 +2383,12 @@ impl PackWriter {
     /// Records a two-tile fractional blend for `mat_anim`, once (RE-321).
     /// Returns `false` when a different record already claims `mat_anim`:
     /// one script cannot drive two tile-1 shapes through one key.
+    /// Adds a converted sprite. `texture` must come from
+    /// [`Self::add_texture`].
+    pub fn add_sprite(&mut self, desc: SpriteDesc) {
+        self.sprites.push(desc);
+    }
+
     pub fn add_lod_blend(&mut self, desc: LodBlendDesc) -> bool {
         match self.lod_blends.iter().find(|d| d.mat_anim == desc.mat_anim) {
             Some(existing) => *existing == desc,
@@ -2744,7 +2781,8 @@ impl PackWriter {
             + self.particle_banks.len() * ParticleBankDesc::SIZE
             + self.particle_scripts.len() * ParticleScriptDesc::SIZE
             + self.particle_textures.len() * ParticleTextureDesc::SIZE
-            + self.lod_blends.len() * LodBlendDesc::SIZE;
+            + self.lod_blends.len() * LodBlendDesc::SIZE
+            + self.sprites.len() * SpriteDesc::SIZE;
         let blob_offset = align_up(Header::SIZE + table_bytes);
 
         // Sorted by (node, costume) so the reader can binary-search rather
@@ -2779,6 +2817,7 @@ impl PackWriter {
         out.extend_from_slice(&(self.particle_scripts.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.particle_textures.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.lod_blends.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.sprites.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -3021,6 +3060,16 @@ impl PackWriter {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
+        for sp in &self.sprites {
+            out.extend_from_slice(&sp.source_file.to_le_bytes());
+            out.extend_from_slice(&sp.source_offset.to_le_bytes());
+            out.extend_from_slice(&sp.texture.to_le_bytes());
+            out.extend_from_slice(&sp.width.to_le_bytes());
+            out.extend_from_slice(&sp.height.to_le_bytes());
+            out.extend_from_slice(&sp.color);
+            out.extend_from_slice(&sp.attr.to_le_bytes());
+            out.extend_from_slice(&sp.flags.to_le_bytes());
+        }
 
         out.resize(blob_offset, 0);
         out.extend_from_slice(&self.blob);
@@ -3083,6 +3132,7 @@ pub struct Pack<'a> {
     particle_script_count: u32,
     particle_texture_count: u32,
     lod_blend_count: u32,
+    sprite_count: u32,
     blob_offset: usize,
     blob_len: usize,
 }
@@ -3144,6 +3194,7 @@ impl<'a> Pack<'a> {
         let particle_script_count = u32_at(data, 80);
         let particle_texture_count = u32_at(data, 84);
         let lod_blend_count = u32_at(data, 88);
+        let sprite_count = u32_at(data, 92);
 
         let tables_end = Header::SIZE
             + mesh_count as usize * MeshDesc::SIZE
@@ -3164,7 +3215,8 @@ impl<'a> Pack<'a> {
             + particle_bank_count as usize * ParticleBankDesc::SIZE
             + particle_script_count as usize * ParticleScriptDesc::SIZE
             + particle_texture_count as usize * ParticleTextureDesc::SIZE
-            + lod_blend_count as usize * LodBlendDesc::SIZE;
+            + lod_blend_count as usize * LodBlendDesc::SIZE
+            + sprite_count as usize * SpriteDesc::SIZE;
 
         if blob_offset < tables_end || blob_offset.saturating_add(blob_len) > data.len() {
             return Err(PackError::OutOfBounds);
@@ -3191,6 +3243,7 @@ impl<'a> Pack<'a> {
             particle_script_count,
             particle_texture_count,
             lod_blend_count,
+            sprite_count,
             blob_offset,
             blob_len,
         })
@@ -3305,6 +3358,9 @@ impl<'a> Pack<'a> {
     fn lod_blend_table(&self) -> usize {
         self.particle_texture_table()
             + self.particle_texture_count as usize * ParticleTextureDesc::SIZE
+    }
+    fn sprite_table(&self) -> usize {
+        self.lod_blend_table() + self.lod_blend_count as usize * LodBlendDesc::SIZE
     }
     fn line_table(&self) -> usize {
         self.stage_table() + self.stage_count as usize * StageDesc::SIZE
@@ -3891,6 +3947,35 @@ impl<'a> Pack<'a> {
             height: u16_at(self.data, at + 10),
             flags: u32_at(self.data, at + 12),
         })
+    }
+
+    pub fn sprite_count(&self) -> u32 {
+        self.sprite_count
+    }
+
+    pub fn sprite_at(&self, i: u32) -> Option<SpriteDesc> {
+        if i >= self.sprite_count {
+            return None;
+        }
+        let d = self.data;
+        let at = self.sprite_table() + i as usize * SpriteDesc::SIZE;
+        Some(SpriteDesc {
+            source_file: u32_at(d, at),
+            source_offset: u32_at(d, at + 4),
+            texture: u32_at(d, at + 8),
+            width: u16_at(d, at + 12),
+            height: u16_at(d, at + 14),
+            color: [d[at + 16], d[at + 17], d[at + 18], d[at + 19]],
+            attr: u16_at(d, at + 20),
+            flags: u16_at(d, at + 22),
+        })
+    }
+
+    /// The sprite at `offset` of `file`: `lbRelocGetFileData(Sprite*, ...)`.
+    pub fn sprite(&self, file: u32, offset: u32) -> Option<SpriteDesc> {
+        (0..self.sprite_count)
+            .filter_map(|i| self.sprite_at(i))
+            .find(|s| s.source_file == file && s.source_offset == offset)
     }
 
     pub fn lod_blend_count(&self) -> u32 {
@@ -6498,6 +6583,55 @@ mod tests {
         let prim = pack.prim(0).unwrap();
         assert_ne!(prim.flags & flags::LOD_BLEND, 0);
         assert_eq!(prim.mat_anim, 7);
+    }
+
+    #[test]
+    fn sprites_round_trip_after_the_lod_blends() {
+        // RE-392: sprites sit after the LOD blends, so both must read back.
+        let mut w = PackWriter::new();
+        let blend = LodBlendDesc {
+            mat_anim: 3,
+            next_count: 1,
+            next_textures: [
+                4,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+            ],
+            tile1_params: [1, 2, 3],
+        };
+        assert!(w.add_lod_blend(blend));
+        let digit = SpriteDesc {
+            source_file: 164,
+            source_offset: 0x148,
+            texture: 5,
+            width: 16,
+            height: 19,
+            color: [0xFF, 0xF0, 0xF0, 0xFF],
+            attr: 0x220,
+            flags: SpriteDesc::TINTED,
+        };
+        let percent = SpriteDesc {
+            source_offset: 0x1458,
+            texture: 6,
+            flags: 0,
+            ..digit
+        };
+        w.add_sprite(digit);
+        w.add_sprite(percent);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.sprite_count(), 2);
+        assert_eq!(pack.sprite(164, 0x148), Some(digit));
+        assert_eq!(pack.sprite(164, 0x1458), Some(percent));
+        assert_eq!(pack.sprite(164, 0x2D8), None);
+        assert_eq!(pack.lod_blend(3), Some(blend));
+        let expected_tables = Header::SIZE + LodBlendDesc::SIZE + 2 * SpriteDesc::SIZE;
+        assert_eq!(pack.blob_offset, align_up(expected_tables));
     }
 
     #[test]

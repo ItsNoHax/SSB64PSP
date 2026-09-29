@@ -37,6 +37,7 @@ pub mod scan;
 pub mod scene;
 pub mod scene_deps;
 pub mod skeleton;
+pub mod sprite;
 pub mod stage;
 pub mod strict;
 pub mod texture;

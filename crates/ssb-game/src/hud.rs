@@ -1,0 +1,328 @@
+//! The battle HUD's damage display — `ifCommonPlayerDamage*` in
+//! `if/ifcommon.c`: each player's percent under the stage, which swells and
+//! flashes white when damage lands, shades toward dark red as it climbs,
+//! and breaks apart when the player falls.
+//!
+//! This module holds the per-player state machine and the glyphs it draws;
+//! the host draws each [`Glyph`] as sprite `digit` of file 164
+//! (`dIFCommonPlayerDamageDigitSpriteOffsets`). The fighter's series emblem
+//! behind the digits is not ported yet.
+
+use crate::rng;
+
+/// `GMCOMMON_PLAYERS_MAX`, also the white flash colour's index.
+pub const PLAYERS_MAX: usize = 4;
+/// Glyph `10`: `%`. Glyph `11` is `H.P`, the Master Hand's.
+pub const PERCENT: u8 = 0xA;
+
+/// `dIFCommonPlayerDamageDigitWidths`: each glyph's advance.
+pub const DIGIT_WIDTHS: [i32; 12] = [14, 9, 15, 14, 15, 13, 15, 14, 15, 15, 17, 20];
+/// `dIFCommonPlayerDamageDigitColors{R,G,B}`; index 4 is the flash.
+const COLORS_R: [u8; 5] = [0xFF, 0xF0, 0xF0, 0xFF, 0xFF];
+const COLORS_G: [u8; 5] = [0xF0, 0xFF, 0xF0, 0xFF, 0xFF];
+const COLORS_B: [u8; 5] = [0xF0, 0xF0, 0xFF, 0xFF, 0xFF];
+/// `dIFCommonPlayerDamagePositionOffsetsX` and
+/// `ifCommonPlayerDamageSetDigitPositions`'s `player_pos_y`.
+pub const POSITION_X: [i32; 4] = [55, 125, 195, 265];
+pub const POSITION_Y: i32 = 210;
+
+/// `IFDCharacter`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Char {
+    pub pos: (f32, f32),
+    pub vel: (f32, f32),
+    pub image_id: u8,
+    pub is_lock_movement: bool,
+    /// `SP_HIDDEN` on its `SObj`.
+    pub hidden: bool,
+}
+
+/// `IFPlayerDamage`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DamageDisplay {
+    pub player: usize,
+    pub damage: i32,
+    pub pos_adjust_wait: i32,
+    pub flash_reset_wait: i32,
+    pub scale: f32,
+    pub chars: [Char; 4],
+    pub color_id: usize,
+    pub is_update_anim: bool,
+    pub char_display_count: usize,
+    pub break_anim_frame: u8,
+    pub dead_stopupdate_wait: u8,
+    pub is_show_interface: bool,
+}
+
+/// One glyph to draw: `lbCommonPrepSObjDraw` of a digit `SObj`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Glyph {
+    /// Index into `dIFCommonPlayerDamageDigitSpriteOffsets`.
+    pub digit: u8,
+    /// The sprite's top-left corner in N64 screen pixels.
+    pub x: f32,
+    pub y: f32,
+    pub scale: f32,
+    pub color: [u8; 3],
+    /// The white flash: the primitive colour through the texel's alpha.
+    pub solid: bool,
+}
+
+/// `ifCommonPlayerDamageGetPercentArrayID`: the decimal digits, then `%`.
+fn percent_digits(damage: i32, digits: &mut [u8; 4]) -> usize {
+    let mut damage = damage;
+    let mut unit = 1;
+    if damage >= 10 {
+        loop {
+            unit *= 10;
+            if damage / unit < 10 {
+                break;
+            }
+        }
+    }
+    let mut n = 0;
+    loop {
+        digits[n] = (damage / unit) as u8;
+        n += 1;
+        damage %= unit;
+        unit /= 10;
+        if unit == 0 {
+            break;
+        }
+    }
+    digits[n] = PERCENT;
+    n + 1
+}
+
+impl DamageDisplay {
+    /// `ifCommonPlayerDamageInitInterface` for one player, then its first
+    /// `ProcUpdate`.
+    pub fn new(player: usize, damage: i32) -> DamageDisplay {
+        let mut d = DamageDisplay {
+            player,
+            damage,
+            pos_adjust_wait: 0,
+            flash_reset_wait: 0,
+            scale: 1.04,
+            chars: [Char::default(); 4],
+            color_id: player,
+            is_update_anim: false,
+            char_display_count: 0,
+            break_anim_frame: 0,
+            dead_stopupdate_wait: 180,
+            is_show_interface: false,
+        };
+        d.update(damage, false);
+        d
+    }
+
+    /// `ifCommonPlayerDamageProcUpdate`. `out_of_stocks` is
+    /// `stock_count == -1`.
+    pub fn update(&mut self, damage: i32, out_of_stocks: bool) {
+        if out_of_stocks {
+            if self.dead_stopupdate_wait != 0 {
+                if self.is_update_anim {
+                    self.update_anim();
+                }
+                self.dead_stopupdate_wait -= 1;
+            }
+        } else if self.is_update_anim {
+            self.update_anim();
+        } else {
+            self.update_digits(damage);
+        }
+    }
+
+    /// `ifCommonPlayerDamageUpdateDigits`.
+    fn update_digits(&mut self, start_damage: i32) {
+        let damage = start_damage.min(999);
+        let mut scale = self.scale;
+        let damage_scale = start_damage - self.damage;
+        if damage_scale == 0 {
+            if scale == 1.0 {
+                return;
+            }
+        } else if damage_scale < 0 {
+            scale = 1.0;
+        } else {
+            self.pos_adjust_wait = 4;
+            self.flash_reset_wait = 1;
+            scale = damage_scale as f32 / 300.0 + 1.0;
+        }
+        let mut pos_adjust_wait = self.pos_adjust_wait;
+        let mut flash_reset_wait = self.flash_reset_wait;
+        let color_id = if flash_reset_wait != 0 {
+            PLAYERS_MAX
+        } else {
+            self.player
+        };
+        let mut digits = [0u8; 4];
+        let count = percent_digits(damage, &mut digits);
+        self.char_display_count = count;
+        let width: i32 = digits[..count]
+            .iter()
+            .map(|&d| DIGIT_WIDTHS[usize::from(d)])
+            .sum();
+        let mut pos_x = width as f32 * scale * 0.5 + POSITION_X[self.player] as f32;
+        if scale > 1.0 && pos_adjust_wait == 0 {
+            scale -= 0.05;
+            if scale < 1.0 {
+                scale = 1.0;
+            }
+        }
+        // `SObjGetStruct(interface_gobj)->next` onward: `chars[0]` holds
+        // the last glyph.
+        let mut digit_id = count as i32 - 1;
+        for c in self.chars.iter_mut() {
+            if digit_id < 0 {
+                c.hidden = true;
+            } else {
+                let sprite_id = digits[digit_id as usize];
+                c.image_id = sprite_id;
+                let offset = DIGIT_WIDTHS[usize::from(sprite_id)] as f32 * scale;
+                c.pos = (pos_x - offset * 0.5, POSITION_Y as f32);
+                pos_x -= offset;
+                c.hidden = false;
+            }
+            digit_id -= 1;
+        }
+        if pos_adjust_wait > 0 {
+            pos_adjust_wait -= 1;
+        }
+        if flash_reset_wait > 0 {
+            flash_reset_wait -= 1;
+        }
+        self.damage = start_damage;
+        self.scale = scale;
+        self.color_id = color_id;
+        self.pos_adjust_wait = pos_adjust_wait;
+        self.flash_reset_wait = flash_reset_wait;
+    }
+
+    /// `ifCommonPlayerDamageUpdateAnim`: every sixth frame one more glyph
+    /// starts to fall, until frame 19.
+    fn update_anim(&mut self) {
+        if self.break_anim_frame < 19 {
+            let modulo = self.break_anim_frame / 6;
+            if self.break_anim_frame - modulo * 6 == 0 {
+                let char_id = self.char_display_count as i32 - i32::from(modulo);
+                if char_id > 0 {
+                    let random = rng::rand_int_range(char_id);
+                    let mut j = 0;
+                    let mut i = 0;
+                    while i < self.char_display_count {
+                        if !self.chars[i].is_lock_movement {
+                            if j == random {
+                                break;
+                            }
+                            j += 1;
+                        }
+                        i += 1;
+                    }
+                    if let Some(c) = self.chars.get_mut(i) {
+                        c.is_lock_movement = true;
+                    }
+                }
+            }
+            self.break_anim_frame += 1;
+        }
+        for c in self.chars.iter_mut() {
+            if !c.hidden && c.is_lock_movement {
+                c.vel.1 += 1.0;
+                c.pos.0 += c.vel.0;
+                c.pos.1 += c.vel.1;
+            }
+        }
+    }
+
+    /// `ifCommonPlayerDamageStartBreakAnim`, from `ftCommonDeadUpdateScore`.
+    pub fn start_break_anim(&mut self) {
+        for c in self.chars[..self.char_display_count].iter_mut() {
+            c.vel = (rng::rand_float() * 2.0 - 1.0, -10.0);
+            c.is_lock_movement = false;
+        }
+        self.break_anim_frame = 0;
+        self.is_update_anim = true;
+    }
+
+    /// `ifCommonPlayerDamageStopBreakAnim`, from the rebirth.
+    pub fn stop_break_anim(&mut self) {
+        self.is_update_anim = false;
+        self.scale = 1.04;
+    }
+
+    /// `ifCommonPlayerDamageProcDisplay`: the glyphs this frame draws.
+    /// `sizes[digit]` is each sprite's width and height.
+    pub fn glyphs(&self, out_of_stocks: bool, sizes: &[(u16, u16); 12]) -> GlyphIter<'_> {
+        let show = self.is_show_interface && (!out_of_stocks || self.dead_stopupdate_wait != 0);
+        let solid = self.color_id == PLAYERS_MAX;
+        let color = if solid {
+            [
+                COLORS_R[PLAYERS_MAX],
+                COLORS_G[PLAYERS_MAX],
+                COLORS_B[PLAYERS_MAX],
+            ]
+        } else {
+            let k = (1.0 - self.damage as f32 / 300.0).max(0.0);
+            let c = self.color_id;
+            [
+                (((f32::from(COLORS_R[c]) - 100.0) * k) as i32 + 100) as u8,
+                (((f32::from(COLORS_G[c]) - 20.0) * k) as i32 + 20) as u8,
+                (((f32::from(COLORS_B[c]) - 20.0) * k) as i32 + 20) as u8,
+            ]
+        };
+        GlyphIter {
+            display: self,
+            sizes: *sizes,
+            color,
+            solid,
+            next: if show { 0 } else { 4 },
+        }
+    }
+}
+
+/// The glyphs of [`DamageDisplay::glyphs`].
+pub struct GlyphIter<'a> {
+    display: &'a DamageDisplay,
+    sizes: [(u16, u16); 12],
+    color: [u8; 3],
+    solid: bool,
+    next: usize,
+}
+
+impl Iterator for GlyphIter<'_> {
+    type Item = Glyph;
+
+    fn next(&mut self) -> Option<Glyph> {
+        let d = self.display;
+        while self.next < 4 {
+            let i = self.next;
+            self.next += 1;
+            let c = &d.chars[i];
+            // The first digit `SObj` draws without an `SP_HIDDEN` check.
+            if i > 0 && c.hidden {
+                continue;
+            }
+            let (w, h) = self.sizes[usize::from(c.image_id)];
+            let mut x = c.pos.0 - f32::from(w) * 0.5 * d.scale;
+            let mut y = c.pos.1 - f32::from(h) * 0.5 * d.scale;
+            if i > 0 && d.scale == 1.0 && !d.is_update_anim {
+                x = x as i32 as f32;
+                y = y as i32 as f32;
+            }
+            return Some(Glyph {
+                digit: c.image_id,
+                x,
+                y,
+                scale: d.scale,
+                color: self.color,
+                solid: self.solid,
+            });
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+#[path = "hud_tests.rs"]
+mod tests;

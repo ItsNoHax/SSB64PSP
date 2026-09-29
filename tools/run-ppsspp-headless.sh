@@ -66,7 +66,9 @@ esac
 
 if [ -n "$SCENE" ]; then
   FEATURE="${FEATURE:-golden_capture}"
-  SECONDS_TO_RUN="${SECONDS_TO_RUN:-30}"
+  # A scene exits by itself after its capture; this only bounds a hang.
+  # `vstimeup` runs 4,200 ticks and needs over 30 s under a full -j.
+  SECONDS_TO_RUN="${SECONDS_TO_RUN:-60}"
 else
   FEATURE="${FEATURE:-regression_capture}"
   SECONDS_TO_RUN="${SECONDS_TO_RUN:-8}"
