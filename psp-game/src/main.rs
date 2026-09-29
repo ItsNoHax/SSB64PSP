@@ -25,6 +25,7 @@ extern crate alloc;
 
 mod capture;
 mod play;
+mod results_screen;
 
 use ssb_engine::input::{newly_pressed, ControllerState, Input, N64Buttons, SSB64_GAME_MAPPING};
 use ssb_engine::renderer::Color;
@@ -46,6 +47,11 @@ use ssb_psp_runtime::meshdraw;
 /// consulted by `deterministic_capture_frozen`/`scripted_buttons`; harmless
 /// to maintain unconditionally (`psp-asset-viewer/main.rs`'s own `sim_frame_index`
 /// comment).
+/// `vsresults`' capture tick (RE-409). At tick 760 the results are up with
+/// no fighters yet, so they started after 640 and the fighters come after
+/// 760; Kirby's 161-frame Win clips have ended by 1041.
+const VS_RESULTS_CAPTURE_TICK: u64 = 1100;
+
 const fn capture_ticks(scene: GameScene) -> u64 {
     match scene {
         // Training starts at tick 8; C-Up at 13 enters jumpsquat, and this
@@ -167,6 +173,10 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // "Go" at 398. From tick 935 Kirby's attack overlaps Mario, his
         // teammate, for 14 ticks and passes through (Team Attack off).
         GameScene::VsTeam => 940,
+        // "Go" at 398; Luigi, held left, falls off Dream Land and the
+        // one-stock battle ends. The results make the fighters 120 tics
+        // in; this is past the end of Kirby's Win clip.
+        GameScene::VsResults => VS_RESULTS_CAPTURE_TICK,
     }
 }
 
@@ -264,6 +274,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsPlayers
             | GameScene::Vs4
             | GameScene::VsTeam
+            | GameScene::VsResults
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -436,6 +447,10 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     ) {
         return 0;
     }
+    // `vsresults`: held left from "Go", the player runs off the stage.
+    if scene == GameScene::VsResults {
+        return if (398..=520).contains(&tick) { -80 } else { 0 };
+    }
     if matches!(scene, GameScene::Grab | GameScene::Jab) {
         return if (14..52).contains(&tick) { -30 } else { 0 };
     }
@@ -499,6 +514,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsNoContest
             | GameScene::Vs4
             | GameScene::VsTeam
+            | GameScene::VsResults
     ) {
         return if tick == 6 { -80 } else { 0 };
     }
@@ -1186,6 +1202,9 @@ const VS_ENTRY: usize = 1;
 
 const BG_INTRO: Color = Color::rgba(24, 32, 64, 255);
 const BG_MENU: Color = Color::rgba(16, 16, 24, 255);
+/// `mnVSResultsFuncStart`'s default camera fill,
+/// `GPACK_RGBA8888(0x00, 0x00, 0x00, 0xFF)`.
+const BG_RESULTS: Color = Color::rgba(0, 0, 0, 255);
 const BG_TRAINING: Color = Color::rgba(20, 48, 24, 255);
 /// Training background when the asset pack failed to load or parse. Distinct
 /// from `BG_TRAINING` so pack status is pixel-provable under PPSSPPHeadless
@@ -1277,7 +1296,9 @@ fn capture_cpu_behavior(scene: GameScene) -> Option<ssb_game::computer::Behavior
         GameScene::CpuWalk => Some(ssb_game::computer::Behavior::Walk),
         GameScene::CpuJump => Some(ssb_game::computer::Behavior::Jump),
         // A time-up tie needs a CPU that never lands a hit.
-        GameScene::VsTimeUp | GameScene::VsTimeUpSign | GameScene::VsSuddenDeath => {
+        // A time-up tie needs a CPU that never lands a hit; `vsresults` a
+        // winner that lets the player fall.
+        GameScene::VsTimeUp | GameScene::VsTimeUpSign | GameScene::VsSuddenDeath | GameScene::VsResults => {
             Some(ssb_game::computer::Behavior::Stand)
         }
         _ => None,
@@ -1361,6 +1382,12 @@ fn vs_rules(scene: GameScene) -> VsRules {
         },
         GameScene::VsTeam => VsRules {
             team_rules: ssb_game::team::TeamRules::TEAMS,
+            ..VsRules::DEFAULT
+        },
+        // One stock (`stock_setting` 0).
+        GameScene::VsResults => VsRules {
+            rule: ssb_game::battle::Rule::Stock,
+            stocks: 0,
             ..VsRules::DEFAULT
         },
         _ => VsRules::DEFAULT,
@@ -1716,10 +1743,20 @@ fn update_damage_hud(hud: &mut ssb_game::hud::DamageDisplay, f: &ssb_game::fight
     hud.update(i32::from(f.damage), f.dead.stock_rule && f.stocks == -1);
 }
 
-/// The results in place of `mnVSResults` (RE-400): one slot per player,
-/// taller for a better place, the winner's (and a shared winner's) lit.
+/// The results in place of `mnVSResults`: one slot per player along the
+/// top, taller for a better place, the winner's (and a shared winner's)
+/// lit (RE-400), then the fighters (RE-409) over the black of
+/// `mnVSResultsFuncStart`'s default camera; the wallpaper is not drawn.
 #[inline(never)]
-fn draw_results(gpu: &mut Gpu, results: Option<&ssb_game::results::Results>) {
+unsafe fn draw_results(
+    gpu: &mut Gpu,
+    pack: Option<&Pack<'_>>,
+    draw_state: &mut meshdraw::DrawState,
+    results: Option<&ssb_game::results::Results>,
+    fighters: Option<&results_screen::Fighters>,
+) {
+    gpu.set_viewport_fullscreen();
+    gpu.begin_frame(Some(BG_RESULTS));
     let Some(r) = results else {
         return;
     };
@@ -1728,23 +1765,46 @@ fn draw_results(gpu: &mut Gpu, results: Option<&ssb_game::results::Results>) {
         let lit = r.winner == Some(i) || r.shared_winner[i];
         let color = if lit { ENTRY_SELECTED } else { ENTRY_ENABLED };
         // First place stands tallest; no contest levels everyone.
-        let top = 100 + r.places[i] * 20;
-        gpu.draw_rect(x0, top, x0 + 80, 180, color);
+        let bottom = 40 - r.places[i] * 8;
+        gpu.draw_rect(x0, 8, x0 + 80, bottom, color);
+    }
+    if let (Some(p), Some(f)) = (pack, fighters) {
+        results_screen::draw(gpu, p, draw_state, f);
     }
 }
 
-/// `mnVSResultsInitVars` and its rankings. Out of [`run`] for branch range.
+/// `mnVSResultsFuncStart`: the rankings (`mnVSResultsInitVars` and
+/// `mnVSResultsInitRankings`), then the scene's random pick. Out of [`run`]
+/// for branch range.
 #[inline(never)]
-fn make_results(b: &ssb_game::battle::Battle) -> ssb_game::results::Results {
-    ssb_game::results::Results::new(b)
+fn make_results(
+    b: &ssb_game::battle::Battle,
+) -> (ssb_game::results::Results, alloc::boxed::Box<results_screen::Fighters>) {
+    let r = ssb_game::results::Results::new(b);
+    let f = results_screen::start(&r);
+    (r, f)
 }
 
-/// One frame of the results' exit check. Out of [`run`] for branch range.
+/// One frame of `mnVSResultsFuncRun`: the tic, the fighters (made from the
+/// battle's `roster`, each with its costume) and the exit check. Out of
+/// [`run`] for branch range.
 #[inline(never)]
-fn results_frame(results: &mut Option<ssb_game::results::Results>, pressed: N64Buttons) -> bool {
-    results
-        .as_mut()
-        .is_some_and(|r| r.tick(pressed.contains(N64Buttons::START)))
+fn results_frame(
+    pack: Option<&Pack<'_>>,
+    results: &mut Option<ssb_game::results::Results>,
+    fighters: &mut Option<alloc::boxed::Box<results_screen::Fighters>>,
+    roster: &Roster,
+    pressed: N64Buttons,
+) -> bool {
+    let Some(r) = results.as_mut() else {
+        return false;
+    };
+    let leave = r.tick(pressed.contains(N64Buttons::START));
+    if let Some(f) = fighters.as_deref_mut() {
+        let entrants = roster.map(|e| e.map(|e| (e.kind, e.costume)));
+        results_screen::tick(pack, r, f, entrants);
+    }
+    leave
 }
 
 /// What Training owns across frames, rebuilt on each stage entry.
@@ -1855,6 +1915,7 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
             [FighterKind::Mario, FighterKind::Kirby, FighterKind::Fox, FighterKind::Donkey],
             Some([0, 0, 1, 1]),
         ),
+        GameScene::VsResults => return vs_results_roster(),
         _ => return training_roster(training),
     };
     core::array::from_fn(|port| {
@@ -1881,6 +1942,26 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
             spawn: port as u16,
             team,
             color,
+            human: port == 0,
+        })
+    })
+}
+
+/// `vsresults`' fighters: the player's Luigi against a Kirby CPU, each in
+/// its first royal costume. Luigi's claps are Mario's, played through his
+/// translation scales; Kirby's Win clips lead with a runtime joint.
+fn vs_results_roster() -> Roster {
+    use ssb_game::fighter::FighterKind;
+    let kinds = [FighterKind::Luigi, FighterKind::Kirby];
+    core::array::from_fn(|port| {
+        kinds.get(port).map(|&kind| Entrant {
+            kind,
+            costume: ssb_game::costume::costume_common_id(kind, 0),
+            level: 3,
+            handicap: ssb_game::stale::HANDICAP_DEFAULT,
+            spawn: port as u16,
+            team: port as u8,
+            color: if port == 0 { 0 } else { ssb_game::hud::CPU_COLOR as u8 },
             human: port == 0,
         })
     })
@@ -2046,9 +2127,7 @@ unsafe fn draw_frame(
             draw_stage_select(gpu, &s.stage_select);
         }
         Screen::Results => {
-            gpu.set_viewport_fullscreen();
-            gpu.begin_frame(Some(BG_MENU));
-            draw_results(gpu, s.vs_results.as_ref());
+            draw_results(gpu, pack.as_ref(), draw_state, s.vs_results.as_ref(), s.vs_results_fighters.as_deref());
         }
         Screen::Training => {
             if let (Some(p), Some(pl)) = (pack.as_ref(), s.play_state.as_ref()) {
@@ -2255,7 +2334,8 @@ unsafe fn session_frame(
             // `mnVSResultsCheckExit`: START after the wait, on to the
             // VS character select.
             Screen::Results => {
-                if results_frame(&mut s.vs_results, pressed) {
+                if results_frame(pack.as_ref(), &mut s.vs_results, &mut s.vs_results_fighters, &s.roster, pressed) {
+                    s.vs_results_fighters = None;
                     s.play_state = None;
                     s.dummies = Default::default();
                     s.vs_battle = None;
@@ -2314,7 +2394,9 @@ unsafe fn session_frame(
                 Some(index) => s.training_stage = index,
                 // A reset from the pause menu is a no contest.
                 None => {
-                    s.vs_results = s.vs_battle.as_ref().map(make_results);
+                    let (results, fighters) = s.vs_battle.as_ref().map(make_results).unzip();
+                    s.vs_results = results;
+                    s.vs_results_fighters = fighters;
                     s.screen = Screen::Results;
                 }
             }
@@ -2346,6 +2428,8 @@ struct Session {
     maps_vsmode_gkind: u8,
     vs_menu_rules: VsRules,
     vs_results: Option<ssb_game::results::Results>,
+    /// The results' fighters (RE-409), on the heap.
+    vs_results_fighters: Option<alloc::boxed::Box<results_screen::Fighters>>,
     vs_mode: ssb_game::vs_mode::VsMode,
     fighter_select: Option<ssb_game::fighter_select::FighterSelect>,
     /// `gSCManagerTransferBattleState` between the VS menus.
@@ -2439,6 +2523,7 @@ unsafe fn run() -> ! {
         maps_vsmode_gkind: ssb_game::stage_select::DEFAULT_GKIND,
         vs_menu_rules: VsRules::DEFAULT,
         vs_results: None,
+        vs_results_fighters: None,
         vs_mode: ssb_game::vs_mode::VsMode::new(ssb_game::vs_mode::VsRule::Time, 3, 2, false),
         fighter_select: None,
         vs_state: ssb_game::players_vs::BattleState::default(),

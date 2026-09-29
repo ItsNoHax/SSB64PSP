@@ -47,6 +47,7 @@ pub mod players_vs;
 pub mod purin;
 pub mod reaction;
 pub mod results;
+pub mod results_scene;
 pub mod rng;
 pub mod samus;
 pub mod shadow;
