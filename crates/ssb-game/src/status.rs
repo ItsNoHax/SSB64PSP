@@ -3505,6 +3505,8 @@ pub struct Preserve {
     /// `FTSTATUS_PRESERVE_DAMAGEPLAYER`: a grounded status keeps
     /// `damage_player`.
     pub damage_player: bool,
+    /// `FTSTATUS_PRESERVE_COLANIM`: keep the colour animation.
+    pub colanim: bool,
 }
 
 impl Preserve {
@@ -3512,6 +3514,7 @@ impl Preserve {
         hit: false,
         hitstatus: false,
         damage_player: false,
+        colanim: false,
     };
     pub const HIT: Preserve = Preserve {
         hit: true,
@@ -3547,6 +3550,7 @@ pub fn set_any_status_preserve(
         crate::combat::clear_attack_colls(f);
     }
     crate::hurtbox::on_set_status(f, preserve.hitstatus);
+    crate::colanim::on_set_status(&mut f.colanim, preserve.colanim);
     f.damage_knockback_stack = 0.0;
     f.damage_mul = 1.0;
     f.damage_e_status = None;
@@ -4839,6 +4843,8 @@ pub fn update(f: &mut Fighter) {
         }
     }
     crate::motion::advance(f);
+    // `ftMainRunUpdateColAnim`.
+    f.colanim.run_update();
 
     // Every extended (`AnyStatus::Mario`-style) status is handled
     // separately, in `update_extended` — unwrapping to a bare `Status` here
@@ -7357,6 +7363,7 @@ mod tests {
             map: zone,
             camera: zone,
             rebirth: ssb_engine::math::Vec2::new(0.0, 0.0),
+            fog_color: [0; 3],
         }
     }
 

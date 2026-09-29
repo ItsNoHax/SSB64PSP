@@ -73,6 +73,8 @@ const G_LIGHT_ANGLE: u32 = 0x60;
 /// (`GMCOMMON_PLAYERS_MAX`), which `ifCommonPlayerDamageInitInterface`
 /// reads as `emblem_colors[4]`, the grey there.
 const G_EMBLEM_COLORS: u32 = 0x50;
+/// `SYColorRGB fog_color`, after `wallpaper` (0x48).
+const G_FOG_COLOR: u32 = 0x4C;
 const G_CAMERA_BOUNDS: u32 = 0x6C;
 const G_MAP_BOUNDS: u32 = 0x74;
 const G_BGM_ID: u32 = 0x7C;
@@ -149,6 +151,9 @@ pub struct GroundData {
     pub light_angle: [f32; 3],
     /// `emblem_colors`, with the CPU's fifth: each HUD emblem tint.
     pub emblem_colors: [[u8; 3]; 5],
+    /// `fog_color`: the colour a star KO fades towards
+    /// (`ftCommonDeadUpStarProcUpdate`).
+    pub fog_color: [u8; 3],
 }
 
 fn read_u32(data: &[u8], at: u32) -> Option<u32> {
@@ -283,6 +288,9 @@ pub fn read_ground_data(
     let emblem = file.data.get(emblem_at..emblem_at + 15)?;
     let emblem_colors =
         core::array::from_fn(|i| [emblem[i * 3], emblem[i * 3 + 1], emblem[i * 3 + 2]]);
+    let fog_at = (base + G_FOG_COLOR) as usize;
+    let fog = file.data.get(fog_at..fog_at + 3)?;
+    let fog_color = [fog[0], fog[1], fog[2]];
 
     Some(GroundData {
         file: file.id,
@@ -295,6 +303,7 @@ pub fn read_ground_data(
         bgm_id: read_u32(&file.data, base + G_BGM_ID)?,
         light_angle,
         emblem_colors,
+        fog_color,
     })
 }
 
@@ -468,6 +477,33 @@ mod tests {
         });
         let found = find_ground_data(&file, graphs);
         assert_eq!(found[0].map_geometry, Some((255, 0x90)));
+    }
+
+    #[test]
+    fn the_vs_stages_fog_colours_match_the_decomp() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        // `fog_color` in `relocData/2xx_GR*Map.c`, in `VS_GROUND_FILES` order.
+        let expected = [
+            [0xB0, 0xC2, 0xE0],
+            [0x00, 0x00, 0x32],
+            [0x5A, 0x0F, 0x00],
+            [0x00, 0x00, 0x00],
+            [0xE1, 0xC8, 0xFF],
+            [0xF3, 0xC7, 0xA5],
+            [0x6E, 0xD2, 0xFF],
+            [0xCD, 0xE6, 0xFF],
+            [0x71, 0x88, 0xB8],
+        ];
+        for (&id, want) in VS_GROUND_FILES.iter().zip(expected) {
+            let file = archive.load(id).unwrap();
+            let g = read_ground_data(&file, 0x14, |_, _| true).unwrap();
+            assert_eq!(g.fog_color, want, "file {id:#x}");
+        }
     }
 
     #[test]

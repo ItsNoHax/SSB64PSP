@@ -271,7 +271,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 64 adds the demo clips (`anim::SLOT_WIN1` to `SLOT_LOSE`, 614..619;
 // RE-408): the figatrees `nFTDemoStatusWin1` to `nFTDemoStatusLose` play on
 // the VS results screen and the character selects.
-pub const VERSION: u32 = 64;
+// 65 gives `StageDesc` the stage's fog colour (`MPGroundData.fog_color`),
+// which a star KO fades towards (RE-412).
+pub const VERSION: u32 = 65;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1355,11 +1357,14 @@ pub struct StageDesc {
     /// `MPGroundData.emblem_colors` and the CPU's grey after it
     /// (`VERSION` 62, RE-393).
     pub emblem_colors: [[u8; 3]; 5],
+    /// `MPGroundData.fog_color` (`VERSION` 65, RE-412).
+    pub fog_color: [u8; 3],
 }
 
 impl StageDesc {
-    /// `16 + 16 + 8 + 8 + 16 + 8 + 28 + 4 + 15`, padded to 120.
-    pub const SIZE: usize = 120;
+    /// `16 + 16 + 8 + 8 + 16 + 8 + 28 + 4 + 15`, padded to 120, then the
+    /// fog colour padded to 124.
+    pub const SIZE: usize = 124;
     pub const NO_LAYER: u32 = u32::MAX;
 }
 
@@ -2679,6 +2684,7 @@ impl PackWriter {
             hazard: [0; 7],
             hazard_surface_y: 0.0,
             emblem_colors: ground.emblem_colors,
+            fog_color: ground.fog_color,
         });
         (self.stages.len() - 1) as u32
     }
@@ -2959,6 +2965,8 @@ impl PackWriter {
             for c in s.emblem_colors {
                 out.extend_from_slice(&c);
             }
+            out.push(0);
+            out.extend_from_slice(&s.fog_color);
             out.push(0);
         }
         for l in &self.lines {
@@ -3867,6 +3875,11 @@ impl<'a> Pack<'a> {
                 let c = at + 104 + k * 3;
                 [self.data[c], self.data[c + 1], self.data[c + 2]]
             }),
+            fog_color: [
+                self.data[at + 120],
+                self.data[at + 121],
+                self.data[at + 122],
+            ],
         })
     }
 
@@ -5490,6 +5503,7 @@ mod tests {
                 [0, 0xFF, 0],
                 [0xDC; 3],
             ],
+            fog_color: [0x10, 0x20, 0x30],
         };
 
         let v = |vertex_id, x, y, flags| V {
@@ -5577,6 +5591,7 @@ mod tests {
         assert_eq!(s.emblem_colors[1], [0, 0, 0xFF]);
         assert_eq!(s.emblem_colors[3], [0, 0xFF, 0]);
         assert_eq!(s.emblem_colors[4], [0xDC; 3]);
+        assert_eq!(s.fog_color, [0x10, 0x20, 0x30]);
 
         let lines: alloc::vec::Vec<LineDesc> = pack.stage_lines(&s).collect();
         assert_eq!(lines.len(), 3);

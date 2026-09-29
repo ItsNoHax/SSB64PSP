@@ -1114,6 +1114,50 @@ impl Gpu {
     }
 }
 
+impl Gpu {
+    /// `ifScreenFlashProcDisplay`'s fill: a flat `G_CC_PRIMITIVE` rectangle
+    /// blended over the frame (`G_RM_AA_XLU_SURF`), untextured, with no
+    /// depth test. The caller invalidates its cached draw state afterwards.
+    pub fn draw_rect_translucent(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
+        unsafe {
+            sys::sceGuDisable(GuState::Texture2D);
+            sys::sceGuDisable(GuState::AlphaTest);
+            sys::sceGuEnable(GuState::Blend);
+            sys::sceGuBlendFunc(
+                sys::BlendOp::Add,
+                sys::BlendFactor::SrcAlpha,
+                sys::BlendFactor::OneMinusSrcAlpha,
+                0,
+                0,
+            );
+        }
+        self.draw_rect(x0, y0, x1, y1, color);
+    }
+
+    /// A fog whose factor is the same for everything near view depth
+    /// `depth`: `G_RM_FOG_PRIM_A`'s blend of each pixel towards `rgba`'s
+    /// colour by its alpha (`ftDisplayMainSetFogColor`). The GE fogs by
+    /// `(far - depth) / (far - near)`, so a window `SPAN` wide placed to
+    /// give `1 - alpha` at `depth` varies by under 1/255 across a fighter.
+    pub fn set_constant_fog(&mut self, depth: f32, rgba: [u8; 4]) {
+        const SPAN: f32 = 1.0e5;
+        let keep = 1.0 - f32::from(rgba[3]) / 255.0;
+        let far = depth + keep * SPAN;
+        let color = u32::from_le_bytes([rgba[0], rgba[1], rgba[2], 0]);
+        unsafe {
+            sys::sceGuFog(far - SPAN, far, color);
+            sys::sceGuEnable(GuState::Fog);
+        }
+    }
+
+    /// Ends [`Self::set_constant_fog`].
+    pub fn clear_fog(&mut self) {
+        unsafe {
+            sys::sceGuDisable(GuState::Fog);
+        }
+    }
+}
+
 /// Ask PPSSPPHeadless to save the current display framebuffer. Real PSPs do
 /// not implement the emulator-only devctl, so the same build remains safe to
 /// load on hardware (where the call simply returns an error). Callers gate

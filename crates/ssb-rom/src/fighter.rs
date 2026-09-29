@@ -55,6 +55,16 @@ pub const SCALAR_COUNT: usize = 45;
 /// Bytes from the start of `FTAttributes` to the end of `cliffcatch_coll`.
 pub const SCALAR_BYTES: u32 = SCALAR_COUNT as u32 * 4;
 
+/// Byte offset of `FTAttributes::halo_size` (after the item pickup boxes
+/// and three `u16` sound and scale fields): the respawn halo's scale.
+pub const HALO_SIZE_OFFSET: u32 = 0xEC;
+
+/// `FTAttributes::halo_size` of the attributes at `offset`.
+pub fn halo_size(data: &[u8], offset: u32) -> Option<f32> {
+    let at = (offset + HALO_SIZE_OFFSET) as usize;
+    (at + 4 <= data.len()).then(|| f32_be(data, at))
+}
+
 /// A fighter's main archive file and the offset of its `FTAttributes`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FighterFile {
@@ -752,6 +762,34 @@ mod tests {
     /// Donkey Kong's) and NLuigi (301, NMario's) are scaled/recoloured
     /// variants of another fighter's model, both real ROM findings from this
     /// same cross-check, not guesses.
+    /// `halo_size` in `relocData/2xx_*Main.c`, which `ssb_game::dead::halo_size`
+    /// transcribes.
+    #[test]
+    fn real_rom_halo_sizes_match_the_decomp() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = Archive::open(&data, info.region).unwrap();
+        #[rustfmt::skip]
+        const EXPECTED: [f32; 27] = [
+            1.0, 1.1, 1.7, 1.2, 1.02, 1.1, 1.2, 1.2, 1.14, 1.1, 1.2, 1.0,
+            1.0, 1.0,
+            1.0, 1.1, 1.7, 1.2, 1.02, 1.1, 1.2, 1.2, 1.14, 1.1, 1.2, 1.0,
+            1.7,
+        ];
+        for (entry, want) in FIGHTER_FILES.iter().zip(EXPECTED) {
+            let main = archive.load(entry.file).unwrap();
+            assert_eq!(
+                halo_size(&main.data, entry.offset),
+                Some(want),
+                "{}",
+                entry.name
+            );
+        }
+    }
+
     #[test]
     fn real_rom_common_parts_match_every_named_model_file() {
         let Some(path) = std::env::var_os("SSB64_ROM") else {

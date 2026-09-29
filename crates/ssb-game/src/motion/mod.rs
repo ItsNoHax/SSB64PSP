@@ -240,6 +240,11 @@ pub fn start(f: &mut Fighter, frame_begin: f32) {
         ..ScriptThread::default()
     };
     run_all(f, frame_begin != 0.0);
+    // `ftMainSetStatus`: a status that starts at frame 0 also runs a frame
+    // of its colour animation.
+    if frame_begin == 0.0 {
+        f.colanim.run_update();
+    }
 }
 
 /// `ftMainUpdateMotionEventsAll`: one frame of every running thread. Call

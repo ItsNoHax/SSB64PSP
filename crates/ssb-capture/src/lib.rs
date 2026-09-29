@@ -380,10 +380,13 @@ pub enum GameScene {
     /// the stage, at its results: the winner in its Win pose, the player
     /// clapping.
     VsResults,
+    /// `rebirthblast`: `rebirth` caught a few ticks after the KO, the
+    /// blast explosion and the screen flash up (RE-412).
+    RebirthBlast,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 47] = [
+    pub const ALL: [GameScene; 48] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -431,6 +434,7 @@ impl GameScene {
         GameScene::Vs4,
         GameScene::VsTeam,
         GameScene::VsResults,
+        GameScene::RebirthBlast,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -482,6 +486,7 @@ impl GameScene {
             GameScene::Vs4 => "vs4",
             GameScene::VsTeam => "vsteam",
             GameScene::VsResults => "vsresults",
+            GameScene::RebirthBlast => "rebirthblast",
         }
     }
 

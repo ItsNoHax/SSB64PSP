@@ -13,10 +13,13 @@
 //! [`DeadState::rebirth_pending`], and the match calls [`rebirth_down`] at
 //! once, in the same slot of the frame.
 //!
-//! Scores, rumble, screen flash, quake, sounds, the explosion and sparkle
-//! effects, the halo model and the colour animation are presentation; the
-//! explosion's placement is recorded ([`DeadState::explode`]) for a host
-//! that draws it.
+//! Scores, rumble, quake, sounds and the effects are presentation. The
+//! explosion's placement ([`DeadState::explode`]), the screen flash
+//! request ([`DeadState::flash`]) and the star KO sparkle's position
+//! ([`DeadState::sparkle`]) are recorded for the host, which runs them
+//! ([`crate::ko`]); the halo is drawn while the fighter is in a rebirth
+//! status ([`halo_scale`]). The top-out fade and the rebirth glow are the
+//! fighter's colour animation ([`crate::colanim`]).
 
 use ssb_engine::math::{Vec2, Vec3};
 
@@ -70,6 +73,42 @@ pub enum ExplodeKind {
     Left = 3,
 }
 
+impl ExplodeKind {
+    /// `dEFManagerDeadExplodeRotateD[type]`: the effect root's `rotate.z`,
+    /// in degrees.
+    pub fn rotate_z_degrees(self) -> f32 {
+        [0.0, 90.0, 180.0, 270.0][self as usize]
+    }
+}
+
+/// `FTAttributes::halo_size`, the respawn halo's scale
+/// (`efManagerRebirthHaloMakeEffect`), from each fighter's `*MainAttributes`
+/// (`relocData/2xx_*Main.c`). The polygons, Metal Mario and Giant Donkey
+/// Kong carry their base fighter's value.
+pub fn halo_size(kind: FighterKind) -> f32 {
+    use FighterKind as K;
+    let base = kind.polygon_base().unwrap_or(kind);
+    match base {
+        K::Mario | K::MetalMario | K::Ness | K::Boss => 1.0,
+        K::Fox | K::Link | K::Pikachu => 1.1,
+        K::Donkey | K::GiantDonkey => 1.7,
+        K::Samus | K::Yoshi | K::Captain | K::Purin => 1.2,
+        K::Luigi => 1.02,
+        K::Kirby => 1.14,
+        _ => 1.0,
+    }
+}
+
+/// The halo's child scale while `efManagerRebirthHaloMakeEffect`'s effect
+/// lives. `ftCommonRebirthDownSetStatus` makes it and sets
+/// `is_effect_attach`; `RebirthStand` and `RebirthWait` keep it
+/// (`FTSTATUS_PRESERVE_EFFECT`), and the next status ends it
+/// (`ftParamProcStopEffect`). Its root follows TopN (matrix kind 0x50,
+/// `func_ovl0_800C99CC`).
+pub fn halo_scale(f: &Fighter) -> Option<f32> {
+    is_rebirth_status(f.status.status).then(|| halo_size(f.kind))
+}
+
 /// The stage data the checks read: `MPGroundData`'s `map_bound_*` and
 /// `camera_bound_*`, and the `nMPMapObjKindRebirth` point.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -77,6 +116,8 @@ pub struct StageBounds {
     pub map: BlastZone,
     pub camera: BlastZone,
     pub rebirth: Vec2,
+    /// `MPGroundData.fog_color`: the colour a star KO fades towards.
+    pub fog_color: [u8; 3],
 }
 
 /// `status_vars.common.rebirth`.
@@ -120,8 +161,15 @@ pub struct DeadState {
     /// Set on the frame the fighter dies, for the host to destroy its
     /// weapons (`ftManagerDestroyFighterWeapons`).
     pub died: bool,
-    /// Where and which way the explosion goes off, once.
+    /// Where and which way `efManagerDeadExplodeMakeEffect` sets off the
+    /// explosion, for the host to take.
     pub explode: Option<(Vec3, ExplodeKind)>,
+    /// `ifScreenFlashSetColAnimID(nGMColAnimScreenFlashDeadExplode, 0)`,
+    /// for the host to take.
+    pub flash: bool,
+    /// Where `efManagerSparkleWhiteDeadMakeEffect` makes the star KO's
+    /// sparkle (TopN, scale 5), for the host to take.
+    pub sparkle: Option<Vec3>,
     /// `gSCManagerBattleState->players[].falls`.
     pub falls: u16,
     /// Set when `ftCommonDeadUpdateScore` runs, for the host to report the
@@ -248,6 +296,7 @@ fn explode(f: &mut Fighter, kind: ExplodeKind) {
         ExplodeKind::Right | ExplodeKind::Left => pos.y = pos.y.min(c.top).max(c.bottom),
     }
     f.dead.explode = Some((pos, kind));
+    f.dead.flash = true;
 }
 
 /// `ftCommonDeadDownSetStatus`.
@@ -283,9 +332,11 @@ fn enter_up(f: &mut Fighter, status: Status) {
     reset_special_stats(f);
 }
 
-/// `ftCommonDeadUpStarSetStatus`.
+/// `ftCommonDeadUpStarSetStatus`, which ends with
+/// `ftParamResetFighterColAnim`.
 pub fn set_dead_up_star(f: &mut Fighter) {
     enter_up(f, Status::DeadUpStar);
+    f.colanim.reset();
 }
 
 /// `ftCommonDeadUpFallSetStatus`.
@@ -352,8 +403,12 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
     true
 }
 
-/// `ftCommonDeadUpStarProcUpdate`.
+/// `ftCommonDeadUpStarProcUpdate`. While the fighter flies away it fades
+/// into the stage's fog colour, up to half strength.
 fn update_up_star(f: &mut Fighter) {
+    if f.dead.step == 1 {
+        f.colanim.color1.rgba[3] = (128 - (f.dead.wait * 128) / DEADUP_WAIT) as u8;
+    }
     if f.dead.wait != 0 {
         f.dead.wait -= 1;
     }
@@ -365,13 +420,19 @@ fn update_up_star(f: &mut Fighter) {
             let top = f.dead.bounds.map_or(0.0, |b| b.camera.top);
             f.physics.vel_air.y = (top * 0.6 - f.pos.y) / DEADUP_WAIT as f32;
             f.physics.vel_air.z = DEADUPSTAR_VEL_Z;
+            let fog = f.dead.bounds.map_or([0; 3], |b| b.fog_color);
+            f.colanim.is_use_color1 = true;
+            f.colanim.color1.rgba = [fog[0], fog[1], fog[2], 0];
             f.dead.wait = DEADUP_WAIT;
             f.dead.step += 1;
         }
         1 => {
             crate::physics::stop_all(&mut f.physics);
+            // TopN is the fighter's position.
+            f.dead.sparkle = Some(f.pos);
             f.is_invisible = true;
             update_score(f);
+            f.colanim.is_use_color1 = false;
             f.dead.wait = DEAD_WAIT;
             f.dead.step += 1;
         }
@@ -405,6 +466,7 @@ fn update_up_fall(f: &mut Fighter) {
         }
         1 => {
             crate::physics::stop_all(&mut f.physics);
+            f.dead.flash = true;
             f.is_invisible = true;
             update_score(f);
             f.dead.wait = DEAD_WAIT;
@@ -499,7 +561,16 @@ pub fn rebirth_down(f: &mut Fighter, halo_number: u8) {
     f.is_shadow_hidden = true;
     f.dead.is_rebirth = true;
     f.dead.camera_mode = CameraMode::Ghost;
+    f.colanim
+        .check_set(crate::colanim::ColAnimId::FighterRebirth, 0);
 }
+
+/// `FTSTATUS_PRESERVE_PLAYERTAG | FTSTATUS_PRESERVE_EFFECT |
+/// FTSTATUS_PRESERVE_COLANIM`: the halo and the glow carry on.
+const REBIRTH_PRESERVE: Preserve = Preserve {
+    colanim: true,
+    ..Preserve::NONE
+};
 
 /// `ftCommonRebirthStandSetStatus`.
 fn set_rebirth_stand(f: &mut Fighter) {
@@ -507,7 +578,13 @@ fn set_rebirth_stand(f: &mut Fighter) {
         Some(len) => StatusTiming::frames(len),
         None => StatusTiming::unknown(),
     };
-    status::set_status(f, Status::RebirthStand, 0.0, timing);
+    status::set_any_status_preserve(
+        f,
+        Status::RebirthStand.into(),
+        0.0,
+        timing,
+        REBIRTH_PRESERVE,
+    );
     status::play_anim_events(f);
     f.dead.is_ghost = true;
     f.is_shadow_hidden = true;
@@ -516,7 +593,13 @@ fn set_rebirth_stand(f: &mut Fighter) {
 
 /// `ftCommonRebirthWaitSetStatus`.
 fn set_rebirth_wait(f: &mut Fighter) {
-    status::set_status(f, Status::RebirthWait, 0.0, StatusTiming::unknown());
+    status::set_any_status_preserve(
+        f,
+        Status::RebirthWait.into(),
+        0.0,
+        StatusTiming::unknown(),
+        REBIRTH_PRESERVE,
+    );
     f.dead.is_ghost = true;
     f.is_shadow_hidden = true;
     f.dead.is_rebirth = true;

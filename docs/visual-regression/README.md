@@ -179,7 +179,8 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `vsplayers`) | `f1-vs-players` | The VS character select at select tic 65: Yoshi placed on port 1's red card, a CPU (Donkey Kong, in his Win1 clip) opened in port 2 with its CP level, the NA doors shut, the stone wallpaper, portraits, pucks, hand and the "Ready to fight" banner | RE-404, RE-411 |
 | `golden_capture` (`psp-game`, scene `vs4`) | `f1-vs-four` | Mario against three CPUs (Fox, Donkey Kong, Kirby) on Dream Land at tick 870, four damage displays | RE-405 |
 | `golden_capture` (`psp-game`, scene `vsteam`) | `f1-vs-team` | A team battle on Dream Land at tick 940: Mario and Kirby (red) against Fox and Donkey Kong (blue) in team costumes and emblem colours, Kirby's attack passing through Mario | RE-407 |
-| `golden_capture` (`psp-game`, scene `rebirth`) | `f1-training-rebirth` | Mario after a KO below Dream Land, standing at the rebirth point in `RebirthStand` (the halo is not drawn) | RE-388 |
+| `golden_capture` (`psp-game`, scene `rebirth`) | `f1-training-rebirth` | Mario after a KO below Dream Land, crouched in `RebirthStand` on the rebirth halo, faintly lit white by the rebirth glow | RE-388, RE-412 |
+| `golden_capture` (`psp-game`, scene `rebirthblast`) | `f1-training-rebirthblast` | `rebirth` at tick 168, eight ticks after the KO: the blast column rising from the bottom of the screen and the screen flash inside the (10, 10)–(310, 230) border | RE-412 |
 | `golden_capture` (`psp-game`, scene `fighterselect`) | `f1-training-fighter-select` | Kirby placed on the character select, then Peach's Castle on the stage select; Kirby and a Mario dummy standing on the castle | RE-386 |
 | `golden_capture` (`psp-game`, scene `stageselect`) | `f1-training-stage-select` | Mario and the dummy standing on Hyrule Castle, picked on the stage select; every other `psp-game` scene skips the select and loads Dream Land | RE-385 |
 | `golden_capture` (`psp-game`, scene `donkey`) | `f1-training-donkey` | Donkey Kong winding up a Giant Punch (`SpecialNLoop`) | — |
@@ -659,3 +660,14 @@ panels, pucks, cursors, banner and fighters. `f1-vs-players` (521,684
 pixels at 2×) was rebaselined, identical in both captures; its capture
 stays at tick 85. The other 109 goldens are unchanged by the new pack.
 110 of 110 goldens match.
+
+## 2026-09-29 RE-412 KO presentation
+
+Pack v65, 30,405,584 bytes (SHA-256 `f0e8c31f…`), with each stage's fog
+colour. KOs now draw the blast and the screen flash, and a respawn draws
+its halo and the rebirth glow. `f1-training-rebirth` was rebaselined
+(3,536 pixels at 2×, identical in both captures): Mario crouches on the
+halo. The new `f1-training-rebirthblast` golden (`rebirthblast`, tick 168)
+was seeded from its first verify run. `f1-vs-results` is unchanged, as its
+battle is not captured. The other 109 goldens are unchanged. 111 of 111
+goldens match.

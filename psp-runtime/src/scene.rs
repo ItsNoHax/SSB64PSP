@@ -264,6 +264,57 @@ pub fn manager_effect(pack: &Pack<'_>, key: (u32, u32)) -> Option<(ObjectDesc, s
     Some((object_keyed(pack, key)?, pack.effect_anim(slot as u32)?))
 }
 
+/// `dEFManagerDeadExplodeEffectDesc`: file 84's four-node blast tree
+/// (`llEFCommonEffects2DeadExplodeDefaultMObjSub`, which the reloc header
+/// names for the DObjDesc slot), slot 9 of
+/// `ssb_rom::effect::MANAGER_EFFECT_KEYS` (RE-412).
+pub const DEAD_EXPLODE_EFFECT_KEY: (u32, u32) = (84, 0x53E8);
+
+/// `dEFManagerDeadExplodeMatAnimJoints[player]`: each player's material
+/// script for the blast's three drawn DObjs, as file 84 offsets
+/// (`llEFCommonEffects2DeadExplode1MatAnimJoint` at 0x58E0 for player 0,
+/// `...2...` at 0x5800, `...3...` at 0x5950 and `...4...` at 0x5870; each
+/// table's entries 1–3 name one script for the node's one MObj). The pack
+/// binds player 0's.
+pub const DEAD_EXPLODE_MAT_SCRIPTS: [[u32; 3]; 4] = [
+    [0x58F0, 0x590C, 0x5928],
+    [0x5810, 0x582C, 0x5848],
+    [0x5960, 0x597C, 0x5998],
+    [0x5880, 0x589C, 0x58B8],
+];
+
+/// `dEFManagerDeadExplodeEnvColorChild*[player]`: ENV of the blast's first
+/// drawn DObj (`dobj->child`).
+pub const DEAD_EXPLODE_ENV_CHILD: [[u8; 3]; 4] = [
+    [0xA6, 0x62, 0x21],
+    [0x1F, 0xFF, 0xA1],
+    [0x3E, 0x6D, 0xFF],
+    [0xFB, 0x66, 0xC7],
+];
+
+/// `dEFManagerDeadExplodeEnvColorSibling*[player]`: ENV of the third
+/// (`dobj->child->sib_next->sib_next`). The second keeps its display
+/// list's own `G_SETENVCOLOR`.
+pub const DEAD_EXPLODE_ENV_SIBLING: [[u8; 3]; 4] = [
+    [0xFF, 0x62, 0x4B],
+    [0x00, 0x7E, 0xFF],
+    [0xFF, 0xFF, 0x00],
+    [0x00, 0xFF, 0x00],
+];
+
+/// `dEFManagerRebirthHaloEffectDesc`: file 85's halo tree
+/// (`llEFCommonEffects3RebirthHaloDObjDesc`), slot 12 of
+/// `ssb_rom::effect::MANAGER_EFFECT_KEYS`. Its animation spins the ring
+/// forever (RE-412).
+pub const REBIRTH_HALO_EFFECT_KEY: (u32, u32) = (85, 0x2AC0);
+
+/// The halo's node for its first DObj's second display list (DLLink 1 at
+/// file 85 + 0x2A88, which calls 0x2890): twelve rays whose combiner is
+/// `PRIMITIVE` colour and `TEXEL0` alpha. The converter classifies that as
+/// a flat colour and drops the texture, so the rays would draw as opaque
+/// white; the port leaves them out (RE-412).
+pub const REBIRTH_HALO_RAYS_NODE: u32 = 3;
+
 /// `nMPMapObjKindRebirth`: the map point a respawn's halo lowers onto.
 pub const MAP_OBJ_KIND_REBIRTH: u16 = 0x20;
 
@@ -945,6 +996,7 @@ impl FighterScene {
                 map: zone(&stage.bounds),
                 camera: zone(&stage.camera),
                 rebirth,
+                fog_color: stage.fog_color,
             });
         }
         FighterScene {
