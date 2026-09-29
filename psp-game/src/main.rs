@@ -142,6 +142,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // later sudden death starts, says "Go" 90 ticks on, and both
         // fighters stand at 300%.
         GameScene::VsTimeUp => 4200,
+        // "TIME UP" holds from tick 3999 for the 90-tick end wait.
+        GameScene::VsTimeUpSign => 4040,
         // The dummy's CPU has paced for some 190 ticks, or jumped several
         // times.
         GameScene::CpuWalk => 200,
@@ -233,7 +235,10 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     }
     // The VS scenes move the menu cursor down to VS at tick 6
     // (`scripted_stick_y`) and confirm it at 8.
-    if matches!(scene, GameScene::Vs | GameScene::VsTimeUp | GameScene::VsCpu) {
+    if matches!(
+        scene,
+        GameScene::Vs | GameScene::VsTimeUp | GameScene::VsTimeUpSign | GameScene::VsCpu
+    ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
             _ => N64Buttons(0),
@@ -372,6 +377,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
         scene,
         GameScene::Vs
             | GameScene::VsTimeUp
+            | GameScene::VsTimeUpSign
             | GameScene::VsCpu
             | GameScene::CpuWalk
             | GameScene::CpuJump
@@ -421,7 +427,10 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
-    if matches!(scene, GameScene::Vs | GameScene::VsTimeUp | GameScene::VsCpu) {
+    if matches!(
+        scene,
+        GameScene::Vs | GameScene::VsTimeUp | GameScene::VsTimeUpSign | GameScene::VsCpu
+    ) {
         return if tick == 6 { -80 } else { 0 };
     }
     // Seventeen ticks at 80 move the cursor 68 pixels up, from y 170 to
@@ -1060,7 +1069,7 @@ fn capture_cpu_behavior(scene: GameScene) -> Option<ssb_game::computer::Behavior
         GameScene::CpuWalk => Some(ssb_game::computer::Behavior::Walk),
         GameScene::CpuJump => Some(ssb_game::computer::Behavior::Jump),
         // A time-up tie needs a CPU that never lands a hit.
-        GameScene::VsTimeUp => Some(ssb_game::computer::Behavior::Stand),
+        GameScene::VsTimeUp | GameScene::VsTimeUpSign => Some(ssb_game::computer::Behavior::Stand),
         _ => None,
     }
 }
@@ -1112,7 +1121,7 @@ impl VsRules {
 /// A capture scene's VS rules: `vstimeup` picks one minute.
 fn vs_rules(scene: GameScene) -> VsRules {
     match scene {
-        GameScene::VsTimeUp => VsRules {
+        GameScene::VsTimeUp | GameScene::VsTimeUpSign => VsRules {
             time_limit: 1,
             ..VsRules::DEFAULT
         },
@@ -1809,6 +1818,7 @@ unsafe fn run() -> ! {
                     Some(&stage_objects),
                     no_pack_color,
                     &damage_hud,
+                    vs_battle.as_ref(),
                 );
             }
         }
@@ -2402,6 +2412,7 @@ unsafe fn draw_training(
     stage_objects: Option<&ssb_rom::ground_obj::GroundObjects>,
     no_pack_color: Color,
     damage_hud: &Hud,
+    battle: Option<&ssb_game::battle::Battle>,
 ) {
     let scene = pack
         .zip(play_state)
@@ -2581,9 +2592,19 @@ unsafe fn draw_training(
         Some((pl.fighter.kind, 0)),
         dummy_state.map(|d| (d.fighter.kind, ssb_game::hud::CPU_COLOR)),
     ];
+    // `ifCommonBattleInterfaceProcSet` hides every interface at Set.
+    if battle.is_some_and(|b| b.status == ssb_game::battle::GameStatus::Set) {
+        return;
+    }
     draw_damage_hud(p, draw_state, &damage_hud.damage, fighters, stage_index);
+    if let Some(b) = battle {
+        draw_timer(p, draw_state, b);
+    }
     if let Some(c) = damage_hud.countdown.as_ref() {
         draw_countdown(p, draw_state, c);
+    }
+    if let Some(end) = battle.and_then(|b| b.end) {
+        draw_announce(p, draw_state, end);
     }
 }
 
@@ -2644,6 +2665,62 @@ fn draw_damage_hud(
                 };
                 meshdraw::draw_sprite(p, &sprite, &d, draw_state);
             }
+        }
+    }
+}
+
+/// One `SP_TEXSHUF | SP_TRANSPARENT` sprite, untinted.
+fn draw_plain(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, sprite: &ssb_rom::pack::SpriteDesc, x: f32, y: f32) {
+    let d = meshdraw::SObjDraw {
+        x,
+        y,
+        scale: 1.0,
+        prim: [0xFF; 4],
+        env: [0; 3],
+        solid: false,
+        attr: ssb_game::countdown::ATTR_TRANSPARENT,
+    };
+    unsafe {
+        meshdraw::draw_sprite(p, sprite, &d, draw_state);
+    }
+}
+
+/// `ifCommonTimerProcDisplay`: `M M : S S` in a timed battle.
+#[inline(never)]
+fn draw_timer(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, b: &ssb_game::battle::Battle) {
+    use ssb_game::hud;
+    if b.rule != ssb_game::battle::Rule::Time || b.time_limit == ssb_game::battle::TIMELIMIT_INFINITE {
+        return;
+    }
+    let f = &ssb_rom::sprite::TIMER;
+    let sprite = |i: u8| f.offsets.get(usize::from(i)).and_then(|&at| p.sprite(f.file, at));
+    let limit = u32::from(b.time_limit) * ssb_game::battle::TICS_PER_MINUTE;
+    let digits = hud::timer_digits(b.time_remain, limit);
+    for (&x, digit) in hud::TIMER_X.iter().zip(digits) {
+        if let Some(s) = sprite(digit) {
+            let (x, y) = hud::timer_origin(x, s.width, s.height);
+            draw_plain(p, draw_state, &s, x, y);
+        }
+    }
+    if let Some(s) = sprite(hud::TIMER_COLON) {
+        let (x, y) = hud::timer_origin(hud::TIMER_COLON_X, s.width, s.height);
+        draw_plain(p, draw_state, &s, x, y);
+    }
+}
+
+/// "TIME UP" (`ifCommonAnnounceTimeUpMakeInterface`) or "GAME SET"
+/// (`ifCommonAnnounceGameSetMakeInterface`) until the battle's Set.
+#[inline(never)]
+fn draw_announce(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, end: ssb_game::battle::EndKind) {
+    use ssb_game::hud;
+    let letters: &[(f32, f32, u8)] = match end {
+        ssb_game::battle::EndKind::TimeUp => &hud::TIME_UP,
+        ssb_game::battle::EndKind::GameSet => &hud::GAME_SET,
+    };
+    let f = &ssb_rom::sprite::GAME_STATUS;
+    for &(x, y, i) in letters {
+        if let Some(s) = f.offsets.get(usize::from(i)).and_then(|&at| p.sprite(f.file, at)) {
+            draw_plain(p, draw_state, &s, x, y);
         }
     }
 }

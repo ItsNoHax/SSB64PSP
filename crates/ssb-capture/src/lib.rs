@@ -357,10 +357,12 @@ pub enum GameScene {
     CpuJump,
     /// `vscpu`: a VS battle's CPU closing in and attacking.
     VsCpu,
+    /// `vstimeupsign`: `vstimeup`'s "TIME UP" before sudden death.
+    VsTimeUpSign,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 38] = [
+    pub const ALL: [GameScene; 39] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -399,6 +401,7 @@ impl GameScene {
         GameScene::CpuWalk,
         GameScene::CpuJump,
         GameScene::VsCpu,
+        GameScene::VsTimeUpSign,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -441,6 +444,7 @@ impl GameScene {
             GameScene::CpuWalk => "cpuwalk",
             GameScene::CpuJump => "cpujump",
             GameScene::VsCpu => "vscpu",
+            GameScene::VsTimeUpSign => "vstimeupsign",
         }
     }
 

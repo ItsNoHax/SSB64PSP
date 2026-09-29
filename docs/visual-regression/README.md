@@ -170,6 +170,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `vs`) | `f1-vs-countdown` | A VS battle's countdown on Dream Land, both fighters locked until "Go" | RE-389 |
 | `golden_capture` (`psp-game`, scene `vstimeup`) | `f1-vs-sudden-death` | A one-minute VS battle timed out in a tie, in sudden death with both fighters at 300% | RE-389 |
 | `golden_capture` (`psp-game`, scene `vscpu`) | `f1-vs-cpu` | A VS battle's CPU forward-throwing the idle player at tick 690, after a down air; `vstimeup` pins its CPU to Stand to keep its tie | RE-391 |
+| `golden_capture` (`psp-game`, scene `vstimeupsign`) | `f1-vs-time-up` | `vstimeup` at tick 4,040: 00:00 and "TIME UP" during the end wait | RE-395 |
 | `golden_capture` (`psp-game`, scene `rebirth`) | `f1-training-rebirth` | Mario after a KO below Dream Land, standing at the rebirth point in `RebirthStand` (the halo is not drawn) | RE-388 |
 | `golden_capture` (`psp-game`, scene `fighterselect`) | `f1-training-fighter-select` | Kirby placed on the character select, then Peach's Castle on the stage select; Kirby and a Mario dummy standing on the castle | RE-386 |
 | `golden_capture` (`psp-game`, scene `stageselect`) | `f1-training-stage-select` | Mario and the dummy standing on Hyrule Castle, picked on the stage select; every other `psp-game` scene skips the select and loads Dream Land | RE-385 |
@@ -541,3 +542,10 @@ catches the player in `CatchPull` at 10%. Sprites tint through `Blend`,
 which shifts the Training HUD by at most one level per channel. 35
 `psp-game` goldens were rebaselined, each captured twice. 101 of 101
 goldens match twice.
+
+## 2026-09-29 RE-395 timer
+
+Pack v62 (`2e1289b8…`) adds file 165. A timed battle draws its timer, so
+`f1-vs-countdown` (03:00) and `f1-vs-cpu` (02:56) were rebaselined, each
+captured twice. The new `f1-vs-time-up` golden was identical in both
+captures. 102 of 102 goldens match twice.

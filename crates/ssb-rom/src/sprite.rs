@@ -277,11 +277,22 @@ pub const GAME_STATUS: SpriteFile = SpriteFile {
     ],
 };
 
+/// File 165, `IFCommonTimer` (`gGMCommonFiles[3]`): `Digit0` to `Digit9`,
+/// then `SymbolColon`, `...Cross`, `...Underscore`, `...Sec` and `...CSec`
+/// (`dIFCommonTimerDigitSpriteOffsets`).
+pub const TIMER: SpriteFile = SpriteFile {
+    file: 165,
+    offsets: &[
+        0x138, 0x228, 0x3A8, 0x528, 0x6A8, 0x828, 0x9A8, 0xB28, 0xCA8, 0xE28, 0xF08, 0x1018,
+        0x1090, 0x1140, 0x1238,
+    ],
+};
+
 /// `SP_CLOUD`: drawn with `G_RM_CLD_SURF`, blended like `SP_TRANSPARENT`.
 pub const SP_CLOUD: u16 = 0x1000;
 
 /// Every sprite file the pack converts.
-pub const FILES: &[SpriteFile] = &[PLAYER_DAMAGE, GAME_STATUS];
+pub const FILES: &[SpriteFile] = &[PLAYER_DAMAGE, GAME_STATUS, TIMER];
 
 /// Decodes every sprite of `f`.
 pub fn decode_all(file: &File, f: &SpriteFile) -> Result<Vec<Sprite>, SpriteError> {
@@ -353,6 +364,32 @@ mod tests {
                 _ => assert_eq!(s.format, Format::I),
             }
         }
+    }
+
+    #[test]
+    fn the_timer_digits_decode() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        let file = archive.load(TIMER.file).unwrap();
+        let sprites = decode_all(&file, &TIMER).unwrap();
+        for (i, s) in sprites.iter().enumerate() {
+            let alpha: Vec<u8> = s
+                .image
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|p| p[3])
+                .collect();
+            assert!(alpha.iter().any(|&a| a > 0), "timer sprite {i} is empty");
+            assert!(s.width < 64 && s.height < 64, "timer sprite {i}");
+        }
+        // The ten digits share one height.
+        assert!(sprites[..10].iter().all(|s| s.height == sprites[0].height));
     }
 
     #[test]
