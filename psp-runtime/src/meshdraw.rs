@@ -1086,13 +1086,10 @@ unsafe fn apply_material(
             1
         });
 
-        // A cutout surface (foliage, grates): the RDP resolves
-        // `CVG_X_ALPHA | ALPHA_CVG_SEL` through multisampled edge coverage
-        // the GE has no equivalent for. `sf64-psp` -- a real, shipped
-        // N64-to-PSP port making this same translation at runtime --
-        // approximates it with a plain alpha test discarding
-        // fully-transparent texels (RE-069); matched here rather than
-        // invented.
+        // A cutout surface (foliage, grates): the RDP scales a pixel's
+        // coverage by its alpha (`CVG_X_ALPHA | ALPHA_CVG_SEL`) and writes
+        // nothing where no coverage is left, `alpha < 32` at full coverage
+        // (RE-424; RE-069 used `alpha > 0`).
         //
         // Both gates -- the cutout approximation and `G_AC_THRESHOLD` --
         // resolve onto the GE's single alpha-test unit in
@@ -1129,6 +1126,21 @@ unsafe fn apply_material(
         if p.flags & (flags::TRANSLUCENT | flags::ALPHA_BLEND)
             == (flags::TRANSLUCENT | flags::ALPHA_BLEND)
         {
+            sys::sceGuEnable(GuState::Blend);
+            sys::sceGuBlendFunc(
+                sys::BlendOp::Add,
+                sys::BlendFactor::SrcAlpha,
+                sys::BlendFactor::OneMinusSrcAlpha,
+                0,
+                0,
+            );
+        } else if p.flags & flags::ALPHA_TEST != 0 {
+            // RE-424: a `TEX_EDGE` pixel keeps `(alpha * 8 + 4) >> 8` of its
+            // coverage. The RDP writes its colour unblended over a fully
+            // covered background and stores the partial coverage, and the
+            // VI's antialiasing then mixes it with the background by that
+            // coverage. The GE has no coverage buffer; blending by the pixel's
+            // alpha is the same mix, taken from what is already drawn.
             sys::sceGuEnable(GuState::Blend);
             sys::sceGuBlendFunc(
                 sys::BlendOp::Add,

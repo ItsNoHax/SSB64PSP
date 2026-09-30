@@ -313,7 +313,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // shape only where the stream never set or cleared it, and seeds the stage
 // controllers' DL-link-6 objects with layer 1's depth state (Saffron City's
 // gate) (RE-423). No layout change.
-pub const VERSION: u32 = 75;
+// 76 decides lighting from the `G_LIGHTING` bit alone: every object's
+// first list starts under the scene's lit state, light colour writes leave
+// the bit alone, and a colour's shape no longer stands in for it (RE-424).
+// No layout change.
+pub const VERSION: u32 = 76;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -466,7 +470,8 @@ pub mod flags {
     pub const SMOOTH: u32 = 1 << 3;
     pub const Z_BUFFER: u32 = 1 << 4;
     /// RE-069: `G_SETRENDERMODE`'s `CVG_X_ALPHA | ALPHA_CVG_SEL` -- a cutout
-    /// surface, approximated as a plain PSP alpha test.
+    /// surface: alpha test at [`super::TEX_EDGE_MIN_ALPHA`] and a blend by
+    /// alpha for the coverage it keeps (RE-424).
     pub const ALPHA_TEST: u32 = 1 << 5;
     /// RE-069: `G_SETRENDERMODE`'s blend equation genuinely reads back the
     /// framebuffer weighted by `1 - alpha` -- real translucency.
@@ -600,46 +605,44 @@ pub enum AlphaGate {
     GreaterOrEqual(u8),
 }
 
+/// The least combined alpha a `TEX_EDGE` pixel of full coverage keeps
+/// (RE-424). `CVG_X_ALPHA` scales the pixel's coverage (0-8 subpixels) by
+/// its alpha, `cvg' = (alpha * cvg + 4) >> 8`, and with `AA_EN` (set by
+/// every `TEX_EDGE` mode in the archive) the RDP writes nothing where
+/// `cvg'` is 0: at `cvg = 8` that is `alpha < 32`. The GE has no coverage,
+/// so every pixel counts as fully covered.
+pub const TEX_EDGE_MIN_ALPHA: u8 = 32;
+
 /// Resolves a primitive's two independent RDP alpha gates onto the GE's single
 /// alpha-test unit.
 ///
 /// The two gates are genuinely different hardware (RE-195):
 ///
-/// * [`flags::ALPHA_TEST`] is the `CVG_X_ALPHA | ALPHA_CVG_SEL` cutout, whose
-///   real multisampled-coverage behaviour the GE cannot reproduce; this port
-///   approximates it as `alpha > 0`, following `sf64-psp`. It is issued as
-///   `alpha >= 1`, the same test on 8-bit alpha: PPSSPP's software renderer
-///   rewrites `GREATER 0` to `NOTEQUAL 0`, treats that as a no-op test on its
-///   rectangle path and draws alpha-0 texels there (RE-379).
+/// * [`flags::ALPHA_TEST`] is the `CVG_X_ALPHA | ALPHA_CVG_SEL` cutout: the
+///   RDP drops a pixel whose alpha-scaled coverage is zero, which for a
+///   fully covered pixel is `alpha >= 32` ([`TEX_EDGE_MIN_ALPHA`], RE-424).
+///   RE-069 approximated it as `alpha > 0`.
 /// * [`flags::ALPHA_COMPARE_THRESHOLD`] is `G_AC_THRESHOLD`, a real
-///   comparison of final pixel alpha against `G_SETBLENDCOLOR`'s alpha.
+///   comparison of final pixel alpha against `G_SETBLENDCOLOR`'s alpha. Under
+///   `ALPHA_CVG_SEL | CVG_X_ALPHA` the compared alpha is
+///   `(alpha * cvg + 4) >> 3`, the combined alpha itself at full coverage.
 ///
-/// They compose without a priority decision because the cutout approximation
-/// is exactly `>= 1`:
-///
-/// * threshold alone, or threshold with a **nonzero** reference, is
-///   `alpha >= reference` — which already implies `alpha > 0`, so both gates
-///   are satisfied by the one comparison;
-/// * threshold at reference **zero** alongside the cutout must stay
-///   `alpha > 0`, because `alpha >= 0` passes everything and would silently
-///   drop the cutout;
-/// * threshold at reference zero *without* the cutout is a real no-op gate
-///   and is expressed as such rather than being strengthened into one.
+/// A pixel must pass both, so the GE compares against the larger bound;
+/// threshold zero without the cutout is a real no-op gate and is expressed
+/// as such rather than strengthened into one.
 ///
 /// Extracted from the draw path so it can be tested on the host; the PSP side
 /// only maps the result onto `sceGuAlphaFunc`.
 pub fn alpha_gate(prim_flags: u32, alpha_compare_ref: u32) -> AlphaGate {
     let cutout = prim_flags & flags::ALPHA_TEST != 0;
+    let floor = if cutout { TEX_EDGE_MIN_ALPHA } else { 0 };
     if prim_flags & flags::ALPHA_COMPARE_THRESHOLD != 0 {
         // Only the alpha channel of the packed ABGR reference is meaningful.
         let reference = ((alpha_compare_ref >> 24) & 0xFF) as u8;
-        if cutout && reference == 0 {
-            return AlphaGate::GreaterOrEqual(1);
-        }
-        return AlphaGate::GreaterOrEqual(reference);
+        return AlphaGate::GreaterOrEqual(reference.max(floor));
     }
     if cutout {
-        return AlphaGate::GreaterOrEqual(1);
+        return AlphaGate::GreaterOrEqual(floor);
     }
     AlphaGate::Off
 }
@@ -1794,14 +1797,10 @@ fn shade_normal(raw: [u8; 4]) -> [u8; 4] {
 /// N64 normals are `i8` components of a unit vector, so `x² + y² + z²` lands
 /// near `127² = 16129`. Arbitrary colours have no reason to.
 ///
-/// This exists because **the display list alone cannot tell us**. `G_LIGHTING`
-/// is set per-object by `objdisplay.c` before the list runs, so a list that
-/// relies on inherited state carries no geometry-mode command of its own.
-/// Measured over the whole archive: of the vertices whose list *did* set
-/// `G_LIGHTING`, 100% look like unit normals — the test has no false positives
-/// on known-lit data — while 69.4% of the supposedly unlit vertices look like
-/// normals too. Drawing those as colours is what produced the saturated
-/// red/green/cyan polygons in the first textured render.
+/// A census predicate only. RE-021 used it to decide lighting where the
+/// stream never stated `G_LIGHTING`; RE-424 replaced that with the scene's
+/// state (`mesh::InitialMaterial::SCENE`), measured on N64 RDRAM traces, so
+/// no packed vertex is lit or unlit because of its bytes' shape.
 pub fn looks_like_unit_normal(c: [u8; 4]) -> bool {
     let x = c[0] as i8 as i32;
     let y = c[1] as i8 as i32;
@@ -2148,16 +2147,10 @@ impl PackWriter {
         // primitive here would reintroduce exactly the timing bug RE-241
         // fixed in `push_vertex`, just one layer later (a display list that
         // toggles `G_LIGHTING` between loading a slot and drawing a triangle
-        // that reuses it). `looks_like_unit_normal`'s data-driven fallback
-        // (RE-021) remains for the one case load-time state still cannot
-        // know: a node whose own list never mentions `G_LIGHTING` at all
-        // because real hardware set it externally, per-object, before the
-        // list ran.
-        let lit: alloc::vec::Vec<bool> = mesh
-            .vertices
-            .iter()
-            .map(|v| v.lit || (!v.lit_known && looks_like_unit_normal(v.rgba)))
-            .collect();
+        // that reuses it). A list that never mentions `G_LIGHTING` runs
+        // under its object's seed, the scene state the N64 traces show
+        // (RE-424); nothing is guessed from the bytes' shape.
+        let lit: alloc::vec::Vec<bool> = mesh.vertices.iter().map(|v| v.lit).collect();
 
         // RE-106/RE-240: `MeshMaterial::prim_color` is not a literal colour
         // despite the name -- `material_now()` (mesh.rs) overwrites it with
@@ -4243,7 +4236,6 @@ mod tests {
                     uv: [32, 64],
                     rgba: [0x11, 0x22, 0x33, 0x44],
                     lit: false,
-                    lit_known: false,
                 },
                 MeshVertex {
                     pos: [4, 5, 6],
@@ -4251,7 +4243,6 @@ mod tests {
                     uv: [0, 0],
                     rgba: [255, 255, 255, 255],
                     lit: false,
-                    lit_known: false,
                 },
                 MeshVertex {
                     pos: [7, 8, 9],
@@ -4259,7 +4250,6 @@ mod tests {
                     uv: [1, 2],
                     rgba: [0, 0, 0, 255],
                     lit: false,
-                    lit_known: false,
                 },
             ],
             primitives: alloc::vec![Primitive {
@@ -4543,63 +4533,59 @@ mod tests {
         assert_eq!((p.texgen_scale_s, p.texgen_scale_t), (0, 0));
     }
 
-    /// RE-195/RE-214: the two RDP alpha gates share one GE comparison. Each
-    /// combination is pinned, including the two overlap cases documentation
-    /// previously described as unresolved.
+    /// RE-195/RE-214/RE-424: the two RDP alpha gates share one GE
+    /// comparison. Each combination is pinned.
     #[test]
     fn both_alpha_gates_resolve_onto_one_ge_comparison() {
         let reference = |a: u8| (a as u32) << 24;
+        let edge = GreaterOrEqual(TEX_EDGE_MIN_ALPHA);
+        use AlphaGate::GreaterOrEqual;
 
         // Neither gate.
         assert_eq!(alpha_gate(0, reference(0x80)), AlphaGate::Off);
 
-        // Cutout alone: the `alpha > 0` approximation.
-        assert_eq!(
-            alpha_gate(flags::ALPHA_TEST, 0),
-            AlphaGate::GreaterOrEqual(1),
-            "the cutout approximation rejects only fully transparent texels"
-        );
+        // Cutout alone: zero alpha-scaled coverage below alpha 32.
+        assert_eq!(alpha_gate(flags::ALPHA_TEST, 0), edge);
+        assert_eq!(TEX_EDGE_MIN_ALPHA, 32);
+        // `(alpha * 8 + 4) >> 8`, the coverage a fully covered pixel keeps.
+        assert_eq!((31u32 * 8 + 4) >> 8, 0);
+        assert_eq!((32u32 * 8 + 4) >> 8, 1);
 
         // Threshold alone.
         assert_eq!(
             alpha_gate(flags::ALPHA_COMPARE_THRESHOLD, reference(0x80)),
-            AlphaGate::GreaterOrEqual(0x80)
+            GreaterOrEqual(0x80)
         );
         assert_eq!(
             alpha_gate(flags::ALPHA_COMPARE_THRESHOLD, 0),
-            AlphaGate::GreaterOrEqual(0),
+            GreaterOrEqual(0),
             "a threshold of zero on its own is a real no-op gate"
         );
 
-        // Overlap, zero reference: `alpha >= 0` would pass everything and
-        // silently discard the cutout, so the comparison must stay `> 0`.
+        // Overlap: the larger bound.
         assert_eq!(
             alpha_gate(flags::ALPHA_TEST | flags::ALPHA_COMPARE_THRESHOLD, 0),
-            AlphaGate::GreaterOrEqual(1)
+            edge
         );
-
-        // Overlap, nonzero reference: `alpha >= reference` already implies
-        // `alpha > 0`, so one comparison satisfies both gates.
         assert_eq!(
             alpha_gate(
                 flags::ALPHA_TEST | flags::ALPHA_COMPARE_THRESHOLD,
                 reference(0x80)
             ),
-            AlphaGate::GreaterOrEqual(0x80)
+            GreaterOrEqual(0x80)
         );
         assert_eq!(
             alpha_gate(
                 flags::ALPHA_TEST | flags::ALPHA_COMPARE_THRESHOLD,
                 reference(1)
             ),
-            AlphaGate::GreaterOrEqual(1),
-            "a reference of 1 is the tightest value still implying the cutout"
+            edge
         );
 
         // Only the alpha channel of the packed reference is read.
         assert_eq!(
             alpha_gate(flags::ALPHA_COMPARE_THRESHOLD, 0x8011_2233),
-            AlphaGate::GreaterOrEqual(0x80)
+            GreaterOrEqual(0x80)
         );
     }
 
@@ -4622,7 +4608,7 @@ mod tests {
         assert_eq!((p.alpha_compare_ref >> 24) & 0xFF, 0);
         assert_eq!(
             alpha_gate(p.flags, p.alpha_compare_ref),
-            AlphaGate::GreaterOrEqual(1)
+            AlphaGate::GreaterOrEqual(TEX_EDGE_MIN_ALPHA)
         );
     }
 
@@ -5258,17 +5244,18 @@ mod tests {
         assert_eq!(dark[3], 0xAB);
     }
 
-    /// RE-423: a colour whose bytes read as a unit normal is recovered as a
-    /// normal only where the stream never set or cleared `G_LIGHTING`.
+    /// RE-424: an unlit vertex keeps its colour even when its bytes read as
+    /// a unit normal, and a lit one is shaded; the bytes' shape decides
+    /// nothing.
     #[test]
-    fn a_known_unlit_normal_shaped_colour_keeps_its_colour() {
-        let pack_colour = |lit_known: bool| {
+    fn an_unlit_normal_shaped_colour_keeps_its_colour() {
+        let pack_colour = |lit: bool| {
             let mut m = sample_mesh();
             m.primitives[0].material.lit = false;
             m.primitives[0].material.prim_color = None;
             // Yoshi's Island's right platform top (file 111 + 0x48E0).
             m.vertices[1].rgba = [227, 227, 132, 255];
-            m.vertices[1].lit_known = lit_known;
+            m.vertices[1].lit = lit;
             let mut w = PackWriter::new();
             w.add_mesh(&m, 0, 0, |_| None, |_| None);
             let bytes = w.finish();
@@ -5278,8 +5265,8 @@ mod tests {
                 VERTEX_SIZE + 4,
             )
         };
-        assert_eq!(pack_colour(true), 0xFF84_E3E3, "known colour kept");
-        assert_ne!(pack_colour(false), 0xFF84_E3E3, "unknown shape shaded");
+        assert_eq!(pack_colour(false), 0xFF84_E3E3, "unlit colour kept");
+        assert_ne!(pack_colour(true), 0xFF84_E3E3, "lit vertex shaded");
     }
 
     #[test]
@@ -5301,10 +5288,8 @@ mod tests {
         let mut m = sample_mesh();
         m.primitives[0].material.lit = true;
         m.primitives[0].material.prim_color = None;
-        // RE-241: `add_mesh` now trusts each vertex's own load-time `lit`,
-        // not the primitive's -- set it explicitly, since white does not
-        // pass `looks_like_unit_normal` either and would otherwise stay
-        // unshaded despite `material.lit` above.
+        // RE-241: `add_mesh` trusts each vertex's own load-time `lit`, not
+        // the primitive's -- set it explicitly.
         for v in &mut m.vertices {
             v.lit = true;
         }
@@ -5329,14 +5314,15 @@ mod tests {
     }
 
     #[test]
-    fn primitives_carrying_normals_are_shaded_even_without_the_geometry_mode() {
-        // The display list never said G_LIGHTING, but the data is normals --
-        // the common case, since the mode is usually inherited.
+    fn unlit_normal_shaped_bytes_are_drawn_as_their_colour() {
+        // RE-424: the bytes' shape decides nothing. An unlit vertex whose
+        // bytes read as a unit normal is drawn as that colour.
         let mut m = sample_mesh();
         m.primitives[0].material.lit = false;
         m.primitives[0].material.prim_color = None; // not a literal colour (RE-106)
         for v in &mut m.vertices {
             v.rgba = [127, 0, 0, 255];
+            v.lit = false;
         }
 
         let mut w = PackWriter::new();
@@ -5344,12 +5330,7 @@ mod tests {
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
-
-        // Shaded to grey rather than drawn as saturated red.
-        let c = u32_at(v, 4);
-        let (r, g, b) = (c as u8, (c >> 8) as u8, (c >> 16) as u8);
-        assert_eq!(r, g, "shaded output must be grey");
-        assert_eq!(g, b);
+        assert_eq!(u32_at(v, 4), 0xFF00_007F, "the colour is kept");
     }
 
     #[test]
@@ -5369,7 +5350,7 @@ mod tests {
     }
 
     #[test]
-    fn a_mixed_primitive_shades_only_its_normal_looking_vertices() {
+    fn a_mixed_primitive_shades_only_its_lit_vertices() {
         // RE-103: a fighter's decal highlights (literal colour) and lit body
         // (normals) routinely share one primitive's vertex buffer, nowhere
         // near the old 80% per-primitive majority either way -- Fox's,
@@ -5380,7 +5361,9 @@ mod tests {
         m.primitives[0].material.lit = false;
         m.primitives[0].material.prim_color = None; // not a literal colour (RE-106)
         m.vertices[0].rgba = [127, 0, 0, 255]; // a unit normal along x
+        m.vertices[0].lit = true; // loaded under G_LIGHTING
         m.vertices[1].rgba = [255, 255, 255, 255]; // a genuine colour
+        m.vertices[1].lit = false;
         m.primitives[0].indices = alloc::vec![0, 1, 0]; // both in one primitive
 
         let mut w = PackWriter::new();
@@ -5392,13 +5375,13 @@ mod tests {
         let normal_shaded = u32_at(v, 4);
         let c = normal_shaded;
         let (r, g, b) = (c as u8, (c >> 8) as u8, (c >> 16) as u8);
-        assert_eq!(r, g, "the normal-looking vertex must be shaded to grey");
+        assert_eq!(r, g, "the lit vertex must be shaded to grey");
         assert_eq!(g, b);
 
         assert_eq!(
             u32_at(v, VERTEX_SIZE + 4),
             0xFFFF_FFFF,
-            "the colour-looking vertex in the same primitive must survive untouched"
+            "the unlit vertex in the same primitive must survive untouched"
         );
     }
 
@@ -5418,11 +5401,6 @@ mod tests {
         m.primitives[0].material.lit = false;
         m.primitives[0].material.prim_color = Some([255, 0, 0, 255]); // pure red scale
         for v in &mut m.vertices {
-            // 200, not a smaller mid-tone: as a signed byte its magnitude
-            // must land outside `looks_like_unit_normal`'s band, or the
-            // per-vertex `lit` fallback (RE-103) would treat this synthetic
-            // "already scaled colour" as a normal instead, defeating the
-            // point of this test.
             v.rgba = [200, 0, 0, 255]; // `push_vertex`'s own already-scaled output
         }
 

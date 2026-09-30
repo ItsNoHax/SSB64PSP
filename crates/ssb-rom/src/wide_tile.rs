@@ -34,7 +34,6 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use crate::mesh::{Mesh, MeshVertex, Primitive, TextureRef};
-use crate::pack::looks_like_unit_normal;
 use crate::psp_texture::GE_MAX_TEXTURE_DIM;
 use crate::texture::mirror_axis_len;
 
@@ -210,7 +209,7 @@ fn lerp(a: i64, b: i64, num: i64, den: i64) -> i64 {
 
 /// Whether `pack::add_mesh` will read `rgba` as a normal.
 fn carries_normal(v: &MeshVertex) -> bool {
-    v.lit || (!v.lit_known && looks_like_unit_normal(v.rgba))
+    v.lit
 }
 
 /// The point on edge `a`-`b` where `axis` equals `x`.
@@ -530,7 +529,6 @@ mod tests {
             uv: [u as i16, 0],
             rgba: [255, 255, 255, 255],
             lit: false,
-            lit_known: false,
             binding: None,
         }
     }

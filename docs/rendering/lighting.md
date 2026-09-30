@@ -9,11 +9,15 @@ Status: complete; PPSSPP-validated.
   (RE-103, RE-105, RE-164–167).
 - Lit versus literal vertex colour is decided per vertex from `G_VTX`
   load-time state, and primitive colour has a single owner (RE-240–243).
-  A colour is read as a normal from its shape (`looks_like_unit_normal`,
-  RE-021) only when the stream never set or cleared `G_LIGHTING` before the
-  load (`MeshVertex::lit_known`). Stage lists clear it themselves, and the
-  N64 loads every stage vertex unlit (RE-423); 29 lists still use the
-  fallback.
+  The `G_LIGHTING` bit alone decides: light colour writes (`G_MW_LIGHTCOL`,
+  an `MObj`'s `gSPLightColor`) leave it alone, and nothing is guessed from a
+  colour's shape. A list that never states it runs under its object's seed:
+  lit for fighters (`ftDisplayMainProcDisplay`) and for every other graph
+  (`InitialMaterial::SCENE`: each scene's lights function sets it after the
+  frame's reset list). Stage lists clear it themselves (RE-423). N64 RDRAM
+  traces of all twelve fighters, their electric skeletons, specials,
+  entries, items, eight VS stages, the opening room and the Training select
+  match the packer on every one of 76,191 traced vertex loads (RE-424).
 - Costume `LIGHT1COLOR`/`LIGHT2COLOR` tracks are preserved (RE-261;
   [D-024](../decisions/D-024.md)).
 - `sceGuLight` does not enable its channel; `GU_LIGHT0` is enabled explicitly
