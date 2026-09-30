@@ -2669,6 +2669,27 @@ fn resolve_layer_mat_anims(
         );
     }
 
+    // RE-420: the series emblems' `llFTEmblemModels*MatAnimJoint`
+    // (`mnVSResultsMakeEmblem`'s `matanim_joints[]`), against the materials
+    // their `MObjSub` tables resolved, as for a weapon tree.
+    if let Some(e) = ssb_rom::effect::EMBLEMS
+        .iter()
+        .find(|e| (ssb_rom::effect::EMBLEM_FILE, e.dobjdesc) == (file.id, graph_offset))
+    {
+        return resolve_mat_anims(
+            file,
+            e.matanim_joint,
+            materials,
+            |node, m| {
+                materials
+                    .get(node)?
+                    .get(m)
+                    .map(|s| (s.at, s.palette_entries))
+            },
+            mat_anim_data,
+        );
+    }
+
     let Some(layer) = loaded
         .stages
         .iter()

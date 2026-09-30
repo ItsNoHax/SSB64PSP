@@ -12,6 +12,7 @@ use alloc::boxed::Box;
 use ssb_game::fighter::FighterKind;
 use ssb_game::results::Results;
 use ssb_game::results_layer::{self, Draw, Layer, Player, Sprite, SpriteFile};
+use ssb_game::results_emblem;
 use ssb_game::results_scene::{self, Scene};
 use ssb_psp_runtime::gu::Gpu;
 use ssb_psp_runtime::meshdraw;
@@ -29,22 +30,85 @@ pub struct Model {
     skeleton: Skeleton,
 }
 
-/// The scene, its fighters' poses and its 2D layer.
+/// The scene, its fighters' poses, its emblem, its particles and its 2D
+/// layer.
 pub struct Fighters {
     pub scene: Scene,
     pub layer: Layer,
     models: [Option<Box<Model>>; 4],
+    /// `mnVSResultsMakeEmblem`'s DObj, after a contest (RE-420).
+    pub emblem: Option<Emblem>,
+    /// `efParticleInitAll` and `efManagerInitEffects`: the confetti's
+    /// runtime.
+    particles: Box<ssb_game::particle::Particles>,
+    effects: ssb_game::effect::Effects,
 }
 
-/// `mnVSResultsFuncStart`: the scene's first random pick. Boxed so the
-/// session holds a pointer.
+/// The emblem and its material animation, started at the player's colour.
+pub struct Emblem {
+    pub state: results_emblem::Emblem,
+    /// `(object, material player)`, if the pack has the tree.
+    model: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::skeleton::EffectMaterialAnimator)>,
+}
+
+/// `mnVSResultsFuncStart`: the scene's first random pick, then the emblem
+/// (`entrants` gives the winner's kind). Boxed so the session holds a
+/// pointer.
 #[inline(never)]
-pub fn start(r: &Results) -> Box<Fighters> {
+pub fn start(pack: Option<&Pack<'_>>, r: &Results, entrants: [Option<(FighterKind, u8)>; 4]) -> Box<Fighters> {
+    let scene = Scene::start(r);
+    let winner_kind = r
+        .winner
+        .and_then(|w| entrants.get(w).copied().flatten())
+        .map(|(kind, _)| kind);
+    let emblem = winner_kind
+        .and_then(|kind| results_emblem::Emblem::make(r, kind))
+        .map(|state| Emblem {
+            state,
+            model: pack.and_then(|p| make_emblem(p, &state)),
+        });
     Box::new(Fighters {
-        scene: Scene::start(r),
+        scene,
         layer: Layer::new(),
         models: [None, None, None, None],
+        emblem,
+        particles: new_particles(),
+        effects: ssb_game::effect::Effects::new(0),
     })
+}
+
+/// `efParticleInitAll`'s pools, built in place on the heap.
+#[inline(never)]
+fn new_particles() -> Box<ssb_game::particle::Particles> {
+    let mut b = Box::<ssb_game::particle::Particles>::new_uninit();
+    // SAFETY: `write_new` initialises every field.
+    unsafe {
+        ssb_game::particle::Particles::write_new(b.as_mut_ptr());
+        b.assume_init()
+    }
+}
+
+/// `gcSetupCommonDObjs`, `gcAddMObjAll`, `gcAddMatAnimJointAll(..., color)`
+/// and the one `gcPlayAnimAll`: the winner's series tree with its
+/// material scripts started at frame `color` and played once, which
+/// leaves its light colours at the player's (RE-420).
+fn make_emblem(
+    p: &Pack<'_>,
+    e: &results_emblem::Emblem,
+) -> Option<(ssb_rom::pack::ObjectDesc, ssb_rom::skeleton::EffectMaterialAnimator)> {
+    let series = ssb_rom::effect::EMBLEM_BY_FIGHTER.get(e.fighter as usize)?;
+    let desc = ssb_rom::effect::EMBLEMS.get(usize::from(*series))?;
+    let object = ssb_psp_runtime::scene::object_keyed(p, (ssb_rom::effect::EMBLEM_FILE, desc.dobjdesc))?;
+    let mut mats = ssb_rom::skeleton::EffectMaterialAnimator::new();
+    let prims = (0..object.node_count)
+        .filter_map(|n| p.node(object.first_node + n))
+        .filter_map(|node| p.mesh(node.mesh))
+        .flat_map(|m| (0..m.prim_count).map(move |j| m.first_prim + j))
+        .filter_map(|i| p.prim(i))
+        .map(|prim| prim.mat_anim);
+    mats.start_at(p, prims, f32::from(e.color));
+    mats.tick(p);
+    Some((object, mats))
 }
 
 /// One tic of the fighters, after [`Results::tick`]: on
@@ -60,6 +124,25 @@ pub fn tick(pack: Option<&Pack<'_>>, r: &Results, f: &mut Fighters, entrants: [O
     let Some(p) = pack else {
         return;
     };
+    // Link 0 again: `mnVSResultsFuncRun`'s confetti, then the particles'
+    // `func_run`s, made after it (RE-420).
+    if let Some(banks) = ssb_psp_runtime::particles::PackBanks::new(p) {
+        let mut rt = ssb_game::effect::EffectRuntime {
+            particles: &mut f.particles,
+            effects: &mut f.effects,
+            banks: &banks,
+        };
+        if results_emblem::confetti_due(r) {
+            for (pos, is_genlink_mask) in results_emblem::CONFETTI {
+                rt.effects.confetti(rt.particles, rt.banks, pos, is_genlink_mask);
+            }
+        }
+        rt.run();
+    }
+    // `mnVSResultsEmblemProcUpdate`.
+    if let Some(e) = f.emblem.as_mut() {
+        e.state.update(r);
+    }
     if r.fighters_due() {
         f.scene.init_fighters_all(r, entrants);
         for (slot, fighter) in f.models.iter_mut().zip(f.scene.fighters) {
@@ -123,15 +206,72 @@ pub unsafe fn draw_all(
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
     r: &Results,
-    f: &Fighters,
+    f: &mut Fighters,
     players: &[Option<Player>; 4],
 ) {
-    f.layer.visit(r, players, |d| match d {
+    let Fighters {
+        layer,
+        models,
+        emblem,
+        particles,
+        ..
+    } = f;
+    layer.visit(r, players, |d| match d {
         Draw::Wallpaper { prim, env } => draw_wallpaper(p, draw_state, prim, env),
         Draw::Fill { rect, color } => meshdraw::fill_rect_n64(rect, color, draw_state),
         Draw::Sprite(piece) => draw_piece(p, draw_state, &piece),
-        Draw::Fighters => draw(gpu, p, draw_state, f),
+        Draw::Emblem => draw_emblem(gpu, p, draw_state, emblem.as_ref()),
+        Draw::Fighters => draw(gpu, p, draw_state, models, particles),
     });
+}
+
+/// `mnVSResultsMakeEmblemCamera`'s camera over the emblem: its root at
+/// `translate`, scaled by `scale` in x and y, lit by the scene's fighter
+/// light in the colours its material scripts hold (RE-420).
+#[inline(never)]
+unsafe fn draw_emblem(gpu: &mut Gpu, p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, emblem: Option<&Emblem>) {
+    let Some((e, (object, mats))) = emblem.and_then(|e| Some((&e.state, e.model.as_ref()?))) else {
+        return;
+    };
+    let cam = &results_emblem::CAMERA;
+    gpu.set_viewport_n64(cam.viewport);
+    gpu.set_perspective(cam.fovy, cam.aspect, cam.near, cam.far);
+    gpu.reset_modelview();
+    draw_state.begin_frame();
+    gpu.set_view(&ssb_engine::math::Mat4::look_at(cam.eye, cam.at, cam.up));
+    let t = e.translate;
+    let k = meshdraw::MODEL_SCALE;
+    gpu.model_transform_xyz([t.x, t.y, t.z], [0.0; 3], [e.scale * k, e.scale * k, k]);
+    let base = gpu.model_matrix();
+    let posed = rooted_rest_pose(p, object);
+    draw_state.configure_fighter_light(results_scene::LIGHT_ANGLE);
+    meshdraw::draw_object_posed(p, object, &base, &posed[..object.node_count as usize], None, draw_state, None, Some(mats), 0);
+    draw_state.finish_fighter_light();
+    gpu.set_viewport_fullscreen();
+}
+
+/// Every node's rest transform below a root the caller places: the root
+/// is the identity (`mnVSResultsMakeEmblem` sets its translation and
+/// scale), each child its parent's matrix times its own rest transform.
+fn rooted_rest_pose(p: &Pack<'_>, object: &ssb_rom::pack::ObjectDesc) -> [ssb_rom::scene::Mat4; 8] {
+    use ssb_rom::scene::Mat4;
+    let mut posed = [Mat4::IDENTITY; 8];
+    for n in 1..(object.node_count as usize).min(posed.len()) {
+        let Some(node) = p.node(object.first_node + n as u32) else {
+            continue;
+        };
+        let local = Mat4::from_trs(
+            node.rest_translate.map(|x| x / meshdraw::MODEL_SCALE),
+            node.rest_rotate,
+            node.rest_scale,
+        );
+        let parent = node
+            .parent
+            .checked_sub(object.first_node)
+            .map_or(0, |i| (i as usize).min(n - 1));
+        posed[n] = posed[parent].mul(&local);
+    }
+    posed
 }
 
 /// `mnVSResultsWallpaperProcDisplay`'s `(PRIM - ENV) * TEXEL0 + ENV` over
@@ -209,14 +349,20 @@ unsafe fn draw_piece(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, piece: 
 /// model as it stands: `ftMainSetStatus` detaches `TransN` from the
 /// hierarchy, and no demo status moves the fighter by it.
 #[inline(never)]
-unsafe fn draw(gpu: &mut Gpu, p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, f: &Fighters) {
+unsafe fn draw(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    models: &[Option<Box<Model>>; 4],
+    particles: &mut ssb_game::particle::Particles,
+) {
     let cam = &results_scene::CAMERA;
     gpu.set_viewport_n64(cam.viewport);
     gpu.set_perspective(cam.fovy, cam.aspect, cam.near, cam.far);
     gpu.reset_modelview();
     draw_state.begin_frame();
     gpu.set_view(&ssb_engine::math::Mat4::look_at(cam.eye, cam.at, cam.up));
-    for m in f.models.iter().flatten() {
+    for m in models.iter().flatten() {
         let Some(obj) = p.object(m.object) else {
             continue;
         };
@@ -243,5 +389,41 @@ unsafe fn draw(gpu: &mut Gpu, p: &Pack<'_>, draw_state: &mut meshdraw::DrawState
         );
         draw_state.finish_fighter_light();
     }
+    // DL links 10, 15 and 18 of the same camera: particle list 4
+    // (`efDisplayZPerspAAXLUProcDisplay`, depth-tested against the
+    // fighters), 1, then 0 and 2. No results camera draws link 25's list 3.
+    if let Some(banks) = ssb_psp_runtime::particles::PackBanks::new(p) {
+        let view = ssb_engine::math::Mat4::look_at(cam.eye, cam.at, cam.up);
+        let proj = ssb_engine::math::Mat4::perspective(cam.fovy.to_radians(), cam.aspect, cam.near, cam.far);
+        let camera = ssb_psp_runtime::particles::Camera {
+            view: &view,
+            proj: &proj,
+            planes: (cam.near, cam.far),
+            ge_planes: (cam.near, cam.far),
+            rect: n64_rect(cam.viewport),
+        };
+        ssb_psp_runtime::particles::draw_lists(
+            &banks,
+            particles,
+            &camera,
+            &RESULTS_PARTICLE_LISTS,
+            ssb_psp_runtime::particles::DEPTH_TESTED,
+            draw_state,
+        );
+    }
     gpu.set_viewport_fullscreen();
+}
+
+/// The lists `mnVSResultsMakeFighterCamera`'s DL links draw, in link
+/// order: 4 (link 10), 1 (15), 0 and 2 (18).
+const RESULTS_PARTICLE_LISTS: [usize; 4] = [4, 1, 0, 2];
+
+/// A camera's N64 viewport on the PSP screen as `[x, y, w, h]`, as
+/// `Gpu::set_viewport_n64` places it.
+fn n64_rect([ulx, uly, lrx, lry]: [f32; 4]) -> [f32; 4] {
+    let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let (nw, nh) = ssb_engine::coord::N64_SCREEN;
+    let kx = vw as f32 / nw as f32;
+    let ky = vh as f32 / nh as f32;
+    [vx as f32 + ulx * kx, uly * ky, (lrx - ulx) * kx, (lry - uly) * ky]
 }

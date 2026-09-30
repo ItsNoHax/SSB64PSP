@@ -1585,9 +1585,11 @@ pub struct Projected {
 }
 
 /// The original battle camera's `near` and `far` (`dGMCameraPerspDefault`),
-/// for the draw's depth cull.
-pub const CULL_NEAR: f32 = 256.0;
-pub const CULL_FAR: f32 = 39936.0;
+/// for the draw's depth cull in a battle.
+pub const CULL_NEAR: f32 = crate::camera::DEFAULT_NEAR;
+pub const CULL_FAR: f32 = crate::camera::DEFAULT_FAR;
+/// [`CULL_NEAR`] and [`CULL_FAR`].
+pub const BATTLE_PLANES: (f32, f32) = (CULL_NEAR, CULL_FAR);
 
 /// Projects one particle as `lbParticleDrawTextures` does: its position
 /// through its transform's matrix, `view` and `proj`, the half extents
@@ -1595,13 +1597,14 @@ pub const CULL_FAR: f32 = 39936.0;
 /// (the gradients of clip x and y).
 ///
 /// The source culls a point outside `[-1, 1]` in x or y, or outside
-/// `[0, 1]` in its own depth range; the depth test uses the original
-/// camera's planes ([`CULL_NEAR`], [`CULL_FAR`]).
+/// `[0, 1]` in its own depth range; the depth test uses the current
+/// camera's `near` and `far` (`planes`): [`BATTLE_PLANES`] in a battle.
 pub fn project(
     pc: &Particle,
     xf: Option<&Transform>,
     view: &Mat4,
     proj: &Mat4,
+    planes: (f32, f32),
 ) -> Option<Projected> {
     if pc.size == 0.0 {
         return None;
@@ -1624,7 +1627,7 @@ pub fn project(
     let tm = 1.0 / cw;
     let (tx, ty) = (cx * tm, cy * tm);
     // N64 depth `((f + n) d - 2 f n) / ((f - n) d)` in `[0, 1]`.
-    let (n, f) = (CULL_NEAR, CULL_FAR);
+    let (n, f) = planes;
     let tz = if depth != 0.0 {
         ((f + n) * depth - 2.0 * f * n) / ((f - n) * depth)
     } else {

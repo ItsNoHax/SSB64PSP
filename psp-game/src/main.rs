@@ -57,6 +57,13 @@ const VS_RESULTS_CAPTURE_TICK: u64 = 1100;
 /// Land's bottom blast line (`ftCommonDeadDownSetStatus`), logged from a
 /// capture build (RE-412).
 const REBIRTH_KO_TICK: u64 = 160;
+/// `starko`'s tick: Mario, settled on Dream Land's floor, is put in
+/// `DeadUpStar` (`ftCommonDeadUpStarSetStatus`) as a top-out picks it,
+/// without the random draw between the star and the fall (RE-420).
+const STAR_KO_TICK: u64 = 60;
+/// `vsresultsemblem`'s capture tick: results tic 100. A capture build's
+/// results log shows tic 0 before tick 643's update (RE-420).
+const VS_RESULTS_EMBLEM_CAPTURE_TICK: u64 = 742;
 /// `vsshield`'s capture tick (RE-418). A capture build's per-tick log shows
 /// the CPU's Mario Tornado setting the player's shield off
 /// (`ftCommonGuardSetOffSetStatus`) in tick 684's update, the only update
@@ -156,6 +163,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // The KO below Dream Land is at tick REBIRTH_KO_TICK; a few ticks
         // on, the blast and the screen flash are up.
         GameScene::RebirthBlast => REBIRTH_KO_TICK + 8,
+        // 150 ticks into the flight: some 12,400 units behind the floor,
+        // past the old 10,000-unit far plane (RE-420).
+        GameScene::StarKo => STAR_KO_TICK + 150,
         // The battle's first frame is tick 8; "3" shows at tick 128 and
         // "Go" at 398.
         GameScene::Vs => 300,
@@ -193,6 +203,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // one-stock battle ends. The results make the fighters 120 tics
         // in; this is past the end of Kirby's Win clip.
         GameScene::VsResults => VS_RESULTS_CAPTURE_TICK,
+        // Results tic 100: the emblem has shrunk and risen for 61 tics; the
+        // text and confetti come at 120 (RE-420).
+        GameScene::VsResultsEmblem => VS_RESULTS_EMBLEM_CAPTURE_TICK,
         GameScene::PikachuThunder => 92,
         GameScene::KirbyHat => 260,
         GameScene::YoshiEgg => 360,
@@ -349,6 +362,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::Vs4
             | GameScene::VsTeam
             | GameScene::VsResults
+            | GameScene::VsResultsEmblem
             | GameScene::VsShield
     ) {
         return match tick {
@@ -379,7 +393,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
-    if matches!(scene, GameScene::Rebirth | GameScene::RebirthBlast) {
+    if matches!(scene, GameScene::Rebirth | GameScene::RebirthBlast | GameScene::StarKo) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
             _ => N64Buttons(0),
@@ -571,7 +585,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
         return 0;
     }
     // `vsresults`: held left from "Go", the player runs off the stage.
-    if scene == GameScene::VsResults {
+    if matches!(scene, GameScene::VsResults | GameScene::VsResultsEmblem) {
         return if (398..=520).contains(&tick) { -80 } else { 0 };
     }
     if matches!(scene, GameScene::Grab | GameScene::Jab | GameScene::KirbyHat) {
@@ -649,6 +663,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::Vs4
             | GameScene::VsTeam
             | GameScene::VsResults
+            | GameScene::VsResultsEmblem
             | GameScene::VsShield
     ) {
         return if tick == 6 { -80 } else { 0 };
@@ -711,6 +726,24 @@ const JUMP_BUTTON_MASK: u16 =
 /// already converted the nub and neither this screen nor gameplay knows PSP
 /// button identities.
 const MENU_STICK_NAV_MIN: i8 = 40;
+
+/// The capture log's results line: the tick and the results tic before
+/// this frame's (RE-420).
+#[cfg(feature = "headless_capture")]
+#[inline(never)]
+fn log_results_tic(sim_frame_index: u64, r: Option<&ssb_game::results::Results>) {
+    let Some(r) = r else {
+        return;
+    };
+    let line = alloc::format!("results tick={} tic={}\n", sim_frame_index, r.total_tics);
+    unsafe {
+        psp::sys::sceIoWrite(
+            psp::sys::sceKernelStdout(),
+            line.as_ptr() as *const core::ffi::c_void,
+            line.len(),
+        );
+    }
+}
 
 /// The capture log's state lines (RE-351): whether a scripted attack landed
 /// and which weapons, items and statuses a scene reached is not always
@@ -1586,7 +1619,11 @@ fn capture_cpu_behavior(scene: GameScene) -> Option<ssb_game::computer::Behavior
         // A time-up tie needs a CPU that never lands a hit.
         // A time-up tie needs a CPU that never lands a hit; `vsresults` a
         // winner that lets the player fall.
-        GameScene::VsTimeUp | GameScene::VsTimeUpSign | GameScene::VsSuddenDeath | GameScene::VsResults => {
+        GameScene::VsTimeUp
+        | GameScene::VsTimeUpSign
+        | GameScene::VsSuddenDeath
+        | GameScene::VsResults
+        | GameScene::VsResultsEmblem => {
             Some(ssb_game::computer::Behavior::Stand)
         }
         _ => None,
@@ -1673,7 +1710,7 @@ fn vs_rules(scene: GameScene) -> VsRules {
             ..VsRules::DEFAULT
         },
         // One stock (`stock_setting` 0).
-        GameScene::VsResults => VsRules {
+        GameScene::VsResults | GameScene::VsResultsEmblem => VsRules {
             rule: ssb_game::battle::Rule::Stock,
             stocks: 0,
             ..VsRules::DEFAULT
@@ -2104,7 +2141,7 @@ unsafe fn draw_results(
     pack: Option<&Pack<'_>>,
     draw_state: &mut meshdraw::DrawState,
     results: Option<&ssb_game::results::Results>,
-    fighters: Option<&results_screen::Fighters>,
+    fighters: Option<&mut results_screen::Fighters>,
     roster: &Roster,
 ) {
     gpu.set_viewport_fullscreen();
@@ -2128,10 +2165,13 @@ unsafe fn draw_results(
 /// for branch range.
 #[inline(never)]
 fn make_results(
+    pack: Option<&Pack<'_>>,
     b: &ssb_game::battle::Battle,
+    roster: &Roster,
 ) -> (ssb_game::results::Results, alloc::boxed::Box<results_screen::Fighters>) {
     let r = ssb_game::results::Results::new(b);
-    let f = results_screen::start(&r);
+    let entrants = roster.map(|e| e.map(|e| (e.kind, e.costume)));
+    let f = results_screen::start(pack, &r, entrants);
     (r, f)
 }
 
@@ -2265,7 +2305,7 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
             [FighterKind::Mario, FighterKind::Kirby, FighterKind::Fox, FighterKind::Donkey],
             Some([0, 0, 1, 1]),
         ),
-        GameScene::VsResults => return vs_results_roster(),
+        GameScene::VsResults | GameScene::VsResultsEmblem => return vs_results_roster(),
         _ => return training_roster(training),
     };
     core::array::from_fn(|port| {
@@ -2490,7 +2530,7 @@ unsafe fn draw_frame(
                 pack.as_ref(),
                 draw_state,
                 s.vs_results.as_ref(),
-                s.vs_results_fighters.as_deref(),
+                s.vs_results_fighters.as_deref_mut(),
                 &s.roster,
             );
         }
@@ -2721,6 +2761,8 @@ unsafe fn session_frame(
             // `mnVSResultsCheckExit`: START after the wait, on to the
             // VS character select.
             Screen::Results => {
+                #[cfg(feature = "headless_capture")]
+                log_results_tic(sim_frame_index, s.vs_results.as_ref());
                 if results_frame(pack.as_ref(), &mut s.vs_results, &mut s.vs_results_fighters, &s.roster, pressed) {
                     s.vs_results_fighters = None;
                     s.play_state = None;
@@ -2734,6 +2776,11 @@ unsafe fn session_frame(
         }
 
         let mut vs_done = false;
+        if capture_scene == Some(GameScene::StarKo) && sim_frame_index == STAR_KO_TICK {
+            if let Some(pl) = s.play_state.as_mut() {
+                ssb_game::dead::set_dead_up_star(&mut pl.fighter);
+            }
+        }
         if let (Screen::Training, Some(p), Some(pl)) = (s.screen, &pack, s.play_state.as_mut()) {
             vs_done = training_frame(
                 p,
@@ -2782,7 +2829,11 @@ unsafe fn session_frame(
                 Some(index) => s.training_stage = index,
                 // A reset from the pause menu is a no contest.
                 None => {
-                    let (results, fighters) = s.vs_battle.as_ref().map(make_results).unzip();
+                    let (results, fighters) = s
+                        .vs_battle
+                        .as_ref()
+                        .map(|b| make_results(pack.as_ref(), b, &s.roster))
+                        .unzip();
                     s.vs_results = results;
                     s.vs_results_fighters = fighters;
                     s.screen = Screen::Results;
@@ -4275,8 +4326,8 @@ impl EffectVisuals {
 /// The halo's root is matrix kind 0x50 (`func_ovl0_800C99CC`), a
 /// translation to TopN's world position, and
 /// `efManagerRebirthHaloMakeEffect` scales its child by the fighter's
-/// `halo_size`. Its rays are left out
-/// (`ssb_psp_runtime::scene::REBIRTH_HALO_RAYS_NODE`). The blast's root takes the clamped death point and its
+/// `halo_size`. Its rays (DLLink 1) draw blended, their colour the primitive
+/// and their alpha the texture's (RE-420). The blast's root takes the clamped death point and its
 /// `rotate.z` by `ExplodeKind`; its first and third DObjs take the player's
 /// ENV colours, and all three the player's material scripts.
 #[inline(never)]
@@ -4308,9 +4359,8 @@ fn draw_ko_effects(
                 let top = f.joint_world(0, ssb_engine::math::Vec3::ZERO);
                 gpu.model_transform([top.x, top.y, top.z], [0.0; 3], meshdraw::MODEL_SCALE);
                 let base = gpu.model_matrix();
-                let rays = object.first_node + ssb_psp_runtime::scene::REBIRTH_HALO_RAYS_NODE;
                 unsafe {
-                    meshdraw::draw_object_posed_hiding(p, object, &base, &posed[..n], draw_state, None, &|g| g == rays);
+                    meshdraw::draw_object_posed(p, object, &base, &posed[..n], None, draw_state, None, None, 0);
                 }
             }
         }
@@ -4373,7 +4423,12 @@ fn draw_particles(p: &Pack<'_>, pl: &play::FighterScene, hud: &mut Hud, draw_sta
     };
     let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
     let view = ssb_engine::math::Mat4::look_at(pl.camera.eye, pl.camera.at, ssb_engine::math::Vec3::Y);
-    let proj = ssb_engine::math::Mat4::perspective(38f32.to_radians(), vw as f32 / vh as f32, 1.0, 10_000.0);
+    let proj = ssb_engine::math::Mat4::perspective(
+        ssb_game::camera::DEFAULT_FOVY_DEGREES.to_radians(),
+        vw as f32 / vh as f32,
+        ssb_game::camera::GE_NEAR,
+        ssb_game::camera::DEFAULT_FAR,
+    );
     unsafe {
         ssb_psp_runtime::particles::draw(&banks, &mut hud.particles, &view, &proj, draw_state);
     }
@@ -4704,10 +4759,15 @@ unsafe fn draw_training(
     let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
     // 38 degrees: the real battle camera's own default FOV
     // (`refs/ssb-decomp-re/src/gm/gmcamera.c:1191`, matching `psp-asset-viewer/main.rs`'s
-    // own sourced value). Far plane fixed rather than bounds-fitted like the
-    // debug viewer's `dbg_cam`: Training has one known stage, not an
-    // arbitrary archive entry to frame sight-unseen.
-    gpu.set_perspective(38.0, vw as f32 / vh as f32, 1.0, 10_000.0);
+    // own sourced value), with `dGMCameraPerspDefault`'s far plane
+    // (39,936), which keeps a star KO in view, and the port's near plane
+    // (`GE_NEAR`, RE-420).
+    gpu.set_perspective(
+        ssb_game::camera::DEFAULT_FOVY_DEGREES,
+        vw as f32 / vh as f32,
+        ssb_game::camera::GE_NEAR,
+        ssb_game::camera::DEFAULT_FAR,
+    );
     gpu.reset_modelview();
     draw_state.begin_frame();
 

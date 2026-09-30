@@ -201,7 +201,9 @@ fn the_wallpaper_fades_in_after_tic_80_in_the_winners_colour() {
             color: [0, 0, 0, 250]
         }
     );
-    assert_eq!(d[2], Draw::Fighters);
+    // The emblem's camera draws between the two fades' (RE-420).
+    assert_eq!(d[2], Draw::Emblem);
+    assert_eq!(d[3], Draw::Fighters);
     run_to(&mut r, &mut l, 130);
     assert_eq!(l.wallpaper_tint2_alpha, Some(0));
 }

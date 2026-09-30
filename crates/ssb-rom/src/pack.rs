@@ -295,7 +295,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `RedCardSprite` as two `SpriteDesc::ROLE_LUT` rows (`costume` 0 the
 // player's `GateMan1PLUT`, 1 the CPU's `GateCPLUT`) and file 18's
 // `TrainingModeTextSprite`. No layout change.
-pub const VERSION: u32 = 71;
+// 72 binds the series emblems' material animations (file 35's
+// `llFTEmblemModels*MatAnimJoint`, `effect::EMBLEMS`), so their prims carry
+// `LIGHT1_ANIM` and `LIGHT2_ANIM`, and keeps the texture of a flat-colour
+// prim whose blended alpha reads `TEXEL0` as a `TEXTURE_BLEND` from the
+// colour to itself (the rebirth halo's rays, RE-420). No layout change.
+pub const VERSION: u32 = 72;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
