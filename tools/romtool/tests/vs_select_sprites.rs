@@ -29,3 +29,22 @@ fn every_vs_select_sprite_is_packed() {
         )
     );
 }
+
+/// And every sprite `ssb_game::fighter_select::layer` adds for the
+/// Training select.
+#[test]
+fn every_training_select_sprite_is_packed() {
+    use ssb_game::fighter_select::layer as training;
+    for &(file, offset) in training::SPRITES {
+        assert!(packed(file, offset), "{file}+{offset:#x}");
+    }
+    let (file, offset, luts) = training::GATE_CARD;
+    assert_eq!(
+        (file, offset, usize::from(luts)),
+        (
+            ssb_rom::sprite::PLAYERS_1P_MODE_FILE,
+            ssb_rom::sprite::TRAINING_GATE_CARD,
+            ssb_rom::sprite::TRAINING_GATE_LUTS.len()
+        )
+    );
+}

@@ -197,6 +197,8 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `stageselectyoshi`) | `f1-training-stage-select-yoshi` | The same select moved down to Yoshi's Island: the yellow Training wallpaper, and the preview hiding the two cloud nodes `mnMapsMakeModel` hides | RE-419 |
 | `golden_capture` (`psp-game`, scene `vssector`) | `f1-vs-sector` | `vs`'s countdown on Sector Z: the wallpaper scaled about its centre by the camera's distance | RE-419 |
 | `golden_capture` (`psp-game`, scene `vsyoshi`) | `f1-vs-yoshi` | `vs`'s countdown on Yoshi's Island: the static wallpaper | RE-419 |
+| `golden_capture` (`psp-game`, scene `trainingselect`) | `f1-training-select` | The Training character select at its tick 60: the stone, "Training Mode", BACK, the portraits with the four locked shadows, the red and grey cards, the hand on the player's card, and the CPU's Mario turning on his card under his name, emblem and puck | — |
+| `golden_capture` (`psp-game`, scene `trainingselectpicked`) | `f1-training-select-picked` | The same select after Kirby is placed in his C-Down (cyan) costume and the CPU's puck is picked up and placed again in Mario's C-Right costume: both fighters in their Win3 clips, the "Ready to fight" banner and "Press Start" | — |
 | `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center, and the red player-1 shield bubble around him | RE-367, RE-369, RE-384 |
 
 Stage sweep example:
@@ -766,3 +768,15 @@ and `f1-vs-yoshi`. A build without the wallpaper draw or the preview's
 hidden nodes changed 49 of the 54 `psp-game` goldens (the Yoshi's Island
 select by the 320 pixels of an unhidden cloud). The four menu scenes and
 the 69 viewer goldens are unchanged. 123 of 123 match twice.
+
+## 2026-09-30 Training character select
+
+Pack v71, 34,423,136 bytes (SHA-256 `daefb176…`), adds the Training
+select's card (file 23, through its two LUTs) and "Training Mode". Two
+goldens are new, identical in both captures: `f1-training-select` and
+`f1-training-select-picked`. A build that drew the old plain slots changed
+every pixel of both (522,240 at 2×); one without the CPU's
+`nGMColAnimFighterComPlayer` blend changed 3,148 and 3,016, the CPU
+fighter's. `f1-training-fighter-select` goes through the select but is
+captured in battle, so it is unchanged, as are the other 122. 125 of 125
+match twice, in two runs.

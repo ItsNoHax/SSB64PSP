@@ -322,10 +322,11 @@ pub const VS_RESULTS: SpriteFile = SpriteFile {
 };
 
 /// File 18, `MNPlayersGameModes` (`dMNVSResultsFileIDs[2]`):
-/// `FreeForAllTextSprite` and `TeamBattleTextSprite` (RE-410).
+/// `FreeForAllTextSprite` and `TeamBattleTextSprite` (RE-410), then
+/// `TrainingModeTextSprite` (`mnPlayers1PTrainingMakeLabels`).
 pub const GAME_MODES: SpriteFile = SpriteFile {
     file: 18,
-    offsets: &[0x280, 0x4E0],
+    offsets: &[0x280, 0x4E0, 0x758],
 };
 
 /// File 36, `IFCommonDigits` (`dMNVSResultsFileIDs[5]`): `Digits0Sprite`
@@ -376,6 +377,18 @@ pub const GATE_CARD: u32 = 0x104B0;
 pub const GATE_LUTS: [u32; 8] = [
     0x103F8, 0x10420, 0x10470, 0x10448, 0x11378, 0x113A0, 0x113F0, 0x113C8,
 ];
+
+/// File 23, `MNPlayers1PMode` (`dMNPlayers1PTrainingFileIDs[1]`):
+/// `RedCardSprite`, the Training select's panel (`mnPlayers1PTrainingMakeGate`,
+/// ). It is 82 x 91 CI4, wider than [`GATE_CARD`].
+pub const PLAYERS_1P_MODE_FILE: u32 = 23;
+pub const TRAINING_GATE_CARD: u32 = 0x32A8;
+
+/// The TLUTs `mnPlayers1PTrainingSetGateLUT` swaps into
+/// [`TRAINING_GATE_CARD`], as `(file, offset)`: the player's
+/// `MNPlayersCommon` `GateMan1PLUT` (the man is port 0), then
+/// `MNPlayers1PMode`'s `GateCPLUT`.
+pub const TRAINING_GATE_LUTS: [(u32, u32); 2] = [(17, 0x103F8), (23, 0x3238)];
 
 /// File 0, `MNCommon` (`dMNPlayersVSFileIDs[1]`): `Digit0Sprite` to
 /// `Digit9Sprite`, then `ColonSprite` (RE-411).
@@ -472,6 +485,21 @@ pub fn decode_gate(file: &File, lut: usize) -> Result<Sprite, SpriteError> {
     let at = GATE_LUTS[lut] as usize;
     let bytes = file.data.get(at..at + 32).ok_or(SpriteError::Truncated)?;
     decode_with_tlut(file, GATE_CARD, &texture::parse_tlut(bytes))
+}
+
+/// [`TRAINING_GATE_CARD`] of `card` (file 23) decoded through
+/// `TRAINING_GATE_LUTS[lut]`, read from `lut_file`.
+pub fn decode_training_gate(
+    card: &File,
+    lut_file: &File,
+    lut: usize,
+) -> Result<Sprite, SpriteError> {
+    let at = TRAINING_GATE_LUTS[lut].1 as usize;
+    let bytes = lut_file
+        .data
+        .get(at..at + 32)
+        .ok_or(SpriteError::Truncated)?;
+    decode_with_tlut(card, TRAINING_GATE_CARD, &texture::parse_tlut(bytes))
 }
 
 /// Decodes every sprite of `f`.
@@ -660,6 +688,40 @@ mod tests {
         assert!(g > 2 * r, "4P green");
         let [r, g, _] = mean(4);
         assert!(r > g && r - g < 40, "the CPU's red is pale");
+
+        // The Training select's own card: wider, red for the
+        // player through `GateMan1PLUT`, grey for the CPU through
+        // `MNPlayers1PMode`'s `GateCPLUT`.
+        let card = archive.load(PLAYERS_1P_MODE_FILE).unwrap();
+        let lut_file = |lut: usize| archive.load(TRAINING_GATE_LUTS[lut].0).unwrap();
+        let mean = |lut: usize| {
+            let s = decode_training_gate(&card, &lut_file(lut), lut).unwrap();
+            assert_eq!((s.width, s.height), (82, 91));
+            assert_eq!((s.format, s.size), (Format::Ci, BitSize::Bits4));
+            let opaque: Vec<_> = s
+                .image
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| p[3] > 0)
+                .copied()
+                .collect();
+            let n = opaque.len() as u32;
+            [0, 1, 2].map(|i| opaque.iter().map(|p| u32::from(p[i])).sum::<u32>() / n)
+        };
+        let [r, g, b] = mean(0);
+        assert!(r > 2 * g && r > 2 * b, "the player's card is red");
+        let [r, g, b] = mean(1);
+        assert!(
+            r.abs_diff(g) < 8 && g.abs_diff(b) < 8 && r > 0x60,
+            "the CPU's is grey"
+        );
+        assert_eq!(
+            formats(&GAME_MODES)[2],
+            (88, 11, Format::I, BitSize::Bits4),
+            "TrainingModeText"
+        );
     }
 
     #[test]

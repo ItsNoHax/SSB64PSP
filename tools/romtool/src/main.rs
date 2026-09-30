@@ -4583,6 +4583,33 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         ));
         sprites += 1;
     }
+    // The Training select's card once per `mnPlayers1PTrainingSetGateLUT`
+    // TLUT: the player's red, the CPU's grey.
+    let card_file = loaded
+        .files
+        .get(ssb_rom::sprite::PLAYERS_1P_MODE_FILE as usize)
+        .and_then(Option::as_ref)
+        .ok_or("sprite file 23 missing")?;
+    for (lut, &(lut_file, _)) in ssb_rom::sprite::TRAINING_GATE_LUTS.iter().enumerate() {
+        let lut_file = loaded
+            .files
+            .get(lut_file as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("sprite file {lut_file} missing"))?;
+        let s = ssb_rom::sprite::decode_training_gate(card_file, lut_file, lut)
+            .map_err(|e| format!("training gate card {lut}: {e:?}"))?;
+        let texture = add_sprite_texture(&mut writer, &s, swizzle);
+        writer.add_sprite(sprite_desc(
+            ssb_rom::sprite::PLAYERS_1P_MODE_FILE,
+            ssb_rom::sprite::TRAINING_GATE_CARD,
+            &s,
+            texture,
+            0,
+            ssb_rom::pack::SpriteDesc::ROLE_LUT,
+            lut as u8,
+        ));
+        sprites += 1;
+    }
     // The wallpapers (RE-419): each VS stage's `MPGroundData.wallpaper`,
     // keyed by its `GRKind`, then Training's three. They are 300 x 220
     // RGBA16, so 5551 keeps every texel exact at half 8888's size.

@@ -291,7 +291,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // as a `SpriteDesc::ROLE_WALLPAPER` row whose `costume` is its `GRKind`,
 // Training's three (`sprite::TRAINING_WALLPAPER_FILES`), all in 5551, and
 // the stage select's file 30 sprites. No layout change.
-pub const VERSION: u32 = 70;
+// 71 adds the Training character select's sprites: file 23's
+// `RedCardSprite` as two `SpriteDesc::ROLE_LUT` rows (`costume` 0 the
+// player's `GateMan1PLUT`, 1 the CPU's `GateCPLUT`) and file 18's
+// `TrainingModeTextSprite`. No layout change.
+pub const VERSION: u32 = 71;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1234,7 +1238,8 @@ impl SpriteDesc {
     /// `FTSprites.stock_sprite` through `stock_luts[costume]`.
     pub const ROLE_STOCK: u8 = 2;
     /// A sprite decoded through a swapped TLUT, `costume` naming which:
-    /// the VS gate card through `sprite::GATE_LUTS[costume]` (RE-411).
+    /// the VS gate card through `sprite::GATE_LUTS[costume]` (RE-411), the
+    /// Training one through `sprite::TRAINING_GATE_LUTS[costume]`.
     pub const ROLE_LUT: u8 = 3;
     /// A VS stage's `MPGroundData.wallpaper`, `costume` naming its
     /// `GRKind` (RE-419).

@@ -206,6 +206,13 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // preview camera has bobbed and the model played 36 ticks.
         GameScene::StageSelectView | GameScene::StageSelectYoshi => 60,
         GameScene::VsSector | GameScene::VsYoshi => 300,
+        // The select opens at tick 8; at its tick 60 the portraits are in
+        // and the CPU's puck shows.
+        GameScene::TrainingSelect => 68,
+        // The CPU's puck is placed again at tick 80; the banner shows 15 of
+        // every 20 ticks from there, and by 110 Mario has turned back to
+        // the front and plays his Win3 clip.
+        GameScene::TrainingSelectPicked => 110,
     }
 }
 
@@ -301,6 +308,26 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         return match tick {
             4 | 8 | 32 | 115 => N64Buttons(N64Buttons::A),
             72 => N64Buttons(N64Buttons::START),
+            _ => N64Buttons(0),
+        };
+    }
+    // `trainingselect` only opens the select. In
+    // `trainingselectpicked` the stick carries the held puck onto Kirby as
+    // in `fighterselect` and C-Down at 32 places it in his third costume;
+    // the cursor then moves onto the CPU's puck on Mario, A at 66 (past the
+    // 30-tick grab wait) grabs it and C-Right at 80 places it back in
+    // Mario's second costume.
+    if scene == GameScene::TrainingSelect {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            _ => N64Buttons(0),
+        };
+    }
+    if scene == GameScene::TrainingSelectPicked {
+        return match tick {
+            4 | 8 | 66 => N64Buttons(N64Buttons::A),
+            32 => N64Buttons(N64Buttons::C_DOWN),
+            80 => N64Buttons(N64Buttons::C_RIGHT),
             _ => N64Buttons(0),
         };
     }
@@ -505,6 +532,17 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if scene == GameScene::FighterSelect {
         return if (12..=22).contains(&tick) { 80 } else { 0 };
     }
+    // Then 44 back left to x 70, over the CPU's puck.
+    if scene == GameScene::TrainingSelect {
+        return 0;
+    }
+    if scene == GameScene::TrainingSelectPicked {
+        return match tick {
+            12..=22 => 80,
+            36..=46 => -80,
+            _ => 0,
+        };
+    }
     if scene == GameScene::Shield {
         return if (50..=60).contains(&tick) { 40 } else { 0 };
     }
@@ -619,6 +657,17 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
     // 102: the held puck's centre lands on Kirby's portrait.
     if scene == GameScene::FighterSelect {
         return if (12..=28).contains(&tick) { 80 } else { 0 };
+    }
+    // Then 48 up to y 54, onto the CPU's puck on Mario.
+    if scene == GameScene::TrainingSelect {
+        return 0;
+    }
+    if scene == GameScene::TrainingSelectPicked {
+        return match tick {
+            12..=28 => 80,
+            36..=47 => 80,
+            _ => 0,
+        };
     }
     if scene == GameScene::Shield && (50..=60).contains(&tick) {
         40
@@ -1488,7 +1537,11 @@ fn capture_route(scene: GameScene) -> CaptureRoute {
         GameScene::StageSelect | GameScene::StageSelectView | GameScene::StageSelectYoshi => {
             CaptureRoute::StageSelect
         }
-        GameScene::FighterSelect | GameScene::VsModeMenu | GameScene::VsPlayers => CaptureRoute::Selects,
+        GameScene::FighterSelect
+        | GameScene::VsModeMenu
+        | GameScene::VsPlayers
+        | GameScene::TrainingSelect
+        | GameScene::TrainingSelectPicked => CaptureRoute::Selects,
         _ => CaptureRoute::Direct,
     }
 }
@@ -2404,13 +2457,13 @@ unsafe fn draw_frame(
             gpu.begin_frame(Some(BG_MENU));
             draw_vs_mode(gpu, &s.vs_mode);
         }
-        Screen::FighterSelect => {
-            gpu.set_viewport_fullscreen();
-            gpu.begin_frame(Some(BG_MENU));
-            if let Some(select) = s.fighter_select.as_ref() {
-                draw_fighter_select(gpu, select);
-            }
-        }
+        Screen::FighterSelect => draw_training_select(
+            gpu,
+            pack.as_ref(),
+            draw_state,
+            s.fighter_select.as_ref(),
+            s.fighter_select_fighters.as_deref(),
+        ),
         Screen::PlayersVs => draw_players_vs(
             gpu,
             pack.as_ref(),
@@ -2557,6 +2610,7 @@ unsafe fn session_frame(
                     } else {
                         s.fighter_select =
                             Some(new_fighter_select(s.training_scene, capture_scene.is_some(), sim_frame_index));
+                        s.fighter_select_fighters = None;
                         s.screen = Screen::FighterSelect;
                     }
                 }
@@ -2586,7 +2640,7 @@ unsafe fn session_frame(
             }
             Screen::FighterSelect => {
                 use ssb_game::fighter_select::Outcome;
-                match s.fighter_select.as_mut().and_then(|s| s.tick(controller, pressed)) {
+                match fighter_select_frame(s, pack.as_ref(), controller, pressed) {
                     Some(Outcome::Proceed(data)) => {
                         s.training_scene = data;
                         // `mnMapsInitVars`: the s.cursor starts on the
@@ -2644,6 +2698,7 @@ unsafe fn session_frame(
                             FIGHTER_MASK,
                             clock_byte,
                         ));
+                        s.fighter_select_fighters = None;
                         s.screen = Screen::FighterSelect;
                     }
                 }
@@ -2767,6 +2822,8 @@ struct Session {
     vs_results_fighters: Option<alloc::boxed::Box<results_screen::Fighters>>,
     vs_mode: ssb_game::vs_mode::VsMode,
     fighter_select: Option<ssb_game::fighter_select::FighterSelect>,
+    /// The Training select's fighter poses, on the heap.
+    fighter_select_fighters: Option<alloc::boxed::Box<players_screen::Fighters>>,
     /// `gSCManagerTransferBattleState` between the VS menus.
     vs_state: ssb_game::players_vs::BattleState,
     players_vs: Option<ssb_game::players_vs::PlayersVs>,
@@ -2901,6 +2958,7 @@ unsafe fn run() -> ! {
         vs_results_fighters: None,
         vs_mode: ssb_game::vs_mode::VsMode::new(ssb_game::vs_mode::VsRule::Time, 3, 2, false),
         fighter_select: None,
+        fighter_select_fighters: None,
         vs_state: ssb_game::players_vs::BattleState::default(),
         players_vs: None,
         players_vs_fighters: None,
@@ -3044,6 +3102,53 @@ fn draw_menu(gpu: &mut Gpu, cursor: usize) {
             ENTRY_DISABLED
         };
         gpu.draw_rect(LEFT, y0, LEFT + ENTRY_WIDTH, y0 + ENTRY_HEIGHT, color);
+    }
+}
+
+/// One frame of `mnPlayers1PTraining`: the select's tick, then its
+/// fighters'. Out of [`run`] for branch range.
+#[inline(never)]
+fn fighter_select_frame(
+    s: &mut Session,
+    pack: Option<&Pack<'_>>,
+    controller: ControllerState,
+    pressed: N64Buttons,
+) -> Option<ssb_game::fighter_select::Outcome> {
+    let select = s.fighter_select.as_mut()?;
+    let outcome = select.tick(controller, pressed);
+    let fighters = s.fighter_select_fighters.get_or_insert_with(players_screen::start);
+    players_screen::tick_training(pack, select, fighters);
+    outcome
+}
+
+/// `mnPlayers1PTraining`'s frame over the black of
+/// `mnPlayers1PTrainingFuncStart`'s default camera:
+/// `players_screen` draws the select's sprites and fighters. Without a
+/// pack it falls back to plain slots.
+#[inline(never)]
+unsafe fn draw_training_select(
+    gpu: &mut Gpu,
+    pack: Option<&Pack<'_>>,
+    draw_state: &mut meshdraw::DrawState,
+    select: Option<&ssb_game::fighter_select::FighterSelect>,
+    fighters: Option<&players_screen::Fighters>,
+) {
+    gpu.set_viewport_fullscreen();
+    let Some(select) = select else {
+        gpu.begin_frame(Some(BG_MENU));
+        return;
+    };
+    match pack {
+        // The fighters' poses are made on the select's first tick; a draw
+        // before it shows none.
+        Some(p) => {
+            gpu.begin_frame(Some(BG_RESULTS));
+            players_screen::draw_training(gpu, p, draw_state, select, fighters);
+        }
+        None => {
+            gpu.begin_frame(Some(BG_MENU));
+            draw_fighter_select(gpu, select);
+        }
     }
 }
 
@@ -3296,9 +3401,8 @@ fn draw_vs_mode(gpu: &mut Gpu, m: &ssb_game::vs_mode::VsMode) {
 }
 
 /// Draws the character select in N64 screen coordinates scaled onto the
-/// PSP screen: the portrait grid (locked portraits dimmed, a placed
-/// fighter's portrait lit), the pucks and the cursor. The portraits,
-/// models and names are not drawn.
+/// PSP screen, for a run with no pack: the portrait grid (locked portraits
+/// dimmed, a placed fighter's portrait lit), the pucks and the cursor.
 #[inline(never)]
 fn draw_fighter_select(gpu: &mut Gpu, select: &ssb_game::fighter_select::FighterSelect) {
     use ssb_game::fighter_select as fs;

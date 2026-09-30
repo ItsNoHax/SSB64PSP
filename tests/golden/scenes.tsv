@@ -136,3 +136,5 @@ f1-training-stage-select-view	psp-game	stageselectview	pass	RE-419
 f1-training-stage-select-yoshi	psp-game	stageselectyoshi	pass	RE-419
 f1-vs-sector	psp-game	vssector	pass	RE-419
 f1-vs-yoshi	psp-game	vsyoshi	pass	RE-419
+f1-training-select	psp-game	trainingselect	pass	
+f1-training-select-picked	psp-game	trainingselectpicked	pass	
