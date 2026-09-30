@@ -290,6 +290,30 @@ pub fn attack_id(s: K) -> Option<MotionAttackId> {
     })
 }
 
+/// `FTKIRBY_COPY_MODELPARTS_JOINT`: the joint whose model part the copy
+/// swaps.
+pub const COPY_MODELPARTS_JOINT: u8 = 6;
+
+/// `dKirbyMainMotion_0x0000[kind].copy_modelpart_id`
+/// (`llKirbyMainMotionSpecialNFTKirbyCopy`, `228_KirbyMainMotion.c`) for the
+/// twelve playable kinds: joint 6's part while Kirby holds that copy
+/// (RE-417). Kirby's own row is 0, his bare head.
+pub const COPY_MODELPART_IDS: [u8; 12] = [12, 7, 4, 8, 11, 10, 5, 9, 0, 6, 3, 13];
+
+/// The copy hat Kirby wears: `ftKirbySpecialNCopyInitCopyVars`'s
+/// `ftParamSetModelPartDefaultID(joint 6, copy[copy_id].copy_modelpart_id)`,
+/// which `ftKirbySpecialNLoseCopy` resets to 0. `None` for part 0 or another
+/// fighter.
+pub fn copy_hat(f: &Fighter) -> Option<u8> {
+    if f.kind != FighterKind::Kirby {
+        return None;
+    }
+    COPY_MODELPART_IDS
+        .get(f.kirby.copy_id as usize)
+        .copied()
+        .filter(|&part| part != 0)
+}
+
 /// `ftKirbySpecialNInitPassiveVars`: a new or lost copy starts clean.
 pub fn init_passive_vars(f: &mut Fighter) {
     match f.kirby.copy_id {
@@ -1286,6 +1310,22 @@ mod tests {
     use super::*;
     use crate::fighter::Situation;
     use ssb_engine::input::ControllerState;
+
+    /// The copy hat follows `copy_id` through `COPY_MODELPART_IDS`; Kirby's
+    /// own head and other fighters wear none (RE-417).
+    #[test]
+    fn the_copy_hat_is_the_copied_fighters_model_part() {
+        assert_eq!(copy_hat(&kirby(FighterKind::Mario, true)), Some(12));
+        assert_eq!(copy_hat(&kirby(FighterKind::Ness, true)), Some(13));
+        assert_eq!(copy_hat(&kirby(FighterKind::Kirby, true)), None);
+        let mut f = kirby(FighterKind::Pikachu, true);
+        assert_eq!(copy_hat(&f), Some(6));
+        crate::kirby::lose_copy(&mut f);
+        assert_eq!(copy_hat(&f), None);
+        let mut mario = Fighter::new(FighterKind::Mario, 0, 3);
+        mario.kirby.copy_id = FighterKind::Fox;
+        assert_eq!(copy_hat(&mario), None);
+    }
 
     fn kirby(copy: FighterKind, ground: bool) -> Fighter {
         let mut f = Fighter::new(FighterKind::Kirby, 0, 3);

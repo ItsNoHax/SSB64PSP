@@ -101,6 +101,15 @@ impl SceneDeps {
                     self.add_mesh(pack, mesh);
                 }
             }
+            // So can a model part (Kirby's copy hats, RE-417), in this
+            // costume or its costume 0.
+            for part in 1..crate::pack::MODELPART_COSTUMES {
+                let own = pack.costume_mesh(node, crate::pack::modelpart_costume(part, costume));
+                let first = || pack.costume_mesh(node, crate::pack::modelpart_costume(part, 0));
+                if let Some(mesh) = own.or_else(first) {
+                    self.add_mesh(pack, mesh);
+                }
+            }
         }
     }
 

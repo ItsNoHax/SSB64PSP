@@ -350,7 +350,8 @@ fn a_fireball_sparkles_where_it_hits() {
 
 /// Pikachu's Thunder segment picks a frame every frame it lives
 /// (`WPPIKACHUTHUNDER_TEXTURES_NUM - 1`) and becomes a fading effect below
-/// `WPPIKACHUTHUNDER_EXPIRE`.
+/// `WPPIKACHUTHUNDER_EXPIRE`. The flush draws the frame itself and keeps it
+/// on the trail for its draw (RE-417); the sink sees only the effect.
 #[test]
 fn a_thunder_segment_draws_its_frame_and_ends_as_an_effect() {
     let mut pool = WeaponPool::default();
@@ -359,27 +360,46 @@ fn a_thunder_segment_draws_its_frame_and_ends_as_an_effect() {
     let mut r = Record::default();
     pool.flush_effects(&mut r);
     assert!(r.0.is_empty(), "{:?}", r.0);
-    // The segment made that frame: four frames with a texture, then the
-    // effect on its fifth.
-    let mut seen = std::vec::Vec::new();
-    for _ in 0..5 {
+    // The first trail was made that frame, at `gcAddMObjForDObj`'s 0.
+    let first = |pool: &WeaponPool| {
+        pool.thunder_trails()
+            .next()
+            .map(|t| (t.position.y, t.texture))
+    };
+    let (made_at, texture) = first(&pool).unwrap();
+    assert_eq!(texture, 0);
+    // Four frames with a drawn texture, then the effect on its fifth.
+    rng::set_seed(11);
+    for frame in 0..5 {
+        let before = rng::seed();
         pool.tick(open_air, None);
         let mut r = Record::default();
         pool.flush_effects(&mut r);
-        seen.push(r.0);
+        if frame < 4 {
+            assert!(
+                !r.0.iter()
+                    .any(|e| matches!(e, WeaponEffect::TextureRand(_))),
+                "{:?}",
+                r.0
+            );
+            // The first trail in the link draws first.
+            rng::set_seed(before);
+            let want = rng::rand_int_range(3) as u8;
+            let (y, got) = first(&pool).unwrap();
+            assert_eq!(y, made_at);
+            assert_eq!(got, want, "frame {frame}");
+            assert!(got < 3);
+        } else {
+            assert!(matches!(
+                r.0.first(),
+                Some(WeaponEffect::ThunderTrail {
+                    lifetime: 6,
+                    texture: 0,
+                    ..
+                })
+            ));
+        }
     }
-    let first: std::vec::Vec<_> = seen.iter().map(|f| f.first().copied()).collect();
-    for f in &first[..4] {
-        assert_eq!(*f, Some(WeaponEffect::TextureRand(3)));
-    }
-    assert!(matches!(
-        first[4],
-        Some(WeaponEffect::ThunderTrail {
-            lifetime: 6,
-            texture: 0,
-            ..
-        })
-    ));
 }
 
 /// A common bank whose every script waits and lives `lifetime` frames.

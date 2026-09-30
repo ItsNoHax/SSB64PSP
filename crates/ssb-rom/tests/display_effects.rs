@@ -176,3 +176,63 @@ fn display_effect_lives_match_the_rom() {
     // The constants the module names are the ones checked.
     assert_eq!(life::QUAKE.len(), 3);
 }
+
+/// RE-417: the Egg Lay egg's animations. The packed Throw table (the
+/// `EFDesc`'s own) ends on `EGG_THROW_PLAYS`, and the packed Wait and Break
+/// tables (`dEFManagerYoshiEggLayAnimJoints`) replay the archive's: Break
+/// ends on its tenth play after the set (`EGG_BREAK_FRAMES`), and Wait loops.
+#[test]
+fn egg_lay_animations_match_the_rom() {
+    use ssb_game::capture_yoshi::{EGG_BREAK_FRAMES, EGG_THROW_PLAYS};
+    let (Some(rom), Some(pack)) = (rom(), pack_bytes()) else {
+        return;
+    };
+    let pack = Pack::open(&pack).unwrap();
+    let info = ssb_rom::rom::identify(&rom).unwrap();
+    let archive = Archive::open(&rom, info.region).unwrap();
+    let (data, scripts) = packed_scripts(&pack, ssb_rom::effect::YOSHI_EGG_LAY_KEY);
+    assert_eq!(scripts.len(), 2);
+    let throw = dobj_life(data, &scripts);
+    eprintln!("egg throw: {throw} plays");
+    assert_eq!(throw, EGG_THROW_PLAYS);
+
+    let file = archive.load(ssb_rom::effect::YOSHI_EGG_LAY_KEY.0).unwrap();
+    let object = (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|o| (o.source_file, o.source_offset) == ssb_rom::effect::YOSHI_EGG_LAY_KEY)
+        .unwrap();
+    for (i, &table) in ssb_rom::effect::YOSHI_EGG_LAY_ANIM_JOINTS
+        .iter()
+        .enumerate()
+    {
+        let archived: Vec<u32> = joint_scripts(&file.data, table, 2)
+            .into_iter()
+            .flatten()
+            .collect();
+        let anim = pack
+            .effect_anim(ssb_rom::effect::YOSHI_EGG_LAY_ANIM_SLOT + i as u32)
+            .expect("packed egg animation");
+        let mut joints: Vec<_> = (0..anim.joint_count)
+            .filter_map(|j| pack.anim_joint(anim.first_joint + j))
+            .map(|j| (j.node - object.first_node, j.script))
+            .collect();
+        joints.sort_unstable();
+        assert_eq!(joints.iter().map(|j| j.0).collect::<Vec<_>>(), vec![0, 1]);
+        let packed: Vec<u32> = joints.iter().map(|j| j.1).collect();
+        let data = pack.anim_script(&anim).unwrap();
+        // Same bytes at the packed offsets as at the archive's.
+        for (p, a) in packed.iter().zip(&archived) {
+            assert_eq!(
+                data[*p as usize..*p as usize + 16],
+                file.data[*a as usize..*a as usize + 16]
+            );
+        }
+        if i == 1 {
+            // Set on a live effect, so its first play is the set's: one
+            // fewer than `dobj_life`'s count, which includes a make.
+            let n = dobj_life(data, &packed) - 1;
+            eprintln!("egg break: {n} plays");
+            assert_eq!(n, u16::from(EGG_BREAK_FRAMES));
+        }
+    }
+}

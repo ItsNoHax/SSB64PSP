@@ -14,6 +14,22 @@ pub const QUAKE_ANIM_JOINTS: [u32; 4] = [0xCBC0, 0xCC20, 0xCCF0, 0xCDC0];
 /// Past every [`MANAGER_EFFECT_KEYS`] slot.
 pub const QUAKE_ANIM_SLOT: u32 = 0x100;
 
+/// Pikachu's Thunder frames (RE-417): the head, trail and fading segment
+/// all draw file 341's list at 0x94F8 with `MObjSub` 0x9420's
+/// `sprites[texture_id_curr]`. The pack keys one mesh per sprite by its
+/// offset, in `texture_id_curr` order (`WPPIKACHUTHUNDER_TEXTURES_NUM`).
+pub const PIKACHU_THUNDER_FILE: u32 = 341;
+pub const PIKACHU_THUNDER_SPRITES: [u32; 4] = [0x9020, 0x8C18, 0x8810, 0x8408];
+
+/// `dEFManagerYoshiEggLayAnimJoints` (`efManagerYoshiEggLaySetAnim`'s
+/// indices 0 and 1): the Egg Lay egg's Wait and Break tables in file 339,
+/// played on its tree (RE-417). Index 2, the Throw table, is the `EFDesc`'s
+/// own (`MANAGER_EFFECT_ANIM_JOINTS`).
+pub const YOSHI_EGG_LAY_KEY: (u32, u32) = (339, 0x0960);
+pub const YOSHI_EGG_LAY_ANIM_JOINTS: [u32; 2] = [0x0DB0, 0x09F0];
+/// The `AnimDesc::EFFECT` slot of the Wait table; Break follows.
+pub const YOSHI_EGG_LAY_ANIM_SLOT: u32 = 0x104;
+
 pub const MANAGER_EFFECT_KEYS: &[(u32, u32)] = &[
     (83, 0x7750),
     (83, 0x7E80),

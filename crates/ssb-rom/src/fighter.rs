@@ -585,6 +585,60 @@ pub fn skeletons(main: &File, entry: FighterFile, count: usize, model: &File) ->
     Some(Skeletons { gate_joint, sets })
 }
 
+/// `FTAttributes::modelparts_container` (`FTModelPartContainer *`), after
+/// `translate_scales` at 0x324 (RE-417).
+pub const MODELPARTS_OFFSET: u32 = 0x328;
+
+/// `nFTPartsJointCommonStart`: the container, like the model's descriptor
+/// array, starts at joint 4.
+pub const JOINT_COMMON_START: u32 = 4;
+
+/// Size of one `FTModelPart`: four pointers and a `u8` of flags.
+const MODELPART_SIZE: u32 = 20;
+
+/// One `FTModelPart`: what `ftParamSetModelPartID` gives a joint for a part
+/// id at one detail level. Every pointer is a `(file, offset)` place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelPart {
+    /// `dl`: the joint's new display list.
+    pub dl: (u32, u32),
+    /// `mobjsubs`: the `MObjSub *` chain `lbCommonAddMObjForFighterPartsDObj`
+    /// gives the joint, if any.
+    pub mobjsubs: Option<(u32, u32)>,
+    /// `costume_matanim_joints`: one `AObjEvent32 *` per chain `MObj`, played
+    /// at the costume's frame.
+    pub costume_matanim_joints: Option<(u32, u32)>,
+    pub flags: u8,
+}
+
+/// `modelparts_container->modelparts_desc[joint - 4]->modelparts[part]
+/// [detail]` (detail 0 is `nFTPartsDetailHigh`). The descriptor carries no
+/// part count; the caller names a part the game sets.
+pub fn model_part(
+    main: &File,
+    entry: FighterFile,
+    joint: u32,
+    part: u32,
+    detail: u32,
+) -> Option<ModelPart> {
+    let (file, container) = crate::sprite::pointer_place(main, entry.offset + MODELPARTS_OFFSET)?;
+    if file != main.id {
+        return None;
+    }
+    let slot = container + joint.checked_sub(JOINT_COMMON_START)? * 4;
+    let (file, desc) = crate::sprite::pointer_place(main, slot)?;
+    if file != main.id {
+        return None;
+    }
+    let at = desc + (part * 2 + detail) * MODELPART_SIZE;
+    Some(ModelPart {
+        dl: crate::sprite::pointer_place(main, at)?,
+        mobjsubs: crate::sprite::pointer_place(main, at + 4),
+        costume_matanim_joints: crate::sprite::pointer_place(main, at + 8),
+        flags: *main.data.get(at as usize + 16)?,
+    })
+}
+
 /// Decodes one fighter out of a loaded archive file.
 pub fn decode_file(entry: FighterFile, file: &File) -> Result<Fighter, FighterError> {
     let attributes = FighterAttributes::decode(&file.data, entry.file, entry.offset)?;

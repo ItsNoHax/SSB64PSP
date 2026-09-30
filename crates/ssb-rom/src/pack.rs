@@ -278,7 +278,13 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 67 adds the quakes' animations (`AnimDesc::EFFECT` slots
 // `effect::QUAKE_ANIM_SLOT` + magnitude, file 83 at 0xCBC0 to 0xCDC0), one
 // node-less script each, whose translation shakes the camera (RE-416).
-pub const VERSION: u32 = 67;
+// 68 adds Pikachu's Thunder frames (file 341's list at 0x94F8 under the
+// weapon seed, one mesh per `MObjSub` sprite, keyed by the sprite), Kirby's
+// copy hats (joint 6's `FTModelPart`s as costume overrides keyed
+// `modelpart_costume(part, costume)`) and the Egg Lay egg's Wait and Break
+// animations (`AnimDesc::EFFECT` slots `effect::YOSHI_EGG_LAY_ANIM_SLOT`
+// on) (RE-417).
+pub const VERSION: u32 = 68;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1252,6 +1258,20 @@ impl CostumeOverride {
 /// `FTAttributes::skeleton`, RE-414). A node with no such entry draws
 /// nothing while that skeleton shows.
 pub const SKELETON_COSTUME_BASE: u32 = 0x100;
+
+/// A [`CostumeOverride`] whose `costume` is [`modelpart_costume`]`(part,
+/// costume)` is the node's mesh while `ftParamSetModelPartID` gives it model
+/// part `part` in that costume (Kirby's copy hats, RE-417). Costume 0 of a
+/// part is always stored; another costume only where its mesh differs.
+pub const MODELPART_COSTUME_BASE: u32 = 0x1000;
+
+/// Costumes per model part in [`modelpart_costume`]'s keys.
+pub const MODELPART_COSTUMES: u32 = 0x10;
+
+/// The [`CostumeOverride`] key of model part `part` in `costume`.
+pub const fn modelpart_costume(part: u32, costume: u32) -> u32 {
+    MODELPART_COSTUME_BASE + part * MODELPART_COSTUMES + costume
+}
 
 /// One original LBParticle bank. Script and texture IDs are bank-local.
 #[repr(C)]

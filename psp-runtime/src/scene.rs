@@ -107,6 +107,22 @@ fn mesh_keyed(pack: &Pack<'_>, file: u32, offset: u32) -> Option<MeshDesc> {
         .find(|mesh| mesh.source_file == file && mesh.source_offset == offset)
 }
 
+/// Pikachu's Thunder frames in `mobj->texture_id_curr` order (RE-417): the
+/// head, trail and fading segment draw one of them.
+pub fn pikachu_thunder_meshes(pack: &Pack<'_>) -> [Option<MeshDesc>; 4] {
+    ssb_rom::effect::PIKACHU_THUNDER_SPRITES
+        .map(|sprite| mesh_keyed(pack, ssb_rom::effect::PIKACHU_THUNDER_FILE, sprite))
+}
+
+/// The Egg Lay egg's tree and its three animations by
+/// `effect_vars.yoshi_egg_lay.index`: Wait, Break and the `EFDesc`'s own
+/// Throw (RE-417).
+pub fn yoshi_egg_lay_effect(pack: &Pack<'_>) -> Option<(ObjectDesc, [ssb_rom::pack::AnimDesc; 3])> {
+    let (object, throw) = manager_effect(pack, ssb_rom::effect::YOSHI_EGG_LAY_KEY)?;
+    let slot = ssb_rom::effect::YOSHI_EGG_LAY_ANIM_SLOT;
+    Some((object, [pack.effect_anim(slot)?, pack.effect_anim(slot + 1)?, throw]))
+}
+
 /// Yoshi's Egg Throw `WPAttributes.data` (file 247 + 0x0C): file 338's
 /// direct list at 0xA860. The list sets its own render mode, so the
 /// discovered mesh draws as the weapon does.

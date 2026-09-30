@@ -51,6 +51,93 @@ pub const LAY_DAMAGE: u16 = 5;
 /// Length of `llYoshiSpecial3EggLayBreakAnimJoint`.
 pub const EGG_BREAK_FRAMES: u8 = 10;
 
+/// `FTCOMMON_YOSHIEGG_WIGGLE_*`.
+pub const WIGGLE_STICK_RANGE_MIN: i32 = 26;
+pub const WIGGLE_GFX_RANGE_XY: f32 = 22.0;
+pub const WIGGLE_ANIM_SPEED: f32 = 5.0;
+
+/// `efManagerYoshiEggLaySetAnim`'s indices into
+/// `dEFManagerYoshiEggLayAnimJoints`, plus the `EFDesc`'s own Throw table.
+pub const EGG_ANIM_WAIT: u8 = 0;
+pub const EGG_ANIM_BREAK: u8 = 1;
+pub const EGG_ANIM_THROW: u8 = 2;
+/// The `gcPlayAnimAll` call, counting the make's, on which the Throw
+/// animation (`llYoshiSpecial3EggLayThrowAnimJoint`) reaches its end
+/// (`crates/ssb-rom/tests/display_effects.rs`).
+pub const EGG_THROW_PLAYS: u16 = 17;
+
+/// `dFTCommonYoshiEggDamageCollDescs[fkind].effect_size`: the egg's X and Y
+/// scale, by `FTKind`.
+pub const EGG_EFFECT_SIZES: [f32; 27] = [
+    2.0, 1.9, 3.5, 2.2, 2.2, 2.0, 2.5, 2.2, 1.8, 1.8, 2.0, 1.8, 2.0, 2.0, 2.0, 1.9, 3.5, 2.2, 2.2,
+    2.0, 2.5, 2.2, 1.8, 1.8, 2.0, 1.8, 5.7,
+];
+
+/// `efManagerYoshiEggLayMakeEffect`'s egg, as its process and the egg
+/// status's callbacks drive it (RE-417). Drawing only: the escape keeps
+/// counting [`EGG_BREAK_FRAMES`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EggLayEffect {
+    /// Whether `ftCommonYoshiEggMakeEffect` has made it.
+    pub made: bool,
+    /// `effect_vars.yoshi_egg_lay.index` and `force_index`.
+    pub index: u8,
+    pub force_index: u8,
+    /// Bumped by every `efManagerYoshiEggLaySetAnim` (and the make).
+    pub epoch: u8,
+    /// `gcPlayAnimAll` calls since the animation was set.
+    pub plays: u16,
+    /// `gcSetAnimSpeed`: [`WIGGLE_ANIM_SPEED`] on a mash, 1 otherwise.
+    pub speed: f32,
+    /// `ftCommonYoshiEggProcInterrupt`'s translate of the tree's root.
+    pub wiggle: [f32; 2],
+}
+
+impl Default for EggLayEffect {
+    fn default() -> Self {
+        EggLayEffect {
+            made: false,
+            index: EGG_ANIM_THROW,
+            force_index: EGG_ANIM_THROW,
+            epoch: 0,
+            plays: 0,
+            speed: 1.0,
+            wiggle: [0.0; 2],
+        }
+    }
+}
+
+impl EggLayEffect {
+    /// `efManagerYoshiEggLayMakeEffect`: the Throw table, played once.
+    fn make(&mut self) {
+        *self = EggLayEffect {
+            made: true,
+            epoch: self.epoch.wrapping_add(1),
+            plays: 1,
+            ..EggLayEffect::default()
+        };
+    }
+
+    /// `efManagerYoshiEggLayProcUpdate`.
+    fn process(&mut self) {
+        if self.force_index != self.index {
+            self.index = self.force_index;
+            self.epoch = self.epoch.wrapping_add(1);
+            self.plays = 0;
+        }
+        self.plays = self.plays.saturating_add(1);
+        if self.index == EGG_ANIM_THROW && self.plays >= EGG_THROW_PLAYS {
+            self.force_index = EGG_ANIM_WAIT;
+        }
+    }
+}
+
+/// The egg a fighter is trapped in: the effect while the fighter is in
+/// `YoshiEgg` and `ftCommonYoshiEggMakeEffect` has made it.
+pub fn egg_effect(f: &Fighter) -> Option<&EggLayEffect> {
+    (f.status.status == Status::YoshiEgg && f.egg.effect.made).then_some(&f.egg.effect)
+}
+
 /// `status_vars.common.captureyoshi`, and the break animation's clock.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct CaptureYoshiState {
@@ -64,6 +151,8 @@ pub struct CaptureYoshiState {
     pub break_frames: u8,
     /// `lr` of the Yoshi that laid the egg.
     pub lr: f32,
+    /// `effect_gobj`: the egg drawn around the fighter (RE-417).
+    pub effect: EggLayEffect,
 }
 
 /// `ftCommonCaptureYoshiProcCapture`, run on the swallowed fighter once its
@@ -121,6 +210,10 @@ fn set_egg(f: &mut Fighter) {
     f.egg.escape_wait = ESCAPE_WAIT_MAX;
     f.egg.breaking = false;
     f.egg.break_frames = 0;
+    f.egg.effect = EggLayEffect {
+        epoch: f.egg.effect.epoch,
+        ..EggLayEffect::default()
+    };
     f.grab.capture_immune = true;
     f.is_invisible = true;
     grab::init_breakout(f, BREAKOUT_INPUTS_MIN);
@@ -135,7 +228,18 @@ fn set_egg(f: &mut Fighter) {
 
 /// `ftCommonYoshiEggProcUpdate`: the egg ends on the frame after the break
 /// animation finishes.
+///
+/// The egg effect's own process (`efManagerYoshiEggLayProcUpdate`, in the
+/// effect link after the fighters) runs here first, for the frame before,
+/// as the port's display effects do; an effect made this frame gets its
+/// first process next frame.
 pub fn update_egg(f: &mut Fighter) {
+    if f.egg.effect.made {
+        f.egg.effect.process();
+    } else {
+        // `ftCommonYoshiEggMakeEffect`.
+        f.egg.effect.make();
+    }
     if f.egg.breaking && f.egg.break_frames >= EGG_BREAK_FRAMES {
         escape(f);
     }
@@ -164,9 +268,26 @@ fn escape(f: &mut Fighter) {
 /// effect's own update for this frame. The ground friction or the air drift
 /// with fast fall that follows is the common physics.
 pub fn physics(f: &mut Fighter) {
+    // `ftCommonYoshiEggProcInterrupt`: the egg leans with the stick on the
+    // ground.
+    let lean = |v: i8| {
+        let v = i32::from(v);
+        if v.abs() >= WIGGLE_STICK_RANGE_MIN {
+            WIGGLE_GFX_RANGE_XY * if v < 0 { -1.0 } else { 1.0 }
+        } else {
+            0.0
+        }
+    };
+    f.egg.effect.wiggle = if f.is_grounded() {
+        [lean(f.stick.x), lean(f.stick.y)]
+    } else {
+        [0.0; 2]
+    };
     if !f.egg.breaking {
         let before = f.grab.breakout_wait;
-        grab::update_breakout(f);
+        let mashed = grab::update_breakout(f);
+        // `gcSetAnimSpeed` on the effect.
+        f.egg.effect.speed = if mashed { WIGGLE_ANIM_SPEED } else { 1.0 };
         f.egg.escape_wait -= (before - f.grab.breakout_wait) * MASH_FRAMES;
         let wait = f.egg.escape_wait;
         f.egg.escape_wait -= 1;
@@ -176,6 +297,7 @@ pub fn physics(f: &mut Fighter) {
         }
     }
     if f.egg.breaking {
+        f.egg.effect.force_index = EGG_ANIM_BREAK;
         f.egg.break_frames = f.egg.break_frames.saturating_add(1);
     }
 }
@@ -312,6 +434,72 @@ mod tests {
         let unmashed = frames_to_escape(&mut slow, None);
         let mashed = frames_to_escape(&mut fast, Some(2));
         assert!(mashed < unmashed / 5, "{mashed} vs {unmashed}");
+    }
+
+    /// `efManagerYoshiEggLayProcUpdate` (RE-417): made on the egg's first
+    /// update with the Throw table played once, Wait from the play after
+    /// Throw ends, Break once the wait runs out.
+    #[test]
+    fn the_egg_effect_throws_then_waits_then_breaks() {
+        let mut f = egg();
+        assert!(egg_effect(&f).is_none());
+        update_egg(&mut f);
+        let e = *egg_effect(&f).unwrap();
+        assert_eq!((e.index, e.plays), (EGG_ANIM_THROW, 1));
+        let epoch = e.epoch;
+        for n in 2..=EGG_THROW_PLAYS {
+            physics(&mut f);
+            update_egg(&mut f);
+            assert_eq!(
+                (f.egg.effect.index, f.egg.effect.plays),
+                (EGG_ANIM_THROW, n)
+            );
+        }
+        physics(&mut f);
+        update_egg(&mut f);
+        assert_eq!((f.egg.effect.index, f.egg.effect.plays), (EGG_ANIM_WAIT, 1));
+        assert_eq!(f.egg.effect.epoch, epoch.wrapping_add(1));
+        f.egg.escape_wait = 0;
+        physics(&mut f);
+        assert!(f.egg.breaking);
+        update_egg(&mut f);
+        assert_eq!(
+            (f.egg.effect.index, f.egg.effect.plays),
+            (EGG_ANIM_BREAK, 1)
+        );
+        // The break's ten frames, then the escape ends the effect.
+        for _ in 0..EGG_BREAK_FRAMES {
+            physics(&mut f);
+            update_egg(&mut f);
+        }
+        assert!(egg_effect(&f).is_none());
+    }
+
+    /// `ftCommonYoshiEggProcPhysics`'s `gcSetAnimSpeed` and
+    /// `ftCommonYoshiEggProcInterrupt`'s lean.
+    #[test]
+    fn a_mash_speeds_the_egg_and_the_stick_leans_it_on_the_ground() {
+        let mut f = egg();
+        update_egg(&mut f);
+        mash(&mut f, true);
+        physics(&mut f);
+        assert_eq!(f.egg.effect.speed, WIGGLE_ANIM_SPEED);
+        mash(&mut f, false);
+        physics(&mut f);
+        assert_eq!(f.egg.effect.speed, 1.0);
+        assert_eq!(f.egg.effect.wiggle, [0.0; 2], "airborne");
+        f.situation = Situation::Ground;
+        f.set_input(
+            ControllerState {
+                stick_x: -40,
+                stick_y: 20,
+                ..Default::default()
+            },
+            false,
+            false,
+        );
+        physics(&mut f);
+        assert_eq!(f.egg.effect.wiggle, [-WIGGLE_GFX_RANGE_XY, 0.0]);
     }
 
     #[test]
