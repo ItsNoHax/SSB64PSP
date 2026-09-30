@@ -27,6 +27,7 @@ mod capture;
 mod play;
 mod players_screen;
 mod results_screen;
+mod stage_screen;
 
 use ssb_engine::input::{newly_pressed, ControllerState, Input, N64Buttons, SSB64_GAME_MAPPING};
 use ssb_engine::renderer::Color;
@@ -201,6 +202,10 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // "Go" at 398 with Z held; the CPU's first hit on the shield sets
         // it off on this tick (the capture log's `re418` lines).
         GameScene::VsShield => VS_SHIELD_SET_OFF_TICK,
+        // The select opens at tick 8 and moves at 20 (and 24); by 60 the
+        // preview camera has bobbed and the model played 36 ticks.
+        GameScene::StageSelectView | GameScene::StageSelectYoshi => 60,
+        GameScene::VsSector | GameScene::VsYoshi => 300,
     }
 }
 
@@ -271,6 +276,22 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
+    // The same select left open on Hyrule Castle, or moved down once to
+    // Yoshi's Island.
+    if scene == GameScene::StageSelectView {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            20 | 24 => N64Buttons(N64Buttons::D_RIGHT),
+            _ => N64Buttons(0),
+        };
+    }
+    if scene == GameScene::StageSelectYoshi {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            20 => N64Buttons(N64Buttons::D_DOWN),
+            _ => N64Buttons(0),
+        };
+    }
     // Tick 8 opens the character select; its first tick is tick 9. The
     // stick (`scripted_stick_x`/`_y`) carries the held puck onto Kirby's
     // portrait, A at 32 places it, and START at 72 (select tick 64, past
@@ -288,6 +309,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     if matches!(
         scene,
         GameScene::Vs
+            | GameScene::VsSector
+            | GameScene::VsYoshi
             | GameScene::VsTimeUp
             | GameScene::VsTimeUpSign
             | GameScene::VsSuddenDeath
@@ -492,6 +515,8 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if matches!(
         scene,
         GameScene::Vs
+            | GameScene::VsSector
+            | GameScene::VsYoshi
             | GameScene::VsTimeUp
             | GameScene::VsTimeUpSign
             | GameScene::VsSuddenDeath
@@ -540,6 +565,8 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::NessMagnet
             | GameScene::LinkBomb
             | GameScene::StageSelect
+            | GameScene::StageSelectView
+            | GameScene::StageSelectYoshi
             | GameScene::YoshiShield
     ) {
         return 0;
@@ -572,6 +599,8 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
     if matches!(
         scene,
         GameScene::Vs
+            | GameScene::VsSector
+            | GameScene::VsYoshi
             | GameScene::VsTimeUp
             | GameScene::VsTimeUpSign
             | GameScene::VsSuddenDeath
@@ -1433,6 +1462,16 @@ const CURSOR_COLOR: Color = Color::rgba(255, 255, 255, 255);
 /// stage select: Dream Land, where the Training goldens were captured.
 const CAPTURE_STAGE_GKIND: u8 = ssb_game::stage_select::gkind::PUPUPU;
 
+/// The stage a scene that skips the select loads: [`CAPTURE_STAGE_GKIND`],
+/// or the stage whose wallpaper kind `vssector` and `vsyoshi` show.
+fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
+    match scene {
+        Some(GameScene::VsSector) => ssb_game::stage_select::gkind::SECTOR,
+        Some(GameScene::VsYoshi) => ssb_game::stage_select::gkind::YOSTER,
+        _ => CAPTURE_STAGE_GKIND,
+    }
+}
+
 /// Which selects a capture scene passes through from the Training entry.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CaptureRoute {
@@ -1446,7 +1485,9 @@ enum CaptureRoute {
 
 fn capture_route(scene: GameScene) -> CaptureRoute {
     match scene {
-        GameScene::StageSelect => CaptureRoute::StageSelect,
+        GameScene::StageSelect | GameScene::StageSelectView | GameScene::StageSelectYoshi => {
+            CaptureRoute::StageSelect
+        }
         GameScene::FighterSelect | GameScene::VsModeMenu | GameScene::VsPlayers => CaptureRoute::Selects,
         _ => CaptureRoute::Direct,
     }
@@ -2377,11 +2418,19 @@ unsafe fn draw_frame(
             s.players_vs.as_ref(),
             s.players_vs_fighters.as_deref(),
         ),
-        Screen::StageSelect => {
-            gpu.set_viewport_fullscreen();
-            gpu.begin_frame(Some(BG_MENU));
-            draw_stage_select(gpu, &s.stage_select);
-        }
+        Screen::StageSelect => match (pack.as_ref(), s.stage_select_layer.as_ref()) {
+            // `gcMakeDefaultCameraGObj`'s black clear, then the cameras.
+            (Some(p), Some(layer)) => {
+                gpu.set_viewport_fullscreen();
+                gpu.begin_frame(Some(Color::rgba(0, 0, 0, 0xFF)));
+                stage_screen::draw_all(gpu, p, draw_state, &s.stage_select, layer, &s.stage_preview);
+            }
+            _ => {
+                gpu.set_viewport_fullscreen();
+                gpu.begin_frame(Some(BG_MENU));
+                draw_stage_select(gpu, &s.stage_select);
+            }
+        },
         Screen::Results => {
             draw_results(
                 gpu,
@@ -2412,6 +2461,13 @@ unsafe fn draw_frame(
                     scenes_ref(pl, &s.dummies).map(|x| x.map(|x| &x.fighter)),
                 );
             }
+            // `grWallpaperCommonProcUpdate` or `grWallpaperSectorProcUpdate`:
+            // process priority 3, after the battle camera's, so from this
+            // tick's camera. Recomputed from the same camera, it is the same
+            // on a frame drawn without a tick.
+            if let Some(pl) = s.play_state.as_ref() {
+                s.wallpaper.update(pl.camera.eye, pl.camera.at);
+            }
             draw_training(
                 gpu,
                 draw_state,
@@ -2429,6 +2485,7 @@ unsafe fn draw_frame(
                 no_pack_color,
                 &mut s.damage_hud,
                 s.vs_battle.as_ref(),
+                s.wallpaper_sprite.as_ref().map(|sprite| (sprite, &s.wallpaper)),
             );
         }
     }
@@ -2479,8 +2536,9 @@ unsafe fn session_frame(
                         let roster = capture_scene.map_or(training_roster(s.training_scene), |scene| {
                             capture_roster(scene, s.training_scene)
                         });
-                        s.enter(pack.as_ref(), CAPTURE_STAGE_GKIND, roster, rules);
-                        s.scene_gkind = CAPTURE_STAGE_GKIND;
+                        let gkind = capture_stage_gkind(capture_scene);
+                        s.enter(pack.as_ref(), gkind, roster, rules);
+                        s.scene_gkind = gkind;
                         // Training's CPU menu (`dSC1PTrainingModeDummyBehaviors`)
                         // is not ported; these scenes pick its behaviour.
                         if let Some(b) = capture_scene.and_then(capture_cpu_behavior) {
@@ -2491,8 +2549,7 @@ unsafe fn session_frame(
                         }
                         s.screen = Screen::Training;
                     } else if route == Some(CaptureRoute::StageSelect) {
-                        s.stage_select = ssb_game::stage_select::StageSelect::new(s.maps_training_gkind, 0);
-                        s.screen = Screen::StageSelect;
+                        s.open_stage_select(s.maps_training_gkind);
                     } else if s.vs {
                         // `mnVSModeFuncStartVars` from the last settings.
                         s.vs_mode = vs_mode_menu(&s.vs_state);
@@ -2536,8 +2593,7 @@ unsafe fn session_frame(
                         // stage this mode picked last. The host has no
                         // save data, so Mushroom Kingdom stays locked.
                         let remembered = if s.vs { s.maps_vsmode_gkind } else { s.maps_training_gkind };
-                        s.stage_select = ssb_game::stage_select::StageSelect::new(remembered, 0);
-                        s.screen = Screen::StageSelect;
+                        s.open_stage_select(remembered);
                     }
                     // The menu stands in for the 1P mode menu.
                     Some(Outcome::Back(data)) => {
@@ -2597,7 +2653,7 @@ unsafe fn session_frame(
                     s.scene_gkind = saved.gkind;
                     s.screen = Screen::Intro;
                 }
-                None => {}
+                None => tick_stage_select_layer(pack.as_ref(), s),
             },
             Screen::Training => {
                 // START is navigation-only here. B belongs to the fighter's
@@ -2716,6 +2772,13 @@ struct Session {
     players_vs: Option<ssb_game::players_vs::PlayersVs>,
     /// The select's fighter poses (RE-411), on the heap.
     players_vs_fighters: Option<alloc::boxed::Box<players_screen::Fighters>>,
+    /// The stage select's presentation (RE-419), made with the select.
+    stage_select_layer: Option<ssb_game::stage_select_layer::Layer>,
+    /// The select's preview model and its clocks, on the heap.
+    stage_preview: alloc::boxed::Box<stage_screen::Preview>,
+    /// The battle's wallpaper `SObj` and its sprite (RE-419).
+    wallpaper: ssb_game::wallpaper::Wallpaper,
+    wallpaper_sprite: Option<ssb_rom::pack::SpriteDesc>,
 }
 
 impl Session {
@@ -2740,6 +2803,37 @@ impl Session {
                 damage_hud: &mut self.damage_hud,
             },
         );
+        self.make_wallpaper(pack, gkind, rules.is_none());
+    }
+
+    /// `grWallpaperMakeDecideKind`, and for Training
+    /// `sc1PTrainingModeLoadWallpaper`'s sprite and
+    /// `sc1PTrainingModeInitDisplayVars`' fog colour, which a star KO fades
+    /// towards (RE-419).
+    #[inline(never)]
+    fn make_wallpaper(&mut self, pack: Option<&Pack<'_>>, gkind: u8, is_training: bool) {
+        use ssb_game::wallpaper;
+        self.wallpaper = wallpaper::Wallpaper::make(wallpaper::decide_kind(is_training, gkind));
+        let training = wallpaper::training_wallpaper(gkind).filter(|_| is_training);
+        self.wallpaper_sprite = pack.and_then(|p| match training {
+            Some(t) => p.sprite(t.file, wallpaper::TRAINING_WALLPAPER_SPRITE),
+            None => p.stage_wallpaper(gkind),
+        });
+        if let (Some(t), Some(pl)) = (training, self.play_state.as_mut()) {
+            for f in scenes(pl, &mut self.dummies).into_iter().flatten() {
+                if let Some(b) = f.fighter.dead.bounds.as_mut() {
+                    b.fog_color = t.fog_color;
+                }
+            }
+        }
+    }
+
+    /// `nSCKindMaps`: the stage select on the kind this mode picked last,
+    /// with its presentation (`mnMapsFuncStart`).
+    fn open_stage_select(&mut self, remembered: u8) {
+        self.stage_select = ssb_game::stage_select::StageSelect::new(remembered, 0);
+        self.stage_select_layer = Some(ssb_game::stage_select_layer::Layer::new(&self.stage_select, !self.vs));
+        self.screen = Screen::StageSelect;
     }
 }
 
@@ -2810,6 +2904,10 @@ unsafe fn run() -> ! {
         vs_state: ssb_game::players_vs::BattleState::default(),
         players_vs: None,
         players_vs_fighters: None,
+        stage_select_layer: None,
+        stage_preview: stage_screen::start(),
+        wallpaper: ssb_game::wallpaper::Wallpaper::make(ssb_game::wallpaper::Kind::Static),
+        wallpaper_sprite: None,
     });
     // Stage MObj material joints are process-lifetime clocks in the original
     // layer setup. Start once with this pack and advance in the same simulation
@@ -3055,8 +3153,7 @@ fn players_vs_frame(
     match next {
         // `nSCKindMaps`: the cursor starts on the stage VS picked last.
         None => {
-            s.stage_select = ssb_game::stage_select::StageSelect::new(s.maps_vsmode_gkind, 0);
-            s.screen = Screen::StageSelect;
+            s.open_stage_select(s.maps_vsmode_gkind);
         }
         // `nSCKindVSBattle` on the random stage.
         Some(gkind) => {
@@ -3261,6 +3358,16 @@ fn draw_stage_select(gpu: &mut Gpu, select: &ssb_game::stage_select::StageSelect
             ENTRY_ENABLED
         };
         gpu.draw_rect(x0, y0, x0 + SLOT_WIDTH, y0 + SLOT_HEIGHT, color);
+    }
+}
+
+/// The select's presentation after its `mnMapsFuncRun` tick: the layer's
+/// preview and camera, then the preview model's clocks (RE-419).
+#[inline(never)]
+fn tick_stage_select_layer(pack: Option<&Pack<'_>>, s: &mut Session) {
+    if let Some(layer) = s.stage_select_layer.as_mut() {
+        layer.tick(&s.stage_select);
+        stage_screen::tick(pack, layer, &mut s.stage_preview);
     }
 }
 
@@ -4471,6 +4578,7 @@ unsafe fn draw_training(
     no_pack_color: Color,
     damage_hud: &mut Hud,
     battle: Option<&ssb_game::battle::Battle>,
+    wallpaper: Option<(&ssb_rom::pack::SpriteDesc, &ssb_game::wallpaper::Wallpaper)>,
 ) {
     let scene = pack
         .zip(play_state)
@@ -4484,6 +4592,11 @@ unsafe fn draw_training(
 
     gpu.begin_frame(Some(BG_TRAINING));
     gpu.set_viewport_pillarboxed();
+    // `gmCameraMakeWallpaperCamera` (priority 80) draws before the stage
+    // camera (50). Race to the Finish's black fill has no VS stage to reach.
+    if let Some((sprite, w)) = wallpaper.filter(|(_, w)| w.kind != ssb_game::wallpaper::Kind::Bonus3) {
+        meshdraw::draw_wallpaper(p, sprite, w.x, w.y, w.scale, draw_state);
+    }
     let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
     // 38 degrees: the real battle camera's own default FOV
     // (`refs/ssb-decomp-re/src/gm/gmcamera.c:1191`, matching `psp-asset-viewer/main.rs`'s

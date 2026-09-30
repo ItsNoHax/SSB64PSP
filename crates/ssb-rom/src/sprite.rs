@@ -417,6 +417,34 @@ pub const SELECT_COMMON: SpriteFile = SpriteFile {
     offsets: &[0x440],
 };
 
+/// File 30, `MNMaps` (`dMNMapsFileIDs[2]`), the stage select's sprites
+/// (RE-419), in `reloc_data.us.h`'s order: the nine names
+/// (`PeachsCastleText`, `SectorZText`, `CongoJungleText`,
+/// `PlanetZebesText`, `HyruleCastleText`, `YoshisIslandText`,
+/// `SaffronCityText`, `MushroomKingdomText`, `DreamLandText`), `Cursor`,
+/// `QuestionMark`, `StageSelectText`, `WoodenCircle`, `PlateRight`,
+/// `PlateMiddle`, `PlateLeft`, the nine icons (`PeachsCastle`, `SectorZ`,
+/// `CongoJungle`, `PlanetZebes`, `HyruleCastle`, `YoshisIsland`,
+/// `SaffronCity`, `MushroomKingdom`, `DreamLand`), `Tiles`, `RandomSmall`
+/// and `RandomBig`.
+pub const MN_MAPS: SpriteFile = SpriteFile {
+    file: 30,
+    offsets: &[
+        0x1F8, 0x438, 0x678, 0x8B8, 0xB10, 0xD58, 0xF98, 0x11D8, 0x1418, 0x1AB8, 0x1DD8, 0x26A0,
+        0x3840, 0x3C68, 0x3D68, 0x3FA8, 0x4D88, 0x5B68, 0x6948, 0x7728, 0x8508, 0x92E8, 0xA0C8,
+        0xAEA8, 0xBC88, 0xC728, 0xCB10, 0xDE30,
+    ],
+};
+
+/// `llGRWallpaperTrainingBlackFileID`, `...YellowFileID` and
+/// `...BlueFileID` (`dSC1PTrainingModeWallpaperDescs`): Training's three
+/// wallpapers, each a 300 x 220 RGBA16 `Sprite` at
+/// [`TRAINING_WALLPAPER_SPRITE`] (RE-419).
+pub const TRAINING_WALLPAPER_FILES: [u32; 3] = [0x1A, 0x1B, 0x1C];
+
+/// `llGRWallpaperTrainingBlackSprite` (the yellow and blue share it).
+pub const TRAINING_WALLPAPER_SPRITE: u32 = 0x20718;
+
 /// `SP_CLOUD`: drawn with `G_RM_CLD_SURF`, blended like `SP_TRANSPARENT`.
 pub const SP_CLOUD: u16 = 0x1000;
 
@@ -436,6 +464,7 @@ pub const FILES: &[SpriteFile] = &[
     PORTRAITS,
     EMBLEM_SPRITES,
     SELECT_COMMON,
+    MN_MAPS,
 ];
 
 /// [`GATE_CARD`] decoded through `GATE_LUTS[lut]`.
@@ -631,6 +660,75 @@ mod tests {
         assert!(g > 2 * r, "4P green");
         let [r, g, _] = mean(4);
         assert!(r > g && r - g < 40, "the CPU's red is pale");
+    }
+
+    #[test]
+    fn the_stage_select_sprites_and_wallpapers_decode() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        let file = archive.load(MN_MAPS.file).unwrap();
+        let maps: Vec<_> = decode_all(&file, &MN_MAPS)
+            .unwrap()
+            .iter()
+            .map(|s| (s.width, s.height, s.format, s.size))
+            .collect();
+        // The names and cursor are I4, "Stage Select" IA8, the wooden
+        // circle and random pictures CI4, the plates, icons and tiles
+        // RGBA16.
+        assert!(maps[..9]
+            .iter()
+            .all(|m| *m == (96, 10, Format::I, BitSize::Bits4)));
+        assert_eq!(maps[9], (62, 50, Format::I, BitSize::Bits4));
+        assert_eq!(maps[10], (24, 44, Format::I, BitSize::Bits4));
+        assert_eq!(maps[11], (112, 19, Format::Ia, BitSize::Bits8));
+        assert_eq!(maps[12], (84, 85, Format::Ci, BitSize::Bits4));
+        assert_eq!(maps[14], (4, 20, Format::Rgba, BitSize::Bits16));
+        assert!(maps[16..25]
+            .iter()
+            .all(|m| *m == (48, 36, Format::Rgba, BitSize::Bits16)));
+        assert_eq!(maps[25], (16, 82, Format::Rgba, BitSize::Bits16));
+        assert_eq!(maps[26], (48, 36, Format::Ci, BitSize::Bits4));
+        assert_eq!(maps[27], (110, 82, Format::Ci, BitSize::Bits4));
+
+        // Training's three and every VS stage's wallpaper are 300 x 220
+        // RGBA16. Each stage's sits at 0x26C88 of its own file, the offset
+        // `dMNMapsWallpaperOffsets` and `dSC1PTrainingModeWallpaperHeapOffsets`
+        // subtract to find the file's heap.
+        for id in TRAINING_WALLPAPER_FILES {
+            let s = decode(&archive.load(id).unwrap(), TRAINING_WALLPAPER_SPRITE).unwrap();
+            assert_eq!(
+                (s.width, s.height, s.format, s.size),
+                (300, 220, Format::Rgba, BitSize::Bits16)
+            );
+        }
+        let mut files = Vec::new();
+        for id in crate::stage::VS_GROUND_FILES {
+            let map = archive.load(id).unwrap();
+            let (file, at) = crate::stage::wallpaper(&map, crate::stage::MAP_HEADER).unwrap();
+            assert_eq!(at, 0x26C88, "file {id:#x}");
+            let s = decode(&archive.load(file).unwrap(), at).unwrap();
+            assert_eq!(
+                (s.width, s.height, s.format, s.size),
+                (300, 220, Format::Rgba, BitSize::Bits16)
+            );
+            assert!(
+                s.image
+                    .pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|p| p[3] == 0xFF),
+                "opaque"
+            );
+            files.push(file);
+        }
+        files.sort_unstable();
+        files.dedup();
+        assert_eq!(files.len(), 9, "one file per stage");
     }
 
     #[test]

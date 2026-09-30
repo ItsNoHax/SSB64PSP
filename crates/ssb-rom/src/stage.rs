@@ -75,6 +75,9 @@ const G_LIGHT_ANGLE: u32 = 0x60;
 const G_EMBLEM_COLORS: u32 = 0x50;
 /// `SYColorRGB fog_color`, after `wallpaper` (0x48).
 const G_FOG_COLOR: u32 = 0x4C;
+/// `Sprite *wallpaper`, after `map_geometry` and `layer_mask`: the stage's
+/// background, which `grWallpaperMakeDecideKind` draws (RE-419).
+pub const G_WALLPAPER: u32 = 0x48;
 const G_CAMERA_BOUNDS: u32 = 0x6C;
 const G_MAP_BOUNDS: u32 = 0x74;
 const G_BGM_ID: u32 = 0x7C;
@@ -154,6 +157,9 @@ pub struct GroundData {
     /// `fog_color`: the colour a star KO fades towards
     /// (`ftCommonDeadUpStarProcUpdate`).
     pub fog_color: [u8; 3],
+    /// `wallpaper`: the background `Sprite`, which every VS stage keeps in
+    /// its own file (RE-419).
+    pub wallpaper: Option<Target>,
 }
 
 fn read_u32(data: &[u8], at: u32) -> Option<u32> {
@@ -304,7 +310,13 @@ pub fn read_ground_data(
         light_angle,
         emblem_colors,
         fog_color,
+        wallpaper: target(file, base + G_WALLPAPER),
     })
+}
+
+/// The `wallpaper` `Sprite` of the header at `base`, followed to its file.
+pub fn wallpaper(file: &File, base: u32) -> Option<Target> {
+    target(file, base + G_WALLPAPER)
 }
 
 /// The nine VS stages' `GR*Map` files (`ll*MapFileID`, US), in `GRKind`
@@ -321,6 +333,9 @@ pub const VS_GROUND_FILES: [u32; 9] = [
     0x108, // Yamabuki
     0x104, // Inishie
 ];
+
+/// `ll*MapMapHeader`: where each VS `GR*Map` file keeps its header.
+pub const MAP_HEADER: u32 = 0x14;
 
 /// `GRKind` of a VS stage's `GR*Map` file.
 pub fn vs_ground_kind(file: u32) -> Option<u8> {

@@ -4583,6 +4583,55 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         ));
         sprites += 1;
     }
+    // The wallpapers (RE-419): each VS stage's `MPGroundData.wallpaper`,
+    // keyed by its `GRKind`, then Training's three. They are 300 x 220
+    // RGBA16, so 5551 keeps every texel exact at half 8888's size.
+    let add_wallpaper = |writer: &mut ssb_rom::pack::PackWriter,
+                         file: u32,
+                         at: u32,
+                         role: u8,
+                         gkind: u8|
+     -> Result<(), String> {
+        let f = loaded
+            .files
+            .get(file as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("wallpaper file {file} missing"))?;
+        let s = ssb_rom::sprite::decode(f, at)
+            .map_err(|e| format!("wallpaper {file}+{at:#x}: {e:?}"))?;
+        let tex =
+            ssb_rom::psp_texture::pack_rgba(&s.image, ssb_rom::psp_texture::Psm::Psm5551, swizzle);
+        let texture = writer.add_texture(&tex, true, true);
+        writer.add_sprite(sprite_desc(file, at, &s, texture, 0, role, gkind));
+        Ok(())
+    };
+    for (gkind, &map_id) in ssb_rom::stage::VS_GROUND_FILES.iter().enumerate() {
+        let map = loaded
+            .files
+            .get(map_id as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("stage file {map_id} missing"))?;
+        let (file, at) = ssb_rom::stage::wallpaper(map, ssb_rom::stage::MAP_HEADER)
+            .ok_or_else(|| format!("stage file {map_id}: no wallpaper"))?;
+        add_wallpaper(
+            &mut writer,
+            file,
+            at,
+            ssb_rom::pack::SpriteDesc::ROLE_WALLPAPER,
+            gkind as u8,
+        )?;
+        sprites += 1;
+    }
+    for file in ssb_rom::sprite::TRAINING_WALLPAPER_FILES {
+        add_wallpaper(
+            &mut writer,
+            file,
+            ssb_rom::sprite::TRAINING_WALLPAPER_SPRITE,
+            ssb_rom::pack::SpriteDesc::ROLE_NONE,
+            0,
+        )?;
+        sprites += 1;
+    }
     // Each playable fighter's `FTSprites` (RE-393): the emblem, and the stock
     // icon once per `stock_luts` costume.
     let file_of = |id: u32| {

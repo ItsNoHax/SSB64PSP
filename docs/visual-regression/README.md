@@ -193,6 +193,10 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `yoshiegg`) | `f1-training-yoshi-egg` | Yoshi's aerial Egg Lay of the dummy; the egg rests on the top platform in its Wait wobble | RE-417 |
 | `golden_capture` (`psp-game`, scene `yoshishield`) | `f1-training-yoshi-shield` | Yoshi holds Z from tick 40 to 600: his model is hidden inside the egg shield, darkened by the worn shield (health 21, ENV (107, 132, 132)): the egg's white texels (231) draw (134, 111, 111) and its green spots (57, 214, 57) draw (33, 103, 27) | RE-418 |
 | `golden_capture` (`psp-game`, scene `vsshield`) | `f1-vs-shield-damage` | A VS battle whose player shields from "Go"; frozen after tick 684's update, where the CPU's Mario Tornado sets the shield off and the bubble draws the grey damage row | RE-418 |
+| `golden_capture` (`psp-game`, scene `stageselectview`) | `f1-training-stage-select-view` | Training's stage select left on Hyrule Castle at tick 60: the stone, icons, red cursor, plaque, name plate and emblem, and the castle's preview model over its blue Training wallpaper | RE-419 |
+| `golden_capture` (`psp-game`, scene `stageselectyoshi`) | `f1-training-stage-select-yoshi` | The same select moved down to Yoshi's Island: the yellow Training wallpaper, and the preview hiding the two cloud nodes `mnMapsMakeModel` hides | RE-419 |
+| `golden_capture` (`psp-game`, scene `vssector`) | `f1-vs-sector` | `vs`'s countdown on Sector Z: the wallpaper scaled about its centre by the camera's distance | RE-419 |
+| `golden_capture` (`psp-game`, scene `vsyoshi`) | `f1-vs-yoshi` | `vs`'s countdown on Yoshi's Island: the static wallpaper | RE-419 |
 | `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center, and the red player-1 shield bubble around him | RE-367, RE-369, RE-384 |
 
 Stage sweep example:
@@ -746,3 +750,19 @@ by `rotate_speed` per update (battle matrix function 0x47); only the
 Fireball's pixels changed. `f1-training-yoshi-shield` and
 `f1-vs-shield-damage` are new. The other 115 are unchanged. 119 of 119
 match twice.
+
+## 2026-09-30 RE-419 stage wallpapers and the stage select
+
+Pack v70, 34,283,632 bytes (SHA-256 `51af4130…`), with the nine stage
+wallpapers, Training's three (5551) and the stage select's sprites. 46
+goldens were rebaselined, identical in both captures: every Training and
+VS battle scene now draws its wallpaper behind the stage (Training's blue
+on Dream Land, VS Dream Land's zoomed and panned with the camera and the
+pause camera), from `f1-vs-pause` (63,204 pixels at 2×) to
+`f1-training-rebirthblast` (273,888); `f1-training-stage-select` and
+`-fighter-select` also pass through the new select. Four are new:
+`f1-training-stage-select-view`, `-stage-select-yoshi`, `f1-vs-sector`
+and `f1-vs-yoshi`. A build without the wallpaper draw or the preview's
+hidden nodes changed 49 of the 54 `psp-game` goldens (the Yoshi's Island
+select by the 320 pixels of an unhidden cloud). The four menu scenes and
+the 69 viewer goldens are unchanged. 123 of 123 match twice.

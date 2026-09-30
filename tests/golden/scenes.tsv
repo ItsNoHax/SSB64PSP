@@ -132,3 +132,7 @@ f1-training-kirby-hat	psp-game	kirbyhat	pass	RE-417
 f1-training-yoshi-egg	psp-game	yoshiegg	pass	RE-417
 f1-training-yoshi-shield	psp-game	yoshishield	pass	RE-418
 f1-vs-shield-damage	psp-game	vsshield	pass	RE-418
+f1-training-stage-select-view	psp-game	stageselectview	pass	RE-419
+f1-training-stage-select-yoshi	psp-game	stageselectyoshi	pass	RE-419
+f1-vs-sector	psp-game	vssector	pass	RE-419
+f1-vs-yoshi	psp-game	vsyoshi	pass	RE-419

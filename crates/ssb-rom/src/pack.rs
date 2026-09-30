@@ -287,7 +287,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 69 adds `flags::SHADE_MINUS_ENV` to prims whose combiner is
 // `(SHADE - ENV) * TEXEL0` (Yoshi's egg shield, 338 + 0xA860), so a draw
 // can subtract the live ENV (RE-418). No layout change.
-pub const VERSION: u32 = 69;
+// 70 adds the wallpapers (RE-419): each VS stage's `MPGroundData.wallpaper`
+// as a `SpriteDesc::ROLE_WALLPAPER` row whose `costume` is its `GRKind`,
+// Training's three (`sprite::TRAINING_WALLPAPER_FILES`), all in 5551, and
+// the stage select's file 30 sprites. No layout change.
+pub const VERSION: u32 = 70;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1232,6 +1236,9 @@ impl SpriteDesc {
     /// A sprite decoded through a swapped TLUT, `costume` naming which:
     /// the VS gate card through `sprite::GATE_LUTS[costume]` (RE-411).
     pub const ROLE_LUT: u8 = 3;
+    /// A VS stage's `MPGroundData.wallpaper`, `costume` naming its
+    /// `GRKind` (RE-419).
+    pub const ROLE_WALLPAPER: u8 = 4;
 }
 
 /// A per-costume mesh substitution for one node (RE-098).
@@ -4090,6 +4097,14 @@ impl<'a> Pack<'a> {
             })
     }
 
+    /// The `wallpaper` of the VS stage `gkind`
+    /// ([`SpriteDesc::ROLE_WALLPAPER`]).
+    pub fn stage_wallpaper(&self, gkind: u8) -> Option<SpriteDesc> {
+        (0..self.sprite_count)
+            .filter_map(|i| self.sprite_at(i))
+            .find(|s| s.role == SpriteDesc::ROLE_WALLPAPER && s.costume == gkind)
+    }
+
     /// The sprite at `offset` of `file` through its `lut`th swapped TLUT
     /// ([`SpriteDesc::ROLE_LUT`]).
     pub fn sprite_lut(&self, file: u32, offset: u32, lut: u8) -> Option<SpriteDesc> {
@@ -5548,6 +5563,7 @@ mod tests {
                 [0xDC; 3],
             ],
             fog_color: [0x10, 0x20, 0x30],
+            wallpaper: None,
         };
 
         let v = |vertex_id, x, y, flags| V {
