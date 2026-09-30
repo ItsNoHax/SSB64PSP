@@ -2220,6 +2220,60 @@ pub unsafe fn draw_sprite_xy(
     draw_state.invalidate_all();
 }
 
+/// The battle's wallpaper `SObj` (`grWallpaperMakeDecideKind`, RE-419): the
+/// sprite at `(x, y)` on the 320 x 240 screen, `scale` times its size,
+/// opaque, under `G_CC_DECALRGBA`.
+///
+/// Every other `SObj` maps the N64 screen onto the pillarbox. This one is
+/// mapped as the battle's 3D is: the port draws the stage camera's
+/// `(10, 10)` to `(310, 230)` viewport over the whole pillarbox, scaled by
+/// `272 / 220` about its centre (its 38 degrees span the pillarbox's
+/// height), so the wallpaper keeps its place behind the stage and fills
+/// the frame as it fills the viewport. The pillarbox's scissor clips it.
+///
+/// # Safety
+///
+/// As [`draw_sprite`].
+pub unsafe fn draw_wallpaper(
+    pack: &Pack<'_>,
+    sprite: &ssb_rom::pack::SpriteDesc,
+    x: f32,
+    y: f32,
+    scale: f32,
+    draw_state: &mut DrawState,
+) {
+    let Some(t) = pack.texture(sprite.texture) else {
+        return;
+    };
+    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    sys::sceGuTexScale(1.0, 1.0);
+    sys::sceGuTexOffset(0.0, 0.0);
+    sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
+    sys::sceGuTexFunc(
+        sys::TextureEffect::Modulate,
+        sys::TextureColorComponent::Rgba,
+    );
+    sprite_blend(0);
+    let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let k = vh as f32 / WALLPAPER_VIEWPORT_HEIGHT;
+    let x0 = vx as f32 + vw as f32 * 0.5 + (x - 160.0) * k;
+    let y0 = vh as f32 * 0.5 + (y - 120.0) * k;
+    let (w, h) = (f32::from(sprite.width), f32::from(sprite.height));
+    sobj_rect(
+        [
+            (0.0, 0.0, x0, y0),
+            (w, h, x0 + w * scale * k, y0 + h * scale * k),
+        ],
+        0xFFFF_FFFF,
+    );
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuEnable(GuState::CullFace);
+    draw_state.invalidate_all();
+}
+
+/// The battle viewport's height, `230 - 10`.
+const WALLPAPER_VIEWPORT_HEIGHT: f32 = 220.0;
+
 /// A wrapping `SObj` (`cms`/`cmt` `G_TX_WRAP` with `masks`/`maskt`): the
 /// sprite repeated over `size` N64 pixels from `(d.x, d.y)`, texel for
 /// pixel, as `lbCommonDrawSObjBitmap`'s single texture rectangle of `lrs`
@@ -2956,6 +3010,66 @@ pub unsafe fn draw_stage_animated(
         tris += draw_objects(LAYER_LINKS[layer]..next_link, st);
     }
     (tris, drawn)
+}
+
+/// The stage select's preview model (`mnMapsMakeModel`, RE-419): the four
+/// render layers alone, without the ground objects, posed by `anim`, with
+/// the nodes `hide` names hidden with their subtrees as `DOBJ_FLAG_HIDDEN`
+/// hides them.
+///
+/// # Safety
+///
+/// Same as [`draw_mesh`].
+pub unsafe fn draw_stage_preview(
+    pack: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    base: &ScePspFMatrix4,
+    anim: &ssb_rom::skeleton::StageAnimator,
+    hide: &[u32],
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) -> u32 {
+    let mut tris = 0;
+    let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+    let mut billboard_scales = [[1.0; 2]; ssb_rom::skeleton::MAX_NODES];
+    let hidden_by_select = |node: u32| {
+        let mut n = node;
+        for _ in 0..ssb_rom::skeleton::MAX_NODES {
+            if hide.contains(&n) {
+                return true;
+            }
+            match pack.node(n).map(|d| d.parent) {
+                Some(parent) if parent != u32::MAX => n = parent,
+                _ => return false,
+            }
+        }
+        false
+    };
+    let hidden = |node: u32| !anim.visible(pack, node) || hidden_by_select(node);
+    for slot in stage.layers {
+        let Some(object) = (slot != ssb_rom::pack::StageDesc::NO_LAYER)
+            .then(|| pack.object(slot))
+            .flatten()
+        else {
+            continue;
+        };
+        let n = anim.compose(pack, &object, &mut posed);
+        let scale_count = anim.billboard_scales(pack, &object, &mut billboard_scales);
+        tris += draw_object_posed_filtered(
+            pack,
+            &object,
+            base,
+            &posed[..n],
+            Some(&billboard_scales[..scale_count]),
+            st,
+            mat_anim,
+            None,
+            0,
+            None,
+            Some(&hidden),
+        );
+    }
+    tris
 }
 
 /// Draws one stage controller object in its live pose, hiding the nodes

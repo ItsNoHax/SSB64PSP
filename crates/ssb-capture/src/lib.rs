@@ -406,10 +406,22 @@ pub enum GameScene {
     /// caught on the frame a CPU's hit sets it off, in the grey damage
     /// colour (RE-418).
     VsShield,
+    /// `stageselectview`: the Training stage select on Hyrule Castle, its
+    /// preview model turning over the stage's Training wallpaper (RE-419).
+    StageSelectView,
+    /// `stageselectyoshi`: the Training stage select on Yoshi's Island,
+    /// the preview hiding the two nodes `mnMapsMakeModel` hides (RE-419).
+    StageSelectYoshi,
+    /// `vssector`: `vs`'s countdown on Sector Z, whose wallpaper scales
+    /// with the camera's distance (RE-419).
+    VsSector,
+    /// `vsyoshi`: `vs`'s countdown on Yoshi's Island, whose wallpaper
+    /// stands still (RE-419).
+    VsYoshi,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 53] = [
+    pub const ALL: [GameScene; 57] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -463,6 +475,10 @@ impl GameScene {
         GameScene::YoshiEgg,
         GameScene::YoshiShield,
         GameScene::VsShield,
+        GameScene::StageSelectView,
+        GameScene::StageSelectYoshi,
+        GameScene::VsSector,
+        GameScene::VsYoshi,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -520,6 +536,10 @@ impl GameScene {
             GameScene::YoshiEgg => "yoshiegg",
             GameScene::YoshiShield => "yoshishield",
             GameScene::VsShield => "vsshield",
+            GameScene::StageSelectView => "stageselectview",
+            GameScene::StageSelectYoshi => "stageselectyoshi",
+            GameScene::VsSector => "vssector",
+            GameScene::VsYoshi => "vsyoshi",
         }
     }
 
