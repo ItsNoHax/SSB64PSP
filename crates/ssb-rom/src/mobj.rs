@@ -659,6 +659,18 @@ pub fn read_table(file: &File, offset: u32, node_count: usize) -> Option<MObjTab
     Some(MObjTable { offset, nodes })
 }
 
+/// Reads one NULL-terminated `MObjSub *` chain at `at`: an `MObjSub **` as
+/// an `FTModelPart` names it for one joint (RE-417), rather than a
+/// per-node table.
+pub fn read_chain(file: &File, at: u32) -> Option<Vec<MObjMaterial>> {
+    let slots = pointer_slots(file);
+    let is_ptr = |at: u32| slots.binary_search(&at).is_ok();
+    read_list(file, &is_ptr, at)?
+        .iter()
+        .map(|&sub| read_material(file, &is_ptr, sub))
+        .collect()
+}
+
 /// Reads exactly `count` consecutive entries of `MObjSub.palettes[]`,
 /// starting at index 0 — the entries [`read_material`]'s own `palette` field
 /// (index 0 only) never reaches.

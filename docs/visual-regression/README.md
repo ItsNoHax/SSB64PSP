@@ -188,6 +188,9 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scenes `pikachu`, `pikachuair`) | `f1-training-pikachu`, `-pikachu-air` | Pikachu's ground Thunder Jolt 8 plays into its first push cycle; an aerial jolt 11 frames into its flight | RE-379 |
 | `golden_capture` (`psp-game`, scene `kirby`) | `f1-training-kirby` | Kirby after a grounded Final Cutter lands on the top platform; its wave 6 frames old | RE-378 |
 | `golden_capture` (`psp-game`, scenes `captain`, `captainkick`) | `f1-training-captain`, `-captain-kick` | Captain Falcon's ground Falcon Punch, some 7 frames after its flame appears at joint 16; a ground Falcon Kick some 12 frames into its flame | RE-376–377 |
+| `golden_capture` (`psp-game`, scene `pikachuthunder`) | `f1-training-pikachu-thunder` | Pikachu dashes out from under the top platform; Thunder's head reaches him (tick 92, the first `SpecialLwHit` frame) with its trails and fading segments above | RE-417 |
+| `golden_capture` (`psp-game`, scene `kirbyhat`) | `f1-training-kirby-hat` | Kirby inhales and copies the Mario dummy on Dream Land's left platform and wears Mario's cap (joint 6's model part 12) | RE-417 |
+| `golden_capture` (`psp-game`, scene `yoshiegg`) | `f1-training-yoshi-egg` | Yoshi's aerial Egg Lay of the dummy; the egg rests on the top platform in its Wait wobble | RE-417 |
 | `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center, and the red player-1 shield bubble around him | RE-367, RE-369, RE-384 |
 
 Stage sweep example:

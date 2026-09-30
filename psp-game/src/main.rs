@@ -186,6 +186,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // one-stock battle ends. The results make the fighters 120 tics
         // in; this is past the end of Kirby's Win clip.
         GameScene::VsResults => VS_RESULTS_CAPTURE_TICK,
+        GameScene::PikachuThunder => 92,
+        GameScene::KirbyHat => 260,
+        GameScene::YoshiEgg => 360,
     }
 }
 
@@ -359,6 +362,31 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
+    // `kirbyhat` and `yoshiegg` take the grab scene's route onto the
+    // dummy's platform, then B: Kirby inhales and, with a second B from
+    // `SpecialNWait`, copies (`ftKirbySpecialNCopyCheckGotoCopy`); Yoshi's
+    // tongue swallows and lays the dummy.
+    if matches!(scene, GameScene::KirbyHat | GameScene::YoshiEgg) {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            13 | 30 if scene == GameScene::KirbyHat => N64Buttons(N64Buttons::C_UP),
+            108 | 170 if scene == GameScene::KirbyHat => N64Buttons(N64Buttons::B),
+            // Yoshi walks under the platform, jumps twice straight up and
+            // falls onto it.
+            130 | 148 if scene == GameScene::YoshiEgg => N64Buttons(N64Buttons::C_UP),
+            250 if scene == GameScene::YoshiEgg => N64Buttons(N64Buttons::B),
+            _ => N64Buttons(0),
+        };
+    }
+    // `pikachuthunder`: Pikachu dashes right, out from under the top
+    // platform that would stop the head, then Down+B.
+    if scene == GameScene::PikachuThunder {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            50 => N64Buttons(N64Buttons::B),
+            _ => N64Buttons(0),
+        };
+    }
     if scene == GameScene::PikachuAir {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -460,8 +488,11 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if scene == GameScene::VsResults {
         return if (398..=520).contains(&tick) { -80 } else { 0 };
     }
-    if matches!(scene, GameScene::Grab | GameScene::Jab) {
+    if matches!(scene, GameScene::Grab | GameScene::Jab | GameScene::KirbyHat) {
         return if (14..52).contains(&tick) { -30 } else { 0 };
+    }
+    if scene == GameScene::YoshiEgg {
+        return if (14..123).contains(&tick) { -30 } else { 0 };
     }
     if matches!(
         scene,
@@ -491,6 +522,9 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     }
     if scene == GameScene::SamusBomb {
         return if (80..100).contains(&tick) { 80 } else { 0 };
+    }
+    if scene == GameScene::PikachuThunder {
+        return if (10..=34).contains(&tick) { 80 } else { 0 };
     }
     if (34..90).contains(&tick) {
         -30
@@ -547,8 +581,12 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
         80
     } else if (matches!(
         scene,
-        GameScene::SamusBomb | GameScene::YoshiBomb | GameScene::CaptainKick | GameScene::LinkBomb
+        GameScene::SamusBomb
+            | GameScene::YoshiBomb
+            | GameScene::CaptainKick
+            | GameScene::LinkBomb
     ) && tick == 20)
+        || (scene == GameScene::PikachuThunder && tick == 50)
         || (scene == GameScene::NessMagnet && tick >= 20)
     {
         // The special-low check's downward stick with the B edge.
@@ -720,6 +758,34 @@ fn log_capture_state(
             player.fighter.status.anim_frame,
             ssb_game::captain::punch_effect_ticks(&player.fighter),
             ssb_game::captain::kick_effect_ticks(&player.fighter),
+        );
+        unsafe {
+            psp::sys::sceIoWrite(
+                psp::sys::sceKernelStdout(),
+                line.as_ptr() as *const core::ffi::c_void,
+                line.len(),
+            );
+        }
+    }
+    if matches!(
+        capture_scene,
+        Some(GameScene::PikachuThunder | GameScene::KirbyHat | GameScene::YoshiEgg)
+    ) {
+        let line = alloc::format!(
+            "re417 player=({:.0},{:.0}) status={:?} copy={:?} hat={:?} dummy=({:.0},{:.0}) egg={:?} heads={:?} trails={:?}\n",
+            player.fighter.pos.x,
+            player.fighter.pos.y,
+            player.fighter.status.status,
+            player.fighter.kirby.copy_id,
+            ssb_game::kirby_copy::copy_hat(&player.fighter),
+            dummy.fighter.pos.x,
+            dummy.fighter.pos.y,
+            ssb_game::capture_yoshi::egg_effect(&dummy.fighter).map(|e| (e.index, e.plays)),
+            weapons.thunder_heads().map(|h| h.position.y as i32).collect::<alloc::vec::Vec<_>>(),
+            weapons
+                .thunder_trails()
+                .map(|t| (t.position.y as i32, t.texture))
+                .collect::<alloc::vec::Vec<_>>(),
         );
         unsafe {
             psp::sys::sceIoWrite(
@@ -1210,12 +1276,14 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Link | GameScene::LinkSpin | GameScene::LinkBomb) => {
             ssb_game::fighter::FighterKind::Link
         }
-        Some(GameScene::Yoshi | GameScene::YoshiBomb) => ssb_game::fighter::FighterKind::Yoshi,
+        Some(GameScene::Yoshi | GameScene::YoshiBomb | GameScene::YoshiEgg) => ssb_game::fighter::FighterKind::Yoshi,
         Some(GameScene::Captain | GameScene::CaptainKick) => {
             ssb_game::fighter::FighterKind::Captain
         }
-        Some(GameScene::Kirby) => ssb_game::fighter::FighterKind::Kirby,
-        Some(GameScene::Pikachu | GameScene::PikachuAir) => ssb_game::fighter::FighterKind::Pikachu,
+        Some(GameScene::Kirby | GameScene::KirbyHat) => ssb_game::fighter::FighterKind::Kirby,
+        Some(GameScene::Pikachu | GameScene::PikachuAir | GameScene::PikachuThunder) => {
+            ssb_game::fighter::FighterKind::Pikachu
+        }
         Some(GameScene::Purin) => ssb_game::fighter::FighterKind::Purin,
         Some(GameScene::Donkey) => ssb_game::fighter::FighterKind::Donkey,
         Some(GameScene::Ness | GameScene::NessThunder | GameScene::NessMagnet) => {
@@ -2291,6 +2359,11 @@ unsafe fn draw_frame(
                     &s.damage_hud.ko,
                     scenes_ref(pl, &s.dummies).map(|x| x.map(|x| &x.fighter)),
                 );
+                effect_visuals.sync_eggs(
+                    p,
+                    draw_assets,
+                    scenes_ref(pl, &s.dummies).map(|x| x.map(|x| &x.fighter)),
+                );
             }
             draw_training(
                 gpu,
@@ -3195,6 +3268,10 @@ struct DrawAssets {
     /// The display effects' objects and transform animations (RE-415), by
     /// [`display_asset`].
     displays: [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 6],
+    /// Pikachu's Thunder frames by `texture_id_curr` (RE-417).
+    thunder_frames: [Option<ssb_rom::pack::MeshDesc>; 4],
+    /// The Egg Lay egg and its Wait, Break and Throw animations (RE-417).
+    egg_lay: Option<(ssb_rom::pack::ObjectDesc, [ssb_rom::pack::AnimDesc; 3])>,
 }
 
 impl DrawAssets {
@@ -3260,7 +3337,49 @@ impl DrawAssets {
             dead_explode: ssb_psp_runtime::scene::manager_effect(p, ssb_psp_runtime::scene::DEAD_EXPLODE_EFFECT_KEY),
             rebirth_halo: ssb_psp_runtime::scene::manager_effect(p, ssb_psp_runtime::scene::REBIRTH_HALO_EFFECT_KEY),
             displays: display_assets(p),
+            thunder_frames: ssb_psp_runtime::scene::pikachu_thunder_meshes(p),
+            egg_lay: ssb_psp_runtime::scene::yoshi_egg_lay_effect(p),
         }
+    }
+}
+
+/// `DObjGetStruct(weapon_gobj)->scale = 0.5` in
+/// `wpPikachuThunderHeadMakeWeapon` and `wpPikachuThunderTrailMakeWeapon`,
+/// and the segment's in `efManagerPikachuThunderTrailMakeEffect`.
+const THUNDER_SCALE: f32 = 0.5;
+/// `mobj->texture_id_curr = 3` in `wpPikachuThunderHeadMakeWeapon`.
+const THUNDER_HEAD_FRAME: u8 = 3;
+
+/// `efManagerPikachuThunderTrailProcDisplay` (RE-417): each fading segment
+/// is a `TraRotRpyRSca` DObj at its translation, turned 180 degrees on its
+/// last frame and scaled by half, drawing `sprites[texture_id_curr]` under
+/// `G_RM_AA_XLU_SURF` with no alpha compare. Its frame is the only thing
+/// that changes: the source sets no colour or alpha as it fades.
+#[inline(never)]
+unsafe fn draw_thunder_segments(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    assets: &DrawAssets,
+    effects: &ssb_game::effect::Effects,
+) {
+    for d in effects
+        .displays()
+        .filter(|d| d.kind == ssb_game::effect::DisplayKind::ThunderTrail)
+    {
+        let Some(mesh) = assets.thunder_frames.get(usize::from(d.index)).and_then(Option::as_ref) else {
+            continue;
+        };
+        gpu.model_transform_xyz(
+            [d.translate.x, d.translate.y, d.translate.z],
+            [d.rotate.x, d.rotate.y, d.rotate.z],
+            [
+                meshdraw::MODEL_SCALE * d.scale.x,
+                meshdraw::MODEL_SCALE * d.scale.y,
+                meshdraw::MODEL_SCALE * d.scale.z,
+            ],
+        );
+        meshdraw::draw_mesh(p, mesh, draw_state, None, None);
     }
 }
 
@@ -3488,6 +3607,9 @@ struct EffectVisuals {
     /// Each port's KO blast and respawn halo (RE-412), made on the first
     /// [`Self::sync_ko`], on the heap for the same reason.
     ko: alloc::vec::Vec<KoVisual>,
+    /// Each port's Egg Lay egg (RE-417), made on the first
+    /// [`Self::sync_eggs`].
+    eggs: alloc::vec::Vec<EggVisual>,
     boomerang: ssb_rom::skeleton::StageAnimator,
     boomerang_ticks: Option<u16>,
     spin: ssb_rom::skeleton::StageAnimator,
@@ -3529,6 +3651,7 @@ impl EffectVisuals {
         unsafe {
             ptr::addr_of_mut!((*p).entry).write(Default::default());
             ptr::addr_of_mut!((*p).ko).write(Default::default());
+            ptr::addr_of_mut!((*p).eggs).write(Default::default());
             ptr::addr_of_mut!((*p).boomerang).write(Default::default());
             ptr::addr_of_mut!((*p).boomerang_ticks).write(Default::default());
             ptr::addr_of_mut!((*p).spin).write(Default::default());
@@ -3707,6 +3830,122 @@ struct KoVisual {
     explode_materials: ssb_rom::skeleton::EffectMaterialAnimator,
     halo_ticks: Option<u16>,
     halo: ssb_rom::skeleton::StageAnimator,
+}
+
+/// One port's Egg Lay egg player: the animation epoch it plays and the
+/// plays it has caught up to.
+#[derive(Default)]
+struct EggVisual {
+    epoch: Option<u8>,
+    plays: u16,
+    anim: ssb_rom::skeleton::StageAnimator,
+}
+
+impl EffectVisuals {
+    /// Plays each fighter's egg up to its play count, restarting on a new
+    /// animation (`efManagerYoshiEggLaySetAnim`), at the effect's
+    /// `gcSetAnimSpeed`.
+    #[inline(never)]
+    fn sync_eggs(&mut self, p: &Pack<'_>, assets: &DrawAssets, fighters: [Option<&ssb_game::fighter::Fighter>; 4]) {
+        if self.eggs.len() < 4 {
+            self.eggs.resize_with(4, Default::default);
+        }
+        let Some((_, anims)) = assets.egg_lay.as_ref() else {
+            return;
+        };
+        for (v, f) in self.eggs.iter_mut().zip(fighters) {
+            let Some(e) = f.and_then(ssb_game::capture_yoshi::egg_effect) else {
+                v.epoch = None;
+                continue;
+            };
+            let Some(anim) = anims.get(usize::from(e.index)) else {
+                continue;
+            };
+            if v.epoch != Some(e.epoch) || v.plays > e.plays {
+                v.epoch = Some(e.epoch);
+                v.plays = 0;
+                v.anim.start(p, anim);
+            }
+            if let Some(script) = p.anim_script(anim) {
+                while v.plays < e.plays {
+                    let _ = v.anim.tick_speed(script, e.speed);
+                    v.plays += 1;
+                }
+            }
+        }
+    }
+}
+
+/// Draws the egg each trapped fighter sits in (`dEFManagerYoshiEggLayEffectDesc`,
+/// RE-417). The root is kind 0x50, a translation to the fighter's TopN,
+/// then `Sca` by `effect_size` in X and Y. The tree's root (node 0) is
+/// `TraRotRpyRSca`, its translation the stick's wiggle; its child, the egg,
+/// is `Tra` then kind 46: a camera-facing quad at its composed position,
+/// spun by its own `rotate.z` and sized by `gGCScaleX` (the root's scale
+/// times node 0's) times its own scale.
+#[inline(never)]
+fn draw_egg_effects(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    assets: &DrawAssets,
+    visuals: &EffectVisuals,
+    fighters: [Option<&ssb_game::fighter::Fighter>; 4],
+    camera: &ssb_game::camera::Camera,
+) {
+    use ssb_rom::scene::Mat4;
+    let Some((object, _)) = assets.egg_lay.as_ref() else {
+        return;
+    };
+    let pose_of = |v: &EggVisual, index: u32| {
+        let node = object.first_node + index;
+        stage_pose(&v.anim, node).or_else(|| {
+            p.node(node).map(|n| ssb_rom::figatree::JointPose {
+                rotate: n.rest_rotate,
+                translate: n.rest_translate,
+                scale: n.rest_scale,
+            })
+        })
+    };
+    let Some(mesh) = p
+        .node(object.first_node + 1)
+        .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+        .and_then(|n| p.mesh(n.mesh))
+    else {
+        return;
+    };
+    for (v, f) in visuals.eggs.iter().zip(fighters) {
+        let Some(f) = f else { continue };
+        let Some(e) = ssb_game::capture_yoshi::egg_effect(f) else {
+            continue;
+        };
+        let (Some(root), Some(egg)) = (pose_of(v, 0), pose_of(v, 1)) else {
+            continue;
+        };
+        let size = ssb_game::capture_yoshi::EGG_EFFECT_SIZES
+            .get(f.kind as usize)
+            .copied()
+            .unwrap_or(1.0);
+        let top = f.joint_world(0, ssb_engine::math::Vec3::ZERO);
+        let t0 = [root.translate[0] + e.wiggle[0], root.translate[1] + e.wiggle[1], root.translate[2]];
+        let place = Mat4::from_trs([top.x, top.y, top.z], [0.0; 3], [size, size, 1.0])
+            .mul(&Mat4::from_trs(t0, root.rotate, root.scale));
+        let [x, y, z] = place.transform_point(egg.translate);
+        let scale = size * root.scale[0];
+        gpu.model_transform_billboard(
+            ssb_engine::math::Vec3::new(x, y, z),
+            camera.eye,
+            camera.at,
+            egg.rotate[2],
+            [
+                meshdraw::MODEL_SCALE * scale * egg.scale[0],
+                meshdraw::MODEL_SCALE * scale * egg.scale[1],
+            ],
+        );
+        unsafe {
+            meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+        }
+    }
 }
 
 /// The halo's `gcPlayAnimAll` calls: one on the frame
@@ -4255,6 +4494,15 @@ unsafe fn draw_training(
     for f in fighters.iter().flatten() {
         draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera);
     }
+    draw_egg_effects(
+        gpu,
+        p,
+        draw_state,
+        assets,
+        effect_visuals,
+        fighters.map(|x| x.map(|x| &x.fighter)),
+        &pl.camera,
+    );
 
     draw_items_weapons_effects(
         gpu,
@@ -4286,6 +4534,7 @@ unsafe fn draw_training(
         &damage_hud.ko,
         fighters.map(|x| x.map(|x| &x.fighter)),
     );
+    draw_thunder_segments(gpu, p, draw_state, assets, &damage_hud.effects);
     draw_display_effects(
         p,
         draw_state,
@@ -4402,11 +4651,18 @@ fn fighter_draw_costume(
     f: &ssb_game::fighter::Fighter,
 ) -> u32 {
     let id = u32::from(f.colanim.skeleton_id);
+    let nodes = obj.first_node..obj.first_node + obj.node_count;
     if id != 0 {
         let key = ssb_rom::pack::SKELETON_COSTUME_BASE + id;
-        let nodes = obj.first_node..obj.first_node + obj.node_count;
-        if nodes.into_iter().any(|n| p.costume_mesh(n, key).is_some()) {
+        if nodes.clone().any(|n| p.costume_mesh(n, key).is_some()) {
             return key;
+        }
+    }
+    // Kirby's copy hat (RE-417): joint 6 wears its model part.
+    if let Some(part) = ssb_game::kirby_copy::copy_hat(f) {
+        let first = ssb_rom::pack::modelpart_costume(u32::from(part), 0);
+        if nodes.into_iter().any(|n| p.costume_mesh(n, first).is_some()) {
+            return ssb_rom::pack::modelpart_costume(u32::from(part), u32::from(f.costume));
         }
     }
     u32::from(f.costume)
@@ -5095,6 +5351,23 @@ unsafe fn draw_items_weapons_effects(
             );
             meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
         }
+    }
+
+    // Pikachu's Thunder head and trails (RE-417): `TraRotRpyRSca` DObjs at
+    // half scale, never turned, drawing `sprites[texture_id_curr]`: 3 for
+    // the head, the frame each update draws for a trail.
+    let thunder = |gpu: &mut Gpu, draw_state: &mut meshdraw::DrawState, pos: ssb_engine::math::Vec3, frame: u8| {
+        let Some(mesh) = assets.thunder_frames.get(usize::from(frame)).and_then(Option::as_ref) else {
+            return;
+        };
+        gpu.model_transform([pos.x, pos.y, pos.z], [0.0; 3], meshdraw::MODEL_SCALE * THUNDER_SCALE);
+        meshdraw::draw_mesh(p, mesh, draw_state, None, None);
+    };
+    for head in weapons.thunder_heads() {
+        thunder(gpu, draw_state, head.position, THUNDER_HEAD_FRAME);
+    }
+    for trail in weapons.thunder_trails() {
+        thunder(gpu, draw_state, trail.position, trail.texture);
     }
 
     // The shield bubble (`efManagerShieldMakeEffect`, RE-384). Its root is

@@ -329,7 +329,8 @@ pub fn lose_copy(f: &mut Fighter) {
 }
 
 /// `FTKirbyCopy[27]` at `KirbyMainMotion` 0x0000: `(copy_id, star_damage)`
-/// per swallowed `FTKind`. The model-part and scale columns are
+/// per swallowed `FTKind`. The model-part column is
+/// [`crate::kirby_copy::COPY_MODELPART_IDS`] (RE-417); the scale column is
 /// presentation.
 pub const COPY: [(u8, i32); 27] = [
     (0, 17),

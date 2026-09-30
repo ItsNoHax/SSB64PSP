@@ -50,6 +50,8 @@ pub enum WeaponEffect {
     },
     /// `mobj->texture_id_curr = syUtilsRandIntRange(n)`: a thunder trail's
     /// frame, drawn where its `proc_update` draws it.
+    /// [`crate::weapon::WeaponPool::flush_effects`] draws it itself and
+    /// keeps the frame on the trail (RE-417).
     TextureRand(u8),
 }
 
@@ -152,6 +154,11 @@ impl<const N: usize> WeaponFx<N> {
     /// The queue in link order (each weapon's effects in the order its
     /// callbacks made them), emptied.
     pub fn drain_sorted(&mut self) -> impl Iterator<Item = WeaponEffect> + '_ {
+        self.drain_sorted_tagged().map(|(_, e)| e)
+    }
+
+    /// [`Self::drain_sorted`] with each effect's link place.
+    pub fn drain_sorted_tagged(&mut self) -> impl Iterator<Item = (u32, WeaponEffect)> + '_ {
         let n = core::mem::take(&mut self.len);
         let items = &mut self.items[..n];
         // A stable insertion sort (no allocator): a weapon's own effects
@@ -163,7 +170,9 @@ impl<const N: usize> WeaponFx<N> {
                 j -= 1;
             }
         }
-        items.iter_mut().filter_map(|(_, e)| e.take())
+        items
+            .iter_mut()
+            .filter_map(|(seq, e)| Some((*seq, e.take()?)))
     }
 
     /// The queue in push order, emptied: the clash search's set-offs, which

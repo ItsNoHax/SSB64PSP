@@ -390,10 +390,19 @@ pub enum GameScene {
     /// `rebirthblast`: `rebirth` caught a few ticks after the KO, the
     /// blast explosion and the screen flash up (RE-412).
     RebirthBlast,
+    /// `pikachuthunder`: Pikachu in Training, Thunder's trails and fading
+    /// segments down to him (RE-417).
+    PikachuThunder,
+    /// `kirbyhat`: Kirby in Training after inhaling and copying the Mario
+    /// dummy, wearing Mario's cap (RE-417).
+    KirbyHat,
+    /// `yoshiegg`: Yoshi in Training after an Egg Lay of the Mario dummy,
+    /// the dummy in its egg (RE-417).
+    YoshiEgg,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 48] = [
+    pub const ALL: [GameScene; 51] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -442,6 +451,9 @@ impl GameScene {
         GameScene::VsTeam,
         GameScene::VsResults,
         GameScene::RebirthBlast,
+        GameScene::PikachuThunder,
+        GameScene::KirbyHat,
+        GameScene::YoshiEgg,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -494,6 +506,9 @@ impl GameScene {
             GameScene::VsTeam => "vsteam",
             GameScene::VsResults => "vsresults",
             GameScene::RebirthBlast => "rebirthblast",
+            GameScene::PikachuThunder => "pikachuthunder",
+            GameScene::KirbyHat => "kirbyhat",
+            GameScene::YoshiEgg => "yoshiegg",
         }
     }
 

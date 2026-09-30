@@ -1685,6 +1685,29 @@ pub unsafe fn draw_object_node(
     )
 }
 
+/// The mesh a node draws in `costume`: its costume override, or its own.
+/// An electric-damage skeleton (RE-414) draws only its own parts. A model
+/// part key ([`ssb_rom::pack::modelpart_costume`], RE-417) replaces the
+/// nodes it names, in that costume or else the part's costume 0, and every
+/// other node draws in the plain costume.
+fn costume_node_mesh(pack: &Pack<'_>, global_node: u32, own: u32, costume: u32) -> u32 {
+    use ssb_rom::pack::{MODELPART_COSTUMES, MODELPART_COSTUME_BASE, SKELETON_COSTUME_BASE};
+    if costume >= MODELPART_COSTUME_BASE {
+        let plain = (costume - MODELPART_COSTUME_BASE) % MODELPART_COSTUMES;
+        return pack
+            .costume_mesh(global_node, costume)
+            .or_else(|| pack.costume_mesh(global_node, costume - plain))
+            .or_else(|| pack.costume_mesh(global_node, plain))
+            .unwrap_or(own);
+    }
+    let fallback = if costume >= SKELETON_COSTUME_BASE {
+        NodeDesc::NO_MESH
+    } else {
+        own
+    };
+    pack.costume_mesh(global_node, costume).unwrap_or(fallback)
+}
+
 #[allow(clippy::too_many_arguments)]
 unsafe fn draw_object_posed_filtered(
     pack: &Pack<'_>,
@@ -1711,13 +1734,7 @@ unsafe fn draw_object_posed_filtered(
         let Some(node) = pack.node(global_node) else {
             continue;
         };
-        // An electric-damage skeleton (RE-414) draws only its own parts.
-        let fallback = if costume >= ssb_rom::pack::SKELETON_COSTUME_BASE {
-            NodeDesc::NO_MESH
-        } else {
-            node.mesh
-        };
-        let mesh_index = pack.costume_mesh(global_node, costume).unwrap_or(fallback);
+        let mesh_index = costume_node_mesh(pack, global_node, node.mesh, costume);
         if mesh_index == NodeDesc::NO_MESH {
             continue; // pure transform: a joint with no geometry
         }

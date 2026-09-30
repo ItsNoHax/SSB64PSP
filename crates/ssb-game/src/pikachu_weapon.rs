@@ -529,6 +529,9 @@ pub struct ThunderTrail {
     pub lifetime: u16,
     pub group: u16,
     pub hit_ports: u8,
+    /// `mobj->texture_id_curr`: 0 when made (`gcAddMObjForDObj`), then the
+    /// frame each update draws (RE-417).
+    pub texture: u8,
 }
 impl ThunderTrail {
     pub(super) fn new(h: ThunderHead) -> Self {
@@ -538,6 +541,7 @@ impl ThunderTrail {
             lifetime: 10,
             group: h.group,
             hit_ports: h.hit_ports,
+            texture: 0,
         }
     }
     /// `wpPikachuThunderTrailProcUpdate`: under `WPPIKACHUTHUNDER_EXPIRE`

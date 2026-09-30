@@ -3447,9 +3447,24 @@ impl WeaponPool {
     /// weapon is made, after [`Self::tick`] (and the items' pass, which
     /// comes first in the source), and after the hit collisions
     /// (`ftMainProcParams` of every fighter first).
+    ///
+    /// A trail's frame (`Fx::TextureRand`) is drawn here, in the same link
+    /// order, and kept on a Thunder trail for its draw (RE-417).
     pub fn flush_effects(&mut self, sink: &mut dyn crate::effect::HitEffectSink) {
-        for e in self.fx.drain_sorted() {
-            sink.weapon(&e);
+        let (fx, slots, seqs) = (&mut self.fx, &mut self.slots, &self.seq);
+        for (seq, e) in fx.drain_sorted_tagged() {
+            let Fx::TextureRand(n) = e else {
+                sink.weapon(&e);
+                continue;
+            };
+            let frame = crate::rng::rand_int_range(i32::from(n)) as u8;
+            let owner = slots
+                .iter_mut()
+                .zip(seqs)
+                .find(|(w, &s)| s == seq && w.is_some());
+            if let Some((Some(Weapon::Trail(t)), _)) = owner {
+                t.texture = frame;
+            }
         }
     }
 
