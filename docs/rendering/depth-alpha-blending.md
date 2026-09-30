@@ -32,6 +32,11 @@ The N64 has two independent discard gates; the GE has one alpha-test unit.
 | Threshold 0 with cutout | `alpha > 0` |
 | Threshold 0 alone | no-op gate |
 
+Deviation: under `TEX_EDGE` the RDP scales a pixel's coverage by its alpha
+(`CVG_X_ALPHA`), so low-alpha edge texels keep little or no coverage and
+are antialiased; the GE keeps every texel with alpha >= 1 opaque, so a transparent TLUT entry's colour can fringe a cutout (Planet
+Zebes's upper platforms, RE-423; TODO).
+
 Other `SETOTHERMODE` fields were measured archive-wide (RE-124, RE-127,
 RE-195): `ALPHADITHER`, `RGBDITHER`, `COMBKEY`, `TEXTCONV`, `TEXTPERSP` and
 `ZSRCSEL` always equal the RDP default; `PIPELINE` has no visible effect.
@@ -77,6 +82,10 @@ draws in this order, the stage by `meshdraw::draw_stage_links` and
 `DrawState::heads`, and the pack marks head-1 primitives with
 `flags::HEAD1` (RE-422). The effects draw whole at their link's place; the
 head-1 lists of an effect on link 10 or 18 do not wait for the stage's.
+The stage controllers' objects on link 6 (Saffron City's gate, Yoshi's
+Island's clouds, Kongo Jungle's barrel, Mushroom Kingdom's scales) draw
+under layer 1's `G_ZBUFFER` and `G_RM_AA_ZB_OPA_SURF`, which their lists
+inherit (RE-423).
 
 Declined, measured: about 43 `PRIM_ALPHA`-multiply and 93 two-cycle
 primitives.

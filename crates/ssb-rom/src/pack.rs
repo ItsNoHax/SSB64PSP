@@ -308,7 +308,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 74 marks the prims of every head-1 list (`DObjDLLink` `list_id` 1) with
 // `flags::HEAD1`, so a stage layer's translucent head-1 prims can draw after
 // the fighters in their camera pass (RE-422). No layout change.
-pub const VERSION: u32 = 74;
+// 75 reads a `G_LOADTILE` rectangle from its corner at the image's pitch
+// (Yoshi's Island's fruit panel), recovers `G_LIGHTING` from the colour's
+// shape only where the stream never set or cleared it, and seeds the stage
+// controllers' DL-link-6 objects with layer 1's depth state (Saffron City's
+// gate) (RE-423). No layout change.
+pub const VERSION: u32 = 75;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -2151,7 +2156,7 @@ impl PackWriter {
         let lit: alloc::vec::Vec<bool> = mesh
             .vertices
             .iter()
-            .map(|v| v.lit || looks_like_unit_normal(v.rgba))
+            .map(|v| v.lit || (!v.lit_known && looks_like_unit_normal(v.rgba)))
             .collect();
 
         // RE-106/RE-240: `MeshMaterial::prim_color` is not a literal colour
@@ -4238,6 +4243,7 @@ mod tests {
                     uv: [32, 64],
                     rgba: [0x11, 0x22, 0x33, 0x44],
                     lit: false,
+                    lit_known: false,
                 },
                 MeshVertex {
                     pos: [4, 5, 6],
@@ -4245,6 +4251,7 @@ mod tests {
                     uv: [0, 0],
                     rgba: [255, 255, 255, 255],
                     lit: false,
+                    lit_known: false,
                 },
                 MeshVertex {
                     pos: [7, 8, 9],
@@ -4252,6 +4259,7 @@ mod tests {
                     uv: [1, 2],
                     rgba: [0, 0, 0, 255],
                     lit: false,
+                    lit_known: false,
                 },
             ],
             primitives: alloc::vec![Primitive {
@@ -5248,6 +5256,30 @@ mod tests {
         assert_eq!(bright[1], bright[2]);
         assert_eq!(bright[3], 0xAB);
         assert_eq!(dark[3], 0xAB);
+    }
+
+    /// RE-423: a colour whose bytes read as a unit normal is recovered as a
+    /// normal only where the stream never set or cleared `G_LIGHTING`.
+    #[test]
+    fn a_known_unlit_normal_shaped_colour_keeps_its_colour() {
+        let pack_colour = |lit_known: bool| {
+            let mut m = sample_mesh();
+            m.primitives[0].material.lit = false;
+            m.primitives[0].material.prim_color = None;
+            // Yoshi's Island's right platform top (file 111 + 0x48E0).
+            m.vertices[1].rgba = [227, 227, 132, 255];
+            m.vertices[1].lit_known = lit_known;
+            let mut w = PackWriter::new();
+            w.add_mesh(&m, 0, 0, |_| None, |_| None);
+            let bytes = w.finish();
+            let pack = Pack::open(&bytes).unwrap();
+            u32_at(
+                pack.vertices(&pack.mesh(0).unwrap()).unwrap(),
+                VERTEX_SIZE + 4,
+            )
+        };
+        assert_eq!(pack_colour(true), 0xFF84_E3E3, "known colour kept");
+        assert_ne!(pack_colour(false), 0xFF84_E3E3, "unknown shape shaded");
     }
 
     #[test]

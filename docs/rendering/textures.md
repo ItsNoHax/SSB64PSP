@@ -33,6 +33,14 @@ The RDP's `G_MDSFT_TEXTLUT`, not the texture format, decides palette lookup
   in `romtool`'s `STALE_TLUT_ENTRIES`.
 - `G_SETTILE.palette` selects a 16-entry bank within a larger TLUT (RE-224).
 
+### Tile loads
+
+A `G_LOADTILE` copies a rectangle of the `G_SETTIMG` image into TMEM. A
+texture drawn from that TMEM address reads from the rectangle's corner at
+the image's own width, not from the image's start at the tile's width
+(RE-423): Yoshi's Island's fruit panel is five such strips of one 66 × 64
+RGBA32 image.
+
 ### Texture references
 
 A texture is named by a file and an offset. Stage display lists often draw

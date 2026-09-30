@@ -858,3 +858,30 @@ Negative tests: the old order changed the 17 draw-order goldens and
 `jungle` (3,036) and `zebes` (1,684); the pack without the blend and seed
 changed `zebes`, `saffron`, `stage-select` and `r2-saffron-city-gate`.
 131 of 131 match twice.
+
+## 2026-09-30 RE-423 stage colours
+
+Pack v75, 34,589,696 bytes (SHA-256 `dfa1768f…`). `G_LOADTILE` strips read
+their own rectangle at the image's pitch, vertices loaded after a list
+clears `G_LIGHTING` keep their colours, and the DL-link-6 controller
+objects test and write depth under layer 1's state. 61 goldens were
+rebaselined, identical in both captures:
+- `f1-vs-yoshi`, `f1-training-stage-select-yoshi`, `r2-stage-yoshis-island`
+  and `r2-stage-small-yoshis-island` (10,248 to 59,024 pixels at 2×): the
+  fruit around the heart, the platforms' vertex colours.
+- `f1-training-saffron` (54,492) and `f1-training-inishie` (27,576): the
+  door frame's lights past the open gate, the scale platforms' depth.
+- 55 others (12 to 140,176): stated-unlit colours on Zebes, Sector Z,
+  Peach's Castle, Kongo Jungle, Hyrule Castle, Mushroom Kingdom, Dream
+  Land's underside, Saffron City's haze, the bonus and other stages, the
+  electric-damage skeleton and the opening room.
+
+Five goldens were added, `f1-training-yoster`, `-sector`, `-castle`,
+`-hyrule` and `-pupupu`, so all nine VS stages have a Training golden at
+tick 400 to set beside the N64 frame-414 captures.
+
+Negative tests: the v74 pack changed `yoster` (69,972) and the Zebes,
+Jungle, Sector, Saffron and Mushroom Kingdom goldens; the pack with only
+the strip fix changed `yoster` (28,480) and the lighting goldens; the pack
+without the gate seed changed `saffron` (2,296) and `inishie` (64).
+136 of 136 match twice.
