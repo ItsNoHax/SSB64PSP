@@ -224,7 +224,12 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::TrainingJungle
         | GameScene::TrainingZebes
         | GameScene::TrainingSaffron
-        | GameScene::TrainingInishie => 400,
+        | GameScene::TrainingInishie
+        | GameScene::TrainingYoster
+        | GameScene::TrainingSector
+        | GameScene::TrainingCastle
+        | GameScene::TrainingHyrule
+        | GameScene::TrainingPupupu => 400,
         // The select opens at tick 8; at its tick 60 the portraits are in
         // and the CPU's puck shows.
         GameScene::TrainingSelect => 68,
@@ -253,6 +258,11 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingZebes
             | GameScene::TrainingSaffron
             | GameScene::TrainingInishie
+            | GameScene::TrainingYoster
+            | GameScene::TrainingSector
+            | GameScene::TrainingCastle
+            | GameScene::TrainingHyrule
+            | GameScene::TrainingPupupu
     )
 }
 
@@ -428,6 +438,11 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingZebes
             | GameScene::TrainingSaffron
             | GameScene::TrainingInishie
+            | GameScene::TrainingYoster
+            | GameScene::TrainingSector
+            | GameScene::TrainingCastle
+            | GameScene::TrainingHyrule
+            | GameScene::TrainingPupupu
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -1585,6 +1600,10 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
         Some(GameScene::TrainingZebes) => ssb_game::stage_select::gkind::ZEBES,
         Some(GameScene::TrainingSaffron) => ssb_game::stage_select::gkind::YAMABUKI,
         Some(GameScene::TrainingInishie) => ssb_game::stage_select::gkind::INISHIE,
+        Some(GameScene::TrainingYoster) => ssb_game::stage_select::gkind::YOSTER,
+        Some(GameScene::TrainingSector) => ssb_game::stage_select::gkind::SECTOR,
+        Some(GameScene::TrainingCastle) => ssb_game::stage_select::gkind::CASTLE,
+        Some(GameScene::TrainingHyrule) => ssb_game::stage_select::gkind::HYRULE,
         _ => CAPTURE_STAGE_GKIND,
     }
 }

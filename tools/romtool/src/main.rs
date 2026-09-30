@@ -2003,14 +2003,44 @@ fn plan_skeleton_order(
 /// mode on head 0, which is already [`ssb_rom::mesh::InitialMaterial::default`];
 /// their `SecProcDisplay` sets `G_RM_AA_XLU_SURF` with `G_ZBUFFER` cleared on
 /// head 1 ([`ssb_rom::mesh::Head1Seed::LayerXlu`]).
+///
+/// A stage controller's object on DL link 6 (`gcAddGObjDisplay(..., 6,
+/// ...)`: Saffron City's gate, Yoshi's Island's clouds, Kongo Jungle's
+/// barrel, Mushroom Kingdom's scales) draws right after layer 1 in the same
+/// link, under the `G_ZBUFFER` and `G_RM_AA_ZB_OPA_SURF` that layer 1 set and
+/// its lists restore, so it takes layer 1's seed too (RE-423). The N64
+/// frame-414 RDRAM traces show every such list's triangles with `G_ZBUFFER`,
+/// `Z_CMP` and, on head 0, `Z_UPD`.
 fn ground_layer1_graphs(loaded: &Loaded) -> std::collections::BTreeMap<(u32, u32), u32> {
-    loaded
+    let mut graphs: std::collections::BTreeMap<(u32, u32), u32> = loaded
         .stages
         .iter()
         .flat_map(|stage| &stage.layers)
         .map(|layer| (layer.graph, layer.index))
-        .collect()
+        .collect();
+    for asset in &ssb_rom::ground_obj::OBJECTS {
+        if asset.dl_link != LAYER1_DL_LINK {
+            continue;
+        }
+        let Some((file, _)) = loaded
+            .stages
+            .iter()
+            .find(|g| g.file == asset.gr_file)
+            .and_then(|g| g.map_nodes)
+            .filter(|&(_, head)| head == asset.map_head)
+        else {
+            continue;
+        };
+        graphs.entry((file, asset.graph)).or_insert(1);
+        if let Some(leaf) = asset.leaf {
+            graphs.entry((file, leaf.dl)).or_insert(1);
+        }
+    }
+    graphs
 }
+
+/// `dGRDisplayDescs[1].dl_link`: the display link stage layer 1 draws on.
+const LAYER1_DL_LINK: u8 = 6;
 
 /// Every loading-break transition scene's `(file, graph_offset)` (RE-246).
 ///

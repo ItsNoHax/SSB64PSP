@@ -446,10 +446,22 @@ pub enum GameScene {
     /// `traininginishie`: Training on Mushroom Kingdom; layer 3's fences
     /// (RE-422).
     TrainingInishie,
+    /// `trainingyoster`: Training on Yoshi's Island; the fruit panel's
+    /// tile-loaded strips and the platforms (RE-423).
+    TrainingYoster,
+    /// `trainingsector`: Training on Sector Z (RE-423).
+    TrainingSector,
+    /// `trainingcastle`: Training on Peach's Castle (RE-423).
+    TrainingCastle,
+    /// `traininghyrule`: Training on Hyrule Castle (RE-423).
+    TrainingHyrule,
+    /// `trainingpupupu`: Training on Dream Land at the stage scenes' tick
+    /// (RE-423).
+    TrainingPupupu,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 65] = [
+    pub const ALL: [GameScene; 70] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -515,6 +527,11 @@ impl GameScene {
         GameScene::TrainingZebes,
         GameScene::TrainingSaffron,
         GameScene::TrainingInishie,
+        GameScene::TrainingYoster,
+        GameScene::TrainingSector,
+        GameScene::TrainingCastle,
+        GameScene::TrainingHyrule,
+        GameScene::TrainingPupupu,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -584,6 +601,11 @@ impl GameScene {
             GameScene::TrainingZebes => "trainingzebes",
             GameScene::TrainingSaffron => "trainingsaffron",
             GameScene::TrainingInishie => "traininginishie",
+            GameScene::TrainingYoster => "trainingyoster",
+            GameScene::TrainingSector => "trainingsector",
+            GameScene::TrainingCastle => "trainingcastle",
+            GameScene::TrainingHyrule => "traininghyrule",
+            GameScene::TrainingPupupu => "trainingpupupu",
         }
     }
 

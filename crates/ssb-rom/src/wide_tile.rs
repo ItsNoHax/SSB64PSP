@@ -210,7 +210,7 @@ fn lerp(a: i64, b: i64, num: i64, den: i64) -> i64 {
 
 /// Whether `pack::add_mesh` will read `rgba` as a normal.
 fn carries_normal(v: &MeshVertex) -> bool {
-    v.lit || looks_like_unit_normal(v.rgba)
+    v.lit || (!v.lit_known && looks_like_unit_normal(v.rgba))
 }
 
 /// The point on edge `a`-`b` where `axis` equals `x`.
@@ -530,6 +530,7 @@ mod tests {
             uv: [u as i16, 0],
             rgba: [255, 255, 255, 255],
             lit: false,
+            lit_known: false,
             binding: None,
         }
     }

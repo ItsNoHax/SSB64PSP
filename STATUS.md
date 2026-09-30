@@ -7,39 +7,40 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** the N64's battle draw order (RE-422, pack v74): six
-  link passes, opaque before translucent lists, so stage layers 2 and 3
-  cover fighters; vertex-alpha glows and shadows blend. CPU costume was
-  already right.
-- **Next gameplay batch:** stage colour fidelity: Yoshi's Island's
-  platforms and centre, Zebes' tube and tint, Saffron's door lights.
+- **Completed batch:** stage colour fidelity (RE-423, pack v75): strip
+  `G_LOADTILE` loads, lists' own lighting state (stages draw unlit), and
+  layer 1's depth state for its link's objects. Eight of nine VS stages
+  match the N64; Zebes keeps a cutout fringe.
+- **Next batch:** check the fighters whose vertices RE-423's lighting rule
+  changed (Samus, Kirby, Jigglypuff, Ness) against N64 RDRAM; the
+  `TEX_EDGE` cutout coverage (Zebes fringe).
 - **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Stage colours | 5 goldens added, 61 rebaselined (unlit stages, fruit strips, depth) | RE-423 |
 | Battle draw order | 4 goldens added, 25 rebaselined (layer 3 over fighters, glows blend) | RE-422 |
-| Near plane 256, effect no-Z | 49 goldens rebaselined (near-plane depth, Sing/Magnet over ground) | RE-421 |
 
 ## Verification baseline
 
 - Workspace tests (absolute `SSB64_ROM`, one thread), pinned 1.98.0 Clippy
-  and rustfmt pass, and `ssb-game` checks as `no_std` (RE-422).
+  and rustfmt pass, and `ssb-game` checks as `no_std` (RE-423).
 - Both PSP release builds pass. Existing viewer warnings remain.
-- PPSSPPHeadless: all 131 goldens match (RE-422); captures time out at
+- PPSSPPHeadless: all 136 goldens match (RE-423); captures time out at
   60 s.
 - PSP-2000: scripted Training held 16,682 µs per frame (RE-360).
-- Pack v74: 34,455,072 bytes, SHA-256
-  `2dbc2a68fba81d63c078acc8ea55fa01d1efe0ac19fd577d685fe4bf9eaabdd9`.
+- Pack v75: 34,589,696 bytes, SHA-256
+  `dfa1768f6a0b00b2ee6cb009eaf5111412425f18dc6be8d672eea12041130a58`.
 - `run` is 20,480 bytes (branch range 128 KB); largest stack frame
-  `enter_training`, 159,456 bytes of the 256 KB main-thread stack (RE-422).
+  `enter_training`, 159,456 bytes of the 256 KB main-thread stack (RE-423).
 - Physical PSP last checked in RE-361 (PSP-2000, 6.61 ARK, pack v43).
 
 ## Blockers and remaining scope
 
-- Pikachu's hat and Jigglypuff's bow (`accesspart`) are not drawn; the
-  selects' spotlight is not drawn. Yoshi's Island's stage draw differs from the N64 (grey platforms, heart) (TODO). The VS select's spotlight is not drawn (RE-411). With no save data, Mushroom
+- Pikachu's hat and Jigglypuff's bow (`accesspart`) and both selects'
+  spotlight are not drawn (RE-411, TODO). With no save data, Mushroom
   Kingdom and the four unlockable fighters stay locked.
 - Yoshi's roll egg and egg explosion are not drawn (RE-415, RE-416).
 - Sector Z Arwing, bonus stages and stage items remain.

@@ -54,6 +54,11 @@ pub struct MeshVertex {
     /// own parameter): `false` for everything except a fighter's two
     /// `common_parts` skeleton graphs.
     pub lit: bool,
+    /// Whether `lit` is known from the stream: a geometry-mode command
+    /// that set or cleared `G_LIGHTING`, or a lit seed, ran before this
+    /// `G_VTX` (RE-423). Only an unknown `lit` may be recovered from the
+    /// colour's shape (`pack::looks_like_unit_normal`).
+    pub lit_known: bool,
     /// Borrowed RSP cache vertex: loading sequence item and original position.
     /// The packer maps the item to its graph node before serialization.
     pub binding: Option<(u16, [i16; 3])>,
@@ -1509,6 +1514,14 @@ struct State {
     real_timg: Option<(u32, Option<u16>)>,
     /// Whether `real_timg` is the current `MObj`'s sprite (RE-326).
     real_timg_mobj: bool,
+    /// Whether `material.lit` is known from the stream rather than guessed
+    /// from the seed (see [`MeshVertex::lit_known`]).
+    lit_known: bool,
+    /// The `G_SETTIMG` image's `width` in texels and its texel size in bits.
+    /// A `G_LOADTILE` reads its rectangle's rows at that pitch.
+    timg_row: (u32, u32),
+    /// The rectangle the last `G_LOADTILE` copied into TMEM (RE-423).
+    load_tile: Option<LoadTileRect>,
     /// Whether `timg_addr` is the current `MObj`'s palette, not yet loaded
     /// (RE-326).
     timg_mobj_palette: bool,
@@ -1587,6 +1600,19 @@ struct State {
     mat_anims: Vec<Option<MatAnimRef>>,
 }
 
+/// A rectangle `G_LOADTILE` copied from a DRAM image into TMEM (RE-423).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LoadTileRect {
+    /// TMEM word address of the load tile.
+    tmem: u16,
+    /// The image the rectangle came from: offset and file.
+    image: (u32, Option<u16>),
+    /// Byte offset of the rectangle's first texel within the image.
+    byte_offset: u32,
+    /// Bits per image row.
+    row_bits: u32,
+}
+
 /// What the stream has said about `G_MDSFT_TEXTLUT`.
 ///
 /// `Unset` is not `G_TT_NONE`: a list that draws before any texture-LUT
@@ -1658,6 +1684,9 @@ impl State {
             timg_file: None,
             real_timg: None,
             real_timg_mobj: false,
+            lit_known: initial.lit,
+            timg_row: (0, 0),
+            load_tile: None,
             timg_mobj_palette: false,
             tile0_fmt: None,
             tile_dims: None,
@@ -1765,6 +1794,8 @@ impl State {
             }
         }
         if let Some(sprite) = m.sprite {
+            // `gcDrawMObjForDObj` block-loads its sprite over TMEM.
+            self.load_tile = None;
             self.timg_addr = Some(sprite.offset);
             self.timg_file = sprite.file;
             self.real_timg = Some((sprite.offset, sprite.file));
@@ -1840,6 +1871,7 @@ impl State {
 
     /// Drops the texture binding a call we cannot follow would have replaced.
     fn forget_texture(&mut self) {
+        self.load_tile = None;
         self.timg_addr = None;
         self.timg_file = None;
         self.real_timg = None;
@@ -2038,7 +2070,44 @@ impl State {
         } else {
             Some((self.timg_addr?, self.timg_file))
         };
-        self.tile_texture(self.tile0_view(), image)
+        let mut texture = self.tile_texture(self.tile0_view(), image)?;
+        // RE-423: a `G_LOADTILE` copies a rectangle of a wider DRAM image into
+        // TMEM, so the render tile's texel (0, 0) is the rectangle's corner
+        // and its rows are the image's rows. Reading from the image's start
+        // at the tile's width drew every strip of Yoshi's Island's fruit
+        // panel as the same sheared top rows.
+        if let Some(rect) = self
+            .load_tile
+            .filter(|r| r.tmem == self.tile_tmem[RENDER_TILE as usize] && image == Some(r.image))
+        {
+            let bits = texture.size.bits() as u32;
+            if rect.row_bits % bits == 0 && rect.row_bits / bits >= u32::from(texture.width) {
+                texture.data_offset += rect.byte_offset;
+                texture.source_width = (rect.row_bits / bits) as u16;
+            }
+        }
+        Some(texture)
+    }
+
+    /// The TMEM rectangle a `G_LOADTILE` (`w0`, through `tile`) copies from
+    /// the current `G_SETTIMG` image: the byte offset of its corner and the
+    /// image's row pitch. `None` without a known image or with a 4-bit image,
+    /// which the RDP cannot tile-load.
+    fn load_tile_rect(&self, tile: usize, w0: u32) -> Option<LoadTileRect> {
+        let image = self.real_timg?;
+        let (width, bits) = self.timg_row;
+        if bits < 8 {
+            return None;
+        }
+        // `uls`/`ult` are 10.2 fixed point, in the image's own texels.
+        let uls = ((w0 >> 12) & 0xFFF) >> 2;
+        let ult = (w0 & 0xFFF) >> 2;
+        Some(LoadTileRect {
+            tmem: self.tile_tmem[tile],
+            image,
+            byte_offset: (ult * width + uls) * bits / 8,
+            row_bits: width * bits,
+        })
     }
 
     /// Tile 0 as [`Self::tile_texture`] reads it.
@@ -2695,6 +2764,7 @@ fn walk(
                                 // when this command runs, not later when a
                                 // triangle references the slot.
                                 lit: state.material.lit,
+                                lit_known: state.lit_known,
                                 binding: None,
                             },
                             space: state.space,
@@ -2772,7 +2842,15 @@ fn walk(
             // address is not "no texture": the archive zeroes a pointer that
             // leaves the file and records it as an extern relocation instead,
             // which is how every stage reaches its texels (RE-037).
-            Cmd::SetTimg { addr, slot, .. } => {
+            Cmd::SetTimg {
+                addr,
+                slot,
+                size,
+                width,
+                ..
+            } => {
+                state.timg_row =
+                    BitSize::from_raw(size).map_or((0, 0), |b| (u32::from(width), b.bits() as u32));
                 // A display list only reconfigures the RDP's texture-image
                 // register to sample it -- so a fresh `G_SETTIMG` implies
                 // texturing is active regardless of a stale inherited `off`
@@ -2891,6 +2969,12 @@ fn walk(
             // `MObj` staged for tile 1 (RE-321).
             Cmd::LoadBlock { tile, .. } => {
                 if state
+                    .load_tile
+                    .is_some_and(|r| r.tmem == state.tile_tmem[tile as usize & 7])
+                {
+                    state.load_tile = None;
+                }
+                if state
                     .next_block
                     .is_some_and(|(tmem, ..)| state.tile_tmem[tile as usize & 7] == tmem)
                 {
@@ -2899,10 +2983,11 @@ fn walk(
             }
             Cmd::Other {
                 opcode: crate::dl::G_LOADTILE,
+                w0,
                 w1,
-                ..
             } => {
                 let tile = ((w1 >> 24) & 0x7) as usize;
+                state.load_tile = state.load_tile_rect(tile, w0);
                 if state
                     .next_block
                     .is_some_and(|(tmem, ..)| state.tile_tmem[tile] == tmem)
@@ -2961,6 +3046,7 @@ fn walk(
                 // it away.
                 state.material.lit =
                     (state.material.lit && clear & G_LIGHTING == 0) || set & G_LIGHTING != 0;
+                state.lit_known |= (clear | set) & G_LIGHTING != 0;
             }
 
             // `G_MW_LIGHTCOL` (RE-105): updating a light's colour has no
@@ -2995,6 +3081,7 @@ fn walk(
                     _ => {}
                 }
                 state.material.lit = true;
+                state.lit_known = true;
             }
 
             Cmd::SetCombine { hi, lo } => state.combiner = Some((hi, lo)),
@@ -4482,6 +4569,106 @@ mod tests {
         assert_eq!(cld.depth_mode, ZMode::Opaque);
         assert!(cld.alpha_compare_threshold);
         assert_eq!(InitialMaterial::SHIELD_EXTERNAL.head1, Head1Seed::EffectCld);
+    }
+
+    /// Yoshi's Island's fruit panel (file 111 + 0x758) as its strip at rows
+    /// 13 to 26: a 66-texel RGBA32 image tile-loaded one rectangle at a time.
+    fn load_tile_strip(load: Cmd) -> Mesh {
+        let file = vertex_data(3);
+        let tile = |tile: u8| Cmd::SetTile {
+            format: Format::Rgba as u8,
+            size: BitSize::Bits32 as u8,
+            line: 17,
+            tmem: 0,
+            tile,
+            palette: 0,
+            cm_s: 2,
+            cm_t: 2,
+            mask_s: 7,
+            mask_t: 6,
+            shift_s: 0,
+            shift_t: 0,
+        };
+        let cmds = [
+            Cmd::SetTimg {
+                format: Format::Rgba as u8,
+                size: BitSize::Bits32 as u8,
+                width: 66,
+                addr: SegAddr(0x1030),
+                slot: 0,
+            },
+            tile(7),
+            load,
+            tile(0),
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 13 << 2,
+                lrs: 64 << 2,
+                lrt: 26 << 2,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        convert(&cmds, Source::bare(&file)).unwrap()
+    }
+
+    /// RE-423: `G_LOADTILE` copies a rectangle of the `G_SETTIMG` image into
+    /// TMEM, so the render tile reads from the rectangle's corner at the
+    /// image's own pitch, not from the image's start at the tile's width.
+    #[test]
+    fn a_load_tile_strip_reads_its_rectangle_at_the_image_pitch() {
+        let strip = load_tile_strip(Cmd::Other {
+            opcode: crate::dl::G_LOADTILE,
+            w0: 0xF400_0034,
+            w1: 0x0710_0068,
+        });
+        let t = strip.primitives[0].material.texture.expect("bound texture");
+        assert_eq!(t.data_offset, 0x1030 + 13 * 66 * 4);
+        assert_eq!(t.source_width, 66);
+        assert_eq!((t.origin_s, t.origin_t), (0, 13 << 2));
+
+        // A block load keeps reading from the image's start.
+        let block = load_tile_strip(Cmd::LoadBlock {
+            tile: 7,
+            uls: 0,
+            ult: 0,
+            lrs: 0x17F,
+            dxt: 0x400,
+        });
+        let t = block.primitives[0].material.texture.expect("bound texture");
+        assert_eq!(t.data_offset, 0x1030);
+    }
+
+    /// RE-423: a vertex loaded after the stream cleared `G_LIGHTING` is a
+    /// known colour, whatever its shape; one the stream never said anything
+    /// about is not.
+    #[test]
+    fn a_vertex_after_a_lighting_clear_is_a_known_colour() {
+        // Yoshi's Island's right platform top (file 111 + 0x48E0): a colour
+        // whose bytes also read as a unit normal.
+        let file = vertex_data_rgba(3, [227, 227, 132, 255]);
+        let clear = Cmd::GeometryMode {
+            clear: G_LIGHTING,
+            set: 0,
+        };
+        let known = convert(&[clear, vtx(3), Cmd::Tri1([0, 1, 2])], Source::bare(&file)).unwrap();
+        assert!(known.vertices.iter().all(|v| !v.lit && v.lit_known));
+        let unknown = convert(&[vtx(3), Cmd::Tri1([0, 1, 2])], Source::bare(&file)).unwrap();
+        assert!(unknown.vertices.iter().all(|v| !v.lit && !v.lit_known));
+        let set = Cmd::GeometryMode {
+            clear: 0,
+            set: G_LIGHTING,
+        };
+        let lit = convert(&[set, vtx(3), Cmd::Tri1([0, 1, 2])], Source::bare(&file)).unwrap();
+        assert!(lit.vertices.iter().all(|v| v.lit && v.lit_known));
     }
 
     /// RE-422: a head-1 item's primitives carry `head1`; a head-0 item's

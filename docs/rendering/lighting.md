@@ -9,6 +9,11 @@ Status: complete; PPSSPP-validated.
   (RE-103, RE-105, RE-164–167).
 - Lit versus literal vertex colour is decided per vertex from `G_VTX`
   load-time state, and primitive colour has a single owner (RE-240–243).
+  A colour is read as a normal from its shape (`looks_like_unit_normal`,
+  RE-021) only when the stream never set or cleared `G_LIGHTING` before the
+  load (`MeshVertex::lit_known`). Stage lists clear it themselves, and the
+  N64 loads every stage vertex unlit (RE-423); 29 lists still use the
+  fallback.
 - Costume `LIGHT1COLOR`/`LIGHT2COLOR` tracks are preserved (RE-261;
   [D-024](../decisions/D-024.md)).
 - `sceGuLight` does not enable its channel; `GU_LIGHT0` is enabled explicitly
