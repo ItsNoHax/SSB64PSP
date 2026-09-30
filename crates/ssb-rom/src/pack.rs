@@ -305,7 +305,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // (`G_RM_CLD_SURF`, `G_AC_THRESHOLD`, `G_ZBUFFER` cleared), so the 31
 // prims that set no render mode of their own lose `DEPTH_TEST` and
 // `ZMODE_XLU` (RE-421). No layout change.
-pub const VERSION: u32 = 73;
+// 74 marks the prims of every head-1 list (`DObjDLLink` `list_id` 1) with
+// `flags::HEAD1`, so a stage layer's translucent head-1 prims can draw after
+// the fighters in their camera pass (RE-422). No layout change.
+pub const VERSION: u32 = 74;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -574,6 +577,10 @@ pub mod flags {
     /// `(SHADE - ENVIRONMENT) * TEXEL0`. The vertex colour is the shade; a
     /// draw that sets ENV (Yoshi's egg shield) subtracts it per vertex.
     pub const SHADE_MINUS_ENV: u32 = 1 << 28;
+    /// RE-422: `MeshMaterial::head1`, the primitive draws from task
+    /// display-list head 1. A camera pass runs all its links' head-0 lists
+    /// before their head-1 lists.
+    pub const HEAD1: u32 = 1 << 29;
 }
 
 /// The one GE alpha comparison that reproduces a primitive's RDP alpha
@@ -2352,6 +2359,9 @@ impl PackWriter {
             }
             if m.shade_minus_env {
                 f |= flags::SHADE_MINUS_ENV;
+            }
+            if m.head1 {
+                f |= flags::HEAD1;
             }
             if m.light1_color.is_some() {
                 f |= flags::LIGHT1_COLOR;

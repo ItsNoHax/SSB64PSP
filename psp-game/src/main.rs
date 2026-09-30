@@ -219,6 +219,12 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // preview camera has bobbed and the model played 36 ticks.
         GameScene::StageSelectView | GameScene::StageSelectYoshi => 60,
         GameScene::VsSector | GameScene::VsYoshi => 300,
+        // Tick 400, the frame of the N64 warp-boot captures RE-422 compares:
+        // both fighters stand at their spawns and the camera has settled.
+        GameScene::TrainingJungle
+        | GameScene::TrainingZebes
+        | GameScene::TrainingSaffron
+        | GameScene::TrainingInishie => 400,
         // The select opens at tick 8; at its tick 60 the portraits are in
         // and the CPU's puck shows.
         GameScene::TrainingSelect => 68,
@@ -236,6 +242,18 @@ const fn capture_ticks(scene: GameScene) -> u64 {
 #[inline]
 fn deterministic_capture_frozen(scene: Option<GameScene>, sim_frame_index: u64) -> bool {
     scene.is_some_and(|scene| sim_frame_index >= capture_ticks(scene))
+}
+
+/// The `training<stage>` scenes (RE-422): Training on one stage with no
+/// input after the menu confirm.
+fn is_training_stage_scene(scene: GameScene) -> bool {
+    matches!(
+        scene,
+        GameScene::TrainingJungle
+            | GameScene::TrainingZebes
+            | GameScene::TrainingSaffron
+            | GameScene::TrainingInishie
+    )
 }
 
 /// A fixed, tick-indexed button script standing in for real `sceCtrl` input
@@ -400,10 +418,16 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         };
     }
     // The costume scenes only confirm into Training; their pick is preset
-    // (`capture_training_scene`).
+    // (`capture_training_scene`). The stage scenes stand still.
     if matches!(
         scene,
-        GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3
+        GameScene::Costume1
+            | GameScene::Costume2
+            | GameScene::Costume3
+            | GameScene::TrainingJungle
+            | GameScene::TrainingZebes
+            | GameScene::TrainingSaffron
+            | GameScene::TrainingInishie
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -537,6 +561,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
+    if is_training_stage_scene(scene) {
+        return 0;
+    }
     // The cursor moves 4 pixels a tick at 80: from (40, 170) to (84, 102)
     // over Yoshi, then to (116, 134) on port 2's NA button.
     if scene == GameScene::VsPlayers {
@@ -640,6 +667,9 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
+    if is_training_stage_scene(scene) {
+        return 0;
+    }
     if scene == GameScene::VsPlayers {
         return match tick {
             6 => -80,
@@ -1545,11 +1575,16 @@ const CURSOR_COLOR: Color = Color::rgba(255, 255, 255, 255);
 const CAPTURE_STAGE_GKIND: u8 = ssb_game::stage_select::gkind::PUPUPU;
 
 /// The stage a scene that skips the select loads: [`CAPTURE_STAGE_GKIND`],
-/// or the stage whose wallpaper kind `vssector` and `vsyoshi` show.
+/// the stage whose wallpaper kind `vssector` and `vsyoshi` show, or the
+/// stage a `training<stage>` scene shows (RE-422).
 fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
     match scene {
         Some(GameScene::VsSector) => ssb_game::stage_select::gkind::SECTOR,
         Some(GameScene::VsYoshi) => ssb_game::stage_select::gkind::YOSTER,
+        Some(GameScene::TrainingJungle) => ssb_game::stage_select::gkind::JUNGLE,
+        Some(GameScene::TrainingZebes) => ssb_game::stage_select::gkind::ZEBES,
+        Some(GameScene::TrainingSaffron) => ssb_game::stage_select::gkind::YAMABUKI,
+        Some(GameScene::TrainingInishie) => ssb_game::stage_select::gkind::INISHIE,
         _ => CAPTURE_STAGE_GKIND,
     }
 }
@@ -3793,7 +3828,8 @@ fn psp_matrix(m: &ssb_rom::scene::Mat4) -> psp::sys::ScePspFMatrix4 {
 /// ([`eye_billboard`]) with its second kind (`RotSca` 0x45, `Sca` or
 /// `RotRpyR`); a flag-1 desc's own `DObj` hangs under it with its kind
 /// (`Sca`, `RotSca` 0x45 or the scale-and-translate 0x44). The impact wave
-/// is a `TraRotRpyRSca` `DObj` in its index's primitive colour.
+/// is a `TraRotRpyRSca` `DObj` in its index's primitive colour. Only the
+/// effects on display link `link` draw (RE-422).
 #[inline(never)]
 fn draw_display_effects(
     p: &Pack<'_>,
@@ -3802,11 +3838,12 @@ fn draw_display_effects(
     scratch: &mut DisplayScratch,
     effects: &ssb_game::effect::Effects,
     eye: ssb_engine::math::Vec3,
+    link: u8,
 ) {
     use ssb_game::effect::DisplayKind as K;
     use ssb_rom::scene::Mat4;
     let ms = meshdraw::MODEL_SCALE;
-    for d in effects.displays() {
+    for d in effects.displays().filter(|d| d.kind.dl_link() == link) {
         let Some((object, anim)) = display_asset(d.kind).and_then(|i| assets.displays[i].as_ref()) else {
             continue;
         };
@@ -4321,6 +4358,11 @@ impl EffectVisuals {
     }
 }
 
+/// `dEFManagerRebirthHaloEffectDesc.dl_link`.
+const REBIRTH_HALO_LINK: u8 = 10;
+/// `dEFManagerDeadExplodeEffectDesc.dl_link`.
+const DEAD_EXPLODE_LINK: u8 = 18;
+
 /// Draws each port's respawn halo and KO blast (RE-412).
 ///
 /// The halo's root is matrix kind 0x50 (`func_ovl0_800C99CC`), a
@@ -4330,6 +4372,10 @@ impl EffectVisuals {
 /// and their alpha the texture's (RE-420). The blast's root takes the clamped death point and its
 /// `rotate.z` by `ExplodeKind`; its first and third DObjs take the player's
 /// ENV colours, and all three the player's material scripts.
+///
+/// The halo is on display link 10 and the blast on 18
+/// (`dEFManagerRebirthHaloEffectDesc`, `dEFManagerDeadExplodeEffectDesc`);
+/// only the one on `link` draws (RE-422).
 #[inline(never)]
 fn draw_ko_effects(
     gpu: &mut Gpu,
@@ -4339,10 +4385,12 @@ fn draw_ko_effects(
     visuals: &EffectVisuals,
     ko: &ssb_game::ko::KoEffects,
     fighters: [Option<&ssb_game::fighter::Fighter>; 4],
+    link: u8,
 ) {
     use ssb_rom::scene::Mat4;
     for (i, v) in visuals.ko.iter().enumerate() {
-        if let (Some(f), Some((object, _))) = (fighters[i], assets.rebirth_halo.as_ref()) {
+        let halo = assets.rebirth_halo.as_ref().filter(|_| link == REBIRTH_HALO_LINK);
+        if let (Some(f), Some((object, _))) = (fighters[i], halo) {
             if let (Some(scale), Some(_)) = (ssb_game::dead::halo_scale(f), v.halo_ticks) {
                 let mut posed = [Mat4::IDENTITY; 8];
                 let n = v.halo.compose(p, object, &mut posed);
@@ -4364,7 +4412,8 @@ fn draw_ko_effects(
                 }
             }
         }
-        let (Some(e), Some((object, _))) = (ko.explosions[i], assets.dead_explode.as_ref()) else {
+        let explode = assets.dead_explode.as_ref().filter(|_| link == DEAD_EXPLODE_LINK);
+        let (Some(e), Some((object, _))) = (ko.explosions[i], explode) else {
             continue;
         };
         if v.explode_ticks.is_none() || v.explode.ended() {
@@ -4415,9 +4464,16 @@ fn draw_ko_effects(
 }
 
 /// `lbParticleDrawTextures` through the battle camera (RE-413), with the
-/// projection `draw_training` sets.
+/// projection `draw_training` sets, for the particle lists `lists` (one
+/// display link's, RE-422).
 #[inline(never)]
-fn draw_particles(p: &Pack<'_>, pl: &play::FighterScene, hud: &mut Hud, draw_state: &mut meshdraw::DrawState) {
+fn draw_particles(
+    p: &Pack<'_>,
+    pl: &play::FighterScene,
+    hud: &mut Hud,
+    draw_state: &mut meshdraw::DrawState,
+    lists: &[usize],
+) {
     let Some(banks) = ssb_psp_runtime::particles::PackBanks::new(p) else {
         return;
     };
@@ -4430,7 +4486,7 @@ fn draw_particles(p: &Pack<'_>, pl: &play::FighterScene, hud: &mut Hud, draw_sta
         ssb_game::camera::DEFAULT_FAR,
     );
     unsafe {
-        ssb_psp_runtime::particles::draw(&banks, &mut hud.particles, &view, &proj, draw_state);
+        ssb_psp_runtime::particles::draw(&banks, &mut hud.particles, &view, &proj, lists, draw_state);
     }
 }
 
@@ -4781,15 +4837,32 @@ unsafe fn draw_training(
     // `sc1PGameFuncLights`: the stage light that animated stage light
     // colours are evaluated under (RE-322).
     draw_state.set_stage_light(stage.light_angle_xy);
-    meshdraw::draw_stage_animated(
-        p,
-        &stage,
-        &base,
-        stage_anim,
-        stage_objects,
-        draw_state,
-        material_anim,
-    );
+    // `gmCameraDefaultProcDisplay` draws the battle in passes of display
+    // links, each running every head-0 list of its links before any head-1
+    // list (RE-422): link 4 (layer 0); links 6-12 (layer 1, the shadows,
+    // the fighters, the link-10 effects, the items and the acid); links
+    // 13-15 (layer 2, the weapons and the effects); links 16-18 (Dream
+    // Land's front flowers, layer 3 and the link-18 effects). Layers 0, 2
+    // and 3 and the front flowers clear `G_ZBUFFER`, so what a later pass
+    // draws covers them and they cover what an earlier pass drew.
+    let stage_pass = |links: core::ops::RangeInclusive<u8>, heads, draw_state: &mut meshdraw::DrawState| {
+        draw_state.heads = heads;
+        meshdraw::draw_stage_links(
+            p,
+            &stage,
+            &base,
+            stage_anim,
+            stage_objects,
+            draw_state,
+            material_anim,
+            links,
+        );
+        draw_state.heads = meshdraw::Heads::Both;
+    };
+    use meshdraw::Heads::{Head0, Head1};
+    stage_pass(0..=5, Head0, draw_state);
+    stage_pass(0..=5, Head1, draw_state);
+    stage_pass(6..=8, Head0, draw_state);
 
     let fighters = scenes_ref(pl, dummies);
     // The N64 puts shadows on their own display link between the stage and
@@ -4817,37 +4890,11 @@ unsafe fn draw_training(
     for f in fighters.iter().flatten() {
         draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera);
     }
-    draw_egg_effects(
-        gpu,
-        p,
-        draw_state,
-        assets,
-        effect_visuals,
-        fighters.map(|x| x.map(|x| &x.fighter)),
-        &pl.camera,
-    );
-
-    draw_items_weapons_effects(
-        gpu,
-        draw_state,
-        p,
-        pl,
-        dummies,
-        weapons,
-        items,
-        assets,
-        effect_visuals,
-        material_anim,
-    );
-    draw_entry_effects(
-        gpu,
-        p,
-        draw_state,
-        assets,
-        effect_visuals,
-        fighters.map(|x| x.map(|x| &x.fighter)),
-        material_anim,
-    );
+    let fighter_refs = fighters.map(|x| x.map(|x| &x.fighter));
+    // Link 10: the entry effects, the trapping egg, the halo, the impact
+    // wave and particle list 4.
+    draw_egg_effects(gpu, p, draw_state, assets, effect_visuals, fighter_refs, &pl.camera);
+    draw_entry_effects(gpu, p, draw_state, assets, effect_visuals, fighter_refs, material_anim);
     draw_ko_effects(
         gpu,
         p,
@@ -4855,8 +4902,43 @@ unsafe fn draw_training(
         assets,
         effect_visuals,
         &damage_hud.ko,
-        fighters.map(|x| x.map(|x| &x.fighter)),
+        fighter_refs,
+        REBIRTH_HALO_LINK,
     );
+    draw_display_effects(
+        p,
+        draw_state,
+        assets,
+        &mut damage_hud.display_scratch,
+        &damage_hud.effects,
+        pl.camera.eye,
+        10,
+    );
+    draw_particles(p, pl, damage_hud, draw_state, &ssb_psp_runtime::particles::LINK10_LISTS);
+    let battle_part = |part, draw_state: &mut meshdraw::DrawState, gpu: &mut Gpu| {
+        draw_items_weapons_effects(
+            gpu,
+            draw_state,
+            p,
+            pl,
+            dummies,
+            weapons,
+            items,
+            assets,
+            effect_visuals,
+            material_anim,
+            part,
+        );
+    };
+    battle_part(BattlePart::Items, draw_state, gpu);
+    stage_pass(9..=12, Head0, draw_state);
+    stage_pass(6..=12, Head1, draw_state);
+
+    // Links 13-15: layer 2 (no head-1 lists on any stage), the weapons, then
+    // the link-15 effects and particle list 1.
+    stage_pass(13..=15, meshdraw::Heads::Both, draw_state);
+    battle_part(BattlePart::Weapons, draw_state, gpu);
+    battle_part(BattlePart::Effects15, draw_state, gpu);
     draw_thunder_segments(gpu, p, draw_state, assets, &damage_hud.effects);
     draw_display_effects(
         p,
@@ -4865,8 +4947,36 @@ unsafe fn draw_training(
         &mut damage_hud.display_scratch,
         &damage_hud.effects,
         pl.camera.eye,
+        15,
     );
-    draw_particles(p, pl, damage_hud, draw_state);
+    draw_particles(p, pl, damage_hud, draw_state, &ssb_psp_runtime::particles::LINK15_LISTS);
+
+    // Links 16-18: the front flowers and layer 3, then the link-18 effects
+    // and particle lists 0 and 2, then the stage's head-1 lists.
+    stage_pass(16..=17, Head0, draw_state);
+    draw_ko_effects(
+        gpu,
+        p,
+        draw_state,
+        assets,
+        effect_visuals,
+        &damage_hud.ko,
+        fighter_refs,
+        DEAD_EXPLODE_LINK,
+    );
+    draw_display_effects(
+        p,
+        draw_state,
+        assets,
+        &mut damage_hud.display_scratch,
+        &damage_hud.effects,
+        pl.camera.eye,
+        18,
+    );
+    draw_particles(p, pl, damage_hud, draw_state, &ssb_psp_runtime::particles::LINK18_LISTS);
+    stage_pass(16..=18, Head1, draw_state);
+    // The interface's link 25.
+    draw_particles(p, pl, damage_hud, draw_state, &ssb_psp_runtime::particles::LINK25_LISTS);
     draw_screen_flash(gpu, draw_state, &damage_hud.ko);
     // `players[].color`: in a free-for-all the human's port and a CPU's
     // `GMCOMMON_PLAYERS_MAX`, in a team battle the team's colour.
@@ -5070,7 +5180,7 @@ fn draw_pause_menu(
     let py = |y: i16| (f32::from(y) * k) as i32;
     for [ulx, uly, lrx, lry] in pause::BORDER {
         // `G_CYC_FILL` covers both corners.
-        gpu.draw_rect(px(ulx), py(uly), px(lrx + 1), py(lry + 1), Color::rgba(0xFF, 0xFF, 0xFF, 0xFF));
+        gpu.draw_rect_fill(px(ulx), py(uly), px(lrx + 1), py(lry + 1), Color::rgba(0xFF, 0xFF, 0xFF, 0xFF));
     }
     draw_state.invalidate_all();
     let f = &ssb_rom::sprite::BATTLE_PAUSE;
@@ -5223,6 +5333,16 @@ fn draw_countdown(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, c: &ssb_ga
     }
 }
 
+/// The part of [`draw_items_weapons_effects`] a battle camera pass draws
+/// (RE-422): items on DL link 11 (the fighters' pass), weapons on 14 and the
+/// effects on 15 (the pass after it, with stage layer 2 on 13 first).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BattlePart {
+    Items,
+    Weapons,
+    Effects15,
+}
+
 /// The item pass (DL link 11) and the weapon and effect pass (links 13 to 15)
 /// that follow the fighters. Kept out of [`draw_training`] so neither
 /// function outgrows MIPS branch range.
@@ -5239,6 +5359,7 @@ unsafe fn draw_items_weapons_effects(
     assets: &DrawAssets,
     effect_visuals: &EffectVisuals,
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    part: BattlePart,
 ) {
     // Items (DL link 11) draw in the fighters' camera pass, under the
     // camera's default head modes. The PK Fire flame is a
@@ -5254,6 +5375,7 @@ unsafe fn draw_items_weapons_effects(
     // item's position plus its own translate, sized by the root's scale times
     // its own and spun by its own `rotate.z` (`gcPrepDObjMatrix` kind 46
     // rewrites only the MVP's rotation rows and carries `gGCScaleX` down).
+    if part == BattlePart::Items {
     for (item, visual) in items.items().zip(effect_visuals.items.iter()) {
         if item.hidden {
             continue;
@@ -5375,7 +5497,9 @@ unsafe fn draw_items_weapons_effects(
             }
         }
     }
+    }
 
+    if part == BattlePart::Weapons {
     // Weapons (DL link 14) and effects (DL link 15) draw in the camera's
     // links-13-to-15 pass, after the pass that draws the fighters (link 9)
     // and items (link 11): `gmCameraProcDisplay`'s `camera_mask` order.
@@ -5695,6 +5819,51 @@ unsafe fn draw_items_weapons_effects(
         thunder(gpu, draw_state, trail.position, trail.texture);
     }
 
+    // Kirby's Final Cutter wave is a `WEAPON_FLAG_DOBJDESC` tree. Its root
+    // takes the weapon's position in place of the desc translate, and
+    // `RotRpyR` of `wpMainVelSetModelPitch`'s yaw and the floor slope; node 1
+    // flickers under the `anim_joints` stream.
+    if let Some((object, _)) = assets.cutter.as_ref() {
+        for cutter in weapons.cutters() {
+            let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
+            let n = effect_visuals.cutter.compose(p, object, &mut posed);
+            if let Some(root) = p.node(object.first_node) {
+                let t = root.rest_translate.map(|v| -v / meshdraw::MODEL_SCALE);
+                let place = ssb_rom::scene::Mat4::from_trs(
+                    [0.0; 3],
+                    [0.0, cutter.model_rotate_y, cutter.rotate_z],
+                    [1.0; 3],
+                )
+                .mul(&ssb_rom::scene::Mat4::from_trs(t, [0.0; 3], [1.0; 3]));
+                for m in &mut posed[..n] {
+                    *m = place.mul(m);
+                }
+            }
+            gpu.model_transform(
+                [cutter.position.x, cutter.position.y, cutter.position.z],
+                [0.0; 3],
+                meshdraw::MODEL_SCALE,
+            );
+            let base = gpu.model_matrix();
+            meshdraw::draw_object_posed(
+                p,
+                object,
+                &base,
+                &posed[..n],
+                None,
+                draw_state,
+                None,
+                None,
+                0,
+            );
+        }
+    }
+    }
+
+    if part != BattlePart::Effects15 {
+        return;
+    }
+
     // The shield bubble (`efManagerShieldMakeEffect`, RE-384). Its root is
     // battle matrix function 79, `YRotN`'s whole matrix, which the guard
     // scales by the shield size; the drawn node adds kind 44, a camera-facing
@@ -5872,46 +6041,6 @@ unsafe fn draw_items_weapons_effects(
                     Some(&effect_visuals.sing_materials),
                 );
             }
-        }
-    }
-
-    // Kirby's Final Cutter wave is a `WEAPON_FLAG_DOBJDESC` tree. Its root
-    // takes the weapon's position in place of the desc translate, and
-    // `RotRpyR` of `wpMainVelSetModelPitch`'s yaw and the floor slope; node 1
-    // flickers under the `anim_joints` stream.
-    if let Some((object, _)) = assets.cutter.as_ref() {
-        for cutter in weapons.cutters() {
-            let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
-            let n = effect_visuals.cutter.compose(p, object, &mut posed);
-            if let Some(root) = p.node(object.first_node) {
-                let t = root.rest_translate.map(|v| -v / meshdraw::MODEL_SCALE);
-                let place = ssb_rom::scene::Mat4::from_trs(
-                    [0.0; 3],
-                    [0.0, cutter.model_rotate_y, cutter.rotate_z],
-                    [1.0; 3],
-                )
-                .mul(&ssb_rom::scene::Mat4::from_trs(t, [0.0; 3], [1.0; 3]));
-                for m in &mut posed[..n] {
-                    *m = place.mul(m);
-                }
-            }
-            gpu.model_transform(
-                [cutter.position.x, cutter.position.y, cutter.position.z],
-                [0.0; 3],
-                meshdraw::MODEL_SCALE,
-            );
-            let base = gpu.model_matrix();
-            meshdraw::draw_object_posed(
-                p,
-                object,
-                &base,
-                &posed[..n],
-                None,
-                draw_state,
-                None,
-                None,
-                0,
-            );
         }
     }
 

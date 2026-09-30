@@ -1992,22 +1992,23 @@ fn plan_skeleton_order(
     out
 }
 
-/// Every stage's render-layer-1 `(file, graph_offset)` (RE-245).
+/// Every stage render layer's `(file, graph_offset)` and its layer slot
+/// (RE-245, RE-422).
 ///
 /// `grDisplayLayer1PriProcDisplay`/`SecProcDisplay` set `G_ZBUFFER` and
 /// `gDPSetRenderMode(G_RM_AA_ZB_OPA_SURF, G_RM_AA_ZB_OPA_SURF2)` unconditionally
 /// before walking a stage's own layer-1 node lists -- see
 /// [`ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL`] for the full
-/// citation. Layers 0/2/3 need no entry here: their own external wrapper
-/// clears `G_ZBUFFER` and sets a non-`ZB` render mode, which is already
-/// [`ssb_rom::mesh::InitialMaterial::default`].
-fn ground_layer1_graphs(loaded: &Loaded) -> std::collections::BTreeSet<(u32, u32)> {
+/// citation. Layers 0, 2 and 3 clear `G_ZBUFFER` and set a non-`ZB` render
+/// mode on head 0, which is already [`ssb_rom::mesh::InitialMaterial::default`];
+/// their `SecProcDisplay` sets `G_RM_AA_XLU_SURF` with `G_ZBUFFER` cleared on
+/// head 1 ([`ssb_rom::mesh::Head1Seed::LayerXlu`]).
+fn ground_layer1_graphs(loaded: &Loaded) -> std::collections::BTreeMap<(u32, u32), u32> {
     loaded
         .stages
         .iter()
         .flat_map(|stage| &stage.layers)
-        .filter(|layer| layer.index == 1)
-        .map(|layer| layer.graph)
+        .map(|layer| (layer.graph, layer.index))
         .collect()
 }
 
@@ -2162,15 +2163,20 @@ const WEAPON_MAT_ANIM_JOINTS: &[((u32, u32), u32)] = &[
 /// [`ground_layer1_graphs`] and [`lb_transition_graphs`].
 fn initial_material_for(
     skeleton_graphs: &std::collections::BTreeSet<(u32, u32)>,
-    ground_layer1_graphs: &std::collections::BTreeSet<(u32, u32)>,
+    ground_layer1_graphs: &std::collections::BTreeMap<(u32, u32), u32>,
     lb_transition_graphs: &std::collections::BTreeSet<(u32, u32)>,
     file: u32,
     graph_offset: u32,
 ) -> ssb_rom::mesh::InitialMaterial {
     if skeleton_graphs.contains(&(file, graph_offset)) {
         ssb_rom::mesh::InitialMaterial::FIGHTER_EXTERNAL
-    } else if ground_layer1_graphs.contains(&(file, graph_offset)) {
+    } else if ground_layer1_graphs.get(&(file, graph_offset)) == Some(&1) {
         ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL
+    } else if ground_layer1_graphs.contains_key(&(file, graph_offset)) {
+        ssb_rom::mesh::InitialMaterial {
+            head1: ssb_rom::mesh::Head1Seed::LayerXlu,
+            ..ssb_rom::mesh::InitialMaterial::default()
+        }
     } else if lb_transition_graphs.contains(&(file, graph_offset)) {
         ssb_rom::mesh::InitialMaterial::LB_TRANSITION_EXTERNAL
     } else if WEAPON_SEEDED_GRAPHS.contains(&(file, graph_offset)) {

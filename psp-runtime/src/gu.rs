@@ -1166,6 +1166,18 @@ impl Gpu {
 }
 
 impl Gpu {
+    /// A `G_CYC_FILL` rectangle: flat `color`, untextured, unblended, with
+    /// no alpha or depth test, whatever the previous draw left enabled. The
+    /// caller invalidates its cached draw state afterwards.
+    pub fn draw_rect_fill(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
+        unsafe {
+            sys::sceGuDisable(GuState::Texture2D);
+            sys::sceGuDisable(GuState::AlphaTest);
+            sys::sceGuDisable(GuState::Blend);
+        }
+        self.draw_rect(x0, y0, x1, y1, color);
+    }
+
     /// `ifScreenFlashProcDisplay`'s fill: a flat `G_CC_PRIMITIVE` rectangle
     /// blended over the frame (`G_RM_AA_XLU_SURF`), untextured, with no
     /// depth test. The caller invalidates its cached draw state afterwards.

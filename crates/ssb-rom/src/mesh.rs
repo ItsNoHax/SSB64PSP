@@ -264,6 +264,10 @@ pub enum Head1Seed {
     /// `efDisplayXLUProcDisplay` (priority 0) restores the Z-buffered mode,
     /// so a list that sets none of these draws with no depth test (RE-421).
     EffectCld,
+    /// `grDisplayLayer{0,2,3}SecProcDisplay`: `G_RM_AA_XLU_SURF` with
+    /// `G_ZBUFFER` cleared, so a stage layer's head-1 lists blend with no
+    /// depth test (RE-422).
+    LayerXlu,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -563,6 +567,13 @@ pub struct MeshMaterial {
     /// the live ENV subtracts it from them (clamped at zero, which equals
     /// the RDP's clamp of the product since `TEXEL0` is non-negative).
     pub shade_minus_env: bool,
+    /// The primitive's commands go to task display-list head 1 (its
+    /// [`SequenceItem::stream`] is 1): a `DObjDLLink` entry with
+    /// `list_id == 1`. Each camera pass runs every head-0 list of its display
+    /// links before any head-1 list (`syTaskmanUpdateDLBuffers`), so a stage
+    /// layer's head-1 primitives draw after the fighters in its pass
+    /// (RE-422).
+    pub head1: bool,
     /// A combiner that reduces to a plain constant colour -- no shade, no
     /// texel, driven only by `PRIMITIVE`/`ENVIRONMENT`/literal constants
     /// (`(ZERO-ZERO)*ZERO+PRIM`, `ONE` alone, etc.) -- found archive-wide by
@@ -1206,6 +1217,17 @@ fn combiner_alpha_blend(hi: u32, lo: u32, two_cycle: bool) -> Option<AlphaBlend>
         return Some(AlphaBlend::Shade);
     }
     None
+}
+
+/// Whether the combined alpha is `SHADE_ALPHA` alone: `(A - B) * 0 +
+/// SHADE_ALPHA` in cycle 0 and, in two-cycle mode, in cycle 1 too
+/// (`G_CC_SHADE`, RE-422).
+fn combiner_alpha_is_shade(hi: u32, lo: u32, two_cycle: bool) -> bool {
+    const SHADE_A: u32 = 4;
+    const ZERO: u32 = 7;
+    let (ac0, ad0) = ((hi >> 9) & 0x7, (lo >> 9) & 0x7);
+    let (ac1, ad1) = ((lo >> 18) & 0x7, lo & 0x7);
+    ac0 == ZERO && ad0 == SHADE_A && (!two_cycle || (ac1 == ZERO && ad1 == SHADE_A))
 }
 
 /// Whether any slot across the active cycle(s) reads `code` (`3` =
@@ -1908,6 +1930,24 @@ impl State {
             .and_then(|(hi, lo)| combiner_alpha_blend(hi, lo, self.two_cycle))
             .or(prim_alpha_blend)
             .or(self.initial_alpha_blend.filter(|_| self.combiner.is_none()));
+        // RE-422: an unlit, untextured primitive whose combined alpha is the
+        // shade's alone (`G_CC_SHADE`: the light beams and glows of Planet
+        // Zebes, Saffron City and Kongo Jungle, drawn on task head 1 under a
+        // blending render mode). Its vertex alpha is the `Vtx` alpha byte
+        // verbatim, since `G_LIGHTING` is off, so the texture gate on
+        // `translucent` below does not apply: the GE's `Modulate` with no
+        // texture blends by exactly that alpha.
+        let shade_alpha_untextured = texture.is_none()
+            && flat_color.is_none()
+            && !self.material.lit
+            && self
+                .combiner
+                .is_some_and(|(hi, lo)| combiner_alpha_is_shade(hi, lo, self.two_cycle));
+        let alpha_blend = if shade_alpha_untextured && self.material.translucent {
+            Some(AlphaBlend::Shade)
+        } else {
+            alpha_blend
+        };
         // RE-420: a constant colour whose alpha still reads `TEXEL0` under
         // a blending mode (the rebirth halo's rays, `PRIMITIVE` colour and
         // `TEXEL0` alpha) keeps its texture: the GE's `Blend` from the
@@ -1951,7 +1991,7 @@ impl State {
             // does classify some shapes, an untextured primitive still has
             // no texel alpha for any of them to multiply, so the gate stays.
             alpha_test: self.material.alpha_test && texture.is_some(),
-            translucent: self.material.translucent && texture.is_some(),
+            translucent: self.material.translucent && (texture.is_some() || shade_alpha_untextured),
             // RE-129/RE-130: independent of the RGB (`texture_blend`/
             // `flat_color`/shade-scale) classification above, and only
             // meaningful when `translucent` (just above) actually is --
@@ -2532,6 +2572,12 @@ pub fn convert_sequence(
     match initial.head1 {
         Head1Seed::CameraXlu => streams[1].set_render_mode(RENDER_MODE_AA_ZB_XLU_SURF),
         Head1Seed::Inherit => {}
+        Head1Seed::LayerXlu => {
+            let head = &mut streams[1];
+            head.set_render_mode(RENDER_MODE_AA_XLU_SURF);
+            head.geometry_mode &= !G_ZBUFFER;
+            head.material.z_buffer = false;
+        }
         Head1Seed::EffectCld => {
             let head = &mut streams[1];
             head.set_render_mode(RENDER_MODE_CLD_SURF);
@@ -2589,6 +2635,11 @@ pub fn convert_sequence(
         let mut prims: Vec<Primitive> = Vec::new();
         let result = walk(item.cmds, src, state, &mut builder, &mut prims, 0);
         builder.flush(&mut prims);
+        if item.stream == 1 {
+            for prim in &mut prims {
+                prim.material.head1 = true;
+            }
+        }
 
         out.push(result.map(|()| Mesh {
             vertices: builder.vertices,
@@ -3111,6 +3162,9 @@ const RENDER_MODE_TEX_EDGE: u32 = CVG_X_ALPHA | ALPHA_CVG_SEL;
 /// CLR_ON_CVG | CVG_DST_WRAP | ZMODE_XLU | FORCE_BL`, blending
 /// `IN * A_IN + MEM * (1 - A_IN)` in both cycles.
 const RENDER_MODE_AA_ZB_XLU_SURF: u32 = 0x0050_49D8;
+/// `G_RM_AA_XLU_SURF | G_RM_AA_XLU_SURF2`: [`RENDER_MODE_AA_ZB_XLU_SURF`]
+/// without `Z_CMP` (`grDisplayLayer{0,2,3}SecProcDisplay`, RE-422).
+const RENDER_MODE_AA_XLU_SURF: u32 = RENDER_MODE_AA_ZB_XLU_SURF & !Z_CMP;
 
 /// `G_RM_CLD_SURF | G_RM_CLD_SURF2`: `IM_RD | CVG_DST_SAVE | FORCE_BL |
 /// ZMODE_OPA`, blending `IN * A_IN + MEM * (1 - A_IN)` in both cycles, with
@@ -4428,6 +4482,84 @@ mod tests {
         assert_eq!(cld.depth_mode, ZMode::Opaque);
         assert!(cld.alpha_compare_threshold);
         assert_eq!(InitialMaterial::SHIELD_EXTERNAL.head1, Head1Seed::EffectCld);
+    }
+
+    /// RE-422: a head-1 item's primitives carry `head1`; a head-0 item's
+    /// do not.
+    #[test]
+    fn a_head1_item_marks_its_primitives() {
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = [vtx(3), Cmd::Tri1([0, 1, 2])];
+        let item = |stream| SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &[],
+            mat_anims: &[],
+            depth_seed: None,
+            stream,
+        };
+        let items = [item(0), item(1)];
+        let meshes: Vec<_> =
+            convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
+                .into_iter()
+                .map(Result::unwrap)
+                .collect();
+        assert!(!meshes[0].primitives[0].material.head1);
+        assert!(meshes[1].primitives[0].material.head1);
+    }
+
+    /// RE-422: `grDisplayLayer{0,2,3}SecProcDisplay` leave head 1 at
+    /// `G_RM_AA_XLU_SURF` with `G_ZBUFFER` cleared. An unlit, untextured
+    /// `G_CC_SHADE` list under it (Saffron City's layer-3 haze, file 112 +
+    /// 0x8688) blends by its vertex alpha with no depth test; the same list
+    /// lit keeps the texture gate and draws opaque.
+    #[test]
+    fn a_layer_head1_shade_alpha_list_blends_with_no_depth_test() {
+        use crate::scene::Mat4;
+
+        let file = vertex_data_rgba(3, [0xFF, 0xFF, 0xFF, 0x40]);
+        let material = |lit: bool| {
+            let cmds = [
+                Cmd::GeometryMode {
+                    clear: !G_LIGHTING,
+                    set: if lit { G_LIGHTING } else { 0 },
+                },
+                // `G_CC_SHADE, G_CC_SHADE`.
+                Cmd::SetCombine {
+                    hi: 0x00FF_FFFF,
+                    lo: 0xFFFE_793C,
+                },
+                vtx(3),
+                Cmd::Tri1([0, 1, 2]),
+            ];
+            let items = [SequenceItem {
+                cmds: &cmds,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+                depth_seed: None,
+                stream: 1,
+            }];
+            let initial = InitialMaterial {
+                head1: Head1Seed::LayerXlu,
+                ..InitialMaterial::default()
+            };
+            let mesh = convert_sequence(&items, Source::bare(&file), initial)
+                .pop()
+                .unwrap()
+                .unwrap();
+            (mesh.primitives[0].material, mesh.vertices[0].rgba[3])
+        };
+        let (unlit, alpha) = material(false);
+        assert!(unlit.translucent && unlit.head1);
+        assert_eq!(unlit.alpha_blend, Some(AlphaBlend::Shade));
+        assert!(!unlit.depth_test && !unlit.depth_write && !unlit.z_buffer);
+        assert_eq!(unlit.depth_mode, ZMode::Translucent);
+        assert_eq!(alpha, 0x40);
+        let (lit, _) = material(true);
+        assert!(!lit.translucent);
     }
 
     #[test]

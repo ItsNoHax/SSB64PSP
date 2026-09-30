@@ -140,3 +140,7 @@ f1-training-select	psp-game	trainingselect	pass
 f1-training-select-picked	psp-game	trainingselectpicked	pass	
 f1-training-starko	psp-game	starko	pass	RE-420
 f1-vs-results-emblem	psp-game	vsresultsemblem	pass	RE-420
+f1-training-jungle	psp-game	trainingjungle	pass	RE-422
+f1-training-zebes	psp-game	trainingzebes	pass	RE-422
+f1-training-saffron	psp-game	trainingsaffron	pass	RE-422
+f1-training-inishie	psp-game	traininginishie	pass	RE-422

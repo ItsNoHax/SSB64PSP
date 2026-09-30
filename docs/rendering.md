@@ -37,7 +37,7 @@ history.
 | Textures: decode, CLUT/TLUT, filtering, addressing, LOD, texgen | Complete with measured filter deviation | [textures.md](rendering/textures.md) |
 | Combiner, `MObj` state, material animation | Complete for classified paths | [materials.md](rendering/materials.md) |
 | Lighting | Complete | [lighting.md](rendering/lighting.md) |
-| Alpha, blending, depth | Complete for classified formulas | [depth-alpha-blending.md](rendering/depth-alpha-blending.md) |
+| Alpha, blending, depth, draw order | Complete for classified formulas; battle passes by display link and task head (RE-422) | [depth-alpha-blending.md](rendering/depth-alpha-blending.md) |
 | Billboards, effects, shadows, framebuffer effects, UI | UI sprites and the wallpaper drawn (RE-392, RE-419) | [animation-effects.md](rendering/animation-effects.md) |
 | Submission order, GE state cache | Complete | [psp-lowering.md](rendering/psp-lowering.md) |
 | Filter residuals per texture | Generated report | [three-point-residuals.md](rendering/three-point-residuals.md) |
