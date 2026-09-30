@@ -23,19 +23,27 @@ The N64 has two independent discard gates; the GE has one alpha-test unit.
 
 | N64 gate | Source | Evidence |
 |---|---|---|
-| Coverage cutout | `CVG_X_ALPHA \| ALPHA_CVG_SEL` → `alpha >= 1` | RE-069 |
-| Threshold compare | `G_MDSFT_ALPHACOMPARE` = `G_AC_THRESHOLD` | RE-195 (29.8% of commands) |
+| Coverage cutout | `CVG_X_ALPHA \| ALPHA_CVG_SEL` → `alpha >= 32` | RE-069, RE-424 |
+| Threshold compare | `G_AC_THRESHOLD` against `G_SETBLENDCOLOR`'s alpha | RE-195 (29.8% of commands) |
 
 | Combination | GE test |
 |---|---|
-| Threshold with reference > 0 | `alpha >= reference` (implies cutout) |
-| Threshold 0 with cutout | `alpha > 0` |
-| Threshold 0 alone | no-op gate |
+| Cutout | `alpha >= 32` (`TEX_EDGE_MIN_ALPHA`) |
+| Threshold with reference `r` and cutout | `alpha >= max(r, 32)` |
+| Threshold alone | `alpha >= r`; `r = 0` is a no-op gate |
 
-Deviation: under `TEX_EDGE` the RDP scales a pixel's coverage by its alpha
-(`CVG_X_ALPHA`), so low-alpha edge texels keep little or no coverage and
-are antialiased; the GE keeps every texel with alpha >= 1 opaque, so a transparent TLUT entry's colour can fringe a cutout (Planet
-Zebes's upper platforms, RE-423; TODO).
+`CVG_X_ALPHA` scales a pixel's coverage by its alpha, `(alpha * cvg + 4)
+>> 8`, and with `AA_EN` (every `TEX_EDGE` mode in the archive) the RDP
+writes nothing where none is left: `alpha < 32` at full coverage. A kept
+pixel over a fully covered background is written unblended with its
+partial coverage (`CVG_DST_CLAMP`), and the VI's antialiasing (mode 0 in
+SSB64) mixes it with the background by that coverage. The GE blends such
+a primitive by its alpha instead (RE-424). Deviations: the GE has no
+coverage, so polygon edges count as fully covered; the mix is by alpha,
+not by eighths of coverage; it is taken from what is drawn before the
+pixel, where the VI uses the finished neighbours. Planet Zebes's yellow
+transparent TLUT entry, filtered into the platform edges, is therefore
+mixed with the background by coverage, as on the N64.
 
 Other `SETOTHERMODE` fields were measured archive-wide (RE-124, RE-127,
 RE-195): `ALPHADITHER`, `RGBDITHER`, `COMBKEY`, `TEXTCONV`, `TEXTPERSP` and

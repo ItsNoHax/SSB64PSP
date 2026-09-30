@@ -49,16 +49,9 @@ pub struct MeshVertex {
     /// normal-vs-colour when the RSP's vertex pipeline runs, which is
     /// `G_VTX` itself; triangle commands only reference the already-resolved
     /// cache. A node whose own list never mentions `G_LIGHTING` gets
-    /// whatever [`State::new`]'s [`InitialMaterial::lit`] seeded (RE-021/
-    /// RE-242's external-per-object case, wired through [`convert_sequence`]'s
-    /// own parameter): `false` for everything except a fighter's two
-    /// `common_parts` skeleton graphs.
+    /// whatever [`State::new`]'s [`InitialMaterial::lit`] seeded: the
+    /// scene's lighting state when the object's first list runs (RE-424).
     pub lit: bool,
-    /// Whether `lit` is known from the stream: a geometry-mode command
-    /// that set or cleared `G_LIGHTING`, or a lit seed, ran before this
-    /// `G_VTX` (RE-423). Only an unknown `lit` may be recovered from the
-    /// colour's shape (`pack::looks_like_unit_normal`).
-    pub lit_known: bool,
     /// Borrowed RSP cache vertex: loading sequence item and original position.
     /// The packer maps the item to its graph node before serialization.
     pub binding: Option<(u16, [i16; 3])>,
@@ -247,9 +240,9 @@ impl ZMode {
 ///
 /// `rdp_default()`/`Self::default()` (all `false`/[`ZMode::Opaque`]) is the
 /// real RDP per-frame reset (`sSYRdpResetDisplayList`'s `G_RM_OPA_SURF`,
-/// which sets neither `Z_CMP` nor `Z_UPD`) and stays correct for any list
-/// that is not one of these externally-wrapped graphs. [`Self::FIGHTER_EXTERNAL`]
-/// is the one measured external wrapper found so far.
+/// which sets neither `Z_CMP` nor `Z_UPD`, and clears `G_LIGHTING`). Every
+/// scene's lights function sets `G_LIGHTING` after it, so a packed graph
+/// starts from [`Self::SCENE`] or one of the wrapper seeds below (RE-424).
 /// The state task head 1 (the translucent list) holds when a graph's
 /// head-1 lists start, which [`convert_sequence`] seeds its second stream
 /// with.
@@ -296,6 +289,27 @@ pub struct InitialMaterial {
 }
 
 impl InitialMaterial {
+    /// The state an object's first list starts under in any scene: the
+    /// frame's reset list (`sSYRdpResetDisplayList`) clears `G_LIGHTING`,
+    /// and the scene's lights function (`scVSBattleFuncLights`,
+    /// `sc1PTrainingModeFuncLights`, `mnVSResultsFuncLights`, the menus' and
+    /// movies' lights lists) sets it again before any camera draws. Nothing
+    /// in `objdisplay.c`, `ef`, `wp`, `it` or `gr` touches it, so a list that
+    /// never mentions it runs lit unless an earlier list of its own object
+    /// cleared it. N64 RDRAM traces (RE-424): every first list of a stage
+    /// layer, item, weapon, effect, entry and fighter part, over Training,
+    /// VS entries, the opening room and the Training select, runs lit.
+    pub const SCENE: InitialMaterial = InitialMaterial {
+        lit: true,
+        depth_test: false,
+        depth_write: false,
+        depth_mode: ZMode::Opaque,
+        translucent: false,
+        alpha_blend: None,
+        env_color: None,
+        head1: Head1Seed::CameraXlu,
+    };
+
     /// `ftDisplayMainProcDisplay` sets `G_LIGHTING` (RE-021, RE-242) and
     /// `gDPSetRenderMode(G_RM_FOG_PRIM_A, G_RM_AA_ZB_OPA_SURF2)` -- which ORs
     /// to `Z_CMP | Z_UPD | ZMODE_OPA` among its shared bits (RE-244) --
@@ -322,9 +336,10 @@ impl InitialMaterial {
     /// unconditionally, right before walking a stage's render-layer-1 `DObj`
     /// tree (`gcDrawDObjTreeForGObj`) or its list-0-routed `DObjDLLink`
     /// entries (`gcDrawDObjTreeDLLinksForGObj`) -- the same external
-    /// "wrap-and-walk" shape [`Self::FIGHTER_EXTERNAL`] has for fighters, but
-    /// without `G_LIGHTING` (`gr`'s wrapper never touches the lighting bit;
-    /// each node's own commands decide it). `G_RM_AA_ZB_OPA_SURF2` ORs to
+    /// "wrap-and-walk" shape [`Self::FIGHTER_EXTERNAL`] has for fighters.
+    /// `gr`'s wrapper never touches the lighting bit, so the layer starts
+    /// under the scene's (lit, [`Self::SCENE`]) and its lists clear it
+    /// themselves (RE-423, RE-424). `G_RM_AA_ZB_OPA_SURF2` ORs to
     /// `Z_CMP | Z_UPD | ZMODE_OPA`, matching `FIGHTER_EXTERNAL`'s depth
     /// fields exactly.
     ///
@@ -341,7 +356,7 @@ impl InitialMaterial {
     /// z_buffer`): 21 of 163 layer-1 `DObjDLLink` entries target list 1 (108
     /// of 776 layer-1 primitives), now correctly reading `depth_write` false.
     pub const GROUND_LAYER1_EXTERNAL: InitialMaterial = InitialMaterial {
-        lit: false,
+        lit: true,
         depth_test: true,
         depth_write: true,
         depth_mode: ZMode::Opaque,
@@ -376,10 +391,10 @@ impl InitialMaterial {
     /// primitive in one of these eleven graphs really is drawn under the
     /// camera's untouched default, not the RDP-reset baseline
     /// [`Self::default`] would otherwise assume. `lbTransitionProcDisplay`
-    /// never sets `G_LIGHTING` either, so `lit` stays `false`, matching
-    /// `GROUND_LAYER1_EXTERNAL`.
+    /// never sets `G_LIGHTING` either, so the scene's lit state stands
+    /// (`mnVSResultsFuncLights`, [`Self::SCENE`]).
     pub const LB_TRANSITION_EXTERNAL: InitialMaterial = InitialMaterial {
-        lit: false,
+        lit: true,
         depth_test: true,
         depth_write: true,
         depth_mode: ZMode::Opaque,
@@ -415,7 +430,7 @@ impl InitialMaterial {
     /// it to opaque and lets the CI4 flame texture's own alpha drive
     /// visibility, matching the sprite's real in-game appearance.
     pub const WEAPON_EXTERNAL: InitialMaterial = InitialMaterial {
-        lit: false,
+        lit: true,
         depth_test: false,
         depth_write: false,
         depth_mode: ZMode::Translucent,
@@ -434,7 +449,7 @@ impl InitialMaterial {
     /// state and, setting no render mode or `G_ZBUFFER` of its own, draws with
     /// no depth test (RE-421).
     pub const SHIELD_EXTERNAL: InitialMaterial = InitialMaterial {
-        lit: false,
+        lit: true,
         depth_test: false,
         depth_write: false,
         depth_mode: ZMode::Opaque,
@@ -1514,14 +1529,13 @@ struct State {
     real_timg: Option<(u32, Option<u16>)>,
     /// Whether `real_timg` is the current `MObj`'s sprite (RE-326).
     real_timg_mobj: bool,
-    /// Whether `material.lit` is known from the stream rather than guessed
-    /// from the seed (see [`MeshVertex::lit_known`]).
-    lit_known: bool,
     /// The `G_SETTIMG` image's `width` in texels and its texel size in bits.
     /// A `G_LOADTILE` reads its rectangle's rows at that pitch.
     timg_row: (u32, u32),
     /// The rectangle the last `G_LOADTILE` copied into TMEM (RE-423).
     load_tile: Option<LoadTileRect>,
+    /// Every `G_VTX` this state ran, when [`trace_vertex_loads`] asked.
+    vtx_trace: Option<Vec<VtxLoad>>,
     /// Whether `timg_addr` is the current `MObj`'s palette, not yet loaded
     /// (RE-326).
     timg_mobj_palette: bool,
@@ -1679,14 +1693,18 @@ impl State {
                 env_color: initial.env_color,
                 ..MeshMaterial::rdp_default()
             },
-            geometry_mode: RDP_DEFAULT_GEOMETRY_MODE,
+            geometry_mode: if initial.lit {
+                RDP_DEFAULT_GEOMETRY_MODE | G_LIGHTING
+            } else {
+                RDP_DEFAULT_GEOMETRY_MODE
+            },
             timg_addr: None,
             timg_file: None,
             real_timg: None,
             real_timg_mobj: false,
-            lit_known: initial.lit,
             timg_row: (0, 0),
             load_tile: None,
+            vtx_trace: None,
             timg_mobj_palette: false,
             tile0_fmt: None,
             tile_dims: None,
@@ -1815,13 +1833,13 @@ impl State {
         if m.blend_color.is_some() {
             self.material.blend_color = m.blend_color;
         }
+        // `gcDrawMObjForDObj` writes the colours with `gSPLightColor` and
+        // leaves `G_LIGHTING` alone (RE-424).
         if let Some(c) = m.light1_color {
             self.material.light1_color = Some(c);
-            self.material.lit = true;
         }
         if let Some(c) = m.light2_color {
             self.material.light2_color = Some(c);
-            self.material.lit = true;
         }
         // `MOBJ_FLAG_TILE0`/`MOBJ_FLAG_TEXTURE` (RE-194): the same
         // `gDPSetTileSize(0, ...)`/`gSPTexture(..., G_ON)` commands a
@@ -2629,6 +2647,36 @@ pub fn convert_sequence(
     src: Source<'_>,
     initial: InitialMaterial,
 ) -> Vec<Result<Mesh, MeshError>> {
+    convert_sequence_traced(items, src, initial, false).0
+}
+
+/// One `G_VTX` as [`convert_sequence`] ran it: the sequence item, the vertex
+/// data's offset in the file, the vertex count, and the lighting state the
+/// vertices were loaded under (RE-424).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VtxLoad {
+    pub item: u16,
+    pub offset: u32,
+    pub count: u8,
+    pub lit: bool,
+}
+
+/// Every `G_VTX` [`convert_sequence`] runs for `items`, in order, for
+/// auditing the lighting state against an N64 display-list trace (RE-424).
+pub fn trace_vertex_loads(
+    items: &[SequenceItem],
+    src: Source<'_>,
+    initial: InitialMaterial,
+) -> Vec<VtxLoad> {
+    convert_sequence_traced(items, src, initial, true).1
+}
+
+fn convert_sequence_traced(
+    items: &[SequenceItem],
+    src: Source<'_>,
+    initial: InitialMaterial,
+    trace: bool,
+) -> (Vec<Result<Mesh, MeshError>>, Vec<VtxLoad>) {
     let spaces: Vec<crate::scene::Mat4> = items.iter().map(|i| i.world).collect();
     let mut streams = [State::new(initial), State::new(initial)];
     // `func_80016338` seeds a camera's task head 1 with this render mode.
@@ -2658,6 +2706,9 @@ pub fn convert_sequence(
     streams[1].texture_lut = LutState::Known(crate::texture::TextureLut::None);
     for state in &mut streams {
         state.spaces = spaces.clone();
+        if trace {
+            state.vtx_trace = Some(Vec::new());
+        }
     }
 
     let mut out = Vec::with_capacity(items.len());
@@ -2715,7 +2766,12 @@ pub fn convert_sequence(
             primitives: merge_by_material(prims),
         }));
     }
-    out
+    let mut loads: Vec<VtxLoad> = streams
+        .iter_mut()
+        .flat_map(|s| s.vtx_trace.take().unwrap_or_default())
+        .collect();
+    loads.sort_by_key(|l| l.item);
+    (out, loads)
 }
 
 fn walk(
@@ -2737,6 +2793,14 @@ fn walk(
                 addr,
             } => {
                 let base = addr.0 as usize;
+                if let Some(trace) = state.vtx_trace.as_mut() {
+                    trace.push(VtxLoad {
+                        item: state.space,
+                        offset: addr.0,
+                        count,
+                        lit: state.material.lit,
+                    });
+                }
                 for i in 0..count as usize {
                     let at = base + i * Vtx::SIZE;
                     let raw = src
@@ -2764,7 +2828,6 @@ fn walk(
                                 // when this command runs, not later when a
                                 // triangle references the slot.
                                 lit: state.material.lit,
-                                lit_known: state.lit_known,
                                 binding: None,
                             },
                             space: state.space,
@@ -3039,14 +3102,10 @@ fn walk(
                 state.material.smooth = gm & G_SHADING_SMOOTH != 0;
                 state.material.z_buffer = gm & G_ZBUFFER != 0;
                 state.material.texture_gen = TextureGen::from_geometry_mode(gm);
-                // `lit` is deliberately *not* derived: `G_MW_LIGHTCOL` below
-                // sets it without any geometry-mode command, because real
-                // hardware sets `G_LIGHTING` per-object outside the node's
-                // own list (RE-021/RE-105). Only an explicit clear may take
-                // it away.
-                state.material.lit =
-                    (state.material.lit && clear & G_LIGHTING == 0) || set & G_LIGHTING != 0;
-                state.lit_known |= (clear | set) & G_LIGHTING != 0;
+                // Only this command changes `G_LIGHTING`: a light colour write
+                // (`G_MW_LIGHTCOL`, an `MObj`'s `gSPLightColor`) leaves it
+                // alone (RE-424).
+                state.material.lit = gm & G_LIGHTING != 0;
             }
 
             // `G_MW_LIGHTCOL` (RE-105): updating a light's colour has no
@@ -3080,8 +3139,6 @@ fn walk(
                     }
                     _ => {}
                 }
-                state.material.lit = true;
-                state.lit_known = true;
             }
 
             Cmd::SetCombine { hi, lo } => state.combiner = Some((hi, lo)),
@@ -3930,7 +3987,8 @@ mod tests {
             .pop()
             .unwrap()
             .unwrap();
-        assert!(mesh.primitives[0].material.lit);
+        // RE-424: `gSPLightColor` leaves `G_LIGHTING` as it was.
+        assert!(!mesh.primitives[0].material.lit);
         assert_eq!(
             mesh.primitives[0].material.light2_color,
             Some([0x4C, 0x4C, 0x4C, 0x00])
@@ -4647,11 +4705,15 @@ mod tests {
         assert_eq!(t.data_offset, 0x1030);
     }
 
-    /// RE-423: a vertex loaded after the stream cleared `G_LIGHTING` is a
-    /// known colour, whatever its shape; one the stream never said anything
-    /// about is not.
+    /// RE-423/RE-424: `G_LIGHTING` alone decides whether a vertex is lit.
+    /// A clear makes a normal-shaped colour unlit, a seed or a set makes it
+    /// lit, and a light colour write changes nothing: Kirby's electric
+    /// skeleton (file 328 + 0x198F8) clears the bit, then its `MObj` writes
+    /// `LIGHT_1`/`LIGHT_2`, and the N64 loads the vertices after it unlit.
     #[test]
-    fn a_vertex_after_a_lighting_clear_is_a_known_colour() {
+    fn only_the_lighting_bit_decides_lighting() {
+        use crate::scene::Mat4;
+
         // Yoshi's Island's right platform top (file 111 + 0x48E0): a colour
         // whose bytes also read as a unit normal.
         let file = vertex_data_rgba(3, [227, 227, 132, 255]);
@@ -4659,16 +4721,48 @@ mod tests {
             clear: G_LIGHTING,
             set: 0,
         };
-        let known = convert(&[clear, vtx(3), Cmd::Tri1([0, 1, 2])], Source::bare(&file)).unwrap();
-        assert!(known.vertices.iter().all(|v| !v.lit && v.lit_known));
-        let unknown = convert(&[vtx(3), Cmd::Tri1([0, 1, 2])], Source::bare(&file)).unwrap();
-        assert!(unknown.vertices.iter().all(|v| !v.lit && !v.lit_known));
         let set = Cmd::GeometryMode {
             clear: 0,
             set: G_LIGHTING,
         };
-        let lit = convert(&[set, vtx(3), Cmd::Tri1([0, 1, 2])], Source::bare(&file)).unwrap();
-        assert!(lit.vertices.iter().all(|v| v.lit && v.lit_known));
+        let light = Cmd::MoveWord {
+            index: G_MW_LIGHTCOL,
+            offset: 0,
+            data: 0xFFFF_FF00,
+        };
+        let run = |cmds: &[Cmd], lit: bool| {
+            let items = [SequenceItem {
+                cmds,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+                depth_seed: None,
+                stream: 0,
+            }];
+            let initial = InitialMaterial {
+                lit,
+                ..InitialMaterial::default()
+            };
+            let m = convert_sequence(&items, Source::bare(&file), initial)
+                .pop()
+                .unwrap()
+                .unwrap();
+            let lit: Vec<bool> = m.vertices.iter().map(|v| v.lit).collect();
+            assert!(lit.iter().all(|&l| l == lit[0]));
+            lit[0]
+        };
+        let tri = Cmd::Tri1([0, 1, 2]);
+        assert!(!run(&[clear, vtx(3), tri], true), "cleared");
+        assert!(
+            !run(&[clear, light, vtx(3), tri], true),
+            "light colour after a clear"
+        );
+        assert!(
+            !run(&[light, vtx(3), tri], false),
+            "light colour on an unlit seed"
+        );
+        assert!(run(&[vtx(3), tri], true), "lit seed");
+        assert!(run(&[set, vtx(3), tri], false), "set");
     }
 
     /// RE-422: a head-1 item's primitives carry `head1`; a head-0 item's
@@ -6171,7 +6265,8 @@ mod tests {
         ];
         let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         let material = &mesh.primitives[0].material;
-        assert!(material.lit);
+        // RE-424: the colours are kept; `G_LIGHTING` is not set by them.
+        assert!(!material.lit);
         assert_eq!(material.light1_color, Some([0x11, 0x22, 0x33, 0]));
         assert_eq!(material.light2_color, Some([0x44, 0x55, 0x66, 0]));
     }
@@ -7422,13 +7517,14 @@ mod tests {
     }
 
     #[test]
-    fn convert_sequence_ground_layer1_external_seeds_depth_but_not_lit() {
+    fn convert_sequence_ground_layer1_external_seeds_depth_under_the_scene_light() {
         // R2.2/C3 (RE-245): `grDisplayLayer1PriProcDisplay`/`SecProcDisplay`
         // set `G_ZBUFFER` and `gDPSetRenderMode(G_RM_AA_ZB_OPA_SURF,
         // G_RM_AA_ZB_OPA_SURF2)` unconditionally before walking a stage's
         // render-layer-1 node lists -- the same depth fields
-        // `FIGHTER_EXTERNAL` seeds, but `gr`'s wrapper never touches
-        // `G_LIGHTING`, so `lit` must stay off.
+        // `FIGHTER_EXTERNAL` seeds. `gr`'s wrapper never touches
+        // `G_LIGHTING`, so the scene's lights function's state stands: lit
+        // until a list clears it (RE-424).
         use crate::scene::Mat4;
 
         let file = vertex_data(3);
@@ -7454,8 +7550,8 @@ mod tests {
         assert!(m.depth_write, "Z_UPD must be seeded on");
         assert_eq!(m.depth_mode, ZMode::Opaque);
         assert!(
-            !mesh.vertices[0].lit,
-            "gr's wrapper does not set G_LIGHTING"
+            mesh.vertices[0].lit,
+            "the scene's lights function set G_LIGHTING"
         );
     }
 
@@ -7518,7 +7614,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_sequence_lb_transition_external_seeds_depth_but_not_lit() {
+    fn convert_sequence_lb_transition_external_seeds_depth_under_the_scene_light() {
         // R2.2/C3 (RE-246): `lbTransitionMakeCamera`'s dedicated camera
         // (buffer 0) gets `Z_CMP | Z_UPD | ZMODE_OPA` from `sys/objdisplay.c`'s
         // `func_8001663C`, the camera-level default every buffer-0 camera's
@@ -7551,8 +7647,8 @@ mod tests {
         assert!(m.depth_write, "Z_UPD must be seeded on");
         assert_eq!(m.depth_mode, ZMode::Opaque);
         assert!(
-            !mesh.vertices[0].lit,
-            "lbTransitionProcDisplay does not set G_LIGHTING"
+            mesh.vertices[0].lit,
+            "lbTransitionProcDisplay leaves the scene's G_LIGHTING"
         );
     }
 

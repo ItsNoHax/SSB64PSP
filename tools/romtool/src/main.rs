@@ -75,6 +75,7 @@ fn main() -> ExitCode {
         ["dump", rom_path, id] => dump(rom_path.as_ref(), id),
         ["link", rom_path, ids @ ..] if !ids.is_empty() => link(rom_path.as_ref(), ids),
         ["textures", rom_path, rest @ ..] => textures(rom_path.as_ref(), rest),
+        ["lighting", rom_path, rest @ ..] => lighting(rom_path.as_ref(), rest),
         _ => {
             usage();
             return ExitCode::from(2);
@@ -128,6 +129,7 @@ USAGE:
     romtool dump     <rom.z64> <file-id>
     romtool textures <rom.z64> [--file <id>]
     romtool texdump  <rom.z64> [--file <id>] [--count <n>]
+    romtool lighting <rom.z64> [--file <id>]
 
 The ROM is read only. Output defaults to assets/generated/, which is
 gitignored -- no extracted asset is ever committed."
@@ -769,6 +771,7 @@ fn mesh(path: &Path) -> Res {
 }
 
 /// One display list a scene graph draws, and the space it draws it in.
+#[derive(Clone, Copy)]
 struct PlannedList {
     /// Index of the owning node within its graph.
     node: usize,
@@ -1001,6 +1004,9 @@ struct MatAnimData {
     /// replay (0 when the track never moves: `gcAddMObjForDObj` zeroes it).
     /// `sprites` also covers `TextureIDNext`, which only tile 1 samples.
     max_current: usize,
+    /// RE-424: the highest `PRIM_LOD_FRAC` byte the replay reaches, from the
+    /// `SetLFrac` track or its rest value.
+    max_lod_frac: u8,
 }
 
 fn texture_cache_key(
@@ -1200,10 +1206,10 @@ fn source_fully_opaque(src: Texels<'_>, t: &ssb_rom::mesh::TextureRef) -> Option
 /// alpha gate cannot tell pass 1's `TEXEL0` alpha from the blended alpha:
 ///
 /// * no GE blending (`translucent` with a classified alpha formula);
-/// * no gate, or a zero-threshold gate with every `TEXEL0` image opaque and
-///   `PRIM_ALPHA` 255 -- then the blended alpha is at least `1 - f` with
-///   `f <= 255/256`, which never fails a zero threshold, and pass 1's alpha
-///   is 255;
+/// * no gate, or a gate with every `TEXEL0` image opaque and `PRIM_ALPHA`
+///   255 whose threshold the lerp from 255 towards 0 at the script's largest
+///   fraction still passes -- then the blended alpha always passes and pass
+///   1's alpha is 255 (RE-424);
 /// * no palette animation and no texgen, which the second pass does not
 ///   carry.
 ///
@@ -1244,12 +1250,21 @@ fn lod_blend_desc(
     if translucent_blend {
         return Err("GE blending would weight pass 1 by its own alpha");
     }
-    let zero_gate = match gate {
-        AlphaGate::Off => false,
-        AlphaGate::Greater(0) | AlphaGate::GreaterOrEqual(0 | 1) => true,
-        _ => return Err("nonzero alpha threshold"),
+    // The least alpha the gate passes, and whether one is set.
+    let floor = match gate {
+        AlphaGate::Off => None,
+        AlphaGate::Greater(t) => Some(u16::from(t) + 1),
+        AlphaGate::GreaterOrEqual(t) => Some(u16::from(t)),
     };
-    if zero_gate {
+    if let Some(floor) = floor {
+        // With every `TEXEL0` opaque and `PRIM_ALPHA` 255 the blended alpha
+        // is at least the lerp from 255 towards 0 at the largest fraction
+        // the script reaches; the gate must pass that (RE-424: the cutout
+        // gate is 32, and Dream Land's pond reaches 114).
+        let least = ssb_rom::lod_blend::rdp_combine_channel(0, 255, data.max_lod_frac, 255);
+        if u16::from(least) < floor {
+            return Err("the blended alpha can fall below the alpha gate");
+        }
         if lod.prim_alpha != 255 {
             return Err("PRIM_ALPHA below 255 under an alpha gate");
         }
@@ -2205,7 +2220,7 @@ fn initial_material_for(
     } else if ground_layer1_graphs.contains_key(&(file, graph_offset)) {
         ssb_rom::mesh::InitialMaterial {
             head1: ssb_rom::mesh::Head1Seed::LayerXlu,
-            ..ssb_rom::mesh::InitialMaterial::default()
+            ..ssb_rom::mesh::InitialMaterial::SCENE
         }
     } else if lb_transition_graphs.contains(&(file, graph_offset)) {
         ssb_rom::mesh::InitialMaterial::LB_TRANSITION_EXTERNAL
@@ -2216,10 +2231,10 @@ fn initial_material_for(
     } else if EFFECT_CLD_GRAPHS.contains(&(file, graph_offset)) {
         ssb_rom::mesh::InitialMaterial {
             head1: ssb_rom::mesh::Head1Seed::EffectCld,
-            ..ssb_rom::mesh::InitialMaterial::default()
+            ..ssb_rom::mesh::InitialMaterial::SCENE
         }
     } else {
-        ssb_rom::mesh::InitialMaterial::default()
+        ssb_rom::mesh::InitialMaterial::SCENE
     }
 }
 
@@ -2294,6 +2309,148 @@ fn convert_graph_at(
     converted
 }
 
+/// [`convert_graph_at`]'s `G_VTX` loads and the lighting each ran under
+/// (RE-424).
+fn trace_graph_at(
+    loaded: &Loaded,
+    file: &ssb_rom::archive::File,
+    graph_offset: u32,
+    plan: &[PlannedList],
+    materials: &[ssb_rom::mobj::NodeMaterials],
+    initial: ssb_rom::mesh::InitialMaterial,
+) -> Vec<ssb_rom::mesh::VtxLoad> {
+    use ssb_rom::mesh;
+
+    let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+        .iter()
+        .map(|p| {
+            file.data
+                .get(p.dl as usize..)
+                .and_then(|d| ssb_rom::dl::decode_list_at(d, p.dl).ok())
+                .unwrap_or_default()
+        })
+        .collect();
+    let mut mat_anim_data = BTreeMap::new();
+    let mat_anims =
+        resolve_layer_mat_anims(loaded, file, graph_offset, materials, &mut mat_anim_data);
+    let items: Vec<mesh::SequenceItem> = plan
+        .iter()
+        .zip(&decoded)
+        .map(|(p, cmds)| mesh::SequenceItem {
+            cmds,
+            world: p.world,
+            mobjs: &materials[p.node],
+            mat_anims: &mat_anims[p.node],
+            depth_seed: ground_layer1_list1_depth_seed(initial, p.list_id),
+            stream: u8::from(p.list_id == Some(1)),
+        })
+        .collect();
+    mesh::trace_vertex_loads(&items, mesh::Source::of(file), initial)
+}
+
+/// `romtool lighting`: every `G_VTX` of every scene graph (and each
+/// fighter's electric skeletons and Kirby's copy hats) with the lighting
+/// state the converter loads it under, one line per load (RE-424):
+/// `file graph variant item dl vertex_offset count lit`.
+/// `variant` is `base`, `skeleton<N>` or `hat<N>`.
+fn lighting(path: &Path, args: &[&str]) -> Res {
+    let mut only_file: Option<u32> = None;
+    let mut it = args.iter();
+    while let Some(&a) = it.next() {
+        match a {
+            "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+    let loaded = load_all(&archive);
+    for r in lighting_rows(&loaded, only_file) {
+        println!(
+            "{}\t0x{:X}\t{}\t{}\t0x{:X}\t0x{:X}\t{}\t{}",
+            r.file,
+            r.graph,
+            r.variant,
+            r.load.item,
+            r.dl,
+            r.load.offset,
+            r.load.count,
+            u8::from(r.load.lit),
+        );
+    }
+    Ok(())
+}
+
+/// One `G_VTX` of [`lighting_rows`].
+struct LightingRow {
+    file: u32,
+    graph: u32,
+    /// `base`, `skeleton<N>` or `hat<N>`.
+    variant: String,
+    dl: u32,
+    load: ssb_rom::mesh::VtxLoad,
+}
+
+/// Every `G_VTX` the packer runs for each scene graph, electric skeleton and
+/// copy hat, with the lighting it loads under (RE-424).
+fn lighting_rows(loaded: &Loaded, only_file: Option<u32>) -> Vec<LightingRow> {
+    let skeleton_graphs = fighter_skeleton_graphs(loaded);
+    let ground_graphs = ground_layer1_graphs(loaded);
+    let transition_graphs = lb_transition_graphs();
+    let mut rows = Vec::new();
+    for (&id, graphs) in &loaded.graphs {
+        if only_file.is_some_and(|f| f != id) {
+            continue;
+        }
+        let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            continue;
+        };
+        let resolver = ssb_rom::scene::DlResolver::new(file);
+        for graph in graphs {
+            let initial = initial_material_for(
+                &skeleton_graphs,
+                &ground_graphs,
+                &transition_graphs,
+                id,
+                graph.offset,
+            );
+            let materials = loaded.materials(file, graph);
+            let base = plan_draw_order(graph, &resolver);
+            let mut variants: Vec<(String, Vec<PlannedList>)> = vec![("base".into(), base.clone())];
+            for (_, set, parts) in skeleton_sets_for(loaded, id, graph) {
+                variants.push((format!("skeleton{set}"), plan_skeleton_order(graph, &parts)));
+            }
+            for (part, mp) in kirby_copy_hats(loaded, id, graph) {
+                let node = (KIRBY_COPY_JOINT - ssb_rom::fighter::JOINT_COMMON_START) as usize;
+                let plan: Vec<PlannedList> = base
+                    .iter()
+                    .map(|p| PlannedList {
+                        dl: if p.node == node && p.own_space() {
+                            mp.dl.1
+                        } else {
+                            p.dl
+                        },
+                        ..*p
+                    })
+                    .collect();
+                variants.push((format!("hat{part}"), plan));
+            }
+            for (name, plan) in &variants {
+                for load in trace_graph_at(loaded, file, graph.offset, plan, &materials, initial) {
+                    rows.push(LightingRow {
+                        file: id,
+                        graph: graph.offset,
+                        variant: name.clone(),
+                        dl: plan[load.item as usize].dl,
+                        load,
+                    });
+                }
+            }
+        }
+    }
+    rows
+}
+
 fn map_vertex_bindings(mesh: &mut ssb_rom::mesh::Mesh, plan: &[PlannedList]) {
     for v in &mut mesh.vertices {
         if let Some((item, pos)) = v.binding {
@@ -2347,6 +2504,8 @@ fn resolve_one_mat_anim(
     let mut uv_replay_holds = true;
     let mut drives_lod = false;
     let mut max_current = 0.0f32;
+    let lfrac_rest = f32::from_bits(base_tracks[ssb_rom::matanim::TRACK_SET_LFRAC]);
+    let mut max_lod_frac = ssb_rom::lod_blend::prim_lod_frac(lfrac_rest);
     loop {
         // A decoder error means this script is not something this resolver
         // can trust the replay of -- decline it outright rather than attach
@@ -2365,6 +2524,9 @@ fn resolve_one_mat_anim(
             max_texture = max_texture.max(v);
         }
         seen_material |= (0..10).any(|track| j.track_value(track).is_some());
+        if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_SET_LFRAC) {
+            max_lod_frac = max_lod_frac.max(ssb_rom::lod_blend::prim_lod_frac(v));
+        }
         drives_lod |= j.track_value(ssb_rom::matanim::TRACK_SET_LFRAC).is_some()
             || j.track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_NEXT)
                 .is_some();
@@ -2461,6 +2623,7 @@ fn resolve_one_mat_anim(
             drives_lod,
             // `texture_id_curr` is a `u16`: the live float truncates.
             max_current: max_current.max(0.0) as usize,
+            max_lod_frac,
         },
     ))
 }
@@ -2646,6 +2809,7 @@ fn resolve_ground_mat_anims(
                 }
                 data.drives_lod |= other.drives_lod;
                 data.max_current = data.max_current.max(other.max_current);
+                data.max_lod_frac = data.max_lod_frac.max(other.max_lod_frac);
                 data.uv_static &= other.uv_static;
             }
             if declined {
@@ -3132,7 +3296,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             if unconvertible_without_materials(&dl.commands, file) {
                 continue;
             }
-            let Ok(m) = mesh::convert(&dl.commands, mesh::Source::of(file)) else {
+            let Ok(m) = convert_discovered(&dl.commands, file) else {
                 continue;
             };
             if m.triangle_count() == 0 {
@@ -7902,9 +8066,32 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
         if unconvertible_without_materials(&dl.commands, file) {
             continue;
         }
-        out.extend(mesh::convert(&dl.commands, mesh::Source::of(file)));
+        out.extend(convert_discovered(&dl.commands, file));
     }
     out
+}
+
+/// A list no scene graph names, converted under the scene's state
+/// ([`ssb_rom::mesh::InitialMaterial::SCENE`], RE-424).
+fn convert_discovered(
+    cmds: &[ssb_rom::dl::Cmd],
+    file: &ssb_rom::archive::File,
+) -> Result<ssb_rom::mesh::Mesh, ssb_rom::mesh::MeshError> {
+    let item = ssb_rom::mesh::SequenceItem {
+        cmds,
+        world: ssb_rom::scene::Mat4::IDENTITY,
+        mobjs: &[],
+        mat_anims: &[],
+        depth_seed: None,
+        stream: 0,
+    };
+    ssb_rom::mesh::convert_sequence(
+        &[item],
+        ssb_rom::mesh::Source::of(file),
+        ssb_rom::mesh::InitialMaterial::SCENE,
+    )
+    .pop()
+    .expect("one item")
 }
 
 /// Whether a discovered list needs material state this converter cannot supply.
@@ -12669,6 +12856,57 @@ mod tests {
             "palette_entries/bank conflict count for a fixed (palette_file, palette_offset) changed \
              from RE-253's measured baseline of 46"
         );
+    }
+
+    /// RE-424: vertex loads whose lighting the N64 RDRAM traces pinned,
+    /// each one the old rules got wrong. Kirby's electric skeleton clears
+    /// `G_LIGHTING` and its `MObj` then writes light colours; Captain
+    /// Falcon's entry car and the items clear it; Fox's entry Arwing never
+    /// states it and runs lit under the scene. `(file, graph, variant,
+    /// vertex offset, count, lit)`.
+    #[test]
+    fn packed_lighting_matches_the_n64_traces() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        let cases: [(u32, u32, &str, u32, u8, bool); 7] = [
+            (328, 0x1448, "skeleton1", 0x191F8, 3, true),
+            (328, 0x1448, "skeleton1", 0x19228, 32, false),
+            (350, 0x5FC0, "base", 0x54D0, 4, false),
+            (350, 0x5FC0, "base", 0x3ED0, 24, true),
+            (161, 0x2C30, "base", 0x1EC0, 4, true),
+            (86, 0x670, "base", 0x210, 14, false),
+            (86, 0x71A8, "base", 0x6E40, 10, true),
+        ];
+        for file in [86, 161, 328, 350] {
+            let rows = super::lighting_rows(&loaded, Some(file));
+            for &(f, graph, variant, offset, count, lit) in cases.iter().filter(|c| c.0 == file) {
+                let hits: Vec<bool> = rows
+                    .iter()
+                    .filter(|r| {
+                        (
+                            r.file,
+                            r.graph,
+                            r.variant.as_str(),
+                            r.load.offset,
+                            r.load.count,
+                        ) == (f, graph, variant, offset, count)
+                    })
+                    .map(|r| r.load.lit)
+                    .collect();
+                assert!(
+                    !hits.is_empty(),
+                    "{f} 0x{graph:X} {variant} 0x{offset:X} not loaded"
+                );
+                assert!(
+                    hits.iter().all(|&l| l == lit),
+                    "{f} 0x{graph:X} {variant} 0x{offset:X}: {hits:?}, N64 {lit}"
+                );
+            }
+        }
     }
 
     /// `R2.2`/C1 (RE-240): measures how many real primitives are both `lit`

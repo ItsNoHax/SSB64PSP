@@ -885,3 +885,25 @@ Jungle, Sector, Saffron and Mushroom Kingdom goldens; the pack with only
 the strip fix changed `yoster` (28,480) and the lighting goldens; the pack
 without the gate seed changed `saffron` (2,296) and `inishie` (64).
 136 of 136 match twice.
+
+## 2026-09-30 RE-424 lighting bit and cutout coverage
+
+Pack v76, 34,589,248 bytes (SHA-256 `750508e7…`). Only `G_LIGHTING`
+decides lighting (light colour writes no longer turn it on, and every
+graph starts under the scene's lit state), and a `TEX_EDGE` cutout keeps
+`alpha >= 32` and blends by its alpha for the coverage it keeps. 76
+goldens were rebaselined, identical in both captures:
+- `r2-kirby-skeleton` (50,596 pixels at 2×): Kirby's electric skeleton
+  keeps its unlit vertex colours after its list clears `G_LIGHTING`, as the
+  N64 trace loads them.
+- `r2-stage-bonus3-race-to-the-finish` (10,144): the lists after 149 +
+  0x53D8's clear keep their colours, and the cutout edges.
+- 74 others (20 to 11,164): cutout edges of trees, fences, grates, rope,
+  flames and fighter parts lose texels below alpha 32 and blend the rest;
+  Planet Zebes's platforms lose their yellow ring.
+
+Negative tests: the old light-colour rule changed `r2-kirby-skeleton`
+(50,596); an unlit scene seed changed 35 goldens (the opening room 79,384,
+the results emblem 63,304, the bonus stages, Sector Z); drawing the
+cutouts unblended changed 74 (`r2-stage-bonus2-donkey-kong` 9,744,
+`saffron` 7,616, `jungle` 7,240, `zebes` 5,752). 136 of 136 match twice.
