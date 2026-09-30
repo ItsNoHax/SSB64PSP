@@ -2108,6 +2108,33 @@ const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[
 /// ENV (RE-384).
 const SHIELD_GRAPH: (u32, u32) = (163, 0x300);
 
+/// `efManagerMakeEffect` effects on DL link 15 or 18 whose display draws
+/// the tree's `DObjDLLink` lists (`gcDrawDObjTreeDLLinksForGObj`): the
+/// head-1 lists start under `efDisplayCLDProcDisplay`'s state, which every
+/// priority-2 effect on those links inherits (RE-421). From
+/// `ef/efmanager.c`'s `EFDesc` table: DamageSlash, DamageFlyMDust,
+/// CatchSwirl, ReflectBreak, DeadExplode, ItemGetSwirl, Pikachu's Thunder
+/// Shock, Kirby's Vulcan Jab and Final Cutter trail, Samus's grapple beam,
+/// Jigglypuff's Sing, Ness's PSI Magnet and PK Thunder wave, and Link's
+/// spin attack. The shield ([`SHIELD_GRAPH`]) is the same case with its
+/// own ENV seed.
+const EFFECT_CLD_GRAPHS: &[(u32, u32)] = &[
+    (83, 0x7750),
+    (83, 0xCAC8),
+    (84, 0x2760),
+    (84, 0x3398),
+    (84, 0x53E8),
+    (85, 0x3170),
+    (347, 0x1640),
+    (348, 0x0B20),
+    (348, 0x0DF8),
+    (349, 0x0380),
+    (351, 0x2130),
+    (352, 0x09A8),
+    (335, 0x9A10),
+    (353, 0x11C0),
+];
+
 /// Weapons whose `WPAttributes.data` is a direct display list with its own
 /// `anim_joints`, so they need a one-node graph for the animation to bind
 /// to, as [`DIRECT_MANAGER_EFFECT_ASSETS`] gives direct effects. Pikachu's
@@ -2150,6 +2177,11 @@ fn initial_material_for(
         ssb_rom::mesh::InitialMaterial::WEAPON_EXTERNAL
     } else if (file, graph_offset) == SHIELD_GRAPH {
         ssb_rom::mesh::InitialMaterial::SHIELD_EXTERNAL
+    } else if EFFECT_CLD_GRAPHS.contains(&(file, graph_offset)) {
+        ssb_rom::mesh::InitialMaterial {
+            head1: ssb_rom::mesh::Head1Seed::EffectCld,
+            ..ssb_rom::mesh::InitialMaterial::default()
+        }
     } else {
         ssb_rom::mesh::InitialMaterial::default()
     }

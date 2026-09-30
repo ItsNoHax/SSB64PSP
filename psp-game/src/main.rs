@@ -4426,7 +4426,7 @@ fn draw_particles(p: &Pack<'_>, pl: &play::FighterScene, hud: &mut Hud, draw_sta
     let proj = ssb_engine::math::Mat4::perspective(
         ssb_game::camera::DEFAULT_FOVY_DEGREES.to_radians(),
         vw as f32 / vh as f32,
-        ssb_game::camera::GE_NEAR,
+        ssb_game::camera::DEFAULT_NEAR,
         ssb_game::camera::DEFAULT_FAR,
     );
     unsafe {
@@ -4759,13 +4759,12 @@ unsafe fn draw_training(
     let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
     // 38 degrees: the real battle camera's own default FOV
     // (`refs/ssb-decomp-re/src/gm/gmcamera.c:1191`, matching `psp-asset-viewer/main.rs`'s
-    // own sourced value), with `dGMCameraPerspDefault`'s far plane
-    // (39,936), which keeps a star KO in view, and the port's near plane
-    // (`GE_NEAR`, RE-420).
+    // own sourced value), with `dGMCameraPerspDefault`'s planes: near 256
+    // and far 39,936, which keeps a star KO in view (RE-420, RE-421).
     gpu.set_perspective(
         ssb_game::camera::DEFAULT_FOVY_DEGREES,
         vw as f32 / vh as f32,
-        ssb_game::camera::GE_NEAR,
+        ssb_game::camera::DEFAULT_NEAR,
         ssb_game::camera::DEFAULT_FAR,
     );
     gpu.reset_modelview();
