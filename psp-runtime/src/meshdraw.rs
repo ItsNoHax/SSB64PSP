@@ -116,9 +116,43 @@ enum TextureFuncState {
     Blend(u32),
 }
 
+/// Which task display-list heads a draw submits (RE-422).
+///
+/// Each battle camera pass runs every head-0 list of its display links, then
+/// every head-1 list (`syTaskmanUpdateDLBuffers` chains head 0 to head 1).
+/// A caller drawing a pass in the original's order draws the stage's
+/// head-0 primitives with [`Heads::Head0`] and, after the pass's other
+/// members, its head-1 primitives ([`ssb_rom::pack::flags::HEAD1`]) with
+/// [`Heads::Head1`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Heads {
+    /// Every primitive, in node order.
+    #[default]
+    Both,
+    /// Only primitives without [`ssb_rom::pack::flags::HEAD1`].
+    Head0,
+    /// Only primitives with [`ssb_rom::pack::flags::HEAD1`].
+    Head1,
+}
+
+impl Heads {
+    /// Whether a primitive with these `flags` draws under this filter.
+    pub fn admits(self, flags: u32) -> bool {
+        let head1 = flags & ssb_rom::pack::flags::HEAD1 != 0;
+        match self {
+            Heads::Both => true,
+            Heads::Head0 => !head1,
+            Heads::Head1 => head1,
+        }
+    }
+}
+
 /// Tracks what state is already applied, so redundant sets are skipped.
 #[derive(Default)]
 pub struct DrawState {
+    /// The task heads draws submit; [`Heads::Both`] except while a caller
+    /// splits a camera pass (RE-422).
+    pub heads: Heads,
     /// Colour registers an effect's display callback sets for the whole draw
     /// (`efManagerShieldProcDisplay`'s per-player PRIM and ENV, RE-384).
     /// Takes the place of a material animation's live colours while set.
@@ -1353,6 +1387,9 @@ unsafe fn draw_mesh_vertices(
         let Some(p) = pack.prim(mesh.first_prim + i) else {
             continue;
         };
+        if !st.heads.admits(p.flags) {
+            continue;
+        }
         let Some(indices) = pack.indices(&p) else {
             continue;
         };
@@ -2947,18 +2984,18 @@ pub unsafe fn draw_stage(
     draw_stage_animated(pack, stage, base, None, None, st, mat_anim)
 }
 
-/// Draws a stage, optionally posed by its scenery animation.
+/// `dGRDisplayDescs[layer].dl_link`: the display link each render layer
+/// draws on.
+pub const STAGE_LAYER_LINKS: [u8; 4] = [4, 6, 13, 17];
+
+/// Draws a stage, optionally posed by its scenery animation: every render
+/// layer and controller object, in display-link order ([`draw_stage_links`]
+/// over all links).
 ///
 /// `anim` recomposes each layer's node matrices before drawing it. A node the
 /// animation does not drive keeps its packed rest matrix, so passing `None` is
 /// exactly [`draw_stage`] — the still and moving paths are one piece of code,
 /// which is what stops a bug in one hiding in the other (RE-051).
-///
-/// `objects` are the stage controller's own objects (RE-357). Each draws
-/// after the render layer whose display link precedes its own, as the
-/// original's link order does: layers use links 4, 6, 13 and 17
-/// (`dGRDisplayDescs`), and a controller object made later on the same link
-/// draws after that layer.
 ///
 /// # Safety
 ///
@@ -2972,54 +3009,87 @@ pub unsafe fn draw_stage_animated(
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) -> (u32, u32) {
-    /// `dGRDisplayDescs[layer].dl_link`.
-    const LAYER_LINKS: [u8; 4] = [4, 6, 13, 17];
+    draw_stage_links(pack, stage, base, anim, objects, st, mat_anim, 0..=u8::MAX)
+}
+
+/// Draws the render layers and the stage controller's own objects (RE-357)
+/// whose display links fall in `links`, in link order. On one link the layer
+/// draws first: the controller makes its objects later, and `gcAddGObjDisplay`
+/// appends at the same priority. The battle camera draws its passes by link
+/// (`gmCameraDefaultProcDisplay`), with the fighters on link 9 between
+/// layer 1 (6) and layer 2 (13) and the effects on link 15 before layer 3
+/// (17), so a caller draws each pass's share of the stage separately
+/// (RE-422). [`DrawState::heads`] selects the task heads drawn.
+///
+/// Returns the triangles submitted and how many layer slots were drawn.
+///
+/// # Safety
+///
+/// Same as [`draw_mesh`].
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn draw_stage_links(
+    pack: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    base: &ScePspFMatrix4,
+    anim: Option<&ssb_rom::skeleton::StageAnimator>,
+    objects: Option<&ssb_rom::ground_obj::GroundObjects>,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    links: core::ops::RangeInclusive<u8>,
+) -> (u32, u32) {
     let mut tris = 0;
     let mut drawn = 0;
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
     let mut billboard_scales = [[1.0; 2]; ssb_rom::skeleton::MAX_NODES];
-    let draw_objects = |links: core::ops::Range<u8>, st: &mut DrawState| {
-        let mut tris = 0;
+    let object_links = objects
+        .into_iter()
+        .flat_map(|o| o.iter())
+        .map(|o| ssb_rom::ground_obj::OBJECTS[o.asset as usize].dl_link);
+    let (first, last) = STAGE_LAYER_LINKS
+        .into_iter()
+        .chain(object_links)
+        .filter(|l| links.contains(l))
+        .fold((u8::MAX, 0), |(lo, hi), l| (lo.min(l), hi.max(l)));
+    if first > last {
+        return (0, 0);
+    }
+    for link in first..=last {
+        if let Some(layer) = STAGE_LAYER_LINKS.iter().position(|&l| l == link) {
+            let slot = stage.layers[layer];
+            let object = (slot != ssb_rom::pack::StageDesc::NO_LAYER)
+                .then(|| pack.object(slot))
+                .flatten();
+            if let Some(object) = object {
+                tris += match anim {
+                    Some(a) => {
+                        let n = a.compose(pack, &object, &mut posed);
+                        let scale_count = a.billboard_scales(pack, &object, &mut billboard_scales);
+                        debug_assert_eq!(n, scale_count);
+                        let hidden = |node: u32| !a.visible(pack, node);
+                        draw_object_posed_filtered(
+                            pack,
+                            &object,
+                            base,
+                            &posed[..n],
+                            Some(&billboard_scales[..scale_count]),
+                            st,
+                            mat_anim,
+                            None,
+                            0,
+                            None,
+                            Some(&hidden),
+                        )
+                    }
+                    None => draw_object(pack, &object, base, st, mat_anim, 0),
+                };
+                drawn += 1;
+            }
+        }
         for o in objects.into_iter().flat_map(|o| o.iter()) {
-            let link = ssb_rom::ground_obj::OBJECTS[o.asset as usize].dl_link;
-            if links.contains(&link) {
+            if ssb_rom::ground_obj::OBJECTS[o.asset as usize].dl_link == link {
                 tris += draw_ground_object(pack, o, base, st, mat_anim);
             }
         }
-        tris
-    };
-    tris += draw_objects(0..LAYER_LINKS[0], st);
-    for (layer, slot) in stage.layers.into_iter().enumerate() {
-        let next_link = LAYER_LINKS.get(layer + 1).copied().unwrap_or(u8::MAX);
-        let object = (slot != ssb_rom::pack::StageDesc::NO_LAYER)
-            .then(|| pack.object(slot))
-            .flatten();
-        if let Some(object) = object {
-            tris += match anim {
-                Some(a) => {
-                    let n = a.compose(pack, &object, &mut posed);
-                    let scale_count = a.billboard_scales(pack, &object, &mut billboard_scales);
-                    debug_assert_eq!(n, scale_count);
-                    let hidden = |node: u32| !a.visible(pack, node);
-                    draw_object_posed_filtered(
-                        pack,
-                        &object,
-                        base,
-                        &posed[..n],
-                        Some(&billboard_scales[..scale_count]),
-                        st,
-                        mat_anim,
-                        None,
-                        0,
-                        None,
-                        Some(&hidden),
-                    )
-                }
-                None => draw_object(pack, &object, base, st, mat_anim, 0),
-            };
-            drawn += 1;
-        }
-        tris += draw_objects(LAYER_LINKS[layer]..next_link, st);
     }
     (tris, drawn)
 }

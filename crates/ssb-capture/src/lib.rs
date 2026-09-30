@@ -433,10 +433,23 @@ pub enum GameScene {
     /// winner's series emblem shrinking and rising in the winner's colour
     /// (RE-420).
     VsResultsEmblem,
+    /// `trainingjungle`: Training on Kongo Jungle, both fighters settled at
+    /// their spawns under the camera's rest framing: its stage layer 3 (the
+    /// rope rail) over the fighters (RE-422).
+    TrainingJungle,
+    /// `trainingzebes`: Training on Planet Zebes; layer 1's head-1 lists
+    /// and the acid (RE-422).
+    TrainingZebes,
+    /// `trainingsaffron`: Training on Saffron City; layer 3's front rail
+    /// and building (RE-422).
+    TrainingSaffron,
+    /// `traininginishie`: Training on Mushroom Kingdom; layer 3's fences
+    /// (RE-422).
+    TrainingInishie,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 61] = [
+    pub const ALL: [GameScene; 65] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -498,6 +511,10 @@ impl GameScene {
         GameScene::TrainingSelectPicked,
         GameScene::StarKo,
         GameScene::VsResultsEmblem,
+        GameScene::TrainingJungle,
+        GameScene::TrainingZebes,
+        GameScene::TrainingSaffron,
+        GameScene::TrainingInishie,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -563,6 +580,10 @@ impl GameScene {
             GameScene::TrainingSelectPicked => "trainingselectpicked",
             GameScene::StarKo => "starko",
             GameScene::VsResultsEmblem => "vsresultsemblem",
+            GameScene::TrainingJungle => "trainingjungle",
+            GameScene::TrainingZebes => "trainingzebes",
+            GameScene::TrainingSaffron => "trainingsaffron",
+            GameScene::TrainingInishie => "traininginishie",
         }
     }
 

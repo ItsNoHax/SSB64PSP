@@ -338,3 +338,31 @@ fn a_hit_spark_draws_the_common_banks_script_for_its_player() {
     });
     assert_eq!(rt.particles.used_num, 1);
 }
+
+/// RE-422: each drawn display effect's `EFDesc::dl_link`, which places it
+/// before (15, 10) or after (18) stage layer 3.
+#[test]
+fn display_effects_draw_on_their_desc_links() {
+    use DisplayKind as K;
+    assert_eq!(K::Slash.dl_link(), 18);
+    assert_eq!(K::ShockSmall.dl_link(), 18);
+    assert_eq!(K::ImpactWave.dl_link(), 10);
+    for k in [
+        K::FlyOrbs,
+        K::FlySparks,
+        K::FlyMDust,
+        K::StarRodSpark,
+        K::FireSpark,
+        K::ThunderTrail,
+    ] {
+        assert_eq!(k.dl_link(), 15, "{k:?}");
+    }
+    for k in [
+        K::SpawnOrbs,
+        K::SpawnSparks,
+        K::SpawnMDust,
+        K::Quake { magnitude: 0 },
+    ] {
+        assert_eq!(k.dl_link(), 0, "{k:?}");
+    }
+}

@@ -84,6 +84,15 @@ impl Banks for PackBanks<'_, '_> {
 /// at 18, and list 3 at the interface's 25.
 pub const DRAW_ORDER: [usize; 5] = [4, 1, 0, 2, 3];
 
+/// The list on DL link 10, in the fighters' camera pass (RE-422).
+pub const LINK10_LISTS: [usize; 1] = [4];
+/// The list on DL link 15, drawn before stage layer 3 (RE-422).
+pub const LINK15_LISTS: [usize; 1] = [1];
+/// The lists on DL link 18, drawn after stage layer 3 (RE-422).
+pub const LINK18_LISTS: [usize; 2] = [0, 2];
+/// The list on the interface's link 25.
+pub const LINK25_LISTS: [usize; 1] = [3];
+
 /// The lists `efDisplayZPerspAAXLUProcDisplay` draws depth-tested
 /// (`G_RM_AA_ZB_XLU_SURF`): list 4, at link 10. The others draw
 /// `G_RM_CLD_SURF` or `G_RM_XLU_SURF`, untested.
@@ -94,9 +103,11 @@ fn maskable(n: u16) -> bool {
     n.is_power_of_two() && (2..=256).contains(&n)
 }
 
-/// Draws every live particle as `lbParticleDrawTextures` does, through
-/// `view` and `proj` onto the pillarboxed viewport: the battle's lists in
-/// [`DRAW_ORDER`], list 4 depth-tested ([`draw_lists`]).
+/// Draws the live particles of `lists` as `lbParticleDrawTextures` does,
+/// through `view` and `proj` onto the pillarboxed viewport, list 4
+/// depth-tested ([`draw_lists`]). The battle draws each link's lists at
+/// that link's place in its camera passes (RE-422); [`DRAW_ORDER`] is all
+/// of them.
 ///
 /// # Safety
 ///
@@ -106,6 +117,7 @@ pub unsafe fn draw(
     particles: &mut Particles,
     view: &Mat4,
     proj: &Mat4,
+    lists: &[usize],
     draw_state: &mut DrawState,
 ) {
     let (vx, vy, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
@@ -116,7 +128,7 @@ pub unsafe fn draw(
         ge_planes: (ssb_game::camera::DEFAULT_NEAR, ssb_game::camera::DEFAULT_FAR),
         rect: [vx as f32, vy as f32, vw as f32, vh as f32],
     };
-    draw_lists(banks, particles, &camera, &DRAW_ORDER, DEPTH_TESTED, draw_state);
+    draw_lists(banks, particles, &camera, lists, DEPTH_TESTED, draw_state);
 }
 
 /// The camera a particle pass draws under: its view, projection and

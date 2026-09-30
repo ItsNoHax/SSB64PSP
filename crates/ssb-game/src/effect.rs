@@ -969,6 +969,26 @@ pub mod life {
 }
 
 impl DisplayKind {
+    /// `EFDesc::dl_link`: the display link the effect draws on, which
+    /// places it among the battle camera's passes (RE-422). The spawners and
+    /// the quake have no display; they report 0.
+    pub fn dl_link(self) -> u8 {
+        match self {
+            DisplayKind::ShockSmall | DisplayKind::Slash => 18,
+            DisplayKind::ImpactWave => 10,
+            DisplayKind::FlyOrbs
+            | DisplayKind::FlySparks
+            | DisplayKind::FlyMDust
+            | DisplayKind::StarRodSpark
+            | DisplayKind::FireSpark
+            | DisplayKind::ThunderTrail => 15,
+            DisplayKind::SpawnOrbs
+            | DisplayKind::SpawnSparks
+            | DisplayKind::SpawnMDust
+            | DisplayKind::Quake { .. } => 0,
+        }
+    }
+
     /// The `gcPlayAnimAll` count at which the effect ends by its
     /// animation, or `None` for one that ends by its own lifetime.
     pub fn life(self) -> Option<u16> {

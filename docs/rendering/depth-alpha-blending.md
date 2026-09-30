@@ -55,6 +55,28 @@ priority-2 effects, and `efDisplayXLUProcDisplay` (priority 0) restores the
 Z-buffered mode after them. The shield bubble and the other `DObjDLLink`
 effects there are seeded with `Head1Seed::EffectCld`, so a list that sets
 no mode of its own draws with no depth test (RE-421).
+Stage layers 0, 2 and 3 set head 1 to `G_RM_AA_XLU_SURF` with `G_ZBUFFER`
+cleared in their `SecProcDisplay` (`Head1Seed::LayerXlu`). An unlit,
+untextured primitive whose alpha is `SHADE_ALPHA` alone (`G_CC_SHADE`)
+blends by its vertex alpha; the texture gate on translucency does not
+apply to it (RE-422).
+
+## Draw order
+
+Status: complete for the stage, fighters, items, weapons and effects.
+
+`gmCameraDefaultProcDisplay` draws the battle in passes of display links:
+1–2, 4, 6–12, 13–15, 16–18 and 19–20, each link in ascending order and,
+within a link, by priority. Each pass runs every head-0 list of its links
+before any head-1 list (`syTaskmanUpdateDLBuffers`). The stage layers are
+on links 4, 6, 13 and 17; the shadows on 7, the fighters on 9, the items on
+11, the weapons on 14, and the effects on 10, 15, 18 or 20 (`EFDesc`).
+Layers 0, 2 and 3 and Dream Land's front flowers (link 16) draw with no
+depth test, so each covers what an earlier pass drew. `draw_training`
+draws in this order, the stage by `meshdraw::draw_stage_links` and
+`DrawState::heads`, and the pack marks head-1 primitives with
+`flags::HEAD1` (RE-422). The effects draw whole at their link's place; the
+head-1 lists of an effect on link 10 or 18 do not wait for the stage's.
 
 Declined, measured: about 43 `PRIM_ALPHA`-multiply and 93 two-cycle
 primitives.

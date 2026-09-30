@@ -830,3 +830,31 @@ Negative test: a pack that seeds those lists with the camera's
 Z-buffered mode changed `shield` (1,652), `vsshield` (2,420), `purin`
 (2,464) and `nessmagnet` (2,188), with the fighter crisp over the bubble.
 127 of 127 match twice.
+
+## 2026-09-30 RE-422 battle draw order by display link and task head
+
+Pack v74, 34,455,072 bytes (SHA-256 `2dbc2a68…`). The battle draws in the
+original's display-link passes: Dream Land's front flowers and layer 3
+after the fighters and the link-15 effects, layer 1's head-1 lists after
+the fighters. Unlit `G_CC_SHADE` glows blend, and layers 0, 2 and 3's
+head-1 lists have no depth test. The pause border is a true fill. 25
+goldens were rebaselined, identical in both captures:
+- 13 Training scenes on Dream Land (16 to 1,996 pixels at 2×): dust,
+  sparks, the Fireball, Sing and the Falcon Kick behind the front flower
+  beds; `f1-training-yoshi-bomb` (6,952) also draws the impact wave (link
+  10) under the Bomb's stars (link 14).
+- `f1-vs-time-up`, `f1-vs-four`, `f1-vs-team` (32 to 1,660): layer 3's
+  fence and rim over a fighter.
+- `f1-training-stage-select`, `-stage-select-view`, `r2-stage-hyrule-castle`
+  (344 to 7,732): Hyrule Castle's ledge shadows blend.
+- `r2-saffron-city-gate` (89,460), `r2-stage-zebes` and three bonus stages
+  (1,140 to 2,128): the head-1 glows and Saffron City's haze blend.
+
+Four goldens were added, `f1-training-jungle`, `-zebes`, `-saffron` and
+`-inishie`: Training on those stages at tick 400, compared with the N64
+warp-boot captures.
+
+Negative tests: the old order changed the 17 draw-order goldens and
+`jungle` (3,036) and `zebes` (1,684); the pack without the blend and seed
+changed `zebes`, `saffron`, `stage-select` and `r2-saffron-city-gate`.
+131 of 131 match twice.
