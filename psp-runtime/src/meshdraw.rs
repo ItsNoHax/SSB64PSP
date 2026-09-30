@@ -1387,11 +1387,7 @@ unsafe fn draw_mesh_vertices(
                     .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
                     .unwrap_or_default();
                 if let Some(colors) = effect_colors {
-                    source.color = colors.vertex_color(
-                        source.color,
-                        p.flags & flags::FLAT_COLOR != 0,
-                        p.flags & flags::TEXTURE_BLEND != 0,
-                    );
+                    source.color = colors.vertex_color(source.color, p.flags);
                 }
                 dynamic.add(corner).write(FloatUvVertex {
                     u: source.u as f32 / VERTEX_16BIT_DIVISOR,
@@ -1444,11 +1440,7 @@ unsafe fn draw_mesh_vertices(
                     .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
                     .unwrap_or_default();
                 if let Some(colors) = effect_colors {
-                    v.color = colors.vertex_color(
-                        v.color,
-                        p.flags & flags::FLAT_COLOR != 0,
-                        p.flags & flags::TEXTURE_BLEND != 0,
-                    );
+                    v.color = colors.vertex_color(v.color, p.flags);
                 }
                 if let Some((basis_s, basis_t)) = texgen_basis {
                     let (u, uv) = ssb_rom::psp_texture::linear_texgen_uv(

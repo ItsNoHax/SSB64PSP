@@ -191,6 +191,8 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `pikachuthunder`) | `f1-training-pikachu-thunder` | Pikachu dashes out from under the top platform; Thunder's head reaches him (tick 92, the first `SpecialLwHit` frame) with its trails and fading segments above | RE-417 |
 | `golden_capture` (`psp-game`, scene `kirbyhat`) | `f1-training-kirby-hat` | Kirby inhales and copies the Mario dummy on Dream Land's left platform and wears Mario's cap (joint 6's model part 12) | RE-417 |
 | `golden_capture` (`psp-game`, scene `yoshiegg`) | `f1-training-yoshi-egg` | Yoshi's aerial Egg Lay of the dummy; the egg rests on the top platform in its Wait wobble | RE-417 |
+| `golden_capture` (`psp-game`, scene `yoshishield`) | `f1-training-yoshi-shield` | Yoshi holds Z from tick 40 to 600: his model is hidden inside the egg shield, darkened by the worn shield (health 21, ENV (107, 132, 132)): the egg's white texels (231) draw (134, 111, 111) and its green spots (57, 214, 57) draw (33, 103, 27) | RE-418 |
+| `golden_capture` (`psp-game`, scene `vsshield`) | `f1-vs-shield-damage` | A VS battle whose player shields from "Go"; frozen after tick 684's update, where the CPU's Mario Tornado sets the shield off and the bubble draws the grey damage row | RE-418 |
 | `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center, and the red player-1 shield bubble around him | RE-367, RE-369, RE-384 |
 
 Stage sweep example:
@@ -733,3 +735,14 @@ weapon-effect flush, with the shake off, matched the old goldens in all
 four; with the shake on, the three quake scenes matched this build's
 captures exactly. No capture catches a weapon ending, so the new
 particles show in none. The other 110 are unchanged. 114 of 114 match.
+
+## 2026-09-30 RE-418 damage shield, egg shield and Fireball spin
+
+Pack v69, 30,710,256 bytes (SHA-256 `a768f845…`), marking the egg list's
+`(SHADE - ENV) * TEXEL0` combiner. Two goldens were rebaselined, identical
+in both captures: `f1-training-fireball` (2,176 pixels at 2×) and
+`f1-training-luigi` (1,712), whose Fireballs now spin in the screen plane
+by `rotate_speed` per update (battle matrix function 0x47); only the
+Fireball's pixels changed. `f1-training-yoshi-shield` and
+`f1-vs-shield-damage` are new. The other 115 are unchanged. 119 of 119
+match twice.

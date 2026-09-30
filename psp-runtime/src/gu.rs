@@ -895,6 +895,57 @@ impl Gpu {
         }
     }
 
+    /// Loads battle matrix function 0x47 (`func_ovl0_800CA5C8`, RE-418): the
+    /// DObj keeps its translated position, and its rotation, relative to the
+    /// camera rather than the world, is `rotate.x` then `rotate.y`. The
+    /// source writes the rows `R · P` over the MVP's rotation, with row-vector
+    /// `R` = `Rx(rotate.x) · Ry(rotate.y)`: the object's X, Y and Z axes are
+    /// `(cos y, 0, -sin y)`, `(sin x sin y, cos x, sin x cos y)` and
+    /// `(cos x sin y, -sin x, cos x cos y)` in the camera's right/up/back
+    /// basis. With `rotate.y` at +/-90 degrees (`wpMainVelSetModelPitch`),
+    /// `rotate.x` spins the object in the screen plane. No DObj scale is
+    /// applied; `scale` is the port's model scale. `eye`/`at` are the
+    /// `look_at` view's, as for [`Self::model_transform_billboard`].
+    pub fn model_transform_camera_rotated(
+        &mut self,
+        pos: ssb_engine::math::Vec3,
+        eye: ssb_engine::math::Vec3,
+        at: ssb_engine::math::Vec3,
+        rotate: [f32; 2],
+        scale: f32,
+    ) {
+        let forward = (at - eye).normalized();
+        let right = forward.cross(ssb_engine::math::Vec3::Y).normalized();
+        let up = right.cross(forward);
+        let back = -forward;
+        let (sx, cx) = ssb_engine::math::sin_cos(rotate[0]);
+        let (sy, cy) = ssb_engine::math::sin_cos(rotate[1]);
+        let camera = |r: f32, u: f32, b: f32| {
+            let v = (right * r + up * u + back * b) * scale;
+            sys::ScePspFVector4 {
+                x: v.x,
+                y: v.y,
+                z: v.z,
+                w: 0.0,
+            }
+        };
+        let matrix = sys::ScePspFMatrix4 {
+            x: camera(cy, 0.0, -sy),
+            y: camera(sx * sy, cx, sx * cy),
+            z: camera(cx * sy, -sx, cx * cy),
+            w: sys::ScePspFVector4 {
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
+                w: 1.0,
+            },
+        };
+        unsafe {
+            sys::sceGumMatrixMode(sys::MatrixMode::Model);
+            sys::sceGumLoadMatrix(&matrix);
+        }
+    }
+
     /// Loads a held fighter's TopN transform from its catcher's sampled joint.
     /// The source extracts rotation from the joint matrix after removing
     /// scale and writes it over TopN's facing yaw, so no facing rotation

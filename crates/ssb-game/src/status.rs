@@ -1869,6 +1869,11 @@ pub struct GuardState {
     /// `shield_rotate_range`: stick deflection, 0..=1. It blends the tilted
     /// pose back toward the neutral shield pose.
     pub shield_rotate_range: f32,
+    /// The shield effect's `effect_vars.shield.is_damage_shield`:
+    /// `ftCommonGuardSetOffSetStatus` sets it and the effect's next
+    /// `efManagerShieldProcUpdate` clears it, so the bubble draws the grey
+    /// damage row of `dEFManagerShieldColors` for one frame (RE-418).
+    pub is_damage_shield: bool,
 }
 
 impl Default for GuardState {
@@ -1887,6 +1892,7 @@ impl Default for GuardState {
             angle_i: 0,
             angle_f: 0.0,
             shield_rotate_range: 0.0,
+            is_damage_shield: false,
         }
     }
 }
@@ -2177,6 +2183,8 @@ pub fn set_guard_set_off(f: &mut Fighter, hit_damage: f32, shield_lr: f32) {
     let dir = if lr == shield_lr { -1.0 } else { 1.0 };
     // `vel_ground.x` is facing-relative in the original.
     f.physics.vel_ground.x = lr * dir * setoff_frames * GUARD_VEL_MUL;
+    // The effect is up whenever a shield takes a hit.
+    f.guard.is_damage_shield = true;
     f.guard.is_shield = true;
     f.guard.is_setoff = true;
 }
@@ -7316,6 +7324,58 @@ mod tests {
             }
             update(f);
         }
+    }
+
+    /// RE-418: a set-off selects the grey damage row for the frame of the
+    /// hit; the next `ftMainProcParams` (after the effect's update) clears
+    /// it.
+    #[test]
+    fn a_shield_set_off_draws_the_damage_row_for_one_frame() {
+        let mut f = mario();
+        hold_z(&mut f, true);
+        update_until(&mut f, Status::Guard, 30);
+        assert_eq!(f.status.status, Status::Guard);
+        assert_eq!(crate::combat::shield_color_row(&f), 0);
+        let lr = f.facing.sign();
+        set_guard_set_off(&mut f, 10.0, lr);
+        assert!(f.guard.is_damage_shield);
+        assert_eq!(
+            crate::combat::shield_color_row(&f),
+            crate::combat::SHIELD_COLOR_DAMAGE_ROW
+        );
+        crate::combat::proc_params(&mut f);
+        assert!(!f.guard.is_damage_shield);
+        assert!(f.guard.is_shield);
+        assert_eq!(crate::combat::shield_color_row(&f), 0);
+    }
+
+    /// RE-418: Yoshi's egg (and his hidden model) comes with `is_shield`
+    /// at the end of `GuardOn`, not at its start, and goes with it.
+    #[test]
+    fn yoshi_hides_in_his_egg_from_the_end_of_guard_on() {
+        let mut f = Fighter::new(FighterKind::Yoshi, 0, 3);
+        f.situation = Situation::Ground;
+        f.status.status = Status::Wait.into();
+        hold_z(&mut f, true);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::GuardOn);
+        assert!(!crate::combat::is_yoshi_egg_shield(&f));
+        update_until(&mut f, Status::Guard, 30);
+        assert_eq!(f.status.status, Status::Guard);
+        assert!(crate::combat::is_yoshi_egg_shield(&f));
+        assert_eq!(crate::combat::yoshi_shield_env(&f), [0, 0, 0]);
+        f.guard.shield_health = 22.0;
+        // blend = 1 - 22 / 55 = 0.6.
+        assert_eq!(crate::combat::yoshi_shield_env(&f), [104, 128, 128]);
+        f.guard.shield_health = 80.0;
+        assert_eq!(crate::combat::yoshi_shield_env(&f), [0, 0, 0]);
+        hold_z(&mut f, false);
+        update_until(&mut f, Status::Wait, 60);
+        assert!(!crate::combat::is_yoshi_egg_shield(&f));
+        let mut mario = mario();
+        hold_z(&mut mario, true);
+        update_until(&mut mario, Status::Guard, 30);
+        assert!(!crate::combat::is_yoshi_egg_shield(&mario));
     }
 
     #[test]

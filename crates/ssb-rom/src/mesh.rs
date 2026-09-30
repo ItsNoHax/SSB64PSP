@@ -525,6 +525,13 @@ pub struct MeshMaterial {
     /// the base colour into affected vertices (`push_vertex`) and sets
     /// `sceGuTexFunc`/`sceGuTexEnvColor` per primitive.
     pub texture_blend: Option<([u8; 4], [u8; 4])>,
+    /// The colour formula is `(SHADE - ENVIRONMENT) * TEXEL0 + 0` in every
+    /// cycle it runs (RE-418): Yoshi's egg shield (file 338's list at
+    /// 0xA860), whose `efManagerYoshiShieldProcDisplay` sets ENV from the
+    /// shield's health. The vertices keep the shade; a renderer that knows
+    /// the live ENV subtracts it from them (clamped at zero, which equals
+    /// the RDP's clamp of the product since `TEXEL0` is non-negative).
+    pub shade_minus_env: bool,
     /// A combiner that reduces to a plain constant colour -- no shade, no
     /// texel, driven only by `PRIMITIVE`/`ENVIRONMENT`/literal constants
     /// (`(ZERO-ZERO)*ZERO+PRIM`, `ONE` alone, etc.) -- found archive-wide by
@@ -1263,6 +1270,31 @@ fn combiner_texture_blend(
     Some((from_f(base), from_f(target)))
 }
 
+/// Whether both colour cycles are `(SHADE - ENVIRONMENT) * TEXEL0 + 0`
+/// ([`MeshMaterial::shade_minus_env`], RE-418). Both are required, as a
+/// display list authoring one cycle writes the same mode into the other, so
+/// the result does not depend on the cycle type in force.
+fn combiner_is_shade_minus_env_texel(hi: u32, lo: u32) -> bool {
+    const SHADE: u32 = 4;
+    const ENVIRONMENT: u32 = 5;
+    const TEXEL0: u32 = 1;
+    const ZERO: u32 = 7;
+    let first = [
+        (hi >> 20) & 0xF,
+        (lo >> 28) & 0xF,
+        (hi >> 15) & 0x1F,
+        (lo >> 15) & 0x7,
+    ];
+    let second = [
+        (hi >> 5) & 0xF,
+        (lo >> 24) & 0xF,
+        hi & 0x1F,
+        (lo >> 6) & 0x7,
+    ];
+    let shape = [SHADE, ENVIRONMENT, TEXEL0, ZERO];
+    first == shape && second == shape
+}
+
 /// Recognises a combiner that reduces to a plain constant colour: no shade,
 /// no texel, in either cycle -- `(ZERO-ZERO)*ZERO+PRIM`, a bare `ONE`, or any
 /// other combination of constants and literal zeros (RE-079). Mutually
@@ -1891,6 +1923,8 @@ impl State {
                 .or(prim_alpha_blend)
                 .or(self.initial_alpha_blend.filter(|_| self.combiner.is_none())),
             texture_blend,
+            shade_minus_env: texture.is_some()
+                && combiner.is_some_and(|(hi, lo)| combiner_is_shade_minus_env_texel(hi, lo)),
             // Unlike `alpha_test`/`translucent`, not gated on `texture`: an
             // effect script can drive untextured primitive/environment/blend
             // colour with no palette or texel involved at all (`crate::
