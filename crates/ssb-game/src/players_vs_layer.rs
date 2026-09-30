@@ -41,7 +41,7 @@ pub const FILE_GAME_MODES: u32 = 18;
 pub const FILE_PORTRAITS: u32 = 19;
 
 /// `llMNPlayersCommon*` offsets.
-mod common {
+pub(crate) mod common {
     pub const TEXT_1P: [u32; 4] = [0x878, 0xA58, 0xC38, 0xE18];
     pub const TEXT_CP: u32 = 0xFF8;
     pub const HANDICAP_TEXT: u32 = 0x1108;
@@ -85,10 +85,10 @@ const MN_DIGITS: [u32; 10] = [
 ];
 const MN_COLON: u32 = 0xDCF0;
 /// `mnPlayersVSMakeNameAndEmblem`'s `emblem_offsets`, by fighter kind.
-const EMBLEMS: [u32; 12] = [
+pub(crate) const EMBLEMS: [u32; 12] = [
     0x618, 0x1938, 0xC78, 0x12D8, 0x618, 0x25F8, 0x2C58, 0x32B8, 0x1F98, 0x3918, 0x3918, 0x3F78,
 ];
-const STONE_BACKGROUND: u32 = 0x440;
+pub(crate) const STONE_BACKGROUND: u32 = 0x440;
 /// `FreeForAllTextSprite`, `TeamBattleTextSprite`.
 const GAME_MODE_TEXT: [u32; 2] = [0x280, 0x4E0];
 /// `llMNPlayersPortraits*` offsets.
@@ -162,7 +162,7 @@ const PORTRAIT_VEL: [f32; 12] = [
     1.9, 3.9, 7.8, -7.8, -3.8, -1.8, 1.8, 3.8, 7.8, -7.8, -3.8, -1.8,
 ];
 /// `mnPlayersVSSetPortraitWallpaperPosition`'s start `x`, by portrait.
-const PORTRAIT_START_X: [f32; 12] = [
+pub(crate) const PORTRAIT_START_X: [f32; 12] = [
     -35.0, -35.0, -35.0, 310.0, 310.0, 310.0, -35.0, -35.0, -35.0, 310.0, 310.0, 310.0,
 ];
 
@@ -172,7 +172,7 @@ const GAME_MODE_COLORS: [[u8; 3]; 2] = [[0xE3, 0xAC, 0x04], [0x61, 0xAD, 0x49]];
 const RULE_DIGIT_COLORS: ([u8; 3], [u8; 3]) = ([0x32, 0x1C, 0x0E], [0xFF, 0xFF, 0xFF]);
 /// `mnPlayersVSUpdateCursor`'s `colors`: the number's primitive, then
 /// environment, by player.
-const CURSOR_COLORS: [([u8; 3], [u8; 3]); 4] = [
+pub(crate) const CURSOR_COLORS: [([u8; 3], [u8; 3]); 4] = [
     ([0xE0, 0x15, 0x15], [0x5B, 0x00, 0x00]),
     ([0x00, 0x00, 0xFB], [0x00, 0x00, 0x52]),
     ([0xCA, 0x94, 0x08], [0x62, 0x3C, 0x00]),
@@ -180,7 +180,7 @@ const CURSOR_COLORS: [([u8; 3], [u8; 3]); 4] = [
 ];
 /// `mnPlayersVSUpdateCursor`'s `pos`: the number's offset from the hand,
 /// by cursor status.
-const CURSOR_NUMBER_OFFSETS: [(f32, f32); 3] = [(7.0, 15.0), (9.0, 10.0), (9.0, 15.0)];
+pub(crate) const CURSOR_NUMBER_OFFSETS: [(f32, f32); 3] = [(7.0, 15.0), (9.0, 10.0), (9.0, 15.0)];
 /// `mnPlayersVSMakePlayerKind`'s `pos_x`.
 const KIND_TEXT_X: [f32; 4] = [8.0, 5.0, 5.0, 5.0];
 /// `mnPlayersVSShutter1PProcDisplay` to `...4P`'s scissors, `[x0, y0, x1,
@@ -195,7 +195,7 @@ const SHUTTER_SCISSORS: [[f32; 4]; 4] = [
 const DOOR_STEP: i32 = 2;
 pub const DOOR_CLOSED: i32 = 41;
 /// `mnPlayersVSPortraitFlashThreadUpdate`'s `length`.
-const FLASH_LENGTH: i32 = 16;
+pub(crate) const FLASH_LENGTH: i32 = 16;
 /// `mnPlayersVSArrowThreadUpdate`'s `blink_wait`.
 const ARROW_BLINK: i32 = 10;
 
@@ -259,7 +259,7 @@ pub struct Arrows {
 pub struct Flash {
     pub portrait: usize,
     pub hidden: bool,
-    length: i32,
+    pub(crate) length: i32,
 }
 
 /// One slot's fighter model (`mnPlayersVSMakeFighter`).
@@ -414,7 +414,7 @@ pub fn rule_number(
 /// which `mnPlayersVSMakeGameRuleNumber` steps by.
 pub const DARK_DIGIT_WIDTHS: [f32; 10] = [10.0, 7.0, 11.0, 10.0, 10.0, 11.0, 9.0, 10.0, 10.0, 9.0];
 
-fn piece(file: u32, offset: u32, x: f32, y: f32) -> Piece {
+pub(crate) fn piece(file: u32, offset: u32, x: f32, y: f32) -> Piece {
     Piece {
         file,
         offset,
@@ -432,7 +432,7 @@ fn panel_x(player: usize) -> f32 {
 }
 
 /// `F_CST_DTOR32` / `F_CLC_DTOR32`.
-fn dtor(deg: f32) -> f32 {
+pub(crate) fn dtor(deg: f32) -> f32 {
     deg * (core::f32::consts::PI / 180.0)
 }
 
@@ -683,16 +683,7 @@ impl PlayersVs {
     /// `mnPlayersVSPortraitFlashThreadUpdate`: shown and hidden on
     /// alternate runs, gone on the sixteenth.
     fn flash_update(&mut self, p: usize) {
-        let v = &mut self.view.slots[p];
-        let Some(f) = v.flash.as_mut() else {
-            return;
-        };
-        f.length -= 1;
-        if f.length == 0 {
-            v.flash = None;
-            return;
-        }
-        f.hidden = !f.hidden;
+        step_flash(&mut self.view.slots[p].flash);
     }
 
     /// `mnPlayersVSFighterProcUpdate`: a fighter not placed turns 2 degrees
@@ -701,69 +692,21 @@ impl PlayersVs {
     fn fighter_update(&mut self, p: usize) {
         let selected = self.slots[p].is_fighter_selected;
         let v = &mut self.view.slots[p];
-        let Some(f) = v.fighter.as_mut() else {
-            return;
-        };
-        let set_status = |f: &mut Fighter| {
-            f.status = Some(status_selected(f.kind));
-            f.serial += 1;
-        };
-        if selected {
-            if f.rotate_y < dtor(0.1) {
-                if !v.is_status_selected {
-                    set_status(f);
-                    v.is_status_selected = true;
-                }
-            } else {
-                f.rotate_y += dtor(20.0);
-                if f.rotate_y > dtor(360.0) {
-                    f.rotate_y = 0.0;
-                    set_status(f);
-                    v.is_status_selected = true;
-                }
-            }
-        } else {
-            f.rotate_y += dtor(2.0);
-            if f.rotate_y > dtor(360.0) {
-                f.rotate_y -= dtor(360.0);
-            }
+        if let Some(f) = v.fighter.as_mut() {
+            turn_fighter(f, &mut v.is_status_selected, selected);
         }
     }
 
     /// `mnPlayersVSUpdatePuckGlowColor`: up by 9 to 0xFF, down by 9 to 0x80.
     /// The turn at the top steps down in the same call.
     fn glow_update(&mut self) {
-        let v = &mut self.view;
-        if !v.glow_up {
-            v.glow += 9;
-            if v.glow > 0xFF {
-                v.glow = 0xFF;
-                v.glow_up = true;
-            }
-        }
-        if v.glow_up {
-            v.glow -= 9;
-            if v.glow < 0x80 {
-                v.glow = 0x80;
-                v.glow_up = false;
-            }
-        }
+        step_glow(&mut self.view.glow, &mut self.view.glow_up);
     }
 
     /// `mnPlayersVSReadyProcUpdate`, whether its GObj shows. Both ready
     /// GObjs run it, and both step the one blink counter.
     fn ready_update(&mut self, ready: bool) -> bool {
-        let v = &mut self.view;
-        if ready {
-            v.ready_blink += 1;
-            if v.ready_blink == 40 {
-                v.ready_blink = 0;
-            }
-            v.ready_blink < 30
-        } else {
-            v.ready_blink = 0;
-            false
-        }
+        step_ready(&mut self.view.ready_blink, ready)
     }
 
     /// What draws, back to front.
@@ -775,18 +718,7 @@ impl PlayersVs {
         f(Draw::Fighters);
         self.visit_pucks_and_cursors(&mut f);
         if self.view.ready_banner {
-            // `mnPlayersVSMakeReady`: the banner strip wraps its 8 texels
-            // over 320 (`masks` 3, `lrs` 320, `lrt` 17).
-            let mut banner = piece(FILE_PLAYERS_COMMON, common::READY_BANNER, 0.0, 71.0);
-            banner.prim = Some([0xF4, 0x56, 0x7F]);
-            f(Draw::Tiled {
-                piece: banner,
-                size: [320.0, 17.0],
-            });
-            let mut text = piece(FILE_PLAYERS_COMMON, common::READY_TEXT, 50.0, 76.0);
-            text.prim = Some([0xFF, 0xFF, 0x9D]);
-            text.env = [0xFF, 0xCA, 0x13];
-            f(Draw::Sprite(text));
+            visit_ready_banner(&mut f);
         }
     }
 
@@ -794,12 +726,7 @@ impl PlayersVs {
     /// viewport (opaque, `SP_FASTCOPY` kept), the game-mode label, the
     /// time or stock selector with its number, and the back button.
     fn visit_top_bar(&self, f: &mut impl FnMut(Draw)) {
-        let mut stone = piece(FILE_SELECT_COMMON, STONE_BACKGROUND, 10.0, 10.0);
-        stone.transparent = false;
-        f(Draw::Tiled {
-            piece: stone,
-            size: [300.0, 220.0],
-        });
+        visit_stone(f);
         let team = usize::from(self.is_team_battle);
         let mut mode = piece(FILE_GAME_MODES, GAME_MODE_TEXT[team], 27.0, 24.0);
         mode.prim = Some(GAME_MODE_COLORS[team]);
@@ -849,48 +776,8 @@ impl PlayersVs {
     /// (opaque), the flashes, then the portraits (a locked one's fire
     /// background, shadow and question mark).
     fn visit_portraits(&self, f: &mut impl FnMut(Draw)) {
-        let y_of = |i: usize| if i >= 6 { 79.0 } else { 36.0 };
-        let locked = |i: usize| is_locked(PORTRAIT_KINDS[i], self.fighter_mask);
-        for i in (0..12).filter(|&i| !locked(i)) {
-            let mut bg = piece(FILE_PORTRAITS, FIRE_BG, self.view.portrait_x[i], y_of(i));
-            bg.transparent = false;
-            f(Draw::Sprite(bg));
-        }
-        for v in &self.view.slots {
-            if let Some(fl) = v.flash.filter(|fl| !fl.hidden) {
-                let p = fl.portrait;
-                let x = (if p >= 6 { p - 6 } else { p } * 45 + 26) as f32;
-                let y = if p >= 6 { 80.0 } else { 37.0 };
-                f(Draw::Sprite(piece(FILE_PORTRAITS, WHITE_SQUARE, x, y)));
-            }
-        }
-        for (i, &kind) in PORTRAIT_KINDS.iter().enumerate() {
-            let (x, y) = (self.view.portrait_x[i], y_of(i));
-            let kind = kind as usize;
-            if locked(i) {
-                // `mnPlayersVSMakePortraitShadow`.
-                let mut bg = piece(FILE_PORTRAITS, FIRE_BG, x, y);
-                bg.transparent = false;
-                f(Draw::Sprite(bg));
-                f(Draw::Shadow(piece(
-                    FILE_PORTRAITS,
-                    SHADOW_SPRITES[kind],
-                    x,
-                    y,
-                )));
-                let mut q = piece(FILE_PORTRAITS, QUESTION_MARK, x, y);
-                q.env = [0x5B, 0x41, 0x33];
-                q.prim = Some([0xC4, 0xB9, 0xA9]);
-                f(Draw::Sprite(q));
-            } else {
-                f(Draw::Sprite(piece(
-                    FILE_PORTRAITS,
-                    PORTRAIT_SPRITES[kind],
-                    x,
-                    y,
-                )));
-            }
-        }
+        let flashes: [Option<Flash>; PLAYERS] = core::array::from_fn(|p| self.view.slots[p].flash);
+        visit_portraits(&self.view.portrait_x, self.fighter_mask, &flashes, f);
     }
 
     /// Cameras 50 to 35: the cards, "1P" texts, names and emblems and "Press
@@ -917,12 +804,7 @@ impl PlayersVs {
             self.visit_name(p, f);
         }
         if self.view.ready_press {
-            let mut press = piece(FILE_PLAYERS_COMMON, common::PRESS_TEXT, 133.0, 219.0);
-            press.prim = Some([0xD6, 0xDD, 0xC6]);
-            f(Draw::Sprite(press));
-            let mut start = piece(FILE_PLAYERS_COMMON, common::START_TEXT, 162.0, 219.0);
-            start.prim = Some([0xFF, 0x56, 0x92]);
-            f(Draw::Sprite(start));
+            visit_press_start(f);
         }
         for (seq, p) in texts {
             if seq > init_seq {
@@ -1109,43 +991,224 @@ impl PlayersVs {
     fn visit_puck(&self, p: usize, f: &mut impl FnMut(Draw)) {
         let s = &self.slots[p];
         let id = if s.pkind == PlayerKind::Com { 4 } else { p };
-        let (x, y) = s.puck;
-        f(Draw::Puck {
-            piece: piece(FILE_PLAYERS_COMMON, common::PUCKS[id], x, y),
-            glow: self.view.glow.clamp(0, 0xFF) as u8,
-        });
+        f(puck(id, s.puck, self.view.glow));
     }
 
     /// `mnPlayersVSUpdateCursor`: the hand for the cursor's status, and the
     /// port's number beside it.
     fn visit_cursor(&self, p: usize, f: &mut impl FnMut(Draw)) {
         let s = &self.slots[p];
-        let Some((x, y)) = s.cursor else {
-            return;
-        };
-        let status = match s.cursor_status {
-            CursorStatus::Pointer => 0,
-            CursorStatus::Grab => 1,
-            CursorStatus::Hover => 2,
-        };
-        f(Draw::Sprite(piece(
+        if let Some(at) = s.cursor {
+            visit_cursor(p, at, s.cursor_status, f);
+        }
+    }
+}
+
+/// `mnPlayersVSMakeWallpaper` (and `mnPlayers1PTrainingMakeWallpaper`): the
+/// stone tile wrapped over the viewport, opaque with `SP_FASTCOPY` kept.
+pub(crate) fn visit_stone(f: &mut impl FnMut(Draw)) {
+    let mut stone = piece(FILE_SELECT_COMMON, STONE_BACKGROUND, 10.0, 10.0);
+    stone.transparent = false;
+    f(Draw::Tiled {
+        piece: stone,
+        size: [300.0, 220.0],
+    });
+}
+
+/// Cameras 75, 73 and 70 (`mnPlayersVSMakePortrait`, shared by
+/// `mnPlayers1PTrainingMakePortrait`): the unlocked portraits' fire
+/// backgrounds (opaque), the shown flashes, then the portraits (a locked
+/// one's fire background, shadow and question mark).
+pub(crate) fn visit_portraits(
+    portrait_x: &[f32; 12],
+    fighter_mask: u16,
+    flashes: &[Option<Flash>],
+    f: &mut impl FnMut(Draw),
+) {
+    let y_of = |i: usize| if i >= 6 { 79.0 } else { 36.0 };
+    let locked = |i: usize| is_locked(PORTRAIT_KINDS[i], fighter_mask);
+    for i in (0..12).filter(|&i| !locked(i)) {
+        let mut bg = piece(FILE_PORTRAITS, FIRE_BG, portrait_x[i], y_of(i));
+        bg.transparent = false;
+        f(Draw::Sprite(bg));
+    }
+    for fl in flashes.iter().flatten().filter(|fl| !fl.hidden) {
+        let p = fl.portrait;
+        let x = (if p >= 6 { p - 6 } else { p } * 45 + 26) as f32;
+        let y = if p >= 6 { 80.0 } else { 37.0 };
+        f(Draw::Sprite(piece(FILE_PORTRAITS, WHITE_SQUARE, x, y)));
+    }
+    for (i, &kind) in PORTRAIT_KINDS.iter().enumerate() {
+        let (x, y) = (portrait_x[i], y_of(i));
+        let kind = kind as usize;
+        if locked(i) {
+            // `mnPlayersVSMakePortraitShadow`.
+            let mut bg = piece(FILE_PORTRAITS, FIRE_BG, x, y);
+            bg.transparent = false;
+            f(Draw::Sprite(bg));
+            f(Draw::Shadow(piece(
+                FILE_PORTRAITS,
+                SHADOW_SPRITES[kind],
+                x,
+                y,
+            )));
+            let mut q = piece(FILE_PORTRAITS, QUESTION_MARK, x, y);
+            q.env = [0x5B, 0x41, 0x33];
+            q.prim = Some([0xC4, 0xB9, 0xA9]);
+            f(Draw::Sprite(q));
+        } else {
+            f(Draw::Sprite(piece(
+                FILE_PORTRAITS,
+                PORTRAIT_SPRITES[kind],
+                x,
+                y,
+            )));
+        }
+    }
+}
+
+/// `mnPlayersVSMakeReady`'s banner GObj (link 38): the strip wraps its 8
+/// texels over 320 (`masks` 3, `lrs` 320, `lrt` 17), then "Ready to fight".
+pub(crate) fn visit_ready_banner(f: &mut impl FnMut(Draw)) {
+    let mut banner = piece(FILE_PLAYERS_COMMON, common::READY_BANNER, 0.0, 71.0);
+    banner.prim = Some([0xF4, 0x56, 0x7F]);
+    f(Draw::Tiled {
+        piece: banner,
+        size: [320.0, 17.0],
+    });
+    let mut text = piece(FILE_PLAYERS_COMMON, common::READY_TEXT, 50.0, 76.0);
+    text.prim = Some([0xFF, 0xFF, 0x9D]);
+    text.env = [0xFF, 0xCA, 0x13];
+    f(Draw::Sprite(text));
+}
+
+/// `mnPlayersVSMakeReady`'s "Press Start" GObj (link 28, US).
+pub(crate) fn visit_press_start(f: &mut impl FnMut(Draw)) {
+    let mut press = piece(FILE_PLAYERS_COMMON, common::PRESS_TEXT, 133.0, 219.0);
+    press.prim = Some([0xD6, 0xDD, 0xC6]);
+    f(Draw::Sprite(press));
+    let mut start = piece(FILE_PLAYERS_COMMON, common::START_TEXT, 162.0, 219.0);
+    start.prim = Some([0xFF, 0x56, 0x92]);
+    f(Draw::Sprite(start));
+}
+
+/// A puck (`1PPuck` to `4PPuck`, `CPPuck` for 4) under the glow.
+pub(crate) fn puck(id: usize, at: (f32, f32), glow: i32) -> Draw {
+    Draw::Puck {
+        piece: piece(FILE_PLAYERS_COMMON, common::PUCKS[id], at.0, at.1),
+        glow: glow.clamp(0, 0xFF) as u8,
+    }
+}
+
+/// `mnPlayersVSUpdateCursor` (and `mnPlayers1PTrainingUpdateCursor`): the
+/// hand for the cursor's status, and port `p`'s number beside it.
+pub(crate) fn visit_cursor(
+    p: usize,
+    (x, y): (f32, f32),
+    status: CursorStatus,
+    f: &mut impl FnMut(Draw),
+) {
+    let status = match status {
+        CursorStatus::Pointer => 0,
+        CursorStatus::Grab => 1,
+        CursorStatus::Hover => 2,
+    };
+    f(Draw::Sprite(piece(
+        FILE_PLAYERS_COMMON,
+        common::CURSORS[status],
+        x,
+        y,
+    )));
+    let (dx, dy) = CURSOR_NUMBER_OFFSETS[status];
+    let (prim, env) = CURSOR_COLORS[p];
+    f(Draw::Sprite(Piece {
+        prim: Some(prim),
+        env,
+        ..piece(
             FILE_PLAYERS_COMMON,
-            common::CURSORS[status],
-            x,
-            y,
-        )));
-        let (dx, dy) = CURSOR_NUMBER_OFFSETS[status];
-        let (prim, env) = CURSOR_COLORS[p];
-        f(Draw::Sprite(Piece {
-            prim: Some(prim),
-            env,
-            ..piece(
-                FILE_PLAYERS_COMMON,
-                common::TEXT_GRADIENT[p],
-                x + dx,
-                y + dy,
-            )
-        }));
+            common::TEXT_GRADIENT[p],
+            x + dx,
+            y + dy,
+        )
+    }));
+}
+
+/// `mnPlayersVSFighterProcUpdate` (and `mnPlayers1PTrainingFighterProcUpdate`):
+/// a fighter not placed turns 2 degrees a tick; once placed it turns 20 a
+/// tick back to 0 and plays its selected status
+/// (`mnPlayersVSGetStatusSelected`).
+pub(crate) fn turn_fighter(f: &mut Fighter, is_status_selected: &mut bool, selected: bool) {
+    let set_status = |f: &mut Fighter| {
+        f.status = Some(status_selected(f.kind));
+        f.serial += 1;
+    };
+    if selected {
+        if f.rotate_y < dtor(0.1) {
+            if !*is_status_selected {
+                set_status(f);
+                *is_status_selected = true;
+            }
+        } else {
+            f.rotate_y += dtor(20.0);
+            if f.rotate_y > dtor(360.0) {
+                f.rotate_y = 0.0;
+                set_status(f);
+                *is_status_selected = true;
+            }
+        }
+    } else {
+        f.rotate_y += dtor(2.0);
+        if f.rotate_y > dtor(360.0) {
+            f.rotate_y -= dtor(360.0);
+        }
+    }
+}
+
+/// `mnPlayersVSPortraitFlashThreadUpdate`: shown and hidden on alternate
+/// runs, gone on the sixteenth.
+pub(crate) fn step_flash(flash: &mut Option<Flash>) {
+    let Some(f) = flash.as_mut() else {
+        return;
+    };
+    f.length -= 1;
+    if f.length == 0 {
+        *flash = None;
+        return;
+    }
+    f.hidden = !f.hidden;
+}
+
+/// `mnPlayersVSUpdatePuckGlowColor`: up by 9 to 0xFF, down by 9 to 0x80.
+/// The turn at the top steps down in the same call.
+pub(crate) fn step_glow(glow: &mut i32, up: &mut bool) {
+    if !*up {
+        *glow += 9;
+        if *glow > 0xFF {
+            *glow = 0xFF;
+            *up = true;
+        }
+    }
+    if *up {
+        *glow -= 9;
+        if *glow < 0x80 {
+            *glow = 0x80;
+            *up = false;
+        }
+    }
+}
+
+/// `mnPlayersVSReadyProcUpdate`, whether its GObj shows: while ready, the
+/// blink counter runs to 40 and the GObj shows below 30.
+pub(crate) fn step_ready(blink: &mut i32, ready: bool) -> bool {
+    if ready {
+        *blink += 1;
+        if *blink == 40 {
+            *blink = 0;
+        }
+        *blink < 30
+    } else {
+        *blink = 0;
+        false
     }
 }
 

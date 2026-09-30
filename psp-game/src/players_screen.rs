@@ -1,8 +1,10 @@
-//! The VS character select's drawing (RE-411): `ssb_game::players_vs::layer`
-//! lays out the sprites and tracks each slot's fighter; this looks the
-//! sprites up in the pack, poses each fighter with its demo clip (`Wait`
-//! for `nFTDemoStatusNull`, `anim::SLOT_WIN1` to `SLOT_WIN4` once placed)
-//! and draws it under `mnPlayersVSMakeFighterCamera`'s camera, between the
+//! The character selects' drawing: VS (RE-411) and Training.
+//! `ssb_game::players_vs::layer` and `ssb_game::fighter_select::layer` lay
+//! out the sprites and track each slot's fighter; this looks the sprites up
+//! in the pack, poses each fighter with its demo clip (`Wait` for
+//! `nFTDemoStatusNull`, `anim::SLOT_WIN1` to `SLOT_WIN4` once placed) and
+//! draws it under the fighter camera (`mnPlayersVSMakeFighterCamera` and
+//! `mnPlayers1PTrainingMakeFighterCamera` are the same), between the
 //! panels and the pucks.
 //!
 //! The poses live on the heap: a [`Skeleton`] is tens of KB and the main
@@ -11,6 +13,7 @@
 use alloc::boxed::Box;
 
 use ssb_engine::math::Vec3;
+use ssb_game::fighter_select::FighterSelect;
 use ssb_game::players_vs::layer::{self, Draw, Piece};
 use ssb_game::players_vs::PlayersVs;
 use ssb_game::results_scene::Camera;
@@ -72,16 +75,28 @@ pub fn start() -> Box<Fighters> {
     })
 }
 
-/// One tick of the fighters, after [`PlayersVs::tick`]: a fighter made
-/// again or given its status starts its clip over (`ftMainSetStatus` plays
-/// the first frame at once); otherwise it plays on.
-#[inline(never)]
+/// One tick of the fighters, after [`PlayersVs::tick`].
 pub fn tick(pack: Option<&Pack<'_>>, select: &PlayersVs, f: &mut Fighters) {
+    let fighters: [Option<layer::Fighter>; 4] = core::array::from_fn(|i| select.view.slots[i].fighter);
+    tick_models(pack, &fighters, f);
+}
+
+/// One tick of the Training select's two fighters, after
+/// [`FighterSelect::tick`].
+pub fn tick_training(pack: Option<&Pack<'_>>, select: &FighterSelect, f: &mut Fighters) {
+    let v = &select.view.slots;
+    tick_models(pack, &[v[0].fighter, v[1].fighter, None, None], f);
+}
+
+/// A fighter made again or given its status starts its clip over
+/// (`ftMainSetStatus` plays the first frame at once); otherwise it plays on.
+#[inline(never)]
+fn tick_models(pack: Option<&Pack<'_>>, fighters: &[Option<layer::Fighter>; 4], f: &mut Fighters) {
     let Some(p) = pack else {
         return;
     };
-    for (model, v) in f.models.iter_mut().zip(select.view.slots.iter()) {
-        let Some(fighter) = v.fighter else {
+    for (model, fighter) in f.models.iter_mut().zip(fighters.iter()) {
+        let Some(fighter) = *fighter else {
             *model = None;
             continue;
         };
@@ -142,8 +157,18 @@ fn play(p: &Pack<'_>, m: &mut Model) {
     let _ = m.skeleton.tick_scaled(script, scales, first_node);
 }
 
-/// The screen back to front (`PlayersVs::visit`).
-#[inline(never)]
+/// How one slot's fighter draws: where, in which costume, and the colour
+/// animation's `color1` blend, if any.
+#[derive(Clone, Copy)]
+pub struct Shown {
+    pub fighter: layer::Fighter,
+    pub position: [f32; 3],
+    pub costume: u8,
+    pub tint: Option<[u8; 4]>,
+}
+
+/// The VS screen back to front (`PlayersVs::visit`). The CPU's colour is
+/// not drawn here (RE-411).
 pub unsafe fn draw_all(
     gpu: &mut Gpu,
     p: &Pack<'_>,
@@ -151,7 +176,54 @@ pub unsafe fn draw_all(
     select: &PlayersVs,
     f: &Fighters,
 ) {
-    select.visit(|d| match d {
+    let shown: [Option<Shown>; 4] = core::array::from_fn(|i| {
+        select.view.slots[i].fighter.map(|fighter| Shown {
+            fighter,
+            position: layer::Fighter::position(i),
+            costume: select.slots[i].costume,
+            tint: None,
+        })
+    });
+    draw_screen(gpu, p, draw_state, &|g| select.visit(g), &shown, Some(f));
+}
+
+/// `dGMColScriptsFighterComPlayer`'s `SetColor1`: white at 0x30, which
+/// `ftParamCheckSetFighterColAnimID(..., nGMColAnimFighterComPlayer, 0)`
+/// gives the Training select's CPU.
+const COM_PLAYER_TINT: [u8; 4] = [0xFF, 0xFF, 0xFF, 0x30];
+
+/// The Training screen back to front (`FighterSelect::visit`).
+pub unsafe fn draw_training(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    select: &FighterSelect,
+    f: Option<&Fighters>,
+) {
+    use ssb_game::fighter_select::{layer as training, COM, MAN};
+    let shown = |slot: usize| {
+        select.view.slots[slot].fighter.map(|fighter| Shown {
+            fighter,
+            position: training::fighter_position(slot),
+            costume: select.slots[slot].costume,
+            tint: (slot == COM).then_some(COM_PLAYER_TINT),
+        })
+    };
+    let shown = [shown(MAN), shown(COM), None, None];
+    draw_screen(gpu, p, draw_state, &|g| select.visit(g), &shown, f);
+}
+
+/// A select's pieces back to front, with the fighters at `Draw::Fighters`.
+#[inline(never)]
+unsafe fn draw_screen(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    visit: &dyn Fn(&mut dyn FnMut(Draw)),
+    shown: &[Option<Shown>; 4],
+    f: Option<&Fighters>,
+) {
+    visit(&mut |d| match d {
         Draw::Sprite(piece) | Draw::Shadow(piece) => draw_piece(p, draw_state, &piece, None),
         Draw::Tiled { piece, size } => draw_piece(p, draw_state, &piece, Some(size)),
         Draw::Puck { piece, glow } => {
@@ -160,7 +232,11 @@ pub unsafe fn draw_all(
             }
         }
         Draw::Scissor(rect) => gpu.set_viewport_n64(rect),
-        Draw::Fighters => draw_fighters(gpu, p, draw_state, select, f),
+        Draw::Fighters => {
+            if let Some(f) = f {
+                draw_fighters(gpu, p, draw_state, shown, f);
+            }
+        }
     });
     gpu.set_viewport_fullscreen();
 }
@@ -203,16 +279,17 @@ unsafe fn draw_piece(
     }
 }
 
-/// The fighters under `mnPlayersVSMakeFighterCamera`'s camera: each at
-/// `(player * 840) - 1250`, -850, turned by its `rotate.y`, at
-/// `dSCSubsysFighterScales` and in the slot's costume. A hidden fighter
-/// (an NA slot, or one with nothing under its puck) is not drawn.
+/// The fighters under the fighter camera: each at its slot's position,
+/// turned by its `rotate.y`, at `dSCSubsysFighterScales` and in the slot's
+/// costume. A hidden fighter (an NA slot, or one with nothing under its
+/// puck) is not drawn. A tint is `G_RM_FOG_PRIM_A`'s blend towards
+/// `color1` (`ftDisplayMainCalcFogColor`), as in battle.
 #[inline(never)]
 unsafe fn draw_fighters(
     gpu: &mut Gpu,
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
-    select: &PlayersVs,
+    shown: &[Option<Shown>; 4],
     f: &Fighters,
 ) {
     let cam = &CAMERA;
@@ -221,10 +298,11 @@ unsafe fn draw_fighters(
     gpu.reset_modelview();
     draw_state.begin_frame();
     gpu.set_view(&ssb_engine::math::Mat4::look_at(cam.eye, cam.at, cam.up));
-    for (player, (m, v)) in f.models.iter().zip(select.view.slots.iter()).enumerate() {
-        let (Some(m), Some(fighter)) = (m, v.fighter) else {
+    for (m, shown) in f.models.iter().zip(shown.iter()) {
+        let (Some(m), Some(shown)) = (m, shown) else {
             continue;
         };
+        let fighter = shown.fighter;
         if fighter.hidden {
             continue;
         }
@@ -234,12 +312,16 @@ unsafe fn draw_fighters(
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
         let n = m.skeleton.compose(p, &obj, &mut posed);
         gpu.model_transform(
-            layer::Fighter::position(player),
+            shown.position,
             [0.0, fighter.rotate_y, 0.0],
             meshdraw::MODEL_SCALE * fighter.scale(),
         );
         let base = gpu.model_matrix();
         draw_state.configure_fighter_light(LIGHT_ANGLE);
+        if let Some(rgba) = shown.tint {
+            // The view looks down -z from `CAMERA.eye`.
+            gpu.set_constant_fog(cam.eye.z - shown.position[2], rgba);
+        }
         meshdraw::draw_object_posed(
             p,
             &obj,
@@ -249,8 +331,11 @@ unsafe fn draw_fighters(
             draw_state,
             None,
             None,
-            u32::from(select.slots[player].costume),
+            u32::from(shown.costume),
         );
+        if shown.tint.is_some() {
+            gpu.clear_fog();
+        }
         draw_state.finish_fighter_light();
     }
     gpu.set_viewport_n64(layer::VIEWPORT);

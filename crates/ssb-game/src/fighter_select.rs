@@ -1,8 +1,8 @@
 //! The Training character select — `mn/mnplayers/mnplayers1ptraining.c`:
 //! the hand cursor, the two pucks (the player's and the CPU's), the portrait
 //! grid, the recall, the costume picks and syncs, the ready check and the
-//! scene data it saves. The portraits, fighter models, names, spotlight,
-//! puck glow and sounds are presentation and stay with the host.
+//! scene data it saves. [`layer`] holds its presentation; the
+//! spotlight and sounds stay with the host.
 //!
 //! One [`FighterSelect::tick`] runs the scene's processes in the original
 //! order: `mnPlayers1PTrainingFuncRun` (the scene GObj's `func_run`), then
@@ -175,6 +175,8 @@ pub fn is_locked(kind: FighterKind, fighter_mask: u16) -> bool {
 #[derive(Clone, Debug)]
 pub struct FighterSelect {
     pub slots: [Slot; 2],
+    /// The presentation's GObjs.
+    pub view: layer::View,
     fighter_mask: u16,
     total_tics: i32,
     return_tic: i32,
@@ -233,6 +235,7 @@ impl FighterSelect {
         com.is_selected = true;
         let mut select = FighterSelect {
             slots: [man, com],
+            view: layer::View::default(),
             fighter_mask,
             total_tics: 0,
             return_tic: RETURN_TICS,
@@ -248,6 +251,7 @@ impl FighterSelect {
                 Some(kind) => portrait_center(kind),
             };
         }
+        select.v_init();
         select
     }
 
@@ -295,6 +299,7 @@ impl FighterSelect {
         }
         self.puck_adjust();
         self.costume_sync();
+        self.view_tick();
         self.pending
     }
 
@@ -463,10 +468,12 @@ impl FighterSelect {
             self.slots[held].costume = costume;
         }
         self.slots[held].is_selected = true;
+        self.v_placement_priorities(held);
         self.slots[held].holder = None;
         self.slots[slot].cursor_status = CursorStatus::Hover;
         self.slots[slot].held = None;
         self.slots[held].is_fighter_selected = true;
+        self.v_make_portrait_flash(held);
     }
 
     /// `mnPlayers1PTrainingUpdateFighter`: the fighter model is remade with
@@ -475,6 +482,7 @@ impl FighterSelect {
         if let Some(kind) = self.slots[slot].kind {
             self.slots[slot].costume = self.free_costume(kind, slot);
         }
+        self.v_update_fighter(slot);
     }
 
     /// `mnPlayers1PTrainingSetCursorGrab`.
@@ -485,10 +493,13 @@ impl FighterSelect {
         self.slots[slot].held = Some(held);
         self.slots[held].is_fighter_selected = false;
         self.update_fighter(held);
+        self.v_grab_priorities(held);
         // `mnPlayers1PTrainingSetCursorPuckOffset`.
         let (px, py) = self.slots[held].puck;
         self.slots[slot].cursor_pickup = (px - 11.0, py - -14.0);
         self.slots[slot].is_cursor_adjusting = true;
+        self.v_destroy_portrait_flash(held);
+        self.v_update_name_and_emblem(held);
     }
 
     /// `mnPlayers1PTrainingCheckCursorPuckGrab`: the CPU's puck is tried
@@ -576,6 +587,7 @@ impl FighterSelect {
 
     /// `mnPlayers1PTrainingPuckProcUpdate`.
     fn puck_update(&mut self, slot: usize) {
+        self.view.slots[slot].puck_shown = self.puck_visible(slot);
         match self.slots[slot].holder {
             Some(holder) if !self.slots[slot].is_selected => {
                 if !self.slots[holder].is_cursor_adjusting {
@@ -600,6 +612,7 @@ impl FighterSelect {
         if !self.slots[slot].is_selected && kind != self.slots[slot].kind {
             self.slots[slot].kind = kind;
             self.update_fighter(slot);
+            self.v_update_name_and_emblem(slot);
         }
     }
 
@@ -745,6 +758,9 @@ pub fn portrait_center(kind: FighterKind) -> (f32, f32) {
         ((p * 45 + 36) as f32, 46.0)
     }
 }
+
+#[path = "fighter_select_layer.rs"]
+pub mod layer;
 
 #[cfg(test)]
 #[path = "fighter_select_tests.rs"]

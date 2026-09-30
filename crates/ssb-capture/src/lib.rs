@@ -418,10 +418,18 @@ pub enum GameScene {
     /// `vsyoshi`: `vs`'s countdown on Yoshi's Island, whose wallpaper
     /// stands still (RE-419).
     VsYoshi,
+    /// `trainingselect`: the Training character select on its first visit,
+    /// the portraits in, the CPU's fighter turning and the hand on the
+    /// player's card.
+    TrainingSelect,
+    /// `trainingselectpicked`: the Training select after Kirby is placed in
+    /// his C-Down costume and the CPU's puck is picked up and placed again
+    /// on Mario with C-Right, the ready banner up.
+    TrainingSelectPicked,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 57] = [
+    pub const ALL: [GameScene; 59] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -479,6 +487,8 @@ impl GameScene {
         GameScene::StageSelectYoshi,
         GameScene::VsSector,
         GameScene::VsYoshi,
+        GameScene::TrainingSelect,
+        GameScene::TrainingSelectPicked,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -540,6 +550,8 @@ impl GameScene {
             GameScene::StageSelectYoshi => "stageselectyoshi",
             GameScene::VsSector => "vssector",
             GameScene::VsYoshi => "vsyoshi",
+            GameScene::TrainingSelect => "trainingselect",
+            GameScene::TrainingSelectPicked => "trainingselectpicked",
         }
     }
 
