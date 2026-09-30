@@ -113,7 +113,7 @@ pub unsafe fn draw(
         view,
         proj,
         planes: lb::BATTLE_PLANES,
-        ge_planes: (ssb_game::camera::GE_NEAR, ssb_game::camera::DEFAULT_FAR),
+        ge_planes: (ssb_game::camera::DEFAULT_NEAR, ssb_game::camera::DEFAULT_FAR),
         rect: [vx as f32, vy as f32, vw as f32, vh as f32],
     };
     draw_lists(banks, particles, &camera, &DRAW_ORDER, DEPTH_TESTED, draw_state);

@@ -807,3 +807,26 @@ Negative tests:
 - One without the confetti changed only `vsresults` (2,284).
 
 127 of 127 match twice, in two runs.
+
+## 2026-09-30 RE-421 shield bubble with no depth test; near plane 256
+
+Pack v73, 34,455,072 bytes (SHA-256 `f07a105b…`). The battle projection
+now uses `dGMCameraPerspDefault`'s near plane, 256. The shield bubble and
+the other link-15/18 effect lists draw under `efDisplayCLDProcDisplay`'s
+state, with no depth test. 49 goldens were rebaselined, identical in both
+captures:
+- `f1-training-purin` (2,160 pixels at 2×) and `f1-training-ness-magnet`
+  (1,128): Sing's rings and the PSI Magnet field draw over the ground, as
+  on the N64.
+- `f1-training-shield` (552) and `f1-vs-shield-damage` (696): fighter
+  self-occlusion; the bubble still covers the whole fighter, as on the
+  N64.
+- `f1-training-stage-select`, `-fighter-select` and `f1-vs-yoshi` (436,
+  1,572, 2,252): stage-edge and foot depth ties.
+- 42 other battle scenes (120 to 1,564): fighter self-occlusion and
+  overlaps that near 1's coarse depth tied.
+
+Negative test: a pack that seeds those lists with the camera's
+Z-buffered mode changed `shield` (1,652), `vsshield` (2,420), `purin`
+(2,464) and `nessmagnet` (2,188), with the fighter crisp over the bubble.
+127 of 127 match twice.

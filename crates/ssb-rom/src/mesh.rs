@@ -245,6 +245,27 @@ impl ZMode {
 /// which sets neither `Z_CMP` nor `Z_UPD`) and stays correct for any list
 /// that is not one of these externally-wrapped graphs. [`Self::FIGHTER_EXTERNAL`]
 /// is the one measured external wrapper found so far.
+/// The state task head 1 (the translucent list) holds when a graph's
+/// head-1 lists start, which [`convert_sequence`] seeds its second stream
+/// with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Head1Seed {
+    /// `func_80016338`/`func_8001663C`'s camera default,
+    /// `G_RM_AA_ZB_XLU_SURF`, with `G_ZBUFFER` as the head left it.
+    #[default]
+    CameraXlu,
+    /// The same state as head 0's seed: a wrapper that resets head 1 itself
+    /// before the graph's lists run (`wpDisplayDrawNormal`, RE-379).
+    Inherit,
+    /// `efDisplayCLDProcDisplay`, the priority-3 display object on DL links
+    /// 15 and 18: `G_RM_CLD_SURF`, `G_AC_THRESHOLD` against blend alpha 8,
+    /// and `G_ZBUFFER` cleared. Every `efManagerMakeEffect` effect on those
+    /// links draws at priority 2, after it and before
+    /// `efDisplayXLUProcDisplay` (priority 0) restores the Z-buffered mode,
+    /// so a list that sets none of these draws with no depth test (RE-421).
+    EffectCld,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct InitialMaterial {
     pub lit: bool,
@@ -261,6 +282,8 @@ pub struct InitialMaterial {
     /// `G_SETENVCOLOR` an external wrapper issues before the graph's own
     /// lists run (RE-384). `None` is the RDP reset's unknown register.
     pub env_color: Option<[u8; 4]>,
+    /// Task head 1's state when the graph's head-1 lists start.
+    pub head1: Head1Seed,
 }
 
 impl InitialMaterial {
@@ -281,6 +304,7 @@ impl InitialMaterial {
         translucent: false,
         alpha_blend: None,
         env_color: None,
+        head1: Head1Seed::CameraXlu,
     };
 
     /// `grDisplayLayer1PriProcDisplay`/`SecProcDisplay` (`refs/ssb-decomp-re/
@@ -315,6 +339,7 @@ impl InitialMaterial {
         translucent: false,
         alpha_blend: None,
         env_color: None,
+        head1: Head1Seed::CameraXlu,
     };
 
     /// A third, structurally different external-seed mechanism (RE-246):
@@ -352,6 +377,7 @@ impl InitialMaterial {
         translucent: false,
         alpha_blend: None,
         env_color: None,
+        head1: Head1Seed::CameraXlu,
     };
 
     /// `wpDisplayDrawNormal` clears `G_ZBUFFER` and sets
@@ -387,13 +413,17 @@ impl InitialMaterial {
         translucent: true,
         alpha_blend: Some(AlphaBlend::TexelOnly),
         env_color: None,
+        head1: Head1Seed::Inherit,
     };
 
     /// `efManagerShieldProcDisplay` sets the shield's `G_SETPRIMCOLOR` and
     /// `G_SETENVCOLOR` (`dEFManagerShieldColors[player]`, alpha 0xC0) before
     /// `gcDrawDObjTreeDLLinksForGObj`. The list sets the same PRIM and reads
     /// ENV, so ENV is seeded with player 1's; the renderer replaces it per
-    /// player at draw time (RE-384).
+    /// player at draw time (RE-384). The tree draws on DL link 15 at
+    /// priority 2, so its head-1 list starts under `efDisplayCLDProcDisplay`'s
+    /// state and, setting no render mode or `G_ZBUFFER` of its own, draws with
+    /// no depth test (RE-421).
     pub const SHIELD_EXTERNAL: InitialMaterial = InitialMaterial {
         lit: false,
         depth_test: false,
@@ -402,6 +432,7 @@ impl InitialMaterial {
         translucent: false,
         alpha_blend: None,
         env_color: Some([0xFF, 0x00, 0x00, 0xC0]),
+        head1: Head1Seed::EffectCld,
     };
 }
 
@@ -2496,9 +2527,18 @@ pub fn convert_sequence(
     // restore XLU before returning, so later graphs inherit this same mode.
     // A weapon's `wpDisplayDrawNormal` resets head 1 itself (`G_ZBUFFER`
     // cleared, `G_RM_AA_XLU_SURF`) before its lists run, so its seed is
-    // already head 1's state (RE-379).
-    if initial != InitialMaterial::WEAPON_EXTERNAL {
-        streams[1].set_render_mode(RENDER_MODE_AA_ZB_XLU_SURF);
+    // already head 1's state (RE-379). An effect on DL link 15 or 18 starts
+    // under `efDisplayCLDProcDisplay`'s (RE-421).
+    match initial.head1 {
+        Head1Seed::CameraXlu => streams[1].set_render_mode(RENDER_MODE_AA_ZB_XLU_SURF),
+        Head1Seed::Inherit => {}
+        Head1Seed::EffectCld => {
+            let head = &mut streams[1];
+            head.set_render_mode(RENDER_MODE_CLD_SURF);
+            head.material.alpha_compare_threshold = true;
+            head.geometry_mode &= !G_ZBUFFER;
+            head.material.z_buffer = false;
+        }
     }
     streams[1].texture_lut = LutState::Known(crate::texture::TextureLut::None);
     for state in &mut streams {
@@ -3071,6 +3111,11 @@ const RENDER_MODE_TEX_EDGE: u32 = CVG_X_ALPHA | ALPHA_CVG_SEL;
 /// CLR_ON_CVG | CVG_DST_WRAP | ZMODE_XLU | FORCE_BL`, blending
 /// `IN * A_IN + MEM * (1 - A_IN)` in both cycles.
 const RENDER_MODE_AA_ZB_XLU_SURF: u32 = 0x0050_49D8;
+
+/// `G_RM_CLD_SURF | G_RM_CLD_SURF2`: `IM_RD | CVG_DST_SAVE | FORCE_BL |
+/// ZMODE_OPA`, blending `IN * A_IN + MEM * (1 - A_IN)` in both cycles, with
+/// neither `Z_CMP` nor `Z_UPD` (`efDisplayCLDProcDisplay`, RE-421).
+const RENDER_MODE_CLD_SURF: u32 = 0x0050_4340;
 
 /// True when a `G_SETRENDERMODE` value's blend equation reads back the
 /// framebuffer weighted by `1 - alpha` (`G_BL_CLR_MEM`, `G_BL_1MA`) in
@@ -4343,6 +4388,46 @@ mod tests {
         );
         assert_eq!(p[1].material.alpha_blend, Some(AlphaBlend::Prim(0x99)));
         assert!(p[1].material.depth_test && !p[1].material.depth_write);
+    }
+
+    /// RE-421: a head-1 list that sets no render mode of its own draws
+    /// under its seed. The camera's `G_RM_AA_ZB_XLU_SURF` tests depth;
+    /// `efDisplayCLDProcDisplay`'s `G_RM_CLD_SURF`, with `G_ZBUFFER` cleared,
+    /// does not, and sets the alpha-compare threshold.
+    #[test]
+    fn an_effect_head1_list_draws_under_the_cld_seed_with_no_depth_test() {
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = [vtx(3), Cmd::Tri1([0, 1, 2])];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &[],
+            mat_anims: &[],
+            depth_seed: None,
+            stream: 1,
+        }];
+        let material = |head1| {
+            let initial = InitialMaterial {
+                head1,
+                ..InitialMaterial::default()
+            };
+            let mesh = convert_sequence(&items, Source::bare(&file), initial)
+                .pop()
+                .unwrap()
+                .unwrap();
+            mesh.primitives[0].material
+        };
+        let camera = material(Head1Seed::CameraXlu);
+        assert!(camera.depth_test && !camera.depth_write);
+        assert_eq!(camera.depth_mode, ZMode::Translucent);
+
+        let cld = material(Head1Seed::EffectCld);
+        assert!(!cld.depth_test && !cld.depth_write && !cld.z_buffer);
+        assert_eq!(cld.depth_mode, ZMode::Opaque);
+        assert!(cld.alpha_compare_threshold);
+        assert_eq!(InitialMaterial::SHIELD_EXTERNAL.head1, Head1Seed::EffectCld);
     }
 
     #[test]

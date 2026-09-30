@@ -49,6 +49,12 @@ is animated (RE-322, RE-323).
 Task-list head 1 starts from the camera's `func_80016338` reset to
 `G_RM_AA_ZB_XLU_SURF` (depth and blender; RE-328). Stage render-layer-1
 also resets head 1 in `grDisplayLayer1*ProcDisplay` (RE-250, RE-323).
+On DL links 15 and 18, `efDisplayCLDProcDisplay` (priority 3) sets head 1
+to `G_RM_CLD_SURF` with `G_AC_THRESHOLD` and clears `G_ZBUFFER` before the
+priority-2 effects, and `efDisplayXLUProcDisplay` (priority 0) restores the
+Z-buffered mode after them. The shield bubble and the other `DObjDLLink`
+effects there are seeded with `Head1Seed::EffectCld`, so a list that sets
+no mode of its own draws with no depth test (RE-421).
 
 Declined, measured: about 43 `PRIM_ALPHA`-multiply and 93 two-cycle
 primitives.

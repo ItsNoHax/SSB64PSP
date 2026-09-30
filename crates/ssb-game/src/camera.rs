@@ -73,17 +73,12 @@ pub const DEFAULT_EYE: Vec3 = Vec3::new(0.0, 300.0, 10000.0);
 pub const DEFAULT_AT: Vec3 = Vec3::new(0.0, 300.0, 0.0);
 pub const DEFAULT_FOVY_DEGREES: f32 = 38.0;
 /// `dGMCameraPerspDefault.near` and `.far` (`gm/gmcamera.c`): the battle
-/// camera's clip planes. A star KO flies 15,000 units away and stays inside
-/// them (RE-420).
+/// camera's clip planes, which the PSP's battle projection uses too. A star
+/// KO flies 15,000 units away and stays inside them (RE-420). The shield
+/// bubble and the other link-15/18 effects cover their fighter because the
+/// original draws them with no depth test, not by a depth tie (RE-421).
 pub const DEFAULT_NEAR: f32 = 256.0;
 pub const DEFAULT_FAR: f32 = 39936.0;
-/// The near plane of the PSP's battle projection. The far plane is
-/// [`DEFAULT_FAR`]; the near plane stays at 1 rather than
-/// [`DEFAULT_NEAR`]: with 256 the GE's 16-bit depth draws a fighter over
-/// its shield bubble, which the N64 capture covers (RE-420). The
-/// particles' depth cull keeps the original planes
-/// ([`crate::particle::BATTLE_PLANES`]).
-pub const GE_NEAR: f32 = 1.0;
 const DEFAULT_TARGET_DIST: f32 = 10000.0;
 
 /// One fighter entry consumed by `gmCameraUpdateInterests`.

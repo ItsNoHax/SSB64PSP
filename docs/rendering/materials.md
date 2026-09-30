@@ -96,5 +96,7 @@ blend, `PrimColor`, `Light1Color`, `Light2Color`.
 Limitations:
 
 - The camera-level head-1 XLU reset is applied to every packed graph's
-  head-1 stream (RE-328). Commands emitted by runtime effects outside those
+  head-1 stream (RE-328), except weapons (`wpDisplayDrawNormal`'s own
+  reset, RE-379) and link-15/18 effects (`efDisplayCLDProcDisplay`'s
+  no-depth state, RE-421). Commands emitted by runtime effects outside those
   graphs still need their own ordered state if they change render mode.

@@ -300,7 +300,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `LIGHT1_ANIM` and `LIGHT2_ANIM`, and keeps the texture of a flat-colour
 // prim whose blended alpha reads `TEXEL0` as a `TEXTURE_BLEND` from the
 // colour to itself (the rebirth halo's rays, RE-420). No layout change.
-pub const VERSION: u32 = 72;
+// 73 seeds the head-1 lists of the shield and the other `DObjDLLink`
+// effects on DL links 15 and 18 with `efDisplayCLDProcDisplay`'s state
+// (`G_RM_CLD_SURF`, `G_AC_THRESHOLD`, `G_ZBUFFER` cleared), so the 31
+// prims that set no render mode of their own lose `DEPTH_TEST` and
+// `ZMODE_XLU` (RE-421). No layout change.
+pub const VERSION: u32 = 73;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
