@@ -1872,6 +1872,22 @@ impl State {
                 self.material.env_color,
             )
         });
+        let alpha_blend = self
+            .combiner
+            .and_then(|(hi, lo)| combiner_alpha_blend(hi, lo, self.two_cycle))
+            .or(prim_alpha_blend)
+            .or(self.initial_alpha_blend.filter(|_| self.combiner.is_none()));
+        // RE-420: a constant colour whose alpha still reads `TEXEL0` under
+        // a blending mode (the rebirth halo's rays, `PRIMITIVE` colour and
+        // `TEXEL0` alpha) keeps its texture: the GE's `Blend` from the
+        // colour to itself gives `Cv = PRIM` for every texel, and its
+        // alpha stays `Af * At`.
+        let (flat_color, texture_blend) = match flat_color {
+            Some(c) if texture.is_some() && self.material.translucent && alpha_blend.is_some() => {
+                (None, Some((c, c)))
+            }
+            flat => (flat, texture_blend),
+        };
         MeshMaterial {
             // `TEXEL` genuinely never enters this shape's formula (RE-079),
             // so a bound texture would be sampled and modulated in for
@@ -1917,11 +1933,7 @@ impl State {
             // alongside one: once any `Cmd::SetCombine` has been seen,
             // `combiner` is no longer `None` and the seed stops mattering,
             // exactly like every other `InitialMaterial` field.
-            alpha_blend: self
-                .combiner
-                .and_then(|(hi, lo)| combiner_alpha_blend(hi, lo, self.two_cycle))
-                .or(prim_alpha_blend)
-                .or(self.initial_alpha_blend.filter(|_| self.combiner.is_none())),
+            alpha_blend,
             texture_blend,
             shade_minus_env: texture.is_some()
                 && combiner.is_some_and(|(hi, lo)| combiner_is_shade_minus_env_texel(hi, lo)),

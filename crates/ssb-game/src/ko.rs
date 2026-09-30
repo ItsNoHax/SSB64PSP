@@ -66,8 +66,9 @@ impl KoEffects {
         if let Some(id) = f.screen_flash.take() {
             self.flash.check_set(id, 0);
         }
-        // The sparkle is a particle script ([`Self::observe_with`]).
+        // The sparkle and the quake are effects ([`Self::observe_with`]).
         f.dead.sparkle = None;
+        f.dead.quake = false;
     }
 
     /// [`Self::observe`], first making the explosion's particle half and
@@ -82,6 +83,10 @@ impl KoEffects {
         if let Some(pos) = f.dead.sparkle {
             rt.effects
                 .sparkle_white_dead(rt.particles, rt.banks, pos, 5.0);
+        }
+        // `efManagerQuakeMakeEffect(2)` (RE-420).
+        if f.dead.quake {
+            rt.effects.quake(2);
         }
         self.observe(f);
     }

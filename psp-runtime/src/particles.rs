@@ -84,13 +84,19 @@ impl Banks for PackBanks<'_, '_> {
 /// at 18, and list 3 at the interface's 25.
 pub const DRAW_ORDER: [usize; 5] = [4, 1, 0, 2, 3];
 
+/// The lists `efDisplayZPerspAAXLUProcDisplay` draws depth-tested
+/// (`G_RM_AA_ZB_XLU_SURF`): list 4, at link 10. The others draw
+/// `G_RM_CLD_SURF` or `G_RM_XLU_SURF`, untested.
+pub const DEPTH_TESTED: u16 = 1 << 4;
+
 /// A power of two from 2 to 256: an axis `lbParticleDrawTextures` can mask.
 fn maskable(n: u16) -> bool {
     n.is_power_of_two() && (2..=256).contains(&n)
 }
 
 /// Draws every live particle as `lbParticleDrawTextures` does, through
-/// `view` and `proj` onto the pillarboxed viewport.
+/// `view` and `proj` onto the pillarboxed viewport: the battle's lists in
+/// [`DRAW_ORDER`], list 4 depth-tested ([`draw_lists`]).
 ///
 /// # Safety
 ///
@@ -102,14 +108,54 @@ pub unsafe fn draw(
     proj: &Mat4,
     draw_state: &mut DrawState,
 ) {
-    let links = DRAW_ORDER.iter().fold(0u16, |m, &l| m | (1 << l));
-    particles.prepare_draw(links);
     let (vx, vy, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let (vx, vy, hw, hh) = (vx as f32, vy as f32, vw as f32 * 0.5, vh as f32 * 0.5);
-    for &link in &DRAW_ORDER {
+    let camera = Camera {
+        view,
+        proj,
+        planes: lb::BATTLE_PLANES,
+        ge_planes: (ssb_game::camera::GE_NEAR, ssb_game::camera::DEFAULT_FAR),
+        rect: [vx as f32, vy as f32, vw as f32, vh as f32],
+    };
+    draw_lists(banks, particles, &camera, &DRAW_ORDER, DEPTH_TESTED, draw_state);
+}
+
+/// The camera a particle pass draws under: its view, projection and
+/// `near`/`far`, and its viewport on the PSP screen as `[x, y, w, h]`.
+pub struct Camera<'m> {
+    pub view: &'m Mat4,
+    pub proj: &'m Mat4,
+    pub planes: (f32, f32),
+    /// The planes of the GE projection `proj` was built with, for a
+    /// depth-tested list's GE depth.
+    pub ge_planes: (f32, f32),
+    pub rect: [f32; 4],
+}
+
+/// `lbParticleDrawTextures` for `lists`, in that order. A list in
+/// `depth_tested` (a bit per list) draws under `G_RM_AA_ZB_XLU_SURF` with
+/// `G_ZS_PRIM` at the particle's projected depth: tested against what the
+/// camera drew, never written (`efDisplayZPerspAAXLUProcDisplay`, RE-420).
+///
+/// # Safety
+///
+/// As [`draw`].
+pub unsafe fn draw_lists(
+    banks: &PackBanks<'_, '_>,
+    particles: &mut Particles,
+    camera: &Camera<'_>,
+    lists: &[usize],
+    depth_tested: u16,
+    draw_state: &mut DrawState,
+) {
+    let links = lists.iter().fold(0u16, |m, &l| m | (1 << l));
+    particles.prepare_draw(links);
+    let [vx, vy, vw, vh] = camera.rect;
+    let (hw, hh) = (vw * 0.5, vh * 0.5);
+    for &link in lists {
+        let tested = depth_tested & (1 << link) != 0;
         for (_, pc) in particles.list(link) {
             let xf = (pc.xf != lb::NIL).then(|| particles.transform(pc.xf));
-            let Some(at) = lb::project(pc, xf, view, proj) else {
+            let Some(at) = lb::project(pc, xf, camera.view, camera.proj, camera.planes) else {
                 continue;
             };
             let Some((texture, desc)) = banks.frame_texture(pc) else {
@@ -137,8 +183,18 @@ pub unsafe fn draw(
                 prim: pc.primcolor,
                 env: (pc.flags & flag::ENVCOLOR != 0).then_some(pc.envcolor),
                 alpha_ref,
+                depth: tested.then(|| ge_depth(at.depth, camera.ge_planes)),
             };
             meshdraw::draw_particle_rect(banks.pack, texture, &rect, draw_state);
         }
     }
+}
+
+/// The GE depth a vertex at eye-space `depth` gets under a projection with
+/// planes `(n, f)` and `Gpu::init`'s `sceGuDepthRange(65535, 0)`:
+/// `32767.5 * (1 - z)` for the normalised `z = ((f + n) d - 2 f n) /
+/// ((f - n) d)`, 65535 at `n`.
+fn ge_depth(depth: f32, (n, f): (f32, f32)) -> f32 {
+    let z = ((f + n) * depth - 2.0 * f * n) / ((f - n) * depth);
+    (32767.5 * (1.0 - z)).clamp(0.0, 65535.0)
 }

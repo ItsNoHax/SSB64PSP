@@ -92,7 +92,10 @@ pub enum Draw {
         color: [u8; 4],
     },
     Sprite(Piece),
-    /// The fighters under their camera.
+    /// The series emblem under its camera (priority 60, RE-420).
+    Emblem,
+    /// The fighters under their camera, with the particles of its DL links
+    /// (the confetti, RE-420).
     Fighters,
 }
 
@@ -358,6 +361,9 @@ impl Layer {
         if let Some(a) = self.wallpaper_tint2_alpha.filter(|&a| a > 0) {
             f(tint(a));
         }
+        // `mnVSResultsMakeEmblemCamera` (60) draws between the two fades'
+        // cameras (70 and 55).
+        f(Draw::Emblem);
         if self.wallpaper_tint_alpha > 0 {
             f(tint(self.wallpaper_tint_alpha));
         }
@@ -457,7 +463,7 @@ fn wallpaper_color(r: &Results) -> usize {
 }
 
 /// `team_colors[players[player].team]`.
-fn team_color(r: &Results, player: usize) -> usize {
+pub(crate) fn team_color(r: &Results, player: usize) -> usize {
     TEAM_COLORS
         .get(usize::from(r.team[player]))
         .copied()

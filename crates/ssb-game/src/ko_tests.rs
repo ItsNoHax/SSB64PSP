@@ -153,6 +153,17 @@ fn a_blast_makes_its_players_streaks_turned_like_the_blast() {
     };
     ko.observe_with(&mut f, &mut rt);
     assert_eq!(ko.explosions[1].unwrap().kind, ExplodeKind::Left);
+    // The KO's `efManagerQuakeMakeEffect(2)` (RE-420).
+    assert!(!f.dead.quake);
+    let quakes: Vec<_> = rt
+        .effects
+        .displays()
+        .filter_map(|d| match d.kind {
+            crate::effect::DisplayKind::Quake { magnitude } => Some(magnitude),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(quakes, [2]);
     let live: Vec<_> = p.list(2).collect();
     assert_eq!(live.len(), 1);
     let t = p.transform(live[0].1.xf);
@@ -201,4 +212,46 @@ fn the_halo_size_is_each_fighters_attribute() {
     assert_eq!(dead::halo_size(FighterKind::Kirby), 1.14);
     assert_eq!(dead::halo_size(FighterKind::PolyKirby), 1.14);
     assert_eq!(dead::halo_size(FighterKind::Purin), 1.2);
+}
+
+/// RE-420: `ftCommonDeadInitStatusVars` and `DeadUpFall`'s landing request
+/// `efManagerQuakeMakeEffect(2)`; `DeadUpStar` requests none.
+#[test]
+fn a_ko_makes_a_magnitude_two_quake_except_a_star_ko() {
+    for pos in [
+        Vec3::new(4001.0, 0.0, 0.0),
+        Vec3::new(-4001.0, 0.0, 0.0),
+        Vec3::new(0.0, -2001.0, 0.0),
+    ] {
+        let mut f = fighter(0);
+        f.pos = pos;
+        assert!(dead::check(&mut f));
+        assert!(f.dead.quake, "{pos:?}");
+        // The host takes it with the frame's other effects.
+        KoEffects::default().observe(&mut f);
+        assert!(!f.dead.quake);
+    }
+
+    let mut f = fighter(1);
+    f.dead.camera_eye = Vec3::new(0.0, 400.0, 6000.0);
+    f.pos.y = 3001.0;
+    dead::set_dead_up_fall(&mut f);
+    assert!(!f.dead.quake);
+    let mut made = 0;
+    for _ in 0..=dead::DEADUP_WAIT + 1 {
+        status::update(&mut f);
+        dead::tick_status(&mut f);
+        made += usize::from(core::mem::take(&mut f.dead.quake));
+    }
+    assert_eq!(made, 1);
+
+    let mut f = fighter(2);
+    f.pos.y = 3001.0;
+    dead::set_dead_up_star(&mut f);
+    for _ in 0..=dead::DEADUP_WAIT + 1 {
+        status::update(&mut f);
+        dead::tick_status(&mut f);
+        assert!(!f.dead.quake);
+    }
+    assert!(f.is_invisible);
 }

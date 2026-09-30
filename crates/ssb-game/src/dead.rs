@@ -13,8 +13,9 @@
 //! [`DeadState::rebirth_pending`], and the match calls [`rebirth_down`] at
 //! once, in the same slot of the frame.
 //!
-//! Scores, rumble, quake, sounds and the effects are presentation. The
-//! explosion's placement ([`DeadState::explode`]), the screen flash
+//! Scores, rumble, sounds and the effects are presentation. The
+//! explosion's placement ([`DeadState::explode`]), the quake request
+//! ([`DeadState::quake`], RE-420), the screen flash
 //! request ([`DeadState::flash`]) and the star KO sparkle's position
 //! ([`DeadState::sparkle`]) are recorded for the host, which runs them
 //! ([`crate::ko`]); the halo is drawn while the fighter is in a rebirth
@@ -170,6 +171,10 @@ pub struct DeadState {
     /// Where `efManagerSparkleWhiteDeadMakeEffect` makes the star KO's
     /// sparkle (TopN, scale 5), for the host to take.
     pub sparkle: Option<Vec3>,
+    /// `efManagerQuakeMakeEffect(2)`: `ftCommonDeadInitStatusVars` (the
+    /// Down, Left and Right setters) and `DeadUpFall`'s landing, for the
+    /// host to take. A star KO makes none (RE-420).
+    pub quake: bool,
     /// `gSCManagerBattleState->players[].falls`.
     pub falls: u16,
     /// Set when `ftCommonDeadUpdateScore` runs, for the host to report the
@@ -268,11 +273,18 @@ fn update_score(f: &mut Fighter) {
     }
 }
 
+/// `efManagerQuakeMakeEffect(2)`, which the dead setters call directly
+/// (not through `ftParamMakeEffect`): recorded for the host (RE-420).
+fn make_quake(f: &mut Fighter) {
+    f.dead.quake = true;
+}
+
 /// `ftCommonDeadInitStatusVars`.
 fn init_status_vars(f: &mut Fighter) {
     f.dead.wait = DEAD_WAIT;
     crate::physics::stop_all(&mut f.physics);
     f.is_invisible = true;
+    make_quake(f);
     update_score(f);
 }
 
@@ -467,6 +479,7 @@ fn update_up_fall(f: &mut Fighter) {
         1 => {
             crate::physics::stop_all(&mut f.physics);
             f.dead.flash = true;
+            make_quake(f);
             f.is_invisible = true;
             update_score(f);
             f.dead.wait = DEAD_WAIT;

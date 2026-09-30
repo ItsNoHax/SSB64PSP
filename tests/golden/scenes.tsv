@@ -138,3 +138,5 @@ f1-vs-sector	psp-game	vssector	pass	RE-419
 f1-vs-yoshi	psp-game	vsyoshi	pass	RE-419
 f1-training-select	psp-game	trainingselect	pass	
 f1-training-select-picked	psp-game	trainingselectpicked	pass	
+f1-training-starko	psp-game	starko	pass	RE-420
+f1-vs-results-emblem	psp-game	vsresultsemblem	pass	RE-420

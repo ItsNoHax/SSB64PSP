@@ -2619,11 +2619,15 @@ pub struct ParticleRect {
     pub env: Option<[u8; 4]>,
     /// `G_AC_THRESHOLD`'s blend alpha; `None` for `G_AC_DITHER`.
     pub alpha_ref: Option<u8>,
+    /// `G_ZS_PRIM`'s depth under a depth-tested mode, as a GE depth value;
+    /// `None` draws with no depth test.
+    pub depth: Option<f32>,
 }
 
 /// Draws one in-game particle (RE-413): `gSPScisTextureRectangle` under
 /// `G_RM_CLD_SURF` (or `G_RM_XLU_SURF`), which blend by the pixel's alpha
-/// with no depth test.
+/// with no depth test, or under `G_RM_AA_ZB_XLU_SURF` at a `depth`, tested
+/// and not written (RE-420).
 ///
 /// The combine: `G_CC_MODULATEIA_PRIM` is `Modulate` by `PRIM`. With ENV,
 /// `(PRIM - ENV) * TEXEL0 + ENV` is `Blend` with the vertex colour at ENV
@@ -2660,7 +2664,14 @@ pub unsafe fn draw_particle_rect(
         }
     };
     sys::sceGuDisable(GuState::Lighting);
-    sys::sceGuDisable(GuState::DepthTest);
+    // `G_RM_AA_ZB_XLU_SURF` compares and does not update.
+    match r.depth {
+        Some(_) => {
+            sys::sceGuEnable(GuState::DepthTest);
+            sys::sceGuDepthMask(1);
+        }
+        None => sys::sceGuDisable(GuState::DepthTest),
+    }
     sys::sceGuDisable(GuState::CullFace);
     match r.alpha_ref {
         Some(a) => {
@@ -2703,7 +2714,7 @@ pub unsafe fn draw_particle_rect(
                 color: abgr,
                 x: x0,
                 y: y0,
-                z: 0.0,
+                z: r.depth.unwrap_or(0.0),
             });
             verts.add(k + 1).write(SObjVertex {
                 u: u1,
@@ -2711,7 +2722,7 @@ pub unsafe fn draw_particle_rect(
                 color: abgr,
                 x: x1,
                 y: y1,
-                z: 0.0,
+                z: r.depth.unwrap_or(0.0),
             });
             k += 2;
         }
@@ -2725,6 +2736,7 @@ pub unsafe fn draw_particle_rect(
     );
     sys::sceGuDisable(GuState::AlphaTest);
     sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuDepthMask(0);
     sys::sceGuEnable(GuState::CullFace);
     draw_state.invalidate_all();
 }

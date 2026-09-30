@@ -426,10 +426,17 @@ pub enum GameScene {
     /// his C-Down costume and the CPU's puck is picked up and placed again
     /// on Mario with C-Right, the ready banner up.
     TrainingSelectPicked,
+    /// `starko`: `rebirth`'s Mario put in `DeadUpStar` on the floor, caught
+    /// flying away past 10,000 units from the camera (RE-420).
+    StarKo,
+    /// `vsresultsemblem`: `vsresults` at an earlier results tic, the
+    /// winner's series emblem shrinking and rising in the winner's colour
+    /// (RE-420).
+    VsResultsEmblem,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 59] = [
+    pub const ALL: [GameScene; 61] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -489,6 +496,8 @@ impl GameScene {
         GameScene::VsYoshi,
         GameScene::TrainingSelect,
         GameScene::TrainingSelectPicked,
+        GameScene::StarKo,
+        GameScene::VsResultsEmblem,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -552,6 +561,8 @@ impl GameScene {
             GameScene::VsYoshi => "vsyoshi",
             GameScene::TrainingSelect => "trainingselect",
             GameScene::TrainingSelectPicked => "trainingselectpicked",
+            GameScene::StarKo => "starko",
+            GameScene::VsResultsEmblem => "vsresultsemblem",
         }
     }
 

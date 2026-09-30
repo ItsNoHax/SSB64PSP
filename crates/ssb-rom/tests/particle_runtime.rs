@@ -448,3 +448,65 @@ fn a_melee_of_weapons_stays_inside_the_source_pools() {
     assert_eq!(e.displays_refused, 0);
     assert!(displays_max < effect::DISPLAY_MAX);
 }
+
+/// RE-420: `mnVSResultsMakeConfetti`'s two scripts: the one behind the
+/// fighters on list 4 (`LBPARTICLE_MASK_GENLINK(3)`), the one in front on
+/// list 0. Each uses only what the runtime models and ends inside the
+/// pools.
+#[test]
+fn the_results_confetti_falls_on_lists_four_and_zero_and_ends() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = open(&bytes);
+    let banks = PackBanks {
+        pack: &pack,
+        common: pack.particle_bank(0).unwrap(),
+    };
+    let mut p = Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    for (pos, is_genlink_mask) in ssb_game::results_emblem::CONFETTI {
+        assert_ne!(e.confetti(&mut p, &banks, pos, is_genlink_mask), lb::NIL);
+    }
+    // Each script makes four generators; their particles take their lists.
+    assert_eq!(p.generators().count(), 8);
+    let mut lists = 0u16;
+    for _ in 0..30 {
+        EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &banks,
+        }
+        .frame();
+        for l in 0..lb::LINKS_NUM {
+            if p.list(l).next().is_some() {
+                lists |= 1 << l;
+            }
+        }
+    }
+    assert_eq!(lists, (1 << 0) | (1 << 4));
+    // It falls for as long as the screen stays up.
+    let (mut flags, mut structs_max, mut gens, mut env_alpha) = (0u16, 0u16, 0usize, 0u8);
+    for _ in 0..1200 {
+        EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &banks,
+        }
+        .frame();
+        for l in 0..lb::LINKS_NUM {
+            for (_, pc) in p.list(l) {
+                flags |= pc.flags;
+                if pc.flags & flag::ENVCOLOR != 0 {
+                    env_alpha = env_alpha.max(pc.envcolor[3]);
+                }
+            }
+        }
+        structs_max = structs_max.max(p.used_num);
+        gens = p.generators().count();
+    }
+    assert_eq!(flags & (flag::VORTEX | flag::ATTACH), 0);
+    assert_eq!(gens, 8, "the generators never end");
+    assert!(structs_max <= lb::STRUCTS_NUM as u16);
+    // The draw's `PRIM.a * TEXEL0.a` is exact at ENV alpha 0 (RE-413).
+    assert_eq!(env_alpha, 0);
+    println!("confetti: flags {flags:#x}, peak {structs_max} particles");
+}

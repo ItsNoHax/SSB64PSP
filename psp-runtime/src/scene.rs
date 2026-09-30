@@ -324,13 +324,6 @@ pub const DEAD_EXPLODE_ENV_SIBLING: [[u8; 3]; 4] = [
 /// forever (RE-412).
 pub const REBIRTH_HALO_EFFECT_KEY: (u32, u32) = (85, 0x2AC0);
 
-/// The halo's node for its first DObj's second display list (DLLink 1 at
-/// file 85 + 0x2A88, which calls 0x2890): twelve rays whose combiner is
-/// `PRIMITIVE` colour and `TEXEL0` alpha. The converter classifies that as
-/// a flat colour and drops the texture, so the rays would draw as opaque
-/// white; the port leaves them out (RE-412).
-pub const REBIRTH_HALO_RAYS_NODE: u32 = 3;
-
 /// `nMPMapObjKindRebirth`: the map point a respawn's halo lowers onto.
 pub const MAP_OBJ_KIND_REBIRTH: u16 = 0x20;
 

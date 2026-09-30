@@ -30,6 +30,82 @@ pub const YOSHI_EGG_LAY_ANIM_JOINTS: [u32; 2] = [0x0DB0, 0x09F0];
 /// The `AnimDesc::EFFECT` slot of the Wait table; Break follows.
 pub const YOSHI_EGG_LAY_ANIM_SLOT: u32 = 0x104;
 
+/// File 35, `FTEmblemModels` (`llFTEmblemModelsFileID`): the series
+/// emblems `mnVSResultsMakeEmblem` and `mnCharactersMakeEmblem` make.
+pub const EMBLEM_FILE: u32 = 35;
+
+/// One series emblem's `llFTEmblemModels*` offsets
+/// (`include/reloc_data.us.h`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Emblem {
+    pub dobjdesc: u32,
+    pub mobjsub: u32,
+    /// `AObjEvent32 ***`: one script per `MObj`. Each steps `Light1Color`
+    /// and `Light2Color` one frame per colour: red, blue, yellow, green,
+    /// then the CPU's grey.
+    pub matanim_joint: u32,
+}
+
+/// The ten series emblems: Mario, Fox, Donkey, Metroid, Zelda, Yoshi,
+/// FZero, Kirby, PMonsters and Mother.
+pub const EMBLEMS: [Emblem; 10] = [
+    Emblem {
+        dobjdesc: 0x0990,
+        mobjsub: 0x0000,
+        matanim_joint: 0x0A14,
+    },
+    Emblem {
+        dobjdesc: 0x21D0,
+        mobjsub: 0x1940,
+        matanim_joint: 0x2254,
+    },
+    Emblem {
+        dobjdesc: 0x1348,
+        mobjsub: 0x0B00,
+        matanim_joint: 0x13CC,
+    },
+    Emblem {
+        dobjdesc: 0x1860,
+        mobjsub: 0x1470,
+        matanim_joint: 0x18E4,
+    },
+    Emblem {
+        dobjdesc: 0x2520,
+        mobjsub: 0x22B0,
+        matanim_joint: 0x25A4,
+    },
+    Emblem {
+        dobjdesc: 0x2F10,
+        mobjsub: 0x2690,
+        matanim_joint: 0x2F94,
+    },
+    Emblem {
+        dobjdesc: 0x3828,
+        mobjsub: 0x2FF0,
+        matanim_joint: 0x38AC,
+    },
+    Emblem {
+        dobjdesc: 0x3E68,
+        mobjsub: 0x3900,
+        matanim_joint: 0x3EEC,
+    },
+    Emblem {
+        dobjdesc: 0x4710,
+        mobjsub: 0x3F40,
+        matanim_joint: 0x4794,
+    },
+    Emblem {
+        dobjdesc: 0x5A00,
+        mobjsub: 0x4840,
+        matanim_joint: 0x5A84,
+    },
+];
+
+/// `mnVSResultsMakeEmblem`'s `dobjdescs[fkind]`, as an [`EMBLEMS`] index,
+/// for the twelve playable kinds: Luigi shares Mario's, Jigglypuff
+/// Pikachu's.
+pub const EMBLEM_BY_FIGHTER: [u8; 12] = [0, 1, 2, 3, 0, 4, 5, 6, 7, 8, 8, 9];
+
 pub const MANAGER_EFFECT_KEYS: &[(u32, u32)] = &[
     (83, 0x7750),
     (83, 0x7E80),

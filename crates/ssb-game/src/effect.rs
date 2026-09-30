@@ -862,6 +862,8 @@ const DUST_DASH_OFF_Y: f32 = 280.0;
 
 /// Particle scripts of the common bank (`ef/efmanager.c`).
 pub mod script {
+    /// `efManagerConfettiMakeEffect` (the VS results, RE-420).
+    pub const CONFETTI: u16 = 0x70;
     /// `efManagerFlameLRMakeEffect`.
     pub const FLAME_LR: u16 = 0x12;
     /// `efManagerFlameRandomMakeEffect`, `...FlameStatic...`,
@@ -1601,6 +1603,33 @@ impl Effects {
                 t.scale = Vec3::splat(scale);
             }
         })
+    }
+
+    /// `efManagerConfettiMakeEffect`: the bank on list 0 with
+    /// `is_genlink_mask`, otherwise ORed with `LBPARTICLE_MASK_GENLINK(3)`,
+    /// under a `Ready` transform at `pos` (RE-420).
+    pub fn confetti(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        pos: Vec3,
+        is_genlink_mask: bool,
+    ) -> u8 {
+        let bank = if is_genlink_mask {
+            self.bank
+        } else {
+            self.bank | lb::genlink(3)
+        };
+        self.start_bare(
+            p,
+            banks,
+            bank,
+            script::CONFETTI,
+            TransformStatus::Ready,
+            |t| {
+                t.translate = pos;
+            },
+        )
     }
 
     /// `efManagerMusicNoteMakeEffect`: the note is drawn before it is made.

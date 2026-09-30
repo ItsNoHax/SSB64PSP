@@ -1184,6 +1184,18 @@ impl EffectMaterialAnimator {
     /// [`MAX_EFFECT_MAT_ANIMS`] is dropped rather than wrapping onto
     /// another slot.
     pub fn start(&mut self, pack: &Pack<'_>, indices: impl Iterator<Item = u32>) {
+        self.start_at(pack, indices, 0.0);
+    }
+
+    /// [`Self::start`] at `anim_frame`: `gcAddMatAnimJointAll(gobj,
+    /// joints, anim_frame)`, whose first `gcPlayAnimAll` fast-forwards each
+    /// script by that many frames (RE-420: the results emblem's colour).
+    pub fn start_at(
+        &mut self,
+        pack: &Pack<'_>,
+        indices: impl Iterator<Item = u32>,
+        anim_frame: f32,
+    ) {
         self.count = 0;
         for i in indices {
             if i == crate::pack::TextureDesc::NO_ANIM {
@@ -1196,7 +1208,7 @@ impl EffectMaterialAnimator {
                 break;
             }
             let script = pack.mat_anim(i).map_or(0, |a| a.script);
-            self.slots[self.count] = (i, crate::matanim::MaterialJoint::start(script, 0.0));
+            self.slots[self.count] = (i, crate::matanim::MaterialJoint::start(script, anim_frame));
             self.count += 1;
         }
     }

@@ -8,7 +8,7 @@
 | Video memory | shared | 2 MiB VRAM | 2 MiB VRAM |
 | Fast scratch | 4 KiB TMEM | 16 KiB scratchpad | 16 KiB scratchpad |
 
-- The current asset pack (v71) is 34,423,136 bytes, 139,504 more than v70 for the Training select's card; the twelve 5551 wallpapers are 3 MiB of it (RE-419). It needs
+- The current asset pack (v72) is 34,455,072 bytes, 31,936 more than v71 for the series emblems' material animations and the halo rays' texture (RE-420); the twelve 5551 wallpapers are 3 MiB of it (RE-419). It needs
   `PARAM.SFO` `MEMSIZE=1` (64 MiB process mode). v34 ran on a PSP-2000 via
   PSPLink (RE-322), v33 before it (RE-321); the earlier stock v32 pack loaded on a PSP-2000 via PSPLink (RE-320); the mode was also
   confirmed with earlier packs (RE-255, RE-260).

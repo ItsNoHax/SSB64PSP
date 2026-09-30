@@ -252,17 +252,17 @@ fn a_particle_projects_to_its_size_over_depth() {
     let proj = Mat4::perspective(core::f32::consts::FRAC_PI_2, 1.0, 1.0, 10_000.0);
     let mut pc = Particle::EMPTY;
     pc.size = 50.0;
-    let got = project(&pc, None, &view, &proj).unwrap();
+    let got = project(&pc, None, &view, &proj, BATTLE_PLANES).unwrap();
     assert!(got.center[0].abs() < 1e-5 && got.center[1].abs() < 1e-5);
     assert!((got.half[0] - 0.05).abs() < 1e-5, "{:?}", got.half);
     assert!((got.depth - 1000.0).abs() < 1e-3);
     // A transform scaled by 2 and flipped in x doubles it and flips s.
     let mut xf = Transform::EMPTY;
     xf.affine = tra_rot_rpy_r_sca(Vec3::ZERO, Vec3::ZERO, Vec3::new(-2.0, 2.0, 2.0));
-    let got = project(&pc, Some(&xf), &view, &proj).unwrap();
+    let got = project(&pc, Some(&xf), &view, &proj, BATTLE_PLANES).unwrap();
     assert!((got.half[0] - 0.1).abs() < 1e-5);
     assert!(got.flip_s && !got.flip_t);
     // Nearer than the original camera's depth window: culled.
     let near = Mat4::look_at(Vec3::new(0.0, 0.0, 300.0), Vec3::ZERO, Vec3::Y);
-    assert_eq!(project(&pc, None, &near, &proj), None);
+    assert_eq!(project(&pc, None, &near, &proj, BATTLE_PLANES), None);
 }

@@ -199,6 +199,8 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `vsyoshi`) | `f1-vs-yoshi` | `vs`'s countdown on Yoshi's Island: the static wallpaper | RE-419 |
 | `golden_capture` (`psp-game`, scene `trainingselect`) | `f1-training-select` | The Training character select at its tick 60: the stone, "Training Mode", BACK, the portraits with the four locked shadows, the red and grey cards, the hand on the player's card, and the CPU's Mario turning on his card under his name, emblem and puck | — |
 | `golden_capture` (`psp-game`, scene `trainingselectpicked`) | `f1-training-select-picked` | The same select after Kirby is placed in his C-Down (cyan) costume and the CPU's puck is picked up and placed again in Mario's C-Right costume: both fighters in their Win3 clips, the "Ready to fight" banner and "Press Start" | — |
+| `golden_capture` (`psp-game`, scene `starko`) | `f1-training-starko` | `rebirth`'s Mario put in `DeadUpStar` on Dream Land's floor at tick 60, 150 ticks into the flight: a few pixels over the treetop, past the old 10,000-unit far plane | RE-420 |
+| `golden_capture` (`psp-game`, scene `vsresultsemblem`) | `f1-vs-results-emblem` | `vsresults` at results tic 100: the winner's (Kirby, port 2) blue series emblem shrinking and rising over the fading wallpaper, before the text and confetti | RE-420 |
 | `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center, and the red player-1 shield bubble around him | RE-367, RE-369, RE-384 |
 
 Stage sweep example:
@@ -780,3 +782,28 @@ every pixel of both (522,240 at 2×); one without the CPU's
 fighter's. `f1-training-fighter-select` goes through the select but is
 captured in battle, so it is unchanged, as are the other 122. 125 of 125
 match twice, in two runs.
+
+## 2026-09-30 RE-420 KO halo rays, quake, star-KO far plane; results emblem and confetti
+
+Pack v72, 34,455,072 bytes (SHA-256 `527e07c5…`). Two goldens are new,
+identical in both captures: `f1-training-starko` and
+`f1-vs-results-emblem`. Thirteen were rebaselined:
+- `r1-catch-swirl-flat-color` (27,980 pixels at 2×): the swirl keeps its
+  texture.
+- `f1-training-rebirth` (2,044): the halo's rays.
+- `f1-training-rebirthblast` (185,644): the KO's quake.
+- `f1-vs-results` (18,628): the emblem and confetti.
+- Nine battle scenes by 4 to 76 pixels at depth ties: the far plane is now
+  39,936.
+
+The GE near plane stays 1. With `dGMCameraPerspDefault`'s 256 the
+fighter drew over its shield bubble in `f1-training-shield`,
+`-ness-magnet` and `f1-vs-shield-damage`, which an N64 capture does not
+show (RE-420).
+
+Negative tests:
+- A build without the emblem, rays, quake and far plane changed
+  `vsresultsemblem`, `vsresults`, `rebirth`, `rebirthblast` and `starko`.
+- One without the confetti changed only `vsresults` (2,284).
+
+127 of 127 match twice, in two runs.
