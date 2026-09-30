@@ -56,6 +56,12 @@ const VS_RESULTS_CAPTURE_TICK: u64 = 1100;
 /// Land's bottom blast line (`ftCommonDeadDownSetStatus`), logged from a
 /// capture build (RE-412).
 const REBIRTH_KO_TICK: u64 = 160;
+/// `vsshield`'s capture tick (RE-418). A capture build's per-tick log shows
+/// the CPU's Mario Tornado setting the player's shield off
+/// (`ftCommonGuardSetOffSetStatus`) in tick 684's update, the only update
+/// that leaves the grey row selected. A scene freezes before its capture
+/// tick's update, so freezing at 685 draws that state.
+const VS_SHIELD_SET_OFF_TICK: u64 = 685;
 
 const fn capture_ticks(scene: GameScene) -> u64 {
     match scene {
@@ -189,6 +195,12 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::PikachuThunder => 92,
         GameScene::KirbyHat => 260,
         GameScene::YoshiEgg => 360,
+        // Z from tick 40: the egg is up from the end of `GuardOn`, and 16
+        // ticks a point of the shield's 55 decays, darkening it.
+        GameScene::YoshiShield => 600,
+        // "Go" at 398 with Z held; the CPU's first hit on the shield sets
+        // it off on this tick (the capture log's `re418` lines).
+        GameScene::VsShield => VS_SHIELD_SET_OFF_TICK,
     }
 }
 
@@ -287,9 +299,12 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::Vs4
             | GameScene::VsTeam
             | GameScene::VsResults
+            | GameScene::VsShield
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
+            // `vsshield`: the shield is held from "Go".
+            t if scene == GameScene::VsShield && t >= 398 => N64Buttons(N64Buttons::Z),
             // `vsplayers`: A on the VS mode menu's Start at 20; the
             // select's first tick is 21. A at 46 places the held puck on
             // Yoshi, and A at 62 on port 2's NA button opens a CPU.
@@ -434,6 +449,13 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
+    if scene == GameScene::YoshiShield {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            t if t >= 40 => N64Buttons(N64Buttons::Z),
+            _ => N64Buttons(0),
+        };
+    }
 
     match tick {
         4 | 8 => N64Buttons(N64Buttons::A),
@@ -479,6 +501,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsNoContest
             | GameScene::Vs4
             | GameScene::VsTeam
+            | GameScene::VsShield
             | GameScene::CpuWalk
             | GameScene::CpuJump
     ) {
@@ -517,6 +540,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::NessMagnet
             | GameScene::LinkBomb
             | GameScene::StageSelect
+            | GameScene::YoshiShield
     ) {
         return 0;
     }
@@ -558,6 +582,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::Vs4
             | GameScene::VsTeam
             | GameScene::VsResults
+            | GameScene::VsShield
     ) {
         return if tick == 6 { -80 } else { 0 };
     }
@@ -786,6 +811,26 @@ fn log_capture_state(
                 .thunder_trails()
                 .map(|t| (t.position.y as i32, t.texture))
                 .collect::<alloc::vec::Vec<_>>(),
+        );
+        unsafe {
+            psp::sys::sceIoWrite(
+                psp::sys::sceKernelStdout(),
+                line.as_ptr() as *const core::ffi::c_void,
+                line.len(),
+            );
+        }
+    }
+    if matches!(capture_scene, Some(GameScene::YoshiShield | GameScene::VsShield)) {
+        let line = alloc::format!(
+            "re418 tick={} status={:?} is_shield={} damage_shield={} row={} health={} egg={} env={:?}\n",
+            sim_frame_index,
+            player.fighter.status.status,
+            player.fighter.guard.is_shield,
+            player.fighter.guard.is_damage_shield,
+            ssb_game::combat::shield_color_row(&player.fighter),
+            player.fighter.guard.shield_health,
+            ssb_game::combat::is_yoshi_egg_shield(&player.fighter),
+            ssb_game::combat::yoshi_shield_env(&player.fighter),
         );
         unsafe {
             psp::sys::sceIoWrite(
@@ -1276,7 +1321,9 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Link | GameScene::LinkSpin | GameScene::LinkBomb) => {
             ssb_game::fighter::FighterKind::Link
         }
-        Some(GameScene::Yoshi | GameScene::YoshiBomb | GameScene::YoshiEgg) => ssb_game::fighter::FighterKind::Yoshi,
+        Some(GameScene::Yoshi | GameScene::YoshiBomb | GameScene::YoshiEgg | GameScene::YoshiShield) => {
+            ssb_game::fighter::FighterKind::Yoshi
+        }
         Some(GameScene::Captain | GameScene::CaptainKick) => {
             ssb_game::fighter::FighterKind::Captain
         }
@@ -4581,7 +4628,7 @@ unsafe fn draw_training(
 /// light from the active stage's `MPGroundData.light_angle.x/y` immediately
 /// before drawing it (RE-164) -- matches `psp-asset-viewer/main.rs`'s own
 /// real-camera fighter draw. `FTStruct::is_invisible` (a KO, a Kirby or
-/// Yoshi capture) skips the model.
+/// Yoshi capture) and Yoshi's egg shield skip the model.
 #[inline(never)]
 unsafe fn draw_fighter_model(
     gpu: &mut Gpu,
@@ -4591,7 +4638,9 @@ unsafe fn draw_fighter_model(
     f: &play::FighterScene,
     camera: &ssb_game::camera::Camera,
 ) {
-    let Some(obj) = p.object(f.object).filter(|_| !f.fighter.is_invisible) else {
+    // Yoshi's egg shield hides every part (`ftParamHideModelPartAll`, RE-418).
+    let hidden = f.fighter.is_invisible || ssb_game::combat::is_yoshi_egg_shield(&f.fighter);
+    let Some(obj) = p.object(f.object).filter(|_| !hidden) else {
         return;
     };
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
@@ -5064,21 +5113,21 @@ unsafe fn draw_items_weapons_effects(
         else {
             continue;
         };
-        // `wpMainVelSetModelPitch` uses +/-90 degrees around Y from
-        // horizontal velocity; the packed direct-display-list mesh gets
-        // that same model orientation here.
+        // `wpMainVelSetModelPitch` sets `rotate.y` to +/-90 degrees from
+        // the horizontal velocity and `wpMarioFireballProcUpdate` spins
+        // `rotate.x`; the DObj's second transform, battle matrix function
+        // 0x47, turns both relative to the camera, so the Fireball rolls in
+        // the screen plane (RE-418).
         let yaw = if fireball.velocity.x >= 0.0 {
             core::f32::consts::FRAC_PI_2
         } else {
             -core::f32::consts::FRAC_PI_2
         };
-        gpu.model_transform(
-            [
-                fireball.position.x,
-                fireball.position.y,
-                fireball.position.z,
-            ],
-            [0.0, yaw, 0.0],
+        gpu.model_transform_camera_rotated(
+            fireball.position,
+            pl.camera.eye,
+            pl.camera.at,
+            [fireball.rotate_x, yaw],
             meshdraw::MODEL_SCALE,
         );
         meshdraw::draw_mesh(p, fireball_mesh, draw_state, None, None);
@@ -5374,14 +5423,15 @@ unsafe fn draw_items_weapons_effects(
     // battle matrix function 79, `YRotN`'s whole matrix, which the guard
     // scales by the shield size; the drawn node adds kind 44, a camera-facing
     // quad sized by that accumulated scale. `efManagerShieldProcDisplay` sets
-    // PRIM white and ENV the player's colour, both at alpha 0xC0. Yoshi's
-    // egg shield is a different effect and is not drawn.
+    // PRIM white and ENV the player's colour, both at alpha 0xC0, or the
+    // grey damage row on a set-off's frame (RE-418). Yoshi's egg shield is
+    // a different effect, drawn below.
     if let Some(object) = assets.shield.as_ref() {
         let fighters = scenes_ref(pl, dummies).into_iter().flatten().map(|x| &x.fighter);
         for f in fighters.filter(|f| f.guard.is_shield && f.kind != ssb_game::fighter::FighterKind::Yoshi) {
             let joint = ssb_game::combat::shield_transform(f);
             let size = joint.axes[0].length();
-            let (prim, env) = ssb_psp_runtime::scene::SHIELD_COLORS[usize::from(f.port).min(3)];
+            let (prim, env) = ssb_psp_runtime::scene::SHIELD_COLORS[ssb_game::combat::shield_color_row(f)];
             draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
                 prim: Some([prim[0], prim[1], prim[2], 0xC0]),
                 env: Some([env[0], env[1], env[2], 0xC0]),
@@ -5414,6 +5464,34 @@ unsafe fn draw_items_weapons_effects(
                 );
                 meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
             }
+            draw_state.color_override = None;
+        }
+    }
+
+    // Yoshi's egg shield (`dEFManagerYoshiShieldEffectDesc`, RE-418): file
+    // 338's direct list at 0xA860, the Egg Throw's egg, under a kind-0x50
+    // root (a translation to `YRotN`'s world position) then kind 44, a
+    // camera-facing quad scaled 1.5 in X and Y. `efManagerYoshiShieldProcDisplay`
+    // sets ENV from the shield's health; the list's `(SHADE - ENV) * TEXEL0`
+    // subtracts it, so the egg darkens (green and blue faster than red)
+    // as the shield wears.
+    if let Some(egg_mesh) = assets.yoshi_egg_mesh.as_ref() {
+        let fighters = scenes_ref(pl, dummies).into_iter().flatten().map(|x| &x.fighter);
+        for f in fighters.filter(|f| ssb_game::combat::is_yoshi_egg_shield(f)) {
+            let [r, g, b] = ssb_game::combat::yoshi_shield_env(f);
+            draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
+                env: Some([r, g, b, 0]),
+                ..Default::default()
+            });
+            let scale = meshdraw::MODEL_SCALE * ssb_game::combat::YOSHI_SHIELD_SCALE;
+            gpu.model_transform_billboard(
+                ssb_game::combat::shield_transform(f).origin,
+                pl.camera.eye,
+                pl.camera.at,
+                0.0,
+                [scale, scale],
+            );
+            meshdraw::draw_mesh(p, egg_mesh, draw_state, None, None);
             draw_state.color_override = None;
         }
     }

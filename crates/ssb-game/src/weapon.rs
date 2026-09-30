@@ -157,6 +157,10 @@ pub struct FireballAttributes {
     pub vel_min: f32,
     pub gravity: f32,
     pub rebound: f32,
+    /// `rotate_speed`: added to the DObj's `rotate.x` on every update
+    /// (`wpMarioFireballProcUpdate`), the spin its kind-0x47 matrix draws in
+    /// the screen plane (RE-418).
+    pub rotate_speed: f32,
     pub angle: f32,
     pub vel_base: f32,
     pub damage: i32,
@@ -170,6 +174,7 @@ pub const FIREBALL_ATTRIBUTES: [FireballAttributes; 2] = [
         vel_min: MARIO_FIREBALL_MIN_SPEED,
         gravity: MARIO_FIREBALL_GRAVITY,
         rebound: MARIO_FIREBALL_REBOUND,
+        rotate_speed: 0.349_065_87, // F_CLC_DTOR32(20.0F)
         angle: MARIO_FIREBALL_ANGLE,
         vel_base: MARIO_FIREBALL_SPEED,
         damage: MARIO_FIREBALL_HITBOX.damage,
@@ -180,6 +185,7 @@ pub const FIREBALL_ATTRIBUTES: [FireballAttributes; 2] = [
         vel_min: 30.0,
         gravity: 0.0,
         rebound: 0.85,
+        rotate_speed: 0.436_332_3, // F_CLC_DTOR32(25.0F)
         angle: 0.0,
         vel_base: LUIGI_FIREBALL_SPEED,
         damage: LUIGI_FIREBALL_DAMAGE,
@@ -1460,6 +1466,10 @@ pub struct MarioFireball {
     pub position: Vec3,
     pub velocity: Vec3,
     pub lifetime: u16,
+    /// The DObj's `rotate.x`: 0 at the make, advanced by
+    /// [`FireballAttributes::rotate_speed`] on every update that does not
+    /// expire.
+    pub rotate_x: f32,
 }
 
 impl MarioFireball {
@@ -1474,6 +1484,7 @@ impl MarioFireball {
             position: spawn.position,
             velocity: Vec3::new(attr.vel_base * cos * spawn.facing, attr.vel_base * sin, 0.0),
             lifetime: attr.lifetime,
+            rotate_x: 0.0,
         }
     }
 
@@ -1504,6 +1515,7 @@ impl MarioFireball {
         }
         let attr = self.attributes();
         self.velocity.y = (self.velocity.y - attr.gravity).max(-attr.vel_terminal);
+        self.rotate_x += attr.rotate_speed;
         let wanted = self.position + self.velocity;
         if let Some(hit) = map_contact(surfaces(), self.position, wanted, MARIO_FIREBALL_MAP_COLL) {
             self.position = hit.position;
@@ -3854,6 +3866,35 @@ mod tests {
         );
         // `wpProcessProcWeaponMain` moves it by `vel_air` in open air.
         assert_eq!(fireball.position, fireball.velocity);
+    }
+
+    /// `wpMarioFireballProcUpdate` adds the row's `rotate_speed` to
+    /// `rotate.x` on every update: 20 degrees for Mario, 25 for Luigi.
+    #[test]
+    fn fireballs_spin_by_their_rows_rotate_speed_each_update() {
+        for (kind, degrees) in [
+            (WeaponKind::MarioFireball, 20.0f32),
+            (WeaponKind::LuigiFireball, 25.0),
+        ] {
+            let mut weapons = WeaponPool::default();
+            assert!(weapons.spawn(WeaponSpawn {
+                kind,
+                owner_port: 0,
+                team: 0,
+                stale: crate::stale::WeaponStale::FRESH,
+                position: Vec3::ZERO,
+                facing: -1.0,
+            }));
+            assert_eq!(weapons.first_fireball().unwrap().rotate_x, 0.0);
+            for n in 1..=3 {
+                weapons.tick(open_air, None);
+                let spin = weapons.first_fireball().unwrap().rotate_x;
+                assert!(
+                    (spin - (n as f32) * degrees.to_radians()).abs() < 1e-5,
+                    "{kind:?} {n} {spin}"
+                );
+            }
+        }
     }
 
     #[test]

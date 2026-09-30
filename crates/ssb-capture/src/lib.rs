@@ -399,10 +399,17 @@ pub enum GameScene {
     /// `yoshiegg`: Yoshi in Training after an Egg Lay of the Mario dummy,
     /// the dummy in its egg (RE-417).
     YoshiEgg,
+    /// `yoshishield`: Yoshi in Training holding his egg shield until its
+    /// health has worn and the egg has darkened (RE-418).
+    YoshiShield,
+    /// `vsshield`: a VS battle whose player holds his shield from "Go",
+    /// caught on the frame a CPU's hit sets it off, in the grey damage
+    /// colour (RE-418).
+    VsShield,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 51] = [
+    pub const ALL: [GameScene; 53] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -454,6 +461,8 @@ impl GameScene {
         GameScene::PikachuThunder,
         GameScene::KirbyHat,
         GameScene::YoshiEgg,
+        GameScene::YoshiShield,
+        GameScene::VsShield,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -509,6 +518,8 @@ impl GameScene {
             GameScene::PikachuThunder => "pikachuthunder",
             GameScene::KirbyHat => "kirbyhat",
             GameScene::YoshiEgg => "yoshiegg",
+            GameScene::YoshiShield => "yoshishield",
+            GameScene::VsShield => "vsshield",
         }
     }
 

@@ -849,6 +849,50 @@ pub fn shield_transform(f: &Fighter) -> JointTransform {
     }
 }
 
+/// `dEFManagerShieldColors`' damage row: `ftCommonGuardSetOffSetStatus`'s
+/// `is_damage_shield` selects it.
+pub const SHIELD_COLOR_DAMAGE_ROW: usize = 4;
+
+/// The `dEFManagerShieldColors` row `efManagerShieldProcDisplay` draws the
+/// bubble in: the damage row on a set-off's frame, else the player's
+/// (RE-384, RE-418).
+pub fn shield_color_row(f: &Fighter) -> usize {
+    if f.guard.is_damage_shield {
+        SHIELD_COLOR_DAMAGE_ROW
+    } else {
+        usize::from(f.port).min(3)
+    }
+}
+
+/// Whether Yoshi is inside his egg shield: `efManagerYoshiShieldMakeEffect`
+/// and `ftParamHideModelPartAll` run together, and every path that raises
+/// `is_shield` for Yoshi makes the egg, while `ftCommonGuardUpdateShieldVars`
+/// and a status change without `FTSTATUS_PRESERVE_MODELPART` restore his
+/// parts as they drop it. So his model is hidden, and the egg drawn, exactly
+/// while this holds (RE-418).
+pub fn is_yoshi_egg_shield(f: &Fighter) -> bool {
+    f.kind == FighterKind::Yoshi && f.guard.is_shield
+}
+
+/// `efManagerYoshiShieldProcDisplay`'s ENV (alpha 0): (0xAE, 0xD6, 0xD6)
+/// scaled by `1 - shield_health / 55`, clamped at zero. The egg's combiner
+/// subtracts it from the shade, so the egg darkens (green and blue
+/// faster than red) as the shield wears
+/// (RE-418).
+pub fn yoshi_shield_env(f: &Fighter) -> [u8; 3] {
+    // The display's own literal 55.0F, equal to `FTCOMMON_GUARD_SIZE_HEALTH_DIV`.
+    let blend = (1.0 - f.guard.shield_health / 55.0).max(0.0);
+    [
+        (f32::from(0xAEu8) * blend) as u8,
+        (f32::from(0xD6u8) * blend) as u8,
+        (f32::from(0xD6u8) * blend) as u8,
+    ]
+}
+
+/// `efManagerYoshiShieldMakeEffect`'s DObj scale (X and Y); its kind-0x50
+/// root adds only `YRotN`'s world translation, so the egg keeps this size.
+pub const YOSHI_SHIELD_SCALE: f32 = 1.5;
+
 /// `gmCollisionCheckFighterAttackShieldCollide`: a 30-unit sphere at the
 /// shield joint.
 fn attack_hits_shield(
@@ -1499,6 +1543,11 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
     let status_before = f.status.status;
     let mut is_knockback_paused = false;
     let mut proc_hit = false;
+
+    // `efManagerShieldProcUpdate` (process priority 3) runs before this
+    // `ftMainProcParams` (priority 0) every frame and clears last frame's
+    // damage colour; only a set-off below raises it again.
+    f.guard.is_damage_shield = false;
 
     if !is_shield(f) && f.guard.shield_health < SHIELD_HEALTH_HEAL_MAX {
         f.guard.heal_wait -= 1.0;

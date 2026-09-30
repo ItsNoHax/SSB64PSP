@@ -1121,21 +1121,30 @@ pub struct EffectColors {
 
 impl EffectColors {
     /// Resolves live material colour registers into one packed PSP vertex
-    /// colour. `flat_color` and `texture_blend` name the two source-backed
-    /// combiner mappings established by RE-073/080; other RGB shapes retain
-    /// their converter-resolved value. PRIM alpha is independent of RGB and
-    /// replaces the packed vertex alpha whenever its track is live.
-    pub fn vertex_color(self, packed: u32, flat_color: bool, texture_blend: bool) -> u32 {
+    /// colour for a primitive with these [`crate::pack::flags`].
+    /// `FLAT_COLOR`, `TEXTURE_BLEND` and `SHADE_MINUS_ENV` name the
+    /// source-backed combiner mappings of RE-073/080 and RE-418; other RGB
+    /// shapes retain their converter-resolved value. PRIM alpha is
+    /// independent of RGB and replaces the packed vertex alpha whenever its
+    /// track is live.
+    pub fn vertex_color(self, packed: u32, prim_flags: u32) -> u32 {
+        use crate::pack::flags;
         let mut rgba = packed.to_le_bytes();
-        if flat_color {
+        if prim_flags & flags::FLAT_COLOR != 0 {
             if let Some(prim) = self.prim {
                 rgba[..3].copy_from_slice(&prim[..3]);
             } else if let Some(env) = self.env {
                 rgba[..3].copy_from_slice(&env[..3]);
             }
-        } else if texture_blend {
+        } else if prim_flags & flags::TEXTURE_BLEND != 0 {
             if let Some(env) = self.env {
                 rgba[..3].copy_from_slice(&env[..3]);
+            }
+        } else if prim_flags & flags::SHADE_MINUS_ENV != 0 {
+            if let Some(env) = self.env {
+                for (c, e) in rgba[..3].iter_mut().zip(env) {
+                    *c = c.saturating_sub(e);
+                }
             }
         }
         if let Some(prim) = self.prim {
@@ -1309,16 +1318,22 @@ mod tests {
         let original = crate::psp_texture::pack_abgr([1, 2, 3, 4]);
 
         assert_eq!(
-            colors.vertex_color(original, true, false),
+            colors.vertex_color(original, crate::pack::flags::FLAT_COLOR),
             crate::psp_texture::pack_abgr([0x11, 0x22, 0x33, 0x44])
         );
         assert_eq!(
-            colors.vertex_color(original, false, true),
+            colors.vertex_color(original, crate::pack::flags::TEXTURE_BLEND),
             crate::psp_texture::pack_abgr([0x55, 0x66, 0x77, 0x44])
         );
         assert_eq!(
-            colors.vertex_color(original, false, false),
+            colors.vertex_color(original, 0),
             crate::psp_texture::pack_abgr([1, 2, 3, 0x44])
+        );
+        // RE-418: `(SHADE - ENV) * TEXEL0` subtracts ENV, clamped at zero.
+        let shade = crate::psp_texture::pack_abgr([0xFF, 0x40, 0x60, 0x90]);
+        assert_eq!(
+            colors.vertex_color(shade, crate::pack::flags::SHADE_MINUS_ENV),
+            crate::psp_texture::pack_abgr([0xFF - 0x55, 0, 0, 0x44])
         );
         assert_eq!(colors.packed_prim(), Some(0x4433_2211));
     }

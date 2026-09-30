@@ -284,7 +284,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `modelpart_costume(part, costume)`) and the Egg Lay egg's Wait and Break
 // animations (`AnimDesc::EFFECT` slots `effect::YOSHI_EGG_LAY_ANIM_SLOT`
 // on) (RE-417).
-pub const VERSION: u32 = 68;
+// 69 adds `flags::SHADE_MINUS_ENV` to prims whose combiner is
+// `(SHADE - ENV) * TEXEL0` (Yoshi's egg shield, 338 + 0xA860), so a draw
+// can subtract the live ENV (RE-418). No layout change.
+pub const VERSION: u32 = 69;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -549,6 +552,10 @@ pub mod flags {
     /// RE-326: `G_TEXTURE`'s scale is the `MObj`'s, so `ScaU`/`ScaV` scale
     /// the coordinates.
     pub const SCALE_ANIM: u32 = 1 << 27;
+    /// RE-418: `MeshMaterial::shade_minus_env`, RGB
+    /// `(SHADE - ENVIRONMENT) * TEXEL0`. The vertex colour is the shade; a
+    /// draw that sets ENV (Yoshi's egg shield) subtracts it per vertex.
+    pub const SHADE_MINUS_ENV: u32 = 1 << 28;
 }
 
 /// The one GE alpha comparison that reproduces a primitive's RDP alpha
@@ -2320,6 +2327,9 @@ impl PackWriter {
             }
             if m.flat_color.is_some() {
                 f |= flags::FLAT_COLOR;
+            }
+            if m.shade_minus_env {
+                f |= flags::SHADE_MINUS_ENV;
             }
             if m.light1_color.is_some() {
                 f |= flags::LIGHT1_COLOR;
