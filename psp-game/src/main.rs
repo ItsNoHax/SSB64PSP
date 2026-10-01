@@ -237,8 +237,25 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // every 20 ticks from there, and by 110 Mario has turned back to
         // the front and plays his Win3 clip.
         GameScene::TrainingSelectPicked => 110,
+        // Both fighters have settled on Dream Land's main floor.
+        GameScene::PikachuHat | GameScene::PurinBow => 40,
+        // The entry focus (`ifCommonEntryFocusThread`) starts from battle
+        // clock 91; these ticks put each vehicle mid-flight (RE-425).
+        GameScene::VsArwing => VS_ARWING_CAPTURE_TICK,
+        GameScene::VsCar => VS_CAR_CAPTURE_TICK,
+        GameScene::VsBall => VS_BALL_CAPTURE_TICK,
+        GameScene::VsRays => VS_RAYS_CAPTURE_TICK,
     }
 }
+
+/// RE-425's entry captures. The capture RNG gives the entry focus id 1, so
+/// the first fighter enters at tick 204 and the second at 219: the Arwing
+/// is 50 frames into its flight, the car 45 into its drive, the ball 26
+/// into its throw, and the ball 50 frames in has opened under its rays.
+const VS_ARWING_CAPTURE_TICK: u64 = 254;
+const VS_CAR_CAPTURE_TICK: u64 = 264;
+const VS_BALL_CAPTURE_TICK: u64 = 230;
+const VS_RAYS_CAPTURE_TICK: u64 = 254;
 
 /// `true` once `regression_capture`'s scripted input has run past its fixed
 /// script and reached its capture tick; always `false` otherwise, so callers
@@ -246,7 +263,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
 /// of the same name).
 #[inline]
 fn deterministic_capture_frozen(scene: Option<GameScene>, sim_frame_index: u64) -> bool {
-    scene.is_some_and(|scene| sim_frame_index >= capture_ticks(scene))
+    scene.is_some_and(|scene| sim_frame_index >= capture::tick_override().unwrap_or(capture_ticks(scene)))
 }
 
 /// The `training<stage>` scenes (RE-422): Training on one stage with no
@@ -392,6 +409,10 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsResults
             | GameScene::VsResultsEmblem
             | GameScene::VsShield
+            | GameScene::VsArwing
+            | GameScene::VsCar
+            | GameScene::VsBall
+            | GameScene::VsRays
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -434,6 +455,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         GameScene::Costume1
             | GameScene::Costume2
             | GameScene::Costume3
+            | GameScene::PikachuHat
+            | GameScene::PurinBow
             | GameScene::TrainingJungle
             | GameScene::TrainingZebes
             | GameScene::TrainingSaffron
@@ -621,6 +644,10 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::Vs4
             | GameScene::VsTeam
             | GameScene::VsShield
+            | GameScene::VsArwing
+            | GameScene::VsCar
+            | GameScene::VsBall
+            | GameScene::VsRays
             | GameScene::CpuWalk
             | GameScene::CpuJump
     ) {
@@ -641,6 +668,8 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
         GameScene::Costume1
             | GameScene::Costume2
             | GameScene::Costume3
+            | GameScene::PikachuHat
+            | GameScene::PurinBow
             | GameScene::Samus
             | GameScene::SamusShot
             | GameScene::Link
@@ -710,6 +739,10 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsResults
             | GameScene::VsResultsEmblem
             | GameScene::VsShield
+            | GameScene::VsArwing
+            | GameScene::VsCar
+            | GameScene::VsBall
+            | GameScene::VsRays
     ) {
         return if tick == 6 { -80 } else { 0 };
     }
@@ -787,6 +820,44 @@ fn log_results_tic(sim_frame_index: u64, r: Option<&ssb_game::results::Results>)
             line.as_ptr() as *const core::ffi::c_void,
             line.len(),
         );
+    }
+}
+
+/// The capture log's entry lines (RE-425), every frame of the entry
+/// scenes: each fighter's status, entry clocks and facing.
+#[cfg(feature = "headless_capture")]
+#[inline(never)]
+fn log_entry_state(
+    capture_scene: Option<GameScene>,
+    sim_frame_index: u64,
+    player: Option<&play::FighterScene>,
+    dummy: Option<&play::Dummy>,
+) {
+    if !matches!(
+        capture_scene,
+        Some(GameScene::VsArwing | GameScene::VsCar | GameScene::VsBall | GameScene::VsRays)
+    ) {
+        return;
+    }
+    for f in [player.map(|p| &p.fighter), dummy.map(|d| &d.fighter)].into_iter().flatten() {
+        let line = alloc::format!(
+            "re425 tick={} port={} status={:?} fx={:?} rays={:?} lr={:?} link1={} z={:.0}\n",
+            sim_frame_index,
+            f.port,
+            f.status.status,
+            f.entry.effect_ticks,
+            f.entry.rays_ticks,
+            f.entry.lr,
+            f.entry.is_link_1,
+            f.pos.z,
+        );
+        unsafe {
+            psp::sys::sceIoWrite(
+                psp::sys::sceKernelStdout(),
+                line.as_ptr() as *const core::ffi::c_void,
+                line.len(),
+            );
+        }
     }
 }
 
@@ -1487,7 +1558,8 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Pikachu | GameScene::PikachuAir | GameScene::PikachuThunder) => {
             ssb_game::fighter::FighterKind::Pikachu
         }
-        Some(GameScene::Purin) => ssb_game::fighter::FighterKind::Purin,
+        Some(GameScene::Purin | GameScene::PurinBow) => ssb_game::fighter::FighterKind::Purin,
+        Some(GameScene::PikachuHat) => ssb_game::fighter::FighterKind::Pikachu,
         Some(GameScene::Donkey) => ssb_game::fighter::FighterKind::Donkey,
         Some(GameScene::Ness | GameScene::NessThunder | GameScene::NessMagnet) => {
             ssb_game::fighter::FighterKind::Ness
@@ -1649,6 +1721,26 @@ fn capture_training_scene(scene: GameScene) -> ssb_game::fighter_select::SceneDa
             ssb_game::costume::Slot { kind, costume: 0 },
         ),
     };
+    // RE-425: both accessory wearers, in the costumes the scenes name.
+    match scene {
+        GameScene::PikachuHat => {
+            return ssb_game::fighter_select::SceneData {
+                man_kind: Some(FighterKind::Pikachu),
+                man_costume: 1,
+                com_kind: Some(FighterKind::Purin),
+                com_costume: 2,
+            }
+        }
+        GameScene::PurinBow => {
+            return ssb_game::fighter_select::SceneData {
+                man_kind: Some(FighterKind::Purin),
+                man_costume: 3,
+                com_kind: Some(FighterKind::Pikachu),
+                com_costume: 3,
+            }
+        }
+        _ => {}
+    }
     let button = match scene {
         GameScene::Costume1 => Some(1),
         GameScene::Costume2 => Some(2),
@@ -2360,6 +2452,8 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
             Some([0, 0, 1, 1]),
         ),
         GameScene::VsResults | GameScene::VsResultsEmblem => return vs_results_roster(),
+        GameScene::VsArwing | GameScene::VsCar => return vs_pair_roster([FighterKind::Fox, FighterKind::Captain]),
+        GameScene::VsBall | GameScene::VsRays => return vs_pair_roster([FighterKind::Pikachu, FighterKind::Purin]),
         _ => return training_roster(training),
     };
     core::array::from_fn(|port| {
@@ -2386,6 +2480,23 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
             spawn: port as u16,
             team,
             color,
+            human: port == 0,
+        })
+    })
+}
+
+/// RE-425's entry scenes: the player's first fighter against a CPU's
+/// second, each in its first royal costume.
+fn vs_pair_roster(kinds: [ssb_game::fighter::FighterKind; 2]) -> Roster {
+    core::array::from_fn(|port| {
+        kinds.get(port).map(|&kind| Entrant {
+            kind,
+            costume: ssb_game::costume::costume_common_id(kind, 0),
+            level: 3,
+            handicap: ssb_game::stale::HANDICAP_DEFAULT,
+            spawn: port as u16,
+            team: port as u8,
+            color: if port == 0 { 0 } else { ssb_game::hud::CPU_COLOR as u8 },
             human: port == 0,
         })
     })
@@ -2805,6 +2916,8 @@ unsafe fn session_frame(
                 None => tick_stage_select_layer(pack.as_ref(), s),
             },
             Screen::Training => {
+                #[cfg(feature = "headless_capture")]
+                log_entry_state(capture_scene, sim_frame_index, s.play_state.as_ref(), s.dummies[0].as_deref());
                 // START is navigation-only here. B belongs to the fighter's
                 // source special-input path and must reach `pl.tick` below.
                 // In a VS battle START is the pause menu's (`training_frame`).
@@ -3586,8 +3699,8 @@ fn tick_stage_select_layer(pack: Option<&Pack<'_>>, s: &mut Session) {
 #[derive(Default)]
 struct DrawAssets {
     shadow_texture: Option<ssb_rom::pack::TextureDesc>,
-    /// `ssb_psp_runtime::scene::ENTRY_EFFECT_KEYS`' objects and animations.
-    entry_effects: [Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>; 7],
+    /// `ssb_psp_runtime::scene::ENTRY_PARTS`' objects and animations.
+    entry_effects: [Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>; 14],
     /// Indexed by `MarioFireball::index`: Mario's palette, then Luigi's.
     fireball_meshes: [Option<ssb_rom::pack::MeshDesc>; 2],
     blaster_mesh: Option<ssb_rom::pack::MeshDesc>,
@@ -3641,8 +3754,8 @@ impl DrawAssets {
     fn resolve(p: &Pack<'_>) -> Self {
         DrawAssets {
             shadow_texture: meshdraw::fighter_shadow_texture(p),
-            entry_effects: ssb_psp_runtime::scene::ENTRY_EFFECT_KEYS
-                .map(|key| ssb_psp_runtime::scene::manager_effect(p, key)),
+            entry_effects: ssb_psp_runtime::scene::ENTRY_PARTS
+                .map(|part| ssb_psp_runtime::scene::entry_part(p, &part)),
             fireball_meshes: ssb_psp_runtime::scene::fireball_meshes(p),
             blaster_mesh: ssb_psp_runtime::scene::fox_blaster_mesh(p),
             reflector: ssb_psp_runtime::scene::fox_reflector_object(p),
@@ -4092,38 +4205,104 @@ fn stage_pose(
 /// Thunder Jolt and each lives 100 frames.
 const MAX_JOLT_VISUALS: usize = 4;
 
-/// One entry effect part's players and the clock they have caught up to.
+/// One entry effect part's players, the clock they have caught up to and
+/// the DL link it draws on this frame (RE-425).
 #[derive(Default)]
 struct EntryVisual {
     ticks: Option<u16>,
     anim: ssb_rom::skeleton::StageAnimator,
     materials: ssb_rom::skeleton::EffectMaterialAnimator,
+    link: u8,
+}
+
+/// A node's local z in an entry part's animation, as the sort helpers
+/// read `dobj->translate.vec.f.z`.
+fn entry_node_z(p: &Pack<'_>, object: &ssb_rom::pack::ObjectDesc, anim: &ssb_rom::skeleton::StageAnimator, node: usize) -> f32 {
+    let global = object.first_node + node as u32;
+    anim.node_pose(global)
+        .map(|pose| pose.translate[2])
+        .or_else(|| p.node(global).map(|n| n.rest_translate[2]))
+        .unwrap_or(0.0)
+}
+
+/// `efManagerSortZNeg`.
+fn sort_z_neg(z: f32) -> u8 {
+    if z < -1000.0 {
+        2
+    } else {
+        20
+    }
+}
+
+/// `efManagerSortZPos`.
+fn sort_z_pos(z: f32) -> u8 {
+    if z > 1000.0 {
+        2
+    } else {
+        20
+    }
 }
 
 impl EffectVisuals {
     /// Plays each fighter's entry effect up to its clock
-    /// (`Entry::effect_ticks`), restarting on a new entry.
+    /// (`Entry::effect_ticks`, or `rays_ticks` for the Poké Ball's rays),
+    /// restarting on a new entry, and sorts each part onto its link as its
+    /// update does (RE-425).
     #[inline(never)]
     fn sync_entry(&mut self, p: &Pack<'_>, assets: &DrawAssets, fighters: [Option<&ssb_game::fighter::Fighter>; 4]) {
+        use ssb_psp_runtime::scene::{EntryClock, EntryLink, ENTRY_PARTS};
         if self.entry.len() < fighters.len() {
             self.entry.resize_with(fighters.len(), Default::default);
         }
         for (visuals, f) in self.entry.iter_mut().zip(fighters) {
-            let clock = f.and_then(|f| f.entry.effect_ticks);
             let parts = f.map_or(&[][..], ssb_psp_runtime::scene::entry_effect_parts);
             for (i, v) in visuals.iter_mut().enumerate() {
-                let asset = parts.get(i).and_then(|&k| assets.entry_effects[k].as_ref());
+                let Some(&k) = parts.get(i) else {
+                    v.ticks = None;
+                    continue;
+                };
+                let part = &ENTRY_PARTS[k];
+                let clock = f.and_then(|f| match part.clock {
+                    EntryClock::Effect => f.entry.effect_ticks,
+                    EntryClock::Rays => f.entry.rays_ticks,
+                });
+                let asset = assets.entry_effects[k].as_ref();
                 let (Some((restart, ticks)), Some((object, anim))) = (catch_up(&mut v.ticks, clock), asset) else {
                     continue;
                 };
+                let turned = part.turns_left && f.is_some_and(|f| f.entry.lr == Some(ssb_game::fighter::Facing::Left));
                 if restart {
                     v.anim.start(p, anim);
                     v.materials.start(p, object_mat_anims(p, object));
+                    v.link = match part.link {
+                        EntryLink::Fixed(link) => link,
+                        // The maker's own sort, on the rest pose until the
+                        // first play.
+                        EntryLink::SortZNeg(n) | EntryLink::Ball(n) => sort_z_neg(entry_node_z(p, object, &v.anim, n)),
+                        EntryLink::SortCar(n) if turned => sort_z_pos(entry_node_z(p, object, &v.anim, n)),
+                        EntryLink::SortCar(n) => sort_z_neg(entry_node_z(p, object, &v.anim, n)),
+                    };
                 }
-                if let Some(script) = p.anim_script(anim) {
-                    for _ in 0..ticks {
-                        let _ = v.anim.tick(script);
-                        v.materials.tick(p);
+                let Some(script) = p.anim_script(anim) else {
+                    continue;
+                };
+                for t in 0..ticks {
+                    let first = restart && t == 0;
+                    // `efManagerMBallThrownProcUpdate` sorts on the pose
+                    // before it plays.
+                    if let EntryLink::Ball(n) = part.link {
+                        if !first {
+                            v.link = if entry_node_z(p, object, &v.anim, n) > 1000.0 { 20 } else { 10 };
+                        }
+                    }
+                    let _ = v.anim.tick(script);
+                    v.materials.tick(p);
+                    match part.link {
+                        EntryLink::Ball(n) if first => v.link = sort_z_neg(entry_node_z(p, object, &v.anim, n)),
+                        EntryLink::SortZNeg(n) => v.link = sort_z_neg(entry_node_z(p, object, &v.anim, n)),
+                        EntryLink::SortCar(n) if turned => v.link = sort_z_pos(entry_node_z(p, object, &v.anim, n)),
+                        EntryLink::SortCar(n) => v.link = sort_z_neg(entry_node_z(p, object, &v.anim, n)),
+                        _ => {}
                     }
                 }
             }
@@ -4131,9 +4310,20 @@ impl EffectVisuals {
     }
 }
 
-/// Draws each fighter's entry effect at its spawn: the root takes the
-/// entry position in place of its desc translate (`dobj->translate.vec.f =
-/// *pos`), and the effect is gone once its animation ends.
+/// Whether an entry part has been ejected: its end node's script, or every
+/// script, has ended.
+fn entry_part_ended(part: &ssb_psp_runtime::scene::EntryPart, object: &ssb_rom::pack::ObjectDesc, v: &EntryVisual) -> bool {
+    match part.end_node {
+        Some(n) => v.anim.node_ended(object.first_node + n as u32).unwrap_or(true),
+        None => v.anim.ended(),
+    }
+}
+
+/// Draws each fighter's entry effect parts on DL link `link`: the root (or
+/// the Arwing's outer `DObj`) takes the entry position (`dobj->translate
+/// .vec.f = *pos`), the car turns for a leftward entry, the visibility
+/// scripts hide their nodes, and a part is gone once its animation ends
+/// (RE-403, RE-425).
 #[inline(never)]
 fn draw_entry_effects(
     gpu: &mut Gpu,
@@ -4143,43 +4333,69 @@ fn draw_entry_effects(
     visuals: &EffectVisuals,
     fighters: [Option<&ssb_game::fighter::Fighter>; 4],
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    link: u8,
 ) {
+    use ssb_psp_runtime::scene::{EntryClock, EntryRoot, ENTRY_PARTS};
     for (vs, f) in visuals.entry.iter().zip(fighters) {
         let Some(f) = f else { continue };
-        if f.entry.effect_ticks.is_none() {
-            continue;
-        }
         let parts = ssb_psp_runtime::scene::entry_effect_parts(f);
         for (v, &k) in vs.iter().zip(parts) {
+            let part = &ENTRY_PARTS[k];
+            let clock = match part.clock {
+                EntryClock::Effect => f.entry.effect_ticks,
+                EntryClock::Rays => f.entry.rays_ticks,
+            };
+            if clock.is_none() || v.ticks.is_none() || v.link != link {
+                continue;
+            }
             let Some((object, _)) = assets.entry_effects[k].as_ref() else {
                 continue;
             };
-            if v.anim.ended() {
+            if entry_part_ended(part, object, v) {
                 continue;
             }
             let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 16];
             let n = v.anim.compose(p, object, &mut posed);
-            if let Some(root) = p.node(object.first_node) {
-                let t = root.rest_translate.map(|x| -x / meshdraw::MODEL_SCALE);
-                let place = ssb_rom::scene::Mat4::from_trs(t, [0.0; 3], [1.0; 3]);
-                for m in &mut posed[..n] {
-                    *m = place.mul(m);
+            if part.root == EntryRoot::Replace {
+                if let Some(root) = p.node(object.first_node) {
+                    let t = root.rest_translate.map(|x| -x / meshdraw::MODEL_SCALE);
+                    let place = ssb_rom::scene::Mat4::from_trs(t, [0.0; 3], [1.0; 3]);
+                    for m in &mut posed[..n] {
+                        *m = place.mul(m);
+                    }
                 }
             }
+            let mut scales = [[1.0f32; 2]; 16];
+            let count = v.anim.billboard_scales(p, object, &mut scales).min(n);
+            for &b in part.extra_billboards {
+                let node = object.first_node + b as u32;
+                let sx = v
+                    .anim
+                    .node_pose(node)
+                    .map(|pose| pose.scale[0])
+                    .or_else(|| p.node(node).map(|n| n.rest_scale[0]))
+                    .unwrap_or(1.0);
+                if let Some(s) = scales.get_mut(b) {
+                    *s = [s[0] * sx, s[1] * sx];
+                }
+            }
+            let turned = part.turns_left && f.entry.lr == Some(ssb_game::fighter::Facing::Left);
+            let yaw = if turned { core::f32::consts::PI } else { 0.0 };
             let pos = f.entry.pos;
-            gpu.model_transform([pos.x, pos.y, pos.z], [0.0; 3], meshdraw::MODEL_SCALE);
+            gpu.model_transform([pos.x, pos.y, pos.z], [0.0, yaw, 0.0], meshdraw::MODEL_SCALE);
             let base = gpu.model_matrix();
+            let hidden = |node: u32| !v.anim.visible(p, node);
             unsafe {
-                meshdraw::draw_object_posed(
+                meshdraw::draw_object_posed_scaled_hiding(
                     p,
                     object,
                     &base,
                     &posed[..n],
-                    None,
+                    &scales[..count],
                     draw_state,
                     material_anim,
                     Some(&v.materials),
-                    0,
+                    &hidden,
                 );
             }
         }
@@ -4879,11 +5095,19 @@ unsafe fn draw_training(
         draw_state.heads = meshdraw::Heads::Both;
     };
     use meshdraw::Heads::{Head0, Head1};
+    let fighters = scenes_ref(pl, dummies);
+    let fighter_refs = fighters.map(|x| x.map(|x| &x.fighter));
+    // Links 1-2, before layer 0 (which clears `G_ZBUFFER` and covers
+    // them): Captain Falcon on a leftward entry (`ftParamMoveDLLink`) and
+    // the entry vehicles `efManagerSortZNeg` puts behind z -1000 (RE-425).
+    for f in fighters.iter().flatten().filter(|f| f.fighter.entry.is_link_1) {
+        draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera);
+    }
+    draw_entry_effects(gpu, p, draw_state, assets, effect_visuals, fighter_refs, material_anim, 2);
     stage_pass(0..=5, Head0, draw_state);
     stage_pass(0..=5, Head1, draw_state);
     stage_pass(6..=8, Head0, draw_state);
 
-    let fighters = scenes_ref(pl, dummies);
     // The N64 puts shadows on their own display link between the stage and
     // fighters.  Resolve each independently from its live floor/air state;
     // the fixed scratch is copied into GE memory by the renderer, so it is
@@ -4906,14 +5130,13 @@ unsafe fn draw_training(
     // Each fighter in port order, the CPUs drawn the same way as the
     // player's -- their own pose, their own per-fighter light rebuild
     // (RE-164).
-    for f in fighters.iter().flatten() {
+    for f in fighters.iter().flatten().filter(|f| !f.fighter.entry.is_link_1) {
         draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera);
     }
-    let fighter_refs = fighters.map(|x| x.map(|x| &x.fighter));
     // Link 10: the entry effects, the trapping egg, the halo, the impact
     // wave and particle list 4.
     draw_egg_effects(gpu, p, draw_state, assets, effect_visuals, fighter_refs, &pl.camera);
-    draw_entry_effects(gpu, p, draw_state, assets, effect_visuals, fighter_refs, material_anim);
+    draw_entry_effects(gpu, p, draw_state, assets, effect_visuals, fighter_refs, material_anim, 10);
     draw_ko_effects(
         gpu,
         p,
@@ -4994,6 +5217,8 @@ unsafe fn draw_training(
     );
     draw_particles(p, pl, damage_hud, draw_state, &ssb_psp_runtime::particles::LINK18_LISTS);
     stage_pass(16..=18, Head1, draw_state);
+    // Links 19-20: the entry vehicles sorted in front (RE-425).
+    draw_entry_effects(gpu, p, draw_state, assets, effect_visuals, fighter_refs, material_anim, 20);
     // The interface's link 25.
     draw_particles(p, pl, damage_hud, draw_state, &ssb_psp_runtime::particles::LINK25_LISTS);
     draw_screen_flash(gpu, draw_state, &damage_hud.ko);
@@ -5078,16 +5303,19 @@ unsafe fn draw_fighter_model(
         let view = (at - eye).normalized();
         gpu.set_constant_fog((f.fighter.pos - eye).dot(view), rgba);
     }
-    meshdraw::draw_object_posed(
+    // Its model parts and headgear accessory (RE-425).
+    let parts = f.fighter.model_parts.draw_parts();
+    meshdraw::draw_fighter_posed(
         p,
         &obj,
         &m,
         &posed[..n],
-        None,
         draw_state,
-        None,
-        None,
-        fighter_draw_costume(p, &obj, &f.fighter),
+        meshdraw::Look {
+            costume: fighter_draw_costume(p, &obj, &f.fighter),
+            parts: parts.as_ref().map(|p| &p[..]),
+            accessory_before: f.fighter.kind == ssb_game::fighter::FighterKind::Purin,
+        },
     );
     if fog.is_some() {
         gpu.clear_fog();
@@ -5112,13 +5340,7 @@ fn fighter_draw_costume(
             return key;
         }
     }
-    // Kirby's copy hat (RE-417): joint 6 wears its model part.
-    if let Some(part) = ssb_game::kirby_copy::copy_hat(f) {
-        let first = ssb_rom::pack::modelpart_costume(u32::from(part), 0);
-        if nodes.into_iter().any(|n| p.costume_mesh(n, first).is_some()) {
-            return ssb_rom::pack::modelpart_costume(u32::from(part), u32::from(f.costume));
-        }
-    }
+    // Kirby's copy hat (RE-417) is joint 6's model part (RE-425).
     u32::from(f.costume)
 }
 

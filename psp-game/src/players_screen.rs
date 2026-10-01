@@ -322,16 +322,19 @@ unsafe fn draw_fighters(
             // The view looks down -z from `CAMERA.eye`.
             gpu.set_constant_fog(cam.eye.z - shown.position[2], rgba);
         }
-        meshdraw::draw_object_posed(
+        // A demo fighter's model parts and accessory (RE-425).
+        let parts = ssb_game::modelpart::demo(fighter.kind).draw_parts();
+        meshdraw::draw_fighter_posed(
             p,
             &obj,
             &base,
             &posed[..n],
-            None,
             draw_state,
-            None,
-            None,
-            u32::from(shown.costume),
+            meshdraw::Look {
+                costume: u32::from(shown.costume),
+                parts: parts.as_ref().map(|p| &p[..]),
+                accessory_before: fighter.kind == ssb_game::fighter::FighterKind::Purin,
+            },
         );
         if shown.tint.is_some() {
             gpu.clear_fog();

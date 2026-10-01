@@ -9,7 +9,7 @@
 //! TransN's translation every frame, and no map collision runs. Captain
 //! Falcon's and Ness's entries have phases (`ftCaptainAppear*`,
 //! `ftNessAppear*`). The entry effects (the pipe, the Arwing and the rest)
-//! are not ported.
+//! run on clocks here and draw in `psp-game` (RE-403, RE-425).
 
 use ssb_engine::math::Vec3;
 
@@ -41,6 +41,14 @@ pub struct Entry {
     /// Ticks since the entry effect was made, `None` before any entry
     /// (RE-403). The effect runs on after the fighter stands.
     pub effect_ticks: Option<u16>,
+    /// Ticks since the Poké Ball's rays were made
+    /// (`efManagerMBallRaysMakeEffect`, on motion flag 1), `None` before
+    /// (RE-425).
+    pub rays_ticks: Option<u16>,
+    /// `ftParamMoveDLLink(fighter_gobj, 1)`: Captain Falcon's leftward
+    /// entry draws him on DL link 1, before the stage, until his TopN is
+    /// nearer than z -1000 (`ftCaptainAppearStartProcUpdate`, RE-425).
+    pub is_link_1: bool,
 }
 
 /// The effect `ftCommonAppearSetStatus` makes for each fighter.
@@ -82,10 +90,13 @@ pub fn entry_effect(kind: FighterKind) -> Option<EntryEffect> {
     })
 }
 
-/// Advances the entry effect's clock, once per frame from
+/// Advances the entry effect's clock and the rays', once per frame from
 /// `ftMainProcPhysicsMap`'s slot (the effects' `gcPlayAnimAll`).
 pub fn tick_effect_clock(f: &mut Fighter) {
-    if let Some(t) = f.entry.effect_ticks.as_mut() {
+    for t in [f.entry.effect_ticks.as_mut(), f.entry.rays_ticks.as_mut()]
+        .into_iter()
+        .flatten()
+    {
         *t = t.saturating_add(1);
     }
 }
@@ -169,6 +180,8 @@ pub fn appear_set_status(f: &mut Fighter) {
         floor_line: f.floor.map(|s| s.line),
         is_rotate: f.kind == FighterKind::Captain && !right,
         effect_ticks: entry_effect(f.kind).map(|_| 0),
+        rays_ticks: None,
+        is_link_1: f.kind == FighterKind::Captain && !right,
     };
     let s = match (f.kind, right) {
         (FighterKind::Mario | FighterKind::Luigi, true) => AnyStatus::Mario(MarioStatus::AppearR),
@@ -222,13 +235,35 @@ pub fn model_yaw(f: &Fighter) -> Option<f32> {
 
 /// `ftCommonAppearProcUpdate` and the phase setters.
 pub fn update(f: &mut Fighter) {
-    // `ftCommonAppearUpdateEffects`: flag 2 shows the shadow. Flag 1 is
-    // the Poké Ball's rays, an effect not ported.
+    // `ftCommonAppearUpdateEffects`: flag 1 makes the Poké Ball's rays at
+    // the entry position (RE-425), flag 2 shows the shadow.
+    if f.motion_script.flags[1] != 0 {
+        if matches!(
+            f.kind,
+            FighterKind::Pikachu
+                | FighterKind::Purin
+                | FighterKind::PolyPikachu
+                | FighterKind::PolyPurin
+        ) {
+            f.entry.rays_ticks = Some(0);
+        }
+        f.motion_script.flags[1] = 0;
+    }
     if f.motion_script.flags[2] != 0 {
         f.motion_script.flags[2] = 0;
         f.is_shadow_hidden = false;
     }
-    f.motion_script.flags[1] = 0;
+    // `ftCaptainAppearStartProcUpdate`: back to the fighters' link once
+    // nearer than z -1000.
+    if f.entry.is_link_1
+        && matches!(
+            f.status.status,
+            AnyStatus::Captain(CaptainStatus::AppearLStart)
+        )
+        && f.pos.z > -1000.0
+    {
+        f.entry.is_link_1 = false;
+    }
     if !f.status.animation_ended() {
         return;
     }

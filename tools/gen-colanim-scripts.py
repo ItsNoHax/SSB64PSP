@@ -146,8 +146,9 @@ def status_enums(refs):
     return names
 
 
-def preserve_table(refs):
-    """Every `ftMainSetStatus` whose flags keep the colour animation, as
+def preserve_table(refs, flag="PRESERVE_COLANIM", doc="the colour animation"):
+    """Every `ftMainSetStatus` whose flags keep `flag` (the colour animation
+    or, for RE-425, the model parts), as
     (fighter, from status, to status) with the caller's own status as
     `from` (a `...SetStatus` function is called from its move's other
     statuses, so its `from` is any)."""
@@ -159,16 +160,16 @@ def preserve_table(refs):
             if not fn.endswith(".c") or fn in ("ftmain.c", "fthammer.c", "ftcommonrebirth.c"):
                 continue
             text = COMMENT_RE.sub(" ", preprocess(open(os.path.join(root, fn)).read()))
-            if "PRESERVE_COLANIM" not in text:
+            if flag not in text:
                 continue
             flag_macros = {m.group(1) for m in re.finditer(r"#define\s+(\w+)\s+\(([^\n]*)\)", text)
-                           if "PRESERVE_COLANIM" in m.group(2)}
+                           if flag in m.group(2)}
             for m in re.finditer(r"^\w[\w \*]*?\b(ft\w+)\(GObj \*fighter_gobj\)\s*\{(.*?)^\}", text, re.S | re.M):
                 func, body = m.group(1), m.group(2)
                 for call in re.finditer(r"ftMainSetStatus\((.*?)\);", body, re.S):
                     args = split_args(call.group(1))
                     flags = args[4]
-                    if "PRESERVE_COLANIM" not in flags and not any(f in flags for f in flag_macros):
+                    if flag not in flags and not any(f in flags for f in flag_macros):
                         continue
                     target = args[1]
                     if target == "status_id":
@@ -194,10 +195,10 @@ def preserve_table(refs):
                         kind, to_id = names[to]
                         from_id = names[frm][1] if frm else ANY_STATUS
                         rows.add((kind, from_id, to_id, frm or "*", to))
-    w = ["\n/// `ftMainSetStatus` calls whose flags carry `FTSTATUS_PRESERVE_COLANIM`:\n",
+    w = [f"\n/// `ftMainSetStatus` calls whose flags carry `FTSTATUS_{flag}`:\n",
          "/// (fighter kind or 0xFF for any, status the call is made from or 0xFFFF\n",
          "/// for any, status entered). Rebirth and the items are not listed.\n",
-         f"pub static PRESERVE_COLANIM: [(u8, u16, u16); {len(rows)}] = [\n"]
+         f"pub static {flag}: [(u8, u16, u16); {len(rows)}] = [\n"]
     for kind, f, t, fn_, tn in sorted(rows):
         w.append(f"    (0x{kind:02X}, 0x{f:04X}, 0x{t:04X}), // {fn_} -> {tn}\n")
     w.append("];\n")
@@ -305,6 +306,7 @@ def main():
         w.append(f"    /// Id {i}: `{sym}`.\n    pub const {screaming(camel(sym))}: Self = Self({i});\n")
     w.append("}\n")
     w.extend(preserve_table(args.refs))
+    w.extend(preserve_table(args.refs, "PRESERVE_MODELPART"))
     with open(OUT, "w") as f:
         f.write("".join(w))
     print(f"wrote {OUT}: {len(scripts)} scripts, {len(descs)} descs")

@@ -458,10 +458,26 @@ pub enum GameScene {
     /// `trainingpupupu`: Training on Dream Land at the stage scenes' tick
     /// (RE-423).
     TrainingPupupu,
+    /// `pikachuhat`: Training's Pikachu in costume 1 against a Jigglypuff
+    /// dummy in costume 2, both wearing their headgear accessory (RE-425).
+    PikachuHat,
+    /// `purinbow`: Training's Jigglypuff in costume 3 against a Pikachu
+    /// dummy in costume 3 (RE-425).
+    PurinBow,
+    /// `vsarwing`: a VS battle's entries, Fox against Captain Falcon, Fox's
+    /// Arwing mid-flight (RE-425).
+    VsArwing,
+    /// `vscar`: `vsarwing` later, Captain Falcon's car driving in (RE-425).
+    VsCar,
+    /// `vsball`: a VS battle's entries, Pikachu against Jigglypuff, the
+    /// Poké Ball in flight (RE-425).
+    VsBall,
+    /// `vsrays`: `vsball` later, the ball open under its rays (RE-425).
+    VsRays,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 70] = [
+    pub const ALL: [GameScene; 76] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -532,6 +548,12 @@ impl GameScene {
         GameScene::TrainingCastle,
         GameScene::TrainingHyrule,
         GameScene::TrainingPupupu,
+        GameScene::PikachuHat,
+        GameScene::PurinBow,
+        GameScene::VsArwing,
+        GameScene::VsCar,
+        GameScene::VsBall,
+        GameScene::VsRays,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -606,6 +628,12 @@ impl GameScene {
             GameScene::TrainingCastle => "trainingcastle",
             GameScene::TrainingHyrule => "traininghyrule",
             GameScene::TrainingPupupu => "trainingpupupu",
+            GameScene::PikachuHat => "pikachuhat",
+            GameScene::PurinBow => "purinbow",
+            GameScene::VsArwing => "vsarwing",
+            GameScene::VsCar => "vscar",
+            GameScene::VsBall => "vsball",
+            GameScene::VsRays => "vsrays",
         }
     }
 

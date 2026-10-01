@@ -402,6 +402,8 @@ pub struct Fighter {
     /// `effect_joint_array_id`: which of `effect_joint_ids` the next
     /// flame, spark or shock uses.
     pub effect_joint_array_id: u8,
+    /// `FTStruct::modelpart_status` ([`crate::modelpart`], RE-425).
+    pub model_parts: crate::modelpart::ModelParts,
 }
 
 impl Fighter {
@@ -502,6 +504,7 @@ impl Fighter {
             damage_player: None,
             effects: crate::fteffect::EffectQueue::default(),
             effect_joint_array_id: 0,
+            model_parts: crate::modelpart::ModelParts::new(kind),
         }
     }
 

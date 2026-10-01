@@ -325,6 +325,8 @@ pub fn damage_check_lose_copy(f: &mut Fighter) {
 pub fn lose_copy(f: &mut Fighter) {
     crate::kirby_copy::init_passive_vars(f);
     f.kirby.copy_id = FighterKind::Kirby;
+    f.model_parts
+        .set_default(crate::kirby_copy::COPY_MODELPARTS_JOINT, 0);
     crate::colanim::reset_stat_update(f);
 }
 
@@ -861,6 +863,12 @@ fn spit(f: &mut Fighter) {
 fn copy(f: &mut Fighter) {
     if f.kirby.copy_id != f.kirby.copy_pending {
         f.kirby.copy_id = f.kirby.copy_pending;
+        // `ftParamSetModelPartDefaultID(joint 6, copy_modelpart_id)` and
+        // `ftParamResetModelPartAll` (RE-425).
+        let part = crate::kirby_copy::copy_modelpart_id(f.kirby.copy_id);
+        f.model_parts
+            .set_default(crate::kirby_copy::COPY_MODELPARTS_JOINT, part);
+        f.model_parts.reset_all();
         crate::kirby_copy::init_passive_vars(f);
     }
     if f.grab.catch.take().is_none() {

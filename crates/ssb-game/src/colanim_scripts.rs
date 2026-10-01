@@ -2514,3 +2514,77 @@ pub static PRESERVE_COLANIM: [(u8, u16, u16); 130] = [
     (0xFF, 0xFFFF, 0x00A2), // * -> nFTCommonStatusShieldBreakStandD
     (0xFF, 0xFFFF, 0x00A3), // * -> nFTCommonStatusShieldBreakStandU
 ];
+
+/// `ftMainSetStatus` calls whose flags carry `FTSTATUS_PRESERVE_MODELPART`:
+/// (fighter kind or 0xFF for any, status the call is made from or 0xFFFF
+/// for any, status entered). Rebirth and the items are not listed.
+pub static PRESERVE_MODELPART: [(u8, u16, u16); 68] = [
+    (0x05, 0x00E5, 0x00E8), // nFTLinkStatusSpecialN -> nFTLinkStatusSpecialAirN
+    (0x05, 0x00E8, 0x00E5), // nFTLinkStatusSpecialAirN -> nFTLinkStatusSpecialN
+    (0x06, 0x00E4, 0x00E7), // nFTYoshiStatusSpecialN -> nFTYoshiStatusSpecialAirN
+    (0x06, 0x00E5, 0x00E8), // nFTYoshiStatusSpecialNCatch -> nFTYoshiStatusSpecialAirNCatch
+    (0x06, 0x00E6, 0x00E9), // nFTYoshiStatusSpecialNRelease -> nFTYoshiStatusSpecialAirNRelease
+    (0x06, 0x00E7, 0x00E4), // nFTYoshiStatusSpecialAirN -> nFTYoshiStatusSpecialN
+    (0x06, 0x00E8, 0x00E5), // nFTYoshiStatusSpecialAirNCatch -> nFTYoshiStatusSpecialNCatch
+    (0x06, 0x00E9, 0x00E6), // nFTYoshiStatusSpecialAirNRelease -> nFTYoshiStatusSpecialNRelease
+    (0x06, 0xFFFF, 0x00E5), // * -> nFTYoshiStatusSpecialNCatch
+    (0x06, 0xFFFF, 0x00E6), // * -> nFTYoshiStatusSpecialNRelease
+    (0x06, 0xFFFF, 0x00E8), // * -> nFTYoshiStatusSpecialAirNCatch
+    (0x06, 0xFFFF, 0x00E9), // * -> nFTYoshiStatusSpecialAirNRelease
+    (0x08, 0x0104, 0x0106), // nFTKirbyStatusSpecialLwStart -> nFTKirbyStatusSpecialLwHold
+    (0x08, 0x0106, 0x010B), // nFTKirbyStatusSpecialLwHold -> nFTKirbyStatusSpecialAirLwFall
+    (0x08, 0x0109, 0x010A), // nFTKirbyStatusSpecialAirLwHold -> nFTKirbyStatusSpecialAirLwLanding
+    (0x08, 0x010D, 0x0116), // nFTKirbyStatusSpecialNStart -> nFTKirbyStatusSpecialAirNStart
+    (0x08, 0x010E, 0x0117), // nFTKirbyStatusSpecialNLoop -> nFTKirbyStatusSpecialAirNLoop
+    (0x08, 0x010F, 0x0118), // nFTKirbyStatusSpecialNEnd -> nFTKirbyStatusSpecialAirNEnd
+    (0x08, 0x0110, 0x0119), // nFTKirbyStatusSpecialNCatch -> nFTKirbyStatusSpecialAirNCatch
+    (0x08, 0x0112, 0x011B), // nFTKirbyStatusSpecialNThrow -> nFTKirbyStatusSpecialAirNThrow
+    (0x08, 0x0113, 0x011C), // nFTKirbyStatusSpecialNWait -> nFTKirbyStatusSpecialAirNWait
+    (0x08, 0x0114, 0x011D), // nFTKirbyStatusSpecialNTurn -> nFTKirbyStatusSpecialAirNTurn
+    (0x08, 0x0115, 0x011E), // nFTKirbyStatusSpecialNCopy -> nFTKirbyStatusSpecialAirNCopy
+    (0x08, 0x0116, 0x010D), // nFTKirbyStatusSpecialAirNStart -> nFTKirbyStatusSpecialNStart
+    (0x08, 0x0117, 0x010E), // nFTKirbyStatusSpecialAirNLoop -> nFTKirbyStatusSpecialNLoop
+    (0x08, 0x0118, 0x010F), // nFTKirbyStatusSpecialAirNEnd -> nFTKirbyStatusSpecialNEnd
+    (0x08, 0x0119, 0x0110), // nFTKirbyStatusSpecialAirNCatch -> nFTKirbyStatusSpecialNCatch
+    (0x08, 0x011B, 0x0112), // nFTKirbyStatusSpecialAirNThrow -> nFTKirbyStatusSpecialNThrow
+    (0x08, 0x011C, 0x0113), // nFTKirbyStatusSpecialAirNWait -> nFTKirbyStatusSpecialNWait
+    (0x08, 0x011D, 0x0114), // nFTKirbyStatusSpecialAirNTurn -> nFTKirbyStatusSpecialNTurn
+    (0x08, 0x011E, 0x0115), // nFTKirbyStatusSpecialAirNCopy -> nFTKirbyStatusSpecialNCopy
+    (0x08, 0x011F, 0x0122), // nFTKirbyStatusCopyLinkSpecialN -> nFTKirbyStatusCopyLinkSpecialAirN
+    (0x08, 0x0122, 0x011F), // nFTKirbyStatusCopyLinkSpecialAirN -> nFTKirbyStatusCopyLinkSpecialN
+    (0x08, 0x0129, 0x012C), // nFTKirbyStatusCopyYoshiSpecialN -> nFTKirbyStatusCopyYoshiSpecialAirN
+    (0x08, 0x012A, 0x012D), // nFTKirbyStatusCopyYoshiSpecialNCatch -> nFTKirbyStatusCopyYoshiSpecialAirNCatch
+    (0x08, 0x012B, 0x012E), // nFTKirbyStatusCopyYoshiSpecialNRelease -> nFTKirbyStatusCopyYoshiSpecialAirNRelease
+    (0x08, 0x012C, 0x0129), // nFTKirbyStatusCopyYoshiSpecialAirN -> nFTKirbyStatusCopyYoshiSpecialN
+    (0x08, 0x012D, 0x012A), // nFTKirbyStatusCopyYoshiSpecialAirNCatch -> nFTKirbyStatusCopyYoshiSpecialNCatch
+    (0x08, 0x012E, 0x012B), // nFTKirbyStatusCopyYoshiSpecialAirNRelease -> nFTKirbyStatusCopyYoshiSpecialNRelease
+    (0x08, 0xFFFF, 0x0108), // * -> nFTKirbyStatusSpecialAirLwStart
+    (0x08, 0xFFFF, 0x010E), // * -> nFTKirbyStatusSpecialNLoop
+    (0x08, 0xFFFF, 0x0112), // * -> nFTKirbyStatusSpecialNThrow
+    (0x08, 0xFFFF, 0x0113), // * -> nFTKirbyStatusSpecialNWait
+    (0x08, 0xFFFF, 0x0114), // * -> nFTKirbyStatusSpecialNTurn
+    (0x08, 0xFFFF, 0x0115), // * -> nFTKirbyStatusSpecialNCopy
+    (0x08, 0xFFFF, 0x0117), // * -> nFTKirbyStatusSpecialAirNLoop
+    (0x08, 0xFFFF, 0x011B), // * -> nFTKirbyStatusSpecialAirNThrow
+    (0x08, 0xFFFF, 0x011C), // * -> nFTKirbyStatusSpecialAirNWait
+    (0x08, 0xFFFF, 0x011D), // * -> nFTKirbyStatusSpecialAirNTurn
+    (0x08, 0xFFFF, 0x011E), // * -> nFTKirbyStatusSpecialAirNCopy
+    (0x08, 0xFFFF, 0x012A), // * -> nFTKirbyStatusCopyYoshiSpecialNCatch
+    (0x08, 0xFFFF, 0x012B), // * -> nFTKirbyStatusCopyYoshiSpecialNRelease
+    (0x08, 0xFFFF, 0x012D), // * -> nFTKirbyStatusCopyYoshiSpecialAirNCatch
+    (0x08, 0xFFFF, 0x012E), // * -> nFTKirbyStatusCopyYoshiSpecialAirNRelease
+    (0x0B, 0xFFFF, 0x00DF), // * -> nFTNessStatusAppearWait
+    (0x0B, 0xFFFF, 0x00E0), // * -> nFTNessStatusAppearREnd
+    (0x0B, 0xFFFF, 0x00E1), // * -> nFTNessStatusAppearLEnd
+    (0xFF, 0xFFFF, 0x0099), // * -> nFTCommonStatusGuard
+    (0xFF, 0xFFFF, 0x009A), // * -> nFTCommonStatusGuardOff
+    (0xFF, 0xFFFF, 0x009B), // * -> nFTCommonStatusGuardSetOff
+    (0xFF, 0xFFFF, 0x009F), // * -> nFTCommonStatusShieldBreakFall
+    (0xFF, 0xFFFF, 0x00A0), // * -> nFTCommonStatusShieldBreakDownD
+    (0xFF, 0xFFFF, 0x00A1), // * -> nFTCommonStatusShieldBreakDownU
+    (0xFF, 0xFFFF, 0x00A2), // * -> nFTCommonStatusShieldBreakStandD
+    (0xFF, 0xFFFF, 0x00A3), // * -> nFTCommonStatusShieldBreakStandU
+    (0xFF, 0xFFFF, 0x00A4), // * -> nFTCommonStatusFuraFura
+    (0xFF, 0xFFFF, 0x00AC), // * -> nFTCommonStatusCaptureWait
+    (0xFF, 0xFFFF, 0x00AE), // * -> nFTCommonStatusCaptureWaitKirby
+];

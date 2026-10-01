@@ -300,6 +300,13 @@ pub const COPY_MODELPARTS_JOINT: u8 = 6;
 /// (RE-417). Kirby's own row is 0, his bare head.
 pub const COPY_MODELPART_IDS: [u8; 12] = [12, 7, 4, 8, 11, 10, 5, 9, 0, 6, 3, 13];
 
+/// `copy[copy_id].copy_modelpart_id` (0 outside the twelve).
+pub fn copy_modelpart_id(copy_id: FighterKind) -> i8 {
+    COPY_MODELPART_IDS
+        .get(copy_id as usize)
+        .map_or(0, |&part| part as i8)
+}
+
 /// The copy hat Kirby wears: `ftKirbySpecialNCopyInitCopyVars`'s
 /// `ftParamSetModelPartDefaultID(joint 6, copy[copy_id].copy_modelpart_id)`,
 /// which `ftKirbySpecialNLoseCopy` resets to 0. `None` for part 0 or another

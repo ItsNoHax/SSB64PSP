@@ -485,6 +485,20 @@ impl StageAnimator {
         (i < self.count).then(|| (self.nodes[i], &self.poses[i]))
     }
 
+    /// The pose the joint driving `node` has reached, if one drives it.
+    pub fn node_pose(&self, node: u32) -> Option<&JointPose> {
+        self.pose_for(node)
+    }
+
+    /// Whether the joint driving `node` has reached its script's end (its
+    /// `DObj::anim_frame` at or below 0), if one drives it (RE-425: the
+    /// Arwing and the car end with one node, not the whole tree).
+    pub fn node_ended(&self, node: u32) -> Option<bool> {
+        (0..self.count)
+            .find(|&i| self.nodes[i] == node)
+            .map(|i| self.joints[i].ended())
+    }
+
     /// Source DObj flags: bit 0 hides this mesh; bit 1 hides its subtree.
     pub fn flags(&self, node: u32) -> u16 {
         (0..self.count)

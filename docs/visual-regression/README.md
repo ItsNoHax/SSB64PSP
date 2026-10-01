@@ -907,3 +907,26 @@ Negative tests: the old light-colour rule changed `r2-kirby-skeleton`
 the results emblem 63,304, the bonus stages, Sector Z); drawing the
 cutouts unblended changed 74 (`r2-stage-bonus2-donkey-kong` 9,744,
 `saffron` 7,616, `jungle` 7,240, `zebes` 5,752). 136 of 136 match twice.
+
+## 2026-10-01 RE-425 accessories, model parts and entry vehicles
+
+Pack v77, 34,880,272 bytes (SHA-256 `b6d6b19d…`). Seven goldens added, each
+identical in both captures: `f1-training-pikachu-hat` (Pikachu costume 1,
+Jigglypuff costume 2), `f1-training-purin-bow` (both costume 3),
+`f1-training-fox-blaster` (the `fox` scene: the Blaster in his hand),
+`f1-vs-arwing` (tick 254), `f1-vs-car` (264), `f1-vs-ball` (230) and
+`f1-vs-rays` (254), all set beside N64 warp-boot captures. Eight
+rebaselined, identical twice:
+- `f1-training-samus` (76 pixels at 2×), `-samus-shot` (52),
+  `-samus-bomb` (136): descriptors 20-21, which `setup_parts` never makes,
+  no longer draw on the arm cannon.
+- `f1-training-donkey` (1,040): the Giant Punch charge's face and hands.
+- `f1-training-ness` (100), `-ness-thunder` (76): open hands.
+- `f1-training-link-bomb` (324): the shield moves from his back to his
+  hand.
+- `f1-vs-team` (908): Donkey Kong's open hand.
+
+Negative tests: a build without the accessory, the model parts and the new
+entry parts changed all fourteen (`pikachu-hat` 920, `purin-bow` 1,028,
+`fox-blaster` 92, `vs-arwing` 12,192, `vs-ball` 2,712, `vs-rays` 31,180 and
+the eight above by their counts). 143 of 143 match twice.

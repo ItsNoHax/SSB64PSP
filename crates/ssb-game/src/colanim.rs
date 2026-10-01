@@ -22,7 +22,7 @@ use crate::status::AnyStatus;
 #[path = "colanim_scripts.rs"]
 mod scripts;
 
-pub use scripts::{Script, DESCS, PRESERVE_COLANIM};
+pub use scripts::{Script, DESCS, PRESERVE_COLANIM, PRESERVE_MODELPART};
 
 /// `gmColCommandEffect` / `...EffectItemHold`: `ftParamMakeEffect`'s
 /// arguments.
@@ -448,6 +448,17 @@ pub(crate) fn on_set_status(f: &mut Fighter, preserve: bool) {
 /// such call: map switches between a move's ground and air statuses, and a
 /// move's own later statuses).
 pub fn preserved(kind: FighterKind, from: AnyStatus, to: AnyStatus) -> bool {
+    preserved_in(&PRESERVE_COLANIM, kind, from, to)
+}
+
+/// Whether a `(fighter, from, to)` table generated from the `ftMainSetStatus`
+/// calls ([`PRESERVE_COLANIM`], [`PRESERVE_MODELPART`]) names this switch.
+pub(crate) fn preserved_in(
+    table: &[(u8, u16, u16)],
+    kind: FighterKind,
+    from: AnyStatus,
+    to: AnyStatus,
+) -> bool {
     let base = match kind.polygon_base().unwrap_or(kind) {
         // Luigi runs Mario's specials (`ftmariospecialn.c`).
         FighterKind::Luigi => FighterKind::Mario,
@@ -455,7 +466,7 @@ pub fn preserved(kind: FighterKind, from: AnyStatus, to: AnyStatus) -> bool {
         k => k,
     } as u8;
     let (from, to) = (from.id(), to.id());
-    PRESERVE_COLANIM
+    table
         .iter()
         .any(|&(k, f, t)| (k == 0xFF || k == base) && (f == 0xFFFF || f == from) && t == to)
 }

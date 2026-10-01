@@ -3581,6 +3581,7 @@ pub fn set_any_status_preserve(
     let keep_colanim =
         preserve.colanim || crate::colanim::preserved(f.kind, f.status.status, status);
     crate::colanim::on_set_status(f, keep_colanim);
+    crate::modelpart::on_set_status(f, status);
     f.damage_knockback_stack = 0.0;
     f.damage_mul = 1.0;
     f.damage_e_status = None;
