@@ -1,6 +1,6 @@
 use super::*;
 use crate::attack;
-use crate::item::ItemPool;
+use crate::item::{ItemPool, NoItemAnims};
 use crate::weapon::{PKFire, WeaponPool};
 use ssb_engine::input::ControllerState;
 
@@ -411,12 +411,12 @@ fn fire_pillar_allocation_and_initial_fall_are_independent_of_a_full_weapon_pool
     assert!(pool.spawn(far));
     assert_eq!(pool.active_count(), crate::weapon::MAX_WEAPONS);
     let initial = *items.items().next().unwrap();
-    items.tick(core::iter::empty, None);
+    items.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     let falling = items.items().next().unwrap();
     assert_eq!(falling.pos, initial.pos);
     assert_eq!(falling.vel_air, Vec3::ZERO);
     assert_eq!(falling.lifetime, 100);
-    items.tick(core::iter::empty, None);
+    items.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     close(items.items().next().unwrap().vel_air.y, -0.45);
 }
 #[test]
@@ -495,7 +495,7 @@ fn pk_fire_hit_creates_independent_shrinking_pillar_with16_frame_rehit() {
     crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 7);
     for _ in 0..15 {
-        items.tick(core::iter::empty, None);
+        items.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     }
     let p = items.items().next().unwrap();
     assert!(p.scale.x < 1.0);
@@ -503,14 +503,14 @@ fn pk_fire_hit_creates_independent_shrinking_pillar_with16_frame_rehit() {
     items.search_fighter(&mut target);
     crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 7);
-    items.tick(core::iter::empty, None);
+    items.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     let p = items.items().next().unwrap();
     target.pos = p.pos + Vec3::new(0.0, 100.0 * p.scale.x, 0.0);
     items.search_fighter(&mut target);
     crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 10);
     for _ in 0..101 {
-        items.tick(core::iter::empty, None);
+        items.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     }
     assert_eq!(items.active_count(), 0);
 }

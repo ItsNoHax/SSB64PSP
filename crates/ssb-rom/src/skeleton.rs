@@ -1121,6 +1121,9 @@ pub const MAX_EFFECT_MAT_ANIMS: usize = 8;
 #[derive(Clone, Copy)]
 pub struct EffectMaterialAnimator {
     slots: [(u32, crate::matanim::MaterialJoint); MAX_EFFECT_MAT_ANIMS],
+    /// `mobj->anim_wait = AOBJ_ANIM_NULL`: the slot keeps its values but no
+    /// longer ticks, until a restart.
+    halted: [bool; MAX_EFFECT_MAT_ANIMS],
     count: usize,
 }
 
@@ -1196,6 +1199,7 @@ impl EffectMaterialAnimator {
                 crate::pack::TextureDesc::NO_ANIM,
                 crate::matanim::MaterialJoint::start(0, 0.0),
             ); MAX_EFFECT_MAT_ANIMS],
+            halted: [false; MAX_EFFECT_MAT_ANIMS],
             count: 0,
         }
     }
@@ -1232,6 +1236,7 @@ impl EffectMaterialAnimator {
             }
             let script = pack.mat_anim(i).map_or(0, |a| a.script);
             self.slots[self.count] = (i, crate::matanim::MaterialJoint::start(script, anim_frame));
+            self.halted[self.count] = false;
             self.count += 1;
         }
     }
@@ -1242,19 +1247,27 @@ impl EffectMaterialAnimator {
     /// when `mat_anim` is new and every slot is taken.
     pub fn restart(&mut self, mat_anim: u32, script: u32) -> bool {
         let joint = crate::matanim::MaterialJoint::start(script, 0.0);
-        if let Some(slot) = self.slots[..self.count]
-            .iter_mut()
-            .find(|(i, _)| *i == mat_anim)
+        if let Some(n) = self.slots[..self.count]
+            .iter()
+            .position(|(i, _)| *i == mat_anim)
         {
-            slot.1 = joint;
+            self.slots[n].1 = joint;
+            self.halted[n] = false;
             return true;
         }
         if self.count >= MAX_EFFECT_MAT_ANIMS {
             return false;
         }
         self.slots[self.count] = (mat_anim, joint);
+        self.halted[self.count] = false;
         self.count += 1;
         true
+    }
+
+    /// `mobj->anim_wait = AOBJ_ANIM_NULL` on every `MObj` this player
+    /// drives: each keeps its current values and stops ticking.
+    pub fn halt_all(&mut self) {
+        self.halted = [true; MAX_EFFECT_MAT_ANIMS];
     }
 
     /// How many joints this player ticks.
@@ -1280,7 +1293,10 @@ impl EffectMaterialAnimator {
     /// [`Self::tick`] at an `MObj::anim_speed` other than 1
     /// (`gcSetAllAnimSpeed`).
     pub fn tick_speed(&mut self, pack: &Pack<'_>, speed: f32) {
-        for (i, j) in &mut self.slots[..self.count] {
+        for (n, (i, j)) in self.slots[..self.count].iter_mut().enumerate() {
+            if self.halted[n] {
+                continue;
+            }
             let Some(a) = pack.mat_anim(*i) else { continue };
             let Some(data) = pack.mat_anim_file(&a) else {
                 continue;

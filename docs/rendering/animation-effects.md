@@ -46,6 +46,13 @@ primitives use the `ALPHA_BLEND` path; the other 10 are the declined
 
 ## Effects and particles
 
+Stage items use their descriptor transforms, rather than only the packed
+graph flags. The Piranha Plant's promoted root uses kind 48's pitch-locked
+billboard until damage changes it to kind 70's screen-facing Z spin, which
+ignores object scale. Rebirth clears the spin but retains kind 70. POW and
+plant animation clocks run on node 1 after the empty root is removed;
+absent items are hidden (RE-429).
+
 Status: complete for renderer scope.
 
 Manager descriptors, transforms, material/texture/colour animation, all 160

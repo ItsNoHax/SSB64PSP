@@ -1887,6 +1887,37 @@ unsafe fn draw_object_posed_filtered(
     only_node: Option<u32>,
     hidden: Option<&dyn Fn(u32) -> bool>,
 ) -> u32 {
+    draw_object_posed_nodes(
+        pack,
+        object,
+        base,
+        posed,
+        billboard_scales,
+        st,
+        mat_anim,
+        effect_mat_anim,
+        look,
+        only_node,
+        hidden,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_object_posed_nodes(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    base: &ScePspFMatrix4,
+    posed: &[ssb_rom::scene::Mat4],
+    billboard_scales: Option<&[[f32; 2]]>,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
+    look: Look<'_>,
+    only_node: Option<u32>,
+    hidden: Option<&dyn Fn(u32) -> bool>,
+    node_override: Option<&dyn Fn(usize, NodeDesc) -> NodeDesc>,
+) -> u32 {
     let mut tris = 0;
     let costume = look.costume;
     for i in 0..object.node_count {
@@ -1900,7 +1931,9 @@ unsafe fn draw_object_posed_filtered(
         let Some(node) = pack.node(global_node) else {
             continue;
         };
-        let part = look.parts.map(|p| p.get(i as usize).copied().unwrap_or(ssb_game::modelpart::ABSENT));
+        let part = look.parts.map(|p| {
+            p.get(i as usize).copied().unwrap_or(ssb_game::modelpart::ABSENT)
+        });
         let mesh_index = costume_node_mesh(pack, global_node, node.mesh, costume, part);
         // `ftDisplayMainDrawAccessory` (RE-425), in the joint's matrix.
         let accessory = accessory_mesh(pack, global_node, costume, mesh_index);
@@ -1917,6 +1950,7 @@ unsafe fn draw_object_posed_filtered(
             Some(m) => NodeDesc { world: m.0, ..node },
             None => node,
         };
+        let node = node_override.map_or(node, |f| f(i as usize, node));
 
         // `world` is already the node's full ancestor-composed transform, so
         // there is nothing to push or pop -- load base * world and draw.
@@ -3345,6 +3379,10 @@ pub unsafe fn draw_ground_object(
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) -> u32 {
+    // A stage item's tree whose item does not live.
+    if object.hidden {
+        return 0;
+    }
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::ground_obj::MAX_OBJECT_NODES];
     let n = object.compose(pack, &mut posed);
     let first = object.object.first_node;
@@ -3352,7 +3390,7 @@ pub unsafe fn draw_ground_object(
         node.checked_sub(first)
             .is_none_or(|i| !object.visible(pack, i as usize))
     };
-    let mut tris = draw_object_posed_filtered(
+    let mut tris = draw_object_posed_nodes(
         pack,
         &object.object,
         base,
@@ -3364,6 +3402,7 @@ pub unsafe fn draw_ground_object(
         Look::costume(0),
         None,
         Some(&hidden),
+        Some(&|i, node| object.draw_node(i, node)),
     );
     // A leaf (RE-365) is a one-node object at its parent's matrix: its own
     // `nGCMatrixKindTra` translate is zero, and its `Kind48` node faces the

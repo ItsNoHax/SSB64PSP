@@ -67,6 +67,12 @@ pub struct GroundObjectAsset {
     /// Every `DObj` carries only a `nGCMatrixKindTra` matrix, so its
     /// rotation and scale never reach a drawn matrix.
     pub translate_only: bool,
+    /// A stage item's tree (`itManagerMakeItem` from the stage's
+    /// `ITAttributes`): hidden until its item lives, played by the item
+    /// rather than [`GroundObjects::advance`]. `lbCommonEjectTreeDObj`
+    /// removes the descriptor's empty root, so node [`ITEM_ROOT`] is the
+    /// item's `DObjGetStruct`.
+    pub item: bool,
 }
 
 /// An object with no display (`gcAddGObjDisplay` is never called).
@@ -150,6 +156,18 @@ pub const CLOUD: u8 = 7;
 pub const SCALE_STRINGS: u8 = 8;
 pub const SCALE_PLATFORM: u8 = 9;
 pub const CASTLE_GROUND: u8 = 10;
+pub const POWER_BLOCK: u8 = 11;
+pub const PAKKUN: u8 = 12;
+
+/// `gcAddGObjDisplay(item_gobj, ..., 11, ...)` in `itManagerMakeItem`.
+pub const ITEM_LINK: u8 = 11;
+/// The node an item tree's `DObjGetStruct(item_gobj)` names once
+/// `itManagerMakeItem`'s `lbCommonEjectTreeDObj` has removed node 0 and
+/// promoted its child (RE-429).
+pub const ITEM_ROOT: usize = 1;
+/// `ITCommonData` file 251 + 0xCF0 names this exact graph. The nearby
+/// 0x7BE8 graph is a separate tree, not this pointer's target (RE-429).
+pub const GBUMPER_SOURCE: (u32, u32) = (86, 0x7648);
 
 /// `llGRInishieMapMapHead`: also the platform display list.
 const INISHIE_HEAD: u32 = 0x5F0;
@@ -171,13 +189,15 @@ const fn desc(
         leaf: None,
         instances: 1,
         translate_only: false,
+        item: false,
     }
 }
 
 /// `grPupupuInitAll`, `grJungleMakeTaruCann`, `grYamabukiMakeGate`,
 /// `grZebesMakeAcid`, `grYosterInitAll`, `grInishieMakeScale`,
-/// `grCastleInitAll`.
-pub const OBJECTS: [GroundObjectAsset; 11] = [
+/// `grCastleInitAll`, and the Mushroom Kingdom items
+/// `itPowerBlockMakeItem` and `itPakkunMakeItem`.
+pub const OBJECTS: [GroundObjectAsset; 13] = [
     desc("WhispyEyes", PUPUPU_FILE, PUPUPU_HEAD, 0x10F0, 4),
     desc("WhispyMouth", PUPUPU_FILE, PUPUPU_HEAD, 0x1770, 4),
     desc("FlowersBack", PUPUPU_FILE, PUPUPU_HEAD, 0x2A80, 4),
@@ -216,6 +236,20 @@ pub const OBJECTS: [GroundObjectAsset; 11] = [
         build: Build::Empty,
         ..desc("CastleGround", CASTLE_FILE, 0x0, 0x0, NO_LINK)
     },
+    // `llGRInishieMapPowerBlockItemAttributes` (file 260 + 0xD8) names the
+    // `DObjDesc` array at `map_head` + 0x11F8 (`itGetPData` subtracts
+    // `llGRInishieMapPowerBlockDataStart` from it).
+    GroundObjectAsset {
+        item: true,
+        ..desc("PowerBlock", INISHIE_FILE, INISHIE_HEAD, 0x11F8, ITEM_LINK)
+    },
+    // `llGRInishieMapPakkunItemAttributes` (file 260 + 0x120): the tree
+    // at `map_head` + 0xC30, one per `pakkun_gobj` slot.
+    GroundObjectAsset {
+        item: true,
+        instances: 2,
+        ..desc("Pakkun", INISHIE_FILE, INISHIE_HEAD, 0xC30, ITEM_LINK)
+    },
 ];
 
 const fn table(name: &'static str, object: u8, script: u32) -> GroundAnimAsset {
@@ -229,7 +263,7 @@ const fn table(name: &'static str, object: u8, script: u32) -> GroundAnimAsset {
 
 /// Every animation the ported controllers start. The order is the index
 /// the lookup functions below compute; do not reorder.
-pub const ANIMS: [GroundAnimAsset; 32] = [
+pub const ANIMS: [GroundAnimAsset; 35] = [
     // `dGRPupupuWhispyEyesAnims[lr][status][0]`: Turn, Blink.
     table("WhispyEyesLeftTurn", WHISPY_EYES, 0x11A0),
     table("WhispyEyesLeftBlink", WHISPY_EYES, 0x12B0),
@@ -288,6 +322,26 @@ pub const ANIMS: [GroundAnimAsset; 32] = [
     },
     // `grCastleInitAll`: the table at `map_nodes` itself.
     table("CastleGround", CASTLE_GROUND, 0x0),
+    // The POW Block's `ITAttributes::anim_joints` (file 260 + 0xD8 + 8):
+    // NULL for the descriptor's root, the pop-in for its child, which the
+    // eject makes the item's root.
+    table("PowerBlockAppear", POWER_BLOCK, 0x13B0),
+    // `itPowerBlockWaitProcDamage`: `llGRInishieMapPowerBlockAnimJoint` on
+    // the item's root.
+    GroundAnimAsset {
+        name: "PowerBlockDamage",
+        object: POWER_BLOCK,
+        script: 0x1288,
+        target: AnimTarget::Node(ITEM_ROOT as u8),
+    },
+    // `itPakkunWaitProcUpdate`: `llGRInishieMapPakkunAppearAnimJoint` on
+    // the item's root.
+    GroundAnimAsset {
+        name: "PakkunAppear",
+        object: PAKKUN,
+        script: 0xCC8,
+        target: AnimTarget::Node(ITEM_ROOT as u8),
+    },
 ];
 
 /// One material-animation table a controller starts.
@@ -305,8 +359,20 @@ pub struct GroundMatAnimAsset {
     pub gr_file: u32,
     pub map_head: u32,
     /// The `AObjEvent32 ***` table: one entry per `DObj` in tree order,
-    /// each an array parallel to that node's `MObj` chain.
+    /// each an array parallel to that node's `MObj` chain; or, for
+    /// [`MatTarget::NodeMObj`], the script itself.
     pub table: u32,
+    pub target: MatTarget,
+}
+
+/// Which `MObj`s a material animation drives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatTarget {
+    /// `gcAddAnimAll`'s `p_matanim_joints` table.
+    Table,
+    /// `gcAddMObjMatAnimJoint(dobj->mobj, script)`: the first `MObj` of
+    /// node `n` (in tree order) alone.
+    NodeMObj(u8),
 }
 
 const fn mat(name: &'static str, object: u8, table: u32) -> GroundMatAnimAsset {
@@ -321,6 +387,15 @@ const fn mat(name: &'static str, object: u8, table: u32) -> GroundMatAnimAsset {
         gr_file: asset.gr_file,
         map_head: asset.map_head,
         table,
+        target: MatTarget::Table,
+    }
+}
+
+/// A script on an item tree's root `MObj` (`DObjGetStruct(item_gobj)->mobj`).
+const fn root_mat(name: &'static str, object: u8, script: u32) -> GroundMatAnimAsset {
+    GroundMatAnimAsset {
+        target: MatTarget::NodeMObj(ITEM_ROOT as u8),
+        ..mat(name, object, script)
     }
 }
 
@@ -329,7 +404,7 @@ const YOSTER_HEAD: u32 = 0x100;
 
 /// Every material animation the ported controllers start. The order is
 /// the index [`mat_anim_of`] and the cloud constants name; do not reorder.
-pub const MAT_ANIMS: [GroundMatAnimAsset; 13] = [
+pub const MAT_ANIMS: [GroundMatAnimAsset; 15] = [
     // `dGRPupupuWhispyEyesAnims[lr][Turn][1]`; Blink has none.
     mat("WhispyEyesLeftTurn", WHISPY_EYES, 0x11E0),
     mat("WhispyEyesRightTurn", WHISPY_EYES, 0x1270),
@@ -347,10 +422,15 @@ pub const MAT_ANIMS: [GroundMatAnimAsset; 13] = [
     // `dGRYosterCloudMatAnimJoints`.
     mat("CloudSolid", CLOUD, 0x670),
     mat("CloudEvaporate", CLOUD, 0x690),
+    // `itPakkunWaitProcUpdate` / `itPakkunAppearProcDamage`.
+    root_mat("PakkunAppear", PAKKUN, 0xCF8),
+    root_mat("PakkunDamaged", PAKKUN, 0xE04),
 ];
 
 pub const CLOUD_SOLID_MAT: usize = 11;
 pub const CLOUD_EVAPORATE_MAT: usize = 12;
+pub const PAKKUN_APPEAR_MAT: usize = 13;
+pub const PAKKUN_DAMAGED_MAT: usize = 14;
 /// `ARRAY_COUNT(gGRCommonStruct.yoster.clouds)`.
 pub const CLOUD_COUNT: usize = 3;
 
@@ -363,6 +443,7 @@ pub const fn mat_anim_of(anim: usize) -> Option<usize> {
         2 => Some(1), // WhispyEyesRightTurn
         4..=11 => Some(anim - 2),
         ACID_ANIM => Some(10),
+        PAKKUN_APPEAR => Some(PAKKUN_APPEAR_MAT),
         _ => None,
     }
 }
@@ -389,14 +470,18 @@ pub const GATE_CLOSE: usize = 28;
 pub const ACID_ANIM: usize = 29;
 pub const SCALE_RETRACT: usize = 30;
 pub const CASTLE_GROUND_ANIM: usize = 31;
+pub const POWER_BLOCK_APPEAR: usize = 32;
+pub const POWER_BLOCK_DAMAGE: usize = 33;
+pub const PAKKUN_APPEAR: usize = 34;
 
 /// Nodes one controller object may have, counting the extra leaves the
 /// packer adds for display lists a node could not carry (identity locals
 /// under their node). The largest ported graph (the front flower bed) has 10.
 pub const MAX_OBJECT_NODES: usize = 32;
 /// Controller objects one stage may have, counting instances (Dream
-/// Land's four).
-pub const MAX_STAGE_OBJECTS: usize = 4;
+/// Land's four; Mushroom Kingdom's strings, two platforms, the POW Block
+/// and two Piranha Plants).
+pub const MAX_STAGE_OBJECTS: usize = 8;
 
 /// One live controller object: its nodes' clocks and poses, and the
 /// `GObj::anim_frame` its parses write.
@@ -418,6 +503,11 @@ pub struct GroundObject {
     poses: [JointPose; MAX_OBJECT_NODES],
     /// `GObj::anim_frame`.
     pub frame: f32,
+    /// An item tree with no live item: not drawn.
+    pub hidden: bool,
+    /// `itPakkunAppearProcDamage` replaces xobj 1's kind 48 with 0x46
+    /// (70, `func_ovl0_800CA194`). Rebirth clears the spin, not the kind.
+    pakkun_damaged_matrix: bool,
     /// The animation file's bytes in the pack blob (offset, length); every
     /// animation of one object comes from the same file.
     script: Option<(u32, u32)>,
@@ -457,6 +547,8 @@ impl GroundObject {
             live: [false; MAX_OBJECT_NODES],
             poses,
             frame: 0.0,
+            hidden: OBJECTS[asset as usize].item,
+            pakkun_damaged_matrix: false,
             script: None,
             materials: EffectMaterialAnimator::new(),
         }
@@ -518,6 +610,24 @@ impl GroundObject {
     /// Node `i`'s current local transform.
     pub fn pose(&self, i: usize) -> Option<&JointPose> {
         self.poses[..self.count].get(i)
+    }
+
+    /// The item's runtime matrix kinds override the descriptor's kinds.
+    /// Kind 70 uses the camera basis and Z spin without object scale.
+    pub fn draw_node(&self, i: usize, mut node: crate::pack::NodeDesc) -> crate::pack::NodeDesc {
+        if self.asset == PAKKUN && i == ITEM_ROOT {
+            use crate::pack::NodeDesc;
+            node.flags = NodeDesc::FLAG_BILLBOARD;
+            if self.pakkun_damaged_matrix {
+                node.flags |= NodeDesc::FLAG_BILLBOARD_SPIN_Z;
+                node.rest_rotate[2] = self.poses[i].rotate[2];
+                let t = [node.world[12], node.world[13], node.world[14]];
+                node.world = Mat4::from_trs(t, [0.0; 3], [1.0; 3]).0;
+            } else {
+                node.flags |= NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED;
+            }
+        }
+        node
     }
 
     /// `DObj::flags`: bit 0 hides the node's mesh, bit 1 its subtree.
@@ -796,9 +906,15 @@ impl GroundObjects {
     }
 
     /// `gcPlayAnimAll` on every object: the priority-5 process that runs
-    /// before the controller.
+    /// before the controller. Item trees play from their item's own
+    /// process instead ([`Self::item_play`]).
     pub fn advance(&mut self, pack: &Pack<'_>) -> Result<(), AnimError> {
-        for obj in self.objects.iter_mut().flatten() {
+        for obj in self
+            .objects
+            .iter_mut()
+            .flatten()
+            .filter(|o| !OBJECTS[o.asset as usize].item)
+        {
             obj.tick(pack)?;
         }
         if let Some(a) = self.arwing.as_mut() {
@@ -840,6 +956,136 @@ impl GroundObjects {
     /// Whether the pack carries [`MAT_ANIMS`]`[mat]` for this stage.
     pub fn has_mat(&self, mat: usize) -> bool {
         self.mat_anims.get(mat).is_some_and(Option::is_some)
+    }
+}
+
+/// The root translation axes a play wrote: those with a live track, while
+/// the root's clock ran (`gcPlayDObjAnimJoint` skips an idle `DObj`).
+pub type RootWrite = [Option<f32>; 3];
+
+impl GroundObjects {
+    /// `itManagerMakeItem` for an item tree: the rest pose, no clocks, then
+    /// `gcAddAnimAll` + `gcPlayAnimAll` with its `ITAttributes` scripts (the
+    /// POW Block's pop-in; the Piranha Plant has none).
+    pub fn item_make(&mut self, pack: &Pack<'_>, asset: u8, instance: u8) {
+        let Some(obj) = self.instance_mut(asset, instance) else {
+            return;
+        };
+        *obj = GroundObject::new(pack, obj.asset, obj.instance, obj.object, obj.leaf);
+        // The ejected descriptor root keeps no transform of its own.
+        obj.poses[0] = JointPose::default();
+        if asset == POWER_BLOCK {
+            let _ = self.play_on(pack, POWER_BLOCK_APPEAR, instance);
+        }
+    }
+
+    /// `gcPlayAnimAll` on an item tree: `itProcessProcItemMain` outside
+    /// hitlag.
+    pub fn item_play(&mut self, pack: &Pack<'_>, asset: u8, instance: u8) -> RootWrite {
+        let Some(obj) = self.instance_mut(asset, instance) else {
+            return [None; 3];
+        };
+        let r = ITEM_ROOT.min(obj.count.saturating_sub(1));
+        let ran = obj.live[r] && !obj.joints[r].ended();
+        let _ = obj.tick(pack);
+        if !ran {
+            return [None; 3];
+        }
+        let t = obj.poses[r].translate;
+        core::array::from_fn(|i| {
+            obj.joints[r]
+                .track_value(crate::figatree::TRACK_TRA_X + i)
+                .map(|_| t[i])
+        })
+    }
+
+    /// `gcAddDObjAnimJoint(root, ANIMS[anim])` and/or
+    /// `gcAddMObjMatAnimJoint(root->mobj, MAT_ANIMS[mat])` at frame 0, then
+    /// the caller's `gcPlayAnimAll`. An animation the pack lacks leaves its
+    /// clock as it is.
+    pub fn item_add_play(
+        &mut self,
+        pack: &Pack<'_>,
+        anim: Option<usize>,
+        mat: Option<usize>,
+        asset: u8,
+        instance: u8,
+    ) -> RootWrite {
+        let damaged_matrix = asset == PAKKUN && mat == Some(PAKKUN_DAMAGED_MAT);
+        let joint = anim.and_then(|a| Some((self.anims.get(a).copied()??, ANIMS.get(a)?)));
+        let mat = mat.and_then(|m| self.mat_anims.get(m).copied().flatten());
+        let Some(obj) = self.instance_mut(asset, instance) else {
+            return [None; 3];
+        };
+        if damaged_matrix {
+            obj.pakkun_damaged_matrix = true;
+        }
+        if let Some((desc, asset_anim)) = joint {
+            let node = match asset_anim.target {
+                AnimTarget::Node(n) => n as usize,
+                AnimTarget::Table => 0,
+            };
+            let script = (0..desc.joint_count)
+                .filter_map(|j| pack.anim_joint(desc.first_joint + j))
+                .find(|j| {
+                    j.node == obj.object.first_node + node as u32
+                        && j.script != AnimJoint::NO_SCRIPT
+                })
+                .map(|j| j.script);
+            obj.script = Some((desc.script_offset, desc.script_len));
+            if node < obj.count {
+                obj.set_script(node, script);
+            }
+        }
+        if let Some(mat) = mat {
+            restart_materials(pack, obj, &mat);
+        }
+        self.item_play(pack, asset, instance)
+    }
+
+    /// `DObjGetStruct(item_gobj)->anim_wait == AOBJ_ANIM_NULL` (node
+    /// [`ITEM_ROOT`]).
+    pub fn item_root_idle(&self, asset: u8, instance: u8) -> bool {
+        self.instance(asset, instance).is_none_or(|o| {
+            let r = ITEM_ROOT.min(o.count.saturating_sub(1));
+            !o.live[r] || o.joints[r].ended()
+        })
+    }
+
+    /// `DObjGetStruct(item_gobj)->anim_wait = AOBJ_ANIM_NULL`: the root
+    /// keeps its pose and flags.
+    pub fn item_stop_root(&mut self, asset: u8, instance: u8) {
+        if let Some(o) = self.instance_mut(asset, instance) {
+            let r = ITEM_ROOT.min(o.count.saturating_sub(1));
+            o.live[r] = false;
+        }
+    }
+
+    /// `dobj->mobj->anim_wait = AOBJ_ANIM_NULL`.
+    pub fn item_stop_material(&mut self, asset: u8, instance: u8) {
+        if let Some(o) = self.instance_mut(asset, instance) {
+            o.materials.halt_all();
+        }
+    }
+
+    /// Places a live item's tree for drawing: its root at the item's
+    /// position, with the item's own `rotate.z`.
+    pub fn item_place(&mut self, asset: u8, instance: u8, pos: [f32; 3], rotate_z: f32) {
+        if let Some(o) = self.instance_mut(asset, instance) {
+            let r = ITEM_ROOT.min(o.count.saturating_sub(1));
+            o.hidden = false;
+            o.poses[r].translate = pos;
+            o.poses[r].rotate[2] = rotate_z;
+        }
+    }
+
+    /// Hides every item tree; [`Self::item_place`] shows the live ones.
+    pub fn hide_items(&mut self) {
+        for o in self.objects.iter_mut().flatten() {
+            if OBJECTS[o.asset as usize].item {
+                o.hidden = true;
+            }
+        }
     }
 }
 

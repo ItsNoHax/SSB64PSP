@@ -336,7 +336,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 79 packs Sector Z's Arwing: files 153 and 161 whole under
 // `AnimDesc::SECTOR`, and the lasers' display list keyed by their
 // `WPAttributes` (RE-428). No layout change.
-pub const VERSION: u32 = 79;
+// 80 packs Mushroom Kingdom's stage items as ground objects: the POW
+// Block's pop-in and squash, and the Piranha Plants' rise and their two
+// root-`MObj` material scripts (RE-429). No layout change.
+pub const VERSION: u32 = 80;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

@@ -2854,6 +2854,11 @@ impl WeaponPool {
                     player: (owner != sector::GROUND_PORT).then_some(owner),
                     handicap: crate::stale::HANDICAP_DEFAULT,
                 },
+                crate::item::Knock {
+                    weight: hitbox.kb_weight,
+                    scale: hitbox.kb_scale,
+                    base: hitbox.kb_base,
+                },
             );
             self.pending_item_hits[i] = true;
         }

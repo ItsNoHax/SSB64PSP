@@ -216,6 +216,10 @@ pub fn object_keyed(pack: &Pack<'_>, key: (u32, u32)) -> Option<ObjectDesc> {
         .find(|object| (object.source_file, object.source_offset) == key)
 }
 
+/// Peach's Castle's Bumper (`llITCommonDataGBumperItemAttributes`, file
+/// 251 + 0xCF0): its exact extern target in `ITCommonObject` (RE-429).
+pub const GBUMPER_ITEM_SOURCE: (u32, u32) = ssb_rom::ground_obj::GBUMPER_SOURCE;
+
 /// Ness's PK Fire spark (file 240 + 0x00): file 336's direct list at 0x168,
 /// packed as a one-node object (RE-381).
 pub const NESS_PK_FIRE_SOURCE: (u32, u32) = (336, 0x168);
@@ -1663,6 +1667,97 @@ pub struct StageObjectsPort<'a, 'p> {
     pub objects: &'a mut ssb_rom::ground_obj::GroundObjects,
 }
 
+/// The runtime half of the stage items' trees ([`ssb_game::item::ItemAnims`]):
+/// the POW Block and the Piranha Plants are ground objects of Mushroom
+/// Kingdom ([`ssb_rom::ground_obj::POWER_BLOCK`], [`ssb_rom::ground_obj::PAKKUN`]),
+/// played by their items rather than by [`ssb_rom::ground_obj::GroundObjects::advance`].
+pub struct ItemAnimsPort<'a, 'p> {
+    pub pack: &'a Pack<'p>,
+    pub objects: &'a mut ssb_rom::ground_obj::GroundObjects,
+}
+
+/// The ground object and instance an item's tree is.
+fn item_tree(target: ssb_game::item::ItemAnimTarget) -> Option<(u8, u8)> {
+    use ssb_game::item::ItemAnimTarget;
+    use ssb_rom::ground_obj as g;
+    match target {
+        ItemAnimTarget::PowerBlock => Some((g::POWER_BLOCK, 0)),
+        ItemAnimTarget::Pakkun(i) => Some((g::PAKKUN, i)),
+        ItemAnimTarget::Untracked => None,
+    }
+}
+
+fn root_write(w: ssb_rom::ground_obj::RootWrite) -> ssb_game::item::RootWrite {
+    ssb_game::item::RootWrite { translate: w }
+}
+
+impl ssb_game::item::ItemAnims for ItemAnimsPort<'_, '_> {
+    fn make(&mut self, target: ssb_game::item::ItemAnimTarget) {
+        if let Some((asset, instance)) = item_tree(target) {
+            self.objects.item_make(self.pack, asset, instance);
+        }
+    }
+    fn play(&mut self, target: ssb_game::item::ItemAnimTarget) -> ssb_game::item::RootWrite {
+        let Some((asset, instance)) = item_tree(target) else {
+            return ssb_game::item::RootWrite::default();
+        };
+        root_write(self.objects.item_play(self.pack, asset, instance))
+    }
+    fn add_play(
+        &mut self,
+        target: ssb_game::item::ItemAnimTarget,
+        anim: ssb_game::item::ItemAnim,
+    ) -> ssb_game::item::RootWrite {
+        use ssb_game::item::ItemAnim;
+        use ssb_rom::ground_obj as g;
+        let Some((asset, instance)) = item_tree(target) else {
+            return ssb_game::item::RootWrite::default();
+        };
+        let (joint, mat) = match anim {
+            ItemAnim::PowerBlockDamage => (Some(g::POWER_BLOCK_DAMAGE), None),
+            ItemAnim::PakkunAppear => (Some(g::PAKKUN_APPEAR), Some(g::PAKKUN_APPEAR_MAT)),
+            ItemAnim::PakkunDamaged => (None, Some(g::PAKKUN_DAMAGED_MAT)),
+        };
+        root_write(
+            self.objects
+                .item_add_play(self.pack, joint, mat, asset, instance),
+        )
+    }
+    fn root_idle(&self, target: ssb_game::item::ItemAnimTarget) -> bool {
+        item_tree(target)
+            .is_none_or(|(asset, instance)| self.objects.item_root_idle(asset, instance))
+    }
+    fn stop_root(&mut self, target: ssb_game::item::ItemAnimTarget) {
+        if let Some((asset, instance)) = item_tree(target) {
+            self.objects.item_stop_root(asset, instance);
+        }
+    }
+    fn stop_material(&mut self, target: ssb_game::item::ItemAnimTarget) {
+        if let Some((asset, instance)) = item_tree(target) {
+            self.objects.item_stop_material(asset, instance);
+        }
+    }
+}
+
+/// Shows the live stage items' trees where their items stand, and hides
+/// the rest. Call after the frame's item processes, before drawing.
+pub fn place_item_trees(
+    objects: &mut ssb_rom::ground_obj::GroundObjects,
+    items: &ssb_game::item::ItemPool,
+) {
+    objects.hide_items();
+    for item in items.items().filter(|i| !i.hidden) {
+        if let Some((asset, instance)) = item_tree(item.anim_target()) {
+            objects.item_place(
+                asset,
+                instance,
+                [item.pos.x, item.pos.y, item.pos.z],
+                item.rotate_z,
+            );
+        }
+    }
+}
+
 /// The [`ssb_rom::ground_obj::ANIMS`] index of a controller's animation.
 pub fn ground_anim(anim: ssb_game::stage::StageAnim) -> Option<usize> {
     use ssb_game::stage::pupupu::{EyesAnim, MouthAnim};
@@ -1797,7 +1892,9 @@ impl ssb_game::stage::sector::ArwingObject for StageObjectsPort<'_, '_> {
         self.objects
             .arwing
             .as_ref()
-            .map_or(ssb_engine::math::Vec3::ZERO, |a| vec3(a.translate(node as usize)))
+            .map_or(ssb_engine::math::Vec3::ZERO, |a| {
+                vec3(a.translate(node as usize))
+            })
     }
     fn set_translate(&mut self, node: u8, t: ssb_engine::math::Vec3) {
         if let Some(a) = self.objects.arwing.as_mut() {

@@ -2,9 +2,9 @@
 //!
 //! The gate is collision group 3. Its X position follows the emerging
 //! Pokémon; the Pokémon themselves are stage items made through
-//! [`StageObjects::make_item`].
+//! [`StageItems::make_item`].
 
-use super::{StageAnim, StageItem, StageObjects};
+use super::{StageAnim, StageItem, StageItems, StageObjects};
 use crate::fighter::Fighter;
 use crate::hazard::material;
 use crate::map::{GroupStatus, MapGroup};
@@ -48,13 +48,18 @@ fn gate_y(groups: &[MapGroup]) -> f32 {
 
 impl Yamabuki {
     /// `grYamabukiInitGroundVars` @ 0x8010B250.
-    pub fn new(groups: &mut [MapGroup], objects: &mut dyn StageObjects) -> Self {
-        Self::with_monster_pos(groups, objects, Vec3::ZERO)
+    pub fn new(
+        groups: &mut [MapGroup],
+        objects: &mut dyn StageObjects,
+        items: &mut dyn StageItems,
+    ) -> Self {
+        Self::with_monster_pos(groups, objects, items, Vec3::ZERO)
     }
 
     pub fn with_monster_pos(
         groups: &mut [MapGroup],
         objects: &mut dyn StageObjects,
+        _items: &mut dyn StageItems,
         monster_pos: Vec3,
     ) -> Self {
         if let Some(g) = groups.get_mut(GATE_GROUP as usize) {
@@ -93,7 +98,7 @@ impl Yamabuki {
 
     /// `grYamabukiGateMakeMonster` @ 0x8010AD70 (`dITManagerForceMonsterKind`
     /// is 0 in retail).
-    fn make_monster(&mut self, objects: &mut dyn StageObjects) {
+    fn make_monster(&mut self, items: &mut dyn StageItems) {
         self.status = GateStatus::Open;
         self.no_entry = false;
         let mut id = rng::rand_int_range(MONSTER_KINDS) as u8;
@@ -105,7 +110,7 @@ impl Yamabuki {
             };
         }
         self.monster_prev = id;
-        self.monster = objects.make_item(StageItem::Monster(id), self.monster_pos);
+        self.monster = items.make_item(StageItem::Monster(id), self.monster_pos);
     }
 
     /// `grYamabukiGateSetClosedWait` @ 0x8010B0B8.
@@ -123,6 +128,7 @@ impl Yamabuki {
         fighters: &[&mut Fighter],
         groups: &mut [MapGroup],
         objects: &mut dyn StageObjects,
+        items: &mut dyn StageItems,
         started: bool,
     ) {
         match self.status {
@@ -133,11 +139,11 @@ impl Yamabuki {
                 }
             }
             GateStatus::Wait => {
-                self.update_wait(fighters, groups, objects);
+                self.update_wait(fighters, groups, objects, items);
                 self.update_group(groups);
             }
             GateStatus::Open => {
-                self.update_open(groups, objects);
+                self.update_open(groups, objects, &*items);
                 self.update_group(groups);
             }
         }
@@ -149,10 +155,11 @@ impl Yamabuki {
         fighters: &[&mut Fighter],
         groups: &[MapGroup],
         objects: &mut dyn StageObjects,
+        items: &mut dyn StageItems,
     ) {
         if self.gate_wait == 0 {
             if Self::players_near(fighters) {
-                self.make_monster(objects);
+                self.make_monster(items);
                 return;
             }
         } else {
@@ -168,12 +175,17 @@ impl Yamabuki {
             if self.gate_wait != 0 {
                 objects.play(StageAnim::GateOpen);
             }
-            self.make_monster(objects);
+            self.make_monster(items);
         }
     }
 
     /// `grYamabukiGateUpdateOpen` @ 0x8010AFF4.
-    fn update_open(&mut self, groups: &[MapGroup], objects: &mut dyn StageObjects) {
+    fn update_open(
+        &mut self,
+        groups: &[MapGroup],
+        objects: &mut dyn StageObjects,
+        items: &dyn StageItems,
+    ) {
         let Some(monster) = self.monster else {
             self.set_closed_wait(groups, objects);
             return;
@@ -181,7 +193,7 @@ impl Yamabuki {
         if self.no_entry {
             return;
         }
-        let Some((pos, width)) = objects.item_pos_width(monster) else {
+        let Some((pos, width)) = items.item_pos_width(monster) else {
             return;
         };
         let mut x = pos.x - width;

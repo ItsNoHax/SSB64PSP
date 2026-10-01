@@ -461,6 +461,12 @@ pub enum GameScene {
     TrainingArwing,
     /// `trainingcastle`: Training on Peach's Castle (RE-423).
     TrainingCastle,
+    /// `trainingbumper`: Castle at tick 240, camera centered on its Bumper
+    /// for item rendering checks (RE-429).
+    TrainingBumper,
+    /// `trainingplants`: Mushroom Kingdom at tick 240, camera centered on
+    /// the left pipe's Piranha Plant (RE-429).
+    TrainingPlants,
     /// `traininghyrule`: Training on Hyrule Castle (RE-423).
     TrainingHyrule,
     /// `trainingpupupu`: Training on Dream Land at the stage scenes' tick
@@ -485,7 +491,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 80] = [
+    pub const ALL: [GameScene; 82] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -558,6 +564,8 @@ impl GameScene {
         GameScene::TrainingSector,
         GameScene::TrainingArwing,
         GameScene::TrainingCastle,
+        GameScene::TrainingBumper,
+        GameScene::TrainingPlants,
         GameScene::TrainingHyrule,
         GameScene::TrainingPupupu,
         GameScene::PikachuHat,
@@ -642,6 +650,8 @@ impl GameScene {
             GameScene::TrainingSector => "trainingsector",
             GameScene::TrainingArwing => "trainingarwing",
             GameScene::TrainingCastle => "trainingcastle",
+            GameScene::TrainingBumper => "trainingbumper",
+            GameScene::TrainingPlants => "trainingplants",
             GameScene::TrainingHyrule => "traininghyrule",
             GameScene::TrainingPupupu => "trainingpupupu",
             GameScene::PikachuHat => "pikachuhat",

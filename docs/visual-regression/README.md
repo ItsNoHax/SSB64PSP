@@ -996,3 +996,23 @@ golden. The blocks' new positions are not compared with the N64. The full
 three VS time-up scenes failed, by timing out under 24-way load, and they
 match when rerun three at a time. Details in
 [RE-428](../evidence/re/RE-428.md).
+
+## 2026-10-02 RE-429 Castle and Mushroom Kingdom items
+
+Two new diagnostic Training views at tick 240 expose the items that the
+ordinary cameras omit: `f1-training-bumper` (`trainingbumper`) follows the
+Castle Bumper, and `f1-training-piranha-plant` (`trainingplants`) frames a
+plant rising from its pipe. Gameplay runs unchanged. Both captures are
+identical twice and were inspected against N64/Rice reference views;
+viewport and animation phase differences prevent a pixel-equality claim.
+
+The corrected Bumper graph is file 86 + 0x7648, as both Bumper attribute
+externs specify. The nearby 0x7BE8 graph had drawn a horizontal disc
+(RE-162 correction). A version-word-only diagnostic copy of v79 lacks the
+plant's new animation/materials and differs by 2,428 pixels at 2×.
+
+`tools/golden.sh verify --twice --no-build -j4` passes **152/152** scenes,
+with zero differences between either pass and no existing rebaselines.
+The normal `traininginishie@240` capture was also taken; its camera misses
+the pipes. Host/ROM animation tests cover the POW's 21-play pop-in and
+23-play squash and the plant's exact rise. See [RE-429](../evidence/re/RE-429.md).

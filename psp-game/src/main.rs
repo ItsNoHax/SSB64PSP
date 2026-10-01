@@ -234,6 +234,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         | GameScene::TrainingPupupu => 400,
         // RE-428: the first pattern's low pass, its wing in the top right.
         GameScene::TrainingArwing => 1800,
+        GameScene::TrainingBumper | GameScene::TrainingPlants => 240,
         // The select opens at tick 8; at its tick 60 the portraits are in
         // and the CPU's puck shows.
         GameScene::TrainingSelect => 68,
@@ -283,6 +284,8 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingSector
             | GameScene::TrainingArwing
             | GameScene::TrainingCastle
+            | GameScene::TrainingBumper
+            | GameScene::TrainingPlants
             | GameScene::TrainingHyrule
             | GameScene::TrainingPupupu
     )
@@ -470,6 +473,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingSector
             | GameScene::TrainingArwing
             | GameScene::TrainingCastle
+            | GameScene::TrainingBumper
+            | GameScene::TrainingPlants
             | GameScene::TrainingHyrule
             | GameScene::TrainingPupupu
     ) {
@@ -584,7 +589,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     if matches!(scene, GameScene::YoshiShield | GameScene::YoshiRollF | GameScene::YoshiRollB | GameScene::YoshiShieldBreak) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
-            t if t >= 40 && (scene != GameScene::YoshiShieldBreak || t < 80) => N64Buttons(N64Buttons::Z),
+            t if t >= 40 && (scene != GameScene::YoshiShieldBreak || t < 80) => {
+                N64Buttons(N64Buttons::Z)
+            }
             _ => N64Buttons(0),
         };
     }
@@ -1244,6 +1251,7 @@ unsafe fn training_step(
                     pack: p,
                     objects: stage_objects,
                 },
+                items: &mut *items,
                 // The groups are being written, so the
                 // controller sees the static map; only the
                 // Twister queries it, on a static floor.
@@ -1269,7 +1277,9 @@ unsafe fn training_step(
         .as_ref()
         .map_or(&[][..], |map| map.groups.as_slice());
     let mut s = scenes(pl, dummies);
-    physics_pass(p, &stage, groups, &mut s, weapons, items, effects);
+    physics_pass(p, &stage, groups, &mut s, weapons, items,
+        stage_objects,
+        effects);
     // Priority 3, after the fighters', weapons' and items': the effects'
     // processes.
     effects.process();
@@ -1279,7 +1289,13 @@ unsafe fn training_step(
             f.camera.quake = quake_translate(p, magnitude, ticks).or(f.camera.quake);
         }
     }
-    hit_pass(p, &stage, groups, &mut s, weapons, items, stage_objects, stage_ctl, effects);
+    hit_pass(p, &stage, groups, &mut s, weapons, items, stage_objects, stage_ctl, effects,
+    );
+    // The stage calls the items made (`grInishiePowerBlockSetDamage` in
+    // their hit collisions, `grInishiePowerBlockSetWait` in their main
+    // process): no stage process runs between them and here.
+    stage_ctl.apply_item_events(items.take_stage_events());
+    ssb_psp_runtime::scene::place_item_trees(stage_objects, items);
 }
 
 /// A new weapon pool on the heap, built in this frame rather than `run`'s.
@@ -1377,6 +1393,7 @@ fn interrupt_pass(
 /// Priority 4, Fighter link: every fighter's `ftMainProcPhysicsMap` in port
 /// order, then the weapon and item pools.
 #[inline(never)]
+#[allow(clippy::too_many_arguments)]
 fn physics_pass(
     p: &Pack<'_>,
     stage: &ssb_rom::pack::StageDesc,
@@ -1384,6 +1401,7 @@ fn physics_pass(
     s: &mut [Option<&mut play::FighterScene>; 4],
     weapons: &mut ssb_game::weapon::WeaponPool,
     items: &mut ssb_game::item::ItemPool,
+    stage_objects: &mut ssb_rom::ground_obj::GroundObjects,
     effects: &mut dyn ssb_game::effect::HitEffectSink,
 ) {
     let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, stage, groups);
@@ -1435,7 +1453,20 @@ fn physics_pass(
     for f in s.iter().flatten() {
         items.observe_owner(&f.fighter);
     }
-    items.tick(map, Some(blast_zone));
+    // `itPakkunCommonCheckNoFighter` walks the fighter link's `TopN`s.
+    let mut tops = [ssb_engine::math::Vec3::ZERO; 4];
+    let mut top_count = 0;
+    for f in s.iter().flatten() {
+        tops[top_count] = ssb_game::item::pakkun::fighter_top(&f.fighter);
+        top_count += 1;
+    }
+    items.tick(map, Some(blast_zone),
+        &tops[..top_count],
+        &mut ssb_psp_runtime::scene::ItemAnimsPort {
+            pack: p,
+            objects: stage_objects,
+        },
+    );
     for f in s.iter_mut().flatten() {
         items.sync_owner(&mut f.fighter);
     }
@@ -1506,7 +1537,9 @@ fn hit_pass(
         let others = s.iter().enumerate().filter(|&(j, _)| j != i).filter_map(|(_, x)| x.as_deref());
         let caught = s[i]
             .as_deref()
-            .and_then(|f| ssb_game::grab::nearest_catch(&f.fighter, others.map(|o| &o.fighter), rules))
+            .and_then(|f| {
+                ssb_game::grab::nearest_catch(&f.fighter, others.map(|o| &o.fighter), rules)
+            })
             .and_then(|port| index_of(s, port));
         if let Some((catcher, other)) = caught.and_then(|j| pair(s, i, j)) {
             ssb_game::grab::search_catch(catcher, other, rules);
@@ -1554,7 +1587,12 @@ fn hit_pass(
         items.take_requests(&mut f.fighter, map);
     }
     let all: alloc::vec::Vec<&ssb_game::fighter::Fighter> = s.iter().flatten().map(|x| &x.fighter).collect();
-    items.resolve(&all);
+    items.resolve(&all,
+        &mut ssb_psp_runtime::scene::ItemAnimsPort {
+            pack: p,
+            objects: stage_objects,
+        },
+    );
     for f in s.iter_mut().flatten() {
         items.sync_owner(&mut f.fighter);
     }
@@ -1711,12 +1749,14 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
         Some(GameScene::TrainingJungle) => ssb_game::stage_select::gkind::JUNGLE,
         Some(GameScene::TrainingZebes) => ssb_game::stage_select::gkind::ZEBES,
         Some(GameScene::TrainingSaffron) => ssb_game::stage_select::gkind::YAMABUKI,
-        Some(GameScene::TrainingInishie) => ssb_game::stage_select::gkind::INISHIE,
+        Some(GameScene::TrainingInishie | GameScene::TrainingPlants) => ssb_game::stage_select::gkind::INISHIE,
         Some(GameScene::TrainingYoster) => ssb_game::stage_select::gkind::YOSTER,
         Some(GameScene::TrainingSector | GameScene::TrainingArwing) => {
             ssb_game::stage_select::gkind::SECTOR
         }
-        Some(GameScene::TrainingCastle) => ssb_game::stage_select::gkind::CASTLE,
+        Some(GameScene::TrainingCastle | GameScene::TrainingBumper) => {
+            ssb_game::stage_select::gkind::CASTLE
+        }
         Some(GameScene::TrainingHyrule) => ssb_game::stage_select::gkind::HYRULE,
         _ => CAPTURE_STAGE_GKIND,
     }
@@ -2622,6 +2662,7 @@ fn enter_training(
                     pack: p,
                     objects: world.stage_objects,
                 },
+                world.items,
             )
         }
         None => ssb_game::stage::Stage::none(),
@@ -3320,6 +3361,23 @@ unsafe fn run() -> ! {
             );
         }
 
+        // RE-429: a diagnostic camera makes the otherwise offscreen Bumper
+        // visible without moving it or the fighters.
+        if matches!(capture_scene, Some(GameScene::TrainingBumper | GameScene::TrainingPlants)) {
+            if let (Some(pl), Some(item)) = (
+                s.play_state.as_mut(),
+                s.items
+                    .items()
+                    .find(|i| i.kind == if capture_scene == Some(GameScene::TrainingBumper) { ssb_game::item::ItemKind::GBumper } else { ssb_game::item::ItemKind::Pakkun }),
+            ) {
+                let at = if item.kind == ssb_game::item::ItemKind::Pakkun {
+                    item.vars.pakkun_pos + ssb_engine::math::Vec3::new(0.0, 400.0, 0.0)
+                } else { item.pos };
+                pl.camera.at = at;
+                pl.camera.eye = at + ssb_engine::math::Vec3::new(0.0, 0.0, 5000.0);
+            }
+        }
+
         draw_frame(
             &mut gpu,
             &mut s,
@@ -3790,6 +3848,9 @@ struct DrawAssets {
     /// The PK Fire flame and Link's Bomb items and their `anim_joints`.
     pk_fire_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     link_bomb_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// Peach's Castle's Bumper: the NBumper tree `ITCommonData`'s
+    /// `GBumperItemAttributes` names (file 86 + 0x7648). It has no scripts.
+    gbumper_item: Option<ssb_rom::pack::ObjectDesc>,
     /// The shield bubble.
     shield: Option<ssb_rom::pack::ObjectDesc>,
     /// Ness's PSI Magnet field and its transform animation.
@@ -3860,6 +3921,10 @@ impl DrawAssets {
                 ssb_psp_runtime::scene::NESS_PK_FIRE_ITEM_SOURCE,
             )
             .zip(p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_NESS_PK_FIRE)),
+            gbumper_item: ssb_psp_runtime::scene::object_keyed(
+                p,
+                ssb_psp_runtime::scene::GBUMPER_ITEM_SOURCE,
+            ),
             link_bomb_item: ssb_psp_runtime::scene::object_keyed(
                 p,
                 ssb_psp_runtime::scene::LINK_BOMB_ITEM_SOURCE,
@@ -4250,6 +4315,10 @@ impl DrawAssets {
         match kind {
             ssb_game::item::ItemKind::NessPKFire => self.pk_fire_item.as_ref(),
             ssb_game::item::ItemKind::LinkBomb => self.link_bomb_item.as_ref(),
+            // No scripts, or trees the stage's ground objects draw.
+            ssb_game::item::ItemKind::GBumper
+            | ssb_game::item::ItemKind::PowerBlock
+            | ssb_game::item::ItemKind::Pakkun => None,
         }
     }
 }
@@ -5693,6 +5762,24 @@ unsafe fn draw_items_weapons_effects(
         if item.hidden {
             continue;
         }
+            // The Bumper: its root `TraRotRpyRSca` at the item, scaled in X and Y
+            // by its swell. The lit palette (`palette_id` 1) is not drawn.
+            if item.kind == ssb_game::item::ItemKind::GBumper {
+                if let Some(object) = assets.gbumper_item.as_ref() {
+                    gpu.model_transform_xyz(
+                        [item.pos.x, item.pos.y, item.pos.z],
+                        [0.0; 3],
+                        [
+                            meshdraw::MODEL_SCALE * item.scale.x,
+                            meshdraw::MODEL_SCALE * item.scale.y,
+                            meshdraw::MODEL_SCALE * item.scale.z,
+                        ],
+                    );
+                    let base = gpu.model_matrix();
+                    meshdraw::draw_object(p, object, &base, draw_state, material_anim, 0);
+                }
+                continue;
+        }
         let Some((object, _)) = assets.item(item.kind) else {
             continue;
         };
@@ -5798,8 +5885,10 @@ unsafe fn draw_items_weapons_effects(
                 if let Some(mesh) = mesh_of(2) {
                     let pos = to_world(v(&body) + v(&spark));
                     match held {
-                        Some(joint) => gpu.model_transform_joint(pos, joint, meshdraw::MODEL_SCALE),
-                        None => gpu.model_transform(
+                        Some(joint) => {
+                                gpu.model_transform_joint(pos, joint, meshdraw::MODEL_SCALE)
+                            }
+                            None => gpu.model_transform(
                             [pos.x, pos.y, pos.z],
                             [0.0; 3],
                             meshdraw::MODEL_SCALE,
@@ -5807,7 +5896,10 @@ unsafe fn draw_items_weapons_effects(
                     }
                     meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&visual.materials));
                 }
-            }
+                }
+                // The Bumper drew above; the POW Block and the Piranha Plants are
+                // stage ground objects.
+                _ => {}
         }
     }
     }
@@ -6248,7 +6340,9 @@ unsafe fn draw_items_weapons_effects(
     // as the shield wears.
     if let Some(egg_mesh) = assets.yoshi_egg_mesh.as_ref() {
         let fighters = scenes_ref(pl, dummies).into_iter().flatten();
-        for scene in fighters.filter(|s| ssb_game::combat::is_yoshi_egg_shield(&s.fighter) || s.fighter.yoshi.egg_escape_active) {
+        for scene in fighters.filter(|s| {
+            ssb_game::combat::is_yoshi_egg_shield(&s.fighter) || s.fighter.yoshi.egg_escape_active
+        }) {
             let f = &scene.fighter;
             let [r, g, b] = ssb_game::combat::yoshi_shield_env(f);
             draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {

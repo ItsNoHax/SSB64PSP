@@ -47,7 +47,7 @@ fn make_flame(pool: &mut ItemPool) -> u8 {
     let mut target = fighter(FighterKind::Mario, 1);
     weapons.apply_hits(&mut target);
     pool.take_weapon_spawns(&mut weapons, core::iter::empty);
-    pool.tick(core::iter::empty, None);
+    pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     pool.order[0]
 }
 
@@ -80,7 +80,7 @@ fn bomb_pull_hold_throw_and_fast_hit_explode() {
     crate::combat::resolve(&mut target);
     // `itMainGetDamageOutput`: (2 + 66 * 0.1) truncates to 8.
     assert_eq!(target.damage, 8);
-    pool.resolve(&[&link, &target]);
+    pool.resolve(&[&link, &target], &mut NoItemAnims);
     assert_eq!(
         pool.get(slot).unwrap().status,
         ItemStatus::LinkBomb(link_bomb::Status::Explode)
@@ -153,11 +153,11 @@ fn fuse_runs_in_the_hand_and_releases_before_explosion() {
     let slot = pull_bomb(&mut pool, &mut link);
     pool.observe_owner(&link);
     for _ in 0..link_bomb::LIFETIME {
-        pool.tick(core::iter::empty, None);
+        pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     }
     assert_eq!(pool.get(slot).unwrap().lifetime, 0);
     assert!(link.items.held.is_some());
-    pool.tick(core::iter::empty, None);
+    pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     pool.sync_owner(&mut link);
     assert!(link.items.held.is_none());
     let bomb = pool.get(slot).unwrap();
@@ -177,7 +177,7 @@ fn bomb_explosion_can_hit_link_himself() {
     let slot = pull_bomb(&mut pool, &mut link);
     pool.get_mut(slot).unwrap().lifetime = 0;
     pool.observe_owner(&link);
-    pool.tick(core::iter::empty, None);
+    pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     pool.sync_owner(&mut link);
     pool.search_fighter(&mut link);
     crate::combat::resolve(&mut link);
@@ -203,8 +203,13 @@ fn seven_damage_explodes_while_six_damage_recoils() {
                 player: Some(1),
                 handicap: 9,
             },
+            Knock {
+                weight: 0,
+                scale: 100,
+                base: 0,
+            },
         );
-        pool.resolve(&[&link]);
+        pool.resolve(&[&link], &mut NoItemAnims);
         let bomb = pool.get(slot).unwrap();
         if damage == 7 {
             assert_eq!(
@@ -232,7 +237,7 @@ fn slow_bomb_hit_recoils_at_the_exact_speed_threshold() {
     );
     bomb.hit_normal_damage = 2;
     bomb.hit_lr = 1.0;
-    pool.resolve(&[&link]);
+    pool.resolve(&[&link], &mut NoItemAnims);
     let bomb = pool.get(slot).unwrap();
     assert_eq!(bomb.status, ItemStatus::LinkBomb(link_bomb::Status::Fall));
     assert_eq!(bomb.vel_air, Vec3::new(-8.0, 20.0, 0.0));
@@ -264,7 +269,7 @@ fn pk_fire_loses_three_times_jab_damage_and_one_update_tick() {
     let before = flame.lifetime;
     pool.search_hurt(&mut [&mut mario], &mut WeaponPool::default());
     assert_eq!(pool.get(slot).unwrap().damage_highest, coll.damage);
-    pool.resolve(&[&mario]);
+    pool.resolve(&[&mario], &mut NoItemAnims);
     assert_eq!(
         pool.get(slot).unwrap().lifetime,
         before - 3 * coll.damage - 1
@@ -314,14 +319,14 @@ fn fox_reflects_bomb_and_damage_growth_caps_at_one_hundred() {
     bomb.update_attack_positions();
     pool.search_fighter(&mut fox);
     assert_eq!(pool.get(slot).unwrap().reflect_by, Some(fox.port));
-    pool.resolve(&[&link, &fox]);
+    pool.resolve(&[&link, &fox], &mut NoItemAnims);
     let bomb = pool.get_mut(slot).unwrap();
     assert_eq!(bomb.owner, Some(fox.port));
     assert_eq!(bomb.attack.damage, 4);
     assert!((bomb.vel_air.x + 60.0).abs() < 0.001);
     bomb.attack.damage = 99;
     bomb.reflect_by = Some(fox.port);
-    pool.resolve(&[&fox]);
+    pool.resolve(&[&fox], &mut NoItemAnims);
     assert_eq!(pool.get(slot).unwrap().attack.damage, 100);
 }
 
@@ -336,7 +341,7 @@ fn shield_hops_below_135_degrees_and_rebounds_at_the_boundary() {
         bomb.hit_shield_damage = 2;
         bomb.shield_collide_angle = degrees.to_radians();
         bomb.shield_collide_dir = Vec3::new(0.0, 0.0, 1.0);
-        pool.resolve(&[&link]);
+        pool.resolve(&[&link], &mut NoItemAnims);
         let bomb = pool.get(slot).unwrap();
         if degrees < 135.0 {
             assert!((bomb.vel_air.x - 30.0).abs() < 0.001);
@@ -524,7 +529,7 @@ fn bounds_destroy_items_strictly_outside_each_edge() {
     ] {
         pool.alloc(link_bomb::make(pos, 1)).unwrap();
     }
-    pool.tick(core::iter::empty, Some(bounds));
+    pool.tick(core::iter::empty, Some(bounds), &[], &mut NoItemAnims);
     assert_eq!(pool.active_count(), 1);
     assert_eq!(
         pool.items().next().unwrap().pos,
@@ -563,7 +568,7 @@ fn ground_item_carries_during_hitlag_before_the_bounds_gate() {
         }),
         ..surface
     };
-    pool.tick(|| [surface], None);
+    pool.tick(|| [surface], None, &[], &mut NoItemAnims);
     let item = pool.slots[slot as usize].as_ref().unwrap();
     assert_eq!(item.pos, Vec3::new(12.5, 20.25, 0.0));
     pool.tick(
@@ -574,6 +579,8 @@ fn ground_item_carries_during_hitlag_before_the_bounds_gate() {
             bottom: -100.0,
             top: 100.0,
         }),
+        &[],
+        &mut NoItemAnims,
     );
     assert!(pool.slots[slot as usize].is_none());
 }
@@ -587,9 +594,9 @@ fn item_animation_plays_once_at_creation_and_per_update_outside_hitlag() {
     // `make_flame` already ran one update after the creation play.
     assert_eq!(pool.get(slot).unwrap().anim_ticks, 2);
     pool.get_mut(slot).unwrap().hitlag_tics = 2;
-    pool.tick(core::iter::empty, None);
+    pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     assert_eq!(pool.get(slot).unwrap().anim_ticks, 2);
-    pool.tick(core::iter::empty, None);
+    pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     // The frame the hitlag runs out plays again.
     assert_eq!(pool.get(slot).unwrap().anim_ticks, 3);
 }

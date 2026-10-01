@@ -163,3 +163,5 @@ f1-training-yoshi-roll-forward	psp-game	yoshirollf	pass	RE-427
 f1-training-yoshi-roll-backward	psp-game	yoshirollb	pass	RE-427
 f1-training-yoshi-shield-break	psp-game	yoshishieldbreak	pass	RE-427
 f1-training-yoshi-explosion	psp-game	yoshi@88	pass	RE-427
+f1-training-bumper	psp-game	trainingbumper	pass	RE-429
+f1-training-piranha-plant	psp-game	trainingplants	pass	RE-429
