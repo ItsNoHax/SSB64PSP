@@ -376,16 +376,19 @@ unsafe fn draw(
         );
         let base = gpu.model_matrix();
         draw_state.configure_fighter_light(results_scene::LIGHT_ANGLE);
-        meshdraw::draw_object_posed(
+        // A demo fighter's model parts and accessory (RE-425).
+        let parts = ssb_game::modelpart::demo(m.fighter.kind).draw_parts();
+        meshdraw::draw_fighter_posed(
             p,
             &obj,
             &base,
             &posed[..n],
-            None,
             draw_state,
-            None,
-            None,
-            u32::from(m.fighter.costume),
+            meshdraw::Look {
+                costume: u32::from(m.fighter.costume),
+                parts: parts.as_ref().map(|p| &p[..]),
+                accessory_before: m.fighter.kind == ssb_game::fighter::FighterKind::Purin,
+            },
         );
         draw_state.finish_fighter_light();
     }

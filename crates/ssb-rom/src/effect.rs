@@ -30,6 +30,80 @@ pub const YOSHI_EGG_LAY_ANIM_JOINTS: [u32; 2] = [0x0DB0, 0x09F0];
 /// The `AnimDesc::EFFECT` slot of the Wait table; Break follows.
 pub const YOSHI_EGG_LAY_ANIM_SLOT: u32 = 0x104;
 
+/// One [`ENTRY_ANIMS`] row.
+pub type EntryAnim = (u32, (u32, u32), u32, Option<u32>, &'static [(u32, u32)]);
+
+/// The entry animations the makers add in place of, or beside, an
+/// `EFDesc`'s own table (RE-425), each an `AnimDesc::EFFECT` slot from
+/// [`ENTRY_ANIM_SLOT`]: `(slot, object key, animation file, AnimJoint
+/// table, (script, node) singles)`.
+///
+/// * `efManagerFoxEntryArwingMakeEffect` plays file 346's
+///   `llFoxSpecial2EntryArwingRAnimJoint` (0x9E0) or `...LAnimJoint`
+///   (0x590) on file 161's Arwing tree (0x2C30) from its first node.
+/// * `efManagerCaptainEntryCarMakeEffect` plays
+///   `llCaptainSpecial2_6200_AnimJoint` on the car (350 + 0x5FC0) and
+///   gives nodes 3, 5, 7 and 9 `llCaptainSpecial2_6518_AnimJoint` and 4, 6,
+///   8 and 10 `..._6598_...`.
+/// * `efManagerMBallThrownMakeEffect` plays
+///   `llITCommonDataMBallThrownRAnimJoint` (86 + 0x9690) facing right; the
+///   left table is the `EFDesc`'s ([`MANAGER_EFFECT_ANIM_JOINTS`]).
+/// * `efManagerKirbyEntryStarMakeEffect` plays
+///   `llKirbySpecial2EntryStarRAnimJoint` (348 + 0x1EA0) facing right.
+pub const ENTRY_ANIMS: [EntryAnim; 5] = [
+    (
+        ENTRY_ARWING_R_ANIM_SLOT,
+        (161, 0x2C30),
+        346,
+        Some(0x09E0),
+        &[],
+    ),
+    (
+        ENTRY_ARWING_R_ANIM_SLOT + 1,
+        (161, 0x2C30),
+        346,
+        Some(0x0590),
+        &[],
+    ),
+    (
+        ENTRY_CAR_ANIM_SLOT,
+        (350, 0x5FC0),
+        350,
+        Some(0x6200),
+        &[
+            (0x6518, 3),
+            (0x6598, 4),
+            (0x6518, 5),
+            (0x6598, 6),
+            (0x6518, 7),
+            (0x6598, 8),
+            (0x6518, 9),
+            (0x6598, 10),
+        ],
+    ),
+    (ENTRY_BALL_R_ANIM_SLOT, (86, 0x9430), 86, Some(0x9690), &[]),
+    (
+        ENTRY_KIRBY_STAR_R_ANIM_SLOT,
+        (348, 0x1DA8),
+        348,
+        Some(0x1EA0),
+        &[],
+    ),
+];
+/// The car's nodes `efManagerCaptainEntryCarMakeEffect` gives a
+/// `nGCMatrixKindRecalcRotRpyRSca` (kind 44) matrix after their own: its
+/// exhaust sprites face the camera (RE-425).
+pub const ENTRY_CAR_KEY: (u32, u32) = (350, 0x5FC0);
+pub const ENTRY_CAR_BILLBOARD_NODES: [u32; 4] = [3, 5, 7, 9];
+
+/// The first [`ENTRY_ANIMS`] slot, past the Egg Lay's.
+pub const ENTRY_ANIM_SLOT: u32 = 0x110;
+/// The Arwing's rightward table; the leftward one follows.
+pub const ENTRY_ARWING_R_ANIM_SLOT: u32 = ENTRY_ANIM_SLOT;
+pub const ENTRY_CAR_ANIM_SLOT: u32 = ENTRY_ANIM_SLOT + 2;
+pub const ENTRY_BALL_R_ANIM_SLOT: u32 = ENTRY_ANIM_SLOT + 3;
+pub const ENTRY_KIRBY_STAR_R_ANIM_SLOT: u32 = ENTRY_ANIM_SLOT + 4;
+
 /// File 35, `FTEmblemModels` (`llFTEmblemModelsFileID`): the series
 /// emblems `mnVSResultsMakeEmblem` and `mnCharactersMakeEmblem` make.
 pub const EMBLEM_FILE: u32 = 35;
@@ -264,7 +338,9 @@ pub const MANAGER_EFFECT_MAT_ANIM_JOINTS: &[Option<u32>] = &[
     Some(0x0B90),
     Some(0x0BF0),
     Some(0x12F0),
-    Some(0x950C),
+    // MBallThrown: `llITCommonDataMBallThrownLMatAnimJoint`; the rightward
+    // table (0x9810) runs a byte-identical script (RE-425).
+    Some(0x9740),
     None,
     Some(0x0780),
     None,
@@ -292,20 +368,13 @@ pub const MANAGER_EFFECT_REST_INVISIBLE_KEYS: &[(u32, u32)] =
 ///   the only tracks a sprite/palette resolver reads, and even a UV-transform
 ///   consumer (which nothing in this renderer implements) would render it
 ///   identically to not running the script at all.
-/// * MBallThrown (file 86 @ 0x9430): its own `DObjDesc` array
-///   (`dITCommonObject_MBall_Item_data_DObjDesc[5]`) has exactly 4 real nodes
-///   before the `DOBJ_ARRAY_MAX` (18) terminator sentinel. The real
-///   `gcAddMatAnimJointAll` walk (`objanim.c`) advances its `p_matanim_joints`
-///   cursor once per real `DObj` and only dereferences it *before* each
-///   advance, so a 4-node tree only ever reads table slots 0-3 — all `NULL`
-///   here (confirmed against the ROM: `dITCommonObject_MBall_Item_data_
-///   remainder_gap_0x950C[5] = { NULL, NULL, NULL, NULL, <script> }`). Slot 4,
-///   the only populated one, sits one past what this specific tree ever
-///   visits; nothing in the traced source calls this table by raw index
-///   either, so its content — plausibly authored for a different item
-///   sharing this same common `ITCommonObject` file — is genuinely
-///   unreachable for this effect, not a missed attachment.
-pub const MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS: &[(u32, u32)] = &[(83, 0x7C28), (86, 0x9430)];
+///
+/// RE-425 removed MBallThrown (file 86 @ 0x9430): RE-178 read the table at
+/// 0x950C, which `llITCommonDataMBallMatAnimJoint` names for the item, not
+/// the thrown effect; `efManagerMBallThrownMakeEffect` sets
+/// `llITCommonDataMBallThrownLMatAnimJoint` (0x9740) or `...R...` (0x9810),
+/// whose node-3 script cycles the closed ball's eight textures.
+pub const MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS: &[(u32, u32)] = &[(83, 0x7C28)];
 
 #[cfg(test)]
 mod tests {
@@ -352,7 +421,7 @@ mod tests {
             .iter()
             .copied()
             .collect();
-        assert_eq!(MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS.len(), 2);
+        assert_eq!(MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS.len(), 1);
         assert_eq!(
             unreachable.len(),
             MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS.len()

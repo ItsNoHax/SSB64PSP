@@ -20,8 +20,9 @@
 //! `ftMainProcPhysicsMap` (`is_events_forward`) the status scripts skip
 //! them and [`forward_effect`] makes them from the copies after the map
 //! step; a status set outside those passes makes them at once.
-//! Sounds, rumble, model/texture parts, slope contours and throw
-//! descriptors are decoded and skipped; the ported status code owns throws.
+//! The model-part commands set [`crate::modelpart`]'s state (RE-425).
+//! Sounds, rumble, texture parts, slope contours and throw descriptors are
+//! decoded and skipped; the ported status code owns throws.
 
 mod scripts;
 
@@ -134,6 +135,9 @@ mod op {
     pub const PAUSE_SCRIPT: u32 = 37;
     pub const EFFECT: u32 = 38;
     pub const EFFECT_ITEM_HOLD: u32 = 39;
+    pub const SET_MODEL_PART_ID: u32 = 40;
+    pub const RESET_MODEL_PART_ALL: u32 = 41;
+    pub const HIDE_MODEL_PART_ALL: u32 = 42;
     pub const SET_COL_ANIM: u32 = 44;
     pub const RESET_COL_ANIM: u32 = 45;
     pub const SET_PARALLEL_SCRIPT: u32 = 46;
@@ -614,6 +618,17 @@ fn execute(
             crate::colanim::check_set(f, id, (w & 0x3_FFFF) as i32);
         }
         op::RESET_COL_ANIM => crate::colanim::reset_stat_update(f),
+        op::SET_MODEL_PART_ID => {
+            // `ftMotionCommandSetModelPartID(jid, mid)`: a 7-bit joint and a
+            // 19-bit part, both signed (RE-425).
+            let joint = sign((w >> 19) & 0x7F, 7);
+            let part = sign(w & 0x7_FFFF, 19);
+            if let Some(joint) = crate::modelpart::motion_joint(f, joint) {
+                f.model_parts.set(joint, part as i8);
+            }
+        }
+        op::RESET_MODEL_PART_ALL => f.model_parts.reset_all(),
+        op::HIDE_MODEL_PART_ALL => f.model_parts.hide_all(),
         op::SET_PARALLEL_SCRIPT => {
             let target = word(1);
             if thread == 0 && f.motion_script.threads[1].pc == NO_SCRIPT && target != NO_SCRIPT {
@@ -628,6 +643,62 @@ fn execute(
         _ => {}
     }
     thread_mut(f, pass, thread).pc = next;
+}
+
+/// Every `SetModelPartID` a playable fighter's scripts can reach, as
+/// `(joint, part)` with `ftParamGetJointID`'s -2 resolved, walked from each
+/// motion's script through its gotos, subroutines and parallel scripts. The
+/// asset pipeline packs the parts these name (RE-425).
+#[cfg(feature = "std")]
+pub fn model_part_events(kind: FighterKind) -> std::collections::BTreeSet<(i32, i32)> {
+    let mut out = std::collections::BTreeSet::new();
+    let Some(table) = fighter_scripts(kind) else {
+        return out;
+    };
+    let item_joint = combat_attrs(kind).map_or(-2, |a| i32::from(a.joint_itemlight_id));
+    let mut todo: Vec<u32> = table
+        .motions
+        .iter()
+        .map(|m| m.script)
+        .filter(|&s| s != NO_SCRIPT)
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(start) = todo.pop() {
+        let mut pc = start;
+        loop {
+            if !seen.insert(pc) {
+                break;
+            }
+            let (words, base) = if pc & COMMON_BIT != 0 {
+                (&scripts::COMMON_MOVESET_WORDS[..], COMMON_BIT)
+            } else {
+                (table.words, 0)
+            };
+            let Some(&w) = words.get((pc - base) as usize) else {
+                break;
+            };
+            let opcode = w >> 26;
+            let target = words.get((pc - base) as usize + 1).copied();
+            match opcode {
+                op::END | op::RETURN => break,
+                op::GOTO => {
+                    todo.extend(target.filter(|&t| t != NO_SCRIPT));
+                    break;
+                }
+                op::SUBROUTINE | op::SET_PARALLEL_SCRIPT => {
+                    todo.extend(target.filter(|&t| t != NO_SCRIPT));
+                }
+                op::SET_MODEL_PART_ID => {
+                    let joint = sign((w >> 19) & 0x7F, 7);
+                    let joint = if joint == -2 { item_joint } else { joint };
+                    out.insert((joint, sign(w & 0x7_FFFF, 19)));
+                }
+                _ => {}
+            }
+            pc += command_words(opcode);
+        }
+    }
+    out
 }
 
 /// `nFTMotionEventMakeAttackColl`: a new slot, or a slot whose group

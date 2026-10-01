@@ -234,44 +234,174 @@ pub const NESS_PK_FIRE_ITEM_SOURCE: (u32, u32) = (336, 0x0A08);
 /// 353's three-node tree (RE-383).
 pub const LINK_BOMB_ITEM_SOURCE: (u32, u32) = (353, 0x18D8);
 
-/// The entry effects a manager `EFDesc` plays through its own `AnimJoint`
-/// table and ejects at its end (`efManagerHaveStructProcUpdate`, RE-403),
-/// keyed like `ssb_rom::effect::MANAGER_EFFECT_KEYS`: Mario's pipe
-/// (`llMarioSpecial2EntryDokanDObjDesc`), Donkey Kong's barrel, Samus's
-/// capsule, Link's wave and beam, Yoshi's egg and Kirby's star (whose
-/// packed table is the leftward one). The Arwing, the car and the Poké Ball
-/// run their own updates and are not listed.
-pub const ENTRY_EFFECT_KEYS: [(u32, u32); 7] = [
-    (356, 0x0608),
-    (355, 0x07C8),
-    (349, 0x0B90),
-    (353, 0x03F8),
-    (353, 0x07B8),
-    (354, 0x0530),
-    (348, 0x1DA8),
+/// Where an entry effect's tree goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryRoot {
+    /// `dobj->translate.vec.f = *pos` on the desc's own root (flag 0x4
+    /// without 0x1): the root's rest translation is replaced.
+    Replace,
+    /// Flag 0x1's empty outer `DObj` takes the position, and the desc's
+    /// tree plays under it (the Arwing, whose root is its flight path).
+    Outer,
+}
+
+/// Which DL link an entry effect draws on this frame (RE-425).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryLink {
+    /// The `EFDesc`'s own link (10 for every entry effect).
+    Fixed(u8),
+    /// `efManagerSortZNeg` on a node after each play: link 2 behind z
+    /// -1000, else 20 (the Arwing, and the car unturned).
+    SortZNeg(usize),
+    /// The car: `efManagerSortZNeg`, or `efManagerSortZPos` (link 2 past z
+    /// 1000, else 20) once turned for a leftward entry.
+    SortCar(usize),
+    /// `efManagerMBallThrownProcUpdate`: link 20 past z 1000, else 10, from
+    /// the node's pose before this frame's play; the maker's first frame
+    /// sorts it with `efManagerSortZNeg`.
+    Ball(usize),
+}
+
+/// Which clock an entry part plays to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryClock {
+    /// `Entry::effect_ticks`: made with the entry.
+    Effect,
+    /// `Entry::rays_ticks`: the Poké Ball's rays, made when it opens.
+    Rays,
+}
+
+/// One entry effect part (RE-403, RE-425): its object, the animation slot
+/// it plays (`AnimDesc::EFFECT`: the manager effect's own, or one of
+/// `ssb_rom::effect::ENTRY_ANIMS`), its placement, and what ends it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntryPart {
+    pub key: (u32, u32),
+    pub anim_slot: u32,
+    pub root: EntryRoot,
+    /// `dobj->rotate.vec.f.y = F_CLC_DTOR32(180.0F)` for `lr == -1`.
+    pub turns_left: bool,
+    /// The node whose script's end ejects it (`dobj->child->anim_frame`);
+    /// `None` for the object's (`efManagerHaveStructProcUpdate`).
+    pub end_node: Option<usize>,
+    pub link: EntryLink,
+    pub clock: EntryClock,
+    /// Nodes that get a second `0x2C` (kind 44) matrix, which multiplies
+    /// their billboard scale by their own X scale once more: the Arwing's
+    /// node 10, the car's exhaust sprites 3, 5, 7 and 9.
+    pub extra_billboards: &'static [usize],
+}
+
+/// `key`'s `ssb_rom::effect::MANAGER_EFFECT_KEYS` slot, which the pack
+/// keys its own animation by.
+const fn manager_slot(key: (u32, u32)) -> u32 {
+    let keys = ssb_rom::effect::MANAGER_EFFECT_KEYS;
+    let mut i = 0;
+    while i < keys.len() {
+        if keys[i].0 == key.0 && keys[i].1 == key.1 {
+            return i as u32;
+        }
+        i += 1;
+    }
+    panic!("not a manager effect")
+}
+
+const fn manager_part(key: (u32, u32)) -> EntryPart {
+    with_anim(key, manager_slot(key))
+}
+
+const fn with_anim(key: (u32, u32), slot: u32) -> EntryPart {
+    EntryPart {
+        key,
+        anim_slot: slot,
+        root: EntryRoot::Replace,
+        turns_left: false,
+        end_node: None,
+        link: EntryLink::Fixed(10),
+        clock: EntryClock::Effect,
+        extra_billboards: &[],
+    }
+}
+
+/// The entry effects' parts, each on its own `ssb_rom::effect` key: Mario's
+/// and Luigi's pipe (`llMarioSpecial2EntryDokanDObjDesc`, file 356 for
+/// both: `dFTLuigiData` names `llMarioSpecial2FileID`), Donkey Kong's
+/// barrel, Samus's capsule, Link's wave and beam, Yoshi's egg, Kirby's star
+/// both ways, Fox's Arwing both ways, Captain Falcon's car, the Poké Ball
+/// both ways and its rays.
+pub const ENTRY_PARTS: [EntryPart; 14] = [
+    manager_part((356, 0x0608)),
+    manager_part((355, 0x07C8)),
+    manager_part((349, 0x0B90)),
+    manager_part((353, 0x03F8)),
+    manager_part((353, 0x07B8)),
+    manager_part((354, 0x0530)),
+    manager_part((348, 0x1DA8)),
+    with_anim((348, 0x1DA8), ssb_rom::effect::ENTRY_KIRBY_STAR_R_ANIM_SLOT),
+    EntryPart {
+        root: EntryRoot::Outer,
+        end_node: Some(0),
+        link: EntryLink::SortZNeg(0),
+        extra_billboards: &[10],
+        ..with_anim((161, 0x2C30), ssb_rom::effect::ENTRY_ARWING_R_ANIM_SLOT)
+    },
+    EntryPart {
+        root: EntryRoot::Outer,
+        end_node: Some(0),
+        link: EntryLink::SortZNeg(0),
+        extra_billboards: &[10],
+        ..with_anim((161, 0x2C30), ssb_rom::effect::ENTRY_ARWING_R_ANIM_SLOT + 1)
+    },
+    EntryPart {
+        turns_left: true,
+        end_node: Some(1),
+        link: EntryLink::SortCar(1),
+        extra_billboards: &[3, 5, 7, 9],
+        ..with_anim((350, 0x5FC0), ssb_rom::effect::ENTRY_CAR_ANIM_SLOT)
+    },
+    EntryPart {
+        link: EntryLink::Ball(1),
+        ..manager_part((86, 0x9430))
+    },
+    EntryPart {
+        link: EntryLink::Ball(1),
+        ..with_anim((86, 0x9430), ssb_rom::effect::ENTRY_BALL_R_ANIM_SLOT)
+    },
+    EntryPart {
+        clock: EntryClock::Rays,
+        ..manager_part((85, 0x0628))
+    },
 ];
 
-/// The [`ENTRY_EFFECT_KEYS`] indices a fighter's entry effect draws. Only
-/// Mario's pipe and Kirby's leftward star are packed: Luigi's pipe comes
-/// from his own file (`gFTDataLuigiSpecial2`) and the rightward star from
-/// `llKirbySpecial2EntryStarRAnimJoint`, so neither draws.
+/// The [`ENTRY_PARTS`] a fighter's entry effect draws: the rightward
+/// tables for `lr == +1`, the leftward ones otherwise
+/// (`ftCommonAppearSetStatus`).
 pub fn entry_effect_parts(f: &ssb_game::fighter::Fighter) -> &'static [usize] {
     use ssb_game::appear::EntryEffect as E;
-    use ssb_game::fighter::{Facing, FighterKind};
+    use ssb_game::fighter::Facing;
     let Some(e) = ssb_game::appear::entry_effect(f.kind) else {
         return &[];
     };
+    let right = f.entry.lr != Some(Facing::Left);
     match e {
-        E::Pipe if f.kind == FighterKind::Luigi => &[],
-        E::Star if f.entry.lr != Some(Facing::Left) => &[],
         E::Pipe => &[0],
         E::Barrel => &[1],
         E::Point => &[2],
         E::WaveAndBeam => &[3, 4],
         E::Egg => &[5],
+        E::Star if right => &[7],
         E::Star => &[6],
-        E::Arwing | E::PokeBall | E::Car => &[],
+        E::Arwing if right => &[8],
+        E::Arwing => &[9],
+        E::Car => &[10],
+        E::PokeBall if right => &[12, 13],
+        E::PokeBall => &[11, 13],
     }
+}
+
+/// An entry part's object and animation.
+pub fn entry_part(pack: &Pack<'_>, part: &EntryPart) -> Option<(ObjectDesc, ssb_rom::pack::AnimDesc)> {
+    Some((object_keyed(pack, part.key)?, pack.effect_anim(part.anim_slot)?))
 }
 
 /// A manager effect's object and its transform animation.

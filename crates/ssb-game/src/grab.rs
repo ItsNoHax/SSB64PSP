@@ -920,6 +920,17 @@ fn set_catch_wait(f: &mut Fighter) {
     status::set_status(f, Status::CatchWait, 0.0, StatusTiming::unknown());
     f.grab.throw_wait = CATCH_THROW_WAIT;
     f.grab.capture_immune = true;
+    // Link takes his shield in hand; Yoshi's jaw closes (RE-425).
+    match f.kind {
+        crate::fighter::FighterKind::Link | crate::fighter::FighterKind::PolyLink => {
+            f.model_parts.set(21, 0);
+            f.model_parts.set(19, crate::modelpart::HIDDEN);
+        }
+        crate::fighter::FighterKind::Yoshi | crate::fighter::FighterKind::PolyYoshi => {
+            f.model_parts.set(7, 1);
+        }
+        _ => {}
+    }
 }
 
 /// `ftCommonThrowCheckInterruptCatchWait` @ 0x8014A394.

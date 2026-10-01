@@ -317,7 +317,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // first list starts under the scene's lit state, light colour writes leave
 // the bit alone, and a colour's shape no longer stands in for it (RE-424).
 // No layout change.
-pub const VERSION: u32 = 76;
+// 77 packs every fighter's motion-script and code-set model parts (hands,
+// faces, Link's shield in hand, Fox's Blaster) as `modelpart_costume`
+// overrides, the headgear accessories (Pikachu's hat, Jigglypuff's bow) as
+// `accessory_costume` overrides for every costume but 0, and the entry
+// vehicles' animations (RE-425). No layout change.
+pub const VERSION: u32 = 77;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1305,9 +1310,22 @@ pub const SKELETON_COSTUME_BASE: u32 = 0x100;
 
 /// A [`CostumeOverride`] whose `costume` is [`modelpart_costume`]`(part,
 /// costume)` is the node's mesh while `ftParamSetModelPartID` gives it model
-/// part `part` in that costume (Kirby's copy hats, RE-417). Costume 0 of a
-/// part is always stored; another costume only where its mesh differs.
+/// part `part` in that costume (Kirby's copy hats, RE-417; every fighter's
+/// motion-script parts, RE-425). A part's mesh is stored only where it
+/// differs from what the lookup would otherwise fall back to: the part's
+/// costume 0 when that is stored, else the node's own mesh in the costume.
 pub const MODELPART_COSTUME_BASE: u32 = 0x1000;
+
+/// A [`CostumeOverride`] whose `costume` is [`accessory_costume`]`(costume)`
+/// is the headgear accessory (`FTAttributes::accesspart`: Pikachu's hat,
+/// Jigglypuff's bow) its joint's node draws besides its own mesh in that
+/// costume (RE-425). Costume 0 has none.
+pub const ACCESSORY_COSTUME_BASE: u32 = 0x2000;
+
+/// The [`CostumeOverride`] key of the accessory in `costume`.
+pub const fn accessory_costume(costume: u32) -> u32 {
+    ACCESSORY_COSTUME_BASE + costume
+}
 
 /// Costumes per model part in [`modelpart_costume`]'s keys.
 pub const MODELPART_COSTUMES: u32 = 0x10;
@@ -2859,6 +2877,15 @@ impl PackWriter {
     /// or palette. Never call this for costume 0: it is the node's own
     /// `NodeDesc::mesh`, already the fallback [`Pack::costume_mesh`] leaves
     /// callers to use when no override exists.
+    /// ORs `flags` into an added node's [`NodeDesc::flags`]: a runtime
+    /// transform a maker adds that the descriptor does not carry (the entry
+    /// car's `gcAddXObjForDObjFixed(node, 0x2C)` billboards, RE-425).
+    pub fn add_node_flags(&mut self, node: u32, flags: u32) {
+        if let Some(n) = self.nodes.get_mut(node as usize) {
+            n.flags |= flags;
+        }
+    }
+
     pub fn add_costume_override(&mut self, node: u32, costume: u32, mesh: u32) {
         debug_assert_ne!(costume, 0, "costume 0 is the node's own baked mesh");
         self.costume_overrides.push(CostumeOverride {

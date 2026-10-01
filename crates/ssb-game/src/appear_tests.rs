@@ -151,3 +151,46 @@ fn the_entry_camera_mode_lasts_through_the_statuses_until_go() {
     on_go(&mut f);
     assert_eq!(f.dead.camera_mode, crate::dead::CameraMode::Default);
 }
+
+/// The Poké Ball opens on Appear frame 40: the motion script sets flag 1
+/// and `ftCommonAppearUpdateEffects` makes the rays (RE-425).
+#[test]
+fn the_poke_balls_rays_start_on_the_scripts_flag() {
+    for kind in [FighterKind::Pikachu, FighterKind::Purin] {
+        let mut f = standing(kind, Facing::Right);
+        appear_set_status(&mut f);
+        let mut started = None;
+        for frame in 1..=60 {
+            status::update(&mut f);
+            if f.entry.rays_ticks.is_some() && started.is_none() {
+                started = Some(frame);
+            }
+            tick_effect_clock(&mut f);
+        }
+        assert_eq!(started, Some(40), "{kind:?}");
+        assert_eq!(f.entry.rays_ticks, Some(21));
+        assert_eq!(f.motion_script.flags[1], 0);
+    }
+    let mut m = standing(FighterKind::Mario, Facing::Right);
+    appear_set_status(&mut m);
+    run(&mut m, 60);
+    assert_eq!(m.entry.rays_ticks, None);
+}
+
+/// Captain Falcon's leftward entry draws him on DL link 1 until his TopN
+/// is nearer than z -1000; a rightward one never moves him (RE-425).
+#[test]
+fn falcon_draws_before_the_stage_while_far_on_a_leftward_entry() {
+    let mut f = standing(FighterKind::Captain, Facing::Left);
+    appear_set_status(&mut f);
+    assert!(f.entry.is_link_1);
+    f.pos.z = -5000.0;
+    status::update(&mut f);
+    assert!(f.entry.is_link_1);
+    f.pos.z = -900.0;
+    status::update(&mut f);
+    assert!(!f.entry.is_link_1);
+    let mut r = standing(FighterKind::Captain, Facing::Right);
+    appear_set_status(&mut r);
+    assert!(!r.entry.is_link_1);
+}

@@ -297,6 +297,9 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
             if is_kirby(f.kind) && s.is_kirby {
                 // The copy the swallowing Kirby took is lost.
                 f.kirby.copy_id = FighterKind::Kirby;
+                f.model_parts
+                    .set_default(crate::kirby_copy::COPY_MODELPARTS_JOINT, 0);
+                f.model_parts.reset_all();
             }
             escape(f);
         }

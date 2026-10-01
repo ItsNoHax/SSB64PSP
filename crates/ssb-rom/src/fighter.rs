@@ -639,6 +639,39 @@ pub fn model_part(
     })
 }
 
+/// `FTAttributes::accesspart` (`FTAccessPart *`), after
+/// `modelparts_container` at 0x328 (RE-425).
+pub const ACCESSPART_OFFSET: u32 = 0x32C;
+
+/// `FTAccessPart`: a headgear accessory (Pikachu's hat, Jigglypuff's bow).
+/// `ftManagerMakeFighter` and `ftParamInitAllParts` give joint `joint_id` a
+/// parts `GObj` whose `DObj` holds `dl`, with `mobjsubs` coloured by
+/// `costume_matanim_joints` at the costume's frame, for every costume but 0;
+/// `ftDisplayMainDrawAccessory` draws it in the joint's matrix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccessPart {
+    /// `joint_id`: the fighter joint (4 is the model's first descriptor).
+    pub joint: u32,
+    pub dl: (u32, u32),
+    pub mobjsubs: Option<(u32, u32)>,
+    pub costume_matanim_joints: Option<(u32, u32)>,
+}
+
+/// Follows `FTAttributes::accesspart`; `None` when the fighter has none.
+pub fn access_part(main: &File, entry: FighterFile) -> Option<AccessPart> {
+    let (file, at) = crate::sprite::pointer_place(main, entry.offset + ACCESSPART_OFFSET)?;
+    if file != main.id {
+        return None;
+    }
+    let raw = main.data.get(at as usize..at as usize + 4)?;
+    Some(AccessPart {
+        joint: u32::from_be_bytes(raw.try_into().ok()?),
+        dl: crate::sprite::pointer_place(main, at + 4)?,
+        mobjsubs: crate::sprite::pointer_place(main, at + 8),
+        costume_matanim_joints: crate::sprite::pointer_place(main, at + 12),
+    })
+}
+
 /// Decodes one fighter out of a loaded archive file.
 pub fn decode_file(entry: FighterFile, file: &File) -> Result<Fighter, FighterError> {
     let attributes = FighterAttributes::decode(&file.data, entry.file, entry.offset)?;

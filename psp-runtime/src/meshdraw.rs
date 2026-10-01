@@ -1656,10 +1656,88 @@ pub unsafe fn draw_object_posed(
         st,
         mat_anim,
         effect_mat_anim,
-        costume,
+        Look::costume(costume),
         None,
         None,
     )
+}
+
+/// How a fighter's model draws (RE-425): its costume key (a costume, or an
+/// electric skeleton set's [`ssb_rom::pack::SKELETON_COSTUME_BASE`] key),
+/// each descriptor's model part, and where its accessory goes.
+#[derive(Clone, Copy, Debug)]
+pub struct Look<'a> {
+    pub costume: u32,
+    /// `modelpart_id_curr` per descriptor (`ssb_game::modelpart`):
+    /// [`ssb_game::modelpart::HIDDEN`], [`ssb_game::modelpart::ABSENT`], 0
+    /// for the node's own mesh, or a part's
+    /// [`ssb_rom::pack::modelpart_costume`] meshes. `None` draws every node
+    /// as packed.
+    pub parts: Option<&'a [i8]>,
+    /// `ftDisplayMainDrawAccessory` runs before the joint's own list
+    /// (Jigglypuff) rather than after it (Pikachu).
+    pub accessory_before: bool,
+}
+
+impl Look<'static> {
+    /// A plain costume key, as every non-fighter caller draws.
+    pub const fn costume(costume: u32) -> Self {
+        Look {
+            costume,
+            parts: None,
+            accessory_before: false,
+        }
+    }
+}
+
+/// [`draw_object_posed`] with its billboard scales and, as
+/// [`draw_object_posed_hiding`] does, the nodes `hidden` names (an entry
+/// effect's visibility scripts, RE-425).
+///
+/// # Safety
+///
+/// Same as [`draw_mesh`].
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn draw_object_posed_scaled_hiding(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    base: &ScePspFMatrix4,
+    posed: &[ssb_rom::scene::Mat4],
+    billboard_scales: &[[f32; 2]],
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
+    hidden: &dyn Fn(u32) -> bool,
+) -> u32 {
+    draw_object_posed_filtered(
+        pack,
+        object,
+        base,
+        posed,
+        Some(billboard_scales),
+        st,
+        mat_anim,
+        effect_mat_anim,
+        Look::costume(0),
+        None,
+        Some(hidden),
+    )
+}
+
+/// [`draw_object_posed`] for a fighter's [`Look`].
+///
+/// # Safety
+///
+/// Same as [`draw_mesh`].
+pub unsafe fn draw_fighter_posed(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    base: &ScePspFMatrix4,
+    posed: &[ssb_rom::scene::Mat4],
+    st: &mut DrawState,
+    look: Look<'_>,
+) -> u32 {
+    draw_object_posed_filtered(pack, object, base, posed, None, st, None, None, look, None, None)
 }
 
 /// [`draw_object_posed`] without the nodes `hidden` names: the source's
@@ -1687,7 +1765,7 @@ pub unsafe fn draw_object_posed_hiding(
         st,
         None,
         effect_mat_anim,
-        0,
+        Look::costume(0),
         None,
         Some(hidden),
     )
@@ -1720,7 +1798,7 @@ pub unsafe fn draw_object_node(
         st,
         mat_anim,
         None,
-        0,
+        Look::costume(0),
         Some(global_node),
         None,
     )
@@ -1730,9 +1808,17 @@ pub unsafe fn draw_object_node(
 /// An electric-damage skeleton (RE-414) draws only its own parts. A model
 /// part key ([`ssb_rom::pack::modelpart_costume`], RE-417) replaces the
 /// nodes it names, in that costume or else the part's costume 0, and every
-/// other node draws in the plain costume.
-fn costume_node_mesh(pack: &Pack<'_>, global_node: u32, own: u32, costume: u32) -> u32 {
-    use ssb_rom::pack::{MODELPART_COSTUMES, MODELPART_COSTUME_BASE, SKELETON_COSTUME_BASE};
+/// other node draws in the plain costume. `part` is the node's
+/// [`Look::parts`] entry (RE-425): a hidden joint draws nothing (a
+/// skeleton's part still draws), a never-made one nothing at all, part 0
+/// the node's own mesh, and another part its mesh in the costume, else its
+/// costume 0's, else the node's own.
+fn costume_node_mesh(pack: &Pack<'_>, global_node: u32, own: u32, costume: u32, part: Option<i8>) -> u32 {
+    use ssb_game::modelpart::{ABSENT, HIDDEN};
+    use ssb_rom::pack::{modelpart_costume, MODELPART_COSTUMES, MODELPART_COSTUME_BASE, SKELETON_COSTUME_BASE};
+    if part == Some(ABSENT) {
+        return NodeDesc::NO_MESH;
+    }
     if costume >= MODELPART_COSTUME_BASE {
         let plain = (costume - MODELPART_COSTUME_BASE) % MODELPART_COSTUMES;
         return pack
@@ -1741,12 +1827,30 @@ fn costume_node_mesh(pack: &Pack<'_>, global_node: u32, own: u32, costume: u32) 
             .or_else(|| pack.costume_mesh(global_node, plain))
             .unwrap_or(own);
     }
-    let fallback = if costume >= SKELETON_COSTUME_BASE {
-        NodeDesc::NO_MESH
-    } else {
-        own
-    };
-    pack.costume_mesh(global_node, costume).unwrap_or(fallback)
+    if costume >= SKELETON_COSTUME_BASE {
+        return pack.costume_mesh(global_node, costume).unwrap_or(NodeDesc::NO_MESH);
+    }
+    let plain = || pack.costume_mesh(global_node, costume).unwrap_or(own);
+    match part {
+        None => plain(),
+        Some(HIDDEN) => NodeDesc::NO_MESH,
+        Some(p) if p >= 0 => {
+            let p = p as u32;
+            pack.costume_mesh(global_node, modelpart_costume(p, costume))
+                .or_else(|| pack.costume_mesh(global_node, modelpart_costume(p, 0)))
+                .unwrap_or_else(plain)
+        }
+        Some(_) => NodeDesc::NO_MESH,
+    }
+}
+
+/// The accessory a node draws beside its mesh (`ftDisplayMainDrawAccessory`,
+/// RE-425): only in a plain costume, and only while the joint has a list.
+fn accessory_mesh(pack: &Pack<'_>, global_node: u32, costume: u32, mesh: u32) -> Option<u32> {
+    if costume == 0 || costume >= ssb_rom::pack::SKELETON_COSTUME_BASE || mesh == NodeDesc::NO_MESH {
+        return None;
+    }
+    pack.costume_mesh(global_node, ssb_rom::pack::accessory_costume(costume))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1759,11 +1863,12 @@ unsafe fn draw_object_posed_filtered(
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
-    costume: u32,
+    look: Look<'_>,
     only_node: Option<u32>,
     hidden: Option<&dyn Fn(u32) -> bool>,
 ) -> u32 {
     let mut tris = 0;
+    let costume = look.costume;
     for i in 0..object.node_count {
         let global_node = object.first_node + i;
         if hidden.is_some_and(|hidden| hidden(global_node)) {
@@ -1775,13 +1880,18 @@ unsafe fn draw_object_posed_filtered(
         let Some(node) = pack.node(global_node) else {
             continue;
         };
-        let mesh_index = costume_node_mesh(pack, global_node, node.mesh, costume);
+        let part = look.parts.map(|p| p.get(i as usize).copied().unwrap_or(ssb_game::modelpart::ABSENT));
+        let mesh_index = costume_node_mesh(pack, global_node, node.mesh, costume, part);
+        // `ftDisplayMainDrawAccessory` (RE-425), in the joint's matrix.
+        let accessory = accessory_mesh(pack, global_node, costume, mesh_index);
+        let meshes = if look.accessory_before {
+            [accessory, Some(mesh_index)]
+        } else {
+            [Some(mesh_index), accessory]
+        };
         if mesh_index == NodeDesc::NO_MESH {
             continue; // pure transform: a joint with no geometry
         }
-        let Some(mesh) = pack.mesh(mesh_index) else {
-            continue;
-        };
 
         let node = match posed.get(i as usize) {
             Some(m) => NodeDesc { world: m.0, ..node },
@@ -1908,51 +2018,70 @@ unsafe fn draw_object_posed_filtered(
         // matrix, so it has to be captured after the branch above -- both
         // arms leave a different matrix on the stack.
         st.note_model_matrix();
-        if !posed.is_empty() {
-            if let (Some(bindings), Some(verts), Some(inverse)) = (
-                pack.vertex_bindings(&mesh),
-                pack.vertices(&mesh),
-                ssb_rom::scene::Mat4(node.world).inverse_affine(),
-            ) {
-                // Arena memory remains alive until the GE finishes this frame.
-                // Only meshes borrowing RSP slots need a transient buffer.
-                let dynamic = sys::sceGuGetMemory(verts.len() as i32) as *mut u8;
-                core::ptr::copy_nonoverlapping(verts.as_ptr(), dynamic, verts.len());
-                for (index, binding) in bindings.chunks_exact(8).enumerate() {
-                    let source_node = u16::from_le_bytes([binding[0], binding[1]]);
-                    if source_node == u16::MAX {
-                        continue;
-                    }
-                    let source = if source_node == u16::MAX - 1 {
-                        ssb_rom::scene::Mat4::IDENTITY
-                    } else {
-                        posed.get(source_node as usize).copied().unwrap_or_else(|| {
-                            pack.node(object.first_node + u32::from(source_node))
-                                .map_or(ssb_rom::scene::Mat4::IDENTITY, |n| {
-                                    ssb_rom::scene::Mat4(n.world)
-                                })
-                        })
-                    };
-                    let vertex =
-                        dynamic.add(index * ssb_rom::pack::VERTEX_SIZE) as *mut PackedVertex;
-                    vertex.write(ssb_rom::pack::pose_cached_vertex(
-                        *vertex, binding, inverse, source,
-                    ));
-                }
-                tris += draw_mesh_vertices(
-                    pack,
-                    &mesh,
-                    core::slice::from_raw_parts(dynamic, verts.len()),
-                    st,
-                    mat_anim,
-                    effect_mat_anim,
-                );
+        for mesh_index in meshes.into_iter().flatten() {
+            let Some(mesh) = pack.mesh(mesh_index) else {
                 continue;
-            }
+            };
+            tris += draw_node_mesh(pack, object, &node, &mesh, posed, st, mat_anim, effect_mat_anim);
         }
-        tris += draw_mesh(pack, &mesh, st, mat_anim, effect_mat_anim);
     }
     tris
+}
+
+/// One mesh of a node whose matrix is loaded: re-posed from `posed` where
+/// its vertices are bound to other joints.
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_node_mesh(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    node: &NodeDesc,
+    mesh: &MeshDesc,
+    posed: &[ssb_rom::scene::Mat4],
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
+) -> u32 {
+    if !posed.is_empty() {
+        if let (Some(bindings), Some(verts), Some(inverse)) = (
+            pack.vertex_bindings(mesh),
+            pack.vertices(mesh),
+            ssb_rom::scene::Mat4(node.world).inverse_affine(),
+        ) {
+            // Arena memory remains alive until the GE finishes this frame.
+            // Only meshes borrowing RSP slots need a transient buffer.
+            let dynamic = sys::sceGuGetMemory(verts.len() as i32) as *mut u8;
+            core::ptr::copy_nonoverlapping(verts.as_ptr(), dynamic, verts.len());
+            for (index, binding) in bindings.chunks_exact(8).enumerate() {
+                let source_node = u16::from_le_bytes([binding[0], binding[1]]);
+                if source_node == u16::MAX {
+                    continue;
+                }
+                let source = if source_node == u16::MAX - 1 {
+                    ssb_rom::scene::Mat4::IDENTITY
+                } else {
+                    posed.get(source_node as usize).copied().unwrap_or_else(|| {
+                        pack.node(object.first_node + u32::from(source_node))
+                            .map_or(ssb_rom::scene::Mat4::IDENTITY, |n| {
+                                ssb_rom::scene::Mat4(n.world)
+                            })
+                    })
+                };
+                let vertex = dynamic.add(index * ssb_rom::pack::VERTEX_SIZE) as *mut PackedVertex;
+                vertex.write(ssb_rom::pack::pose_cached_vertex(
+                    *vertex, binding, inverse, source,
+                ));
+            }
+            return draw_mesh_vertices(
+                pack,
+                mesh,
+                core::slice::from_raw_parts(dynamic, verts.len()),
+                st,
+                mat_anim,
+                effect_mat_anim,
+            );
+        }
+    }
+    draw_mesh(pack, mesh, st, mat_anim, effect_mat_anim)
 }
 
 /// Bounding box of a whole object, in the pack's normalised units.
@@ -3087,7 +3216,7 @@ pub unsafe fn draw_stage_links(
                             st,
                             mat_anim,
                             None,
-                            0,
+                            Look::costume(0),
                             None,
                             Some(&hidden),
                         )
@@ -3158,7 +3287,7 @@ pub unsafe fn draw_stage_preview(
             st,
             mat_anim,
             None,
-            0,
+            Look::costume(0),
             None,
             Some(&hidden),
         );
@@ -3197,7 +3326,7 @@ pub unsafe fn draw_ground_object(
         st,
         mat_anim,
         Some(object.materials()),
-        0,
+        Look::costume(0),
         None,
         Some(&hidden),
     );

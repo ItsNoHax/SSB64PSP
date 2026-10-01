@@ -2074,6 +2074,9 @@ fn lb_transition_graphs() -> std::collections::BTreeSet<(u32, u32)> {
 /// `FTKIRBY_COPY_MODELPARTS_JOINT`: the joint Kirby's copy swaps.
 const KIRBY_COPY_JOINT: u32 = 6;
 
+/// Kirby's model file (`KirbyModel`).
+const KIRBY_MODEL_FILE: u32 = 328;
+
 /// `llKirbyMainMotionSpecialNFTKirbyCopy`: file 228's `FTKirbyCopy[27]`
 /// table at 0x0 (`copy_id` u16, `copy_modelpart_id` s16, then eight bytes),
 /// indexed by the copied fighter's kind.
@@ -2130,6 +2133,191 @@ fn kirby_copy_hats(
         })
         .collect()
 }
+
+/// The playable fighter whose high-detail `FTCommonPart` is `graph` of
+/// `file`, with its main file.
+fn playable_fighter_of<'a>(
+    loaded: &'a Loaded,
+    file: u32,
+    graph: &ssb_rom::scene::SceneGraph,
+) -> Option<(ssb_rom::fighter::FighterFile, &'a ssb_rom::archive::File)> {
+    ssb_rom::fighter::FIGHTER_FILES
+        .iter()
+        .filter(|e| e.kind < 12)
+        .find_map(|entry| {
+            let main = loaded.files.get(entry.file as usize)?.as_ref()?;
+            let part = ssb_rom::fighter::common_parts(main, *entry)[0]?;
+            ((part.model_file, part.graph) == (file, graph.offset)).then_some((*entry, main))
+        })
+}
+
+/// Joint `joint`'s parts `ftParamSetModelPartID` can give a playable
+/// fighter outside its motion scripts: Link's shield in hand
+/// (`ftCommonCatchWaitSetStatus`, and his make's defaults), Yoshi's closed
+/// jaw, and Kirby's copy hats (RE-417).
+fn code_model_parts(kind: u8) -> &'static [(i32, i32)] {
+    match kind {
+        5 => &[(19, 0), (21, 0)],
+        6 => &[(7, 1)],
+        _ => &[],
+    }
+}
+
+/// Every `(joint, part, FTModelPart)` a playable fighter can wear that the
+/// pack needs (RE-425): the parts its motion scripts set
+/// (`ssb_game::motion::model_part_events`), the code-set ones and Kirby's
+/// copy hats, on joints `setup_parts` makes, high detail. Part -1 hides a
+/// joint and needs no mesh.
+fn fighter_model_parts(
+    loaded: &Loaded,
+    file: u32,
+    graph: &ssb_rom::scene::SceneGraph,
+) -> Vec<(u32, u32, ssb_rom::fighter::ModelPart)> {
+    let Some((entry, main)) = playable_fighter_of(loaded, file, graph) else {
+        return Vec::new();
+    };
+    let Some(&kind) = ssb_game::fighter::FighterKind::PLAYABLE
+        .iter()
+        .find(|k| **k as u8 == entry.kind)
+    else {
+        return Vec::new();
+    };
+    let present = ssb_game::modelpart::joint_masks(kind).map_or(0, |m| m.0);
+    let mut wanted: std::collections::BTreeSet<(i32, i32)> =
+        ssb_game::motion::model_part_events(kind);
+    wanted.extend(code_model_parts(entry.kind).iter().copied());
+    if kind == ssb_game::fighter::FighterKind::Kirby {
+        wanted.extend(
+            kirby_copy_hats(loaded, file, graph)
+                .into_iter()
+                .map(|(p, _)| (KIRBY_COPY_JOINT as i32, p as i32)),
+        );
+    }
+    wanted
+        .into_iter()
+        .filter_map(|(joint, part)| {
+            let node = u32::try_from(joint)
+                .ok()?
+                .checked_sub(ssb_rom::fighter::JOINT_COMMON_START)?;
+            let part = u32::try_from(part).ok()?;
+            if node as usize >= graph.nodes.len() || present >> node & 1 == 0 {
+                return None;
+            }
+            let mp = ssb_rom::fighter::model_part(main, entry, joint as u32, part, 0)?;
+            (mp.flags & 0xF == 0).then_some((joint as u32, part, mp))
+        })
+        .collect()
+}
+
+/// `plan` with node `node`'s own list replaced by `dl`, or `dl` inserted
+/// for a node that has none, where the walk reaches that node.
+fn plan_with_node_list(
+    plan: &[PlannedList],
+    graph: &ssb_rom::scene::SceneGraph,
+    node: usize,
+    dl: u32,
+) -> (Vec<PlannedList>, usize) {
+    let mut out: Vec<PlannedList> = plan.to_vec();
+    if let Some(slot) = out.iter().position(|p| p.node == node && p.own_space()) {
+        out[slot].dl = dl;
+        return (out, slot);
+    }
+    let slot = out.iter().position(|p| p.node > node).unwrap_or(out.len());
+    out.insert(
+        slot,
+        PlannedList {
+            node,
+            dl,
+            space: Some(node),
+            world: graph.world_transforms()[node],
+            list_id: None,
+        },
+    );
+    (out, slot)
+}
+
+/// `ftDisplayMainDrawAccessory`'s place in the walk: Jigglypuff's bow is
+/// drawn just before its joint's own list, Pikachu's hat just after
+/// (`ftDisplayMainDrawDefault`), both in the joint's matrix. The accessory
+/// is planned as an extra node, `graph.nodes.len()`, whose materials the
+/// caller appends.
+fn plan_with_accessory(
+    plan: &[PlannedList],
+    graph: &ssb_rom::scene::SceneGraph,
+    access: &ssb_rom::fighter::AccessPart,
+    before: bool,
+) -> Option<(Vec<PlannedList>, usize)> {
+    let node = access
+        .joint
+        .checked_sub(ssb_rom::fighter::JOINT_COMMON_START)? as usize;
+    let own = plan.iter().position(|p| p.node == node && p.own_space())?;
+    let slot = if before { own } else { own + 1 };
+    let mut out = plan.to_vec();
+    out.insert(
+        slot,
+        PlannedList {
+            node: graph.nodes.len(),
+            dl: access.dl.1,
+            space: Some(node),
+            world: plan[own].world,
+            list_id: None,
+        },
+    );
+    Some((out, slot))
+}
+
+/// A fighter's headgear accessory (`FTAttributes::accesspart`, RE-425),
+/// when `graph` is its high-detail model and the accessory's list and
+/// materials live in the model file; `true` when it draws before its
+/// joint's list (Jigglypuff) rather than after (Pikachu).
+fn fighter_accessory(
+    loaded: &Loaded,
+    file: u32,
+    graph: &ssb_rom::scene::SceneGraph,
+) -> Option<(ssb_rom::fighter::AccessPart, bool)> {
+    let (entry, main) = playable_fighter_of(loaded, file, graph)?;
+    let access = ssb_rom::fighter::access_part(main, entry)?;
+    if access.dl.0 != file || access.mobjsubs.is_some_and(|(f, _)| f != file) {
+        return None;
+    }
+    Some((access, entry.kind == 10))
+}
+
+/// A part's or accessory's own `MObj` chain, coloured at `costume` from its
+/// `costume_matanim_joints` (`lbCommonAddMObjForFighterPartsDObj`).
+fn part_materials(
+    file: &ssb_rom::archive::File,
+    mobjsubs: Option<(u32, u32)>,
+    costume_matanim_joints: Option<(u32, u32)>,
+    costume: u32,
+) -> ssb_rom::mobj::NodeMaterials {
+    let mut own = mobjsubs
+        .filter(|&(f, _)| f == file.id)
+        .and_then(|(_, at)| ssb_rom::mobj::read_chain(file, at))
+        .unwrap_or_default();
+    if let Some((_, scripts)) = costume_matanim_joints.filter(|&(f, _)| f == file.id) {
+        let colors: Vec<_> = (0..own.len() as u32)
+            .map(|m| {
+                let script = file
+                    .data
+                    .get((scripts + 4 * m) as usize..(scripts + 4 * m + 4) as usize)
+                    .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+                    .filter(|&s| s != 0)?;
+                ssb_rom::matanim::colors_at(&file.data, script, costume as f32).ok()
+            })
+            .collect();
+        apply_costume_colors(file, &mut own, &colors);
+    }
+    own
+}
+
+/// The entry vehicles' trees (RE-425): the Arwing's and the car's bodies
+/// set no render mode, and an RDRAM walk of an N64 frame (Fox and Captain
+/// Falcon entering) finds them under the fighters' `G_RM_AA_ZB_OPA_SURF`
+/// with `G_ZBUFFER`, which `ftDisplayMainProcDisplay` leaves on the head
+/// before DL link 10's effects; their head-1 lists set
+/// `G_RM_AA_ZB_XLU_SURF` themselves. The fighter seed is that state.
+const ENTRY_VEHICLE_GRAPHS: &[(u32, u32)] = &[(161, 0x2C30), (350, 0x5FC0)];
 
 /// Weapon `DObjDesc` trees whose lists set no render mode, so they draw
 /// under `wpDisplayDrawNormal`'s state (`G_ZBUFFER` cleared,
@@ -2213,7 +2401,9 @@ fn initial_material_for(
     file: u32,
     graph_offset: u32,
 ) -> ssb_rom::mesh::InitialMaterial {
-    if skeleton_graphs.contains(&(file, graph_offset)) {
+    if skeleton_graphs.contains(&(file, graph_offset))
+        || ENTRY_VEHICLE_GRAPHS.contains(&(file, graph_offset))
+    {
         ssb_rom::mesh::InitialMaterial::FIGHTER_EXTERNAL
     } else if ground_layer1_graphs.get(&(file, graph_offset)) == Some(&1) {
         ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL
@@ -2352,7 +2542,8 @@ fn trace_graph_at(
 /// fighter's electric skeletons and Kirby's copy hats) with the lighting
 /// state the converter loads it under, one line per load (RE-424):
 /// `file graph variant item dl vertex_offset count lit`.
-/// `variant` is `base`, `skeleton<N>` or `hat<N>`.
+/// `variant` is `base`, `skeleton<N>`, `hat<N>` (Kirby's copy hats),
+/// `part<joint>.<part>` (another model part) or `access` (the accessory).
 fn lighting(path: &Path, args: &[&str]) -> Res {
     let mut only_file: Option<u32> = None;
     let mut it = args.iter();
@@ -2420,23 +2611,40 @@ fn lighting_rows(loaded: &Loaded, only_file: Option<u32>) -> Vec<LightingRow> {
             for (_, set, parts) in skeleton_sets_for(loaded, id, graph) {
                 variants.push((format!("skeleton{set}"), plan_skeleton_order(graph, &parts)));
             }
-            for (part, mp) in kirby_copy_hats(loaded, id, graph) {
-                let node = (KIRBY_COPY_JOINT - ssb_rom::fighter::JOINT_COMMON_START) as usize;
-                let plan: Vec<PlannedList> = base
-                    .iter()
-                    .map(|p| PlannedList {
-                        dl: if p.node == node && p.own_space() {
-                            mp.dl.1
-                        } else {
-                            p.dl
-                        },
-                        ..*p
-                    })
-                    .collect();
-                variants.push((format!("hat{part}"), plan));
+            // The model parts in the model file (RE-417's copy hats are
+            // Kirby's joint 6) and the accessory (RE-425).
+            for (joint, part, mp) in fighter_model_parts(loaded, id, graph) {
+                if mp.dl.0 != id {
+                    continue;
+                }
+                let node = (joint - ssb_rom::fighter::JOINT_COMMON_START) as usize;
+                let (plan, _) = plan_with_node_list(&base, graph, node, mp.dl.1);
+                let name = if joint == KIRBY_COPY_JOINT && id == KIRBY_MODEL_FILE {
+                    format!("hat{part}")
+                } else {
+                    format!("part{joint}.{part}")
+                };
+                variants.push((name, plan));
+            }
+            let mut access_materials = materials.clone();
+            if let Some((a, before)) = fighter_accessory(loaded, id, graph) {
+                if let Some((plan, _)) = plan_with_accessory(&base, graph, &a, before) {
+                    access_materials.push(part_materials(
+                        file,
+                        a.mobjsubs,
+                        a.costume_matanim_joints,
+                        1,
+                    ));
+                    variants.push(("access".into(), plan));
+                }
             }
             for (name, plan) in &variants {
-                for load in trace_graph_at(loaded, file, graph.offset, plan, &materials, initial) {
+                let materials = if name == "access" {
+                    &access_materials
+                } else {
+                    &materials
+                };
+                for load in trace_graph_at(loaded, file, graph.offset, plan, materials, initial) {
                     rows.push(LightingRow {
                         file: id,
                         graph: graph.offset,
@@ -3138,7 +3346,9 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut costume_overrides_added = 0usize;
     let (mut skeleton_parts_added, mut skeleton_parts_dropped) = (0usize, 0usize);
     let mut skeleton_fighters = std::collections::BTreeSet::new();
-    let mut copy_hats_added = 0usize;
+    let mut model_parts_added = 0usize;
+    let mut model_parts_empty = 0usize;
+    let mut accessories_added = 0usize;
     // A stage names its render layers by the `DObjDesc` address they start at,
     // and `add_object` is given that same address -- so the layer lookup is an
     // exact match, never a search.
@@ -3689,6 +3899,12 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             placed_meshes += node_mesh[gi].iter().filter(|m| m.is_some()).count();
             let object = writer.add_object(graph, id, |n| node_mesh[gi][n], &node_extra[gi]);
             object_index.insert((id, graph.offset), object);
+            if (id, graph.offset) == ssb_rom::effect::ENTRY_CAR_KEY {
+                let first = writer.object(object).unwrap().first_node;
+                for n in ssb_rom::effect::ENTRY_CAR_BILLBOARD_NODES {
+                    writer.add_node_flags(first + n, ssb_rom::pack::NodeDesc::FLAG_BILLBOARD);
+                }
+            }
             objects += 1;
 
             // RE-098: a fighter's alternate costumes share this one object's
@@ -3709,7 +3925,15 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             // second time into another render layer) is not handled by
             // this pass; no costume-bearing graph in the archive was found
             // to need it.
+            //
+            // RE-425: every costume but 0 also wears the fighter's headgear
+            // accessory, drawn in its joint's matrix before (Jigglypuff) or
+            // after (Pikachu) the joint's own list, so it is converted in
+            // that place of the walk. Its mesh is keyed
+            // `accessory_costume(costume)` on the joint's node, and any node
+            // after it whose state it changed gets its own override.
             let costumes = fighter_costume_count(id);
+            let accessory = fighter_accessory(&loaded, id, graph);
             if costumes > 1 && loaded.tables.costumes_for(id, graph.offset).is_some() {
                 let base_materials = loaded.materials(file, graph);
                 let first_node = writer.object(object).unwrap().first_node;
@@ -3730,18 +3954,66 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     &mut mat_anim_data,
                     initial,
                 );
+                let with_accessory = accessory.as_ref().and_then(|(a, before)| {
+                    plan_with_accessory(plan, graph, a, *before).map(|(p, slot)| (p, slot, *a))
+                });
                 for costume in 1..costumes {
-                    let materials_k = loaded.materials_at(file, graph, costume as f32);
+                    let mut materials_k = loaded.materials_at(file, graph, costume as f32);
+                    let (plan_k, access_slot): (&[PlannedList], Option<usize>) =
+                        match &with_accessory {
+                            Some((p, slot, a)) => {
+                                materials_k.push(part_materials(
+                                    file,
+                                    a.mobjsubs,
+                                    a.costume_matanim_joints,
+                                    costume,
+                                ));
+                                (p, Some(*slot))
+                            }
+                            None => (plan, None),
+                        };
                     let converted_k = convert_graph_at(
                         &loaded,
                         file,
                         graph.offset,
-                        plan,
+                        plan_k,
                         &materials_k,
                         &mut mat_anim_data,
                         initial,
                     );
-                    for (p, m_k) in plan.iter().zip(&converted_k) {
+                    let mut base_slot = 0usize;
+                    for (i, (p, m_k)) in plan_k.iter().zip(&converted_k).enumerate() {
+                        if Some(i) == access_slot {
+                            let (Ok(m), Some(space)) = (m_k, p.space) else {
+                                continue;
+                            };
+                            if m.triangle_count() == 0 {
+                                continue;
+                            }
+                            let mesh = pack_mesh(
+                                &mut writer,
+                                &mut tex_index,
+                                &mut mat_anim_index,
+                                &mat_anim_data,
+                                Texels {
+                                    home: file,
+                                    all: &loaded.files,
+                                },
+                                id,
+                                p.dl,
+                                m,
+                                swizzle,
+                            );
+                            writer.add_costume_override(
+                                first_node + space as u32,
+                                ssb_rom::pack::accessory_costume(costume),
+                                mesh,
+                            );
+                            accessories_added += 1;
+                            continue;
+                        }
+                        let base_index = base_slot;
+                        base_slot += 1;
                         if !p.own_space() {
                             continue;
                         }
@@ -3749,7 +4021,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         if m_k.triangle_count() == 0 {
                             continue;
                         }
-                        if base_converted.get(p.node) == Some(&Ok(m_k.clone())) {
+                        if base_converted.get(base_index) == Some(&Ok(m_k.clone())) {
                             continue;
                         }
                         let variant_index = pack_mesh(
@@ -3834,37 +4106,20 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 skeleton_fighters.insert(owner);
             }
 
-            // RE-417: Kirby's copy hats. `ftKirbySpecialNCopyInitCopyVars`
-            // gives joint 6 its copy's `copy_modelpart_id`, and
-            // `ftParamResetModelPartAll` swaps the joint's list and `MObj`s
-            // for that `FTModelPart` (high detail), its colours played from
-            // the part's own costume scripts. Each part is converted in the
-            // whole graph's order, as the base costumes are, and keyed
-            // `modelpart_costume(part, costume)` on the joint's node.
-            for (part, mp) in kirby_copy_hats(&loaded, id, graph) {
-                let node = (KIRBY_COPY_JOINT - ssb_rom::fighter::JOINT_COMMON_START) as usize;
-                let plan: Vec<PlannedList> = plans[gi]
-                    .iter()
-                    .map(|p| PlannedList {
-                        node: p.node,
-                        dl: if p.node == node && p.own_space() {
-                            mp.dl.1
-                        } else {
-                            p.dl
-                        },
-                        space: p.space,
-                        world: p.world,
-                        list_id: p.list_id,
-                    })
-                    .collect();
-                let Some(slot) = plan.iter().position(|p| p.node == node && p.own_space()) else {
-                    continue;
-                };
-                let chain = mp
-                    .mobjsubs
-                    .filter(|&(f, _)| f == id)
-                    .and_then(|(_, at)| ssb_rom::mobj::read_chain(file, at))
-                    .unwrap_or_default();
+            // RE-417, RE-425: the model parts `ftParamSetModelPartID` can
+            // give a joint -- the motion scripts' hands, faces, Link's
+            // shield in hand and Fox's Blaster, and Kirby's copy hats. It
+            // swaps the joint's list and `MObj`s for that `FTModelPart`
+            // (high detail), its colours played from the part's own
+            // costume scripts. A part in the model file is converted in the
+            // whole graph's order, as the base costumes are; one in another
+            // file (Fox's Blaster, file 315) on its own, under the graph's
+            // seed. Each is keyed `modelpart_costume(part, costume)` on the
+            // joint's node, stored only where it differs from what the
+            // lookup would otherwise draw (see `MODELPART_COSTUME_BASE`).
+            let parts = fighter_model_parts(&loaded, id, graph);
+            if !parts.is_empty() {
+                let first_node = writer.object(object).unwrap().first_node;
                 let initial = initial_material_for(
                     &skeleton_graphs,
                     &ground_graphs,
@@ -3872,67 +4127,134 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     id,
                     graph.offset,
                 );
-                let first_node = writer.object(object).unwrap().first_node;
-                let mut first: Option<ssb_rom::mesh::Mesh> = None;
-                for costume in 0..costumes.max(1) {
-                    let mut materials = loaded.materials_at(file, graph, costume as f32);
-                    let mut own = chain.clone();
-                    if let Some((_, scripts)) = mp.costume_matanim_joints.filter(|&(f, _)| f == id)
-                    {
-                        let colors: Vec<_> = (0..own.len() as u32)
-                            .map(|m| {
-                                let script = file
-                                    .data
-                                    .get((scripts + 4 * m) as usize..(scripts + 4 * m + 4) as usize)
-                                    .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
-                                    .filter(|&s| s != 0)?;
-                                ssb_rom::matanim::colors_at(&file.data, script, costume as f32).ok()
-                            })
-                            .collect();
-                        apply_costume_colors(file, &mut own, &colors);
-                    }
-                    materials[node] = own;
-                    let converted = convert_graph_at(
-                        &loaded,
-                        file,
-                        graph.offset,
-                        &plan,
-                        &materials,
-                        &mut mat_anim_data,
-                        initial,
-                    );
-                    let Some(Ok(m)) = converted.get(slot) else {
+                let plan = &plans[gi];
+                // The node's own mesh in each costume, as drawn without a
+                // part (the lookup's last fallback).
+                let own_by_costume: Vec<Vec<Option<ssb_rom::mesh::Mesh>>> = (0..costumes.max(1))
+                    .map(|costume| {
+                        let materials = loaded.materials_at(file, graph, costume as f32);
+                        let converted = convert_graph_at(
+                            &loaded,
+                            file,
+                            graph.offset,
+                            plan,
+                            &materials,
+                            &mut mat_anim_data,
+                            initial,
+                        );
+                        let mut own = vec![None; graph.nodes.len()];
+                        for (p, m) in plan.iter().zip(converted) {
+                            if p.own_space() {
+                                own[p.node] = m.ok().filter(|m| m.triangle_count() != 0);
+                            }
+                        }
+                        own
+                    })
+                    .collect();
+                for (joint, part, mp) in parts {
+                    let node = (joint - ssb_rom::fighter::JOINT_COMMON_START) as usize;
+                    let Some(part_file) =
+                        loaded.files.get(mp.dl.0 as usize).and_then(Option::as_ref)
+                    else {
                         continue;
                     };
-                    if m.triangle_count() == 0 {
-                        continue;
+                    let mut stored_first: Option<ssb_rom::mesh::Mesh> = None;
+                    for costume in 0..costumes.max(1) {
+                        let converted: Option<ssb_rom::mesh::Mesh> = if mp.dl.0 == id {
+                            let (plan_p, slot) = plan_with_node_list(plan, graph, node, mp.dl.1);
+                            let mut materials = loaded.materials_at(file, graph, costume as f32);
+                            materials[node] = part_materials(
+                                file,
+                                mp.mobjsubs,
+                                mp.costume_matanim_joints,
+                                costume,
+                            );
+                            convert_graph_at(
+                                &loaded,
+                                file,
+                                graph.offset,
+                                &plan_p,
+                                &materials,
+                                &mut mat_anim_data,
+                                initial,
+                            )
+                            .into_iter()
+                            .nth(slot)
+                            .and_then(Result::ok)
+                        } else {
+                            let cmds = part_file
+                                .data
+                                .get(mp.dl.1 as usize..)
+                                .and_then(|d| ssb_rom::dl::decode_list_at(d, mp.dl.1).ok())
+                                .unwrap_or_default();
+                            let world = graph.world_transforms()[node];
+                            let mobjs = part_materials(
+                                part_file,
+                                mp.mobjsubs,
+                                mp.costume_matanim_joints,
+                                costume,
+                            );
+                            let single = [PlannedList {
+                                node,
+                                dl: mp.dl.1,
+                                space: Some(node),
+                                world,
+                                list_id: None,
+                            }];
+                            ssb_rom::mesh::convert_sequence(
+                                &[ssb_rom::mesh::SequenceItem {
+                                    cmds: &cmds,
+                                    world,
+                                    mobjs: &mobjs,
+                                    mat_anims: &vec![None; mobjs.len()],
+                                    depth_seed: None,
+                                    stream: 0,
+                                }],
+                                ssb_rom::mesh::Source::of(part_file),
+                                initial,
+                            )
+                            .into_iter()
+                            .next()
+                            .and_then(Result::ok)
+                            .map(|mut m| {
+                                map_vertex_bindings(&mut m, &single);
+                                m
+                            })
+                        };
+                        let Some(m) = converted.filter(|m| m.triangle_count() != 0) else {
+                            model_parts_empty += 1;
+                            continue;
+                        };
+                        let fallback = stored_first
+                            .as_ref()
+                            .or(own_by_costume[costume as usize][node].as_ref());
+                        if fallback == Some(&m) {
+                            continue;
+                        }
+                        let mesh = pack_mesh(
+                            &mut writer,
+                            &mut tex_index,
+                            &mut mat_anim_index,
+                            &mat_anim_data,
+                            Texels {
+                                home: part_file,
+                                all: &loaded.files,
+                            },
+                            mp.dl.0,
+                            mp.dl.1,
+                            &m,
+                            swizzle,
+                        );
+                        writer.add_costume_override(
+                            first_node + node as u32,
+                            ssb_rom::pack::modelpart_costume(part, costume),
+                            mesh,
+                        );
+                        if costume == 0 {
+                            stored_first = Some(m);
+                        }
+                        model_parts_added += 1;
                     }
-                    if costume != 0 && first.as_ref() == Some(m) {
-                        continue;
-                    }
-                    if costume == 0 {
-                        first = Some(m.clone());
-                    }
-                    let mesh = pack_mesh(
-                        &mut writer,
-                        &mut tex_index,
-                        &mut mat_anim_index,
-                        &mat_anim_data,
-                        Texels {
-                            home: file,
-                            all: &loaded.files,
-                        },
-                        id,
-                        mp.dl.1,
-                        m,
-                        swizzle,
-                    );
-                    writer.add_costume_override(
-                        first_node + node as u32,
-                        ssb_rom::pack::modelpart_costume(part, costume),
-                        mesh,
-                    );
-                    copy_hats_added += 1;
                 }
             }
         }
@@ -3942,7 +4264,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
          ({skeleton_parts_dropped} pre-matrix lists with triangles dropped)",
         skeleton_fighters.len()
     );
-    println!("  copy hats   {copy_hats_added} Kirby copy-hat meshes");
+    println!(
+        "  model parts {model_parts_added} fighter model-part meshes \
+         ({model_parts_empty} costumes with no triangles), {accessories_added} accessory meshes"
+    );
 
     // Stages last: a layer can only be resolved once every object exists.
     let mut stage_layers = 0usize;
@@ -4417,6 +4742,53 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &joints,
             );
         }
+    }
+
+    // RE-425: the entry makers' own tables and single scripts
+    // (`ssb_rom::effect::ENTRY_ANIMS`), on their trees' packed nodes. The
+    // Arwing's tables live in file 346 and drive file 161's tree.
+    for &(slot, (file_id, graph_at), anim_file, table, singles) in &ssb_rom::effect::ENTRY_ANIMS {
+        let file = loaded
+            .files
+            .get(anim_file as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("entry anim {slot:#X}: file {anim_file} missing"))?;
+        let graph = loaded
+            .graphs
+            .get(&file_id)
+            .and_then(|graphs| graphs.iter().find(|graph| graph.offset == graph_at))
+            .ok_or_else(|| format!("entry anim {slot:#X}: graph missing"))?;
+        let object = object_index
+            .get(&(file_id, graph_at))
+            .and_then(|&index| writer.object(index))
+            .ok_or_else(|| format!("entry anim {slot:#X}: packed object missing"))?;
+        let mut joints: Vec<_> = table
+            .map(|table| ssb_rom::objanim::joint_scripts(&file.data, table, graph.nodes.len()))
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+            .filter_map(|(node, script)| {
+                script.map(|script| (Some(script), Some(object.first_node + node as u32)))
+            })
+            .collect();
+        joints.extend(
+            singles
+                .iter()
+                .map(|&(script, node)| (Some(script), Some(object.first_node + node))),
+        );
+        if joints.is_empty() {
+            return Err(format!("entry anim {slot:#X}: no animation scripts").into());
+        }
+        effect_anim_joints += joints.len();
+        effect_anims += 1;
+        writer.add_anim(
+            ssb_rom::pack::AnimDesc::EFFECT,
+            slot,
+            anim_file,
+            0,
+            &file.data,
+            &joints,
+        );
     }
 
     // Weapon DObj trees animate through `WPAttributes.anim_joints`
