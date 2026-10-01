@@ -52,6 +52,14 @@ Manager descriptors, transforms, material/texture/colour animation, all 160
 `LBParticle` scripts, `LBGenerator` spawn trees and PSP drawing are
 implemented (RE-172–189). Remaining effect call sites belong to gameplay.
 
+Matches load the common bank as runtime bank 0 and Yoshi's `particles_unk2`
+(pack bank 3) as runtime bank 1. Egg Throw's explosion uses Yoshi script 3;
+shield release uses common script 0x54. The roll egg draws on link 15 at
+fighter joint 5, scaled 1.5 and spun from that joint's signed local X
+rotation, with the shield's health-dependent ENV colour. Skeleton poses
+are looked up by model node: animation indices omit runtime joints and
+cannot be treated as fighter joint indices (RE-427).
+
 ## Shadows
 
 Status: complete for the Training runtime (RE-302).

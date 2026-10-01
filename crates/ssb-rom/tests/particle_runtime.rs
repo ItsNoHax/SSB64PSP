@@ -22,22 +22,29 @@ struct PackBanks<'p, 'a> {
     common: ParticleBankDesc,
 }
 
+impl PackBanks<'_, '_> {
+    fn bank(&self, id: u8) -> Option<ParticleBankDesc> {
+        match id {
+            0 => Some(self.common),
+            effect::YOSHI_PARTICLE_BANK => self.pack.particle_bank(3),
+            _ => None,
+        }
+    }
+}
+
 impl Banks for PackBanks<'_, '_> {
     fn script_count(&self, bank: u8) -> u16 {
-        if bank == 0 {
-            self.common.script_count as u16
-        } else {
-            0
-        }
+        self.bank(bank).map_or(0, |b| b.script_count as u16)
     }
 
     fn script(&self, bank: u8, id: u16) -> Option<Script<'_>> {
-        if bank != 0 || u32::from(id) >= self.common.script_count {
+        let bank = self.bank(bank)?;
+        if u32::from(id) >= bank.script_count {
             return None;
         }
         let s = self
             .pack
-            .particle_script(self.common.first_script + u32::from(id))?;
+            .particle_script(bank.first_script + u32::from(id))?;
         Some(Script {
             kind: s.kind,
             texture_id: s.texture_id,
@@ -56,11 +63,11 @@ impl Banks for PackBanks<'_, '_> {
     }
 
     fn texture_flags(&self, bank: u8, texture: u16) -> u32 {
-        if bank != 0 {
+        let Some(bank) = self.bank(bank) else {
             return 0;
-        }
+        };
         self.pack
-            .particle_texture(self.common.first_texture + u32::from(texture))
+            .particle_texture(bank.first_texture + u32::from(texture))
             .map_or(0, |t| t.flags)
     }
 }
@@ -111,6 +118,53 @@ fn run_until_empty(p: &mut Particles, e: &mut Effects, banks: &dyn Banks, census
 
 fn open(bytes: &[u8]) -> Pack<'_> {
     Pack::open(bytes).unwrap()
+}
+
+/// `dFTYoshiData` names `particles_unk2`. An explosion must use that
+/// bank's script and textures, not common-bank script 3.
+#[test]
+fn yoshi_explosion_runs_the_packed_fighter_bank_and_ends() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = open(&bytes);
+    let banks = PackBanks {
+        pack: &pack,
+        common: pack.particle_bank(0).unwrap(),
+    };
+    let rom = std::fs::read(std::env::var_os("SSB64_ROM").unwrap()).unwrap();
+    let (scripts, textures) =
+        ssb_rom::particle::decode_bank(&rom, ssb_rom::particle::BANKS[3]).unwrap();
+    let expected = &scripts[3];
+    let actual = banks.script(effect::YOSHI_PARTICLE_BANK, 3).unwrap();
+    assert_eq!(actual.bytecode, expected.bytecode);
+    assert_eq!(actual.flags, expected.flags);
+    assert_eq!(actual.texture_id, expected.texture_id);
+    let packed_bank = pack.particle_bank(3).unwrap();
+    assert_eq!(packed_bank.texture_count as usize, textures.len());
+    let mut p = Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    ssb_game::rng::set_seed(1);
+    let pos = Vec3::new(800.0, 200.0, 30.0);
+    wpeffect::make(&WeaponEffect::YoshiEggExplode(pos), &mut e, &mut p, &banks);
+    assert!(p.used_num > 0);
+    let (_, pc) = (0..lb::LINKS_NUM).flat_map(|l| p.list(l)).next().unwrap();
+    assert_eq!(pc.bank_id & 7, effect::YOSHI_PARTICLE_BANK);
+    assert_eq!(p.transform(pc.xf).translate, pos);
+    assert_eq!(
+        e.free_num as usize,
+        effect::EFFECT_ALLOC_NUM,
+        "no effect struct is held"
+    );
+    let mut census = Census::default();
+    run_until_empty(&mut p, &mut e, &banks, &mut census);
+    assert_eq!(
+        census.flags
+            & (flag::VORTEX | flag::ATTACH | flag::NOISE | flag::ALPHABLEND | flag::DITHER),
+        0
+    );
+    assert_eq!(census.frames, 18);
+    assert_eq!(census.structs_max, 3);
+    assert_eq!(census.transforms_max, 1);
+    eprintln!("Yoshi explosion: {census:?}");
 }
 
 /// Each maker a match reaches, run alone to its end: no script it reaches

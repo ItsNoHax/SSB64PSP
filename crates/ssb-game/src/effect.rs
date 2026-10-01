@@ -37,6 +37,10 @@ pub const EFFECT_ALLOC_NUM: usize = 38;
 /// many structs free.
 const NO_FORCE_RESERVE: u8 = 5;
 
+/// Match bank assigned to `dFTYoshiData`'s `particles_unk2` pair.
+/// The common bank remains 0; bank IDs are local to the match runtime.
+pub const YOSHI_PARTICLE_BANK: u8 = 1;
+
 /// `dEFManagerDamageNormalLightIDs`, by the attacker's player.
 pub const NORMAL_LIGHT_IDS: [u16; 4] = [0x49, 0x4A, 0x4B, 0x4C];
 /// `efManagerDamageNormalHeavyMakeEffect`'s script.
@@ -191,7 +195,15 @@ impl Effects {
 
     /// `efManagerGetNextStructAlloc(FALSE)`.
     fn get_no_force(&mut self) -> Option<u8> {
-        if self.free_num < NO_FORCE_RESERVE || self.free == NIL {
+        if self.free_num < NO_FORCE_RESERVE {
+            return None;
+        }
+        self.get_force()
+    }
+
+    /// `efManagerGetNextStructForce`: the last four are available too.
+    fn get_force(&mut self) -> Option<u8> {
+        if self.free == NIL {
             return None;
         }
         let i = self.free;
@@ -642,6 +654,21 @@ impl Effects {
         pc
     }
 
+    /// `efManagerYoshiEggExplodeMakeEffect`: Yoshi's script 3, first
+    /// processed under a ready transform, then placed. No EFStruct.
+    pub fn yoshi_egg_explode(&mut self, p: &mut Particles, banks: &dyn Banks, pos: Vec3) -> u8 {
+        self.start_bare(
+            p,
+            banks,
+            YOSHI_PARTICLE_BANK,
+            3,
+            TransformStatus::Ready,
+            |t| {
+                t.translate = pos;
+            },
+        )
+    }
+
     /// Makes one hit effect ([`HitEffect`]). The display effects (the
     /// slash, the orbs, the sparks and the metal dust) are not ported.
     pub fn make_hit(&mut self, p: &mut Particles, banks: &dyn Banks, e: &HitEffect) {
@@ -944,6 +971,9 @@ pub enum DisplayKind {
     /// out, which ends by its own lifetime and picks a random frame while
     /// its texture is not 3. Its model is Pikachu's; not drawn (RE-416).
     ThunderTrail,
+    /// `dEFManagerYoshiEggEscapeEffectDesc`: forced, attached to joint 5,
+    /// no process or animation. Stopped by `ftParamProcStopEffect`.
+    YoshiEggEscape,
 }
 
 /// `gcPlayAnimAll` calls until each display effect's animation reaches its
@@ -981,7 +1011,8 @@ impl DisplayKind {
             | DisplayKind::FlyMDust
             | DisplayKind::StarRodSpark
             | DisplayKind::FireSpark
-            | DisplayKind::ThunderTrail => 15,
+            | DisplayKind::ThunderTrail
+            | DisplayKind::YoshiEggEscape => 15,
             DisplayKind::SpawnOrbs
             | DisplayKind::SpawnSparks
             | DisplayKind::SpawnMDust
@@ -1004,7 +1035,8 @@ impl DisplayKind {
             | DisplayKind::FlyOrbs
             | DisplayKind::SpawnSparks
             | DisplayKind::SpawnMDust
-            | DisplayKind::ThunderTrail => return None,
+            | DisplayKind::ThunderTrail
+            | DisplayKind::YoshiEggEscape => return None,
         })
     }
 
@@ -1017,6 +1049,7 @@ impl DisplayKind {
                 | DisplayKind::SpawnSparks
                 | DisplayKind::SpawnMDust
                 | DisplayKind::ThunderTrail
+                | DisplayKind::YoshiEggEscape
         )
     }
 }
@@ -1121,6 +1154,8 @@ impl Effects {
         };
         let ep = if kind == DisplayKind::Slash {
             NIL
+        } else if kind == DisplayKind::YoshiEggEscape {
+            self.get_force()?
         } else {
             self.get_no_force()?
         };
@@ -1152,6 +1187,7 @@ impl Effects {
             return;
         };
         match d.kind {
+            DisplayKind::YoshiEggEscape => {}
             DisplayKind::ShockSmall
             | DisplayKind::Slash
             | DisplayKind::FlySparks
@@ -1277,6 +1313,30 @@ impl Effects {
                     }
                 }
                 self.spawner_tick(i, d);
+            }
+        }
+    }
+
+    /// `efManagerYoshiEggEscapeMakeEffect`: keep the forced struct until
+    /// the fighter stops attached effects. Hiding happens only on success.
+    pub fn yoshi_egg_escape(&mut self, owner: u8) -> bool {
+        let Some(i) = self.make_display(DisplayKind::YoshiEggEscape) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.owner = owner;
+        d.scale = Vec3::new(1.5, 1.5, 1.0);
+        true
+    }
+
+    /// The roll egg's `ftParamProcStopEffect`, including every attached
+    /// egg for this port, as the source walks the effect link.
+    pub fn stop_yoshi_egg_escape(&mut self, owner: u8) {
+        for i in 0..DISPLAY_MAX {
+            if self.displays[i]
+                .is_some_and(|d| d.kind == DisplayKind::YoshiEggEscape && d.owner == owner)
+            {
+                self.eject_display(i);
             }
         }
     }

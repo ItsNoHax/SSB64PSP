@@ -1979,7 +1979,15 @@ pub fn guard_update_shield_vars(f: &mut Fighter) {
     }
     if lag_end {
         if f.kind == crate::fighter::FighterKind::Yoshi {
+            // The port's raised egg shield is the live attachment (RE-418).
+            // `ftCommonGuardUpdateShieldVars` places shell fragments at YRotN.
+            f.model_parts.reset_all();
             crate::hurtbox::set_hit_status_part_all(f, crate::combat::HitStatus::Normal);
+            let pos = f.joint_world(3, ssb_engine::math::Vec3::ZERO);
+            f.effects.push(crate::fteffect::FighterEffect::At {
+                kind: crate::fteffect::kind::EGG_BREAK,
+                pos,
+            });
         }
         f.guard.is_shield = false;
     }
@@ -3582,6 +3590,7 @@ pub fn set_any_status_preserve(
         preserve.colanim || crate::colanim::preserved(f.kind, f.status.status, status);
     crate::colanim::on_set_status(f, keep_colanim);
     crate::modelpart::on_set_status(f, status);
+    crate::fteffect::on_set_status(f, status);
     f.damage_knockback_stack = 0.0;
     f.damage_mul = 1.0;
     f.damage_e_status = None;

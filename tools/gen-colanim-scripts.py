@@ -308,6 +308,7 @@ def main():
     w.extend(preserve_table(args.refs))
     w.extend(preserve_table(args.refs, "PRESERVE_MODELPART"))
     w.extend(preserve_table(args.refs, "PRESERVE_TEXTUREPART"))
+    w.extend(preserve_table(args.refs, "PRESERVE_EFFECT"))
     with open(OUT, "w") as f:
         f.write("".join(w))
     print(f"wrote {OUT}: {len(scripts)} scripts, {len(descs)} descs")

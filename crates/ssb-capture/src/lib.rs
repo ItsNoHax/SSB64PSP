@@ -402,6 +402,11 @@ pub enum GameScene {
     /// `yoshishield`: Yoshi in Training holding his egg shield until its
     /// health has worn and the egg has darkened (RE-418).
     YoshiShield,
+    /// `yoshirollf` / `yoshirollb`: guard then roll in either direction.
+    YoshiRollF,
+    YoshiRollB,
+    /// `yoshishieldbreak`: release the egg shield and draw its fragments.
+    YoshiShieldBreak,
     /// `vsshield`: a VS battle whose player holds his shield from "Go",
     /// caught on the frame a CPU's hit sets it off, in the grey damage
     /// colour (RE-418).
@@ -477,7 +482,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 76] = [
+    pub const ALL: [GameScene; 79] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -530,6 +535,9 @@ impl GameScene {
         GameScene::KirbyHat,
         GameScene::YoshiEgg,
         GameScene::YoshiShield,
+        GameScene::YoshiRollF,
+        GameScene::YoshiRollB,
+        GameScene::YoshiShieldBreak,
         GameScene::VsShield,
         GameScene::StageSelectView,
         GameScene::StageSelectYoshi,
@@ -610,6 +618,9 @@ impl GameScene {
             GameScene::KirbyHat => "kirbyhat",
             GameScene::YoshiEgg => "yoshiegg",
             GameScene::YoshiShield => "yoshishield",
+            GameScene::YoshiRollF => "yoshirollf",
+            GameScene::YoshiRollB => "yoshirollb",
+            GameScene::YoshiShieldBreak => "yoshishieldbreak",
             GameScene::VsShield => "vsshield",
             GameScene::StageSelectView => "stageselectview",
             GameScene::StageSelectYoshi => "stageselectyoshi",

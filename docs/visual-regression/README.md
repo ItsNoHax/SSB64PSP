@@ -950,3 +950,22 @@ All seventeen reject a scratch pack with texture variants, low model
 selection and new demo hands disabled; the two new goldens reject it by
 4 and 9,292 pixels at 2× respectively. Two separate final paired runs
 pass 145/145, with no differing pixels between paired captures.
+
+## 2026-10-01 RE-427 Yoshi egg effects
+
+Unchanged pack v78. Four new game goldens:
+
+| Golden | Scene | Visible behavior | Disabled-effect pixels at 2× |
+|---|---|---|---:|
+| `f1-training-yoshi-roll-forward` | `yoshirollf` (69) | Joint-5 egg with forward-roll spin; hidden Yoshi | 4,396 |
+| `f1-training-yoshi-roll-backward` | `yoshirollb` (69) | Joint-5 egg with backward-roll spin; hidden Yoshi | 4,468 |
+| `f1-training-yoshi-shield-break` | `yoshishieldbreak` (84) | Shell fragments after releasing Z at 80 | 1,524 |
+| `f1-training-yoshi-explosion` | `yoshi@88` | Yoshi-bank pink/green burst alongside common shell fragments | 26,388 |
+
+The shield-break scene means shell breakup on release, not shield depletion.
+Eleven targeted Yoshi, Luigi, Fireball and shield-damage scenes match twice
+in run `20261001-201622`. No existing PNG is rebaselined. Scratch copies
+disable the egg indices, common script 0x54 or Yoshi script 3, and all four
+new scenes reject their corresponding copy. The manifest has 149 scenes;
+this batch does not rerun the full matrix. Source mapping, original-game
+angles and capture limits are in [RE-427](../evidence/re/RE-427.md).

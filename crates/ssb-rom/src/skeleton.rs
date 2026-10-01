@@ -251,6 +251,15 @@ impl Skeleton {
             .filter(|&n| n != AnimJoint::NO_NODE)
     }
 
+    /// The local pose of a model node. Figatrees can omit runtime joints,
+    /// so their animation indices are not `FTStruct::joints` indices.
+    pub fn node_pose(&self, node: u32) -> Option<&JointPose> {
+        self.nodes[..self.joint_count]
+            .iter()
+            .position(|&n| n == node)
+            .map(|i| &self.poses[i])
+    }
+
     /// Rebuilds `out[0..object.node_count]` from the current poses.
     ///
     /// Nodes an animation does not drive keep their rest transform, so this is
