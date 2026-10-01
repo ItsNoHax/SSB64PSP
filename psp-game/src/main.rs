@@ -1902,6 +1902,9 @@ unsafe fn training_frame(
             }
         } else if status == GameStatus::Go {
             pl.camera.pause_eye = pause.origin;
+            if pause.kind == ssb_game::pause::PauseKind::Default {
+                pl.fighter.model_parts.set_detail_all(pause.detail);
+            }
             damage_hud.pause = None;
         }
     }
@@ -2041,6 +2044,9 @@ struct PauseState {
     kind: ssb_game::pause::PauseKind,
     /// `sIFCommonBattlePauseCameraEyeXOrigin`/`YOrigin`.
     origin: (f32, f32),
+    /// `sIFCommonBattlePausePlayerDetail`: the zoomed player draws at high
+    /// detail until the battle resumes (RE-426).
+    detail: ssb_game::modelpart::Detail,
 }
 
 /// `ifCommonBattleGoUpdateInterface`'s START and
@@ -2072,10 +2078,17 @@ fn pause_frame(
     };
     match b.status {
         GameStatus::Go if pressed.contains(N64Buttons::START) => {
+            let kind = pause::kind_for(pl.fighter.pos, bounds);
             hud.pause = Some(PauseState {
-                kind: pause::kind_for(pl.fighter.pos, bounds),
+                kind,
                 origin: pl.camera.pause_eye,
+                detail: pl.fighter.model_parts.detail_curr,
             });
+            if kind == PauseKind::Default {
+                pl.fighter
+                    .model_parts
+                    .set_detail_all(ssb_game::modelpart::Detail::High);
+            }
             b.pause();
         }
         GameStatus::Pause => {
@@ -2594,6 +2607,13 @@ fn enter_training(
     let Some(pl) = world.play_state.as_mut() else {
         return index;
     };
+    // `desc.detail` (`scvsbattle.c:188`, `sc1ptrainingmode.c:1809`): low
+    // detail with three or four fighters (RE-426).
+    let detail = ssb_game::modelpart::Detail::for_fighters(roster.iter().flatten().count());
+    for f in scenes(pl, world.dummies).into_iter().flatten() {
+        f.fighter.model_parts.detail_curr = detail;
+        f.fighter.model_parts.detail_base = detail;
+    }
     *battle = vs.map(|rules| {
         // `scVSBattleStartBattle`: each fighter faces the nearest other
         // player's spawn (`scVSBattleGetStartPlayerLR`), and a stock
@@ -5275,6 +5295,13 @@ unsafe fn draw_fighter_model(
     };
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
     let n = f.compose_model(p, &obj, &mut posed);
+    // RE-426: the low-detail model, posed by the high-detail one's nodes.
+    let drawn = ssb_psp_runtime::scene::fighter_draw_object(
+        f.object,
+        f.object_low,
+        f.fighter.model_parts.detail_curr,
+    );
+    let obj = p.object(drawn).unwrap_or(obj);
     if let Some(joint) = f
         .fighter
         .grab
@@ -5313,6 +5340,7 @@ unsafe fn draw_fighter_model(
         draw_state,
         meshdraw::Look {
             costume: fighter_draw_costume(p, &obj, &f.fighter),
+            textures: f.fighter.model_parts.draw_textures(),
             parts: parts.as_ref().map(|p| &p[..]),
             accessory_before: f.fighter.kind == ssb_game::fighter::FighterKind::Purin,
         },

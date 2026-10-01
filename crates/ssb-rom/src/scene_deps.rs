@@ -126,6 +126,15 @@ impl SceneDeps {
         }
     }
 
+    /// [`Self::add_fighter`] at low detail: the fighter's low-detail
+    /// object (`FighterModelDesc`, RE-426).
+    pub fn add_fighter_low(&mut self, pack: &Pack<'_>, kind: u32, costume: u32) {
+        match pack.fighter_model(kind).filter(|m| m.low != u32::MAX) {
+            Some(m) => self.add_object(pack, m.low, costume),
+            None => self.unresolved += 1,
+        }
+    }
+
     /// Adds a stage's layer objects (`StageDesc::layers`, `u32::MAX` for an
     /// empty layer).
     pub fn add_stage(&mut self, pack: &Pack<'_>, stage: u32) {
@@ -156,6 +165,14 @@ impl SceneDeps {
             self.prims.insert(prim);
             if p.texture != PrimDesc::NO_TEXTURE {
                 self.add_texture(pack, p.texture);
+            }
+            // A texture part's other sprites (RE-426).
+            if let Some(t) = pack.texture_part(mesh, prim - m.first_prim) {
+                for &texture in &t.textures {
+                    if texture != crate::pack::TextureDesc::NO_ANIM {
+                        self.add_texture(pack, texture);
+                    }
+                }
             }
             if p.mat_anim != TextureDesc::NO_ANIM {
                 self.add_mat_anim(pack, p.mat_anim);

@@ -672,6 +672,36 @@ pub fn access_part(main: &File, entry: FighterFile) -> Option<AccessPart> {
     })
 }
 
+/// `FTAttributes::textureparts_container`, after `accesspart` (RE-426).
+pub const TEXTUREPARTS_OFFSET: u32 = 0x330;
+
+/// `FTTexturePart`: the joint whose `MObj` chain holds a face texture, and
+/// that `MObj`'s position in the chain at high (`detail[0]`) and low
+/// (`detail[1]`) detail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TexturePart {
+    pub joint: u8,
+    pub detail: [u8; 2],
+}
+
+/// `textureparts_container->textureparts[0..2]` (3 bytes each), or `None`
+/// when the container is NULL (Donkey Kong, Samus). The container is the
+/// struct's full two entries even where the decompilation declares one: a
+/// fighter whose scripts set only part 0 (Mario, Luigi, Kirby, Captain
+/// Falcon, Ness) reads the bytes that follow for part 1, and never uses
+/// them.
+pub fn texture_parts(main: &File, entry: FighterFile) -> Option<[TexturePart; 2]> {
+    let (file, at) = crate::sprite::pointer_place(main, entry.offset + TEXTUREPARTS_OFFSET)?;
+    if file != main.id {
+        return None;
+    }
+    let raw = main.data.get(at as usize..at as usize + 6)?;
+    Some(core::array::from_fn(|i| TexturePart {
+        joint: raw[3 * i],
+        detail: [raw[3 * i + 1], raw[3 * i + 2]],
+    }))
+}
+
 /// Decodes one fighter out of a loaded archive file.
 pub fn decode_file(entry: FighterFile, file: &File) -> Result<Fighter, FighterError> {
     let attributes = FighterAttributes::decode(&file.data, entry.file, entry.offset)?;

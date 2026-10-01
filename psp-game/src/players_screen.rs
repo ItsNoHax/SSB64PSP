@@ -60,6 +60,8 @@ pub struct Model {
     slot: Option<u32>,
     skips_scales: bool,
     skeleton: Skeleton,
+    /// The demo status script's parts (RE-426).
+    demo: ssb_game::modelpart::DemoParts,
 }
 
 /// The four slots' poses.
@@ -107,6 +109,7 @@ fn tick_models(pack: Option<&Pack<'_>>, fighters: &[Option<layer::Fighter>; 4], 
             *model = Some(make_model(p, fighter));
         } else if let Some(m) = model.as_deref_mut() {
             play(p, m);
+            m.demo.tick();
         }
     }
 }
@@ -130,6 +133,10 @@ fn make_model(p: &Pack<'_>, fighter: layer::Fighter) -> Box<Model> {
             .status
             .is_some_and(|s| s.skips_translate_scales(fighter.kind)),
         skeleton: Skeleton::new(),
+        demo: ssb_game::modelpart::DemoParts::start(
+            fighter.kind,
+            fighter.status.map_or(0, |s| 1 + s.index()),
+        ),
     });
     if let Some(anim) = p.fighter_anim(kind, slot) {
         m.skeleton.start(p, &anim, 0.0, 1.0);
@@ -322,8 +329,9 @@ unsafe fn draw_fighters(
             // The view looks down -z from `CAMERA.eye`.
             gpu.set_constant_fog(cam.eye.z - shown.position[2], rgba);
         }
-        // A demo fighter's model parts and accessory (RE-425).
-        let parts = ssb_game::modelpart::demo(fighter.kind).draw_parts();
+        // A demo fighter's model and texture parts (RE-426) and accessory
+        // (RE-425).
+        let parts = m.demo.parts.draw_parts();
         meshdraw::draw_fighter_posed(
             p,
             &obj,
@@ -332,6 +340,7 @@ unsafe fn draw_fighters(
             draw_state,
             meshdraw::Look {
                 costume: u32::from(shown.costume),
+                textures: m.demo.parts.draw_textures(),
                 parts: parts.as_ref().map(|p| &p[..]),
                 accessory_before: fighter.kind == ssb_game::fighter::FighterKind::Purin,
             },

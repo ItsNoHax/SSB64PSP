@@ -646,6 +646,10 @@ pub struct MeshMaterial {
     /// Which texture state still comes from [`Self::mat_anim`]'s `MObj`
     /// (RE-326). Always all-false without a `mat_anim`.
     pub anim_texture: AnimTexture,
+    /// The bound image is a fighter texture part's `MObj` sprite (RE-426):
+    /// set while that `MObj`'s `sprites[0]` is the image, cleared by a
+    /// display list's own `G_SETTIMG` or another `MObj`.
+    pub texture_part: Option<crate::mobj::TexturePartTag>,
 }
 
 /// Texture state an animated `MObj` set and nothing has replaced since
@@ -1811,7 +1815,10 @@ impl State {
                 self.material.anim_texture.palette = true;
             }
         }
+        self.material.texture_part = None;
         if let Some(sprite) = m.sprite {
+            // RE-426: a texture part's `MObj` owns the image it names.
+            self.material.texture_part = m.texture_part;
             // `gcDrawMObjForDObj` block-loads its sprite over TMEM.
             self.load_tile = None;
             self.timg_addr = Some(sprite.offset);
@@ -1900,6 +1907,7 @@ impl State {
         self.material.mat_anim = None;
         self.material.anim_colors = AnimColors::default();
         self.material.anim_texture = AnimTexture::default();
+        self.material.texture_part = None;
         self.real_timg_mobj = false;
         self.timg_mobj_palette = false;
     }
@@ -2074,6 +2082,10 @@ impl State {
             lod_blend,
             anim_colors,
             anim_texture,
+            texture_part: self
+                .material
+                .texture_part
+                .filter(|_| texture.is_some() && flat_color.is_none() && self.real_timg_mobj),
             ..self.material
         }
     }
@@ -2929,6 +2941,7 @@ fn walk(
                 // `MObj`'s.
                 state.real_timg_mobj = false;
                 state.timg_mobj_palette = false;
+                state.material.texture_part = None;
                 if addr.segment() == crate::mobj::LB_TRANSITION_SEGMENT {
                     // The LB "loading transition" system binds this segment to
                     // a one-time CPU-side snapshot of the framebuffer

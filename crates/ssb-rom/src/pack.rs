@@ -41,6 +41,8 @@
 //! ParticleTextureDesc[particle_texture_count]
 //! LodBlendDesc[lod_blend_count]
 //! SpriteDesc[sprite_count]
+//! TexturePartDesc[texture_part_count]
+//! FighterModelDesc[fighter_model_count]
 //! ---- 16-byte aligned blob region ----
 //! vertex data | index data | texel data | palette data | animation scripts
 //! ```
@@ -322,7 +324,16 @@ pub const MAGIC: u32 = 0x5342_5350;
 // overrides, the headgear accessories (Pikachu's hat, Jigglypuff's bow) as
 // `accessory_costume` overrides for every costume but 0, and the entry
 // vehicles' animations (RE-425). No layout change.
-pub const VERSION: u32 = 77;
+// 78 adds the `TexturePartDesc` table after the sprites (the header grows
+// to 100 bytes): each fighter primitive whose image is a texture part's
+// `MObj` sprite, with that sprite's textures by `texture_id` (eyes and
+// mouths, `ftParamSetTexturePartID`). It also converts the fighters'
+// low-detail graphs with the high-detail list of every joint whose
+// low-detail descriptor has none, gives them the high-detail graph's
+// model parts, accessories and electric skeletons, and names each
+// fighter's two objects in a `FighterModelDesc` table after it (the
+// header grows to 104 bytes) (RE-426).
+pub const VERSION: u32 = 78;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -345,7 +356,8 @@ pub const VERTEX_SIZE: usize = 20;
 /// `mat_anim_palette_count` (`VERSION` 12) extend it to 72, and
 /// `costume_override_count` (`VERSION` 13) to 76, three particle counts
 /// (`VERSION` 25) to 88, `lod_blend_count` (`VERSION` 33) to 92, and
-/// `sprite_count` (`VERSION` 61) to 96. The original 64 was a coincidence of having exactly
+/// `sprite_count` (`VERSION` 61) to 96, `texture_part_count` and
+/// `fighter_model_count` (`VERSION` 78) to 104. The original 64 was a coincidence of having exactly
 /// 16 `u32` fields, not a hard alignment requirement (only the blob region,
 /// computed separately via `blob_offset`, needs 16-byte alignment for GE DMA).
 #[repr(C)]
@@ -386,10 +398,14 @@ pub struct Header {
     pub lod_blend_count: u32,
     /// `SObj` sprites (RE-392).
     pub sprite_count: u32,
+    /// Fighter texture-part primitives (RE-426).
+    pub texture_part_count: u32,
+    /// Fighters' high- and low-detail objects (RE-426).
+    pub fighter_model_count: u32,
 }
 
 impl Header {
-    pub const SIZE: usize = 96;
+    pub const SIZE: usize = 104;
 }
 
 /// A vertex in the GE's expected layout.
@@ -1231,6 +1247,47 @@ impl LodBlendDesc {
     pub const SIZE: usize = 52;
 }
 
+/// A fighter primitive whose image is a texture part's `MObj` sprite
+/// (RE-426): `FTTexturePart` `part` names a joint and, per detail, the
+/// position of the `MObj` in its chain; `ftParamSetTexturePartID` sets that
+/// `MObj`'s `texture_id_curr`, and `gcDrawMObjForDObj` loads
+/// `sprites[texture_id_curr]` (the eyes and mouths). `textures[id]` is that
+/// sprite converted through the primitive's own tile and palette, packed
+/// for every id the fighter's motion scripts set
+/// ([`TextureDesc::NO_ANIM`] elsewhere); id 0 is the primitive's own
+/// texture. Sorted by `(mesh, prim)`; `prim` counts within the mesh.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TexturePartDesc {
+    pub mesh: u32,
+    pub prim: u32,
+    pub part: u32,
+    pub textures: [u32; TexturePartDesc::MAX_IDS],
+}
+
+/// A fighter's two models (RE-426): the objects of its
+/// `FTCommonPartContainer`'s high- and low-detail `FTCommonPart`s, whose
+/// node trees are the same shape. [`NodeDesc::NO_MESH`]-style
+/// `u32::MAX` for a missing one.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FighterModelDesc {
+    /// `FTKind` ordinal.
+    pub kind: u32,
+    pub high: u32,
+    pub low: u32,
+}
+
+impl FighterModelDesc {
+    pub const SIZE: usize = 12;
+}
+
+impl TexturePartDesc {
+    /// The highest `texture_id` a fighter script sets is 11 (RE-426).
+    pub const MAX_IDS: usize = 16;
+    pub const SIZE: usize = 12 + 4 * Self::MAX_IDS;
+}
+
 /// A libultra `Sprite` an `SObj` draws, keyed by where it sits in its file
 /// (RE-392). `texture` holds the image already through the format's
 /// combiner ([`crate::sprite::combined_image`]); a draw modulates it by the
@@ -1867,6 +1924,8 @@ pub struct PackWriter {
     particle_textures: Vec<ParticleTextureDesc>,
     lod_blends: Vec<LodBlendDesc>,
     sprites: Vec<SpriteDesc>,
+    texture_parts: Vec<TexturePartDesc>,
+    fighter_models: Vec<FighterModelDesc>,
     blob: Vec<u8>,
 }
 
@@ -2511,6 +2570,33 @@ impl PackWriter {
         self.sprites.push(desc);
     }
 
+    /// Records that primitive `prim` of mesh `mesh` samples texture part
+    /// `part`'s sprite, with its textures by `texture_id` (RE-426).
+    pub fn add_texture_part(
+        &mut self,
+        mesh: u32,
+        prim: u32,
+        part: u32,
+        textures: [u32; TexturePartDesc::MAX_IDS],
+    ) {
+        self.texture_parts.push(TexturePartDesc {
+            mesh,
+            prim,
+            part,
+            textures,
+        });
+    }
+
+    pub fn texture_part_count(&self) -> usize {
+        self.texture_parts.len()
+    }
+
+    /// Names fighter `kind`'s high- and low-detail objects (RE-426).
+    pub fn add_fighter_model(&mut self, kind: u32, high: u32, low: u32) {
+        self.fighter_models
+            .push(FighterModelDesc { kind, high, low });
+    }
+
     pub fn add_lod_blend(&mut self, desc: LodBlendDesc) -> bool {
         match self.lod_blends.iter().find(|d| d.mat_anim == desc.mat_anim) {
             Some(existing) => *existing == desc,
@@ -2915,7 +3001,9 @@ impl PackWriter {
             + self.particle_scripts.len() * ParticleScriptDesc::SIZE
             + self.particle_textures.len() * ParticleTextureDesc::SIZE
             + self.lod_blends.len() * LodBlendDesc::SIZE
-            + self.sprites.len() * SpriteDesc::SIZE;
+            + self.sprites.len() * SpriteDesc::SIZE
+            + self.texture_parts.len() * TexturePartDesc::SIZE
+            + self.fighter_models.len() * FighterModelDesc::SIZE;
         let blob_offset = align_up(Header::SIZE + table_bytes);
 
         // Sorted by (node, costume) so the reader can binary-search rather
@@ -2923,6 +3011,8 @@ impl PackWriter {
         // place that can still mutate the list before it is written.
         let mut costume_overrides = self.costume_overrides;
         costume_overrides.sort_unstable_by_key(|o| (o.node, o.costume));
+        let mut texture_parts = self.texture_parts;
+        texture_parts.sort_unstable_by_key(|t| (t.mesh, t.prim));
 
         let mut out = Vec::with_capacity(blob_offset + self.blob.len());
 
@@ -2951,6 +3041,8 @@ impl PackWriter {
         out.extend_from_slice(&(self.particle_textures.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.lod_blends.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.sprites.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(texture_parts.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.fighter_models.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -3210,6 +3302,16 @@ impl PackWriter {
             out.extend_from_slice(&sp.flags.to_le_bytes());
             out.extend_from_slice(&[sp.fighter, sp.role, sp.costume, 0]);
         }
+        for t in &texture_parts {
+            for v in [t.mesh, t.prim, t.part].into_iter().chain(t.textures) {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        for m in &self.fighter_models {
+            for v in [m.kind, m.high, m.low] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
 
         out.resize(blob_offset, 0);
         out.extend_from_slice(&self.blob);
@@ -3273,6 +3375,8 @@ pub struct Pack<'a> {
     particle_texture_count: u32,
     lod_blend_count: u32,
     sprite_count: u32,
+    texture_part_count: u32,
+    fighter_model_count: u32,
     blob_offset: usize,
     blob_len: usize,
 }
@@ -3335,6 +3439,8 @@ impl<'a> Pack<'a> {
         let particle_texture_count = u32_at(data, 84);
         let lod_blend_count = u32_at(data, 88);
         let sprite_count = u32_at(data, 92);
+        let texture_part_count = u32_at(data, 96);
+        let fighter_model_count = u32_at(data, 100);
 
         let tables_end = Header::SIZE
             + mesh_count as usize * MeshDesc::SIZE
@@ -3356,7 +3462,9 @@ impl<'a> Pack<'a> {
             + particle_script_count as usize * ParticleScriptDesc::SIZE
             + particle_texture_count as usize * ParticleTextureDesc::SIZE
             + lod_blend_count as usize * LodBlendDesc::SIZE
-            + sprite_count as usize * SpriteDesc::SIZE;
+            + sprite_count as usize * SpriteDesc::SIZE
+            + texture_part_count as usize * TexturePartDesc::SIZE
+            + fighter_model_count as usize * FighterModelDesc::SIZE;
 
         if blob_offset < tables_end || blob_offset.saturating_add(blob_len) > data.len() {
             return Err(PackError::OutOfBounds);
@@ -3384,6 +3492,8 @@ impl<'a> Pack<'a> {
             particle_texture_count,
             lod_blend_count,
             sprite_count,
+            texture_part_count,
+            fighter_model_count,
             blob_offset,
             blob_len,
         })
@@ -3501,6 +3611,24 @@ impl<'a> Pack<'a> {
     }
     fn sprite_table(&self) -> usize {
         self.lod_blend_table() + self.lod_blend_count as usize * LodBlendDesc::SIZE
+    }
+    fn texture_part_table(&self) -> usize {
+        self.sprite_table() + self.sprite_count as usize * SpriteDesc::SIZE
+    }
+    fn fighter_model_table(&self) -> usize {
+        self.texture_part_table() + self.texture_part_count as usize * TexturePartDesc::SIZE
+    }
+
+    /// Fighter `kind`'s high- and low-detail objects (RE-426).
+    pub fn fighter_model(&self, kind: u32) -> Option<FighterModelDesc> {
+        (0..self.fighter_model_count).find_map(|i| {
+            let at = self.fighter_model_table() + i as usize * FighterModelDesc::SIZE;
+            (u32_at(self.data, at) == kind).then(|| FighterModelDesc {
+                kind,
+                high: u32_at(self.data, at + 4),
+                low: u32_at(self.data, at + 8),
+            })
+        })
     }
     fn line_table(&self) -> usize {
         self.stage_table() + self.stage_count as usize * StageDesc::SIZE
@@ -4103,6 +4231,62 @@ impl<'a> Pack<'a> {
 
     pub fn sprite_count(&self) -> u32 {
         self.sprite_count
+    }
+
+    pub fn texture_part_count(&self) -> u32 {
+        self.texture_part_count
+    }
+
+    /// The `i`th [`TexturePartDesc`], in `(mesh, prim)` order.
+    pub fn texture_part_at(&self, i: u32) -> Option<TexturePartDesc> {
+        if i >= self.texture_part_count {
+            return None;
+        }
+        let at = self.texture_part_table() + i as usize * TexturePartDesc::SIZE;
+        Some(TexturePartDesc {
+            mesh: u32_at(self.data, at),
+            prim: u32_at(self.data, at + 4),
+            part: u32_at(self.data, at + 8),
+            textures: core::array::from_fn(|k| u32_at(self.data, at + 12 + 4 * k)),
+        })
+    }
+
+    /// The texture part primitive `prim` of mesh `mesh` samples, if any
+    /// (RE-426).
+    pub fn texture_part(&self, mesh: u32, prim: u32) -> Option<TexturePartDesc> {
+        let key = |i: u32| {
+            let at = self.texture_part_table() + i as usize * TexturePartDesc::SIZE;
+            (u32_at(self.data, at), u32_at(self.data, at + 4))
+        };
+        let (mut lo, mut hi) = (0u32, self.texture_part_count);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            match key(mid).cmp(&(mesh, prim)) {
+                core::cmp::Ordering::Less => lo = mid + 1,
+                core::cmp::Ordering::Greater => hi = mid,
+                core::cmp::Ordering::Equal => return self.texture_part_at(mid),
+            }
+        }
+        None
+    }
+
+    /// Whether any primitive of mesh `mesh` is a texture part's.
+    pub fn mesh_has_texture_part(&self, mesh: u32) -> bool {
+        let (mut lo, mut hi) = (0u32, self.texture_part_count);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let at = self.texture_part_table() + mid as usize * TexturePartDesc::SIZE;
+            if u32_at(self.data, at) < mesh {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        lo < self.texture_part_count
+            && u32_at(
+                self.data,
+                self.texture_part_table() + lo as usize * TexturePartDesc::SIZE,
+            ) == mesh
     }
 
     pub fn sprite_at(&self, i: u32) -> Option<SpriteDesc> {
@@ -6866,6 +7050,42 @@ mod tests {
         assert_eq!(pack.lod_blend(3), Some(blend));
         let expected_tables = Header::SIZE + LodBlendDesc::SIZE + 3 * SpriteDesc::SIZE;
         assert_eq!(pack.blob_offset, align_up(expected_tables));
+    }
+
+    #[test]
+    fn texture_parts_round_trip_after_the_sprites() {
+        let mut w = PackWriter::new();
+        let mut textures = [TextureDesc::NO_ANIM; TexturePartDesc::MAX_IDS];
+        textures[0] = 4;
+        textures[3] = 9;
+        w.add_texture_part(7, 2, 1, textures);
+        w.add_texture_part(5, 0, 0, textures);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.texture_part_count(), 2);
+        assert_eq!(pack.texture_part_at(0).unwrap().mesh, 5);
+        let t = pack.texture_part(7, 2).unwrap();
+        assert_eq!(
+            (t.part, t.textures[3], t.textures[1]),
+            (1, 9, TextureDesc::NO_ANIM)
+        );
+        assert_eq!(pack.texture_part(7, 1), None);
+        assert!(pack.mesh_has_texture_part(5) && pack.mesh_has_texture_part(7));
+        assert!(!pack.mesh_has_texture_part(6) && !pack.mesh_has_texture_part(8));
+    }
+
+    #[test]
+    fn fighter_models_round_trip_after_the_texture_parts() {
+        let mut w = PackWriter::new();
+        w.add_texture_part(1, 0, 0, [TextureDesc::NO_ANIM; TexturePartDesc::MAX_IDS]);
+        w.add_fighter_model(3, 10, 11);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(
+            pack.fighter_model(3).map(|m| (m.high, m.low)),
+            Some((10, 11))
+        );
+        assert_eq!(pack.fighter_model(4), None);
     }
 
     #[test]

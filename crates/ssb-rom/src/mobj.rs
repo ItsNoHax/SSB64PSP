@@ -127,14 +127,25 @@ pub struct Ptr {
     pub offset: u32,
 }
 
+/// A fighter texture part's `MObj` (RE-426): `FTTexturePart` `part`
+/// names this `MObj`'s place in its joint's chain, so
+/// `ftParamSetTexturePartID` swaps which of its `sprites` loads. `ids`
+/// has bit `n` for each `texture_id` the fighter's scripts set; `at` is
+/// the `MObjSub`, whose `sprites` table the pack reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct TexturePartTag {
+    pub part: u8,
+    pub ids: u16,
+    pub at: u32,
+}
+
 /// The commands one `MObj` contributes, in the order `gcDrawMObjForDObj`
 /// emits them.
 ///
 /// Only the fields that survive into a converted mesh are kept. Everything
 /// indexed by a runtime counter is read at its initial value, because
 /// `gcAddMObjForDObj` zeroes `palette_id`, `texture_id_curr` and
-/// `texture_id_next` — index 0 is the neutral costume and the first frame of
-/// any material animation.
+/// `texture_id_next` — index 0 is the neutral costume and first frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MObjMaterial {
     /// Byte offset of the `MObjSub` this was read from. Kept so a recovered
@@ -213,6 +224,9 @@ pub struct MObjMaterial {
     /// `unk38`/`unk3A`: tile 1's width and height in the source equations,
     /// the counterparts of [`Self::mat_anim_tile_params`]' last two entries.
     pub tile1_params: [u16; 2],
+    /// Set by the asset pipeline on a fighter's texture-part `MObj`s
+    /// (RE-426); never read from the `MObjSub`.
+    pub texture_part: Option<TexturePartTag>,
 }
 
 impl MObjMaterial {
@@ -592,6 +606,7 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
             && sprite.is_some(),
         tile1_uv,
         tile1_params: [unk38, unk3a],
+        texture_part: None,
     })
 }
 
@@ -711,6 +726,36 @@ pub fn read_palettes(file: &File, sub_at: u32, count: usize) -> Option<Vec<Ptr>>
 /// on the runtime-indexed sprite table.
 pub fn read_sprites(file: &File, sub_at: u32, count: usize) -> Option<Vec<Ptr>> {
     read_pointer_array(file, sub_at + F_SPRITES, count)
+}
+
+/// `MObjSub.sprites[index]` alone: `None` for a NULL entry or one that
+/// does not read as a pointer. Some face tables leave entries NULL that
+/// the motion scripts never select (Kirby's 1 to 4, RE-426), which makes
+/// [`read_sprites`] decline the whole table.
+pub fn read_sprite_at(file: &File, sub_at: u32, index: usize) -> Option<Ptr> {
+    let slots = pointer_slots(file);
+    let is_ptr = |at: u32| slots.binary_search(&at).is_ok();
+    let field_at = sub_at + F_SPRITES;
+    let array = read_u32(&file.data, field_at)?;
+    if array == 0 || !is_ptr(field_at) {
+        return None;
+    }
+    let slot = array.checked_add(index as u32 * 4)?;
+    match read_u32(&file.data, slot)? {
+        0 => file
+            .extern_relocs
+            .iter()
+            .find(|r| r.at == slot)
+            .map(|r| Ptr {
+                file: Some(r.target_file),
+                offset: r.target_offset,
+            }),
+        target if is_ptr(slot) => Some(Ptr {
+            file: None,
+            offset: target,
+        }),
+        _ => None,
+    }
 }
 
 fn read_pointer_array(file: &File, field_at: u32, count: usize) -> Option<Vec<Ptr>> {

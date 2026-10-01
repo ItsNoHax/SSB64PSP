@@ -156,3 +156,5 @@ f1-vs-arwing	psp-game	vsarwing	pass	RE-425
 f1-vs-car	psp-game	vscar	pass	RE-425
 f1-vs-ball	psp-game	vsball	pass	RE-425
 f1-vs-rays	psp-game	vsrays	pass	RE-425
+f1-training-damage-face	psp-game	jab@119	pass	RE-426
+f1-vs-four-low-detail	psp-game	vs4@390	pass	RE-426

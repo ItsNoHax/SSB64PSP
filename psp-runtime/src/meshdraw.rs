@@ -282,6 +282,12 @@ pub struct DrawState {
     /// from `last_flags` because two primitives with identical flags can carry
     /// different `G_TEXTURE` scales or tile origins.
     last_texture_mapping: Option<TextureMapping>,
+    /// RE-426: the fighter mesh being drawn while one of its texture parts
+    /// shows another sprite, and what each part's `MObj` shows.
+    texture_part_mesh: Option<u32>,
+    texture_part_ids: [i8; 2],
+    /// The texture the next primitive's texture part selects.
+    texture_override: Option<u32>,
 }
 
 /// Which texture of a two-tile fractional blend a diagnostic capture keeps
@@ -1198,6 +1204,7 @@ unsafe fn apply_material(
     // primitive still draws the `MObj`'s own image (`IMAGE_ANIM`); a display
     // list that loaded its own keeps it.
     let effective_texture = match p.image_anim() {
+        _ if st.texture_override.is_some() => st.texture_override.unwrap_or(p.texture),
         Some(anim) => match effect_mat_anim {
             Some(m) => m.resolved_texture(pack, anim),
             None => mat_anim.and_then(|m| m.resolved_texture(pack, anim)),
@@ -1409,7 +1416,15 @@ unsafe fn draw_mesh_vertices(
             continue;
         }
 
+        // RE-426: `sprites[texture_id_curr]` of a texture part's `MObj`.
+        st.texture_override = st.texture_part_mesh.and_then(|mesh| {
+            let t = pack.texture_part(mesh, i)?;
+            let id = *st.texture_part_ids.get(t.part as usize)?;
+            let texture = *t.textures.get(usize::try_from(id).ok().filter(|&id| id > 0)?)?;
+            (texture != TextureDesc::NO_ANIM).then_some(texture)
+        });
         apply_material(pack, &p, st, mat_anim, effect_mat_anim);
+        st.texture_override = None;
 
         let effect_colors = material_colors(st.color_override, &p, mat_anim, effect_mat_anim)
             .filter(|c| c.prim.is_some() || c.env.is_some());
@@ -1668,6 +1683,10 @@ pub unsafe fn draw_object_posed(
 #[derive(Clone, Copy, Debug)]
 pub struct Look<'a> {
     pub costume: u32,
+    /// `texture_id_curr` of each texture part's `MObj`
+    /// (`ssb_game::modelpart::TextureParts::shown`, RE-426); 0 draws the
+    /// packed textures.
+    pub textures: [i8; 2],
     /// `modelpart_id_curr` per descriptor (`ssb_game::modelpart`):
     /// [`ssb_game::modelpart::HIDDEN`], [`ssb_game::modelpart::ABSENT`], 0
     /// for the node's own mesh, or a part's
@@ -1684,6 +1703,7 @@ impl Look<'static> {
     pub const fn costume(costume: u32) -> Self {
         Look {
             costume,
+            textures: [0; 2],
             parts: None,
             accessory_before: false,
         }
@@ -2022,7 +2042,12 @@ unsafe fn draw_object_posed_filtered(
             let Some(mesh) = pack.mesh(mesh_index) else {
                 continue;
             };
+            st.texture_part_ids = look.textures;
+            st.texture_part_mesh = (look.textures.iter().any(|&id| id > 0)
+                && pack.mesh_has_texture_part(mesh_index))
+            .then_some(mesh_index);
             tris += draw_node_mesh(pack, object, &node, &mesh, posed, st, mat_anim, effect_mat_anim);
+            st.texture_part_mesh = None;
         }
     }
     tris

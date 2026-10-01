@@ -8,7 +8,7 @@
 | Video memory | shared | 2 MiB VRAM | 2 MiB VRAM |
 | Fast scratch | 4 KiB TMEM | 16 KiB scratchpad | 16 KiB scratchpad |
 
-- The current asset pack (v77) is 34,880,272 bytes, 291,024 more than v76 for every fighter's model parts, the two headgear accessories and the entry vehicles' animations (RE-425); the twelve 5551 wallpapers are 3 MiB of it (RE-419). It needs
+- The current asset pack (v78) is 35,392,000 bytes (33.75 MiB), 511,728 more than v77 for both fighter details' parts and reachable face sprites through costume palettes (RE-426); the twelve 5551 wallpapers are 3 MiB of it (RE-419). The production game ELF's text/data/BSS total 3,326,984 bytes before dynamic allocations. Paired game/viewer golden boots load v78 in 64 MiB mode; no new physical-PSP measurement. It needs
   `PARAM.SFO` `MEMSIZE=1` (64 MiB process mode). v34 ran on a PSP-2000 via
   PSPLink (RE-322), v33 before it (RE-321); the earlier stock v32 pack loaded on a PSP-2000 via PSPLink (RE-320); the mode was also
   confirmed with earlier packs (RE-255, RE-260).
@@ -22,10 +22,10 @@
 ## VRAM
 
 ```
-Framebuffer 0   480×272×4   522 KiB
-Framebuffer 1   480×272×4   522 KiB
-Depth buffer    480×272×2   261 KiB
-Texture pool    remainder  ≈700 KiB
+Framebuffer 0   512×272×4   544 KiB
+Framebuffer 1   512×272×4   544 KiB
+Depth buffer    512×272×2   272 KiB
+Texture pool    remainder  688 KiB (704,512 bytes)
 ```
 
 Paletted textures keep the pool usable: a 64×64 CI4 texture is 2 KiB versus
@@ -44,6 +44,18 @@ mip level and CLUT:
 
 Training fits the pool; four-player VS scenes do not, so they need
 per-scene residency (textures sampled from main RAM or streamed).
+
+RE-426 measures v78 Dream Land with Mario, Fox, DK and Kirby costume 0,
+including the VS wallpaper, all reachable model/texture parts and skeletons:
+high detail needs 1,051,532 bytes (103 textures), low 726,924 (98).
+The original three/four-fighter low-detail rule saves 324,608 bytes (30.9%),
+but the low closure still exceeds the pool by 22,412. This is packed
+residency demand, not a physical-PSP allocation measurement; the runtime
+samples textures directly from the pack in main RAM.
+
+The production game's largest frame is `enter_training`, 159,568 bytes
+of its 256 KiB main-thread stack; preview model states are heap-owned.
+`run` has an 18,544-byte frame and 21,856 bytes of code (RE-426).
 
 ## Original pattern
 

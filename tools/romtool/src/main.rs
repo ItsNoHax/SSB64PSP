@@ -1362,6 +1362,8 @@ fn pack_mesh(
     let mut per_prim_mat_anim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
     let mut per_prim_phase = Vec::with_capacity(m.primitives.len());
     let mut per_prim_lod = Vec::with_capacity(m.primitives.len());
+    let mut texture_parts: Vec<(u32, u32, [u32; ssb_rom::pack::TexturePartDesc::MAX_IDS])> =
+        Vec::new();
     for (packed_index, prim) in m.primitives.iter().enumerate() {
         let prim_index = lowered.source_prim[packed_index];
         let fix = prim
@@ -1710,11 +1712,31 @@ fn pack_mesh(
             });
             outcome.is_ok()
         });
+        // RE-426: a texture part's `MObj` sprite, each script-set id
+        // converted through this primitive's own tile and palette.
+        if let (Some(tag), Some(t), Some(own)) = (
+            prim.material.texture_part,
+            prim.material.texture,
+            texture_index,
+        ) {
+            if prim.material.texture != source.primitives[prim_index].material.texture {
+                TEXTURE_PART_STATS.with(|s| s.borrow_mut().lowered += 1);
+            } else {
+                let textures = texture_part_textures(
+                    writer, tex_index, src, id, m, prim, &t, own, tag, swizzle,
+                );
+                texture_parts.push((packed_index as u32, u32::from(tag.part), textures));
+            }
+        }
         per_prim.push(texture_index);
         per_prim_mat_anim.push(mat_anim_index_resolved);
         per_prim_lod.push(lod == Some(true));
     }
     let mesh_index = writer.add_mesh(m, id, offset, |i| per_prim[i], |i| per_prim_mat_anim[i]);
+    for (prim, part, textures) in texture_parts {
+        writer.add_texture_part(mesh_index, prim, part, textures);
+        TEXTURE_PART_STATS.with(|s| s.borrow_mut().prims += 1);
+    }
     for (i, &phase) in per_prim_phase.iter().enumerate() {
         if phase != [0, 0] {
             writer.set_mesh_prim_phase(mesh_index, i, phase);
@@ -1726,6 +1748,85 @@ fn pack_mesh(
         }
     }
     mesh_index
+}
+
+/// RE-426 pipeline counts: texture-part primitives recorded, sprites
+/// converted, ids whose sprite pointer did not resolve, and primitives the
+/// wide-tile lowering split (left on their own texture).
+#[derive(Default)]
+struct TexturePartStats {
+    prims: usize,
+    sprites: usize,
+    unresolved: usize,
+    lowered: usize,
+}
+
+thread_local! {
+    static TEXTURE_PART_STATS: std::cell::RefCell<TexturePartStats> =
+        std::cell::RefCell::new(TexturePartStats::default());
+}
+
+/// `sprites[id]` of a texture part's `MObj` for every id the scripts set,
+/// converted with `t`'s tile and palette (`gcDrawMObjForDObj` swaps only
+/// the image address); id 0 is the primitive's own texture `own`.
+#[allow(clippy::too_many_arguments)]
+fn texture_part_textures(
+    writer: &mut ssb_rom::pack::PackWriter,
+    tex_index: &mut BTreeMap<TexKey, u32>,
+    src: Texels<'_>,
+    id: u32,
+    m: &ssb_rom::mesh::Mesh,
+    prim: &ssb_rom::mesh::Primitive,
+    t: &ssb_rom::mesh::TextureRef,
+    own: u32,
+    tag: ssb_rom::mobj::TexturePartTag,
+    swizzle: bool,
+) -> [u32; ssb_rom::pack::TexturePartDesc::MAX_IDS] {
+    let mut out = [ssb_rom::pack::TextureDesc::NO_ANIM; ssb_rom::pack::TexturePartDesc::MAX_IDS];
+    out[0] = own;
+    let (gate, translucent_blend) = ssb_rom::pack::material_alpha_state(&prim.material);
+    let alpha_policy = ssb_rom::filter_compensation::AlphaPolicy::classify(gate, translucent_blend);
+    let coverage = primitive_filter_coverage(m, prim);
+    for (k, slot) in out.iter_mut().enumerate().skip(1) {
+        if tag.ids >> k & 1 == 0 {
+            continue;
+        }
+        let Some(p) = ssb_rom::mobj::read_sprite_at(src.home, tag.at, k) else {
+            TEXTURE_PART_STATS.with(|s| s.borrow_mut().unresolved += 1);
+            continue;
+        };
+        let variant = ssb_rom::mesh::TextureRef {
+            data_file: p.file,
+            data_offset: p.offset,
+            ..*t
+        };
+        let key = texture_cache_key(id, &variant, 0, None, alpha_policy);
+        if let Some(&i) = tex_index.get(&key) {
+            *slot = i;
+            continue;
+        }
+        residuals::discard_conversion();
+        let mut compensated = false;
+        let Some(tex) = convert_texture(
+            src,
+            &variant,
+            &coverage,
+            swizzle,
+            None,
+            alpha_policy,
+            Some(&mut compensated),
+            None,
+        ) else {
+            TEXTURE_PART_STATS.with(|s| s.borrow_mut().unresolved += 1);
+            continue;
+        };
+        let i = writer.add_texture(&tex, t.clamp_s, t.clamp_t);
+        record_texture_source(writer, i, src, &variant, compensated);
+        tex_index.insert(key, i);
+        TEXTURE_PART_STATS.with(|s| s.borrow_mut().sprites += 1);
+        *slot = i;
+    }
+    out
 }
 
 /// Converts one resolved palette variant to the GE's ABGR8888 CLUT format,
@@ -1923,8 +2024,8 @@ fn fighter_skeleton_graphs(loaded: &Loaded) -> std::collections::BTreeSet<(u32, 
 }
 
 /// The electric-damage skeleton sets (`FTAttributes::skeleton[1..=2]`,
-/// RE-414) of every fighter whose high-detail `FTCommonPart` is `graph` of
-/// `file`: `(fighter name, set id, parts)`.
+/// RE-414) of every fighter whose high- or low-detail `FTCommonPart` is
+/// `graph` of `file`: `(fighter name, set id, parts)`.
 fn skeleton_sets_for(
     loaded: &Loaded,
     file: u32,
@@ -1938,10 +2039,13 @@ fn skeleton_sets_for(
         let Some(main) = loaded.files[entry.file as usize].as_ref() else {
             continue;
         };
-        let Some(part) = ssb_rom::fighter::common_parts(main, *entry)[0] else {
-            continue;
-        };
-        if (part.model_file, part.graph) != (file, graph.offset) {
+        // RE-426: either detail's graph; the skeleton draws under the
+        // node's own `MObj`s at both.
+        if !ssb_rom::fighter::common_parts(main, *entry)
+            .iter()
+            .flatten()
+            .any(|part| (part.model_file, part.graph) == (file, graph.offset))
+        {
             continue;
         }
         let Some(sk) = ssb_rom::fighter::skeletons(main, *entry, graph.nodes.len(), model) else {
@@ -2110,12 +2214,12 @@ fn kirby_copy_hats(
     ) else {
         return Vec::new();
     };
-    let Some(part) = ssb_rom::fighter::common_parts(main, *entry)[0] else {
+    let Some(detail) = ssb_rom::fighter::common_parts(main, *entry)
+        .iter()
+        .position(|p| p.is_some_and(|p| (p.model_file, p.graph) == (file, graph.offset)))
+    else {
         return Vec::new();
     };
-    if (part.model_file, part.graph) != (file, graph.offset) {
-        return Vec::new();
-    }
     let mut parts: Vec<u32> = (0..12u32)
         .filter_map(|kind| {
             let at = (KIRBY_COPY_TABLE.1 + kind * KIRBY_COPY_ENTRY_SIZE + 2) as usize;
@@ -2128,27 +2232,27 @@ fn kirby_copy_hats(
     parts
         .into_iter()
         .filter_map(|p| {
-            let mp = ssb_rom::fighter::model_part(main, *entry, KIRBY_COPY_JOINT, p, 0)?;
+            let mp =
+                ssb_rom::fighter::model_part(main, *entry, KIRBY_COPY_JOINT, p, detail as u32)?;
             (mp.dl.0 == file).then_some((p, mp))
         })
         .collect()
 }
 
-/// The playable fighter whose high-detail `FTCommonPart` is `graph` of
-/// `file`, with its main file.
+/// The playable fighter whose high- or low-detail `FTCommonPart` is
+/// `graph`, its main file and the detail (0 high, 1 low; RE-426).
 fn playable_fighter_of<'a>(
     loaded: &'a Loaded,
     file: u32,
     graph: &ssb_rom::scene::SceneGraph,
-) -> Option<(ssb_rom::fighter::FighterFile, &'a ssb_rom::archive::File)> {
-    ssb_rom::fighter::FIGHTER_FILES
-        .iter()
-        .filter(|e| e.kind < 12)
-        .find_map(|entry| {
-            let main = loaded.files.get(entry.file as usize)?.as_ref()?;
-            let part = ssb_rom::fighter::common_parts(main, *entry)[0]?;
-            ((part.model_file, part.graph) == (file, graph.offset)).then_some((*entry, main))
-        })
+) -> Option<(
+    ssb_rom::fighter::FighterFile,
+    &'a ssb_rom::archive::File,
+    u32,
+)> {
+    let fg = loaded.fighter_graphs.get(&(file, graph.offset))?;
+    let main = loaded.files.get(fg.entry.file as usize)?.as_ref()?;
+    Some((fg.entry, main, fg.detail))
 }
 
 /// Joint `joint`'s parts `ftParamSetModelPartID` can give a playable
@@ -2173,7 +2277,7 @@ fn fighter_model_parts(
     file: u32,
     graph: &ssb_rom::scene::SceneGraph,
 ) -> Vec<(u32, u32, ssb_rom::fighter::ModelPart)> {
-    let Some((entry, main)) = playable_fighter_of(loaded, file, graph) else {
+    let Some((entry, main, detail)) = playable_fighter_of(loaded, file, graph) else {
         return Vec::new();
     };
     let Some(&kind) = ssb_game::fighter::FighterKind::PLAYABLE
@@ -2203,7 +2307,7 @@ fn fighter_model_parts(
             if node as usize >= graph.nodes.len() || present >> node & 1 == 0 {
                 return None;
             }
-            let mp = ssb_rom::fighter::model_part(main, entry, joint as u32, part, 0)?;
+            let mp = ssb_rom::fighter::model_part(main, entry, joint as u32, part, detail)?;
             (mp.flags & 0xF == 0).then_some((joint as u32, part, mp))
         })
         .collect()
@@ -2275,7 +2379,7 @@ fn fighter_accessory(
     file: u32,
     graph: &ssb_rom::scene::SceneGraph,
 ) -> Option<(ssb_rom::fighter::AccessPart, bool)> {
-    let (entry, main) = playable_fighter_of(loaded, file, graph)?;
+    let (entry, main, _) = playable_fighter_of(loaded, file, graph)?;
     let access = ssb_rom::fighter::access_part(main, entry)?;
     if access.dl.0 != file || access.mobjsubs.is_some_and(|(f, _)| f != file) {
         return None;
@@ -4169,6 +4273,9 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                                 mp.costume_matanim_joints,
                                 costume,
                             );
+                            // RE-426: the part's `MObj` at the texture
+                            // part's place takes the face swap too.
+                            loaded.tag_texture_parts(id, graph.offset, node, &mut materials[node]);
                             convert_graph_at(
                                 &loaded,
                                 file,
@@ -4268,6 +4375,30 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         "  model parts {model_parts_added} fighter model-part meshes \
          ({model_parts_empty} costumes with no triangles), {accessories_added} accessory meshes"
     );
+    TEXTURE_PART_STATS.with(|s| {
+        let s = s.borrow();
+        println!(
+            "  tex parts   {} texture-part primitives, {} sprite textures \
+             ({} ids unresolved, {} primitives split by the wide-tile lowering)",
+            s.prims, s.sprites, s.unresolved, s.lowered
+        );
+    });
+
+    // RE-426: each playable fighter's high- and low-detail objects.
+    for (&(file, graph), fg) in &loaded.fighter_graphs {
+        if fg.detail != 0 {
+            continue;
+        }
+        let low = ssb_rom::fighter::common_parts(
+            loaded.files[fg.entry.file as usize].as_ref().unwrap(),
+            fg.entry,
+        )[1]
+        .and_then(|lo| object_index.get(&(lo.model_file, lo.graph)).copied())
+        .unwrap_or(u32::MAX);
+        if let Some(&high) = object_index.get(&(file, graph)) {
+            writer.add_fighter_model(u32::from(fg.entry.kind), high, low);
+        }
+    }
 
     // Stages last: a layer can only be resolved once every object exists.
     let mut stage_layers = 0usize;
@@ -7140,8 +7271,16 @@ fn scene_deps(path: &Path, rest: &[&str]) -> Res {
         match flag {
             "--stage" => deps.add_stage(&pack, value.parse()?),
             "--fighter" => {
-                let (kind, costume) = value.split_once(':').unwrap_or((value, "0"));
-                deps.add_fighter(&pack, kind.parse()?, costume.parse()?);
+                // `kind[:costume[:low]]`; `low` draws the low-detail model
+                // (RE-426).
+                let mut it = value.split(':');
+                let kind = it.next().unwrap_or("0").parse()?;
+                let costume = it.next().unwrap_or("0").parse()?;
+                if it.next() == Some("low") {
+                    deps.add_fighter_low(&pack, kind, costume);
+                } else {
+                    deps.add_fighter(&pack, kind, costume);
+                }
             }
             "--object" => {
                 let (object, costume) = value.split_once(':').unwrap_or((value, "0"));
@@ -7703,6 +7842,24 @@ struct Loaded {
     graphs: BTreeMap<u32, Vec<ssb_rom::scene::SceneGraph>>,
     tables: ssb_rom::mobj::PartTables,
     stages: Vec<ssb_rom::stage::GroundData>,
+    /// Every playable fighter's two `FTCommonPart` graphs (RE-426), keyed
+    /// `(model file, graph offset)`.
+    fighter_graphs: BTreeMap<(u32, u32), FighterGraph>,
+}
+
+/// One of a playable fighter's `FTCommonPart` graphs (RE-426).
+#[derive(Debug, Clone)]
+struct FighterGraph {
+    entry: ssb_rom::fighter::FighterFile,
+    /// 0 for `nFTPartsDetailHigh`, 1 for `nFTPartsDetailLow`.
+    detail: u32,
+    /// The high-detail graph's offset (this one's at high detail).
+    high: u32,
+    /// Low detail: the nodes whose descriptor has no list, which
+    /// `lbCommonSetupFighterPartsDObjs` gives the high-detail list and
+    /// `MObj`s (`commonparts[1].dobjdesc[i].dl == NULL`). `load_all` has
+    /// already put the list on the graph's node.
+    fallback: Vec<usize>,
 }
 
 fn load_all(archive: &Archive) -> Loaded {
@@ -8230,11 +8387,69 @@ fn load_all(archive: &Archive) -> Loaded {
         }
     }
 
+    // RE-426: each playable fighter's high- and low-detail graphs. A
+    // low-detail joint whose descriptor has no list draws the high-detail
+    // one with its `MObj`s, so that list goes on the low graph's node.
+    let mut fighter_graphs = BTreeMap::new();
+    for entry in ssb_rom::fighter::FIGHTER_FILES
+        .iter()
+        .filter(|e| e.kind < 12)
+    {
+        let Some(main) = files.get(entry.file as usize).and_then(Option::as_ref) else {
+            continue;
+        };
+        let [Some(hi), lo] = ssb_rom::fighter::common_parts(main, *entry) else {
+            continue;
+        };
+        fighter_graphs.insert(
+            (hi.model_file, hi.graph),
+            FighterGraph {
+                entry: *entry,
+                detail: 0,
+                high: hi.graph,
+                fallback: Vec::new(),
+            },
+        );
+        let Some(lo) = lo.filter(|lo| lo.model_file == hi.model_file) else {
+            continue;
+        };
+        let Some(hi_dls) = graphs.get(&hi.model_file).and_then(|gs| {
+            gs.iter()
+                .find(|g| g.offset == hi.graph)
+                .map(|g| g.nodes.iter().map(|n| n.desc.dl).collect::<Vec<_>>())
+        }) else {
+            continue;
+        };
+        let Some(low) = graphs
+            .get_mut(&lo.model_file)
+            .and_then(|gs| gs.iter_mut().find(|g| g.offset == lo.graph))
+        else {
+            continue;
+        };
+        let mut fallback = Vec::new();
+        for (n, (node, hi_dl)) in low.nodes.iter_mut().zip(&hi_dls).enumerate() {
+            if node.desc.dl.is_none() && hi_dl.is_some() {
+                node.desc.dl = *hi_dl;
+                fallback.push(n);
+            }
+        }
+        fighter_graphs.insert(
+            (lo.model_file, lo.graph),
+            FighterGraph {
+                entry: *entry,
+                detail: 1,
+                high: hi.graph,
+                fallback,
+            },
+        );
+    }
+
     Loaded {
         files,
         graphs,
         tables,
         stages,
+        fighter_graphs,
     }
 }
 
@@ -8281,7 +8496,79 @@ impl Loaded {
                 apply_costume_colors(file, chain, &per_node);
             }
         }
+        // RE-426: a low-detail joint drawing the high-detail list wears its
+        // `MObj`s too.
+        if let Some(fg) = self.fighter_graphs.get(&(file.id, graph.offset)) {
+            if !fg.fallback.is_empty() {
+                if let Some(high) = self
+                    .graphs
+                    .get(&file.id)
+                    .and_then(|gs| gs.iter().find(|g| g.offset == fg.high))
+                {
+                    let hi = self.materials_at(file, high, costume);
+                    for &n in &fg.fallback {
+                        if let (Some(slot), Some(m)) = (nodes.get_mut(n), hi.get(n)) {
+                            *slot = m.clone();
+                        }
+                    }
+                }
+            }
+            for (n, chain) in nodes.iter_mut().enumerate() {
+                self.tag_texture_parts(file.id, graph.offset, n, chain);
+            }
+        }
         nodes
+    }
+
+    /// Marks node `node`'s texture-part `MObj`s (RE-426): each
+    /// `FTTexturePart` on this joint names its `MObj`'s place in the chain
+    /// at this graph's detail, and the ids the fighter's scripts set.
+    fn tag_texture_parts(
+        &self,
+        file: u32,
+        graph_offset: u32,
+        node: usize,
+        chain: &mut ssb_rom::mobj::NodeMaterials,
+    ) {
+        let Some(fg) = self.fighter_graphs.get(&(file, graph_offset)) else {
+            return;
+        };
+        let Some(main) = self
+            .files
+            .get(fg.entry.file as usize)
+            .and_then(Option::as_ref)
+        else {
+            return;
+        };
+        let Some(parts) = ssb_rom::fighter::texture_parts(main, fg.entry) else {
+            return;
+        };
+        let Some(&kind) = ssb_game::fighter::FighterKind::PLAYABLE
+            .iter()
+            .find(|k| **k as u8 == fg.entry.kind)
+        else {
+            return;
+        };
+        let events = ssb_game::motion::texture_part_events(kind);
+        for (p, tp) in parts.iter().enumerate() {
+            if u32::from(tp.joint) != node as u32 + ssb_rom::fighter::JOINT_COMMON_START {
+                continue;
+            }
+            let ids = events
+                .iter()
+                .filter(|&&(part, id)| part == p as i32 && id > 0 && id < 16)
+                .fold(0u16, |m, &(_, id)| m | 1 << id);
+            if ids == 0 {
+                continue;
+            }
+            if let Some(m) = chain.get_mut(usize::from(tp.detail[fg.detail as usize])) {
+                m.texture_part = Some(ssb_rom::mobj::TexturePartTag {
+                    part: p as u8,
+                    ids,
+                    at: m.at,
+                });
+            }
+        }
     }
 }
 
@@ -9947,6 +10234,7 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
         graphs,
         tables,
         stages,
+        ..
     } = load_all(&archive);
 
     let known: Option<BTreeMap<u32, BTreeSet<u32>>> = expect

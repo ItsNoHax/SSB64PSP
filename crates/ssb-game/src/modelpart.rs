@@ -70,7 +70,96 @@ pub fn joint_masks(kind: FighterKind) -> Option<(u64, u64)> {
         .filter(|_| (kind as u8) < 12)
 }
 
-/// `FTStruct::modelpart_status` and `is_modelpart_modify`.
+/// `nFTPartsDetailHigh` / `nFTPartsDetailLow`: which `FTCommonPart` a
+/// joint's list, `MObj`s and model parts come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Detail {
+    #[default]
+    High,
+    Low,
+}
+
+impl Detail {
+    /// `detail - nFTPartsDetailStart`.
+    pub const fn index(self) -> usize {
+        match self {
+            Detail::High => 0,
+            Detail::Low => 1,
+        }
+    }
+
+    /// `desc.detail` in a battle scene (`scvsbattle.c:188`,
+    /// `sc1pgame.c:1379`, `sc1ptrainingmode.c:1809`): high detail for up
+    /// to two fighters, low for three or four.
+    pub const fn for_fighters(count: usize) -> Detail {
+        if count < 3 {
+            Detail::High
+        } else {
+            Detail::Low
+        }
+    }
+}
+
+/// Texture parts per fighter (`FTTexturePartContainer`).
+pub const TEXTURE_PARTS: usize = 2;
+
+/// `FTAttributes::textureparts_container`, per playable fighter: each
+/// part's joint and the position of its `MObj` in that joint's chain at
+/// high and low detail; `None` for a NULL container (Donkey Kong, Samus).
+/// A fighter the decompilation gives one part reads the next bytes as its
+/// second (joint 0, `TopN`, which has no `MObj`) and never sets it.
+/// `crates/ssb-rom/tests/texture_parts.rs` checks them against the ROM.
+pub type TexturePartTable = [(u8, [u8; 2]); TEXTURE_PARTS];
+
+const TEXTURE_PART_TABLE: [Option<TexturePartTable>; 12] = [
+    Some([(12, [0, 0]), (0, [0, 0])]),  // Mario
+    Some([(12, [0, 0]), (12, [1, 1])]), // Fox
+    None,                               // Donkey
+    None,                               // Samus
+    Some([(12, [0, 0]), (0, [0, 0])]),  // Luigi
+    Some([(23, [0, 0]), (23, [1, 1])]), // Link
+    Some([(7, [0, 0]), (7, [1, 1])]),   // Yoshi
+    Some([(12, [0, 0]), (0, [0, 0])]),  // Captain
+    Some([(6, [0, 0]), (0, [0, 0])]),   // Kirby
+    Some([(11, [0, 0]), (11, [1, 1])]), // Pikachu
+    Some([(6, [0, 0]), (6, [1, 1])]),   // Purin
+    Some([(12, [0, 0]), (0, [0, 0])]),  // Ness
+];
+
+/// [`TEXTURE_PART_TABLE`]'s row for `kind`.
+pub fn texture_part_table(kind: FighterKind) -> Option<TexturePartTable> {
+    TEXTURE_PART_TABLE
+        .get(kind as usize)
+        .copied()
+        .flatten()
+        .filter(|_| (kind as u8) < 12)
+}
+
+/// `FTStruct::texturepart_status` and `is_texturepart_modify`, with what
+/// each part's `MObj` shows (RE-426).
+///
+/// `ftParamSetTexturePartID` writes `texture_id_curr` of the joint's
+/// `detail`th `MObj`, which `gcDrawMObjForDObj` reads to load
+/// `sprites[texture_id_curr]`, and records it in the status. A model-part
+/// change on that joint replaces its `MObj`s (`gcRemoveMObjAll`, then
+/// `gcAddMObjForDObj`, which zeroes `texture_id_curr`), so what the face
+/// shows can differ from the status until the next set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TextureParts {
+    /// Each part's joint (0: none).
+    pub joint: [u8; TEXTURE_PARTS],
+    pub base: [i8; TEXTURE_PARTS],
+    pub curr: [i8; TEXTURE_PARTS],
+    /// `texture_id_curr` of the part's `MObj`: what draws.
+    pub shown: [i8; TEXTURE_PARTS],
+    /// Parts without the named MObj in either detail: Kirby's Stone head
+    /// (2) and Ness's alternate head (1). ROM-backed in texture_parts.rs.
+    pub missing_part: [Option<i8>; TEXTURE_PARTS],
+    pub is_modify: bool,
+}
+
+/// `FTStruct::modelpart_status` and `is_modelpart_modify`, the texture
+/// parts and the detail level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelParts {
     /// `setup_parts`: descriptor `n`'s joint exists. Zero for a fighter the
@@ -79,6 +168,10 @@ pub struct ModelParts {
     pub base: [i8; PARTS_MAX],
     pub curr: [i8; PARTS_MAX],
     pub is_modify: bool,
+    pub texture: TextureParts,
+    /// `detail_curr` and `detail_base`.
+    pub detail_curr: Detail,
+    pub detail_base: Detail,
 }
 
 impl Default for ModelParts {
@@ -88,6 +181,9 @@ impl Default for ModelParts {
             base: [0; PARTS_MAX],
             curr: [0; PARTS_MAX],
             is_modify: false,
+            texture: TextureParts::default(),
+            detail_curr: Detail::High,
+            detail_base: Detail::High,
         }
     }
 }
@@ -104,6 +200,14 @@ impl ModelParts {
         let mut p = ModelParts {
             present,
             ..ModelParts::default()
+        };
+        if let Some(t) = texture_part_table(kind) {
+            p.texture.joint = [t[0].0, t[1].0];
+        }
+        p.texture.missing_part[0] = match kind {
+            FighterKind::Kirby => Some(2),
+            FighterKind::Ness => Some(1),
+            _ => None,
         };
         for i in 0..PARTS_MAX {
             let id = if dl >> i & 1 != 0 { 0 } else { HIDDEN };
@@ -137,7 +241,88 @@ impl ModelParts {
         if self.curr[i] != id {
             self.curr[i] = id;
             self.is_modify = true;
+            self.remake(joint);
         }
+    }
+
+    /// `gcRemoveMObjAll` on `joint`, then (unless hidden) new `MObj`s
+    /// with `texture_id_curr` 0.
+    fn remake(&mut self, joint: u8) {
+        for p in 0..TEXTURE_PARTS {
+            if self.texture.joint[p] == joint {
+                self.texture.shown[p] = 0;
+            }
+        }
+    }
+
+    /// Whether the texture part's `MObj` exists: its joint is made and not
+    /// hidden, and its current model part has the named material.
+    fn texture_mobj(&self, part: usize) -> bool {
+        let joint = self.texture.joint[part];
+        if joint < JOINT_COMMON_START {
+            return false;
+        }
+        let i = usize::from(joint - JOINT_COMMON_START);
+        i < PARTS_MAX
+            && self.present >> i & 1 != 0
+            && self.curr[i] != HIDDEN
+            && self.texture.missing_part[part] != Some(self.curr[i])
+    }
+
+    /// `ftParamSetTexturePartID`.
+    pub fn set_texture(&mut self, part: usize, id: i8) {
+        if part >= TEXTURE_PARTS || !self.texture_mobj(part) {
+            return;
+        }
+        self.texture.shown[part] = id;
+        self.texture.curr[part] = id;
+        self.texture.is_modify = true;
+    }
+
+    /// `ftParamResetTexturePartAll`.
+    pub fn reset_textures(&mut self) {
+        for p in 0..TEXTURE_PARTS {
+            let t = &mut self.texture;
+            if t.curr[p] != t.base[p] {
+                t.curr[p] = t.base[p];
+                if self.texture_mobj(p) {
+                    self.texture.shown[p] = self.texture.base[p];
+                }
+            }
+        }
+        self.texture.is_modify = false;
+    }
+
+    /// `ftParamInitTexturePartAll`.
+    pub fn init_textures(&mut self) {
+        for p in 0..TEXTURE_PARTS {
+            if self.texture.curr[p] != self.texture.base[p] && self.texture_mobj(p) {
+                self.texture.shown[p] = self.texture.curr[p];
+            }
+        }
+        self.texture.is_modify = true;
+    }
+
+    /// `ftParamSetModelPartDetailAll`: every shown joint takes its part
+    /// again at the new detail (new `MObj`s), then the texture parts are
+    /// applied to them.
+    pub fn set_detail_all(&mut self, detail: Detail) {
+        if detail == self.detail_curr {
+            return;
+        }
+        self.detail_curr = detail;
+        for i in 0..PARTS_MAX {
+            if self.present >> i & 1 != 0 && self.curr[i] != HIDDEN {
+                self.remake(i as u8 + JOINT_COMMON_START);
+            }
+        }
+        self.is_modify = true;
+        self.init_textures();
+    }
+
+    /// The texture id each part's `MObj` shows, for the renderer.
+    pub fn draw_textures(&self) -> [i8; TEXTURE_PARTS] {
+        self.texture.shown
     }
 
     /// `ftParamSetModelPartDefaultID`: the base only (no joint check).
@@ -154,8 +339,9 @@ impl ModelParts {
     /// `ftParamResetModelPartAll`.
     pub fn reset_all(&mut self) {
         for i in 0..PARTS_MAX {
-            if self.present >> i & 1 != 0 {
+            if self.present >> i & 1 != 0 && self.curr[i] != self.base[i] {
                 self.curr[i] = self.base[i];
+                self.remake(i as u8 + JOINT_COMMON_START);
             }
         }
         self.is_modify = false;
@@ -164,8 +350,9 @@ impl ModelParts {
     /// `ftParamHideModelPartAll`.
     pub fn hide_all(&mut self) {
         for i in 0..PARTS_MAX {
-            if self.present >> i & 1 != 0 {
+            if self.present >> i & 1 != 0 && self.curr[i] != HIDDEN {
                 self.curr[i] = HIDDEN;
+                self.remake(i as u8 + JOINT_COMMON_START);
             }
         }
         self.is_modify = true;
@@ -192,31 +379,54 @@ impl ModelParts {
     }
 }
 
-/// A demo fighter's parts (the selects' and the results' fighters):
-/// `ftManagerMakeFighter`'s, then `scSubsysFighterSetStatus`'s first
-/// `ftMainSetStatus` applies the make's defaults. The demo statuses'
-/// motion scripts are not run (RE-425), so the parts stay there.
-pub fn demo(kind: FighterKind) -> ModelParts {
-    let mut p = ModelParts::new(kind);
-    if p.is_modify {
-        p.reset_all();
+/// A demo fighter's parts (the selects' and the results' fighters,
+/// RE-426): `ftManagerMakeFighter`'s, then `scSubsysFighterSetStatus`
+/// (`ftMainSetStatus` with the make's defaults) and each frame's
+/// `scSubsysFighterProcUpdate`, whose demo-status script swaps the model
+/// and texture parts (Mario's blinks, Kirby's Win mouth, the claps' open
+/// hands).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DemoParts {
+    pub parts: ModelParts,
+    script: crate::motion::DemoScript,
+}
+
+impl DemoParts {
+    /// The fighter made, then set to demo status row `row`
+    /// (`nFTDemoStatusNull + row`: 0 the selects' wait, 1 to 4 Win1 to
+    /// Win4, 5 Lose).
+    pub fn start(kind: FighterKind, row: usize) -> Self {
+        let mut parts = ModelParts::new(kind);
+        let script = crate::motion::DemoScript::start(kind, row, &mut parts);
+        DemoParts { parts, script }
     }
-    p
+
+    /// One `scSubsysFighterProcUpdate` frame.
+    pub fn tick(&mut self) {
+        self.script.tick(&mut self.parts);
+    }
 }
 
 /// `ftMainSetStatus`: `if (!(flags & FTSTATUS_PRESERVE_MODELPART) &&
 /// fp->is_modelpart_modify) ftParamResetModelPartAll(fighter_gobj)`, the
 /// flag from every call that passes it
 /// ([`crate::colanim::PRESERVE_MODELPART`]).
+///
+/// Before it, `if (fp->detail_curr != fp->detail_base)
+/// ftParamSetModelPartDetailAll(fighter_gobj, fp->detail_base)`; after it
+/// the texture parts reset the same way unless the status keeps them
+/// (`FTSTATUS_PRESERVE_TEXTUREPART`, RE-426).
 pub(crate) fn on_set_status(f: &mut Fighter, to: crate::status::AnyStatus) {
-    let preserve = crate::colanim::preserved_in(
-        &crate::colanim::PRESERVE_MODELPART,
-        f.kind,
-        f.status.status,
-        to,
-    );
-    if !preserve && f.model_parts.is_modify {
+    let base = f.model_parts.detail_base;
+    f.model_parts.set_detail_all(base);
+    let preserve = |table| crate::colanim::preserved_in(table, f.kind, f.status.status, to);
+    let keep_model = preserve(&crate::colanim::PRESERVE_MODELPART);
+    let keep_texture = preserve(&crate::colanim::PRESERVE_TEXTUREPART);
+    if !keep_model && f.model_parts.is_modify {
         f.model_parts.reset_all();
+    }
+    if !keep_texture && f.model_parts.texture.is_modify {
+        f.model_parts.reset_textures();
     }
 }
 
@@ -312,14 +522,14 @@ mod tests {
     }
 
     /// The walk finds exactly the decompilation's `SetModelPartID` events
-    /// (`relocData/*MainMotion.c`); Samus's 0x0D10 script (joints 17..25,
+    /// (`relocData/*MainMotion.c` and `scsubsysdata*.c`); Samus's 0x0D10 script (joints 17..25,
     /// never made) is reached too.
     #[test]
     fn the_scripts_name_the_decomps_model_part_events() {
         use crate::motion::model_part_events;
         let v = |k| model_part_events(k).into_iter().collect::<Vec<_>>();
-        assert!(v(FighterKind::Mario).is_empty());
-        assert_eq!(v(FighterKind::Fox), [(17, 0)]);
+        assert_eq!(v(FighterKind::Mario), [(10, 1), (16, 1)]);
+        assert_eq!(v(FighterKind::Fox), [(10, 1), (16, 1), (17, -1), (17, 0)]);
         assert_eq!(
             v(FighterKind::Donkey),
             [
@@ -349,10 +559,82 @@ mod tests {
         );
         assert_eq!(
             v(FighterKind::Ness),
-            [(10, 2), (12, 1), (16, 2), (17, 0), (30, 0)]
+            [(10, 2), (12, 1), (16, 2), (17, 0), (17, 1), (30, 0)]
         );
         assert_eq!(v(FighterKind::Samus).len(), 11);
         assert_eq!(v(FighterKind::Link).len(), 12);
         assert_eq!(v(FighterKind::Captain).len(), 5);
+    }
+
+    #[test]
+    fn mario_demo_blink_follows_the_subroutine_waits() {
+        // scsubsysdatamario.c: sprite 2 for two frames, 3 for three,
+        // 2 for two, then 0. The wait loop calls it again at tick 98.
+        let mut d = DemoParts::start(FighterKind::Mario, 0);
+        let mut ids = Vec::new();
+        for _ in 0..9 {
+            ids.push(d.parts.draw_textures()[0]);
+            d.tick();
+        }
+        assert_eq!(ids, [2, 2, 3, 3, 3, 2, 2, 0, 0]);
+        for _ in 9..98 {
+            d.tick();
+        }
+        assert_eq!(d.parts.draw_textures()[0], 2);
+    }
+
+    #[test]
+    fn kirby_win_mouth_changes_at_the_source_frame() {
+        let mut d = DemoParts::start(FighterKind::Kirby, 1);
+        for _ in 0..157 {
+            d.tick();
+        }
+        assert_eq!(d.parts.draw_textures(), [0, 0]);
+        d.tick();
+        assert_eq!(d.parts.draw_textures(), [5, 0]);
+        assert_eq!(
+            DemoParts::start(FighterKind::Kirby, 5)
+                .parts
+                .draw_textures(),
+            [5, 0]
+        );
+    }
+
+    #[test]
+    fn texture_status_and_material_differ_after_a_model_part_remake() {
+        let mut p = ModelParts::new(FighterKind::Kirby);
+        p.set_texture(0, 5);
+        p.set(6, 1);
+        assert_eq!(p.texture.curr[0], 5);
+        assert_eq!(p.draw_textures()[0], 0);
+        p.init_textures();
+        assert_eq!(p.draw_textures()[0], 5);
+        p.reset_textures();
+        assert_eq!(p.draw_textures()[0], 0);
+        p.hide_all();
+        p.set_texture(0, 8);
+        assert_eq!(p.texture.curr[0], 0);
+    }
+
+    #[test]
+    fn detail_switch_reapplies_the_face_and_status_restores_the_base() {
+        use crate::status::{AnyStatus, Status, StatusTiming};
+        assert_eq!(Detail::for_fighters(2), Detail::High);
+        assert_eq!(Detail::for_fighters(3), Detail::Low);
+        assert_eq!(Detail::for_fighters(4), Detail::Low);
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.model_parts.detail_base = Detail::Low;
+        f.model_parts.set_texture(0, 3);
+        f.model_parts.set_detail_all(Detail::Low);
+        assert_eq!(f.model_parts.draw_textures()[0], 3);
+        f.model_parts.set_detail_all(Detail::High);
+        crate::status::set_any_status(
+            &mut f,
+            AnyStatus::Common(Status::Fall),
+            0.0,
+            StatusTiming::unknown(),
+        );
+        assert_eq!(f.model_parts.detail_curr, Detail::Low);
+        assert_eq!(f.model_parts.texture.curr[0], 0);
     }
 }

@@ -351,9 +351,12 @@ pub fn set_dead_up_star(f: &mut Fighter) {
     f.colanim.reset();
 }
 
-/// `ftCommonDeadUpFallSetStatus`.
+/// `ftCommonDeadUpFallSetStatus`, which ends with
+/// `ftParamSetModelPartDetailAll(fighter_gobj, nFTPartsDetailHigh)`: the
+/// fighter falling at the camera draws at high detail (RE-426).
 pub fn set_dead_up_fall(f: &mut Fighter) {
     enter_up(f, Status::DeadUpFall);
+    f.model_parts.set_detail_all(crate::modelpart::Detail::High);
 }
 
 /// `ftCommonDeadCheckRebirth`: out of stocks the fighter sleeps; otherwise
@@ -526,6 +529,8 @@ fn reinit(f: &mut Fighter, pos: Vec3, facing: Facing) {
     fresh.cliff_air_mask = f.cliff_air_mask;
     fresh.anim = f.anim;
     fresh.costume = f.costume;
+    // `ftManagerInitFighter` leaves the part status and the detail alone.
+    fresh.model_parts = f.model_parts;
     fresh.handicap = f.handicap;
     fresh.input = f.input;
     fresh.prev_input = f.prev_input;
