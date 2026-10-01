@@ -930,3 +930,23 @@ Negative tests: a build without the accessory, the model parts and the new
 entry parts changed all fourteen (`pikachu-hat` 920, `purin-bow` 1,028,
 `fox-blaster` 92, `vs-arwing` 12,192, `vs-ball` 2,712, `vs-rays` 31,180 and
 the eight above by their counts). 143 of 143 match twice.
+
+## 2026-10-01 RE-426 faces, demo scripts and low detail
+
+Pack v78 adds reachable face frames through each costume's palette and
+both fighter details' parts. New game goldens: `f1-training-damage-face`
+(`jab@119`, the damaged dummy's face) and `f1-vs-four-low-detail`
+(`vs4@390`, four fighters before Go). `GameSpec` round-trips explicit
+positive capture ticks with the same parser used by the PSP.
+
+Seventeen rebaselines: eleven Training faces, `f1-vs-cpu` faces,
+`f1-vs-no-contest` Lose hands, `f1-vs-players` demo face,
+`f1-vs-four`/`f1-vs-team` low models and faces, and `f1-vs-results`
+Kirby Win mouth/Luigi Lose hands. The unchanged Training-select ticks
+need no rebaseline. Per-golden reasons and N64 comparison limits are in
+[RE-426](../evidence/re/RE-426.md).
+
+All seventeen reject a scratch pack with texture variants, low model
+selection and new demo hands disabled; the two new goldens reject it by
+4 and 9,292 pixels at 2× respectively. Two separate final paired runs
+pass 145/145, with no differing pixels between paired captures.

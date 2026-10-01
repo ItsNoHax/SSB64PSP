@@ -40,16 +40,12 @@ pub fn select() -> Option<Capture> {
             // `scene@tick` captures the scene at another tick, for matching
             // an N64 frame (RE-425); the goldens name none.
             let line = core::str::from_utf8(&buf[..len]).ok().and_then(ssb_capture::spec_line);
-            let (name, tick) = match line.and_then(|l| l.split_once('@')) {
-                Some((name, tick)) => (Some(name), tick.trim().parse::<u32>().ok()),
-                None => (line, None),
-            };
-            if let Some(scene) = name.and_then(GameScene::parse) {
-                if let Some(tick) = tick {
+            if let Some(spec) = line.and_then(ssb_capture::GameSpec::parse) {
+                if let Some(tick) = spec.tick {
                     TICK_OVERRIDE.store(tick, core::sync::atomic::Ordering::Relaxed);
                 }
                 return Some(Capture {
-                    scene,
+                    scene: spec.scene,
                     from_file: true,
                 });
             }

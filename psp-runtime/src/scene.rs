@@ -811,6 +811,25 @@ pub fn fighter_object(pack: &Pack<'_>, kind: u32) -> Option<u32> {
     ssb_rom::scene_deps::fighter_object(pack, kind)
 }
 
+/// The object of a character's low-detail `FTCommonPart`
+/// (`ssb_rom::pack::FighterModelDesc`, RE-426), when it has one with the
+/// high-detail object's node count.
+pub fn fighter_low_object(pack: &Pack<'_>, kind: u32) -> Option<u32> {
+    let m = pack.fighter_model(kind)?;
+    let (high, low) = (pack.object(m.high)?, pack.object(m.low)?);
+    (high.node_count == low.node_count).then_some(m.low)
+}
+
+/// The object a fighter at `detail` draws: its low-detail model at
+/// `nFTPartsDetailLow` when it has one, else `object`.
+pub fn fighter_draw_object(object: u32, object_low: u32, detail: ssb_game::modelpart::Detail) -> u32 {
+    if detail == ssb_game::modelpart::Detail::Low && object_low != u32::MAX {
+        object_low
+    } else {
+        object
+    }
+}
+
 /// The physics constants out of a packed [`FighterDesc`].
 ///
 /// Duplicated from `romtool`'s copy for the same reason [`FloorSegments`] is:
@@ -997,6 +1016,10 @@ pub struct FighterScene {
     /// Object whose nodes the skeleton drives, or `u32::MAX` when the pack has
     /// no model for this character.
     pub object: u32,
+    /// The low-detail model's object ([`fighter_low_object`], RE-426), or
+    /// `u32::MAX`. It is posed by the high-detail object's nodes: the two
+    /// trees are the same shape.
+    pub object_low: u32,
     /// The real battle camera (RE-131), ticked alongside the fighter each
     /// frame in [`FighterScene::tick`].
     pub camera: ssb_game::camera::Camera,
@@ -1149,6 +1172,7 @@ impl FighterScene {
             // so any one of them names it; a scan over the objects finds which
             // one owns that node. Done once, here, rather than per tick.
             object: fighter_object(pack, kind as u32).unwrap_or(u32::MAX),
+            object_low: fighter_low_object(pack, kind as u32).unwrap_or(u32::MAX),
             // Matches real hardware's own `dGMCameraCObjVecDefault` rest
             // state (RE-131) rather than starting already converged on the
             // fighter -- the pan-in from that rest state as the match

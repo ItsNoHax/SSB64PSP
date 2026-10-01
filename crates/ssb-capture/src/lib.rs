@@ -649,6 +649,44 @@ impl fmt::Display for GameScene {
     }
 }
 
+/// A game capture scene and optional deterministic capture tick (RE-426).
+/// The `scene@tick` format also serves N64 frame comparisons (RE-425).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GameSpec {
+    pub scene: GameScene,
+    pub tick: Option<u32>,
+}
+
+impl GameSpec {
+    pub fn parse(spec: &str) -> Option<Self> {
+        let spec = spec.trim();
+        let (name, tick) = match spec.split_once('@') {
+            Some((name, tick)) => {
+                let tick = parse_decimal(tick)?;
+                if tick == 0 {
+                    return None;
+                }
+                (name, Some(tick))
+            }
+            None => (spec, None),
+        };
+        Some(Self {
+            scene: GameScene::parse(name)?,
+            tick,
+        })
+    }
+}
+
+impl fmt::Display for GameSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.scene.fmt(f)?;
+        if let Some(tick) = self.tick {
+            write!(f, "@{tick}")?;
+        }
+        Ok(())
+    }
+}
+
 /// Unsigned decimal without sign, prefix or leading `+`.
 fn parse_decimal(s: &str) -> Option<u32> {
     if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {

@@ -28,6 +28,8 @@ pub struct Model {
     /// clip.
     slot: Option<u32>,
     skeleton: Skeleton,
+    /// The demo status script's parts (RE-426).
+    demo: ssb_game::modelpart::DemoParts,
 }
 
 /// The scene, its fighters' poses, its emblem, its particles and its 2D
@@ -152,6 +154,7 @@ pub fn tick(pack: Option<&Pack<'_>>, r: &Results, f: &mut Fighters, entrants: [O
     }
     for m in f.models.iter_mut().flatten() {
         play(p, m);
+        m.demo.tick();
     }
 }
 
@@ -164,6 +167,10 @@ fn make_model(p: &Pack<'_>, fighter: results_scene::Fighter) -> Box<Model> {
         object: ssb_psp_runtime::scene::fighter_object(p, kind).unwrap_or(u32::MAX),
         slot: None,
         skeleton: Skeleton::new(),
+        demo: ssb_game::modelpart::DemoParts::start(
+            fighter.kind,
+            fighter.status.map_or(0, |s| 1 + s.index()),
+        ),
     });
     if let Some(status) = fighter.status {
         let slot = (ssb_rom::anim::SLOT_WIN1 + status.index()) as u32;
@@ -376,8 +383,9 @@ unsafe fn draw(
         );
         let base = gpu.model_matrix();
         draw_state.configure_fighter_light(results_scene::LIGHT_ANGLE);
-        // A demo fighter's model parts and accessory (RE-425).
-        let parts = ssb_game::modelpart::demo(m.fighter.kind).draw_parts();
+        // A demo fighter's model and texture parts (RE-426) and accessory
+        // (RE-425).
+        let parts = m.demo.parts.draw_parts();
         meshdraw::draw_fighter_posed(
             p,
             &obj,
@@ -386,6 +394,7 @@ unsafe fn draw(
             draw_state,
             meshdraw::Look {
                 costume: u32::from(m.fighter.costume),
+                textures: m.demo.parts.draw_textures(),
                 parts: parts.as_ref().map(|p| &p[..]),
                 accessory_before: m.fighter.kind == ssb_game::fighter::FighterKind::Purin,
             },

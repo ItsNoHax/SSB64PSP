@@ -21,7 +21,8 @@
 //! them and [`forward_effect`] makes them from the copies after the map
 //! step; a status set outside those passes makes them at once.
 //! The model-part commands set [`crate::modelpart`]'s state (RE-425).
-//! Sounds, rumble, texture parts, slope contours and throw descriptors are
+//! Texture-part commands select the joint material's sprite (RE-426).
+//! Sounds, rumble, slope contours and throw descriptors are
 //! decoded and skipped; the ported status code owns throws.
 
 mod scripts;
@@ -59,6 +60,181 @@ pub struct FighterScripts {
     pub motions: &'static [MotionDesc],
     /// `dFT<Name>SpecialStatusDescs[..].mflags.motion_id`.
     pub special_status_motion: &'static [i16],
+}
+
+/// A script index with this bit set reads the fighter's demo scripts
+/// ([`DemoScripts::words`]); only the part-event walk uses it.
+pub const DEMO_BIT: u32 = 0x2000_0000;
+
+/// One fighter's `dFT<Name>SubMotionDescs` scripts (`sc/scsubsys`): the
+/// demo statuses the selects and the results set (`nFTDemoStatusNull` to
+/// `nFTDemoStatusLose`, `D_ovl1_80390BE8`'s motion ids 0 to 5), RE-426.
+#[derive(Debug)]
+pub struct DemoScripts {
+    pub words: &'static [u32],
+    /// Word index of each row's script, or [`NO_SCRIPT`].
+    pub rows: [u32; 6],
+}
+
+/// The fighter's [`DemoScripts`], or `None` for an unported fighter.
+pub fn demo_scripts(kind: FighterKind) -> Option<&'static DemoScripts> {
+    Some(match kind {
+        FighterKind::Mario => &scripts::MARIO_DEMO,
+        FighterKind::Fox => &scripts::FOX_DEMO,
+        FighterKind::Donkey => &scripts::DONKEY_DEMO,
+        FighterKind::Samus => &scripts::SAMUS_DEMO,
+        FighterKind::Luigi => &scripts::LUIGI_DEMO,
+        FighterKind::Link => &scripts::LINK_DEMO,
+        FighterKind::Yoshi => &scripts::YOSHI_DEMO,
+        FighterKind::Captain => &scripts::CAPTAIN_DEMO,
+        FighterKind::Kirby => &scripts::KIRBY_DEMO,
+        FighterKind::Pikachu => &scripts::PIKACHU_DEMO,
+        FighterKind::Purin => &scripts::PURIN_DEMO,
+        FighterKind::Ness => &scripts::NESS_DEMO,
+        _ => return None,
+    })
+}
+
+/// A demo fighter's status script (`scSubsysFighterSetStatus`, then
+/// `scSubsysFighterProcUpdate`'s `ftMainPlayAnimEventsAll` each frame), of
+/// which the port runs the flow and the model- and texture-part events
+/// (RE-426). Demo statuses play at speed 1 from frame 0.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DemoScript {
+    kind: FighterKind,
+    thread: ScriptThread,
+    anim_frame: f32,
+}
+
+impl DemoScript {
+    /// `ftMainSetStatus(fighter_gobj, nFTDemoStatusNull + row,
+    /// FTSTATUS_PRESERVE_NONE, 1.0F, 0.0F)`: the parts reset if modified,
+    /// the row's script starts and its time-zero commands run.
+    pub fn start(kind: FighterKind, row: usize, parts: &mut crate::modelpart::ModelParts) -> Self {
+        let base = parts.detail_base;
+        parts.set_detail_all(base);
+        if parts.is_modify {
+            parts.reset_all();
+        }
+        if parts.texture.is_modify {
+            parts.reset_textures();
+        }
+        let pc = demo_scripts(kind)
+            .and_then(|d| d.rows.get(row).copied())
+            .unwrap_or(NO_SCRIPT);
+        let mut d = DemoScript {
+            kind,
+            thread: ScriptThread {
+                pc,
+                wait: 1.0,
+                ..ScriptThread::default()
+            },
+            anim_frame: 0.0,
+        };
+        d.run(parts);
+        d
+    }
+
+    /// One frame: the clip advances, then the events.
+    pub fn tick(&mut self, parts: &mut crate::modelpart::ModelParts) {
+        self.anim_frame += 1.0;
+        self.run(parts);
+    }
+
+    fn run(&mut self, parts: &mut crate::modelpart::ModelParts) {
+        let Some(words) = demo_scripts(self.kind).map(|d| d.words) else {
+            return;
+        };
+        let t = &mut self.thread;
+        if t.pc == NO_SCRIPT {
+            return;
+        }
+        if t.wait != f32::MAX {
+            t.wait -= 1.0;
+        }
+        for _ in 0..4096 {
+            let Some(&w) = words.get(t.pc as usize) else {
+                t.pc = NO_SCRIPT;
+                return;
+            };
+            if t.wait == f32::MAX {
+                // A paused script resumes when the clip starts over.
+                if 1.0 <= self.anim_frame {
+                    return;
+                }
+                t.wait = -self.anim_frame;
+            } else if t.wait > 0.0 {
+                return;
+            }
+            let opcode = w >> 26;
+            let value = w & 0x03FF_FFFF;
+            let next = t.pc + command_words(opcode);
+            let word1 = words.get(t.pc as usize + 1).copied().unwrap_or(NO_SCRIPT);
+            match opcode {
+                op::END => {
+                    t.pc = NO_SCRIPT;
+                    return;
+                }
+                op::SYNC_WAIT => t.wait += value as f32,
+                op::ASYNC_WAIT => t.wait = value as f32 - self.anim_frame,
+                op::LOOP_BEGIN => {
+                    if t.script_id + 2 <= STACK_MAX {
+                        t.p_goto[t.script_id] = next;
+                        t.loop_count[t.script_id] = value as i32;
+                        t.script_id += 2;
+                    }
+                }
+                op::LOOP_END => {
+                    if t.script_id >= 2 {
+                        let slot = t.script_id - 2;
+                        t.loop_count[slot] -= 1;
+                        if t.loop_count[slot] != 0 {
+                            t.pc = t.p_goto[slot];
+                            continue;
+                        }
+                        t.script_id -= 2;
+                    }
+                }
+                op::SUBROUTINE => {
+                    if word1 != NO_SCRIPT && t.script_id < STACK_MAX {
+                        t.p_goto[t.script_id] = next;
+                        t.script_id += 1;
+                        t.pc = word1;
+                        continue;
+                    }
+                }
+                op::RETURN => {
+                    if t.script_id == 0 {
+                        t.pc = NO_SCRIPT;
+                        return;
+                    }
+                    t.script_id -= 1;
+                    t.pc = t.p_goto[t.script_id];
+                    continue;
+                }
+                op::GOTO => {
+                    t.pc = word1;
+                    continue;
+                }
+                op::PAUSE_SCRIPT => t.wait = f32::MAX,
+                op::SET_MODEL_PART_ID => {
+                    let joint = sign((w >> 19) & 0x7F, 7);
+                    let part = sign(w & 0x7_FFFF, 19);
+                    if let Ok(joint) = u8::try_from(joint) {
+                        parts.set(joint, part as i8);
+                    }
+                }
+                op::RESET_MODEL_PART_ALL => parts.reset_all(),
+                op::HIDE_MODEL_PART_ALL => parts.hide_all(),
+                op::SET_TEXTURE_PART_ID => {
+                    let (part, id) = texture_part_event(w);
+                    parts.set_texture(part, id);
+                }
+                _ => {}
+            }
+            t.pc = next;
+        }
+    }
 }
 
 /// `FTAttributes` fields the hit pipeline reads (generated from the
@@ -138,6 +314,7 @@ mod op {
     pub const SET_MODEL_PART_ID: u32 = 40;
     pub const RESET_MODEL_PART_ALL: u32 = 41;
     pub const HIDE_MODEL_PART_ALL: u32 = 42;
+    pub const SET_TEXTURE_PART_ID: u32 = 43;
     pub const SET_COL_ANIM: u32 = 44;
     pub const RESET_COL_ANIM: u32 = 45;
     pub const SET_PARALLEL_SCRIPT: u32 = 46;
@@ -629,6 +806,12 @@ fn execute(
         }
         op::RESET_MODEL_PART_ALL => f.model_parts.reset_all(),
         op::HIDE_MODEL_PART_ALL => f.model_parts.hide_all(),
+        op::SET_TEXTURE_PART_ID => {
+            // `ftMotionCommandSetTexturePartID`: a 6-bit part and a 20-bit
+            // texture id (RE-426).
+            let (part, id) = texture_part_event(w);
+            f.model_parts.set_texture(part, id);
+        }
         op::SET_PARALLEL_SCRIPT => {
             let target = word(1);
             if thread == 0 && f.motion_script.threads[1].pc == NO_SCRIPT && target != NO_SCRIPT {
@@ -645,12 +828,31 @@ fn execute(
     thread_mut(f, pass, thread).pc = next;
 }
 
+/// `FTMotionEventSetTexturePartID`'s `(texturepart_id, frame)`.
+fn texture_part_event(w: u32) -> (usize, i8) {
+    (((w >> 20) & 0x3F) as usize, (w & 0xF_FFFF) as i8)
+}
+
 /// Every `SetModelPartID` a playable fighter's scripts can reach, as
 /// `(joint, part)` with `ftParamGetJointID`'s -2 resolved, walked from each
 /// motion's script through its gotos, subroutines and parallel scripts. The
 /// asset pipeline packs the parts these name (RE-425).
 #[cfg(feature = "std")]
 pub fn model_part_events(kind: FighterKind) -> std::collections::BTreeSet<(i32, i32)> {
+    part_events(kind, op::SET_MODEL_PART_ID)
+}
+
+/// Every `SetTexturePartID` a playable fighter's scripts can reach, as
+/// `(texturepart_id, texture id)`, from the battle motions and the demo
+/// statuses' scripts (RE-426). The asset pipeline packs the textures these
+/// name.
+#[cfg(feature = "std")]
+pub fn texture_part_events(kind: FighterKind) -> std::collections::BTreeSet<(i32, i32)> {
+    part_events(kind, op::SET_TEXTURE_PART_ID)
+}
+
+#[cfg(feature = "std")]
+fn part_events(kind: FighterKind, wanted: u32) -> std::collections::BTreeSet<(i32, i32)> {
     let mut out = std::collections::BTreeSet::new();
     let Some(table) = fighter_scripts(kind) else {
         return out;
@@ -662,6 +864,16 @@ pub fn model_part_events(kind: FighterKind) -> std::collections::BTreeSet<(i32, 
         .map(|m| m.script)
         .filter(|&s| s != NO_SCRIPT)
         .collect();
+    // The demo statuses' scripts (`scsubsysdata*.c`) live in their own
+    // word blob, marked with `DEMO_BIT`.
+    if let Some(demo) = demo_scripts(kind) {
+        todo.extend(
+            demo.rows
+                .iter()
+                .filter(|&&s| s != NO_SCRIPT)
+                .map(|&s| s | DEMO_BIT),
+        );
+    }
     let mut seen = std::collections::BTreeSet::new();
     while let Some(start) = todo.pop() {
         let mut pc = start;
@@ -669,7 +881,9 @@ pub fn model_part_events(kind: FighterKind) -> std::collections::BTreeSet<(i32, 
             if !seen.insert(pc) {
                 break;
             }
-            let (words, base) = if pc & COMMON_BIT != 0 {
+            let (words, base) = if pc & DEMO_BIT != 0 {
+                (demo_scripts(kind).map_or(&[][..], |d| d.words), DEMO_BIT)
+            } else if pc & COMMON_BIT != 0 {
                 (&scripts::COMMON_MOVESET_WORDS[..], COMMON_BIT)
             } else {
                 (table.words, 0)
@@ -682,16 +896,28 @@ pub fn model_part_events(kind: FighterKind) -> std::collections::BTreeSet<(i32, 
             match opcode {
                 op::END | op::RETURN => break,
                 op::GOTO => {
-                    todo.extend(target.filter(|&t| t != NO_SCRIPT));
+                    todo.extend(
+                        target
+                            .filter(|&t| t != NO_SCRIPT)
+                            .map(|t| t | (pc & DEMO_BIT)),
+                    );
                     break;
                 }
                 op::SUBROUTINE | op::SET_PARALLEL_SCRIPT => {
-                    todo.extend(target.filter(|&t| t != NO_SCRIPT));
+                    todo.extend(
+                        target
+                            .filter(|&t| t != NO_SCRIPT)
+                            .map(|t| t | (pc & DEMO_BIT)),
+                    );
                 }
-                op::SET_MODEL_PART_ID => {
+                op::SET_MODEL_PART_ID if wanted == op::SET_MODEL_PART_ID => {
                     let joint = sign((w >> 19) & 0x7F, 7);
                     let joint = if joint == -2 { item_joint } else { joint };
                     out.insert((joint, sign(w & 0x7_FFFF, 19)));
+                }
+                op::SET_TEXTURE_PART_ID if wanted == op::SET_TEXTURE_PART_ID => {
+                    let (part, id) = texture_part_event(w);
+                    out.insert((part as i32, i32::from(id)));
                 }
                 _ => {}
             }

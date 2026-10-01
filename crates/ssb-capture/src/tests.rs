@@ -137,7 +137,7 @@ fn manifest_specs_round_trip() {
         );
         let canonical = match krate {
             "psp-asset-viewer" => ViewerScene::parse(spec).map(|s| s.to_string()),
-            "psp-game" => GameScene::parse(spec).map(|s| s.to_string()),
+            "psp-game" => crate::GameSpec::parse(spec).map(|s| s.to_string()),
             other => panic!("unknown crate {other}"),
         };
         assert_eq!(canonical.as_deref(), Some(spec), "{golden}");
@@ -154,4 +154,23 @@ fn manifest_specs_round_trip() {
         })
         .count();
     assert_eq!(rows, pngs, "every golden PNG has exactly one manifest row");
+}
+
+#[test]
+fn game_capture_ticks_round_trip_and_reject_malformed_values() {
+    let spec = crate::GameSpec::parse("vs4@390").unwrap();
+    assert_eq!(spec.scene, GameScene::Vs4);
+    assert_eq!(spec.tick, Some(390));
+    assert_eq!(spec.to_string(), "vs4@390");
+    assert_eq!(crate::GameSpec::parse("training").unwrap().tick, None);
+    for bad in [
+        "vs4@0",
+        "vs4@",
+        "vs4@-1",
+        "vs4@+1",
+        "vs4@1@2",
+        "vs4@4294967296",
+    ] {
+        assert!(crate::GameSpec::parse(bad).is_none(), "{bad}");
+    }
 }
