@@ -15,14 +15,16 @@
 //! Piranha Plants and Pokémon) are made through the same port; kinds the
 //! runtime cannot make return `None`, which is a real source outcome
 //! (`itManagerMakeItemSetupCommon` fails when the pool is full). Sector Z's
-//! Arwing and the bonus stages are not ported. Effects, rumble and audio are
-//! not ported, as elsewhere in the gameplay layer.
+//! Arwing has an object port of its own ([`sector::ArwingObject`]), and its
+//! lasers go to the weapon pool. The bonus stages are not ported. Rumble and
+//! audio are not ported, as elsewhere in the gameplay layer.
 
 pub mod castle;
 pub mod hyrule;
 pub mod inishie;
 pub mod jungle;
 pub mod pupupu;
+pub mod sector;
 pub mod yamabuki;
 pub mod yoster;
 pub mod zebes;
@@ -231,6 +233,46 @@ pub trait StageObjects {
     fn item_pos_width(&self, _handle: u32) -> Option<(Vec3, f32)> {
         None
     }
+    /// Sector Z's Arwing, or `None` when the runtime has none.
+    fn arwing(&mut self) -> Option<&mut dyn sector::ArwingObject> {
+        None
+    }
+}
+
+/// An Arwing with no runtime: every node is idle, so a pattern ends the
+/// frame it starts.
+struct NoArwing;
+impl sector::ArwingObject for NoArwing {
+    fn add_anim(&mut self, _: u8, _: Option<sector::ArwingAnim>) {}
+    fn add_anim_joint(&mut self, _: u8, _: sector::ArwingAnim) {}
+    fn play_all(&mut self) {}
+    fn anim_null(&self, _: u8) -> bool {
+        true
+    }
+    fn stop(&mut self, _: u8) {}
+    fn flags(&self, _: u8) -> u16 {
+        0
+    }
+    fn set_flags(&mut self, _: u8, _: u16) {}
+    fn set_hidden(&mut self, _: bool) {}
+    fn translate(&self, _: u8) -> Vec3 {
+        Vec3::ZERO
+    }
+    fn set_translate(&mut self, _: u8, _: Vec3) {}
+    fn rotate(&self, _: u8) -> Vec3 {
+        Vec3::ZERO
+    }
+    fn set_rotate(&mut self, _: u8, _: Vec3) {}
+    fn path_fraction(&self, _: u8) -> Option<f32> {
+        None
+    }
+    fn path_tangent(&self, _: u8, _: f32) -> Option<Vec3> {
+        None
+    }
+    fn path_point(&self, _: u8, _: f32) -> Option<Vec3> {
+        None
+    }
+    fn set_root(&mut self, _: [[f32; 4]; 4]) {}
 }
 
 /// Objects with no runtime: nothing animates and no item can be made.
@@ -358,6 +400,7 @@ pub enum Controller {
     Pupupu(pupupu::Pupupu),
     Yamabuki(yamabuki::Yamabuki),
     Inishie(inishie::Inishie),
+    Sector(sector::Sector),
 }
 
 /// A stage's controller, its hazard registries and its file data.
@@ -391,7 +434,14 @@ impl Stage {
         let mut registry = Registry::default();
         let controller = match init.kind {
             StageKind::Castle => Controller::Castle(castle::Castle::new(init, objects)),
-            StageKind::Sector => Controller::None,
+            StageKind::Sector => {
+                let mut none = NoArwing;
+                let arwing = match objects.arwing() {
+                    Some(a) => a,
+                    None => &mut none,
+                };
+                Controller::Sector(sector::Sector::new(groups, arwing))
+            }
             StageKind::Jungle => Controller::Jungle(jungle::Jungle::new(objects, &mut registry)),
             StageKind::Zebes => Controller::Zebes(zebes::Zebes::new(init, objects, &mut registry)),
             StageKind::Hyrule => Controller::Hyrule(hyrule::Hyrule::new(init)),
@@ -445,6 +495,14 @@ impl Stage {
             Controller::Inishie(c) => {
                 c.tick(fighters, groups, objects, &map, started, &mut self.registry)
             }
+            Controller::Sector(c) => {
+                let mut none = NoArwing;
+                let arwing = match objects.arwing() {
+                    Some(a) => a,
+                    None => &mut none,
+                };
+                c.tick(fighters, groups, arwing, &map, started)
+            }
         }
         self.publish(fighters, objects);
     }
@@ -468,6 +526,16 @@ impl Stage {
                 _ => {}
             }
         }
+    }
+
+    /// The Arwing lasers this frame's tick made, for the weapon pool
+    /// (`wpManagerMakeWeapon` at the controller's own time).
+    pub fn take_lasers(&mut self) -> impl Iterator<Item = crate::weapon::ArwingLaser> {
+        let lasers = match &mut self.controller {
+            Controller::Sector(s) => Some(s.take_lasers()),
+            _ => None,
+        };
+        lasers.into_iter().flatten()
     }
 
     /// `grJungleTaruCannGetRotate`.

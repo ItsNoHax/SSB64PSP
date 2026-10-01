@@ -3998,6 +3998,58 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             }
         }
 
+        // Sector Z's Arwing lasers (RE-428): both `WPAttributes` (file 262
+        // + 0xBC and + 0xF0) name file 153's list at 0x1C50, whose textures
+        // are file 161's. Keyed by the 2D record; the 3D shot draws the same
+        // list.
+        if id == ssb_rom::sector::FLIGHT_FILE {
+            const LASER_KEY: (u32, u32) = (
+                ssb_rom::sector::MAP_FILE,
+                ssb_rom::sector::LASER_2D_ATTRIBUTES,
+            );
+            let dl = ssb_rom::sector::LASER_DISPLAY_LIST;
+            if let Some(Ok(laser)) = file
+                .data
+                .get(dl as usize..)
+                .and_then(|data| ssb_rom::dl::decode_list_at(data, dl).ok())
+                .and_then(|cmds| {
+                    mesh::convert_sequence(
+                        &[mesh::SequenceItem {
+                            cmds: &cmds,
+                            world: ssb_rom::scene::Mat4::IDENTITY,
+                            mobjs: &[],
+                            mat_anims: &[],
+                            depth_seed: None,
+                            stream: 0,
+                        }],
+                        mesh::Source::of(file),
+                        mesh::InitialMaterial::WEAPON_EXTERNAL,
+                    )
+                    .into_iter()
+                    .next()
+                })
+            {
+                if laser.triangle_count() != 0 {
+                    pack_mesh(
+                        &mut writer,
+                        &mut tex_index,
+                        &mut mat_anim_index,
+                        &mat_anim_data,
+                        Texels {
+                            home: file,
+                            all: &loaded.files,
+                        },
+                        LASER_KEY.0,
+                        LASER_KEY.1,
+                        &laser,
+                        swizzle,
+                    );
+                    meshes += 1;
+                    triangles += laser.triangle_count();
+                }
+            }
+        }
+
         for (gi, graph) in graphs.iter().enumerate() {
             node_dls += graph.display_lists().count();
             placed_meshes += node_mesh[gi].iter().filter(|m| m.is_some()).count();
@@ -5195,6 +5247,40 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             &file.data,
             &joints,
         );
+    }
+
+    // Sector Z's Arwing (RE-428): file 153 (the flight paths `map_nodes`
+    // points into) and file 161 (the Arwing's own scripts) whole, so every
+    // script, `SYInterpDesc` and path pointer stays a file offset. A file an
+    // earlier animation stored is shared only if it was stored whole.
+    {
+        use ssb_rom::sector;
+        if ground_map_file(&loaded, sector::MAP_FILE, 0) != Some(sector::FLIGHT_FILE) {
+            return Err("sector: map_nodes does not land on file 153 + 0".into());
+        }
+        for (slot, file_id) in [
+            (sector::SLOT_FLIGHT, sector::FLIGHT_FILE),
+            (sector::SLOT_ARWING, sector::ARWING_FILE),
+        ] {
+            let file = loaded
+                .files
+                .get(file_id as usize)
+                .and_then(Option::as_ref)
+                .ok_or_else(|| format!("sector: file {file_id} missing"))?;
+            if let Some(len) = writer.anim_file_len(file_id) {
+                if len as usize != file.data.len() {
+                    return Err(format!("sector: file {file_id} already packed in part").into());
+                }
+            }
+            writer.add_anim(
+                ssb_rom::pack::AnimDesc::SECTOR,
+                slot,
+                file_id,
+                0,
+                &file.data,
+                &[],
+            );
+        }
     }
 
     // Shield poses go last, so every earlier animation keeps its index.

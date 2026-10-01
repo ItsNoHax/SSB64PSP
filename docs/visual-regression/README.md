@@ -196,6 +196,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `stageselectview`) | `f1-training-stage-select-view` | Training's stage select left on Hyrule Castle at tick 60: the stone, icons, red cursor, plaque, name plate and emblem, and the castle's preview model over its blue Training wallpaper | RE-419 |
 | `golden_capture` (`psp-game`, scene `stageselectyoshi`) | `f1-training-stage-select-yoshi` | The same select moved down to Yoshi's Island: the yellow Training wallpaper, and the preview hiding the two cloud nodes `mnMapsMakeModel` hides | RE-419 |
 | `golden_capture` (`psp-game`, scene `vssector`) | `f1-vs-sector` | `vs`'s countdown on Sector Z: the wallpaper scaled about its centre by the camera's distance | RE-419 |
+| `golden_capture` (`psp-game`, scene `trainingarwing`) | `f1-training-arwing` | Training on Sector Z at tick 1800: the Arwing's first pattern passing low, its wing in the top right | RE-428 |
 | `golden_capture` (`psp-game`, scene `vsyoshi`) | `f1-vs-yoshi` | `vs`'s countdown on Yoshi's Island: the static wallpaper | RE-419 |
 | `golden_capture` (`psp-game`, scene `trainingselect`) | `f1-training-select` | The Training character select at its tick 60: the stone, "Training Mode", BACK, the portraits with the four locked shadows, the red and grey cards, the hand on the player's card, and the CPU's Mario turning on his card under his name, emblem and puck | — |
 | `golden_capture` (`psp-game`, scene `trainingselectpicked`) | `f1-training-select-picked` | The same select after Kirby is placed in his C-Down (cyan) costume and the CPU's puck is picked up and placed again in Mario's C-Right costume: both fighters in their Win3 clips, the "Ready to fight" banner and "Press Start" | — |
@@ -969,3 +970,29 @@ disable the egg indices, common script 0x54 or Yoshi script 3, and all four
 new scenes reject their corresponding copy. The manifest has 149 scenes;
 this batch does not rerun the full matrix. Source mapping, original-game
 angles and capture limits are in [RE-427](../evidence/re/RE-427.md).
+
+## 2026-10-01 RE-428 Sector Z's Arwing
+
+`f1-training-arwing` (`trainingarwing`, `trainingsector` at tick 1800) is
+new: the Arwing's wing over the stage, the same wing the N64 shows at
+frames 5200–5260 of a traced Training run. Two captures are identical.
+
+`TraI` path tracks now play, so Board the Platforms' moving blocks follow
+their paths. Seven goldens were rebaselined, each identical twice:
+
+| Golden | Pixels (2×) |
+|---|---:|
+| `r2-stage-bonus2-fox` | 7,060 |
+| `r2-stage-bonus2-samus` | 1,080 |
+| `r2-stage-bonus2-luigi` | 1,148 |
+| `r2-stage-bonus2-yoshi` | 5,172 |
+| `r2-stage-bonus2-kirby` | 480 |
+| `r2-stage-bonus2-pikachu` | 10,464 |
+| `r2-stage-bonus2-purin` | 8,580 |
+
+With the `TraI` write disabled, `r2-stage-bonus2-pikachu` matches its old
+golden. The blocks' new positions are not compared with the N64. The full
+150-scene matrix ran twice (run `20261001-231214`); apart from these, only
+three VS time-up scenes failed, by timing out under 24-way load, and they
+match when rerun three at a time. Details in
+[RE-428](../evidence/re/RE-428.md).

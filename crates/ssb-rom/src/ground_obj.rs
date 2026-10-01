@@ -634,6 +634,9 @@ impl GroundObject {
 /// A stage's controller objects and the animations its controller may start.
 pub struct GroundObjects {
     objects: [Option<GroundObject>; MAX_STAGE_OBJECTS],
+    /// Sector Z's Arwing ([`crate::sector`]), whose scripts come from two
+    /// files and play node by node.
+    pub arwing: Option<crate::sector::Arwing>,
     anims: [Option<AnimDesc>; ANIMS.len()],
     mat_anims: [Option<AnimDesc>; MAT_ANIMS.len()],
 }
@@ -643,6 +646,7 @@ impl GroundObjects {
     pub fn empty() -> Self {
         GroundObjects {
             objects: [None; MAX_STAGE_OBJECTS],
+            arwing: None,
             anims: [None; ANIMS.len()],
             mat_anims: [None; MAT_ANIMS.len()],
         }
@@ -654,6 +658,9 @@ impl GroundObjects {
     /// packed from its label in that file.
     pub fn new(pack: &Pack<'_>, gr_file: u32) -> Self {
         let mut this = Self::empty();
+        if gr_file == crate::sector::MAP_FILE {
+            this.arwing = crate::sector::Arwing::new(pack);
+        }
         let mut file = None;
         for i in 0..pack.anim_count() {
             let Some(a) = pack.anim(i) else { continue };
@@ -793,6 +800,9 @@ impl GroundObjects {
     pub fn advance(&mut self, pack: &Pack<'_>) -> Result<(), AnimError> {
         for obj in self.objects.iter_mut().flatten() {
             obj.tick(pack)?;
+        }
+        if let Some(a) = self.arwing.as_mut() {
+            a.play_all(pack)?;
         }
         Ok(())
     }

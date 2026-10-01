@@ -588,11 +588,7 @@ fn every_packed_vs_stage_builds_and_runs_its_controller() {
         let mut stage = Stage::new(&init, &mut groups, &mut NoObjects);
         assert_eq!(stage.attack, hazard_attack);
         assert_eq!(stage.throw, hazard_throw);
-        assert_eq!(
-            matches!(stage.controller, Controller::None),
-            kind == StageKind::Sector,
-            "{kind:?}"
-        );
+        assert!(!matches!(stage.controller, Controller::None), "{kind:?}");
         let line_group = |_: u16| None;
         for _ in 0..3600 {
             stage.tick(
@@ -1202,5 +1198,273 @@ fn packed_scales_follow_the_inishie_controller() {
             + strings.node_translate(parent).unwrap()[1]
             + strings.node_translate(node).unwrap()[1];
         assert!((world - t[1]).abs() < 1e-2, "{world} {}", t[1]);
+    }
+}
+
+/// The runtime port's Arwing half (`psp-runtime::scene::StageObjectsPort`),
+/// for the pack's Sector Z Arwing (RE-428).
+struct ArwingPort<'a, 'p> {
+    pack: &'a ssb_rom::pack::Pack<'p>,
+    objects: &'a mut ssb_rom::ground_obj::GroundObjects,
+}
+
+fn script(anim: ssb_game::stage::sector::ArwingAnim) -> ssb_rom::sector::Script {
+    use ssb_game::stage::sector::ArwingAnim as A;
+    use ssb_rom::sector::Script as S;
+    match anim {
+        A::Flight { pattern, field } => S::Flight { pattern, field },
+        A::Pilot(id) => S::Pilot(id),
+        A::LaserCharge => S::LaserCharge,
+        A::LaserFire => S::LaserFire,
+        A::Flare => S::Flare,
+        A::Glow => S::Glow,
+    }
+}
+
+fn v3([x, y, z]: [f32; 3]) -> ssb_engine::math::Vec3 {
+    ssb_engine::math::Vec3::new(x, y, z)
+}
+
+impl ArwingPort<'_, '_> {
+    fn a(&self) -> &ssb_rom::sector::Arwing {
+        self.objects.arwing.as_ref().expect("arwing packed")
+    }
+    fn a_mut(&mut self) -> &mut ssb_rom::sector::Arwing {
+        self.objects.arwing.as_mut().expect("arwing packed")
+    }
+}
+
+impl ssb_game::stage::sector::ArwingObject for ArwingPort<'_, '_> {
+    fn add_anim(&mut self, node: u8, anim: Option<ssb_game::stage::sector::ArwingAnim>) {
+        let pack = self.pack;
+        self.a_mut()
+            .add_anim(pack, node as usize, anim.map(script))
+            .expect("arwing script parses");
+    }
+    fn add_anim_joint(&mut self, node: u8, anim: ssb_game::stage::sector::ArwingAnim) {
+        let pack = self.pack;
+        self.a_mut()
+            .add_anim_joint(pack, node as usize, script(anim));
+    }
+    fn play_all(&mut self) {
+        let pack = self.pack;
+        self.a_mut().play_all(pack).expect("arwing scripts parse");
+    }
+    fn anim_null(&self, node: u8) -> bool {
+        self.a().anim_null(node as usize)
+    }
+    fn stop(&mut self, node: u8) {
+        self.a_mut().stop(node as usize);
+    }
+    fn flags(&self, node: u8) -> u16 {
+        self.a().flags(node as usize)
+    }
+    fn set_flags(&mut self, node: u8, flags: u16) {
+        self.a_mut().set_flags(node as usize, flags);
+    }
+    fn set_hidden(&mut self, hidden: bool) {
+        self.a_mut().hidden = hidden;
+    }
+    fn translate(&self, node: u8) -> ssb_engine::math::Vec3 {
+        v3(self.a().translate(node as usize))
+    }
+    fn set_translate(&mut self, node: u8, t: ssb_engine::math::Vec3) {
+        self.a_mut().set_translate(node as usize, [t.x, t.y, t.z]);
+    }
+    fn rotate(&self, node: u8) -> ssb_engine::math::Vec3 {
+        v3(self.a().rotate(node as usize))
+    }
+    fn set_rotate(&mut self, node: u8, r: ssb_engine::math::Vec3) {
+        self.a_mut().set_rotate(node as usize, [r.x, r.y, r.z]);
+    }
+    fn path_fraction(&self, node: u8) -> Option<f32> {
+        self.a().path_fraction(node as usize)
+    }
+    fn path_tangent(&self, node: u8, t: f32) -> Option<ssb_engine::math::Vec3> {
+        self.a().path_tangent(self.pack, node as usize, t).map(v3)
+    }
+    fn path_point(&self, node: u8, t: f32) -> Option<ssb_engine::math::Vec3> {
+        self.a().path_point(self.pack, node as usize, t).map(v3)
+    }
+    fn set_root(&mut self, m: [[f32; 4]; 4]) {
+        self.a_mut().root = ssb_rom::scene::Mat4(core::array::from_fn(|i| m[i / 4][i % 4]));
+    }
+}
+
+impl StageObjects for ArwingPort<'_, '_> {
+    fn arwing(&mut self) -> Option<&mut dyn ssb_game::stage::sector::ArwingObject> {
+        Some(self)
+    }
+}
+
+/// RE-428: the Sector Z controller flies the packed Arwing. Every pattern
+/// starts visible on its path, the plane patterns pass the stage plane with
+/// the wing's collision group on (never a background one, which may pass
+/// as close), every fourth pattern is a background one, and every pattern
+/// ends hidden with the wing off.
+#[test]
+fn packed_arwing_flies_the_sector_controller() {
+    use ssb_game::map::{GroupStatus, MapGroup};
+    use ssb_game::stage::sector::{node, ArwingStatus, WING_GROUP};
+    use ssb_game::stage::{Controller, Stage, StageInit, StageKind, TickInput};
+    use ssb_rom::ground_obj::GroundObjects;
+    let Some((bytes, _)) = pack_and_rom() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let s = pack
+        .stage(pack.stage_of_file(ssb_rom::sector::MAP_FILE).unwrap())
+        .unwrap();
+    let mut objects = GroundObjects::new(&pack, s.source_file);
+    assert!(objects.arwing.is_some(), "the pack carries the Arwing");
+    let init = StageInit {
+        kind: StageKind::Sector,
+        map_objects: &[],
+        bound_bottom: s.bounds.bottom as f32,
+        hazard_attack: None,
+        hazard_throw: None,
+        acid_surface_y: 0.0,
+    };
+    let mut groups = vec![MapGroup::default(); 4];
+    ssb_game::rng::set_seed(0x5EC7);
+    let mut stage = Stage::new(
+        &init,
+        &mut groups,
+        &mut ArwingPort {
+            pack: &pack,
+            objects: &mut objects,
+        },
+    );
+    assert_eq!(groups[WING_GROUP as usize].status, GroupStatus::Off);
+    let line_group = |_: u16| None;
+    // Ahead of the plane patterns, level with their cruise: in the 2D
+    // volley's window (`grSectorArwingGetLaserAmmoCount`).
+    let mut fighter = Fighter::new(FighterKind::Mario, 0, 3);
+    fighter.pos = ssb_engine::math::Vec3::new(-9000.0, 2400.0, 0.0);
+    let mut patterns = Vec::new();
+    let mut was_patrol = false;
+    let mut near_z = (f32::MAX, f32::MAX);
+    let mut wing_on = 0;
+    let mut lasers = 0;
+    for frame in 0..60 * 60 * 6 {
+        objects.advance(&pack).unwrap();
+        let mut fighters = [&mut fighter];
+        stage.tick(
+            &mut fighters,
+            TickInput {
+                groups: &mut groups,
+                objects: &mut ArwingPort {
+                    pack: &pack,
+                    objects: &mut objects,
+                },
+                map: ssb_game::stage::MapQuery {
+                    surfaces: || core::iter::empty::<ssb_game::weapon::MapSurface>(),
+                    line_group: &line_group,
+                },
+                started: true,
+            },
+        );
+        for l in stage.take_lasers() {
+            lasers += 1;
+            if !l.three_d {
+                assert_eq!(l.velocity, ssb_engine::math::Vec3::new(-230.0, 0.0, 0.0));
+            }
+        }
+        let Controller::Sector(c) = &stage.controller else {
+            panic!("Sector has its controller");
+        };
+        let a = objects.arwing.as_ref().unwrap();
+        let patrol = c.status == ArwingStatus::Patrol;
+        if patrol && !was_patrol {
+            assert!(!a.hidden, "frame {frame}: a pattern starts visible");
+            assert!(a.path_fraction(node::PATH as usize).is_some());
+            patterns.push((frame, c.laser_count, c.target_x));
+            near_z = (f32::MAX, f32::MAX);
+        }
+        if patrol {
+            let t = a.translate(node::PATH as usize);
+            assert!(t.iter().all(|v| v.is_finite()), "frame {frame}: {t:?}");
+            let slot = if c.laser_count == 2 {
+                &mut near_z.0
+            } else {
+                &mut near_z.1
+            };
+            *slot = slot.min(t[2].abs());
+            if groups[WING_GROUP as usize].status == GroupStatus::On {
+                wing_on += 1;
+                assert_eq!(c.laser_count, 2, "only the plane patterns land the wing");
+            }
+        }
+        if !patrol && was_patrol {
+            assert!(a.hidden, "frame {frame}: a pattern ends hidden");
+            assert_eq!(groups[WING_GROUP as usize].status, GroupStatus::Off);
+            let (start, count, x) = patterns.last().copied().unwrap();
+            eprintln!(
+                "pattern from {start} to {frame}: laser_count {count} target_x {x} min |z| plane {} background {}",
+                near_z.0, near_z.1
+            );
+            if count == 2 {
+                assert!(near_z.0 < 200.0, "a plane pattern crosses the stage plane");
+            }
+        }
+        was_patrol = patrol;
+    }
+    // Sleep ends on the first started frame, then 600 frames of wait.
+    assert_eq!(patterns.first().map(|p| p.0), Some(601));
+    assert!(patterns.len() >= 8, "{patterns:?}");
+    for (i, p) in patterns.iter().enumerate() {
+        assert_eq!(
+            p.1 == 0,
+            i % 4 == 3,
+            "every fourth pattern sweeps in: {patterns:?}"
+        );
+    }
+    assert!(wing_on > 0);
+    assert!(
+        lasers > 0 && lasers % 2 == 0,
+        "the 2D volleys fire pairs: {lasers}"
+    );
+    eprintln!(
+        "{} patterns, {wing_on} wing frames, {lasers} lasers",
+        patterns.len()
+    );
+}
+
+/// RE-428: node 0's path, played from the pack, against the N64. A
+/// Training-on-Sector-Z warp build traced `map_dobjs[0]->translate` every
+/// frame (Mupen64Plus, 9,500 frames): patterns 0, 4, 2 and 5 started at
+/// frames 601, 2271, 4080 and 8032, and every traced frame of each matched
+/// this playback to four decimals. These are frames `k` after the pattern
+/// started (`func_ovl2_80107D50`'s parse and play is `k` 0).
+#[test]
+fn packed_arwing_paths_match_the_n64_trace() {
+    use ssb_rom::sector::{Arwing, Script};
+    let Some((bytes, _)) = pack_and_rom() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    // The trace's printed values, to four decimals.
+    let traced: [(u8, usize, [f64; 3]); 6] = [
+        (0, 300, [1999.1096, 4500.0, -0.0002]),
+        (4, 300, [-1037.0774, 2311.9409, 0.0]),
+        (2, 1150, [-1122.0406, 2500.9065, 0.0]),
+        (2, 2166, [10827.8457, -810.501, 8400.0]),
+        (5, 200, [-1991.5497, 3943.3335, 3276.9719]),
+        (5, 398, [-12299.9893, 13141.6191, 19200.002]),
+    ];
+    for (pattern, k, want) in traced {
+        let mut a = Arwing::new(&pack).expect("arwing packed");
+        a.add_anim(&pack, 0, Some(Script::Flight { pattern, field: 0 }))
+            .unwrap();
+        for _ in 0..k {
+            a.play_all(&pack).unwrap();
+        }
+        let got = a.translate(0);
+        for i in 0..3 {
+            assert!(
+                (f64::from(got[i]) - want[i]).abs() < 0.001,
+                "pattern {pattern} frame {k}: {got:?} vs {want:?}"
+            );
+        }
     }
 }

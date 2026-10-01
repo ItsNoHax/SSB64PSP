@@ -139,6 +139,17 @@ pub fn yoshi_star_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
     mesh_keyed(pack, YOSHI_STAR_SOURCE.0, YOSHI_STAR_SOURCE.1)
 }
 
+/// Sector Z's Arwing lasers: file 153's list, keyed by the 2D shot's
+/// `WPAttributes` (file 262 + 0xBC); the 3D shot names the same list
+/// (RE-428).
+pub fn arwing_laser_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
+    mesh_keyed(
+        pack,
+        ssb_rom::sector::MAP_FILE,
+        ssb_rom::sector::LASER_2D_ATTRIBUTES,
+    )
+}
+
 /// Link Special1's `WPAttributes.data`: file 325's three-node Boomerang
 /// `DObjDesc` tree.
 pub const LINK_BOOMERANG_SOURCE_FILE: u32 = 325;
@@ -1725,6 +1736,109 @@ fn vec3([x, y, z]: [f32; 3]) -> ssb_engine::math::Vec3 {
     ssb_engine::math::Vec3::new(x, y, z)
 }
 
+/// The pack script a controller's Arwing animation names.
+fn arwing_script(anim: ssb_game::stage::sector::ArwingAnim) -> ssb_rom::sector::Script {
+    use ssb_game::stage::sector::ArwingAnim as A;
+    use ssb_rom::sector::Script as S;
+    match anim {
+        A::Flight { pattern, field } => S::Flight { pattern, field },
+        A::Pilot(id) => S::Pilot(id),
+        A::LaserCharge => S::LaserCharge,
+        A::LaserFire => S::LaserFire,
+        A::Flare => S::Flare,
+        A::Glow => S::Glow,
+    }
+}
+
+/// Sector Z's Arwing through the same port (RE-428). Every call on a stage
+/// without one is a no-op; `arwing()` never hands it out there.
+impl ssb_game::stage::sector::ArwingObject for StageObjectsPort<'_, '_> {
+    fn add_anim(&mut self, node: u8, anim: Option<ssb_game::stage::sector::ArwingAnim>) {
+        if let Some(a) = self.objects.arwing.as_mut() {
+            // A script that fails to parse leaves the node where it is.
+            let _ = a.add_anim(self.pack, node as usize, anim.map(arwing_script));
+        }
+    }
+    fn add_anim_joint(&mut self, node: u8, anim: ssb_game::stage::sector::ArwingAnim) {
+        if let Some(a) = self.objects.arwing.as_mut() {
+            a.add_anim_joint(self.pack, node as usize, arwing_script(anim));
+        }
+    }
+    fn play_all(&mut self) {
+        if let Some(a) = self.objects.arwing.as_mut() {
+            let _ = a.play_all(self.pack);
+        }
+    }
+    fn anim_null(&self, node: u8) -> bool {
+        self.objects
+            .arwing
+            .as_ref()
+            .is_none_or(|a| a.anim_null(node as usize))
+    }
+    fn stop(&mut self, node: u8) {
+        if let Some(a) = self.objects.arwing.as_mut() {
+            a.stop(node as usize);
+        }
+    }
+    fn flags(&self, node: u8) -> u16 {
+        self.objects.arwing.as_ref().map_or(0, |a| a.flags(node as usize))
+    }
+    fn set_flags(&mut self, node: u8, flags: u16) {
+        if let Some(a) = self.objects.arwing.as_mut() {
+            a.set_flags(node as usize, flags);
+        }
+    }
+    fn set_hidden(&mut self, hidden: bool) {
+        if let Some(a) = self.objects.arwing.as_mut() {
+            a.hidden = hidden;
+        }
+    }
+    fn translate(&self, node: u8) -> ssb_engine::math::Vec3 {
+        self.objects
+            .arwing
+            .as_ref()
+            .map_or(ssb_engine::math::Vec3::ZERO, |a| vec3(a.translate(node as usize)))
+    }
+    fn set_translate(&mut self, node: u8, t: ssb_engine::math::Vec3) {
+        if let Some(a) = self.objects.arwing.as_mut() {
+            a.set_translate(node as usize, [t.x, t.y, t.z]);
+        }
+    }
+    fn rotate(&self, node: u8) -> ssb_engine::math::Vec3 {
+        self.objects
+            .arwing
+            .as_ref()
+            .map_or(ssb_engine::math::Vec3::ZERO, |a| vec3(a.rotate(node as usize)))
+    }
+    fn set_rotate(&mut self, node: u8, r: ssb_engine::math::Vec3) {
+        if let Some(a) = self.objects.arwing.as_mut() {
+            a.set_rotate(node as usize, [r.x, r.y, r.z]);
+        }
+    }
+    fn path_fraction(&self, node: u8) -> Option<f32> {
+        self.objects.arwing.as_ref()?.path_fraction(node as usize)
+    }
+    fn path_tangent(&self, node: u8, t: f32) -> Option<ssb_engine::math::Vec3> {
+        self.objects
+            .arwing
+            .as_ref()?
+            .path_tangent(self.pack, node as usize, t)
+            .map(vec3)
+    }
+    fn path_point(&self, node: u8, t: f32) -> Option<ssb_engine::math::Vec3> {
+        self.objects
+            .arwing
+            .as_ref()?
+            .path_point(self.pack, node as usize, t)
+            .map(vec3)
+    }
+    fn set_root(&mut self, m: [[f32; 4]; 4]) {
+        if let Some(a) = self.objects.arwing.as_mut() {
+            a.root = ssb_rom::scene::Mat4(core::array::from_fn(|i| m[i / 4][i % 4]));
+        }
+    }
+}
+
 impl ssb_game::stage::StageObjects for StageObjectsPort<'_, '_> {
     fn play(&mut self, anim: ssb_game::stage::StageAnim) {
         use ssb_game::stage::StageAnim;
@@ -1792,5 +1906,12 @@ impl ssb_game::stage::StageObjects for StageObjectsPort<'_, '_> {
     }
     fn child_translate(&self, obj: ssb_game::stage::StageObj) -> Option<ssb_engine::math::Vec3> {
         self.get(obj)?.child_translate(self.pack).map(vec3)
+    }
+    fn arwing(&mut self) -> Option<&mut dyn ssb_game::stage::sector::ArwingObject> {
+        if self.objects.arwing.is_some() {
+            Some(self)
+        } else {
+            None
+        }
     }
 }

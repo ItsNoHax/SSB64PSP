@@ -157,6 +157,9 @@ pub struct StageJoint {
     /// `anim_wait == AOBJ_ANIM_CHANGED`: the next parse starts at the
     /// script's beginning without first advancing the clock.
     changed: bool,
+    /// The `TraI` track's `AObj::interpolate`: the file offset of the
+    /// `SYInterpDesc` its last `SetInterp` named.
+    interp: Option<u32>,
 }
 
 /// `AOBJ_ANIM_END` (`F32_MIN / 3`), the frame an ended script reports.
@@ -174,6 +177,7 @@ impl StageJoint {
             frame,
             frame_written: false,
             changed: false,
+            interp: None,
         }
     }
 
@@ -195,6 +199,17 @@ impl StageJoint {
         self.ended
     }
 
+    /// `gcGetAObjValue` on track `track`, or `None` while it has no key.
+    pub fn track_value(&self, track: usize) -> Option<f32> {
+        let t = self.tracks.get(track)?;
+        (t.kind != Kind::None).then(|| t.value())
+    }
+
+    /// The `SYInterpDesc` the `TraI` track follows, as a file offset.
+    pub fn interp(&self) -> Option<u32> {
+        self.interp
+    }
+
     /// Advances one tick and writes the tracks it names into `pose`.
     ///
     /// `pose` starts at the node's rest transform and is updated in place, so
@@ -214,7 +229,7 @@ impl StageJoint {
         translate_scale: [f32; 3],
     ) -> Result<(), AnimError> {
         self.parse(data, speed)?;
-        self.play(speed, pose, translate_scale);
+        self.play(data, speed, pose, translate_scale);
         Ok(())
     }
 
@@ -292,9 +307,11 @@ impl StageJoint {
                         }
                     }
                 }
-                // Hands the `TraI` track a pointer to spline control points.
-                // The pointer word is consumed; nothing reads `TraI` yet.
-                OP_SET_INTERP => self.pc += 4,
+                // Hands the `TraI` track its `SYInterpDesc`.
+                OP_SET_INTERP => {
+                    self.interp = Some(u32_at(data, self.pc).ok_or(AnimError::Truncated { at })?);
+                    self.pc += 4;
+                }
                 _ => {
                     let per =
                         values_per_track(opcode).ok_or(AnimError::UnknownOpcode { opcode, at })?;
@@ -387,7 +404,7 @@ impl StageJoint {
     }
 
     /// `gcPlayDObjAnimJoint`: advance every live track and write the pose.
-    fn play(&mut self, speed: f32, pose: &mut JointPose, translate_scale: [f32; 3]) {
+    fn play(&mut self, data: &[u8], speed: f32, pose: &mut JointPose, translate_scale: [f32; 3]) {
         for (track, aobj) in self.tracks.iter_mut().enumerate() {
             if aobj.kind == Kind::None {
                 continue;
@@ -400,8 +417,19 @@ impl StageJoint {
                 0..=2 => pose.rotate[track] = value,
                 4..=6 => pose.translate[track - 4] = value * translate_scale[track - 4],
                 7..=9 => pose.scale[track - 7] = value,
-                // TraI, the spline-translation fraction, needs the control
-                // points opcode 12 would set; nothing reads it here.
+                // `TraI`: the fraction along the path, clamped, written as
+                // `syInterpCubic`'s point. A track with no path writes
+                // nothing.
+                3 => {
+                    let t = value.clamp(0.0, 1.0);
+                    if let Some(p) = self
+                        .interp
+                        .and_then(|at| crate::interp::Spline::read(data, at))
+                        .and_then(|s| s.cubic(data, t))
+                    {
+                        pose.translate = p;
+                    }
+                }
                 _ => {}
             }
         }

@@ -232,6 +232,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         | GameScene::TrainingCastle
         | GameScene::TrainingHyrule
         | GameScene::TrainingPupupu => 400,
+        // RE-428: the first pattern's low pass, its wing in the top right.
+        GameScene::TrainingArwing => 1800,
         // The select opens at tick 8; at its tick 60 the portraits are in
         // and the CPU's puck shows.
         GameScene::TrainingSelect => 68,
@@ -279,6 +281,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingInishie
             | GameScene::TrainingYoster
             | GameScene::TrainingSector
+            | GameScene::TrainingArwing
             | GameScene::TrainingCastle
             | GameScene::TrainingHyrule
             | GameScene::TrainingPupupu
@@ -465,6 +468,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingInishie
             | GameScene::TrainingYoster
             | GameScene::TrainingSector
+            | GameScene::TrainingArwing
             | GameScene::TrainingCastle
             | GameScene::TrainingHyrule
             | GameScene::TrainingPupupu
@@ -1251,6 +1255,16 @@ unsafe fn training_step(
             },
         );
     }
+    // Sector Z's Arwing lasers: `wpManagerMakeWeapon` inside the
+    // controller; a pair's second shot only after the first.
+    for laser in stage_ctl.take_lasers() {
+        if !weapons.spawn_arwing_laser(laser) {
+            break;
+        }
+    }
+    if let Some(a) = stage_objects.arwing.as_ref() {
+        weapons.observe_arwing_roll(a.rotate(1)[2]);
+    }
     let groups = stage_map
         .as_ref()
         .map_or(&[][..], |map| map.groups.as_slice());
@@ -1699,7 +1713,9 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
         Some(GameScene::TrainingSaffron) => ssb_game::stage_select::gkind::YAMABUKI,
         Some(GameScene::TrainingInishie) => ssb_game::stage_select::gkind::INISHIE,
         Some(GameScene::TrainingYoster) => ssb_game::stage_select::gkind::YOSTER,
-        Some(GameScene::TrainingSector) => ssb_game::stage_select::gkind::SECTOR,
+        Some(GameScene::TrainingSector | GameScene::TrainingArwing) => {
+            ssb_game::stage_select::gkind::SECTOR
+        }
         Some(GameScene::TrainingCastle) => ssb_game::stage_select::gkind::CASTLE,
         Some(GameScene::TrainingHyrule) => ssb_game::stage_select::gkind::HYRULE,
         _ => CAPTURE_STAGE_GKIND,
@@ -3760,6 +3776,7 @@ struct DrawAssets {
     spin_effect: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     yoshi_egg_mesh: Option<ssb_rom::pack::MeshDesc>,
     yoshi_star_mesh: Option<ssb_rom::pack::MeshDesc>,
+    arwing_laser_mesh: Option<ssb_rom::pack::MeshDesc>,
     /// The Falcon Punch flame (material animation only).
     falcon_punch: Option<ssb_rom::pack::ObjectDesc>,
     /// Pikachu's aerial and ground Thunder Jolts with their `anim_joints`.
@@ -3813,6 +3830,7 @@ impl DrawAssets {
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             yoshi_egg_mesh: ssb_psp_runtime::scene::yoshi_egg_mesh(p),
             yoshi_star_mesh: ssb_psp_runtime::scene::yoshi_star_mesh(p),
+            arwing_laser_mesh: ssb_psp_runtime::scene::arwing_laser_mesh(p),
             falcon_punch: ssb_psp_runtime::scene::captain_falcon_punch_effect(p),
             jolt_air: ssb_psp_runtime::scene::object_keyed(
                 p,
@@ -5910,6 +5928,19 @@ unsafe fn draw_items_weapons_effects(
                 ],
             );
             meshdraw::draw_mesh(p, star_mesh, draw_state, None, None);
+        }
+    }
+
+    // Sector Z's Arwing lasers (RE-428): a `TraRotRpyR` DObj drawing file
+    // 153's list, faced along the shot. The 3D shot's burst clears it.
+    if let Some(laser_mesh) = assets.arwing_laser_mesh.as_ref() {
+        for laser in weapons.arwing_lasers().filter(|l| !l.exploded) {
+            gpu.model_transform(
+                [laser.position.x, laser.position.y, laser.position.z],
+                [laser.rotate.x, laser.rotate.y, laser.rotate.z],
+                meshdraw::MODEL_SCALE,
+            );
+            meshdraw::draw_mesh(p, laser_mesh, draw_state, None, None);
         }
     }
 
