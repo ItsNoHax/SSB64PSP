@@ -12,9 +12,10 @@
 //! animated by the runtime. Controllers see them only through the
 //! [`StageObjects`] port, which reports the `GObj::anim_frame` and
 //! `MObj::anim_wait` values the source polls. Items (the Bumper, POW Block,
-//! Piranha Plants and Pokémon) are made through the same port; kinds the
-//! runtime cannot make return `None`, which is a real source outcome
-//! (`itManagerMakeItemSetupCommon` fails when the pool is full). Sector Z's
+//! Piranha Plants and Pokémon) are made through the [`StageItems`] port,
+//! which the item pool implements; a kind it cannot make returns `None`,
+//! which is a real source outcome (`itManagerMakeItemSetupCommon` fails
+//! when the pool is full). The Pokémon are not ported yet. Sector Z's
 //! Arwing has an object port of its own ([`sector::ArwingObject`]), and its
 //! lasers go to the weapon pool. The bonus stages are not ported. Rumble and
 //! audio are not ported, as elsewhere in the gameplay layer.
@@ -225,14 +226,6 @@ pub trait StageObjects {
     fn child_translate(&self, _obj: StageObj) -> Option<Vec3> {
         None
     }
-    /// Returns a handle, or `None` when the item cannot be made.
-    fn make_item(&mut self, _item: StageItem, _pos: Vec3) -> Option<u32> {
-        None
-    }
-    /// A live item's translation and `map_coll.width`.
-    fn item_pos_width(&self, _handle: u32) -> Option<(Vec3, f32)> {
-        None
-    }
     /// Sector Z's Arwing, or `None` when the runtime has none.
     fn arwing(&mut self) -> Option<&mut dyn sector::ArwingObject> {
         None
@@ -275,9 +268,31 @@ impl sector::ArwingObject for NoArwing {
     fn set_root(&mut self, _: [[f32; 4]; 4]) {}
 }
 
-/// Objects with no runtime: nothing animates and no item can be made.
+/// Objects with no runtime: nothing animates.
 pub struct NoObjects;
 impl StageObjects for NoObjects {}
+
+/// The items a controller makes and moves (`itManagerMakeItemSetupCommon`
+/// and the item GObjs it keeps). A handle names one item for as long as it
+/// lives. The defaults make nothing.
+pub trait StageItems {
+    /// Returns a handle, or `None` when the item cannot be made.
+    fn make_item(&mut self, _item: StageItem, _pos: Vec3) -> Option<u32> {
+        None
+    }
+    /// A live item's translation and `map_coll.width`.
+    fn item_pos_width(&self, _handle: u32) -> Option<(Vec3, f32)> {
+        None
+    }
+    /// `DObjGetStruct(item_gobj)->translate.vec.f.x = x`.
+    fn set_item_x(&mut self, _handle: u32, _x: f32) {}
+    /// `itPakkunCommonSetWaitFighter`.
+    fn pakkun_set_wait_fighter(&mut self, _handle: u32) {}
+}
+
+/// No item pool: nothing is made.
+pub struct NoItems;
+impl StageItems for NoItems {}
 
 /// Stage data the runtime reads from the stage file.
 #[derive(Debug, Clone, Copy)]
@@ -307,9 +322,11 @@ pub enum Obstacle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hazard {
     Acid,
-    /// The POW Block item, with its `damage_handicap`.
+    /// The POW Block item, with its `damage_handicap` and the fighter that
+    /// hit it (`damage_gobj`), whom the quake spares.
     PowerBlock {
         handicap: u8,
+        hitter: Option<u8>,
     },
 }
 
@@ -384,6 +401,7 @@ pub struct MapQuery<'a, F> {
 pub struct TickInput<'a, F> {
     pub groups: &'a mut [MapGroup],
     pub objects: &'a mut dyn StageObjects,
+    pub items: &'a mut dyn StageItems,
     pub map: MapQuery<'a, F>,
     /// `gSCManagerBattleState->game_status != nSCBattleGameStatusWait`.
     pub started: bool,
@@ -430,10 +448,11 @@ impl Stage {
         init: &StageInit<'_>,
         groups: &mut [MapGroup],
         objects: &mut dyn StageObjects,
+        items: &mut dyn StageItems,
     ) -> Self {
         let mut registry = Registry::default();
         let controller = match init.kind {
-            StageKind::Castle => Controller::Castle(castle::Castle::new(init, objects)),
+            StageKind::Castle => Controller::Castle(castle::Castle::new(init, objects, items)),
             StageKind::Sector => {
                 let mut none = NoArwing;
                 let arwing = match objects.arwing() {
@@ -450,11 +469,14 @@ impl Stage {
             StageKind::Yamabuki => Controller::Yamabuki(yamabuki::Yamabuki::with_monster_pos(
                 groups,
                 objects,
+                items,
                 objects_of(init.map_objects, mapobj::MONSTER)
                     .next()
                     .unwrap_or(Vec3::ZERO),
             )),
-            StageKind::Inishie => Controller::Inishie(inishie::Inishie::new(init, groups, objects)),
+            StageKind::Inishie => {
+                Controller::Inishie(inishie::Inishie::new(init, groups, objects, items))
+            }
         };
         Stage {
             controller,
@@ -474,6 +496,7 @@ impl Stage {
         let TickInput {
             groups,
             objects,
+            items,
             map,
             started,
         } = input;
@@ -485,16 +508,22 @@ impl Stage {
         }
         match &mut self.controller {
             Controller::None => {}
-            Controller::Castle(c) => c.tick(objects),
+            Controller::Castle(c) => c.tick(objects, items),
             Controller::Jungle(c) => c.tick(),
             Controller::Zebes(c) => c.tick(started, objects),
             Controller::Hyrule(c) => c.tick(fighters, &mut self.registry, &map, started),
             Controller::Yoster(c) => c.tick(fighters, groups, objects, &map),
             Controller::Pupupu(c) => c.tick(fighters, objects, started),
-            Controller::Yamabuki(c) => c.tick(fighters, groups, objects, started),
-            Controller::Inishie(c) => {
-                c.tick(fighters, groups, objects, &map, started, &mut self.registry)
-            }
+            Controller::Yamabuki(c) => c.tick(fighters, groups, objects, items, started),
+            Controller::Inishie(c) => c.tick(
+                fighters,
+                groups,
+                objects,
+                items,
+                &map,
+                started,
+                &mut self.registry,
+            ),
             Controller::Sector(c) => {
                 let mut none = NoArwing;
                 let arwing = match objects.arwing() {
@@ -524,6 +553,34 @@ impl Stage {
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// Delivers the stage calls this frame's items made, in order.
+    pub fn apply_item_events(
+        &mut self,
+        events: impl IntoIterator<Item = crate::item::StageItemEvent>,
+    ) {
+        use crate::item::StageItemEvent;
+        for e in events {
+            if let Controller::Inishie(c) = &mut self.controller {
+                match e {
+                    StageItemEvent::PowerBlockDamage { handicap, hitter } => {
+                        c.set_power_block_damage(&mut self.registry, handicap, hitter)
+                    }
+                    StageItemEvent::PowerBlockGone => c.power_block_gone(),
+                }
+            }
+        }
+    }
+
+    /// `grInishiePakkunSetWaitFighter`, from `ftCommonDokanStartSetStatus`.
+    /// Pipes are not ported yet, so nothing calls it.
+    pub fn pakkun_set_wait_fighter(&self, items: &mut dyn StageItems) {
+        if let Controller::Inishie(c) = &self.controller {
+            for h in c.pakkun.into_iter().flatten() {
+                items.pakkun_set_wait_fighter(h);
             }
         }
     }
@@ -587,11 +644,12 @@ impl Stage {
                     .then_some(self.attack)
                     .flatten()
                     .map(|a| (a, crate::hazard::GROUND_HANDICAP)),
-                (Hazard::PowerBlock { handicap }, _) => f
-                    .is_grounded()
-                    .then_some(self.attack)
-                    .flatten()
-                    .map(|a| (a, handicap)),
+                // `grInishiePowerBlockCheckGetDamageKind`.
+                (Hazard::PowerBlock { handicap, hitter }, _) => (f.is_grounded()
+                    && hitter != Some(f.port))
+                .then_some(self.attack)
+                .flatten()
+                .map(|a| (a, handicap)),
                 _ => None,
             };
             if result.is_some() {

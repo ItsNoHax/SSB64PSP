@@ -73,6 +73,15 @@ pub(crate) struct Attacker {
     pub handicap: u8,
 }
 
+/// The attack's knockback terms, which an item that takes knockback
+/// (`is_allow_knockback`) runs through `ftParamGetCommonKnockback`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Knock {
+    pub weight: i32,
+    pub scale: i32,
+    pub base: i32,
+}
+
 /// The shared half of `itProcessUpdateDamageStat*`: a normal damage
 /// collision queues the damage and the strongest hit's angle, element and
 /// side.
@@ -83,6 +92,7 @@ pub(crate) fn queue_damage(
     element: crate::combat::Element,
     lr: f32,
     by: Attacker,
+    knock: Knock,
 ) {
     if victim.damage_coll.hitstatus != HitStatus::Normal {
         return;
@@ -98,7 +108,23 @@ pub(crate) fn queue_damage(
         victim.damage_team = by.team;
         victim.damage_handicap = by.handicap;
     }
-    // `is_allow_knockback` is never set for the ported kinds.
+    if victim.is_allow_knockback {
+        // The queue already holds this hit, and the item weighs 1.0.
+        let knockback = crate::attack::knockback(
+            victim.percent_damage.clamp(0, i32::from(u16::MAX)) as u16,
+            victim.damage_queue,
+            damage,
+            knock.weight,
+            knock.scale,
+            knock.base,
+            1.0,
+            by.handicap,
+            victim.handicap,
+        );
+        if victim.damage_knockback < knockback {
+            victim.damage_knockback = knockback;
+        }
+    }
 }
 
 /// `gmCollisionCheck*AttackItemDamageCollide`: a sphere swept against the
@@ -305,6 +331,11 @@ fn update_damage_stat_item(attack: &mut Item, defend: &mut Item, defend_id: u8) 
             player: attack.player,
             handicap: attack.handicap,
         },
+        Knock {
+            weight: attack.attack.kb_weight,
+            scale: attack.attack.kb_scale,
+            base: attack.attack.kb_base,
+        },
     );
 }
 
@@ -363,6 +394,11 @@ fn fighter_attacks_item(f: &mut Fighter, item: &mut Item, id: u8, rules: TeamRul
                     team: f.team,
                     player: Some(f.port),
                     handicap: f.handicap,
+                },
+                Knock {
+                    weight: c.kb_weight,
+                    scale: c.kb_scale,
+                    base: c.kb_base,
                 },
             );
         }

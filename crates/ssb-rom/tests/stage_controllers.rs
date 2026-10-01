@@ -7,7 +7,7 @@
 
 use ssb_game::fighter::{Fighter, FighterKind};
 use ssb_game::stage::pupupu::{EyesAnim, MouthAnim, Pupupu, WindStatus};
-use ssb_game::stage::{StageAnim, StageObj, StageObjects};
+use ssb_game::stage::{NoItems, StageAnim, StageObj, StageObjects};
 use ssb_rom::archive::{Archive, File};
 use ssb_rom::figatree::JointPose;
 use ssb_rom::objanim::{joint_scripts, StageJoint};
@@ -223,6 +223,11 @@ fn packed_controller_poses_match_the_rom() {
     let archive = Archive::open(&rom, info.region).unwrap();
     use ssb_rom::ground_obj::{self as g, AnimTarget};
     for (object_index, asset) in g::OBJECTS.iter().enumerate() {
+        // Item trees play from their item, not `advance`
+        // (`packed_item_trees_play_on_the_ejected_root`).
+        if asset.item {
+            continue;
+        }
         let mut objects = g::GroundObjects::new(&pack, asset.gr_file);
         let packed = objects.get(object_index as u8).unwrap();
         let header_file = archive.load(asset.gr_file).unwrap();
@@ -585,7 +590,7 @@ fn every_packed_vs_stage_builds_and_runs_its_controller() {
             .max()
             .unwrap_or(0);
         let mut groups = vec![ssb_game::map::MapGroup::default(); count];
-        let mut stage = Stage::new(&init, &mut groups, &mut NoObjects);
+        let mut stage = Stage::new(&init, &mut groups, &mut NoObjects, &mut NoItems);
         assert_eq!(stage.attack, hazard_attack);
         assert_eq!(stage.throw, hazard_throw);
         assert!(!matches!(stage.controller, Controller::None), "{kind:?}");
@@ -596,6 +601,7 @@ fn every_packed_vs_stage_builds_and_runs_its_controller() {
                 TickInput {
                     groups: &mut groups,
                     objects: &mut NoObjects,
+                    items: &mut NoItems,
                     map: ssb_game::stage::MapQuery {
                         surfaces: || core::iter::empty::<ssb_game::weapon::MapSurface>(),
                         line_group: &line_group,
@@ -664,6 +670,7 @@ fn packed_acid_follows_the_zebes_controller() {
             pack: &pack,
             objects: &mut objects,
         },
+        &mut NoItems,
     );
     let acid = objects.get(g::ACID).expect("acid packed");
     assert_eq!(acid.node_count(), 2);
@@ -690,6 +697,7 @@ fn packed_acid_follows_the_zebes_controller() {
                     pack: &pack,
                     objects: &mut objects,
                 },
+                items: &mut NoItems,
                 map: ssb_game::stage::MapQuery {
                     surfaces: || core::iter::empty::<ssb_game::weapon::MapSurface>(),
                     line_group: &line_group,
@@ -749,6 +757,11 @@ fn packed_ground_materials_replay_the_rom() {
         };
         let asset = &g::MAT_ANIMS[slot];
         let object = asset.object;
+        // Item trees play from their item, not `advance`
+        // (`packed_item_trees_play_on_the_ejected_root`).
+        if g::OBJECTS[object as usize].item {
+            continue;
+        }
         let desc = descs.iter().find(|d| d.slot == slot as u32).unwrap();
         let file = archive.load(desc.source_file).unwrap();
         let joints: Vec<AnimJoint> = (0..desc.joint_count)
@@ -1067,6 +1080,7 @@ fn packed_castle_ground_replays_the_rom() {
             pack: &pack,
             objects: &mut objects,
         },
+        &mut NoItems,
     );
     r.tick(&file.data, 1.0, &mut pose).unwrap();
     let (mut low, mut high) = (f32::MAX, f32::MIN);
@@ -1078,10 +1092,13 @@ fn packed_castle_ground_replays_the_rom() {
         let x = objects.get(g::CASTLE_GROUND).unwrap().translate()[0];
         assert_eq!(x.to_bits(), pose.translate[0].to_bits(), "tick {tick}");
         castle.bumper = Some(0);
-        castle.tick(&ListPort {
-            pack: &pack,
-            objects: &mut objects,
-        });
+        castle.tick(
+            &ListPort {
+                pack: &pack,
+                objects: &mut objects,
+            },
+            &mut NoItems,
+        );
         assert_eq!(castle.bumper_x, x + castle.bumper_pos.x);
         low = low.min(x);
         high = high.max(x);
@@ -1165,6 +1182,7 @@ fn packed_scales_follow_the_inishie_controller() {
             pack: &pack,
             objects: &mut objects,
         },
+        &mut NoItems,
     );
     // `map_dobjs[0].y + map_dobjs[3].y` and `map_dobjs[0].y + map_dobjs[1].y`.
     assert_eq!(inishie.string_length[0], 2010.0 + -57.750_09);
@@ -1177,6 +1195,7 @@ fn packed_scales_follow_the_inishie_controller() {
             pack: &pack,
             objects: &mut objects,
         },
+        &mut NoItems,
         &ssb_game::stage::MapQuery {
             surfaces: || core::iter::empty::<ssb_game::weapon::MapSurface>(),
             line_group: &line_group,
@@ -1334,6 +1353,7 @@ fn packed_arwing_flies_the_sector_controller() {
             pack: &pack,
             objects: &mut objects,
         },
+        &mut NoItems,
     );
     assert_eq!(groups[WING_GROUP as usize].status, GroupStatus::Off);
     let line_group = |_: u16| None;
@@ -1357,6 +1377,7 @@ fn packed_arwing_flies_the_sector_controller() {
                     pack: &pack,
                     objects: &mut objects,
                 },
+                items: &mut NoItems,
                 map: ssb_game::stage::MapQuery {
                     surfaces: || core::iter::empty::<ssb_game::weapon::MapSurface>(),
                     line_group: &line_group,
@@ -1467,4 +1488,161 @@ fn packed_arwing_paths_match_the_n64_trace() {
             );
         }
     }
+}
+
+/// RE-429: the Castle Bumper is the exact GBumper attribute extern target,
+/// not the separate horizontal tree at 0x7BE8 (RE-162).
+#[test]
+fn castle_bumper_graph_matches_its_rom_attribute() {
+    let Some((bytes, rom)) = pack_and_rom() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let info = ssb_rom::rom::identify(&rom).unwrap();
+    let archive = Archive::open(&rom, info.region).unwrap();
+    let attr = archive.load(251).unwrap();
+    let data = attr.extern_relocs.iter().find(|r| r.at == 0xCF0).unwrap();
+    assert_eq!(
+        (u32::from(data.target_file), data.target_offset),
+        ssb_rom::ground_obj::GBUMPER_SOURCE
+    );
+    let pickup = attr.extern_relocs.iter().find(|r| r.at == 0x69C).unwrap();
+    assert_eq!(
+        (pickup.target_file, pickup.target_offset),
+        (data.target_file, data.target_offset)
+    );
+    let materials = attr.extern_relocs.iter().find(|r| r.at == 0xCF4).unwrap();
+    assert_eq!(
+        (materials.target_file, materials.target_offset),
+        (86, 0x7488)
+    );
+    let object = (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|o| (o.source_file, o.source_offset) == ssb_rom::ground_obj::GBUMPER_SOURCE)
+        .unwrap();
+    let root = pack.node(object.first_node).unwrap();
+    assert_eq!(root.mesh, ssb_rom::pack::NodeDesc::NO_MESH);
+    assert_eq!(root.rest_translate, [0.0; 3]);
+    assert_ne!(
+        pack.node(object.first_node + 1).unwrap().mesh,
+        ssb_rom::pack::NodeDesc::NO_MESH
+    );
+}
+
+/// RE-429: the Mushroom Kingdom item trees. `itManagerMakeItem` ejects each
+/// descriptor's empty root, so the item's root is node 1: the POW Block's
+/// `anim_joints` pop-in (file 155 + 0x13B8) plays there and settles the
+/// block on its 21st play, its squash (0x1288) ends on the 23rd, and the
+/// Piranha Plant's rise (0xCC8) writes the root's Y as the ROM replay does
+/// and ends on its 141st play. Both material scripts are packed.
+#[test]
+fn packed_item_trees_play_on_the_ejected_root() {
+    use ssb_rom::ground_obj::{self as g, GroundObjects};
+    use ssb_rom::pack::Pack;
+    let Some((bytes, rom)) = pack_and_rom() else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    let info = ssb_rom::rom::identify(&rom).unwrap();
+    let archive = Archive::open(&rom, info.region).unwrap();
+    let file = archive.load(155).unwrap();
+    let mut objects = GroundObjects::new(&pack, g::INISHIE_FILE);
+    for (anim, mat) in [
+        (g::POWER_BLOCK_APPEAR, None),
+        (g::POWER_BLOCK_DAMAGE, None),
+        (g::PAKKUN_APPEAR, Some(g::PAKKUN_APPEAR_MAT)),
+    ] {
+        assert!(objects.has(anim), "{}", g::ANIMS[anim].name);
+        if let Some(m) = mat {
+            assert!(objects.has_mat(m), "{}", g::MAT_ANIMS[m].name);
+        }
+    }
+    assert!(objects.has_mat(g::PAKKUN_DAMAGED_MAT));
+    for i in 0..2 {
+        let p = objects.instance(g::PAKKUN, i).expect("both plants");
+        assert!(p.hidden);
+        assert_eq!(p.node_count(), 2);
+    }
+
+    // The pop-in: the make's play, then one per process.
+    objects.item_make(&pack, g::POWER_BLOCK, 0);
+    let mut plays = 1;
+    while !objects.item_root_idle(g::POWER_BLOCK, 0) {
+        assert_eq!(objects.item_play(&pack, g::POWER_BLOCK, 0), [None; 3]);
+        plays += 1;
+        assert!(plays < 100);
+    }
+    assert_eq!(plays, 21);
+    let mut plays = 1;
+    objects.item_add_play(&pack, Some(g::POWER_BLOCK_DAMAGE), None, g::POWER_BLOCK, 0);
+    while !objects.item_root_idle(g::POWER_BLOCK, 0) {
+        objects.item_play(&pack, g::POWER_BLOCK, 0);
+        plays += 1;
+        assert!(plays < 100);
+    }
+    assert_eq!(plays, 23);
+
+    objects.item_make(&pack, g::PAKKUN, 1);
+    assert!(objects.item_root_idle(g::PAKKUN, 1));
+    let mut rom_joint = StageJoint::start_changed(0xCC8, 0.0);
+    let mut pose = JointPose::default();
+    rom_joint.tick(&file.data, 1.0, &mut pose).unwrap();
+    let first = objects.item_add_play(
+        &pack,
+        Some(g::PAKKUN_APPEAR),
+        Some(g::PAKKUN_APPEAR_MAT),
+        g::PAKKUN,
+        1,
+    );
+    assert_eq!(first, [None, Some(pose.translate[1]), None]);
+    let mut plays = 1;
+    let mut top = 0.0f32;
+    while !objects.item_root_idle(g::PAKKUN, 1) {
+        let w = objects.item_play(&pack, g::PAKKUN, 1);
+        rom_joint.tick(&file.data, 1.0, &mut pose).unwrap();
+        assert_eq!(
+            w[1].map(f32::to_bits),
+            Some(pose.translate[1].to_bits()),
+            "play {plays}"
+        );
+        top = top.max(pose.translate[1]);
+        plays += 1;
+        assert!(plays < 400);
+    }
+    assert_eq!(plays, 141);
+    assert_eq!(top, 596.39996);
+    // Instance 0 never moved.
+    assert!(objects.item_root_idle(g::PAKKUN, 0));
+
+    // The item descriptor supplies kind 48 even if the graph has no high
+    // bits. A knockout switches to custom kind 70, which persists after
+    // rebirth; the spin alone resets (itPakkunDamagedProcDead).
+    let draw_root = |objects: &g::GroundObjects| {
+        let plant = objects.instance(g::PAKKUN, 1).unwrap();
+        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; g::MAX_OBJECT_NODES];
+        plant.compose(&pack, &mut posed);
+        let mut node = pack
+            .node(plant.object.first_node + g::ITEM_ROOT as u32)
+            .unwrap();
+        node.world = posed[g::ITEM_ROOT].0;
+        plant.draw_node(g::ITEM_ROOT, node)
+    };
+    use ssb_rom::pack::NodeDesc;
+    assert_eq!(
+        draw_root(&objects).flags,
+        NodeDesc::FLAG_BILLBOARD | NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED
+    );
+    objects.item_add_play(&pack, None, Some(g::PAKKUN_DAMAGED_MAT), g::PAKKUN, 1);
+    objects.item_place(g::PAKKUN, 1, [2800.0, 1000.0, 0.0], core::f32::consts::PI);
+    let node = draw_root(&objects);
+    assert_eq!(
+        node.flags,
+        NodeDesc::FLAG_BILLBOARD | NodeDesc::FLAG_BILLBOARD_SPIN_Z
+    );
+    assert_eq!(node.billboard_rest_spin(), core::f32::consts::PI);
+    assert_eq!([node.world[0], node.world[5], node.world[10]], [1.0; 3]);
+    objects.item_stop_material(g::PAKKUN, 1);
+    objects.item_place(g::PAKKUN, 1, [2800.0, 0.0, 0.0], 0.0);
+    assert_eq!(draw_root(&objects).billboard_rest_spin(), 0.0);
+    assert_eq!(draw_root(&objects).flags, node.flags);
 }

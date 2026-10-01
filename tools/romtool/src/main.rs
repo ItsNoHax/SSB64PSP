@@ -3028,9 +3028,23 @@ fn ground_mat_scripts(
                 && ground_map_file(loaded, m.gr_file, m.map_head) == Some(file.id)
         })
         .map(|(slot, m)| {
-            let scripts = ssb_rom::matanim::resolve_scripts(file, m.table, materials.len(), |n| {
-                materials[n].len()
-            });
+            let scripts = match m.target {
+                ssb_rom::ground_obj::MatTarget::Table => {
+                    ssb_rom::matanim::resolve_scripts(file, m.table, materials.len(), |n| {
+                        materials[n].len()
+                    })
+                }
+                // `gcAddMObjMatAnimJoint(dobj->mobj, script)` on one node.
+                ssb_rom::ground_obj::MatTarget::NodeMObj(node) => materials
+                    .iter()
+                    .enumerate()
+                    .map(|(n, chain)| {
+                        (0..chain.len())
+                            .map(|i| (n == usize::from(node) && i == 0).then_some(m.table))
+                            .collect()
+                    })
+                    .collect(),
+            };
             (slot, scripts)
         })
         .collect()
@@ -8181,13 +8195,16 @@ fn load_all(archive: &Archive) -> Loaded {
     // turned out to be a substring coincidence in a symbol name rather than
     // a real address match, and are left unfixed rather than guessed at.
     for &(file, graph, table) in &[
-        // ITCommonData's NBumper ItemAttributes names both the DObj resource
-        // and its MObjSub*** table as externs from ITCommonObject.  The scene
-        // parser starts at the first actual DObjDesc record (0x7BE8), within
-        // the source label's broad 0x7648 data block; the material table is
-        // the exact linker target at 0x7488.  This replaces RE-061's former
-        // 27-way demand-search ambiguity with a direct original relationship.
-        (86u32, 0x7BE8u32, 0x7488u32), // NBumper ItemAttributes
+        // Both GBumper (file 251 + 0xCF0) and NBumper (+ 0x69C) name
+        // 0x7648 exactly. 0x7BE8 is a separate tree, not a later start
+        // of that graph (correction to RE-162, measured in RE-429).
+        (86u32, 0x7648u32, 0x7488u32), // GBumper / NBumper ItemAttributes
+        (86u32, 0x7BE8u32, 0x7488u32), // Legacy neighboring-tree pairing, RE-162
+        // GRInishieMap's Pakkun ItemAttributes (file 260 + 0x120) names the
+        // `DObjDesc` array at StageInishieFile3 0xC30 and its `MObjSub ***`
+        // table at 0xA68, which `itManagerMakeItem` hands to
+        // `gcSetupCustomDObjsWithMObj` (RE-429).
+        (155u32, 0xC30u32, 0xA68u32), // Pakkun ItemAttributes
         // LinkModel's `JointTree_0x9CF8` uses the raw MObjSub** dispatch at
         // 0x84B8.  Its three leading NULL slots match the root
         // Joint_0x93B8's zero graphics-heap demand; slots 3 and 4 name the

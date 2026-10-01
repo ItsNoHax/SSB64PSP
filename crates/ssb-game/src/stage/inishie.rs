@@ -3,7 +3,7 @@
 
 use super::{
     mapobj, objects_of, standing_group, Hazard, MapQuery, Registry, StageAnim, StageInit,
-    StageItem, StageObj, StageObjects,
+    StageItem, StageItems, StageObj, StageObjects,
 };
 use crate::fighter::Fighter;
 use crate::map::{GroupStatus, MapGroup};
@@ -65,6 +65,7 @@ impl Inishie {
         init: &StageInit<'_>,
         groups: &mut [MapGroup],
         objects: &mut dyn StageObjects,
+        items: &mut dyn StageItems,
     ) -> Self {
         // `grInishieMakeScale` @ 0x801094A0: the strings hang from
         // `map_dobjs[0]` through `map_dobjs[3]` (left) and `[1]` (right).
@@ -89,7 +90,7 @@ impl Inishie {
             let pos = objects_of(init.map_objects, kind)
                 .next()
                 .unwrap_or(Vec3::ZERO);
-            pakkun[i] = objects.make_item(StageItem::Pakkun(i as u8), pos);
+            pakkun[i] = items.make_item(StageItem::Pakkun(i as u8), pos);
         }
         let mut pblock_positions = [Vec3::ZERO; 10];
         let mut count = 0;
@@ -278,12 +279,7 @@ impl Inishie {
     }
 
     /// `grInishiePowerBlockProcUpdate` @ 0x80109968.
-    fn tick_pblock(
-        &mut self,
-        registry: &mut Registry,
-        objects: &mut dyn StageObjects,
-        started: bool,
-    ) {
+    fn tick_pblock(&mut self, registry: &mut Registry, items: &mut dyn StageItems, started: bool) {
         match self.pblock_status {
             PowerBlockStatus::Wait => {
                 if started {
@@ -295,7 +291,7 @@ impl Inishie {
                 if self.pblock_wait == 0 {
                     let count = i32::from(self.pblock_position_count.max(1));
                     let pos = self.pblock_positions[rng::rand_int_range(count) as usize];
-                    match objects.make_item(StageItem::PowerBlock, pos) {
+                    match items.make_item(StageItem::PowerBlock, pos) {
                         Some(item) => {
                             self.pblock = Some(item);
                             self.pblock_status = PowerBlockStatus::Sleep;
@@ -314,22 +310,29 @@ impl Inishie {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn tick<F>(
         &mut self,
         fighters: &[&mut Fighter],
         groups: &mut [MapGroup],
         objects: &mut dyn StageObjects,
+        items: &mut dyn StageItems,
         map: &MapQuery<'_, F>,
         started: bool,
         registry: &mut Registry,
     ) {
         self.tick_scales(fighters, groups, objects, map);
-        self.tick_pblock(registry, objects, started);
+        self.tick_pblock(registry, items, started);
     }
 
     /// `grInishiePowerBlockSetDamage` @ 0x80109B4C, called by the POW item.
-    pub fn set_power_block_damage(&mut self, registry: &mut Registry, handicap: u8) {
-        registry.add_hazard(Hazard::PowerBlock { handicap });
+    pub fn set_power_block_damage(
+        &mut self,
+        registry: &mut Registry,
+        handicap: u8,
+        hitter: Option<u8>,
+    ) {
+        registry.add_hazard(Hazard::PowerBlock { handicap, hitter });
         self.pblock_wait = 2;
         self.pblock_status = PowerBlockStatus::Damage;
     }

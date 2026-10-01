@@ -250,7 +250,7 @@ fn acid_rises_to_its_next_level_and_burns() {
     let mut i = init(StageKind::Zebes, &objects);
     i.hazard_attack = Some(hazard::GroundAttack::from_words([0, 10, 90, 100, 0, 60, 1]));
     i.acid_surface_y = 100.0;
-    let mut stage = Stage::new(&i, &mut [], &mut NoObjects);
+    let mut stage = Stage::new(&i, &mut [], &mut NoObjects, &mut NoItems);
     let Controller::Zebes(z) = &mut stage.controller else {
         panic!()
     };
@@ -321,7 +321,7 @@ fn acid_writes_its_root_and_reads_its_animated_surface() {
         child_y: -270.0,
         ..Default::default()
     };
-    let mut stage = Stage::new(&i, &mut [], &mut acid);
+    let mut stage = Stage::new(&i, &mut [], &mut acid, &mut NoItems);
     assert_eq!(acid.played, [StageAnim::Acid]);
     assert_eq!(acid.root_y, [-3000.0]);
     let Controller::Zebes(z) = &mut stage.controller else {
@@ -361,7 +361,7 @@ fn twister_rides_its_floor_catches_and_throws() {
     }];
     let mut i = init(StageKind::Hyrule, &objects);
     i.hazard_throw = Some(hazard::HazardThrow::from_words([0, 15, 80, 70, 0, 60, 0]));
-    let mut stage = Stage::new(&i, &mut [], &mut NoObjects);
+    let mut stage = Stage::new(&i, &mut [], &mut NoObjects, &mut NoItems);
     let map = query(&surfaces, &no_group);
     let mut f = standing(FighterKind::Mario, 0, Vec3::new(1200.0, 0.0, 0.0), 0, 0);
     {
@@ -395,6 +395,7 @@ fn twister_rides_its_floor_catches_and_throws() {
             TickInput {
                 groups: &mut [],
                 objects: &mut NoObjects,
+                items: &mut NoItems,
                 map: query(&surfaces, &no_group),
                 started: true,
             },
@@ -458,7 +459,7 @@ fn scales_tip_toward_the_weight_and_fall_past_the_limit() {
     ];
     let mut groups = vec![MapGroup::default(); 3];
     let i = init(StageKind::Inishie, &objects);
-    let mut stage = Stage::new(&i, &mut groups, &mut NoObjects);
+    let mut stage = Stage::new(&i, &mut groups, &mut NoObjects, &mut NoItems);
     let line_group = |line: u16| (line == 1).then_some(1u8);
     let surfaces: [MapSurface; 0] = [];
     let map = query(&surfaces, &line_group);
@@ -473,6 +474,7 @@ fn scales_tip_toward_the_weight_and_fall_past_the_limit() {
             &[&mut f],
             &mut groups,
             &mut NoObjects,
+            &mut NoItems,
             &map,
             true,
             &mut stage.registry,
@@ -490,6 +492,7 @@ fn scales_tip_toward_the_weight_and_fall_past_the_limit() {
             &[],
             &mut groups,
             &mut NoObjects,
+            &mut NoItems,
             &map,
             true,
             &mut stage.registry,
@@ -509,10 +512,10 @@ fn scales_tip_toward_the_weight_and_fall_past_the_limit() {
 fn gate_opens_on_the_first_frame_and_closes_without_a_monster() {
     let mut groups = vec![MapGroup::default(); 4];
     groups[3].translate = Vec3::new(960.0, 240.0, 0.0);
-    let mut y = yamabuki::Yamabuki::new(&mut groups, &mut NoObjects);
-    y.tick(&[], &mut groups, &mut NoObjects, true);
+    let mut y = yamabuki::Yamabuki::new(&mut groups, &mut NoObjects, &mut NoItems);
+    y.tick(&[], &mut groups, &mut NoObjects, &mut NoItems, true);
     assert_eq!(y.status, yamabuki::GateStatus::Wait);
-    y.tick(&[], &mut groups, &mut NoObjects, true);
+    y.tick(&[], &mut groups, &mut NoObjects, &mut NoItems, true);
     assert_eq!(y.gate_wait, 0);
     assert_eq!(groups[3].translate.x, yamabuki::GATE_FAR_X);
     // A fighter on the detect floor calls the monster; none can be made.
@@ -523,9 +526,9 @@ fn gate_opens_on_the_first_frame_and_closes_without_a_monster() {
         0,
         hazard::material::DETECT,
     );
-    y.tick(&[&mut f], &mut groups, &mut NoObjects, true);
+    y.tick(&[&mut f], &mut groups, &mut NoObjects, &mut NoItems, true);
     assert_eq!(y.status, yamabuki::GateStatus::Open);
-    y.tick(&[&mut f], &mut groups, &mut NoObjects, true);
+    y.tick(&[&mut f], &mut groups, &mut NoObjects, &mut NoItems, true);
     assert_eq!(y.status, yamabuki::GateStatus::Wait);
     assert_eq!(y.gate_wait, 1000);
     assert_eq!(y.gate_pos.x, yamabuki::GATE_NEAR_X);
@@ -538,7 +541,7 @@ fn barrel_captures_and_fires_on_a_button_press() {
     i.hazard_throw = Some(hazard::HazardThrow::from_words([0, 0, 0, 100, 50, 60, 0]));
     let mut clocks = Clocks::with_len(3.0);
     clocks.barrel = Vec3::new(-2000.0, -800.0, 0.0);
-    let mut stage = Stage::new(&i, &mut [], &mut clocks);
+    let mut stage = Stage::new(&i, &mut [], &mut clocks, &mut NoItems);
     assert!(clocks.played.contains(&StageAnim::TaruCannDefault));
     let mut f = airborne(Vec3::new(-2100.0, -700.0, 0.0));
     hazard::search_hit_hazard(&mut f, &mut stage, &mut clocks, &[]);
@@ -564,6 +567,7 @@ fn barrel_captures_and_fires_on_a_button_press() {
         TickInput {
             groups: &mut [],
             objects: &mut clocks,
+            items: &mut NoItems,
             map: query(&surfaces, &no_group),
             started: true,
         },
@@ -583,4 +587,64 @@ fn barrel_captures_and_fires_on_a_button_press() {
     assert_eq!(f.hazard.tarucann_wait, hazard::TARUCANN_PICKUP_WAIT);
     // Facing right with no spin, the barrel fires straight up.
     assert!(f.physics.vel_knockback.y > 0.0 || f.physics.vel_air.y > 0.0);
+}
+
+#[test]
+fn power_block_quake_spares_its_hitter_and_rearms_the_spawner() {
+    let objects = [];
+    let mut i = init(StageKind::Inishie, &objects);
+    i.hazard_attack = Some(GroundAttack::from_words([1, 20, 90, 130, 0, 30, 0]));
+    let mut stage = Stage::new(&i, &mut [], &mut NoObjects, &mut NoItems);
+    stage.apply_item_events([crate::item::StageItemEvent::PowerBlockDamage {
+        handicap: 9,
+        hitter: Some(1),
+    }]);
+    let hitter = standing(FighterKind::Mario, 1, Vec3::ZERO, 0, 0);
+    let other = standing(FighterKind::Fox, 0, Vec3::ZERO, 0, 0);
+    let flying = airborne(Vec3::ZERO);
+    assert_eq!(stage.check_hazards(&hitter), None);
+    assert_eq!(stage.check_hazards(&flying), None);
+    let (attack, handicap) = stage.check_hazards(&other).expect("the quake");
+    assert_eq!((attack.damage, handicap), (20, 9));
+    let Controller::Inishie(s) = &stage.controller else {
+        panic!()
+    };
+    assert_eq!(s.pblock_status, inishie::PowerBlockStatus::Damage);
+    assert_eq!(s.pblock_wait, 2);
+
+    stage.apply_item_events([crate::item::StageItemEvent::PowerBlockGone]);
+    let Controller::Inishie(s) = &stage.controller else {
+        panic!()
+    };
+    assert_eq!(s.pblock_status, inishie::PowerBlockStatus::Make);
+    assert_eq!(s.pblock_wait, 1800);
+    assert_eq!(s.pblock, None);
+}
+
+#[test]
+fn castle_carries_its_bumper_with_the_ground() {
+    let objects = [MapObject {
+        kind: mapobj::BUMPER,
+        pos: Vec3::new(100.0, 50.0, 0.0),
+    }];
+    let i = init(StageKind::Castle, &objects);
+    let mut clocks = Clocks::with_len(3.0);
+    let mut pool = crate::item::ItemPool::default();
+    let mut stage = Stage::new(&i, &mut [], &mut clocks, &mut pool);
+    assert_eq!(pool.active_count(), 1);
+    clocks.barrel = Vec3::new(-640.0, 0.0, 0.0);
+    let surfaces: [MapSurface; 0] = [];
+    stage.tick(
+        &mut [],
+        TickInput {
+            groups: &mut [],
+            objects: &mut clocks,
+            items: &mut pool,
+            map: query(&surfaces, &no_group),
+            started: true,
+        },
+    );
+    let bumper = pool.items().next().unwrap();
+    assert_eq!(bumper.kind, crate::item::ItemKind::GBumper);
+    assert_eq!(bumper.pos, Vec3::new(-540.0, 50.0, 0.0));
 }

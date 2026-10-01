@@ -1,6 +1,9 @@
 //! The item system: `itmanager.c`, `itmain.c`, `itprocess.c` and `itmap.c`,
 //! with the two fighter items, Ness's PK Fire flame (`itnesspkfire.c`,
-//! [`pk_fire`]) and Link's Bomb (`itlinkbomb.c`, [`link_bomb`]).
+//! [`pk_fire`]) and Link's Bomb (`itlinkbomb.c`, [`link_bomb`]), and the
+//! stage items Peach's Castle's Bumper (`itgbumper.c`, [`gbumper`]),
+//! Mushroom Kingdom's POW Block (`itpowerblock.c`, [`power_block`]) and its
+//! Piranha Plants (`itpakkun.c`, [`pakkun`]).
 //!
 //! [`ItemPool`] is `gITManagerStructsAllocFree` and the item GObj link: 16
 //! structs (`ITEM_ALLOC_MAX`), handed out last-freed first, and a creation
@@ -29,6 +32,13 @@
 //! Attack-record victims use [`ITEM_RECORD_BASE`] plus the struct index, as
 //! the source keys records by `GObj` pointer, which a new item reuses too.
 //!
+//! Stage controllers make their items through [`crate::stage::StageItems`],
+//! which the pool implements, and the items' calls back into the stage are
+//! queued as [`StageItemEvent`]s ([`ItemPool::take_stage_events`]). The POW
+//! Block and the Piranha Plants read their own `DObj` animation (a root
+//! clock that ends, a translation it writes), which the runtime plays
+//! through the [`ItemAnims`] port.
+//!
 //! Teams, colour animations, effects, sounds, spin and the pickup arrow are
 //! not ported; `hidden` keeps the despawn flash, which is display state.
 
@@ -41,11 +51,16 @@ use crate::stale::MotionAttackId;
 use crate::status::BlastZone;
 use crate::weapon::MapSurface;
 
+pub mod gbumper;
 mod hit;
-pub(crate) use hit::{queue_damage, touches_damage_coll, Attacker};
+pub(crate) use hit::{queue_damage, touches_damage_coll, Attacker, Knock};
 pub mod link_bomb;
 mod map;
+pub mod pakkun;
 pub mod pk_fire;
+pub mod power_block;
+#[cfg(test)]
+mod stage_tests;
 #[cfg(test)]
 mod tests;
 
@@ -97,6 +112,9 @@ pub const INTERACT_ALL: u8 = INTERACT_FIGHTER | INTERACT_WEAPON | INTERACT_ITEM;
 pub enum ItemKind {
     NessPKFire,
     LinkBomb,
+    GBumper,
+    PowerBlock,
+    Pakkun,
 }
 
 /// `ITType`.
@@ -327,6 +345,9 @@ pub struct ItemDamageColl {
 pub enum ItemStatus {
     PKFire(pk_fire::Status),
     LinkBomb(link_bomb::Status),
+    GBumper(gbumper::Status),
+    PowerBlock(power_block::Status),
+    Pakkun(pakkun::Status),
 }
 
 /// `ITStruct::item_vars`.
@@ -336,6 +357,13 @@ pub struct ItemVars {
     pub bomb_scale_id: i32,
     pub bomb_scale_int: i32,
     pub bomb_drop_update_wait: u16,
+    /// `bumper.hit_anim_length`.
+    pub bumper_hit_anim_length: u16,
+    /// `pakkun.pos` and `pakkun.is_wait_fighter`.
+    pub pakkun_pos: Vec3,
+    pub pakkun_is_wait_fighter: bool,
+    /// Which `pakkun_gobj` slot made the plant: its tree in the runtime.
+    pub pakkun_index: u8,
 }
 
 /// `ITStruct`.
@@ -412,6 +440,18 @@ pub struct Item {
     /// `gcPlayAnimAll` calls on the item's DObjs: one when it is made, then
     /// one per `itProcessProcItemMain` outside hitlag. Presentation only.
     pub anim_ticks: u16,
+    /// The runtime has started this item's tree ([`ItemAnims::make`]). A
+    /// stage controller makes its items without the runtime at hand, so the
+    /// tree starts on the item's first process: its `itManagerMakeItem`
+    /// play and that process's own play run back to back, as they do in
+    /// the source's frame, with nothing reading the tree between.
+    pub anim_made: bool,
+    /// The root DObj's `rotate.z` (the knocked-out Piranha Plant's flip).
+    /// Presentation only.
+    pub rotate_z: f32,
+    /// `dobj->mobj->palette_id` (the Bumper's lit frames). Presentation
+    /// only.
+    pub palette: u8,
     pub arrow_timer: u8,
     pub status: ItemStatus,
     pub vars: ItemVars,
@@ -524,6 +564,9 @@ impl Item {
             hidden: false,
             // `itManagerMakeItem` plays the animation it adds once.
             anim_ticks: 1,
+            anim_made: false,
+            rotate_z: 0.0,
+            palette: 0,
             arrow_timer: 0,
             status,
             vars: ItemVars::default(),
@@ -649,7 +692,105 @@ impl Item {
     pub fn floor_line(&self) -> Option<u16> {
         self.floor.map(|s| s.line)
     }
+
+    /// The tree the runtime animates for this item through [`ItemAnims`].
+    pub fn anim_target(&self) -> ItemAnimTarget {
+        match self.kind {
+            ItemKind::PowerBlock => ItemAnimTarget::PowerBlock,
+            ItemKind::Pakkun => ItemAnimTarget::Pakkun(self.vars.pakkun_index),
+            _ => ItemAnimTarget::Untracked,
+        }
+    }
+
+    /// A play's writes to the root DObj's translation, which is the item's
+    /// position.
+    pub(crate) fn apply_root_write(&mut self, write: RootWrite) {
+        let [x, y, z] = write.translate;
+        if let Some(x) = x {
+            self.pos.x = x;
+        }
+        if let Some(y) = y {
+            self.pos.y = y;
+        }
+        if let Some(z) = z {
+            self.pos.z = z;
+        }
+    }
 }
+
+/// The item trees whose animation gameplay reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemAnimTarget {
+    /// An item whose animation is presentation only.
+    Untracked,
+    PowerBlock,
+    /// A Piranha Plant by its `pakkun_gobj` slot.
+    Pakkun(u8),
+}
+
+/// The scripts an item starts on itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemAnim {
+    /// `llGRInishieMapPowerBlockAnimJoint` on the root.
+    PowerBlockDamage,
+    /// `llGRInishieMapPakkunAppearAnimJoint` on the root and
+    /// `llGRInishieMapPakkunAppearMatAnimJoint` on its `MObj`.
+    PakkunAppear,
+    /// `llGRInishieMapPakkunDamagedMatAnimJoint` on the root's `MObj`.
+    PakkunDamaged,
+}
+
+/// What one `gcPlayAnimAll` wrote to the root's translation: an axis is
+/// `Some` when a live track set it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct RootWrite {
+    pub translate: [Option<f32>; 3],
+}
+
+/// The runtime half of the items' `DObj` animation. A new item's tree
+/// starts its `ITAttributes` scripts (`gcAddAnimAll` + `gcPlayAnimAll` in
+/// `itManagerMakeItem`); [`ItemPool`] then drives it. The defaults are a
+/// tree with no scripts: every root clock is idle and nothing is written.
+pub trait ItemAnims {
+    /// `itManagerMakeItem`'s `gcAddAnimAll` + `gcPlayAnimAll`.
+    fn make(&mut self, _target: ItemAnimTarget) {}
+    /// `gcPlayAnimAll`: `itProcessProcItemMain` outside hitlag.
+    fn play(&mut self, _target: ItemAnimTarget) -> RootWrite {
+        RootWrite::default()
+    }
+    /// `gcAddDObjAnimJoint` / `gcAddMObjMatAnimJoint` at frame 0, then the
+    /// caller's `gcPlayAnimAll`.
+    fn add_play(&mut self, _target: ItemAnimTarget, _anim: ItemAnim) -> RootWrite {
+        RootWrite::default()
+    }
+    /// `DObjGetStruct(item_gobj)->anim_wait == AOBJ_ANIM_NULL`.
+    fn root_idle(&self, _target: ItemAnimTarget) -> bool {
+        true
+    }
+    /// `DObjGetStruct(item_gobj)->anim_wait = AOBJ_ANIM_NULL`.
+    fn stop_root(&mut self, _target: ItemAnimTarget) {}
+    /// `dobj->mobj->anim_wait = AOBJ_ANIM_NULL`.
+    fn stop_material(&mut self, _target: ItemAnimTarget) {}
+}
+
+/// Item trees with no runtime.
+pub struct NoItemAnims;
+impl ItemAnims for NoItemAnims {}
+
+/// A stage call an item makes (`grInishiePowerBlock*`), delivered by
+/// [`crate::stage::Stage::apply_item_events`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StageItemEvent {
+    /// `grInishiePowerBlockSetDamage`: the quake, sparing `hitter`
+    /// (`ip->damage_gobj`).
+    PowerBlockDamage { handicap: u8, hitter: Option<u8> },
+    /// `grInishiePowerBlockSetWait`: the block is gone.
+    PowerBlockGone,
+}
+
+/// Stage calls one frame can queue: one POW Block makes at most one of
+/// each.
+const STAGE_EVENTS_MAX: usize = 4;
 
 /// `syVectorRotateAbout3D`.
 pub(crate) fn rotate_about(v: Vec3, dir: Vec3, angle: f32) -> Vec3 {
@@ -795,6 +936,10 @@ pub struct ItemPool {
     landed: [Option<(u8, MotionAttackId, u16)>; ITEM_ALLOC_MAX],
     /// The battle's team-attack rule ([`crate::team`]).
     pub team_rules: crate::team::TeamRules,
+    /// Bumped each time a struct is handed out, so a stage's handle to a
+    /// struct that was freed and reused no longer resolves.
+    serials: [u16; ITEM_ALLOC_MAX],
+    events: [Option<StageItemEvent>; STAGE_EVENTS_MAX],
 }
 
 impl Default for ItemPool {
@@ -814,6 +959,8 @@ impl Default for ItemPool {
             released: [false; 4],
             landed: [None; ITEM_ALLOC_MAX],
             team_rules: crate::team::TeamRules::FREE_FOR_ALL,
+            serials: [0; ITEM_ALLOC_MAX],
+            events: [None; STAGE_EVENTS_MAX],
         }
     }
 }
@@ -856,6 +1003,7 @@ impl ItemPool {
         let slot = self.free[self.free_len];
         self.slots[usize::from(slot)] = Some(item);
         self.landed[usize::from(slot)] = None;
+        self.serials[usize::from(slot)] = self.serials[usize::from(slot)].wrapping_add(1);
         self.order[self.order_len] = slot;
         self.order_len += 1;
         Some(slot)
@@ -1017,9 +1165,8 @@ impl ItemPool {
         item.vel_air = Vec3::ZERO;
         map::set_air(item);
         item.pos = hold_pos(item, &view);
-        match item.kind {
-            ItemKind::LinkBomb => link_bomb::hold_set_status(item),
-            ItemKind::NessPKFire => {}
+        if item.kind == ItemKind::LinkBomb {
+            link_bomb::hold_set_status(item);
         }
         item.pickup_wait = PICKUP_WAIT_DEFAULT;
         f.items.held = Some(held_item(slot, item));
@@ -1064,9 +1211,8 @@ impl ItemPool {
         let Some(item) = self.get_mut(slot) else {
             return;
         };
-        match item.kind {
-            ItemKind::LinkBomb => link_bomb::thrown_set_status(item),
-            ItemKind::NessPKFire => {}
+        if item.kind == ItemKind::LinkBomb {
+            link_bomb::thrown_set_status(item);
         }
         Self::set_fighter_release(item, &view, vel, throw_mul, surfaces);
         f.items.held = None;
@@ -1088,9 +1234,8 @@ impl ItemPool {
         let Some(item) = self.get_mut(slot) else {
             return;
         };
-        match item.kind {
-            ItemKind::LinkBomb => link_bomb::dropped_set_status(item),
-            ItemKind::NessPKFire => {}
+        if item.kind == ItemKind::LinkBomb {
+            link_bomb::dropped_set_status(item);
         }
         Self::set_fighter_release(item, &view, vel, throw_mul, surfaces);
         f.items.held = None;
@@ -1110,43 +1255,79 @@ impl ItemPool {
     }
 
     /// `itProcessProcItemMain` for every item, in link order. Call once per
-    /// frame after the fighters' and weapons' own updates.
+    /// frame after the fighters' and weapons' own updates. `fighters` holds
+    /// every fighter's `TopN` translation in link order
+    /// ([`pakkun::fighter_top`]).
     #[inline(never)]
-    pub fn tick<I, F>(&mut self, surfaces: F, bounds: Option<BlastZone>)
-    where
+    pub fn tick<I, F>(
+        &mut self,
+        surfaces: F,
+        bounds: Option<BlastZone>,
+        fighters: &[Vec3],
+        anims: &mut dyn ItemAnims,
+    ) where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
         let order = self.order;
         let owners = self.owners;
+        let mut events = self.events;
         for &slot in &order[..self.order_len] {
             let Some(mut item) = self.slots[usize::from(slot)] else {
                 continue;
             };
             let mut effects = Effects::default();
-            let alive = process_main(&mut item, &owners, &surfaces, bounds, &mut effects);
+            let mut push = |e| push_event(&mut events, e);
+            let mut ctx = ProcCtx {
+                owners: &owners,
+                fighters,
+                anims: &mut *anims,
+                events: &mut push,
+            };
+            let alive = process_main(&mut item, &mut ctx, &surfaces, bounds, &mut effects);
             self.slots[usize::from(slot)] = Some(item);
             self.apply_effects(effects);
             if !alive {
                 self.destroy(slot);
             }
         }
+        self.events = events;
     }
 
     /// `itProcessProcHitCollisions` for every item. `fighters` supplies the
     /// reflectors' current facing; call after `ftMainProcParams`.
-    pub fn resolve(&mut self, fighters: &[&Fighter]) {
+    pub fn resolve(&mut self, fighters: &[&Fighter], anims: &mut dyn ItemAnims) {
         let order = self.order;
+        let mut events = self.events;
         for &slot in &order[..self.order_len] {
             let Some(mut item) = self.slots[usize::from(slot)] else {
                 continue;
             };
-            let alive = hit_collisions(&mut item, fighters);
+            let mut push = |e| push_event(&mut events, e);
+            let alive = hit_collisions(&mut item, fighters, anims, &mut push);
             self.slots[usize::from(slot)] = Some(item);
             if !alive {
                 self.destroy(slot);
             }
         }
+        self.events = events;
+    }
+
+    /// The stage calls this frame's items made, in order.
+    pub fn take_stage_events(&mut self) -> impl Iterator<Item = StageItemEvent> {
+        core::mem::take(&mut self.events).into_iter().flatten()
+    }
+
+    /// The live struct a stage handle names.
+    fn slot_of(&self, handle: u32) -> Option<u8> {
+        let slot = (handle & 0xFF) as u8;
+        let serial = (handle >> 16) as u16;
+        (self.get(slot).is_some() && self.serials.get(usize::from(slot)) == Some(&serial))
+            .then_some(slot)
+    }
+
+    fn handle_of(&self, slot: u8) -> u32 {
+        u32::from(slot) | (u32::from(self.serials[usize::from(slot)]) << 16)
     }
 
     /// Records this frame's landed item hits in the thrower's stale queue
@@ -1161,6 +1342,54 @@ impl ItemPool {
             }
         }
     }
+}
+
+fn push_event(events: &mut [Option<StageItemEvent>; STAGE_EVENTS_MAX], e: StageItemEvent) {
+    if let Some(slot) = events.iter_mut().find(|s| s.is_none()) {
+        *slot = Some(e);
+    }
+}
+
+impl crate::stage::StageItems for ItemPool {
+    /// `itManagerMakeItemSetupCommon` with `ITEM_FLAG_PARENT_GROUND`. A
+    /// stage item has no owner, so its `motion_count` never reaches a stale
+    /// queue. The Pokémon are not ported: they are never made.
+    fn make_item(&mut self, kind: crate::stage::StageItem, pos: Vec3) -> Option<u32> {
+        use crate::stage::StageItem;
+        let item = match kind {
+            StageItem::Bumper => gbumper::make(pos, 0),
+            StageItem::PowerBlock => power_block::make(pos, 0),
+            StageItem::Pakkun(i) => pakkun::make(i, pos, 0),
+            StageItem::Monster(_) => return None,
+        };
+        let slot = self.alloc(item)?;
+        Some(self.handle_of(slot))
+    }
+
+    fn item_pos_width(&self, handle: u32) -> Option<(Vec3, f32)> {
+        let item = self.get(self.slot_of(handle)?)?;
+        Some((item.pos, item.coll.width))
+    }
+
+    fn set_item_x(&mut self, handle: u32, x: f32) {
+        if let Some(item) = self.slot_of(handle).and_then(|s| self.get_mut(s)) {
+            item.pos.x = x;
+        }
+    }
+
+    fn pakkun_set_wait_fighter(&mut self, handle: u32) {
+        if let Some(item) = self.slot_of(handle).and_then(|s| self.get_mut(s)) {
+            pakkun::set_wait_fighter(item);
+        }
+    }
+}
+
+/// What an item's callbacks reach besides the item itself.
+struct ProcCtx<'a> {
+    owners: &'a [Option<OwnerView>; 4],
+    fighters: &'a [Vec3],
+    anims: &'a mut dyn ItemAnims,
+    events: &'a mut dyn FnMut(StageItemEvent),
 }
 
 fn owner_view(f: &Fighter) -> OwnerView {
@@ -1194,7 +1423,7 @@ fn hold_pos(item: &Item, view: &OwnerView) -> Vec3 {
 /// `itProcessProcItemMain`. Returns whether the item lives on.
 fn process_main<I, F>(
     item: &mut Item,
-    owners: &[Option<OwnerView>; 4],
+    ctx: &mut ProcCtx<'_>,
     surfaces: &F,
     bounds: Option<BlastZone>,
     effects: &mut Effects,
@@ -1206,12 +1435,22 @@ where
     if item.hitlag_tics > 0 {
         item.hitlag_tics -= 1;
     }
+    let target = item.anim_target();
+    if !item.anim_made {
+        item.anim_made = true;
+        ctx.anims.make(target);
+    }
     if item.hitlag_tics == 0 {
         item.anim_ticks = item.anim_ticks.wrapping_add(1);
+        if target != ItemAnimTarget::Untracked {
+            let write = ctx.anims.play(target);
+            item.apply_root_write(write);
+        }
     }
-    if item.hitlag_tics == 0 && !proc_update(item, owners, surfaces, effects) {
+    if item.hitlag_tics == 0 && !proc_update(item, ctx, surfaces, effects) {
         return false;
     }
+    let owners = ctx.owners;
     if item.is_allow_pickup {
         item.pickup_wait = item.pickup_wait.wrapping_sub(1) & 0xFFF;
         if item.pickup_wait <= DESPAWN_FLASH_BEGIN {
@@ -1259,13 +1498,19 @@ where
             || item.pos.x < b.left
             || item.pos.y > b.top
         {
-            return false;
+            // `ip->proc_dead`, which only a knocked-out Piranha Plant has.
+            match item.status {
+                ItemStatus::Pakkun(pakkun::Status::Damaged) => pakkun::proc_dead(item, ctx.anims),
+                _ => return false,
+            }
         }
     }
-    item.mask_prev = item.mask_curr;
-    item.mask_curr = 0;
-    if !proc_map(item, surfaces) {
-        return false;
+    if has_proc_map(item) {
+        item.mask_prev = item.mask_curr;
+        item.mask_curr = 0;
+        if !proc_map(item, surfaces) {
+            return false;
+        }
     }
     item.update_attack_positions();
     item.update_attack_records();
@@ -1275,7 +1520,7 @@ where
 /// `ip->proc_update`. Returns whether the item lives on.
 fn proc_update<I, F>(
     item: &mut Item,
-    owners: &[Option<OwnerView>; 4],
+    ctx: &mut ProcCtx<'_>,
     surfaces: &F,
     effects: &mut Effects,
 ) -> bool
@@ -1285,8 +1530,17 @@ where
 {
     match item.status {
         ItemStatus::PKFire(s) => pk_fire::proc_update(item, s),
-        ItemStatus::LinkBomb(s) => link_bomb::proc_update(item, s, owners, surfaces, effects),
+        ItemStatus::LinkBomb(s) => link_bomb::proc_update(item, s, ctx.owners, surfaces, effects),
+        ItemStatus::GBumper(_) => gbumper::proc_update(item),
+        ItemStatus::PowerBlock(s) => power_block::proc_update(item, s, ctx.anims, ctx.events),
+        ItemStatus::Pakkun(s) => pakkun::proc_update(item, s, ctx.fighters, ctx.anims),
     }
+}
+
+/// Whether the status has a `proc_map`: the stage items have none, so
+/// `itProcessProcItemMain` leaves their map masks alone.
+fn has_proc_map(item: &Item) -> bool {
+    matches!(item.status, ItemStatus::PKFire(_) | ItemStatus::LinkBomb(_))
 }
 
 /// `ip->proc_map`. Returns whether the item lives on.
@@ -1298,6 +1552,7 @@ where
     match item.status {
         ItemStatus::PKFire(s) => pk_fire::proc_map(item, s, surfaces),
         ItemStatus::LinkBomb(s) => link_bomb::proc_map(item, s, surfaces),
+        ItemStatus::GBumper(_) | ItemStatus::PowerBlock(_) | ItemStatus::Pakkun(_) => {}
     }
     true
 }
@@ -1314,24 +1569,44 @@ enum HitProc {
     Reflector,
 }
 
-fn run_hit_proc(item: &mut Item, proc: HitProc, reflector_lr: f32) -> Option<bool> {
+/// One item callback's reach into the runtime and the stage.
+struct HitCtx<'a> {
+    anims: &'a mut dyn ItemAnims,
+    events: &'a mut dyn FnMut(StageItemEvent),
+}
+
+fn run_hit_proc(
+    item: &mut Item,
+    proc: HitProc,
+    reflector_lr: f32,
+    ctx: &mut HitCtx<'_>,
+) -> Option<bool> {
     match item.status {
         ItemStatus::PKFire(s) => pk_fire::hit_proc(item, s, proc),
         ItemStatus::LinkBomb(s) => link_bomb::hit_proc(item, s, proc, reflector_lr),
+        ItemStatus::GBumper(_) => gbumper::hit_proc(item, proc),
+        ItemStatus::PowerBlock(s) => power_block::hit_proc(item, s, proc, ctx.anims, ctx.events),
+        ItemStatus::Pakkun(s) => pakkun::hit_proc(item, s, proc, ctx.anims),
     }
 }
 
 /// `itProcessProcHitCollisions`. Returns whether the item lives on.
-fn hit_collisions(item: &mut Item, fighters: &[&Fighter]) -> bool {
+fn hit_collisions(
+    item: &mut Item,
+    fighters: &[&Fighter],
+    anims: &mut dyn ItemAnims,
+    events: &mut dyn FnMut(StageItemEvent),
+) -> bool {
+    let ctx = &mut HitCtx { anims, events };
     if item.damage_queue != 0 {
         item.percent_damage = (item.percent_damage + item.damage_queue).min(PERCENT_DAMAGE_MAX);
         item.damage_lag = item.damage_queue;
-        if run_hit_proc(item, HitProc::Damage, 0.0) == Some(false) {
+        if run_hit_proc(item, HitProc::Damage, 0.0, ctx) == Some(false) {
             return false;
         }
     }
     if (item.hit_normal_damage != 0 || item.hit_refresh_damage != 0)
-        && run_hit_proc(item, HitProc::Hit, 0.0) == Some(false)
+        && run_hit_proc(item, HitProc::Hit, 0.0, ctx) == Some(false)
     {
         return false;
     }
@@ -1339,16 +1614,16 @@ fn hit_collisions(item: &mut Item, fighters: &[&Fighter]) -> bool {
         let mut hopped = false;
         if item.attack.can_hop && item.ga == Ga::Air && item.shield_collide_angle < HOP_ANGLE {
             item.shield_collide_angle = (item.shield_collide_angle - DEG_90).max(0.0);
-            if run_hit_proc(item, HitProc::Hop, 0.0) == Some(false) {
+            if run_hit_proc(item, HitProc::Hop, 0.0, ctx) == Some(false) {
                 return false;
             }
             hopped = true;
         }
-        if !hopped && run_hit_proc(item, HitProc::Shield, 0.0) == Some(false) {
+        if !hopped && run_hit_proc(item, HitProc::Shield, 0.0, ctx) == Some(false) {
             return false;
         }
     }
-    if item.hit_attack_damage != 0 && run_hit_proc(item, HitProc::SetOff, 0.0) == Some(false) {
+    if item.hit_attack_damage != 0 && run_hit_proc(item, HitProc::SetOff, 0.0, ctx) == Some(false) {
         return false;
     }
     if let Some(port) = item.reflect_by {
@@ -1360,7 +1635,7 @@ fn hit_collisions(item: &mut Item, fighters: &[&Fighter]) -> bool {
             item.handicap = r.handicap;
         }
         let lr = reflector.map_or(1.0, |r| r.facing.sign());
-        if run_hit_proc(item, HitProc::Reflector, lr) == Some(false) {
+        if run_hit_proc(item, HitProc::Reflector, lr, ctx) == Some(false) {
             return false;
         }
         if !item.is_static_damage {
