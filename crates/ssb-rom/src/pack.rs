@@ -333,7 +333,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // model parts, accessories and electric skeletons, and names each
 // fighter's two objects in a `FighterModelDesc` table after it (the
 // header grows to 104 bytes) (RE-426).
-pub const VERSION: u32 = 78;
+// 79 packs Sector Z's Arwing: files 153 and 161 whole under
+// `AnimDesc::SECTOR`, and the lasers' display list keyed by their
+// `WPAttributes` (RE-428). No layout change.
+pub const VERSION: u32 = 79;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1095,6 +1098,11 @@ impl AnimDesc {
     /// `fighter` value marking an item's `ITAttributes.anim_joints` stream.
     /// `slot` is one of the `ITEM_ANIM_*` keys below.
     pub const ITEM: u32 = u32::MAX - 8;
+    /// `fighter` value marking a whole file Sector Z's Arwing plays scripts
+    /// from (`sector::SLOT_*`): file 153's flight paths or file 161's
+    /// Arwing scripts. The joint table is empty.
+    pub const SECTOR: u32 = u32::MAX - 9;
+
     /// [`Self::ITEM`] slot of Ness's PK Fire flame (file 336's table at
     /// 0xAF0).
     pub const ITEM_ANIM_NESS_PK_FIRE: u32 = 0;
@@ -2763,6 +2771,12 @@ impl PackWriter {
             script_len,
         });
         (self.anims.len() - 1) as u32
+    }
+
+    /// The blob length an earlier [`Self::add_anim`] stored for
+    /// `source_file`, or `None` when no animation names it yet.
+    pub fn anim_file_len(&self, source_file: u32) -> Option<u32> {
+        self.anim_files.get(&source_file).map(|&(_, len)| len)
     }
 
     /// Adds a stage: its four render layers, its collision lines and its map

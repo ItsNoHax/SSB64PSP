@@ -3210,7 +3210,12 @@ pub unsafe fn draw_stage_links(
     let object_links = objects
         .into_iter()
         .flat_map(|o| o.iter())
-        .map(|o| ssb_rom::ground_obj::OBJECTS[o.asset as usize].dl_link);
+        .map(|o| ssb_rom::ground_obj::OBJECTS[o.asset as usize].dl_link)
+        .chain(
+            objects
+                .and_then(|o| o.arwing.as_ref())
+                .map(|_| ssb_rom::sector::DL_LINK),
+        );
     let (first, last) = STAGE_LAYER_LINKS
         .into_iter()
         .chain(object_links)
@@ -3254,6 +3259,11 @@ pub unsafe fn draw_stage_links(
         for o in objects.into_iter().flat_map(|o| o.iter()) {
             if ssb_rom::ground_obj::OBJECTS[o.asset as usize].dl_link == link {
                 tris += draw_ground_object(pack, o, base, st, mat_anim);
+            }
+        }
+        if link == ssb_rom::sector::DL_LINK {
+            if let Some(a) = objects.and_then(|o| o.arwing.as_ref()) {
+                tris += draw_arwing(pack, a, base, st, mat_anim);
             }
         }
     }
@@ -3377,6 +3387,47 @@ pub unsafe fn draw_ground_object(
         }
     }
     tris
+}
+
+/// Draws Sector Z's Arwing (RE-428) unless its `GObj` is hidden: node 0 at
+/// the controller's path matrix, the muzzles, flare and glow as the
+/// billboards their `0x2C` matrices make, and the hulls its flags hide.
+///
+/// # Safety
+///
+/// Same as [`draw_mesh`].
+pub unsafe fn draw_arwing(
+    pack: &Pack<'_>,
+    arwing: &ssb_rom::sector::Arwing,
+    base: &ScePspFMatrix4,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) -> u32 {
+    if arwing.hidden {
+        return 0;
+    }
+    let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::sector::NODES];
+    let n = arwing.compose(&mut posed);
+    let mut scales = [[1.0f32; 2]; ssb_rom::sector::NODES];
+    let count = arwing.billboard_scales(&mut scales).min(n);
+    let first = arwing.object.first_node;
+    let hidden = |node: u32| {
+        node.checked_sub(first)
+            .is_none_or(|i| !arwing.visible(i as usize))
+    };
+    draw_object_posed_filtered(
+        pack,
+        &arwing.object,
+        base,
+        &posed[..n],
+        Some(&scales[..count]),
+        st,
+        mat_anim,
+        None,
+        Look::costume(0),
+        None,
+        Some(&hidden),
+    )
 }
 
 /// Draws a stage's collision polylines over its geometry.

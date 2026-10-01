@@ -20,6 +20,9 @@ mod ness;
 mod pikachu;
 pub use ness::{PKFire, PKThunder, PKThunderTrail};
 pub use pikachu::{ThunderHead, ThunderJolt, ThunderTrail, JOLT_GROUND_ANIM_SPEED};
+#[path = "sector_weapon.rs"]
+pub mod sector;
+pub use sector::ArwingLaser;
 
 /// The one-sided role a map segment has in the original collision tables.
 ///
@@ -1452,6 +1455,7 @@ enum Weapon {
     PKFire(PKFire),
     PKThunder(PKThunder),
     PKTrail(PKThunderTrail),
+    Laser(ArwingLaser),
 }
 
 /// A live Mario Fireball. Weapons are match-owned, not fighter-owned:
@@ -1571,6 +1575,9 @@ pub struct WeaponPool {
     teams: [u8; MAX_WEAPONS],
     /// The battle's team-attack rule ([`crate::team`]).
     pub team_rules: crate::team::TeamRules,
+    /// Sector Z's Arwing's roll (`map_dobjs[1]->rotate.z`), from
+    /// [`Self::observe_arwing_roll`]: its lasers reface by it.
+    ground_roll: f32,
     /// A slot's hit that registered damage this frame, as `(owner port,
     /// motion)`, for [`Self::record_landed`].
     landed: [Option<(u8, crate::stale::MotionAttackId, u16)>; MAX_WEAPONS],
@@ -1650,6 +1657,9 @@ impl Weapon {
             }
             Weapon::Jolt(j) => wflags(true, j.surface.is_none(), true, true),
             Weapon::Blaster(_) => wflags(false, true, true, true),
+            // The 2D shot hops, reflects and is absorbed; the 3D shot is
+            // only absorbed, before and after it bursts.
+            Weapon::Laser(l) => wflags(false, !l.three_d, !l.three_d, true),
             Weapon::Bomb(_) => wflags(false, true, false, false),
             Weapon::Boomerang(_) | Weapon::Egg(_) => wflags(true, true, true, false),
             Weapon::Cutter(_) | Weapon::PKThunder(_) => wflags(true, false, true, true),
@@ -1695,6 +1705,7 @@ impl Weapon {
         match self {
             Weapon::Fireball(w) => w.position,
             Weapon::Blaster(w) => w.position,
+            Weapon::Laser(w) => w.position,
             Weapon::ChargeShot(w) => w.position,
             Weapon::Bomb(w) => w.position,
             Weapon::Boomerang(w) => w.position,
@@ -1721,6 +1732,16 @@ impl Weapon {
             Weapon::Fireball(_) => fx.push(Fx::SparkleWhite(pos)),
             // `wpFoxBlasterProcHit`.
             Weapon::Blaster(_) => fx.push(Fx::FoxBlasterGlow(pos)),
+            // `grSectorArwingWeaponLaser2DProcHit` for all four;
+            // `...3DProcHit` and `...3DProcAbsorb` burst, and the burst
+            // clears them.
+            Weapon::Laser(l) => {
+                if !l.three_d {
+                    fx.push(shock(l.damage));
+                } else if !l.exploded {
+                    fx.push(Fx::SparkleWhiteMultiExplode(pos));
+                }
+            }
             // `wpSamusChargeShotProcHit`.
             Weapon::ChargeShot(c) => fx.push(shock(c.damage)),
             // `wpSamusBombProcHit` and `...ProcAbsorb`; the explosion
@@ -1981,6 +2002,144 @@ fn pre_hit(
     PreHit::None
 }
 
+/// The pool state one Arwing laser's fighter search writes.
+struct LaserHit<'a> {
+    records: &'a mut [Option<u8>; 4],
+    /// The fighter ports in `records`.
+    ports: u8,
+    stale: crate::stale::WeaponStale,
+    team: &'a mut u8,
+    landed: &'a mut Option<(u8, crate::stale::MotionAttackId, u16)>,
+    fx: &'a mut crate::wpeffect::WeaponFx,
+    seq: u32,
+    rules: crate::team::TeamRules,
+    slot: usize,
+}
+
+/// `ftMainSearchHitWeapon` and `wpProcessProcHitCollisions` for one of
+/// Sector Z's Arwing lasers against one fighter. Returns whether the laser
+/// lives on. Its hits credit no fighter until a reflector takes it, and the
+/// 3D shot and its burst pass shields (`can_shield` clear).
+fn laser_hit(laser: &mut ArwingLaser, h: LaserHit<'_>, defender: &mut Fighter) -> bool {
+    let owner = laser.owner_port;
+    if owner == defender.port || h.rules.spares(defender.team, *h.team) {
+        return true;
+    }
+    let bit = 1u8 << (defender.port & 7);
+    if h.ports & bit != 0 {
+        return true;
+    }
+    let mut staled = laser.hitbox();
+    staled.damage = h.stale.damage(staled.damage);
+    let owner_player = (owner != sector::GROUND_PORT).then_some(owner);
+    let attack = |pos: Vec3, vel: Vec3, can_shield: bool| crate::combat::WeaponAttack {
+        hitbox: staled,
+        pos_curr: pos,
+        pos_prev: pos - vel,
+        source: crate::combat::HitSource::Weapon { vel_x: vel.x },
+        handicap: crate::stale::HANDICAP_DEFAULT,
+        can_shield,
+        owner: owner_player,
+        is_hitlag_victim: None,
+    };
+    let landed = |landed: &mut Option<_>| {
+        if owner_player.is_some() {
+            *landed = Some((owner, h.stale.attack_id, h.stale.motion_count));
+        }
+    };
+    // The burst only damages: every callback but `proc_update` is cleared.
+    if laser.exploded {
+        let contact =
+            crate::combat::weapon_hit(defender, attack(laser.position, laser.velocity, false));
+        if attack::HitOutcome::of(contact).registered() {
+            record_weapon_victim(h.records, defender.port);
+            if contact == crate::combat::WeaponContact::Hurt(true) {
+                landed(h.landed);
+            }
+        }
+        return true;
+    }
+    let flags = wflags(false, !laser.three_d, !laser.three_d, true);
+    let pre = pre_hit(
+        defender,
+        flags,
+        false,
+        owner,
+        *h.team,
+        h.rules,
+        h.slot,
+        staled,
+        laser.position,
+        laser.velocity,
+    );
+    let mut emit = Emit::default();
+    let hit_fx = |l: &ArwingLaser, emit: &mut Emit| {
+        if !l.three_d {
+            emit.push(Fx::ImpactShock {
+                pos: l.position,
+                size: l.damage,
+            });
+        } else if !l.exploded {
+            emit.push(Fx::SparkleWhiteMultiExplode(l.position));
+        }
+    };
+    match pre {
+        PreHit::None | PreHit::SetOff => {}
+        // `grSectorArwingWeaponLaser2DProcReflector`.
+        PreHit::Reflected => {
+            reflect_shot(
+                &mut laser.velocity,
+                &mut laser.owner_port,
+                &mut laser.damage,
+                defender,
+            );
+            laser.reface();
+            *h.team = defender.team;
+            return true;
+        }
+        // `proc_hit` (the 2D shot's; the 3D shot cannot be reflected) and
+        // `proc_absorb`: both destroy it.
+        PreHit::ReflectorBroke | PreHit::Absorbed => {
+            hit_fx(laser, &mut emit);
+            h.fx.extend(h.seq, &emit);
+            return false;
+        }
+    }
+    let contact = crate::combat::weapon_hit(
+        defender,
+        attack(laser.position, laser.velocity, laser.can_shield()),
+    );
+    if let crate::combat::WeaponContact::Shielded(shield) = contact {
+        record_weapon_victim(h.records, defender.port);
+        // `grSectorArwingWeaponLaser2DProcHop` under 135 degrees, else its
+        // `proc_shield` (`...ProcHit`).
+        if shield.angle < WEAPON_HOP_ANGLE_DEFAULT {
+            let angle = (shield.angle - DEG_90).max(0.0);
+            laser.velocity = hop_velocity(laser.velocity, angle, shield.dir_z);
+            laser.reface();
+            return true;
+        }
+        hit_fx(laser, &mut emit);
+        h.fx.extend(h.seq, &emit);
+        return false;
+    }
+    if attack::HitOutcome::of(contact).registered() {
+        record_weapon_victim(h.records, defender.port);
+        if contact == crate::combat::WeaponContact::Hurt(true) {
+            landed(h.landed);
+        }
+        hit_fx(laser, &mut emit);
+        h.fx.extend(h.seq, &emit);
+        if !laser.three_d {
+            return false;
+        }
+        // `grSectorArwingWeaponLaserExplodeInitVars`.
+        laser.explode();
+        *h.records = [None; 4];
+    }
+    true
+}
+
 /// `wpMainReflectorSetLR` and the reflect bonus for the straight shots:
 /// turn X toward the reflector's facing, take its ownership and deal
 /// `damage * 1.8 + 0.99` (US), at most 100.
@@ -2067,6 +2226,7 @@ impl Default for WeaponPool {
             stale: [crate::stale::WeaponStale::FRESH; MAX_WEAPONS],
             teams: [crate::team::TEAM_DEFAULT; MAX_WEAPONS],
             team_rules: crate::team::TeamRules::FREE_FOR_ALL,
+            ground_roll: 0.0,
             landed: [None; MAX_WEAPONS],
             camera: None,
             seq: [0; MAX_WEAPONS],
@@ -2094,6 +2254,7 @@ impl WeaponPool {
         self.stale = [crate::stale::WeaponStale::FRESH; MAX_WEAPONS];
         self.teams = [crate::team::TEAM_DEFAULT; MAX_WEAPONS];
         self.team_rules = crate::team::TeamRules::FREE_FOR_ALL;
+        self.ground_roll = 0.0;
         self.landed = [None; MAX_WEAPONS];
         self.camera = None;
         self.seq = [0; MAX_WEAPONS];
@@ -2403,6 +2564,32 @@ impl WeaponPool {
             }
         })
     }
+    /// `wpManagerMakeWeapon` for one of Sector Z's Arwing lasers
+    /// (`WEAPON_FLAG_PARENT_GROUND`): default team and staling. Returns
+    /// whether a slot was free; the 2D pair's second shot is made only
+    /// after the first.
+    pub fn spawn_arwing_laser(&mut self, laser: ArwingLaser) -> bool {
+        self.insert(
+            Weapon::Laser(laser),
+            crate::stale::WeaponStale::FRESH,
+            sector::GROUND_TEAM,
+        )
+    }
+
+    /// Records Sector Z's Arwing's roll for its lasers' hops and
+    /// reflections. Call it after the stage ticks.
+    pub fn observe_arwing_roll(&mut self, roll: f32) {
+        self.ground_roll = roll;
+    }
+
+    /// The live Arwing lasers, in slot order.
+    pub fn arwing_lasers(&self) -> impl Iterator<Item = ArwingLaser> + '_ {
+        self.slots.iter().flatten().filter_map(|w| match w {
+            Weapon::Laser(l) => Some(*l),
+            _ => None,
+        })
+    }
+
     /// Consumes a fighter's deferred request. A full pool follows the source
     /// manager's allocation-failure shape: the already-consumed script event
     /// is not retried on a later frame.
@@ -2597,6 +2784,7 @@ impl WeaponPool {
                 h.position,
                 h.velocity,
             ),
+            Weapon::Laser(l) => (l.owner_port, l.hitbox(), l.position, l.velocity),
             Weapon::Thunder(_) | Weapon::Trail(_) | Weapon::PKTrail(_) => return None,
         };
         hitbox.damage = stale.damage(hitbox.damage);
@@ -2662,7 +2850,8 @@ impl WeaponPool {
                 crate::item::Attacker {
                     owner: Some(owner),
                     team: self.teams[i],
-                    player: Some(owner),
+                    // A ground weapon's `wp->player` names no fighter.
+                    player: (owner != sector::GROUND_PORT).then_some(owner),
                     handicap: crate::stale::HANDICAP_DEFAULT,
                 },
             );
@@ -2705,6 +2894,13 @@ impl WeaponPool {
                 let spawn = p.item_spawn(stale, self.teams[i]);
                 *slot = None;
                 self.queue_item_spawn(spawn);
+            }
+            // `grSectorArwingWeaponLaser3DProcHit`; the burst has none.
+            Weapon::Laser(l) if l.three_d => {
+                if !l.exploded {
+                    l.explode();
+                    self.hit_records[i] = [None; 4];
+                }
             }
             _ => *slot = None,
         }
@@ -2881,6 +3077,15 @@ impl WeaponPool {
                     Weapon::Egg(egg) => egg.tick(surfaces, fx),
                     Weapon::Star(star) => star.tick(fx),
                     Weapon::Cutter(cutter) => cutter.tick(surfaces, fx),
+                    Weapon::Laser(laser) => {
+                        laser.roll = self.ground_roll;
+                        let (alive, burst) = laser.tick(surfaces, fx);
+                        // `wpMainClearAttackRecord`.
+                        if burst {
+                            self.hit_records[i] = [None; 4];
+                        }
+                        alive
+                    }
                 };
                 self.fx.extend(self.seq[i], &emit);
                 let alive = alive
@@ -2968,6 +3173,27 @@ impl WeaponPool {
                 }
                 continue;
             }
+            if let Weapon::Laser(laser) = weapon {
+                let alive = laser_hit(
+                    laser,
+                    LaserHit {
+                        records,
+                        ports,
+                        stale: self.stale[i],
+                        team: &mut self.teams[i],
+                        landed: &mut self.landed[i],
+                        fx: &mut self.fx,
+                        seq: self.seq[i],
+                        rules,
+                        slot: i,
+                    },
+                    defender,
+                );
+                if !alive {
+                    *slot = None;
+                }
+                continue;
+            }
             let (owner, mut hitbox, position, velocity) = match weapon {
                 Weapon::Jolt(j) => {
                     let (hit, pos) = j.hit();
@@ -2987,6 +3213,7 @@ impl WeaponPool {
                 Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position, e.velocity),
                 Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position, s.velocity),
                 Weapon::Cutter(c) => (c.owner_port, KIRBY_CUTTER_HITBOX, c.position, c.velocity),
+                Weapon::Laser(_) => unreachable!("handled above"),
             };
             // `ftMainSearchHitWeapon`: not its owner, nor, with team attack
             // off, the owner's teammates.
@@ -3013,6 +3240,7 @@ impl WeaponPool {
                 Weapon::Egg(e) => e.damage,
                 Weapon::Star(s) => s.damage,
                 Weapon::Cutter(c) => c.damage,
+                Weapon::Laser(_) => unreachable!("handled above"),
             };
             // The exploding egg keeps the record of what the egg hit and is
             // only a hurtbox test now.

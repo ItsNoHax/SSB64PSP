@@ -456,6 +456,9 @@ pub enum GameScene {
     TrainingYoster,
     /// `trainingsector`: Training on Sector Z (RE-423).
     TrainingSector,
+    /// `trainingarwing`: `trainingsector` at tick 1800, the Arwing's wing
+    /// passing over the stage (RE-428).
+    TrainingArwing,
     /// `trainingcastle`: Training on Peach's Castle (RE-423).
     TrainingCastle,
     /// `traininghyrule`: Training on Hyrule Castle (RE-423).
@@ -482,7 +485,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 79] = [
+    pub const ALL: [GameScene; 80] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -553,6 +556,7 @@ impl GameScene {
         GameScene::TrainingInishie,
         GameScene::TrainingYoster,
         GameScene::TrainingSector,
+        GameScene::TrainingArwing,
         GameScene::TrainingCastle,
         GameScene::TrainingHyrule,
         GameScene::TrainingPupupu,
@@ -636,6 +640,7 @@ impl GameScene {
             GameScene::TrainingInishie => "traininginishie",
             GameScene::TrainingYoster => "trainingyoster",
             GameScene::TrainingSector => "trainingsector",
+            GameScene::TrainingArwing => "trainingarwing",
             GameScene::TrainingCastle => "trainingcastle",
             GameScene::TrainingHyrule => "traininghyrule",
             GameScene::TrainingPupupu => "trainingpupupu",

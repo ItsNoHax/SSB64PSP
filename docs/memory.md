@@ -53,9 +53,10 @@ but the low closure still exceeds the pool by 22,412. This is packed
 residency demand, not a physical-PSP allocation measurement; the runtime
 samples textures directly from the pack in main RAM.
 
-The production game's largest frame is `enter_training`, 159,584 bytes
-of its 256 KiB main-thread stack; preview model states are heap-owned.
-`run` has an 18,544-byte frame and 21,856 bytes of code (RE-427).
+The production game's largest frame is `enter_training`, 166,536 bytes
+of its 256 KiB main-thread stack (it builds `GroundObjects`, Sector Z's
+Arwing included, by value); preview model states are heap-owned. `run`
+has an 18,608-byte frame and 28,696 bytes of code (RE-428).
 
 ## Original pattern
 
