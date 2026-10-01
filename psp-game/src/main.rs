@@ -212,6 +212,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Z from tick 40: the egg is up from the end of `GuardOn`, and 16
         // ticks a point of the shield's 55 decays, darkening it.
         GameScene::YoshiShield => 600,
+        GameScene::YoshiRollF | GameScene::YoshiRollB => 69,
+        GameScene::YoshiShieldBreak => 84,
         // "Go" at 398 with Z held; the CPU's first hit on the shield sets
         // it off on this tick (the capture log's `re418` lines).
         GameScene::VsShield => VS_SHIELD_SET_OFF_TICK,
@@ -575,10 +577,10 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
-    if scene == GameScene::YoshiShield {
+    if matches!(scene, GameScene::YoshiShield | GameScene::YoshiRollF | GameScene::YoshiRollB | GameScene::YoshiShieldBreak) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
-            t if t >= 40 => N64Buttons(N64Buttons::Z),
+            t if t >= 40 && (scene != GameScene::YoshiShieldBreak || t < 80) => N64Buttons(N64Buttons::Z),
             _ => N64Buttons(0),
         };
     }
@@ -663,6 +665,12 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if scene == GameScene::YoshiEgg {
         return if (14..123).contains(&tick) { -30 } else { 0 };
     }
+    if matches!(scene, GameScene::YoshiRollF | GameScene::YoshiRollB) {
+        return if (60..62).contains(&tick) {
+            // Dream Land spawn 0 is at x=0 and faces left.
+            if scene == GameScene::YoshiRollF { -80 } else { 80 }
+        } else { 0 };
+    }
     if matches!(
         scene,
         GameScene::Costume1
@@ -691,6 +699,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::StageSelectView
             | GameScene::StageSelectYoshi
             | GameScene::YoshiShield
+            | GameScene::YoshiShieldBreak
     ) {
         return 0;
     }
@@ -911,6 +920,23 @@ fn log_capture_state(
             line.as_ptr() as *const core::ffi::c_void,
             line.len(),
         );
+    }
+    if matches!(capture_scene, Some(GameScene::YoshiRollF | GameScene::YoshiRollB | GameScene::YoshiShieldBreak)) {
+        let f = &player.fighter;
+        let line = alloc::format!(
+            "re427 tick={} anim_frame={} roll_egg={} joint5={:?} rotate_x={} positive={} health={}\n",
+            sim_frame_index,
+            f.status.anim_frame,
+            f.yoshi.egg_escape_active,
+            f.joint_world(5, ssb_engine::math::Vec3::ZERO),
+            // The current roll animation drives joint 5 at slot 2.
+            player.skeleton.pose(2).map_or(0.0, |p| p.rotate[0]),
+            f.joint_transforms[5].is_some_and(|j| j.axes[0].z > 0.0),
+            f.guard.shield_health,
+        );
+        unsafe {
+            psp::sys::sceIoWrite(psp::sys::sceKernelStdout(), line.as_ptr() as *const core::ffi::c_void, line.len());
+        }
     }
     if matches!(capture_scene, Some(GameScene::Yoshi | GameScene::YoshiBomb)) {
         let line = alloc::format!(
@@ -1548,7 +1574,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Link | GameScene::LinkSpin | GameScene::LinkBomb) => {
             ssb_game::fighter::FighterKind::Link
         }
-        Some(GameScene::Yoshi | GameScene::YoshiBomb | GameScene::YoshiEgg | GameScene::YoshiShield) => {
+        Some(GameScene::Yoshi | GameScene::YoshiBomb | GameScene::YoshiEgg | GameScene::YoshiShield | GameScene::YoshiRollF | GameScene::YoshiRollB | GameScene::YoshiShieldBreak) => {
             ssb_game::fighter::FighterKind::Yoshi
         }
         Some(GameScene::Captain | GameScene::CaptainKick) => {
@@ -3906,7 +3932,7 @@ fn display_asset(kind: ssb_game::effect::DisplayKind) -> Option<usize> {
         K::FlySparks | K::StarRodSpark => 3,
         K::FlyMDust => 4,
         K::ShockSmall => 5,
-        K::SpawnOrbs | K::SpawnSparks | K::SpawnMDust | K::Quake { .. } | K::FireSpark | K::ThunderTrail => return None,
+        K::SpawnOrbs | K::SpawnSparks | K::SpawnMDust | K::Quake { .. } | K::FireSpark | K::ThunderTrail | K::YoshiEggEscape => return None,
     })
 }
 
@@ -6190,19 +6216,32 @@ unsafe fn draw_items_weapons_effects(
     // subtracts it, so the egg darkens (green and blue faster than red)
     // as the shield wears.
     if let Some(egg_mesh) = assets.yoshi_egg_mesh.as_ref() {
-        let fighters = scenes_ref(pl, dummies).into_iter().flatten().map(|x| &x.fighter);
-        for f in fighters.filter(|f| ssb_game::combat::is_yoshi_egg_shield(f)) {
+        let fighters = scenes_ref(pl, dummies).into_iter().flatten();
+        for scene in fighters.filter(|s| ssb_game::combat::is_yoshi_egg_shield(&s.fighter) || s.fighter.yoshi.egg_escape_active) {
+            let f = &scene.fighter;
             let [r, g, b] = ssb_game::combat::yoshi_shield_env(f);
             draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
                 env: Some([r, g, b, 0]),
                 ..Default::default()
             });
             let scale = meshdraw::MODEL_SCALE * ssb_game::combat::YOSHI_SHIELD_SCALE;
+            // Roll egg: kind 0x50 translates to joint 5; kind 0x4A
+            // (`func_ovl0_800CB2F0`) copies signed local rotate.x into z;
+            // kind 0x2E then builds the scaled, spun billboard.
+            let (origin, spin) = if f.yoshi.egg_escape_active {
+                let angle = p.object(scene.object)
+                    .and_then(|o| scene.skeleton.node_pose(o.first_node + 1))
+                    .map_or(0.0, |p| p.rotate[0]);
+                let positive = f.joint_transforms[5].is_some_and(|j| j.axes[0].z > 0.0);
+                (f.joint_world(5, ssb_engine::math::Vec3::ZERO), if positive { angle } else { -angle })
+            } else {
+                (ssb_game::combat::shield_transform(f).origin, 0.0)
+            };
             gpu.model_transform_billboard(
-                ssb_game::combat::shield_transform(f).origin,
+                origin,
                 pl.camera.eye,
                 pl.camera.at,
-                0.0,
+                spin,
                 [scale, scale],
             );
             meshdraw::draw_mesh(p, egg_mesh, draw_state, None, None);

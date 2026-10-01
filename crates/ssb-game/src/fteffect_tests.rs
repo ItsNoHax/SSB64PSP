@@ -475,3 +475,130 @@ fn a_status_change_in_the_frame_makes_the_old_scripts_pending_effects() {
     }
     assert_eq!(params(&f).len(), 1);
 }
+
+#[test]
+fn yoshis_roll_egg_hides_on_success_and_stops_on_a_status_change() {
+    let bank = bank(20);
+    let mut p = Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut f = Fighter::new(FighterKind::Yoshi, 0, 3);
+    f.situation = Situation::Ground;
+    crate::reaction::set_escape(&mut f, Status::EscapeF);
+    flush(
+        &mut f,
+        &mut EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &bank,
+        },
+    );
+    assert!(f.yoshi.egg_escape_active);
+    assert!(f.model_parts.is_modify);
+    assert!(e.displays().any(|d| d.kind == DisplayKind::YoshiEggEscape));
+    let free = e.free_num;
+    for _ in 0..40 {
+        e.func_run();
+        e.process(&mut p, &bank);
+    }
+    assert_eq!(e.free_num, free, "no update or animation expires the egg");
+    status::set_status(&mut f, Status::Wait, 0.0, StatusTiming::unknown());
+    assert!(!f.yoshi.egg_escape_active);
+    assert!(!f.model_parts.is_modify);
+    flush(
+        &mut f,
+        &mut EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &bank,
+        },
+    );
+    assert!(!e.displays().any(|d| d.kind == DisplayKind::YoshiEggEscape));
+    assert_eq!(e.free_num, free + 1);
+}
+
+#[test]
+fn a_roll_ending_before_flush_does_not_hide_the_next_status() {
+    let bank = bank(20);
+    let mut p = Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut f = Fighter::new(FighterKind::Yoshi, 0, 3);
+    crate::reaction::set_escape(&mut f, Status::EscapeB);
+    status::set_status(&mut f, Status::Wait, 0.0, StatusTiming::unknown());
+    flush(
+        &mut f,
+        &mut EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &bank,
+        },
+    );
+    assert!(!f.yoshi.egg_escape_active);
+    assert!(!f.model_parts.is_modify);
+    assert!(!e.displays().any(|d| d.kind == DisplayKind::YoshiEggEscape));
+    assert_eq!(e.free_num, EFFECT_ALLOC_NUM as u8);
+}
+
+#[test]
+fn a_forced_roll_egg_uses_the_reserved_structs_and_refusal_keeps_yoshi_visible() {
+    let mut e = Effects::new(0);
+    for _ in 0..EFFECT_ALLOC_NUM - 4 {
+        assert!(e.fire_spark(0));
+    }
+    assert!(!e.fire_spark(0));
+    for port in 0..4 {
+        assert!(e.yoshi_egg_escape(port));
+    }
+    assert_eq!(e.free_num, 0);
+    let bank = bank(20);
+    let mut p = Box::new(Particles::new());
+    let mut f = Fighter::new(FighterKind::Yoshi, 0, 3);
+    crate::reaction::set_escape(&mut f, Status::EscapeF);
+    flush(
+        &mut f,
+        &mut EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &bank,
+        },
+    );
+    assert!(!f.yoshi.egg_escape_active);
+    assert!(!f.model_parts.is_modify);
+    e.stop_yoshi_egg_escape(2);
+    assert_eq!(e.free_num, 1);
+    assert_eq!(
+        e.displays()
+            .filter(|d| d.kind == DisplayKind::YoshiEggEscape)
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn yoshi_shield_release_makes_shell_fragments_once_at_yrotn() {
+    let mut f = Fighter::new(FighterKind::Yoshi, 0, 3);
+    f.guard.is_shield = true;
+    f.guard.is_release = true;
+    f.guard.release_lag = 1;
+    let origin = Vec3::new(500.0, 300.0, 20.0);
+    f.joint_transforms[3] = Some(JointTransform {
+        axes: [Vec3::X, Vec3::Y, Vec3::Z],
+        origin,
+    });
+    status::guard_update_shield_vars(&mut f);
+    assert!(!f.guard.is_shield);
+    let effects: std::vec::Vec<_> = f.effects.iter().copied().collect();
+    assert_eq!(
+        effects,
+        [FighterEffect::At {
+            kind: kind::EGG_BREAK,
+            pos: origin
+        }]
+    );
+    status::guard_update_shield_vars(&mut f);
+    assert_eq!(f.effects.len(), 1);
+    let mut mario = mario();
+    mario.guard.is_shield = true;
+    mario.guard.is_release = true;
+    status::guard_update_shield_vars(&mut mario);
+    assert!(mario.effects.is_empty());
+}

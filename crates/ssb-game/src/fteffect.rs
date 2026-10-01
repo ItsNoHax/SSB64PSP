@@ -105,6 +105,10 @@ impl EffectRequest {
 /// One queued fighter effect.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FighterEffect {
+    /// Roll-egg maker tagged with the status that requested it.
+    EggEscape { epoch: u32 },
+    /// `ftParamProcStopEffect` for this fighter's roll egg.
+    StopEggEscape,
     /// `ftParamMakeEffect`.
     Param(EffectRequest),
     /// `ftParamKirbyTryMakeMapStarEffect`'s `efManagerKirbyStarMakeEffect`.
@@ -169,7 +173,36 @@ impl EffectQueue {
 
 /// `ftParamMakeEffect`, queued.
 pub fn request(f: &mut Fighter, r: EffectRequest) {
-    f.effects.push(FighterEffect::Param(r));
+    let effect = if r.kind == kind::YOSHI_EGG_ESCAPE {
+        FighterEffect::EggEscape {
+            epoch: f.yoshi.egg_escape_epoch,
+        }
+    } else {
+        FighterEffect::Param(r)
+    };
+    f.effects.push(effect);
+}
+
+/// `ftMainSetStatus` stops attachments unless `FTSTATUS_PRESERVE_EFFECT`
+/// holds. Queued makers and stops retain their order until the next flush.
+pub(crate) fn on_set_status(f: &mut Fighter, to: crate::status::AnyStatus) {
+    if crate::colanim::preserved_in(
+        &crate::colanim::PRESERVE_EFFECT,
+        f.kind,
+        f.status.status,
+        to,
+    ) {
+        return;
+    }
+    let pending = f
+        .effects
+        .iter()
+        .any(|e| matches!(e, FighterEffect::EggEscape { .. }));
+    if f.yoshi.egg_escape_active || pending {
+        f.effects.push(FighterEffect::StopEggEscape);
+    }
+    f.yoshi.egg_escape_active = false;
+    f.yoshi.egg_escape_epoch = f.yoshi.egg_escape_epoch.wrapping_add(1);
 }
 
 /// `FTAttributes` fields the effects read, for any fighter kind (a polygon
@@ -193,6 +226,13 @@ pub fn flush(f: &mut Fighter, rt: &mut EffectRuntime<'_>) {
     let queue = core::mem::take(&mut f.effects);
     for e in queue.iter() {
         match *e {
+            FighterEffect::EggEscape { epoch } => {
+                if rt.effects.yoshi_egg_escape(f.port) && epoch == f.yoshi.egg_escape_epoch {
+                    f.model_parts.hide_all();
+                    f.yoshi.egg_escape_active = true;
+                }
+            }
+            FighterEffect::StopEggEscape => rt.effects.stop_yoshi_egg_escape(f.port),
             FighterEffect::Param(r) => make(f, rt, r),
             FighterEffect::KirbyStar(pos) => {
                 rt.effects
@@ -406,15 +446,16 @@ fn dispatch(f: &mut Fighter, rt: &mut EffectRuntime<'_>, effect: u16, mut pos: V
         kind::FIRE_SPARK => {
             e.fire_spark(f.port);
         }
+        kind::YOSHI_EGG_ESCAPE => {
+            if e.yoshi_egg_escape(f.port) {
+                f.model_parts.hide_all();
+                f.yoshi.egg_escape_active = true;
+            }
+        }
         // Not made (RE-415): the Kirby bank's two scripts (the bank is not
-        // loaded), Donkey Kong's crate pieces (the item file's), Yoshi's
-        // roll egg (`efManagerYoshiEggEscapeMakeEffect`, which also hides
-        // the model) and `func_ovl2_8010183C`.
-        kind::KIRBY_BANK_2
-        | kind::KIRBY_BANK_5
-        | kind::BOX_SMASH
-        | kind::YOSHI_EGG_ESCAPE
-        | kind::CRASH_THE_GAME => {}
+        // loaded), Donkey Kong's crate pieces (the item file's) and
+        // `func_ovl2_8010183C`.
+        kind::KIRBY_BANK_2 | kind::KIRBY_BANK_5 | kind::BOX_SMASH | kind::CRASH_THE_GAME => {}
         _ => {}
     }
 }

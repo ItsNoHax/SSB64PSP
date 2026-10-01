@@ -222,8 +222,9 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
         WeaponEffect::DustCollide(pos) => {
             effects.dust_collide(p, banks, pos);
         }
-        // `gFTDataYoshiParticleBankID` is not loaded.
-        WeaponEffect::YoshiEggExplode(_) => {}
+        WeaponEffect::YoshiEggExplode(pos) => {
+            effects.yoshi_egg_explode(p, banks, pos);
+        }
         WeaponEffect::EggBreak(pos) => {
             effects.ready_at(p, banks, false, script::EGG_BREAK, pos, 1.0);
         }

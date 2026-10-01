@@ -22,7 +22,9 @@ use crate::status::AnyStatus;
 #[path = "colanim_scripts.rs"]
 mod scripts;
 
-pub use scripts::{Script, DESCS, PRESERVE_COLANIM, PRESERVE_MODELPART, PRESERVE_TEXTUREPART};
+pub use scripts::{
+    Script, DESCS, PRESERVE_COLANIM, PRESERVE_EFFECT, PRESERVE_MODELPART, PRESERVE_TEXTUREPART,
+};
 
 /// `gmColCommandEffect` / `...EffectItemHold`: `ftParamMakeEffect`'s
 /// arguments.

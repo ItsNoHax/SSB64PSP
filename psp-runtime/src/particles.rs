@@ -9,10 +9,12 @@ use ssb_rom::pack::{Pack, ParticleBankDesc, ParticleTextureDesc};
 use crate::meshdraw::{self, DrawState, ParticleRect};
 
 /// The banks a match loads: runtime bank 0 is `efcommon` (pack bank 0),
-/// which `efDisplayInitAll` loads. The stages' own banks are not loaded.
+/// which `efDisplayInitAll` loads. Runtime bank 1 maps to Yoshi's packed
+/// `particles_unk2` (pack bank 3, `dFTYoshiData`). Stage banks stay unloaded.
 pub struct PackBanks<'p, 'a> {
     pack: &'p Pack<'a>,
     common: ParticleBankDesc,
+    yoshi: Option<ParticleBankDesc>,
 }
 
 impl<'p, 'a> PackBanks<'p, 'a> {
@@ -20,38 +22,50 @@ impl<'p, 'a> PackBanks<'p, 'a> {
         Some(PackBanks {
             pack,
             common: pack.particle_bank(0)?,
+            yoshi: pack.particle_bank(3),
         })
+    }
+
+    fn bank(&self, id: u8) -> Option<ParticleBankDesc> {
+        match id {
+            0 => Some(self.common),
+            ssb_game::effect::YOSHI_PARTICLE_BANK => self.yoshi,
+            _ => None,
+        }
     }
 
     /// The pack texture of a particle's frame.
     fn frame_texture(&self, pc: &lb::Particle) -> Option<(u32, ParticleTextureDesc)> {
-        if pc.bank_id & 7 != 0 || u32::from(pc.texture_id) >= self.common.texture_count {
+        let bank = self.bank(pc.bank_id & 7)?;
+        if u32::from(pc.texture_id) >= bank.texture_count {
             return None;
         }
         let t = self
             .pack
-            .particle_texture(self.common.first_texture + u32::from(pc.texture_id))?;
+            .particle_texture(bank.first_texture + u32::from(pc.texture_id))?;
         if t.first_frame == ParticleTextureDesc::NO_FRAME || t.frame_count == 0 {
             return None;
         }
-        Some((t.first_frame + u32::from(pc.frame_id).min(t.frame_count - 1), t))
+        Some((
+            t.first_frame + u32::from(pc.frame_id).min(t.frame_count - 1),
+            t,
+        ))
     }
 }
 
 impl Banks for PackBanks<'_, '_> {
     fn script_count(&self, bank: u8) -> u16 {
-        if bank == 0 {
-            self.common.script_count as u16
-        } else {
-            0
-        }
+        self.bank(bank).map_or(0, |b| b.script_count as u16)
     }
 
     fn script(&self, bank: u8, id: u16) -> Option<Script<'_>> {
-        if bank != 0 || u32::from(id) >= self.common.script_count {
+        let bank = self.bank(bank)?;
+        if u32::from(id) >= bank.script_count {
             return None;
         }
-        let s = self.pack.particle_script(self.common.first_script + u32::from(id))?;
+        let s = self
+            .pack
+            .particle_script(bank.first_script + u32::from(id))?;
         Some(Script {
             kind: s.kind,
             texture_id: s.texture_id,
@@ -70,11 +84,14 @@ impl Banks for PackBanks<'_, '_> {
     }
 
     fn texture_flags(&self, bank: u8, texture: u16) -> u32 {
-        if bank != 0 {
+        let Some(bank) = self.bank(bank) else {
+            return 0;
+        };
+        if u32::from(texture) >= bank.texture_count {
             return 0;
         }
         self.pack
-            .particle_texture(self.common.first_texture + u32::from(texture))
+            .particle_texture(bank.first_texture + u32::from(texture))
             .map_or(0, |t| t.flags)
     }
 }
@@ -125,7 +142,10 @@ pub unsafe fn draw(
         view,
         proj,
         planes: lb::BATTLE_PLANES,
-        ge_planes: (ssb_game::camera::DEFAULT_NEAR, ssb_game::camera::DEFAULT_FAR),
+        ge_planes: (
+            ssb_game::camera::DEFAULT_NEAR,
+            ssb_game::camera::DEFAULT_FAR,
+        ),
         rect: [vx as f32, vy as f32, vw as f32, vh as f32],
     };
     draw_lists(banks, particles, &camera, lists, DEPTH_TESTED, draw_state);

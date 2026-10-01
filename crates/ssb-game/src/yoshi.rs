@@ -109,6 +109,11 @@ pub const EGG_LAY_THROW_DESC: [ThrowHitDesc; 2] = [
 /// Yoshi's status vars and the aerial jump's turn.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct YoshiState {
+    /// A successfully made `efManagerYoshiEggEscapeMakeEffect` attachment.
+    pub egg_escape_active: bool,
+    /// Status epoch for deferred roll-egg makers. A maker preceding a stop
+    /// still allocates in order, but must not hide the new status's model.
+    pub egg_escape_epoch: u32,
     /// `status_vars.yoshi.specialhi.egg_gobj != NULL`: the egg is in hand.
     pub egg_held: bool,
     /// `status_vars.yoshi.specialhi.throw_force`: frames B was held.

@@ -89,3 +89,31 @@ fn only_the_egg_carries_shade_minus_env() {
         assert_eq!(&v[4..7], &[0xFF, 0xFF, 0xFF]);
     }
 }
+
+/// RE-427's original-game trace at RollF/B frame 12. Matrix kind 0x4A
+/// reads fighter joint 5's local rotate.x. The figatree omits three of the
+/// four runtime joints, so animation index 2 drives the second model node.
+#[test]
+fn the_roll_egg_attachment_pose_matches_the_n64_trace() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = Pack::open(&bytes).unwrap();
+    for (slot, expected) in [(462, 2.9705577f32), (463, -6.3230405f32)] {
+        let anim = pack.fighter_anim(6, slot).unwrap();
+        let mut skeleton = ssb_rom::skeleton::Skeleton::new();
+        skeleton.start(&pack, &anim, 0.0, 1.0);
+        let node = skeleton.joint_node(2).unwrap();
+        let object = (0..pack.object_count())
+            .filter_map(|i| pack.object(i))
+            .find(|o| o.first_node <= node && node < o.first_node + o.node_count)
+            .unwrap();
+        assert_eq!(node, object.first_node + 1);
+        for _ in 0..13 {
+            skeleton.tick(pack.anim_script(&anim).unwrap()).unwrap();
+        }
+        let angle = skeleton.node_pose(node).unwrap().rotate[0];
+        assert!(
+            (angle - expected).abs() < 0.0001,
+            "slot {slot}: {angle} != {expected}"
+        );
+    }
+}
