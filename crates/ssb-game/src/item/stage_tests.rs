@@ -202,7 +202,7 @@ fn power_block_settles_squashes_and_leaves() {
     assert_eq!(pow.damage_coll.hitstatus, HitStatus::Normal);
 
     hit(&mut pool, slot, 2, SOFT);
-    pool.resolve(&[], &mut anims);
+    pool.resolve(&[], &mut anims, core::iter::empty);
     let pow = pool.get(slot).unwrap();
     assert_eq!(
         pow.status,
@@ -308,7 +308,7 @@ fn piranha_plant_knocked_out_regrows_after_the_rebirth_wait() {
 
     // A light hit only hurts.
     hit(&mut pool, slot, 0, SOFT);
-    pool.resolve(&[], &mut anims);
+    pool.resolve(&[], &mut anims, core::iter::empty);
     let plant = *pool.get(slot).unwrap();
     assert_eq!(plant.status, ItemStatus::Pakkun(pakkun::Status::Appear));
     assert!(plant.damage_knockback == 0.0);
@@ -319,7 +319,7 @@ fn piranha_plant_knocked_out_regrows_after_the_rebirth_wait() {
     hit(&mut pool, slot, 0, HARD);
     let kb = pool.get(slot).unwrap().damage_knockback;
     assert!(kb >= pakkun::NDAMAGE_KNOCKBACK_MIN, "{kb}");
-    pool.resolve(&[], &mut anims);
+    pool.resolve(&[], &mut anims, core::iter::empty);
     let plant = *pool.get(slot).unwrap();
     assert_eq!(plant.status, ItemStatus::Pakkun(pakkun::Status::Damaged));
     assert_eq!(plant.rotate_z, core::f32::consts::PI);
@@ -390,7 +390,7 @@ fn castle_bumper_follows_the_ground_and_swells_on_a_hit() {
     assert_eq!(pool.get(slot).unwrap().pos.x, 340.0);
 
     pool.get_mut(slot).unwrap().hit_normal_damage = 1;
-    pool.resolve(&[], &mut anims);
+    pool.resolve(&[], &mut anims, core::iter::empty);
     let b = pool.get(slot).unwrap();
     assert_eq!(
         (b.scale.x, b.palette, b.multi),

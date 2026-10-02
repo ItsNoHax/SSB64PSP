@@ -58,6 +58,8 @@ pub enum WeaponEffect {
     YoshiEggExplode(Vec3),
     /// `efManagerEggBreakMakeEffect`.
     EggBreak(Vec3),
+    /// `efManagerItemSpawnSwirlMakeEffect`, common script 0x69.
+    ItemSpawnSwirl(Vec3),
     /// `efManagerQuakeMakeEffect(magnitude)`.
     Quake(u8),
     /// `efManagerSetOffMakeEffect`: one side of a weapon clash.
@@ -274,6 +276,9 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
         }
         WeaponEffect::YoshiEggExplode(pos) => {
             effects.yoshi_egg_explode(p, banks, pos);
+        }
+        WeaponEffect::ItemSpawnSwirl(pos) => {
+            effects.ready_at(p, banks, true, 0x69, pos, 1.0);
         }
         WeaponEffect::EggBreak(pos) => {
             effects.ready_at(p, banks, false, script::EGG_BREAK, pos, 1.0);

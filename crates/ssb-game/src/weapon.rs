@@ -2833,15 +2833,15 @@ impl WeaponPool {
     /// `itProcessSearchHitWeapon` for one item (`id` is its record id):
     /// every weapon that has not recorded it tests its damage box. A contact
     /// queues the weapon's staled damage on the item and defers the weapon's
-    /// `proc_hit` until all item searches finish. No ported item
-    /// can clank (`can_setoff`), so the weapon-item set-off branch is not
-    /// reached.
+    /// `proc_hit` until all item searches finish. Attack clashes precede
+    /// the hurtbox search and queue `proc_setoff` for `finish_clashes`.
     pub fn hit_item(&mut self, item: &mut crate::item::Item, id: u8) {
         use crate::item::INTERACT_WEAPON;
         if item.damage_coll.interact_mask & INTERACT_WEAPON == 0 {
             return;
         }
-        for i in 0..MAX_WEAPONS {
+        let (order, count) = self.link_order();
+        for &i in &order[..count] {
             let Some((owner, hitbox, pos, vel)) = self.item_attack(i) else {
                 continue;
             };
@@ -2853,6 +2853,61 @@ impl WeaponPool {
             }
             if self.hit_records[i].contains(&Some(id)) {
                 continue;
+            }
+            if item.attack.can_setoff
+                && item.attack.state != crate::combat::AttackState::Off
+                && item.attack.interact_mask & INTERACT_WEAPON != 0
+                && item.owner != Some(owner)
+                && !self.team_rules.spares(item.team, self.teams[i])
+                && item.attack.record(weapon_victim_id(i)).is_clear()
+            {
+                if let Some(w) = self.clash_attack(i) {
+                    for j in 0..item.attack.count {
+                        let p = item.attack.pos[j];
+                        if !crate::hurtbox::attacks_collide(
+                            (w.pos_curr, w.pos_prev, w.size, w.state),
+                            (p.pos_curr, p.pos_prev, item.attack.size, item.attack.state),
+                        ) {
+                            continue;
+                        }
+                        let impact = crate::combat::impact_point(
+                            crate::combat::attack_point(w.pos_curr, w.pos_prev, w.state),
+                            crate::combat::attack_point(p.pos_curr, p.pos_prev, item.attack.state),
+                        );
+                        if item.attack.priority <= w.priority {
+                            let damage = item.damage_output();
+                            item.attack.set_hit_interact(
+                                weapon_victim_id(i),
+                                crate::item::HitType::Attack(0),
+                            );
+                            item.hit_attack_damage = item.hit_attack_damage.max(damage);
+                            self.clash_fx.push(
+                                0,
+                                Fx::SetOff {
+                                    pos: impact,
+                                    size: damage,
+                                },
+                            );
+                        }
+                        if w.priority <= item.attack.priority {
+                            record_weapon_victim(&mut self.hit_records[i], id);
+                            self.clash_damage[i] = self.clash_damage[i].max(w.damage);
+                            self.clash_fx.push(
+                                0,
+                                Fx::SetOff {
+                                    pos: impact,
+                                    size: w.damage,
+                                },
+                            );
+                        }
+                        if self.clash_damage[i] != 0 || item.hit_attack_damage != 0 {
+                            break;
+                        }
+                    }
+                    if self.clash_damage[i] != 0 {
+                        continue;
+                    }
+                }
             }
             match item.damage_coll.hitstatus {
                 crate::combat::HitStatus::None | crate::combat::HitStatus::Intangible => continue,

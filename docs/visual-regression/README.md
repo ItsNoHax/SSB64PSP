@@ -29,7 +29,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  The manifest currently has 74 scenes; RE-316 measured about 17 s for an
+  The manifest currently has 159 scenes; RE-316 measured about 17 s for an
   earlier full run.
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
@@ -1036,3 +1036,18 @@ These views prove deterministic current PSP output, not N64 equivalence,
 Egg spawning, random gate selection, explosion timing or damaged flight.
 The host tests and ROM root replay supply the timing evidence. See
 [RE-430](../evidence/re/RE-430.md).
+
+## 2026-10-02 RE-431 Light containers
+
+Two new game goldens pin loose Capsule at tick 90 (`trainingcapsule`) and
+Chansey's airborne Egg at tick 105 (`trainingchansey@105`). The existing
+Chansey tick-90 scene changes 6,752 pixels: its enabled source maker now
+draws the Egg, spawn swirl and dust. That semantic delta was visually
+reviewed before rebaseline, and both captures agree exactly.
+
+Twelve targeted game scenes pass twice at four-way concurrency (run
+`20261002-083652`), with zero pixel differences. The nine other existing
+stage/item controls are unchanged. The manifest has 159 scenes; the last
+full-matrix proof remains RE-429's 152 scenes. These captures cover loose
+models and spawning; held/throw/explosion paths have host coverage but no
+visual capture in this batch. See [RE-431](../evidence/re/RE-431.md).

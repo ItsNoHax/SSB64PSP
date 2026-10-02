@@ -235,6 +235,7 @@ pub(super) fn proc_update(
     event: &mut dyn FnMut(StageItemEvent),
     shots: &mut dyn FnMut(MonsterShot),
     fx: &mut Emit,
+    common: &mut dyn super::normal::CommonItems,
 ) -> bool {
     let k = kind(item);
     if status == Status::Damaged {
@@ -292,7 +293,7 @@ pub(super) fn proc_update(
     }
     if k == Kind::Chansey && (80.0..=85.0).contains(&frame) {
         if item.multi == 0 && item.vars.monster_eggs != 0 {
-            let mut made = !anims.eggs_enabled();
+            let mut made = !common.eggs_enabled();
             if !made {
                 let pos = item.pos + Vec3::new(-200.0, 200.0, 0.0);
                 let vel = Vec3::new(
@@ -300,8 +301,9 @@ pub(super) fn proc_update(
                     crate::rng::rand_float() * 8.0 + 30.0,
                     0.0,
                 );
-                made = anims.make_egg(pos, vel);
+                made = common.make_egg(item, pos, vel);
                 if made {
+                    fx.push(Fx::ItemSpawnSwirl(pos));
                     fx.push(Fx::DustLight { pos, lr: -1 });
                 }
             }
@@ -409,10 +411,15 @@ mod tests {
         fn stop_root(&mut self, _: ItemAnimTarget) {
             self.stopped = true;
         }
+    }
+    impl super::super::normal::CommonItems for Clock {
+        fn open_container(&mut self, _: &mut Item) -> bool {
+            false
+        }
         fn eggs_enabled(&self) -> bool {
             self.enabled
         }
-        fn make_egg(&mut self, pos: Vec3, vel: Vec3) -> bool {
+        fn make_egg(&mut self, _: &Item, pos: Vec3, vel: Vec3) -> bool {
             self.attempts += 1;
             assert_eq!(pos, Vec3::new(-200.0, 200.0, 0.0));
             assert!((-16.0..=-8.0).contains(&vel.x) && (30.0..38.0).contains(&vel.y));
@@ -425,6 +432,11 @@ mod tests {
             panic!()
         };
         let (mut events, mut shots) = (Vec::new(), Vec::new());
+        let mut maker = Clock {
+            enabled: clock.enabled,
+            egg_success: clock.egg_success,
+            ..Clock::default()
+        };
         proc_update(
             item,
             status,
@@ -432,7 +444,9 @@ mod tests {
             &mut |e| events.push(e),
             &mut |s| shots.push(s),
             &mut Emit::default(),
+            &mut maker,
         );
+        clock.attempts += maker.attempts;
         (events, shots)
     }
 

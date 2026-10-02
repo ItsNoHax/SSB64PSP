@@ -5132,6 +5132,16 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             0x1990,
             None,
         ),
+        // Normal Egg: file 251 + 0xACC names file 86's three-node
+        // tree and its node-2 scale animation.
+        (
+            ssb_rom::pack::AnimDesc::ITEM,
+            ssb_rom::pack::AnimDesc::ITEM_ANIM_EGG,
+            86,
+            0x104A0,
+            0x10550,
+            None,
+        ),
     ];
     let mut weapon_anims = 0usize;
     let mut weapon_anim_rebased = 0usize;

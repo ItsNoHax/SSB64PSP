@@ -341,7 +341,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 // root-`MObj` material scripts (RE-429). No layout change.
 // Version 81 adds Saffron's five item animations and direct texture frames.
 // Existing descriptors retain their indices; no layout change.
-pub const VERSION: u32 = 81;
+// 82 adds the normal Egg item's scale animation (86 + 0x10550).
+pub const VERSION: u32 = 82;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1113,6 +1114,7 @@ impl AnimDesc {
     pub const ITEM_ANIM_NESS_PK_FIRE: u32 = 0;
     /// [`Self::ITEM`] slot of Link's Bomb (file 353's table at 0x1990).
     pub const ITEM_ANIM_LINK_BOMB: u32 = 1;
+    pub const ITEM_ANIM_EGG: u32 = 2;
 
     /// [`Self::WEAPON`] slot of Link's Boomerang (file 325's table at 0x6C0).
     pub const WEAPON_ANIM_LINK_BOOMERANG: u32 = 0;

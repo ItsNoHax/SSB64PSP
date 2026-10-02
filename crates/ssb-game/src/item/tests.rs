@@ -80,7 +80,7 @@ fn bomb_pull_hold_throw_and_fast_hit_explode() {
     crate::combat::resolve(&mut target);
     // `itMainGetDamageOutput`: (2 + 66 * 0.1) truncates to 8.
     assert_eq!(target.damage, 8);
-    pool.resolve(&[&link, &target], &mut NoItemAnims);
+    pool.resolve(&[&link, &target], &mut NoItemAnims, core::iter::empty);
     assert_eq!(
         pool.get(slot).unwrap().status,
         ItemStatus::LinkBomb(link_bomb::Status::Explode)
@@ -209,7 +209,7 @@ fn seven_damage_explodes_while_six_damage_recoils() {
                 base: 0,
             },
         );
-        pool.resolve(&[&link], &mut NoItemAnims);
+        pool.resolve(&[&link], &mut NoItemAnims, core::iter::empty);
         let bomb = pool.get(slot).unwrap();
         if damage == 7 {
             assert_eq!(
@@ -237,7 +237,7 @@ fn slow_bomb_hit_recoils_at_the_exact_speed_threshold() {
     );
     bomb.hit_normal_damage = 2;
     bomb.hit_lr = 1.0;
-    pool.resolve(&[&link], &mut NoItemAnims);
+    pool.resolve(&[&link], &mut NoItemAnims, core::iter::empty);
     let bomb = pool.get(slot).unwrap();
     assert_eq!(bomb.status, ItemStatus::LinkBomb(link_bomb::Status::Fall));
     assert_eq!(bomb.vel_air, Vec3::new(-8.0, 20.0, 0.0));
@@ -269,7 +269,7 @@ fn pk_fire_loses_three_times_jab_damage_and_one_update_tick() {
     let before = flame.lifetime;
     pool.search_hurt(&mut [&mut mario], &mut WeaponPool::default());
     assert_eq!(pool.get(slot).unwrap().damage_highest, coll.damage);
-    pool.resolve(&[&mario], &mut NoItemAnims);
+    pool.resolve(&[&mario], &mut NoItemAnims, core::iter::empty);
     assert_eq!(
         pool.get(slot).unwrap().lifetime,
         before - 3 * coll.damage - 1
@@ -319,14 +319,14 @@ fn fox_reflects_bomb_and_damage_growth_caps_at_one_hundred() {
     bomb.update_attack_positions();
     pool.search_fighter(&mut fox);
     assert_eq!(pool.get(slot).unwrap().reflect_by, Some(fox.port));
-    pool.resolve(&[&link, &fox], &mut NoItemAnims);
+    pool.resolve(&[&link, &fox], &mut NoItemAnims, core::iter::empty);
     let bomb = pool.get_mut(slot).unwrap();
     assert_eq!(bomb.owner, Some(fox.port));
     assert_eq!(bomb.attack.damage, 4);
     assert!((bomb.vel_air.x + 60.0).abs() < 0.001);
     bomb.attack.damage = 99;
     bomb.reflect_by = Some(fox.port);
-    pool.resolve(&[&fox], &mut NoItemAnims);
+    pool.resolve(&[&fox], &mut NoItemAnims, core::iter::empty);
     assert_eq!(pool.get(slot).unwrap().attack.damage, 100);
 }
 
@@ -341,7 +341,7 @@ fn shield_hops_below_135_degrees_and_rebounds_at_the_boundary() {
         bomb.hit_shield_damage = 2;
         bomb.shield_collide_angle = degrees.to_radians();
         bomb.shield_collide_dir = Vec3::new(0.0, 0.0, 1.0);
-        pool.resolve(&[&link], &mut NoItemAnims);
+        pool.resolve(&[&link], &mut NoItemAnims, core::iter::empty);
         let bomb = pool.get(slot).unwrap();
         if degrees < 135.0 {
             assert!((bomb.vel_air.x - 30.0).abs() < 0.001);

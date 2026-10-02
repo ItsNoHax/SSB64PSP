@@ -165,8 +165,10 @@ f1-training-yoshi-shield-break	psp-game	yoshishieldbreak	pass	RE-427
 f1-training-yoshi-explosion	psp-game	yoshi@88	pass	RE-427
 f1-training-bumper	psp-game	trainingbumper	pass	RE-429
 f1-training-piranha-plant	psp-game	trainingplants	pass	RE-429
-f1-training-chansey	psp-game	trainingchansey	pass	RE-430
+f1-training-chansey	psp-game	trainingchansey	pass	RE-431
 f1-training-electrode	psp-game	trainingelectrode	pass	RE-430
 f1-training-charmander	psp-game	trainingcharmander	pass	RE-430
 f1-training-venusaur	psp-game	trainingvenusaur	pass	RE-430
 f1-training-porygon	psp-game	trainingporygon	pass	RE-430
+f1-training-capsule	psp-game	trainingcapsule	pass	RE-431
+f1-training-chansey-egg	psp-game	trainingchansey@105	pass	RE-431

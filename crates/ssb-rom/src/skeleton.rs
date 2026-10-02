@@ -486,6 +486,20 @@ impl StageAnimator {
         }
     }
 
+    /// `gcAddAnimAll`: the first play parses frame zero without advancing
+    /// time. Kept separate from existing stage players' advancing start.
+    pub fn start_changed(&mut self, pack: &Pack<'_>, anim: &AnimDesc) {
+        self.start(pack, anim);
+        for i in 0..self.count {
+            if let Some(joint) = (0..anim.joint_count)
+                .filter_map(|j| pack.anim_joint(anim.first_joint + j))
+                .find(|joint| joint.node == self.nodes[i])
+            {
+                self.joints[i] = crate::objanim::StageJoint::start_changed(joint.script, 0.0);
+            }
+        }
+    }
+
     /// The node a joint drives, and the pose it has reached. Exposed so a
     /// verifier can compare a packed replay against one run straight off the
     /// archive, which is the check that the packing path — script offsets, node
