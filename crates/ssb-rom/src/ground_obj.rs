@@ -13,6 +13,8 @@
 //! controller subtracts. So every `ll*` offset below is an offset into the
 //! file `map_nodes` names, and the pack builder checks that `map_nodes`
 //! really lands on [`GroundObjectAsset::map_head`] before trusting it.
+//! Saffron's item models instead use the separate loaded item file 159;
+//! [`GroundObjectAsset::source_file`] overrides the gate's map-node file 160.
 //!
 //! [`OBJECTS`] and [`ANIMS`] are the ports' asset tables: the US
 //! `reloc_data_symbols.us.txt` labels the controllers pass to `gcAddAnimAll`,
@@ -50,6 +52,8 @@ pub struct GroundObjectAsset {
     /// The `GR*Map` file holding the stage's `MPGroundData`
     /// (`ll*MapFileID`); the pack's `StageDesc::source_file`.
     pub gr_file: u32,
+    /// Item data can live outside the map-node file (Saffron file 159).
+    pub source_file: Option<u32>,
     /// The label the controller subtracts from `map_nodes`.
     pub map_head: u32,
     /// The object's `DObjDesc` array.
@@ -158,6 +162,10 @@ pub const SCALE_PLATFORM: u8 = 9;
 pub const CASTLE_GROUND: u8 = 10;
 pub const POWER_BLOCK: u8 = 11;
 pub const PAKKUN: u8 = 12;
+pub const MONSTER_FIRST: u8 = 13;
+pub const MONSTER_FILE: u32 = 159;
+/// Two direct texture-ID frames of Charmander and Venusaur.
+pub const MONSTER_TEXTURES: [[u32; 2]; 2] = [[0x1410, 0x1048], [0x1E80, 0x1B78]];
 
 /// `gcAddGObjDisplay(item_gobj, ..., 11, ...)` in `itManagerMakeItem`.
 pub const ITEM_LINK: u8 = 11;
@@ -182,6 +190,7 @@ const fn desc(
     GroundObjectAsset {
         name,
         gr_file,
+        source_file: None,
         map_head,
         graph,
         dl_link,
@@ -197,7 +206,7 @@ const fn desc(
 /// `grZebesMakeAcid`, `grYosterInitAll`, `grInishieMakeScale`,
 /// `grCastleInitAll`, and the Mushroom Kingdom items
 /// `itPowerBlockMakeItem` and `itPakkunMakeItem`.
-pub const OBJECTS: [GroundObjectAsset; 13] = [
+pub const OBJECTS: [GroundObjectAsset; 18] = [
     desc("WhispyEyes", PUPUPU_FILE, PUPUPU_HEAD, 0x10F0, 4),
     desc("WhispyMouth", PUPUPU_FILE, PUPUPU_HEAD, 0x1770, 4),
     desc("FlowersBack", PUPUPU_FILE, PUPUPU_HEAD, 0x2A80, 4),
@@ -250,6 +259,31 @@ pub const OBJECTS: [GroundObjectAsset; 13] = [
         instances: 2,
         ..desc("Pakkun", INISHIE_FILE, INISHIE_HEAD, 0xC30, ITEM_LINK)
     },
+    GroundObjectAsset {
+        item: true,
+        source_file: Some(MONSTER_FILE),
+        ..desc("Chansey", YAMABUKI_FILE, 0x8A0, 0x360, ITEM_LINK)
+    },
+    GroundObjectAsset {
+        item: true,
+        source_file: Some(MONSTER_FILE),
+        ..desc("Electrode", YAMABUKI_FILE, 0x8A0, 0x790, ITEM_LINK)
+    },
+    GroundObjectAsset {
+        item: true,
+        source_file: Some(MONSTER_FILE),
+        ..desc("Charmander", YAMABUKI_FILE, 0x8A0, 0x1990, ITEM_LINK)
+    },
+    GroundObjectAsset {
+        item: true,
+        source_file: Some(MONSTER_FILE),
+        ..desc("Venusaur", YAMABUKI_FILE, 0x8A0, 0x2340, ITEM_LINK)
+    },
+    GroundObjectAsset {
+        item: true,
+        source_file: Some(MONSTER_FILE),
+        ..desc("Porygon", YAMABUKI_FILE, 0x8A0, 0xEA0, ITEM_LINK)
+    },
 ];
 
 const fn table(name: &'static str, object: u8, script: u32) -> GroundAnimAsset {
@@ -263,7 +297,7 @@ const fn table(name: &'static str, object: u8, script: u32) -> GroundAnimAsset {
 
 /// Every animation the ported controllers start. The order is the index
 /// the lookup functions below compute; do not reorder.
-pub const ANIMS: [GroundAnimAsset; 35] = [
+pub const ANIMS: [GroundAnimAsset; 40] = [
     // `dGRPupupuWhispyEyesAnims[lr][status][0]`: Turn, Blink.
     table("WhispyEyesLeftTurn", WHISPY_EYES, 0x11A0),
     table("WhispyEyesLeftBlink", WHISPY_EYES, 0x12B0),
@@ -342,6 +376,11 @@ pub const ANIMS: [GroundAnimAsset; 35] = [
         script: 0xCC8,
         target: AnimTarget::Node(ITEM_ROOT as u8),
     },
+    table("Chansey", MONSTER_FIRST, 0x3F0),
+    table("Electrode", MONSTER_FIRST + 1, 0x820),
+    table("Charmander", MONSTER_FIRST + 2, 0x1A20),
+    table("Venusaur", MONSTER_FIRST + 3, 0x23D0),
+    table("Porygon", MONSTER_FIRST + 4, 0xF30),
 ];
 
 /// One material-animation table a controller starts.
@@ -503,6 +542,8 @@ pub struct GroundObject {
     poses: [JointPose; MAX_OBJECT_NODES],
     /// `GObj::anim_frame`.
     pub frame: f32,
+    pub texture: u8,
+    texture_meshes: [Option<u32>; 2],
     /// An item tree with no live item: not drawn.
     pub hidden: bool,
     /// `itPakkunAppearProcDamage` replaces xobj 1's kind 48 with 0x46
@@ -547,6 +588,23 @@ impl GroundObject {
             live: [false; MAX_OBJECT_NODES],
             poses,
             frame: 0.0,
+            texture: 0,
+            texture_meshes: {
+                let frames = match asset {
+                    15 => Some(MONSTER_TEXTURES[0]),
+                    16 => Some(MONSTER_TEXTURES[1]),
+                    _ => None,
+                };
+                core::array::from_fn(|i| {
+                    frames.and_then(|f| {
+                        (0..pack.mesh_count()).find(|&m| {
+                            pack.mesh(m).is_some_and(|m| {
+                                m.source_file == MONSTER_FILE && m.source_offset == f[i]
+                            })
+                        })
+                    })
+                })
+            },
             hidden: OBJECTS[asset as usize].item,
             pakkun_damaged_matrix: false,
             script: None,
@@ -615,6 +673,15 @@ impl GroundObject {
     /// The item's runtime matrix kinds override the descriptor's kinds.
     /// Kind 70 uses the camera basis and Z spin without object scale.
     pub fn draw_node(&self, i: usize, mut node: crate::pack::NodeDesc) -> crate::pack::NodeDesc {
+        if i == ITEM_ROOT {
+            if let Some(mesh) = self.texture_meshes[usize::from(self.texture.min(1))] {
+                node.mesh = mesh;
+            }
+        }
+        if self.asset == MONSTER_FIRST + 1 && i == ITEM_ROOT {
+            node.flags = crate::pack::NodeDesc::FLAG_BILLBOARD
+                | crate::pack::NodeDesc::FLAG_BILLBOARD_SPIN_Z;
+        }
         if self.asset == PAKKUN && i == ITEM_ROOT {
             use crate::pack::NodeDesc;
             node.flags = NodeDesc::FLAG_BILLBOARD;
@@ -786,7 +853,13 @@ impl GroundObjects {
             if gr != Some(gr_file) {
                 continue;
             }
-            file = Some(a.source_file);
+            if a.fighter == AnimDesc::GROUND_MAT
+                || OBJECTS[ANIMS[a.slot as usize].object as usize]
+                    .source_file
+                    .is_none()
+            {
+                file = Some(a.source_file);
+            }
             if a.fighter == AnimDesc::GROUND {
                 this.anims[a.slot as usize] = Some(a);
             } else {
@@ -794,7 +867,7 @@ impl GroundObjects {
             }
         }
         let Some(file) = file else { return this };
-        let find = |offset: u32| {
+        let find = |file: u32, offset: u32| {
             (0..pack.object_count())
                 .filter_map(|i| pack.object(i))
                 .find(|o| o.source_file == file && o.source_offset == offset)
@@ -804,10 +877,11 @@ impl GroundObjects {
             if asset.gr_file != gr_file {
                 continue;
             }
-            let Some(object) = find(asset.graph) else {
+            let source = asset.source_file.unwrap_or(file);
+            let Some(object) = find(source, asset.graph) else {
                 continue;
             };
-            let leaf = asset.leaf.and_then(|l| find(l.dl));
+            let leaf = asset.leaf.and_then(|l| find(source, l.dl));
             for instance in 0..asset.instances {
                 if n == MAX_STAGE_OBJECTS {
                     return this;
@@ -976,6 +1050,8 @@ impl GroundObjects {
         obj.poses[0] = JointPose::default();
         if asset == POWER_BLOCK {
             let _ = self.play_on(pack, POWER_BLOCK_APPEAR, instance);
+        } else if (MONSTER_FIRST..MONSTER_FIRST + 5).contains(&asset) {
+            let _ = self.play_on(pack, 35 + usize::from(asset - MONSTER_FIRST), instance);
         }
     }
 
@@ -1045,6 +1121,12 @@ impl GroundObjects {
 
     /// `DObjGetStruct(item_gobj)->anim_wait == AOBJ_ANIM_NULL` (node
     /// [`ITEM_ROOT`]).
+    pub fn item_root_frame(&self, asset: u8, instance: u8) -> f32 {
+        self.instance(asset, instance).map_or(0.0, |o| {
+            o.joints[ITEM_ROOT.min(o.count.saturating_sub(1))].frame()
+        })
+    }
+
     pub fn item_root_idle(&self, asset: u8, instance: u8) -> bool {
         self.instance(asset, instance).is_none_or(|o| {
             let r = ITEM_ROOT.min(o.count.saturating_sub(1));

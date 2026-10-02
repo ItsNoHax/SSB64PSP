@@ -561,15 +561,25 @@ impl Stage {
     pub fn apply_item_events(
         &mut self,
         events: impl IntoIterator<Item = crate::item::StageItemEvent>,
+        groups: &[MapGroup],
+        objects: &mut dyn StageObjects,
     ) {
         use crate::item::StageItemEvent;
         for e in events {
+            if let Controller::Yamabuki(c) = &mut self.controller {
+                match e {
+                    StageItemEvent::MonsterClose => c.set_closed_wait(groups, objects),
+                    StageItemEvent::MonsterClear => c.clear_monster(),
+                    _ => {}
+                }
+            }
             if let Controller::Inishie(c) = &mut self.controller {
                 match e {
                     StageItemEvent::PowerBlockDamage { handicap, hitter } => {
                         c.set_power_block_damage(&mut self.registry, handicap, hitter)
                     }
                     StageItemEvent::PowerBlockGone => c.power_block_gone(),
+                    _ => {}
                 }
             }
         }

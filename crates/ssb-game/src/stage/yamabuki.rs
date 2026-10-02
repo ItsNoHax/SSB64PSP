@@ -114,7 +114,7 @@ impl Yamabuki {
     }
 
     /// `grYamabukiGateSetClosedWait` @ 0x8010B0B8.
-    fn set_closed_wait(&mut self, groups: &[MapGroup], objects: &mut dyn StageObjects) {
+    pub(super) fn set_closed_wait(&mut self, groups: &[MapGroup], objects: &mut dyn StageObjects) {
         self.status = GateStatus::Wait;
         self.gate_wait = 1000;
         self.monster_wait = (rng::rand_int_range(1000) + 1000) as u16;

@@ -1016,3 +1016,23 @@ with zero differences between either pass and no existing rebaselines.
 The normal `traininginishie@240` capture was also taken; its camera misses
 the pipes. Host/ROM animation tests cover the POW's 21-play pop-in and
 23-play squash and the plant's exact rise. See [RE-429](../evidence/re/RE-429.md).
+
+## 2026-10-02 RE-430 Saffron Pokémon
+
+Five new tick-90 scenes, `trainingchansey`, `trainingelectrode`,
+`trainingcharmander`, `trainingvenusaur` and `trainingporygon`, expose one
+selected item at the open gate. Charmander and Venusaur use the source WAIT
+pattern to show the active texture and projectile; the camera targets the
+monster origin minus 600 X, with eye 5,000 Z above it. The normal item
+callbacks and combat run after this diagnostic setup.
+
+The manifest has 157 scenes. This batch verifies ten game scenes twice at
+four-way concurrency (final run `20261002-021151`): the five additions plus
+Saffron, Bumper, Piranha Plant, Link Bomb and Samus Bomb. All match, with
+zero paired differences and no existing rebaselines. The full matrix was
+last verified at RE-429; it was not rerun for this gameplay batch.
+
+These views prove deterministic current PSP output, not N64 equivalence,
+Egg spawning, random gate selection, explosion timing or damaged flight.
+The host tests and ROM root replay supply the timing evidence. See
+[RE-430](../evidence/re/RE-430.md).

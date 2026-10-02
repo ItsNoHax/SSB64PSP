@@ -3,7 +3,8 @@
 //! [`pk_fire`]) and Link's Bomb (`itlinkbomb.c`, [`link_bomb`]), and the
 //! stage items Peach's Castle's Bumper (`itgbumper.c`, [`gbumper`]),
 //! Mushroom Kingdom's POW Block (`itpowerblock.c`, [`power_block`]) and its
-//! Piranha Plants (`itpakkun.c`, [`pakkun`]).
+//! Piranha Plants (`itpakkun.c`, [`pakkun`]), and Saffron's five Pokémon
+//! ([`monsters`]).
 //!
 //! [`ItemPool`] is `gITManagerStructsAllocFree` and the item GObj link: 16
 //! structs (`ITEM_ALLOC_MAX`), handed out last-freed first, and a creation
@@ -56,6 +57,7 @@ mod hit;
 pub(crate) use hit::{queue_damage, touches_damage_coll, Attacker, Knock};
 pub mod link_bomb;
 mod map;
+pub mod monsters;
 pub mod pakkun;
 pub mod pk_fire;
 pub mod power_block;
@@ -115,6 +117,7 @@ pub enum ItemKind {
     GBumper,
     PowerBlock,
     Pakkun,
+    Monster(monsters::Kind),
 }
 
 /// `ITType`.
@@ -348,6 +351,7 @@ pub enum ItemStatus {
     GBumper(gbumper::Status),
     PowerBlock(power_block::Status),
     Pakkun(pakkun::Status),
+    Monster(monsters::Status),
 }
 
 /// `ITStruct::item_vars`.
@@ -364,6 +368,10 @@ pub struct ItemVars {
     pub pakkun_is_wait_fighter: bool,
     /// Which `pakkun_gobj` slot made the plant: its tree in the runtime.
     pub pakkun_index: u8,
+    pub monster_offset: Vec3,
+    pub monster_flags: u8,
+    pub monster_spawn_wait: u16,
+    pub monster_eggs: u8,
 }
 
 /// `ITStruct`.
@@ -452,6 +460,8 @@ pub struct Item {
     /// `dobj->mobj->palette_id` (the Bumper's lit frames). Presentation
     /// only.
     pub palette: u8,
+    /// Direct MObj texture selection by a ground Pokémon.
+    pub texture: u8,
     pub arrow_timer: u8,
     pub status: ItemStatus,
     pub vars: ItemVars,
@@ -567,6 +577,7 @@ impl Item {
             anim_made: false,
             rotate_z: 0.0,
             palette: 0,
+            texture: 0,
             arrow_timer: 0,
             status,
             vars: ItemVars::default(),
@@ -698,6 +709,7 @@ impl Item {
         match self.kind {
             ItemKind::PowerBlock => ItemAnimTarget::PowerBlock,
             ItemKind::Pakkun => ItemAnimTarget::Pakkun(self.vars.pakkun_index),
+            ItemKind::Monster(k) => ItemAnimTarget::Monster(k),
             _ => ItemAnimTarget::Untracked,
         }
     }
@@ -726,6 +738,7 @@ pub enum ItemAnimTarget {
     PowerBlock,
     /// A Piranha Plant by its `pakkun_gobj` slot.
     Pakkun(u8),
+    Monster(monsters::Kind),
 }
 
 /// The scripts an item starts on itself.
@@ -752,6 +765,18 @@ pub struct RootWrite {
 /// `itManagerMakeItem`); [`ItemPool`] then drives it. The defaults are a
 /// tree with no scripts: every root clock is idle and nothing is written.
 pub trait ItemAnims {
+    /// The root DObj clock after its latest play.
+    fn root_frame(&self, _target: ItemAnimTarget) -> f32 {
+        0.0
+    }
+    /// Normal-item switches: eggs are disabled until that subsystem loads.
+    fn eggs_enabled(&self) -> bool {
+        false
+    }
+    /// `itManagerMakeItemSetupCommon(Egg)`: false on allocation failure.
+    fn make_egg(&mut self, _pos: Vec3, _vel: Vec3) -> bool {
+        false
+    }
     /// `itManagerMakeItem`'s `gcAddAnimAll` + `gcPlayAnimAll`.
     fn make(&mut self, _target: ItemAnimTarget) {}
     /// `gcPlayAnimAll`: `itProcessProcItemMain` outside hitlag.
@@ -777,8 +802,9 @@ pub trait ItemAnims {
 pub struct NoItemAnims;
 impl ItemAnims for NoItemAnims {}
 
-/// A stage call an item makes (`grInishiePowerBlock*`), delivered by
-/// [`crate::stage::Stage::apply_item_events`].
+/// A stage call an item makes, delivered by
+/// [`crate::stage::Stage::apply_item_events`] after the item's update or
+/// collision pass, before the next process phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageItemEvent {
     /// `grInishiePowerBlockSetDamage`: the quake, sparing `hitter`
@@ -786,6 +812,10 @@ pub enum StageItemEvent {
     PowerBlockDamage { handicap: u8, hitter: Option<u8> },
     /// `grInishiePowerBlockSetWait`: the block is gone.
     PowerBlockGone,
+    /// `grYamabukiGateSetClosedWait`.
+    MonsterClose,
+    /// `grYamabukiGateClearMonsterGObj` after a knockout.
+    MonsterClear,
 }
 
 /// Stage calls one frame can queue: one POW Block makes at most one of
@@ -940,6 +970,9 @@ pub struct ItemPool {
     /// struct that was freed and reused no longer resolves.
     serials: [u16; ITEM_ALLOC_MAX],
     events: [Option<StageItemEvent>; STAGE_EVENTS_MAX],
+    monster_attack_prev: u8,
+    monster_shots: [Option<crate::monster_weapon::MonsterShot>; ITEM_ALLOC_MAX],
+    fx: crate::wpeffect::WeaponFx,
 }
 
 impl Default for ItemPool {
@@ -961,6 +994,9 @@ impl Default for ItemPool {
             team_rules: crate::team::TeamRules::FREE_FOR_ALL,
             serials: [0; ITEM_ALLOC_MAX],
             events: [None; STAGE_EVENTS_MAX],
+            monster_attack_prev: 4,
+            monster_shots: [None; ITEM_ALLOC_MAX],
+            fx: crate::wpeffect::WeaponFx::default(),
         }
     }
 }
@@ -973,6 +1009,20 @@ pub(crate) struct Effects {
 }
 
 impl ItemPool {
+    /// Item-made weapons enter the weapon link before its main processes.
+    pub fn flush_monster_shots(&mut self, weapons: &mut crate::weapon::WeaponPool) {
+        for shot in core::mem::take(&mut self.monster_shots)
+            .into_iter()
+            .flatten()
+        {
+            weapons.spawn_monster_shot(shot);
+        }
+    }
+    pub fn flush_effects(&mut self, sink: &mut dyn crate::effect::HitEffectSink) {
+        for fx in self.fx.drain_sorted() {
+            sink.weapon(&fx);
+        }
+    }
     /// Live items in link order.
     pub fn items(&self) -> impl Iterator<Item = &Item> + '_ {
         self.order[..self.order_len]
@@ -1255,7 +1305,7 @@ impl ItemPool {
     }
 
     /// `itProcessProcItemMain` for every item, in link order. Call once per
-    /// frame after the fighters' and weapons' own updates. `fighters` holds
+    /// frame after the fighters and before the weapons. `fighters` holds
     /// every fighter's `TopN` translation in link order
     /// ([`pakkun::fighter_top`]).
     #[inline(never)]
@@ -1272,26 +1322,37 @@ impl ItemPool {
         let order = self.order;
         let owners = self.owners;
         let mut events = self.events;
-        for &slot in &order[..self.order_len] {
+        let mut shots = self.monster_shots;
+        for (link, &slot) in order[..self.order_len].iter().enumerate() {
             let Some(mut item) = self.slots[usize::from(slot)] else {
                 continue;
             };
             let mut effects = Effects::default();
             let mut push = |e| push_event(&mut events, e);
+            let mut emit = crate::wpeffect::Emit::default();
+            let mut spawn = |shot| {
+                if let Some(s) = shots.iter_mut().find(|s| s.is_none()) {
+                    *s = Some(shot);
+                }
+            };
             let mut ctx = ProcCtx {
                 owners: &owners,
                 fighters,
                 anims: &mut *anims,
                 events: &mut push,
+                shots: &mut spawn,
+                fx: &mut emit,
             };
             let alive = process_main(&mut item, &mut ctx, &surfaces, bounds, &mut effects);
             self.slots[usize::from(slot)] = Some(item);
+            self.fx.extend(link as u32, &emit);
             self.apply_effects(effects);
             if !alive {
                 self.destroy(slot);
             }
         }
         self.events = events;
+        self.monster_shots = shots;
     }
 
     /// `itProcessProcHitCollisions` for every item. `fighters` supplies the
@@ -1353,14 +1414,20 @@ fn push_event(events: &mut [Option<StageItemEvent>; STAGE_EVENTS_MAX], e: StageI
 impl crate::stage::StageItems for ItemPool {
     /// `itManagerMakeItemSetupCommon` with `ITEM_FLAG_PARENT_GROUND`. A
     /// stage item has no owner, so its `motion_count` never reaches a stale
-    /// queue. The Pokémon are not ported: they are never made.
+    /// queue. Ground Pokémon use the same allocation and handle rules.
     fn make_item(&mut self, kind: crate::stage::StageItem, pos: Vec3) -> Option<u32> {
         use crate::stage::StageItem;
         let item = match kind {
             StageItem::Bumper => gbumper::make(pos, 0),
             StageItem::PowerBlock => power_block::make(pos, 0),
             StageItem::Pakkun(i) => pakkun::make(i, pos, 0),
-            StageItem::Monster(_) => return None,
+            StageItem::Monster(id) => {
+                let kind = monsters::Kind::from_id(id)?;
+                if self.free_len == 0 {
+                    return None;
+                }
+                monsters::make(kind, pos, &mut self.monster_attack_prev)
+            }
         };
         let slot = self.alloc(item)?;
         Some(self.handle_of(slot))
@@ -1390,6 +1457,8 @@ struct ProcCtx<'a> {
     fighters: &'a [Vec3],
     anims: &'a mut dyn ItemAnims,
     events: &'a mut dyn FnMut(StageItemEvent),
+    shots: &'a mut dyn FnMut(crate::monster_weapon::MonsterShot),
+    fx: &'a mut crate::wpeffect::Emit,
 }
 
 fn owner_view(f: &Fighter) -> OwnerView {
@@ -1465,9 +1534,11 @@ where
             item.arrow_timer = ARROW_FLASH_INT;
         }
         item.arrow_timer -= 1;
-    } else if item.kind != ItemKind::LinkBomb
-        || item.status != ItemStatus::LinkBomb(link_bomb::Status::Explode)
-    {
+    } else if !matches!(
+        item.status,
+        ItemStatus::LinkBomb(link_bomb::Status::Explode)
+            | ItemStatus::Monster(monsters::Status::Explode)
+    ) {
         // `item_gobj->flags = GOBJ_FLAG_NONE`, except that the explosion
         // hides the Bomb's DObj rather than the GObj.
         item.hidden = false;
@@ -1534,6 +1605,9 @@ where
         ItemStatus::GBumper(_) => gbumper::proc_update(item),
         ItemStatus::PowerBlock(s) => power_block::proc_update(item, s, ctx.anims, ctx.events),
         ItemStatus::Pakkun(s) => pakkun::proc_update(item, s, ctx.fighters, ctx.anims),
+        ItemStatus::Monster(s) => {
+            monsters::proc_update(item, s, ctx.anims, ctx.events, ctx.shots, ctx.fx)
+        }
     }
 }
 
@@ -1552,7 +1626,10 @@ where
     match item.status {
         ItemStatus::PKFire(s) => pk_fire::proc_map(item, s, surfaces),
         ItemStatus::LinkBomb(s) => link_bomb::proc_map(item, s, surfaces),
-        ItemStatus::GBumper(_) | ItemStatus::PowerBlock(_) | ItemStatus::Pakkun(_) => {}
+        ItemStatus::GBumper(_)
+        | ItemStatus::PowerBlock(_)
+        | ItemStatus::Pakkun(_)
+        | ItemStatus::Monster(_) => {}
     }
     true
 }
@@ -1587,6 +1664,7 @@ fn run_hit_proc(
         ItemStatus::GBumper(_) => gbumper::hit_proc(item, proc),
         ItemStatus::PowerBlock(s) => power_block::hit_proc(item, s, proc, ctx.anims, ctx.events),
         ItemStatus::Pakkun(s) => pakkun::hit_proc(item, s, proc, ctx.anims),
+        ItemStatus::Monster(s) => monsters::hit_proc(item, s, proc, ctx.anims, ctx.events),
     }
 }
 

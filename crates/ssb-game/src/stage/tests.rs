@@ -595,10 +595,14 @@ fn power_block_quake_spares_its_hitter_and_rearms_the_spawner() {
     let mut i = init(StageKind::Inishie, &objects);
     i.hazard_attack = Some(GroundAttack::from_words([1, 20, 90, 130, 0, 30, 0]));
     let mut stage = Stage::new(&i, &mut [], &mut NoObjects, &mut NoItems);
-    stage.apply_item_events([crate::item::StageItemEvent::PowerBlockDamage {
-        handicap: 9,
-        hitter: Some(1),
-    }]);
+    stage.apply_item_events(
+        [crate::item::StageItemEvent::PowerBlockDamage {
+            handicap: 9,
+            hitter: Some(1),
+        }],
+        &[],
+        &mut NoObjects,
+    );
     let hitter = standing(FighterKind::Mario, 1, Vec3::ZERO, 0, 0);
     let other = standing(FighterKind::Fox, 0, Vec3::ZERO, 0, 0);
     let flying = airborne(Vec3::ZERO);
@@ -612,7 +616,11 @@ fn power_block_quake_spares_its_hitter_and_rearms_the_spawner() {
     assert_eq!(s.pblock_status, inishie::PowerBlockStatus::Damage);
     assert_eq!(s.pblock_wait, 2);
 
-    stage.apply_item_events([crate::item::StageItemEvent::PowerBlockGone]);
+    stage.apply_item_events(
+        [crate::item::StageItemEvent::PowerBlockGone],
+        &[],
+        &mut NoObjects,
+    );
     let Controller::Inishie(s) = &stage.controller else {
         panic!()
     };

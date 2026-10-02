@@ -7,51 +7,49 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** Castle's Bumper, Mushroom Kingdom's POW Block and
-  both Piranha Plants: gameplay, item/stage hookup and rendering (RE-429,
-  pack v80). The POW quake spares its hitter.
-- **Next gameplay batch:** Saffron City's monster items (Pokémon).
-- **Parallel track:** rendering fidelity (`P5`). Not a gameplay gate.
+- **Completed batch:** Saffron City's five Pokémon, flame/Razor Leaf
+  weapons, gate callbacks, ROM clocks and rendering (RE-430, pack v81).
+  Chansey's Egg dependency remains explicitly disabled.
+- **Next gameplay batch:** normal container items, starting with Egg,
+  plus the normal-item switches needed to enable Chansey's maker.
+- **Parallel track:** rendering fidelity (`P5`), not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
-| Castle / Mushroom Kingdom items | Real stage items; ROM clocks and transforms; N64 reference views; 2 new goldens | RE-429 |
-| Sector Z Arwing | Paths match an N64 RDRAM trace; 1 golden added, 7 bonus-2 rebaselined | RE-428 |
+| Saffron Pokémon | Five real items, two weapons, direct texture frames; 5 new goldens | RE-430 |
+| Castle / Mushroom Kingdom items | Bumper, POW and two plants; ROM clocks; 2 new goldens | RE-429 |
 
 ## Verification baseline
 
-- Workspace tests: 1,609 pass (absolute SSB64_ROM, one thread).
-  Pinned 1.98.0 Clippy, workspace rustfmt and gameplay/ROM no_std pass.
-- Both production PSP release builds pass; game has no warnings, viewer
-  has five existing warnings.
-- PPSSPPHeadless: full 152-scene matrix run twice at four-way concurrency;
-  every golden and paired capture matches. No existing rebaselines.
-- Production PPSSPPHeadless 20 s software smoke finishes without faults;
-  no menu-navigation or hardware proof.
-- Pack v80: 35,419,520 bytes, SHA-256
-  `7d37d021e090d4d4248a018a4b6ed3b9f9cec74a1274cd2d519e6ee32edba3b5`.
-- Production `run`: 23,080 code bytes, frame 18,576. Largest frame
-  `enter_training`: 211,992 of the 256 KiB main-thread stack. Entry plus
-  caller consumes 230,568 bytes, leaving 31,576 before nested calls.
-- N64 warp sources remain restored; rebuilt and original ROM SHA-1 e2929e10…
+- Workspace: 1,619 tests pass (absolute SSB64_ROM, pinned 1.98.0, one thread).
+  Clippy, workspace rustfmt, gameplay/ROM no_std and docs validation pass.
+- Both production PSP release builds pass. Game has no warnings; viewer
+  retains five existing warnings. Production binaries are restored.
+- Ten relevant game goldens pass twice at four-way concurrency, zero pixel
+  differences, no existing rebaselines. Manifest: 157 scenes. Last full
+  matrix: RE-429's 152 scenes; not rerun for this gameplay batch.
+- Final production PPSSPPHeadless 20 s software smoke finishes without
+  faults. No menu-navigation, N64 visual-equivalence or hardware proof.
+- Pack v81: 35,435,520 bytes, SHA-256
+  `350217cf1be1383e5ae13358668d8d4e69689206a66b4d3a7a354918280d7065`.
+- Production `run` frame 26,048; largest frame `enter_training` 212,304.
+  Combined 238,352 of the 256 KiB stack, leaving 23,792 before alignment
+  and nested calls. ELF total 3,415,316 bytes. Details: RE-430.
 - Physical PSP last checked RE-361 (PSP-2000, 6.61 ARK, pack v43).
   Scripted Training held 16,682 µs/frame in RE-360.
 
 ## Blockers and remaining scope
 
-- Bonus stages, Saffron's Pokémon and pipe traversal remain. Pipe entry
-  does not yet notify a plant. Bumper lit flash and an N64 plant-knockout
-  comparison remain; RE-429's normal views establish qualitative shape,
-  not pixel equality or full animation/material phase agreement.
-- Both selects' spotlight is not drawn; no-save-data unlocks remain locked.
-- Arwing lasers' look, 3D patterns' facing, pilot manoeuvres and wing
-  collision are not yet compared with the N64 (RE-428).
-- Entry Arwing cockpit (tick 264) and near-camera Poké Ball (224) remain
-  unresolved; entry focus 2 and Luigi pipe/Kirby rightward-star comparisons
-  are outstanding (RE-425).
-- Four-fighter Dream Land texture closure is 726,924 bytes at low detail,
-  exceeding the 704,512-byte VRAM pool by 22,412 (RE-426).
-- Results fade/wipe and broader N64 scene equality remain unverified.
-  Stage draw performance (4.5 ms/frame, RE-360) belongs to `P5`.
+- Chansey Egg/container and switches; bonus stages and pipe traversal.
+  Pipe entry still must notify a plant. Bumper lit flash, audio, Pokémon
+  and launched-plant N64 appearance comparisons remain.
+- Both selects' spotlight is absent; no-save-data unlocks remain locked.
+- Arwing laser appearance, 3D facing, pilot manoeuvres and wing collision
+  remain unverified against the N64 (RE-428).
+- Entry cockpit (264), near-camera Poké Ball (224), focus 2, Luigi pipe and
+  Kirby rightward-star comparisons remain (RE-425).
+- Four-fighter Dream Land texture closure exceeds VRAM by 22,412 bytes
+  at low detail (RE-426). Results fade/wipe and broader scene equality
+  remain unverified. Stage draw performance belongs to `P5`.

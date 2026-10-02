@@ -2432,6 +2432,7 @@ const ENTRY_VEHICLE_GRAPHS: &[(u32, u32)] = &[(161, 0x2C30), (350, 0x5FC0)];
 /// neither (RE-379).
 /// Ness's PK Fire spark (336 + 0x168), PK Thunder head (335 + 0x7C98) and
 /// trail (335 + 0x8B40) draw the same way (RE-381).
+/// Saffron's Razor Leaf (159 + 0x2A50) uses the same weapon wrapper (RE-430).
 const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[
     (328, 0x1D388),
     (342, 0x270),
@@ -2439,6 +2440,7 @@ const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[
     (336, 0x168),
     (335, 0x7C98),
     (335, 0x8B40),
+    (159, 0x2A50),
 ];
 
 /// `dEFManagerShieldEffectDesc`'s tree (`llFTManagerCommonShieldDObjDesc`,
@@ -3879,6 +3881,70 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             }
         }
 
+        // Saffron's makers select MObj texture IDs directly, without a
+        // material animation. Pack both source sprites as distinct meshes.
+        if id == ssb_rom::ground_obj::MONSTER_FILE {
+            for (graph_at, table_at, expected) in [
+                (0x1990, 0x17D0, ssb_rom::ground_obj::MONSTER_TEXTURES[0]),
+                (0x2340, 0x2180, ssb_rom::ground_obj::MONSTER_TEXTURES[1]),
+            ] {
+                let graph = loaded.graphs[&id]
+                    .iter()
+                    .find(|g| g.offset == graph_at)
+                    .ok_or("monster graph missing")?;
+                let materials = ssb_rom::mobj::read_table(file, table_at, graph.nodes.len())
+                    .ok_or("monster materials missing")?;
+                let mobjs = &materials.nodes[1];
+                let sprites = ssb_rom::mobj::read_sprites(file, mobjs[0].at, 2)
+                    .ok_or("monster sprites missing")?;
+                assert!(sprites.iter().map(|s| s.offset).eq(expected));
+                let dl = graph.nodes[1]
+                    .desc
+                    .dl
+                    .ok_or("monster display list missing")?;
+                let cmds = ssb_rom::dl::decode_list_at(&file.data[dl as usize..], dl)?;
+                for sprite in sprites {
+                    let mut chain = mobjs.clone();
+                    chain[0].sprite = Some(sprite);
+                    let item = mesh::SequenceItem {
+                        cmds: &cmds,
+                        world: ssb_rom::scene::Mat4::IDENTITY,
+                        mobjs: &chain,
+                        mat_anims: &[],
+                        depth_seed: None,
+                        stream: 0,
+                    };
+                    let frame = mesh::convert_sequence(
+                        &[item],
+                        mesh::Source::of(file),
+                        // `itDisplayOPAProcDisplay` walks the item tree
+                        // without the weapon wrapper's translucent seed.
+                        mesh::InitialMaterial::SCENE,
+                    )
+                    .into_iter()
+                    .next()
+                    .ok_or("monster mesh missing")?
+                    .map_err(|e| format!("monster mesh: {e:?}"))?;
+                    pack_mesh(
+                        &mut writer,
+                        &mut tex_index,
+                        &mut mat_anim_index,
+                        &mat_anim_data,
+                        Texels {
+                            home: file,
+                            all: &loaded.files,
+                        },
+                        id,
+                        sprite.offset,
+                        &frame,
+                        swizzle,
+                    );
+                    meshes += 1;
+                    triangles += frame.triangle_count();
+                }
+            }
+        }
+
         // Pikachu's Thunder (RE-417). The head and trail
         // (`llPikachuMainThunderHeadWeaponAttributes`, file 243 + 0x0C, and
         // `...TrailWeaponAttributes`, + 0x40) and the fading segment
@@ -5145,6 +5211,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         let (file_id, head) = ground
             .map_nodes
             .ok_or_else(|| format!("ground {}: no map_nodes", anim.name))?;
+        let file_id = asset.source_file.unwrap_or(file_id);
         if head != asset.map_head {
             return Err(format!(
                 "ground {}: map_nodes at 0x{head:X}, controller subtracts 0x{:X}",
@@ -8205,6 +8272,8 @@ fn load_all(archive: &Archive) -> Loaded {
         // table at 0xA68, which `itManagerMakeItem` hands to
         // `gcSetupCustomDObjsWithMObj` (RE-429).
         (155u32, 0xC30u32, 0xA68u32), // Pakkun ItemAttributes
+        (159, 0x1990, 0x17D0),        // Charmander ItemAttributes
+        (159, 0x2340, 0x2180),        // Venusaur ItemAttributes
         // LinkModel's `JointTree_0x9CF8` uses the raw MObjSub** dispatch at
         // 0x84B8.  Its three leading NULL slots match the root
         // Joint_0x93B8's zero graphics-heap demand; slots 3 and 4 name the

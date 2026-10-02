@@ -43,6 +43,7 @@ pub mod link;
 mod luigi;
 pub mod map;
 pub mod modelpart;
+pub mod monster_weapon;
 pub mod motion;
 pub mod ness;
 pub mod particle;
