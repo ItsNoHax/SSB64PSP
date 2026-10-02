@@ -3,6 +3,7 @@ use ssb_game::item::container::{
     BARREL_ATTRIBUTES, CAPSULE_ATTRIBUTES, CAPSULE_EVENTS, CRATE_ATTRIBUTES, EGG_ATTRIBUTES,
     EGG_EVENTS, HEAVY_EVENTS,
 };
+use ssb_game::item::utility::{HEART_ATTRIBUTES, STAR_ATTRIBUTES, TOMATO_ATTRIBUTES};
 use ssb_rom::{
     archive::Archive,
     figatree::JointPose,
@@ -21,6 +22,31 @@ fn rom() -> Option<Vec<u8>> {
 }
 
 #[test]
+fn utility_models_are_present_in_the_pack() {
+    let Some(rom) = rom() else {
+        return;
+    };
+    let archive = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();
+    let file = archive.load(251).unwrap();
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak"),
+    )
+    .unwrap();
+    let p = Pack::open(&bytes).unwrap();
+    // Tomato, Heart, Star: `ITAttributes::data` in file 86.
+    for (offset, graph) in [(0xB8, 0xAB0), (0x100, 0x1158), (0x148, 0x1560)] {
+        let data = file.extern_relocs.iter().find(|r| r.at == offset).unwrap();
+        assert_eq!((data.target_file, data.target_offset), (86, graph));
+        let object = (0..p.object_count())
+            .filter_map(|i| p.object(i))
+            .find(|o| (o.source_file, o.source_offset) == (86, graph))
+            .unwrap();
+        // Descriptor 0 is the placeholder `itManagerMakeItem` ejects.
+        assert_eq!(object.node_count, 2);
+    }
+}
+
+#[test]
 fn container_attributes_and_explosion_tables_match_the_rom() {
     let Some(rom) = rom() else {
         return;
@@ -32,10 +58,13 @@ fn container_attributes_and_explosion_tables_match_the_rom() {
         (0xACC, &EGG_ATTRIBUTES, 100),
         (0x5CC, &CRATE_ATTRIBUTES, 40),
         (0x634, &BARREL_ATTRIBUTES, 0),
+        (0xB8, &TOMATO_ATTRIBUTES, 100),
+        (0x100, &HEART_ATTRIBUTES, 0),
+        (0x148, &STAR_ATTRIBUTES, 0),
     ] {
         let d = &file.data[offset..offset + 72];
         let light = attr.weight == ssb_game::item::ItemWeight::Light;
-        assert_eq!(word(d, 16) >> 27, if light { 3 } else { 2 });
+        assert_eq!((word(d, 16) >> 27) & 3, if light { 3 } else { 2 });
         assert!(attr.is_give_hitlag);
         for at in (18..36).step_by(2) {
             assert_eq!(half(d, at), 0);
@@ -198,4 +227,24 @@ fn heavy_models_and_smash_piece_are_present_in_the_pack() {
     assert!((0..p.mesh_count())
         .filter_map(|i| p.mesh(i))
         .any(|m| m.source_file == 86 && m.source_offset == 0x68F0));
+}
+
+#[test]
+fn vs_stages_have_item_points_and_weights() {
+    if rom().is_none() {
+        return;
+    }
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak"),
+    )
+    .unwrap();
+    let p = Pack::open(&bytes).unwrap();
+    for &file in &ssb_rom::stage::VS_GROUND_FILES {
+        let i = p.stage_of_file(file).unwrap();
+        let stage = p.stage(i).unwrap();
+        // `nMPMapObjKindItem`; more than 30 halts `itManagerMakeAppearActor`.
+        let points = p.stage_points(&stage).filter(|pt| pt.kind == 4).count();
+        assert!((1..=30).contains(&points), "file {file:#x}: {points}");
+        assert!(stage.item_weights.is_some(), "file {file:#x}");
+    }
 }

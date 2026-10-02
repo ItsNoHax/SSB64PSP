@@ -1,6 +1,9 @@
-//! Normal-item switches and `itManagerSetupContainerDrops`.
-//! Utility makers remain separate ports; the runtime currently enables
-//! only Capsule/Egg, so its container-drop table is empty.
+//! Normal-item switches, `itManagerSetupContainerDrops` and the
+//! appearance actor (`itManagerMakeAppearActor`). Kinds without a ported
+//! maker are still drawn from the tables, so the RNG stream matches the
+//! source; their maker makes nothing (RE-433).
+
+use ssb_engine::math::Vec3;
 
 /// `SCBattleItemSwitch` order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,10 +24,11 @@ pub struct Switches {
 }
 
 impl Default for Switches {
+    /// `dSCManagerDefaultBattleState`: every item, middle appearance.
     fn default() -> Self {
         Self {
             appearance: Appearance::Middle,
-            toggles: 0xF,
+            toggles: !0,
         }
     }
 }
@@ -36,10 +40,12 @@ impl Switches {
 
 /// `ITRandomWeights`: cumulative lower bounds, including the explosion
 /// sentinel (`nITKindMBallMonsterStart`, 32). Zero-weight entries are omitted.
+/// The appearance actor's table spans all 20 common kinds; the container
+/// table, the 16 utilities and the sentinel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DropWeights {
-    pub(crate) kinds: [u8; 17],
-    pub(crate) blocks: [u16; 17],
+    pub(crate) kinds: [u8; 21],
+    pub(crate) blocks: [u16; 21],
     pub(crate) len: usize,
     pub(crate) sum: u16,
 }
@@ -83,6 +89,127 @@ impl DropWeights {
         utilities.len -= 1;
         utilities.sum = utilities.blocks[utilities.len];
         utilities.choose()
+    }
+}
+
+/// `I_SEC_TO_TICS(n)`.
+const fn secs(n: u16) -> u16 {
+    n * 60
+}
+/// `dITManagerAppearanceRatesMin` / `Max`, by [`Appearance`].
+const APPEARANCE_RATES_MIN: [u16; 6] = [secs(0), secs(30), secs(25), secs(20), secs(15), secs(10)];
+const APPEARANCE_RATES_MAX: [u16; 6] = [
+    secs(0),
+    secs(30) + 90,
+    secs(25) + 75,
+    secs(20) + 60,
+    secs(15) + 45,
+    secs(10) + 30,
+];
+/// `item_mapobj_ids[30]`: more item points halt the source.
+pub const APPEAR_POINTS_MAX: usize = 30;
+
+/// `gITManagerAppearActor`: drops a random common item (containers
+/// included, no explosion sentinel) on a random `nMPMapObjKindItem` point
+/// every 10 to 30 seconds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AppearActor {
+    pub(crate) weights: DropWeights,
+    appearance: Appearance,
+    points: [Vec3; APPEAR_POINTS_MAX],
+    points_len: usize,
+    pub spawn_wait: u16,
+}
+
+/// What [`AppearActor::tick`] asks the item manager to make.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AppearSpawn {
+    pub kind: u8,
+    pub pos: Vec3,
+}
+
+impl AppearActor {
+    /// `itManagerMakeAppearActor`: `None` when the switches, the stage's
+    /// weights or its item points rule the actor out. Draws the first
+    /// spawn wait.
+    pub fn new(
+        switches: Switches,
+        stage_weights: Option<&[u8; 20]>,
+        points: impl IntoIterator<Item = Vec3>,
+    ) -> Option<Self> {
+        if switches.appearance == Appearance::None || switches.toggles == 0 {
+            return None;
+        }
+        let weights = stage_weights?;
+        let mut out = Self {
+            weights: DropWeights::default(),
+            appearance: switches.appearance,
+            points: [Vec3::ZERO; APPEAR_POINTS_MAX],
+            points_len: 0,
+            spawn_wait: 0,
+        };
+        for (kind, &weight) in weights.iter().enumerate() {
+            if switches.toggles & (1 << kind) != 0 {
+                out.weights.sum += u16::from(weight);
+            }
+        }
+        if out.weights.sum == 0 {
+            return None;
+        }
+        for p in points {
+            // The source halts with "Item positions are over 30!".
+            assert!(
+                out.points_len < APPEAR_POINTS_MAX,
+                "item positions are over 30"
+            );
+            out.points[out.points_len] = p;
+            out.points_len += 1;
+        }
+        if out.points_len == 0 {
+            return None;
+        }
+        let mut block = 0;
+        for (kind, &weight) in weights.iter().enumerate() {
+            if switches.toggles & (1 << kind) != 0 && weight != 0 {
+                out.weights.kinds[out.weights.len] = kind as u8;
+                out.weights.blocks[out.weights.len] = block;
+                out.weights.len += 1;
+                block += u16::from(weight);
+            }
+        }
+        out.set_spawn_wait();
+        Some(out)
+    }
+
+    /// `itManagerSetItemSpawnWait`.
+    fn set_spawn_wait(&mut self) {
+        let i = self.appearance as usize;
+        let (min, max) = (APPEARANCE_RATES_MIN[i], APPEARANCE_RATES_MAX[i]);
+        self.spawn_wait = min + crate::rng::rand_int_range(i32::from(max - min)) as u16;
+    }
+
+    /// `itManagerAppearActorProcUpdate`. `started` is the game status past
+    /// `nSCBattleGameStatusWait`; `can_alloc` is `itManagerGetCurrentAlloc`.
+    /// Returns the item to make with `itManagerMakeItemSetupCommon` (no
+    /// parent, zero velocity).
+    pub fn tick(&mut self, started: bool, can_alloc: bool) -> Option<AppearSpawn> {
+        if !started {
+            return None;
+        }
+        if self.spawn_wait > 0 {
+            self.spawn_wait -= 1;
+            return None;
+        }
+        let spawn = can_alloc.then(|| {
+            let kind = self.weights.choose().unwrap_or(0);
+            let point = crate::rng::rand_int_range(self.points_len as i32) as usize;
+            AppearSpawn {
+                kind,
+                pos: self.points[point],
+            }
+        });
+        self.set_spawn_wait();
+        spawn
     }
 }
 
@@ -132,7 +259,13 @@ mod tests {
         );
         assert_eq!(small.sum, 2);
         for drops in [
-            DropWeights::new(Switches::default(), Some(&weights)),
+            DropWeights::new(
+                Switches {
+                    toggles: 0xF,
+                    ..switches
+                },
+                Some(&weights),
+            ),
             DropWeights::new(
                 Switches {
                     appearance: Appearance::None,

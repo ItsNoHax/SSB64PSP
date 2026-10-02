@@ -195,7 +195,9 @@ pub fn best_hit_status_all(f: &Fighter) -> HitStatus {
     } else {
         f.hitstatus
     };
-    best.max(body).max(combat::special_hitstatus(f))
+    best.max(body)
+        .max(combat::star_hitstatus(f))
+        .max(combat::special_hitstatus(f))
 }
 
 /// `ftParamGetGroundHazardKnockback` (US only): no damage ratio.

@@ -70,6 +70,9 @@ pub mod power_block;
 mod stage_tests;
 #[cfg(test)]
 mod tests;
+pub mod utility;
+#[cfg(test)]
+mod utility_tests;
 
 /// `ITEM_ALLOC_MAX`.
 pub const ITEM_ALLOC_MAX: usize = 16;
@@ -118,12 +121,24 @@ pub const INTERACT_ALL: u8 = INTERACT_FIGHTER | INTERACT_WEAPON | INTERACT_ITEM;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemKind {
     Container(container::Kind),
+    Utility(utility::Kind),
     NessPKFire,
     LinkBomb,
     GBumper,
     PowerBlock,
     Pakkun,
     Monster(monsters::Kind),
+}
+
+impl ItemKind {
+    /// `ITAttributes::spin_speed` as a fraction, for the kinds that spin.
+    pub fn spin_speed(self) -> Option<f32> {
+        match self {
+            Self::Container(k) => Some(k.spin_speed()),
+            Self::Utility(k) => Some(k.spin_speed()),
+            _ => None,
+        }
+    }
 }
 
 /// `ITType`.
@@ -353,6 +368,7 @@ pub struct ItemDamageColl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemStatus {
     Container(container::Status),
+    Utility(utility::Status),
     PKFire(pk_fire::Status),
     LinkBomb(link_bomb::Status),
     GBumper(gbumper::Status),
@@ -606,8 +622,8 @@ impl Item {
     /// `itMainSetSpinVelLR`, less the spin itself.
     pub(crate) fn set_spin_vel_lr(&mut self) {
         self.lr = if self.vel_air.x >= 0.0 { 1.0 } else { -1.0 };
-        if let ItemKind::Container(k) = self.kind {
-            self.spin_step = k.spin_speed() * 0.314_159_27 * self.lr;
+        if let Some(spin) = self.kind.spin_speed() {
+            self.spin_step = spin * 0.314_159_27 * self.lr;
         }
     }
 
@@ -979,6 +995,11 @@ pub struct ItemPool {
     pub team_rules: crate::team::TeamRules,
     pub normal_switches: normal::Switches,
     pub normal_drops: normal::DropWeights,
+    /// `gITManagerAppearActor`, made after the ground (`grCommonSetupInitAll`).
+    pub appear: Option<normal::AppearActor>,
+    /// The battle camera's look-at X (`CObj::vec.at.x`), which the Star's
+    /// maker reads.
+    pub camera_at_x: f32,
     /// Bumped each time a struct is handed out, so a stage's handle to a
     /// struct that was freed and reused no longer resolves.
     serials: [u16; ITEM_ALLOC_MAX],
@@ -1007,6 +1028,8 @@ impl Default for ItemPool {
             team_rules: crate::team::TeamRules::FREE_FOR_ALL,
             normal_switches: normal::Switches::default(),
             normal_drops: normal::DropWeights::default(),
+            appear: None,
+            camera_at_x: 0.0,
             serials: [0; ITEM_ALLOC_MAX],
             events: [None; STAGE_EVENTS_MAX],
             monster_attack_prev: 4,
@@ -1031,6 +1054,79 @@ impl ItemPool {
         emit.push(crate::wpeffect::WeaponEffect::ItemSpawnSwirl(pos));
         self.fx.extend(self.order_len as u32 - 1, &emit);
         Some(slot)
+    }
+
+    /// `itManagerMakeItemSetupCommon(parent, index, pos, vel, flags)` for a
+    /// common kind (`ITKind` 0..=19). `parent` is the item a container's
+    /// contents project from (`ITEM_FLAG_COLLPROJECT | ...PARENT_ITEM`).
+    /// Kinds without a ported maker make nothing (RE-433).
+    pub fn make_setup_common<I, F>(
+        &mut self,
+        index: u8,
+        parent: Option<(Vec3, BodyColl)>,
+        pos: Vec3,
+        vel: Vec3,
+        surfaces: &F,
+    ) -> Option<u8>
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        if self.free_len == 0 {
+            return None;
+        }
+        let mut item = match index {
+            0 => container::make(container::Kind::Crate, pos, vel),
+            1 => container::make(container::Kind::Barrel, pos, vel),
+            2 => container::make(container::Kind::Capsule, pos, vel),
+            3 => container::make(container::Kind::Egg, pos, vel),
+            _ => utility::make(
+                utility::Kind::from_index(index)?,
+                pos,
+                vel,
+                self.camera_at_x,
+            ),
+        };
+        if let Some((parent_pos, parent_coll)) = parent {
+            map::run_default_collision(&mut item, parent_pos, parent_coll, surfaces);
+        }
+        item.update_attack_positions();
+        // `itMainSetAppearSpin(item_gobj, FALSE)`: slow, unsigned.
+        item.spin_step = item.kind.spin_speed().unwrap_or(0.0) * core::f32::consts::PI / 18.0;
+        let slot = self.alloc(item)?;
+        let mut emit = crate::wpeffect::Emit::default();
+        emit.push(crate::wpeffect::WeaponEffect::ItemSpawnSwirl(pos));
+        self.fx.extend(self.order_len as u32 - 1, &emit);
+        Some(slot)
+    }
+
+    /// `itManagerMakeAppearActor`, after the stage's ground is made.
+    /// `points` are the stage's `nMPMapObjKindItem` positions.
+    pub fn make_appear_actor(
+        &mut self,
+        stage_weights: Option<&[u8; 20]>,
+        points: impl IntoIterator<Item = Vec3>,
+    ) {
+        self.appear = normal::AppearActor::new(self.normal_switches, stage_weights, points);
+    }
+
+    /// `itManagerAppearActorProcUpdate` (Item actor link, before the item
+    /// link's main processes). `started` is past `nSCBattleGameStatusWait`.
+    #[inline(never)]
+    pub fn tick_appear<I, F>(&mut self, started: bool, surfaces: F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let can_alloc = self.free_len != 0;
+        let Some(spawn) = self
+            .appear
+            .as_mut()
+            .and_then(|a| a.tick(started, can_alloc))
+        else {
+            return;
+        };
+        self.make_setup_common(spawn.kind, None, spawn.pos, Vec3::ZERO, &surfaces);
     }
     /// Item-made weapons enter the weapon link before its main processes.
     pub fn flush_monster_shots(&mut self, weapons: &mut crate::weapon::WeaponPool) {
@@ -1323,6 +1419,11 @@ impl ItemPool {
         } else if let ItemKind::Container(k) = item.kind {
             container::dropped(item);
             item.spin_step = k.spin_speed() * 0.314_159_27 * if vel.x >= 0.0 { 1.0 } else { -1.0 };
+        } else if matches!(
+            item.kind,
+            ItemKind::Utility(utility::Kind::Tomato | utility::Kind::Heart)
+        ) {
+            utility::dropped(item);
         }
         Self::set_fighter_release(item, &view, vel, throw_mul, surfaces);
         f.items.held = None;
@@ -1701,6 +1802,7 @@ where
 {
     match item.status {
         ItemStatus::Container(s) => container::update(item, s, ctx.fx),
+        ItemStatus::Utility(s) => utility::update(item, s),
         ItemStatus::PKFire(s) => pk_fire::proc_update(item, s),
         ItemStatus::LinkBomb(s) => link_bomb::proc_update(item, s, ctx.owners, surfaces, effects),
         ItemStatus::GBumper(_) => gbumper::proc_update(item),
@@ -1719,6 +1821,7 @@ fn has_proc_map(item: &Item) -> bool {
         item.status,
         ItemStatus::PKFire(_)
             | ItemStatus::LinkBomb(_)
+            | ItemStatus::Utility(_)
             | ItemStatus::Container(
                 container::Status::Init
                     | container::Status::Wait
@@ -1743,6 +1846,7 @@ where
 {
     match item.status {
         ItemStatus::Container(s) => return container::proc_map(item, s, surfaces, common, fx),
+        ItemStatus::Utility(s) => return utility::proc_map(item, s, surfaces),
         ItemStatus::PKFire(s) => pk_fire::proc_map(item, s, surfaces),
         ItemStatus::LinkBomb(s) => link_bomb::proc_map(item, s, surfaces),
         ItemStatus::GBumper(_)
@@ -1781,6 +1885,7 @@ fn run_hit_proc(
 ) -> Option<bool> {
     match item.status {
         ItemStatus::Container(s) => container::hit(item, s, proc, ctx.common, ctx.fx),
+        ItemStatus::Utility(s) => utility::hit_proc(item, s, proc),
         ItemStatus::PKFire(s) => pk_fire::hit_proc(item, s, proc),
         ItemStatus::LinkBomb(s) => link_bomb::hit_proc(item, s, proc, reflector_lr),
         ItemStatus::GBumper(_) => gbumper::hit_proc(item, proc),
@@ -1897,31 +2002,63 @@ where
         egg.update_attack_positions();
         self.pool.alloc(egg).is_some()
     }
-    fn open_container(&mut self, _parent: &mut Item) -> bool {
-        // Utilities 4..19 have no maker yet. The supported runtime switches
-        // enable only light containers, so this table is empty in the app.
-        // Preserve the source's successful selection even if allocation fails.
-        self.pool
-            .normal_drops
-            .choose()
-            .is_some_and(|kind| kind <= 19)
-    }
-    fn open_crate(&mut self, _parent: &mut Item) -> bool {
-        let drops = self.pool.normal_drops;
-        if !drops.choose().is_some_and(|kind| kind <= 19) {
+    fn open_container(&mut self, parent: &mut Item) -> bool {
+        // `itMainMakeContainerItem`.
+        let Some(kind) = self.pool.normal_drops.choose().filter(|&k| k <= 19) else {
             return false;
-        }
-        let count = match crate::rng::rand_int_range(5) {
-            0 | 1 => 1,
-            2 => 2,
-            _ => 3,
         };
-        if crate::rng::rand_int_range(32) != 0 {
-            for _ in 1..count {
-                drops.choose_utility();
-            }
+        let vel = Vec3::new(0.0, CONTAINER_VEL_Y[usize::from(kind)], 0.0);
+        let parent_at = (parent.pos, parent.coll);
+        if self
+            .pool
+            .make_setup_common(kind, Some(parent_at), parent.pos, vel, self.surfaces)
+            .is_some()
+        {
+            // `itMainSetAppearSpin(parent_gobj, TRUE)`.
+            parent.spin_step =
+                parent.kind.spin_speed().unwrap_or(0.0) * 16.0 * core::f32::consts::PI / 180.0;
         }
-        // Utility makers join this branch in the next normal-item batch.
+        true
+    }
+    fn open_crate(&mut self, parent: &mut Item) -> bool {
+        // `itBoxCommonCheckSpawnItems`, after the smash effect.
+        let drops = self.pool.normal_drops;
+        let Some(mut kind) = drops.choose().filter(|&k| k <= 19) else {
+            return false;
+        };
+        let (count, first) = match crate::rng::rand_int_range(5) {
+            0 | 1 => (1, 0),
+            2 => (2, 1),
+            _ => (3, 3),
+        };
+        let parent_at = (parent.pos, parent.coll);
+        let identical = crate::rng::rand_int_range(32) == 0;
+        for (j, &(x, y)) in BOX_SPAWN_VELOCITIES[first..first + count]
+            .iter()
+            .enumerate()
+        {
+            if !identical && j != 0 {
+                kind = drops.choose_utility().unwrap_or(kind);
+            }
+            let vel = Vec3::new(x, y, 0.0);
+            self.pool
+                .make_setup_common(kind, Some(parent_at), parent.pos, vel, self.surfaces);
+        }
         true
     }
 }
+
+/// `llITCommonDataContainerVelocitiesY` (file 251 + 0), by `ITKind`.
+const CONTAINER_VEL_Y: [f32; 20] = [
+    26.0, 26.0, 26.0, 26.0, 26.0, 26.0, 26.0, 40.0, 26.0, 26.0, 26.0, 26.0, 26.0, 26.0, 26.0, 26.0,
+    26.0, 26.0, 26.0, 26.0,
+];
+/// `dITBoxItemSpawnVelocities`: one item, two, then three.
+const BOX_SPAWN_VELOCITIES: [(f32, f32); 6] = [
+    (0.0, 48.0),
+    (-2.0, 48.0),
+    (2.0, 48.0),
+    (-5.0, 48.2),
+    (0.0, 48.2),
+    (5.2, 48.2),
+];

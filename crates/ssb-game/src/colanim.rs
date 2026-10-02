@@ -161,6 +161,10 @@ pub struct ColAnim {
     /// Set by [`Fighter::tick_timers`] when the last of
     /// `intangible_tics`/`invincible_tics` runs out this frame.
     pub(crate) is_nodamage_expired: bool,
+    /// `star_invincible_tics` ran out this frame.
+    pub(crate) is_star_expired: bool,
+    /// `damage_heal` ran out this frame.
+    pub(crate) is_heal_expired: bool,
 }
 
 impl ColAnim {
@@ -346,8 +350,8 @@ pub fn best_hit_status_part(f: &Fighter) -> HitStatus {
 }
 
 /// `ftParamResetStatUpdateColAnim`: the animation ends, and the fighter's
-/// standing states pick the next one. Healing, the Star and the Hammer are
-/// items the port does not have.
+/// standing states pick the next one. The Hammer is an item the port does
+/// not have.
 pub fn reset_stat_update(f: &mut Fighter) {
     f.colanim.reset();
     match best_hit_status_part(f) {
@@ -381,6 +385,12 @@ pub fn reset_stat_update(f: &mut Fighter) {
     }
     if matches!(f.kind, FighterKind::Ness | FighterKind::PolyNess) && crate::ness::absorbing(f) {
         check_set(f, ColAnimId::FIGHTER_NESS_SPECIAL_LW_HOLD, 0);
+    }
+    if f.damage_heal != 0 {
+        check_set(f, ColAnimId::FIGHTER_HEAL, 0);
+    }
+    if f.star_invincible_frames != 0 {
+        check_set(f, ColAnimId::FIGHTER_STAR, 0);
     }
     if f.invincible_frames != 0 || f.intangible_frames != 0 {
         check_set(f, ColAnimId::FIGHTER_NO_DAMAGE, 0);
@@ -435,6 +445,24 @@ pub fn run_update_interrupt(f: &mut Fighter) {
     {
         reset_stat_update(f);
     }
+    if core::mem::take(&mut f.colanim.is_star_expired) && f.colanim.id == ColAnimId::FIGHTER_STAR {
+        reset_stat_update(f);
+    }
+    if core::mem::take(&mut f.colanim.is_heal_expired) && f.colanim.id == ColAnimId::FIGHTER_HEAL {
+        reset_stat_update(f);
+    }
+}
+
+/// `ftParamSetHealDamage`.
+pub fn set_heal_damage(f: &mut Fighter, heal: i32) {
+    f.damage_heal += heal;
+    check_set(f, ColAnimId::FIGHTER_HEAL, 0);
+}
+
+/// `ftParamSetStarHitStatusInvincible`.
+pub fn set_star_invincible(f: &mut Fighter, tics: u16) {
+    f.star_invincible_frames = tics;
+    check_set(f, ColAnimId::FIGHTER_STAR, 0);
 }
 
 /// `ftMainSetStatus`: an unlocked animation ends with the status unless the

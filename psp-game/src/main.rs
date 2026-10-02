@@ -239,6 +239,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         | GameScene::TrainingCrate
         | GameScene::TrainingBarrel
         | GameScene::TrainingHeavy
+        | GameScene::TrainingUtility
         | GameScene::TrainingChansey
         | GameScene::TrainingElectrode
         | GameScene::TrainingCharmander
@@ -299,6 +300,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingCrate
             | GameScene::TrainingBarrel
             | GameScene::TrainingHeavy
+            | GameScene::TrainingUtility
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -497,6 +499,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingCrate
             | GameScene::TrainingBarrel
             | GameScene::TrainingHeavy
+            | GameScene::TrainingUtility
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -507,7 +510,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
-            60 if scene == GameScene::TrainingHeavy => N64Buttons(N64Buttons::A),
+            60 if matches!(scene, GameScene::TrainingHeavy | GameScene::TrainingUtility) => {
+                N64Buttons(N64Buttons::A)
+            }
             110 if scene == GameScene::TrainingHeavy => N64Buttons(N64Buttons::B),
             _ => N64Buttons(0),
         };
@@ -1318,6 +1323,7 @@ unsafe fn training_step(
     physics_pass(p, &stage, groups, &mut s, weapons, items,
         stage_ctl,
         stage_objects,
+        started,
         effects);
     // Priority 3, after the fighters', weapons' and items': the effects'
     // processes.
@@ -1449,6 +1455,7 @@ fn physics_pass(
     items: &mut ssb_game::item::ItemPool,
     stage_ctl: &mut ssb_game::stage::Stage,
     stage_objects: &mut ssb_rom::ground_obj::GroundObjects,
+    started: bool,
     effects: &mut dyn ssb_game::effect::HitEffectSink,
 ) {
     let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, stage, groups);
@@ -1503,6 +1510,12 @@ fn physics_pass(
         tops[top_count] = ssb_game::item::pakkun::fighter_top(&f.fighter);
         top_count += 1;
     }
+    // Priority 3, Item actor link (2), before the item link: the
+    // appearance actor. The Star's maker reads the camera's look-at.
+    if let Some(pl) = s[0].as_deref() {
+        items.camera_at_x = pl.camera.at.x;
+    }
+    items.tick_appear(started, map);
     items.tick_with_effects(map, Some(blast_zone),
         &tops[..top_count],
         &mut ssb_psp_runtime::scene::ItemAnimsPort {
@@ -1847,6 +1860,19 @@ fn capture_monster(scene: Option<GameScene>) -> Option<u8> {
 #[inline(never)]
 fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s: &mut Session) {
     use ssb_game::stage::StageItems;
+    if scene == Some(GameScene::TrainingUtility) {
+        if let Some(pl) = s.play_state.as_ref() {
+            // Tomato in reach, Heart and Star in view; the Star bounces
+            // towards the camera's look-at. No parent: no map projection.
+            let at = pl.fighter.pos;
+            s.items.camera_at_x = pl.camera.at.x;
+            for (index, offset) in [(4, (75.0, 300.0)), (5, (-500.0, 600.0)), (6, (500.0, 300.0))] {
+                let pos = at + ssb_engine::math::Vec3::new(offset.0, offset.1, 0.0);
+                s.items.make_setup_common(index, None, pos, ssb_engine::math::Vec3::ZERO, &core::iter::empty);
+            }
+        }
+        return;
+    }
     if matches!(scene, Some(GameScene::TrainingCapsule | GameScene::TrainingCrate | GameScene::TrainingBarrel | GameScene::TrainingHeavy)) {
         if let Some(pl) = s.play_state.as_ref() {
             let kind = match scene {
@@ -2767,6 +2793,17 @@ fn enter_training(
     *world.stage_objects = ssb_rom::ground_obj::GroundObjects::new(p, stage.source_file);
     // `grMainSetupMakeGround`: any VS stage gets its controller; others run
     // an empty slot.
+    // `gSCManagerBattleState`'s item switches: Training clears them
+    // (`sc1PTrainingModeFuncStart`); VS keeps `dSCManagerDefaultBattleState`'s,
+    // every item at middle appearance. `itManagerInitItems` builds the
+    // container drop table before the ground exists.
+    if vs.is_none() {
+        world.items.normal_switches.toggles = 0;
+    }
+    world.items.normal_drops = ssb_game::item::normal::DropWeights::new(
+        world.items.normal_switches,
+        stage.item_weights.as_ref(),
+    );
     *world.stage_ctl = match ssb_psp_runtime::scene::StageSetup::new(p, &stage) {
         Some(setup) => {
             let mut empty = [];
@@ -2786,6 +2823,13 @@ fn enter_training(
         }
         None => ssb_game::stage::Stage::none(),
     };
+    // `grCommonSetupInitAll`: the appearance actor follows the ground.
+    world.items.make_appear_actor(
+        stage.item_weights.as_ref(),
+        p.stage_points(&stage)
+            .filter(|point| point.kind == ssb_game::stage::mapobj::ITEM)
+            .map(|point| ssb_engine::math::Vec3::new(point.x as f32, point.y as f32, 0.0)),
+    );
     // `ftManagerMakeFighter` for each player in turn.
     let lead = roster[0].unwrap_or(training_roster(Default::default())[0].unwrap());
     let mut scene = play::FighterScene::at_spawn(p, &stage, lead.kind, lead.spawn);
@@ -3986,6 +4030,8 @@ struct DrawAssets {
     heavy_items: [Option<ssb_rom::pack::ObjectDesc>; 2],
     container_piece: Option<ssb_rom::pack::MeshDesc>,
     egg_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// Tomato, Heart and Star: file 86 + 0xAB0, 0x1158, 0x1560 (RE-433).
+    utility_items: [Option<ssb_rom::pack::ObjectDesc>; 3],
     /// The shield bubble.
     shield: Option<ssb_rom::pack::ObjectDesc>,
     /// Ness's PSI Magnet field and its transform animation.
@@ -4062,6 +4108,7 @@ impl DrawAssets {
             container_piece: (0..p.mesh_count()).filter_map(|i| p.mesh(i))
                 .find(|m| m.source_file == 86 && m.source_offset == 0x68F0),
             egg_item: ssb_psp_runtime::scene::object_keyed(p, (86, 0x104A0)).zip(p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_EGG)),
+            utility_items: [0xAB0, 0x1158, 0x1560].map(|offset| ssb_psp_runtime::scene::object_keyed(p, (86, offset))),
             gbumper_item: ssb_psp_runtime::scene::object_keyed(
                 p,
                 ssb_psp_runtime::scene::GBUMPER_ITEM_SOURCE,
@@ -4456,7 +4503,7 @@ impl DrawAssets {
             ssb_game::item::ItemKind::NessPKFire => self.pk_fire_item.as_ref(),
             ssb_game::item::ItemKind::LinkBomb => self.link_bomb_item.as_ref(),
             ssb_game::item::ItemKind::Container(ssb_game::item::container::Kind::Egg) => self.egg_item.as_ref(),
-            ssb_game::item::ItemKind::Container(_) => None,
+            ssb_game::item::ItemKind::Container(_) | ssb_game::item::ItemKind::Utility(_) => None,
             // No scripts, or trees the stage's ground objects draw.
             ssb_game::item::ItemKind::GBumper
             | ssb_game::item::ItemKind::PowerBlock
@@ -5937,6 +5984,22 @@ unsafe fn draw_items_weapons_effects(
                     meshdraw::draw_object(p, object, &base, draw_state, material_anim, 0);
                 }
                 continue;
+        }
+        // Tomato, Heart and Star: `gcAddXObjForDObjFixed(root, 0x2E)` makes the
+        // item root, node 1, a camera-facing quad spun by its `rotate.z`. Held,
+        // it draws at the item-light joint, where the pool keeps it (RE-433).
+        if let ssb_game::item::ItemKind::Utility(kind) = item.kind {
+            let object = assets.utility_items[kind as usize - ssb_game::item::utility::Kind::Tomato as usize].as_ref();
+            if let Some(mesh) = object
+                .and_then(|o| p.node(o.first_node + 1))
+                .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                .and_then(|n| p.mesh(n.mesh))
+            {
+                gpu.model_transform_billboard(item.pos, pl.camera.eye, pl.camera.at, item.rotate_z,
+                    [meshdraw::MODEL_SCALE, meshdraw::MODEL_SCALE]);
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+            }
+            continue;
         }
         if let ssb_game::item::ItemKind::Container(kind) = item.kind {
           if kind != ssb_game::item::container::Kind::Egg {

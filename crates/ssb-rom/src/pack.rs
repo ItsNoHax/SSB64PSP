@@ -345,7 +345,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 83 adds the Crate/Barrel smash piece's direct display list (86 + 0x68F0)
 // and binds hidden model parts, such as the item-heavy joint, by the
 // original tree walk (RE-432).
-pub const VERSION: u32 = 83;
+// 84 gives `StageDesc` the stage's `MPGroundData.item_weights` (RE-433).
+pub const VERSION: u32 = 84;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1527,12 +1528,16 @@ pub struct StageDesc {
     pub emblem_colors: [[u8; 3]; 5],
     /// `MPGroundData.fog_color` (`VERSION` 65, RE-412).
     pub fog_color: [u8; 3],
+    /// `MPGroundData.item_weights`, `None` where the pointer is NULL
+    /// (`VERSION` 84, RE-433).
+    pub item_weights: Option<[u8; crate::stage::ITEM_WEIGHT_COUNT]>,
 }
 
 impl StageDesc {
     /// `16 + 16 + 8 + 8 + 16 + 8 + 28 + 4 + 15`, padded to 120, then the
-    /// fog colour padded to 124.
-    pub const SIZE: usize = 124;
+    /// fog colour padded to 124, then the 20 item weights and their
+    /// presence byte, padded to 148.
+    pub const SIZE: usize = 148;
     pub const NO_LAYER: u32 = u32::MAX;
 }
 
@@ -2884,6 +2889,7 @@ impl PackWriter {
             hazard_surface_y: 0.0,
             emblem_colors: ground.emblem_colors,
             fog_color: ground.fog_color,
+            item_weights: ground.item_weights,
         });
         (self.stages.len() - 1) as u32
     }
@@ -3182,6 +3188,8 @@ impl PackWriter {
             out.push(0);
             out.extend_from_slice(&s.fog_color);
             out.push(0);
+            out.extend_from_slice(&s.item_weights.unwrap_or_default());
+            out.extend_from_slice(&[u8::from(s.item_weights.is_some()), 0, 0, 0]);
         }
         for l in &self.lines {
             out.extend_from_slice(&l.first_vertex.to_le_bytes());
@@ -4133,6 +4141,8 @@ impl<'a> Pack<'a> {
                 self.data[at + 121],
                 self.data[at + 122],
             ],
+            item_weights: (self.data[at + 144] != 0)
+                .then(|| core::array::from_fn(|k| self.data[at + 124 + k])),
         })
     }
 
@@ -5834,6 +5844,7 @@ mod tests {
             ],
             fog_color: [0x10, 0x20, 0x30],
             wallpaper: None,
+            item_weights: None,
         };
 
         let v = |vertex_id, x, y, flags| V {

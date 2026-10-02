@@ -83,6 +83,8 @@ impl StageKind {
 
 /// `nMPMapObjKind*` values the controllers look up.
 pub mod mapobj {
+    /// `nMPMapObjKindItem`: where the appearance actor drops items.
+    pub const ITEM: u16 = 0x4;
     pub const SCALE_L: u16 = 0x5;
     pub const SCALE_R: u16 = 0x6;
     pub const PAKKUN_L: u16 = 0x7;

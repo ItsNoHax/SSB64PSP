@@ -577,8 +577,7 @@ fn update_shield_stat(item: &mut Item, f: &mut Fighter, angle: f32, dir: Vec3) {
     }
 }
 
-/// `ftMainUpdateDamageStatItem` for the non-touch items. Returns whether
-/// the damage was taken.
+/// `ftMainUpdateDamageStatItem`. Returns whether the damage was taken.
 fn update_damage_stat(
     item: &mut Item,
     f: &mut Fighter,
@@ -594,6 +593,20 @@ fn update_damage_stat(
             HitType::Damage
         },
     );
+    if item.ty == super::ItemType::Touch {
+        match item.kind {
+            super::ItemKind::Utility(super::utility::Kind::Star) => {
+                item.attack.state = AttackState::Off;
+                item.hit_normal_damage = 1;
+                crate::colanim::set_star_invincible(f, super::utility::STAR_INVINCIBLE_TIME);
+            }
+            super::ItemKind::Monster(super::monsters::Kind::Chansey) => {
+                crate::colanim::set_heal_damage(f, item.attack.damage);
+            }
+            _ => {}
+        }
+        return false;
+    }
     let damage = crate::attack::captured_damage(f, output);
     if item.attack.can_rehit_fighter {
         item.hit_refresh_damage = item.hit_refresh_damage.max(damage);
