@@ -7,45 +7,43 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** light containers Capsule/Egg, their ROM animation
-  and rendering, real Chansey Egg allocation, normal-item switches and
-  item–weapon clashes (RE-431, pack v82).
-- **Next gameplay batch:** Crate/Barrel and the common heavy-item pickup
-  and throw statuses. Utility contents and normal-item appearance follow.
+- **Completed batch:** Crate/Barrel, heavy pickup/lift/throw statuses,
+  hidden-part figatree binding and the item root, matched to an N64
+  crate lift and throw (RE-432, pack v83).
+- **Next gameplay batch:** utility container contents (the item makers
+  the drop table names) and the normal-item appearance actor.
 - **Parallel track:** rendering fidelity (`P5`), not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Heavy containers | Crate/Barrel, heavy statuses, item-heavy joint animated; 6 new goldens, 3 rebaselined | RE-432 |
 | Light containers | Capsule/Egg states, switches, Chansey maker; 2 new goldens | RE-431 |
-| Saffron Pokémon | Five real items, two weapons, gate callbacks and ROM clocks | RE-430 |
 
 ## Verification baseline
 
-- Workspace: 1,630 tests pass (absolute SSB64_ROM, pinned 1.98.0, one thread).
+- Workspace: 1,638 tests pass (absolute SSB64_ROM, pinned 1.98.0, one thread).
   Clippy, workspace rustfmt, gameplay/ROM no_std and docs validation pass.
 - Both production PSP release builds pass. Game has no warnings; viewer
   retains five existing warnings. Production binaries are restored.
-- Twelve relevant game goldens pass twice at four-way concurrency, zero
-  pixel differences. Chansey is rebaselined for its Egg and spawn effects
-  (6,752 pixels). Manifest: 159 scenes. Last full matrix: RE-429's 152
-  scenes; not rerun for this gameplay batch.
+- Full golden matrix: 165 of 165 scenes pass (run `20261002-152358`).
 - Final production PPSSPPHeadless 20 s software smoke finishes without
-  faults. No menu-navigation, N64 visual-equivalence or hardware proof.
-- Pack v82: 35,435,568 bytes, SHA-256
-  `baecdd64d7b495a4ef1bccea4dad3e784806ac49bb7c5118b2c4cba8c673580f`.
-- Production `run` frame 26,144; largest frame `enter_training` 212,384.
-  Combined 238,528 of the 256 KiB stack, leaving 23,616 before alignment
-  and nested calls. ELF total 3,390,216 bytes. Details: RE-431.
+  faults. N64 reference only for the crate lift/throw; no hardware proof.
+- Pack v83: 35,435,760 bytes, SHA-256
+  `f980d85b6c126be34698453fef4e1440ca121fe324cbad8ffc6ca22ac373037d`.
+- Production `run` frame 27,200; largest frame `enter_training` 212,384.
+  Combined 239,584 of the 256 KiB stack, leaving 22,560 before alignment
+  and nested calls. ELF total 3,390,560 bytes. Details: RE-432.
 - Physical PSP last checked RE-361 (PSP-2000, 6.61 ARK, pack v43).
   Scripted Training held 16,682 µs/frame in RE-360.
 
 ## Blockers and remaining scope
 
-- Heavy containers/statuses, utility makers and normal appearance actor.
-  Current switches enable only Capsule/Egg; the utility drop table is
-  empty, so containers use the source explosion fallback.
+- Utility makers and normal appearance actor; the utility drop table is
+  empty, so containers use the source explosion fallback. Non-container
+  items do not yet use descriptor 1 as their root (RE-432).
+- Yoshi hangs at his double-jump apex until interrupted (pre-existing).
 - Bonus stages and pipe traversal/plant notification. Bumper lit flash,
   audio, Pokémon and launched-plant N64 comparisons remain.
 - Both selects' spotlight is absent; no-save-data unlocks remain locked.

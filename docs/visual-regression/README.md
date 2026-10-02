@@ -190,7 +190,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scenes `captain`, `captainkick`) | `f1-training-captain`, `-captain-kick` | Captain Falcon's ground Falcon Punch, some 7 frames after its flame appears at joint 16; a ground Falcon Kick some 12 frames into its flame | RE-376–377 |
 | `golden_capture` (`psp-game`, scene `pikachuthunder`) | `f1-training-pikachu-thunder` | Pikachu dashes out from under the top platform; Thunder's head reaches him (tick 92, the first `SpecialLwHit` frame) with its trails and fading segments above | RE-417 |
 | `golden_capture` (`psp-game`, scene `kirbyhat`) | `f1-training-kirby-hat` | Kirby inhales and copies the Mario dummy on Dream Land's left platform and wears Mario's cap (joint 6's model part 12) | RE-417 |
-| `golden_capture` (`psp-game`, scene `yoshiegg`) | `f1-training-yoshi-egg` | Yoshi's aerial Egg Lay of the dummy; the egg rests on the top platform in its Wait wobble | RE-417 |
+| `golden_capture` (`psp-game`, scene `yoshiegg`) | `f1-training-yoshi-egg` | Yoshi lands beside the dummy, backs off, turns and tongues it at tick 330; at 460 the laid egg rests on the top platform in its Wait wobble | RE-417, RE-432 |
 | `golden_capture` (`psp-game`, scene `yoshishield`) | `f1-training-yoshi-shield` | Yoshi holds Z from tick 40 to 600: his model is hidden inside the egg shield, darkened by the worn shield (health 21, ENV (107, 132, 132)): the egg's white texels (231) draw (134, 111, 111) and its green spots (57, 214, 57) draw (33, 103, 27) | RE-418 |
 | `golden_capture` (`psp-game`, scene `vsshield`) | `f1-vs-shield-damage` | A VS battle whose player shields from "Go"; frozen after tick 684's update, where the CPU's Mario Tornado sets the shield off and the bubble draws the grey damage row | RE-418 |
 | `golden_capture` (`psp-game`, scene `stageselectview`) | `f1-training-stage-select-view` | Training's stage select left on Hyrule Castle at tick 60: the stone, icons, red cursor, plaque, name plate and emblem, and the castle's preview model over its blue Training wallpaper | RE-419 |
@@ -1051,3 +1051,19 @@ stage/item controls are unchanged. The manifest has 159 scenes; the last
 full-matrix proof remains RE-429's 152 scenes. These captures cover loose
 models and spawning; held/throw/explosion paths have host coverage but no
 visual capture in this batch. See [RE-431](../evidence/re/RE-431.md).
+
+## 2026-10-02 RE-432 Heavy containers
+
+Six new game goldens: loose Crate (`trainingcrate`) and Barrel
+(`trainingbarrel`), and Mario lifting a crate (`trainingheavy@82`),
+carrying it in `LiftWait` (`@110`), throwing it (`@134`) and its
+explosion (`@150`). The `trainingheavy` sequence matches an N64
+Mupen64Plus reference of the same pickup and throw frame for frame.
+
+Three rebaselines: `f1-training-grab` (259,600 pixels; the held fighter
+hangs from the now-animated item-heavy joint), `f1-training-yoshi-egg`
+(318,388; re-scripted, since the tongue tip now reaches forward) and
+`f1-training-capsule` (1,280; descriptor 0 is no longer the item root).
+Each was reviewed and captured twice with zero differences. All 165
+manifest scenes pass (run `20261002-152358`). See
+[RE-432](../evidence/re/RE-432.md).

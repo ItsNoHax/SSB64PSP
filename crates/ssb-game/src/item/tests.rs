@@ -381,7 +381,7 @@ fn throw_flag_overlay_decodes_damage_velocity_and_signed_angle() {
     link.motion_script.flags[0] = 1;
     link.motion_script.flags[1] = 200;
     link.motion_script.flags[2] = (150 << 12) | ((-90_i32 as u32) & 0xfff);
-    crate::item_throw::update(&mut link, Status::LightThrowF);
+    crate::item_throw::update(&mut link);
     assert_eq!(link.item_throw.angle, -90);
     assert_eq!(link.item_throw.damage, 2.0);
     assert_eq!(link.item_throw.velocity, 1.5);

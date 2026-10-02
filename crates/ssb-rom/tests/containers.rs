@@ -1,5 +1,8 @@
 //! Normal-container constants and the Egg's packed animation, from the US ROM.
-use ssb_game::item::container::{CAPSULE_ATTRIBUTES, CAPSULE_EVENTS, EGG_ATTRIBUTES, EGG_EVENTS};
+use ssb_game::item::container::{
+    BARREL_ATTRIBUTES, CAPSULE_ATTRIBUTES, CAPSULE_EVENTS, CRATE_ATTRIBUTES, EGG_ATTRIBUTES,
+    EGG_EVENTS, HEAVY_EVENTS,
+};
 use ssb_rom::{
     archive::Archive,
     figatree::JointPose,
@@ -18,7 +21,7 @@ fn rom() -> Option<Vec<u8>> {
 }
 
 #[test]
-fn light_container_attributes_and_explosion_tables_match_the_rom() {
+fn container_attributes_and_explosion_tables_match_the_rom() {
     let Some(rom) = rom() else {
         return;
     };
@@ -27,11 +30,13 @@ fn light_container_attributes_and_explosion_tables_match_the_rom() {
     for (offset, attr, spin) in [
         (0x50, &CAPSULE_ATTRIBUTES, 120),
         (0xACC, &EGG_ATTRIBUTES, 100),
+        (0x5CC, &CRATE_ATTRIBUTES, 40),
+        (0x634, &BARREL_ATTRIBUTES, 0),
     ] {
         let d = &file.data[offset..offset + 72];
-        assert_eq!(word(d, 16) >> 27, 3); // give hitlag + light, opaque
+        let light = attr.weight == ssb_game::item::ItemWeight::Light;
+        assert_eq!(word(d, 16) >> 27, if light { 3 } else { 2 });
         assert!(attr.is_give_hitlag);
-        assert_eq!(attr.weight, ssb_game::item::ItemWeight::Light);
         for at in (18..36).step_by(2) {
             assert_eq!(half(d, at), 0);
         }
@@ -97,7 +102,12 @@ fn light_container_attributes_and_explosion_tables_match_the_rom() {
         assert_eq!(attr.vel_scale, (word(d, 68) >> 23) as u16);
         assert_eq!(half(d, 70), spin);
     }
-    for (offset, events) in [(0x98, CAPSULE_EVENTS), (0xB14, EGG_EVENTS)] {
+    for (offset, events) in [
+        (0x98, CAPSULE_EVENTS),
+        (0xB14, EGG_EVENTS),
+        (0x614, HEAVY_EVENTS),
+        (0x67C, HEAVY_EVENTS),
+    ] {
         for (i, e) in events.into_iter().enumerate() {
             let d = &file.data[offset + i * 8..];
             let w = word(d, 0);
@@ -112,7 +122,12 @@ fn light_container_attributes_and_explosion_tables_match_the_rom() {
             );
         }
     }
-    for (offset, graph, script) in [(0x50, 0x670, None), (0xACC, 0x104A0, Some(0x10550))] {
+    for (offset, graph, script) in [
+        (0x50, 0x670, None),
+        (0xACC, 0x104A0, Some(0x10550)),
+        (0x5CC, 0x6778, None),
+        (0x634, 0x71A8, None),
+    ] {
         let data = file.extern_relocs.iter().find(|r| r.at == offset).unwrap();
         assert_eq!((data.target_file, data.target_offset), (86, graph));
         if let Some(script) = script {
@@ -161,4 +176,26 @@ fn egg_scale_animation_replays_the_rom_for_two_hundred_plays() {
         changed |= pose.scale != [1.0; 3];
     }
     assert!(changed);
+}
+
+#[test]
+fn heavy_models_and_smash_piece_are_present_in_the_pack() {
+    if rom().is_none() {
+        return;
+    }
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak"),
+    )
+    .unwrap();
+    let p = Pack::open(&bytes).unwrap();
+    for key in [(86, 0x6778), (86, 0x71A8)] {
+        let object = (0..p.object_count())
+            .filter_map(|i| p.object(i))
+            .find(|o| (o.source_file, o.source_offset) == key)
+            .unwrap();
+        assert_eq!(object.node_count, 2);
+    }
+    assert!((0..p.mesh_count())
+        .filter_map(|i| p.mesh(i))
+        .any(|m| m.source_file == 86 && m.source_offset == 0x68F0));
 }

@@ -139,6 +139,9 @@ impl Slot {
 /// The effect manager's struct pool and particle bank.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Effects {
+    /// Custom seven-sibling DObj effects. Storage grows only on allocation,
+    /// keeping the PSP's match initializer off a large stack temporary.
+    containers: alloc::vec::Vec<ContainerSmash>,
     slots: [Slot; EFFECT_ALLOC_NUM],
     live: [bool; EFFECT_ALLOC_NUM],
     free: u8,
@@ -168,6 +171,7 @@ impl Effects {
     /// `efManagerInitEffects`, with the common bank loaded as `bank`.
     pub fn new(bank: u8) -> Effects {
         let mut e = Effects {
+            containers: alloc::vec::Vec::new(),
             slots: [Slot::EMPTY; EFFECT_ALLOC_NUM],
             live: [false; EFFECT_ALLOC_NUM],
             free: 0,
@@ -789,6 +793,7 @@ pub struct HitEffect {
 /// the hit pipeline's, each fighter's queued ones ([`crate::fteffect`]),
 /// and the effect processes' pass.
 pub trait HitEffectSink {
+    fn container_smash(&mut self, _pos: Vec3) {}
     fn make(&mut self, e: &HitEffect);
 
     /// Makes (or, without a runtime, drops) the effects `f` queued.
@@ -830,6 +835,9 @@ pub struct EffectRuntime<'b> {
 }
 
 impl HitEffectSink for EffectRuntime<'_> {
+    fn container_smash(&mut self, pos: Vec3) {
+        self.effects.container_smash(pos);
+    }
     fn make(&mut self, e: &HitEffect) {
         self.effects.make_hit(self.particles, self.banks, e);
     }
@@ -939,6 +947,8 @@ pub mod script {
 /// `DObj` drawn by the host from the packed manager-effect object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayKind {
+    /// `itBoxContainerSmashMakeEffect`: seven sibling pieces, one struct.
+    ContainerSmash,
     /// `dEFManagerShockSmallEffectDesc` (`efManagerVelAddDestroyAnimEnd`).
     ShockSmall,
     /// `dEFManagerDamageSlashEffectDesc`: no `EFFECT_FLAG_USERDATA`, so no
@@ -1004,6 +1014,7 @@ impl DisplayKind {
     /// the quake have no display; they report 0.
     pub fn dl_link(self) -> u8 {
         match self {
+            DisplayKind::ContainerSmash => 11,
             DisplayKind::ShockSmall | DisplayKind::Slash => 18,
             DisplayKind::ImpactWave => 10,
             DisplayKind::FlyOrbs
@@ -1036,7 +1047,8 @@ impl DisplayKind {
             | DisplayKind::SpawnSparks
             | DisplayKind::SpawnMDust
             | DisplayKind::ThunderTrail
-            | DisplayKind::YoshiEggEscape => return None,
+            | DisplayKind::YoshiEggEscape
+            | DisplayKind::ContainerSmash => return None,
         })
     }
 
@@ -1050,6 +1062,7 @@ impl DisplayKind {
                 | DisplayKind::SpawnMDust
                 | DisplayKind::ThunderTrail
                 | DisplayKind::YoshiEggEscape
+                | DisplayKind::ContainerSmash
         )
     }
 }
@@ -1099,6 +1112,19 @@ pub struct Display {
     pub owner: u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContainerPiece {
+    pub pos: Vec3,
+    pub rotate: Vec3,
+    vel: Vec3,
+    rotate_step: Vec3,
+}
+#[derive(Debug, Clone, PartialEq)]
+struct ContainerSmash {
+    seq: u32,
+    pieces: [ContainerPiece; 7],
+}
+
 impl Display {
     fn new(kind: DisplayKind, ep: u8, seq: u32) -> Display {
         Display {
@@ -1133,6 +1159,38 @@ impl Effects {
     /// The live display effects, in pool order.
     pub fn displays(&self) -> impl Iterator<Item = &Display> + '_ {
         self.displays.iter().flatten()
+    }
+    /// One non-forced struct is obtained before the source's 42 RNG draws.
+    pub fn container_smash(&mut self, pos: Vec3) {
+        let Some(i) = self.make_display(DisplayKind::ContainerSmash) else {
+            return;
+        };
+        let seq = self.display_mut(i).seq;
+        self.display_mut(i).lifetime = 90;
+        // Unlike `efManagerMakeEffect`, this maker installs its process
+        // immediately; an item-main smash moves in this frame's effect pass.
+        self.display_mut(i).started = true;
+        let pieces = core::array::from_fn(|_| ContainerPiece {
+            pos,
+            rotate: Vec3::ZERO,
+            vel: Vec3::new(
+                rng::rand_float() * 48.0 - 24.0,
+                rng::rand_float() * 50.0 + 10.0,
+                rng::rand_float() * 32.0 - 16.0,
+            ),
+            rotate_step: Vec3::new(
+                dtor(rng::rand_float() * 100.0 - 50.0),
+                dtor(rng::rand_float() * 100.0 - 50.0),
+                dtor(rng::rand_float() * 100.0 - 50.0),
+            ),
+        });
+        self.containers.push(ContainerSmash { seq, pieces });
+    }
+    pub fn container_pieces(&self, display: &Display) -> Option<&[ContainerPiece; 7]> {
+        self.containers
+            .iter()
+            .find(|s| s.seq == display.seq)
+            .map(|s| &s.pieces)
     }
 
     /// The effect link's `func_run`s: every display effect made last frame
@@ -1175,6 +1233,9 @@ impl Effects {
     /// `efManagerSetPrevStructAlloc` and `gcEjectGObj`.
     fn eject_display(&mut self, i: usize) {
         if let Some(d) = self.displays[i].take() {
+            if d.kind == DisplayKind::ContainerSmash {
+                self.containers.retain(|s| s.seq != d.seq);
+            }
             if d.ep != NIL {
                 self.release(d.ep);
             }
@@ -1187,6 +1248,21 @@ impl Effects {
             return;
         };
         match d.kind {
+            DisplayKind::ContainerSmash => {
+                d.lifetime -= 1;
+                if d.lifetime == 0 {
+                    self.eject_display(i);
+                    return;
+                }
+                if let Some(smash) = self.containers.iter_mut().find(|s| s.seq == d.seq) {
+                    for piece in &mut smash.pieces {
+                        piece.vel.y -= 1.3;
+                        piece.pos += piece.vel;
+                        piece.rotate += piece.rotate_step;
+                    }
+                }
+                self.displays[i] = Some(d);
+            }
             DisplayKind::YoshiEggEscape => {}
             DisplayKind::ShockSmall
             | DisplayKind::Slash

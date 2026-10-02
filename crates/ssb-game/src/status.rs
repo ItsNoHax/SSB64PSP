@@ -865,6 +865,10 @@ pub enum DonkeyStatus {
     ThrowFDamage = 243,
     ThrowFF = 244,
     ThrowAirFF = 245,
+    HeavyThrowF = 246,
+    HeavyThrowB = 247,
+    HeavyThrowF4 = 248,
+    HeavyThrowB4 = 249,
 }
 
 /// Samus's character status table, `ftsamus.h`. Appear (220, 221) belongs
@@ -1390,6 +1394,10 @@ impl AnyStatus {
                 DonkeyStatus::ThrowFDamage => 107,
                 DonkeyStatus::ThrowFF => 108,
                 DonkeyStatus::ThrowAirFF => 109,
+                DonkeyStatus::HeavyThrowF => Status::HeavyThrowF.anim_slot(),
+                DonkeyStatus::HeavyThrowB => Status::HeavyThrowB.anim_slot(),
+                DonkeyStatus::HeavyThrowF4 => Status::HeavyThrowF4.anim_slot(),
+                DonkeyStatus::HeavyThrowB4 => Status::HeavyThrowB4.anim_slot(),
             },
             AnyStatus::Samus(s) => match s {
                 // The battle entry runs in `crate::appear`.
@@ -3611,6 +3619,7 @@ pub fn set_any_status_preserve(
     // (`ftCommonTwisterSetStatus` leaves the air itself beforehand).
     let keeps_situation = matches!(status, AnyStatus::Common(s) if s.keeps_situation())
         || crate::hazard::is_captured(status)
+        || crate::item_throw::is_donkey_throw(status)
         || crate::dead::keeps_situation(status);
     match (f.situation, status.is_grounded()) {
         _ if keeps_situation => {}
@@ -4890,6 +4899,9 @@ pub fn update(f: &mut Fighter) {
     // separately, in `update_extended` — unwrapping to a bare `Status` here
     // means the common-table match below needs no changes at all to stay
     // exactly what it was before `AnyStatus` existed.
+    if crate::item_throw::update(f) {
+        return;
+    }
     if crate::grab::update(f) {
         return;
     }
@@ -4901,10 +4913,6 @@ pub fn update(f: &mut Fighter) {
         update_extended(f);
         return;
     };
-
-    if crate::item_throw::update(f, current) {
-        return;
-    }
 
     if crate::reaction::update(f, current) {
         return;

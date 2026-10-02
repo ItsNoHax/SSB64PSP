@@ -988,8 +988,29 @@ def status_motions(refs):
     return out
 
 
+# `FTAnimDesc` bits 31..5: bit (31 - i) enables `FTAttributes.hiddenparts[i]`
+# (`ftMainSetStatus`). Parts 0-2 are the runtime joints `XRotN`, `TransN` and
+# `YRotN`; the rest are model joints, such as the item-heavy joint.
+HIDDEN_PART_BITS = 0xFFFFFFE0
+LEADING_BITS = 0xE0000000
+FLAG_VALUES = {"FTANIM_FLAG_TRANSN_JOINT": 0x80000000, "FTANIM_FLAG_XROTN_JOINT": 0x40000000,
+               "FTANIM_FLAG_YROTN_JOINT": 0x20000000}
+
+
+def anim_desc_parts(flags):
+    """The hidden-part bits of one `anim_desc` initializer expression."""
+    value = 0
+    for term in flags.split("|"):
+        term = term.strip()
+        if term in FLAG_VALUES:
+            value |= FLAG_VALUES[term]
+        elif re.fullmatch(r"0x[0-9A-Fa-f]+|\d+", term):
+            value |= int(term, 0)
+    return value & HIDDEN_PART_BITS
+
+
 def motion_descs(refs):
-    """Fighter -> [(animation symbol, leading runtime joint) per motion_id].
+    """Fighter -> [(animation symbol, hidden-part bits) per motion_id].
 
     An `FTMotionDesc` is three words, and the decompilation spells a table
     both ways: brace groups, and bare `0x0, 0x80000000, 0x80000000,` word
@@ -1013,10 +1034,7 @@ def motion_descs(refs):
         for i in range(0, len(words), 3):
             sym = re.match(r"&ll(\w+?)FileID$", words[i])
             flags = words[i + 2]
-            runtime = bool(re.search(r"FTANIM_FLAG_(?:TRANSN|XROTN|YROTN)_JOINT", flags))
-            runtime |= any(int(n, 16) & 0xE0000000 != 0
-                           for n in re.findall(r"0x[0-9A-Fa-f]+", flags))
-            entries.append((sym.group(1) if sym else None, runtime))
+            entries.append((sym.group(1) if sym else None, anim_desc_parts(flags)))
         out[m.group(1)] = entries
     return out
 
@@ -1073,7 +1091,7 @@ def demo_status_motions(refs):
 
 
 def sub_motion_descs(refs):
-    """Fighter -> [(animation symbol, leading runtime joint) per submotion].
+    """Fighter -> [(animation symbol, hidden-part bits) per submotion].
 
     Parsed from `dFT<Name>SubMotionDescs` the way `motion_descs` reads the
     main tables: three words per `FTMotionDesc`. Also returns, per fighter,
@@ -1097,7 +1115,7 @@ def sub_motion_descs(refs):
                 sym = re.match(r"&ll(\w+?)FileID$", words[i])
                 flags = int(words[i + 2], 0)
                 entries.append((sym.group(1) if sym else None,
-                                flags & 0xE0000000 != 0, flags & 0x8 != 0))
+                                flags & HIDDEN_PART_BITS, flags & 0x8 != 0))
             out[m.group(1)] = entries
     return out
 
@@ -1128,7 +1146,7 @@ def resolve(refs):
                 # Jigglypuff have no aerial jump, and RE-035 found those exact
                 # placeholders. Record the absence rather than failing: the
                 # slot gets no file and the runtime keeps the rest pose.
-                entry.append((slot, 0, None, 0, False))
+                entry.append((slot, 0, None, 0, 0))
                 continue
             # `FT<Name>Anim<X>` -> `<X>`
             anim = re.sub(r"^FT\w*?Anim", "", sym)
@@ -1142,12 +1160,12 @@ def resolve(refs):
         def special(slot, target, sym):
             targets = target if isinstance(target, tuple) else (target,)
             if fighter not in targets:
-                entry.append((slot, 0, None, 0, False))
+                entry.append((slot, 0, None, 0, 0))
                 return
             runtime_options = {runtime for name, runtime in table if name == sym}
             if len(runtime_options) != 1:
                 problems.append(f"{fighter} {slot}: inconsistent runtime-joint flags for {sym}")
-            runtime = next(iter(runtime_options), False)
+            runtime = next(iter(runtime_options), 0)
             fid, path = files[sym]
             if fid not in cache:
                 cache[fid] = file_frames(path)
@@ -1155,9 +1173,9 @@ def resolve(refs):
         for slot, target, sym in SPECIAL_SLOTS:
             special(slot, target, sym)
         def common(slot, status):
-            sym, runtime = table[smot[status]] if fighter in GRAB_FIGHTERS else (None, False)
+            sym, runtime = table[smot[status]] if fighter in GRAB_FIGHTERS else (None, 0)
             if sym is None:
-                entry.append((slot, 0, None, 0, False))
+                entry.append((slot, 0, None, 0, 0))
                 return
             fid, path = files[sym]
             if fid not in cache:
@@ -1181,9 +1199,9 @@ def resolve(refs):
         motions = fighter_motions(refs, owner)
         for slot in APPEAR_SLOTS:
             motion = motions.get(f"nFT{owner}Motion{slot}")
-            sym, runtime = table[motion] if motion is not None and motion < len(table) else (None, False)
+            sym, runtime = table[motion] if motion is not None and motion < len(table) else (None, 0)
             if sym is None:
-                entry.append((slot, 0, None, 0, False))
+                entry.append((slot, 0, None, 0, 0))
                 continue
             fid, _ = files[sym]
             entry.append((slot, fid, sym, 0, runtime))
@@ -1192,9 +1210,9 @@ def resolve(refs):
         sub = subdescs.get(fighter, [])
         for slot, status in DEMO_SLOTS:
             motion = demo[status]
-            sym, runtime, anim_joint = sub[motion] if motion < len(sub) else (None, False, False)
+            sym, runtime, anim_joint = sub[motion] if motion < len(sub) else (None, 0, False)
             if sym is None:
-                entry.append((slot, 0, None, 0, False))
+                entry.append((slot, 0, None, 0, 0))
                 continue
             if anim_joint:
                 problems.append(f"{fighter} {slot}: {sym} is an AnimJoint clip")
@@ -1227,7 +1245,16 @@ def emit(rows, out):
     w("#[rustfmt::skip]\n#[allow(clippy::large_const_arrays)]\npub const LEADING_RUNTIME_JOINT: "
       f"[[bool; SLOT_COUNT]; {len(rows)}] = [\n")
     for fighter, entry in rows:
-        flags = ", ".join("true" if runtime else "false" for _, _, _, _, runtime in entry)
+        flags = ", ".join("true" if runtime & LEADING_BITS else "false"
+                          for _, _, _, _, runtime in entry)
+        w(f"    [{flags}],  // {fighter}\n")
+    w("];\n\n")
+    w("/// Each motion's `FTAnimDesc` hidden-part bits (31..5): bit `31 - i`\n")
+    w("/// inserts `FTAttributes.hiddenparts[i]` before the figatree binds.\n")
+    w("#[rustfmt::skip]\n#[allow(clippy::large_const_arrays)]\npub const HIDDEN_PARTS: "
+      f"[[u32; SLOT_COUNT]; {len(rows)}] = [\n")
+    for fighter, entry in rows:
+        flags = ", ".join(f"{runtime:#x}" for _, _, _, _, runtime in entry)
         w(f"    [{flags}],  // {fighter}\n")
     w("];\n\n")
     w("/// Lengths the decompilation's own C sources give for the same files.\n")

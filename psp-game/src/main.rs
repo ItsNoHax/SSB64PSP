@@ -208,7 +208,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::VsResultsEmblem => VS_RESULTS_EMBLEM_CAPTURE_TICK,
         GameScene::PikachuThunder => 92,
         GameScene::KirbyHat => 260,
-        GameScene::YoshiEgg => 360,
+        GameScene::YoshiEgg => 460,
         // Z from tick 40: the egg is up from the end of `GuardOn`, and 16
         // ticks a point of the shield's 55 decays, darkening it.
         GameScene::YoshiShield => 600,
@@ -236,6 +236,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::TrainingArwing => 1800,
         GameScene::TrainingBumper | GameScene::TrainingPlants => 240,
         GameScene::TrainingCapsule
+        | GameScene::TrainingCrate
+        | GameScene::TrainingBarrel
+        | GameScene::TrainingHeavy
         | GameScene::TrainingChansey
         | GameScene::TrainingElectrode
         | GameScene::TrainingCharmander
@@ -293,6 +296,9 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingBumper
             | GameScene::TrainingPlants
             | GameScene::TrainingCapsule
+            | GameScene::TrainingCrate
+            | GameScene::TrainingBarrel
+            | GameScene::TrainingHeavy
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -488,6 +494,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingBumper
             | GameScene::TrainingPlants
             | GameScene::TrainingCapsule
+            | GameScene::TrainingCrate
+            | GameScene::TrainingBarrel
+            | GameScene::TrainingHeavy
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -498,6 +507,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
+            60 if scene == GameScene::TrainingHeavy => N64Buttons(N64Buttons::A),
+            110 if scene == GameScene::TrainingHeavy => N64Buttons(N64Buttons::B),
             _ => N64Buttons(0),
         };
     }
@@ -541,10 +552,13 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             4 | 8 => N64Buttons(N64Buttons::A),
             13 | 30 if scene == GameScene::KirbyHat => N64Buttons(N64Buttons::C_UP),
             108 | 170 if scene == GameScene::KirbyHat => N64Buttons(N64Buttons::B),
-            // Yoshi walks under the platform, jumps twice straight up and
-            // falls onto it.
+            // Yoshi walks under the platform and jumps twice straight up.
+            // The aerial tongue at 250 drops him onto the platform beside
+            // the dummy; joint 31, the tongue tip, reaches 340-785 units
+            // ahead in the catch window, so he backs off, turns and tongues
+            // the dummy at 330 (RE-432).
             130 | 148 if scene == GameScene::YoshiEgg => N64Buttons(N64Buttons::C_UP),
-            250 if scene == GameScene::YoshiEgg => N64Buttons(N64Buttons::B),
+            250 | 330 if scene == GameScene::YoshiEgg => N64Buttons(N64Buttons::B),
             _ => N64Buttons(0),
         };
     }
@@ -692,7 +706,13 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
         return if (14..52).contains(&tick) { -30 } else { 0 };
     }
     if scene == GameScene::YoshiEgg {
-        return if (14..123).contains(&tick) { -30 } else { 0 };
+        // Then backs off right and turns to face the dummy (RE-432).
+        return match tick {
+            14..123 => -30,
+            296..308 => 40,
+            318..320 => -30,
+            _ => 0,
+        };
     }
     if matches!(scene, GameScene::YoshiRollF | GameScene::YoshiRollB) {
         return if (60..62).contains(&tick) {
@@ -1483,12 +1503,13 @@ fn physics_pass(
         tops[top_count] = ssb_game::item::pakkun::fighter_top(&f.fighter);
         top_count += 1;
     }
-    items.tick(map, Some(blast_zone),
+    items.tick_with_effects(map, Some(blast_zone),
         &tops[..top_count],
         &mut ssb_psp_runtime::scene::ItemAnimsPort {
             pack: p,
             objects: stage_objects,
         },
+        effects,
     );
     // Monster completion calls the gate from the item main process,
     // before the weapon link and its particle RNG draws.
@@ -1626,12 +1647,13 @@ fn hit_pass(
         items.take_requests(&mut f.fighter, map);
     }
     let all: alloc::vec::Vec<&ssb_game::fighter::Fighter> = s.iter().flatten().map(|x| &x.fighter).collect();
-    items.resolve(&all,
+    items.resolve_with_effects(&all,
         &mut ssb_psp_runtime::scene::ItemAnimsPort {
             pack: p,
             objects: stage_objects,
         },
         map,
+        effects,
     );
     items.flush_effects(effects);
     for f in s.iter_mut().flatten() {
@@ -1825,9 +1847,16 @@ fn capture_monster(scene: Option<GameScene>) -> Option<u8> {
 #[inline(never)]
 fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s: &mut Session) {
     use ssb_game::stage::StageItems;
-    if scene == Some(GameScene::TrainingCapsule) {
+    if matches!(scene, Some(GameScene::TrainingCapsule | GameScene::TrainingCrate | GameScene::TrainingBarrel | GameScene::TrainingHeavy)) {
         if let Some(pl) = s.play_state.as_ref() {
-            s.items.spawn_container(ssb_game::item::container::Kind::Capsule, pl.fighter.pos + ssb_engine::math::Vec3::new(500.0, 500.0, 0.0), ssb_engine::math::Vec3::ZERO);
+            let kind = match scene {
+                Some(GameScene::TrainingBarrel) => ssb_game::item::container::Kind::Barrel,
+                Some(GameScene::TrainingCrate | GameScene::TrainingHeavy) => ssb_game::item::container::Kind::Crate,
+                _ => ssb_game::item::container::Kind::Capsule,
+            };
+            let offset = if scene == Some(GameScene::TrainingHeavy) { ssb_engine::math::Vec3::new(75.0, 500.0, 0.0) }
+                else { ssb_engine::math::Vec3::new(500.0, 500.0, 0.0) };
+            s.items.spawn_container(kind, pl.fighter.pos + offset, ssb_engine::math::Vec3::ZERO);
         }
         return;
     }
@@ -3954,6 +3983,8 @@ struct DrawAssets {
     /// `GBumperItemAttributes` names (file 86 + 0x7648). It has no scripts.
     gbumper_item: Option<ssb_rom::pack::ObjectDesc>,
     capsule_item: Option<ssb_rom::pack::ObjectDesc>,
+    heavy_items: [Option<ssb_rom::pack::ObjectDesc>; 2],
+    container_piece: Option<ssb_rom::pack::MeshDesc>,
     egg_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The shield bubble.
     shield: Option<ssb_rom::pack::ObjectDesc>,
@@ -4027,6 +4058,9 @@ impl DrawAssets {
             )
             .zip(p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_NESS_PK_FIRE)),
             capsule_item: ssb_psp_runtime::scene::object_keyed(p, (86, 0x670)),
+            heavy_items: [0x6778, 0x71A8].map(|offset| ssb_psp_runtime::scene::object_keyed(p, (86, offset))),
+            container_piece: (0..p.mesh_count()).filter_map(|i| p.mesh(i))
+                .find(|m| m.source_file == 86 && m.source_offset == 0x68F0),
             egg_item: ssb_psp_runtime::scene::object_keyed(p, (86, 0x104A0)).zip(p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_EGG)),
             gbumper_item: ssb_psp_runtime::scene::object_keyed(
                 p,
@@ -4122,7 +4156,7 @@ fn display_asset(kind: ssb_game::effect::DisplayKind) -> Option<usize> {
         K::FlySparks | K::StarRodSpark => 3,
         K::FlyMDust => 4,
         K::ShockSmall => 5,
-        K::SpawnOrbs | K::SpawnSparks | K::SpawnMDust | K::Quake { .. } | K::FireSpark | K::ThunderTrail | K::YoshiEggEscape => return None,
+        K::SpawnOrbs | K::SpawnSparks | K::SpawnMDust | K::Quake { .. } | K::FireSpark | K::ThunderTrail | K::YoshiEggEscape | K::ContainerSmash => return None,
     })
 }
 
@@ -4422,7 +4456,7 @@ impl DrawAssets {
             ssb_game::item::ItemKind::NessPKFire => self.pk_fire_item.as_ref(),
             ssb_game::item::ItemKind::LinkBomb => self.link_bomb_item.as_ref(),
             ssb_game::item::ItemKind::Container(ssb_game::item::container::Kind::Egg) => self.egg_item.as_ref(),
-            ssb_game::item::ItemKind::Container(ssb_game::item::container::Kind::Capsule) => None,
+            ssb_game::item::ItemKind::Container(_) => None,
             // No scripts, or trees the stage's ground objects draw.
             ssb_game::item::ItemKind::GBumper
             | ssb_game::item::ItemKind::PowerBlock
@@ -5419,6 +5453,17 @@ unsafe fn draw_training(
         );
     };
     battle_part(BattlePart::Items, draw_state, gpu);
+    if let Some(mesh) = assets.container_piece.as_ref() {
+        for display in damage_hud.effects.displays().filter(|d| d.kind == ssb_game::effect::DisplayKind::ContainerSmash) {
+            if let Some(pieces) = damage_hud.effects.container_pieces(display) {
+                for piece in pieces {
+                    gpu.model_transform_xyz([piece.pos.x, piece.pos.y, piece.pos.z],
+                        [piece.rotate.x, piece.rotate.y, piece.rotate.z], [meshdraw::MODEL_SCALE; 3]);
+                    meshdraw::draw_mesh(p, mesh, draw_state, None, None);
+                }
+            }
+        }
+    }
     stage_pass(9..=12, Head0, draw_state);
     stage_pass(6..=12, Head1, draw_state);
 
@@ -5893,29 +5938,48 @@ unsafe fn draw_items_weapons_effects(
                 }
                 continue;
         }
-        if item.kind == ssb_game::item::ItemKind::Container(ssb_game::item::container::Kind::Capsule) {
-            if let Some(object) = assets.capsule_item.as_ref() {
+        if let ssb_game::item::ItemKind::Container(kind) = item.kind {
+          if kind != ssb_game::item::container::Kind::Egg {
+            let object = match kind {
+                ssb_game::item::container::Kind::Capsule => assets.capsule_item.as_ref(),
+                ssb_game::item::container::Kind::Crate => assets.heavy_items[0].as_ref(),
+                ssb_game::item::container::Kind::Barrel => assets.heavy_items[1].as_ref(),
+                _ => None,
+            };
+            if let Some(object) = object {
                 // The manager replaces root translation with the item's position.
                 // Relative descendant transforms stay from the descriptor.
                 let held = item.owner.filter(|_| item.is_hold).and_then(|port| {
                     scenes_ref(pl, dummies).into_iter().flatten().find(|s| s.fighter.port == port)
-                        .and_then(|s| s.fighter.joint_transforms[ssb_game::item_throw::itemlight_joint(s.fighter.kind)])
+                        .and_then(|s| {
+                            let joint = if kind.heavy() { ssb_game::grab::itemheavy_joint(s.fighter.kind) }
+                                else { Some(ssb_game::item_throw::itemlight_joint(s.fighter.kind)) }?;
+                            s.fighter.joint_transforms[joint]
+                        })
                 });
                 match held {
                     Some(joint) => gpu.model_transform_joint(joint.origin, joint, meshdraw::MODEL_SCALE),
-                    None => gpu.model_transform_xyz([item.pos.x, item.pos.y, item.pos.z], [0.0, 0.0, item.rotate_z], [meshdraw::MODEL_SCALE; 3]),
+                    None => gpu.model_transform([item.pos.x, item.pos.y, item.pos.z], [0.0; 3], meshdraw::MODEL_SCALE),
                 }
+                // `itManagerMakeItem` ejects descriptor 0's placeholder, so the
+                // item root is node 1: at the item position loose, at its own
+                // descriptor translation under the attach joint (RE-432).
                 let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
-                for i in 0..object.node_count as usize {
+                for i in 1..object.node_count as usize {
                     let Some(node) = p.node(object.first_node + i as u32) else { continue; };
-                    if i == 0 && held.is_none() { continue; }
-                    let local = ssb_rom::scene::Mat4::from_trs(node.rest_translate.map(|x| x / meshdraw::MODEL_SCALE), node.rest_rotate, node.rest_scale);
-                    posed[i] = node.parent.checked_sub(object.first_node).filter(|&parent| parent < i as u32).map_or(local, |parent| posed[parent as usize].mul(&local));
+                    let local = if i == 1 {
+                        let t = if held.is_some() { node.rest_translate.map(|x| x / meshdraw::MODEL_SCALE) } else { [0.0; 3] };
+                        ssb_rom::scene::Mat4::from_trs(t, [item.vars.container_root_pitch, item.vars.container_root_yaw, item.rotate_z], node.rest_scale)
+                    } else {
+                        ssb_rom::scene::Mat4::from_trs(node.rest_translate.map(|x| x / meshdraw::MODEL_SCALE), node.rest_rotate, node.rest_scale)
+                    };
+                    posed[i] = node.parent.checked_sub(object.first_node).filter(|&parent| parent >= 1 && parent < i as u32).map_or(local, |parent| posed[parent as usize].mul(&local));
                 }
                 let base = gpu.model_matrix();
                 meshdraw::draw_object_posed(p, object, &base, &posed[..object.node_count as usize], None, draw_state, material_anim, None, 0);
             }
             continue;
+          }
         }
         let Some((object, _)) = assets.item(item.kind) else {
             continue;

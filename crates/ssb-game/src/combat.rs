@@ -1575,6 +1575,9 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         }
         f.add_damage(f.hits.damage_queue);
         if f.items.held.is_some()
+            && !f.items.held.is_some_and(|i| {
+                i.weight == crate::item::ItemWeight::Heavy && crate::grab::is_donkey(f.kind)
+            })
             && f.hits.damage_knockback != 0.0
             && (f.hitlag == 0
                 || !f.is_knockback_paused
@@ -1700,6 +1703,7 @@ pub fn goto_damage_status(f: &mut Fighter) {
         crate::link::on_damage(f);
     }
     crate::yoshi::on_damage(f);
+    crate::item_throw::on_damage(f);
     crate::pikachu::on_damage(f);
     if crate::kirby::is_kirby(f.kind) {
         crate::kirby_copy::on_damage(f);

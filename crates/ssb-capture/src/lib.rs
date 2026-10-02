@@ -469,6 +469,9 @@ pub enum GameScene {
     TrainingPlants,
     /// Diagnostic loose Capsule view (RE-431).
     TrainingCapsule,
+    TrainingCrate,
+    TrainingBarrel,
+    TrainingHeavy,
     /// Diagnostic Saffron item views: source lifecycle, selected maker.
     TrainingChansey,
     TrainingElectrode,
@@ -500,7 +503,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 88] = [
+    pub const ALL: [GameScene; 91] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -576,6 +579,9 @@ impl GameScene {
         GameScene::TrainingBumper,
         GameScene::TrainingPlants,
         GameScene::TrainingCapsule,
+        GameScene::TrainingCrate,
+        GameScene::TrainingBarrel,
+        GameScene::TrainingHeavy,
         GameScene::TrainingChansey,
         GameScene::TrainingElectrode,
         GameScene::TrainingCharmander,
@@ -668,6 +674,9 @@ impl GameScene {
             GameScene::TrainingBumper => "trainingbumper",
             GameScene::TrainingPlants => "trainingplants",
             GameScene::TrainingCapsule => "trainingcapsule",
+            GameScene::TrainingCrate => "trainingcrate",
+            GameScene::TrainingBarrel => "trainingbarrel",
+            GameScene::TrainingHeavy => "trainingheavy",
             GameScene::TrainingChansey => "trainingchansey",
             GameScene::TrainingElectrode => "trainingelectrode",
             GameScene::TrainingCharmander => "trainingcharmander",

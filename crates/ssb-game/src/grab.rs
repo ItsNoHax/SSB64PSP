@@ -769,7 +769,7 @@ impl GrabState {
     }
 }
 
-fn is_donkey(kind: FighterKind) -> bool {
+pub(crate) fn is_donkey(kind: FighterKind) -> bool {
     base_kind(kind) == FighterKind::Donkey
 }
 
@@ -1520,7 +1520,10 @@ fn set_donkey_throwf_landing(f: &mut Fighter) {
 /// The cargo Wait/Walk interrupt head: heavy-item throw (no items), cargo
 /// throw, jump, platform drop.
 fn cargo_common_interrupt(f: &mut Fighter) -> bool {
-    check_donkey_throwff(f) || check_donkey_kneebend(f) || check_donkey_pass(f)
+    crate::item_throw::check_heavy_throw(f)
+        || check_donkey_throwff(f)
+        || check_donkey_kneebend(f)
+        || check_donkey_pass(f)
 }
 
 /// `ftDonkeyThrowFDamageSetStatus` @ 0x8014E0E0: hit while carrying but
@@ -1736,7 +1739,7 @@ pub fn update(f: &mut Fighter) -> bool {
             }
             if f.status.animation_ended() {
                 set_donkey_throwf_wait(f);
-            } else if !check_donkey_throwff(f) {
+            } else if !(crate::item_throw::check_heavy_throw(f) || check_donkey_throwff(f)) {
                 check_donkey_kneebend(f);
             }
         }
@@ -1753,12 +1756,16 @@ pub fn update(f: &mut Fighter) -> bool {
             }
             if f.attributes.kneebend_anim_length <= frame {
                 set_donkey_throwf_jump(f);
-            } else if !check_donkey_throwff(f) && f.status.jump_force < f.stick.y {
+            } else if !(crate::item_throw::check_heavy_throw(f) || check_donkey_throwff(f))
+                && f.status.jump_force < f.stick.y
+            {
                 f.status.jump_force = f.stick.y;
             }
         }
         AnyStatus::Donkey(DonkeyStatus::ThrowFFall) => {
-            check_donkey_throwff(f);
+            if !crate::item_throw::check_heavy_throw(f) {
+                check_donkey_throwff(f);
+            }
         }
         // `ftDonkeyThrowFLandingProcUpdate` @ 0x8014DC50 tests
         // `landing_anim_frame <= 4.0F` after incrementing it, which is true on
@@ -1952,6 +1959,10 @@ where
 /// Whether a catcher in a holding status just lost its floor. Called from the
 /// grounded tick when the walk off an edge left no floor.
 pub fn on_ground_lost(f: &mut Fighter) -> bool {
+    if crate::item_throw::is_donkey_throw(f.status.status) {
+        f.become_airborne();
+        return true;
+    }
     match f.status.status {
         // `ftCommonCatchProcMap`: `mpCommonCheckFighterOnEdge == FALSE`.
         AnyStatus::Common(
@@ -1980,6 +1991,10 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
 
 /// Landing for the cargo air statuses. Returns whether it handled it.
 pub fn on_landing(f: &mut Fighter, floor_y: f32) -> bool {
+    if crate::item_throw::is_donkey_throw(f.status.status) {
+        f.land(floor_y);
+        return true;
+    }
     match f.status.status {
         // `ftDonkeyThrowFFallProcMap` @ 0x8014DA30.
         AnyStatus::Donkey(DonkeyStatus::ThrowFFall) => {

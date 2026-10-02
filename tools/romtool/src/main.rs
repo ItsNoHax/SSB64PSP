@@ -4034,6 +4034,45 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         // list, keyed (86, 0x5458), under the default seed, so this copy is
         // keyed by the attributes record that names it: (247, 0x40).
         if id == 86 {
+            // `itBoxContainerSmashMakeEffect` names this list directly;
+            // it has no descriptor for graph discovery to reach.
+            const CONTAINER_PIECE: u32 = 0x68F0;
+            let cmds = ssb_rom::dl::decode_list_at(
+                &file.data[CONTAINER_PIECE as usize..],
+                CONTAINER_PIECE,
+            )?;
+            let piece = mesh::convert_sequence(
+                &[mesh::SequenceItem {
+                    cmds: &cmds,
+                    world: ssb_rom::scene::Mat4::IDENTITY,
+                    mobjs: &[],
+                    mat_anims: &[],
+                    depth_seed: None,
+                    stream: 0,
+                }],
+                mesh::Source::of(file),
+                mesh::InitialMaterial::SCENE,
+            )
+            .into_iter()
+            .next()
+            .ok_or("container piece missing")?
+            .map_err(|e| format!("container piece conversion: {e:?}"))?;
+            pack_mesh(
+                &mut writer,
+                &mut tex_index,
+                &mut mat_anim_index,
+                &mat_anim_data,
+                Texels {
+                    home: file,
+                    all: &loaded.files,
+                },
+                id,
+                CONTAINER_PIECE,
+                &piece,
+                swizzle,
+            );
+            meshes += 1;
+            triangles += piece.triangle_count();
             const STAR_DISPLAY_LIST: u32 = 0x5458;
             const STAR_KEY: (u32, u32) = (247, 0x40);
             if let Some(Ok(star)) = file
@@ -4670,6 +4709,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut anim_joints_packed = 0usize;
     let mut anims_failed: Vec<String> = Vec::new();
     let mut hidden_joint_anims = 0usize;
+    let mut walked_anims = 0usize;
     let mut deferred_shield_poses: Vec<(
         u32,
         ssb_rom::fighter::ShieldPoseRefs,
@@ -4696,6 +4736,33 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             anims_failed.push(format!("{}: no skeleton", entry.name));
             continue;
         };
+        // Motions that insert hidden model parts bind by the original tree
+        // walk (RE-432): each needs every descriptor's depth and the parts.
+        let walk = loaded.files[file_entry.file as usize]
+            .as_ref()
+            .and_then(|main| {
+                let common = ssb_rom::fighter::common_parts(main, file_entry)[0]?;
+                let mask = ssb_rom::fighter::setup_parts(main, file_entry)?;
+                let object =
+                    writer.object(*object_index.get(&(common.model_file, common.graph))?)?;
+                let graph = loaded
+                    .graphs
+                    .get(&common.model_file)?
+                    .iter()
+                    .find(|g| g.offset == common.graph)?;
+                let depths: Vec<u32> = graph.nodes.iter().map(|n| n.desc.depth()).collect();
+                let used = ssb_rom::anim::HIDDEN_PARTS[kind]
+                    .iter()
+                    .fold(0u32, |m, &bits| m | bits);
+                let count = (0..27)
+                    .filter(|i| used >> (31 - i) & 1 != 0)
+                    .max()
+                    .map_or(0, |i| i + 1);
+                let hidden = (0..count)
+                    .map(|i| ssb_rom::fighter::hidden_part(main, file_entry, i))
+                    .collect::<Option<Vec<_>>>()?;
+                Some((depths, mask, hidden, object.first_node))
+            });
 
         for (slot, &id) in entry.files.iter().enumerate() {
             if id == 0 {
@@ -4778,11 +4845,42 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             // cliff escape), so the descriptor remains authoritative beyond +1.
             let hidden_joint =
                 table.len() > nodes.len() && ssb_rom::anim::LEADING_RUNTIME_JOINT[kind][slot];
+            // Hidden *model* parts (bits 28..5) change the walk; the leading
+            // runtime joints alone keep the guarded shift above.
+            let parts = ssb_rom::anim::HIDDEN_PARTS[kind][slot];
+            let order = (parts & 0x1FFF_FFE0 != 0)
+                .then(|| {
+                    walk.as_ref().and_then(|(depths, mask, hidden, first)| {
+                        let order = ssb_rom::fighter::figatree_order(depths, *mask, hidden, parts)?;
+                        (table.len() >= order.len()).then(|| {
+                            order
+                                .iter()
+                                .map(|j| match *j {
+                                    ssb_rom::fighter::TreeJoint::Desc(d) => Some(first + d),
+                                    ssb_rom::fighter::TreeJoint::Runtime(_) => None,
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                })
+                .flatten();
+            if parts & 0x1FFF_FFE0 != 0 {
+                match &order {
+                    Some(_) => walked_anims += 1,
+                    None => anims_failed.push(format!(
+                        "{}.{}: hidden-part walk",
+                        entry.name,
+                        ssb_rom::anim::SLOT_NAMES[slot]
+                    )),
+                }
+            }
             let joints: Vec<(Option<u32>, Option<u32>)> = table
                 .iter()
                 .enumerate()
                 .map(|(j, &at)| {
-                    let node = if hidden_joint {
+                    let node = if let Some(order) = &order {
+                        order.get(j).copied().flatten()
+                    } else if hidden_joint {
                         j.checked_sub(1).and_then(|k| nodes.get(k).copied())
                     } else {
                         nodes.get(j).copied()
@@ -5706,7 +5804,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         );
     }
     println!(
-        "  animations  {packed_anims} ({anim_joints_packed} joint entries, {} joints bound to a node, {hidden_joint_anims} with a runtime joint)",
+        "  animations  {packed_anims} ({anim_joints_packed} joint entries, {} joints bound to a node, {hidden_joint_anims} with a runtime joint, {walked_anims} with hidden model parts)",
         pack_anim_joints_bound(&pack)
     );
     if !anims_failed.is_empty() {

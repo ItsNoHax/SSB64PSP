@@ -360,6 +360,10 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
             | FoxStatus::SpecialAirLwTurn => M::SpecialLw,
         },
         AnyStatus::Donkey(s) => match s {
+            DonkeyStatus::HeavyThrowF
+            | DonkeyStatus::HeavyThrowB
+            | DonkeyStatus::HeavyThrowF4
+            | DonkeyStatus::HeavyThrowB4 => M::None,
             // The battle entry runs in `crate::appear`.
             DonkeyStatus::AppearR | DonkeyStatus::AppearL => M::None,
             DonkeyStatus::SpecialNStart

@@ -1080,6 +1080,9 @@ impl Fighter {
         let Some(standing) = self.floor else {
             // Grounded with no floor recorded is not a state the original can
             // reach; treat it as airborne rather than guessing a surface.
+            if crate::item_throw::common_heavy(self.status.status) && self.items.held.is_some() {
+                crate::item_throw::drop_item(self);
+            }
             self.become_airborne();
             return;
         };
@@ -1208,6 +1211,10 @@ impl Fighter {
             // with no ground under it.
             None => {
                 self.floor = None;
+                if crate::item_throw::common_heavy(self.status.status) && self.items.held.is_some()
+                {
+                    crate::item_throw::drop_item(self);
+                }
                 if self.status.status
                     == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialN)
                 {
