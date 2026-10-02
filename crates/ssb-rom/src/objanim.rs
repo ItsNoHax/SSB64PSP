@@ -195,6 +195,11 @@ impl StageJoint {
         self.frame_written.then_some(self.frame)
     }
 
+    /// Current `DObj::anim_frame`, even when this play did not write GObj.
+    pub fn frame(&self) -> f32 {
+        self.frame
+    }
+
     pub fn ended(&self) -> bool {
         self.ended
     }

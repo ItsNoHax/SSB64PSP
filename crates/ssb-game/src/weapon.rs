@@ -1456,6 +1456,7 @@ enum Weapon {
     PKThunder(PKThunder),
     PKTrail(PKThunderTrail),
     Laser(ArwingLaser),
+    Monster(crate::monster_weapon::MonsterShot),
 }
 
 /// A live Mario Fireball. Weapons are match-owned, not fighter-owned:
@@ -1660,6 +1661,7 @@ impl Weapon {
             // The 2D shot hops, reflects and is absorbed; the 3D shot is
             // only absorbed, before and after it bursts.
             Weapon::Laser(l) => wflags(false, !l.three_d, !l.three_d, true),
+            Weapon::Monster(m) => wflags(m.razor, m.razor, true, true),
             Weapon::Bomb(_) => wflags(false, true, false, false),
             Weapon::Boomerang(_) | Weapon::Egg(_) => wflags(true, true, true, false),
             Weapon::Cutter(_) | Weapon::PKThunder(_) => wflags(true, false, true, true),
@@ -1706,6 +1708,7 @@ impl Weapon {
             Weapon::Fireball(w) => w.position,
             Weapon::Blaster(w) => w.position,
             Weapon::Laser(w) => w.position,
+            Weapon::Monster(w) => w.position,
             Weapon::ChargeShot(w) => w.position,
             Weapon::Bomb(w) => w.position,
             Weapon::Boomerang(w) => w.position,
@@ -1787,6 +1790,12 @@ impl Weapon {
             Weapon::Trail(_) => fx.push(shock(pikachu::TRAIL_HIT.damage)),
             // The head has no callbacks.
             Weapon::Thunder(_) => {}
+            Weapon::Monster(m) => {
+                // Flame has no proc_absorb; razor uses proc_hit.
+                if m.razor || proc != Proc::Absorb {
+                    m.hit_fx(fx);
+                }
+            }
         }
     }
 
@@ -1812,6 +1821,7 @@ impl Weapon {
         match self {
             // `wpLinkBoomerangProcShield`.
             Weapon::Boomerang(b) => b.set_off(),
+            Weapon::Monster(m) if !m.razor => {}
             // `wpKirbyCutterProcShield` returns FALSE.
             Weapon::Cutter(_) => {}
             // `wpYoshiEggThrowProcHit` and `wpSamusBombProcHit`.
@@ -1834,6 +1844,11 @@ impl Weapon {
         let turn = |v: Vec3| hop_velocity(v, angle, dir_z);
         match self {
             Weapon::Boomerang(b) => b.hop(angle, dir_z),
+            Weapon::Monster(m) => {
+                m.velocity = turn(m.velocity);
+                m.reface();
+                m.lr = if m.velocity.x > 0.0 { 1.0 } else { -1.0 };
+            }
             // `wpMarioFireballProcHop`.
             Weapon::Fireball(f) => f.velocity = turn(f.velocity),
             // `wpFoxBlasterProcHop`: the shot is drawn unstretched again.
@@ -2564,6 +2579,29 @@ impl WeaponPool {
             }
         })
     }
+    /// Live Saffron projectiles for the runtime's Razor Leaf draw pass.
+    pub fn monster_shots(&self) -> impl Iterator<Item = crate::monster_weapon::MonsterShot> + '_ {
+        self.slots.iter().flatten().filter_map(|w| match w {
+            Weapon::Monster(m) => Some(*m),
+            _ => None,
+        })
+    }
+
+    pub fn spawn_monster_shot(&mut self, shot: crate::monster_weapon::MonsterShot) -> bool {
+        let seq = self.next_seq;
+        let made = self.insert(
+            Weapon::Monster(shot),
+            crate::stale::WeaponStale::FRESH,
+            sector::GROUND_TEAM,
+        );
+        if made {
+            let mut emit = Emit::default();
+            shot.make_fx(&mut emit);
+            self.fx.extend(seq, &emit);
+        }
+        made
+    }
+
     /// `wpManagerMakeWeapon` for one of Sector Z's Arwing lasers
     /// (`WEAPON_FLAG_PARENT_GROUND`): default team and staling. Returns
     /// whether a slot was free; the 2D pair's second shot is made only
@@ -2785,6 +2823,7 @@ impl WeaponPool {
                 h.velocity,
             ),
             Weapon::Laser(l) => (l.owner_port, l.hitbox(), l.position, l.velocity),
+            Weapon::Monster(m) => (m.owner_port, m.hitbox(), m.position, m.velocity),
             Weapon::Thunder(_) | Weapon::Trail(_) | Weapon::PKTrail(_) => return None,
         };
         hitbox.damage = stale.damage(hitbox.damage);
@@ -2907,6 +2946,7 @@ impl WeaponPool {
                     self.hit_records[i] = [None; 4];
                 }
             }
+            Weapon::Monster(m) if !m.razor => {}
             _ => *slot = None,
         }
     }
@@ -3081,6 +3121,7 @@ impl WeaponPool {
                     }
                     Weapon::Egg(egg) => egg.tick(surfaces, fx),
                     Weapon::Star(star) => star.tick(fx),
+                    Weapon::Monster(m) => m.tick(surfaces, fx),
                     Weapon::Cutter(cutter) => cutter.tick(surfaces, fx),
                     Weapon::Laser(laser) => {
                         laser.roll = self.ground_roll;
@@ -3218,6 +3259,7 @@ impl WeaponPool {
                 Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position, e.velocity),
                 Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position, s.velocity),
                 Weapon::Cutter(c) => (c.owner_port, KIRBY_CUTTER_HITBOX, c.position, c.velocity),
+                Weapon::Monster(m) => (m.owner_port, m.hitbox(), m.position, m.velocity),
                 Weapon::Laser(_) => unreachable!("handled above"),
             };
             // `ftMainSearchHitWeapon`: not its owner, nor, with team attack
@@ -3245,6 +3287,7 @@ impl WeaponPool {
                 Weapon::Egg(e) => e.damage,
                 Weapon::Star(s) => s.damage,
                 Weapon::Cutter(c) => c.damage,
+                Weapon::Monster(m) => m.damage,
                 Weapon::Laser(_) => unreachable!("handled above"),
             };
             // The exploding egg keeps the record of what the egg hit and is
@@ -3341,6 +3384,7 @@ impl WeaponPool {
                         }
                         // `wpYoshiStarProcHit` without `hit_normal_damage`.
                         Weapon::Star(_) => {}
+                        Weapon::Monster(m) if !m.razor => {}
                         // `wpKirbyCutterProcSetOff` and every `ProcHit` that
                         // returns TRUE.
                         _ => *slot = None,
@@ -3380,6 +3424,23 @@ impl WeaponPool {
                         Weapon::Star(s) => s.reflect(defender),
                         Weapon::Cutter(c) => c.reflect(defender),
                         Weapon::Jolt(j) => j.reflect(defender),
+                        Weapon::Monster(m) => {
+                            reflect_shot(
+                                &mut m.velocity,
+                                &mut m.owner_port,
+                                &mut m.damage,
+                                defender,
+                            );
+                            if m.razor {
+                                m.reface();
+                                m.lr = -m.lr;
+                            } else {
+                                m.lifetime = 20;
+                                let mut emit = Emit::default();
+                                m.make_fx(&mut emit);
+                                self.fx.extend(self.seq[i], &emit);
+                            }
+                        }
                         _ => unreachable!("not reflectable"),
                     }
                     // `wpProcessProcHitCollisions`: the reflector's team.
@@ -3403,14 +3464,20 @@ impl WeaponPool {
                             e.hit_ports |= bit;
                             e.explode();
                         }
+                        Weapon::Monster(m) if !m.razor => {
+                            record_weapon_victim(records, defender.port);
+                        }
                         _ => *slot = None,
                     }
                     continue;
                 }
-                // `proc_absorb`: the Cutter's is its `ProcShield` (it flies
-                // on); every other absorbable weapon is destroyed.
+                // `proc_absorb`: Cutter survives; Charmander's flame has
+                // no callback, so absorption records it without deletion.
                 PreHit::Absorbed => {
                     match weapon {
+                        Weapon::Monster(m) if !m.razor => {
+                            record_weapon_victim(records, defender.port);
+                        }
                         Weapon::Cutter(c) => {
                             record_weapon_victim(records, defender.port);
                             c.hit_ports |= bit;
@@ -3465,6 +3532,10 @@ impl WeaponPool {
                     record_weapon_victim(records, defender.port);
                     e.hit_ports |= bit;
                     e.explode();
+                    continue;
+                }
+                if matches!(weapon, Weapon::Monster(m) if !m.razor) {
+                    record_weapon_victim(records, defender.port);
                     continue;
                 }
                 *slot = None;
@@ -3664,6 +3735,7 @@ impl WeaponPool {
                 }
                 // `wpYoshiStarProcHit` without `hit_normal_damage`.
                 Weapon::Star(_) => true,
+                Weapon::Monster(m) => !m.razor,
                 // `wpNessPKFireProcHit`: the pillar.
                 Weapon::PKFire(p) => {
                     let spawn = p.item_spawn(stale, team);
@@ -3824,7 +3896,7 @@ impl WeaponPool {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct MapContact {
-    position: Vec3,
+    pub(crate) position: Vec3,
     normal: Vec2,
     time: f32,
     kind: MapSurfaceKind,
@@ -3948,6 +4020,70 @@ pub(crate) fn swept_coords_intersection(from: Vec2, to: Vec2, coords: [f32; 4]) 
 mod tests {
     use super::*;
     use crate::fighter::{FighterKind, Situation};
+
+    #[test]
+    fn saffron_shots_expire_and_only_razor_accelerates() {
+        use crate::monster_weapon::MonsterShot;
+        for razor in [false, true] {
+            let mut pool = WeaponPool::default();
+            pool.spawn_monster_shot(MonsterShot::new(razor, Vec3::ZERO));
+            let life = if razor { 24 } else { 20 };
+            for tick in 1..life {
+                pool.tick(open_air, None);
+                let shot = pool.monster_shots().next().unwrap();
+                assert_eq!(shot.lifetime, life - tick);
+                if razor {
+                    assert_eq!(shot.velocity.x, -100.0 - tick as f32 * 5.0);
+                }
+            }
+            pool.tick(open_air, None);
+            assert!(pool.monster_shots().next().is_none());
+        }
+    }
+
+    #[test]
+    fn saffron_flame_survives_a_recorded_hit_while_razor_is_destroyed() {
+        use crate::monster_weapon::MonsterShot;
+        for razor in [false, true] {
+            let mut pool = WeaponPool::default();
+            pool.spawn_monster_shot(MonsterShot::new(razor, Vec3::new(0.0, 100.0, 0.0)));
+            let mut mario = Fighter::new(FighterKind::Mario, 0, 3);
+            pool.apply_hits(&mut mario);
+            crate::combat::resolve(&mut mario);
+            assert_eq!(mario.damage, if razor { 3 } else { 2 });
+            assert_eq!(pool.monster_shots().count(), usize::from(!razor));
+            pool.apply_hits(&mut mario);
+            crate::combat::resolve(&mut mario);
+            assert_eq!(mario.damage, if razor { 3 } else { 2 });
+        }
+    }
+
+    #[test]
+    fn saffron_reflection_keeps_source_lr_and_resets_only_the_flame_life() {
+        use crate::monster_weapon::MonsterShot;
+        for razor in [false, true] {
+            let mut pool = WeaponPool::default();
+            let mut shot = MonsterShot::new(razor, Vec3::new(100.0, 60.0, 0.0));
+            shot.lifetime = 5;
+            pool.spawn_monster_shot(shot);
+            let mut fox = Fighter::new(FighterKind::Fox, 1, 3);
+            fox.situation = Situation::Ground;
+            crate::status::set_fox_special_lw_start(&mut fox);
+            crate::status::set_any_status(
+                &mut fox,
+                crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialLwLoop),
+                0.0,
+                crate::status::StatusTiming::unknown(),
+            );
+            pool.apply_hits(&mut fox);
+            let shot = pool.monster_shots().next().unwrap();
+            assert_eq!(shot.owner_port, 1);
+            assert!(shot.velocity.x > 0.0);
+            assert_eq!(shot.lr, if razor { 1.0 } else { -1.0 });
+            assert_eq!(shot.lifetime, if razor { 5 } else { 20 });
+            assert_eq!(shot.damage, if razor { 6 } else { 4 });
+        }
+    }
 
     fn open_air() -> [MapSurface; 0] {
         []

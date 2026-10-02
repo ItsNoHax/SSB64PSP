@@ -66,7 +66,7 @@ impl Scripted {
         match target {
             ItemAnimTarget::PowerBlock => Some(&mut self.pow),
             ItemAnimTarget::Pakkun(i) => self.pakkun.get_mut(usize::from(i)),
-            ItemAnimTarget::Untracked => None,
+            ItemAnimTarget::Untracked | ItemAnimTarget::Monster(_) => None,
         }
     }
 }
@@ -121,7 +121,7 @@ impl ItemAnims for Scripted {
         match target {
             ItemAnimTarget::PowerBlock => !self.pow.live,
             ItemAnimTarget::Pakkun(i) => !self.pakkun[usize::from(i)].live,
-            ItemAnimTarget::Untracked => true,
+            ItemAnimTarget::Untracked | ItemAnimTarget::Monster(_) => true,
         }
     }
     fn stop_root(&mut self, target: ItemAnimTarget) {
@@ -418,6 +418,6 @@ fn a_stale_handle_names_nothing() {
     assert_eq!(again, slot);
     assert_eq!(pool.item_pos_width(handle), None);
     assert!(ItemPool::default()
-        .make_item(StageItem::Monster(0), Vec3::ZERO)
+        .make_item(StageItem::Monster(5), Vec3::ZERO)
         .is_none());
 }

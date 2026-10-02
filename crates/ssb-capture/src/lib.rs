@@ -467,6 +467,13 @@ pub enum GameScene {
     /// `trainingplants`: Mushroom Kingdom at tick 240, camera centered on
     /// the left pipe's Piranha Plant (RE-429).
     TrainingPlants,
+    /// Diagnostic Saffron item views: source lifecycle, selected maker.
+    TrainingChansey,
+    TrainingElectrode,
+    TrainingCharmander,
+    TrainingVenusaur,
+    TrainingPorygon,
+
     /// `traininghyrule`: Training on Hyrule Castle (RE-423).
     TrainingHyrule,
     /// `trainingpupupu`: Training on Dream Land at the stage scenes' tick
@@ -491,7 +498,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 82] = [
+    pub const ALL: [GameScene; 87] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -566,6 +573,11 @@ impl GameScene {
         GameScene::TrainingCastle,
         GameScene::TrainingBumper,
         GameScene::TrainingPlants,
+        GameScene::TrainingChansey,
+        GameScene::TrainingElectrode,
+        GameScene::TrainingCharmander,
+        GameScene::TrainingVenusaur,
+        GameScene::TrainingPorygon,
         GameScene::TrainingHyrule,
         GameScene::TrainingPupupu,
         GameScene::PikachuHat,
@@ -652,6 +664,12 @@ impl GameScene {
             GameScene::TrainingCastle => "trainingcastle",
             GameScene::TrainingBumper => "trainingbumper",
             GameScene::TrainingPlants => "trainingplants",
+            GameScene::TrainingChansey => "trainingchansey",
+            GameScene::TrainingElectrode => "trainingelectrode",
+            GameScene::TrainingCharmander => "trainingcharmander",
+            GameScene::TrainingVenusaur => "trainingvenusaur",
+            GameScene::TrainingPorygon => "trainingporygon",
+
             GameScene::TrainingHyrule => "traininghyrule",
             GameScene::TrainingPupupu => "trainingpupupu",
             GameScene::PikachuHat => "pikachuhat",

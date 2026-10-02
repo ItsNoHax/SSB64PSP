@@ -339,7 +339,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 80 packs Mushroom Kingdom's stage items as ground objects: the POW
 // Block's pop-in and squash, and the Piranha Plants' rise and their two
 // root-`MObj` material scripts (RE-429). No layout change.
-pub const VERSION: u32 = 80;
+// Version 81 adds Saffron's five item animations and direct texture frames.
+// Existing descriptors retain their indices; no layout change.
+pub const VERSION: u32 = 81;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

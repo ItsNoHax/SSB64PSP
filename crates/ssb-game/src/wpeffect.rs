@@ -19,6 +19,23 @@ use crate::particle::{Banks, Particles};
 /// One effect a weapon callback makes, or one random draw it takes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WeaponEffect {
+    DustLight {
+        pos: Vec3,
+        lr: i8,
+    },
+    ScaledExplosion {
+        pos: Vec3,
+        scale: f32,
+    },
+    DamageSlash {
+        pos: Vec3,
+        size: i32,
+        lr: f32,
+    },
+    MonsterFlame {
+        pos: Vec3,
+        vel: Vec3,
+    },
     /// `efManagerDustExpandSmallMakeEffect(pos, 1.0F)`.
     DustExpandSmall(Vec3),
     /// `efManagerSparkleWhiteMakeEffect`.
@@ -26,7 +43,10 @@ pub enum WeaponEffect {
     /// `efManagerSparkleWhiteMultiExplodeMakeEffect`.
     SparkleWhiteMultiExplode(Vec3),
     /// `efManagerImpactShockMakeEffect(pos, wp->attack_coll.damage)`.
-    ImpactShock { pos: Vec3, size: i32 },
+    ImpactShock {
+        pos: Vec3,
+        size: i32,
+    },
     /// `efManagerFoxBlasterGlowMakeEffect`.
     FoxBlasterGlow(Vec3),
     /// `efManagerFireGrindMakeEffect`: the Fireball's rebound.
@@ -41,7 +61,10 @@ pub enum WeaponEffect {
     /// `efManagerQuakeMakeEffect(magnitude)`.
     Quake(u8),
     /// `efManagerSetOffMakeEffect`: one side of a weapon clash.
-    SetOff { pos: Vec3, size: i32 },
+    SetOff {
+        pos: Vec3,
+        size: i32,
+    },
     /// `efManagerPikachuThunderTrailMakeEffect(pos, lifetime, texture)`.
     ThunderTrail {
         pos: Vec3,
@@ -194,6 +217,33 @@ pub const FOX_BLASTER_GLOW_ID: u16 = 0x62;
 pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &dyn Banks) {
     use crate::effect::script;
     match *e {
+        WeaponEffect::DustLight { pos, lr } => {
+            effects.dust_light(p, banks, pos, lr, 1.0);
+        }
+        WeaponEffect::ScaledExplosion { pos, scale } => {
+            effects.ready_at(
+                p,
+                banks,
+                true,
+                script::SPARKLE_WHITE_MULTI_EXPLODE,
+                pos,
+                scale,
+            );
+        }
+        WeaponEffect::DamageSlash { pos, size, lr } => {
+            effects.damage_slash(pos, size, lr);
+        }
+        WeaponEffect::MonsterFlame { pos, vel } => {
+            for id in [2, 0] {
+                let pc = crate::particle::make_script_id(p, banks, 2, id);
+                if pc != crate::particle::NIL {
+                    let particle = p.particle_mut(pc);
+                    particle.pos = pos;
+                    particle.vel = vel;
+                    crate::particle::process_struct(p, banks, effects, pc);
+                }
+            }
+        }
         WeaponEffect::DustExpandSmall(pos) => {
             effects.dust_expand_small(p, banks, pos, 1.0);
         }

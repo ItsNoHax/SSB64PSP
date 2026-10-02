@@ -235,6 +235,11 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // RE-428: the first pattern's low pass, its wing in the top right.
         GameScene::TrainingArwing => 1800,
         GameScene::TrainingBumper | GameScene::TrainingPlants => 240,
+        GameScene::TrainingChansey
+        | GameScene::TrainingElectrode
+        | GameScene::TrainingCharmander
+        | GameScene::TrainingVenusaur
+        | GameScene::TrainingPorygon => 90,
         // The select opens at tick 8; at its tick 60 the portraits are in
         // and the CPU's puck shows.
         GameScene::TrainingSelect => 68,
@@ -286,6 +291,11 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingCastle
             | GameScene::TrainingBumper
             | GameScene::TrainingPlants
+            | GameScene::TrainingChansey
+            | GameScene::TrainingElectrode
+            | GameScene::TrainingCharmander
+            | GameScene::TrainingVenusaur
+            | GameScene::TrainingPorygon
             | GameScene::TrainingHyrule
             | GameScene::TrainingPupupu
     )
@@ -475,6 +485,11 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingCastle
             | GameScene::TrainingBumper
             | GameScene::TrainingPlants
+            | GameScene::TrainingChansey
+            | GameScene::TrainingElectrode
+            | GameScene::TrainingCharmander
+            | GameScene::TrainingVenusaur
+            | GameScene::TrainingPorygon
             | GameScene::TrainingHyrule
             | GameScene::TrainingPupupu
     ) {
@@ -1278,6 +1293,7 @@ unsafe fn training_step(
         .map_or(&[][..], |map| map.groups.as_slice());
     let mut s = scenes(pl, dummies);
     physics_pass(p, &stage, groups, &mut s, weapons, items,
+        stage_ctl,
         stage_objects,
         effects);
     // Priority 3, after the fighters', weapons' and items': the effects'
@@ -1294,7 +1310,14 @@ unsafe fn training_step(
     // The stage calls the items made (`grInishiePowerBlockSetDamage` in
     // their hit collisions, `grInishiePowerBlockSetWait` in their main
     // process): no stage process runs between them and here.
-    stage_ctl.apply_item_events(items.take_stage_events());
+    stage_ctl.apply_item_events(
+        items.take_stage_events(),
+        groups,
+        &mut ssb_psp_runtime::scene::StageObjectsPort {
+            pack: p,
+            objects: stage_objects,
+        },
+    );
     ssb_psp_runtime::scene::place_item_trees(stage_objects, items);
 }
 
@@ -1401,6 +1424,7 @@ fn physics_pass(
     s: &mut [Option<&mut play::FighterScene>; 4],
     weapons: &mut ssb_game::weapon::WeaponPool,
     items: &mut ssb_game::item::ItemPool,
+    stage_ctl: &mut ssb_game::stage::Stage,
     stage_objects: &mut ssb_rom::ground_obj::GroundObjects,
     effects: &mut dyn ssb_game::effect::HitEffectSink,
 ) {
@@ -1446,10 +1470,6 @@ fn physics_pass(
         left: stage.bounds.left as f32,
         right: stage.bounds.right as f32,
     };
-    weapons.tick(map, Some(blast_zone));
-    for f in s.iter_mut().flatten() {
-        weapons.sync_owner(&mut f.fighter);
-    }
     for f in s.iter().flatten() {
         items.observe_owner(&f.fighter);
     }
@@ -1467,8 +1487,24 @@ fn physics_pass(
             objects: stage_objects,
         },
     );
+    // Monster completion calls the gate from the item main process,
+    // before the weapon link and its particle RNG draws.
+    stage_ctl.apply_item_events(
+        items.take_stage_events(),
+        groups,
+        &mut ssb_psp_runtime::scene::StageObjectsPort {
+            pack: p,
+            objects: stage_objects,
+        },
+    );
     for f in s.iter_mut().flatten() {
         items.sync_owner(&mut f.fighter);
+    }
+    items.flush_effects(effects);
+    items.flush_monster_shots(weapons);
+    weapons.tick(map, Some(blast_zone));
+    for f in s.iter_mut().flatten() {
+        weapons.sync_owner(&mut f.fighter);
     }
     // The weapons' main processes' effects: the weapon link runs after the
     // item link (RE-416).
@@ -1748,8 +1784,16 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
         Some(GameScene::VsYoshi) => ssb_game::stage_select::gkind::YOSTER,
         Some(GameScene::TrainingJungle) => ssb_game::stage_select::gkind::JUNGLE,
         Some(GameScene::TrainingZebes) => ssb_game::stage_select::gkind::ZEBES,
-        Some(GameScene::TrainingSaffron) => ssb_game::stage_select::gkind::YAMABUKI,
-        Some(GameScene::TrainingInishie | GameScene::TrainingPlants) => ssb_game::stage_select::gkind::INISHIE,
+        Some(
+            GameScene::TrainingSaffron | GameScene::TrainingChansey
+            | GameScene::TrainingElectrode
+            | GameScene::TrainingCharmander
+            | GameScene::TrainingVenusaur
+            | GameScene::TrainingPorygon,
+        ) => ssb_game::stage_select::gkind::YAMABUKI,
+        Some(GameScene::TrainingInishie | GameScene::TrainingPlants) => {
+            ssb_game::stage_select::gkind::INISHIE
+        }
         Some(GameScene::TrainingYoster) => ssb_game::stage_select::gkind::YOSTER,
         Some(GameScene::TrainingSector | GameScene::TrainingArwing) => {
             ssb_game::stage_select::gkind::SECTOR
@@ -1760,6 +1804,41 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
         Some(GameScene::TrainingHyrule) => ssb_game::stage_select::gkind::HYRULE,
         _ => CAPTURE_STAGE_GKIND,
     }
+}
+
+fn capture_monster(scene: Option<GameScene>) -> Option<u8> {
+    Some(match scene {
+        Some(GameScene::TrainingChansey) => 0,
+        Some(GameScene::TrainingElectrode) => 1,
+        Some(GameScene::TrainingCharmander) => 2,
+        Some(GameScene::TrainingVenusaur) => 3,
+        Some(GameScene::TrainingPorygon) => 4,
+        _ => return None,
+    })
+}
+
+#[inline(never)]
+fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s: &mut Session) {
+    use ssb_game::stage::StageItems;
+    let (Some(id), Some(pack)) = (capture_monster(scene), pack) else {
+        return;
+    };
+    let ssb_game::stage::Controller::Yamabuki(gate) = &mut s.stage_ctl.controller else {
+        return;
+    };
+    gate.status = ssb_game::stage::yamabuki::GateStatus::Open;
+    gate.monster_prev = id;
+    gate.monster = s
+        .items
+        .make_item(ssb_game::stage::StageItem::Monster(id), gate.monster_pos);
+    // Force the source's WAIT firing pattern, to show the weapon and the
+    // active texture frame at this diagnostic scene's capture tick.
+    for slot in 0..ssb_game::item::ITEM_ALLOC_MAX as u8 {
+        if let Some(item) = s.items.get_mut(slot) {
+            item.vars.monster_flags = 1;
+        }
+    }
+    let _ = s.stage_objects.play(pack, ssb_rom::ground_obj::GATE_OPEN);
 }
 
 /// Which selects a capture scene passes through from the Training entry.
@@ -2899,6 +2978,7 @@ unsafe fn session_frame(
                         });
                         let gkind = capture_stage_gkind(capture_scene);
                         s.enter(pack.as_ref(), gkind, roster, rules);
+                        prepare_monster_capture(capture_scene, pack.as_ref(), s);
                         s.scene_gkind = gkind;
                         // Training's CPU menu (`dSC1PTrainingModeDummyBehaviors`)
                         // is not ported; these scenes pick its behaviour.
@@ -3378,6 +3458,16 @@ unsafe fn run() -> ! {
             }
         }
 
+        if capture_monster(capture_scene).is_some() {
+            if let Some(pl) = s.play_state.as_mut() {
+                if let ssb_game::stage::Controller::Yamabuki(gate) = &s.stage_ctl.controller {
+                    let at = gate.monster_pos + ssb_engine::math::Vec3::new(-600.0, 0.0, 0.0);
+                    pl.camera.at = at;
+                    pl.camera.eye = at + ssb_engine::math::Vec3::new(0.0, 0.0, 5000.0);
+                }
+            }
+        }
+
         draw_frame(
             &mut gpu,
             &mut s,
@@ -3835,6 +3925,7 @@ struct DrawAssets {
     yoshi_egg_mesh: Option<ssb_rom::pack::MeshDesc>,
     yoshi_star_mesh: Option<ssb_rom::pack::MeshDesc>,
     arwing_laser_mesh: Option<ssb_rom::pack::MeshDesc>,
+    monster_razor: Option<ssb_rom::pack::ObjectDesc>,
     /// The Falcon Punch flame (material animation only).
     falcon_punch: Option<ssb_rom::pack::ObjectDesc>,
     /// Pikachu's aerial and ground Thunder Jolts with their `anim_joints`.
@@ -3892,6 +3983,7 @@ impl DrawAssets {
             yoshi_egg_mesh: ssb_psp_runtime::scene::yoshi_egg_mesh(p),
             yoshi_star_mesh: ssb_psp_runtime::scene::yoshi_star_mesh(p),
             arwing_laser_mesh: ssb_psp_runtime::scene::arwing_laser_mesh(p),
+            monster_razor: ssb_psp_runtime::scene::object_keyed(p, (159, 0x2A50)),
             falcon_punch: ssb_psp_runtime::scene::captain_falcon_punch_effect(p),
             jolt_air: ssb_psp_runtime::scene::object_keyed(
                 p,
@@ -4318,7 +4410,8 @@ impl DrawAssets {
             // No scripts, or trees the stage's ground objects draw.
             ssb_game::item::ItemKind::GBumper
             | ssb_game::item::ItemKind::PowerBlock
-            | ssb_game::item::ItemKind::Pakkun => None,
+            | ssb_game::item::ItemKind::Pakkun
+            | ssb_game::item::ItemKind::Monster(_) => None,
         }
     }
 }
@@ -6161,6 +6254,16 @@ unsafe fn draw_items_weapons_effects(
     // camera-facing quad spun by `rotate.z`. The head's root pulses its
     // scale; its child, the drawn node, adds its own kind 46 at scale 1. The
     // trail is one `TraRotRpyRSca` DObj turned about Z along its path.
+    if let Some(object) = assets.monster_razor.as_ref() {
+        for shot in weapons.monster_shots().filter(|m| m.razor) {
+            gpu.model_transform_xyz(
+                [shot.position.x, shot.position.y, shot.position.z],
+                [0.0, 0.0, shot.rotate_z],
+                [meshdraw::MODEL_SCALE; 3],
+            );
+            meshdraw::draw_object(p, object, &gpu.model_matrix(), draw_state, None, 0);
+        }
+    }
     let first_mesh = |object: &ssb_rom::pack::ObjectDesc, node: u32| {
         p.node(object.first_node + node)
             .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)

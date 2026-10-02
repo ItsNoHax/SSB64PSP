@@ -13,6 +13,71 @@ use ssb_rom::figatree::JointPose;
 use ssb_rom::objanim::{joint_scripts, StageJoint};
 use ssb_rom::scene::find_scene_graphs;
 
+/// Every Saffron item uses file 159, while the gate uses file 160. Replay
+/// each packed root against its ROM script, including the make-time play.
+#[test]
+fn saffron_item_clocks_and_texture_frames_match_the_rom() {
+    use ssb_rom::ground_obj::{self as g, GroundObjects};
+    use ssb_rom::pack::{NodeDesc, Pack};
+    let Some((bytes, rom)) = pack_and_rom() else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    let archive = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();
+    let file = archive.load(159).unwrap();
+    let mut objects = GroundObjects::new(&pack, g::YAMABUKI_FILE);
+    assert_eq!(objects.iter().count(), 6);
+    for (id, script) in [0x3F8, 0x828, 0x1A28, 0x23D8, 0xF38]
+        .into_iter()
+        .enumerate()
+    {
+        let asset = g::MONSTER_FIRST + id as u8;
+        let object = objects.instance(asset, 0).unwrap().object;
+        assert_eq!(object.source_file, 159);
+        objects.item_make(&pack, asset, 0);
+        let mut joint = StageJoint::start_changed(script, 0.0);
+        let mut pose = JointPose::default();
+        joint.tick(&file.data, 1.0, &mut pose).unwrap();
+        let mut plays = 1;
+        while !joint.ended() {
+            let write = objects.item_play(&pack, asset, 0);
+            joint.tick(&file.data, 1.0, &mut pose).unwrap();
+            for (axis, v) in write.into_iter().enumerate() {
+                if let Some(v) = v {
+                    assert_eq!(
+                        v.to_bits(),
+                        pose.translate[axis].to_bits(),
+                        "kind {id} play {plays} axis {axis}"
+                    );
+                }
+            }
+            assert_eq!(
+                objects.item_root_frame(asset, 0).to_bits(),
+                joint.frame().to_bits()
+            );
+            assert_eq!(objects.item_root_idle(asset, 0), joint.ended());
+            plays += 1;
+            assert!(plays < 500);
+        }
+        assert!(plays > 80, "kind {id}: {plays}");
+        if id == 2 || id == 3 {
+            let o = objects.instance_mut(asset, 0).unwrap();
+            let node = pack.node(object.first_node + 1).unwrap();
+            for frame in 0..2 {
+                o.texture = frame;
+                let draw = o.draw_node(1, node);
+                assert_ne!(draw.mesh, NodeDesc::NO_MESH);
+                let mesh = pack.mesh(draw.mesh).unwrap();
+                assert_eq!(
+                    mesh.source_offset,
+                    g::MONSTER_TEXTURES[id - 2][frame as usize]
+                );
+                assert!(mesh.prim_count > 0);
+            }
+        }
+    }
+}
+
 const EYES: u32 = 0x10F0;
 const MOUTH: u32 = 0x1770;
 const FLOWERS_BACK: u32 = 0x2A80;

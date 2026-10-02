@@ -10,11 +10,14 @@ use crate::meshdraw::{self, DrawState, ParticleRect};
 
 /// The banks a match loads: runtime bank 0 is `efcommon` (pack bank 0),
 /// which `efDisplayInitAll` loads. Runtime bank 1 maps to Yoshi's packed
-/// `particles_unk2` (pack bank 3, `dFTYoshiData`). Stage banks stay unloaded.
+/// `particles_unk2` (pack bank 3, `dFTYoshiData`). Runtime bank 2 is
+/// `itcommon` (pack bank 4), loaded by `itManagerInitItems` for monster flames.
+/// Stage banks stay unloaded.
 pub struct PackBanks<'p, 'a> {
     pack: &'p Pack<'a>,
     common: ParticleBankDesc,
     yoshi: Option<ParticleBankDesc>,
+    items: Option<ParticleBankDesc>,
 }
 
 impl<'p, 'a> PackBanks<'p, 'a> {
@@ -23,6 +26,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             pack,
             common: pack.particle_bank(0)?,
             yoshi: pack.particle_bank(3),
+            items: pack.particle_bank(4),
         })
     }
 
@@ -30,6 +34,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
         match id {
             0 => Some(self.common),
             ssb_game::effect::YOSHI_PARTICLE_BANK => self.yoshi,
+            2 => self.items,
             _ => None,
         }
     }

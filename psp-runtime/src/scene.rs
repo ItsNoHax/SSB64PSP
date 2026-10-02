@@ -1683,6 +1683,7 @@ fn item_tree(target: ssb_game::item::ItemAnimTarget) -> Option<(u8, u8)> {
     match target {
         ItemAnimTarget::PowerBlock => Some((g::POWER_BLOCK, 0)),
         ItemAnimTarget::Pakkun(i) => Some((g::PAKKUN, i)),
+        ItemAnimTarget::Monster(k) => Some((g::MONSTER_FIRST + k as u8, 0)),
         ItemAnimTarget::Untracked => None,
     }
 }
@@ -1692,6 +1693,9 @@ fn root_write(w: ssb_rom::ground_obj::RootWrite) -> ssb_game::item::RootWrite {
 }
 
 impl ssb_game::item::ItemAnims for ItemAnimsPort<'_, '_> {
+    fn root_frame(&self, target: ssb_game::item::ItemAnimTarget) -> f32 {
+        item_tree(target).map_or(0.0, |(a, i)| self.objects.item_root_frame(a, i))
+    }
     fn make(&mut self, target: ssb_game::item::ItemAnimTarget) {
         if let Some((asset, instance)) = item_tree(target) {
             self.objects.item_make(self.pack, asset, instance);
@@ -1748,6 +1752,9 @@ pub fn place_item_trees(
     objects.hide_items();
     for item in items.items().filter(|i| !i.hidden) {
         if let Some((asset, instance)) = item_tree(item.anim_target()) {
+            if let Some(o) = objects.instance_mut(asset, instance) {
+                o.texture = item.texture;
+            }
             objects.item_place(
                 asset,
                 instance,
