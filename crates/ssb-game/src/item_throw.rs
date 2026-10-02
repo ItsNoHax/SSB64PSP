@@ -295,6 +295,10 @@ pub fn update(f: &mut Fighter) -> bool {
                     set_lift_wait(f);
                 }
             } else {
+                // The Hammer's `ftHammerSetStatusHammerWait` is not ported.
+                if !heavy {
+                    light_get_proc_damage(f);
+                }
                 status::set_wait(f);
             }
         }
@@ -433,6 +437,43 @@ pub fn on_damage(f: &mut Fighter) {
     {
         drop_item(f);
     }
+    if f.status.status == Status::LightGet {
+        light_get_proc_damage(f);
+    }
+}
+
+/// `ftCommonLightGetProcMap`/`HeavyGet`'s and the lift statuses' ground
+/// loss: a heavy item drops, a consumable is eaten.
+pub fn on_floor_lost(f: &mut Fighter) {
+    if common_heavy(f.status.status) && f.items.held.is_some() {
+        drop_item(f);
+    }
+    if f.status.status == Status::LightGet {
+        light_get_proc_damage(f);
+    }
+}
+
+/// `ftCommonLightGetProcDamage`: a held Tomato or Heart heals and is
+/// destroyed. The Hammer's timer and music are not ported.
+pub fn light_get_proc_damage(f: &mut Fighter) {
+    let Some(held) = f.items.held else {
+        return;
+    };
+    if held.ty != ItemType::Consume {
+        return;
+    }
+    let heal = match held.kind {
+        crate::item::ItemKind::Utility(crate::item::utility::Kind::Tomato) => {
+            crate::item::utility::TOMATO_DAMAGE_HEAL
+        }
+        crate::item::ItemKind::Utility(crate::item::utility::Kind::Heart) => {
+            crate::item::utility::HEART_DAMAGE_HEAL
+        }
+        _ => return,
+    };
+    crate::colanim::set_heal_damage(f, heal);
+    f.items.request(ItemRequest::Destroy);
+    f.items.held = None;
 }
 
 /// `ftCommonLightThrowCheckItemTypeThrow`.

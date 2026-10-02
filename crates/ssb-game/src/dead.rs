@@ -260,6 +260,7 @@ fn reset_common_vars(f: &mut Fighter) {
 
 /// `ftCommonDeadResetSpecialStats`.
 fn reset_special_stats(f: &mut Fighter) {
+    f.star_invincible_frames = 0;
     f.dead.is_ghost = true;
     f.is_shadow_hidden = true;
 }

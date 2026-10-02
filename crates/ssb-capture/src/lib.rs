@@ -472,6 +472,9 @@ pub enum GameScene {
     TrainingCrate,
     TrainingBarrel,
     TrainingHeavy,
+    /// `trainingutility`: a Tomato within Mario's reach, a Heart and a
+    /// Star; A at tick 60 picks up and eats the Tomato (RE-433).
+    TrainingUtility,
     /// Diagnostic Saffron item views: source lifecycle, selected maker.
     TrainingChansey,
     TrainingElectrode,
@@ -503,7 +506,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 91] = [
+    pub const ALL: [GameScene; 92] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -582,6 +585,7 @@ impl GameScene {
         GameScene::TrainingCrate,
         GameScene::TrainingBarrel,
         GameScene::TrainingHeavy,
+        GameScene::TrainingUtility,
         GameScene::TrainingChansey,
         GameScene::TrainingElectrode,
         GameScene::TrainingCharmander,
@@ -677,6 +681,7 @@ impl GameScene {
             GameScene::TrainingCrate => "trainingcrate",
             GameScene::TrainingBarrel => "trainingbarrel",
             GameScene::TrainingHeavy => "trainingheavy",
+            GameScene::TrainingUtility => "trainingutility",
             GameScene::TrainingChansey => "trainingchansey",
             GameScene::TrainingElectrode => "trainingelectrode",
             GameScene::TrainingCharmander => "trainingcharmander",

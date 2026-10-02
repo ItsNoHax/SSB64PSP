@@ -350,6 +350,11 @@ pub struct Fighter {
     pub damage_colls: crate::hurtbox::DamageColls,
     /// `FTStruct::intangible_tics`.
     pub intangible_frames: u16,
+    /// `FTStruct::star_invincible_tics`; `star_hitstatus` is invincible
+    /// while it runs (`ftParamSetStarHitStatusInvincible`).
+    pub star_invincible_frames: u16,
+    /// `FTStruct::damage_heal`: percent still to heal, one per frame.
+    pub damage_heal: i32,
     /// `FTStruct::knockback_resist_passive`.
     pub knockback_resist_passive: f32,
     /// `FTStruct::damage_knockback_stack`: the knockback of the last damage
@@ -486,6 +491,8 @@ impl Fighter {
             hitstatus: crate::combat::HitStatus::Normal,
             damage_colls: crate::hurtbox::DamageColls::default(),
             intangible_frames: 0,
+            star_invincible_frames: 0,
+            damage_heal: 0,
             knockback_resist_passive: 0.0,
             damage_knockback_stack: 0.0,
             is_knockback_paused: false,
@@ -557,6 +564,27 @@ impl Fighter {
             self.invincible_frames -= 1;
             if self.invincible_frames == 0 && self.intangible_frames == 0 {
                 self.colanim.is_nodamage_expired = true;
+            }
+        }
+        // The Star's timer and the heal follow. Their colour animations
+        // (`colanim_id` 0x4A and 9) end in the same deferred check. The
+        // Star's warning frame only restores the stage music.
+        if self.star_invincible_frames > 0 {
+            self.star_invincible_frames -= 1;
+            if self.star_invincible_frames == 0 {
+                self.colanim.is_star_expired = true;
+            }
+        }
+        if self.damage_heal != 0 {
+            self.damage_heal -= 1;
+            if self.damage != 0 {
+                self.damage -= 1;
+            }
+            if self.damage == 0 {
+                self.damage_heal = 0;
+            }
+            if self.damage_heal == 0 {
+                self.colanim.is_heal_expired = true;
             }
         }
         if self.hitlag > 0 {
@@ -1080,9 +1108,7 @@ impl Fighter {
         let Some(standing) = self.floor else {
             // Grounded with no floor recorded is not a state the original can
             // reach; treat it as airborne rather than guessing a surface.
-            if crate::item_throw::common_heavy(self.status.status) && self.items.held.is_some() {
-                crate::item_throw::drop_item(self);
-            }
+            crate::item_throw::on_floor_lost(self);
             self.become_airborne();
             return;
         };
@@ -1211,10 +1237,7 @@ impl Fighter {
             // with no ground under it.
             None => {
                 self.floor = None;
-                if crate::item_throw::common_heavy(self.status.status) && self.items.held.is_some()
-                {
-                    crate::item_throw::drop_item(self);
-                }
+                crate::item_throw::on_floor_lost(self);
                 if self.status.status
                     == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialN)
                 {

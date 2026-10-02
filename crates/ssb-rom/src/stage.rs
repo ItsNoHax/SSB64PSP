@@ -82,6 +82,11 @@ const G_CAMERA_BOUNDS: u32 = 0x6C;
 const G_MAP_BOUNDS: u32 = 0x74;
 const G_BGM_ID: u32 = 0x7C;
 const G_MAP_NODES: u32 = 0x80;
+/// `MPItemWeights *item_weights`: one randomizer weight per common item
+/// kind (`nITKindCommonStart..=nITKindCommonEnd`).
+const G_ITEM_WEIGHTS: u32 = 0x84;
+/// `nITKindCommonEnd + 1`.
+pub const ITEM_WEIGHT_COUNT: usize = 20;
 
 /// A pointer that has been followed to the file it lands in.
 pub type Target = (u32, u32);
@@ -160,6 +165,8 @@ pub struct GroundData {
     /// `wallpaper`: the background `Sprite`, which every VS stage keeps in
     /// its own file (RE-419).
     pub wallpaper: Option<Target>,
+    /// `item_weights`, NULL on the bonus stages.
+    pub item_weights: Option<[u8; ITEM_WEIGHT_COUNT]>,
 }
 
 fn read_u32(data: &[u8], at: u32) -> Option<u32> {
@@ -311,7 +318,19 @@ pub fn read_ground_data(
         emblem_colors,
         fog_color,
         wallpaper: target(file, base + G_WALLPAPER),
+        item_weights: item_weights(file, base),
     })
+}
+
+/// `item_weights` of the header at `base`, when it points into the header's
+/// own file (every VS map file does).
+fn item_weights(file: &File, base: u32) -> Option<[u8; ITEM_WEIGHT_COUNT]> {
+    let (id, at) = target(file, base + G_ITEM_WEIGHTS)?;
+    if id != file.id {
+        return None;
+    }
+    let at = at as usize;
+    file.data.get(at..at + ITEM_WEIGHT_COUNT)?.try_into().ok()
 }
 
 /// The `wallpaper` `Sprite` of the header at `base`, followed to its file.
@@ -492,6 +511,43 @@ mod tests {
         });
         let found = find_ground_data(&file, graphs);
         assert_eq!(found[0].map_geometry, Some((255, 0x90)));
+    }
+
+    #[test]
+    fn item_weights_match_the_decomp_us_tables() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        // `dGRCastleMap_item_weights` and `dGRZebesMap_item_weights`, the
+        // non-JP variants.
+        for (id, want) in [
+            (
+                VS_GROUND_FILES[0],
+                [
+                    0x50, 0x1E, 0x78, 0x00, 0x0E, 0x07, 0x0C, 0x0A, 0x05, 0x0F, 0x0A, 0x08, 0x13,
+                    0x08, 0x10, 0x16, 0x0A, 0x0A, 0x0A, 0x14,
+                ],
+            ),
+            (
+                VS_GROUND_FILES[3],
+                [
+                    0x14, 0x08, 0xC8, 0x00, 0x0A, 0x05, 0x05, 0x14, 0x05, 0x08, 0x0C, 0x1E, 0x0F,
+                    0x08, 0x16, 0x0C, 0x0E, 0x05, 0x07, 0x10,
+                ],
+            ),
+        ] {
+            let file = archive.load(id).unwrap();
+            let g = read_ground_data(&file, 0x14, |_, _| true).unwrap();
+            assert_eq!(g.item_weights, Some(want), "file {id:#x}");
+        }
+        for &id in &VS_GROUND_FILES {
+            let file = archive.load(id).unwrap();
+            let g = read_ground_data(&file, 0x14, |_, _| true).unwrap();
+            assert!(g.item_weights.is_some(), "file {id:#x}");
+        }
     }
 
     #[test]

@@ -712,7 +712,18 @@ pub fn is_body_intangible(f: &Fighter) -> bool {
 
 /// Whether every body-wide hit status is normal.
 pub fn is_body_normal(f: &Fighter) -> bool {
-    special_hitstatus(f) == HitStatus::Normal && body_hitstatus(f) == HitStatus::Normal
+    special_hitstatus(f) == HitStatus::Normal
+        && star_hitstatus(f) == HitStatus::Normal
+        && body_hitstatus(f) == HitStatus::Normal
+}
+
+/// `FTStruct::star_hitstatus`: only the Star sets it, to invincible.
+pub fn star_hitstatus(f: &Fighter) -> HitStatus {
+    if f.star_invincible_frames > 0 {
+        HitStatus::Invincible
+    } else {
+        HitStatus::Normal
+    }
 }
 
 /// `FTStruct::hitstatus`, including the `ftParamSetHitStatusAll` writes of
