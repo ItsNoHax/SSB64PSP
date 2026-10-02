@@ -58,6 +58,8 @@ pub mod gbumper;
 mod hit;
 pub mod normal;
 pub(crate) use hit::{queue_damage, touches_damage_coll, Attacker, Knock};
+#[cfg(test)]
+mod heavy_tests;
 pub mod link_bomb;
 mod map;
 pub mod monsters;
@@ -362,6 +364,12 @@ pub enum ItemStatus {
 /// `ITStruct::item_vars`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ItemVars {
+    /// The item root's rotation: descriptor 1's `DObj`, since
+    /// `itManagerMakeItem` ejects descriptor 0's placeholder (RE-432).
+    /// `rotate_z` is its Z.
+    pub container_root_yaw: f32,
+    pub container_root_pitch: f32,
+    pub taru_roll_step: f32,
     /// `linkbomb.scale_id`, `scale_int`, `drop_update_wait`.
     pub bomb_scale_id: i32,
     pub bomb_scale_int: i32,
@@ -1016,7 +1024,7 @@ pub(crate) struct Effects {
 }
 
 impl ItemPool {
-    /// `itManagerMakeItemSetupCommon` for a supported light container.
+    /// `itManagerMakeItemSetupCommon` for a supported container.
     pub fn spawn_container(&mut self, kind: container::Kind, pos: Vec3, vel: Vec3) -> Option<u8> {
         let slot = self.alloc(container::make(kind, pos, vel))?;
         let mut emit = crate::wpeffect::Emit::default();
@@ -1348,6 +1356,29 @@ impl ItemPool {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
+        self.tick_with_effects(
+            surfaces,
+            bounds,
+            fighters,
+            anims,
+            &mut crate::effect::NoEffects,
+        );
+    }
+
+    /// Item main with direct effect-manager calls, preserving maker RNG
+    /// before container contents are selected.
+    #[inline(never)]
+    pub fn tick_with_effects<I, F>(
+        &mut self,
+        surfaces: F,
+        bounds: Option<BlastZone>,
+        fighters: &[Vec3],
+        anims: &mut dyn ItemAnims,
+        effects_sink: &mut dyn crate::effect::HitEffectSink,
+    ) where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
         let order = self.order;
         let owners = self.owners;
         let mut events = self.events;
@@ -1367,6 +1398,7 @@ impl ItemPool {
             let mut common = CommonPort {
                 pool: self,
                 surfaces: &surfaces,
+                effects: effects_sink,
             };
             let mut ctx = ProcCtx {
                 common: &mut common,
@@ -1396,6 +1428,19 @@ impl ItemPool {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
+        self.resolve_with_effects(fighters, anims, surfaces, &mut crate::effect::NoEffects);
+    }
+    #[inline(never)]
+    pub fn resolve_with_effects<I, F>(
+        &mut self,
+        fighters: &[&Fighter],
+        anims: &mut dyn ItemAnims,
+        surfaces: F,
+        effects_sink: &mut dyn crate::effect::HitEffectSink,
+    ) where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
         let order = self.order;
         let mut events = self.events;
         for (link, &slot) in order[..self.order_len].iter().enumerate() {
@@ -1407,6 +1452,7 @@ impl ItemPool {
             let mut common = CommonPort {
                 pool: self,
                 surfaces: &surfaces,
+                effects: effects_sink,
             };
             let alive = hit_collisions(
                 &mut item,
@@ -1591,6 +1637,7 @@ where
         ItemStatus::LinkBomb(link_bomb::Status::Explode)
             | ItemStatus::Monster(monsters::Status::Explode)
             | ItemStatus::Container(container::Status::Explode)
+            | ItemStatus::Container(container::Status::Roll)
     ) {
         // `item_gobj->flags = GOBJ_FLAG_NONE`, except that the explosion
         // hides the Bomb's DObj rather than the GObj.
@@ -1678,6 +1725,7 @@ fn has_proc_map(item: &Item) -> bool {
                     | container::Status::Fall
                     | container::Status::Thrown
                     | container::Status::Dropped
+                    | container::Status::Roll
             )
     )
 }
@@ -1826,12 +1874,16 @@ fn hit_collisions(
 struct CommonPort<'a, F> {
     pool: &'a mut ItemPool,
     surfaces: &'a F,
+    effects: &'a mut dyn crate::effect::HitEffectSink,
 }
 impl<I, F> normal::CommonItems for CommonPort<'_, F>
 where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
+    fn smash_container(&mut self, pos: Vec3) {
+        self.effects.container_smash(pos);
+    }
     fn eggs_enabled(&self) -> bool {
         self.pool.normal_switches.enabled(3)
     }
@@ -1853,5 +1905,23 @@ where
             .normal_drops
             .choose()
             .is_some_and(|kind| kind <= 19)
+    }
+    fn open_crate(&mut self, _parent: &mut Item) -> bool {
+        let drops = self.pool.normal_drops;
+        if !drops.choose().is_some_and(|kind| kind <= 19) {
+            return false;
+        }
+        let count = match crate::rng::rand_int_range(5) {
+            0 | 1 => 1,
+            2 => 2,
+            _ => 3,
+        };
+        if crate::rng::rand_int_range(32) != 0 {
+            for _ in 1..count {
+                drops.choose_utility();
+            }
+        }
+        // Utility makers join this branch in the next normal-item batch.
+        true
     }
 }

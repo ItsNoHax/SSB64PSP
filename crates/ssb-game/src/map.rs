@@ -1313,6 +1313,12 @@ pub(crate) fn stops_at_edge(s: AnyStatus) -> bool {
             )
             | AnyStatus::Kirby(KirbyStatus::SpecialHi)
             | AnyStatus::Common(Status::Catch)
+            | AnyStatus::Common(
+                Status::HeavyThrowF
+                    | Status::HeavyThrowB
+                    | Status::HeavyThrowF4
+                    | Status::HeavyThrowB4
+            )
     )
 }
 

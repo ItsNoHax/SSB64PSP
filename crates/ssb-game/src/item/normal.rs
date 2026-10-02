@@ -24,7 +24,7 @@ impl Default for Switches {
     fn default() -> Self {
         Self {
             appearance: Appearance::Middle,
-            toggles: (1 << 2) | (1 << 3),
+            toggles: 0xF,
         }
     }
 }
@@ -73,10 +73,23 @@ impl DropWeights {
         let random = crate::rng::rand_int_range(i32::from(self.sum)) as u16;
         Some(self.kinds[self.blocks[..self.len].partition_point(|&b| b <= random) - 1])
     }
+    /// Crate rerolls omit the terminal explosion weight. The first draw
+    /// still uses the whole table (`itBoxCommonCheckSpawnItems`).
+    pub(super) fn choose_utility(&self) -> Option<u8> {
+        let mut utilities = *self;
+        if utilities.len == 0 {
+            return None;
+        }
+        utilities.len -= 1;
+        utilities.sum = utilities.blocks[utilities.len];
+        utilities.choose()
+    }
 }
 
 /// Direct item-manager calls made from item callbacks; distinct from animation.
 pub(super) trait CommonItems {
+    /// Direct call, before the weighted-drop RNG (`itBox.c`, `itTaru.c`).
+    fn smash_container(&mut self, _pos: ssb_engine::math::Vec3) {}
     fn eggs_enabled(&self) -> bool;
     fn make_egg(
         &mut self,
@@ -87,6 +100,9 @@ pub(super) trait CommonItems {
     /// `itMainMakeContainerItem`: true for a utility selection even if its
     /// maker cannot allocate; false for an empty table or explosion sentinel.
     fn open_container(&mut self, parent: &mut super::Item) -> bool;
+    fn open_crate(&mut self, parent: &mut super::Item) -> bool {
+        self.open_container(parent)
+    }
 }
 
 #[cfg(test)]

@@ -342,7 +342,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // Version 81 adds Saffron's five item animations and direct texture frames.
 // Existing descriptors retain their indices; no layout change.
 // 82 adds the normal Egg item's scale animation (86 + 0x10550).
-pub const VERSION: u32 = 82;
+// 83 adds the Crate/Barrel smash piece's direct display list (86 + 0x68F0)
+// and binds hidden model parts, such as the item-heavy joint, by the
+// original tree walk (RE-432).
+pub const VERSION: u32 = 83;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

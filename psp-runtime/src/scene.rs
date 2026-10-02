@@ -1602,7 +1602,9 @@ pub fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
 /// (`lr = 0` faces the camera; Captain Falcon's leftward entry turns
 /// around), `ssb_game::appear::model_yaw`.
 pub fn fighter_turn(f: &ssb_game::fighter::Fighter) -> f32 {
-    ssb_game::appear::model_yaw(f).unwrap_or_else(|| facing_turn(f.facing))
+    ssb_game::appear::model_yaw(f)
+        .or_else(|| ssb_game::item_throw::model_yaw(f))
+        .unwrap_or_else(|| facing_turn(f.facing))
 }
 
 /// The file data `grMainSetupMakeGround` hands a VS stage's controller:

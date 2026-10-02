@@ -1,4 +1,4 @@
-//! Light item throws and pickup (`ftcommonitemthrow.c`, `ftcommonget.c`).
+//! Item pickup, lift and throws (`ftcommonitemthrow.c`, `ftcommonget.c`).
 //! The item callbacks are delivered through the fighter's item requests.
 
 use ssb_engine::input::N64Buttons;
@@ -6,7 +6,7 @@ use ssb_engine::math::{Vec2, Vec3};
 
 use crate::fighter::{Facing, Fighter, FighterKind};
 use crate::item::{HeldItem, ItemRequest, ItemType, ItemWeight};
-use crate::status::{self, Status, StatusTiming};
+use crate::status::{self, AnyStatus, DonkeyStatus, Status, StatusTiming};
 
 /// `FTAttributes::itemlight_joint_id`, including polygon variants.
 pub fn itemlight_joint(kind: FighterKind) -> usize {
@@ -59,22 +59,30 @@ pub fn pickup(kind: FighterKind) -> Pickup {
 }
 
 /// `ftCommonGetFindItem`: same floor, strict overlap, closest horizontal
-/// distance; creation order wins ties. No heavy item is ported yet.
+/// distance; creation order wins ties. Each weight uses its own hand reach.
 pub fn find_item(f: &Fighter) -> Option<HeldItem> {
+    find_weight(f, None)
+}
+fn find_weight(f: &Fighter, weight: Option<ItemWeight>) -> Option<HeldItem> {
     let p = pickup(f.kind);
     let floor = f.floor.map(|s| s.line);
     let mut closest = f32::MAX;
     let mut found = None;
     for c in f.items.view.candidates.iter().flatten() {
-        if c.item.weight != ItemWeight::Light || c.floor_line != floor {
+        if weight.is_some_and(|w| c.item.weight != w) || c.floor_line != floor {
             continue;
         }
-        let x = f.pos.x + f.facing.sign() * p.offset_light.x;
-        let y = f.pos.y + p.offset_light.y;
-        if x - p.range_light.x - c.coll.width < c.pos.x
-            && c.pos.x < x + p.range_light.x + c.coll.width
-            && y - p.range_light.y - c.coll.top < c.pos.y
-            && c.pos.y < y + p.range_light.y - c.coll.bottom
+        let (offset, range) = if c.item.weight == ItemWeight::Heavy {
+            (p.offset_heavy, p.range_heavy)
+        } else {
+            (p.offset_light, p.range_light)
+        };
+        let x = f.pos.x + f.facing.sign() * offset.x;
+        let y = f.pos.y + offset.y;
+        if x - range.x - c.coll.width < c.pos.x
+            && c.pos.x < x + range.x + c.coll.width
+            && y - range.y - c.coll.top < c.pos.y
+            && c.pos.y < y + range.y - c.coll.bottom
         {
             let distance = (x - c.pos.x).abs();
             if distance < closest {
@@ -88,12 +96,20 @@ pub fn find_item(f: &Fighter) -> Option<HeldItem> {
 
 /// `ftCommonGetCheckInterruptCommon` / `ftCommonGetSetStatus`.
 pub fn check_get(f: &mut Fighter) -> bool {
-    if f.items.held.is_some() || find_item(f).is_none() {
+    if f.items.held.is_some() {
         return false;
     }
+    let Some(item) = find_item(f) else {
+        return false;
+    };
+    let s = if item.weight == ItemWeight::Heavy {
+        Status::HeavyGet
+    } else {
+        Status::LightGet
+    };
     f.motion_script.flags[1] = 0;
-    let timing = timing(f, Status::LightGet);
-    status::set_status(f, Status::LightGet, 0.0, timing);
+    let timing = timing(f, s.into());
+    status::set_status(f, s, 0.0, timing);
     status::play_anim_events(f);
     true
 }
@@ -116,7 +132,7 @@ const fn desc(is_smash: bool, velocity: f32, angle: i32, damage_scale: f32) -> T
     }
 }
 
-pub const THROW_DESCS: [ThrowDesc; 18] = [
+pub const THROW_DESCS: [ThrowDesc; 22] = [
     desc(false, 36.0, 110, 50.0),
     desc(false, 120.0, 10, 100.0),
     desc(false, 60.0, 15, 100.0),
@@ -135,10 +151,17 @@ pub const THROW_DESCS: [ThrowDesc; 18] = [
     desc(true, 120.0, 7, 100.0),
     desc(true, 120.0, 90, 100.0),
     desc(true, 140.0, -90, 100.0),
+    desc(false, 70.0, 60, 100.0),
+    desc(false, 70.0, 60, 100.0),
+    desc(true, 90.0, 20, 100.0),
+    desc(true, 90.0, 20, 100.0),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThrowState {
+    /// TopN yaw during script-driven turns and the eight-frame lift turn.
+    pub model_yaw: Option<f32>,
+    pub lift_turn_tics: u8,
     pub turn_tics: u32,
     pub turn_step: u32,
     pub turn_invert_wait: u32,
@@ -150,6 +173,8 @@ pub struct ThrowState {
 impl Default for ThrowState {
     fn default() -> Self {
         Self {
+            model_yaw: None,
+            lift_turn_tics: 0,
             turn_tics: 0,
             turn_step: 0,
             turn_invert_wait: 0,
@@ -160,13 +185,45 @@ impl Default for ThrowState {
     }
 }
 
-fn timing(f: &Fighter, s: Status) -> StatusTiming {
-    crate::motion::anim_length(f.kind, s.into())
-        .map_or(StatusTiming::unknown(), StatusTiming::frames)
+fn timing(f: &Fighter, s: AnyStatus) -> StatusTiming {
+    crate::motion::anim_length(f.kind, s).map_or(StatusTiming::unknown(), StatusTiming::frames)
 }
 
 pub fn is_throw(s: Status) -> bool {
-    (Status::LightThrowDrop as u16..=Status::LightThrowAirLw4 as u16).contains(&(s as u16))
+    (Status::LightThrowDrop as u16..=Status::HeavyThrowB4 as u16).contains(&(s as u16))
+}
+pub fn is_donkey_throw(s: AnyStatus) -> bool {
+    matches!(
+        s,
+        AnyStatus::Donkey(
+            DonkeyStatus::HeavyThrowF
+                | DonkeyStatus::HeavyThrowB
+                | DonkeyStatus::HeavyThrowF4
+                | DonkeyStatus::HeavyThrowB4
+        )
+    )
+}
+pub fn common_throw(s: AnyStatus) -> Option<Status> {
+    match s {
+        AnyStatus::Common(s) if is_throw(s) => Some(s),
+        AnyStatus::Donkey(DonkeyStatus::HeavyThrowF) => Some(Status::HeavyThrowF),
+        AnyStatus::Donkey(DonkeyStatus::HeavyThrowB) => Some(Status::HeavyThrowB),
+        AnyStatus::Donkey(DonkeyStatus::HeavyThrowF4) => Some(Status::HeavyThrowF4),
+        AnyStatus::Donkey(DonkeyStatus::HeavyThrowB4) => Some(Status::HeavyThrowB4),
+        _ => None,
+    }
+}
+fn facing_yaw(f: &Fighter) -> f32 {
+    core::f32::consts::FRAC_PI_2 * f.facing.sign()
+}
+pub fn model_yaw(f: &Fighter) -> Option<f32> {
+    if common_throw(f.status.status).is_some()
+        || matches!(f.status.status, AnyStatus::Common(Status::LiftTurn))
+    {
+        f.item_throw.model_yaw
+    } else {
+        None
+    }
 }
 
 /// `ftCommonItemThrowUpdateModelYaw`: the turn flips facing halfway.
@@ -180,6 +237,8 @@ fn update_turn(f: &mut Fighter) {
         f.motion_script.flags[3] = 0;
     }
     if f.item_throw.turn_tics != 0 {
+        let yaw = f.item_throw.model_yaw.unwrap_or_else(|| facing_yaw(f));
+        f.item_throw.model_yaw = Some(yaw - core::f32::consts::PI / f.item_throw.turn_step as f32);
         f.item_throw.turn_tics -= 1;
         if f.item_throw.turn_invert_wait != 0 {
             f.item_throw.turn_invert_wait -= 1;
@@ -196,31 +255,71 @@ fn update_turn(f: &mut Fighter) {
 /// `ftCommonItemThrowSetStatus`.
 pub fn set_item_throw(f: &mut Fighter, s: Status) {
     debug_assert!(is_throw(s));
+    set_throw(f, s.into());
+}
+fn set_throw(f: &mut Fighter, s: AnyStatus) {
     f.motion_script.flags = [0; 4];
     let t = timing(f, s);
-    status::set_status(f, s, 0.0, t);
+    status::set_any_status(f, s, 0.0, t);
     status::play_anim_events(f);
     f.item_throw = ThrowState::default();
     update_turn(f);
 }
 
 /// `ftCommonItemThrowProcUpdate` / `ftCommonGetProcUpdate`.
-pub fn update(f: &mut Fighter, s: Status) -> bool {
-    if s == Status::LightGet {
+pub fn update(f: &mut Fighter) -> bool {
+    let current = f.status.status;
+    if matches!(
+        current,
+        AnyStatus::Common(Status::LightGet | Status::HeavyGet)
+    ) {
+        let heavy = current == Status::HeavyGet;
         if f.motion_script.flags[1] != 0 {
             f.motion_script.flags[1] = 0;
-            if let Some(item) = find_item(f) {
+            if let Some(item) = find_weight(
+                f,
+                Some(if heavy {
+                    ItemWeight::Heavy
+                } else {
+                    ItemWeight::Light
+                }),
+            ) {
                 f.items.request(ItemRequest::Hold { slot: item.slot });
             }
         }
         if f.status.animation_ended() {
-            status::set_wait(f);
+            if heavy && f.items.held.is_some() {
+                if crate::grab::is_donkey(f.kind) {
+                    crate::grab::set_donkey_throwf_wait(f);
+                } else {
+                    set_lift_wait(f);
+                }
+            } else {
+                status::set_wait(f);
+            }
         }
         return true;
     }
-    if !is_throw(s) {
-        return false;
+    if current == Status::LiftWait {
+        if !check_heavy_throw(f) && f.stick.forward(f.facing) <= status::TURN_STICK_MIN {
+            status::set_status(f, Status::LiftTurn, 0.0, StatusTiming::unknown());
+            f.item_throw.model_yaw = Some(facing_yaw(f));
+            f.item_throw.lift_turn_tics = 8;
+            lift_turn(f);
+        }
+        return true;
     }
+    if current == Status::LiftTurn {
+        lift_turn(f);
+        if f.item_throw.lift_turn_tics == 0 {
+            set_lift_wait(f);
+        }
+        check_heavy_throw(f);
+        return true;
+    }
+    let Some(s) = common_throw(current) else {
+        return false;
+    };
     update_turn(f);
     // `motion_vars.item_throw` overlays flags 0..2, big-endian bitfields.
     let flag2 = f.motion_script.flags[2];
@@ -263,6 +362,77 @@ pub fn update(f: &mut Fighter, s: Status) -> bool {
         status::set_wait_or_fall(f);
     }
     true
+}
+fn set_lift_wait(f: &mut Fighter) {
+    status::set_status(f, Status::LiftWait, 0.0, StatusTiming::unknown());
+}
+fn lift_turn(f: &mut Fighter) {
+    f.item_throw.lift_turn_tics -= 1;
+    f.item_throw.model_yaw =
+        Some(f.item_throw.model_yaw.unwrap_or_else(|| facing_yaw(f)) - core::f32::consts::PI / 8.0);
+    if f.item_throw.lift_turn_tics == 4 {
+        f.facing = f.facing.flipped();
+        f.physics.vel_ground.x = -f.physics.vel_ground.x;
+    }
+}
+/// `ftCommonHeavyThrowCheckInterruptCommon`: A or B, before cargo actions.
+pub fn check_heavy_throw(f: &mut Fighter) -> bool {
+    if !f.items.held.is_some_and(|i| i.weight == ItemWeight::Heavy)
+        || !f.button_tap().contains(N64Buttons::A | N64Buttons::B)
+    {
+        return false;
+    }
+    let x = i32::from(f.stick.x);
+    let angle = ssb_engine::math::atan2(f.stick.y as f32, x.abs() as f32);
+    let forward = x as f32 * f.facing.sign() >= 0.0;
+    let s = if x.abs() >= 56 && f.stick.hold_x < 8 {
+        if forward {
+            Status::HeavyThrowF4
+        } else {
+            Status::HeavyThrowB4
+        }
+    } else if x.abs() >= 20 && angle.abs() <= 50.0_f32.to_radians() {
+        if forward {
+            Status::HeavyThrowF
+        } else {
+            Status::HeavyThrowB
+        }
+    } else {
+        Status::HeavyThrowF
+    };
+    let s = if crate::grab::is_donkey(f.kind) {
+        AnyStatus::Donkey(match s {
+            Status::HeavyThrowF => DonkeyStatus::HeavyThrowF,
+            Status::HeavyThrowB => DonkeyStatus::HeavyThrowB,
+            Status::HeavyThrowF4 => DonkeyStatus::HeavyThrowF4,
+            _ => DonkeyStatus::HeavyThrowB4,
+        })
+    } else {
+        s.into()
+    };
+    set_throw(f, s);
+    true
+}
+/// Common lift statuses' `proc_damage` and `proc_map` drop immediately.
+pub fn common_heavy(s: AnyStatus) -> bool {
+    matches!(
+        s,
+        AnyStatus::Common(
+            Status::HeavyGet
+                | Status::LiftWait
+                | Status::LiftTurn
+                | Status::HeavyThrowF
+                | Status::HeavyThrowB
+                | Status::HeavyThrowF4
+                | Status::HeavyThrowB4
+        )
+    )
+}
+pub fn on_damage(f: &mut Fighter) {
+    if (common_heavy(f.status.status) || is_donkey_throw(f.status.status)) && f.items.held.is_some()
+    {
+        drop_item(f);
+    }
 }
 
 /// `ftCommonLightThrowCheckItemTypeThrow`.

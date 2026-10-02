@@ -127,3 +127,74 @@ fn dream_land_rom_geometry_drives_floor_wall_ceiling_and_cliff_queries() {
     );
     assert_eq!(cliff, Some((3, Vec2::new(2318.0, 0.0))));
 }
+
+/// RE-432: the simulated figatree walk reproduces the mask-order binding for
+/// motions without hidden model parts, fits every motion that has them, and
+/// ends HeavyGet on each fighter's `joint_itemheavy_id` descriptor.
+#[test]
+fn hidden_part_walk_matches_mask_order_and_reaches_the_item_heavy_joint() {
+    let Ok(path) = std::env::var("SSB64_ROM") else {
+        return;
+    };
+    let rom = std::fs::read(path).unwrap();
+    let info = ssb_rom::rom::identify(&rom).unwrap();
+    let archive = Archive::open(&rom, info.region).unwrap();
+    let mut walked = 0;
+    for kind in 0..12usize {
+        let entry_file = ssb_rom::fighter::FIGHTER_FILES[kind];
+        let main = archive.load(entry_file.file).unwrap();
+        let mask = ssb_rom::fighter::setup_parts(&main, entry_file).unwrap();
+        let common = ssb_rom::fighter::common_parts(&main, entry_file)[0].unwrap();
+        let model = archive.load(common.model_file).unwrap();
+        let graph = ssb_rom::scene::find_scene_graphs(&model)
+            .into_iter()
+            .find(|g| g.offset == common.graph)
+            .unwrap();
+        let depths: Vec<u32> = graph.nodes.iter().map(|n| n.desc.depth()).collect();
+        let hidden: Vec<_> = (0..4)
+            .map(|i| ssb_rom::fighter::hidden_part(&main, entry_file, i).unwrap())
+            .collect();
+        let plain = ssb_rom::fighter::figatree_order(&depths, mask, &hidden, 0).unwrap();
+        let enabled: Vec<_> = (0..depths.len() as u32)
+            .filter(|i| mask >> i & 1 != 0)
+            .map(ssb_rom::fighter::TreeJoint::Desc)
+            .collect();
+        assert_eq!(plain, enabled, "fighter {kind}");
+        let entry = &ssb_rom::anim::FIGHTER_ANIMS[kind];
+        for (slot, &id) in entry.files.iter().enumerate() {
+            let parts = ssb_rom::anim::HIDDEN_PARTS[kind][slot];
+            if id == 0 || parts & 0x1FFF_FFE0 == 0 || ssb_rom::anim::is_anim_joint_slot(slot) {
+                continue;
+            }
+            let all: Vec<_> = (0..27)
+                .take_while(|&i| ssb_rom::fighter::hidden_part(&main, entry_file, i).is_some())
+                .map(|i| ssb_rom::fighter::hidden_part(&main, entry_file, i).unwrap())
+                .collect();
+            let order = ssb_rom::fighter::figatree_order(&depths, mask, &all, parts)
+                .unwrap_or_else(|| panic!("fighter {kind} slot {slot}"));
+            let file = archive.load(id as u32).unwrap();
+            let len = ssb_rom::anim::joint_table_len(&file.data).unwrap();
+            assert!(
+                len >= order.len(),
+                "fighter {kind} {}",
+                ssb_rom::anim::SLOT_NAMES[slot]
+            );
+            walked += 1;
+        }
+        let heavy = ssb_rom::fighter::figatree_order(
+            &depths,
+            mask,
+            &hidden,
+            ssb_rom::anim::HIDDEN_PARTS[kind][ssb_rom::anim::SLOT_LIGHT_THROW_DROP - 1],
+        )
+        .unwrap();
+        assert_eq!(
+            heavy.last(),
+            Some(&ssb_rom::fighter::TreeJoint::Desc(
+                hidden[3].root_joint_id - 4
+            )),
+            "fighter {kind}"
+        );
+    }
+    assert!(walked > 100, "{walked}");
+}

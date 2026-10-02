@@ -1,4 +1,4 @@
-//! The light containers, `itegg.c` and `itcapsule.c`.
+//! Normal containers: `itbox.c`, `ittaru.c`, `itegg.c`, `itcapsule.c`.
 use super::{
     map, normal::CommonItems, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType,
     ItemWeight,
@@ -9,20 +9,27 @@ use crate::{
     weapon::MapSurface,
     wpeffect::{Emit, WeaponEffect as Fx},
 };
-use ssb_engine::math::Vec3;
+use ssb_engine::math::{Vec2, Vec3};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Kind {
+    Crate = 0,
+    Barrel = 1,
     Capsule = 2,
     Egg = 3,
 }
 impl Kind {
     pub fn spin_speed(self) -> f32 {
         match self {
+            Self::Crate => 40.0 * 0.01,
+            Self::Barrel => 0.0,
             Self::Capsule => 120.0 * 0.01,
             Self::Egg => 1.0,
         }
+    }
+    pub fn heavy(self) -> bool {
+        matches!(self, Self::Crate | Self::Barrel)
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +41,7 @@ pub enum Status {
     Thrown,
     Dropped,
     Explode,
+    Roll,
 }
 
 /// File 251's `ITAttributes` at 0x50 and 0xACC (US).
@@ -81,6 +89,43 @@ pub static EGG_ATTRIBUTES: ItemAttributes = ItemAttributes {
     vel_scale: 100,
     ..CAPSULE_ATTRIBUTES
 };
+/// File 251, `llITCommonDataBoxItemAttributes` (0x5CC).
+pub static CRATE_ATTRIBUTES: ItemAttributes = ItemAttributes {
+    weight: ItemWeight::Heavy,
+    damage_coll_size: Vec3::new(450.0, 450.0, 450.0),
+    map_coll: BodyColl {
+        top: 225.0,
+        center: 0.0,
+        bottom: -225.0,
+        width: 225.0,
+    },
+    damage: 15,
+    kb_scale: 100,
+    kb_base: 40,
+    can_hop: false,
+    ty: ItemType::Damage,
+    vel_scale: 100,
+    ..CAPSULE_ATTRIBUTES
+};
+/// File 251, `llITCommonDataTaruItemAttributes` (0x634).
+pub static BARREL_ATTRIBUTES: ItemAttributes = ItemAttributes {
+    damage_coll_size: Vec3::new(294.0, 316.0, 294.0),
+    map_coll: BodyColl {
+        top: 236.0,
+        center: 0.0,
+        bottom: -236.0,
+        width: 221.0,
+    },
+    size: 290.0,
+    damage: 12,
+    ..CRATE_ATTRIBUTES
+};
+pub const HEAVY_EVENTS: [(u16, i32, i32, f32); 4] = [
+    (0, 361, 20, 350.0),
+    (4, 361, 15, 250.0),
+    (6, 361, 10, 150.0),
+    (8, 361, 1, 0.0),
+];
 /// The Egg intentionally initializes from the Capsule table, then uses its
 /// own table on updates, as the source does. These are full radii.
 pub const CAPSULE_EVENTS: [(u16, i32, i32, f32); 4] = [
@@ -98,6 +143,8 @@ pub const EGG_EVENTS: [(u16, i32, i32, f32); 4] = [
 
 pub(super) fn make(kind: Kind, pos: Vec3, vel: Vec3) -> Item {
     let attr = match kind {
+        Kind::Crate => &CRATE_ATTRIBUTES,
+        Kind::Barrel => &BARREL_ATTRIBUTES,
         Kind::Capsule => &CAPSULE_ATTRIBUTES,
         Kind::Egg => &EGG_ATTRIBUTES,
     };
@@ -112,6 +159,10 @@ pub(super) fn make(kind: Kind, pos: Vec3, vel: Vec3) -> Item {
     );
     // `itManagerMakeItemSetupCommon`: slow appear spin is unsigned.
     item.spin_step = kind.spin_speed() * core::f32::consts::PI / 18.0;
+    item.is_damage_all = kind.heavy();
+    if kind == Kind::Crate {
+        item.vars.container_root_yaw = core::f32::consts::FRAC_PI_2;
+    }
     item.update_attack_positions();
     item
 }
@@ -125,13 +176,20 @@ fn set(item: &mut Item, s: Status) {
     item.set_status(ItemStatus::Container(s));
 }
 pub(super) fn hold(item: &mut Item) {
+    // Under the new attach joint, `gcSetDObjTransformsForGObj` gives the
+    // root descriptor 1's transform: zero rotation, unit scale.
     item.rotate_z = 0.0;
     item.scale = Vec3::new(1.0, 1.0, 1.0);
+    item.vars.container_root_yaw = 0.0;
+    item.vars.container_root_pitch = 0.0;
     set(item, Status::Hold);
 }
 pub(super) fn thrown(item: &mut Item) {
-    item.is_damage_all = true;
-    item.damage_coll.hitstatus = HitStatus::Normal;
+    if !kind(item).heavy() {
+        item.is_damage_all = true;
+        item.damage_coll.hitstatus = HitStatus::Normal;
+    }
+    release_pose(item);
     set(item, Status::Thrown);
 }
 pub(super) fn dropped(item: &mut Item) {
@@ -139,9 +197,14 @@ pub(super) fn dropped(item: &mut Item) {
         item.is_damage_all = true;
         item.damage_coll.hitstatus = HitStatus::Normal;
     }
+    release_pose(item);
     set(item, Status::Dropped);
 }
 fn wait(item: &mut Item) {
+    if kind(item) == Kind::Crate {
+        let n = item.floor.map_or(Vec2::new(0.0, 1.0), |f| f.normal);
+        item.rotate_z = ssb_engine::math::atan2(n.y, n.x) - core::f32::consts::FRAC_PI_2;
+    }
     item.attack.state = AttackState::Off;
     item.vel_air = Vec3::ZERO;
     item.is_allow_pickup = true;
@@ -159,13 +222,29 @@ fn wait(item: &mut Item) {
 }
 fn fall(item: &mut Item) {
     item.is_allow_pickup = false;
-    item.is_damage_all = true;
-    item.damage_coll.hitstatus = HitStatus::Normal;
+    if !kind(item).heavy() {
+        item.is_damage_all = true;
+        item.damage_coll.hitstatus = HitStatus::Normal;
+    }
     if kind(item) == Kind::Egg {
         item.attack.state = AttackState::Off;
     }
     map::set_air(item);
     set(item, Status::Fall);
+}
+/// `it{Box,Taru}{Thrown,Dropped}SetStatus` run before the release, so
+/// their `DObjGetStruct(item_gobj)->child` is the item root under the
+/// attach joint.
+fn release_pose(item: &mut Item) {
+    match kind(item) {
+        Kind::Crate => item.vars.container_root_yaw = core::f32::consts::FRAC_PI_2,
+        Kind::Barrel => {
+            item.vars.container_root_pitch = core::f32::consts::FRAC_PI_2;
+            item.coll.top = item.coll.width;
+            item.coll.bottom = -item.coll.width;
+        }
+        _ => {}
+    }
 }
 fn attack_event(item: &mut Item, events: &[(u16, i32, i32, f32); 4]) {
     let (timer, angle, damage, size) = events[item.event_id as usize];
@@ -189,18 +268,35 @@ fn explode(item: &mut Item, fx: &mut Emit) {
     item.event_id = 0;
     item.attack.throw_mul = 1.0;
     item.attack.can_rehit_item = true;
-    item.attack.can_hop = false;
+    if kind(item) != Kind::Barrel {
+        item.attack.can_hop = false;
+    }
     item.attack.can_reflect = false;
     item.attack.can_setoff = false;
     item.attack.element = Element::Fire;
     item.damage_coll.hitstatus = HitStatus::None;
     item.clear_owner_stats();
     item.refresh_attack_coll();
-    attack_event(item, &CAPSULE_EVENTS);
+    attack_event(
+        item,
+        if kind(item).heavy() {
+            &HEAVY_EVENTS
+        } else {
+            &CAPSULE_EVENTS
+        },
+    );
     set(item, Status::Explode);
 }
 fn open(item: &mut Item, common: &mut dyn CommonItems, fx: &mut Emit) -> bool {
-    if common.open_container(item) {
+    if kind(item).heavy() {
+        common.smash_container(item.pos);
+    }
+    let opened = if kind(item) == Kind::Crate {
+        common.open_crate(item)
+    } else {
+        common.open_container(item)
+    };
+    if opened {
         if kind(item) == Kind::Egg {
             fx.push(Fx::EggBreak(item.pos));
         }
@@ -213,19 +309,55 @@ fn open(item: &mut Item, common: &mut dyn CommonItems, fx: &mut Emit) -> bool {
 pub(super) fn update(item: &mut Item, status: Status, fx: &mut Emit) -> bool {
     match status {
         Status::Init | Status::Fall | Status::Thrown | Status::Dropped => {
-            item.apply_gravity_clamp_tvel(1.2, 100.0);
+            match kind(item) {
+                Kind::Crate => item.apply_gravity_clamp_tvel(4.0, 120.0),
+                Kind::Barrel => {
+                    item.apply_gravity_clamp_tvel(4.0, 90.0);
+                    item.rotate_z += item.vars.taru_roll_step;
+                }
+                _ => item.apply_gravity_clamp_tvel(1.2, 100.0),
+            }
             item.rotate_z += item.spin_step;
         }
         Status::Explode => {
             item.multi += 1;
             let egg = kind(item) == Kind::Egg;
-            if item.multi == if egg { 8 } else { 6 } {
+            if item.multi == if kind(item) == Kind::Capsule { 6 } else { 8 } {
                 if egg {
                     fx.push(Fx::EggBreak(item.pos));
                 }
                 return false;
             }
-            attack_event(item, if egg { &EGG_EVENTS } else { &CAPSULE_EVENTS });
+            attack_event(
+                item,
+                if kind(item).heavy() {
+                    &HEAVY_EVENTS
+                } else if egg {
+                    &EGG_EVENTS
+                } else {
+                    &CAPSULE_EVENTS
+                },
+            );
+        }
+        Status::Roll => {
+            let n = item.floor.map_or(Vec2::new(0.0, 1.0), |f| f.normal);
+            item.vel_air.x +=
+                -(ssb_engine::math::atan2(n.y, n.x) - core::f32::consts::FRAC_PI_2) * 1.4;
+            item.lr = if item.vel_air.x >= 0.0 { 1.0 } else { -1.0 };
+            let speed = Vec2::new(item.vel_air.x, item.vel_air.y).length();
+            if speed < 0.1 {
+                item.lifetime -= 1;
+                if item.lifetime < 60 {
+                    if item.lifetime == 0 {
+                        return false;
+                    }
+                    if item.lifetime % 2 != 0 {
+                        item.hidden = !item.hidden;
+                    }
+                }
+            }
+            item.vars.taru_roll_step = if item.lr == -1.0 { 0.0045 } else { -0.0045 } * speed;
+            item.rotate_z += item.vars.taru_roll_step;
         }
         Status::Wait | Status::Hold => {}
     }
@@ -248,14 +380,57 @@ where
                 fall(item);
             }
         }
-        Status::Init | Status::Fall | Status::Dropped => {
-            let ground = if kind(item) == Kind::Egg { 0.5 } else { 0.4 };
-            let result = map::check_destroy_dropped(item, 0.2, ground, surfaces);
+        Status::Init | Status::Fall | Status::Dropped
+            if status != Status::Dropped || kind(item) != Kind::Barrel =>
+        {
+            let (common_rebound, ground) = match kind(item) {
+                Kind::Crate => (0.2, 0.5),
+                Kind::Barrel => (0.5, 0.2),
+                Kind::Egg => (0.2, 0.5),
+                Kind::Capsule => (0.2, 0.4),
+            };
+            let result = map::check_destroy_dropped(item, common_rebound, ground, surfaces);
             if result.destroy {
                 return false;
             }
             if result.goto_wait {
                 wait(item);
+            }
+        }
+        Status::Thrown | Status::Dropped if kind(item) == Kind::Barrel => {
+            let floor = map::test_all_collision_flag(item, crate::map::MASK_FLOOR, surfaces);
+            if map::check_collide_all_rebound(
+                item,
+                crate::map::MASK_CEIL | crate::map::MASK_LWALL | crate::map::MASK_RWALL,
+                0.5,
+            ) {
+                item.set_spin_vel_lr();
+            }
+            if floor {
+                // Signed comparisons in `itTaruThrownProcMap`, including
+                // unconditional destruction after the >=90 branch.
+                if item.vel_air.y >= 90.0 {
+                    open(item, common, fx);
+                    return false;
+                } else if item.vel_air.y < 30.0 {
+                    item.lifetime = 360;
+                    item.vel_air.y = 0.0;
+                    set(item, Status::Roll);
+                } else {
+                    let n = item.floor.unwrap().normal;
+                    map::reflect(&mut item.vel_air, n);
+                    item.vel_air.y *= 0.2;
+                    item.set_spin_vel_lr();
+                }
+                item.clear_owner_stats();
+            }
+        }
+        Status::Roll => {
+            if !map::test_lr_wall_check_floor(item, surfaces) {
+                // This callback changes only the proc table, not kinetics.
+                set(item, Status::Dropped);
+            } else if item.mask_curr & (crate::map::MASK_LWALL | crate::map::MASK_RWALL) != 0 {
+                return open(item, common, fx);
             }
         }
         Status::Thrown => {
@@ -264,6 +439,7 @@ where
             }
         }
         Status::Hold | Status::Explode => {}
+        Status::Init | Status::Fall | Status::Dropped => unreachable!(),
     }
     true
 }
@@ -274,6 +450,20 @@ pub(super) fn hit(
     common: &mut dyn CommonItems,
     fx: &mut Emit,
 ) -> Option<bool> {
+    if kind(item).heavy() {
+        return match (status, proc) {
+            (Status::Wait | Status::Thrown | Status::Dropped | Status::Roll, HitProc::Damage)
+                if item.percent_damage >= if kind(item) == Kind::Crate { 15 } else { 10 } =>
+            {
+                Some(open(item, common, fx))
+            }
+            (
+                Status::Thrown | Status::Dropped | Status::Roll,
+                HitProc::Hit | HitProc::Shield | HitProc::SetOff | HitProc::Reflector,
+            ) => Some(open(item, common, fx)),
+            _ => None,
+        };
+    }
     match (status, proc) {
         (Status::Init | Status::Wait | Status::Fall, HitProc::Damage)
         | (

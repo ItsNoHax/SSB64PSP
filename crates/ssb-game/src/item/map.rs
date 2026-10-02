@@ -114,7 +114,7 @@ fn dot(v: Vec3, n: Vec2) -> f32 {
 }
 
 /// `lbCommonReflect2D`.
-fn reflect(v: &mut Vec3, n: Vec2) {
+pub(super) fn reflect(v: &mut Vec3, n: Vec2) {
     let d = dot(*v, n) * 2.0;
     v.x -= d * n.x;
     v.y -= d * n.y;
