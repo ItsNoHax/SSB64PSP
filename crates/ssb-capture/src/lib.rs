@@ -467,6 +467,8 @@ pub enum GameScene {
     /// `trainingplants`: Mushroom Kingdom at tick 240, camera centered on
     /// the left pipe's Piranha Plant (RE-429).
     TrainingPlants,
+    /// Diagnostic loose Capsule view (RE-431).
+    TrainingCapsule,
     /// Diagnostic Saffron item views: source lifecycle, selected maker.
     TrainingChansey,
     TrainingElectrode,
@@ -498,7 +500,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 87] = [
+    pub const ALL: [GameScene; 88] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -573,6 +575,7 @@ impl GameScene {
         GameScene::TrainingCastle,
         GameScene::TrainingBumper,
         GameScene::TrainingPlants,
+        GameScene::TrainingCapsule,
         GameScene::TrainingChansey,
         GameScene::TrainingElectrode,
         GameScene::TrainingCharmander,
@@ -664,6 +667,7 @@ impl GameScene {
             GameScene::TrainingCastle => "trainingcastle",
             GameScene::TrainingBumper => "trainingbumper",
             GameScene::TrainingPlants => "trainingplants",
+            GameScene::TrainingCapsule => "trainingcapsule",
             GameScene::TrainingChansey => "trainingchansey",
             GameScene::TrainingElectrode => "trainingelectrode",
             GameScene::TrainingCharmander => "trainingcharmander",

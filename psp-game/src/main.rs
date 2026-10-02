@@ -235,7 +235,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // RE-428: the first pattern's low pass, its wing in the top right.
         GameScene::TrainingArwing => 1800,
         GameScene::TrainingBumper | GameScene::TrainingPlants => 240,
-        GameScene::TrainingChansey
+        GameScene::TrainingCapsule
+        | GameScene::TrainingChansey
         | GameScene::TrainingElectrode
         | GameScene::TrainingCharmander
         | GameScene::TrainingVenusaur
@@ -291,6 +292,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingCastle
             | GameScene::TrainingBumper
             | GameScene::TrainingPlants
+            | GameScene::TrainingCapsule
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -485,6 +487,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingCastle
             | GameScene::TrainingBumper
             | GameScene::TrainingPlants
+            | GameScene::TrainingCapsule
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -1628,7 +1631,9 @@ fn hit_pass(
             pack: p,
             objects: stage_objects,
         },
+        map,
     );
+    items.flush_effects(effects);
     for f in s.iter_mut().flatten() {
         items.sync_owner(&mut f.fighter);
     }
@@ -1820,6 +1825,12 @@ fn capture_monster(scene: Option<GameScene>) -> Option<u8> {
 #[inline(never)]
 fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s: &mut Session) {
     use ssb_game::stage::StageItems;
+    if scene == Some(GameScene::TrainingCapsule) {
+        if let Some(pl) = s.play_state.as_ref() {
+            s.items.spawn_container(ssb_game::item::container::Kind::Capsule, pl.fighter.pos + ssb_engine::math::Vec3::new(500.0, 500.0, 0.0), ssb_engine::math::Vec3::ZERO);
+        }
+        return;
+    }
     let (Some(id), Some(pack)) = (capture_monster(scene), pack) else {
         return;
     };
@@ -3942,6 +3953,8 @@ struct DrawAssets {
     /// Peach's Castle's Bumper: the NBumper tree `ITCommonData`'s
     /// `GBumperItemAttributes` names (file 86 + 0x7648). It has no scripts.
     gbumper_item: Option<ssb_rom::pack::ObjectDesc>,
+    capsule_item: Option<ssb_rom::pack::ObjectDesc>,
+    egg_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The shield bubble.
     shield: Option<ssb_rom::pack::ObjectDesc>,
     /// Ness's PSI Magnet field and its transform animation.
@@ -4013,6 +4026,8 @@ impl DrawAssets {
                 ssb_psp_runtime::scene::NESS_PK_FIRE_ITEM_SOURCE,
             )
             .zip(p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_NESS_PK_FIRE)),
+            capsule_item: ssb_psp_runtime::scene::object_keyed(p, (86, 0x670)),
+            egg_item: ssb_psp_runtime::scene::object_keyed(p, (86, 0x104A0)).zip(p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_EGG)),
             gbumper_item: ssb_psp_runtime::scene::object_keyed(
                 p,
                 ssb_psp_runtime::scene::GBUMPER_ITEM_SOURCE,
@@ -4385,9 +4400,8 @@ impl EffectVisuals {
     }
 }
 
-/// Items drawn at once: Training has at most one PK Fire flame and one Bomb
-/// per fighter.
-const MAX_ITEM_VISUALS: usize = 4;
+/// One visual for every live item in the shared pool, including containers.
+const MAX_ITEM_VISUALS: usize = ssb_game::item::ITEM_ALLOC_MAX;
 
 /// One item's players, keyed by its kind and restarted when its play count
 /// goes back.
@@ -4407,6 +4421,8 @@ impl DrawAssets {
         match kind {
             ssb_game::item::ItemKind::NessPKFire => self.pk_fire_item.as_ref(),
             ssb_game::item::ItemKind::LinkBomb => self.link_bomb_item.as_ref(),
+            ssb_game::item::ItemKind::Container(ssb_game::item::container::Kind::Egg) => self.egg_item.as_ref(),
+            ssb_game::item::ItemKind::Container(ssb_game::item::container::Kind::Capsule) => None,
             // No scripts, or trees the stage's ground objects draw.
             ssb_game::item::ItemKind::GBumper
             | ssb_game::item::ItemKind::PowerBlock
@@ -5029,7 +5045,11 @@ impl EffectVisuals {
             if visual.kind != Some(item.kind) || visual.ticks > item.anim_ticks {
                 visual.kind = Some(item.kind);
                 visual.ticks = 0;
-                visual.anim.start(p, anim);
+                if item.kind == ssb_game::item::ItemKind::Container(ssb_game::item::container::Kind::Egg) {
+                    visual.anim.start_changed(p, anim);
+                } else {
+                    visual.anim.start(p, anim);
+                }
                 visual.materials.start(p, object_mat_anims(p, object));
             }
             if let Some(script) = p.anim_script(anim) {
@@ -5873,10 +5893,46 @@ unsafe fn draw_items_weapons_effects(
                 }
                 continue;
         }
+        if item.kind == ssb_game::item::ItemKind::Container(ssb_game::item::container::Kind::Capsule) {
+            if let Some(object) = assets.capsule_item.as_ref() {
+                // The manager replaces root translation with the item's position.
+                // Relative descendant transforms stay from the descriptor.
+                let held = item.owner.filter(|_| item.is_hold).and_then(|port| {
+                    scenes_ref(pl, dummies).into_iter().flatten().find(|s| s.fighter.port == port)
+                        .and_then(|s| s.fighter.joint_transforms[ssb_game::item_throw::itemlight_joint(s.fighter.kind)])
+                });
+                match held {
+                    Some(joint) => gpu.model_transform_joint(joint.origin, joint, meshdraw::MODEL_SCALE),
+                    None => gpu.model_transform_xyz([item.pos.x, item.pos.y, item.pos.z], [0.0, 0.0, item.rotate_z], [meshdraw::MODEL_SCALE; 3]),
+                }
+                let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
+                for i in 0..object.node_count as usize {
+                    let Some(node) = p.node(object.first_node + i as u32) else { continue; };
+                    if i == 0 && held.is_none() { continue; }
+                    let local = ssb_rom::scene::Mat4::from_trs(node.rest_translate.map(|x| x / meshdraw::MODEL_SCALE), node.rest_rotate, node.rest_scale);
+                    posed[i] = node.parent.checked_sub(object.first_node).filter(|&parent| parent < i as u32).map_or(local, |parent| posed[parent as usize].mul(&local));
+                }
+                let base = gpu.model_matrix();
+                meshdraw::draw_object_posed(p, object, &base, &posed[..object.node_count as usize], None, draw_state, material_anim, None, 0);
+            }
+            continue;
+        }
         let Some((object, _)) = assets.item(item.kind) else {
             continue;
         };
         match item.kind {
+            ssb_game::item::ItemKind::Container(ssb_game::item::container::Kind::Egg) => {
+                // Maker inserts kind 46 on child 1; its child 2 carries the
+                // mesh and ROM scale script. Egg copies root spin to child 1.
+                let Some(node) = p.node(object.first_node + 2) else { continue; };
+                let Some(mesh) = p.mesh(node.mesh) else { continue; };
+                let pose = stage_pose(&visual.anim, object.first_node + 2).unwrap_or(ssb_rom::figatree::JointPose {
+                    rotate: node.rest_rotate, translate: node.rest_translate, scale: node.rest_scale,
+                });
+                gpu.model_transform_billboard(item.pos, pl.camera.eye, pl.camera.at, item.rotate_z,
+                    [meshdraw::MODEL_SCALE * item.scale.x * pose.scale[0], meshdraw::MODEL_SCALE * item.scale.y * pose.scale[1]]);
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&visual.materials));
+            }
             ssb_game::item::ItemKind::NessPKFire => {
                 let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 8];
                 let n = visual.anim.compose(p, object, &mut posed);

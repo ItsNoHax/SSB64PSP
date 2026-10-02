@@ -4,7 +4,7 @@
 //! stage items Peach's Castle's Bumper (`itgbumper.c`, [`gbumper`]),
 //! Mushroom Kingdom's POW Block (`itpowerblock.c`, [`power_block`]) and its
 //! Piranha Plants (`itpakkun.c`, [`pakkun`]), and Saffron's five Pokémon
-//! ([`monsters`]).
+//! ([`monsters`]), plus the light containers Egg and Capsule ([`container`]).
 //!
 //! [`ItemPool`] is `gITManagerStructsAllocFree` and the item GObj link: 16
 //! structs (`ITEM_ALLOC_MAX`), handed out last-freed first, and a creation
@@ -40,8 +40,9 @@
 //! clock that ends, a translation it writes), which the runtime plays
 //! through the [`ItemAnims`] port.
 //!
-//! Teams, colour animations, effects, sounds, spin and the pickup arrow are
-//! not ported; `hidden` keeps the despawn flash, which is display state.
+//! Normal containers have spin, spawn/break/explosion effects and switch
+//! gates. Colour animations, sounds and pickup arrows remain; `hidden`
+//! keeps the despawn flash, which is display state.
 
 use ssb_engine::math::{Vec2, Vec3};
 
@@ -52,8 +53,10 @@ use crate::stale::MotionAttackId;
 use crate::status::BlastZone;
 use crate::weapon::MapSurface;
 
+pub mod container;
 pub mod gbumper;
 mod hit;
+pub mod normal;
 pub(crate) use hit::{queue_damage, touches_damage_coll, Attacker, Knock};
 pub mod link_bomb;
 mod map;
@@ -112,6 +115,7 @@ pub const INTERACT_ALL: u8 = INTERACT_FIGHTER | INTERACT_WEAPON | INTERACT_ITEM;
 /// The ported `ITKind`s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemKind {
+    Container(container::Kind),
     NessPKFire,
     LinkBomb,
     GBumper,
@@ -206,7 +210,7 @@ impl Default for ItemRecord {
 }
 
 impl ItemRecord {
-    fn is_clear(&self) -> bool {
+    pub(crate) fn is_clear(&self) -> bool {
         !self.is_interact_hurt
             && !self.is_interact_shield
             && !self.is_interact_reflect
@@ -346,6 +350,7 @@ pub struct ItemDamageColl {
 /// status is set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemStatus {
+    Container(container::Status),
     PKFire(pk_fire::Status),
     LinkBomb(link_bomb::Status),
     GBumper(gbumper::Status),
@@ -457,6 +462,8 @@ pub struct Item {
     /// The root DObj's `rotate.z` (the knocked-out Piranha Plant's flip).
     /// Presentation only.
     pub rotate_z: f32,
+    /// Common/appear/thrown spin for normal containers.
+    pub spin_step: f32,
     /// `dobj->mobj->palette_id` (the Bumper's lit frames). Presentation
     /// only.
     pub palette: u8,
@@ -576,6 +583,7 @@ impl Item {
             anim_ticks: 1,
             anim_made: false,
             rotate_z: 0.0,
+            spin_step: 0.0,
             palette: 0,
             texture: 0,
             arrow_timer: 0,
@@ -590,6 +598,9 @@ impl Item {
     /// `itMainSetSpinVelLR`, less the spin itself.
     pub(crate) fn set_spin_vel_lr(&mut self) {
         self.lr = if self.vel_air.x >= 0.0 { 1.0 } else { -1.0 };
+        if let ItemKind::Container(k) = self.kind {
+            self.spin_step = k.spin_speed() * 0.314_159_27 * self.lr;
+        }
     }
 
     /// `itMainApplyGravityClampTVel`.
@@ -768,14 +779,6 @@ pub trait ItemAnims {
     /// The root DObj clock after its latest play.
     fn root_frame(&self, _target: ItemAnimTarget) -> f32 {
         0.0
-    }
-    /// Normal-item switches: eggs are disabled until that subsystem loads.
-    fn eggs_enabled(&self) -> bool {
-        false
-    }
-    /// `itManagerMakeItemSetupCommon(Egg)`: false on allocation failure.
-    fn make_egg(&mut self, _pos: Vec3, _vel: Vec3) -> bool {
-        false
     }
     /// `itManagerMakeItem`'s `gcAddAnimAll` + `gcPlayAnimAll`.
     fn make(&mut self, _target: ItemAnimTarget) {}
@@ -966,6 +969,8 @@ pub struct ItemPool {
     landed: [Option<(u8, MotionAttackId, u16)>; ITEM_ALLOC_MAX],
     /// The battle's team-attack rule ([`crate::team`]).
     pub team_rules: crate::team::TeamRules,
+    pub normal_switches: normal::Switches,
+    pub normal_drops: normal::DropWeights,
     /// Bumped each time a struct is handed out, so a stage's handle to a
     /// struct that was freed and reused no longer resolves.
     serials: [u16; ITEM_ALLOC_MAX],
@@ -992,6 +997,8 @@ impl Default for ItemPool {
             released: [false; 4],
             landed: [None; ITEM_ALLOC_MAX],
             team_rules: crate::team::TeamRules::FREE_FOR_ALL,
+            normal_switches: normal::Switches::default(),
+            normal_drops: normal::DropWeights::default(),
             serials: [0; ITEM_ALLOC_MAX],
             events: [None; STAGE_EVENTS_MAX],
             monster_attack_prev: 4,
@@ -1009,6 +1016,14 @@ pub(crate) struct Effects {
 }
 
 impl ItemPool {
+    /// `itManagerMakeItemSetupCommon` for a supported light container.
+    pub fn spawn_container(&mut self, kind: container::Kind, pos: Vec3, vel: Vec3) -> Option<u8> {
+        let slot = self.alloc(container::make(kind, pos, vel))?;
+        let mut emit = crate::wpeffect::Emit::default();
+        emit.push(crate::wpeffect::WeaponEffect::ItemSpawnSwirl(pos));
+        self.fx.extend(self.order_len as u32 - 1, &emit);
+        Some(slot)
+    }
     /// Item-made weapons enter the weapon link before its main processes.
     pub fn flush_monster_shots(&mut self, weapons: &mut crate::weapon::WeaponPool) {
         for shot in core::mem::take(&mut self.monster_shots)
@@ -1217,6 +1232,8 @@ impl ItemPool {
         item.pos = hold_pos(item, &view);
         if item.kind == ItemKind::LinkBomb {
             link_bomb::hold_set_status(item);
+        } else if matches!(item.kind, ItemKind::Container(_)) {
+            container::hold(item);
         }
         item.pickup_wait = PICKUP_WAIT_DEFAULT;
         f.items.held = Some(held_item(slot, item));
@@ -1251,7 +1268,7 @@ impl ItemPool {
         f: &mut Fighter,
         vel: Vec3,
         throw_mul: f32,
-        _is_smash: bool,
+        is_smash: bool,
         surfaces: &F,
     ) where
         F: Fn() -> I,
@@ -1263,6 +1280,15 @@ impl ItemPool {
         };
         if item.kind == ItemKind::LinkBomb {
             link_bomb::thrown_set_status(item);
+        } else if let ItemKind::Container(k) = item.kind {
+            container::thrown(item);
+            item.spin_step = k.spin_speed()
+                * if is_smash {
+                    -0.366_519_15
+                } else {
+                    -core::f32::consts::PI / 18.0
+                }
+                * if vel.x < 0.0 { -1.0 } else { 1.0 };
         }
         Self::set_fighter_release(item, &view, vel, throw_mul, surfaces);
         f.items.held = None;
@@ -1286,6 +1312,9 @@ impl ItemPool {
         };
         if item.kind == ItemKind::LinkBomb {
             link_bomb::dropped_set_status(item);
+        } else if let ItemKind::Container(k) = item.kind {
+            container::dropped(item);
+            item.spin_step = k.spin_speed() * 0.314_159_27 * if vel.x >= 0.0 { 1.0 } else { -1.0 };
         }
         Self::set_fighter_release(item, &view, vel, throw_mul, surfaces);
         f.items.held = None;
@@ -1335,7 +1364,12 @@ impl ItemPool {
                     *s = Some(shot);
                 }
             };
+            let mut common = CommonPort {
+                pool: self,
+                surfaces: &surfaces,
+            };
             let mut ctx = ProcCtx {
+                common: &mut common,
                 owners: &owners,
                 fighters,
                 anims: &mut *anims,
@@ -1357,15 +1391,32 @@ impl ItemPool {
 
     /// `itProcessProcHitCollisions` for every item. `fighters` supplies the
     /// reflectors' current facing; call after `ftMainProcParams`.
-    pub fn resolve(&mut self, fighters: &[&Fighter], anims: &mut dyn ItemAnims) {
+    pub fn resolve<I, F>(&mut self, fighters: &[&Fighter], anims: &mut dyn ItemAnims, surfaces: F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
         let order = self.order;
         let mut events = self.events;
-        for &slot in &order[..self.order_len] {
+        for (link, &slot) in order[..self.order_len].iter().enumerate() {
             let Some(mut item) = self.slots[usize::from(slot)] else {
                 continue;
             };
             let mut push = |e| push_event(&mut events, e);
-            let alive = hit_collisions(&mut item, fighters, anims, &mut push);
+            let mut emit = crate::wpeffect::Emit::default();
+            let mut common = CommonPort {
+                pool: self,
+                surfaces: &surfaces,
+            };
+            let alive = hit_collisions(
+                &mut item,
+                fighters,
+                anims,
+                &mut push,
+                &mut common,
+                &mut emit,
+            );
+            self.fx.extend(link as u32, &emit);
             self.slots[usize::from(slot)] = Some(item);
             if !alive {
                 self.destroy(slot);
@@ -1453,6 +1504,7 @@ impl crate::stage::StageItems for ItemPool {
 
 /// What an item's callbacks reach besides the item itself.
 struct ProcCtx<'a> {
+    common: &'a mut dyn normal::CommonItems,
     owners: &'a [Option<OwnerView>; 4],
     fighters: &'a [Vec3],
     anims: &'a mut dyn ItemAnims,
@@ -1538,6 +1590,7 @@ where
         item.status,
         ItemStatus::LinkBomb(link_bomb::Status::Explode)
             | ItemStatus::Monster(monsters::Status::Explode)
+            | ItemStatus::Container(container::Status::Explode)
     ) {
         // `item_gobj->flags = GOBJ_FLAG_NONE`, except that the explosion
         // hides the Bomb's DObj rather than the GObj.
@@ -1579,7 +1632,7 @@ where
     if has_proc_map(item) {
         item.mask_prev = item.mask_curr;
         item.mask_curr = 0;
-        if !proc_map(item, surfaces) {
+        if !proc_map(item, surfaces, ctx.common, ctx.fx) {
             return false;
         }
     }
@@ -1600,30 +1653,48 @@ where
     I: IntoIterator<Item = MapSurface>,
 {
     match item.status {
+        ItemStatus::Container(s) => container::update(item, s, ctx.fx),
         ItemStatus::PKFire(s) => pk_fire::proc_update(item, s),
         ItemStatus::LinkBomb(s) => link_bomb::proc_update(item, s, ctx.owners, surfaces, effects),
         ItemStatus::GBumper(_) => gbumper::proc_update(item),
         ItemStatus::PowerBlock(s) => power_block::proc_update(item, s, ctx.anims, ctx.events),
         ItemStatus::Pakkun(s) => pakkun::proc_update(item, s, ctx.fighters, ctx.anims),
-        ItemStatus::Monster(s) => {
-            monsters::proc_update(item, s, ctx.anims, ctx.events, ctx.shots, ctx.fx)
-        }
+        ItemStatus::Monster(s) => monsters::proc_update(
+            item, s, ctx.anims, ctx.events, ctx.shots, ctx.fx, ctx.common,
+        ),
     }
 }
 
 /// Whether the status has a `proc_map`: the stage items have none, so
 /// `itProcessProcItemMain` leaves their map masks alone.
 fn has_proc_map(item: &Item) -> bool {
-    matches!(item.status, ItemStatus::PKFire(_) | ItemStatus::LinkBomb(_))
+    matches!(
+        item.status,
+        ItemStatus::PKFire(_)
+            | ItemStatus::LinkBomb(_)
+            | ItemStatus::Container(
+                container::Status::Init
+                    | container::Status::Wait
+                    | container::Status::Fall
+                    | container::Status::Thrown
+                    | container::Status::Dropped
+            )
+    )
 }
 
 /// `ip->proc_map`. Returns whether the item lives on.
-fn proc_map<I, F>(item: &mut Item, surfaces: &F) -> bool
+fn proc_map<I, F>(
+    item: &mut Item,
+    surfaces: &F,
+    common: &mut dyn normal::CommonItems,
+    fx: &mut crate::wpeffect::Emit,
+) -> bool
 where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
     match item.status {
+        ItemStatus::Container(s) => return container::proc_map(item, s, surfaces, common, fx),
         ItemStatus::PKFire(s) => pk_fire::proc_map(item, s, surfaces),
         ItemStatus::LinkBomb(s) => link_bomb::proc_map(item, s, surfaces),
         ItemStatus::GBumper(_)
@@ -1648,6 +1719,8 @@ enum HitProc {
 
 /// One item callback's reach into the runtime and the stage.
 struct HitCtx<'a> {
+    common: &'a mut dyn normal::CommonItems,
+    fx: &'a mut crate::wpeffect::Emit,
     anims: &'a mut dyn ItemAnims,
     events: &'a mut dyn FnMut(StageItemEvent),
 }
@@ -1659,6 +1732,7 @@ fn run_hit_proc(
     ctx: &mut HitCtx<'_>,
 ) -> Option<bool> {
     match item.status {
+        ItemStatus::Container(s) => container::hit(item, s, proc, ctx.common, ctx.fx),
         ItemStatus::PKFire(s) => pk_fire::hit_proc(item, s, proc),
         ItemStatus::LinkBomb(s) => link_bomb::hit_proc(item, s, proc, reflector_lr),
         ItemStatus::GBumper(_) => gbumper::hit_proc(item, proc),
@@ -1674,8 +1748,15 @@ fn hit_collisions(
     fighters: &[&Fighter],
     anims: &mut dyn ItemAnims,
     events: &mut dyn FnMut(StageItemEvent),
+    common: &mut dyn normal::CommonItems,
+    fx: &mut crate::wpeffect::Emit,
 ) -> bool {
-    let ctx = &mut HitCtx { anims, events };
+    let ctx = &mut HitCtx {
+        anims,
+        events,
+        common,
+        fx,
+    };
     if item.damage_queue != 0 {
         item.percent_damage = (item.percent_damage + item.damage_queue).min(PERCENT_DAMAGE_MAX);
         item.damage_lag = item.damage_queue;
@@ -1738,4 +1819,39 @@ fn hit_collisions(
     item.damage_lag = 0;
     item.damage_knockback = 0.0;
     true
+}
+
+/// A direct manager call can allocate while the parent callback runs. The
+/// child joins the pool immediately, so later searches see it this frame.
+struct CommonPort<'a, F> {
+    pool: &'a mut ItemPool,
+    surfaces: &'a F,
+}
+impl<I, F> normal::CommonItems for CommonPort<'_, F>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    fn eggs_enabled(&self) -> bool {
+        self.pool.normal_switches.enabled(3)
+    }
+    fn make_egg(&mut self, parent: &Item, pos: Vec3, vel: Vec3) -> bool {
+        if self.pool.free_len == 0 {
+            return false;
+        }
+        let mut egg = container::make(container::Kind::Egg, pos, vel);
+        map::run_default_collision(&mut egg, parent.pos, parent.coll, self.surfaces);
+        // Ground Chansey is GLucky, not MLucky: no direction RNG here.
+        egg.update_attack_positions();
+        self.pool.alloc(egg).is_some()
+    }
+    fn open_container(&mut self, _parent: &mut Item) -> bool {
+        // Utilities 4..19 have no maker yet. The supported runtime switches
+        // enable only light containers, so this table is empty in the app.
+        // Preserve the source's successful selection even if allocation fails.
+        self.pool
+            .normal_drops
+            .choose()
+            .is_some_and(|kind| kind <= 19)
+    }
 }

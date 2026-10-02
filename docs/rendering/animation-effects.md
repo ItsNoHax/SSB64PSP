@@ -76,6 +76,13 @@ and Venusaur select one of two packed sprite meshes directly by texture ID;
 they use the OPA item seed. Electrode spins as a screen-facing billboard
 and hides during its explosion. Razor Leaf uses the weapon seed (RE-430).
 
+Normal Egg uses file 86's child-1 kind-46 billboard, with root Z spin and
+the child-2 ROM scale animation. Its raw add/play clock starts at frame
+zero through `StageAnimator::start_changed`; existing stage clocks retain
+their previous entry point. Capsule composes its four descriptor nodes
+under the loose item transform or normalized fighter hand joint. Item
+visuals cover all sixteen shared-pool slots (RE-431).
+
 ## Shadows
 
 Status: complete for the Training runtime (RE-302).
