@@ -164,6 +164,17 @@ fn transformed(kind: Kind, s: MapSurface) -> [f32; 4] {
     [a.x, a.y, b.x, b.y]
 }
 
+/// `mpProcessCheckTestFloorCollisionAdjNew` with no callback: the floor a
+/// point crossed from above while moving `from` to `to` (a moving floor by
+/// its own motion), and where. Nothing moves.
+pub fn floor_crossing<I, F>(surfaces: &F, from: Vec2, to: Vec2) -> Option<(Contact, Vec2)>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    sweep(surfaces, Kind::Floor, from, to)
+}
+
 fn query<I, F>(surfaces: &F, kind: Kind, from: Vec2, to: Vec2) -> Option<(Contact, Vec2)>
 where
     F: Fn() -> I,

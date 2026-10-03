@@ -9,7 +9,7 @@ use ssb_engine::math::{Vec2, Vec3};
 use super::{
     Ga, Item, LANDING_DESPAWN_CHECK, LANDING_NUM_MAX, THROW_DESPAWN_RANDOM, THROW_NUM_MAX,
 };
-use crate::ground::BodyColl;
+use crate::ground::{BodyColl, Standing};
 use crate::map::{AirOptions, MASK_CEIL, MASK_FLOOR, MASK_LWALL, MASK_RWALL};
 use crate::weapon::MapSurface;
 
@@ -115,6 +115,34 @@ where
         item.rotate_z = 0.0;
     }
     item.mask_curr & flags != 0
+}
+
+/// `itMapTestAllCheckCollEnd`: the walls and ceiling are only tested, and
+/// a floor the item's bottom crossed this frame is noted
+/// (`mpProcessRunFloorCollisionAdjNewNULL`) without stopping it: the item
+/// keeps its position and stays airborne, and its spin and root roll stop.
+/// Only the floor is read by the callers, so only the floor is tested.
+/// Returns whether it met one.
+pub(crate) fn test_all_check_coll_end<I, F>(item: &mut Item, surfaces: &F) -> bool
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let bottom = item.coll.bottom;
+    let from = Vec2::new(item.pos_prev.x, item.pos_prev.y + bottom);
+    let to = Vec2::new(item.pos.x, item.pos.y + bottom);
+    let Some((hit, _)) = crate::map::floor_crossing(surfaces, from, to) else {
+        return false;
+    };
+    item.mask_curr |= MASK_FLOOR;
+    item.floor = Some(Standing {
+        line: hit.line,
+        flags: hit.flags,
+        normal: hit.normal,
+    });
+    item.spin_step = 0.0;
+    item.rotate_z = 0.0;
+    true
 }
 
 fn dot(v: Vec3, n: Vec2) -> f32 {

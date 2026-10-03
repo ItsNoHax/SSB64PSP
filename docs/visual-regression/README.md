@@ -29,7 +29,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  The manifest currently has 169 scenes; RE-316 measured about 17 s for an
+  The manifest currently has 171 scenes; RE-316 measured about 17 s for an
   earlier full run.
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
@@ -1067,3 +1067,24 @@ hangs from the now-animated item-heavy joint), `f1-training-yoshi-egg`
 Each was reviewed and captured twice with zero differences. All 165
 manifest scenes pass (run `20261002-152358`). See
 [RE-432](../evidence/re/RE-432.md).
+
+## 2026-10-03 RE-435 Poké Ball Pokémon
+
+Two new tick-120 game goldens release three Pokémon each from balls owned
+by Mario: `trainingpokemona` (Meowth, Chansey, Blastoise) and
+`trainingpokemonb` (Charizard, Starmie, Koffing). Normal item and weapon
+processes run after the diagnostic setup.
+
+All 18 targeted game controls pass twice with zero differences (run
+`20261003-180306`), including both additions, the five Saffron Pokémon,
+Chansey's Egg, the heavy-item sequence, utilities, throwable items, Link's
+Bomb and Samus's Bomb. No existing golden is rebaselined. The first pass
+caught a missing maker-time weapon attack position; correcting it to
+`wpManagerMakeWeapon` restores the Charmander control's 34,728 changed
+pixels exactly.
+
+The manifest has 171 scenes. The last full matrix remains RE-434's
+169/169; it was not rerun for this gameplay batch. N64 references support
+qualitative model/attack comparisons, with later damage and trajectories
+still divergent. These goldens pin PSP output and do not establish N64
+or physical-PSP equivalence. See [RE-435](../evidence/re/RE-435.md).

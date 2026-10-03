@@ -83,6 +83,15 @@ their previous entry point. Capsule composes its four descriptor nodes
 under the loose item transform or normalized fighter hand joint. Item
 visuals cover all sixteen shared-pool slots (RE-431).
 
+Poké Ball Pokémon use file 86's trees and maker-specific matrices, with
+packed appear/status joint scripts; camera-relative kind 48 scales X/Z by
+X and Y by Y. Onix, Blastoise and Hitmonlee swap attack display lists.
+Hydro Pump, Smog and Beedrill swarm replay their weapon material scripts
+from each weapon's play count. Pokémon status materials, translucent modes,
+link 18, rock texture IDs and Poké Ball rays/open animation remain. The
+FlySparks head-0 state produces black squares; its head-1 CLD counterpart
+is a separate path (RE-435).
+
 ## Shadows
 
 Status: complete for the Training runtime (RE-302).

@@ -182,3 +182,5 @@ f1-training-utility	psp-game	trainingutility@50	pass	RE-433
 f1-training-utility-eaten	psp-game	trainingutility@100	pass	RE-433
 f1-training-throwable	psp-game	trainingthrowable@40	pass	RE-434
 f1-training-throwable-open	psp-game	trainingthrowable@170	pass	RE-434
+f1-training-pokemon-a	psp-game	trainingpokemona@120	pass	RE-435
+f1-training-pokemon-b	psp-game	trainingpokemonb@120	pass	RE-435

@@ -232,6 +232,17 @@ pub(super) trait CommonItems {
     }
     /// `itMainMakeMonster` from a Poké Ball.
     fn make_monster(&mut self, _parent: &super::Item) {}
+    /// `itManagerMakeItemSetupCommon(parent, nITKindEgg, ...)` with
+    /// `ITEM_FLAG_COLLPROJECT | ITEM_FLAG_PARENT_ITEM`: the new Egg's
+    /// facing, or `None` when no struct is free (Chansey's eggs).
+    fn make_common_egg(
+        &mut self,
+        _parent: &super::Item,
+        _pos: ssb_engine::math::Vec3,
+        _vel: ssb_engine::math::Vec3,
+    ) -> Option<i8> {
+        None
+    }
 }
 
 #[cfg(test)]

@@ -2433,6 +2433,9 @@ const ENTRY_VEHICLE_GRAPHS: &[(u32, u32)] = &[(161, 0x2C30), (350, 0x5FC0)];
 /// Ness's PK Fire spark (336 + 0x168), PK Thunder head (335 + 0x7C98) and
 /// trail (335 + 0x8B40) draw the same way (RE-381).
 /// Saffron's Razor Leaf (159 + 0x2A50) uses the same weapon wrapper (RE-430).
+/// So do the Poké Ball Pokémon's rock, coin, swarm, Hydro Pump, Swift and
+/// Smog (file 86, RE-435). Clefairy's swarm draws Clefairy's item tree under
+/// its own `G_RM_AA_XLU_SURF` and is left with the item.
 const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[
     (328, 0x1D388),
     (342, 0x270),
@@ -2441,6 +2444,15 @@ const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[
     (335, 0x7C98),
     (335, 0x8B40),
     (159, 0x2A50),
+    (ssb_rom::mmonster::FILE, ssb_rom::mmonster::ROCK_GRAPH),
+    (ssb_rom::mmonster::FILE, ssb_rom::mmonster::COIN_GRAPH),
+    (
+        ssb_rom::mmonster::FILE,
+        ssb_rom::mmonster::SPEAR_SWARM_GRAPH,
+    ),
+    (ssb_rom::mmonster::FILE, ssb_rom::mmonster::HYDRO_GRAPH),
+    (ssb_rom::mmonster::FILE, ssb_rom::mmonster::SWIFT_GRAPH),
+    (ssb_rom::mmonster::FILE, ssb_rom::mmonster::SMOG_GRAPH),
 ];
 
 /// `dEFManagerShieldEffectDesc`'s tree (`llFTManagerCommonShieldDObjDesc`,
@@ -2491,10 +2503,27 @@ const DIRECT_WEAPON_GRAPHS: &[(u32, u32)] = &[(342, 0x270), (336, 0x168), (335, 
 /// (RE-379).
 /// The PK Fire spark (file 240 + 0x00) names file 336's 0x1E0 and the PK
 /// Thunder head (file 239 + 0x0C) file 335's 0x7D70 (RE-381).
+/// The Hydro Pump (file 251 + 0xA50), the Smog (+ 0xC40) and Beedrill's
+/// swarm (+ 0x9D4) name file 86's 0xFB70, 0x131E0 and 0xE560 (RE-435).
 const WEAPON_MAT_ANIM_JOINTS: &[((u32, u32), u32)] = &[
     ((342, 0x1888), 0x1AE0),
     ((336, 0x168), 0x1E0),
     ((335, 0x7C98), 0x7D70),
+    (
+        (ssb_rom::mmonster::FILE, ssb_rom::mmonster::HYDRO_GRAPH),
+        ssb_rom::mmonster::HYDRO_MAT_ANIM_JOINTS,
+    ),
+    (
+        (ssb_rom::mmonster::FILE, ssb_rom::mmonster::SMOG_GRAPH),
+        ssb_rom::mmonster::SMOG_MAT_ANIM_JOINTS,
+    ),
+    (
+        (
+            ssb_rom::mmonster::FILE,
+            ssb_rom::mmonster::SPEAR_SWARM_GRAPH,
+        ),
+        ssb_rom::mmonster::SPEAR_SWARM_MAT_ANIM_JOINTS,
+    ),
 ];
 
 /// The seed a [`ssb_rom::mesh::convert_sequence`] call for `(file,
@@ -5301,6 +5330,24 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             0x10550,
             None,
         ),
+        // The Poké Ball Pokémon's weapons (RE-435): the Hydro Pump's reach
+        // and the Smog's swell, which gameplay keeps as tables.
+        (
+            ssb_rom::pack::AnimDesc::WEAPON,
+            ssb_rom::pack::AnimDesc::WEAPON_ANIM_KAMEX_HYDRO,
+            ssb_rom::mmonster::FILE,
+            ssb_rom::mmonster::HYDRO_GRAPH,
+            ssb_rom::mmonster::HYDRO_ANIM_JOINTS,
+            None,
+        ),
+        (
+            ssb_rom::pack::AnimDesc::WEAPON,
+            ssb_rom::pack::AnimDesc::WEAPON_ANIM_DOGAS_SMOG,
+            ssb_rom::mmonster::FILE,
+            ssb_rom::mmonster::SMOG_GRAPH,
+            ssb_rom::mmonster::SMOG_ANIM_JOINTS,
+            None,
+        ),
     ];
     let mut weapon_anims = 0usize;
     let mut weapon_anim_rebased = 0usize;
@@ -5361,6 +5408,51 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         }
         weapon_anims += 1;
         writer.add_anim(stream, slot, file_id, 0, &blob, &joints);
+    }
+
+    // The Poké Ball Pokémon (RE-435): each maker's appear script and each
+    // status's own script, single scripts on one node of the kind's tree.
+    let mut monster_anims = 0usize;
+    {
+        let file_id = ssb_rom::mmonster::FILE;
+        let file = loaded
+            .files
+            .get(file_id as usize)
+            .and_then(Option::as_ref)
+            .ok_or("monster anims: file 86 missing")?;
+        for (kind, visual) in ssb_rom::mmonster::VISUALS.iter().enumerate() {
+            let object = object_index
+                .get(&(file_id, visual.graph))
+                .and_then(|&index| writer.object(index))
+                .ok_or_else(|| format!("monster {kind}: packed object missing"))?;
+            let mut add = |slot: u32, script: u32, node: u32| -> Res {
+                if node >= object.node_count {
+                    return Err(format!("monster {kind}: node {node} past its tree").into());
+                }
+                writer.add_anim(
+                    ssb_rom::pack::AnimDesc::ITEM,
+                    slot + kind as u32,
+                    file_id,
+                    0,
+                    &file.data,
+                    &[(Some(script), Some(object.first_node + node))],
+                );
+                monster_anims += 1;
+                Ok(())
+            };
+            add(
+                ssb_rom::pack::AnimDesc::ITEM_ANIM_MMONSTER_APPEAR,
+                ssb_rom::mmonster::APPEAR_SCRIPT,
+                visual.appear_node,
+            )?;
+            if let Some((script, node)) = visual.status {
+                add(
+                    ssb_rom::pack::AnimDesc::ITEM_ANIM_MMONSTER_STATUS,
+                    script,
+                    node,
+                )?;
+            }
+        }
     }
 
     // Stage controller objects (RE-357): the GObjs a `gr*.c` controller
@@ -5919,6 +6011,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     println!(
         "  weapon anims {weapon_anims} weapon and item stream(s), {weapon_anim_rebased} windowed pointer(s) rebased"
     );
+    println!("  monster anims {monster_anims} Poké Ball Pokémon script(s)");
     println!(
         "  ground anims {ground_anims} controller clip(s), {ground_anim_joints} animated node(s)"
     );
