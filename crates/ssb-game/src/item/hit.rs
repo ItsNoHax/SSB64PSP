@@ -614,10 +614,12 @@ fn update_damage_stat(
         item.hit_normal_damage = item.hit_normal_damage.max(damage);
     }
     item.hit_lr = attacker_lr(item.vel_air.x, item.pos.x, f.pos.x);
+    let damage_before = f.hits.damage_queue;
     if combat::is_body_normal(f)
         && hit.hitstatus == HitStatus::Normal
         && combat::check_get_update_damage(f, damage)
     {
+        f.record_combo_damage(item.player, f.hits.damage_queue - damage_before);
         combat::push_log(
             f,
             HitLogEntry {

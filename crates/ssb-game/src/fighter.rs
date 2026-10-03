@@ -221,6 +221,9 @@ pub struct Fighter {
     pub attributes: PhysicsAttributes,
     /// Damage percentage. The original stores this as an integer.
     pub damage: u16,
+    /// `SCBattlePlayer.combo_damage_foe` / `combo_count_foe`.
+    pub combo_damage_foe: u32,
+    pub combo_count_foe: u32,
     pub stocks: i8,
     /// Frames of hitlag remaining; the fighter is frozen while nonzero.
     pub hitlag: u16,
@@ -424,6 +427,8 @@ impl Fighter {
             physics: PhysicsState::default(),
             attributes: PhysicsAttributes::default(),
             damage: 0,
+            combo_damage_foe: 0,
+            combo_count_foe: 0,
             stocks,
             hitlag: 0,
             hitstun: 0,
@@ -526,6 +531,15 @@ impl Fighter {
     pub fn add_damage(&mut self, damage: i32) {
         let total = i32::from(self.damage) + damage.max(0);
         self.damage = total.min(DAMAGE_PERCENT_MAX) as u16;
+    }
+
+    /// `ftParamUpdatePlayerBattleStats`: every accepted hit from another
+    /// player counts, including a zero-damage hit. World/self hits do not.
+    pub fn record_combo_damage(&mut self, player: Option<u8>, damage: i32) {
+        if player.is_some_and(|p| p < 4 && p != self.port) {
+            self.combo_damage_foe += damage.max(0) as u32;
+            self.combo_count_foe += 1;
+        }
     }
 
     /// Whether the fighter is frozen by hitlag.
@@ -819,6 +833,12 @@ impl Fighter {
         // situation is re-read afterwards rather than captured before.
         crate::status::update(self);
         self.resolve_cliff_release(surfaces);
+        // `ftMainProcUpdateInterrupt`, after proc_update/proc_interrupt,
+        // outside hitlag. Hit searches later in the frame start a new combo.
+        if self.hitstun == 0 {
+            self.combo_damage_foe = 0;
+            self.combo_count_foe = 0;
+        }
     }
 
     /// `ftMainProcPhysicsMap` (process priority 4), after the stage, ending

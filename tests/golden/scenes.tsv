@@ -190,4 +190,5 @@ f1-training-flower	psp-game	trainingflower@130	pass	RE-436
 f1-training-starrod	psp-game	trainingstarrod@118	pass	RE-436
 f1-training-hammer	psp-game	traininghammer@110	pass	RE-436
 f1-training-cpu-item	psp-game	trainingcpuitem	pass	RE-437
-f1-training-menu	psp-game	trainingmenu	pass	RE-438
+f1-training-menu	psp-game	trainingmenu	pass	RE-439
+f1-training-menu-open	psp-game	trainingmenu@30	pass	RE-439

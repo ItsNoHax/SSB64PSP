@@ -29,7 +29,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  The manifest currently has 178 scenes; RE-316 measured about 17 s for an
+  The manifest currently has 179 scenes; RE-316 measured about 17 s for an
   earlier full run.
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
@@ -168,7 +168,8 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `linkbomb`) | `f1-training-link-bomb` | Link holding a freshly pulled Bomb | RE-383 |
 | `golden_capture` (`psp-game`, scenes `cpuwalk`, `cpujump`) | `f1-training-cpu-walk`, `f1-training-cpu-jump` | The Training dummy under the CPU's Walk and Jump behaviours (in `WalkMiddle` and `JumpF` at the freeze) | RE-390 |
 | `golden_capture` (`psp-game`, scene `trainingcpuitem`) | `f1-training-cpu-item` | A level-9 Training CPU on the default behaviour at tick 200, holding the Bat it tracked and picked up (TrackItem) | RE-437 |
-| `golden_capture` (`psp-game`, scene `trainingmenu`) | `f1-training-menu` | Training's menu, open from tick 20 to 34, sets the CPU to Walk and drops a Maxim Tomato above Mario; at tick 150 the CPU has walked onto the left platform. The menu itself is not drawn yet | RE-438 |
+| `golden_capture` (`psp-game`, scene `trainingmenu`) | `f1-training-menu` | Training's menu, open from tick 20 to 34, sets the CPU to Walk and drops a Maxim Tomato above Mario; at tick 150 the CPU has walked onto the left platform. The closed-menu stat interface draws | RE-438, RE-439 |
+| `golden_capture` (`psp-game`, scene `trainingmenu@30`) | `f1-training-menu-open` | Open Training menu on Item/Maxim Tomato with CP Walk, Normal view, panel, border, cursor, arrows and underline; battle HUD and stats hidden | RE-439 |
 | `golden_capture` (`psp-game`, scene `vs`) | `f1-vs-countdown` | A VS battle's countdown on Dream Land, both fighters locked until "Go" | RE-389 |
 | `golden_capture` (`psp-game`, scene `vstimeup`) | `f1-vs-sudden-death` | A one-minute VS battle timed out in a tie, in sudden death with both fighters at 300% | RE-389 |
 | `golden_capture` (`psp-game`, scene `vscpu`) | `f1-vs-cpu` | A VS battle's CPU landing a hit on the idle player at tick 900 (7%); `vstimeup` pins its CPU to Stand to keep its tie | RE-391, RE-438 |
@@ -1127,3 +1128,11 @@ keep their subjects. New `f1-training-menu` (`trainingmenu`, tick 150)
 drives Training's menu: CP Walk and a dropped Maxim Tomato. The manifest
 has 178 scenes. These are PSP output controls, not N64 equivalence. See
 [RE-438](../evidence/re/RE-438.md).
+
+RE-439 adds the open Training menu (`trainingmenu@30`) and refreshes 84
+Training goldens for the DAMAGE/COMBO/ENEMY/SPEED/held-item stat display.
+All differences are within the top HUD; the world and bottom HUD pixels
+are unchanged. Four select controls remain identical. All 89 targeted
+scenes match their final goldens and repeat exactly; source attribution,
+counts and original-game menu references are in
+[RE-439](../evidence/re/RE-439.md).

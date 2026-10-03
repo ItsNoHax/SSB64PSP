@@ -28,6 +28,7 @@ mod play;
 mod players_screen;
 mod results_screen;
 mod stage_screen;
+mod training_screen;
 
 use ssb_engine::input::{newly_pressed, ControllerState, Input, N64Buttons, SSB64_GAME_MAPPING};
 use ssb_engine::renderer::Color;
@@ -3208,7 +3209,16 @@ unsafe fn draw_frame(
                 &mut s.damage_hud,
                 s.vs_battle.as_ref(),
                 s.wallpaper_sprite.as_ref().map(|sprite| (sprite, &s.wallpaper)),
+                s.training_paused,
             );
+            if let (Some(p), Some(menu), Some(pl)) = (pack.as_ref(), s.training_menu.as_mut(), s.play_state.as_ref()) {
+                let dummy = s.dummies[0].as_ref().map(|x| &x.fighter);
+                if !s.training_paused {
+                    menu.stats.observe(dummy.map_or(0, |f| f.combo_damage_foe), dummy.map_or(0, |f| f.combo_count_foe));
+                }
+                let held = pl.fighter.items.held.and_then(|h| s.items.get(h.slot)).map(|it| it.kind);
+                training_screen::draw(p, draw_state, menu, s.training_paused, ssb_game::training::held_item_option(held));
+            }
         }
     }
 }
@@ -5821,6 +5831,7 @@ unsafe fn draw_training(
     damage_hud: &mut Hud,
     battle: Option<&ssb_game::battle::Battle>,
     wallpaper: Option<(&ssb_rom::pack::SpriteDesc, &ssb_game::wallpaper::Wallpaper)>,
+    training_paused: bool,
 ) {
     let scene = pack
         .zip(play_state)
@@ -6041,6 +6052,11 @@ unsafe fn draw_training(
     }
     if let Some(pause) = damage_hud.pause {
         draw_pause_menu(gpu, p, draw_state, pause.kind);
+        return;
+    }
+    // Training hides every Interface-link GObj while its PauseMenu link
+    // draws, including the battle damage and Training stat displays.
+    if training_paused {
         return;
     }
     draw_damage_hud(p, draw_state, &damage_hud.damage, emblems, stage_index);

@@ -27,6 +27,28 @@ pub const SP_TRANSPARENT: u16 = 0x0001;
 /// `SP_TEXSHUF`: 32-bit strips are stored shuffled.
 pub const SP_TEXSHUF: u16 = 0x0200;
 
+/// `SC1PTrainingMode`'s four tables (file 254). Sprites are keyed in the
+/// pack by the pointer slot, even when it refers to another archive file.
+pub const TRAINING_FILE: u32 = 254;
+pub const TRAINING_TABLES: [(u32, usize, u32); 4] =
+    [(0, 4, 8), (0x20, 39, 4), (0xBC, 10, 8), (0x13C, 31, 4)];
+pub const TRAINING_LAYOUT_LEN: usize = 0x1B8;
+
+pub fn training_sprite_slots() -> impl Iterator<Item = u32> {
+    TRAINING_TABLES.into_iter().flat_map(|(at, count, stride)| {
+        (0..count).map(move |i| at + i as u32 * stride + if stride == 8 { 4 } else { 0 })
+    })
+}
+
+/// The source sprite of a Training table entry, resolved through the
+/// archive relocation rather than treating a patched pointer as an offset.
+pub fn training_sprite_ref(file: &File, slot: u32) -> Result<(u32, u32), SpriteError> {
+    if let Some(r) = file.extern_relocs.iter().find(|r| r.at == slot) {
+        return Ok((u32::from(r.target_file), r.target_offset));
+    }
+    pointer(file, slot).map(|at| (file.id, at))
+}
+
 /// A decoded sprite.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sprite {
@@ -823,6 +845,64 @@ mod tests {
             assert!(tall.contains(&s.height), "letter {i}: {}", s.height);
         }
         assert_eq!((sprites[16].width, sprites[16].height), (37, 39));
+    }
+
+    #[test]
+    fn training_resolves_external_sprites_and_the_pack_preserves_table_identity() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        let table = archive.load(TRAINING_FILE).unwrap();
+        let slots: Vec<_> = training_sprite_slots().collect();
+        assert_eq!(slots.len(), 84);
+        let mut writer = crate::pack::PackWriter::new();
+        for slot in slots {
+            let (id, at) = training_sprite_ref(&table, slot).unwrap();
+            assert_eq!(id, 29);
+            let source = archive.load(id).unwrap();
+            let s = decode(&source, at).unwrap();
+            assert!(s.width > 0 && s.height > 0);
+            writer.add_sprite(crate::pack::SpriteDesc {
+                source_file: TRAINING_FILE,
+                source_offset: slot,
+                texture: 0,
+                width: s.width,
+                height: s.height,
+                color: s.color,
+                attr: s.attr,
+                flags: 0,
+                fighter: 0,
+                role: 0,
+                costume: 0,
+                _pad: 0,
+            });
+        }
+        writer.add_anim(
+            crate::pack::AnimDesc::TRAINING_LAYOUT,
+            0,
+            TRAINING_FILE,
+            0,
+            &table.data[..TRAINING_LAYOUT_LEN],
+            &[],
+        );
+        let bytes = writer.finish();
+        let p = crate::pack::Pack::open(&bytes).unwrap();
+        assert_eq!(
+            p.training_layout(),
+            Some(&table.data[..TRAINING_LAYOUT_LEN])
+        );
+        for slot in training_sprite_slots() {
+            assert!(p.sprite(TRAINING_FILE, slot).is_some());
+        }
+        // Both View options are reached with the callback's ordinal,
+        // independently of the decomp's names for the sprite enum.
+        assert_ne!(
+            p.sprite(TRAINING_FILE, 0x13C + 26 * 4).unwrap().width,
+            p.sprite(TRAINING_FILE, 0x13C + 27 * 4).unwrap().width
+        );
     }
 
     #[test]

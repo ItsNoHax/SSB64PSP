@@ -136,3 +136,8 @@ developer overlay still uses `sceGuDebugFlush` (RE-014, RE-202).
   drawn first, opaque and without depth, from a 5551 texture in main RAM.
 - The stage select's preview model draws under its own camera over the
   select's sprites (`meshdraw::draw_stage_preview`, RE-419).
+- Training's interface uses its original sprite tables and signed label
+  positions (RE-439). Its closed-menu stats use the Interface link; opening
+  hides all interfaces and draws the PauseMenu link. The blue panel and
+  inclusive red underline precede the menu sprites. DAMAGE/COMBO retain
+  their last digits for 90 process ticks after the source counters clear.

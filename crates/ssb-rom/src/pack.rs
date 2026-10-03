@@ -350,7 +350,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 // joint/material animations, under the weapon render seed (RE-435).
 // No layout change.
 // 86 adds the Ray Gun's ammo list under the weapon seed, keyed (251, 0x2B0).
-pub const VERSION: u32 = 86;
+// 87 adds Training's sprite tables and their original label positions.
+pub const VERSION: u32 = 87;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1104,6 +1105,10 @@ impl AnimDesc {
     /// Per-joint big-endian `Vec3f` translation scales. `slot` is `FTKind`,
     /// and `script` contains exactly the scale array from `FTAttributes`.
     pub const TRANSLATE_SCALES: u32 = u32::MAX - 6;
+
+    /// Training's original big-endian sprite layout tables. Slot 0 is
+    /// file 254's first 0x1B8 bytes; sprites are keyed by pointer slot.
+    pub const TRAINING_LAYOUT: u32 = u32::MAX - 10;
 
     /// `fighter` value marking a weapon's `WPAttributes.anim_joints` stream.
     /// `slot` is one of the `WEAPON_ANIM_*` keys below.
@@ -3762,6 +3767,14 @@ impl<'a> Pack<'a> {
             .filter_map(|i| self.anim(i))
             .find(|a| a.fighter == AnimDesc::TRANSLATE_SCALES && a.slot == fighter)?;
         self.anim_script(&anim)
+    }
+
+    pub fn training_layout(&self) -> Option<&'a [u8]> {
+        let a = (0..self.anim_count)
+            .rev()
+            .filter_map(|i| self.anim(i))
+            .find(|a| a.fighter == AnimDesc::TRAINING_LAYOUT && a.slot == 0)?;
+        self.anim_script(&a)
     }
 
     /// A stage's joint animation, if it has one.

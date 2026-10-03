@@ -1183,12 +1183,15 @@ fn update_damage_stat(
         attack_point(coll.pos_curr, coll.pos_prev, coll.state),
         hit.center,
     );
+    let damage_before = victim.hits.damage_queue;
     if is_body_normal(victim)
         && hit.hitstatus == HitStatus::Normal
         && check_get_update_damage(victim, damage)
     {
         // The thrower's player for a thrown fighter's attack.
         let player = throw_port(attacker).unwrap_or(attacker.port);
+        // Source CheckGet updates its damage pointer when resistance breaks.
+        victim.record_combo_damage(Some(player), victim.hits.damage_queue - damage_before);
         push_log(
             victim,
             HitLogEntry {
@@ -1199,7 +1202,7 @@ fn update_damage_stat(
                 attacker_pos: attacker.pos,
                 attack_handicap: attacker.handicap,
                 placement: hit.placement,
-                attacker: DamageBy::Player(attacker.port),
+                attacker: DamageBy::Player(player),
                 effect: Some(LogEffect {
                     pos: impact,
                     player,
@@ -1393,6 +1396,7 @@ fn weapon_hit_inner(victim: &mut Fighter, w: WeaponAttack, shield_only: bool) ->
     };
     // `ftMainUpdateDamageStatWeapon`.
     let damage = attack::captured_damage(victim, w.hitbox.damage);
+    let damage_before = victim.hits.damage_queue;
     if is_body_normal(victim)
         && hit.hitstatus == HitStatus::Normal
         && check_get_update_damage(victim, damage)
@@ -1418,6 +1422,7 @@ fn weapon_hit_inner(victim: &mut Fighter, w: WeaponAttack, shield_only: bool) ->
                 }),
             },
         );
+        victim.record_combo_damage(w.owner, victim.hits.damage_queue - damage_before);
         return WeaponContact::Hurt(true);
     }
     WeaponContact::Hurt(false)
@@ -1437,7 +1442,17 @@ pub fn direct_hit(
         return false;
     }
     let damage = attack::captured_damage(victim, hitbox.damage);
-    check_get_update_damage(victim, damage);
+    let damage_before = victim.hits.damage_queue;
+    let accepted = check_get_update_damage(victim, damage);
+    if accepted {
+        victim.record_combo_damage(
+            match attacker {
+                DamageBy::Player(p) => Some(p),
+                _ => None,
+            },
+            victim.hits.damage_queue - damage_before,
+        );
+    }
     push_log(
         victim,
         HitLogEntry {

@@ -136,6 +136,7 @@ pub struct MenuFrame {
 /// `SC1PTrainingModeMenu`'s state and settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrainingMenu {
+    pub stats: crate::training_layer::Stats,
     pub main_option: MainOption,
     pub item_option: u8,
     pub cp_option: u8,
@@ -165,6 +166,7 @@ impl TrainingMenu {
     /// the player is on it.
     pub fn new(player: u8) -> TrainingMenu {
         TrainingMenu {
+            stats: crate::training_layer::Stats::default(),
             main_option: MainOption::Cp,
             item_option: 0,
             cp_option: 0,
@@ -379,6 +381,7 @@ impl TrainingMenu {
     /// `sc1PTrainingModeViewOptionProcUpdate`, run with the other GObj
     /// processes: the magnifying glass comes back 180 ticks after Normal.
     pub fn tick_processes(&mut self) {
+        self.stats.tick();
         if self.magnify_wait != 0 {
             self.magnify_wait -= 1;
             if self.magnify_wait == 0 {
