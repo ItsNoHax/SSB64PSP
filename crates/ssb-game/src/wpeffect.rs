@@ -23,6 +23,12 @@ pub enum WeaponEffect {
         pos: Vec3,
         lr: i8,
     },
+    /// `efManagerDustHeavyDoubleMakeEffect(pos, lr, 1.0F)`: an item's
+    /// explosion on the ground.
+    DustHeavyDouble {
+        pos: Vec3,
+        lr: i8,
+    },
     ScaledExplosion {
         pos: Vec3,
         scale: f32,
@@ -80,15 +86,16 @@ pub enum WeaponEffect {
     TextureRand(u8),
 }
 
-/// The effects one weapon callback makes, in order. No callback makes more
-/// than four (the Egg's map contact: quake, explosion, shell, dust).
+/// The effects one weapon or item callback makes, in order. The most is an
+/// armed Motion-Sensor Bomb that four fighters reach in one frame: each
+/// sets it off again, with dust, explosion and quake (12).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Emit {
     buf: [Option<WeaponEffect>; EMIT_MAX],
     len: u8,
 }
 
-const EMIT_MAX: usize = 6;
+const EMIT_MAX: usize = 12;
 
 impl Emit {
     pub fn push(&mut self, e: WeaponEffect) {
@@ -221,6 +228,9 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
     match *e {
         WeaponEffect::DustLight { pos, lr } => {
             effects.dust_light(p, banks, pos, lr, 1.0);
+        }
+        WeaponEffect::DustHeavyDouble { pos, lr } => {
+            effects.dust_heavy_double(p, banks, pos, lr, 1.0);
         }
         WeaponEffect::ScaledExplosion { pos, scale } => {
             effects.ready_at(

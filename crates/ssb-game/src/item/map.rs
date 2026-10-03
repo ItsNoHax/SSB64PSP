@@ -49,10 +49,12 @@ where
     if let Some(hit) = contacts.left_wall {
         item.mask_curr |= MASK_LWALL;
         item.lwall_normal = hit.normal;
+        item.lwall_line = hit.line;
     }
     if let Some(hit) = contacts.right_wall {
         item.mask_curr |= MASK_RWALL;
         item.rwall_normal = hit.normal;
+        item.rwall_line = hit.line;
     }
     match moved.floor {
         Some(f) => {
@@ -93,18 +95,24 @@ where
     if let Some(hit) = result.contacts.left_wall {
         item.mask_curr |= MASK_LWALL;
         item.lwall_normal = hit.normal;
+        item.lwall_line = hit.line;
     }
     if let Some(hit) = result.contacts.right_wall {
         item.mask_curr |= MASK_RWALL;
         item.rwall_normal = hit.normal;
+        item.rwall_line = hit.line;
     }
     if let Some(hit) = result.contacts.ceiling {
         item.mask_curr |= MASK_CEIL;
         item.ceil_normal = hit.normal;
+        item.ceil_line = hit.line;
     }
     if let Some(f) = result.moved.floor {
         item.mask_curr |= MASK_FLOOR;
         item.floor = Some(f);
+        // The landing stops the item's spin and squares its root.
+        item.spin_step = 0.0;
+        item.rotate_z = 0.0;
     }
     item.mask_curr & flags != 0
 }
@@ -265,6 +273,53 @@ where
         item.set_spin_vel_lr();
     }
     is_collide_any
+}
+
+/// `itMapCheckDestroyLanding`: returns whether the item met a floor (the
+/// source's `TRUE`, which destroys it).
+pub(crate) fn check_destroy_landing<I, F>(
+    item: &mut Item,
+    common_rebound: f32,
+    surfaces: &F,
+) -> bool
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let is_collide_floor = test_all_collision_flag(item, MASK_FLOOR, surfaces);
+    if check_collide_all_rebound(item, MASK_CEIL | MASK_RWALL | MASK_LWALL, common_rebound) {
+        item.set_spin_vel_lr();
+    }
+    is_collide_floor
+}
+
+/// `itMapCheckMapProcAll`: returns whether any surface was touched (the
+/// caller runs its callback); the source itself always returns `FALSE`.
+pub(crate) fn check_map_proc_all<I, F>(item: &mut Item, surfaces: &F) -> bool
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    test_all_collision_flag(item, MASK_MAIN, surfaces)
+}
+
+/// `itMapCheckMapReboundProcNoFloor`: `on_floor` runs on a floor contact,
+/// before the walls and ceiling rebound the item.
+pub(crate) fn check_map_rebound_proc_no_floor<I, F>(
+    item: &mut Item,
+    common_rebound: f32,
+    surfaces: &F,
+    on_floor: impl FnOnce(&mut Item),
+) where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    if test_all_collision_flag(item, MASK_FLOOR, surfaces) {
+        on_floor(item);
+    }
+    if check_collide_all_rebound(item, MASK_CEIL | MASK_RWALL | MASK_LWALL, common_rebound) {
+        item.set_spin_vel_lr();
+    }
 }
 
 /// `mpCommonRunItemCollisionDefault`: one sweep from the parent's position

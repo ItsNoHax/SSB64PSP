@@ -240,6 +240,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         | GameScene::TrainingBarrel
         | GameScene::TrainingHeavy
         | GameScene::TrainingUtility
+        | GameScene::TrainingThrowable
         | GameScene::TrainingChansey
         | GameScene::TrainingElectrode
         | GameScene::TrainingCharmander
@@ -301,6 +302,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingBarrel
             | GameScene::TrainingHeavy
             | GameScene::TrainingUtility
+            | GameScene::TrainingThrowable
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -500,6 +502,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingBarrel
             | GameScene::TrainingHeavy
             | GameScene::TrainingUtility
+            | GameScene::TrainingThrowable
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -510,9 +513,11 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
-            60 if matches!(scene, GameScene::TrainingHeavy | GameScene::TrainingUtility) => {
-                N64Buttons(N64Buttons::A)
-            }
+            60 if matches!(
+                scene,
+                GameScene::TrainingHeavy | GameScene::TrainingUtility | GameScene::TrainingThrowable
+            ) => N64Buttons(N64Buttons::A),
+            100 if scene == GameScene::TrainingThrowable => N64Buttons(N64Buttons::A),
             110 if scene == GameScene::TrainingHeavy => N64Buttons(N64Buttons::B),
             _ => N64Buttons(0),
         };
@@ -1860,6 +1865,26 @@ fn capture_monster(scene: Option<GameScene>) -> Option<u8> {
 #[inline(never)]
 fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s: &mut Session) {
     use ssb_game::stage::StageItems;
+    if scene == Some(GameScene::TrainingThrowable) {
+        if let Some(pl) = s.play_state.as_ref() {
+            // Motion-Sensor Bomb, Bob-omb, Bumper and the two Shells across
+            // the stage; the Poké Ball in reach.
+            let at = pl.fighter.pos;
+            s.items.camera_at_x = pl.camera.at.x;
+            for (index, offset) in [
+                (14, (-1100.0, 500.0)),
+                (15, (-750.0, 500.0)),
+                (16, (-400.0, 500.0)),
+                (17, (450.0, 500.0)),
+                (18, (800.0, 500.0)),
+                (19, (75.0, 300.0)),
+            ] {
+                let pos = at + ssb_engine::math::Vec3::new(offset.0, offset.1, 0.0);
+                s.items.make_setup_common(index, None, pos, ssb_engine::math::Vec3::ZERO, &core::iter::empty);
+            }
+        }
+        return;
+    }
     if scene == Some(GameScene::TrainingUtility) {
         if let Some(pl) = s.play_state.as_ref() {
             // Tomato in reach, Heart and Star in view; the Star bounces
@@ -4032,6 +4057,11 @@ struct DrawAssets {
     egg_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Tomato, Heart and Star: file 86 + 0xAB0, 0x1158, 0x1560 (RE-433).
     utility_items: [Option<ssb_rom::pack::ObjectDesc>; 3],
+    /// Motion-Sensor Bomb, Bob-omb, Bumper, Shell and Poké Ball: file 86 +
+    /// 0x39A0, 0x33F8, 0x7648, 0x5F88, 0x9430.
+    throwable_items: [Option<ssb_rom::pack::ObjectDesc>; 5],
+    /// The Green Shell's list under `palettes[1]`, keyed (86, 0x5578).
+    green_shell: Option<ssb_rom::pack::MeshDesc>,
     /// The shield bubble.
     shield: Option<ssb_rom::pack::ObjectDesc>,
     /// Ness's PSI Magnet field and its transform animation.
@@ -4109,6 +4139,10 @@ impl DrawAssets {
                 .find(|m| m.source_file == 86 && m.source_offset == 0x68F0),
             egg_item: ssb_psp_runtime::scene::object_keyed(p, (86, 0x104A0)).zip(p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_EGG)),
             utility_items: [0xAB0, 0x1158, 0x1560].map(|offset| ssb_psp_runtime::scene::object_keyed(p, (86, offset))),
+            throwable_items: [0x39A0, 0x33F8, 0x7648, 0x5F88, 0x9430]
+                .map(|offset| ssb_psp_runtime::scene::object_keyed(p, (86, offset))),
+            green_shell: (0..p.mesh_count()).filter_map(|i| p.mesh(i))
+                .find(|m| m.source_file == 86 && m.source_offset == 0x5578),
             gbumper_item: ssb_psp_runtime::scene::object_keyed(
                 p,
                 ssb_psp_runtime::scene::GBUMPER_ITEM_SOURCE,
@@ -4503,7 +4537,13 @@ impl DrawAssets {
             ssb_game::item::ItemKind::NessPKFire => self.pk_fire_item.as_ref(),
             ssb_game::item::ItemKind::LinkBomb => self.link_bomb_item.as_ref(),
             ssb_game::item::ItemKind::Container(ssb_game::item::container::Kind::Egg) => self.egg_item.as_ref(),
-            ssb_game::item::ItemKind::Container(_) | ssb_game::item::ItemKind::Utility(_) => None,
+            ssb_game::item::ItemKind::Container(_)
+            | ssb_game::item::ItemKind::Utility(_)
+            | ssb_game::item::ItemKind::MSBomb
+            | ssb_game::item::ItemKind::BombHei
+            | ssb_game::item::ItemKind::NBumper
+            | ssb_game::item::ItemKind::Shell(_)
+            | ssb_game::item::ItemKind::MBall => None,
             // No scripts, or trees the stage's ground objects draw.
             ssb_game::item::ItemKind::GBumper
             | ssb_game::item::ItemKind::PowerBlock
@@ -5935,6 +5975,86 @@ enum BattlePart {
 /// function outgrows MIPS branch range.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
+/// The throwable utilities (RE-434). The Green Shell binds palette 1. The
+/// Bob-omb and the Bumper put kind 0x2E on their root (node 1 once
+/// `itManagerMakeItem` ejects descriptor 0): a camera-facing quad spun by
+/// `rotate.z` and sized by the root's scale. The Shells put `TraRotRpyR`
+/// then kind 0x48 (`func_ovl0_800CAB48`) on theirs: `rotate.x`/`rotate.y`
+/// relative to the camera. The Motion-Sensor Bomb and the Poké Ball turn
+/// their root by `rotate.z`; its first child is the armed or open shape,
+/// and its second, the ball, is kind 0x46 (`func_ovl0_800CA194`): a
+/// camera-facing quad spun by the root's `rotate.z`, unscaled. Held, each
+/// draws at the item position the pool keeps at the hold joint. Returns
+/// whether `item` was one of them.
+unsafe fn draw_throwable(
+    p: &Pack<'_>,
+    gpu: &mut Gpu,
+    assets: &DrawAssets,
+    pl: &play::FighterScene,
+    item: &ssb_game::item::Item,
+    draw_state: &mut meshdraw::DrawState,
+) -> bool {
+    use ssb_game::item::ItemKind;
+    let index = match item.kind {
+        ItemKind::MSBomb => 0,
+        ItemKind::BombHei => 1,
+        ItemKind::NBumper => 2,
+        ItemKind::Shell(_) => 3,
+        ItemKind::MBall => 4,
+        _ => return false,
+    };
+    let Some(object) = assets.throwable_items[index].as_ref() else {
+        return true;
+    };
+    let node_of = |i: u32| p.node(object.first_node + i);
+    let mesh_of = |i: u32| {
+        node_of(i)
+            .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+            .and_then(|n| p.mesh(n.mesh))
+    };
+    let (eye, at) = (pl.camera.eye, pl.camera.at);
+    let scale = meshdraw::MODEL_SCALE;
+    match item.kind {
+        ItemKind::BombHei | ItemKind::NBumper => {
+            if let Some(mesh) = mesh_of(1) {
+                gpu.model_transform_billboard(item.pos, eye, at, item.rotate_z,
+                    [scale * item.scale.x, scale * item.scale.y]);
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+            }
+        }
+        ItemKind::Shell(kind) => {
+            let green = (kind == ssb_game::item::shell::Kind::Green).then_some(assets.green_shell).flatten();
+            if let Some(mesh) = green.or_else(|| mesh_of(1)) {
+                gpu.model_transform_camera_rotated(item.pos, eye, at,
+                    [0.0, item.vars.shell_rotate_y], scale * item.scale.x);
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+            }
+        }
+        _ => {
+            let open = match item.kind {
+                ItemKind::MSBomb => item.vars.msbomb_attached,
+                _ => item.vars.mball_open,
+            };
+            if open {
+                if let (Some(node), Some(mesh)) = (node_of(2), mesh_of(2)) {
+                    let (s, c) = ssb_engine::math::sin_cos(item.rotate_z);
+                    let [tx, ty, tz] = node.rest_translate;
+                    gpu.model_transform(
+                        [item.pos.x + c * tx - s * ty, item.pos.y + s * tx + c * ty, item.pos.z + tz],
+                        [0.0, 0.0, item.rotate_z],
+                        scale,
+                    );
+                    meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+                }
+            } else if let Some(mesh) = mesh_of(3) {
+                gpu.model_transform_billboard(item.pos, eye, at, item.rotate_z, [scale, scale]);
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+            }
+        }
+    }
+    true
+}
+
 unsafe fn draw_items_weapons_effects(
     gpu: &mut Gpu,
     draw_state: &mut meshdraw::DrawState,
@@ -5999,6 +6119,9 @@ unsafe fn draw_items_weapons_effects(
                     [meshdraw::MODEL_SCALE, meshdraw::MODEL_SCALE]);
                 meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
             }
+            continue;
+        }
+        if draw_throwable(p, gpu, assets, pl, item, draw_state) {
             continue;
         }
         if let ssb_game::item::ItemKind::Container(kind) = item.kind {

@@ -475,6 +475,10 @@ pub enum GameScene {
     /// `trainingutility`: a Tomato within Mario's reach, a Heart and a
     /// Star; A at tick 60 picks up and eats the Tomato (RE-433).
     TrainingUtility,
+    /// `trainingthrowable`: the six throwable utilities around Mario, the
+    /// Poké Ball in his reach; A at tick 60 picks it up and A at tick 100
+    /// throws it (RE-434).
+    TrainingThrowable,
     /// Diagnostic Saffron item views: source lifecycle, selected maker.
     TrainingChansey,
     TrainingElectrode,
@@ -506,7 +510,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 92] = [
+    pub const ALL: [GameScene; 93] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -586,6 +590,7 @@ impl GameScene {
         GameScene::TrainingBarrel,
         GameScene::TrainingHeavy,
         GameScene::TrainingUtility,
+        GameScene::TrainingThrowable,
         GameScene::TrainingChansey,
         GameScene::TrainingElectrode,
         GameScene::TrainingCharmander,
@@ -682,6 +687,7 @@ impl GameScene {
             GameScene::TrainingBarrel => "trainingbarrel",
             GameScene::TrainingHeavy => "trainingheavy",
             GameScene::TrainingUtility => "trainingutility",
+            GameScene::TrainingThrowable => "trainingthrowable",
             GameScene::TrainingChansey => "trainingchansey",
             GameScene::TrainingElectrode => "trainingelectrode",
             GameScene::TrainingCharmander => "trainingcharmander",

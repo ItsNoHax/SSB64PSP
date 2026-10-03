@@ -1611,6 +1611,19 @@ where
         .map(|(i, s)| (line_id(i, s), s))
 }
 
+/// `mpCollisionCheckExistLineID`: the runtime leaves out the lines of a
+/// group that is off or hidden, so a line exists when a surface names it.
+pub fn line_exists<I, F>(surfaces: &F, line: u16) -> bool
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    surfaces()
+        .into_iter()
+        .enumerate()
+        .any(|(i, s)| line_id(i, s) == line)
+}
+
 /// `mpCollisionGetFloorEdgeL` / `...R`.
 pub fn floor_edge<I, F>(surfaces: &F, line: u16, right: bool) -> Option<Vec2>
 where
