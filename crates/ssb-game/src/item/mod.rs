@@ -59,6 +59,7 @@ use crate::weapon::MapSurface;
 
 pub mod bombhei;
 pub mod container;
+pub mod equipment;
 pub mod gbumper;
 mod hit;
 pub mod normal;
@@ -136,6 +137,7 @@ pub const INTERACT_ALL: u8 = INTERACT_FIGHTER | INTERACT_WEAPON | INTERACT_ITEM;
 pub enum ItemKind {
     Container(container::Kind),
     Utility(utility::Kind),
+    Equipment(equipment::Kind),
     MSBomb,
     BombHei,
     NBumper,
@@ -156,6 +158,7 @@ impl ItemKind {
         match self {
             Self::Container(k) => Some(k.spin_speed()),
             Self::Utility(k) => Some(k.spin_speed()),
+            Self::Equipment(k) => Some(k.spin_speed()),
             // `ITAttributes::spin_speed` (file 251).
             Self::MSBomb => Some(120.0 * 0.01),
             Self::NBumper => Some(70.0 * 0.01),
@@ -394,6 +397,7 @@ pub struct ItemDamageColl {
 pub enum ItemStatus {
     Container(container::Status),
     Utility(utility::Status),
+    Equipment(equipment::Status),
     MSBomb(msbomb::Status),
     BombHei(bombhei::Status),
     NBumper(nbumper::Status),
@@ -416,6 +420,8 @@ pub struct ItemVars {
     /// `rotate_z` is its Z.
     pub container_root_yaw: f32,
     pub container_root_pitch: f32,
+    pub equipment_child_yaw: f32,
+    pub hammer_warning: bool,
     pub taru_roll_step: f32,
     /// `linkbomb.scale_id`, `scale_int`, `drop_update_wait`.
     pub bomb_scale_id: i32,
@@ -1027,9 +1033,16 @@ pub struct ItemView {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ItemRequest {
     /// `itLinkBombMakeItem`: a Bomb in the fighter's hand.
-    MakeLinkBomb { pos: Vec3 },
+    MakeLinkBomb {
+        pos: Vec3,
+    },
+    UseAmmo(u16),
+    Scale(f32),
+    HammerWarning,
     /// `itMainSetFighterHold` on an item found by the pickup search.
-    Hold { slot: u8 },
+    Hold {
+        slot: u8,
+    },
     /// `itMainSetFighterThrow`.
     Throw {
         vel: Vec3,
@@ -1037,7 +1050,10 @@ pub enum ItemRequest {
         is_smash: bool,
     },
     /// `itMainSetFighterDrop`.
-    Drop { vel: Vec3, throw_mul: f32 },
+    Drop {
+        vel: Vec3,
+        throw_mul: f32,
+    },
     /// `itMainDestroyItem` from the fighter (`ftCommonDead`).
     Destroy,
 }
@@ -1051,6 +1067,7 @@ pub const REQUESTS_MAX: usize = 2;
 pub struct FighterItems {
     /// `FTStruct::item_gobj`.
     pub held: Option<HeldItem>,
+    pub held_multi: u16,
     pub requests: [Option<ItemRequest>; REQUESTS_MAX],
     pub view: ItemView,
 }
@@ -1251,6 +1268,7 @@ impl ItemPool {
             1 => container::make(container::Kind::Barrel, pos, vel),
             2 => container::make(container::Kind::Capsule, pos, vel),
             3 => container::make(container::Kind::Egg, pos, vel),
+            7..=13 => equipment::make(equipment::Kind::from_index(index)?, pos, vel),
             14 => msbomb::make(pos, vel),
             15 => bombhei::make(pos, vel),
             16 => nbumper::make(pos, vel),
@@ -1495,6 +1513,10 @@ impl ItemPool {
                 });
             }
         }
+        f.items.held_multi = self
+            .held_slot(f)
+            .and_then(|s| self.get(s))
+            .map_or(0, |i| i.multi);
         f.items.view = view;
     }
 
@@ -1511,6 +1533,21 @@ impl ItemPool {
         let requests = core::mem::take(&mut f.items.requests);
         for request in requests.into_iter().flatten() {
             match request {
+                ItemRequest::UseAmmo(cost) => {
+                    if let Some(item) = self.held_slot(f).and_then(|s| self.get_mut(s)) {
+                        item.multi = item.multi.wrapping_sub(cost);
+                    }
+                }
+                ItemRequest::Scale(scale) => {
+                    if let Some(item) = self.held_slot(f).and_then(|s| self.get_mut(s)) {
+                        item.scale = Vec3::new(scale, scale, scale);
+                    }
+                }
+                ItemRequest::HammerWarning => {
+                    if let Some(item) = self.held_slot(f).and_then(|s| self.get_mut(s)) {
+                        item.vars.hammer_warning = true;
+                    }
+                }
                 ItemRequest::MakeLinkBomb { pos } => {
                     let count = f.motion.take_count();
                     let item = link_bomb::make(pos, count);
@@ -1578,6 +1615,7 @@ impl ItemPool {
         item.pos = hold_pos(item, &view);
         // `dITMainProcHoldList`.
         match item.kind {
+            ItemKind::Equipment(_) => equipment::hold(item),
             ItemKind::LinkBomb => link_bomb::hold_set_status(item),
             ItemKind::Container(_) => container::hold(item),
             ItemKind::MSBomb => msbomb::hold(item),
@@ -1589,6 +1627,7 @@ impl ItemPool {
         }
         item.pickup_wait = PICKUP_WAIT_DEFAULT;
         f.items.held = Some(held_item(slot, item));
+        f.items.held_multi = item.multi;
     }
 
     /// `itMainSetFighterRelease`.
@@ -1632,6 +1671,7 @@ impl ItemPool {
         };
         // `dITMainProcThrownList`.
         match item.kind {
+            ItemKind::Equipment(_) => equipment::release(item, false, f.facing.sign()),
             ItemKind::LinkBomb => link_bomb::thrown_set_status(item),
             ItemKind::Container(_) => container::thrown(item),
             ItemKind::MSBomb => msbomb::thrown(item),
@@ -1681,6 +1721,7 @@ impl ItemPool {
                 ItemKind::Utility(utility::Kind::Tomato | utility::Kind::Heart) => {
                     utility::dropped(item)
                 }
+                ItemKind::Equipment(_) => equipment::release(item, true, f.facing.sign()),
                 ItemKind::MSBomb => msbomb::dropped(item),
                 ItemKind::BombHei => bombhei::dropped(item),
                 ItemKind::NBumper => nbumper::dropped(item),
@@ -2107,6 +2148,7 @@ where
     match item.status {
         ItemStatus::Container(s) => container::update(item, s, ctx.fx),
         ItemStatus::Utility(s) => utility::update(item, s),
+        ItemStatus::Equipment(s) => equipment::update(item, s),
         ItemStatus::MSBomb(s) => msbomb::update(item, s, ctx.owners, ctx.fx),
         ItemStatus::BombHei(s) => bombhei::update(item, s, ctx.owners, surfaces, ctx.fx),
         ItemStatus::NBumper(s) => nbumper::update(item, s, surfaces),
@@ -2145,6 +2187,7 @@ where
 /// `itProcessProcItemMain` leaves their map masks alone.
 fn has_proc_map(item: &Item) -> bool {
     match item.status {
+        ItemStatus::Equipment(s) => return s != equipment::Status::Hold,
         ItemStatus::MSBomb(s) => return msbomb::has_proc_map(s),
         ItemStatus::BombHei(s) => return bombhei::has_proc_map(s),
         ItemStatus::NBumper(s) => return nbumper::has_proc_map(s),
@@ -2183,6 +2226,7 @@ where
     match item.status {
         ItemStatus::Container(s) => return container::proc_map(item, s, surfaces, common, fx),
         ItemStatus::Utility(s) => return utility::proc_map(item, s, surfaces),
+        ItemStatus::Equipment(s) => return equipment::proc_map(item, s, surfaces),
         ItemStatus::MSBomb(s) => return msbomb::proc_map(item, s, surfaces),
         ItemStatus::BombHei(s) => return bombhei::proc_map(item, s, surfaces),
         ItemStatus::NBumper(s) => return nbumper::proc_map(item, s, surfaces),
@@ -2230,6 +2274,7 @@ fn run_hit_proc(
     match item.status {
         ItemStatus::Container(s) => container::hit(item, s, proc, ctx.common, ctx.fx),
         ItemStatus::Utility(s) => utility::hit_proc(item, s, proc),
+        ItemStatus::Equipment(s) => equipment::hit(item, s, proc, reflector_lr),
         ItemStatus::MSBomb(s) => msbomb::hit_proc(item, s, proc, reflector_lr, ctx.fx),
         ItemStatus::BombHei(s) => bombhei::hit_proc(item, s, proc, reflector_lr, ctx.fx),
         ItemStatus::NBumper(s) => nbumper::hit_proc(item, s, proc, reflector_lr),

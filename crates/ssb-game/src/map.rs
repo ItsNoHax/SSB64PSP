@@ -1323,7 +1323,7 @@ pub(crate) fn stops_at_edge(s: AnyStatus) -> bool {
                 NessStatus::SpecialHiStart | NessStatus::SpecialHiHold | NessStatus::SpecialHiEnd
             )
             | AnyStatus::Kirby(KirbyStatus::SpecialHi)
-            | AnyStatus::Common(Status::Catch)
+            | AnyStatus::Common(Status::Catch | Status::LGunShoot | Status::FireFlowerShoot)
             | AnyStatus::Common(
                 Status::HeavyThrowF
                     | Status::HeavyThrowB

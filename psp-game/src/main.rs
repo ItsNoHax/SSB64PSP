@@ -243,6 +243,11 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         | GameScene::TrainingThrowable
         | GameScene::TrainingPokemonA
         | GameScene::TrainingPokemonB
+        | GameScene::TrainingEquipment
+        | GameScene::TrainingRayGun
+        | GameScene::TrainingFlower
+        | GameScene::TrainingStarRod
+        | GameScene::TrainingHammer
         | GameScene::TrainingChansey
         | GameScene::TrainingElectrode
         | GameScene::TrainingCharmander
@@ -307,6 +312,11 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingThrowable
             | GameScene::TrainingPokemonA
             | GameScene::TrainingPokemonB
+            | GameScene::TrainingEquipment
+            | GameScene::TrainingRayGun
+            | GameScene::TrainingFlower
+            | GameScene::TrainingStarRod
+            | GameScene::TrainingHammer
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -509,6 +519,11 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingThrowable
             | GameScene::TrainingPokemonA
             | GameScene::TrainingPokemonB
+            | GameScene::TrainingEquipment
+            | GameScene::TrainingRayGun
+            | GameScene::TrainingFlower
+            | GameScene::TrainingStarRod
+            | GameScene::TrainingHammer
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -522,8 +537,24 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             60 if matches!(
                 scene,
                 GameScene::TrainingHeavy | GameScene::TrainingUtility | GameScene::TrainingThrowable
-            ) => N64Buttons(N64Buttons::A),
-            100 if scene == GameScene::TrainingThrowable => N64Buttons(N64Buttons::A),
+                    | GameScene::TrainingRayGun
+                    | GameScene::TrainingFlower
+                    | GameScene::TrainingStarRod
+                    | GameScene::TrainingHammer
+            ) =>
+            {
+                N64Buttons(N64Buttons::A)
+            }
+            100 if matches!(
+                scene,
+                GameScene::TrainingThrowable
+                    | GameScene::TrainingRayGun
+                    | GameScene::TrainingStarRod
+            ) =>
+            {
+                N64Buttons(N64Buttons::A)
+            }
+            100..=150 if scene == GameScene::TrainingFlower => N64Buttons(N64Buttons::A),
             110 if scene == GameScene::TrainingHeavy => N64Buttons(N64Buttons::B),
             _ => N64Buttons(0),
         };
@@ -1904,6 +1935,47 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
                     pos,
                     Some(pl.fighter.port),
                     pl.fighter.team,
+                    &core::iter::empty,
+                );
+            }
+        }
+        return;
+    }
+    if matches!(
+        scene,
+        Some(
+            GameScene::TrainingEquipment
+                | GameScene::TrainingRayGun
+                | GameScene::TrainingFlower
+                | GameScene::TrainingStarRod
+                | GameScene::TrainingHammer
+        )
+    ) {
+        if let Some(pl) = s.play_state.as_ref() {
+            let at = pl.fighter.pos;
+            s.items.camera_at_x = pl.camera.at.x;
+            let selected = match scene {
+                Some(GameScene::TrainingRayGun) => Some(11),
+                Some(GameScene::TrainingFlower) => Some(12),
+                Some(GameScene::TrainingStarRod) => Some(10),
+                Some(GameScene::TrainingHammer) => Some(13),
+                _ => None,
+            };
+            for index in 7..=13 {
+                if selected.is_some_and(|k| k != index) {
+                    continue;
+                }
+                let x = if selected.is_some() {
+                    75.0
+                } else {
+                    (f32::from(index) - 10.0) * 350.0
+                };
+                let pos = at + ssb_engine::math::Vec3::new(x, 500.0, 0.0);
+                s.items.make_setup_common(
+                    index,
+                    None,
+                    pos,
+                    ssb_engine::math::Vec3::ZERO,
                     &core::iter::empty,
                 );
             }
@@ -4105,6 +4177,8 @@ struct DrawAssets {
     /// Motion-Sensor Bomb, Bob-omb, Bumper, Shell and Poké Ball: file 86 +
     /// 0x39A0, 0x33F8, 0x7648, 0x5F88, 0x9430.
     throwable_items: [Option<ssb_rom::pack::ObjectDesc>; 5],
+    equipment_items: [Option<ssb_rom::pack::ObjectDesc>; 7],
+    ray_ammo: Option<ssb_rom::pack::MeshDesc>,
     /// The Green Shell's list under `palettes[1]`, keyed (86, 0x5578).
     green_shell: Option<ssb_rom::pack::MeshDesc>,
     /// The shield bubble.
@@ -4231,6 +4305,11 @@ impl DrawAssets {
             utility_items: [0xAB0, 0x1158, 0x1560].map(|offset| ssb_psp_runtime::scene::object_keyed(p, (86, offset))),
             throwable_items: [0x39A0, 0x33F8, 0x7648, 0x5F88, 0x9430]
                 .map(|offset| ssb_psp_runtime::scene::object_keyed(p, (86, offset))),
+            equipment_items: [0x1918, 0x1E00, 0x2198, 0x4B60, 0x3F50, 0x46B0, 0x2750]
+                .map(|offset| ssb_psp_runtime::scene::object_keyed(p, (86, offset))),
+            ray_ammo: (0..p.mesh_count())
+                .filter_map(|i| p.mesh(i))
+                .find(|m| m.source_file == 251 && m.source_offset == 0x2B0),
             green_shell: (0..p.mesh_count()).filter_map(|i| p.mesh(i))
                 .find(|m| m.source_file == 86 && m.source_offset == 0x5578),
             gbumper_item: ssb_psp_runtime::scene::object_keyed(
@@ -4663,6 +4742,7 @@ impl DrawAssets {
             ssb_game::item::ItemKind::LinkBomb => self.link_bomb_item.as_ref(),
             ssb_game::item::ItemKind::Container(ssb_game::item::container::Kind::Egg) => self.egg_item.as_ref(),
             ssb_game::item::ItemKind::Container(_)
+            | ssb_game::item::ItemKind::Equipment(_)
             | ssb_game::item::ItemKind::Utility(_)
             | ssb_game::item::ItemKind::MSBomb
             | ssb_game::item::ItemKind::BombHei
@@ -6571,7 +6651,23 @@ unsafe fn draw_monster_weapons(
                     }
                 }
             }
-            S::HitokageFlame | S::FushigibanaRazor | S::LizardonFlame => {}
+            S::RayGun => {
+                if let Some(mesh) = assets.ray_ammo.as_ref() {
+                    gpu.model_transform_xyz(
+                        [pos.x, pos.y, pos.z],
+                        [0.0, 0.0, shot.rotate_z],
+                        [ms * shot.scale_x, ms, ms],
+                    );
+                    meshdraw::draw_mesh(p, mesh, draw_state, None, None);
+                }
+            }
+            S::StarRod => {
+                if let Some(mesh) = assets.yoshi_star_mesh.as_ref() {
+                    gpu.model_transform_billboard(pos, eye, at, shot.rotate_z, [ms, ms]);
+                    meshdraw::draw_mesh(p, mesh, draw_state, None, None);
+                }
+            }
+            S::HitokageFlame | S::FushigibanaRazor | S::LizardonFlame | S::FireFlower => {}
         }
     }
 }
@@ -6647,6 +6743,78 @@ unsafe fn draw_items_weapons_effects(
             }
             if let ssb_game::item::ItemKind::MMonster(kind) = item.kind {
                 draw_mmonster(p, gpu, assets, pl, item, kind, visual, draw_state);
+                continue;
+            }
+            if let ssb_game::item::ItemKind::Equipment(kind) = item.kind {
+                if let Some(object) = assets.equipment_items[kind as usize].as_ref() {
+                    let held = item.owner.filter(|_| item.is_hold).and_then(|port| {
+                        scenes_ref(pl, dummies)
+                            .into_iter()
+                            .flatten()
+                            .find(|s| s.fighter.port == port)
+                            .and_then(|s| {
+                                s.fighter.joint_transforms
+                                    [ssb_game::item_throw::itemlight_joint(s.fighter.kind)]
+                            })
+                    });
+                    match held {
+                        Some(joint) => {
+                            gpu.model_transform_joint(joint.origin, joint, meshdraw::MODEL_SCALE)
+                        }
+                        None => gpu.model_transform(
+                            [item.pos.x, item.pos.y, item.pos.z],
+                            [0.0; 3],
+                            meshdraw::MODEL_SCALE,
+                        ),
+                    }
+                    let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
+                    for i in 1..object.node_count as usize {
+                        let Some(node) = p.node(object.first_node + i as u32) else {
+                            continue;
+                        };
+                        let t = if i == 1 && held.is_none() {
+                            [0.0; 3]
+                        } else {
+                            node.rest_translate.map(|x| x / meshdraw::MODEL_SCALE)
+                        };
+                        let r = if i == 1 {
+                            [0.0, item.vars.container_root_yaw, item.rotate_z]
+                        } else {
+                            [
+                                node.rest_rotate[0],
+                                node.rest_rotate[1] + item.vars.equipment_child_yaw,
+                                node.rest_rotate[2],
+                            ]
+                        };
+                        let scale = if i == 1 && kind == ssb_game::item::equipment::Kind::Fan {
+                            [
+                                node.rest_scale[0] * item.scale.x,
+                                node.rest_scale[1] * item.scale.y,
+                                node.rest_scale[2] * item.scale.z,
+                            ]
+                        } else {
+                            node.rest_scale
+                        };
+                        let local = ssb_rom::scene::Mat4::from_trs(t, r, scale);
+                        posed[i] = node
+                            .parent
+                            .checked_sub(object.first_node)
+                            .filter(|&parent| parent >= 1 && parent < i as u32)
+                            .map_or(local, |parent| posed[parent as usize].mul(&local));
+                    }
+                    let mats = replay_materials(p, object, item.anim_ticks);
+                    meshdraw::draw_object_posed(
+                        p,
+                        object,
+                        &gpu.model_matrix(),
+                        &posed[..object.node_count as usize],
+                        None,
+                        draw_state,
+                        material_anim,
+                        Some(&mats),
+                        0,
+                    );
+                }
                 continue;
         }
         if let ssb_game::item::ItemKind::Container(kind) = item.kind {

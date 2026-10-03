@@ -1309,7 +1309,7 @@ impl FighterScene {
         groups: &[ssb_game::map::MapGroup],
     ) {
         self.fighter
-            .tick_physics_map(&|| MapSegments::with_groups(pack, stage, groups));
+            .tick_physics_map_before_accessory(&|| MapSegments::with_groups(pack, stage, groups));
         if self.fighter.is_grounded() {
             self.airborne_ticks = 0;
         } else {
@@ -1343,6 +1343,9 @@ impl FighterScene {
         }
         ssb_game::grab::refresh_held_attachment(&mut self.fighter);
         self.sample_gameplay_joints(pack);
+        // `proc_accessory` reads the updated hand, after the map and parts
+        // transform pass (`ftMainProcPhysicsMap`).
+        ssb_game::item_use::accessory(&mut self.fighter);
         // A held fighter hangs from this fighter's `joint_itemheavy_id`; the
         // match loop hands the sampled position over in `grab::exchange`.
         self.fighter.grab.anchor = if self.fighter.grab.catch.is_some() {

@@ -38,6 +38,10 @@ pub enum WeaponEffect {
         size: i32,
         lr: f32,
     },
+    StarRodSpark {
+        pos: Vec3,
+        lr: f32,
+    },
     MonsterFlame {
         pos: Vec3,
         vel: Vec3,
@@ -269,6 +273,9 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
         }
         WeaponEffect::DamageSlash { pos, size, lr } => {
             effects.damage_slash(pos, size, lr);
+        }
+        WeaponEffect::StarRodSpark { pos, lr } => {
+            effects.star_rod_spark(pos, lr as i8);
         }
         WeaponEffect::MonsterFlame { pos, vel } => {
             for id in [2, 0] {

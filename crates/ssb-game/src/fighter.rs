@@ -270,6 +270,7 @@ pub struct Fighter {
     pub guard: crate::status::GuardState,
     pub items: crate::item::FighterItems,
     pub item_throw: crate::item_throw::ThrowState,
+    pub item_use: crate::item_use::State,
     /// Ledge-hang working state — `crate::status::CliffState`.
     pub cliff: crate::status::CliffState,
     /// Frames before this fighter can grab a ledge again —
@@ -445,6 +446,7 @@ impl Fighter {
             guard: crate::status::GuardState::default(),
             items: crate::item::FighterItems::default(),
             item_throw: crate::item_throw::ThrowState::default(),
+            item_use: crate::item_use::State::default(),
             cliff: crate::status::CliffState::default(),
             cliffcatch_wait: 0,
             attack1: crate::status::Attack1State::default(),
@@ -827,6 +829,18 @@ impl Fighter {
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
+        self.tick_physics_map_before_accessory(surfaces);
+        crate::item_use::accessory(self);
+    }
+
+    /// A runtime that samples animated joints after the map pass calls this,
+    /// refreshes those joints, then runs `item_use::accessory`. Host callers
+    /// without a skeleton use `tick_physics_map` for the complete pass.
+    pub fn tick_physics_map_before_accessory<I, F>(&mut self, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
         self.tick_physics_map_procs(surfaces);
         crate::motion::end_physics(self);
     }
@@ -1140,7 +1154,8 @@ impl Fighter {
             | crate::status::AnyStatus::Purin(_)
             | crate::status::AnyStatus::Ness(_) => crate::status::Status::Wait,
         };
-        if crate::captain::apply_ground_physics(self)
+        if crate::item_use::apply_ground_physics(self)
+            || crate::captain::apply_ground_physics(self)
             || crate::kirby::apply_ground_physics(self)
             || crate::pikachu::apply_ground_physics(self)
             || crate::purin::apply_ground_physics(self)
@@ -1286,7 +1301,8 @@ impl Fighter {
                     // carries on in the air.
                     self.become_airborne();
                     self.physics.jumps_used = 1;
-                } else if !crate::samus::on_ground_lost(self)
+                } else if !crate::item_use::on_ground_lost(self)
+                    && !crate::samus::on_ground_lost(self)
                     && !crate::link::on_ground_lost(self)
                     && !crate::yoshi::on_ground_lost(self)
                     && !crate::captain::on_ground_lost(self)
@@ -1368,6 +1384,7 @@ impl Fighter {
             && !fox_special_hi
             && !fox_special_lw
             && !donkey_special_hi
+            && !crate::item_use::skips_fast_fall(self.status.status)
             && !crate::samus::skips_fast_fall(self.status.status)
             && !crate::link::skips_fast_fall(self.status.status)
             && !crate::yoshi::skips_fast_fall(self)
@@ -1551,6 +1568,10 @@ impl Fighter {
                 ) {
                     self.land(moved.pos.y);
                     crate::status::switch_donkey_special_ground(self);
+                    return;
+                }
+                if crate::item_use::on_landing(self) {
+                    self.pos.y = moved.pos.y;
                     return;
                 }
                 if crate::samus::on_landing(self, moved.pos.y) {

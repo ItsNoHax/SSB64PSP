@@ -68,6 +68,13 @@ fn container_attributes_and_explosion_tables_match_the_rom() {
         (0x584, &shell::RED_ATTRIBUTES, 0),
         (0x69C, &nbumper::ATTRIBUTES, 70),
         (0x6E4, &mball::ATTRIBUTES, 20),
+        (0x190, &ssb_game::item::equipment::ATTRIBUTES[0], 100),
+        (0x1D8, &ssb_game::item::equipment::ATTRIBUTES[1], 100),
+        (0x220, &ssb_game::item::equipment::ATTRIBUTES[2], 50),
+        (0x48C, &ssb_game::item::equipment::ATTRIBUTES[3], 110),
+        (0x268, &ssb_game::item::equipment::ATTRIBUTES[4], 140),
+        (0x2E4, &ssb_game::item::equipment::ATTRIBUTES[5], 0),
+        (0x374, &ssb_game::item::equipment::ATTRIBUTES[6], 0),
     ] {
         let d = &file.data[offset..offset + 72];
         let light = attr.weight == ssb_game::item::ItemWeight::Light;

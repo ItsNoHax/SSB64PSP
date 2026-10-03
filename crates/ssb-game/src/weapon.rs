@@ -115,6 +115,11 @@ pub enum WeaponKind {
         grounded: bool,
     },
     NessPKThunder,
+    Equipment {
+        kind: ShotKind,
+        smash: bool,
+        angle_index: u8,
+    },
     PikachuThunderJolt,
     PikachuThunder,
 }
@@ -1554,6 +1559,7 @@ const MAX_OWNERS: usize = 4;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeaponPool {
+    star_rod_smash_desc: bool,
     slots: [Option<Weapon>; MAX_WEAPONS],
     /// PK Fire flames the sparks' hit callbacks made this frame, for
     /// [`crate::item::ItemPool::take_weapon_spawns`].
@@ -2208,6 +2214,7 @@ struct MonsterHit<'a> {
     rules: crate::team::TeamRules,
     slot: usize,
     set_off: &'a mut bool,
+    landed: &'a mut Option<(u8, crate::stale::MotionAttackId, u16)>,
 }
 
 /// `wpProcessSetHitInteractStats` for a fighter: a `can_rehit_fighter`
@@ -2250,9 +2257,17 @@ fn monster_hit(
         attr.can_reflect,
         attr.can_absorb,
     );
-    let pre = pre_hit_at(
+    let mut pre = pre_hit_at(
         defender, flags, false, owner, *h.team, h.rules, h.slot, staled, curr, prev, m.velocity,
     );
+    if matches!(pre, PreHit::None) && m.kind == ShotKind::RayGun {
+        if let Some((tail, old)) = m.attack_tail {
+            pre = pre_hit_at(
+                defender, flags, false, owner, *h.team, h.rules, h.slot, staled, tail, old,
+                m.velocity,
+            );
+        }
+    }
     let mut emit = Emit::default();
     let alive = match pre {
         PreHit::None => None,
@@ -2287,7 +2302,7 @@ fn monster_hit(
         h.fx.extend(h.seq, &emit);
         return alive;
     }
-    let contact = crate::combat::weapon_hit(
+    let contact = crate::combat::weapon_hit_pair(
         defender,
         crate::combat::WeaponAttack {
             hitbox: staled,
@@ -2303,6 +2318,11 @@ fn monster_hit(
                 .is_hitlag_victim()
                 .then_some(m.player.unwrap_or(sector::GROUND_PORT)),
         },
+        if m.kind == ShotKind::RayGun {
+            m.attack_tail
+        } else {
+            None
+        },
     );
     if let crate::combat::WeaponContact::Shielded(shield) = contact {
         record_shot_victim(&mut h, defender.port, false);
@@ -2316,6 +2336,11 @@ fn monster_hit(
         return m.survives(ShotProc::Shield);
     }
     if attack::HitOutcome::of(contact).registered() {
+        if contact == crate::combat::WeaponContact::Hurt(true) {
+            *h.landed = m
+                .player
+                .map(|p| (p, h.stale.attack_id, h.stale.motion_count));
+        }
         record_shot_victim(&mut h, defender.port, rehit);
         m.proc_fx(ShotProc::Hit, &mut emit);
         h.fx.extend(h.seq, &emit);
@@ -2399,6 +2424,7 @@ fn stale_contact(
 impl Default for WeaponPool {
     fn default() -> Self {
         WeaponPool {
+            star_rod_smash_desc: false,
             slots: [None; MAX_WEAPONS],
             item_spawns: [None; MAX_WEAPONS],
             hit_records: [[None; 4]; MAX_WEAPONS],
@@ -2842,6 +2868,40 @@ impl WeaponPool {
             return first || second;
         }
         let weapon = match spawn.kind {
+            WeaponKind::Equipment {
+                kind,
+                smash,
+                angle_index,
+            } => {
+                if kind == ShotKind::StarRod && smash {
+                    self.star_rod_smash_desc = true;
+                }
+                let parent = crate::monster_weapon::ShotParent {
+                    owner: Some(spawn.owner_port),
+                    player: Some(spawn.owner_port),
+                    team: spawn.team,
+                    lr: spawn.facing,
+                    handle: u32::MAX,
+                };
+                let mut m = crate::monster_weapon::MonsterShot::equipment(
+                    kind,
+                    parent,
+                    spawn.position,
+                    smash,
+                    angle_index,
+                );
+                if kind == ShotKind::StarRod && self.star_rod_smash_desc {
+                    m.damage = 12;
+                    m.star_smash = true;
+                }
+                let made = self.insert_at(Weapon::Monster(m), spawn.stale, spawn.team);
+                if let Some(i) = made {
+                    let mut emit = Emit::default();
+                    m.make_fx(&mut emit);
+                    self.fx.extend(self.seq[i], &emit);
+                }
+                return made.is_some();
+            }
             WeaponKind::NessPKFire { grounded } => Weapon::PKFire(PKFire::new(spawn, grounded)),
             WeaponKind::NessPKThunder => {
                 let group = self.next_group;
@@ -3126,11 +3186,18 @@ impl WeaponPool {
             } else {
                 crate::combat::AttackState::Interpolate
             };
-            if !crate::item::touches_damage_coll(item, pos, prev, hitbox.radius, state) {
+            let tail_hit = matches!(self.slots[i], Some(Weapon::Monster(m)) if m.kind == ShotKind::RayGun && m.attack_tail.is_some_and(|(tail, old)| crate::item::touches_damage_coll(item, tail, old, hitbox.radius, state)));
+            if !crate::item::touches_damage_coll(item, pos, prev, hitbox.radius, state) && !tail_hit
+            {
                 continue;
             }
             // `itProcessUpdateDamageStatWeapon`.
             record_weapon_victim(&mut self.hit_records[i], id);
+            if matches!(self.slots[i], Some(Weapon::Monster(m)) if m.attributes().can_rehit_item) {
+                if let Some(r) = self.hit_records[i].iter().position(|r| *r == Some(id)) {
+                    self.rehit[i][r] = 16;
+                }
+            }
             let lr = if vel.x.abs() < 5.0 {
                 if item.pos.x < pos.x {
                     1.0
@@ -3521,6 +3588,7 @@ impl WeaponPool {
                         rules,
                         slot: i,
                         set_off: &mut self.set_off[i],
+                        landed: &mut self.landed[i],
                     },
                     defender,
                 );

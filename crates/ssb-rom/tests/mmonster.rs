@@ -118,11 +118,22 @@ fn item_weapon_attributes_match_the_rom() {
         (ShotKind::KamexHydro, 0, 0xA50),
         (ShotKind::StarmieSwift, 0, 0xB7C),
         (ShotKind::DogasSmog, 0, 0xC40),
+        (ShotKind::RayGun, 0, 0x2B0),
+        (ShotKind::StarRod, 0, 0x4D4),
+        (ShotKind::FireFlower, 0, 0x32C),
     ] {
         let a = &SHOTS[kind as usize];
         let d = &files[file].data[off..off + 0x34];
         for at in (16..28).step_by(2) {
-            assert_eq!(half(d, at), 0, "{kind:?}: attack offsets");
+            assert_eq!(
+                half(d, at),
+                if kind == ShotKind::RayGun && at == 22 {
+                    -5
+                } else {
+                    0
+                },
+                "{kind:?}: attack offsets"
+            );
         }
         let h = |at| half(d, at) as f32;
         assert_eq!(
@@ -149,7 +160,7 @@ fn item_weapon_attributes_match_the_rom() {
             "{kind:?}"
         );
         assert_eq!(a.shield_damage, (w2 as i32) >> 24, "{kind:?}");
-        assert_eq!((w2 >> 22) & 3, 1);
+        assert_eq!((w2 >> 22) & 3, if kind == ShotKind::RayGun { 2 } else { 1 });
         assert_eq!(a.can_setoff, (w2 >> 21) & 1 != 0, "{kind:?}");
         assert_eq!((w2 >> 8) & 7, 1, "{kind:?}: priority");
         assert_eq!(
@@ -163,7 +174,44 @@ fn item_weapon_attributes_match_the_rom() {
             [6, 5, 4, 3, 2].map(|b| w2 & (1 << b) != 0),
             "{kind:?}"
         );
+        if matches!(
+            kind,
+            ShotKind::RayGun | ShotKind::StarRod | ShotKind::FireFlower
+        ) {
+            assert_eq!(a.can_rehit_item, w2 & (1 << 7) != 0, "{kind:?}");
+        }
         assert_eq!(a.kb_base, (w3 >> 22) as i32, "{kind:?}");
+    }
+}
+
+#[test]
+fn star_rod_smash_record_and_flower_angles_match_the_rom() {
+    let Some(files) = archive_files(&[251]) else {
+        return;
+    };
+    let d = &files[0].data;
+    // Smash changes damage and the hit sound in the packed attack words.
+    for at in (0..0x34).step_by(4) {
+        let tilt = word(d, 0x4D4 + at);
+        let smash = word(d, 0x508 + at);
+        if at == 40 {
+            assert_eq!((smash >> 14) & 255, 12);
+            assert_eq!(tilt & !(255 << 14), smash & !(255 << 14));
+        } else if at == 44 {
+            assert_eq!((tilt >> 11) & 1023, 38);
+            assert_eq!((smash >> 11) & 1023, 37);
+            assert_eq!(tilt & !(1023 << 11), smash & !(1023 << 11));
+        } else {
+            assert_eq!(tilt, smash, "word {at}");
+        }
+    }
+    for i in 0..5 {
+        let radians = f32::from_bits(word(d, 0x360 + i * 4));
+        let expected = (i as f32 * 7.5 - 15.0) * core::f32::consts::PI / 180.0;
+        assert!(
+            (radians - expected).abs() < 0.000_001,
+            "angle {i}: {radians}"
+        );
     }
 }
 

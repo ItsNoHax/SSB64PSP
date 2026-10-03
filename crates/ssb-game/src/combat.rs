@@ -1274,6 +1274,47 @@ pub struct WeaponAttack {
 /// (reflection is the weapon pool's). Weapons test their current and
 /// previous positions like fighter attacks.
 pub fn weapon_hit(victim: &mut Fighter, w: WeaponAttack) -> WeaponContact {
+    weapon_hit_inner(victim, w, false)
+}
+
+/// Every attack box tests the shield before any tests a hurtbox
+/// (`ftMainSearchHitWeapon`). Used by Ray Gun's head and growing tail.
+pub(crate) fn weapon_hit_pair(
+    victim: &mut Fighter,
+    w: WeaponAttack,
+    tail: Option<(Vec3, Vec3)>,
+) -> WeaponContact {
+    let attacks = [
+        Some(w),
+        tail.map(|(pos_curr, pos_prev)| WeaponAttack {
+            pos_curr,
+            pos_prev,
+            ..w
+        }),
+    ];
+    for a in attacks.into_iter().flatten() {
+        let contact = weapon_hit_inner(victim, a, true);
+        if matches!(contact, WeaponContact::Shielded(_)) {
+            return contact;
+        }
+    }
+    for a in attacks.into_iter().flatten() {
+        let contact = weapon_hit_inner(
+            victim,
+            WeaponAttack {
+                can_shield: false,
+                ..a
+            },
+            false,
+        );
+        if contact != WeaponContact::Missed {
+            return contact;
+        }
+    }
+    WeaponContact::Missed
+}
+
+fn weapon_hit_inner(victim: &mut Fighter, w: WeaponAttack, shield_only: bool) -> WeaponContact {
     let state = if w.pos_curr == w.pos_prev {
         AttackState::Transfer
     } else {
@@ -1342,7 +1383,7 @@ pub fn weapon_hit(victim: &mut Fighter, w: WeaponAttack) -> WeaponContact {
             .push_set_off(impact, w.hitbox.shield_damage + w.hitbox.damage);
         return WeaponContact::Shielded(ShieldCollide { angle, dir_z });
     }
-    if is_body_intangible(victim) {
+    if shield_only || is_body_intangible(victim) {
         return WeaponContact::Missed;
     }
     let Some(hit) =
@@ -1647,6 +1688,9 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
             f.is_knockback_paused = true;
         }
         f.clear_taps();
+    }
+    if proc_hit {
+        crate::item_use::proc_hit(f);
     }
     f.hits = FrameHits::default();
     proc_hit

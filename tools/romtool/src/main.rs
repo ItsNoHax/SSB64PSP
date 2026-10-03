@@ -4205,6 +4205,49 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     triangles += star.triangle_count();
                 }
             }
+            // Ray Gun ammo: the shared item's standalone display list.
+            const RAY_DISPLAY_LIST: u32 = 0x40A8;
+            const RAY_KEY: (u32, u32) = (251, 0x2B0);
+            if let Some(Ok(ray)) = file
+                .data
+                .get(RAY_DISPLAY_LIST as usize..)
+                .and_then(|data| ssb_rom::dl::decode_list_at(data, RAY_DISPLAY_LIST).ok())
+                .and_then(|cmds| {
+                    mesh::convert_sequence(
+                        &[mesh::SequenceItem {
+                            cmds: &cmds,
+                            world: ssb_rom::scene::Mat4::IDENTITY,
+                            mobjs: &[],
+                            mat_anims: &[],
+                            depth_seed: None,
+                            stream: 0,
+                        }],
+                        mesh::Source::of(file),
+                        mesh::InitialMaterial::WEAPON_EXTERNAL,
+                    )
+                    .into_iter()
+                    .next()
+                })
+            {
+                if ray.triangle_count() != 0 {
+                    pack_mesh(
+                        &mut writer,
+                        &mut tex_index,
+                        &mut mat_anim_index,
+                        &mat_anim_data,
+                        Texels {
+                            home: file,
+                            all: &loaded.files,
+                        },
+                        RAY_KEY.0,
+                        RAY_KEY.1,
+                        &ray,
+                        swizzle,
+                    );
+                    meshes += 1;
+                    triangles += ray.triangle_count();
+                }
+            }
         }
 
         // Sector Z's Arwing lasers (RE-428): both `WPAttributes` (file 262

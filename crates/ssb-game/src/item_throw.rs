@@ -217,6 +217,9 @@ fn facing_yaw(f: &Fighter) -> f32 {
     core::f32::consts::FRAC_PI_2 * f.facing.sign()
 }
 pub fn model_yaw(f: &Fighter) -> Option<f32> {
+    if f.status.status == Status::HammerTurn {
+        return f.item_use.yaw;
+    }
     if common_throw(f.status.status).is_some()
         || matches!(f.status.status, AnyStatus::Common(Status::LiftTurn))
     {
@@ -295,7 +298,7 @@ pub fn update(f: &mut Fighter) -> bool {
                     set_lift_wait(f);
                 }
             } else {
-                // The Hammer's `ftHammerSetStatusHammerWait` is not ported.
+                // LightGet's proc_damage also starts the Hammer's timer.
                 if !heavy {
                     light_get_proc_damage(f);
                 }
@@ -459,6 +462,10 @@ pub fn light_get_proc_damage(f: &mut Fighter) {
     let Some(held) = f.items.held else {
         return;
     };
+    if crate::item_use::holds_hammer(f) {
+        f.item_use.hammer_tics = 720;
+        return;
+    }
     if held.ty != ItemType::Consume {
         return;
     }

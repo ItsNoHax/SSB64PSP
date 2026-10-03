@@ -136,7 +136,7 @@ pub fn opponent(f: &Fighter) -> Opponent {
         facing: f.facing,
         damage: f.damage,
         star_invincible: false,
-        has_hammer: false,
+        has_hammer: crate::item_use::holds_hammer(f),
         kind: f.kind,
         damage_size: damage_size(f),
         tvel_base: f.attributes.tvel_base,
