@@ -3408,6 +3408,7 @@ pub fn set_cliff_catch(f: &mut Fighter, line: u16, corner: Vec2) {
 /// `ftCommonCliffWaitSetStatus` @ `ftcommoncliffcatchwait.c:98`.
 pub fn set_cliff_wait(f: &mut Fighter) {
     set_status(f, Status::CliffWait, 0.0, StatusTiming::unknown());
+    f.interface.tag_wait = 120;
     f.cliff.is_allow_interrupt = false;
     f.cliff.fall_wait = if f.damage < CLIFF_DAMAGE_HIGH {
         CLIFF_FALL_WAIT_DAMAGE_LOW
@@ -3548,6 +3549,7 @@ pub struct Preserve {
     pub damage_player: bool,
     /// `FTSTATUS_PRESERVE_COLANIM`: keep the colour animation.
     pub colanim: bool,
+    pub playertag: bool,
 }
 
 impl Preserve {
@@ -3556,6 +3558,7 @@ impl Preserve {
         hitstatus: false,
         damage_player: false,
         colanim: false,
+        playertag: false,
     };
     pub const HIT: Preserve = Preserve {
         hit: true,
@@ -3602,6 +3605,10 @@ pub fn set_any_status_preserve(
     crate::colanim::on_set_status(f, keep_colanim);
     crate::modelpart::on_set_status(f, status);
     crate::fteffect::on_set_status(f, status);
+    f.interface.tag_hide = false;
+    if !preserve.playertag {
+        f.interface.tag_wait = 0;
+    }
     f.damage_knockback_stack = 0.0;
     f.damage_mul = 1.0;
     f.damage_e_status = None;
@@ -3656,6 +3663,17 @@ pub fn set_any_status_preserve(
     f.is_shadow_hidden = crate::shadow::status_hides_shadow(status);
     f.is_invisible = false;
     crate::dead::on_set_status(f);
+    f.interface.tag_hide = matches!(
+        status,
+        AnyStatus::Common(
+            Status::Entry
+                | Status::EntryNull
+                | Status::DeadDown
+                | Status::DeadLeftRight
+                | Status::Sleep
+                | Status::DokanWait
+        )
+    );
     f.status.anim_frame = anim_frame_begin;
     f.status.anim_frame_begin = anim_frame_begin;
     f.status.entry = f.status.entry.wrapping_add(1);
@@ -3671,6 +3689,7 @@ pub fn set_wait(f: &mut Fighter) {
     }
     set_status(f, Status::Wait, 0.0, StatusTiming::unknown());
     f.is_special_interrupt = true;
+    f.interface.tag_wait = 120;
 }
 
 /// `ftCommonWalkGetWalkStatus` @ 0x8013E340.
@@ -3851,7 +3870,16 @@ pub fn set_jump_aerial(f: &mut Fighter) {
     } else {
         Status::JumpAerialB
     };
-    set_status(f, status, 0.0, StatusTiming::unknown());
+    set_any_status_preserve(
+        f,
+        status.into(),
+        0.0,
+        StatusTiming::unknown(),
+        Preserve {
+            playertag: true,
+            ..Preserve::NONE
+        },
+    );
 
     let attr = f.attributes;
     f.physics.vel_air.y =
@@ -4997,6 +5025,7 @@ pub fn update(f: &mut Fighter) {
             if f.status.animation_ended() {
                 set_status(f, Status::SquatWait, 0.0, StatusTiming::unknown());
                 f.is_special_interrupt = true;
+                f.interface.tag_wait = 120;
             } else {
                 ground_interrupt(f);
             }
@@ -5068,6 +5097,7 @@ pub fn update(f: &mut Fighter) {
             } else if f.status.animation_ended() {
                 set_status(f, Status::SquatWait, 0.0, StatusTiming::unknown());
                 f.is_special_interrupt = true;
+                f.interface.tag_wait = 120;
             }
         }
         // `ftAnimEndSetFall` @ ftcommonstatus.h: a drop-through becomes a

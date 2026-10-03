@@ -515,7 +515,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
             // sharing one vertex cache -- so this reports what actually
             // happens rather than what a standalone conversion would.
             let plan = plan_draw_order(g, &resolver);
-            let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+            let mut decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                 .iter()
                 .map(|p| {
                     file.data
@@ -524,6 +524,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                         .unwrap_or_default()
                 })
                 .collect();
+            seed_player_interface_commands((*id, g.offset), &mut decoded);
             let materials = loaded.materials(file, g);
             let initial = initial_material_for(
                 &skeleton_graphs,
@@ -2529,6 +2530,33 @@ const WEAPON_MAT_ANIM_JOINTS: &[((u32, u32), u32)] = &[
 /// The seed a [`ssb_rom::mesh::convert_sequence`] call for `(file,
 /// graph_offset)` must use -- see [`fighter_skeleton_graphs`],
 /// [`ground_layer1_graphs`] and [`lb_transition_graphs`].
+/// The interface wrappers set PRIM before entering these ROM display lists.
+fn seed_player_interface_commands(key: (u32, u32), decoded: &mut [Vec<ssb_rom::dl::Cmd>]) {
+    use ssb_rom::{dl::Cmd, player_interface as asset};
+    if key.0 != asset::FILE {
+        return;
+    }
+    let Some(cmds) = decoded.first_mut() else {
+        return;
+    };
+    let rgba = match key.1 {
+        asset::ARROWS => {
+            // `dIFCommonPlayerArrowsDisplayList`: G_CC_PRIMITIVE in both cycles.
+            cmds.insert(
+                0,
+                Cmd::SetCombine {
+                    hi: 0x00FF_FFFF,
+                    lo: 0xFFFD_F6FB,
+                },
+            );
+            [255, 0, 0, 128]
+        }
+        asset::POINTER => [255; 4], // dynamic player colour at display time
+        _ => return,
+    };
+    cmds.insert(0, Cmd::SetPrimColor { m: 0, l: 0, rgba });
+}
+
 fn initial_material_for(
     skeleton_graphs: &std::collections::BTreeSet<(u32, u32)>,
     ground_layer1_graphs: &std::collections::BTreeMap<(u32, u32), u32>,
@@ -2536,7 +2564,13 @@ fn initial_material_for(
     file: u32,
     graph_offset: u32,
 ) -> ssb_rom::mesh::InitialMaterial {
-    if skeleton_graphs.contains(&(file, graph_offset))
+    if file == ssb_rom::player_interface::FILE {
+        ssb_rom::mesh::InitialMaterial {
+            lit: false,
+            translucent: graph_offset == ssb_rom::player_interface::ARROWS,
+            ..ssb_rom::mesh::InitialMaterial::SCENE
+        }
+    } else if skeleton_graphs.contains(&(file, graph_offset))
         || ENTRY_VEHICLE_GRAPHS.contains(&(file, graph_offset))
     {
         ssb_rom::mesh::InitialMaterial::FIGHTER_EXTERNAL
@@ -3561,7 +3595,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             // game itself has told us where the list starts. Routing them
             // through it placed 742 of 1661 node lists; decoding them straight
             // places 1417.
-            let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+            let mut decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                 .iter()
                 .map(|p| {
                     file.data
@@ -3570,6 +3604,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         .unwrap_or_default()
                 })
                 .collect();
+            seed_player_interface_commands((id, graphs[gi].offset), &mut decoded);
             // A node's palette lives in its `MObj` chain, not its display
             // list; see `ssb_rom::mobj`.
             let materials = loaded.materials(file, &graphs[gi]);
@@ -5758,8 +5793,58 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         particle_textures += textures.len();
     }
 
-    // `ftShadowProcDisplay` is not a DObj/display-list mesh: it loads this
-    // I4 image directly and writes its own four-to-eight vertices every
+    // The player interface shares its ROM file between the tree and mask.
+    let interface_file = loaded.files[ssb_rom::player_interface::FILE as usize]
+        .as_ref()
+        .ok_or("player interface file missing")?;
+    let frame =
+        ssb_rom::player_interface::frame(&interface_file.data).ok_or("magnifier frame missing")?;
+    let texture = add_sprite_texture(&mut writer, &frame, swizzle);
+    writer.add_sprite(sprite_desc(
+        ssb_rom::player_interface::FILE,
+        ssb_rom::player_interface::FRAME,
+        &frame,
+        texture,
+        0,
+        0,
+        0,
+    ));
+    let arrow_object = object_index
+        .get(&(
+            ssb_rom::player_interface::FILE,
+            ssb_rom::player_interface::ARROWS,
+        ))
+        .and_then(|&i| writer.object(i))
+        .ok_or("player arrow object missing")?;
+    let joints: Vec<_> = ssb_rom::objanim::joint_scripts(
+        &interface_file.data,
+        ssb_rom::player_interface::ARROWS_ANIM,
+        arrow_object.node_count as usize,
+    )
+    .into_iter()
+    .enumerate()
+    .filter_map(|(n, script)| script.map(|s| (Some(s), Some(arrow_object.first_node + n as u32))))
+    .collect();
+    writer.add_anim(
+        ssb_rom::pack::AnimDesc::EFFECT,
+        ssb_rom::player_interface::ARROWS_SLOT,
+        ssb_rom::player_interface::FILE,
+        0,
+        &interface_file.data,
+        &joints,
+    );
+    // The magnifier's color-image-to-Z draw needs the original IA8 samples.
+    writer.add_anim(
+        ssb_rom::pack::AnimDesc::EFFECT,
+        ssb_rom::player_interface::ARROWS_SLOT + 1,
+        ssb_rom::player_interface::FILE,
+        0,
+        &interface_file.data,
+        &[],
+    );
+
+    // `ftShadowProcDisplay` loads this I4 image directly and writes its
+    // own four-to-eight vertices every
     // frame.  Extract its first 16x16 frame explicitly rather than hoping an
     // effect bank happens to retain the same bytes.  The N64 uses mirror+wrap
     // on both axes; bake one mirrored 32x32 period so the PSP can repeat it
@@ -8387,7 +8472,10 @@ fn load_all(archive: &Archive) -> Loaded {
         .flatten()
         .map(|f| (f.id, scene::find_scene_graphs(f)))
         .collect();
-    for &(file, graph) in DIRECT_WEAPON_GRAPHS {
+    for &(file, graph) in DIRECT_WEAPON_GRAPHS.iter().chain(&[(
+        ssb_rom::player_interface::FILE,
+        ssb_rom::player_interface::POINTER,
+    )]) {
         let file_graphs = graphs.entry(file).or_default();
         if !file_graphs.iter().any(|g| g.offset == graph) {
             file_graphs.push(scene::SceneGraph {
@@ -13323,6 +13411,61 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn player_interface_wrapper_colours_reach_rom_primitives() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let rom = std::fs::read(path).unwrap();
+        let info = ssb_rom::rom::identify(&rom).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&rom, info.region).unwrap();
+        let file = archive.load(ssb_rom::player_interface::FILE).unwrap();
+        for (graph, list, color) in [
+            (ssb_rom::player_interface::POINTER, 0x30, [255; 4]),
+            (ssb_rom::player_interface::ARROWS, 0xB0, [255, 0, 0, 255]),
+        ] {
+            let cmds = ssb_rom::dl::decode_list_at(&file.data[list as usize..], list).unwrap();
+            let mut decoded = vec![cmds];
+            super::seed_player_interface_commands((file.id, graph), &mut decoded);
+            let mesh =
+                ssb_rom::mesh::convert(&decoded[0], ssb_rom::mesh::Source::of(&file)).unwrap();
+            assert_eq!(mesh.triangle_count(), 1);
+            assert_eq!(mesh.primitives[0].material.flat_color, Some(color));
+            if graph == ssb_rom::player_interface::ARROWS {
+                let item = ssb_rom::mesh::SequenceItem {
+                    cmds: &decoded[0],
+                    world: ssb_rom::scene::Mat4::IDENTITY,
+                    mobjs: &[],
+                    mat_anims: &[],
+                    depth_seed: None,
+                    stream: 0,
+                };
+                for translucent in [false, true] {
+                    let initial = ssb_rom::mesh::InitialMaterial {
+                        lit: false,
+                        translucent,
+                        ..ssb_rom::mesh::InitialMaterial::SCENE
+                    };
+                    let mesh = ssb_rom::mesh::convert_sequence(
+                        core::slice::from_ref(&item),
+                        ssb_rom::mesh::Source::of(&file),
+                        initial,
+                    )
+                    .remove(0)
+                    .unwrap();
+                    assert_eq!(mesh.primitives[0].material.translucent, translucent);
+                    if translucent {
+                        assert_eq!(
+                            mesh.primitives[0].material.alpha_blend,
+                            Some(ssb_rom::mesh::AlphaBlend::Prim(128))
+                        );
+                        assert!(mesh.vertices.iter().all(|v| v.rgba[3] == 128));
+                    }
+                }
+            }
+        }
+    }
+
     /// The shared damage and attack slots, by name, and their pack lengths
     /// against `motion::anim_length` for every playable fighter. A fighter
     /// without the motion has neither a file nor a length.

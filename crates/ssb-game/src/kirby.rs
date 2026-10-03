@@ -464,7 +464,16 @@ pub fn set_jump_aerial(f: &mut Fighter) {
         4 => K::JumpAerialF4,
         _ => K::JumpAerialF5,
     };
-    set_frames(f, status, 0.0, JUMPAERIAL_LENGTH);
+    status::set_any_status_preserve(
+        f,
+        AnyStatus::Kirby(status),
+        0.0,
+        StatusTiming::frames(JUMPAERIAL_LENGTH),
+        status::Preserve {
+            playertag: true,
+            ..status::Preserve::NONE
+        },
+    );
     let attr = f.attributes;
     f.physics.vel_air.x = f.input.stick_x as f32 * attr.jumpaerial_vel_x;
     if f.physics.jumps_used == 1 {

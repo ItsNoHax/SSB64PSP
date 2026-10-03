@@ -14,6 +14,13 @@ Status: complete.
 
 Remaining: physical-PSP capture of the diagnostic.
 
+The magnifier writes its ROM colour image into depth. `draw_depth_image`
+samples and packs RGBA5551, decodes compressed RDP Z to 18 bits, maps it
+to inverted GE 16-bit depth and writes horizontal spans with colour
+writes masked off. GE loses two depth bits and has no RDP coverage or dZ
+tolerance; native-pixel sampling differs from the N64 texture rectangle
+([RE-440](../evidence/re/RE-440.md)).
+
 ## Alpha test
 
 Status: complete for both gates and their overlap.
@@ -74,6 +81,11 @@ untextured primitive whose alpha is `SHADE_ALPHA` alone (`G_CC_SHADE`)
 blends by its vertex alpha; the texture gate on translucency does not
 apply to it (RE-422).
 
+Unlit, untextured flat `PRIM_ALPHA` also blends when the render mode
+blends. The player-arrow wrapper seeds `G_CC_PRIMITIVE` and red alpha 128;
+its three primitives are the only changed classifications in this batch
+([RE-440](../evidence/re/RE-440.md)).
+
 ## Draw order
 
 Status: complete for the stage, fighters, items, weapons and effects.
@@ -94,6 +106,10 @@ The stage controllers' objects on link 6 (Saffron City's gate, Yoshi's
 Island's clouds, Kongo Jungle's barrel, Mushroom Kingdom's scales) draw
 under layer 1's `G_ZBUFFER` and `G_RM_AA_ZB_OPA_SURF`, which their lists
 inherit (RE-423).
+
+After the battle, arrow camera priority 35 draws before magnifier camera
+30 and interface camera 20. Training's open menu hides Interface-link
+tags/arrows; magnifiers remain until Close-Up disables them (RE-440).
 
 Declined, measured: about 43 `PRIM_ALPHA`-multiply and 93 two-cycle
 primitives.

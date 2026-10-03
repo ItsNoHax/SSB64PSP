@@ -29,7 +29,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  The manifest currently has 179 scenes; RE-316 measured about 17 s for an
+  The manifest currently has 184 scenes; RE-316 measured about 17 s for an
   earlier full run.
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
@@ -170,6 +170,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `trainingcpuitem`) | `f1-training-cpu-item` | A level-9 Training CPU on the default behaviour at tick 200, holding the Bat it tracked and picked up (TrackItem) | RE-437 |
 | `golden_capture` (`psp-game`, scene `trainingmenu`) | `f1-training-menu` | Training's menu, open from tick 20 to 34, sets the CPU to Walk and drops a Maxim Tomato above Mario; at tick 150 the CPU has walked onto the left platform. The closed-menu stat interface draws | RE-438, RE-439 |
 | `golden_capture` (`psp-game`, scene `trainingmenu@30`) | `f1-training-menu-open` | Open Training menu on Item/Maxim Tomato with CP Walk, Normal view, panel, border, cursor, arrows and underline; battle HUD and stats hidden | RE-439 |
+| `golden_capture` (`psp-game`, scene `traininginterface@50/67/75/100/280`) | `f1-training-interface-normal/menu/close/wait/restored` | Tags and off-screen miniatures, open-menu visibility, Close-Up, Normal's delay and restoration | RE-440 |
 | `golden_capture` (`psp-game`, scene `vs`) | `f1-vs-countdown` | A VS battle's countdown on Dream Land, both fighters locked until "Go" | RE-389 |
 | `golden_capture` (`psp-game`, scene `vstimeup`) | `f1-vs-sudden-death` | A one-minute VS battle timed out in a tie, in sudden death with both fighters at 300% | RE-389 |
 | `golden_capture` (`psp-game`, scene `vscpu`) | `f1-vs-cpu` | A VS battle's CPU landing a hit on the idle player at tick 900 (7%); `vstimeup` pins its CPU to Stand to keep its tie | RE-391, RE-438 |
@@ -1136,3 +1137,14 @@ are unchanged. Four select controls remain identical. All 89 targeted
 scenes match their final goldens and repeat exactly; source attribution,
 counts and original-game menu references are in
 [RE-439](../evidence/re/RE-439.md).
+
+## 2026-10-04 RE-440 battle player interface
+
+Five `traininginterface` goldens cover tags, off-screen arrows and circular
+miniatures, the open menu, Close-Up, Normal's wait and restored visibility.
+The source battle inset viewport, live FOV and matching particle projection
+refresh 101 existing world goldens; nine select/results controls stay
+identical. All 115 targeted scenes repeat exactly and match their final
+baselines. Runs, pixel deltas, source attribution and original Training
+observations belong to [RE-440](../evidence/re/RE-440.md). The manifest has
+184 scenes; no full viewer matrix or physical-PSP run in this batch.

@@ -44,8 +44,8 @@ r2-metal-mario-fighter	psp-asset-viewer	fighter metal_mario	pass	RE-311 RE-358
 r2-mario-entry-pipe	psp-asset-viewer	mario_entry	pass	RE-312
 r2-bonus-platform-small	psp-asset-viewer	bonus_platform	pass	RE-312
 r2-dream-land-water	psp-asset-viewer	dream_land_water	pass	RE-321
-f1-training-fireball	psp-game	fireball	pass	RE-300 RE-357 RE-358 RE-359
-f1-training-shadows	psp-game	shadows	pass	RE-302 RE-357 RE-358 RE-359
+f1-training-fireball	psp-game	fireball	pass	RE-300 RE-357 RE-358 RE-359 RE-440
+f1-training-shadows	psp-game	shadows	pass	RE-302 RE-357 RE-358 RE-359 RE-440
 r2-stage-beta-dream-land	psp-asset-viewer	stage 1	pass	RE-286 RE-312 RE-358 RE-359
 r2-stage-zebes	psp-asset-viewer	stage 2	pass	RE-286 RE-312 RE-323 RE-358 RE-359
 r2-stage-test-stage	psp-asset-viewer	stage 3	pass	RE-286 RE-312 RE-358 RE-359
@@ -84,111 +84,116 @@ r2-stage-bonus2-pikachu	psp-asset-viewer	stage 37	pass	RE-286 RE-312 RE-358 RE-3
 r2-stage-bonus2-purin	psp-asset-viewer	stage 38	pass	RE-286 RE-312
 r2-stage-bonus2-ness	psp-asset-viewer	stage 39	pass	RE-286 RE-312 RE-359
 r2-stage-bonus3-race-to-the-finish	psp-asset-viewer	stage 40	pass	RE-286 RE-312 RE-322 RE-323 RE-359
-f1-training-grab	psp-game	grab	pass	RE-332 RE-357 RE-358 RE-359 RE-370 RE-371
-f1-training-costume-1	psp-game	costume1	pass	RE-341 RE-357 RE-358 RE-359
-f1-training-costume-2	psp-game	costume2	pass	RE-341 RE-357 RE-358 RE-359
-f1-training-costume-3	psp-game	costume3	pass	RE-341 RE-357 RE-358 RE-359
-f1-training-jab	psp-game	jab	pass	RE-351 RE-357 RE-358 RE-359
-f1-training-shield	psp-game	shield	pass	RE-367 RE-369 RE-384
-f1-training-luigi	psp-game	luigi	pass	RE-372
-f1-training-samus	psp-game	samus	pass	RE-373
-f1-training-samus-shot	psp-game	samusshot	pass	RE-373
-f1-training-samus-bomb	psp-game	samusbomb	pass	RE-373
-f1-training-link	psp-game	link	pass	RE-374
-f1-training-link-spin	psp-game	linkspin	pass	RE-374
-f1-training-yoshi	psp-game	yoshi	pass	RE-375
-f1-training-yoshi-bomb	psp-game	yoshibomb	pass	RE-375
-f1-training-captain	psp-game	captain	pass	RE-376
-f1-training-captain-kick	psp-game	captainkick	pass	RE-377
-f1-training-kirby	psp-game	kirby	pass	RE-378
-f1-training-pikachu	psp-game	pikachu	pass	RE-379
-f1-training-pikachu-air	psp-game	pikachuair	pass	RE-379
-f1-training-purin	psp-game	purin	pass	RE-380
-f1-training-donkey	psp-game	donkey	pass	
-f1-training-ness	psp-game	ness	pass	RE-381
-f1-training-ness-thunder	psp-game	nessthunder	pass	RE-381
-f1-training-ness-magnet	psp-game	nessmagnet	pass	RE-381
-f1-training-link-bomb	psp-game	linkbomb	pass	RE-383
-f1-training-stage-select	psp-game	stageselect	pass	RE-385
-f1-training-fighter-select	psp-game	fighterselect	pass	RE-386
-f1-training-rebirth	psp-game	rebirth	pass	RE-388
-f1-vs-countdown	psp-game	vs	pass	RE-389
-f1-vs-sudden-death	psp-game	vstimeup	pass	RE-389
-f1-training-cpu-walk	psp-game	cpuwalk	pass	RE-390
-f1-training-cpu-jump	psp-game	cpujump	pass	RE-390
-f1-vs-cpu	psp-game	vscpu	pass	RE-391
-f1-vs-time-up	psp-game	vstimeupsign	pass	RE-395
-f1-vs-sudden-death-sign	psp-game	vssuddendeath	pass	RE-397
-f1-vs-pause	psp-game	vspause	pass	RE-398
+f1-training-grab	psp-game	grab	pass	RE-332 RE-357 RE-358 RE-359 RE-370 RE-371 RE-440
+f1-training-costume-1	psp-game	costume1	pass	RE-341 RE-357 RE-358 RE-359 RE-440
+f1-training-costume-2	psp-game	costume2	pass	RE-341 RE-357 RE-358 RE-359 RE-440
+f1-training-costume-3	psp-game	costume3	pass	RE-341 RE-357 RE-358 RE-359 RE-440
+f1-training-jab	psp-game	jab	pass	RE-351 RE-357 RE-358 RE-359 RE-440
+f1-training-shield	psp-game	shield	pass	RE-367 RE-369 RE-384 RE-440
+f1-training-luigi	psp-game	luigi	pass	RE-372 RE-440
+f1-training-samus	psp-game	samus	pass	RE-373 RE-440
+f1-training-samus-shot	psp-game	samusshot	pass	RE-373 RE-440
+f1-training-samus-bomb	psp-game	samusbomb	pass	RE-373 RE-440
+f1-training-link	psp-game	link	pass	RE-374 RE-440
+f1-training-link-spin	psp-game	linkspin	pass	RE-374 RE-440
+f1-training-yoshi	psp-game	yoshi	pass	RE-375 RE-440
+f1-training-yoshi-bomb	psp-game	yoshibomb	pass	RE-375 RE-440
+f1-training-captain	psp-game	captain	pass	RE-376 RE-440
+f1-training-captain-kick	psp-game	captainkick	pass	RE-377 RE-440
+f1-training-kirby	psp-game	kirby	pass	RE-378 RE-440
+f1-training-pikachu	psp-game	pikachu	pass	RE-379 RE-440
+f1-training-pikachu-air	psp-game	pikachuair	pass	RE-379 RE-440
+f1-training-purin	psp-game	purin	pass	RE-380 RE-440
+f1-training-donkey	psp-game	donkey	pass	 RE-440
+f1-training-ness	psp-game	ness	pass	RE-381 RE-440
+f1-training-ness-thunder	psp-game	nessthunder	pass	RE-381 RE-440
+f1-training-ness-magnet	psp-game	nessmagnet	pass	RE-381 RE-440
+f1-training-link-bomb	psp-game	linkbomb	pass	RE-383 RE-440
+f1-training-stage-select	psp-game	stageselect	pass	RE-385 RE-440
+f1-training-fighter-select	psp-game	fighterselect	pass	RE-386 RE-440
+f1-training-rebirth	psp-game	rebirth	pass	RE-388 RE-440
+f1-vs-countdown	psp-game	vs	pass	RE-389 RE-440
+f1-vs-sudden-death	psp-game	vstimeup	pass	RE-389 RE-440
+f1-training-cpu-walk	psp-game	cpuwalk	pass	RE-390 RE-440
+f1-training-cpu-jump	psp-game	cpujump	pass	RE-390 RE-440
+f1-vs-cpu	psp-game	vscpu	pass	RE-391 RE-440
+f1-vs-time-up	psp-game	vstimeupsign	pass	RE-395 RE-440
+f1-vs-sudden-death-sign	psp-game	vssuddendeath	pass	RE-397 RE-440
+f1-vs-pause	psp-game	vspause	pass	RE-398 RE-440
 f1-vs-mode-menu	psp-game	vsmode	pass	RE-399
 f1-vs-no-contest	psp-game	vsnocontest	pass	RE-400
 f1-vs-players	psp-game	vsplayers	pass	RE-404
-f1-vs-four	psp-game	vs4	pass	RE-405
-f1-vs-team	psp-game	vsteam	pass	RE-407
+f1-vs-four	psp-game	vs4	pass	RE-405 RE-440
+f1-vs-team	psp-game	vsteam	pass	RE-407 RE-440
 f1-vs-results	psp-game	vsresults	pass	RE-409
-f1-training-rebirthblast	psp-game	rebirthblast	pass	RE-412
-f1-training-pikachu-thunder	psp-game	pikachuthunder	pass	RE-417
-f1-training-kirby-hat	psp-game	kirbyhat	pass	RE-417
-f1-training-yoshi-egg	psp-game	yoshiegg	pass	RE-417
-f1-training-yoshi-shield	psp-game	yoshishield	pass	RE-418
-f1-vs-shield-damage	psp-game	vsshield	pass	RE-418
+f1-training-rebirthblast	psp-game	rebirthblast	pass	RE-412 RE-440
+f1-training-pikachu-thunder	psp-game	pikachuthunder	pass	RE-417 RE-440
+f1-training-kirby-hat	psp-game	kirbyhat	pass	RE-417 RE-440
+f1-training-yoshi-egg	psp-game	yoshiegg	pass	RE-417 RE-440
+f1-training-yoshi-shield	psp-game	yoshishield	pass	RE-418 RE-440
+f1-vs-shield-damage	psp-game	vsshield	pass	RE-418 RE-440
 f1-training-stage-select-view	psp-game	stageselectview	pass	RE-419
 f1-training-stage-select-yoshi	psp-game	stageselectyoshi	pass	RE-419
-f1-vs-sector	psp-game	vssector	pass	RE-419
-f1-vs-yoshi	psp-game	vsyoshi	pass	RE-419
+f1-vs-sector	psp-game	vssector	pass	RE-419 RE-440
+f1-vs-yoshi	psp-game	vsyoshi	pass	RE-419 RE-440
 f1-training-select	psp-game	trainingselect	pass	
 f1-training-select-picked	psp-game	trainingselectpicked	pass	
-f1-training-starko	psp-game	starko	pass	RE-420
+f1-training-starko	psp-game	starko	pass	RE-420 RE-440
 f1-vs-results-emblem	psp-game	vsresultsemblem	pass	RE-420
-f1-training-jungle	psp-game	trainingjungle	pass	RE-422
-f1-training-zebes	psp-game	trainingzebes	pass	RE-422
-f1-training-saffron	psp-game	trainingsaffron	pass	RE-422
-f1-training-inishie	psp-game	traininginishie	pass	RE-422
-f1-training-yoster	psp-game	trainingyoster	pass	RE-423
-f1-training-sector	psp-game	trainingsector	pass	RE-423
-f1-training-arwing	psp-game	trainingarwing	pass	RE-428
-f1-training-castle	psp-game	trainingcastle	pass	RE-423
-f1-training-hyrule	psp-game	traininghyrule	pass	RE-423
-f1-training-pupupu	psp-game	trainingpupupu	pass	RE-423
-f1-training-pikachu-hat	psp-game	pikachuhat	pass	RE-425
-f1-training-purin-bow	psp-game	purinbow	pass	RE-425
-f1-training-fox-blaster	psp-game	fox	pass	RE-425
-f1-vs-arwing	psp-game	vsarwing	pass	RE-425
-f1-vs-car	psp-game	vscar	pass	RE-425
-f1-vs-ball	psp-game	vsball	pass	RE-425
-f1-vs-rays	psp-game	vsrays	pass	RE-425
-f1-training-damage-face	psp-game	jab@119	pass	RE-426
-f1-vs-four-low-detail	psp-game	vs4@390	pass	RE-426
-f1-training-yoshi-roll-forward	psp-game	yoshirollf	pass	RE-427
-f1-training-yoshi-roll-backward	psp-game	yoshirollb	pass	RE-427
-f1-training-yoshi-shield-break	psp-game	yoshishieldbreak	pass	RE-427
-f1-training-yoshi-explosion	psp-game	yoshi@88	pass	RE-427
-f1-training-bumper	psp-game	trainingbumper	pass	RE-429
-f1-training-piranha-plant	psp-game	trainingplants	pass	RE-429
-f1-training-chansey	psp-game	trainingchansey	pass	RE-431
-f1-training-electrode	psp-game	trainingelectrode	pass	RE-430
-f1-training-charmander	psp-game	trainingcharmander	pass	RE-430
-f1-training-venusaur	psp-game	trainingvenusaur	pass	RE-430
-f1-training-porygon	psp-game	trainingporygon	pass	RE-430
-f1-training-capsule	psp-game	trainingcapsule	pass	RE-431
-f1-training-chansey-egg	psp-game	trainingchansey@105	pass	RE-431
-f1-training-crate	psp-game	trainingcrate	pass	RE-432
-f1-training-barrel	psp-game	trainingbarrel	pass	RE-432
-f1-training-heavy-lift	psp-game	trainingheavy@82	pass	RE-432
-f1-training-heavy-carry	psp-game	trainingheavy@110	pass	RE-432
-f1-training-heavy-throw	psp-game	trainingheavy@134	pass	RE-432
-f1-training-heavy-smash	psp-game	trainingheavy@150	pass	RE-432
-f1-training-utility	psp-game	trainingutility@50	pass	RE-433
-f1-training-utility-eaten	psp-game	trainingutility@100	pass	RE-433
-f1-training-throwable	psp-game	trainingthrowable@40	pass	RE-434
-f1-training-throwable-open	psp-game	trainingthrowable@170	pass	RE-434
-f1-training-pokemon-a	psp-game	trainingpokemona@120	pass	RE-435
-f1-training-pokemon-b	psp-game	trainingpokemonb@120	pass	RE-435
-f1-training-equipment	psp-game	trainingequipment@50	pass	RE-436
-f1-training-raygun	psp-game	trainingraygun@110	pass	RE-436
-f1-training-flower	psp-game	trainingflower@130	pass	RE-436
-f1-training-starrod	psp-game	trainingstarrod@118	pass	RE-436
-f1-training-hammer	psp-game	traininghammer@110	pass	RE-436
-f1-training-cpu-item	psp-game	trainingcpuitem	pass	RE-437
-f1-training-menu	psp-game	trainingmenu	pass	RE-439
-f1-training-menu-open	psp-game	trainingmenu@30	pass	RE-439
+f1-training-jungle	psp-game	trainingjungle	pass	RE-422 RE-440
+f1-training-zebes	psp-game	trainingzebes	pass	RE-422 RE-440
+f1-training-saffron	psp-game	trainingsaffron	pass	RE-422 RE-440
+f1-training-inishie	psp-game	traininginishie	pass	RE-422 RE-440
+f1-training-yoster	psp-game	trainingyoster	pass	RE-423 RE-440
+f1-training-sector	psp-game	trainingsector	pass	RE-423 RE-440
+f1-training-arwing	psp-game	trainingarwing	pass	RE-428 RE-440
+f1-training-castle	psp-game	trainingcastle	pass	RE-423 RE-440
+f1-training-hyrule	psp-game	traininghyrule	pass	RE-423 RE-440
+f1-training-pupupu	psp-game	trainingpupupu	pass	RE-423 RE-440
+f1-training-pikachu-hat	psp-game	pikachuhat	pass	RE-425 RE-440
+f1-training-purin-bow	psp-game	purinbow	pass	RE-425 RE-440
+f1-training-fox-blaster	psp-game	fox	pass	RE-425 RE-440
+f1-vs-arwing	psp-game	vsarwing	pass	RE-425 RE-440
+f1-vs-car	psp-game	vscar	pass	RE-425 RE-440
+f1-vs-ball	psp-game	vsball	pass	RE-425 RE-440
+f1-vs-rays	psp-game	vsrays	pass	RE-425 RE-440
+f1-training-damage-face	psp-game	jab@119	pass	RE-426 RE-440
+f1-vs-four-low-detail	psp-game	vs4@390	pass	RE-426 RE-440
+f1-training-yoshi-roll-forward	psp-game	yoshirollf	pass	RE-427 RE-440
+f1-training-yoshi-roll-backward	psp-game	yoshirollb	pass	RE-427 RE-440
+f1-training-yoshi-shield-break	psp-game	yoshishieldbreak	pass	RE-427 RE-440
+f1-training-yoshi-explosion	psp-game	yoshi@88	pass	RE-427 RE-440
+f1-training-bumper	psp-game	trainingbumper	pass	RE-429 RE-440
+f1-training-piranha-plant	psp-game	trainingplants	pass	RE-429 RE-440
+f1-training-chansey	psp-game	trainingchansey	pass	RE-431 RE-440
+f1-training-electrode	psp-game	trainingelectrode	pass	RE-430 RE-440
+f1-training-charmander	psp-game	trainingcharmander	pass	RE-430 RE-440
+f1-training-venusaur	psp-game	trainingvenusaur	pass	RE-430 RE-440
+f1-training-porygon	psp-game	trainingporygon	pass	RE-430 RE-440
+f1-training-capsule	psp-game	trainingcapsule	pass	RE-431 RE-440
+f1-training-chansey-egg	psp-game	trainingchansey@105	pass	RE-431 RE-440
+f1-training-crate	psp-game	trainingcrate	pass	RE-432 RE-440
+f1-training-barrel	psp-game	trainingbarrel	pass	RE-432 RE-440
+f1-training-heavy-lift	psp-game	trainingheavy@82	pass	RE-432 RE-440
+f1-training-heavy-carry	psp-game	trainingheavy@110	pass	RE-432 RE-440
+f1-training-heavy-throw	psp-game	trainingheavy@134	pass	RE-432 RE-440
+f1-training-heavy-smash	psp-game	trainingheavy@150	pass	RE-432 RE-440
+f1-training-utility	psp-game	trainingutility@50	pass	RE-433 RE-440
+f1-training-utility-eaten	psp-game	trainingutility@100	pass	RE-433 RE-440
+f1-training-throwable	psp-game	trainingthrowable@40	pass	RE-434 RE-440
+f1-training-throwable-open	psp-game	trainingthrowable@170	pass	RE-434 RE-440
+f1-training-pokemon-a	psp-game	trainingpokemona@120	pass	RE-435 RE-440
+f1-training-pokemon-b	psp-game	trainingpokemonb@120	pass	RE-435 RE-440
+f1-training-equipment	psp-game	trainingequipment@50	pass	RE-436 RE-440
+f1-training-raygun	psp-game	trainingraygun@110	pass	RE-436 RE-440
+f1-training-flower	psp-game	trainingflower@130	pass	RE-436 RE-440
+f1-training-starrod	psp-game	trainingstarrod@118	pass	RE-436 RE-440
+f1-training-hammer	psp-game	traininghammer@110	pass	RE-436 RE-440
+f1-training-cpu-item	psp-game	trainingcpuitem	pass	RE-437 RE-440
+f1-training-menu	psp-game	trainingmenu	pass	RE-439 RE-440
+f1-training-menu-open	psp-game	trainingmenu@30	pass	RE-439 RE-440
+f1-training-interface-normal	psp-game	traininginterface@50	pass	RE-440
+f1-training-interface-menu	psp-game	traininginterface@67	pass	RE-440
+f1-training-interface-close	psp-game	traininginterface@75	pass	RE-440
+f1-training-interface-wait	psp-game	traininginterface@100	pass	RE-440
+f1-training-interface-restored	psp-game	traininginterface@280	pass	RE-440

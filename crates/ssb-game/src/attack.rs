@@ -362,6 +362,9 @@ pub fn init_damage_vars_full(
     status::set_any_status_preserve(f, status_set, 0.0, timing, status::Preserve::DAMAGE_PLAYER);
     status::play_anim_events(f);
     f.reaction.is_knockback_over = knockback >= crate::reaction::KNOCKBACK_OVER;
+    if level == 3 && knockback >= 130.0 {
+        f.interface.tag_wait = 10;
+    }
     f.damage_e_status = if matches!(
         f.status.status,
         AnyStatus::Common(Status::DamageE1 | Status::DamageE2)

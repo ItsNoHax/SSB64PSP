@@ -40,9 +40,12 @@ vertex.
 - UVs are S10.5: divide by 32 for texels, then by the uploaded dimension.
   Linear filtering adds `+0.5 / uploaded_dim` after all tile-origin and
   material transforms; point sampling adds nothing (RE-304).
-- The game renders 4:3 at 320×240. The port uses a centred, pillarboxed
-  362×272 viewport, applied to both `sceGuViewport` and `sceGuScissor`
-  (`coord::pillarboxed_viewport`, RE-034, [D-008](../decisions/D-008.md)).
+- The original 320×240 screen maps to a centred, pillarboxed 362×272
+  area (`coord::pillarboxed_viewport`, RE-034,
+  [D-008](../decisions/D-008.md)). The battle camera uses the inset
+  (10,10)–(310,230) viewport, aspect 15/11 and its live FOV. Models,
+  particles and portable projection share it; tags use the same scissor.
+  Entry/pause zooms follow their live FOV (RE-440).
 
 ## Conversion results
 
@@ -119,5 +122,5 @@ colour never references it ([D-025](../decisions/D-025.md), RE-072).
 | Area | Status | Evidence | Remaining |
 |---|---|---|---|
 | Geometry and transforms | Complete; billboard kinds 44/46/48/50 and signed scale | RE-062, RE-063, RE-143–145 | Physical-PSP recheck |
-| Projection | Complete; battle camera matches original ROM state | RE-034, RE-082–085, RE-131, RE-150, RE-151 | Special camera modes (gameplay) |
+| Projection | Complete; battle camera matches original ROM state, inset viewport and live FOV | RE-034, RE-082–085, RE-131, RE-150, RE-151, RE-440 | Special camera modes (gameplay) |
 | Culling | Complete; RDP default `CULL_BACK` | RE-068 | — |

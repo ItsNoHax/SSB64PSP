@@ -790,6 +790,16 @@ impl Gpu {
         }
     }
 
+    /// Replaces the projection with an orthographic camera.
+    pub fn set_ortho(&mut self, bounds: [f32; 4], near: f32, far: f32) {
+        let [left, right, bottom, top] = bounds;
+        unsafe {
+            sys::sceGumMatrixMode(sys::MatrixMode::Projection);
+            sys::sceGumLoadIdentity();
+            sys::sceGumOrtho(left, right, bottom, top, near, far);
+        }
+    }
+
     /// Resets view and model matrices to identity.
     pub fn reset_modelview(&mut self) {
         unsafe {

@@ -2681,6 +2681,98 @@ unsafe fn sobj_rect(corners: [(f32, f32, f32, f32); 2], abgr: u32) {
     );
 }
 
+/// Draws the RGBA5551 output of an RDP color-image pass into PSP's inverted
+/// depth buffer. Used by framebuffer masks. Pixel samples use the original
+/// 3-point filter; GE rasterisation places the resulting native pixel spans.
+///
+/// # Safety
+/// An active GU list and an ordinary full-screen/pillarbox scissor are required.
+pub unsafe fn draw_depth_image(
+    image: &ssb_rom::texture::Rgba8,
+    rect: [f32; 4],
+    st: &mut DrawState,
+) {
+    let [x, y, width, height] = rect;
+    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let k = vh as f32 / 240.0;
+    let x0 = vx as f32 + x * k;
+    let y0 = y * k;
+    let x1 = x0 + width * k;
+    let y1 = y0 + height * k;
+    sys::sceGuDisable(GuState::Texture2D);
+    sys::sceGuDisable(GuState::Lighting);
+    sys::sceGuDisable(GuState::CullFace);
+    sys::sceGuDisable(GuState::Blend);
+    sys::sceGuDisable(GuState::AlphaTest);
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuDepthFunc(sys::DepthFunc::Always);
+    sys::sceGuDepthMask(0);
+    sys::sceGuPixelMask(u32::MAX);
+    // Consecutive equal samples share one sprite. This is a data-derived
+    // span compression, with no threshold or guessed circle geometry.
+    let ceil = |v: f32| {
+        let i = v as i32;
+        if v > i as f32 {
+            i + 1
+        } else {
+            i
+        }
+    };
+    for py in (y0 as i32)..ceil(y1) {
+        let sample = |px: i32| {
+            let s = (((px as f32 + 0.5 - x0) / k) * image.width as f32 / width * 32.0) as i32;
+            let t = (((py as f32 + 0.5 - y0) / k) * image.height as f32 / height * 32.0) as i32;
+            let rgba = ssb_rom::n64_filter::sample_3point(image, s, t);
+            let packed = (u16::from(rgba[0] >> 3) << 11)
+                | (u16::from(rgba[1] >> 3) << 6)
+                | (u16::from(rgba[2] >> 3) << 1)
+                | u16::from(rgba[3] >= 128);
+            // The RDP reads this color-image word as compressed 18-bit Z.
+            // GE stores linear 16-bit Z with the viewport range inverted.
+            u16::MAX - (ssb_rom::n64_depth::decode(packed) >> 2) as u16
+        };
+        let mut px = x0 as i32;
+        let end = ceil(x1);
+        while px < end {
+            let depth = sample(px);
+            let start = px;
+            px += 1;
+            while px < end && sample(px) == depth {
+                px += 1;
+            }
+            let verts = sys::sceGuGetMemory((2 * core::mem::size_of::<SObjVertex>()) as i32)
+                as *mut SObjVertex;
+            for (i, (x, y)) in [(start as f32, py as f32), (px as f32, py as f32 + 1.0)]
+                .into_iter()
+                .enumerate()
+            {
+                verts.add(i).write(SObjVertex {
+                    u: 0.0,
+                    v: 0.0,
+                    color: 0,
+                    x,
+                    y,
+                    z: f32::from(depth),
+                });
+            }
+            sys::sceGuDrawArray(
+                GuPrimitive::Sprites,
+                VertexType::TEXTURE_32BITF
+                    | VertexType::COLOR_8888
+                    | VertexType::VERTEX_32BITF
+                    | VertexType::TRANSFORM_2D,
+                2,
+                core::ptr::null(),
+                verts.cast(),
+            );
+        }
+    }
+    sys::sceGuPixelMask(0);
+    sys::sceGuDepthFunc(sys::DepthFunc::GreaterOrEqual);
+    sys::sceGuEnable(GuState::CullFace);
+    st.invalidate_all();
+}
+
 /// An untextured `gDPFillRectangle` over `[x0, y0, x1, y1)` in N64 screen
 /// pixels, mapped onto the pillarboxed viewport, blended by `rgba`'s alpha
 /// (`G_RM_AA_XLU_SURF`) below 0xFF.

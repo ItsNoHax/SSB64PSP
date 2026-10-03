@@ -237,6 +237,7 @@ pub struct Fighter {
     /// distinct from invincibility: `ftShadowProcDisplay` hides only the
     /// former.
     pub is_invisible: bool,
+    pub interface: crate::player_interface::FighterInterface,
     /// Source shadow-specific display gate (`FTStruct::is_shadow_hide`).
     /// Common lifecycle transitions maintain it; capture/other visual systems
     /// can also set it without acquiring renderer knowledge.
@@ -434,6 +435,7 @@ impl Fighter {
             hitstun: 0,
             invincible_frames: 0,
             is_invisible: false,
+            interface: crate::player_interface::FighterInterface::default(),
             is_shadow_hidden: false,
             entry: crate::appear::Entry::default(),
             input: ControllerState::default(),
@@ -828,8 +830,11 @@ impl Fighter {
             return;
         }
 
-        // `proc_update` + `proc_interrupt`. This can move the fighter between
-        // ground and air (a jumpsquat ending, a platform drop), so the
+        if self.interface.tag_wait > 1 && !self.interface.control_disable {
+            self.interface.tag_wait -= 1;
+        }
+        // `proc_update` + `proc_interrupt` can move between ground and air
+        // (a jumpsquat ending, a platform drop), so the
         // situation is re-read afterwards rather than captured before.
         crate::status::update(self);
         self.resolve_cliff_release(surfaces);

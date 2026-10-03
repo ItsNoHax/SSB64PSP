@@ -126,7 +126,7 @@ fn maskable(n: u16) -> bool {
 }
 
 /// Draws the live particles of `lists` as `lbParticleDrawTextures` does,
-/// through `view` and `proj` onto the pillarboxed viewport, list 4
+/// through `view` and `proj` onto the battle's inset viewport, list 4
 /// depth-tested ([`draw_lists`]). The battle draws each link's lists at
 /// that link's place in its camera passes (RE-422); [`DRAW_ORDER`] is all
 /// of them.
@@ -143,6 +143,7 @@ pub unsafe fn draw(
     draw_state: &mut DrawState,
 ) {
     let (vx, vy, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let (kx, ky) = (vw as f32 / 320.0, vh as f32 / 240.0);
     let camera = Camera {
         view,
         proj,
@@ -151,7 +152,12 @@ pub unsafe fn draw(
             ssb_game::camera::DEFAULT_NEAR,
             ssb_game::camera::DEFAULT_FAR,
         ),
-        rect: [vx as f32, vy as f32, vw as f32, vh as f32],
+        rect: [
+            vx as f32 + 10.0 * kx,
+            vy as f32 + 10.0 * ky,
+            300.0 * kx,
+            220.0 * ky,
+        ],
     };
     draw_lists(banks, particles, &camera, lists, DEPTH_TESTED, draw_state);
 }

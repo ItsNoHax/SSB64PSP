@@ -25,6 +25,7 @@ extern crate alloc;
 
 mod capture;
 mod play;
+mod player_screen;
 mod players_screen;
 mod results_screen;
 mod stage_screen;
@@ -240,6 +241,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::TrainingCpuItem => 200,
         // The menu closes at 34; the CPU has walked and the Tomato landed.
         GameScene::TrainingMenu => 150,
+        GameScene::TrainingInterface => 50,
         GameScene::TrainingCapsule
         | GameScene::TrainingCrate
         | GameScene::TrainingBarrel
@@ -381,6 +383,13 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
+    if scene == GameScene::TrainingInterface {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            60 | 70 | 80 | 84 => N64Buttons(N64Buttons::START),
+            _ => N64Buttons(0),
+        };
+    }
     // Tick 8 opens the stage select on Peach's Castle, which reads input
     // from its tenth tick (18). D-Right at 20 and 24 moves the cursor to
     // Kongo Jungle, then Hyrule Castle; A at 30 confirms it.
@@ -709,6 +718,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
+    if scene == GameScene::TrainingInterface {
+        return if tick == 68 || tick == 82 { 80 } else { 0 };
+    }
     if is_training_stage_scene(scene) {
         return 0;
     }
@@ -837,6 +849,13 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
+    if scene == GameScene::TrainingInterface {
+        return if tick == 62 || tick == 64 || tick == 66 {
+            -80
+        } else {
+            0
+        };
+    }
     if is_training_stage_scene(scene) {
         return 0;
     }
@@ -1495,6 +1514,7 @@ fn interrupt_pass(
     let eye = pl.camera.eye;
     for f in scenes(pl, dummies).into_iter().flatten() {
         f.fighter.dead.camera_eye = eye;
+        f.fighter.interface.control_disable = locked;
     }
     for i in 0..4 {
         if i == 0 {
@@ -2454,6 +2474,7 @@ struct Hud {
     /// `players[].color` by port, the stage emblem colour each damage
     /// display takes (`ifCommonPlayerDamageInitInterface`).
     colors: [u8; 4],
+    players: ssb_game::player_interface::Interface,
     /// The KO explosions and the screen flash (RE-412).
     ko: ssb_game::ko::KoEffects,
     /// The match's particles (RE-413), on the heap: some 30 KB.
@@ -2560,6 +2581,7 @@ impl Hud {
             pause: None,
             entry_focus: None,
             colors: [0, 1, 2, 3],
+            players: ssb_game::player_interface::Interface::default(),
             ko: ssb_game::ko::KoEffects::default(),
             particles: new_particles(),
             effects: ssb_game::effect::Effects::new(0),
@@ -2691,6 +2713,7 @@ fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     world.damage_hud.particles.reset();
     world.damage_hud.effects = ssb_game::effect::Effects::new(0);
     world.damage_hud.entry_focus = None;
+    world.damage_hud.players = ssb_game::player_interface::Interface::default();
     let mut damage = [0; 4];
     if let Some(pl) = world.play_state.as_ref() {
         damage[0] = i32::from(pl.fighter.damage);
@@ -3210,6 +3233,8 @@ unsafe fn draw_frame(
                 s.vs_battle.as_ref(),
                 s.wallpaper_sprite.as_ref().map(|sprite| (sprite, &s.wallpaper)),
                 s.training_paused,
+                s.training_menu.as_ref().is_none_or(|m| m.magnify_display),
+                s.roster.map(|x| x.is_some_and(|x| !x.human)),
             );
             if let (Some(p), Some(menu), Some(pl)) = (pack.as_ref(), s.training_menu.as_mut(), s.play_state.as_ref()) {
                 let dummy = s.dummies[0].as_ref().map(|x| &x.fighter);
@@ -3455,6 +3480,27 @@ unsafe fn session_frame(
             );
             if let Some(m) = s.training_menu.as_mut() {
                 m.tick_processes();
+            }
+            let magnify_display = s.training_menu.as_ref().is_none_or(|m| m.magnify_display)
+                && s.vs_battle.as_ref().is_none_or(|b| {
+                    matches!(
+                        b.status,
+                        ssb_game::battle::GameStatus::Wait | ssb_game::battle::GameStatus::Go
+                    )
+                });
+            s.damage_hud.players.tick(magnify_display);
+            #[cfg(feature = "headless_capture")]
+            if capture_scene == Some(GameScene::TrainingInterface) && sim_frame_index >= 40 {
+                for (i, f) in scenes(s.play_state.as_mut().unwrap(), &mut s.dummies)
+                    .into_iter()
+                    .enumerate()
+                {
+                    let Some(f) = f else { continue };
+                    ssb_game::status::set_fall(&mut f.fighter);
+                    f.fighter.pos =
+                        ssb_engine::math::Vec3::new(if i == 0 { -6500.0 } else { 6500.0 }, 1500.0, 0.0);
+                    f.fighter.physics.vel_air = ssb_engine::math::Vec3::ZERO;
+                }
             }
         }
         // `scVSBattleStartScene`: a tied time battle goes to sudden
@@ -4308,6 +4354,7 @@ fn tick_stage_select_layer(pack: Option<&Pack<'_>>, s: &mut Session) {
 #[derive(Default)]
 struct DrawAssets {
     shadow_texture: Option<ssb_rom::pack::TextureDesc>,
+    player_frame: Option<ssb_rom::texture::Rgba8>,
     /// `ssb_psp_runtime::scene::ENTRY_PARTS`' objects and animations.
     entry_effects: [Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>; 14],
     /// Indexed by `MarioFireball::index`: Mario's palette, then Luigi's.
@@ -4426,6 +4473,7 @@ impl DrawAssets {
     fn resolve(p: &Pack<'_>) -> Self {
         DrawAssets {
             shadow_texture: meshdraw::fighter_shadow_texture(p),
+            player_frame: player_screen::frame_image(p),
             entry_effects: ssb_psp_runtime::scene::ENTRY_PARTS
                 .map(|part| ssb_psp_runtime::scene::entry_part(p, &part)),
             fireball_meshes: ssb_psp_runtime::scene::fireball_meshes(p),
@@ -5455,11 +5503,10 @@ fn draw_particles(
     let Some(banks) = ssb_psp_runtime::particles::PackBanks::new(p) else {
         return;
     };
-    let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
     let view = ssb_engine::math::Mat4::look_at(pl.camera.eye, pl.camera.at, ssb_engine::math::Vec3::Y);
     let proj = ssb_engine::math::Mat4::perspective(
-        ssb_game::camera::DEFAULT_FOVY_DEGREES.to_radians(),
-        vw as f32 / vh as f32,
+        pl.camera.fovy_degrees.to_radians(),
+        ssb_game::camera::BATTLE_VIEWPORT_WIDTH / ssb_game::camera::BATTLE_VIEWPORT_HEIGHT,
         ssb_game::camera::DEFAULT_NEAR,
         ssb_game::camera::DEFAULT_FAR,
     );
@@ -5832,6 +5879,8 @@ unsafe fn draw_training(
     battle: Option<&ssb_game::battle::Battle>,
     wallpaper: Option<(&ssb_rom::pack::SpriteDesc, &ssb_game::wallpaper::Wallpaper)>,
     training_paused: bool,
+    magnify_display: bool,
+    cpu_ports: [bool; 4],
 ) {
     let scene = pack
         .zip(play_state)
@@ -5850,14 +5899,13 @@ unsafe fn draw_training(
     if let Some((sprite, w)) = wallpaper.filter(|(_, w)| w.kind != ssb_game::wallpaper::Kind::Bonus3) {
         meshdraw::draw_wallpaper(p, sprite, w.x, w.y, w.scale, draw_state);
     }
-    let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-    // 38 degrees: the real battle camera's own default FOV
-    // (`refs/ssb-decomp-re/src/gm/gmcamera.c:1191`, matching `psp-asset-viewer/main.rs`'s
-    // own sourced value), with `dGMCameraPerspDefault`'s planes: near 256
-    // and far 39,936, which keeps a star KO in view (RE-420, RE-421).
+    gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
+    // Tags, culling and magnifier scale use this camera's live projection.
+    // Its default is 38 degrees; entry/pause zooms ease to their source FOV.
+    // `dGMCameraPerspDefault` supplies near 256 and far 39,936 (RE-421/440).
     gpu.set_perspective(
-        ssb_game::camera::DEFAULT_FOVY_DEGREES,
-        vw as f32 / vh as f32,
+        pl.camera.fovy_degrees,
+        ssb_game::camera::BATTLE_VIEWPORT_WIDTH / ssb_game::camera::BATTLE_VIEWPORT_HEIGHT,
         ssb_game::camera::DEFAULT_NEAR,
         ssb_game::camera::DEFAULT_FAR,
     );
@@ -5900,11 +5948,23 @@ unsafe fn draw_training(
     use meshdraw::Heads::{Head0, Head1};
     let fighters = scenes_ref(pl, dummies);
     let fighter_refs = fighters.map(|x| x.map(|x| &x.fighter));
+    let views = fighters.map(|f| {
+        f.map_or_else(ssb_game::player_interface::View::default, |f| {
+            ssb_game::player_interface::view(&f.fighter, &pl.camera, f.cam_offset_y)
+        })
+    });
+    damage_hud.players.views = views;
     // Links 1-2, before layer 0 (which clears `G_ZBUFFER` and covers
     // them): Captain Falcon on a leftward entry (`ftParamMoveDLLink`) and
     // the entry vehicles `efManagerSortZNeg` puts behind z -1000 (RE-425).
-    for f in fighters.iter().flatten().filter(|f| f.fighter.entry.is_link_1) {
-        draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera);
+    for f in fighters
+        .iter()
+        .flatten()
+        .filter(|f| f.fighter.entry.is_link_1)
+    {
+        if !views[usize::from(f.fighter.port)].offscreen {
+            draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera, false);
+        }
     }
     draw_entry_effects(gpu, p, draw_state, assets, effect_visuals, fighter_refs, material_anim, 2);
     stage_pass(0..=5, Head0, draw_state);
@@ -5933,8 +5993,14 @@ unsafe fn draw_training(
     // Each fighter in port order, the CPUs drawn the same way as the
     // player's -- their own pose, their own per-fighter light rebuild
     // (RE-164).
-    for f in fighters.iter().flatten().filter(|f| !f.fighter.entry.is_link_1) {
-        draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera);
+    for f in fighters
+        .iter()
+        .flatten()
+        .filter(|f| !f.fighter.entry.is_link_1)
+    {
+        if !views[usize::from(f.fighter.port)].offscreen {
+            draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera, false);
+        }
     }
     // Link 10: the entry effects, the trapping egg, the halo, the impact
     // wave and particle list 4.
@@ -6032,7 +6098,46 @@ unsafe fn draw_training(
     draw_particles(p, pl, damage_hud, draw_state, &ssb_psp_runtime::particles::LINK18_LISTS);
     stage_pass(16..=18, Head1, draw_state);
     // Links 19-20: the entry vehicles sorted in front (RE-425).
-    draw_entry_effects(gpu, p, draw_state, assets, effect_visuals, fighter_refs, material_anim, 20);
+    draw_entry_effects(
+        gpu,
+        p,
+        draw_state,
+        assets,
+        effect_visuals,
+        fighter_refs,
+        material_anim,
+        20,
+    );
+    // Arrow camera 35, magnifier camera 30, then the interface camera 20.
+    let show_magnify = magnify_display
+        && damage_hud.pause.is_none()
+        && battle.is_none_or(|b| {
+            matches!(
+                b.status,
+                ssb_game::battle::GameStatus::Wait | ssb_game::battle::GameStatus::Go
+            )
+        });
+    if show_magnify {
+        let flags = views
+            .iter()
+            .filter(|v| v.offscreen && v.eligible)
+            .fold(0, |flags, v| flags | v.arrow);
+        if !training_paused {
+            player_screen::arrows(gpu, p, draw_state, &damage_hud.players, flags);
+        }
+        draw_magnifiers(
+            gpu,
+            p,
+            &stage,
+            draw_state,
+            fighters,
+            &pl.camera,
+            views,
+            damage_hud.colors,
+            assets.player_frame.as_ref(),
+        );
+    }
+    gpu.set_viewport_pillarboxed();
     // The interface's link 25.
     draw_particles(p, pl, damage_hud, draw_state, &ssb_psp_runtime::particles::LINK25_LISTS);
     draw_screen_flash(gpu, draw_state, &damage_hud.ko);
@@ -6059,6 +6164,15 @@ unsafe fn draw_training(
     if training_paused {
         return;
     }
+    player_screen::tags(
+        gpu,
+        p,
+        draw_state,
+        fighters,
+        &pl.camera,
+        damage_hud.colors,
+        cpu_ports,
+    );
     draw_damage_hud(p, draw_state, &damage_hud.damage, emblems, stage_index);
     if let Some(b) = battle {
         draw_stocks(p, draw_state, b, fighters.map(|x| x.map(|x| &x.fighter)));
@@ -6069,6 +6183,80 @@ unsafe fn draw_training(
     }
     if let Some(end) = battle.and_then(|b| b.end) {
         draw_announce(p, draw_state, end);
+    }
+}
+
+#[inline(never)]
+unsafe fn draw_magnifiers(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    st: &mut meshdraw::DrawState,
+    fighters: [Option<&play::FighterScene>; 4],
+    camera: &ssb_game::camera::Camera,
+    views: [ssb_game::player_interface::View; 4],
+    colors: [u8; 4],
+    frame_image: Option<&ssb_rom::texture::Rgba8>,
+) {
+    use ssb_game::player_interface as logic;
+    let Some(frame) = p.sprite(
+        ssb_rom::player_interface::FILE,
+        ssb_rom::player_interface::FRAME,
+    ) else {
+        return;
+    };
+    let Some(image) = frame_image else { return };
+    let scale = logic::magnify_scale(camera);
+    let distance = (camera.eye - camera.at).length();
+    let mut mini_camera = *camera;
+    mini_camera.eye = ssb_engine::math::Vec3::new(0.0, 300.0, distance);
+    mini_camera.at = ssb_engine::math::Vec3::new(0.0, 300.0, 0.0);
+    for f in fighters.into_iter().flatten() {
+        let port = usize::from(f.fighter.port).min(3);
+        let v = views[port];
+        if !v.offscreen || !v.eligible {
+            continue;
+        }
+        let xy = logic::magnify_position(v.direction, scale);
+        let (x, y) = (160.0 + xy.0, 120.0 - xy.1);
+        let color = logic::MAGNIFY_COLORS[usize::from(colors[port]).min(4)];
+        let fog = f
+            .fighter
+            .dead
+            .bounds
+            .map_or(stage.fog_color, |b| b.fog_color);
+        gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
+        let rect = [
+            x - 16.0 * scale,
+            y - 16.0 * scale,
+            32.0 * scale,
+            32.0 * scale,
+        ];
+        meshdraw::draw_depth_image(image, rect, st);
+        meshdraw::draw_sprite(
+            p,
+            &frame,
+            &meshdraw::SObjDraw {
+                x: rect[0],
+                y: rect[1],
+                scale,
+                prim: [fog[0], fog[1], fog[2], 255],
+                env: [color[0], color[1], color[2]],
+                solid: false,
+                attr: ssb_rom::sprite::SP_TRANSPARENT,
+            },
+            st,
+        );
+        let half = 9.0 * scale;
+        gpu.set_viewport_n64([x - half, y - half, x + half, y + half]);
+        gpu.set_ortho([-450.0, 450.0, -450.0, 450.0], 256.0, 39936.0);
+        gpu.set_view(&ssb_engine::math::Mat4::look_at(
+            mini_camera.eye,
+            mini_camera.at,
+            ssb_engine::math::Vec3::Y,
+        ));
+        draw_fighter_model(gpu, p, stage, st, f, &mini_camera, true);
+        player_screen::pointer(gpu, p, st, xy, v.direction, scale, color);
     }
 }
 
@@ -6086,6 +6274,7 @@ unsafe fn draw_fighter_model(
     draw_state: &mut meshdraw::DrawState,
     f: &play::FighterScene,
     camera: &ssb_game::camera::Camera,
+    miniature: bool,
 ) {
     // Yoshi's egg shield hides every part (`ftParamHideModelPartAll`, RE-418).
     let hidden = f.fighter.is_invisible || ssb_game::combat::is_yoshi_egg_shield(&f.fighter);
@@ -6101,7 +6290,13 @@ unsafe fn draw_fighter_model(
         f.fighter.model_parts.detail_curr,
     );
     let obj = p.object(drawn).unwrap_or(obj);
-    if let Some(joint) = f
+    if miniature {
+        gpu.model_transform(
+            [0.0; 3],
+            [0.0, play::fighter_turn(&f.fighter), 0.0],
+            meshdraw::MODEL_SCALE,
+        );
+    } else if let Some(joint) = f
         .fighter
         .grab
         .holder
