@@ -7,7 +7,8 @@
 //! ([`monsters`]), plus the light containers Egg and Capsule ([`container`]),
 //! the consumed utilities ([`utility`]) and the throwable ones: the
 //! Motion-Sensor Bomb ([`msbomb`]), the Bob-omb ([`bombhei`]), the Bumper
-//! ([`nbumper`]), both Shells ([`shell`]) and the Poké Ball ([`mball`]).
+//! ([`nbumper`]), both Shells ([`shell`]) and the Poké Ball ([`mball`])
+//! with its thirteen Pokémon ([`mmonster`]).
 //!
 //! [`ItemPool`] is `gITManagerStructsAllocFree` and the item GObj link: 16
 //! structs (`ITEM_ALLOC_MAX`), handed out last-freed first, and a creation
@@ -67,6 +68,9 @@ mod heavy_tests;
 pub mod link_bomb;
 mod map;
 pub mod mball;
+pub mod mmonster;
+#[cfg(test)]
+mod mmonster_tests;
 pub mod monsters;
 pub mod msbomb;
 pub mod nbumper;
@@ -143,6 +147,7 @@ pub enum ItemKind {
     PowerBlock,
     Pakkun,
     Monster(monsters::Kind),
+    MMonster(mmonster::Kind),
 }
 
 impl ItemKind {
@@ -400,6 +405,7 @@ pub enum ItemStatus {
     PowerBlock(power_block::Status),
     Pakkun(pakkun::Status),
     Monster(monsters::Status),
+    MMonster(mmonster::Status),
 }
 
 /// `ITStruct::item_vars`.
@@ -453,6 +459,8 @@ pub struct ItemVars {
     pub mball_owner: Option<(u8, u8, u8)>,
     /// The open halves show and the closed ball hides.
     pub mball_open: bool,
+    /// A Poké Ball Pokémon's.
+    pub mmonster: mmonster::Vars,
 }
 
 /// `ITStruct`.
@@ -935,6 +943,11 @@ pub enum StageItemEvent {
 /// each.
 const STAGE_EVENTS_MAX: usize = 4;
 
+/// `lbCommonReflect2D`.
+pub(crate) fn reflect_2d(v: &mut Vec3, n: Vec2) {
+    map::reflect(v, n);
+}
+
 /// `syVectorRotateAbout3D`.
 pub(crate) fn rotate_about(v: Vec3, dir: Vec3, angle: f32) -> Vec3 {
     let mag_yz = ssb_engine::math::sqrt(dir.y * dir.y + dir.z * dir.z);
@@ -978,6 +991,8 @@ pub struct OwnerView {
     pub pos: Vec3,
     pub facing: f32,
     pub coll: BodyColl,
+    /// `fp->team`, which the Pokémon's opponent searches read.
+    pub team: u8,
     /// World positions of `joint_itemlight_id` and `joint_itemheavy_id`.
     pub hold_light: Vec3,
     pub hold_heavy: Vec3,
@@ -1097,6 +1112,9 @@ pub struct ItemPool {
     /// Mew can come out of a Poké Ball. No save data unlocks nothing.
     pub unlock_newcomers: bool,
     monster_shots: [Option<crate::monster_weapon::MonsterShot>; ITEM_ALLOC_MAX],
+    /// Free weapon structs, from [`Self::observe_weapons`]: an item's weapon
+    /// maker fails without one.
+    weapon_free: u8,
     fx: crate::wpeffect::WeaponFx,
 }
 
@@ -1127,6 +1145,7 @@ impl Default for ItemPool {
             monster_data: MonsterData::default(),
             unlock_newcomers: false,
             monster_shots: [None; ITEM_ALLOC_MAX],
+            weapon_free: crate::weapon::MAX_WEAPONS as u8,
             fx: crate::wpeffect::WeaponFx::default(),
         }
     }
@@ -1258,6 +1277,52 @@ impl ItemPool {
         Some(slot)
     }
 
+    /// `itMainMakeMonster` after its draw: `kind`'s maker from the open
+    /// ball `ball`, then the ball's owner, team, player and handicap.
+    pub fn make_mmonster<I, F>(
+        &mut self,
+        kind: mmonster::Kind,
+        ball: &Item,
+        surfaces: &F,
+    ) -> Option<u8>
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        if self.free_len == 0 {
+            return None;
+        }
+        let owners = self.owners;
+        let vel = Vec3::new(0.0, 16.0, 0.0);
+        let mut monster = mmonster::make(kind, ball, vel, &owners, surfaces);
+        monster.owner = ball.owner;
+        monster.team = ball.team;
+        monster.player = ball.player;
+        monster.handicap = ball.handicap;
+        self.alloc(monster)
+    }
+
+    /// A Pokémon from a Poké Ball resting at `pos` that `owner` (with
+    /// `team`) threw, for captures and tests.
+    pub fn spawn_mmonster<I, F>(
+        &mut self,
+        kind: mmonster::Kind,
+        pos: Vec3,
+        owner: Option<u8>,
+        team: u8,
+        surfaces: &F,
+    ) -> Option<u8>
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let mut ball = mball::make(pos, Vec3::ZERO);
+        ball.owner = owner;
+        ball.player = owner;
+        ball.team = team;
+        self.make_mmonster(kind, &ball, surfaces)
+    }
+
     /// `itManagerMakeAppearActor`, after the stage's ground is made.
     /// `points` are the stage's `nMPMapObjKindItem` positions.
     pub fn make_appear_actor(
@@ -1286,6 +1351,25 @@ impl ItemPool {
         };
         self.make_setup_common(spawn.kind, None, spawn.pos, Vec3::ZERO, &surfaces);
     }
+    /// Reads the weapon pool before the item processes: its free structs
+    /// (an item's weapon maker fails without one) and the last weapon pass's
+    /// rock events, which Onix reads in its update: a rock that left the
+    /// stage (`itIwarkWeaponRockProcDead`) or met a new floor
+    /// (`rumble_frame`).
+    pub fn observe_weapons(&mut self, weapons: &mut crate::weapon::WeaponPool) {
+        self.weapon_free = weapons.free_count() as u8;
+        for (handle, dead) in weapons.take_rock_events() {
+            let Some(slot) = self.slot_of(handle) else {
+                continue;
+            };
+            if let Some(item) = self.slots[usize::from(slot)].as_mut() {
+                if matches!(item.kind, ItemKind::MMonster(_)) {
+                    mmonster::rock_event(item, dead);
+                }
+            }
+        }
+    }
+
     /// Item-made weapons enter the weapon link before its main processes.
     pub fn flush_monster_shots(&mut self, weapons: &mut crate::weapon::WeaponPool) {
         for shot in core::mem::take(&mut self.monster_shots)
@@ -1664,17 +1748,18 @@ impl ItemPool {
         let owners = self.owners;
         let mut events = self.events;
         let mut shots = self.monster_shots;
+        let mut weapon_free = self.weapon_free;
         for (link, &slot) in order[..self.order_len].iter().enumerate() {
             let Some(mut item) = self.slots[usize::from(slot)] else {
                 continue;
             };
+            let handle = self.handle_of(slot);
             let mut effects = Effects::default();
             let mut push = |e| push_event(&mut events, e);
             let mut emit = crate::wpeffect::Emit::default();
-            let mut spawn = |shot| {
-                if let Some(s) = shots.iter_mut().find(|s| s.is_none()) {
-                    *s = Some(shot);
-                }
+            let mut spawn = ShotBuf {
+                shots: &mut shots,
+                free: &mut weapon_free,
             };
             let mut common = CommonPort {
                 pool: self,
@@ -1689,6 +1774,8 @@ impl ItemPool {
                 events: &mut push,
                 shots: &mut spawn,
                 fx: &mut emit,
+                bounds,
+                handle,
             };
             let alive = process_main(&mut item, &mut ctx, &surfaces, bounds, &mut effects);
             self.slots[usize::from(slot)] = Some(item);
@@ -1700,6 +1787,7 @@ impl ItemPool {
         }
         self.events = events;
         self.monster_shots = shots;
+        self.weapon_free = weapon_free;
     }
 
     /// `itProcessProcHitCollisions` for every item. `fighters` supplies the
@@ -1836,8 +1924,33 @@ struct ProcCtx<'a> {
     fighters: &'a [Vec3],
     anims: &'a mut dyn ItemAnims,
     events: &'a mut dyn FnMut(StageItemEvent),
-    shots: &'a mut dyn FnMut(crate::monster_weapon::MonsterShot),
+    shots: &'a mut dyn mmonster::ShotSink,
     fx: &'a mut crate::wpeffect::Emit,
+    bounds: Option<BlastZone>,
+    /// The item's own handle ([`ItemPool::handle_of`]).
+    handle: u32,
+}
+
+/// The frame's item-made weapons, made in the weapon link by
+/// [`ItemPool::flush_monster_shots`]; `free` counts the weapon structs left.
+struct ShotBuf<'a> {
+    shots: &'a mut [Option<crate::monster_weapon::MonsterShot>; ITEM_ALLOC_MAX],
+    free: &'a mut u8,
+}
+
+impl mmonster::ShotSink for ShotBuf<'_> {
+    fn has_free(&self) -> bool {
+        *self.free > 0 && self.shots.iter().any(Option::is_none)
+    }
+    fn push(&mut self, shot: crate::monster_weapon::MonsterShot) {
+        if !self.has_free() {
+            return;
+        }
+        if let Some(s) = self.shots.iter_mut().find(|s| s.is_none()) {
+            *s = Some(shot);
+            *self.free -= 1;
+        }
+    }
 }
 
 fn owner_view(f: &Fighter) -> OwnerView {
@@ -1847,6 +1960,7 @@ fn owner_view(f: &Fighter) -> OwnerView {
         pos: f.pos,
         facing: f.facing.sign(),
         coll: f.coll,
+        team: f.team,
         hold_light: f.joint_world(light as u8, Vec3::ZERO),
         hold_heavy: f.joint_world(heavy as u8, Vec3::ZERO),
     }
@@ -2012,6 +2126,18 @@ where
         ItemStatus::Monster(s) => monsters::proc_update(
             item, s, ctx.anims, ctx.events, ctx.shots, ctx.fx, ctx.common,
         ),
+        ItemStatus::MMonster(s) => mmonster::update(
+            item,
+            s,
+            &mut mmonster::Ctx {
+                owners: ctx.owners,
+                bounds: ctx.bounds,
+                shots: &mut *ctx.shots,
+                fx: &mut *ctx.fx,
+                common: &mut *ctx.common,
+                handle: ctx.handle,
+            },
+        ),
     }
 }
 
@@ -2024,6 +2150,7 @@ fn has_proc_map(item: &Item) -> bool {
         ItemStatus::NBumper(s) => return nbumper::has_proc_map(s),
         ItemStatus::Shell(s) => return shell::has_proc_map(s),
         ItemStatus::MBall(s) => return mball::has_proc_map(s),
+        ItemStatus::MMonster(s) => return mmonster::has_proc_map(item, s),
         _ => {}
     }
     matches!(
@@ -2061,6 +2188,7 @@ where
         ItemStatus::NBumper(s) => return nbumper::proc_map(item, s, surfaces),
         ItemStatus::Shell(s) => return shell::proc_map(item, s, surfaces),
         ItemStatus::MBall(s) => return mball::proc_map(item, s, surfaces),
+        ItemStatus::MMonster(s) => return mmonster::proc_map(item, s, surfaces),
         ItemStatus::PKFire(s) => pk_fire::proc_map(item, s, surfaces),
         ItemStatus::LinkBomb(s) => link_bomb::proc_map(item, s, surfaces),
         ItemStatus::GBumper(_)
@@ -2113,6 +2241,7 @@ fn run_hit_proc(
         ItemStatus::PowerBlock(s) => power_block::hit_proc(item, s, proc, ctx.anims, ctx.events),
         ItemStatus::Pakkun(s) => pakkun::hit_proc(item, s, proc, ctx.anims),
         ItemStatus::Monster(s) => monsters::hit_proc(item, s, proc, ctx.anims, ctx.events),
+        ItemStatus::MMonster(s) => mmonster::hit_proc(item, s, proc),
     }
 }
 
@@ -2245,10 +2374,23 @@ where
         true
     }
     fn make_monster(&mut self, parent: &Item) {
-        // `itMainMakeMonster`: the Pokémon makers make nothing yet, so the
-        // draw and the bookkeeping are all that happen.
-        let _kind = self.pool.monster_data.choose(self.pool.unlock_newcomers);
-        let _ = parent;
+        // `itMainMakeMonster`: the draw and its bookkeeping, then the maker,
+        // then the ball's owner, team, player and handicap. The 1P game's
+        // Mew catcher bonus is not ported.
+        let index = self.pool.monster_data.choose(self.pool.unlock_newcomers);
+        if let Some(kind) = mmonster::Kind::from_item_kind(index) {
+            self.pool.make_mmonster(kind, parent, self.surfaces);
+        }
+    }
+    fn make_common_egg(&mut self, parent: &Item, pos: Vec3, vel: Vec3) -> Option<i8> {
+        let slot = self.pool.make_setup_common(
+            3,
+            Some((parent.pos, parent.coll)),
+            pos,
+            vel,
+            self.surfaces,
+        )?;
+        Some(self.pool.get(slot).map_or(1, |egg| egg.lr as i8))
     }
     fn open_crate(&mut self, parent: &mut Item) -> bool {
         // `itBoxCommonCheckSpawnItems`, after the smash effect.

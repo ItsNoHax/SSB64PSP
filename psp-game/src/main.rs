@@ -241,6 +241,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         | GameScene::TrainingHeavy
         | GameScene::TrainingUtility
         | GameScene::TrainingThrowable
+        | GameScene::TrainingPokemonA
+        | GameScene::TrainingPokemonB
         | GameScene::TrainingChansey
         | GameScene::TrainingElectrode
         | GameScene::TrainingCharmander
@@ -303,6 +305,8 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingHeavy
             | GameScene::TrainingUtility
             | GameScene::TrainingThrowable
+            | GameScene::TrainingPokemonA
+            | GameScene::TrainingPokemonB
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -503,6 +507,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingHeavy
             | GameScene::TrainingUtility
             | GameScene::TrainingThrowable
+            | GameScene::TrainingPokemonA
+            | GameScene::TrainingPokemonB
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -1520,6 +1526,9 @@ fn physics_pass(
     if let Some(pl) = s[0].as_deref() {
         items.camera_at_x = pl.camera.at.x;
     }
+    // The weapon link's last pass: free structs for the items' weapon
+    // makers, and Onix's rock events.
+    items.observe_weapons(weapons);
     items.tick_appear(started, map);
     items.tick_with_effects(map, Some(blast_zone),
         &tops[..top_count],
@@ -1865,6 +1874,42 @@ fn capture_monster(scene: Option<GameScene>) -> Option<u8> {
 #[inline(never)]
 fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s: &mut Session) {
     use ssb_game::stage::StageItems;
+    if let Some(kinds) = match scene {
+        Some(GameScene::TrainingPokemonA) => Some([
+            (ssb_game::item::mmonster::Kind::Nyars, -900.0),
+            (ssb_game::item::mmonster::Kind::MLucky, -400.0),
+            (ssb_game::item::mmonster::Kind::Kamex, 600.0),
+        ]),
+        Some(GameScene::TrainingPokemonB) => Some([
+            (ssb_game::item::mmonster::Kind::Lizardon, -900.0),
+            (ssb_game::item::mmonster::Kind::Starmie, -400.0),
+            (ssb_game::item::mmonster::Kind::Dogas, 600.0),
+        ]),
+        _ => None,
+    } {
+        if let Some(pl) = s.play_state.as_ref() {
+            // Each from a ball resting on the floor (its map box's top
+            // above it) that Mario (port 0) threw.
+            // Blastoise's maker reads every fighter.
+            s.items.observe_owner(&pl.fighter);
+            for d in s.dummies.iter().flatten() {
+                s.items.observe_owner(&d.fighter);
+            }
+            let at = pl.fighter.pos;
+            let ball = ssb_game::item::mball::ATTRIBUTES.map_coll.top;
+            for (kind, x) in kinds {
+                let pos = at + ssb_engine::math::Vec3::new(x, ball, 0.0);
+                s.items.spawn_mmonster(
+                    kind,
+                    pos,
+                    Some(pl.fighter.port),
+                    pl.fighter.team,
+                    &core::iter::empty,
+                );
+            }
+        }
+        return;
+    }
     if scene == Some(GameScene::TrainingThrowable) {
         if let Some(pl) = s.play_state.as_ref() {
             // Motion-Sensor Bomb, Bob-omb, Bumper and the two Shells across
@@ -4083,6 +4128,51 @@ struct DrawAssets {
     thunder_frames: [Option<ssb_rom::pack::MeshDesc>; 4],
     /// The Egg Lay egg and its Wait, Break and Throw animations (RE-417).
     egg_lay: Option<(ssb_rom::pack::ObjectDesc, [ssb_rom::pack::AnimDesc; 3])>,
+    /// The Poké Ball Pokémon by kind (RE-435).
+    mmonsters: [Option<MonsterAsset>; 13],
+    /// Their weapons' trees: Onix's rock, Meowth's coin, Starmie's Swift,
+    /// Clefairy's swarm (Clefairy's own tree), and the Hydro Pump, Smog and
+    /// Beedrill swarm with their `anim_joints`.
+    monster_rock: Option<ssb_rom::pack::ObjectDesc>,
+    monster_coin: Option<ssb_rom::pack::ObjectDesc>,
+    monster_swift: Option<ssb_rom::pack::ObjectDesc>,
+    monster_pippi_swarm: Option<ssb_rom::pack::ObjectDesc>,
+    monster_hydro: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    monster_smog: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    monster_swarm: Option<ssb_rom::pack::ObjectDesc>,
+}
+
+/// One Poké Ball Pokémon's tree (`ssb_rom::mmonster::VISUALS`): its attack
+/// display list, and its appear and status scripts.
+#[derive(Clone, Copy)]
+struct MonsterAsset {
+    object: ssb_rom::pack::ObjectDesc,
+    attack_mesh: Option<ssb_rom::pack::MeshDesc>,
+    appear: Option<ssb_rom::pack::AnimDesc>,
+    status: Option<ssb_rom::pack::AnimDesc>,
+}
+
+impl MonsterAsset {
+    fn resolve(p: &Pack<'_>, kind: usize) -> Option<Self> {
+        use ssb_rom::mmonster::{FILE, VISUALS};
+        let v = VISUALS[kind];
+        let object = ssb_psp_runtime::scene::object_keyed(p, (FILE, v.graph))?;
+        let attack_mesh = v.attack_dl_graph.and_then(|g| {
+            let o = ssb_psp_runtime::scene::object_keyed(p, (FILE, g))?;
+            let node = p.node(o.first_node + 1)?;
+            (node.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                .then(|| p.mesh(node.mesh))
+                .flatten()
+        });
+        Some(MonsterAsset {
+            object,
+            attack_mesh,
+            appear: p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_MMONSTER_APPEAR + kind as u32),
+            status: v.status.and_then(|_| {
+                p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_MMONSTER_STATUS + kind as u32)
+            }),
+        })
+    }
 }
 
 impl DrawAssets {
@@ -4166,6 +4256,37 @@ impl DrawAssets {
             displays: display_assets(p),
             thunder_frames: ssb_psp_runtime::scene::pikachu_thunder_meshes(p),
             egg_lay: ssb_psp_runtime::scene::yoshi_egg_lay_effect(p),
+            mmonsters: core::array::from_fn(|kind| MonsterAsset::resolve(p, kind)),
+            monster_rock: ssb_psp_runtime::scene::object_keyed(
+                p,
+                (86, ssb_rom::mmonster::ROCK_GRAPH),
+            ),
+            monster_coin: ssb_psp_runtime::scene::object_keyed(
+                p,
+                (86, ssb_rom::mmonster::COIN_GRAPH),
+            ),
+            monster_swift: ssb_psp_runtime::scene::object_keyed(
+                p,
+                (86, ssb_rom::mmonster::SWIFT_GRAPH),
+            ),
+            monster_pippi_swarm: ssb_psp_runtime::scene::object_keyed(
+                p,
+                (86, ssb_rom::mmonster::PIPPI_SWARM_GRAPH),
+            ),
+            monster_hydro: ssb_psp_runtime::scene::object_keyed(
+                p,
+                (86, ssb_rom::mmonster::HYDRO_GRAPH),
+            )
+            .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_KAMEX_HYDRO)),
+            monster_smog: ssb_psp_runtime::scene::object_keyed(
+                p,
+                (86, ssb_rom::mmonster::SMOG_GRAPH),
+            )
+            .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_DOGAS_SMOG)),
+            monster_swarm: ssb_psp_runtime::scene::object_keyed(
+                p,
+                (86, ssb_rom::mmonster::SPEAR_SWARM_GRAPH),
+            ),
         }
     }
 }
@@ -4526,6 +4647,10 @@ struct ItemVisual {
     ticks: u16,
     anim: ssb_rom::skeleton::StageAnimator,
     materials: ssb_rom::skeleton::EffectMaterialAnimator,
+    /// A Pokémon's: the status script it plays since that tick, and the
+    /// script playing.
+    status: Option<u16>,
+    playing: Option<ssb_rom::pack::AnimDesc>,
 }
 
 impl DrawAssets {
@@ -4549,6 +4674,8 @@ impl DrawAssets {
             | ssb_game::item::ItemKind::PowerBlock
             | ssb_game::item::ItemKind::Pakkun
             | ssb_game::item::ItemKind::Monster(_) => None,
+            // [`MonsterAsset`].
+            ssb_game::item::ItemKind::MMonster(_) => None,
         }
     }
 }
@@ -5142,6 +5269,57 @@ fn catch_up(clock: &mut Option<u16>, target: Option<u16>) -> Option<(bool, u16)>
     Some(step)
 }
 
+/// A Pokémon's players: the appear script from its first process
+/// (`gcAddDObjAnimJoint` in the maker, played by `itProcessProcItemMain`),
+/// then, from the tick its status added one, the status script, whose own
+/// init plays it once at frame zero. Beedrill's fly status stops it.
+fn sync_mmonster(
+    p: &Pack<'_>,
+    assets: &DrawAssets,
+    v: &mut ItemVisual,
+    item: &ssb_game::item::Item,
+    kind: ssb_game::item::mmonster::Kind,
+) {
+    let Some(asset) = assets.mmonsters[kind as usize].as_ref() else {
+        return;
+    };
+    let vars = &item.vars.mmonster;
+    if v.kind != Some(item.kind) || v.ticks > item.anim_ticks {
+        v.kind = Some(item.kind);
+        v.status = None;
+        v.playing = asset.appear;
+        v.anim = Default::default();
+        if let Some(anim) = asset.appear.as_ref() {
+            v.anim.start_changed(p, anim);
+        }
+        // The make's own play ran before the maker added the script.
+        v.ticks = 1;
+        v.materials.start(p, object_mat_anims(p, &asset.object));
+    }
+    let advance = |v: &mut ItemVisual, until: u16| {
+        let script = v.playing.as_ref().and_then(|a| p.anim_script(a));
+        while v.ticks < until {
+            if let (Some(script), false) = (script, vars.anim_frozen) {
+                let _ = v.anim.tick(script);
+            }
+            v.materials.tick(p);
+            v.ticks += 1;
+        }
+    };
+    if vars.status_anim != v.status {
+        if let (Some(at), Some(anim)) = (vars.status_anim, asset.status) {
+            advance(v, at);
+            v.anim.start_changed(p, &anim);
+            if let Some(script) = p.anim_script(&anim) {
+                let _ = v.anim.tick(script);
+            }
+            v.playing = Some(anim);
+        }
+        v.status = vars.status_anim;
+    }
+    advance(v, item.anim_ticks);
+}
+
 impl EffectVisuals {
     #[inline(never)]
     fn sync(
@@ -5160,6 +5338,10 @@ impl EffectVisuals {
                 visual.kind = None;
                 continue;
             };
+            if let ssb_game::item::ItemKind::MMonster(kind) = item.kind {
+                sync_mmonster(p, assets, visual, item, kind);
+                continue;
+            }
             let Some((object, anim)) = assets.item(item.kind) else {
                 continue;
             };
@@ -6055,6 +6237,345 @@ unsafe fn draw_throwable(
     true
 }
 
+/// A tree node's mesh, if it has one.
+fn node_mesh(
+    p: &Pack<'_>,
+    object: &ssb_rom::pack::ObjectDesc,
+    node: u32,
+) -> Option<ssb_rom::pack::MeshDesc> {
+    p.node(object.first_node + node)
+        .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+        .and_then(|n| p.mesh(n.mesh))
+}
+
+/// The pose a player has reached for a tree node, or its rest pose.
+fn node_pose_or_rest(
+    p: &Pack<'_>,
+    anim: &ssb_rom::skeleton::StageAnimator,
+    object: &ssb_rom::pack::ObjectDesc,
+    node: u32,
+) -> ssb_rom::figatree::JointPose {
+    let index = object.first_node + node;
+    anim.node_pose(index).copied().unwrap_or_else(|| {
+        p.node(index)
+            .map_or_else(Default::default, |n| ssb_rom::figatree::JointPose {
+                rotate: n.rest_rotate,
+                translate: n.rest_translate,
+                scale: n.rest_scale,
+            })
+    })
+}
+
+/// `node`'s pose after `plays` plays of the packed script driving it
+/// (`gcAddAnimAll` then one `gcPlayAnimAll` per update, the first at frame
+/// zero), from its rest pose, or the rest pose with no script. A weapon
+/// replays its own scripts from its play count rather than keep a player.
+fn replay_node(
+    p: &Pack<'_>,
+    anim: &ssb_rom::pack::AnimDesc,
+    object: &ssb_rom::pack::ObjectDesc,
+    node: u32,
+    plays: u16,
+) -> ssb_rom::figatree::JointPose {
+    let index = object.first_node + node;
+    let mut pose = p
+        .node(index)
+        .map_or_else(Default::default, |n| ssb_rom::figatree::JointPose {
+            rotate: n.rest_rotate,
+            translate: n.rest_translate,
+            scale: n.rest_scale,
+        });
+    let joint = (0..anim.joint_count)
+        .filter_map(|i| p.anim_joint(anim.first_joint + i))
+        .find(|j| j.node == index && j.script != ssb_rom::pack::AnimJoint::NO_SCRIPT);
+    if let (Some(joint), Some(script)) = (joint, p.anim_script(anim)) {
+        let mut player = ssb_rom::objanim::StageJoint::start_changed(joint.script, 0.0);
+        for _ in 0..plays {
+            if player.tick(script, 1.0, &mut pose).is_err() {
+                break;
+            }
+        }
+    }
+    pose
+}
+
+/// A weapon tree's material scripts (`WPAttributes::p_matanim_joints`)
+/// after `plays` plays, replayed rather than kept.
+fn replay_materials(
+    p: &Pack<'_>,
+    object: &ssb_rom::pack::ObjectDesc,
+    plays: u16,
+) -> ssb_rom::skeleton::EffectMaterialAnimator {
+    let mut mats = ssb_rom::skeleton::EffectMaterialAnimator::default();
+    mats.start(p, object_mat_anims(p, object));
+    for _ in 0..plays {
+        mats.tick(p);
+    }
+    mats
+}
+
+fn local_trs(pose: &ssb_rom::figatree::JointPose) -> ssb_rom::scene::Mat4 {
+    ssb_rom::scene::Mat4::from_trs(
+        pose.translate.map(|t| t / meshdraw::MODEL_SCALE),
+        pose.rotate,
+        pose.scale,
+    )
+}
+
+fn v3(a: [f32; 3]) -> ssb_engine::math::Vec3 {
+    ssb_engine::math::Vec3::new(a[0], a[1], a[2])
+}
+
+/// The Poké Ball Pokémon (RE-435), each under its makers' matrix kinds.
+/// Most roots are `TraRotRpyR` then kind 0x48 (`func_ovl0_800CAB48`):
+/// rotation relative to the camera, scaled by the `DObj` (the appear
+/// script's squash); Goldeen's child has no matrix of its own and draws
+/// under it. Snorlax and Mew are plain `TraRotRpyRSca` trees in world axes.
+/// Koffing's root is kind 40, facing the eye, over a `TraRotRpyRSca` child;
+/// Chansey's child is kind 44 and Beedrill's kind 0x48, each placed by its
+/// translation under an unrotated root. The attack display lists replace
+/// Onix's, Blastoise's and Hitmonlee's models. The status material
+/// animations, the translucent modes of Snorlax's fall, Starmie and
+/// Hitmonlee, and DL link 18 are not drawn (RE-435).
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_mmonster(
+    p: &Pack<'_>,
+    gpu: &mut Gpu,
+    assets: &DrawAssets,
+    pl: &play::FighterScene,
+    item: &ssb_game::item::Item,
+    kind: ssb_game::item::mmonster::Kind,
+    visual: &ItemVisual,
+    draw_state: &mut meshdraw::DrawState,
+) {
+    use ssb_game::item::mmonster::Kind as K;
+    let Some(asset) = assets.mmonsters[kind as usize].as_ref() else {
+        return;
+    };
+    let object = &asset.object;
+    let ms = meshdraw::MODEL_SCALE;
+    let (eye, at) = (pl.camera.eye, pl.camera.at);
+    let vars = &item.vars.mmonster;
+    let pose = |n: u32| node_pose_or_rest(p, &visual.anim, object, n);
+    let mats = Some(&visual.materials);
+    match kind {
+        K::Kabigon | K::Mew => {
+            let r = pose(1);
+            gpu.model_transform_xyz(
+                [item.pos.x, item.pos.y, item.pos.z],
+                r.rotate,
+                [
+                    ms * item.scale.x * r.scale[0],
+                    ms * item.scale.y * r.scale[1],
+                    ms * item.scale.z * r.scale[2],
+                ],
+            );
+            if let Some(mesh) = node_mesh(p, object, 1) {
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, mats);
+            }
+        }
+        K::Dogas => {
+            // The maker's `TraRotRpyRSca` resets the child before its
+            // scripts drive it.
+            let c = visual
+                .anim
+                .node_pose(object.first_node + 2)
+                .copied()
+                .unwrap_or_default();
+            let mut base = eye_billboard(item.pos, eye);
+            for v in &mut base.0[..12] {
+                *v *= ms;
+            }
+            let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 3];
+            posed[2] = local_trs(&c);
+            meshdraw::draw_object_posed(
+                p,
+                object,
+                &psp_matrix(&base),
+                &posed[..(object.node_count as usize).min(3)],
+                None,
+                draw_state,
+                None,
+                mats,
+                0,
+            );
+        }
+        K::MLucky => {
+            let c = pose(2);
+            gpu.model_transform_billboard(
+                item.pos + v3(c.translate),
+                eye,
+                at,
+                0.0,
+                [ms * c.scale[0], ms * c.scale[1]],
+            );
+            if let Some(mesh) = node_mesh(p, object, 2) {
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, mats);
+            }
+        }
+        K::Spear => {
+            let c = pose(2);
+            gpu.model_transform_camera_rotated_scaled(
+                item.pos + v3(c.translate),
+                eye,
+                at,
+                [c.rotate[0], vars.rotate_y],
+                [ms * c.scale[0], ms * c.scale[1]],
+            );
+            if let Some(mesh) = node_mesh(p, object, 2) {
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, mats);
+            }
+        }
+        _ => {
+            let r = pose(1);
+            // Charizard's attack script turns its root; the rest turn by
+            // their own `rotate.y`.
+            let yaw = if kind == K::Lizardon && visual.status.is_some() {
+                r.rotate[1]
+            } else {
+                vars.rotate_y
+            };
+            gpu.model_transform_camera_rotated_scaled(
+                item.pos,
+                eye,
+                at,
+                [0.0, yaw],
+                [ms * r.scale[0], ms * r.scale[1]],
+            );
+            let mesh = asset
+                .attack_mesh
+                .filter(|_| vars.attack_dl)
+                .or_else(|| node_mesh(p, object, 1))
+                .or_else(|| node_mesh(p, object, 2));
+            if let Some(mesh) = mesh {
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, mats);
+            }
+        }
+    }
+}
+
+/// The Poké Ball Pokémon's weapons (RE-435). Onix's rock and Meowth's coin
+/// are `TraRotRpyR(Sca)` then kind 0x46 at their root: a camera-facing
+/// quad spun by `rotate.z`, its mesh child drawn under it. Swift and the
+/// Hydro Pump are `TraRotRpyRSca` trees turned by `rotate.y`; the Hydro
+/// Pump's child reaches along its script. The Smog's child is kind 44,
+/// sized by its script; the swarms' drawn node is kind 0x48, turned by
+/// `rotate.y`. Charizard's flame is particles only. The rock's three
+/// textures (`texture_id_curr`) and Clefairy's translucent swarm are not
+/// drawn.
+unsafe fn draw_monster_weapons(
+    p: &Pack<'_>,
+    gpu: &mut Gpu,
+    assets: &DrawAssets,
+    pl: &play::FighterScene,
+    weapons: &ssb_game::weapon::WeaponPool,
+    draw_state: &mut meshdraw::DrawState,
+) {
+    use ssb_game::monster_weapon::ShotKind as S;
+    let ms = meshdraw::MODEL_SCALE;
+    let (eye, at) = (pl.camera.eye, pl.camera.at);
+    for shot in weapons.monster_shots() {
+        let pos = shot.position;
+        match shot.kind {
+            S::IwarkRock | S::NyarsCoin => {
+                let object = if shot.kind == S::IwarkRock {
+                    assets.monster_rock.as_ref()
+                } else {
+                    assets.monster_coin.as_ref()
+                };
+                if let Some(mesh) = object.and_then(|o| node_mesh(p, o, 1)) {
+                    gpu.model_transform_billboard(pos, eye, at, shot.rotate_z, [ms, ms]);
+                    meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+                }
+            }
+            S::StarmieSwift => {
+                if let Some(object) = assets.monster_swift.as_ref() {
+                    gpu.model_transform(
+                        [pos.x, pos.y, pos.z],
+                        [0.0, shot.rotate_y, shot.rotate_z],
+                        ms,
+                    );
+                    meshdraw::draw_object(p, object, &gpu.model_matrix(), draw_state, None, 0);
+                }
+            }
+            S::KamexHydro => {
+                if let Some((object, anim)) = assets.monster_hydro.as_ref() {
+                    let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 3];
+                    posed[1] = local_trs(&replay_node(p, anim, object, 1, shot.plays));
+                    posed[2] =
+                        posed[1].mul(&local_trs(&replay_node(p, anim, object, 2, shot.plays)));
+                    let mats = replay_materials(p, object, shot.plays);
+                    gpu.model_transform([pos.x, pos.y, pos.z], [0.0, shot.rotate_y, 0.0], ms);
+                    meshdraw::draw_object_posed(
+                        p,
+                        object,
+                        &gpu.model_matrix(),
+                        &posed[..(object.node_count as usize).min(3)],
+                        None,
+                        draw_state,
+                        None,
+                        Some(&mats),
+                        0,
+                    );
+                }
+            }
+            S::DogasSmog => {
+                if let Some((object, anim)) = assets.monster_smog.as_ref() {
+                    let c = replay_node(p, anim, object, 1, shot.plays);
+                    let mats = replay_materials(p, object, shot.plays);
+                    if let Some(mesh) = node_mesh(p, object, 1) {
+                        gpu.model_transform_billboard(
+                            pos + v3(c.translate),
+                            eye,
+                            at,
+                            0.0,
+                            [ms * c.scale[0], ms * c.scale[1]],
+                        );
+                        meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&mats));
+                    }
+                }
+            }
+            S::SpearSwarm => {
+                if let Some(object) = assets.monster_swarm.as_ref() {
+                    let (Some(a), Some(b)) =
+                        (p.node(object.first_node + 1), p.node(object.first_node + 2))
+                    else {
+                        continue;
+                    };
+                    let mats = replay_materials(p, object, shot.plays);
+                    if let Some(mesh) = node_mesh(p, object, 2) {
+                        gpu.model_transform_camera_rotated_scaled(
+                            pos + v3(a.rest_translate) + v3(b.rest_translate),
+                            eye,
+                            at,
+                            [b.rest_rotate[0], shot.rotate_y],
+                            [ms * b.rest_scale[0], ms * b.rest_scale[1]],
+                        );
+                        meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&mats));
+                    }
+                }
+            }
+            S::PippiSwarm => {
+                if let Some(object) = assets.monster_pippi_swarm.as_ref() {
+                    if let Some(node) = p.node(object.first_node + 1) {
+                        if let Some(mesh) = node_mesh(p, object, 1) {
+                            gpu.model_transform_camera_rotated_scaled(
+                                pos + v3(node.rest_translate),
+                                eye,
+                                at,
+                                [node.rest_rotate[0], shot.rotate_y],
+                                [ms * node.rest_scale[0], ms * node.rest_scale[1]],
+                            );
+                            meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+                        }
+                    }
+                }
+            }
+            S::HitokageFlame | S::FushigibanaRazor | S::LizardonFlame => {}
+        }
+    }
+}
+
 unsafe fn draw_items_weapons_effects(
     gpu: &mut Gpu,
     draw_state: &mut meshdraw::DrawState,
@@ -6122,7 +6643,11 @@ unsafe fn draw_items_weapons_effects(
             continue;
         }
         if draw_throwable(p, gpu, assets, pl, item, draw_state) {
-            continue;
+                continue;
+            }
+            if let ssb_game::item::ItemKind::MMonster(kind) = item.kind {
+                draw_mmonster(p, gpu, assets, pl, item, kind, visual, draw_state);
+                continue;
         }
         if let ssb_game::item::ItemKind::Container(kind) = item.kind {
           if kind != ssb_game::item::container::Kind::Egg {
@@ -6561,7 +7086,7 @@ unsafe fn draw_items_weapons_effects(
     // scale; its child, the drawn node, adds its own kind 46 at scale 1. The
     // trail is one `TraRotRpyRSca` DObj turned about Z along its path.
     if let Some(object) = assets.monster_razor.as_ref() {
-        for shot in weapons.monster_shots().filter(|m| m.razor) {
+        for shot in weapons.monster_shots().filter(|m| m.is_razor()) {
             gpu.model_transform_xyz(
                 [shot.position.x, shot.position.y, shot.position.z],
                 [0.0, 0.0, shot.rotate_z],
@@ -6570,7 +7095,8 @@ unsafe fn draw_items_weapons_effects(
             meshdraw::draw_object(p, object, &gpu.model_matrix(), draw_state, None, 0);
         }
     }
-    let first_mesh = |object: &ssb_rom::pack::ObjectDesc, node: u32| {
+        draw_monster_weapons(p, gpu, assets, pl, weapons, draw_state);
+        let first_mesh = |object: &ssb_rom::pack::ObjectDesc, node: u32| {
         p.node(object.first_node + node)
             .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
             .and_then(|n| p.mesh(n.mesh))

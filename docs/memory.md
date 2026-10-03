@@ -8,7 +8,9 @@
 | Video memory | shared | 2 MiB VRAM | 2 MiB VRAM |
 | Fast scratch | 4 KiB TMEM | 16 KiB scratchpad | 16 KiB scratchpad |
 
-- The current asset pack (v78) is 35,392,000 bytes (33.75 MiB), 511,728 more than v77 for both fighter details' parts and reachable face sprites through costume palettes (RE-426); the twelve 5551 wallpapers are 3 MiB of it (RE-419). The production game ELF's text/data/BSS total 3,332,152 bytes before dynamic allocations (RE-427). Paired game/viewer golden boots load v78 in 64 MiB mode; no new physical-PSP measurement. It needs
+- Current pack size and production ELF totals live in
+  [STATUS.md](../STATUS.md), with measurements in RE-435. The twelve
+  5551 wallpapers occupy 3 MiB (RE-419). The full pack needs
   `PARAM.SFO` `MEMSIZE=1` (64 MiB process mode). v34 ran on a PSP-2000 via
   PSPLink (RE-322), v33 before it (RE-321); the earlier stock v32 pack loaded on a PSP-2000 via PSPLink (RE-320); the mode was also
   confirmed with earlier packs (RE-255, RE-260).
@@ -53,10 +55,10 @@ but the low closure still exceeds the pool by 22,412. This is packed
 residency demand, not a physical-PSP allocation measurement; the runtime
 samples textures directly from the pack in main RAM.
 
-The production game's largest frame is `enter_training`, 166,536 bytes
-of its 256 KiB main-thread stack (it builds `GroundObjects`, Sector Z's
-Arwing included, by value); preview model states are heap-owned. `run`
-has an 18,608-byte frame and 28,696 bytes of code (RE-428).
+The production game's largest frame is `enter_training`: it builds
+`GroundObjects`, including Sector Z's Arwing, by value. Preview model
+states are heap-owned. Current frame sizes and the remaining 256 KiB
+main-thread stack budget live in [STATUS.md](../STATUS.md) and RE-435.
 
 ## Original pattern
 

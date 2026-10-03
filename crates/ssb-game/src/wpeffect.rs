@@ -79,6 +79,31 @@ pub enum WeaponEffect {
         lifetime: u8,
         texture: u8,
     },
+    /// `efManagerDustHeavyMakeEffect(pos, lr)`.
+    DustHeavy {
+        pos: Vec3,
+        lr: i8,
+    },
+    /// `efManagerDustExpandLargeMakeEffect`.
+    DustExpandLarge(Vec3),
+    /// `efManagerHealSparklesMakeEffect`.
+    HealSparkles(Vec3),
+    /// `efManagerRippleMakeEffect`.
+    Ripple(Vec3),
+    /// `efManagerDamageSpawnSparksMakeEffect(pos, lr)`.
+    DamageSpawnSparks {
+        pos: Vec3,
+        lr: i8,
+    },
+    /// `efManagerSparkleWhiteScaleMakeEffect(pos, 1.0F)`.
+    SparkleWhiteScale(Vec3),
+    /// `efManagerDamageCoinMakeEffect`.
+    DamageCoin(Vec3),
+    /// `efManagerStarSplashMakeEffect(pos, lr)`.
+    StarSplash {
+        pos: Vec3,
+        lr: i8,
+    },
     /// `mobj->texture_id_curr = syUtilsRandIntRange(n)`: a thunder trail's
     /// frame, drawn where its `proc_update` draws it.
     /// [`crate::weapon::WeaponPool::flush_effects`] draws it itself and
@@ -305,6 +330,35 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
             texture,
         } => {
             effects.thunder_trail(pos, lifetime, texture);
+        }
+        WeaponEffect::DustHeavy { pos, lr } => {
+            effects.dust_heavy(p, banks, pos, lr);
+        }
+        WeaponEffect::DustExpandLarge(pos) => {
+            effects.dust_expand_large(p, banks, pos);
+        }
+        WeaponEffect::HealSparkles(pos) => {
+            effects.ready_at(p, banks, true, script::HEAL_SPARKLES, pos, 1.0);
+        }
+        WeaponEffect::Ripple(pos) => {
+            effects.generator_at(p, banks, script::RIPPLE_GEN, pos);
+        }
+        WeaponEffect::DamageSpawnSparks { pos, lr } => {
+            effects.damage_spawn_sparks(pos, lr, false);
+        }
+        WeaponEffect::SparkleWhiteScale(pos) => {
+            effects.ready_at(p, banks, false, script::SPARKLE_WHITE_SCALE, pos, 1.0);
+        }
+        WeaponEffect::DamageCoin(pos) => {
+            effects.damage_coin(p, banks, pos);
+        }
+        WeaponEffect::StarSplash { pos, lr } => {
+            let id = if lr == -1 {
+                script::STAR_SPLASH_GEN_L
+            } else {
+                script::STAR_SPLASH_GEN_R
+            };
+            effects.generator_at(p, banks, id, pos);
         }
         WeaponEffect::TextureRand(n) => {
             crate::rng::rand_int_range(i32::from(n));

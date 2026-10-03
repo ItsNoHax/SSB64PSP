@@ -233,7 +233,7 @@ pub(super) fn proc_update(
     status: Status,
     anims: &mut dyn ItemAnims,
     event: &mut dyn FnMut(StageItemEvent),
-    shots: &mut dyn FnMut(MonsterShot),
+    shots: &mut dyn super::mmonster::ShotSink,
     fx: &mut Emit,
     common: &mut dyn super::normal::CommonItems,
 ) -> bool {
@@ -276,7 +276,7 @@ pub(super) fn proc_update(
                     -540.0
                 };
                 let pos = item.pos + Vec3::new(off, 0.0, 0.0);
-                shots(MonsterShot::new(k == Kind::Venusaur, pos));
+                shots.push(MonsterShot::saffron(k == Kind::Venusaur, pos));
                 item.vars.monster_spawn_wait = if k == Kind::Charmander { 8 } else { 16 };
                 if k == Kind::Venusaur {
                     fx.push(Fx::DustCollide(pos));
@@ -427,11 +427,21 @@ mod tests {
         }
     }
 
+    struct Shots(Vec<MonsterShot>);
+    impl super::super::mmonster::ShotSink for Shots {
+        fn has_free(&self) -> bool {
+            true
+        }
+        fn push(&mut self, shot: MonsterShot) {
+            self.0.push(shot);
+        }
+    }
+
     fn update(item: &mut Item, clock: &mut Clock) -> (Vec<StageItemEvent>, Vec<MonsterShot>) {
         let ItemStatus::Monster(status) = item.status else {
             panic!()
         };
-        let (mut events, mut shots) = (Vec::new(), Vec::new());
+        let (mut events, mut shots) = (Vec::new(), Shots(Vec::new()));
         let mut maker = Clock {
             enabled: clock.enabled,
             egg_success: clock.egg_success,
@@ -442,12 +452,12 @@ mod tests {
             status,
             clock,
             &mut |e| events.push(e),
-            &mut |s| shots.push(s),
+            &mut shots,
             &mut Emit::default(),
             &mut maker,
         );
         clock.attempts += maker.attempts;
-        (events, shots)
+        (events, shots.0)
     }
 
     #[test]

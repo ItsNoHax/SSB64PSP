@@ -12,6 +12,7 @@ use crate::attack::{self, Hitbox};
 use crate::collision::Segment;
 use crate::fighter::Fighter;
 use crate::ground::BodyColl;
+use crate::monster_weapon::{ShotKind, ShotProc};
 use crate::status::BlastZone;
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
 #[path = "ness_weapon.rs"]
@@ -1600,6 +1601,11 @@ pub struct WeaponPool {
     /// A fighter's attack set the weapon off this frame (its `proc_setoff`
     /// already ran), so a clash runs no second one.
     set_off: [bool; MAX_WEAPONS],
+    /// Each record's `timer_rehit` (`WEAPON_REHIT_TIME_DEFAULT` on a
+    /// `can_rehit_fighter` item weapon's hit; zero otherwise).
+    rehit: [[u8; 4]; MAX_WEAPONS],
+    /// Onix's rocks' events for [`crate::item::ItemPool::observe_weapons`].
+    rock_events: [Option<(u32, bool)>; 2 * MAX_WEAPONS],
 }
 
 /// `WEAPON_HOP_ANGLE_DEFAULT`: `F_CLC_DTOR32(135.0F)`.
@@ -1661,7 +1667,10 @@ impl Weapon {
             // The 2D shot hops, reflects and is absorbed; the 3D shot is
             // only absorbed, before and after it bursts.
             Weapon::Laser(l) => wflags(false, !l.three_d, !l.three_d, true),
-            Weapon::Monster(m) => wflags(m.razor, m.razor, true, true),
+            Weapon::Monster(m) => {
+                let a = m.attributes();
+                wflags(a.can_setoff, a.can_hop, a.can_reflect, a.can_absorb)
+            }
             Weapon::Bomb(_) => wflags(false, true, false, false),
             Weapon::Boomerang(_) | Weapon::Egg(_) => wflags(true, true, true, false),
             Weapon::Cutter(_) | Weapon::PKThunder(_) => wflags(true, false, true, true),
@@ -1790,12 +1799,7 @@ impl Weapon {
             Weapon::Trail(_) => fx.push(shock(pikachu::TRAIL_HIT.damage)),
             // The head has no callbacks.
             Weapon::Thunder(_) => {}
-            Weapon::Monster(m) => {
-                // Flame has no proc_absorb; razor uses proc_hit.
-                if m.razor || proc != Proc::Absorb {
-                    m.hit_fx(fx);
-                }
-            }
+            Weapon::Monster(m) => m.proc_fx(shot_proc(proc), fx),
         }
     }
 
@@ -1821,7 +1825,7 @@ impl Weapon {
         match self {
             // `wpLinkBoomerangProcShield`.
             Weapon::Boomerang(b) => b.set_off(),
-            Weapon::Monster(m) if !m.razor => {}
+            Weapon::Monster(m) if m.survives(ShotProc::Shield) => {}
             // `wpKirbyCutterProcShield` returns FALSE.
             Weapon::Cutter(_) => {}
             // `wpYoshiEggThrowProcHit` and `wpSamusBombProcHit`.
@@ -1844,11 +1848,7 @@ impl Weapon {
         let turn = |v: Vec3| hop_velocity(v, angle, dir_z);
         match self {
             Weapon::Boomerang(b) => b.hop(angle, dir_z),
-            Weapon::Monster(m) => {
-                m.velocity = turn(m.velocity);
-                m.reface();
-                m.lr = if m.velocity.x > 0.0 { 1.0 } else { -1.0 };
-            }
+            Weapon::Monster(m) => m.hop(turn(m.velocity)),
             // `wpMarioFireballProcHop`.
             Weapon::Fireball(f) => f.velocity = turn(f.velocity),
             // `wpFoxBlasterProcHop`: the shot is drawn unstretched again.
@@ -1897,6 +1897,16 @@ struct ClashAttack {
     state: crate::combat::AttackState,
 }
 
+/// The item weapons' name for a collision callback.
+fn shot_proc(proc: Proc) -> ShotProc {
+    match proc {
+        Proc::Hit => ShotProc::Hit,
+        Proc::Shield => ShotProc::Shield,
+        Proc::SetOff => ShotProc::SetOff,
+        Proc::Absorb => ShotProc::Absorb,
+    }
+}
+
 /// Queues the effects of `w`'s callback `proc` under its link place `seq`.
 fn push_proc(fx: &mut crate::wpeffect::WeaponFx, seq: u32, w: &Weapon, proc: Proc) {
     let mut emit = Emit::default();
@@ -1926,7 +1936,7 @@ fn hop_velocity(v: Vec3, angle: f32, dir_z: f32) -> Vec3 {
 }
 
 /// `wpProcessProcWeaponMain`'s blast-zone test, strict on every edge.
-fn out_of_bounds(b: BlastZone, p: Vec3) -> bool {
+pub(crate) fn out_of_bounds(b: BlastZone, p: Vec3) -> bool {
     p.y < b.bottom
         || p.x > b.right
         || p.x < b.left
@@ -1968,10 +1978,40 @@ fn pre_hit(
     position: Vec3,
     velocity: Vec3,
 ) -> PreHit {
+    pre_hit_at(
+        defender,
+        flags,
+        grounded,
+        owner,
+        team,
+        rules,
+        slot,
+        hitbox,
+        position,
+        position - velocity,
+        velocity,
+    )
+}
+
+/// [`pre_hit`] with the attack's previous position given.
+#[allow(clippy::too_many_arguments)]
+fn pre_hit_at(
+    defender: &mut Fighter,
+    flags: WeaponFlags,
+    grounded: bool,
+    owner: u8,
+    team: u8,
+    rules: crate::team::TeamRules,
+    slot: usize,
+    hitbox: Hitbox,
+    position: Vec3,
+    prev: Vec3,
+    velocity: Vec3,
+) -> PreHit {
     let w = crate::combat::WeaponAttack {
         hitbox,
         pos_curr: position,
-        pos_prev: position - velocity,
+        pos_prev: prev,
         source: crate::combat::HitSource::Weapon { vel_x: velocity.x },
         handicap: crate::stale::HANDICAP_DEFAULT,
         can_shield: true,
@@ -2155,6 +2195,135 @@ fn laser_hit(laser: &mut ArwingLaser, h: LaserHit<'_>, defender: &mut Fighter) -
     true
 }
 
+/// The pool state one item weapon's fighter search writes.
+struct MonsterHit<'a> {
+    records: &'a mut [Option<u8>; 4],
+    rehit: &'a mut [u8; 4],
+    /// The fighter ports in `records`.
+    ports: u8,
+    stale: crate::stale::WeaponStale,
+    team: &'a mut u8,
+    fx: &'a mut crate::wpeffect::WeaponFx,
+    seq: u32,
+    rules: crate::team::TeamRules,
+    slot: usize,
+    set_off: &'a mut bool,
+}
+
+/// `wpProcessSetHitInteractStats` for a fighter: a `can_rehit_fighter`
+/// weapon's record clears after `WEAPON_REHIT_TIME_DEFAULT` updates.
+fn record_shot_victim(h: &mut MonsterHit<'_>, port: u8, rehit: bool) {
+    record_weapon_victim(h.records, port);
+    if rehit {
+        if let Some(i) = h.records.iter().position(|r| *r == Some(port)) {
+            h.rehit[i] = 16;
+        }
+    }
+}
+
+/// `ftMainSearchHitWeapon` and `wpProcessProcHitCollisions` for one
+/// item-made weapon against one fighter ([`crate::monster_weapon`]).
+/// Returns whether it lives on. Its attack sweeps from its last position
+/// (the Hydro Pump's offset moves while it stands), its hits credit its
+/// player, and the Smog passes shields (`can_shield` clear).
+fn monster_hit(
+    m: &mut crate::monster_weapon::MonsterShot,
+    mut h: MonsterHit<'_>,
+    defender: &mut Fighter,
+) -> bool {
+    let owner = m.owner.unwrap_or(sector::GROUND_PORT);
+    if m.owner == Some(defender.port) || h.rules.spares(defender.team, *h.team) {
+        return true;
+    }
+    let bit = 1u8 << (defender.port & 7);
+    if h.ports & bit != 0 {
+        return true;
+    }
+    let attr = m.attributes();
+    let rehit = attr.can_rehit_fighter;
+    let mut staled = m.hitbox();
+    staled.damage = h.stale.damage(staled.damage);
+    let (curr, prev) = m.attack_positions();
+    let flags = wflags(
+        attr.can_setoff,
+        attr.can_hop,
+        attr.can_reflect,
+        attr.can_absorb,
+    );
+    let pre = pre_hit_at(
+        defender, flags, false, owner, *h.team, h.rules, h.slot, staled, curr, prev, m.velocity,
+    );
+    let mut emit = Emit::default();
+    let alive = match pre {
+        PreHit::None => None,
+        PreHit::SetOff => {
+            *h.set_off = true;
+            m.proc_fx(ShotProc::SetOff, &mut emit);
+            Some(m.survives(ShotProc::SetOff))
+        }
+        PreHit::Reflected => {
+            m.reflect(
+                defender.port,
+                defender.team,
+                defender.facing.sign(),
+                &mut emit,
+            );
+            *h.team = defender.team;
+            Some(true)
+        }
+        PreHit::ReflectorBroke => {
+            m.proc_fx(ShotProc::Hit, &mut emit);
+            Some(m.survives(ShotProc::Hit))
+        }
+        PreHit::Absorbed => {
+            m.proc_fx(ShotProc::Absorb, &mut emit);
+            Some(m.survives(ShotProc::Absorb))
+        }
+    };
+    if let Some(alive) = alive {
+        if alive && !matches!(pre, PreHit::Reflected) {
+            record_shot_victim(&mut h, defender.port, rehit);
+        }
+        h.fx.extend(h.seq, &emit);
+        return alive;
+    }
+    let contact = crate::combat::weapon_hit(
+        defender,
+        crate::combat::WeaponAttack {
+            hitbox: staled,
+            pos_curr: curr,
+            pos_prev: prev,
+            source: crate::combat::HitSource::Weapon {
+                vel_x: m.velocity.x,
+            },
+            handicap: crate::stale::HANDICAP_DEFAULT,
+            can_shield: attr.can_shield,
+            owner: m.player,
+            is_hitlag_victim: m
+                .is_hitlag_victim()
+                .then_some(m.player.unwrap_or(sector::GROUND_PORT)),
+        },
+    );
+    if let crate::combat::WeaponContact::Shielded(shield) = contact {
+        record_shot_victim(&mut h, defender.port, false);
+        if attr.can_hop && shield.angle < WEAPON_HOP_ANGLE_DEFAULT {
+            let angle = (shield.angle - DEG_90).max(0.0);
+            m.hop(hop_velocity(m.velocity, angle, shield.dir_z));
+            return true;
+        }
+        m.proc_fx(ShotProc::Shield, &mut emit);
+        h.fx.extend(h.seq, &emit);
+        return m.survives(ShotProc::Shield);
+    }
+    if attack::HitOutcome::of(contact).registered() {
+        record_shot_victim(&mut h, defender.port, rehit);
+        m.proc_fx(ShotProc::Hit, &mut emit);
+        h.fx.extend(h.seq, &emit);
+        return m.survives(ShotProc::Hit);
+    }
+    true
+}
+
 /// `wpMainReflectorSetLR` and the reflect bonus for the straight shots:
 /// turn X toward the reflector's facing, take its ownership and deal
 /// `damage * 1.8 + 0.99` (US), at most 100.
@@ -2250,6 +2419,8 @@ impl Default for WeaponPool {
             clash_fx: Default::default(),
             clash_damage: [0; MAX_WEAPONS],
             set_off: [false; MAX_WEAPONS],
+            rehit: [[0; 4]; MAX_WEAPONS],
+            rock_events: [None; 2 * MAX_WEAPONS],
         }
     }
 }
@@ -2579,7 +2750,7 @@ impl WeaponPool {
             }
         })
     }
-    /// Live Saffron projectiles for the runtime's Razor Leaf draw pass.
+    /// Live item-made weapons, for the runtime's draw passes.
     pub fn monster_shots(&self) -> impl Iterator<Item = crate::monster_weapon::MonsterShot> + '_ {
         self.slots.iter().flatten().filter_map(|w| match w {
             Weapon::Monster(m) => Some(*m),
@@ -2587,19 +2758,42 @@ impl WeaponPool {
         })
     }
 
+    /// Free weapon structs.
+    pub fn free_count(&self) -> usize {
+        self.slots.iter().filter(|s| s.is_none()).count()
+    }
+
+    /// `wpManagerMakeWeapon` for an item-made weapon
+    /// (`WEAPON_FLAG_PARENT_ITEM`): the item's team and staling. Saffron's
+    /// flame makes its particles here; the Poké Ball Pokémon's makers made
+    /// theirs in the item's update.
     pub fn spawn_monster_shot(&mut self, shot: crate::monster_weapon::MonsterShot) -> bool {
         let seq = self.next_seq;
         let made = self.insert(
             Weapon::Monster(shot),
             crate::stale::WeaponStale::FRESH,
-            sector::GROUND_TEAM,
+            shot.team,
         );
-        if made {
+        if made && shot.kind == ShotKind::HitokageFlame {
             let mut emit = Emit::default();
             shot.make_fx(&mut emit);
             self.fx.extend(seq, &emit);
         }
         made
+    }
+
+    /// Onix's rock events since the last call, in order: `(parent handle,
+    /// dead)`, where a live rock met a new floor.
+    pub fn take_rock_events(&mut self) -> impl Iterator<Item = (u32, bool)> {
+        core::mem::replace(&mut self.rock_events, [None; 2 * MAX_WEAPONS])
+            .into_iter()
+            .flatten()
+    }
+
+    fn push_rock_event(&mut self, event: (u32, bool)) {
+        if let Some(slot) = self.rock_events.iter_mut().find(|s| s.is_none()) {
+            *slot = Some(event);
+        }
     }
 
     /// `wpManagerMakeWeapon` for one of Sector Z's Arwing lasers
@@ -2719,6 +2913,7 @@ impl WeaponPool {
         self.pending_item_hits[i] = false;
         self.clash_damage[i] = 0;
         self.set_off[i] = false;
+        self.rehit[i] = [0; 4];
         self.next_seq = self.next_seq.wrapping_add(1);
         self.seq[i] = self.next_seq;
         // A record naming the slot's last weapon does not name this one.
@@ -2764,7 +2959,9 @@ impl WeaponPool {
     /// staled hitbox, position and velocity. Pikachu's Thunder and both
     /// thunder trail kinds keep group records that do not name items; they
     /// pass items by.
-    fn item_attack(&self, i: usize) -> Option<(u8, Hitbox, Vec3, Vec3)> {
+    /// A slot's attack for the item and clash searches: owner, staled
+    /// hitbox, position, velocity and previous position.
+    fn item_attack(&self, i: usize) -> Option<(u8, Hitbox, Vec3, Vec3, Vec3)> {
         let stale = self.stale[i];
         let (owner, mut hitbox, pos, vel) = match self.slots[i]? {
             Weapon::Jolt(j) => {
@@ -2823,11 +3020,22 @@ impl WeaponPool {
                 h.velocity,
             ),
             Weapon::Laser(l) => (l.owner_port, l.hitbox(), l.position, l.velocity),
-            Weapon::Monster(m) => (m.owner_port, m.hitbox(), m.position, m.velocity),
+            Weapon::Monster(m) => {
+                let (curr, prev) = m.attack_positions();
+                let mut hitbox = m.hitbox();
+                hitbox.damage = stale.damage(hitbox.damage);
+                return Some((
+                    m.owner.unwrap_or(sector::GROUND_PORT),
+                    hitbox,
+                    curr,
+                    m.velocity,
+                    prev,
+                ));
+            }
             Weapon::Thunder(_) | Weapon::Trail(_) | Weapon::PKTrail(_) => return None,
         };
         hitbox.damage = stale.damage(hitbox.damage);
-        Some((owner, hitbox, pos, vel))
+        Some((owner, hitbox, pos, vel, pos - vel))
     }
 
     /// `itProcessSearchHitWeapon` for one item (`id` is its record id):
@@ -2842,7 +3050,7 @@ impl WeaponPool {
         }
         let (order, count) = self.link_order();
         for &i in &order[..count] {
-            let Some((owner, hitbox, pos, vel)) = self.item_attack(i) else {
+            let Some((owner, hitbox, pos, vel, prev)) = self.item_attack(i) else {
                 continue;
             };
             if item.owner == Some(owner) && !item.is_damage_all {
@@ -2913,7 +3121,6 @@ impl WeaponPool {
                 crate::combat::HitStatus::None | crate::combat::HitStatus::Intangible => continue,
                 _ => {}
             }
-            let prev = pos - vel;
             let state = if prev == pos {
                 crate::combat::AttackState::Transfer
             } else {
@@ -3001,7 +3208,7 @@ impl WeaponPool {
                     self.hit_records[i] = [None; 4];
                 }
             }
-            Weapon::Monster(m) if !m.razor => {}
+            Weapon::Monster(m) if m.survives(ShotProc::Hit) => {}
             _ => *slot = None,
         }
     }
@@ -3115,6 +3322,7 @@ impl WeaponPool {
         let camera = self.camera;
         self.tick_pk_thunder(surfaces, bounds);
         let mut trails = [None; MAX_WEAPONS];
+        let mut rocks: [Option<(u32, bool)>; MAX_WEAPONS] = [None; MAX_WEAPONS];
         for (i, slot) in self.slots.iter_mut().enumerate() {
             if let Some(weapon) = slot.as_mut() {
                 let mut emit = Emit::default();
@@ -3176,7 +3384,18 @@ impl WeaponPool {
                     }
                     Weapon::Egg(egg) => egg.tick(surfaces, fx),
                     Weapon::Star(star) => star.tick(fx),
-                    Weapon::Monster(m) => m.tick(surfaces, fx),
+                    Weapon::Monster(m) => {
+                        let alive = m.tick(surfaces, bounds, fx);
+                        if m.kind == ShotKind::IwarkRock {
+                            if core::mem::take(&mut m.rumbled) {
+                                rocks[i] = Some((m.parent, false));
+                            }
+                            if !alive {
+                                rocks[i] = Some((m.parent, true));
+                            }
+                        }
+                        alive
+                    }
                     Weapon::Cutter(cutter) => cutter.tick(surfaces, fx),
                     Weapon::Laser(laser) => {
                         laser.roll = self.ground_roll;
@@ -3194,8 +3413,22 @@ impl WeaponPool {
                         || !bounds.is_some_and(|b| out_of_bounds(b, weapon.position())));
                 if !alive {
                     *slot = None;
+                } else if matches!(weapon, Weapon::Monster(_)) {
+                    // `wpProcessUpdateAttackRecords`: a rehit record clears
+                    // when its timer runs out.
+                    for (r, t) in self.hit_records[i].iter_mut().zip(&mut self.rehit[i]) {
+                        if r.is_some() && *t > 0 {
+                            *t -= 1;
+                            if *t == 0 {
+                                *r = None;
+                            }
+                        }
+                    }
                 }
             }
+        }
+        for event in rocks.into_iter().flatten() {
+            self.push_rock_event(event);
         }
         for (trail, stale, team) in trails.into_iter().flatten() {
             self.insert(Weapon::Trail(trail), stale, team);
@@ -3274,6 +3507,28 @@ impl WeaponPool {
                 }
                 continue;
             }
+            if let Weapon::Monster(m) = weapon {
+                let alive = monster_hit(
+                    m,
+                    MonsterHit {
+                        records,
+                        rehit: &mut self.rehit[i],
+                        ports,
+                        stale: self.stale[i],
+                        team: &mut self.teams[i],
+                        fx: &mut self.fx,
+                        seq: self.seq[i],
+                        rules,
+                        slot: i,
+                        set_off: &mut self.set_off[i],
+                    },
+                    defender,
+                );
+                if !alive {
+                    *slot = None;
+                }
+                continue;
+            }
             if let Weapon::Laser(laser) = weapon {
                 let alive = laser_hit(
                     laser,
@@ -3314,8 +3569,7 @@ impl WeaponPool {
                 Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position, e.velocity),
                 Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position, s.velocity),
                 Weapon::Cutter(c) => (c.owner_port, KIRBY_CUTTER_HITBOX, c.position, c.velocity),
-                Weapon::Monster(m) => (m.owner_port, m.hitbox(), m.position, m.velocity),
-                Weapon::Laser(_) => unreachable!("handled above"),
+                Weapon::Monster(_) | Weapon::Laser(_) => unreachable!("handled above"),
             };
             // `ftMainSearchHitWeapon`: not its owner, nor, with team attack
             // off, the owner's teammates.
@@ -3342,8 +3596,7 @@ impl WeaponPool {
                 Weapon::Egg(e) => e.damage,
                 Weapon::Star(s) => s.damage,
                 Weapon::Cutter(c) => c.damage,
-                Weapon::Monster(m) => m.damage,
-                Weapon::Laser(_) => unreachable!("handled above"),
+                Weapon::Monster(_) | Weapon::Laser(_) => unreachable!("handled above"),
             };
             // The exploding egg keeps the record of what the egg hit and is
             // only a hurtbox test now.
@@ -3439,7 +3692,6 @@ impl WeaponPool {
                         }
                         // `wpYoshiStarProcHit` without `hit_normal_damage`.
                         Weapon::Star(_) => {}
-                        Weapon::Monster(m) if !m.razor => {}
                         // `wpKirbyCutterProcSetOff` and every `ProcHit` that
                         // returns TRUE.
                         _ => *slot = None,
@@ -3479,23 +3731,6 @@ impl WeaponPool {
                         Weapon::Star(s) => s.reflect(defender),
                         Weapon::Cutter(c) => c.reflect(defender),
                         Weapon::Jolt(j) => j.reflect(defender),
-                        Weapon::Monster(m) => {
-                            reflect_shot(
-                                &mut m.velocity,
-                                &mut m.owner_port,
-                                &mut m.damage,
-                                defender,
-                            );
-                            if m.razor {
-                                m.reface();
-                                m.lr = -m.lr;
-                            } else {
-                                m.lifetime = 20;
-                                let mut emit = Emit::default();
-                                m.make_fx(&mut emit);
-                                self.fx.extend(self.seq[i], &emit);
-                            }
-                        }
                         _ => unreachable!("not reflectable"),
                     }
                     // `wpProcessProcHitCollisions`: the reflector's team.
@@ -3519,20 +3754,13 @@ impl WeaponPool {
                             e.hit_ports |= bit;
                             e.explode();
                         }
-                        Weapon::Monster(m) if !m.razor => {
-                            record_weapon_victim(records, defender.port);
-                        }
                         _ => *slot = None,
                     }
                     continue;
                 }
-                // `proc_absorb`: Cutter survives; Charmander's flame has
-                // no callback, so absorption records it without deletion.
+                // `proc_absorb`: Cutter survives.
                 PreHit::Absorbed => {
                     match weapon {
-                        Weapon::Monster(m) if !m.razor => {
-                            record_weapon_victim(records, defender.port);
-                        }
                         Weapon::Cutter(c) => {
                             record_weapon_victim(records, defender.port);
                             c.hit_ports |= bit;
@@ -3589,10 +3817,6 @@ impl WeaponPool {
                     e.explode();
                     continue;
                 }
-                if matches!(weapon, Weapon::Monster(m) if !m.razor) {
-                    record_weapon_victim(records, defender.port);
-                    continue;
-                }
                 *slot = None;
             }
         }
@@ -3633,8 +3857,7 @@ impl WeaponPool {
         if !w.flags().can_setoff {
             return None;
         }
-        let (owner, hitbox, pos, vel) = self.item_attack(i)?;
-        let prev = pos - vel;
+        let (owner, hitbox, pos, _vel, prev) = self.item_attack(i)?;
         Some(ClashAttack {
             owner,
             team: self.teams[i],
@@ -3790,7 +4013,7 @@ impl WeaponPool {
                 }
                 // `wpYoshiStarProcHit` without `hit_normal_damage`.
                 Weapon::Star(_) => true,
-                Weapon::Monster(m) => !m.razor,
+                Weapon::Monster(m) => m.survives(ShotProc::SetOff),
                 // `wpNessPKFireProcHit`: the pillar.
                 Weapon::PKFire(p) => {
                     let spawn = p.item_spawn(stale, team);
@@ -4081,7 +4304,7 @@ mod tests {
         use crate::monster_weapon::MonsterShot;
         for razor in [false, true] {
             let mut pool = WeaponPool::default();
-            pool.spawn_monster_shot(MonsterShot::new(razor, Vec3::ZERO));
+            pool.spawn_monster_shot(MonsterShot::saffron(razor, Vec3::ZERO));
             let life = if razor { 24 } else { 20 };
             for tick in 1..life {
                 pool.tick(open_air, None);
@@ -4101,7 +4324,7 @@ mod tests {
         use crate::monster_weapon::MonsterShot;
         for razor in [false, true] {
             let mut pool = WeaponPool::default();
-            pool.spawn_monster_shot(MonsterShot::new(razor, Vec3::new(0.0, 100.0, 0.0)));
+            pool.spawn_monster_shot(MonsterShot::saffron(razor, Vec3::new(0.0, 100.0, 0.0)));
             let mut mario = Fighter::new(FighterKind::Mario, 0, 3);
             pool.apply_hits(&mut mario);
             crate::combat::resolve(&mut mario);
@@ -4118,7 +4341,7 @@ mod tests {
         use crate::monster_weapon::MonsterShot;
         for razor in [false, true] {
             let mut pool = WeaponPool::default();
-            let mut shot = MonsterShot::new(razor, Vec3::new(100.0, 60.0, 0.0));
+            let mut shot = MonsterShot::saffron(razor, Vec3::new(100.0, 60.0, 0.0));
             shot.lifetime = 5;
             pool.spawn_monster_shot(shot);
             let mut fox = Fighter::new(FighterKind::Fox, 1, 3);
@@ -4132,7 +4355,7 @@ mod tests {
             );
             pool.apply_hits(&mut fox);
             let shot = pool.monster_shots().next().unwrap();
-            assert_eq!(shot.owner_port, 1);
+            assert_eq!(shot.owner, Some(1));
             assert!(shot.velocity.x > 0.0);
             assert_eq!(shot.lr, if razor { 1.0 } else { -1.0 });
             assert_eq!(shot.lifetime, if razor { 5 } else { 20 });

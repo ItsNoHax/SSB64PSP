@@ -940,6 +940,9 @@ pub mod script {
     pub const FLASH_LARGE: u16 = 6;
     /// Generators: `efManagerRippleMakeEffect` and `...KirbyStar...`.
     pub const RIPPLE_GEN: u16 = 0x61;
+    /// `efManagerStarSplashMakeEffect`'s generators, facing left and right.
+    pub const STAR_SPLASH_GEN_L: u16 = 0x10;
+    pub const STAR_SPLASH_GEN_R: u16 = 0x11;
     pub const KIRBY_STAR_GEN: u16 = 0x0F;
 }
 

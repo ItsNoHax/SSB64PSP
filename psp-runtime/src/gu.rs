@@ -914,14 +914,28 @@ impl Gpu {
         rotate: [f32; 2],
         scale: f32,
     ) {
+        self.model_transform_camera_rotated_scaled(pos, eye, at, rotate, [scale; 2]);
+    }
+
+    /// Battle matrix function 0x48 (`func_ovl0_800CAB48`): function 0x47
+    /// with the `DObj` scale, X on the object's X and Z axes and Y on its Y
+    /// axis (`scale` includes the port's model scale).
+    pub fn model_transform_camera_rotated_scaled(
+        &mut self,
+        pos: ssb_engine::math::Vec3,
+        eye: ssb_engine::math::Vec3,
+        at: ssb_engine::math::Vec3,
+        rotate: [f32; 2],
+        scale: [f32; 2],
+    ) {
         let forward = (at - eye).normalized();
         let right = forward.cross(ssb_engine::math::Vec3::Y).normalized();
         let up = right.cross(forward);
         let back = -forward;
         let (sx, cx) = ssb_engine::math::sin_cos(rotate[0]);
         let (sy, cy) = ssb_engine::math::sin_cos(rotate[1]);
-        let camera = |r: f32, u: f32, b: f32| {
-            let v = (right * r + up * u + back * b) * scale;
+        let camera = |r: f32, u: f32, b: f32, k: f32| {
+            let v = (right * r + up * u + back * b) * k;
             sys::ScePspFVector4 {
                 x: v.x,
                 y: v.y,
@@ -930,9 +944,9 @@ impl Gpu {
             }
         };
         let matrix = sys::ScePspFMatrix4 {
-            x: camera(cy, 0.0, -sy),
-            y: camera(sx * sy, cx, sx * cy),
-            z: camera(cx * sy, -sx, cx * cy),
+            x: camera(cy, 0.0, -sy, scale[0]),
+            y: camera(sx * sy, cx, sx * cy, scale[1]),
+            z: camera(cx * sy, -sx, cx * cy, scale[0]),
             w: sys::ScePspFVector4 {
                 x: pos.x,
                 y: pos.y,

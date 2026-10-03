@@ -25,6 +25,7 @@ pub mod interp;
 pub mod lod_blend;
 pub mod matanim;
 pub mod mesh;
+pub mod mmonster;
 pub mod mobj;
 pub mod n64_addressing;
 pub mod n64_filter;

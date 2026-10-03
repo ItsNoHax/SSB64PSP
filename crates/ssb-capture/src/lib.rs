@@ -479,6 +479,11 @@ pub enum GameScene {
     /// Poké Ball in his reach; A at tick 60 picks it up and A at tick 100
     /// throws it (RE-434).
     TrainingThrowable,
+    /// `trainingpokemona` / `...b`: Poké Ball Pokémon released beside
+    /// Mario as if he had thrown the ball: Meowth, Chansey and Blastoise;
+    /// Charizard, Starmie and Koffing (RE-435).
+    TrainingPokemonA,
+    TrainingPokemonB,
     /// Diagnostic Saffron item views: source lifecycle, selected maker.
     TrainingChansey,
     TrainingElectrode,
@@ -510,7 +515,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 93] = [
+    pub const ALL: [GameScene; 95] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -591,6 +596,8 @@ impl GameScene {
         GameScene::TrainingHeavy,
         GameScene::TrainingUtility,
         GameScene::TrainingThrowable,
+        GameScene::TrainingPokemonA,
+        GameScene::TrainingPokemonB,
         GameScene::TrainingChansey,
         GameScene::TrainingElectrode,
         GameScene::TrainingCharmander,
@@ -688,6 +695,8 @@ impl GameScene {
             GameScene::TrainingHeavy => "trainingheavy",
             GameScene::TrainingUtility => "trainingutility",
             GameScene::TrainingThrowable => "trainingthrowable",
+            GameScene::TrainingPokemonA => "trainingpokemona",
+            GameScene::TrainingPokemonB => "trainingpokemonb",
             GameScene::TrainingChansey => "trainingchansey",
             GameScene::TrainingElectrode => "trainingelectrode",
             GameScene::TrainingCharmander => "trainingcharmander",

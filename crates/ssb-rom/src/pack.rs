@@ -346,7 +346,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // and binds hidden model parts, such as the item-heavy joint, by the
 // original tree walk (RE-432).
 // 84 gives `StageDesc` the stage's `MPGroundData.item_weights` (RE-433).
-pub const VERSION: u32 = 84;
+// 85 packs the Poké Ball Pokémon's appear/status scripts and weapon
+// joint/material animations, under the weapon render seed (RE-435).
+// No layout change.
+pub const VERSION: u32 = 85;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1119,6 +1122,11 @@ impl AnimDesc {
     /// [`Self::ITEM`] slot of Link's Bomb (file 353's table at 0x1990).
     pub const ITEM_ANIM_LINK_BOMB: u32 = 1;
     pub const ITEM_ANIM_EGG: u32 = 2;
+    /// [`Self::ITEM`] slots of the Poké Ball Pokémon's appear script on
+    /// each kind's tree, by kind from Onix (`crate::mmonster::VISUALS`).
+    pub const ITEM_ANIM_MMONSTER_APPEAR: u32 = 3;
+    /// [`Self::ITEM`] slots of their status scripts, by kind.
+    pub const ITEM_ANIM_MMONSTER_STATUS: u32 = 16;
 
     /// [`Self::WEAPON`] slot of Link's Boomerang (file 325's table at 0x6C0).
     pub const WEAPON_ANIM_LINK_BOOMERANG: u32 = 0;
@@ -1131,6 +1139,10 @@ impl AnimDesc {
     pub const WEAPON_ANIM_PIKACHU_JOLT_GROUND: u32 = 3;
     /// [`Self::WEAPON`] slot of Ness's PK Thunder head (335 + 0x7D20).
     pub const WEAPON_ANIM_NESS_PK_THUNDER: u32 = 4;
+    /// [`Self::WEAPON`] slots of the Hydro Pump (86 + 0xFA90) and the Smog
+    /// (86 + 0x13190), RE-435.
+    pub const WEAPON_ANIM_KAMEX_HYDRO: u32 = 5;
+    pub const WEAPON_ANIM_DOGAS_SMOG: u32 = 6;
 
     /// `shield_anim_joints` has one table per 45-degree stick sector.
     pub const SHIELD_SECTORS: u32 = 8;
