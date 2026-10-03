@@ -29,7 +29,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  The manifest currently has 176 scenes; RE-316 measured about 17 s for an
+  The manifest currently has 178 scenes; RE-316 measured about 17 s for an
   earlier full run.
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
@@ -168,9 +168,10 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `linkbomb`) | `f1-training-link-bomb` | Link holding a freshly pulled Bomb | RE-383 |
 | `golden_capture` (`psp-game`, scenes `cpuwalk`, `cpujump`) | `f1-training-cpu-walk`, `f1-training-cpu-jump` | The Training dummy under the CPU's Walk and Jump behaviours (in `WalkMiddle` and `JumpF` at the freeze) | RE-390 |
 | `golden_capture` (`psp-game`, scene `trainingcpuitem`) | `f1-training-cpu-item` | A level-9 Training CPU on the default behaviour at tick 200, holding the Bat it tracked and picked up (TrackItem) | RE-437 |
+| `golden_capture` (`psp-game`, scene `trainingmenu`) | `f1-training-menu` | Training's menu, open from tick 20 to 34, sets the CPU to Walk and drops a Maxim Tomato above Mario; at tick 150 the CPU has walked onto the left platform. The menu itself is not drawn yet | RE-438 |
 | `golden_capture` (`psp-game`, scene `vs`) | `f1-vs-countdown` | A VS battle's countdown on Dream Land, both fighters locked until "Go" | RE-389 |
 | `golden_capture` (`psp-game`, scene `vstimeup`) | `f1-vs-sudden-death` | A one-minute VS battle timed out in a tie, in sudden death with both fighters at 300% | RE-389 |
-| `golden_capture` (`psp-game`, scene `vscpu`) | `f1-vs-cpu` | A VS battle's CPU forward-throwing the idle player at tick 690, after a down air; `vstimeup` pins its CPU to Stand to keep its tie | RE-391 |
+| `golden_capture` (`psp-game`, scene `vscpu`) | `f1-vs-cpu` | A VS battle's CPU landing a hit on the idle player at tick 900 (7%); `vstimeup` pins its CPU to Stand to keep its tie | RE-391, RE-438 |
 | `golden_capture` (`psp-game`, scene `vstimeupsign`) | `f1-vs-time-up` | `vstimeup` at tick 4,040: 00:00 and "TIME UP" during the end wait | RE-395 |
 | `golden_capture` (`psp-game`, scene `vssuddendeath`) | `f1-vs-sudden-death-sign` | `vstimeup` at tick 4,150: "SUDDEN DEATH!" before its "GO!", emblems and stock icons without digits | RE-397 |
 | `golden_capture` (`psp-game`, scene `vspause`) | `f1-vs-pause` | START at tick 500: the pause menu's zoom on Mario, border, "1P PAUSE" and decals at 560 | RE-398 |
@@ -179,7 +180,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `vsresults`) | `f1-vs-results` | A one-stock battle Luigi loses by running off Dream Land, at tick 1100: Kirby in front holding his last Win frame, Luigi behind turned to him and clapping, over the blue wallpaper, with the tags, the Place and KOs rows, the bar, the header and "KIRBY WINS!" | RE-409, RE-410 |
 | `golden_capture` (`psp-game`, scene `vsplayers`) | `f1-vs-players` | The VS character select at select tic 65: Yoshi placed on port 1's red card, a CPU (Donkey Kong, in his Win1 clip) opened in port 2 with its CP level, the NA doors shut, the stone wallpaper, portraits, pucks, hand and the "Ready to fight" banner | RE-404, RE-411 |
 | `golden_capture` (`psp-game`, scene `vs4`) | `f1-vs-four` | Mario against three CPUs (Fox, Donkey Kong, Kirby) on Dream Land at tick 870, four damage displays | RE-405 |
-| `golden_capture` (`psp-game`, scene `vsteam`) | `f1-vs-team` | A team battle on Dream Land at tick 940: Mario and Kirby (red) against Fox and Donkey Kong (blue) in team costumes and emblem colours, Kirby's attack passing through Mario | RE-407 |
+| `golden_capture` (`psp-game`, scene `vsteam`) | `f1-vs-team` | A team battle on Dream Land at tick 940: Mario and Kirby (red) against Fox and Donkey Kong (blue) in team costumes and emblem colours | RE-407, RE-438 |
 | `golden_capture` (`psp-game`, scene `rebirth`) | `f1-training-rebirth` | Mario after a KO below Dream Land, crouched in `RebirthStand` on the rebirth halo, faintly lit white by the rebirth glow | RE-388, RE-412 |
 | `golden_capture` (`psp-game`, scene `rebirthblast`) | `f1-training-rebirthblast` | `rebirth` at tick 168, eight ticks after the KO: the blast column rising from the bottom of the screen and the screen flash inside the (10, 10)–(310, 230) border | RE-412 |
 | `golden_capture` (`psp-game`, scene `fighterselect`) | `f1-training-fighter-select` | Kirby placed on the character select, then Peach's Castle on the stage select; Kirby and a Mario dummy standing on the castle | RE-386 |
@@ -193,7 +194,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `kirbyhat`) | `f1-training-kirby-hat` | Kirby inhales and copies the Mario dummy on Dream Land's left platform and wears Mario's cap (joint 6's model part 12) | RE-417 |
 | `golden_capture` (`psp-game`, scene `yoshiegg`) | `f1-training-yoshi-egg` | Yoshi lands beside the dummy, backs off, turns and tongues it at tick 330; at 460 the laid egg rests on the top platform in its Wait wobble | RE-417, RE-432 |
 | `golden_capture` (`psp-game`, scene `yoshishield`) | `f1-training-yoshi-shield` | Yoshi holds Z from tick 40 to 600: his model is hidden inside the egg shield, darkened by the worn shield (health 21, ENV (107, 132, 132)): the egg's white texels (231) draw (134, 111, 111) and its green spots (57, 214, 57) draw (33, 103, 27) | RE-418 |
-| `golden_capture` (`psp-game`, scene `vsshield`) | `f1-vs-shield-damage` | A VS battle whose player shields from "Go"; frozen after tick 684's update, where the CPU's Mario Tornado sets the shield off and the bubble draws the grey damage row | RE-418 |
+| `golden_capture` (`psp-game`, scene `vsshield`) | `f1-vs-shield-damage` | A VS battle whose player shields from "Go"; frozen after tick 884's update, where the CPU's hit sets the shield off and the bubble draws the grey damage row | RE-418, RE-438 |
 | `golden_capture` (`psp-game`, scene `stageselectview`) | `f1-training-stage-select-view` | Training's stage select left on Hyrule Castle at tick 60: the stone, icons, red cursor, plaque, name plate and emblem, and the castle's preview model over its blue Training wallpaper | RE-419 |
 | `golden_capture` (`psp-game`, scene `stageselectyoshi`) | `f1-training-stage-select-yoshi` | The same select moved down to Yoshi's Island: the yellow Training wallpaper, and the preview hiding the two cloud nodes `mnMapsMakeModel` hides | RE-419 |
 | `golden_capture` (`psp-game`, scene `vssector`) | `f1-vs-sector` | `vs`'s countdown on Sector Z: the wallpaper scaled about its centre by the camera's distance | RE-419 |
@@ -1113,3 +1114,16 @@ platform and picks it up. Matches twice (run `20261003-205917`). All 107
 existing `f1-*` goldens match with weapons and items now in the CPUs' view
 (run `20261003-204834`). The manifest has 177 scenes. This is a PSP output
 control, not N64 equivalence. See [RE-437](../evidence/re/RE-437.md).
+
+## 2026-10-03 RE-438 CPU traits, Rush and Training's menu
+
+Locked fighters no longer run their CPU (`ftMainProcInterrupt`), so the
+VS countdown draws no CPU randomness and the entry focus and every later
+draw move. Twelve VS goldens are rebaselined, each captured twice with
+zero differences: `f1-vs-countdown`, `-cpu`, `-pause`, `-no-contest`,
+`-four`, `-team`, `-shield-damage`, `-arwing`, `-car`, `-ball`, `-rays`
+and `-four-low-detail`. `vscpu` moved to tick 900 and `vsshield` to 885 to
+keep their subjects. New `f1-training-menu` (`trainingmenu`, tick 150)
+drives Training's menu: CP Walk and a dropped Maxim Tomato. The manifest
+has 178 scenes. These are PSP output controls, not N64 equivalence. See
+[RE-438](../evidence/re/RE-438.md).

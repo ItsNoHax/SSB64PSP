@@ -5,7 +5,8 @@
 //! (`func_ovl3_8013837C`, `...8013877C`, `...80138AA8`, `...80138EE4`,
 //! `ftComputerCheckTryChargeSpecialN`, `ftComputerCheckEvadeDistance`),
 //! and the item objectives: `ftComputerCheckFindItem`,
-//! `ftComputerCheckTargetItemInRange`, TrackItem and UseItem.
+//! `ftComputerCheckTargetItemInRange`, TrackItem and UseItem, and the
+//! 1P Game's traits and Rush objective.
 
 use ssb_engine::math::{Vec2, Vec3};
 
@@ -24,16 +25,35 @@ use crate::weapon::{MapSurface, MapSurfaceKind};
 /// `FTDONKEY_GIANTPUNCH_CHARGE_MAX`.
 const DONKEY_CHARGE_MAX: u8 = 10;
 
-/// `nFTComputerTrait*`.
+/// `nFTComputerTrait*`: what `ftComputerProcessTrait` does with the
+/// behaviour. The 1P Game sets these per stage (`sSC1PGamePlayerSetups`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Trait {
     /// `nFTComputerTraitDefault`: VS. The behaviour changes every 900–1,800
     /// ticks.
     #[default]
     Default,
+    /// `nFTComputerTraitLink`: stand until hurt or the first behaviour
+    /// change, then fight.
+    Link,
+    YoshiTeam,
+    KirbyTeam,
+    PolyTeam,
+    /// `nFTComputerTraitMarioBros`: Mario fights, Luigi backs him up.
+    MarioBros,
+    GiantDonkey,
+    Unk1,
+    /// `nFTComputerTraitBonus3`: Race to the Finish's polygons rush.
+    Bonus3,
+    /// `nFTComputerTraitAlly`: a 1P Game ally.
+    Ally,
     /// `nFTComputerTraitNone`: Training keeps the menu's behaviour.
     None,
 }
+
+/// `fp->percent_damage` from which a Link-trait CPU fights (US build;
+/// other regions use 20).
+const LINK_TRAIT_DAMAGE: u16 = 14;
 
 fn sq(v: f32) -> f32 {
     v * v
@@ -126,20 +146,46 @@ fn count_slot(input_kind: usize) -> Option<usize> {
 }
 
 impl Computer {
-    /// `ftComputerProcessTrait` for the default trait, then
-    /// `ftComputerProcessBehavior`'s base objective.
-    pub(super) fn process_trait(&mut self) {
-        if self.trait_kind == Trait::Default && self.behavior_change_wait == 0 {
-            self.behavior_change_wait = (crate::rng::rand_float() * 900.0 + 900.0) as u16;
-            self.behavior = match crate::rng::rand_ushort() & 3 {
-                0 => Behavior::Default,
-                1 => Behavior::Unk2,
-                2 => {
-                    self.behavior_change_wait >>= 2;
-                    Behavior::Ally
+    /// `ftComputerProcessTrait`, then `ftComputerProcessBehavior`'s base
+    /// objective.
+    pub(super) fn process_trait(&mut self, f: &Fighter) {
+        match self.trait_kind {
+            Trait::Default => {
+                if self.behavior_change_wait == 0 {
+                    self.behavior_change_wait = (crate::rng::rand_float() * 900.0 + 900.0) as u16;
+                    self.behavior = match crate::rng::rand_ushort() & 3 {
+                        0 => Behavior::Default,
+                        1 => Behavior::Unk2,
+                        2 => {
+                            self.behavior_change_wait >>= 2;
+                            Behavior::Ally
+                        }
+                        _ => Behavior::Captain,
+                    };
                 }
-                _ => Behavior::Captain,
-            };
+            }
+            Trait::Link => {
+                self.behavior = if f.damage >= LINK_TRAIT_DAMAGE || self.behavior_change_wait == 0 {
+                    Behavior::Default
+                } else {
+                    Behavior::Stand
+                };
+            }
+            Trait::YoshiTeam => self.behavior = Behavior::YoshiTeam,
+            Trait::KirbyTeam => self.behavior = Behavior::KirbyTeam,
+            Trait::PolyTeam => self.behavior = Behavior::PolyTeam,
+            Trait::MarioBros => {
+                self.behavior = if f.kind == FighterKind::Mario {
+                    Behavior::Default
+                } else {
+                    Behavior::Ally
+                };
+            }
+            Trait::GiantDonkey => self.behavior = Behavior::Default,
+            Trait::Unk1 => self.behavior = Behavior::Unk2,
+            Trait::Bonus3 => self.behavior = Behavior::Bonus3,
+            Trait::Ally => self.behavior = Behavior::Ally,
+            Trait::None => {}
         }
         self.objective_base = match self.behavior {
             Behavior::Unk1 => Objective::Evade,
@@ -1188,6 +1234,25 @@ impl Computer {
             };
             self.walk_or_wander(f, world, burst, true);
         }
+    }
+
+    /// `ftComputerFollowObjectiveRush`: Race to the Finish. Attack a target
+    /// in reach, else walk at it; with no target, wander.
+    pub(super) fn follow_rush<F, I>(&mut self, f: &Fighter, world: &World<'_, F>)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        if !self.find_target(f, world) {
+            self.idle_wander(f, world);
+            return;
+        }
+        crate::rng::rand_float();
+        let random = crate::rng::rand_float();
+        if self.target_dist >= random * 300.0 + 1200.0 || !self.detect_target(f, world, 0.0) {
+            self.follow_walk(f, world);
+        }
+        self.walk_stop_wait = 0;
     }
 
     /// Walk to the target on a different level or in a walking burst, else

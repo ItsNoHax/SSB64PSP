@@ -1042,6 +1042,10 @@ pub struct FighterScene {
     /// `gmCameraSetStatusPlayerZoom`, RE-402): a target with its
     /// `cam_offset_y` added and a distance. `None` runs the battle camera.
     pub entry_zoom: Option<(ssb_engine::math::Vec3, f32)>,
+    /// Training's Close-Up view (`sc1PTrainingModeUpdateViewOption`'s
+    /// `gmCameraSetStatusPlayerZoom`): the fighter's `closeup_camera_zoom`.
+    /// `None` runs the battle camera.
+    pub player_zoom: Option<f32>,
     /// `FTAttributes.cam_offset_y` (`refs/ssb-decomp-re/src/ft/fttypes.h`) --
     /// deliberately *not* part of `PhysicsAttributes` (that struct's own doc
     /// comment already carves camera offsets out as belonging to "other
@@ -1195,6 +1199,7 @@ impl FighterScene {
             // hide.
             camera: ssb_game::camera::Camera::default(),
             entry_zoom: None,
+            player_zoom: None,
             cam_offset_y,
             camera_zoom_frame,
             shadow_size,
@@ -1413,6 +1418,22 @@ impl FighterScene {
             left: stage.camera.left as f32,
             right: stage.camera.right as f32,
         };
+        // `gmCameraPlayerZoomFuncCamera`: the battle camera while the
+        // fighter is out of the camera bounds.
+        if let Some(dist) = self.player_zoom {
+            let pos = self.fighter.pos;
+            if ssb_game::pause::kind_for(pos, bounds) != ssb_game::pause::PauseKind::PlayerNA {
+                let target = ssb_engine::math::Vec3::new(pos.x, pos.y + self.cam_offset_y, pos.z);
+                self.camera.tick_player_zoom(
+                    target,
+                    (0.0, 0.0),
+                    dist,
+                    ssb_game::training::CLOSE_UP_PAN_SCALE,
+                    ssb_game::training::CLOSE_UP_FOV,
+                );
+                return;
+            }
+        }
         let mut list = [ssb_game::camera::Interest::default(); 4];
         let mut count = 0;
         let all = self.camera_interest(stage).into_iter().chain(others.iter().copied());

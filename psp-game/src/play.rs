@@ -95,11 +95,13 @@ impl Dummy {
         locked: bool,
     ) {
         let surfaces = || ssb_psp_runtime::scene::MapSegments::with_groups(pack, stage, groups);
-        let world = cpu_world(stage, surfaces, opponents, sight);
-        self.computer.process(&self.scene.fighter, &world);
+        // `ftMainProcInterrupt`: a fighter whose control is locked
+        // (`is_control_disable`) runs no CPU at all.
         let controller = if locked {
             ssb_engine::input::ControllerState::default()
         } else {
+            let world = cpu_world(stage, surfaces, opponents, sight);
+            self.computer.process(&self.scene.fighter, &world);
             self.computer.controller()
         };
         self.scene

@@ -493,6 +493,9 @@ pub enum GameScene {
     /// `trainingcpuitem`: a level-9 CPU on the default behaviour with a Bat
     /// beside it: it tracks the Bat and picks it up (TrackItem).
     TrainingCpuItem,
+    /// `trainingmenu`: Training's menu sets the CPU to Walk and drops a
+    /// Maxim Tomato above the player, then closes.
+    TrainingMenu,
     /// Diagnostic Saffron item views: source lifecycle, selected maker.
     TrainingChansey,
     TrainingElectrode,
@@ -524,7 +527,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 101] = [
+    pub const ALL: [GameScene; 102] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -613,6 +616,7 @@ impl GameScene {
         GameScene::TrainingStarRod,
         GameScene::TrainingHammer,
         GameScene::TrainingCpuItem,
+        GameScene::TrainingMenu,
         GameScene::TrainingChansey,
         GameScene::TrainingElectrode,
         GameScene::TrainingCharmander,
@@ -718,6 +722,7 @@ impl GameScene {
             GameScene::TrainingStarRod => "trainingstarrod",
             GameScene::TrainingHammer => "traininghammer",
             GameScene::TrainingCpuItem => "trainingcpuitem",
+            GameScene::TrainingMenu => "trainingmenu",
             GameScene::TrainingChansey => "trainingchansey",
             GameScene::TrainingElectrode => "trainingelectrode",
             GameScene::TrainingCharmander => "trainingcharmander",
