@@ -680,6 +680,9 @@ impl Status {
                 | Status::JumpAerialB
                 | Status::Fall
                 | Status::FallAerial
+                | Status::LGunShootAir
+                | Status::FireFlowerShootAir
+                | Status::HammerFall
                 | Status::Pass
                 | Status::DamageAir1
                 | Status::DamageAir2
@@ -3662,6 +3665,10 @@ pub fn set_any_status_preserve(
 
 /// `ftCommonWaitSetStatus` @ 0x8013E1C8.
 pub fn set_wait(f: &mut Fighter) {
+    if crate::item_use::holds_hammer(f) {
+        crate::item_use::hammer_wait(f);
+        return;
+    }
     set_status(f, Status::Wait, 0.0, StatusTiming::unknown());
     f.is_special_interrupt = true;
 }
@@ -3868,6 +3875,10 @@ pub fn set_jump_aerial(f: &mut Fighter) {
 
 /// `ftCommonFallSetStatus` @ 0x8013F9E0.
 pub fn set_fall(f: &mut Fighter) {
+    if crate::item_use::holds_hammer(f) {
+        crate::item_use::hammer_fall(f);
+        return;
+    }
     let status = if f.physics.jumps_used >= f.attributes.jumps_max {
         Status::FallAerial
     } else {
@@ -4525,11 +4536,18 @@ pub fn check_pass(f: &mut Fighter) -> bool {
 }
 
 /// `ftCommonAttackDashCheckInterruptCommon` @ `ftcommonattackdash.c:24`.
-/// Swing items are not ported; held throwable items use `LightThrowDash`.
+/// Held swing items use their dash swing; throwables use `LightThrowDash`.
 pub fn check_attack_dash(f: &mut Fighter) -> bool {
     if f.button_tap().contains(N64Buttons::A) {
         if crate::item_throw::check_item_type_throw(f) {
             crate::item_throw::set_item_throw(f, Status::LightThrowDash);
+            return true;
+        }
+        if f.items
+            .held
+            .is_some_and(|i| i.ty == crate::item::ItemType::Swing)
+            && crate::item_use::check(f, 3, false)
+        {
             return true;
         }
         set_dash_attack(f);
@@ -4548,7 +4566,11 @@ pub fn check_fsmash(f: &mut Fighter) -> bool {
     {
         return false;
     }
-    if crate::item_throw::check_item_type_throw(f) {
+    if crate::item_throw::check_item_type_throw(f)
+        || f.items
+            .held
+            .is_some_and(|i| i.ty == crate::item::ItemType::Shoot && f.items.held_multi == 0)
+    {
         let s = if f.stick.x as f32 * f.facing.sign() >= 0.0 {
             Status::LightThrowF4
         } else {
@@ -4556,6 +4578,21 @@ pub fn check_fsmash(f: &mut Fighter) -> bool {
         };
         crate::item_throw::set_item_throw(f, s);
     } else {
+        if f.items.held.is_some_and(|i| {
+            matches!(
+                i.ty,
+                crate::item::ItemType::Swing | crate::item::ItemType::Shoot
+            )
+        }) {
+            if f.stick.x < 0 {
+                f.facing = Facing::Left;
+            } else if f.stick.x > 0 {
+                f.facing = Facing::Right;
+            }
+            if crate::item_use::check(f, 2, false) {
+                return true;
+            }
+        }
         set_fsmash(f);
     }
     true
@@ -4614,6 +4651,9 @@ pub fn check_ftilt(f: &mut Fighter) -> bool {
     if crate::item_throw::check_item_type_throw(f) {
         crate::item_throw::set_item_throw(f, Status::LightThrowF);
     } else {
+        if crate::item_use::check(f, 1, false) {
+            return true;
+        }
         set_ftilt(f);
     }
     true
@@ -4668,6 +4708,9 @@ pub fn check_dtilt(f: &mut Fighter) -> bool {
 /// ground tilts picks up/down, and forward-relative-to-facing picks
 /// forward/back.
 pub fn check_attack_air(f: &mut Fighter) -> bool {
+    if crate::item_use::holds_hammer(f) {
+        return false;
+    }
     if !f.button_tap().contains(N64Buttons::A) {
         return false;
     }
@@ -4689,6 +4732,11 @@ pub fn check_attack_air(f: &mut Fighter) -> bool {
     } else {
         Status::AttackAirB
     };
+    if matches!(status, Status::AttackAirN | Status::AttackAirF)
+        && crate::item_use::check(f, 0, true)
+    {
+        return true;
+    }
     if crate::motion::fighter_scripts(f.kind).is_none() {
         return false;
     }
@@ -4709,6 +4757,9 @@ pub fn check_attack1(f: &mut Fighter) -> bool {
                 crate::item_throw::set_item_throw(f, Status::LightThrowDrop);
                 return true;
             }
+        }
+        if crate::item_use::check(f, 0, false) {
+            return true;
         }
         if f.attack1.followup_frames != 0.0 {
             match f.attack1.status_id {
@@ -4899,6 +4950,9 @@ pub fn update(f: &mut Fighter) {
     // separately, in `update_extended` — unwrapping to a bare `Status` here
     // means the common-table match below needs no changes at all to stay
     // exactly what it was before `AnyStatus` existed.
+    if crate::item_use::update(f) {
+        return;
+    }
     if crate::item_throw::update(f) {
         return;
     }
@@ -5794,7 +5848,7 @@ pub fn apply_status_physics(
 ) {
     match status {
         // `ftCommonWalkProcPhysics` @ 0x8013E548.
-        Status::WalkSlow | Status::WalkMiddle | Status::WalkFast => {
+        Status::WalkSlow | Status::WalkMiddle | Status::WalkFast | Status::HammerWalk => {
             set_ground_vel_abs_stick(p, stick_x, attr.walk_speed_mul, attr.traction);
         }
         // `ftCommonDashProcPhysics` @ 0x8013EC58: no friction for the first

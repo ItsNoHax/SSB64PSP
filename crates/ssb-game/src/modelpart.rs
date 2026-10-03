@@ -420,8 +420,11 @@ pub(crate) fn on_set_status(f: &mut Fighter, to: crate::status::AnyStatus) {
     let base = f.model_parts.detail_base;
     f.model_parts.set_detail_all(base);
     let preserve = |table| crate::colanim::preserved_in(table, f.kind, f.status.status, to);
-    let keep_model = preserve(&crate::colanim::PRESERVE_MODELPART);
-    let keep_texture = preserve(&crate::colanim::PRESERVE_TEXTUREPART);
+    // `ftHammerGetStatUpdateFlags`: every Hammer status plays HammerWait
+    // or HammerWalk and keeps these parts when switching within that set.
+    let hammer = crate::item_use::is_hammer(f.status.status) && crate::item_use::is_hammer(to);
+    let keep_model = hammer || preserve(&crate::colanim::PRESERVE_MODELPART);
+    let keep_texture = hammer || preserve(&crate::colanim::PRESERVE_TEXTUREPART);
     if !keep_model && f.model_parts.is_modify {
         f.model_parts.reset_all();
     }

@@ -31,6 +31,9 @@ pub enum ShotKind {
     KamexHydro,
     StarmieSwift,
     DogasSmog,
+    RayGun,
+    StarRod,
+    FireFlower,
 }
 
 /// The `WPAttributes` fields gameplay reads.
@@ -47,6 +50,7 @@ pub struct ShotAttributes {
     pub shield_damage: i32,
     pub can_setoff: bool,
     pub can_rehit_fighter: bool,
+    pub can_rehit_item: bool,
     pub can_hop: bool,
     pub can_reflect: bool,
     pub can_absorb: bool,
@@ -74,6 +78,7 @@ const BASE: ShotAttributes = ShotAttributes {
     shield_damage: 1,
     can_setoff: true,
     can_rehit_fighter: false,
+    can_rehit_item: false,
     can_hop: false,
     can_reflect: false,
     can_absorb: false,
@@ -83,7 +88,7 @@ const BASE: ShotAttributes = ShotAttributes {
 
 /// File 264 + 0x244 and 0x308 (Saffron); file 251 + 0x774, 0x8C8, 0x944,
 /// 0x9D4, 0xCBC, 0xA50, 0xB7C and 0xC40 (`reloc_data.us.h`).
-pub static ATTRIBUTES: [ShotAttributes; 10] = [
+pub static ATTRIBUTES: [ShotAttributes; 13] = [
     ShotAttributes {
         map_coll: coll(50.0, -50.0, 50.0),
         size: 320.0,
@@ -188,6 +193,49 @@ pub static ATTRIBUTES: [ShotAttributes; 10] = [
         can_shield: false,
         ..BASE
     },
+    ShotAttributes {
+        map_coll: coll(10.0, -10.0, 10.0),
+        size: 120.0,
+        angle: 70,
+        kb_scale: 40,
+        damage: 10,
+        element: Element::Electric,
+        shield_damage: -8,
+        can_setoff: false,
+        can_hop: true,
+        can_reflect: true,
+        can_absorb: true,
+        kb_base: 50,
+        ..BASE
+    },
+    ShotAttributes {
+        map_coll: BodyColl {
+            top: 10.0,
+            center: -10.0,
+            bottom: -10.0,
+            width: 10.0,
+        },
+        size: 200.0,
+        angle: 361,
+        damage: 8,
+        can_hop: true,
+        can_reflect: true,
+        can_absorb: true,
+        kb_base: 10,
+        ..BASE
+    },
+    ShotAttributes {
+        map_coll: coll(50.0, -50.0, 50.0),
+        size: 270.0,
+        damage: 3,
+        can_rehit_item: true,
+        element: Element::Fire,
+        kb_weight: 3,
+        can_setoff: false,
+        can_reflect: true,
+        can_absorb: true,
+        ..BASE
+    },
 ];
 
 /// `ITKAMEX_HYDRO_LIFETIME`, `ITSTARMIE_SWIFT_LIFETIME`,
@@ -289,6 +337,11 @@ pub enum ShotProc {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MonsterShot {
+    /// Ray Gun root X scale; its second attack is -5 local X.
+    pub scale_x: f32,
+    pub attack_tail: Option<(Vec3, Vec3)>,
+    /// Star Rod descriptor remains on smash attributes after a smash.
+    pub star_smash: bool,
     pub kind: ShotKind,
     /// `owner_gobj`: the fighter it never hits.
     pub owner: Option<u8>,
@@ -328,6 +381,9 @@ impl MonsterShot {
         let attr = &ATTRIBUTES[kind as usize];
         Self {
             kind,
+            scale_x: 1.0,
+            attack_tail: Some((position, position)),
+            star_smash: false,
             owner: parent.owner,
             player: parent.player,
             team: parent.team,
@@ -462,6 +518,41 @@ impl MonsterShot {
         }
     }
 
+    /// Fighter-owned item weapon; the caller handles ammo even when allocation fails.
+    pub fn equipment(
+        kind: ShotKind,
+        parent: ShotParent,
+        position: Vec3,
+        smash: bool,
+        angle_index: u8,
+    ) -> Self {
+        let mut m = Self::make(kind, parent, position);
+        match kind {
+            ShotKind::RayGun => {
+                m.attack_tail = Some((
+                    position + Vec3::new(-5.0, 0.0, 0.0),
+                    position + Vec3::new(-5.0, 0.0, 0.0),
+                ));
+                m.velocity.x = parent.lr * 300.0;
+                m.rotate_z = atan2(0.0, m.velocity.x);
+            }
+            ShotKind::StarRod => {
+                m.position.z = 0.0;
+                m.velocity.x = parent.lr * if smash { 120.0 } else { 80.0 };
+                m.lifetime = 30;
+            }
+            ShotKind::FireFlower => {
+                let angle =
+                    (f32::from(angle_index.min(4)) * 7.5 - 15.0) * core::f32::consts::PI / 180.0;
+                let (s, c) = sin_cos(angle);
+                m.velocity = Vec3::new(c * 30.0 * parent.lr, s * 30.0, 0.0);
+                m.lifetime = 30;
+            }
+            _ => unreachable!(),
+        }
+        m
+    }
+
     pub fn attributes(&self) -> &'static ShotAttributes {
         &ATTRIBUTES[self.kind as usize]
     }
@@ -513,6 +604,12 @@ impl MonsterShot {
     /// `wpProcessUpdateHitPositions`.
     fn update_attack(&mut self) {
         let curr = self.attack_point();
+        if self.kind == ShotKind::RayGun {
+            let (sin, cos) = sin_cos(self.rotate_z);
+            let tail = self.position
+                + Vec3::new(-5.0 * self.scale_x * cos, -5.0 * self.scale_x * sin, 0.0);
+            self.attack_tail = Some((tail, self.attack_tail.map_or(tail, |(p, _)| p)));
+        }
         self.attack = Some(match self.attack {
             None => (curr, curr),
             Some((prev, _)) => (curr, prev),
@@ -522,10 +619,12 @@ impl MonsterShot {
     /// The make's own effects, at the weapon's position.
     pub(crate) fn make_fx(&self, fx: &mut Emit) {
         match self.kind {
-            ShotKind::HitokageFlame | ShotKind::LizardonFlame => fx.push(Fx::MonsterFlame {
-                pos: self.position,
-                vel: self.velocity,
-            }),
+            ShotKind::HitokageFlame | ShotKind::LizardonFlame | ShotKind::FireFlower => {
+                fx.push(Fx::MonsterFlame {
+                    pos: self.position,
+                    vel: self.velocity,
+                })
+            }
             ShotKind::KamexHydro | ShotKind::StarmieSwift => {
                 fx.push(Fx::SparkleWhiteScale(self.position));
             }
@@ -547,7 +646,12 @@ impl MonsterShot {
                 fx.push(Fx::SparkleWhite(pos));
             }
             ShotKind::NyarsCoin => fx.push(Fx::DamageCoin(pos)),
-            ShotKind::StarmieSwift => fx.push(Fx::StarSplash {
+            ShotKind::RayGun => fx.push(Fx::ImpactShock {
+                pos,
+                size: self.damage,
+            }),
+            ShotKind::FireFlower if proc != ShotProc::Absorb => fx.push(Fx::SparkleWhite(pos)),
+            ShotKind::StarmieSwift | ShotKind::StarRod => fx.push(Fx::StarSplash {
                 pos,
                 lr: self.lr as i8,
             }),
@@ -559,14 +663,19 @@ impl MonsterShot {
     /// callback, or whose callback returns `FALSE`, does.
     pub fn survives(&self, proc: ShotProc) -> bool {
         match self.kind {
-            ShotKind::FushigibanaRazor | ShotKind::NyarsCoin | ShotKind::StarmieSwift => false,
+            ShotKind::FushigibanaRazor
+            | ShotKind::NyarsCoin
+            | ShotKind::StarmieSwift
+            | ShotKind::RayGun
+            | ShotKind::StarRod => false,
             ShotKind::HitokageFlame
             | ShotKind::LizardonFlame
             | ShotKind::IwarkRock
             | ShotKind::SpearSwarm
             | ShotKind::PippiSwarm
             | ShotKind::KamexHydro
-            | ShotKind::DogasSmog => {
+            | ShotKind::DogasSmog
+            | ShotKind::FireFlower => {
                 let _ = proc;
                 true
             }
@@ -582,7 +691,15 @@ impl MonsterShot {
                 self.reface();
                 self.lr = if self.velocity.x > 0.0 { 1.0 } else { -1.0 };
             }
-            ShotKind::IwarkRock | ShotKind::NyarsCoin | ShotKind::StarmieSwift => {
+            ShotKind::RayGun => {
+                self.rotate_z = atan2(self.velocity.y, self.velocity.x);
+                self.scale_x = 1.0;
+            }
+            ShotKind::IwarkRock
+            | ShotKind::NyarsCoin
+            | ShotKind::StarmieSwift
+            | ShotKind::StarRod => {
+                self.scale_x = 1.0;
                 self.rotate_z = atan2(self.velocity.y, self.velocity.x);
                 self.lr = if self.velocity.x > 0.0 { 1.0 } else { -1.0 };
             }
@@ -611,6 +728,14 @@ impl MonsterShot {
                 self.lifetime = 20;
                 self.make_fx(fx);
             }
+            ShotKind::RayGun => {
+                self.rotate_z = atan2(self.velocity.y, self.velocity.x);
+                self.scale_x = 1.0;
+            }
+            ShotKind::FireFlower => {
+                self.lifetime = 30;
+                self.make_fx(fx);
+            }
             ShotKind::LizardonFlame => {
                 self.lifetime = LIZARDON_FLAME_LIFETIME;
                 self.make_fx(fx);
@@ -618,7 +743,9 @@ impl MonsterShot {
             ShotKind::IwarkRock
             | ShotKind::NyarsCoin
             | ShotKind::KamexHydro
-            | ShotKind::StarmieSwift => {
+            | ShotKind::StarmieSwift
+            | ShotKind::StarRod => {
+                self.scale_x = 1.0;
                 self.rotate_z = atan2(self.velocity.y, self.velocity.x);
                 self.lr = -self.lr;
             }
@@ -653,6 +780,23 @@ impl MonsterShot {
                     return false;
                 }
             }
+            ShotKind::RayGun => self.scale_x = (self.scale_x + 10.0).min(160.0 / 3.0),
+            ShotKind::StarRod => {
+                if self.lifetime == 0 {
+                    fx.push(Fx::SparkleWhiteScale(self.position));
+                    return false;
+                }
+                self.lifetime -= 1;
+                self.rotate_z += -0.2 * self.lr;
+                if !self.lifetime.is_multiple_of(2) {
+                    let pos = Vec3::new(
+                        self.position.x,
+                        self.position.y - 125.0 + crate::rng::rand_int_range(250) as f32,
+                        0.0,
+                    );
+                    fx.push(Fx::StarRodSpark { pos, lr: -self.lr });
+                }
+            }
             ShotKind::IwarkRock => {
                 self.velocity.y -= ROCK_GRAVITY;
                 let mag = Vec2::new(self.velocity.x, self.velocity.y).length();
@@ -681,7 +825,8 @@ impl MonsterShot {
             ShotKind::KamexHydro
             | ShotKind::StarmieSwift
             | ShotKind::LizardonFlame
-            | ShotKind::DogasSmog => {
+            | ShotKind::DogasSmog
+            | ShotKind::FireFlower => {
                 match self.kind {
                     ShotKind::KamexHydro => self.offset_x = hydro_offset_x(play) * self.lr,
                     ShotKind::DogasSmog => {
@@ -706,11 +851,22 @@ impl MonsterShot {
         }
         // `proc_map`.
         match self.kind {
-            ShotKind::HitokageFlame | ShotKind::LizardonFlame => {
+            ShotKind::HitokageFlame
+            | ShotKind::LizardonFlame
+            | ShotKind::RayGun
+            | ShotKind::FireFlower
+            | ShotKind::StarRod => {
                 let c = self.attributes().map_coll;
                 if let Some(hit) = map_contact(surfaces(), prev, self.position, c) {
                     self.position = hit.position;
-                    fx.push(Fx::DustExpandSmall(self.position));
+                    if self.kind == ShotKind::StarRod {
+                        fx.push(Fx::StarSplash {
+                            pos: self.position,
+                            lr: self.lr as i8,
+                        });
+                    } else {
+                        fx.push(Fx::DustExpandSmall(self.position));
+                    }
                     return false;
                 }
             }

@@ -350,8 +350,7 @@ pub fn best_hit_status_part(f: &Fighter) -> HitStatus {
 }
 
 /// `ftParamResetStatUpdateColAnim`: the animation ends, and the fighter's
-/// standing states pick the next one. The Hammer is an item the port does
-/// not have.
+/// standing states pick the next one.
 pub fn reset_stat_update(f: &mut Fighter) {
     f.colanim.reset();
     match best_hit_status_part(f) {
@@ -385,6 +384,9 @@ pub fn reset_stat_update(f: &mut Fighter) {
     }
     if matches!(f.kind, FighterKind::Ness | FighterKind::PolyNess) && crate::ness::absorbing(f) {
         check_set(f, ColAnimId::FIGHTER_NESS_SPECIAL_LW_HOLD, 0);
+    }
+    if crate::item_use::is_hammer(f.status.status) {
+        check_set(f, ColAnimId::FIGHTER_HAMMER, 0);
     }
     if f.damage_heal != 0 {
         check_set(f, ColAnimId::FIGHTER_HEAL, 0);
@@ -451,6 +453,7 @@ pub fn run_update_interrupt(f: &mut Fighter) {
     if core::mem::take(&mut f.colanim.is_heal_expired) && f.colanim.id == ColAnimId::FIGHTER_HEAL {
         reset_stat_update(f);
     }
+    crate::item_use::tick_hammer(f);
 }
 
 /// `ftParamSetHealDamage`.

@@ -484,6 +484,12 @@ pub enum GameScene {
     /// Charizard, Starmie and Koffing (RE-435).
     TrainingPokemonA,
     TrainingPokemonB,
+    /// The seven held utilities and their natural pickup/use callbacks.
+    TrainingEquipment,
+    TrainingRayGun,
+    TrainingFlower,
+    TrainingStarRod,
+    TrainingHammer,
     /// Diagnostic Saffron item views: source lifecycle, selected maker.
     TrainingChansey,
     TrainingElectrode,
@@ -515,7 +521,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 95] = [
+    pub const ALL: [GameScene; 100] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -598,6 +604,11 @@ impl GameScene {
         GameScene::TrainingThrowable,
         GameScene::TrainingPokemonA,
         GameScene::TrainingPokemonB,
+        GameScene::TrainingEquipment,
+        GameScene::TrainingRayGun,
+        GameScene::TrainingFlower,
+        GameScene::TrainingStarRod,
+        GameScene::TrainingHammer,
         GameScene::TrainingChansey,
         GameScene::TrainingElectrode,
         GameScene::TrainingCharmander,
@@ -697,6 +708,11 @@ impl GameScene {
             GameScene::TrainingThrowable => "trainingthrowable",
             GameScene::TrainingPokemonA => "trainingpokemona",
             GameScene::TrainingPokemonB => "trainingpokemonb",
+            GameScene::TrainingEquipment => "trainingequipment",
+            GameScene::TrainingRayGun => "trainingraygun",
+            GameScene::TrainingFlower => "trainingflower",
+            GameScene::TrainingStarRod => "trainingstarrod",
+            GameScene::TrainingHammer => "traininghammer",
             GameScene::TrainingChansey => "trainingchansey",
             GameScene::TrainingElectrode => "trainingelectrode",
             GameScene::TrainingCharmander => "trainingcharmander",

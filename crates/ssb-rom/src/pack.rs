@@ -349,7 +349,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 85 packs the Poké Ball Pokémon's appear/status scripts and weapon
 // joint/material animations, under the weapon render seed (RE-435).
 // No layout change.
-pub const VERSION: u32 = 85;
+// 86 adds the Ray Gun's ammo list under the weapon seed, keyed (251, 0x2B0).
+pub const VERSION: u32 = 86;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

@@ -38,6 +38,9 @@ pub mod hud;
 pub mod hurtbox;
 pub mod item;
 pub mod item_throw;
+pub mod item_use;
+#[cfg(test)]
+mod item_use_tests;
 pub mod kirby;
 pub mod kirby_copy;
 pub mod ko;

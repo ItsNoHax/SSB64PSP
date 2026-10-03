@@ -377,6 +377,12 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
         }
         // `ftCommonDamageFallProcInterrupt`.
         Status::DamageFall => {
+            if crate::item_use::holds_hammer(f)
+                && f.button_tap().contains(N64Buttons::A | N64Buttons::B)
+            {
+                crate::item_use::hammer_fall(f);
+                return true;
+            }
             air_interrupt(f);
         }
         Status::DownBounceD | Status::DownBounceU => update_down_bounce(f),

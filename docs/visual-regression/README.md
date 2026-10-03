@@ -29,7 +29,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  The manifest currently has 171 scenes; RE-316 measured about 17 s for an
+  The manifest currently has 176 scenes; RE-316 measured about 17 s for an
   earlier full run.
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
@@ -1088,3 +1088,18 @@ The manifest has 171 scenes. The last full matrix remains RE-434's
 qualitative model/attack comparisons, with later damage and trajectories
 still divergent. These goldens pin PSP output and do not establish N64
 or physical-PSP equivalence. See [RE-435](../evidence/re/RE-435.md).
+
+## 2026-10-03 RE-436 held utilities
+
+Five new game goldens show all seven loose utilities and natural pickup/use:
+`trainingequipment@50`, `trainingraygun@110`, `trainingflower@130`,
+`trainingstarrod@118` and `traininghammer@110`. The use scenes pick up at
+tick 60. Gun and Rod attack at tick 100; Flower holds A from tick 100
+through tick 150. Hammer enters its attack motion on pickup.
+
+All 20 targeted item controls match twice with zero differences (run
+`20261003-192249`). No existing PNG is rebaselined. The manifest has 176
+scenes; the last full matrix remains RE-434's 169/169. Star Rod retains the
+known FlySparks head-0 black squares; Hammer's item warning colour is not
+drawn. These are PSP output controls, without N64 damage/trajectory or
+physical-PSP equivalence proof. See [RE-436](../evidence/re/RE-436.md).
