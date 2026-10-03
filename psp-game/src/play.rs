@@ -76,7 +76,8 @@ impl Dummy {
         computer.behavior = ssb_game::computer::Behavior::Stand;
         computer.trait_kind = ssb_game::computer::attack::Trait::None;
         let surfaces = || ssb_psp_runtime::scene::MapSegments::new(pack, stage);
-        let world = cpu_world(stage, surfaces, &[]);
+        let sight = CpuSight::default();
+        let world = cpu_world(stage, surfaces, &[], &sight);
         computer.setup_world(&scene.fighter, &world);
         Some(Dummy { scene, computer })
     }
@@ -90,10 +91,11 @@ impl Dummy {
         stage: &StageDesc,
         groups: &[ssb_game::map::MapGroup],
         opponents: &[ssb_game::computer::behave::Opponent],
+        sight: &CpuSight,
         locked: bool,
     ) {
         let surfaces = || ssb_psp_runtime::scene::MapSegments::with_groups(pack, stage, groups);
-        let world = cpu_world(stage, surfaces, opponents);
+        let world = cpu_world(stage, surfaces, opponents, sight);
         self.computer.process(&self.scene.fighter, &world);
         let controller = if locked {
             ssb_engine::input::ControllerState::default()
@@ -108,12 +110,65 @@ impl Dummy {
 /// `gSCManagerBattleState->players[dummy].level` in Training.
 pub const TRAINING_CPU_LEVEL: u8 = 3;
 
-/// The map, bounds and opponents a CPU reads this frame. Items, the
-/// Twister and the Zebes acid are not reported yet.
+/// What a CPU reads of the match besides the fighters, as it stands when
+/// its interrupt runs: the items and weapons in link order, the Twister,
+/// the Zebes acid and its own PK Thunder trail.
+pub struct CpuSight {
+    pub items: alloc::vec::Vec<ssb_game::computer::behave::ItemSight>,
+    pub weapons: alloc::vec::Vec<ssb_game::computer::behave::WeaponThreat>,
+    pub team_rules: ssb_game::team::TeamRules,
+    pub twister: Option<ssb_engine::math::Vec2>,
+    pub acid: Option<(f32, f32)>,
+    pub pk_thunder_trail: Option<ssb_engine::math::Vec2>,
+}
+
+impl Default for CpuSight {
+    fn default() -> Self {
+        CpuSight {
+            items: alloc::vec::Vec::new(),
+            weapons: alloc::vec::Vec::new(),
+            team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL,
+            twister: None,
+            acid: None,
+            pk_thunder_trail: None,
+        }
+    }
+}
+
+impl CpuSight {
+    /// The view of the CPU on `port`.
+    pub fn observe(
+        port: u8,
+        items: &ssb_game::item::ItemPool,
+        weapons: &ssb_game::weapon::WeaponPool,
+        stage: &ssb_game::stage::Stage,
+    ) -> Self {
+        use ssb_game::stage::Controller;
+        let flat = |v: ssb_engine::math::Vec3| ssb_engine::math::Vec2::new(v.x, v.y);
+        CpuSight {
+            items: items.cpu_sights().collect(),
+            weapons: weapons.cpu_threats().collect(),
+            team_rules: items.team_rules,
+            twister: match &stage.controller {
+                Controller::Hyrule(h) => h.visible_position().map(flat),
+                _ => None,
+            },
+            acid: match &stage.controller {
+                Controller::Zebes(z) => Some(z.level_info()),
+                _ => None,
+            },
+            pk_thunder_trail: weapons.own_pk_trail(port).map(flat),
+        }
+    }
+}
+
+/// The map, bounds, opponents and the rest of the match a CPU reads this
+/// frame.
 fn cpu_world<'a, F, I>(
     stage: &StageDesc,
     surfaces: F,
     opponents: &'a [ssb_game::computer::behave::Opponent],
+    sight: &'a CpuSight,
 ) -> ssb_game::computer::behave::World<'a, F>
 where
     F: Fn() -> I,
@@ -137,9 +192,13 @@ where
         },
         gkind: ssb_rom::stage::vs_ground_kind(stage.source_file),
         opponents,
-        item_attacks: &[],
-        weapon_threats: &[],
-        twister: None,
-        acid: None,
+        items: &sight.items,
+        weapon_threats: &sight.weapons,
+        team_rules: sight.team_rules,
+        // `nSCBattleGameType1PGame`: the 1P game is not ported.
+        is_1p_game: false,
+        pk_thunder_trail: sight.pk_thunder_trail,
+        twister: sight.twister,
+        acid: sight.acid,
     }
 }

@@ -99,7 +99,7 @@ pub const ITEM_RECORD_BASE: u8 = 0x40;
 /// `GMATTACKREC_NUM_MAX`.
 const ATTACK_RECORDS: usize = 4;
 /// `ITEM_ATKCOLL_NUM_MAX`.
-const ATTACK_COLLS: usize = 2;
+pub const ATTACK_COLLS: usize = 2;
 
 /// `ITEM_REHIT_TIME_DEFAULT`.
 pub const REHIT_TIME: i32 = 16;
@@ -1492,6 +1492,43 @@ impl ItemPool {
                 }
             }
         }
+    }
+
+    /// Every item as the CPU reads it, in link order
+    /// ([`crate::computer::behave::World::items`]).
+    pub fn cpu_sights(&self) -> impl Iterator<Item = crate::computer::behave::ItemSight> + '_ {
+        self.order[..self.order_len]
+            .iter()
+            .filter_map(|&s| self.slots[usize::from(s)].as_ref())
+            .map(|item| {
+                let a = &item.attack;
+                let mut attack_pos = [Vec2::ZERO; ATTACK_COLLS];
+                for (p, at) in attack_pos.iter_mut().zip(&a.pos) {
+                    *p = Vec2::new(at.pos_curr.x, at.pos_curr.y);
+                }
+                crate::computer::behave::ItemSight {
+                    pos: item.pos,
+                    owner: item.owner,
+                    team: item.team,
+                    kind: item.kind,
+                    weight: item.weight,
+                    is_allow_pickup: item.is_allow_pickup,
+                    is_damage_all: item.is_damage_all,
+                    floor_line: if item.ga == Ga::Ground {
+                        item.floor_line()
+                    } else {
+                        None
+                    },
+                    coll: item.coll,
+                    vel_x: item.vel_air.x,
+                    lr: item.lr,
+                    attack_live: !matches!(a.state, AttackState::Off | AttackState::New)
+                        && a.interact_mask & INTERACT_FIGHTER != 0,
+                    attack_size: a.size,
+                    attack_count: a.count.min(ATTACK_COLLS),
+                    attack_pos,
+                }
+            })
     }
 
     /// Fills the fighter's [`ItemView`] for its pickup search. Call right

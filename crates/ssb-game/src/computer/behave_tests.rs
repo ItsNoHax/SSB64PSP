@@ -40,8 +40,11 @@ fn world(opponents: &[Opponent]) -> World<'_, impl Fn() -> [MapSurface; 1]> {
         },
         gkind: None,
         opponents,
-        item_attacks: &[],
+        items: &[],
         weapon_threats: &[],
+        team_rules: crate::team::TeamRules::FREE_FOR_ALL,
+        is_1p_game: false,
+        pk_thunder_trail: None,
         twister: None,
         acid: None,
     }

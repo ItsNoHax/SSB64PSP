@@ -2,15 +2,16 @@
 //! `...ProcWalk`, `...ProcEvade`, `...ProcJump` and `func_ovl3_80137E70` —
 //! with the objective check they all start from
 //! (`ftComputerGetObjectiveStatus`) and the objectives they hand out:
-//! stand, walk, evade, recover and the landing counter-attack.
-//! `ftComputerProcDefault`'s attacking behaviour and the item objectives
-//! come later.
+//! stand, walk, evade, recover and the landing counter-attack. The
+//! attacking behaviour and the item objectives live in [`super::attack`].
 
 use ssb_engine::math::{Vec2, Vec3};
 
 use super::{input, Behavior, Computer, LEVEL_MAX};
 use crate::dead::StageBounds;
 use crate::fighter::{Facing, Fighter, FighterKind, Situation};
+use crate::ground::BodyColl;
+use crate::item::{ItemKind, ItemWeight};
 use crate::map;
 use crate::stage_select::gkind;
 use crate::status::{
@@ -58,16 +59,60 @@ pub struct Opponent {
     pub gravity: f32,
 }
 
-/// A live weapon of another fighter, as `func_ovl3_80135B78` reads it.
+/// One live hit of a weapon, as `func_ovl3_80135B78` reads it: every
+/// weapon whose attack is past `nGMAttackStateNew` and can hit fighters,
+/// one entry per `attack_pos`, in link order.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WeaponThreat {
-    /// One hit position, `attack_pos[i].pos_curr`.
+    /// `owner_gobj`'s port.
+    pub owner: u8,
+    /// `wp->team`.
+    pub team: u8,
+    /// `attack_pos[i].pos_curr`.
     pub pos: Vec2,
     pub vel_x: f32,
-    /// The weapon's `lr` as +1 or -1.
+    /// `wp->lr`.
     pub lr: f32,
-    /// The hit's size (the diameter).
+    /// `attack_coll.size`: the radius, which the check halves again.
     pub size: f32,
+}
+
+/// What the CPU reads of one item (`ITStruct`), in link order: the item
+/// searches of `ftComputerCheckFindItem`,
+/// `ftComputerCheckTargetItemInRange`,
+/// `ftComputerCheckTargetItemOrTwister` and `func_ovl3_80135B78`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ItemSight {
+    /// The root DObj's `translate`.
+    pub pos: Vec3,
+    /// `owner_gobj`'s port.
+    pub owner: Option<u8>,
+    pub team: u8,
+    pub kind: ItemKind,
+    pub weight: ItemWeight,
+    pub is_allow_pickup: bool,
+    pub is_damage_all: bool,
+    /// `coll_data.floor_line_id` while `ga` is ground.
+    pub floor_line: Option<u16>,
+    /// `coll_data.map_coll`.
+    pub coll: BodyColl,
+    pub vel_x: f32,
+    pub lr: f32,
+    /// `attack_coll.attack_state` is past `New` and its `interact_mask`
+    /// has the fighter bit.
+    pub attack_live: bool,
+    /// `attack_coll.size`, the radius.
+    pub attack_size: f32,
+    /// `attack_coll.attack_pos[..attack_count].pos_curr`.
+    pub attack_count: usize,
+    pub attack_pos: [Vec2; crate::item::ATTACK_COLLS],
+}
+
+impl ItemSight {
+    /// The live attack positions.
+    pub fn attacks(&self) -> &[Vec2] {
+        &self.attack_pos[..self.attack_count.min(self.attack_pos.len())]
+    }
 }
 
 /// `damage_coll_size`, the hurtboxes' extent. The map body's width and top
@@ -87,14 +132,18 @@ pub struct World<'a, F> {
     pub gkind: Option<u8>,
     /// Every fighter on another team ([`is_opponent`]).
     pub opponents: &'a [Opponent],
-    /// Live item attacks that can hit this fighter: position and size.
-    /// `ftComputerCheckTargetItemOrTwister` and `func_ovl3_80135B78` skip
-    /// the CPU's own and, with team attack off, its team's
-    /// ([`crate::team::TeamRules::spares`]).
-    pub item_attacks: &'a [(Vec2, f32)],
-    /// Other fighters' live weapons, less its team's with team attack off
-    /// (`func_ovl3_80135B78`).
+    /// Every item, in link order. The searches skip the CPU's own and, with
+    /// team attack off, its team's ([`crate::team::TeamRules::spares`]).
+    pub items: &'a [ItemSight],
+    /// Every weapon's live hits, in link order; the same skips apply.
     pub weapon_threats: &'a [WeaponThreat],
+    /// `gSCManagerBattleState->is_team_battle` and `is_team_attack`.
+    pub team_rules: crate::team::TeamRules,
+    /// `gSCManagerBattleState->game_type == nSCBattleGameType1PGame`.
+    pub is_1p_game: bool,
+    /// `ftComputerGetOwnWeaponPositionKind(fp, nWPKindPKThunderTrail)`:
+    /// the CPU's own first PK Thunder trail in the link.
+    pub pk_thunder_trail: Option<Vec2>,
     /// `grHyruleTwisterCheckGetPosition`.
     pub twister: Option<Vec2>,
     /// `grZebesAcidGetLevelInfo`: level and step.
@@ -171,6 +220,12 @@ where
             let (lo, hi) = if x1 <= x2 { (x1, x2) } else { (x2, x1) };
             y1.min(y2) <= pos.y + 0.001 && lo <= pos.x && pos.x <= hi
         })
+    }
+
+    /// The item and weapon walks' skip: not the CPU's own, nor, with team
+    /// attack off, its team's.
+    pub(super) fn sees_item(&self, f: &Fighter, it: &ItemSight) -> bool {
+        it.owner != Some(f.port) && !self.team_rules.spares(it.team, f.team)
     }
 
     fn floor_edge(&self, line: u16, right: bool) -> Option<Vec2> {
@@ -310,7 +365,7 @@ impl Computer {
             f,
             &super::Senses {
                 target_status,
-                pk_thunder_trail: None,
+                pk_thunder_trail: world.pk_thunder_trail,
             },
         );
     }
@@ -334,6 +389,8 @@ impl Computer {
             }
             Objective::Recover => self.follow_recover(f, world),
             Objective::CounterAttack => self.follow_counter_attack(f, world),
+            Objective::TrackItem => self.follow_track_item(f, world),
+            Objective::UseItem => self.follow_use_item(f, world),
             Objective::Attack | Objective::Unknown1 | Objective::Ally | Objective::Patrol => {
                 self.follow_attack(f, world, self.objective)
             }
@@ -714,7 +771,17 @@ impl Computer {
     {
         let px = f.pos.x + f.physics.vel_air.x * 5.0;
         let py = f.pos.y + f.physics.vel_air.y * 5.0;
-        if let Some(&(at, size)) = world.item_attacks.first() {
+        for it in world.items {
+            if !world.sees_item(f, it)
+                || !((it.kind == ItemKind::MSBomb && it.is_damage_all) || it.attack_live)
+            {
+                continue;
+            }
+            // Only the first item with an attack is weighed.
+            let Some(&at) = it.attacks().first() else {
+                continue;
+            };
+            let size = it.attack_size;
             if (px - at.x).abs() < size && (py - at.y).abs() < size {
                 self.stop_at_ledged_target = false;
                 if f.situation != Situation::Ground {

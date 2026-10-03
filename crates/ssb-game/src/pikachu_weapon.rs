@@ -763,6 +763,7 @@ mod tests {
             ))),
             crate::stale::WeaponStale::FRESH,
             0,
+            1.0,
         );
         let mut f = Fighter::new(FighterKind::Mario, 1, 3);
         f.pos.y = 400.0;

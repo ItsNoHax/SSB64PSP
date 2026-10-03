@@ -235,6 +235,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // RE-428: the first pattern's low pass, its wing in the top right.
         GameScene::TrainingArwing => 1800,
         GameScene::TrainingBumper | GameScene::TrainingPlants => 240,
+        // The CPU has jumped to the Bat's platform and holds it.
+        GameScene::TrainingCpuItem => 200,
         GameScene::TrainingCapsule
         | GameScene::TrainingCrate
         | GameScene::TrainingBarrel
@@ -317,6 +319,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingFlower
             | GameScene::TrainingStarRod
             | GameScene::TrainingHammer
+            | GameScene::TrainingCpuItem
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -524,6 +527,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingFlower
             | GameScene::TrainingStarRod
             | GameScene::TrainingHammer
+            | GameScene::TrainingCpuItem
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
             | GameScene::TrainingCharmander
@@ -1312,7 +1316,19 @@ unsafe fn training_step(
     let groups = stage_map
         .as_ref()
         .map_or(&[][..], |map| map.groups.as_slice());
-    interrupt_pass(p, &stage, groups, pl, dummies, items, controller, !started, effects);
+    interrupt_pass(
+        p,
+        &stage,
+        groups,
+        pl,
+        dummies,
+        items,
+        weapons,
+        stage_ctl,
+        controller,
+        !started,
+        effects,
+    );
     // Priority 4, Ground link: the stage controller.
     {
         let mut empty: [ssb_game::map::MapGroup; 0] = [];
@@ -1440,6 +1456,8 @@ fn interrupt_pass(
     pl: &mut play::FighterScene,
     dummies: &mut Dummies,
     items: &mut ssb_game::item::ItemPool,
+    weapons: &ssb_game::weapon::WeaponPool,
+    stage_ctl: &ssb_game::stage::Stage,
     controller: ControllerState,
     // The VS countdown locks every fighter's control, the CPUs' too.
     locked: bool,
@@ -1475,7 +1493,9 @@ fn interrupt_pass(
                 continue;
             };
             items.publish(&mut d.fighter);
-            d.tick_interrupt(p, stage, groups, &opponents, locked);
+            // The items as the fighters before it left them this pass.
+            let sight = play::CpuSight::observe(d.fighter.port, items, weapons, stage_ctl);
+            d.tick_interrupt(p, stage, groups, &opponents, &sight, locked);
         }
         let mut s = scenes(pl, dummies);
         after_interrupt(&mut s, i);
@@ -1982,6 +2002,16 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
         }
         return;
     }
+    if scene == Some(GameScene::TrainingCpuItem) {
+        // A Bat dropped beside the CPU, on the side away from the player.
+        if let (Some(pl), Some(d)) = (s.play_state.as_ref(), s.dummies[0].as_deref()) {
+            let side = if d.fighter.pos.x < pl.fighter.pos.x { -1.0 } else { 1.0 };
+            let pos = d.fighter.pos + ssb_engine::math::Vec3::new(side * 400.0, 300.0, 0.0);
+            s.items.camera_at_x = pl.camera.at.x;
+            s.items.make_setup_common(8, None, pos, ssb_engine::math::Vec3::ZERO, &core::iter::empty);
+        }
+        return;
+    }
     if scene == Some(GameScene::TrainingThrowable) {
         if let Some(pl) = s.play_state.as_ref() {
             // Motion-Sensor Bomb, Bob-omb, Bumper and the two Shells across
@@ -2131,6 +2161,7 @@ fn capture_cpu_behavior(scene: GameScene) -> Option<ssb_game::computer::Behavior
     match scene {
         GameScene::CpuWalk => Some(ssb_game::computer::Behavior::Walk),
         GameScene::CpuJump => Some(ssb_game::computer::Behavior::Jump),
+        GameScene::TrainingCpuItem => Some(ssb_game::computer::Behavior::Default),
         // A time-up tie needs a CPU that never lands a hit.
         // A time-up tie needs a CPU that never lands a hit; `vsresults` a
         // winner that lets the player fall.
@@ -3212,6 +3243,10 @@ unsafe fn session_frame(
                             for d in s.dummies.iter_mut().flatten() {
                                 d.computer.behavior = b;
                                 d.computer.trait_kind = ssb_game::computer::attack::Trait::None;
+                                // Level 9 tracks an item without waiting.
+                                if capture_scene == Some(GameScene::TrainingCpuItem) {
+                                    d.computer.level = ssb_game::computer::LEVEL_MAX;
+                                }
                             }
                         }
                         s.screen = Screen::Training;

@@ -6,7 +6,7 @@ use crate::status::BlastZone;
 use crate::weapon::MapSurface;
 use ssb_engine::math::Vec3;
 
-use super::super::behave::{Opponent, WeaponThreat};
+use super::super::behave::{ItemSight, Opponent, WeaponThreat};
 use super::super::INPUT_SCRIPTS;
 
 /// One floor from -2000 to 2000 at y 0.
@@ -49,8 +49,11 @@ fn world<'a>(
         },
         gkind: None,
         opponents,
-        item_attacks: &[],
+        items: &[],
         weapon_threats,
+        team_rules: crate::team::TeamRules::FREE_FOR_ALL,
+        is_1p_game: false,
+        pk_thunder_trail: None,
         twister: None,
         acid: None,
     }
@@ -246,6 +249,8 @@ fn an_incoming_weapon_is_answered() {
     // A shot 400 to the left flying right at 60: it arrives in about five
     // frames at the fighter's height.
     let threats = [WeaponThreat {
+        owner: 9,
+        team: 9,
         pos: Vec2::new(-400.0, 100.0),
         vel_x: 60.0,
         lr: 1.0,
@@ -293,4 +298,318 @@ fn a_vs_cpu_fights_a_standing_player() {
             || com.buttons.contains(ssb_engine::input::N64Buttons::B);
     }
     assert!(pressed, "the CPU never attacked");
+}
+
+fn item_world<'a>(
+    opponents: &'a [Opponent],
+    items: &'a [ItemSight],
+) -> World<'a, impl Fn() -> [MapSurface; 1]> {
+    World {
+        items,
+        ..world(opponents, &[])
+    }
+}
+
+/// A light item resting on the floor at `x`, free to pick up.
+fn item_at(x: f32) -> ItemSight {
+    ItemSight {
+        pos: Vec3::new(x, 0.0, 0.0),
+        owner: None,
+        team: crate::team::TEAM_DEFAULT,
+        kind: ItemKind::Equipment(equipment::Kind::Bat),
+        weight: ItemWeight::Light,
+        is_allow_pickup: true,
+        is_damage_all: false,
+        floor_line: Some(0),
+        coll: crate::ground::BodyColl {
+            top: 100.0,
+            center: 50.0,
+            bottom: 0.0,
+            width: 100.0,
+        },
+        vel_x: 0.0,
+        lr: 1.0,
+        attack_live: false,
+        attack_size: 0.0,
+        attack_count: 0,
+        attack_pos: [Vec2::ZERO; crate::item::ATTACK_COLLS],
+    }
+}
+
+fn holding(f: &mut Fighter, kind: ItemKind, ty: ItemType, multi: u16) {
+    f.items.held = Some(crate::item::HeldItem {
+        slot: 0,
+        kind,
+        ty,
+        weight: ItemWeight::Light,
+    });
+    f.items.held_multi = multi;
+}
+
+#[test]
+fn the_nearest_free_item_is_the_target() {
+    let f = standing_mario(0.0);
+    let mut own = item_at(100.0);
+    own.owner = Some(f.port);
+    let mut held = item_at(150.0);
+    held.is_allow_pickup = false;
+    let mut flying = item_at(-300.0);
+    flying.floor_line = None;
+    let items = [own, held, item_at(900.0), flying, item_at(-600.0)];
+    let w = item_world(&[], &items);
+    let mut com = vs_cpu(&f, 3);
+    com.target_user = Some(0);
+    com.stop_at_ledged_target = true;
+    assert!(com.find_item(&f, &w));
+    // Its own item and the one held are passed by; the airborne one is
+    // nearest of the rest and has no floor line.
+    assert_eq!(com.target_item, Some(3));
+    assert_eq!(com.target_user, None);
+    assert_eq!(com.target_line, None);
+    assert_eq!(com.target_dist, 300.0);
+    assert!(!com.stop_at_ledged_target);
+    // A held item stops the search.
+    let mut f = f;
+    holding(&mut f, ItemKind::MBall, ItemType::Throw, 0);
+    assert!(!com.find_item(&f, &w));
+    // Off the stage there is nothing to find.
+    let off = [item_at(3000.0)];
+    let w = item_world(&[], &off);
+    let f = standing_mario(0.0);
+    assert!(!com.find_item(&f, &w));
+}
+
+#[test]
+fn a_teammates_item_is_passed_by_without_team_attack() {
+    let mut f = standing_mario(0.0);
+    f.team = 0;
+    let mut mate = item_at(100.0);
+    mate.team = 0;
+    let items = [mate, item_at(500.0)];
+    let mut w = item_world(&[], &items);
+    w.team_rules = crate::team::TeamRules::TEAMS;
+    let mut com = vs_cpu(&f, 3);
+    assert!(com.find_item(&f, &w));
+    assert_eq!(com.target_item, Some(1));
+    w.team_rules = crate::team::TeamRules::FREE_FOR_ALL;
+    assert!(com.find_item(&f, &w));
+    assert_eq!(com.target_item, Some(0));
+}
+
+#[test]
+fn the_cpu_tracks_an_item_after_its_level_wait() {
+    // Level 3 in VS waits 225 - 75 = 150 ticks before tracking; the
+    // opponent is too far to attack.
+    let f = standing_mario(0.0);
+    let opponents = [player_at(1900.0)];
+    let items = [item_at(800.0)];
+    let w = item_world(&opponents, &items);
+    let mut com = vs_cpu(&f, 3);
+    com.process_trait();
+    for tick in 1..=150 {
+        assert_eq!(com.proc_default(&f, &w), 1);
+        assert_ne!(com.objective, Objective::TrackItem, "tick {tick}");
+    }
+    assert_eq!(com.proc_default(&f, &w), 1);
+    assert_eq!(com.objective, Objective::TrackItem);
+    assert_eq!(com.target_pos, Vec2::new(800.0, 0.0));
+    // In 1P the wait is 315 - 105 = 210.
+    let mut w = item_world(&opponents, &items);
+    w.is_1p_game = true;
+    let mut com = vs_cpu(&f, 3);
+    com.process_trait();
+    for _ in 0..210 {
+        com.proc_default(&f, &w);
+        assert_ne!(com.objective, Objective::TrackItem);
+    }
+    com.proc_default(&f, &w);
+    assert_eq!(com.objective, Objective::TrackItem);
+    // Beyond 400 * (level + 3) the count stands still; with no item it
+    // resets.
+    let far = [item_at(1950.0)];
+    let w = item_world(&opponents, &far);
+    let mut com = vs_cpu(&f, 1);
+    com.process_trait();
+    com.item_track_wait = 7;
+    com.proc_default(&f, &w);
+    assert_eq!(com.item_track_wait, 7);
+    let w = item_world(&opponents, &[]);
+    com.proc_default(&f, &w);
+    assert_eq!(com.item_track_wait, 0);
+}
+
+#[test]
+fn a_tracked_item_in_reach_is_picked_up() {
+    let mut f = standing_mario(0.0);
+    f.facing = Facing::Right;
+    f.status.status = AnyStatus::Common(Status::Wait);
+    // Mario's light reach: 105 ahead, 378 + the item's 100 either side.
+    let items = [item_at(500.0)];
+    let w = item_world(&[], &items);
+    let mut com = vs_cpu(&f, 9);
+    assert!(com.find_item(&f, &w));
+    assert!(com.target_item_in_range(&f, &w));
+    com.follow_track_item(&f, &w);
+    assert_eq!(
+        com.command.map(|c| c.0),
+        Some(input::STICK_N_BUTTON_B_Z_RELEASE_A_PRESS)
+    );
+    // Out of reach it walks there.
+    let items = [item_at(700.0)];
+    let w = item_world(&[], &items);
+    let mut com = vs_cpu(&f, 9);
+    assert!(com.find_item(&f, &w));
+    assert!(!com.target_item_in_range(&f, &w));
+    com.follow_track_item(&f, &w);
+    assert_eq!(com.command.map(|c| c.0), Some(input::MOVE_AUTO));
+    // Running, it does not stop to pick up.
+    f.status.status = AnyStatus::Common(Status::Run);
+    let items = [item_at(500.0)];
+    let w = item_world(&[], &items);
+    let mut com = vs_cpu(&f, 9);
+    assert!(com.find_item(&f, &w));
+    com.follow_track_item(&f, &w);
+    assert_eq!(com.command.map(|c| c.0), Some(input::MOVE_AUTO));
+}
+
+#[test]
+fn a_held_item_chooses_use_or_attack() {
+    let opponents = [player_at(1900.0)];
+    let w = item_world(&opponents, &[]);
+    for (ty, objective) in [
+        (ItemType::Throw, Objective::UseItem),
+        (ItemType::Shoot, Objective::UseItem),
+        (ItemType::Damage, Objective::UseItem),
+        (ItemType::Swing, Objective::Attack),
+    ] {
+        let mut f = standing_mario(0.0);
+        holding(&mut f, ItemKind::MBall, ty, 0);
+        let mut com = vs_cpu(&f, 3);
+        com.behavior = Behavior::Captain;
+        com.process_trait();
+        assert_eq!(com.proc_default(&f, &w), 1);
+        assert_eq!(com.objective, objective, "{ty:?}");
+    }
+}
+
+#[test]
+fn a_throwing_item_is_thrown() {
+    let opponents = [player_at(1000.0)];
+    let w = item_world(&opponents, &[]);
+    // A Poké Ball goes after the wait.
+    let mut f = standing_mario(0.0);
+    holding(&mut f, ItemKind::MBall, ItemType::Throw, 0);
+    let mut com = vs_cpu(&f, 3);
+    com.follow_use_item(&f, &w);
+    assert_eq!(com.command.map(|c| c.0), Some(input::THROW_ITEM_WAIT));
+    // Others go at once until the third empty shot.
+    let mut f = standing_mario(0.0);
+    holding(&mut f, ItemKind::BombHei, ItemType::Throw, 0);
+    let mut com = vs_cpu(&f, 3);
+    com.follow_use_item(&f, &w);
+    assert_eq!(com.command.map(|c| c.0), Some(input::THROW_ITEM_IMMEDIATE));
+    assert_eq!(com.item_throw_wait, 0);
+    let gun = ItemKind::Equipment(equipment::Kind::RayGun);
+    holding(&mut f, gun, ItemType::Shoot, 0);
+    for wait in 1..=2 {
+        com.follow_use_item(&f, &w);
+        assert_eq!(com.item_throw_wait, wait);
+        assert_eq!(com.command.map(|c| c.0), Some(input::THROW_ITEM_IMMEDIATE));
+    }
+    com.follow_use_item(&f, &w);
+    assert_eq!(com.item_throw_wait, 0);
+    assert_eq!(com.command.map(|c| c.0), Some(input::THROW_ITEM_WAIT));
+}
+
+#[test]
+fn a_loaded_gun_fires_at_a_target_on_its_level() {
+    let mut f = standing_mario(0.0);
+    f.facing = Facing::Right;
+    let gun = ItemKind::Equipment(equipment::Kind::RayGun);
+    holding(&mut f, gun, ItemType::Shoot, 5);
+    let opponents = [player_at(1000.0)];
+    let w = item_world(&opponents, &[]);
+    let mut com = vs_cpu(&f, 3);
+    com.item_throw_wait = 2;
+    com.follow_use_item(&f, &w);
+    assert_eq!(
+        com.command.map(|c| c.0),
+        Some(input::STICK_TILT_AUTO_X_BUTTON_B_Z_RELEASE_A_PRESS)
+    );
+    assert_eq!(com.item_throw_wait, 0);
+    // The Fire Flower's 1,500 reach: a farther target is walked to.
+    let flower = ItemKind::Equipment(equipment::Kind::FireFlower);
+    holding(&mut f, flower, ItemType::Shoot, 5);
+    let opponents = [player_at(1800.0)];
+    let w = item_world(&opponents, &[]);
+    let mut com = vs_cpu(&f, 3);
+    com.follow_use_item(&f, &w);
+    assert_eq!(com.command.map(|c| c.0), Some(input::MOVE_AUTO));
+    // From level 5 a reflector user gets the gun thrown at it.
+    let mut fox = player_at(1000.0);
+    fox.kind = FighterKind::Fox;
+    let opponents = [fox];
+    let w = item_world(&opponents, &[]);
+    holding(&mut f, gun, ItemType::Shoot, 5);
+    let mut com = vs_cpu(&f, 5);
+    com.follow_use_item(&f, &w);
+    assert_eq!(com.command.map(|c| c.0), Some(input::THROW_ITEM_IMMEDIATE));
+}
+
+#[test]
+fn an_incoming_item_attack_is_answered_and_fox_reflects() {
+    let mut f = standing_mario(0.0);
+    f.kind = FighterKind::Fox;
+    let opponents = [player_at(1500.0)];
+    let mut shell = item_at(-400.0);
+    shell.pos.y = 100.0;
+    shell.is_allow_pickup = false;
+    shell.vel_x = 60.0;
+    shell.attack_live = true;
+    shell.attack_size = 100.0;
+    shell.attack_count = 1;
+    shell.attack_pos[0] = Vec2::new(-400.0, 100.0);
+    let items = [shell];
+    let w = item_world(&opponents, &items);
+    let mut com = vs_cpu(&f, 9);
+    assert_eq!(com.proc_default(&f, &w), 1);
+    assert_eq!(com.objective, Objective::CounterAttack);
+    assert!(com.is_opponent_ra);
+    // Its own shell is no threat.
+    let mut own = shell;
+    own.owner = Some(f.port);
+    let items = [own];
+    let w = item_world(&opponents, &items);
+    let mut com = vs_cpu(&f, 9);
+    com.proc_default(&f, &w);
+    assert_ne!(com.objective, Objective::CounterAttack);
+}
+
+#[test]
+fn a_held_bat_reaches_further_with_the_a_attacks() {
+    // The forward tilt's box ends at 560, plus the target's 150: a target
+    // at 800 is out of its reach until a Bat widens it by 1.3.
+    let mut f = standing_mario(0.0);
+    f.facing = Facing::Right;
+    let opponents = [player_at(800.0)];
+    let w = world(&opponents, &[]);
+    let bat = ItemKind::Equipment(equipment::Kind::Bat);
+    let mut tilts = [0u32; 2];
+    for (n, held) in [None, Some(bat)].into_iter().enumerate() {
+        if let Some(kind) = held {
+            holding(&mut f, kind, ItemType::Swing, 0);
+        }
+        for seed in 0..200 {
+            crate::rng::set_seed(seed);
+            let mut com = vs_cpu(&f, 9);
+            com.find_target(&f, &w);
+            if com.detect_target(&f, &w, 0.0)
+                && com.input_kind == Some(input::STICK_TILT_AUTO_X_BUTTON_A)
+            {
+                tilts[n] += 1;
+            }
+        }
+    }
+    assert_eq!(tilts[0], 0);
+    assert!(tilts[1] > 0, "{tilts:?}");
 }

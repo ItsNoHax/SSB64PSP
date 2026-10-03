@@ -3,9 +3,9 @@
 //! `ftComputerCheckDetectTarget` over the per-fighter attack tables, and the
 //! Attack, Unknown1, Ally and Patrol objectives with their helpers
 //! (`func_ovl3_8013837C`, `...8013877C`, `...80138AA8`, `...80138EE4`,
-//! `ftComputerCheckTryChargeSpecialN`, `ftComputerCheckEvadeDistance`).
-//! Item tracking and use are not ported; with no items in play they never
-//! apply.
+//! `ftComputerCheckTryChargeSpecialN`, `ftComputerCheckEvadeDistance`),
+//! and the item objectives: `ftComputerCheckFindItem`,
+//! `ftComputerCheckTargetItemInRange`, TrackItem and UseItem.
 
 use ssb_engine::math::{Vec2, Vec3};
 
@@ -13,6 +13,7 @@ use super::behave::{Objective, World};
 use super::scripts::{Attack, ATTACKS};
 use super::{input, Behavior, Computer, LEVEL_MAX};
 use crate::fighter::{Facing, Fighter, FighterKind, Situation};
+use crate::item::{equipment, ItemKind, ItemType, ItemWeight};
 use crate::map;
 use crate::stage_select::gkind;
 use crate::status::{
@@ -194,10 +195,181 @@ impl Computer {
             self.objective = Objective::Attack;
             return 1;
         }
-        // `ftComputerCheckFindItem`: no items are in play.
-        self.item_track_wait = 0;
-        self.objective = self.objective_base;
+        if self.find_item(f, world) {
+            if self.target_dist < 400.0 * f32::from(self.level + 3) {
+                let level = i32::from(self.level);
+                let track_wait = if world.is_1p_game {
+                    -level * 35 + 315
+                } else {
+                    -level * 25 + 225
+                };
+                self.item_track_wait = self.item_track_wait.wrapping_add(1);
+                if track_wait < i32::from(self.item_track_wait) {
+                    self.objective = Objective::TrackItem;
+                    return 1;
+                }
+            }
+        } else {
+            self.item_track_wait = 0;
+        }
+        self.objective = match f.items.held {
+            Some(held) => match held.ty {
+                ItemType::Damage | ItemType::Shoot | ItemType::Throw => Objective::UseItem,
+                _ => Objective::Attack,
+            },
+            None => self.objective_base,
+        };
         1
+    }
+
+    /// `ftComputerCheckFindItem`: the nearest item on the stage that can be
+    /// picked up, while the hand is empty. The CPU's own items and, with
+    /// team attack off, its team's are passed by.
+    ///
+    /// The source keeps the item in `target_user`, the slot that otherwise
+    /// names a fighter; the port keeps it in [`Computer::target_item`] and
+    /// clears `target_user`.
+    pub(super) fn find_item<F, I>(&mut self, f: &Fighter, world: &World<'_, F>) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        if f.items.held.is_some() {
+            self.target_line = None;
+            return false;
+        }
+        let mut nearest = f32::MAX;
+        self.stop_at_ledged_target = false;
+        for (i, it) in world.items.iter().enumerate() {
+            if !world.sees_item(f, it) || !it.is_allow_pickup || !world.over_stage(it.pos) {
+                continue;
+            }
+            let b = &world.geometry;
+            if it.pos.x <= b.right
+                && it.pos.x >= b.left
+                && it.pos.y >= b.bottom
+                && it.pos.y < world.stage.camera.top
+            {
+                let d = sq(f.pos.x - it.pos.x) + sq(f.pos.y - it.pos.y);
+                if nearest > d {
+                    self.target_pos = Vec2::new(it.pos.x, it.pos.y);
+                    self.target_item = Some(i);
+                    self.target_user = None;
+                    nearest = d;
+                }
+            }
+        }
+        if nearest == f32::MAX {
+            self.target_line = None;
+            return false;
+        }
+        self.target_dist = ssb_engine::math::sqrt(nearest);
+        self.target_line = self
+            .target_item
+            .and_then(|i| world.items.get(i))
+            .and_then(|it| it.floor_line);
+        true
+    }
+
+    /// `ftComputerCheckTargetItemInRange`: the target item lies in the
+    /// hand's pickup box for its weight. Unlike `ftCommonGetFindItem` it
+    /// does not ask for the same floor.
+    pub(super) fn target_item_in_range<F, I>(&self, f: &Fighter, world: &World<'_, F>) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let Some(it) = self.target_item.and_then(|i| world.items.get(i)) else {
+            return false;
+        };
+        let p = crate::item_throw::pickup(f.kind);
+        let (offset, range) = if it.weight == ItemWeight::Light {
+            (p.offset_light, p.range_light)
+        } else {
+            (p.offset_heavy, p.range_heavy)
+        };
+        let x = f.pos.x + f.facing.sign() * offset.x;
+        let y = f.pos.y + offset.y;
+        let c = &it.coll;
+        (x - range.x) - c.width < it.pos.x
+            && (range.x + x) + c.width > it.pos.x
+            && (y - range.y) - c.top < it.pos.y
+            && (range.y + y) - c.bottom > it.pos.y
+    }
+
+    /// `ftComputerFollowObjectiveTrackItem`: pick the item up when standing
+    /// or crouching within reach, else walk to it.
+    pub(super) fn follow_track_item<F, I>(&mut self, f: &Fighter, world: &World<'_, F>)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        if self.target_item_in_range(f, world)
+            && matches!(common(f), Some(Status::Wait | Status::Squat))
+        {
+            self.set_command_wait_short(
+                f.situation == Situation::Ground,
+                input::STICK_N_BUTTON_B_Z_RELEASE_A_PRESS,
+            );
+            return;
+        }
+        self.follow_walk(f, world);
+    }
+
+    /// `ftComputerFollowObjectiveUseItem`: fire a shooting item with ammo
+    /// at a target on its level, and throw an empty one, a damage item or
+    /// a throwing item — a Poké Ball at once, the others after three tries.
+    pub(super) fn follow_use_item<F, I>(&mut self, f: &Fighter, world: &World<'_, F>)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let Some(held) = f.items.held else {
+            return;
+        };
+        let grounded = f.situation == Situation::Ground;
+        match held.ty {
+            ItemType::Shoot if f.items.held_multi != 0 => {
+                self.find_target(f, world);
+                let target = self.target_user.and_then(|i| world.opponents.get(i));
+                if self.level >= 5
+                    && target
+                        .is_some_and(|t| matches!(t.kind, FighterKind::Ness | FighterKind::Fox))
+                {
+                    self.set_command_wait_short(grounded, input::THROW_ITEM_IMMEDIATE);
+                    return;
+                }
+                if (f.pos.y - self.target_pos.y).abs() < 400.0 {
+                    let ahead = (self.target_pos.x - f.pos.x) * f.facing.sign();
+                    if held.kind == ItemKind::Equipment(equipment::Kind::FireFlower)
+                        && (ahead < 0.0 || ahead > 1500.0)
+                    {
+                        self.follow_walk(f, world);
+                    } else {
+                        self.set_command_wait_short(
+                            grounded,
+                            input::STICK_TILT_AUTO_X_BUTTON_B_Z_RELEASE_A_PRESS,
+                        );
+                    }
+                } else {
+                    self.follow_walk(f, world);
+                }
+                self.item_throw_wait = 0;
+            }
+            ItemType::Shoot | ItemType::Damage | ItemType::Throw => {
+                if held.ty == ItemType::Shoot {
+                    self.item_throw_wait = self.item_throw_wait.wrapping_add(1);
+                }
+                self.find_target(f, world);
+                if self.item_throw_wait >= 3 || held.kind == ItemKind::MBall {
+                    self.set_command_wait_short(grounded, input::THROW_ITEM_WAIT);
+                    self.item_throw_wait = 0;
+                } else {
+                    self.set_command_wait_short(grounded, input::THROW_ITEM_IMMEDIATE);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// `ftComputerCheckEvadeDistance`: a star-invincible opponent within
@@ -216,38 +388,71 @@ impl Computer {
         })
     }
 
-    /// `func_ovl3_80135B78`: an opponent's weapon about to connect.
+    /// `func_ovl3_80135B78`: another side's weapon or item attack about to
+    /// connect. Each hit that will reach the fighter within 15 frames
+    /// rolls `(level + 2) / 9`; Fox and Ness answer with their reflectors
+    /// (`is_opponent_ra`). The source's opening fighter walk has no effect.
     fn check_weapon_threat<F, I>(&mut self, f: &Fighter, world: &World<'_, F>) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        for t in world.weapon_threats {
-            let vel = (t.vel_x - f.physics.vel_air.x) * t.lr;
-            if vel <= 0.0 {
-                continue;
-            }
-            let half = t.size * 0.5;
-            let gap = (f.pos.x - t.pos.x) * t.lr - (super::behave::damage_size(f).x + half);
-            if gap <= 0.0 {
-                continue;
-            }
-            let frames = gap / vel;
-            if frames >= 15.0 {
-                continue;
-            }
-            let y = if f.situation != Situation::Ground {
-                f.physics.vel_air.y * frames + f.pos.y
-            } else {
-                f.pos.y
-            };
-            if (t.pos.y - half) - super::behave::damage_size(f).y < y && y < t.pos.y + half {
-                self.target_pos.y = y;
-                self.hit_predict = frames;
-                if crate::rng::rand_float() < f32::from(self.level + 2) / 9.0 {
-                    return true;
+        let weapons = world
+            .weapon_threats
+            .iter()
+            .filter(|t| t.owner != f.port && !world.team_rules.spares(t.team, f.team))
+            .map(|t| (t.pos, t.vel_x, t.lr, t.size));
+        let items = world
+            .items
+            .iter()
+            .filter(|it| world.sees_item(f, it) && it.attack_live)
+            .flat_map(|it| {
+                it.attacks()
+                    .iter()
+                    .map(move |&pos| (pos, it.vel_x, it.lr, it.attack_size))
+            });
+        for (pos, vel_x, lr, size) in weapons.chain(items) {
+            if self.threat_hit(f, pos, vel_x, lr, size) {
+                if matches!(
+                    f.kind,
+                    FighterKind::Fox
+                        | FighterKind::Ness
+                        | FighterKind::PolyFox
+                        | FighterKind::PolyNess
+                ) {
+                    self.is_opponent_ra = true;
                 }
+                return true;
             }
+        }
+        false
+    }
+
+    /// One hit of `func_ovl3_80135B78`'s walks.
+    fn threat_hit(&mut self, f: &Fighter, pos: Vec2, vel_x: f32, lr: f32, size: f32) -> bool {
+        let vel = (vel_x - f.physics.vel_air.x) * lr;
+        if vel <= 0.0 {
+            return false;
+        }
+        let half = size * 0.5;
+        let damage_size = super::behave::damage_size(f);
+        let gap = (f.pos.x - pos.x) * lr - (damage_size.x + half);
+        if gap <= 0.0 {
+            return false;
+        }
+        let frames = gap / vel;
+        if frames >= 15.0 {
+            return false;
+        }
+        let y = if f.situation != Situation::Ground {
+            f.physics.vel_air.y * frames + f.pos.y
+        } else {
+            f.pos.y
+        };
+        if (pos.y - half) - damage_size.y < y && y < pos.y + half {
+            self.target_pos.y = y;
+            self.hit_predict = frames;
+            return crate::rng::rand_float() < f32::from(self.level + 2) / 9.0;
         }
         false
     }
@@ -590,7 +795,12 @@ impl Computer {
     /// `ftComputerCheckDetectTarget`: every attack of the fighter's table
     /// whose box around the fighter will hold the target when its hitbox
     /// comes out, weighted, then one picked at random.
-    fn detect_target<F, I>(&mut self, f: &Fighter, world: &World<'_, F>, range_base: f32) -> bool
+    fn detect_target<F, I>(
+        &mut self,
+        f: &Fighter,
+        world: &World<'_, F>,
+        mut range_base: f32,
+    ) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
@@ -632,6 +842,7 @@ impl Computer {
             return false;
         };
         let table: &[Attack] = if grounded { ground } else { air };
+        let held = f.items.held;
         let mut kinds = [0usize; 20];
         let mut ranges = [0.0f32; 20];
         let mut count = 0;
@@ -672,13 +883,41 @@ impl Computer {
             } else {
                 (hit * tvy + target.pos.y) - adjust_y
             };
-            let (near_x, far_x) = if lr > 0.0 {
+            let (mut near_x, mut far_x) = if lr > 0.0 {
                 (attack.detect_near_x, attack.detect_far_x)
             } else {
                 (-attack.detect_far_x, -attack.detect_near_x)
             };
             let mut near_y = attack.detect_near_y;
-            let far_y = attack.detect_far_y;
+            let mut far_y = attack.detect_far_y;
+            if f.kind == FighterKind::GiantDonkey {
+                near_x *= 1.4;
+                far_x *= 1.4;
+                near_y *= 1.4;
+                far_y *= 1.4;
+            }
+            // A sword, bat or rod reaches further with the A attacks.
+            if grounded
+                && matches!(
+                    attack.input,
+                    input::STICK_N_BUTTON_A
+                        | input::STICK_TILT_AUTO_X_BUTTON_A
+                        | input::STICK_SMASH_AUTO_X_N_Y_BUTTON_A
+                )
+                && held.is_some_and(|h| {
+                    matches!(
+                        h.kind,
+                        ItemKind::Equipment(
+                            equipment::Kind::Sword
+                                | equipment::Kind::Bat
+                                | equipment::Kind::StarRod
+                        )
+                    )
+                })
+            {
+                near_x *= 1.3;
+                far_x *= 1.3;
+            }
             let cliffcatch = match f.kind {
                 FighterKind::Mario | FighterKind::Luigi => {
                     attack.input == input::STICK_SMASH_HI_BUTTON_B
@@ -777,6 +1016,22 @@ impl Computer {
                         if !matches!(f.kind, FighterKind::Link | FighterKind::Samus) =>
                     {
                         4.0
+                    }
+                    input::STICK_SMASH_AUTO_X_N_Y_BUTTON_A => {
+                        // A swing item's smash lowers the base for every
+                        // attack weighed after it.
+                        if held.is_some_and(|h| h.ty == ItemType::Swing) {
+                            range_base = -0.8;
+                        }
+                        if grounded
+                            && held.is_some_and(|h| {
+                                h.kind == ItemKind::Equipment(equipment::Kind::Bat)
+                            })
+                        {
+                            4.0
+                        } else {
+                            1.0
+                        }
                     }
                     _ => 1.0,
                 };

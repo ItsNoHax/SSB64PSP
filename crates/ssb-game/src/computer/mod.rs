@@ -116,6 +116,9 @@ pub struct Computer {
     pub behavior_change_wait: u16,
     /// `target_user`: an index into [`behave::World::opponents`].
     pub target_user: Option<usize>,
+    /// `target_user` when it names an item: an index into
+    /// [`behave::World::items`], set by `ftComputerCheckFindItem`.
+    pub target_item: Option<usize>,
     pub target_dist: f32,
     pub stand_pos: Vec2,
     pub stand_stop_wait: u16,
