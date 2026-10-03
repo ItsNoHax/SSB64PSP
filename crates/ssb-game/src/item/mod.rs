@@ -4,7 +4,10 @@
 //! stage items Peach's Castle's Bumper (`itgbumper.c`, [`gbumper`]),
 //! Mushroom Kingdom's POW Block (`itpowerblock.c`, [`power_block`]) and its
 //! Piranha Plants (`itpakkun.c`, [`pakkun`]), and Saffron's five Pokémon
-//! ([`monsters`]), plus the light containers Egg and Capsule ([`container`]).
+//! ([`monsters`]), plus the light containers Egg and Capsule ([`container`]),
+//! the consumed utilities ([`utility`]) and the throwable ones: the
+//! Motion-Sensor Bomb ([`msbomb`]), the Bob-omb ([`bombhei`]), the Bumper
+//! ([`nbumper`]), both Shells ([`shell`]) and the Poké Ball ([`mball`]).
 //!
 //! [`ItemPool`] is `gITManagerStructsAllocFree` and the item GObj link: 16
 //! structs (`ITEM_ALLOC_MAX`), handed out last-freed first, and a creation
@@ -53,6 +56,7 @@ use crate::stale::MotionAttackId;
 use crate::status::BlastZone;
 use crate::weapon::MapSurface;
 
+pub mod bombhei;
 pub mod container;
 pub mod gbumper;
 mod hit;
@@ -62,14 +66,20 @@ pub(crate) use hit::{queue_damage, touches_damage_coll, Attacker, Knock};
 mod heavy_tests;
 pub mod link_bomb;
 mod map;
+pub mod mball;
 pub mod monsters;
+pub mod msbomb;
+pub mod nbumper;
 pub mod pakkun;
 pub mod pk_fire;
 pub mod power_block;
+pub mod shell;
 #[cfg(test)]
 mod stage_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod throwable_tests;
 pub mod utility;
 #[cfg(test)]
 mod utility_tests;
@@ -122,6 +132,11 @@ pub const INTERACT_ALL: u8 = INTERACT_FIGHTER | INTERACT_WEAPON | INTERACT_ITEM;
 pub enum ItemKind {
     Container(container::Kind),
     Utility(utility::Kind),
+    MSBomb,
+    BombHei,
+    NBumper,
+    Shell(shell::Kind),
+    MBall,
     NessPKFire,
     LinkBomb,
     GBumper,
@@ -136,6 +151,11 @@ impl ItemKind {
         match self {
             Self::Container(k) => Some(k.spin_speed()),
             Self::Utility(k) => Some(k.spin_speed()),
+            // `ITAttributes::spin_speed` (file 251).
+            Self::MSBomb => Some(120.0 * 0.01),
+            Self::NBumper => Some(70.0 * 0.01),
+            Self::MBall => Some(20.0 * 0.01),
+            Self::BombHei | Self::Shell(_) => Some(0.0),
             _ => None,
         }
     }
@@ -369,6 +389,11 @@ pub struct ItemDamageColl {
 pub enum ItemStatus {
     Container(container::Status),
     Utility(utility::Status),
+    MSBomb(msbomb::Status),
+    BombHei(bombhei::Status),
+    NBumper(nbumper::Status),
+    Shell(shell::Status),
+    MBall(mball::Status),
     PKFire(pk_fire::Status),
     LinkBomb(link_bomb::Status),
     GBumper(gbumper::Status),
@@ -401,6 +426,33 @@ pub struct ItemVars {
     pub monster_flags: u8,
     pub monster_spawn_wait: u16,
     pub monster_eggs: u8,
+    /// The Motion-Sensor Bomb's armed shape shows (its child 0) and its
+    /// ball hides (child 1).
+    pub msbomb_attached: bool,
+    /// `bombhei.smoke_delay`, and the walk's display list.
+    pub bombhei_smoke_delay: u16,
+    pub bombhei_walk_right: bool,
+    /// The shells' root `rotate.y`.
+    pub shell_rotate_y: f32,
+    /// `ITCommonItemVarsShell`.
+    pub shell_damage_all_delay: u8,
+    pub shell_dust_int: u8,
+    pub shell_health: u8,
+    pub shell_is_damage: bool,
+    pub shell_is_setup: bool,
+    pub shell_interact: u8,
+    pub shell_vel_x: f32,
+    /// The slide's spin and material animations run.
+    pub shell_spin_anim: bool,
+    /// `bumper.damage_all_delay`; the attached model and material.
+    pub bumper_damage_all_delay: u16,
+    pub bumper_attached: bool,
+    /// `mball.is_rebound`, and `mball.owner_gobj` with that fighter's team
+    /// and handicap.
+    pub mball_is_rebound: bool,
+    pub mball_owner: Option<(u8, u8, u8)>,
+    /// The open halves show and the closed ball hides.
+    pub mball_open: bool,
 }
 
 /// `ITStruct`.
@@ -435,6 +487,13 @@ pub struct Item {
     pub lwall_normal: Vec2,
     pub rwall_normal: Vec2,
     pub ceil_normal: Vec2,
+    /// `coll_data.{lwall,rwall,ceil}_line_id`.
+    pub lwall_line: u16,
+    pub rwall_line: u16,
+    pub ceil_line: u16,
+    /// `is_attach_surface` with `attach_line_id`: the line whose motion
+    /// carries the item.
+    pub attach_line: Option<u16>,
     pub attack: ItemAttackColl,
     pub damage_coll: ItemDamageColl,
     pub hit_normal_damage: i32,
@@ -535,6 +594,10 @@ impl Item {
             lwall_normal: Vec2::ZERO,
             rwall_normal: Vec2::ZERO,
             ceil_normal: Vec2::ZERO,
+            lwall_line: 0,
+            rwall_line: 0,
+            ceil_line: 0,
+            attach_line: None,
             attack: ItemAttackColl {
                 state: attack_state,
                 damage: attr.damage,
@@ -697,6 +760,29 @@ impl Item {
         self.is_damage_all = true;
         self.owner = None;
         self.team = crate::team::TEAM_DEFAULT;
+    }
+
+    /// `itMainSetGroundAllowPickup`.
+    pub(crate) fn set_ground_allow_pickup(&mut self) {
+        self.attack.state = AttackState::Off;
+        self.vel_air = Vec3::ZERO;
+        self.is_allow_pickup = true;
+        self.times_landed = 0;
+        // `itMainResetPlayerVars`.
+        self.owner = None;
+        self.team = crate::team::TEAM_DEFAULT;
+        self.player = None;
+        self.handicap = crate::stale::HANDICAP_DEFAULT;
+        self.attack.throw_mul = 1.0;
+        map::set_ground(self);
+    }
+
+    /// `itMainCopyDamageStats`: the attacker becomes the owner.
+    pub(crate) fn copy_damage_stats(&mut self) {
+        self.owner = self.damage_by;
+        self.team = self.damage_team;
+        self.player = self.damage_port;
+        self.handicap = self.damage_handicap;
     }
 
     /// `itMainSetStatus`'s common half: the procs come from `status`.
@@ -1005,6 +1091,11 @@ pub struct ItemPool {
     serials: [u16; ITEM_ALLOC_MAX],
     events: [Option<StageItemEvent>; STAGE_EVENTS_MAX],
     monster_attack_prev: u8,
+    /// `gITManagerMonsterData` (`itManagerInitMonsterVars`).
+    monster_data: MonsterData,
+    /// `gSCManagerBackupData.unlock_mask & LBBACKUP_UNLOCK_MASK_NEWCOMERS`:
+    /// Mew can come out of a Poké Ball. No save data unlocks nothing.
+    pub unlock_newcomers: bool,
     monster_shots: [Option<crate::monster_weapon::MonsterShot>; ITEM_ALLOC_MAX],
     fx: crate::wpeffect::WeaponFx,
 }
@@ -1033,9 +1124,70 @@ impl Default for ItemPool {
             serials: [0; ITEM_ALLOC_MAX],
             events: [None; STAGE_EVENTS_MAX],
             monster_attack_prev: 4,
+            monster_data: MonsterData::default(),
+            unlock_newcomers: false,
             monster_shots: [None; ITEM_ALLOC_MAX],
             fx: crate::wpeffect::WeaponFx::default(),
         }
+    }
+}
+
+/// `nITKindMBallMonsterStart` (Onix), `nITKindMBallCommonEnd` (Clefairy)
+/// and `nITKindMew`.
+pub const MBALL_MONSTER_START: u8 = 32;
+pub const MBALL_COMMON_END: u8 = 43;
+pub const MEW: u8 = 44;
+
+/// `ITMonsterData`: the last two Pokémon released, which the next draw
+/// leaves out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MonsterData {
+    pub monster_curr: u8,
+    pub monster_prev: u8,
+    pub monsters_num: u8,
+}
+
+impl Default for MonsterData {
+    /// `itManagerInitMonsterVars`.
+    fn default() -> Self {
+        MonsterData {
+            monster_curr: u8::MAX,
+            monster_prev: u8::MAX,
+            monsters_num: MEW - MBALL_MONSTER_START,
+        }
+    }
+}
+
+impl MonsterData {
+    /// `itMainMakeMonster`'s choice of `ITKind`. Mew needs a newcomer
+    /// unlocked and a 1 in 151 draw, and never follows itself.
+    pub fn choose(&mut self, unlock_newcomers: bool) -> u8 {
+        let index = if unlock_newcomers
+            && crate::rng::rand_int_range(151) == 0
+            && self.monster_curr != MEW
+            && self.monster_prev != MEW
+        {
+            MEW
+        } else {
+            let mut ids = [0u8; (MBALL_COMMON_END - MBALL_MONSTER_START + 1) as usize];
+            let mut j = 0;
+            for i in MBALL_MONSTER_START..=MBALL_COMMON_END {
+                if i != self.monster_curr && i != self.monster_prev {
+                    ids[j] = i;
+                    j += 1;
+                }
+            }
+            // The count falls from 12 to 10 as the last two fill, so the
+            // draw stays within the filled ids. With Mew among the last
+            // two, one more id fills than the draw reaches.
+            ids[crate::rng::rand_int_range(i32::from(self.monsters_num)) as usize]
+        };
+        if self.monsters_num != 10 {
+            self.monsters_num -= 1;
+        }
+        self.monster_prev = self.monster_curr;
+        self.monster_curr = index;
+        index
     }
 }
 
@@ -1080,6 +1232,12 @@ impl ItemPool {
             1 => container::make(container::Kind::Barrel, pos, vel),
             2 => container::make(container::Kind::Capsule, pos, vel),
             3 => container::make(container::Kind::Egg, pos, vel),
+            14 => msbomb::make(pos, vel),
+            15 => bombhei::make(pos, vel),
+            16 => nbumper::make(pos, vel),
+            17 => shell::make(shell::Kind::Green, pos, vel),
+            18 => shell::make(shell::Kind::Red, pos, vel),
+            19 => mball::make(pos, vel),
             _ => utility::make(
                 utility::Kind::from_index(index)?,
                 pos,
@@ -1334,10 +1492,16 @@ impl ItemPool {
         item.vel_air = Vec3::ZERO;
         map::set_air(item);
         item.pos = hold_pos(item, &view);
-        if item.kind == ItemKind::LinkBomb {
-            link_bomb::hold_set_status(item);
-        } else if matches!(item.kind, ItemKind::Container(_)) {
-            container::hold(item);
+        // `dITMainProcHoldList`.
+        match item.kind {
+            ItemKind::LinkBomb => link_bomb::hold_set_status(item),
+            ItemKind::Container(_) => container::hold(item),
+            ItemKind::MSBomb => msbomb::hold(item),
+            ItemKind::BombHei => bombhei::hold(item),
+            ItemKind::NBumper => nbumper::hold(item),
+            ItemKind::Shell(_) => shell::hold(item),
+            ItemKind::MBall => mball::hold(item, f.team, f.handicap),
+            _ => {}
         }
         item.pickup_wait = PICKUP_WAIT_DEFAULT;
         f.items.held = Some(held_item(slot, item));
@@ -1382,19 +1546,27 @@ impl ItemPool {
         let Some(item) = self.get_mut(slot) else {
             return;
         };
-        if item.kind == ItemKind::LinkBomb {
-            link_bomb::thrown_set_status(item);
-        } else if let ItemKind::Container(k) = item.kind {
-            container::thrown(item);
-            item.spin_step = k.spin_speed()
-                * if is_smash {
+        // `dITMainProcThrownList`.
+        match item.kind {
+            ItemKind::LinkBomb => link_bomb::thrown_set_status(item),
+            ItemKind::Container(_) => container::thrown(item),
+            ItemKind::MSBomb => msbomb::thrown(item),
+            ItemKind::BombHei => bombhei::thrown(item),
+            ItemKind::NBumper => nbumper::thrown(item),
+            ItemKind::Shell(_) => shell::thrown(item),
+            ItemKind::MBall => mball::thrown(item),
+            _ => {}
+        }
+        Self::set_fighter_release(item, &view, vel, throw_mul, surfaces);
+        // `itMainSetThrownSpin`.
+        if let Some(spin) = item.kind.spin_speed() {
+            item.spin_step =
+                spin * if is_smash {
                     -0.366_519_15
                 } else {
                     -core::f32::consts::PI / 18.0
-                }
-                * if vel.x < 0.0 { -1.0 } else { 1.0 };
+                } * if vel.x < 0.0 { -1.0 } else { 1.0 };
         }
-        Self::set_fighter_release(item, &view, vel, throw_mul, surfaces);
         f.items.held = None;
     }
 
@@ -1419,11 +1591,19 @@ impl ItemPool {
         } else if let ItemKind::Container(k) = item.kind {
             container::dropped(item);
             item.spin_step = k.spin_speed() * 0.314_159_27 * if vel.x >= 0.0 { 1.0 } else { -1.0 };
-        } else if matches!(
-            item.kind,
-            ItemKind::Utility(utility::Kind::Tomato | utility::Kind::Heart)
-        ) {
-            utility::dropped(item);
+        } else {
+            // `dITMainProcDroppedList`.
+            match item.kind {
+                ItemKind::Utility(utility::Kind::Tomato | utility::Kind::Heart) => {
+                    utility::dropped(item)
+                }
+                ItemKind::MSBomb => msbomb::dropped(item),
+                ItemKind::BombHei => bombhei::dropped(item),
+                ItemKind::NBumper => nbumper::dropped(item),
+                ItemKind::Shell(_) => shell::dropped(item),
+                ItemKind::MBall => mball::dropped(item),
+                _ => {}
+            }
         }
         Self::set_fighter_release(item, &view, vel, throw_mul, surfaces);
         f.items.held = None;
@@ -1736,12 +1916,15 @@ where
     } else if !matches!(
         item.status,
         ItemStatus::LinkBomb(link_bomb::Status::Explode)
+            | ItemStatus::MSBomb(msbomb::Status::Explode)
+            | ItemStatus::BombHei(bombhei::Status::Explode)
+            | ItemStatus::NBumper(nbumper::Status::GDisappear)
             | ItemStatus::Monster(monsters::Status::Explode)
             | ItemStatus::Container(container::Status::Explode)
             | ItemStatus::Container(container::Status::Roll)
     ) {
-        // `item_gobj->flags = GOBJ_FLAG_NONE`, except that the explosion
-        // hides the Bomb's DObj rather than the GObj.
+        // `item_gobj->flags = GOBJ_FLAG_NONE`, except that the explosions
+        // and the Bumper's blink hide the root DObj rather than the GObj.
         item.hidden = false;
     }
     if item.is_hold {
@@ -1757,9 +1940,16 @@ where
     if item.hitlag_tics == 0 {
         item.pos += item.vel_air;
     }
-    // `itProcessProcItemMain` carries ground attachments before the bounds gate,
-    // including hitlag frames. The map callback consumes this carried target.
-    if item.ga == Ga::Ground {
+    // `itProcessProcItemMain` carries surface attachments before the bounds
+    // gate, including hitlag frames. The map callback consumes this carried
+    // target. An attached item follows its own line; a grounded one its
+    // floor.
+    let attached = item
+        .attach_line
+        .filter(|&line| crate::map::line_exists(surfaces, line));
+    if let Some(line) = attached {
+        item.pos += crate::map::line_speed(surfaces, line);
+    } else if item.ga == Ga::Ground {
         if let Some(floor) = item.floor {
             item.pos += crate::map::line_speed(surfaces, floor.line);
         }
@@ -1803,6 +1993,17 @@ where
     match item.status {
         ItemStatus::Container(s) => container::update(item, s, ctx.fx),
         ItemStatus::Utility(s) => utility::update(item, s),
+        ItemStatus::MSBomb(s) => msbomb::update(item, s, ctx.owners, ctx.fx),
+        ItemStatus::BombHei(s) => bombhei::update(item, s, ctx.owners, surfaces, ctx.fx),
+        ItemStatus::NBumper(s) => nbumper::update(item, s, surfaces),
+        ItemStatus::Shell(s) => shell::update(item, s, ctx.owners, surfaces, ctx.fx),
+        ItemStatus::MBall(s) => match mball::update(item, s) {
+            mball::Update::Live => true,
+            mball::Update::MakeMonster => {
+                ctx.common.make_monster(item);
+                false
+            }
+        },
         ItemStatus::PKFire(s) => pk_fire::proc_update(item, s),
         ItemStatus::LinkBomb(s) => link_bomb::proc_update(item, s, ctx.owners, surfaces, effects),
         ItemStatus::GBumper(_) => gbumper::proc_update(item),
@@ -1817,6 +2018,14 @@ where
 /// Whether the status has a `proc_map`: the stage items have none, so
 /// `itProcessProcItemMain` leaves their map masks alone.
 fn has_proc_map(item: &Item) -> bool {
+    match item.status {
+        ItemStatus::MSBomb(s) => return msbomb::has_proc_map(s),
+        ItemStatus::BombHei(s) => return bombhei::has_proc_map(s),
+        ItemStatus::NBumper(s) => return nbumper::has_proc_map(s),
+        ItemStatus::Shell(s) => return shell::has_proc_map(s),
+        ItemStatus::MBall(s) => return mball::has_proc_map(s),
+        _ => {}
+    }
     matches!(
         item.status,
         ItemStatus::PKFire(_)
@@ -1847,6 +2056,11 @@ where
     match item.status {
         ItemStatus::Container(s) => return container::proc_map(item, s, surfaces, common, fx),
         ItemStatus::Utility(s) => return utility::proc_map(item, s, surfaces),
+        ItemStatus::MSBomb(s) => return msbomb::proc_map(item, s, surfaces),
+        ItemStatus::BombHei(s) => return bombhei::proc_map(item, s, surfaces),
+        ItemStatus::NBumper(s) => return nbumper::proc_map(item, s, surfaces),
+        ItemStatus::Shell(s) => return shell::proc_map(item, s, surfaces),
+        ItemStatus::MBall(s) => return mball::proc_map(item, s, surfaces),
         ItemStatus::PKFire(s) => pk_fire::proc_map(item, s, surfaces),
         ItemStatus::LinkBomb(s) => link_bomb::proc_map(item, s, surfaces),
         ItemStatus::GBumper(_)
@@ -1877,15 +2091,22 @@ struct HitCtx<'a> {
     events: &'a mut dyn FnMut(StageItemEvent),
 }
 
+/// `reflector` is the reflecting fighter's facing and X position.
 fn run_hit_proc(
     item: &mut Item,
     proc: HitProc,
-    reflector_lr: f32,
+    reflector: (f32, f32),
     ctx: &mut HitCtx<'_>,
 ) -> Option<bool> {
+    let reflector_lr = reflector.0;
     match item.status {
         ItemStatus::Container(s) => container::hit(item, s, proc, ctx.common, ctx.fx),
         ItemStatus::Utility(s) => utility::hit_proc(item, s, proc),
+        ItemStatus::MSBomb(s) => msbomb::hit_proc(item, s, proc, reflector_lr, ctx.fx),
+        ItemStatus::BombHei(s) => bombhei::hit_proc(item, s, proc, reflector_lr, ctx.fx),
+        ItemStatus::NBumper(s) => nbumper::hit_proc(item, s, proc, reflector_lr),
+        ItemStatus::Shell(s) => shell::hit_proc(item, s, proc, reflector),
+        ItemStatus::MBall(s) => mball::hit_proc(item, s, proc),
         ItemStatus::PKFire(s) => pk_fire::hit_proc(item, s, proc),
         ItemStatus::LinkBomb(s) => link_bomb::hit_proc(item, s, proc, reflector_lr),
         ItemStatus::GBumper(_) => gbumper::hit_proc(item, proc),
@@ -1913,12 +2134,12 @@ fn hit_collisions(
     if item.damage_queue != 0 {
         item.percent_damage = (item.percent_damage + item.damage_queue).min(PERCENT_DAMAGE_MAX);
         item.damage_lag = item.damage_queue;
-        if run_hit_proc(item, HitProc::Damage, 0.0, ctx) == Some(false) {
+        if run_hit_proc(item, HitProc::Damage, (0.0, 0.0), ctx) == Some(false) {
             return false;
         }
     }
     if (item.hit_normal_damage != 0 || item.hit_refresh_damage != 0)
-        && run_hit_proc(item, HitProc::Hit, 0.0, ctx) == Some(false)
+        && run_hit_proc(item, HitProc::Hit, (0.0, 0.0), ctx) == Some(false)
     {
         return false;
     }
@@ -1926,16 +2147,18 @@ fn hit_collisions(
         let mut hopped = false;
         if item.attack.can_hop && item.ga == Ga::Air && item.shield_collide_angle < HOP_ANGLE {
             item.shield_collide_angle = (item.shield_collide_angle - DEG_90).max(0.0);
-            if run_hit_proc(item, HitProc::Hop, 0.0, ctx) == Some(false) {
+            if run_hit_proc(item, HitProc::Hop, (0.0, 0.0), ctx) == Some(false) {
                 return false;
             }
             hopped = true;
         }
-        if !hopped && run_hit_proc(item, HitProc::Shield, 0.0, ctx) == Some(false) {
+        if !hopped && run_hit_proc(item, HitProc::Shield, (0.0, 0.0), ctx) == Some(false) {
             return false;
         }
     }
-    if item.hit_attack_damage != 0 && run_hit_proc(item, HitProc::SetOff, 0.0, ctx) == Some(false) {
+    if item.hit_attack_damage != 0
+        && run_hit_proc(item, HitProc::SetOff, (0.0, 0.0), ctx) == Some(false)
+    {
         return false;
     }
     if let Some(port) = item.reflect_by {
@@ -1947,7 +2170,8 @@ fn hit_collisions(
             item.handicap = r.handicap;
         }
         let lr = reflector.map_or(1.0, |r| r.facing.sign());
-        if run_hit_proc(item, HitProc::Reflector, lr, ctx) == Some(false) {
+        let x = reflector.map_or(item.pos.x, |r| r.pos.x);
+        if run_hit_proc(item, HitProc::Reflector, (lr, x), ctx) == Some(false) {
             return false;
         }
         if !item.is_static_damage {
@@ -2019,6 +2243,12 @@ where
                 parent.kind.spin_speed().unwrap_or(0.0) * 16.0 * core::f32::consts::PI / 180.0;
         }
         true
+    }
+    fn make_monster(&mut self, parent: &Item) {
+        // `itMainMakeMonster`: the Pokémon makers make nothing yet, so the
+        // draw and the bookkeeping are all that happen.
+        let _kind = self.pool.monster_data.choose(self.pool.unlock_newcomers);
+        let _ = parent;
     }
     fn open_crate(&mut self, parent: &mut Item) -> bool {
         // `itBoxCommonCheckSpawnItems`, after the smash effect.

@@ -3819,6 +3819,67 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             }
         }
 
+        // The Shells share file 86's tree at 0x5F88 (`llITCommonDataShell*`).
+        // `itGShellMakeItem` sets `mobj->palette_id` to 1 and
+        // `itRShellMakeItem` to 0; the tree's own mesh binds palette 0 (red),
+        // so the Green Shell's list (0x5EC0) gets a second mesh, keyed by the
+        // palette it binds (`palettes[1]`, file offset 0x5578), as Luigi's
+        // Fireball is (RE-434).
+        if id == 86 {
+            const SHELL_MOBJ_TABLE: u32 = 0x5DE0;
+            const SHELL_DISPLAY_LIST: u32 = 0x5EC0;
+            const GREEN_SHELL_KEY: u32 = 0x5578;
+            if let (Some(materials), Some(Ok(cmds))) = (
+                ssb_rom::mobj::read_table(file, SHELL_MOBJ_TABLE, 2),
+                file.data
+                    .get(SHELL_DISPLAY_LIST as usize..)
+                    .map(|data| ssb_rom::dl::decode_list_at(data, SHELL_DISPLAY_LIST)),
+            ) {
+                let palettes = materials.nodes[1]
+                    .first()
+                    .and_then(|sub| ssb_rom::mobj::read_palettes(file, sub.at, 2))
+                    .expect("file 86 Shell MObjSub has red and green palettes");
+                assert_eq!(palettes[1].offset, GREEN_SHELL_KEY);
+                let mut mobjs = materials.nodes[1].clone();
+                mobjs[0].palette = Some(palettes[1]);
+                let item = mesh::SequenceItem {
+                    cmds: &cmds,
+                    world: ssb_rom::scene::Mat4::IDENTITY,
+                    mobjs: &mobjs,
+                    mat_anims: &[],
+                    depth_seed: None,
+                    stream: 0,
+                };
+                if let Some(Ok(shell)) = mesh::convert_sequence(
+                    &[item],
+                    mesh::Source::of(file),
+                    mesh::InitialMaterial::SCENE,
+                )
+                .into_iter()
+                .next()
+                {
+                    if shell.triangle_count() != 0 {
+                        pack_mesh(
+                            &mut writer,
+                            &mut tex_index,
+                            &mut mat_anim_index,
+                            &mat_anim_data,
+                            Texels {
+                                home: file,
+                                all: &loaded.files,
+                            },
+                            id,
+                            GREEN_SHELL_KEY,
+                            &shell,
+                            swizzle,
+                        );
+                        meshes += 1;
+                        triangles += shell.triangle_count();
+                    }
+                }
+            }
+        }
+
         // Samus's Bomb (`llSamusMainBombWeaponAttributes`, file 217 + 0x0C)
         // names file 320's direct list at 0xE0D8 and the `MObjSub` table at
         // 0xE008. `wpSamusBombProcUpdate` blinks by toggling

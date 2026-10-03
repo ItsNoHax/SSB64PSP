@@ -230,6 +230,8 @@ pub(super) trait CommonItems {
     fn open_crate(&mut self, parent: &mut super::Item) -> bool {
         self.open_container(parent)
     }
+    /// `itMainMakeMonster` from a Poké Ball.
+    fn make_monster(&mut self, _parent: &super::Item) {}
 }
 
 #[cfg(test)]

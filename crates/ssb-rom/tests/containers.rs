@@ -4,6 +4,7 @@ use ssb_game::item::container::{
     EGG_EVENTS, HEAVY_EVENTS,
 };
 use ssb_game::item::utility::{HEART_ATTRIBUTES, STAR_ATTRIBUTES, TOMATO_ATTRIBUTES};
+use ssb_game::item::{bombhei, mball, msbomb, nbumper, shell, ItemKind};
 use ssb_rom::{
     archive::Archive,
     figatree::JointPose,
@@ -61,6 +62,12 @@ fn container_attributes_and_explosion_tables_match_the_rom() {
         (0xB8, &TOMATO_ATTRIBUTES, 100),
         (0x100, &HEART_ATTRIBUTES, 0),
         (0x148, &STAR_ATTRIBUTES, 0),
+        (0x3BC, &msbomb::ATTRIBUTES, 120),
+        (0x424, &bombhei::ATTRIBUTES, 0),
+        (0x53C, &shell::GREEN_ATTRIBUTES, 0),
+        (0x584, &shell::RED_ATTRIBUTES, 0),
+        (0x69C, &nbumper::ATTRIBUTES, 70),
+        (0x6E4, &mball::ATTRIBUTES, 20),
     ] {
         let d = &file.data[offset..offset + 72];
         let light = attr.weight == ssb_game::item::ItemWeight::Light;
@@ -130,6 +137,35 @@ fn container_attributes_and_explosion_tables_match_the_rom() {
         assert_eq!(attr.hitstatus as u8, ((w >> 6) & 15) as u8);
         assert_eq!(attr.vel_scale, (word(d, 68) >> 23) as u16);
         assert_eq!(half(d, 70), spin);
+    }
+    // The pool's spin speeds are the attributes' percentages.
+    for (kind, spin) in [
+        (ItemKind::MSBomb, 120),
+        (ItemKind::BombHei, 0),
+        (ItemKind::Shell(shell::Kind::Green), 0),
+        (ItemKind::Shell(shell::Kind::Red), 0),
+        (ItemKind::NBumper, 70),
+        (ItemKind::MBall, 20),
+    ] {
+        assert_eq!(kind.spin_speed(), Some(spin as f32 * 0.01));
+    }
+    for (offset, events) in [
+        (0x404, msbomb::ATTACK_EVENTS),
+        (0x46C, bombhei::ATTACK_EVENTS),
+    ] {
+        for (i, e) in events.into_iter().enumerate() {
+            let d = &file.data[offset + i * 8..];
+            let w = word(d, 0);
+            assert_eq!(
+                e,
+                (
+                    (w >> 24) as u16,
+                    ((w >> 14) & 1023) as i32,
+                    ((w >> 6) & 255) as i32,
+                    half(d, 4) as f32
+                )
+            );
+        }
     }
     for (offset, events) in [
         (0x98, CAPSULE_EVENTS),
