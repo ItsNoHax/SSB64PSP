@@ -5789,6 +5789,48 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             sprites += 1;
         }
     }
+    // `sc1PTrainingModeLoadSprites`: the layout file's external pointers
+    // select sprites in file 29. Keep the table-slot identity in the pack
+    // and the original signed Vec2h positions, without runtime relocations.
+    let training = loaded
+        .files
+        .get(ssb_rom::sprite::TRAINING_FILE as usize)
+        .and_then(Option::as_ref)
+        .ok_or("Training sprite table missing")?;
+    for slot in ssb_rom::sprite::training_sprite_slots() {
+        let (file_id, at) = ssb_rom::sprite::training_sprite_ref(training, slot)
+            .map_err(|e| format!("Training sprite pointer {slot:#x}: {e:?}"))?;
+        let file = loaded
+            .files
+            .get(file_id as usize)
+            .and_then(Option::as_ref)
+            .ok_or("Training sprite source missing")?;
+        let s = ssb_rom::sprite::decode(file, at)
+            .map_err(|e| format!("Training sprite {file_id}+{at:#x}: {e:?}"))?;
+        let texture = add_sprite_texture(&mut writer, &s, swizzle);
+        writer.add_sprite(sprite_desc(
+            ssb_rom::sprite::TRAINING_FILE,
+            slot,
+            &s,
+            texture,
+            0,
+            0,
+            0,
+        ));
+        sprites += 1;
+    }
+    writer.add_anim(
+        ssb_rom::pack::AnimDesc::TRAINING_LAYOUT,
+        0,
+        ssb_rom::sprite::TRAINING_FILE,
+        0,
+        training
+            .data
+            .get(..ssb_rom::sprite::TRAINING_LAYOUT_LEN)
+            .ok_or("Training layout truncated")?,
+        &[],
+    );
+
     // The VS gate card once per `mnPlayersVSSetGateLUT` TLUT (RE-411).
     let common = loaded
         .files

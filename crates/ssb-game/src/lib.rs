@@ -72,6 +72,7 @@ pub mod stale;
 pub mod status;
 pub mod team;
 pub mod training;
+pub mod training_layer;
 pub mod vs_mode;
 pub mod wallpaper;
 pub mod weapon;

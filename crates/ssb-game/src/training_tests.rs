@@ -12,6 +12,87 @@ fn stick(x: i8, y: i8) -> ControllerState {
 
 const NONE: N64Buttons = N64Buttons(0);
 
+#[test]
+fn combo_stats_count_accepted_hits_before_the_log_limit_and_reset_outside_hitlag() {
+    use crate::{
+        attack, combat,
+        fighter::{Fighter, FighterKind},
+    };
+    use ssb_engine::math::Vec3;
+    let mut f = Fighter::new(FighterKind::Mario, 1, -1);
+    let hit = attack::MARIO_JAB1_HITBOX;
+    for _ in 0..12 {
+        assert!(combat::direct_hit(
+            &mut f,
+            hit,
+            Vec3::ZERO,
+            1.0,
+            9,
+            combat::DamageBy::Player(0)
+        ));
+    }
+    assert_eq!((f.combo_damage_foe, f.combo_count_foe), (24, 12));
+    assert_eq!(f.hits.log_len, combat::HIT_LOG_MAX);
+    // Stone absorbs the first two points; only the overflow counts. This
+    // remains independent of the already-full hit log.
+    f.kirby.is_damage_resist = true;
+    f.kirby.damage_resist = 2;
+    combat::direct_hit(
+        &mut f,
+        attack::Hitbox { damage: 5, ..hit },
+        Vec3::ZERO,
+        1.0,
+        9,
+        combat::DamageBy::Player(0),
+    );
+    assert_eq!((f.combo_damage_foe, f.combo_count_foe), (27, 13));
+    // Neither world nor self damage belongs to the enemy combo.
+    for by in [combat::DamageBy::World, combat::DamageBy::Player(1)] {
+        combat::direct_hit(&mut f, hit, Vec3::ZERO, 1.0, 9, by);
+    }
+    assert_eq!((f.combo_damage_foe, f.combo_count_foe), (27, 13));
+    let no_floor = || core::iter::empty::<crate::weapon::MapSurface>();
+    f.hitlag = 3;
+    f.tick_interrupt(&no_floor);
+    assert_eq!(f.combo_count_foe, 13);
+    f.hitlag = 0;
+    f.hitstun = 0;
+    f.tick_interrupt(&no_floor);
+    assert_eq!((f.combo_damage_foe, f.combo_count_foe), (0, 0));
+}
+
+#[test]
+fn held_damage_and_throws_contribute_actual_damage_and_invincible_hits_do_not() {
+    use crate::{
+        attack, combat,
+        fighter::{Fighter, FighterKind},
+    };
+    use ssb_engine::math::Vec3;
+    let mut f = Fighter::new(FighterKind::Mario, 1, -1);
+    f.damage_mul = 0.5;
+    let hit = attack::Hitbox {
+        damage: 5,
+        ..attack::MARIO_JAB1_HITBOX
+    };
+    combat::direct_hit(&mut f, hit, Vec3::ZERO, 1.0, 9, combat::DamageBy::Player(0));
+    assert_eq!((f.combo_damage_foe, f.combo_count_foe), (3, 1));
+    let mut attacker = Fighter::new(FighterKind::Mario, 0, -1);
+    let before = f.damage;
+    crate::grab::thrown_update_damage_stats(&mut f, &mut attacker);
+    assert_eq!(f.combo_damage_foe, 3 + u32::from(f.damage - before));
+    assert_eq!(f.combo_count_foe, 2);
+    f.invincible_frames = 10;
+    assert!(!combat::direct_hit(
+        &mut f,
+        hit,
+        Vec3::ZERO,
+        1.0,
+        9,
+        combat::DamageBy::Player(0)
+    ));
+    assert_eq!(f.combo_count_foe, 2);
+}
+
 /// Opens the menu and lets the stick settle at neutral.
 fn open_menu() -> TrainingMenu {
     let mut m = TrainingMenu::new(0);

@@ -1577,6 +1577,7 @@ pub fn thrown_update_damage_stats(held: &mut Fighter, catcher: &mut Fighter) {
         .unwrap_or(MARIO_CATCH[1]);
     let staled = StaledThrow::of(catcher, desc.damage);
     held.add_damage(staled.damage);
+    held.record_combo_damage(Some(catcher.port), staled.damage);
     if catcher.port != held.port {
         catcher.stale.push(staled.attack_id, staled.motion_count);
     }
@@ -2085,8 +2086,9 @@ pub fn partner(f: &Fighter) -> Option<u8> {
 
 /// `ftParamUpdateStaleQueue(capture_fp->player, this_fp->player, ...)`,
 /// which the throw paths call only when damage was dealt.
-fn record_throw(catcher: &mut Fighter, held: &Fighter, staled: StaledThrow, damage: i32) {
+fn record_throw(catcher: &mut Fighter, held: &mut Fighter, staled: StaledThrow, damage: i32) {
     if damage != 0 && catcher.port != held.port {
+        held.record_combo_damage(Some(catcher.port), damage);
         catcher.stale.push(staled.attack_id, staled.motion_count);
     }
 }
