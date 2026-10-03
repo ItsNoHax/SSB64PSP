@@ -348,6 +348,7 @@ fn enter_up(f: &mut Fighter, status: Status) {
     f.dead.wait = 1;
     f.dead.step = 0;
     reset_special_stats(f);
+    f.interface.tag_wait = 1;
 }
 
 /// `ftCommonDeadUpStarSetStatus`, which ends with
@@ -453,6 +454,7 @@ fn update_up_star(f: &mut Fighter) {
             // TopN is the fighter's position.
             f.dead.sparkle = Some(f.pos);
             f.is_invisible = true;
+            f.interface.tag_hide = true;
             f.dead.is_menu_ignore = true;
             update_score(f);
             f.colanim.is_use_color1 = false;
@@ -492,6 +494,7 @@ fn update_up_fall(f: &mut Fighter) {
             f.dead.flash = true;
             make_quake(f);
             f.is_invisible = true;
+            f.interface.tag_hide = true;
             f.dead.is_menu_ignore = true;
             update_score(f);
             f.dead.wait = DEAD_WAIT;
@@ -589,6 +592,7 @@ pub fn rebirth_down(f: &mut Fighter, halo_number: u8) {
     f.is_shadow_hidden = true;
     f.dead.is_rebirth = true;
     f.dead.camera_mode = CameraMode::Ghost;
+    f.interface.tag_wait = 1;
     f.colanim
         .check_set(crate::colanim::ColAnimId::FIGHTER_REBIRTH, 0);
 }
@@ -597,6 +601,7 @@ pub fn rebirth_down(f: &mut Fighter, halo_number: u8) {
 /// FTSTATUS_PRESERVE_COLANIM`: the halo and the glow carry on.
 const REBIRTH_PRESERVE: Preserve = Preserve {
     colanim: true,
+    playertag: true,
     ..Preserve::NONE
 };
 

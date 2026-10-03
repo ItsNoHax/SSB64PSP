@@ -351,7 +351,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 // No layout change.
 // 86 adds the Ray Gun's ammo list under the weapon seed, keyed (251, 0x2B0).
 // 87 adds Training's sprite tables and their original label positions.
-pub const VERSION: u32 = 87;
+// 88 adds the player magnifier frame, pointer and arrow joint animation.
+pub const VERSION: u32 = 88;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

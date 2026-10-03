@@ -168,6 +168,7 @@ fn set(f: &mut Fighter, s: AnyStatus) {
     // `ftCommonAppearInitStatusVars`.
     f.dead.is_ghost = true;
     f.is_shadow_hidden = true;
+    f.interface.tag_hide = true;
     f.motion_script.flags = [0; 4];
 }
 

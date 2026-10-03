@@ -200,6 +200,7 @@ pub fn update_captured(f: &mut Fighter) {
 fn escape_breakout(f: &mut Fighter, holder: Holder) {
     f.kirby_capture.intangible = false;
     grab::apply_capture_knockback_with(f, holder, KNOCKBACK_CAPTURE);
+    f.interface.tag_wait = 1;
 }
 
 /// `ftCommonThrownKirbyStarSetStatus` / `ftCommonThrownCopyStarSetStatus`
@@ -230,6 +231,7 @@ pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, thrower: u8, thrower_tea
     f.grab.capture_immune = true;
     f.is_invisible = true;
     f.is_shadow_hidden = true;
+    f.interface.tag_wait = 1;
     f.kirby_capture = CaptureKirbyState {
         is_goto_wait: false,
         is_kirby,
@@ -255,6 +257,7 @@ fn escape(f: &mut Fighter) {
         status::Preserve::DAMAGE_PLAYER,
     );
     f.kirby_capture.thrower = None;
+    f.interface.tag_wait = 1;
     f.kirby_capture.intangible = false;
     f.grab.capture_immune = false;
     f.is_invisible = false;

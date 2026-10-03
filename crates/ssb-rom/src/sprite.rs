@@ -364,7 +364,7 @@ pub const DIGITS: SpriteFile = SpriteFile {
 /// `PlayerTags1PSprite` to `...4PSprite`, then `...CPSprite` (RE-410).
 pub const PLAYER_TAGS: SpriteFile = SpriteFile {
     file: 38,
-    offsets: &[0x258, 0x4F8, 0x798, 0xA38, 0xCD8],
+    offsets: &[0x258, 0x4F8, 0x798, 0xA38, 0xCD8, 0xEB8],
 };
 
 /// File 17, `MNPlayersCommon` (`dMNPlayersVSFileIDs[0]`), the sprites the

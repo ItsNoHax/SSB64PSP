@@ -28,6 +28,7 @@ fn a_vs_fighter_waits_hidden_then_enters_facing_the_camera() {
     entry_set_status(&mut f);
     assert_eq!(f.status.status, AnyStatus::Common(Status::Entry));
     assert!(f.is_invisible && f.is_shadow_hidden && f.dead.is_ghost);
+    assert!(f.interface.tag_hide);
     // Entry holds the fighter where it is.
     assert!(tick_status(&mut f));
 
@@ -36,6 +37,7 @@ fn a_vs_fighter_waits_hidden_then_enters_facing_the_camera() {
     assert_eq!(slot(f.status.status), Some(SLOT_APPEAR_R));
     assert!(!f.is_invisible, "the entry shows the fighter");
     assert!(f.is_shadow_hidden && f.dead.is_ghost);
+    assert!(f.interface.tag_hide);
     assert_eq!(f.situation, Situation::Air);
     assert_eq!(model_yaw(&f), Some(0.0));
     assert_eq!(f.entry.floor_line, Some(3));
@@ -52,6 +54,7 @@ fn a_vs_fighter_waits_hidden_then_enters_facing_the_camera() {
     assert_eq!(f.facing, Facing::Right);
     assert_eq!(f.situation, Situation::Ground);
     assert_eq!(model_yaw(&f), None);
+    assert!(!f.interface.tag_hide);
 }
 
 #[test]
@@ -73,6 +76,7 @@ fn a_leftward_captain_turns_around_and_has_two_phases() {
         AnyStatus::Captain(CaptainStatus::AppearLEnd)
     );
     assert!(!f.is_shadow_hidden);
+    assert!(f.interface.tag_hide);
     run(&mut f, 30);
     assert_eq!(f.status.status, AnyStatus::Common(Status::Wait));
     assert_eq!(f.facing, Facing::Left);
@@ -85,8 +89,10 @@ fn ness_enters_in_three_phases() {
     assert_eq!(f.status.status, AnyStatus::Ness(NessStatus::AppearRStart));
     run(&mut f, 40);
     assert_eq!(f.status.status, AnyStatus::Ness(NessStatus::AppearWait));
+    assert!(f.interface.tag_hide);
     run(&mut f, 50);
     assert_eq!(f.status.status, AnyStatus::Ness(NessStatus::AppearREnd));
+    assert!(f.interface.tag_hide);
     run(&mut f, 30);
     assert_eq!(f.status.status, AnyStatus::Common(Status::Wait));
 }

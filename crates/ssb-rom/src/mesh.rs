@@ -1176,7 +1176,8 @@ pub enum AlphaBlend {
     /// override is needed here -- a plain `Modulate` already computes
     /// this formula for free once blend is enabled.
     Shade,
-    /// `TEXEL0_ALPHA * PRIM_ALPHA` (RE-322, RE-323): the vertex alpha
+    /// `TEXEL0_ALPHA * PRIM_ALPHA` (RE-322, RE-323), or untextured
+    /// `PRIM_ALPHA` alone (RE-440): the vertex alpha
     /// carries the primitive alpha; where the primitive colour is animated
     /// the renderer replaces it with the live track value. Carries the
     /// static primitive alpha, since [`MeshMaterial::prim_color`] holds the
@@ -1252,6 +1253,14 @@ fn combiner_alpha_is_shade(hi: u32, lo: u32, two_cycle: bool) -> bool {
     let (ac0, ad0) = ((hi >> 9) & 0x7, (lo >> 9) & 0x7);
     let (ac1, ad1) = ((lo >> 18) & 0x7, lo & 0x7);
     ac0 == ZERO && ad0 == SHADE_A && (!two_cycle || (ac1 == ZERO && ad1 == SHADE_A))
+}
+
+fn combiner_alpha_is_prim(hi: u32, lo: u32, two_cycle: bool) -> bool {
+    const PRIM_A: u32 = 3;
+    const ZERO: u32 = 7;
+    let (ac0, ad0) = ((hi >> 9) & 0x7, (lo >> 9) & 0x7);
+    let (ac1, ad1) = ((lo >> 18) & 0x7, lo & 0x7);
+    ac0 == ZERO && ad0 == PRIM_A && (!two_cycle || (ac1 == ZERO && ad1 == PRIM_A))
 }
 
 /// Whether any slot across the active cycle(s) reads `code` (`3` =
@@ -2001,7 +2010,17 @@ impl State {
             && self
                 .combiner
                 .is_some_and(|(hi, lo)| combiner_alpha_is_shade(hi, lo, self.two_cycle));
-        let alpha_blend = if shade_alpha_untextured && self.material.translucent {
+        // The player's arrows use a flat PRIM colour and PRIM alpha 128.
+        // There is no texel or shade alpha in this known constant formula.
+        let flat_prim_alpha_untextured = texture.is_none()
+            && flat_color.is_some()
+            && !self.material.lit
+            && self
+                .combiner
+                .is_some_and(|(hi, lo)| combiner_alpha_is_prim(hi, lo, self.two_cycle));
+        let alpha_blend = if flat_prim_alpha_untextured && self.material.translucent {
+            self.material.prim_color.map(|c| AlphaBlend::Prim(c[3]))
+        } else if shade_alpha_untextured && self.material.translucent {
             Some(AlphaBlend::Shade)
         } else {
             alpha_blend
@@ -2042,14 +2061,11 @@ impl State {
             // see `push_vertex`'s doc comment), so alpha-testing against it
             // discarded whole primitives outright until this gate was added
             // (RE-069 measured 46 of 380 `alpha_test` primitives had no
-            // texture at all). `translucent` gets the same gate for the same
-            // reason: this converter did not compute the combiner's actual
-            // alpha output at all before RE-129/RE-130 (`combiner_shade_scale`
-            // only ever resolved RGB) -- even now that `alpha_blend` below
-            // does classify some shapes, an untextured primitive still has
-            // no texel alpha for any of them to multiply, so the gate stays.
+            // texture at all). Untextured blending needs a classified
+            // shade-alpha or constant-primitive-alpha formula (RE-422/440).
             alpha_test: self.material.alpha_test && texture.is_some(),
-            translucent: self.material.translucent && (texture.is_some() || shade_alpha_untextured),
+            translucent: self.material.translucent
+                && (texture.is_some() || shade_alpha_untextured || flat_prim_alpha_untextured),
             // RE-129/RE-130: independent of the RGB (`texture_blend`/
             // `flat_color`/shade-scale) classification above, and only
             // meaningful when `translucent` (just above) actually is --

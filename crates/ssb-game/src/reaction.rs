@@ -135,7 +135,23 @@ fn timing_at(f: &Fighter, status: Status, speed: f32) -> StatusTiming {
 
 fn set(f: &mut Fighter, status: Status) {
     let t = timing(f, status);
-    status::set_status(f, status, 0.0, t);
+    status::set_any_status_preserve(
+        f,
+        status.into(),
+        0.0,
+        t,
+        status::Preserve {
+            playertag: matches!(
+                status,
+                Status::DamageFall
+                    | Status::DownBounceD
+                    | Status::DownBounceU
+                    | Status::DownWaitD
+                    | Status::DownWaitU
+            ),
+            ..status::Preserve::NONE
+        },
+    );
 }
 
 fn set_preserve(f: &mut Fighter, status: Status, preserve: status::Preserve) {
@@ -314,7 +330,10 @@ pub fn set_wall_damage(f: &mut Fighter, normal: ssb_engine::math::Vec2) {
         Status::WallDamage.into(),
         0.0,
         t,
-        status::Preserve::DAMAGE_PLAYER,
+        status::Preserve {
+            playertag: true,
+            ..status::Preserve::DAMAGE_PLAYER
+        },
     );
     f.physics.vel_knockback = vel;
     f.physics.vel_damage_ground = ground;
