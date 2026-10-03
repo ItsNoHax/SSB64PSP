@@ -1581,6 +1581,11 @@ pub struct WeaponPool {
     /// Each slot's `wp->team`: its [`WeaponSpawn::team`], a parent weapon's
     /// for a trail, and its reflector's once reflected.
     teams: [u8; MAX_WEAPONS],
+    /// Each slot's `wp->lr` as `wpManagerMakeWeapon` sets it: the owner's
+    /// facing, a parent weapon's for a trail, +1 for a ground weapon. The
+    /// kinds that keep their own `lr` (or rederive it from their velocity)
+    /// answer from that instead ([`Self::cpu_lr`]).
+    lrs: [f32; MAX_WEAPONS],
     /// The battle's team-attack rule ([`crate::team`]).
     pub team_rules: crate::team::TeamRules,
     /// Sector Z's Arwing's roll (`map_dobjs[1]->rotate.z`), from
@@ -2435,6 +2440,7 @@ impl Default for WeaponPool {
             next_group: 1,
             stale: [crate::stale::WeaponStale::FRESH; MAX_WEAPONS],
             teams: [crate::team::TEAM_DEFAULT; MAX_WEAPONS],
+            lrs: [1.0; MAX_WEAPONS],
             team_rules: crate::team::TeamRules::FREE_FOR_ALL,
             ground_roll: 0.0,
             landed: [None; MAX_WEAPONS],
@@ -2465,6 +2471,7 @@ impl WeaponPool {
         self.next_group = 1;
         self.stale = [crate::stale::WeaponStale::FRESH; MAX_WEAPONS];
         self.teams = [crate::team::TEAM_DEFAULT; MAX_WEAPONS];
+        self.lrs = [1.0; MAX_WEAPONS];
         self.team_rules = crate::team::TeamRules::FREE_FOR_ALL;
         self.ground_roll = 0.0;
         self.landed = [None; MAX_WEAPONS];
@@ -2494,7 +2501,12 @@ impl WeaponPool {
                 if !alive || bounds.is_some_and(|b| out_of_bounds(b, h.position)) {
                     *slot = None;
                 } else if h.trail_spawn {
-                    pending[i] = Some((PKThunderTrail::new(*h, 0), self.stale[i], self.teams[i]));
+                    pending[i] = Some((
+                        PKThunderTrail::new(*h, 0),
+                        self.stale[i],
+                        self.teams[i],
+                        self.lrs[i],
+                    ));
                 }
             }
         }
@@ -2513,15 +2525,15 @@ impl WeaponPool {
                     if t.spawn_next {
                         let mut child = PKThunderTrail::new(*head, t.id + 1);
                         child.position = t.position;
-                        pending[i] = Some((child, self.stale[i], self.teams[i]));
+                        pending[i] = Some((child, self.stale[i], self.teams[i], self.lrs[i]));
                     }
                 } else {
                     *slot = None;
                 }
             }
         }
-        for (trail, stale, team) in pending.into_iter().flatten() {
-            self.insert(Weapon::PKTrail(trail), stale, team);
+        for (trail, stale, team, lr) in pending.into_iter().flatten() {
+            self.insert(Weapon::PKTrail(trail), stale, team, lr);
         }
     }
     fn clear_pk_trails(&mut self) {
@@ -2689,6 +2701,8 @@ impl WeaponPool {
                                 // weapon, last in the link.
                                 self.next_seq = self.next_seq.wrapping_add(1);
                                 self.seq[i] = self.next_seq;
+                                // Its `wp->lr` is the reflector's.
+                                self.lrs[i] = defender.facing.sign();
                             }
                             h.reflect(defender, group);
                             self.teams[i] = defender.team;
@@ -2799,6 +2813,7 @@ impl WeaponPool {
             Weapon::Monster(shot),
             crate::stale::WeaponStale::FRESH,
             shot.team,
+            shot.lr,
         );
         if made && shot.kind == ShotKind::HitokageFlame {
             let mut emit = Emit::default();
@@ -2827,10 +2842,12 @@ impl WeaponPool {
     /// whether a slot was free; the 2D pair's second shot is made only
     /// after the first.
     pub fn spawn_arwing_laser(&mut self, laser: ArwingLaser) -> bool {
+        // `WEAPON_FLAG_PARENT_GROUND`: `wp->lr` is +1.
         self.insert(
             Weapon::Laser(laser),
             crate::stale::WeaponStale::FRESH,
             sector::GROUND_TEAM,
+            1.0,
         )
     }
 
@@ -2859,11 +2876,13 @@ impl WeaponPool {
                 Weapon::Star(YoshiStar::new(spawn, lr)),
                 spawn.stale,
                 spawn.team,
+                lr,
             );
             let second = self.insert(
                 Weapon::Star(YoshiStar::new(spawn, -lr)),
                 spawn.stale,
                 spawn.team,
+                -lr,
             );
             return first || second;
         }
@@ -2894,7 +2913,7 @@ impl WeaponPool {
                     m.damage = 12;
                     m.star_smash = true;
                 }
-                let made = self.insert_at(Weapon::Monster(m), spawn.stale, spawn.team);
+                let made = self.insert_at(Weapon::Monster(m), spawn.stale, spawn.team, m.lr);
                 if let Some(i) = made {
                     let mut emit = Emit::default();
                     m.make_fx(&mut emit);
@@ -2924,6 +2943,7 @@ impl WeaponPool {
                     Weapon::Blaster(FoxBlaster::new(spawn)),
                     spawn.stale,
                     spawn.team,
+                    if spawn.facing < 0.0 { -1.0 } else { 1.0 },
                 );
                 // `wpFoxBlasterMakeWeapon`.
                 if let Some(i) = made {
@@ -2950,11 +2970,18 @@ impl WeaponPool {
                 Weapon::Cutter(KirbyCutter::new(spawn, grounded))
             }
         };
-        self.insert(weapon, spawn.stale, spawn.team)
+        let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
+        self.insert(weapon, spawn.stale, spawn.team, lr)
     }
 
-    fn insert(&mut self, weapon: Weapon, stale: crate::stale::WeaponStale, team: u8) -> bool {
-        self.insert_at(weapon, stale, team).is_some()
+    fn insert(
+        &mut self,
+        weapon: Weapon,
+        stale: crate::stale::WeaponStale,
+        team: u8,
+        lr: f32,
+    ) -> bool {
+        self.insert_at(weapon, stale, team, lr).is_some()
     }
 
     /// `wpManagerMakeWeapon`: the first free slot, placed last in the link.
@@ -2963,11 +2990,13 @@ impl WeaponPool {
         weapon: Weapon,
         stale: crate::stale::WeaponStale,
         team: u8,
+        lr: f32,
     ) -> Option<usize> {
         let i = self.slots.iter().position(|slot| slot.is_none())?;
         self.slots[i] = Some(weapon);
         self.stale[i] = stale;
         self.teams[i] = team;
+        self.lrs[i] = lr;
         self.landed[i] = None;
         self.hit_records[i] = [None; 4];
         self.pending_item_hits[i] = false;
@@ -3416,8 +3445,12 @@ impl WeaponPool {
                         } else {
                             // ProcUpdate makes a stationary trail before head physics/map.
                             if head.lifetime > 1 {
-                                trails[i] =
-                                    Some((ThunderTrail::new(*head), self.stale[i], self.teams[i]));
+                                trails[i] = Some((
+                                    ThunderTrail::new(*head),
+                                    self.stale[i],
+                                    self.teams[i],
+                                    self.lrs[i],
+                                ));
                             }
                             // `wpPikachuThunderHeadProcDead` notifies
                             // the owner like an expired head.
@@ -3497,8 +3530,8 @@ impl WeaponPool {
         for event in rocks.into_iter().flatten() {
             self.push_rock_event(event);
         }
-        for (trail, stale, team) in trails.into_iter().flatten() {
-            self.insert(Weapon::Trail(trail), stale, team);
+        for (trail, stale, team, lr) in trails.into_iter().flatten() {
+            self.insert(Weapon::Trail(trail), stale, team, lr);
         }
     }
 
@@ -3900,6 +3933,99 @@ impl WeaponPool {
                 }
             }
         }
+    }
+
+    /// Slot `i`'s `wp->lr`. Fireballs, Blaster shots, both Thunders and
+    /// their trails, and the Arwing's lasers keep the make's; the Charge
+    /// Shot and PK Fire rederive theirs from the velocity on every make,
+    /// hop and reflect (`wpMainVelSetLR`), which leaves its sign.
+    fn cpu_lr(&self, i: usize) -> f32 {
+        let sign = |x: f32| if x >= 0.0 { 1.0 } else { -1.0 };
+        match self.slots[i] {
+            Some(Weapon::Bomb(b)) => b.lr,
+            Some(Weapon::Boomerang(b)) => b.lr,
+            Some(Weapon::Egg(e)) => e.lr,
+            Some(Weapon::Star(s)) => s.lr,
+            Some(Weapon::Cutter(c)) => c.lr,
+            Some(Weapon::Monster(m)) => m.lr,
+            // On a wall the Jolt's `lr` is 2 or 3, and the source reads it
+            // as is.
+            Some(Weapon::Jolt(j)) => f32::from(j.direction),
+            Some(Weapon::ChargeShot(c)) => sign(c.velocity.x),
+            Some(Weapon::PKFire(p)) => sign(p.velocity.x),
+            _ => self.lrs[i],
+        }
+    }
+
+    /// Every weapon's live hits as the CPU reads them
+    /// (`func_ovl3_80135B78`), in link order: one entry per attack
+    /// position. Pikachu's Thunder head has no fighter attack.
+    pub fn cpu_threats(&self) -> impl Iterator<Item = crate::computer::behave::WeaponThreat> + '_ {
+        let (order, n) = self.link_order();
+        (0..n).flat_map(move |k| {
+            let i = order[k];
+            let threat = |owner: u8, pos: Vec3, vel_x: f32, size: f32| {
+                crate::computer::behave::WeaponThreat {
+                    owner,
+                    team: self.teams[i],
+                    pos: Vec2::new(pos.x, pos.y),
+                    vel_x,
+                    lr: self.cpu_lr(i),
+                    size,
+                }
+            };
+            let mut out = [None, None];
+            match self.slots[i] {
+                Some(Weapon::Thunder(_)) | None => {}
+                Some(Weapon::Trail(t)) => {
+                    let r = pikachu::TRAIL_HIT.radius;
+                    out[0] = Some(threat(
+                        t.owner_port,
+                        t.position + Vec3::new(0.0, 120.0, 0.0),
+                        0.0,
+                        r,
+                    ));
+                    out[1] = Some(threat(
+                        t.owner_port,
+                        t.position - Vec3::new(0.0, 120.0, 0.0),
+                        0.0,
+                        r,
+                    ));
+                }
+                Some(Weapon::PKTrail(t)) => {
+                    out[0] = Some(threat(
+                        t.owner_port,
+                        t.hit_position(),
+                        0.0,
+                        ness::TRAIL_HIT.radius,
+                    ));
+                }
+                Some(Weapon::PKThunder(h)) => {
+                    out[0] = Some(threat(
+                        h.owner_port,
+                        h.position,
+                        h.velocity.x,
+                        ness::HEAD_HIT.radius,
+                    ));
+                }
+                Some(_) => {
+                    if let Some((owner, hitbox, pos, vel, _)) = self.item_attack(i) {
+                        out[0] = Some(threat(owner, pos, vel.x, hitbox.radius));
+                    }
+                }
+            }
+            out.into_iter().flatten()
+        })
+    }
+
+    /// `ftComputerGetOwnWeaponPositionKind(fp, nWPKindPKThunderTrail)`:
+    /// the first of the port's PK Thunder trails in the link.
+    pub fn own_pk_trail(&self, port: u8) -> Option<Vec3> {
+        let (order, n) = self.link_order();
+        order[..n].iter().find_map(|&i| match self.slots[i] {
+            Some(Weapon::PKTrail(t)) if t.owner_port == port => Some(t.position),
+            _ => None,
+        })
     }
 
     /// The live slots in link order.
@@ -5569,5 +5695,43 @@ mod tests {
             assert!(!b.check_off_camera(None));
         }
         assert_eq!(b.adjust_angle_delay, 0);
+    }
+
+    #[test]
+    fn the_cpu_reads_a_weapons_make_lr_not_its_velocity() {
+        let mut pool = WeaponPool::default();
+        assert!(pool.spawn(WeaponSpawn {
+            kind: WeaponKind::FoxBlaster,
+            owner_port: 2,
+            team: 2,
+            position: Vec3::new(500.0, 100.0, 0.0),
+            facing: -1.0,
+            stale: crate::stale::WeaponStale::FRESH,
+        }));
+        let t = pool.cpu_threats().next().unwrap();
+        assert_eq!((t.owner, t.team, t.lr), (2, 2, -1.0));
+        assert!(t.vel_x < 0.0);
+        assert_eq!(t.size, FOX_BLASTER_HITBOX.radius);
+        // A reflector turns the shot's velocity, not its `wp->lr`.
+        if let Some(Weapon::Blaster(b)) = pool.slots.iter_mut().flatten().next() {
+            b.velocity.x = -b.velocity.x;
+        }
+        let t = pool.cpu_threats().next().unwrap();
+        assert!(t.vel_x > 0.0);
+        assert_eq!(t.lr, -1.0);
+        // PK Fire rederives it from the velocity.
+        let mut pool = WeaponPool::default();
+        assert!(pool.spawn(WeaponSpawn {
+            kind: WeaponKind::NessPKFire { grounded: true },
+            owner_port: 1,
+            team: 1,
+            position: Vec3::ZERO,
+            facing: 1.0,
+            stale: crate::stale::WeaponStale::FRESH,
+        }));
+        if let Some(Weapon::PKFire(p)) = pool.slots.iter_mut().flatten().next() {
+            p.velocity.x = -p.velocity.x.abs();
+        }
+        assert_eq!(pool.cpu_threats().next().unwrap().lr, -1.0);
     }
 }

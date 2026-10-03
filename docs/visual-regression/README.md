@@ -167,6 +167,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scenes `ness`, `nessthunder`, `nessmagnet`) | `f1-training-ness`, `-ness-thunder`, `-ness-magnet` | Ness's PK Fire spark in flight; PK Thunder's head with four trails; PSI Magnet held | RE-381 |
 | `golden_capture` (`psp-game`, scene `linkbomb`) | `f1-training-link-bomb` | Link holding a freshly pulled Bomb | RE-383 |
 | `golden_capture` (`psp-game`, scenes `cpuwalk`, `cpujump`) | `f1-training-cpu-walk`, `f1-training-cpu-jump` | The Training dummy under the CPU's Walk and Jump behaviours (in `WalkMiddle` and `JumpF` at the freeze) | RE-390 |
+| `golden_capture` (`psp-game`, scene `trainingcpuitem`) | `f1-training-cpu-item` | A level-9 Training CPU on the default behaviour at tick 200, holding the Bat it tracked and picked up (TrackItem) | RE-437 |
 | `golden_capture` (`psp-game`, scene `vs`) | `f1-vs-countdown` | A VS battle's countdown on Dream Land, both fighters locked until "Go" | RE-389 |
 | `golden_capture` (`psp-game`, scene `vstimeup`) | `f1-vs-sudden-death` | A one-minute VS battle timed out in a tie, in sudden death with both fighters at 300% | RE-389 |
 | `golden_capture` (`psp-game`, scene `vscpu`) | `f1-vs-cpu` | A VS battle's CPU forward-throwing the idle player at tick 690, after a down air; `vstimeup` pins its CPU to Stand to keep its tie | RE-391 |
@@ -1103,3 +1104,12 @@ scenes; the last full matrix remains RE-434's 169/169. Star Rod retains the
 known FlySparks head-0 black squares; Hammer's item warning colour is not
 drawn. These are PSP output controls, without N64 damage/trajectory or
 physical-PSP equivalence proof. See [RE-436](../evidence/re/RE-436.md).
+
+## 2026-10-03 RE-437 CPU item objectives
+
+New `f1-training-cpu-item` (`trainingcpuitem`, tick 200): a Bat drops
+400 beside a level-9 CPU on the default behaviour; it jumps to the Bat's
+platform and picks it up. Matches twice (run `20261003-205917`). All 107
+existing `f1-*` goldens match with weapons and items now in the CPUs' view
+(run `20261003-204834`). The manifest has 177 scenes. This is a PSP output
+control, not N64 equivalence. See [RE-437](../evidence/re/RE-437.md).
