@@ -153,6 +153,22 @@ pub enum ItemKind {
 }
 
 impl ItemKind {
+    /// The `ITKind` of a common kind (`<= nITKindCommonEnd`): the
+    /// containers, utilities, held utilities and throwables, 0 to 19.
+    pub fn common_index(self) -> Option<u8> {
+        Some(match self {
+            Self::Container(k) => k as u8,
+            Self::Utility(k) => k as u8,
+            Self::Equipment(k) => 7 + k as u8,
+            Self::MSBomb => 14,
+            Self::BombHei => 15,
+            Self::NBumper => 16,
+            Self::Shell(k) => k as u8,
+            Self::MBall => 19,
+            _ => return None,
+        })
+    }
+
     /// `ITAttributes::spin_speed` as a fraction, for the kinds that spin.
     pub fn spin_speed(self) -> Option<f32> {
         match self {

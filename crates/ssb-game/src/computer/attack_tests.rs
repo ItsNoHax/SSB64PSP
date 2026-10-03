@@ -123,7 +123,7 @@ fn the_default_trait_changes_behaviour_when_the_wait_runs_out() {
     crate::rng::set_seed(1);
     let f = standing_mario(0.0);
     let mut com = vs_cpu(&f, 9);
-    com.process_trait();
+    com.process_trait(&f);
     assert!(matches!(
         com.behavior,
         Behavior::Default | Behavior::Unk2 | Behavior::Ally | Behavior::Captain
@@ -142,8 +142,85 @@ fn the_default_trait_changes_behaviour_when_the_wait_runs_out() {
     let mut com = vs_cpu(&f, 9);
     com.trait_kind = Trait::None;
     com.behavior = Behavior::Stand;
-    com.process_trait();
+    com.process_trait(&f);
     assert_eq!(com.behavior, Behavior::Stand);
+}
+
+#[test]
+fn the_1p_traits_set_their_behaviours() {
+    let mut f = standing_mario(0.0);
+    let mut com = vs_cpu(&f, 3);
+    for (t, b) in [
+        (Trait::YoshiTeam, Behavior::YoshiTeam),
+        (Trait::KirbyTeam, Behavior::KirbyTeam),
+        (Trait::PolyTeam, Behavior::PolyTeam),
+        (Trait::GiantDonkey, Behavior::Default),
+        (Trait::Unk1, Behavior::Unk2),
+        (Trait::Bonus3, Behavior::Bonus3),
+        (Trait::Ally, Behavior::Ally),
+        (Trait::MarioBros, Behavior::Default),
+    ] {
+        com.trait_kind = t;
+        com.process_trait(&f);
+        assert_eq!(com.behavior, b, "{t:?}");
+    }
+    assert_eq!(com.objective_base, Objective::Attack);
+    com.trait_kind = Trait::Bonus3;
+    com.process_trait(&f);
+    assert_eq!(com.objective_base, Objective::Rush);
+    // Luigi backs Mario up.
+    f.kind = FighterKind::Luigi;
+    com.trait_kind = Trait::MarioBros;
+    com.process_trait(&f);
+    assert_eq!(com.behavior, Behavior::Ally);
+    assert_eq!(com.objective_base, Objective::Ally);
+}
+
+#[test]
+fn the_link_trait_stands_until_hurt_or_the_wait_runs_out() {
+    let mut f = standing_mario(0.0);
+    let mut com = vs_cpu(&f, 3);
+    com.trait_kind = Trait::Link;
+    com.process_trait(&f);
+    assert_eq!(com.behavior, Behavior::Stand);
+    f.damage = 13;
+    com.process_trait(&f);
+    assert_eq!(com.behavior, Behavior::Stand);
+    f.damage = 14;
+    com.process_trait(&f);
+    assert_eq!(com.behavior, Behavior::Default);
+    f.damage = 0;
+    com.behavior_change_wait = 0;
+    com.process_trait(&f);
+    assert_eq!(com.behavior, Behavior::Default);
+}
+
+#[test]
+fn the_rush_objective_walks_at_a_far_target_and_attacks_a_near_one() {
+    crate::rng::set_seed(3);
+    let f = standing_mario(0.0);
+    let mut com = vs_cpu(&f, 9);
+    com.trait_kind = Trait::Bonus3;
+    com.process_trait(&f);
+    // Far: walk toward it.
+    let opponents = [player_at(1900.0)];
+    let w = world(&opponents, &[]);
+    com.walk_stop_wait = 7;
+    com.follow_rush(&f, &w);
+    assert_eq!(com.walk_stop_wait, 0);
+    assert!(com.command.is_some());
+    assert!(com.target_pos.x > 1000.0, "{}", com.target_pos.x);
+    // Close: an attack script.
+    let mut com = vs_cpu(&f, 9);
+    let opponents = [player_at(250.0)];
+    let w = world(&opponents, &[]);
+    com.follow_rush(&f, &w);
+    assert!(com.input_kind.is_some());
+    // No target: wander, counting the stop wait.
+    let mut com = vs_cpu(&f, 9);
+    let w = world(&[], &[]);
+    com.follow_rush(&f, &w);
+    assert_eq!(com.walk_stop_wait, 1);
 }
 
 #[test]
@@ -152,14 +229,14 @@ fn a_close_opponent_gives_the_attack_objective() {
     let mut com = vs_cpu(&f, 3);
     let opponents = [player_at(300.0)];
     let w = world(&opponents, &[]);
-    com.process_trait();
+    com.process_trait(&f);
     assert_eq!(com.proc_default(&f, &w), 1);
     assert_eq!(com.objective, Objective::Attack);
     // Far away, the behaviour's base objective.
     let opponents = [player_at(1500.0)];
     let w = world(&opponents, &[]);
     com.behavior = Behavior::Captain;
-    com.process_trait();
+    com.process_trait(&f);
     assert_eq!(com.proc_default(&f, &w), 1);
     assert_eq!(com.objective, Objective::Patrol);
 }
@@ -405,7 +482,7 @@ fn the_cpu_tracks_an_item_after_its_level_wait() {
     let items = [item_at(800.0)];
     let w = item_world(&opponents, &items);
     let mut com = vs_cpu(&f, 3);
-    com.process_trait();
+    com.process_trait(&f);
     for tick in 1..=150 {
         assert_eq!(com.proc_default(&f, &w), 1);
         assert_ne!(com.objective, Objective::TrackItem, "tick {tick}");
@@ -417,7 +494,7 @@ fn the_cpu_tracks_an_item_after_its_level_wait() {
     let mut w = item_world(&opponents, &items);
     w.is_1p_game = true;
     let mut com = vs_cpu(&f, 3);
-    com.process_trait();
+    com.process_trait(&f);
     for _ in 0..210 {
         com.proc_default(&f, &w);
         assert_ne!(com.objective, Objective::TrackItem);
@@ -429,7 +506,7 @@ fn the_cpu_tracks_an_item_after_its_level_wait() {
     let far = [item_at(1950.0)];
     let w = item_world(&opponents, &far);
     let mut com = vs_cpu(&f, 1);
-    com.process_trait();
+    com.process_trait(&f);
     com.item_track_wait = 7;
     com.proc_default(&f, &w);
     assert_eq!(com.item_track_wait, 7);
@@ -486,7 +563,7 @@ fn a_held_item_chooses_use_or_attack() {
         holding(&mut f, ItemKind::MBall, ty, 0);
         let mut com = vs_cpu(&f, 3);
         com.behavior = Behavior::Captain;
-        com.process_trait();
+        com.process_trait(&f);
         assert_eq!(com.proc_default(&f, &w), 1);
         assert_eq!(com.objective, objective, "{ty:?}");
     }

@@ -147,6 +147,9 @@ pub struct DeadState {
     pub is_ghost: bool,
     /// `FTStruct::is_rebirth`.
     pub is_rebirth: bool,
+    /// `FTStruct::is_menu_ignore`: dead, asleep or reborn, the player
+    /// cannot open the pause or Training menu.
+    pub is_menu_ignore: bool,
     pub camera_mode: CameraMode,
     /// `status_vars.common.dead.pos`: where a top-out started, which the
     /// camera frames at the top (`gmCameraSetDeadUpStarPosition`).
@@ -187,6 +190,7 @@ pub struct DeadState {
 pub(crate) fn on_set_status(f: &mut Fighter) {
     f.dead.is_ghost = false;
     f.dead.is_rebirth = false;
+    f.dead.is_menu_ignore = false;
     if f.dead.camera_mode != CameraMode::Entry {
         f.dead.camera_mode = CameraMode::Default;
     }
@@ -285,6 +289,7 @@ fn init_status_vars(f: &mut Fighter) {
     f.dead.wait = DEAD_WAIT;
     crate::physics::stop_all(&mut f.physics);
     f.is_invisible = true;
+    f.dead.is_menu_ignore = true;
     make_quake(f);
     update_score(f);
 }
@@ -367,6 +372,7 @@ fn check_rebirth(f: &mut Fighter) {
         // `ftCommonSleepSetStatus`.
         status::set_status(f, Status::Sleep, 0.0, StatusTiming::unknown());
         f.dead.is_ghost = true;
+        f.dead.is_menu_ignore = true;
         f.dead.camera_mode = CameraMode::Ghost;
         return;
     }
@@ -447,6 +453,7 @@ fn update_up_star(f: &mut Fighter) {
             // TopN is the fighter's position.
             f.dead.sparkle = Some(f.pos);
             f.is_invisible = true;
+            f.dead.is_menu_ignore = true;
             update_score(f);
             f.colanim.is_use_color1 = false;
             f.dead.wait = DEAD_WAIT;
@@ -485,6 +492,7 @@ fn update_up_fall(f: &mut Fighter) {
             f.dead.flash = true;
             make_quake(f);
             f.is_invisible = true;
+            f.dead.is_menu_ignore = true;
             update_score(f);
             f.dead.wait = DEAD_WAIT;
             f.dead.step += 1;
@@ -577,6 +585,7 @@ pub fn rebirth_down(f: &mut Fighter, halo_number: u8) {
     r.halo_offset = halo;
     r.halo_number = halo_number;
     f.dead.is_ghost = true;
+    f.dead.is_menu_ignore = true;
     f.is_shadow_hidden = true;
     f.dead.is_rebirth = true;
     f.dead.camera_mode = CameraMode::Ghost;

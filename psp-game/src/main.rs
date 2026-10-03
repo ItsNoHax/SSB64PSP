@@ -64,12 +64,12 @@ const STAR_KO_TICK: u64 = 60;
 /// `vsresultsemblem`'s capture tick: results tic 100. A capture build's
 /// results log shows tic 0 before tick 643's update (RE-420).
 const VS_RESULTS_EMBLEM_CAPTURE_TICK: u64 = 742;
-/// `vsshield`'s capture tick (RE-418). A capture build's per-tick log shows
-/// the CPU's Mario Tornado setting the player's shield off
-/// (`ftCommonGuardSetOffSetStatus`) in tick 684's update, the only update
+/// `vsshield`'s capture tick (RE-418, RE-438). A capture build's log shows
+/// the CPU's hit setting the player's shield off
+/// (`ftCommonGuardSetOffSetStatus`) in tick 884's update, the only update
 /// that leaves the grey row selected. A scene freezes before its capture
-/// tick's update, so freezing at 685 draws that state.
-const VS_SHIELD_SET_OFF_TICK: u64 = 685;
+/// tick's update, so freezing at 885 draws that state.
+const VS_SHIELD_SET_OFF_TICK: u64 = 885;
 
 const fn capture_ticks(scene: GameScene) -> u64 {
     match scene {
@@ -190,9 +190,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // times.
         GameScene::CpuWalk => 200,
         GameScene::CpuJump => 120,
-        // After "Go" the CPU closes in and lands hits (10%); at tick 690 it
-        // pulls the player into a grab (`CatchPull`, RE-394).
-        GameScene::VsCpu => 690,
+        // After "Go" the CPU closes in; at tick 900 its fiery hit lands
+        // (7%). Locked fighters run no CPU during the countdown (RE-438).
+        GameScene::VsCpu => 900,
         // "Go" at 398. The camera frames the player alone, so this is a
         // tick where the CPUs' fight has drawn all four into its view.
         GameScene::Vs4 => 870,
@@ -237,6 +237,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::TrainingBumper | GameScene::TrainingPlants => 240,
         // The CPU has jumped to the Bat's platform and holds it.
         GameScene::TrainingCpuItem => 200,
+        // The menu closes at 34; the CPU has walked and the Tomato landed.
+        GameScene::TrainingMenu => 150,
         GameScene::TrainingCapsule
         | GameScene::TrainingCrate
         | GameScene::TrainingBarrel
@@ -483,6 +485,17 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
+    // `trainingmenu`: START at 20 opens Training's menu; with the stick
+    // (`scripted_stick_x`/`_y`) CP goes to Walk at 22, the cursor down to
+    // Item at 25 and Item to Maxim Tomato at 27; A at 29 drops it and
+    // START at 34 closes the menu.
+    if scene == GameScene::TrainingMenu {
+        return match tick {
+            4 | 8 | 29 => N64Buttons(N64Buttons::A),
+            20 | 34 => N64Buttons(N64Buttons::START),
+            _ => N64Buttons(0),
+        };
+    }
     if matches!(scene, GameScene::CpuWalk | GameScene::CpuJump) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -698,6 +711,9 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if is_training_stage_scene(scene) {
         return 0;
     }
+    if scene == GameScene::TrainingMenu {
+        return if tick == 22 || tick == 27 { 80 } else { 0 };
+    }
     // The cursor moves 4 pixels a tick at 80: from (40, 170) to (84, 102)
     // over Yoshi, then to (116, 134) on port 2's NA button.
     if scene == GameScene::VsPlayers {
@@ -822,6 +838,9 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
     if is_training_stage_scene(scene) {
         return 0;
+    }
+    if scene == GameScene::TrainingMenu {
+        return if tick == 25 { -80 } else { 0 };
     }
     if scene == GameScene::VsPlayers {
         return match tick {
@@ -1301,6 +1320,7 @@ unsafe fn training_step(
     stage_ctl: &mut ssb_game::stage::Stage,
     controller: ControllerState,
     started: bool,
+    locked: bool,
     effects: &mut dyn ssb_game::effect::HitEffectSink,
 ) {
     material_anim.tick(p);
@@ -1326,7 +1346,7 @@ unsafe fn training_step(
         weapons,
         stage_ctl,
         controller,
-        !started,
+        locked,
         effects,
     );
     // Priority 4, Ground link: the stage controller.
@@ -2286,6 +2306,9 @@ unsafe fn training_frame(
     pressed: N64Buttons,
     mut battle: Option<&mut ssb_game::battle::Battle>,
     damage_hud: &mut Hud,
+    // Training's menu locks both fighters' control
+    // (`ftParamLockPlayerControl`) while the world runs on.
+    menu_locked: bool,
 ) -> bool {
     use ssb_game::battle::{Frame, GameStatus};
     if let Some(b) = battle.as_deref_mut() {
@@ -2331,6 +2354,7 @@ unsafe fn training_frame(
         }
         Some((Frame::Done, _)) => return true,
     };
+    let locked = locked || menu_locked;
     let mut none = ssb_game::effect::NoEffects;
     let mut rt = banks.as_ref().map(|b| ssb_game::effect::EffectRuntime {
         particles: &mut damage_hud.particles,
@@ -2358,6 +2382,7 @@ unsafe fn training_frame(
         stage_ctl,
         if locked { ControllerState::default() } else { controller },
         started,
+        locked,
         sink,
     );
     // The effect and interface processes after the fighters': the KO
@@ -2477,7 +2502,7 @@ fn pause_frame(
         right: f32::from(stage.camera.right),
     };
     match b.status {
-        GameStatus::Go if pressed.contains(N64Buttons::START) => {
+        GameStatus::Go if pressed.contains(N64Buttons::START) && !pl.fighter.dead.is_menu_ignore => {
             let kind = pause::kind_for(pl.fighter.pos, bounds);
             hud.pause = Some(PauseState {
                 kind,
@@ -3202,6 +3227,7 @@ unsafe fn session_frame(
     controller: ControllerState,
     pressed: N64Buttons,
 ) {
+        let mut lag_tic = false;
         match s.screen {
             Screen::Intro => {
                 if pressed.contains(N64Buttons::A) || pressed.contains(N64Buttons::START) {
@@ -3237,8 +3263,8 @@ unsafe fn session_frame(
                         s.enter(pack.as_ref(), gkind, roster, rules);
                         prepare_monster_capture(capture_scene, pack.as_ref(), s);
                         s.scene_gkind = gkind;
-                        // Training's CPU menu (`dSC1PTrainingModeDummyBehaviors`)
-                        // is not ported; these scenes pick its behaviour.
+                        // These scenes set the behaviour directly rather than
+                        // through Training's CP option (`trainingmenu` does).
                         if let Some(b) = capture_scene.and_then(capture_cpu_behavior) {
                             for d in s.dummies.iter_mut().flatten() {
                                 d.computer.behavior = b;
@@ -3362,11 +3388,9 @@ unsafe fn session_frame(
             Screen::Training => {
                 #[cfg(feature = "headless_capture")]
                 log_entry_state(capture_scene, sim_frame_index, s.play_state.as_ref(), s.dummies[0].as_deref());
-                // START is navigation-only here. B belongs to the fighter's
-                // source special-input path and must reach `pl.tick` below.
                 // In a VS battle START is the pause menu's (`training_frame`).
-                if pressed.contains(N64Buttons::START) && s.vs_battle.is_none() {
-                    s.screen = Screen::Menu;
+                if s.vs_battle.is_none() {
+                    lag_tic = training_menu_frame(pack.as_ref(), s, controller, pressed, capture_scene.is_some(), sim_frame_index);
                 }
             }
             // `mnVSResultsCheckExit`: START after the wait, on to the
@@ -3387,12 +3411,21 @@ unsafe fn session_frame(
         }
 
         let mut vs_done = false;
+        if lag_tic {
+            // `sc1PTrainingModeCheckLagTic`: a slowed tick runs only the
+            // camera.
+            if let (Some(p), Some(pl)) = (&pack, s.play_state.as_mut()) {
+                if let Some(stage) = p.stage(s.training_stage) {
+                    tick_battle_camera(&stage, &mut scenes(pl, &mut s.dummies));
+                }
+            }
+        }
         if capture_scene == Some(GameScene::StarKo) && sim_frame_index == STAR_KO_TICK {
             if let Some(pl) = s.play_state.as_mut() {
                 ssb_game::dead::set_dead_up_star(&mut pl.fighter);
             }
         }
-        if let (Screen::Training, Some(p), Some(pl)) = (s.screen, &pack, s.play_state.as_mut()) {
+        if let (Screen::Training, false, Some(p), Some(pl)) = (s.screen, lag_tic, &pack, s.play_state.as_mut()) {
             vs_done = training_frame(
                 p,
                 s.training_stage,
@@ -3408,7 +3441,11 @@ unsafe fn session_frame(
                 pressed,
                 s.vs_battle.as_mut(),
                 &mut s.damage_hud,
+                s.training_paused,
             );
+            if let Some(m) = s.training_menu.as_mut() {
+                m.tick_processes();
+            }
         }
         // `scVSBattleStartScene`: a tied time battle goes to sudden
         // death on the same stage, then to the results.
@@ -3453,6 +3490,87 @@ unsafe fn session_frame(
         }
 }
 
+/// `sc1PTrainingModeUpdateAll`'s menu half: START during Go opens
+/// Training's menu, which then runs its options until B or START leaves
+/// it, or Reset or Exit loads the next scene. Returns whether this tick is
+/// a slowed speed's skipped one (`sc1PTrainingModeCheckLagTic`).
+#[inline(never)]
+fn training_menu_frame(
+    pack: Option<&Pack<'_>>,
+    s: &mut Session,
+    controller: ControllerState,
+    pressed: N64Buttons,
+    is_capture: bool,
+    sim_frame_index: u64,
+) -> bool {
+    use ssb_game::training;
+    let (Some(menu), Some(pl)) = (s.training_menu.as_mut(), s.play_state.as_mut()) else {
+        return false;
+    };
+    if !s.training_paused {
+        // `sc1PTrainingModeCheckEnterMenu`.
+        if menu.check_enter(pressed, pl.fighter.dead.is_menu_ignore) {
+            s.training_paused = true;
+        }
+        return menu.check_lag_tic();
+    }
+    let item_count = s
+        .items
+        .items()
+        .filter(|it| training::counts_toward_limit(it.kind))
+        .count();
+    let frame = menu.update(&controller, pressed, item_count);
+    if frame.cp_changed {
+        // `sc1PTrainingModeUpdateDummyBehavior`.
+        let behavior = menu.dummy_behavior();
+        if let Some(d) = s.dummies[usize::from(menu.dummy) - 1].as_deref_mut() {
+            d.computer.behavior = behavior;
+            d.computer.trait_kind = ssb_game::computer::attack::Trait::None;
+        }
+    }
+    if let Some(kind) = frame.spawn_item {
+        let mut pos = pl.fighter.pos;
+        pos.y += 200.0;
+        pos.z = 0.0;
+        let vel = ssb_engine::math::Vec3::new(0.0, 30.0, 0.0);
+        s.items.make_setup_common(kind, None, pos, vel, &core::iter::empty);
+    }
+    match frame.view_changed {
+        Some(training::VIEW_NORMAL) => pl.player_zoom = None,
+        Some(_) => {
+            pl.player_zoom =
+                Some(pack.and_then(|p| p.fighter(pl.fighter.kind as u32)).map_or(1000.0, |d| d.closeup_camera_zoom));
+        }
+        None => {}
+    }
+    if let Some(b_held) = frame.leave {
+        // `sc1PTrainingModeCheckLeaveMenu`: Go, both fighters unlocked;
+        // B stays held so it is no special.
+        s.training_paused = false;
+        if b_held {
+            pl.fighter.input.buttons.0 |= N64Buttons::B;
+        }
+    }
+    if frame.load_scene {
+        // `sc1PTrainingModeStartScene`: Reset runs Training again; Exit
+        // goes to its character select (`nSCKindPlayers1PTraining`).
+        if menu.exit_or_reset {
+            let roster = s.roster;
+            s.enter(pack, s.scene_gkind, roster, None);
+        } else {
+            s.play_state = None;
+            s.dummies = Default::default();
+            s.training_menu = None;
+            s.training_paused = false;
+            s.fighter_select = Some(new_fighter_select(s.training_scene, is_capture, sim_frame_index));
+            s.fighter_select_fighters = None;
+            s.screen = Screen::FighterSelect;
+        }
+        return false;
+    }
+    menu.check_lag_tic()
+}
+
 /// What `run` owns across frames: the screens' state and the world.
 struct Session {
     material_anim: ssb_rom::skeleton::MaterialAnimator,
@@ -3477,6 +3595,11 @@ struct Session {
     roster: Roster,
     vs: bool,
     vs_battle: Option<ssb_game::battle::Battle>,
+    /// Training's menu (`sSC1PTrainingModeMenu`); `None` in a VS battle.
+    training_menu: Option<ssb_game::training::TrainingMenu>,
+    /// `game_status == nSCBattleGameStatusPause` in Training: the menu is
+    /// open.
+    training_paused: bool,
     maps_vsmode_gkind: u8,
     vs_menu_rules: VsRules,
     vs_results: Option<ssb_game::results::Results>,
@@ -3523,6 +3646,9 @@ impl Session {
             },
         );
         self.make_wallpaper(pack, gkind, rules.is_none());
+        // `sc1PTrainingModeInitVars`; the player is on port 0.
+        self.training_menu = rules.is_none().then(|| ssb_game::training::TrainingMenu::new(0));
+        self.training_paused = false;
     }
 
     /// `grWallpaperMakeDecideKind`, and for Training
@@ -3614,6 +3740,8 @@ unsafe fn run() -> ! {
         roster: [None; 4],
         vs: false,
         vs_battle: None,
+        training_menu: None,
+        training_paused: false,
         maps_vsmode_gkind: ssb_game::stage_select::DEFAULT_GKIND,
         vs_menu_rules: VsRules::DEFAULT,
         vs_results: None,

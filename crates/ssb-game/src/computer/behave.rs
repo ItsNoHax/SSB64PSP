@@ -343,7 +343,7 @@ impl Computer {
         }
         self.behavior_change_wait = self.behavior_change_wait.saturating_sub(1);
         if self.input_wait == 0 {
-            self.process_trait();
+            self.process_trait(f);
             // `ftComputerProcessObjective`.
             let proceed = match self.behavior {
                 Behavior::Stand => self.proc_stand(f, world),
@@ -394,7 +394,7 @@ impl Computer {
             Objective::Attack | Objective::Unknown1 | Objective::Ally | Objective::Patrol => {
                 self.follow_attack(f, world, self.objective)
             }
-            _ => {}
+            Objective::Rush => self.follow_rush(f, world),
         }
     }
 
