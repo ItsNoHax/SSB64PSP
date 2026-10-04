@@ -85,6 +85,7 @@ pub struct ThrowHitDesc {
     pub kb_scale: i32,
     pub kb_weight: i32,
     pub kb_base: i32,
+    pub element: crate::combat::Element,
 }
 
 const fn desc(
@@ -102,6 +103,7 @@ const fn desc(
         kb_scale: kbs,
         kb_weight: kbw,
         kb_base: kbb,
+        element: crate::combat::Element::Normal,
     }
 }
 
@@ -164,15 +166,19 @@ const YOSHI_THROW_B: [ThrowHitDesc; 2] = [
     desc(FLY_N, 16, 45, 70, 0, 70),
     desc(None, 8, 361, 100, 0, 0),
 ];
-// `216_SamusMainMotion.c`. Both throws carry element 2 (electric), which
-// only selects hit effects.
+const fn electric(mut d: ThrowHitDesc) -> ThrowHitDesc {
+    d.element = crate::combat::Element::Electric;
+    d
+}
+
+// `216_SamusMainMotion.c`: both throws carry element 2 (electric).
 const SAMUS_CATCH: [ThrowHitDesc; 2] = [desc(None, 8, 361, 100, 0, 0); 2];
 const SAMUS_THROW_F: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 16, 40, 60, 0, 90),
+    electric(desc(FLY_N, 16, 40, 60, 0, 90)),
     desc(None, 8, 361, 100, 0, 0),
 ];
 const SAMUS_THROW_B: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 18, 40, 60, 0, 90),
+    electric(desc(FLY_N, 18, 40, 60, 0, 90)),
     desc(None, 8, 361, 100, 0, 0),
 ];
 // `235_CaptainMainMotion.c`: Falcon's standard grab and throw descriptors.
@@ -323,7 +329,7 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
         },
         (FighterKind::Pikachu, true) => ThrowScript {
             desc: Some([
-                desc(FLY_N, 18, 45, 80, 0, 60),
+                electric(desc(FLY_N, 18, 45, 80, 0, 60)),
                 desc(None, 8, 361, 100, 0, 0),
             ]),
             flag1: None,
@@ -664,6 +670,8 @@ pub enum GrabEvent {
     /// `ftCommonThrownReleaseThrownUpdateStats`.
     Release {
         lr: f32,
+        /// `is_proc_status`: Falcon Dive leaves no throw pointer.
+        script_id: Option<u8>,
         desc: ThrowHitDesc,
         shield_catch: bool,
         staled: StaledThrow,
@@ -1009,6 +1017,7 @@ pub(crate) fn release_thrown(f: &mut Fighter, lr: f32) {
     let desc = f.grab.throw_desc.map(|d| d[0]).unwrap_or(MARIO_CATCH[0]);
     f.grab.send(GrabEvent::Release {
         lr,
+        script_id: Some(u8::from(f.status.status == Status::ThrowB)),
         desc,
         shield_catch: f.grab.is_shield_catch,
         staled: StaledThrow::of(f, desc.damage),
@@ -1325,6 +1334,7 @@ fn release_with(
     lr: Option<f32>,
     shield_catch: bool,
     staled: StaledThrow,
+    thrown: Option<(crate::thrown::ThrowOwner, u8)>,
 ) -> i32 {
     let Some(holder) = f.grab.holder else {
         return 0;
@@ -1350,6 +1360,7 @@ fn release_with(
         holder.handicap,
         f.handicap,
     );
+    let is_throw = lr.is_some();
     let lr = lr.unwrap_or(if f.pos.x < holder.pos.x { 1.0 } else { -1.0 });
     let mut damage = staled.damage;
     if shield_catch {
@@ -1358,15 +1369,24 @@ fn release_with(
     if f.invincible_frames > 0 {
         damage = 0;
     }
-    attack::init_damage_vars(
+    f.thrown.pending = thrown;
+    attack::init_damage_vars_full(
         f,
         desc.status.map(AnyStatus::Common),
         damage,
         knockback,
         desc.angle,
         lr,
+        attack::DAMAGE_INDEX_N,
+        if is_throw {
+            desc.element
+        } else {
+            crate::combat::Element::Normal
+        },
         true,
     );
+    // The source updates percent after the damage status and its events.
+    f.add_damage(damage);
     damage
 }
 
@@ -2107,12 +2127,15 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
         }
         GrabEvent::Release {
             lr,
+            script_id,
             desc,
             shield_catch,
             staled,
         } => {
             to.grab.holder = Some(holder_of(from));
-            let damage = release_with(to, desc, Some(lr), shield_catch, staled);
+            to.damage_player = Some(from.port);
+            let thrown = script_id.map(|id| (crate::thrown::ThrowOwner::of(from), id));
+            let damage = release_with(to, desc, Some(lr), shield_catch, staled, thrown);
             record_throw(from, to, staled, damage);
         }
         GrabEvent::DamageRelease {
@@ -2120,7 +2143,8 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             shield_catch,
             staled,
         } => {
-            let damage = release_with(to, desc, None, shield_catch, staled);
+            to.damage_player = Some(from.port);
+            let damage = release_with(to, desc, None, shield_catch, staled, None);
             record_throw(from, to, staled, damage);
         }
         GrabEvent::CaptureHitRelease => {
@@ -2164,7 +2188,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             record_throw(from, to, staled, staled.damage);
         }
         GrabEvent::KirbyStar { copy, vel } => {
-            crate::capture_kirby::set_star(to, copy, vel, from.port, from.team)
+            crate::capture_kirby::set_star(to, copy, vel, crate::thrown::ThrowOwner::of(from))
         }
         GrabEvent::KirbyWiggle { up, push_x } => crate::kirby::on_wiggle(to, up, push_x),
         GrabEvent::KirbyBreakout => {
@@ -2482,6 +2506,94 @@ mod tests {
             frame(a, b);
             if a.grab.catch.is_some() {
                 break;
+            }
+        }
+    }
+
+    #[test]
+    fn thrown_release_installs_owner_before_damage_events_for_every_thrower() {
+        for &kind in FighterKind::PLAYABLE {
+            for back in [false, true] {
+                let mut catcher = grounded(kind, 0, 0.0);
+                catcher.team = 2;
+                let mut held = grounded(FighterKind::Mario, 1, 150.0);
+                catcher.grab.catch = Some(held.port);
+                catcher.grab.catch_kind = Some(held.kind);
+                capture_pulled(&mut held, catcher.port, holder_of(&catcher));
+                catcher.stick.x = if back { -80 } else { 80 };
+                set_throw(&mut catcher, !back);
+                exchange(&mut catcher, &mut held);
+                if kind == FighterKind::Donkey && !back {
+                    set_donkey_throwff(&mut catcher, false);
+                }
+                let damage = catcher.grab.throw_desc.unwrap()[0].damage;
+                release_thrown(&mut catcher, -1.0);
+                exchange(&mut catcher, &mut held);
+                assert_eq!(held.damage, damage as u16, "{kind:?}, back {back}");
+                assert_eq!(held.damage_player, Some(0));
+                assert_eq!(held.grab.capture, None);
+                assert_eq!(
+                    held.thrown.owner,
+                    Some(crate::thrown::ThrowOwner::of(&catcher))
+                );
+                assert_eq!(held.thrown.script_id, u8::from(back));
+                assert!(held.thrown.pending.is_none());
+                // Electric release initially uses DamageE2; its passive
+                // status transition clears the pointer, as in the source.
+                if kind == FighterKind::Samus || kind == FighterKind::Pikachu && back {
+                    assert_eq!(held.status.status, Status::DamageE2);
+                    crate::attack::update_damage_e(&mut held);
+                    assert_eq!(held.thrown.owner, None);
+                } else {
+                    assert_ne!(held.attack_colls[0].state, crate::combat::AttackState::Off);
+                    assert_eq!(
+                        held.attack_colls[0].damage,
+                        if kind == FighterKind::Mario && back {
+                            8
+                        } else {
+                            6
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn damage_release_and_falcon_dive_do_not_install_throw_pointer() {
+        for dive in [false, true] {
+            let mut catcher = grounded(FighterKind::Captain, 0, 0.0);
+            let mut held = grounded(FighterKind::Mario, 1, 150.0);
+            catcher.grab.catch = Some(1);
+            capture_pulled(&mut held, 0, holder_of(&catcher));
+            let desc = crate::captain::DIVE_THROW[usize::from(!dive)];
+            let staled = StaledThrow::of(&catcher, desc.damage);
+            let event = if dive {
+                GrabEvent::Release {
+                    lr: 1.0,
+                    desc,
+                    shield_catch: false,
+                    staled,
+                    script_id: None,
+                }
+            } else {
+                GrabEvent::DamageRelease {
+                    desc,
+                    shield_catch: false,
+                    staled,
+                }
+            };
+            deliver(event, &mut catcher, &mut held);
+            assert_eq!(held.thrown.owner, None);
+            assert!(held
+                .attack_colls
+                .iter()
+                .all(|c| c.state == crate::combat::AttackState::Off));
+            assert_eq!(held.damage, desc.damage as u16);
+            assert_eq!(held.damage_player, Some(0));
+            if dive {
+                let start = crate::colanim::ColAnimId::DAMAGE_FIRE_START;
+                assert!((start..=start + 3).contains(&held.colanim.id.0));
             }
         }
     }
@@ -3375,7 +3487,8 @@ mod tests {
         assert_eq!(dummy.hitlag, lag);
     }
 
-    /// Fox's back throw makes two boxes on joint 20 for frames 11..19.
+    /// Fox's back throw makes two boxes on joint 20 for frames 11..19. On
+    /// release, the thrown body's `SetDamageThrown` box (6) also lands.
     #[test]
     fn fox_back_throw_swing_hits_a_bystander() {
         let mut fox = grounded(FighterKind::Fox, 0, 0.0);
@@ -3391,7 +3504,8 @@ mod tests {
             frame(&mut fox, &mut dummy);
             crate::combat::resolve_frame(&mut [&mut fox, &mut dummy, &mut bystander]);
         }
-        assert_eq!(bystander.damage, 10);
+        assert_eq!(bystander.damage, 10 + 6);
+        assert_eq!(bystander.damage_player, Some(0));
     }
 
     /// A second back throw of the same fighter is staled by the first:

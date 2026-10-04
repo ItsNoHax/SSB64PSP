@@ -314,6 +314,7 @@ pub struct Fighter {
     pub ness: crate::ness::NessState,
     /// This fighter's side of an Inhale — `crate::capture_kirby`.
     pub kirby_capture: crate::capture_kirby::CaptureKirbyState,
+    pub thrown: crate::thrown::ThrownState,
     /// This fighter's side of an Egg Lay — `crate::capture_yoshi`.
     pub egg: crate::capture_yoshi::CaptureYoshiState,
     /// `FTStruct::knockback_resist_status`: knockback a hit loses before it
@@ -475,6 +476,7 @@ impl Fighter {
             purin: crate::purin::PurinState::default(),
             ness: crate::ness::NessState::default(),
             kirby_capture: crate::capture_kirby::CaptureKirbyState::default(),
+            thrown: crate::thrown::ThrownState::default(),
             egg: crate::capture_yoshi::CaptureYoshiState::default(),
             knockback_resist: 0.0,
             is_special_interrupt: false,
@@ -1226,6 +1228,7 @@ impl Fighter {
             self.physics.vel_ground.x = self.physics.vel_ground.x.abs() * self.facing.sign();
         }
 
+        crate::thrown::damage_physics(self);
         crate::physics::update_damage_velocity(
             &mut self.physics,
             true,
@@ -1492,6 +1495,7 @@ impl Fighter {
             );
         }
 
+        crate::thrown::damage_physics(self);
         crate::physics::update_damage_velocity(
             &mut self.physics,
             false,

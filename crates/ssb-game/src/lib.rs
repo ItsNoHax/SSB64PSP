@@ -72,6 +72,7 @@ pub mod stage_select_layer;
 pub mod stale;
 pub mod status;
 pub mod team;
+pub mod thrown;
 pub mod training;
 pub mod training_layer;
 pub mod vs_mode;
