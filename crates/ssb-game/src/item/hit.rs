@@ -572,6 +572,7 @@ fn update_shield_stat(item: &mut Item, f: &mut Fighter, angle: f32, dir: Vec3) {
     }
     f.hits.shield_damage_total += damage + item.attack.shield_damage;
     if f.hits.shield_damage < damage {
+        f.guard.shield_player = item.player;
         f.hits.shield_damage = damage;
         f.hits.shield_lr = if item.vel_air.x < 0.0 { 1.0 } else { -1.0 };
     }
@@ -599,6 +600,8 @@ fn update_damage_stat(
                 item.attack.state = AttackState::Off;
                 item.hit_normal_damage = 1;
                 crate::colanim::set_star_invincible(f, super::utility::STAR_INVINCIBLE_TIME);
+                f.stats
+                    .emit(crate::spgame::live::Event::Item(super::utility::Kind::Star));
             }
             super::ItemKind::Monster(super::monsters::Kind::Chansey) => {
                 crate::colanim::set_heal_damage(f, item.attack.damage);
@@ -623,6 +626,8 @@ fn update_damage_stat(
         combat::push_log(
             f,
             HitLogEntry {
+                stat: item.attack.stat,
+                object: super::damage_object(item.kind),
                 source: HitSource::Weapon {
                     vel_x: item.vel_air.x,
                 },

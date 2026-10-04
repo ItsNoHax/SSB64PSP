@@ -501,6 +501,7 @@ fn interrupt_blaster(f: &mut Fighter, s: K) {
     if f.status.anim_frame >= blaster_frames(s).1 && taps(f).contains(N64Buttons::B) {
         set_blaster(f, f.is_grounded());
         f.motion.set(MotionAttackId::SpecialNCopyFox);
+        f.stats.restart();
     }
 }
 

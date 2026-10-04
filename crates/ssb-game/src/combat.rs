@@ -282,6 +282,8 @@ pub enum HitSource {
 /// `FTHitLog`, with the attack's fields copied at contact time.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HitLogEntry {
+    pub stat: crate::spgame::live::AttackStat,
+    pub object: crate::spgame::bonus::DamageObject,
     pub source: HitSource,
     pub hitbox: attack::Hitbox,
     pub attacker_pos: Vec3,
@@ -1144,6 +1146,7 @@ fn update_shield_stat(
     }
     victim.hits.shield_damage_total += coll.damage + coll.shield_damage;
     if victim.hits.shield_damage < coll.damage {
+        victim.guard.shield_player = Some(attacker.port);
         victim.hits.shield_damage = coll.damage;
         victim.hits.shield_lr = if victim.pos.x < attacker.pos.x {
             1.0
@@ -1195,6 +1198,11 @@ fn update_damage_stat(
         push_log(
             victim,
             HitLogEntry {
+                stat: crate::spgame::live::AttackStat {
+                    flags: attacker.stats.attack.flags.body(),
+                    ..attacker.stats.attack
+                },
+                object: crate::spgame::bonus::DamageObject::Other,
                 source: HitSource::Fighter {
                     port: attacker.port,
                 },
@@ -1264,6 +1272,8 @@ pub enum WeaponContact {
 /// A weapon's attack for [`weapon_hit`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WeaponAttack {
+    pub stat: crate::spgame::live::AttackStat,
+    pub object: crate::spgame::bonus::DamageObject,
     /// Damage already staled (`wpMainGetStaledDamage`).
     pub hitbox: attack::Hitbox,
     pub pos_curr: Vec3,
@@ -1352,6 +1362,7 @@ fn weapon_hit_inner(victim: &mut Fighter, w: WeaponAttack, shield_only: bool) ->
         // `ftMainUpdateShieldStatWeapon`.
         victim.hits.shield_damage_total += w.hitbox.damage + w.hitbox.shield_damage;
         if victim.hits.shield_damage < w.hitbox.damage {
+            victim.guard.shield_player = w.owner;
             victim.hits.shield_damage = w.hitbox.damage;
             victim.hits.shield_lr = match w.source {
                 HitSource::Weapon { vel_x } => {
@@ -1409,6 +1420,8 @@ fn weapon_hit_inner(victim: &mut Fighter, w: WeaponAttack, shield_only: bool) ->
         push_log(
             victim,
             HitLogEntry {
+                stat: w.stat,
+                object: w.object,
                 source: w.source,
                 hitbox: w.hitbox,
                 attacker_pos: w.pos_curr,
@@ -1443,6 +1456,29 @@ pub fn direct_hit(
     handicap: u8,
     attacker: DamageBy,
 ) -> bool {
+    direct_hit_with_stat(
+        victim,
+        hitbox,
+        attacker_pos,
+        lr,
+        handicap,
+        attacker,
+        crate::spgame::live::AttackStat::default(),
+        crate::spgame::bonus::DamageObject::Other,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn direct_hit_with_stat(
+    victim: &mut Fighter,
+    hitbox: attack::Hitbox,
+    attacker_pos: Vec3,
+    lr: f32,
+    handicap: u8,
+    attacker: DamageBy,
+    stat: crate::spgame::live::AttackStat,
+    object: crate::spgame::bonus::DamageObject,
+) -> bool {
     if !is_body_normal(victim) {
         return false;
     }
@@ -1461,6 +1497,8 @@ pub fn direct_hit(
     push_log(
         victim,
         HitLogEntry {
+            stat,
+            object,
             source: HitSource::Direct { lr },
             hitbox,
             attacker_pos,
@@ -1522,11 +1560,7 @@ pub fn process_hit_collision(this: &mut Fighter) {
     };
     this.hits.damage_index = entry.placement;
     this.hits.damage_knockback = best;
-    match entry.attacker {
-        DamageBy::Player(p) => this.damage_player = Some(p),
-        DamageBy::World => this.damage_player = None,
-        DamageBy::Keep => {}
-    }
+    crate::spgame::live::hit(this, entry.attacker, entry.stat, entry.object);
     if this.hits.damage_element == Element::Electric {
         this.hits.hitlag_mul = 1.5;
     }
@@ -1605,6 +1639,20 @@ pub fn proc_params(f: &mut Fighter) -> bool {
     proc_params_with(f, None)
 }
 
+pub(crate) fn record_shield_break(f: &mut Fighter) {
+    let player = f.guard.shield_player;
+    crate::spgame::live::hit(
+        f,
+        player.map_or(DamageBy::World, DamageBy::Player),
+        crate::spgame::live::AttackStat::default(),
+        crate::spgame::bonus::DamageObject::Other,
+    );
+    if f.hits.shield_damage != 0 {
+        f.stats
+            .emit(crate::spgame::live::Event::ShieldBreak { player });
+    }
+}
+
 /// [`proc_params`] with the fighter's grab partner (`catch_gobj` or
 /// `capture_gobj`), whose same-frame hit `ftCommonDamageUpdateMain` reads
 /// and writes. A partner already processed this frame reads as unhit, as in
@@ -1669,6 +1717,7 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         is_knockback_paused = true;
     } else if f.hits.shield_damage != 0 {
         if is_shieldbreak {
+            record_shield_break(f);
             crate::reaction::set_shield_break_fly(f);
         } else {
             status::set_guard_set_off(f, f.hits.shield_damage as f32, f.hits.shield_lr);

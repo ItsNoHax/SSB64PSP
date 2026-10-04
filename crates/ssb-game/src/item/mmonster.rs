@@ -577,6 +577,7 @@ fn find_victim(item: &Item, owners: &[Option<OwnerView>; 4]) -> Option<OwnerView
 
 fn parent(item: &Item, handle: u32) -> ShotParent {
     ShotParent {
+        stat: item.attack.stat,
         owner: item.owner,
         player: item.player,
         team: item.team,

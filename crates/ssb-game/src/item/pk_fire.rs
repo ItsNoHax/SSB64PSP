@@ -7,6 +7,43 @@
 
 use ssb_engine::math::Vec3;
 
+#[cfg(test)]
+mod stat_tests {
+    use super::*;
+    #[test]
+    fn item_status_resets_statistics_except_pk_fire_ground_air_changes() {
+        use crate::spgame::{
+            bonus::HitAttackId,
+            live::{AttackStat, Flags},
+        };
+        let air = core::iter::empty::<crate::weapon::MapSurface>;
+        let identity = AttackStat {
+            flags: Flags(HitAttackId::SpecialN as u16),
+            count: 77,
+        };
+        let mut item = make(
+            super::super::PKFireSpawn {
+                owner_port: 0,
+                team: 0,
+                pos: Vec3::ZERO,
+                weapon_pos: Vec3::ZERO,
+                weapon_coll: crate::ground::BodyColl::default(),
+                stale: crate::stale::WeaponStale {
+                    stat: identity,
+                    ..crate::stale::WeaponStale::FRESH
+                },
+            },
+            &air,
+        );
+        assert_eq!(item.attack.stat, identity);
+        proc_update(&mut item, Status::Init);
+        assert_eq!(item.attack.stat, identity);
+        item.set_status(ItemStatus::PKFire(Status::Fall));
+        assert_eq!(item.attack.stat.flags.id(), HitAttackId::Null);
+        assert_ne!(item.attack.stat.count, identity.count);
+    }
+}
+
 use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight};
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::ground::BodyColl;
@@ -93,6 +130,7 @@ where
     item.attack.stale = spawn.stale.stale;
     item.attack.motion_attack_id = spawn.stale.attack_id;
     item.attack.motion_count = spawn.stale.motion_count;
+    item.attack.stat = spawn.stale.stat;
     map::set_air(&mut item);
     item.update_attack_positions();
     item.lifetime = LIFETIME;
@@ -115,14 +153,15 @@ fn update_all_check_destroy(item: &mut Item) -> bool {
     item.lifetime < 0
 }
 
-/// `itNessPKFireWaitSetStatus`: `stat_flags`/`stat_count` survive, which
-/// the port does not track.
+/// `itNessPKFireWaitSetStatus`: preserve the incoming weapon's stat identity.
 fn wait_set_status(item: &mut Item) {
     map::set_ground(item);
     item.vel_ground = 0.0;
     item.vel_air.x = 0.0;
     item.vel_air.y = 0.0;
+    let stat = item.attack.stat;
     item.set_status(ItemStatus::PKFire(Status::Wait));
+    item.attack.stat = stat;
 }
 
 /// `itNessPKFireFallSetStatus`.
@@ -130,7 +169,9 @@ fn fall_set_status(item: &mut Item) {
     map::set_air(item);
     item.vel_air.x = 0.0;
     item.vel_air.y = 0.0;
+    let stat = item.attack.stat;
     item.set_status(ItemStatus::PKFire(Status::Fall));
+    item.attack.stat = stat;
 }
 
 /// `proc_update`. Returns whether the flame lives on.

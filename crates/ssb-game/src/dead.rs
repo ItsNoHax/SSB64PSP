@@ -567,9 +567,12 @@ fn reinit(f: &mut Fighter, pos: Vec3, facing: Facing) {
     fresh.input = f.input;
     fresh.prev_input = f.prev_input;
     fresh.stale = f.stale;
+    fresh.stats = f.stats.reinit();
     fresh.dead = DeadState {
         bounds: f.dead.bounds,
         stock_rule: f.dead.stock_rule,
+        spgame_rule: f.dead.spgame_rule,
+        team_bounds: f.dead.team_bounds,
         camera_eye: f.dead.camera_eye,
         falls: f.dead.falls,
         ..DeadState::default()

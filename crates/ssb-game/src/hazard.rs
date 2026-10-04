@@ -7,6 +7,7 @@
 //! obstacle positions a captured fighter follows. Sound, rumble and effect
 //! calls are not ported, as elsewhere in the gameplay layer.
 
+use crate::combat::DamageBy;
 use crate::combat::{self, Element, HitLogEntry, HitSource, HitStatus};
 use crate::fighter::Fighter;
 use crate::stage::{Stage, StageObjects};
@@ -298,6 +299,12 @@ fn update_damage_stat_ground(f: &mut Fighter, attack: GroundAttack, kind: i32, h
     let damage = crate::attack::captured_damage(f, attack.damage);
     if combat::check_get_update_damage(f, damage) {
         let entry = HitLogEntry {
+            stat: crate::spgame::live::AttackStat::default(),
+            object: if kind == ENV_ACID {
+                crate::spgame::bonus::DamageObject::Acid
+            } else {
+                crate::spgame::bonus::DamageObject::Other
+            },
             source: HitSource::Direct {
                 lr: f.facing.sign(),
             },
@@ -432,6 +439,12 @@ fn shoot_twister(f: &mut Fighter, t: HazardThrow) {
         Element::from_raw(t.element as u32),
         true,
     );
+    crate::spgame::live::hit(
+        f,
+        DamageBy::World,
+        crate::spgame::live::AttackStat::default(),
+        crate::spgame::bonus::DamageObject::Twister,
+    );
     if damage != 0 {
         f.add_damage(damage);
     }
@@ -468,6 +481,12 @@ fn shoot_tarucann(f: &mut Fighter, t: HazardThrow) {
         0,
         Element::from_raw(t.element as u32),
         false,
+    );
+    crate::spgame::live::hit(
+        f,
+        DamageBy::World,
+        crate::spgame::live::AttackStat::default(),
+        crate::spgame::bonus::DamageObject::Other,
     );
     f.hazard.tarucann_wait = TARUCANN_PICKUP_WAIT;
 }
@@ -552,5 +571,33 @@ mod tests {
         assert_eq!(f.hazard.tarucann_wait, TARUCANN_PICKUP_WAIT);
         assert_eq!(f.status.status, AnyStatus::Common(Status::DamageFlyRoll));
         assert_eq!(f.damage, 0, "the barrel adds no percentage");
+        assert_eq!(f.damage_player, None);
+        assert_eq!(f.stats.damage_count, 1);
+        assert_eq!(
+            f.stats.damage_object,
+            crate::spgame::bonus::DamageObject::Other
+        );
+    }
+
+    #[test]
+    fn twister_launch_replaces_the_last_player_hit_even_when_intangible() {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.damage_player = Some(1);
+        f.stats.enable();
+        crate::hurtbox::set_hit_status_all(&mut f, HitStatus::Intangible);
+        shoot_twister(&mut f, HazardThrow::from_words([0, 10, 0, 100, 0, 50, 0]));
+        assert_eq!(f.damage, 0);
+        assert_eq!(f.damage_player, None);
+        assert_eq!(
+            f.stats.damage_object,
+            crate::spgame::bonus::DamageObject::Twister
+        );
+        assert_eq!(
+            f.stats.drain().collect::<alloc::vec::Vec<_>>(),
+            [crate::spgame::live::Event::Defend {
+                player: None,
+                flags: crate::spgame::live::Flags(0)
+            }]
+        );
     }
 }

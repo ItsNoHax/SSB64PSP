@@ -254,8 +254,8 @@ impl BonusCounters {
         self.defeat_count += 1;
     }
 
-    /// `ftParamUpdate1PGameAttackStats`: count the previous nonzero attack
-    /// when its stat ID changes. The caller supplies that previous ID.
+    /// `ftParamUpdate1PGameAttackStats`: count the current nonzero attack
+    /// when it differs from the saved previous stat ID.
     pub fn attack(&mut self, id: HitAttackId, smash: bool, air: bool, projectile: bool) {
         if id == HitAttackId::None {
             return;

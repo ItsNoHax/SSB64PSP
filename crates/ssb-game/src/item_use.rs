@@ -384,6 +384,7 @@ fn flower(f: &mut Fighter) {
             if f.item_use.flame_index == 8 {
                 f.item_use.flame_index = 0;
                 f.motion.set(crate::stale::MotionAttackId::FireFlowerShoot);
+                f.stats.restart();
             }
         }
         if f.motion_script.flags[0] == 1 {

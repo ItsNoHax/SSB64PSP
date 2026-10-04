@@ -66,6 +66,8 @@ fn ray_gun_tail_shield_precedes_head_hurtbox() {
     let head = Vec3::new(0.0, 100.0, 0.0);
     let tail = Vec3::new(800.0, 100.0, 0.0);
     let attack = WeaponAttack {
+        stat: crate::spgame::live::AttackStat::default(),
+        object: crate::spgame::bonus::DamageObject::Other,
         hitbox: shot.hitbox(),
         pos_curr: head,
         pos_prev: head,
@@ -90,6 +92,7 @@ fn ray_gun_second_box_hits_a_fighter_when_the_head_misses() {
     let mut shot = MonsterShot::equipment(
         ShotKind::RayGun,
         ShotParent {
+            stat: crate::spgame::live::AttackStat::default(),
             owner: Some(0),
             player: Some(0),
             team: 0,
@@ -124,6 +127,7 @@ fn fire_flower_rehits_an_item_after_sixteen_weapon_updates() {
     let mut shot = MonsterShot::equipment(
         ShotKind::FireFlower,
         ShotParent {
+            stat: crate::spgame::live::AttackStat::default(),
             owner: Some(0),
             player: Some(0),
             team: 0,
@@ -171,6 +175,7 @@ fn hammer_walk_keeps_animation_hits_and_colour_clock() {
 fn ray_gun_tail_grows_and_hop_and_reflection_reset_it() {
     use crate::monster_weapon::{MonsterShot, ShotKind, ShotParent};
     let parent = ShotParent {
+        stat: crate::spgame::live::AttackStat::default(),
         handle: 0,
         owner: Some(0),
         player: Some(0),
@@ -203,6 +208,7 @@ fn ray_gun_tail_grows_and_hop_and_reflection_reset_it() {
 fn star_expires_on_update_31_but_flame_on_30_and_reflection_renews_flame() {
     use crate::monster_weapon::{MonsterShot, ShotKind, ShotParent};
     let parent = ShotParent {
+        stat: crate::spgame::live::AttackStat::default(),
         handle: 0,
         owner: Some(0),
         player: Some(0),

@@ -355,6 +355,7 @@ pub struct Fighter {
     pub grab: crate::grab::GrabState,
     /// `motion_attack_id` / `motion_count` ([`crate::stale`]).
     pub motion: crate::stale::MotionId,
+    pub stats: crate::spgame::live::Stats,
     /// This player's `stale_info` queue ([`crate::stale`]).
     pub stale: crate::stale::StaleQueue,
     /// `FTStruct::handicap`, an index into `dFTCommonDataHandicapTable`.
@@ -510,6 +511,7 @@ impl Fighter {
             is_special_interrupt: false,
             grab: crate::grab::GrabState::default(),
             motion: crate::stale::MotionId::default(),
+            stats: crate::spgame::live::Stats::default(),
             stale: crate::stale::StaleQueue::default(),
             handicap: crate::stale::HANDICAP_DEFAULT,
             costume: 0,
@@ -562,6 +564,8 @@ impl Fighter {
     /// `ftParamUpdateDamage` @ 0x800EA248: adds to the percent, which the
     /// original caps at 999.
     pub fn add_damage(&mut self, damage: i32) {
+        self.stats
+            .emit(crate::spgame::live::Event::Damage(damage.max(0) as u32));
         let total = i32::from(self.damage) + damage.max(0);
         self.damage = total.min(DAMAGE_PERCENT_MAX) as u16;
     }
@@ -570,6 +574,10 @@ impl Fighter {
     /// player counts, including a zero-damage hit. World/self hits do not.
     pub fn record_combo_damage(&mut self, player: Option<u8>, damage: i32) {
         if player.is_some_and(|p| p < 4 && p != self.port) {
+            self.stats.emit(crate::spgame::live::Event::Credit {
+                player: player.unwrap(),
+                damage: damage.max(0) as u32,
+            });
             self.combo_damage_foe += damage.max(0) as u32;
             self.combo_count_foe += 1;
         }

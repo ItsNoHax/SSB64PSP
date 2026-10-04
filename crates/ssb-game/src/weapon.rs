@@ -2020,6 +2020,8 @@ fn pre_hit_at(
     velocity: Vec3,
 ) -> PreHit {
     let w = crate::combat::WeaponAttack {
+        stat: crate::spgame::live::AttackStat::default(),
+        object: crate::spgame::bonus::DamageObject::Other,
         hitbox,
         pos_curr: position,
         pos_prev: prev,
@@ -2073,7 +2075,7 @@ struct LaserHit<'a> {
     records: &'a mut [Option<u8>; 4],
     /// The fighter ports in `records`.
     ports: u8,
-    stale: crate::stale::WeaponStale,
+    stale: &'a mut crate::stale::WeaponStale,
     team: &'a mut u8,
     landed: &'a mut Option<(u8, crate::stale::MotionAttackId, u16)>,
     fx: &'a mut crate::wpeffect::WeaponFx,
@@ -2099,6 +2101,8 @@ fn laser_hit(laser: &mut ArwingLaser, h: LaserHit<'_>, defender: &mut Fighter) -
     staled.damage = h.stale.damage(staled.damage);
     let owner_player = (owner != sector::GROUND_PORT).then_some(owner);
     let attack = |pos: Vec3, vel: Vec3, can_shield: bool| crate::combat::WeaponAttack {
+        stat: h.stale.stat,
+        object: crate::spgame::bonus::DamageObject::Arwing,
         hitbox: staled,
         pos_curr: pos,
         pos_prev: pos - vel,
@@ -2160,6 +2164,7 @@ fn laser_hit(laser: &mut ArwingLaser, h: LaserHit<'_>, defender: &mut Fighter) -
                 defender,
             );
             laser.reface();
+            h.stale.stat = defender.stats.attack;
             *h.team = defender.team;
             return true;
         }
@@ -2288,6 +2293,7 @@ fn monster_hit(
                 defender.facing.sign(),
                 &mut emit,
             );
+            m.stat = defender.stats.attack;
             *h.team = defender.team;
             Some(true)
         }
@@ -2310,6 +2316,15 @@ fn monster_hit(
     let contact = crate::combat::weapon_hit_pair(
         defender,
         crate::combat::WeaponAttack {
+            stat: m.stat,
+            object: if matches!(
+                m.kind,
+                ShotKind::RayGun | ShotKind::StarRod | ShotKind::FireFlower
+            ) {
+                crate::spgame::bonus::DamageObject::Other
+            } else {
+                crate::spgame::bonus::DamageObject::PokemonWeapon
+            },
             hitbox: staled,
             pos_curr: curr,
             pos_prev: prev,
@@ -2383,14 +2398,21 @@ fn stale_hit(
     let mut hitbox = *hitbox;
     hitbox.damage = stale.damage(hitbox.damage);
     // `wp->handicap` is the owner's; every Training player has the default.
-    let outcome = attack::register_hitbox(
-        &hitbox,
-        position,
-        position - velocity,
-        crate::combat::HitSource::Weapon { vel_x: velocity.x },
-        crate::stale::HANDICAP_DEFAULT,
+    let outcome = attack::HitOutcome::of(crate::combat::weapon_hit(
         defender,
-    );
+        crate::combat::WeaponAttack {
+            stat: stale.stat,
+            object: crate::spgame::bonus::DamageObject::Other,
+            hitbox,
+            pos_curr: position,
+            pos_prev: position - velocity,
+            source: crate::combat::HitSource::Weapon { vel_x: velocity.x },
+            handicap: crate::stale::HANDICAP_DEFAULT,
+            can_shield: true,
+            owner: Some(owner),
+            is_hitlag_victim: None,
+        },
+    ));
     if outcome == attack::HitOutcome::Damaged {
         *landed = Some((owner, stale.attack_id, stale.motion_count));
     }
@@ -2411,14 +2433,20 @@ fn stale_contact(
 ) -> crate::combat::WeaponContact {
     let mut hitbox = *hitbox;
     hitbox.damage = stale.damage(hitbox.damage);
-    let contact = attack::register_hitbox_contact_with(
-        &hitbox,
-        position,
-        position - velocity,
-        crate::combat::HitSource::Weapon { vel_x: velocity.x },
-        crate::stale::HANDICAP_DEFAULT,
+    let contact = crate::combat::weapon_hit(
         defender,
-        is_hitlag_victim,
+        crate::combat::WeaponAttack {
+            stat: stale.stat,
+            object: crate::spgame::bonus::DamageObject::Other,
+            hitbox,
+            pos_curr: position,
+            pos_prev: position - velocity,
+            source: crate::combat::HitSource::Weapon { vel_x: velocity.x },
+            handicap: crate::stale::HANDICAP_DEFAULT,
+            can_shield: true,
+            owner: Some(owner),
+            is_hitlag_victim,
+        },
     );
     if contact == crate::combat::WeaponContact::Hurt(true) {
         *landed = Some((owner, stale.attack_id, stale.motion_count));
@@ -2896,6 +2924,7 @@ impl WeaponPool {
                     self.star_rod_smash_desc = true;
                 }
                 let parent = crate::monster_weapon::ShotParent {
+                    stat: spawn.stale.stat,
                     owner: Some(spawn.owner_port),
                     player: Some(spawn.owner_port),
                     team: spawn.team,
@@ -2987,12 +3016,20 @@ impl WeaponPool {
     /// `wpManagerMakeWeapon`: the first free slot, placed last in the link.
     fn insert_at(
         &mut self,
-        weapon: Weapon,
-        stale: crate::stale::WeaponStale,
+        mut weapon: Weapon,
+        mut stale: crate::stale::WeaponStale,
         team: u8,
         lr: f32,
     ) -> Option<usize> {
         let i = self.slots.iter().position(|slot| slot.is_none())?;
+        if stale.stat.count == 0 {
+            stale.stat.count = crate::spgame::live::next_count();
+        }
+        if let Weapon::Monster(m) = &mut weapon {
+            if m.stat.count == 0 {
+                m.stat.count = stale.stat.count;
+            }
+        }
         self.slots[i] = Some(weapon);
         self.stale[i] = stale;
         self.teams[i] = team;
@@ -3636,7 +3673,7 @@ impl WeaponPool {
                     LaserHit {
                         records,
                         ports,
-                        stale: self.stale[i],
+                        stale: &mut self.stale[i],
                         team: &mut self.teams[i],
                         landed: &mut self.landed[i],
                         fx: &mut self.fx,
@@ -3836,6 +3873,7 @@ impl WeaponPool {
                     }
                     // `wpProcessProcHitCollisions`: the reflector's team.
                     self.teams[i] = defender.team;
+                    self.stale[i].stat = defender.stats.attack;
                     continue;
                 }
                 // `hit_normal_damage`: the weapon's `proc_hit`.

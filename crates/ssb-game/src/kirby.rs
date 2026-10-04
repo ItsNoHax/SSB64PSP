@@ -403,6 +403,7 @@ fn update_attack100_loop(f: &mut Fighter) {
         f.kirby.rapid_is_anim_end = true;
         // `ftParamSetMotionID`: each cycle is a new motion.
         f.motion.set(crate::stale::MotionAttackId::Attack100);
+        f.stats.restart();
     }
     if f.motion_script.flags[1] != 0 {
         f.motion_script.flags[1] = 0;

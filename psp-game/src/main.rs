@@ -3104,6 +3104,7 @@ fn enter_training(
     *world.items = ssb_game::item::ItemPool::default();
     // `gSCManagerBattleState`'s team rule, which every hit search reads;
     // Training is a free-for-all.
+    ssb_game::spgame::live::reset_count();
     let team_rules = vs.map_or(ssb_game::team::TeamRules::FREE_FOR_ALL, |r| r.team_rules);
     world.weapons.team_rules = team_rules;
     world.items.team_rules = team_rules;

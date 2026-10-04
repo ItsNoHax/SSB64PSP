@@ -307,6 +307,7 @@ pub const SMOG_SCALE: [f32; 30] = [
 /// `WEAPON_FLAG_PARENT_ITEM` copies.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShotParent {
+    pub stat: crate::spgame::live::AttackStat,
     pub owner: Option<u8>,
     pub player: Option<u8>,
     pub team: u8,
@@ -318,6 +319,10 @@ pub struct ShotParent {
 impl ShotParent {
     /// A stage item's: no owner or player, the default team.
     pub const GROUND: ShotParent = ShotParent {
+        stat: crate::spgame::live::AttackStat {
+            flags: crate::spgame::live::Flags(0),
+            count: 0,
+        },
         owner: None,
         player: None,
         team: crate::team::TEAM_DEFAULT,
@@ -337,6 +342,7 @@ pub enum ShotProc {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MonsterShot {
+    pub stat: crate::spgame::live::AttackStat,
     /// Ray Gun root X scale; its second attack is -5 local X.
     pub scale_x: f32,
     pub attack_tail: Option<(Vec3, Vec3)>,
@@ -380,6 +386,7 @@ impl MonsterShot {
     fn make(kind: ShotKind, parent: ShotParent, position: Vec3) -> Self {
         let attr = &ATTRIBUTES[kind as usize];
         Self {
+            stat: parent.stat,
             kind,
             scale_x: 1.0,
             attack_tail: Some((position, position)),

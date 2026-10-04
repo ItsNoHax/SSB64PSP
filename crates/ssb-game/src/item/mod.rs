@@ -96,6 +96,17 @@ mod utility_tests;
 /// `ITEM_ALLOC_MAX`.
 pub const ITEM_ALLOC_MAX: usize = 16;
 
+pub(crate) fn damage_object(kind: ItemKind) -> crate::spgame::bonus::DamageObject {
+    use crate::spgame::bonus::DamageObject as D;
+    match kind {
+        ItemKind::MMonster(_) => D::PokemonItem,
+        ItemKind::MSBomb => D::MSBomb,
+        ItemKind::GBumper => D::GroundBumper,
+        ItemKind::NBumper => D::Bumper,
+        _ => D::Other,
+    }
+}
+
 /// Attack-record victim ids from this value name an item struct; fighters
 /// use their port and weapons [`crate::combat::WEAPON_RECORD_BASE`].
 pub const ITEM_RECORD_BASE: u8 = 0x40;
@@ -363,6 +374,7 @@ pub struct ItemAttackColl {
     pub can_reflect: bool,
     pub can_shield: bool,
     pub motion_attack_id: MotionAttackId,
+    pub stat: crate::spgame::live::AttackStat,
     pub motion_count: u16,
     pub count: usize,
     pub pos: [ItemAttackPos; ATTACK_COLLS],
@@ -733,6 +745,12 @@ impl Item {
                 can_reflect: attr.can_reflect,
                 can_shield: attr.can_shield,
                 motion_attack_id: MotionAttackId::None,
+                stat: crate::spgame::live::AttackStat {
+                    flags: crate::spgame::live::Flags(
+                        crate::spgame::bonus::HitAttackId::Null as u16,
+                    ),
+                    count: crate::spgame::live::next_count(),
+                },
                 motion_count,
                 count: attr.attack_count,
                 pos: [ItemAttackPos::default(); ATTACK_COLLS],
@@ -901,6 +919,10 @@ impl Item {
 
     /// `itMainSetStatus`'s common half: the procs come from `status`.
     pub(crate) fn set_status(&mut self, status: ItemStatus) {
+        self.attack.stat = crate::spgame::live::AttackStat {
+            flags: crate::spgame::live::Flags(crate::spgame::bonus::HitAttackId::Null as u16),
+            count: crate::spgame::live::next_count(),
+        };
         self.status = status;
         self.is_thrown = false;
     }
@@ -1255,6 +1277,7 @@ pub struct ItemPool {
     /// `gSCManagerBackupData.unlock_mask & LBBACKUP_UNLOCK_MASK_NEWCOMERS`:
     /// Mew can come out of a Poké Ball. No save data unlocks nothing.
     pub unlock_newcomers: bool,
+    mew_caught: [bool; 4],
     monster_shots: [Option<crate::monster_weapon::MonsterShot>; ITEM_ALLOC_MAX],
     /// Free weapon structs, from [`Self::observe_weapons`]: an item's weapon
     /// maker fails without one.
@@ -1288,6 +1311,7 @@ impl Default for ItemPool {
             monster_attack_prev: 4,
             monster_data: MonsterData::default(),
             unlock_newcomers: false,
+            mew_caught: [false; 4],
             monster_shots: [None; ITEM_ALLOC_MAX],
             weapon_free: crate::weapon::MAX_WEAPONS as u8,
             fx: crate::wpeffect::WeaponFx::default(),
@@ -1444,7 +1468,13 @@ impl ItemPool {
         monster.team = ball.team;
         monster.player = ball.player;
         monster.handicap = ball.handicap;
-        self.alloc(monster)
+        let slot = self.alloc(monster)?;
+        if kind == mmonster::Kind::Mew {
+            if let Some(player) = ball.player.filter(|&p| p < 4) {
+                self.mew_caught[player as usize] = true;
+            }
+        }
+        Some(slot)
     }
 
     /// A Pokémon from a Poké Ball resting at `pos` that `owner` (with
@@ -1608,6 +1638,9 @@ impl ItemPool {
     /// that exploded or was destroyed leaves its hand.
     pub fn sync_owner(&mut self, f: &mut Fighter) {
         let port = usize::from(f.port);
+        if port < 4 && core::mem::take(&mut self.mew_caught[port]) {
+            f.stats.emit(crate::spgame::live::Event::Mew);
+        }
         if port < self.released.len() && self.released[port] {
             self.released[port] = false;
             if let Some(held) = f.items.held {
@@ -1847,6 +1880,7 @@ impl ItemPool {
             _ => {}
         }
         Self::set_fighter_release(item, &view, vel, throw_mul, surfaces);
+        item.attack.stat = f.stats.attack;
         // `itMainSetThrownSpin`.
         if let Some(spin) = item.kind.spin_speed() {
             item.spin_step =
@@ -1896,6 +1930,10 @@ impl ItemPool {
             }
         }
         Self::set_fighter_release(item, &view, vel, throw_mul, surfaces);
+        item.attack.stat = crate::spgame::live::AttackStat {
+            flags: crate::spgame::live::Flags(crate::spgame::bonus::HitAttackId::ItemThrow as u16),
+            count: f.stats.attack.count,
+        };
         f.items.held = None;
     }
 
@@ -2538,6 +2576,7 @@ fn hit_collisions(
         if let Some(r) = reflector {
             item.team = r.team;
             item.handicap = r.handicap;
+            item.attack.stat = r.stats.attack;
         }
         let lr = reflector.map_or(1.0, |r| r.facing.sign());
         let x = reflector.map_or(item.pos.x, |r| r.pos.x);
@@ -2622,8 +2661,7 @@ where
     }
     fn make_monster(&mut self, parent: &Item) {
         // `itMainMakeMonster`: the draw and its bookkeeping, then the maker,
-        // then the ball's owner, team, player and handicap. The 1P game's
-        // Mew catcher bonus is not ported.
+        // then the ball's owner, team, player, handicap and Mew record.
         let index = self.pool.monster_data.choose(self.pool.unlock_newcomers);
         if let Some(kind) = mmonster::Kind::from_item_kind(index) {
             self.pool.make_mmonster(kind, parent, self.surfaces);

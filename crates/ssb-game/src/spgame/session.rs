@@ -147,6 +147,7 @@ impl Session {
     /// totals reset when the new fighters are made, after allies were picked.
     pub fn start_battle(&mut self, backup: &Backup) {
         assert_eq!(self.manager.scene, manager::Scene::Battle);
+        super::live::reset_count();
         let game = Game::setup_stage_all(
             &mut self.state,
             &mut self.data,
@@ -182,6 +183,7 @@ impl Session {
 
     /// Configure the shared KO machinery for a fighter the host made.
     pub fn configure_fighter(&mut self, f: &mut Fighter, team_bounds: BlastZone) {
+        f.stats.enable();
         // `ftManagerInitFighter` publishes the new fighter's damage.
         // This is not damage taken this stage.
         self.state.players[f.port as usize].stock_damage_all = u32::from(f.damage);
@@ -202,6 +204,78 @@ impl Session {
         self.state
             .update_player_battle_stats(attacker, defender, damage);
         self.state.update_damage(defender, damage, percent);
+    }
+
+    /// Drain after live callbacks, before KO records or results read the
+    /// ledger. Totals are callback amounts; percent is sampled separately
+    /// so healing, cap saturation and rebirth never fabricate damage.
+    pub fn collect_fighter(&mut self, f: &mut Fighter) {
+        use super::live::Event;
+        let port = f.port;
+        let me = self.data.player;
+        for event in f.stats.drain() {
+            match event {
+                Event::Damage(damage) => {
+                    self.state.update_damage(port, damage, u32::from(f.damage));
+                }
+                Event::Credit { player, damage } => {
+                    self.state.update_player_battle_stats(player, port, damage);
+                }
+                Event::Attack(flags) if port == me => {
+                    self.game.as_mut().expect("active game").bonus.attack(
+                        flags.id(),
+                        flags.smash(),
+                        flags.air(),
+                        flags.projectile(),
+                    );
+                }
+                Event::Defend {
+                    player: Some(player),
+                    flags,
+                } if player == me => {
+                    self.game.as_mut().expect("active game").bonus.defend(
+                        flags.id(),
+                        flags.smash(),
+                        flags.air(),
+                        flags.projectile(),
+                    );
+                }
+                Event::Item(kind) if port == me => {
+                    let b = &mut self.game.as_mut().expect("active game").bonus;
+                    use crate::item::utility::Kind;
+                    let count = match kind {
+                        Kind::Tomato => &mut b.tomato_count,
+                        Kind::Heart => &mut b.heart_count,
+                        Kind::Star => &mut b.star_count,
+                    };
+                    *count = count.saturating_add(1);
+                }
+                Event::ShieldBreak {
+                    player: Some(player),
+                } if player == me && port != me => {
+                    self.game
+                        .as_mut()
+                        .expect("active game")
+                        .bonus
+                        .shield_breaker = true;
+                }
+                Event::Mew if port == me => {
+                    self.game.as_mut().expect("active game").bonus.mew_catcher = true
+                }
+                _ => {}
+            }
+        }
+        self.state.players[port as usize].stock_damage_all = u32::from(f.damage);
+    }
+
+    /// Source KO record from the fighter and the actual stage's team order.
+    /// Consumes `dead.scored` once, after its callbacks have been collected.
+    pub fn collect_fall(&mut self, f: &mut Fighter) {
+        self.collect_fighter(f);
+        if core::mem::take(&mut f.dead.scored) {
+            let order = self.game.as_ref().expect("active game").setups[f.port as usize].team_order;
+            self.fall(f.port, f.stats.defeat(f, order), f.kind);
+        }
     }
 
     /// After the fighter raises `dead.scored`, take the battle's stock

@@ -1852,6 +1852,7 @@ pub const GUARD_HEAL_INTERVAL: f32 = 10.0;
 /// instead because nothing else needs them split.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GuardState {
+    pub shield_player: Option<u8>,
     /// `status_vars.common.guard.slide_tics`: dash/run throw window.
     pub slide_tics: i32,
     pub shield_health: f32,
@@ -1897,6 +1898,7 @@ impl Default for GuardState {
             slide_tics: 0,
             shield_health: GUARD_HEALTH_MAX,
             shield_damage: 0.0,
+            shield_player: None,
             release_lag: 0,
             decay_wait: 0,
             is_release: false,
@@ -2173,6 +2175,7 @@ fn check_guard_pass(f: &mut Fighter) -> bool {
 /// `ftCommonShieldBreakFlyCommonSetStatus`: [`crate::reaction`] runs the
 /// chain.
 pub fn set_shield_break_fly(f: &mut Fighter) {
+    crate::combat::record_shield_break(f);
     crate::reaction::set_shield_break_fly(f);
 }
 
@@ -3672,6 +3675,7 @@ pub fn set_any_status_preserve(
     // `ftMainSetStatus` clears `is_damage_resist`; Stone's setters restore it.
     f.kirby.is_damage_resist = false;
     crate::stale::on_set_status(f, status);
+    crate::spgame::live::on_set_status(f, status);
     // `ftCommonEntry`, `ftCommonDead`, `ftCommonRebirth`, and sleep each
     // toggle `FTStruct::is_shadow_hide`. Keep the source-owned flag portable
     // so rendering has one display gate and capture systems can use it too.
@@ -4330,6 +4334,7 @@ fn set_fox_rapid_loop(f: &mut Fighter) {
     // `ftCommonAttack100LoopProcUpdate` calls `ftParamSetMotionID` at the
     // start of every loop, so each cycle is a new motion.
     f.motion.set(crate::stale::MotionAttackId::Attack100);
+    f.stats.restart();
 }
 
 fn set_fox_rapid_end(f: &mut Fighter) {
@@ -5626,6 +5631,7 @@ fn update_extended(f: &mut Fighter) {
             };
             if f.status.anim_frame >= repeat_frame && f.button_tap().contains(N64Buttons::B) {
                 set_fox_special_n(f);
+                f.stats.restart();
             } else if f.status.animation_ended() {
                 if f.situation == Situation::Ground {
                     set_wait(f);
@@ -7841,7 +7847,13 @@ mod tests {
         }
         update(&mut f);
         // A fresh queue: the spawn carries the neutral-B motion unstaled.
+        assert_eq!(
+            f.stats.attack.flags.id(),
+            crate::spgame::bonus::HitAttackId::SpecialN
+        );
+        assert_ne!(f.stats.attack.count, 0);
         let stale = crate::stale::WeaponStale {
+            stat: f.stats.attack,
             stale: 1.0,
             attack_id: crate::stale::MotionAttackId::SpecialN,
             motion_count: f.motion.count,

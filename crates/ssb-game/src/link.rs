@@ -499,6 +499,7 @@ fn set_attack100_loop(f: &mut Fighter) {
     // `ftCommonAttack100LoopProcUpdate` calls `ftParamSetMotionID` at the
     // start of every loop, so each cycle is a new motion.
     f.motion.set(crate::stale::MotionAttackId::Attack100);
+    f.stats.restart();
 }
 
 /// Link's `proc_update` and `proc_interrupt` callbacks, then the physics
@@ -791,14 +792,21 @@ pub fn apply_spin_attack_hits(
     for position in spin.hit_positions().into_iter().flatten() {
         // Registered in the defender's hit log; the damage lands in its
         // `ftMainProcParams` with the rest of the frame's hits.
-        let outcome = crate::attack::register_hitbox(
-            &hitbox,
-            position,
-            position,
-            crate::combat::HitSource::Weapon { vel_x: 0.0 },
-            handicap,
+        let outcome = crate::attack::HitOutcome::of(crate::combat::weapon_hit(
             defender,
-        );
+            crate::combat::WeaponAttack {
+                stat: stale.stat,
+                object: crate::spgame::bonus::DamageObject::Other,
+                hitbox,
+                pos_curr: position,
+                pos_prev: position,
+                source: crate::combat::HitSource::Weapon { vel_x: 0.0 },
+                handicap,
+                can_shield: true,
+                owner: Some(attacker.port),
+                is_hitlag_victim: None,
+            },
+        ));
         if outcome.registered() {
             spin.hit_ports |= bit;
             if outcome == crate::attack::HitOutcome::Damaged {

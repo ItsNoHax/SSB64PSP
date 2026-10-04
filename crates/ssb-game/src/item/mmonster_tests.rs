@@ -230,6 +230,7 @@ fn meowth_throws_four_coins_every_eight_frames_turning_13_degrees() {
 fn a_coin_lives_ten_updates_and_dies_on_a_hit() {
     let mut pool = WeaponPool::default();
     let p = crate::monster_weapon::ShotParent {
+        stat: crate::spgame::live::AttackStat::default(),
         owner: Some(0),
         player: Some(0),
         team: 0,
@@ -327,6 +328,7 @@ fn onix_drops_its_rocks_and_leaves_once_every_rock_is_gone() {
 fn a_rock_bounces_once_per_floor_and_reports_its_end() {
     let mut pool = WeaponPool::default();
     let p = crate::monster_weapon::ShotParent {
+        stat: crate::spgame::live::AttackStat::default(),
         owner: None,
         player: None,
         team: crate::team::TEAM_DEFAULT,
@@ -415,6 +417,7 @@ fn blastoise_faces_its_nearest_opponent_and_is_pushed_back_by_each_stream() {
 fn the_hydro_pump_attack_reaches_along_its_animation() {
     let mut pool = WeaponPool::default();
     let p = crate::monster_weapon::ShotParent {
+        stat: crate::spgame::live::AttackStat::default(),
         lr: -1.0,
         ..crate::monster_weapon::ShotParent::GROUND
     };

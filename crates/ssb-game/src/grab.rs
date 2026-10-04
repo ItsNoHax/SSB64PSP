@@ -620,6 +620,7 @@ pub fn thrown_length(held: FighterKind, status: Status) -> Option<f32> {
 /// original dereferences. Refreshed by [`exchange`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Holder {
+    pub stat: crate::spgame::live::AttackStat,
     pub kind: FighterKind,
     pub pos: Vec3,
     pub facing: Facing,
@@ -641,6 +642,7 @@ pub struct Holder {
 /// release, and the motion to record in the catcher's queue if it lands.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StaledThrow {
+    pub stat: crate::spgame::live::AttackStat,
     pub damage: i32,
     pub attack_id: MotionAttackId,
     pub motion_count: u16,
@@ -649,6 +651,7 @@ pub struct StaledThrow {
 impl StaledThrow {
     pub(crate) fn of(f: &Fighter, damage: i32) -> Self {
         StaledThrow {
+            stat: f.stats.attack,
             damage: crate::stale::staled_damage(f, damage),
             attack_id: f.motion.attack_id,
             motion_count: f.motion.count,
@@ -1285,6 +1288,7 @@ pub(crate) fn apply_capture_knockback_with(
     );
     let lr = if f.pos.x < holder.pos.x { 1.0 } else { -1.0 };
     attack::init_damage_vars(f, None, 0, knockback, angle, lr, false);
+    clear_damage_stats(f);
 }
 
 /// `ftCommonCaptureApplyCatchKnockback` @ 0x8014E1D0: the catcher's recoil
@@ -1308,6 +1312,7 @@ fn apply_catch_knockback_with(f: &mut Fighter, capture_handicap: u8, desc: (i32,
     );
     let lr = f.facing.sign();
     attack::init_damage_vars(f, None, 0, knockback, angle, lr, false);
+    clear_damage_stats(f);
 }
 
 /// Drops the link on the held side (`ftCommonThrownReleaseFighterLoseGrip`
@@ -1598,6 +1603,12 @@ pub fn thrown_update_damage_stats(held: &mut Fighter, catcher: &mut Fighter) {
     let staled = StaledThrow::of(catcher, desc.damage);
     held.add_damage(staled.damage);
     held.record_combo_damage(Some(catcher.port), staled.damage);
+    crate::spgame::live::hit(
+        held,
+        crate::combat::DamageBy::Player(catcher.port),
+        catcher.stats.attack,
+        crate::spgame::bonus::DamageObject::Other,
+    );
     if catcher.port != held.port {
         catcher.stale.push(staled.attack_id, staled.motion_count);
     }
@@ -1653,6 +1664,7 @@ fn set_no_damage_release(f: &mut Fighter) {
     );
     let lr = f.facing.sign();
     attack::init_damage_vars(f, None, 0, knockback, d.angle, lr, false);
+    clear_damage_stats(f);
 }
 
 /// `ftCommonThrownDecideDeadResult` @ 0x8014AF2C, the KO'd side.
@@ -2062,6 +2074,7 @@ pub fn ground_physics_status(status: AnyStatus) -> Option<Status> {
 
 fn holder_of(f: &Fighter) -> Holder {
     Holder {
+        stat: f.stats.attack,
         kind: f.kind,
         pos: f.pos,
         facing: f.facing,
@@ -2113,6 +2126,24 @@ fn record_throw(catcher: &mut Fighter, held: &mut Fighter, staled: StaledThrow, 
     }
 }
 
+fn clear_damage_stats(f: &mut Fighter) {
+    crate::spgame::live::hit(
+        f,
+        crate::combat::DamageBy::World,
+        crate::spgame::live::AttackStat::default(),
+        crate::spgame::bonus::DamageObject::Other,
+    );
+}
+
+fn record_release(catcher: &Fighter, held: &mut Fighter, stat: crate::spgame::live::AttackStat) {
+    crate::spgame::live::hit(
+        held,
+        crate::combat::DamageBy::Player(catcher.port),
+        stat,
+        crate::spgame::bonus::DamageObject::Other,
+    );
+}
+
 fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
     match event {
         GrabEvent::Capture => capture_pulled(to, from.port, holder_of(from)),
@@ -2136,6 +2167,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             to.damage_player = Some(from.port);
             let thrown = script_id.map(|id| (crate::thrown::ThrowOwner::of(from), id));
             let damage = release_with(to, desc, Some(lr), shield_catch, staled, thrown);
+            record_release(from, to, staled.stat);
             record_throw(from, to, staled, damage);
         }
         GrabEvent::DamageRelease {
@@ -2145,6 +2177,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
         } => {
             to.damage_player = Some(from.port);
             let damage = release_with(to, desc, None, shield_catch, staled, None);
+            record_release(from, to, staled.stat);
             record_throw(from, to, staled, damage);
         }
         GrabEvent::CaptureHitRelease => {
@@ -2188,7 +2221,8 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             record_throw(from, to, staled, staled.damage);
         }
         GrabEvent::KirbyStar { copy, vel } => {
-            crate::capture_kirby::set_star(to, copy, vel, crate::thrown::ThrowOwner::of(from))
+            crate::capture_kirby::set_star(to, copy, vel, crate::thrown::ThrowOwner::of(from));
+            record_release(from, to, from.stats.attack);
         }
         GrabEvent::KirbyWiggle { up, push_x } => crate::kirby::on_wiggle(to, up, push_x),
         GrabEvent::KirbyBreakout => {

@@ -18,16 +18,20 @@ pub mod bonus;
 pub mod continue_scene;
 pub mod frontend;
 pub mod intro;
+pub mod live;
 pub mod manager;
 pub mod results;
 pub mod select;
 pub mod session;
 pub mod setup;
 pub mod stage_clear;
+mod stat_flags;
 pub mod wait;
 
 #[cfg(test)]
 mod frontend_tests;
+#[cfg(test)]
+mod live_tests;
 
 use crate::fighter::FighterKind;
 

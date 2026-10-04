@@ -732,6 +732,8 @@ pub fn register_hitbox_contact_with(
     crate::combat::weapon_hit(
         defender,
         crate::combat::WeaponAttack {
+            stat: crate::spgame::live::AttackStat::default(),
+            object: crate::spgame::bonus::DamageObject::Other,
             hitbox: *hitbox,
             pos_curr,
             pos_prev,

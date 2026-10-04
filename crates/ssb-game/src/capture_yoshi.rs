@@ -218,6 +218,17 @@ fn set_egg(f: &mut Fighter) {
     f.is_invisible = true;
     grab::init_breakout(f, BREAKOUT_INPUTS_MIN);
     f.add_damage(i32::from(LAY_DAMAGE));
+    let player = f.grab.capture;
+    f.record_combo_damage(player, i32::from(LAY_DAMAGE));
+    crate::spgame::live::hit(
+        f,
+        player.map_or(
+            crate::combat::DamageBy::World,
+            crate::combat::DamageBy::Player,
+        ),
+        holder.stat,
+        crate::spgame::bonus::DamageObject::Other,
+    );
     let lr = holder.facing.sign();
     f.pos = holder.pos + Vec3::new(-lr * LAY_OFF_X, LAY_OFF_Y, 0.0);
     f.physics.vel_air = Vec3::new(-lr * LAY_VEL_X, LAY_VEL_Y, 0.0);
@@ -341,6 +352,7 @@ mod tests {
 
     fn holder() -> Holder {
         Holder {
+            stat: crate::spgame::live::AttackStat::default(),
             kind: FighterKind::Yoshi,
             pos: Vec3::new(100.0, 0.0, 0.0),
             facing: Facing::Right,

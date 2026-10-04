@@ -142,6 +142,7 @@ fn set_attack100_loop(f: &mut Fighter) {
     // `ftCommonAttack100LoopProcUpdate` calls `ftParamSetMotionID` at the
     // start of every loop, so each cycle is a new motion.
     f.motion.set(crate::stale::MotionAttackId::Attack100);
+    f.stats.restart();
 }
 
 fn crossed(f: &Fighter, at: f32) -> bool {

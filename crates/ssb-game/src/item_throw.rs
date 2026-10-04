@@ -499,6 +499,9 @@ pub fn light_get_proc_damage(f: &mut Fighter) {
         _ => return,
     };
     crate::colanim::set_heal_damage(f, heal);
+    if let crate::item::ItemKind::Utility(kind) = held.kind {
+        f.stats.emit(crate::spgame::live::Event::Item(kind));
+    }
     f.items.request(ItemRequest::Destroy);
     f.items.held = None;
 }

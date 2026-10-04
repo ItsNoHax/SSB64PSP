@@ -569,6 +569,8 @@ pub fn on_set_status(f: &mut Fighter, status: AnyStatus) {
 /// factor at that moment and the motion to record when it lands.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WeaponStale {
+    /// The parent's independent bonus statistics at creation time.
+    pub stat: crate::spgame::live::AttackStat,
     pub stale: f32,
     pub attack_id: MotionAttackId,
     pub motion_count: u16,
@@ -577,6 +579,10 @@ pub struct WeaponStale {
 impl WeaponStale {
     /// `WEAPON_STALE_DEFAULT` with no motion: a weapon no fighter made.
     pub const FRESH: WeaponStale = WeaponStale {
+        stat: crate::spgame::live::AttackStat {
+            flags: crate::spgame::live::Flags(0),
+            count: 0,
+        },
         stale: 1.0,
         attack_id: MotionAttackId::None,
         motion_count: 0,
@@ -585,6 +591,7 @@ impl WeaponStale {
     /// `ftParamGetStale(fp->player, fp->motion_attack_id, fp->motion_count)`.
     pub fn of(f: &Fighter) -> Self {
         WeaponStale {
+            stat: f.stats.attack,
             stale: f.stale.stale(f.motion.attack_id, f.motion.count),
             attack_id: f.motion.attack_id,
             motion_count: f.motion.count,
