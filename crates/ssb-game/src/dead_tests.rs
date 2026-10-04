@@ -1,5 +1,41 @@
 use super::*;
 
+#[test]
+fn one_player_enemy_uses_team_bounds_and_requests_replacement_after_dead_wait() {
+    let mut f = mario();
+    f.dead.spgame_rule = true;
+    f.dead.team_bounds = Some(BlastZone {
+        bottom: -1000.0,
+        ..stage().map
+    });
+    f.stocks = 0;
+    f.pos.y = -1001.0;
+    assert!(check(&mut f));
+    assert_eq!(f.stocks, -1);
+    for _ in 0..DEAD_WAIT {
+        status::update(&mut f);
+    }
+    assert!(f.dead.enemy_next_pending);
+    assert!(!f.dead.rebirth_pending);
+}
+
+#[test]
+fn one_player_human_rebirths_with_stocks_and_sleeps_without_any() {
+    for stock in [0, 1] {
+        let mut f = mario();
+        f.dead.spgame_rule = true;
+        f.stocks = stock;
+        f.pos.y = -2001.0;
+        assert!(check(&mut f));
+        for _ in 0..DEAD_WAIT {
+            status::update(&mut f);
+        }
+        assert_eq!(f.dead.rebirth_pending, stock == 1);
+        assert_eq!(is(&f, Status::Sleep), stock == 0);
+        assert!(!f.dead.enemy_next_pending);
+    }
+}
+
 fn stage() -> StageBounds {
     StageBounds {
         map: BlastZone {

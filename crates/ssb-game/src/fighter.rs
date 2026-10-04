@@ -54,6 +54,32 @@ pub enum FighterKind {
 }
 
 impl FighterKind {
+    /// `FTKind` from an original stage or team table.
+    pub fn from_ordinal(value: u8) -> Option<Self> {
+        if value < 12 {
+            return Self::PLAYABLE.get(value as usize).copied();
+        }
+        use FighterKind::*;
+        [
+            Boss,
+            MetalMario,
+            PolyMario,
+            PolyFox,
+            PolyDonkey,
+            PolySamus,
+            PolyLuigi,
+            PolyLink,
+            PolyYoshi,
+            PolyCaptain,
+            PolyKirby,
+            PolyPikachu,
+            PolyPurin,
+            PolyNess,
+            GiantDonkey,
+        ]
+        .get(value as usize - 12)
+        .copied()
+    }
     /// The 12 selectable characters, in select-screen order.
     pub const PLAYABLE: &'static [FighterKind] = &[
         FighterKind::Mario,

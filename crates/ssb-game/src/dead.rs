@@ -140,6 +140,17 @@ pub struct DeadState {
     /// `gSCManagerBattleState->game_rules & SCBATTLE_GAMERULE_STOCK`. Off in
     /// Training, whose rules are timed.
     pub stock_rule: bool,
+    /// `SCBATTLE_GAMERULE_1PGAME`: a fall takes a stock, and an enemy
+    /// ([`Self::team_bounds`]) is replaced rather than reborn.
+    pub spgame_rule: bool,
+    /// `gSCManagerBattleState->players[].is_spgame_enemy` in a 1P Game:
+    /// `MPGroundData`'s `map_bound_team_*`, which the enemy dies outside of
+    /// instead of `map_bound_*`.
+    pub team_bounds: Option<BlastZone>,
+    /// Set when a 1P Game enemy's `Dead*` wait runs out; the host then
+    /// calls `sc1PGameSpawnEnemyTeamNext`
+    /// ([`crate::spgame::Game::spawn_enemy_team_next`]).
+    pub enemy_next_pending: bool,
     /// `CObjGetStruct(gGMCameraGObj)->vec.eye`, written by the host each
     /// frame; `DeadUpFall` drops the fighter from above it.
     pub camera_eye: Vec3,
@@ -229,7 +240,8 @@ pub fn check(f: &mut Fighter) -> bool {
     if f.kind == FighterKind::Boss || f.dead.is_ghost {
         return false;
     }
-    let b = bounds.map;
+    // A 1P Game enemy dies outside the team bounds.
+    let b = f.dead.team_bounds.unwrap_or(bounds.map);
     if f.pos.y < b.bottom {
         set_dead_down(f);
     } else if f.pos.x > b.right {
@@ -273,7 +285,7 @@ fn reset_special_stats(f: &mut Fighter) {
 fn update_score(f: &mut Fighter) {
     f.dead.falls = f.dead.falls.saturating_add(1);
     f.dead.scored = true;
-    if f.dead.stock_rule {
+    if f.dead.stock_rule || f.dead.spgame_rule {
         f.stocks -= 1;
     }
 }
@@ -366,18 +378,26 @@ pub fn set_dead_up_fall(f: &mut Fighter) {
     f.model_parts.set_detail_all(crate::modelpart::Detail::High);
 }
 
-/// `ftCommonDeadCheckRebirth`: out of stocks the fighter sleeps; otherwise
-/// the host respawns it.
+/// `ftCommonDeadCheckRebirth`: out of stocks the fighter sleeps; a 1P
+/// Game enemy is replaced by the host; otherwise the host respawns it.
 fn check_rebirth(f: &mut Fighter) {
-    if f.dead.stock_rule && f.stocks == -1 {
-        // `ftCommonSleepSetStatus`.
-        status::set_status(f, Status::Sleep, 0.0, StatusTiming::unknown());
-        f.dead.is_ghost = true;
-        f.dead.is_menu_ignore = true;
-        f.dead.camera_mode = CameraMode::Ghost;
+    if !f.dead.stock_rule && f.dead.spgame_rule && f.dead.team_bounds.is_some() {
+        f.dead.enemy_next_pending = true;
+        return;
+    }
+    if (f.dead.stock_rule || f.dead.spgame_rule) && f.stocks == -1 {
+        set_sleep(f);
         return;
     }
     f.dead.rebirth_pending = true;
+}
+
+/// `ftCommonSleepSetStatus`.
+pub fn set_sleep(f: &mut Fighter) {
+    status::set_status(f, Status::Sleep, 0.0, StatusTiming::unknown());
+    f.dead.is_ghost = true;
+    f.dead.is_menu_ignore = true;
+    f.dead.camera_mode = CameraMode::Ghost;
 }
 
 /// `proc_update` and `proc_interrupt` of the dead and rebirth statuses.

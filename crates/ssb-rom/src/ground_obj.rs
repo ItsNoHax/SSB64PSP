@@ -163,6 +163,11 @@ pub const CASTLE_GROUND: u8 = 10;
 pub const POWER_BLOCK: u8 = 11;
 pub const PAKKUN: u8 = 12;
 pub const MONSTER_FIRST: u8 = 13;
+pub const BONUS3_FILE: u32 = 0x127;
+pub const BONUS3_NODES_FILE: u32 = 0xA2;
+pub const BONUS3_BUMPER_FIRST: u8 = 18;
+pub const BONUS3_BUMPER_ANIM_FIRST: usize = 40;
+pub const TARUBOMB_SOURCE: (u32, u32) = (BONUS3_NODES_FILE, 0x788);
 pub const MONSTER_FILE: u32 = 159;
 /// Two direct texture-ID frames of Charmander and Venusaur.
 pub const MONSTER_TEXTURES: [[u32; 2]; 2] = [[0x1410, 0x1048], [0x1E80, 0x1B78]];
@@ -206,7 +211,7 @@ const fn desc(
 /// `grZebesMakeAcid`, `grYosterInitAll`, `grInishieMakeScale`,
 /// `grCastleInitAll`, and the Mushroom Kingdom items
 /// `itPowerBlockMakeItem` and `itPakkunMakeItem`.
-pub const OBJECTS: [GroundObjectAsset; 18] = [
+pub const OBJECTS: [GroundObjectAsset; 22] = [
     desc("WhispyEyes", PUPUPU_FILE, PUPUPU_HEAD, 0x10F0, 4),
     desc("WhispyMouth", PUPUPU_FILE, PUPUPU_HEAD, 0x1770, 4),
     desc("FlowersBack", PUPUPU_FILE, PUPUPU_HEAD, 0x2A80, 4),
@@ -284,7 +289,19 @@ pub const OBJECTS: [GroundObjectAsset; 18] = [
         source_file: Some(MONSTER_FILE),
         ..desc("Porygon", YAMABUKI_FILE, 0x8A0, 0xEA0, ITEM_LINK)
     },
+    bonus3_bumper("Bonus3Bumper0"),
+    bonus3_bumper("Bonus3Bumper1"),
+    bonus3_bumper("Bonus3Bumper2"),
+    bonus3_bumper("Bonus3Bumper3"),
 ];
+
+const fn bonus3_bumper(name: &'static str) -> GroundObjectAsset {
+    GroundObjectAsset {
+        item: true,
+        source_file: Some(GBUMPER_SOURCE.0),
+        ..desc(name, BONUS3_FILE, 0, GBUMPER_SOURCE.1, ITEM_LINK)
+    }
+}
 
 const fn table(name: &'static str, object: u8, script: u32) -> GroundAnimAsset {
     GroundAnimAsset {
@@ -297,7 +314,7 @@ const fn table(name: &'static str, object: u8, script: u32) -> GroundAnimAsset {
 
 /// Every animation the ported controllers start. The order is the index
 /// the lookup functions below compute; do not reorder.
-pub const ANIMS: [GroundAnimAsset; 40] = [
+pub const ANIMS: [GroundAnimAsset; 44] = [
     // `dGRPupupuWhispyEyesAnims[lr][status][0]`: Turn, Blink.
     table("WhispyEyesLeftTurn", WHISPY_EYES, 0x11A0),
     table("WhispyEyesLeftBlink", WHISPY_EYES, 0x12B0),
@@ -381,6 +398,30 @@ pub const ANIMS: [GroundAnimAsset; 40] = [
     table("Charmander", MONSTER_FIRST + 2, 0x1A20),
     table("Venusaur", MONSTER_FIRST + 3, 0x23D0),
     table("Porygon", MONSTER_FIRST + 4, 0xF30),
+    GroundAnimAsset {
+        name: "Bonus3Bumper0",
+        object: BONUS3_BUMPER_FIRST,
+        script: 0x124,
+        target: AnimTarget::Node(ITEM_ROOT as u8),
+    },
+    GroundAnimAsset {
+        name: "Bonus3Bumper1",
+        object: BONUS3_BUMPER_FIRST + 1,
+        script: 0x150,
+        target: AnimTarget::Node(ITEM_ROOT as u8),
+    },
+    GroundAnimAsset {
+        name: "Bonus3Bumper2",
+        object: BONUS3_BUMPER_FIRST + 2,
+        script: 0x18C,
+        target: AnimTarget::Node(ITEM_ROOT as u8),
+    },
+    GroundAnimAsset {
+        name: "Bonus3Bumper3",
+        object: BONUS3_BUMPER_FIRST + 3,
+        script: 0x1C8,
+        target: AnimTarget::Node(ITEM_ROOT as u8),
+    },
 ];
 
 /// One material-animation table a controller starts.
@@ -854,6 +895,7 @@ impl GroundObjects {
                 continue;
             }
             if a.fighter == AnimDesc::GROUND_MAT
+                || gr_file == BONUS3_FILE
                 || OBJECTS[ANIMS[a.slot as usize].object as usize]
                     .source_file
                     .is_none()
@@ -1052,6 +1094,12 @@ impl GroundObjects {
             let _ = self.play_on(pack, POWER_BLOCK_APPEAR, instance);
         } else if (MONSTER_FIRST..MONSTER_FIRST + 5).contains(&asset) {
             let _ = self.play_on(pack, 35 + usize::from(asset - MONSTER_FIRST), instance);
+        } else if (BONUS3_BUMPER_FIRST..BONUS3_BUMPER_FIRST + 4).contains(&asset) {
+            let _ = self.play_on(
+                pack,
+                BONUS3_BUMPER_ANIM_FIRST + usize::from(asset - BONUS3_BUMPER_FIRST),
+                instance,
+            );
         }
     }
 

@@ -22,6 +22,72 @@ const GEOMETRY_FILE: u32 = 0x95;
 const NODES_FILE: u32 = 0xA2;
 
 #[test]
+fn packed_race_ground_barrel_and_bumper_roots_match_original_scripts() {
+    use ssb_rom::{figatree::JointPose, ground_obj as g, objanim::StageJoint, pack::Pack};
+    let Some(path) = std::env::var_os("SSB64_ROM") else {
+        return;
+    };
+    let rom = std::fs::read(path).unwrap();
+    let archive = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();
+    let nodes = archive.load(NODES_FILE).unwrap();
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak"),
+    )
+    .unwrap();
+    let pack = Pack::open(&bytes).unwrap();
+    let index = pack.stage_of_file(MAP_FILE).expect("Race ground packed");
+    let stage = pack.stage(index).unwrap();
+    assert_eq!(stage.line_count, 34);
+    for layer in [0, 1] {
+        assert_ne!(stage.layers[layer], ssb_rom::pack::StageDesc::NO_LAYER);
+    }
+    let object = |key: (u32, u32)| {
+        (0..pack.object_count())
+            .filter_map(|i| pack.object(i))
+            .find(|o| (o.source_file, o.source_offset) == key)
+            .unwrap()
+    };
+    assert!(object(g::TARUBOMB_SOURCE).node_count >= 2);
+    let descriptors = object((NODES_FILE, 0));
+    for i in 0..4 {
+        let packed = pack.node(descriptors.first_node + i + 1).unwrap();
+        let desc = 0x2C * (i + 1) as usize;
+        assert_eq!(
+            packed.rest_translate,
+            [
+                float(&nodes.data, desc + 8),
+                float(&nodes.data, desc + 12),
+                float(&nodes.data, desc + 16)
+            ]
+        );
+    }
+    let mut objects = g::GroundObjects::new(&pack, MAP_FILE);
+    assert_eq!(objects.iter().count(), 4);
+    for i in 0..4 {
+        let asset = g::BONUS3_BUMPER_FIRST + i;
+        objects.item_make(&pack, asset, 0);
+        let script = word(&nodes.data, 0x114 + usize::from(i) * 4);
+        let mut joint = StageJoint::start_changed(script, 0.0);
+        let mut pose = JointPose::default();
+        joint.tick(&nodes.data, 1.0, &mut pose).unwrap();
+        for tick in 0..600 {
+            assert_eq!(
+                objects
+                    .get(asset)
+                    .unwrap()
+                    .pose(g::ITEM_ROOT)
+                    .unwrap()
+                    .translate,
+                pose.translate,
+                "Bumper {i} at {tick}"
+            );
+            objects.item_play(&pack, asset, 0);
+            joint.tick(&nodes.data, 1.0, &mut pose).unwrap();
+        }
+    }
+}
+
+#[test]
 fn bonus3_ground_data_matches_the_rom() {
     let Some(path) = std::env::var_os("SSB64_ROM") else {
         return;
