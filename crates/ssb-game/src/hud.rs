@@ -34,8 +34,8 @@ pub const CPU_COLOR: usize = 4;
 /// the scale of 1: where `ifCommonPlayerDamageInitInterface` puts a `w` by
 /// `h` emblem, truncated to whole pixels. It is drawn first, whether or not
 /// the digits show.
-pub fn emblem_origin(player: usize, w: u16, h: u16) -> (f32, f32) {
-    let x = (POSITION_X[player] as f32 - f32::from(w) * 0.5) + 3.0;
+pub fn emblem_origin(pos_x: i32, w: u16, h: u16) -> (f32, f32) {
+    let x = (pos_x as f32 - f32::from(w) * 0.5) + 3.0;
     let y = (POSITION_Y as f32 - f32::from(h) * 0.5) - 3.0;
     (x as i32 as f32, y as i32 as f32)
 }
@@ -50,13 +50,13 @@ const STOCK_ICON_X: i32 = -24;
 /// ten apart, up to six. More than six switches to digits, which no VS
 /// menu setting reaches and is not ported.
 pub fn stock_icons(
-    player: usize,
+    pos_x: i32,
     stocks: i8,
     single: bool,
     w: u16,
     h: u16,
 ) -> impl Iterator<Item = (f32, f32)> {
-    let base_x = POSITION_X[player] + STOCK_ICON_X;
+    let base_x = pos_x + STOCK_ICON_X;
     let y = ((POSITION_Y - (f32::from(h) * 0.5) as i32) - 20) as f32;
     let count = if stocks < 0 {
         0
@@ -172,6 +172,10 @@ pub struct DamageDisplay {
     pub break_anim_frame: u8,
     pub dead_stopupdate_wait: u8,
     pub is_show_interface: bool,
+    /// `gIFCommonPlayerInterface.player_pos_x[player]`:
+    /// [`POSITION_X`], or the 1P Game's
+    /// (`sc1PGameSetPlayerInterfacePositions`).
+    pub pos_x: i32,
 }
 
 /// One glyph to draw: `lbCommonPrepSObjDraw` of a digit `SObj`.
@@ -218,6 +222,11 @@ impl DamageDisplay {
     /// `ifCommonPlayerDamageInitInterface` for one player, then its first
     /// `ProcUpdate`.
     pub fn new(player: usize, damage: i32) -> DamageDisplay {
+        Self::at(player, damage, POSITION_X[player])
+    }
+
+    /// [`DamageDisplay::new`] at interface position `pos_x`.
+    pub fn at(player: usize, damage: i32, pos_x: i32) -> DamageDisplay {
         let mut d = DamageDisplay {
             player,
             damage,
@@ -231,6 +240,7 @@ impl DamageDisplay {
             break_anim_frame: 0,
             dead_stopupdate_wait: 180,
             is_show_interface: false,
+            pos_x,
         };
         d.update(damage, false);
         d
@@ -283,7 +293,7 @@ impl DamageDisplay {
             .iter()
             .map(|&d| DIGIT_WIDTHS[usize::from(d)])
             .sum();
-        let mut pos_x = width as f32 * scale * 0.5 + POSITION_X[self.player] as f32;
+        let mut pos_x = width as f32 * scale * 0.5 + self.pos_x as f32;
         if scale > 1.0 && pos_adjust_wait == 0 {
             scale -= 0.05;
             if scale < 1.0 {

@@ -85,6 +85,11 @@ const G_MAP_NODES: u32 = 0x80;
 /// `MPItemWeights *item_weights`: one randomizer weight per common item
 /// kind (`nITKindCommonStart..=nITKindCommonEnd`).
 const G_ITEM_WEIGHTS: u32 = 0x84;
+/// `camera_bound_team_*`, after `alt_warning` (0x88): the 1P Game team
+/// stages' camera bounds (`gmcamera.c`).
+const G_CAMERA_TEAM_BOUNDS: u32 = 0x8A;
+/// `map_bound_team_*`: where a 1P Game enemy dies (`ftcommondead.c`).
+const G_MAP_TEAM_BOUNDS: u32 = 0x92;
 /// `nITKindCommonEnd + 1`.
 pub const ITEM_WEIGHT_COUNT: usize = 20;
 
@@ -167,6 +172,10 @@ pub struct GroundData {
     pub wallpaper: Option<Target>,
     /// `item_weights`, NULL on the bonus stages.
     pub item_weights: Option<[u8; ITEM_WEIGHT_COUNT]>,
+    /// `camera_bound_team_*` and `map_bound_team_*`, as stored; not
+    /// required to be plausible on stages the 1P Game never uses them on.
+    pub camera_team_bounds: Bounds,
+    pub map_team_bounds: Bounds,
 }
 
 fn read_u32(data: &[u8], at: u32) -> Option<u32> {
@@ -319,6 +328,8 @@ pub fn read_ground_data(
         fog_color,
         wallpaper: target(file, base + G_WALLPAPER),
         item_weights: item_weights(file, base),
+        camera_team_bounds: read_bounds(&file.data, base + G_CAMERA_TEAM_BOUNDS)?,
+        map_team_bounds: read_bounds(&file.data, base + G_MAP_TEAM_BOUNDS)?,
     })
 }
 
@@ -352,6 +363,34 @@ pub const VS_GROUND_FILES: [u32; 9] = [
     0x108, // Yamabuki
     0x104, // Inishie
 ];
+
+/// `dMPCollisionGroundFileInfos[..=nGRKindCommonEnd]`: the `GR*Map` file
+/// of every common `GRKind`, the VS stages first, then Beta Dream Land,
+/// the test stage, How to Play and the 1P Game's stages.
+pub const COMMON_GROUND_FILES: [u32; 17] = [
+    0x103, 0x106, 0x105, 0x101, 0x109, 0x107, 0xFF, 0x108, 0x104, // VS
+    0x100, // PupupuSmall
+    0x102, // PupupuTest
+    0x10B, // Explain
+    0x10E, // YosterSmall
+    0x10D, // Metal
+    0x10C, // Zako
+    0x127, // Bonus3
+    0x10A, // Last
+];
+
+/// The 1P Game stages with a wallpaper, by `GRKind`, and their
+/// `ll*MapMapHeader`: Small Yoshi's Island, Meta Crystal, Duel Zone and
+/// Final Destination. Race to the Finish has none.
+pub const ONE_P_WALLPAPER_GROUNDS: [(u8, u32); 4] = [(12, 0x14), (13, 0x14), (14, 0x14), (16, 0)];
+
+/// `GRKind` of a common stage's `GR*Map` file.
+pub fn common_ground_kind(file: u32) -> Option<u8> {
+    COMMON_GROUND_FILES
+        .iter()
+        .position(|&f| f == file)
+        .map(|k| k as u8)
+}
 
 /// `ll*MapMapHeader`: where each VS `GR*Map` file keeps its header.
 pub const MAP_HEADER: u32 = 0x14;
@@ -511,6 +550,42 @@ mod tests {
         });
         let found = find_ground_data(&file, graphs);
         assert_eq!(found[0].map_geometry, Some((255, 0x90)));
+    }
+
+    #[test]
+    fn common_ground_files_extend_the_vs_table() {
+        assert_eq!(COMMON_GROUND_FILES[..9], VS_GROUND_FILES);
+        assert_eq!(common_ground_kind(0x127), Some(15));
+        assert_eq!(common_ground_kind(0x10A), Some(16));
+    }
+
+    #[test]
+    fn team_bounds_match_the_decomp_us_headers() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        // `257_GRZebesMap.c` and the 1P Game's Yoshi's Island.
+        for (id, camera, map) in [
+            (
+                0x101,
+                [4400, -2100, 4000, -4000],
+                [9000, -4200, 9500, -9500],
+            ),
+            (
+                0x10E,
+                [3500, -1000, 2500, -2500],
+                [7500, -4000, 5500, -5500],
+            ),
+        ] {
+            let file = archive.load(id).unwrap();
+            let g = read_ground_data(&file, 0x14, |_, _| true).unwrap();
+            let b = |b: Bounds| [b.top, b.bottom, b.right, b.left];
+            assert_eq!(b(g.camera_team_bounds), camera, "file {id:#x}");
+            assert_eq!(b(g.map_team_bounds), map, "file {id:#x}");
+        }
     }
 
     #[test]

@@ -365,7 +365,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // discovered. No layout change.
 // 93 adds the 1P Game select's sprites (files 23, 24, 25 and 33) and the
 // Training card through `GateMan2PLUT` to `...4PLUT`. No layout change.
-pub const VERSION: u32 = 93;
+// 94 gives `StageDesc` the 1P Game's `camera_bound_team_*` and
+// `map_bound_team_*` (RE-450).
+pub const VERSION: u32 = 94;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1570,13 +1572,18 @@ pub struct StageDesc {
     /// `MPGroundData.item_weights`, `None` where the pointer is NULL
     /// (`VERSION` 84, RE-433).
     pub item_weights: Option<[u8; crate::stage::ITEM_WEIGHT_COUNT]>,
+    /// `MPGroundData.camera_bound_team_*`: the camera's bounds around a 1P
+    /// Game enemy (`VERSION` 94, RE-450).
+    pub team_camera: Extent,
+    /// `MPGroundData.map_bound_team_*`: a 1P Game enemy's blast zone.
+    pub team_bounds: Extent,
 }
 
 impl StageDesc {
     /// `16 + 16 + 8 + 8 + 16 + 8 + 28 + 4 + 15`, padded to 120, then the
     /// fog colour padded to 124, then the 20 item weights and their
-    /// presence byte, padded to 148.
-    pub const SIZE: usize = 148;
+    /// presence byte, padded to 148, then the two team extents.
+    pub const SIZE: usize = 164;
     pub const NO_LAYER: u32 = u32::MAX;
 }
 
@@ -2932,6 +2939,8 @@ impl PackWriter {
             emblem_colors: ground.emblem_colors,
             fog_color: ground.fog_color,
             item_weights: ground.item_weights,
+            team_camera: extent(ground.camera_team_bounds),
+            team_bounds: extent(ground.map_team_bounds),
         });
         (self.stages.len() - 1) as u32
     }
@@ -3232,6 +3241,11 @@ impl PackWriter {
             out.push(0);
             out.extend_from_slice(&s.item_weights.unwrap_or_default());
             out.extend_from_slice(&[u8::from(s.item_weights.is_some()), 0, 0, 0]);
+            for e in [s.team_camera, s.team_bounds] {
+                for v in [e.top, e.bottom, e.right, e.left] {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+            }
         }
         for l in &self.lines {
             out.extend_from_slice(&l.first_vertex.to_le_bytes());
@@ -4193,6 +4207,8 @@ impl<'a> Pack<'a> {
             ],
             item_weights: (self.data[at + 144] != 0)
                 .then(|| core::array::from_fn(|k| self.data[at + 124 + k])),
+            team_camera: extent_at(self.data, at + 148),
+            team_bounds: extent_at(self.data, at + 156),
         })
     }
 
@@ -5895,6 +5911,18 @@ mod tests {
             fog_color: [0x10, 0x20, 0x30],
             wallpaper: None,
             item_weights: None,
+            camera_team_bounds: crate::stage::Bounds {
+                top: 1200,
+                bottom: -900,
+                right: 1700,
+                left: -1800,
+            },
+            map_team_bounds: crate::stage::Bounds {
+                top: 9000,
+                bottom: -4200,
+                right: 9500,
+                left: -9400,
+            },
         };
 
         let v = |vertex_id, x, y, flags| V {
@@ -5977,6 +6005,8 @@ mod tests {
         assert_eq!((s.source_file, s.source_offset), (104, 0x14));
         assert_eq!(s.bgm_id, 0x11);
         assert_eq!(s.camera.top, 1600);
+        assert_eq!((s.team_camera.bottom, s.team_camera.left), (-900, -1800));
+        assert_eq!((s.team_bounds.top, s.team_bounds.left), (9000, -9400));
         assert_eq!(s.camera.left, -2400);
         assert_eq!(s.bounds.bottom, -1500);
         assert_eq!(s.emblem_colors[1], [0, 0, 0xFF]);

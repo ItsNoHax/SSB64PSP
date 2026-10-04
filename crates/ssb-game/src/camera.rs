@@ -97,6 +97,10 @@ pub struct Interest {
     /// `nFTCameraModeDeadUp`: `target_pos` is already
     /// `gmCameraSetDeadUpStarPosition`'s, which replaces the bounds clamp.
     pub dead_up: bool,
+    /// A 1P Game enemy (`is_spgame_enemy`): `gmCameraSetTeamBoundsPosition`
+    /// clamps it to `camera_bound_team_*` in every camera mode, including
+    /// DeadUp, instead of the stage bounds.
+    pub team_bounds: Option<Bounds>,
 }
 
 /// The real camera's own smoothly-updated state -- one `CObj` plus
@@ -184,6 +188,7 @@ impl Camera {
                 zoom_range: 1.0,
                 idle_zoomed_out: false,
                 dead_up: false,
+                team_bounds: None,
             }],
             bounds,
             light_angle_z_radians,
@@ -329,7 +334,9 @@ fn calculate_interest(interests: &[Interest], bounds: Bounds) -> (Vec3, f32, f32
     let (mut gm_left, mut gm_right, mut gm_bottom, mut gm_top) =
         (65536.0f32, -65536.0f32, 65536.0f32, -65536.0f32);
     for interest in interests {
-        let target_pos = if interest.dead_up {
+        let target_pos = if let Some(team) = interest.team_bounds {
+            team.clamp(interest.target_pos)
+        } else if interest.dead_up {
             interest.target_pos
         } else {
             bounds.clamp(interest.target_pos)
@@ -648,6 +655,7 @@ mod tests {
                 zoom_range: 1.0,
                 idle_zoomed_out: false,
                 dead_up: false,
+                team_bounds: None,
             }],
             bounds,
             0.03,
@@ -674,12 +682,43 @@ mod tests {
         let star = calculate_interest(
             &[Interest {
                 dead_up: true,
+                team_bounds: None,
                 ..above
             }],
             bounds,
         )
         .0;
         assert!(star.y > clamped.y);
+    }
+
+    #[test]
+    fn a_team_enemy_clamps_to_the_team_bounds_even_when_dead_up() {
+        let bounds = Bounds {
+            top: 2000.0,
+            bottom: -2000.0,
+            left: -3000.0,
+            right: 3000.0,
+        };
+        let team = Bounds {
+            top: 1000.0,
+            bottom: -1000.0,
+            left: -1500.0,
+            right: 1500.0,
+        };
+        let at = |pos| Interest {
+            target_pos: pos,
+            zoom_frame: 1.0,
+            zoom_range: 1.0,
+            ..Interest::default()
+        };
+        let enemy = |pos| Interest {
+            team_bounds: Some(team),
+            dead_up: true,
+            ..at(pos)
+        };
+        let far = Vec3::new(2600.0, 2600.0, 0.0);
+        let want = calculate_interest(&[at(Vec3::new(1500.0, 1000.0, 0.0))], bounds);
+        assert_eq!(calculate_interest(&[enemy(far)], bounds), want);
     }
 
     #[test]
@@ -698,6 +737,7 @@ mod tests {
                 zoom_range: 1.0,
                 idle_zoomed_out: false,
                 dead_up: false,
+                team_bounds: None,
             },
             Interest {
                 target_pos: Vec3::new(1000.0, 250.0, 0.0),
@@ -706,6 +746,7 @@ mod tests {
                 zoom_range: 1.0,
                 idle_zoomed_out: false,
                 dead_up: false,
+                team_bounds: None,
             },
         ];
         let (interest, hz, vt) = calculate_interest(&interests, bounds);
@@ -740,6 +781,7 @@ mod tests {
                 zoom_range: 1.0,
                 idle_zoomed_out: true,
                 dead_up: false,
+                team_bounds: None,
             },
             Interest {
                 target_pos: Vec3::new(-1397.0, 1054.0, 0.0),
@@ -748,6 +790,7 @@ mod tests {
                 zoom_range: 1.0,
                 idle_zoomed_out: true,
                 dead_up: false,
+                team_bounds: None,
             },
         ];
         let mut camera = Camera::default();

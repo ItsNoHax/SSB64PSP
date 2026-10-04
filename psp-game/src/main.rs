@@ -23,6 +23,7 @@
 // The asset pack is loaded into a heap buffer; `psp` provides the allocator.
 extern crate alloc;
 
+mod campaign;
 mod capture;
 mod play;
 mod player_screen;
@@ -75,6 +76,7 @@ const VS_SHIELD_SET_OFF_TICK: u64 = 885;
 
 const fn capture_ticks(scene: GameScene) -> u64 {
     match scene {
+        GameScene::OnePGame => 600,
         // Training starts at tick 8; C-Up at 13 enters jumpsquat, and this
         // lands in the rising portion of Mario's real button jump while the
         // dummy is still on Dream Land's main floor.
@@ -391,6 +393,13 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
+    if scene == GameScene::OnePGame {
+        return match tick {
+            4 | 10 | 34 | 166 => N64Buttons(N64Buttons::A),
+            74 => N64Buttons(N64Buttons::START),
+            _ => N64Buttons(0),
+        };
+    }
     if scene == GameScene::TrainingInterface {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
@@ -736,6 +745,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
+    if scene == GameScene::OnePGame {
+        return if (14..=24).contains(&tick) { 80 } else { 0 };
+    }
     if scene == GameScene::LinkBomb && tick == 300 {
         return 80;
     }
@@ -870,6 +882,14 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
+    if scene == GameScene::OnePGame {
+        // Two separate menu-down edges, then carry the puck to Kirby.
+        return match tick {
+            6 | 8 => -80,
+            14..=30 => 80,
+            _ => 0,
+        };
+    }
     if scene == GameScene::TrainingInterface {
         return if tick == 62 || tick == 64 || tick == 66 {
             -80
@@ -1893,6 +1913,9 @@ enum Screen {
     /// The 1P Game character select (`mnPlayers1PGame`,
     /// `ssb_game::players_1p`).
     Players1P,
+    /// The 1P Game's own scenes between battles: intro, continue and stage
+    /// clear (`campaign`, RE-450). Its battles run on [`Screen::Training`].
+    Campaign,
     /// Training Mode: a real stage and a real, physics-ticked fighter now
     /// draw here (`draw_training`) -- no combat yet, see
     /// `plans/gameplay/F1.md` acceptance criteria 5-7 for what still has to
@@ -2240,7 +2263,8 @@ fn capture_route(scene: GameScene) -> CaptureRoute {
         GameScene::StageSelect | GameScene::StageSelectView | GameScene::StageSelectYoshi => {
             CaptureRoute::StageSelect
         }
-        GameScene::FighterSelect
+        GameScene::OnePGame
+        | GameScene::FighterSelect
         | GameScene::VsModeMenu
         | GameScene::VsPlayers
         | GameScene::TrainingSelect
@@ -2429,17 +2453,23 @@ unsafe fn training_frame(
     stage_ctl: &mut ssb_game::stage::Stage,
     controller: ControllerState,
     pressed: N64Buttons,
-    mut battle: Option<&mut ssb_game::battle::Battle>,
+    battle: &mut Option<ssb_game::battle::Battle>,
     damage_hud: &mut Hud,
     // Training's menu locks both fighters' control
     // (`ftParamLockPlayerControl`) while the world runs on.
     menu_locked: bool,
+    // A 1P Game battle's campaign: it collects the falls and replaces the
+    // enemies (RE-450).
+    mut campaign: Option<&mut ssb_game::spgame::session::Session>,
 ) -> bool {
     use ssb_game::battle::{Frame, GameStatus};
-    if let Some(b) = battle.as_deref_mut() {
+    if let Some(b) = battle.as_mut() {
         pause_frame(p, stage_index, pl, dummies, damage_hud, b, controller, pressed);
     }
     let frame = battle.as_mut().map(|b| (b.begin_frame(), b.status));
+    if let (Some(c), Some((_, status))) = (campaign.as_deref_mut(), frame) {
+        campaign::update_game(c, status, &pl.fighter);
+    }
     // `ifCommonBattlePauseRestoreInterfaceAll`: the camera eases back while
     // the pause menu stays, then the turn is restored and the world runs.
     if let (Some(pause), Some((f, status))) = (damage_hud.pause, frame) {
@@ -2520,14 +2550,27 @@ unsafe fn training_frame(
     }
     damage_hud.ko.tick();
     for f in scenes(pl, dummies).into_iter().flatten() {
-        let fell = report_falls(battle.as_deref_mut(), &mut f.fighter);
+        let fell = match campaign.as_deref_mut() {
+            Some(c) => campaign::collect_fall(c, battle, &mut f.fighter),
+            None => report_falls(battle.as_mut(), &mut f.fighter),
+        };
         if let Some(hud) = damage_hud.damage.get_mut(usize::from(f.fighter.port)) {
             update_damage_hud(hud, &f.fighter, fell, started);
         }
     }
-    if let Some(b) = battle.as_deref() {
-        tick_countdown(p, damage_hud, b);
-        entry_frame(p, pl, dummies, damage_hud, b);
+    match (campaign, p.stage(stage_index)) {
+        (Some(c), Some(stage)) => {
+            campaign::replace_enemies(p, &stage, dummies, c, battle, damage_hud);
+            if let (Some(b), Some(wait)) = (battle.as_ref(), c.wait.as_ref()) {
+                campaign::entry_frame(p, &stage, pl, dummies, damage_hud, b, wait);
+            }
+        }
+        _ => {
+            if let Some(b) = battle.as_ref() {
+                tick_countdown(p, damage_hud, b);
+                entry_frame(p, pl, dummies, damage_hud, b);
+            }
+        }
     }
     false
 }
@@ -2585,6 +2628,9 @@ struct Hud {
     particles: alloc::boxed::Box<ssb_game::particle::Particles>,
     /// The effect manager's structs (`efManagerInitEffects`).
     effects: ssb_game::effect::Effects,
+    /// The 1P Game's `players[].is_single_stockicon`; `None` follows the
+    /// VS battle's rule.
+    single_stock: Option<[bool; 4]>,
     /// The display effects' players ([`draw_display_effects`]).
     display_scratch: alloc::boxed::Box<DisplayScratch>,
 }
@@ -2689,6 +2735,7 @@ impl Hud {
             ko: ssb_game::ko::KoEffects::default(),
             particles: new_particles(),
             effects: ssb_game::effect::Effects::new(0),
+            single_stock: None,
             display_scratch: new_display_scratch(),
         }
     }
@@ -2817,6 +2864,7 @@ fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     world.damage_hud.particles.reset();
     world.damage_hud.effects = ssb_game::effect::Effects::new(0);
     world.damage_hud.entry_focus = None;
+    world.damage_hud.single_stock = None;
     world.damage_hud.players = ssb_game::player_interface::Interface::default();
     let mut damage = [0; 4];
     if let Some(pl) = world.play_state.as_ref() {
@@ -3109,7 +3157,7 @@ fn enter_training(
     world.weapons.team_rules = team_rules;
     world.items.team_rules = team_rules;
     let Some((p, index, stage)) = pack.and_then(|p| {
-        let index = ssb_psp_runtime::scene::vs_stage_index(p, gkind)?;
+        let index = ssb_psp_runtime::scene::common_stage_index(p, gkind)?;
         Some((p, index, p.stage(index)?))
     }) else {
         return 0;
@@ -3270,6 +3318,7 @@ unsafe fn draw_frame(
             s.players_vs_fighters.as_deref(),
         ),
         Screen::Players1P => draw_players_1p(gpu, pack.as_ref(), draw_state, s),
+        Screen::Campaign => campaign::draw(gpu, s),
         Screen::StageSelect => match (pack.as_ref(), s.stage_select_layer.as_ref()) {
             // `gcMakeDefaultCameraGObj`'s black clear, then the cameras.
             (Some(p), Some(layer)) => {
@@ -3459,6 +3508,7 @@ unsafe fn session_frame(
                 players_vs_frame(s, pack, capture_scene.is_some(), sim_frame_index, controller, pressed);
             }
             Screen::Players1P => players_1p_frame(s, pack.as_ref(), controller, pressed),
+            Screen::Campaign => campaign::frame(s, pack.as_ref(), controller, pressed),
             Screen::FighterSelect => {
                 use ssb_game::fighter_select::Outcome;
                 match fighter_select_frame(s, pack.as_ref(), controller, pressed) {
@@ -3585,9 +3635,10 @@ unsafe fn session_frame(
                 &mut s.stage_ctl,
                 controller,
                 pressed,
-                s.vs_battle.as_mut(),
+                &mut s.vs_battle,
                 &mut s.damage_hud,
                 s.training_paused,
+                s.campaign.as_mut().and_then(|c| c.frontend.session.as_deref_mut()),
             );
             if let Some(m) = s.training_menu.as_mut() {
                 m.tick_processes();
@@ -3616,7 +3667,9 @@ unsafe fn session_frame(
         }
         // `scVSBattleStartScene`: a tied time battle goes to sudden
         // death on the same stage, then to the results.
-        if vs_done {
+        if vs_done && s.campaign.is_some() {
+            campaign::finish_battle(s, pack.as_ref());
+        } else if vs_done {
             let sudden = s.vs_battle
                 .as_ref()
                 .filter(|b| !b.is_sudden_death && !b.is_reset)
@@ -3790,6 +3843,8 @@ struct Session {
     /// `gSCManagerBackupData`'s 1P fields. There is no save data yet, so
     /// they live for the session.
     backup: ssb_game::spgame::Backup,
+    /// The running 1P Game, between the select's START and its end.
+    campaign: Option<campaign::Campaign>,
     /// The stage select's presentation (RE-419), made with the select.
     stage_select_layer: Option<ssb_game::stage_select_layer::Layer>,
     /// The select's preview model and its clocks, on the heap.
@@ -3933,6 +3988,7 @@ unsafe fn run() -> ! {
         one_p_scene: ssb_game::players_1p::SceneData::default(),
         spgame_scene: ssb_game::spgame::SceneData::default(),
         backup: ssb_game::spgame::Backup::default(),
+        campaign: None,
         stage_select_layer: None,
         stage_preview: stage_screen::start(),
         wallpaper: ssb_game::wallpaper::Wallpaper::make(ssb_game::wallpaper::Kind::Static),
@@ -4052,6 +4108,9 @@ unsafe fn run() -> ! {
         #[cfg(feature = "headless_capture")]
         if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
             emit_headless_screenshot();
+            if capture_scene == Some(GameScene::OnePGame) {
+                campaign::log_capture(&s, sim_frame_index);
+            }
             // One line for the capture log: whether the scripted attack
             // landed is not always visible (RE-351).
             if let (Some(dummy), Some(player)) = (s.dummies[0].as_deref(), s.play_state.as_ref()) {
@@ -4281,17 +4340,20 @@ fn players_1p_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: Contro
     players_screen::tick_1p(pack, select, fighters);
     let (saved, next) = match outcome {
         None => return,
-        // `nSCKind1PGame`: the campaign's scenes are not wired yet, so
-        // the menu stands in for them as it does for the 1P mode menu.
-        Some(Outcome::Proceed(saved)) => (saved, Screen::Menu),
-        Some(Outcome::Back(saved)) => (saved, Screen::Menu),
-        Some(Outcome::Timeout(saved)) => (saved, Screen::Intro),
+        // `nSCKind1PGame`: the campaign (RE-450).
+        Some(Outcome::Proceed(saved)) => (saved, None),
+        // The menu stands in for the 1P mode menu.
+        Some(Outcome::Back(saved)) => (saved, Some(Screen::Menu)),
+        Some(Outcome::Timeout(saved)) => (saved, Some(Screen::Intro)),
     };
     saved.apply(&mut s.spgame_scene, &mut s.backup);
     s.one_p_scene = saved.scene;
     s.players_1p = None;
     s.players_1p_fighters = None;
-    s.screen = next;
+    match next {
+        Some(screen) => s.screen = screen,
+        None => campaign::start(s),
+    }
 }
 
 /// `mnPlayers1PGame`'s frame over the black of its default camera:
@@ -6655,7 +6717,7 @@ unsafe fn draw_training(
     );
     draw_damage_hud(p, draw_state, &damage_hud.damage, emblems, stage_index);
     if let Some(b) = battle {
-        draw_stocks(p, draw_state, b, fighters.map(|x| x.map(|x| &x.fighter)));
+        draw_stocks(p, draw_state, b, damage_hud, fighters.map(|x| x.map(|x| &x.fighter)));
         draw_timer(p, draw_state, b);
     }
     if let Some(c) = damage_hud.countdown.as_ref() {
@@ -6874,7 +6936,7 @@ fn draw_damage_hud(
         };
         let emblem = p.fighter_sprite(kind as u8, ssb_rom::pack::SpriteDesc::ROLE_EMBLEM, 0);
         if let (Some(sprite), Some(colors)) = (emblem, emblem_colors) {
-            let (x, y) = ssb_game::hud::emblem_origin(d.player, sprite.width, sprite.height);
+            let (x, y) = ssb_game::hud::emblem_origin(d.pos_x, sprite.width, sprite.height);
             let [r, g, b] = colors[color];
             unsafe {
                 let d = meshdraw::SObjDraw {
@@ -6978,15 +7040,21 @@ fn draw_stocks(
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
     b: &ssb_game::battle::Battle,
+    hud: &Hud,
     fighters: [Option<&ssb_game::fighter::Fighter>; 4],
 ) {
-    let single = b.rule == ssb_game::battle::Rule::Time;
     for f in fighters.into_iter().flatten() {
         let player = usize::from(f.port);
+        // `players[].is_single_stockicon`: a VS time battle's, or the 1P
+        // Game's per player.
+        let single = hud
+            .single_stock
+            .map_or(b.rule == ssb_game::battle::Rule::Time, |s| s[player]);
+        let pos_x = hud.damage[player].pos_x;
         let Some(icon) = p.fighter_sprite(f.kind as u8, ssb_rom::pack::SpriteDesc::ROLE_STOCK, f.costume) else {
             continue;
         };
-        for (x, y) in ssb_game::hud::stock_icons(player, f.stocks, single, icon.width, icon.height) {
+        for (x, y) in ssb_game::hud::stock_icons(pos_x, f.stocks, single, icon.width, icon.height) {
             draw_plain(p, draw_state, &icon, x, y);
         }
     }

@@ -215,6 +215,16 @@ pub fn appear_set_status(f: &mut Fighter) {
     f.dead.camera_mode = crate::dead::CameraMode::Entry;
 }
 
+/// `ftCommonAppearSetPosition`: a 1P Game team member drops in from
+/// halfway between `camera_bound_top` and `map_bound_top`, the camera
+/// holding its start point until Go.
+pub fn appear_set_position(f: &mut Fighter, camera_bound_top: f32, map_bound_top: f32) {
+    f.dead.camera_mode = crate::dead::CameraMode::Entry;
+    f.entry.pos = f.pos;
+    f.pos.y = (camera_bound_top + map_bound_top) * 0.5;
+    status::set_fall(f);
+}
+
 /// `ifCommonAnnounceGoSetStatus`'s camera half: the entry's camera mode
 /// ends.
 pub fn on_go(f: &mut Fighter) {

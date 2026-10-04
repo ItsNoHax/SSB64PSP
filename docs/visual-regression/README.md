@@ -63,6 +63,15 @@ The old per-scene features (`regression_capture_scene3`,
 builds never read the file and keep running until the runner's timeout, as
 before. Interactive and physical-PSP builds read no scene file.
 
+### Campaign diagnostic capture
+
+`onepgame` scripts 1P select START, intro and the real Link battle (RE-450).
+Tick 600 shows GO and the two-player HUD; `onepgame@65` checks the
+select outline, `@275` the red countdown, and `@700`/`@1200` the live
+timer. These are diagnostics; the 195-scene golden manifest is unchanged.
+Two tick-600 captures are byte-identical. See
+[RE-450](../evidence/re/RE-450.md) for verification limits.
+
 ### Single captures
 
 ```bash

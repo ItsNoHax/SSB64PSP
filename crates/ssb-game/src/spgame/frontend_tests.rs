@@ -638,3 +638,22 @@ fn frontend_stage_clear_commits_ledger_once_before_next_intro() {
     assert_eq!(s.data.stage(), Some(Stage::Yoshi));
     assert_eq!(s.manager.scene, Scene::Intro);
 }
+
+#[test]
+fn host_select_campaign_starts_at_the_first_intro() {
+    let backup = Backup::default();
+    let data = SceneData {
+        fkind: FighterKind::Fox,
+        costume: costume_common_id(FighterKind::Fox, 1),
+        ..Default::default()
+    };
+    let f = frontend::Frontend::campaign(data, &backup);
+    let frontend::Screen::Intro(intro) = &f.screen else {
+        panic!("intro");
+    };
+    assert_eq!((intro.stage, intro.player), (Stage::Link, FighterKind::Fox));
+    let session = f.session.as_ref().unwrap();
+    assert_eq!(session.manager.scene, Scene::Intro);
+    assert_eq!(f.selection.kind, Some(FighterKind::Fox));
+    assert_eq!(f.selection.stocks, backup.spgame_stock_count);
+}

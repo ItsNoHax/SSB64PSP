@@ -126,8 +126,8 @@ fn hidden_until_shown_and_gone_after_the_last_stock() {
 #[test]
 fn the_emblem_sits_behind_the_digits() {
     // Mario's 27x25 emblem for player 1: 55 - 13.5 + 3, 210 - 12.5 - 3.
-    assert_eq!(emblem_origin(0, 27, 25), (44.0, 194.0));
-    assert_eq!(emblem_origin(1, 30, 24), (113.0, 195.0));
+    assert_eq!(emblem_origin(POSITION_X[0], 27, 25), (44.0, 194.0));
+    assert_eq!(emblem_origin(POSITION_X[1], 30, 24), (113.0, 195.0));
 }
 
 #[test]
@@ -150,10 +150,10 @@ fn timer_glyphs_are_centred_on_their_slots() {
 #[test]
 fn stock_icons_sit_above_the_damage() {
     // A time battle: one 8x10 icon, 55 - 24 - 4 across, 210 - 5 - 20 down.
-    let single: Vec<_> = stock_icons(0, 2, true, 8, 10).collect();
+    let single: Vec<_> = stock_icons(POSITION_X[0], 2, true, 8, 10).collect();
     assert_eq!(single, [(27.0, 185.0)]);
     // Three stocks left in a stock battle: four icons, ten apart.
-    let multi: Vec<_> = stock_icons(1, 3, false, 8, 10).collect();
+    let multi: Vec<_> = stock_icons(POSITION_X[1], 3, false, 8, 10).collect();
     assert_eq!(
         multi,
         [
@@ -164,6 +164,6 @@ fn stock_icons_sit_above_the_damage() {
         ]
     );
     // Sudden death's last stock shows one icon; out of stocks, none.
-    assert_eq!(stock_icons(0, 0, false, 8, 10).count(), 1);
-    assert_eq!(stock_icons(0, -1, true, 8, 10).count(), 0);
+    assert_eq!(stock_icons(POSITION_X[0], 0, false, 8, 10).count(), 1);
+    assert_eq!(stock_icons(POSITION_X[0], -1, true, 8, 10).count(), 0);
 }

@@ -1051,6 +1051,7 @@ unsafe fn run() -> ! {
                                                 // state after 120 ticks.
                                                 idle_zoomed_out: true,
                                                 dead_up: false,
+                                                team_bounds: None,
                                             }
                                         })
                                 })

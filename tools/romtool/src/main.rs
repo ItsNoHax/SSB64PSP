@@ -6370,20 +6370,22 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         writer.add_sprite(sprite_desc(file, at, &s, texture, 0, role, gkind));
         Ok(())
     };
-    for (gkind, &map_id) in ssb_rom::stage::VS_GROUND_FILES.iter().enumerate() {
+    let vs = (0u8..).zip(ssb_rom::stage::VS_GROUND_FILES.map(|_| ssb_rom::stage::MAP_HEADER));
+    for (gkind, header) in vs.chain(ssb_rom::stage::ONE_P_WALLPAPER_GROUNDS) {
+        let map_id = ssb_rom::stage::COMMON_GROUND_FILES[usize::from(gkind)];
         let map = loaded
             .files
             .get(map_id as usize)
             .and_then(Option::as_ref)
             .ok_or_else(|| format!("stage file {map_id} missing"))?;
-        let (file, at) = ssb_rom::stage::wallpaper(map, ssb_rom::stage::MAP_HEADER)
+        let (file, at) = ssb_rom::stage::wallpaper(map, header)
             .ok_or_else(|| format!("stage file {map_id}: no wallpaper"))?;
         add_wallpaper(
             &mut writer,
             file,
             at,
             ssb_rom::pack::SpriteDesc::ROLE_WALLPAPER,
-            gkind as u8,
+            gkind,
         )?;
         sprites += 1;
     }

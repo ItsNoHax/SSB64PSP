@@ -200,3 +200,16 @@ fn falcon_draws_before_the_stage_while_far_on_a_leftward_entry() {
     appear_set_status(&mut r);
     assert!(!r.entry.is_link_1);
 }
+
+#[test]
+fn a_team_member_drops_in_from_between_the_camera_and_blast_tops() {
+    let mut f = standing(FighterKind::Yoshi, Facing::Left);
+    entry_set_status(&mut f);
+    let start = f.pos;
+    appear_set_position(&mut f, 3500.0, 7500.0);
+    assert_eq!(f.status.status, AnyStatus::Common(Status::Fall));
+    assert_eq!(f.pos.y, 5500.0);
+    assert_eq!(f.entry.pos, start);
+    assert_eq!(f.dead.camera_mode, crate::dead::CameraMode::Entry);
+    assert!(!f.is_invisible && !f.dead.is_ghost);
+}

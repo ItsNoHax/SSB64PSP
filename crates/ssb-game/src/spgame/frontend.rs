@@ -35,6 +35,27 @@ impl Frontend {
         }
     }
 
+    /// A campaign begun by a host-drawn select (`players_1p`), which has
+    /// already applied its scene and backup data. Starts at the manager's
+    /// first requested scene, as a ready Proceed does.
+    pub fn campaign(data: super::SceneData, backup: &Backup) -> Self {
+        let selection = select::Selection {
+            player: data.player,
+            kind: Some(data.fkind),
+            costume: data.costume,
+            time_limit: data.time_limit,
+            difficulty: backup.spgame_difficulty,
+            stocks: backup.spgame_stock_count,
+        };
+        let mut frontend = Self {
+            screen: Screen::Host(Scene::Startup),
+            session: Some(alloc::boxed::Box::new(Session::new(data, backup))),
+            selection,
+        };
+        frontend.sync(backup);
+        frontend
+    }
+
     /// Called after the host consumes a Battle/BonusStage/other scene.
     /// This creates the new presentation once, on that scene boundary.
     pub fn sync(&mut self, backup: &Backup) -> Scene {

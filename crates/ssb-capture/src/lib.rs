@@ -282,6 +282,8 @@ impl fmt::Display for ViewerScene {
 /// One `psp-game` scripted Training scene.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameScene {
+    /// `onepgame`: select START, intro, then the campaign's Link battle.
+    OnePGame,
     /// `training`: jump, jab, freeze.
     Training,
     /// `fireball`: Training plus Mario's neutral B.
@@ -540,7 +542,8 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 107] = [
+    pub const ALL: [GameScene; 108] = [
+        GameScene::OnePGame,
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -652,6 +655,7 @@ impl GameScene {
 
     pub const fn name(self) -> &'static str {
         match self {
+            GameScene::OnePGame => "onepgame",
             GameScene::Training => "training",
             GameScene::Fireball => "fireball",
             GameScene::Superjump => "superjump",

@@ -103,6 +103,24 @@ fn deinterleave(data: &mut [u8], row_bytes: usize, rows: usize, unit: usize) {
     }
 }
 
+/// `G_IM_SIZ_4c`, which the ROM's own sprite loader expands: two bits
+/// per texel.
+const G_IM_SIZ_4C: u8 = 4;
+
+/// `lbCommonDecodeBitmapSiz4b`: each byte's four 2-bit texels, most
+/// significant first, become 4-bit ones through
+/// `lbCommonGetBitmapDecodeNibble`'s levels 0, 5, 10 and 15.
+fn expand_siz_4c(packed: &[u8]) -> Vec<u8> {
+    const LEVEL: [u8; 4] = [0x0, 0x5, 0xA, 0xF];
+    let mut out = Vec::with_capacity(packed.len() * 2);
+    for &b in packed {
+        let texel = |shift: u8| LEVEL[usize::from((b >> shift) & 3)];
+        out.push(texel(6) << 4 | texel(4));
+        out.push(texel(2) << 4 | texel(0));
+    }
+    out
+}
+
 /// Decodes the `Sprite` at byte offset `at` of `file`.
 pub fn decode(file: &File, at: u32) -> Result<Sprite, SpriteError> {
     decode_with(file, at, None)
@@ -128,7 +146,13 @@ fn decode_with(file: &File, at: u32, tlut_override: Option<&[u16]>) -> Result<Sp
     let bmheight = be16(d, base + 44)?.max(0) as usize;
     let (fmt, siz) = (d[base + 48], d[base + 49]);
     let format = Format::from_raw(fmt).ok_or(SpriteError::BadFormat(fmt, siz))?;
-    let size = BitSize::from_raw(siz).ok_or(SpriteError::BadFormat(fmt, siz))?;
+    // `G_IM_SIZ_4c`: `lbCommonMakeSObjForGObj` expands it to 4b first.
+    let packed_4c = siz == G_IM_SIZ_4C;
+    let size = if packed_4c {
+        BitSize::Bits4
+    } else {
+        BitSize::from_raw(siz).ok_or(SpriteError::BadFormat(fmt, siz))?
+    };
     let tlut = if let Some(t) = tlut_override {
         Some(t.to_vec())
     } else if format == Format::Ci {
@@ -150,10 +174,18 @@ fn decode_with(file: &File, at: u32, tlut_override: Option<&[u16]>) -> Result<Sp
         let rows = be16(d, bm + 12)?.max(0) as usize;
         let buf = pointer(file, (bm + 8) as u32)? as usize;
         let row_bytes = (width_img * size.bits()).div_ceil(8);
-        let mut texels = d
-            .get(buf..buf + row_bytes * rows)
-            .ok_or(SpriteError::Truncated)?
-            .to_vec();
+        let mut texels = if packed_4c {
+            // `res = (width_img / 2) * actualHeight` bytes of 4b texels
+            // from `res / 2` bytes of 2b ones.
+            let res = (width_img / 2) * rows;
+            let mut out = expand_siz_4c(d.get(buf..buf + res / 2).ok_or(SpriteError::Truncated)?);
+            out.resize(row_bytes * rows, 0);
+            out
+        } else {
+            d.get(buf..buf + row_bytes * rows)
+                .ok_or(SpriteError::Truncated)?
+                .to_vec()
+        };
         match size {
             BitSize::Bits32 if attr & SP_TEXSHUF != 0 => {
                 deinterleave(&mut texels, row_bytes, rows, 16)
@@ -650,6 +682,12 @@ mod tests {
     }
 
     #[test]
+    fn siz_4c_expands_like_lb_common_decode_bitmap_siz_4b() {
+        // 0b11_10_01_00: texels 15, 10, 5, 0.
+        assert_eq!(expand_siz_4c(&[0xE4, 0x1B]), [0xFA, 0x50, 0x05, 0xAF]);
+    }
+
+    #[test]
     fn the_1p_select_sprites_decode() {
         let Some(path) = std::env::var_os("SSB64_ROM") else {
             return;
@@ -898,6 +936,13 @@ mod tests {
                 (s.width, s.height, s.format, s.size),
                 (300, 220, Format::Rgba, BitSize::Bits16)
             );
+        }
+        for (gkind, header) in crate::stage::ONE_P_WALLPAPER_GROUNDS {
+            let id = crate::stage::COMMON_GROUND_FILES[usize::from(gkind)];
+            let map = archive.load(id).unwrap();
+            let (file, at) = crate::stage::wallpaper(&map, header).unwrap();
+            let s = decode(&archive.load(file).unwrap(), at).unwrap();
+            assert_eq!((s.width, s.height), (300, 220), "file {id:#x}");
         }
         let mut files = Vec::new();
         for id in crate::stage::VS_GROUND_FILES {

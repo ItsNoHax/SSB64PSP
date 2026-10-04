@@ -7,57 +7,49 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
   All 12 fighters have host moveset ports. Shared machinery and PSP game
   integration remain before `P2` is complete.
-- **Completed batch:** live 1P battle-stat callbacks: authored attack
-  flags, projectile/item/throw attribution, damage and item totals,
-  shield breaks, hazard and KO records; session collectors sample percent
-  separately after healing/rebirth (RE-449). `mnPlayers1PGame`'s select
-  (`ssb_game::players_1p`) is drawn in `psp-game` from the menu's third
-  entry; pack v93 adds its sprites. START on that select saves its data
-  and returns to the menu until the session is wired.
-- **Next gameplay batch:** PSP 1P frontend/session binding: session
-  wiring from the select's START, authored intro/continue/stage-clear
-  draws and actual campaign battles. Use `spgame::Frontend`, real 1P setup
-  and Session's `collect_fighter`/`collect_fall` before results. Bonus/Boss
-  requests need their own controllers; never substitute VS battles or
-  skip them.
+- **Completed batch:** PSP 1P campaign session binding (RE-450). START on
+  the existing 1P select runs the portable frontend, real campaign setup,
+  collectors, entry schedule, team replacement and results boundary.
+  Link, Yoshi Team and Fox are supported; Break the Targets then blocks.
+  Unsupported scenes and missing special-fighter assets block explicitly.
+  Intro/continue/stage-clear drawing is interim; authored drawing remains.
+- **Next gameplay batch:** authored 1P intro, continue and stage-clear
+  presentation over the portable controllers. Pack their authored assets
+  and bind scene models/cameras without changing process timing.
 - **Parallel track:** rendering fidelity (`P5`), not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
-| Live 1P battle statistics | Callback amounts, attack identity, ownership, item/KO records and percent sync; 22 new regressions | RE-449 |
-| Portable 1P frontend controllers | Selection/settings, process clocks and intro/continue/stage-clear transitions | RE-448 |
-| 1P select | Logic and presentation ported; sprite offsets ROM-checked on the user's machine | — |
+| PSP 1P session binding | Campaign routing, setup, entry/team bounds, collectors, replacements and HUD positions | RE-450 |
+| Live 1P battle statistics | Callback identity, ownership, damage/item/KO records and percent sync | RE-449 |
+| Portable 1P frontend controllers | Selection/settings, clocks and presentation transitions | RE-448 |
 
 ## Verification baseline
 
-- All 1,873 workspace tests pass at RE-449 (absolute SSB64_ROM, pinned
-  1.98.0, one thread), including all 497 ROM status-flag rows. Clippy with
-  warnings denied, workspace rustfmt and documentation validation pass.
-- Pack v93 is not rebuilt yet. Pack v92: 35,821,024 bytes, SHA-256
-  `4b84c7d713dc732d5dac53a584f2605d5256976ec0560fd5478e43e84d245e35`.
+- All 1,898 workspace tests pass (absolute `SSB64_ROM`, Rust 1.98.0,
+  one thread), including 1,094 game tests. Clippy with warnings denied,
+  workspace rustfmt and documentation validation pass.
+- Pack v94 rebuilt: 37,146,848 bytes, SHA-256
+  `465538fdf77087c747eaae06697427b337967bd2327515598fbe376266ea4e94`.
   No ROM-derived assets committed.
 - Both production PSP release builds pass (nightly-2026-08-26).
   Game has no warnings; viewer retains five existing warnings.
-- Production PPSSPPHeadless 20 s software startup smoke exits 0 at its
-  expected timeout without reported faults. Startup only; no live 1P,
-  physical-PSP or N64-equivalence proof.
-- No goldens re-run. Last targeted game goldens: RE-444 (33 scenes);
-  larger game baseline RE-443; full viewer matrix RE-438. Manifest: 195.
-- Stack last measured RE-440; production ELF last measured RE-443.
+- PPSSPPHeadless software `onepgame` reaches Link's battle; two tick-600
+  captures are pixel-identical. Select outline, countdown and later live
+  timer inspected. Production 20 s startup smoke exits 0 at its expected
+  timeout without reported faults. No physical-PSP or N64-equivalence proof.
+- Golden manifest remains 195; no full matrix or existing goldens re-run.
+  Stack last measured RE-440; production ELF last measured RE-443.
   Physical PSP last checked RE-361 (PSP-2000, 6.61 ARK, pack v43).
 
 ## Blockers and remaining scope
 
-- 1P's select runs, but the campaign is not playable on PSP yet. PSP
-  frontend drawing/session wiring, bonus-stage controllers, Master Hand,
-  boss wallpaper/fade, ending and challenger/message presentation, saves
-  and unlock writes remain.
-- Audio and rumble remain; Training/magnifier sounds await the backend.
-- Event-aligned N64 evidence remains for CPU item behavior, VS entry
-  focus, item damage/trajectory, thrown-body hits, pipes and stage effects.
-- Lit primitives without authored light colours retain baked fallback
-  shade. Bumper palette, Star flicker and bomb flashes lack N64 traces.
-- Fighter jostling and selects' spotlight remain. Yoshi's pre-existing
-  double-jump apex hang persists. Performance/VRAM residency belong to P5.
+- Authored campaign presentation, bonus-stage controllers, Master Hand,
+  special fighters, boss wallpaper/fade, ending/challenger/message scenes,
+  saves/unlocks, select reconciliation, shade/magnify-ignore and 1P tags.
+  Details live in `TODO.md`; later-stage PSP behavior remains unvalidated.
+- Audio/rumble and event-aligned N64 evidence remain. Selects' spotlight,
+  fighter jostling and Yoshi's double-jump apex hang remain. Rendering
+  fidelity, performance and VRAM residency belong to P5.
