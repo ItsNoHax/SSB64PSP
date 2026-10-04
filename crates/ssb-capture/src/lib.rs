@@ -284,6 +284,12 @@ impl fmt::Display for ViewerScene {
 pub enum GameScene {
     /// `onepgame`: select START, intro, then the campaign's Link battle.
     OnePGame,
+    /// Authored campaign presentation fixtures after the real 1P select.
+    OnePIntro,
+    OnePBonus,
+    OnePContinue,
+    OnePRetry,
+    OnePClear,
     /// `training`: jump, jab, freeze.
     Training,
     /// `fireball`: Training plus Mario's neutral B.
@@ -542,8 +548,13 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 108] = [
+    pub const ALL: [GameScene; 113] = [
         GameScene::OnePGame,
+        GameScene::OnePIntro,
+        GameScene::OnePBonus,
+        GameScene::OnePContinue,
+        GameScene::OnePRetry,
+        GameScene::OnePClear,
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -656,6 +667,11 @@ impl GameScene {
     pub const fn name(self) -> &'static str {
         match self {
             GameScene::OnePGame => "onepgame",
+            GameScene::OnePIntro => "onepintro",
+            GameScene::OnePBonus => "onepbonus",
+            GameScene::OnePContinue => "onepcontinue",
+            GameScene::OnePRetry => "onepretry",
+            GameScene::OnePClear => "onepclear",
             GameScene::Training => "training",
             GameScene::Fireball => "fireball",
             GameScene::Superjump => "superjump",

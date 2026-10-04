@@ -9,10 +9,11 @@
 //! (the bonus stages, Master Hand, the ending, challengers, unlock
 //! messages, or a battle whose fighters the pack lacks) stops the campaign
 //! with an explicit blocked screen: it is never replaced by a VS battle or
-//! skipped. The presentation screens draw interim placeholders until their
-//! authored sprites are packed.
+//! skipped. Authored presentation is bound by campaign_screen.
 
 use super::*;
+#[path = "campaign_screen.rs"]
+mod presentation;
 use ssb_game::spgame::{
     self,
     frontend::{Event, Frontend, Screen as Scene1P},
@@ -30,6 +31,7 @@ pub(crate) struct Campaign {
     tic: u32,
     /// Why the campaign stopped, at a scene it cannot run yet.
     blocked: Option<Blocked>,
+    presentation: presentation::Presentation,
 }
 
 /// A scene the host cannot run yet.
@@ -55,6 +57,7 @@ pub(crate) fn start(s: &mut Session) {
         frontend: alloc::boxed::Box::new(Frontend::campaign(s.spgame_scene.clone(), &s.backup)),
         tic: 0,
         blocked: None,
+        presentation: presentation::Presentation::default(),
     });
     s.screen = Screen::Campaign;
 }
@@ -72,7 +75,12 @@ fn leave(s: &mut Session, next: Screen) {
 /// One frame of the campaign's own scenes: the intro, continue and
 /// stage-clear controllers, or the blocked screen.
 #[inline(never)]
-pub(crate) fn frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: ControllerState, pressed: N64Buttons) {
+pub(crate) fn frame(
+    s: &mut Session,
+    pack: Option<&Pack<'_>>,
+    controller: ControllerState,
+    pressed: N64Buttons,
+) {
     let Some(c) = s.campaign.as_mut() else {
         s.screen = Screen::Menu;
         return;
@@ -86,13 +94,17 @@ pub(crate) fn frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: Contro
     let before = core::mem::discriminant(&c.frontend.screen);
     c.tic += 1;
     let mut host = None;
-    c.frontend.tick(c.tic, controller, pressed, &mut s.backup, |e| {
-        if let Event::Host(scene) = e {
-            host = Some(scene);
-        }
-    });
+    c.frontend
+        .tick(c.tic, controller, pressed, &mut s.backup, |e| {
+            if let Event::Host(scene) = e {
+                host = Some(scene);
+            }
+        });
     if core::mem::discriminant(&c.frontend.screen) != before {
         c.tic = 0;
+    }
+    if let (Some(p), Some(sp)) = (pack, c.frontend.session.as_ref()) {
+        c.presentation.tick(p, &c.frontend.screen, sp);
     }
     if let Some(scene) = host {
         on_host(s, pack, scene);
@@ -129,7 +141,8 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     sp.start_battle(&s.backup);
     let p = pack.ok_or(Blocked::Assets(stage))?;
     let gkind = sp.state.gkind;
-    let index = ssb_psp_runtime::scene::common_stage_index(p, gkind).ok_or(Blocked::Assets(stage))?;
+    let index =
+        ssb_psp_runtime::scene::common_stage_index(p, gkind).ok_or(Blocked::Assets(stage))?;
     let desc = p.stage(index).ok_or(Blocked::Assets(stage))?;
     let game = sp.game.as_ref().expect("active game");
     // The pad drives the scene's player on port 0.
@@ -174,7 +187,8 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     s.scene_gkind = gkind;
     // `itManagerInitItems` with the 1P stage's switches.
     s.items.normal_switches = switches;
-    s.items.normal_drops = ssb_game::item::normal::DropWeights::new(switches, desc.item_weights.as_ref());
+    s.items.normal_drops =
+        ssb_game::item::normal::DropWeights::new(switches, desc.item_weights.as_ref());
     let team_bounds = ssb_game::status::BlastZone {
         top: f32::from(desc.team_bounds.top),
         bottom: f32::from(desc.team_bounds.bottom),
@@ -250,7 +264,9 @@ pub(crate) fn log_capture(s: &Session, tick: u64) {
         "campaign tick={} scene={} stage={:?} clock={:?} countdown={:?} cpu={:?}\n",
         tick,
         state,
-        s.campaign.as_ref().and_then(|c| c.frontend.session.as_ref().map(|sp| sp.data.stage)),
+        s.campaign
+            .as_ref()
+            .and_then(|c| c.frontend.session.as_ref().map(|sp| sp.data.stage)),
         s.vs_battle.as_ref().map(|b| b.clock()),
         s.damage_hud.countdown.is_some(),
         s.dummies[0].as_ref().map(|d| d.computer.behavior),
@@ -265,7 +281,11 @@ pub(crate) fn log_capture(s: &Session, tick: u64) {
 }
 
 /// `sc1PGameFuncUpdate`'s Go and Set checks, after the battle's frame.
-pub(crate) fn update_game(sp: &mut Campaign1P, status: ssb_game::battle::GameStatus, player: &ssb_game::fighter::Fighter) {
+pub(crate) fn update_game(
+    sp: &mut Campaign1P,
+    status: ssb_game::battle::GameStatus,
+    player: &ssb_game::fighter::Fighter,
+) {
     if let Some(game) = sp.game.as_mut() {
         game.update(status, || {
             let end = match player.status.status {
@@ -338,7 +358,9 @@ pub(crate) fn entry_frame(
         let f = scenes_ref(pl, dummies)[usize::from(port)]?;
         let mut pos = f.fighter.pos;
         pos.y += f.cam_offset_y;
-        let dist = p.fighter(f.fighter.kind as u32).map_or(1000.0, |d| d.closeup_camera_zoom);
+        let dist = p
+            .fighter(f.fighter.kind as u32)
+            .map_or(1000.0, |d| d.closeup_camera_zoom);
         Some((pos, dist))
     });
 }
@@ -382,13 +404,20 @@ pub(crate) fn replace_enemies(
         right: f32::from(stage.team_bounds.right),
     };
     for slot in dummies.iter_mut() {
-        let Some(d) = slot.as_deref_mut() else { continue };
+        let Some(d) = slot.as_deref_mut() else {
+            continue;
+        };
         if !d.fighter.dead.enemy_next_pending {
             continue;
         }
         let port = d.fighter.port;
         core::mem::swap(&mut sp.battle, battle);
-        let next = sp.next_enemy(port, &points, f32::from(stage.camera.top), f32::from(stage.bounds.top));
+        let next = sp.next_enemy(
+            port,
+            &points,
+            f32::from(stage.camera.top),
+            f32::from(stage.bounds.top),
+        );
         core::mem::swap(&mut sp.battle, battle);
         match next {
             spgame::setup::NextEnemy::Sleep => {
@@ -396,7 +425,8 @@ pub(crate) fn replace_enemies(
                 ssb_game::dead::set_sleep(&mut d.fighter);
             }
             spgame::setup::NextEnemy::Spawn(e) => {
-                let mut n = play::Dummy::at_position(p, stage, e.fkind, e.costume, e.level, e.pos, port);
+                let mut n =
+                    play::Dummy::at_position(p, stage, e.fkind, e.costume, e.level, e.pos, port);
                 n.fighter.facing = e.facing;
                 n.fighter.team = d.fighter.team;
                 let detail = if e.detail_high {
@@ -450,65 +480,66 @@ pub(crate) fn finish_battle(s: &mut Session, pack: Option<&Pack<'_>>) {
     }
 }
 
-/// Interim presentation of the campaign's own scenes: the authored intro,
-/// continue and stage-clear sprites are not packed yet. Each scene shows
-/// its state with plain rectangles; a blocked scene shows red.
+/// Authored presentation; unsupported scene requests keep an explicit marker.
 #[inline(never)]
-pub(crate) fn draw(gpu: &mut Gpu, s: &Session) {
+pub(crate) unsafe fn draw(
+    gpu: &mut Gpu,
+    pack: Option<&Pack<'_>>,
+    st: &mut meshdraw::DrawState,
+    s: &mut Session,
+) {
+    if let (Some(c), Some(p)) = (s.campaign.as_mut(), pack) {
+        if let Some(sp) = c.frontend.session.as_ref() {
+            c.presentation.prepare_draw(gpu, p, &c.frontend.screen, sp);
+        }
+    }
     gpu.set_viewport_fullscreen();
     gpu.begin_frame(Some(BG_RESULTS));
-    let Some(c) = s.campaign.as_ref() else { return };
-    let stage = c.frontend.session.as_ref().map_or(0, |sp| sp.data.stage);
-    match c.blocked {
-        // The scene with no controller yet, marked under its slot in the
-        // manager's scene list.
-        Some(Blocked::Scene(scene)) => {
-            gpu.draw_rect(40, 100, 440, 172, Color::rgba(160, 24, 24, 255));
-            let x = 40 + scene as i32 * 30;
-            gpu.draw_rect(x, 180, x + 24, 196, ENTRY_SELECTED);
-        }
-        // The stage whose fighters or ground the pack lacks.
-        Some(Blocked::Assets(stage)) => {
-            gpu.draw_rect(40, 100, 440, 172, Color::rgba(200, 120, 0, 255));
-            let x = 40 + stage as i32 * 29;
-            gpu.draw_rect(x, 180, x + 24, 196, ENTRY_SELECTED);
-        }
-        None => {}
-    }
-    // The campaign's fourteen stages, the current one lit.
-    for i in 0..14u8 {
-        let x = 40 + i32::from(i) * 29;
-        let color = if i == stage {
-            ENTRY_SELECTED
-        } else if i < stage {
-            ENTRY_ENABLED
-        } else {
-            ENTRY_DISABLED
+    let Some(c) = s.campaign.as_mut() else { return };
+    if let Some(blocked) = c.blocked {
+        let (color, x) = match blocked {
+            Blocked::Scene(scene) => (Color::rgba(160, 24, 24, 255), 40 + scene as i32 * 30),
+            Blocked::Assets(stage) => (Color::rgba(200, 120, 0, 255), 40 + stage as i32 * 29),
         };
-        gpu.draw_rect(x, 40, x + 24, 56, color);
+        gpu.draw_rect(40, 100, 440, 172, color);
+        gpu.draw_rect(x, 180, x + 24, 196, ENTRY_SELECTED);
+        return;
     }
-    match &c.frontend.screen {
-        Scene1P::Continue(scene) if scene.options_shown => {
-            let (yes, no) = if scene.yes {
-                (ENTRY_SELECTED, ENTRY_ENABLED)
-            } else {
-                (ENTRY_ENABLED, ENTRY_SELECTED)
-            };
-            gpu.draw_rect(120, 180, 220, 210, yes);
-            gpu.draw_rect(260, 180, 360, 210, no);
+    let (Some(p), Some(sp)) = (pack, c.frontend.session.as_ref()) else {
+        return;
+    };
+    c.presentation.draw(gpu, p, st, &mut c.frontend.screen, sp);
+}
+
+/// Deterministic drawing fixtures, not evidence of winning/losing a battle.
+/// Selection still runs normally; only the requested campaign overlay is seeded.
+#[cfg(feature = "headless_capture")]
+pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
+    let Some(c) = s.campaign.as_mut() else { return };
+    let sp = c.frontend.session.as_mut().expect("campaign");
+    match scene {
+        GameScene::OnePIntro => {
+            sp.data.stage = Stage::Yoshi as u8;
+            sp.manager.scene = Scene::Intro;
         }
-        Scene1P::StageClear(scene) => {
-            let rows = scene
-                .rows
-                .iter()
-                .flatten()
-                .filter(|r| r.reveal_tic < scene.total_tics)
-                .count();
-            for row in 0..rows {
-                let y = 80 + row as i32 * 16;
-                gpu.draw_rect(120, y, 360, y + 10, ENTRY_ENABLED);
-            }
+        GameScene::OnePBonus => {
+            sp.data.stage = Stage::Bonus1 as u8;
+            sp.manager.scene = Scene::Intro;
         }
-        _ => {}
+        GameScene::OnePContinue | GameScene::OnePRetry => {
+            sp.data.score = 123456;
+            sp.manager.scene = Scene::Continue;
+        }
+        GameScene::OnePClear => {
+            sp.data.score = 123456;
+            sp.data.time_remain = 250;
+            sp.state.players[sp.data.player as usize].total_damage_given = 321;
+            sp.data.bonus_get_mask = [0x0018_0005, 0, 0];
+            sp.manager.scene = Scene::StageClear;
+        }
+        _ => return,
     }
+    c.frontend.sync(&s.backup);
+    c.tic = 0;
+    s.screen = Screen::Campaign;
 }

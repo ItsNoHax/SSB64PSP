@@ -72,6 +72,24 @@ timer. These are diagnostics; the 195-scene golden manifest is unchanged.
 Two tick-600 captures are byte-identical. See
 [RE-450](../evidence/re/RE-450.md) for verification limits.
 
+RE-451 adds presentation fixtures after the same real select. At global
+105 they seed the requested scene; these do not simulate a real win/loss.
+
+| Spec | Captured display |
+|---|---|
+| `onepgame@145` | Real Link intro with authored fighter cards |
+| `onepintro` (150) | Yoshi intro/team cards |
+| `onepbonus` (150) | Break the Targets intro picture |
+| `onepcontinue` (240) | Continue options and dropped figure |
+| `onepretry` (320), `onepretry@470` | A at 270 accepts; stand-up clip, score halved |
+| `onepcontinue@2600` | Automatic Game Over |
+| `onepclear@150`, `onepclear` (270) | Timer/damage page, then bonus rows and dimmed snapshot |
+
+Intro, Continue and stage-clear repeat captures are pixel-identical.
+The stage-clear fixture copies the preceding intro frame. These remain
+diagnostics outside the golden manifest; see
+[RE-451](../evidence/re/RE-451.md) for source/ROM checks and limits.
+
 ### Single captures
 
 ```bash

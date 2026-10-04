@@ -24,6 +24,7 @@ pub const BITMAP_SIZE: usize = 16;
 
 /// `SP_TRANSPARENT`: drawn with `G_RM_XLU_SURF`.
 pub const SP_TRANSPARENT: u16 = 0x0001;
+pub const SP_FASTCOPY: u16 = 0x0020;
 /// `SP_TEXSHUF`: 32-bit strips are stored shuffled.
 pub const SP_TEXSHUF: u16 = 0x0200;
 
@@ -388,7 +389,7 @@ pub const GAME_MODES: SpriteFile = SpriteFile {
 pub const DIGITS: SpriteFile = SpriteFile {
     file: 36,
     offsets: &[
-        0x68, 0x118, 0x1C8, 0x278, 0x328, 0x3D8, 0x488, 0x538, 0x5E8, 0x698, 0x710,
+        0x68, 0x118, 0x1C8, 0x278, 0x328, 0x3D8, 0x488, 0x538, 0x5E8, 0x698, 0x710, 0x828, 0x8D8,
     ],
 };
 
@@ -565,6 +566,14 @@ pub const SP_CLOUD: u16 = 0x1000;
 
 /// Every sprite file the pack converts.
 pub const FILES: &[SpriteFile] = &[
+    crate::campaign::INTRO,
+    crate::campaign::NAMES,
+    crate::campaign::PICTURES,
+    crate::campaign::PLATFORM_PICTURE,
+    crate::campaign::CONTINUE,
+    crate::campaign::CLEAR,
+    crate::campaign::SCORE,
+    crate::campaign::OBJECTIVES,
     PLAYER_DAMAGE,
     GAME_STATUS,
     TIMER,

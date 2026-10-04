@@ -158,8 +158,13 @@ pub const SLOT_WIN2: usize = 615;
 pub const SLOT_WIN3: usize = 616;
 pub const SLOT_WIN4: usize = 617;
 pub const SLOT_LOSE: usize = 618;
+/// Continue and campaign intro demo rows 9, 10, 13 and 14 (RE-451).
+pub const SLOT_FIGURE_DROPPED: usize = 619;
+pub const SLOT_FIGURE_STAND: usize = 620;
+pub const SLOT_INTRO_L: usize = 621;
+pub const SLOT_INTRO_R: usize = 622;
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 619;
+pub const SLOT_COUNT: usize = 623;
 
 /// Whether a slot holds a 32-bit `AnimJoint` clip rather than a figatree:
 /// the seven entry slots only.
@@ -660,7 +665,8 @@ mod tests {
             missing,
             10950 + 15 * (SLOT_REBIRTH_DOWN - SLOT_WALL_DAMAGE) + 106 + 10 + 15 * 66 + 1 + 27 * 7
                 - 62
-                + 14 * 5,
+                + 14 * 5
+                + 49,
             "Twelve ported fighters have character, grab, reaction and move slots"
         );
         for a in &FIGHTER_ANIMS[..12] {
@@ -698,8 +704,8 @@ mod tests {
         assert_eq!(SLOT_NAMES[SLOT_WIN1 - 1], "AppearWait");
         assert_eq!(SLOT_NAMES[SLOT_WIN1], "Win1");
         assert_eq!(SLOT_NAMES[SLOT_WIN4], "Win4");
-        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "Lose");
-        assert_eq!(SLOT_LOSE, SLOT_COUNT - 1);
+        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "IntroR");
+        assert_eq!(SLOT_LOSE, SLOT_FIGURE_DROPPED - 1);
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")

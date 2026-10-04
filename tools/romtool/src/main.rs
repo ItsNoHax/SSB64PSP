@@ -6241,6 +6241,25 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let shadow = fighter_shadow_texture(&shadow_file.data, swizzle)?;
     writer.add_fighter_shadow_texture(&shadow);
 
+    // sc1PIntro cameras play once, with no update process. Preserve their
+    // ten scalar tracks in native format; eye/at overrides remain in the host.
+    let intro = archive.load(ssb_rom::campaign::INTRO.file)?;
+    let mut cameras = Vec::new();
+    for offset in ssb_rom::campaign::CAMERA_OFFSETS {
+        let values = ssb_rom::campaign::initial_camera(&intro.data, offset)?;
+        for value in values {
+            cameras.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    writer.add_anim(
+        ssb_rom::pack::AnimDesc::EFFECT,
+        ssb_rom::campaign::CAMERA_SLOT,
+        ssb_rom::campaign::INTRO.file,
+        0,
+        &cameras,
+        &[],
+    );
+
     // `SObj` sprites (RE-392): each through its format's combiner, in 8888,
     // clamped on both axes like a texture rectangle.
     let mut sprites = 0usize;

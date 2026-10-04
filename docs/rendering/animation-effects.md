@@ -136,8 +136,12 @@ Remaining: team-colour shadows and moving map groups (match runtime).
 Status: complete for renderer scope.
 
 LB-transition capture and all 11 wipes (RE-146–149); 1P wallpaper capture and
-its `SObj` sprite draw (RE-190–193). Results-screen and match-transition
-triggers belong to gameplay.
+its `SObj` sprite draw (RE-190–193). The campaign stage-clear trigger samples
+the last completed active picture before opening its first result frame,
+then redraws at (10,10)–(310,230) with 0x80 dimming (RE-451). The capture
+uses native PSP 8888 pixel centers and GE bilinear sampling; it does not
+quantize to N64 5551. The viewer diagnostic retains its separate rectangle.
+Match-transition triggers belong to gameplay.
 
 The 26 segment-0x01 texture references are `sLBTransitionPhotoHeap`, a
 runtime framebuffer copy, not ROM data (RE-055).

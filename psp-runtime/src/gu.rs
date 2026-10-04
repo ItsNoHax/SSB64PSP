@@ -534,6 +534,27 @@ impl Gpu {
         self.wallpaper_capture_requested = true;
     }
 
+    /// sc1PStageClearCopyFramebufToWallpaper: sample the last completed
+    /// display's N64 active picture before opening the result frame.
+    /// Store 300x220 native texels; drawing maps them back to the same crop.
+    pub fn capture_campaign_wallpaper(&self) {
+        debug_assert!(!self.frame_open);
+        unsafe {
+            let src = if self.draw_is_fbp0 { self.fbp1_direct } else { self.fbp0_direct } as *const u32;
+            let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+            let dst = core::ptr::addr_of_mut!(WALLPAPER_PHOTO.0) as *mut u32;
+            for y in 0..WALLPAPER_PHOTO_HEIGHT {
+                let sy = ((y as f32 + 10.5) * vh as f32 / 240.0) as usize;
+                for x in 0..WALLPAPER_PHOTO_WIDTH {
+                    let sx = vx as usize + ((x as f32 + 10.5) * vw as f32 / 320.0) as usize;
+                    dst.add(y * WALLPAPER_PHOTO_STRIDE + x).write(src.add(sy * BUF_WIDTH as usize + sx).read());
+                }
+            }
+            let bytes = wallpaper_photo_data();
+            sys::sceKernelDcacheWritebackRange(bytes.as_ptr() as *const c_void, bytes.len() as u32);
+        }
+    }
+
     /// Copies the top-left 300x220 corner of whichever buffer just finished
     /// rendering into [`WALLPAPER_PHOTO`]. Same safety contract, pillarbox
     /// offset reasoning and draw-buffer selection as
@@ -628,6 +649,21 @@ impl Gpu {
     /// every other GE draw call uses.
     pub unsafe fn draw_wallpaper_sprite(&self) {
         let (vx, _, _, _) = ssb_engine::coord::pillarboxed_viewport();
+        self.draw_wallpaper_rect([vx as i16, 0, (vx as usize + WALLPAPER_PHOTO_WIDTH) as i16, WALLPAPER_PHOTO_HEIGHT as i16]);
+    }
+
+    /// Draw the campaign snapshot at sc1PStageClearMakeWallpaper's (10,10).
+    pub unsafe fn draw_campaign_wallpaper(&self) {
+        let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+        self.draw_wallpaper_rect([
+            (vx as f32 + 10.0 * vw as f32 / 320.0) as i16,
+            (10.0 * vh as f32 / 240.0) as i16,
+            (vx as f32 + 310.0 * vw as f32 / 320.0) as i16,
+            (230.0 * vh as f32 / 240.0) as i16,
+        ]);
+    }
+
+    unsafe fn draw_wallpaper_rect(&self, [x0,y0,x1,y1]: [i16;4]) {
         let data = wallpaper_photo_data();
 
         sys::sceGuEnable(GuState::Texture2D);
@@ -662,10 +698,6 @@ impl Gpu {
         const PRIM_COLOR: u32 = 0xFF80_8080;
         let u1 = WALLPAPER_PHOTO_WIDTH as f32;
         let v1 = WALLPAPER_PHOTO_HEIGHT as f32;
-        let x0 = vx as i16;
-        let y0 = 0i16;
-        let x1 = (vx as usize + WALLPAPER_PHOTO_WIDTH) as i16;
-        let y1 = WALLPAPER_PHOTO_HEIGHT as i16;
 
         let verts = [
             SpriteVertex {
@@ -687,12 +719,14 @@ impl Gpu {
                 _pad: 0,
             },
         ];
+        let dynamic = sys::sceGuGetMemory(core::mem::size_of_val(&verts) as i32) as *mut SpriteVertex;
+        core::ptr::copy_nonoverlapping(verts.as_ptr(), dynamic, verts.len());
         sys::sceGuDrawArray(
             GuPrimitive::Sprites,
             SpriteVertex::FORMAT,
             2,
             core::ptr::null(),
-            verts.as_ptr() as *const c_void,
+            dynamic as *const c_void,
         );
 
         sys::sceGuEnable(GuState::DepthTest);

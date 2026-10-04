@@ -367,7 +367,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 // Training card through `GateMan2PLUT` to `...4PLUT`. No layout change.
 // 94 gives `StageDesc` the 1P Game's `camera_bound_team_*` and
 // `map_bound_team_*` (RE-450).
-pub const VERSION: u32 = 94;
+// 95 adds authored campaign sprites, demo clips and initial camera payloads.
+pub const VERSION: u32 = 95;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

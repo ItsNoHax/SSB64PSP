@@ -14,6 +14,7 @@ extern crate alloc;
 pub mod anim;
 pub mod anim_color;
 pub mod archive;
+pub mod campaign;
 pub mod collision;
 pub mod dl;
 pub mod effect;

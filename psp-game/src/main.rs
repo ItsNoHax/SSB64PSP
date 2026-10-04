@@ -77,6 +77,11 @@ const VS_SHIELD_SET_OFF_TICK: u64 = 885;
 const fn capture_ticks(scene: GameScene) -> u64 {
     match scene {
         GameScene::OnePGame => 600,
+        GameScene::OnePIntro => 150,
+        GameScene::OnePBonus => 150,
+        GameScene::OnePContinue => 240,
+        GameScene::OnePRetry => 320,
+        GameScene::OnePClear => 270,
         // Training starts at tick 8; C-Up at 13 enters jumpsquat, and this
         // lands in the rising portion of Mario's real button jump while the
         // dummy is still on Dream Land's main floor.
@@ -393,9 +398,11 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
-    if scene == GameScene::OnePGame {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         return match tick {
-            4 | 10 | 34 | 166 => N64Buttons(N64Buttons::A),
+            4 | 10 | 34 => N64Buttons(N64Buttons::A),
+            166 if scene == GameScene::OnePGame => N64Buttons(N64Buttons::A),
+            270 if scene == GameScene::OnePRetry => N64Buttons(N64Buttons::A),
             74 => N64Buttons(N64Buttons::START),
             _ => N64Buttons(0),
         };
@@ -745,7 +752,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
-    if scene == GameScene::OnePGame {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         return if (14..=24).contains(&tick) { 80 } else { 0 };
     }
     if scene == GameScene::LinkBomb && tick == 300 {
@@ -882,7 +889,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
-    if scene == GameScene::OnePGame {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         // Two separate menu-down edges, then carry the puck to Kirby.
         return match tick {
             6 | 8 => -80,
@@ -2264,6 +2271,7 @@ fn capture_route(scene: GameScene) -> CaptureRoute {
             CaptureRoute::StageSelect
         }
         GameScene::OnePGame
+        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear
         | GameScene::FighterSelect
         | GameScene::VsModeMenu
         | GameScene::VsPlayers
@@ -3318,7 +3326,7 @@ unsafe fn draw_frame(
             s.players_vs_fighters.as_deref(),
         ),
         Screen::Players1P => draw_players_1p(gpu, pack.as_ref(), draw_state, s),
-        Screen::Campaign => campaign::draw(gpu, s),
+        Screen::Campaign => campaign::draw(gpu, pack.as_ref(), draw_state, s),
         Screen::StageSelect => match (pack.as_ref(), s.stage_select_layer.as_ref()) {
             // `gcMakeDefaultCameraGObj`'s black clear, then the cameras.
             (Some(p), Some(layer)) => {
@@ -4065,6 +4073,13 @@ unsafe fn run() -> ! {
                 controller,
                 pressed,
             );
+        }
+
+        #[cfg(feature = "headless_capture")]
+        if sim_frame_index == 105 {
+            if let Some(scene) = capture_scene {
+                campaign::capture_fixture(&mut s, scene);
+            }
         }
 
         // RE-429: a diagnostic camera makes the otherwise offscreen Bumper
