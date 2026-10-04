@@ -381,9 +381,11 @@ pub struct Vars {
     /// The attack display list replaced the model (Onix, Blastoise,
     /// Hitmonlee).
     pub attack_dl: bool,
-    /// Drawn translucent on DL link 18 (Snorlax's fall, Starmie,
-    /// Hitmonlee).
+    /// Moved to DL link 18. Starmie/Hitmonlee keep their normal display
+    /// callback; Snorlax's fall and Clefairy's imitations use AA_XLU_SURF.
     pub xlu: bool,
+    /// The visual clock when gcMoveGObjDLHead last moved this item.
+    pub link18_at: u16,
     // `ITMonsterItemVarsIwark`.
     pub rock_spawn_remain: u16,
     pub rock_spawn_wait: i32,
@@ -539,6 +541,7 @@ where
     }
     if matches!(k, Kind::Starmie | Kind::Sawamura) {
         v(&mut item).xlu = true;
+        item.vars.mmonster.link18_at = item.anim_ticks;
     }
     item
 }
@@ -862,6 +865,7 @@ fn pippi_select(item: &mut Item, ctx: &mut Ctx<'_>) {
     }
     if matches!(as_kind, Kind::Sawamura | Kind::Starmie) {
         v(item).xlu = true;
+        item.vars.mmonster.link18_at = item.anim_ticks;
     }
     if as_kind == Kind::Lizardon {
         item.multi = LIZARDON_LIFETIME;
@@ -1003,6 +1007,7 @@ fn kabigon_fall(item: &mut Item, k: Kind) {
     item.scale.y = size;
     item.attack.size *= size;
     v(item).xlu = true;
+    item.vars.mmonster.link18_at = item.anim_ticks;
     set(item, Status::KabigonFall);
 }
 

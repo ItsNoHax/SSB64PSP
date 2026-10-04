@@ -480,13 +480,37 @@ fn a_bumper_hit_in_the_air_flies_back() {
 
 #[test]
 fn a_poke_ball_opens_on_its_second_landing_and_releases_after_30_frames() {
+    #[derive(Default)]
+    struct Rays {
+        made: std::vec::Vec<Vec3>,
+        moved: std::vec::Vec<(u32, Vec3)>,
+    }
+    impl crate::effect::HitEffectSink for Rays {
+        fn make(&mut self, _: &crate::effect::HitEffect) {}
+        fn mball_rays(&mut self, pos: Vec3) -> Option<u32> {
+            self.made.push(pos);
+            Some(42)
+        }
+        fn move_display(&mut self, seq: u32, pos: Vec3) {
+            self.moved.push((seq, pos));
+        }
+    }
+    let mut rays = Rays::default();
     let mut pool = ItemPool::default();
     let slot = resting(&mut pool, 19, 0.0);
     let mut mario = fighter(FighterKind::Mario, 0, 0.0);
     throw(&mut pool, &mut mario, slot, Vec3::new(10.0, 40.0, 0.0));
+    let added = pool.get(slot).unwrap().anim_ticks;
+    assert_eq!(
+        pool.get(slot).unwrap().root_script,
+        Some(RootScript {
+            added,
+            cleared: None
+        })
+    );
     let mut opened = false;
     for _ in 0..200 {
-        tick(&mut pool);
+        pool.tick_with_effects(|| [floor()], None, &[], &mut NoItemAnims, &mut rays);
         if status_of(&pool, slot) == ItemStatus::MBall(mball::Status::Open) {
             opened = true;
             break;
@@ -498,12 +522,20 @@ fn a_poke_ball_opens_on_its_second_landing_and_releases_after_30_frames() {
     assert_eq!(ball.vel_air, Vec3::ZERO);
     assert_eq!(ball.attack.state, AttackState::Off);
     assert!(!ball.attack.can_reflect);
+    assert_eq!(ball.vars.mball_rays, Some(42));
+    assert_eq!(rays.made, [ball.pos]);
+    assert!(rays.moved.is_empty(), "the open init only makes the rays");
+    assert_eq!(ball.root_script.unwrap().cleared, Some(ball.anim_ticks));
     assert_eq!(pool.monster_data, MonsterData::default());
     for _ in 0..mball::SPAWN_WAIT {
-        tick(&mut pool);
+        let pos = pool.get(slot).unwrap().pos;
+        pool.tick_with_effects(|| [floor()], None, &[], &mut NoItemAnims, &mut rays);
         assert!(pool.get(slot).is_some());
+        assert_eq!(rays.moved.last(), Some(&(42, pos)));
     }
-    tick(&mut pool);
+    pool.tick_with_effects(|| [floor()], None, &[], &mut NoItemAnims, &mut rays);
+    assert_eq!(rays.made.len(), 1);
+    assert_eq!(rays.moved.len(), usize::from(mball::SPAWN_WAIT));
     assert!(pool.get(slot).is_none());
     let data = pool.monster_data;
     assert!((MBALL_MONSTER_START..=MBALL_COMMON_END).contains(&data.monster_curr));

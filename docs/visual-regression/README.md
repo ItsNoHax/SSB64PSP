@@ -29,7 +29,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  The manifest currently has 188 scenes; RE-316 measured about 17 s for an
+  The manifest currently has 192 scenes; RE-316 measured about 17 s for an
   earlier full run.
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
@@ -207,6 +207,10 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `starko`) | `f1-training-starko` | `rebirth`'s Mario put in `DeadUpStar` on Dream Land's floor at tick 60, 150 ticks into the flight: a few pixels over the treetop, past the old 10,000-unit far plane | RE-420 |
 | `golden_capture` (`psp-game`, scene `vsresultsemblem`) | `f1-vs-results-emblem` | `vsresults` at results tic 100: the winner's (Kirby, port 2) blue series emblem shrinking and rising over the fading wallpaper, before the text and confetti | RE-420 |
 | `golden_capture` (`psp-game`, scene `shield`) | `f1-training-shield` | Mario's tilted Guard pose on Dream Land; `PPSSPPHeadless --log` confirms the raised shield and posed `YRotN` collision center, and the red player-1 shield bubble around him | RE-367, RE-369, RE-384 |
+| `golden_capture` (`psp-game`, scene `trainingpokemonc@60`) | `f1-training-pokemon-c` | Onix rising and Beedrill's animated wings | RE-443 |
+| `golden_capture` (`psp-game`, scene `trainingpokemonc@210`) | `f1-training-pokemon-fall` | Snorlax's enlarged fall on link 18 under its translucent callback state | RE-443 |
+| `golden_capture` (`psp-game`, scene `trainingpokemonc@240`) | `f1-training-pokemon-rocks` | Onix's textured rock shower and Beedrill swarm | RE-443 |
+| `golden_capture` (`psp-game`, scene `trainingpokemond@120`) | `f1-training-pokemon-d` | Goldeen's material frames, Hitmonlee and Clefairy | RE-443 |
 
 Stage sweep example:
 
@@ -1104,7 +1108,8 @@ through tick 150. Hammer enters its attack motion on pickup.
 All 20 targeted item controls match twice with zero differences (run
 `20261003-192249`). No existing PNG is rebaselined. The manifest has 176
 scenes; the last full matrix remains RE-434's 169/169. Star Rod retains the
-known FlySparks head-0 black squares; Hammer's item warning colour is not
+FlySparks black squares (later fixed by the head-1 CLD correction in
+RE-443); Hammer's item warning colour is not
 drawn. These are PSP output controls, without N64 damage/trajectory or
 physical-PSP equivalence proof. See [RE-436](../evidence/re/RE-436.md).
 
@@ -1169,3 +1174,13 @@ Utility and open Throwable scenes. All 119 game scenes repeat exactly and
 match their final baselines. Runs, pixel deltas and the N64 references
 belong to [RE-442](../evidence/re/RE-442.md). The manifest has 188 scenes;
 no full viewer matrix or physical-PSP run in this batch.
+
+## 2026-10-04 RE-443 Poké Ball and Pokémon presentation
+
+Four new controls cover Onix/Beedrill at tick 60, the rock shower at 240,
+Snorlax Fall at 210, and Goldeen/Hitmonlee/Clefairy at 120. Six existing
+goldens change with the rays, status materials and corrected Scale-X
+effects' head-1 CLD state. All 123 game goldens match and repeat exactly
+(122 together, Fall separately). Pixel deltas and original-game observation
+belong to [RE-443](../evidence/re/RE-443.md). Manifest 192 scenes; no full
+viewer matrix or physical-PSP run this batch.

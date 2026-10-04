@@ -14,6 +14,32 @@ fn runtime() -> (std::boxed::Box<Particles>, Effects) {
     (std::boxed::Box::new(Particles::new()), Effects::new(0))
 }
 
+#[test]
+fn poke_ball_rays_have_no_effect_struct_and_follow_only_their_own_sequence() {
+    let bank = bank(200);
+    let (mut p, mut e) = runtime();
+    let seq = e.mball_rays(Vec3::new(10.0, 20.0, 0.0)).unwrap();
+    assert_eq!(e.used(), 0, "EFDesc lacks EFFECT_FLAG_USERDATA");
+    let pos = Vec3::new(40.0, 50.0, 0.0);
+    e.move_display(seq, pos);
+    assert_eq!(e.displays().next().unwrap().translate, pos);
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    for _ in 1..life::MBALL_RAYS - 1 {
+        rt.frame();
+        assert!(rt.effects.displays().next().is_some());
+    }
+    rt.frame();
+    assert!(rt.effects.displays().next().is_none());
+    let next = rt.effects.mball_rays(Vec3::ZERO).unwrap();
+    assert_ne!(next, seq);
+    rt.effects.move_display(seq, pos);
+    assert_eq!(rt.effects.displays().next().unwrap().translate, Vec3::ZERO);
+}
+
 /// The one live particle's script, on list `link`.
 fn scripts_on(p: &Particles, link: usize) -> std::vec::Vec<u8> {
     p.list(link).map(|(i, _)| i).collect()
@@ -347,6 +373,7 @@ fn display_effects_draw_on_their_desc_links() {
     assert_eq!(K::Slash.dl_link(), 18);
     assert_eq!(K::ShockSmall.dl_link(), 18);
     assert_eq!(K::ImpactWave.dl_link(), 10);
+    assert_eq!(K::MBallRays.dl_link(), 10);
     for k in [
         K::FlyOrbs,
         K::FlySparks,

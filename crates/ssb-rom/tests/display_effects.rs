@@ -28,6 +28,31 @@ fn pack_bytes() -> Option<Vec<u8>> {
     std::fs::read(path).ok()
 }
 
+#[test]
+fn scale_x_effects_draw_on_head_one_under_the_effect_links_cld_state() {
+    use ssb_rom::pack::flags;
+    let Some(bytes) = pack_bytes() else {
+        return;
+    };
+    let p = Pack::open(&bytes).unwrap();
+    for key in [(83, 0x7E80), (83, 0x8FA0), (84, 0x1500)] {
+        let o = (0..p.object_count())
+            .filter_map(|i| p.object(i))
+            .find(|o| (o.source_file, o.source_offset) == key)
+            .unwrap();
+        let m = p.mesh(p.node(o.first_node).unwrap().mesh).unwrap();
+        for pr in (0..m.prim_count).map(|i| p.prim(m.first_prim + i).unwrap()) {
+            assert_ne!(pr.flags & flags::HEAD1, 0, "{key:?}");
+            assert_ne!(pr.flags & flags::ALPHA_BLEND, 0, "{key:?}");
+            assert_eq!(
+                pr.flags & (flags::DEPTH_TEST | flags::DEPTH_WRITE),
+                0,
+                "{key:?}"
+            );
+        }
+    }
+}
+
 /// The play on which a `DObj` tree's `GObj::anim_frame` first reads at or
 /// below zero after creation, counting creation's play as 1.
 fn dobj_life(data: &[u8], scripts: &[u32]) -> u16 {
@@ -128,6 +153,7 @@ fn display_effect_lives_match_the_rom() {
         ("common spark", (83, 0x8FA0), DisplayKind::FlySparks),
         ("metal dust", (83, 0xCAC8), DisplayKind::FlyMDust),
         ("fire spark", (84, 0x2040), DisplayKind::FireSpark),
+        ("Poké Ball rays", (85, 0x0628), DisplayKind::MBallRays),
     ] {
         let (data, scripts) = packed_scripts(&pack, key);
         let n = dobj_life(data, &scripts);

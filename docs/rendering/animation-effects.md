@@ -87,10 +87,18 @@ Poké Ball Pokémon use file 86's trees and maker-specific matrices, with
 packed appear/status joint scripts; camera-relative kind 48 scales X/Z by
 X and Y by Y. Onix, Blastoise and Hitmonlee swap attack display lists.
 Hydro Pump, Smog and Beedrill swarm replay their weapon material scripts
-from each weapon's play count. Pokémon status materials, translucent modes,
-link 18, rock texture IDs and Poké Ball rays/open animation remain. The
-FlySparks head-0 state produces black squares; its head-1 CLD counterpart
-is a separate path (RE-435).
+from each weapon's play count. Goldeen, Charizard, Beedrill and Starmie
+start material scripts on their status clocks. Snorlax's fall, Starmie,
+Hitmonlee and Clefairy's corresponding imitations move to link 18 in head
+insertion order; only the callbacks that select AA_XLU_SURF use that mode.
+Onix's rocks select one of three packed sprites. The thrown Poké Ball
+cycles its eight textures, clears that script on opening and creates rays
+on link 10 that follow it until release (RE-443).
+
+`lbCommonDObjScaleXProcDisplay` writes direct FlyOrbs, CommonSpark
+(FlySparks and Star Rod) and ShockSmall lists to head 1. Their links
+install CLD state first. The pack marks HEAD1 and applies that seed;
+RE-443 corrects RE-435's earlier head-0 diagnosis.
 
 ## Shadows
 

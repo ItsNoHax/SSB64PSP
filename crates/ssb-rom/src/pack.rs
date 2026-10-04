@@ -357,7 +357,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // Bob-omb walk and Shell spin scripts, and adds the Bob-omb's left-walk
 // list, the Shells' spin animation and the Bumper's lit and attached lists
 // (RE-442). No layout change.
-pub const VERSION: u32 = 90;
+// 91 adds Pokémon status materials, Poké Ball throw materials, conditional
+// translucent Pokémon meshes, rock texture variants and the scale-X
+// effects' head-1 CLD state (RE-443). No layout change.
+pub const VERSION: u32 = 91;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

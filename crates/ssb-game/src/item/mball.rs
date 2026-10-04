@@ -2,10 +2,12 @@
 //! and, 30 frames later, releases a Pokémon (`itMainMakeMonster`) and is
 //! gone. A ball that bounces off a target lands at its next floor contact;
 //! otherwise its first landing may still despawn it. A reflected ball stays
-//! its thrower's.
+//! its thrower's. Opening makes the rays (`efManagerMBallRaysMakeEffect`),
+//! which follow the ball until the Pokémon comes out.
 
 use ssb_engine::math::Vec3;
 
+use super::normal::CommonItems;
 use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight};
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::ground::BodyColl;
@@ -107,20 +109,28 @@ pub(super) fn hold(item: &mut Item, team: u8, handicap: u8) {
     set(item, Status::Hold);
 }
 
-/// `itMBallThrownSetStatus` / `itMBallDroppedSetStatus`. The opening's
-/// material animation is display only.
+/// `itMBallThrownSetStatus` / `itMBallDroppedSetStatus`.
+/// `itMBallOpenAddAnim` adds `llITCommonDataMBallMatAnimJoint` to the
+/// closed ball's `MObj` (`dobj->child->child->sib_next`, the attach joint
+/// still above the root) and plays the tree: display only.
 pub(super) fn thrown(item: &mut Item) {
+    item.add_root_script();
     set(item, Status::Thrown);
 }
 pub(super) fn dropped(item: &mut Item) {
+    item.add_root_script();
     set(item, Status::Dropped);
 }
 
 /// `itMBallOpenSetStatus`: the open halves show and the closed ball hides.
-fn open(item: &mut Item) {
+/// `itMBallOpenClearAnim` clears the same `MObj`'s script, now
+/// `dobj->child->sib_next` with the ball released.
+fn open(item: &mut Item, common: &mut dyn CommonItems) {
     item.vel_air = Vec3::ZERO;
     item.vars.mball_open = !item.vars.mball_open;
     item.attach_line = item.floor_line();
+    item.vars.mball_rays = common.mball_rays(item.pos);
+    item.clear_root_script();
     item.attack.state = AttackState::Off;
     item.attack.can_reflect = false;
     set(item, Status::Open);
@@ -134,7 +144,7 @@ pub(super) enum Update {
     MakeMonster,
 }
 
-pub(super) fn update(item: &mut Item, status: Status) -> Update {
+pub(super) fn update(item: &mut Item, status: Status, common: &mut dyn CommonItems) -> Update {
     match status {
         Status::Init | Status::Fall | Status::Thrown | Status::Dropped => {
             item.apply_gravity_clamp_tvel(GRAVITY, TVEL);
@@ -148,6 +158,9 @@ pub(super) fn update(item: &mut Item, status: Status) -> Update {
                 return Update::MakeMonster;
             }
             item.multi -= 1;
+            if let Some(seq) = item.vars.mball_rays {
+                common.move_display(seq, item.pos);
+            }
         }
     }
     Update::Live
@@ -157,7 +170,12 @@ pub(super) fn has_proc_map(status: Status) -> bool {
     status != Status::Hold
 }
 
-pub(super) fn proc_map<I, F>(item: &mut Item, status: Status, surfaces: &F) -> bool
+pub(super) fn proc_map<I, F>(
+    item: &mut Item,
+    status: Status,
+    surfaces: &F,
+    common: &mut dyn CommonItems,
+) -> bool
 where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
@@ -182,7 +200,7 @@ where
         Status::Thrown | Status::Dropped => {
             if item.vars.mball_is_rebound {
                 if map::check_landing(item, MAP_REBOUND_COMMON, MAP_REBOUND_GROUND, surfaces) {
-                    open(item);
+                    open(item, common);
                 }
             } else {
                 let out = map::check_destroy_dropped(
@@ -192,7 +210,7 @@ where
                     surfaces,
                 );
                 if out.goto_wait {
-                    open(item);
+                    open(item, common);
                 }
             }
         }
@@ -209,7 +227,7 @@ where
             let out =
                 map::check_destroy_dropped(item, MAP_REBOUND_COMMON, MAP_REBOUND_GROUND, surfaces);
             if out.goto_wait {
-                open(item);
+                open(item, common);
             }
         }
         Status::Hold => {}

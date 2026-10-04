@@ -93,6 +93,13 @@ blend, `PrimColor`, `Light1Color`, `Light2Color`.
   (see [lighting.md](lighting.md)). Exact against a decomp reference
   (`romtool matcolors`).
 
+Poké Ball throw materials and Goldeen, Charizard, Beedrill and Starmie
+status materials bind to the exact MObj selected by the status callback.
+The runtime starts each script on its recorded item clock. Conditional
+Snorlax/Clefairy lists receive the callback's AA_XLU_SURF seed before their
+own commands; normal Clefairy receives AA_ZB_TEX_EDGE. A display-link move
+alone does not make Starmie or Hitmonlee translucent (RE-443).
+
 Limitations:
 
 - The camera-level head-1 XLU reset is applied to every packed graph's

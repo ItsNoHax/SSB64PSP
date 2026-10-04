@@ -494,6 +494,8 @@ pub struct ItemVars {
     pub mball_owner: Option<(u8, u8, u8)>,
     /// The open halves show and the closed ball hides.
     pub mball_open: bool,
+    /// `mball.effect_gobj`: the rays the opened ball made.
+    pub mball_rays: Option<u32>,
     /// A Poké Ball Pokémon's.
     pub mmonster: mmonster::Vars,
 }
@@ -2307,7 +2309,7 @@ where
         ItemStatus::BombHei(s) => bombhei::update(item, s, ctx.owners, surfaces, ctx.fx),
         ItemStatus::NBumper(s) => nbumper::update(item, s, surfaces),
         ItemStatus::Shell(s) => shell::update(item, s, ctx.owners, surfaces, ctx.fx),
-        ItemStatus::MBall(s) => match mball::update(item, s) {
+        ItemStatus::MBall(s) => match mball::update(item, s, ctx.common) {
             mball::Update::Live => true,
             mball::Update::MakeMonster => {
                 ctx.common.make_monster(item);
@@ -2385,7 +2387,7 @@ where
         ItemStatus::BombHei(s) => return bombhei::proc_map(item, s, surfaces),
         ItemStatus::NBumper(s) => return nbumper::proc_map(item, s, surfaces),
         ItemStatus::Shell(s) => return shell::proc_map(item, s, surfaces),
-        ItemStatus::MBall(s) => return mball::proc_map(item, s, surfaces),
+        ItemStatus::MBall(s) => return mball::proc_map(item, s, surfaces, common),
         ItemStatus::MMonster(s) => return mmonster::proc_map(item, s, surfaces),
         ItemStatus::PKFire(s) => pk_fire::proc_map(item, s, surfaces),
         ItemStatus::LinkBomb(s) => link_bomb::proc_map(item, s, surfaces),
@@ -2540,6 +2542,12 @@ where
 {
     fn smash_container(&mut self, pos: Vec3) {
         self.effects.container_smash(pos);
+    }
+    fn mball_rays(&mut self, pos: Vec3) -> Option<u32> {
+        self.effects.mball_rays(pos)
+    }
+    fn move_display(&mut self, seq: u32, pos: Vec3) {
+        self.effects.move_display(seq, pos);
     }
     fn eggs_enabled(&self) -> bool {
         self.pool.normal_switches.enabled(3)

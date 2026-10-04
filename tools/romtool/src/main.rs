@@ -514,7 +514,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
             // Convert the graph the way the packer does -- in draw order,
             // sharing one vertex cache -- so this reports what actually
             // happens rather than what a standalone conversion would.
-            let plan = plan_draw_order(g, &resolver);
+            let plan = plan_draw_order(file, g, &resolver);
             let mut decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                 .iter()
                 .map(|p| {
@@ -812,6 +812,7 @@ const NO_LIST: u32 = u32::MAX;
 /// node-then-child-then-siblings, so the pre-order flattening the array already
 /// is round-trips exactly. Nothing needs sorting.
 fn plan_draw_order(
+    file: &ssb_rom::archive::File,
     graph: &ssb_rom::scene::SceneGraph,
     resolver: &ssb_rom::scene::DlResolver,
 ) -> Vec<PlannedList> {
@@ -832,7 +833,14 @@ fn plan_draw_order(
             list_id,
         };
         match resolver.resolve(node_dl) {
-            NodeDl::Direct(dl) => out.push(own(dl, None)),
+            NodeDl::Direct(dl) => out.push(own(
+                dl,
+                // lbCommonDrawDObjScaleX submits these direct effects to
+                // gSYTaskmanDLHeads[1], under the link's CLD setup (RE-443).
+                EFFECT_SCALE_X_GRAPHS
+                    .contains(&(file.id, graph.offset))
+                    .then_some(1),
+            )),
             NodeDl::Links(links) => out.extend(
                 links
                     .iter()
@@ -2488,6 +2496,10 @@ const EFFECT_CLD_GRAPHS: &[(u32, u32)] = &[
     (353, 0x11C0),
 ];
 
+/// Direct effects rendered by lbCommonDObjScaleXProcDisplay, whose walker
+/// uses task head 1 (not head 0). Their links 15/18 install CLD first.
+const EFFECT_SCALE_X_GRAPHS: &[(u32, u32)] = &[(83, 0x7E80), (83, 0x8FA0), (84, 0x1500)];
+
 /// Weapons whose `WPAttributes.data` is a direct display list with its own
 /// `anim_joints`, so they need a one-node graph for the animation to bind
 /// to, as [`DIRECT_MANAGER_EFFECT_ASSETS`] gives direct effects. Pikachu's
@@ -2536,6 +2548,9 @@ enum ItemMatTarget {
     /// One script a status adds to the root's first `MObj`
     /// (`gcAddMObjMatAnimJoint(dobj->mobj, ...)`).
     Root(u32),
+    /// One script a status adds to a packed node's first `MObj`: a
+    /// Pokémon's root (node 1) or its child (node 2) (RE-443).
+    Node(usize, u32),
 }
 
 /// The item root once `itManagerMakeItem` ejects descriptor 0.
@@ -2553,12 +2568,43 @@ const ITEM_MAT_ANIMS: &[((u32, u32), ItemMatTarget)] = &[
     ((86, 0x5F88), ItemMatTarget::Root(0x6048)),
 ];
 
+/// A tree's item material script: [`ITEM_MAT_ANIMS`], or a Pokémon status's
+/// `gcAddMObjMatAnimJoint` (`ssb_rom::mmonster::Visual::status_mat`,
+/// RE-443).
+fn item_mat_target(key: (u32, u32)) -> Option<ItemMatTarget> {
+    ITEM_MAT_ANIMS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|&(_, target)| target)
+        .or_else(|| {
+            ssb_rom::mmonster::VISUALS
+                .iter()
+                .filter(|v| (ssb_rom::mmonster::FILE, v.graph) == key)
+                .find_map(|v| v.status_mat)
+                .map(|(script, node)| ItemMatTarget::Node(node as usize, script))
+        })
+}
+
 /// The seed a [`ssb_rom::mesh::convert_sequence`] call for `(file,
 /// graph_offset)` must use -- see [`fighter_skeleton_graphs`],
 /// [`ground_layer1_graphs`] and [`lb_transition_graphs`].
 /// The interface wrappers set PRIM before entering these ROM display lists.
 fn seed_player_interface_commands(key: (u32, u32), decoded: &mut [Vec<ssb_rom::dl::Cmd>]) {
     use ssb_rom::{dl::Cmd, player_interface as asset};
+    if key == (86, ssb_rom::mmonster::PIPPI_SWARM_GRAPH) {
+        // itPippiCommonProcDisplay, before the list's own writes.
+        if let Some(cmds) = decoded.first_mut() {
+            cmds.insert(
+                0,
+                Cmd::SetOtherModeL {
+                    shift: 3,
+                    len: 29,
+                    data: 0x0055_3078,
+                },
+            );
+        }
+        return;
+    }
     if key.0 != asset::FILE {
         return;
     }
@@ -2613,7 +2659,9 @@ fn initial_material_for(
         ssb_rom::mesh::InitialMaterial::WEAPON_EXTERNAL
     } else if (file, graph_offset) == SHIELD_GRAPH {
         ssb_rom::mesh::InitialMaterial::SHIELD_EXTERNAL
-    } else if EFFECT_CLD_GRAPHS.contains(&(file, graph_offset)) {
+    } else if EFFECT_CLD_GRAPHS.contains(&(file, graph_offset))
+        || EFFECT_SCALE_X_GRAPHS.contains(&(file, graph_offset))
+    {
         ssb_rom::mesh::InitialMaterial {
             head1: ssb_rom::mesh::Head1Seed::EffectCld,
             ..ssb_rom::mesh::InitialMaterial::SCENE
@@ -2665,7 +2713,7 @@ fn convert_graph_at(
 ) -> Vec<Result<ssb_rom::mesh::Mesh, ssb_rom::mesh::MeshError>> {
     use ssb_rom::mesh;
 
-    let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+    let mut decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
         .iter()
         .map(|p| {
             file.data
@@ -2674,6 +2722,7 @@ fn convert_graph_at(
                 .unwrap_or_default()
         })
         .collect();
+    seed_player_interface_commands((file.id, graph_offset), &mut decoded);
     let mat_anims = resolve_layer_mat_anims(loaded, file, graph_offset, materials, mat_anim_data);
     let items: Vec<mesh::SequenceItem> = plan
         .iter()
@@ -2706,7 +2755,7 @@ fn trace_graph_at(
 ) -> Vec<ssb_rom::mesh::VtxLoad> {
     use ssb_rom::mesh;
 
-    let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+    let mut decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
         .iter()
         .map(|p| {
             file.data
@@ -2715,6 +2764,7 @@ fn trace_graph_at(
                 .unwrap_or_default()
         })
         .collect();
+    seed_player_interface_commands((file.id, graph_offset), &mut decoded);
     let mut mat_anim_data = BTreeMap::new();
     let mat_anims =
         resolve_layer_mat_anims(loaded, file, graph_offset, materials, &mut mat_anim_data);
@@ -2801,7 +2851,7 @@ fn lighting_rows(loaded: &Loaded, only_file: Option<u32>) -> Vec<LightingRow> {
                 graph.offset,
             );
             let materials = loaded.materials(file, graph);
-            let base = plan_draw_order(graph, &resolver);
+            let base = plan_draw_order(file, graph, &resolver);
             let mut variants: Vec<(String, Vec<PlannedList>)> = vec![("base".into(), base.clone())];
             for (_, set, parts) in skeleton_sets_for(loaded, id, graph) {
                 variants.push((format!("skeleton{set}"), plan_skeleton_order(graph, &parts)));
@@ -3333,25 +3383,28 @@ fn resolve_layer_mat_anims(
 
     // RE-442: the items' material scripts, against the materials their
     // `ITAttributes.p_mobjsubs` tables resolved.
-    if let Some(&(_, target)) = ITEM_MAT_ANIMS
-        .iter()
-        .find(|(key, _)| *key == (file.id, graph_offset))
-    {
+    if let Some(target) = item_mat_target((file.id, graph_offset)) {
         let scripts: Vec<Vec<Option<u32>>> = match target {
             ItemMatTarget::Table(table) => {
                 ssb_rom::matanim::resolve_scripts(file, table, materials.len(), |n| {
                     materials[n].len()
                 })
             }
-            ItemMatTarget::Root(script) => materials
-                .iter()
-                .enumerate()
-                .map(|(n, chain)| {
-                    (0..chain.len())
-                        .map(|m| (n == ITEM_ROOT_NODE && m == 0).then_some(script))
-                        .collect()
-                })
-                .collect(),
+            ItemMatTarget::Root(script) | ItemMatTarget::Node(_, script) => {
+                let node = match target {
+                    ItemMatTarget::Node(node, _) => node,
+                    _ => ITEM_ROOT_NODE,
+                };
+                materials
+                    .iter()
+                    .enumerate()
+                    .map(|(n, chain)| {
+                        (0..chain.len())
+                            .map(|m| (n == node && m == 0).then_some(script))
+                            .collect()
+                    })
+                    .collect()
+            }
         };
         return resolve_script_matrix(
             file,
@@ -3647,7 +3700,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         // vertex cache can be threaded through them; see convert_sequence.
         let plans: Vec<Vec<PlannedList>> = graphs
             .iter()
-            .map(|g| plan_draw_order(g, &resolver))
+            .map(|g| plan_draw_order(file, g, &resolver))
             .collect();
         let authoritative: std::collections::BTreeSet<u32> = plans
             .iter()
@@ -3989,11 +4042,16 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             const BUMPER_WAIT_MOBJ: u32 = 0x7A38;
             const BUMPER_WAIT_LIST: u32 = 0x7AF8;
             const BUMPER_WAIT_LIT_KEY: u32 = 0x76D8;
+            const MBALL_MOBJ_TABLE: u32 = 0x9120;
+            const MBALL_BALL_NODE: usize = 3;
+            const MBALL_BALL_LIST: u32 = 0x9340;
+            const MBALL_SCRIPT: u32 = 0x9520;
             let mut variant =
                 |dl: u32,
                  mobjs: &[ssb_rom::mobj::MObjMaterial],
                  mat_anims: &[Option<ssb_rom::mesh::MatAnimRef>],
                  key: u32,
+                 initial: mesh::InitialMaterial,
                  mat_anim_data: &BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>| {
                     let cmds = file
                         .data
@@ -4008,16 +4066,13 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         depth_seed: None,
                         stream: 0,
                     };
-                    let converted = mesh::convert_sequence(
-                        &[item],
-                        mesh::Source::of(file),
-                        mesh::InitialMaterial::SCENE,
-                    )
-                    .into_iter()
-                    .next()
-                    .and_then(Result::ok)
-                    .filter(|m| m.triangle_count() != 0)
-                    .unwrap_or_else(|| panic!("file 86 list 0x{dl:X} converts"));
+                    let converted =
+                        mesh::convert_sequence(&[item], mesh::Source::of(file), initial)
+                            .into_iter()
+                            .next()
+                            .and_then(Result::ok)
+                            .filter(|m| m.triangle_count() != 0)
+                            .unwrap_or_else(|| panic!("file 86 list 0x{dl:X} converts"));
                     pack_mesh(
                         &mut writer,
                         &mut tex_index,
@@ -4088,6 +4143,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &mobjs,
                 &[Some(green)],
                 GREEN_SHELL_KEY,
+                mesh::InitialMaterial::SCENE,
                 &mat_anim_data,
             );
 
@@ -4099,6 +4155,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &bombhei.nodes[1],
                 &[Some(walk)],
                 BOMBHEI_LEFT_LIST,
+                mesh::InitialMaterial::SCENE,
                 &mat_anim_data,
             );
 
@@ -4119,6 +4176,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &lit_root,
                 &[None],
                 BUMPER_LIT_KEY,
+                mesh::InitialMaterial::SCENE,
                 &mat_anim_data,
             );
             let wait = ssb_rom::mobj::read_sub(file, BUMPER_WAIT_MOBJ)
@@ -4129,6 +4187,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &[wait],
                 &[None],
                 BUMPER_WAIT_MOBJ,
+                mesh::InitialMaterial::SCENE,
                 &mat_anim_data,
             );
             variant(
@@ -4136,8 +4195,102 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &lit_wait,
                 &[None],
                 BUMPER_WAIT_LIT_KEY,
+                mesh::InitialMaterial::SCENE,
                 &mat_anim_data,
             );
+
+            // `itMBallOpenAddAnim` adds `llITCommonDataMBallMatAnimJoint`
+            // (0x9520, a looping cycle of the eight ball textures) to the
+            // closed ball's `MObj` when the ball is thrown or dropped. The
+            // tree itself binds the entry effect's table (0x9740), whose
+            // script ends, so the ball's list gets a second mesh keyed by
+            // the item's script (RE-443).
+            let mball = ssb_rom::mobj::read_table(file, MBALL_MOBJ_TABLE, 4)
+                .expect("file 86 Poké Ball MObjSub table");
+            let scripts: Vec<Vec<Option<u32>>> = mball
+                .nodes
+                .iter()
+                .enumerate()
+                .map(|(n, chain)| {
+                    (0..chain.len())
+                        .map(|m| (n == MBALL_BALL_NODE && m == 0).then_some(MBALL_SCRIPT))
+                        .collect()
+                })
+                .collect();
+            let refs = resolve_script_matrix(
+                file,
+                &scripts,
+                &mball.nodes,
+                |node, m| {
+                    mball
+                        .nodes
+                        .get(node)?
+                        .get(m)
+                        .map(|s| (s.at, s.palette_entries))
+                },
+                &mut mat_anim_data,
+            );
+            let ball = refs[MBALL_BALL_NODE][0];
+            assert!(ball.is_some(), "file 86 Poké Ball script 0x9520 resolved");
+            variant(
+                MBALL_BALL_LIST,
+                &mball.nodes[MBALL_BALL_NODE],
+                &[ball],
+                MBALL_SCRIPT,
+                mesh::InitialMaterial::SCENE,
+                &mat_anim_data,
+            );
+
+            // Status callbacks draw Snorlax's fall and Clefairy's
+            // Hitmonlee/Starmie imitations under AA_XLU_SURF. Clefairy's
+            // swarm weapon uses the same wrapper. Seed before converting
+            // so any render-mode write in the list retains precedence.
+            for key in [
+                ssb_rom::mmonster::KABIGON_FALL_MESH,
+                ssb_rom::mmonster::PIPPI_XLU_MESH,
+            ] {
+                let graph = graphs
+                    .iter()
+                    .find(|g| g.offset == key)
+                    .expect("Pokémon tree");
+                let materials = loaded.materials(file, graph);
+                let dl = graph.nodes[1].desc.dl.expect("Pokémon root list");
+                variant(
+                    dl,
+                    &materials[1],
+                    &[],
+                    key,
+                    mesh::InitialMaterial::WEAPON_EXTERNAL,
+                    &mat_anim_data,
+                );
+            }
+
+            // The rock maker assigns texture_id_curr directly, with no
+            // material script. Convert each of the three original sprites.
+            let graph = graphs
+                .iter()
+                .find(|g| g.offset == ssb_rom::mmonster::ROCK_GRAPH)
+                .expect("rock tree");
+            let materials = loaded.materials(file, graph);
+            let root = &materials[1];
+            let sprites =
+                ssb_rom::mobj::read_sprites(file, root[0].at, 3).expect("three rock sprites");
+            for (sprite, key) in sprites
+                .into_iter()
+                .zip(ssb_rom::mmonster::ROCK_TEXTURE_KEYS)
+            {
+                assert_eq!(sprite.offset, key);
+                let mut mobjs = root.clone();
+                mobjs[0].sprite = Some(sprite);
+                variant(
+                    graph.nodes[1].desc.dl.expect("rock list"),
+                    &mobjs,
+                    &[],
+                    key,
+                    mesh::InitialMaterial::WEAPON_EXTERNAL,
+                    &mat_anim_data,
+                );
+            }
         }
 
         // Samus's Bomb (`llSamusMainBombWeaponAttributes`, file 217 + 0x0C)
@@ -9504,7 +9657,7 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
     let mut claimed = BTreeSet::new();
 
     for graph in graphs {
-        let plan = plan_draw_order(graph, &resolver);
+        let plan = plan_draw_order(file, graph, &resolver);
         let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
             .iter()
             .map(|p| {
@@ -13244,7 +13397,7 @@ fn build_texgen_census(
         let mut authoritative: BTreeSet<u32> = BTreeSet::new();
 
         for (gi, graph) in graphs.iter().enumerate() {
-            let plan = plan_draw_order(graph, &resolver);
+            let plan = plan_draw_order(file, graph, &resolver);
             let materials = loaded.materials(file, graph);
             // One walker for the whole graph: the RDP/RSP state and the vertex
             // cache persist across a graph's nodes exactly as they do on
@@ -14113,7 +14266,7 @@ mod tests {
             };
             let resolver = ssb_rom::scene::DlResolver::new(file);
             for graph in graphs {
-                let plan = super::plan_draw_order(graph, &resolver);
+                let plan = super::plan_draw_order(file, graph, &resolver);
                 let heads: Vec<_> = plan.iter().filter(|p| p.list_id == Some(1)).collect();
                 if heads.is_empty() {
                     continue;
@@ -14145,7 +14298,9 @@ mod tests {
         }
         // 104 since RE-381 synthesised the PK Thunder trail's one-node graph
         // (335 + 0x8B40), whose one list is on link 1 and sets no mode.
-        assert_eq!(total, 104);
+        // RE-443 routes three scale-X direct effects to their source's
+        // head 1. They inherit CLD rather than the camera's XLU state.
+        assert_eq!(total, 107);
         assert_eq!(mode_writers, 3);
     }
 
@@ -14669,7 +14824,7 @@ mod tests {
                     continue;
                 };
                 let resolver = ssb_rom::scene::DlResolver::new(file);
-                let plan = super::plan_draw_order(g, &resolver);
+                let plan = super::plan_draw_order(file, g, &resolver);
                 let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                     .iter()
                     .map(|p| {
@@ -14743,7 +14898,7 @@ mod tests {
                 .iter()
                 .find(|g| g.offset == graph_offset)
                 .unwrap();
-            let plan = super::plan_draw_order(graph, &ssb_rom::scene::DlResolver::new(file));
+            let plan = super::plan_draw_order(file, graph, &ssb_rom::scene::DlResolver::new(file));
             let converted = super::convert_graph_at(
                 &loaded,
                 file,
@@ -14816,7 +14971,7 @@ mod tests {
             .iter()
             .find(|g| g.offset == 0x2200)
             .unwrap();
-        let plan = super::plan_draw_order(graph, &ssb_rom::scene::DlResolver::new(file));
+        let plan = super::plan_draw_order(file, graph, &ssb_rom::scene::DlResolver::new(file));
         let converted = super::convert_graph_at(
             &loaded,
             file,
@@ -15015,7 +15170,7 @@ mod tests {
                 continue;
             };
             let resolver = ssb_rom::scene::DlResolver::new(file);
-            let plan = super::plan_draw_order(g, &resolver);
+            let plan = super::plan_draw_order(file, g, &resolver);
             let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                 .iter()
                 .map(|p| {
@@ -15116,7 +15271,7 @@ mod tests {
                     continue;
                 };
                 let resolver = ssb_rom::scene::DlResolver::new(file);
-                let plan = super::plan_draw_order(g, &resolver);
+                let plan = super::plan_draw_order(file, g, &resolver);
                 let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                     .iter()
                     .map(|p| {
@@ -15270,7 +15425,7 @@ mod tests {
                     }
                 }
 
-                let plan = super::plan_draw_order(g, &resolver);
+                let plan = super::plan_draw_order(file, g, &resolver);
                 let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                     .iter()
                     .map(|p| {
@@ -15360,7 +15515,7 @@ mod tests {
                     continue;
                 };
                 let resolver = ssb_rom::scene::DlResolver::new(file);
-                let plan = super::plan_draw_order(g, &resolver);
+                let plan = super::plan_draw_order(file, g, &resolver);
                 let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                     .iter()
                     .map(|p| {
@@ -16194,7 +16349,7 @@ mod tests {
                 loaded.graphs.get(&file.id).map_or(&[], Vec::as_slice);
             let mut claimed = BTreeSet::new();
             for graph in graphs {
-                let plan = super::plan_draw_order(graph, &resolver);
+                let plan = super::plan_draw_order(file, graph, &resolver);
                 for p in &plan {
                     if p.dl == super::NO_LIST {
                         continue;
