@@ -395,6 +395,8 @@ pub struct Fighter {
     pub cliff_air_mask: u32,
     /// Stage hazard timers, wind and captor state ([`crate::hazard`]).
     pub hazard: crate::hazard::HazardState,
+    /// Mushroom Kingdom's pipes ([`crate::dokan`]).
+    pub dokan: crate::dokan::DokanState,
     /// Blast-zone deaths and the rebirth halo ([`crate::dead`]).
     pub dead: crate::dead::DeadState,
     /// `FTStruct::colanim`: the colour the fighter is fogged towards and
@@ -516,6 +518,7 @@ impl Fighter {
             reaction: crate::reaction::ReactionState::default(),
             is_smash_di: false,
             hazard: crate::hazard::HazardState::default(),
+            dokan: crate::dokan::DokanState::default(),
             dead: crate::dead::DeadState::default(),
             colanim: crate::colanim::ColAnim::default(),
             screen_flash: None,
@@ -835,6 +838,7 @@ impl Fighter {
         // (a jumpsquat ending, a platform drop), so the
         // situation is re-read afterwards rather than captured before.
         crate::status::update(self);
+        crate::dokan::run_pending(self, surfaces);
         self.resolve_cliff_release(surfaces);
         // `ftMainProcUpdateInterrupt`, after proc_update/proc_interrupt,
         // outside hitlag. Hit searches later in the frame start a new combo.
@@ -911,6 +915,12 @@ impl Fighter {
         }
         self.map_contacts_prev = self.map_contacts;
         self.map_contacts = crate::map::Contacts::default();
+        if crate::dokan::tick_status(self) {
+            self.root_motion = RootMotion::default();
+            self.weapon_spawn_anchor = None;
+            crate::dead::check(self);
+            return;
+        }
         if crate::hazard::tick_status(self, &surfaces) {
             crate::fteffect::kirby_map_star(self);
             self.root_motion = RootMotion::default();
@@ -1177,7 +1187,8 @@ impl Fighter {
             | crate::status::AnyStatus::Purin(_)
             | crate::status::AnyStatus::Ness(_) => crate::status::Status::Wait,
         };
-        if crate::item_use::apply_ground_physics(self)
+        if crate::dokan::apply_ground_physics(self)
+            || crate::item_use::apply_ground_physics(self)
             || crate::captain::apply_ground_physics(self)
             || crate::kirby::apply_ground_physics(self)
             || crate::pikachu::apply_ground_physics(self)

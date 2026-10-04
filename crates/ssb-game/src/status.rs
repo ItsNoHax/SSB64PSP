@@ -723,6 +723,10 @@ impl Status {
                 | Status::LightThrowAirHi4
                 | Status::LightThrowAirLw4
                 | Status::FallSpecial
+                // `ftCommonDokanWaitSetStatus` and `...WalkSetStatus` leave
+                // the ground before their status (whose table says ground).
+                | Status::DokanWait
+                | Status::DokanWalk
                 // `ftCommonThrownSetStatusQueue`/`...Immediate` put the held
                 // fighter in the air (`ga = nMPKineticsAir`).
                 | Status::ThrownDonkeyF
@@ -2126,6 +2130,11 @@ pub fn check_guard_from_escape(f: &mut Fighter) -> bool {
     f.guard.is_setoff = false;
     set_guard(f);
     true
+}
+
+/// `ftCommonGuardCommonProcInterrupt`: [`guard_interrupt`], else a pipe.
+fn guard_common_interrupt(f: &mut Fighter) -> bool {
+    guard_interrupt(f) || crate::dokan::check(f)
 }
 
 /// `ftCommonGuardCheckInterrupt`: item throw, roll, grab, jump or drop through.
@@ -3669,6 +3678,7 @@ pub fn set_any_status_preserve(
     f.is_shadow_hidden = crate::shadow::status_hides_shadow(status);
     f.is_invisible = false;
     crate::dead::on_set_status(f);
+    crate::dokan::on_set_status(f);
     f.interface.tag_hide = matches!(
         status,
         AnyStatus::Common(
@@ -4914,9 +4924,30 @@ pub fn ground_interrupt(f: &mut Fighter) -> bool {
         || check_kneebend(f)
         || check_dash(f)
         || check_pass(f)
+        || (checks_dokan(f.status.status) && crate::dokan::check(f))
         || check_squat(f)
         || check_turn(f)
         || check_walk(f)
+}
+
+/// The statuses whose interrupt chain ends in
+/// `ftCommonDokanStartCheckInterruptCommon` right after the pass check:
+/// the squats, the landings and the teeters (`ftcommonsquat.c`,
+/// `ftcommonlanding.c`, `ftcommonottotto.c`). `Wait` and the walks do not.
+fn checks_dokan(s: AnyStatus) -> bool {
+    matches!(
+        s,
+        AnyStatus::Common(
+            Status::Squat
+                | Status::SquatWait
+                | Status::SquatRv
+                | Status::LandingLight
+                | Status::LandingHeavy
+                | Status::LandingFallSpecial
+                | Status::OttottoWait
+                | Status::Ottotto
+        )
+    )
 }
 
 /// A walking fighter's interrupt chain — the `ftCommonWalkCheckInterrupt`
@@ -5007,6 +5038,9 @@ pub fn update(f: &mut Fighter) {
         return;
     }
     if crate::hazard::update(f, current) {
+        return;
+    }
+    if crate::dokan::update(f, current) {
         return;
     }
     if crate::dead::update(f, current) {
@@ -5135,11 +5169,11 @@ pub fn update(f: &mut Fighter) {
                         f.guard.is_shield = true;
                     }
                     set_guard(f);
-                    guard_interrupt(f);
+                    guard_common_interrupt(f);
                 }
             } else {
                 guard_update_joints(f);
-                guard_interrupt(f);
+                guard_common_interrupt(f);
             }
         }
         // `ftCommonGuardProcUpdate` @ `ftcommonguard1.c:472`.
@@ -5152,7 +5186,7 @@ pub fn update(f: &mut Fighter) {
                 set_guard_off(f);
             } else {
                 guard_init_joints(f);
-                guard_interrupt(f);
+                guard_common_interrupt(f);
             }
         }
         // `ftCommonGuardOffProcUpdate` @ `ftcommonguard2.c:60`.

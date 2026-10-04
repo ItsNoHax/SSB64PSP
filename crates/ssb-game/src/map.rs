@@ -1598,6 +1598,37 @@ where
     best
 }
 
+/// `mpCollisionCheckProjectRWall`'s `ga_dist`: the signed X distance from
+/// `pos` to the nearest right wall at or left of it whose span covers
+/// `pos.y` (a moving group's line where it stands now).
+pub fn project_rwall_dist<I, F>(surfaces: &F, pos: Vec3) -> Option<f32>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let mut best: Option<f32> = None;
+    for s in surfaces().into_iter() {
+        if s.kind != Kind::RightWall {
+            continue;
+        }
+        let [x1, y1, x2, y2] = s.coords();
+        if !((y1 <= pos.y && y2 >= pos.y) || (y2 <= pos.y && y1 >= pos.y)) {
+            continue;
+        }
+        // `mpCollisionGetLineDistanceLR`.
+        let x = if y1 == y2 {
+            x1
+        } else {
+            x1 + (pos.y - y1) * (x2 - x1) / (y2 - y1)
+        };
+        let dist = x - pos.x;
+        if x <= pos.x && best.is_none_or(|d| dist.abs() < d.abs()) {
+            best = Some(dist);
+        }
+    }
+    best
+}
+
 /// `mpCollisionGet{Floor,Ceil}Edge{L,R}` and `mpCollisionGet{L,R}WallEdge{D,U}`:
 /// a line's low or high end along its own axis (x for floors and ceilings,
 /// y for walls).

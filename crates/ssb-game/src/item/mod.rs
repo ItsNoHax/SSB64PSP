@@ -82,6 +82,9 @@ pub mod power_block;
 pub mod shell;
 #[cfg(test)]
 mod stage_tests;
+pub mod tarubomb;
+#[cfg(test)]
+mod tarubomb_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -151,6 +154,7 @@ pub enum ItemKind {
     GBumper,
     PowerBlock,
     Pakkun,
+    TaruBomb,
     Monster(monsters::Kind),
     MMonster(mmonster::Kind),
 }
@@ -190,6 +194,8 @@ impl ItemKind {
             Self::NBumper => Some(70.0 * 0.01),
             Self::MBall => Some(20.0 * 0.01),
             Self::BombHei | Self::Shell(_) => Some(0.0),
+            // `llGRBonus3MapTaruBombItemAttributes` (file 0x127).
+            Self::TaruBomb => Some(0.0),
             _ => None,
         }
     }
@@ -438,6 +444,7 @@ pub enum ItemStatus {
     GBumper(gbumper::Status),
     PowerBlock(power_block::Status),
     Pakkun(pakkun::Status),
+    TaruBomb(tarubomb::Status),
     Monster(monsters::Status),
     MMonster(mmonster::Status),
 }
@@ -458,6 +465,8 @@ pub struct ItemVars {
     pub bomb_drop_update_wait: u16,
     /// `bumper.hit_anim_length`.
     pub bumper_hit_anim_length: u16,
+    /// A Race to the Finish Bumper's `llGRBonus3MapBumpersAnimJoint` index.
+    pub bonus3_bumper_joint: Option<u8>,
     /// `pakkun.pos` and `pakkun.is_wait_fighter`.
     pub pakkun_pos: Vec3,
     pub pakkun_is_wait_fighter: bool,
@@ -936,6 +945,10 @@ impl Item {
             ItemKind::PowerBlock => ItemAnimTarget::PowerBlock,
             ItemKind::Pakkun => ItemAnimTarget::Pakkun(self.vars.pakkun_index),
             ItemKind::Monster(k) => ItemAnimTarget::Monster(k),
+            ItemKind::GBumper => match self.vars.bonus3_bumper_joint {
+                Some(i) => ItemAnimTarget::Bonus3Bumper(i),
+                None => ItemAnimTarget::Untracked,
+            },
             _ => ItemAnimTarget::Untracked,
         }
     }
@@ -984,6 +997,10 @@ pub enum ItemAnimTarget {
     /// A Piranha Plant by its `pakkun_gobj` slot.
     Pakkun(u8),
     Monster(monsters::Kind),
+    /// A Race to the Finish Bumper by its `llGRBonus3MapBumpersAnimJoint`
+    /// index: [`ItemAnims::make`] also adds that script and plays it
+    /// (`gcAddDObjAnimJoint` + `gcPlayAnimAll` in `grBonus3MakeBumpers`).
+    Bonus3Bumper(u8),
 }
 
 /// The scripts an item starts on itself.
@@ -2093,7 +2110,12 @@ impl crate::stage::StageItems for ItemPool {
     fn make_item(&mut self, kind: crate::stage::StageItem, pos: Vec3) -> Option<u32> {
         use crate::stage::StageItem;
         let item = match kind {
-            StageItem::Bumper => gbumper::make(pos, 0),
+            StageItem::Bumper { castle, joint } => {
+                let mut item = gbumper::make(pos, 0, castle);
+                item.vars.bonus3_bumper_joint = joint;
+                item
+            }
+            StageItem::TaruBomb => tarubomb::make(pos),
             StageItem::PowerBlock => power_block::make(pos, 0),
             StageItem::Pakkun(i) => pakkun::make(i, pos, 0),
             StageItem::Monster(id) => {
@@ -2335,6 +2357,7 @@ where
         ItemStatus::GBumper(_) => gbumper::proc_update(item),
         ItemStatus::PowerBlock(s) => power_block::proc_update(item, s, ctx.anims, ctx.events),
         ItemStatus::Pakkun(s) => pakkun::proc_update(item, s, ctx.fighters, ctx.anims),
+        ItemStatus::TaruBomb(s) => tarubomb::update(item, s),
         ItemStatus::Monster(s) => monsters::proc_update(
             item, s, ctx.anims, ctx.events, ctx.shots, ctx.fx, ctx.common,
         ),
@@ -2364,6 +2387,7 @@ fn has_proc_map(item: &Item) -> bool {
         ItemStatus::Shell(s) => return shell::has_proc_map(s),
         ItemStatus::MBall(s) => return mball::has_proc_map(s),
         ItemStatus::MMonster(s) => return mmonster::has_proc_map(item, s),
+        ItemStatus::TaruBomb(s) => return tarubomb::has_proc_map(s),
         _ => {}
     }
     matches!(
@@ -2403,6 +2427,7 @@ where
         ItemStatus::Shell(s) => return shell::proc_map(item, s, surfaces),
         ItemStatus::MBall(s) => return mball::proc_map(item, s, surfaces, common),
         ItemStatus::MMonster(s) => return mmonster::proc_map(item, s, surfaces),
+        ItemStatus::TaruBomb(s) => return tarubomb::proc_map(item, s, surfaces, common, fx),
         ItemStatus::PKFire(s) => pk_fire::proc_map(item, s, surfaces),
         ItemStatus::LinkBomb(s) => link_bomb::proc_map(item, s, surfaces),
         ItemStatus::GBumper(_)
@@ -2455,6 +2480,7 @@ fn run_hit_proc(
         ItemStatus::GBumper(_) => gbumper::hit_proc(item, proc),
         ItemStatus::PowerBlock(s) => power_block::hit_proc(item, s, proc, ctx.anims, ctx.events),
         ItemStatus::Pakkun(s) => pakkun::hit_proc(item, s, proc, ctx.anims),
+        ItemStatus::TaruBomb(s) => tarubomb::hit_proc(item, s, proc, ctx.common, ctx.fx),
         ItemStatus::Monster(s) => monsters::hit_proc(item, s, proc, ctx.anims, ctx.events),
         ItemStatus::MMonster(s) => mmonster::hit_proc(item, s, proc),
     }
@@ -2554,8 +2580,8 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
-    fn smash_container(&mut self, pos: Vec3) {
-        self.effects.container_smash(pos);
+    fn smash_container(&mut self, pos: Vec3, piece: crate::effect::SmashPiece) {
+        self.effects.container_smash(pos, piece);
     }
     fn mball_rays(&mut self, pos: Vec3) -> Option<u32> {
         self.effects.mball_rays(pos)

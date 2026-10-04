@@ -66,7 +66,9 @@ impl Scripted {
         match target {
             ItemAnimTarget::PowerBlock => Some(&mut self.pow),
             ItemAnimTarget::Pakkun(i) => self.pakkun.get_mut(usize::from(i)),
-            ItemAnimTarget::Untracked | ItemAnimTarget::Monster(_) => None,
+            ItemAnimTarget::Untracked
+            | ItemAnimTarget::Monster(_)
+            | ItemAnimTarget::Bonus3Bumper(_) => None,
         }
     }
 }
@@ -121,7 +123,9 @@ impl ItemAnims for Scripted {
         match target {
             ItemAnimTarget::PowerBlock => !self.pow.live,
             ItemAnimTarget::Pakkun(i) => !self.pakkun[usize::from(i)].live,
-            ItemAnimTarget::Untracked | ItemAnimTarget::Monster(_) => true,
+            ItemAnimTarget::Untracked
+            | ItemAnimTarget::Monster(_)
+            | ItemAnimTarget::Bonus3Bumper(_) => true,
         }
     }
     fn stop_root(&mut self, target: ItemAnimTarget) {
@@ -375,7 +379,14 @@ fn pipe_entry_sends_a_rising_plant_back_down() {
 fn castle_bumper_follows_the_ground_and_swells_on_a_hit() {
     let mut pool = ItemPool::default();
     let mut anims = Scripted::new(0);
-    let slot = make(&mut pool, StageItem::Bumper, Vec3::new(100.0, 200.0, 0.0));
+    let slot = make(
+        &mut pool,
+        StageItem::Bumper {
+            castle: true,
+            joint: None,
+        },
+        Vec3::new(100.0, 200.0, 0.0),
+    );
     let bumper = *pool.get(slot).unwrap();
     assert_eq!(bumper.attack.kb_weight, gbumper::CASTLE_KNOCKBACK);
     assert_eq!(bumper.attack.angle, gbumper::CASTLE_ANGLE);
@@ -411,7 +422,14 @@ fn castle_bumper_follows_the_ground_and_swells_on_a_hit() {
 #[test]
 fn a_stale_handle_names_nothing() {
     let mut pool = ItemPool::default();
-    let slot = make(&mut pool, StageItem::Bumper, Vec3::ZERO);
+    let slot = make(
+        &mut pool,
+        StageItem::Bumper {
+            castle: true,
+            joint: None,
+        },
+        Vec3::ZERO,
+    );
     let handle = pool.handle_of(slot);
     pool.destroy(slot);
     let again = make(&mut pool, StageItem::PowerBlock, Vec3::ZERO);

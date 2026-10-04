@@ -17,9 +17,11 @@
 //! which is a real source outcome (`itManagerMakeItemSetupCommon` fails
 //! when the pool is full). The Pokémon are not ported yet. Sector Z's
 //! Arwing has an object port of its own ([`sector::ArwingObject`]), and its
-//! lasers go to the weapon pool. The bonus stages are not ported. Rumble and
+//! lasers go to the weapon pool. Of the bonus stages, Race to the Finish has
+//! its controller ([`bonus3`]); the others have none. Rumble and
 //! audio are not ported, as elsewhere in the gameplay layer.
 
+pub mod bonus3;
 pub mod castle;
 pub mod hyrule;
 pub mod inishie;
@@ -51,6 +53,8 @@ pub enum StageKind {
     Pupupu,
     Yamabuki,
     Inishie,
+    /// `nGRKindBonus3`, Race to the Finish.
+    Bonus3,
 }
 
 impl StageKind {
@@ -65,6 +69,7 @@ impl StageKind {
             6 => StageKind::Pupupu,
             7 => StageKind::Yamabuki,
             8 => StageKind::Inishie,
+            15 => StageKind::Bonus3,
             _ => return None,
         })
     }
@@ -183,7 +188,15 @@ pub enum StageAnim {
 /// Stage items a controller makes (`itManagerMakeItemSetupCommon`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageItem {
-    Bumper,
+    /// `nITKindGBumper`; `castle` is the source's `gkind` test, and
+    /// `joint` the `llGRBonus3MapBumpersAnimJoint` script a Race to the
+    /// Finish Bumper plays, by its index past descriptor 0.
+    Bumper {
+        castle: bool,
+        joint: Option<u8>,
+    },
+    /// `nITKindTaruBomb`.
+    TaruBomb,
     PowerBlock,
     Pakkun(u8),
     /// `nITKindGroundMonsterStart + id`.
@@ -311,6 +324,10 @@ pub struct StageInit<'a> {
     /// (`llGRZebesMapAcidDObjDesc[1]`), read while the runtime has no acid
     /// object to animate it.
     pub acid_surface_y: f32,
+    /// Race to the Finish's Bumpers (`llGRBonus3MapBumpersDObjDesc`).
+    pub bonus3_bumpers: &'a [bonus3::BumperDesc],
+    /// `gSCManagerSceneData.player`.
+    pub player: u8,
 }
 
 /// The two ground obstacles (`GRObstacle` kinds).
@@ -421,6 +438,7 @@ pub enum Controller {
     Yamabuki(yamabuki::Yamabuki),
     Inishie(inishie::Inishie),
     Sector(sector::Sector),
+    Bonus3(bonus3::Bonus3),
 }
 
 /// A stage's controller, its hazard registries and its file data.
@@ -430,6 +448,8 @@ pub struct Stage {
     pub registry: Registry,
     pub attack: Option<GroundAttack>,
     pub throw: Option<HazardThrow>,
+    /// The pipes' map points, which [`Stage::tick`] hands every fighter.
+    pub dokan: crate::dokan::Points,
 }
 
 impl Stage {
@@ -441,10 +461,11 @@ impl Stage {
             registry: Registry::default(),
             attack: None,
             throw: None,
+            dokan: crate::dokan::Points::default(),
         }
     }
 
-    /// `grMainSetupMakeGround` for a VS stage, run by
+    /// `grMainSetupMakeGround` for a VS stage or Race to the Finish, run by
     /// `grCommonSetupInitAll` after `mpCollisionClearYakumonoAll`.
     pub fn new(
         init: &StageInit<'_>,
@@ -479,12 +500,19 @@ impl Stage {
             StageKind::Inishie => {
                 Controller::Inishie(inishie::Inishie::new(init, groups, objects, items))
             }
+            StageKind::Bonus3 => Controller::Bonus3(bonus3::Bonus3::new(init, items)),
         };
+        let point = |kind| objects_of(init.map_objects, kind).next();
         Stage {
             controller,
             registry,
             attack: init.hazard_attack,
             throw: init.hazard_throw,
+            dokan: crate::dokan::Points {
+                left: point(crate::dokan::MAPOBJ_DOKAN_L),
+                right: point(crate::dokan::MAPOBJ_DOKAN_R),
+                wall: point(crate::dokan::MAPOBJ_DOKAN_WALL),
+            },
         }
     }
 
@@ -502,10 +530,15 @@ impl Stage {
             map,
             started,
         } = input;
-        // `grJungleTaruCannAddAnimShoot` from the fighter's own update.
+        // `grJungleTaruCannAddAnimShoot` from the fighter's own update, and
+        // `grInishiePakkunSetWaitFighter` from a pipe entry: both reach the
+        // stage objects before their own processes run.
         for f in fighters.iter_mut() {
             if core::mem::take(&mut f.hazard.shoot_request) {
                 objects.play(StageAnim::TaruCannShoot);
+            }
+            if core::mem::take(&mut f.dokan.plant_request) {
+                self.pakkun_set_wait_fighter(items);
             }
         }
         match &mut self.controller {
@@ -534,6 +567,7 @@ impl Stage {
                 };
                 c.tick(fighters, groups, arwing, &map, started)
             }
+            Controller::Bonus3(c) => c.tick(fighters, items),
         }
         self.publish(fighters, objects);
     }
@@ -542,6 +576,7 @@ impl Stage {
     fn publish(&self, fighters: &mut [&mut Fighter], objects: &dyn StageObjects) {
         for f in fighters.iter_mut() {
             f.hazard.throw = self.throw;
+            f.dokan.points = self.dokan;
             match f.status.status {
                 crate::status::AnyStatus::Common(crate::status::Status::Twister) => {
                     if let Controller::Hyrule(h) = &self.controller {
@@ -556,6 +591,21 @@ impl Stage {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Makes the effects this frame's stage process made
+    /// (`grYosterCloudVaporMakeEffect`, `efManagerSparkleWhiteScaleMakeEffect`),
+    /// in order. The runtime calls it right after [`Stage::tick`], where the
+    /// source makes them.
+    pub fn flush_effects(&mut self, sink: &mut dyn crate::effect::HitEffectSink) {
+        let fx = match &mut self.controller {
+            Controller::Yoster(c) => core::mem::take(&mut c.fx),
+            Controller::Inishie(c) => core::mem::take(&mut c.fx),
+            _ => return,
+        };
+        for e in fx.iter() {
+            sink.weapon(&e);
         }
     }
 
@@ -587,8 +637,8 @@ impl Stage {
         }
     }
 
-    /// `grInishiePakkunSetWaitFighter`, from `ftCommonDokanStartSetStatus`.
-    /// Pipes are not ported yet, so nothing calls it.
+    /// `grInishiePakkunSetWaitFighter`, from `ftCommonDokanStartSetStatus`
+    /// ([`crate::dokan::DokanState::plant_request`]).
     pub fn pakkun_set_wait_fighter(&self, items: &mut dyn StageItems) {
         if let Controller::Inishie(c) = &self.controller {
             for h in c.pakkun.into_iter().flatten() {

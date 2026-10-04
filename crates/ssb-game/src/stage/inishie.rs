@@ -57,6 +57,9 @@ pub struct Inishie {
     pub pblock_positions: [Vec3; 10],
     pub pblock_position_count: u8,
     pub pakkun: [Option<u32>; 2],
+    /// The sparkles this frame's tip-over made, for
+    /// [`super::Stage::flush_effects`].
+    pub fx: crate::wpeffect::Emit,
 }
 
 impl Inishie {
@@ -118,6 +121,7 @@ impl Inishie {
             pblock_positions,
             pblock_position_count: count,
             pakkun,
+            fx: crate::wpeffect::Emit::default(),
         }
     }
 
@@ -203,6 +207,12 @@ impl Inishie {
                 SCALE_ALT_MAX
             };
             self.status = ScaleStatus::Fall;
+            // `efManagerSparkleWhiteScaleMakeEffect` at each platform as it
+            // stood, before this frame's placement.
+            for p in self.platform {
+                self.fx
+                    .push(crate::wpeffect::WeaponEffect::SparkleWhiteScale(p));
+            }
         }
         self.place(objects);
     }

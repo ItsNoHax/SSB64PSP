@@ -26,7 +26,13 @@ impl Castle {
         let bumper_pos = objects_of(init.map_objects, mapobj::BUMPER)
             .next()
             .unwrap_or(Vec3::ZERO);
-        let bumper = items.make_item(StageItem::Bumper, bumper_pos);
+        let bumper = items.make_item(
+            StageItem::Bumper {
+                castle: true,
+                joint: None,
+            },
+            bumper_pos,
+        );
         Castle {
             bumper,
             bumper_pos,

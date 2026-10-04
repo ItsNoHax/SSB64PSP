@@ -787,8 +787,9 @@ fn execute(
             return;
         }
         op::PAUSE_SCRIPT => thread_mut(f, pass, thread).wait = f32::MAX,
+        // `fp->is_effect_skip` (Mushroom Kingdom's pipes) skips the event.
+        op::EFFECT | op::EFFECT_ITEM_HOLD if f.dokan.is_effect_skip => {}
         op::EFFECT | op::EFFECT_ITEM_HOLD => {
-            // `fp->is_effect_skip` is only set in Mushroom Kingdom's pipes.
             let (w2, w3, w4) = (word(1), word(2), word(3));
             let joint = crate::fteffect::joint_id(f.kind, sign((w >> 19) & 0x7F, 7) as i8);
             crate::fteffect::request(

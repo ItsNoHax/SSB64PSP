@@ -32,7 +32,12 @@ pub struct Cloud {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Yoster {
     pub clouds: [Cloud; 3],
+    /// The vapor this frame's evaporations made, for [`super::Stage::flush_effects`].
+    pub fx: crate::wpeffect::Emit,
 }
+
+/// `grYosterUpdateCloudSolid`'s vapor offset from the cloud's root.
+pub const VAPOR_OFFSET: Vec3 = Vec3::new(-750.0, -350.0, 0.0);
 
 fn group(groups: &mut [MapGroup], id: u8) -> Option<&mut MapGroup> {
     groups.get_mut(id as usize)
@@ -64,7 +69,10 @@ impl Yoster {
         // played: its scripts write only scale, and every cloud `DObj` has
         // only a `nGCMatrixKindTra` matrix (RE-365). The material
         // animations are added by the first tick.
-        Yoster { clouds }
+        Yoster {
+            clouds,
+            fx: crate::wpeffect::Emit::default(),
+        }
     }
 
     /// `grYosterCheckFighterCloudStand` @ 0x801085A8.
@@ -96,6 +104,11 @@ impl Yoster {
                             cloud.status = CloudStatus::Evaporate;
                             cloud.anim = Some(CloudStatus::Evaporate);
                             cloud.evaporate_wait = 180;
+                            // `grYosterCloudVaporMakeEffect` below the cloud
+                            // as it stands, before this frame's sink.
+                            self.fx.push(crate::wpeffect::WeaponEffect::CloudVapor(
+                                cloud.pos + VAPOR_OFFSET,
+                            ));
                         } else {
                             if Self::stood_on(fighters, map, id) {
                                 if cloud.pressure_timer == -1 {

@@ -472,7 +472,14 @@ mod tests {
             );
         }
         for _ in 5..16 {
-            pool.make_item(StageItem::Bumper, Vec3::ZERO).unwrap();
+            pool.make_item(
+                StageItem::Bumper {
+                    castle: true,
+                    joint: None,
+                },
+                Vec3::ZERO,
+            )
+            .unwrap();
         }
         let seed = crate::rng::seed();
         assert!(pool.make_item(StageItem::Monster(2), Vec3::ZERO).is_none());

@@ -41,6 +41,11 @@ const NO_FORCE_RESERVE: u8 = 5;
 /// The common bank remains 0; bank IDs are local to the match runtime.
 pub const YOSHI_PARTICLE_BANK: u8 = 1;
 
+/// Match bank for Yoshi's Island's own pair (`lGRYosterParticleScriptBank*`,
+/// `efParticleGetLoadBankID` in `grYosterInitAll`). Each stage bank keeps a
+/// fixed id of its own, so the runtime needs no stage to resolve it.
+pub const YOSTER_PARTICLE_BANK: u8 = 5;
+
 /// `dEFManagerDamageNormalLightIDs`, by the attacker's player.
 pub const NORMAL_LIGHT_IDS: [u16; 4] = [0x49, 0x4A, 0x4B, 0x4C];
 /// `efManagerDamageNormalHeavyMakeEffect`'s script.
@@ -793,7 +798,7 @@ pub struct HitEffect {
 /// the hit pipeline's, each fighter's queued ones ([`crate::fteffect`]),
 /// and the effect processes' pass.
 pub trait HitEffectSink {
-    fn container_smash(&mut self, _pos: Vec3) {}
+    fn container_smash(&mut self, _pos: Vec3, _piece: SmashPiece) {}
 
     /// `efManagerMBallRaysMakeEffect`: the rays' sequence number, or `None`
     /// when the effect is not made.
@@ -845,8 +850,8 @@ pub struct EffectRuntime<'b> {
 }
 
 impl HitEffectSink for EffectRuntime<'_> {
-    fn container_smash(&mut self, pos: Vec3) {
-        self.effects.container_smash(pos);
+    fn container_smash(&mut self, pos: Vec3, piece: SmashPiece) {
+        self.effects.container_smash(pos, piece);
     }
     fn mball_rays(&mut self, pos: Vec3) -> Option<u32> {
         self.effects.mball_rays(pos)
@@ -1145,9 +1150,18 @@ pub struct ContainerPiece {
     vel: Vec3,
     rotate_step: Vec3,
 }
+/// Whose display list a container smash's pieces draw:
+/// `llITCommonDataBoxEffectDisplayList` (the Crate and the Barrel) or
+/// `llGRBonus3MapTaruBombEffectDisplayList` (Race to the Finish's bomb).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmashPiece {
+    Box,
+    TaruBomb,
+}
 #[derive(Debug, Clone, PartialEq)]
 struct ContainerSmash {
     seq: u32,
+    piece: SmashPiece,
     pieces: [ContainerPiece; 7],
 }
 
@@ -1186,8 +1200,11 @@ impl Effects {
     pub fn displays(&self) -> impl Iterator<Item = &Display> + '_ {
         self.displays.iter().flatten()
     }
-    /// One non-forced struct is obtained before the source's 42 RNG draws.
-    pub fn container_smash(&mut self, pos: Vec3) {
+    /// `itBoxContainerSmashMakeEffect` and
+    /// `itTaruBombContainerSmashMakeEffect`, which differ only in their
+    /// pieces' display list. One non-forced struct is obtained before the
+    /// source's 42 RNG draws.
+    pub fn container_smash(&mut self, pos: Vec3, piece: SmashPiece) {
         let Some(i) = self.make_display(DisplayKind::ContainerSmash) else {
             return;
         };
@@ -1210,13 +1227,16 @@ impl Effects {
                 dtor(rng::rand_float() * 100.0 - 50.0),
             ),
         });
-        self.containers.push(ContainerSmash { seq, pieces });
+        self.containers.push(ContainerSmash { seq, piece, pieces });
     }
-    pub fn container_pieces(&self, display: &Display) -> Option<&[ContainerPiece; 7]> {
+    pub fn container_pieces(
+        &self,
+        display: &Display,
+    ) -> Option<(SmashPiece, &[ContainerPiece; 7])> {
         self.containers
             .iter()
             .find(|s| s.seq == display.seq)
-            .map(|s| &s.pieces)
+            .map(|s| (s.piece, &s.pieces))
     }
 
     /// The effect link's `func_run`s: every display effect made last frame

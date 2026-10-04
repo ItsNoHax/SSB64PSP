@@ -1,5 +1,6 @@
-//! Peach's Castle's Bumper, `itgbumper.c`. `grCastleInitAll` makes it on the
-//! moving ground and `grCastleBumperProcUpdate` carries its X every frame.
+//! The ground Bumper, `itgbumper.c`. `grCastleInitAll` makes Peach's
+//! Castle's on the moving ground and `grCastleBumperProcUpdate` carries its
+//! X every frame; `grBonus3MakeBumpers` lines Race to the Finish with them.
 //! It hits fighters only, never takes damage, and swells and lights up for
 //! a few frames each time it hits.
 
@@ -61,10 +62,11 @@ pub enum Status {
     Common,
 }
 
-/// `itGBumperMakeItem` (`ITEM_FLAG_PARENT_GROUND`: no map projection). The
-/// pool only makes it for Peach's Castle, so the Castle knockback always
-/// applies.
-pub(super) fn make(pos: Vec3, motion_count: u16) -> Item {
+/// `itGBumperMakeItem` (`ITEM_FLAG_PARENT_GROUND`: no map projection).
+/// `castle` is `gSCManagerBattleState->gkind == nGRKindCastle`: only Peach's
+/// Castle's Bumper takes the Castle knockback; Race to the Finish's keep
+/// the attributes'.
+pub(super) fn make(pos: Vec3, motion_count: u16, castle: bool) -> Item {
     let mut item = Item::new(
         ItemKind::GBumper,
         &ATTRIBUTES,
@@ -81,8 +83,10 @@ pub(super) fn make(pos: Vec3, motion_count: u16) -> Item {
     item.attack.can_rehit_shield = true;
     item.vel_air = Vec3::ZERO;
     item.palette = 0;
-    item.attack.kb_weight = CASTLE_KNOCKBACK;
-    item.attack.angle = CASTLE_ANGLE;
+    if castle {
+        item.attack.kb_weight = CASTLE_KNOCKBACK;
+        item.attack.angle = CASTLE_ANGLE;
+    }
     item
 }
 

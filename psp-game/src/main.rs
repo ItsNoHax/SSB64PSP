@@ -1425,6 +1425,8 @@ unsafe fn training_step(
             },
         );
     }
+    // The vapor and sparkles the stage process made.
+    stage_ctl.flush_effects(effects);
     // Sector Z's Arwing lasers: `wpManagerMakeWeapon` inside the
     // controller; a pair's second shot only after the first.
     for laser in stage_ctl.take_lasers() {
@@ -5195,6 +5197,8 @@ impl DrawAssets {
             | ssb_game::item::ItemKind::PowerBlock
             | ssb_game::item::ItemKind::Pakkun
             | ssb_game::item::ItemKind::Monster(_) => None,
+            // Race to the Finish is not packed.
+            ssb_game::item::ItemKind::TaruBomb => None,
             // [`MonsterAsset`].
             ssb_game::item::ItemKind::MMonster(_) => None,
         }
@@ -6425,7 +6429,10 @@ unsafe fn draw_training(
             .displays()
             .filter(|d| d.kind == ssb_game::effect::DisplayKind::ContainerSmash)
         {
-            if let Some(pieces) = damage_hud.effects.container_pieces(display) {
+            // Only the Box pieces are packed; Race to the Finish is not.
+            if let Some((ssb_game::effect::SmashPiece::Box, pieces)) =
+                damage_hud.effects.container_pieces(display)
+            {
                 for piece in pieces {
                     gpu.model_transform_xyz(
                         [piece.pos.x, piece.pos.y, piece.pos.z],
