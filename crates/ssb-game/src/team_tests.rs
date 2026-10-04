@@ -62,7 +62,16 @@ fn a_teammates_attack_passes_through_only_with_team_attack_off() {
 fn star_lands(rules: TeamRules, thrower_team: u8, bystander_team: u8) -> bool {
     let mut star = Fighter::new(FighterKind::Mario, 1, 3);
     star.team = 1;
-    crate::capture_kirby::set_star(&mut star, false, Vec3::new(40.0, 0.0, 0.0), 0, thrower_team);
+    crate::capture_kirby::set_star(
+        &mut star,
+        false,
+        Vec3::new(40.0, 0.0, 0.0),
+        crate::thrown::ThrowOwner {
+            port: 0,
+            kind: FighterKind::Kirby,
+            team: thrower_team,
+        },
+    );
     let mut bystander = standing(FighterKind::Fox, 2, bystander_team);
     bystander.pos = star.pos;
     combat::search_all(&mut [&mut star, &mut bystander], rules);

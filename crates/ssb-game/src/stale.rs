@@ -9,23 +9,18 @@
 //! `gSCManagerBattleState->players[player].stale_info[5]` and hands out
 //! motion counts from the global `gFTManagerMotionCount`. Here the queue lives
 //! on the attacking [`Fighter`] ([`Fighter::stale`]), and each fighter counts
-//! its own motions. The two are equivalent: a player's queue only ever holds
-//! that player's own `(attack_id, motion_count)` pairs, and the lookup only
-//! compares counts for equality, so any counter that never repeats a value
-//! for one fighter gives the same staling. The only difference is when the
+//! its own motions. Thrown-body hits enter the thrower's queue with the
+//! body's motion ID/count. Those entries also carry their origin port, so
+//! two bodies' local counters do not cause false duplicate suppression.
+//! Body attacks have attack ID `None`, which the stale lookup bypasses.
+//! The remaining difference is when the
 //! 16-bit counter wraps (after 65,535 of that fighter's own motions rather
 //! than everyone's).
 //!
 //! ## Documented deviations
 //!
-//! * **Damage is staled at contact, not at `MakeAttackColl`.** The source
-//!   stales a hitbox's damage once, when the motion command creates it. Here
-//!   it is staled when the hit lands. The queue can only change between the
-//!   two if another of the attacker's motions lands a hit while the box is
-//!   live (a projectile, say), which ported moves do not do.
-//! * **Weapons are not staled yet.** `wpMainGetStaledDamage` multiplies by a
-//!   `stale` captured when the weapon spawns; weapon hits do not feed the
-//!   queue either. See `TODO.md`.
+//! Hitbox damage is staled at `MakeAttackColl`. Weapons capture their
+//! stale multiplier at spawn and feed their owner's queue at contact.
 
 use crate::fighter::{Fighter, FighterKind};
 use crate::status::{
@@ -169,6 +164,7 @@ pub struct StaleQueue {
     pub next: usize,
     /// `stale_info[i] = { attack_id, motion_count }`.
     pub entries: [(MotionAttackId, u16); STALE_QUEUE_LEN],
+    origins: [Option<u8>; STALE_QUEUE_LEN],
 }
 
 impl StaleQueue {
@@ -211,14 +207,26 @@ impl StaleQueue {
     /// `ftParamUpdateStaleQueue` @ 0x800EA614, for an attacker that is not
     /// the defender (the caller checks `attack_player != defend_player`).
     pub fn push(&mut self, attack_id: MotionAttackId, motion_count: u16) {
+        self.push_origin(attack_id, motion_count, None);
+    }
+
+    pub(crate) fn push_thrown(&mut self, attack_id: MotionAttackId, motion_count: u16, origin: u8) {
+        self.push_origin(attack_id, motion_count, Some(origin));
+    }
+
+    fn push_origin(&mut self, attack_id: MotionAttackId, motion_count: u16, origin: Option<u8>) {
         if self
             .entries
             .iter()
-            .any(|&(id, count)| id == attack_id && count == motion_count)
+            .zip(self.origins)
+            .any(|(&(id, count), source)| {
+                id == attack_id && count == motion_count && source == origin
+            })
         {
             return;
         }
         self.entries[self.next] = (attack_id, motion_count);
+        self.origins[self.next] = origin;
         self.next = if self.next == STALE_QUEUE_LEN - 1 {
             0
         } else {

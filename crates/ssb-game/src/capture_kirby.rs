@@ -65,10 +65,6 @@ pub struct CaptureKirbyState {
     pub flag1: i32,
     /// Motion flag 2: 1 copy star, 2 spit star, 3 releasing.
     pub flag2: u8,
-    /// `throw_gobj`: the Kirby that spat this star, which it never hits.
-    pub thrower: Option<u8>,
-    /// `throw_team`: that Kirby's team (`ftParamSetThrowParams`).
-    pub thrower_team: u8,
     /// `ftParamSetHitStatusAll(nGMHitStatusIntangible)`.
     pub intangible: bool,
 }
@@ -205,7 +201,7 @@ fn escape_breakout(f: &mut Fighter, holder: Holder) {
 
 /// `ftCommonThrownKirbyStarSetStatus` / `ftCommonThrownCopyStarSetStatus`
 /// and their `proc_status`: the victim leaves the link at `vel`.
-pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, thrower: u8, thrower_team: u8) {
+pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, owner: crate::thrown::ThrowOwner) {
     let is_kirby = f.kirby_capture.is_kirby;
     grab::lose_grip(f);
     f.become_airborne();
@@ -214,7 +210,17 @@ pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, thrower: u8, thrower_tea
     } else {
         Status::ThrownKirbyStar
     };
-    status::set_status(f, status, 0.0, StatusTiming::unknown());
+    f.thrown.owner = Some(owner);
+    status::set_any_status_preserve(
+        f,
+        status.into(),
+        0.0,
+        StatusTiming::unknown(),
+        status::Preserve {
+            throw_pointer: true,
+            ..status::Preserve::NONE
+        },
+    );
     if !copy {
         // `ftCommonThrownKirbyStarSetStatus` rewrites the new collisions'
         // damage from `FTKirbyCopy::star_damage`.
@@ -238,8 +244,6 @@ pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, thrower: u8, thrower_tea
         lr: if vel.x < 0.0 { -1.0 } else { 1.0 },
         flag1: if copy { 10 } else { 30 },
         flag2: if copy { 1 } else { 2 },
-        thrower: Some(thrower),
-        thrower_team,
         intangible: true,
     };
     if !copy {
@@ -256,7 +260,6 @@ fn escape(f: &mut Fighter) {
         StatusTiming::unknown(),
         status::Preserve::DAMAGE_PLAYER,
     );
-    f.kirby_capture.thrower = None;
     f.interface.tag_wait = 1;
     f.kirby_capture.intangible = false;
     f.grab.capture_immune = false;
@@ -387,7 +390,16 @@ mod tests {
             (crate::fighter::FighterKind::Yoshi, 25),
         ] {
             let mut f = Fighter::new(kind, 1, 3);
-            set_star(&mut f, false, Vec3::new(40.0, 0.0, 0.0), 0, 0);
+            set_star(
+                &mut f,
+                false,
+                Vec3::new(40.0, 0.0, 0.0),
+                crate::thrown::ThrowOwner {
+                    port: 0,
+                    kind: FighterKind::Kirby,
+                    team: 0,
+                },
+            );
             let live: std::vec::Vec<_> = f
                 .attack_colls
                 .iter()
@@ -409,7 +421,16 @@ mod tests {
     #[test]
     fn spit_star_travels_decelerates_then_pops_out() {
         let mut f = Fighter::new(FighterKind::Mario, 1, 4);
-        set_star(&mut f, false, Vec3::new(120.0, 0.0, 0.0), 0, 0);
+        set_star(
+            &mut f,
+            false,
+            Vec3::new(120.0, 0.0, 0.0),
+            crate::thrown::ThrowOwner {
+                port: 0,
+                kind: FighterKind::Kirby,
+                team: 0,
+            },
+        );
         assert!(is_intangible(&f));
         apply_air_physics(&mut f);
         assert_eq!(f.physics.vel_air.x, 116.0);
@@ -436,7 +457,16 @@ mod tests {
         f.kirby_capture.is_kirby = true;
         // The copy star keeps the capture's breakout count.
         f.grab.breakout_wait = 400;
-        set_star(&mut f, true, Vec3::new(-26.0, 96.0, 0.0), 0, 0);
+        set_star(
+            &mut f,
+            true,
+            Vec3::new(-26.0, 96.0, 0.0),
+            crate::thrown::ThrowOwner {
+                port: 0,
+                kind: FighterKind::Kirby,
+                team: 0,
+            },
+        );
         for _ in 0..10 {
             apply_air_physics(&mut f);
         }

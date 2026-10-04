@@ -210,7 +210,7 @@ def parse_file(path, macros, common=None, base=0, demo=False):
     src = COMMENT_RE.sub(" ", preprocess(open(path).read()))
     size = re.search(r"File size: US (\d+) bytes", open(path).read())
     arrays = []
-    for m in re.finditer(r"^(\w+)\s+(\w+)\s*(\[[^\]]*\])?\s*=\s*\{(.*?)\n\};", src, re.M | re.S):
+    for m in re.finditer(r"^((?:void\s*\*)|\w+)\s*(\w+)\s*((?:\[[^\]]*\])*)\s*=\s*\{(.*?)\n\};", src, re.M | re.S):
         if demo and m.group(1) not in ("s32", "u32", "ftMotionCommand"):
             continue
         if demo or m.group(1) == "ftMotionCommand" or "ftMotion" in m.group(4):
@@ -218,6 +218,11 @@ def parse_file(path, macros, common=None, base=0, demo=False):
             words = []
             for item in items:
                 words += macros.expand(item)
+        elif m.group(1).replace(" ", "") == "void*" or m.group(1) == "FTMotionDamageScript":
+            # `SetDamageThrown` calls [script_id][throw_fkind]. Preserve
+            # every pointer (including NULL), in the original file layout.
+            words = [t.strip() for t in re.split(r"[{},]", m.group(4)) if t.strip()]
+            words = [str(NONE_PTR) if t == "NULL" or re.fullmatch(r"0|0[xX]0+", t) else t for t in words]
         else:
             # Embedded data (`FTThrowHitDesc`, `FTSpecialColl`): every scalar
             # is one 32-bit word. Only its size matters to the scripts.
@@ -462,7 +467,7 @@ def main():
               f"({len(macros.unknown)})", file=sys.stderr)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w") as f:
-        f.write("".join(w))
+        f.write("".join(w).rstrip() + "\n")
     print(f"wrote {OUT}")
 
 

@@ -28,6 +28,7 @@ pub const DIVE_THROW: [ThrowHitDesc; 2] = [
         kb_scale: 82,
         kb_weight: 0,
         kb_base: 30,
+        element: crate::combat::Element::Fire,
     },
     ThrowHitDesc {
         status: None,
@@ -36,6 +37,7 @@ pub const DIVE_THROW: [ThrowHitDesc; 2] = [
         kb_scale: 100,
         kb_weight: 0,
         kb_base: 0,
+        element: crate::combat::Element::Normal,
     },
 ];
 
@@ -320,6 +322,7 @@ fn dive_throw(f: &mut Fighter) {
     if f.grab.catch.take().is_some() {
         f.grab.send(GrabEvent::Release {
             lr: f.facing.sign(),
+            script_id: None,
             desc: DIVE_THROW[0],
             shield_catch: false,
             staled: crate::grab::StaledThrow::of(f, DIVE_THROW[0].damage),

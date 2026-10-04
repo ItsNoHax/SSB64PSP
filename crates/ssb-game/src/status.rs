@@ -3542,6 +3542,8 @@ pub fn set_any_status(
 pub struct Preserve {
     /// `FTSTATUS_PRESERVE_HIT`: keep the attack collisions.
     pub hit: bool,
+    /// `FTSTATUS_PRESERVE_THROWPOINTER`.
+    pub throw_pointer: bool,
     /// `FTSTATUS_PRESERVE_HITSTATUS`: keep intangibility/invincibility.
     pub hitstatus: bool,
     /// `FTSTATUS_PRESERVE_DAMAGEPLAYER`: a grounded status keeps
@@ -3555,6 +3557,7 @@ pub struct Preserve {
 impl Preserve {
     pub const NONE: Preserve = Preserve {
         hit: false,
+        throw_pointer: false,
         hitstatus: false,
         damage_player: false,
         colanim: false,
@@ -3598,6 +3601,9 @@ pub fn set_any_status_preserve(
     }
     if !preserve.hit {
         crate::combat::clear_attack_colls(f);
+    }
+    if !preserve.throw_pointer {
+        f.thrown.owner = None;
     }
     crate::hurtbox::on_set_status(f, preserve.hitstatus);
     let keep_colanim =
@@ -3678,6 +3684,7 @@ pub fn set_any_status_preserve(
     f.status.anim_frame_begin = anim_frame_begin;
     f.status.entry = f.status.entry.wrapping_add(1);
     f.status.timing = timing;
+    crate::thrown::on_status(f);
     crate::motion::start(f, anim_frame_begin);
 }
 

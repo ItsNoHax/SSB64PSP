@@ -403,6 +403,9 @@ pub struct FrameHits {
     /// [`finish_frame_with`] to hand on.
     pub effects: [Option<HitEffect>; EFFECT_QUEUE_MAX],
     pub effects_len: usize,
+    /// Thrown-body hits credit the thrower's stale queue. One slot per
+    /// attack collision, flushed between fighter pairs in the search pass.
+    pub(crate) thrown_stale: [Option<(u8, MotionAttackId, u16)>; 4],
 }
 
 impl Default for FrameHits {
@@ -431,6 +434,7 @@ impl Default for FrameHits {
             absorb_lr: 0.0,
             effects: [None; EFFECT_QUEUE_MAX],
             effects_len: 0,
+            thrown_stale: [None; 4],
         }
     }
 }
@@ -736,18 +740,14 @@ fn body_hitstatus(f: &Fighter) -> HitStatus {
     }
 }
 
-/// `FTStruct::throw_gobj`: the Kirby that spat this fighter out as a star.
+/// `FTStruct::throw_gobj`: common throws and Kirby's spit/copy stars.
 pub(crate) fn throw_port(f: &Fighter) -> Option<u8> {
-    if crate::capture_kirby::is_star(f.status.status) {
-        f.kirby_capture.thrower
-    } else {
-        None
-    }
+    f.thrown.owner.map(|owner| owner.port)
 }
 
 /// `FTStruct::throw_team`, while [`throw_port`] is set.
 pub(crate) fn throw_team(f: &Fighter) -> Option<u8> {
-    throw_port(f).map(|_| f.kirby_capture.thrower_team)
+    f.thrown.owner.map(|owner| owner.team)
 }
 
 /// `(fp->throw_gobj != NULL) ? fp->throw_team : fp->team`: the team a
@@ -985,7 +985,7 @@ pub fn search_fighter_hits(
     if rules.spares(hit_team(other), this.team) || is_catchstatus(other) {
         return;
     }
-    // A thrown star never hits the fighter that threw it.
+    // A thrown fighter never hits the fighter that threw it.
     if throw_port(other) == Some(this.port) {
         return;
     }
@@ -1212,10 +1212,15 @@ fn update_damage_stat(
                 }),
             },
         );
-        if attacker.port != victim.port {
-            attacker
-                .stale
-                .push(coll.motion_attack_id, coll.motion_count);
+        if player != victim.port {
+            if throw_port(attacker).is_some() {
+                attacker.hits.thrown_stale[i] =
+                    Some((player, coll.motion_attack_id, coll.motion_count));
+            } else {
+                attacker
+                    .stale
+                    .push(coll.motion_attack_id, coll.motion_count);
+            }
         }
     } else {
         // An invincible body or box, or damage a resist soaked.
@@ -1921,6 +1926,7 @@ pub fn search_all(fighters: &mut [&mut Fighter], rules: TeamRules) {
             }
             let (a, b) = pair_mut(fighters, this, other);
             search_fighter_hits(a, b, other > this, rules);
+            flush_thrown_stale(fighters);
         }
     }
 }
@@ -1952,6 +1958,8 @@ pub fn finish_frame_between(
     effects: &mut dyn HitEffectSink,
     between: &mut dyn FnMut(&mut dyn HitEffectSink),
 ) -> [bool; 4] {
+    // Also supports callers that use individual pair searches.
+    flush_thrown_stale(fighters);
     // The catch search's statuses (priority 2) made their effects first.
     for f in fighters.iter_mut() {
         effects.fighter(f);
@@ -1995,6 +2003,19 @@ pub fn finish_frame_between(
         }
     }
     landed
+}
+
+fn flush_thrown_stale(fighters: &mut [&mut Fighter]) {
+    for i in 0..fighters.len() {
+        for slot in 0..4 {
+            if let Some((owner, id, count)) = fighters[i].hits.thrown_stale[slot].take() {
+                let origin = fighters[i].port;
+                if let Some(f) = fighters.iter_mut().find(|f| f.port == owner) {
+                    f.stale.push_thrown(id, count, origin);
+                }
+            }
+        }
+    }
 }
 
 fn pair_mut<'a>(

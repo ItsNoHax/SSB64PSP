@@ -95,6 +95,7 @@ pub const EGG_LAY_THROW_DESC: [ThrowHitDesc; 2] = [
         kb_scale: 100,
         kb_weight: 0,
         kb_base: 0,
+        element: crate::combat::Element::Normal,
     },
     ThrowHitDesc {
         status: None,
@@ -103,6 +104,7 @@ pub const EGG_LAY_THROW_DESC: [ThrowHitDesc; 2] = [
         kb_scale: 100,
         kb_weight: 0,
         kb_base: 0,
+        element: crate::combat::Element::Normal,
     },
 ];
 

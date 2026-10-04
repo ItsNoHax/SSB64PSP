@@ -736,11 +736,34 @@ fn execute(
                 t.script_id -= 2;
             }
         }
-        op::SUBROUTINE => {
-            let target = word(1);
+        op::SUBROUTINE | op::SET_DAMAGE_THROWN => {
+            let target = if opcode == op::SET_DAMAGE_THROWN {
+                f.thrown
+                    .owner
+                    .and_then(|owner| {
+                        let table = word(1);
+                        if table == NO_SCRIPT || f.thrown.script_id >= 2 {
+                            return None;
+                        }
+                        let (data, table_base) = if table & COMMON_BIT != 0 {
+                            (&scripts::COMMON_MOVESET_WORDS[..], COMMON_BIT)
+                        } else {
+                            (fighter_scripts(f.kind)?.words, 0)
+                        };
+                        data.get(
+                            (table - table_base) as usize
+                                + usize::from(f.thrown.script_id) * 27
+                                + owner.kind as usize,
+                        )
+                        .copied()
+                    })
+                    .unwrap_or(NO_SCRIPT)
+            } else {
+                word(1)
+            };
             let t = thread_mut(f, pass, thread);
             if target == NO_SCRIPT || t.script_id >= STACK_MAX {
-                // An item moveset outside this file: nothing of it runs.
+                // No subroutine (or no throwing fighter).
                 t.pc = next;
                 return;
             }
