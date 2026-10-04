@@ -1541,13 +1541,10 @@ impl FighterScene {
         use ssb_engine::math::Vec3;
         use ssb_game::fighter::{JointTransform, FIGHTER_JOINTS};
         self.fighter.joint_transforms = [None; FIGHTER_JOINTS];
-        let sign = self.fighter.facing.sign();
+        let axes = ssb_game::item_throw::model_axes(&self.fighter);
+        let world = |v: Vec3| axes[0] * v.x + axes[1] * v.y + axes[2] * v.z;
         let root = JointTransform {
-            axes: [
-                Vec3::new(0.0, 0.0, -sign),
-                Vec3::new(0.0, 1.0, 0.0),
-                Vec3::new(sign, 0.0, 0.0),
-            ],
+            axes,
             origin: self.fighter.pos,
         };
         self.fighter.joint_transforms[0] = Some(root);
@@ -1562,13 +1559,13 @@ impl FighterScene {
         for (i, matrix) in posed[..count].iter().enumerate() {
             let axis = |col: usize| {
                 let m = &matrix.0;
-                Vec3::new(m[col * 4 + 2] * sign, m[col * 4 + 1], -m[col * 4] * sign)
+                world(Vec3::new(m[col * 4], m[col * 4 + 1], m[col * 4 + 2]))
             };
             let t = matrix.translation();
             self.fighter.joint_transforms[i + 4] = Some(JointTransform {
                 axes: [axis(0), axis(1), axis(2)],
                 origin: self.fighter.pos
-                    + Vec3::new(t[2] * scale * sign, t[1] * scale, -t[0] * scale * sign),
+                    + world(Vec3::new(t[0] * scale, t[1] * scale, t[2] * scale)),
             });
         }
         // `YRotN` hangs off `XRotN`, which nothing rotates, so its local
@@ -1577,11 +1574,11 @@ impl FighterScene {
             let pose = &self.shield_yrotn;
             let m = ssb_rom::scene::Mat4::from_trs([0.0; 3], pose.rotate, [1.0; 3]).0;
             let axis =
-                |col: usize| Vec3::new(m[col * 4 + 2] * sign, m[col * 4 + 1], -m[col * 4] * sign);
+                |col: usize| world(Vec3::new(m[col * 4], m[col * 4 + 1], m[col * 4 + 2]));
             let t = pose.translate;
             self.fighter.joint_transforms[3] = Some(JointTransform {
                 axes: [axis(0), axis(1), axis(2)],
-                origin: self.fighter.pos + Vec3::new(t[2] * sign, t[1], -t[0] * sign),
+                origin: self.fighter.pos + world(Vec3::new(t[0], t[1], t[2])),
             });
         }
     }
@@ -1601,12 +1598,11 @@ impl FighterScene {
         }
         let local = posed[local_index].translation();
         let scale = ssb_rom::pack::MODEL_SCALE;
-        let facing = self.fighter.facing.sign();
-        Some(ssb_engine::math::Vec3::new(
-            self.fighter.pos.x + (local[2] * scale + offset_x) * facing,
-            self.fighter.pos.y + local[1] * scale,
-            self.fighter.pos.z - local[0] * scale * facing,
-        ))
+        let axes = ssb_game::item_throw::model_axes(&self.fighter);
+        Some(self.fighter.pos
+            + axes[0] * (local[0] * scale)
+            + axes[1] * (local[1] * scale)
+            + axes[2] * (local[2] * scale + offset_x))
     }
 }
 

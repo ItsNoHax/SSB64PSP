@@ -1933,14 +1933,18 @@ impl ItemPool {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        let order = self.order;
         let owners = self.owners;
         let mut events = self.events;
         let mut shots = self.monster_shots;
         let mut weapon_free = self.weapon_free;
-        for (link, &slot) in order[..self.order_len].iter().enumerate() {
+        // gcRunGObjProcess reads priority_next after the callback. Makers
+        // append to the live link, so their main processes run in this pass.
+        let mut cursor = 0;
+        let mut link = 0;
+        while cursor < self.order_len {
+            let slot = self.order[cursor];
             let Some(mut item) = self.slots[usize::from(slot)] else {
-                continue;
+                unreachable!("live item link names an empty struct");
             };
             let handle = self.handle_of(slot);
             let mut effects = Effects::default();
@@ -1975,7 +1979,10 @@ impl ItemPool {
             self.apply_effects(effects);
             if !alive {
                 self.destroy(slot);
+            } else {
+                cursor += 1;
             }
+            link += 1;
         }
         self.events = events;
         self.monster_shots = shots;
@@ -2002,11 +2009,15 @@ impl ItemPool {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        let order = self.order;
         let mut events = self.events;
-        for (link, &slot) in order[..self.order_len].iter().enumerate() {
+        // Collision callbacks can make container contents too. Their
+        // priority-0 process runs now; priority 3 has already passed.
+        let mut cursor = 0;
+        let mut link = 0;
+        while cursor < self.order_len {
+            let slot = self.order[cursor];
             let Some(mut item) = self.slots[usize::from(slot)] else {
-                continue;
+                unreachable!("live item link names an empty struct");
             };
             let mut push = |e| push_event(&mut events, e);
             let mut emit = crate::wpeffect::Emit::default();
@@ -2030,7 +2041,10 @@ impl ItemPool {
             self.slots[usize::from(slot)] = Some(item);
             if !alive {
                 self.destroy(slot);
+            } else {
+                cursor += 1;
             }
+            link += 1;
         }
         self.events = events;
     }

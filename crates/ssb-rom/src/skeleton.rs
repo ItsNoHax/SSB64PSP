@@ -635,6 +635,49 @@ impl StageAnimator {
         count
     }
 
+    /// Item tree after `lbCommonEjectTreeDObj` removed descriptor 0.
+    /// The caller supplies descriptor 1's live root transform (its world
+    /// translation is owned by gameplay); descendant scripts remain local.
+    pub fn compose_item(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        root: JointPose,
+        out: &mut [Mat4],
+    ) -> usize {
+        let count = (object.node_count as usize).min(out.len()).min(MAX_NODES);
+        if count != 0 {
+            out[0] = Mat4::IDENTITY;
+        }
+        for i in 1..count {
+            let index = object.first_node + i as u32;
+            let Some(node) = pack.node(index) else {
+                out[i] = Mat4::IDENTITY;
+                continue;
+            };
+            let pose = if i == 1 {
+                root
+            } else {
+                self.pose_for(index).copied().unwrap_or(JointPose {
+                    rotate: node.rest_rotate,
+                    translate: node.rest_translate,
+                    scale: node.rest_scale,
+                })
+            };
+            let local = Mat4::from_trs(
+                pose.translate.map(|t| t / MODEL_SCALE),
+                pose.rotate,
+                pose.scale,
+            );
+            out[i] = node
+                .parent
+                .checked_sub(object.first_node)
+                .filter(|&parent| parent >= 1 && parent < i as u32)
+                .map_or(local, |parent| out[parent as usize].mul(&local));
+        }
+        count
+    }
+
     /// Signed billboard X/Y scales for every node in `object`.
     ///
     /// `gcPrepDObjMatrix` does not derive these from a composed matrix. It
@@ -1464,6 +1507,34 @@ mod tests {
         let mut w = PackWriter::new();
         w.add_object(graph, 296, |_| None, &[]);
         w.finish()
+    }
+
+    #[test]
+    fn item_composition_ejects_the_placeholder_and_keeps_descendant_transforms() {
+        let bytes = packed(&chain());
+        let pack = Pack::open(&bytes).unwrap();
+        let object = pack.object(0).unwrap();
+        let root = JointPose {
+            translate: [0.0; 3],
+            rotate: [0.0; 3],
+            scale: [1.5; 3],
+        };
+        let mut out = [Mat4::IDENTITY; 3];
+        assert_eq!(
+            StageAnimator::default().compose_item(&pack, &object, root, &mut out),
+            3
+        );
+        assert_eq!(out[0], Mat4::IDENTITY);
+        assert_eq!(out[1], Mat4::from_trs([0.0; 3], [0.0; 3], [1.5; 3]));
+        let child = pack.node(object.first_node + 2).unwrap();
+        let expected = out[1].mul(&Mat4::from_trs(
+            child.rest_translate.map(|t| t / MODEL_SCALE),
+            child.rest_rotate,
+            child.rest_scale,
+        ));
+        assert_eq!(out[2], expected);
+        assert!(StageAnimator::default().compose(&pack, &object, &mut [Mat4::IDENTITY; 3]) > 0);
+        assert_ne!(out[1].0, pack.node(object.first_node + 1).unwrap().world);
     }
 
     #[test]

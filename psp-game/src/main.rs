@@ -627,6 +627,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             4 | 8 => N64Buttons(N64Buttons::A),
             20 => N64Buttons(N64Buttons::B),
             60 if scene == GameScene::SamusShot => N64Buttons(N64Buttons::B),
+            // Extended controls hold through the critical bloat, then throw
+            // backward. The original Link Bomb capture stays at tick 55.
+            300 if scene == GameScene::LinkBomb => N64Buttons(N64Buttons::A),
             // PSI Magnet lasts while B is held.
             t if scene == GameScene::NessMagnet && t > 20 => N64Buttons(N64Buttons::B),
             _ => N64Buttons(0),
@@ -733,6 +736,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
+    if scene == GameScene::LinkBomb && tick == 300 {
+        return 80;
+    }
     if scene == GameScene::TrainingInterface {
         return if tick == 68 || tick == 82 { 80 } else { 0 };
     }
@@ -7568,16 +7574,10 @@ unsafe fn draw_items_weapons_effects(
     // camera's default head modes. The PK Fire flame is a
     // `TraRotRpyRSca` tree scaled by its lifetime (`itNessPKFireProcUpdate`);
     // its node 3 is a ROM billboard. Link's Bomb is `Tra` then kind 46 on its
-    // root and child (RE-383): the child, the drawn node, is a camera-facing
-    // quad spun by its own `rotate.z` and sized by the accumulated
-    // `gGCScaleX` (root scale times its own). Its position is its translate
-    // under the root's modelview: the item position in world axes, or, held,
-    // the item joint under `itMainSetFighterHold`'s kind-82 parent
-    // (`func_ovl0_800C9F70`, the joint matrix with its scale divided out). Link's Bomb is `Tra` then kind 46 on the
-    // root and its child: the child draws as a camera-facing quad at the
-    // item's position plus its own translate, sized by the root's scale times
-    // its own and spun by its own `rotate.z` (`gcPrepDObjMatrix` kind 46
-    // rewrites only the MVP's rotation rows and carries `gGCScaleX` down).
+    // promoted body/root and fuse child. Loose, the body's translation is
+    // the gameplay position; held, its descriptor offset sits under the
+    // normalized hand joint. The fuse inherits the body's billboard frame
+    // and then applies its own kind-46 spin and scale.
     if part == BattlePart::Items {
     // `itDisplayColAnim{OPA,XLU}ProcDisplay`: an item whose attributes set
     // `is_display_colanim` draws with ENV its colour animation's `color1`
@@ -7781,7 +7781,9 @@ unsafe fn draw_items_weapons_effects(
             }
             ssb_game::item::ItemKind::NessPKFire => {
                 let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 8];
-                let n = visual.anim.compose(p, object, &mut posed);
+                let mut root = node_pose_or_rest(p, &visual.anim, object, 1);
+                root.translate = [0.0; 3];
+                let n = visual.anim.compose_item(p, object, root, &mut posed);
                 gpu.model_transform_xyz(
                     [item.pos.x, item.pos.y, item.pos.z],
                     [0.0; 3],
@@ -7855,40 +7857,32 @@ unsafe fn draw_items_weapons_effects(
                     }
                     None => item.pos + local,
                 };
-                // Held, `itMainSetFighterHold` resets the root to its desc
-                // scale; loose, the bloat scales the root.
-                let root_scale = if held.is_some() {
-                    [1.0, 1.0]
-                } else {
-                    [item.scale.x, item.scale.y]
-                };
+                // Descriptor 0 is gone. Node 1 is the body/root, retaining
+                // its hand offset only under the attach joint. Bloat writes
+                // this same node loose and held (root->child when held).
+                let root_pos = if held.is_some() { to_world(v(&body)) } else { item.pos };
+                let root_scale = [item.scale.x * body.scale[0], item.scale.y * body.scale[1]];
+                gpu.model_transform_billboard(
+                    root_pos, pl.camera.eye, pl.camera.at, body.rotate[2],
+                    root_scale.map(|s| meshdraw::MODEL_SCALE * s),
+                );
+                let parent = gpu.model_matrix();
                 if let Some(mesh) = mesh_of(1) {
-                    gpu.model_transform_billboard(
-                        to_world(v(&body)),
-                        pl.camera.eye,
-                        pl.camera.at,
-                        body.rotate[2],
-                        [
-                            meshdraw::MODEL_SCALE * root_scale[0] * body.scale[0],
-                            meshdraw::MODEL_SCALE * root_scale[1] * body.scale[1],
-                        ],
-                    );
                     meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&visual.materials));
                 }
-                // Node 2 (the fuse spark) is plain `Tra`: no rotation or scale
-                // of its own, in the parent's frame.
+                // The maker adds kind 46 to root->child too: its position
+                // inherits the body's billboard matrix; its axes then reset
+                // to the camera, with its own spin/scale and gGCScaleX.
                 if let Some(mesh) = mesh_of(2) {
-                    let pos = to_world(v(&body) + v(&spark));
-                    match held {
-                        Some(joint) => {
-                                gpu.model_transform_joint(pos, joint, meshdraw::MODEL_SCALE)
-                            }
-                            None => gpu.model_transform(
-                            [pos.x, pos.y, pos.z],
-                            [0.0; 3],
-                            meshdraw::MODEL_SCALE,
-                        ),
-                    }
+                    let [x, y, z] = spark.translate.map(|v| v / meshdraw::MODEL_SCALE);
+                    let pos = ssb_engine::math::Vec3::new(
+                        parent.w.x + parent.x.x * x + parent.y.x * y + parent.z.x * z,
+                        parent.w.y + parent.x.y * x + parent.y.y * y + parent.z.y * z,
+                        parent.w.z + parent.x.z * x + parent.y.z * y + parent.z.z * z,
+                    );
+                    gpu.model_transform_billboard(pos, pl.camera.eye, pl.camera.at, spark.rotate[2],
+                        [meshdraw::MODEL_SCALE * root_scale[0] * spark.scale[0],
+                         meshdraw::MODEL_SCALE * root_scale[0] * spark.scale[1]]);
                     meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&visual.materials));
                 }
                 }

@@ -160,7 +160,7 @@ pub(super) fn make(pos: Vec3, motion_count: u16) -> Item {
 }
 
 /// `itLinkBombExplodeWaitUpdateScale`: in the hand the bloat scales the
-/// model's child joint, which gameplay never reads.
+/// model's item root under the attach joint (descriptor 1).
 fn update_scale(item: &mut Item) {
     let vars = &mut item.vars;
     if vars.bomb_scale_int == 0 {
@@ -170,10 +170,8 @@ fn update_scale(item: &mut Item) {
             vars.bomb_scale_id
         };
         let scale = BLOAT_SCALES[id.clamp(0, 5) as usize];
-        if !item.is_hold {
-            item.scale.x = scale;
-            item.scale.y = scale;
-        }
+        item.scale.x = scale;
+        item.scale.y = scale;
         vars.bomb_scale_int = SCALE_INT;
         if vars.bomb_scale_id >= SCALE_INDEX_MAX {
             vars.bomb_scale_id = 0;
@@ -222,6 +220,8 @@ fn fall_set_status(item: &mut Item) {
 
 /// `itLinkBombHoldSetStatus`.
 pub(super) fn hold_set_status(item: &mut Item) {
+    // itMainSetFighterHold resets the promoted body's descriptor scale.
+    item.scale = Vec3::new(1.0, 1.0, 1.0);
     set_hitstatus(item, HitStatus::None);
     item.set_status(ItemStatus::LinkBomb(Status::Hold));
 }

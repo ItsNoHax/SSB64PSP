@@ -288,6 +288,9 @@ fn a_crate_drops_one_to_three_utilities_from_the_drop_table() {
         if pool.get(slot).is_none() {
             counts[utilities] += 1;
             for item in pool.items() {
+                // Contents made at priority 0 run their collision callback
+                // this pass, but priority 3's animation/movement has passed.
+                assert_eq!(item.anim_ticks, 1);
                 assert!((item.vel_air.y - 48.0).abs() < 0.3);
                 // `itMainSetAppearSpin(item_gobj, FALSE)`.
                 let spin = if item.kind == ItemKind::Utility(Kind::Tomato) {

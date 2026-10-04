@@ -29,7 +29,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  The manifest currently has 192 scenes; RE-316 measured about 17 s for an
+  The manifest currently has 195 scenes; RE-316 measured about 17 s for an
   earlier full run.
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
@@ -113,6 +113,13 @@ identical pixels; the full 73-scene matrix passes. Pixel counts and source
 attribution are in [RE-357](../evidence/re/RE-357.md).
 
 ## Scenes
+
+RE-444 adds three Link Bomb controls: held critical bloat (`linkbomb@270`),
+the backward throw's mid-turn attachment (`linkbomb@305`) and the loose
+Bomb (`linkbomb@320`). The original `linkbomb` golden changes by 72 pixels
+at its fuse: the promoted body's child now uses its own kind-46 billboard
+spin and scale. All 33 targeted item/weapon controls match in two final
+captures; no full matrix is run this batch. Details: [RE-444](../evidence/re/RE-444.md).
 
 RE-368 refreshes only `r2-luigi-fighter`: the ROM's translation scales
 retarget his shared Mario animation, changing 57,056 pixels at 2×. The
