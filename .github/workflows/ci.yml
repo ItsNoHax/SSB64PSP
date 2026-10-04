@@ -44,7 +44,9 @@ jobs:
         run: cargo clippy --workspace --all-targets
 
       - name: Tests
-        run: cargo test --workspace --all-targets
+        # One thread, as the local gate: the game's RNG is one global seed
+        # (`ssb_game::rng`), so parallel tests race on it.
+        run: cargo test --workspace --all-targets -- --test-threads=1
 
       - name: Build host tools
         run: cargo build --release -p romtool
