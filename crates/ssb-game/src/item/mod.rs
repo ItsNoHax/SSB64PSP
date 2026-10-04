@@ -470,7 +470,9 @@ pub struct ItemVars {
     /// The Motion-Sensor Bomb's armed shape shows (its child 0) and its
     /// ball hides (child 1).
     pub msbomb_attached: bool,
-    /// `bombhei.smoke_delay`, and the walk's display list.
+    /// `bombhei.smoke_delay`, and the root's display list: the tree's own
+    /// (`llITCommonDataBombHeiWalkRightDisplayList`) or the left-walking
+    /// one (`itBombHeiCommonSetWalkLR`).
     pub bombhei_smoke_delay: u16,
     pub bombhei_walk_right: bool,
     /// The shells' root `rotate.y`.
@@ -483,8 +485,6 @@ pub struct ItemVars {
     pub shell_is_setup: bool,
     pub shell_interact: u8,
     pub shell_vel_x: f32,
-    /// The slide's spin and material animations run.
-    pub shell_spin_anim: bool,
     /// `bumper.damage_all_delay`; the attached model and material.
     pub bumper_damage_all_delay: u16,
     pub bumper_attached: bool,
@@ -596,6 +596,9 @@ pub struct Item {
     /// Direct MObj texture selection by a ground Pokémon.
     pub texture: u8,
     pub arrow_timer: u8,
+    /// The script a status added to the root's DObj or first MObj: the
+    /// Bob-omb's walk and the Shells' spin. Presentation only (RE-442).
+    pub root_script: Option<RootScript>,
     /// `colanim`: the Bob-omb's, the Link Bomb's and the Hammer's
     /// warnings (`itMainCheckSetColAnimID`). Its colour draws only for
     /// an item whose attributes set `is_display_colanim`.
@@ -615,6 +618,34 @@ impl Item {
     /// `itMainClearColAnim`.
     pub fn clear_colanim(&mut self) {
         self.colanim.reset();
+    }
+
+    /// `itMainDestroyItem`'s dust: every item but one leaving its owner's
+    /// hand and the stage Pokémon (`nITKindGroundMonsterStart` to
+    /// `nITKindGroundMonsterEnd`) makes `efManagerDustExpandLargeMakeEffect`
+    /// at its position.
+    fn push_destroy_dust(&self, emit: &mut crate::wpeffect::Emit) {
+        let held = self.is_hold && self.owner.is_some();
+        if !held && !matches!(self.kind, ItemKind::Monster(_)) {
+            emit.push(crate::wpeffect::WeaponEffect::DustExpandLarge(self.pos));
+        }
+    }
+
+    /// `gcAddDObjAnimJoint` / `gcAddMObjMatAnimJoint` on the root at frame
+    /// 0, then the caller's `gcPlayAnimAll`.
+    pub(crate) fn add_root_script(&mut self) {
+        self.root_script = Some(RootScript {
+            added: self.anim_ticks,
+            cleared: None,
+        });
+    }
+
+    /// `event32 = NULL` on the root script: it ends at its next command
+    /// fetch. A second clear changes nothing.
+    pub(crate) fn clear_root_script(&mut self) {
+        if let Some(script) = self.root_script.as_mut() {
+            script.cleared.get_or_insert(self.anim_ticks);
+        }
     }
 
     /// `ifCommonItemArrowProcDisplay`'s gate: the arrow draws while the
@@ -744,6 +775,7 @@ impl Item {
             palette: 0,
             texture: 0,
             arrow_timer: 0,
+            root_script: None,
             colanim: ColAnim::default(),
             status,
             vars: ItemVars::default(),
@@ -919,6 +951,25 @@ impl Item {
         if let Some(z) = z {
             self.pos.z = z;
         }
+    }
+}
+
+/// When a root script ran, on the item's [`Item::anim_ticks`] clock. The
+/// status that adds it plays the tree once more (`gcPlayAnimAll`) on the
+/// tick it is added, after that tick's own play; one that clears it does so
+/// after that tick's play.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RootScript {
+    pub added: u16,
+    pub cleared: Option<u16>,
+}
+
+impl RootScript {
+    /// Plays the script has had by `anim_ticks`, and how many of them came
+    /// before it was cleared.
+    pub fn plays(&self, anim_ticks: u16) -> (u16, Option<u16>) {
+        let plays = |at: u16| at.wrapping_sub(self.added).wrapping_add(1);
+        (plays(anim_ticks), self.cleared.map(plays))
     }
 }
 
@@ -1914,6 +1965,9 @@ impl ItemPool {
                 handle,
             };
             let alive = process_main(&mut item, &mut ctx, &surfaces, bounds, &mut effects);
+            if !alive {
+                item.push_destroy_dust(&mut emit);
+            }
             self.slots[usize::from(slot)] = Some(item);
             self.fx.extend(link as u32, &emit);
             self.apply_effects(effects);
@@ -1967,6 +2021,9 @@ impl ItemPool {
                 &mut common,
                 &mut emit,
             );
+            if !alive {
+                item.push_destroy_dust(&mut emit);
+            }
             self.fx.extend(link as u32, &emit);
             self.slots[usize::from(slot)] = Some(item);
             if !alive {

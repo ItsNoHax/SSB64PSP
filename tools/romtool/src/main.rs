@@ -2527,6 +2527,32 @@ const WEAPON_MAT_ANIM_JOINTS: &[((u32, u32), u32)] = &[
     ),
 ];
 
+/// Where an item's material script comes from (RE-442).
+#[derive(Clone, Copy)]
+enum ItemMatTarget {
+    /// `ITAttributes.p_matanim_joints`, which `itManagerMakeItem` hands to
+    /// `gcAddAnimAll`.
+    Table(u32),
+    /// One script a status adds to the root's first `MObj`
+    /// (`gcAddMObjMatAnimJoint(dobj->mobj, ...)`).
+    Root(u32),
+}
+
+/// The item root once `itManagerMakeItem` ejects descriptor 0.
+const ITEM_ROOT_NODE: usize = 1;
+
+/// File 86's items with material scripts, by tree (`ITAttributes.data`).
+const ITEM_MAT_ANIMS: &[((u32, u32), ItemMatTarget)] = &[
+    // Star (251 + 0x148): the palette flicker of both root `MObj`s.
+    ((86, 0x1560), ItemMatTarget::Table(0x15F0)),
+    // Ray Gun (251 + 0x2E4): the barrel's palette.
+    ((86, 0x46B0), ItemMatTarget::Table(0x4760)),
+    // `itBombHeiWalkInitVars`: `llITCommonDataBombHeiWalkMatAnimJoint`.
+    ((86, 0x33F8), ItemMatTarget::Root(0x35B8)),
+    // `it{G,R}ShellSpinAddAnim`: `llITCommonDataShellMatAnimJoint`.
+    ((86, 0x5F88), ItemMatTarget::Root(0x6048)),
+];
+
 /// The seed a [`ssb_rom::mesh::convert_sequence`] call for `(file,
 /// graph_offset)` must use -- see [`fighter_skeleton_graphs`],
 /// [`ground_layer1_graphs`] and [`lb_transition_graphs`].
@@ -3026,6 +3052,19 @@ fn resolve_mat_anims(
     let scripts = ssb_rom::matanim::resolve_scripts(file, matanim_table, materials.len(), |n| {
         materials[n].len()
     });
+    resolve_script_matrix(file, &scripts, materials, sub_at, mat_anim_data)
+}
+
+/// [`resolve_mat_anims`] for a script per `(node, MObj-chain-position)`
+/// already resolved: a table's, or one script a maker or status adds to
+/// one `MObj` with `gcAddMObjMatAnimJoint`.
+fn resolve_script_matrix(
+    file: &ssb_rom::archive::File,
+    scripts: &[Vec<Option<u32>>],
+    materials: &[ssb_rom::mobj::NodeMaterials],
+    sub_at: impl Fn(usize, usize) -> Option<(u32, u16)>,
+    mat_anim_data: &mut BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>,
+) -> Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> {
     let mut refs: Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> =
         scripts.iter().map(|c| vec![None; c.len()]).collect();
     for (node, chain) in scripts.iter().enumerate() {
@@ -3281,6 +3320,42 @@ fn resolve_layer_mat_anims(
         return resolve_mat_anims(
             file,
             mat,
+            materials,
+            |node, m| {
+                materials
+                    .get(node)?
+                    .get(m)
+                    .map(|s| (s.at, s.palette_entries))
+            },
+            mat_anim_data,
+        );
+    }
+
+    // RE-442: the items' material scripts, against the materials their
+    // `ITAttributes.p_mobjsubs` tables resolved.
+    if let Some(&(_, target)) = ITEM_MAT_ANIMS
+        .iter()
+        .find(|(key, _)| *key == (file.id, graph_offset))
+    {
+        let scripts: Vec<Vec<Option<u32>>> = match target {
+            ItemMatTarget::Table(table) => {
+                ssb_rom::matanim::resolve_scripts(file, table, materials.len(), |n| {
+                    materials[n].len()
+                })
+            }
+            ItemMatTarget::Root(script) => materials
+                .iter()
+                .enumerate()
+                .map(|(n, chain)| {
+                    (0..chain.len())
+                        .map(|m| (n == ITEM_ROOT_NODE && m == 0).then_some(script))
+                        .collect()
+                })
+                .collect(),
+        };
+        return resolve_script_matrix(
+            file,
+            &scripts,
             materials,
             |node, m| {
                 materials
@@ -3888,60 +3963,181 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         // `itRShellMakeItem` to 0; the tree's own mesh binds palette 0 (red),
         // so the Green Shell's list (0x5EC0) gets a second mesh, keyed by the
         // palette it binds (`palettes[1]`, file offset 0x5578), as Luigi's
-        // Fireball is (RE-434).
+        // Fireball is (RE-434). Its spin script's sprite frames convert
+        // under that palette, so its `MatAnimRef` names the palette rather
+        // than the `MObjSub` (RE-442).
+        //
+        // `itBombHeiCommonSetWalkLR` swaps the Bob-omb root's list between
+        // the tree's (0x3310, right) and 0x34C0 (left), under the same
+        // `MObj` and walk script (RE-442).
+        //
+        // The Bumper's hit sets `palette_id` 1 (`itNBumper*ProcHit`), and
+        // `itNBumperAttachedInitVars` swaps its root to the Wait list
+        // (0x7AF8) under the Wait `MObjSub` (0x7A38) alone
+        // (`gcRemoveMObjAll` + `gcAddMObjForDObj`). Each lit list is keyed
+        // by the palette it binds, the attached unlit one by the Wait
+        // `MObjSub` (RE-442).
         if id == 86 {
             const SHELL_MOBJ_TABLE: u32 = 0x5DE0;
             const SHELL_DISPLAY_LIST: u32 = 0x5EC0;
             const GREEN_SHELL_KEY: u32 = 0x5578;
-            if let (Some(materials), Some(Ok(cmds))) = (
-                ssb_rom::mobj::read_table(file, SHELL_MOBJ_TABLE, 2),
-                file.data
-                    .get(SHELL_DISPLAY_LIST as usize..)
-                    .map(|data| ssb_rom::dl::decode_list_at(data, SHELL_DISPLAY_LIST)),
-            ) {
-                let palettes = materials.nodes[1]
-                    .first()
-                    .and_then(|sub| ssb_rom::mobj::read_palettes(file, sub.at, 2))
-                    .expect("file 86 Shell MObjSub has red and green palettes");
-                assert_eq!(palettes[1].offset, GREEN_SHELL_KEY);
-                let mut mobjs = materials.nodes[1].clone();
-                mobjs[0].palette = Some(palettes[1]);
-                let item = mesh::SequenceItem {
-                    cmds: &cmds,
-                    world: ssb_rom::scene::Mat4::IDENTITY,
-                    mobjs: &mobjs,
-                    mat_anims: &[],
-                    depth_seed: None,
-                    stream: 0,
+            const BOMBHEI_MOBJ_TABLE: u32 = 0x3230;
+            const BOMBHEI_LEFT_LIST: u32 = 0x34C0;
+            const BUMPER_MOBJ_TABLE: u32 = 0x7488;
+            const BUMPER_LIST: u32 = 0x7558;
+            const BUMPER_LIT_KEY: u32 = 0x7238;
+            const BUMPER_WAIT_MOBJ: u32 = 0x7A38;
+            const BUMPER_WAIT_LIST: u32 = 0x7AF8;
+            const BUMPER_WAIT_LIT_KEY: u32 = 0x76D8;
+            let mut variant =
+                |dl: u32,
+                 mobjs: &[ssb_rom::mobj::MObjMaterial],
+                 mat_anims: &[Option<ssb_rom::mesh::MatAnimRef>],
+                 key: u32,
+                 mat_anim_data: &BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>| {
+                    let cmds = file
+                        .data
+                        .get(dl as usize..)
+                        .and_then(|data| ssb_rom::dl::decode_list_at(data, dl).ok())
+                        .unwrap_or_else(|| panic!("file 86 list 0x{dl:X} decodes"));
+                    let item = mesh::SequenceItem {
+                        cmds: &cmds,
+                        world: ssb_rom::scene::Mat4::IDENTITY,
+                        mobjs,
+                        mat_anims,
+                        depth_seed: None,
+                        stream: 0,
+                    };
+                    let converted = mesh::convert_sequence(
+                        &[item],
+                        mesh::Source::of(file),
+                        mesh::InitialMaterial::SCENE,
+                    )
+                    .into_iter()
+                    .next()
+                    .and_then(Result::ok)
+                    .filter(|m| m.triangle_count() != 0)
+                    .unwrap_or_else(|| panic!("file 86 list 0x{dl:X} converts"));
+                    pack_mesh(
+                        &mut writer,
+                        &mut tex_index,
+                        &mut mat_anim_index,
+                        mat_anim_data,
+                        Texels {
+                            home: file,
+                            all: &loaded.files,
+                        },
+                        id,
+                        key,
+                        &converted,
+                        swizzle,
+                    );
+                    meshes += 1;
+                    triangles += converted.triangle_count();
                 };
-                if let Some(Ok(shell)) = mesh::convert_sequence(
-                    &[item],
-                    mesh::Source::of(file),
-                    mesh::InitialMaterial::SCENE,
-                )
-                .into_iter()
-                .next()
-                {
-                    if shell.triangle_count() != 0 {
-                        pack_mesh(
-                            &mut writer,
-                            &mut tex_index,
-                            &mut mat_anim_index,
-                            &mat_anim_data,
-                            Texels {
-                                home: file,
-                                all: &loaded.files,
-                            },
-                            id,
-                            GREEN_SHELL_KEY,
-                            &shell,
-                            swizzle,
-                        );
-                        meshes += 1;
-                        triangles += shell.triangle_count();
-                    }
-                }
+            // The script each root list runs, as the tree's own conversion
+            // resolved it.
+            let root_ref = |data: &BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>,
+                            mobj: u32,
+                            script: u32| {
+                let key = ssb_rom::mesh::MatAnimRef {
+                    source_file: id,
+                    script,
+                    source_mobj: mobj,
+                };
+                assert!(
+                    data.contains_key(&key),
+                    "file 86 script 0x{script:X} on MObjSub 0x{mobj:X} resolved"
+                );
+                key
+            };
+
+            let shell = ssb_rom::mobj::read_table(file, SHELL_MOBJ_TABLE, 2)
+                .expect("file 86 Shell MObjSub table");
+            let palettes = shell.nodes[1]
+                .first()
+                .and_then(|sub| ssb_rom::mobj::read_palettes(file, sub.at, 2))
+                .expect("file 86 Shell MObjSub has red and green palettes");
+            assert_eq!(palettes[1].offset, GREEN_SHELL_KEY);
+            let mut mobjs = shell.nodes[1].clone();
+            mobjs[0].palette = Some(palettes[1]);
+            let red = root_ref(&mat_anim_data, mobjs[0].at, 0x6048);
+            let green = ssb_rom::mesh::MatAnimRef {
+                source_mobj: GREEN_SHELL_KEY,
+                ..red
+            };
+            let data = mat_anim_data.get(&red).map(|d| MatAnimData {
+                source_offset: d.source_offset,
+                palette_entries: d.palette_entries,
+                palettes: d.palettes.clone(),
+                sprites: d.sprites.clone(),
+                base_tracks: d.base_tracks,
+                uv_mode: d.uv_mode,
+                uv_tile_params: d.uv_tile_params,
+                uv_half: d.uv_half,
+                uv_static: d.uv_static,
+                drives_lod: d.drives_lod,
+                max_current: d.max_current,
+                max_lod_frac: d.max_lod_frac,
+            });
+            if let Some(data) = data {
+                mat_anim_data.insert(green, data);
             }
+            variant(
+                SHELL_DISPLAY_LIST,
+                &mobjs,
+                &[Some(green)],
+                GREEN_SHELL_KEY,
+                &mat_anim_data,
+            );
+
+            let bombhei = ssb_rom::mobj::read_table(file, BOMBHEI_MOBJ_TABLE, 2)
+                .expect("file 86 Bob-omb MObjSub table");
+            let walk = root_ref(&mat_anim_data, bombhei.nodes[1][0].at, 0x35B8);
+            variant(
+                BOMBHEI_LEFT_LIST,
+                &bombhei.nodes[1],
+                &[Some(walk)],
+                BOMBHEI_LEFT_LIST,
+                &mat_anim_data,
+            );
+
+            let bumper = ssb_rom::mobj::read_table(file, BUMPER_MOBJ_TABLE, 2)
+                .expect("file 86 Bumper MObjSub table");
+            let lit = |sub: &ssb_rom::mobj::MObjMaterial, key: u32| {
+                let palettes = ssb_rom::mobj::read_palettes(file, sub.at, 2)
+                    .expect("file 86 Bumper MObjSub has two palettes");
+                assert_eq!(palettes[1].offset, key);
+                ssb_rom::mobj::MObjMaterial {
+                    palette: Some(palettes[1]),
+                    ..*sub
+                }
+            };
+            let lit_root = vec![lit(&bumper.nodes[1][0], BUMPER_LIT_KEY)];
+            variant(
+                BUMPER_LIST,
+                &lit_root,
+                &[None],
+                BUMPER_LIT_KEY,
+                &mat_anim_data,
+            );
+            let wait = ssb_rom::mobj::read_sub(file, BUMPER_WAIT_MOBJ)
+                .expect("file 86 Bumper Wait MObjSub");
+            let lit_wait = vec![lit(&wait, BUMPER_WAIT_LIT_KEY)];
+            variant(
+                BUMPER_WAIT_LIST,
+                &[wait],
+                &[None],
+                BUMPER_WAIT_MOBJ,
+                &mat_anim_data,
+            );
+            variant(
+                BUMPER_WAIT_LIST,
+                &lit_wait,
+                &[None],
+                BUMPER_WAIT_LIT_KEY,
+                &mat_anim_data,
+            );
         }
 
         // Samus's Bomb (`llSamusMainBombWeaponAttributes`, file 217 + 0x0C)
@@ -5531,6 +5727,34 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 )?;
             }
         }
+    }
+
+    // The Shells' slide spin (RE-442): `it{G,R}ShellSpinAddAnim` adds
+    // `llITCommonDataShellAnimJoint` (86 + 0x6018) to the root, node 1 of
+    // the tree at 0x5F88 once descriptor 0 is ejected.
+    {
+        const SHELL_TREE: u32 = 0x5F88;
+        const SHELL_SPIN_SCRIPT: u32 = 0x6018;
+        let file = loaded
+            .files
+            .get(86)
+            .and_then(Option::as_ref)
+            .ok_or("shell spin: file 86 missing")?;
+        let object = object_index
+            .get(&(86, SHELL_TREE))
+            .and_then(|&index| writer.object(index))
+            .ok_or("shell spin: packed object missing")?;
+        if object.node_count != 2 {
+            return Err(format!("shell spin: tree has {} nodes", object.node_count).into());
+        }
+        writer.add_anim(
+            ssb_rom::pack::AnimDesc::ITEM,
+            ssb_rom::pack::AnimDesc::ITEM_ANIM_SHELL_SPIN,
+            86,
+            0,
+            &file.data,
+            &[(Some(SHELL_SPIN_SCRIPT), Some(object.first_node + 1))],
+        );
     }
 
     // Stage controller objects (RE-357): the GObjs a `gr*.c` controller

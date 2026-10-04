@@ -353,7 +353,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 87 adds Training's sprite tables and their original label positions.
 // 88 adds the player magnifier frame, pointer and arrow joint animation.
 // 89 adds the item pickup arrow sprite (87 + 0x50) and `flags::ENV_LERP`.
-pub const VERSION: u32 = 89;
+// 90 binds the Star's and Ray Gun's `ITAttributes` material tables and the
+// Bob-omb walk and Shell spin scripts, and adds the Bob-omb's left-walk
+// list, the Shells' spin animation and the Bumper's lit and attached lists
+// (RE-442). No layout change.
+pub const VERSION: u32 = 90;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1138,6 +1142,10 @@ impl AnimDesc {
     pub const ITEM_ANIM_MMONSTER_APPEAR: u32 = 3;
     /// [`Self::ITEM`] slots of their status scripts, by kind.
     pub const ITEM_ANIM_MMONSTER_STATUS: u32 = 16;
+    /// [`Self::ITEM`] slot of the Shells' slide spin
+    /// (`llITCommonDataShellAnimJoint`, file 86 + 0x6018) on the root of
+    /// their tree at 0x5F88, which `it{G,R}ShellSpinAddAnim` adds.
+    pub const ITEM_ANIM_SHELL_SPIN: u32 = 32;
 
     /// [`Self::WEAPON`] slot of Link's Boomerang (file 325's table at 0x6C0).
     pub const WEAPON_ANIM_LINK_BOOMERANG: u32 = 0;

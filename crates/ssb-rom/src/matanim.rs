@@ -479,6 +479,8 @@ pub struct MaterialJoint {
     pc: usize,
     ended: bool,
     start: usize,
+    /// `mobj->matanim_joint.event32 = NULL` ([`Self::clear_script`]).
+    cleared: bool,
 }
 
 /// Ten material tracks (`nGCAnimTrackMaterialStart..`) plus five colour
@@ -552,7 +554,17 @@ impl MaterialJoint {
             pc: script as usize,
             ended: false,
             start: script as usize,
+            cleared: false,
         }
+    }
+
+    /// `mobj->matanim_joint.event32 = NULL` (`itBombHeiExplodeWaitInitVars`,
+    /// `it{G,R}ShellCommonClearAnim`): the tracks keep playing until the
+    /// current wait runs out, and the parse that would fetch the next
+    /// command ends the script as `End` does (`gcParseMObjMatAnimJoint`'s
+    /// NULL check). The tracks then hold their values.
+    pub fn clear_script(&mut self) {
+        self.cleared = true;
     }
 
     pub fn ended(&self) -> bool {
@@ -653,13 +665,18 @@ impl MaterialJoint {
 
         for _ in 0..4096 {
             let at = self.pc;
-            let word = u32_at(data, at).ok_or(MatAnimError::Truncated { at })?;
+            let word = if self.cleared {
+                0
+            } else {
+                u32_at(data, at).ok_or(MatAnimError::Truncated { at })?
+            };
             let opcode = word >> 25;
             let flags = (word >> 15) & 0x3FF;
             let payload = (word & 0x7FFF) as f32;
             self.pc += 4;
 
             match opcode {
+                // A cleared script (NULL `event32`) takes the same path.
                 OP_END => {
                     for t in self.tracks.iter_mut() {
                         if t.kind != Kind::None {
@@ -1069,6 +1086,45 @@ mod tick_tests {
 
     const fn cmd(opcode: u32, flags: u32, payload: u32) -> u32 {
         (opcode << 25) | (flags << 15) | payload
+    }
+
+    #[test]
+    fn a_cleared_script_ends_when_its_wait_runs_out() {
+        // The Bob-omb walk's shape: a texture step every three frames,
+        // looping. `itBombHeiExplodeWaitInitVars` NULLs the
+        // script mid-wait: the frame already set holds, and the parse that
+        // would read the next command ends the script instead.
+        let d = script(&[
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_TEXTURE_ID_CURRENT, 3),
+            1.0f32.to_bits(),
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_TEXTURE_ID_CURRENT, 3),
+            2.0f32.to_bits(),
+            cmd(OP_JUMP, 0, 0),
+            0,
+        ]);
+        let run = |clear_after: Option<usize>| {
+            let mut j = MaterialJoint::start(0, 0.0);
+            let mut seen = alloc::vec::Vec::new();
+            for tick in 0..8 {
+                j.tick(&d, 1.0).expect("ticks");
+                seen.push((j.track_value(TRACK_TEXTURE_ID_CURRENT), j.ended()));
+                if clear_after == Some(tick) {
+                    j.clear_script();
+                }
+            }
+            seen
+        };
+        let live = run(None);
+        let cleared = run(Some(1));
+        assert_eq!(live[..3], cleared[..3], "the running wait is unaffected");
+        assert_eq!(live[6].0, Some(2.0), "the live script steps on");
+        assert!(!live[7].1);
+        // The fourth tick's parse ends it, crediting the step it was
+        // waiting on, and the value holds from then on.
+        assert_eq!(cleared[3], (live[3].0, true));
+        assert!(cleared[3..]
+            .iter()
+            .all(|&(v, ended)| ended && v == Some(1.0)));
     }
 
     #[test]

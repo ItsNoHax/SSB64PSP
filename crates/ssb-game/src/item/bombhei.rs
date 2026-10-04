@@ -105,6 +105,8 @@ pub(super) fn make(pos: Vec3, vel: Vec3) -> Item {
     item.multi = 0;
     item.clear_owner_stats();
     item.rotate_z = 0.0;
+    // The tree's own list walks right.
+    item.vars.bombhei_walk_right = true;
     item
 }
 
@@ -176,9 +178,10 @@ pub(super) fn dropped(item: &mut Item) {
     set(item, Status::Dropped);
 }
 
-/// The floor-edge turn of `itBombHeiWalkProcUpdate` and
-/// `itBombHeiWalkInitVars`.
-fn check_edge<I, F>(item: &mut Item, surfaces: &F)
+/// The floor-edge turn of `itBombHeiWalkProcUpdate`, and with
+/// `left_only` that of `itBombHeiWalkInitVars`, which tests only a
+/// left-walking Bob-omb against its line's left edge.
+fn check_edge<I, F>(item: &mut Item, surfaces: &F, left_only: bool)
 where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
@@ -195,15 +198,15 @@ where
         {
             set_walk_lr(item, true);
         }
-    } else if crate::map::floor_edge(surfaces, line, true)
-        .is_some_and(|e| e.x <= item.pos.x + width)
+    } else if !left_only
+        && crate::map::floor_edge(surfaces, line, true).is_some_and(|e| e.x <= item.pos.x + width)
     {
         set_walk_lr(item, false);
     }
 }
 
-/// `itBombHeiWalkSetStatus`. The walk's material animation is display
-/// only.
+/// `itBombHeiWalkSetStatus`. The walk's material script
+/// (`llITCommonDataBombHeiWalkMatAnimJoint`) is display only.
 fn walk<I, F>(item: &mut Item, surfaces: &F)
 where
     F: Fn() -> I,
@@ -214,7 +217,8 @@ where
     item.multi = 0;
     item.vars.bombhei_smoke_delay = SMOKE_WAIT;
     item.refresh_attack_coll();
-    check_edge(item, surfaces);
+    item.add_root_script();
+    check_edge(item, surfaces, true);
     item.clear_owner_stats();
     set(item, Status::Walk);
 }
@@ -274,6 +278,8 @@ fn explode(item: &mut Item, fx: &mut Emit) {
 fn explode_wait(item: &mut Item) {
     item.damage_coll.hitstatus = HitStatus::Normal;
     item.multi = 0;
+    // `dobj->mobj->matanim_joint.event32 = NULL`.
+    item.clear_root_script();
     item.check_set_colanim(ColAnimId::ITEM_BOMB_HEI_CRITICAL, EXPLODE_COLANIM_DURATION);
     set(item, Status::ExplodeWait);
 }
@@ -316,7 +322,7 @@ where
         }
         Status::Walk => {
             smoke(item, fx);
-            check_edge(item, surfaces);
+            check_edge(item, surfaces, false);
             if item.multi == FLASH_WAIT {
                 item.vel_air = Vec3::ZERO;
                 explode_wait(item);

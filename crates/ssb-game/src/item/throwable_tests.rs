@@ -547,3 +547,169 @@ fn the_released_pokemon_never_repeats_either_of_the_last_two() {
     data.clone().choose(true);
     assert_ne!(crate::rng::seed(), locked);
 }
+
+/// The weapon effects this frame's item processes queued.
+fn drain_fx(pool: &mut ItemPool) -> Vec<crate::wpeffect::WeaponEffect> {
+    pool.fx.drain_sorted().collect()
+}
+
+#[test]
+fn bob_omb_walk_adds_its_root_script_and_explode_wait_clears_it() {
+    let mut pool = ItemPool::default();
+    let slot = resting(&mut pool, 15, 0.0);
+    let bob = pool.get(slot).unwrap();
+    // The tree's own list walks right, and no script runs at rest.
+    assert!(bob.vars.bombhei_walk_right);
+    assert_eq!(bob.root_script, None);
+    let multi = bob.multi;
+    pool.observe_owner(&fighter(FighterKind::Mario, 0, -800.0));
+    for _ in multi..=bombhei::WALK_WAIT {
+        tick(&mut pool);
+    }
+    let bob = pool.get(slot).unwrap();
+    assert_eq!(bob.status, ItemStatus::BombHei(bombhei::Status::Walk));
+    assert!(!bob.vars.bombhei_walk_right, "walking left swaps the list");
+    let added = bob.anim_ticks;
+    assert_eq!(
+        bob.root_script,
+        Some(RootScript {
+            added,
+            cleared: None
+        })
+    );
+    // The walk's init plays it once on top of the tick's own play.
+    assert_eq!(bob.root_script.unwrap().plays(added), (1, None));
+    for _ in 0..bombhei::FLASH_WAIT {
+        tick(&mut pool);
+    }
+    let bob = pool.get(slot).unwrap();
+    assert_eq!(
+        bob.status,
+        ItemStatus::BombHei(bombhei::Status::ExplodeWait)
+    );
+    let cleared = bob.anim_ticks;
+    assert_eq!(
+        bob.root_script,
+        Some(RootScript {
+            added,
+            cleared: Some(cleared)
+        })
+    );
+    assert_eq!(
+        bob.root_script.unwrap().plays(cleared + 3),
+        (cleared - added + 4, Some(cleared - added + 1))
+    );
+}
+
+#[test]
+fn a_bob_omb_starting_its_walk_left_tests_only_the_left_edge() {
+    // `itBombHeiWalkInitVars` turns a left-walking Bob-omb at its line's
+    // left edge, and leaves a right-walking one at its right edge to the
+    // walk's own update.
+    let mut pool = ItemPool::default();
+    let slot = pool
+        .make_setup_common(15, None, Vec3::new(900.0, 400.0, 0.0), Vec3::ZERO, &|| {
+            [short_floor()]
+        })
+        .unwrap();
+    for _ in 0..300 {
+        pool.tick(|| [short_floor()], None, &[], &mut NoItemAnims);
+        if pool.get(slot).unwrap().is_allow_pickup {
+            break;
+        }
+    }
+    let multi = pool.get(slot).unwrap().multi;
+    pool.observe_owner(&fighter(FighterKind::Mario, 0, -800.0));
+    pool.observe_owner(&fighter(FighterKind::Mario, 1, 1800.0));
+    pool.observe_owner(&fighter(FighterKind::Mario, 2, 1900.0));
+    for _ in multi..=bombhei::WALK_WAIT {
+        pool.tick(|| [short_floor()], None, &[], &mut NoItemAnims);
+    }
+    let bob = pool.get(slot).unwrap();
+    assert_eq!(bob.status, ItemStatus::BombHei(bombhei::Status::Walk));
+    assert_eq!(bob.lr, 1.0, "the init kept it walking right");
+    pool.tick(|| [short_floor()], None, &[], &mut NoItemAnims);
+    let bob = pool.get(slot).unwrap();
+    assert_eq!(bob.lr, -1.0, "the next update turns it at the right edge");
+    assert!(!bob.vars.bombhei_walk_right);
+}
+
+#[test]
+fn a_shell_slide_adds_its_spin_and_a_hit_clears_it() {
+    let mut pool = ItemPool::default();
+    let slot = resting(&mut pool, 17, -3000.0);
+    assert_eq!(pool.get(slot).unwrap().root_script, None);
+    let shell = pool.get_mut(slot).unwrap();
+    shell.damage_queue = 2;
+    shell.damage_lr = -1.0;
+    pool.resolve(&[], &mut NoItemAnims, || [floor()]);
+    let shell = pool.get(slot).unwrap();
+    assert_eq!(shell.status, ItemStatus::Shell(shell::Status::Spin));
+    // `itGShellSpinAddAnim` runs with the slide's init.
+    let added = shell.anim_ticks;
+    assert_eq!(
+        shell.root_script,
+        Some(RootScript {
+            added,
+            cleared: None
+        })
+    );
+    ride_hitlag(&mut pool, slot);
+    for _ in 0..10 {
+        tick(&mut pool);
+    }
+    // `itGShellCommonProcHit` clears it and the shell falls.
+    let shell = pool.get_mut(slot).unwrap();
+    shell.hit_normal_damage = 1;
+    let at = shell.anim_ticks;
+    pool.resolve(&[], &mut NoItemAnims, || [floor()]);
+    let shell = pool.get(slot).unwrap();
+    assert_eq!(shell.status, ItemStatus::Shell(shell::Status::Fall));
+    assert_eq!(
+        shell.root_script,
+        Some(RootScript {
+            added,
+            cleared: Some(at)
+        })
+    );
+}
+
+#[test]
+fn a_destroyed_item_leaves_dust_unless_its_owner_holds_it() {
+    let mut pool = ItemPool::default();
+    let slot = resting(&mut pool, 15, 0.0);
+    let mut mario = fighter(FighterKind::Mario, 0, 0.0);
+    throw(&mut pool, &mut mario, slot, Vec3::new(10.0, 5.0, 0.0));
+    drain_fx(&mut pool);
+    let mut dust = None;
+    for _ in 0..100 {
+        let pos = pool.get(slot).unwrap().pos;
+        tick(&mut pool);
+        let fx = drain_fx(&mut pool);
+        if pool.get(slot).is_none() {
+            dust = Some((pos, fx));
+            break;
+        }
+        assert!(!fx
+            .iter()
+            .any(|e| matches!(e, crate::wpeffect::WeaponEffect::DustExpandLarge(_))));
+    }
+    // `itMainDestroyItem` makes the dust last, at the item's position.
+    let (pos, fx) = dust.expect("the explosion ends");
+    assert_eq!(
+        fx.last(),
+        Some(&crate::wpeffect::WeaponEffect::DustExpandLarge(pos))
+    );
+
+    // A held item destroyed from its owner's hand makes none.
+    let slot = resting(&mut pool, 15, 0.0);
+    mario.items.request(ItemRequest::Hold { slot });
+    pool.take_requests(&mut mario, || [floor()]);
+    pool.get_mut(slot).unwrap().lifetime = 1;
+    drain_fx(&mut pool);
+    mario.items.request(ItemRequest::Destroy);
+    pool.take_requests(&mut mario, || [floor()]);
+    assert!(pool.get(slot).is_none());
+    tick(&mut pool);
+    assert!(drain_fx(&mut pool).is_empty());
+}

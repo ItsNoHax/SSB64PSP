@@ -479,6 +479,13 @@ pub enum GameScene {
     /// Poké Ball in his reach; A at tick 60 picks it up and A at tick 100
     /// throws it (RE-434).
     TrainingThrowable,
+    /// `trainingslide`: a Green Shell in Mario's reach and a Bob-omb to his
+    /// right; A at tick 60 picks the shell up and A at 100 throws it into
+    /// its slide (RE-442).
+    TrainingSlide,
+    /// `trainingbumperthrow`: a Bumper in Mario's reach; A at tick 60
+    /// picks it up and A at 100 throws it onto the floor (RE-442).
+    TrainingBumperThrow,
     /// `trainingpokemona` / `...b`: Poké Ball Pokémon released beside
     /// Mario as if he had thrown the ball: Meowth, Chansey and Blastoise;
     /// Charizard, Starmie and Koffing (RE-435).
@@ -529,7 +536,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 103] = [
+    pub const ALL: [GameScene; 105] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -610,6 +617,8 @@ impl GameScene {
         GameScene::TrainingHeavy,
         GameScene::TrainingUtility,
         GameScene::TrainingThrowable,
+        GameScene::TrainingSlide,
+        GameScene::TrainingBumperThrow,
         GameScene::TrainingPokemonA,
         GameScene::TrainingPokemonB,
         GameScene::TrainingEquipment,
@@ -717,6 +726,8 @@ impl GameScene {
             GameScene::TrainingHeavy => "trainingheavy",
             GameScene::TrainingUtility => "trainingutility",
             GameScene::TrainingThrowable => "trainingthrowable",
+            GameScene::TrainingSlide => "trainingslide",
+            GameScene::TrainingBumperThrow => "trainingbumperthrow",
             GameScene::TrainingPokemonA => "trainingpokemona",
             GameScene::TrainingPokemonB => "trainingpokemonb",
             GameScene::TrainingEquipment => "trainingequipment",

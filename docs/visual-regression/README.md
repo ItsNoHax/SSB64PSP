@@ -29,7 +29,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  The manifest currently has 184 scenes; RE-316 measured about 17 s for an
+  The manifest currently has 188 scenes; RE-316 measured about 17 s for an
   earlier full run.
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
@@ -1158,3 +1158,14 @@ stage direction), Hammer and Equipment most. All 116 game scenes repeat
 exactly and match their final baselines. Runs, pixel deltas and the N64
 references belong to [RE-441](../evidence/re/RE-441.md). The manifest has
 185 scenes; no full viewer matrix or physical-PSP run in this batch.
+
+## 2026-10-04 RE-442 item material scripts, root lists and dust
+
+`f1-training-slide` (`trainingslide@130`) shows the thrown Green Shell's
+spin frames, `f1-training-slide-walk` (`@233`) the Bob-omb on its left walk
+list, and `f1-training-bumper-throw` (`trainingbumperthrow@160`) the
+attached Bumper's Wait list. `itMainDestroyItem`'s dust changes the eaten
+Utility and open Throwable scenes. All 119 game scenes repeat exactly and
+match their final baselines. Runs, pixel deltas and the N64 references
+belong to [RE-442](../evidence/re/RE-442.md). The manifest has 188 scenes;
+no full viewer matrix or physical-PSP run in this batch.
