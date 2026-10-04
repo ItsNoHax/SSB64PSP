@@ -160,6 +160,8 @@ fn init(kind: StageKind, objects: &[MapObject]) -> StageInit<'_> {
         hazard_attack: None,
         hazard_throw: None,
         acid_surface_y: 0.0,
+        bonus3_bumpers: &[],
+        player: 0,
     }
 }
 
@@ -423,11 +425,21 @@ fn clouds_sink_under_weight_then_evaporate_and_return() {
     let mut f = standing(FighterKind::Mario, 0, Vec3::new(-1000.0, 800.0, 0.0), 7, 0);
     let mut frames = 0;
     while y.clouds[0].status == yoster::CloudStatus::Solid {
+        assert!(y.fx.is_empty());
         clocks.advance();
         y.tick(&[&mut f], &mut groups, &mut clocks, &map);
         frames += 1;
         assert!(frames < 400);
     }
+    // The vapor rises from below the sunk cloud as it gives way.
+    assert_eq!(
+        y.fx.iter().collect::<Vec<_>>(),
+        [crate::wpeffect::WeaponEffect::CloudVapor(Vec3::new(
+            -1000.0 - 750.0,
+            800.0 - 180.0 - 350.0,
+            0.0
+        ))]
+    );
     // The timer is armed and first counted on the same frame, so it reads
     // zero on frame 120 and the cloud gives way on the next.
     assert_eq!(frames, 120 + 1);
@@ -487,6 +499,18 @@ fn scales_tip_toward_the_weight_and_fall_past_the_limit() {
     }
     assert_eq!(s.status, inishie::ScaleStatus::Fall);
     assert_eq!(s.alt, -inishie::SCALE_ALT_MAX);
+    // A sparkle at each platform, where they stood before the tip-over's
+    // placement.
+    let sparkles: Vec<_> =
+        s.fx.iter()
+            .map(|e| match e {
+                crate::wpeffect::WeaponEffect::SparkleWhiteScale(p) => p,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+    assert_eq!(sparkles.len(), 2);
+    assert!(sparkles[0].x == -800.0 && sparkles[1].x == 800.0);
+    assert!(sparkles[0].y > s.platform[0].y && sparkles[1].y < s.platform[1].y);
     for _ in 0..200 {
         s.tick(
             &[],
@@ -655,4 +679,260 @@ fn castle_carries_its_bumper_with_the_ground() {
     let bumper = pool.items().next().unwrap();
     assert_eq!(bumper.kind, crate::item::ItemKind::GBumper);
     assert_eq!(bumper.pos, Vec3::new(-540.0, 50.0, 0.0));
+}
+
+// ---------------------------------------------------------------------------
+// Race to the Finish (`grbonus3.c`).
+
+/// Records each `itManagerMakeItemSetupCommon` and refuses once `cap`
+/// items are made.
+#[derive(Default)]
+struct Made {
+    made: Vec<(StageItem, Vec3)>,
+    cap: Option<usize>,
+}
+
+impl StageItems for Made {
+    fn make_item(&mut self, item: StageItem, pos: Vec3) -> Option<u32> {
+        if self.cap.is_some_and(|c| self.made.len() >= c) {
+            return None;
+        }
+        self.made.push((item, pos));
+        Some(self.made.len() as u32)
+    }
+}
+
+const BONUS3_BUMPERS: [bonus3::BumperDesc; 4] = [
+    bonus3::BumperDesc {
+        translate: Vec3::new(900.0, -2550.0, 0.0),
+        animated: true,
+    },
+    bonus3::BumperDesc {
+        translate: Vec3::new(0.0, -3705.745, 0.0),
+        animated: true,
+    },
+    bonus3::BumperDesc {
+        translate: Vec3::new(-1050.0, -2550.0, 0.0),
+        animated: false,
+    },
+    bonus3::BumperDesc {
+        translate: Vec3::new(-2550.0, -3600.0, 0.0),
+        animated: true,
+    },
+];
+
+fn bonus3_init<'a>(objects: &'a [MapObject], player: u8) -> StageInit<'a> {
+    StageInit {
+        bonus3_bumpers: &BONUS3_BUMPERS,
+        player,
+        ..init(StageKind::Bonus3, objects)
+    }
+}
+
+const BARREL_POINT: MapObject = MapObject {
+    kind: bonus3::MAPOBJ_TARUBOMB,
+    pos: Vec3::new(-3000.0, 1200.0, 0.0),
+};
+
+fn bonus3_tick(stage: &mut Stage, fighters: &mut [&mut Fighter], items: &mut Made) {
+    stage.tick(
+        fighters,
+        TickInput {
+            groups: &mut [],
+            objects: &mut NoObjects,
+            items,
+            map: query(&[], &no_group),
+            started: true,
+        },
+    );
+}
+
+#[test]
+fn bonus3_makes_its_bumpers_with_their_scripts() {
+    assert_eq!(StageKind::from_gkind(15), Some(StageKind::Bonus3));
+    let objects = [BARREL_POINT];
+    let mut items = Made::default();
+    let stage = Stage::new(
+        &bonus3_init(&objects, 0),
+        &mut [],
+        &mut NoObjects,
+        &mut items,
+    );
+    let joints: Vec<_> = items
+        .made
+        .iter()
+        .map(|(i, p)| match i {
+            StageItem::Bumper { castle, joint } => {
+                assert!(!castle);
+                (*joint, *p)
+            }
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        joints,
+        BONUS3_BUMPERS
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (d.animated.then_some(i as u8), d.translate))
+            .collect::<Vec<_>>()
+    );
+    let Controller::Bonus3(c) = &stage.controller else {
+        panic!();
+    };
+    assert_eq!(c.bumpers, [Some(1), Some(2), Some(3), Some(4)]);
+    assert_eq!(c.tarubomb_make_pos, BARREL_POINT.pos);
+    assert_eq!(c.tarubomb_make_wait, bonus3::TARUBOMB_MAKE_WAIT);
+    assert_eq!((stage.attack, stage.throw), (None, None));
+}
+
+/// The first barrel drops on the 181st tick, then every 180; a full pool
+/// skips a drop without delaying the next.
+#[test]
+fn bonus3_drops_a_barrel_every_180_frames() {
+    let objects = [BARREL_POINT];
+    let mut items = Made::default();
+    let mut stage = Stage::new(
+        &bonus3_init(&objects, 0),
+        &mut [],
+        &mut NoObjects,
+        &mut items,
+    );
+    items.made.clear();
+    let mut drops = Vec::new();
+    for t in 1..=541 {
+        if t == 361 {
+            items.cap = Some(items.made.len());
+        }
+        if t == 362 {
+            items.cap = None;
+        }
+        let before = items.made.len();
+        bonus3_tick(&mut stage, &mut [], &mut items);
+        if items.made.len() > before {
+            assert_eq!(items.made[before], (StageItem::TaruBomb, BARREL_POINT.pos));
+            drops.push(t);
+        }
+    }
+    assert_eq!(drops, [181, 541]);
+}
+
+#[test]
+#[should_panic(expected = "Too many barrels!")]
+fn bonus3_needs_exactly_one_barrel_point() {
+    let objects = [BARREL_POINT, BARREL_POINT];
+    Stage::new(
+        &bonus3_init(&objects, 0),
+        &mut [],
+        &mut NoObjects,
+        &mut Made::default(),
+    );
+}
+
+/// Only the scene's player, standing on a Detect floor, completes the
+/// course: another fighter there, or the player in the air over it, does not.
+#[test]
+fn bonus3_completes_when_the_player_stands_on_the_gate() {
+    let objects = [BARREL_POINT];
+    let mut items = Made::default();
+    let mut stage = Stage::new(
+        &bonus3_init(&objects, 1),
+        &mut [],
+        &mut NoObjects,
+        &mut items,
+    );
+    let complete = |s: &Stage| match &s.controller {
+        Controller::Bonus3(c) => c.complete,
+        _ => unreachable!(),
+    };
+    let gate = bonus3::MATERIAL_DETECT;
+    let mut other = standing(FighterKind::Mario, 0, Vec3::ZERO, 0, gate);
+    let mut player = standing(FighterKind::Fox, 1, Vec3::ZERO, 0, 0);
+    bonus3_tick(&mut stage, &mut [&mut other, &mut player], &mut items);
+    assert!(!complete(&stage));
+    player.floor.as_mut().unwrap().flags = gate | crate::collision::flags::PASS;
+    bonus3_tick(&mut stage, &mut [&mut other, &mut player], &mut items);
+    assert!(complete(&stage));
+    player.situation = Situation::Air;
+    bonus3_tick(&mut stage, &mut [&mut other, &mut player], &mut items);
+    assert!(!complete(&stage));
+}
+
+// ---------------------------------------------------------------------------
+// Mushroom Kingdom's pipes and plants.
+
+#[derive(Default)]
+struct Plants {
+    made: Vec<StageItem>,
+    waits: Vec<u32>,
+}
+
+impl StageItems for Plants {
+    fn make_item(&mut self, item: StageItem, _: Vec3) -> Option<u32> {
+        self.made.push(item);
+        Some(self.made.len() as u32)
+    }
+    fn pakkun_set_wait_fighter(&mut self, handle: u32) {
+        self.waits.push(handle);
+    }
+}
+
+/// The stage hands every fighter the pipe points, and a pipe entry's
+/// `grInishiePakkunSetWaitFighter` reaches both plants before their own
+/// process runs.
+#[test]
+fn a_pipe_entry_tells_both_plants_to_wait() {
+    let point = |kind, x| MapObject {
+        kind,
+        pos: Vec3::new(x, 0.0, 0.0),
+    };
+    let objects = [
+        point(mapobj::PAKKUN_L, -1250.0),
+        point(mapobj::PAKKUN_R, 1250.0),
+        point(crate::dokan::MAPOBJ_DOKAN_L, -1250.0),
+        point(crate::dokan::MAPOBJ_DOKAN_R, 1250.0),
+        point(crate::dokan::MAPOBJ_DOKAN_WALL, -2500.0),
+    ];
+    let mut items = Plants::default();
+    let mut groups = vec![MapGroup::default(); 4];
+    let mut stage = Stage::new(
+        &init(StageKind::Inishie, &objects),
+        &mut groups,
+        &mut NoObjects,
+        &mut items,
+    );
+    let plants: Vec<u32> = items
+        .made
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| matches!(i, StageItem::Pakkun(_)))
+        .map(|(n, _)| n as u32 + 1)
+        .collect();
+    assert_eq!(plants.len(), 2);
+    assert_eq!(stage.dokan.left, Some(Vec3::new(-1250.0, 0.0, 0.0)));
+
+    let mut f = standing(FighterKind::Fox, 0, Vec3::new(-1250.0, 0.0, 0.0), 0, 0);
+    let tick = |stage: &mut Stage, f: &mut Fighter, items: &mut Plants| {
+        stage.tick(
+            &mut [f],
+            TickInput {
+                groups: &mut [],
+                objects: &mut NoObjects,
+                items,
+                map: query(&[], &no_group),
+                started: true,
+            },
+        );
+    };
+    tick(&mut stage, &mut f, &mut items);
+    assert_eq!(f.dokan.points, stage.dokan);
+    assert!(items.waits.is_empty());
+
+    f.floor.as_mut().unwrap().flags = crate::dokan::MATERIAL_DOKAN_L;
+    crate::dokan::set_start(&mut f, crate::dokan::MATERIAL_DOKAN_L);
+    tick(&mut stage, &mut f, &mut items);
+    assert_eq!(items.waits, plants);
+    assert!(!f.dokan.plant_request);
+    tick(&mut stage, &mut f, &mut items);
+    assert_eq!(items.waits.len(), 2, "one notification per entry");
 }

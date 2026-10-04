@@ -406,8 +406,13 @@ pub fn run_update(f: &mut Fighter) {
     // a data error from hanging the port.
     for _ in 0..8 {
         let (kind, lr) = (f.kind, f.facing.sign() as i8);
+        let skip = f.dokan.is_effect_skip;
         let queue = &mut f.effects;
         let ended = f.colanim.update_effects(&mut |e| {
+            // `is_effect_skip`: the event is read and dropped.
+            if skip {
+                return;
+            }
             // `ftParamMakeEffect(..., fp->lr, is_item_hold, flag)`.
             queue.push(crate::fteffect::FighterEffect::Param(
                 crate::fteffect::EffectRequest {

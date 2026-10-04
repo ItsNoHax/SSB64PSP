@@ -410,8 +410,11 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
         Status::DownStandD | Status::DownStandU => {
             if f.status.animation_ended() {
                 status::set_wait(f);
-            } else if f.motion_script.flags[1] != 0 && !status::check_kneebend(f) {
-                status::check_pass(f);
+            } else if f.motion_script.flags[1] != 0
+                && !status::check_kneebend(f)
+                && !status::check_pass(f)
+            {
+                crate::dokan::check(f);
             }
         }
         Status::PassiveStandF

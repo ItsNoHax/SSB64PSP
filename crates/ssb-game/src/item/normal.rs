@@ -215,8 +215,10 @@ impl AppearActor {
 
 /// Direct item-manager calls made from item callbacks; distinct from animation.
 pub(super) trait CommonItems {
-    /// Direct call, before the weighted-drop RNG (`itBox.c`, `itTaru.c`).
-    fn smash_container(&mut self, _pos: ssb_engine::math::Vec3) {}
+    /// Direct call, before the weighted-drop RNG (`itBox.c`, `itTaru.c`),
+    /// or before the explosion (`ittarubomb.c`).
+    fn smash_container(&mut self, _pos: ssb_engine::math::Vec3, _piece: crate::effect::SmashPiece) {
+    }
     fn eggs_enabled(&self) -> bool;
     fn make_egg(
         &mut self,

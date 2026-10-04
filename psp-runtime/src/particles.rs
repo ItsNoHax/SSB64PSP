@@ -12,12 +12,21 @@ use crate::meshdraw::{self, DrawState, ParticleRect};
 /// which `efDisplayInitAll` loads. Runtime bank 1 maps to Yoshi's packed
 /// `particles_unk2` (pack bank 3, `dFTYoshiData`). Runtime bank 2 is
 /// `itcommon` (pack bank 4), loaded by `itManagerInitItems` for monster flames.
-/// Stage banks stay unloaded.
+/// Runtime bank 5 is Yoshi's Island's `gryoster` (pack bank 7), whose
+/// cloud vapor only that stage makes. The other stage banks stay unloaded.
 pub struct PackBanks<'p, 'a> {
     pack: &'p Pack<'a>,
     common: ParticleBankDesc,
     yoshi: Option<ParticleBankDesc>,
     items: Option<ParticleBankDesc>,
+    yoster: Option<ParticleBankDesc>,
+}
+
+/// The pack bank of `ssb_rom::particle::BANKS` entry `name`: the pack
+/// holds them in that order.
+fn pack_bank(pack: &Pack<'_>, name: &str) -> Option<ParticleBankDesc> {
+    let i = ssb_rom::particle::BANKS.iter().position(|b| b.name == name)?;
+    pack.particle_bank(i as u32)
 }
 
 impl<'p, 'a> PackBanks<'p, 'a> {
@@ -27,6 +36,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             common: pack.particle_bank(0)?,
             yoshi: pack.particle_bank(3),
             items: pack.particle_bank(4),
+            yoster: pack_bank(pack, "gryoster"),
         })
     }
 
@@ -35,6 +45,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             0 => Some(self.common),
             ssb_game::effect::YOSHI_PARTICLE_BANK => self.yoshi,
             2 => self.items,
+            ssb_game::effect::YOSTER_PARTICLE_BANK => self.yoster,
             _ => None,
         }
     }

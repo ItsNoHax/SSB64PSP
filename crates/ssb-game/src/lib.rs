@@ -27,6 +27,7 @@ pub mod computer;
 pub mod costume;
 pub mod countdown;
 pub mod dead;
+pub mod dokan;
 pub mod effect;
 pub mod fighter;
 pub mod fighter_select;

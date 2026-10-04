@@ -101,6 +101,9 @@ pub enum WeaponEffect {
     },
     /// `efManagerSparkleWhiteScaleMakeEffect(pos, 1.0F)`.
     SparkleWhiteScale(Vec3),
+    /// `grYosterCloudVaporMakeEffect`: generator 0 of Yoshi's Island's own
+    /// bank ([`crate::effect::YOSTER_PARTICLE_BANK`]).
+    CloudVapor(Vec3),
     /// `efManagerDamageCoinMakeEffect`.
     DamageCoin(Vec3),
     /// `efManagerStarSplashMakeEffect(pos, lr)`.
@@ -118,7 +121,7 @@ pub enum WeaponEffect {
 /// The effects one weapon or item callback makes, in order. The most is an
 /// armed Motion-Sensor Bomb that four fighters reach in one frame: each
 /// sets it off again, with dust, explosion and quake (12).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Emit {
     buf: [Option<WeaponEffect>; EMIT_MAX],
     len: u8,
@@ -358,6 +361,13 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
         }
         WeaponEffect::DamageCoin(pos) => {
             effects.damage_coin(p, banks, pos);
+        }
+        WeaponEffect::CloudVapor(pos) => {
+            let gn =
+                crate::particle::make_generator(p, banks, crate::effect::YOSTER_PARTICLE_BANK, 0);
+            if gn != crate::particle::NIL {
+                p.generator_mut(gn).pos = pos;
+            }
         }
         WeaponEffect::StarSplash { pos, lr } => {
             let id = if lr == -1 {

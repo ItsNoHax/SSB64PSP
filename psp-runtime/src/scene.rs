@@ -1624,6 +1624,7 @@ pub fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
 pub fn fighter_turn(f: &ssb_game::fighter::Fighter) -> f32 {
     ssb_game::appear::model_yaw(f)
         .or_else(|| ssb_game::item_throw::model_yaw(f))
+        .or_else(|| ssb_game::dokan::model_yaw(f))
         .unwrap_or_else(|| facing_turn(f.facing))
 }
 
@@ -1675,6 +1676,8 @@ impl StageSetup {
             hazard_attack,
             hazard_throw,
             acid_surface_y: self.hazard_surface_y,
+            bonus3_bumpers: &[],
+            player: 0,
         }
     }
 }
@@ -1706,7 +1709,8 @@ fn item_tree(target: ssb_game::item::ItemAnimTarget) -> Option<(u8, u8)> {
         ItemAnimTarget::PowerBlock => Some((g::POWER_BLOCK, 0)),
         ItemAnimTarget::Pakkun(i) => Some((g::PAKKUN, i)),
         ItemAnimTarget::Monster(k) => Some((g::MONSTER_FIRST + k as u8, 0)),
-        ItemAnimTarget::Untracked => None,
+        // Race to the Finish is not packed.
+        ItemAnimTarget::Bonus3Bumper(_) | ItemAnimTarget::Untracked => None,
     }
 }
 

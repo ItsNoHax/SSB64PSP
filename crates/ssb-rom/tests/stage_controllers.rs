@@ -648,6 +648,8 @@ fn every_packed_vs_stage_builds_and_runs_its_controller() {
             hazard_attack,
             hazard_throw,
             acid_surface_y: s.hazard_surface_y,
+            bonus3_bumpers: &[],
+            player: 0,
         };
         let count = pack
             .stage_lines(&s)
@@ -726,6 +728,8 @@ fn packed_acid_follows_the_zebes_controller() {
         hazard_attack,
         hazard_throw,
         acid_surface_y: s.hazard_surface_y,
+        bonus3_bumpers: &[],
+        player: 0,
     };
     let mut objects = GroundObjects::new(&pack, g::ZEBES_FILE);
     let mut stage = Stage::new(
@@ -1138,6 +1142,8 @@ fn packed_castle_ground_replays_the_rom() {
         hazard_attack: None,
         hazard_throw: None,
         acid_surface_y: 0.0,
+        bonus3_bumpers: &[],
+        player: 0,
     };
     let mut castle = Castle::new(
         &init,
@@ -1237,6 +1243,8 @@ fn packed_scales_follow_the_inishie_controller() {
         hazard_attack: None,
         hazard_throw: None,
         acid_surface_y: 0.0,
+        bonus3_bumpers: &[],
+        player: 0,
     };
     let mut objects = GroundObjects::new(&pack, g::INISHIE_FILE);
     let mut groups = vec![ssb_game::map::MapGroup::default(); 4];
@@ -1408,6 +1416,8 @@ fn packed_arwing_flies_the_sector_controller() {
         hazard_attack: None,
         hazard_throw: None,
         acid_surface_y: 0.0,
+        bonus3_bumpers: &[],
+        player: 0,
     };
     let mut groups = vec![MapGroup::default(); 4];
     ssb_game::rng::set_seed(0x5EC7);

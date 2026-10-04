@@ -290,7 +290,7 @@ fn explode(item: &mut Item, fx: &mut Emit) {
 }
 fn open(item: &mut Item, common: &mut dyn CommonItems, fx: &mut Emit) -> bool {
     if kind(item).heavy() {
-        common.smash_container(item.pos);
+        common.smash_container(item.pos, crate::effect::SmashPiece::Box);
     }
     let opened = if kind(item) == Kind::Crate {
         common.open_crate(item)
