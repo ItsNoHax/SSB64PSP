@@ -23,6 +23,7 @@ pub const HIT_ANIM_LENGTH: u16 = 3;
 /// rehits fighters and can be shielded.
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: false,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::ZERO, Vec3::ZERO],
     damage_coll_offset: Vec3::ZERO,

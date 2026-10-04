@@ -231,11 +231,20 @@ fn bob_omb_walks_towards_the_fighters_after_180_frames_and_explodes_480_plus_90_
         ItemStatus::BombHei(bombhei::Status::ExplodeWait)
     );
     assert_eq!(bob.vel_air, Vec3::ZERO);
+    // `itBombHeiExplodeWaitInitVars`' critical flash runs its first frame
+    // in the same process: yellow blending towards dark red over 8.
+    assert_eq!(
+        bob.colanim.id,
+        crate::colanim::ColAnimId::ITEM_BOMB_HEI_CRITICAL
+    );
+    assert_eq!(bob.colanim.color(), Some([0xF0, 0xE0, 0x00, 0x8C]));
     for _ in 0..bombhei::EXPLODE_WAIT {
         tick(&mut pool);
     }
     let bob = pool.get(slot).unwrap();
     assert_eq!(bob.status, ItemStatus::BombHei(bombhei::Status::Explode));
+    // Its 90-frame length runs out with the wait.
+    assert_eq!(bob.colanim.id, crate::colanim::ColAnimId::NONE);
     assert_eq!((bob.attack.damage, bob.attack.size), (30, 350.0));
 }
 

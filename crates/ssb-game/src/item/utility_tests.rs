@@ -308,3 +308,19 @@ fn a_crate_drops_one_to_three_utilities_from_the_drop_table() {
         "{counts:?}"
     );
 }
+
+#[test]
+fn a_pickable_item_shows_its_arrow_thirty_of_every_forty_five_frames() {
+    let mut pool = ItemPool::default();
+    let slot = waiting(&mut pool, Kind::Tomato);
+    let mut shown = 0;
+    for _ in 0..45 {
+        pool.tick(|| [floor()], None, &[], &mut NoItemAnims);
+        shown += usize::from(pool.get(slot).unwrap().is_arrow_shown());
+    }
+    assert_eq!(shown, 30);
+    // `itStarMakeItem` makes no arrow.
+    assert!(!ItemKind::Utility(Kind::Star).has_arrow());
+    assert!(ItemKind::Utility(Kind::Heart).has_arrow());
+    assert!(!ItemKind::LinkBomb.has_arrow());
+}

@@ -1,4 +1,5 @@
-//! `ifCommonPlayerTag*`, `ifCommonPlayerArrows*`, `ifCommonPlayerMagnify*`.
+//! `ifCommonPlayerTag*`, `ifCommonPlayerArrows*`, `ifCommonPlayerMagnify*`
+//! and `ifCommonItemArrow*`.
 //! Screen coordinates are original 320x240 pixels, with projected Y up.
 
 use crate::{
@@ -49,6 +50,29 @@ pub fn tag_position(
         return None;
     }
     let xy = camera.project(f.pos + Vec3::new(0.0, zoom_base, 0.0));
+    in_bounds(xy).then(|| {
+        (
+            ((160.0 + xy.0 - f32::from(size[0]) * 0.5) as i32) as f32,
+            ((120.0 - xy.1 - f32::from(size[1])) as i32) as f32,
+        )
+    })
+}
+
+/// `ifCommonItemArrowSetAttr`: the pickup arrow's primitive colour.
+pub const ITEM_ARROW_COLOR: [u8; 4] = [0xFF, 0x00, 0x00, 0xFF];
+
+/// `ifCommonItemArrowProcDisplay`: the pickup arrow's top-left corner, 100
+/// units above the item's map collision top, while it shows and projects
+/// inside the camera's bounds.
+pub fn item_arrow_position(
+    item: &crate::item::Item,
+    camera: &Camera,
+    size: [u16; 2],
+) -> Option<(f32, f32)> {
+    if !item.is_arrow_shown() {
+        return None;
+    }
+    let xy = camera.project(item.pos + Vec3::new(0.0, item.coll.top + 100.0, 0.0));
     in_bounds(xy).then(|| {
         (
             ((160.0 + xy.0 - f32::from(size[0]) * 0.5) as i32) as f32,

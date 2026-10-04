@@ -21,6 +21,7 @@ pub const MAP_REBOUND_GROUND: f32 = 0.2;
 /// File 251, `llITCommonDataMBallItemAttributes` (0x6E4).
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: false,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::ZERO; 2],
     damage_coll_offset: Vec3::ZERO,

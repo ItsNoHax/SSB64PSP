@@ -46,6 +46,7 @@ pub enum Status {
 /// `ITAttributes` in file 264: 0xBC, 0x104, 0x1FC, 0x278, 0x16C.
 const BASE: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: false,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::ZERO; 2],
     damage_coll_offset: Vec3::ZERO,

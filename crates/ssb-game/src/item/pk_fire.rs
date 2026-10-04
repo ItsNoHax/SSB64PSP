@@ -26,6 +26,7 @@ pub const MAP_REBOUND_GROUND: f32 = 0.5;
 /// fighters and items, shieldable, not reflectable, no clank.
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: false,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::new(0.0, 100.0, 0.0), Vec3::new(0.0, 350.0, 0.0)],
     damage_coll_offset: Vec3::new(0.0, 200.0, 0.0),

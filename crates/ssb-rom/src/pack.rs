@@ -352,7 +352,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 86 adds the Ray Gun's ammo list under the weapon seed, keyed (251, 0x2B0).
 // 87 adds Training's sprite tables and their original label positions.
 // 88 adds the player magnifier frame, pointer and arrow joint animation.
-pub const VERSION: u32 = 88;
+// 89 adds the item pickup arrow sprite (87 + 0x50) and `flags::ENV_LERP`.
+pub const VERSION: u32 = 89;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -631,6 +632,9 @@ pub mod flags {
     /// display-list head 1. A camera pass runs all its links' head-0 lists
     /// before their head-1 lists.
     pub const HEAD1: u32 = 1 << 29;
+    /// `MeshMaterial::env_lerp`: the second colour cycle blends towards
+    /// ENV by its alpha. An item colour animation's draw sets ENV.
+    pub const ENV_LERP: u32 = 1 << 30;
 }
 
 /// The one GE alpha comparison that reproduces a primitive's RDP alpha
@@ -2473,6 +2477,9 @@ impl PackWriter {
             }
             if m.flat_color.is_some() {
                 f |= flags::FLAT_COLOR;
+            }
+            if m.env_lerp {
+                f |= flags::ENV_LERP;
             }
             if m.shade_minus_env {
                 f |= flags::SHADE_MINUS_ENV;

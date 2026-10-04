@@ -6041,7 +6041,13 @@ unsafe fn draw_training(
             part,
         );
     };
+    // Items draw after the fighters, each of which restores the stage's
+    // light (`ftDisplayMainProcDisplay`'s closing
+    // `ftDisplayLightsDrawReflect`) under the pass's `G_LIGHTING`: a lit
+    // item primitive takes that direction and its own `G_MW_LIGHTCOL`.
+    draw_state.configure_item_light(stage.light_angle_xy);
     battle_part(BattlePart::Items, draw_state, gpu);
+    draw_state.finish_fighter_light();
     if let Some(mesh) = assets.container_piece.as_ref() {
         for display in damage_hud.effects.displays().filter(|d| d.kind == ssb_game::effect::DisplayKind::ContainerSmash) {
             if let Some(pieces) = damage_hud.effects.container_pieces(display) {
@@ -6181,6 +6187,9 @@ unsafe fn draw_training(
     if let Some(c) = damage_hud.countdown.as_ref() {
         draw_countdown(p, draw_state, c);
     }
+    // Each pickup arrow is made with its item, after the battle's own
+    // interface GObjs.
+    player_screen::item_arrows(gpu, p, draw_state, items, &pl.camera);
     if let Some(end) = battle.and_then(|b| b.end) {
         draw_announce(p, draw_state, end);
     }
@@ -7074,9 +7083,25 @@ unsafe fn draw_items_weapons_effects(
     // its own and spun by its own `rotate.z` (`gcPrepDObjMatrix` kind 46
     // rewrites only the MVP's rotation rows and carries `gGCScaleX` down).
     if part == BattlePart::Items {
+    // `itDisplayColAnim{OPA,XLU}ProcDisplay`: an item whose attributes set
+    // `is_display_colanim` draws with ENV its colour animation's `color1`
+    // (or clear), which its `ENV_LERP` primitives blend towards by its
+    // alpha: the GE's constant fog, as the fighters' `G_RM_FOG_PRIM_A`.
+    let mut env_fog = false;
+    let (eye, view) = (pl.camera.eye, (pl.camera.at - pl.camera.eye).normalized());
     for (item, visual) in items.items().zip(effect_visuals.items.iter()) {
+        if env_fog {
+            draw_state.end_env_lerp();
+            gpu.clear_fog();
+            env_fog = false;
+        }
         if item.hidden {
             continue;
+        }
+        if let Some(rgba) = item.colanim.color().filter(|c| item.attr.is_display_colanim && c[3] != 0) {
+            gpu.set_constant_fog((item.pos - eye).dot(view), rgba);
+            draw_state.begin_env_lerp();
+            env_fog = true;
         }
             // The Bumper: its root `TraRotRpyRSca` at the item, scaled in X and Y
             // by its swell. The lit palette (`palette_id` 1) is not drawn.
@@ -7367,6 +7392,10 @@ unsafe fn draw_items_weapons_effects(
                 // stage ground objects.
                 _ => {}
         }
+    }
+    if env_fog {
+        draw_state.end_env_lerp();
+        gpu.clear_fog();
     }
     }
 

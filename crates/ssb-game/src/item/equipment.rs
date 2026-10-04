@@ -123,6 +123,7 @@ pub static ATTRIBUTES: [ItemAttributes; 7] = [
         kb_base: 30,
         can_reflect: false,
         ty: ItemType::Consume,
+        is_display_colanim: true,
         ..BASE
     },
 ];
@@ -190,7 +191,8 @@ pub(super) fn release(i: &mut Item, dropped: bool, lr: f32) {
         _ => core::f32::consts::FRAC_PI_2,
     };
     if dropped && kind(i) == Kind::Hammer {
-        i.vars.hammer_warning = false;
+        // `itHammerDroppedSetStatus`.
+        i.clear_colanim();
     }
 }
 fn wait(i: &mut Item) {

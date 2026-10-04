@@ -30,6 +30,7 @@ pub const EXPLODE_SCALE: f32 = 1.2;
 /// File 251, `llITCommonDataMSBombItemAttributes` (0x3BC).
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: false,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::ZERO; 2],
     damage_coll_offset: Vec3::ZERO,

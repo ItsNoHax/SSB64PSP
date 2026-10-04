@@ -587,6 +587,12 @@ pub struct MeshMaterial {
     /// the live ENV subtracts it from them (clamped at zero, which equals
     /// the RDP's clamp of the product since `TEXEL0` is non-negative).
     pub shade_minus_env: bool,
+    /// The second colour cycle is `(ENVIRONMENT - COMBINED) *
+    /// ENV_ALPHA + COMBINED` with alpha `COMBINED`: the Bob-omb's, the
+    /// Hammer's and the Link Bomb's body. `itDisplayColAnim{OPA,XLU}`
+    /// draws them in two-cycle mode with ENV the item's colour animation,
+    /// so they blend towards it by its alpha. Inert without a live ENV.
+    pub env_lerp: bool,
     /// The primitive's commands go to task display-list head 1 (its
     /// [`SequenceItem::stream`] is 1): a `DObjDLLink` entry with
     /// `list_id == 1`. Each camera pass runs every head-0 list of its display
@@ -1381,6 +1387,30 @@ fn combiner_is_shade_minus_env_texel(hi: u32, lo: u32) -> bool {
     first == shape && second == shape
 }
 
+/// Whether the second colour cycle is `(ENVIRONMENT - COMBINED) *
+/// ENV_ALPHA + COMBINED` and its alpha `COMBINED`
+/// ([`MeshMaterial::env_lerp`]).
+fn combiner_is_env_lerp_second(hi: u32, lo: u32) -> bool {
+    const COMBINED: u32 = 0;
+    const ENVIRONMENT: u32 = 5;
+    const ENV_ALPHA: u32 = 12;
+    let rgb = [
+        (hi >> 5) & 0xF,
+        (lo >> 24) & 0xF,
+        hi & 0x1F,
+        (lo >> 6) & 0x7,
+    ];
+    let alpha = [
+        (lo >> 21) & 0x7,
+        (lo >> 3) & 0x7,
+        (lo >> 18) & 0x7,
+        lo & 0x7,
+    ];
+    // Alpha: `(ZERO - ZERO) * ZERO + COMBINED`.
+    const ZERO: u32 = 7;
+    rgb == [ENVIRONMENT, COMBINED, ENV_ALPHA, COMBINED] && alpha == [ZERO, ZERO, ZERO, COMBINED]
+}
+
 /// Recognises a combiner that reduces to a plain constant colour: no shade,
 /// no texel, in either cycle -- `(ZERO-ZERO)*ZERO+PRIM`, a bare `ONE`, or any
 /// other combination of constants and literal zeros (RE-079). Mutually
@@ -2082,6 +2112,7 @@ impl State {
             texture_blend,
             shade_minus_env: texture.is_some()
                 && combiner.is_some_and(|(hi, lo)| combiner_is_shade_minus_env_texel(hi, lo)),
+            env_lerp: combiner.is_some_and(|(hi, lo)| combiner_is_env_lerp_second(hi, lo)),
             // Unlike `alpha_test`/`translucent`, not gated on `texture`: an
             // effect script can drive untextured primitive/environment/blend
             // colour with no palette or texel involved at all (`crate::
