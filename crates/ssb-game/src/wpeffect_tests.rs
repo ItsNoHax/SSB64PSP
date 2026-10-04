@@ -576,7 +576,7 @@ fn a_quake_shifts_the_camera_at_after_its_update() {
         zoom_frame: 1.0,
         zoom_range: 1.0,
         idle_zoomed_out: false,
-        dead_up: false,
+        own_clamp: false,
     }];
     c.tick_interests(&interest, bounds, 0.0, 1.0);
     still.tick_interests(&interest, bounds, 0.0, 1.0);

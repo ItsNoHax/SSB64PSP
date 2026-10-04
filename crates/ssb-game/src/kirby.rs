@@ -868,6 +868,25 @@ fn spit(f: &mut Fighter) {
     });
 }
 
+/// `ftManagerInitFighter`'s Kirby case: a Kirby made holding
+/// `copy_kind` (the 1P Game's Kirby Team) keeps it for life and wears its
+/// hat; `nFTKindKirby` makes a bare Kirby that can lose a later copy.
+/// `ftParamSetModelPartDefaultID` takes effect at the creating status's
+/// `ftParamResetModelPartAll`, which [`ModelParts::reset_all`] stands for.
+///
+/// [`ModelParts::reset_all`]: crate::modelpart::ModelParts::reset_all
+pub fn init_copy(f: &mut Fighter, copy_kind: FighterKind) {
+    f.kirby.copy_id = copy_kind;
+    f.kirby.copy = crate::kirby_copy::CopyState::default();
+    f.kirby.is_ignore_losecopy = copy_kind != FighterKind::Kirby;
+    if f.kind == FighterKind::Kirby {
+        let part = crate::kirby_copy::copy_modelpart_id(copy_kind);
+        f.model_parts
+            .set_default(crate::kirby_copy::COPY_MODELPARTS_JOINT, part);
+        f.model_parts.reset_all();
+    }
+}
+
 /// `ftKirbySpecialNCopyInitCopyVars` then
 /// `ftKirbySpecialNCopyUpdateCheckCopyStar`.
 fn copy(f: &mut Fighter) {
@@ -1512,6 +1531,23 @@ mod tests {
             damage_check_lose_copy(&mut f);
         }
         assert_eq!(f.kirby.copy_id, FighterKind::Mario);
+    }
+
+    #[test]
+    fn a_kirby_made_with_a_copy_keeps_it_and_its_hat() {
+        let mut f = kirby();
+        f.kirby.copy.samus_charge_level = 3;
+        init_copy(&mut f, FighterKind::Fox);
+        assert_eq!(f.kirby.copy_id, FighterKind::Fox);
+        assert!(f.kirby.is_ignore_losecopy);
+        assert_eq!(f.kirby.copy.samus_charge_level, 0);
+        assert_eq!(
+            crate::kirby_copy::copy_hat(&f),
+            Some(crate::kirby_copy::COPY_MODELPART_IDS[FighterKind::Fox as usize])
+        );
+        init_copy(&mut f, FighterKind::Kirby);
+        assert!(!f.kirby.is_ignore_losecopy);
+        assert_eq!(crate::kirby_copy::copy_hat(&f), None);
     }
 
     #[test]

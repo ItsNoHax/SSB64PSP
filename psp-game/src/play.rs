@@ -34,6 +34,9 @@ pub struct Dummy {
     /// Training's `nFTComputerBehaviorStand` at level 3
     /// (`sc1PTrainingModeInitVars`).
     pub computer: ssb_game::computer::Computer,
+    /// `gSCManagerBattleState->game_type == nSCBattleGameType1PGame`, as
+    /// its CPU reads it.
+    pub is_1p_game: bool,
 }
 
 impl Deref for Dummy {
@@ -68,7 +71,24 @@ impl Dummy {
         port: u8,
     ) -> Option<Dummy> {
         pack.spawn(stage, spawn)?;
-        let mut scene = FighterScene::at_spawn(pack, stage, kind, spawn);
+        Some(Self::of(pack, stage, FighterScene::at_spawn(pack, stage, kind, spawn), costume, level, port))
+    }
+
+    /// [`Self::at_spawn`] at `pos`: a 1P Game team member dropping in.
+    #[allow(clippy::too_many_arguments)]
+    pub fn at_point(
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        kind: FighterKind,
+        costume: u8,
+        level: u8,
+        pos: ssb_engine::math::Vec3,
+        port: u8,
+    ) -> Dummy {
+        Self::of(pack, stage, FighterScene::at_point(pack, stage, kind, port, Some(pos)), costume, level, port)
+    }
+
+    fn of(pack: &Pack<'_>, stage: &StageDesc, mut scene: FighterScene, costume: u8, level: u8, port: u8) -> Dummy {
         scene.fighter.port = port;
         scene.fighter.costume = costume;
         let mut computer = ssb_game::computer::Computer::setup(&scene.fighter, level);
@@ -77,9 +97,13 @@ impl Dummy {
         computer.trait_kind = ssb_game::computer::attack::Trait::None;
         let surfaces = || ssb_psp_runtime::scene::MapSegments::new(pack, stage);
         let sight = CpuSight::default();
-        let world = cpu_world(stage, surfaces, &[], &sight);
+        let world = cpu_world(stage, surfaces, &[], &sight, false);
         computer.setup_world(&scene.fighter, &world);
-        Some(Dummy { scene, computer })
+        Dummy {
+            scene,
+            computer,
+            is_1p_game: false,
+        }
     }
 
     /// The priority-5 half of a tick, driven by the CPU: `ftComputerProcessAll`
@@ -100,7 +124,7 @@ impl Dummy {
         let controller = if locked {
             ssb_engine::input::ControllerState::default()
         } else {
-            let world = cpu_world(stage, surfaces, opponents, sight);
+            let world = cpu_world(stage, surfaces, opponents, sight, self.is_1p_game);
             self.computer.process(&self.scene.fighter, &world);
             self.computer.controller()
         };
@@ -171,6 +195,7 @@ fn cpu_world<'a, F, I>(
     surfaces: F,
     opponents: &'a [ssb_game::computer::behave::Opponent],
     sight: &'a CpuSight,
+    is_1p_game: bool,
 ) -> ssb_game::computer::behave::World<'a, F>
 where
     F: Fn() -> I,
@@ -192,13 +217,12 @@ where
             rebirth: ssb_engine::math::Vec2::new(0.0, 0.0),
             fog_color: stage.fog_color,
         },
-        gkind: ssb_rom::stage::vs_ground_kind(stage.source_file),
+        gkind: ssb_rom::stage::ground_kind(stage.source_file),
         opponents,
         items: &sight.items,
         weapon_threats: &sight.weapons,
         team_rules: sight.team_rules,
-        // `nSCBattleGameType1PGame`: the 1P game is not ported.
-        is_1p_game: false,
+        is_1p_game,
         pk_thunder_trail: sight.pk_thunder_trail,
         twister: sight.twister,
         acid: sight.acid,

@@ -1050,7 +1050,7 @@ unsafe fn run() -> ! {
                                                 // to the original's settled Wait
                                                 // state after 120 ticks.
                                                 idle_zoomed_out: true,
-                                                dead_up: false,
+                                                own_clamp: false,
                                             }
                                         })
                                 })

@@ -12,20 +12,20 @@ Current snapshot. History lives in git and `docs/evidence/`.
   shield breaks, hazard and KO records; session collectors sample percent
   separately after healing/rebirth (RE-449). `mnPlayers1PGame`'s select
   (`ssb_game::players_1p`) is drawn in `psp-game` from the menu's third
-  entry; pack v93 adds its sprites. START on that select saves its data
-  and returns to the menu until the session is wired.
-- **Next gameplay batch:** PSP 1P frontend/session binding: session
-  wiring from the select's START, authored intro/continue/stage-clear
-  draws and actual campaign battles. Use `spgame::Frontend`, real 1P setup
-  and Session's `collect_fighter`/`collect_fall` before results. Bonus/Boss
-  requests need their own controllers; never substitute VS battles or
-  skip them.
+  entry; pack v93 adds its sprites. START on that select now starts the
+  campaign: its scenes run undrawn and seven stages' battles run on PSP
+  (RE-450, unverified on hardware).
+- **Next gameplay batch:** finish the PSP 1P frontend binding: authored
+  intro/continue/stage-clear draws (RE-450 runs them undrawn), then a
+  PPSSPP run of the first stages on packs v94/v95. Bonus/Boss requests
+  need their own controllers; never substitute VS battles or skip them.
 - **Parallel track:** rendering fidelity (`P5`), not a gameplay gate.
 
 ## Last completed
 
 | Batch | Result | Evidence |
 |---|---|---|
+| PSP 1P campaign binding | Select START into `Frontend`; Link, Yoshi Team, Fox, Mario Bros., Pikachu, Kirby Team and Samus battles through `Session`; team drop-ins and team camera bounds | RE-450 |
 | Live 1P battle statistics | Callback amounts, attack identity, ownership, item/KO records and percent sync; 22 new regressions | RE-449 |
 | Portable 1P frontend controllers | Selection/settings, process clocks and intro/continue/stage-clear transitions | RE-448 |
 | 1P select | Logic and presentation ported; sprite offsets ROM-checked on the user's machine | — |

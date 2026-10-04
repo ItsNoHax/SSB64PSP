@@ -235,6 +235,10 @@ fn saved_data_reaches_the_campaign() {
     assert_eq!(scene.fkind, FighterKind::Pikachu);
     assert_eq!(scene.stage, 0);
     assert_eq!(backup.writes, 1);
+    let selection = s.saved().selection();
+    assert_eq!(selection.kind, Some(FighterKind::Pikachu));
+    assert_eq!(selection.campaign().unwrap().fkind, FighterKind::Pikachu);
+    assert_eq!(selection.stocks, backup.spgame_stock_count);
     // A puck left unplaced saves no fighter.
     let mut s = first_visit();
     hover_portrait(&mut s, FighterKind::Pikachu);

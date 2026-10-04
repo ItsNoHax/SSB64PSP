@@ -35,6 +35,20 @@ impl Frontend {
         }
     }
 
+    /// A host whose own select already saved `selection` and proceeded
+    /// (`nSCKind1PGame`): the campaign begins at its first scene. `None`
+    /// for an unplaced fighter, which cannot proceed.
+    pub fn start(selection: select::Selection, backup: &Backup) -> Option<Self> {
+        let session = Session::new(selection.campaign()?, backup);
+        let mut frontend = Self {
+            screen: Screen::Host(Scene::Startup),
+            session: Some(alloc::boxed::Box::new(session)),
+            selection,
+        };
+        frontend.sync(backup);
+        Some(frontend)
+    }
+
     /// Called after the host consumes a Battle/BonusStage/other scene.
     /// This creates the new presentation once, on that scene boundary.
     pub fn sync(&mut self, backup: &Backup) -> Scene {

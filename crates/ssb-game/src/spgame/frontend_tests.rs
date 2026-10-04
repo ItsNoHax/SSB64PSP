@@ -638,3 +638,21 @@ fn frontend_stage_clear_commits_ledger_once_before_next_intro() {
     assert_eq!(s.data.stage(), Some(Stage::Yoshi));
     assert_eq!(s.manager.scene, Scene::Intro);
 }
+
+#[test]
+fn a_host_select_starts_the_campaign_at_its_intro_without_saving_again() {
+    let backup = Backup::default();
+    let selection = select::Selection {
+        kind: Some(FighterKind::Fox),
+        costume: 2,
+        ..Default::default()
+    };
+    assert!(frontend::Frontend::start(select::Selection::default(), &backup).is_none());
+    let f = frontend::Frontend::start(selection, &backup).unwrap();
+    assert!(matches!(f.screen, frontend::Screen::Intro(_)));
+    let session = f.session.as_ref().unwrap();
+    assert_eq!(session.manager.scene, Scene::Intro);
+    assert_eq!(session.data.fkind, FighterKind::Fox);
+    assert_eq!(session.data.costume, 2);
+    assert_eq!(backup.writes, 0);
+}

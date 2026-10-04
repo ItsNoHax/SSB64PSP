@@ -78,6 +78,19 @@ pub struct Saved {
 }
 
 impl Saved {
+    /// The same fields as the portable frontend's select returns them,
+    /// for [`spgame::frontend::Frontend::start`].
+    pub fn selection(&self) -> spgame::select::Selection {
+        spgame::select::Selection {
+            player: self.scene.player,
+            kind: self.scene.kind,
+            costume: self.scene.costume,
+            time_limit: self.scene.time_limit,
+            difficulty: self.difficulty,
+            stocks: self.stock_count,
+        }
+    }
+
     /// Writes the saved values into the 1P Game's scene data and backup,
     /// with `spgame_stage` reset to 0, then counts the `lbBackupWrite`.
     /// The portable [`spgame::SceneData`] always names a fighter, so a

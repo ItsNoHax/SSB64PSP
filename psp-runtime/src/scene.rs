@@ -1127,7 +1127,23 @@ impl FighterScene {
         // convention (port N spawns at spawn N) -- the same convention the
         // pre-generalization `Play`/`Dummy` split already baked in (ports 0
         // and 1 for spawns 0 and 1).
-        let mut fighter = Fighter::new(kind, spawn_index as u8, 3);
+        let spawn = pack
+            .spawn(stage, spawn_index)
+            .map(|spawn| ssb_engine::math::Vec3::new(spawn.x as f32, spawn.y as f32, 0.0));
+        Self::at_point(pack, stage, kind, spawn_index as u8, spawn)
+    }
+
+    /// [`Self::at_spawn`] at `pos` rather than a map object, such as a 1P
+    /// Game team member's drop-in point; at the origin, unplaced, for
+    /// `None`.
+    pub fn at_point(
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        kind: FighterKind,
+        port: u8,
+        pos: Option<ssb_engine::math::Vec3>,
+    ) -> FighterScene {
+        let mut fighter = Fighter::new(kind, port, 3);
 
         // Real constants if the pack has them: gravity 2.4 and terminal
         // velocity 44 rather than the 0.09 and 1.7 the first port guessed.
@@ -1149,8 +1165,8 @@ impl FighterScene {
         }
 
         let mut placed = false;
-        if let Some(spawn) = pack.spawn(stage, spawn_index) {
-            fighter.pos = ssb_engine::math::Vec3::new(spawn.x as f32, spawn.y as f32, 0.0);
+        if let Some(pos) = pos {
+            fighter.pos = pos;
             fighter.facing = ssb_game::fighter::Facing::at_spawn_x(fighter.pos.x);
             placed = ssb_game::collision::project_floor(
                 FloorSegments::new(pack, stage),
@@ -1381,19 +1397,34 @@ impl FighterScene {
             CameraMode::Default => (f.pos, f.facing),
         };
         target.y += self.cam_offset_y;
-        let dead_up = f.dead.camera_mode == CameraMode::DeadUp;
-        if dead_up {
+        // `gmCameraUpdateInterests`: a 1P Game enemy, the only fighter
+        // with team bounds, is held inside the team camera bounds in every
+        // mode; anyone else's top-out frames at the camera's top.
+        let own_clamp = if f.dead.team_bounds.is_some() {
+            let b = stage.team_camera;
+            target = ssb_game::camera::Bounds {
+                top: f32::from(b.top),
+                bottom: f32::from(b.bottom),
+                left: f32::from(b.left),
+                right: f32::from(b.right),
+            }
+            .clamp(target);
+            true
+        } else if f.dead.camera_mode == CameraMode::DeadUp {
             let top = f32::from(stage.camera.top);
             target.x = top * target.x / f32::from(stage.bounds.top);
             target.y = top;
-        }
+            true
+        } else {
+            false
+        };
         Some(ssb_game::camera::Interest {
             target_pos: target,
             facing_left: matches!(facing, ssb_game::fighter::Facing::Left),
             zoom_frame: self.camera_zoom_frame,
             zoom_range: 1.0,
             idle_zoomed_out: f.status.status == Status::Wait && f.status.anim_frame >= 120.0,
-            dead_up,
+            own_clamp,
         })
     }
 
@@ -1646,6 +1677,15 @@ pub fn vs_stage_index(pack: &Pack<'_>, gkind: u8) -> Option<u32> {
     (0..pack.stage_count()).find(|&i| {
         pack.stage(i)
             .is_some_and(|s| ssb_rom::stage::vs_ground_kind(s.source_file) == Some(gkind))
+    })
+}
+
+/// The packed stage of `GRKind` `gkind`, the 1P Game's own stages
+/// included.
+pub fn stage_index(pack: &Pack<'_>, gkind: u8) -> Option<u32> {
+    (0..pack.stage_count()).find(|&i| {
+        pack.stage(i)
+            .is_some_and(|s| ssb_rom::stage::ground_kind(s.source_file) == Some(gkind))
     })
 }
 
