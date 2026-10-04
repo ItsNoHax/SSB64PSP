@@ -81,6 +81,11 @@ pub const G_WALLPAPER: u32 = 0x48;
 const G_CAMERA_BOUNDS: u32 = 0x6C;
 const G_MAP_BOUNDS: u32 = 0x74;
 const G_BGM_ID: u32 = 0x7C;
+/// `camera_bound_team_*` and `map_bound_team_*`, after `item_weights`
+/// (0x84) and `alt_warning` (0x88): the 1P Game's enemy-team bounds
+/// (`gmCameraSetTeamBoundsPosition`, `ftCommonDeadCheckInterruptCommon`).
+const G_CAMERA_TEAM_BOUNDS: u32 = 0x8A;
+const G_MAP_TEAM_BOUNDS: u32 = 0x92;
 const G_MAP_NODES: u32 = 0x80;
 /// `MPItemWeights *item_weights`: one randomizer weight per common item
 /// kind (`nITKindCommonStart..=nITKindCommonEnd`).
@@ -145,6 +150,10 @@ pub struct GroundData {
     pub map_nodes: Option<Target>,
     pub camera_bounds: Bounds,
     pub map_bounds: Bounds,
+    /// The 1P Game's enemy-team camera and blast bounds; zero on stages
+    /// the campaign never uses.
+    pub camera_team_bounds: Bounds,
+    pub map_team_bounds: Bounds,
     pub bgm_id: u32,
     /// `light_angle`'s three raw components, in **mixed units** (matches the
     /// ROM's own storage, not normalised here): `.x`/`.y`, in *degrees*, are
@@ -291,6 +300,8 @@ pub fn read_ground_data(
     if !camera_bounds.plausible() || !map_bounds.plausible() {
         return None;
     }
+    let camera_team_bounds = read_bounds(&file.data, base + G_CAMERA_TEAM_BOUNDS)?;
+    let map_team_bounds = read_bounds(&file.data, base + G_MAP_TEAM_BOUNDS)?;
     let light_angle = [
         read_f32(&file.data, base + G_LIGHT_ANGLE)?,
         read_f32(&file.data, base + G_LIGHT_ANGLE + 4)?,
@@ -313,6 +324,8 @@ pub fn read_ground_data(
         map_nodes: target(file, base + G_MAP_NODES),
         camera_bounds,
         map_bounds,
+        camera_team_bounds,
+        map_team_bounds,
         bgm_id: read_u32(&file.data, base + G_BGM_ID)?,
         light_angle,
         emblem_colors,
@@ -352,6 +365,38 @@ pub const VS_GROUND_FILES: [u32; 9] = [
     0x108, // Yamabuki
     0x104, // Inishie
 ];
+
+/// Every common stage's `GR*Map` file (`ll*MapFileID`, US), in `GRKind`
+/// order: `dMPCollisionGroundFileInfos`' first seventeen rows, the nine
+/// VS stages then the 1P Game's and the test stages (`relocData`'s file
+/// numbers).
+pub const GROUND_FILES: [u32; 17] = [
+    VS_GROUND_FILES[0],
+    VS_GROUND_FILES[1],
+    VS_GROUND_FILES[2],
+    VS_GROUND_FILES[3],
+    VS_GROUND_FILES[4],
+    VS_GROUND_FILES[5],
+    VS_GROUND_FILES[6],
+    VS_GROUND_FILES[7],
+    VS_GROUND_FILES[8],
+    256, // PupupuSmall
+    258, // PupupuTest
+    267, // Explain
+    270, // YosterSmall
+    269, // Metal
+    268, // Zako
+    295, // Bonus3
+    266, // Last
+];
+
+/// `GRKind` of a common stage's `GR*Map` file.
+pub fn ground_kind(file: u32) -> Option<u8> {
+    GROUND_FILES
+        .iter()
+        .position(|&f| f == file)
+        .map(|k| k as u8)
+}
 
 /// `ll*MapMapHeader`: where each VS `GR*Map` file keeps its header.
 pub const MAP_HEADER: u32 = 0x14;
@@ -425,6 +470,9 @@ mod tests {
         };
         bounds(base + G_CAMERA_BOUNDS, [4000, -2000, 3900, -3900]);
         bounds(base + G_MAP_BOUNDS, [8300, -3500, 9000, -9000]);
+        // `GRHyruleMap`'s team bounds.
+        bounds(base + G_CAMERA_TEAM_BOUNDS, [6000, -2100, 6000, -6000]);
+        bounds(base + G_MAP_TEAM_BOUNDS, [9000, -5000, 11000, -11000]);
 
         let angle_x = (base + G_LIGHT_ANGLE) as usize;
         data[angle_x..angle_x + 4].copy_from_slice(&30.0f32.to_be_bytes());
@@ -466,7 +514,18 @@ mod tests {
         assert_eq!(h.map_geometry, Some((104, 0x1F34)));
         assert_eq!(h.camera_bounds.top, 4000);
         assert_eq!(h.map_bounds.left, -9000);
+        assert_eq!(h.camera_team_bounds.bottom, -2100);
+        assert_eq!(h.map_team_bounds.top, 9000);
+        assert_eq!(h.map_team_bounds.right, 11000);
         assert_eq!(h.light_angle, [30.0, -40.0, 5.0]);
+    }
+
+    #[test]
+    fn the_common_stage_table_keeps_the_vs_rows_and_race_to_the_finish() {
+        assert_eq!(&GROUND_FILES[..9], &VS_GROUND_FILES);
+        assert_eq!(GROUND_FILES[15], crate::ground_obj::BONUS3_FILE);
+        assert_eq!(ground_kind(270), Some(12));
+        assert_eq!(ground_kind(0x109), vs_ground_kind(0x109));
     }
 
     #[test]

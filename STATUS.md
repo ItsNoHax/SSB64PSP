@@ -35,9 +35,10 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - All 1,873 workspace tests pass at RE-449 (absolute SSB64_ROM, pinned
   1.98.0, one thread), including all 497 ROM status-flag rows. Clippy with
   warnings denied, workspace rustfmt and documentation validation pass.
-- Packs v93 and v94 are not rebuilt yet; v93 first failed on the select's
+- Packs v93 to v95 are not rebuilt yet; v93 first failed on the select's
   2-bit outline sprite, now widened like `lbCommonMakeSObjForGObj`. v94
-  adds the campaign's FigureDropped, FigureStand, IntroL and IntroR clips. Pack v92: 35,821,024 bytes, SHA-256
+  adds the campaign's FigureDropped, FigureStand, IntroL and IntroR clips; v95 adds each stage's 1P enemy-team camera
+  and blast bounds. Pack v92: 35,821,024 bytes, SHA-256
   `4b84c7d713dc732d5dac53a584f2605d5256976ec0560fd5478e43e84d245e35`.
   No ROM-derived assets committed.
 - Both production PSP release builds pass (nightly-2026-08-26).

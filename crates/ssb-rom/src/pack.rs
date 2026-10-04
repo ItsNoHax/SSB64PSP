@@ -369,7 +369,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `SLOT_INTRO_R`, 619..623): the continue screen's FigureDropped and
 // FigureStand, which lead with a TransN joint, and the stage cards' IntroL
 // and IntroR. `SLOT_COUNT` grows to 623.
-pub const VERSION: u32 = 94;
+// 95 gives `StageDesc` the 1P Game's enemy-team camera and blast bounds
+// (`MPGroundData.camera_bound_team_*`, `map_bound_team_*`); 164 bytes.
+pub const VERSION: u32 = 95;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1571,6 +1573,10 @@ pub struct StageDesc {
     pub emblem_colors: [[u8; 3]; 5],
     /// `MPGroundData.fog_color` (`VERSION` 65, RE-412).
     pub fog_color: [u8; 3],
+    /// `camera_bound_team_*`: the 1P Game's enemy-team camera bounds.
+    pub team_camera: Extent,
+    /// `map_bound_team_*`: the 1P Game's enemy-team blast zone.
+    pub team_bounds: Extent,
     /// `MPGroundData.item_weights`, `None` where the pointer is NULL
     /// (`VERSION` 84, RE-433).
     pub item_weights: Option<[u8; crate::stage::ITEM_WEIGHT_COUNT]>,
@@ -1579,8 +1585,8 @@ pub struct StageDesc {
 impl StageDesc {
     /// `16 + 16 + 8 + 8 + 16 + 8 + 28 + 4 + 15`, padded to 120, then the
     /// fog colour padded to 124, then the 20 item weights and their
-    /// presence byte, padded to 148.
-    pub const SIZE: usize = 148;
+    /// presence byte, padded to 148, then the two team extents.
+    pub const SIZE: usize = 164;
     pub const NO_LAYER: u32 = u32::MAX;
 }
 
@@ -2935,6 +2941,8 @@ impl PackWriter {
             hazard_surface_y: 0.0,
             emblem_colors: ground.emblem_colors,
             fog_color: ground.fog_color,
+            team_camera: extent(ground.camera_team_bounds),
+            team_bounds: extent(ground.map_team_bounds),
             item_weights: ground.item_weights,
         });
         (self.stages.len() - 1) as u32
@@ -3236,6 +3244,11 @@ impl PackWriter {
             out.push(0);
             out.extend_from_slice(&s.item_weights.unwrap_or_default());
             out.extend_from_slice(&[u8::from(s.item_weights.is_some()), 0, 0, 0]);
+            for e in [s.team_camera, s.team_bounds] {
+                for v in [e.top, e.bottom, e.right, e.left] {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+            }
         }
         for l in &self.lines {
             out.extend_from_slice(&l.first_vertex.to_le_bytes());
@@ -4195,6 +4208,8 @@ impl<'a> Pack<'a> {
                 self.data[at + 121],
                 self.data[at + 122],
             ],
+            team_camera: extent_at(self.data, at + 148),
+            team_bounds: extent_at(self.data, at + 156),
             item_weights: (self.data[at + 144] != 0)
                 .then(|| core::array::from_fn(|k| self.data[at + 124 + k])),
         })
@@ -5885,6 +5900,18 @@ mod tests {
                 right: 3500,
                 left: -3500,
             },
+            camera_team_bounds: Bounds {
+                top: 4000,
+                bottom: -2500,
+                right: 3500,
+                left: -3500,
+            },
+            map_team_bounds: Bounds {
+                top: 5000,
+                bottom: -3000,
+                right: 6000,
+                left: -6000,
+            },
             bgm_id: 0x11,
             // Deliberately non-zero in every component: a pack round-trip
             // must not silently retain only the camera's Z component.
@@ -5987,6 +6014,8 @@ mod tests {
         assert_eq!(s.emblem_colors[3], [0, 0xFF, 0]);
         assert_eq!(s.emblem_colors[4], [0xDC; 3]);
         assert_eq!(s.fog_color, [0x10, 0x20, 0x30]);
+        assert_eq!((s.team_camera.top, s.team_camera.bottom), (4000, -2500));
+        assert_eq!((s.team_bounds.right, s.team_bounds.left), (6000, -6000));
 
         let lines: alloc::vec::Vec<LineDesc> = pack.stage_lines(&s).collect();
         assert_eq!(lines.len(), 3);
