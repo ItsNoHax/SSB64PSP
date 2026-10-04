@@ -491,6 +491,10 @@ pub enum GameScene {
     /// Charizard, Starmie and Koffing (RE-435).
     TrainingPokemonA,
     TrainingPokemonB,
+    /// Onix's rocks, Snorlax's fall and Beedrill's status material (RE-443).
+    TrainingPokemonC,
+    /// Goldeen, Hitmonlee and Clefairy's status presentation (RE-443).
+    TrainingPokemonD,
     /// The seven held utilities and their natural pickup/use callbacks.
     TrainingEquipment,
     TrainingRayGun,
@@ -536,7 +540,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 105] = [
+    pub const ALL: [GameScene; 107] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -621,6 +625,8 @@ impl GameScene {
         GameScene::TrainingBumperThrow,
         GameScene::TrainingPokemonA,
         GameScene::TrainingPokemonB,
+        GameScene::TrainingPokemonC,
+        GameScene::TrainingPokemonD,
         GameScene::TrainingEquipment,
         GameScene::TrainingRayGun,
         GameScene::TrainingFlower,
@@ -730,6 +736,8 @@ impl GameScene {
             GameScene::TrainingBumperThrow => "trainingbumperthrow",
             GameScene::TrainingPokemonA => "trainingpokemona",
             GameScene::TrainingPokemonB => "trainingpokemonb",
+            GameScene::TrainingPokemonC => "trainingpokemonc",
+            GameScene::TrainingPokemonD => "trainingpokemond",
             GameScene::TrainingEquipment => "trainingequipment",
             GameScene::TrainingRayGun => "trainingraygun",
             GameScene::TrainingFlower => "trainingflower",

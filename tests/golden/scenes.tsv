@@ -184,6 +184,10 @@ f1-training-throwable	psp-game	trainingthrowable@40	pass	RE-434 RE-440
 f1-training-throwable-open	psp-game	trainingthrowable@170	pass	RE-434 RE-440
 f1-training-pokemon-a	psp-game	trainingpokemona@120	pass	RE-435 RE-440
 f1-training-pokemon-b	psp-game	trainingpokemonb@120	pass	RE-435 RE-440
+f1-training-pokemon-c	psp-game	trainingpokemonc@60	pass	RE-443
+f1-training-pokemon-rocks	psp-game	trainingpokemonc@240	pass	RE-443
+f1-training-pokemon-fall	psp-game	trainingpokemonc@210	pass	RE-443
+f1-training-pokemon-d	psp-game	trainingpokemond@120	pass	RE-443
 f1-training-equipment	psp-game	trainingequipment@50	pass	RE-436 RE-440
 f1-training-raygun	psp-game	trainingraygun@110	pass	RE-436 RE-440
 f1-training-flower	psp-game	trainingflower@130	pass	RE-436 RE-440

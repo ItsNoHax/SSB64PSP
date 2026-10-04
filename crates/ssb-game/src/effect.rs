@@ -794,6 +794,16 @@ pub struct HitEffect {
 /// and the effect processes' pass.
 pub trait HitEffectSink {
     fn container_smash(&mut self, _pos: Vec3) {}
+
+    /// `efManagerMBallRaysMakeEffect`: the rays' sequence number, or `None`
+    /// when the effect is not made.
+    fn mball_rays(&mut self, _pos: Vec3) -> Option<u32> {
+        None
+    }
+
+    /// `DObjGetStruct(effect_gobj)->translate.vec.f = *pos` on a display
+    /// effect the caller made. Nothing happens once it is gone.
+    fn move_display(&mut self, _seq: u32, _pos: Vec3) {}
     fn make(&mut self, e: &HitEffect);
 
     /// Makes (or, without a runtime, drops) the effects `f` queued.
@@ -837,6 +847,12 @@ pub struct EffectRuntime<'b> {
 impl HitEffectSink for EffectRuntime<'_> {
     fn container_smash(&mut self, pos: Vec3) {
         self.effects.container_smash(pos);
+    }
+    fn mball_rays(&mut self, pos: Vec3) -> Option<u32> {
+        self.effects.mball_rays(pos)
+    }
+    fn move_display(&mut self, seq: u32, pos: Vec3) {
+        self.effects.move_display(seq, pos);
     }
     fn make(&mut self, e: &HitEffect) {
         self.effects.make_hit(self.particles, self.banks, e);
@@ -987,6 +1003,10 @@ pub enum DisplayKind {
     /// `dEFManagerYoshiEggEscapeEffectDesc`: forced, attached to joint 5,
     /// no process or animation. Stopped by `ftParamProcStopEffect`.
     YoshiEggEscape,
+    /// `dEFManagerMBallRaysEffectDesc`: the opened Poké Ball's rays. Its
+    /// flags lack `EFFECT_FLAG_USERDATA`, so it has no struct and runs
+    /// `efManagerNoStructProcUpdate` (RE-443).
+    MBallRays,
 }
 
 /// `gcPlayAnimAll` calls until each display effect's animation reaches its
@@ -1009,6 +1029,8 @@ pub mod life {
     pub const QUAKE: [u16; 3] = [19, 31, 31];
     /// `llEFCommonEffects2FireSparkAnimJoint`.
     pub const FIRE_SPARK: u16 = 11;
+    /// `llEFCommonEffects3MBallRaysAnimJoint`.
+    pub const MBALL_RAYS: u16 = 51;
 }
 
 impl DisplayKind {
@@ -1019,7 +1041,7 @@ impl DisplayKind {
         match self {
             DisplayKind::ContainerSmash => 11,
             DisplayKind::ShockSmall | DisplayKind::Slash => 18,
-            DisplayKind::ImpactWave => 10,
+            DisplayKind::ImpactWave | DisplayKind::MBallRays => 10,
             DisplayKind::FlyOrbs
             | DisplayKind::FlySparks
             | DisplayKind::FlyMDust
@@ -1045,6 +1067,7 @@ impl DisplayKind {
             DisplayKind::ImpactWave => life::IMPACT_WAVE,
             DisplayKind::Quake { magnitude } => life::QUAKE[usize::from(magnitude.min(2))],
             DisplayKind::FireSpark => life::FIRE_SPARK,
+            DisplayKind::MBallRays => life::MBALL_RAYS,
             DisplayKind::SpawnOrbs
             | DisplayKind::FlyOrbs
             | DisplayKind::SpawnSparks
@@ -1213,7 +1236,7 @@ impl Effects {
             self.displays_refused = self.displays_refused.saturating_add(1);
             return None;
         };
-        let ep = if kind == DisplayKind::Slash {
+        let ep = if matches!(kind, DisplayKind::Slash | DisplayKind::MBallRays) {
             NIL
         } else if kind == DisplayKind::YoshiEggEscape {
             self.get_force()?
@@ -1274,7 +1297,8 @@ impl Effects {
             | DisplayKind::ImpactWave
             | DisplayKind::StarRodSpark
             | DisplayKind::Quake { .. }
-            | DisplayKind::FireSpark => {
+            | DisplayKind::FireSpark
+            | DisplayKind::MBallRays => {
                 d.ticks = d.ticks.saturating_add(1);
                 if d.kind.life().is_some_and(|life| d.ticks >= life) {
                     self.eject_display(i);
@@ -1447,6 +1471,24 @@ impl Effects {
         d.scale.y = scale;
         d.rotate.z = rotate;
         true
+    }
+
+    /// `efManagerMBallRaysMakeEffect`: its sequence number, which the
+    /// opened ball keeps (`item_vars.mball.effect_gobj`).
+    pub fn mball_rays(&mut self, pos: Vec3) -> Option<u32> {
+        let i = self.make_display(DisplayKind::MBallRays)?;
+        let d = self.display_mut(i);
+        d.translate = pos;
+        Some(d.seq)
+    }
+
+    /// Moves the live display effect `seq` to `pos`. Resolving its sequence
+    /// avoids moving a replacement if the original effect was ejected
+    /// before the ball releases its Pokémon (RE-443).
+    pub fn move_display(&mut self, seq: u32, pos: Vec3) {
+        if let Some(d) = self.displays.iter_mut().flatten().find(|d| d.seq == seq) {
+            d.translate = pos;
+        }
     }
 
     /// `efManagerDamageSlashMakeEffect`.

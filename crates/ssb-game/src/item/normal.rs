@@ -232,6 +232,12 @@ pub(super) trait CommonItems {
     }
     /// `itMainMakeMonster` from a Poké Ball.
     fn make_monster(&mut self, _parent: &super::Item) {}
+    /// `efManagerMBallRaysMakeEffect`: the rays' sequence number.
+    fn mball_rays(&mut self, _pos: ssb_engine::math::Vec3) -> Option<u32> {
+        None
+    }
+    /// The opened ball moves its rays to itself.
+    fn move_display(&mut self, _seq: u32, _pos: ssb_engine::math::Vec3) {}
     /// `itManagerMakeItemSetupCommon(parent, nITKindEgg, ...)` with
     /// `ITEM_FLAG_COLLPROJECT | ITEM_FLAG_PARENT_ITEM`: the new Egg's
     /// facing, or `None` when no struct is free (Chansey's eggs).

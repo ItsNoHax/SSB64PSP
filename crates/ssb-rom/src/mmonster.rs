@@ -22,6 +22,9 @@ pub struct Visual {
     pub appear_node: u32,
     /// The script its status adds (`gcAddDObjAnimJoint`), and the node.
     pub status: Option<(u32, u32)>,
+    /// The material script the same status adds to that node's first
+    /// `MObj` (`gcAddMObjMatAnimJoint`), and the node (RE-443).
+    pub status_mat: Option<(u32, u32)>,
     /// The tree whose node 1 is the display list the attack status puts on
     /// the root (`dobj->dl = ...DisplayList`): Onix 0xA640, Blastoise
     /// 0xED60 and Hitmonlee 0x12340, each the first list of the tree
@@ -34,6 +37,7 @@ const fn visual(graph: u32, appear_node: u32) -> Visual {
         graph,
         appear_node,
         status: None,
+        status_mat: None,
         attack_dl_graph: None,
     }
 }
@@ -48,17 +52,20 @@ pub const VISUALS: [Visual; 13] = [
     // the child.
     Visual {
         status: Some((0xB7CC, 2)),
+        status_mat: Some((0xB90C, 2)),
         ..visual(0xB708, 1)
     },
     visual(0xC130, 1),
     // `itLizardonAttackInitVars`: its root.
     Visual {
         status: Some((0xD658, 1)),
+        status_mat: Some((0xD688, 1)),
         ..visual(0xD5C0, 1)
     },
     // `itSpearAppearInitVars`: the child.
     Visual {
         status: Some((0xDFFC, 2)),
+        status_mat: Some((0xE12C, 2)),
         ..visual(0xDF38, 2)
     },
     Visual {
@@ -70,7 +77,11 @@ pub const VISUALS: [Visual; 13] = [
         status: Some((0x100BC, 2)),
         ..visual(0x10000, 2)
     },
-    visual(0x112A0, 1),
+    // `itStarmieNFollowFindFollowPlayerLR`: its root's `MObj` only.
+    Visual {
+        status_mat: Some((0x11338, 1)),
+        ..visual(0x112A0, 1)
+    },
     Visual {
         attack_dl_graph: Some(0x12430),
         ..visual(0x11F40, 1)
@@ -86,6 +97,12 @@ pub const VISUALS: [Visual; 13] = [
 
 /// The weapons' `WPAttributes::data` trees.
 pub const ROCK_GRAPH: u32 = 0xAB98;
+/// The three sprites selected by itIwarkWeaponRockMakeWeapon's random
+/// 0..3. Mesh variants are keyed by these image pointers (RE-443).
+pub const ROCK_TEXTURE_KEYS: [u32; 3] = [0xA950, 0xA8C8, 0xA840];
+/// Conditional AA_XLU_SURF mesh variants, keyed by their trees.
+pub const KABIGON_FALL_MESH: u32 = 0xB158;
+pub const PIPPI_XLU_MESH: u32 = 0x13598;
 pub const COIN_GRAPH: u32 = 0xC520;
 pub const SPEAR_SWARM_GRAPH: u32 = 0xE4A8;
 /// Clefairy's swarm draws Clefairy (`llITCommonDataPippiSwarmWeaponAttributes`).

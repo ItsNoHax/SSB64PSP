@@ -8,6 +8,88 @@ use ssb_rom::{archive::Archive, figatree::JointPose, objanim::StageJoint};
 fn word(d: &[u8], at: usize) -> u32 {
     u32::from_be_bytes(d[at..at + 4].try_into().unwrap())
 }
+
+#[test]
+fn pokemon_status_materials_and_conditional_meshes_are_bound_in_the_pack() {
+    use ssb_rom::{
+        mmonster as asset,
+        pack::{flags, Pack},
+    };
+    if std::env::var_os("SSB64_ROM").is_none() {
+        return;
+    }
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak"),
+    )
+    .unwrap();
+    let p = Pack::open(&bytes).unwrap();
+    let object = |graph| {
+        (0..p.object_count())
+            .filter_map(|i| p.object(i))
+            .find(|o| (o.source_file, o.source_offset) == (86, graph))
+            .unwrap()
+    };
+    let mesh = |key| {
+        (0..p.mesh_count())
+            .filter_map(|i| p.mesh(i))
+            .find(|m| (m.source_file, m.source_offset) == (86, key))
+            .unwrap()
+    };
+    // Offsets and target nodes independently read from the named status
+    // callbacks and reloc_data.us.h, rather than the Visual table itself.
+    for (kind, node, script) in [
+        (Kind::Tosakinto, 2, 0xB90C),
+        (Kind::Lizardon, 1, 0xD688),
+        (Kind::Spear, 2, 0xE12C),
+        (Kind::Starmie, 1, 0x11338),
+    ] {
+        let o = object(asset::VISUALS[kind as usize].graph);
+        let m = p.mesh(p.node(o.first_node + node).unwrap().mesh).unwrap();
+        let bound: Vec<_> = (0..m.prim_count)
+            .filter_map(|i| p.prim(m.first_prim + i))
+            .filter_map(|pr| p.mat_anim(pr.mat_anim))
+            .collect();
+        assert!(!bound.is_empty(), "{kind:?}");
+        assert!(
+            bound
+                .iter()
+                .all(|a| (a.source_file, a.script) == (86, script)),
+            "{kind:?}"
+        );
+    }
+    let ball = mesh(0x9520);
+    let a = p
+        .mat_anim(p.prim(ball.first_prim).unwrap().mat_anim)
+        .unwrap();
+    assert_eq!((a.source_file, a.script, a.texture_count), (86, 0x9520, 8));
+    for key in [asset::KABIGON_FALL_MESH, asset::PIPPI_XLU_MESH] {
+        let m = mesh(key);
+        for pr in (0..m.prim_count).map(|i| p.prim(m.first_prim + i).unwrap()) {
+            assert_ne!(pr.flags & flags::ALPHA_BLEND, 0);
+            assert_eq!(
+                pr.flags & (flags::DEPTH_TEST | flags::DEPTH_WRITE | flags::HEAD1),
+                0
+            );
+        }
+    }
+    let clefairy = object(asset::PIPPI_SWARM_GRAPH);
+    let normal = p
+        .mesh(p.node(clefairy.first_node + 1).unwrap().mesh)
+        .unwrap();
+    let pr = p.prim(normal.first_prim).unwrap();
+    assert_eq!(
+        pr.flags & (flags::DEPTH_TEST | flags::DEPTH_WRITE | flags::ALPHA_TEST),
+        flags::DEPTH_TEST | flags::DEPTH_WRITE | flags::ALPHA_TEST
+    );
+    let textures: Vec<_> = asset::ROCK_TEXTURE_KEYS
+        .into_iter()
+        .map(|key| p.prim(mesh(key).first_prim).unwrap().texture)
+        .collect();
+    assert!(textures.iter().all(|&i| p.texture(i).is_some()));
+    assert_ne!(textures[0], textures[1]);
+    assert_ne!(textures[1], textures[2]);
+    assert_ne!(textures[0], textures[2]);
+}
 fn half(d: &[u8], at: usize) -> i16 {
     i16::from_be_bytes(d[at..at + 2].try_into().unwrap())
 }
