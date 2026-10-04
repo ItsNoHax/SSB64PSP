@@ -178,9 +178,10 @@ fn damage_all_delay(item: &mut Item) -> bool {
     expired
 }
 
-/// `it{G,R}ShellCommonClearAnim`: the slide's spin animation stops.
+/// `it{G,R}ShellCommonClearAnim`: the slide's spin and material scripts
+/// end.
 fn clear_anim(item: &mut Item) {
-    item.vars.shell_spin_anim = false;
+    item.clear_root_script();
 }
 
 /// `itGShellSpinUpdateEffect` / `itRShellSpinUpdateGFX`.
@@ -292,7 +293,8 @@ fn spin(item: &mut Item) {
         Kind::Green => {
             item.vars.shell_dust_int = G_EFFECT_SPAWN_INT;
             item.vars.shell_damage_all_delay = G_DAMAGE_ALL_WAIT;
-            item.vars.shell_spin_anim = true;
+            // `itGShellSpinAddAnim`.
+            item.add_root_script();
             item.is_damage_all = false;
             item.refresh_attack_coll();
         }
@@ -303,7 +305,8 @@ fn spin(item: &mut Item) {
                 item.vars.shell_interact = R_INTERACT_MAX;
             }
             item.vars.shell_dust_int = R_EFFECT_SPAWN_INT;
-            item.vars.shell_spin_anim = true;
+            // `itRShellSpinAddAnim`.
+            item.add_root_script();
             item.clear_owner_stats();
             map::set_ground(item);
         }

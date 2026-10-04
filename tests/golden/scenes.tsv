@@ -198,3 +198,6 @@ f1-training-interface-menu	psp-game	traininginterface@67	pass	RE-440
 f1-training-interface-close	psp-game	traininginterface@75	pass	RE-440
 f1-training-interface-wait	psp-game	traininginterface@100	pass	RE-440
 f1-training-interface-restored	psp-game	traininginterface@280	pass	RE-440
+f1-training-slide	psp-game	trainingslide@130	pass	RE-442
+f1-training-slide-walk	psp-game	trainingslide@233	pass	RE-442
+f1-training-bumper-throw	psp-game	trainingbumperthrow@160	pass	RE-442

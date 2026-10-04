@@ -248,6 +248,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         | GameScene::TrainingHeavy
         | GameScene::TrainingUtility
         | GameScene::TrainingThrowable
+        | GameScene::TrainingSlide
+        | GameScene::TrainingBumperThrow
         | GameScene::TrainingPokemonA
         | GameScene::TrainingPokemonB
         | GameScene::TrainingEquipment
@@ -317,6 +319,8 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingHeavy
             | GameScene::TrainingUtility
             | GameScene::TrainingThrowable
+            | GameScene::TrainingSlide
+            | GameScene::TrainingBumperThrow
             | GameScene::TrainingPokemonA
             | GameScene::TrainingPokemonB
             | GameScene::TrainingEquipment
@@ -543,6 +547,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingHeavy
             | GameScene::TrainingUtility
             | GameScene::TrainingThrowable
+            | GameScene::TrainingSlide
+            | GameScene::TrainingBumperThrow
             | GameScene::TrainingPokemonA
             | GameScene::TrainingPokemonB
             | GameScene::TrainingEquipment
@@ -564,6 +570,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             60 if matches!(
                 scene,
                 GameScene::TrainingHeavy | GameScene::TrainingUtility | GameScene::TrainingThrowable
+                    | GameScene::TrainingSlide | GameScene::TrainingBumperThrow
                     | GameScene::TrainingRayGun
                     | GameScene::TrainingFlower
                     | GameScene::TrainingStarRod
@@ -575,6 +582,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             100 if matches!(
                 scene,
                 GameScene::TrainingThrowable
+                    | GameScene::TrainingSlide
+                    | GameScene::TrainingBumperThrow
                     | GameScene::TrainingRayGun
                     | GameScene::TrainingStarRod
             ) =>
@@ -2067,6 +2076,23 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
                 (18, (800.0, 500.0)),
                 (19, (75.0, 300.0)),
             ] {
+                let pos = at + ssb_engine::math::Vec3::new(offset.0, offset.1, 0.0);
+                s.items.make_setup_common(index, None, pos, ssb_engine::math::Vec3::ZERO, &core::iter::empty);
+            }
+        }
+        return;
+    }
+    if matches!(scene, Some(GameScene::TrainingSlide | GameScene::TrainingBumperThrow)) {
+        if let Some(pl) = s.play_state.as_ref() {
+            // The thrown item in reach; the slide adds a Bob-omb that walks.
+            let at = pl.fighter.pos;
+            s.items.camera_at_x = pl.camera.at.x;
+            let items: &[(u8, (f32, f32))] = if scene == Some(GameScene::TrainingSlide) {
+                &[(17, (75.0, 300.0)), (15, (750.0, 500.0))]
+            } else {
+                &[(16, (75.0, 300.0))]
+            };
+            for &(index, offset) in items {
                 let pos = at + ssb_engine::math::Vec3::new(offset.0, offset.1, 0.0);
                 s.items.make_setup_common(index, None, pos, ssb_engine::math::Vec3::ZERO, &core::iter::empty);
             }
@@ -4401,6 +4427,15 @@ struct DrawAssets {
     ray_ammo: Option<ssb_rom::pack::MeshDesc>,
     /// The Green Shell's list under `palettes[1]`, keyed (86, 0x5578).
     green_shell: Option<ssb_rom::pack::MeshDesc>,
+    /// The Shells' slide spin on their root (RE-442).
+    shell_spin: Option<ssb_rom::pack::AnimDesc>,
+    /// The Bob-omb's left-walking list (86 + 0x34C0, RE-442).
+    bombhei_left: Option<ssb_rom::pack::MeshDesc>,
+    /// The Bumper's root lists by `[attached][palette_id]`: the tree's own,
+    /// lit (keyed by `palettes[1]`, 0x7238), then the attached Wait list
+    /// under the Wait `MObjSub` (0x7A38) and lit (0x76D8) (RE-442).
+    bumper_lit: Option<ssb_rom::pack::MeshDesc>,
+    bumper_wait: [Option<ssb_rom::pack::MeshDesc>; 2],
     /// The shield bubble.
     shield: Option<ssb_rom::pack::ObjectDesc>,
     /// Ness's PSI Magnet field and its transform animation.
@@ -4531,8 +4566,11 @@ impl DrawAssets {
             ray_ammo: (0..p.mesh_count())
                 .filter_map(|i| p.mesh(i))
                 .find(|m| m.source_file == 251 && m.source_offset == 0x2B0),
-            green_shell: (0..p.mesh_count()).filter_map(|i| p.mesh(i))
-                .find(|m| m.source_file == 86 && m.source_offset == 0x5578),
+            green_shell: mesh_keyed(p, (86, 0x5578)),
+            shell_spin: p.item_anim(ssb_rom::pack::AnimDesc::ITEM_ANIM_SHELL_SPIN),
+            bombhei_left: mesh_keyed(p, (86, 0x34C0)),
+            bumper_lit: mesh_keyed(p, (86, 0x7238)),
+            bumper_wait: [0x7A38, 0x76D8].map(|offset| mesh_keyed(p, (86, offset))),
             gbumper_item: ssb_psp_runtime::scene::object_keyed(
                 p,
                 ssb_psp_runtime::scene::GBUMPER_ITEM_SOURCE,
@@ -4951,6 +4989,10 @@ struct ItemVisual {
     /// script playing.
     status: Option<u16>,
     playing: Option<ssb_rom::pack::AnimDesc>,
+    /// The root script ([`ssb_game::item::RootScript`]) these players
+    /// follow, by the tick it was added, and whether it has been cleared.
+    root_added: Option<u16>,
+    root_cleared: bool,
 }
 
 impl DrawAssets {
@@ -5555,6 +5597,96 @@ fn object_mat_anims<'p>(
         .map(|prim| prim.mat_anim)
 }
 
+/// The items whose players are material scripts, and the Shells' spin
+/// (RE-442): the Star's and the Ray Gun's `ITAttributes` tables from the
+/// make, and the root script a Bob-omb's walk or a Shell's slide adds and
+/// a later status clears. Returns whether `item` is one of them.
+fn sync_item_scripts(
+    p: &Pack<'_>,
+    assets: &DrawAssets,
+    v: &mut ItemVisual,
+    item: &ssb_game::item::Item,
+) -> bool {
+    use ssb_game::item::ItemKind;
+    let table = match item.kind {
+        ItemKind::Utility(ssb_game::item::utility::Kind::Star) => Some(assets.utility_items[2].as_ref()),
+        ItemKind::Equipment(kind) => Some(assets.equipment_items[kind as usize].as_ref()),
+        ItemKind::BombHei | ItemKind::Shell(_) => None,
+        _ => return false,
+    };
+    if let Some(object) = table {
+        let Some(object) = object else {
+            return true;
+        };
+        if v.kind != Some(item.kind) || v.ticks > item.anim_ticks {
+            v.kind = Some(item.kind);
+            v.ticks = 0;
+            v.materials.start(p, object_mat_anims(p, object));
+        }
+        while v.ticks < item.anim_ticks {
+            v.materials.tick(p);
+            v.ticks += 1;
+        }
+        return true;
+    }
+    let Some(script) = item.root_script else {
+        if v.kind != Some(item.kind) || v.root_added.is_some() {
+            v.kind = Some(item.kind);
+            v.root_added = None;
+            v.materials = Default::default();
+            v.anim = Default::default();
+        }
+        return true;
+    };
+    let (plays, cleared) = script.plays(item.anim_ticks);
+    if v.kind != Some(item.kind) || v.root_added != Some(script.added) || v.ticks > plays {
+        v.kind = Some(item.kind);
+        v.root_added = Some(script.added);
+        v.root_cleared = false;
+        v.ticks = 0;
+        let index = if item.kind == ItemKind::BombHei { 1 } else { 3 };
+        let Some(object) = assets.throwable_items[index].as_ref() else {
+            return true;
+        };
+        // The extra lists run the root `MObj`'s script too: the left walk,
+        // and the Green Shell's, under a key of its own.
+        let extra = match item.kind {
+            ItemKind::BombHei => assets.bombhei_left,
+            _ => assets.green_shell,
+        };
+        let extra = extra
+            .into_iter()
+            .flat_map(|m| (0..m.prim_count).filter_map(move |i| p.prim(m.first_prim + i)))
+            .map(|prim| prim.mat_anim);
+        v.materials.start(p, object_mat_anims(p, object).chain(extra));
+        v.anim = Default::default();
+        if let (ItemKind::Shell(_), Some(anim)) = (item.kind, assets.shell_spin.as_ref()) {
+            v.anim.start_changed(p, anim);
+        }
+    }
+    let spin = match item.kind {
+        ItemKind::Shell(_) => assets.shell_spin.as_ref().and_then(|anim| p.anim_script(anim)),
+        _ => None,
+    };
+    loop {
+        // The status clears `event32` after the play it ran on.
+        if cleared == Some(v.ticks) && !v.root_cleared {
+            v.root_cleared = true;
+            v.materials.clear_scripts();
+            v.anim.clear_scripts();
+        }
+        if v.ticks >= plays {
+            break;
+        }
+        v.materials.tick(p);
+        if let Some(script) = spin {
+            let _ = v.anim.tick(script);
+        }
+        v.ticks += 1;
+    }
+    true
+}
+
 /// `(restart, ticks)` that bring a player at `clock` to `target`.
 fn catch_up(clock: &mut Option<u16>, target: Option<u16>) -> Option<(bool, u16)> {
     let Some(target) = target else {
@@ -5640,6 +5772,9 @@ impl EffectVisuals {
             };
             if let ssb_game::item::ItemKind::MMonster(kind) = item.kind {
                 sync_mmonster(p, assets, visual, item, kind);
+                continue;
+            }
+            if sync_item_scripts(p, assets, visual, item) {
                 continue;
             }
             let Some((object, anim)) = assets.item(item.kind) else {
@@ -6637,6 +6772,7 @@ unsafe fn draw_throwable(
     assets: &DrawAssets,
     pl: &play::FighterScene,
     item: &ssb_game::item::Item,
+    visual: &ItemVisual,
     draw_state: &mut meshdraw::DrawState,
 ) -> bool {
     use ssb_game::item::ItemKind;
@@ -6661,18 +6797,34 @@ unsafe fn draw_throwable(
     let scale = meshdraw::MODEL_SCALE;
     match item.kind {
         ItemKind::BombHei | ItemKind::NBumper => {
-            if let Some(mesh) = mesh_of(1) {
+            // `itBombHeiCommonSetWalkLR`'s list, and the Bumper's lit
+            // palette and attached Wait list (RE-442).
+            let mesh = match item.kind {
+                ItemKind::BombHei if !item.vars.bombhei_walk_right => assets.bombhei_left,
+                ItemKind::NBumper if item.vars.bumper_attached => {
+                    assets.bumper_wait[usize::from(item.palette == 1)]
+                }
+                ItemKind::NBumper if item.palette == 1 => assets.bumper_lit,
+                _ => mesh_of(1),
+            };
+            if let Some(mesh) = mesh {
                 gpu.model_transform_billboard(item.pos, eye, at, item.rotate_z,
                     [scale * item.scale.x, scale * item.scale.y]);
-                meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&visual.materials));
             }
         }
         ItemKind::Shell(kind) => {
             let green = (kind == ssb_game::item::shell::Kind::Green).then_some(assets.green_shell).flatten();
+            // The slide's spin writes `rotate.y` from its first play on,
+            // frozen once its script ends (RE-442).
+            let rotate_y = item
+                .root_script
+                .and_then(|_| visual.anim.node_pose(object.first_node + 1))
+                .map_or(item.vars.shell_rotate_y, |pose| pose.rotate[1]);
             if let Some(mesh) = green.or_else(|| mesh_of(1)) {
                 gpu.model_transform_camera_rotated(item.pos, eye, at,
-                    [0.0, item.vars.shell_rotate_y], scale * item.scale.x);
-                meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+                    [0.0, rotate_y], scale * item.scale.x);
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&visual.materials));
             }
         }
         _ => {
@@ -6698,6 +6850,13 @@ unsafe fn draw_throwable(
         }
     }
     true
+}
+
+/// The mesh romtool packed under `key`.
+fn mesh_keyed(p: &Pack<'_>, key: (u32, u32)) -> Option<ssb_rom::pack::MeshDesc> {
+    (0..p.mesh_count())
+        .filter_map(|i| p.mesh(i))
+        .find(|m| (m.source_file, m.source_offset) == key)
 }
 
 /// A tree node's mesh, if it has one.
@@ -7104,9 +7263,15 @@ unsafe fn draw_items_weapons_effects(
             env_fog = true;
         }
             // The Bumper: its root `TraRotRpyRSca` at the item, scaled in X and Y
-            // by its swell. The lit palette (`palette_id` 1) is not drawn.
+            // by its swell, under its lit palette (`palette_id` 1) after a hit
+            // (RE-442). Its tree's node 0 and root rest at identity.
             if item.kind == ssb_game::item::ItemKind::GBumper {
-                if let Some(object) = assets.gbumper_item.as_ref() {
+                let mesh = if item.palette == 1 {
+                    assets.bumper_lit
+                } else {
+                    assets.gbumper_item.as_ref().and_then(|object| node_mesh(p, object, 1))
+                };
+                if let Some(mesh) = mesh {
                     gpu.model_transform_xyz(
                         [item.pos.x, item.pos.y, item.pos.z],
                         [0.0; 3],
@@ -7116,8 +7281,7 @@ unsafe fn draw_items_weapons_effects(
                             meshdraw::MODEL_SCALE * item.scale.z,
                         ],
                     );
-                    let base = gpu.model_matrix();
-                    meshdraw::draw_object(p, object, &base, draw_state, material_anim, 0);
+                    meshdraw::draw_mesh(p, &mesh, draw_state, material_anim, None);
                 }
                 continue;
         }
@@ -7133,11 +7297,12 @@ unsafe fn draw_items_weapons_effects(
             {
                 gpu.model_transform_billboard(item.pos, pl.camera.eye, pl.camera.at, item.rotate_z,
                     [meshdraw::MODEL_SCALE, meshdraw::MODEL_SCALE]);
-                meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+                // The Star's palette flicker (RE-442).
+                meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&visual.materials));
             }
             continue;
         }
-        if draw_throwable(p, gpu, assets, pl, item, draw_state) {
+        if draw_throwable(p, gpu, assets, pl, item, visual, draw_state) {
                 continue;
             }
             if let ssb_game::item::ItemKind::MMonster(kind) = item.kind {
@@ -7201,7 +7366,6 @@ unsafe fn draw_items_weapons_effects(
                             .filter(|&parent| parent >= 1 && parent < i as u32)
                             .map_or(local, |parent| posed[parent as usize].mul(&local));
                     }
-                    let mats = replay_materials(p, object, item.anim_ticks);
                     meshdraw::draw_object_posed(
                         p,
                         object,
@@ -7210,7 +7374,7 @@ unsafe fn draw_items_weapons_effects(
                         None,
                         draw_state,
                         material_anim,
-                        Some(&mats),
+                        Some(&visual.materials),
                         0,
                     );
                 }

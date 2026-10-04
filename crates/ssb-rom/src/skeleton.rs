@@ -549,6 +549,14 @@ impl StageAnimator {
         false
     }
 
+    /// `dobj->anim_joint.event32 = NULL` on every node this player drives
+    /// ([`crate::objanim::StageJoint::clear_script`]).
+    pub fn clear_scripts(&mut self) {
+        for joint in &mut self.joints[..self.count] {
+            joint.clear_script();
+        }
+    }
+
     /// Advances every joint one tick. `script` is the animation file's bytes,
     /// which the joint offsets index into.
     pub fn tick(&mut self, script: &[u8]) -> Result<(), crate::objanim::AnimError> {
@@ -1282,6 +1290,14 @@ impl EffectMaterialAnimator {
     /// drives: each keeps its current values and stops ticking.
     pub fn halt_all(&mut self) {
         self.halted = [true; MAX_EFFECT_MAT_ANIMS];
+    }
+
+    /// `mobj->matanim_joint.event32 = NULL` on every `MObj` this player
+    /// drives ([`crate::matanim::MaterialJoint::clear_script`]).
+    pub fn clear_scripts(&mut self) {
+        for (_, joint) in &mut self.slots[..self.count] {
+            joint.clear_script();
+        }
     }
 
     /// How many joints this player ticks.

@@ -292,3 +292,114 @@ fn vs_stages_have_item_points_and_weights() {
         assert!(stage.item_weights.is_some(), "file {file:#x}");
     }
 }
+
+/// The items' material scripts and root lists (RE-442).
+#[test]
+fn item_scripts_and_root_lists_are_packed() {
+    if rom().is_none() {
+        return;
+    }
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak"),
+    )
+    .unwrap();
+    let p = Pack::open(&bytes).unwrap();
+    let object = |offset: u32| {
+        (0..p.object_count())
+            .filter_map(|i| p.object(i))
+            .find(|o| (o.source_file, o.source_offset) == (86, offset))
+            .unwrap()
+    };
+    let mesh = |offset: u32| {
+        (0..p.mesh_count())
+            .filter_map(|i| p.mesh(i))
+            .find(|m| (m.source_file, m.source_offset) == (86, offset))
+            .unwrap_or_else(|| panic!("mesh 86 + {offset:#X}"))
+    };
+    let prims = |m: ssb_rom::pack::MeshDesc| {
+        (0..m.prim_count)
+            .map(|i| p.prim(m.first_prim + i).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let root = |offset: u32| {
+        let o = object(offset);
+        p.mesh(p.node(o.first_node + 1).unwrap().mesh).unwrap()
+    };
+    let script = |prim: &ssb_rom::pack::PrimDesc| p.mat_anim(prim.mat_anim).unwrap().script;
+
+    // The Star's two root `MObj`s flicker by `ITAttributes` table 0x15F0.
+    let star = prims(root(0x1560));
+    assert_eq!(
+        star.iter().map(script).collect::<Vec<_>>(),
+        [0x15F8, 0x1628]
+    );
+    // `itManagerMakeItem`'s play then one per process: palettes 0, 0, 1,
+    // 1, 0 on the packed player.
+    let mut mats = ssb_rom::skeleton::EffectMaterialAnimator::default();
+    mats.start(&p, star.iter().map(|prim| prim.mat_anim));
+    let palettes: Vec<_> = (0..5)
+        .map(|_| {
+            mats.tick(&p);
+            mats.resolved_palette(&p, star[0].mat_anim)
+        })
+        .collect();
+    assert_eq!(palettes[0], palettes[1]);
+    assert_ne!(palettes[1], palettes[2]);
+    assert_eq!(palettes[2], palettes[3]);
+    assert_eq!(palettes[0], palettes[4]);
+    // The Ray Gun's barrel (node 2) by table 0x4760.
+    let lgun = object(0x46B0);
+    let barrel = p.mesh(p.node(lgun.first_node + 2).unwrap().mesh).unwrap();
+    assert_eq!(
+        prims(barrel).iter().map(script).collect::<Vec<_>>(),
+        [0x476C]
+    );
+
+    // Both Bob-omb walk lists run the walk script on the same entry.
+    let right = prims(root(0x33F8));
+    let left = prims(mesh(0x34C0));
+    assert_eq!(script(&right[0]), 0x35B8);
+    assert_eq!(right[0].mat_anim, left[0].mat_anim);
+
+    // The Shells' spin frames: red under the tree, green under its own
+    // entry and palette.
+    let red = prims(root(0x5F88));
+    let green = prims(mesh(0x5578));
+    assert_eq!((script(&red[0]), script(&green[0])), (0x6048, 0x6048));
+    assert_ne!(red[0].mat_anim, green[0].mat_anim);
+    let red_frames = p.mat_anim(red[0].mat_anim).unwrap();
+    let green_frames = p.mat_anim(green[0].mat_anim).unwrap();
+    assert_eq!(red_frames.texture_count, 4);
+    assert_eq!(green_frames.texture_count, 4);
+    assert_ne!(red_frames.textures[1], green_frames.textures[1]);
+    // Two plays per sprite: 0, 0, 1, 1, 2, 2, 3, 3, 2.
+    let mut mats = ssb_rom::skeleton::EffectMaterialAnimator::default();
+    mats.start(&p, core::iter::once(green[0].mat_anim));
+    let frames: Vec<_> = (0..9)
+        .map(|_| {
+            mats.tick(&p);
+            mats.resolved_texture(&p, green[0].mat_anim)
+        })
+        .collect();
+    let t = |i: usize| Some(green_frames.textures[i]);
+    assert_eq!(
+        frames,
+        [t(0), t(0), t(1), t(1), t(2), t(2), t(3), t(3), t(2)]
+    );
+    // And the root's `rotate.y` spin.
+    let spin = p.item_anim(AnimDesc::ITEM_ANIM_SHELL_SPIN).unwrap();
+    let joint = p.anim_joint(spin.first_joint).unwrap();
+    assert_eq!((spin.joint_count, joint.script), (1, 0x6018));
+    assert_eq!(joint.node, object(0x5F88).first_node + 1);
+
+    // The Bumper's lit, attached and attached-lit lists bind their own
+    // palettes.
+    let unlit = prims(root(0x7648))[0].texture;
+    let lit = prims(mesh(0x7238))[0].texture;
+    let wait = prims(mesh(0x7A38))[0].texture;
+    let wait_lit = prims(mesh(0x76D8))[0].texture;
+    let all = [unlit, lit, wait, wait_lit];
+    for (i, a) in all.iter().enumerate() {
+        assert!(all[i + 1..].iter().all(|b| b != a), "{all:?}");
+    }
+}

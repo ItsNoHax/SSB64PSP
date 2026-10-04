@@ -686,6 +686,15 @@ pub fn read_chain(file: &File, at: u32) -> Option<Vec<MObjMaterial>> {
         .collect()
 }
 
+/// Reads one `MObjSub` at `at`: the descriptor a status hands to
+/// `gcAddMObjForDObj` itself (`itNBumperAttachedInitVars`'s
+/// `llITCommonDataNBumperWaitMObjSub`), outside any table or chain.
+pub fn read_sub(file: &File, at: u32) -> Option<MObjMaterial> {
+    let slots = pointer_slots(file);
+    let is_ptr = |at: u32| slots.binary_search(&at).is_ok();
+    read_material(file, &is_ptr, at)
+}
+
 /// Reads exactly `count` consecutive entries of `MObjSub.palettes[]`,
 /// starting at index 0 — the entries [`read_material`]'s own `palette` field
 /// (index 0 only) never reaches.

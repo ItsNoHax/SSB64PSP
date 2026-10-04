@@ -160,6 +160,9 @@ pub struct StageJoint {
     /// The `TraI` track's `AObj::interpolate`: the file offset of the
     /// `SYInterpDesc` its last `SetInterp` named.
     interp: Option<u32>,
+    /// `dobj->anim_joint.event32 = NULL`: the next command fetch ends the
+    /// script instead ([`Self::clear_script`]).
+    cleared: bool,
 }
 
 /// `AOBJ_ANIM_END` (`F32_MIN / 3`), the frame an ended script reports.
@@ -178,7 +181,17 @@ impl StageJoint {
             frame_written: false,
             changed: false,
             interp: None,
+            cleared: false,
         }
+    }
+
+    /// `dobj->anim_joint.event32 = NULL` (`it{G,R}ShellCommonClearAnim`):
+    /// the tracks keep playing until the current wait runs out, and the
+    /// parse that would fetch the next command ends the script as `End`
+    /// does (`gcParseDObjAnimJoint`'s NULL check). An ended script keeps
+    /// writing its tracks' frozen values.
+    pub fn clear_script(&mut self) {
+        self.cleared = true;
     }
 
     /// `gcAddDObjAnimJoint`: the next [`Self::tick`] is the caller's
@@ -261,13 +274,18 @@ impl StageJoint {
 
         for _ in 0..4096 {
             let at = self.pc;
-            let word = u32_at(data, at).ok_or(AnimError::Truncated { at })?;
+            let word = if self.cleared {
+                0
+            } else {
+                u32_at(data, at).ok_or(AnimError::Truncated { at })?
+            };
             let opcode = word >> 25;
             let flags = ((word >> 15) & 0x3FF) as u16;
             let payload = (word & 0x7FFF) as f32;
             self.pc += 4;
 
             match opcode {
+                // A cleared script (NULL `event32`) takes the same path.
                 OP_END => {
                     // `gcParseDObjAnimJoint`'s end path credits every live
                     // track with the time left in this tick, which is what
@@ -511,7 +529,42 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_cleared_script_ends_and_keeps_writing_its_frozen_values() {
+        // The Shells' spin: `RotY` 0, then pi after 6 frames, waiting 12,
+        // looping. `it{G,R}ShellCommonClearAnim` NULLs it mid-wait.
+        let data = script(&[
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << 1, 0),
+            0.0f32.to_bits(),
+            cmd(OP_SET_VAL_AFTER, 1 << 1, 6),
+            core::f32::consts::PI.to_bits(),
+            cmd(OP_WAIT, 0, 12),
+            cmd(OP_JUMP, 0, 0),
+            0,
+        ]);
+        let mut j = StageJoint::start_changed(0, 0.0);
+        let mut pose = JointPose::default();
+        for _ in 0..8 {
+            j.tick(&data, 1.0, &mut pose).expect("ticks");
+        }
+        assert_eq!(pose.rotate[1], core::f32::consts::PI);
+        j.clear_script();
+        for _ in 0..4 {
+            j.tick(&data, 1.0, &mut pose).expect("ticks");
+            assert!(!j.ended(), "the 12-frame wait runs out first");
+        }
+        j.tick(&data, 1.0, &mut pose).expect("ticks");
+        assert!(j.ended());
+        // The loop would restart at 0; the ended script holds pi.
+        for _ in 0..20 {
+            pose.rotate[1] = 0.0;
+            j.tick(&data, 1.0, &mut pose).expect("ticks");
+            assert_eq!(pose.rotate[1], core::f32::consts::PI);
+        }
+    }
+
     /// Real scripts use zero-duration commands (an immediate key, not a
+    /// ramp). On PSP    /// Real scripts use zero-duration commands (an immediate key, not a
     /// ramp). On PSP, PSPLink's trapping FPU faults on a speculated divide
     /// by that duration even though the `payload != 0.0` guard means the
     /// division's *result* is never used — reproduced on physical hardware
