@@ -10,15 +10,24 @@
 //!
 //! The original's scene calls block until the scene returns; here the
 //! manager is a state machine the host advances with each scene's result.
-//! The scenes themselves (intro, stage clear, continue, the bonus stages,
-//! the ending, the challenger and message screens) are not ported.
+//! [`frontend`] owns the select and the intro, stage-clear and continue
+//! controllers. Their PSP drawing and the bonus/ending/challenger/message
+//! overlays remain host work.
 
 pub mod bonus;
+pub mod continue_scene;
+pub mod frontend;
+pub mod intro;
 pub mod manager;
 pub mod results;
+pub mod select;
 pub mod session;
 pub mod setup;
+pub mod stage_clear;
 pub mod wait;
+
+#[cfg(test)]
+mod frontend_tests;
 
 use crate::fighter::FighterKind;
 

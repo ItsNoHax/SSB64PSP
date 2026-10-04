@@ -1,5 +1,5 @@
-//! `sc1pstageclear.c`'s US score calculation. Presentation timing and
-//! sprites remain owned by the scene the host runs.
+//! `sc1pstageclear.c`'s US score calculation. [`super::stage_clear`]
+//! registers these values at the original presentation deadlines.
 use super::{bonus::Bonus, BattleState, Difficulty, SceneData, Stage};
 
 /// `dSC1PStageClearBonusData`, in bonus ID order (including unused IDs).
@@ -35,22 +35,34 @@ pub fn score(scene: &SceneData, state: &BattleState, difficulty: Difficulty) -> 
     match stage {
         Stage::Bonus1 | Stage::Bonus2 => {
             total += i64::from(scene.bonus_tasks_complete) * 1000;
-            if scene.bonus_tasks_complete == 10 {
+            if scene.bonus_tasks_complete == 10
+                && scene.time_limit != crate::battle::TIMELIMIT_INFINITE
+            {
                 total += i64::from(scene.time_remain) * multiplier;
             }
         }
         Stage::Bonus3 => total += i64::from(scene.time_remain) * multiplier,
         _ => {
-            total += i64::from(scene.time_remain) * multiplier
-                + i64::from(state.players[scene.player as usize].total_damage_given) * 10
+            if scene.time_limit != crate::battle::TIMELIMIT_INFINITE {
+                total += i64::from(scene.time_remain) * multiplier;
+            }
+            total += i64::from(state.players[scene.player as usize].total_damage_given) * 10
         }
     }
+    let mut page_points = 0i64;
+    let mut page_rows = 0;
     for id in 0..BONUS_POINTS.len() {
         if scene.bonus_get_mask[id / 32] & (1 << (id % 32)) != 0 {
-            total += i64::from(bonus_points(id, stage, difficulty));
+            page_points += i64::from(bonus_points(id, stage, difficulty));
+            page_rows += 1;
+            if page_rows == 9 {
+                total = (total + page_points).max(0);
+                page_points = 0;
+                page_rows = 0;
+            }
         }
     }
-    total.max(0) as u32
+    (total + page_points).max(0) as u32
 }
 
 #[cfg(test)]
