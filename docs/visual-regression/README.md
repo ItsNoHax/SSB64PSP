@@ -1148,3 +1148,13 @@ identical. All 115 targeted scenes repeat exactly and match their final
 baselines. Runs, pixel deltas, source attribution and original Training
 observations belong to [RE-440](../evidence/re/RE-440.md). The manifest has
 184 scenes; no full viewer matrix or physical-PSP run in this batch.
+
+## 2026-10-04 RE-441 item colour animations, arrows and lighting
+
+`f1-training-hammer-warning` (`traininghammer@700`) shows the Hammer's
+warning colour animation. Seven Training item scenes gain the pickup
+arrows; eight change with the item light (authored light colours under the
+stage direction), Hammer and Equipment most. All 116 game scenes repeat
+exactly and match their final baselines. Runs, pixel deltas and the N64
+references belong to [RE-441](../evidence/re/RE-441.md). The manifest has
+185 scenes; no full viewer matrix or physical-PSP run in this batch.

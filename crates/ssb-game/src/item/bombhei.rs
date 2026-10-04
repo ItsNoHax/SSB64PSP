@@ -9,6 +9,7 @@ use ssb_engine::math::Vec3;
 use super::{
     map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight, OwnerView,
 };
+use crate::colanim::ColAnimId;
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::ground::BodyColl;
 use crate::map::{MASK_FLOOR, MASK_LWALL, MASK_RWALL};
@@ -28,10 +29,13 @@ pub const TVEL: f32 = 100.0;
 pub const MAP_REBOUND_COMMON: f32 = 0.4;
 pub const MAP_REBOUND_GROUND: f32 = 0.3;
 pub const EXPLODE_SCALE: f32 = 1.4;
+/// `ITBOMBHEI_EXPLODE_COLANIM_DURATION`.
+pub const EXPLODE_COLANIM_DURATION: i32 = 90;
 
 /// File 251, `llITCommonDataBombHeiItemAttributes` (0x424).
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: true,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::ZERO; 2],
     damage_coll_offset: Vec3::ZERO,
@@ -266,11 +270,11 @@ fn explode(item: &mut Item, fx: &mut Emit) {
     set(item, Status::Explode);
 }
 
-/// `itBombHeiExplodeWaitSetStatus`. The critical colour animation
-/// (`nGMColAnimItemBombHeiCritical`) is display only.
+/// `itBombHeiExplodeWaitSetStatus`.
 fn explode_wait(item: &mut Item) {
     item.damage_coll.hitstatus = HitStatus::Normal;
     item.multi = 0;
+    item.check_set_colanim(ColAnimId::ITEM_BOMB_HEI_CRITICAL, EXPLODE_COLANIM_DURATION);
     set(item, Status::ExplodeWait);
 }
 

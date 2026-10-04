@@ -67,6 +67,7 @@ pub const R_MAP_REBOUND_GROUND: f32 = 0.5;
 /// File 251, `llITCommonDataGShellItemAttributes` (0x53C).
 pub static GREEN_ATTRIBUTES: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: false,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::ZERO; 2],
     damage_coll_offset: Vec3::ZERO,

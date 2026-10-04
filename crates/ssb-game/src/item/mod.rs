@@ -50,6 +50,7 @@
 
 use ssb_engine::math::{Vec2, Vec3};
 
+use crate::colanim::{ColAnim, ColAnimId};
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::fighter::Fighter;
 use crate::ground::{BodyColl, Standing};
@@ -109,6 +110,8 @@ pub const PICKUP_WAIT_DEFAULT: u16 = 1400;
 const DESPAWN_FLASH_BEGIN: u16 = 180;
 /// `ITEM_ARROW_FLASH_INT_DEFAULT`.
 const ARROW_FLASH_INT: u8 = 45;
+/// `ifCommonItemArrowProcDisplay` draws while `arrow_timer >= 15`.
+const ARROW_SHOW_FROM: u8 = 15;
 /// `ITEM_REFLECT_MUL_DEFAULT` (US), `..._ADD_...` and `..._MAX_...`.
 const REFLECT_MUL: f32 = 1.8;
 const REFLECT_ADD: f32 = 0.99;
@@ -169,6 +172,13 @@ impl ItemKind {
         })
     }
 
+    /// Whether the kind's maker gives it a pickup arrow
+    /// (`ip->arrow_gobj = ifCommonItemArrowMakeInterface(ip)`): every
+    /// common kind but the Star.
+    pub fn has_arrow(self) -> bool {
+        self.common_index().is_some() && self != Self::Utility(utility::Kind::Star)
+    }
+
     /// `ITAttributes::spin_speed` as a fraction, for the kinds that spin.
     pub fn spin_speed(self) -> Option<f32> {
         match self {
@@ -217,6 +227,10 @@ pub enum Ga {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ItemAttributes {
     pub is_give_hitlag: bool,
+    /// `is_display_colanim`: the item draws through
+    /// `itDisplayColAnim{OPA,XLU}ProcDisplay`, which sets the
+    /// environment colour its second combiner cycle blends towards.
+    pub is_display_colanim: bool,
     pub weight: ItemWeight,
     pub attack_offsets: [Vec3; ATTACK_COLLS],
     pub damage_coll_offset: Vec3,
@@ -437,7 +451,6 @@ pub struct ItemVars {
     pub container_root_yaw: f32,
     pub container_root_pitch: f32,
     pub equipment_child_yaw: f32,
-    pub hammer_warning: bool,
     pub taru_roll_step: f32,
     /// `linkbomb.scale_id`, `scale_int`, `drop_update_wait`.
     pub bomb_scale_id: i32,
@@ -583,6 +596,10 @@ pub struct Item {
     /// Direct MObj texture selection by a ground Pokémon.
     pub texture: u8,
     pub arrow_timer: u8,
+    /// `colanim`: the Bob-omb's, the Link Bomb's and the Hammer's
+    /// warnings (`itMainCheckSetColAnimID`). Its colour draws only for
+    /// an item whose attributes set `is_display_colanim`.
+    pub colanim: ColAnim,
     pub status: ItemStatus,
     pub vars: ItemVars,
     /// Where `ITStruct::attr` points.
@@ -590,6 +607,29 @@ pub struct Item {
 }
 
 impl Item {
+    /// `itMainCheckSetColAnimID`.
+    pub fn check_set_colanim(&mut self, id: ColAnimId, length: i32) -> bool {
+        self.colanim.check_set(id, length)
+    }
+
+    /// `itMainClearColAnim`.
+    pub fn clear_colanim(&mut self) {
+        self.colanim.reset();
+    }
+
+    /// `ifCommonItemArrowProcDisplay`'s gate: the arrow draws while the
+    /// item can be picked up, for 30 of every 45 frames.
+    pub fn is_arrow_shown(&self) -> bool {
+        self.kind.has_arrow() && self.is_allow_pickup && self.arrow_timer >= ARROW_SHOW_FROM
+    }
+
+    /// `itVisualsUpdateColAnim`.
+    fn update_colanim(&mut self) {
+        if self.colanim.update() {
+            self.clear_colanim();
+        }
+    }
+
     /// `itManagerMakeItem`'s field setup, without the GObj and the map
     /// projection.
     fn new(
@@ -704,6 +744,7 @@ impl Item {
             palette: 0,
             texture: 0,
             arrow_timer: 0,
+            colanim: ColAnim::default(),
             status,
             vars: ItemVars::default(),
             attr,
@@ -1597,8 +1638,9 @@ impl ItemPool {
                     }
                 }
                 ItemRequest::HammerWarning => {
+                    // `itHammerCommonSetColAnim`.
                     if let Some(item) = self.held_slot(f).and_then(|s| self.get_mut(s)) {
-                        item.vars.hammer_warning = true;
+                        item.check_set_colanim(ColAnimId::ITEM_HAMMER_END, 0);
                     }
                 }
                 ItemRequest::MakeLinkBomb { pos } => {
@@ -2142,6 +2184,7 @@ where
         {
             item.pos = hold_pos(item, &view);
         }
+        item.update_colanim();
         return true;
     }
     item.pos_prev = item.pos;
@@ -2184,6 +2227,7 @@ where
     }
     item.update_attack_positions();
     item.update_attack_records();
+    item.update_colanim();
     true
 }
 

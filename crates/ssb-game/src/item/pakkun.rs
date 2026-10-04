@@ -37,6 +37,7 @@ const DEG_180: f32 = core::f32::consts::PI;
 /// item whose attack clanks and rehits both items and fighters.
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: false,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::ZERO, Vec3::ZERO],
     damage_coll_offset: Vec3::ZERO,

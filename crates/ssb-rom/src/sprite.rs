@@ -367,6 +367,13 @@ pub const PLAYER_TAGS: SpriteFile = SpriteFile {
     offsets: &[0x258, 0x4F8, 0x798, 0xA38, 0xCD8, 0xEB8],
 };
 
+/// File 87, `IFCommonItem` (`llIFCommonItemFileID`): `ArrowSprite`, the
+/// pickup arrow `ifCommonItemArrowSetAttr` loads.
+pub const ITEM_ARROW: SpriteFile = SpriteFile {
+    file: 87,
+    offsets: &[0x50],
+};
+
 /// File 17, `MNPlayersCommon` (`dMNPlayersVSFileIDs[0]`), the sprites the
 /// VS character select draws (RE-411), in `reloc_data.us.h`'s order:
 /// `1PText` to `4PText`, `CPText`, `HandicapText`, `CPLevelText`,
@@ -494,6 +501,7 @@ pub const FILES: &[SpriteFile] = &[
     GAME_MODES,
     DIGITS,
     PLAYER_TAGS,
+    ITEM_ARROW,
     PLAYERS_COMMON,
     MN_COMMON,
     PORTRAITS,
@@ -629,6 +637,7 @@ mod tests {
         assert_eq!(digits[10], (6, 3, Format::Ia, BitSize::Bits8));
         let tags = formats(&PLAYER_TAGS);
         assert!(tags.iter().all(|t| t.1 == 24 && t.2 == Format::Ia));
+        assert_eq!(formats(&ITEM_ARROW), [(9, 7, Format::I, BitSize::Bits4)]);
     }
 
     #[test]

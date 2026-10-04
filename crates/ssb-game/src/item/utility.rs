@@ -62,6 +62,7 @@ const STAR_BOUNCE_Y: f32 = 50.0;
 /// File 251, `llITCommonDataTomatoItemAttributes` (0xB8).
 pub static TOMATO_ATTRIBUTES: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: false,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::ZERO; 2],
     damage_coll_offset: Vec3::ZERO,

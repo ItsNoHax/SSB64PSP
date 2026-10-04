@@ -199,6 +199,9 @@ pub struct DrawState {
     /// emits `ftDisplayLightsDrawReflect` immediately before the fighter
     /// object, then enables `G_LIGHTING` only for the appropriate primitives.
     runtime_fighter_light: bool,
+    /// Set by [`Self::configure_item_light`]: only primitives whose own list
+    /// writes both light colours take the runtime light.
+    authored_lights_only: bool,
     /// The scene's stage light direction for this frame, set by
     /// [`Self::set_stage_light`]. Only primitives whose `LIGHT_1`/`LIGHT_2`
     /// register is animated (`LIGHT1_ANIM`/`LIGHT2_ANIM`, RE-322) light with
@@ -207,6 +210,12 @@ pub struct DrawState {
     /// Whether the GE's light 0 currently holds [`Self::stage_light`]. The
     /// fighter scope reprograms the same channel, so it clears this.
     stage_light_installed: bool,
+    /// `Some` while an item colour animation's draw has installed its
+    /// constant fog ([`crate::gu::Gpu::set_constant_fog`]): only
+    /// [`flags::ENV_LERP`] primitives, whose second combiner cycle blends
+    /// towards ENV by its alpha, take it (`itDisplayColAnim{OPA,XLU}`).
+    /// The value is whether fog is currently enabled.
+    env_lerp_fog: Option<bool>,
     pub draws: u32,
     pub triangles: u32,
     pub state_changes: u32,
@@ -330,14 +339,27 @@ impl DrawState {
         self.last_texture_mapping = None;
         self.texgen_model = None;
         self.runtime_fighter_light = false;
+        self.authored_lights_only = false;
         self.stage_light = None;
         self.stage_light_installed = false;
+        self.env_lerp_fog = None;
         self.draws = 0;
         self.triangles = 0;
         self.state_changes = 0;
         // Not reset here: `force_no_cull` is set once per frame by the
         // caller (main.rs), based on which debug-viewer mode is active, and
         // must survive `begin_frame`'s reset of everything else.
+    }
+
+    /// Starts an item colour animation's draw: the caller has just called
+    /// [`crate::gu::Gpu::set_constant_fog`] with the animation's colour.
+    pub fn begin_env_lerp(&mut self) {
+        self.env_lerp_fog = Some(true);
+    }
+
+    /// Ends [`Self::begin_env_lerp`]; the caller then clears the fog.
+    pub fn end_env_lerp(&mut self) {
+        self.env_lerp_fog = None;
     }
 
     /// Installs the original fighter display's one directional light.
@@ -354,6 +376,18 @@ impl DrawState {
         self.stage_light_installed = false;
         self.last_fighter_light_colors.invalidate();
         self.last_fighter_material_color.invalidate();
+    }
+
+    /// Installs the stage light for the items' draw (RE-441). Items draw
+    /// after the fighters, the last of which restored the stage's light
+    /// (`ftDisplayMainProcDisplay`), under the pass's `G_LIGHTING`. Only a
+    /// primitive whose list writes both `G_MW_LIGHTCOL` registers is lit at
+    /// runtime: any other reads register values left by earlier lists,
+    /// which the pack does not know, and keeps its baked shade.
+    pub unsafe fn configure_item_light(&mut self, angles_degrees: [f32; 2]) {
+        self.configure_fighter_light(angles_degrees);
+        self.authored_lights_only = true;
+        self.last_flags = None;
     }
 
     /// Records the scene's stage light for this frame (RE-322).
@@ -430,6 +464,7 @@ impl DrawState {
     /// direct disable has changed behind its back.
     pub unsafe fn finish_fighter_light(&mut self) {
         self.runtime_fighter_light = false;
+        self.authored_lights_only = false;
         self.stage_light_installed = false;
         self.last_flags = None;
         self.last_fighter_light_colors.invalidate();
@@ -1010,13 +1045,25 @@ unsafe fn apply_material(
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
 ) {
     let effect_colors = material_colors(st.color_override, p, mat_anim, effect_mat_anim);
+    let authored = flags::LIGHT1_COLOR | flags::LIGHT2_COLOR;
     let light_scope = ssb_rom::anim_color::light_scope(
         p.flags,
-        st.runtime_fighter_light,
+        st.runtime_fighter_light && (!st.authored_lights_only || p.flags & authored == authored),
         st.stage_light.is_some(),
     );
     if light_scope == ssb_rom::anim_color::LightScope::StageAnimated {
         st.ensure_stage_light();
+    }
+    if let Some(on) = st.env_lerp_fog {
+        let want = p.flags & flags::ENV_LERP != 0;
+        if want != on {
+            if want {
+                sys::sceGuEnable(GuState::Fog);
+            } else {
+                sys::sceGuDisable(GuState::Fog);
+            }
+            st.env_lerp_fog = Some(want);
+        }
     }
 
     if st.last_flags != Some(p.flags) {

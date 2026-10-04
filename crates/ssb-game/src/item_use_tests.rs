@@ -429,7 +429,10 @@ fn hammer_timer_waits_for_pickup_then_warns_and_destroys() {
     f.hitlag = 5;
     item_use::tick_hammer(&mut f);
     p.take_requests(&mut f, core::iter::empty);
-    assert!(p.get(slot).unwrap().vars.hammer_warning);
+    assert_eq!(
+        p.get(slot).unwrap().colanim.id,
+        crate::colanim::ColAnimId::ITEM_HAMMER_END
+    );
     f.item_use.hammer_tics = 1;
     item_use::tick_hammer(&mut f);
     p.take_requests(&mut f, core::iter::empty);

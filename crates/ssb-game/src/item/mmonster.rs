@@ -243,6 +243,7 @@ const fn coll(top: f32, bottom: f32, width: f32) -> BodyColl {
 /// gives hitlag, a shieldable attack of priority 1 that rehits items.
 const BASE: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: false,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::ZERO; 2],
     damage_coll_offset: Vec3::ZERO,

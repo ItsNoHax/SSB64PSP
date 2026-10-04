@@ -61,6 +61,44 @@ pub fn tags(
     gpu.set_viewport_pillarboxed();
 }
 
+/// `ifCommonItemArrowProcDisplay` for every item with a pickup arrow.
+pub fn item_arrows(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    st: &mut DrawState,
+    items: &ssb_game::item::ItemPool,
+    camera: &ssb_game::camera::Camera,
+) {
+    let arrow = &ssb_rom::sprite::ITEM_ARROW;
+    let Some(sprite) = p.sprite(arrow.file, arrow.offsets[0]) else {
+        return;
+    };
+    gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
+    for item in items.items() {
+        let Some((x, y)) = logic::item_arrow_position(item, camera, [sprite.width, sprite.height])
+        else {
+            continue;
+        };
+        unsafe {
+            meshdraw::draw_sprite(
+                p,
+                &sprite,
+                &SObjDraw {
+                    x,
+                    y,
+                    scale: 1.0,
+                    prim: logic::ITEM_ARROW_COLOR,
+                    env: [0; 3],
+                    solid: false,
+                    attr: ssb_rom::sprite::SP_TEXSHUF | ssb_rom::sprite::SP_TRANSPARENT,
+                },
+                st,
+            );
+        }
+    }
+    gpu.set_viewport_pillarboxed();
+}
+
 pub unsafe fn arrows(
     gpu: &mut Gpu,
     p: &Pack<'_>,

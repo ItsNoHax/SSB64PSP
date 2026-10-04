@@ -19,6 +19,7 @@ use crate::ground::BodyColl;
 /// status none until it settles.
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: false,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::ZERO, Vec3::ZERO],
     damage_coll_offset: Vec3::ZERO,

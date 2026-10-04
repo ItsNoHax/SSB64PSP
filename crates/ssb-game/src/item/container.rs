@@ -47,6 +47,7 @@ pub enum Status {
 /// File 251's `ITAttributes` at 0x50 and 0xACC (US).
 pub static CAPSULE_ATTRIBUTES: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: false,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::ZERO; 2],
     damage_coll_offset: Vec3::ZERO,

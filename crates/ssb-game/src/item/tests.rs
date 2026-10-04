@@ -88,6 +88,30 @@ fn bomb_pull_hold_throw_and_fast_hit_explode() {
 }
 
 #[test]
+fn a_held_bomb_flashes_once_its_fuse_reaches_the_bloat() {
+    let mut link = fighter(FighterKind::Link, 0);
+    let mut pool = ItemPool::default();
+    let slot = pull_bomb(&mut pool, &mut link);
+    pool.get_mut(slot).unwrap().lifetime = link_bomb::BLOAT_BEGIN + 1;
+    pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
+    assert_eq!(
+        pool.get(slot).unwrap().colanim.id,
+        crate::colanim::ColAnimId::NONE
+    );
+    pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
+    let bomb = pool.get(slot).unwrap();
+    assert!(bomb.is_hold);
+    // `itVisualsUpdateColAnim` runs for a held item too: the first frame
+    // blends from yellow towards dark red over 4.
+    assert_eq!(
+        bomb.colanim.id,
+        crate::colanim::ColAnimId::ITEM_LINK_BOMB_CRITICAL
+    );
+    assert_eq!(bomb.colanim.color(), Some([0xE0, 0xC0, 0x00, 0x8C]));
+    assert!(bomb.attr.is_display_colanim);
+}
+
+#[test]
 fn damage_drop_obeys_the_hitlag_stack_gate_and_death_destroys_the_held_item() {
     for stacking in [false, true] {
         let mut link = fighter(FighterKind::Link, 0);

@@ -12,6 +12,7 @@ use super::{
     map, Effects, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight,
     OwnerView,
 };
+use crate::colanim::ColAnimId;
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::ground::BodyColl;
 use crate::weapon::MapSurface;
@@ -29,6 +30,8 @@ pub const EXPLODE_THRESHOLD_VEL_X: f32 = 36.0;
 pub const EXPLODE_THRESHOLD_VEL_Y: f32 = 25.0;
 /// Compared against the integer fuse as a float in the source.
 pub const BLOAT_BEGIN: i32 = 96;
+/// `ITLINKBOMB_BLOAT_COLANIM_LENGTH`.
+pub const BLOAT_COLANIM_LENGTH: i32 = 96;
 pub const HIT_RECOIL_VEL_X: f32 = 8.0;
 pub const HIT_RECOIL_VEL_Y: f32 = 20.0;
 pub const GRAVITY: f32 = 1.2;
@@ -48,6 +51,7 @@ const DROP_UPDATE_WAIT: u16 = 10;
 /// leaves the hand, 60% throw speed.
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
     is_give_hitlag: true,
+    is_display_colanim: true,
     weight: ItemWeight::Light,
     attack_offsets: [Vec3::ZERO, Vec3::ZERO],
     damage_coll_offset: Vec3::ZERO,
@@ -183,7 +187,7 @@ fn update_scale(item: &mut Item) {
 /// The fuse half shared by every live status's update.
 fn fuse(item: &mut Item) {
     if item.lifetime == BLOAT_BEGIN {
-        // `nGMColAnimItemLinkBombCritical` is display only.
+        item.check_set_colanim(ColAnimId::ITEM_LINK_BOMB_CRITICAL, BLOAT_COLANIM_LENGTH);
         item.vars.bomb_scale_id = 1;
     }
     if item.lifetime < BLOAT_BEGIN {

@@ -80,6 +80,7 @@ fn container_attributes_and_explosion_tables_match_the_rom() {
         let light = attr.weight == ssb_game::item::ItemWeight::Light;
         assert_eq!((word(d, 16) >> 27) & 3, if light { 3 } else { 2 });
         assert!(attr.is_give_hitlag);
+        assert_eq!((word(d, 16) >> 29) & 1 == 1, attr.is_display_colanim);
         for at in (18..36).step_by(2) {
             assert_eq!(half(d, at), 0);
         }
