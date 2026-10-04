@@ -1628,7 +1628,7 @@ pub fn fighter_turn(f: &ssb_game::fighter::Fighter) -> f32 {
         .unwrap_or_else(|| facing_turn(f.facing))
 }
 
-/// The file data `grMainSetupMakeGround` hands a VS stage's controller:
+/// The file data `grMainSetupMakeGround` hands a stage's controller:
 /// its kind (`dMPCollisionGroundFileInfos` row), map objects, bottom bound
 /// and hazard descriptors.
 pub struct StageSetup {
@@ -1637,6 +1637,7 @@ pub struct StageSetup {
     pub bound_bottom: f32,
     pub hazard: [i32; 7],
     pub hazard_surface_y: f32,
+    pub bonus3_bumpers: alloc::vec::Vec<ssb_game::stage::bonus3::BumperDesc>,
 }
 
 /// The pack's stage whose `GR*Map` file is VS stage `gkind`
@@ -1649,9 +1650,14 @@ pub fn vs_stage_index(pack: &Pack<'_>, gkind: u8) -> Option<u32> {
 }
 
 impl StageSetup {
-    /// `None` for a stage that is not one of the nine VS stages.
+    /// VS stages and Race to the Finish, whose header names file 162's
+    /// Bumper descriptors. The host sets `StageInit::player` on entry.
     pub fn new(pack: &Pack<'_>, stage: &StageDesc) -> Option<Self> {
-        let gkind = ssb_rom::stage::vs_ground_kind(stage.source_file)?;
+        let gkind = if stage.source_file == ssb_rom::ground_obj::BONUS3_FILE {
+            15
+        } else {
+            ssb_rom::stage::vs_ground_kind(stage.source_file)?
+        };
         Some(StageSetup {
             kind: ssb_game::stage::StageKind::from_gkind(gkind)?,
             map_objects: pack
@@ -1664,6 +1670,29 @@ impl StageSetup {
             bound_bottom: stage.bounds.bottom as f32,
             hazard: stage.hazard,
             hazard_surface_y: stage.hazard_surface_y,
+            bonus3_bumpers: if gkind == 15 {
+                let object = (0..pack.object_count())
+                    .filter_map(|i| pack.object(i))
+                    .find(|o| {
+                        o.source_file == ssb_rom::ground_obj::BONUS3_NODES_FILE
+                            && o.source_offset == 0
+                    })?;
+                (1..=4)
+                    .map(|i| {
+                        let node = pack.node(object.first_node + i)?;
+                        Some(ssb_game::stage::bonus3::BumperDesc {
+                            translate: ssb_engine::math::Vec3::new(
+                                node.rest_translate[0],
+                                node.rest_translate[1],
+                                node.rest_translate[2],
+                            ),
+                            animated: true,
+                        })
+                    })
+                    .collect::<Option<alloc::vec::Vec<_>>>()?
+            } else {
+                alloc::vec::Vec::new()
+            },
         })
     }
 
@@ -1676,7 +1705,7 @@ impl StageSetup {
             hazard_attack,
             hazard_throw,
             acid_surface_y: self.hazard_surface_y,
-            bonus3_bumpers: &[],
+            bonus3_bumpers: &self.bonus3_bumpers,
             player: 0,
         }
     }
@@ -1709,8 +1738,8 @@ fn item_tree(target: ssb_game::item::ItemAnimTarget) -> Option<(u8, u8)> {
         ItemAnimTarget::PowerBlock => Some((g::POWER_BLOCK, 0)),
         ItemAnimTarget::Pakkun(i) => Some((g::PAKKUN, i)),
         ItemAnimTarget::Monster(k) => Some((g::MONSTER_FIRST + k as u8, 0)),
-        // Race to the Finish is not packed.
-        ItemAnimTarget::Bonus3Bumper(_) | ItemAnimTarget::Untracked => None,
+        ItemAnimTarget::Bonus3Bumper(i) => Some((g::BONUS3_BUMPER_FIRST + i, 0)),
+        ItemAnimTarget::Untracked => None,
     }
 }
 

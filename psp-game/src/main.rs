@@ -6952,11 +6952,11 @@ fn draw_timer(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, b: &ssb_game::
 #[inline(never)]
 fn draw_announce(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, end: ssb_game::battle::EndKind) {
     use ssb_game::hud;
-    let letters: &[(f32, f32, u8)] = match end {
-        ssb_game::battle::EndKind::TimeUp => &hud::TIME_UP,
-        ssb_game::battle::EndKind::GameSet => &hud::GAME_SET,
+    let (letters, f): (&[(f32, f32, u8)], _) = match end {
+        ssb_game::battle::EndKind::TimeUp => (&hud::TIME_UP, &ssb_rom::sprite::GAME_STATUS),
+        ssb_game::battle::EndKind::GameSet => (&hud::GAME_SET, &ssb_rom::sprite::GAME_STATUS),
+        ssb_game::battle::EndKind::Complete => (&hud::COMPLETE, &ssb_rom::sprite::ANNOUNCE_COMMON),
     };
-    let f = &ssb_rom::sprite::GAME_STATUS;
     for &(x, y, i) in letters {
         if let Some(s) = f.offsets.get(usize::from(i)).and_then(|&at| p.sprite(f.file, at)) {
             draw_plain(p, draw_state, &s, x, y);

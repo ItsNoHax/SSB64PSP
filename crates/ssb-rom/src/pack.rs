@@ -360,7 +360,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 91 adds Pokémon status materials, Poké Ball throw materials, conditional
 // translucent Pokémon meshes, rock texture variants and the scale-X
 // effects' head-1 CLD state (RE-443). No layout change.
-pub const VERSION: u32 = 91;
+// 92 adds Race to the Finish's four Bumper root scripts, keyed by the
+// ground animation table. Its ground layers and barrel graph were already
+// discovered. No layout change.
+pub const VERSION: u32 = 92;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

@@ -60,6 +60,8 @@ pub enum EndKind {
     TimeUp,
     /// `ifCommonAnnounceEndMessage`: one player or team is left.
     GameSet,
+    /// `ifCommonAnnounceCompleteInitInterface`: a bonus-stage task or gate.
+    Complete,
 }
 
 /// One `gSCManagerBattleState->players` entry, the fields the battle reads.
@@ -122,6 +124,16 @@ pub struct Battle {
     pub is_sudden_death: bool,
     /// `gSCManagerSceneData.is_reset`: A+B+R+Z in the pause menu.
     pub is_reset: bool,
+    /// `SCBATTLE_GAMERULE_1PGAME`: a fall takes a stock without the stock
+    /// rule's placement, and the 1P Game ([`crate::spgame`]) decides the end.
+    pub is_1p_game: bool,
+    /// The wait the end's proc-set leaves before the next scene: 3
+    /// (`ifCommonBattleInterfaceProcSet`) or 45
+    /// (`ifCommon1PGameInterfaceProcSet`).
+    set_wait: u16,
+    /// `ifCommon1PGameInterfaceProcSet` ran: the host zooms on the player
+    /// (`sc1PGameSetCameraZoom`) while the scene holds 45 ticks.
+    pub set_zoom: bool,
 }
 
 impl Battle {
@@ -150,6 +162,9 @@ impl Battle {
             go_tick: Self::GO_TICK,
             is_sudden_death: false,
             is_reset: false,
+            is_1p_game: false,
+            set_wait: SET_RESTORE_WAIT,
+            set_zoom: false,
         };
         b.init_placement();
         b
@@ -162,6 +177,24 @@ impl Battle {
         self.is_team_attack = is_team_attack;
         self.init_placement();
         self
+    }
+
+    /// `sc1PManagerUpdateScene`'s battle state: a team battle under
+    /// `SCBATTLE_GAMERULE_1PGAME | SCBATTLE_GAMERULE_TIME`, each player
+    /// keeping the stocks it brings. `go_tick` is the frame the stage's
+    /// wait thread says "Go" ([`crate::spgame::wait`]).
+    pub fn new_1p(
+        time_limit: u8,
+        players: [Player; 4],
+        is_team_attack: bool,
+        go_tick: u32,
+    ) -> Battle {
+        let mut b =
+            Battle::new(Rule::Time, time_limit, 0, players).with_teams(true, is_team_attack);
+        b.players = players;
+        b.is_1p_game = true;
+        b.go_tick = go_tick;
+        b
     }
 
     /// The rule the hit, catch and CPU searches read ([`crate::team`]).
@@ -279,9 +312,11 @@ impl Battle {
                 if self.restore_wait != 0 {
                     self.restore_wait -= 1;
                 } else {
-                    // `ifCommonBattleInterfaceProcSet`.
+                    // `ifCommonBattleInterfaceProcSet`, or the 1P Game's
+                    // `ifCommon1PGameInterfaceProcSet`.
                     self.status = GameStatus::Set;
-                    self.restore_wait = SET_RESTORE_WAIT;
+                    self.restore_wait = self.set_wait;
+                    self.set_zoom = self.set_wait != SET_RESTORE_WAIT;
                 }
                 Frame::Frozen
             }
@@ -334,6 +369,22 @@ impl Battle {
         }
     }
 
+    /// `ifCommonAnnounceEndMessage` in a 1P Game stage: while the player
+    /// still has a stock the end sets through
+    /// `ifCommon1PGameInterfaceProcSet`, which holds 45 ticks.
+    pub fn announce_end_1p(&mut self, player_in: bool) {
+        if self.end.is_none() && player_in {
+            self.set_wait = 45;
+        }
+        self.set_end(EndKind::GameSet);
+    }
+
+    /// The bonus interface holds the completion message for 90 ticks,
+    /// then uses the common three-tick scene return, without victory zoom.
+    pub fn announce_complete(&mut self) {
+        self.set_end(EndKind::Complete);
+    }
+
     /// `ifCommonBattleSetInterface`.
     fn set_end(&mut self, kind: EndKind) {
         if self.end.is_some() {
@@ -360,6 +411,11 @@ impl Battle {
         if self.rule == Rule::Stock {
             self.players[i].stock_count -= 1;
             self.update_score_stocks(i);
+        }
+        // `SCBATTLE_GAMERULE_1PGAME`: `sc1PGameSetPlayerDefeatStats`
+        // follows ([`crate::spgame::Game::set_player_defeat_stats`]).
+        if self.is_1p_game {
+            self.players[i].stock_count -= 1;
         }
     }
 

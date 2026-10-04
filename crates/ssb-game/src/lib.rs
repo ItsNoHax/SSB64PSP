@@ -67,6 +67,7 @@ pub mod results_scene;
 pub mod rng;
 pub mod samus;
 pub mod shadow;
+pub mod spgame;
 pub mod stage;
 pub mod stage_select;
 pub mod stage_select_layer;

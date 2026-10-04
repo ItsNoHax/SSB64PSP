@@ -110,7 +110,7 @@ pub const DAMAGE_RATIO_DEFAULT: u8 = 100;
 /// scales knockback dealt, `[1]` knockback received. Written with the same
 /// float expressions as the source so the constants round identically.
 #[rustfmt::skip]
-pub const HANDICAP_TABLE: [[f32; 2]; 34] = [
+pub const HANDICAP_TABLE: [[f32; 2]; 40] = [
     [0.55, 1.818_181_8],
     [0.6, 15.0 / 9.0],
     [0.7, 10.0 / 7.0],
@@ -145,6 +145,13 @@ pub const HANDICAP_TABLE: [[f32; 2]; 34] = [
     [1.15, (10.0 / 3.0) / 9.0],
     [1.2, 0.357_142_87],
     [1.25, 3.0 / 9.0],
+    // Master Hand (35–39), then US Very Hard Samus (40).
+    [0.9, 1.0],
+    [1.0, 1.0],
+    [1.1, 1.0],
+    [1.22, 1.0],
+    [1.5, 1.0],
+    [1.08, (200.0 / 24.0) / 9.0],
 ];
 
 /// `ftParamGetCommonKnockback`'s trailing factors:

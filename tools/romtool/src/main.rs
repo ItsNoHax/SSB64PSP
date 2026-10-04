@@ -5927,7 +5927,14 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         let (file_id, head) = ground
             .map_nodes
             .ok_or_else(|| format!("ground {}: no map_nodes", anim.name))?;
-        let file_id = asset.source_file.unwrap_or(file_id);
+        let graph_file_id = asset.source_file.unwrap_or(file_id);
+        // Race's Bumpers use ITCommonData's tree, but the joint scripts
+        // live under GRBonus3Map.map_nodes in file 162.
+        let file_id = if asset.gr_file == ssb_rom::ground_obj::BONUS3_FILE {
+            file_id
+        } else {
+            graph_file_id
+        };
         if head != asset.map_head {
             return Err(format!(
                 "ground {}: map_nodes at 0x{head:X}, controller subtracts 0x{:X}",
@@ -5942,11 +5949,11 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             .ok_or_else(|| format!("ground {}: file {file_id} missing", anim.name))?;
         let graph = loaded
             .graphs
-            .get(&file_id)
+            .get(&graph_file_id)
             .and_then(|graphs| graphs.iter().find(|graph| graph.offset == asset.graph))
             .ok_or_else(|| format!("ground {}: graph 0x{:X} missing", asset.name, asset.graph))?;
         let object = object_index
-            .get(&(file_id, asset.graph))
+            .get(&(graph_file_id, asset.graph))
             .and_then(|&index| writer.object(index))
             .ok_or_else(|| format!("ground {}: packed object missing", asset.name))?;
         let joints: Vec<_> = match anim.target {
