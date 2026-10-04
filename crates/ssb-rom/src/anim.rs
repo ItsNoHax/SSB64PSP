@@ -158,8 +158,16 @@ pub const SLOT_WIN2: usize = 615;
 pub const SLOT_WIN3: usize = 616;
 pub const SLOT_WIN4: usize = 617;
 pub const SLOT_LOSE: usize = 618;
+/// The four demo slots the 1P campaign's scenes add, after `Lose`, from the
+/// same submotion table: the continue screen's `nFTDemoStatusFigureDropped`
+/// and `FigureStand` (rows 9 and 10) and the stage cards' `IntroL` and
+/// `IntroR` (rows 13 and 14). Figatrees too.
+pub const SLOT_FIGURE_DROPPED: usize = 619;
+pub const SLOT_FIGURE_STAND: usize = 620;
+pub const SLOT_INTRO_L: usize = 621;
+pub const SLOT_INTRO_R: usize = 622;
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 619;
+pub const SLOT_COUNT: usize = 623;
 
 /// Whether a slot holds a 32-bit `AnimJoint` clip rather than a figatree:
 /// the seven entry slots only.
@@ -655,12 +663,20 @@ mod tests {
         // Metal Mario, the Poly fighters and Giant Donkey Kong. The five demo
         // slots exist for the twelve and Master Hand (his one default clip)
         // and for none of the other fourteen, whose submotion rows 1 to 5
-        // are null or absent (RE-408).
+        // are null or absent (RE-408). Of the campaign's four, the twelve
+        // lack only IntroR for Captain Falcon, Jigglypuff and Ness, who are
+        // never a card's enemy; Master Hand lacks IntroL; the other
+        // fourteen have only IntroR, except Poly Luigi, Poly Jigglypuff and
+        // Giant Donkey Kong.
         assert_eq!(
             missing,
             10950 + 15 * (SLOT_REBIRTH_DOWN - SLOT_WALL_DAMAGE) + 106 + 10 + 15 * 66 + 1 + 27 * 7
                 - 62
-                + 14 * 5,
+                + 14 * 5
+                + 3
+                + 1
+                + 14 * 3
+                + 3,
             "Twelve ported fighters have character, grab, reaction and move slots"
         );
         for a in &FIGHTER_ANIMS[..12] {
@@ -698,8 +714,12 @@ mod tests {
         assert_eq!(SLOT_NAMES[SLOT_WIN1 - 1], "AppearWait");
         assert_eq!(SLOT_NAMES[SLOT_WIN1], "Win1");
         assert_eq!(SLOT_NAMES[SLOT_WIN4], "Win4");
-        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "Lose");
-        assert_eq!(SLOT_LOSE, SLOT_COUNT - 1);
+        assert_eq!(SLOT_NAMES[SLOT_LOSE], "Lose");
+        assert_eq!(SLOT_NAMES[SLOT_FIGURE_DROPPED], "FigureDropped");
+        assert_eq!(SLOT_NAMES[SLOT_FIGURE_STAND], "FigureStand");
+        assert_eq!(SLOT_NAMES[SLOT_INTRO_L], "IntroL");
+        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "IntroR");
+        assert_eq!(SLOT_INTRO_R, SLOT_COUNT - 1);
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")

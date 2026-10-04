@@ -757,7 +757,10 @@ APPEAR_SLOTS = ["AppearR", "AppearL", "AppearRStart", "AppearLStart",
 # their C sources like every other figatree slot.
 DEMO_SLOTS = [("Win1", "nFTDemoStatusWin1"), ("Win2", "nFTDemoStatusWin2"),
               ("Win3", "nFTDemoStatusWin3"), ("Win4", "nFTDemoStatusWin4"),
-              ("Lose", "nFTDemoStatusLose")]
+              ("Lose", "nFTDemoStatusLose"),
+              ("FigureDropped", "nFTDemoStatusFigureDropped"),
+              ("FigureStand", "nFTDemoStatusFigureStand"),
+              ("IntroL", "nFTDemoStatusIntroL"), ("IntroR", "nFTDemoStatusIntroR")]
 
 # The fighter whose motion enum a table uses.
 MOTION_ENUM_OWNER = {"MMario": "Mario", "NMario": "Mario", "NFox": "Fox",

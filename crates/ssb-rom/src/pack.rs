@@ -365,7 +365,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // discovered. No layout change.
 // 93 adds the 1P Game select's sprites (files 23, 24, 25 and 33) and the
 // Training card through `GateMan2PLUT` to `...4PLUT`. No layout change.
-pub const VERSION: u32 = 93;
+// 94 adds the campaign's demo clips (`anim::SLOT_FIGURE_DROPPED` to
+// `SLOT_INTRO_R`, 619..623): the continue screen's FigureDropped and
+// FigureStand, which lead with a TransN joint, and the stage cards' IntroL
+// and IntroR. `SLOT_COUNT` grows to 623.
+pub const VERSION: u32 = 94;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

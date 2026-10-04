@@ -315,15 +315,25 @@ def motion_descs(refs):
     return out
 
 
+# `nFTDemoStatusNull` .. `nFTDemoStatusIntroR`: the results' and selects'
+# rows 0..5, the continue screen's FigureDropped (9) and FigureStand (10)
+# and the 1P stage cards' IntroL (13) and IntroR (14).
+DEMO_ROWS = 15
+
+
 def demo_rows(path, name, symbols):
-    """`dFT<name>SubMotionDescs[0..6]`'s scripts: the demo statuses
-    `nFTDemoStatusNull` .. `nFTDemoStatusLose` (`D_ovl1_80390BE8`'s motion
-    ids 0..5), as word indices or NONE_PTR."""
+    """`dFT<name>SubMotionDescs[0..15]`'s scripts: the demo statuses
+    `nFTDemoStatusNull` .. `nFTDemoStatusIntroR` (`D_ovl1_80390BE8`'s
+    motion ids 0..14), as word indices or NONE_PTR. A shorter table has
+    no script past its end."""
     src = COMMENT_RE.sub(" ", open(path).read())
     m = re.search(r"FTMotionDesc dFT" + name + r"SubMotionDescs\[\]\s*=\s*\{(.*?)\n\};", src, re.S)
     words = [w.strip() for w in m.group(1).replace("{", " ").replace("}", " ").split(",") if w.strip()]
     rows = []
-    for i in range(6):
+    for i in range(DEMO_ROWS):
+        if 3 * i + 1 >= len(words):
+            rows.append(NONE_PTR)
+            continue
         sym = words[3 * i + 1].lstrip("&").strip()
         rows.append(NONE_PTR if sym in ("0x80000000", "0", "NULL") else symbols[sym])
     return rows
@@ -454,13 +464,13 @@ def main():
         dwords, dsyms = parse_file(dpath, macros, demo=True)
         rows = demo_rows(dpath, name, dsyms)
         w.append(f"/// `dFT{name}SubMotionDescs` (`sc/scsubsys/scsubsysdata{name.lower()}.c`): the\n"
-                 f"/// demo statuses' scripts, `nFTDemoStatusNull` to `nFTDemoStatusLose`.\n")
+                 f"/// demo statuses' scripts, `nFTDemoStatusNull` to `nFTDemoStatusIntroR`.\n")
         w.append(f"#[rustfmt::skip]\nstatic {up}_DEMO_WORDS: [u32; {len(dwords)}] = [\n")
         for i in range(0, len(dwords), 8):
             w.append("    " + ", ".join(f"0x{x:08X}" for x in dwords[i:i + 8]) + ",\n")
         w.append("];\n\n")
         rs = ", ".join("NO_SCRIPT" if r == NONE_PTR else str(r) for r in rows)
-        w.append(f"pub static {up}_DEMO: DemoScripts = DemoScripts {{\n"
+        w.append(f"#[rustfmt::skip]\npub static {up}_DEMO: DemoScripts = DemoScripts {{\n"
                  f"    words: &{up}_DEMO_WORDS,\n    rows: [{rs}],\n}};\n\n")
     if macros.unknown:
         print("note: identifiers read as 0:", " ".join(sorted(macros.unknown)),
