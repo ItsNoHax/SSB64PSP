@@ -103,6 +103,42 @@ fn deinterleave(data: &mut [u8], row_bytes: usize, rows: usize, unit: usize) {
     }
 }
 
+/// The `bmsiz` the game widens on SObj creation (`G_IM_SIZ_4c`).
+const SIZ_4C: u8 = 4;
+
+/// `lbCommonDecodeSpriteBitmapsSiz4b` for one bitmap: its first `res / 2`
+/// bytes, `res = (width_img / 2) * actualHeight`, widen in place from the
+/// end into `res` bytes of 4b texels. Each two-bit texel, most significant
+/// first, becomes `0x0`, `0x5`, `0xA` or `0xF`
+/// (`lbCommonGetBitmapDecodeNibble`). `len` pads the result to the 4b
+/// strip size.
+fn widen_siz4c(
+    d: &[u8],
+    buf: usize,
+    width_img: usize,
+    rows: usize,
+    len: usize,
+) -> Result<Vec<u8>, SpriteError> {
+    const NIBBLE: [u8; 4] = [0x0, 0x5, 0xA, 0xF];
+    let res = (width_img / 2) * rows;
+    let src = d.get(buf..buf + res / 2).ok_or(SpriteError::Truncated)?;
+    let mut out = src.to_vec();
+    out.resize(res.max(len), 0);
+    // The cursor walks the packed bytes down from `res / 2 - 1` as the
+    // output walks pairs down from `res - 1`.
+    let mut dst = res as isize - 1;
+    for i in (0..res / 2).rev() {
+        let b = out[i];
+        let hi = NIBBLE[usize::from(b >> 6 & 3)] << 4 | NIBBLE[usize::from(b >> 4 & 3)];
+        let lo = NIBBLE[usize::from(b >> 2 & 3)] << 4 | NIBBLE[usize::from(b & 3)];
+        out[dst as usize] = lo;
+        out[(dst - 1) as usize] = hi;
+        dst -= 2;
+    }
+    out.truncate(len.max(res));
+    Ok(out)
+}
+
 /// Decodes the `Sprite` at byte offset `at` of `file`.
 pub fn decode(file: &File, at: u32) -> Result<Sprite, SpriteError> {
     decode_with(file, at, None)
@@ -128,7 +164,14 @@ fn decode_with(file: &File, at: u32, tlut_override: Option<&[u16]>) -> Result<Sp
     let bmheight = be16(d, base + 44)?.max(0) as usize;
     let (fmt, siz) = (d[base + 48], d[base + 49]);
     let format = Format::from_raw(fmt).ok_or(SpriteError::BadFormat(fmt, siz))?;
-    let size = BitSize::from_raw(siz).ok_or(SpriteError::BadFormat(fmt, siz))?;
+    // `G_IM_SIZ_4c`: two-bit texels the game widens to 4b when it makes the
+    // SObj (`lbCommonMakeSObjForGObj`), before any TMEM load.
+    let packed = siz == SIZ_4C;
+    let size = if packed {
+        BitSize::Bits4
+    } else {
+        BitSize::from_raw(siz).ok_or(SpriteError::BadFormat(fmt, siz))?
+    };
     let tlut = if let Some(t) = tlut_override {
         Some(t.to_vec())
     } else if format == Format::Ci {
@@ -150,10 +193,13 @@ fn decode_with(file: &File, at: u32, tlut_override: Option<&[u16]>) -> Result<Sp
         let rows = be16(d, bm + 12)?.max(0) as usize;
         let buf = pointer(file, (bm + 8) as u32)? as usize;
         let row_bytes = (width_img * size.bits()).div_ceil(8);
-        let mut texels = d
-            .get(buf..buf + row_bytes * rows)
-            .ok_or(SpriteError::Truncated)?
-            .to_vec();
+        let mut texels = if packed {
+            widen_siz4c(d, buf, width_img, rows, row_bytes * rows)?
+        } else {
+            d.get(buf..buf + row_bytes * rows)
+                .ok_or(SpriteError::Truncated)?
+                .to_vec()
+        };
         match size {
             BitSize::Bits32 if attr & SP_TEXSHUF != 0 => {
                 deinterleave(&mut texels, row_bytes, rows, 16)
@@ -585,6 +631,14 @@ pub fn decode_all(file: &File, f: &SpriteFile) -> Result<Vec<Sprite>, SpriteErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_bit_texels_widen_most_significant_first() {
+        // 8 texels wide, 2 rows: res = 4 * 2 = 8 bytes from 4 packed ones.
+        let d = [0b00_01_10_11, 0b11_10_01_00, 0xFF, 0x00];
+        let out = widen_siz4c(&d, 0, 8, 2, 8).unwrap();
+        assert_eq!(out, [0x05, 0xAF, 0xFA, 0x50, 0xFF, 0xFF, 0x00, 0x00]);
+    }
 
     #[test]
     fn odd_rows_swap_their_halves() {
