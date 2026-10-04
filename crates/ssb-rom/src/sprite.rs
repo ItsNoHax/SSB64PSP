@@ -413,11 +413,52 @@ pub const GATE_LUTS: [u32; 8] = [
 pub const PLAYERS_1P_MODE_FILE: u32 = 23;
 pub const TRAINING_GATE_CARD: u32 = 0x32A8;
 
-/// The TLUTs `mnPlayers1PTrainingSetGateLUT` swaps into
-/// [`TRAINING_GATE_CARD`], as `(file, offset)`: the player's
-/// `MNPlayersCommon` `GateMan1PLUT` (the man is port 0), then
-/// `MNPlayers1PMode`'s `GateCPLUT`.
-pub const TRAINING_GATE_LUTS: [(u32, u32); 2] = [(17, 0x103F8), (23, 0x3238)];
+/// The TLUTs `mnPlayers1PTrainingSetGateLUT` and
+/// `mnPlayers1PGameSetGateLUT` swap into [`TRAINING_GATE_CARD`], as
+/// `(file, offset)`: the player's `MNPlayersCommon` `GateMan1PLUT` (the
+/// Training man is port 0), `MNPlayers1PMode`'s `GateCPLUT`, then
+/// `GateMan2PLUT` to `...4PLUT` for a 1P Game on another port.
+pub const TRAINING_GATE_LUTS: [(u32, u32); 5] = [
+    (17, 0x103F8),
+    (23, 0x3238),
+    (17, 0x10420),
+    (17, 0x10470),
+    (17, 0x10448),
+];
+
+/// File 23's sprites `mnPlayers1PGame*` draws besides the card, in its
+/// sprite manifest's order: `1PlayerGameText`, `ClosingParenthesis`,
+/// `OpeningParenthesis`, `LevelColonText`, `StockColonText`,
+/// `OptionOutline`, `SmashLogo` and `OptionText`.
+pub const PLAYERS_1P_MODE: SpriteFile = SpriteFile {
+    file: PLAYERS_1P_MODE_FILE,
+    offsets: &[0x228, 0x2C8, 0x368, 0x488, 0x5A8, 0x1208, 0x1950, 0x1EC8],
+};
+
+/// File 24, `MNPlayersDifficulty` (`dMNPlayers1PGameFileIDs[6]`):
+/// `EasyText`, `HardText`, `NormalText`, `VeryEasyText`, `VeryHardText`.
+pub const PLAYERS_DIFFICULTY: SpriteFile = SpriteFile {
+    file: 24,
+    offsets: &[0x98, 0x178, 0x2D8, 0x438, 0x598],
+};
+
+/// File 25, `FTStocksZako` (`dMNPlayers1PGameFileIDs[7]`): the Fighting
+/// Polygon's stock icon, 8 x 8 CI4.
+pub const STOCKS_ZAKO: SpriteFile = SpriteFile {
+    file: 25,
+    offsets: &[0x80],
+};
+
+/// File 33, `MNCommonFonts` (`dMNPlayers1PGameFileIDs[8]`): `LetterA` to
+/// `LetterZ`, `SymbolApostrophe`, `SymbolPercent` and `SymbolPeriod`.
+pub const COMMON_FONTS: SpriteFile = SpriteFile {
+    file: 33,
+    offsets: &[
+        0x40, 0xD0, 0x160, 0x1F0, 0x280, 0x310, 0x3A0, 0x430, 0x4C0, 0x550, 0x5E0, 0x670, 0x700,
+        0x790, 0x820, 0x8B0, 0x940, 0x9D0, 0xA60, 0xAF0, 0xB80, 0xC10, 0xCA0, 0xD30, 0xDC0, 0xE50,
+        0xED0, 0xF60, 0xFD0,
+    ],
+};
 
 /// File 0, `MNCommon` (`dMNPlayersVSFileIDs[1]`): `Digit0Sprite` to
 /// `Digit9Sprite`, then `ColonSprite` (RE-411).
@@ -508,6 +549,10 @@ pub const FILES: &[SpriteFile] = &[
     EMBLEM_SPRITES,
     SELECT_COMMON,
     MN_MAPS,
+    PLAYERS_1P_MODE,
+    PLAYERS_DIFFICULTY,
+    STOCKS_ZAKO,
+    COMMON_FONTS,
 ];
 
 /// [`GATE_CARD`] decoded through `GATE_LUTS[lut]`.
@@ -602,6 +647,55 @@ mod tests {
                 _ => assert_eq!(s.format, Format::I),
             }
         }
+    }
+
+    #[test]
+    fn the_1p_select_sprites_decode() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        let sizes = |f: &SpriteFile| -> Vec<_> {
+            let file = archive.load(f.file).unwrap();
+            decode_all(&file, f)
+                .unwrap()
+                .iter()
+                .map(|s| (s.width, s.height, s.format, s.size))
+                .collect()
+        };
+        use BitSize::{Bits4, Bits8};
+        use Format::{Ci, Ia, I};
+        assert_eq!(
+            sizes(&PLAYERS_1P_MODE),
+            [
+                (86, 11, I, Bits4),
+                (3, 8, I, Bits4),
+                (3, 8, I, Bits4),
+                (45, 8, I, Bits4),
+                (46, 8, I, Bits4),
+                (192, 32, I, Bits4),
+                (16, 11, I, Bits4),
+                (72, 18, Ia, Bits8),
+            ]
+        );
+        assert_eq!(
+            sizes(&PLAYERS_DIFFICULTY),
+            [
+                (31, 8, I, Bits4),
+                (32, 8, I, Bits4),
+                (50, 8, I, Bits4),
+                (61, 8, I, Bits4),
+                (62, 8, I, Bits4),
+            ]
+        );
+        assert_eq!(sizes(&STOCKS_ZAKO), [(8, 8, Ci, Bits4)]);
+        let fonts = sizes(&COMMON_FONTS);
+        assert_eq!(fonts.len(), 29);
+        assert!(fonts.iter().all(|&(_, _, f, b)| (f, b) == (I, Bits4)));
+        assert_eq!((fonts[0].0, fonts[0].1), (5, 5), "LetterA");
+        assert_eq!((fonts[27].0, fonts[27].1), (7, 5), "SymbolPercent");
     }
 
     #[test]
@@ -748,6 +842,13 @@ mod tests {
             r.abs_diff(g) < 8 && g.abs_diff(b) < 8 && r > 0x60,
             "the CPU's is grey"
         );
+        // The 1P Game's card on ports 2 to 4: blue, yellow, green.
+        let [r, _, b] = mean(2);
+        assert!(b > 2 * r, "2P blue");
+        let [r, g, b] = mean(3);
+        assert!(r > 10 * b && g > 10 * b, "3P yellow");
+        let [r, g, _] = mean(4);
+        assert!(g > 2 * r, "4P green");
         assert_eq!(
             formats(&GAME_MODES)[2],
             (88, 11, Format::I, BitSize::Bits4),

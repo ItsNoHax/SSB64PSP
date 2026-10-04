@@ -1890,6 +1890,9 @@ enum Screen {
     /// The VS character select (`mnPlayersVS`, `ssb_game::players_vs`,
     /// RE-404).
     PlayersVs,
+    /// The 1P Game character select (`mnPlayers1PGame`,
+    /// `ssb_game::players_1p`).
+    Players1P,
     /// Training Mode: a real stage and a real, physics-ticked fighter now
     /// draw here (`draw_training`) -- no combat yet, see
     /// `plans/gameplay/F1.md` acceptance criteria 5-7 for what still has to
@@ -1897,13 +1900,15 @@ enum Screen {
     Training,
 }
 
-/// Main-menu entries. Only `Training` is selectable; the others are visible,
-/// inert placeholders (`plans/gameplay/F1.md` allows this explicitly).
+/// Main-menu entries: Training, VS and the 1P Game's select.
 const MENU_ENTRIES: usize = 3;
 const TRAINING_ENTRY: usize = 0;
 /// A VS battle against the CPU pick, which stands still: CPU AI is not
 /// ported (RE-389).
 const VS_ENTRY: usize = 1;
+/// The 1P Game's character select. Its campaign scenes are not wired yet,
+/// so START comes back to this menu with the choice saved.
+const ONE_P_ENTRY: usize = 2;
 
 const BG_INTRO: Color = Color::rgba(24, 32, 64, 255);
 const BG_MENU: Color = Color::rgba(16, 16, 24, 255);
@@ -3263,6 +3268,7 @@ unsafe fn draw_frame(
             s.players_vs.as_ref(),
             s.players_vs_fighters.as_deref(),
         ),
+        Screen::Players1P => draw_players_1p(gpu, pack.as_ref(), draw_state, s),
         Screen::StageSelect => match (pack.as_ref(), s.stage_select_layer.as_ref()) {
             // `gcMakeDefaultCameraGObj`'s black clear, then the cameras.
             (Some(p), Some(layer)) => {
@@ -3369,7 +3375,11 @@ unsafe fn session_frame(
                 }
             }
             Screen::Menu => {
-                if menu_stick_down_pressed(previous_controller, controller) {
+                if pressed.contains(N64Buttons::A) && s.cursor == ONE_P_ENTRY {
+                    s.players_1p = Some(ssb_game::players_1p::Players1P::new(s.one_p_scene, &s.backup));
+                    s.players_1p_fighters = None;
+                    s.screen = Screen::Players1P;
+                } else if menu_stick_down_pressed(previous_controller, controller) {
                     s.cursor = (s.cursor + 1) % MENU_ENTRIES;
                 } else if menu_stick_up_pressed(previous_controller, controller) {
                     s.cursor = (s.cursor + MENU_ENTRIES - 1) % MENU_ENTRIES;
@@ -3447,6 +3457,7 @@ unsafe fn session_frame(
             Screen::PlayersVs => {
                 players_vs_frame(s, pack, capture_scene.is_some(), sim_frame_index, controller, pressed);
             }
+            Screen::Players1P => players_1p_frame(s, pack.as_ref(), controller, pressed),
             Screen::FighterSelect => {
                 use ssb_game::fighter_select::Outcome;
                 match fighter_select_frame(s, pack.as_ref(), controller, pressed) {
@@ -3769,6 +3780,15 @@ struct Session {
     players_vs: Option<ssb_game::players_vs::PlayersVs>,
     /// The select's fighter poses (RE-411), on the heap.
     players_vs_fighters: Option<alloc::boxed::Box<players_screen::Fighters>>,
+    players_1p: Option<ssb_game::players_1p::Players1P>,
+    players_1p_fighters: Option<alloc::boxed::Box<players_screen::Fighters>>,
+    /// What the 1P select left in `gSCManagerSceneData` for its next visit.
+    one_p_scene: ssb_game::players_1p::SceneData,
+    /// The 1P Game's part of `gSCManagerSceneData`.
+    spgame_scene: ssb_game::spgame::SceneData,
+    /// `gSCManagerBackupData`'s 1P fields. There is no save data yet, so
+    /// they live for the session.
+    backup: ssb_game::spgame::Backup,
     /// The stage select's presentation (RE-419), made with the select.
     stage_select_layer: Option<ssb_game::stage_select_layer::Layer>,
     /// The select's preview model and its clocks, on the heap.
@@ -3907,6 +3927,11 @@ unsafe fn run() -> ! {
         vs_state: ssb_game::players_vs::BattleState::default(),
         players_vs: None,
         players_vs_fighters: None,
+        players_1p: None,
+        players_1p_fighters: None,
+        one_p_scene: ssb_game::players_1p::SceneData::default(),
+        spgame_scene: ssb_game::spgame::SceneData::default(),
+        backup: ssb_game::spgame::Backup::default(),
         stage_select_layer: None,
         stage_preview: stage_screen::start(),
         wallpaper: ssb_game::wallpaper::Wallpaper::make(ssb_game::wallpaper::Kind::Static),
@@ -4068,7 +4093,7 @@ fn draw_menu(gpu: &mut Gpu, cursor: usize) {
         let y0 = TOP + i as i32 * (ENTRY_HEIGHT + ENTRY_GAP);
         let color = if i == cursor {
             ENTRY_SELECTED
-        } else if i == TRAINING_ENTRY || i == VS_ENTRY {
+        } else if i == TRAINING_ENTRY || i == VS_ENTRY || i == ONE_P_ENTRY {
             ENTRY_ENABLED
         } else {
             ENTRY_DISABLED
@@ -4238,6 +4263,48 @@ fn players_vs_frame(
             s.enter(pack.as_ref(), gkind, vs_roster(&state), Some(s.vs_menu_rules));
             s.screen = Screen::Training;
         }
+    }
+}
+
+/// One frame of `mnPlayers1PGame`: the select's tick, then its fighter's.
+/// The select's way out saves its scene and backup data
+/// (`mnPlayers1PGameSetSceneData`). Out of [`run`] for branch range.
+#[inline(never)]
+fn players_1p_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: ControllerState, pressed: N64Buttons) {
+    use ssb_game::players_1p::Outcome;
+    let Some(select) = s.players_1p.as_mut() else {
+        return;
+    };
+    let outcome = select.tick(controller, pressed);
+    let fighters = s.players_1p_fighters.get_or_insert_with(players_screen::start);
+    players_screen::tick_1p(pack, select, fighters);
+    let (saved, next) = match outcome {
+        None => return,
+        // `nSCKind1PGame`: the campaign's scenes are not wired yet, so
+        // the menu stands in for them as it does for the 1P mode menu.
+        Some(Outcome::Proceed(saved)) => (saved, Screen::Menu),
+        Some(Outcome::Back(saved)) => (saved, Screen::Menu),
+        Some(Outcome::Timeout(saved)) => (saved, Screen::Intro),
+    };
+    saved.apply(&mut s.spgame_scene, &mut s.backup);
+    s.one_p_scene = saved.scene;
+    s.players_1p = None;
+    s.players_1p_fighters = None;
+    s.screen = next;
+}
+
+/// `mnPlayers1PGame`'s frame over the black of its default camera:
+/// `players_screen` draws the select's sprites and fighter. Without a
+/// pack it draws nothing over the menu colour.
+#[inline(never)]
+unsafe fn draw_players_1p(gpu: &mut Gpu, pack: Option<&Pack<'_>>, draw_state: &mut meshdraw::DrawState, s: &Session) {
+    gpu.set_viewport_fullscreen();
+    match (pack, s.players_1p.as_ref()) {
+        (Some(p), Some(select)) => {
+            gpu.begin_frame(Some(BG_RESULTS));
+            players_screen::draw_1p(gpu, p, draw_state, select, &s.backup, s.players_1p_fighters.as_deref());
+        }
+        _ => gpu.begin_frame(Some(BG_MENU)),
     }
 }
 

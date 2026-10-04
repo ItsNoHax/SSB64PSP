@@ -1,4 +1,4 @@
-//! The character selects' drawing: VS (RE-411) and Training.
+//! The character selects' drawing: VS (RE-411), Training and the 1P Game.
 //! `ssb_game::players_vs::layer` and `ssb_game::fighter_select::layer` lay
 //! out the sprites and track each slot's fighter; this looks the sprites up
 //! in the pack, poses each fighter with its demo clip (`Wait` for
@@ -14,6 +14,7 @@ use alloc::boxed::Box;
 
 use ssb_engine::math::Vec3;
 use ssb_game::fighter_select::FighterSelect;
+use ssb_game::players_1p::Players1P;
 use ssb_game::players_vs::layer::{self, Draw, Piece};
 use ssb_game::players_vs::PlayersVs;
 use ssb_game::results_scene::Camera;
@@ -88,6 +89,11 @@ pub fn tick(pack: Option<&Pack<'_>>, select: &PlayersVs, f: &mut Fighters) {
 pub fn tick_training(pack: Option<&Pack<'_>>, select: &FighterSelect, f: &mut Fighters) {
     let v = &select.view.slots;
     tick_models(pack, &[v[0].fighter, v[1].fighter, None, None], f);
+}
+
+/// One tick of the 1P select's fighter, after [`Players1P::tick`].
+pub fn tick_1p(pack: Option<&Pack<'_>>, select: &Players1P, f: &mut Fighters) {
+    tick_models(pack, &[select.view.fighter, None, None, None], f);
 }
 
 /// A fighter made again or given its status starts its clip over
@@ -220,6 +226,52 @@ pub unsafe fn draw_training(
     draw_screen(gpu, p, draw_state, &|g| select.visit(g), &shown, f);
 }
 
+/// The 1P select back to front (`Players1P::visit`), with the backup's
+/// records for the fighter under the puck.
+pub unsafe fn draw_1p(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    select: &Players1P,
+    backup: &ssb_game::spgame::Backup,
+    f: Option<&Fighters>,
+) {
+    use ssb_game::players_1p::layer::Draw as One;
+    let shown = select.fighter_draw().map(|(fighter, position, _, costume)| Shown {
+        fighter,
+        position,
+        costume,
+        tint: None,
+    });
+    let shown = [shown, None, None, None];
+    let records = Players1P::records(backup, select.force_puck_fighter_kind());
+    select.visit(&records, |d| match d {
+        One::Select(d) => draw_select_piece(gpu, p, draw_state, d, &shown, f),
+        One::Fill { rect, color } => meshdraw::fill_rect_n64(rect, color, draw_state),
+        One::MirroredT { piece, size } => {
+            if let Some((s, d)) = sobj_draw(p, &piece) {
+                meshdraw::draw_sprite_mirror_t(p, &s, &d, size, draw_state);
+            }
+        }
+        One::Stock { kind, costume, x, y } => {
+            // `fp->attr->sprites->stock_sprite` through `stock_luts`.
+            if let Some(s) = p.fighter_sprite(kind as u8, ssb_rom::pack::SpriteDesc::ROLE_STOCK, costume) {
+                let d = meshdraw::SObjDraw {
+                    x,
+                    y,
+                    scale: 1.0,
+                    prim: s.color,
+                    env: [0; 3],
+                    solid: false,
+                    attr: s.attr | ssb_rom::sprite::SP_TRANSPARENT,
+                };
+                meshdraw::draw_sprite(p, &s, &d, draw_state);
+            }
+        }
+    });
+    gpu.set_viewport_fullscreen();
+}
+
 /// A select's pieces back to front, with the fighters at `Draw::Fighters`.
 #[inline(never)]
 unsafe fn draw_screen(
@@ -230,7 +282,20 @@ unsafe fn draw_screen(
     shown: &[Option<Shown>; 4],
     f: Option<&Fighters>,
 ) {
-    visit(&mut |d| match d {
+    visit(&mut |d| draw_select_piece(gpu, p, draw_state, d, shown, f));
+    gpu.set_viewport_fullscreen();
+}
+
+/// One of a select's pieces.
+unsafe fn draw_select_piece(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    d: Draw,
+    shown: &[Option<Shown>; 4],
+    f: Option<&Fighters>,
+) {
+    match d {
         Draw::Sprite(piece) | Draw::Shadow(piece) => draw_piece(p, draw_state, &piece, None),
         Draw::Tiled { piece, size } => draw_piece(p, draw_state, &piece, Some(size)),
         Draw::Puck { piece, glow } => {
@@ -244,8 +309,7 @@ unsafe fn draw_screen(
                 draw_fighters(gpu, p, draw_state, shown, f);
             }
         }
-    });
-    gpu.set_viewport_fullscreen();
+    }
 }
 
 /// One `SObj` through `lbCommonDrawSObjAttr`: `SP_FASTCOPY` cleared and
@@ -256,14 +320,22 @@ unsafe fn draw_piece(
     piece: &Piece,
     size: Option<[f32; 2]>,
 ) {
+    let Some((s, d)) = sobj_draw(p, piece) else {
+        return;
+    };
+    match size {
+        Some(size) => meshdraw::draw_sprite_tiled(p, &s, &d, size, draw_state),
+        None => meshdraw::draw_sprite(p, &s, &d, draw_state),
+    }
+}
+
+/// A piece's pack sprite and its `SObj` state.
+fn sobj_draw(p: &Pack<'_>, piece: &Piece) -> Option<(ssb_rom::pack::SpriteDesc, meshdraw::SObjDraw)> {
     const SP_FASTCOPY: u16 = 0x0020;
     let s = match piece.lut {
         Some(lut) => p.sprite_lut(piece.file, piece.offset, lut),
         None => p.sprite(piece.file, piece.offset),
-    };
-    let Some(s) = s else {
-        return;
-    };
+    }?;
     let [r, g, b, a] = s.color;
     let prim = piece.prim.map_or([r, g, b, a], |c| [c[0], c[1], c[2], a]);
     let attr = if piece.transparent {
@@ -280,10 +352,7 @@ unsafe fn draw_piece(
         solid: false,
         attr,
     };
-    match size {
-        Some(size) => meshdraw::draw_sprite_tiled(p, &s, &d, size, draw_state),
-        None => meshdraw::draw_sprite(p, &s, &d, draw_state),
-    }
+    Some((s, d))
 }
 
 /// The fighters under the fighter camera: each at its slot's position,
