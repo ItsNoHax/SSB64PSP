@@ -363,7 +363,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 92 adds Race to the Finish's four Bumper root scripts, keyed by the
 // ground animation table. Its ground layers and barrel graph were already
 // discovered. No layout change.
-pub const VERSION: u32 = 92;
+// 93 adds the 1P Game select's sprites (files 23, 24, 25 and 33) and the
+// Training card through `GateMan2PLUT` to `...4PLUT`. No layout change.
+pub const VERSION: u32 = 93;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

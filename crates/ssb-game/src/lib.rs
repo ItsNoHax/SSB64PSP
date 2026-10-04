@@ -57,6 +57,7 @@ pub mod pause;
 pub mod physics;
 pub mod pikachu;
 pub mod player_interface;
+pub mod players_1p;
 pub mod players_vs;
 pub mod purin;
 pub mod reaction;

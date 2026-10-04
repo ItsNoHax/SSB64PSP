@@ -2603,6 +2603,62 @@ pub unsafe fn draw_sprite_tiled(
     draw_state.invalidate_all();
 }
 
+/// A sprite over `size` with `cmt` `G_TX_MIRROR` (`mnPlayers1PGameMakeLabels`'
+/// `OptionOutline`): rows beyond the sprite's height read it back upside
+/// down, as N64 mirroring does for one repeat. The GE has no mirror wrap,
+/// so the bands are drawn as two rectangles, the second with its `v`
+/// running backwards. S wraps or clamps as [`draw_sprite_tiled`]. Only
+/// `size[1]` up to twice the height is mirrored; the source needs 64 of
+/// 32.
+///
+/// # Safety
+///
+/// As [`draw_sprite`].
+pub unsafe fn draw_sprite_mirror_t(
+    pack: &Pack<'_>,
+    sprite: &ssb_rom::pack::SpriteDesc,
+    d: &SObjDraw,
+    size: [f32; 2],
+    draw_state: &mut DrawState,
+) {
+    let Some(t) = pack.texture(sprite.texture) else {
+        return;
+    };
+    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    sys::sceGuTexScale(1.0, 1.0);
+    sys::sceGuTexOffset(0.0, 0.0);
+    let s_wrap = if size[0] > f32::from(sprite.width) {
+        sys::GuTexWrapMode::Repeat
+    } else {
+        sys::GuTexWrapMode::Clamp
+    };
+    sys::sceGuTexWrap(s_wrap, sys::GuTexWrapMode::Clamp);
+    let (_, vertex) = sprite_combiner(sprite, d);
+    sprite_blend(d.attr);
+    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
+    let x0 = vx as f32 + d.x * k;
+    let y0 = d.y * k;
+    let h = f32::from(sprite.height);
+    let first = size[1].min(h);
+    let abgr = u32::from_le_bytes(vertex);
+    sobj_rect(
+        [(0.0, 0.0, x0, y0), (size[0], first, x0 + size[0] * k, y0 + first * k)],
+        abgr,
+    );
+    let rest = (size[1] - first).min(h);
+    if rest > 0.0 {
+        let y1 = y0 + first * k;
+        sobj_rect(
+            [(0.0, h, x0, y1), (size[0], h - rest, x0 + size[0] * k, y1 + rest * k)],
+            abgr,
+        );
+    }
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuEnable(GuState::CullFace);
+    draw_state.invalidate_all();
+}
+
 /// `mnPlayersVSPuckProcDisplay`'s `(TEXEL0 - PRIMITIVE) * ENVIRONMENT +
 /// PRIMITIVE` with a white primitive and a grey `glow` environment, alpha
 /// `TEXEL0`, blended (RE-411): the texel lerped towards white by `1 -
