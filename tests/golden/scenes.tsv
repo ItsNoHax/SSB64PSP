@@ -108,7 +108,7 @@ f1-training-donkey	psp-game	donkey	pass	 RE-440
 f1-training-ness	psp-game	ness	pass	RE-381 RE-440
 f1-training-ness-thunder	psp-game	nessthunder	pass	RE-381 RE-440
 f1-training-ness-magnet	psp-game	nessmagnet	pass	RE-381 RE-440
-f1-training-link-bomb	psp-game	linkbomb	pass	RE-383 RE-440
+f1-training-link-bomb	psp-game	linkbomb	pass	RE-383 RE-440 RE-444
 f1-training-stage-select	psp-game	stageselect	pass	RE-385 RE-440
 f1-training-fighter-select	psp-game	fighterselect	pass	RE-386 RE-440
 f1-training-rebirth	psp-game	rebirth	pass	RE-388 RE-440
@@ -205,3 +205,6 @@ f1-training-interface-restored	psp-game	traininginterface@280	pass	RE-440
 f1-training-slide	psp-game	trainingslide@130	pass	RE-442
 f1-training-slide-walk	psp-game	trainingslide@233	pass	RE-442
 f1-training-bumper-throw	psp-game	trainingbumperthrow@160	pass	RE-442
+f1-training-link-bomb-bloat	psp-game	linkbomb@270	pass	RE-444
+f1-training-link-bomb-turn	psp-game	linkbomb@305	pass	RE-444
+f1-training-link-bomb-loose	psp-game	linkbomb@320	pass	RE-444

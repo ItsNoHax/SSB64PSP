@@ -76,12 +76,26 @@ and Venusaur select one of two packed sprite meshes directly by texture ID;
 they use the OPA item seed. Electrode spins as a screen-facing billboard
 and hides during its explosion. Razor Leaf uses the weapon seed (RE-430).
 
-Normal Egg uses file 86's child-1 kind-46 billboard, with root Z spin and
-the child-2 ROM scale animation. Its raw add/play clock starts at frame
-zero through `StageAnimator::start_changed`; existing stage clocks retain
-their previous entry point. Capsule composes its four descriptor nodes
-under the loose item transform or normalized fighter hand joint. Item
-visuals cover all sixteen shared-pool slots (RE-431).
+Every item tree promotes descriptor 1 after the manager ejects descriptor
+0. Loose, its translation belongs to gameplay; held, its descriptor
+offset sits under the normalized hand joint. PK Fire uses
+`StageAnimator::compose_item` to preserve descendant scripts without
+composing the placeholder or adding the root translation twice (RE-444).
+
+Normal Egg's promoted root is packed node 1; its child, packed node 2,
+uses kind 46 and the ROM scale animation, with root Z spin. Its raw
+add/play clock starts at frame zero through `StageAnimator::start_changed`.
+Capsule and heavy containers compose from descriptor 1 under the loose
+item transform or normalized fighter hand joint. Item visuals cover all
+sixteen shared-pool slots (RE-431–432, RE-444).
+
+Link Bomb's promoted body/root is packed node 1, with hand offset
+(30, 90, 15) only while held. Its fuse is packed node 2: the maker adds
+kind 46 to both body and fuse. The fuse's translation inherits the body's
+billboard frame, then its own spin/scale uses the camera axes and
+`gGCScaleX`. Bloat scales the same body node held and loose. Throw turns
+refresh sampled joint axes from TopN yaw on every step, while facing
+flips halfway (RE-444).
 
 Poké Ball Pokémon use file 86's trees and maker-specific matrices, with
 packed appear/status joint scripts; camera-relative kind 48 scales X/Z by

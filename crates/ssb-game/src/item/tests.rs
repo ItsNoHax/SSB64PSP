@@ -397,6 +397,114 @@ fn backward_throw_script_turns_link_before_releasing_the_bomb() {
 }
 
 #[test]
+fn light_throw_joints_turn_each_step_and_restore_facing_outside_the_status() {
+    for facing in [Facing::Right, Facing::Left] {
+        let mut link = fighter(FighterKind::Link, 0);
+        link.facing = facing;
+        crate::item_throw::set_item_throw(&mut link, Status::LightThrowB);
+        link.item_throw = crate::item_throw::ThrowState::default();
+        link.motion_script.flags = [0, 0, 0, 8];
+        for step in 1..=8 {
+            crate::item_throw::update(&mut link);
+            let yaw = core::f32::consts::FRAC_PI_2 * facing.sign()
+                - core::f32::consts::PI * step as f32 / 8.0;
+            let axes = crate::item_throw::model_axes(&link);
+            let (sin, cos) = ssb_engine::math::sin_cos(yaw);
+            assert!((axes[2].x - sin).abs() < 0.00001);
+            assert!((axes[2].z - cos).abs() < 0.00001);
+            let point = link.joint_world(0, Vec3::new(0.0, 0.0, 100.0)) - link.pos;
+            assert!((point.x - 100.0 * sin).abs() < 0.001);
+            assert!((point.z - 100.0 * cos).abs() < 0.001);
+            assert_eq!(
+                link.facing,
+                if step < 4 { facing } else { facing.flipped() }
+            );
+        }
+        status::set_wait(&mut link);
+        assert_eq!(
+            crate::item_throw::model_axes(&link)[2],
+            Vec3::new(-facing.sign(), 0.0, 0.0)
+        );
+    }
+}
+
+#[test]
+fn main_pass_runs_a_chansey_egg_once_without_skipping_its_surviving_parent() {
+    let mut pool = ItemPool::default();
+    let slot = pool
+        .spawn_mmonster(
+            mmonster::Kind::MLucky,
+            Vec3::new(0.0, 1000.0, 0.0),
+            None,
+            0,
+            &core::iter::empty,
+        )
+        .unwrap();
+    let chansey = pool.get_mut(slot).unwrap();
+    chansey.status = ItemStatus::MMonster(mmonster::Status::MLuckyMakeEgg);
+    chansey.multi = 3;
+    chansey.vars.mmonster.egg_spawn_wait = 0;
+    pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
+    let chansey = pool.get(slot).unwrap();
+    assert_eq!(chansey.multi, 2);
+    assert_eq!(chansey.anim_ticks, 2);
+    let egg = pool.items().last().unwrap();
+    assert_eq!(egg.kind, ItemKind::Container(container::Kind::Egg));
+    assert_eq!(egg.anim_ticks, 2);
+    assert!(egg.pos.y > chansey.pos.y);
+}
+
+#[test]
+fn held_and_loose_bomb_bloat_write_the_same_promoted_body_root() {
+    for held in [false, true] {
+        let mut pool = ItemPool::default();
+        let mut bomb = link_bomb::make(Vec3::ZERO, 0);
+        bomb.is_hold = held;
+        if held {
+            bomb.scale = Vec3::new(1.8, 1.8, 1.0);
+            link_bomb::hold_set_status(&mut bomb);
+            assert_eq!(bomb.scale, Vec3::new(1.0, 1.0, 1.0));
+        }
+        bomb.lifetime = link_bomb::BLOAT_BEGIN - 1;
+        bomb.vars.bomb_scale_int = 0;
+        bomb.vars.bomb_scale_id = 3;
+        let slot = pool.alloc(bomb).unwrap();
+        pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
+        let bomb = pool.get(slot).unwrap();
+        assert_eq!(bomb.scale.x, link_bomb::BLOAT_SCALES[3]);
+        assert_eq!(bomb.scale.y, link_bomb::BLOAT_SCALES[3]);
+        assert_eq!(bomb.scale.z, 1.0);
+    }
+}
+
+#[test]
+fn main_pass_runs_pokemon_made_by_a_destroyed_ball_after_existing_siblings() {
+    for siblings in [0, 1, 14] {
+        let mut pool = ItemPool::default();
+        let mut ball = mball::make(Vec3::new(0.0, 1000.0, 0.0), Vec3::ZERO);
+        ball.status = ItemStatus::MBall(mball::Status::Open);
+        ball.multi = 0;
+        let ball_slot = pool.alloc(ball).unwrap();
+        for i in 0..siblings {
+            pool.alloc(link_bomb::make(Vec3::new(i as f32, 1000.0, 0.0), i as u16))
+                .unwrap();
+        }
+        pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
+        assert!(pool.get(ball_slot).is_none());
+        let pokemon = pool.items().last().unwrap();
+        assert!(matches!(pokemon.kind, ItemKind::MMonster(_)));
+        assert_eq!(
+            pokemon.anim_ticks, 2,
+            "maker play followed by same-pass main play"
+        );
+        for sibling in pool.items().take(siblings) {
+            assert_eq!(sibling.anim_ticks, 2);
+            assert_eq!(sibling.lifetime, link_bomb::LIFETIME - 1);
+        }
+    }
+}
+
+#[test]
 fn throw_flag_overlay_decodes_damage_velocity_and_signed_angle() {
     let mut link = fighter(FighterKind::Link, 0);
     let mut pool = ItemPool::default();

@@ -229,8 +229,28 @@ pub fn model_yaw(f: &Fighter) -> Option<f32> {
     }
 }
 
+/// TopN's world axes for collision joints and held-item attachments.
+/// `ftCommonItemThrowUpdateModelYaw` refreshes these on every turn step,
+/// including the steps before and after the halfway facing inversion.
+pub fn model_axes(f: &Fighter) -> [Vec3; 3] {
+    let Some(yaw) = model_yaw(f) else {
+        let sign = f.facing.sign();
+        return [
+            Vec3::new(0.0, 0.0, -sign),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(sign, 0.0, 0.0),
+        ];
+    };
+    let (sin, cos) = ssb_engine::math::sin_cos(yaw);
+    [
+        Vec3::new(cos, 0.0, -sin),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec3::new(sin, 0.0, cos),
+    ]
+}
+
 /// `ftCommonItemThrowUpdateModelYaw`: the turn flips facing halfway.
-/// Joint yaw is presentation; the gameplay direction follows the source.
+/// Joint transforms follow this yaw; the gameplay direction flips halfway.
 fn update_turn(f: &mut Fighter) {
     let flag = f.motion_script.flags[3];
     if flag != 0 {

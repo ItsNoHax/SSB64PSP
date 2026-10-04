@@ -215,6 +215,56 @@ fn container_attributes_and_explosion_tables_match_the_rom() {
 }
 
 #[test]
+fn link_bomb_promotes_its_body_and_animates_the_billboard_fuse_child() {
+    let Some(rom) = rom() else {
+        return;
+    };
+    let archive = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();
+    let file = archive.load(353).unwrap();
+    // ITAttributes' script table: neither the ejected placeholder nor the
+    // promoted body has a script; the fuse child does.
+    assert_eq!(word(&file.data, 0x1990), 0);
+    assert_eq!(word(&file.data, 0x1994), 0);
+    assert_eq!(word(&file.data, 0x1998), 0x199C);
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak"),
+    )
+    .unwrap();
+    let p = Pack::open(&bytes).unwrap();
+    let object = (0..p.object_count())
+        .filter_map(|i| p.object(i))
+        .find(|o| (o.source_file, o.source_offset) == (353, 0x18D8))
+        .unwrap();
+    let body = p.node(object.first_node + 1).unwrap();
+    assert_eq!(body.rest_translate, [30.0, 90.0, 15.0]);
+    assert_eq!(body.parent, object.first_node);
+    let fuse = p.node(object.first_node + 2).unwrap();
+    assert_eq!(fuse.parent, object.first_node + 1);
+    let anim = p.item_anim(AnimDesc::ITEM_ANIM_LINK_BOMB).unwrap();
+    let mut packed = StageAnimator::new();
+    packed.start_changed(&p, &anim);
+    let mut raw = StageJoint::start_changed(0x199C, 0.0);
+    let mut pose = JointPose {
+        translate: fuse.rest_translate,
+        rotate: fuse.rest_rotate,
+        scale: fuse.rest_scale,
+    };
+    for _ in 0..300 {
+        packed.tick(p.anim_script(&anim).unwrap()).unwrap();
+        raw.tick(&file.data, 1.0, &mut pose).unwrap();
+        assert_eq!(packed.node_pose(object.first_node + 2).unwrap(), &pose);
+        assert!(packed.node_pose(object.first_node + 1).is_none());
+    }
+    let mut out = [ssb_rom::scene::Mat4::IDENTITY; 3];
+    packed.compose_item(&p, &object, JointPose::default(), &mut out);
+    assert_eq!(
+        out[1],
+        ssb_rom::scene::Mat4::IDENTITY,
+        "loose body has no hand offset"
+    );
+}
+
+#[test]
 fn egg_scale_animation_replays_the_rom_for_two_hundred_plays() {
     let Some(rom) = rom() else {
         return;

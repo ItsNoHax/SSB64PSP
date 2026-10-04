@@ -715,8 +715,9 @@ mod tests {
         assert_eq!(pool.get(slot).unwrap().vars.monster_eggs, 0);
         let egg = pool.items().last().unwrap();
         assert_eq!(egg.kind, ItemKind::Container(Kind::Egg));
-        assert_eq!(egg.pos, Vec3::new(-200.0, 200.0, 0.0));
-        assert_eq!(egg.anim_ticks, 1);
+        assert_eq!(egg.pos_prev, Vec3::new(-200.0, 200.0, 0.0));
+        assert_eq!(egg.pos, egg.pos_prev + egg.vel_air);
+        assert_eq!(egg.anim_ticks, 2);
         assert!(egg.vel_air.x < 0.0 && egg.lr < 0.0);
         assert!(egg.spin_step > 0.0);
         assert_eq!(pool.active_count(), 16);
