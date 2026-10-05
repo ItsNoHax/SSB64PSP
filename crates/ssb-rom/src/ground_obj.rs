@@ -211,7 +211,7 @@ const fn desc(
 /// `grZebesMakeAcid`, `grYosterInitAll`, `grInishieMakeScale`,
 /// `grCastleInitAll`, and the Mushroom Kingdom items
 /// `itPowerBlockMakeItem` and `itPakkunMakeItem`.
-pub const OBJECTS: [GroundObjectAsset; 22] = [
+pub const OBJECTS: [GroundObjectAsset; 34] = [
     desc("WhispyEyes", PUPUPU_FILE, PUPUPU_HEAD, 0x10F0, 4),
     desc("WhispyMouth", PUPUPU_FILE, PUPUPU_HEAD, 0x1770, 4),
     desc("FlowersBack", PUPUPU_FILE, PUPUPU_HEAD, 0x2A80, 4),
@@ -293,7 +293,34 @@ pub const OBJECTS: [GroundObjectAsset; 22] = [
     bonus3_bumper("Bonus3Bumper1"),
     bonus3_bumper("Bonus3Bumper2"),
     bonus3_bumper("Bonus3Bumper3"),
+    bonus1_targets(0),
+    bonus1_targets(1),
+    bonus1_targets(2),
+    bonus1_targets(3),
+    bonus1_targets(4),
+    bonus1_targets(5),
+    bonus1_targets(6),
+    bonus1_targets(7),
+    bonus1_targets(8),
+    bonus1_targets(9),
+    bonus1_targets(10),
+    bonus1_targets(11),
 ];
+
+const fn bonus1_targets(kind: usize) -> GroundObjectAsset {
+    GroundObjectAsset {
+        item: true,
+        instances: 10,
+        source_file: Some(crate::bonus1::MODEL.0),
+        ..desc(
+            "Bonus1Target",
+            271 + kind as u32,
+            0,
+            crate::bonus1::MODEL.1,
+            ITEM_LINK,
+        )
+    }
+}
 
 const fn bonus3_bumper(name: &'static str) -> GroundObjectAsset {
     GroundObjectAsset {
@@ -561,7 +588,7 @@ pub const MAX_OBJECT_NODES: usize = 32;
 /// Controller objects one stage may have, counting instances (Dream
 /// Land's four; Mushroom Kingdom's strings, two platforms, the POW Block
 /// and two Piranha Plants).
-pub const MAX_STAGE_OBJECTS: usize = 8;
+pub const MAX_STAGE_OBJECTS: usize = 10;
 
 /// One live controller object: its nodes' clocks and poses, and the
 /// `GObj::anim_frame` its parses write.
@@ -851,6 +878,7 @@ impl GroundObject {
 
 /// A stage's controller objects and the animations its controller may start.
 pub struct GroundObjects {
+    target_anims: [Option<AnimDesc>; 10],
     objects: [Option<GroundObject>; MAX_STAGE_OBJECTS],
     /// Sector Z's Arwing ([`crate::sector`]), whose scripts come from two
     /// files and play node by node.
@@ -863,6 +891,7 @@ impl GroundObjects {
     /// No objects: a stage with no ported controller objects.
     pub fn empty() -> Self {
         GroundObjects {
+            target_anims: [None; 10],
             objects: [None; MAX_STAGE_OBJECTS],
             arwing: None,
             anims: [None; ANIMS.len()],
@@ -876,6 +905,24 @@ impl GroundObjects {
     /// packed from its label in that file.
     pub fn new(pack: &Pack<'_>, gr_file: u32) -> Self {
         let mut this = Self::empty();
+        if let Some(kind) = crate::bonus1::kind(gr_file) {
+            let object = (0..pack.object_count())
+                .filter_map(|i| pack.object(i))
+                .find(|o| (o.source_file, o.source_offset) == crate::bonus1::MODEL);
+            if let Some(object) = object {
+                for i in 0..10 {
+                    this.objects[i] = Some(GroundObject::new(
+                        pack,
+                        crate::bonus1::FIRST_ASSET + kind,
+                        i as u8,
+                        object,
+                        None,
+                    ));
+                    this.target_anims[i] = pack.item_anim(crate::bonus1::anim(kind, i as u8));
+                }
+            }
+            return this;
+        }
         if gr_file == crate::sector::MAP_FILE {
             this.arwing = crate::sector::Arwing::new(pack);
         }
@@ -1084,12 +1131,27 @@ impl GroundObjects {
     /// `gcAddAnimAll` + `gcPlayAnimAll` with its `ITAttributes` scripts (the
     /// POW Block's pop-in; the Piranha Plant has none).
     pub fn item_make(&mut self, pack: &Pack<'_>, asset: u8, instance: u8) {
+        let target = if asset >= crate::bonus1::FIRST_ASSET {
+            self.target_anims.get(instance as usize).copied().flatten()
+        } else {
+            None
+        };
         let Some(obj) = self.instance_mut(asset, instance) else {
             return;
         };
         *obj = GroundObject::new(pack, obj.asset, obj.instance, obj.object, obj.leaf);
         // The ejected descriptor root keeps no transform of its own.
         obj.poses[0] = JointPose::default();
+        if let Some(a) = target {
+            obj.script = Some((a.script_offset, a.script_len));
+            let script = pack
+                .anim_joint(a.first_joint)
+                .filter(|j| j.script != AnimJoint::NO_SCRIPT)
+                .map(|j| j.script);
+            obj.set_script(ITEM_ROOT, script);
+            let _ = obj.tick(pack);
+            return;
+        }
         if asset == POWER_BLOCK {
             let _ = self.play_on(pack, POWER_BLOCK_APPEAR, instance);
         } else if (MONSTER_FIRST..MONSTER_FIRST + 5).contains(&asset) {

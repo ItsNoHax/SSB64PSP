@@ -82,6 +82,7 @@ pub mod power_block;
 pub mod shell;
 #[cfg(test)]
 mod stage_tests;
+pub mod target;
 pub mod tarubomb;
 #[cfg(test)]
 mod tarubomb_tests;
@@ -152,6 +153,7 @@ pub const INTERACT_ALL: u8 = INTERACT_FIGHTER | INTERACT_WEAPON | INTERACT_ITEM;
 /// The ported `ITKind`s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemKind {
+    Target,
     Container(container::Kind),
     Utility(utility::Kind),
     Equipment(equipment::Kind),
@@ -443,6 +445,7 @@ pub struct ItemDamageColl {
 /// status is set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemStatus {
+    Target,
     Container(container::Status),
     Utility(utility::Status),
     Equipment(equipment::Status),
@@ -464,6 +467,7 @@ pub enum ItemStatus {
 /// `ITStruct::item_vars`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ItemVars {
+    pub target_index: u8,
     /// The item root's rotation: descriptor 1's `DObj`, since
     /// `itManagerMakeItem` ejects descriptor 0's placeholder (RE-432).
     /// `rotate_z` is its Z.
@@ -964,6 +968,7 @@ impl Item {
     /// The tree the runtime animates for this item through [`ItemAnims`].
     pub fn anim_target(&self) -> ItemAnimTarget {
         match self.kind {
+            ItemKind::Target => ItemAnimTarget::Target(self.vars.target_index),
             ItemKind::PowerBlock => ItemAnimTarget::PowerBlock,
             ItemKind::Pakkun => ItemAnimTarget::Pakkun(self.vars.pakkun_index),
             ItemKind::Monster(k) => ItemAnimTarget::Monster(k),
@@ -1013,6 +1018,7 @@ impl RootScript {
 /// The item trees whose animation gameplay reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemAnimTarget {
+    Target(u8),
     /// An item whose animation is presentation only.
     Untracked,
     PowerBlock,
@@ -1083,9 +1089,13 @@ impl ItemAnims for NoItemAnims {}
 /// collision pass, before the next process phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageItemEvent {
+    TargetBroken,
     /// `grInishiePowerBlockSetDamage`: the quake, sparing `hitter`
     /// (`ip->damage_gobj`).
-    PowerBlockDamage { handicap: u8, hitter: Option<u8> },
+    PowerBlockDamage {
+        handicap: u8,
+        hitter: Option<u8>,
+    },
     /// `grInishiePowerBlockSetWait`: the block is gone.
     PowerBlockGone,
     /// `grYamabukiGateSetClosedWait`.
@@ -1094,9 +1104,8 @@ pub enum StageItemEvent {
     MonsterClear,
 }
 
-/// Stage calls one frame can queue: one POW Block makes at most one of
-/// each.
-const STAGE_EVENTS_MAX: usize = 4;
+/// Stage calls one frame can queue, including ten simultaneous target breaks.
+const STAGE_EVENTS_MAX: usize = ITEM_ALLOC_MAX;
 
 /// `lbCommonReflect2D`.
 pub(crate) fn reflect_2d(v: &mut Vec3, n: Vec2) {
@@ -2148,6 +2157,7 @@ impl crate::stage::StageItems for ItemPool {
     fn make_item(&mut self, kind: crate::stage::StageItem, pos: Vec3) -> Option<u32> {
         use crate::stage::StageItem;
         let item = match kind {
+            StageItem::Target(i) => target::make(pos, i),
             StageItem::Bumper { castle, joint } => {
                 let mut item = gbumper::make(pos, 0, castle);
                 item.vars.bonus3_bumper_joint = joint;
@@ -2376,6 +2386,7 @@ where
     I: IntoIterator<Item = MapSurface>,
 {
     match item.status {
+        ItemStatus::Target => true,
         ItemStatus::Container(s) => container::update(item, s, ctx.fx),
         ItemStatus::Utility(s) => utility::update(item, s),
         ItemStatus::Equipment(s) => equipment::update(item, s),
@@ -2468,7 +2479,8 @@ where
         ItemStatus::TaruBomb(s) => return tarubomb::proc_map(item, s, surfaces, common, fx),
         ItemStatus::PKFire(s) => pk_fire::proc_map(item, s, surfaces),
         ItemStatus::LinkBomb(s) => link_bomb::proc_map(item, s, surfaces),
-        ItemStatus::GBumper(_)
+        ItemStatus::Target
+        | ItemStatus::GBumper(_)
         | ItemStatus::PowerBlock(_)
         | ItemStatus::Pakkun(_)
         | ItemStatus::Monster(_) => {}
@@ -2505,6 +2517,7 @@ fn run_hit_proc(
 ) -> Option<bool> {
     let reflector_lr = reflector.0;
     match item.status {
+        ItemStatus::Target => target::hit(item, proc, ctx),
         ItemStatus::Container(s) => container::hit(item, s, proc, ctx.common, ctx.fx),
         ItemStatus::Utility(s) => utility::hit_proc(item, s, proc),
         ItemStatus::Equipment(s) => equipment::hit(item, s, proc, reflector_lr),

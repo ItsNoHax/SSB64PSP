@@ -79,6 +79,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::OnePGame => 600,
         GameScene::OnePIntro => 150,
         GameScene::OnePBonus => 150,
+        GameScene::OnePTargetClear => 850,
+        GameScene::OnePTargetFall => 670,
         GameScene::OnePContinue => 240,
         GameScene::OnePRetry => 320,
         GameScene::OnePClear => 270,
@@ -398,7 +400,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         return match tick {
             4 | 10 | 34 => N64Buttons(N64Buttons::A),
             166 if scene == GameScene::OnePGame => N64Buttons(N64Buttons::A),
@@ -752,7 +754,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         return if (14..=24).contains(&tick) { 80 } else { 0 };
     }
     if scene == GameScene::LinkBomb && tick == 300 {
@@ -889,7 +891,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         // Two separate menu-down edges, then carry the puck to Kirby.
         return match tick {
             6 | 8 => -80,
@@ -2271,7 +2273,7 @@ fn capture_route(scene: GameScene) -> CaptureRoute {
             CaptureRoute::StageSelect
         }
         GameScene::OnePGame
-        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear
+        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear
         | GameScene::FighterSelect
         | GameScene::VsModeMenu
         | GameScene::VsPlayers
@@ -2469,6 +2471,7 @@ unsafe fn training_frame(
     // A 1P Game battle's campaign: it collects the falls and replaces the
     // enemies (RE-450).
     mut campaign: Option<&mut ssb_game::spgame::session::Session>,
+    mut bonus: Option<&mut ssb_game::spgame::bonus_stage::BonusStage>,
 ) -> bool {
     use ssb_game::battle::{Frame, GameStatus};
     if let Some(b) = battle.as_mut() {
@@ -2558,13 +2561,19 @@ unsafe fn training_frame(
     }
     damage_hud.ko.tick();
     for f in scenes(pl, dummies).into_iter().flatten() {
-        let fell = match campaign.as_deref_mut() {
+        let fell = if let (Some(bonus), Some(b)) = (bonus.as_deref_mut(), battle.as_mut()) {
+            bonus.observe(&mut f.fighter, b, stage_ctl.take_target_breaks())
+        } else { match campaign.as_deref_mut() {
             Some(c) => campaign::collect_fall(c, battle, &mut f.fighter),
             None => report_falls(battle.as_mut(), &mut f.fighter),
-        };
+        }};
         if let Some(hud) = damage_hud.damage.get_mut(usize::from(f.fighter.port)) {
             update_damage_hud(hud, &f.fighter, fell, started);
         }
+    }
+    if let (Some(bonus), Some(b)) = (bonus, battle.as_ref()) {
+        campaign::bonus_frame(p, damage_hud, b, bonus.tasks_remain);
+        return false;
     }
     match (campaign, p.stage(stage_index)) {
         (Some(c), Some(stage)) => {
@@ -2620,6 +2629,7 @@ fn entry_frame(
 /// The battle HUD's state beside the world: the damage displays and the
 /// countdown or sudden death's "GO!".
 struct Hud {
+    bonus_tasks: Option<u8>,
     /// By port.
     damage: [ssb_game::hud::DamageDisplay; 4],
     countdown: Option<ssb_game::countdown::Countdown>,
@@ -2734,6 +2744,7 @@ impl Hud {
     #[inline(never)]
     fn new() -> Hud {
         Hud {
+            bonus_tasks: None,
             damage: core::array::from_fn(|port| ssb_game::hud::DamageDisplay::new(port, 0)),
             countdown: None,
             pause: None,
@@ -2866,6 +2877,7 @@ fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game:
 /// `ifCommonPlayerDamageInitInterface` for every port, shown at once
 /// outside a battle.
 fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
+    world.damage_hud.bonus_tasks = None;
     world.damage_hud.countdown = None;
     world.damage_hud.ko = ssb_game::ko::KoEffects::default();
     // `efParticleInitAll` and `efManagerInitEffects`: a new battle scene.
@@ -3630,6 +3642,8 @@ unsafe fn session_frame(
             }
         }
         if let (Screen::Training, false, Some(p), Some(pl)) = (s.screen, lag_tic, &pack, s.play_state.as_mut()) {
+            let (campaign_session, bonus_stage) = s.campaign.as_mut().map_or((None, None), |c|
+                (c.frontend.session.as_deref_mut(), c.bonus.as_deref_mut()));
             vs_done = training_frame(
                 p,
                 s.training_stage,
@@ -3646,7 +3660,8 @@ unsafe fn session_frame(
                 &mut s.vs_battle,
                 &mut s.damage_hud,
                 s.training_paused,
-                s.campaign.as_mut().and_then(|c| c.frontend.session.as_deref_mut()),
+                campaign_session,
+                bonus_stage,
             );
             if let Some(m) = s.training_menu.as_mut() {
                 m.tick_processes();
@@ -4081,6 +4096,10 @@ unsafe fn run() -> ! {
                 campaign::capture_fixture(&mut s, scene);
             }
         }
+        #[cfg(feature = "headless_capture")]
+        if let Some(scene) = capture_scene {
+            campaign::capture_objectives(&mut s, pack.as_ref(), scene, sim_frame_index);
+        }
 
         // RE-429: a diagnostic camera makes the otherwise offscreen Bumper
         // visible without moving it or the fighters.
@@ -4123,7 +4142,7 @@ unsafe fn run() -> ! {
         #[cfg(feature = "headless_capture")]
         if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
             emit_headless_screenshot();
-            if capture_scene == Some(GameScene::OnePGame) {
+            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall)) {
                 campaign::log_capture(&s, sim_frame_index);
             }
             // One line for the capture log: whether the scripted attack
@@ -5339,6 +5358,7 @@ impl DrawAssets {
             | ssb_game::item::ItemKind::MBall => None,
             // No scripts, or trees the stage's ground objects draw.
             ssb_game::item::ItemKind::GBumper
+            | ssb_game::item::ItemKind::Target
             | ssb_game::item::ItemKind::PowerBlock
             | ssb_game::item::ItemKind::Pakkun
             | ssb_game::item::ItemKind::Monster(_) => None,
@@ -6731,6 +6751,14 @@ unsafe fn draw_training(
         cpu_ports,
     );
     draw_damage_hud(p, draw_state, &damage_hud.damage, emblems, stage_index);
+    if let Some(count) = damage_hud.bonus_tasks {
+        if let Some(icon) = p.sprite(ssb_rom::campaign::OBJECTIVES.file, ssb_rom::campaign::OBJECTIVES_TARGET) {
+            for i in 0..count {
+                let x = 30 + (i32::from(icon.width) + 3) * i32::from(i) - i32::from(icon.width) / 2;
+                draw_plain(p, draw_state, &icon, x as f32, (30 - i32::from(icon.height) / 2) as f32);
+            }
+        }
+    }
     if let Some(b) = battle {
         draw_stocks(p, draw_state, b, damage_hud, fighters.map(|x| x.map(|x| &x.fighter)));
         draw_timer(p, draw_state, b);
@@ -7107,10 +7135,18 @@ fn draw_announce(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, end: ssb_ga
         ssb_game::battle::EndKind::TimeUp => (&hud::TIME_UP, &ssb_rom::sprite::GAME_STATUS),
         ssb_game::battle::EndKind::GameSet => (&hud::GAME_SET, &ssb_rom::sprite::GAME_STATUS),
         ssb_game::battle::EndKind::Complete => (&hud::COMPLETE, &ssb_rom::sprite::ANNOUNCE_COMMON),
+        ssb_game::battle::EndKind::Failure => (&hud::FAILURE, &ssb_rom::sprite::ANNOUNCE_COMMON),
     };
     for &(x, y, i) in letters {
         if let Some(s) = f.offsets.get(usize::from(i)).and_then(|&at| p.sprite(f.file, at)) {
-            draw_plain(p, draw_state, &s, x, y);
+            let env = match end {
+                ssb_game::battle::EndKind::Complete => [0xFF, 0, 0],
+                ssb_game::battle::EndKind::Failure => [0, 0, 0xFF],
+                _ => [0; 3],
+            };
+            let d = meshdraw::SObjDraw { x, y, scale: 1.0, prim: [0xFF; 4], env,
+                solid: false, attr: ssb_game::countdown::ATTR_TRANSPARENT };
+            unsafe { meshdraw::draw_sprite(p, &s, &d, draw_state); }
         }
     }
 }

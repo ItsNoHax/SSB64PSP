@@ -5910,6 +5910,47 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         );
     }
 
+    // `sc1PBonusStageMakeTargets`: each course script animates the shared
+    // item model, not its placement descriptor's display list.
+    let target_model = object_index
+        .get(&ssb_rom::bonus1::MODEL)
+        .and_then(|&i| writer.object(i))
+        .ok_or("target model missing")?;
+    for (kind, course) in ssb_rom::bonus1::COURSES.iter().enumerate() {
+        let ground = loaded
+            .stages
+            .iter()
+            .find(|g| g.file == 271 + kind as u32)
+            .ok_or("target course missing")?;
+        let layer = ground
+            .layers
+            .iter()
+            .find(|l| l.index == 1)
+            .ok_or("target course layer 1 missing")?;
+        if layer.graph != (124 + kind as u32, course.start) {
+            return Err("target course base differs from US labels".into());
+        }
+        let file = loaded.files[124 + kind]
+            .as_ref()
+            .ok_or("target course data missing")?;
+        let scripts = ssb_rom::objanim::joint_scripts(&file.data, course.scripts, 11);
+        for (instance, script) in scripts.into_iter().skip(1).enumerate() {
+            if let Some(script) = script {
+                writer.add_anim(
+                    ssb_rom::pack::AnimDesc::ITEM,
+                    ssb_rom::bonus1::anim(kind as u8, instance as u8),
+                    file.id,
+                    0,
+                    &file.data,
+                    &[(
+                        Some(script),
+                        Some(target_model.first_node + ssb_rom::ground_obj::ITEM_ROOT as u32),
+                    )],
+                );
+            }
+        }
+    }
+
     // Stage controller objects (RE-357): the GObjs a `gr*.c` controller
     // makes from `MPGroundData::map_nodes` and animates itself. Each label
     // is an offset into the file `map_nodes` lands in, and only once

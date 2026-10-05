@@ -1042,6 +1042,7 @@ pub struct FighterScene {
     /// `gmCameraSetStatusPlayerZoom`, RE-402): a target with its
     /// `cam_offset_y` added and a distance. `None` runs the battle camera.
     pub entry_zoom: Option<(ssb_engine::math::Vec3, f32)>,
+    pub bonus_follow: bool,
     /// Training's Close-Up view (`sc1PTrainingModeUpdateViewOption`'s
     /// `gmCameraSetStatusPlayerZoom`): the fighter's `closeup_camera_zoom`.
     /// `None` runs the battle camera.
@@ -1216,6 +1217,7 @@ impl FighterScene {
             // hide.
             camera: ssb_game::camera::Camera::default(),
             entry_zoom: None,
+            bonus_follow: false,
             player_zoom: None,
             cam_offset_y,
             camera_zoom_frame,
@@ -1428,6 +1430,16 @@ impl FighterScene {
     /// `others` (the other fighters' [`FighterScene::camera_interest`]s, in
     /// link order); any past the fourth interest are ignored.
     pub fn tick_camera(&mut self, stage: &StageDesc, others: &[ssb_game::camera::Interest]) {
+        if self.bonus_follow {
+            let pos = self.fighter.pos;
+            let bounds = ssb_game::camera::Bounds {
+                top: stage.camera.top as f32, bottom: stage.camera.bottom as f32,
+                left: stage.camera.left as f32, right: stage.camera.right as f32,
+            };
+            let target = bounds.clamp(ssb_engine::math::Vec3::new(pos.x, pos.y + self.cam_offset_y, 0.0));
+            self.camera.tick_player_zoom(target, (0.0, -9.0 * core::f32::consts::PI / 180.0), 9000.0, 0.3, 31.5);
+            return;
+        }
         if let Some((target, dist)) = self.entry_zoom {
             self.camera.tick_player_zoom(
                 target,
@@ -1680,6 +1692,9 @@ pub fn vs_stage_index(pack: &Pack<'_>, gkind: u8) -> Option<u32> {
 /// (`ssb_rom::stage::COMMON_GROUND_FILES`): the VS stages and the 1P
 /// Game's.
 pub fn common_stage_index(pack: &Pack<'_>, gkind: u8) -> Option<u32> {
+    if (17..29).contains(&gkind) {
+        return pack.stage_of_file(271 + u32::from(gkind - 17));
+    }
     let file = *ssb_rom::stage::COMMON_GROUND_FILES.get(usize::from(gkind))?;
     pack.stage_of_file(file)
 }
@@ -1766,7 +1781,7 @@ pub struct ItemAnimsPort<'a, 'p> {
 }
 
 /// The ground object and instance an item's tree is.
-fn item_tree(target: ssb_game::item::ItemAnimTarget) -> Option<(u8, u8)> {
+fn item_tree(target: ssb_game::item::ItemAnimTarget, objects: &ssb_rom::ground_obj::GroundObjects) -> Option<(u8, u8)> {
     use ssb_game::item::ItemAnimTarget;
     use ssb_rom::ground_obj as g;
     match target {
@@ -1775,6 +1790,8 @@ fn item_tree(target: ssb_game::item::ItemAnimTarget) -> Option<(u8, u8)> {
         ItemAnimTarget::Monster(k) => Some((g::MONSTER_FIRST + k as u8, 0)),
         ItemAnimTarget::Bonus3Bumper(i) => Some((g::BONUS3_BUMPER_FIRST + i, 0)),
         ItemAnimTarget::Untracked => None,
+        ItemAnimTarget::Target(i) => objects.iter()
+            .find(|o| o.asset >= ssb_rom::bonus1::FIRST_ASSET).map(|o| (o.asset, i)),
     }
 }
 
@@ -1784,15 +1801,15 @@ fn root_write(w: ssb_rom::ground_obj::RootWrite) -> ssb_game::item::RootWrite {
 
 impl ssb_game::item::ItemAnims for ItemAnimsPort<'_, '_> {
     fn root_frame(&self, target: ssb_game::item::ItemAnimTarget) -> f32 {
-        item_tree(target).map_or(0.0, |(a, i)| self.objects.item_root_frame(a, i))
+        item_tree(target, self.objects).map_or(0.0, |(a, i)| self.objects.item_root_frame(a, i))
     }
     fn make(&mut self, target: ssb_game::item::ItemAnimTarget) {
-        if let Some((asset, instance)) = item_tree(target) {
+        if let Some((asset, instance)) = item_tree(target, self.objects) {
             self.objects.item_make(self.pack, asset, instance);
         }
     }
     fn play(&mut self, target: ssb_game::item::ItemAnimTarget) -> ssb_game::item::RootWrite {
-        let Some((asset, instance)) = item_tree(target) else {
+        let Some((asset, instance)) = item_tree(target, self.objects) else {
             return ssb_game::item::RootWrite::default();
         };
         root_write(self.objects.item_play(self.pack, asset, instance))
@@ -1804,7 +1821,7 @@ impl ssb_game::item::ItemAnims for ItemAnimsPort<'_, '_> {
     ) -> ssb_game::item::RootWrite {
         use ssb_game::item::ItemAnim;
         use ssb_rom::ground_obj as g;
-        let Some((asset, instance)) = item_tree(target) else {
+        let Some((asset, instance)) = item_tree(target, self.objects) else {
             return ssb_game::item::RootWrite::default();
         };
         let (joint, mat) = match anim {
@@ -1818,16 +1835,16 @@ impl ssb_game::item::ItemAnims for ItemAnimsPort<'_, '_> {
         )
     }
     fn root_idle(&self, target: ssb_game::item::ItemAnimTarget) -> bool {
-        item_tree(target)
+        item_tree(target, self.objects)
             .is_none_or(|(asset, instance)| self.objects.item_root_idle(asset, instance))
     }
     fn stop_root(&mut self, target: ssb_game::item::ItemAnimTarget) {
-        if let Some((asset, instance)) = item_tree(target) {
+        if let Some((asset, instance)) = item_tree(target, self.objects) {
             self.objects.item_stop_root(asset, instance);
         }
     }
     fn stop_material(&mut self, target: ssb_game::item::ItemAnimTarget) {
-        if let Some((asset, instance)) = item_tree(target) {
+        if let Some((asset, instance)) = item_tree(target, self.objects) {
             self.objects.item_stop_material(asset, instance);
         }
     }
@@ -1841,7 +1858,7 @@ pub fn place_item_trees(
 ) {
     objects.hide_items();
     for item in items.items().filter(|i| !i.hidden) {
-        if let Some((asset, instance)) = item_tree(item.anim_target()) {
+        if let Some((asset, instance)) = item_tree(item.anim_target(), objects) {
             if let Some(o) = objects.instance_mut(asset, instance) {
                 o.texture = item.texture;
             }

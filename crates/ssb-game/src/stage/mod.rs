@@ -188,6 +188,7 @@ pub enum StageAnim {
 /// Stage items a controller makes (`itManagerMakeItemSetupCommon`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageItem {
+    Target(u8),
     /// `nITKindGBumper`; `castle` is the source's `gkind` test, and
     /// `joint` the `llGRBonus3MapBumpersAnimJoint` script a Race to the
     /// Finish Bumper plays, by its index past descriptor 0.
@@ -444,6 +445,7 @@ pub enum Controller {
 /// A stage's controller, its hazard registries and its file data.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stage {
+    target_breaks: u8,
     pub controller: Controller,
     pub registry: Registry,
     pub attack: Option<GroundAttack>,
@@ -457,6 +459,7 @@ impl Stage {
     /// stages, host tests).
     pub fn none() -> Self {
         Stage {
+            target_breaks: 0,
             controller: Controller::None,
             registry: Registry::default(),
             attack: None,
@@ -504,6 +507,7 @@ impl Stage {
         };
         let point = |kind| objects_of(init.map_objects, kind).next();
         Stage {
+            target_breaks: 0,
             controller,
             registry,
             attack: init.hazard_attack,
@@ -618,6 +622,9 @@ impl Stage {
     ) {
         use crate::item::StageItemEvent;
         for e in events {
+            if e == StageItemEvent::TargetBroken {
+                self.target_breaks += 1;
+            }
             if let Controller::Yamabuki(c) = &mut self.controller {
                 match e {
                     StageItemEvent::MonsterClose => c.set_closed_wait(groups, objects),
@@ -645,6 +652,11 @@ impl Stage {
                 items.pakkun_set_wait_fighter(h);
             }
         }
+    }
+
+    /// The target damage callbacks since the bonus scene last observed them.
+    pub fn take_target_breaks(&mut self) -> u8 {
+        core::mem::take(&mut self.target_breaks)
     }
 
     /// The Arwing lasers this frame's tick made, for the weapon pool

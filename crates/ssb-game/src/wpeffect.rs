@@ -61,6 +61,8 @@ pub enum WeaponEffect {
     FoxBlasterGlow(Vec3),
     /// `efManagerFireGrindMakeEffect`: the Fireball's rebound.
     FireGrind(Vec3),
+    /// `efManagerShieldBreakMakeEffect`: common-bank generator 3.
+    ShieldBreak(Vec3),
     /// `efManagerDustCollideMakeEffect`: the Boomerang meets a surface.
     DustCollide(Vec3),
     /// `efManagerYoshiEggExplodeMakeEffect`: script 3 of Yoshi's own
@@ -315,6 +317,12 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
         }
         WeaponEffect::FireGrind(pos) => {
             effects.ready_at(p, banks, true, FIRE_GRIND_ID, pos, 1.0);
+        }
+        WeaponEffect::ShieldBreak(pos) => {
+            let g = crate::particle::make_generator(p, banks, effects.bank, 3);
+            if g != crate::particle::NIL {
+                p.generator_mut(g).pos = pos;
+            }
         }
         WeaponEffect::DustCollide(pos) => {
             effects.dust_collide(p, banks, pos);

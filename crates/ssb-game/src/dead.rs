@@ -143,6 +143,8 @@ pub struct DeadState {
     /// `SCBATTLE_GAMERULE_1PGAME`: a fall takes a stock, and an enemy
     /// ([`Self::team_bounds`]) is replaced rather than reborn.
     pub spgame_rule: bool,
+    /// Bonus scenes keep the blast effect at the original map position.
+    pub bonus_rule: bool,
     /// `gSCManagerBattleState->players[].is_spgame_enemy` in a 1P Game:
     /// `MPGroundData`'s `map_bound_team_*`, which the enemy dies outside of
     /// instead of `map_bound_*`.
@@ -322,6 +324,7 @@ fn explode(f: &mut Fighter, kind: ExplodeKind) {
     let c = bounds.camera;
     let mut pos = f.pos;
     match kind {
+        _ if f.dead.bonus_rule => {}
         ExplodeKind::Down => pos.x = pos.x.min(c.right).max(c.left),
         ExplodeKind::Right | ExplodeKind::Left => pos.y = pos.y.min(c.top).max(c.bottom),
     }

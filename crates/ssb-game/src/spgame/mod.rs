@@ -11,10 +11,12 @@
 //! The original's scene calls block until the scene returns; here the
 //! manager is a state machine the host advances with each scene's result.
 //! [`frontend`] owns the select and the intro, stage-clear and continue
-//! controllers. Their PSP drawing and the bonus/ending/challenger/message
-//! overlays remain host work.
+//! controllers. [`bonus_stage`] owns Break the Targets' separate battle
+//! and objective accounting; PSP drawing and scene orchestration live in
+//! the host.
 
 pub mod bonus;
+pub mod bonus_stage;
 pub mod continue_scene;
 pub mod frontend;
 pub mod intro;

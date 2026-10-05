@@ -90,6 +90,23 @@ The stage-clear fixture copies the preceding intro frame. These remain
 diagnostics outside the golden manifest; see
 [RE-451](../evidence/re/RE-451.md) for source/ROM checks and limits.
 
+RE-452 extends the seeded bonus intro into a real Break the Targets world.
+The fixtures still bypass the first three campaign wins. Objective counts,
+announcements and result handoffs run through the real scene controller.
+
+| Spec | Captured display |
+|---|---|
+| `onepbonus@600` | Kirby's live course, ten objectives and the campaign's two-minute timer |
+| `oneptargetclear@670`, `oneptargetclear` (850) | Mario's real jab breaks relocated targets; COMPLETE, then ten credited targets in RESULT |
+| `oneptargetfall` (670), `oneptargetfall@750` | A seeded Fall below the blast zone; FAILURE, then zero credited targets |
+| `onepbonus@7790`, `onepbonus@7860` | Unmodified timer reaches FAILURE, then zero credited targets |
+
+The clear fixture stops target motion and offers one target at a time to
+Mario's jab. It does not write counts or results. Campaign stock remains
+two through all three handoffs. Repeated live-course native images are
+pixel-identical. These diagnostics remain outside the 195-scene manifest;
+see [RE-452](../evidence/re/RE-452.md) for the remaining validation limits.
+
 ### Single captures
 
 ```bash

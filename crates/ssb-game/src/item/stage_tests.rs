@@ -67,6 +67,7 @@ impl Scripted {
             ItemAnimTarget::PowerBlock => Some(&mut self.pow),
             ItemAnimTarget::Pakkun(i) => self.pakkun.get_mut(usize::from(i)),
             ItemAnimTarget::Untracked
+            | ItemAnimTarget::Target(_)
             | ItemAnimTarget::Monster(_)
             | ItemAnimTarget::Bonus3Bumper(_) => None,
         }
@@ -124,6 +125,7 @@ impl ItemAnims for Scripted {
             ItemAnimTarget::PowerBlock => !self.pow.live,
             ItemAnimTarget::Pakkun(i) => !self.pakkun[usize::from(i)].live,
             ItemAnimTarget::Untracked
+            | ItemAnimTarget::Target(_)
             | ItemAnimTarget::Monster(_)
             | ItemAnimTarget::Bonus3Bumper(_) => true,
         }

@@ -368,7 +368,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 94 gives `StageDesc` the 1P Game's `camera_bound_team_*` and
 // `map_bound_team_*` (RE-450).
 // 95 adds authored campaign sprites, demo clips and initial camera payloads.
-pub const VERSION: u32 = 95;
+// 96 adds Break the Targets' item-root clips (ITEM slots 64..183).
+pub const VERSION: u32 = 96;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

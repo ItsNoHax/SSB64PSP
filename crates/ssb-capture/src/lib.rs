@@ -287,6 +287,8 @@ pub enum GameScene {
     /// Authored campaign presentation fixtures after the real 1P select.
     OnePIntro,
     OnePBonus,
+    OnePTargetClear,
+    OnePTargetFall,
     OnePContinue,
     OnePRetry,
     OnePClear,
@@ -548,10 +550,12 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 113] = [
+    pub const ALL: [GameScene; 115] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
+        GameScene::OnePTargetClear,
+        GameScene::OnePTargetFall,
         GameScene::OnePContinue,
         GameScene::OnePRetry,
         GameScene::OnePClear,
@@ -669,6 +673,8 @@ impl GameScene {
             GameScene::OnePGame => "onepgame",
             GameScene::OnePIntro => "onepintro",
             GameScene::OnePBonus => "onepbonus",
+            GameScene::OnePTargetClear => "oneptargetclear",
+            GameScene::OnePTargetFall => "oneptargetfall",
             GameScene::OnePContinue => "onepcontinue",
             GameScene::OnePRetry => "onepretry",
             GameScene::OnePClear => "onepclear",

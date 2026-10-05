@@ -146,6 +146,17 @@ pub const GAME_SET: [(f32, f32, u8); 7] = [
     (262.0, 95.0, 3),
 ];
 
+/// `dIFCommonAnnounceFailureSpriteData`, A..Z in ANNOUNCE_COMMON.
+pub const FAILURE: [(f32, f32, u8); 7] = [
+    (77.0, 101.0, 5),
+    (97.0, 101.0, 0),
+    (130.0, 101.0, 8),
+    (145.0, 101.0, 11),
+    (167.0, 101.0, 20),
+    (197.0, 101.0, 17),
+    (225.0, 101.0, 4),
+];
+
 /// `IFDCharacter`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Char {

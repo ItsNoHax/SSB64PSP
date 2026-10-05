@@ -62,6 +62,8 @@ pub enum EndKind {
     GameSet,
     /// `ifCommonAnnounceCompleteInitInterface`: a bonus-stage task or gate.
     Complete,
+    /// Bonus course timeout or a fall.
+    Failure,
 }
 
 /// One `gSCManagerBattleState->players` entry, the fields the battle reads.
@@ -127,6 +129,7 @@ pub struct Battle {
     /// `SCBATTLE_GAMERULE_1PGAME`: a fall takes a stock without the stock
     /// rule's placement, and the 1P Game ([`crate::spgame`]) decides the end.
     pub is_1p_game: bool,
+    pub is_bonus: bool,
     /// The wait the end's proc-set leaves before the next scene: 3
     /// (`ifCommonBattleInterfaceProcSet`) or 45
     /// (`ifCommon1PGameInterfaceProcSet`).
@@ -163,6 +166,7 @@ impl Battle {
             is_sudden_death: false,
             is_reset: false,
             is_1p_game: false,
+            is_bonus: false,
             set_wait: SET_RESTORE_WAIT,
             set_zoom: false,
         };
@@ -203,6 +207,15 @@ impl Battle {
             is_team_battle: self.is_team_battle,
             is_team_attack: self.is_team_attack,
         }
+    }
+
+    /// `sc1PBonusStageMakeInterface`: its thread first runs on tick 1
+    /// and sleeps 60 before GO. The bonus rules do not consume stocks.
+    pub fn new_bonus(time_limit: u8, players: [Player; 4]) -> Self {
+        let mut b = Self::new(Rule::Time, time_limit, 0, players);
+        b.is_bonus = true;
+        b.go_tick = 61;
+        b
     }
 
     /// `scVSBattleSetScoreCheckSuddenDeath`'s new battle for the tied
@@ -339,7 +352,11 @@ impl Battle {
         }
         self.time_remain -= 1;
         if self.time_remain == 0 {
-            self.set_end(EndKind::TimeUp);
+            self.set_end(if self.is_bonus {
+                EndKind::Failure
+            } else {
+                EndKind::TimeUp
+            });
         }
     }
 
@@ -416,6 +433,9 @@ impl Battle {
         // follows ([`crate::spgame::Game::set_player_defeat_stats`]).
         if self.is_1p_game {
             self.players[i].stock_count -= 1;
+        }
+        if self.is_bonus {
+            self.set_end(EndKind::Failure);
         }
     }
 

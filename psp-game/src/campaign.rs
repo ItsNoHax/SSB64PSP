@@ -6,7 +6,7 @@
 //! stage-clear controllers run here, and a requested battle runs on the
 //! shared Training/VS world with the campaign's `Session` collecting its
 //! callbacks, falls and enemy replacements. A scene the PSP cannot run yet
-//! (the bonus stages, Master Hand, the ending, challengers, unlock
+//! (Board the Platforms, Race to the Finish, Master Hand, the ending, challengers, unlock
 //! messages, or a battle whose fighters the pack lacks) stops the campaign
 //! with an explicit blocked screen: it is never replaced by a VS battle or
 //! skipped. Authored presentation is bound by campaign_screen.
@@ -25,6 +25,7 @@ use ssb_game::spgame::{
 
 /// The campaign the PSP is running, across its scenes.
 pub(crate) struct Campaign {
+    pub bonus: Option<alloc::boxed::Box<spgame::bonus_stage::BonusStage>>,
     pub frontend: alloc::boxed::Box<Frontend>,
     /// The current overlay's scheduler clock; `sc1PIntroFuncStart` and each
     /// scene start reset it.
@@ -37,7 +38,7 @@ pub(crate) struct Campaign {
 /// A scene the host cannot run yet.
 #[derive(Clone, Copy)]
 enum Blocked {
-    /// No PSP controller yet: bonus stages, ending, challenger, message.
+    /// No PSP controller yet: Platforms, Race, ending, challenger, message.
     Scene(Scene),
     /// The stage or a fighter (Metal Mario, Giant Donkey Kong, the
     /// Polygons, Master Hand) is not in the pack.
@@ -54,6 +55,7 @@ impl Campaign {
 /// applied its scene and backup data.
 pub(crate) fn start(s: &mut Session) {
     s.campaign = Some(Campaign {
+        bonus: None,
         frontend: alloc::boxed::Box::new(Frontend::campaign(s.spgame_scene.clone(), &s.backup)),
         tic: 0,
         blocked: None,
@@ -114,6 +116,10 @@ pub(crate) fn frame(
 /// A scene request from the frontend.
 fn on_host(s: &mut Session, pack: Option<&Pack<'_>>, scene: Scene) {
     match scene {
+        Scene::BonusStage => match enter_bonus(s, pack) {
+            Ok(()) => s.screen = Screen::Training,
+            Err(blocked) => s.campaign.as_mut().expect("campaign").blocked = Some(blocked),
+        },
         Scene::Battle => match enter_battle(s, pack) {
             Ok(()) => s.screen = Screen::Training,
             Err(blocked) => {
@@ -222,6 +228,62 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     Ok(())
 }
 
+/// `sc1PBonusStageFuncStart`: a separate bonus world, one fighter and ten
+/// targets. Campaign stocks and its accumulated battle records stay put.
+fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> {
+    let c = s.campaign.as_mut().expect("campaign");
+    let data = &c.frontend.session.as_ref().expect("campaign session").data;
+    if data.stage() != Some(Stage::Bonus1) { return Err(Blocked::Scene(Scene::BonusStage)); }
+    if data.player != 0 { return Err(Blocked::Assets(Stage::Bonus1)); }
+    let bonus = spgame::bonus_stage::BonusStage::targets(data);
+    let p = pack.ok_or(Blocked::Assets(Stage::Bonus1))?;
+    let index = ssb_psp_runtime::scene::common_stage_index(p, bonus.state.gkind).ok_or(Blocked::Assets(Stage::Bonus1))?;
+    let stage = p.stage(index).ok_or(Blocked::Assets(Stage::Bonus1))?;
+    let kind = data.fkind as usize;
+    let placement = (0..p.object_count()).filter_map(|i| p.object(i)).find(|o|
+        o.source_file == 124 + kind as u32 && o.source_offset == ssb_rom::bonus1::COURSES[kind].placements)
+        .ok_or(Blocked::Assets(Stage::Bonus1))?;
+    if placement.node_count != 11 || p.fighter(data.fkind as u32).is_none()
+        || p.spawn(&stage, spgame::setup::mapobj::PLAYER).is_none() {
+        return Err(Blocked::Assets(Stage::Bonus1));
+    }
+    let positions: alloc::vec::Vec<_> = (1..11).filter_map(|i| p.node(placement.first_node + i))
+        .map(|n| ssb_engine::math::Vec3::new(n.rest_translate[0], n.rest_translate[1], n.rest_translate[2])).collect();
+    let mut roster: Roster = [None; 4];
+    roster[0] = Some(Entrant { kind: data.fkind, costume: data.costume, level: 1,
+        handicap: ssb_game::stale::HANDICAP_DEFAULT, spawn: spgame::setup::mapobj::PLAYER,
+        team: 0, color: 0, human: true });
+    let gkind = bonus.state.gkind;
+    s.enter(pack, gkind, roster, Some(VsRules { rule: ssb_game::battle::Rule::Time,
+        time_limit: bonus.state.time_limit, stocks: 0, team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL }));
+    s.scene_gkind = gkind;
+    s.vs_battle = Some(bonus.battle());
+    s.items.appear = None;
+    bonus.make_targets(&positions, &mut s.items);
+    let pl = s.play_state.as_mut().ok_or(Blocked::Assets(Stage::Bonus1))?;
+    ssb_game::status::set_wait_or_fall(&mut pl.fighter);
+    pl.fighter.facing = if pl.fighter.pos.x >= 0.0 { ssb_game::fighter::Facing::Left } else { ssb_game::fighter::Facing::Right };
+    pl.fighter.stats.enable();
+    pl.fighter.dead.stock_rule = false;
+    pl.fighter.dead.spgame_rule = false;
+    pl.fighter.dead.bonus_rule = true;
+    pl.bonus_follow = true;
+    s.damage_hud.damage[0] = ssb_game::hud::DamageDisplay::at(0, 0, 55);
+    s.damage_hud.bonus_tasks = Some(10);
+    s.campaign.as_mut().expect("campaign").bonus = Some(alloc::boxed::Box::new(bonus));
+    Ok(())
+}
+
+pub(crate) fn bonus_frame(p: &Pack<'_>, hud: &mut Hud, b: &ssb_game::battle::Battle, tasks: u8) {
+    hud.bonus_tasks = Some(tasks);
+    if b.clock() == 61 {
+        let mut c = ssb_game::countdown::Countdown::sudden_death();
+        c.start_go();
+        hud.countdown = Some(c);
+    }
+    if let Some(c) = hud.countdown.as_mut() { c.tick(&game_status_sizes(p)); }
+}
+
 /// `ftManagerMakeFighter`'s 1P Game fields and `Session`'s KO machinery.
 fn configure(
     sp: &mut Campaign1P,
@@ -254,6 +316,7 @@ pub(crate) fn log_capture(s: &Session, tick: u64) {
                 Scene1P::Continue(_) => "continue",
                 Scene1P::StageClear(_) => "stage-clear",
                 Scene1P::Host(Scene::Battle) => "battle",
+                Scene1P::Host(Scene::BonusStage) => "bonus",
                 _ => "host",
             }
         }
@@ -261,7 +324,7 @@ pub(crate) fn log_capture(s: &Session, tick: u64) {
         "menu"
     };
     let line = alloc::format!(
-        "campaign tick={} scene={} stage={:?} clock={:?} countdown={:?} cpu={:?}\n",
+        "campaign tick={} scene={} stage={:?} clock={:?} countdown={:?} cpu={:?} targets={:?} end={:?} tasks={:?} stocks={:?}\n",
         tick,
         state,
         s.campaign
@@ -270,6 +333,10 @@ pub(crate) fn log_capture(s: &Session, tick: u64) {
         s.vs_battle.as_ref().map(|b| b.clock()),
         s.damage_hud.countdown.is_some(),
         s.dummies[0].as_ref().map(|d| d.computer.behavior),
+        s.campaign.as_ref().and_then(|c| c.bonus.as_ref().map(|b| b.tasks_remain)),
+        s.vs_battle.as_ref().and_then(|b| b.end),
+        s.campaign.as_ref().and_then(|c| c.frontend.session.as_ref().map(|sp| sp.data.bonus_tasks_complete)),
+        s.campaign.as_ref().and_then(|c| c.frontend.session.as_ref().map(|sp| sp.state.players[sp.data.player as usize].stock_count)),
     );
     unsafe {
         psp::sys::sceIoWrite(
@@ -277,6 +344,12 @@ pub(crate) fn log_capture(s: &Session, tick: u64) {
             line.as_ptr() as *const core::ffi::c_void,
             line.len(),
         );
+        let fd = psp::sys::sceIoOpen(b"campaign_capture.txt\0".as_ptr(),
+            psp::sys::IoOpenFlags::WR_ONLY | psp::sys::IoOpenFlags::CREAT | psp::sys::IoOpenFlags::TRUNC, 0o777);
+        if fd.0 >= 0 {
+            psp::sys::sceIoWrite(fd, line.as_ptr() as *const core::ffi::c_void, line.len());
+            psp::sys::sceIoClose(fd);
+        }
     }
 }
 
@@ -328,8 +401,8 @@ pub(crate) fn entry_frame(
                     );
                 }
             }
-            // The camera follows `zoom_port` below; Race, Master Hand and
-            // the bonus stages are not entered.
+            // The camera follows `zoom_port` below; Race and Master Hand
+            // are not entered. Targets uses its separate bonus entry path.
             Action::Zoom(_)
             | Action::CameraDefault
             | Action::Go
@@ -459,6 +532,19 @@ pub(crate) fn replace_enemies(
 pub(crate) fn finish_battle(s: &mut Session, pack: Option<&Pack<'_>>) {
     let Some(c) = s.campaign.as_mut() else { return };
     let sp = c.frontend.session.as_mut().expect("campaign session");
+    if let Some(mut bonus) = c.bonus.take() {
+        let battle = s.vs_battle.take().expect("bonus battle");
+        sp.data.is_reset = battle.is_reset;
+        let tasks = bonus.tasks_remain;
+        sp.finish_bonus_stage(bonus.result(&battle), tasks, &mut s.backup);
+        let scene = c.frontend.sync(&s.backup);
+        c.tic = 0;
+        s.play_state = None;
+        s.dummies = Default::default();
+        s.screen = Screen::Campaign;
+        if matches!(c.frontend.screen, Scene1P::Host(_)) { on_host(s, pack, scene); }
+        return;
+    }
     // Callbacks still queued on the fighters belong to this battle.
     if let Some(pl) = s.play_state.as_mut() {
         for f in scenes(pl, &mut s.dummies).into_iter().flatten() {
@@ -522,7 +608,8 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
             sp.data.stage = Stage::Yoshi as u8;
             sp.manager.scene = Scene::Intro;
         }
-        GameScene::OnePBonus => {
+        GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall => {
+            if scene != GameScene::OnePBonus { sp.data.fkind = ssb_game::fighter::FighterKind::Mario; }
             sp.data.stage = Stage::Bonus1 as u8;
             sp.manager.scene = Scene::Intro;
         }
@@ -542,4 +629,37 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
     c.frontend.sync(&s.backup);
     c.tic = 0;
     s.screen = Screen::Campaign;
+}
+
+/// Diagnostic placement fixtures use the real hit search and real blast
+/// check; they do not set the task counter or the results directly.
+#[cfg(feature = "headless_capture")]
+pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene: GameScene, tick: u64) {
+    let Some(pack) = pack else { return };
+    if !s.campaign.as_ref().is_some_and(|c| c.bonus.is_some()) { return; }
+    if scene == GameScene::OnePTargetFall && tick == 600 {
+        if let Some(pl) = s.play_state.as_mut() {
+            ssb_game::status::set_fall(&mut pl.fighter);
+            pl.fighter.pos.y = -20000.0;
+        }
+    }
+    if scene == GameScene::OnePTargetClear && (600..810).contains(&tick) {
+        let Some(pl) = s.play_state.as_mut() else { return };
+        // Keep the fighter over its real starting floor and offer one
+        // target at a time to Mario's actual jab script; course motion
+        // is stopped only for this diagnostic placement fixture.
+        if tick % 20 == 0 {
+            ssb_game::status::set_wait(&mut pl.fighter);
+            ssb_game::status::set_attack11(&mut pl.fighter);
+        }
+        let next = (0..ssb_game::item::ITEM_ALLOC_MAX as u8).find(|&i| s.items.get(i).is_some_and(|i| i.kind == ssb_game::item::ItemKind::Target));
+        if let Some(index) = next {
+            if let Some(item) = s.items.get_mut(index) {
+                use ssb_game::item::ItemAnims;
+                ssb_psp_runtime::scene::ItemAnimsPort { pack, objects: &mut s.stage_objects }.stop_root(item.anim_target());
+                item.pos = pl.fighter.pos + ssb_engine::math::Vec3::new(100.0 * pl.fighter.facing.sign(), 120.0, 0.0);
+                item.update_attack_positions();
+            }
+        }
+    }
 }
