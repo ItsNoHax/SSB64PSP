@@ -15,6 +15,8 @@ pub enum PauseKind {
     Default,
     /// The player is out of the camera bounds: no zoom, no camera decals.
     PlayerNA,
+    /// A bonus course zooms to its authored map points and adds L: RETRY.
+    Bonus,
 }
 
 /// `IFPauseDecal`: a file 197 sprite, its top-left corner and colours.
@@ -40,8 +42,8 @@ const BLACK: [u8; 3] = [0; 3];
 const GREY: [u8; 3] = [0x80; 3];
 const DARK: [u8; 3] = [0x21; 3];
 
-/// `dIFCommonBattlePauseDecalsSpriteData`'s first twelve; the last two are
-/// Bonus Practice's "L: RETRY".
+/// The common pause-menu decals used by the VS presentation. Bonus courses
+/// add their L: RETRY labels separately from rows 12 and 13 of source data.
 pub const DECALS: [Decal; 12] = [
     decal(4, 232, 191, WHITE, BLACK),
     decal(9, 99, 203, [0x00, 0x95, 0xFF], [0x00, 0x05, 0xC7]),
@@ -61,9 +63,15 @@ pub const DECALS: [Decal; 12] = [
 pub fn decals(kind: PauseKind) -> &'static [Decal] {
     match kind {
         PauseKind::Default => &DECALS,
-        PauseKind::PlayerNA => &DECALS[..10],
+        PauseKind::PlayerNA | PauseKind::Bonus => &DECALS[..10],
     }
 }
+
+/// `dIFCommonBattlePauseDecalsSpriteData[12..14]`: L and RETRY on bonus courses.
+pub const BONUS_RETRY: [Decal; 2] = [
+    decal(15, 34, 203, GREY, DARK),
+    decal(8, 51, 205, WHITE, BLACK),
+];
 
 /// `ifCommonBattlePausePlayerNumMakeSObj`: "1P" to "4P" (sprites 0 to 3)
 /// at (213, 191), white.

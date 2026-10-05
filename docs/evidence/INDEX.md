@@ -465,3 +465,4 @@ editing a record.
 | RE-453 | PSP 1P campaign binding and its deviations | PARTIAL (select START, scene flow and seven stages' battles on PSP; scene draws, remaining stages and runtime checks remain) | gameplay, front-end, battle |  |
 | RE-454 | Platform children, course Bumpers and boarding order | IMPLEMENTED (source/ROM bindings and PSP diagnostic handoffs; N64 runtime and physical PSP comparison pending) | stage, item, animation, pack, campaign, camera |  |
 | RE-455 | Race gate, campaign stocks and bomb-barrel binding | IMPLEMENTED (source/ROM bindings and PSP diagnostic handoffs; N64 runtime and physical PSP comparison pending) | stage, item, pack, campaign, camera |  |
+| RE-456 | Bonus pause map zoom and scene-entry fade | IMPLEMENTED (decomp source, pack round-trip, workspace compile, both PSP builds and production PPSSPP startup; bonus pause capture, N64 runtime and physical PSP checks pending) | campaign, pause, camera, stage, pack |  |

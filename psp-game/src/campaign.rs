@@ -573,6 +573,13 @@ pub(crate) fn finish_battle(s: &mut Session, pack: Option<&Pack<'_>>) {
     let Some(c) = s.campaign.as_mut() else { return };
     let sp = c.frontend.session.as_mut().expect("campaign session");
     if let Some(mut bonus) = c.bonus.take() {
+        if bonus.retry_requested {
+            s.vs_battle = None;
+            s.play_state = None;
+            s.dummies = Default::default();
+            on_host(s, pack, Scene::BonusStage);
+            return;
+        }
         let battle = s.vs_battle.take().expect("bonus battle");
         sp.data.is_reset = battle.is_reset;
         let tasks = bonus.tasks_remain;

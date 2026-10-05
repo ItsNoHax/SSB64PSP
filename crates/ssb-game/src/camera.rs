@@ -291,6 +291,21 @@ impl Camera {
         self.at += vel;
     }
 
+    /// `gmCameraMapZoomFuncCamera`: ease the look-at point toward the
+    /// authored `zoom_start`, the eye toward `zoom_end`, and the FOV to 38.
+    pub fn tick_map_zoom(&mut self, origin: Vec3, target: Vec3) {
+        let vel = self.vel_at();
+        self.fovy_degrees += (DEFAULT_FOVY_DEGREES - self.fovy_degrees) * 0.1;
+        self.at = self.at.lerp(origin, pan_scale(self.target_dist));
+        self.eye = self.eye.lerp(target, 0.1);
+        self.at += vel;
+    }
+
+    /// `gmCameraSetStatusMapZoom`'s initial target distance.
+    pub fn begin_map_zoom(&mut self, origin: Vec3, target: Vec3) {
+        self.target_dist = (origin - target).length();
+    }
+
     /// `func_ovl2_800EB924` through `gGMCameraMatrix`: a world point's
     /// offset from the battle viewport's centre in N64 pixels, Y up.
     ///

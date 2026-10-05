@@ -11,6 +11,10 @@ pub struct BonusStage {
     pub state: BattleState,
     pub tasks_remain: u8,
     pub platforms: [Option<Platform>; BONUSGAME_TASK_MAX as usize],
+    /// Ticks of the source's 12-tick scene-entry fade while the world runs.
+    pub fade_ticks: u8,
+    /// The bonus pause menu's L: RETRY scene reload request.
+    pub retry_requested: bool,
 }
 
 /// A DETECT floor's yakumono, shared by every line on that platform.
@@ -68,7 +72,19 @@ impl BonusStage {
             state,
             tasks_remain: BONUSGAME_TASK_MAX,
             platforms: [None; BONUSGAME_TASK_MAX as usize],
+            fade_ticks: 0,
+            retry_requested: false,
         }
+    }
+
+    /// `lbFadeProcDisplay`: the source fades opaque black to transparent,
+    /// ejecting its actor two ticks after the 12 alpha updates.
+    pub fn fade_alpha(&self) -> u8 {
+        if self.fade_ticks >= 14 {
+            return 0;
+        }
+        let current = self.fade_ticks.min(12);
+        255 - (u16::from(current) * 255 / 12) as u8
     }
 
     /// Priority 4, after fighter interrupts and before movement/item hits.

@@ -90,6 +90,9 @@ const G_ITEM_WEIGHTS: u32 = 0x84;
 const G_CAMERA_TEAM_BOUNDS: u32 = 0x8A;
 /// `map_bound_team_*`: where a 1P Game enemy dies (`ftcommondead.c`).
 const G_MAP_TEAM_BOUNDS: u32 = 0x92;
+/// `MPGroundData::zoom_start`, `zoom_end`: bonus-course pause-map camera.
+const G_ZOOM_START: u32 = 0x9A;
+const G_ZOOM_END: u32 = 0xA0;
 /// `nITKindCommonEnd + 1`.
 pub const ITEM_WEIGHT_COUNT: usize = 20;
 
@@ -176,6 +179,9 @@ pub struct GroundData {
     /// required to be plausible on stages the 1P Game never uses them on.
     pub camera_team_bounds: Bounds,
     pub map_team_bounds: Bounds,
+    /// `zoom_start`/`zoom_end`, used by `gmCameraSetStatusMapZoom`.
+    pub zoom_start: [i16; 3],
+    pub zoom_end: [i16; 3],
 }
 
 fn read_u32(data: &[u8], at: u32) -> Option<u32> {
@@ -330,6 +336,12 @@ pub fn read_ground_data(
         item_weights: item_weights(file, base),
         camera_team_bounds: read_bounds(&file.data, base + G_CAMERA_TEAM_BOUNDS)?,
         map_team_bounds: read_bounds(&file.data, base + G_MAP_TEAM_BOUNDS)?,
+        zoom_start: core::array::from_fn(|i| {
+            read_i16(&file.data, base + G_ZOOM_START + i as u32 * 2).unwrap()
+        }),
+        zoom_end: core::array::from_fn(|i| {
+            read_i16(&file.data, base + G_ZOOM_END + i as u32 * 2).unwrap()
+        }),
     })
 }
 

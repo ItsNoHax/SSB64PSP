@@ -2500,9 +2500,16 @@ unsafe fn training_frame(
 ) -> bool {
     use ssb_game::battle::{Frame, GameStatus};
     if let Some(b) = battle.as_mut() {
-        pause_frame(p, stage_index, pl, dummies, damage_hud, b, controller, pressed);
+        pause_frame(p, stage_index, pl, dummies, damage_hud, b, controller, pressed, bonus.as_deref_mut());
+        if bonus.as_ref().is_some_and(|stage| stage.retry_requested) {
+            return true;
+        }
     }
     let frame = battle.as_mut().map(|b| (b.begin_frame(), b.status));
+    if let (Some(bonus), Some((Frame::Run, _))) = (bonus.as_deref_mut(), frame) {
+        bonus.fade_ticks = bonus.fade_ticks.saturating_add(1);
+        damage_hud.bonus_fade_alpha = bonus.fade_alpha();
+    }
     if let (Some(c), Some((_, status))) = (campaign.as_deref_mut(), frame) {
         campaign::update_game(c, status, &pl.fighter);
     }
@@ -2657,6 +2664,8 @@ fn entry_frame(
 /// countdown or sudden death's "GO!".
 struct Hud {
     bonus_tasks: Option<u8>,
+    /// Black scene-entry fade alpha for a campaign bonus course.
+    bonus_fade_alpha: u8,
     /// By port.
     damage: [ssb_game::hud::DamageDisplay; 4],
     countdown: Option<ssb_game::countdown::Countdown>,
@@ -2689,6 +2698,8 @@ struct PauseState {
     /// `sIFCommonBattlePausePlayerDetail`: the zoomed player draws at high
     /// detail until the battle resumes (RE-426).
     detail: ssb_game::modelpart::Detail,
+    map_origin: ssb_engine::math::Vec3,
+    map_target: ssb_engine::math::Vec3,
 }
 
 /// `ifCommonBattleGoUpdateInterface`'s START and
@@ -2706,6 +2717,7 @@ fn pause_frame(
     b: &mut ssb_game::battle::Battle,
     controller: ControllerState,
     pressed: N64Buttons,
+    mut bonus: Option<&mut ssb_game::spgame::bonus_stage::BonusStage>,
 ) {
     use ssb_game::battle::GameStatus;
     use ssb_game::pause::{self, PauseKind};
@@ -2720,12 +2732,20 @@ fn pause_frame(
     };
     match b.status {
         GameStatus::Go if pressed.contains(N64Buttons::START) && !pl.fighter.dead.is_menu_ignore => {
-            let kind = pause::kind_for(pl.fighter.pos, bounds);
+            let kind = if bonus.is_some() { PauseKind::Bonus } else { pause::kind_for(pl.fighter.pos, bounds) };
             hud.pause = Some(PauseState {
                 kind,
                 origin: pl.camera.pause_eye,
                 detail: pl.fighter.model_parts.detail_curr,
+                map_origin: ssb_engine::math::Vec3::new(stage.zoom_start[0] as f32, stage.zoom_start[1] as f32, stage.zoom_start[2] as f32),
+                map_target: ssb_engine::math::Vec3::new(stage.zoom_end[0] as f32, stage.zoom_end[1] as f32, stage.zoom_end[2] as f32),
             });
+            if kind == PauseKind::Bonus {
+                pl.camera.begin_map_zoom(
+                    ssb_engine::math::Vec3::new(stage.zoom_start[0] as f32, stage.zoom_start[1] as f32, stage.zoom_start[2] as f32),
+                    ssb_engine::math::Vec3::new(stage.zoom_end[0] as f32, stage.zoom_end[1] as f32, stage.zoom_end[2] as f32),
+                );
+            }
             if kind == PauseKind::Default {
                 pl.fighter
                     .model_parts
@@ -2735,6 +2755,12 @@ fn pause_frame(
         }
         GameStatus::Pause => {
             let Some(state) = hud.pause else { return };
+            if state.kind == PauseKind::Bonus && pressed.contains(N64Buttons::L) {
+                if let Some(bonus) = bonus.as_deref_mut() {
+                    bonus.retry_requested = true;
+                }
+                return;
+            }
             if state.kind == PauseKind::Default {
                 pause::steer(&mut pl.camera.pause_eye, controller.stick_x, controller.stick_y);
             }
@@ -2749,7 +2775,9 @@ fn pause_frame(
                 b.reset();
                 return;
             }
-            if state.kind != PauseKind::PlayerNA {
+            if state.kind == PauseKind::Bonus {
+                pl.camera.tick_map_zoom(state.map_origin, state.map_target);
+            } else if state.kind != PauseKind::PlayerNA {
                 // `gmCameraPlayerZoomFuncCamera`: the battle camera while
                 // the player is out of bounds.
                 if pause::kind_for(pl.fighter.pos, bounds) == PauseKind::PlayerNA {
@@ -2772,6 +2800,7 @@ impl Hud {
     fn new() -> Hud {
         Hud {
             bonus_tasks: None,
+            bonus_fade_alpha: 0,
             damage: core::array::from_fn(|port| ssb_game::hud::DamageDisplay::new(port, 0)),
             countdown: None,
             pause: None,
@@ -2905,6 +2934,7 @@ fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game:
 /// outside a battle.
 fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     world.damage_hud.bonus_tasks = None;
+    world.damage_hud.bonus_fade_alpha = 0;
     world.damage_hud.countdown = None;
     world.damage_hud.ko = ssb_game::ko::KoEffects::default();
     // `efParticleInitAll` and `efManagerInitEffects`: a new battle scene.
@@ -6816,6 +6846,13 @@ unsafe fn draw_training(
     if let Some(end) = battle.and_then(|b| b.end) {
         draw_announce(p, draw_state, end);
     }
+    if damage_hud.bonus_fade_alpha != 0 {
+        meshdraw::fill_rect_n64(
+            [10.0, 10.0, 310.0, 230.0],
+            [0, 0, 0, damage_hud.bonus_fade_alpha],
+            draw_state,
+        );
+    }
 }
 
 #[inline(never)]
@@ -7100,6 +7137,11 @@ fn draw_pause_menu(
     draw(0, pause::PLAYER_NUM_POS, [0xFF; 3], [0; 3]);
     for d in pause::decals(kind) {
         draw(d.sprite, d.pos, d.prim, d.env);
+    }
+    if kind == ssb_game::pause::PauseKind::Bonus {
+        for d in pause::BONUS_RETRY {
+            draw(d.sprite, d.pos, d.prim, d.env);
+        }
     }
 }
 

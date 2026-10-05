@@ -373,7 +373,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 // rows and their reachable model/texture parts. No layout change.
 // 98 adds Board the Platforms' six trees' clips/materials and course Bumpers.
 // 99 adds Race to the Finish's bomb-barrel smash display list.
-pub const VERSION: u32 = 99;
+// 100 adds the ground's `zoom_start` and `zoom_end` bonus pause camera points.
+pub const VERSION: u32 = 100;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1583,13 +1584,15 @@ pub struct StageDesc {
     pub team_camera: Extent,
     /// `MPGroundData.map_bound_team_*`: a 1P Game enemy's blast zone.
     pub team_bounds: Extent,
+    /// `MPGroundData.zoom_start` and `zoom_end`, for bonus pause map zoom.
+    pub zoom_start: [i16; 3],
+    pub zoom_end: [i16; 3],
 }
 
 impl StageDesc {
-    /// `16 + 16 + 8 + 8 + 16 + 8 + 28 + 4 + 15`, padded to 120, then the
-    /// fog colour padded to 124, then the 20 item weights and their
-    /// presence byte, padded to 148, then the two team extents.
-    pub const SIZE: usize = 164;
+    /// The prior 164-byte stage entry followed by two three-component
+    /// `i16` bonus-map zoom points.
+    pub const SIZE: usize = 176;
     pub const NO_LAYER: u32 = u32::MAX;
 }
 
@@ -2947,6 +2950,8 @@ impl PackWriter {
             item_weights: ground.item_weights,
             team_camera: extent(ground.camera_team_bounds),
             team_bounds: extent(ground.map_team_bounds),
+            zoom_start: ground.zoom_start,
+            zoom_end: ground.zoom_end,
         });
         (self.stages.len() - 1) as u32
     }
@@ -3251,6 +3256,9 @@ impl PackWriter {
                 for v in [e.top, e.bottom, e.right, e.left] {
                     out.extend_from_slice(&v.to_le_bytes());
                 }
+            }
+            for v in s.zoom_start.into_iter().chain(s.zoom_end) {
+                out.extend_from_slice(&v.to_le_bytes());
             }
         }
         for l in &self.lines {
@@ -4215,6 +4223,8 @@ impl<'a> Pack<'a> {
                 .then(|| core::array::from_fn(|k| self.data[at + 124 + k])),
             team_camera: extent_at(self.data, at + 148),
             team_bounds: extent_at(self.data, at + 156),
+            zoom_start: core::array::from_fn(|k| i16_at(self.data, at + 164 + k * 2)),
+            zoom_end: core::array::from_fn(|k| i16_at(self.data, at + 170 + k * 2)),
         })
     }
 
@@ -5929,6 +5939,8 @@ mod tests {
                 right: 9500,
                 left: -9400,
             },
+            zoom_start: [110, 220, 330],
+            zoom_end: [-110, -220, -330],
         };
 
         let v = |vertex_id, x, y, flags| V {
