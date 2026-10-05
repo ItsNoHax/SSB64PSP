@@ -17,6 +17,7 @@
 
 pub mod bonus;
 pub mod bonus_stage;
+pub mod boss;
 pub mod continue_scene;
 pub mod frontend;
 pub mod intro;

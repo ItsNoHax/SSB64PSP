@@ -64,7 +64,28 @@ pub enum EndKind {
     Complete,
     /// Bonus course timeout or a fall.
     Failure,
+    /// Master Hand's hit points ran out (`sc1PGameBossDefeatInitInterface`).
+    BossDefeat,
 }
+
+/// The phases of Master Hand's defeat (`sc1PGameBossDefeatInitInterface`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BossDefeat {
+    /// `ifCommonBattleSetInterface(..., 90)`: for 90 ticks every process
+    /// is paused but the camera's, the interface's, the effects' and the
+    /// boss wallpaper's (`sc1PGameBossDefeatInterfaceProcUpdate`).
+    Zoom,
+    /// `ifCommonBattleBossDefeatSetGameStatus`: the world runs one tick in
+    /// three (`dIFCommonBattleBossUpdateInterval = 2`) while the camera
+    /// runs every tick, until the wallpaper's fade ends
+    /// (`ifCommonBattleEndSetBossDefeat`, [`Battle::boss_wallpaper_done`]).
+    Slow,
+}
+
+/// `ifCommonBattleSetInterface`'s restore wait for Master Hand's defeat.
+pub const BOSS_DEFEAT_ZOOM_WAIT: u16 = 90;
+/// `dIFCommonBattleBossUpdateInterval`.
+pub const BOSS_DEFEAT_INTERVAL: u8 = 2;
 
 /// One `gSCManagerBattleState->players` entry, the fields the battle reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -140,6 +161,13 @@ pub struct Battle {
     /// `ifCommon1PGameInterfaceProcSet` ran: the host zooms on the player
     /// (`sc1PGameSetCameraZoom`) while the scene holds 45 ticks.
     pub set_zoom: bool,
+    /// Master Hand's defeat, when it is under way.
+    pub boss_defeat: Option<BossDefeat>,
+    /// `dIFCommonBattleBossUpdateWait`.
+    boss_wait: u8,
+    /// `sc1PGameBossDefeatInterfaceProcSet` ran this tick: the host changes
+    /// the wallpaper and starts the defeat camera animation.
+    pub boss_set: bool,
 }
 
 impl Battle {
@@ -173,6 +201,9 @@ impl Battle {
             time_up_is_failure: false,
             set_wait: SET_RESTORE_WAIT,
             set_zoom: false,
+            boss_defeat: None,
+            boss_wait: 0,
+            boss_set: false,
         };
         b.init_placement();
         b
@@ -324,6 +355,9 @@ impl Battle {
             }
             // `ifCommonBattleEndUpdateInterface` pauses the world and falls
             // through to `ifCommonBattleBossDefeatUpdateInterface`.
+            GameStatus::End | GameStatus::BossDefeat if self.boss_defeat.is_some() => {
+                self.boss_frame()
+            }
             GameStatus::End | GameStatus::BossDefeat => {
                 self.status = GameStatus::BossDefeat;
                 if self.restore_wait != 0 {
@@ -345,6 +379,67 @@ impl Battle {
                     Frame::Done
                 }
             }
+        }
+    }
+
+    /// `ifCommonBattleBossDefeatUpdateInterface` during Master Hand's
+    /// defeat: the restore wait, its proc-set, then whether the world runs.
+    fn boss_frame(&mut self) -> Frame {
+        self.status = GameStatus::BossDefeat;
+        self.boss_set = false;
+        if self.restore_wait != 0 {
+            self.restore_wait -= 1;
+        } else {
+            match self.boss_defeat {
+                // `sc1PGameBossDefeatInterfaceProcSet`, then
+                // `ifCommonBattleBossDefeatSetGameStatus`.
+                Some(BossDefeat::Zoom) => {
+                    self.boss_defeat = Some(BossDefeat::Slow);
+                    self.boss_set = true;
+                    self.restore_wait = u16::MAX;
+                    self.boss_wait = 0;
+                }
+                // `ifCommonBattleInterfaceProcSet`.
+                _ => {
+                    self.status = GameStatus::Set;
+                    self.restore_wait = SET_RESTORE_WAIT;
+                    self.set_zoom = false;
+                    return Frame::Frozen;
+                }
+            }
+        }
+        match self.boss_defeat {
+            Some(BossDefeat::Slow) if self.boss_wait == 0 => {
+                self.boss_wait = BOSS_DEFEAT_INTERVAL;
+                Frame::Run
+            }
+            Some(BossDefeat::Slow) => {
+                self.boss_wait -= 1;
+                Frame::Frozen
+            }
+            _ => Frame::Frozen,
+        }
+    }
+
+    /// `sc1PGameBossDefeatInitInterface`'s battle half
+    /// (`ifCommonBattleSetInterface(sc1PGameBossDefeatInterfaceProcUpdate,
+    /// sc1PGameBossDefeatInterfaceProcSet, ..., 90)`).
+    pub fn boss_defeat(&mut self) {
+        if self.end.is_some() {
+            return;
+        }
+        self.status = GameStatus::End;
+        self.restore_wait = BOSS_DEFEAT_ZOOM_WAIT;
+        self.end = Some(EndKind::BossDefeat);
+        self.boss_defeat = Some(BossDefeat::Zoom);
+    }
+
+    /// `ifCommonBattleEndSetBossDefeat`: the defeat wallpaper's last fade
+    /// ended, and the next tick sets the scene.
+    pub fn boss_wallpaper_done(&mut self) {
+        if self.boss_defeat == Some(BossDefeat::Slow) {
+            self.status = GameStatus::BossDefeat;
+            self.restore_wait = 0;
         }
     }
 

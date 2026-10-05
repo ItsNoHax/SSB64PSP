@@ -483,6 +483,8 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
                 _ => M::SpecialHi,
             }
         }
+        // Every `dFTBossSpecialStatusDescs` entry has `nFTMotionAttackIDNone`.
+        AnyStatus::Boss(_) => M::None,
         AnyStatus::Ness(s) => {
             use crate::status::NessStatus as N;
             match s {

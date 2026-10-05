@@ -970,6 +970,88 @@ const NESS: &[DamageCollDesc] = &[
     ),
 ];
 
+/// `dBossMain_attr.damage_coll_descs` (250_BossMain.c): Master Hand's
+/// eleven boxes, every one grabbable.
+const BOSS: &[DamageCollDesc] = &[
+    hurt(
+        20,
+        1,
+        true,
+        Vec3::new(15.0, 105.0, -196.0),
+        Vec3::new(574.0, 1020.0, 590.0),
+    ),
+    hurt(
+        8,
+        1,
+        true,
+        Vec3::new(132.0, -90.0, 0.0),
+        Vec3::new(210.0, 461.0, 240.0),
+    ),
+    hurt(
+        11,
+        1,
+        true,
+        Vec3::new(39.0, 27.0, -41.0),
+        Vec3::new(391.0, 216.0, 221.0),
+    ),
+    hurt(
+        13,
+        1,
+        true,
+        Vec3::new(208.0, 28.0, 19.0),
+        Vec3::new(336.0, 163.0, 158.0),
+    ),
+    hurt(
+        15,
+        1,
+        true,
+        Vec3::new(65.0, 55.0, 14.0),
+        Vec3::new(348.0, 169.0, 192.0),
+    ),
+    hurt(
+        17,
+        1,
+        true,
+        Vec3::new(288.0, 38.0, 0.0),
+        Vec3::new(411.0, 189.0, 162.0),
+    ),
+    hurt(
+        19,
+        1,
+        true,
+        Vec3::new(58.0, 60.0, 0.0),
+        Vec3::new(448.0, 225.0, 201.0),
+    ),
+    hurt(
+        22,
+        1,
+        true,
+        Vec3::new(227.0, 30.0, 0.0),
+        Vec3::new(319.0, 191.0, 162.0),
+    ),
+    hurt(
+        24,
+        1,
+        true,
+        Vec3::new(0.0, 33.0, 1.0),
+        Vec3::new(450.0, 179.0, 189.0),
+    ),
+    hurt(
+        26,
+        1,
+        true,
+        Vec3::new(199.0, 28.0, 0.0),
+        Vec3::new(220.0, 183.0, 162.0),
+    ),
+    hurt(
+        28,
+        1,
+        true,
+        Vec3::new(50.0, 30.0, 0.0),
+        Vec3::new(370.0, 162.0, 162.0),
+    ),
+];
+
 /// A fighter's hurtbox table, or `None` for an unported fighter.
 pub fn damage_colls(kind: FighterKind) -> Option<&'static [DamageCollDesc]> {
     Some(match kind {
@@ -985,6 +1067,7 @@ pub fn damage_colls(kind: FighterKind) -> Option<&'static [DamageCollDesc]> {
         FighterKind::Pikachu => PIKACHU,
         FighterKind::Purin => PURIN,
         FighterKind::Ness => NESS,
+        FighterKind::Boss => BOSS,
         _ => return None,
     })
 }

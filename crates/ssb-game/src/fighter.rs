@@ -338,6 +338,8 @@ pub struct Fighter {
     pub pikachu: crate::pikachu::PikachuState,
     pub purin: crate::purin::PurinState,
     pub ness: crate::ness::NessState,
+    /// Master Hand's passive and status variables ([`crate::boss`]).
+    pub boss: crate::boss::BossState,
     /// This fighter's side of an Inhale — `crate::capture_kirby`.
     pub kirby_capture: crate::capture_kirby::CaptureKirbyState,
     pub thrown: crate::thrown::ThrownState,
@@ -504,6 +506,7 @@ impl Fighter {
             pikachu: crate::pikachu::PikachuState::default(),
             purin: crate::purin::PurinState::default(),
             ness: crate::ness::NessState::default(),
+            boss: crate::boss::BossState::default(),
             kirby_capture: crate::capture_kirby::CaptureKirbyState::default(),
             thrown: crate::thrown::ThrownState::default(),
             egg: crate::capture_yoshi::CaptureYoshiState::default(),
@@ -872,6 +875,8 @@ impl Fighter {
         // (a jumpsquat ending, a platform drop), so the
         // situation is re-read afterwards rather than captured before.
         crate::status::update(self);
+        // Master Hand's `proc_update` and `proc_interrupt` read the map.
+        crate::boss::update(self, surfaces);
         crate::dokan::run_pending(self, surfaces);
         self.resolve_cliff_release(surfaces);
         // `ftMainProcUpdateInterrupt`, after proc_update/proc_interrupt,
@@ -922,6 +927,12 @@ impl Fighter {
         // The dead and rebirth statuses have no `proc_physics`, and their
         // `proc_map` (if any) replaces the map step.
         if crate::dead::tick_status(self) {
+            self.root_motion = RootMotion::default();
+            self.weapon_spawn_anchor = None;
+            return;
+        }
+        // Master Hand's statuses own their physics and map callbacks.
+        if crate::boss::tick_status(self, &surfaces) {
             self.root_motion = RootMotion::default();
             self.weapon_spawn_anchor = None;
             return;
@@ -1219,7 +1230,8 @@ impl Fighter {
             crate::status::AnyStatus::Kirby(_)
             | crate::status::AnyStatus::Pikachu(_)
             | crate::status::AnyStatus::Purin(_)
-            | crate::status::AnyStatus::Ness(_) => crate::status::Status::Wait,
+            | crate::status::AnyStatus::Ness(_)
+            | crate::status::AnyStatus::Boss(_) => crate::status::Status::Wait,
         };
         if crate::dokan::apply_ground_physics(self)
             || crate::item_use::apply_ground_physics(self)

@@ -122,6 +122,11 @@ pub enum WeaponKind {
     },
     PikachuThunderJolt,
     PikachuThunder,
+    /// `nWPKindBulletNormal` or `nWPKindBulletHard`, Master Hand's finger
+    /// gun (`wpBossBullet{Normal,Hard}MakeWeapon`).
+    BossBullet {
+        hard: bool,
+    },
 }
 
 /// One deferred weapon creation. The owner is identified by player port, the
@@ -277,6 +282,110 @@ impl FoxBlaster {
             // `wpFoxBlasterProcMap`.
             fx.push(Fx::FoxBlasterGlow(hit.position));
             return false;
+        }
+        self.position = wanted;
+        true
+    }
+}
+
+/// `llBossMainMotionBulletNormalWeaponAttributes` and `...Hard...` in
+/// `249_BossMainMotion.c`, which are identical: size 40, angle 361,
+/// knockback 100/10/0, 5 damage, one shield damage.
+pub const BOSS_BULLET_HITBOX: Hitbox = Hitbox {
+    damage: 5,
+    offset: Vec3::ZERO,
+    radius: 20.0,
+    angle: 361,
+    kb_scale: 100,
+    kb_weight: 10,
+    kb_base: 0,
+    element: crate::combat::Element::Normal,
+    shield_damage: 1,
+};
+pub const BOSS_BULLET_MAP_COLL: BodyColl = BodyColl {
+    top: 10.0,
+    center: 0.0,
+    bottom: -10.0,
+    width: 10.0,
+};
+/// `WPYUBIBULLET_EXPLODE_LIFETIME` and `..._SIZE` (`wpvars.h`).
+pub const BOSS_BULLET_EXPLODE_LIFETIME: u16 = 6;
+pub const BOSS_BULLET_EXPLODE_SIZE: f32 = 180.0;
+
+/// Source `wpBossBullet`: a straight shot (`vel = { 160 * lr, -25 }`, no
+/// `proc_update`) that bursts where it meets the map
+/// (`wpBossBulletExplodeInitVars`): a 180-wide fire blast for six frames
+/// that neither hops nor reflects.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BossBullet {
+    pub owner_port: u8,
+    pub damage: i32,
+    pub position: Vec3,
+    pub velocity: Vec3,
+    /// `nWPKindBulletHard`; the two share their attributes.
+    pub hard: bool,
+    pub exploded: bool,
+    pub lifetime: u16,
+}
+
+impl BossBullet {
+    fn new(spawn: WeaponSpawn, hard: bool) -> Self {
+        let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
+        Self {
+            owner_port: spawn.owner_port,
+            damage: BOSS_BULLET_HITBOX.damage,
+            position: spawn.position,
+            velocity: Vec3::new(
+                crate::boss::BULLET_VEL_X * lr,
+                crate::boss::BULLET_VEL_Y,
+                0.0,
+            ),
+            hard,
+            exploded: false,
+            lifetime: 0,
+        }
+    }
+
+    pub fn hitbox(&self) -> Hitbox {
+        if self.exploded {
+            Hitbox {
+                damage: self.damage,
+                radius: BOSS_BULLET_EXPLODE_SIZE * 0.5,
+                element: crate::combat::Element::Fire,
+                ..BOSS_BULLET_HITBOX
+            }
+        } else {
+            Hitbox {
+                damage: self.damage,
+                ..BOSS_BULLET_HITBOX
+            }
+        }
+    }
+
+    /// `wpBossBulletExplodeInitVars`.
+    fn explode(&mut self) {
+        self.exploded = true;
+        self.lifetime = BOSS_BULLET_EXPLODE_LIFETIME;
+        self.velocity = Vec3::ZERO;
+    }
+
+    /// The explosion's `wpBossBulletExplodeProcUpdate`, or the shot's
+    /// move and `wpBossBulletProcMap`.
+    fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        if self.exploded {
+            self.lifetime -= 1;
+            return self.lifetime != 0;
+        }
+        let wanted = self.position + self.velocity;
+        if let Some(hit) = map_contact(surfaces(), self.position, wanted, BOSS_BULLET_MAP_COLL) {
+            self.position = hit.position;
+            self.explode();
+            fx.push(Fx::SparkleWhiteMultiExplode(self.position));
+            return true;
         }
         self.position = wanted;
         true
@@ -1463,6 +1572,7 @@ enum Weapon {
     PKTrail(PKThunderTrail),
     Laser(ArwingLaser),
     Monster(crate::monster_weapon::MonsterShot),
+    BossBullet(BossBullet),
 }
 
 /// A live Mario Fireball. Weapons are match-owned, not fighter-owned:
@@ -1683,6 +1793,8 @@ impl Weapon {
                 wflags(a.can_setoff, a.can_hop, a.can_reflect, a.can_absorb)
             }
             Weapon::Bomb(_) => wflags(false, true, false, false),
+            // The burst clears `can_hop` and `can_reflect` only.
+            Weapon::BossBullet(b) => wflags(false, !b.exploded, !b.exploded, true),
             Weapon::Boomerang(_) | Weapon::Egg(_) => wflags(true, true, true, false),
             Weapon::Cutter(_) | Weapon::PKThunder(_) => wflags(true, false, true, true),
             Weapon::Thunder(_) | Weapon::Trail(_) | Weapon::PKTrail(_) => {
@@ -1729,6 +1841,7 @@ impl Weapon {
             Weapon::Blaster(w) => w.position,
             Weapon::Laser(w) => w.position,
             Weapon::Monster(w) => w.position,
+            Weapon::BossBullet(w) => w.position,
             Weapon::ChargeShot(w) => w.position,
             Weapon::Bomb(w) => w.position,
             Weapon::Boomerang(w) => w.position,
@@ -1811,6 +1924,13 @@ impl Weapon {
             // The head has no callbacks.
             Weapon::Thunder(_) => {}
             Weapon::Monster(m) => m.proc_fx(shot_proc(proc), fx),
+            // `wpBossBulletProcHit` for all four; the burst clears all but
+            // `proc_absorb`.
+            Weapon::BossBullet(b) => {
+                if !b.exploded || proc == Proc::Absorb {
+                    fx.push(Fx::SparkleWhiteMultiExplode(pos));
+                }
+            }
         }
     }
 
@@ -1819,8 +1939,11 @@ impl Weapon {
     /// `can_hop` weapon that met the shield under 135 degrees hops, any
     /// other runs its `proc_shield`. Returns whether the weapon lives on.
     fn on_shield(&mut self, shield: crate::combat::ShieldCollide, fx: &mut Emit) -> bool {
-        // The Bomb's explosion clears `proc_hop` and `proc_shield`.
-        if matches!(self, Weapon::Bomb(b) if b.exploded) {
+        // The Bomb's and the bullet's bursts clear `proc_hop` and
+        // `proc_shield`.
+        if matches!(self, Weapon::Bomb(b) if b.exploded)
+            || matches!(self, Weapon::BossBullet(b) if b.exploded)
+        {
             return true;
         }
         let hops = self.flags().can_hop && !self.is_grounded();
@@ -1884,6 +2007,8 @@ impl Weapon {
             }
             // `wpPikachuThunderJoltAirProcHop`.
             Weapon::Jolt(j) => j.velocity = turn(j.velocity),
+            // `wpBossBulletProcHop`.
+            Weapon::BossBullet(b) => b.velocity = turn(b.velocity),
             // `wpNessPKFireProcHop`.
             Weapon::PKFire(p) => {
                 p.velocity = turn(p.velocity);
@@ -2985,6 +3110,7 @@ impl WeaponPool {
                 Weapon::ChargeShot(SamusChargeShot::new(spawn, charge))
             }
             WeaponKind::SamusBomb => Weapon::Bomb(SamusBomb::new(spawn)),
+            WeaponKind::BossBullet { hard } => Weapon::BossBullet(BossBullet::new(spawn, hard)),
             WeaponKind::LinkBoomerang {
                 is_smash,
                 stick_x,
@@ -3115,6 +3241,7 @@ impl WeaponPool {
             ),
             Weapon::ChargeShot(c) => (c.owner_port, c.hitbox(), c.position, c.velocity),
             Weapon::Bomb(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
+            Weapon::BossBullet(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
             Weapon::Boomerang(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
             Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position, e.velocity),
             Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position, s.velocity),
@@ -3341,6 +3468,8 @@ impl WeaponPool {
                     self.hit_records[i] = [None; 4];
                 }
             }
+            // The burst has no `proc_hit`.
+            Weapon::BossBullet(b) if b.exploded => {}
             Weapon::Monster(m) if m.survives(ShotProc::Hit) => {}
             _ => *slot = None,
         }
@@ -3507,6 +3636,7 @@ impl WeaponPool {
                     Weapon::Blaster(blaster) => blaster.tick(surfaces, fx),
                     Weapon::ChargeShot(shot) => shot.tick(surfaces, fx),
                     Weapon::Bomb(bomb) => bomb.tick(surfaces, fx),
+                    Weapon::BossBullet(bullet) => bullet.tick(surfaces, fx),
                     Weapon::Boomerang(boomerang) => {
                         let parent = boomerang
                             .parent_port
@@ -3703,6 +3833,7 @@ impl WeaponPool {
                 Weapon::Blaster(b) => (b.owner_port, FOX_BLASTER_HITBOX, b.position, b.velocity),
                 Weapon::ChargeShot(c) => (c.owner_port, c.hitbox(), c.position, c.velocity),
                 Weapon::Bomb(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
+                Weapon::BossBullet(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
                 Weapon::Boomerang(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
                 Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position, e.velocity),
                 Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position, s.velocity),
@@ -3730,6 +3861,7 @@ impl WeaponPool {
                 Weapon::Blaster(b) => b.damage,
                 Weapon::ChargeShot(c) => c.damage,
                 Weapon::Bomb(_) => hitbox.damage,
+                Weapon::BossBullet(b) => b.damage,
                 Weapon::Boomerang(b) => b.damage,
                 Weapon::Egg(e) => e.damage,
                 Weapon::Star(s) => s.damage,
@@ -3869,6 +4001,13 @@ impl WeaponPool {
                         Weapon::Star(s) => s.reflect(defender),
                         Weapon::Cutter(c) => c.reflect(defender),
                         Weapon::Jolt(j) => j.reflect(defender),
+                        // `wpBossBulletProcReflector`.
+                        Weapon::BossBullet(b) => reflect_shot(
+                            &mut b.velocity,
+                            &mut b.owner_port,
+                            &mut b.damage,
+                            defender,
+                        ),
                         _ => unreachable!("not reflectable"),
                     }
                     // `wpProcessProcHitCollisions`: the reflector's team.
@@ -3947,6 +4086,11 @@ impl WeaponPool {
                 if let Weapon::Cutter(c) = weapon {
                     record_weapon_victim(records, defender.port);
                     c.hit_ports |= bit;
+                    continue;
+                }
+                // The bullet's burst has no `proc_hit` and hits on.
+                if matches!(weapon, Weapon::BossBullet(b) if b.exploded) {
+                    record_weapon_victim(records, defender.port);
                     continue;
                 }
                 // `wpYoshiEggThrowProcHit`: the egg explodes in place.
@@ -4357,6 +4501,14 @@ impl WeaponPool {
     pub fn blasters(&self) -> impl Iterator<Item = FoxBlaster> + '_ {
         self.slots.iter().flatten().filter_map(|w| match w {
             Weapon::Blaster(b) => Some(*b),
+            _ => None,
+        })
+    }
+
+    /// Master Hand's live finger-gun shots.
+    pub fn boss_bullets(&self) -> impl Iterator<Item = BossBullet> + '_ {
+        self.slots.iter().flatten().filter_map(|w| match w {
+            Weapon::BossBullet(b) => Some(*b),
             _ => None,
         })
     }

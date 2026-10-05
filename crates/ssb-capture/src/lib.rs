@@ -296,6 +296,12 @@ pub enum GameScene {
     OnePRaceClear,
     OnePRaceFall,
     OnePRaceHazards,
+    /// `onepboss`: Final Destination with Master Hand after the intro
+    /// camera (RE-457).
+    OnePBoss,
+    /// `onepbossdefeat`: Master Hand's hit points seeded out, then the
+    /// real defeat sequence (RE-457).
+    OnePBossDefeat,
     OnePContinue,
     OnePRetry,
     OnePClear,
@@ -557,7 +563,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 122] = [
+    pub const ALL: [GameScene; 124] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -570,6 +576,8 @@ impl GameScene {
         GameScene::OnePRaceClear,
         GameScene::OnePRaceFall,
         GameScene::OnePRaceHazards,
+        GameScene::OnePBoss,
+        GameScene::OnePBossDefeat,
         GameScene::OnePContinue,
         GameScene::OnePRetry,
         GameScene::OnePClear,
@@ -696,6 +704,8 @@ impl GameScene {
             GameScene::OnePRaceClear => "onepraceclear",
             GameScene::OnePRaceFall => "onepracefall",
             GameScene::OnePRaceHazards => "onepracehazards",
+            GameScene::OnePBoss => "onepboss",
+            GameScene::OnePBossDefeat => "onepbossdefeat",
             GameScene::OnePContinue => "onepcontinue",
             GameScene::OnePRetry => "onepretry",
             GameScene::OnePClear => "onepclear",

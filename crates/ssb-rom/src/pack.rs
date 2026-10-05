@@ -374,7 +374,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 98 adds Board the Platforms' six trees' clips/materials and course Bumpers.
 // 99 adds Race to the Finish's bomb-barrel smash display list.
 // 100 adds the ground's `zoom_start` and `zoom_end` bonus pause camera points.
-pub const VERSION: u32 = 100;
+// 101 adds Master Hand's 30 motion slots (`SLOT_COUNT` 653) and his baked
+// intro and defeat camera animations.
+pub const VERSION: u32 = 101;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

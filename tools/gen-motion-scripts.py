@@ -49,6 +49,7 @@ FIGHTERS = [
     ("Pikachu", "242_PikachuMainMotion.c", "ftpikachu/ftpikachustatus.h"),
     ("Purin", "232_PurinMainMotion.c", "ftpurin/ftpurinstatus.h"),
     ("Ness", "238_NessMainMotion.c", "ftness/ftnessstatus.h"),
+    ("Boss", "249_BossMainMotion.c", "ftboss/ftbossstatus.h"),
 ]
 
 COMMENT_RE = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
@@ -227,7 +228,10 @@ def parse_file(path, macros, common=None, base=0, demo=False):
             # Embedded data (`FTThrowHitDesc`, `FTSpecialColl`): every scalar
             # is one 32-bit word. Only its size matters to the scripts.
             scalars = [t for t in re.split(r"[{},\s]+", m.group(4)) if t]
-            if m.group(1) == "FTKirbyCopy":
+            if m.group(1) == "WPAttributes":
+                # Master Hand's bullets: a 52-byte `WPAttributes`.
+                words = ["0"] * 13
+            elif m.group(1) == "FTKirbyCopy":
                 # `{ s16 fkind, u16 copy, f32 scale, s32 damage }`: 12 bytes.
                 words = ["0"] * (len(scalars) // 4 * 3)
             else:
@@ -269,7 +273,7 @@ MAIN_FILES = {
     "Samus": "217_SamusMain.c", "Luigi": "221_LuigiMain.c", "Link": "225_LinkMain.c",
     "Yoshi": "247_YoshiMain.c", "Captain": "236_CaptainMain.c",
     "Kirby": "229_KirbyMain.c", "Pikachu": "243_PikachuMain.c", "Purin": "233_PurinMain.c",
-    "Ness": "239_NessMain.c",
+    "Ness": "239_NessMain.c", "Boss": "250_BossMain.c",
 }
 
 ATTR_FIELDS = ["size", "rebound_anim_length", "shield_size", "shield_break_vel_y",
@@ -450,13 +454,16 @@ def main():
         w.append(f"#[rustfmt::skip]\nstatic {up}_SPECIAL_MOTION: [i16; {n_sp}] = [{', '.join(sp)}];\n\n")
         a = combat_attrs(os.path.join(refs, "src/relocData", MAIN_FILES[name]))
         r = a["hit_detect_range"]
+        # Master Hand's -1: no item-light joint.
+        light = int(a["joint_itemlight_id"])
+        light = "u8::MAX" if light < 0 else str(light)
         w.append(f"pub static {up}_ATTRS: CombatAttrs = CombatAttrs {{\n"
                  f"    size: {fl(a['size'])},\n    rebound_anim_length: {fl(a['rebound_anim_length'])},\n"
                  f"    shield_size: {fl(a['shield_size'])},\n    shield_break_vel_y: {fl(a['shield_break_vel_y'])},\n"
                  f"    jostle_width: {fl(a['jostle_width'])},\n    jostle_x: {fl(a['jostle_x'])},\n"
                  f"    hit_detect_range: [{fl(r[0])}, {fl(r[1])}, {fl(r[2])}],\n"
                  f"    effect_joint_ids: [{', '.join(str(int(j)) for j in a['effect_joint_ids'])}],\n"
-                 f"    joint_itemlight_id: {int(a['joint_itemlight_id'])},\n}};\n\n")
+                 f"    joint_itemlight_id: {light},\n}};\n\n")
         w.append(f"pub static {up}: FighterScripts = FighterScripts {{\n"
                  f"    words: &{up}_WORDS,\n    motions: &{up}_MOTIONS,\n"
                  f"    special_status_motion: &{up}_SPECIAL_MOTION,\n}};\n\n")

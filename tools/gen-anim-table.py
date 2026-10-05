@@ -763,6 +763,20 @@ DEMO_SLOTS = [("Win1", "nFTDemoStatusWin1"), ("Win2", "nFTDemoStatusWin2"),
               ("IntroL", "nFTDemoStatusIntroL"),
               ("IntroR", "nFTDemoStatusIntroR")]
 
+# Master Hand's own motions (`ftBossMotion`, `nFTBossMotionDefault` to
+# `nFTBossMotionAppear`), last so every earlier slot keeps its index. Each
+# resolves through `dFTBossMotionDescs[motion]`. Eight are 32-bit
+# `AnimJoint` clips (`FTANIM_FLAG_ANIMJOINT`); `BOSS_ANIM_JOINT` records
+# which, and their length is read from the ROM like the entry clips'.
+BOSS_MOTIONS = ["Default", "Hippataku", "Harau", "Okuhikouki1", "Okuhikouki2",
+                "Okuhikouki3", "Walk", "WalkLoop", "WalkWait", "WalkShoot",
+                "GootsubusuUp", "GootsubusuWait", "GootsubusuEnd", "GootsubusuDown",
+                "Tsutsuku1", "Tsutsuku3", "Tsutsuku2", "Drill", "Okukouki",
+                "Yubideppou1", "Yubideppou3", "Yubideppou2", "Okupunch1", "Okupunch2",
+                "Okupunch3", "Okutsubushi", "DeadLeft", "DeadCenter", "DeadRight",
+                "Appear"]
+BOSS_SLOTS = [f"Boss{m}" for m in BOSS_MOTIONS]
+
 # The fighter whose motion enum a table uses.
 MOTION_ENUM_OWNER = {"MMario": "Mario", "NMario": "Mario", "NFox": "Fox",
                      "NDonkey": "Donkey", "GDonkey": "Donkey", "NSamus": "Samus",
@@ -780,7 +794,8 @@ ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
              + [(name, None, None) for name, _, _ in FINAL_SPECIAL_SLOTS]
              + [(name, status, None) for name, status in TAIL_COMMON_SLOTS]
              + [(name, None, None) for name in APPEAR_SLOTS]
-             + [(name, None, None) for name, _ in DEMO_SLOTS])
+             + [(name, None, None) for name, _ in DEMO_SLOTS]
+             + [(name, None, None) for name in BOSS_SLOTS])
 
 # The slots whose animation ends on its own, and whose length the status
 # machine therefore reads (RE-035). Everything after them loops until it is
@@ -801,6 +816,7 @@ FIGHTERS = ["Mario", "Fox", "Donkey", "Samus", "Luigi", "Link", "Yoshi",
             "NNess", "GDonkey"]
 
 ACTION_STATUS_START = 6
+PROJECT_REFS = [None]
 
 # ── AObjEvent16 decoding ────────────────────────────────────────────────
 # Mirrors ftAnimParseDObjFigatree. Only the two facts the length depends on
@@ -1039,8 +1055,14 @@ def motion_descs(refs):
             sym = re.match(r"&ll(\w+?)FileID$", words[i])
             flags = words[i + 2]
             entries.append((sym.group(1) if sym else None, anim_desc_parts(flags)))
+            ANIM_JOINT_MOTIONS.setdefault(m.group(1), []).append(
+                "FTANIM_FLAG_ANIMJOINT" in flags)
         out[m.group(1)] = entries
     return out
+
+
+# Fighter -> per motion_id, whether `anim_desc` sets `FTANIM_FLAG_ANIMJOINT`.
+ANIM_JOINT_MOTIONS = {}
 
 
 def fighter_motions(refs, name):
@@ -1224,6 +1246,23 @@ def resolve(refs):
             if fid not in cache:
                 cache[fid] = file_frames(path)
             entry.append((slot, fid, sym, cache[fid], runtime))
+        boss_motions = fighter_motions(refs, "Boss")
+        for name, slot in zip(BOSS_MOTIONS, BOSS_SLOTS):
+            if fighter != "Boss":
+                entry.append((slot, 0, None, 0, 0))
+                continue
+            motion = boss_motions[f"nFTBossMotion{name}"]
+            sym, runtime = table[motion]
+            fid, path = files[sym]
+            if ANIM_JOINT_MOTIONS["Boss"][motion]:
+                entry.append((slot, fid, sym, 0, runtime))
+                continue
+            if fid not in cache:
+                try:
+                    cache[fid] = file_frames(path)
+                except (ValueError, TypeError):
+                    cache[fid] = None
+            entry.append((slot, fid, sym, cache[fid], runtime))
         rows.append((fighter, entry))
     return rows, problems
 
@@ -1261,6 +1300,12 @@ def emit(rows, out):
         flags = ", ".join(f"{runtime:#x}" for _, _, _, _, runtime in entry)
         w(f"    [{flags}],  // {fighter}\n")
     w("];\n\n")
+    boss_motions = fighter_motions(PROJECT_REFS[0], "Boss")
+    flags = ", ".join("true" if ANIM_JOINT_MOTIONS["Boss"][boss_motions[f"nFTBossMotion{m}"]]
+                      else "false" for m in BOSS_MOTIONS)
+    w("/// Which of Master Hand's slots (`SLOT_BOSS_DEFAULT` on) hold a 32-bit\n")
+    w("/// `AnimJoint` clip (`FTANIM_FLAG_ANIMJOINT` in `dFTBossMotionDescs`).\n")
+    w(f"pub const BOSS_ANIM_JOINT: [bool; {len(BOSS_MOTIONS)}] = [{flags}];\n\n")
     w("/// Lengths the decompilation's own C sources give for the same files.\n")
     w("/// `romtool anims --verify` checks the ROM against these.\n")
     w("#[rustfmt::skip]\n#[allow(clippy::large_const_arrays)]\npub const EXPECTED_FRAMES: "
@@ -1276,6 +1321,7 @@ def main():
     ap.add_argument("--refs", default=os.path.join(PROJECT, "refs/ssb-decomp-re"))
     ap.add_argument("--out", default="-")
     args = ap.parse_args()
+    PROJECT_REFS[0] = args.refs
     rows, problems = resolve(args.refs)
     for fighter, entry in rows:
         if fighter in NO_GROUND_STATUSES:

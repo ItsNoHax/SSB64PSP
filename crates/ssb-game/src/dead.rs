@@ -137,6 +137,10 @@ pub struct DeadState {
     /// The stage, set by the host when it spawns the fighter. `None`
     /// disables the check.
     pub bounds: Option<StageBounds>,
+    /// `FTStruct::is_limit_map_bounds`: Master Hand's defeat
+    /// (`sc1PGameBossSetIgnorePlayerMapBounds`) keeps every fighter 500
+    /// inside the blast zones instead of killing it.
+    pub is_limit_map_bounds: bool,
     /// `gSCManagerBattleState->game_rules & SCBATTLE_GAMERULE_STOCK`. Off in
     /// Training, whose rules are timed.
     pub stock_rule: bool,
@@ -239,7 +243,28 @@ pub fn check(f: &mut Fighter) -> bool {
     let Some(bounds) = f.dead.bounds else {
         return false;
     };
-    if f.kind == FighterKind::Boss || f.dead.is_ghost {
+    if f.kind == FighterKind::Boss {
+        return false;
+    }
+    if f.dead.is_limit_map_bounds {
+        let m = bounds.map;
+        let held = f.pos;
+        if f.pos.y < m.bottom {
+            f.pos.y = m.bottom + 500.0;
+        } else if f.pos.y > m.top {
+            f.pos.y = m.top - 500.0;
+        }
+        if f.pos.x > m.right {
+            f.pos.x = m.right - 500.0;
+        } else if f.pos.x < m.left {
+            f.pos.x = m.left + 500.0;
+        }
+        if f.pos != held {
+            f.physics.vel_air = ssb_engine::math::Vec3::ZERO;
+        }
+        return false;
+    }
+    if f.dead.is_ghost {
         return false;
     }
     // A 1P Game enemy dies outside the team bounds.

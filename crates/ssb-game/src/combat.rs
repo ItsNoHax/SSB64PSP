@@ -1706,12 +1706,19 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         {
             crate::item_throw::drop_item(f);
         }
-        match f.hits.damage_kind {
-            DamageKind::None => {}
-            DamageKind::Status => goto_damage_status(f),
-            DamageKind::ColAnim => set_damage_colanim(f),
-            DamageKind::Catch => update_catch_resist(f),
-            DamageKind::Default => update_main(f, partner),
+        if f.kind == FighterKind::Boss {
+            // Master Hand takes no reaction: only the colour and his hit
+            // points (`ftBossCommonUpdateDamageStats`).
+            set_damage_colanim(f);
+            crate::boss::update_damage_stats(f);
+        } else {
+            match f.hits.damage_kind {
+                DamageKind::None => {}
+                DamageKind::Status => goto_damage_status(f),
+                DamageKind::ColAnim => set_damage_colanim(f),
+                DamageKind::Catch => update_catch_resist(f),
+                DamageKind::Default => update_main(f, partner),
+            }
         }
         damage = f.hits.damage_lag;
         is_knockback_paused = true;
@@ -1933,7 +1940,7 @@ fn update_main(f: &mut Fighter, partner: Option<&mut Fighter>) {
 
 /// `ftCommonDamageSetDamageColAnim`: the hit flashes the fighter without
 /// changing its status.
-fn set_damage_colanim(f: &mut Fighter) {
+pub(crate) fn set_damage_colanim(f: &mut Fighter) {
     let (kb, element) = (f.hits.damage_knockback, f.hits.damage_element);
     crate::colanim::update_damage_colanim(f, kb, element);
 }

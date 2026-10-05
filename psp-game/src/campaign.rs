@@ -5,9 +5,11 @@
 //! The select's START begins a campaign; its intro, continue and
 //! stage-clear controllers run here, and a requested battle runs on the
 //! shared Training/VS world with the campaign's `Session` collecting its
-//! callbacks, falls and enemy replacements. A scene the PSP cannot run yet
-//! (Master Hand, the ending, challengers, unlock
-//! messages, or a battle whose fighters the pack lacks) stops the campaign
+//! callbacks, falls and enemy replacements. Master Hand's stage runs its
+//! boss scene ([`BossScene`]: `sc1pgameboss.c`'s wallpaper and fades and
+//! `sc1pgame.c`'s camera animations and defeat). A scene the PSP cannot
+//! run yet (the ending, challengers, unlock messages, or a battle whose
+//! fighters the pack lacks) stops the campaign
 //! with an explicit blocked screen: it is never replaced by a VS battle or
 //! skipped. Authored presentation is bound by campaign_screen.
 
@@ -26,6 +28,8 @@ use ssb_game::spgame::{
 /// The campaign the PSP is running, across its scenes.
 pub(crate) struct Campaign {
     pub bonus: Option<alloc::boxed::Box<spgame::bonus_stage::BonusStage>>,
+    /// Final Destination's boss scene while Master Hand's battle runs.
+    pub boss: Option<alloc::boxed::Box<BossScene>>,
     pub frontend: alloc::boxed::Box<Frontend>,
     /// The current overlay's scheduler clock; `sc1PIntroFuncStart` and each
     /// scene start reset it.
@@ -55,6 +59,7 @@ impl Campaign {
 pub(crate) fn start(s: &mut Session) {
     s.campaign = Some(Campaign {
         bonus: None,
+        boss: None,
         frontend: alloc::boxed::Box::new(Frontend::campaign(s.spgame_scene.clone(), &s.backup)),
         tic: 0,
         blocked: None,
@@ -221,13 +226,270 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
         d.computer.trait_kind = setup.cp_trait;
     }
     s.damage_hud.single_stock = Some(single);
+    let kinds = sp.state.players.map(|b| b.fkind);
     for (port, d) in s.damage_hud.damage.iter_mut().enumerate() {
         if positions[port] != 0 {
-            *d = ssb_game::hud::DamageDisplay::at(port, d.damage, positions[port]);
+            let is_boss = kinds[port] == ssb_game::fighter::FighterKind::Boss;
+            *d = ssb_game::hud::DamageDisplay::at_kind(port, d.damage, positions[port], is_boss);
         }
+    }
+    c.boss = None;
+    if stage == Stage::Boss {
+        c.boss = Some(alloc::boxed::Box::new(BossScene::new(p, &desc, &mut s.dummies)?));
     }
     c.tic = 0;
     Ok(())
+}
+
+/// The boss stage's scene state (`sc1pgameboss.c`, `sc1pgame.c`'s boss
+/// functions): the wallpaper controller, the two camera animations and
+/// the point the defeat zooms on.
+pub(crate) struct BossScene {
+    pub wallpaper: spgame::boss::BossWallpaper,
+    /// The effects' trees and joint clocks on the PSP.
+    pub effects: Option<ssb_psp_runtime::boss::BossEffects>,
+    intro_camera: ssb_psp_runtime::scene::CameraAnim,
+    defeat_camera: ssb_psp_runtime::scene::CameraAnim,
+    /// `sSC1PGameBossDefeatZoomPosition`.
+    zoom: ssb_engine::math::Vec3,
+    /// `sSC1PGameBossMain.bossplayer`.
+    pub port: u8,
+    extents: spgame::boss::Extents,
+    /// `sc1PGameBossDefeatInterfaceProcUpdate` ran.
+    defeat_update: bool,
+}
+
+impl BossScene {
+    /// `sc1PGameBossInitWallpaper`, and `ftManagerInitFighter`'s Boss
+    /// case for the enemy (`ftBossCommonSetNextAttackWait`,
+    /// `...SetDefaultLineID`).
+    fn new(
+        p: &Pack<'_>,
+        stage: &ssb_rom::pack::StageDesc,
+        dummies: &mut Dummies,
+    ) -> Result<Self, Blocked> {
+        let missing = Blocked::Assets(Stage::Boss);
+        let intro_camera = ssb_psp_runtime::scene::CameraAnim::load(
+            p,
+            ssb_rom::campaign::BOSS_INTRO_CAMERA_SLOT,
+        )
+        .ok_or(missing)?;
+        let defeat_camera = ssb_psp_runtime::scene::CameraAnim::load(
+            p,
+            ssb_rom::campaign::BOSS_DEFEAT_CAMERA_SLOT,
+        )
+        .ok_or(missing)?;
+        let surfaces = || ssb_psp_runtime::scene::MapSegments::new(p, stage);
+        let bounds = ssb_game::computer::behave::geometry_bounds(surfaces());
+        let mut port = None;
+        for d in dummies.iter_mut().flatten() {
+            if d.fighter.kind != ssb_game::fighter::FighterKind::Boss {
+                continue;
+            }
+            let level = d.computer.level;
+            ssb_game::boss::init(&mut d.fighter, &surfaces, level, false);
+            port = Some(d.fighter.port);
+        }
+        let port = port.ok_or(missing)?;
+        Ok(BossScene {
+            wallpaper: spgame::boss::BossWallpaper::new(),
+            effects: Some(ssb_psp_runtime::boss::BossEffects::new(p)),
+            intro_camera,
+            defeat_camera,
+            zoom: ssb_engine::math::Vec3::ZERO,
+            port,
+            extents: spgame::boss::Extents {
+                left: bounds.left,
+                right: bounds.right,
+                map_top: f32::from(stage.bounds.top),
+                map_bottom: f32::from(stage.bounds.bottom),
+            },
+            defeat_update: false,
+        })
+    }
+
+    /// The camera animation `gmCameraSetStatusAnim` last started: the
+    /// intro's, or the defeat's once it began.
+    fn camera_anim(&self) -> &ssb_psp_runtime::scene::CameraAnim {
+        if self.defeat_update {
+            &self.defeat_camera
+        } else {
+            &self.intro_camera
+        }
+    }
+
+    /// `sc1PGameBossWallpaperProcUpdate` and the effects' processes, on a
+    /// tick `gcRunAll` runs them.
+    fn run_wallpaper(&mut self, dummies: &Dummies) {
+        let damage = dummies
+            .iter()
+            .flatten()
+            .find(|d| d.fighter.port == self.port)
+            .map_or(0, |d| i32::from(d.fighter.damage));
+        self.wallpaper.update(damage, self.extents);
+    }
+}
+
+/// Every fighter's view of Master Hand's target: the first other fighter
+/// in link (port) order (`ftCommonAppearSetStatus`), as it stands now.
+pub(crate) fn refresh_boss_targets(s: &mut [Option<&mut play::FighterScene>; 4]) {
+    for i in 0..s.len() {
+        let is_boss = s[i]
+            .as_deref()
+            .is_some_and(|f| f.fighter.kind == ssb_game::fighter::FighterKind::Boss);
+        if !is_boss {
+            continue;
+        }
+        let target = s.iter().enumerate().filter(|&(j, _)| j != i).find_map(|(_, x)| {
+            x.as_deref().map(|t| ssb_game::boss::Target {
+                port: t.fighter.port,
+                pos: t.fighter.pos,
+                floor_line: t.fighter.floor.map(|f| f.line),
+            })
+        });
+        if let Some(f) = s[i].as_deref_mut() {
+            f.fighter.boss.target = target;
+        }
+    }
+}
+
+/// Master Hand's camera requests (`gmCameraSetStatusMapZoom` and
+/// `gmCameraSetStatusDefault`) on the battle camera.
+pub(crate) fn take_boss_camera(s: &mut [Option<&mut play::FighterScene>; 4]) {
+    let mut request = None;
+    for f in s.iter_mut().flatten() {
+        if let Some(r) = f.fighter.boss.camera.take() {
+            request = Some(r);
+        }
+    }
+    let (Some(r), Some(pl)) = (request, s[0].as_deref_mut()) else {
+        return;
+    };
+    match r {
+        ssb_game::boss::CameraRequest::MapZoom { at, eye } => {
+            pl.camera.begin_map_zoom(at, eye);
+            pl.camera_status = Some(ssb_psp_runtime::scene::CameraStatus::MapZoom {
+                origin: at,
+                target: eye,
+            });
+        }
+        ssb_game::boss::CameraRequest::Default => pl.camera_status = None,
+    }
+}
+
+/// The boss stage's half of the battle frame before the world runs:
+/// `sc1PGameBossDefeatInterfaceProcSet` when the battle ran it. Returns
+/// nothing; the defeat's paused ticks run [`boss_frozen_frame`].
+pub(crate) fn boss_frame_start(
+    boss: &mut BossScene,
+    pl: &mut play::FighterScene,
+    b: &ssb_game::battle::Battle,
+) {
+    if b.boss_set {
+        // `sc1PGameBossSetChangeWallpaper`, then the defeat camera from
+        // the zoom point.
+        boss.wallpaper.set_change();
+        ssb_psp_runtime::scene::start_camera_anim(pl, &boss.defeat_camera, boss.zoom);
+    }
+}
+
+/// A paused tick of Master Hand's defeat: during the zoom every process but
+/// the camera's, the interface's, the effects' and the boss wallpaper's is
+/// paused (`sc1PGameBossDefeatInterfaceProcUpdate`); in the slow motion the
+/// camera alone runs (`ifCommonBattleBossDefeatUpdateInterface`).
+pub(crate) fn boss_frozen_frame(
+    p: &Pack<'_>,
+    stage_index: u32,
+    boss: &mut BossScene,
+    pl: &mut play::FighterScene,
+    dummies: &mut Dummies,
+    b: &ssb_game::battle::Battle,
+) {
+    if b.boss_defeat.is_none() {
+        return;
+    }
+    if b.boss_defeat == Some(ssb_game::battle::BossDefeat::Zoom) {
+        boss.run_wallpaper(dummies);
+    }
+    boss_camera(p, stage_index, boss, pl, dummies);
+}
+
+/// The camera's process: a camera animation's play, or the camera status
+/// the battle camera ticks.
+fn boss_camera(
+    p: &Pack<'_>,
+    stage_index: u32,
+    boss: &BossScene,
+    pl: &mut play::FighterScene,
+    dummies: &mut Dummies,
+) {
+    if !ssb_psp_runtime::scene::play_camera_anim(pl, boss.camera_anim()) {
+        if let Some(stage) = p.stage(stage_index) {
+            tick_battle_camera(&stage, &mut scenes(pl, dummies));
+        }
+    }
+}
+
+/// The boss stage's half of a tick the world ran: the wallpaper's
+/// processes, the camera animation's play, and Master Hand's defeat
+/// (`sc1PGameBossDefeatInitInterface`, then its first interface update).
+pub(crate) fn boss_after_world(
+    boss: &mut BossScene,
+    pl: &mut play::FighterScene,
+    dummies: &mut Dummies,
+    b: &mut ssb_game::battle::Battle,
+    hud: &mut Hud,
+) {
+    boss.run_wallpaper(dummies);
+    ssb_psp_runtime::scene::play_camera_anim(pl, boss.camera_anim());
+    if boss.wallpaper.done {
+        // `ifCommonBattleEndSetBossDefeat`.
+        b.boss_wallpaper_done();
+    }
+    let defeated = dummies.iter_mut().flatten().find_map(|d| {
+        core::mem::take(&mut d.fighter.boss.defeated).then_some(d.fighter.port)
+    });
+    if let Some(port) = defeated {
+        boss_defeat_init(boss, pl, dummies, b, hud, port);
+    }
+}
+
+/// `sc1PGameBossDefeatInitInterface`: the tags hide, the hit points
+/// break apart, the camera zooms on the joint last struck and the battle
+/// ends into the defeat; then `sc1PGameBossDefeatInterfaceProcUpdate`
+/// locks every fighter inside the stage.
+fn boss_defeat_init(
+    boss: &mut BossScene,
+    pl: &mut play::FighterScene,
+    dummies: &mut Dummies,
+    b: &mut ssb_game::battle::Battle,
+    hud: &mut Hud,
+    port: u8,
+) {
+    let Some(f) = dummies.iter().flatten().find(|d| d.fighter.port == port) else {
+        return;
+    };
+    // `fp->joints[fp->damage_joint_id]`: the port does not record the
+    // struck hurtbox, so the zoom takes the palm's (RE-457).
+    let world = f.fighter.joint_world(ssb_game::boss::DEFEAT_ZOOM_JOINT, ssb_engine::math::Vec3::ZERO);
+    boss.zoom = world;
+    pl.camera.begin_map_zoom(world, world + ssb_engine::math::Vec3::new(0.0, 0.0, 3000.0));
+    pl.camera_status = Some(ssb_psp_runtime::scene::CameraStatus::MapZoom {
+        origin: world,
+        target: world + ssb_engine::math::Vec3::new(0.0, 0.0, 3000.0),
+    });
+    if let Some(h) = hud.damage.get_mut(usize::from(port)) {
+        h.start_break_anim();
+    }
+    for f in scenes(pl, dummies).into_iter().flatten() {
+        // `sc1PGameBossHidePlayerTagAll`.
+        f.fighter.interface.tag_bossend = true;
+        // `sc1PGameBossLockPlayerControl`, `...SetIgnorePlayerMapBounds`.
+        f.fighter.interface.control_disable = true;
+        f.fighter.dead.is_limit_map_bounds = true;
+    }
+    boss.defeat_update = true;
+    b.boss_defeat();
 }
 
 /// `sc1PBonusStageFuncStart`: a separate bonus world, one fighter and ten
@@ -417,6 +679,7 @@ pub(crate) fn entry_frame(
     hud: &mut Hud,
     b: &ssb_game::battle::Battle,
     wait: &spgame::wait::Wait,
+    boss: Option<&BossScene>,
 ) {
     let clock = b.clock();
     for action in wait.at(clock) {
@@ -437,6 +700,17 @@ pub(crate) fn entry_frame(
                 }
             }
             Action::Bonus3Follow => pl.bonus_follow = true,
+            // `sc1PGameWaitStageBossUpdate`: the intro camera from the
+            // origin, then Master Hand appears.
+            Action::BossCameraAnim => {
+                if let Some(boss) = boss {
+                    ssb_psp_runtime::scene::start_camera_anim(
+                        pl,
+                        &boss.intro_camera,
+                        ssb_engine::math::Vec3::ZERO,
+                    );
+                }
+            }
             Action::Go if stage.source_file == ssb_rom::ground_obj::BONUS3_FILE => {
                 let mut c = ssb_game::countdown::Countdown::sudden_death();
                 c.start_go();
@@ -447,8 +721,9 @@ pub(crate) fn entry_frame(
             Action::Zoom(_)
             | Action::CameraDefault
             | Action::Go
-            | Action::BossGo
-            | Action::BossCameraAnim => {}
+            // "Go" itself is the battle's (`go_tick` 601), and the entry's
+            // camera mode ends there (`appear::on_go`).
+            | Action::BossGo => {}
         }
     }
     if let Some(c) = hud.countdown.as_mut() {
@@ -592,6 +867,7 @@ pub(crate) fn finish_battle(s: &mut Session, pack: Option<&Pack<'_>>) {
         if matches!(c.frontend.screen, Scene1P::Host(_)) { on_host(s, pack, scene); }
         return;
     }
+    c.boss = None;
     // Callbacks still queued on the fighters belong to this battle.
     if let Some(pl) = s.play_state.as_mut() {
         for f in scenes(pl, &mut s.dummies).into_iter().flatten() {
@@ -669,6 +945,10 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
             sp.data.stage = Stage::Bonus3 as u8;
             sp.manager.scene = Scene::Intro;
         }
+        GameScene::OnePBoss | GameScene::OnePBossDefeat => {
+            sp.data.stage = Stage::Boss as u8;
+            sp.manager.scene = Scene::Intro;
+        }
         GameScene::OnePContinue | GameScene::OnePRetry => {
             sp.data.score = 123456;
             sp.manager.scene = Scene::Continue;
@@ -691,6 +971,19 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
 /// check; they do not set the task counter or the results directly.
 #[cfg(feature = "headless_capture")]
 pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene: GameScene, tick: u64) {
+    // Master Hand's hit points run out 100 ticks after "Go": the fixture
+    // writes the damage, and `ftBossCommonUpdateDamageStats` runs the real
+    // defeat from there.
+    if scene == GameScene::OnePBossDefeat
+        && s.vs_battle.as_ref().is_some_and(|b| b.clock() == 701)
+    {
+        for d in s.dummies.iter_mut().flatten() {
+            if d.fighter.kind == ssb_game::fighter::FighterKind::Boss {
+                d.fighter.damage = ssb_game::boss::HIT_POINTS;
+                ssb_game::boss::update_damage_stats(&mut d.fighter);
+            }
+        }
+    }
     let Some(pack) = pack else { return };
     if scene == GameScene::OnePRaceHazards && tick == 600 {
         if let (Some(pl), ssb_game::stage::Controller::Bonus3(race)) = (s.play_state.as_mut(), &s.stage_ctl.controller) {

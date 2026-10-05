@@ -16,6 +16,7 @@ extern crate alloc;
 pub mod appear;
 pub mod attack;
 pub mod battle;
+pub mod boss;
 pub mod camera;
 pub mod captain;
 pub mod capture_kirby;

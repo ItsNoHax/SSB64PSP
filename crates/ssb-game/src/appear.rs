@@ -174,6 +174,9 @@ fn set(f: &mut Fighter, s: AnyStatus) {
 
 /// `ftCommonAppearSetStatus`.
 pub fn appear_set_status(f: &mut Fighter) {
+    if f.kind == FighterKind::Boss {
+        return crate::boss::appear_set_status(f);
+    }
     let right = f.facing == Facing::Right;
     f.entry = Entry {
         pos: f.pos,

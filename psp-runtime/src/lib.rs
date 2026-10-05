@@ -9,6 +9,7 @@
 extern crate alloc;
 
 pub mod assets;
+pub mod boss;
 pub mod gu;
 pub mod input;
 pub mod meshdraw;

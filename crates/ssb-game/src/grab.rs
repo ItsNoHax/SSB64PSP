@@ -2300,7 +2300,11 @@ pub fn nearest_catch<'a>(
 /// Whether `catcher`'s catch box finds `other` this frame
 /// (`ftMainSearchFighterCatch`'s tests for one fighter).
 fn catch_touches(catcher: &Fighter, other: &Fighter, rules: crate::team::TeamRules) -> bool {
-    if !catcher.grab.is_catchstatus || other.dead.is_ghost {
+    // `ftMainSearchFighterCatch` skips a ghost and Master Hand.
+    if !catcher.grab.is_catchstatus
+        || other.dead.is_ghost
+        || other.kind == crate::fighter::FighterKind::Boss
+    {
         return false;
     }
     // Team attack off: nobody grabs a teammate.

@@ -343,3 +343,57 @@ pub fn packed_camera(pack: &crate::pack::Pack<'_>, index: usize) -> Option<[f32;
         f32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap())
     }))
 }
+
+/// Final Destination's layer file (`StageLastFile2`), which holds the boss
+/// camera animations and wallpaper effects.
+pub const BOSS_CAMERA_FILE: u32 = 114;
+/// `sc1PGameWaitStageBossUpdate`'s camera animation:
+/// `gr_desc[1].dobjdesc - llGRLastMapFileHead + D_NF_00006010`, an offset
+/// into Final Destination's layer file 114 (`StageLastFile2`).
+pub const BOSS_INTRO_CAMERA: u32 = 0x6010;
+/// `sc1PGameBossDefeatInterfaceProcSet`'s (`D_NF_00006450`).
+pub const BOSS_DEFEAT_CAMERA: u32 = 0x6450;
+/// The reserved animation slots their baked frames are packed under.
+pub const BOSS_INTRO_CAMERA_SLOT: u32 = 0xF101;
+pub const BOSS_DEFEAT_CAMERA_SLOT: u32 = 0xF102;
+/// Floats per baked camera frame: eye XYZ, look-at XYZ, field of view.
+pub const CAMERA_FRAME_FLOATS: usize = 7;
+
+/// `gcPlayCamAnim` from `gcAddCObjCamAnimJoint` to the end: one
+/// `[eye.x, eye.y, eye.z, at.x, at.y, at.z, fovy]` per play, the last
+/// being the play its script ends on (`gmCameraAnimFuncCamera` sets the
+/// default camera after it). Tracks a script never keys keep the
+/// `CObj` defaults of [`initial_camera`]. Path tracks (`EyeI`/`AtI`) are
+/// not modelled; neither boss script has one (`tests/boss.rs`).
+pub fn camera_frames(
+    data: &[u8],
+    offset: u32,
+) -> Result<alloc::vec::Vec<[f32; CAMERA_FRAME_FLOATS]>, crate::objanim::AnimError> {
+    let mut j = crate::objanim::StageJoint::start_changed(offset, 0.0);
+    let mut pose = crate::figatree::JointPose::default();
+    let defaults = [0.0, 0.0, 1500.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 30.0];
+    let mut out = alloc::vec::Vec::new();
+    while !j.ended() && out.len() < 4096 {
+        j.tick(data, 1.0, &mut pose)?;
+        let v = |i: usize| j.track_value(i).unwrap_or(defaults[i]);
+        out.push([v(0), v(1), v(2), v(4), v(5), v(6), v(9)]);
+    }
+    Ok(out)
+}
+
+/// A baked boss camera animation's frames from the pack.
+pub fn packed_camera_frames<'a>(
+    pack: &'a crate::pack::Pack<'a>,
+    slot: u32,
+) -> Option<impl Iterator<Item = [f32; CAMERA_FRAME_FLOATS]> + 'a> {
+    let a = (0..pack.anim_count())
+        .filter_map(|i| pack.anim(i))
+        .find(|a| a.fighter == crate::pack::AnimDesc::EFFECT && a.slot == slot)?;
+    let bytes = pack.anim_script(&a)?;
+    let (frames, _) = bytes.as_chunks::<{ CAMERA_FRAME_FLOATS * 4 }>();
+    Some(frames.iter().map(|c| {
+        core::array::from_fn(|i| {
+            f32::from_le_bytes([c[i * 4], c[i * 4 + 1], c[i * 4 + 2], c[i * 4 + 3]])
+        })
+    }))
+}

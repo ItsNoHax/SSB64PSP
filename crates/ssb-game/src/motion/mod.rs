@@ -91,6 +91,7 @@ pub fn demo_scripts(kind: FighterKind) -> Option<&'static DemoScripts> {
         FighterKind::Pikachu => &scripts::PIKACHU_DEMO,
         FighterKind::Purin => &scripts::PURIN_DEMO,
         FighterKind::Ness => &scripts::NESS_DEMO,
+        FighterKind::Boss => &scripts::BOSS_DEMO,
         _ => return None,
     })
 }
@@ -274,6 +275,7 @@ pub fn combat_attrs(kind: FighterKind) -> Option<&'static CombatAttrs> {
         FighterKind::Pikachu => &scripts::PIKACHU_ATTRS,
         FighterKind::Purin => &scripts::PURIN_ATTRS,
         FighterKind::Ness => &scripts::NESS_ATTRS,
+        FighterKind::Boss => &scripts::BOSS_ATTRS,
         _ => return None,
     })
 }
@@ -402,6 +404,7 @@ pub fn fighter_scripts(kind: FighterKind) -> Option<&'static FighterScripts> {
         FighterKind::Pikachu => &scripts::PIKACHU,
         FighterKind::Purin => &scripts::PURIN,
         FighterKind::Ness => &scripts::NESS,
+        FighterKind::Boss => &scripts::BOSS,
         _ => return None,
     })
 }

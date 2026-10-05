@@ -88,6 +88,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::OnePRaceClear => 750,
         GameScene::OnePRaceFall => 750,
         GameScene::OnePRaceHazards => 660,
+        GameScene::OnePBoss => 1500,
+        GameScene::OnePBossDefeat => 1500,
         GameScene::OnePContinue => 240,
         GameScene::OnePRetry => 320,
         GameScene::OnePClear => 270,
@@ -407,7 +409,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         return match tick {
             4 | 10 | 34 => N64Buttons(N64Buttons::A),
             166 if scene == GameScene::OnePGame => N64Buttons(N64Buttons::A),
@@ -761,7 +763,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         return if (14..=24).contains(&tick) { 80 } else { 0 };
     }
     if scene == GameScene::LinkBomb && tick == 300 {
@@ -898,7 +900,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         // Two separate menu-down edges, then carry the puck to Kirby.
         return match tick {
             6 | 8 => -80,
@@ -1594,6 +1596,8 @@ fn interrupt_pass(
         f.fighter.interface.control_disable = locked;
     }
     for i in 0..4 {
+        // Master Hand reads his target as it stands (`target_gobj`).
+        campaign::refresh_boss_targets(&mut scenes(pl, dummies));
         if i == 0 {
             items.publish(&mut pl.fighter);
             pl.tick_fighter_interrupt(p, stage, controller, jump_held, groups);
@@ -1645,6 +1649,7 @@ fn physics_pass(
         for (slot, o) in held.iter_mut().zip(others) {
             *slot = ssb_game::map::is_cliff_hold(o.fighter.status.status).then_some((o.fighter.cliff.line, o.fighter.facing));
         }
+        campaign::refresh_boss_targets(s);
         let Some(f) = s[i].as_deref_mut() else {
             continue;
         };
@@ -1670,6 +1675,8 @@ fn physics_pass(
             weapons.flush_effects(effects);
         }
     }
+    // Master Hand's camera requests reach the camera before its process.
+    campaign::take_boss_camera(s);
     tick_battle_camera(stage, s);
     for f in s.iter().flatten() {
         weapons.observe_owner(&f.fighter);
@@ -2298,7 +2305,7 @@ fn capture_route(scene: GameScene) -> CaptureRoute {
             CaptureRoute::StageSelect
         }
         GameScene::OnePGame
-        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear
+        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear
         | GameScene::FighterSelect
         | GameScene::VsModeMenu
         | GameScene::VsPlayers
@@ -2497,6 +2504,8 @@ unsafe fn training_frame(
     // enemies (RE-450).
     mut campaign: Option<&mut ssb_game::spgame::session::Session>,
     mut bonus: Option<&mut ssb_game::spgame::bonus_stage::BonusStage>,
+    // Master Hand's stage (`sc1pgameboss.c`).
+    mut boss: Option<&mut campaign::BossScene>,
 ) -> bool {
     use ssb_game::battle::{Frame, GameStatus};
     if let Some(b) = battle.as_mut() {
@@ -2512,6 +2521,9 @@ unsafe fn training_frame(
     }
     if let (Some(c), Some((_, status))) = (campaign.as_deref_mut(), frame) {
         campaign::update_game(c, status, &pl.fighter);
+    }
+    if let (Some(boss), Some(b)) = (boss.as_deref_mut(), battle.as_ref()) {
+        campaign::boss_frame_start(boss, pl, b);
     }
     // `ifCommonBattlePauseRestoreInterfaceAll`: the camera eases back while
     // the pause menu stays, then the turn is restored and the world runs.
@@ -2548,11 +2560,20 @@ unsafe fn training_frame(
                     ssb_game::particle::run(&mut damage_hud.particles, b, &mut damage_hud.effects);
                 }
             }
+            if let (Some(boss), Some(b)) = (boss.as_deref_mut(), battle.as_ref()) {
+                campaign::boss_frozen_frame(p, stage_index, boss, pl, dummies, b);
+                // The damage display's break animation runs on.
+                if let Some(h) = damage_hud.damage.get_mut(usize::from(boss.port)) {
+                    h.update(i32::from(h.damage), false);
+                }
+            }
             return false;
         }
         Some((Frame::Done, _)) => return true,
     };
-    let locked = locked || menu_locked;
+    // `sc1PGameBossLockPlayerControl`: Master Hand's defeat locks every
+    // fighter.
+    let locked = locked || menu_locked || battle.as_ref().is_some_and(|b| b.boss_defeat.is_some());
     let mut none = ssb_game::effect::NoEffects;
     let mut rt = banks.as_ref().map(|b| ssb_game::effect::EffectRuntime {
         particles: &mut damage_hud.particles,
@@ -2609,11 +2630,14 @@ unsafe fn training_frame(
         campaign::bonus_frame(p, damage_hud, b, bonus.tasks_remain);
         return false;
     }
+    if let (Some(boss), Some(b)) = (boss.as_deref_mut(), battle.as_mut()) {
+        campaign::boss_after_world(boss, pl, dummies, b, damage_hud);
+    }
     match (campaign, p.stage(stage_index)) {
         (Some(c), Some(stage)) => {
             campaign::replace_enemies(p, &stage, dummies, c, battle, damage_hud);
             if let (Some(b), Some(wait)) = (battle.as_ref(), c.wait.as_ref()) {
-                campaign::entry_frame(p, &stage, pl, dummies, damage_hud, b, wait);
+                campaign::entry_frame(p, &stage, pl, dummies, damage_hud, b, wait, boss.as_deref());
             }
         }
         _ => {
@@ -2666,6 +2690,10 @@ struct Hud {
     bonus_tasks: Option<u8>,
     /// Black scene-entry fade alpha for a campaign bonus course.
     bonus_fade_alpha: u8,
+    /// The boss wallpaper's closing fade this frame
+    /// (`sc1PGameBossProcDisplayFadeAlpha`/`...FadeColor`): RGBA over
+    /// the battle viewport.
+    boss_fade: Option<[u8; 4]>,
     /// By port.
     damage: [ssb_game::hud::DamageDisplay; 4],
     countdown: Option<ssb_game::countdown::Countdown>,
@@ -2801,6 +2829,7 @@ impl Hud {
         Hud {
             bonus_tasks: None,
             bonus_fade_alpha: 0,
+            boss_fade: None,
             damage: core::array::from_fn(|port| ssb_game::hud::DamageDisplay::new(port, 0)),
             countdown: None,
             pause: None,
@@ -2935,6 +2964,7 @@ fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game:
 fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     world.damage_hud.bonus_tasks = None;
     world.damage_hud.bonus_fade_alpha = 0;
+    world.damage_hud.boss_fade = None;
     world.damage_hud.countdown = None;
     world.damage_hud.ko = ssb_game::ko::KoEffects::default();
     // `efParticleInitAll` and `efManagerInitEffects`: a new battle scene.
@@ -3446,6 +3476,22 @@ unsafe fn draw_frame(
             if let Some(pl) = s.play_state.as_ref() {
                 s.wallpaper.update(pl.camera.eye, pl.camera.at);
             }
+            if let (Some(p), Some(b)) = (pack.as_ref(), s.campaign.as_mut().and_then(|c| c.boss.as_deref_mut())) {
+                if let Some(effects) = b.effects.as_mut() {
+                    effects.sync(p, &b.wallpaper);
+                }
+            }
+            let magnify_hidden = boss_magnify_hidden(s);
+            // The boss wallpaper's fades step once per drawn frame.
+            s.damage_hud.boss_fade = s
+                .campaign
+                .as_mut()
+                .and_then(|c| c.boss.as_mut())
+                .and_then(|b| b.wallpaper.display())
+                .map(|(d, v)| match d {
+                    ssb_game::spgame::boss::Display::FadeAlpha => [0xFF, 0xFF, 0xFF, v],
+                    _ => [v, v, v, 0xFF],
+                });
             draw_training(
                 gpu,
                 draw_state,
@@ -3465,8 +3511,12 @@ unsafe fn draw_frame(
                 s.vs_battle.as_ref(),
                 s.wallpaper_sprite.as_ref().map(|sprite| (sprite, &s.wallpaper)),
                 s.training_paused,
-                s.training_menu.as_ref().is_none_or(|m| m.magnify_display),
+                s.training_menu.as_ref().is_none_or(|m| m.magnify_display) && !magnify_hidden,
                 s.roster.map(|x| x.is_some_and(|x| !x.human)),
+                s.campaign
+                    .as_ref()
+                    .and_then(|c| c.boss.as_deref())
+                    .and_then(|b| b.effects.as_ref().map(|e| (e, &b.wallpaper))),
             );
             if let (Some(p), Some(menu), Some(pl)) = (pack.as_ref(), s.training_menu.as_mut(), s.play_state.as_ref()) {
                 let dummy = s.dummies[0].as_ref().map(|x| &x.fighter);
@@ -3478,6 +3528,15 @@ unsafe fn draw_frame(
             }
         }
     }
+}
+
+/// Master Hand's stage shows the magnifiers only from its "Go"
+/// (`sc1PGameWaitStageBossUpdate` sets `is_magnify_display`).
+fn boss_magnify_hidden(s: &Session) -> bool {
+    s.campaign.as_ref().is_some_and(|c| c.boss.is_some())
+        && s.vs_battle
+            .as_ref()
+            .is_some_and(|b| b.status == ssb_game::battle::GameStatus::Wait)
 }
 
 /// One frame of the screens' logic and the world, when not frozen for a
@@ -3699,8 +3758,8 @@ unsafe fn session_frame(
             }
         }
         if let (Screen::Training, false, Some(p), Some(pl)) = (s.screen, lag_tic, &pack, s.play_state.as_mut()) {
-            let (campaign_session, bonus_stage) = s.campaign.as_mut().map_or((None, None), |c|
-                (c.frontend.session.as_deref_mut(), c.bonus.as_deref_mut()));
+            let (campaign_session, bonus_stage, boss_scene) = s.campaign.as_mut().map_or((None, None, None), |c|
+                (c.frontend.session.as_deref_mut(), c.bonus.as_deref_mut(), c.boss.as_deref_mut()));
             vs_done = training_frame(
                 p,
                 s.training_stage,
@@ -3719,11 +3778,13 @@ unsafe fn session_frame(
                 s.training_paused,
                 campaign_session,
                 bonus_stage,
+                boss_scene,
             );
             if let Some(m) = s.training_menu.as_mut() {
                 m.tick_processes();
             }
             let magnify_display = s.training_menu.as_ref().is_none_or(|m| m.magnify_display)
+                && !boss_magnify_hidden(s)
                 && s.vs_battle.as_ref().is_none_or(|b| {
                     matches!(
                         b.status,
@@ -4199,7 +4260,7 @@ unsafe fn run() -> ! {
         #[cfg(feature = "headless_capture")]
         if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
             emit_headless_screenshot();
-            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards)) {
+            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat)) {
                 campaign::log_capture(&s, sim_frame_index);
             }
             // One line for the capture log: whether the scripted attack
@@ -4681,6 +4742,8 @@ struct DrawAssets {
     fireball_meshes: [Option<ssb_rom::pack::MeshDesc>; 2],
     blaster_mesh: Option<ssb_rom::pack::MeshDesc>,
     reflector: Option<ssb_rom::pack::ObjectDesc>,
+    /// Master Hand's bullet tree.
+    boss_bullet: Option<ssb_rom::pack::ObjectDesc>,
     charge_shot_mesh: Option<ssb_rom::pack::MeshDesc>,
     /// Indexed by `SamusBomb::blink_palette`.
     bomb_meshes: [Option<ssb_rom::pack::MeshDesc>; 2],
@@ -4815,6 +4878,7 @@ impl DrawAssets {
             fireball_meshes: ssb_psp_runtime::scene::fireball_meshes(p),
             blaster_mesh: ssb_psp_runtime::scene::fox_blaster_mesh(p),
             reflector: ssb_psp_runtime::scene::fox_reflector_object(p),
+            boss_bullet: ssb_psp_runtime::scene::boss_bullet_object(p),
             charge_shot_mesh: ssb_psp_runtime::scene::samus_charge_shot_mesh(p),
             bomb_meshes: ssb_psp_runtime::scene::samus_bomb_meshes(p),
             boomerang: ssb_psp_runtime::scene::link_boomerang_object(p)
@@ -6449,6 +6513,8 @@ unsafe fn draw_training(
     training_paused: bool,
     magnify_display: bool,
     cpu_ports: [bool; 4],
+    // Final Destination's boss wallpaper effects and their controller.
+    boss: Option<(&ssb_psp_runtime::boss::BossEffects, &ssb_game::spgame::boss::BossWallpaper)>,
 ) {
     let scene = pack
         .zip(play_state)
@@ -6469,6 +6535,12 @@ unsafe fn draw_training(
     // camera (50). Race uses a black viewport without a sprite.
     if let Some((sprite, w)) = wallpaper.filter(|(_, w)| w.kind != ssb_game::wallpaper::Kind::Bonus3) {
         meshdraw::draw_wallpaper(p, sprite, w.x, w.y, w.scale, draw_state);
+    }
+    // `sc1PGameBossMakeCamera`'s second camera (priority 60, tag 2): the
+    // boss wallpaper's far effects, between the wallpaper and the stage.
+    if let Some((effects, controller)) = boss {
+        draw_state.begin_frame();
+        effects.draw(gpu, p, draw_state, controller, 2);
     }
     gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
     // Tags, culling and magnifier scale use this camera's live projection.
@@ -6752,6 +6824,14 @@ unsafe fn draw_training(
         material_anim,
         20,
     );
+    // The boss's first camera (priority 40, tag 1): the near comets and
+    // the closing effect, whose fades cover the battle.
+    if let Some((effects, controller)) = boss {
+        effects.draw(gpu, p, draw_state, controller, 1);
+        if let Some(color) = damage_hud.boss_fade {
+            meshdraw::fill_rect_n64([10.0, 10.0, 310.0, 230.0], color, draw_state);
+        }
+    }
     // Arrow camera 35, magnifier camera 30, then the interface camera 20.
     let show_magnify = magnify_display
         && damage_hud.pause.is_none()
@@ -7222,6 +7302,8 @@ fn draw_announce(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, end: ssb_ga
         ssb_game::battle::EndKind::GameSet => (&hud::GAME_SET, &ssb_rom::sprite::GAME_STATUS),
         ssb_game::battle::EndKind::Complete => (&hud::COMPLETE, &ssb_rom::sprite::ANNOUNCE_COMMON),
         ssb_game::battle::EndKind::Failure => (&hud::FAILURE, &ssb_rom::sprite::ANNOUNCE_COMMON),
+        // Master Hand's defeat announces nothing.
+        ssb_game::battle::EndKind::BossDefeat => return,
     };
     for &(x, y, i) in letters {
         if let Some(s) = f.offsets.get(usize::from(i)).and_then(|&at| p.sprite(f.file, at)) {
@@ -8228,6 +8310,27 @@ unsafe fn draw_items_weapons_effects(
                 ],
             );
             meshdraw::draw_mesh(p, blaster_mesh, draw_state, None, None);
+        }
+    }
+
+    // Master Hand's bullets: `TraRotRpyRSca` turned along the velocity by
+    // `wpMainReflectorRotateWeaponModel`; the burst has no display list.
+    if let Some(bullet) = assets.boss_bullet.as_ref() {
+        for shot in weapons.boss_bullets().filter(|b| !b.exploded) {
+            // `syUtilsArcTan2` of the cross product is scale-free.
+            let (vx, vy) = (shot.velocity.x, shot.velocity.y);
+            let (yaw, pitch) = if vx > 0.0 {
+                (core::f32::consts::FRAC_PI_2, ssb_engine::math::atan2(-vy, vx))
+            } else {
+                (-core::f32::consts::FRAC_PI_2, ssb_engine::math::atan2(-vy, -vx))
+            };
+            gpu.model_transform_xyz(
+                [shot.position.x, shot.position.y, shot.position.z],
+                [pitch, yaw, 0.0],
+                [meshdraw::MODEL_SCALE; 3],
+            );
+            let base = gpu.model_matrix();
+            meshdraw::draw_object(p, bullet, &base, draw_state, None, 0);
         }
     }
 

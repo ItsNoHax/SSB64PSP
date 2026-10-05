@@ -140,6 +140,21 @@ select and bypass preceding campaign wins.
 Clear places the human above the actual DETECT segment and lets swept
 collision land him. Fall and hazards move him to the authored blast/dropper
 areas; fixtures never write completion, score, stock loss or damage.
+
+RE-457 adds Master Hand's stage. Both fixtures seed stage 13's intro after
+the real select (Kirby).
+
+| Spec | Captured display |
+|---|---|
+| `onepboss@600` | Intro camera, Master Hand appearing, comets, boss stock icon and emblem; no magnifiers before "Go" |
+| `onepboss@1200`, `onepboss` (1500) | Poke and finger gun on the idle Kirby, then his fall KO |
+| `onepbossdefeat@1250`, `@1500`, `@2000` | Defeat zoom with broken H.P, closing effect and white fade, black fade |
+| `onepbossdefeat@2250` | GAME CLEAR stage clear with the boss bonuses |
+
+The defeat fixture writes Master Hand's damage to 300 at battle clock 701
+and calls the real `ftBossCommonUpdateDamageStats`; everything after is the
+port's own sequence. Captures live under `~/ppsspp-headless-test/re457-*`
+and stay outside the manifest.
 These diagnostics remain outside the 195-scene manifest. They do not prove
 unmodified traversal, a full campaign, N64 equivalence or physical PSP;
 see [RE-455](../evidence/re/RE-455.md) for source checks and capture limits.

@@ -6386,6 +6386,29 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         &[],
     );
 
+    // Master Hand's two camera animations (`gmCameraSetStatusAnim`) from
+    // Final Destination's layer file, baked one frame per play. Their
+    // synthetic source ids keep `add_anim` from sharing a blob.
+    let last = archive.load(ssb_rom::campaign::BOSS_CAMERA_FILE)?;
+    for (offset, slot) in [
+        (
+            ssb_rom::campaign::BOSS_INTRO_CAMERA,
+            ssb_rom::campaign::BOSS_INTRO_CAMERA_SLOT,
+        ),
+        (
+            ssb_rom::campaign::BOSS_DEFEAT_CAMERA,
+            ssb_rom::campaign::BOSS_DEFEAT_CAMERA_SLOT,
+        ),
+    ] {
+        let mut bytes = Vec::new();
+        for frame in ssb_rom::campaign::camera_frames(&last.data, offset)? {
+            for value in frame {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        writer.add_anim(ssb_rom::pack::AnimDesc::EFFECT, slot, slot, 0, &bytes, &[]);
+    }
+
     // `SObj` sprites (RE-392): each through its format's combiner, in 8888,
     // clamped on both axes like a texture rectangle.
     let mut sprites = 0usize;
@@ -6553,7 +6576,9 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             .and_then(Option::as_ref)
             .ok_or_else(|| format!("file {id} missing"))
     };
-    for e in ssb_rom::fighter::FIGHTER_FILES.iter().take(12) {
+    // The twelve and Master Hand, whose emblem and stock icon the 1P
+    // Game's interface draws.
+    for e in ssb_rom::fighter::FIGHTER_FILES.iter().take(13) {
         let main = file_of(e.file)?;
         let fs = ssb_rom::sprite::fighter_sprites(main, e.offset)
             .ok_or_else(|| format!("{}: no FTSprites", e.name))?;

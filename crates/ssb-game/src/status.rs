@@ -1049,6 +1049,45 @@ pub enum NessStatus {
     SpecialAirLwEnd = 244,
 }
 
+/// Master Hand's `ftBossStatus` table (`ftboss.h`), every entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u16)]
+pub enum BossStatus {
+    Default = 220,
+    Wait = 221,
+    Move = 222,
+    Hippataku = 223,
+    Harau = 224,
+    Okuhikouki1 = 225,
+    Okuhikouki2 = 226,
+    Okuhikouki3 = 227,
+    Walk = 228,
+    WalkLoop = 229,
+    WalkWait = 230,
+    WalkShoot = 231,
+    GootsubusuUp = 232,
+    GootsubusuWait = 233,
+    GootsubusuEnd = 234,
+    GootsubusuDown = 235,
+    Tsutsuku1 = 236,
+    Tsutsuku3 = 237,
+    Tsutsuku2 = 238,
+    Drill = 239,
+    Okukouki = 240,
+    Yubideppou1 = 241,
+    Yubideppou3 = 242,
+    Yubideppou2 = 243,
+    Okupunch1 = 244,
+    Okupunch2 = 245,
+    Okupunch3 = 246,
+    Okutsubushi = 247,
+    OkutsubushiStart = 248,
+    DeadLeft = 249,
+    DeadCenter = 250,
+    DeadRight = 251,
+    Appear = 252,
+}
+
 /// Kirby's `ftKirbyStatus` table without the entry statuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
@@ -1158,6 +1197,7 @@ pub enum AnyStatus {
     Pikachu(PikachuStatus),
     Purin(PurinStatus),
     Ness(NessStatus),
+    Boss(BossStatus),
 }
 
 impl AnyStatus {
@@ -1177,6 +1217,7 @@ impl AnyStatus {
             AnyStatus::Pikachu(s) => s as u16,
             AnyStatus::Purin(s) => s as u16,
             AnyStatus::Ness(s) => s as u16,
+            AnyStatus::Boss(s) => s as u16,
         }
     }
 
@@ -1256,6 +1297,9 @@ impl AnyStatus {
             AnyStatus::Pikachu(p) => crate::pikachu::is_grounded(p),
             AnyStatus::Purin(p) => crate::purin::is_grounded(p),
             AnyStatus::Ness(n) => crate::ness::is_grounded(n),
+            // `ftCommonAppearSetStatus` puts Master Hand in the air and none
+            // of his statuses touches `ga` again.
+            AnyStatus::Boss(_) => false,
         }
     }
 
@@ -1273,6 +1317,7 @@ impl AnyStatus {
             AnyStatus::Pikachu(_) => false,
             AnyStatus::Purin(_) => false,
             AnyStatus::Ness(_) => false,
+            AnyStatus::Boss(_) => false,
         }
     }
 
@@ -1295,6 +1340,7 @@ impl AnyStatus {
             AnyStatus::Pikachu(_) => false,
             AnyStatus::Purin(_) => false,
             AnyStatus::Ness(_) => false,
+            AnyStatus::Boss(_) => false,
         }
     }
 
@@ -1490,6 +1536,7 @@ impl AnyStatus {
             AnyStatus::Pikachu(p) => crate::pikachu::anim_slot(p),
             AnyStatus::Purin(p) => crate::purin::anim_slot(p),
             AnyStatus::Ness(n) => crate::ness::anim_slot(n),
+            AnyStatus::Boss(b) => crate::boss::anim_slot(b),
         }
     }
 
@@ -1520,6 +1567,7 @@ impl AnyStatus {
             AnyStatus::Pikachu(_) => 1.0,
             AnyStatus::Purin(_) => 1.0,
             AnyStatus::Ness(_) => 1.0,
+            AnyStatus::Boss(_) => 1.0,
         }
     }
 }
@@ -5381,6 +5429,9 @@ fn update_extended(f: &mut Fighter) {
         AnyStatus::Pikachu(_) => crate::pikachu::update(f),
         AnyStatus::Purin(_) => crate::purin::update(f),
         AnyStatus::Ness(_) => crate::ness::update(f),
+        // Master Hand's `proc_update` and `proc_interrupt` read the map, so
+        // `Fighter::tick_interrupt` runs them (`crate::boss::update`).
+        AnyStatus::Boss(_) => {}
         AnyStatus::Donkey(DonkeyStatus::SpecialNStart | DonkeyStatus::SpecialAirNStart) => {
             let taps = f.button_tap();
             if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {

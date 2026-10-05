@@ -518,6 +518,14 @@ pub fn captain_falcon_kick_effect(pack: &Pack<'_>) -> Option<(ObjectDesc, u32)> 
 }
 
 /// Fox Special2's three-entry Reflector effect hierarchy.
+/// Master Hand's bullets' `WPAttributes.data`: `dBossModel_DObjDescs_0x2CB8`
+/// in `BossModel` (file 344).
+pub fn boss_bullet_object(pack: &Pack<'_>) -> Option<ObjectDesc> {
+    (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|object| object.source_file == 344 && object.source_offset == 0x2CB8)
+}
+
 pub fn fox_reflector_object(pack: &Pack<'_>) -> Option<ObjectDesc> {
     (0..pack.object_count())
         .filter_map(|i| pack.object(i))
@@ -1065,6 +1073,10 @@ pub struct FighterScene {
     /// `cam_offset_y` added and a distance. `None` runs the battle camera.
     pub entry_zoom: Option<(ssb_engine::math::Vec3, f32)>,
     pub bonus_follow: bool,
+    /// A camera status other than the battle camera's
+    /// (`gmCameraSetStatusMapZoom`, `gmCameraSetStatusAnim`): Master Hand's
+    /// background attacks and the boss stage's camera animations.
+    pub camera_status: Option<CameraStatus>,
     /// Training's Close-Up view (`sc1PTrainingModeUpdateViewOption`'s
     /// `gmCameraSetStatusPlayerZoom`): the fighter's `closeup_camera_zoom`.
     /// `None` runs the battle camera.
@@ -1240,6 +1252,7 @@ impl FighterScene {
             camera: ssb_game::camera::Camera::default(),
             entry_zoom: None,
             bonus_follow: false,
+            camera_status: None,
             player_zoom: None,
             cam_offset_y,
             camera_zoom_frame,
@@ -1452,6 +1465,23 @@ impl FighterScene {
     /// `others` (the other fighters' [`FighterScene::camera_interest`]s, in
     /// link order); any past the fourth interest are ignored.
     pub fn tick_camera(&mut self, stage: &StageDesc, others: &[ssb_game::camera::Interest]) {
+        match self.camera_status {
+            Some(CameraStatus::MapZoom { origin, target }) => {
+                self.camera.tick_map_zoom(origin, target);
+                return;
+            }
+            // `gmCameraAnimFuncCamera`: the host plays the animation
+            // ([`play_camera_anim`]); once its script has ended the battle
+            // camera takes over (`gmCameraSetStatusDefault`).
+            Some(CameraStatus::Anim { ended, .. }) => {
+                if ended {
+                    self.camera_status = None;
+                } else {
+                    return;
+                }
+            }
+            None => {}
+        }
         if self.bonus_follow {
             let pos = self.fighter.pos;
             let bounds = ssb_game::camera::Bounds {
@@ -1681,11 +1711,73 @@ pub fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
     }
 }
 
+/// A camera status set over the battle camera.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CameraStatus {
+    /// `gmCameraSetStatusMapZoom(&origin, &target)`.
+    MapZoom {
+        origin: ssb_engine::math::Vec3,
+        target: ssb_engine::math::Vec3,
+    },
+    /// `gmCameraSetStatusAnim`: the host plays the baked frames
+    /// ([`CameraAnim`]) into the camera; `ended` hands back to the battle
+    /// camera on the next tick.
+    Anim {
+        frame: usize,
+        vel: ssb_engine::math::Vec3,
+        ended: bool,
+    },
+}
+
+/// A baked boss camera animation (`ssb_rom::campaign::camera_frames`).
+#[derive(Clone)]
+pub struct CameraAnim {
+    pub frames: alloc::vec::Vec<[f32; ssb_rom::campaign::CAMERA_FRAME_FLOATS]>,
+}
+
+impl CameraAnim {
+    pub fn load(pack: &Pack<'_>, slot: u32) -> Option<Self> {
+        let frames: alloc::vec::Vec<_> = ssb_rom::campaign::packed_camera_frames(pack, slot)?.collect();
+        (!frames.is_empty()).then_some(CameraAnim { frames })
+    }
+}
+
+/// `gmCameraSetStatusAnim`: the camera takes the animation's first play,
+/// offset by `vel` (`gGMCameraStruct.vel_all`).
+pub fn start_camera_anim(scene: &mut FighterScene, anim: &CameraAnim, vel: ssb_engine::math::Vec3) {
+    scene.camera_status = Some(CameraStatus::Anim {
+        frame: 0,
+        vel,
+        ended: false,
+    });
+    play_camera_anim(scene, anim);
+}
+
+/// `gmCameraUpdateAnimVel` (`gcPlayCamAnim`, then `vel_all`): one play.
+/// Returns whether the animation was playing.
+pub fn play_camera_anim(scene: &mut FighterScene, anim: &CameraAnim) -> bool {
+    let Some(CameraStatus::Anim { frame, vel, .. }) = scene.camera_status else {
+        return false;
+    };
+    let last = anim.frames.len().saturating_sub(1);
+    let f = anim.frames[frame.min(last)];
+    scene.camera.eye = ssb_engine::math::Vec3::new(f[0], f[1], f[2]) + vel;
+    scene.camera.at = ssb_engine::math::Vec3::new(f[3], f[4], f[5]) + vel;
+    scene.camera.fovy_degrees = f[6];
+    scene.camera_status = Some(CameraStatus::Anim {
+        frame: frame + 1,
+        vel,
+        ended: frame >= last,
+    });
+    true
+}
+
 /// A fighter's model yaw: [`facing_turn`], or none at all while it enters
 /// (`lr = 0` faces the camera; Captain Falcon's leftward entry turns
 /// around), `ssb_game::appear::model_yaw`.
 pub fn fighter_turn(f: &ssb_game::fighter::Fighter) -> f32 {
-    ssb_game::appear::model_yaw(f)
+    ssb_game::boss::model_yaw(f)
+        .or_else(|| ssb_game::appear::model_yaw(f))
         .or_else(|| ssb_game::item_throw::model_yaw(f))
         .or_else(|| ssb_game::dokan::model_yaw(f))
         .unwrap_or_else(|| facing_turn(f.facing))

@@ -163,13 +163,22 @@ pub const SLOT_FIGURE_DROPPED: usize = 619;
 pub const SLOT_FIGURE_STAND: usize = 620;
 pub const SLOT_INTRO_L: usize = 621;
 pub const SLOT_INTRO_R: usize = 622;
+/// First of Master Hand's 30 slots, `ftBossMotion` order from
+/// `nFTBossMotionDefault` to `nFTBossMotionAppear`.
+pub const SLOT_BOSS_DEFAULT: usize = 623;
+/// Number of Master Hand's own motion slots.
+pub const BOSS_SLOTS: usize = 30;
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 623;
+pub const SLOT_COUNT: usize = 653;
 
 /// Whether a slot holds a 32-bit `AnimJoint` clip rather than a figatree:
-/// the seven entry slots only.
+/// the seven entry slots, and Master Hand's motions whose descriptor sets
+/// `FTANIM_FLAG_ANIMJOINT`.
 pub const fn is_anim_joint_slot(slot: usize) -> bool {
-    slot >= SLOT_APPEAR_R && slot < SLOT_WIN1
+    (slot >= SLOT_APPEAR_R && slot < SLOT_WIN1)
+        || (slot >= SLOT_BOSS_DEFAULT
+            && slot < SLOT_BOSS_DEFAULT + BOSS_SLOTS
+            && BOSS_ANIM_JOINT[slot - SLOT_BOSS_DEFAULT])
 }
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
@@ -664,13 +673,14 @@ mod tests {
         // lack only IntroR for Captain Falcon, Jigglypuff and Ness, who are
         // never a card's enemy; Master Hand lacks IntroL; the other
         // fourteen have only IntroR, except Poly Luigi, Poly Jigglypuff and
-        // Giant Donkey Kong.
+        // Giant Donkey Kong. Master Hand's 30 own slots exist for him alone.
         assert_eq!(
             missing,
             10950 + 15 * (SLOT_REBIRTH_DOWN - SLOT_WALL_DAMAGE) + 106 + 10 + 15 * 66 + 1 + 27 * 7
                 - 62
                 + 14 * 5
-                + 49,
+                + 49
+                + 26 * BOSS_SLOTS,
             "Twelve ported fighters have character, grab, reaction and move slots"
         );
         for a in &FIGHTER_ANIMS[..12] {
@@ -713,8 +723,11 @@ mod tests {
         assert_eq!(SLOT_NAMES[SLOT_FIGURE_DROPPED], "FigureDropped");
         assert_eq!(SLOT_NAMES[SLOT_FIGURE_STAND], "FigureStand");
         assert_eq!(SLOT_NAMES[SLOT_INTRO_L], "IntroL");
-        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "IntroR");
-        assert_eq!(SLOT_INTRO_R, SLOT_COUNT - 1);
+        assert_eq!(SLOT_NAMES[SLOT_INTRO_R], "IntroR");
+        assert_eq!(SLOT_BOSS_DEFAULT, SLOT_INTRO_R + 1);
+        assert_eq!(SLOT_NAMES[SLOT_BOSS_DEFAULT], "BossDefault");
+        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "BossAppear");
+        assert_eq!(SLOT_BOSS_DEFAULT + BOSS_SLOTS, SLOT_COUNT);
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")

@@ -14,6 +14,10 @@ use crate::rng;
 pub const PLAYERS_MAX: usize = 4;
 /// Glyph `10`: `%`. Glyph `11` is `H.P`, the Master Hand's.
 pub const PERCENT: u8 = 0xA;
+/// Glyph `11`: `H.P`.
+pub const HIT_POINTS: u8 = 0xB;
+/// Master Hand's hit points (`ifCommonPlayerDamageUpdateDigits`).
+pub const BOSS_HIT_POINTS: i32 = 300;
 
 /// `dIFCommonPlayerDamageDigitWidths`: each glyph's advance.
 pub const DIGIT_WIDTHS: [i32; 12] = [14, 9, 15, 14, 15, 13, 15, 14, 15, 15, 17, 20];
@@ -187,6 +191,9 @@ pub struct DamageDisplay {
     /// [`POSITION_X`], or the 1P Game's
     /// (`sc1PGameSetPlayerInterfacePositions`).
     pub pos_x: i32,
+    /// `players[player].fkind == nFTKindBoss`: the display counts Master
+    /// Hand's hit points down from 300 and ends in the `H.P` glyph.
+    pub is_boss: bool,
 }
 
 /// One glyph to draw: `lbCommonPrepSObjDraw` of a digit `SObj`.
@@ -205,6 +212,20 @@ pub struct Glyph {
 
 /// `ifCommonPlayerDamageGetPercentArrayID`: the decimal digits, then `%`.
 fn percent_digits(damage: i32, digits: &mut [u8; 4]) -> usize {
+    let n = special_digits(damage, digits);
+    digits[n] = PERCENT;
+    n + 1
+}
+
+/// `ifCommonPlayerDamageGetHitPointsArrayID`: the digits, then `H.P`.
+fn hit_points_digits(hit_points: i32, digits: &mut [u8; 4]) -> usize {
+    let n = special_digits(hit_points, digits);
+    digits[n] = HIT_POINTS;
+    n + 1
+}
+
+/// `ifCommonPlayerDamageGetSpecialArrayID`: the decimal digits.
+fn special_digits(damage: i32, digits: &mut [u8; 4]) -> usize {
     let mut damage = damage;
     let mut unit = 1;
     if damage >= 10 {
@@ -225,8 +246,7 @@ fn percent_digits(damage: i32, digits: &mut [u8; 4]) -> usize {
             break;
         }
     }
-    digits[n] = PERCENT;
-    n + 1
+    n
 }
 
 impl DamageDisplay {
@@ -238,6 +258,11 @@ impl DamageDisplay {
 
     /// [`DamageDisplay::new`] at interface position `pos_x`.
     pub fn at(player: usize, damage: i32, pos_x: i32) -> DamageDisplay {
+        Self::at_kind(player, damage, pos_x, false)
+    }
+
+    /// [`DamageDisplay::at`] for Master Hand's hit points when `is_boss`.
+    pub fn at_kind(player: usize, damage: i32, pos_x: i32, is_boss: bool) -> DamageDisplay {
         let mut d = DamageDisplay {
             player,
             damage,
@@ -252,6 +277,7 @@ impl DamageDisplay {
             dead_stopupdate_wait: 180,
             is_show_interface: false,
             pos_x,
+            is_boss,
         };
         d.update(damage, false);
         d
@@ -298,7 +324,11 @@ impl DamageDisplay {
             self.player
         };
         let mut digits = [0u8; 4];
-        let count = percent_digits(damage, &mut digits);
+        let count = if self.is_boss {
+            hit_points_digits((BOSS_HIT_POINTS - damage).max(0), &mut digits)
+        } else {
+            percent_digits(damage, &mut digits)
+        };
         self.char_display_count = count;
         let width: i32 = digits[..count]
             .iter()

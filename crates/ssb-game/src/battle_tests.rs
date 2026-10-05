@@ -220,3 +220,48 @@ fn a_team_tie_sends_both_whole_teams_to_sudden_death() {
     b.on_fall(3, Some(0));
     assert_eq!(b.sudden_death(), None);
 }
+
+#[test]
+fn master_hand_falls_in_slow_motion_until_the_wallpaper_fades() {
+    let mut b = Battle::new_1p(5, two_players(), false, 601);
+    run_to_go(&mut b);
+    b.begin_frame();
+    b.boss_defeat();
+    assert_eq!(b.status, GameStatus::End);
+    assert_eq!(b.end, Some(EndKind::BossDefeat));
+    // A second end changes nothing.
+    b.announce_end_1p(true);
+    assert_eq!(b.end, Some(EndKind::BossDefeat));
+    // 90 paused ticks with the camera zooming on him.
+    for _ in 0..BOSS_DEFEAT_ZOOM_WAIT {
+        assert_eq!(b.begin_frame(), Frame::Frozen);
+        assert_eq!(b.boss_defeat, Some(BossDefeat::Zoom));
+        assert!(!b.boss_set);
+    }
+    // The proc-set, then the world runs one tick in three.
+    assert_eq!(b.begin_frame(), Frame::Run);
+    assert!(b.boss_set);
+    assert_eq!(b.boss_defeat, Some(BossDefeat::Slow));
+    let frames: Vec<Frame> = (0..6).map(|_| b.begin_frame()).collect();
+    assert_eq!(
+        frames,
+        [
+            Frame::Frozen,
+            Frame::Frozen,
+            Frame::Run,
+            Frame::Frozen,
+            Frame::Frozen,
+            Frame::Run
+        ]
+    );
+    assert!(!b.boss_set);
+    assert_eq!(b.status, GameStatus::BossDefeat);
+    // The fade's end: the next tick sets the scene, three more end it.
+    b.boss_wallpaper_done();
+    assert_eq!(b.begin_frame(), Frame::Frozen);
+    assert_eq!(b.status, GameStatus::Set);
+    for _ in 0..SET_RESTORE_WAIT {
+        assert_eq!(b.begin_frame(), Frame::Frozen);
+    }
+    assert_eq!(b.begin_frame(), Frame::Done);
+}
