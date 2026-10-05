@@ -107,6 +107,25 @@ two through all three handoffs. Repeated live-course native images are
 pixel-identical. These diagnostics remain outside the 195-scene manifest;
 see [RE-452](../evidence/re/RE-452.md) for the remaining validation limits.
 
+RE-454 adds Board the Platforms with ten real landing objectives. Its
+fixtures seed the bonus intro after the real select and bypass preceding
+campaign wins.
+
+| Spec | Captured display |
+|---|---|
+| `onepplatforms` (600) | Kirby's live course, ten platform icons and timer 01:59 |
+| `onepplatformclear@800` | Mario lands on ten real floors; COMPLETE |
+| `onepplatformclear@1000`, `@1100` | Ten credited platforms in RESULT, then Perfect |
+| `onepplatformfall@670`, `onepplatformfall` (750) | Seeded Fall below the blast zone; FAILURE, then zero credited platforms |
+| `onepplatforms@7790` | Unmodified two-minute timer reaches FAILURE at 00:00 |
+
+The clear fixture places Mario above each floor and lets normal swept
+collision land him before the objective process credits it. It does not
+write task counts or results. Repeated live-course native images are
+pixel-identical. These diagnostics remain outside the 195-scene manifest;
+see [RE-454](../evidence/re/RE-454.md) for source/ROM checks and validation
+limits.
+
 ### Single captures
 
 ```bash

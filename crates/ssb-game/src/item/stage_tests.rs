@@ -69,7 +69,8 @@ impl Scripted {
             ItemAnimTarget::Untracked
             | ItemAnimTarget::Target(_)
             | ItemAnimTarget::Monster(_)
-            | ItemAnimTarget::Bonus3Bumper(_) => None,
+            | ItemAnimTarget::Bonus3Bumper(_)
+            | ItemAnimTarget::Bonus2Bumper(_) => None,
         }
     }
 }
@@ -127,7 +128,8 @@ impl ItemAnims for Scripted {
             ItemAnimTarget::Untracked
             | ItemAnimTarget::Target(_)
             | ItemAnimTarget::Monster(_)
-            | ItemAnimTarget::Bonus3Bumper(_) => true,
+            | ItemAnimTarget::Bonus3Bumper(_)
+            | ItemAnimTarget::Bonus2Bumper(_) => true,
         }
     }
     fn stop_root(&mut self, target: ItemAnimTarget) {

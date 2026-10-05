@@ -545,6 +545,7 @@ pub struct FloorSegments<'a, 'p> {
 /// Walks every static stage collision segment with its authored one-sided
 /// kind. Fighters and weapons share this allocation-free static map input.
 pub struct StageMap {
+    pub platforms: alloc::vec::Vec<ssb_rom::bonus2::Visual>,
     pub animator: ssb_rom::skeleton::StageAnimator,
     pub groups: alloc::vec::Vec<ssb_game::map::MapGroup>,
     anim: Option<ssb_rom::pack::AnimDesc>,
@@ -583,6 +584,7 @@ impl StageMap {
             });
         }
         Self {
+            platforms: alloc::vec::Vec::new(),
             animator,
             groups,
             anim,
@@ -591,7 +593,27 @@ impl StageMap {
         }
     }
 
+    /// Platform children draw under their yakumono's translation on link 6.
+    /// Safety: the caller has initialized GU and the current battle matrices.
+    pub unsafe fn draw_platforms(&self, pack: &Pack<'_>, base: &psp::sys::ScePspFMatrix4, st: &mut crate::meshdraw::DrawState) {
+        use crate::meshdraw;
+        use ssb_rom::scene::Mat4;
+        // The course's empty root still contributes its authored matrix.
+        let root = pack.node(self.first_node).map_or(Mat4::IDENTITY, |n| Mat4(n.world));
+        for platform in &self.platforms {
+            let Some(group) = self.groups.get(platform.group as usize) else { continue };
+            if !group.exists() { continue; }
+            let pos = group.translate;
+            let parent = root.mul(&Mat4::from_trs([pos.x / meshdraw::MODEL_SCALE, pos.y / meshdraw::MODEL_SCALE, pos.z / meshdraw::MODEL_SCALE], [0.0; 3], [1.0; 3]));
+            let mut posed = [Mat4::IDENTITY; 8];
+            let count = platform.anim.compose(pack, &platform.object, &mut posed);
+            for pose in &mut posed[..count] { *pose = parent.mul(pose); }
+            meshdraw::draw_object_posed_hiding(pack, &platform.object, base, &posed[..count], st, Some(&platform.materials), &|node| !platform.anim.visible(pack, node));
+        }
+    }
+
     pub fn tick(&mut self, pack: &Pack<'_>) -> Result<(), ssb_rom::objanim::AnimError> {
+        for platform in &mut self.platforms { platform.tick(pack)?; }
         let Some(anim) = self.anim else {
             return Ok(());
         };
@@ -1437,7 +1459,8 @@ impl FighterScene {
                 left: stage.camera.left as f32, right: stage.camera.right as f32,
             };
             let target = bounds.clamp(ssb_engine::math::Vec3::new(pos.x, pos.y + self.cam_offset_y, 0.0));
-            self.camera.tick_player_zoom(target, (0.0, -9.0 * core::f32::consts::PI / 180.0), 9000.0, 0.3, 31.5);
+            let pitch = if ssb_rom::bonus2::kind(stage.source_file).is_some() { -15.0 } else { -9.0 };
+            self.camera.tick_player_zoom(target, (0.0, pitch * core::f32::consts::PI / 180.0), 9000.0, 0.3, 31.5);
             return;
         }
         if let Some((target, dist)) = self.entry_zoom {
@@ -1692,6 +1715,7 @@ pub fn vs_stage_index(pack: &Pack<'_>, gkind: u8) -> Option<u32> {
 /// (`ssb_rom::stage::COMMON_GROUND_FILES`): the VS stages and the 1P
 /// Game's.
 pub fn common_stage_index(pack: &Pack<'_>, gkind: u8) -> Option<u32> {
+    if (29..41).contains(&gkind) { return pack.stage_of_file(283 + u32::from(gkind - 29)); }
     if (17..29).contains(&gkind) {
         return pack.stage_of_file(271 + u32::from(gkind - 17));
     }
@@ -1789,9 +1813,10 @@ fn item_tree(target: ssb_game::item::ItemAnimTarget, objects: &ssb_rom::ground_o
         ItemAnimTarget::Pakkun(i) => Some((g::PAKKUN, i)),
         ItemAnimTarget::Monster(k) => Some((g::MONSTER_FIRST + k as u8, 0)),
         ItemAnimTarget::Bonus3Bumper(i) => Some((g::BONUS3_BUMPER_FIRST + i, 0)),
+        ItemAnimTarget::Bonus2Bumper(i) => objects.iter().find(|o| o.asset >= ssb_rom::bonus2::FIRST_BUMPER_ASSET).map(|o| (o.asset, i)),
         ItemAnimTarget::Untracked => None,
         ItemAnimTarget::Target(i) => objects.iter()
-            .find(|o| o.asset >= ssb_rom::bonus1::FIRST_ASSET).map(|o| (o.asset, i)),
+            .find(|o| (ssb_rom::bonus1::FIRST_ASSET..ssb_rom::bonus2::FIRST_BUMPER_ASSET).contains(&o.asset)).map(|o| (o.asset, i)),
     }
 }
 

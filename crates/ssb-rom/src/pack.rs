@@ -371,7 +371,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 96 adds Break the Targets' item-root clips (ITEM slots 64..183).
 // 97 reconciles the campaign branches, including all fifteen demo-script
 // rows and their reachable model/texture parts. No layout change.
-pub const VERSION: u32 = 97;
+// 98 adds Board the Platforms' six trees' clips/materials and course Bumpers.
+pub const VERSION: u32 = 98;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

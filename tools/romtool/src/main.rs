@@ -2146,6 +2146,9 @@ fn ground_layer1_graphs(loaded: &Loaded) -> std::collections::BTreeMap<(u32, u32
         .flat_map(|stage| &stage.layers)
         .map(|layer| (layer.graph, layer.index))
         .collect();
+    for tree in ssb_rom::bonus2::TREES {
+        graphs.insert((ssb_rom::bonus2::FILE, tree[0]), 1);
+    }
     for asset in &ssb_rom::ground_obj::OBJECTS {
         if asset.dl_link != LAYER1_DL_LINK {
             continue;
@@ -3328,6 +3331,26 @@ fn resolve_layer_mat_anims(
     mat_anim_data: &mut BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>,
 ) -> Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> {
     let empty = || materials.iter().map(|c| vec![None; c.len()]).collect();
+
+    if file.id == ssb_rom::bonus2::FILE {
+        if let Some(tree) = ssb_rom::bonus2::TREES
+            .iter()
+            .find(|t| t[0] == graph_offset && t[3] != 0)
+        {
+            return resolve_mat_anims(
+                file,
+                tree[3],
+                materials,
+                |n, m| {
+                    materials
+                        .get(n)
+                        .and_then(|c| c.get(m))
+                        .map(|m| (m.at, m.palette_entries))
+                },
+                mat_anim_data,
+            );
+        }
+    }
 
     let ground = ground_mat_scripts(loaded, file, graph_offset, materials);
     if !ground.is_empty() {
@@ -5946,6 +5969,66 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         Some(script),
                         Some(target_model.first_node + ssb_rom::ground_obj::ITEM_ROOT as u32),
                     )],
+                );
+            }
+        }
+    }
+
+    // Platform children keep independent clocks; their parent's course
+    // animation continues to move the collision group after boarding.
+    let file = loaded.files[ssb_rom::bonus2::FILE as usize]
+        .as_ref()
+        .ok_or("platform file missing")?;
+    for (i, tree) in ssb_rom::bonus2::TREES.iter().enumerate() {
+        let object = object_index
+            .get(&(file.id, tree[0]))
+            .and_then(|&i| writer.object(i))
+            .ok_or("platform tree missing")?;
+        let scripts =
+            ssb_rom::objanim::joint_scripts(&file.data, tree[1], object.node_count as usize);
+        let joints: Vec<_> = scripts
+            .into_iter()
+            .enumerate()
+            .map(|(i, s)| (s, Some(object.first_node + i as u32)))
+            .collect();
+        writer.add_anim(
+            ssb_rom::pack::AnimDesc::ITEM,
+            ssb_rom::bonus2::FIRST_ANIM + i as u32,
+            file.id,
+            0,
+            &file.data,
+            &joints,
+        );
+    }
+    let bumper = object_index
+        .get(&ssb_rom::ground_obj::GBUMPER_SOURCE)
+        .and_then(|&i| writer.object(i))
+        .ok_or("Bumper tree missing")?;
+    for (kind, labels) in ssb_rom::bonus2::BUMPERS.iter().enumerate() {
+        let Some((graph, table)) = labels else {
+            continue;
+        };
+        let file = loaded.files[137 + kind]
+            .as_ref()
+            .ok_or("Bumper course missing")?;
+        let placements = object_index
+            .get(&(file.id, *graph))
+            .and_then(|&i| writer.object(i))
+            .ok_or("Bumper placements missing")?;
+        for (i, script) in
+            ssb_rom::objanim::joint_scripts(&file.data, *table, placements.node_count as usize)
+                .into_iter()
+                .skip(1)
+                .enumerate()
+        {
+            if let Some(script) = script {
+                writer.add_anim(
+                    ssb_rom::pack::AnimDesc::ITEM,
+                    ssb_rom::bonus2::BUMPER_ANIM + kind as u32 * 10 + i as u32,
+                    file.id,
+                    0,
+                    &file.data,
+                    &[(Some(script), Some(bumper.first_node + 1))],
                 );
             }
         }
@@ -8960,7 +9043,7 @@ fn load_all(archive: &Archive) -> Loaded {
     }
     // A record only counts if a graph really starts where it points *and* the
     // table it names parses for that graph's node count; see `PartTables::scan`.
-    let tables = mobj::PartTables::scan(files.iter().flatten(), |model, graph, table| {
+    let mut tables = mobj::PartTables::scan(files.iter().flatten(), |model, graph, table| {
         let Some(nodes) = graphs
             .get(&model)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
@@ -8972,6 +9055,21 @@ fn load_all(archive: &Archive) -> Loaded {
             .as_ref()
             .is_some_and(|f| mobj::read_table(f, table, nodes).is_some())
     });
+    // `sc1PBonusStageInitPlatforms` attaches these exact MObj tables to
+    // descriptor 0 (a child of the existing yakumono, not an empty root).
+    for tree in ssb_rom::bonus2::TREES.iter().take(3) {
+        let graph = graphs
+            .get(&ssb_rom::bonus2::FILE)
+            .and_then(|gs| gs.iter().find(|g| g.offset == tree[0]))
+            .expect("platform graph absent");
+        assert!(
+            files[ssb_rom::bonus2::FILE as usize]
+                .as_ref()
+                .is_some_and(|f| mobj::read_table(f, tree[2], graph.nodes.len()).is_some()),
+            "platform material table invalid"
+        );
+        tables.insert(ssb_rom::bonus2::FILE, tree[0], tree[2]);
+    }
     // Stage layers name their table through `MPGroundDesc`, which puts it two
     // words after the graph rather than one. Same idea, different struct.
     let is_graph = |file: u32, offset: u32| {
@@ -9028,7 +9126,6 @@ fn load_all(archive: &Archive) -> Loaded {
         }
     }
 
-    let mut tables = tables;
     for (file, graph, table) in leaf_tables {
         let parses = files[file as usize]
             .as_ref()

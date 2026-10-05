@@ -463,3 +463,4 @@ editing a record.
 | RE-451 | Authored campaign cameras, figure movement and result snapshot | COMPLETE (source/ROM bindings and PSP diagnostic captures; physical PSP and N64 comparison pending) | front-end, camera, animation, pack, sprite, framebuffer |  |
 | RE-452 | Target course placement and independent item clocks | COMPLETE (source/ROM bindings and PSP diagnostic handoffs; physical PSP and N64 comparison pending) | stage, item, animation, pack, campaign, camera |  |
 | RE-453 | PSP 1P campaign binding and its deviations | PARTIAL (select START, scene flow and seven stages' battles on PSP; scene draws, remaining stages and runtime checks remain) | gameplay, front-end, battle |  |
+| RE-454 | Platform children, course Bumpers and boarding order | IMPLEMENTED (source/ROM bindings and PSP diagnostic handoffs; N64 runtime and physical PSP comparison pending) | stage, item, animation, pack, campaign, camera |  |

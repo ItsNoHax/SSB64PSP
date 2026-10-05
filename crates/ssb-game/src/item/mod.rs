@@ -483,6 +483,8 @@ pub struct ItemVars {
     pub bumper_hit_anim_length: u16,
     /// A Race to the Finish Bumper's `llGRBonus3MapBumpersAnimJoint` index.
     pub bonus3_bumper_joint: Option<u8>,
+    /// Board the Platforms' course-local descriptor index (past root).
+    pub bonus2_bumper_joint: Option<u8>,
     /// `pakkun.pos` and `pakkun.is_wait_fighter`.
     pub pakkun_pos: Vec3,
     pub pakkun_is_wait_fighter: bool,
@@ -972,6 +974,9 @@ impl Item {
             ItemKind::PowerBlock => ItemAnimTarget::PowerBlock,
             ItemKind::Pakkun => ItemAnimTarget::Pakkun(self.vars.pakkun_index),
             ItemKind::Monster(k) => ItemAnimTarget::Monster(k),
+            ItemKind::GBumper if self.vars.bonus2_bumper_joint.is_some() => {
+                ItemAnimTarget::Bonus2Bumper(self.vars.bonus2_bumper_joint.unwrap())
+            }
             ItemKind::GBumper => match self.vars.bonus3_bumper_joint {
                 Some(i) => ItemAnimTarget::Bonus3Bumper(i),
                 None => ItemAnimTarget::Untracked,
@@ -1029,6 +1034,7 @@ pub enum ItemAnimTarget {
     /// index: [`ItemAnims::make`] also adds that script and plays it
     /// (`gcAddDObjAnimJoint` + `gcPlayAnimAll` in `grBonus3MakeBumpers`).
     Bonus3Bumper(u8),
+    Bonus2Bumper(u8),
 }
 
 /// The scripts an item starts on itself.
@@ -2158,6 +2164,11 @@ impl crate::stage::StageItems for ItemPool {
         use crate::stage::StageItem;
         let item = match kind {
             StageItem::Target(i) => target::make(pos, i),
+            StageItem::Bonus2Bumper(i) => {
+                let mut item = gbumper::make(pos, 0, false);
+                item.vars.bonus2_bumper_joint = Some(i);
+                item
+            }
             StageItem::Bumper { castle, joint } => {
                 let mut item = gbumper::make(pos, 0, castle);
                 item.vars.bonus3_bumper_joint = joint;

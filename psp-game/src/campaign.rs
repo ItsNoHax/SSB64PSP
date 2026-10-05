@@ -6,7 +6,7 @@
 //! stage-clear controllers run here, and a requested battle runs on the
 //! shared Training/VS world with the campaign's `Session` collecting its
 //! callbacks, falls and enemy replacements. A scene the PSP cannot run yet
-//! (Board the Platforms, Race to the Finish, Master Hand, the ending, challengers, unlock
+//! (Race to the Finish, Master Hand, the ending, challengers, unlock
 //! messages, or a battle whose fighters the pack lacks) stops the campaign
 //! with an explicit blocked screen: it is never replaced by a VS battle or
 //! skipped. Authored presentation is bound by campaign_screen.
@@ -38,7 +38,7 @@ pub(crate) struct Campaign {
 /// A scene the host cannot run yet.
 #[derive(Clone, Copy)]
 enum Blocked {
-    /// No PSP controller yet: Platforms, Race, ending, challenger, message.
+    /// No PSP controller yet: Race, ending, challenger, message.
     Scene(Scene),
     /// The stage or a fighter (Metal Mario, Giant Donkey Kong, the
     /// Polygons, Master Hand) is not in the pack.
@@ -229,26 +229,46 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
 }
 
 /// `sc1PBonusStageFuncStart`: a separate bonus world, one fighter and ten
-/// targets. Campaign stocks and its accumulated battle records stay put.
+/// objectives. Campaign stocks and accumulated battle records stay put.
 fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> {
     let c = s.campaign.as_mut().expect("campaign");
     let data = &c.frontend.session.as_ref().expect("campaign session").data;
-    if data.stage() != Some(Stage::Bonus1) { return Err(Blocked::Scene(Scene::BonusStage)); }
-    if data.player != 0 { return Err(Blocked::Assets(Stage::Bonus1)); }
-    let bonus = spgame::bonus_stage::BonusStage::targets(data);
-    let p = pack.ok_or(Blocked::Assets(Stage::Bonus1))?;
-    let index = ssb_psp_runtime::scene::common_stage_index(p, bonus.state.gkind).ok_or(Blocked::Assets(Stage::Bonus1))?;
-    let stage = p.stage(index).ok_or(Blocked::Assets(Stage::Bonus1))?;
+    let which = data.stage().filter(|s| matches!(s, Stage::Bonus1 | Stage::Bonus2)).ok_or(Blocked::Scene(Scene::BonusStage))?;
+    if data.player != 0 { return Err(Blocked::Assets(which)); }
+    let p = pack.ok_or(Blocked::Assets(which))?;
+    let gkind = (if which == Stage::Bonus1 { 17 } else { 29 }) + data.fkind as u8;
+    let index = ssb_psp_runtime::scene::common_stage_index(p, gkind).ok_or(Blocked::Assets(which))?;
+    let stage = p.stage(index).ok_or(Blocked::Assets(which))?;
     let kind = data.fkind as usize;
-    let placement = (0..p.object_count()).filter_map(|i| p.object(i)).find(|o|
+    let positions: alloc::vec::Vec<_> = if which == Stage::Bonus1 {
+      let placement = (0..p.object_count()).filter_map(|i| p.object(i)).find(|o|
         o.source_file == 124 + kind as u32 && o.source_offset == ssb_rom::bonus1::COURSES[kind].placements)
-        .ok_or(Blocked::Assets(Stage::Bonus1))?;
-    if placement.node_count != 11 || p.fighter(data.fkind as u32).is_none()
-        || p.spawn(&stage, spgame::setup::mapobj::PLAYER).is_none() {
-        return Err(Blocked::Assets(Stage::Bonus1));
+        .ok_or(Blocked::Assets(which))?;
+      if placement.node_count != 11 { return Err(Blocked::Assets(which)); }
+      (1..11).filter_map(|i| p.node(placement.first_node + i))
+        .map(|n| ssb_engine::math::Vec3::new(n.rest_translate[0], n.rest_translate[1], n.rest_translate[2])).collect()
+    } else { alloc::vec::Vec::new() };
+    if p.fighter(data.fkind as u32).is_none() || p.spawn(&stage, spgame::setup::mapobj::PLAYER).is_none() {
+        return Err(Blocked::Assets(which));
     }
-    let positions: alloc::vec::Vec<_> = (1..11).filter_map(|i| p.node(placement.first_node + i))
-        .map(|n| ssb_engine::math::Vec3::new(n.rest_translate[0], n.rest_translate[1], n.rest_translate[2])).collect();
+    let floors = ssb_rom::bonus2::platforms(p, &stage);
+    let bonus = if which == Stage::Bonus1 { spgame::bonus_stage::BonusStage::targets(data) } else {
+        if floors.len() != 10 || (0..6).any(|i| ssb_rom::bonus2::object(p, i).is_none() || p.item_anim(ssb_rom::bonus2::FIRST_ANIM + i as u32).is_none()) {
+            return Err(Blocked::Assets(which));
+        }
+        let platforms: alloc::vec::Vec<_> = floors.iter().map(|f| spgame::bonus_stage::Platform {
+            group: f.group, kind: spgame::bonus_stage::platform_kind(f.width), boarded: false,
+        }).collect();
+        spgame::bonus_stage::BonusStage::platforms(data, &platforms)
+    };
+    let bumpers = if which == Stage::Bonus2 {
+        if let Some((graph, _)) = ssb_rom::bonus2::BUMPERS[kind] {
+            let placements = (0..p.object_count()).filter_map(|i| p.object(i))
+                .find(|o| (o.source_file, o.source_offset) == (137 + kind as u32, graph)).ok_or(Blocked::Assets(which))?;
+            (1..placements.node_count).filter_map(|i| p.node(placements.first_node + i))
+                .map(|n| ssb_engine::math::Vec3::new(n.rest_translate[0], n.rest_translate[1], n.rest_translate[2])).collect()
+        } else { alloc::vec::Vec::new() }
+    } else { alloc::vec::Vec::new() };
     let mut roster: Roster = [None; 4];
     roster[0] = Some(Entrant { kind: data.fkind, costume: data.costume, level: 1,
         handicap: ssb_game::stale::HANDICAP_DEFAULT, spawn: spgame::setup::mapobj::PLAYER,
@@ -259,8 +279,20 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
     s.scene_gkind = gkind;
     s.vs_battle = Some(bonus.battle());
     s.items.appear = None;
-    bonus.make_targets(&positions, &mut s.items);
-    let pl = s.play_state.as_mut().ok_or(Blocked::Assets(Stage::Bonus1))?;
+    if which == Stage::Bonus1 { bonus.make_targets(&positions, &mut s.items); }
+    else {
+        let map = s.stage_map.as_mut().ok_or(Blocked::Assets(which))?;
+        for platform in bonus.platforms.iter().flatten() {
+            let group = map.groups.get_mut(platform.group as usize).ok_or(Blocked::Assets(which))?;
+            if !group.animated { group.status = ssb_game::map::GroupStatus::On; }
+            map.platforms.push(ssb_rom::bonus2::Visual::new(p, platform.group, platform.kind).ok_or(Blocked::Assets(which))?);
+        }
+        for (i, pos) in bumpers.into_iter().enumerate() {
+            use ssb_game::stage::StageItems;
+            s.items.make_item(ssb_game::stage::StageItem::Bonus2Bumper(i as u8), pos).ok_or(Blocked::Assets(which))?;
+        }
+    }
+    let pl = s.play_state.as_mut().ok_or(Blocked::Assets(which))?;
     ssb_game::status::set_wait_or_fall(&mut pl.fighter);
     pl.fighter.facing = if pl.fighter.pos.x >= 0.0 { ssb_game::fighter::Facing::Left } else { ssb_game::fighter::Facing::Right };
     pl.fighter.stats.enable();
@@ -614,6 +646,11 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
             sp.data.stage = Stage::Bonus1 as u8;
             sp.manager.scene = Scene::Intro;
         }
+        GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall => {
+            sp.data.stage = Stage::Bonus2 as u8;
+            if scene != GameScene::OnePPlatforms { sp.data.fkind = ssb_game::fighter::FighterKind::Mario; }
+            sp.manager.scene = Scene::Intro;
+        }
         GameScene::OnePContinue | GameScene::OnePRetry => {
             sp.data.score = 123456;
             sp.manager.scene = Scene::Continue;
@@ -638,11 +675,29 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
 pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene: GameScene, tick: u64) {
     let Some(pack) = pack else { return };
     if !s.campaign.as_ref().is_some_and(|c| c.bonus.is_some()) { return; }
-    if scene == GameScene::OnePTargetFall && tick == 600 {
+    if matches!(scene, GameScene::OnePTargetFall | GameScene::OnePPlatformFall) && tick == 600 {
         if let Some(pl) = s.play_state.as_mut() {
             ssb_game::status::set_fall(&mut pl.fighter);
             pl.fighter.pos.y = -20000.0;
         }
+    }
+    if scene == GameScene::OnePPlatformClear && (600..810).contains(&tick) && tick % 20 == 0 {
+        let Some(pl) = s.play_state.as_mut() else { return };
+        let Some(stage) = pack.stage(s.training_stage) else { return };
+        let Some(map) = s.stage_map.as_ref() else { return };
+        let Some(platform) = s.campaign.as_ref().and_then(|c| c.bonus.as_ref())
+            .and_then(|b| b.platforms.iter().flatten().find(|p| !p.boarded)) else { return };
+        let Some(floor) = pack.stage_lines(&stage).find(|l| l.kind == ssb_rom::pack::line_kind::FLOOR && l.yakumono == platform.group && pack.line_vertices(l).next().is_some_and(|v| v.flags & 0xff == 14)) else { return };
+        let mut vertices = pack.line_vertices(&floor);
+        let Some(left) = vertices.next() else { return };
+        let right = vertices.last().unwrap_or(left);
+        let offset = map.groups[platform.group as usize].translate;
+        // Teleport above each real floor; the normal swept map collision
+        // must land the fighter before the objective process can credit it.
+        ssb_game::status::set_fall(&mut pl.fighter);
+        pl.fighter.pos = offset + ssb_engine::math::Vec3::new((f32::from(left.x) + f32::from(right.x)) * 0.5, f32::from(left.y) + 100.0, 0.0);
+        pl.fighter.floor = None;
+        pl.fighter.physics.vel_air = ssb_engine::math::Vec3::ZERO;
     }
     if scene == GameScene::OnePTargetClear && (600..810).contains(&tick) {
         let Some(pl) = s.play_state.as_mut() else { return };

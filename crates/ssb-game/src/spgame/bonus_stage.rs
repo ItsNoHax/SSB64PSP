@@ -1,4 +1,4 @@
-//! Break the Targets' separate battle and scene accounting
+//! Break the Targets and Board the Platforms' separate battle and accounting
 //! (`sc1pbonusstage.c`). Its results never overwrite campaign stocks.
 use super::{BattleState, PlayerKind, SceneData, Stage, BONUSGAME_TASK_MAX};
 use crate::{
@@ -10,13 +10,46 @@ use ssb_engine::math::Vec3;
 pub struct BonusStage {
     pub state: BattleState,
     pub tasks_remain: u8,
+    pub platforms: [Option<Platform>; BONUSGAME_TASK_MAX as usize],
+}
+
+/// A DETECT floor's yakumono, shared by every line on that platform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Platform {
+    pub group: u16,
+    pub kind: u8,
+    pub boarded: bool,
+}
+
+pub fn platform_kind(width: f32) -> u8 {
+    if width <= 750.0 {
+        0
+    } else if width <= 1050.0 {
+        1
+    } else {
+        2
+    }
 }
 
 impl BonusStage {
     pub fn targets(data: &SceneData) -> Self {
         assert_eq!(data.stage(), Some(Stage::Bonus1));
+        Self::new(data, 17)
+    }
+
+    pub fn platforms(data: &SceneData, platforms: &[Platform]) -> Self {
+        assert_eq!(data.stage(), Some(Stage::Bonus2));
+        assert_eq!(platforms.len(), BONUSGAME_TASK_MAX as usize);
+        let mut this = Self::new(data, 29);
+        for (slot, platform) in this.platforms.iter_mut().zip(platforms) {
+            *slot = Some(*platform);
+        }
+        this
+    }
+
+    fn new(data: &SceneData, first_ground: u8) -> Self {
         let mut state = BattleState {
-            gkind: 17 + data.fkind as u8,
+            gkind: first_ground + data.fkind as u8,
             pl_count: 1,
             cp_count: 0,
             time_limit: if data.time_limit == TIMELIMIT_INFINITE {
@@ -34,7 +67,30 @@ impl BonusStage {
         Self {
             state,
             tasks_remain: BONUSGAME_TASK_MAX,
+            platforms: [None; BONUSGAME_TASK_MAX as usize],
         }
+    }
+
+    /// Priority 4, after fighter interrupts and before movement/item hits.
+    /// Return the replaced platform's index so the host can restart its tree.
+    pub fn board(&mut self, fighter: &Fighter, group: u16, battle: &mut Battle) -> Option<usize> {
+        if !fighter.is_grounded()
+            || !fighter
+                .floor
+                .is_some_and(|s| s.material() == crate::stage::bonus3::MATERIAL_DETECT)
+        {
+            return None;
+        }
+        let i = self
+            .platforms
+            .iter()
+            .position(|p| p.is_some_and(|p| p.group == group && !p.boarded))?;
+        self.platforms[i].as_mut().unwrap().boarded = true;
+        self.tasks_remain -= 1;
+        if self.tasks_remain == 0 {
+            battle.announce_complete();
+        }
+        Some(i)
     }
 
     pub fn battle(&self) -> Battle {
@@ -182,5 +238,105 @@ mod tests {
             }
             assert!(b.end.is_none());
         }
+    }
+
+    fn platform_course() -> (BonusStage, Fighter) {
+        let data = SceneData {
+            stage: Stage::Bonus2 as u8,
+            ..Default::default()
+        };
+        let platforms = core::array::from_fn::<_, 10, _>(|i| Platform {
+            group: i as u16 + 1,
+            kind: (i % 3) as u8,
+            boarded: false,
+        });
+        (
+            BonusStage::platforms(&data, &platforms),
+            Fighter::new(FighterKind::Mario, 0, 3),
+        )
+    }
+
+    #[test]
+    fn platforms_credit_ground_contact_once_per_group_and_complete_all_ten() {
+        use crate::{fighter::Situation, ground::Standing};
+        let (mut scene, mut fighter) = platform_course();
+        let mut battle = scene.battle();
+        fighter.floor = Some(Standing {
+            line: 42,
+            flags: 0x800e,
+            normal: ssb_engine::math::Vec2::new(0.0, 1.0),
+        });
+        fighter.situation = Situation::Air;
+        assert_eq!(scene.board(&fighter, 1, &mut battle), None);
+        fighter.situation = Situation::Ground;
+        fighter.floor.as_mut().unwrap().flags = 0x800d;
+        assert_eq!(scene.board(&fighter, 1, &mut battle), None);
+        fighter.floor.as_mut().unwrap().flags = 0x800e;
+        assert_eq!(scene.board(&fighter, 99, &mut battle), None);
+        for i in 0..10 {
+            assert_eq!(scene.board(&fighter, i + 1, &mut battle), Some(i as usize));
+            assert_eq!(scene.board(&fighter, i + 1, &mut battle), None);
+            assert_eq!(scene.tasks_remain, 9 - i as u8);
+            assert_eq!(
+                battle.end,
+                if i == 9 {
+                    Some(EndKind::Complete)
+                } else {
+                    None
+                }
+            );
+        }
+        assert_eq!(fighter.stocks, 3);
+    }
+
+    #[test]
+    fn platforms_keep_selection_limits_and_source_width_boundaries() {
+        assert_eq!(
+            [750.0, 750.1, 1050.0, 1050.1].map(platform_kind),
+            [0, 1, 1, 2]
+        );
+        let (s, _) = platform_course();
+        let platforms: alloc::vec::Vec<_> = s.platforms.into_iter().flatten().collect();
+        for k in 0..12 {
+            for time in [2, TIMELIMIT_INFINITE] {
+                let data = SceneData {
+                    stage: Stage::Bonus2 as u8,
+                    fkind: FighterKind::from_ordinal(k).unwrap(),
+                    costume: 2,
+                    player: 3,
+                    time_limit: time,
+                    ..Default::default()
+                };
+                let s = BonusStage::platforms(&data, &platforms);
+                assert_eq!(s.state.gkind, 29 + k);
+                assert_eq!(s.state.players[3].fkind, data.fkind);
+                assert_eq!(s.state.players[3].costume, 2);
+                assert_eq!(s.state.time_limit, time);
+            }
+        }
+    }
+
+    #[test]
+    fn platform_timeout_keeps_partial_credit_and_wins_final_boarding_tie() {
+        use crate::{fighter::Situation, ground::Standing};
+        let (mut s, mut f) = platform_course();
+        let mut b = s.battle();
+        f.situation = Situation::Ground;
+        f.floor = Some(Standing {
+            line: 0,
+            flags: 14,
+            normal: ssb_engine::math::Vec2::new(0.0, 1.0),
+        });
+        for i in 1..10 {
+            s.board(&f, i, &mut b);
+        }
+        for _ in 0..7262 {
+            b.begin_frame();
+        }
+        assert_eq!(b.end, Some(EndKind::Failure));
+        assert_eq!(s.tasks_remain, 1);
+        s.board(&f, 10, &mut b);
+        assert_eq!(b.end, Some(EndKind::Failure));
+        assert_eq!(f.stocks, 3);
     }
 }

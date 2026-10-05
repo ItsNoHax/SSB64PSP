@@ -102,3 +102,4 @@ impl std::error::Error for Error {}
 
 pub type Result<T> = core::result::Result<T, Error>;
 pub mod bonus1;
+pub mod bonus2;

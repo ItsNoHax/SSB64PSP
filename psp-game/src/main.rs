@@ -81,6 +81,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::OnePBonus => 150,
         GameScene::OnePTargetClear => 850,
         GameScene::OnePTargetFall => 670,
+        GameScene::OnePPlatforms => 600,
+        GameScene::OnePPlatformClear => 950,
+        GameScene::OnePPlatformFall => 750,
         GameScene::OnePContinue => 240,
         GameScene::OnePRetry => 320,
         GameScene::OnePClear => 270,
@@ -400,7 +403,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         return match tick {
             4 | 10 | 34 => N64Buttons(N64Buttons::A),
             166 if scene == GameScene::OnePGame => N64Buttons(N64Buttons::A),
@@ -754,7 +757,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         return if (14..=24).contains(&tick) { 80 } else { 0 };
     }
     if scene == GameScene::LinkBomb && tick == 300 {
@@ -891,7 +894,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         // Two separate menu-down edges, then carry the puck to Kirby.
         return match tick {
             6 | 8 => -80,
@@ -1392,6 +1395,8 @@ unsafe fn training_step(
     started: bool,
     locked: bool,
     effects: &mut dyn ssb_game::effect::HitEffectSink,
+    bonus: Option<&mut ssb_game::spgame::bonus_stage::BonusStage>,
+    battle: Option<&mut ssb_game::battle::Battle>,
 ) {
     material_anim.tick(p);
     let Some(stage) = p.stage(stage_index) else {
@@ -1419,6 +1424,15 @@ unsafe fn training_step(
         locked,
         effects,
     );
+    // Bonus2's priority-4 process observes the fighter after interrupts,
+    // before priority-3 movement, item hits and death scoring.
+    if let (Some(bonus), Some(battle), Some(map)) = (bonus, battle, stage_map.as_mut()) {
+        if let Some(group) = pl.fighter.floor.and_then(|s| p.stage_lines(&stage).find(|l| l.id == s.line)).map(|l| l.yakumono) {
+            if let Some(i) = bonus.board(&pl.fighter, group, battle) {
+                map.platforms[i].board(p);
+            }
+        }
+    }
     // Priority 4, Ground link: the stage controller.
     {
         let mut empty: [ssb_game::map::MapGroup; 0] = [];
@@ -2273,7 +2287,7 @@ fn capture_route(scene: GameScene) -> CaptureRoute {
             CaptureRoute::StageSelect
         }
         GameScene::OnePGame
-        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear
+        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear
         | GameScene::FighterSelect
         | GameScene::VsModeMenu
         | GameScene::VsPlayers
@@ -2550,6 +2564,8 @@ unsafe fn training_frame(
         started,
         locked,
         sink,
+        bonus.as_deref_mut(),
+        battle.as_mut(),
     );
     // The effect and interface processes after the fighters': the KO
     // explosions (with their particles) and the screen flash.
@@ -3401,7 +3417,7 @@ unsafe fn draw_frame(
                 draw_assets,
                 effect_visuals,
                 Some(&s.material_anim),
-                s.stage_map.as_ref().map(|map| &map.animator),
+                s.stage_map.as_deref(),
                 Some(&s.stage_objects),
                 no_pack_color,
                 &mut s.damage_hud,
@@ -4142,7 +4158,7 @@ unsafe fn run() -> ! {
         #[cfg(feature = "headless_capture")]
         if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
             emit_headless_screenshot();
-            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall)) {
+            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall)) {
                 campaign::log_capture(&s, sim_frame_index);
             }
             // One line for the capture log: whether the scripted attack
@@ -6379,7 +6395,7 @@ unsafe fn draw_training(
     assets: &DrawAssets,
     effect_visuals: &EffectVisuals,
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
-    stage_anim: Option<&ssb_rom::skeleton::StageAnimator>,
+    stage_map: Option<&ssb_psp_runtime::scene::StageMap>,
     stage_objects: Option<&ssb_rom::ground_obj::GroundObjects>,
     no_pack_color: Color,
     damage_hud: &mut Hud,
@@ -6440,15 +6456,22 @@ unsafe fn draw_training(
     // draws covers them and they cover what an earlier pass drew.
     let stage_pass = |links: core::ops::RangeInclusive<u8>, heads, draw_state: &mut meshdraw::DrawState| {
         draw_state.heads = heads;
+        // All twelve courses put empty yakumono parents 1..10 before
+        // their other layer-1 nodes. Draw their inserted children there.
+        if links.contains(&6) {
+            if let Some(map) = stage_map {
+                map.draw_platforms(p, &base, draw_state);
+            }
+        }
         meshdraw::draw_stage_links(
             p,
             &stage,
             &base,
-            stage_anim,
+            stage_map.map(|m| &m.animator),
             stage_objects,
             draw_state,
             material_anim,
-            links,
+            links.clone(),
         );
         draw_state.heads = meshdraw::Heads::Both;
     };
@@ -6752,7 +6775,8 @@ unsafe fn draw_training(
     );
     draw_damage_hud(p, draw_state, &damage_hud.damage, emblems, stage_index);
     if let Some(count) = damage_hud.bonus_tasks {
-        if let Some(icon) = p.sprite(ssb_rom::campaign::OBJECTIVES.file, ssb_rom::campaign::OBJECTIVES_TARGET) {
+        let offset = if ssb_rom::bonus2::kind(stage.source_file).is_some() { ssb_rom::campaign::OBJECTIVES_PLATFORM } else { ssb_rom::campaign::OBJECTIVES_TARGET };
+        if let Some(icon) = p.sprite(ssb_rom::campaign::OBJECTIVES.file, offset) {
             for i in 0..count {
                 let x = 30 + (i32::from(icon.width) + 3) * i32::from(i) - i32::from(icon.width) / 2;
                 draw_plain(p, draw_state, &icon, x as f32, (30 - i32::from(icon.height) / 2) as f32);

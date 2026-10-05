@@ -211,7 +211,7 @@ const fn desc(
 /// `grZebesMakeAcid`, `grYosterInitAll`, `grInishieMakeScale`,
 /// `grCastleInitAll`, and the Mushroom Kingdom items
 /// `itPowerBlockMakeItem` and `itPakkunMakeItem`.
-pub const OBJECTS: [GroundObjectAsset; 34] = [
+pub const OBJECTS: [GroundObjectAsset; 46] = [
     desc("WhispyEyes", PUPUPU_FILE, PUPUPU_HEAD, 0x10F0, 4),
     desc("WhispyMouth", PUPUPU_FILE, PUPUPU_HEAD, 0x1770, 4),
     desc("FlowersBack", PUPUPU_FILE, PUPUPU_HEAD, 0x2A80, 4),
@@ -305,7 +305,37 @@ pub const OBJECTS: [GroundObjectAsset; 34] = [
     bonus1_targets(9),
     bonus1_targets(10),
     bonus1_targets(11),
+    bonus2_bumpers(0),
+    bonus2_bumpers(1),
+    bonus2_bumpers(2),
+    bonus2_bumpers(3),
+    bonus2_bumpers(4),
+    bonus2_bumpers(5),
+    bonus2_bumpers(6),
+    bonus2_bumpers(7),
+    bonus2_bumpers(8),
+    bonus2_bumpers(9),
+    bonus2_bumpers(10),
+    bonus2_bumpers(11),
 ];
+
+const fn bonus2_bumpers(kind: usize) -> GroundObjectAsset {
+    GroundObjectAsset {
+        item: true,
+        instances: 10,
+        source_file: Some(GBUMPER_SOURCE.0),
+        ..desc(
+            "Bonus2Bumper",
+            283 + kind as u32,
+            match crate::bonus2::BUMPERS[kind] {
+                Some((graph, _)) => graph,
+                None => 0,
+            },
+            GBUMPER_SOURCE.1,
+            ITEM_LINK,
+        )
+    }
+}
 
 const fn bonus1_targets(kind: usize) -> GroundObjectAsset {
     GroundObjectAsset {
@@ -905,6 +935,30 @@ impl GroundObjects {
     /// packed from its label in that file.
     pub fn new(pack: &Pack<'_>, gr_file: u32) -> Self {
         let mut this = Self::empty();
+        if let Some(kind) = crate::bonus2::kind(gr_file) {
+            if let Some((graph, _)) = crate::bonus2::BUMPERS[kind as usize] {
+                let placements = (0..pack.object_count())
+                    .filter_map(|i| pack.object(i))
+                    .find(|o| (o.source_file, o.source_offset) == (137 + u32::from(kind), graph));
+                let model = (0..pack.object_count())
+                    .filter_map(|i| pack.object(i))
+                    .find(|o| (o.source_file, o.source_offset) == GBUMPER_SOURCE);
+                if let (Some(placements), Some(model)) = (placements, model) {
+                    for i in 0..(placements.node_count - 1).min(MAX_STAGE_OBJECTS as u32) {
+                        this.objects[i as usize] = Some(GroundObject::new(
+                            pack,
+                            crate::bonus2::FIRST_BUMPER_ASSET + kind,
+                            i as u8,
+                            model,
+                            None,
+                        ));
+                        this.target_anims[i as usize] =
+                            pack.item_anim(crate::bonus2::BUMPER_ANIM + u32::from(kind) * 10 + i);
+                    }
+                }
+            }
+            return this;
+        }
         if let Some(kind) = crate::bonus1::kind(gr_file) {
             let object = (0..pack.object_count())
                 .filter_map(|i| pack.object(i))

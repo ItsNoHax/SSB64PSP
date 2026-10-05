@@ -189,6 +189,8 @@ pub enum StageAnim {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageItem {
     Target(u8),
+    /// `sc1PBonusStageMakeBumpers`, indexed past descriptor 0.
+    Bonus2Bumper(u8),
     /// `nITKindGBumper`; `castle` is the source's `gkind` test, and
     /// `joint` the `llGRBonus3MapBumpersAnimJoint` script a Race to the
     /// Finish Bumper plays, by its index past descriptor 0.
