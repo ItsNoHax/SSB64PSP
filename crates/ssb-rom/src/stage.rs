@@ -464,6 +464,9 @@ mod tests {
         };
         bounds(base + G_CAMERA_BOUNDS, [4000, -2000, 3900, -3900]);
         bounds(base + G_MAP_BOUNDS, [8300, -3500, 9000, -9000]);
+        // `GRHyruleMap`'s team bounds.
+        bounds(base + G_CAMERA_TEAM_BOUNDS, [6000, -2100, 6000, -6000]);
+        bounds(base + G_MAP_TEAM_BOUNDS, [9000, -5000, 11000, -11000]);
 
         let angle_x = (base + G_LIGHT_ANGLE) as usize;
         data[angle_x..angle_x + 4].copy_from_slice(&30.0f32.to_be_bytes());
@@ -505,7 +508,18 @@ mod tests {
         assert_eq!(h.map_geometry, Some((104, 0x1F34)));
         assert_eq!(h.camera_bounds.top, 4000);
         assert_eq!(h.map_bounds.left, -9000);
+        assert_eq!(h.camera_team_bounds.bottom, -2100);
+        assert_eq!(h.map_team_bounds.top, 9000);
+        assert_eq!(h.map_team_bounds.right, 11000);
         assert_eq!(h.light_angle, [30.0, -40.0, 5.0]);
+    }
+
+    #[test]
+    fn the_common_stage_table_keeps_the_vs_rows_and_race_to_the_finish() {
+        assert_eq!(&COMMON_GROUND_FILES[..9], &VS_GROUND_FILES);
+        assert_eq!(COMMON_GROUND_FILES[15], crate::ground_obj::BONUS3_FILE);
+        assert_eq!(common_ground_kind(270), Some(12));
+        assert_eq!(common_ground_kind(0x109), vs_ground_kind(0x109));
     }
 
     #[test]

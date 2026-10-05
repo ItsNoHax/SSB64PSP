@@ -657,3 +657,21 @@ fn host_select_campaign_starts_at_the_first_intro() {
     assert_eq!(f.selection.kind, Some(FighterKind::Fox));
     assert_eq!(f.selection.stocks, backup.spgame_stock_count);
 }
+
+#[test]
+fn a_host_select_starts_the_campaign_at_its_intro_without_saving_again() {
+    let backup = Backup::default();
+    let selection = select::Selection {
+        kind: Some(FighterKind::Fox),
+        costume: 2,
+        ..Default::default()
+    };
+    assert!(frontend::Frontend::start(select::Selection::default(), &backup).is_none());
+    let f = frontend::Frontend::start(selection, &backup).unwrap();
+    assert!(matches!(f.screen, frontend::Screen::Intro(_)));
+    let session = f.session.as_ref().unwrap();
+    assert_eq!(session.manager.scene, Scene::Intro);
+    assert_eq!(session.data.fkind, FighterKind::Fox);
+    assert_eq!(session.data.costume, 2);
+    assert_eq!(backup.writes, 0);
+}

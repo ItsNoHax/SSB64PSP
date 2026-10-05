@@ -628,6 +628,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn two_bit_texels_widen_most_significant_first() {
+        // 8 texels wide, 2 rows: res = 4 * 2 = 8 bytes from 4 packed ones.
+        let d = [0b00_01_10_11, 0b11_10_01_00, 0xFF, 0x00];
+        let out = expand_siz_4c(&d);
+        assert_eq!(out, [0x05, 0xAF, 0xFA, 0x50, 0xFF, 0xFF, 0x00, 0x00]);
+    }
+
+    #[test]
     fn odd_rows_swap_their_halves() {
         let mut d: Vec<u8> = (0..32).collect();
         deinterleave(&mut d, 16, 2, 8);

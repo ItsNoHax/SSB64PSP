@@ -369,7 +369,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `map_bound_team_*` (RE-450).
 // 95 adds authored campaign sprites, demo clips and initial camera payloads.
 // 96 adds Break the Targets' item-root clips (ITEM slots 64..183).
-pub const VERSION: u32 = 96;
+// 97 reconciles the campaign branches, including all fifteen demo-script
+// rows and their reachable model/texture parts. No layout change.
+pub const VERSION: u32 = 97;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -6015,6 +6017,8 @@ mod tests {
         assert_eq!(s.emblem_colors[3], [0, 0xFF, 0]);
         assert_eq!(s.emblem_colors[4], [0xDC; 3]);
         assert_eq!(s.fog_color, [0x10, 0x20, 0x30]);
+        assert_eq!((s.team_camera.top, s.team_camera.bottom), (1200, -900));
+        assert_eq!((s.team_bounds.right, s.team_bounds.left), (9500, -9400));
 
         let lines: alloc::vec::Vec<LineDesc> = pack.stage_lines(&s).collect();
         assert_eq!(lines.len(), 3);

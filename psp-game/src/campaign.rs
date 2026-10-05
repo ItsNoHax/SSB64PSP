@@ -293,8 +293,9 @@ fn configure(
 ) {
     sp.configure_fighter(&mut f.fighter, team_bounds);
     if ssb_game::kirby::is_kirby(f.fighter.kind) {
-        f.fighter.kirby.copy_id = setup.copy_kind;
+        ssb_game::kirby::init_copy(&mut f.fighter, setup.copy_kind);
     }
+    f.fighter.interface.magnify_ignore = setup.is_magnify_ignore;
     f.camera_zoom_frame *= setup.camera_frame_mul;
     if setup.is_skip_entry {
         ssb_game::status::set_wait_or_fall(&mut f.fighter);

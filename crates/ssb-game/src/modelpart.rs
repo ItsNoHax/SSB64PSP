@@ -565,7 +565,13 @@ mod tests {
             [(10, 2), (12, 1), (16, 2), (17, 0), (17, 1), (30, 0)]
         );
         assert_eq!(v(FighterKind::Samus).len(), 11);
-        assert_eq!(v(FighterKind::Link).len(), 12);
+        // Link's stage-card poses (IntroL and IntroR, `D_ovl1_803919EC`) add
+        // four: joints 22 to 24 to part 1 and joint 11 to part 2.
+        let link = v(FighterKind::Link);
+        assert_eq!(link.len(), 16);
+        for e in [(22, 1), (23, 1), (24, 1), (11, 2)] {
+            assert!(link.contains(&e), "{e:?}");
+        }
         assert_eq!(v(FighterKind::Captain).len(), 5);
     }
 

@@ -14,6 +14,26 @@ pub struct Session {
     pub battle: Option<Battle>,
 }
 
+/// One fighter `sc1PGameFuncStart` makes (`FTDesc`): the battle state's
+/// player and the stage's setup for its slot.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Entrant {
+    pub kind: FighterKind,
+    pub costume: u8,
+    pub shade: u8,
+    pub level: u8,
+    pub handicap: u8,
+    pub team: u8,
+    /// `players[].color`, the player tag and damage colour.
+    pub color: u8,
+    pub human: bool,
+    /// `is_spgame_enemy`.
+    pub enemy: bool,
+    pub setup: setup::PlayerSetup,
+    /// `desc.detail`: high detail with fewer than three fighters.
+    pub detail_high: bool,
+}
+
 impl Session {
     /// Advance the battle and sample end status at Set, once. The return's
     /// second flag requests the Meta Crystal/Polygon music on Go.
@@ -179,6 +199,28 @@ impl Session {
         ));
         self.game = Some(game);
         self.wait = Some(wait);
+    }
+
+    /// The fighters the started battle makes, by port.
+    pub fn entrants(&self) -> [Option<Entrant>; PLAYERS_MAX] {
+        let game = self.game.as_ref().expect("active game");
+        let detail_high = self.state.pl_count + self.state.cp_count < 3;
+        core::array::from_fn(|port| {
+            let p = &self.state.players[port];
+            (p.pkind != PlayerKind::Not).then_some(Entrant {
+                kind: p.fkind,
+                costume: p.costume,
+                shade: p.shade,
+                level: p.level,
+                handicap: p.handicap,
+                team: p.team,
+                color: p.color,
+                human: p.pkind == PlayerKind::Man,
+                enemy: p.is_spgame_enemy,
+                setup: game.setups[port],
+                detail_high,
+            })
+        })
     }
 
     /// Configure the shared KO machinery for a fighter the host made.

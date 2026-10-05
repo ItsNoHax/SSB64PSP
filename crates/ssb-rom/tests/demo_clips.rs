@@ -103,3 +103,61 @@ fn every_fighter_has_its_demo_clips_over_its_model_joints() {
     let win3 = pack.fighter_anim(NESS, SLOT_WIN4 as u32 - 1).unwrap();
     assert_eq!(win4.source_file, win3.source_file);
 }
+
+/// The campaign's four demo clips: the continue screen's FigureDropped and
+/// FigureStand and the stage cards' IntroL and IntroR. Every listed row is
+/// packed at its C source's length, over the model's joints, after the
+/// leading TransN joint its `anim_desc` flags (FigureDropped and
+/// FigureStand, which `scSubsysFighterApplyVelTransN` moves by).
+#[test]
+fn the_campaign_demo_clips_are_packed() {
+    use ssb_rom::anim::{
+        EXPECTED_FRAMES, FIGHTER_ANIMS, LEADING_RUNTIME_JOINT, SLOT_FIGURE_DROPPED, SLOT_INTRO_R,
+    };
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = Pack::open(&bytes).unwrap();
+    let mut packed = 0;
+    for (kind, anims) in FIGHTER_ANIMS.iter().enumerate() {
+        let kind = kind as u32;
+        for slot in SLOT_FIGURE_DROPPED..=SLOT_INTRO_R {
+            if anims.files[slot] == 0 {
+                assert!(pack.fighter_anim(kind, slot as u32).is_none());
+                continue;
+            }
+            let anim = pack
+                .fighter_anim(kind, slot as u32)
+                .unwrap_or_else(|| panic!("{} slot {slot}", anims.name));
+            assert_eq!(anim.source_file, u32::from(anims.files[slot]));
+            assert_eq!(
+                anim.frames,
+                u32::from(EXPECTED_FRAMES[kind as usize][slot]),
+                "{} {slot}",
+                anims.name
+            );
+            if kind < PLAYABLE {
+                let lead = usize::from(LEADING_RUNTIME_JOINT[kind as usize][slot]);
+                let model = pack.fighter_anim(kind, SLOT_GUARD_ON).unwrap();
+                let model_nodes: Vec<u32> = (0..model.joint_count)
+                    .map(|j| pack.anim_joint(model.first_joint + j).unwrap().node)
+                    .filter(|&n| n != AnimJoint::NO_NODE)
+                    .collect();
+                let nodes: Vec<u32> = (0..anim.joint_count)
+                    .map(|j| pack.anim_joint(anim.first_joint + j).unwrap().node)
+                    .collect();
+                if lead == 1 {
+                    assert_eq!(nodes[0], AnimJoint::NO_NODE, "{} {slot}", anims.name);
+                }
+                assert_eq!(
+                    &nodes[lead..lead + model_nodes.len()],
+                    &model_nodes[..],
+                    "{} {slot}",
+                    anims.name
+                );
+            }
+            packed += 1;
+        }
+    }
+    // 12 * 4 - 3 for the twelve, three for Master Hand and eleven IntroR
+    // rows for the others.
+    assert_eq!(packed, 45 + 3 + 11);
+}

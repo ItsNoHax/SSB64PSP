@@ -2,7 +2,7 @@ use super::{
     bonus::{DamageObject, HitAttackId},
     live::*,
     session::Session,
-    *,
+    setup, *,
 };
 use crate::{
     attack,
@@ -549,4 +549,34 @@ fn yoshi_attribution_and_credit_begin_at_egg_lay() {
         s.game.as_ref().unwrap().bonus.defend_id_count[HitAttackId::SpecialN as usize],
         1
     );
+}
+
+#[test]
+fn a_started_battle_names_each_fighter_and_its_start() {
+    let (s, _) = session(Stage::Link);
+    let e = s.entrants();
+    let me = e[0].unwrap();
+    assert!(me.human && !me.enemy);
+    assert_eq!(me.setup.mapobj_kind, setup::mapobj::PLAYER);
+    let link = e[1].unwrap();
+    assert_eq!(link.kind, FighterKind::Link);
+    assert!(!link.human && link.enemy);
+    assert_eq!(link.setup.mapobj_kind, setup::mapobj::ENEMY_START);
+    assert!(link.detail_high);
+    assert!(e[2].is_none() && e[3].is_none());
+
+    let (s, _) = session(Stage::Yoshi);
+    let yoshis: alloc::vec::Vec<_> = s
+        .entrants()
+        .into_iter()
+        .flatten()
+        .filter(|e| e.enemy)
+        .collect();
+    assert_eq!(yoshis.len(), 3);
+    for (i, y) in yoshis.iter().enumerate() {
+        assert_eq!(y.kind, FighterKind::Yoshi);
+        assert_eq!(y.setup.mapobj_kind, setup::mapobj::ENEMY_START + i as u16);
+        assert_eq!(y.setup.camera_frame_mul, 0.3);
+        assert!(!y.detail_high);
+    }
 }
