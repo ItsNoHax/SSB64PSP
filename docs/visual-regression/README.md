@@ -126,6 +126,24 @@ pixel-identical. These diagnostics remain outside the 195-scene manifest;
 see [RE-454](../evidence/re/RE-454.md) for source/ROM checks and validation
 limits.
 
+RE-455 adds Race to the Finish. Fixtures seed its intro after the real
+select and bypass preceding campaign wins.
+
+| Spec | Captured display |
+|---|---|
+| `oneprace` (600) | Kirby, three Polygons, live course and timer 00:59; repeated native images match exactly |
+| `onepraceclear@650`, `onepraceclear` (750), `@900` | Real DETECT landing gives COMPLETE, Timer RESULT, then No Damage and total 44,500 |
+| `onepracefall` (750) | Real blast-zone fall consumes a stock and rebirths |
+| `oneprace@4170`, `@4280` | Unmodified minute gives FAILURE, then zero-time RESULT |
+| `onepracehazards` (660), `@800` | Human beneath the real dropper; smash pieces, then 26% damage |
+
+Clear places the human above the actual DETECT segment and lets swept
+collision land him. Fall and hazards move him to the authored blast/dropper
+areas; fixtures never write completion, score, stock loss or damage.
+These diagnostics remain outside the 195-scene manifest. They do not prove
+unmodified traversal, a full campaign, N64 equivalence or physical PSP;
+see [RE-455](../evidence/re/RE-455.md) for source checks and capture limits.
+
 ### Single captures
 
 ```bash

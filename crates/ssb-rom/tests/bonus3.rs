@@ -35,6 +35,39 @@ fn packed_race_ground_barrel_and_bumper_roots_match_original_scripts() {
     )
     .unwrap();
     let pack = Pack::open(&bytes).unwrap();
+    for kind in 14..=25 {
+        let entry = ssb_rom::fighter::FIGHTER_FILES[kind as usize];
+        let main = archive.load(entry.file).unwrap();
+        let attributes = pack.fighter(kind).expect("Polygon attributes");
+        assert_eq!(
+            (attributes.source_file, attributes.source_offset),
+            (entry.file, entry.offset)
+        );
+        let object = pack
+            .object(ssb_rom::scene_deps::fighter_object(&pack, kind).expect("Polygon model"))
+            .unwrap();
+        let part = ssb_rom::fighter::common_parts(&main, entry)[0].unwrap();
+        assert_eq!(
+            (object.source_file, object.source_offset),
+            (part.model_file, part.graph)
+        );
+        for slot in [
+            ssb_rom::anim::SLOT_WAIT,
+            ssb_rom::anim::SLOT_WALK_SLOW,
+            ssb_rom::anim::SLOT_RUN,
+        ] {
+            assert!(
+                pack.fighter_anim(kind, slot as u32).is_some(),
+                "Polygon {kind} movement {slot}"
+            );
+        }
+    }
+    assert!(
+        (0..pack.mesh_count())
+            .filter_map(|i| pack.mesh(i))
+            .any(|m| (m.source_file, m.source_offset) == (NODES_FILE, 0x8A0)),
+        "barrel smash pieces"
+    );
     let index = pack.stage_of_file(MAP_FILE).expect("Race ground packed");
     let stage = pack.stage(index).unwrap();
     assert_eq!(stage.line_count, 34);

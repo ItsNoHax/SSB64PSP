@@ -43,8 +43,8 @@ pub struct Bonus3 {
     pub player: u8,
     /// `grBonus3FinishProcUpdate` found the player on the gate this frame:
     /// the source announces "Complete!" (`ifCommonAnnounceCompleteInitInterface`,
-    /// which ends the battle) and queues the bonus-complete sound. The 1P
-    /// Game's bonus scene, which acts on it, is not ported.
+    /// which ends the battle) and queues the bonus-complete sound. The PSP
+    /// campaign consumes this flag immediately after the priority-4 stage tick.
     pub complete: bool,
 }
 

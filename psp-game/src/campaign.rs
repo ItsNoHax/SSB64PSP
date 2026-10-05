@@ -6,7 +6,7 @@
 //! stage-clear controllers run here, and a requested battle runs on the
 //! shared Training/VS world with the campaign's `Session` collecting its
 //! callbacks, falls and enemy replacements. A scene the PSP cannot run yet
-//! (Race to the Finish, Master Hand, the ending, challengers, unlock
+//! (Master Hand, the ending, challengers, unlock
 //! messages, or a battle whose fighters the pack lacks) stops the campaign
 //! with an explicit blocked screen: it is never replaced by a VS battle or
 //! skipped. Authored presentation is bound by campaign_screen.
@@ -38,10 +38,9 @@ pub(crate) struct Campaign {
 /// A scene the host cannot run yet.
 #[derive(Clone, Copy)]
 enum Blocked {
-    /// No PSP controller yet: Race, ending, challenger, message.
+    /// No PSP controller yet: ending, challenger, message.
     Scene(Scene),
-    /// The stage or a fighter (Metal Mario, Giant Donkey Kong, the
-    /// Polygons, Master Hand) is not in the pack.
+    /// A stage, fighter attributes or fighter model is missing from the pack.
     Assets(Stage),
 }
 
@@ -158,7 +157,9 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     let mut roster: Roster = [None; 4];
     for (i, b) in sp.state.present() {
         let setup = game.setups[i];
-        if p.fighter(b.fkind as u32).is_none() || p.spawn(&desc, setup.mapobj_kind).is_none() {
+        if p.fighter(b.fkind as u32).is_none()
+            || ssb_psp_runtime::scene::fighter_object(p, b.fkind as u32).is_none()
+            || p.spawn(&desc, setup.mapobj_kind).is_none() {
             return Err(Blocked::Assets(stage));
         }
         roster[i] = Some(Entrant {
@@ -209,6 +210,7 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     let Some(pl) = s.play_state.as_mut() else {
         return Err(Blocked::Assets(stage));
     };
+    pl.bonus_follow = stage == Stage::Bonus3;
     for f in scenes(pl, &mut s.dummies).into_iter().flatten() {
         let port = usize::from(f.fighter.port);
         configure(sp, f, setups[port], team_bounds);
@@ -434,13 +436,18 @@ pub(crate) fn entry_frame(
                     );
                 }
             }
-            // The camera follows `zoom_port` below; Race and Master Hand
-            // are not entered. Targets uses its separate bonus entry path.
+            Action::Bonus3Follow => pl.bonus_follow = true,
+            Action::Go if stage.source_file == ssb_rom::ground_obj::BONUS3_FILE => {
+                let mut c = ssb_game::countdown::Countdown::sudden_death();
+                c.start_go();
+                hud.countdown = Some(c);
+            }
+            // The camera follows `zoom_port` below. Targets uses its
+            // separate bonus entry path.
             Action::Zoom(_)
             | Action::CameraDefault
             | Action::Go
             | Action::BossGo
-            | Action::Bonus3Follow
             | Action::BossCameraAnim => {}
         }
     }
@@ -651,6 +658,10 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
             if scene != GameScene::OnePPlatforms { sp.data.fkind = ssb_game::fighter::FighterKind::Mario; }
             sp.manager.scene = Scene::Intro;
         }
+        GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards => {
+            sp.data.stage = Stage::Bonus3 as u8;
+            sp.manager.scene = Scene::Intro;
+        }
         GameScene::OnePContinue | GameScene::OnePRetry => {
             sp.data.score = 123456;
             sp.manager.scene = Scene::Continue;
@@ -674,6 +685,30 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
 #[cfg(feature = "headless_capture")]
 pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene: GameScene, tick: u64) {
     let Some(pack) = pack else { return };
+    if scene == GameScene::OnePRaceHazards && tick == 600 {
+        if let (Some(pl), ssb_game::stage::Controller::Bonus3(race)) = (s.play_state.as_mut(), &s.stage_ctl.controller) {
+            ssb_game::status::set_fall(&mut pl.fighter);
+            pl.fighter.floor = None;
+            pl.fighter.physics.vel_air = ssb_engine::math::Vec3::ZERO;
+            pl.fighter.pos = race.tarubomb_make_pos + ssb_engine::math::Vec3::new(0.0, -1000.0, 0.0);
+        }
+    }
+    if matches!(scene, GameScene::OnePRaceClear | GameScene::OnePRaceFall) && tick == 600 {
+        if let (Some(pl), Some(stage)) = (s.play_state.as_mut(), pack.stage(s.training_stage)) {
+            ssb_game::status::set_fall(&mut pl.fighter);
+            pl.fighter.floor = None;
+            pl.fighter.physics.vel_air = ssb_engine::math::Vec3::ZERO;
+            if scene == GameScene::OnePRaceFall {
+                pl.fighter.pos.y = f32::from(stage.bounds.bottom) - 100.0;
+            } else {
+                let gate = ssb_psp_runtime::scene::MapSegments::new(pack, &stage).find(|s|
+                    s.kind == ssb_game::weapon::MapSurfaceKind::Floor && s.segment.material() == ssb_game::stage::bonus3::MATERIAL_DETECT).expect("Race finish segment").segment;
+                // Land through swept collision on the DETECT segment, not
+                // on the earlier normal segment of the same polyline.
+                pl.fighter.pos = ssb_engine::math::Vec3::new((f32::from(gate.x1) + f32::from(gate.x2)) * 0.5, (f32::from(gate.y1) + f32::from(gate.y2)) * 0.5 + 50.0, 0.0);
+            }
+        }
+    }
     if !s.campaign.as_ref().is_some_and(|c| c.bonus.is_some()) { return; }
     if matches!(scene, GameScene::OnePTargetFall | GameScene::OnePPlatformFall) && tick == 600 {
         if let Some(pl) = s.play_state.as_mut() {

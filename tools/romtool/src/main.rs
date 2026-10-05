@@ -4530,13 +4530,13 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         // `G_ZBUFFER`, like the Fireball. Discovery already packs the same
         // list, keyed (86, 0x5458), under the default seed, so this copy is
         // keyed by the attributes record that names it: (247, 0x40).
-        if id == 86 {
-            // `itBoxContainerSmashMakeEffect` names this list directly;
+        if id == 86 || id == ssb_rom::ground_obj::BONUS3_NODES_FILE {
+            // The Box and TaruBomb smash makers name these lists directly;
             // it has no descriptor for graph discovery to reach.
-            const CONTAINER_PIECE: u32 = 0x68F0;
+            let container_piece = if id == 86 { 0x68F0 } else { 0x8A0 };
             let cmds = ssb_rom::dl::decode_list_at(
-                &file.data[CONTAINER_PIECE as usize..],
-                CONTAINER_PIECE,
+                &file.data[container_piece as usize..],
+                container_piece,
             )?;
             let piece = mesh::convert_sequence(
                 &[mesh::SequenceItem {
@@ -4564,12 +4564,14 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     all: &loaded.files,
                 },
                 id,
-                CONTAINER_PIECE,
+                container_piece,
                 &piece,
                 swizzle,
             );
             meshes += 1;
             triangles += piece.triangle_count();
+        }
+        if id == 86 {
             const STAR_DISPLAY_LIST: u32 = 0x5458;
             const STAR_KEY: (u32, u32) = (247, 0x40);
             if let Some(Ok(star)) = file

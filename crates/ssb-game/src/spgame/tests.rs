@@ -243,6 +243,70 @@ fn session_loss_and_race_completion_use_real_battle_end_and_accounting() {
 }
 
 #[test]
+fn race_timer_failure_keeps_campaign_stocks_and_wins_a_finish_gate_tie() {
+    use crate::battle::{EndKind, Frame, GameStatus};
+    let mut backup = Backup::default();
+    let mut s = session::Session::new(
+        SceneData {
+            stage: Stage::Bonus3 as u8,
+            time_limit: crate::battle::TIMELIMIT_INFINITE,
+            ..Default::default()
+        },
+        &backup,
+    );
+    s.manager.advance(&mut s.data, &mut s.state, &mut backup);
+    s.start_battle(&backup);
+    let stocks = s.state.players[0].stock_count;
+    let b = s.battle.as_mut().unwrap();
+    assert!(b.is_1p_game && !b.is_bonus && b.time_up_is_failure);
+    assert_eq!(b.time_limit, 1);
+    while b.status != GameStatus::Go {
+        b.begin_frame();
+    }
+    while b.end.is_none() {
+        b.begin_frame();
+    }
+    assert_eq!(b.end, Some(EndKind::Failure));
+    assert_eq!(b.players[0].stock_count, stocks);
+    s.complete_race();
+    assert_eq!(s.battle.as_ref().unwrap().end, Some(EndKind::Failure));
+    while s.battle.as_mut().unwrap().begin_frame() != Frame::Done {}
+    assert_eq!(s.finish_battle(&mut backup), Scene::StageClear);
+    assert_eq!(s.data.time_remain, 0);
+    assert_eq!(s.manager.total_falls, 0);
+    assert!(!bonus::Bonus::NoDamage.contains(&s.data.bonus_get_mask));
+}
+
+#[test]
+fn race_fall_consumes_a_campaign_stock_and_returns_to_results() {
+    use crate::battle::{Frame, GameStatus};
+    let mut backup = Backup::default();
+    let mut s = session::Session::new(
+        SceneData {
+            stage: Stage::Bonus3 as u8,
+            ..Default::default()
+        },
+        &backup,
+    );
+    s.manager.advance(&mut s.data, &mut s.state, &mut backup);
+    s.start_battle(&backup);
+    let stocks = s.state.players[0].stock_count;
+    s.fall(0, bonus::DefeatRecord::default(), FighterKind::Mario);
+    assert_eq!(s.battle.as_ref().unwrap().status, GameStatus::Wait);
+    assert_eq!(
+        s.battle.as_ref().unwrap().players[0].stock_count,
+        stocks - 1
+    );
+    // Race uses the campaign's rebirth rule while stocks remain. Reaching
+    // the gate later still ends it, but the fall prevents No Damage.
+    s.complete_race();
+    while s.battle.as_mut().unwrap().begin_frame() != Frame::Done {}
+    assert_eq!(s.finish_battle(&mut backup), Scene::StageClear);
+    assert_eq!(s.manager.total_falls, 1);
+    assert!(!bonus::Bonus::NoDamage.contains(&s.data.bonus_get_mask));
+}
+
+#[test]
 fn session_continue_halves_score_and_retries_without_resetting_attempt_totals() {
     let mut backup = Backup::default();
     let mut s = session::Session::new(SceneData::default(), &backup);

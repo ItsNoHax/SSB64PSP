@@ -130,6 +130,9 @@ pub struct Battle {
     /// rule's placement, and the 1P Game ([`crate::spgame`]) decides the end.
     pub is_1p_game: bool,
     pub is_bonus: bool,
+    /// The timer callback selected by `sc1PGameInitTimeUpMessage`.
+    /// Race uses FAILURE while retaining the ordinary campaign stock rule.
+    pub time_up_is_failure: bool,
     /// The wait the end's proc-set leaves before the next scene: 3
     /// (`ifCommonBattleInterfaceProcSet`) or 45
     /// (`ifCommon1PGameInterfaceProcSet`).
@@ -167,6 +170,7 @@ impl Battle {
             is_reset: false,
             is_1p_game: false,
             is_bonus: false,
+            time_up_is_failure: false,
             set_wait: SET_RESTORE_WAIT,
             set_zoom: false,
         };
@@ -352,7 +356,7 @@ impl Battle {
         }
         self.time_remain -= 1;
         if self.time_remain == 0 {
-            self.set_end(if self.is_bonus {
+            self.set_end(if self.is_bonus || self.time_up_is_failure {
                 EndKind::Failure
             } else {
                 EndKind::TimeUp

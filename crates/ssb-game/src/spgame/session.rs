@@ -197,6 +197,7 @@ impl Session {
             self.state.is_team_attack,
             wait.go_tick,
         ));
+        self.battle.as_mut().unwrap().time_up_is_failure = game.time_up_is_failure();
         self.game = Some(game);
         self.wait = Some(wait);
     }

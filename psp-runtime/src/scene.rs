@@ -1459,8 +1459,9 @@ impl FighterScene {
                 left: stage.camera.left as f32, right: stage.camera.right as f32,
             };
             let target = bounds.clamp(ssb_engine::math::Vec3::new(pos.x, pos.y + self.cam_offset_y, 0.0));
-            let pitch = if ssb_rom::bonus2::kind(stage.source_file).is_some() { -15.0 } else { -9.0 };
-            self.camera.tick_player_zoom(target, (0.0, pitch * core::f32::consts::PI / 180.0), 9000.0, 0.3, 31.5);
+            let race = stage.source_file == ssb_rom::ground_obj::BONUS3_FILE;
+            let pitch = if race || ssb_rom::bonus2::kind(stage.source_file).is_some() { -15.0 } else { -9.0 };
+            self.camera.tick_player_zoom(target, (0.0, pitch * core::f32::consts::PI / 180.0), if race { 7000.0 } else { 9000.0 }, 0.3, 31.5);
             return;
         }
         if let Some((target, dist)) = self.entry_zoom {

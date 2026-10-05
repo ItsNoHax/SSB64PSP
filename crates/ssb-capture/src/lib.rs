@@ -292,6 +292,10 @@ pub enum GameScene {
     OnePPlatforms,
     OnePPlatformClear,
     OnePPlatformFall,
+    OnePRace,
+    OnePRaceClear,
+    OnePRaceFall,
+    OnePRaceHazards,
     OnePContinue,
     OnePRetry,
     OnePClear,
@@ -553,7 +557,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 118] = [
+    pub const ALL: [GameScene; 122] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -562,6 +566,10 @@ impl GameScene {
         GameScene::OnePPlatforms,
         GameScene::OnePPlatformClear,
         GameScene::OnePPlatformFall,
+        GameScene::OnePRace,
+        GameScene::OnePRaceClear,
+        GameScene::OnePRaceFall,
+        GameScene::OnePRaceHazards,
         GameScene::OnePContinue,
         GameScene::OnePRetry,
         GameScene::OnePClear,
@@ -684,6 +692,10 @@ impl GameScene {
             GameScene::OnePPlatforms => "onepplatforms",
             GameScene::OnePPlatformClear => "onepplatformclear",
             GameScene::OnePPlatformFall => "onepplatformfall",
+            GameScene::OnePRace => "oneprace",
+            GameScene::OnePRaceClear => "onepraceclear",
+            GameScene::OnePRaceFall => "onepracefall",
+            GameScene::OnePRaceHazards => "onepracehazards",
             GameScene::OnePContinue => "onepcontinue",
             GameScene::OnePRetry => "onepretry",
             GameScene::OnePClear => "onepclear",

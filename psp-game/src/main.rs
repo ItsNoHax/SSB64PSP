@@ -84,6 +84,10 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::OnePPlatforms => 600,
         GameScene::OnePPlatformClear => 950,
         GameScene::OnePPlatformFall => 750,
+        GameScene::OnePRace => 600,
+        GameScene::OnePRaceClear => 750,
+        GameScene::OnePRaceFall => 750,
+        GameScene::OnePRaceHazards => 660,
         GameScene::OnePContinue => 240,
         GameScene::OnePRetry => 320,
         GameScene::OnePClear => 270,
@@ -403,7 +407,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         return match tick {
             4 | 10 | 34 => N64Buttons(N64Buttons::A),
             166 if scene == GameScene::OnePGame => N64Buttons(N64Buttons::A),
@@ -757,7 +761,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         return if (14..=24).contains(&tick) { 80 } else { 0 };
     }
     if scene == GameScene::LinkBomb && tick == 300 {
@@ -894,7 +898,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         // Two separate menu-down edges, then carry the puck to Kirby.
         return match tick {
             6 | 8 => -80,
@@ -1396,7 +1400,7 @@ unsafe fn training_step(
     locked: bool,
     effects: &mut dyn ssb_game::effect::HitEffectSink,
     bonus: Option<&mut ssb_game::spgame::bonus_stage::BonusStage>,
-    battle: Option<&mut ssb_game::battle::Battle>,
+    mut battle: Option<&mut ssb_game::battle::Battle>,
 ) {
     material_anim.tick(p);
     let Some(stage) = p.stage(stage_index) else {
@@ -1426,7 +1430,7 @@ unsafe fn training_step(
     );
     // Bonus2's priority-4 process observes the fighter after interrupts,
     // before priority-3 movement, item hits and death scoring.
-    if let (Some(bonus), Some(battle), Some(map)) = (bonus, battle, stage_map.as_mut()) {
+    if let (Some(bonus), Some(battle), Some(map)) = (bonus, battle.as_deref_mut(), stage_map.as_mut()) {
         if let Some(group) = pl.fighter.floor.and_then(|s| p.stage_lines(&stage).find(|l| l.id == s.line)).map(|l| l.yakumono) {
             if let Some(i) = bonus.board(&pl.fighter, group, battle) {
                 map.platforms[i].board(p);
@@ -1467,6 +1471,13 @@ unsafe fn training_step(
                 started,
             },
         );
+    }
+    // The finish process runs at priority 4, before fighter physics and
+    // death scoring. A timer callback already dispatched keeps its end.
+    if let ssb_game::stage::Controller::Bonus3(race) = &stage_ctl.controller {
+        if race.complete {
+            if let Some(battle) = battle.as_deref_mut() { battle.announce_complete(); }
+        }
     }
     // The vapor and sparkles the stage process made.
     stage_ctl.flush_effects(effects);
@@ -2287,7 +2298,7 @@ fn capture_route(scene: GameScene) -> CaptureRoute {
             CaptureRoute::StageSelect
         }
         GameScene::OnePGame
-        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear
+        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear
         | GameScene::FighterSelect
         | GameScene::VsModeMenu
         | GameScene::VsPlayers
@@ -4158,7 +4169,7 @@ unsafe fn run() -> ! {
         #[cfg(feature = "headless_capture")]
         if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
             emit_headless_screenshot();
-            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall)) {
+            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards)) {
                 campaign::log_capture(&s, sim_frame_index);
             }
             // One line for the capture log: whether the scripted attack
@@ -4669,6 +4680,8 @@ struct DrawAssets {
     gbumper_item: Option<ssb_rom::pack::ObjectDesc>,
     capsule_item: Option<ssb_rom::pack::ObjectDesc>,
     heavy_items: [Option<ssb_rom::pack::ObjectDesc>; 2],
+    tarubomb_item: Option<ssb_rom::pack::ObjectDesc>,
+    tarubomb_piece: Option<ssb_rom::pack::MeshDesc>,
     container_piece: Option<ssb_rom::pack::MeshDesc>,
     egg_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Tomato, Heart and Star: file 86 + 0xAB0, 0x1158, 0x1560 (RE-433).
@@ -4814,6 +4827,8 @@ impl DrawAssets {
             capsule_item: ssb_psp_runtime::scene::object_keyed(p, (86, 0x670)),
             heavy_items: [0x6778, 0x71A8]
                 .map(|offset| ssb_psp_runtime::scene::object_keyed(p, (86, offset))),
+            tarubomb_item: ssb_psp_runtime::scene::object_keyed(p, ssb_rom::ground_obj::TARUBOMB_SOURCE),
+            tarubomb_piece: mesh_keyed(p, (ssb_rom::ground_obj::BONUS3_NODES_FILE, 0x8A0)),
             container_piece: (0..p.mesh_count())
                 .filter_map(|i| p.mesh(i))
                 .find(|m| m.source_file == 86 && m.source_offset == 0x68F0),
@@ -5378,7 +5393,7 @@ impl DrawAssets {
             | ssb_game::item::ItemKind::PowerBlock
             | ssb_game::item::ItemKind::Pakkun
             | ssb_game::item::ItemKind::Monster(_) => None,
-            // Race to the Finish is not packed.
+            // Static tree drawn with the container roots below.
             ssb_game::item::ItemKind::TaruBomb => None,
             // [`MonsterAsset`].
             ssb_game::item::ItemKind::MMonster(_) => None,
@@ -6417,8 +6432,11 @@ unsafe fn draw_training(
 
     gpu.begin_frame(Some(BG_TRAINING));
     gpu.set_viewport_pillarboxed();
+    if stage.source_file == ssb_rom::ground_obj::BONUS3_FILE {
+        meshdraw::fill_rect_n64([10.0, 10.0, 310.0, 230.0], [0, 0, 0, 255], draw_state);
+    }
     // `gmCameraMakeWallpaperCamera` (priority 80) draws before the stage
-    // camera (50). Race to the Finish's black fill has no VS stage to reach.
+    // camera (50). Race uses a black viewport without a sprite.
     if let Some((sprite, w)) = wallpaper.filter(|(_, w)| w.kind != ssb_game::wallpaper::Kind::Bonus3) {
         meshdraw::draw_wallpaper(p, sprite, w.x, w.y, w.scale, draw_state);
     }
@@ -6611,16 +6629,18 @@ unsafe fn draw_training(
     draw_state.configure_item_light(stage.light_angle_xy);
     battle_part(BattlePart::Items, draw_state, gpu);
     draw_state.finish_fighter_light();
-    if let Some(mesh) = assets.container_piece.as_ref() {
+    {
         for display in damage_hud
             .effects
             .displays()
             .filter(|d| d.kind == ssb_game::effect::DisplayKind::ContainerSmash)
         {
-            // Only the Box pieces are packed; Race to the Finish is not.
-            if let Some((ssb_game::effect::SmashPiece::Box, pieces)) =
-                damage_hud.effects.container_pieces(display)
-            {
+            if let Some((kind, pieces)) = damage_hud.effects.container_pieces(display) {
+                let mesh = match kind {
+                    ssb_game::effect::SmashPiece::Box => assets.container_piece.as_ref(),
+                    ssb_game::effect::SmashPiece::TaruBomb => assets.tarubomb_piece.as_ref(),
+                };
+                let Some(mesh) = mesh else { continue; };
                 for piece in pieces {
                     gpu.model_transform_xyz(
                         [piece.pos.x, piece.pos.y, piece.pos.z],
@@ -6716,7 +6736,7 @@ unsafe fn draw_training(
             .iter()
             .filter(|v| v.offscreen && v.eligible)
             .fold(0, |flags, v| flags | v.arrow);
-        if !training_paused {
+        if !training_paused && stage.source_file != ssb_rom::ground_obj::BONUS3_FILE {
             player_screen::arrows(gpu, p, draw_state, &damage_hud.players, flags);
         }
         draw_magnifiers(
@@ -7938,14 +7958,18 @@ unsafe fn draw_items_weapons_effects(
                 }
                 continue;
         }
-        if let ssb_game::item::ItemKind::Container(kind) = item.kind {
+        if matches!(item.kind, ssb_game::item::ItemKind::Container(_) | ssb_game::item::ItemKind::TaruBomb) {
+          let kind = match item.kind {
+            ssb_game::item::ItemKind::Container(kind) => kind,
+            _ => ssb_game::item::container::Kind::Barrel,
+          };
           if kind != ssb_game::item::container::Kind::Egg {
-            let object = match kind {
+            let object = if item.kind == ssb_game::item::ItemKind::TaruBomb { assets.tarubomb_item.as_ref() } else { match kind {
                 ssb_game::item::container::Kind::Capsule => assets.capsule_item.as_ref(),
                 ssb_game::item::container::Kind::Crate => assets.heavy_items[0].as_ref(),
                 ssb_game::item::container::Kind::Barrel => assets.heavy_items[1].as_ref(),
                 _ => None,
-            };
+            }};
             if let Some(object) = object {
                 // The manager replaces root translation with the item's position.
                 // Relative descendant transforms stay from the descriptor.
