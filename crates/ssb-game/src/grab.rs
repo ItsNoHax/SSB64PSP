@@ -402,11 +402,7 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
 
 /// Polygon, Metal and Giant fighters share their base fighter's motion data.
 pub(crate) fn base_kind(kind: FighterKind) -> FighterKind {
-    match kind {
-        FighterKind::MetalMario => FighterKind::Mario,
-        FighterKind::GiantDonkey => FighterKind::Donkey,
-        k => k.polygon_base().unwrap_or(k),
-    }
+    kind.character()
 }
 
 /// `FTAttributes::joint_itemheavy_id`: the joint a held fighter hangs from

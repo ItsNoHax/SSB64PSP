@@ -122,6 +122,19 @@ impl Entrance {
         }
     }
 
+    /// One of a Polygon's three frozen card frames (`frame` 0 to 2) on the
+    /// Fighting Polygon Team's card: drawn once the scene's clock passes
+    /// [`polygon_frames`]' threshold (`sc1PIntroVSFighterProcDisplay`).
+    pub fn polygon(kind: FighterKind, frame: usize) -> Self {
+        let threshold = [-28, -8, 12][frame.min(2)] + kind as i32 * 2;
+        Self {
+            z: 0.0,
+            shown: false,
+            velocity_z: 30.0,
+            delay: Some(threshold.max(0) as u32),
+        }
+    }
+
     pub fn tick(&mut self, scene_tic: u32) {
         if let Some(delay) = self.delay {
             self.shown = delay < scene_tic;

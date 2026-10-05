@@ -1052,7 +1052,72 @@ const BOSS: &[DamageCollDesc] = &[
     ),
 ];
 
-/// A fighter's hurtbox table, or `None` for an unported fighter.
+/// `base` with entry `i` replaced: the variants' tables (`2xx_N*Main.c`,
+/// `206_MMarioMain.c`) copy their base fighter's but keep the boxes the
+/// US release later resized for the twelve.
+const fn replaced<const N: usize>(
+    base: &[DamageCollDesc],
+    i: usize,
+    desc: DamageCollDesc,
+) -> [DamageCollDesc; N] {
+    let mut out = [hurt(
+        0,
+        0,
+        false,
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(0.0, 0.0, 0.0),
+    ); N];
+    let mut j = 0;
+    while j < N {
+        out[j] = base[j];
+        j += 1;
+    }
+    out[i] = desc;
+    out
+}
+
+/// `dMMarioMain_attr`/`dNMarioMain_attr.damage_coll_descs`: Mario's, with
+/// the torso box still 160 tall (US Mario's is 140).
+const MARIO_VARIANT: [DamageCollDesc; MARIO.len()] = replaced(
+    MARIO,
+    1,
+    hurt(
+        12,
+        2,
+        true,
+        Vec3::new(0.0, 68.0, 8.0),
+        Vec3::new(148.0, 160.0, 138.0),
+    ),
+);
+
+/// `dNLuigiMain_attr.damage_coll_descs`: Luigi's, torso 200 tall (US 160).
+const POLY_LUIGI: [DamageCollDesc; LUIGI.len()] = replaced(
+    LUIGI,
+    1,
+    hurt(
+        12,
+        2,
+        true,
+        Vec3::new(0.0, 81.0, 14.0),
+        Vec3::new(155.0, 200.0, 150.0),
+    ),
+);
+
+/// `dNPikachuMain_attr.damage_coll_descs`: Pikachu's, with the head box
+/// lower and shorter.
+const POLY_PIKACHU: [DamageCollDesc; PIKACHU.len()] = replaced(
+    PIKACHU,
+    2,
+    hurt(
+        11,
+        2,
+        true,
+        Vec3::new(0.0, 30.0, 12.0),
+        Vec3::new(191.0, 129.0, 203.0),
+    ),
+);
+
+/// A fighter's hurtbox table (`FTAttributes::damage_coll_descs`).
 pub fn damage_colls(kind: FighterKind) -> Option<&'static [DamageCollDesc]> {
     Some(match kind {
         FighterKind::Mario => MARIO,
@@ -1068,7 +1133,19 @@ pub fn damage_colls(kind: FighterKind) -> Option<&'static [DamageCollDesc]> {
         FighterKind::Purin => PURIN,
         FighterKind::Ness => NESS,
         FighterKind::Boss => BOSS,
-        _ => return None,
+        FighterKind::MetalMario | FighterKind::PolyMario => &MARIO_VARIANT,
+        FighterKind::PolyLuigi => &POLY_LUIGI,
+        FighterKind::PolyPikachu => &POLY_PIKACHU,
+        // The other variants' tables equal their base fighter's (US).
+        FighterKind::PolyFox => FOX,
+        FighterKind::PolyDonkey | FighterKind::GiantDonkey => DONKEY,
+        FighterKind::PolySamus => SAMUS,
+        FighterKind::PolyLink => LINK,
+        FighterKind::PolyYoshi => YOSHI,
+        FighterKind::PolyCaptain => CAPTAIN,
+        FighterKind::PolyKirby => KIRBY,
+        FighterKind::PolyPurin => PURIN,
+        FighterKind::PolyNess => NESS,
     })
 }
 
@@ -1089,7 +1166,19 @@ pub fn yoshi_egg_coll(kind: FighterKind) -> Option<DamageCollDesc> {
         FighterKind::Pikachu => (144.0, 165.0),
         FighterKind::Purin => (144.0, 162.0),
         FighterKind::Ness => (160.0, 168.0),
-        _ => return None,
+        FighterKind::Boss | FighterKind::MetalMario | FighterKind::PolyMario => (157.0, 180.0),
+        FighterKind::PolyFox => (155.0, 171.0),
+        FighterKind::PolyDonkey => (230.0, 245.0),
+        FighterKind::PolySamus => (163.0, 198.0),
+        FighterKind::PolyLuigi => (160.0, 188.0),
+        FighterKind::PolyLink => (133.0, 148.0),
+        FighterKind::PolyYoshi => (175.0, 210.0),
+        FighterKind::PolyCaptain => (156.0, 198.0),
+        FighterKind::PolyKirby => (132.0, 164.0),
+        FighterKind::PolyPikachu => (144.0, 165.0),
+        FighterKind::PolyPurin => (144.0, 162.0),
+        FighterKind::PolyNess => (160.0, 168.0),
+        FighterKind::GiantDonkey => (400.0, 350.0),
     };
     Some(hurt(
         0,

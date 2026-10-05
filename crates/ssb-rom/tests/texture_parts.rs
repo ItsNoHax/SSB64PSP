@@ -6,6 +6,13 @@ use ssb_rom::{
     Archive,
 };
 
+/// Every fighter but Master Hand (RE-458).
+fn fighters() -> impl Iterator<Item = FighterKind> {
+    (0..27)
+        .filter(|&k| k != 12)
+        .filter_map(FighterKind::from_ordinal)
+}
+
 fn inputs() -> Option<(Vec<u8>, Vec<u8>)> {
     let rom = std::fs::read(std::env::var_os("SSB64_ROM")?).unwrap();
     let pack = std::fs::read(concat!(
@@ -20,7 +27,7 @@ fn inputs() -> Option<(Vec<u8>, Vec<u8>)> {
 fn texture_part_joint_and_material_positions_equal_the_rom() {
     let Some((rom, _)) = inputs() else { return };
     let a = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();
-    for &kind in FighterKind::PLAYABLE {
+    for kind in fighters() {
         let e = *fighter::FIGHTER_FILES
             .iter()
             .find(|e| e.kind == kind as u8)
@@ -39,7 +46,7 @@ fn both_details_pack_the_source_models_fallbacks_and_reachable_parts() {
     let Some((rom, bytes)) = inputs() else { return };
     let p = Pack::open(&bytes).unwrap();
     let a = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();
-    for &kind in FighterKind::PLAYABLE {
+    for kind in fighters() {
         let e = *fighter::FIGHTER_FILES
             .iter()
             .find(|e| e.kind == kind as u8)
@@ -49,7 +56,7 @@ fn both_details_pack_the_source_models_fallbacks_and_reachable_parts() {
         let models = p.fighter_model(kind as u32).unwrap();
         let high = p.object(models.high).unwrap();
         let mut wanted = ssb_game::motion::model_part_events(kind);
-        if kind == FighterKind::Link {
+        if matches!(kind, FighterKind::Link | FighterKind::PolyLink) {
             wanted.extend([(19, 0), (21, 0)]);
         }
         if kind == FighterKind::Yoshi {
@@ -103,8 +110,17 @@ fn both_details_pack_the_source_models_fallbacks_and_reachable_parts() {
                 if part < 0 || joint < 4 || mask >> (joint - 4) & 1 == 0 {
                     continue;
                 }
-                let mp =
-                    fighter::model_part(&f, e, joint as u32, part as u32, detail as u32).unwrap();
+                // A joint without a `modelparts_desc` keeps its own list
+                // and `MObj`s for any part (`ftParamSetModelPartID`).
+                let Some(mp) = fighter::model_part(&f, e, joint as u32, part as u32, detail as u32)
+                else {
+                    let node = o.first_node + joint as u32 - 4;
+                    assert_eq!(
+                        p.costume_mesh(node, modelpart_costume(part as u32, 0)),
+                        None
+                    );
+                    continue;
+                };
                 if let Some(tps) = fighter::texture_parts(&f, e) {
                     for (texture_part, tp) in tps
                         .iter()
@@ -168,9 +184,7 @@ fn packed_texture_parts_have_every_reachable_sprite_and_valid_texture() {
             t.textures[0],
             p.prim(mesh.first_prim + t.prim).unwrap().texture
         );
-        let kind = FighterKind::PLAYABLE
-            .iter()
-            .copied()
+        let kind = fighters()
             .find(|&k| {
                 let e = fighter::FIGHTER_FILES
                     .iter()

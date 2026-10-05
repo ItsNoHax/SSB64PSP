@@ -540,7 +540,7 @@ pub fn absorber(f: &Fighter) -> Option<SpecialColl> {
 }
 
 fn base_kind(kind: FighterKind) -> FighterKind {
-    kind.polygon_base().unwrap_or(kind)
+    kind.character()
 }
 
 /// The special collision's joint, or TopN's facing transform at the root
@@ -1824,13 +1824,13 @@ pub fn goto_damage_status(f: &mut Fighter) {
         f.hits.damage_index,
         f.hits.damage_element,
     );
-    if f.kind == FighterKind::Donkey {
+    if f.kind.character() == FighterKind::Donkey {
         f.donkey_special_n.charge_level = 0;
     }
-    if f.kind == FighterKind::Samus {
+    if f.kind.character() == FighterKind::Samus {
         crate::samus::on_damage(f);
     }
-    if f.kind == FighterKind::Link {
+    if f.kind.character() == FighterKind::Link {
         crate::link::on_damage(f);
     }
     crate::yoshi::on_damage(f);

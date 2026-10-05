@@ -654,35 +654,60 @@ mod tests {
                 }
             }
         }
-        let missing: usize = FIGHTER_ANIMS
+        let missing: usize = FIGHTER_ANIMS[..13]
             .iter()
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
-        // The reaction, cliff and damage slots exist for all twelve and for
-        // none of the other fifteen rows. The attack slots lack the 106
-        // motions the twelve do not have (mid-angle tilts and smashes,
-        // `AttackHi3F`/`B`, null `LandingAirX`), and only Mario and Luigi have
-        // `MarioAttack13`. The remaining shared slots exist for all twelve,
-        // except that Pikachu has no `YoshiEgg` motion. Of the seven entry
-        // slots, 62 clips exist: two for each one-part entry, four for
-        // Captain Falcon's and five for Ness's, the twelve's 29 and 33 for
-        // Metal Mario, the Poly fighters and Giant Donkey Kong. The five demo
-        // slots exist for the twelve and Master Hand (his one default clip)
-        // and for none of the other fourteen, whose submotion rows 1 to 5
-        // are null or absent (RE-408). Of the campaign's four, the twelve
-        // lack only IntroR for Captain Falcon, Jigglypuff and Ness, who are
-        // never a card's enemy; Master Hand lacks IntroL; the other
-        // fourteen have only IntroR, except Poly Luigi, Poly Jigglypuff and
-        // Giant Donkey Kong. Master Hand's 30 own slots exist for him alone.
-        assert_eq!(
-            missing,
-            10950 + 15 * (SLOT_REBIRTH_DOWN - SLOT_WALL_DAMAGE) + 106 + 10 + 15 * 66 + 1 + 27 * 7
-                - 62
-                + 14 * 5
-                + 49
-                + 26 * BOSS_SLOTS,
-            "Twelve ported fighters have character, grab, reaction and move slots"
-        );
+        // The attack slots lack the 106 motions the twelve do not have
+        // (mid-angle tilts and smashes, `AttackHi3F`/`B`, null
+        // `LandingAirX`), and only Mario and Luigi have `MarioAttack13`.
+        // The remaining shared slots exist for all twelve, except that
+        // Pikachu has no `YoshiEgg` motion. Of the seven entry slots, two
+        // exist for each one-part entry, four for Captain Falcon's and five
+        // for Ness's. The five demo slots exist for the twelve and Master
+        // Hand (his one default clip) (RE-408). Of the campaign's four, the
+        // twelve lack only IntroR for Captain Falcon, Jigglypuff and Ness,
+        // who are never a card's enemy; Master Hand lacks IntroL. Master
+        // Hand's 30 own slots exist for him alone; his common statuses all
+        // play one idle.
+        assert_eq!(missing, 5686, "Twelve fighters and Master Hand");
+        // Metal Mario, the Polygons and Giant Donkey Kong carry every slot
+        // their base fighter has (their `dFT<Name>MotionDescs` index the
+        // base's motion enum), except: the demo and continue rows and
+        // IntroL their submotion tables lack (only IntroR exists, and not
+        // for Poly Luigi, Poly Jigglypuff and Giant Donkey Kong; Poly
+        // Captain Falcon and Poly Ness have the IntroR their bases lack);
+        // Giant Donkey Kong's null `YoshiEgg` (Poly Pikachu has one, Poly
+        // Luigi's plays Mario's Wait); and the specials and copies of Poly
+        // Kirby and Poly Pikachu, whose tables drop rows among their own
+        // motions and who have no specials (`is_have_special*` 0).
+        let base = |kind: usize| match kind {
+            13 | 14 => 0,
+            26 => 2,
+            k => k - 14,
+        };
+        for (kind, a) in FIGHTER_ANIMS.iter().enumerate().skip(13) {
+            let b = &FIGHTER_ANIMS[base(kind)];
+            for (slot, name) in SLOT_NAMES.iter().enumerate() {
+                let (have, base_has) = (a.files[slot] != 0, b.files[slot] != 0);
+                if have == base_has
+                    || (SLOT_WIN1..=SLOT_INTRO_R).contains(&slot)
+                    || (*name == "YoshiEgg" && matches!(kind, 23 | 26))
+                {
+                    continue;
+                }
+                let special = name.starts_with("KirbySpecial")
+                    || name.starts_with("KirbyCopy")
+                    || name.starts_with("PikachuSpecial");
+                assert!(
+                    matches!(kind, 22 | 23) && special && !have,
+                    "{} {} differs from {}",
+                    a.name,
+                    name,
+                    b.name
+                );
+            }
+        }
         for a in &FIGHTER_ANIMS[..12] {
             for (file, name) in a.files[SLOT_WALL_DAMAGE..SLOT_APPEAL]
                 .iter()
@@ -835,7 +860,10 @@ mod tests {
         assert_eq!(EXPECTED_FRAMES[0][SLOT_MARIO_SPECIAL_LW], 87);
         assert_eq!(EXPECTED_FRAMES[0][SLOT_MARIO_SPECIAL_AIR_LW], 83);
         for fighter in FIGHTER_ANIMS {
-            let has_mario_specials = matches!(fighter.name, "Mario" | "Luigi");
+            let has_mario_specials = matches!(
+                fighter.name,
+                "Mario" | "Luigi" | "MMario" | "NMario" | "NLuigi"
+            );
             assert_eq!(
                 fighter.files[SLOT_MARIO_SPECIAL_HI] != 0,
                 has_mario_specials

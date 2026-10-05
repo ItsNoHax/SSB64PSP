@@ -1185,6 +1185,38 @@ def resolve(refs):
             entry.append((slot, fid, sym, cache[fid], runtime))
         def special(slot, target, sym):
             targets = target if isinstance(target, tuple) else (target,)
+            owner = MOTION_ENUM_OWNER.get(fighter)
+            if fighter not in targets and owner in targets:
+                # Metal Mario, the Polygons and Giant Donkey Kong index their
+                # own `dFT<Name>MotionDescs` with their base fighter's motion
+                # enum: the slot is the variant's entry at every motion id
+                # where the base table names `sym`.
+                ids = [i for i, (name, _) in enumerate(descs[owner]) if name == sym]
+                # Polygon Kirby's and Polygon Pikachu's tables drop rows
+                # among their own motions (some of Kirby's copies, Pikachu's
+                # two appear motions), so past the gap the base enum reaches
+                # a different motion. Only rows still aligned with the base
+                # table resolve; the rest are specials those fighters do not
+                # have (`is_have_special*` 0), and stay empty.
+                if len(table) != len(descs[owner]):
+                    ids = [i for i in ids if i < len(table) and table[i][0] == sym]
+                rows = {table[i] for i in ids if i < len(table)}
+                if not rows:
+                    entry.append((slot, 0, None, 0, 0))
+                    return
+                if len(rows) != 1:
+                    problems.append(f"{fighter} {slot}: {sym} resolves to {sorted(map(str, rows))}")
+                    entry.append((slot, 0, None, 0, 0))
+                    return
+                vsym, runtime = next(iter(rows))
+                if vsym is None:
+                    entry.append((slot, 0, None, 0, 0))
+                    return
+                fid, path = files[vsym]
+                if fid not in cache:
+                    cache[fid] = file_frames(path)
+                entry.append((slot, fid, vsym, cache[fid], runtime))
+                return
             if fighter not in targets:
                 entry.append((slot, 0, None, 0, 0))
                 return
@@ -1199,7 +1231,8 @@ def resolve(refs):
         for slot, target, sym in SPECIAL_SLOTS:
             special(slot, target, sym)
         def common(slot, status):
-            sym, runtime = table[smot[status]] if fighter in GRAB_FIGHTERS else (None, 0)
+            ported = fighter in GRAB_FIGHTERS or fighter in MOTION_ENUM_OWNER
+            sym, runtime = table[smot[status]] if ported else (None, 0)
             if sym is None:
                 entry.append((slot, 0, None, 0, 0))
                 return

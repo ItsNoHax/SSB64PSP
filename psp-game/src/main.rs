@@ -90,6 +90,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::OnePRaceHazards => 660,
         GameScene::OnePBoss => 1500,
         GameScene::OnePBossDefeat => 1500,
+        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako => 1200,
         GameScene::OnePContinue => 240,
         GameScene::OnePRetry => 320,
         GameScene::OnePClear => 270,
@@ -409,7 +410,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         return match tick {
             4 | 10 | 34 => N64Buttons(N64Buttons::A),
             166 if scene == GameScene::OnePGame => N64Buttons(N64Buttons::A),
@@ -763,7 +764,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         return if (14..=24).contains(&tick) { 80 } else { 0 };
     }
     if scene == GameScene::LinkBomb && tick == 300 {
@@ -900,7 +901,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear) {
         // Two separate menu-down edges, then carry the puck to Kirby.
         return match tick {
             6 | 8 => -80,
@@ -2305,7 +2306,7 @@ fn capture_route(scene: GameScene) -> CaptureRoute {
             CaptureRoute::StageSelect
         }
         GameScene::OnePGame
-        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear
+        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear
         | GameScene::FighterSelect
         | GameScene::VsModeMenu
         | GameScene::VsPlayers
@@ -2713,6 +2714,9 @@ struct Hud {
     /// The 1P Game's `players[].is_single_stockicon`; `None` follows the
     /// VS battle's rule.
     single_stock: Option<[bool; 4]>,
+    /// The 1P Game's team stock icons and their stage
+    /// (`sc1PGameTeamStockDisplayProcDisplay`).
+    team_stocks: Option<(ssb_game::spgame::Stage, alloc::vec::Vec<ssb_game::spgame::setup::StockIcon>)>,
     /// The display effects' players ([`draw_display_effects`]).
     display_scratch: alloc::boxed::Box<DisplayScratch>,
 }
@@ -2840,6 +2844,7 @@ impl Hud {
             particles: new_particles(),
             effects: ssb_game::effect::Effects::new(0),
             single_stock: None,
+            team_stocks: None,
             display_scratch: new_display_scratch(),
         }
     }
@@ -4260,7 +4265,7 @@ unsafe fn run() -> ! {
         #[cfg(feature = "headless_capture")]
         if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
             emit_headless_screenshot();
-            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat)) {
+            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako)) {
                 campaign::log_capture(&s, sim_frame_index);
             }
             // One line for the capture log: whether the scripted attack
@@ -6915,6 +6920,7 @@ unsafe fn draw_training(
     }
     if let Some(b) = battle {
         draw_stocks(p, draw_state, b, damage_hud, fighters.map(|x| x.map(|x| &x.fighter)));
+        draw_team_stocks(p, draw_state, damage_hud);
         draw_timer(p, draw_state, b);
     }
     if let Some(c) = damage_hud.countdown.as_ref() {
@@ -7039,11 +7045,14 @@ unsafe fn draw_fighter_model(
         f.fighter.model_parts.detail_curr,
     );
     let obj = p.object(drawn).unwrap_or(obj);
+    // TopN's scale is `attr->size` (`ftManagerMakeFighter`): Giant Donkey
+    // Kong twice the size of his model, Mario 1.12, Kirby 0.91 (RE-458).
+    let scale = meshdraw::MODEL_SCALE * f.fighter.attributes.size;
     if miniature {
         gpu.model_transform(
             [0.0; 3],
             [0.0, play::fighter_turn(&f.fighter), 0.0],
-            meshdraw::MODEL_SCALE,
+            scale,
         );
     } else if let Some(joint) = f
         .fighter
@@ -7052,12 +7061,12 @@ unsafe fn draw_fighter_model(
         .and_then(|h| h.anchor_transform)
         .filter(|_| ssb_game::grab::is_held(f.fighter.status.status))
     {
-        gpu.model_transform_joint(f.fighter.pos, joint, meshdraw::MODEL_SCALE);
+        gpu.model_transform_joint(f.fighter.pos, joint, scale);
     } else {
         gpu.model_transform(
             [f.fighter.pos.x, f.fighter.pos.y, f.fighter.pos.z],
             [0.0, play::fighter_turn(&f.fighter), 0.0],
-            meshdraw::MODEL_SCALE,
+            scale,
         );
     }
     let m = gpu.model_matrix();
@@ -7265,6 +7274,32 @@ fn draw_stocks(
         };
         for (x, y) in ssb_game::hud::stock_icons(pos_x, f.stocks, single, icon.width, icon.height) {
             draw_plain(p, draw_state, &icon, x, y);
+        }
+    }
+}
+
+/// `sc1PGameTeamStockDisplayProcDisplay`: the enemy team's remaining
+/// members, ten to a row from (20, 20): Yoshi's stock icon in each
+/// member's costume, the Kirbys' in theirs, the Polygons' own
+/// (`FTStocksZako`).
+#[inline(never)]
+fn draw_team_stocks(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, hud: &Hud) {
+    use ssb_game::{fighter::FighterKind, spgame::Stage};
+    let Some((stage, icons)) = hud.team_stocks.as_ref() else {
+        return;
+    };
+    let zako = || {
+        let f = &ssb_rom::sprite::STOCKS_ZAKO;
+        p.sprite(f.file, f.offsets[0])
+    };
+    for icon in icons {
+        let sprite = match (stage, icon.costume) {
+            (Stage::Yoshi, Some(c)) => p.fighter_sprite(FighterKind::Yoshi as u8, ssb_rom::pack::SpriteDesc::ROLE_STOCK, c),
+            (Stage::Kirby, Some(c)) => p.fighter_sprite(FighterKind::Kirby as u8, ssb_rom::pack::SpriteDesc::ROLE_STOCK, c),
+            _ => zako(),
+        };
+        if let Some(sprite) = sprite {
+            draw_plain(p, draw_state, &sprite, icon.x as f32, icon.y as f32);
         }
     }
 }

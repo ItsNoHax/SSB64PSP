@@ -376,7 +376,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 100 adds the ground's `zoom_start` and `zoom_end` bonus pause camera points.
 // 101 adds Master Hand's 30 motion slots (`SLOT_COUNT` 653) and his baked
 // intro and defeat camera animations.
-pub const VERSION: u32 = 101;
+// 102 gives Metal Mario, the Polygons and Giant Donkey Kong every motion slot
+// their base fighter has, and their own model and texture parts and
+// low-detail models (RE-458). No layout change.
+pub const VERSION: u32 = 102;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

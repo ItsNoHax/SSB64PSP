@@ -34,7 +34,7 @@ pub const ABSENT: i8 = i8::MIN;
 /// (`commonparts[0].dobjdesc[n].dl`). Read from each fighter's `*Main` and
 /// `*Model` files; `crates/ssb-rom/tests/model_parts.rs` checks them
 /// against the ROM.
-const JOINT_MASKS: [(u64, u64); 12] = [
+const JOINT_MASKS: [(u64, u64); 27] = [
     // Mario: 25 descriptors
     (0xffffff, 0xb59d74),
     // Fox: 27 descriptors
@@ -59,6 +59,36 @@ const JOINT_MASKS: [(u64, u64); 12] = [
     (0x1ff9ff7, 0x1080cc4),
     // Ness: 27 descriptors
     (0x3ffffff, 0x34d1d74),
+    // Master Hand: not read (his parts never change).
+    (0x1ffffff, 0x1fffffc),
+    // Metal Mario (`300_MMarioModel`): Mario's masks.
+    (0xffffff, 0xb59d74),
+    // Polygon Mario (and Polygon Luigi, who wears his model).
+    (0xffffff, 0xb59d74),
+    // Polygon Fox
+    (0x3ffffff, 0x3b59df6),
+    // Polygon Donkey Kong: no list on descriptor 14.
+    (0x1ffffff, 0x16b1d76),
+    // Polygon Samus
+    (0xffc01fff, 0xb5801a76),
+    // Polygon Luigi (`301_NMarioModel`)
+    (0xffffff, 0xb59d74),
+    // Polygon Link: no list on descriptor 16.
+    (0x7fff9fff, 0x5acc8ef6),
+    // Polygon Yoshi
+    (0x7ffffdf, 0x5adbb9e),
+    // Polygon Captain Falcon: no list on descriptor 14.
+    (0x1ffffff, 0x16b1d76),
+    // Polygon Kirby
+    (0x3ff3ef7, 0x21018c4),
+    // Polygon Pikachu: no lists on descriptors 9 and 10.
+    (0x3ffffff, 0x36b60e6),
+    // Polygon Jigglypuff
+    (0x1ff9ff7, 0x1080cc4),
+    // Polygon Ness
+    (0x3ffffff, 0x34d1d74),
+    // Giant Donkey Kong (Donkey Kong's model)
+    (0x1ffffff, 0x16b5d76),
 ];
 
 /// `(setup_parts, has a display list)` for a playable fighter, as
@@ -67,7 +97,7 @@ pub fn joint_masks(kind: FighterKind) -> Option<(u64, u64)> {
     JOINT_MASKS
         .get(kind as usize)
         .copied()
-        .filter(|_| (kind as u8) < 12)
+        .filter(|_| kind != FighterKind::Boss)
 }
 
 /// `nFTPartsDetailHigh` / `nFTPartsDetailLow`: which `FTCommonPart` a
@@ -111,7 +141,7 @@ pub const TEXTURE_PARTS: usize = 2;
 /// `crates/ssb-rom/tests/texture_parts.rs` checks them against the ROM.
 pub type TexturePartTable = [(u8, [u8; 2]); TEXTURE_PARTS];
 
-const TEXTURE_PART_TABLE: [Option<TexturePartTable>; 12] = [
+const TEXTURE_PART_TABLE: [Option<TexturePartTable>; 27] = [
     Some([(12, [0, 0]), (0, [0, 0])]),  // Mario
     Some([(12, [0, 0]), (12, [1, 1])]), // Fox
     None,                               // Donkey
@@ -124,15 +154,26 @@ const TEXTURE_PART_TABLE: [Option<TexturePartTable>; 12] = [
     Some([(11, [0, 0]), (11, [1, 1])]), // Pikachu
     Some([(6, [0, 0]), (6, [1, 1])]),   // Purin
     Some([(12, [0, 0]), (0, [0, 0])]),  // Ness
+    None,                               // Master Hand
+    Some([(12, [0, 0]), (0, [0, 0])]),  // Metal Mario
+    Some([(12, [0, 0]), (0, [0, 0])]),  // Polygon Mario
+    Some([(12, [0, 0]), (12, [1, 1])]), // Polygon Fox
+    None,                               // Polygon Donkey Kong
+    None,                               // Polygon Samus
+    Some([(12, [0, 0]), (0, [0, 0])]),  // Polygon Luigi
+    Some([(23, [0, 0]), (23, [1, 1])]), // Polygon Link
+    Some([(7, [0, 0]), (7, [1, 1])]),   // Polygon Yoshi
+    Some([(12, [0, 0]), (0, [0, 0])]),  // Polygon Captain Falcon
+    Some([(6, [0, 0]), (0, [0, 0])]),   // Polygon Kirby
+    Some([(11, [0, 0]), (11, [1, 1])]), // Polygon Pikachu
+    Some([(6, [0, 0]), (6, [1, 1])]),   // Polygon Jigglypuff
+    Some([(12, [0, 0]), (0, [0, 0])]),  // Polygon Ness
+    None,                               // Giant Donkey Kong
 ];
 
 /// [`TEXTURE_PART_TABLE`]'s row for `kind`.
 pub fn texture_part_table(kind: FighterKind) -> Option<TexturePartTable> {
-    TEXTURE_PART_TABLE
-        .get(kind as usize)
-        .copied()
-        .flatten()
-        .filter(|_| (kind as u8) < 12)
+    TEXTURE_PART_TABLE.get(kind as usize).copied().flatten()
 }
 
 /// `FTStruct::texturepart_status` and `is_texturepart_modify`, with what
@@ -217,7 +258,7 @@ impl ModelParts {
         match kind {
             // `copy[copy_kind].copy_modelpart_id`, Kirby's own row: 0.
             FighterKind::Kirby => p.set_default(6, 0),
-            FighterKind::Link => {
+            FighterKind::Link | FighterKind::PolyLink => {
                 p.set_default(21, HIDDEN);
                 p.set_default(19, 0);
             }

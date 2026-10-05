@@ -31,6 +31,9 @@ struct Model {
     transn: [f32; 3],
     frozen: bool,
     priority: u8,
+    /// The intro's light angle: the scene's, or Master Hand's own
+    /// `colanim.light_angle` (-20, -30) from `sc1PIntroMakeVSFighter`.
+    light: [f32; 2],
 }
 
 impl Presentation {
@@ -117,6 +120,38 @@ impl Presentation {
                 Stage::Pikachu => (FighterKind::Pikachu, 16, 1),
                 Stage::Kirby => (FighterKind::Kirby, 18, 8),
                 Stage::Samus => (FighterKind::Samus, 19, 1),
+                Stage::MMario => (FighterKind::MetalMario, 20, 1),
+                Stage::Boss => (FighterKind::Boss, 22, 1),
+                Stage::Zako => {
+                    // `sc1PIntroInitVSFighters`: every Polygon but Luigi
+                    // and Jigglypuff, low detail, each drawn at its IntroR
+                    // frames 0, 1 and 2 as the clock passes them.
+                    let camera = a::packed_camera(p, 21).expect("packed opponent camera");
+                    for kind in (14..=25).filter_map(FighterKind::from_ordinal) {
+                        if matches!(kind, FighterKind::PolyLuigi | FighterKind::PolyPurin) {
+                            continue;
+                        }
+                        for frame in 0..3 {
+                            let mut model = make_model(
+                                p,
+                                kind,
+                                ssb_game::costume::costume_common_id(kind, 0),
+                                ssb_rom::anim::SLOT_INTRO_R,
+                                14,
+                                frame as f32,
+                                true,
+                                camera,
+                                spgame::intro::Entrance::polygon(kind, frame),
+                            );
+                            model
+                                .demo
+                                .parts
+                                .set_detail_all(ssb_game::modelpart::Detail::Low);
+                            self.models.push(model);
+                        }
+                    }
+                    return true;
+                }
                 _ => return true,
             };
             let mut camera = a::packed_camera(p, index).expect("packed opponent camera");
@@ -311,6 +346,13 @@ impl Presentation {
                     ),
                     _ => {}
                 }
+                // `gcDrawAll` draws the cameras from the highest priority
+                // down: the sky's (80), the fighters' (70 to 40), the
+                // banners' (30), then the decals' and text's (20). Every
+                // fighter is cut off by the banners (N64 reference, RE-458).
+                for priority in [70, 60, 50, 40] {
+                    self.draw_intro_models(gpu, p, st, priority);
+                }
                 sprite(
                     p,
                     st,
@@ -333,11 +375,7 @@ impl Presentation {
                     [0; 3],
                     1.0,
                 );
-                self.draw_intro_models(gpu, p, st, 70);
                 intro_text(p, st, s, session);
-                for priority in [60, 50, 40] {
-                    self.draw_intro_models(gpu, p, st, priority);
-                }
             }
             Screen::Continue(s) => {
                 s.draw();
@@ -489,7 +527,7 @@ impl Presentation {
                     [0.0, 0.0, m.entrance.z],
                     1.0,
                     (128.0, 16384.0),
-                    [-20.0, 30.0],
+                    m.light,
                 );
             }
         }
@@ -523,6 +561,11 @@ fn make_model(
         transn: [0.0; 3],
         frozen,
         priority: if frozen { 40 } else { 50 },
+        light: if kind == FighterKind::Boss {
+            [-20.0, -30.0]
+        } else {
+            [-20.0, 30.0]
+        },
     });
     if let Some(anim) = p.fighter_anim(kind as u32, slot as u32) {
         m.skeleton

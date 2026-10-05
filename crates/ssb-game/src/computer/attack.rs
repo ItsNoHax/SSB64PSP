@@ -211,7 +211,11 @@ impl Computer {
             self.objective = Objective::Evade;
             return 1;
         }
-        if self.check_weapon_threat(f, world) {
+        // Metal Mario and Giant Donkey Kong never look for incoming
+        // weapons (`fkind != nFTKindMMario && fkind != nFTKindGDonkey`).
+        if !matches!(f.kind, FighterKind::MetalMario | FighterKind::GiantDonkey)
+            && self.check_weapon_threat(f, world)
+        {
             self.objective = Objective::CounterAttack;
             return 1;
         }
@@ -511,7 +515,9 @@ impl Computer {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        if self.behavior != Behavior::YoshiTeam {
+        // Giant Donkey Kong never locks on to the lowest-damage opponent
+        // (`this_fp->fkind != nFTKindGDonkey`).
+        if self.behavior != Behavior::YoshiTeam && f.kind != FighterKind::GiantDonkey {
             if let Some(i) = self.wait_get_target(world) {
                 let o = world.opponents[i];
                 self.target_user = Some(i);
@@ -599,6 +605,28 @@ impl Computer {
                         )
                     )
                     && f.donkey_special_n.charge_level < DONKEY_CHARGE_MAX
+            }
+            // `case nFTKindGDonkey:` only charges from these idle-ish
+            // common statuses.
+            FighterKind::GiantDonkey => {
+                matches!(
+                    s,
+                    AnyStatus::Common(
+                        Status::Wait
+                            | Status::WalkSlow
+                            | Status::WalkMiddle
+                            | Status::WalkFast
+                            | Status::Dash
+                            | Status::Run
+                            | Status::RunBrake
+                            | Status::Squat
+                            | Status::SquatWait
+                            | Status::SquatRv
+                            | Status::LandingLight
+                            | Status::OttottoWait
+                            | Status::Ottotto
+                    )
+                ) && f.donkey_special_n.charge_level < DONKEY_CHARGE_MAX
             }
             FighterKind::Samus => {
                 !samus_charging(s) && f.samus.charge_level < crate::samus::CHARGE_MAX
@@ -728,7 +756,8 @@ impl Computer {
             | FighterKind::Fox
             | FighterKind::Samus
             | FighterKind::Luigi
-            | FighterKind::Pikachu => {}
+            | FighterKind::Pikachu
+            | FighterKind::MetalMario => {}
             _ => return false,
         }
         if kind == FighterKind::Link && self.target_dist < 1500.0 && crate::rng::rand_float() < 0.3
@@ -769,22 +798,29 @@ impl Computer {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
+        // Giant Donkey Kong never rolls.
+        if f.kind == FighterKind::GiantDonkey {
+            return false;
+        }
         let kind = effective_kind(f);
         if kind == FighterKind::Samus && samus_charging(f.status.status) {
             return false;
         }
-        if kind == FighterKind::Donkey
-            && (donkey_charging(f.status.status)
-                || matches!(
-                    f.status.status,
-                    AnyStatus::Donkey(
-                        DonkeyStatus::ThrowFWait
-                            | DonkeyStatus::ThrowFWalkSlow
-                            | DonkeyStatus::ThrowFWalkMiddle
-                            | DonkeyStatus::ThrowFWalkFast
-                            | DonkeyStatus::ThrowFTurn
-                    )
-                ))
+        // US: `fkind == Donkey || NDonkey || GDonkey`.
+        if matches!(
+            kind,
+            FighterKind::Donkey | FighterKind::PolyDonkey | FighterKind::GiantDonkey
+        ) && (donkey_charging(f.status.status)
+            || matches!(
+                f.status.status,
+                AnyStatus::Donkey(
+                    DonkeyStatus::ThrowFWait
+                        | DonkeyStatus::ThrowFWalkSlow
+                        | DonkeyStatus::ThrowFWalkMiddle
+                        | DonkeyStatus::ThrowFWalkFast
+                        | DonkeyStatus::ThrowFTurn
+                )
+            ))
         {
             return false;
         }
@@ -884,7 +920,10 @@ impl Computer {
         let this_tvel = -a.tvel_base;
         let target_tvel = -target.tvel_base;
         let target_gravity = target.gravity;
-        let Some(&(ground, air)) = ATTACKS.get(f.kind as usize) else {
+        // `dFTComputerAttackList[fkind]`: Metal Mario and each Polygon use
+        // their model's table, Giant Donkey Kong Donkey Kong's, Master Hand
+        // none (`NULL`).
+        let Some(&(ground, air)) = ATTACKS.get(f.kind.character() as usize) else {
             return false;
         };
         let table: &[Attack] = if grounded { ground } else { air };
@@ -964,17 +1003,24 @@ impl Computer {
                 near_x *= 1.3;
                 far_x *= 1.3;
             }
+            // The source's `switch (this_fp->fkind)`: Metal Mario and the
+            // Polygon Mario, Luigi, Kirby, Yoshi and Captain join their
+            // models; Master Hand, the other Polygons and Giant Donkey Kong
+            // `break` with nothing.
             let cliffcatch = match f.kind {
-                FighterKind::Mario | FighterKind::Luigi => {
-                    attack.input == input::STICK_SMASH_HI_BUTTON_B
-                }
-                FighterKind::Kirby => {
+                FighterKind::Mario
+                | FighterKind::Luigi
+                | FighterKind::MetalMario
+                | FighterKind::PolyMario
+                | FighterKind::PolyLuigi => attack.input == input::STICK_SMASH_HI_BUTTON_B,
+                FighterKind::Kirby | FighterKind::PolyKirby => {
                     attack.input == input::STICK_SMASH_HI_BUTTON_B
                         || attack.input == input::STICK_SMASH_LW_BUTTON_B
                 }
-                FighterKind::Yoshi | FighterKind::Captain => {
-                    attack.input == input::STICK_SMASH_LW_BUTTON_B
-                }
+                FighterKind::Yoshi
+                | FighterKind::Captain
+                | FighterKind::PolyYoshi
+                | FighterKind::PolyCaptain => attack.input == input::STICK_SMASH_LW_BUTTON_B,
                 _ => false,
             };
             if cliffcatch {
@@ -997,6 +1043,33 @@ impl Computer {
                 } else if self.cliff_left.x > self.target_pos.x - 1200.0 {
                     continue;
                 }
+            }
+            // Giant Donkey Kong near either edge of the stage never tries an
+            // up special, a side special toward the outside (the source
+            // tests `translate.x * lr`), or any aerial input.
+            if f.kind == FighterKind::GiantDonkey
+                && (f.pos.x < world.geometry.left + 500.0 || f.pos.x > world.geometry.right - 500.0)
+            {
+                match attack.input {
+                    input::STICK_SMASH_HI_BUTTON_B => continue,
+                    input::STICK_SMASH_AUTO_X_BUTTON_B => {
+                        if f.pos.x * lr > 0.0 {
+                            continue;
+                        }
+                    }
+                    _ => {
+                        if !grounded {
+                            continue;
+                        }
+                    }
+                }
+            }
+            // Nor, in the air, its up special anywhere.
+            if f.kind == FighterKind::GiantDonkey
+                && !grounded
+                && attack.input == input::STICK_SMASH_HI_BUTTON_B
+            {
+                continue;
             }
             if self.stop_at_ledged_target
                 && matches!(
@@ -1028,12 +1101,13 @@ impl Computer {
                                     | FighterKind::Luigi
                                     | FighterKind::Link
                                     | FighterKind::Pikachu
+                                    | FighterKind::MetalMario
                             );
                         if reflector_target {
                             continue;
                         }
                         let full = match f.kind {
-                            FighterKind::Donkey => {
+                            FighterKind::Donkey | FighterKind::GiantDonkey => {
                                 f.donkey_special_n.charge_level == DONKEY_CHARGE_MAX
                             }
                             FighterKind::Samus => f.samus.charge_level == crate::samus::CHARGE_MAX,

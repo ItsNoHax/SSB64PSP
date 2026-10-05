@@ -497,10 +497,9 @@ pub(crate) fn preserved_in(
     from: AnyStatus,
     to: AnyStatus,
 ) -> bool {
-    let base = match kind.polygon_base().unwrap_or(kind) {
+    let base = match kind.character() {
         // Luigi runs Mario's specials (`ftmariospecialn.c`).
         FighterKind::Luigi => FighterKind::Mario,
-        FighterKind::GiantDonkey => FighterKind::Donkey,
         k => k,
     } as u8;
     let (from, to) = (from.id(), to.id());

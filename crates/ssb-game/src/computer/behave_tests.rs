@@ -226,3 +226,26 @@ fn the_target_search_skips_a_teammate() {
     assert!(com.find_target(&f, &w));
     assert_eq!(com.target_pos.x, 900.0);
 }
+
+#[test]
+fn metal_mario_only_targets_grounded_opponents() {
+    // `ftComputerCheckFindTarget`: `fkind != nFTKindMMario || other ga ==
+    // Ground`.
+    let mut airborne = player_at(500.0);
+    airborne.pos.y = 300.0;
+    airborne.grounded = false;
+    airborne.floor_line = None;
+    airborne.status = AnyStatus::Common(Status::Fall);
+    let opponents = [airborne];
+    let w = world(&opponents);
+    let f = standing_mario(0.0);
+    let mut com = cpu(&f, Behavior::Stand);
+    assert!(com.find_target(&f, &w));
+    let mut metal = standing_mario(0.0);
+    metal.kind = FighterKind::MetalMario;
+    let mut com = cpu(&metal, Behavior::Stand);
+    assert!(!com.find_target(&metal, &w));
+    let opponents = [player_at(500.0)];
+    let w = world(&opponents);
+    assert!(com.find_target(&metal, &w));
+}

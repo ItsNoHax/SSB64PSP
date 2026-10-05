@@ -2273,7 +2273,8 @@ fn playable_fighter_of<'a>(
 /// jaw, and Kirby's copy hats (RE-417).
 fn code_model_parts(kind: u8) -> &'static [(i32, i32)] {
     match kind {
-        5 => &[(19, 0), (21, 0)],
+        // Link and Polygon Link (`ftManagerInitFighter`'s defaults).
+        5 | 19 => &[(19, 0), (21, 0)],
         6 => &[(7, 1)],
         _ => &[],
     }
@@ -2292,15 +2293,36 @@ fn fighter_model_parts(
     let Some((entry, main, detail)) = playable_fighter_of(loaded, file, graph) else {
         return Vec::new();
     };
-    let Some(&kind) = ssb_game::fighter::FighterKind::PLAYABLE
-        .iter()
-        .find(|k| **k as u8 == entry.kind)
-    else {
+    let Some(kind) = ssb_game::fighter::FighterKind::from_ordinal(entry.kind) else {
         return Vec::new();
     };
     let present = ssb_game::modelpart::joint_masks(kind).map_or(0, |m| m.0);
     let mut wanted: std::collections::BTreeSet<(i32, i32)> =
         ssb_game::motion::model_part_events(kind);
+    // A fighter wearing another's graph (Giant Donkey Kong Donkey Kong's,
+    // Polygon Luigi Polygon Mario's) sets parts from its own scripts.
+    for other in ssb_rom::fighter::FIGHTER_FILES
+        .iter()
+        .filter(|e| e.kind != 12 && e.kind != entry.kind)
+    {
+        let Some(other_main) = loaded
+            .files
+            .get(other.file as usize)
+            .and_then(Option::as_ref)
+        else {
+            continue;
+        };
+        let shares = ssb_rom::fighter::common_parts(other_main, *other)
+            .iter()
+            .flatten()
+            .any(|c| (c.model_file, c.graph) == (file, graph.offset));
+        if let (true, Some(k)) = (
+            shares,
+            ssb_game::fighter::FighterKind::from_ordinal(other.kind),
+        ) {
+            wanted.extend(ssb_game::motion::model_part_events(k));
+        }
+    }
     wanted.extend(code_model_parts(entry.kind).iter().copied());
     if kind == ssb_game::fighter::FighterKind::Kirby {
         wanted.extend(
@@ -5097,19 +5119,29 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         );
     });
 
-    // RE-426: each playable fighter's high- and low-detail objects.
-    for (&(file, graph), fg) in &loaded.fighter_graphs {
-        if fg.detail != 0 {
+    // RE-426: each fighter's high- and low-detail objects, including the
+    // fighters that share another's graphs.
+    for entry in ssb_rom::fighter::FIGHTER_FILES
+        .iter()
+        .filter(|e| e.kind != 12)
+    {
+        let Some(main) = loaded.files[entry.file as usize].as_ref() else {
+            continue;
+        };
+        let [Some(hi), lo] = ssb_rom::fighter::common_parts(main, *entry) else {
+            continue;
+        };
+        if !loaded
+            .fighter_graphs
+            .contains_key(&(hi.model_file, hi.graph))
+        {
             continue;
         }
-        let low = ssb_rom::fighter::common_parts(
-            loaded.files[fg.entry.file as usize].as_ref().unwrap(),
-            fg.entry,
-        )[1]
-        .and_then(|lo| object_index.get(&(lo.model_file, lo.graph)).copied())
-        .unwrap_or(u32::MAX);
-        if let Some(&high) = object_index.get(&(file, graph)) {
-            writer.add_fighter_model(u32::from(fg.entry.kind), high, low);
+        let low = lo
+            .and_then(|lo| object_index.get(&(lo.model_file, lo.graph)).copied())
+            .unwrap_or(u32::MAX);
+        if let Some(&high) = object_index.get(&(hi.model_file, hi.graph)) {
+            writer.add_fighter_model(u32::from(entry.kind), high, low);
         }
     }
 
@@ -6576,27 +6608,33 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             .and_then(Option::as_ref)
             .ok_or_else(|| format!("file {id} missing"))
     };
-    // The twelve and Master Hand, whose emblem and stock icon the 1P
-    // Game's interface draws.
-    for e in ssb_rom::fighter::FIGHTER_FILES.iter().take(13) {
+    // Every fighter's emblem and stock icon, which the 1P Game's interface
+    // draws for its enemies: the twelve, Master Hand, Metal Mario, the
+    // Polygons and Giant Donkey Kong (RE-458). The Polygons have Master
+    // Hand's emblem and no stock icon; their team's interface draws its
+    // own (`FTStocksZako`).
+    for e in ssb_rom::fighter::FIGHTER_FILES.iter() {
         let main = file_of(e.file)?;
         let fs = ssb_rom::sprite::fighter_sprites(main, e.offset)
             .ok_or_else(|| format!("{}: no FTSprites", e.name))?;
-        let (file, at) = fs.emblem;
-        let s = ssb_rom::sprite::decode(file_of(file)?, at)
-            .map_err(|err| format!("{} emblem: {err:?}", e.name))?;
-        let texture = add_sprite_texture(&mut writer, &s, swizzle);
-        writer.add_sprite(sprite_desc(
-            file,
-            at,
-            &s,
-            texture,
-            e.kind,
-            ssb_rom::pack::SpriteDesc::ROLE_EMBLEM,
-            0,
-        ));
-        sprites += 1;
-        let (file, at) = fs.stock;
+        if let Some((file, at)) = fs.emblem {
+            let s = ssb_rom::sprite::decode(file_of(file)?, at)
+                .map_err(|err| format!("{} emblem: {err:?}", e.name))?;
+            let texture = add_sprite_texture(&mut writer, &s, swizzle);
+            writer.add_sprite(sprite_desc(
+                file,
+                at,
+                &s,
+                texture,
+                e.kind,
+                ssb_rom::pack::SpriteDesc::ROLE_EMBLEM,
+                0,
+            ));
+            sprites += 1;
+        }
+        let Some((file, at)) = fs.stock else {
+            continue;
+        };
         for (costume, &(lut_file, lut_at)) in fs.stock_luts.iter().enumerate() {
             let lut = file_of(lut_file)?
                 .data
@@ -9564,13 +9602,16 @@ fn load_all(archive: &Archive) -> Loaded {
         }
     }
 
-    // RE-426: each playable fighter's high- and low-detail graphs. A
+    // RE-426: each fighter's high- and low-detail graphs (all but Master
+    // Hand: the twelve, Metal Mario, the Polygons and Giant Donkey Kong). A
     // low-detail joint whose descriptor has no list draws the high-detail
     // one with its `MObj`s, so that list goes on the low graph's node.
+    // Giant Donkey Kong wears Donkey Kong's model and Polygon Luigi Polygon
+    // Mario's; the first fighter to name a graph owns it.
     let mut fighter_graphs = BTreeMap::new();
     for entry in ssb_rom::fighter::FIGHTER_FILES
         .iter()
-        .filter(|e| e.kind < 12)
+        .filter(|e| e.kind != 12)
     {
         let Some(main) = files.get(entry.file as usize).and_then(Option::as_ref) else {
             continue;
@@ -9578,6 +9619,9 @@ fn load_all(archive: &Archive) -> Loaded {
         let [Some(hi), lo] = ssb_rom::fighter::common_parts(main, *entry) else {
             continue;
         };
+        if fighter_graphs.contains_key(&(hi.model_file, hi.graph)) {
+            continue;
+        }
         fighter_graphs.insert(
             (hi.model_file, hi.graph),
             FighterGraph {
@@ -9720,10 +9764,7 @@ impl Loaded {
         let Some(parts) = ssb_rom::fighter::texture_parts(main, fg.entry) else {
             return;
         };
-        let Some(&kind) = ssb_game::fighter::FighterKind::PLAYABLE
-            .iter()
-            .find(|k| **k as u8 == fg.entry.kind)
-        else {
+        let Some(kind) = ssb_game::fighter::FighterKind::from_ordinal(fg.entry.kind) else {
             return;
         };
         let events = ssb_game::motion::texture_part_events(kind);

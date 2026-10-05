@@ -839,6 +839,9 @@ pub(crate) fn replace_enemies(
             }
         }
     }
+    // `sc1PGameTeamStockDisplayProcDisplay`'s icons, from this frame's
+    // remaining team (the Yoshi, Kirby and Polygon teams).
+    hud.team_stocks = sp.game.as_ref().map(|g| (g.stage, g.team_stock_icons()));
 }
 
 /// The battle's end: its records go to the campaign once, then the
@@ -949,6 +952,17 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
             sp.data.stage = Stage::Boss as u8;
             sp.manager.scene = Scene::Intro;
         }
+        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako => {
+            sp.data.stage = match scene {
+                GameScene::OnePMetal => Stage::MMario,
+                GameScene::OnePGiant => Stage::Donkey,
+                _ => Stage::Zako,
+            } as u8;
+            // The stage's own setup (Giant Donkey Kong's random allies),
+            // which the seeded jump would otherwise skip.
+            sp.manager.prepare_stage(&sp.data, &mut sp.state, &s.backup);
+            sp.manager.scene = Scene::Intro;
+        }
         GameScene::OnePContinue | GameScene::OnePRetry => {
             sp.data.score = 123456;
             sp.manager.scene = Scene::Continue;
@@ -985,6 +999,26 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
         }
     }
     let Some(pack) = pack else { return };
+    // From battle clock 1000, every 150 ticks: each enemy placed below the
+    // stage's bottom bound, so the real blast check KOs it and the
+    // campaign replaces it (the Polygon Team) or ends the stage. The
+    // fixture writes no stocks, falls or results.
+    if matches!(scene, GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako)
+        && s.vs_battle.as_ref().is_some_and(|b| b.clock() >= 1000 && b.clock() % 150 == 100)
+    {
+        if let (Some(pl), Some(stage)) = (s.play_state.as_ref(), pack.stage(s.training_stage)) {
+            let team = pl.fighter.team;
+            for d in s.dummies.iter_mut().flatten() {
+                // Past `nFTCommonStatusControlStart`: not dead, asleep or entering.
+                if d.fighter.team != team && d.fighter.status.status.id() > ssb_game::status::Status::RebirthWait as u16 {
+                    ssb_game::status::set_fall(&mut d.fighter);
+                    d.fighter.floor = None;
+                    d.fighter.physics.vel_air = ssb_engine::math::Vec3::ZERO;
+                    d.fighter.pos.y = f32::from(stage.bounds.bottom) - 100.0;
+                }
+            }
+        }
+    }
     if scene == GameScene::OnePRaceHazards && tick == 600 {
         if let (Some(pl), ssb_game::stage::Controller::Bonus3(race)) = (s.play_state.as_mut(), &s.stage_ctl.controller) {
             ssb_game::status::set_fall(&mut pl.fighter);

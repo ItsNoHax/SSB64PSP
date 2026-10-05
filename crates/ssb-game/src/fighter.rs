@@ -125,6 +125,27 @@ impl FighterKind {
             .copied()
     }
 
+    /// The fighter whose special statuses this kind runs
+    /// (`dFTMainSpecialStatusDescs`): Metal Mario and Polygon Mario run
+    /// Mario's, Giant Donkey Kong Donkey Kong's, each Polygon its model's.
+    /// The source's per-character branches of the common statuses list the
+    /// same groups (`case nFTKindMario: case nFTKindMMario: case
+    /// nFTKindNMario:`); where a branch leaves a variant out, the call site
+    /// says so.
+    pub fn character(self) -> FighterKind {
+        match self {
+            FighterKind::MetalMario => FighterKind::Mario,
+            FighterKind::GiantDonkey => FighterKind::Donkey,
+            k => k.polygon_base().unwrap_or(k),
+        }
+    }
+
+    /// `FTAttributes::is_have_specialn` and its five siblings, and
+    /// `is_have_catch`: every fighter but the Polygons (`2xx_N*Main.c`).
+    pub fn has_specials(self) -> bool {
+        !self.is_polygon()
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             FighterKind::Mario => "Mario",
@@ -537,7 +558,13 @@ impl Fighter {
             intangible_frames: 0,
             star_invincible_frames: 0,
             damage_heal: 0,
-            knockback_resist_passive: 0.0,
+            // `ftManagerInitFighter`: Metal Mario resists 30 knockback
+            // and Giant Donkey Kong 48, whatever their status.
+            knockback_resist_passive: match kind {
+                FighterKind::MetalMario => 30.0,
+                FighterKind::GiantDonkey => 48.0,
+                _ => 0.0,
+            },
             damage_knockback_stack: 0.0,
             is_knockback_paused: false,
             hits: crate::combat::FrameHits::default(),

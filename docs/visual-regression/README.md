@@ -155,6 +155,23 @@ The defeat fixture writes Master Hand's damage to 300 at battle clock 701
 and calls the real `ftBossCommonUpdateDamageStats`; everything after is the
 port's own sequence. Captures live under `~/ppsspp-headless-test/re457-*`
 and stay outside the manifest.
+
+RE-458 adds the special fighters' stages. Each fixture seeds its stage's
+intro after the real select (Kirby) and runs the manager's own stage setup
+(Giant Donkey Kong's random allies).
+
+| Spec | Captured display |
+|---|---|
+| `onepmetal@200`, `onepgiant@200`, `onepzako@200` | Intro cards: Metal Mario, Giant DK with both allies, the Polygons' card frames; every fighter under the banners |
+| `onepmetal@1000` | Metal Mario on Meta Crystal's truss after his pipe entry, his emblem and stock icon |
+| `onepgiant@780` | Giant DK on the tree platform, his two random allies after their entries |
+| `onepzako@1000`, `@1700` | Three Polygons, their emblems and the 30-icon team stock; after fixture KOs, 23 left |
+| `onepmetal@1700`, `onepgiant@1700` | STAGE CLEAR after the enemy's fixture KO |
+
+From battle clock 1000 the fixture moves every enemy below the stage's
+bottom bound every 150 ticks; the real blast check, replacement and
+stage-clear logic do the rest. Captures live under
+`~/ppsspp-headless-test/re458-*`.
 These diagnostics remain outside the 195-scene manifest. They do not prove
 unmodified traversal, a full campaign, N64 equivalence or physical PSP;
 see [RE-455](../evidence/re/RE-455.md) for source checks and capture limits.

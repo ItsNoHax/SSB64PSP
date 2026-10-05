@@ -2954,21 +2954,25 @@ pub fn switch_donkey_special_ground(f: &mut Fighter) {
 /// `ftCommonSpecialNCheckInterruptCommon` @ 0x80151098 for Mario and Fox.
 /// Neutral B is strictly between the up/down-special thresholds.
 pub fn check_special_n(f: &mut Fighter) -> bool {
-    if !matches!(
-        f.kind,
-        crate::fighter::FighterKind::Mario
-            | crate::fighter::FighterKind::Fox
-            | crate::fighter::FighterKind::Donkey
-            | crate::fighter::FighterKind::Samus
-            | crate::fighter::FighterKind::Luigi
-            | crate::fighter::FighterKind::Link
-            | crate::fighter::FighterKind::Yoshi
-            | crate::fighter::FighterKind::Captain
-            | crate::fighter::FighterKind::Kirby
-            | crate::fighter::FighterKind::Pikachu
-            | crate::fighter::FighterKind::Purin
-            | crate::fighter::FighterKind::Ness
-    ) || !f.button_tap().contains(N64Buttons::B)
+    // `attr->is_have_special*`; the special statuses are the character's
+    // (`dFTMainSpecialStatusDescs`).
+    if !f.kind.has_specials()
+        || !matches!(
+            f.kind.character(),
+            crate::fighter::FighterKind::Mario
+                | crate::fighter::FighterKind::Fox
+                | crate::fighter::FighterKind::Donkey
+                | crate::fighter::FighterKind::Samus
+                | crate::fighter::FighterKind::Luigi
+                | crate::fighter::FighterKind::Link
+                | crate::fighter::FighterKind::Yoshi
+                | crate::fighter::FighterKind::Captain
+                | crate::fighter::FighterKind::Kirby
+                | crate::fighter::FighterKind::Pikachu
+                | crate::fighter::FighterKind::Purin
+                | crate::fighter::FighterKind::Ness
+        )
+        || !f.button_tap().contains(N64Buttons::B)
         || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
     {
         return false;
@@ -2976,7 +2980,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
     if f.stick.forward(f.facing) < SPECIALN_TURN_STICK_MIN {
         f.facing = f.facing.flipped();
     }
-    match f.kind {
+    match f.kind.character() {
         // Luigi runs Mario's special statuses (`dFTLuigiSpecialStatusDescs`).
         crate::fighter::FighterKind::Mario | crate::fighter::FighterKind::Luigi => {
             if f.situation == Situation::Ground {
@@ -3045,56 +3049,60 @@ pub fn set_mario_special_air_hi(f: &mut Fighter) {
 /// `ftCommonSpecialHiCheckInterruptCommon` @ 0x80151160, limited to Mario:
 /// B edge plus an upward stick. Every other fighter remains unported here.
 pub fn check_special_hi(f: &mut Fighter) -> bool {
-    if !matches!(
-        f.kind,
-        crate::fighter::FighterKind::Mario
-            | crate::fighter::FighterKind::Fox
-            | crate::fighter::FighterKind::Donkey
-            | crate::fighter::FighterKind::Samus
-            | crate::fighter::FighterKind::Luigi
-            | crate::fighter::FighterKind::Link
-            | crate::fighter::FighterKind::Yoshi
-            | crate::fighter::FighterKind::Captain
-            | crate::fighter::FighterKind::Kirby
-            | crate::fighter::FighterKind::Pikachu
-            | crate::fighter::FighterKind::Purin
-            | crate::fighter::FighterKind::Ness
-    ) || !f.button_tap().contains(N64Buttons::B)
+    // `attr->is_have_special*`; the special statuses are the character's
+    // (`dFTMainSpecialStatusDescs`).
+    if !f.kind.has_specials()
+        || !matches!(
+            f.kind.character(),
+            crate::fighter::FighterKind::Mario
+                | crate::fighter::FighterKind::Fox
+                | crate::fighter::FighterKind::Donkey
+                | crate::fighter::FighterKind::Samus
+                | crate::fighter::FighterKind::Luigi
+                | crate::fighter::FighterKind::Link
+                | crate::fighter::FighterKind::Yoshi
+                | crate::fighter::FighterKind::Captain
+                | crate::fighter::FighterKind::Kirby
+                | crate::fighter::FighterKind::Pikachu
+                | crate::fighter::FighterKind::Purin
+                | crate::fighter::FighterKind::Ness
+        )
+        || !f.button_tap().contains(N64Buttons::B)
         || (f.stick.y as i32) < SPECIALHI_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Ness {
+    if f.kind.character() == crate::fighter::FighterKind::Ness {
         crate::ness::set_special_hi(f);
-    } else if f.kind == crate::fighter::FighterKind::Pikachu {
+    } else if f.kind.character() == crate::fighter::FighterKind::Pikachu {
         crate::pikachu::set_special_hi(f);
-    } else if f.kind == crate::fighter::FighterKind::Purin {
+    } else if f.kind.character() == crate::fighter::FighterKind::Purin {
         crate::purin::set_special_hi(f);
-    } else if f.kind == crate::fighter::FighterKind::Kirby {
+    } else if f.kind.character() == crate::fighter::FighterKind::Kirby {
         crate::kirby::set_special_hi(f);
-    } else if f.kind == crate::fighter::FighterKind::Captain {
+    } else if f.kind.character() == crate::fighter::FighterKind::Captain {
         crate::captain::set_special_hi(f);
-    } else if f.kind == crate::fighter::FighterKind::Yoshi {
+    } else if f.kind.character() == crate::fighter::FighterKind::Yoshi {
         if f.is_grounded() {
             crate::yoshi::set_special_hi(f);
         } else {
             crate::yoshi::set_special_air_hi(f);
         }
-    } else if f.kind == crate::fighter::FighterKind::Link {
+    } else if f.kind.character() == crate::fighter::FighterKind::Link {
         if f.is_grounded() {
             crate::link::set_special_hi(f);
         } else {
             crate::link::set_special_air_hi(f);
         }
-    } else if f.kind == crate::fighter::FighterKind::Samus {
+    } else if f.kind.character() == crate::fighter::FighterKind::Samus {
         if f.is_grounded() {
             crate::samus::set_special_hi(f);
         } else {
             crate::samus::set_special_air_hi(f);
         }
-    } else if f.kind == crate::fighter::FighterKind::Donkey {
+    } else if f.kind.character() == crate::fighter::FighterKind::Donkey {
         set_donkey_special_hi(f);
-    } else if f.kind == crate::fighter::FighterKind::Fox {
+    } else if f.kind.character() == crate::fighter::FighterKind::Fox {
         set_fox_special_hi_start(f);
     } else if f.situation == Situation::Ground {
         set_mario_special_hi(f);
@@ -3221,64 +3229,68 @@ pub fn switch_mario_tornado_air(f: &mut Fighter) {
 
 /// `ftCommonSpecialLwCheckInterruptCommon`, restricted to Mario.
 pub fn check_special_lw(f: &mut Fighter) -> bool {
-    if !matches!(
-        f.kind,
-        crate::fighter::FighterKind::Mario
-            | crate::fighter::FighterKind::Fox
-            | crate::fighter::FighterKind::Donkey
-            | crate::fighter::FighterKind::Samus
-            | crate::fighter::FighterKind::Luigi
-            | crate::fighter::FighterKind::Link
-            | crate::fighter::FighterKind::Yoshi
-            | crate::fighter::FighterKind::Captain
-            | crate::fighter::FighterKind::Kirby
-            | crate::fighter::FighterKind::Pikachu
-            | crate::fighter::FighterKind::Purin
-            | crate::fighter::FighterKind::Ness
-    ) || !f.button_tap().contains(N64Buttons::B)
+    // `attr->is_have_special*`; the special statuses are the character's
+    // (`dFTMainSpecialStatusDescs`).
+    if !f.kind.has_specials()
+        || !matches!(
+            f.kind.character(),
+            crate::fighter::FighterKind::Mario
+                | crate::fighter::FighterKind::Fox
+                | crate::fighter::FighterKind::Donkey
+                | crate::fighter::FighterKind::Samus
+                | crate::fighter::FighterKind::Luigi
+                | crate::fighter::FighterKind::Link
+                | crate::fighter::FighterKind::Yoshi
+                | crate::fighter::FighterKind::Captain
+                | crate::fighter::FighterKind::Kirby
+                | crate::fighter::FighterKind::Pikachu
+                | crate::fighter::FighterKind::Purin
+                | crate::fighter::FighterKind::Ness
+        )
+        || !f.button_tap().contains(N64Buttons::B)
         || (f.stick.y as i32) > SPECIALLW_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Ness {
+    if f.kind.character() == crate::fighter::FighterKind::Ness {
         crate::ness::set_special_lw(f);
-    } else if f.kind == crate::fighter::FighterKind::Pikachu {
+    } else if f.kind.character() == crate::fighter::FighterKind::Pikachu {
         crate::pikachu::set_special_lw(f);
-    } else if f.kind == crate::fighter::FighterKind::Purin {
+    } else if f.kind.character() == crate::fighter::FighterKind::Purin {
         crate::purin::set_special_lw(f);
-    } else if f.kind == crate::fighter::FighterKind::Kirby {
+    } else if f.kind.character() == crate::fighter::FighterKind::Kirby {
         crate::kirby::set_special_lw(f);
-    } else if f.kind == crate::fighter::FighterKind::Captain {
+    } else if f.kind.character() == crate::fighter::FighterKind::Captain {
         if f.is_grounded() {
             crate::captain::set_special_lw(f);
         } else {
             crate::captain::set_special_air_lw(f);
         }
-    } else if f.kind == crate::fighter::FighterKind::Yoshi {
+    } else if f.kind.character() == crate::fighter::FighterKind::Yoshi {
         if f.is_grounded() {
             crate::yoshi::set_special_lw_start(f);
         } else {
             crate::yoshi::set_special_air_lw_start(f);
         }
-    } else if f.kind == crate::fighter::FighterKind::Link {
+    } else if f.kind.character() == crate::fighter::FighterKind::Link {
         if f.is_grounded() {
             crate::link::set_special_lw(f);
         } else {
             crate::link::set_special_air_lw(f);
         }
-    } else if f.kind == crate::fighter::FighterKind::Samus {
+    } else if f.kind.character() == crate::fighter::FighterKind::Samus {
         if f.is_grounded() {
             crate::samus::set_special_lw(f);
         } else {
             crate::samus::set_special_air_lw(f);
         }
-    } else if f.kind == crate::fighter::FighterKind::Donkey {
+    } else if f.kind.character() == crate::fighter::FighterKind::Donkey {
         if f.is_grounded() {
             set_donkey_special_lw(f);
         } else {
             return false;
         }
-    } else if f.kind == crate::fighter::FighterKind::Fox {
+    } else if f.kind.character() == crate::fighter::FighterKind::Fox {
         set_fox_special_lw_start(f);
     } else if f.situation == Situation::Ground {
         set_mario_special_lw(f);
@@ -4214,12 +4226,7 @@ pub fn set_attack11(f: &mut Fighter) {
 /// [`ATTACK1_FOLLOWUP_FRAMES_DEFAULT`].
 fn attack11_followup_frames(kind: crate::fighter::FighterKind) -> f32 {
     use crate::fighter::FighterKind;
-    let base = match kind {
-        FighterKind::MetalMario => FighterKind::Mario,
-        FighterKind::GiantDonkey => FighterKind::Donkey,
-        k => k.polygon_base().unwrap_or(k),
-    };
-    match base {
+    match kind.character() {
         FighterKind::Fox | FighterKind::Samus => 30.0,
         FighterKind::Donkey => 28.0,
         _ => ATTACK1_FOLLOWUP_FRAMES_DEFAULT,
@@ -4256,7 +4263,9 @@ pub fn set_attack12(f: &mut Fighter) {
 /// `ftCommonAttack100StartCheckInterruptCommon`'s `inputs_min` for the
 /// fighters this codebase ports: `None` when the fighter has no `Attack100`.
 fn rapid_inputs_min(kind: crate::fighter::FighterKind) -> Option<u8> {
-    match kind {
+    // `ftCommonAttack100StartCheckInterruptCommon` lists each with its
+    // Polygon.
+    match kind.character() {
         crate::fighter::FighterKind::Fox => Some(4),
         crate::fighter::FighterKind::Link => Some(5),
         crate::fighter::FighterKind::Captain => Some(6),
@@ -4318,7 +4327,10 @@ fn update_attack11_flagged(f: &mut Fighter) {
 /// `ftCommonAttack100StartCheckInterruptCommon`), in source order.
 fn update_attack12_flagged(f: &mut Fighter) {
     let flag1 = f.motion_script.flags[1] != 0;
-    if flag1 && f.attack1.rapid_requested && f.kind != crate::fighter::FighterKind::Captain {
+    if flag1
+        && f.attack1.rapid_requested
+        && f.kind.character() != crate::fighter::FighterKind::Captain
+    {
         return set_rapid_start(f);
     }
     if flag1 && f.attack1.is_goto_followup {
@@ -4339,7 +4351,7 @@ fn update_attack12_flagged(f: &mut Fighter) {
             f.attack1.is_goto_followup = true;
         }
     }
-    if rapid_input(f) && flag1 && f.kind != crate::fighter::FighterKind::Captain {
+    if rapid_input(f) && flag1 && f.kind.character() != crate::fighter::FighterKind::Captain {
         set_rapid_start(f);
     }
 }
@@ -4347,7 +4359,7 @@ fn update_attack12_flagged(f: &mut Fighter) {
 /// `ftCommonAttack100StartSetStatus` for the fighters with their own
 /// `Attack100` statuses.
 fn set_rapid_start(f: &mut Fighter) {
-    match f.kind {
+    match f.kind.character() {
         crate::fighter::FighterKind::Fox => set_fox_rapid_start(f),
         crate::fighter::FighterKind::Link => crate::link::set_attack100_start(f),
         crate::fighter::FighterKind::Captain => crate::captain::set_attack100_start(f),
@@ -4430,7 +4442,7 @@ fn ftilt_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
 
 fn fsmash_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
     use crate::fighter::FighterKind;
-    match crate::grab::base_kind(kind) {
+    match kind.character() {
         FighterKind::Fox
         | FighterKind::Link
         | FighterKind::Kirby
@@ -5333,7 +5345,7 @@ pub fn update(f: &mut Fighter) {
         // first drops the fighter into a plain fall — landing mid-move is
         // handled separately, in `Fighter::tick_air` via
         // `set_landing_or_landing_air`.
-        Status::AttackAirLw if f.kind == crate::fighter::FighterKind::Link => {
+        Status::AttackAirLw if f.kind.character() == crate::fighter::FighterKind::Link => {
             crate::link::update_attack_air_lw(f)
         }
         Status::AttackAirN
@@ -5563,7 +5575,7 @@ fn update_extended(f: &mut Fighter) {
                 f.mario_special_n.spawned = true;
                 // `ftMarioSpecialNProcAccessory`'s `fkind` switch picks
                 // the Fireball attribute row.
-                let kind = if f.kind == crate::fighter::FighterKind::Luigi {
+                let kind = if f.kind.character() == crate::fighter::FighterKind::Luigi {
                     crate::weapon::WeaponKind::LuigiFireball
                 } else {
                     crate::weapon::WeaponKind::MarioFireball
@@ -5796,7 +5808,8 @@ fn update_extended(f: &mut Fighter) {
 /// falls back to `Attack100`'s rapid-jab loop instead for a different,
 /// smaller set).
 pub fn attack13_status(kind: crate::fighter::FighterKind) -> Option<AnyStatus> {
-    match kind {
+    // `ftCommonAttack11/12` list each fighter with its variants.
+    match kind.character() {
         crate::fighter::FighterKind::Mario | crate::fighter::FighterKind::Luigi => {
             Some(AnyStatus::Mario(MarioStatus::Attack13))
         }

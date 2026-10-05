@@ -417,7 +417,10 @@ impl Computer {
                     o.status,
                     AnyStatus::Common(Status::CliffCatch | Status::CliffWait)
                 );
-            if in_play(o.status) && (on_stage || ledge) {
+            // Metal Mario only targets grounded opponents
+            // (`this_fp->fkind != nFTKindMMario || other_fp->ga == Ground`).
+            let kind_ok = f.kind != FighterKind::MetalMario || o.grounded;
+            if in_play(o.status) && (on_stage || ledge) && kind_ok {
                 let d = sq(f.pos.x - o.pos.x) + sq(f.pos.y - o.pos.y);
                 if d < best {
                     self.target_pos = Vec2::new(o.pos.x, o.pos.y);
@@ -478,7 +481,10 @@ impl Computer {
             let wait = 180 - f.reaction.stand_wait;
             if slack * 25 < wait {
                 self.find_target(f, world);
-                if self.target_dist < 800.0
+                // Giant Donkey Kong never rolls out of a down
+                // (`this_fp->fkind != nFTKindGDonkey`).
+                if f.kind != FighterKind::GiantDonkey
+                    && self.target_dist < 800.0
                     && self.level >= 4
                     && crate::rng::rand_float() * f32::from(11 - self.level.min(10)) < 1.0
                 {
@@ -960,7 +966,11 @@ impl Computer {
                     )
                 {
                     self.is_attempt_specialhi_recovery = true;
-                    if crate::rng::rand_float() < f32::from(self.level + 2) / 9.0 {
+                    // Giant Donkey Kong always tries (and, short-circuiting,
+                    // draws no random number).
+                    if f.kind == FighterKind::GiantDonkey
+                        || crate::rng::rand_float() < f32::from(self.level + 2) / 9.0
+                    {
                         self.set_command_immediate(input::STICK_SMASH_HI_BUTTON_B);
                         return;
                     }
@@ -1070,8 +1080,10 @@ impl Computer {
 
     /// `ftComputerCheckTryCancelSpecialN`: let go of a charging neutral
     /// special, Kirby's copied ones included. The source's switch reads
-    /// Kirby's `copy_id` first; checking the copied statuses directly is the
-    /// same test.
+    /// Kirby's `copy_id` first and lists Donkey Kong with Giant Donkey Kong
+    /// (`case nFTKindDonkey: case nFTKindGDonkey:`) and Samus; only those
+    /// kinds (and Kirby with that copy) can be in these statuses, so
+    /// checking the statuses directly is the same test.
     pub(super) fn try_cancel_special_n(&mut self, f: &Fighter) -> bool {
         let charging = matches!(
             f.status.status,
@@ -1181,11 +1193,14 @@ impl Computer {
             self.target_pos = Vec2::new(f.pos.x + side * 500.0, f.pos.y);
             return true;
         }
-        let edge_offset = if world.gkind == Some(gkind::YAMABUKI) {
-            0.0
-        } else {
-            self.jump_predict * 0.75
-        };
+        // Metal Mario (`fkind == nFTKindMMario`) and Saffron City take no
+        // offset.
+        let edge_offset =
+            if f.kind == FighterKind::MetalMario || world.gkind == Some(gkind::YAMABUKI) {
+                0.0
+            } else {
+                self.jump_predict * 0.75
+            };
         let a = &f.attributes;
         let mut seen: [Option<u16>; 64] = [None; 64];
         let mut n = 0;
@@ -1247,10 +1262,14 @@ impl Computer {
         let mut range = self.jump_predict;
         if f.physics.jumps_used == f.attributes.jumps_max {
             match f.kind {
-                FighterKind::Fox | FighterKind::Donkey => range *= 0.5,
+                FighterKind::Fox | FighterKind::Donkey | FighterKind::GiantDonkey => range *= 0.5,
                 FighterKind::Ness => range = -self.jump_predict,
                 _ => {}
             }
+        }
+        // Metal Mario and Giant Donkey Kong never hold back for the cliff.
+        if matches!(f.kind, FighterKind::MetalMario | FighterKind::GiantDonkey) {
+            range = 0.0;
         }
         let jumps_left = f.physics.jumps_used < f.attributes.jumps_max;
         let next_y = pos.y + f.physics.vel_air.y;
@@ -1300,13 +1319,23 @@ impl Computer {
             self.is_counterattack = false;
         } else if self.is_opponent_ra {
             self.is_opponent_ra = false;
-            let scoping = match f.status.status {
-                AnyStatus::Fox(s) => (FoxStatus::SpecialLwStart as u16
-                    ..=FoxStatus::SpecialAirLwTurn as u16)
-                    .contains(&(s as u16)),
-                AnyStatus::Ness(s) => (NessStatus::SpecialLwStart as u16
-                    ..=NessStatus::SpecialAirLwEnd as u16)
-                    .contains(&(s as u16)),
+            // `switch (fp->fkind)`: Fox and Polygon Fox, Ness and Polygon
+            // Ness reflect unless already scoping; everyone else does
+            // nothing. A Polygon is never in its model's special statuses,
+            // so it always reflects.
+            let scoping = match f.kind {
+                FighterKind::Fox | FighterKind::PolyFox => matches!(
+                    f.status.status,
+                    AnyStatus::Fox(s) if (FoxStatus::SpecialLwStart as u16
+                        ..=FoxStatus::SpecialAirLwTurn as u16)
+                        .contains(&(s as u16))
+                ),
+                FighterKind::Ness | FighterKind::PolyNess => matches!(
+                    f.status.status,
+                    AnyStatus::Ness(s) if (NessStatus::SpecialLwStart as u16
+                        ..=NessStatus::SpecialAirLwEnd as u16)
+                        .contains(&(s as u16))
+                ),
                 _ => true,
             };
             if !scoping {
@@ -1345,10 +1374,12 @@ impl Computer {
                     f.pos.y + 1100.0
                 };
         } else {
-            let frames = if f.kind == FighterKind::Donkey {
-                11.0
-            } else {
-                7.0
+            // Donkey Kong, Polygon Donkey Kong and Giant Donkey Kong 11,
+            // Metal Mario 20, everyone else 7.
+            let frames = match f.kind {
+                FighterKind::Donkey | FighterKind::PolyDonkey | FighterKind::GiantDonkey => 11.0,
+                FighterKind::MetalMario => 20.0,
+                _ => 7.0,
             };
             if self.hit_predict < frames || matches!(common(f), Some(Status::Run | Status::Dash)) {
                 self.is_shield_item_weapon = true;

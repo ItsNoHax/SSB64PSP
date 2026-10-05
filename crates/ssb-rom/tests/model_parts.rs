@@ -17,10 +17,13 @@ fn pack_bytes() -> Option<Vec<u8>> {
     std::fs::read(path).ok()
 }
 
+/// Every fighter but Master Hand: the twelve, Metal Mario, the Polygons
+/// and Giant Donkey Kong (RE-458).
 fn playable() -> impl Iterator<Item = (FighterFile, ssb_game::fighter::FighterKind)> {
-    ssb_game::fighter::FighterKind::PLAYABLE
-        .iter()
-        .map(|&kind| {
+    (0..27)
+        .filter(|&k| k != 12)
+        .filter_map(ssb_game::fighter::FighterKind::from_ordinal)
+        .map(|kind| {
             let entry = *fighter::FIGHTER_FILES
                 .iter()
                 .find(|e| e.kind == kind as u8)
@@ -153,7 +156,9 @@ fn every_reachable_model_part_is_packed() {
         let (present, _) = ssb_game::modelpart::joint_masks(kind).unwrap();
         let mut wanted = ssb_game::motion::model_part_events(kind);
         match kind {
-            ssb_game::fighter::FighterKind::Link => wanted.extend([(19, 0), (21, 0)]),
+            ssb_game::fighter::FighterKind::Link | ssb_game::fighter::FighterKind::PolyLink => {
+                wanted.extend([(19, 0), (21, 0)])
+            }
             ssb_game::fighter::FighterKind::Yoshi => {
                 wanted.insert((7, 1));
             }
@@ -174,7 +179,17 @@ fn every_reachable_model_part_is_packed() {
                 continue;
             }
             let node = object.first_node + n;
-            let mp = fighter::model_part(&main, entry, joint, part, 0).unwrap();
+            // A joint without a `modelparts_desc` keeps its own list for any
+            // part (`ftParamSetModelPartID`): the Polygons' simpler models.
+            let Some(mp) = fighter::model_part(&main, entry, joint, part, 0) else {
+                assert_eq!(
+                    pack.costume_mesh(node, modelpart_costume(part, 0)),
+                    None,
+                    "{} joint {joint} part {part}",
+                    entry.name
+                );
+                continue;
+            };
             match pack.costume_mesh(node, modelpart_costume(part, 0)) {
                 Some(mesh) => {
                     let mesh = pack.mesh(mesh).unwrap();

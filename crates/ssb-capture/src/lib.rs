@@ -302,6 +302,13 @@ pub enum GameScene {
     /// `onepbossdefeat`: Master Hand's hit points seeded out, then the
     /// real defeat sequence (RE-457).
     OnePBossDefeat,
+    /// `onepmetal`: Meta Crystal with Metal Mario (RE-458).
+    OnePMetal,
+    /// `onepgiant`: Kongo Jungle with Giant Donkey Kong and two allies
+    /// (RE-458).
+    OnePGiant,
+    /// `onepzako`: Duel Zone with the Fighting Polygon Team (RE-458).
+    OnePZako,
     OnePContinue,
     OnePRetry,
     OnePClear,
@@ -563,7 +570,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 124] = [
+    pub const ALL: [GameScene; 127] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -578,6 +585,9 @@ impl GameScene {
         GameScene::OnePRaceHazards,
         GameScene::OnePBoss,
         GameScene::OnePBossDefeat,
+        GameScene::OnePMetal,
+        GameScene::OnePGiant,
+        GameScene::OnePZako,
         GameScene::OnePContinue,
         GameScene::OnePRetry,
         GameScene::OnePClear,
@@ -706,6 +716,9 @@ impl GameScene {
             GameScene::OnePRaceHazards => "onepracehazards",
             GameScene::OnePBoss => "onepboss",
             GameScene::OnePBossDefeat => "onepbossdefeat",
+            GameScene::OnePMetal => "onepmetal",
+            GameScene::OnePGiant => "onepgiant",
+            GameScene::OnePZako => "onepzako",
             GameScene::OnePContinue => "onepcontinue",
             GameScene::OnePRetry => "onepretry",
             GameScene::OnePClear => "onepclear",

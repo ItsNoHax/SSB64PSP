@@ -277,10 +277,12 @@ pub type Place = (u32, u32);
 /// series emblem, as places in the archive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FighterSprites {
-    pub stock: Place,
+    /// NULL for the Polygons, whose team draws its own (`FTStocksZako`).
+    pub stock: Option<Place>,
     /// `stock_luts[costume]`.
     pub stock_luts: Vec<Place>,
-    pub emblem: Place,
+    /// The Polygons wear Master Hand's (`dMasterHandIcon_FTEmblem`).
+    pub emblem: Option<Place>,
 }
 
 /// Where the pointer slot at `at` of `file` leads, in this file or another.
@@ -302,15 +304,13 @@ pub fn fighter_sprites(main: &File, attributes: u32) -> Option<FighterSprites> {
     if file != main.id {
         return None;
     }
-    let stock = pointer_place(main, sprites)?;
-    let emblem = pointer_place(main, sprites + 8)?;
-    let (lut_file, luts) = pointer_place(main, sprites + 4)?;
-    let stock_luts = if lut_file == main.id {
-        (0..8)
+    let stock = pointer_place(main, sprites);
+    let emblem = pointer_place(main, sprites + 8);
+    let stock_luts = match pointer_place(main, sprites + 4) {
+        Some((lut_file, luts)) if lut_file == main.id => (0..8)
             .map_while(|i| pointer_place(main, luts + i * 4))
-            .collect()
-    } else {
-        Vec::new()
+            .collect(),
+        _ => Vec::new(),
     };
     Some(FighterSprites {
         stock,
@@ -657,15 +657,17 @@ mod tests {
         for e in crate::fighter::FIGHTER_FILES.iter().take(12) {
             let main = archive.load(e.file).unwrap();
             let s = fighter_sprites(&main, e.offset).unwrap();
-            let emblem = decode(&archive.load(s.emblem.0).unwrap(), s.emblem.1).unwrap();
+            let (file, at) = s.emblem.unwrap();
+            let emblem = decode(&archive.load(file).unwrap(), at).unwrap();
             assert_eq!(
                 (emblem.format, emblem.size),
                 (Format::I, BitSize::Bits4),
                 "{}",
                 e.name
             );
-            let model = archive.load(s.stock.0).unwrap();
-            let stock = decode(&model, s.stock.1).unwrap();
+            let (file, at) = s.stock.unwrap();
+            let model = archive.load(file).unwrap();
+            let stock = decode(&model, at).unwrap();
             assert_eq!((stock.width, stock.height), (8, 10), "{}", e.name);
             assert_eq!((stock.format, stock.size), (Format::Ci, BitSize::Bits4));
             assert!((7..=8).contains(&s.stock_luts.len()), "{}", e.name);
@@ -673,8 +675,20 @@ mod tests {
         // Mario's, named in `reloc_data.us.h`.
         let mario = archive.load(203).unwrap();
         let s = fighter_sprites(&mario, crate::fighter::FIGHTER_FILES[0].offset).unwrap();
-        assert_eq!(s.stock, (296, 0x72D0));
-        assert_eq!(s.emblem, (296, 0x74C8));
+        assert_eq!(s.stock, Some((296, 0x72D0)));
+        assert_eq!(s.emblem, Some((296, 0x74C8)));
+        // The Polygons have no stock icon and Master Hand's emblem
+        // (`dNMarioMain_sprites`).
+        let boss = fighter_sprites(
+            &archive.load(250).unwrap(),
+            crate::fighter::FIGHTER_FILES[12].offset,
+        )
+        .unwrap();
+        for e in &crate::fighter::FIGHTER_FILES[14..26] {
+            let s = fighter_sprites(&archive.load(e.file).unwrap(), e.offset).unwrap();
+            assert_eq!((s.stock, s.stock_luts.len()), (None, 0), "{}", e.name);
+            assert_eq!(s.emblem, boss.emblem, "{}", e.name);
+        }
     }
 
     #[test]

@@ -76,7 +76,7 @@ pub struct DemoScripts {
     pub rows: [u32; 15],
 }
 
-/// The fighter's [`DemoScripts`], or `None` for an unported fighter.
+/// The fighter's [`DemoScripts`] (every kind has one).
 pub fn demo_scripts(kind: FighterKind) -> Option<&'static DemoScripts> {
     Some(match kind {
         FighterKind::Mario => &scripts::MARIO_DEMO,
@@ -92,7 +92,20 @@ pub fn demo_scripts(kind: FighterKind) -> Option<&'static DemoScripts> {
         FighterKind::Purin => &scripts::PURIN_DEMO,
         FighterKind::Ness => &scripts::NESS_DEMO,
         FighterKind::Boss => &scripts::BOSS_DEMO,
-        _ => return None,
+        FighterKind::MetalMario => &scripts::MMARIO_DEMO,
+        FighterKind::PolyMario => &scripts::NMARIO_DEMO,
+        FighterKind::PolyFox => &scripts::NFOX_DEMO,
+        FighterKind::PolyDonkey => &scripts::NDONKEY_DEMO,
+        FighterKind::PolySamus => &scripts::NSAMUS_DEMO,
+        FighterKind::PolyLuigi => &scripts::NLUIGI_DEMO,
+        FighterKind::PolyLink => &scripts::NLINK_DEMO,
+        FighterKind::PolyYoshi => &scripts::NYOSHI_DEMO,
+        FighterKind::PolyCaptain => &scripts::NCAPTAIN_DEMO,
+        FighterKind::PolyKirby => &scripts::NKIRBY_DEMO,
+        FighterKind::PolyPikachu => &scripts::NPIKACHU_DEMO,
+        FighterKind::PolyPurin => &scripts::NPURIN_DEMO,
+        FighterKind::PolyNess => &scripts::NNESS_DEMO,
+        FighterKind::GiantDonkey => &scripts::GDONKEY_DEMO,
     })
 }
 
@@ -260,7 +273,7 @@ pub struct CombatAttrs {
     pub joint_itemlight_id: u8,
 }
 
-/// The fighter's [`CombatAttrs`], or `None` for an unported fighter.
+/// The fighter's [`CombatAttrs`] (every kind has them).
 pub fn combat_attrs(kind: FighterKind) -> Option<&'static CombatAttrs> {
     Some(match kind {
         FighterKind::Mario => &scripts::MARIO_ATTRS,
@@ -276,7 +289,20 @@ pub fn combat_attrs(kind: FighterKind) -> Option<&'static CombatAttrs> {
         FighterKind::Purin => &scripts::PURIN_ATTRS,
         FighterKind::Ness => &scripts::NESS_ATTRS,
         FighterKind::Boss => &scripts::BOSS_ATTRS,
-        _ => return None,
+        FighterKind::MetalMario => &scripts::MMARIO_ATTRS,
+        FighterKind::PolyMario => &scripts::NMARIO_ATTRS,
+        FighterKind::PolyFox => &scripts::NFOX_ATTRS,
+        FighterKind::PolyDonkey => &scripts::NDONKEY_ATTRS,
+        FighterKind::PolySamus => &scripts::NSAMUS_ATTRS,
+        FighterKind::PolyLuigi => &scripts::NLUIGI_ATTRS,
+        FighterKind::PolyLink => &scripts::NLINK_ATTRS,
+        FighterKind::PolyYoshi => &scripts::NYOSHI_ATTRS,
+        FighterKind::PolyCaptain => &scripts::NCAPTAIN_ATTRS,
+        FighterKind::PolyKirby => &scripts::NKIRBY_ATTRS,
+        FighterKind::PolyPikachu => &scripts::NPIKACHU_ATTRS,
+        FighterKind::PolyPurin => &scripts::NPURIN_ATTRS,
+        FighterKind::PolyNess => &scripts::NNESS_ATTRS,
+        FighterKind::GiantDonkey => &scripts::GDONKEY_ATTRS,
     })
 }
 
@@ -389,7 +415,7 @@ enum Pass {
     ForwardEffect,
 }
 
-/// The fighter's script table, or `None` for an unported fighter.
+/// The fighter's script table (every kind has one).
 pub fn fighter_scripts(kind: FighterKind) -> Option<&'static FighterScripts> {
     Some(match kind {
         FighterKind::Mario => &scripts::MARIO,
@@ -405,7 +431,20 @@ pub fn fighter_scripts(kind: FighterKind) -> Option<&'static FighterScripts> {
         FighterKind::Purin => &scripts::PURIN,
         FighterKind::Ness => &scripts::NESS,
         FighterKind::Boss => &scripts::BOSS,
-        _ => return None,
+        FighterKind::MetalMario => &scripts::MMARIO,
+        FighterKind::PolyMario => &scripts::NMARIO,
+        FighterKind::PolyFox => &scripts::NFOX,
+        FighterKind::PolyDonkey => &scripts::NDONKEY,
+        FighterKind::PolySamus => &scripts::NSAMUS,
+        FighterKind::PolyLuigi => &scripts::NLUIGI,
+        FighterKind::PolyLink => &scripts::NLINK,
+        FighterKind::PolyYoshi => &scripts::NYOSHI,
+        FighterKind::PolyCaptain => &scripts::NCAPTAIN,
+        FighterKind::PolyKirby => &scripts::NKIRBY,
+        FighterKind::PolyPikachu => &scripts::NPIKACHU,
+        FighterKind::PolyPurin => &scripts::NPURIN,
+        FighterKind::PolyNess => &scripts::NNESS,
+        FighterKind::GiantDonkey => &scripts::GDONKEY,
     })
 }
 

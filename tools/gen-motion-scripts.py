@@ -52,6 +52,32 @@ FIGHTERS = [
     ("Boss", "249_BossMainMotion.c", "ftboss/ftbossstatus.h"),
 ]
 
+# Metal Mario, the Polygons and Giant Donkey Kong: (fighter, base fighter,
+# own MainMotion file or None, Main file). `dFTMainSpecialStatusDescs` gives
+# each its base fighter's special statuses, and its `dFT<Name>MotionDescs`
+# index the base's motion enum. A motion flagged
+# `FTANIM_FLAG_SUBMOTION_SCRIPT` reads its script from `file_submotion` (the
+# base's MainMotion); any other from `file_mainmotion` (Metal Mario's own).
+# The decompilation names each offset after whichever file's label shares
+# its value (`include/ft/motiondesc_offsets.h`), so only the number counts.
+VARIANTS = [
+    ("MMario", "Mario", "205_MMarioMainMotion.c", "206_MMarioMain.c"),
+    ("NMario", "Mario", None, "207_NMarioMain.c"),
+    ("NFox", "Fox", None, "211_NFoxMain.c"),
+    ("NDonkey", "Donkey", None, "214_NDonkeyMain.c"),
+    ("NSamus", "Samus", None, "219_NSamusMain.c"),
+    ("NLuigi", "Luigi", None, "223_NLuigiMain.c"),
+    ("NLink", "Link", None, "227_NLinkMain.c"),
+    ("NYoshi", "Yoshi", None, "248_NYoshiMain.c"),
+    ("NCaptain", "Captain", None, "237_NCaptainMain.c"),
+    ("NKirby", "Kirby", None, "231_NKirbyMain.c"),
+    ("NPikachu", "Pikachu", None, "245_NPikachuMain.c"),
+    ("NPurin", "Purin", None, "234_NPurinMain.c"),
+    ("NNess", "Ness", None, "241_NNessMain.c"),
+    ("GDonkey", "Donkey", None, "215_GDonkeyMain.c"),
+]
+SUBMOTION_FLAG = 0x10
+
 COMMENT_RE = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
 NONE_PTR = 0xFFFFFFFF
 # Word indexes into the shared `FTCommonMoveset` file carry this bit.
@@ -302,6 +328,34 @@ def combat_attrs(path):
     return out
 
 
+def motion_flags(refs):
+    """Fighter -> [`FTMotionDesc.anim_desc` flag expression] per motion."""
+    src = COMMENT_RE.sub(" ", open(os.path.join(refs, "src/ft/ftdata.c")).read())
+    defs = dict(re.findall(r"#define\s+(FTANIM_FLAG_\w+)\s+(0x[0-9A-Fa-f]+)",
+                           open(os.path.join(refs, "src/ft/ftdef.h")).read()))
+    out = {}
+    for m in re.finditer(r"^FTMotionDesc dFT(\w+)MotionDescs\[\]\s*=\s*$", src, re.M):
+        start = src.index("{", m.end())
+        body = src[start + 1:src.index("\n};", start)]
+        words = [w.strip() for w in body.replace("{", " ").replace("}", " ").split(",")]
+        words = [w for w in words if w]
+        flags = []
+        for i in range(0, len(words), 3):
+            v = 0
+            for t in words[i + 2].split("|"):
+                t = t.strip()
+                v |= int(defs[t], 16) if t in defs else int(t, 0)
+            flags.append(v)
+        out[m.group(1)] = flags
+    return out
+
+
+def motion_offsets(refs):
+    """`d<File>MainMotion_<label>` -> byte offset in its file."""
+    hdr = open(os.path.join(refs, "include/ft/motiondesc_offsets.h")).read()
+    return {k: int(v, 16) for k, v in re.findall(r"#define (\w+) (0x[0-9A-Fa-f]+)", hdr)}
+
+
 def motion_descs(refs):
     """Fighter -> [(anim symbol or None, script word expr)]."""
     src = COMMENT_RE.sub(" ", open(os.path.join(refs, "src/ft/ftdata.c")).read())
@@ -416,8 +470,10 @@ def main():
     for i in range(0, len(cwords), 8):
         w.append("    " + ", ".join(f"0x{x:08X}" for x in cwords[i:i + 8]) + ",\n")
     w.append("];\n\n")
+    parsed = {}
     for name, mfile, shdr in FIGHTERS:
         words, symbols = parse_file(os.path.join(refs, "src/relocData", mfile), macros, csyms)
+        parsed[name] = (words, symbols, mfile)
         header = os.path.join(refs, "src/ft/ftchar", shdr)
         fsrc = open(os.path.join(refs, "src/ft/ftchar", shdr.split("/")[0], shdr.split("/")[0] + ".h")).read()
         m_enum = dict(common_motion)
@@ -449,6 +505,7 @@ def main():
             s = "NO_SCRIPT" if start == NONE_PTR else str(start)
             w.append(f"    MotionDesc {{ script: {s}, anim_length: {fr} }},\n")
         w.append("];\n\n")
+        parsed[name] += (special,)
         n_sp = (max(special) - special_start + 1) if special else 0
         sp = [str(special.get(special_start + i, -1)) for i in range(n_sp)]
         w.append(f"#[rustfmt::skip]\nstatic {up}_SPECIAL_MOTION: [i16; {n_sp}] = [{', '.join(sp)}];\n\n")
@@ -477,6 +534,83 @@ def main():
             w.append("    " + ", ".join(f"0x{x:08X}" for x in dwords[i:i + 8]) + ",\n")
         w.append("];\n\n")
         rs = ", ".join("NO_SCRIPT" if r == NONE_PTR else str(r) for r in rows)
+        w.append(f"#[rustfmt::skip]\npub static {up}_DEMO: DemoScripts = DemoScripts {{\n"
+                 f"    words: &{up}_DEMO_WORDS,\n    rows: [{rs}],\n}};\n\n")
+    flags_all, offsets = motion_flags(refs), motion_offsets(refs)
+    for name, base, own_file, main_file in VARIANTS:
+        bwords, _, bfile, _ = parsed[base]
+        up, bup = name.upper(), base.upper()
+        if own_file:
+            own, _ = parse_file(os.path.join(refs, "src/relocData", own_file), macros, csyms)
+            # The base's MainMotion follows the variant's own file in one
+            # blob; its internal pointers move by the own file's length.
+            sub_base = len(own)
+            sub, _ = parse_file(os.path.join(refs, "src/relocData", bfile), macros, csyms,
+                                base=sub_base)
+            words_ref = f"&{up}_WORDS"
+            w.append(f"/// `{own_file[:-2]}`, then `{bfile[:-2]}` (`file_submotion`) from\n"
+                     f"/// word {sub_base}.\n")
+            all_words = own + sub
+            w.append(f"#[rustfmt::skip]\nstatic {up}_WORDS: [u32; {len(all_words)}] = [\n")
+            for i in range(0, len(all_words), 8):
+                w.append("    " + ", ".join(f"0x{x:08X}" for x in all_words[i:i + 8]) + ",\n")
+            w.append("];\n\n")
+        else:
+            sub_base = 0
+            words_ref = f"&{bup}_WORDS"
+        motions = []
+        for (anim_sym, script), aflags in zip(descs[name], flags_all[name]):
+            sc = script.strip()
+            if sc in ("0x80000000", "0"):
+                start = NONE_PTR
+            else:
+                mm = re.match(r"(\w+)\s*(?:\+\s*(0x[0-9A-Fa-f]+|\d+))?$", sc)
+                off = int(mm.group(2), 0) if mm.group(2) else 0
+                sym = mm.group(1)
+                if sym in csyms:
+                    start = COMMON_BIT | (csyms[sym] + off // 4)
+                else:
+                    at = int(sym, 0) if re.match(r"0x", sym) else offsets[sym]
+                    at += off
+                    if at % 4:
+                        raise ValueError(f"{name}: unaligned script {sc}")
+                    if aflags & SUBMOTION_FLAG:
+                        start = sub_base + at // 4
+                    elif own_file:
+                        start = at // 4
+                    else:
+                        raise ValueError(f"{name}: {sc} names no MainMotion file")
+            motions.append((start, frames(anim_sym)))
+        w.append(f"#[rustfmt::skip]\nstatic {up}_MOTIONS: [MotionDesc; {len(motions)}] = [\n")
+        for start, fr in motions:
+            s_ = "NO_SCRIPT" if start == NONE_PTR else str(start)
+            w.append(f"    MotionDesc {{ script: {s_}, anim_length: {fr} }},\n")
+        w.append("];\n\n")
+        a = combat_attrs(os.path.join(refs, "src/relocData", main_file))
+        r = a["hit_detect_range"]
+        light = int(a["joint_itemlight_id"])
+        light = "u8::MAX" if light < 0 else str(light)
+        w.append(f"pub static {up}_ATTRS: CombatAttrs = CombatAttrs {{\n"
+                 f"    size: {fl(a['size'])},\n    rebound_anim_length: {fl(a['rebound_anim_length'])},\n"
+                 f"    shield_size: {fl(a['shield_size'])},\n    shield_break_vel_y: {fl(a['shield_break_vel_y'])},\n"
+                 f"    jostle_width: {fl(a['jostle_width'])},\n    jostle_x: {fl(a['jostle_x'])},\n"
+                 f"    hit_detect_range: [{fl(r[0])}, {fl(r[1])}, {fl(r[2])}],\n"
+                 f"    effect_joint_ids: [{', '.join(str(int(j)) for j in a['effect_joint_ids'])}],\n"
+                 f"    joint_itemlight_id: {light},\n}};\n\n")
+        w.append(f"/// `dFT{name}MotionDescs` over {'its own and ' if own_file else ''}"
+                 f"{base}'s scripts; {base}'s special statuses.\n")
+        w.append(f"pub static {up}: FighterScripts = FighterScripts {{\n"
+                 f"    words: {words_ref},\n    motions: &{up}_MOTIONS,\n"
+                 f"    special_status_motion: &{bup}_SPECIAL_MOTION,\n}};\n\n")
+        dpath = os.path.join(refs, "src/sc/scsubsys", f"scsubsysdata{name.lower()}.c")
+        dwords, dsyms = parse_file(dpath, macros, demo=True)
+        rows = demo_rows(dpath, name, dsyms)
+        w.append(f"/// `dFT{name}SubMotionDescs` (`sc/scsubsys/scsubsysdata{name.lower()}.c`).\n")
+        w.append(f"#[rustfmt::skip]\nstatic {up}_DEMO_WORDS: [u32; {len(dwords)}] = [\n")
+        for i in range(0, len(dwords), 8):
+            w.append("    " + ", ".join(f"0x{x:08X}" for x in dwords[i:i + 8]) + ",\n")
+        w.append("];\n\n")
+        rs = ", ".join("NO_SCRIPT" if r_ == NONE_PTR else str(r_) for r_ in rows)
         w.append(f"#[rustfmt::skip]\npub static {up}_DEMO: DemoScripts = DemoScripts {{\n"
                  f"    words: &{up}_DEMO_WORDS,\n    rows: [{rs}],\n}};\n\n")
     if macros.unknown:

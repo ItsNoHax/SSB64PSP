@@ -690,3 +690,73 @@ fn a_held_bat_reaches_further_with_the_a_attacks() {
     assert_eq!(tilts[0], 0);
     assert!(tilts[1] > 0, "{tilts:?}");
 }
+
+#[test]
+fn metal_mario_and_giant_donkey_ignore_incoming_weapons() {
+    // `ftComputerProcDefault` skips `func_ovl3_80135B78` for nFTKindMMario
+    // and nFTKindGDonkey.
+    let opponents = [player_at(1500.0)];
+    let threats = [WeaponThreat {
+        owner: 9,
+        team: 9,
+        pos: Vec2::new(-400.0, 100.0),
+        vel_x: 60.0,
+        lr: 1.0,
+        size: 100.0,
+    }];
+    let w = world(&opponents, &threats);
+    for kind in [FighterKind::MetalMario, FighterKind::GiantDonkey] {
+        let mut f = standing_mario(0.0);
+        f.kind = kind;
+        for seed in 0..10 {
+            crate::rng::set_seed(seed);
+            let mut com = vs_cpu(&f, 9);
+            com.proc_default(&f, &w);
+            assert_ne!(
+                com.objective,
+                Objective::CounterAttack,
+                "{kind:?} seed {seed}"
+            );
+        }
+    }
+}
+
+#[test]
+fn variant_kinds_use_their_models_attack_table() {
+    // `dFTComputerAttackList`: Metal Mario and Polygon Mario read Mario's.
+    let opponents = [player_at(250.0)];
+    let w = world(&opponents, &[]);
+    for kind in [FighterKind::MetalMario, FighterKind::PolyMario] {
+        let mut f = standing_mario(0.0);
+        f.kind = kind;
+        crate::rng::set_seed(1);
+        let mut com = vs_cpu(&f, 9);
+        assert!(com.find_target(&f, &w));
+        assert!(com.detect_target(&f, &w, 0.0), "{kind:?}");
+    }
+}
+
+#[test]
+fn giant_donkey_never_rolls() {
+    let mut f = standing_mario(0.0);
+    f.kind = FighterKind::GiantDonkey;
+    let opponents = [player_at(100.0)];
+    let w = world(&opponents, &[]);
+    for seed in 0..20 {
+        crate::rng::set_seed(seed);
+        let mut com = vs_cpu(&f, 9);
+        assert!(com.find_target(&f, &w));
+        assert!(!com.try_roll(&f, &w));
+    }
+    // The same spot makes Donkey Kong roll for some seeds.
+    f.kind = FighterKind::Donkey;
+    let rolled = (0..20)
+        .filter(|&seed| {
+            crate::rng::set_seed(seed);
+            let mut com = vs_cpu(&f, 9);
+            com.find_target(&f, &w);
+            com.try_roll(&f, &w)
+        })
+        .count();
+    assert!(rolled > 0);
+}

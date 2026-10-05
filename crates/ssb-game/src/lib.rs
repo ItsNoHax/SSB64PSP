@@ -69,6 +69,7 @@ pub mod results_scene;
 pub mod rng;
 pub mod samus;
 pub mod shadow;
+mod special_fighters;
 pub mod spgame;
 pub mod stage;
 pub mod stage_select;

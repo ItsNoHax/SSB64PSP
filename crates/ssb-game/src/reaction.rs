@@ -826,7 +826,8 @@ fn update_escape(f: &mut Fighter) {
     if f.status.animation_ended() {
         f.physics.vel_air = ssb_engine::math::Vec3::ZERO;
         f.physics.vel_ground = ssb_engine::math::Vec3::ZERO;
-        if f.kind != FighterKind::Yoshi || !status::check_guard_from_escape(f) {
+        // `ftCommonEscapeProcUpdate`: Yoshi and Polygon Yoshi.
+        if f.kind.character() != FighterKind::Yoshi || !status::check_guard_from_escape(f) {
             status::set_wait(f);
         }
     } else {

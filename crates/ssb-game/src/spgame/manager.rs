@@ -125,7 +125,10 @@ impl Manager {
         out
     }
 
-    fn prepare_stage(&mut self, data: &SceneData, state: &mut BattleState, backup: &Backup) {
+    /// `sc1PManagerUpdateScene`'s per-stage setup before the intro: the
+    /// Mario Bros.' and Giant Donkey Kong's random allies, and the Kirby
+    /// Team's final copy.
+    pub fn prepare_stage(&mut self, data: &SceneData, state: &mut BattleState, backup: &Backup) {
         let mut mask = (backup.fighter_mask | CHARACTER_MASK_STARTER) & !(1 << data.fkind as u8);
         match data.stage() {
             Some(Stage::Mario | Stage::Donkey) => {

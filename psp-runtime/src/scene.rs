@@ -1634,7 +1634,10 @@ impl FighterScene {
         use ssb_engine::math::Vec3;
         use ssb_game::fighter::{JointTransform, FIGHTER_JOINTS};
         self.fighter.joint_transforms = [None; FIGHTER_JOINTS];
-        let axes = ssb_game::item_throw::model_axes(&self.fighter);
+        // TopN carries `attr->size` (`ftManagerMakeFighter`), which every
+        // joint below it inherits (RE-458).
+        let size = self.fighter.attributes.size;
+        let axes = ssb_game::item_throw::model_axes(&self.fighter).map(|a| a * size);
         let world = |v: Vec3| axes[0] * v.x + axes[1] * v.y + axes[2] * v.z;
         let root = JointTransform {
             axes,
@@ -1690,7 +1693,7 @@ impl FighterScene {
             return None;
         }
         let local = posed[local_index].translation();
-        let scale = ssb_rom::pack::MODEL_SCALE;
+        let scale = ssb_rom::pack::MODEL_SCALE * self.fighter.attributes.size;
         let axes = ssb_game::item_throw::model_axes(&self.fighter);
         Some(self.fighter.pos
             + axes[0] * (local[0] * scale)

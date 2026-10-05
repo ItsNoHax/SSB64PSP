@@ -211,7 +211,8 @@ pub const DAIR_REHIT_BOUNCE_VEL_Y: f32 = 40.0;
 /// what it hits and clears its boxes. Past frame 35 the status restarts at
 /// frame 35, whose fast-forward skips the frame-5 `MakeAttackColl`.
 pub fn on_attack_hit(f: &mut Fighter) {
-    if f.kind != crate::fighter::FighterKind::Link || f.status.status != status::Status::AttackAirLw
+    if f.kind.character() != crate::fighter::FighterKind::Link
+        || f.status.status != status::Status::AttackAirLw
     {
         return;
     }

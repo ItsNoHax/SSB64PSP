@@ -76,10 +76,12 @@ pub enum EntryEffect {
 
 /// Which entry effect a fighter makes; Ness makes none.
 pub fn entry_effect(kind: FighterKind) -> Option<EntryEffect> {
+    // `ftCommonEntrySetStatus`'s switch adds Metal Mario to the pipe and
+    // Giant Donkey Kong to the barrel; the Polygons make none.
     Some(match kind {
-        FighterKind::Mario | FighterKind::Luigi => EntryEffect::Pipe,
+        FighterKind::Mario | FighterKind::Luigi | FighterKind::MetalMario => EntryEffect::Pipe,
         FighterKind::Fox => EntryEffect::Arwing,
-        FighterKind::Donkey => EntryEffect::Barrel,
+        FighterKind::Donkey | FighterKind::GiantDonkey => EntryEffect::Barrel,
         FighterKind::Samus => EntryEffect::Point,
         FighterKind::Link => EntryEffect::WaveAndBeam,
         FighterKind::Yoshi => EntryEffect::Egg,
@@ -187,7 +189,14 @@ pub fn appear_set_status(f: &mut Fighter) {
         rays_ticks: None,
         is_link_1: f.kind == FighterKind::Captain && !right,
     };
-    let s = match (f.kind, right) {
+    // `dFTCommonEntryAppearStatusIDs`: Metal Mario's row is Mario's and
+    // Giant Donkey Kong's Donkey Kong's.
+    let kind = match f.kind {
+        FighterKind::MetalMario => FighterKind::Mario,
+        FighterKind::GiantDonkey => FighterKind::Donkey,
+        k => k,
+    };
+    let s = match (kind, right) {
         (FighterKind::Mario | FighterKind::Luigi, true) => AnyStatus::Mario(MarioStatus::AppearR),
         (FighterKind::Mario | FighterKind::Luigi, false) => AnyStatus::Mario(MarioStatus::AppearL),
         (FighterKind::Fox, true) => AnyStatus::Fox(FoxStatus::AppearR),
@@ -210,7 +219,7 @@ pub fn appear_set_status(f: &mut Fighter) {
         (FighterKind::Purin, false) => AnyStatus::Purin(PurinStatus::AppearL),
         (FighterKind::Ness, true) => AnyStatus::Ness(NessStatus::AppearRStart),
         (FighterKind::Ness, false) => AnyStatus::Ness(NessStatus::AppearLStart),
-        // Master Hand and the Poly fighters have no entry clip here.
+        // The Polygons' rows are `nFTCommonStatusEntryNull`.
         _ => return status::set_wait(f),
     };
     set(f, s);
