@@ -78,6 +78,10 @@ When code and docs disagree, verify against source and fix the wrong record.
 5. Targeted tests → workspace tests → PSP builds → one integration smoke.
 6. Update `STATUS.md` and affected docs once, then commit.
 
+Large batches run as phases, one fresh agent each, linked by a scratchpad
+handoff note: research (steps 1–3, output: module map and port plan),
+implement (step 4 and targeted tests), validate (steps 5–6).
+
 ## Evidence
 
 Write an `RE-NNN` record only for ambiguous original behavior, RE
@@ -109,6 +113,17 @@ build, pack version and observations. Then run
 - Prefer symbol-level code search (Serena, when available) over reading
   whole files. Semantic/vector search is deliberately not used; reconsider
   only if the indexes stop being navigable.
+- Every turn re-reads the whole context, so cost grows with context size
+  times turns. Past ~250K tokens, write a handoff note (done, next, open
+  questions, file:line pointers) to scratchpad and continue in a fresh agent.
+- Delegate broad decomp/code searches to a read-only subagent (`Explore`)
+  that returns `file:line` answers. Cap your own searches (`rg -n -m 20`,
+  `sed -n` ranges); redirect verbose output to a file and grep it.
+- Edit existing files; never rewrite a whole file with Write.
+- Commands over 5 minutes expire the prompt cache and re-bill the whole
+  context. While iterating, run `cargo test -p <crate>` and
+  `tools/golden.sh verify --filter REGEX` on affected scenes. Run full workspace tests and golden matrices once, in a
+  fresh low-context validation agent.
 
 ## Skill routing
 

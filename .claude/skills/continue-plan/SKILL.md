@@ -16,5 +16,13 @@ description: Resume or continue SSB64PSP development from repository state. Acti
 7. Before ending: replace `STATUS.md`, update the affected docs once, and
    commit the batch.
 
+## Orchestrating
+
+When asked to orchestrate, do no batch work yourself; only dispatch and
+review. Per batch, spawn one agent per phase (see "Batch workflow" in
+`AGENTS.md`), each prompt giving: the batch, its phase, the handoff note
+path to read and to write, and the context-budget rules. Keep agent
+reports short: outcome, commit hash, blockers, handoff path.
+
 Do not scan unrelated milestones, `plans/` (archived) or evidence the batch
 does not need.
