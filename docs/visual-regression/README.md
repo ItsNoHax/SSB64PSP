@@ -1380,3 +1380,14 @@ confetti, as the fall's particles draw from the random sequence first) and
 player off twice and taps START asleep at 1060: `vsteamsteal@1066..1085`
 show the stolen icon's arc, `@1090` its landing and the rebirth. The
 manifest has 195 scenes.
+
+## 2026-10-06 RE-466 fighter movement
+
+The fighter movement batch moves 175 of 195 goldens. With its device trig
+fix reverted, 18 return (the viewer's fighter, water and rotated-camera
+scenes, the selects, `f1-vs-players`, `f1-training-interface-wait`); the
+other 157 are fighter scenes: fighters now stand on the floor when made
+(no opening fall), clips and TransN steps play on the status's own frame,
+and the status chains follow the decomp, so the camera framing of most
+Training scenes shifts. All 175 were rebaselined after a mask review and
+captured twice; 195 of 195 match ([RE-466](../evidence/re/RE-466.md)).

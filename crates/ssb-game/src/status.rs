@@ -88,6 +88,8 @@ pub const DASH_DECELERATE_BEGIN: f32 = 7.0;
 pub const DASH_END_VEL_MUL: f32 = 0.75;
 /// Deflection needed to hold a run.
 pub const RUN_STICK_MIN: i32 = 50;
+/// `FTCOMMON_TURNRUN_STICK_RANGE_MIN`.
+pub const TURNRUN_STICK_MIN: i32 = -30;
 /// Frames within which an upward stick crossing counts as a jump input.
 pub const KNEEBEND_BUFFER_TICS_MAX: u8 = 3;
 /// Upward deflection that starts a jumpsquat from a standing state.
@@ -110,6 +112,8 @@ pub const KNEEBEND_BUTTON_LONG_MIN: f32 = 63.0;
 pub const KNEEBEND_BUTTON_HEIGHT_CLAMP: f32 = 77.0;
 /// Downward deflection that squats, and the window it must arrive in.
 pub const SQUAT_STICK_MIN: i32 = -53;
+/// `FTCOMMON_SQUAT_PASS_WAIT`.
+pub const SQUAT_PASS_WAIT: i32 = 3;
 pub const SQUAT_BUFFER_TICS_MAX: u8 = 4;
 /// Downward deflection that drops through a passable floor.
 pub const PASS_STICK_MIN: i32 = -53;
@@ -1832,8 +1836,10 @@ pub struct StatusState {
     pub jump_input: JumpInput,
     pub jump_force: i8,
     pub is_shorthop: bool,
-    /// Turn: the facing being turned toward, which a dash out of a turn uses.
-    pub turn_toward: Facing,
+    /// `status_vars.common.turn`.
+    pub turn: TurnVars,
+    /// `status_vars.common.squat`.
+    pub squat: SquatVars,
     /// The `frame_begin` the status was entered with. `ftMainSetStatus`
     /// starts the figatree there (`lbCommonAddFighterPartsFigatree`).
     pub anim_frame_begin: f32,
@@ -1841,6 +1847,52 @@ pub struct StatusState {
     /// status is entered again. `ftMainSetStatus` always restarts the
     /// figatree, even for the same status.
     pub entry: u32,
+}
+
+/// `ftCommonTurnStatusVars`: the pivot's state. `lr_turn` shares its word
+/// with `ftCommonAttack4StatusVars::lr`, which
+/// `ftCommonAttackS4CheckInterruptTurn` reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnVars {
+    /// Set on the flip frame (motion flag 1) and cleared at the end of the
+    /// interrupt: the one frame a pivot can dash and replays the buffered
+    /// A and B taps.
+    pub is_allow_turn_direction: bool,
+    /// Set on the flip frame: the specials and the non-smash attacks wait
+    /// for it.
+    pub is_disable_sa_interrupts: bool,
+    /// A and B taps seen before the flip, replayed on it.
+    pub button_mask: u16,
+    /// The way a dash out of the turn goes, 0 for none yet.
+    pub lr_dash: i32,
+    /// The way the fighter is turning to.
+    pub lr_turn: i32,
+    /// Frames since a dash input, capped at 256: under 6 a forward smash
+    /// reads the turn's direction instead of a fresh tap.
+    pub attacks4_buffer: i32,
+}
+
+/// `ftCommonSquatStatusVars`. Its third word is
+/// `ftCommonAttack4StatusVars::is_goto_attacklw4`, the frames a down smash
+/// may still come out of the squat without a fresh flick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SquatVars {
+    pub is_allow_pass: bool,
+    pub pass_wait: i32,
+    pub lw4_wait: i32,
+}
+
+impl Default for TurnVars {
+    fn default() -> Self {
+        TurnVars {
+            is_allow_turn_direction: false,
+            is_disable_sa_interrupts: false,
+            button_mask: 0,
+            lr_dash: 0,
+            lr_turn: 0,
+            attacks4_buffer: 256,
+        }
+    }
 }
 
 impl Default for StatusState {
@@ -1852,7 +1904,8 @@ impl Default for StatusState {
             jump_input: JumpInput::None,
             jump_force: 0,
             is_shorthop: false,
-            turn_toward: Facing::Right,
+            turn: TurnVars::default(),
+            squat: SquatVars::default(),
             anim_frame_begin: 0.0,
             entry: 0,
         }
@@ -3671,6 +3724,8 @@ pub fn set_any_status_preserve(
     if f.motion_script.is_events_forward {
         crate::motion::forward_effect(f);
     }
+    // `fp->joints[nFTPartsJointTopN]->rotate.vec.f.y = fp->lr * 90°`.
+    f.topn_lr = f.facing.sign();
     if !preserve.hit {
         crate::combat::clear_attack_colls(f);
     }
@@ -3802,7 +3857,9 @@ pub fn walk_anim_length(attr: &PhysicsAttributes, status: Status) -> f32 {
 pub fn set_walk(f: &mut Fighter, anim_frame_begin: f32) {
     let status = walk_status_for(f.input.stick_x);
     let len = walk_anim_length(&f.attributes, status);
-    set_status(f, status, anim_frame_begin, StatusTiming::frames(len));
+    // The walk's figatree loops.
+    set_status(f, status, anim_frame_begin, StatusTiming::looping(len));
+    play_anim_events(f);
     f.is_special_interrupt = status != Status::WalkFast;
 }
 
@@ -3835,27 +3892,254 @@ pub fn set_run(f: &mut Fighter) {
 
 /// `ftCommonRunBrakeSetStatus` @ 0x8013F05C.
 pub fn set_run_brake(f: &mut Fighter) {
+    set_run_brake_flag(f, 1);
+}
+
+/// `ftCommonRunBrakeSetStatus`: `flag` (`motion_vars.flags.flag1`) is set
+/// for a brake out of a run, whose first frames may turn the run; a brake
+/// out of a turn-run clears it.
+pub fn set_run_brake_flag(f: &mut Fighter, flag: u32) {
     let len = f.anim.run_brake;
     set_status(f, Status::RunBrake, 0.0, StatusTiming::animation(len, 1.0));
+    f.motion_script.flags[1] = flag;
+}
+
+/// `ftCommonTurnRunSetStatus` @ 0x8013F208.
+pub fn set_turn_run(f: &mut Fighter) {
+    let t = match crate::motion::anim_length(f.kind, Status::TurnRun.into()) {
+        Some(len) => StatusTiming::frames(len),
+        None => StatusTiming::unknown(),
+    };
+    set_status(f, Status::TurnRun, 0.0, t);
+    f.motion_script.flags[1] = 0;
+    f.motion_script.flags[2] = 0;
+}
+
+/// `ftCommonTurnRunCheckInterruptRun` @ 0x8013F248.
+pub fn check_turn_run(f: &mut Fighter) -> bool {
+    if i32::from(f.stick.x) * lr(f) <= TURNRUN_STICK_MIN {
+        set_turn_run(f);
+        return true;
+    }
+    false
+}
+
+/// `ftCommonTurnRunProcUpdate` @ 0x8013F170 and `ftCommonTurnRunProcInterrupt`
+/// @ 0x8013F1C0: flag 1 flips the facing (the world velocity stays), the
+/// animation's end runs the other way, and from flag 2 a released stick
+/// brakes.
+fn update_turn_run(f: &mut Fighter) {
+    if f.motion_script.flags[1] != 0 {
+        f.motion_script.flags[1] = 0;
+        f.facing = f.facing.flipped();
+    }
+    if f.status.animation_ended() {
+        set_run(f);
+        return;
+    }
+    if !check_kneebend_run(f) && f.motion_script.flags[2] != 0 {
+        check_run_brake_turn_run(f);
+    }
+}
+
+/// `ftCommonRunBrakeCheckInterruptTurnRun` @ 0x8013F0EC, with the US
+/// version's cap on the speed carried into the brake.
+fn check_run_brake_turn_run(f: &mut Fighter) -> bool {
+    if i32::from(f.stick.x).abs() < RUN_STICK_MIN {
+        set_run_brake_flag(f, 0);
+        let rel = f.physics.vel_ground.x * f.facing.sign();
+        if rel > f.attributes.run_speed {
+            f.physics.vel_ground.x = f.attributes.run_speed * f.facing.sign();
+        }
+        return true;
+    }
+    false
 }
 
 /// `ftCommonTurnSetStatus` @ 0x8013E908.
 ///
-/// The facing does not flip here. `ftCommonTurnProcUpdate` flips it — and the
-/// ground velocity with it — on the frame the motion script raises `flag1`,
-/// which is partway through the animation. That delay is why a turnaround has
-/// a visible pivot rather than snapping.
-pub fn set_turn(f: &mut Fighter) {
+/// The facing does not flip here. `ftCommonTurnProcUpdate` flips it on the
+/// frame the motion script raises `flag1`, partway through the animation,
+/// and only that frame can dash out of the turn (`lr_dash`) or replay the
+/// A and B taps buffered before it.
+pub fn set_turn_lr(f: &mut Fighter, lr_dash: i32) {
+    f.motion_script.flags[1] = 0;
     let len = f.anim.turn;
     set_status(f, Status::Turn, 0.0, StatusTiming::animation(len, 1.0));
-    f.status.turn_toward = f.facing.flipped();
+    play_anim_events(f);
+    f.status.turn = TurnVars {
+        is_allow_turn_direction: false,
+        is_disable_sa_interrupts: false,
+        button_mask: 0,
+        lr_dash,
+        attacks4_buffer: if lr_dash != 0 { 0 } else { 256 },
+        lr_turn: -lr(f),
+    };
+}
+
+/// `ftCommonTurnSetStatusCenter` @ 0x8013E988: a turn with no dash yet.
+pub fn set_turn(f: &mut Fighter) {
+    set_turn_lr(f, 0);
+}
+
+/// `ftCommonTurnSetStatusInvertLR` @ 0x8013E9A8: a dash input behind the
+/// fighter, which dashes out at the pivot.
+pub fn set_turn_invert_lr(f: &mut Fighter) {
+    let lr_dash = -lr(f);
+    set_turn_lr(f, lr_dash);
+}
+
+/// `fp->lr` as the original's `s32`.
+pub(crate) fn lr(f: &Fighter) -> i32 {
+    f.facing.sign() as i32
 }
 
 /// `ftCommonSquatSetStatusNoPass` @ 0x80143024.
 pub fn set_squat(f: &mut Fighter) {
+    set_squat_status(f);
+    let flick = f.stick.y as i32 <= SQUAT_STICK_MIN && f.stick.tap_y < SQUAT_BUFFER_TICS_MAX;
+    f.status.squat = SquatVars {
+        is_allow_pass: false,
+        pass_wait: 0,
+        lw4_wait: if flick { 3 } else { 0 },
+    };
+}
+
+/// `ftCommonSquatSetStatusPass` @ 0x801430A8: a flick down on a passable
+/// floor crouches for `FTCOMMON_SQUAT_PASS_WAIT` frames, then drops.
+pub fn set_squat_pass(f: &mut Fighter) {
+    set_squat_status(f);
+    f.status.squat = SquatVars {
+        is_allow_pass: true,
+        pass_wait: SQUAT_PASS_WAIT,
+        lw4_wait: 3,
+    };
+}
+
+fn set_squat_status(f: &mut Fighter) {
     let len = f.anim.squat;
     set_status(f, Status::Squat, 0.0, StatusTiming::animation(len, 1.0));
+    play_anim_events(f);
     f.is_special_interrupt = true;
+}
+
+/// `ftCommonSquatWaitSetStatus` @ 0x8014329C: the squat's variables carry
+/// over.
+pub fn set_squat_wait(f: &mut Fighter) {
+    set_status(f, Status::SquatWait, 0.0, StatusTiming::unknown());
+    f.is_special_interrupt = true;
+    f.interface.tag_wait = 120;
+}
+
+/// `ftCommonSquatRvSetStatus` @ 0x801434CC.
+fn set_squat_rv(f: &mut Fighter) {
+    let t = match crate::motion::anim_length(f.kind, Status::SquatRv.into()) {
+        Some(len) => StatusTiming::frames(len),
+        None => StatusTiming::unknown(),
+    };
+    set_status(f, Status::SquatRv, 0.0, t);
+    play_anim_events(f);
+    f.is_special_interrupt = true;
+}
+
+/// `ftCommonSquatRvCheckInterruptSquatWait` @ 0x8014351C.
+fn check_squat_rv(f: &mut Fighter) -> bool {
+    if f.stick.y as i32 >= SQUAT_STICK_MIN + 4 {
+        set_squat_rv(f);
+        return true;
+    }
+    false
+}
+
+/// `ftCommonSquatCheckGotoPass` @ 0x80142E70: the pass's countdown, and the
+/// down-smash window's.
+fn check_goto_pass(f: &mut Fighter) -> bool {
+    let sq = &mut f.status.squat;
+    if sq.is_allow_pass && sq.pass_wait != 0 {
+        sq.pass_wait -= 1;
+        if sq.pass_wait == 0 {
+            set_pass(f);
+            return true;
+        }
+    }
+    let sq = &mut f.status.squat;
+    if sq.lw4_wait != 0 {
+        sq.lw4_wait -= 1;
+    }
+    false
+}
+
+/// `ftCommonPassCheckInterruptSquat` @ 0x80141F0C: a fresh flick down on a
+/// passable floor arms the squat's pass.
+fn check_pass_squat(f: &mut Fighter) -> bool {
+    if !f.status.squat.is_allow_pass && pass_input(f) {
+        f.status.squat.is_allow_pass = true;
+        f.status.squat.pass_wait = SQUAT_PASS_WAIT;
+        return true;
+    }
+    false
+}
+
+/// `ftCommonAttackLw4CheckInterruptSquat`: within the squat's window the
+/// down smash needs no fresh flick.
+fn check_dsmash_squat(f: &mut Fighter) -> bool {
+    if !f.button_tap().contains(N64Buttons::A)
+        || (f.stick.y as i32) > ATTACKLW4_STICK_RANGE_MIN
+        || f.status.squat.lw4_wait == 0
+    {
+        return false;
+    }
+    if crate::item_throw::check_item_type_throw(f) {
+        crate::item_throw::set_item_throw(f, Status::LightThrowLw4);
+    } else {
+        set_dsmash(f);
+    }
+    true
+}
+
+/// The squat chains' shared head (`ftCommonSquatCheckInterrupt` and its
+/// SquatWait variant): the down smash through the squat's window.
+fn squat_attack_chain(f: &mut Fighter) -> bool {
+    check_special_n(f)
+        || check_special_hi(f)
+        || check_special_lw(f)
+        || crate::grab::check_catch_common(f)
+        || check_fsmash(f)
+        || check_usmash(f)
+        || check_dsmash_squat(f)
+        || check_ftilt(f)
+        || check_utilt(f)
+        || check_dtilt(f)
+        || check_attack1(f)
+        || check_guard_on(f)
+        || check_appeal(f)
+        || check_kneebend(f)
+}
+
+/// `ftCommonSquatProcInterrupt` @ 0x80142EFC.
+fn squat_interrupt(f: &mut Fighter) {
+    if !(squat_attack_chain(f) || check_pass_squat(f) || crate::dokan::check(f)) {
+        check_goto_pass(f);
+    }
+}
+
+/// `ftCommonSquatWaitProcInterrupt` @ 0x80143154.
+fn squat_wait_interrupt(f: &mut Fighter) {
+    if !(squat_attack_chain(f)
+        || check_dash(f)
+        || check_pass_squat(f)
+        || crate::dokan::check(f)
+        || check_squat_rv(f))
+    {
+        check_goto_pass(f);
+    }
+}
+
+/// `ftCommonSquatRvProcInterrupt` @ 0x80143394.
+fn squat_rv_interrupt(f: &mut Fighter) {
+    if !(landing_chain(f)) {
+        check_walk(f);
+    }
 }
 
 /// `ftCommonKneeBendSetStatusParam` @ 0x8013F3A0.
@@ -3918,7 +4202,12 @@ pub fn set_jump(f: &mut Fighter) {
     } else {
         Status::JumpB
     };
-    set_status(f, status, 0.0, StatusTiming::unknown());
+    // `ftAnimEndSetFall` ends the jump with its figatree.
+    let t = match crate::motion::anim_length(f.kind, status.into()) {
+        Some(len) => StatusTiming::frames(len),
+        None => StatusTiming::unknown(),
+    };
+    set_status(f, status, 0.0, t);
 
     let (vel_x, vel_y) = match f.status.jump_input {
         JumpInput::Button => jump_force_button(f.input.stick_x, f.status.is_shorthop),
@@ -3951,11 +4240,17 @@ pub fn set_jump_aerial(f: &mut Fighter) {
     } else {
         Status::JumpAerialB
     };
+    // `ftCommonJumpAerialProcUpdate`'s `ftAnimEndSetFall` ends it with its
+    // figatree.
+    let t = match crate::motion::anim_length(f.kind, status.into()) {
+        Some(len) => StatusTiming::frames(len),
+        None => StatusTiming::unknown(),
+    };
     set_any_status_preserve(
         f,
         status.into(),
         0.0,
-        StatusTiming::unknown(),
+        t,
         Preserve {
             playertag: true,
             ..Preserve::NONE
@@ -4302,7 +4597,7 @@ fn update_attack11_flagged(f: &mut Fighter) {
         return set_attack12(f);
     }
     if f.status.animation_ended() {
-        return set_wait(f);
+        return anim_end_set_wait(f);
     }
     if f.status.anim_frame <= 2.0 && crate::grab::check_catch_attack11(f) {
         return;
@@ -4339,7 +4634,7 @@ fn update_attack12_flagged(f: &mut Fighter) {
         }
     }
     if f.status.animation_ended() {
-        return set_wait(f);
+        return anim_end_set_wait(f);
     }
     if f.attack1.followup_frames > 0.0 && attack13_status(f.kind).is_some() {
         f.attack1.followup_frames -= f.status.timing.anim_speed;
@@ -4481,6 +4776,8 @@ pub fn set_ftilt(f: &mut Fighter) {
     };
     let len = attack_length(f, status);
     set_status(f, status, 0.0, StatusTiming::frames(len));
+    // The setter plays the first frame (`ftMainPlayAnimEventsAll`).
+    play_anim_events(f);
 }
 
 /// `ftCommonAttackHi3SetStatus` @ `ftcommonattackhi3.c:10`, reduced to the
@@ -4490,6 +4787,8 @@ pub fn set_ftilt(f: &mut Fighter) {
 pub fn set_utilt(f: &mut Fighter) {
     let len = attack_length(f, Status::AttackHi3);
     set_status(f, Status::AttackHi3, 0.0, StatusTiming::frames(len));
+    // The setter plays the first frame (`ftMainPlayAnimEventsAll`).
+    play_anim_events(f);
 }
 
 /// `ftCommonAttackLw3SetStatus` @ `ftcommonattacklw3.c:59`.
@@ -4497,9 +4796,13 @@ pub fn set_dtilt(f: &mut Fighter) {
     if crate::item_throw::check_get(f) {
         return;
     }
+    // `ftCommonAttackLw3InitStatusVars`, the status's `proc_status`.
     f.ness.dtilt_requested = false;
+    f.motion_script.flags[1] = 0;
     let len = attack_length(f, Status::AttackLw3);
     set_status(f, Status::AttackLw3, 0.0, StatusTiming::frames(len));
+    // The setter plays the first frame (`ftMainPlayAnimEventsAll`).
+    play_anim_events(f);
 }
 
 /// The status-setting half of `ftCommonAttackAirCheckInterruptCommon` @
@@ -4511,6 +4814,8 @@ pub fn set_dtilt(f: &mut Fighter) {
 pub fn set_air_attack(f: &mut Fighter, status: Status) {
     let len = attack_length(f, status);
     set_status(f, status, 0.0, StatusTiming::frames(len));
+    // The setter plays the first frame (`ftMainPlayAnimEventsAll`).
+    play_anim_events(f);
     f.link.dair_rehit_timer = 0;
     f.link.dair_cleared = false;
 }
@@ -4530,6 +4835,8 @@ pub fn set_fsmash(f: &mut Fighter) {
     };
     let len = attack_length(f, status);
     set_status(f, status, 0.0, StatusTiming::frames(len));
+    // The setter plays the first frame (`ftMainPlayAnimEventsAll`).
+    play_anim_events(f);
 }
 
 fn fsmash_five(x: f32, y: f32) -> Status {
@@ -4550,12 +4857,16 @@ fn fsmash_five(x: f32, y: f32) -> Status {
 pub fn set_usmash(f: &mut Fighter) {
     let len = attack_length(f, Status::AttackHi4);
     set_status(f, Status::AttackHi4, 0.0, StatusTiming::frames(len));
+    // The setter plays the first frame (`ftMainPlayAnimEventsAll`).
+    play_anim_events(f);
 }
 
 /// `ftCommonAttackLw4SetStatus` @ `ftcommonattacklw4.c:10`.
 pub fn set_dsmash(f: &mut Fighter) {
     let len = attack_length(f, Status::AttackLw4);
     set_status(f, Status::AttackLw4, 0.0, StatusTiming::frames(len));
+    // The setter plays the first frame (`ftMainPlayAnimEventsAll`).
+    play_anim_events(f);
 }
 
 /// `ftCommonDamageFallSetStatusFromDamage` @ `ftcommondamagefall.c:53`,
@@ -4621,7 +4932,7 @@ pub fn check_dash(f: &mut Fighter) -> bool {
         return false;
     }
     if f.stick.forward(f.facing) < 0 {
-        set_turn(f);
+        set_turn_invert_lr(f);
         return true;
     }
     // `ftParamSetStickLR`: face the way the stick points before dashing.
@@ -4637,12 +4948,19 @@ pub fn check_dash(f: &mut Fighter) -> bool {
 /// `ftCommonPassCheckInputSuccess` @ 0x80141E60 — needs the floor to actually
 /// be passable, so holding down on solid ground squats instead.
 pub fn check_pass(f: &mut Fighter) -> bool {
-    let passable = f.floor.map(|s| s.passable()).unwrap_or(false);
-    if f.stick.y as i32 <= PASS_STICK_MIN && f.stick.tap_y < PASS_BUFFER_TICS_MAX && passable {
-        set_pass(f);
+    // `ftCommonPassCheckInterruptCommon`: the drop goes through a squat
+    // (`ftCommonPassSetStatusSquat`).
+    if pass_input(f) {
+        set_squat_pass(f);
         return true;
     }
     false
+}
+
+/// `ftCommonPassCheckInputSuccess` @ 0x80141E60.
+fn pass_input(f: &Fighter) -> bool {
+    let passable = f.floor.map(|s| s.passable()).unwrap_or(false);
+    f.stick.y as i32 <= PASS_STICK_MIN && f.stick.tap_y < PASS_BUFFER_TICS_MAX && passable
 }
 
 /// `ftCommonAttackDashCheckInterruptCommon` @ `ftcommonattackdash.c:24`.
@@ -4965,15 +5283,52 @@ pub fn check_run_brake(f: &mut Fighter) -> bool {
 }
 
 /// The ground interrupt chain — `ftCommonGroundCheckInterrupt` in
-/// `src/ft/fighter.h`, restricted to the ported statuses.
-///
-/// The order is the original's, with the unported entries (specials, grab,
-/// shield, taunt, pipe) removed rather than reordered around. `Attack1`
-/// (`check_attack1`) is the one attack this slice ports, and it sits exactly
-/// where the original's macro puts it: after every unported attack/special
-/// check, before `GuardOn`/`Appeal` (also unported) and `KneeBend`. Returns
-/// whether any check took the frame.
+/// `src/ft/fighter.h`, Wait's `proc_interrupt`: the landing chain (specials,
+/// grab, smashes, tilts, jab, shield, taunt, jump, dash, pass, pipe), then
+/// the squat, turn and walk, in the original's order. Returns whether any
+/// check took the frame.
 pub fn ground_interrupt(f: &mut Fighter) -> bool {
+    landing_chain(f) || check_squat(f) || check_turn(f) || check_walk(f)
+}
+
+/// `FTCOMMON_LANDING_INTERRUPT_BEGIN`.
+const LANDING_INTERRUPT_BEGIN: f32 = 4.0;
+
+/// `ftCommonLandingProcInterrupt` @ 0x80142B70 for a landing that allows
+/// interrupts: nothing for four frames; then on that frame a held-down
+/// stick crouches straight into `SquatWait`, later into `Squat`, and the
+/// chain ends in a turn or a walk.
+fn landing_interrupt(f: &mut Fighter) {
+    let frame = f.status.anim_frame;
+    if frame < LANDING_INTERRUPT_BEGIN || landing_chain(f) {
+        return;
+    }
+    if frame < LANDING_INTERRUPT_BEGIN + f.status.timing.anim_speed {
+        if check_squat_wait_landing(f) {
+            return;
+        }
+    } else if check_squat(f) {
+        return;
+    }
+    if !check_turn(f) {
+        check_walk(f);
+    }
+}
+
+/// `ftCommonSquatWaitCheckInterruptLanding` @ 0x80143354.
+fn check_squat_wait_landing(f: &mut Fighter) -> bool {
+    if f.stick.y as i32 <= SQUAT_STICK_MIN - 2 {
+        set_status(f, Status::SquatWait, 0.0, StatusTiming::unknown());
+        f.is_special_interrupt = true;
+        f.interface.tag_wait = 120;
+        return true;
+    }
+    false
+}
+
+/// `ftCommonLandingCheckInterrupt`, the common prefix of the ground chains
+/// (`ftCommonGroundCheckInterrupt` adds the squat, turn and walk).
+fn landing_chain(f: &mut Fighter) -> bool {
     check_special_n(f)
         || check_special_hi(f)
         || check_special_lw(f)
@@ -4986,24 +5341,24 @@ pub fn ground_interrupt(f: &mut Fighter) -> bool {
         || check_dtilt(f)
         || check_attack1(f)
         || check_guard_on(f)
+        || check_appeal(f)
         || check_kneebend(f)
         || check_dash(f)
         || check_pass(f)
         || (checks_dokan(f.status.status) && crate::dokan::check(f))
-        || check_squat(f)
-        || check_turn(f)
-        || check_walk(f)
 }
 
 /// The statuses whose interrupt chain ends in
 /// `ftCommonDokanStartCheckInterruptCommon` right after the pass check:
-/// the squats, the landings and the teeters (`ftcommonsquat.c`,
-/// `ftcommonlanding.c`, `ftcommonottotto.c`). `Wait` and the walks do not.
+/// `Wait` (`ftCommonGroundCheckInterrupt`), the squats, the landings and the
+/// teeters (`ftcommonsquat.c`, `ftcommonlanding.c`, `ftcommonottotto.c`).
+/// The walks do not.
 fn checks_dokan(s: AnyStatus) -> bool {
     matches!(
         s,
         AnyStatus::Common(
-            Status::Squat
+            Status::Wait
+                | Status::Squat
                 | Status::SquatWait
                 | Status::SquatRv
                 | Status::LandingLight
@@ -5048,6 +5403,7 @@ pub fn walk_interrupt(f: &mut Fighter) -> bool {
         || check_dtilt(f)
         || check_attack1(f)
         || check_guard_on(f)
+        || check_appeal(f)
         || check_kneebend(f)
         || check_dash(f)
         || check_squat(f)
@@ -5114,27 +5470,35 @@ pub fn update(f: &mut Fighter) {
     match current {
         Status::KneeBend | Status::GuardKneeBend => update_kneebend(f),
         Status::Dash => update_dash(f),
-        // `ftCommonRunProcInterrupt` (no appeal or turn-run yet).
+        // `ftCommonRunProcInterrupt`: runs do not end on their own.
         Status::Run => {
-            if !(check_special_n(f)
+            let _ = check_special_n(f)
                 || crate::grab::check_catch_dash_run(f)
                 || check_attack_dash(f)
                 || check_guard_on(f)
+                || check_appeal(f)
                 || check_kneebend_run(f)
-                || check_run_brake(f))
-            {
-                // Runs do not end on their own; they are held.
-            }
+                || check_turn_run(f)
+                || check_run_brake(f);
         }
         Status::Turn => update_turn(f),
+        Status::TurnRun => update_turn_run(f),
+        // `ftCommonSquatProcUpdate` (`ftAnimEndCheckSetStatus` into
+        // `SquatWait`), then the current status's interrupt.
         Status::Squat => {
             if f.status.animation_ended() {
-                set_status(f, Status::SquatWait, 0.0, StatusTiming::unknown());
-                f.is_special_interrupt = true;
-                f.interface.tag_wait = 120;
+                set_squat_wait(f);
+                squat_wait_interrupt(f);
             } else {
-                ground_interrupt(f);
+                squat_interrupt(f);
             }
+        }
+        Status::SquatWait => squat_wait_interrupt(f),
+        Status::SquatRv => {
+            if f.status.animation_ended() {
+                return anim_end_set_wait(f);
+            }
+            squat_rv_interrupt(f);
         }
         // `ftCommonFuraSleepProcUpdate`: every mash takes three extra frames
         // off the wait.
@@ -5151,9 +5515,15 @@ pub fn update(f: &mut Fighter) {
         // test. Landing is here too, and its heavy variant runs the same
         // animation at half speed, so it takes twice as many frames to reach
         // the same length — the real cost of a fastfall.
+        // `ftAnimEndSetWait`, then `ftCommonRunBrakeProcInterrupt`: a
+        // jump, or in a brake from a run its first frames turn the run.
         Status::RunBrake => {
             if f.status.animation_ended() {
-                set_wait(f);
+                return anim_end_set_wait(f);
+            }
+            if !check_kneebend_run(f) && f.motion_script.flags[1] != 0 && f.status.anim_frame <= 4.0
+            {
+                check_turn_run(f);
             }
         }
         // `ftCommonAttack11ProcUpdate` @ `ftcommonattack1.c:29`, reduced to
@@ -5191,19 +5561,39 @@ pub fn update(f: &mut Fighter) {
         | Status::AttackHi4
         | Status::AttackLw4 => {
             if f.status.animation_ended() {
-                set_wait(f);
+                anim_end_set_wait(f);
+            }
+        }
+        // `ftAnimEndSetWait`, then `ftCommonAppealProcInterrupt`: from flag 1
+        // a grab or a shield ends the taunt.
+        Status::Appeal => {
+            if f.status.animation_ended() {
+                return anim_end_set_wait(f);
+            }
+            if f.motion_script.flags[1] != 0 && !crate::grab::check_catch_common(f) {
+                check_guard_on(f);
             }
         }
         // `ftCommonAttackLw3ProcUpdate` @ `ftcommonattacklw3.c:10`, minus the
         // repeated-tap extension (`is_goto_attacklw3`) — down tilt is
         // performed from a crouch and ends back in it, not in `Wait`.
+        // `ftCommonAttackLw3ProcUpdate`: from motion flag 1 a buffered A
+        // repeats the down tilt; its end crouches into `SquatWait`, whose
+        // interrupt runs this frame. Then `ftCommonAttackLw3ProcInterrupt`.
         Status::AttackLw3 => {
-            if crate::ness::is_ness(f.kind) {
-                crate::ness::update_dtilt(f);
-            } else if f.status.animation_ended() {
-                set_status(f, Status::SquatWait, 0.0, StatusTiming::unknown());
-                f.is_special_interrupt = true;
-                f.interface.tag_wait = 120;
+            if f.motion_script.flags[1] != 0 && f.ness.dtilt_requested {
+                return set_dtilt(f);
+            }
+            if f.status.animation_ended() {
+                set_squat_wait(f);
+                return squat_wait_interrupt(f);
+            }
+            if f.button_tap().contains(N64Buttons::A) {
+                if f.motion_script.flags[1] != 0 {
+                    set_dtilt(f);
+                } else {
+                    f.ness.dtilt_requested = true;
+                }
             }
         }
         // `ftAnimEndSetFall` @ ftcommonstatus.h: a drop-through becomes a
@@ -5260,7 +5650,7 @@ pub fn update(f: &mut Fighter) {
             if f.guard.shield_health <= 0.0 {
                 set_shield_break_fly(f);
             } else if f.status.animation_ended() {
-                set_wait(f);
+                anim_end_set_wait(f);
             } else {
                 guard_update_joints(f);
             }
@@ -5330,12 +5720,14 @@ pub fn update(f: &mut Fighter) {
                 end_cliff_recovery(f);
             }
         }
+        Status::LandingLight | Status::LandingHeavy => {
+            if f.status.animation_ended() {
+                return anim_end_set_wait(f);
+            }
+            landing_interrupt(f);
+        }
         s if s.is_actionable_on_ground() => {
-            if matches!(s, Status::LandingLight | Status::LandingHeavy)
-                && f.status.animation_ended()
-            {
-                set_wait(f);
-            } else if s.is_walk() {
+            if s.is_walk() {
                 update_walk(f);
             } else {
                 ground_interrupt(f);
@@ -5368,13 +5760,13 @@ pub fn update(f: &mut Fighter) {
         | Status::LandingAirHi
         | Status::LandingAirLw => {
             if f.status.animation_ended() {
-                set_wait(f);
+                anim_end_set_wait(f);
             }
         }
         // `LandingAirNull`'s length is real (`set_landing_air_null`'s docs).
         Status::LandingAirNull => {
             if f.status.animation_ended() {
-                set_wait(f);
+                anim_end_set_wait(f);
             }
         }
         // `ftCommonFallSpecialProcInterrupt` @ `ftcommonfallspecial.c:10`:
@@ -5401,11 +5793,19 @@ pub fn update(f: &mut Fighter) {
         // `ftCommonYoshiEggProcUpdate`; its interrupt only wiggles the
         // effect.
         Status::YoshiEgg => crate::capture_yoshi::update_egg(f),
+        // `ftAnimEndSetFall`, then the current status's interrupt (Fall's is
+        // the jump's).
+        Status::JumpF | Status::JumpB => {
+            if f.status.animation_ended() {
+                set_fall(f);
+            }
+            air_interrupt(f);
+        }
         s if !s.is_grounded() => {
             // `ftCommonJumpAerialUpdateModelYaw`: only Yoshi sets a turn.
             if matches!(s, Status::JumpAerialF | Status::JumpAerialB) {
                 crate::yoshi::update_jump_aerial_turn(f);
-                if crate::ness::is_ness(f.kind) && f.status.animation_ended() {
+                if f.status.animation_ended() {
                     set_fall(f);
                 }
             }
@@ -5843,17 +6243,48 @@ pub fn set_attack13(f: &mut Fighter, status: AnyStatus) {
 /// back up inside the short-hop window. Both are why holding up through the
 /// squat jumps higher than flicking.
 fn update_kneebend(f: &mut Fighter) {
+    // `ftCommonKneeBendProcUpdate`.
     if f.status.jump_input == JumpInput::Button
         && f.status.anim_frame <= KNEEBEND_SHORTHOP_FRAMES
         && f.stick.jump_released
     {
         f.status.is_shorthop = true;
     }
+    if f.status.animation_ended() {
+        // The jump's own interrupt runs this frame; the squat's stick
+        // sample does not.
+        set_jump(f);
+        air_interrupt(f);
+        return;
+    }
+    // `ftCommonKneeBendProcInterrupt`.
+    if check_special_hi(f) || check_usmash_kneebend(f) {
+        return;
+    }
     if f.status.jump_force < f.stick.y {
         f.status.jump_force = f.stick.y;
     }
-    if f.status.animation_ended() {
-        set_jump(f);
+}
+
+/// `ftCommonAttackHi4CheckInterruptKneeBend`: an up smash out of a
+/// jumpsquat needs no fresh flick.
+fn check_usmash_kneebend(f: &mut Fighter) -> bool {
+    if !f.button_tap().contains(N64Buttons::A) || (f.stick.y as i32) < ATTACKHI4_STICK_RANGE_MIN {
+        return false;
+    }
+    if crate::item_throw::check_item_type_throw(f) {
+        crate::item_throw::set_item_throw(f, Status::LightThrowHi4);
+    } else {
+        set_usmash(f);
+    }
+    true
+}
+
+/// `ftCommonJumpProcInterrupt` and `ftCommonFallProcInterrupt`: an aerial
+/// special, an aerial attack, or a second jump.
+fn air_interrupt(f: &mut Fighter) {
+    if !check_special_n(f) && !check_special_hi(f) && !check_special_lw(f) && !check_attack_air(f) {
+        check_jump_aerial(f);
     }
 }
 
@@ -5871,8 +6302,7 @@ fn update_dash(f: &mut Fighter) {
     // three quarters of its speed into the Wait, so the fighter coasts.
     if f.status.animation_ended() {
         f.physics.vel_ground.x *= DASH_END_VEL_MUL;
-        set_wait(f);
-        return;
+        return anim_end_set_wait(f);
     }
     // `ftCommonDashProcInterrupt`.
     let frame = f.status.anim_frame;
@@ -5899,7 +6329,7 @@ fn update_dash(f: &mut Fighter) {
     } else if crate::grab::check_catch_common(f) || check_dash(f) || check_guard_on(f) {
         return;
     }
-    if check_kneebend_run(f) {
+    if check_appeal(f) || check_kneebend_run(f) {
         return;
     }
     // `ftCommonRunCheckInterruptDash`: the one-frame dash-to-run window.
@@ -5925,25 +6355,204 @@ fn check_fsmash_dash(f: &mut Fighter) -> bool {
     false
 }
 
-/// `ftCommonTurnProcUpdate` @ 0x8013E690.
+/// `ftCommonTurnProcUpdate` @ 0x8013E690, then the status's interrupt.
 ///
-/// The facing flip is not on entry — it happens partway through, and takes the
-/// ground velocity's sign with it. Without the animation length the flip is
-/// applied once the status has run as long as the fighter's slow-walk
-/// animation would take to reach the same point; see [`StatusTiming`] for why
-/// no better number is available.
+/// Motion flag 1 is the pivot: the facing flips there (the world velocity
+/// stays, since the original negates the facing-relative one with it), and
+/// that frame alone may dash out of the turn and replays the A and B taps
+/// buffered before it.
 fn update_turn(f: &mut Fighter) {
-    if f.status.anim_frame >= 1.0 && f.facing != f.status.turn_toward {
-        f.facing = f.status.turn_toward;
-        f.physics.vel_ground.x = -f.physics.vel_ground.x;
+    if f.motion_script.flags[1] != 0 {
+        f.motion_script.flags[1] = 0;
+        f.status.turn.is_allow_turn_direction = true;
+        f.status.turn.is_disable_sa_interrupts = true;
+        f.facing = f.facing.flipped();
     }
-    // `ftCommonTurnProcUpdate` flips first and tests the animation second, so
-    // a turn always completes its pivot even on the frame it ends.
     if f.status.animation_ended() {
-        set_wait(f);
+        return anim_end_set_wait(f);
+    }
+    turn_interrupt(f);
+}
+
+/// `ftCommonTurnProcInterrupt`.
+fn turn_interrupt(f: &mut Fighter) {
+    let t = f.status.turn;
+    if t.is_allow_turn_direction {
+        f.tap_carry.0 |= t.button_mask;
+    }
+    if t.is_disable_sa_interrupts
+        && (check_special_n(f) || check_special_hi(f) || check_special_lw(f))
+    {
         return;
     }
-    ground_interrupt(f);
+    if crate::grab::check_catch_common(f) {
+        return;
+    }
+    if f.status.turn.attacks4_buffer < 256 {
+        f.status.turn.attacks4_buffer += 1;
+    }
+    let fsmash = if f.status.turn.attacks4_buffer < 6 {
+        check_fsmash_turn(f)
+    } else {
+        check_fsmash(f)
+    };
+    if fsmash {
+        return;
+    }
+    if f.status.turn.is_disable_sa_interrupts
+        && (check_usmash(f)
+            || check_dsmash(f)
+            || check_ftilt(f)
+            || check_utilt(f)
+            || check_dtilt(f)
+            || check_attack1(f))
+    {
+        return;
+    }
+    if check_guard_on(f) || check_appeal(f) || check_kneebend(f) {
+        return;
+    }
+    check_dash_turn(f);
+    let t = f.status.turn;
+    if t.is_allow_turn_direction
+        && t.lr_dash != 0
+        && i32::from(f.stick.x) * t.lr_turn >= DASH_STICK_MIN
+    {
+        // `ftCommonDashSetStatus(fighter_gobj, 0)`: the chain goes on.
+        set_dash_flag(f, 0);
+    }
+    let tap = f.button_tap();
+    let mut mask = f.status.turn.button_mask;
+    if tap.contains(N64Buttons::A) {
+        mask |= N64Buttons::A;
+    }
+    if tap.contains(N64Buttons::B) {
+        mask |= N64Buttons::B;
+    }
+    f.status.turn.button_mask = mask;
+    f.status.turn.is_allow_turn_direction = false;
+}
+
+/// `ftCommonDashCheckTurn` @ 0x8013EDFC: a dash input the way the turn
+/// faces, remembered for the pivot.
+fn check_dash_turn(f: &mut Fighter) -> bool {
+    let t = &mut f.status.turn;
+    if i32::from(f.stick.x) * t.lr_turn >= DASH_STICK_MIN && f.stick.tap_x < DASH_BUFFER_TICS_MAX {
+        t.lr_dash = t.lr_turn;
+        t.attacks4_buffer = 0;
+        return true;
+    }
+    false
+}
+
+/// `ftCommonAttackS4CheckInterruptTurn` @ 0x8015030C: within a dash input's
+/// first frames of a turn, a forward smash the way the turn faces needs only
+/// the A tap. `status_vars.common.attack4.lr` is the turn's `lr_turn`.
+fn check_fsmash_turn(f: &mut Fighter) -> bool {
+    if i32::from(f.stick.x) * f.status.turn.lr_turn < ATTACKS4_STICK_RANGE_MIN
+        || !f.button_tap().contains(N64Buttons::A)
+    {
+        return false;
+    }
+    if crate::item_throw::check_item_type_throw(f)
+        || f.items
+            .held
+            .is_some_and(|i| i.ty == crate::item::ItemType::Shoot && f.items.held_multi == 0)
+    {
+        let s = if f.stick.x as f32 * f.facing.sign() >= 0.0 {
+            Status::LightThrowF4
+        } else {
+            Status::LightThrowB4
+        };
+        crate::item_throw::set_item_throw(f, s);
+        return true;
+    }
+    set_stick_lr(f);
+    if f.items.held.is_some_and(|i| {
+        matches!(
+            i.ty,
+            crate::item::ItemType::Swing | crate::item::ItemType::Shoot
+        )
+    }) && crate::item_use::check(f, 2, false)
+    {
+        return true;
+    }
+    set_fsmash(f);
+    true
+}
+
+/// `ftParamSetStickLR`: face the way the stick points; a centred stick
+/// keeps the facing.
+fn set_stick_lr(f: &mut Fighter) {
+    if f.stick.x < 0 {
+        f.facing = Facing::Left;
+    } else if f.stick.x > 0 {
+        f.facing = Facing::Right;
+    }
+}
+
+/// `ftCommonAppealCheckInterruptCommon` @ 0x8014E764: L taunts.
+pub fn check_appeal(f: &mut Fighter) -> bool {
+    if f.button_tap().contains(N64Buttons::L) {
+        set_appeal(f);
+        return true;
+    }
+    false
+}
+
+/// `ftCommonAppealSetStatus` @ 0x8014E6E0: a Kirby holding a copy drops it.
+pub fn set_appeal(f: &mut Fighter) {
+    if crate::kirby::is_kirby(f.kind)
+        && f.kirby.copy_id != crate::fighter::FighterKind::Kirby
+        && !f.kirby.is_ignore_losecopy
+    {
+        crate::kirby::lose_copy(f);
+    }
+    let t = match crate::motion::anim_length(f.kind, Status::Appeal.into()) {
+        Some(len) => StatusTiming::frames(len),
+        None => StatusTiming::unknown(),
+    };
+    set_status(f, Status::Appeal, 0.0, t);
+    f.motion_script.flags[1] = 0;
+}
+
+/// The common statuses whose `proc_physics` is
+/// `ftPhysicsApplyGroundFrictionOrTransN` (`dFTCommonActionStatusDescs`).
+pub fn uses_ground_friction_or_transn(s: AnyStatus) -> bool {
+    matches!(
+        s,
+        AnyStatus::Common(
+            Status::SwordSwing4
+                | Status::BatSwing4
+                | Status::HarisenSwing4
+                | Status::StarRodSwing4
+                | Status::ThrowF
+                | Status::ThrowB
+                | Status::AttackS3Hi
+                | Status::AttackS3HiS
+                | Status::AttackS3
+                | Status::AttackS3LwS
+                | Status::AttackS3Lw
+                | Status::AttackHi3
+                | Status::AttackLw3
+                | Status::AttackS4Hi
+                | Status::AttackS4HiS
+                | Status::AttackS4
+                | Status::AttackS4LwS
+                | Status::AttackS4Lw
+                | Status::AttackHi4
+        )
+    )
+}
+
+/// `ftAnimEndSetWait` from a `proc_update`: Wait's own interrupt
+/// (`ftCommonWaitProcInterrupt`) then runs in the same frame, since
+/// `ftMainProcUpdateInterrupt` reads `proc_interrupt` after `proc_update`.
+pub(crate) fn anim_end_set_wait(f: &mut Fighter) {
+    set_wait(f);
+    if f.status.status == Status::Wait {
+        ground_interrupt(f);
+    }
 }
 
 /// `ftCommonWalkProcInterrupt` @ 0x8013E390.
@@ -6209,7 +6818,9 @@ mod tests {
         hold(&mut f, 80, 0);
         update_walk(&mut f);
         assert_eq!(f.status.status, Status::WalkFast);
-        assert_eq!(f.status.anim_frame, 20.0);
+        // `ftCommonWalkSetStatusParam` then plays a frame: 20 + 1 (the N64
+        // goes WalkMiddle frame 3 to WalkFast frame 3 in RE-466's trace).
+        assert_eq!(f.status.anim_frame, 21.0);
     }
 
     #[test]
@@ -6244,13 +6855,16 @@ mod tests {
         assert_eq!(f.status.status, Status::Turn);
         // The flip is not immediate — that is what makes a pivot visible.
         assert_eq!(f.facing, Facing::Right);
-        assert_eq!(f.status.turn_toward, Facing::Left);
+        // `ftCommonTurnSetStatusInvertLR`: turning left, dashing left at the
+        // pivot.
+        assert_eq!(f.status.turn.lr_turn, -1);
+        assert_eq!(f.status.turn.lr_dash, -1);
     }
 
     #[test]
-    fn a_turn_flips_the_facing_and_the_momentum_together() {
-        // Stick released before the flip, so nothing interrupts and the flip
-        // itself is what is observed.
+    fn a_turn_flips_the_facing_at_its_pivot_and_keeps_the_world_velocity() {
+        // `ftCommonTurnProcUpdate` negates the facing and the facing-relative
+        // velocity together, so the fighter keeps sliding the same way.
         let mut f = mario();
         f.facing = Facing::Right;
         f.physics.vel_ground.x = 20.0;
@@ -6258,10 +6872,12 @@ mod tests {
         set_turn(&mut f);
         hold(&mut f, 0, 0);
 
-        f.status.anim_frame = 1.0;
+        update_turn(&mut f);
+        assert_eq!(f.facing, Facing::Right, "no flip before motion flag 1");
+        f.motion_script.flags[1] = 1;
         update_turn(&mut f);
         assert_eq!(f.facing, Facing::Left);
-        assert_eq!(f.physics.vel_ground.x, -20.0);
+        assert_eq!(f.physics.vel_ground.x, 20.0);
     }
 
     #[test]
@@ -6297,20 +6913,28 @@ mod tests {
     }
 
     #[test]
-    fn holding_the_stick_through_a_turn_dashes_out_of_it() {
-        // Once the facing flips, a stick still held that way is pointing
-        // *forward*, and the dash check in the interrupt chain takes it. This
-        // is how a dash-dance turns back into a dash.
+    fn a_dash_out_of_a_turn_waits_for_the_pivot() {
+        // RE-466: a dash input behind the fighter turns, and the turn dashes
+        // only on its pivot frame (`is_allow_turn_direction`), not as soon as
+        // the stick points forward again.
         let mut f = mario();
         f.facing = Facing::Right;
         hold(&mut f, -80, 0);
-        set_turn(&mut f);
+        assert!(check_dash(&mut f));
+        assert_eq!(f.status.status, Status::Turn);
 
-        f.status.anim_frame = 1.0;
+        hold(&mut f, -80, 0);
+        update_turn(&mut f);
+        assert_eq!(f.status.status, Status::Turn, "no dash before the pivot");
+
+        hold(&mut f, -80, 0);
+        f.motion_script.flags[1] = 1;
         update_turn(&mut f);
         assert_eq!(f.facing, Facing::Left);
         assert_eq!(f.status.status, Status::Dash);
         assert_eq!(f.physics.vel_ground.x, -f.attributes.dash_speed);
+        // Out of a turn the dash's first frames are not open to a smash.
+        assert_eq!(f.motion_script.flags[1], 0);
     }
 
     #[test]
@@ -6455,6 +7079,13 @@ mod tests {
         g.floor = Some(platform);
         hold(&mut g, 0, -80);
         assert!(check_pass(&mut g));
+        // `ftCommonPassSetStatusSquat`: a squat, then the drop after
+        // `FTCOMMON_SQUAT_PASS_WAIT` frames of its interrupt.
+        assert_eq!(g.status.status, Status::Squat);
+        for _ in 0..SQUAT_PASS_WAIT {
+            assert_eq!(g.status.status, Status::Squat);
+            squat_interrupt(&mut g);
+        }
         assert_eq!(g.status.status, Status::Pass);
         assert_eq!(g.ignore_line, Some(2));
         // Zeroed rather than carried over, so a drop-through starts from rest.
@@ -6635,13 +7266,14 @@ mod tests {
     }
 
     #[test]
-    fn a_turn_ends_after_twelve_frames() {
-        // Every character in the game turns in 12 frames — the one length the
-        // whole roster shares.
+    fn a_turn_lasts_eleven_frames() {
+        // Every character's turn is 12 frames long; `ftCommonTurnSetStatus`
+        // plays its first at once, so the N64 shows Turn for 11 frames
+        // (RE-466's How to Play trace).
         let mut f = mario();
         set_turn(&mut f);
         assert_eq!(f.status.timing.anim_length, Some(12.0));
-        for _ in 0..11 {
+        for _ in 0..10 {
             hold(&mut f, 0, 0);
             update(&mut f);
             assert_eq!(f.status.status, Status::Turn);
@@ -7135,12 +7767,21 @@ mod tests {
         tap_a(&mut f);
         update(&mut f);
         assert_eq!(f.status.status, Status::AttackLw3);
+        assert_eq!(f.status.anim_frame, 1.0);
 
+        // A released, the stick held down: no repeat, and SquatWait's chain
+        // keeps the crouch.
+        let down = ssb_engine::input::ControllerState {
+            stick_y: -80,
+            ..Default::default()
+        };
         let len = crate::motion::anim_length(f.kind, Status::AttackLw3.into()).unwrap();
-        for _ in 0..(len as i32 - 1) {
+        for _ in 0..(len as i32 - 2) {
+            f.set_input(down, false, false);
             update(&mut f);
             assert_eq!(f.status.status, Status::AttackLw3);
         }
+        f.set_input(down, false, false);
         update(&mut f);
         assert_eq!(f.status.status, Status::SquatWait);
     }
@@ -7202,6 +7843,8 @@ mod tests {
             if f.status.status == Status::Wait {
                 break;
             }
+            // The stick and A released: the smash's end runs Wait's chain.
+            f.set_input(ssb_engine::input::ControllerState::default(), false, false);
             update(&mut f);
         }
         assert_eq!(f.status.status, Status::Wait);
@@ -7402,7 +8045,9 @@ mod tests {
         let mut f = airborne_mario();
         set_air_attack(&mut f, Status::AttackAirF);
         let len = crate::motion::anim_length(f.kind, Status::AttackAirF.into()).unwrap();
-        for _ in 0..(len as i32 - 1) {
+        // The setter plays frame 1 (`ftMainPlayAnimEventsAll`).
+        assert_eq!(f.status.anim_frame, 1.0);
+        for _ in 0..(len as i32 - 2) {
             update(&mut f);
             assert_eq!(f.status.status, Status::AttackAirF);
         }

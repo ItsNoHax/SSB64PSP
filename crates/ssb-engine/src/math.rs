@@ -374,34 +374,59 @@ pub fn atan2(y: f32, x: f32) -> f32 {
 
 #[cfg(not(feature = "std"))]
 pub fn atan2(y: f32, x: f32) -> f32 {
+    atan2_poly(y, x)
+}
+
+/// [`atan2`] without `std`: `atan` of the smaller axis over the larger,
+/// reduced below `tan(15°)` and summed to its 13th power, within a few ULP
+/// of `f32::atan2` — the N64's `atan2f` is a full-precision libm, and an
+/// angle off by milliradians moves a launch or a sweep (RE-466).
+#[cfg_attr(feature = "std", allow(dead_code))]
+fn atan2_poly(y: f32, x: f32) -> f32 {
+    use core::f32::consts::{FRAC_PI_2, PI};
     if x == 0.0 {
         return if y < 0.0 {
-            -core::f32::consts::FRAC_PI_2
+            -FRAC_PI_2
+        } else if y > 0.0 {
+            FRAC_PI_2
         } else {
-            core::f32::consts::FRAC_PI_2
+            0.0
         };
     }
-    // Approximate atan on [-1, 1], with the larger axis factored out to
-    // avoid large ratios.
     let ax = x.abs();
     let ay = y.abs();
     let z = ax.min(ay) / ax.max(ay);
-    let angle = z * (core::f32::consts::FRAC_PI_4 + 0.273 * (1.0 - z));
-    let angle = if ay > ax {
-        core::f32::consts::FRAC_PI_2 - angle
-    } else {
-        angle
-    };
-    let angle = if x < 0.0 {
-        core::f32::consts::PI - angle
-    } else {
-        angle
-    };
+    let angle = atan_unit(z);
+    let angle = if ay > ax { FRAC_PI_2 - angle } else { angle };
+    let angle = if x < 0.0 { PI - angle } else { angle };
     if y < 0.0 {
         -angle
     } else {
         angle
     }
+}
+
+/// `atan(z)` for `z` in `[0, 1]`.
+#[cfg_attr(feature = "std", allow(dead_code))]
+fn atan_unit(z: f32) -> f32 {
+    // tan(15°) and the identity atan(z) = 30° + atan((√3·z − 1) / (√3 + z)).
+    const TAN_15: f32 = 0.267_949_2;
+    const SQRT_3: f32 = 1.732_050_8;
+    let (offset, t) = if z > TAN_15 {
+        (
+            core::f32::consts::FRAC_PI_6,
+            (SQRT_3 * z - 1.0) / (SQRT_3 + z),
+        )
+    } else {
+        (0.0, z)
+    };
+    let t2 = t * t;
+    let series = t
+        * (1.0
+            - t2 * (1.0 / 3.0
+                - t2 * (1.0 / 5.0
+                    - t2 * (1.0 / 7.0 - t2 * (1.0 / 9.0 - t2 * (1.0 / 11.0 - t2 / 13.0))))));
+    offset + series
 }
 
 /// Tangent (radians). Public for the same reason as [`sin_cos`].
@@ -418,20 +443,32 @@ pub fn tan(v: f32) -> f32 {
     s / c
 }
 
-/// Minimax-ish sine over a range-reduced argument. Only used in `no_std`.
-#[cfg(not(feature = "std"))]
+/// Sine without `std`: reduced to `[-π/2, π/2]` by `sin(π − x) = sin(x)`
+/// and summed to its 13th power, within a few ULP of `f32::sin` (the
+/// earlier `[-π, π]` series was 2e-3 out near ±π, which moved knockback,
+/// RE-466).
+#[cfg_attr(feature = "std", allow(dead_code))]
 fn sin_poly(v: f32) -> f32 {
-    use core::f32::consts::PI;
-    // Reduce to [-PI, PI].
+    use core::f32::consts::{FRAC_PI_2, PI};
+    // Reduce to [-PI, PI], then fold into [-PI/2, PI/2].
     let mut x = v % (2.0 * PI);
     if x > PI {
         x -= 2.0 * PI;
     } else if x < -PI {
         x += 2.0 * PI;
     }
+    if x > FRAC_PI_2 {
+        x = PI - x;
+    } else if x < -FRAC_PI_2 {
+        x = -PI - x;
+    }
     let x2 = x * x;
-    // Taylor series to x^9; error < 1e-6 over [-PI, PI].
-    x * (1.0 - x2 / 6.0 * (1.0 - x2 / 20.0 * (1.0 - x2 / 42.0 * (1.0 - x2 / 72.0))))
+    x * (1.0
+        - x2 / 6.0
+            * (1.0
+                - x2 / 20.0
+                    * (1.0
+                        - x2 / 42.0 * (1.0 - x2 / 72.0 * (1.0 - x2 / 110.0 * (1.0 - x2 / 156.0))))))
 }
 
 // --- LookAt quantization (FTOFRAC8) ----------------------------------------
@@ -513,6 +550,33 @@ pub fn transform_lookat_basis(columns: [[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
         [r[0] / len, r[1] / len, r[2] / len]
     } else {
         [0.0; 3]
+    }
+}
+
+#[cfg(test)]
+mod trig_tests {
+    use super::{atan2_poly, sin_poly};
+
+    #[test]
+    fn the_device_trig_matches_libm() {
+        let mut worst_sin = 0.0f32;
+        let mut worst_cos = 0.0f32;
+        let mut a = -10.0f32;
+        while a < 10.0 {
+            worst_sin = worst_sin.max((sin_poly(a) - a.sin()).abs());
+            worst_cos = worst_cos.max((sin_poly(a + core::f32::consts::FRAC_PI_2) - a.cos()).abs());
+            a += 0.001;
+        }
+        assert!(worst_sin < 2e-6, "sin off by {worst_sin}");
+        assert!(worst_cos < 2e-6, "cos off by {worst_cos}");
+        let mut worst_atan = 0.0f32;
+        for i in -200..=200 {
+            for j in -200..=200 {
+                let (y, x) = (i as f32 * 0.37, j as f32 * 0.41);
+                worst_atan = worst_atan.max((atan2_poly(y, x) - y.atan2(x)).abs());
+            }
+        }
+        assert!(worst_atan < 2e-6, "atan2 off by {worst_atan}");
     }
 }
 

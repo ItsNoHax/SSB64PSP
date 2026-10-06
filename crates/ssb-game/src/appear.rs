@@ -326,8 +326,10 @@ fn finish(f: &mut Fighter) {
     f.pos = f.entry.pos;
     f.physics.vel_air = Vec3::ZERO;
     f.situation = crate::fighter::Situation::Ground;
-    status::set_wait(f);
     f.entry.lr = None;
+    // `ftCommonWaitSetStatus` from `proc_update`: Wait's interrupt runs this
+    // frame too (RE-466).
+    status::anim_end_set_wait(f);
 }
 
 /// `ftCommonAppearProcPhysics`, and no map step: the spawn point plus the
@@ -342,6 +344,15 @@ pub fn tick_status(f: &mut Fighter) -> bool {
         return false;
     }
     let t = f.root_motion.translate;
+    place(f, t);
+    true
+}
+
+/// `ftCommonAppearProcPhysics`'s placement: the entry position plus the
+/// clip's TransN translation `t`, mirrored for Captain Falcon's turned
+/// entry. A runtime with a skeleton calls this again with the pose of the
+/// frame just played.
+pub fn place(f: &mut Fighter, t: Vec3) {
     let e = f.entry.pos;
     f.pos.y = e.y + t.y;
     if f.entry.is_rotate {
@@ -351,7 +362,6 @@ pub fn tick_status(f: &mut Fighter) -> bool {
         f.pos.x = e.x + t.x;
         f.pos.z = e.z + t.z;
     }
-    true
 }
 
 /// `dIFCommonEntryFocusSleepTics`.

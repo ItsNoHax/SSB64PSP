@@ -480,7 +480,7 @@ def main():
         m_enum.update(enum_values(fsrc, f"ft{name}Motion", common_motion))
         special = status_motion_ids(header, m_enum)
         motions = []
-        for anim_sym, script in descs[name]:
+        for (anim_sym, script), aflags in zip(descs[name], motion_flags(refs)[name]):
             s = script.strip()
             if s in ("0x80000000", "0"):
                 start = NONE_PTR
@@ -494,16 +494,16 @@ def main():
                     start = symbols[mm.group(1)] + off // 4
                 else:
                     start = COMMON_BIT | (csyms[mm.group(1)] + off // 4)
-            motions.append((start, frames(anim_sym)))
+            motions.append((start, frames(anim_sym), aflags))
         up = name.upper()
         w.append(f"#[rustfmt::skip]\nstatic {up}_WORDS: [u32; {len(words)}] = [\n")
         for i in range(0, len(words), 8):
             w.append("    " + ", ".join(f"0x{x:08X}" for x in words[i:i + 8]) + ",\n")
         w.append("];\n\n")
         w.append(f"#[rustfmt::skip]\nstatic {up}_MOTIONS: [MotionDesc; {len(motions)}] = [\n")
-        for start, fr in motions:
+        for start, fr, aflags in motions:
             s = "NO_SCRIPT" if start == NONE_PTR else str(start)
-            w.append(f"    MotionDesc {{ script: {s}, anim_length: {fr} }},\n")
+            w.append(f"    MotionDesc {{ script: {s}, anim_length: {fr}, anim_flags: 0x{aflags:08X} }},\n")
         w.append("];\n\n")
         parsed[name] += (special,)
         n_sp = (max(special) - special_start + 1) if special else 0
@@ -580,11 +580,11 @@ def main():
                         start = at // 4
                     else:
                         raise ValueError(f"{name}: {sc} names no MainMotion file")
-            motions.append((start, frames(anim_sym)))
+            motions.append((start, frames(anim_sym), aflags))
         w.append(f"#[rustfmt::skip]\nstatic {up}_MOTIONS: [MotionDesc; {len(motions)}] = [\n")
-        for start, fr in motions:
+        for start, fr, aflags in motions:
             s_ = "NO_SCRIPT" if start == NONE_PTR else str(start)
-            w.append(f"    MotionDesc {{ script: {s_}, anim_length: {fr} }},\n")
+            w.append(f"    MotionDesc {{ script: {s_}, anim_length: {fr}, anim_flags: 0x{aflags:08X} }},\n")
         w.append("];\n\n")
         a = combat_attrs(os.path.join(refs, "src/relocData", main_file))
         r = a["hit_detect_range"]

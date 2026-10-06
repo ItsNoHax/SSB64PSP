@@ -1134,7 +1134,7 @@ fn log_entry_state(
     if capture_scene == Some(GameScene::Explain) {
         for f in [player.map(|p| &p.fighter), dummy.map(|d| &d.fighter)].into_iter().flatten() {
             let line = alloc::format!(
-                "re465 tick={} port={} status={:?} damage={} x={:.1} y={:.1} lr={:?}\n",
+                "re465 tick={} port={} status={:?} damage={} x={:.2} y={:.2} lr={:?} af={:.2} vg={:.3} va={:.3},{:.3} lag={} id={}\n",
                 sim_frame_index,
                 f.port,
                 f.status.status,
@@ -1142,6 +1142,12 @@ fn log_entry_state(
                 f.pos.x,
                 f.pos.y,
                 f.facing,
+                f.status.anim_frame,
+                f.physics.vel_ground.x,
+                f.physics.vel_air.x,
+                f.physics.vel_air.y,
+                f.hitlag,
+                f.status.status.id(),
             );
             unsafe {
                 psp::sys::sceIoWrite(
@@ -1754,6 +1760,7 @@ fn interrupt_pass(
         }
         let mut s = scenes(pl, dummies);
         after_interrupt(&mut s, i);
+        jostle_from(&mut s, i);
         exchange_from(&mut s, i);
         flush_fighter_effects(&mut s, effects);
     }
@@ -2551,6 +2558,29 @@ fn clock_byte() -> u8 {
 /// `syUtilsRandTimeUCharRange(9)`: the clock's low byte, scaled to 0..9.
 fn stage_select_rand() -> u8 {
     (u32::from(clock_byte()) * 9 / 256) as u8
+}
+
+/// `ftMainProcUpdateInterrupt`'s jostle for fighter `i`, outside hitlag,
+/// against the others as their interrupts have left them (RE-466).
+fn jostle_from(s: &mut [Option<&mut play::FighterScene>; 4], i: usize) {
+    let Some(me) = s[i].as_deref() else { return };
+    if me.fighter.is_in_hitlag() {
+        return;
+    }
+    let mut others = [(ssb_game::fighter::JostleBody::of(&me.fighter), false); 3];
+    let mut count = 0;
+    for (j, o) in s.iter().enumerate() {
+        if j == i {
+            continue;
+        }
+        if let Some(o) = o.as_deref() {
+            others[count] = (ssb_game::fighter::JostleBody::of(&o.fighter), j > i);
+            count += 1;
+        }
+    }
+    if let Some(me) = s[i].as_deref_mut() {
+        ssb_game::fighter::jostle(&mut me.fighter, &others[..count]);
+    }
 }
 
 /// The half of `ftCommonDeadCheckRebirth` fighter `i` cannot do itself:

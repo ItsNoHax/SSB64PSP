@@ -152,6 +152,10 @@ pub struct PhysicsState {
     pub vel_damage_ground: f32,
     pub is_fastfall: bool,
     pub jumps_used: i32,
+    /// `vel_jostle_x`/`vel_jostle_z`: the push from overlapping another
+    /// grounded fighter on the same floor line ([`crate::fighter::jostle`]).
+    pub vel_jostle_x: f32,
+    pub vel_jostle_z: f32,
 }
 
 /// The depth axis is clamped to this magnitude.
@@ -164,8 +168,14 @@ pub const Z_LIMIT: f32 = 60.0;
 /// `ftPhysicsApplyGroundVelTransN` @ 0x800D8C14, reduced to the port's
 /// X-only ground plane. Mario's model-forward axis is animation Z; facing
 /// turns that local displacement into the stage's X axis.
-pub fn apply_ground_vel_transn(p: &mut PhysicsState, motion: RootMotion, facing: f32) {
-    p.vel_ground.x = motion.delta.z * facing;
+///
+/// `facing` is the sign of TopN's yaw ([`crate::fighter::Fighter::topn_lr`]),
+/// which `lr * rotate.y < 0` makes the step follow. The step is scaled by
+/// TopN's scale, the fighter's `attr->size`
+/// (`DObjGetStruct(fighter_gobj)->scale`): a roll or a tilt carries Mario
+/// 1.12 times its clip's TransN (RE-466).
+pub fn apply_ground_vel_transn(p: &mut PhysicsState, motion: RootMotion, facing: f32, size: f32) {
+    p.vel_ground.x = motion.delta.z * size * facing;
 }
 
 /// `ftPhysicsApplyAirVelTransNAll` @ 0x800D93E4 via
@@ -772,6 +782,7 @@ mod tests {
                 ..Default::default()
             },
             -1.0,
+            1.0,
         );
         assert_eq!(p.vel_ground.x, -12.0);
     }

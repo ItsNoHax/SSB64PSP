@@ -996,14 +996,20 @@ pub fn tick_skeleton_animation(
     started: &mut Option<(AnyStatus, u32)>,
 ) -> Option<ssb_rom::figatree::JointPose> {
     let entry = status.entry;
-    let frame_begin = status.anim_frame_begin;
+    // The clip starts on the status's current frame: `ftMainSetStatus`
+    // parses `frame_begin`, and a setter's `ftMainPlayAnimEventsAll` or the
+    // frame's own advance has moved it on before this first parse, which
+    // poses without advancing (RE-466).
+    let frame_begin = status.anim_frame;
     let status = status.status;
     // The pack row is the fighter's; the slot is the status's. Common
     // statuses use the shared slots, which resolve per fighter through the
     // status -> motion pairing (`ssb_rom::anim::SLOT_APPEAL`).
     let slot = status.anim_slot() as u32;
+    let mut restarted = false;
     if *started != Some((status, entry)) {
         *started = Some((status, entry));
+        restarted = !status.keeps_motion();
         // A status with no motion of its own (`CatchWait`, `CaptureWait`)
         // keeps playing the previous one; its slot is that status's slot.
         if status.keeps_motion() {
@@ -1018,7 +1024,16 @@ pub fn tick_skeleton_animation(
     // The slot is read back rather than remembered, so a status whose
     // animation the pack lacks -- Kirby has no aerial jump -- simply keeps
     // the pose it had.
-    let root_before = skeleton.pose(0).copied();
+    // `ftMainSetStatus` zeroes TransN before the new clip's first parse, so
+    // its first step is the clip's own first translation.
+    let root_before = if restarted {
+        skeleton.pose(0).map(|p| ssb_rom::figatree::JointPose {
+            translate: [0.0; 3],
+            ..*p
+        })
+    } else {
+        skeleton.pose(0).copied()
+    };
     if let Some(anim) = pack.fighter_anim(kind, slot) {
         if let Some(script) = pack.anim_script(&anim) {
             let _ = skeleton.tick_scaled(
@@ -1148,9 +1163,10 @@ impl FighterScene {
 
     /// Puts a fighter of `kind` at a stage's `spawn_index`'th spawn point.
     ///
-    /// Deliberately *not* settled onto the surface: a spawn sits a few units
-    /// up (RE-030) and letting it fall that distance is the first thing worth
-    /// watching. Returns a `FighterScene` even when the stage has no such
+    /// A spawn sits a few units up (RE-030); as `ftManagerInitFighter` does,
+    /// the fighter is stood on the floor below it when that floor is less
+    /// than 300 units down (RE-466). Returns a `FighterScene` even when the
+    /// stage has no such
     /// spawn, so a caller can say so (`placed`) rather than the view going
     /// blank; a caller that needs to distinguish "no spawn point" from
     /// "spawn point, but nothing to stand on" should check
@@ -1201,6 +1217,8 @@ impl FighterScene {
             fighter.anim = anim_of(&d);
             cam_offset_y = d.cam_offset_y;
             camera_zoom_frame = d.camera_zoom;
+            fighter.jostle_width = d.jostle_width;
+            fighter.jostle_x = d.jostle_x;
             shadow_size = d.shadow_size;
         }
 
@@ -1208,11 +1226,11 @@ impl FighterScene {
         if let Some(pos) = pos {
             fighter.pos = pos;
             fighter.facing = ssb_game::fighter::Facing::at_spawn_x(fighter.pos.x);
-            placed = ssb_game::collision::project_floor(
-                FloorSegments::new(pack, stage),
-                ssb_engine::math::Vec2::new(fighter.pos.x, fighter.pos.y),
-            )
-            .is_some();
+            // `ftManagerInitFighter`: stood on the floor below, if near;
+            // then `mpCommonSetFighterWaitOrFall` (an entry or a demo sets
+            // its own status after).
+            placed = fighter.init_floor(FloorSegments::new(pack, stage));
+            ssb_game::status::set_wait_or_fall(&mut fighter);
         }
         // `MPGroundData`'s `map_bound_*` and `camera_bound_*`, and the
         // `nMPMapObjKindRebirth` point the halo lowers the fighter onto.
@@ -1372,6 +1390,37 @@ impl FighterScene {
         stage: &StageDesc,
         groups: &[ssb_game::map::MapGroup],
     ) {
+        // `ftMainProcUpdateInterrupt`'s `ftMainPlayAnimEventsAll` has played
+        // this frame's pose before `ftMainProcPhysicsMap` runs, so TransN's
+        // step (`translate - anim_vel`) and the entry's placement read the
+        // frame the status is on (RE-466). Hitlag freezes the motion with
+        // the status.
+        if !self.fighter.is_in_hitlag() {
+            self.tick_animation(pack);
+            if let (Some(before), Some(current)) =
+                (self.root_motion_before_tick, self.skeleton.pose(0))
+            {
+                // The interrupt may have turned TransN (Mario's Super Jump
+                // Punch); its rotation is kept.
+                let rotate_z = self.fighter.root_motion.rotate_z;
+                self.fighter.set_root_motion(ssb_game::physics::RootMotion {
+                    delta: ssb_engine::math::Vec3::new(
+                        current.translate[0] - before.translate[0],
+                        current.translate[1] - before.translate[1],
+                        current.translate[2] - before.translate[2],
+                    ),
+                    rotate_z,
+                    translate: ssb_engine::math::Vec3::new(
+                        current.translate[0],
+                        current.translate[1],
+                        current.translate[2],
+                    ),
+                });
+            }
+        } else {
+            // No TransN motion accrues while frozen.
+            self.root_motion_before_tick = self.skeleton.pose(0).copied();
+        }
         self.fighter
             .tick_physics_map_before_accessory(&|| MapSegments::with_groups(pack, stage, groups));
         if self.fighter.is_grounded() {
@@ -1379,13 +1428,12 @@ impl FighterScene {
         } else {
             self.airborne_ticks = self.airborne_ticks.saturating_add(1);
         }
-        // Hitlag freezes the motion with the status (`ftMainProcUpdateMain`
-        // skips the animation while `hitlag_tics` is nonzero).
-        if !self.fighter.is_in_hitlag() {
+        // A status the map step set (a landing) parses its first frame at
+        // once (`ftMainSetStatus`).
+        if !self.fighter.is_in_hitlag()
+            && self.started != Some((self.fighter.status.status, self.fighter.status.entry))
+        {
             self.tick_animation(pack);
-        } else {
-            // No TransN motion accrues while frozen.
-            self.root_motion_before_tick = self.skeleton.pose(0).copied();
         }
         self.sample_held_child_offset();
         if (ssb_game::map::is_cliff_hold(self.fighter.status.status)

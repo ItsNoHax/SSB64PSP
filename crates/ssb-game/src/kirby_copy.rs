@@ -1149,7 +1149,7 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
     ) {
         return false;
     }
-    physics::apply_ground_vel_transn(&mut f.physics, f.root_motion, f.facing.sign());
+    physics::apply_ground_vel_transn(&mut f.physics, f.root_motion, f.topn_lr, f.attributes.size);
     true
 }
 

@@ -420,6 +420,15 @@ pub struct Fighter {
     pub is_knockback_paused: bool,
     /// This frame's hit bookkeeping ([`crate::combat::FrameHits`]).
     pub hits: crate::combat::FrameHits,
+    /// `attr->jostle_width` and `attr->jostle_x`: the body's half-width and
+    /// its forward offset for [`jostle`].
+    pub jostle_width: f32,
+    pub jostle_x: f32,
+    /// The sign of TopN's yaw, which `ftMainSetStatus` sets from `lr`
+    /// (`rotate.y = lr * 90°`). A status that turns the fighter partway
+    /// (a roll) keeps moving the way the model faces until the next status
+    /// (`ftPhysicsApplyGroundVelTransN`'s `lr * rotate.y < 0` case).
+    pub topn_lr: f32,
     /// Taps and releases gathered while in hitlag
     /// (`ftMainProcUpdateInterrupt` ORs them together until it ends).
     pub tap_carry: N64Buttons,
@@ -568,6 +577,9 @@ impl Fighter {
             damage_knockback_stack: 0.0,
             is_knockback_paused: false,
             hits: crate::combat::FrameHits::default(),
+            jostle_width: 0.0,
+            jostle_x: 0.0,
+            topn_lr: 1.0,
             tap_carry: N64Buttons(0),
             release_carry: N64Buttons(0),
             tics_since_last_z: crate::status::ZTRIGLAST_TICS_MAX,
@@ -729,6 +741,35 @@ impl Fighter {
         self.purin.pound_count = 0;
     }
 
+    /// `ftManagerInitFighter`'s floor projection: a fighter made over a
+    /// floor less than 300 units below stands on it from the start
+    /// (`mpCollisionCheckProjectFloor`); otherwise it starts airborne with
+    /// one jump spent. Master Hand always starts airborne. Returns whether a
+    /// floor was found.
+    pub fn init_floor<I>(&mut self, floors: I) -> bool
+    where
+        I: IntoIterator<Item = (u16, Segment)>,
+    {
+        let below =
+            collision::project_floor(floors, ssb_engine::math::Vec2::new(self.pos.x, self.pos.y));
+        match below {
+            Some(b) if b.dist > -300.0 && self.kind != FighterKind::Boss => {
+                self.situation = Situation::Ground;
+                self.pos.y += b.dist;
+                self.floor = Some(Standing {
+                    line: b.line,
+                    flags: b.flags,
+                    normal: b.normal,
+                });
+            }
+            _ => {
+                self.situation = Situation::Air;
+                self.physics.jumps_used = 1;
+            }
+        }
+        below.is_some()
+    }
+
     /// Places the fighter on the stage beneath it, as a match start does.
     ///
     /// A spawn point sits a little above its surface (RE-030), so a fighter
@@ -763,6 +804,11 @@ impl Fighter {
     /// taps and releases are derived from, so `prev_input` carries it too.
     pub fn set_input(&mut self, input: ControllerState, jump_tapped: bool, jump_released: bool) {
         let mut input = input;
+        // `pl->stick_range` is clamped to ±`I_CONTROLLER_RANGE_MAX`; every
+        // status reads the clamped value (a jumpsquat's force too).
+        let max = crate::status::STICK_MAX;
+        input.stick_x = (i32::from(input.stick_x)).clamp(-max, max) as i8;
+        input.stick_y = (i32::from(input.stick_y)).clamp(-max, max) as i8;
         if input.buttons.contains(ssb_engine::input::N64Buttons::R) {
             input.buttons.0 |= ssb_engine::input::N64Buttons::A | ssb_engine::input::N64Buttons::Z;
         }
@@ -1069,7 +1115,13 @@ impl Fighter {
         let mut motion = self.root_motion;
         motion.delta *= self.attributes.size;
         if self.is_grounded() {
-            crate::physics::apply_ground_vel_transn(&mut self.physics, motion, self.facing.sign());
+            // `motion` is already scaled by `attr->size` above.
+            crate::physics::apply_ground_vel_transn(
+                &mut self.physics,
+                motion,
+                self.facing.sign(),
+                1.0,
+            );
             let want =
                 self.pos + Vec3::new(self.physics.vel_ground.x, 0.0, self.physics.vel_ground.z);
             let stop = !matches!(
@@ -1183,6 +1235,21 @@ impl Fighter {
                     surfaces,
                 );
                 self.pos = result.moved.pos;
+                // `mpCommonUpdateFighterKinetics`, `proc_map` in hitlag too:
+                // a hit reaction launched from where it stood and nudged into
+                // the floor lands there, and slides once the hitlag is over
+                // (RE-466).
+                if let Some(floor) = result.moved.floor.filter(|_| {
+                    matches!(
+                        self.status.status,
+                        crate::status::AnyStatus::Common(s) if s.keeps_situation()
+                    )
+                }) {
+                    self.map_contacts = result.contacts;
+                    self.floor = Some(floor);
+                    self.ignore_line = None;
+                    self.land(result.moved.pos.y);
+                }
             }
         }
     }
@@ -1269,14 +1336,29 @@ impl Fighter {
             || crate::ness::apply_ground_physics(self)
             || crate::reaction::apply_ground_physics(self)
         {
+        } else if crate::status::uses_ground_friction_or_transn(self.status.status)
+            && crate::motion::uses_transn(self.kind, self.status.status)
+        {
+            // `ftPhysicsApplyGroundFrictionOrTransN`: a clip with a TransN
+            // joint moves the fighter by its step, scaled by TopN's
+            // `attr->size` (`ftPhysicsApplyGroundVelTransN`).
+            crate::physics::apply_ground_vel_transn(
+                &mut self.physics,
+                self.root_motion,
+                self.topn_lr,
+                self.attributes.size,
+            );
         } else if self.status.status == crate::status::Status::LightThrowDash
+            // `ftCommonTurnRunProcPhysics` is `ftPhysicsApplyGroundVelTransN`.
+            || self.status.status == crate::status::Status::TurnRun
             || self.status.status
                 == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
         {
             crate::physics::apply_ground_vel_transn(
                 &mut self.physics,
                 self.root_motion,
-                self.facing.sign(),
+                self.topn_lr,
+                self.attributes.size,
             );
         } else if self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialLw)
@@ -1297,6 +1379,13 @@ impl Fighter {
         {
             crate::status::apply_donkey_special_hi_ground_physics(self);
         } else {
+            // `ftPhysicsSetGroundVelAbsStickRange` works on the
+            // facing-relative velocity the original keeps; this port's is
+            // the world one.
+            let relative = self.status.status.is_walk();
+            if relative {
+                self.physics.vel_ground.x *= self.facing.sign();
+            }
             crate::status::apply_status_physics(
                 &mut self.physics,
                 &self.attributes,
@@ -1305,11 +1394,9 @@ impl Fighter {
                 self.input.stick_x,
                 friction,
             );
-        }
-
-        // A walk's speed is a magnitude; the facing decides its sign.
-        if self.status.status.is_walk() {
-            self.physics.vel_ground.x = self.physics.vel_ground.x.abs() * self.facing.sign();
+            if relative {
+                self.physics.vel_ground.x *= self.facing.sign();
+            }
         }
 
         crate::thrown::damage_physics(self);
@@ -1327,10 +1414,16 @@ impl Fighter {
         } else {
             self.physics.vel_ground.x
         };
+        // `ftPhysicsSetGroundVelTransferAir`: the jostle adds to the step.
         let want = Vec3::new(
-            self.pos.x + ground_x + self.physics.vel_knockback.x,
+            self.pos.x + ground_x + self.physics.vel_jostle_x + self.physics.vel_knockback.x,
             self.pos.y,
-            self.pos.z,
+            self.pos.z
+                + ground_vel_z(
+                    self.pos.z,
+                    self.physics.vel_jostle_z,
+                    self.physics.vel_ground.z,
+                ),
         );
         let stop_edge = crate::map::stops_at_edge(self.status.status);
         if self.status.status == crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialHi)
@@ -1739,6 +1832,109 @@ impl Fighter {
             }
         }
     }
+}
+
+/// What [`jostle`] reads of another fighter.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct JostleBody {
+    pub pos: Vec3,
+    pub lr: f32,
+    pub jostle_x: f32,
+    pub jostle_width: f32,
+    /// The floor line, when grounded.
+    pub line: Option<u16>,
+    /// `capture_gobj != NULL`.
+    pub is_captured: bool,
+}
+
+impl JostleBody {
+    pub fn of(f: &Fighter) -> Self {
+        JostleBody {
+            pos: f.pos,
+            lr: f.facing.sign(),
+            jostle_x: f.jostle_x,
+            jostle_width: f.jostle_width,
+            line: f.floor.map(|s| s.line).filter(|_| f.is_grounded()),
+            is_captured: f.grab.capture.is_some(),
+        }
+    }
+}
+
+/// `ftMainProcUpdateInterrupt`'s jostle, after the status's interrupt and
+/// outside hitlag: a grounded fighter overlapping another grounded fighter
+/// on its floor line (each `jostle_width` either side of its position plus
+/// `jostle_x` forward) is pushed 6.75 a frame apart, and 3 in depth.
+/// `others` are the other fighters in link order, each with whether it
+/// comes after this one (`is_check_self`).
+pub fn jostle(f: &mut Fighter, others: &[(JostleBody, bool)]) {
+    f.physics.vel_jostle_x = 0.0;
+    f.physics.vel_jostle_z = 0.0;
+    let Some(line) = f.floor.map(|s| s.line).filter(|_| f.is_grounded()) else {
+        return;
+    };
+    if f.dokan.is_jostle_ignore {
+        return;
+    }
+    let mut is_jostle = false;
+    // A captured fighter takes the loop's `else` branch, as this one does.
+    let mut passed_captured = false;
+    for &(o, after_self) in others {
+        if o.is_captured {
+            passed_captured = true;
+            continue;
+        }
+        let is_check_self = after_self || passed_captured;
+        if o.line != Some(line) {
+            continue;
+        }
+        let dist_x = (f.pos.x + f.jostle_x * f.facing.sign()) - (o.pos.x + o.jostle_x * o.lr);
+        if dist_x.abs() >= f.jostle_width + o.jostle_width {
+            continue;
+        }
+        is_jostle = true;
+        let self_sign = if is_check_self { -1.0 } else { 1.0 };
+        f.physics.vel_jostle_x += 6.75
+            * if dist_x == 0.0 {
+                self_sign
+            } else if dist_x < 0.0 {
+                -1.0
+            } else {
+                1.0
+            };
+        let dist_z = f.pos.z - o.pos.z;
+        f.physics.vel_jostle_z += 3.0
+            * if dist_z != 0.0 {
+                if dist_z < 0.0 {
+                    -1.0
+                } else {
+                    1.0
+                }
+            } else if dist_x == 0.0 {
+                self_sign
+            } else if dist_x < 0.0 {
+                1.0
+            } else {
+                -1.0
+            };
+    }
+    if !is_jostle && f.pos.z != 0.0 {
+        f.physics.vel_jostle_z = if f.pos.z < 0.0 { 3.0 } else { -3.0 };
+    }
+}
+
+/// `ftPhysicsSetGroundVelTransferAir`'s depth: the jostle's push, kept
+/// from crossing the plane in one step and within ±60.
+fn ground_vel_z(z: f32, jostle_z: f32, ground_z: f32) -> f32 {
+    let mut v = jostle_z;
+    if (jostle_z > 0.0 && z < 0.0 && z + v > 0.0) || (v < 0.0 && z > 0.0 && z + v < 0.0) {
+        v = -z;
+    }
+    if v > 0.0 && z + v > 60.0 {
+        v = 60.0 - z;
+    } else if v < 0.0 && z + v < -60.0 {
+        v = -60.0 - z;
+    }
+    v + ground_z
 }
 
 #[cfg(test)]

@@ -57,7 +57,12 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Purin
     );
     if dash || smash {
-        crate::physics::apply_ground_vel_transn(&mut f.physics, f.root_motion, f.facing.sign());
+        crate::physics::apply_ground_vel_transn(
+            &mut f.physics,
+            f.root_motion,
+            f.topn_lr,
+            f.attributes.size,
+        );
         true
     } else {
         false

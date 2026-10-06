@@ -475,7 +475,12 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
             if f.status.status == AnyStatus::Captain(CaptainStatus::SpecialN) {
                 update_punch_effect(f);
             }
-            physics::apply_ground_vel_transn(&mut f.physics, f.root_motion, f.facing.sign());
+            physics::apply_ground_vel_transn(
+                &mut f.physics,
+                f.root_motion,
+                f.topn_lr,
+                f.attributes.size,
+            );
             // `ftCaptainSpecialLwProcPhysics` updates the flame last.
             if matches!(
                 f.status.status,

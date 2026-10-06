@@ -51,6 +51,18 @@ pub struct MotionDesc {
     /// Frames the figatree runs for; `0` without one, `0xFFFF` when it
     /// loops.
     pub anim_length: u16,
+    /// `FTMotionDesc.anim_desc` (`FTANIM_FLAG_*`).
+    pub anim_flags: u32,
+}
+
+/// `FTAnimDesc.flags.is_use_transn_joint`.
+pub const ANIM_FLAG_TRANSN: u32 = 0x4000_0000;
+
+/// Whether the status's motion moves the fighter by its TransN joint
+/// (`fp->anim_desc.flags.is_use_transn_joint`), which
+/// `ftPhysicsApplyGroundFrictionOrTransN` reads.
+pub fn uses_transn(kind: FighterKind, status: AnyStatus) -> bool {
+    motion_desc(kind, status).is_some_and(|d| d.anim_flags & ANIM_FLAG_TRANSN != 0)
 }
 
 /// One fighter's `*MainMotion` file and motion table.

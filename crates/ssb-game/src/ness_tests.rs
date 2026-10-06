@@ -166,10 +166,12 @@ fn jab_flags_chain_to_jab3_and_down_tilt_repeats_at_frame11() {
     input(&mut f, N64Buttons::A, 0, -80);
     steps(&mut f, 1);
     input(&mut f, 0, 0, -80);
-    steps(&mut f, 9);
+    // `ftCommonAttackLw3SetStatus` plays frame 1 at once; motion flag 1 at
+    // frame 11 restarts the buffered tilt, at its frame 1 again.
+    steps(&mut f, 8);
     assert_eq!(f.status.anim_frame, 10.0);
     steps(&mut f, 1);
-    assert_eq!(f.status.anim_frame, 0.0);
+    assert_eq!(f.status.anim_frame, 1.0);
 }
 #[test]
 fn down_air_and_fox_drill_have_signed_downward_angles() {

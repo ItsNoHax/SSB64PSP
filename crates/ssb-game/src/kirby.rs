@@ -1155,7 +1155,12 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
             f.physics.vel_ground.x = f.physics.vel_air.x;
         }
         K::SpecialHiLanding | K::SpecialNThrow => {
-            physics::apply_ground_vel_transn(&mut f.physics, f.root_motion, f.facing.sign());
+            physics::apply_ground_vel_transn(
+                &mut f.physics,
+                f.root_motion,
+                f.topn_lr,
+                f.attributes.size,
+            );
         }
         // `proc_physics` is NULL and the setter zeroed `vel_air`.
         K::SpecialLwStart => f.physics.vel_ground.x = 0.0,

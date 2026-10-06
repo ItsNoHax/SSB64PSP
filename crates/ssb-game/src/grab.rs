@@ -849,6 +849,7 @@ fn tapped(f: &Fighter) -> N64Buttons {
 pub fn set_catch(f: &mut Fighter) {
     let length = catch_length(f.kind);
     status::set_status(f, Status::Catch, 0.0, StatusTiming::frames(length));
+    status::play_anim_events(f);
     f.grab.throw_desc = Some(match base_kind(f.kind) {
         FighterKind::Fox => FOX_CATCH,
         FighterKind::Donkey => DONKEY_CATCH,
@@ -2736,7 +2737,9 @@ mod tests {
         let dummy = grounded(FighterKind::Mario, 1, 0.0);
         set_catch(&mut samus);
         assert_eq!(samus.status.timing.anim_length, Some(100.0));
-        for _ in 0..19 {
+        // `ftCommonCatchSetStatus` plays frame 1 at once.
+        assert_eq!(samus.status.anim_frame, 1.0);
+        for _ in 0..18 {
             press(&mut samus, 0, 0);
             tick(&mut samus);
             assert!(
@@ -2778,7 +2781,8 @@ mod tests {
         let dummy = grounded(FighterKind::Mario, 1, 0.0);
         set_catch(&mut link);
         assert_eq!(link.status.timing.anim_length, Some(85.0));
-        for _ in 0..16 {
+        assert_eq!(link.status.anim_frame, 1.0);
+        for _ in 0..15 {
             press(&mut link, 0, 0);
             tick(&mut link);
             assert!(

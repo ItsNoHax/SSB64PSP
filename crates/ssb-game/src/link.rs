@@ -1049,7 +1049,8 @@ mod tests {
         let mut target = Fighter::new(FighterKind::Mario, 1, 3);
         target.situation = Situation::Ground;
         status::set_air_attack(&mut f, Status::AttackAirLw);
-        for _ in 0..10 {
+        // The setter plays frame 1 (`ftMainPlayAnimEventsAll`).
+        for _ in 0..9 {
             status::update(&mut f);
         }
         target.pos = f.joint_world(11, Vec3::new(0.0, 0.0, 100.0));

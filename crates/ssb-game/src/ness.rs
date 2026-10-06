@@ -463,25 +463,6 @@ pub fn update(f: &mut Fighter) {
         }
     }
 }
-/// Ness's `DTilt` sets flag 1 at frame 11. Update uses the prior request;
-/// interrupt then tests this frame's A tap, as in `ftcommonattacklw3.c`.
-pub(crate) fn update_dtilt(f: &mut Fighter) {
-    let flag = f.status.anim_frame >= 11.0;
-    if flag && f.ness.dtilt_requested {
-        status::set_dtilt(f);
-        return;
-    }
-    if f.status.animation_ended() {
-        status::set_status(f, Status::SquatWait, 0.0, StatusTiming::unknown());
-        f.is_special_interrupt = true;
-    } else if f.button_tap().contains(N64Buttons::A) {
-        if flag {
-            status::set_dtilt(f);
-        } else {
-            f.ness.dtilt_requested = true;
-        }
-    }
-}
 fn special_slow_air(f: &mut Fighter, gravity: f32) {
     if f.ness.gravity_delay != 0 {
         f.ness.gravity_delay -= 1;

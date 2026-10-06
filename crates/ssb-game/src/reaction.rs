@@ -514,7 +514,12 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
     if !moves_by_transn(f.status.status) {
         return false;
     }
-    crate::physics::apply_ground_vel_transn(&mut f.physics, f.root_motion, f.facing.sign());
+    crate::physics::apply_ground_vel_transn(
+        &mut f.physics,
+        f.root_motion,
+        f.topn_lr,
+        f.attributes.size,
+    );
     true
 }
 
