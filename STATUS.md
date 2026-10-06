@@ -40,10 +40,10 @@ Current snapshot. History lives in git and `docs/evidence/`.
 - Capture scenes `title`, `modeselect`, `onepmode`, `vsoptions`,
   `itemswitch`, `bonusselect` and `bonuspractice` run under
   PPSSPPHeadless; six front-end scenes overlay N64 references.
-- Golden matrix: 78 of 195 match. The previous commit already differs in
-  116 scenes (small fighter-pose drift in Training and VS scenes); this
-  batch changes only `f1-vs-mode-menu`, rebaselined. The drift needs
-  triage before the next rebaseline. Physical PSP last checked RE-361.
+- Golden matrix: 195 of 195 match after RE-463 traced the 116-scene drift
+  to RE-458's TopN scale, RE-449's Egg Lay combo credit and RE-454's
+  platform materials and rebaselined them. Physical PSP last checked
+  RE-361.
 
 ## Blockers and remaining scope
 

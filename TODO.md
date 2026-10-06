@@ -11,8 +11,6 @@ or evidence record covers it.
 | Independent fighter animation validation | Stage animation has a ROM-derived check (RE-050–052, RE-142); fighter costume/material animation does not | — |
 | Per-scene texture residency | Low detail reduces the v78 Dream Land Mario/Fox/DK/Kirby costume-0 closure, including wallpaper, to 726,924 bytes, 22,412 over the 704,512-byte VRAM pool; high needs 1,051,532. Other stages/costumes can need more. Runtime samples from main RAM; hardware residency and DK format work remain | RE-076, RE-077, RE-341, RE-426 |
 | Material-animation command 22 | `ssb-rom::matanim` rejects it; its writes are never read, so it can be skipped | RE-010 |
-| Triage the golden matrix's pose drift | At the RE-461 commit 116 of 195 goldens already differ (mostly a fighter's pose a frame apart in Training and VS scenes, 184 to 300k pixels); RE-462 changes none of them. Find the commit that moved them before rebaselining | RE-462 |
-| Refresh fighter goldens for TopN's scale | Every battle fighter now draws and places its joints at `attr->size` (RE-458); the `psp-game` fighter goldens predate it | RE-458 |
 | `Pack::fighter_anim` lookup | A linear scan of 6,246 clips, twice per fighter per frame; the variants' rows sit last (`P5`) | RE-458 |
 | `WPAttributes` pairing shape | Only known instance (Link's boomerang) has no sub-objects; revisit if another appears | RE-058 |
 
