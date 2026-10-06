@@ -136,6 +136,9 @@ pub enum Scene {
     /// `nSCKind1PBonusStage` and `nSCKindMessage`.
     BonusStage,
     Message,
+    /// `nSCKindOpeningRoom` to `nSCKindOpeningNewcomers`: the opening
+    /// movie's scenes (`crate::opening`).
+    Opening(crate::opening::Kind),
 }
 
 /// One frame of the controllers, as `scSubsysController*` read them: the
@@ -404,6 +407,10 @@ pub enum Draw {
     /// cameras' viewport: the N64's title leaves the border outside it
     /// black (RE-462).
     Clear([u8; 4]),
+    /// The title's opening layout (RE-467): the logo fire's particles under
+    /// its 3D camera, and the slash under its orthographic one.
+    TitleParticles,
+    TitleSlash,
 }
 
 /// A `G_CYC_FILL` rectangle: inclusive lower-right corner.

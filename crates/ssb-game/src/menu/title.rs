@@ -1,12 +1,13 @@
 //! `mn/mncommon/mntitle.c`: the title screen (US).
 //!
-//! The port enters the title as the original does after the N64 logo
-//! (`mnStartup`) or a demo, never after the opening movie
-//! (`nSCKindOpeningNewcomers`), which is not ported: so the title always
-//! takes `nMNTitleLayoutAnimate`, its transitions starting at tic 169 with
-//! the fire already lit, the small red logo at rest and no logo animation,
-//! slash or logo-fire particles (the opening-only `mnTitleMakeLogo` branch,
-//! `mnTitleMakeSlash` and `mnTitleMakeLogoFireParticles`).
+//! After the N64 logo (`mnStartup`) or a demo the title takes
+//! `nMNTitleLayoutAnimate`, its transitions starting at tic 169 with the
+//! fire already lit and the small red logo at rest. After the opening
+//! movie (`nSCKindOpeningNewcomers`, RE-467) it takes
+//! `nMNTitleLayoutOpening` from tic 0: the logo's animation with its black
+//! cutout and strikes over the logo fire's particles, the slash, the red
+//! logo fading in its place, and at tic 111 the fire
+//! (`mnTitleTransitionFromFireLogo`); A, B or START jumps to tic 169.
 //!
 //! One [`Title::tick`] is `gcRunAll`: the GObjs' `func_run` in link order
 //! (`mnTitleFuncRun`, `mnTitleFireFuncRun`, `mnTitleTransitionsFuncRun`),
@@ -199,7 +200,15 @@ pub fn count_boot(demo: &DemoData, backup: &mut Backup) {
 pub trait Anims {
     fn labels(&self, play: usize, child: usize) -> Option<[f32; 4]>;
     fn press_start(&self, play: usize) -> Option<[f32; 4]>;
+    /// The opening layout's logo tree (`llMNTitleLogoDObjDesc`): children
+    /// 0 to 2 place the cutout and strikes, 3 the red logo.
+    fn logo(&self, _play: usize, _child: usize) -> Option<[f32; 4]> {
+        None
+    }
 }
+
+/// `dMNTitleLogoAnimSprites`' cutout and strikes, then the full logo.
+pub const LOGO_ANIM_SPRITES: [u32; 4] = [0x8FC8, 0x97E8, 0x9B48, sprite::LOGO_ANIM_FULL];
 
 /// No baked plays: every child stays at its sprite's place.
 pub struct NoAnims;
@@ -260,6 +269,24 @@ pub struct Title {
     black: bool,
     /// The scene `syTaskmanSetLoadScene` will load.
     scene_next: Scene,
+    /// `gSCManagerSceneData.scene_prev == nSCKindOpeningNewcomers`.
+    after_opening: bool,
+    /// The fire's `GObj` is hidden (`GOBJ_FLAG_HIDDEN`): its alpha holds.
+    fire_hidden: bool,
+    /// The opening layout's black cutout and strikes (`GObj` 6, link 7).
+    fire_logo_shown: bool,
+    /// The slash and the logo fire's particles, until
+    /// `mnTitleTransitionFromFireLogo` ejects them.
+    slash_shown: bool,
+    particles_shown: bool,
+    /// The logo tree's plays (`mnTitlePlayAnim`), and whether the red logo
+    /// still follows its child 3 (`mnTitleLogoProcUpdate`).
+    logo_play: usize,
+    logo_follows: bool,
+    /// The red logo's `[x, y, scale x, scale y]` while it follows.
+    logo_place: [f32; 4],
+    /// Tics the slash's and the fire tree's processes have run.
+    pub effect_plays: u32,
 }
 
 impl Title {
@@ -292,7 +319,71 @@ impl Title {
             press_start_play: 0,
             black: false,
             scene_next: Scene::Title,
+            after_opening: false,
+            fire_hidden: false,
+            fire_logo_shown: false,
+            slash_shown: false,
+            particles_shown: false,
+            logo_play: 0,
+            logo_follows: false,
+            logo_place: [0.0; 4],
+            effect_plays: 0,
         }
+    }
+
+    /// `mnTitleFuncStart` after the opening movie
+    /// (`nMNTitleLayoutOpening`): tic 0, a black fire camera, the fire
+    /// hidden, the logo's animation with its cutout, strikes, slash and
+    /// particles, the red logo at full alpha.
+    pub fn new_opening(time: u8) -> Title {
+        Title {
+            layout: Layout::Opening,
+            transition_tics: 0,
+            fire_alpha: 0,
+            logo_alpha: 0xFF,
+            fire_color: [0.0; 3],
+            fire_color_id: 0,
+            after_opening: true,
+            fire_hidden: true,
+            fire_logo_shown: true,
+            slash_shown: true,
+            particles_shown: true,
+            logo_follows: true,
+            ..Title::new(time)
+        }
+    }
+
+    /// The red logo follows its child (`mnTitleLogoProcUpdate`), after
+    /// `mnTitlePlayAnim` played the tree: the host calls this after each
+    /// [`Title::tick`].
+    pub fn follow(&mut self, anims: &impl Anims) {
+        if !self.logo_follows {
+            return;
+        }
+        if let Some(p) = anims.logo(self.logo_play, 3) {
+            self.logo_place = p;
+        }
+    }
+
+    /// Whether the slash and the logo fire's particles still draw.
+    pub fn effects_shown(&self) -> (bool, bool) {
+        (self.slash_shown, self.particles_shown)
+    }
+
+    /// The logo tree's play this frame.
+    pub fn logo_play(&self) -> usize {
+        self.logo_play
+    }
+
+    /// `mnTitleTransitionFromFireLogo`: the cutout and strikes hide, the
+    /// particles' display and the slash go, the fire shows and takes a new
+    /// colour.
+    fn transition_from_fire_logo(&mut self, time: u8) {
+        self.fire_logo_shown = false;
+        self.particles_shown = false;
+        self.slash_shown = false;
+        self.fire_hidden = false;
+        self.update_fire_vars(time);
     }
 
     /// `mnTitleProceedDemoNext`: the next demo after the scene the title
@@ -370,23 +461,42 @@ impl Title {
             } else {
                 self.transition_tics = 169;
                 self.layout = Layout::Animate;
-                self.update_fire_vars(time);
+                self.transition_from_fire_logo(time);
             }
         }
         // `mnTitleFireFuncRun`.
-        self.fire_alpha = (self.fire_alpha + 0x0D).min(0xFF);
+        if !self.fire_hidden {
+            self.fire_alpha = (self.fire_alpha + 0x0D).min(0xFF);
+        }
+        // `mnTitleFadeOutLogoFuncRun`, the opening layout's logo's: from
+        // the size its process left it.
+        if self.after_opening {
+            let [_, _, sx, sy] = if self.logo_follows {
+                self.logo_place
+            } else {
+                [0.0, 0.0, 1.0, 1.0]
+            };
+            if sx >= 0.0001 && sy >= 0.0001 {
+                self.logo_alpha = (self.logo_alpha - 0x04).max(0x4C);
+            }
+        }
         // `mnTitleTransitionsFuncRun`.
         self.transition_tics += 1;
         if self.transition_tics == self.allow_proceed_wait {
             demo.is_title_anim_viewed = true;
         }
         match self.transition_tics {
-            111 => self.update_fire_vars(time),
+            111 => self.transition_from_fire_logo(time),
             170 => {
-                // `mnTitleSetEndLogoPosition`.
+                // `mnTitleSetEndLogoPosition`: after the opening its
+                // process ends.
+                self.logo_follows = false;
                 self.logo_alpha = 0x4C;
                 self.labels_shown = true;
                 // `mnTitleAdvanceLayout`.
+                if self.layout == Layout::Opening && self.after_opening {
+                    demo.is_extend_demo_wait = false;
+                }
                 self.layout = match self.layout {
                     Layout::Opening => Layout::Animate,
                     _ => Layout::Final,
@@ -394,8 +504,9 @@ impl Title {
                 self.set_allow_proceed_wait();
             }
             220 => {
-                // `mnTitleSetEndLayout`.
+                // `mnTitleSetEndLayout`: `mnTitleShowFire`.
                 self.fire_alpha = 0xFF;
+                self.fire_hidden = false;
                 self.labels_running = false;
             }
             280 => self.press_start_shown = true,
@@ -413,6 +524,12 @@ impl Title {
         for i in 0..2 {
             self.fire_shown[i] = self.fire_frames[i];
             self.fire_frames[i] = (self.fire_frames[i] + 1) % sprite::FIRE.len();
+        }
+        // The opening layout's `mnTitlePlayAnim` on the logo tree, then the
+        // slash's and the fire tree's `gcPlayAnimAll`.
+        if self.after_opening {
+            self.logo_play += 1;
+            self.effect_plays += 1;
         }
         // `mnTitleProcUpdate` and `mnTitlePressStartProcUpdate`.
         if self.labels_shown && self.labels_running {
@@ -490,20 +607,47 @@ impl Title {
     pub fn visit(&self, anims: &impl Anims, f: &mut impl FnMut(Draw)) {
         let [r, g, b] = self.fire_color();
         f(Draw::Clear([r, g, b, 0xFF]));
-        // `mnTitleMakeFire`'s two SObjs (`mnTitleFireProcDisplay`).
-        for (i, &(x, y, sx, sy)) in [(-32.0, -16.0, 12.0, 8.5), (8.0, 8.0, 9.5, 7.0)]
-            .iter()
-            .enumerate()
-        {
-            let mut p = Piece::clear(FILE_FIRE, sprite::FIRE[self.fire_shown[i]], x, y);
-            p.scale = [sx, sy];
-            p.alpha = Some(self.fire_alpha as u8);
-            f(Draw::Sprite(p));
+        // Camera 80's logo fire particles (link 3), until ejected at 111.
+        if self.particles_shown {
+            f(Draw::TitleParticles);
         }
-        // `mnTitleMakeLogoNoOpening` (`mnTitleLogoProcDisplay`).
+        // `mnTitleMakeFire`'s two SObjs (`mnTitleFireProcDisplay`).
+        if !self.fire_hidden {
+            for (i, &(x, y, sx, sy)) in [(-32.0, -16.0, 12.0, 8.5), (8.0, 8.0, 9.5, 7.0)]
+                .iter()
+                .enumerate()
+            {
+                let mut p = Piece::clear(FILE_FIRE, sprite::FIRE[self.fire_shown[i]], x, y);
+                p.scale = [sx, sy];
+                p.alpha = Some(self.fire_alpha as u8);
+                f(Draw::Sprite(p));
+            }
+        }
+        // `mnTitleMakeLogo`'s black cutout and strikes on the logo tree's
+        // children 0 to 2 (`mnTitlePlayAnim`).
+        if self.fire_logo_shown {
+            for (child, &at) in LOGO_ANIM_SPRITES.iter().take(3).enumerate() {
+                if let Some([x, y, sx, sy]) = anims.logo(self.logo_play, child) {
+                    let mut p = Piece::clear(FILE_TITLE, at, x + 160.0, 120.0 - y).prim([0; 3]);
+                    p.centred = true;
+                    p.scale = [sx, sy];
+                    f(Draw::Sprite(p));
+                }
+            }
+        }
+        // The red logo (`mnTitleLogoProcDisplay`): on child 3 while it
+        // follows, else at rest.
         let [cx, cy] = SPRITE_DESCS[KIND_LOGO].0;
-        let mut logo = Piece::clear(FILE_TITLE, sprite::LOGO_ANIM_FULL, cx, cy).prim([0xFF, 0, 0]);
+        let (centre, scale) = if self.logo_follows {
+            let [x, y, sx, sy] = self.logo_place;
+            ([x + 160.0, 120.0 - y], [sx, sy])
+        } else {
+            ([cx, cy], [1.0, 1.0])
+        };
+        let mut logo = Piece::clear(FILE_TITLE, sprite::LOGO_ANIM_FULL, centre[0], centre[1])
+            .prim([0xFF, 0, 0]);
         logo.centred = true;
+        logo.scale = scale;
         logo.alpha = Some(self.logo_alpha as u8);
         logo.solid = true;
         f(Draw::Sprite(logo));
@@ -534,6 +678,10 @@ impl Title {
                 None => (SPRITE_DESCS[KIND_PRESS_START].0, [1.0, 1.0]),
             };
             f(Self::label(KIND_PRESS_START, centre, scale));
+        }
+        // Camera 40's orthographic slash (link 2), until ejected at 111.
+        if self.slash_shown {
+            f(Draw::TitleSlash);
         }
         if self.black {
             f(Draw::Clear([0, 0, 0, 0xFF]));

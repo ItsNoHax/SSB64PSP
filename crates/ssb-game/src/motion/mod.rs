@@ -85,7 +85,7 @@ pub const DEMO_BIT: u32 = 0x2000_0000;
 pub struct DemoScripts {
     pub words: &'static [u32],
     /// Word index of each row's script, or [`NO_SCRIPT`].
-    pub rows: [u32; 15],
+    pub rows: [u32; 24],
 }
 
 /// The fighter's [`DemoScripts`] (every kind has one).

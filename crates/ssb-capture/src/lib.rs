@@ -631,10 +631,71 @@ pub enum GameScene {
     /// `autodemo`: the auto demo (`scAutoDemo`, RE-465) after Characters'
     /// demo. Diagnostic: outside the manifest.
     AutoDemo,
+    /// `opening`: the N64 logo (`mnStartup`) and the opening movie that
+    /// follows it (RE-467); `@tick` picks the moment. Diagnostic: outside
+    /// the manifest.
+    Opening,
+    /// `op-room`: the opening's room scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningRoom,
+    /// `op-portraits`: the opening's portraits scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningPortraits,
+    /// `op-mario`: the opening's mario scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningMario,
+    /// `op-donkey`: the opening's donkey scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningDonkey,
+    /// `op-link`: the opening's link scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningLink,
+    /// `op-samus`: the opening's samus scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningSamus,
+    /// `op-yoshi`: the opening's yoshi scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningYoshi,
+    /// `op-kirby`: the opening's kirby scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningKirby,
+    /// `op-fox`: the opening's fox scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningFox,
+    /// `op-pikachu`: the opening's pikachu scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningPikachu,
+    /// `op-run`: the opening's run scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningRun,
+    /// `op-cliff`: the opening's cliff scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningCliff,
+    /// `op-yamabuki`: the opening's yamabuki scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningYamabuki,
+    /// `op-jungle`: the opening's jungle scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningJungle,
+    /// `op-yoster`: the opening's yoster scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningYoster,
+    /// `op-sector`: the opening's sector scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningSector,
+    /// `op-standoff`: the opening's standoff scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningStandoff,
+    /// `op-clash`: the opening's clash scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningClash,
+    /// `op-newcomers`: the opening's newcomers scene from its first tic (RE-467).
+    /// Diagnostic: outside the manifest.
+    OpeningNewcomers,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 151] = [
+    pub const ALL: [GameScene; 171] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -786,6 +847,26 @@ impl GameScene {
         GameScene::VsTeamSteal,
         GameScene::Explain,
         GameScene::AutoDemo,
+        GameScene::Opening,
+        GameScene::OpeningRoom,
+        GameScene::OpeningPortraits,
+        GameScene::OpeningMario,
+        GameScene::OpeningDonkey,
+        GameScene::OpeningLink,
+        GameScene::OpeningSamus,
+        GameScene::OpeningYoshi,
+        GameScene::OpeningKirby,
+        GameScene::OpeningFox,
+        GameScene::OpeningPikachu,
+        GameScene::OpeningRun,
+        GameScene::OpeningCliff,
+        GameScene::OpeningYamabuki,
+        GameScene::OpeningJungle,
+        GameScene::OpeningYoster,
+        GameScene::OpeningSector,
+        GameScene::OpeningStandoff,
+        GameScene::OpeningClash,
+        GameScene::OpeningNewcomers,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -942,6 +1023,26 @@ impl GameScene {
             GameScene::VsTeamSteal => "vsteamsteal",
             GameScene::Explain => "explain",
             GameScene::AutoDemo => "autodemo",
+            GameScene::Opening => "opening",
+            GameScene::OpeningRoom => "op-room",
+            GameScene::OpeningPortraits => "op-portraits",
+            GameScene::OpeningMario => "op-mario",
+            GameScene::OpeningDonkey => "op-donkey",
+            GameScene::OpeningLink => "op-link",
+            GameScene::OpeningSamus => "op-samus",
+            GameScene::OpeningYoshi => "op-yoshi",
+            GameScene::OpeningKirby => "op-kirby",
+            GameScene::OpeningFox => "op-fox",
+            GameScene::OpeningPikachu => "op-pikachu",
+            GameScene::OpeningRun => "op-run",
+            GameScene::OpeningCliff => "op-cliff",
+            GameScene::OpeningYamabuki => "op-yamabuki",
+            GameScene::OpeningJungle => "op-jungle",
+            GameScene::OpeningYoster => "op-yoster",
+            GameScene::OpeningSector => "op-sector",
+            GameScene::OpeningStandoff => "op-standoff",
+            GameScene::OpeningClash => "op-clash",
+            GameScene::OpeningNewcomers => "op-newcomers",
         }
     }
 

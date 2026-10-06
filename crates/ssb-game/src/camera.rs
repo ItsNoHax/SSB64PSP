@@ -125,6 +125,20 @@ pub struct Camera {
     /// `game_type == nSCBattleGameTypeExplain`:
     /// `gmCameraGetPlayerNumZoomRange` frames three quarters as wide.
     pub is_explain: bool,
+    /// `gmCameraMakeMovieCamera` with its processes ended: an opening
+    /// scene moves `eye`, `at` and the roll itself (RE-467).
+    pub movie: Option<MovieView>,
+}
+
+/// The movie camera's own viewport, projection and roll
+/// (`syMatrixModLookAt`'s `up.x`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MovieView {
+    pub viewport: [f32; 4],
+    pub aspect: f32,
+    pub near: f32,
+    pub far: f32,
+    pub up_x: f32,
 }
 
 /// `EFCOMMON_QUAKE_MAGNITUDE`.
@@ -141,6 +155,7 @@ impl Default for Camera {
             quake: None,
             viewport: BATTLE_VIEWPORT,
             is_explain: false,
+            movie: None,
         }
     }
 }

@@ -375,15 +375,18 @@ def motion_descs(refs):
 
 # `nFTDemoStatusNull` .. `nFTDemoStatusIntroR`: the results' and selects'
 # rows 0..5, the continue screen's FigureDropped (9) and FigureStand (10)
-# and the 1P stage cards' IntroL (13) and IntroR (14).
-DEMO_ROWS = 15
+# and the 1P stage cards' IntroL (13) and IntroR (14); the opening movie's
+# run, jump, pulled, clash and stance rows (6, 7, 8, 11, 12) and its
+# fighter-specific statuses from 0x1000F (rows 15 to 23).
+DEMO_ROWS = 24
 
 
 def demo_rows(path, name, symbols):
-    """`dFT<name>SubMotionDescs[0..15]`'s scripts: the demo statuses
+    """`dFT<name>SubMotionDescs[0..24]`'s scripts: the demo statuses
     `nFTDemoStatusNull` .. `nFTDemoStatusIntroR` (`D_ovl1_80390BE8`'s
-    motion ids 0..14), as word indices or NONE_PTR. A shorter table has
-    no script past its end."""
+    motion ids 0..14) and the opening's fighter-specific rows 15..23, as
+    word indices or NONE_PTR. A shorter table has no script past its
+    end."""
     src = COMMENT_RE.sub(" ", open(path).read())
     m = re.search(r"FTMotionDesc dFT" + name + r"SubMotionDescs\[\]\s*=\s*\{(.*?)\n\};", src, re.S)
     words = [w.strip() for w in m.group(1).replace("{", " ").replace("}", " ").split(",") if w.strip()]

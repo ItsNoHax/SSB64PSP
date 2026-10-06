@@ -250,6 +250,11 @@ pub struct Generator {
     rotate_target: f32,
     move_to: Vec3,
     vortex_lifetime: u16,
+    /// `gn->dobj`'s world matrix (N64 rows, translation in row 3), which
+    /// the host keeps current: the generator emits from its translation,
+    /// its velocity turned by its rotation (`lbParticleGetPosVelDObj`).
+    /// The title's logo fire (RE-467).
+    pub dobj: Option<[[f32; 4]; 4]>,
 }
 
 impl Generator {
@@ -277,7 +282,31 @@ impl Generator {
         rotate_target: 0.0,
         move_to: Vec3::ZERO,
         vortex_lifetime: 0,
+        dobj: None,
     };
+}
+
+/// `lbParticleGetPosVelDObj`'s last part: the position from `m`'s
+/// translation and `vel` through its normalised rotation columns.
+fn pos_vel_dobj(m: &[[f32; 4]; 4], vel: Vec3) -> (Vec3, Vec3) {
+    let mut d = *m;
+    for c in 0..3 {
+        let len = sqrt(d[0][c] * d[0][c] + d[1][c] * d[1][c] + d[2][c] * d[2][c]);
+        if len != 0.0 {
+            for row in d.iter_mut().take(3) {
+                row[c] /= len;
+            }
+        }
+    }
+    let (x, y, z) = (vel.x, vel.y, vel.z);
+    (
+        Vec3::new(m[3][0], m[3][1], m[3][2]),
+        Vec3::new(
+            d[0][0] * x + d[1][0] * y + d[2][0] * z,
+            d[0][1] * x + d[1][1] * y + d[2][1] * z,
+            d[0][2] * x + d[1][2] * y + d[2][2] * z,
+        ),
+    )
 }
 
 /// A transform's `proc_dead`, run when its last user goes.
@@ -1499,9 +1528,14 @@ pub fn generator_func_run(p: &mut Particles, banks: &dyn Banks, dead: &mut dyn P
             }
         }
         let g = p.gens[gi];
-        let vel = g.vel;
+        let mut vel = g.vel;
         let (mut pv0, mut spb8) = (0.0, 0.0);
         if g.frame >= 1.0 {
+            if let Some(m) = g.dobj {
+                let (pos, v) = pos_vel_dobj(&m, vel);
+                vel = v;
+                p.gens[gi].pos = pos;
+            }
             match g.kind {
                 0 | 3 | 4 => {
                     let span = g.rotate_target - g.rotate_base;

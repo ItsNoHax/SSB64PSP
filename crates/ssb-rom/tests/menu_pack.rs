@@ -292,6 +292,32 @@ fn front_menus_draw_only_packed_sprites() {
             t.visit(&NoAnims, &mut |d| collect(&mut drawn)(d));
         }
     }
+    // The layout after the opening (RE-467): its logo tree places the
+    // cutout and strikes, unit-scaled here.
+    struct LogoAnims;
+    impl ssb_game::menu::title::Anims for LogoAnims {
+        fn labels(&self, _: usize, _: usize) -> Option<[f32; 4]> {
+            None
+        }
+        fn press_start(&self, _: usize) -> Option<[f32; 4]> {
+            None
+        }
+        fn logo(&self, _: usize, _: usize) -> Option<[f32; 4]> {
+            Some([0.0, 0.0, 1.0, 1.0])
+        }
+    }
+    let mut t = Title::new_opening(0);
+    for i in 0..400u32 {
+        t.tick(
+            &Pad::default(),
+            Scene::Opening(ssb_game::opening::Kind::Newcomers),
+            &mut demo,
+            &b,
+            (i * 13) as u8,
+            &mut |r| r - 1,
+        );
+        t.visit(&LogoAnims, &mut |d| collect(&mut drawn)(d));
+    }
     check(MenuScene::Title, &drawn);
 
     let mut drawn = BTreeSet::new();

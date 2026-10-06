@@ -58,6 +58,7 @@ pub mod modelpart;
 pub mod monster_weapon;
 pub mod motion;
 pub mod ness;
+pub mod opening;
 pub mod particle;
 pub mod pause;
 pub mod physics;
