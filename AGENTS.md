@@ -110,20 +110,29 @@ build, pack version and observations. Then run
   `DECISIONS.md`, `docs/porting-status.md`). Open only the records the batch
   needs.
 - Never bulk-read `docs/evidence/re/` or `plans/`.
-- Prefer symbol-level code search (Serena, when available) over reading
-  whole files. Semantic/vector search is deliberately not used; reconsider
-  only if the indexes stop being navigable.
 - Every turn re-reads the whole context, so cost grows with context size
   times turns. Past ~250K tokens, write a handoff note (done, next, open
   questions, file:line pointers) to scratchpad and continue in a fresh agent.
-- Delegate broad decomp/code searches to a read-only subagent (`Explore`)
-  that returns `file:line` answers. Cap your own searches (`rg -n -m 20`,
-  `sed -n` ranges); redirect verbose output to a file and grep it.
+- Decomp C: `tools/decomp.py fn|type|sym|refs NAME` prints one function,
+  type, symbol list or reference list in one call. Use it before grep/sed.
+- Rust: use Serena, not `sed`/Read over whole files. Load once with
+  ToolSearch `select:mcp__serena__get_symbols_overview,mcp__serena__find_symbol,mcp__serena__find_referencing_symbols`
+  (add `replace_symbol_body` for edits). Skip `initial_instructions`.
+  `get_symbols_overview` maps a file; `find_symbol` with
+  `include_body: true` and `relative_path` reads one item.
+- Delegate broad searches to a read-only subagent (`Explore`) that returns
+  `file:line` answers. Semantic/vector search is deliberately not used.
+- Read at most ~150 lines per call (`sed -n` ranges, `rg -n -m 20`); never
+  `cat` large files. Redirect verbose output to a file and grep it.
+- Batch independent lookups into one Bash call or parallel tool calls.
+- Never poll with `sleep`/`until` loops. Run long jobs with
+  `run_in_background` or wait with `Monitor`.
 - Edit existing files; never rewrite a whole file with Write.
 - Commands over 5 minutes expire the prompt cache and re-bill the whole
   context. While iterating, run `cargo test -p <crate>` and
-  `tools/golden.sh verify --filter REGEX` on affected scenes. Run full workspace tests and golden matrices once, in a
-  fresh low-context validation agent.
+  `tools/golden.sh verify --filter REGEX` on affected scenes. Run full
+  workspace tests and golden matrices once, in a fresh low-context
+  validation agent.
 
 ## Skill routing
 
