@@ -69,6 +69,7 @@ pub(crate) use hit::{queue_damage, touches_damage_coll, Attacker, Knock};
 mod heavy_tests;
 pub mod link_bomb;
 mod map;
+pub use map::set_explain;
 pub mod mball;
 pub mod mmonster;
 #[cfg(test)]

@@ -64,6 +64,10 @@ pub enum CameraMode {
     /// `nFTCameraModeEntry`: from `ftCommonAppearInitStatusVars` until
     /// "Go" (`ifCommonAnnounceGoSetStatus`), framed at the entry position.
     Entry,
+    /// `nFTCameraModeExplain`: How to Play's fighters from their appear
+    /// (`scExplainStartBattle`), framed like [`CameraMode::Entry`] until
+    /// their next status resets it.
+    Explain,
 }
 
 /// Which way `efManagerDeadExplodeMakeEffect` points the blast.

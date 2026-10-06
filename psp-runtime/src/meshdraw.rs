@@ -2973,6 +2973,61 @@ pub unsafe fn fill_rect_n64(rect: [f32; 4], rgba: [u8; 4], draw_state: &mut Draw
     draw_state.invalidate_all();
 }
 
+/// Flat triangles at N64 screen coordinates, blended by `rgba`'s alpha
+/// with no depth test: How to Play's stick arrows (RE-465).
+///
+/// # Safety
+///
+/// Between `begin_frame` and `end_frame`.
+pub unsafe fn fill_triangles_n64(tris: &[[[f32; 2]; 3]], rgba: [u8; 4], draw_state: &mut DrawState) {
+    #[repr(C, align(4))]
+    struct FillVertex {
+        color: u32,
+        x: f32,
+        y: f32,
+        z: f32,
+    }
+    if tris.is_empty() {
+        return;
+    }
+    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
+    let color = u32::from_le_bytes(rgba);
+    let count = tris.len() * 3;
+    let verts = sys::sceGuGetMemory((count * core::mem::size_of::<FillVertex>()) as i32) as *mut FillVertex;
+    for (i, [x, y]) in tris.iter().flatten().enumerate() {
+        verts.add(i).write(FillVertex {
+            color,
+            x: vx as f32 + x * k,
+            y: y * k,
+            z: 0.0,
+        });
+    }
+    sys::sceGuDisable(GuState::Texture2D);
+    sys::sceGuDisable(GuState::Lighting);
+    sys::sceGuDisable(GuState::DepthTest);
+    sys::sceGuDisable(GuState::CullFace);
+    sys::sceGuDisable(GuState::AlphaTest);
+    sys::sceGuEnable(GuState::Blend);
+    sys::sceGuBlendFunc(
+        sys::BlendOp::Add,
+        sys::BlendFactor::SrcAlpha,
+        sys::BlendFactor::OneMinusSrcAlpha,
+        0,
+        0,
+    );
+    sys::sceGuDrawArray(
+        GuPrimitive::Triangles,
+        VertexType::COLOR_8888 | VertexType::VERTEX_32BITF | VertexType::TRANSFORM_2D,
+        count as i32,
+        core::ptr::null(),
+        verts as *const c_void,
+    );
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuEnable(GuState::CullFace);
+    draw_state.invalidate_all();
+}
+
 /// A textured quad in the current model space, `[x0, y0, x1, y1]` with
 /// `(x0, y0)` the top-left texel corner, drawn with no depth test and
 /// blended by alpha. The texture modulates `color`: a sprite texture baked

@@ -15,6 +15,7 @@ extern crate alloc;
 
 pub mod appear;
 pub mod attack;
+pub mod auto_demo;
 pub mod backup;
 pub mod battle;
 pub mod boss;
@@ -31,6 +32,7 @@ pub mod countdown;
 pub mod dead;
 pub mod dokan;
 pub mod effect;
+pub mod explain;
 pub mod fighter;
 pub mod fighter_select;
 pub mod fteffect;
@@ -44,6 +46,7 @@ pub mod item_throw;
 pub mod item_use;
 #[cfg(test)]
 mod item_use_tests;
+pub mod key;
 pub mod kirby;
 pub mod kirby_copy;
 pub mod ko;

@@ -19,6 +19,7 @@ pub mod collision;
 pub mod dl;
 pub mod effect;
 pub mod ending;
+pub mod explain;
 pub mod figatree;
 pub mod fighter;
 pub mod filter_compensation;

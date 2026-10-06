@@ -50,10 +50,11 @@ pub fn tag_position(
         return None;
     }
     let xy = camera.project(f.pos + Vec3::new(0.0, zoom_base, 0.0));
-    in_bounds(xy).then(|| {
+    let (cx, cy) = camera.viewport_center();
+    camera.in_viewport(xy).then(|| {
         (
-            ((160.0 + xy.0 - f32::from(size[0]) * 0.5) as i32) as f32,
-            ((120.0 - xy.1 - f32::from(size[1])) as i32) as f32,
+            ((cx + xy.0 - f32::from(size[0]) * 0.5) as i32) as f32,
+            ((cy - xy.1 - f32::from(size[1])) as i32) as f32,
         )
     })
 }
@@ -73,10 +74,11 @@ pub fn item_arrow_position(
         return None;
     }
     let xy = camera.project(item.pos + Vec3::new(0.0, item.coll.top + 100.0, 0.0));
-    in_bounds(xy).then(|| {
+    let (cx, cy) = camera.viewport_center();
+    camera.in_viewport(xy).then(|| {
         (
-            ((160.0 + xy.0 - f32::from(size[0]) * 0.5) as i32) as f32,
-            ((120.0 - xy.1 - f32::from(size[1])) as i32) as f32,
+            ((cx + xy.0 - f32::from(size[0]) * 0.5) as i32) as f32,
+            ((cy - xy.1 - f32::from(size[1])) as i32) as f32,
         )
     })
 }
@@ -106,7 +108,7 @@ pub fn view(f: &Fighter, camera: &Camera, cam_offset_y: f32) -> View {
         probe += toward.normalized() * cam_offset_y;
     }
     let xy = camera.project(probe);
-    if in_bounds(xy) {
+    if camera.in_viewport(xy) {
         return View::default();
     }
     View {
@@ -139,9 +141,15 @@ pub fn magnify_scale(camera: &Camera) -> f32 {
 }
 
 /// Ray intersection with the inset viewport (`ifCommonPlayerMagnifyGetPosition`).
-pub fn magnify_position((x, y): (f32, f32), scale: f32) -> (f32, f32) {
-    let right = 150.0 - 20.0 * scale - 5.0;
-    let up = 110.0 - 20.0 * scale;
+pub fn magnify_position(xy: (f32, f32), scale: f32) -> (f32, f32) {
+    magnify_position_in(xy, scale, (150.0, 110.0))
+}
+
+/// [`magnify_position`] in a viewport `half` its size across and up
+/// (`gGMCameraStruct.viewport_width / 2`, `viewport_height / 2`).
+pub fn magnify_position_in((x, y): (f32, f32), scale: f32, half: (f32, f32)) -> (f32, f32) {
+    let right = half.0 - 20.0 * scale - 5.0;
+    let up = half.1 - 20.0 * scale;
     if x == 0.0 {
         return (0.0, if y > 0.0 { up } else { -up });
     }

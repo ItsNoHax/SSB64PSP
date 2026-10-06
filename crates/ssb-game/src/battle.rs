@@ -172,6 +172,10 @@ pub struct Battle {
     /// `sc1PGameBossDefeatInterfaceProcSet` ran this tick: the host changes
     /// the wallpaper and starts the defeat camera animation.
     pub boss_set: bool,
+    /// How to Play or the auto demo (`nSCBattleGameTypeExplain`,
+    /// `...Demo`): the scene makes no battle interface, so there is no
+    /// countdown, timer or pause, and "Go" is set at once.
+    pub is_demo: bool,
 }
 
 impl Battle {
@@ -208,8 +212,21 @@ impl Battle {
             boss_defeat: None,
             boss_wait: 0,
             boss_set: false,
+            is_demo: false,
         };
         b.init_placement();
+        b
+    }
+
+    /// `scExplainStartBattle` and `scAutoDemoStartBattle`'s battle:
+    /// `dSCManagerDefaultBattleState`'s time rule and two stocks, with no
+    /// timer (`ifCommonTimerMakeInterface` is not made) and the status
+    /// "Go" from the first frame.
+    pub fn new_demo(players: [Player; 4]) -> Battle {
+        let mut b = Battle::new(Rule::Time, TIMELIMIT_INFINITE, 2, players);
+        b.status = GameStatus::Go;
+        b.go_tick = 0;
+        b.is_demo = true;
         b
     }
 

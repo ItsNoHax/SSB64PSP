@@ -38,10 +38,14 @@ pub enum MenuScene {
     VsOptions = 10,
     VsItemSwitch = 11,
     Players1PBonus = 12,
+    /// How to Play (`scExplain`): its window's sprites, the stick's,
+    /// spark's and overlay's textures and the scene's data blobs
+    /// ([`crate::explain`]).
+    Explain = 13,
 }
 
 impl MenuScene {
-    pub const ALL: [MenuScene; 13] = [
+    pub const ALL: [MenuScene; 14] = [
         MenuScene::Option,
         MenuScene::ScreenAdjust,
         MenuScene::BackupClear,
@@ -55,6 +59,7 @@ impl MenuScene {
         MenuScene::VsOptions,
         MenuScene::VsItemSwitch,
         MenuScene::Players1PBonus,
+        MenuScene::Explain,
     ];
 
     /// The scene's sprites (`dMN*FileIDs`, those it draws).
@@ -79,6 +84,7 @@ impl MenuScene {
             MenuScene::VsOptions => &[COMMON_OPTIONS, COMMON_SLASH, VS_OPTIONS],
             MenuScene::VsItemSwitch => &[VS_ITEM_SWITCH],
             MenuScene::Players1PBonus => &[BONUS_GAME_MODES, BONUS_RECORDS],
+            MenuScene::Explain => &[crate::explain::SPRITES],
         }
     }
 

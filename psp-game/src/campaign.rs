@@ -260,6 +260,7 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
         },
         items: switches,
         damage_ratio: ssb_game::stale::DAMAGE_RATIO_DEFAULT,
+        demo: false,
     };
     s.enter(pack, gkind, roster, Some(rules));
     s.scene_gkind = gkind;

@@ -33,14 +33,24 @@ pub const POSITION_Y: i32 = 210;
 /// `ifCommonPlayerStockMakeStockSnap`: where a lost stock's burst starts,
 /// the player's interface position (`efManagerStockSnapMakeEffect`).
 pub fn stock_snap_position(pos_x: i32) -> (f32, f32) {
-    (pos_x as f32, POSITION_Y as f32)
+    stock_snap_position_at(pos_x, POSITION_Y)
+}
+
+/// [`stock_snap_position`] at interface height `pos_y`.
+pub fn stock_snap_position_at(pos_x: i32, pos_y: i32) -> (f32, f32) {
+    (pos_x as f32, pos_y as f32)
 }
 
 /// `ifCommonPlayerScoreMakeEffect`: the "+1" or "-1" at the player's
 /// interface position (`dIFCommonPlayerScorePositionOffsetsX` is all 0)
 /// and 13 below it, in the effect camera's quarter pixels.
 pub fn score_position(pos_x: i32) -> ssb_engine::math::Vec3 {
-    ssb_engine::math::Vec3::new((pos_x << 2) as f32, ((POSITION_Y + 13) << 2) as f32, 0.0)
+    score_position_at(pos_x, POSITION_Y)
+}
+
+/// [`score_position`] at interface height `pos_y`.
+pub fn score_position_at(pos_x: i32, pos_y: i32) -> ssb_engine::math::Vec3 {
+    ssb_engine::math::Vec3::new((pos_x << 2) as f32, ((pos_y + 13) << 2) as f32, 0.0)
 }
 
 /// `IFPlayerSteal` and `ifCommonPlayerStockSteal*` (RE-464): the stolen
@@ -65,7 +75,12 @@ pub const STOCK_STEAL_FRAMES: u8 = 30;
 /// Where `efManagerStockStealStartMakeEffect` and `...EndMakeEffect` burst:
 /// a player's first stock icon's centre.
 pub fn steal_effect_position(pos_x: i32) -> (f32, f32) {
-    ((pos_x + STOCK_ICON_X) as f32, (POSITION_Y - 20) as f32)
+    steal_effect_position_at(pos_x, POSITION_Y)
+}
+
+/// [`steal_effect_position`] at interface height `pos_y`.
+pub fn steal_effect_position_at(pos_x: i32, pos_y: i32) -> (f32, f32) {
+    ((pos_x + STOCK_ICON_X) as f32, (pos_y - 20) as f32)
 }
 
 impl StockSteal {
@@ -73,10 +88,22 @@ impl StockSteal {
     /// `stolen`'s stocks (interface position `stolen_pos_x`) towards the
     /// thief's (`thief_pos_x`).
     pub fn make(stolen: u8, stolen_pos_x: i32, thief_pos_x: i32, w: u16, h: u16) -> StockSteal {
+        Self::make_at(stolen, stolen_pos_x, thief_pos_x, POSITION_Y, w, h)
+    }
+
+    /// [`StockSteal::make`] at interface height `pos_y`.
+    pub fn make_at(
+        stolen: u8,
+        stolen_pos_x: i32,
+        thief_pos_x: i32,
+        pos_y: i32,
+        w: u16,
+        h: u16,
+    ) -> StockSteal {
         let half_w = (f32::from(w) * 0.5) as i32;
         let half_h = (f32::from(h) * 0.5) as i32;
         let steal_pos_x = (stolen_pos_x + STOCK_ICON_X - half_w) as u16;
-        let steal_pos_y = (POSITION_Y - half_h - 20) as u16;
+        let steal_pos_y = (pos_y - half_h - 20) as u16;
         let target_pos_x = (thief_pos_x + STOCK_ICON_X - half_w) as u16;
         StockSteal {
             stolen,
@@ -120,8 +147,13 @@ pub const CPU_COLOR: usize = 4;
 /// `h` emblem, truncated to whole pixels. It is drawn first, whether or not
 /// the digits show.
 pub fn emblem_origin(pos_x: i32, w: u16, h: u16) -> (f32, f32) {
+    emblem_origin_at(pos_x, POSITION_Y, w, h)
+}
+
+/// [`emblem_origin`] at interface height `pos_y`.
+pub fn emblem_origin_at(pos_x: i32, pos_y: i32, w: u16, h: u16) -> (f32, f32) {
     let x = (pos_x as f32 - f32::from(w) * 0.5) + 3.0;
-    let y = (POSITION_Y as f32 - f32::from(h) * 0.5) - 3.0;
+    let y = (pos_y as f32 - f32::from(h) * 0.5) - 3.0;
     (x as i32 as f32, y as i32 as f32)
 }
 
@@ -141,8 +173,20 @@ pub fn stock_icons(
     w: u16,
     h: u16,
 ) -> impl Iterator<Item = (f32, f32)> {
+    stock_icons_at(pos_x, POSITION_Y, stocks, single, w, h)
+}
+
+/// [`stock_icons`] at interface height `pos_y`.
+pub fn stock_icons_at(
+    pos_x: i32,
+    pos_y: i32,
+    stocks: i8,
+    single: bool,
+    w: u16,
+    h: u16,
+) -> impl Iterator<Item = (f32, f32)> {
     let base_x = pos_x + STOCK_ICON_X;
-    let y = ((POSITION_Y - (f32::from(h) * 0.5) as i32) - 20) as f32;
+    let y = ((pos_y - (f32::from(h) * 0.5) as i32) - 20) as f32;
     let count = if stocks < 0 {
         0
     } else if single {
@@ -272,6 +316,9 @@ pub struct DamageDisplay {
     /// [`POSITION_X`], or the 1P Game's
     /// (`sc1PGameSetPlayerInterfacePositions`).
     pub pos_x: i32,
+    /// `gIFCommonPlayerInterface.player_pos_y`: [`POSITION_Y`], or How to
+    /// Play's 150.
+    pub pos_y: i32,
     /// `players[player].fkind == nFTKindBoss`: the display counts Master
     /// Hand's hit points down from 300 and ends in the `H.P` glyph.
     pub is_boss: bool,
@@ -344,6 +391,18 @@ impl DamageDisplay {
 
     /// [`DamageDisplay::at`] for Master Hand's hit points when `is_boss`.
     pub fn at_kind(player: usize, damage: i32, pos_x: i32, is_boss: bool) -> DamageDisplay {
+        Self::at_place(player, damage, pos_x, POSITION_Y, is_boss)
+    }
+
+    /// [`DamageDisplay::at_kind`] at interface height `pos_y`
+    /// (`scExplainSetPlayerInterfacePositions`).
+    pub fn at_place(
+        player: usize,
+        damage: i32,
+        pos_x: i32,
+        pos_y: i32,
+        is_boss: bool,
+    ) -> DamageDisplay {
         let mut d = DamageDisplay {
             player,
             damage,
@@ -358,6 +417,7 @@ impl DamageDisplay {
             dead_stopupdate_wait: 180,
             is_show_interface: false,
             pos_x,
+            pos_y,
             is_boss,
         };
         d.update(damage, false);
@@ -432,7 +492,7 @@ impl DamageDisplay {
                 let sprite_id = digits[digit_id as usize];
                 c.image_id = sprite_id;
                 let offset = DIGIT_WIDTHS[usize::from(sprite_id)] as f32 * scale;
-                c.pos = (pos_x - offset * 0.5, POSITION_Y as f32);
+                c.pos = (pos_x - offset * 0.5, self.pos_y as f32);
                 pos_x -= offset;
                 c.hidden = false;
             }

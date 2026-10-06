@@ -385,7 +385,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // script files, and the room's tissues graph. No layout change.
 // 104 makes the wipes' photo the whole 300 x 220 RGB565 picture, with the
 // strips' absolute texel coordinates (RE-464). No layout change.
-pub const VERSION: u32 = 104;
+// 105 adds How to Play's stage wallpaper (`ROLE_WALLPAPER`, `GRKind` 11) and
+// the menu packs' How to Play scene (RE-465). No layout change.
+pub const VERSION: u32 = 105;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

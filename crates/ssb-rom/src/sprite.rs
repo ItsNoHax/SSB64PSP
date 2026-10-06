@@ -24,6 +24,8 @@ pub const BITMAP_SIZE: usize = 16;
 
 /// `SP_TRANSPARENT`: drawn with `G_RM_XLU_SURF`.
 pub const SP_TRANSPARENT: u16 = 0x0001;
+/// `SP_HIDDEN`: the `SObj` is not drawn.
+pub const SP_HIDDEN: u16 = 0x0004;
 pub const SP_FASTCOPY: u16 = 0x0020;
 /// `SP_TEXSHUF`: 32-bit strips are stored shuffled.
 pub const SP_TEXSHUF: u16 = 0x0200;

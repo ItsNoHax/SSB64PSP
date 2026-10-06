@@ -25,6 +25,7 @@ extern crate alloc;
 
 mod campaign;
 mod capture;
+mod demo_screen;
 mod menus_screen;
 mod play;
 mod player_screen;
@@ -122,6 +123,10 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::Characters => 90,
         // The title from tic 169: "Press Start" shows at tic 280 (RE-462).
         GameScene::Title => 140,
+        // The title's demos (RE-465): How to Play's tap-the-stick phase,
+        // the auto demo's focus on player 1.
+        GameScene::Explain => 300,
+        GameScene::AutoDemo => 420,
         GameScene::ModeSelect | GameScene::OnePMode => 40,
         GameScene::VsOptions | GameScene::ItemSwitch => 40,
         // The bonus select places a fighter at tick 40.
@@ -468,7 +473,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         // hand reached.
         (GameScene::BonusSelect | GameScene::BonusPractice, 40) => return N64Buttons(N64Buttons::A),
         (GameScene::BonusPractice, 50) => return N64Buttons(N64Buttons::START),
-        (GameScene::Option | GameScene::ScreenAdjust | GameScene::BackupClear | GameScene::DataMenu | GameScene::VsRecord | GameScene::Characters | GameScene::Title | GameScene::ModeSelect | GameScene::OnePMode | GameScene::VsOptions | GameScene::ItemSwitch | GameScene::BonusSelect | GameScene::BonusPractice, _) => {
+        (GameScene::Option | GameScene::ScreenAdjust | GameScene::BackupClear | GameScene::DataMenu | GameScene::VsRecord | GameScene::Characters | GameScene::Title | GameScene::ModeSelect | GameScene::OnePMode | GameScene::VsOptions | GameScene::ItemSwitch | GameScene::BonusSelect | GameScene::BonusPractice | GameScene::Explain | GameScene::AutoDemo, _) => {
             return N64Buttons(0)
         }
         _ => {}
@@ -1088,7 +1093,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
 /// (`ftCommonKneeBendCheckButtonTap`'s `R_CBUTTONS|L_CBUTTONS|D_CBUTTONS|
 /// U_CBUTTONS`) -- not a debug stand-in. `SSB64_GAME_MAPPING` maps each PSP
 /// D-pad direction to one of these raw N64 C-button bits.
-const JUMP_BUTTON_MASK: u16 =
+pub(crate) const JUMP_BUTTON_MASK: u16 =
     N64Buttons::C_UP | N64Buttons::C_DOWN | N64Buttons::C_LEFT | N64Buttons::C_RIGHT;
 
 /// N64-stick deflection used by the temporary front end for a single menu
@@ -1125,6 +1130,29 @@ fn log_entry_state(
     player: Option<&play::FighterScene>,
     dummy: Option<&play::Dummy>,
 ) {
+    // `explain`'s fighters each frame, against an N64 trace (RE-465).
+    if capture_scene == Some(GameScene::Explain) {
+        for f in [player.map(|p| &p.fighter), dummy.map(|d| &d.fighter)].into_iter().flatten() {
+            let line = alloc::format!(
+                "re465 tick={} port={} status={:?} damage={} x={:.1} y={:.1} lr={:?}\n",
+                sim_frame_index,
+                f.port,
+                f.status.status,
+                f.damage,
+                f.pos.x,
+                f.pos.y,
+                f.facing,
+            );
+            unsafe {
+                psp::sys::sceIoWrite(
+                    psp::sys::sceKernelStdout(),
+                    line.as_ptr() as *const core::ffi::c_void,
+                    line.len(),
+                );
+            }
+        }
+        return;
+    }
     if !matches!(
         capture_scene,
         Some(GameScene::VsArwing | GameScene::VsCar | GameScene::VsBall | GameScene::VsRays)
@@ -1488,6 +1516,7 @@ unsafe fn training_step(
     effects: &mut dyn ssb_game::effect::HitEffectSink,
     bonus: Option<&mut ssb_game::spgame::bonus_stage::BonusStage>,
     mut battle: Option<&mut ssb_game::battle::Battle>,
+    lead: &mut play::Lead,
 ) {
     material_anim.tick(p);
     let Some(stage) = p.stage(stage_index) else {
@@ -1514,6 +1543,7 @@ unsafe fn training_step(
         controller,
         locked,
         effects,
+        lead,
     );
     // Bonus2's priority-4 process observes the fighter after interrupts,
     // before priority-3 movement, item hits and death scoring.
@@ -1666,6 +1696,7 @@ fn interrupt_pass(
     // The VS countdown locks every fighter's control, the CPUs' too.
     locked: bool,
     effects: &mut dyn ssb_game::effect::HitEffectSink,
+    lead: &mut play::Lead,
 ) {
     // Real jump binding (RE-295): any N64 C-button tap is a
     // real `FTCOMMON_KNEEBEND` button-jump input
@@ -1685,7 +1716,24 @@ fn interrupt_pass(
         campaign::refresh_boss_targets(&mut scenes(pl, dummies));
         if i == 0 {
             items.publish(&mut pl.fighter);
-            pl.tick_fighter_interrupt(p, stage, controller, jump_held, groups);
+            let (input, jump) = match lead {
+                play::Lead::Pad => (controller, jump_held),
+                _ if locked => (ControllerState::default(), false),
+                play::Lead::Key(key) => play::key_input(key),
+                play::Lead::Computer(computer) => {
+                    let all = scenes_ref(pl, dummies);
+                    let opponents: alloc::vec::Vec<_> = all
+                        .into_iter()
+                        .flatten()
+                        .filter(|x| ssb_game::computer::behave::is_opponent(&pl.fighter, &x.fighter))
+                        .map(|x| ssb_game::computer::behave::opponent(&x.fighter))
+                        .collect();
+                    let sight = play::CpuSight::observe(pl.fighter.port, items, weapons, stage_ctl);
+                    let input = play::computer_input(computer, pl, p, stage, groups, &opponents, &sight, false);
+                    (input, false)
+                }
+            };
+            pl.tick_fighter_interrupt(p, stage, input, jump, groups);
         } else {
             // The CPU's fighter walks skip itself and its team.
             let all = scenes_ref(pl, dummies);
@@ -1835,7 +1883,16 @@ fn tick_battle_camera(stage: &ssb_rom::pack::StageDesc, s: &mut [Option<&mut pla
             count += 1;
         }
     }
+    // The auto demo's focus follows its fighter as this tick left it.
+    let focus = s[0].as_deref().and_then(|pl| pl.demo_zoom).and_then(|z| {
+        let f = s.iter().flatten().find(|f| f.fighter.port == z.port)?;
+        Some((f.fighter.pos, f.cam_offset_y))
+    });
     if let Some(pl) = s[0].as_deref_mut() {
+        if let (Some(z), Some((pos, cam_offset_y))) = (pl.demo_zoom.as_mut(), focus) {
+            z.pos = pos;
+            z.cam_offset_y = cam_offset_y;
+        }
         pl.tick_camera(stage, &others[..count]);
     }
 }
@@ -2526,6 +2583,11 @@ struct VsRules {
     items: ssb_game::item::normal::Switches,
     /// VS Options' damage ratio (percent).
     damage_ratio: u8,
+    /// How to Play or the auto demo: `dSCManagerDefaultBattleState`'s
+    /// rules with no battle interface ([`ssb_game::battle::Battle::new_demo`]),
+    /// each fighter facing away from its side of the stage (`desc.lr`) and
+    /// not entering.
+    demo: bool,
 }
 
 impl VsRules {
@@ -2541,6 +2603,7 @@ impl VsRules {
             toggles: !0,
         },
         damage_ratio: ssb_game::stale::DAMAGE_RATIO_DEFAULT,
+        demo: false,
     };
 
     /// The rules `mnPlayersVSSetSceneData` left in the battle state.
@@ -2555,6 +2618,7 @@ impl VsRules {
             },
             items: state.item_switches(),
             damage_ratio: state.damage_ratio,
+            demo: false,
         }
     }
 }
@@ -2618,9 +2682,12 @@ unsafe fn training_frame(
     mut bonus: Option<&mut ssb_game::spgame::bonus_stage::BonusStage>,
     // Master Hand's stage (`sc1pgameboss.c`).
     mut boss: Option<&mut campaign::BossScene>,
+    // What drives port 0: the pad, or a title demo's script or CPU.
+    lead: &mut play::Lead,
 ) -> bool {
     use ssb_game::battle::{Frame, GameStatus};
-    if let Some(b) = battle.as_mut() {
+    // How to Play and the auto demo make no battle interface: no pause.
+    if let Some(b) = battle.as_mut().filter(|b| !b.is_demo) {
         pause_frame(p, stage_index, pl, dummies, damage_hud, b, controller, pressed, bonus.as_deref_mut());
         if bonus.as_ref().is_some_and(|stage| stage.retry_requested) {
             return true;
@@ -2717,6 +2784,7 @@ unsafe fn training_frame(
         sink,
         bonus.as_deref_mut(),
         battle.as_mut(),
+        lead,
     );
     // The effect and interface processes after the fighters': the KO
     // explosions (with their particles) and the screen flash.
@@ -2759,7 +2827,7 @@ unsafe fn training_frame(
             }
         }
         _ => {
-            if let Some(b) = battle.as_ref() {
+            if let Some(b) = battle.as_ref().filter(|b| !b.is_demo) {
                 tick_countdown(p, damage_hud, b);
                 entry_frame(p, pl, dummies, damage_hud, b);
             }
@@ -2810,6 +2878,9 @@ struct Hud {
     bonus_timer: Option<ssb_game::spgame::bonus_stage::PracticeTimer>,
     /// Black scene-entry fade alpha for a campaign bonus course.
     bonus_fade_alpha: u8,
+    /// The title demos' fade in from black (`lbFadeMakeActor`, display
+    /// link 10 of the battle camera, RE-465).
+    demo_fade_alpha: u8,
     /// The boss wallpaper's closing fade this frame
     /// (`sc1PGameBossProcDisplayFadeAlpha`/`...FadeColor`): RGBA over
     /// the battle viewport.
@@ -2959,6 +3030,7 @@ impl Hud {
             bonus_tasks: None,
             bonus_timer: None,
             bonus_fade_alpha: 0,
+            demo_fade_alpha: 0,
             boss_fade: None,
             damage: core::array::from_fn(|port| ssb_game::hud::DamageDisplay::new(port, 0)),
             countdown: None,
@@ -3050,6 +3122,7 @@ fn start_sudden_death(
         // `gSCManagerVSBattleState` keeps the battle's items and ratio.
         items: world.items.normal_switches,
         damage_ratio: ssb_game::stale::damage_ratio(),
+        demo: false,
     };
     // `gSCManagerVSBattleState`: only the tied players.
     let tied: Roster = core::array::from_fn(|port| roster[port].filter(|_| sudden.players[port].present));
@@ -3108,16 +3181,16 @@ fn fall_effects(
     let Some(own) = displays.get(usize::from(f.port)) else {
         return;
     };
-    let (x, y) = ssb_game::hud::stock_snap_position(own.pos_x);
+    let (x, y) = ssb_game::hud::stock_snap_position_at(own.pos_x, own.pos_y);
     rt.effects.stock_snap(rt.particles, rt.banks, x, y);
     if !battle.is_some_and(|b| b.is_show_score()) {
         return;
     }
     rt.effects
-        .battle_score(rt.particles, rt.banks, ssb_game::hud::score_position(own.pos_x), -1);
+        .battle_score(rt.particles, rt.banks, ssb_game::hud::score_position_at(own.pos_x, own.pos_y), -1);
     if let Some(scorer) = f.damage_player.and_then(|k| displays.get(usize::from(k))) {
         rt.effects
-            .battle_score(rt.particles, rt.banks, ssb_game::hud::score_position(scorer.pos_x), 1);
+            .battle_score(rt.particles, rt.banks, ssb_game::hud::score_position_at(scorer.pos_x, scorer.pos_y), 1);
     }
 }
 
@@ -3137,7 +3210,7 @@ fn stock_steal_frame(
     steals: &mut [Option<ssb_game::hud::StockSteal>; 4],
     mut rt: Option<&mut ssb_game::effect::EffectRuntime<'_>>,
 ) {
-    use ssb_game::hud::{steal_effect_position, StockSteal};
+    use ssb_game::hud::{steal_effect_position_at, StockSteal};
     for thief in 0..4 {
         let Some(f) = s[thief].as_deref_mut().map(|x| &mut x.fighter) else {
             continue;
@@ -3163,9 +3236,9 @@ fn stock_steal_frame(
         let Some(icon) = p.fighter_sprite(kind as u8, ssb_rom::pack::SpriteDesc::ROLE_STOCK, costume) else {
             continue;
         };
-        steals[thief] = Some(StockSteal::make(stolen, from.pos_x, to.pos_x, icon.width, icon.height));
+        steals[thief] = Some(StockSteal::make_at(stolen, from.pos_x, to.pos_x, from.pos_y, icon.width, icon.height));
         if let Some(rt) = rt.as_deref_mut() {
-            let (x, y) = steal_effect_position(from.pos_x);
+            let (x, y) = steal_effect_position_at(from.pos_x, from.pos_y);
             rt.effects.stock_steal_start(rt.particles, rt.banks, x, y);
         }
     }
@@ -3173,7 +3246,7 @@ fn stock_steal_frame(
         if slot.as_mut().is_some_and(|steal| !steal.update()) {
             *slot = None;
             if let (Some(rt), Some(to)) = (rt.as_deref_mut(), displays.get(thief)) {
-                let (x, y) = steal_effect_position(to.pos_x);
+                let (x, y) = steal_effect_position_at(to.pos_x, to.pos_y);
                 rt.effects.stock_steal_end(rt.particles, rt.banks, x, y);
             }
         }
@@ -3186,6 +3259,7 @@ fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     world.damage_hud.bonus_tasks = None;
     world.damage_hud.bonus_timer = None;
     world.damage_hud.bonus_fade_alpha = 0;
+    world.damage_hud.demo_fade_alpha = 0;
     world.damage_hud.boss_fade = None;
     world.damage_hud.countdown = None;
     world.damage_hud.ko = ssb_game::ko::KoEffects::default();
@@ -3591,7 +3665,16 @@ fn enter_training(
                 .enumerate()
                 .filter(|&(j, e)| j != port && e.is_some_and(|e| e.team != me.team))
                 .filter_map(|(_, e)| e.as_ref().and_then(spawn_x));
-            f.fighter.facing = ssb_game::battle::start_facing(f.fighter.pos.x, others);
+            f.fighter.facing = if rules.demo {
+                // `desc.lr = (desc.pos.x >= 0.0F) ? -1 : +1`.
+                if f.fighter.pos.x >= 0.0 {
+                    ssb_game::fighter::Facing::Left
+                } else {
+                    ssb_game::fighter::Facing::Right
+                }
+            } else {
+                ssb_game::battle::start_facing(f.fighter.pos.x, others)
+            };
             f.fighter.dead.stock_rule = stock_rule;
             f.fighter.dead.team_battle = rules.team_rules.is_team_battle;
             f.fighter.stocks = rules.stocks;
@@ -3599,8 +3682,11 @@ fn enter_training(
             // totals, which the results save.
             f.fighter.stats.enable();
             // `ftManagerMakeFighter`: a VS fighter waits hidden for its
-            // entry (`ftCommonEntrySetStatus`).
-            ssb_game::appear::entry_set_status(&mut f.fighter);
+            // entry (`ftCommonEntrySetStatus`); the demos' fighters are set
+            // up by their scenes.
+            if !rules.demo {
+                ssb_game::appear::entry_set_status(&mut f.fighter);
+            }
             players[port] = ssb_game::battle::Player {
                 present: true,
                 is_human: port == 0 && me.human,
@@ -3612,6 +3698,9 @@ fn enter_training(
         for d in world.dummies.iter_mut().flatten() {
             d.computer.trait_kind = ssb_game::computer::attack::Trait::Default;
             d.computer.behavior = ssb_game::computer::Behavior::Default;
+        }
+        if rules.demo {
+            return ssb_game::battle::Battle::new_demo(players);
         }
         ssb_game::battle::Battle::new(rules.rule, rules.time_limit, rules.stocks, players).with_teams(
             rules.team_rules.is_team_battle,
@@ -3748,13 +3837,20 @@ unsafe fn draw_frame(
                 s.vs_battle.as_ref(),
                 s.wallpaper_sprite.as_ref().map(|sprite| (sprite, &s.wallpaper)),
                 s.training_paused,
-                s.training_menu.as_ref().is_none_or(|m| m.magnify_display) && !magnify_hidden,
-                s.roster.map(|x| x.is_some_and(|x| !x.human)),
+                s.training_menu.as_ref().is_none_or(|m| m.magnify_display)
+                    && s.demo.as_ref().is_none_or(demo_screen::magnify_display)
+                    && !magnify_hidden,
+                // The demos tag each player by its number (`players[].tag
+                // = player`).
+                if s.demo.is_some() { [false; 4] } else { s.roster.map(|x| x.is_some_and(|x| !x.human)) },
                 s.campaign
                     .as_ref()
                     .and_then(|c| c.boss.as_deref())
                     .and_then(|b| b.effects.as_ref().map(|e| (e, &b.wallpaper))),
             );
+            if let Some(demo) = s.demo.as_ref() {
+                demo_screen::draw(gpu, pack.as_ref(), draw_state, demo);
+            }
             if let (Some(p), Some(menu), Some(pl)) = (pack.as_ref(), s.training_menu.as_mut(), s.play_state.as_ref()) {
                 let dummy = s.dummies[0].as_ref().map(|x| &x.fighter);
                 if !s.training_paused {
@@ -3794,6 +3890,10 @@ unsafe fn session_frame(
         match s.screen {
             Screen::CaptureIntro => {
                 if let Some((scene, prev)) = capture_scene.and_then(capture_menu) {
+                    // The title picks the demo fighters on its way out.
+                    if scene == MScene::AutoDemo {
+                        s.menus.demo.set_demo_fighter_kinds(&s.backup, &mut ssb_game::rng::rand_int_range);
+                    }
                     go_scene(s, pack.as_ref(), scene, prev, true);
                 } else if pressed.contains(N64Buttons::A) || pressed.contains(N64Buttons::START) {
                     s.screen = Screen::CaptureMenu;
@@ -4015,6 +4115,13 @@ unsafe fn session_frame(
                 ssb_game::dead::set_dead_up_star(&mut pl.fighter);
             }
         }
+        // The title demos' exit: A, B or START on the pad (any
+        // controller's `button_tap`).
+        let demo_tapped = pressed.contains(N64Buttons::A | N64Buttons::B | N64Buttons::START);
+        let mut demo_load = None;
+        if s.screen == Screen::Training && s.demo.is_some() {
+            demo_load = demo_screen::before_world(s, pack.as_ref(), demo_tapped);
+        }
         if let (Screen::Training, false, Some(p), Some(pl)) = (s.screen, lag_tic, &pack, s.play_state.as_mut()) {
             let (campaign_session, bonus_stage, boss_scene) = s.campaign.as_mut().map_or((None, None, None), |c|
                 (c.frontend.session.as_deref_mut(), c.bonus.as_deref_mut(), c.boss.as_deref_mut()));
@@ -4037,11 +4144,16 @@ unsafe fn session_frame(
                 campaign_session,
                 bonus_stage,
                 boss_scene,
+                &mut s.lead,
             );
             if let Some(m) = s.training_menu.as_mut() {
                 m.tick_processes();
             }
+            if s.demo.is_some() {
+                demo_load = demo_load.or(demo_screen::after_world(s, demo_tapped));
+            }
             let magnify_display = s.training_menu.as_ref().is_none_or(|m| m.magnify_display)
+                && s.demo.as_ref().is_none_or(demo_screen::magnify_display)
                 && !boss_magnify_hidden(s)
                 && s.vs_battle.as_ref().is_none_or(|b| {
                     matches!(
@@ -4063,6 +4175,13 @@ unsafe fn session_frame(
                     f.fighter.physics.vel_air = ssb_engine::math::Vec3::ZERO;
                 }
             }
+        }
+        // A title demo's `syTaskmanSetLoadScene`.
+        if let Some(next) = demo_load {
+            let from = s.menus.scene;
+            demo_screen::leave(s);
+            go_scene(s, pack.as_ref(), next, from, capture_scene.is_some());
+            return;
         }
         // `scVSBattleStartScene`: a tied time battle goes to sudden
         // death on the same stage, then to the results.
@@ -4287,6 +4406,11 @@ struct Session {
     /// The battle's wallpaper `SObj` and its sprite (RE-419).
     wallpaper: ssb_game::wallpaper::Wallpaper,
     wallpaper_sprite: Option<ssb_rom::pack::SpriteDesc>,
+    /// What drives port 0: the pad, or in the title's demos How to Play's
+    /// input script or the auto demo's CPU.
+    lead: play::Lead,
+    /// The running title demo (`scExplain`, `scAutoDemo`, RE-465).
+    demo: Option<demo_screen::Demo>,
 }
 
 impl Session {
@@ -4460,6 +4584,8 @@ unsafe fn run() -> ! {
         stage_preview: stage_screen::start(),
         wallpaper: ssb_game::wallpaper::Wallpaper::make(ssb_game::wallpaper::Kind::Static),
         wallpaper_sprite: None,
+        lead: play::Lead::Pad,
+        demo: None,
     });
     // Stage MObj material joints are process-lifetime clocks in the original
     // layer setup. Start once with this pack and advance in the same simulation
@@ -4667,6 +4793,8 @@ fn capture_menu(scene: GameScene) -> Option<(ssb_game::menu::Scene, ssb_game::me
         GameScene::DataMenu => (Scene::Data, Scene::ModeSelect),
         GameScene::VsRecord | GameScene::Characters => (Scene::Data, Scene::ModeSelect),
         GameScene::Title => (Scene::Title, Scene::Startup),
+        GameScene::Explain => (Scene::Explain, Scene::Title),
+        GameScene::AutoDemo => (Scene::AutoDemo, Scene::Characters),
         GameScene::ModeSelect => (Scene::ModeSelect, Scene::Title),
         GameScene::OnePMode => (Scene::OnePMode, Scene::ModeSelect),
         GameScene::VsOptions => (Scene::VsOptions, Scene::VsMode),
@@ -4781,6 +4909,18 @@ fn start_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MS
             s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
             s.players_vs_fighters = None;
             s.screen = Screen::PlayersVs;
+        }
+        // The title's demos (RE-465); without their data each is skipped
+        // along its own exit.
+        MScene::Explain => {
+            if !demo_screen::start_explain(s, pack) {
+                go_scene(s, pack, MScene::Characters, MScene::Explain, capture);
+            }
+        }
+        MScene::AutoDemo => {
+            if !demo_screen::start_auto_demo(s, pack) {
+                go_scene(s, pack, MScene::Startup, MScene::AutoDemo, capture);
+            }
         }
         // Not reached yet: the menus run every other scene they name, and
         // the bonus practices' select is wired below.
@@ -6479,9 +6619,10 @@ fn draw_particles(
         return;
     };
     let view = ssb_engine::math::Mat4::look_at(pl.camera.eye, pl.camera.at, ssb_engine::math::Vec3::Y);
+    let (w, h) = pl.camera.viewport_size();
     let proj = ssb_engine::math::Mat4::perspective(
         pl.camera.fovy_degrees.to_radians(),
-        ssb_game::camera::BATTLE_VIEWPORT_WIDTH / ssb_game::camera::BATTLE_VIEWPORT_HEIGHT,
+        w / h,
         ssb_game::camera::DEFAULT_NEAR,
         ssb_game::camera::DEFAULT_FAR,
     );
@@ -6989,6 +7130,12 @@ unsafe fn draw_training(
 
     gpu.begin_frame(Some(BG_TRAINING));
     gpu.set_viewport_pillarboxed();
+    // `gmCameraSetViewportDimensions`: How to Play's battle cameras (the
+    // wallpaper's among them) stop above its window.
+    let viewport = pl.camera.viewport;
+    if viewport != ssb_game::camera::BATTLE_VIEWPORT {
+        gpu.set_viewport_n64(viewport);
+    }
     if stage.source_file == ssb_rom::ground_obj::BONUS3_FILE {
         meshdraw::fill_rect_n64([10.0, 10.0, 310.0, 230.0], [0, 0, 0, 255], draw_state);
     }
@@ -7003,13 +7150,14 @@ unsafe fn draw_training(
         draw_state.begin_frame();
         effects.draw(gpu, p, draw_state, controller, 2);
     }
-    gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
+    gpu.set_viewport_n64(viewport);
     // Tags, culling and magnifier scale use this camera's live projection.
     // Its default is 38 degrees; entry/pause zooms ease to their source FOV.
     // `dGMCameraPerspDefault` supplies near 256 and far 39,936 (RE-421/440).
+    let (viewport_w, viewport_h) = pl.camera.viewport_size();
     gpu.set_perspective(
         pl.camera.fovy_degrees,
-        ssb_game::camera::BATTLE_VIEWPORT_WIDTH / ssb_game::camera::BATTLE_VIEWPORT_HEIGHT,
+        viewport_w / viewport_h,
         ssb_game::camera::DEFAULT_NEAR,
         ssb_game::camera::DEFAULT_FAR,
     );
@@ -7123,8 +7271,12 @@ unsafe fn draw_training(
             draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera, false);
         }
     }
-    // Link 10: the entry effects, the trapping egg, the halo, the impact
-    // wave and particle list 4.
+    // Link 10: the title demos' fade (made before any effect), the entry
+    // effects, the trapping egg, the halo, the impact wave and particle
+    // list 4.
+    if damage_hud.demo_fade_alpha != 0 {
+        meshdraw::fill_rect_n64(viewport, [0, 0, 0, damage_hud.demo_fade_alpha], draw_state);
+    }
     draw_egg_effects(
         gpu,
         p,
@@ -7329,7 +7481,7 @@ unsafe fn draw_training(
         ssb_psp_runtime::particles::draw_screen(
             &banks,
             &mut damage_hud.particles,
-            ssb_game::camera::BATTLE_VIEWPORT,
+            viewport,
             &ssb_psp_runtime::particles::LINK25_LISTS,
             draw_state,
         );
@@ -7367,6 +7519,10 @@ unsafe fn draw_training(
         damage_hud.colors,
         cpu_ports,
     );
+    // `gmCameraMakeInterfaceCamera`'s scissor is the battle viewport.
+    if viewport != ssb_game::camera::BATTLE_VIEWPORT {
+        gpu.set_viewport_n64(viewport);
+    }
     draw_damage_hud(p, draw_state, &damage_hud.damage, emblems, stage_index);
     if let Some(count) = damage_hud.bonus_tasks {
         let offset = if ssb_rom::bonus2::kind(stage.source_file).is_some() { ssb_rom::campaign::OBJECTIVES_PLATFORM } else { ssb_rom::campaign::OBJECTIVES_TARGET };
@@ -7396,12 +7552,9 @@ unsafe fn draw_training(
         draw_announce(p, draw_state, end);
     }
     if damage_hud.bonus_fade_alpha != 0 {
-        meshdraw::fill_rect_n64(
-            [10.0, 10.0, 310.0, 230.0],
-            [0, 0, 0, damage_hud.bonus_fade_alpha],
-            draw_state,
-        );
+        meshdraw::fill_rect_n64(viewport, [0, 0, 0, damage_hud.bonus_fade_alpha], draw_state);
     }
+    gpu.set_viewport_pillarboxed();
 }
 
 #[inline(never)]
@@ -7435,8 +7588,10 @@ unsafe fn draw_magnifiers(
         if !v.offscreen || !v.eligible {
             continue;
         }
-        let xy = logic::magnify_position(v.direction, scale);
-        let (x, y) = (160.0 + xy.0, 120.0 - xy.1);
+        let (w, h) = camera.viewport_size();
+        let xy = logic::magnify_position_in(v.direction, scale, ((w * 0.5) as i32 as f32, (h * 0.5) as i32 as f32));
+        let (cx, cy) = camera.viewport_center();
+        let (x, y) = (cx + xy.0, cy - xy.1);
         let color = logic::MAGNIFY_COLORS[usize::from(colors[port]).min(4)];
         let fog = f
             .fighter
@@ -7612,7 +7767,7 @@ fn draw_damage_hud(
         };
         let emblem = p.fighter_sprite(kind as u8, ssb_rom::pack::SpriteDesc::ROLE_EMBLEM, 0);
         if let (Some(sprite), Some(colors)) = (emblem, emblem_colors) {
-            let (x, y) = ssb_game::hud::emblem_origin(d.pos_x, sprite.width, sprite.height);
+            let (x, y) = ssb_game::hud::emblem_origin_at(d.pos_x, d.pos_y, sprite.width, sprite.height);
             let [r, g, b] = colors[color];
             unsafe {
                 let d = meshdraw::SObjDraw {
@@ -7732,11 +7887,11 @@ fn draw_stocks(
         let single = hud
             .single_stock
             .map_or(b.rule == ssb_game::battle::Rule::Time, |s| s[player]);
-        let pos_x = hud.damage[player].pos_x;
+        let (pos_x, pos_y) = (hud.damage[player].pos_x, hud.damage[player].pos_y);
         let Some(icon) = p.fighter_sprite(f.kind as u8, ssb_rom::pack::SpriteDesc::ROLE_STOCK, f.costume) else {
             continue;
         };
-        for (x, y) in ssb_game::hud::stock_icons(pos_x, f.stocks, single, icon.width, icon.height) {
+        for (x, y) in ssb_game::hud::stock_icons_at(pos_x, pos_y, f.stocks, single, icon.width, icon.height) {
             draw_plain(p, draw_state, &icon, x, y);
         }
     }

@@ -2,10 +2,9 @@
 //! and the 1P mode menu (RE-462), and Option, Screen Adjust, Backup Clear,
 //! Data, VS Record and Characters (RE-461).
 //!
-//! The title's demos that are not ported (How to Play, the N64 logo and
-//! opening movie, the auto demo) are skipped along the way each would
-//! leave: How to Play on to Characters' demo, the auto demo and the N64
-//! logo back to the title.
+//! The title's demos, How to Play and the auto demo, run on the host's
+//! battle (`demo_screen`, RE-465); the N64 logo and the opening movie it
+//! starts are not ported and are skipped back to the title.
 //!
 //! Each scene's sprites come from its own pack in `ssb64-menus.pak`
 //! (`ssb_rom::menu_pack`), read when the scene starts and dropped when it
@@ -146,16 +145,15 @@ impl Menus {
     }
 
     /// Loads `next` after `from` (`syTaskmanSetLoadScene`): a menu starts
-    /// here; a demo that is not ported is skipped along its own exit; any
-    /// other scene leaves the menus and is returned for the host.
+    /// here; a scene that is not ported is skipped along its own exit; any
+    /// other scene (the title's demos among them) leaves the menus and is
+    /// returned for the host.
     pub(crate) fn go(&mut self, mut next: Scene, mut from: Scene, host: &mut Host<'_, '_>) -> Option<Scene> {
         loop {
             let (skip_to, skipped) = match next {
-                // `scExplain` ends on Characters' demo.
-                Scene::Explain => (Scene::Characters, Scene::Explain),
-                // `scAutoDemo` ends on `mnStartup`, which goes to the
-                // title when skipped.
-                Scene::AutoDemo | Scene::Startup => (Scene::Title, Scene::Startup),
+                // `mnStartup` (the N64 logo, then the opening movie) goes
+                // to the title when skipped.
+                Scene::Startup => (Scene::Title, Scene::Startup),
                 // Sound Test is not ported: back to Data with its tab.
                 Scene::SoundTest => (Scene::Data, Scene::SoundTest),
                 scene if Self::is_menu(scene) => {

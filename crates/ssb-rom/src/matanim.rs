@@ -481,6 +481,8 @@ pub struct MaterialJoint {
     start: usize,
     /// `mobj->matanim_joint.event32 = NULL` ([`Self::clear_script`]).
     cleared: bool,
+    /// `mobj->anim_frame`.
+    anim_frame: f32,
 }
 
 /// Ten material tracks (`nGCAnimTrackMaterialStart..`) plus five colour
@@ -555,7 +557,14 @@ impl MaterialJoint {
             ended: false,
             start: script as usize,
             cleared: false,
+            anim_frame: frame,
         }
+    }
+
+    /// `mobj->anim_frame`: frames played since the script (re)started,
+    /// rebased by `SetAnim` (How to Play's stick fires its spark on 15).
+    pub fn anim_frame(&self) -> f32 {
+        self.anim_frame
     }
 
     /// `mobj->matanim_joint.event32 = NULL` (`itBombHeiExplodeWaitInitVars`,
@@ -658,6 +667,7 @@ impl MaterialJoint {
             self.changed = false;
         } else {
             self.anim_wait -= speed;
+            self.anim_frame += speed;
             if self.anim_wait > 0.0 {
                 return Ok(());
             }
@@ -683,6 +693,7 @@ impl MaterialJoint {
                             t.length += speed + self.anim_wait;
                         }
                     }
+                    self.anim_frame = self.anim_wait;
                     self.ended = true;
                     return Ok(());
                 }
@@ -691,6 +702,9 @@ impl MaterialJoint {
                 OP_JUMP | OP_SET_ANIM => {
                     let target = u32_at(data, self.pc).ok_or(MatAnimError::Truncated { at })?;
                     self.pc = target as usize;
+                    if opcode == OP_SET_ANIM {
+                        self.anim_frame = -self.anim_wait;
+                    }
                     if self.pc == at {
                         return Err(MatAnimError::TooLong);
                     }

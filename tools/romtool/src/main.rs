@@ -3679,6 +3679,14 @@ fn write_menu_packs(files: &[Option<ssb_rom::archive::File>], swizzle: bool, out
         if scene == MenuScene::Title {
             add_title_anims(&mut writer, file(ssb_rom::title::FILE)?)?;
         }
+        if scene == MenuScene::Explain {
+            sprites += add_explain(
+                &mut writer,
+                file(ssb_rom::explain::FILE_MAIN)?,
+                file(ssb_rom::explain::FILE_GRAPHICS)?,
+                swizzle,
+            )?;
+        }
         let bytes = writer.finish();
         ssb_rom::pack::Pack::open(&bytes)
             .map_err(|e| format!("menu pack {scene:?} will not load: {e:?}"))?;
@@ -3693,6 +3701,72 @@ fn write_menu_packs(files: &[Option<ssb_rom::archive::File>], swizzle: bool, out
         bytes.len()
     );
     Ok(())
+}
+
+/// How to Play's raw textures as sprites keyed by their texture's offset,
+/// and its three data blobs (`ssb_rom::explain`). Returns the sprites
+/// added.
+fn add_explain(
+    writer: &mut ssb_rom::pack::PackWriter,
+    main: &ssb_rom::archive::File,
+    graphics: &ssb_rom::archive::File,
+    swizzle: bool,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    use ssb_rom::explain as ex;
+    use ssb_rom::psp_texture::{pack_rgba, Psm};
+    let mut images = Vec::new();
+    for &at in &ex::STICK_TEXTURES {
+        images.push((
+            at,
+            ex::stick_texture(graphics, at).ok_or(format!("explain stick {at:#x}"))?,
+        ));
+    }
+    for &at in &ex::SPARK_TEXTURES {
+        images.push((
+            at,
+            ex::spark_texture(graphics, at).ok_or(format!("explain spark {at:#x}"))?,
+        ));
+    }
+    images.push((
+        ex::RGB_TEXTURE,
+        ex::rgb_texture(graphics).ok_or("explain overlay")?,
+    ));
+    let count = images.len();
+    for (at, image) in images {
+        let texture = writer.add_texture(&pack_rgba(&image, Psm::Psm8888, swizzle), true, true);
+        writer.add_sprite(ssb_rom::pack::SpriteDesc {
+            source_file: ex::FILE_GRAPHICS,
+            source_offset: at,
+            texture,
+            width: image.width as u16,
+            height: image.height as u16,
+            color: [0xFF; 4],
+            attr: 0,
+            flags: 0,
+            fighter: 0,
+            role: ssb_rom::pack::SpriteDesc::ROLE_NONE,
+            costume: 0,
+            _pad: 0,
+        });
+    }
+    let blobs = [
+        (
+            ex::PHASES_SLOT,
+            ex::phase_table(main).ok_or("explain phase table")?,
+        ),
+        (
+            ex::KEYS_SLOT,
+            ex::key_scripts(main).ok_or("explain input scripts")?,
+        ),
+        (
+            ex::ANIMS_SLOT,
+            ex::anim_bytes(graphics).ok_or("explain animations")?,
+        ),
+    ];
+    for (slot, bytes) in blobs {
+        writer.add_anim(ssb_rom::pack::AnimDesc::EFFECT, slot, slot, 1, &bytes, &[]);
+    }
+    Ok(count)
 }
 
 /// `mnTitle`'s labels and "Press Start" trees played ahead
@@ -6829,7 +6903,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         Ok(())
     };
     let vs = (0u8..).zip(ssb_rom::stage::VS_GROUND_FILES.map(|_| ssb_rom::stage::MAP_HEADER));
-    for (gkind, header) in vs.chain(ssb_rom::stage::ONE_P_WALLPAPER_GROUNDS) {
+    let others = ssb_rom::stage::ONE_P_WALLPAPER_GROUNDS
+        .into_iter()
+        .chain([ssb_rom::stage::EXPLAIN_WALLPAPER_GROUND]);
+    for (gkind, header) in vs.chain(others) {
         let map_id = ssb_rom::stage::COMMON_GROUND_FILES[usize::from(gkind)];
         let map = loaded
             .files

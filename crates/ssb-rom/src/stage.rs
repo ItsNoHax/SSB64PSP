@@ -396,6 +396,11 @@ pub const COMMON_GROUND_FILES: [u32; 17] = [
 /// Final Destination. Race to the Finish has none.
 pub const ONE_P_WALLPAPER_GROUNDS: [(u8, u32); 4] = [(12, 0x14), (13, 0x14), (14, 0x14), (16, 0)];
 
+/// How to Play's stage (`nGRKindExplain`), whose header
+/// (`llGRExplainMapMapHeader`) is at 0: `grWallpaperMakeCommon` draws its
+/// wallpaper.
+pub const EXPLAIN_WALLPAPER_GROUND: (u8, u32) = (11, 0);
+
 /// `GRKind` of a common stage's `GR*Map` file.
 pub fn common_ground_kind(file: u32) -> Option<u8> {
     COMMON_GROUND_FILES

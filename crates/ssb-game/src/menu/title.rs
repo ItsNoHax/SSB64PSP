@@ -104,6 +104,9 @@ pub struct DemoData {
     pub demo_mask_prev: u16,
     pub demo_fkind: [FighterKind; 2],
     pub demo_first_fkind: FighterKind,
+    /// `demo_gkind_order`: the auto demo's next stage
+    /// (`dSCAutoDemoGroundOrder`).
+    pub demo_gkind_order: u8,
 }
 
 impl Default for DemoData {
@@ -115,18 +118,19 @@ impl Default for DemoData {
             demo_mask_prev: 0,
             demo_fkind: [FighterKind::Mario; 2],
             demo_first_fkind: FighterKind::Mario,
+            demo_gkind_order: 0,
         }
     }
 }
 
-/// `mnTitleGetFighterKindsNum`.
-fn kinds_num(mask: u16) -> i32 {
+/// `mnTitleGetFighterKindsNum` (and `scAutoDemoGetFighterKindsNum`).
+pub(crate) fn kinds_num(mask: u16) -> i32 {
     mask.count_ones() as i32
 }
 
 /// `mnTitleGetShuffledFighterKind`: the `random`th kind of `this_mask` not
-/// in `prev_mask`.
-fn shuffled_kind(this_mask: u16, prev_mask: u16, random: i32) -> usize {
+/// in `prev_mask` (and `scAutoDemoGetShuffledFighterKind`).
+pub(crate) fn shuffled_kind(this_mask: u16, prev_mask: u16, random: i32) -> usize {
     let mut fkind: i32 = -1;
     let mut random = random + 1;
     loop {
@@ -141,7 +145,7 @@ fn shuffled_kind(this_mask: u16, prev_mask: u16, random: i32) -> usize {
     }
 }
 
-fn kind_of(i: usize) -> FighterKind {
+pub(crate) fn kind_of(i: usize) -> FighterKind {
     FighterKind::from_ordinal(i as u8).unwrap_or(FighterKind::Mario)
 }
 

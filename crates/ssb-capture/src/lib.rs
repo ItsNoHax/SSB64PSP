@@ -625,10 +625,16 @@ pub enum GameScene {
     /// twice and, asleep, steals a stock from the CPU on its team with
     /// START (RE-464).
     VsTeamSteal,
+    /// `explain`: How to Play (`scExplain`, RE-465) from the title, its
+    /// fighters on their input scripts. Diagnostic: outside the manifest.
+    Explain,
+    /// `autodemo`: the auto demo (`scAutoDemo`, RE-465) after Characters'
+    /// demo. Diagnostic: outside the manifest.
+    AutoDemo,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 149] = [
+    pub const ALL: [GameScene; 151] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -778,6 +784,8 @@ impl GameScene {
         GameScene::BonusSelect,
         GameScene::BonusPractice,
         GameScene::VsTeamSteal,
+        GameScene::Explain,
+        GameScene::AutoDemo,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -932,6 +940,8 @@ impl GameScene {
             GameScene::BonusSelect => "bonusselect",
             GameScene::BonusPractice => "bonuspractice",
             GameScene::VsTeamSteal => "vsteamsteal",
+            GameScene::Explain => "explain",
+            GameScene::AutoDemo => "autodemo",
         }
     }
 

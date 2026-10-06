@@ -1081,6 +1081,10 @@ pub struct FighterScene {
     /// `gmCameraSetStatusPlayerZoom`): the fighter's `closeup_camera_zoom`.
     /// `None` runs the battle camera.
     pub player_zoom: Option<f32>,
+    /// The auto demo's focus (`scAutoDemoSetCameraPlayerZoom`), on any
+    /// player's fighter: the host refreshes its target before each camera
+    /// tick. `None` runs the battle camera.
+    pub demo_zoom: Option<DemoZoom>,
     /// `FTAttributes.cam_offset_y` (`refs/ssb-decomp-re/src/ft/fttypes.h`) --
     /// deliberately *not* part of `PhysicsAttributes` (that struct's own doc
     /// comment already carves camera offsets out as belonging to "other
@@ -1254,6 +1258,7 @@ impl FighterScene {
             bonus_follow: false,
             camera_status: None,
             player_zoom: None,
+            demo_zoom: None,
             cam_offset_y,
             camera_zoom_frame,
             shadow_size,
@@ -1430,7 +1435,7 @@ impl FighterScene {
         let f = &self.fighter;
         let (mut target, facing) = match f.dead.camera_mode {
             CameraMode::Ghost => return None,
-            CameraMode::Entry => (f.entry.pos, f.entry.lr.unwrap_or(f.facing)),
+            CameraMode::Entry | CameraMode::Explain => (f.entry.pos, f.entry.lr.unwrap_or(f.facing)),
             CameraMode::DeadUp => (f.dead.up_pos, f.facing),
             CameraMode::Default => (f.pos, f.facing),
         };
@@ -1513,6 +1518,13 @@ impl FighterScene {
         };
         // `gmCameraPlayerZoomFuncCamera`: the battle camera while the
         // fighter is out of the camera bounds.
+        if let Some(z) = self.demo_zoom {
+            if ssb_game::pause::kind_for(z.pos, bounds) != ssb_game::pause::PauseKind::PlayerNA {
+                let target = ssb_engine::math::Vec3::new(z.pos.x, z.pos.y + z.cam_offset_y, z.pos.z);
+                self.camera.tick_player_zoom(target, z.eye, z.dist, z.pan_scale, z.fov);
+                return;
+            }
+        }
         if let Some(dist) = self.player_zoom {
             let pos = self.fighter.pos;
             if ssb_game::pause::kind_for(pos, bounds) != ssb_game::pause::PauseKind::PlayerNA {
@@ -1534,12 +1546,15 @@ impl FighterScene {
             list[count] = interest;
             count += 1;
         }
-        self.camera.tick_interests(
-            &list[..count],
-            bounds,
-            stage.camera_light_angle_z,
-            vw as f32 / vh as f32,
-        );
+        // How to Play's battle viewport (300 x 150) frames by its own
+        // aspect; the full battle viewport keeps the screen's.
+        let aspect = if self.camera.viewport == ssb_game::camera::BATTLE_VIEWPORT {
+            vw as f32 / vh as f32
+        } else {
+            let (w, h) = self.camera.viewport_size();
+            w / h
+        };
+        self.camera.tick_interests(&list[..count], bounds, stage.camera_light_angle_z, aspect);
     }
 
     /// Advances one tick against the stage: fighter physics/collision and
@@ -1712,6 +1727,23 @@ pub fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
         ssb_game::fighter::Facing::Right => core::f32::consts::FRAC_PI_2,
         ssb_game::fighter::Facing::Left => -core::f32::consts::FRAC_PI_2,
     }
+}
+
+/// `gmCameraSetStatusPlayerZoom(fighter, eye_x, eye_y, dist, pan, fov)`
+/// as the auto demo sets it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DemoZoom {
+    /// The fighter's port.
+    pub port: u8,
+    /// `pzoom_eye_x`, `pzoom_eye_y` in radians.
+    pub eye: (f32, f32),
+    /// `pzoom_dist`: the fighter's `closeup_camera_zoom`.
+    pub dist: f32,
+    pub pan_scale: f32,
+    pub fov: f32,
+    /// The fighter's translation and `cam_offset_y` at this tick.
+    pub pos: ssb_engine::math::Vec3,
+    pub cam_offset_y: f32,
 }
 
 /// A camera status set over the battle camera.

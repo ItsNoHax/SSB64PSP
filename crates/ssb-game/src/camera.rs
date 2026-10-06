@@ -119,6 +119,12 @@ pub struct Camera {
     /// `DObj`'s translation `(y, z)` (`efManagerQuakeProcUpdate`), which
     /// [`Self::vel_at`] scales and `gmCameraApplyVel` adds to `at`.
     pub quake: Option<(f32, f32)>,
+    /// `gmCameraSetViewportDimensions`: the battle cameras' `ulx, uly,
+    /// lrx, lry`, [`BATTLE_VIEWPORT`] but in How to Play.
+    pub viewport: [f32; 4],
+    /// `game_type == nSCBattleGameTypeExplain`:
+    /// `gmCameraGetPlayerNumZoomRange` frames three quarters as wide.
+    pub is_explain: bool,
 }
 
 /// `EFCOMMON_QUAKE_MAGNITUDE`.
@@ -133,6 +139,8 @@ impl Default for Camera {
             target_dist: DEFAULT_TARGET_DIST,
             pause_eye: (0.0, 0.0),
             quake: None,
+            viewport: BATTLE_VIEWPORT,
+            is_explain: false,
         }
     }
 }
@@ -209,7 +217,8 @@ impl Camera {
             "the original battle supports at most four fighters"
         );
         let count = interests.len().min(4);
-        let (interest, hz, vt) = calculate_interest(&interests[..count], bounds);
+        let zoom_scale = if self.is_explain { 0.75 } else { 1.0 };
+        let (interest, hz, vt) = calculate_interest_scaled(&interests[..count], bounds, zoom_scale);
 
         let vel = self.vel_at();
         self.advance(interest, hz, vt, light_angle_z_radians, viewport_aspect);
@@ -316,7 +325,8 @@ impl Camera {
     /// `gmCameraLookAtFuncMatrix` lowers it only when a matrix element passes
     /// 32000.
     pub fn project(&self, p: Vec3) -> (f32, f32) {
-        let aspect = BATTLE_VIEWPORT_WIDTH / BATTLE_VIEWPORT_HEIGHT;
+        let (width, height) = self.viewport_size();
+        let aspect = width / height;
         let cot = 1.0 / original_tan(self.fovy_degrees.to_radians() * 0.5);
         // `guLookAtF`: Look points from `at` back to the eye.
         let look = (self.at - self.eye).normalized() * -1.0;
@@ -330,9 +340,30 @@ impl Camera {
             w = if w < 0.0 { -0.1 } else { 0.1 };
         }
         // `viewport.vp.vscale / 4`: half the viewport in pixels.
+        (width * 0.5 * (x / w), height * 0.5 * (y / w))
+    }
+
+    /// `gGMCameraStruct.viewport_center_x` and `_y`.
+    pub fn viewport_center(&self) -> (f32, f32) {
         (
-            BATTLE_VIEWPORT_WIDTH * 0.5 * (x / w),
-            BATTLE_VIEWPORT_HEIGHT * 0.5 * (y / w),
+            ((self.viewport[0] + self.viewport[2]) * 0.5) as i32 as f32,
+            ((self.viewport[1] + self.viewport[3]) * 0.5) as i32 as f32,
+        )
+    }
+
+    /// `gmCameraCheckTargetInBounds`: a [`Self::project`]ed point inside
+    /// the viewport.
+    pub fn in_viewport(&self, (x, y): (f32, f32)) -> bool {
+        let (w, h) = self.viewport_size();
+        let (w, h) = ((w * 0.5) as i32 as f32, (h * 0.5) as i32 as f32);
+        (-w..=w).contains(&x) && (-h..=h).contains(&y)
+    }
+
+    /// `gGMCameraStruct.viewport_width` and `viewport_height`.
+    pub fn viewport_size(&self) -> (f32, f32) {
+        (
+            self.viewport[2] - self.viewport[0],
+            self.viewport[3] - self.viewport[1],
         )
     }
 }
@@ -347,8 +378,19 @@ pub const BATTLE_VIEWPORT_WIDTH: f32 = 300.0;
 pub const BATTLE_VIEWPORT_HEIGHT: f32 = 220.0;
 
 /// `gmCameraUpdateInterests`: clamp and union every fighter's asymmetric box.
+#[cfg(test)]
 fn calculate_interest(interests: &[Interest], bounds: Bounds) -> (Vec3, f32, f32) {
-    let zoom = [0.0, ONE_PLAYER_ZOOM, 1.32, 1.16, 1.0][interests.len()];
+    calculate_interest_scaled(interests, bounds, 1.0)
+}
+
+/// [`calculate_interest`] with `gmCameraGetPlayerNumZoomRange`'s range
+/// times `zoom_scale`.
+fn calculate_interest_scaled(
+    interests: &[Interest],
+    bounds: Bounds,
+    zoom_scale: f32,
+) -> (Vec3, f32, f32) {
+    let zoom = [0.0, ONE_PLAYER_ZOOM, 1.32, 1.16, 1.0][interests.len()] * zoom_scale;
     let (mut gm_left, mut gm_right, mut gm_bottom, mut gm_top) =
         (65536.0f32, -65536.0f32, 65536.0f32, -65536.0f32);
     for interest in interests {

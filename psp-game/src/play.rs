@@ -37,6 +37,9 @@ pub struct Dummy {
     /// `gSCManagerBattleState->game_type == nSCBattleGameType1PGame`, which
     /// the CPU's item tracking reads.
     pub is_1p_game: bool,
+    /// How to Play's input script (`nFTPlayerKindGameKey`), which drives
+    /// the fighter instead of the CPU.
+    pub key: Option<ssb_game::key::Key>,
 }
 
 impl Deref for Dummy {
@@ -112,6 +115,7 @@ impl Dummy {
             scene,
             computer,
             is_1p_game: false,
+            key: None,
         }
     }
 
@@ -127,19 +131,84 @@ impl Dummy {
         sight: &CpuSight,
         locked: bool,
     ) {
-        let surfaces = || ssb_psp_runtime::scene::MapSegments::with_groups(pack, stage, groups);
         // `ftMainProcInterrupt`: a fighter whose control is locked
-        // (`is_control_disable`) runs no CPU at all.
-        let controller = if locked {
-            ssb_engine::input::ControllerState::default()
+        // (`is_control_disable`) runs no CPU or script at all.
+        let (controller, jump_held) = if locked {
+            (ssb_engine::input::ControllerState::default(), false)
+        } else if let Some(key) = self.key.as_mut() {
+            key_input(key)
         } else {
-            let world = cpu_world(stage, surfaces, opponents, sight, self.is_1p_game);
-            self.computer.process(&self.scene.fighter, &world);
-            self.computer.controller()
+            let input = computer_input(
+                &mut self.computer,
+                &self.scene,
+                pack,
+                stage,
+                groups,
+                opponents,
+                sight,
+                self.is_1p_game,
+            );
+            (input, false)
         };
         self.scene
-            .tick_fighter_interrupt(pack, stage, controller, false, groups);
+            .tick_fighter_interrupt(pack, stage, controller, jump_held, groups);
     }
+}
+
+/// `ftKeyProcessKeyEvents`, then `cp` as the fighter reads it; its
+/// C-buttons jump as a pad's do.
+pub fn key_input(key: &mut ssb_game::key::Key) -> (ssb_engine::input::ControllerState, bool) {
+    key.process();
+    let c = key.controller();
+    (c, c.buttons.contains(crate::JUMP_BUTTON_MASK))
+}
+
+/// `ftComputerProcessAll` for `scene`'s fighter: the CPU's controller.
+#[allow(clippy::too_many_arguments)]
+pub fn computer_input(
+    computer: &mut ssb_game::computer::Computer,
+    scene: &FighterScene,
+    pack: &Pack<'_>,
+    stage: &StageDesc,
+    groups: &[ssb_game::map::MapGroup],
+    opponents: &[ssb_game::computer::behave::Opponent],
+    sight: &CpuSight,
+    is_1p_game: bool,
+) -> ssb_engine::input::ControllerState {
+    let surfaces = || ssb_psp_runtime::scene::MapSegments::with_groups(pack, stage, groups);
+    let world = cpu_world(stage, surfaces, opponents, sight, is_1p_game);
+    computer.process(&scene.fighter, &world);
+    computer.controller()
+}
+
+/// What drives the fighter on port 0: the pad, or in the title's demos an
+/// input script (How to Play) or a CPU (the auto demo).
+#[derive(Default)]
+pub enum Lead {
+    #[default]
+    Pad,
+    Key(ssb_game::key::Key),
+    Computer(alloc::boxed::Box<ssb_game::computer::Computer>),
+}
+
+/// `ftComputerSetupAll` for a CPU on port 0, as [`Dummy::at_spawn`] sets
+/// one up, running `behavior` with `trait_kind`.
+pub fn lead_computer(
+    pack: &Pack<'_>,
+    stage: &StageDesc,
+    scene: &FighterScene,
+    level: u8,
+    behavior: ssb_game::computer::Behavior,
+    trait_kind: ssb_game::computer::attack::Trait,
+) -> ssb_game::computer::Computer {
+    let mut computer = ssb_game::computer::Computer::setup(&scene.fighter, level);
+    computer.behavior = behavior;
+    computer.trait_kind = trait_kind;
+    let surfaces = || ssb_psp_runtime::scene::MapSegments::new(pack, stage);
+    let sight = CpuSight::default();
+    let world = cpu_world(stage, surfaces, &[], &sight, false);
+    computer.setup_world(&scene.fighter, &world);
+    computer
 }
 
 /// `gSCManagerBattleState->players[dummy].level` in Training.
