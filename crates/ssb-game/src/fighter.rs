@@ -713,7 +713,10 @@ impl Fighter {
             return;
         }
         self.situation = Situation::Air;
-        crate::physics::transfer_ground_to_air(&mut self.physics);
+        // `mpCommonSetFighterAir`: `vel_air` already holds the last ground
+        // step (`ftPhysicsSetGroundVelTransferAir`); only its depth stops.
+        self.physics.vel_ground = Vec3::ZERO;
+        self.physics.vel_air.z = 0.0;
     }
 
     /// Lands, clearing air state.
@@ -1115,13 +1118,9 @@ impl Fighter {
         let mut motion = self.root_motion;
         motion.delta *= self.attributes.size;
         if self.is_grounded() {
-            // `motion` is already scaled by `attr->size` above.
-            crate::physics::apply_ground_vel_transn(
-                &mut self.physics,
-                motion,
-                self.facing.sign(),
-                1.0,
-            );
+            // `motion` is already scaled by `attr->size` above; the step
+            // follows TopN's yaw (`lr * rotate.y < 0` flips it).
+            crate::physics::apply_ground_vel_transn(&mut self.physics, motion, self.topn_lr, 1.0);
             let want =
                 self.pos + Vec3::new(self.physics.vel_ground.x, 0.0, self.physics.vel_ground.z);
             let stop = !matches!(
@@ -1140,7 +1139,13 @@ impl Fighter {
                 crate::status::set_fall(self);
             }
         } else {
-            crate::physics::apply_air_vel_transn_all(&mut self.physics, motion, self.facing.sign());
+            // `motion` is already scaled by `attr->size` above.
+            crate::physics::apply_air_vel_transn_all(
+                &mut self.physics,
+                motion,
+                self.facing.sign(),
+                1.0,
+            );
             let mut want = self.pos + self.physics.vel_air;
             let speed = map::line_speed(surfaces, self.cliff.line);
             if let Some((y, _)) = map::floor_point(surfaces, self.cliff.line, want.x + speed.x) {
@@ -1286,16 +1291,89 @@ impl Fighter {
         }
     }
 
+    /// The ground statuses' `proc_map` when `mpProcessUpdateMain` finds no
+    /// floor under the fighter (`mpCommonSetFighterFallOnGroundBreak` and
+    /// the specials' own air switches): the status falls or switches to its
+    /// aerial counterpart.
+    fn on_ground_break(&mut self) {
+        crate::item_throw::on_floor_lost(self);
+        if self.status.status
+            == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialN)
+        {
+            crate::status::switch_mario_fireball_air(self);
+        } else if self.status.status
+            == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialLw)
+        {
+            crate::status::switch_mario_tornado_air(self);
+        } else if matches!(
+            self.status.status,
+            crate::status::AnyStatus::Fox(
+                crate::status::FoxStatus::SpecialHiStart
+                    | crate::status::FoxStatus::SpecialHiHold
+                    | crate::status::FoxStatus::SpecialHi
+                    | crate::status::FoxStatus::SpecialHiEnd
+            )
+        ) {
+            crate::status::switch_fox_special_hi_air(self);
+        } else if matches!(
+            self.status.status,
+            crate::status::AnyStatus::Fox(
+                crate::status::FoxStatus::SpecialLwStart
+                    | crate::status::FoxStatus::SpecialLwLoop
+                    | crate::status::FoxStatus::SpecialLwHit
+                    | crate::status::FoxStatus::SpecialLwEnd
+                    | crate::status::FoxStatus::SpecialLwTurn
+            )
+        ) {
+            crate::status::switch_fox_special_lw_air(self);
+        } else if matches!(
+            self.status.status,
+            crate::status::AnyStatus::Donkey(
+                crate::status::DonkeyStatus::SpecialNStart
+                    | crate::status::DonkeyStatus::SpecialNLoop
+                    | crate::status::DonkeyStatus::SpecialNEnd
+                    | crate::status::DonkeyStatus::SpecialNFull
+                    | crate::status::DonkeyStatus::SpecialHi
+            )
+        ) {
+            crate::status::switch_donkey_special_air(self);
+        } else if matches!(
+            self.status.status,
+            crate::status::AnyStatus::Common(s) if s.keeps_situation()
+        ) {
+            // `mpCommonUpdateFighterKinetics`: the hit reaction
+            // carries on in the air.
+            self.become_airborne();
+            self.physics.jumps_used = 1;
+        } else if !crate::item_use::on_ground_lost(self)
+            && !crate::samus::on_ground_lost(self)
+            && !crate::link::on_ground_lost(self)
+            && !crate::yoshi::on_ground_lost(self)
+            && !crate::captain::on_ground_lost(self)
+            && !crate::kirby::on_ground_lost(self)
+            && !crate::pikachu::on_ground_lost(self)
+            && !crate::purin::on_ground_lost(self)
+            && !crate::ness::on_ground_lost(self)
+            && !crate::capture_yoshi::on_ground_lost(self)
+            && !crate::grab::on_ground_lost(self)
+        {
+            self.become_airborne();
+            crate::status::set_fall(self);
+        }
+    }
+
     fn tick_ground<I, F>(&mut self, surfaces: F)
     where
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         let Some(standing) = self.floor else {
-            // Grounded with no floor recorded is not a state the original can
-            // reach; treat it as airborne rather than guessing a surface.
-            crate::item_throw::on_floor_lost(self);
-            self.become_airborne();
+            // Grounded on no line: the rebirth halo's fake floor (`-2`,
+            // `ftCommonRebirthDownSetStatus`). The first ground status after
+            // the rebirth statuses finds no floor in its `proc_map` and falls
+            // (RE-468: Luigi's down tap on the halo squats and falls on the
+            // same frame).
+            self.on_ground_break();
             return;
         };
 
@@ -1349,6 +1427,9 @@ impl Fighter {
                 self.attributes.size,
             );
         } else if self.status.status == crate::status::Status::LightThrowDash
+            // `ftCommonAttackDash`'s `proc_physics` too (RE-468: How to
+            // Play's dash attack kept the dash's speed).
+            || self.status.status == crate::status::Status::AttackDash
             // `ftCommonTurnRunProcPhysics` is `ftPhysicsApplyGroundVelTransN`.
             || self.status.status == crate::status::Status::TurnRun
             || self.status.status
@@ -1407,13 +1488,29 @@ impl Fighter {
             friction,
             self.attributes.traction,
         );
+        // `ftPhysicsSetGroundVelTransferAir`: the ground speed runs along
+        // the floor, `lr * floor_angle.y * vel_ground.x` across (RE-468: on
+        // the jungle's slope Samus's 56 is 54.97).
         let ground_x = if self.status.status
             == crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialHi)
         {
             self.physics.vel_air.x
         } else {
-            self.physics.vel_ground.x
+            self.physics.vel_ground.x * standing.normal.y
         };
+        // `ftPhysicsSetGroundVelTransferAir` keeps this frame's step in
+        // `vel_air`, jostle included; leaving the ground
+        // (`mpCommonSetFighterAir`) carries it on (RE-468: Mario's Tornado
+        // out of a jostle keeps its -6.75).
+        if self.status.status
+            != crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialHi)
+        {
+            self.physics.vel_air = Vec3::new(
+                ground_x + self.physics.vel_jostle_x,
+                -standing.normal.x * self.physics.vel_ground.x,
+                ground_vel_z(self.pos.z, self.physics.vel_jostle_z, 0.0),
+            );
+        }
         // `ftPhysicsSetGroundVelTransferAir`: the jostle adds to the step.
         let want = Vec3::new(
             self.pos.x + ground_x + self.physics.vel_jostle_x + self.physics.vel_knockback.x,
@@ -1453,70 +1550,7 @@ impl Fighter {
             // with no ground under it.
             None => {
                 self.floor = None;
-                crate::item_throw::on_floor_lost(self);
-                if self.status.status
-                    == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialN)
-                {
-                    crate::status::switch_mario_fireball_air(self);
-                } else if self.status.status
-                    == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialLw)
-                {
-                    crate::status::switch_mario_tornado_air(self);
-                } else if matches!(
-                    self.status.status,
-                    crate::status::AnyStatus::Fox(
-                        crate::status::FoxStatus::SpecialHiStart
-                            | crate::status::FoxStatus::SpecialHiHold
-                            | crate::status::FoxStatus::SpecialHi
-                            | crate::status::FoxStatus::SpecialHiEnd
-                    )
-                ) {
-                    crate::status::switch_fox_special_hi_air(self);
-                } else if matches!(
-                    self.status.status,
-                    crate::status::AnyStatus::Fox(
-                        crate::status::FoxStatus::SpecialLwStart
-                            | crate::status::FoxStatus::SpecialLwLoop
-                            | crate::status::FoxStatus::SpecialLwHit
-                            | crate::status::FoxStatus::SpecialLwEnd
-                            | crate::status::FoxStatus::SpecialLwTurn
-                    )
-                ) {
-                    crate::status::switch_fox_special_lw_air(self);
-                } else if matches!(
-                    self.status.status,
-                    crate::status::AnyStatus::Donkey(
-                        crate::status::DonkeyStatus::SpecialNStart
-                            | crate::status::DonkeyStatus::SpecialNLoop
-                            | crate::status::DonkeyStatus::SpecialNEnd
-                            | crate::status::DonkeyStatus::SpecialNFull
-                            | crate::status::DonkeyStatus::SpecialHi
-                    )
-                ) {
-                    crate::status::switch_donkey_special_air(self);
-                } else if matches!(
-                    self.status.status,
-                    crate::status::AnyStatus::Common(s) if s.keeps_situation()
-                ) {
-                    // `mpCommonUpdateFighterKinetics`: the hit reaction
-                    // carries on in the air.
-                    self.become_airborne();
-                    self.physics.jumps_used = 1;
-                } else if !crate::item_use::on_ground_lost(self)
-                    && !crate::samus::on_ground_lost(self)
-                    && !crate::link::on_ground_lost(self)
-                    && !crate::yoshi::on_ground_lost(self)
-                    && !crate::captain::on_ground_lost(self)
-                    && !crate::kirby::on_ground_lost(self)
-                    && !crate::pikachu::on_ground_lost(self)
-                    && !crate::purin::on_ground_lost(self)
-                    && !crate::ness::on_ground_lost(self)
-                    && !crate::capture_yoshi::on_ground_lost(self)
-                    && !crate::grab::on_ground_lost(self)
-                {
-                    self.become_airborne();
-                    crate::status::set_fall(self);
-                }
+                self.on_ground_break();
             }
         }
     }
@@ -1535,6 +1569,10 @@ impl Fighter {
         // airborne tick does regardless of status.
         let special_air_hi = self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialAirHi);
+        // The grounded Super Jump once `SetAirJumpMax` lifts it off
+        // (`ftMarioSpecialHiProcPhysics`, `is_air_bool == FALSE`).
+        let special_hi_lifted = self.status.status
+            == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi);
         let special_air_lw = self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialAirLw);
         let fox_special_hi = matches!(
@@ -1581,6 +1619,7 @@ impl Fighter {
                     )
             );
         if !special_air_hi
+            && !special_hi_lifted
             && !special_air_lw
             && !fox_special_hi
             && !fox_special_lw
@@ -1602,6 +1641,14 @@ impl Fighter {
         if stop_ceil {
         } else if special_air_hi {
             crate::status::apply_mario_special_air_hi_physics(self);
+        } else if special_hi_lifted {
+            // `ftPhysicsApplyAirVelTransNAll`, undamped.
+            crate::physics::apply_air_vel_transn_all(
+                &mut self.physics,
+                self.root_motion,
+                self.facing.sign(),
+                self.attributes.size,
+            );
         } else if special_air_lw {
             crate::status::apply_mario_special_lw_air_physics(self);
         } else if fox_special_hi {
@@ -1774,6 +1821,9 @@ impl Fighter {
                 }
                 if crate::item_use::on_landing(self) {
                     self.pos.y = moved.pos.y;
+                    return;
+                }
+                if crate::status::mario_special_hi_on_landing(self, moved.pos.y) {
                     return;
                 }
                 if crate::samus::on_landing(self, moved.pos.y) {

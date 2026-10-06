@@ -143,8 +143,9 @@ mod tests {
         let mario = crate::hurtbox::damage_colls(FighterKind::Mario).unwrap();
         let metal = crate::hurtbox::damage_colls(FighterKind::MetalMario).unwrap();
         assert_eq!(mario.len(), metal.len());
-        assert_eq!(mario[1].size.y, 140.0);
-        assert_eq!(metal[1].size.y, 160.0);
+        // The live boxes are the descriptors' halves (140 and 160).
+        assert_eq!(mario[1].size.y, 70.0);
+        assert_eq!(metal[1].size.y, 80.0);
         assert_eq!(&mario[2..], &metal[2..]);
         assert_eq!(
             crate::hurtbox::damage_colls(FighterKind::GiantDonkey),

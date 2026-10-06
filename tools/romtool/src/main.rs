@@ -2283,8 +2283,8 @@ fn code_model_parts(kind: u8) -> &'static [(i32, i32)] {
 /// Every `(joint, part, FTModelPart)` a playable fighter can wear that the
 /// pack needs (RE-425): the parts its motion scripts set
 /// (`ssb_game::motion::model_part_events`), the code-set ones and Kirby's
-/// copy hats, on joints `setup_parts` makes, high detail. Part -1 hides a
-/// joint and needs no mesh.
+/// copy hats, on joints `setup_parts` or a hidden part makes, high detail.
+/// Part -1 hides a joint and needs no mesh.
 fn fighter_model_parts(
     loaded: &Loaded,
     file: u32,
@@ -2296,7 +2296,13 @@ fn fighter_model_parts(
     let Some(kind) = ssb_game::fighter::FighterKind::from_ordinal(entry.kind) else {
         return Vec::new();
     };
-    let present = ssb_game::modelpart::joint_masks(kind).map_or(0, |m| m.0);
+    // The joints `setup_parts` makes, and the hidden parts a motion makes
+    // (`ftMainUpdateHiddenPartID`): Samus's grapple beam links take their
+    // lists from model parts (RE-468).
+    let present = ssb_game::modelpart::joint_masks(kind).map_or(0, |m| m.0)
+        | ssb_game::modelpart::hidden_part_joints(kind)
+            .iter()
+            .fold(0u64, |m, &(_, root, _)| m | 1 << (root - 4));
     let mut wanted: std::collections::BTreeSet<(i32, i32)> =
         ssb_game::motion::model_part_events(kind);
     // A fighter wearing another's graph (Giant Donkey Kong Donkey Kong's,

@@ -1001,6 +1001,9 @@ pub fn tick_skeleton_animation(
     // frame's own advance has moved it on before this first parse, which
     // poses without advancing (RE-466).
     let frame_begin = status.anim_frame;
+    // A setter's `ftMainPlayAnimEventsAll` after `ftMainSetStatus`'s own
+    // first parse: the clip stands one play past `anim_frame_begin`.
+    let setter_played = status.anim_frame > status.anim_frame_begin;
     let status = status.status;
     // The pack row is the fighter's; the slot is the status's. Common
     // statuses use the shared slots, which resolve per fighter through the
@@ -1017,7 +1020,16 @@ pub fn tick_skeleton_animation(
             skeleton.speed = speed;
         } else {
             if let Some(anim) = pack.fighter_anim(kind, slot) {
-                skeleton.start(pack, &anim, frame_begin, speed);
+                skeleton.start(
+                    pack,
+                    &anim,
+                    if setter_played { frame_begin - speed } else { frame_begin },
+                    speed,
+                );
+                skeleton.lead_xrotn = u8::try_from(kind)
+                    .ok()
+                    .and_then(FighterKind::from_ordinal)
+                    .is_some_and(|k| ssb_game::motion::leads_with_xrotn(k, status));
             }
         }
     }
@@ -1026,7 +1038,22 @@ pub fn tick_skeleton_animation(
     // the pose it had.
     // `ftMainSetStatus` zeroes TransN before the new clip's first parse, so
     // its first step is the clip's own first translation.
-    let root_before = if restarted {
+    let root_before = if restarted && setter_played {
+        // `ftMainSetStatus` parsed `frame_begin` (TransN zeroed first, then
+        // posed); the setter's play reads that pose as `anim_vel` and
+        // advances, so the first step is from the clip's own first pose
+        // (RE-468: Samus's roll starts 23.27 along, not 22.53).
+        if let Some(anim) = pack.fighter_anim(kind, slot) {
+            if let Some(script) = pack.anim_script(&anim) {
+                let _ = skeleton.tick_scaled(
+                    script,
+                    pack.fighter_translate_scales(kind),
+                    first_node,
+                );
+            }
+        }
+        skeleton.pose(0).copied()
+    } else if restarted {
         skeleton.pose(0).map(|p| ssb_rom::figatree::JointPose {
             translate: [0.0; 3],
             ..*p
@@ -1136,29 +1163,19 @@ impl FighterScene {
         object: &ObjectDesc,
         out: &mut [ssb_rom::scene::Mat4],
     ) -> usize {
-        let count = self.skeleton.compose(pack, object, out);
-        if matches!(
-            self.fighter.status.status,
-            AnyStatus::Common(Status::CapturePulled | Status::CaptureWait)
-        ) && self.skeleton.joint_node(0).is_none()
-        {
-            if let Some(pose) = self.skeleton.pose(0) {
-                let scale = ssb_rom::pack::MODEL_SCALE;
-                let runtime = ssb_rom::scene::Mat4::from_trs(
-                    [
-                        pose.translate[0] / scale,
-                        pose.translate[1] / scale,
-                        pose.translate[2] / scale,
-                    ],
-                    pose.rotate,
-                    pose.scale,
-                );
-                for matrix in &mut out[..count] {
-                    *matrix = runtime.mul(matrix);
-                }
-            }
-        }
-        count
+        self.skeleton.compose(pack, object, out)
+    }
+
+    /// [`Self::compose_model`] for gameplay positions: the joints' matrices
+    /// from `lbCommonSin`, as `gmCollisionGetFighterPartsWorldPosition`
+    /// builds them for hit and hurt collisions and attachments (RE-468).
+    pub fn compose_collision(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        out: &mut [ssb_rom::scene::Mat4],
+    ) -> usize {
+        self.skeleton.compose_collision(pack, object, out)
     }
 
     /// Puts a fighter of `kind` at a stage's `spawn_index`'th spawn point.
@@ -1226,6 +1243,7 @@ impl FighterScene {
         if let Some(pos) = pos {
             fighter.pos = pos;
             fighter.facing = ssb_game::fighter::Facing::at_spawn_x(fighter.pos.x);
+            fighter.topn_lr = fighter.facing.sign();
             // `ftManagerInitFighter`: stood on the floor below, if near;
             // then `mpCommonSetFighterWaitOrFall` (an entry or a demo sets
             // its own status after).
@@ -1704,7 +1722,7 @@ impl FighterScene {
         // TopN carries `attr->size` (`ftManagerMakeFighter`), which every
         // joint below it inherits (RE-458).
         let size = self.fighter.attributes.size;
-        let axes = ssb_game::item_throw::model_axes(&self.fighter).map(|a| a * size);
+        let axes = ssb_game::item_throw::collision_axes(&self.fighter).map(|a| a * size);
         let world = |v: Vec3| axes[0] * v.x + axes[1] * v.y + axes[2] * v.z;
         let root = JointTransform {
             axes,
@@ -1716,7 +1734,7 @@ impl FighterScene {
         };
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
         let count = self
-            .compose_model(pack, &object, &mut posed)
+            .compose_collision(pack, &object, &mut posed)
             .min(FIGHTER_JOINTS - 4);
         let scale = ssb_rom::pack::MODEL_SCALE;
         for (i, matrix) in posed[..count].iter().enumerate() {
@@ -1735,13 +1753,23 @@ impl FighterScene {
         // pose is its model-space pose. Only a raised shield reads it.
         if ssb_game::status::shield_pose(&self.fighter).is_some() {
             let pose = &self.shield_yrotn;
-            let m = ssb_rom::scene::Mat4::from_trs([0.0; 3], pose.rotate, [1.0; 3]).0;
-            let axis =
-                |col: usize| world(Vec3::new(m[col * 4], m[col * 4 + 1], m[col * 4 + 2]));
-            let t = pose.translate;
+            let scale = ssb_rom::pack::MODEL_SCALE;
+            let local = |p: &ssb_rom::figatree::JointPose, s: [f32; 3]| {
+                let t = [p.translate[0] / scale, p.translate[1] / scale, p.translate[2] / scale];
+                ssb_rom::scene::Mat4::from_trs_collision(t, p.rotate, s)
+            };
+            let mut m = local(pose, [1.0; 3]);
+            // Under `XRotN` when the guard clip interposes it.
+            if let Some(lead) = self.skeleton.lead_xrotn_pose() {
+                m = local(lead, lead.scale).mul(&m);
+            }
+            let axis = |col: usize| {
+                world(Vec3::new(m.0[col * 4], m.0[col * 4 + 1], m.0[col * 4 + 2]))
+            };
+            let t = m.translation();
             self.fighter.joint_transforms[3] = Some(JointTransform {
                 axes: [axis(0), axis(1), axis(2)],
-                origin: self.fighter.pos + world(Vec3::new(t[0], t[1], t[2])),
+                origin: self.fighter.pos + world(Vec3::new(t[0] * scale, t[1] * scale, t[2] * scale)),
             });
         }
     }
@@ -1754,14 +1782,14 @@ impl FighterScene {
     ) -> Option<ssb_engine::math::Vec3> {
         let object = pack.object(self.object)?;
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-        let count = self.compose_model(pack, &object, &mut posed);
+        let count = self.compose_collision(pack, &object, &mut posed);
         let local_index = node.checked_sub(object.first_node)? as usize;
         if local_index >= count {
             return None;
         }
         let local = posed[local_index].translation();
         let scale = ssb_rom::pack::MODEL_SCALE * self.fighter.attributes.size;
-        let axes = ssb_game::item_throw::model_axes(&self.fighter);
+        let axes = ssb_game::item_throw::collision_axes(&self.fighter);
         Some(self.fighter.pos
             + axes[0] * (local[0] * scale)
             + axes[1] * (local[1] * scale)
@@ -1867,7 +1895,9 @@ pub fn fighter_turn(f: &ssb_game::fighter::Fighter) -> f32 {
         .or_else(|| ssb_game::appear::model_yaw(f))
         .or_else(|| ssb_game::item_throw::model_yaw(f))
         .or_else(|| ssb_game::dokan::model_yaw(f))
-        .unwrap_or_else(|| facing_turn(f.facing))
+        // TopN's yaw, set from `lr` by `ftMainSetStatus`: a status that
+        // flips `lr` part-way (Turn's pivot, a roll) keeps it (RE-468).
+        .unwrap_or_else(|| core::f32::consts::FRAC_PI_2 * f.topn_lr)
 }
 
 /// The file data `grMainSetupMakeGround` hands a stage's controller:

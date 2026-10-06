@@ -514,67 +514,9 @@ fn eye_direction(at: Vec3, light_angle_z_radians: f32, pause_eye: (f32, f32)) ->
     Vec3::new(vx, vy, vz)
 }
 
-/// The original does not call the platform's trigonometry routines here. Its
-/// `lbCommonSin`/`Cos`/`Tan` quantize a radian angle into 4096 turns and read a
-/// 1024-entry, six-decimal sine table. 1011 of its 1024 words are exactly the
-/// rounded mathematical sine; retain the 13 authored exceptions explicitly
-/// so this reproduces the complete table without carrying 4 KiB of constants.
-fn original_sine_sample(index: u16) -> f32 {
-    let exception = match index {
-        372 => Some(0x3f0a_48b6),
-        420 => Some(0x3f19_c1f8),
-        453 => Some(0x3f23_eae6),
-        500 => Some(0x3f31_a826),
-        503 => Some(0x3f32_80bf),
-        598 => Some(0x3f4b_41f2),
-        628 => Some(0x3f52_33be),
-        685 => Some(0x3f5e_28bb),
-        722 => Some(0x3f65_0471),
-        795 => Some(0x3f70_5dd9),
-        804 => Some(0x3f71_8f60),
-        842 => Some(0x3f76_1672),
-        1023 => Some(0x3f80_0000),
-        _ => None,
-    };
-    if let Some(bits) = exception {
-        return f32::from_bits(bits);
-    }
-    let angle = index as f32 / 651.898_6;
-    let value = ssb_engine::math::sin_cos(angle).0;
-    ((value * 1_000_000.0 + 0.5) as u32) as f32 / 1_000_000.0
-}
-
-fn original_sin_index(index: u16) -> f32 {
-    let index = index & 0x0fff;
-    let low = index & 0x03ff;
-    let sample = if index & 0x0400 != 0 {
-        original_sine_sample(0x03ff - low)
-    } else {
-        original_sine_sample(low)
-    };
-    if index & 0x0800 != 0 {
-        -sample
-    } else {
-        sample
-    }
-}
-
-fn original_angle_index(angle: f32) -> u16 {
-    ((angle * 651.898_6) as i32 as u16) & 0x0fff
-}
-
-fn original_sin(angle: f32) -> f32 {
-    original_sin_index(original_angle_index(angle))
-}
-
-fn original_cos(angle: f32) -> f32 {
-    original_sin_index(original_angle_index(angle).wrapping_add(0x0400))
-}
-
-fn original_tan(angle: f32) -> f32 {
-    let index = original_angle_index(angle);
-    original_sin_index(index) / original_sin_index(index.wrapping_add(0x0400))
-}
+// The original does not call the platform's trigonometry routines here:
+// `lbCommonSin`/`Cos`/`Tan` read a quantized table (`math::lb_sin`).
+use ssb_engine::math::{lb_cos as original_cos, lb_sin as original_sin, lb_tan as original_tan};
 
 #[cfg(test)]
 mod tests {
@@ -593,9 +535,9 @@ mod tests {
     fn original_camera_trig_uses_the_roms_quantized_table_words() {
         // tan(19 degrees) reads entries 216 and 807. Entry 372 is one of the
         // 13 authored values that differs from rounded mathematical sine.
-        assert_eq!(original_sine_sample(216).to_bits(), 0x3ea6_8f08);
-        assert_eq!(original_sine_sample(807).to_bits(), 0x3f71_f288);
-        assert_eq!(original_sine_sample(372).to_bits(), 0x3f0a_48b6);
+        assert_eq!(ssb_engine::math::lb_sine_sample(216).to_bits(), 0x3ea6_8f08);
+        assert_eq!(ssb_engine::math::lb_sine_sample(807).to_bits(), 0x3f71_f288);
+        assert_eq!(ssb_engine::math::lb_sine_sample(372).to_bits(), 0x3f0a_48b6);
         assert!((original_tan(19.0f32.to_radians()) - 0.3442044).abs() < 1e-7);
     }
 

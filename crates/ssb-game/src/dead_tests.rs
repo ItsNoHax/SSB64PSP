@@ -196,9 +196,13 @@ fn a_rebirth_starts_at_the_top_and_resets_the_fighter() {
     f.costume = 2;
     f.team = 3;
     f.facing = Facing::Left;
+    f.jostle_width = 112.5;
+    f.jostle_x = 90.0;
     f.pos.y = -2001.0;
     check(&mut f);
     rebirth_down(&mut f, 1);
+    // `ftManagerInitFighter` keeps the attributes, the jostle box too.
+    assert_eq!((f.jostle_width, f.jostle_x), (112.5, 90.0));
     assert!(is(&f, Status::RebirthDown));
     assert_eq!(f.pos, Vec3::new(100.0 - 1000.0, 3000.0, 0.0));
     assert_eq!(f.damage, 0);

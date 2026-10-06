@@ -444,7 +444,7 @@ pub fn update(f: &mut Fighter) {
         }
         N::SpecialAirHiEnd | N::SpecialAirHiBound => {
             if f.status.animation_ended() {
-                status::set_fall_special(f, 0.6, false, true, 0.17, false);
+                status::set_fall_special(f, 0.6, true, true, 0.17, false);
             }
         }
         N::SpecialN | N::SpecialAirN => {
@@ -453,12 +453,12 @@ pub fn update(f: &mut Fighter) {
                 make_pk_fire(f, false);
             }
             if f.status.animation_ended() {
-                status::set_wait_or_fall(f);
+                status::anim_end_set_wait_or_fall(f);
             }
         }
         _ => {
             if f.status.animation_ended() {
-                status::set_wait_or_fall(f);
+                status::anim_end_set_wait_or_fall(f);
             }
         }
     }
@@ -521,7 +521,12 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
         )
     {
         let mut transn = f.physics;
-        physics::apply_air_vel_transn_all(&mut transn, f.root_motion, f.facing.sign());
+        physics::apply_air_vel_transn_all(
+            &mut transn,
+            f.root_motion,
+            f.facing.sign(),
+            f.attributes.size,
+        );
         f.physics.vel_air.x = f.ness.jump_velocity_x;
         f.physics.vel_air.y = transn.vel_air.y;
         f.physics.vel_air.z = transn.vel_air.z;

@@ -10,6 +10,8 @@ description = "Reads Super Smash Bros. 64 ROM data: validation, VPK0, relocData 
 [dependencies]
 sha1_smol = { version = "1.0", default-features = false }
 libm = "0.2"
+# `lbCommonSin` for the collision matrices (`Mat4::from_trs_collision`).
+ssb-engine = { workspace = true }
 
 [features]
 default = ["std"]

@@ -419,7 +419,7 @@ pub fn update(f: &mut Fighter) {
         }
         CaptainStatus::Attack100End | CaptainStatus::SpecialN | CaptainStatus::SpecialLwLanding => {
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         CaptainStatus::SpecialAirN
@@ -427,7 +427,7 @@ pub fn update(f: &mut Fighter) {
         | CaptainStatus::SpecialLwBound
         | CaptainStatus::SpecialHiThrow => {
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
         CaptainStatus::SpecialLw | CaptainStatus::SpecialLwAir => {
@@ -449,11 +449,13 @@ pub fn update(f: &mut Fighter) {
                     } else {
                         crate::fighter::Facing::Right
                     };
+                    // `fp->joints[nFTPartsJointTopN]->rotate.vec.f.y`.
+                    f.topn_lr = f.facing.sign();
                 }
             }
             if f.status.animation_ended() {
                 f.grab.is_catchstatus = false;
-                status::set_fall_special(f, DIVE_DRIFT, false, true, DIVE_LANDING_LAG, false);
+                status::set_fall_special(f, DIVE_DRIFT, true, true, DIVE_LANDING_LAG, false);
             }
         }
         CaptainStatus::SpecialHiCatch => {
@@ -551,7 +553,12 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
                     physics::apply_air_friction(&mut f.physics, &f.attributes);
                 }
             } else {
-                physics::apply_air_vel_transn_all(&mut f.physics, f.root_motion, f.facing.sign());
+                physics::apply_air_vel_transn_all(
+                    &mut f.physics,
+                    f.root_motion,
+                    f.facing.sign(),
+                    f.attributes.size,
+                );
             }
             if matches!(
                 current,
@@ -587,7 +594,12 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
                 physics::apply_air_friction(&mut f.physics, &f.attributes);
             }
             f.captain.dive_vel = f.physics.vel_air;
-            physics::apply_air_vel_transn_all(&mut f.physics, f.root_motion, f.facing.sign());
+            physics::apply_air_vel_transn_all(
+                &mut f.physics,
+                f.root_motion,
+                f.facing.sign(),
+                f.attributes.size,
+            );
             f.physics.vel_air.x += f.captain.dive_vel.x;
             f.physics.vel_air.y += f.captain.dive_vel.y;
             if f.captain.dive_cliff_wait > 0 {

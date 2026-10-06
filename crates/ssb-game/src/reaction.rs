@@ -149,6 +149,8 @@ fn set(f: &mut Fighter, status: Status) {
                     | Status::DownWaitD
                     | Status::DownWaitU
             ),
+            // `ftCommonDamageFallSetStatusFromDamage` and `...FromCliffWait`.
+            fastfall: status == Status::DamageFall,
             ..status::Preserve::NONE
         },
     );
@@ -253,9 +255,7 @@ pub fn air_interrupt(f: &mut Fighter) -> bool {
 
 /// `ftCommonDamageFallSetStatusFromDamage`.
 pub fn set_damage_fall(f: &mut Fighter) {
-    let fastfall = f.physics.is_fastfall;
     set(f, Status::DamageFall);
-    f.physics.is_fastfall = fastfall;
     crate::physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
 }
 
@@ -354,6 +354,15 @@ pub fn set_stop_ceil(f: &mut Fighter) {
 // Status updates
 // ---------------------------------------------------------------------------
 
+/// `ftCommonDamageFallProcInterrupt`.
+fn damage_fall_interrupt(f: &mut Fighter) {
+    if crate::item_use::holds_hammer(f) && f.button_tap().contains(N64Buttons::A | N64Buttons::B) {
+        crate::item_use::hammer_fall(f);
+        return;
+    }
+    air_interrupt(f);
+}
+
 /// `proc_update` + `proc_interrupt` for the statuses this module owns.
 /// Returns whether `current` was one of them.
 pub fn update(f: &mut Fighter, current: Status) -> bool {
@@ -362,6 +371,17 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
         s if is_damage_common(s) => {
             if f.status.animation_ended() && f.hitstun == 0 {
                 status::set_wait_or_fall(f);
+                // `proc_interrupt` is read after `proc_update`: Wait's or
+                // Fall's own runs on the frame they start (RE-468).
+                match f.status.status {
+                    AnyStatus::Common(Status::Wait) => {
+                        status::ground_interrupt(f);
+                    }
+                    AnyStatus::Common(Status::Fall) => {
+                        air_interrupt(f);
+                    }
+                    _ => {}
+                }
             } else if f.hitstun == 0 {
                 if f.is_grounded() {
                     status::ground_interrupt(f);
@@ -382,7 +402,7 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
         // `ftAnimEndSetFall`.
         Status::StopCeil => {
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
         // `ftCommonDamageAirCommonProcUpdate` / `ProcInterrupt`.
@@ -390,26 +410,22 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
             update_dust_effect(f);
             if f.status.animation_ended() && f.hitstun == 0 {
                 set_damage_fall(f);
+                // `ftCommonDamageFallProcInterrupt`, the new status's.
+                if f.status.status == Status::DamageFall {
+                    damage_fall_interrupt(f);
+                }
             } else if f.hitstun == 0 {
                 air_interrupt(f);
             }
         }
         // `ftCommonDamageFallProcInterrupt`.
-        Status::DamageFall => {
-            if crate::item_use::holds_hammer(f)
-                && f.button_tap().contains(N64Buttons::A | N64Buttons::B)
-            {
-                crate::item_use::hammer_fall(f);
-                return true;
-            }
-            air_interrupt(f);
-        }
+        Status::DamageFall => damage_fall_interrupt(f),
         Status::DownBounceD | Status::DownBounceU => update_down_bounce(f),
         Status::DownWaitD | Status::DownWaitU => update_down_wait(f),
         // `ftAnimEndSetWait` + `ftCommonDownStandProcInterrupt`.
         Status::DownStandD | Status::DownStandU => {
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             } else if f.motion_script.flags[1] != 0
                 && !status::check_kneebend(f)
                 && !status::check_pass(f)
@@ -426,8 +442,10 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
         | Status::DownAttackD
         | Status::DownAttackU
         | Status::Passive => {
+            // `ftAnimEndSetWait`, then Wait's interrupt on the same frame
+            // (RE-468: Samus shields out of her get-up roll at once).
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         // `ftCommonReboundWaitProcUpdate`.
@@ -734,8 +752,11 @@ fn check_down_forward_or_back(f: &mut Fighter) -> bool {
         (false, true) => Status::DownBackD,
         (false, false) => Status::DownBackU,
     };
+    // `ftCommonDownForwardOrBackSetStatus`: the roll passes through
+    // fighters (RE-468).
     set(f, status);
     status::play_anim_events(f);
+    f.dokan.is_jostle_ignore = true;
     true
 }
 
@@ -795,6 +816,7 @@ pub fn set_escape(f: &mut Fighter, status: Status) {
     f.motion_script.flags[1] = 0;
     set(f, status);
     status::play_anim_events(f);
+    f.dokan.is_jostle_ignore = true;
 }
 
 /// `ftCommonEscapeCheckInterruptGuard`.
@@ -833,7 +855,8 @@ fn update_escape(f: &mut Fighter) {
         f.physics.vel_ground = ssb_engine::math::Vec3::ZERO;
         // `ftCommonEscapeProcUpdate`: Yoshi and Polygon Yoshi.
         if f.kind.character() != FighterKind::Yoshi || !status::check_guard_from_escape(f) {
-            status::set_wait(f);
+            // `ftCommonWaitSetStatus`; Wait's interrupt runs this frame.
+            status::anim_end_set_wait(f);
         }
     } else {
         crate::item_throw::check_escape(f);

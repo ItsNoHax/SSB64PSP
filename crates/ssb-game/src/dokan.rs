@@ -79,8 +79,9 @@ pub struct DokanState {
     /// `FTStruct::is_effect_skip`: motion and colour scripts make no
     /// effects while the fighter is in the pipe.
     pub is_effect_skip: bool,
-    /// `FTStruct::is_jostle_ignore`. Fighter jostling is not ported, so
-    /// nothing reads it yet.
+    /// `FTStruct::is_jostle_ignore`: set by the pipes, the rolls, the down
+    /// rolls and the grounded cliff phase two; [`crate::fighter::jostle`]
+    /// skips the fighter.
     pub is_jostle_ignore: bool,
     /// `grInishiePakkunSetWaitFighter`, made by the entry.
     pub plant_request: bool,
@@ -325,9 +326,9 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
             // `mpCommonSetFighterWaitOrFall`.
             if f.status.animation_ended() {
                 if f.is_grounded() {
-                    status::set_wait(f);
+                    status::anim_end_set_wait(f);
                 } else {
-                    status::set_fall(f);
+                    status::anim_end_set_fall(f);
                 }
             }
         }

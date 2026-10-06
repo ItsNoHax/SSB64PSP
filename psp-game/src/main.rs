@@ -1186,7 +1186,7 @@ fn log_entry_state(
     if capture_scene == Some(GameScene::Explain) {
         for f in [player.map(|p| &p.fighter), dummy.map(|d| &d.fighter)].into_iter().flatten() {
             let line = alloc::format!(
-                "re465 tick={} port={} status={:?} damage={} x={:.2} y={:.2} lr={:?} af={:.2} vg={:.3} va={:.3},{:.3} lag={} id={}\n",
+                "re465 tick={} port={} status={:?} damage={} x={:.2} y={:.2} lr={:?} af={:.2} vg={:.3} va={:.3},{:.3} lag={} id={} seed={}\n",
                 sim_frame_index,
                 f.port,
                 f.status.status,
@@ -1200,6 +1200,7 @@ fn log_entry_state(
                 f.physics.vel_air.y,
                 f.hitlag,
                 f.status.status.id(),
+                ssb_game::rng::seed(),
             );
             unsafe {
                 psp::sys::sceIoWrite(

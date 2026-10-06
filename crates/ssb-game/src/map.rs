@@ -1418,6 +1418,12 @@ pub(crate) fn allows_cliff(f: &Fighter) -> bool {
                 | PurinStatus::JumpAerialF5
         ),
         AnyStatus::Link(s) => s == status::LinkStatus::SpecialAirHi,
+        // `ftMarioSpecialHiProcMap`: once motion flag 1 launches the jump,
+        // a fall catches ledges (`mpCommonCheckFighterPassCliff`); rising,
+        // it only projects (RE-468: Mario's recovery in How to Play).
+        AnyStatus::Mario(status::MarioStatus::SpecialHi | status::MarioStatus::SpecialAirHi) => {
+            f.motion_script.flags[1] != 0 && f.physics.vel_air.y < 0.0
+        }
         _ => false,
     }
 }

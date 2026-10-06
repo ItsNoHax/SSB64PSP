@@ -91,6 +91,78 @@ const JOINT_MASKS: [(u64, u64); 27] = [
     (0x1ffffff, 0x16b5d76),
 ];
 
+/// `FTAttributes::hiddenparts` from joint 4 on, per fighter: the part's
+/// index (its `anim_desc` bit is `0x80000000 >> index`), its root joint and
+/// whether its high-detail descriptor has a display list. Samus's grapple
+/// beam strands (joints 24 and 25) and Yoshi's tongue (joint 9) draw; the
+/// rest are joints only. `crates/ssb-rom/tests/fighter_fidelity.rs` checks
+/// them against the ROM (RE-468).
+fn hidden_parts(kind: FighterKind) -> &'static [(u8, u8, bool)] {
+    use FighterKind as K;
+    const SAMUS: &[(u8, u8, bool)] = &[
+        (3, 36, false),
+        (4, 17, false),
+        (5, 18, false),
+        (6, 19, false),
+        (7, 20, false),
+        (8, 21, false),
+        (9, 22, false),
+        (10, 23, false),
+        (11, 24, true),
+        (12, 25, true),
+    ];
+    const POLY_SAMUS: &[(u8, u8, bool)] = &[
+        (3, 36, false),
+        (4, 17, false),
+        (5, 18, false),
+        (6, 19, false),
+        (7, 20, false),
+        (8, 21, false),
+        (9, 22, false),
+        (10, 23, false),
+        (11, 24, false),
+        (12, 25, false),
+    ];
+    const LINK: &[(u8, u8, bool)] = &[(3, 35, false), (4, 17, false), (5, 18, false)];
+    const KIRBY: &[(u8, u8, bool)] = &[
+        (3, 30, false),
+        (4, 7, false),
+        (5, 19, false),
+        (6, 12, false),
+        (7, 18, false),
+    ];
+    const POLY_KIRBY: &[(u8, u8, bool)] = &[(3, 30, false), (4, 7, false), (5, 19, false)];
+    match kind {
+        K::Mario | K::Luigi | K::MetalMario | K::PolyMario | K::PolyLuigi => &[(3, 28, false)],
+        K::Fox | K::PolyFox | K::Pikachu | K::PolyPikachu | K::Ness | K::PolyNess => {
+            &[(3, 30, false)]
+        }
+        K::Donkey
+        | K::PolyDonkey
+        | K::GiantDonkey
+        | K::Captain
+        | K::PolyCaptain
+        | K::Purin
+        | K::PolyPurin => &[(3, 29, false)],
+        K::Samus => SAMUS,
+        K::PolySamus => POLY_SAMUS,
+        K::Link | K::PolyLink => LINK,
+        K::Yoshi => &[(3, 31, false), (4, 9, true)],
+        K::PolyYoshi => &[(3, 31, false), (4, 9, false)],
+        K::Kirby => KIRBY,
+        K::PolyKirby => POLY_KIRBY,
+        K::Boss => &[],
+    }
+}
+
+/// [`hidden_parts`], for the ROM test.
+pub fn hidden_part_joints(kind: FighterKind) -> &'static [(u8, u8, bool)] {
+    hidden_parts(kind)
+}
+
+/// `FTAnimDesc`'s low flags, which name no hidden part.
+const ANIM_DESC_FLAGS: u32 = 0x1F;
+
 /// `(setup_parts, has a display list)` for a playable fighter, as
 /// [`JOINT_MASKS`] holds them.
 pub fn joint_masks(kind: FighterKind) -> Option<(u64, u64)> {
@@ -209,6 +281,9 @@ pub struct ModelParts {
     pub base: [i8; PARTS_MAX],
     pub curr: [i8; PARTS_MAX],
     pub is_modify: bool,
+    /// The hidden-part bits of the last motion with a figatree
+    /// (`fp->anim_desc`), which decide the next status's makes and ejects.
+    pub hidden_bits: u32,
     pub texture: TextureParts,
     /// `detail_curr` and `detail_base`.
     pub detail_curr: Detail,
@@ -222,6 +297,7 @@ impl Default for ModelParts {
             base: [0; PARTS_MAX],
             curr: [0; PARTS_MAX],
             is_modify: false,
+            hidden_bits: 0,
             texture: TextureParts::default(),
             detail_curr: Detail::High,
             detail_base: Detail::High,
@@ -377,6 +453,35 @@ impl ModelParts {
         }
     }
 
+    /// `ftMainSetStatus`'s hidden-part walk over the old and new
+    /// `anim_desc`: a part the new motion names is made
+    /// (`ftMainUpdateHiddenPartID`: shown on its own list, or hidden
+    /// without one), kept, or ejected when it no longer names it.
+    pub fn apply_hidden_parts(&mut self, kind: FighterKind, anim_desc: u32) {
+        let new = anim_desc & !ANIM_DESC_FLAGS;
+        let old = self.hidden_bits;
+        if self.present != 0 {
+            for &(index, root, dl) in hidden_parts(kind) {
+                let bit = 0x8000_0000u32 >> index;
+                let n = usize::from(root - JOINT_COMMON_START);
+                if n >= PARTS_MAX {
+                    continue;
+                }
+                match (old & bit != 0, new & bit != 0) {
+                    (false, true) => {
+                        self.present |= 1 << n;
+                        let id = if dl { 0 } else { HIDDEN };
+                        self.base[n] = id;
+                        self.curr[n] = id;
+                    }
+                    (true, false) => self.present &= !(1u64 << n),
+                    _ => {}
+                }
+            }
+        }
+        self.hidden_bits = new;
+    }
+
     /// `ftParamResetModelPartAll`.
     pub fn reset_all(&mut self) {
         for i in 0..PARTS_MAX {
@@ -458,6 +563,10 @@ impl DemoParts {
 /// the texture parts reset the same way unless the status keeps them
 /// (`FTSTATUS_PRESERVE_TEXTUREPART`, RE-426).
 pub(crate) fn on_set_status(f: &mut Fighter, to: crate::status::AnyStatus) {
+    // `ftMainSetStatus`'s hidden parts, for a motion with a figatree.
+    if let Some(d) = crate::motion::motion_desc(f.kind, to).filter(|d| d.anim_length != 0) {
+        f.model_parts.apply_hidden_parts(f.kind, d.anim_flags);
+    }
     let base = f.model_parts.detail_base;
     f.model_parts.set_detail_all(base);
     let preserve = |table| crate::colanim::preserved_in(table, f.kind, f.status.status, to);
@@ -485,6 +594,25 @@ pub(crate) fn motion_joint(f: &Fighter, joint: i32) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_catch_makes_samuss_beam_strands_and_yoshis_tongue_then_ejects_them() {
+        let mut f = Fighter::new(FighterKind::Samus, 0, 3);
+        assert_eq!(f.model_parts.node_part(20), Some(ABSENT));
+        on_set_status(&mut f, crate::status::Status::Catch.into());
+        // Joints 24 and 25 draw their lists; the chain (17..23) is joints.
+        assert_eq!(f.model_parts.node_part(20), Some(0));
+        assert_eq!(f.model_parts.node_part(21), Some(0));
+        assert_eq!(f.model_parts.node_part(13), Some(HIDDEN));
+        on_set_status(&mut f, crate::status::Status::Wait.into());
+        assert_eq!(f.model_parts.node_part(20), Some(ABSENT));
+        assert_eq!(f.model_parts.node_part(13), Some(ABSENT));
+
+        let mut y = Fighter::new(FighterKind::Yoshi, 0, 3);
+        assert_eq!(y.model_parts.node_part(5), Some(ABSENT));
+        on_set_status(&mut y, crate::status::Status::Catch.into());
+        assert_eq!(y.model_parts.node_part(5), Some(0));
+    }
 
     #[test]
     fn joints_start_shown_with_a_list_and_hidden_without() {

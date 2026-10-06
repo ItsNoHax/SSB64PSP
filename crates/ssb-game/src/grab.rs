@@ -923,6 +923,14 @@ fn catch_pull(f: &mut Fighter, held: &Fighter) {
     f.grab.capture_immune = true;
 }
 
+/// `ftCommonCatchWaitProcInterrupt` @ 0x80149FCC.
+fn catch_wait_interrupt(f: &mut Fighter) {
+    if f.grab.throw_wait != 0 {
+        f.grab.throw_wait -= 1;
+    }
+    check_throw(f);
+}
+
 /// `ftCommonCatchWaitSetStatus` @ 0x8014A000.
 fn set_catch_wait(f: &mut Fighter) {
     status::set_status(f, Status::CatchWait, 0.0, StatusTiming::unknown());
@@ -969,6 +977,8 @@ fn set_throw(f: &mut Fighter, is_throwf: bool) {
     } else {
         let status = if back { Status::ThrowB } else { Status::ThrowF };
         status::set_status(f, status, 0.0, StatusTiming::frames(script.length));
+        // `ftCommonThrowSetStatus` plays the first frame (RE-468).
+        status::play_anim_events(f);
     }
     if let Some(desc) = script.desc {
         f.grab.throw_desc = Some(desc);
@@ -1007,7 +1017,7 @@ fn update_throw(f: &mut Fighter) {
             set_donkey_throwf_wait(f);
             return;
         }
-        status::set_wait_or_fall(f);
+        status::anim_end_set_wait_or_fall(f);
     }
 }
 
@@ -1070,6 +1080,8 @@ fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
         0.0,
         StatusTiming::frames(CAPTURE_PULLED_LENGTH),
     );
+    // The capture plays its first frame (RE-468).
+    status::play_anim_events(f);
     f.grab.is_goto_pulled_wait = false;
     f.grab.capture_immune = true;
     f.physics.vel_air = Vec3::ZERO;
@@ -1159,6 +1171,8 @@ fn set_thrown(f: &mut Fighter, status: Status, queue: Option<Status>) {
         None => StatusTiming::unknown(),
     };
     status::set_status(f, status, 0.0, timing);
+    // Both setters play the first frame (RE-468).
+    status::play_anim_events(f);
     f.grab.capture_immune = true;
     f.grab.thrown_queue = queue;
 }
@@ -1400,6 +1414,17 @@ fn set_donkey(f: &mut Fighter, status: DonkeyStatus, frame: f32, timing: StatusT
     status::set_any_status(f, AnyStatus::Donkey(status), frame, timing);
 }
 
+/// [`set_donkey`] with `FTSTATUS_PRESERVE_FASTFALL`.
+fn set_donkey_keep_fastfall(f: &mut Fighter, status: DonkeyStatus, timing: StatusTiming) {
+    status::set_any_status_preserve(
+        f,
+        AnyStatus::Donkey(status),
+        0.0,
+        timing,
+        status::Preserve::FASTFALL,
+    );
+}
+
 /// `ftDonkeyThrowFWaitSetStatus` @ 0x8014D49C.
 pub fn set_donkey_throwf_wait(f: &mut Fighter) {
     set_donkey(f, DonkeyStatus::ThrowFWait, 0.0, StatusTiming::unknown());
@@ -1428,12 +1453,13 @@ fn set_donkey_throwf_walk(f: &mut Fighter, frame: f32) {
 
 /// `ftDonkeyThrowFFSetStatus` @ 0x8014DF14.
 fn set_donkey_throwff(f: &mut Fighter, is_turn: bool) {
+    // The aerial throw keeps `is_fastfall`; the grounded one has none.
     let status = if f.is_grounded() {
         DonkeyStatus::ThrowFF
     } else {
         DonkeyStatus::ThrowAirFF
     };
-    set_donkey(f, status, 0.0, StatusTiming::frames(DONKEY_THROWFF_LENGTH));
+    set_donkey_keep_fastfall(f, status, StatusTiming::frames(DONKEY_THROWFF_LENGTH));
     f.grab.throw_desc = Some(DONKEY_THROW_FF);
     f.grab.capture_immune = true;
     f.grab.throwff_turn_tics = 0;
@@ -1511,10 +1537,8 @@ fn check_donkey_turn(f: &mut Fighter) -> bool {
 
 /// `ftDonkeyThrowFFallSetStatus` @ 0x8014DA98.
 fn set_donkey_throwf_fall(f: &mut Fighter) {
-    let fastfall = f.physics.is_fastfall;
     f.become_airborne();
-    set_donkey(f, DonkeyStatus::ThrowFFall, 0.0, StatusTiming::unknown());
-    f.physics.is_fastfall = fastfall;
+    set_donkey_keep_fastfall(f, DonkeyStatus::ThrowFFall, StatusTiming::unknown());
     physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
 }
 
@@ -1702,7 +1726,7 @@ pub fn update(f: &mut Fighter) -> bool {
             }
             if f.status.animation_ended() {
                 f.grab.is_catchstatus = false;
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         // `ftCommonCatchPullProcUpdate` @ 0x80149EC0.
@@ -1710,15 +1734,13 @@ pub fn update(f: &mut Fighter) -> bool {
             if f.status.animation_ended() {
                 set_catch_wait(f);
                 f.grab.send(GrabEvent::GotoPulledWait);
+                // `proc_interrupt` is read after `proc_update`: CatchWait's
+                // runs on the frame it starts (RE-468: How to Play's throw
+                // came a frame late).
+                catch_wait_interrupt(f);
             }
         }
-        // `ftCommonCatchWaitProcInterrupt` @ 0x80149FCC.
-        AnyStatus::Common(Status::CatchWait) => {
-            if f.grab.throw_wait != 0 {
-                f.grab.throw_wait -= 1;
-            }
-            check_throw(f);
-        }
+        AnyStatus::Common(Status::CatchWait) => catch_wait_interrupt(f),
         AnyStatus::Common(Status::ThrowF | Status::ThrowB) => update_throw(f),
         // `ftCommonCapturePulledProcPhysics`'s status switch.
         AnyStatus::Common(Status::CapturePulled) => {
@@ -1828,7 +1850,7 @@ pub fn update(f: &mut Fighter) -> bool {
                 release_thrown(f, -f.facing.sign());
             }
             if f.status.animation_ended() {
-                status::set_wait_or_fall(f);
+                status::anim_end_set_wait_or_fall(f);
             }
         }
         _ => return false,
@@ -2996,8 +3018,9 @@ mod tests {
             assert!(waited <= CATCH_THROW_WAIT);
         }
         assert_eq!(dummy.status.status, Status::ThrownCommon);
-        // Entered with `throw_wait = 60`; the 60th decrement throws.
-        assert_eq!(waited, CATCH_THROW_WAIT);
+        // Entered with `throw_wait = 60`, the first decrement on the frame
+        // it starts (RE-468); the 60th throws, so 59 frames end waiting.
+        assert_eq!(waited, CATCH_THROW_WAIT - 1);
     }
 
     #[test]

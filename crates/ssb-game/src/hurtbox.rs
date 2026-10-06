@@ -38,6 +38,10 @@ pub struct DamageCollDesc {
     pub size: Vec3,
 }
 
+/// One `FTDamageCollDesc` row as `relocData/*Main.c` writes it: `size` is
+/// the box's full extent, and `ftParamResetFighterDamageCollsAll` halves it
+/// into the live `FTDamageColl::size` the hit tests read (RE-468; the N64's
+/// Luigi carries 55 x 65 x 49 for the descriptor's 110 x 130 x 98).
 const fn hurt(
     joint: u8,
     placement: u8,
@@ -50,7 +54,11 @@ const fn hurt(
         placement,
         is_grabbable,
         offset,
-        size,
+        size: Vec3 {
+            x: size.x * 0.5,
+            y: size.y * 0.5,
+            z: size.z * 0.5,
+        },
     }
 }
 
@@ -1180,13 +1188,15 @@ pub fn yoshi_egg_coll(kind: FighterKind) -> Option<DamageCollDesc> {
         FighterKind::PolyNess => (160.0, 168.0),
         FighterKind::GiantDonkey => (400.0, 350.0),
     };
-    Some(hurt(
-        0,
-        1,
-        false,
-        Vec3::new(0.0, y, 0.0),
-        Vec3::new(size, size, size),
-    ))
+    // `ftCommonYoshiEggSetDamageCollCollisions` copies the egg's size
+    // without halving it.
+    Some(DamageCollDesc {
+        joint: 0,
+        placement: 1,
+        is_grabbable: false,
+        offset: Vec3::new(0.0, y, 0.0),
+        size: Vec3::new(size, size, size),
+    })
 }
 
 /// `gmCollisionSetInvertMatrix` applied to a point: the joint-space position
@@ -1902,7 +1912,7 @@ mod tests {
         }
         assert_eq!(MARIO.len(), 10);
         // US Mario's head box is 140 tall (JP: 160).
-        assert_eq!(MARIO[1].size.y, 140.0);
+        assert_eq!(MARIO[1].size.y, 70.0);
     }
 
     #[test]
@@ -1910,18 +1920,18 @@ mod tests {
         let desc = MARIO[0];
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
         posed(&mut f, 6, Vec3::new(1000.0, 0.0, 0.0), 2.0);
-        // Joint-space X reach is 103 + 20 / 2 = 113, world 226.
+        // Joint-space X reach is 103 / 2 + 20 / 2 = 61.5, world 123.
         let t = f.joint_transforms[6].unwrap();
         assert!(box_contains(
             &t,
             &desc,
-            Vec3::new(1000.0 + 225.0, 20.0, 8.0),
+            Vec3::new(1000.0 + 122.0, 20.0, 8.0),
             20.0
         ));
         assert!(!box_contains(
             &t,
             &desc,
-            Vec3::new(1000.0 + 227.0, 20.0, 8.0),
+            Vec3::new(1000.0 + 124.0, 20.0, 8.0),
             20.0
         ));
     }
@@ -1952,9 +1962,10 @@ mod tests {
         });
         let desc = MARIO[2];
         let t = f.joint_transforms[14].unwrap();
-        // Offset 15 along joint X, half length 36: world Y from -21 to 51.
-        assert!(box_contains(&t, &desc, Vec3::new(0.0, 50.0, 0.0), 0.0));
-        assert!(!box_contains(&t, &desc, Vec3::new(0.0, 52.0, 0.0), 0.0));
+        // Offset 15 along joint X, length 36 (half 18): world Y from -3
+        // to 33.
+        assert!(box_contains(&t, &desc, Vec3::new(0.0, 32.0, 0.0), 0.0));
+        assert!(!box_contains(&t, &desc, Vec3::new(0.0, 34.0, 0.0), 0.0));
         assert!(!box_contains(&t, &desc, Vec3::new(60.0, 0.0, 0.0), 0.0));
     }
 

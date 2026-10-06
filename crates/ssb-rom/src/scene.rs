@@ -260,6 +260,22 @@ impl Mat4 {
     /// The rotation order is the N64 library's roll-pitch-yaw convention: the
     /// vector holds radians about x, y and z, applied x first.
     pub fn from_trs(t: [f32; 3], r: [f32; 3], s: [f32; 3]) -> Mat4 {
+        Self::from_trs_with(t, r, s, sin_cos)
+    }
+
+    /// [`Mat4::from_trs`] with `gmCollisionTransformMatrixAll`'s trigonometry,
+    /// `lbCommonSin`/`lbCommonCos`: the matrices the original's hit, hurt
+    /// and attachment positions come from (RE-468).
+    pub fn from_trs_collision(t: [f32; 3], r: [f32; 3], s: [f32; 3]) -> Mat4 {
+        Self::from_trs_with(t, r, s, ssb_engine::math::lb_sin_cos)
+    }
+
+    fn from_trs_with(
+        t: [f32; 3],
+        r: [f32; 3],
+        s: [f32; 3],
+        sin_cos: fn(f32) -> (f32, f32),
+    ) -> Mat4 {
         let (sx, cx) = sin_cos(r[0]);
         let (sy, cy) = sin_cos(r[1]);
         let (sz, cz) = sin_cos(r[2]);

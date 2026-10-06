@@ -271,7 +271,7 @@ pub fn update(f: &mut Fighter) -> bool {
         _ => {}
     }
     if f.status.animation_ended() {
-        status::set_wait_or_fall(f);
+        status::anim_end_set_wait_or_fall(f);
     }
     true
 }

@@ -160,10 +160,23 @@ pub struct CopyState {
 }
 
 fn set(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming) {
-    if matches!(s, K::CopyNessSpecialN | K::CopyNessSpecialAirN) {
-        f.physics.is_fastfall = false;
-    }
-    status::set_any_status(f, AnyStatus::Kirby(s), frame, timing);
+    // The aerial Fireball, Blaster and Giant Punch setters pass
+    // `FTSTATUS_PRESERVE_FASTFALL`; every other status change clears it.
+    let fastfall = matches!(
+        s,
+        K::CopyMarioSpecialAirN
+            | K::CopyLuigiSpecialAirN
+            | K::CopyFoxSpecialAirN
+            | K::CopyDonkeySpecialAirNStart
+            | K::CopyDonkeySpecialAirNLoop
+            | K::CopyDonkeySpecialAirNEnd
+            | K::CopyDonkeySpecialAirNFull
+    );
+    let preserve = status::Preserve {
+        fastfall,
+        ..status::Preserve::NONE
+    };
+    status::set_any_status_preserve(f, AnyStatus::Kirby(s), frame, timing, preserve);
 }
 
 fn taps(f: &Fighter) -> N64Buttons {
@@ -491,7 +504,7 @@ fn update_blaster(f: &mut Fighter, s: K) {
         });
     }
     if f.status.animation_ended() {
-        status::set_wait_or_fall(f);
+        status::anim_end_set_wait_or_fall(f);
     }
 }
 
@@ -910,7 +923,7 @@ pub fn update(f: &mut Fighter) {
         | K::CopyLuigiSpecialAirN => {
             make_fireball(f);
             if f.status.animation_ended() {
-                status::set_wait_or_fall(f);
+                status::anim_end_set_wait_or_fall(f);
             }
         }
         K::CopyFoxSpecialN | K::CopyFoxSpecialAirN => update_blaster(f, current),
@@ -920,13 +933,13 @@ pub fn update(f: &mut Fighter) {
                 crate::ness::make_pk_fire(f, true);
             }
             if f.status.animation_ended() {
-                status::set_wait_or_fall(f);
+                status::anim_end_set_wait_or_fall(f);
             }
         }
         K::CopyPikachuSpecialN | K::CopyPikachuSpecialAirN => {
             make_thunder_jolt(f);
             if f.status.animation_ended() {
-                status::set_wait_or_fall(f);
+                status::anim_end_set_wait_or_fall(f);
             }
         }
         K::CopySamusSpecialNStart | K::CopySamusSpecialAirNStart => {
@@ -966,7 +979,7 @@ pub fn update(f: &mut Fighter) {
                 fire_charge_shot(f);
             }
             if f.status.animation_ended() {
-                status::set_wait_or_fall(f);
+                status::anim_end_set_wait_or_fall(f);
             }
         }
         K::CopyDonkeySpecialNStart => {
@@ -991,7 +1004,7 @@ pub fn update(f: &mut Fighter) {
             // `ftKirbyCopyDonkeySpecialNEndProcUpdate`: the charge adds to
             // each collision the script makes.
             if f.status.animation_ended() {
-                status::set_wait_or_fall(f);
+                status::anim_end_set_wait_or_fall(f);
             } else {
                 let bonus = giant_punch_bonus(f);
                 for coll in &mut f.attack_colls {
@@ -1004,13 +1017,13 @@ pub fn update(f: &mut Fighter) {
         K::CopyLinkSpecialN => {
             make_boomerang(f);
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         K::CopyLinkSpecialAirN => {
             make_boomerang(f);
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
         K::CopyLinkSpecialNGet
@@ -1022,7 +1035,7 @@ pub fn update(f: &mut Fighter) {
                 if current == K::CopyYoshiSpecialN {
                     f.grab.is_catchstatus = false;
                 }
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         K::CopyLinkSpecialAirNReturn
@@ -1034,7 +1047,7 @@ pub fn update(f: &mut Fighter) {
                 if current == K::CopyYoshiSpecialAirN {
                     f.grab.is_catchstatus = false;
                 }
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
         // `ftKirbyCopyYoshiSpecialNCatchUpdateProcStatus`. Flag 1 stays set
@@ -1048,13 +1061,13 @@ pub fn update(f: &mut Fighter) {
         K::CopyYoshiSpecialNRelease => {
             update_egg_lay_capture_vars(f);
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         K::CopyYoshiSpecialAirNRelease => {
             update_egg_lay_capture_vars(f);
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
         _ => {}
@@ -1472,7 +1485,9 @@ mod tests {
         for _ in 0..20 {
             step(&mut f);
         }
-        f.physics.vel_ground.x = 100.0;
+        // The last ground step, which `vel_air` holds on the ground
+        // (`ftPhysicsSetGroundVelTransferAir`).
+        f.physics.vel_air.x = 100.0;
         assert!(on_ground_lost(&mut f));
         assert_eq!(status(&f), K::CopyPikachuSpecialAirN);
         assert_eq!(f.status.anim_frame, 20.0);

@@ -389,13 +389,13 @@ pub fn update(f: &mut Fighter) {
         YoshiStatus::SpecialHi => {
             update_egg(f);
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         YoshiStatus::SpecialAirHi => {
             update_egg(f);
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
         YoshiStatus::SpecialLwStart | YoshiStatus::SpecialAirLwStart => {
@@ -409,19 +409,19 @@ pub fn update(f: &mut Fighter) {
                 make_stars(f);
             }
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         YoshiStatus::SpecialN => {
             if f.status.animation_ended() {
                 f.grab.is_catchstatus = false;
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         YoshiStatus::SpecialAirN => {
             if f.status.animation_ended() {
                 f.grab.is_catchstatus = false;
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
         // `ftYoshiSpecialNCatchUpdateProcStatus`. Flag 1 stays set once the
@@ -435,13 +435,13 @@ pub fn update(f: &mut Fighter) {
         YoshiStatus::SpecialNRelease => {
             update_capture_vars(f);
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         YoshiStatus::SpecialAirNRelease => {
             update_capture_vars(f);
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
     }
@@ -466,7 +466,12 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
         // no gravity applies.
         AnyStatus::Common(status::Status::JumpAerialF | status::Status::JumpAerialB) => {
             let mut transn = f.physics;
-            physics::apply_air_vel_transn_all(&mut transn, f.root_motion, f.facing.sign());
+            physics::apply_air_vel_transn_all(
+                &mut transn,
+                f.root_motion,
+                f.facing.sign(),
+                f.attributes.size,
+            );
             f.physics.vel_air.y = transn.vel_air.y;
             f.physics.vel_air.z = transn.vel_air.z;
             if !physics::check_clamp_air_vel_x_dec(&mut f.physics, attr.air_speed_max_x) {
@@ -498,7 +503,12 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
         }
         // `ftPhysicsApplyAirVelTransNAll`.
         AnyStatus::Yoshi(YoshiStatus::SpecialLwStart | YoshiStatus::SpecialAirLwStart) => {
-            physics::apply_air_vel_transn_all(&mut f.physics, f.root_motion, f.facing.sign());
+            physics::apply_air_vel_transn_all(
+                &mut f.physics,
+                f.root_motion,
+                f.facing.sign(),
+                f.attributes.size,
+            );
         }
         // `ftYoshiSpecialAirLwLoopProcPhysics`: the fall speed holds.
         AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop) => {
@@ -668,6 +678,8 @@ mod tests {
             }
         );
         assert!(!f.yoshi.egg_held && f.yoshi.egg_thrown);
+        // A centred stick: Wait's interrupt runs on the frame it starts.
+        hold(&mut f, 0, 0);
         while f.status.status != Status::Wait {
             status::update(&mut f);
         }

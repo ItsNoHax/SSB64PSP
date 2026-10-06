@@ -349,6 +349,42 @@ fn script_length(data: &[u8], start: usize) -> Option<AnimLength> {
     }
 }
 
+/// How many frames a looping figatree plays before it jumps back: the
+/// period of a status that checks for the wrap (Donkey Kong's Hand Slap
+/// loop, `ftDonkeySpecialLwLoopProcUpdate`). `None` unless every joint
+/// script loops after the same number of frames.
+pub fn loop_frames(file: &File) -> Option<u16> {
+    let data = &file.data;
+    let joints = joint_table_len(data)?;
+    let mut agreed = None;
+    for joint in 0..joints {
+        let ptr = u32_be(data, joint * 4) as usize;
+        if ptr == 0 {
+            continue;
+        }
+        let mut frames: u16 = 0;
+        let mut at = ptr;
+        let period = loop {
+            let cmd = figatree::command(data, at).ok()?;
+            at = cmd.next;
+            match cmd.opcode {
+                OP_END => return None,
+                OP_LOOP => break frames,
+                _ => {}
+            }
+            if figatree::is_block(cmd.opcode) {
+                frames = frames.saturating_add(cmd.payload);
+            }
+        };
+        match agreed {
+            None => agreed = Some(period),
+            Some(prev) if prev != period => return None,
+            Some(_) => {}
+        }
+    }
+    agreed
+}
+
 fn first_pointer(data: &[u8]) -> u32 {
     (0..data.len() / 4)
         .map(|i| u32_be(data, i * 4))

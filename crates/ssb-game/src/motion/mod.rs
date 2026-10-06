@@ -58,6 +58,18 @@ pub struct MotionDesc {
 /// `FTAnimDesc.flags.is_use_transn_joint`.
 pub const ANIM_FLAG_TRANSN: u32 = 0x4000_0000;
 
+/// `FTAnimDesc.flags.is_use_xrotn_joint` (`ftdef.h`'s
+/// `FTANIM_FLAG_TRANSN_JOINT`, the names swapped).
+pub const ANIM_FLAG_XROTN: u32 = 0x8000_0000;
+
+/// Whether the status's motion interposes `XRotN` between TopN and the
+/// model and leads its figatree with it (and no detached TransN): the
+/// clip's leading joint then poses the whole model (RE-468).
+pub fn leads_with_xrotn(kind: FighterKind, status: AnyStatus) -> bool {
+    motion_desc(kind, status)
+        .is_some_and(|d| d.anim_flags & (ANIM_FLAG_XROTN | ANIM_FLAG_TRANSN) == ANIM_FLAG_XROTN)
+}
+
 /// Whether the status's motion moves the fighter by its TransN joint
 /// (`fp->anim_desc.flags.is_use_transn_joint`), which
 /// `ftPhysicsApplyGroundFrictionOrTransN` reads.
@@ -334,6 +346,8 @@ mod op {
     pub const REFRESH_ATTACK_COLL_ID: u32 = 11;
     pub const SET_THROW: u32 = 12;
     pub const SET_DAMAGE_THROWN: u32 = 13;
+    pub const PLAY_FGM: u32 = 14;
+    pub const PLAY_SMASH_VOICE: u32 = 20;
     pub const SET_FLAG0: u32 = 21;
     pub const SET_FLAG3: u32 = 24;
     pub const SET_AIR_JUMP_ADD: u32 = 25;
@@ -621,6 +635,7 @@ fn run(f: &mut Fighter, thread: usize, pass: Pass) {
                             | op::SET_ATTACK_COLL_SIZE
                             | op::SET_ATTACK_COLL_SOUND_LEVEL
                             | op::REFRESH_ATTACK_COLL_ID
+                            | op::PLAY_FGM..=op::PLAY_SMASH_VOICE
                             | op::SET_FLAG0
                             ..=23
                                 | op::SET_AIR_JUMP_ADD
@@ -728,6 +743,14 @@ fn execute(
             }
         }
         op::CLEAR_ATTACK_COLL_ALL => crate::combat::clear_attack_colls(f),
+        // `nFTMotionEventPlaySmashVoice`: one of `attr->smash_sfx[3]` at
+        // random. Audio is not ported, but the draw advances the shared
+        // generator as the original's does (RE-468: Mario's up smash in
+        // How to Play). Only the Characters menu mutes a fighter
+        // (`is_muted`), and its fighters run no motion script here.
+        op::PLAY_SMASH_VOICE => {
+            let _ = crate::rng::rand_int_range(3);
+        }
         op::SET_FLAG0..=op::SET_FLAG3 => {
             f.motion_script.flags[(opcode - op::SET_FLAG0) as usize] = value;
         }

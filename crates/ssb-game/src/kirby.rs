@@ -302,7 +302,7 @@ fn apply_air_vel_transn_yz(f: &mut Fighter, scale: f32) {
     let x = f.physics.vel_air.x;
     let mut motion = f.root_motion;
     motion.delta *= scale;
-    physics::apply_air_vel_transn_all(&mut f.physics, motion, f.facing.sign());
+    physics::apply_air_vel_transn_all(&mut f.physics, motion, f.facing.sign(), f.attributes.size);
     f.physics.vel_air.x = x;
 }
 
@@ -518,6 +518,8 @@ fn update_jump_aerial_turn(f: &mut Fighter) {
 pub fn set_throw_f(f: &mut Fighter, length: f32) {
     f.become_airborne();
     set_frames(f, K::ThrowF, 0.0, length);
+    // `ftCommonThrowSetStatus` plays the first frame.
+    status::play_anim_events(f);
 }
 
 // ---------------------------------------------------------------------------
@@ -956,13 +958,13 @@ pub fn update(f: &mut Fighter) {
         K::Attack100Loop => update_attack100_loop(f),
         K::Attack100End => {
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         K::JumpAerialF1 | K::JumpAerialF2 | K::JumpAerialF3 | K::JumpAerialF4 | K::JumpAerialF5 => {
             update_jump_aerial_turn(f);
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             } else if !status::check_special_n(f)
                 && !status::check_special_hi(f)
                 && !status::check_special_lw(f)
@@ -989,7 +991,7 @@ pub fn update(f: &mut Fighter) {
                 f.physics.jumps_used += 1;
             }
             if f.status.animation_ended() {
-                status::set_wait_or_fall(f);
+                status::anim_end_set_wait_or_fall(f);
             }
         }
         K::SpecialHi | K::SpecialAirHi => {
@@ -1006,7 +1008,7 @@ pub fn update(f: &mut Fighter) {
                 make_cutter(f);
             }
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         K::SpecialLwStart => {
@@ -1034,7 +1036,7 @@ pub fn update(f: &mut Fighter) {
         K::SpecialAirLwFall => stone_hold_decide(f, false),
         K::SpecialLwEnd | K::SpecialAirLwEnd => {
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
         K::SpecialNStart | K::SpecialAirNStart => {
@@ -1066,12 +1068,12 @@ pub fn update(f: &mut Fighter) {
         }
         K::SpecialNEnd => {
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         K::SpecialAirNEnd => {
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
         K::SpecialNCatch | K::SpecialAirNCatch => {
@@ -1120,9 +1122,9 @@ pub fn update(f: &mut Fighter) {
             }
             if f.status.animation_ended() {
                 if current == K::SpecialNThrow {
-                    status::set_wait(f);
+                    status::anim_end_set_wait(f);
                 } else {
-                    status::set_fall(f);
+                    status::anim_end_set_fall(f);
                 }
             }
         }
@@ -1132,9 +1134,9 @@ pub fn update(f: &mut Fighter) {
             }
             if f.status.animation_ended() {
                 if current == K::SpecialNCopy {
-                    status::set_wait(f);
+                    status::anim_end_set_wait(f);
                 } else {
-                    status::set_fall(f);
+                    status::anim_end_set_fall(f);
                 }
             }
         }
@@ -1221,7 +1223,12 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
         | K::SpecialLwEnd
         | K::SpecialAirLwEnd
         | K::SpecialAirNThrow => {
-            physics::apply_air_vel_transn_all(&mut f.physics, f.root_motion, f.facing.sign());
+            physics::apply_air_vel_transn_all(
+                &mut f.physics,
+                f.root_motion,
+                f.facing.sign(),
+                f.attributes.size,
+            );
         }
         // `proc_physics` is NULL: the velocity carries.
         K::ThrowFFall | K::SpecialAirLwStart | K::SpecialAirLwHold | K::SpecialAirLwFall => {}

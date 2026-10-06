@@ -443,6 +443,99 @@ pub fn tan(v: f32) -> f32 {
     s / c
 }
 
+/// `lbCommonSin`: the original's gameplay sine. It does not call the
+/// platform's trigonometry: it truncates the radian angle into 4096 steps a
+/// turn and reads a 1024-entry quarter-wave table of six-decimal words.
+/// The fighters' collision matrices (`gmCollisionTransformMatrixAll`), the
+/// battle camera and others read it; its truncation moves a joint chain's
+/// end by up to a unit against exact sine (RE-468).
+pub fn lb_sin(angle: f32) -> f32 {
+    lb_sin_index(lb_angle_index(angle))
+}
+
+/// `lbCommonCos`: [`lb_sin`] of the angle plus a quarter turn, added in
+/// radians before the truncation, as the original does.
+pub fn lb_cos(angle: f32) -> f32 {
+    lb_sin_index(lb_angle_index(angle + core::f32::consts::FRAC_PI_2))
+}
+
+/// `lbCommonSin` and `lbCommonCos` of one angle.
+pub fn lb_sin_cos(angle: f32) -> (f32, f32) {
+    (lb_sin(angle), lb_cos(angle))
+}
+
+/// `lbCommonTan`: both table words of one truncated index.
+pub fn lb_tan(angle: f32) -> f32 {
+    let index = lb_angle_index(angle);
+    lb_sin_index(index) / lb_sin_index(index.wrapping_add(0x0400))
+}
+
+fn lb_angle_index(angle: f32) -> u16 {
+    ((angle * 651.898_6) as i32 as u16) & 0x0fff
+}
+
+fn lb_sin_index(index: u16) -> f32 {
+    let index = index & 0x0fff;
+    let low = index & 0x03ff;
+    let sample = if index & 0x0400 != 0 {
+        lb_sine_sample(0x03ff - low)
+    } else {
+        lb_sine_sample(low)
+    };
+    if index & 0x0800 != 0 {
+        -sample
+    } else {
+        sample
+    }
+}
+
+/// `dLBCommonSinLookup[index]`: the sine of `index / 651.8986` (an `f32`
+/// angle) rounded to six decimals, which 1010 of the 1024 words are. The
+/// sine is taken in `f64`, whose rounding margin (5.7e-10 at worst) no
+/// platform's error reaches, so the PSP builds the same words as the host;
+/// the 14 authored exceptions are kept explicitly. The table itself is not
+/// carried (4 KiB of ROM data); `lbcommon_sine_table_matches_the_rom`
+/// checks every word against the ROM.
+pub fn lb_sine_sample(index: u16) -> f32 {
+    let exception = match index {
+        355 => Some(0x3f04_9e99),
+        372 => Some(0x3f0a_48b6),
+        420 => Some(0x3f19_c1f8),
+        440 => Some(0x3f1f_f6d3),
+        500 => Some(0x3f31_a826),
+        503 => Some(0x3f32_80bf),
+        598 => Some(0x3f4b_41f2),
+        628 => Some(0x3f52_33be),
+        663 => Some(0x3f59_bda5),
+        677 => Some(0x3f5c_94d5),
+        722 => Some(0x3f65_0471),
+        804 => Some(0x3f71_8f60),
+        842 => Some(0x3f76_1672),
+        1023 => Some(0x3f80_0000),
+        _ => None,
+    };
+    if let Some(bits) = exception {
+        return f32::from_bits(bits);
+    }
+    let value = sin_f64(f64::from(index as f32 / 651.898_6));
+    (((value * 1_000_000.0 + 0.5) as u64) as f64 / 1_000_000.0) as f32
+}
+
+/// Sine of an angle in `[0, π/2]` in `f64`, summed to its 25th power
+/// (the remainder is below 1e-22 there).
+fn sin_f64(x: f64) -> f64 {
+    let x2 = x * x;
+    let mut term = x;
+    let mut sum = x;
+    let mut n = 1.0;
+    while n < 25.0 {
+        term = -term * x2 / ((n + 1.0) * (n + 2.0));
+        sum += term;
+        n += 2.0;
+    }
+    sum
+}
+
 /// Sine without `std`: reduced to `[-π/2, π/2]` by `sin(π − x) = sin(x)`
 /// and summed to its 13th power, within a few ULP of `f32::sin` (the
 /// earlier `[-π, π]` series was 2e-3 out near ±π, which moved knockback,
@@ -577,6 +670,16 @@ mod trig_tests {
             }
         }
         assert!(worst_atan < 2e-6, "atan2 off by {worst_atan}");
+    }
+
+    #[test]
+    fn the_table_sine_is_exact_where_it_must_be() {
+        for i in 0..1024u16 {
+            let a = f64::from(i as f32 / 651.898_6);
+            assert!((super::sin_f64(a) - a.sin()).abs() < 1e-14, "entry {i}");
+        }
+        assert_eq!(super::lb_sin(core::f32::consts::FRAC_PI_2), 1.0);
+        assert_eq!(super::lb_cos(core::f32::consts::FRAC_PI_2), 0.0);
     }
 }
 

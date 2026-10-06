@@ -277,9 +277,9 @@ pub fn update(f: &mut Fighter) {
             }
             if f.status.animation_ended() {
                 if ground {
-                    status::set_wait(f)
+                    status::anim_end_set_wait(f)
                 } else {
-                    status::set_fall(f)
+                    status::anim_end_set_fall(f)
                 }
             }
         }
@@ -348,9 +348,9 @@ pub fn update(f: &mut Fighter) {
         P::SpecialLwEnd | P::SpecialAirLwEnd => {
             if f.status.animation_ended() {
                 if ground {
-                    status::set_wait(f)
+                    status::anim_end_set_wait(f)
                 } else {
-                    status::set_fall(f)
+                    status::anim_end_set_fall(f)
                 }
             }
         }
@@ -486,8 +486,8 @@ pub fn on_landing(f: &mut Fighter, y: f32, normal: Vec2) -> bool {
         P::SpecialAirHi => P::SpecialHi,
         P::SpecialAirHiEnd => {
             f.land(y);
-            f.fall_special.landing_lag = 0.4;
-            status::set_landing_fall_special(f);
+            // `FTPIKACHU_QUICKATTACK_LANDING_LAG`.
+            status::set_landing_fall_special(f, false, 0.4);
             return true;
         }
         _ => return false,
@@ -802,6 +802,8 @@ mod tests {
             f.status.status,
             AnyStatus::Common(Status::LandingFallSpecial)
         );
-        close(f.fall_special.landing_lag, 0.4);
+        // `FTPIKACHU_QUICKATTACK_LANDING_LAG` is the landing's speed.
+        close(f.status.timing.anim_speed, 0.4);
+        assert!(!f.fall_special.landing_allow_interrupt);
     }
 }

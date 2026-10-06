@@ -234,7 +234,9 @@ pub fn model_yaw(f: &Fighter) -> Option<f32> {
 /// including the steps before and after the halfway facing inversion.
 pub fn model_axes(f: &Fighter) -> [Vec3; 3] {
     let Some(yaw) = model_yaw(f) else {
-        let sign = f.facing.sign();
+        // TopN's yaw (`lr * 90°` from `ftMainSetStatus`), which a status
+        // flipping `lr` part-way keeps (RE-468: Luigi's turn after its pivot).
+        let sign = f.topn_lr;
         return [
             Vec3::new(0.0, 0.0, -sign),
             Vec3::new(0.0, 1.0, 0.0),
@@ -242,6 +244,20 @@ pub fn model_axes(f: &Fighter) -> [Vec3; 3] {
         ];
     };
     let (sin, cos) = ssb_engine::math::sin_cos(yaw);
+    [
+        Vec3::new(cos, 0.0, -sin),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec3::new(sin, 0.0, cos),
+    ]
+}
+
+/// [`model_axes`] as `gmCollisionTransformMatrixAll` builds TopN's matrix
+/// for gameplay positions, from the `lbCommonSin` table (RE-468).
+pub fn collision_axes(f: &Fighter) -> [Vec3; 3] {
+    let Some(yaw) = model_yaw(f) else {
+        return model_axes(f);
+    };
+    let (sin, cos) = ssb_engine::math::lb_sin_cos(yaw);
     [
         Vec3::new(cos, 0.0, -sin),
         Vec3::new(0.0, 1.0, 0.0),
@@ -322,7 +338,7 @@ pub fn update(f: &mut Fighter) -> bool {
                 if !heavy {
                     light_get_proc_damage(f);
                 }
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         return true;
@@ -386,7 +402,7 @@ pub fn update(f: &mut Fighter) -> bool {
         f.motion_script.flags[0] = 0;
     }
     if f.status.animation_ended() {
-        status::set_wait_or_fall(f);
+        status::anim_end_set_wait_or_fall(f);
     }
     true
 }

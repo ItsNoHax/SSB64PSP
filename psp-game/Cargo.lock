@@ -115,6 +115,7 @@ version = "0.1.0"
 dependencies = [
  "libm",
  "sha1_smol",
+ "ssb-engine",
 ]
 
 [[package]]

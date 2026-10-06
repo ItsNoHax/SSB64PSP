@@ -121,6 +121,9 @@ pub fn set_special_n(f: &mut Fighter) {
         0.0,
         StatusTiming::at_speed(SPECIAL_N_START_LENGTH, speed),
     );
+    // The setter plays the first frame (RE-468: the N64's start shows
+    // `anim_frame` 0.86 on its first frame at the uncharged speed).
+    status::play_anim_events(f);
     f.samus.damage_resets_charge = true;
     f.samus.charge_shot = false;
     f.samus.shot_fired = false;
@@ -344,7 +347,7 @@ pub fn update(f: &mut Fighter) {
                 fire_charge_shot(f);
             }
             if f.status.animation_ended() {
-                status::set_wait_or_fall(f);
+                status::anim_end_set_wait_or_fall(f);
             }
         }
         SamusStatus::SpecialHi => {
@@ -377,7 +380,7 @@ pub fn update(f: &mut Fighter) {
         SamusStatus::SpecialAirLw => {
             make_bomb(f);
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
     }
@@ -446,7 +449,12 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
         SamusStatus::SpecialHi => {
             // `ftPhysicsApplyAirVelTransNYZ`: the figatree drives Y and Z.
             let mut transn = f.physics;
-            physics::apply_air_vel_transn_all(&mut transn, f.root_motion, f.facing.sign());
+            physics::apply_air_vel_transn_all(
+                &mut transn,
+                f.root_motion,
+                f.facing.sign(),
+                f.attributes.size,
+            );
             f.physics.vel_air.y = transn.vel_air.y;
             f.physics.vel_air.z = transn.vel_air.z;
             screw_drift(f);
@@ -563,7 +571,8 @@ pub fn on_landing(f: &mut Fighter, floor_y: f32) -> bool {
                 return true;
             }
             f.land(floor_y);
-            status::set_landing_fall_special(f);
+            // `FTSAMUS_SCREWATTACK_LANDING_LAG`.
+            status::set_landing_fall_special(f, false, 0.4);
         }
         _ => return false,
     }
@@ -610,7 +619,8 @@ mod tests {
         let mut f = samus(true);
         set_special_n(&mut f);
         assert!(!f.samus.is_release);
-        for _ in 0..16 {
+        // The setter played the start's first frame.
+        for _ in 0..15 {
             press(&mut f, 0);
             status::update(&mut f);
         }

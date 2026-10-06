@@ -128,21 +128,14 @@ pub const SPECIALN_TURN_STICK_MIN: i32 = -20;
 /// 636). The shared motion script emits its weapon event at frame 16.
 pub const MARIO_FIREBALL_LENGTH_FRAMES: f32 = 46.0;
 pub const MARIO_FIREBALL_SPAWN_FRAME: f32 = 16.0;
-/// `dMarioMainMotion_SuperJumpPunchAir`: two frames to the initial hit, one
-/// frame through its cleanup, then six to `SetFlag1(1)`/`SetFlag2(1)`.
-pub const MARIO_SUPERJUMP_LAUNCH_FRAME: f32 = 9.0;
-/// `dLuigiMainMotion_SuperJumpPunchAir`/`0x17FC`: the same events, but only
-/// four frames from the sweet spot's end to the flags.
+/// The frame Mario's Super Jump Punch script raises motion flags 1 and 2
+/// (TransN's launch and the facing pick), its setter having played frame
+/// 1; the N64 launches on it (RE-468). The statuses read the flags; these
+/// pin the scripts in tests.
+pub const MARIO_SUPERJUMP_LAUNCH_FRAME: f32 = 6.0;
+/// Luigi's: the same events, one frame later.
 pub const LUIGI_SUPERJUMP_LAUNCH_FRAME: f32 = 7.0;
 
-/// The frame the fighter's Super Jump Punch script raises flags 1 and 2.
-pub fn superjump_launch_frame(kind: crate::fighter::FighterKind) -> f32 {
-    if kind == crate::fighter::FighterKind::Luigi {
-        LUIGI_SUPERJUMP_LAUNCH_FRAME
-    } else {
-        MARIO_SUPERJUMP_LAUNCH_FRAME
-    }
-}
 /// The ROM-verified Super Jump Punch figatree duration. Its motion-event
 /// script ends after 27 frames, but `ftMarioSpecialHiProcUpdate` waits for
 /// the 40-frame skeleton animation itself to end before entering FallSpecial.
@@ -2384,6 +2377,9 @@ pub struct FallSpecialState {
     /// plain default gravity instead (used by moves that keep accelerating
     /// rather than settling immediately).
     pub is_fall_accelerate: bool,
+    /// `status_vars.common.landing.is_allow_interrupt` of the
+    /// `LandingFallSpecial` that follows.
+    pub landing_allow_interrupt: bool,
 }
 
 /// Motion-script state used by `ftMarioSpecialHiProcInterrupt`. The script's
@@ -2486,7 +2482,13 @@ pub fn set_fall_special(
     is_allow_interrupt: bool,
 ) {
     let drift = f.attributes.air_speed_max_x * drift_mul;
-    set_status(f, Status::FallSpecial, 0.0, StatusTiming::unknown());
+    set_any_status_preserve(
+        f,
+        Status::FallSpecial.into(),
+        0.0,
+        StatusTiming::unknown(),
+        Preserve::FASTFALL,
+    );
     physics::clamp_air_vel_x(&mut f.physics, drift);
     f.physics.jumps_used = f.attributes.jumps_max;
     f.fall_special = FallSpecialState {
@@ -2496,6 +2498,7 @@ pub fn set_fall_special(
         landing_lag,
         is_allow_interrupt,
         is_fall_accelerate,
+        landing_allow_interrupt: false,
     };
     crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_FALL_SPECIAL, 0);
     f.is_special_interrupt = true;
@@ -2509,17 +2512,21 @@ pub fn set_mario_special_n(f: &mut Fighter) {
         0.0,
         StatusTiming::frames(MARIO_FIREBALL_LENGTH_FRAMES),
     );
+    // The setter plays the first frame (RE-468).
+    play_anim_events(f);
     f.mario_special_n = MarioSpecialNState::default();
 }
 
 /// `ftMarioSpecialAirNSetStatus` @ 0x80156054.
 pub fn set_mario_special_air_n(f: &mut Fighter) {
-    set_any_status(
+    set_any_status_preserve(
         f,
         AnyStatus::Mario(MarioStatus::SpecialAirN),
         0.0,
         StatusTiming::frames(MARIO_FIREBALL_LENGTH_FRAMES),
+        Preserve::FASTFALL,
     );
+    play_anim_events(f);
     f.mario_special_n = MarioSpecialNState::default();
 }
 
@@ -2531,7 +2538,22 @@ pub fn set_fox_special_n(f: &mut Fighter) {
     } else {
         (FoxStatus::SpecialAirN, 45.0)
     };
-    set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::frames(length));
+    // `ftFoxSpecialAirNSetStatus` keeps `is_fastfall`.
+    let preserve = if status == FoxStatus::SpecialAirN {
+        Preserve::FASTFALL
+    } else {
+        Preserve::NONE
+    };
+    set_any_status_preserve(
+        f,
+        AnyStatus::Fox(status),
+        0.0,
+        StatusTiming::frames(length),
+        preserve,
+    );
+    // The setter plays the first frame (RE-468: the opening's Fox shows
+    // `anim_frame` 1 on the N64's first frame).
+    play_anim_events(f);
     f.fox_special_n = FoxSpecialNState::default();
     // `ftFoxSpecialNProcUpdate`'s repeat path calls `ftParamSetMotionID`, so
     // every blaster shot is a new motion.
@@ -2715,6 +2737,8 @@ pub fn fox_fire_fox_floor_contact(f: &mut Fighter, normal: Vec2, floor_y: f32) -
         } else {
             Facing::Left
         };
+        // `fp->joints[nFTPartsJointTopN]->rotate.vec.f.y = lr * 90°`.
+        f.topn_lr = f.facing.sign();
         f.fox_special_hi.angle =
             ssb_engine::math::atan2(f.physics.vel_air.y, f.physics.vel_air.x * f.facing.sign());
         f.pos.y = floor_y;
@@ -2843,34 +2867,94 @@ pub fn switch_mario_fireball_air(f: &mut Fighter) {
     physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
 }
 
-/// `ftDonkeySpecialNStartSetStatus` and its aerial counterpart.
+/// `ftDonkeySpecialNStartSetStatus` and its aerial counterpart: the setter
+/// plays the first frame, then `ftDonkeySpecialNInitStatusVars`.
 pub fn set_donkey_special_n(f: &mut Fighter) {
     let status = if f.is_grounded() {
         DonkeyStatus::SpecialNStart
     } else {
         DonkeyStatus::SpecialAirNStart
     };
-    set_any_status(f, AnyStatus::Donkey(status), 0.0, StatusTiming::frames(8.0));
+    set_any_status_preserve(
+        f,
+        AnyStatus::Donkey(status),
+        0.0,
+        StatusTiming::frames(8.0),
+        donkey_special_n_preserve(f),
+    );
+    play_anim_events(f);
     let charge = f.donkey_special_n.charge_level;
-    f.donkey_special_n.release = charge == 10;
+    f.donkey_special_n.release = charge == DONKEY_GIANTPUNCH_CHARGE_MAX;
     f.donkey_special_n.charging = false;
     f.donkey_special_n.cancel = false;
 }
 
+/// `FTDONKEY_GIANTPUNCH_CHARGE_MAX`.
+const DONKEY_GIANTPUNCH_CHARGE_MAX: u8 = 10;
+/// `FTDONKEY_GIANTPUNCH_CHRAGE_ANIM_SPEED`: a full charge's loop plays at
+/// double speed.
+const DONKEY_GIANTPUNCH_CHARGE_ANIM_SPEED: f32 = 2.0;
+/// The charge loop's figatree (`DonkeySpecialNLoop`) wraps every 12 frames
+/// (the ROM test `donkey_giant_punch_loop_is_12_frames`).
+pub const DONKEY_SPECIAL_N_LOOP_FRAMES: f32 = 12.0;
+
+/// The charge loop's timing: looping, at double speed once full
+/// (`ftDonkeySpecialNLoopSetProcDamageAnimSpeed`).
+fn donkey_charge_loop_timing(f: &Fighter) -> StatusTiming {
+    StatusTiming {
+        anim_length: Some(DONKEY_SPECIAL_N_LOOP_FRAMES),
+        anim_speed: if f.donkey_special_n.charge_level == DONKEY_GIANTPUNCH_CHARGE_MAX {
+            DONKEY_GIANTPUNCH_CHARGE_ANIM_SPEED
+        } else {
+            1.0
+        },
+        looping: true,
+    }
+}
+
+/// `ftDonkeySpecialNLoopSetStatus` / `ftDonkeySpecialAirNLoopSetStatus`.
 fn donkey_charge_loop(f: &mut Fighter) {
     let status = if f.is_grounded() {
         DonkeyStatus::SpecialNLoop
     } else {
         DonkeyStatus::SpecialAirNLoop
     };
-    // The figatree loops every 12 frames; its zero decoded length denotes
-    // that loop rather than a one-frame animation.
-    set_any_status(
+    let timing = donkey_charge_loop_timing(f);
+    set_any_status_preserve(
         f,
         AnyStatus::Donkey(status),
         0.0,
-        StatusTiming::frames(12.0),
+        timing,
+        donkey_special_n_preserve(f),
     );
+}
+
+/// The aerial Giant Punch setters keep `is_fastfall`
+/// (`FTSTATUS_PRESERVE_FASTFALL`); the grounded ones have none to keep.
+fn donkey_special_n_preserve(f: &Fighter) -> Preserve {
+    if f.is_grounded() {
+        Preserve::NONE
+    } else {
+        Preserve::FASTFALL
+    }
+}
+
+/// `ftDonkeySpecialNLoopProcInterrupt`: on the ground a roll leaves the
+/// charge; A or B releases it, Z cancels it.
+fn donkey_charge_loop_interrupt(f: &mut Fighter) {
+    if f.is_grounded() {
+        if let Some(status) = crate::reaction::escape_status(f) {
+            crate::reaction::set_escape(f, status);
+            return;
+        }
+    }
+    let taps = f.button_tap();
+    if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {
+        f.donkey_special_n.release = true;
+    }
+    if taps.contains(N64Buttons::Z) {
+        f.donkey_special_n.cancel = true;
+    }
 }
 
 /// `FTDONKEY_GIANTPUNCH_CHARGE_DAMAGE_MUL`.
@@ -2886,7 +2970,14 @@ fn donkey_charge_release(f: &mut Fighter) {
     };
     let charge = f.donkey_special_n.charge_level;
     let len = crate::motion::anim_length(f.kind, AnyStatus::Donkey(status)).unwrap_or(80.0);
-    set_any_status(f, AnyStatus::Donkey(status), 0.0, StatusTiming::frames(len));
+    let preserve = donkey_special_n_preserve(f);
+    set_any_status_preserve(
+        f,
+        AnyStatus::Donkey(status),
+        0.0,
+        StatusTiming::frames(len),
+        preserve,
+    );
     // `ftDonkeySpecialNGetStatusChargeLevelReset`, after the status change.
     f.donkey_special_n.attack_charge = charge;
     f.donkey_special_n.charge_level = 0;
@@ -2925,18 +3016,23 @@ pub fn set_donkey_special_lw(f: &mut Fighter) {
         0.0,
         StatusTiming::frames(3.0),
     );
+    play_anim_events(f);
     f.donkey_special_lw.loop_requested = false;
 }
 
+/// The Hand Slap loop's figatree (`DonkeySpecialLwLoop`) wraps every 34
+/// frames (RE-468; the ROM test `donkey_hand_slap_loop_is_34_frames`).
+pub const DONKEY_SPECIAL_LW_LOOP_FRAMES: f32 = 34.0;
+
+/// `ftDonkeySpecialLwLoopProcInterrupt`: a B tap asks for another slap.
+fn donkey_special_lw_loop_interrupt(f: &mut Fighter) {
+    if f.button_tap().contains(N64Buttons::B) {
+        f.donkey_special_lw.loop_requested = true;
+    }
+}
+
 pub fn apply_donkey_special_hi_ground_physics(f: &mut Fighter) {
-    physics::apply_clamp_ground_vel_stick_range(
-        &mut f.physics,
-        f.input.stick_x,
-        0,
-        0.025,
-        f.facing.sign(),
-        26.0,
-    );
+    physics::apply_clamp_ground_vel_stick_range(&mut f.physics, f.input.stick_x, 0, 0.025, 26.0);
 }
 
 pub fn apply_donkey_special_hi_air_physics(f: &mut Fighter) {
@@ -3077,6 +3173,9 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
 
 /// `ftMarioSpecialHiSetStatus` @ 0x80156428.
 pub fn set_mario_special_hi(f: &mut Fighter) {
+    // `ftMarioSpecialHiInitStatusVars`: motion flags 1 and 2 down.
+    f.motion_script.flags[1] = 0;
+    f.motion_script.flags[2] = 0;
     set_any_status(
         f,
         AnyStatus::Mario(MarioStatus::SpecialHi),
@@ -3084,10 +3183,15 @@ pub fn set_mario_special_hi(f: &mut Fighter) {
         StatusTiming::frames(MARIO_SUPERJUMP_LENGTH_FRAMES),
     );
     f.mario_special_hi = MarioSpecialHiState::default();
+    // The setter plays the first frame (RE-468).
+    play_anim_events(f);
 }
 
 /// `ftMarioSpecialAirHiSetStatus` @ 0x80156478.
 pub fn set_mario_special_air_hi(f: &mut Fighter) {
+    // `ftMarioSpecialHiInitStatusVars`: motion flags 1 and 2 down.
+    f.motion_script.flags[1] = 0;
+    f.motion_script.flags[2] = 0;
     set_any_status(
         f,
         AnyStatus::Mario(MarioStatus::SpecialAirHi),
@@ -3097,6 +3201,9 @@ pub fn set_mario_special_air_hi(f: &mut Fighter) {
     f.mario_special_hi = MarioSpecialHiState::default();
     f.physics.vel_air.y = 0.0;
     f.physics.vel_air.x /= 1.5;
+    // The setter plays the first frame (RE-468: Mario's recovery in How
+    // to Play launched a frame late).
+    play_anim_events(f);
 }
 
 /// `ftCommonSpecialHiCheckInterruptCommon` @ 0x80151160, limited to Mario:
@@ -3166,11 +3273,17 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
 }
 
 /// `ftMarioSpecialHiProcPhysics` @ 0x80156240, aerial branch. Before the
-/// source motion script raises flag1 the move uses capped gravity and normal
-/// air friction; from frame 9 onward it consumes TransN and damps all axes.
+/// motion script raises flag 1 the move uses capped gravity and normal air
+/// friction; from then on it consumes TransN and damps all axes (RE-468:
+/// the flag, not a fixed frame — Mario's comes on frame 6).
 pub fn apply_mario_special_air_hi_physics(f: &mut Fighter) {
-    if f.status.anim_frame >= superjump_launch_frame(f.kind) {
-        physics::apply_air_vel_transn_all(&mut f.physics, f.root_motion, f.facing.sign());
+    if f.motion_script.flags[1] != 0 {
+        physics::apply_air_vel_transn_all(
+            &mut f.physics,
+            f.root_motion,
+            f.facing.sign(),
+            f.attributes.size,
+        );
         f.physics.vel_air *= 0.95;
     } else {
         physics::apply_gravity_clamp_tvel(&mut f.physics, 0.5, f.attributes.tvel_base);
@@ -3187,24 +3300,24 @@ pub fn apply_mario_special_air_hi_physics(f: &mut Fighter) {
 /// the original's player-input semantics.
 pub fn apply_mario_special_hi_interrupt(f: &mut Fighter) {
     let stick_x = f.stick.x as i32;
-    if f.status.anim_frame < superjump_launch_frame(f.kind) {
-        if stick_x.abs() >= MARIO_SUPERJUMP_TURN_STICK_MIN {
-            let clamped = stick_x.signum() * MARIO_SUPERJUMP_TURN_STICK_MIN;
-            let desired_rotation =
-                -((stick_x - clamped) as f32 * MARIO_SUPERJUMP_AIR_DRIFT * core::f32::consts::PI
-                    / 180.0);
-            if f.root_motion.rotate_z.abs() < desired_rotation.abs() {
-                f.root_motion.rotate_z = desired_rotation;
-            }
+    // Until motion flag 1: a stick past 50 tilts TransN.
+    if f.motion_script.flags[1] == 0 && stick_x.abs() > MARIO_SUPERJUMP_TURN_STICK_MIN {
+        let clamped = stick_x.signum() * MARIO_SUPERJUMP_TURN_STICK_MIN;
+        let desired_rotation =
+            -((stick_x - clamped) as f32 * MARIO_SUPERJUMP_AIR_DRIFT * core::f32::consts::PI
+                / 180.0);
+        if f.root_motion.rotate_z.abs() < desired_rotation.abs() {
+            f.root_motion.rotate_z = desired_rotation;
         }
-    } else if !f.mario_special_hi.launch_started {
+    }
+    // Motion flag 2, once: a stick past 20 picks the facing
+    // (`ftParamSetStickLR`) and turns TopN.
+    if f.motion_script.flags[2] != 0 {
+        f.motion_script.flags[2] = 0;
         f.mario_special_hi.launch_started = true;
-        if stick_x.abs() >= MARIO_SUPERJUMP_FACING_STICK_MIN {
-            f.facing = if stick_x < 0 {
-                Facing::Left
-            } else {
-                Facing::Right
-            };
+        if stick_x.abs() > MARIO_SUPERJUMP_FACING_STICK_MIN {
+            set_stick_lr(f);
+            f.topn_lr = f.facing.sign();
         }
     }
 }
@@ -3230,6 +3343,7 @@ pub fn set_mario_special_lw(f: &mut Fighter) {
         0.0,
         StatusTiming::frames(MARIO_TORNADO_AIR_LENGTH_FRAMES),
     );
+    play_anim_events(f);
     f.physics.vel_air.y = -7.0;
     physics::clamp_air_vel_x(&mut f.physics, MARIO_TORNADO_VEL_X_CLAMP);
     init_mario_tornado_status(f);
@@ -3243,6 +3357,7 @@ pub fn set_mario_special_air_lw(f: &mut Fighter) {
         0.0,
         StatusTiming::frames(MARIO_TORNADO_AIR_LENGTH_FRAMES),
     );
+    play_anim_events(f);
     f.physics.vel_air.y = MARIO_TORNADO_VEL_Y_BASE
         - if f.mario_special_lw.rise_exhausted {
             0.0
@@ -3371,7 +3486,6 @@ pub fn apply_mario_special_lw_ground_physics(f: &mut Fighter) -> bool {
         f.input.stick_x,
         0,
         MARIO_TORNADO_VEL_X_GROUND,
-        f.facing.sign(),
         clamp,
     );
     if f.mario_special_lw.rise_enabled && f.button_tap().contains(N64Buttons::B) {
@@ -3403,12 +3517,37 @@ pub fn apply_mario_special_lw_air_physics(f: &mut Fighter) {
     );
 }
 
-/// `ftCommonLandingFallSpecialSetStatus` @ `ftcommonlanding.c:89`. No
-/// extracted animation length (module docs elsewhere on collapsed landing
-/// statuses — `set_guard_on`'s doc comment covers the pattern), so this
-/// resolves into `Wait` on its very next update tick.
-pub fn set_landing_fall_special(f: &mut Fighter) {
-    set_status(f, Status::LandingFallSpecial, 0.0, StatusTiming::unknown());
+/// `ftCommonLandingFallSpecialSetStatus` @ `ftcommonlanding.c:89`: the
+/// helpless landing's figatree at `anim_speed` (the move's landing lag, so
+/// 0.28 stretches it to 1 / 0.28 of its length), then `Wait`; the landing
+/// interrupts only when `is_allow_interrupt` (RE-468: it ended at once).
+pub fn set_landing_fall_special(f: &mut Fighter, is_allow_interrupt: bool, anim_speed: f32) {
+    let timing = match crate::motion::anim_length(f.kind, Status::LandingFallSpecial.into()) {
+        Some(len) => StatusTiming::at_speed(len, anim_speed),
+        None => StatusTiming::unknown(),
+    };
+    set_status(f, Status::LandingFallSpecial, 0.0, timing);
+    f.fall_special.landing_allow_interrupt = is_allow_interrupt;
+}
+
+/// `ftMarioSpecialHiProcMap`'s floor contact: before motion flag 1 or
+/// while rising the jump only projects (`mpCommonCheckFighterProject`);
+/// falling after launch it lands helpless (RE-468).
+pub fn mario_special_hi_on_landing(f: &mut Fighter, floor_y: f32) -> bool {
+    if !matches!(
+        f.status.status,
+        AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi)
+    ) {
+        return false;
+    }
+    if f.motion_script.flags[1] == 0 || f.physics.vel_air.y >= 0.0 {
+        f.floor = None;
+        f.pos.y = floor_y;
+        return true;
+    }
+    f.land(floor_y);
+    set_landing_fall_special(f, false, MARIO_SUPERJUMP_LANDING_LAG);
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -3677,6 +3816,9 @@ pub struct Preserve {
     /// `FTSTATUS_PRESERVE_COLANIM`: keep the colour animation.
     pub colanim: bool,
     pub playertag: bool,
+    /// `FTSTATUS_PRESERVE_FASTFALL`: keep `is_fastfall`, which every other
+    /// status change clears (RE-468).
+    pub fastfall: bool,
 }
 
 impl Preserve {
@@ -3687,6 +3829,11 @@ impl Preserve {
         damage_player: false,
         colanim: false,
         playertag: false,
+        fastfall: false,
+    };
+    pub const FASTFALL: Preserve = Preserve {
+        fastfall: true,
+        ..Preserve::NONE
     };
     pub const HIT: Preserve = Preserve {
         hit: true,
@@ -3748,6 +3895,12 @@ pub fn set_any_status_preserve(
     f.reaction.is_passive_invincible = false;
     // `ftMainSetStatus`: `is_shield = FALSE`; the guard setters raise it.
     f.guard.is_shield = false;
+    // `ftMainSetStatus`: `is_fastfall = FALSE` unless the setter keeps it
+    // (RE-468: Luigi's aerial jump out of a fast-falling DamageFall rose
+    // on the N64 and fell on the port).
+    if !preserve.fastfall {
+        f.physics.is_fastfall = false;
+    }
     f.is_smash_di = false;
     // `attack1_followup_frames` survives only into Wait and the walks.
     if !matches!(
@@ -4288,7 +4441,13 @@ pub fn set_fall(f: &mut Fighter) {
     } else {
         Status::Fall
     };
-    set_status(f, status, 0.0, StatusTiming::unknown());
+    set_any_status_preserve(
+        f,
+        status.into(),
+        0.0,
+        StatusTiming::unknown(),
+        Preserve::FASTFALL,
+    );
     physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
     f.is_special_interrupt = true;
 }
@@ -4460,7 +4619,11 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
             if f.fall_special.is_goto_landing
                 || f.physics.vel_air.y < FALLSPECIAL_SKIPLANDING_VEL_Y_MAX
             {
-                set_landing_fall_special(f);
+                let (interrupt, lag) = (
+                    f.fall_special.is_allow_interrupt,
+                    f.fall_special.landing_lag,
+                );
+                set_landing_fall_special(f, interrupt, lag);
             } else {
                 set_wait(f);
             }
@@ -4813,7 +4976,14 @@ pub fn set_dtilt(f: &mut Fighter) {
 /// transfer, which is the only thing that ever touches `is_fastfall`.
 pub fn set_air_attack(f: &mut Fighter, status: Status) {
     let len = attack_length(f, status);
-    set_status(f, status, 0.0, StatusTiming::frames(len));
+    // `ftCommonAttackAirCheckInterruptCommon`: `FTSTATUS_PRESERVE_FASTFALL`.
+    set_any_status_preserve(
+        f,
+        status.into(),
+        0.0,
+        StatusTiming::frames(len),
+        Preserve::FASTFALL,
+    );
     // The setter plays the first frame (`ftMainPlayAnimEventsAll`).
     play_anim_events(f);
     f.link.dair_rehit_timer = 0;
@@ -5006,20 +5176,17 @@ pub fn check_fsmash(f: &mut Fighter) -> bool {
         };
         crate::item_throw::set_item_throw(f, s);
     } else {
+        // `ftParamSetStickLR` before the swing, the shot and the smash
+        // alike (RE-468: Luigi's forward smash the other way from Wait).
+        set_stick_lr(f);
         if f.items.held.is_some_and(|i| {
             matches!(
                 i.ty,
                 crate::item::ItemType::Swing | crate::item::ItemType::Shoot
             )
-        }) {
-            if f.stick.x < 0 {
-                f.facing = Facing::Left;
-            } else if f.stick.x > 0 {
-                f.facing = Facing::Right;
-            }
-            if crate::item_use::check(f, 2, false) {
-                return true;
-            }
+        }) && crate::item_use::check(f, 2, false)
+        {
+            return true;
         }
         set_fsmash(f);
     }
@@ -5598,12 +5765,13 @@ pub fn update(f: &mut Fighter) {
         }
         // `ftAnimEndSetFall` @ ftcommonstatus.h: a drop-through becomes a
         // plain fall once its animation is done.
+        // `ftCommonPassProcInterrupt`: a special, an aerial or a jump;
+        // after the fall, Fall's own (the same checks).
         Status::Pass | Status::GuardPass => {
             if f.status.animation_ended() {
                 set_fall(f);
-            } else {
-                check_jump_aerial(f);
             }
+            crate::reaction::air_interrupt(f);
         }
         // `ftCommonGuardOnProcUpdate` @ `ftcommonguard1.c:362`, minus the
         // Yoshi/effects side (module docs). No animation length is extracted
@@ -5707,6 +5875,8 @@ pub fn update(f: &mut Fighter) {
                 } else {
                     Situation::Ground
                 };
+                // `ftCommonCliffCommon2InitStatusVars`.
+                f.dokan.is_jostle_ignore = f.situation == Situation::Ground;
                 f.cliff.place_phase2 = true;
             }
         }
@@ -5746,7 +5916,7 @@ pub fn update(f: &mut Fighter) {
         | Status::AttackAirHi
         | Status::AttackAirLw => {
             if f.status.animation_ended() {
-                set_fall(f);
+                anim_end_set_fall(f);
             }
         }
         // `LandingAirF`/`Hi`/`B`/`Lw` have no extracted animation length
@@ -5779,10 +5949,15 @@ pub fn update(f: &mut Fighter) {
         Status::FallSpecial => {
             check_jump_aerial(f);
         }
-        // `ftCommonLandingFallSpecialSetStatus`'s status has no extracted
-        // animation length either (`set_landing_fall_special`'s docs).
+        // `ftAnimEndSetWait`, then `ftCommonLandingProcInterrupt` when the
+        // setter allowed it.
         Status::LandingFallSpecial => {
-            set_wait(f);
+            if f.status.animation_ended() {
+                return anim_end_set_wait(f);
+            }
+            if f.fall_special.landing_allow_interrupt {
+                landing_interrupt(f);
+            }
         }
         // `ftCommonFallProcInterrupt` @ `ftcommonfall.c:10`: attack outranks
         // a second jump.
@@ -5845,26 +6020,30 @@ fn update_extended(f: &mut Fighter) {
         // `Fighter::tick_interrupt` runs them (`crate::boss::update`).
         AnyStatus::Boss(_) => {}
         AnyStatus::Donkey(DonkeyStatus::SpecialNStart | DonkeyStatus::SpecialAirNStart) => {
-            let taps = f.button_tap();
-            if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {
-                f.donkey_special_n.release = true;
-            }
             if f.status.animation_ended() {
+                // `ftAnimEndCheckSetStatus`, then the loop's interrupt on
+                // the frame it starts.
                 donkey_charge_loop(f);
+                donkey_charge_loop_interrupt(f);
+            } else {
+                // `ftDonkeySpecialNStartProcInterrupt`.
+                let taps = f.button_tap();
+                if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {
+                    f.donkey_special_n.release = true;
+                }
             }
         }
         AnyStatus::Donkey(DonkeyStatus::SpecialNLoop | DonkeyStatus::SpecialAirNLoop) => {
-            let taps = f.button_tap();
-            if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {
-                f.donkey_special_n.release = true;
-            }
-            if taps.contains(N64Buttons::Z) {
-                f.donkey_special_n.cancel = true;
-            }
-            if f.status.animation_ended() {
-                if f.donkey_special_n.charging && f.donkey_special_n.charge_level < 10 {
+            // `ftDonkeySpecialNLoopProcUpdate`: on the frame the looping
+            // figatree wraps.
+            let anim_frame = f.status.anim_frame;
+            if (0.0..f.status.timing.anim_speed).contains(&anim_frame) {
+                if f.donkey_special_n.charging
+                    && f.donkey_special_n.charge_level < DONKEY_GIANTPUNCH_CHARGE_MAX
+                {
                     f.donkey_special_n.charge_level += 1;
-                    if f.donkey_special_n.charge_level == 10 {
+                    if f.donkey_special_n.charge_level == DONKEY_GIANTPUNCH_CHARGE_MAX {
+                        f.status.timing.anim_speed = DONKEY_GIANTPUNCH_CHARGE_ANIM_SPEED;
                         crate::colanim::check_set(
                             f,
                             crate::colanim::ColAnimId::FIGHTER_COMMON_SPECIAL_N_CHARGE,
@@ -5874,18 +6053,15 @@ fn update_extended(f: &mut Fighter) {
                     }
                 }
                 if f.donkey_special_n.cancel {
-                    if f.is_grounded() {
-                        set_wait(f);
-                    } else {
-                        set_fall(f);
-                    }
+                    set_wait_or_fall(f);
+                    return;
                 } else if f.donkey_special_n.release {
                     donkey_charge_release(f);
-                } else {
-                    f.donkey_special_n.charging = true;
-                    donkey_charge_loop(f);
+                    return;
                 }
+                f.donkey_special_n.charging = true;
             }
+            donkey_charge_loop_interrupt(f);
         }
         AnyStatus::Donkey(
             DonkeyStatus::SpecialNEnd
@@ -5896,9 +6072,9 @@ fn update_extended(f: &mut Fighter) {
             // `ftDonkeySpecialNEndProcUpdate`.
             if f.status.animation_ended() {
                 if f.is_grounded() {
-                    set_wait(f);
+                    anim_end_set_wait(f);
                 } else {
-                    set_fall(f);
+                    anim_end_set_fall(f);
                 }
             } else if matches!(
                 f.status.status,
@@ -5916,9 +6092,11 @@ fn update_extended(f: &mut Fighter) {
         AnyStatus::Donkey(DonkeyStatus::SpecialHi | DonkeyStatus::SpecialAirHi) => {
             if f.status.animation_ended() {
                 if f.is_grounded() {
-                    set_wait(f);
+                    anim_end_set_wait(f);
                 } else {
-                    set_fall_special(f, 1.0, false, true, 0.3, true);
+                    // `FTDONKEY_SPINNINGKONG_*`: accelerating, no forced
+                    // landing (RE-468).
+                    set_fall_special(f, 1.0, true, false, 0.3, true);
                 }
             }
         }
@@ -5928,23 +6106,21 @@ fn update_extended(f: &mut Fighter) {
                     f,
                     AnyStatus::Donkey(DonkeyStatus::SpecialLwLoop),
                     0.0,
-                    StatusTiming::frames(28.0),
+                    StatusTiming::looping(DONKEY_SPECIAL_LW_LOOP_FRAMES),
                 );
+                // `proc_interrupt` is read after `proc_update`: the loop's
+                // runs on the frame it starts.
+                donkey_special_lw_loop_interrupt(f);
             }
         }
         AnyStatus::Donkey(DonkeyStatus::SpecialLwLoop) => {
-            if f.button_tap().contains(N64Buttons::B) {
-                f.donkey_special_lw.loop_requested = true;
-            }
-            if f.status.animation_ended() {
+            // `ftDonkeySpecialLwLoopProcUpdate`: on the frame the looping
+            // figatree wraps (`0 <= anim_frame < anim_speed`) a B tap since
+            // the last wrap plays the slap again; otherwise the slap ends.
+            let anim_frame = f.status.anim_frame;
+            if (0.0..f.status.timing.anim_speed).contains(&anim_frame) {
                 if f.donkey_special_lw.loop_requested {
                     f.donkey_special_lw.loop_requested = false;
-                    set_any_status(
-                        f,
-                        AnyStatus::Donkey(DonkeyStatus::SpecialLwLoop),
-                        0.0,
-                        StatusTiming::frames(28.0),
-                    );
                 } else {
                     set_any_status(
                         f,
@@ -5952,19 +6128,21 @@ fn update_extended(f: &mut Fighter) {
                         0.0,
                         StatusTiming::frames(5.0),
                     );
+                    return;
                 }
             }
+            donkey_special_lw_loop_interrupt(f);
         }
         AnyStatus::Donkey(DonkeyStatus::SpecialLwEnd) => {
             if f.status.animation_ended() {
-                set_wait(f);
+                anim_end_set_wait(f);
             }
         }
         // `ftCommonAttack13ProcUpdate` @ `ftcommonattack1.c:63`, minus the
         // Captain-only `Attack100` branch (doesn't apply to Mario).
         AnyStatus::Mario(MarioStatus::Attack13) => {
             if f.status.animation_ended() {
-                set_wait(f);
+                anim_end_set_wait(f);
             }
         }
         AnyStatus::Mario(MarioStatus::SpecialN | MarioStatus::SpecialAirN) => {
@@ -5995,18 +6173,21 @@ fn update_extended(f: &mut Fighter) {
             }
             if f.status.animation_ended() {
                 if f.situation == Situation::Ground {
-                    set_wait(f);
+                    anim_end_set_wait(f);
                 } else {
-                    set_fall(f);
+                    anim_end_set_fall(f);
                 }
             }
         }
         AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi) => {
             if f.status.animation_ended() {
+                // (drift, unknown TRUE, is_fall_accelerate FALSE,
+                // is_goto_landing TRUE, ...): the terminal-velocity fall
+                // (RE-468).
                 set_fall_special(
                     f,
                     MARIO_SUPERJUMP_AIR_DRIFT,
-                    true,
+                    false,
                     true,
                     MARIO_SUPERJUMP_LANDING_LAG,
                     false,
@@ -6030,7 +6211,7 @@ fn update_extended(f: &mut Fighter) {
                 }
             }
             if f.status.animation_ended() {
-                set_wait(f);
+                anim_end_set_wait(f);
             }
         }
         AnyStatus::Mario(MarioStatus::SpecialAirLw) => {
@@ -6039,7 +6220,7 @@ fn update_extended(f: &mut Fighter) {
                 f.mario_special_lw.rise_exhausted = true;
             }
             if f.status.animation_ended() {
-                set_fall(f);
+                anim_end_set_fall(f);
             }
         }
         AnyStatus::Fox(FoxStatus::Attack100Start) => {
@@ -6063,7 +6244,7 @@ fn update_extended(f: &mut Fighter) {
         }
         AnyStatus::Fox(FoxStatus::Attack100End) => {
             if f.status.animation_ended() {
-                set_wait(f);
+                anim_end_set_wait(f);
             }
         }
         AnyStatus::Fox(FoxStatus::SpecialN | FoxStatus::SpecialAirN) => {
@@ -6126,12 +6307,13 @@ fn update_extended(f: &mut Fighter) {
         }
         AnyStatus::Fox(FoxStatus::SpecialHiEnd) => {
             if f.status.animation_ended() {
-                set_wait(f);
+                anim_end_set_wait(f);
             }
         }
         AnyStatus::Fox(FoxStatus::SpecialAirHiEnd | FoxStatus::SpecialAirHiBound) => {
             if f.status.animation_ended() {
-                set_fall_special(f, 1.0, false, true, 0.34, true);
+                // `FTFOX_FIREFOX_*`: accelerating, no forced landing.
+                set_fall_special(f, 1.0, true, false, 0.34, true);
             }
         }
         AnyStatus::Fox(FoxStatus::SpecialLwStart | FoxStatus::SpecialAirLwStart) => {
@@ -6190,9 +6372,9 @@ fn update_extended(f: &mut Fighter) {
         AnyStatus::Fox(FoxStatus::SpecialLwEnd | FoxStatus::SpecialAirLwEnd) => {
             if f.status.animation_ended() {
                 if f.situation == Situation::Ground {
-                    set_wait(f);
+                    anim_end_set_wait(f);
                 } else {
-                    set_fall(f);
+                    anim_end_set_fall(f);
                 }
             }
         }
@@ -6482,13 +6664,13 @@ fn check_fsmash_turn(f: &mut Fighter) -> bool {
 }
 
 /// `ftParamSetStickLR`: face the way the stick points; a centred stick
-/// keeps the facing.
+/// faces right (`stick_range.x >= 0`).
 fn set_stick_lr(f: &mut Fighter) {
-    if f.stick.x < 0 {
-        f.facing = Facing::Left;
-    } else if f.stick.x > 0 {
-        f.facing = Facing::Right;
-    }
+    f.facing = if f.stick.x >= 0 {
+        Facing::Right
+    } else {
+        Facing::Left
+    };
 }
 
 /// `ftCommonAppealCheckInterruptCommon` @ 0x8014E764: L taunts.
@@ -6552,6 +6734,29 @@ pub(crate) fn anim_end_set_wait(f: &mut Fighter) {
     set_wait(f);
     if f.status.status == Status::Wait {
         ground_interrupt(f);
+    }
+}
+
+/// `ftAnimEndSetFall`: Fall from `proc_update`, then
+/// `ftCommonFallProcInterrupt` on the same frame (`proc_interrupt` is read
+/// after `proc_update`; RE-468). A Hammer's fall keeps its own.
+pub(crate) fn anim_end_set_fall(f: &mut Fighter) {
+    set_fall(f);
+    if matches!(
+        f.status.status,
+        AnyStatus::Common(Status::Fall | Status::FallAerial)
+    ) {
+        crate::reaction::air_interrupt(f);
+    }
+}
+
+/// `ftAnimEndCheckSetStatus(..., mpCommonSetFighterWaitOrFall)`: the
+/// status that follows runs its interrupt on the same frame.
+pub(crate) fn anim_end_set_wait_or_fall(f: &mut Fighter) {
+    if f.is_grounded() {
+        anim_end_set_wait(f);
+    } else {
+        anim_end_set_fall(f);
     }
 }
 
@@ -7330,6 +7535,65 @@ mod tests {
         assert!(!f.status.animation_ended());
     }
 
+    #[test]
+    fn a_status_change_ends_a_fast_fall_unless_the_setter_keeps_it() {
+        // RE-468: `ftMainSetStatus` clears `is_fastfall`; the aerial jump
+        // out of a fast-falling DamageFall rises.
+        let mut f = airborne_mario();
+        f.physics.is_fastfall = true;
+        set_fall(&mut f);
+        assert!(f.physics.is_fastfall, "ftCommonFallSetStatus keeps it");
+        hold(&mut f, 0, 0);
+        set_jump_aerial(&mut f);
+        assert!(!f.physics.is_fastfall);
+        assert!(f.physics.vel_air.y > 0.0);
+    }
+
+    #[test]
+    fn a_forward_smash_from_wait_faces_the_stick() {
+        // `ftParamSetStickLR` before `ftCommonAttackS4SetStatus` (RE-468).
+        let mut f = mario();
+        f.facing = Facing::Left;
+        hold(&mut f, 80, 0);
+        tap_a(&mut f);
+        assert!(check_fsmash(&mut f));
+        assert_eq!(f.facing, Facing::Right);
+        assert_eq!(f.topn_lr, 1.0);
+    }
+
+    #[test]
+    fn turn_keeps_topn_yaw_past_its_pivot() {
+        // `ftCommonTurnProcUpdate` flips `lr`, not TopN: the turn figatree
+        // carries the model round (RE-468).
+        let mut f = mario();
+        f.facing = Facing::Right;
+        set_turn(&mut f);
+        assert_eq!(f.topn_lr, 1.0);
+        for _ in 0..20 {
+            if f.facing == Facing::Left {
+                break;
+            }
+            update(&mut f);
+        }
+        assert_eq!(f.facing, Facing::Left);
+        assert_eq!(f.topn_lr, 1.0);
+        assert_eq!(crate::item_throw::model_axes(&f)[2].x, 1.0);
+    }
+
+    #[test]
+    fn a_smash_voice_draws_the_shared_generator_once() {
+        // `nFTMotionEventPlaySmashVoice`: `syUtilsRandIntRange(3)` (RE-468).
+        let mut f = mario();
+        crate::rng::set_seed(1);
+        set_usmash(&mut f);
+        for _ in 0..30 {
+            update(&mut f);
+        }
+        let mut expected = 1i32;
+        expected = expected.wrapping_mul(214013).wrapping_add(2531011);
+        assert_eq!(crate::rng::seed(), expected);
+    }
+
     /// Taps the N64 A button for one frame.
     fn tap_a(f: &mut Fighter) {
         f.prev_input = f.input;
@@ -7599,7 +7863,8 @@ mod tests {
         f.input.buttons = N64Buttons(N64Buttons::B);
         update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialN));
-        assert_eq!(f.status.anim_frame, 0.0);
+        // The repeat's `ftFoxSpecialNSetStatus` plays the first frame too.
+        assert_eq!(f.status.anim_frame, 1.0);
         assert!(!f.fox_special_n.spawned);
     }
 
@@ -7697,7 +7962,9 @@ mod tests {
         assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::Attack13));
 
         // And it plays out and ends back in Wait on its own, same as any
-        // other attack.
+        // other attack (released, so Wait's same-frame interrupt rests).
+        f.input.buttons = N64Buttons::default();
+        f.prev_input.buttons = N64Buttons::default();
         for _ in 0..60 {
             if f.status.status == Status::Wait {
                 break;
@@ -8089,10 +8356,16 @@ mod tests {
     #[test]
     fn fall_special_landing_takes_the_real_status_when_falling_fast() {
         let mut f = airborne_mario();
-        set_fall_special(&mut f, 1.0, false, false, 0.0, true);
+        set_fall_special(&mut f, 1.0, false, false, 0.5, true);
         f.physics.vel_air.y = -50.0; // past FALLSPECIAL_SKIPLANDING_VEL_Y_MAX
         set_landing_or_landing_air(&mut f);
         assert_eq!(f.status.status, Status::LandingFallSpecial);
+        // The landing figatree plays at the landing lag's speed (RE-468).
+        let len = crate::motion::anim_length(f.kind, Status::LandingFallSpecial.into()).unwrap();
+        for _ in 0..(len / 0.5) as usize - 1 {
+            update(&mut f);
+            assert_eq!(f.status.status, Status::LandingFallSpecial);
+        }
         update(&mut f);
         assert_eq!(f.status.status, Status::Wait);
     }
@@ -8550,7 +8823,8 @@ mod tests {
             Some(MARIO_FIREBALL_LENGTH_FRAMES)
         );
 
-        for _ in 0..15 {
+        // The setter played frame 1 (RE-468).
+        for _ in 0..14 {
             update(&mut f);
             assert_eq!(f.take_weapon_spawn(), None);
         }
@@ -8643,14 +8917,18 @@ mod tests {
         assert!(f.root_motion.rotate_z < 0.0);
         assert!(!f.mario_special_hi.launch_started);
 
-        f.status.anim_frame = MARIO_SUPERJUMP_LAUNCH_FRAME;
+        // Motion flag 2 picks the facing once, on the script's frame.
         hold(&mut f, -80, 0);
-        update(&mut f);
-        assert_eq!(f.facing, Facing::Left);
-        assert!(f.mario_special_hi.launch_started);
-
-        hold(&mut f, 80, 0);
-        update(&mut f);
+        let mut launched = None;
+        for _ in 0..12 {
+            update(&mut f);
+            if launched.is_none() && f.mario_special_hi.launch_started {
+                launched = Some(f.status.anim_frame);
+                assert_eq!(f.facing, Facing::Left);
+                hold(&mut f, 80, 0);
+            }
+        }
+        assert_eq!(launched, Some(MARIO_SUPERJUMP_LAUNCH_FRAME));
         assert_eq!(f.facing, Facing::Left);
     }
 
@@ -8658,7 +8936,8 @@ mod tests {
     fn super_jump_enters_fall_special_only_after_the_40_frame_figatree() {
         let mut f = airborne_mario();
         set_mario_special_air_hi(&mut f);
-        for _ in 0..(MARIO_SUPERJUMP_LENGTH_FRAMES as usize - 1) {
+        // The setter played frame 1 (RE-468).
+        for _ in 0..(MARIO_SUPERJUMP_LENGTH_FRAMES as usize - 2) {
             update(&mut f);
             assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::SpecialAirHi));
         }
@@ -8666,7 +8945,8 @@ mod tests {
         assert_eq!(f.status.status, AnyStatus::Common(Status::FallSpecial));
         assert_eq!(f.fall_special.drift, f.attributes.air_speed_max_x * 0.6);
         assert!(f.fall_special.is_goto_landing);
-        assert!(f.fall_special.is_fall_accelerate);
+        // `ftMarioSpecialHiProcUpdate` passes `is_fall_accelerate` FALSE.
+        assert!(!f.fall_special.is_fall_accelerate);
         assert_eq!(f.fall_special.landing_lag, 0.28);
     }
 
@@ -8736,17 +9016,24 @@ mod tests {
     fn donkey_hand_slap_enters_two_pulse_loop_then_finishes() {
         let mut f = Fighter::new(crate::fighter::FighterKind::Donkey, 0, 3);
         f.situation = Situation::Ground;
+        // The setter plays the first frame (RE-468: the N64's Start shows
+        // frames 1 and 2, the loop starting on the third).
         set_donkey_special_lw(&mut f);
-        for _ in 0..3 {
+        for _ in 0..2 {
             update(&mut f);
         }
         assert_eq!(
             f.status.status,
             AnyStatus::Donkey(DonkeyStatus::SpecialLwLoop)
         );
-        for _ in 0..28 {
+        for _ in 0..33 {
             update(&mut f);
         }
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Donkey(DonkeyStatus::SpecialLwLoop)
+        );
+        update(&mut f);
         assert_eq!(
             f.status.status,
             AnyStatus::Donkey(DonkeyStatus::SpecialLwEnd)

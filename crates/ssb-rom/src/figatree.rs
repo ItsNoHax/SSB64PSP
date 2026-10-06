@@ -368,6 +368,10 @@ pub struct JointAnim {
     clock: Clock,
     /// Render flags the script last set (`nGCAnimEvent16SetFlags`).
     pub flags: u16,
+    /// The `TraI` track's `AObj::interpolate`: the byte offset of the
+    /// `SYInterpDesc` `nGCAnimEvent16SetTranslateInterp` named (Samus's
+    /// rolls move TransN along one, RE-468).
+    interp: Option<u32>,
 }
 
 impl JointAnim {
@@ -380,6 +384,7 @@ impl JointAnim {
             pc: 0,
             clock: Clock::Inert,
             flags: 0,
+            interp: None,
         }
     }
 
@@ -395,6 +400,7 @@ impl JointAnim {
             pc: script,
             clock: Clock::Changed,
             flags: 0,
+            interp: None,
         }
     }
 
@@ -432,7 +438,7 @@ impl JointAnim {
         translate_scale: [f32; 3],
     ) -> Result<(), Desynchronised> {
         self.parse(data, speed)?;
-        self.play(speed, pose, translate_scale);
+        self.play(data, speed, pose, translate_scale);
         Ok(())
     }
 
@@ -456,7 +462,8 @@ impl JointAnim {
         }
 
         loop {
-            let cmd = command(data, self.pc)?;
+            let at = self.pc;
+            let cmd = command(data, at)?;
             self.pc = cmd.next;
 
             match cmd.opcode {
@@ -473,10 +480,13 @@ impl JointAnim {
                     self.flags = cmd.flags;
                     self.anim_wait += cmd.payload as f32;
                 }
-                // Sets the control points for a spline translation. No fighter
-                // figatree in the ROM contains one, so the track it would feed
-                // is never applied; skipping it keeps the walk in step.
-                OP_TRANSLATE_INTERP => {}
+                // `nGCAnimEvent16SetTranslateInterp`: the `TraI` track follows
+                // the `SYInterpDesc` at `event16 + s / 2`, `event16` being the
+                // halfword after the opcode.
+                OP_TRANSLATE_INTERP => {
+                    let s = i32::from(cmd.value(data, 0));
+                    self.interp = u32::try_from(at as i32 + 2 + 2 * (s / 2)).ok();
+                }
                 OP_ADD_LENGTH => {
                     for track in set_tracks(cmd.flags) {
                         self.tracks[track].length += cmd.payload as f32;
@@ -580,7 +590,7 @@ impl JointAnim {
 
     /// `gcPlayDObjAnimJoint`: ages every live track by one tick and reads the
     /// pose back out of it.
-    fn play(&mut self, speed: f32, pose: &mut JointPose, translate_scale: [f32; 3]) {
+    fn play(&mut self, data: &[u8], speed: f32, pose: &mut JointPose, translate_scale: [f32; 3]) {
         if self.clock == Clock::Inert {
             return;
         }
@@ -599,8 +609,19 @@ impl JointAnim {
                         value * translate_scale[track - TRACK_TRA_X]
                 }
                 TRACK_SCA_X | TRACK_SCA_Y | TRACK_SCA_Z => pose.scale[track - TRACK_SCA_X] = value,
-                // TraI needs opcode 12's control points, which no fighter
-                // animation carries.
+                // `syInterpCubic` along the path at the clamped fraction,
+                // scaled as the axes are (`lbCommonPlayTranslateScaledDObjAnim`).
+                TRACK_TRA_I => {
+                    let point = self
+                        .interp
+                        .and_then(|at| crate::interp::Spline::read(data, at))
+                        .and_then(|path| path.cubic(data, value.clamp(0.0, 1.0)));
+                    if let Some(p) = point {
+                        for (axis, v) in p.into_iter().enumerate() {
+                            pose.translate[axis] = v * translate_scale[axis];
+                        }
+                    }
+                }
                 _ => {}
             }
         }

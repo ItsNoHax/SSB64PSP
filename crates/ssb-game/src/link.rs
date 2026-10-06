@@ -246,7 +246,7 @@ pub fn update_attack_air_lw(f: &mut Fighter) {
         }
     }
     if f.status.animation_ended() {
-        status::set_fall(f);
+        status::anim_end_set_fall(f);
     }
 }
 
@@ -520,7 +520,7 @@ pub fn update(f: &mut Fighter) {
         // `ftCommonAttack13ProcUpdate`: the `Attack100` branch is Captain's.
         LinkStatus::Attack13 | LinkStatus::Attack100End | LinkStatus::SpecialNGet => {
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         LinkStatus::Attack100Start => {
@@ -532,35 +532,35 @@ pub fn update(f: &mut Fighter) {
         LinkStatus::SpecialN => {
             make_boomerang(f);
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         LinkStatus::SpecialAirN => {
             make_boomerang(f);
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
         LinkStatus::SpecialNEmpty => {
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         LinkStatus::SpecialAirNReturn | LinkStatus::SpecialAirNEmpty => {
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
         LinkStatus::SpecialLw => {
             make_bomb(f);
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         LinkStatus::SpecialAirLw => {
             make_bomb(f);
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
         LinkStatus::SpecialHi => {
@@ -573,7 +573,7 @@ pub fn update(f: &mut Fighter) {
         LinkStatus::SpecialHiEnd => {
             if f.status.animation_ended() {
                 destroy_spin(f);
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         LinkStatus::SpecialAirHi => {

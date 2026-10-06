@@ -327,7 +327,7 @@ pub fn update(f: &mut Fighter) {
         P::JumpAerialF1 | P::JumpAerialF2 | P::JumpAerialF3 | P::JumpAerialF4 | P::JumpAerialF5 => {
             update_jump_aerial_turn(f);
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             } else if !status::check_special_n(f)
                 && !status::check_special_hi(f)
                 && !status::check_special_lw(f)
@@ -340,12 +340,12 @@ pub fn update(f: &mut Fighter) {
         // note effect.
         P::SpecialN | P::SpecialHi | P::SpecialLw => {
             if f.status.animation_ended() {
-                status::set_wait(f);
+                status::anim_end_set_wait(f);
             }
         }
         P::SpecialAirN | P::SpecialAirHi | P::SpecialAirLw => {
             if f.status.animation_ended() {
-                status::set_fall(f);
+                status::anim_end_set_fall(f);
             }
         }
     }

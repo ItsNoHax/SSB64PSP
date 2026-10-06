@@ -75,6 +75,12 @@ pub struct Skeleton {
     joint_count: usize,
     /// Playback rate: 1.0 normally, 0.5 for a heavy landing (RE-035).
     pub speed: f32,
+    /// The clip's leading runtime joint is `XRotN` (`anim_desc` bit 31,
+    /// `is_use_xrotn_joint`, which `ftdef.h` names `FTANIM_FLAG_TRANSN_JOINT`):
+    /// `ftMainSetStatus` interposes it between TopN and the model, so its
+    /// pose parents every root node. A `TransN` leading joint (bit 30) is
+    /// detached instead and only moves the fighter (RE-468).
+    pub lead_xrotn: bool,
 }
 
 impl Default for Skeleton {
@@ -88,6 +94,7 @@ impl Default for Skeleton {
             poses: [JointPose::default(); MAX_JOINTS],
             joint_count: 0,
             speed: 1.0,
+            lead_xrotn: false,
         }
     }
 }
@@ -244,6 +251,13 @@ impl Skeleton {
         (joint < self.joint_count).then(|| &self.poses[joint])
     }
 
+    /// The interposed `XRotN`'s pose, when the clip leads with it
+    /// ([`Skeleton::lead_xrotn`]).
+    pub fn lead_xrotn_pose(&self) -> Option<&JointPose> {
+        (self.lead_xrotn && self.joint_count > 0 && self.nodes[0] == AnimJoint::NO_NODE)
+            .then(|| &self.poses[0])
+    }
+
     /// The node a joint drives.
     pub fn joint_node(&self, joint: usize) -> Option<u32> {
         (joint < self.joint_count)
@@ -269,7 +283,40 @@ impl Skeleton {
     ///
     /// Returns how many matrices were written.
     pub fn compose(&self, pack: &Pack<'_>, object: &ObjectDesc, out: &mut [Mat4]) -> usize {
+        self.compose_with(pack, object, out, Mat4::from_trs)
+    }
+
+    /// [`Skeleton::compose`] as `gmCollisionGetFighterPartsWorldPosition`
+    /// builds it: each joint's matrix from the `lbCommonSin` table
+    /// (`gmCollisionTransformMatrixAll`), not the display's. Gameplay
+    /// positions (hit and hurt collisions, attachments) read these; the
+    /// display keeps [`Skeleton::compose`] (RE-468).
+    pub fn compose_collision(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        out: &mut [Mat4],
+    ) -> usize {
+        self.compose_with(pack, object, out, Mat4::from_trs_collision)
+    }
+
+    fn compose_with(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        out: &mut [Mat4],
+        from_trs: fn([f32; 3], [f32; 3], [f32; 3]) -> Mat4,
+    ) -> usize {
         let count = (object.node_count as usize).min(out.len()).min(MAX_NODES);
+        // `XRotN`, when the clip interposes it, under every root node.
+        let lead = self.lead_xrotn_pose().map(|p| {
+            let t = [
+                p.translate[0] / MODEL_SCALE,
+                p.translate[1] / MODEL_SCALE,
+                p.translate[2] / MODEL_SCALE,
+            ];
+            from_trs(t, p.rotate, p.scale)
+        });
         for i in 0..count {
             let Some(node) = pack.node(object.first_node + i as u32) else {
                 out[i] = Mat4::IDENTITY;
@@ -287,12 +334,12 @@ impl Skeleton {
                 pose.translate[1] / MODEL_SCALE,
                 pose.translate[2] / MODEL_SCALE,
             ];
-            let local = Mat4::from_trs(t, pose.rotate, pose.scale);
+            let local = from_trs(t, pose.rotate, pose.scale);
             // Parents always precede children in a `DObjDesc` array — a child
             // references `array_dobjs[depth - 1]`, which an earlier entry must
             // have filled — so the parent's matrix is already final.
             out[i] = match node.parent {
-                NodeDesc::NO_PARENT => local,
+                NodeDesc::NO_PARENT => lead.map_or(local, |lead| lead.mul(&local)),
                 p if p >= object.first_node && (p - object.first_node) < i as u32 => {
                     out[(p - object.first_node) as usize].mul(&local)
                 }

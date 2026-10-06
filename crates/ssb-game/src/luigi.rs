@@ -33,15 +33,16 @@ mod tests {
         press_b(&mut f, 0, 80);
         assert!(status::check_special_hi(&mut f));
         assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::SpecialHi));
-        // `update` advances the frame before the interrupt runs.
-        f.status.anim_frame = 5.0;
         f.input.stick_x = -80;
         f.stick.step(-80, 0, false, false);
-        status::update(&mut f);
-        assert!(!f.mario_special_hi.launch_started);
-        status::update(&mut f);
-        assert_eq!(f.status.anim_frame, status::LUIGI_SUPERJUMP_LAUNCH_FRAME);
-        assert!(f.mario_special_hi.launch_started);
+        let mut launched = None;
+        for _ in 0..12 {
+            status::update(&mut f);
+            if launched.is_none() && f.mario_special_hi.launch_started {
+                launched = Some(f.status.anim_frame);
+            }
+        }
+        assert_eq!(launched, Some(status::LUIGI_SUPERJUMP_LAUNCH_FRAME));
         assert_eq!(f.facing, Facing::Left);
     }
 
@@ -50,7 +51,8 @@ mod tests {
         let mut f = luigi(Situation::Ground);
         press_b(&mut f, 0, 0);
         assert!(status::check_special_n(&mut f));
-        for _ in 0..15 {
+        // The setter played frame 1 (RE-468).
+        for _ in 0..14 {
             status::update(&mut f);
             assert_eq!(f.take_weapon_spawn(), None);
         }

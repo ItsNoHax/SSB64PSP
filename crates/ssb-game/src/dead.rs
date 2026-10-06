@@ -642,6 +642,9 @@ fn reinit(f: &mut Fighter, pos: Vec3, facing: Facing) {
     fresh.cliff_reach = f.cliff_reach;
     fresh.cliff_air_mask = f.cliff_air_mask;
     fresh.anim = f.anim;
+    // The attributes' jostle box (RE-468: a respawned Luigi pushed no one).
+    fresh.jostle_width = f.jostle_width;
+    fresh.jostle_x = f.jostle_x;
     fresh.costume = f.costume;
     // `ftManagerInitFighter` leaves the part status and the detail alone.
     fresh.model_parts = f.model_parts;
@@ -662,6 +665,7 @@ fn reinit(f: &mut Fighter, pos: Vec3, facing: Facing) {
     };
     fresh.pos = pos;
     fresh.facing = facing;
+    fresh.topn_lr = facing.sign();
     *f = fresh;
 }
 

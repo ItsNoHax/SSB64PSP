@@ -181,12 +181,14 @@ pub fn apply_ground_vel_transn(p: &mut PhysicsState, motion: RootMotion, facing:
 /// `ftPhysicsApplyAirVelTransNAll` @ 0x800D93E4 via
 /// `ftPhysicsGetAirVelTransN` @ 0x800D9260. The original's local Z/Y climb is
 /// rotated by TransN's pitch, while local X remains the shallow stage axis.
-pub fn apply_air_vel_transn_all(p: &mut PhysicsState, motion: RootMotion, facing: f32) {
+/// Each step is scaled by TopN's scale, `attr->size` (RE-468).
+pub fn apply_air_vel_transn_all(p: &mut PhysicsState, motion: RootMotion, facing: f32, size: f32) {
     let (sin, cos) = ssb_engine::math::sin_cos(motion.rotate_z);
-    let local_forward = motion.delta.z * facing;
-    p.vel_air.x = local_forward * cos - motion.delta.y * sin;
-    p.vel_air.y = local_forward * sin + motion.delta.y * cos;
-    p.vel_air.z = -motion.delta.x * facing;
+    let local_forward = motion.delta.z * facing * size;
+    let up = motion.delta.y * size;
+    p.vel_air.x = local_forward * cos - up * sin;
+    p.vel_air.y = local_forward * sin + up * cos;
+    p.vel_air.z = -motion.delta.x * facing * size;
 }
 
 /// `ftPhysicsSetGroundVelTransferAir` @ 0x800D8880 (Z clamp portion).
@@ -209,19 +211,20 @@ pub fn clamp_ground_vel(p: &mut PhysicsState, clamp: f32) {
     p.vel_ground.x = p.vel_ground.x.clamp(-clamp, clamp);
 }
 
-/// `ftPhysicsApplyClampGroundVelStickRange` @ 0x800D89E0. Like the aerial
-/// counterpart, this is an acceleration scaled by the full stick range; the
-/// ground-facing sign is applied by the caller's fighter orientation.
+/// `ftPhysicsApplyClampGroundVelStickRange` @ 0x800D89E0: an acceleration
+/// scaled by the full stick range. The original adds `stick * vel * lr` to
+/// its facing-relative `vel_ground`; the port's is world-space, so the stick
+/// adds without the facing (RE-468: a left-facing Tornado sped up where the
+/// N64's slowed).
 pub fn apply_clamp_ground_vel_stick_range(
     p: &mut PhysicsState,
     stick_x: i8,
     stick_min: i32,
     vel: f32,
-    facing: f32,
     clamp: f32,
 ) {
     if (stick_x as i32).abs() >= stick_min {
-        p.vel_ground.x += stick_x as f32 * vel * facing;
+        p.vel_ground.x += stick_x as f32 * vel;
         clamp_ground_vel(p, clamp);
     }
 }
@@ -765,6 +768,7 @@ mod tests {
                 ..Default::default()
             },
             1.0,
+            1.0,
         );
         assert!((p.vel_air.x + 5.0).abs() < 0.001);
         assert!((p.vel_air.y - 10.0).abs() < 0.001);
@@ -788,11 +792,16 @@ mod tests {
     }
 
     #[test]
-    fn ground_stick_clamp_uses_full_deflection_and_facing() {
+    fn ground_stick_clamp_uses_full_deflection_in_world_space() {
+        // World-space `vel_ground`: the stick pushes its own way whatever the
+        // facing (the original's `lr` cancels against its relative frame).
         let mut p = PhysicsState::default();
-        apply_clamp_ground_vel_stick_range(&mut p, 80, 0, 0.025, -1.0, 17.0);
-        assert_eq!(p.vel_ground.x, -2.0);
-        apply_clamp_ground_vel_stick_range(&mut p, -80, 0, 0.025, -1.0, 17.0);
+        apply_clamp_ground_vel_stick_range(&mut p, 80, 0, 0.025, 17.0);
+        assert_eq!(p.vel_ground.x, 2.0);
+        apply_clamp_ground_vel_stick_range(&mut p, -80, 0, 0.025, 17.0);
         assert_eq!(p.vel_ground.x, 0.0);
+        p.vel_ground.x = -16.5;
+        apply_clamp_ground_vel_stick_range(&mut p, -80, 0, 0.025, 17.0);
+        assert_eq!(p.vel_ground.x, -17.0);
     }
 }

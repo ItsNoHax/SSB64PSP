@@ -1228,7 +1228,7 @@ where
 /// `ftPhysicsApplyAirVelTransNAll`.
 fn transn_all(f: &mut Fighter) {
     let lr = lr(f);
-    crate::physics::apply_air_vel_transn_all(&mut f.physics, f.root_motion, lr);
+    crate::physics::apply_air_vel_transn_all(&mut f.physics, f.root_motion, lr, f.attributes.size);
 }
 
 /// `ftPhysicsApplyAirVelTransNYZ`: TransN's Y and Z; X stays.
