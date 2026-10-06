@@ -83,7 +83,7 @@ pub fn try_save_backup(backup: &mut Backup, scene: &SceneData, complete: bool) {
         write = true;
     }
     if write {
-        backup.writes += 1;
+        backup.write();
     }
 }
 

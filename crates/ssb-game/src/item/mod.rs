@@ -1290,7 +1290,8 @@ pub struct ItemPool {
     /// `gITManagerMonsterData` (`itManagerInitMonsterVars`).
     monster_data: MonsterData,
     /// `gSCManagerBackupData.unlock_mask & LBBACKUP_UNLOCK_MASK_NEWCOMERS`:
-    /// Mew can come out of a Poké Ball. No save data unlocks nothing.
+    /// Mew can come out of a Poké Ball. Default backup data unlocks
+    /// nothing.
     pub unlock_newcomers: bool,
     mew_caught: [bool; 4],
     monster_shots: [Option<crate::monster_weapon::MonsterShot>; ITEM_ALLOC_MAX],

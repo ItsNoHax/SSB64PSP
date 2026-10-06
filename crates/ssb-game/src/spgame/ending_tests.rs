@@ -104,7 +104,7 @@ fn the_message_writes_its_unlock_when_closed() {
     assert_eq!(backup.writes, 1);
     let mut backup = Backup::default();
     apply_unlock(&mut backup, Unlock::Inishie);
-    assert_eq!(backup.fighter_mask, CHARACTER_MASK_STARTER);
+    assert_eq!(backup.fighter_mask, 0);
     assert_eq!(backup.characters_fkind, FighterKind::Mario);
     assert_eq!(backup.writes, 1);
 }
@@ -350,7 +350,10 @@ fn finished_boss_session(backup: &Backup) -> session::Session {
 
 #[test]
 fn a_cleared_campaign_runs_the_ending_staff_roll_and_congratulations_into_a_challenger() {
-    let mut backup = Backup::default();
+    let mut backup = Backup {
+        spgame_difficulty: Difficulty::Normal,
+        ..Backup::default()
+    };
     let mut f = frontend::Frontend::new(Default::default(), &backup);
     f.session = Some(Box::new(finished_boss_session(&backup)));
     f.staffroll_assets = Some(frontend::StaffrollAssets {

@@ -425,6 +425,11 @@ fn player_kind_select_in_range(c: (f32, f32), player: usize) -> bool {
 }
 
 impl PlayersVs {
+    /// `sMNPlayersVSFighterMask`: the backup's `fighter_mask`.
+    pub fn fighter_mask(&self) -> u16 {
+        self.fighter_mask
+    }
+
     /// `mnPlayersVSFuncStart`'s logic: `mnPlayersVSUpdateControllerOrders`,
     /// `mnPlayersVSInitVars` (with `mnPlayersVSInitPlayer` or
     /// `mnPlayersVSResetPlayer`) and `mnPlayersVSInitSlotAll`.

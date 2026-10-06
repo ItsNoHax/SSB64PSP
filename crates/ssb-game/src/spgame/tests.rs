@@ -174,7 +174,8 @@ fn high_score_save_preserves_completion_and_uses_score_attempt_difficulty() {
         ..Default::default()
     };
     manager::try_save_backup(&mut backup, &data, true);
-    assert_eq!(backup.spgame_records[0].spgame_best_difficulty, 3);
+    // `dSCManagerDefaultBackupData`'s Easy, plus one.
+    assert_eq!(backup.spgame_records[0].spgame_best_difficulty, 2);
     data.score = 200;
     manager::try_save_backup(&mut backup, &data, false);
     assert_eq!(backup.spgame_records[0].spgame_best_difficulty, 0);

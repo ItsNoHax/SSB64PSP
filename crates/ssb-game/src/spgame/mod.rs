@@ -350,85 +350,9 @@ impl BattleState {
     }
 }
 
-/// One `LBBackup1PRecord`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Record {
-    pub spgame_hiscore: u32,
-    pub spgame_continues: u32,
-    pub spgame_total_bonuses: u32,
-    pub spgame_best_difficulty: u8,
-    pub bonus1_task_count: u8,
-    pub bonus2_task_count: u8,
-    pub bonus1_time: u32,
-    pub bonus2_time: u32,
-    pub is_spgame_complete: bool,
-}
-
-impl Default for Record {
-    fn default() -> Self {
-        Self {
-            spgame_hiscore: 0,
-            spgame_continues: 0,
-            spgame_total_bonuses: 0,
-            spgame_best_difficulty: 0,
-            bonus1_task_count: 0,
-            bonus2_task_count: 0,
-            bonus1_time: 60 * 60 * 60,
-            bonus2_time: 60 * 60 * 60,
-            is_spgame_complete: false,
-        }
-    }
-}
-
-/// `LBBACKUP_ERROR_1PGAMEMARIO`.
-pub const ERROR_1PGAME_MARIO: u8 = 1 << 2;
-
-/// The `gSCManagerBackupData` fields the 1P Game reads and writes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Backup {
-    /// `characters_fkind`: the Characters menu's last fighter, which
-    /// `mnMessageApplyUnlock` points at a newcomer.
-    pub characters_fkind: FighterKind,
-    pub fighter_mask: u16,
-    pub unlock_mask: u8,
-    /// VS stages played.
-    pub ground_mask: u16,
-    pub spgame_difficulty: Difficulty,
-    /// Stocks chosen on the 1P select, 0..=4.
-    pub spgame_stock_count: i8,
-    pub error_flags: u8,
-    pub spgame_records: [Record; 12],
-    /// `lbBackupWrite` calls, for the host to persist.
-    pub writes: u32,
-}
-
-impl Default for Backup {
-    fn default() -> Self {
-        Self {
-            characters_fkind: FighterKind::Mario,
-            fighter_mask: CHARACTER_MASK_STARTER,
-            unlock_mask: 0,
-            ground_mask: 0,
-            spgame_difficulty: Difficulty::Normal,
-            spgame_stock_count: 2,
-            error_flags: 0,
-            spgame_records: [Record::default(); 12],
-            writes: 0,
-        }
-    }
-}
-
-/// `LBBACKUP_CHARACTER_MASK_ALL`.
-pub const CHARACTER_MASK_ALL: u16 = 0x0FFF;
-/// `LBBACKUP_CHARACTER_MASK_STARTER`: all but Luigi, Captain Falcon,
-/// Jigglypuff and Ness.
-pub const CHARACTER_MASK_STARTER: u16 = CHARACTER_MASK_ALL
-    & !((1 << FighterKind::Luigi as u16)
-        | (1 << FighterKind::Captain as u16)
-        | (1 << FighterKind::Purin as u16)
-        | (1 << FighterKind::Ness as u16));
-/// `LBBACKUP_GROUND_MASK_ALL`: the eight starter VS stages.
-pub const GROUND_MASK_ALL: u16 = 0x00FF;
+pub use crate::backup::{
+    Backup, Record, CHARACTER_MASK_ALL, CHARACTER_MASK_STARTER, ERROR_1PGAME_MARIO, GROUND_MASK_ALL,
+};
 
 /// The 1P Game's part of `gSCManagerSceneData`.
 #[derive(Debug, Clone, PartialEq)]

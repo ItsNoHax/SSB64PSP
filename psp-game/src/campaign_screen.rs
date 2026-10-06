@@ -16,6 +16,13 @@ use ssb_rom::{campaign as a, pack::Pack, skeleton::Skeleton};
 #[path = "campaign_ending_screen.rs"]
 mod ending;
 
+/// The unlock message outside the 1P Game: the VS results' (`mnMessage`).
+pub unsafe fn draw_message(gpu: &mut Gpu, p: &Pack<'_>, st: &mut DrawState, m: &spgame::message::Message) {
+    gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
+    ending::draw_message(p, st, m);
+    gpu.set_viewport_fullscreen();
+}
+
 #[derive(Default)]
 pub struct Presentation {
     scene: Option<(u8, u8)>,

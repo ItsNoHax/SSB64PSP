@@ -21,8 +21,8 @@ pub mod gkind {
     pub const RANDOM: u8 = 0xDE;
 }
 
-/// `LBBACKUP_UNLOCK_MASK_INISHIE`: bit `nLBBackupUnlockInishie` (0).
-pub const UNLOCK_MASK_INISHIE: u8 = 1 << 0;
+/// `LBBACKUP_UNLOCK_MASK_INISHIE`: bit `nLBBackupUnlockInishie` (4).
+pub const UNLOCK_MASK_INISHIE: u8 = 1 << 4;
 
 /// `dSCManagerDefaultSceneData.maps_training_gkind` and
 /// `maps_vsmode_gkind`.

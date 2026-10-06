@@ -185,6 +185,15 @@ manager expects it.
 | `onepfinale@1520`, `@1700`, `onepfinale` (2200) | One run from the ending through the fast staff roll and congratulations into Ness's challenge and battle |
 
 Captures live under `~/ppsspp-headless-test/re459/`, outside the manifest.
+
+Two save scenes (RE-460) are the only captures that load or write the
+memory-stick backup; every other scene boots with the defaults. Run them in
+order in one `--job` directory and delete its `ssb64.sav` afterwards:
+
+| Spec | Captured display |
+|---|---|
+| `saveunlock` (260) | `onepmessage` closed with A at tick 240, writing Ness's unlock; the Intro after it |
+| `saveplayers` (85) | `vsplayers` after loading that save: Ness's portrait instead of "?" |
 These diagnostics remain outside the 195-scene manifest. They do not prove
 unmodified traversal, a full campaign, N64 equivalence or physical PSP;
 see [RE-455](../evidence/re/RE-455.md) for source checks and capture limits.

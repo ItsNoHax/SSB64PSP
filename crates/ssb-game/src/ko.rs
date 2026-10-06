@@ -45,6 +45,9 @@ pub struct KoEffects {
     pub explosions: [Option<Explosion>; 4],
     /// `sIFScreenFlashColAnim`.
     pub flash: ColAnim,
+    /// `!is_allow_screenflash`: `ifScreenFlashMakeInterface` made no
+    /// flash, so nothing sets or draws it.
+    pub flash_disabled: bool,
 }
 
 impl KoEffects {
@@ -59,11 +62,13 @@ impl KoEffects {
                 ticks: 0,
             });
         }
-        if core::mem::take(&mut f.dead.flash) {
+        let dead = core::mem::take(&mut f.dead.flash);
+        let hit = f.screen_flash.take();
+        if dead && !self.flash_disabled {
             self.flash
                 .check_set(ColAnimId::SCREEN_FLASH_DEAD_EXPLODE, 0);
         }
-        if let Some(id) = f.screen_flash.take() {
+        if let Some(id) = hit.filter(|_| !self.flash_disabled) {
             self.flash.check_set(id, 0);
         }
         // The sparkle and the quake are effects ([`Self::observe_with`]).

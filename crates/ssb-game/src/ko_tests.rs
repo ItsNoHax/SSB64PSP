@@ -255,3 +255,18 @@ fn a_ko_makes_a_magnitude_two_quake_except_a_star_ko() {
     }
     assert!(f.is_invisible);
 }
+
+#[test]
+fn screen_flash_off_sets_no_flash_but_still_explodes() {
+    let mut ko = KoEffects {
+        flash_disabled: true,
+        ..KoEffects::default()
+    };
+    let mut f = fighter(1);
+    f.pos = Vec3::new(4001.0, 2500.0, 0.0);
+    assert!(dead::check(&mut f));
+    ko.observe(&mut f);
+    assert!(ko.explosions[1].is_some());
+    assert!(!f.dead.flash);
+    assert_eq!(ko.flash_color(), None);
+}

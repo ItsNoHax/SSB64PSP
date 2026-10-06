@@ -29,6 +29,7 @@ mod play;
 mod player_screen;
 mod players_screen;
 mod results_screen;
+mod save;
 mod stage_screen;
 mod training_screen;
 
@@ -74,6 +75,10 @@ const VS_RESULTS_EMBLEM_CAPTURE_TICK: u64 = 742;
 /// tick's update, so freezing at 885 draws that state.
 const VS_SHIELD_SET_OFF_TICK: u64 = 885;
 
+/// `saveunlock`'s A: the message's two-second input wait, from its
+/// fixture at tick 105, has passed.
+const SAVE_UNLOCK_TICK: u64 = 240;
+
 const fn capture_ticks(scene: GameScene) -> u64 {
     match scene {
         GameScene::OnePGame => 600,
@@ -99,6 +104,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::OnePCongra => 200,
         GameScene::OnePChallenger => 150,
         GameScene::OnePMessage => 150,
+        // `onepmessage`'s A at [`SAVE_UNLOCK_TICK`], then the next scene.
+        GameScene::SaveUnlock => 260,
+        GameScene::SavePlayers => 85,
         GameScene::OnePFinale => 2200,
         // Training starts at tick 8; C-Up at 13 enters jumpsquat, and this
         // lands in the rising portion of Mario's real button jump while the
@@ -1956,6 +1964,9 @@ enum Screen {
     StageSelect,
     /// A VS battle's results: the winner's slot lit (RE-389).
     Results,
+    /// The unlock message the VS results queued (`mnMessage`), then the
+    /// VS character select.
+    Message,
     /// The VS mode menu (`mnVSMode`, `ssb_game::vs_mode`, RE-399).
     VsMode,
     /// The VS character select (`mnPlayersVS`, `ssb_game::players_vs`,
@@ -2396,11 +2407,6 @@ fn capture_cpu_behavior(scene: GameScene) -> Option<ssb_game::computer::Behavior
         _ => None,
     }
 }
-
-/// `gSCManagerBackupData.fighter_mask` with no save data
-/// (`dSCManagerDefaultBackupData`): Luigi, Captain Falcon, Ness and
-/// Jigglypuff are locked.
-const FIGHTER_MASK: u16 = 0;
 
 /// `osGetTime() & 0xFF`: the clock's low byte.
 fn clock_byte() -> u8 {
@@ -2965,8 +2971,9 @@ fn start_sudden_death(
 /// fighter fell.
 fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game::fighter::Fighter) -> bool {
     let fell = core::mem::take(&mut f.dead.scored);
-    if fell {
-        if let Some(b) = battle {
+    if let Some(b) = battle {
+        b.collect_damage(f);
+        if fell {
             b.on_fall(f.port, f.damage_player);
         }
     }
@@ -3374,6 +3381,9 @@ fn enter_training(
             f.fighter.facing = ssb_game::battle::start_facing(f.fighter.pos.x, others);
             f.fighter.dead.stock_rule = stock_rule;
             f.fighter.stocks = rules.stocks;
+            // `ftParamUpdateDamage`'s and `ftParamUpdatePlayerBattleStats`'
+            // totals, which the results save.
+            f.fighter.stats.enable();
             // `ftManagerMakeFighter`: a VS fighter waits hidden for its
             // entry (`ftCommonEntrySetStatus`).
             ssb_game::appear::entry_set_status(&mut f.fighter);
@@ -3453,6 +3463,13 @@ unsafe fn draw_frame(
                 draw_stage_select(gpu, &s.stage_select);
             }
         },
+        Screen::Message => {
+            gpu.set_viewport_fullscreen();
+            gpu.begin_frame(Some(BG_RESULTS));
+            if let (Some(p), Some(m)) = (pack.as_ref(), s.vs_message.as_ref()) {
+                campaign::draw_message(gpu, p, draw_state, m);
+            }
+        }
         Screen::Results => {
             draw_results(
                 gpu,
@@ -3628,7 +3645,7 @@ unsafe fn session_frame(
                         s.screen = Screen::VsMode;
                     } else {
                         s.fighter_select =
-                            Some(new_fighter_select(s.training_scene, capture_scene.is_some(), sim_frame_index));
+                            Some(new_fighter_select(s.training_scene, s.backup.fighter_mask, capture_scene.is_some(), sim_frame_index));
                         s.fighter_select_fighters = None;
                         s.screen = Screen::FighterSelect;
                     }
@@ -3644,7 +3661,7 @@ unsafe fn session_frame(
                         s.vs_state.time_limit = s.vs_mode.time;
                         s.vs_state.stocks = s.vs_mode.stocks().max(0) as u8;
                         s.vs_menu_rules = VsRules::of(&s.vs_state);
-                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind));
+                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
                         s.players_vs_fighters = None;
                         s.screen = Screen::PlayersVs;
                     }
@@ -3665,8 +3682,8 @@ unsafe fn session_frame(
                     Some(Outcome::Proceed(data)) => {
                         s.training_scene = data;
                         // `mnMapsInitVars`: the s.cursor starts on the
-                        // stage this mode picked last. The host has no
-                        // save data, so Mushroom Kingdom stays locked.
+                        // stage this mode picked last; Mushroom Kingdom
+                        // needs the backup's unlock.
                         let remembered = if s.vs { s.maps_vsmode_gkind } else { s.maps_training_gkind };
                         s.open_stage_select(remembered);
                     }
@@ -3709,14 +3726,14 @@ unsafe fn session_frame(
                     // from.
                     if s.vs {
                         s.maps_vsmode_gkind = saved.remembered;
-                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind));
+                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
                         s.players_vs_fighters = None;
                         s.screen = Screen::PlayersVs;
                     } else {
                         s.maps_training_gkind = saved.remembered;
                         s.fighter_select = Some(ssb_game::fighter_select::FighterSelect::new(
                             s.training_scene,
-                            FIGHTER_MASK,
+                            s.backup.fighter_mask,
                             clock_byte,
                         ));
                         s.fighter_select_fighters = None;
@@ -3749,9 +3766,30 @@ unsafe fn session_frame(
                     s.play_state = None;
                     s.dummies = Default::default();
                     s.vs_battle = None;
-                    s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind));
-                    s.players_vs_fighters = None;
-                    s.screen = Screen::PlayersVs;
+                    // Any unlock goes through the message scene first.
+                    let [first, next] = ssb_game::results::unlocks(&s.backup);
+                    s.vs_message = first.map(ssb_game::spgame::message::Message::new);
+                    s.vs_message_next = next;
+                    if s.vs_message.is_some() {
+                        s.screen = Screen::Message;
+                    } else {
+                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
+                        s.players_vs_fighters = None;
+                        s.screen = Screen::PlayersVs;
+                    }
+                }
+            }
+            // `mnMessageFuncRun`, one task per queued unlock, then
+            // `nSCKindPlayersVS`.
+            Screen::Message => {
+                let done = s.vs_message.as_mut().is_none_or(|m| m.tick(pressed, &mut s.backup));
+                if done {
+                    s.vs_message = s.vs_message_next.take().map(ssb_game::spgame::message::Message::new);
+                    if s.vs_message.is_none() {
+                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
+                        s.players_vs_fighters = None;
+                        s.screen = Screen::PlayersVs;
+                    }
                 }
             }
         }
@@ -3825,6 +3863,9 @@ unsafe fn session_frame(
         if vs_done && s.campaign.is_some() {
             campaign::finish_battle(s, pack.as_ref());
         } else if vs_done {
+            if s.vs_battle.as_ref().is_some_and(|b| !b.is_sudden_death) {
+                s.vs_transfer = s.vs_battle.clone();
+            }
             let sudden = s.vs_battle
                 .as_ref()
                 .filter(|b| !b.is_sudden_death && !b.is_reset)
@@ -3849,9 +3890,17 @@ unsafe fn session_frame(
                 )
             });
             match entered {
-                Some(index) => s.training_stage = index,
+                Some(index) => {
+                    s.training_stage = index;
+                    s.apply_backup_options();
+                }
                 // A reset from the pause menu is a no contest.
                 None => {
+                    // `mnVSResultsFuncStart`'s `mnVSResultsSaveBackup`.
+                    if let Some(transfer) = s.vs_transfer.take() {
+                        let kinds = s.roster.map(|e| e.map(|e| e.kind));
+                        ssb_game::results::save_backup(&mut s.backup, &transfer, kinds, s.scene_gkind);
+                    }
                     let (results, fighters) = s
                         .vs_battle
                         .as_ref()
@@ -3937,7 +3986,7 @@ fn training_menu_frame(
             s.dummies = Default::default();
             s.training_menu = None;
             s.training_paused = false;
-            s.fighter_select = Some(new_fighter_select(s.training_scene, is_capture, sim_frame_index));
+            s.fighter_select = Some(new_fighter_select(s.training_scene, s.backup.fighter_mask, is_capture, sim_frame_index));
             s.fighter_select_fighters = None;
             s.screen = Screen::FighterSelect;
         }
@@ -3978,6 +4027,12 @@ struct Session {
     maps_vsmode_gkind: u8,
     vs_menu_rules: VsRules,
     vs_results: Option<ssb_game::results::Results>,
+    /// `gSCManagerTransferBattleState`: the battle as it ended before any
+    /// sudden death, which `mnVSResultsSaveBackup` records.
+    vs_transfer: Option<ssb_game::battle::Battle>,
+    /// The VS results' unlock message and the one queued after it.
+    vs_message: Option<ssb_game::spgame::message::Message>,
+    vs_message_next: Option<ssb_game::spgame::Unlock>,
     /// The results' fighters (RE-409), on the heap.
     vs_results_fighters: Option<alloc::boxed::Box<results_screen::Fighters>>,
     vs_mode: ssb_game::vs_mode::VsMode,
@@ -3995,9 +4050,9 @@ struct Session {
     one_p_scene: ssb_game::players_1p::SceneData,
     /// The 1P Game's part of `gSCManagerSceneData`.
     spgame_scene: ssb_game::spgame::SceneData,
-    /// `gSCManagerBackupData`'s 1P fields. There is no save data yet, so
-    /// they live for the session.
-    backup: ssb_game::spgame::Backup,
+    /// `gSCManagerBackupData`, loaded at boot and saved on every write.
+    backup: ssb_game::backup::Backup,
+    save: save::Save,
     /// The running 1P Game, between the select's START and its end.
     campaign: Option<campaign::Campaign>,
     /// The stage select's presentation (RE-419), made with the select.
@@ -4032,9 +4087,18 @@ impl Session {
             },
         );
         self.make_wallpaper(pack, gkind, rules.is_none());
+        self.apply_backup_options();
         // `sc1PTrainingModeInitVars`; the player is on port 0.
         self.training_menu = rules.is_none().then(|| ssb_game::training::TrainingMenu::new(0));
         self.training_paused = false;
+    }
+
+    /// The backup's battle settings: `ifScreenFlashMakeInterface`'s
+    /// `is_allow_screenflash` and Mew's newcomer gate (`itMainMakeMonster`).
+    fn apply_backup_options(&mut self) {
+        self.damage_hud.ko.flash_disabled = !self.backup.is_allow_screenflash;
+        self.items.unlock_newcomers =
+            self.backup.unlock_mask & ssb_game::backup::UNLOCK_MASK_NEWCOMERS != 0;
     }
 
     /// `grWallpaperMakeDecideKind`, and for Training
@@ -4062,7 +4126,8 @@ impl Session {
     /// `nSCKindMaps`: the stage select on the kind this mode picked last,
     /// with its presentation (`mnMapsFuncStart`).
     fn open_stage_select(&mut self, remembered: u8) {
-        self.stage_select = ssb_game::stage_select::StageSelect::new(remembered, 0);
+        // `mnMapsFuncStart`: `sMNMapsUnlockedMask` from the backup.
+        self.stage_select = ssb_game::stage_select::StageSelect::new(remembered, self.backup.unlock_mask);
         self.stage_select_layer = Some(ssb_game::stage_select_layer::Layer::new(&self.stage_select, !self.vs));
         self.screen = Screen::StageSelect;
     }
@@ -4071,7 +4136,9 @@ impl Session {
 unsafe fn run() -> ! {
     // The scripted scene this run captures; `None` reads the real pad.
     let capture = capture::select();
-    let capture_scene = capture.map(|c| c.scene);
+    // The save scenes run another scene's route and script.
+    let capture_spec = capture.map(|c| c.scene);
+    let capture_scene = capture_spec.map(GameScene::script);
     let mut gpu = Gpu::init();
     // Select this application’s layout at the PSP backend boundary.  The
     // asset viewer keeps PspInput::init() and therefore its legacy controls.
@@ -4081,6 +4148,9 @@ unsafe fn run() -> ! {
     // reads vertex and texture data out of it by DMA once the training
     // scene draws real meshes below.
     let loaded = assets::load_pack();
+    // `lbBackupIsSramValid` and `lbBackupApplyOptions`, before the first
+    // scene.
+    let (backup, save) = save::boot(loaded.as_ref().ok().map(|(_, p)| *p), capture_spec);
     let pack_buf = loaded.as_ref().ok().map(|(b, _)| b);
     let opened = pack_buf.map(|b| Pack::open(b.as_slice()));
     // Which flat colour `draw_training` falls back to when there is no scene
@@ -4112,7 +4182,7 @@ unsafe fn run() -> ! {
         training_stage: 0,
         scene_gkind: ssb_game::stage_select::DEFAULT_GKIND,
         maps_training_gkind: ssb_game::stage_select::DEFAULT_GKIND,
-        stage_select: ssb_game::stage_select::StageSelect::new(ssb_game::stage_select::DEFAULT_GKIND, 0),
+        stage_select: ssb_game::stage_select::StageSelect::new(ssb_game::stage_select::DEFAULT_GKIND, backup.unlock_mask),
         damage_hud: Hud::new(),
         play_state: None,
         dummies: Default::default(),
@@ -4131,6 +4201,9 @@ unsafe fn run() -> ! {
         maps_vsmode_gkind: ssb_game::stage_select::DEFAULT_GKIND,
         vs_menu_rules: VsRules::DEFAULT,
         vs_results: None,
+        vs_transfer: None,
+        vs_message: None,
+        vs_message_next: None,
         vs_results_fighters: None,
         vs_mode: ssb_game::vs_mode::VsMode::new(ssb_game::vs_mode::VsRule::Time, 3, 2, false),
         fighter_select: None,
@@ -4142,7 +4215,8 @@ unsafe fn run() -> ! {
         players_1p_fighters: None,
         one_p_scene: ssb_game::players_1p::SceneData::default(),
         spgame_scene: ssb_game::spgame::SceneData::default(),
-        backup: ssb_game::spgame::Backup::default(),
+        backup,
+        save,
         campaign: None,
         stage_select_layer: None,
         stage_preview: stage_screen::start(),
@@ -4208,9 +4282,13 @@ unsafe fn run() -> ! {
         } else {
             (pad.previous(0), pad.state(0))
         };
+        let mut controller = controller;
+        if capture_spec == Some(GameScene::SaveUnlock) && sim_frame_index == SAVE_UNLOCK_TICK {
+            controller.buttons = N64Buttons(N64Buttons::A);
+        }
         let pressed = newly_pressed(previous_controller.buttons, controller.buttons);
 
-        if !deterministic_capture_frozen(capture_scene, sim_frame_index) {
+        if !deterministic_capture_frozen(capture_spec, sim_frame_index) {
             session_frame(
                 &mut s,
                 &pack,
@@ -4221,6 +4299,7 @@ unsafe fn run() -> ! {
                 pressed,
             );
         }
+        save::persist(&mut s.save, &s.backup);
 
         #[cfg(feature = "headless_capture")]
         if sim_frame_index == 105 {
@@ -4272,7 +4351,7 @@ unsafe fn run() -> ! {
         gpu.end_frame();
 
         #[cfg(feature = "headless_capture")]
-        if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
+        if !headless_capture_sent && deterministic_capture_frozen(capture_spec, sim_frame_index) {
             emit_headless_screenshot();
             if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale)) {
                 campaign::log_capture(&s, sim_frame_index);
@@ -4380,11 +4459,12 @@ unsafe fn draw_training_select(
 #[inline(never)]
 fn new_fighter_select(
     scene: ssb_game::fighter_select::SceneData,
+    fighter_mask: u16,
     capture: bool,
     frame: u64,
 ) -> ssb_game::fighter_select::FighterSelect {
     let time_byte = frame as u8;
-    ssb_game::fighter_select::FighterSelect::new(scene, FIGHTER_MASK, || {
+    ssb_game::fighter_select::FighterSelect::new(scene, fighter_mask, || {
         if capture { time_byte } else { clock_byte() }
     })
 }
@@ -4420,12 +4500,16 @@ fn vs_mode_menu(state: &ssb_game::players_vs::BattleState) -> ssb_game::vs_mode:
 
 /// `mnPlayersVSStartScene` from the battle state, with one controller
 /// plugged into port 1.
-fn new_players_vs(state: ssb_game::players_vs::BattleState, gkind: u8) -> ssb_game::players_vs::PlayersVs {
+fn new_players_vs(
+    state: ssb_game::players_vs::BattleState,
+    gkind: u8,
+    backup: &ssb_game::backup::Backup,
+) -> ssb_game::players_vs::PlayersVs {
     ssb_game::players_vs::PlayersVs::new(
         state,
         ssb_game::players_vs::SceneContext {
-            fighter_mask: FIGHTER_MASK,
-            unlock_mask: 0,
+            fighter_mask: backup.fighter_mask,
+            unlock_mask: backup.unlock_mask,
             gkind,
         },
         [true, false, false, false],
@@ -4588,7 +4672,7 @@ fn draw_players_vs_slots(gpu: &mut Gpu, select: &ssb_game::players_vs::PlayersVs
             .slots
             .iter()
             .any(|s| s.is_fighter_selected && s.fkind == Some(*kind));
-        let color = if fs::is_locked(*kind, FIGHTER_MASK) {
+        let color = if fs::is_locked(*kind, select.fighter_mask()) {
             ENTRY_DISABLED
         } else if placed {
             ENTRY_SELECTED
@@ -4688,7 +4772,7 @@ fn draw_fighter_select(gpu: &mut Gpu, select: &ssb_game::fighter_select::Fighter
             .slots
             .iter()
             .any(|s| s.is_fighter_selected && s.kind == Some(*kind));
-        let color = if fs::is_locked(*kind, FIGHTER_MASK) {
+        let color = if fs::is_locked(*kind, select.fighter_mask()) {
             ENTRY_DISABLED
         } else if placed {
             ENTRY_SELECTED

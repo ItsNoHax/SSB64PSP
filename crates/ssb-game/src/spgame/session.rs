@@ -136,13 +136,13 @@ impl Session {
             if tasks_remain != 0 {
                 if *count < self.data.bonus_tasks_complete {
                     *count = self.data.bonus_tasks_complete;
-                    backup.writes += 1;
+                    backup.write();
                 }
             } else {
                 *count = BONUSGAME_TASK_MAX;
                 if result.time_passed < *time {
                     *time = result.time_passed;
-                    backup.writes += 1;
+                    backup.write();
                 }
             }
         }

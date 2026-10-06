@@ -43,6 +43,7 @@ new evidence contradicts it.
 - [D-029](docs/decisions/D-029.md): Debug Overlay — Software Rasteriser Required in PPSSPP
 - [D-030](docs/decisions/D-030.md): Toolchain Pinning — Successful Compile ≠ Working
 - [D-044](docs/decisions/D-044.md): PSP Backend Split Into Shared psp-runtime + Two Applications
+- [D-045](docs/decisions/D-045.md): Save Data Is the N64 SRAM Image in a Plain File Beside the Pack
 
 ## Engineering Process
 

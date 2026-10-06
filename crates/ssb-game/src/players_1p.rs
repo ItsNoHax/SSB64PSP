@@ -106,7 +106,7 @@ impl Saved {
             scene.fkind = kind;
         }
         scene.costume = self.scene.costume;
-        backup.writes += 1;
+        backup.write();
     }
 }
 

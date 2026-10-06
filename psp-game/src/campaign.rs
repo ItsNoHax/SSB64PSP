@@ -28,6 +28,11 @@ use ssb_game::spgame::{
     Stage,
 };
 
+/// The VS results' unlock message, drawn as the 1P Game's.
+pub(crate) unsafe fn draw_message(gpu: &mut Gpu, p: &Pack<'_>, st: &mut meshdraw::DrawState, m: &spgame::message::Message) {
+    presentation::draw_message(gpu, p, st, m);
+}
+
 /// The campaign the PSP is running, across its scenes.
 pub(crate) struct Campaign {
     pub bonus: Option<alloc::boxed::Box<spgame::bonus_stage::BonusStage>>,

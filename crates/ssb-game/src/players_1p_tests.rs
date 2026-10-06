@@ -128,7 +128,8 @@ fn start_after_sixty_ticks_proceeds_thirty_later_with_the_saved_data() {
     };
     assert_eq!(saved.scene.kind, Some(FighterKind::Samus));
     assert_eq!(saved.scene.player, 0);
-    assert_eq!(saved.difficulty, Difficulty::Normal);
+    // `dSCManagerDefaultBackupData`'s Easy and two stocks.
+    assert_eq!(saved.difficulty, Difficulty::Easy);
     assert_eq!(saved.stock_count, 2);
 }
 

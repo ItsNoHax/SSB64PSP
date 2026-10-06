@@ -186,6 +186,11 @@ pub struct FighterSelect {
 }
 
 impl FighterSelect {
+    /// `sMNPlayers1PTrainingFighterMask`: the backup's `fighter_mask`.
+    pub fn fighter_mask(&self) -> u16 {
+        self.fighter_mask
+    }
+
     /// `mnPlayers1PTrainingInitVars` and `mnPlayers1PTrainingInitSlotAll`.
     /// `time_byte` stands for `osGetTime() & 0xFF`, read once per draw of
     /// the CPU's random fighter.

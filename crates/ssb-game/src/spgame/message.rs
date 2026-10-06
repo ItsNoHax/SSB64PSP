@@ -92,5 +92,5 @@ pub fn apply_unlock(backup: &mut Backup, unlock: Unlock) {
         backup.fighter_mask |= 1 << kind as u16;
         backup.characters_fkind = kind;
     }
-    backup.writes += 1;
+    backup.write();
 }

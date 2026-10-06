@@ -103,6 +103,10 @@ pub struct Player {
     pub self_destructs: u16,
     /// `total_kos_players`.
     pub kos: [u16; 4],
+    /// `total_damage_given` (`ftParamUpdatePlayerBattleStats`).
+    pub total_damage_given: u32,
+    /// `total_damage_all` (`ftParamUpdateDamage`).
+    pub total_damage_all: u32,
     /// Final place, 0 first, for a stock battle's losers in the order they
     /// went out.
     pub place: u8,
@@ -509,6 +513,30 @@ impl Battle {
         self.status = GameStatus::End;
         self.restore_wait = END_RESTORE_WAIT;
         self.end = Some(kind);
+    }
+
+    /// `ftParamUpdateDamage`'s and `ftParamUpdatePlayerBattleStats`'
+    /// totals from `f`'s queued hit callbacks (its stats must be enabled):
+    /// damage taken from anything, and damage another player dealt.
+    pub fn collect_damage(&mut self, f: &mut crate::fighter::Fighter) {
+        use crate::spgame::live::Event;
+        let d = usize::from(f.port);
+        for event in f.stats.drain() {
+            match event {
+                Event::Damage(damage) if d < 4 => {
+                    self.players[d].total_damage_all =
+                        self.players[d].total_damage_all.wrapping_add(damage);
+                }
+                Event::Credit { player, damage } => {
+                    let a = usize::from(player);
+                    if a < 4 && d < 4 && a != d {
+                        self.players[a].total_damage_given =
+                            self.players[a].total_damage_given.wrapping_add(damage);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// The battle half of `ftCommonDeadUpdateScore`: `damage_player` is

@@ -54,14 +54,15 @@ fn the_level_text_and_stock_icons_follow_the_options() {
     let r = Players1P::records(&Backup::default(), None);
     let d = pieces(&s, &r);
     assert_eq!(
-        sprite_at(&d, FILE_DIFFICULTY, LEVEL_TEXT[2]),
-        [(209.0, 159.0)]
+        // `dSCManagerDefaultBackupData`'s Easy.
+        sprite_at(&d, FILE_DIFFICULTY, LEVEL_TEXT[1]),
+        [(219.0, 159.0)]
     );
     // No fighter: three Polygon stocks, left to right at 207, 219, 231.
     let mut zako = sprite_at(&d, FILE_STOCKS_ZAKO, ZAKO_STOCK);
     zako.sort_by(|a, b| a.0.total_cmp(&b.0));
     assert_eq!(zako, [(207.0, 179.0), (219.0, 179.0), (231.0, 179.0)]);
-    // Both arrows show at Normal and 3 stocks.
+    // Both arrows show at Easy and 3 stocks.
     assert_eq!(sprite_at(&d, FILE_PLAYERS_COMMON, common::ARROW_L).len(), 2);
     assert_eq!(sprite_at(&d, FILE_PLAYERS_COMMON, common::ARROW_R).len(), 2);
     // A fighter's own icons in its costume.

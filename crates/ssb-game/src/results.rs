@@ -265,6 +265,79 @@ impl Results {
     }
 }
 
+/// `mnVSResultsSaveBackup`, at the results' start: the VS counters and the
+/// stage played, then each present fighter's record against the others in
+/// `battle` (`gSCManagerTransferBattleState`, the battle before any sudden
+/// death). `kinds` are the ports' fighters.
+pub fn save_backup(
+    backup: &mut crate::backup::Backup,
+    battle: &Battle,
+    kinds: [Option<crate::fighter::FighterKind>; 4],
+    gkind: u8,
+) {
+    backup.vs_total_battles = backup.vs_total_battles.wrapping_add(1);
+    backup.ground_mask |= 1u16.wrapping_shl(u32::from(gkind));
+    // Stops at `U8_MAX`.
+    backup.vs_itemswitch_battles = backup.vs_itemswitch_battles.saturating_add(1);
+    // `mnVSResultsGetPlayerCount`: `pl_count + cp_count`.
+    let count = battle.players.iter().filter(|p| p.present).count() as u16;
+    for (i, p) in battle.players.iter().enumerate() {
+        let Some(this) = kinds[i].filter(|_| p.present) else {
+            continue;
+        };
+        let r = &mut backup.vs_records[this as usize % 12];
+        r.time_used = r.time_used.wrapping_add(battle.time_passed / 60);
+        r.time_used = r.time_used.min(60 * 60 * 1000 - 1);
+        r.damage_given = r
+            .damage_given
+            .wrapping_add(p.total_damage_given)
+            .min(999_999);
+        r.damage_taken = r.damage_taken.wrapping_add(p.total_damage_all).min(999_999);
+        r.selfdestructs = r.selfdestructs.wrapping_add(p.self_destructs).min(9999);
+        r.games_played = r.games_played.wrapping_add(1);
+        r.player_count_tally = r.player_count_tally.wrapping_add(count);
+        for (j, q) in battle.players.iter().enumerate() {
+            let Some(vs) = kinds[j].filter(|_| i != j && q.present) else {
+                continue;
+            };
+            let vs = vs as usize % 12;
+            r.ko_count[vs] = r.ko_count[vs].wrapping_add(p.kos[j]).min(9999);
+            r.player_count_tallies[vs] = r.player_count_tallies[vs].wrapping_add(count);
+            r.played_against[vs] = r.played_against[vs].wrapping_add(1);
+        }
+    }
+    backup.write();
+}
+
+/// `mnVSResultsFuncRun`'s exit: the Item Switch after 100 VS battles, then
+/// Mushroom Kingdom once every starter stage has been played and every
+/// starter has cleared the 1P Game. Any queued unlock goes to the message
+/// scene, which returns to the VS character select.
+pub fn unlocks(backup: &crate::backup::Backup) -> [Option<crate::spgame::Unlock>; 2] {
+    use crate::backup::{CHARACTER_MASK_STARTER, GROUND_MASK_ALL};
+    use crate::spgame::Unlock;
+    let mut out = [None; 2];
+    let mut n = 0;
+    if backup.unlock_mask & Unlock::ItemSwitch.mask() == 0 && backup.vs_itemswitch_battles >= 100 {
+        out[n] = Some(Unlock::ItemSwitch);
+        n += 1;
+    }
+    if backup.unlock_mask & Unlock::Inishie.mask() == 0
+        && backup.ground_mask & GROUND_MASK_ALL == GROUND_MASK_ALL
+    {
+        let complete = backup
+            .spgame_records
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.is_spgame_complete)
+            .fold(0u16, |m, (i, _)| m | 1 << i);
+        if complete & CHARACTER_MASK_STARTER == CHARACTER_MASK_STARTER {
+            out[n] = Some(Unlock::Inishie);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 #[path = "results_tests.rs"]
 mod tests;

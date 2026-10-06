@@ -348,7 +348,7 @@ unsafe fn draw_challenger(
 
 /// `mnMessageFuncStart`'s cameras: the collage (80), the blue tint (70),
 /// the exclamation mark (60) and the message (40).
-unsafe fn draw_message(p: &Pack<'_>, st: &mut DrawState, m: &message::Message) {
+pub(super) unsafe fn draw_message(p: &Pack<'_>, st: &mut DrawState, m: &message::Message) {
     clear_black(st);
     let [wx, wy] = message::WALLPAPER_POSITION;
     sprite(p, st, asset::MESSAGE_COLLAGE.file, asset::COLLAGE, wx, wy, [0xFF; 3], [0; 3], 1.0);

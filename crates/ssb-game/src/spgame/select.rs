@@ -34,7 +34,7 @@ impl Selection {
     pub fn save(self, backup: &mut Backup) {
         backup.spgame_difficulty = self.difficulty;
         backup.spgame_stock_count = self.stocks;
-        backup.writes += 1;
+        backup.write();
     }
 
     pub fn campaign(self) -> Option<SceneData> {

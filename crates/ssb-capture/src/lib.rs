@@ -581,10 +581,17 @@ pub enum GameScene {
     VsBall,
     /// `vsrays`: `vsball` later, the ball open under its rays (RE-425).
     VsRays,
+    /// `saveunlock`: `onepmessage` closed with A once its input wait has
+    /// passed, writing Ness's unlock to the memory stick. With
+    /// [`GameScene::SavePlayers`], the only scenes that load or save the
+    /// backup.
+    SaveUnlock,
+    /// `saveplayers`: `vsplayers` after loading the memory stick's backup.
+    SavePlayers,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 133] = [
+    pub const ALL: [GameScene; 135] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -718,6 +725,8 @@ impl GameScene {
         GameScene::VsCar,
         GameScene::VsBall,
         GameScene::VsRays,
+        GameScene::SaveUnlock,
+        GameScene::SavePlayers,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -856,6 +865,17 @@ impl GameScene {
             GameScene::VsCar => "vscar",
             GameScene::VsBall => "vsball",
             GameScene::VsRays => "vsrays",
+            GameScene::SaveUnlock => "saveunlock",
+            GameScene::SavePlayers => "saveplayers",
+        }
+    }
+
+    /// The scene whose route and input script this one runs.
+    pub const fn script(self) -> GameScene {
+        match self {
+            GameScene::SaveUnlock => GameScene::OnePMessage,
+            GameScene::SavePlayers => GameScene::VsPlayers,
+            s => s,
         }
     }
 
