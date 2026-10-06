@@ -3603,6 +3603,95 @@ fn add_sprite_texture(
     writer.add_texture(&tex, true, true)
 }
 
+/// A menu sprite's texture: 5551 when that holds its combined image
+/// exactly (the RGBA16-palette pictures), else 8888.
+fn add_menu_sprite_texture(
+    writer: &mut ssb_rom::pack::PackWriter,
+    s: &ssb_rom::sprite::Sprite,
+    swizzle: bool,
+) -> u32 {
+    use ssb_rom::psp_texture::{pack_rgba, Psm};
+    let image = ssb_rom::sprite::combined_image(s);
+    let exact_5551 = image.pixels.as_chunks::<4>().0.iter().all(|p| {
+        let c = |v: u8| (v >> 3) << 3 | v >> 5;
+        c(p[0]) == p[0] && c(p[1]) == p[1] && c(p[2]) == p[2] && (p[3] == 0 || p[3] == 0xFF)
+    });
+    let psm = if exact_5551 {
+        Psm::Psm5551
+    } else {
+        Psm::Psm8888
+    };
+    let tex = pack_rgba(&image, psm, swizzle);
+    writer.add_texture(&tex, true, true)
+}
+
+/// `ssb64-menus.pak` (`ssb_rom::menu_pack`): each options or data menu
+/// scene's sprites in a pack of their own, which the host loads with the
+/// scene.
+fn write_menu_packs(files: &[Option<ssb_rom::archive::File>], swizzle: bool, out: &Path) -> Res {
+    use ssb_rom::menu_pack::MenuScene;
+    let file = |id: u32| {
+        files
+            .get(id as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("menu sprite file {id:#x} missing"))
+    };
+    let mut packs = Vec::new();
+    let mut sprites = 0usize;
+    for scene in MenuScene::ALL {
+        let mut writer = ssb_rom::pack::PackWriter::new();
+        for f in scene.sprites() {
+            let data = file(f.file)?;
+            for &at in f.offsets {
+                let s = ssb_rom::sprite::decode(data, at)
+                    .map_err(|e| format!("menu sprite {:#x}+{at:#x}: {e:?}", f.file))?;
+                let texture = add_menu_sprite_texture(&mut writer, &s, swizzle);
+                writer.add_sprite(sprite_desc(f.file, at, &s, texture, 0, 0, 0));
+                sprites += 1;
+            }
+        }
+        for &(id, at, luts) in scene.lut_sprites() {
+            let data = file(id)?;
+            for (i, &lut) in luts.iter().enumerate() {
+                let bytes = data
+                    .data
+                    .get(lut as usize..lut as usize + 32)
+                    .ok_or_else(|| format!("menu palette {id:#x}+{lut:#x} missing"))?;
+                let s = ssb_rom::sprite::decode_with_tlut(
+                    data,
+                    at,
+                    &ssb_rom::texture::parse_tlut(bytes),
+                )
+                .map_err(|e| format!("menu sprite {id:#x}+{at:#x} LUT {i}: {e:?}"))?;
+                let texture = add_menu_sprite_texture(&mut writer, &s, swizzle);
+                writer.add_sprite(sprite_desc(
+                    id,
+                    at,
+                    &s,
+                    texture,
+                    0,
+                    ssb_rom::pack::SpriteDesc::ROLE_LUT,
+                    i as u8,
+                ));
+                sprites += 1;
+            }
+        }
+        let bytes = writer.finish();
+        ssb_rom::pack::Pack::open(&bytes)
+            .map_err(|e| format!("menu pack {scene:?} will not load: {e:?}"))?;
+        println!("  menu pack   {scene:?}: {} bytes", bytes.len());
+        packs.push(bytes);
+    }
+    let bytes = ssb_rom::menu_pack::build(&packs);
+    fs::write(out, &bytes)?;
+    println!(
+        "menu packs -> {} ({} bytes, {sprites} sprites)",
+        out.display(),
+        bytes.len()
+    );
+    Ok(())
+}
+
 fn sprite_desc(
     file: u32,
     at: u32,
@@ -6789,6 +6878,11 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         fs::create_dir_all(dir)?;
     }
     fs::write(&out_path, &bytes)?;
+    write_menu_packs(
+        &loaded.files,
+        swizzle,
+        &out_path.with_file_name(ssb_rom::menu_pack::FILE_NAME),
+    )?;
 
     // Verify what we just wrote actually loads, rather than trusting it.
     let pack = ssb_rom::pack::Pack::open(&bytes)

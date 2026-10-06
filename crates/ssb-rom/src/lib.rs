@@ -26,6 +26,7 @@ pub mod ground_obj;
 pub mod interp;
 pub mod lod_blend;
 pub mod matanim;
+pub mod menu_pack;
 pub mod mesh;
 pub mod mmonster;
 pub mod mobj;

@@ -588,10 +588,24 @@ pub enum GameScene {
     SaveUnlock,
     /// `saveplayers`: `vsplayers` after loading the memory stick's backup.
     SavePlayers,
+    /// `option`: the Option menu (`mnOption`, RE-461) on its Sound tab.
+    Option,
+    /// `screenadjust`: Screen Adjust's guide and frame (`mnScreenAdjust`).
+    ScreenAdjust,
+    /// `backupclear`: Backup Clear's "Is it okay?" for VS Record
+    /// (`mnBackupClear`).
+    BackupClear,
+    /// `datamenu`: the Data menu (`mnData`).
+    DataMenu,
+    /// `vsrecord`: VS Record's Ranking page (`mnVSRecord`).
+    VsRecord,
+    /// `characters`: Characters' first page, Mario playing a motion
+    /// (`mnCharacters`).
+    Characters,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 135] = [
+    pub const ALL: [GameScene; 141] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -727,6 +741,12 @@ impl GameScene {
         GameScene::VsRays,
         GameScene::SaveUnlock,
         GameScene::SavePlayers,
+        GameScene::Option,
+        GameScene::ScreenAdjust,
+        GameScene::BackupClear,
+        GameScene::DataMenu,
+        GameScene::VsRecord,
+        GameScene::Characters,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -867,6 +887,12 @@ impl GameScene {
             GameScene::VsRays => "vsrays",
             GameScene::SaveUnlock => "saveunlock",
             GameScene::SavePlayers => "saveplayers",
+            GameScene::Option => "option",
+            GameScene::ScreenAdjust => "screenadjust",
+            GameScene::BackupClear => "backupclear",
+            GameScene::DataMenu => "datamenu",
+            GameScene::VsRecord => "vsrecord",
+            GameScene::Characters => "characters",
         }
     }
 

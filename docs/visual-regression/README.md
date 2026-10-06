@@ -194,6 +194,24 @@ order in one `--job` directory and delete its `ssb64.sav` afterwards:
 |---|---|
 | `saveunlock` (260) | `onepmessage` closed with A at tick 240, writing Ness's unlock; the Intro after it |
 | `saveplayers` (85) | `vsplayers` after loading that save: Ness's portrait instead of "?" |
+
+The options and data menus (RE-461) start in their scene (the last two on
+Data, so the capture loads one scene's sprite pack after another) with the
+default backup and neutral sticks; each needs `ssb64-menus.pak` staged beside the
+pack (`run-ppsspp-headless.sh` does):
+
+| Spec | Captured display |
+|---|---|
+| `option` (40) | Option on Sound, stereo underlined |
+| `screenadjust` (30) | Screen Adjust's guide, instruction and frame |
+| `backupclear` (50) | Down to VS Record, A: "Is it okay to clear this data?" with No circled |
+| `datamenu` (40) | Data on Characters, without Sound Test |
+| `vsrecord` (40) | From Data (down, A) into VS Record, A at tick 30: the Ranking page, Mario highlighted |
+| `characters` (90) | From Data (A at tick 15): Mario's page; the fighter's motion comes from a fixed byte sequence, not the clock |
+
+The first five match warp-booted N64 references of the same states to
+within edge resampling (`~/ppsspp-test/n64menus/`).
+
 These diagnostics remain outside the 195-scene manifest. They do not prove
 unmodified traversal, a full campaign, N64 equivalence or physical PSP;
 see [RE-455](../evidence/re/RE-455.md) for source checks and capture limits.

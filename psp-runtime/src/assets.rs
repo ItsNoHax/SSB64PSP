@@ -168,3 +168,48 @@ pub fn load_pack() -> Result<(AlignedBuf, &'static str), LoadError> {
     }
     Err(LoadError::NotFound)
 }
+
+/// `ssb_rom::menu_pack::FILE_NAME` beside each of [`SEARCH_PATHS`].
+const MENU_PATHS: &[(&str, &str)] = &[
+    ("ssb64.pak", "ssb64-menus.pak\0"),
+    ("ms0:/PSP/GAME/ssb64/ssb64.pak", "ms0:/PSP/GAME/ssb64/ssb64-menus.pak\0"),
+    ("ms0:/ssb64.pak", "ms0:/ssb64-menus.pak\0"),
+];
+
+/// One options or data menu scene's sprite pack from `ssb64-menus.pak`
+/// beside the pack at `pack_path` (`ssb_rom::menu_pack`): the index, then
+/// only that scene's bytes. The caller drops the buffer when the scene
+/// ends, as `lbRelocInitSetup` drops the original's files.
+pub fn load_menu_pack(pack_path: &str, scene: ssb_rom::menu_pack::MenuScene) -> Result<AlignedBuf, LoadError> {
+    let path = MENU_PATHS
+        .iter()
+        .find(|(pack, _)| *pack == pack_path)
+        .map_or(MENU_PATHS[0].1, |(_, menus)| *menus);
+    // SAFETY: the path is a NUL-terminated literal.
+    let fd = unsafe { sys::sceIoOpen(path.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0o777) };
+    if fd.0 < 0 {
+        return Err(LoadError::NotFound);
+    }
+    let result = (|| {
+        let mut index = [0u8; 64];
+        let n = ssb_rom::menu_pack::index_len(ssb_rom::menu_pack::MenuScene::ALL.len());
+        let read = unsafe { sys::sceIoRead(fd, index.as_mut_ptr() as *mut core::ffi::c_void, n as u32) };
+        if read as usize != n {
+            return Err(LoadError::ShortRead);
+        }
+        let (at, len) = ssb_rom::menu_pack::locate(&index[..n], scene).ok_or(LoadError::Empty)?;
+        if len == 0 {
+            return Err(LoadError::Empty);
+        }
+        let buf = AlignedBuf::new(len as usize).ok_or(LoadError::OutOfMemory)?;
+        unsafe { sys::sceIoLseek(fd, i64::from(at), sys::IoWhence::Set) };
+        let read = unsafe { sys::sceIoRead(fd, buf.ptr as *mut core::ffi::c_void, len) };
+        if read as i64 != i64::from(len) {
+            return Err(LoadError::ShortRead);
+        }
+        buf.flush_cache();
+        Ok(buf)
+    })();
+    unsafe { sys::sceIoClose(fd) };
+    result
+}

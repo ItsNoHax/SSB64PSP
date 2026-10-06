@@ -25,6 +25,7 @@ extern crate alloc;
 
 mod campaign;
 mod capture;
+mod menus_screen;
 mod play;
 mod player_screen;
 mod players_screen;
@@ -107,6 +108,12 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // `onepmessage`'s A at [`SAVE_UNLOCK_TICK`], then the next scene.
         GameScene::SaveUnlock => 260,
         GameScene::SavePlayers => 85,
+        // The menus read input from their tenth tic (RE-461).
+        GameScene::Option | GameScene::DataMenu => 40,
+        GameScene::ScreenAdjust => 30,
+        GameScene::BackupClear => 50,
+        GameScene::VsRecord => 40,
+        GameScene::Characters => 90,
         GameScene::OnePFinale => 2200,
         // Training starts at tick 8; C-Up at 13 enters jumpsquat, and this
         // lands in the rising portion of Mario's real button jump while the
@@ -424,6 +431,19 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
+    // Backup Clear: down three times to VS Record, then A for its confirm.
+    match (scene, tick) {
+        (GameScene::BackupClear, 15 | 30 | 45) => return N64Buttons(N64Buttons::D_DOWN),
+        (GameScene::BackupClear, 47) => return N64Buttons(N64Buttons::A),
+        // VS Record and Characters start on Data, so the capture also
+        // swaps the scenes' sprite packs.
+        (GameScene::VsRecord, 14) => return N64Buttons(N64Buttons::D_DOWN),
+        (GameScene::VsRecord, 16 | 30) | (GameScene::Characters, 15) => return N64Buttons(N64Buttons::A),
+        (GameScene::Option | GameScene::ScreenAdjust | GameScene::BackupClear | GameScene::DataMenu | GameScene::VsRecord | GameScene::Characters, _) => {
+            return N64Buttons(0)
+        }
+        _ => {}
+    }
     if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         return match tick {
             4 | 10 | 34 => N64Buttons(N64Buttons::A),
@@ -781,6 +801,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
+    if capture_menu(scene).is_some() {
+        return 0;
+    }
     if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         return if (14..=24).contains(&tick) { 80 } else { 0 };
     }
@@ -918,6 +941,9 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
+    if capture_menu(scene).is_some() {
+        return 0;
+    }
     if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         // Two separate menu-down edges, then carry the puck to Kirby.
         return match tick {
@@ -1978,6 +2004,8 @@ enum Screen {
     /// The 1P Game's own scenes between battles: intro, continue and stage
     /// clear (`campaign`, RE-450). Its battles run on [`Screen::Training`].
     Campaign,
+    /// The options and data menus (`ssb_game::menu`, RE-461).
+    Menus,
     /// Training Mode: a real stage and a real, physics-ticked fighter now
     /// draw here (`draw_training`) -- no combat yet, see
     /// `plans/gameplay/F1.md` acceptance criteria 5-7 for what still has to
@@ -1985,8 +2013,9 @@ enum Screen {
     Training,
 }
 
-/// Main-menu entries: Training, VS and the 1P Game's select.
-const MENU_ENTRIES: usize = 3;
+/// Main-menu entries: Training, VS, the 1P Game's select, Option and Data
+/// (`nMNModeSelectOptionOption` and `...Data`).
+const MENU_ENTRIES: usize = 5;
 const TRAINING_ENTRY: usize = 0;
 /// A VS battle against the CPU pick, which stands still: CPU AI is not
 /// ported (RE-389).
@@ -1994,6 +2023,10 @@ const VS_ENTRY: usize = 1;
 /// The 1P Game's character select. Its campaign scenes are not wired yet,
 /// so START comes back to this menu with the choice saved.
 const ONE_P_ENTRY: usize = 2;
+/// `mnOption` (RE-461).
+const OPTION_ENTRY: usize = 3;
+/// `mnData` (RE-461).
+const DATA_ENTRY: usize = 4;
 
 const BG_INTRO: Color = Color::rgba(24, 32, 64, 255);
 const BG_MENU: Color = Color::rgba(16, 16, 24, 255);
@@ -3429,6 +3462,7 @@ unsafe fn draw_frame(
             gpu.begin_frame(Some(BG_MENU));
             draw_menu(gpu, s.cursor);
         }
+        Screen::Menus => s.menus.draw(gpu, pack.as_ref(), draw_state, &s.backup),
         Screen::VsMode => {
             gpu.set_viewport_fullscreen();
             gpu.begin_frame(Some(BG_MENU));
@@ -3587,12 +3621,21 @@ unsafe fn session_frame(
         let mut lag_tic = false;
         match s.screen {
             Screen::Intro => {
-                if pressed.contains(N64Buttons::A) || pressed.contains(N64Buttons::START) {
+                if let Some(scene) = capture_scene.and_then(capture_menu) {
+                    enter_menus(s, pack.as_ref(), scene, ssb_game::menu::Scene::ModeSelect, true);
+                } else if pressed.contains(N64Buttons::A) || pressed.contains(N64Buttons::START) {
                     s.screen = Screen::Menu;
                 }
             }
             Screen::Menu => {
-                if pressed.contains(N64Buttons::A) && s.cursor == ONE_P_ENTRY {
+                if pressed.contains(N64Buttons::A) && (s.cursor == OPTION_ENTRY || s.cursor == DATA_ENTRY) {
+                    let scene = if s.cursor == OPTION_ENTRY {
+                        ssb_game::menu::Scene::Option
+                    } else {
+                        ssb_game::menu::Scene::Data
+                    };
+                    enter_menus(s, pack.as_ref(), scene, ssb_game::menu::Scene::ModeSelect, capture_scene.is_some());
+                } else if pressed.contains(N64Buttons::A) && s.cursor == ONE_P_ENTRY {
                     s.players_1p = Some(ssb_game::players_1p::Players1P::new(s.one_p_scene, &s.backup));
                     s.players_1p_fighters = None;
                     s.screen = Screen::Players1P;
@@ -3651,6 +3694,7 @@ unsafe fn session_frame(
                     }
                 }
             }
+            Screen::Menus => menus_frame(s, pack.as_ref(), controller, pressed, capture_scene.is_some()),
             Screen::VsMode => {
                 use ssb_game::vs_mode::Action;
                 match vs_mode_frame(&mut s.vs_mode, controller, pressed) {
@@ -4053,6 +4097,16 @@ struct Session {
     /// `gSCManagerBackupData`, loaded at boot and saved on every write.
     backup: ssb_game::backup::Backup,
     save: save::Save,
+    /// Where the pack loaded from: the menus' sprite packs sit beside it.
+    pack_path: Option<&'static str>,
+    /// The options and data menus (RE-461).
+    menus: menus_screen::Menus,
+    /// `dSYAudioSoundQuality`, which `lbBackupApplyOptions` and Option set:
+    /// 1 stereo, 0 mono. The port's audio has no mono mix (RE-461).
+    sound_quality: u8,
+    /// `syVideoSetCenterOffsets`' horizontal and vertical offsets. The PSP's
+    /// picture does not move (RE-461).
+    video_offsets: (i16, i16),
     /// The running 1P Game, between the select's START and its end.
     campaign: Option<campaign::Campaign>,
     /// The stage select's presentation (RE-419), made with the select.
@@ -4215,6 +4269,11 @@ unsafe fn run() -> ! {
         players_1p_fighters: None,
         one_p_scene: ssb_game::players_1p::SceneData::default(),
         spgame_scene: ssb_game::spgame::SceneData::default(),
+        pack_path: loaded.as_ref().ok().map(|(_, p)| *p),
+        menus: menus_screen::Menus::new(),
+        // `lbBackupApplyOptions`.
+        sound_quality: backup.sound_mono_or_stereo,
+        video_offsets: (backup.screen_adjust_h, backup.screen_adjust_v),
         backup,
         save,
         campaign: None,
@@ -4381,6 +4440,98 @@ unsafe fn run() -> ! {
     }
 }
 
+/// `gSCManagerSceneData` and `gSCManagerTransferBattleState`'s selections,
+/// for `lbBackupCorrectErrors`.
+fn selections(s: &Session) -> ssb_game::backup::Selections {
+    use ssb_game::backup::{SelectedPlayer, Selections};
+    Selections {
+        fkind: s.one_p_scene.kind,
+        training_man_fkind: s.training_scene.man_kind,
+        training_com_fkind: s.training_scene.com_kind,
+        players: s.vs_state.players.map(|p| SelectedPlayer {
+            fkind: p.fkind,
+            is_man: p.pkind == ssb_game::players_vs::PlayerKind::Man,
+        }),
+        maps_vsmode_gkind: s.maps_vsmode_gkind,
+        maps_training_gkind: s.maps_training_gkind,
+        items_reset: false,
+    }
+}
+
+/// The corrected selections back into the session.
+fn apply_selections(s: &mut Session, c: ssb_game::backup::Selections) {
+    s.one_p_scene.kind = c.fkind;
+    s.training_scene.man_kind = c.training_man_fkind;
+    s.training_scene.com_kind = c.training_com_fkind;
+    for (p, c) in s.vs_state.players.iter_mut().zip(c.players) {
+        p.fkind = c.fkind;
+        if c.is_man {
+            p.pkind = ssb_game::players_vs::PlayerKind::Man;
+        }
+    }
+    s.maps_vsmode_gkind = c.maps_vsmode_gkind;
+    s.maps_training_gkind = c.maps_training_gkind;
+}
+
+/// The menu scene a capture starts in.
+fn capture_menu(scene: GameScene) -> Option<ssb_game::menu::Scene> {
+    use ssb_game::menu::Scene;
+    Some(match scene {
+        GameScene::Option => Scene::Option,
+        GameScene::ScreenAdjust => Scene::ScreenAdjust,
+        GameScene::BackupClear => Scene::BackupClear,
+        GameScene::DataMenu => Scene::Data,
+        GameScene::VsRecord | GameScene::Characters => Scene::Data,
+        _ => return None,
+    })
+}
+
+/// The options and data menus' host state.
+macro_rules! menus_host {
+    ($s:expr, $pack:expr, $selections:expr, $capture:expr) => {
+        menus_screen::Host {
+            pack: $pack,
+            pack_path: $s.pack_path,
+            backup: &mut $s.backup,
+            selections: $selections,
+            sound_quality: &mut $s.sound_quality,
+            video_offsets: &mut $s.video_offsets,
+            capture: $capture,
+        }
+    };
+}
+
+/// `mnModeSelect`'s Option or Data: the menus' first scene.
+#[inline(never)]
+fn enter_menus(s: &mut Session, pack: Option<&Pack<'_>>, scene: ssb_game::menu::Scene, prev: ssb_game::menu::Scene, capture: bool) {
+    let mut selections = selections(s);
+    let mut menus = core::mem::replace(&mut s.menus, menus_screen::Menus::new());
+    menus.enter(scene, prev, &mut menus_host!(s, pack, &mut selections, capture));
+    s.menus = menus;
+    s.screen = Screen::Menus;
+}
+
+/// One frame of the options and data menus.
+#[inline(never)]
+fn menus_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: ControllerState, pressed: N64Buttons, capture: bool) {
+    let pad = ssb_game::menu::Pad {
+        hold: controller.buttons.0,
+        tap: pressed.0,
+        stick_x: controller.stick_x,
+        stick_y: controller.stick_y,
+    };
+    let mut selections = selections(s);
+    let mut menus = core::mem::replace(&mut s.menus, menus_screen::Menus::new());
+    let exit = menus.frame(&pad, &mut menus_host!(s, pack, &mut selections, capture));
+    s.menus = menus;
+    apply_selections(s, selections);
+    match exit {
+        Some(menus_screen::Exit::Title) => s.screen = Screen::Intro,
+        Some(menus_screen::Exit::ModeSelect) => s.screen = Screen::Menu,
+        None => {}
+    }
+}
+
 /// Draws the menu entries as a vertical stack of rectangles: one bar per
 /// entry, the selected one in `ENTRY_SELECTED`, `Training` in
 /// `ENTRY_ENABLED` when not selected, and the stubbed entries dimmed. No text
@@ -4398,7 +4549,7 @@ fn draw_menu(gpu: &mut Gpu, cursor: usize) {
         let y0 = TOP + i as i32 * (ENTRY_HEIGHT + ENTRY_GAP);
         let color = if i == cursor {
             ENTRY_SELECTED
-        } else if i == TRAINING_ENTRY || i == VS_ENTRY || i == ONE_P_ENTRY {
+        } else if i < MENU_ENTRIES {
             ENTRY_ENABLED
         } else {
             ENTRY_DISABLED

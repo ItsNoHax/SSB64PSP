@@ -260,7 +260,7 @@ unsafe fn draw_emblem(gpu: &mut Gpu, p: &Pack<'_>, draw_state: &mut meshdraw::Dr
 /// Every node's rest transform below a root the caller places: the root
 /// is the identity (`mnVSResultsMakeEmblem` sets its translation and
 /// scale), each child its parent's matrix times its own rest transform.
-fn rooted_rest_pose(p: &Pack<'_>, object: &ssb_rom::pack::ObjectDesc) -> [ssb_rom::scene::Mat4; 8] {
+pub(crate) fn rooted_rest_pose(p: &Pack<'_>, object: &ssb_rom::pack::ObjectDesc) -> [ssb_rom::scene::Mat4; 8] {
     use ssb_rom::scene::Mat4;
     let mut posed = [Mat4::IDENTITY; 8];
     for n in 1..(object.node_count as usize).min(posed.len()) {

@@ -87,7 +87,7 @@ pub const FONT: [u32; 29] = [
     0xF60, 0xFD0,
 ];
 /// `mnPlayers1PGameMakeString`'s `widths`, by character ID.
-const FONT_WIDTHS: [f32; 29] = [
+pub(crate) const FONT_WIDTHS: [f32; 29] = [
     5.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 3.0, 4.0, 4.0, 4.0, 5.0, 5.0, 4.0, 4.0, 5.0, 4.0, 4.0,
     5.0, 4.0, 5.0, 5.0, 5.0, 5.0, 4.0, 2.0, 7.0, 3.0,
 ];
@@ -636,7 +636,7 @@ fn number(
 }
 
 /// `mnPlayers1PGameGetCharacterID`.
-fn character_id(c: u8) -> usize {
+pub(crate) fn character_id(c: u8) -> usize {
     match c {
         b'\'' => 0x1A,
         b'%' => 0x1B,
@@ -647,7 +647,7 @@ fn character_id(c: u8) -> usize {
 }
 
 /// `mnPlayers1PGameGetCharacterSpacing`: the kerning after `s[i]`.
-fn character_spacing(s: &[u8], i: usize) -> f32 {
+pub(crate) fn character_spacing(s: &[u8], i: usize) -> f32 {
     let next = s.get(i + 1).copied().unwrap_or(0);
     let tight = match s[i] {
         b'A' => matches!(next, b'F' | b'P' | b'T' | b'V' | b'Y'),
