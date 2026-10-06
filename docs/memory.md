@@ -18,7 +18,10 @@
   needs a per-scene or reduced pack.
 - The options and data menus' sprites are not resident: `ssb64-menus.pak`
   holds one small pack per scene (13 scenes, 56 KB to 2.7 MB), read when
-  the scene starts and freed when it ends (RE-461, RE-462).
+  the scene starts and freed when it ends (RE-461, RE-462). The opening
+  adds a pack per scene and `OpeningModels` (1.6 MB, the objects of files
+  0x35–0x4B), held from the room to the title; the opening's lowest free
+  memory is 2.57 MB, in the Jungle scene (RE-467).
 - The stage `MaterialAnimator` allocates one 448-byte joint per
   `MatAnimDesc` on the heap (103, 46 KiB; RE-322).
 - CPU time, not RAM, is the main constraint. Trade memory for CPU:
