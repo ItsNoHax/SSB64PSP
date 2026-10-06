@@ -191,7 +191,7 @@ pub fn load_menu_pack(pack_path: &str, scene: ssb_rom::menu_pack::MenuScene) -> 
         return Err(LoadError::NotFound);
     }
     let result = (|| {
-        let mut index = [0u8; 64];
+        let mut index = [0u8; 256];
         let n = ssb_rom::menu_pack::index_len(ssb_rom::menu_pack::MenuScene::ALL.len());
         let read = unsafe { sys::sceIoRead(fd, index.as_mut_ptr() as *mut core::ffi::c_void, n as u32) };
         if read as usize != n {

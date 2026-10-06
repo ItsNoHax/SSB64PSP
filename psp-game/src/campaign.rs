@@ -10,9 +10,8 @@
 //! `sc1pgame.c`'s camera animations and defeat). After the last stage the
 //! ending movie, staff roll and congratulations run, then a challenger's
 //! warning, battle and unlock message (`ssb_game::spgame`). A scene the PSP
-//! cannot run yet (the Bonus 1 select after Luigi's challenge, a staff
-//! roll whose ROM data the pack lacks, or a battle whose fighters the pack
-//! lacks) stops the campaign with an explicit blocked screen: it is never
+//! cannot run yet (a staff roll whose ROM data the pack lacks, or a battle
+//! whose fighters the pack lacks) stops the campaign with an explicit blocked screen: it is never
 //! replaced by a VS battle or skipped. Authored presentation is bound by
 //! campaign_screen.
 
@@ -45,6 +44,9 @@ pub(crate) struct Campaign {
     /// Why the campaign stopped, at a scene it cannot run yet.
     blocked: Option<Blocked>,
     presentation: presentation::Presentation,
+    /// Bonus 1 or 2 Practice (`scene_prev` an `nSCKind1PBonus*Players`):
+    /// the course runs alone and goes back to its select.
+    pub practice: Option<ssb_game::players_1p_bonus::BonusKind>,
 }
 
 /// A scene the host cannot run yet.
@@ -75,18 +77,60 @@ pub(crate) fn start(s: &mut Session, pack: Option<&Pack<'_>>) {
         tic: 0,
         blocked: None,
         presentation: presentation::Presentation::default(),
+        practice: None,
     });
     s.screen = Screen::Campaign;
 }
 
-/// Ends the campaign for `next`: the 1P mode menu (the menu stands in for
-/// it) or the title.
-fn leave(s: &mut Session, next: Screen) {
+/// `nSCKind1PBonusStage` from a Bonus Practice select
+/// (`sc1PBonusStageFuncStart`'s practice branch): the practice fighter
+/// and costume on the course, with no time limit.
+pub(crate) fn start_practice(
+    s: &mut Session,
+    pack: Option<&Pack<'_>>,
+    saved: ssb_game::players_1p_bonus::Saved,
+    bonus: ssb_game::players_1p_bonus::BonusKind,
+) {
+    use ssb_game::players_1p_bonus::BonusKind;
+    let mut data = s.spgame_scene.clone();
+    data.player = saved.player;
+    data.fkind = saved.bonus_fkind.unwrap_or(ssb_game::fighter::FighterKind::Mario);
+    data.costume = saved.bonus_costume;
+    let fkind = data.fkind;
+    let mut frontend = alloc::boxed::Box::new(Frontend::campaign(data, &s.backup));
+    if let Some(sp) = frontend.session.as_mut() {
+        // `sc1PBonusStageSetupFiles`' practice branch: the course of the
+        // fighter, `SCBATTLE_TIMELIMIT_INFINITE`, the practice's costume
+        // (the error flag's Mario does not apply).
+        sp.data.player = saved.player;
+        sp.data.fkind = fkind;
+        sp.data.costume = saved.bonus_costume;
+        sp.data.stage = if bonus == BonusKind::Targets { Stage::Bonus1 } else { Stage::Bonus2 } as u8;
+        sp.data.time_limit = ssb_game::battle::TIMELIMIT_INFINITE;
+        sp.data.is_reset = false;
+        sp.manager.scene = Scene::BonusStage;
+    }
+    s.campaign = Some(Campaign {
+        bonus: None,
+        boss: None,
+        frontend,
+        tic: 0,
+        blocked: None,
+        presentation: presentation::Presentation::default(),
+        practice: Some(bonus),
+    });
+    s.screen = Screen::Campaign;
+    on_host(s, pack, Scene::BonusStage);
+}
+
+/// Ends the campaign for `next`: the 1P mode menu or the N64 logo (which
+/// is skipped to the title).
+fn leave(s: &mut Session, pack: Option<&Pack<'_>>, next: ssb_game::menu::Scene) {
     s.campaign = None;
     s.play_state = None;
     s.dummies = Default::default();
     s.vs_battle = None;
-    s.screen = next;
+    crate::go_scene(s, pack, next, ssb_game::menu::Scene::OnePGame, false);
 }
 
 /// One frame of the campaign's own scenes: the intro, continue and
@@ -99,12 +143,12 @@ pub(crate) fn frame(
     pressed: N64Buttons,
 ) {
     let Some(c) = s.campaign.as_mut() else {
-        s.screen = Screen::Menu;
+        crate::go_scene(s, pack, ssb_game::menu::Scene::OnePMode, ssb_game::menu::Scene::OnePGame, false);
         return;
     };
     if c.blocked.is_some() {
         if pressed.contains(N64Buttons::START) || pressed.contains(N64Buttons::B) {
-            leave(s, Screen::Menu);
+            leave(s, pack, ssb_game::menu::Scene::OnePMode);
         }
         return;
     }
@@ -143,8 +187,17 @@ fn on_host(s: &mut Session, pack: Option<&Pack<'_>>, scene: Scene) {
                 }
             }
         },
-        Scene::ModeMenu => leave(s, Screen::Menu),
-        Scene::Startup => leave(s, Screen::Intro),
+        Scene::ModeMenu => leave(s, pack, ssb_game::menu::Scene::OnePMode),
+        Scene::Startup => leave(s, pack, ssb_game::menu::Scene::Startup),
+        // After Luigi's challenge (`sc1PManagerUpdateScene`): the Bonus 1
+        // Practice select, entered from the bonus stage.
+        Scene::Bonus1Select => {
+            s.campaign = None;
+            s.play_state = None;
+            s.dummies = Default::default();
+            s.vs_battle = None;
+            crate::go_scene(s, pack, ssb_game::menu::Scene::Players1PBonus1, ssb_game::menu::Scene::BonusStage, false);
+        }
         other => {
             if let Some(c) = s.campaign.as_mut() {
                 c.blocked = Some(Blocked::Scene(other));
@@ -205,6 +258,8 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
             is_team_battle: true,
             is_team_attack: sp.state.is_team_attack,
         },
+        items: switches,
+        damage_ratio: ssb_game::stale::DAMAGE_RATIO_DEFAULT,
     };
     s.enter(pack, gkind, roster, Some(rules));
     s.scene_gkind = gkind;
@@ -550,7 +605,8 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
         team: 0, color: 0, human: true });
     let gkind = bonus.state.gkind;
     s.enter(pack, gkind, roster, Some(VsRules { rule: ssb_game::battle::Rule::Time,
-        time_limit: bonus.state.time_limit, stocks: 0, team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL }));
+        time_limit: bonus.state.time_limit, stocks: 0, team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL,
+        ..VsRules::DEFAULT }));
     s.scene_gkind = gkind;
     s.vs_battle = Some(bonus.battle());
     s.items.appear = None;
@@ -577,12 +633,22 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
     pl.bonus_follow = true;
     s.damage_hud.damage[0] = ssb_game::hud::DamageDisplay::at(0, 0, 55);
     s.damage_hud.bonus_tasks = Some(10);
-    s.campaign.as_mut().expect("campaign").bonus = Some(alloc::boxed::Box::new(bonus));
+    let c = s.campaign.as_mut().expect("campaign");
+    let mut bonus = bonus;
+    bonus.practice = c.practice.is_some();
+    // `sc1PBonusStageMakeTimer`'s practice digits.
+    s.damage_hud.bonus_timer = bonus.practice.then(spgame::bonus_stage::PracticeTimer::default);
+    c.bonus = Some(alloc::boxed::Box::new(bonus));
     Ok(())
 }
 
-pub(crate) fn bonus_frame(p: &Pack<'_>, hud: &mut Hud, b: &ssb_game::battle::Battle, tasks: u8) {
-    hud.bonus_tasks = Some(tasks);
+pub(crate) fn bonus_frame(p: &Pack<'_>, hud: &mut Hud, b: &ssb_game::battle::Battle, bonus: &mut spgame::bonus_stage::BonusStage) {
+    hud.bonus_tasks = Some(bonus.tasks_remain);
+    if bonus.practice {
+        // `sc1PBonusStageTimerProcUpdate`.
+        bonus.timer.tick(b.time_passed);
+        hud.bonus_timer = Some(bonus.timer);
+    }
     if b.clock() == 61 {
         let mut c = ssb_game::countdown::Countdown::sudden_death();
         c.start_go();
@@ -863,6 +929,45 @@ pub(crate) fn replace_enemies(
     hud.team_stocks = sp.game.as_ref().map(|g| (g.stage, g.team_stock_icons()));
 }
 
+/// `sc1PBonusStageStartScene`'s practice branch: the records, then the
+/// select, Luigi's challenge or the Sound Test message.
+fn finish_practice(
+    s: &mut Session,
+    pack: Option<&Pack<'_>>,
+    battle: &ssb_game::battle::Battle,
+    tasks_remain: u8,
+    practice: ssb_game::players_1p_bonus::BonusKind,
+) {
+    use ssb_game::menu::Scene as M;
+    use ssb_game::players_1p_bonus::BonusKind;
+    use spgame::bonus_stage::PracticeNext;
+    let c = s.campaign.take().expect("campaign");
+    let sp = c.frontend.session.as_ref().expect("campaign session");
+    let (fkind, costume) = (sp.data.fkind, sp.data.costume);
+    s.play_state = None;
+    s.dummies = Default::default();
+    let bonus1 = practice == BonusKind::Targets;
+    let next = spgame::bonus_stage::finish_practice(&mut s.backup, bonus1, fkind, tasks_remain, battle.time_passed, battle.is_reset);
+    let select = if bonus1 { M::Players1PBonus1 } else { M::Players1PBonus2 };
+    match next {
+        PracticeNext::Select => crate::go_scene(s, pack, select, M::BonusStage, false),
+        PracticeNext::LuigiChallenge => {
+            s.spgame_scene.fkind = fkind;
+            s.spgame_scene.costume = costume;
+            s.spgame_scene.stage = Stage::Luigi as u8;
+            s.menus.scene = M::OnePGame;
+            s.menus.scene_prev = M::BonusStage;
+            start(s, pack);
+        }
+        PracticeNext::SoundTestMessage => {
+            s.vs_message = Some(spgame::message::Message::new(spgame::Unlock::SoundTest));
+            s.vs_message_next = None;
+            s.message_after = M::Startup;
+            s.screen = Screen::Message;
+        }
+    }
+}
+
 /// The battle's end: its records go to the campaign once, then the
 /// manager's next scene.
 #[inline(never)]
@@ -878,6 +983,10 @@ pub(crate) fn finish_battle(s: &mut Session, pack: Option<&Pack<'_>>) {
             return;
         }
         let battle = s.vs_battle.take().expect("bonus battle");
+        if let Some(practice) = c.practice {
+            finish_practice(s, pack, &battle, bonus.tasks_remain, practice);
+            return;
+        }
         sp.data.is_reset = battle.is_reset;
         let tasks = bonus.tasks_remain;
         sp.finish_bonus_stage(bonus.result(&battle), tasks, &mut s.backup);

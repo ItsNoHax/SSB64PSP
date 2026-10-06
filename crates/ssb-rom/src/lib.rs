@@ -49,6 +49,7 @@ pub mod sprite;
 pub mod stage;
 pub mod strict;
 pub mod texture;
+pub mod title;
 pub mod transition;
 pub mod vpk0;
 pub mod wide_tile;

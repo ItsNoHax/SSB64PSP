@@ -92,7 +92,7 @@ pub(crate) const FONT_WIDTHS: [f32; 29] = [
     5.0, 4.0, 5.0, 5.0, 5.0, 5.0, 4.0, 2.0, 7.0, 3.0,
 ];
 /// `llIFCommonDigits0Sprite` to `...9Sprite`.
-const DIGITS: [u32; 10] = [
+pub(crate) const DIGITS: [u32; 10] = [
     0x68, 0x118, 0x1C8, 0x278, 0x328, 0x3D8, 0x488, 0x538, 0x5E8, 0x698,
 ];
 /// `mnPlayers1PGameMakeTimeNumber`'s `widths`: a table, not the sprites'.
@@ -125,7 +125,7 @@ pub const SPRITE_LISTS: &[(u32, &[u32])] = &[
 pub const GATE_LUTS: [u8; 4] = [0, 2, 3, 4];
 
 /// `mnPlayers1PGameMakeGate`'s "1P" text `pos_x`, by port.
-const KIND_TEXT_X: [f32; 4] = [8.0, 5.0, 5.0, 5.0];
+pub(crate) const KIND_TEXT_X: [f32; 4] = [8.0, 5.0, 5.0, 5.0];
 /// `mnPlayers1PGameMakeFighter`'s `translate`.
 pub const FIGHTER_POSITION: [f32; 3] = [-1100.0, -850.0, 0.0];
 /// The level and stock threads' `blink_wait`.
@@ -607,7 +607,7 @@ fn digit_count(number: u32, max: u32) -> u32 {
 /// `mnPlayers1PGameMakeNumber`: `IFCommonDigits` right-aligned on `x`,
 /// 8 pixels apart, `colors` the environment then the primitive. A fixed
 /// count draws leading zeroes.
-fn number(
+pub(crate) fn number(
     number: u32,
     x: f32,
     y: f32,

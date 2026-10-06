@@ -602,10 +602,29 @@ pub enum GameScene {
     /// `characters`: Characters' first page, Mario playing a motion
     /// (`mnCharacters`).
     Characters,
+    /// `title`: the title screen (`mnTitle`, RE-462) after the N64 logo,
+    /// with "Press Start".
+    Title,
+    /// `modeselect`: the mode select (`mnModeSelect`) moved to VS Mode.
+    ModeSelect,
+    /// `onepmode`: the 1P mode menu (`mn1PMode`) moved to Bonus 1
+    /// Practice.
+    OnePMode,
+    /// `vsoptions`: VS Options (`mnVSOptions`) with the damage ratio
+    /// raised.
+    VsOptions,
+    /// `itemswitch`: the Item Switch (`mnVSItemSwitch`) with an item off.
+    ItemSwitch,
+    /// `bonusselect`: the Bonus 1 Practice select (`mnPlayers1PBonus`)
+    /// with Mario placed and his records.
+    BonusSelect,
+    /// `bonuspractice`: START on that select: Yoshi's Break the Targets
+    /// practice with its time-passed timer.
+    BonusPractice,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 141] = [
+    pub const ALL: [GameScene; 148] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -747,6 +766,13 @@ impl GameScene {
         GameScene::DataMenu,
         GameScene::VsRecord,
         GameScene::Characters,
+        GameScene::Title,
+        GameScene::ModeSelect,
+        GameScene::OnePMode,
+        GameScene::VsOptions,
+        GameScene::ItemSwitch,
+        GameScene::BonusSelect,
+        GameScene::BonusPractice,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -893,6 +919,13 @@ impl GameScene {
             GameScene::DataMenu => "datamenu",
             GameScene::VsRecord => "vsrecord",
             GameScene::Characters => "characters",
+            GameScene::Title => "title",
+            GameScene::ModeSelect => "modeselect",
+            GameScene::OnePMode => "onepmode",
+            GameScene::VsOptions => "vsoptions",
+            GameScene::ItemSwitch => "itemswitch",
+            GameScene::BonusSelect => "bonusselect",
+            GameScene::BonusPractice => "bonuspractice",
         }
     }
 

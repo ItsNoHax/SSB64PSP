@@ -15,6 +15,131 @@ pub struct BonusStage {
     pub fade_ticks: u8,
     /// The bonus pause menu's L: RETRY scene reload request.
     pub retry_requested: bool,
+    /// Bonus 1 or 2 Practice (`scene_prev` is not `nSCKind1PGame`): the
+    /// pause menu offers L: RETRY and the time passed shows top right.
+    pub practice: bool,
+    pub timer: PracticeTimer,
+}
+
+/// `sc1PBonusStageWriteBackup` (unless the battle was reset): a fighter's
+/// best task count while tasks remain, else the course complete and its
+/// best time.
+pub fn write_records(
+    backup: &mut crate::backup::Backup,
+    bonus1: bool,
+    fkind: crate::fighter::FighterKind,
+    tasks_remain: u8,
+    time_passed: u32,
+) {
+    let complete = BONUSGAME_TASK_MAX - tasks_remain;
+    let record = &mut backup.spgame_records[fkind as usize];
+    let (count, time) = if bonus1 {
+        (&mut record.bonus1_task_count, &mut record.bonus1_time)
+    } else {
+        (&mut record.bonus2_task_count, &mut record.bonus2_time)
+    };
+    if tasks_remain != 0 {
+        if *count < complete {
+            *count = complete;
+            backup.write();
+        }
+    } else {
+        *count = BONUSGAME_TASK_MAX;
+        if time_passed < *time {
+            *time = time_passed;
+            backup.write();
+        }
+    }
+}
+
+/// Where a Bonus Practice goes after its course (`sc1PBonusStageStartScene`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PracticeNext {
+    /// Back to the practice's select.
+    Select,
+    /// Every starter has broken all the targets: Luigi's challenge, a 1P
+    /// Game at `nSC1PGameStageLuigi` with the practice's fighter.
+    LuigiChallenge,
+    /// Every course complete: the Sound Test unlock message, then the N64
+    /// logo (`mnMessage`).
+    SoundTestMessage,
+}
+
+/// `sc1PBonusStageStartScene`'s practice branch, after a battle that was
+/// not left paused (L: RETRY reloads the course instead): the records
+/// written unless reset, then the next scene.
+pub fn finish_practice(
+    backup: &mut crate::backup::Backup,
+    bonus1: bool,
+    fkind: crate::fighter::FighterKind,
+    tasks_remain: u8,
+    time_passed: u32,
+    is_reset: bool,
+) -> PracticeNext {
+    if !is_reset {
+        write_records(backup, bonus1, fkind, tasks_remain, time_passed);
+    }
+    if tasks_remain != 0 {
+        return PracticeNext::Select;
+    }
+    if bonus1 && backup.unlock_mask & super::Unlock::Luigi.mask() == 0 {
+        let complete = backup
+            .spgame_records
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.bonus1_task_count == BONUSGAME_TASK_MAX)
+            .fold(0u16, |m, (i, _)| m | 1 << i);
+        if complete & crate::backup::CHARACTER_MASK_STARTER == crate::backup::CHARACTER_MASK_STARTER
+        {
+            return PracticeNext::LuigiChallenge;
+        }
+    }
+    if super::manager::check_unlock_sound_test(backup) {
+        PracticeNext::SoundTestMessage
+    } else {
+        PracticeNext::Select
+    }
+}
+
+/// `dSC1PBonusStageTimerDigitPositions`: each digit's centre x; their
+/// centre y is 30.
+pub const TIMER_DIGIT_X: [f32; 6] = [207.0, 222.0, 240.0, 255.0, 273.0, 288.0];
+/// The `SymbolSec` and `SymbolCSec` marks' centres.
+pub const TIMER_SEC_AT: [f32; 2] = [231.0, 20.0];
+pub const TIMER_CSEC_AT: [f32; 2] = [264.0, 20.0];
+
+/// `dSC1PBonusStageTimerUnitLengths`: ten minutes, a minute, ten seconds,
+/// a second, a tenth and `277 / 500` of a tic.
+const TIMER_UNITS: [f32; 6] = [36000.0, 3600.0, 600.0, 60.0, 6.0, 277.0 / 500.0];
+
+/// `sc1PBonusStageMakeTimer`'s practice timer: minutes, seconds and
+/// hundredths of `time_passed`, the tens of minutes hidden until they
+/// first change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PracticeTimer {
+    pub digits: [u8; 6],
+    /// The first `SObj`'s `SP_HIDDEN`, cleared once its digit changes.
+    pub tens_shown: bool,
+}
+
+impl PracticeTimer {
+    /// `sc1PBonusStageTimerProcUpdate`.
+    pub fn tick(&mut self, time_passed: u32) {
+        // `I_TIME_TO_TICS(0, 59, 59, 59)`.
+        let itime = time_passed.min(59 * 3600 + 59 * 60 + 59);
+        let mut ftime = itime as f32;
+        for (i, unit) in TIMER_UNITS.iter().enumerate() {
+            let digit = (ftime / unit) as i32;
+            ftime -= digit as f32 * unit;
+            let digit = digit.clamp(0, 9) as u8;
+            if digit != self.digits[i] {
+                self.digits[i] = digit;
+                if i == 0 {
+                    self.tens_shown = true;
+                }
+            }
+        }
+    }
 }
 
 /// A DETECT floor's yakumono, shared by every line on that platform.
@@ -74,6 +199,8 @@ impl BonusStage {
             platforms: [None; BONUSGAME_TASK_MAX as usize],
             fade_ticks: 0,
             retry_requested: false,
+            practice: false,
+            timer: PracticeTimer::default(),
         }
     }
 

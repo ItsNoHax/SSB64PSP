@@ -16,12 +16,21 @@
 pub mod backup_clear;
 pub mod characters;
 pub mod data;
+pub mod mode_select;
+pub mod one_p_mode;
 pub mod option;
 pub mod screen_adjust;
+pub mod title;
+pub mod vs_item_switch;
+pub mod vs_options;
 pub mod vs_record;
 
 #[cfg(test)]
+mod front_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod vs_tests;
 
 use ssb_engine::input::N64Buttons;
 
@@ -33,6 +42,12 @@ pub const VIEWPORT: [f32; 4] = [10.0, 10.0, 310.0, 230.0];
 
 /// `llMNCommonFileID`.
 pub const FILE_COMMON: u32 = 0x00;
+/// `llMNVSModeFileID`.
+pub const FILE_VS_MODE: u32 = 0x06;
+/// `llMNVSOptionsFileID`.
+pub const FILE_VS_OPTIONS: u32 = 0x07;
+/// `llMNVSItemSwitchFileID`.
+pub const FILE_VS_ITEM_SWITCH: u32 = 0x08;
 /// `llMNOptionFileID`.
 pub const FILE_OPTION: u32 = 0x04;
 /// `llMNDataFileID`.
@@ -61,7 +76,19 @@ pub mod common {
     pub const OPTION_TAB_RIGHT: u32 = 0x568;
     pub const DECAL_PAPER: u32 = 0x2A30;
     pub const SMASH_LOGO: u32 = 0x31F8;
+    pub const ON_TEXT: u32 = 0xB818;
+    pub const OFF_TEXT: u32 = 0xB958;
     pub const SLASH: u32 = 0xBA28;
+    pub const GAME_MODE_TEXT: u32 = 0xD240;
+    /// `llMNCommonDigit0Sprite` to `...Digit9Sprite`.
+    pub const DIGITS: [u32; 10] = [
+        0xD310, 0xD3E0, 0xD4B0, 0xD580, 0xD650, 0xD720, 0xD7F0, 0xD8C0, 0xD990, 0xDA60,
+    ];
+    pub const PERCENTAGE: u32 = 0xDB30;
+    pub const INFINITY: u32 = 0xDC48;
+    pub const ARROW_R: u32 = 0xDD90;
+    pub const ARROW_L: u32 = 0xDE30;
+    pub const AUTO_TEXT: u32 = 0xDF48;
     pub const SMASH_BROS_COLLAGE: u32 = 0x18000;
 }
 
@@ -85,6 +112,30 @@ pub enum Scene {
     Characters,
     SoundTest,
     AutoDemo,
+    /// `nSCKind1PMode`.
+    OnePMode,
+    /// `nSCKindVSMode`, `nSCKindVSOptions` and `nSCKindVSItemSwitch`.
+    VsMode,
+    VsOptions,
+    VsItemSwitch,
+    /// The selects: `nSCKind1PGamePlayers`, `nSCKindPlayers1PTraining`,
+    /// `nSCKind1PBonus1Players` and `nSCKind1PBonus2Players`.
+    Players1PGame,
+    Players1PTraining,
+    Players1PBonus1,
+    Players1PBonus2,
+    /// The title's demos: `nSCKindExplain` (How to Play) and
+    /// `nSCKindStartup` (the N64 logo before the opening movie).
+    Explain,
+    Startup,
+    /// `nSCKind1PGame`, `nSCKindPlayersVS` and `nSCKindMaps` (with the
+    /// battles after them), which the host runs.
+    OnePGame,
+    PlayersVs,
+    Maps,
+    /// `nSCKind1PBonusStage` and `nSCKindMessage`.
+    BonusStage,
+    Message,
 }
 
 /// One frame of the controllers, as `scSubsysController*` read them: the
@@ -277,6 +328,17 @@ pub struct Piece {
     pub env: [u8; 3],
     /// `SP_TRANSPARENT` set and `SP_FASTCOPY` cleared.
     pub transparent: bool,
+    /// `sprite.scalex` and `.scaley`.
+    pub scale: [f32; 2],
+    /// `(x, y)` is the sprite's centre: its corner is half its scaled size
+    /// up and left (`mnTitleSetPosition`, `mnTitlePlayAnim`).
+    pub centred: bool,
+    /// The primitive alpha a custom display sets; `None` keeps the
+    /// sprite's.
+    pub alpha: Option<u8>,
+    /// `G_CC(0, 0, 0, PRIMITIVE, TEXEL0, 0, PRIMITIVE, 0)`: the primitive
+    /// colour through the texel's alpha times the primitive alpha.
+    pub solid: bool,
 }
 
 impl Piece {
@@ -291,6 +353,10 @@ impl Piece {
             prim: None,
             env: [0; 3],
             transparent: false,
+            scale: [1.0, 1.0],
+            centred: false,
+            alpha: None,
+            solid: false,
         }
     }
 
@@ -334,6 +400,10 @@ pub enum Draw {
     Fighter,
     /// `mnCharacters`' series emblem under its camera.
     Emblem,
+    /// A default camera's fill colour (`COBJ_FLAG_FILLCOLOR`) over the
+    /// cameras' viewport: the N64's title leaves the border outside it
+    /// black (RE-462).
+    Clear([u8; 4]),
 }
 
 /// A `G_CYC_FILL` rectangle: inclusive lower-right corner.
@@ -445,4 +515,33 @@ pub(crate) fn labels(
     f(Draw::Sprite(
         Piece::clear(title_file, title, title_at.0, title_at.1).prim([0; 3]),
     ));
+}
+
+/// `mnVSModeMakeNumber` and `mnVSOptionsMakeDamageDigitSObjs` (unpadded):
+/// `num`'s digits right to left, each 11 pixels left of the last, the
+/// ones digit's corner at `x - 11`. Clamped below at 0; at most
+/// `max_digits`.
+pub(crate) fn right_digits(
+    f: &mut impl FnMut(Draw),
+    num: i32,
+    x: f32,
+    y: f32,
+    rgb: [u8; 3],
+    max_digits: u32,
+) {
+    let num = num.max(0);
+    // `mnVSModeGetNumberOfDigits`: the highest place with a non-zero
+    // quotient.
+    let count = (1..=max_digits)
+        .rev()
+        .find(|&n| num / 10i32.pow(n - 1) != 0)
+        .unwrap_or(0);
+    let mut at = x;
+    for place in 0..count.max(1) {
+        let digit = (num / 10i32.pow(place)) % 10;
+        at -= 11.0;
+        f(Draw::Sprite(
+            Piece::clear(FILE_COMMON, common::DIGITS[digit as usize], at, y).prim(rgb),
+        ));
+    }
 }

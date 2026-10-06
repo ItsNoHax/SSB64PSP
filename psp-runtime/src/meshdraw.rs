@@ -2386,8 +2386,10 @@ pub struct SObjDraw {
     pub prim: [u8; 4],
     /// `sobj->envcolor`, which the IA combiner blends from.
     pub env: [u8; 3],
-    /// Draws the primitive colour through the texel's alpha
-    /// (`G_CC(0, 0, 0, PRIMITIVE, 0, 0, 0, TEXEL0)`).
+    /// Draws the primitive colour through the texel's alpha times the
+    /// primitive alpha (`G_CC(0, 0, 0, PRIMITIVE, TEXEL0, 0, PRIMITIVE,
+    /// 0)`; with an opaque `prim[3]`, `G_CC(0, 0, 0, PRIMITIVE, 0, 0, 0,
+    /// TEXEL0)`).
     pub solid: bool,
     /// The live `sprite.attr`, which the game may rewrite.
     pub attr: u16,
@@ -2439,7 +2441,7 @@ pub unsafe fn draw_sprite_xy(
     sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
     let tinted = sprite.flags & ssb_rom::pack::SpriteDesc::TINTED != 0;
     let vertex = if d.solid {
-        [d.prim[0], d.prim[1], d.prim[2], 0xFF]
+        [d.prim[0], d.prim[1], d.prim[2], d.prim[3]]
     } else if tinted {
         [d.env[0], d.env[1], d.env[2], d.prim[3]]
     } else {
@@ -2722,7 +2724,7 @@ pub unsafe fn draw_sprite_glow(
 unsafe fn sprite_combiner(sprite: &ssb_rom::pack::SpriteDesc, d: &SObjDraw) -> (bool, [u8; 4]) {
     let tinted = sprite.flags & ssb_rom::pack::SpriteDesc::TINTED != 0;
     let vertex = if d.solid {
-        [d.prim[0], d.prim[1], d.prim[2], 0xFF]
+        [d.prim[0], d.prim[1], d.prim[2], d.prim[3]]
     } else if tinted {
         [d.env[0], d.env[1], d.env[2], d.prim[3]]
     } else {

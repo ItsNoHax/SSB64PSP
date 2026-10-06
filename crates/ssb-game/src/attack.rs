@@ -129,7 +129,7 @@ pub fn common_knockback(
 }
 
 /// `ftParamGetCommonKnockback` @ `ftparam.c:1451`. The damage ratio is
-/// Training's `100` ([`crate::stale::DAMAGE_RATIO_DEFAULT`]); the handicaps
+/// the battle's ([`crate::stale::damage_ratio`]); the handicaps
 /// index `dFTCommonDataHandicapTable` ([`crate::stale::HANDICAP_TABLE`]).
 /// Throws pass the throw's own damage as `recent_damage`.
 #[allow(clippy::too_many_arguments)]
@@ -155,7 +155,7 @@ pub fn knockback(
     };
     let knockback = crate::stale::apply_ratio_and_handicap(
         base,
-        crate::stale::DAMAGE_RATIO_DEFAULT,
+        crate::stale::damage_ratio(),
         attack_handicap,
         defend_handicap,
     );

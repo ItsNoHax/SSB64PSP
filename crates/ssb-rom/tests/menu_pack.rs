@@ -249,3 +249,229 @@ fn every_menu_pack_sprite_decodes() {
         }
     }
 }
+
+/// Ticks `menu` with `pad` once, then idles `n` tics, visiting each.
+fn walk<M>(
+    m: &mut M,
+    drawn: &mut BTreeSet<Key>,
+    pads: &[u16],
+    idle: usize,
+    mut tick: impl FnMut(&mut M, &Pad),
+    visit: impl Fn(&M, &mut dyn FnMut(Draw)),
+) {
+    for &b in pads {
+        tick(m, &tap(b));
+        visit(m, &mut collect(drawn));
+        for _ in 0..idle {
+            tick(m, &Pad::default());
+            visit(m, &mut collect(drawn));
+        }
+    }
+}
+
+#[test]
+fn front_menus_draw_only_packed_sprites() {
+    use ssb_game::menu::mode_select::ModeSelect;
+    use ssb_game::menu::one_p_mode::{OnePMode, OnePOption};
+    use ssb_game::menu::title::{DemoData, NoAnims, Title};
+
+    let mut drawn = BTreeSet::new();
+    let b = Backup::default();
+    let mut demo = DemoData::default();
+    for time in [0u8, 37, 200] {
+        let mut t = Title::new(time);
+        for i in 0..400u32 {
+            t.tick(
+                &Pad::default(),
+                Scene::Startup,
+                &mut demo,
+                &b,
+                (i * 13) as u8,
+                &mut |r| r - 1,
+            );
+            t.visit(&NoAnims, &mut |d| collect(&mut drawn)(d));
+        }
+    }
+    check(MenuScene::Title, &drawn);
+
+    let mut drawn = BTreeSet::new();
+    let mut m = ModeSelect::new(Scene::Title);
+    let down = N64Buttons::D_DOWN;
+    walk(
+        &mut m,
+        &mut drawn,
+        &[0, down, down, down, down],
+        12,
+        |m, p| {
+            m.tick(p);
+        },
+        |m, f| m.visit(&mut |d| f(d)),
+    );
+    check(MenuScene::ModeSelect, &drawn);
+
+    let mut drawn = BTreeSet::new();
+    let mut m = OnePMode::new(Scene::ModeSelect, OnePOption::OnePGame);
+    walk(
+        &mut m,
+        &mut drawn,
+        &[0, down, down, down, down, N64Buttons::A],
+        12,
+        |m, p| {
+            m.tick(p);
+        },
+        |m, f| m.visit(&mut |d| f(d)),
+    );
+    check(MenuScene::OnePMode, &drawn);
+}
+
+#[test]
+fn vs_menus_draw_only_packed_sprites() {
+    use ssb_game::menu::vs_item_switch::VsItemSwitchMenu;
+    use ssb_game::menu::vs_options::VsOptionsMenu;
+    use ssb_game::players_vs::BattleState;
+    use ssb_game::vs_mode::VsMode;
+
+    let (down, up, right, left) = (
+        N64Buttons::D_DOWN,
+        N64Buttons::D_UP,
+        N64Buttons::D_RIGHT,
+        N64Buttons::D_LEFT,
+    );
+    let mut drawn = BTreeSet::new();
+    let mut state = BattleState::default();
+    let mut m = VsMode::new(Scene::ModeSelect, &state);
+    let mut pads = vec![0, down];
+    // Every rule, then the time down to infinity and up past 9 and 10.
+    pads.extend([right; 4]);
+    pads.extend([left; 4]);
+    pads.push(down);
+    pads.extend([left; 4]);
+    pads.extend([right; 14]);
+    pads.extend([up, right, right, down]);
+    pads.extend([right; 12]);
+    pads.extend([down, up, up]);
+    walk(
+        &mut m,
+        &mut drawn,
+        &pads,
+        31,
+        |m, p| {
+            m.tick(p, &mut state);
+        },
+        |m, f| m.visit(&mut |d| f(d)),
+    );
+    check(MenuScene::VsMode, &drawn);
+
+    let mut drawn = BTreeSet::new();
+    for unlock in [0u8, 0xFF] {
+        let b = Backup {
+            unlock_mask: unlock,
+            ..Backup::default()
+        };
+        let mut state = BattleState::default();
+        let mut m = VsOptionsMenu::new(Scene::VsMode, &state, &b);
+        let mut pads = vec![0];
+        for _ in 0..5 {
+            pads.extend([right, right, right, left, left, left, down]);
+        }
+        walk(
+            &mut m,
+            &mut drawn,
+            &pads,
+            14,
+            |m, p| {
+                m.tick(p, &mut state);
+            },
+            |m, f| m.visit(&mut |d| f(d)),
+        );
+    }
+    check(MenuScene::VsOptions, &drawn);
+
+    let mut drawn = BTreeSet::new();
+    let mut state = BattleState::default();
+    let mut m = VsItemSwitchMenu::new(&state);
+    // Every appearance rate, then each toggle off and on.
+    let mut pads = vec![0, left, left, left];
+    pads.extend([right; 5]);
+    for _ in 0..20 {
+        pads.extend([right, left, down]);
+    }
+    walk(
+        &mut m,
+        &mut drawn,
+        &pads,
+        14,
+        |m, p| {
+            m.tick(p, &mut state);
+        },
+        |m, f| m.visit(&mut |d| f(d)),
+    );
+    check(MenuScene::VsItemSwitch, &drawn);
+}
+
+#[test]
+fn the_bonus_select_pack_holds_its_records() {
+    let packed: BTreeSet<(u32, u32)> = MenuScene::Players1PBonus
+        .sprites()
+        .iter()
+        .flat_map(|f| f.offsets.iter().map(|&o| (f.file, o)))
+        .collect();
+    let drawn: BTreeSet<(u32, u32)> = ssb_game::players_1p_bonus::layer::MENU_SPRITES
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(packed, drawn);
+}
+
+/// The title's baked plays: seven label children ending at their sprites'
+/// places, and "Press Start" looping every 39 plays.
+#[test]
+fn the_title_bakes_its_label_and_press_start_plays() {
+    let Some(path) = std::env::var_os("SSB64_ROM") else {
+        return;
+    };
+    use ssb_rom::title;
+    let data = std::fs::read(path).unwrap();
+    let info = ssb_rom::rom::identify(&data).unwrap();
+    let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+    let file = archive.load(title::FILE).unwrap();
+    let pins: Vec<[f32; 2]> = title::LABEL_CENTRES
+        .iter()
+        .map(|c| title::pin(c[0], c[1]))
+        .collect();
+    let labels = title::bake(
+        &file.data,
+        title::LABELS_DOBJDESC,
+        title::LABELS_ANIM_JOINT,
+        &pins,
+        title::LABEL_PLAYS,
+    )
+    .unwrap();
+    assert_eq!(labels.len(), title::LABEL_PLAYS * title::LABEL_CHILDREN);
+    let last = &labels[labels.len() - title::LABEL_CHILDREN..];
+    for (i, v) in last.iter().take(5).enumerate() {
+        assert_eq!([v[0], v[1], v[2], v[3]], [pins[i][0], pins[i][1], 1.0, 1.0]);
+    }
+    let c = title::PRESS_START_CENTRE;
+    let n = 400;
+    let press = title::bake(
+        &file.data,
+        title::PRESS_START_DOBJDESC,
+        title::PRESS_START_ANIM_JOINT,
+        &[title::pin(c[0], c[1])],
+        n,
+    )
+    .unwrap();
+    for play in 1..n {
+        let looped = 1 + (play - 1) % title::PRESS_START_PERIOD;
+        assert_eq!(press[play], press[looped], "play {play}");
+        assert_eq!(
+            ssb_game::menu::title::press_start_frame(play),
+            looped,
+            "the game's period is the build's"
+        );
+    }
+    // Twenty plays shown, then nineteen at no size.
+    assert!(press[1..=19].iter().all(|v| v[2] == 1.0));
+    assert!(press[20..39].iter().all(|v| v[2] < 0.0001));
+}

@@ -1,4 +1,5 @@
-//! The character selects' drawing: VS (RE-411), Training and the 1P Game.
+//! The character selects' drawing: VS (RE-411), Training, the 1P Game and
+//! the Bonus Practice select.
 //! `ssb_game::players_vs::layer` and `ssb_game::fighter_select::layer` lay
 //! out the sprites and track each slot's fighter; this looks the sprites up
 //! in the pack, poses each fighter with its demo clip (`Wait` for
@@ -15,6 +16,7 @@ use alloc::boxed::Box;
 use ssb_engine::math::Vec3;
 use ssb_game::fighter_select::FighterSelect;
 use ssb_game::players_1p::Players1P;
+use ssb_game::players_1p_bonus::Players1PBonus;
 use ssb_game::players_vs::layer::{self, Draw, Piece};
 use ssb_game::players_vs::PlayersVs;
 use ssb_game::results_scene::Camera;
@@ -93,6 +95,12 @@ pub fn tick_training(pack: Option<&Pack<'_>>, select: &FighterSelect, f: &mut Fi
 
 /// One tick of the 1P select's fighter, after [`Players1P::tick`].
 pub fn tick_1p(pack: Option<&Pack<'_>>, select: &Players1P, f: &mut Fighters) {
+    tick_models(pack, &[select.view.fighter, None, None, None], f);
+}
+
+/// One tick of the Bonus Practice select's fighter, after
+/// [`Players1PBonus::tick`]. The poses start from [`start`].
+pub fn tick_bonus(pack: Option<&Pack<'_>>, select: &Players1PBonus, f: &mut Fighters) {
     tick_models(pack, &[select.view.fighter, None, None, None], f);
 }
 
@@ -270,6 +278,50 @@ pub unsafe fn draw_1p(
         }
     });
     gpu.set_viewport_fullscreen();
+}
+
+/// The Bonus Practice select back to front (`Players1PBonus::visit`), with
+/// the backup's records for the practice shown. A sprite is looked up in
+/// `menu`, the scene's menu pack (the titles and records' labels the
+/// resident pack lacks, `players_1p_bonus::layer::MENU_SPRITES`), first,
+/// then in the resident `p`.
+pub unsafe fn draw_bonus(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    menu: Option<&Pack<'_>>,
+    draw_state: &mut meshdraw::DrawState,
+    select: &Players1PBonus,
+    backup: &ssb_game::spgame::Backup,
+    f: Option<&Fighters>,
+) {
+    let shown = select.fighter_draw().map(|(fighter, position, _, costume)| Shown {
+        fighter,
+        position,
+        costume,
+        tint: None,
+    });
+    let shown = [shown, None, None, None];
+    let records = select.records(backup);
+    select.visit(&records, |d| {
+        let (piece, size) = match d {
+            Draw::Sprite(piece) | Draw::Shadow(piece) => (piece, None),
+            Draw::Tiled { piece, size } => (piece, Some(size)),
+            _ => return draw_select_piece(gpu, p, draw_state, d, &shown, f),
+        };
+        match menu.filter(|m| has_sprite(m, &piece)) {
+            Some(m) => draw_piece(m, draw_state, &piece, size),
+            None => draw_piece(p, draw_state, &piece, size),
+        }
+    });
+    gpu.set_viewport_fullscreen();
+}
+
+/// Whether `p` holds `piece`'s sprite (through its LUT, if it names one).
+fn has_sprite(p: &Pack<'_>, piece: &Piece) -> bool {
+    match piece.lut {
+        Some(lut) => p.sprite_lut(piece.file, piece.offset, lut).is_some(),
+        None => p.sprite(piece.file, piece.offset).is_some(),
+    }
 }
 
 /// A select's pieces back to front, with the fighters at `Draw::Fighters`.

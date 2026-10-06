@@ -212,6 +212,25 @@ pack (`run-ppsspp-headless.sh` does):
 The first five match warp-booted N64 references of the same states to
 within edge resampling (`~/ppsspp-test/n64menus/`).
 
+The front end's scenes (RE-462) start the same way, from the scene before
+them; `bonusselect` and `bonuspractice` stick the hand up from tick 12 to
+32 and place the puck with A at 40:
+
+| Spec | Captured display |
+|---|---|
+| `title` (140) | The title at rest, its fire colour from a fixed byte sequence; "Press Start" in its hidden half |
+| `modeselect` (40) | Down at 15: VS Mode lit, the labels drawn before the options |
+| `onepmode` (40) | Down at 15 and 30: Bonus 1 Practice highlighted |
+| `vsoptions` (40) | Down three rows, right twice: Damage 102 % highlighted |
+| `itemswitch` (40) | Down, A: the Beam Sword off |
+| `bonusselect` (70) | Yoshi placed on Bonus 1's select, his targets record and "Press Start" |
+| `bonuspractice` (300) | START at 50: Yoshi's Break the Targets with the practice timer |
+
+`title`, `modeselect`, `vsoptions`, `onepmode` and `bonusselect` overlay
+N64 references reached from the N64 logo with START
+(`~/ppsspp-test/n64front/`), as does `vsmode` (whose golden
+`f1-vs-mode-menu` now shows the menu's sprites).
+
 These diagnostics remain outside the 195-scene manifest. They do not prove
 unmodified traversal, a full campaign, N64 equivalence or physical PSP;
 see [RE-455](../evidence/re/RE-455.md) for source checks and capture limits.
@@ -337,7 +356,7 @@ builds the same scene as its default.
 | `golden_capture` (`psp-game`, scene `vstimeupsign`) | `f1-vs-time-up` | `vstimeup` at tick 4,040: 00:00 and "TIME UP" during the end wait | RE-395 |
 | `golden_capture` (`psp-game`, scene `vssuddendeath`) | `f1-vs-sudden-death-sign` | `vstimeup` at tick 4,150: "SUDDEN DEATH!" before its "GO!", emblems and stock icons without digits | RE-397 |
 | `golden_capture` (`psp-game`, scene `vspause`) | `f1-vs-pause` | START at tick 500: the pause menu's zoom on Mario, border, "1P PAUSE" and decals at 560 | RE-398 |
-| `golden_capture` (`psp-game`, scene `vsmode`) | `f1-vs-mode-menu` | The VS mode menu as plain slots after Rule → Stock and one more stock | RE-399 |
+| `golden_capture` (`psp-game`, scene `vsmode`) | `f1-vs-mode-menu` | The VS mode menu's sprites after Rule → Stock and one more stock | RE-399, RE-462 |
 | `golden_capture` (`psp-game`, scene `vsnocontest`) | `f1-vs-no-contest` | A VS battle reset from the pause menu, at results tic 117 (tick 640): the random blue wallpaper, the KOs and TKO rows, both Marios one row back clapping under their tags, and "NO CONTEST" | RE-400, RE-409, RE-410 |
 | `golden_capture` (`psp-game`, scene `vsresults`) | `f1-vs-results` | A one-stock battle Luigi loses by running off Dream Land, at tick 1100: Kirby in front holding his last Win frame, Luigi behind turned to him and clapping, over the blue wallpaper, with the tags, the Place and KOs rows, the bar, the header and "KIRBY WINS!" | RE-409, RE-410 |
 | `golden_capture` (`psp-game`, scene `vsplayers`) | `f1-vs-players` | The VS character select at select tic 65: Yoshi placed on port 1's red card, a CPU (Donkey Kong, in his Win1 clip) opened in port 2 with its CP level, the NA doors shut, the stone wallpaper, portraits, pucks, hand and the "Ready to fight" banner | RE-404, RE-411 |

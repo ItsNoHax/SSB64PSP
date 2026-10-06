@@ -41,6 +41,7 @@ use crate::fighter_select::{
     is_locked, portrait_center, portrait_edge_velocity, puck_fighter_kind, CursorStatus,
     PUCK_HEIGHT, PUCK_WIDTH,
 };
+use crate::item::normal::{Appearance, Switches};
 use crate::stage_select::{gkind, UNLOCK_MASK_INISHIE};
 
 /// `GMCOMMON_PLAYERS_MAX`.
@@ -162,7 +163,8 @@ pub struct PlayerState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BattleState {
     pub is_team_battle: bool,
-    /// `is_team_attack`, which only VS Options (not ported) changes.
+    /// `is_team_attack`, which VS Options ([`crate::menu::vs_options`])
+    /// changes.
     pub is_team_attack: bool,
     /// `game_rules`: `SCBATTLE_GAMERULE_TIME` or `_STOCK`.
     pub rule: Rule,
@@ -172,6 +174,12 @@ pub struct BattleState {
     pub stocks: u8,
     pub handicap: Handicap,
     pub is_stage_select: bool,
+    /// `damage_ratio`: 50 to 200 (percent), set by VS Options.
+    pub damage_ratio: u8,
+    /// `item_toggles`: one bit per `ITKind`, set by the Item Switch.
+    pub item_toggles: u32,
+    /// `item_appearance_rate`, set by the Item Switch.
+    pub item_appearance: Appearance,
     /// Start with the slots reset (`mnPlayersVSResetPlayer`); cleared on
     /// the first visit.
     pub is_reset_players: bool,
@@ -206,10 +214,24 @@ impl Default for BattleState {
             stocks: 2,
             handicap: Handicap::Off,
             is_stage_select: true,
+            damage_ratio: 100,
+            item_toggles: !0,
+            item_appearance: Appearance::Middle,
             is_reset_players: true,
             pl_count: 0,
             cp_count: 0,
             players: [player(0, 0), player(1, 0), player(2, 1), player(3, 1)],
+        }
+    }
+}
+
+impl BattleState {
+    /// The normal-item switches a battle under these settings spawns with
+    /// (`item_appearance_rate` and `item_toggles`).
+    pub fn item_switches(&self) -> Switches {
+        Switches {
+            appearance: self.item_appearance,
+            toggles: self.item_toggles,
         }
     }
 }

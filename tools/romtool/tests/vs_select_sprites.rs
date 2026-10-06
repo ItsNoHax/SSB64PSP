@@ -85,3 +85,14 @@ fn every_1p_select_sprite_is_packed() {
         );
     }
 }
+
+/// The Bonus Practice select draws the VS and 1P selects' sprites (packed,
+/// above) plus `ssb_game::players_1p_bonus::layer::MENU_SPRITES`, which the
+/// resident pack does not hold: they come from the scene's menu pack.
+#[test]
+fn the_bonus_select_menu_sprites_are_not_resident() {
+    use ssb_game::players_1p_bonus::layer as bonus;
+    for &(file, offset) in bonus::MENU_SPRITES {
+        assert!(!packed(file, offset), "{file}+{offset:#x} is resident");
+    }
+}

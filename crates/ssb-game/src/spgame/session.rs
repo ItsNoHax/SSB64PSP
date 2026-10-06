@@ -127,24 +127,13 @@ impl Session {
                 bonus::Bonus::Perfect.insert(&mut self.data.bonus_get_mask);
                 result.time_remain.div_ceil(60)
             };
-            let record = &mut backup.spgame_records[self.data.fkind as usize];
-            let (count, time) = if self.data.stage() == Some(Stage::Bonus1) {
-                (&mut record.bonus1_task_count, &mut record.bonus1_time)
-            } else {
-                (&mut record.bonus2_task_count, &mut record.bonus2_time)
-            };
-            if tasks_remain != 0 {
-                if *count < self.data.bonus_tasks_complete {
-                    *count = self.data.bonus_tasks_complete;
-                    backup.write();
-                }
-            } else {
-                *count = BONUSGAME_TASK_MAX;
-                if result.time_passed < *time {
-                    *time = result.time_passed;
-                    backup.write();
-                }
-            }
+            super::bonus_stage::write_records(
+                backup,
+                self.data.stage() == Some(Stage::Bonus1),
+                self.data.fkind,
+                tasks_remain,
+                result.time_passed,
+            );
         }
         self.manager
             .advance(&mut self.data, &mut self.state, backup)

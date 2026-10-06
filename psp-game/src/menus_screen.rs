@@ -1,5 +1,11 @@
-//! The options and data menus (`ssb_game::menu`, RE-461): Option, Screen
-//! Adjust, Backup Clear, Data, VS Record and Characters.
+//! The front end's menus (`ssb_game::menu`): the title, the mode select
+//! and the 1P mode menu (RE-462), and Option, Screen Adjust, Backup Clear,
+//! Data, VS Record and Characters (RE-461).
+//!
+//! The title's demos that are not ported (How to Play, the N64 logo and
+//! opening movie, the auto demo) are skipped along the way each would
+//! leave: How to Play on to Characters' demo, the auto demo and the N64
+//! logo back to the title.
 //!
 //! Each scene's sprites come from its own pack in `ssb64-menus.pak`
 //! (`ssb_rom::menu_pack`), read when the scene starts and dropped when it
@@ -15,9 +21,16 @@ use ssb_game::fighter::FighterKind;
 use ssb_game::menu::backup_clear::BackupClear;
 use ssb_game::menu::characters::{self, CharactersMenu, Motion};
 use ssb_game::menu::data::DataMenu;
+use ssb_game::menu::mode_select::ModeSelect;
+use ssb_game::menu::one_p_mode::{OnePMode, OnePOption};
 use ssb_game::menu::option::OptionMenu;
 use ssb_game::menu::screen_adjust::ScreenAdjust;
+use ssb_game::menu::title::{DemoData, Title};
+use ssb_game::menu::vs_item_switch::VsItemSwitchMenu;
+use ssb_game::menu::vs_options::VsOptionsMenu;
 use ssb_game::menu::vs_record::VsRecordMenu;
+use ssb_game::players_vs::BattleState;
+use ssb_game::vs_mode::VsMode;
 use ssb_game::menu::{Draw, Pad, Piece, Scene, VIEWPORT};
 use ssb_game::results_scene::Camera;
 use ssb_psp_runtime::assets::{self, AlignedBuf};
@@ -29,6 +42,12 @@ use ssb_rom::skeleton::Skeleton;
 
 /// The running menu scene.
 pub(crate) enum Active {
+    Title(Box<Title>),
+    ModeSelect(ModeSelect),
+    OnePMode(OnePMode),
+    VsMode(Box<VsMode>),
+    VsOptions(Box<VsOptionsMenu>),
+    VsItemSwitch(Box<VsItemSwitchMenu>),
     Option(OptionMenu),
     ScreenAdjust(ScreenAdjust),
     BackupClear(BackupClear),
@@ -37,14 +56,6 @@ pub(crate) enum Active {
     Characters(Box<CharactersMenu>),
 }
 
-/// Where the menus leave to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Exit {
-    /// `nSCKindTitle`: the port's intro screen.
-    Title,
-    /// `nSCKindModeSelect`: the port's main menu.
-    ModeSelect,
-}
 
 /// Characters' fighter pose.
 struct FighterModel {
@@ -65,6 +76,14 @@ pub(crate) struct Menus {
     emblem: Option<Box<(ssb_rom::pack::ObjectDesc, ssb_rom::skeleton::EffectMaterialAnimator)>>,
     /// A capture's stand-in for `osGetTime`'s low byte.
     clock: u8,
+    /// The running scene and the one before it
+    /// (`gSCManagerSceneData.scene_curr`, `.scene_prev`).
+    pub scene: Scene,
+    pub scene_prev: Scene,
+    /// The title's and demos' scene data.
+    pub demo: DemoData,
+    /// `sMN1PModeOption`, which the 1P mode menu keeps between visits.
+    one_p_option: OnePOption,
 }
 
 /// What the menus read and write in the session.
@@ -77,6 +96,8 @@ pub(crate) struct Host<'h, 'p> {
     pub sound_quality: &'h mut u8,
     /// `gSYVideoOffsetLeft`/`Top` as `syVideoSetCenterOffsets` last set them.
     pub video_offsets: &'h mut (i16, i16),
+    /// `gSCManagerTransferBattleState`, which the VS menus set.
+    pub vs_state: &'h mut BattleState,
     pub capture: bool,
 }
 
@@ -88,6 +109,68 @@ impl Menus {
             fighter: None,
             emblem: None,
             clock: 0,
+            scene: Scene::Startup,
+            scene_prev: Scene::Startup,
+            demo: DemoData::default(),
+            one_p_option: OnePOption::OnePGame,
+        }
+    }
+
+    /// `osGetTime`'s low byte, or a counter in a capture.
+    fn time(&mut self, capture: bool) -> u8 {
+        if capture {
+            self.clock = self.clock.wrapping_add(97);
+            self.clock
+        } else {
+            unsafe { psp::sys::sceKernelGetSystemTimeLow() as u8 }
+        }
+    }
+
+    /// Whether `scene` runs here.
+    pub(crate) fn is_menu(scene: Scene) -> bool {
+        matches!(
+            scene,
+            Scene::Title
+                | Scene::ModeSelect
+                | Scene::OnePMode
+                | Scene::VsMode
+                | Scene::VsOptions
+                | Scene::VsItemSwitch
+                | Scene::Option
+                | Scene::ScreenAdjust
+                | Scene::BackupClear
+                | Scene::Data
+                | Scene::VsRecord
+                | Scene::Characters
+        )
+    }
+
+    /// Loads `next` after `from` (`syTaskmanSetLoadScene`): a menu starts
+    /// here; a demo that is not ported is skipped along its own exit; any
+    /// other scene leaves the menus and is returned for the host.
+    pub(crate) fn go(&mut self, mut next: Scene, mut from: Scene, host: &mut Host<'_, '_>) -> Option<Scene> {
+        loop {
+            let (skip_to, skipped) = match next {
+                // `scExplain` ends on Characters' demo.
+                Scene::Explain => (Scene::Characters, Scene::Explain),
+                // `scAutoDemo` ends on `mnStartup`, which goes to the
+                // title when skipped.
+                Scene::AutoDemo | Scene::Startup => (Scene::Title, Scene::Startup),
+                // Sound Test is not ported: back to Data with its tab.
+                Scene::SoundTest => (Scene::Data, Scene::SoundTest),
+                scene if Self::is_menu(scene) => {
+                    self.enter(scene, from, host);
+                    return None;
+                }
+                scene => {
+                    self.leave();
+                    self.scene_prev = from;
+                    self.scene = scene;
+                    return Some(scene);
+                }
+            };
+            from = skipped;
+            next = skip_to;
         }
     }
 
@@ -109,7 +192,32 @@ impl Menus {
         self.sprites = None;
         self.fighter = None;
         self.emblem = None;
+        self.scene_prev = prev;
+        self.scene = scene;
         let (pack_scene, active) = match scene {
+            Scene::Title => {
+                // `mnTitleStartScene`.
+                ssb_game::menu::title::count_boot(&self.demo, host.backup);
+                let time = self.time(host.capture);
+                (MenuScene::Title, Active::Title(Box::new(Title::new(time))))
+            }
+            Scene::ModeSelect => (MenuScene::ModeSelect, Active::ModeSelect(ModeSelect::new(prev))),
+            Scene::OnePMode => (
+                MenuScene::OnePMode,
+                Active::OnePMode(OnePMode::new(prev, self.one_p_option)),
+            ),
+            Scene::VsMode => (
+                MenuScene::VsMode,
+                Active::VsMode(Box::new(VsMode::new(prev, host.vs_state))),
+            ),
+            Scene::VsOptions => (
+                MenuScene::VsOptions,
+                Active::VsOptions(Box::new(VsOptionsMenu::new(prev, host.vs_state, host.backup))),
+            ),
+            Scene::VsItemSwitch => (
+                MenuScene::VsItemSwitch,
+                Active::VsItemSwitch(Box::new(VsItemSwitchMenu::new(host.vs_state))),
+            ),
             Scene::Option => (
                 MenuScene::Option,
                 Active::Option(OptionMenu::new(prev, *host.sound_quality, host.backup)),
@@ -126,7 +234,14 @@ impl Menus {
             Scene::Characters => {
                 let capture = host.capture;
                 let backup: &Backup = host.backup;
-                let menu = CharactersMenu::new(backup, &mut self.rand(capture));
+                let demo = self.demo.demo_fkind;
+                // `mnCharactersFuncStart`: the attract demo unless entered
+                // from Data.
+                let menu = if prev == Scene::Data {
+                    CharactersMenu::new(backup, &mut self.rand(capture))
+                } else {
+                    CharactersMenu::demo(backup, demo, &mut self.rand(capture))
+                };
                 (MenuScene::Characters, Active::Characters(Box::new(menu)))
             }
             // The Data menu; Sound Test is not ported, so leaving for it
@@ -151,8 +266,9 @@ impl Menus {
         self.emblem = None;
     }
 
-    /// One frame of the running scene. `Some` when the menus are left.
-    pub(crate) fn frame(&mut self, pad: &Pad, host: &mut Host<'_, '_>) -> Option<Exit> {
+    /// One frame of the running scene. `Some` names the scene the menus
+    /// leave for.
+    pub(crate) fn frame(&mut self, pad: &Pad, host: &mut Host<'_, '_>) -> Option<Scene> {
         let capture = host.capture;
         let (from, next) = if matches!(self.active, Some(Active::Characters(_))) {
             (Scene::Characters, self.characters_frame(pad, host, capture))
@@ -160,25 +276,27 @@ impl Menus {
             self.menu_frame(pad, host)?
         };
         let next = next?;
-        match next {
-            Scene::Title | Scene::AutoDemo => {
-                self.leave();
-                Some(Exit::Title)
-            }
-            Scene::ModeSelect => {
-                self.leave();
-                Some(Exit::ModeSelect)
-            }
-            scene => {
-                self.enter(scene, from, host);
-                None
-            }
-        }
+        self.go(next, from, host)
     }
 
     /// Every scene's frame but Characters'.
     fn menu_frame(&mut self, pad: &Pad, host: &mut Host<'_, '_>) -> Option<(Scene, Option<Scene>)> {
+        let time = self.time(host.capture);
         Some(match self.active.as_mut()? {
+            Active::Title(m) => {
+                let mut range = ssb_game::rng::rand_int_range;
+                let next = m.tick(pad, self.scene_prev, &mut self.demo, host.backup, time, &mut range);
+                (Scene::Title, next)
+            }
+            Active::ModeSelect(m) => (Scene::ModeSelect, m.tick(pad)),
+            Active::VsMode(m) => (Scene::VsMode, m.tick(pad, host.vs_state)),
+            Active::VsOptions(m) => (Scene::VsOptions, m.tick(pad, host.vs_state)),
+            Active::VsItemSwitch(m) => (Scene::VsItemSwitch, m.tick(pad, host.vs_state)),
+            Active::OnePMode(m) => {
+                let next = m.tick(pad);
+                self.one_p_option = m.option;
+                (Scene::OnePMode, next)
+            }
             Active::Option(m) => {
                 let next = m.tick(pad, host.backup);
                 // `syAudioSetQuality`.
@@ -267,7 +385,14 @@ impl Menus {
             main: pack,
         };
         gpu.set_viewport_n64(VIEWPORT);
+        let title_anims = TitleAnims {
+            labels: sprites.as_ref().and_then(|p| ssb_rom::title::packed_frames(p, ssb_rom::title::LABELS_SLOT)),
+            press_start: sprites
+                .as_ref()
+                .and_then(|p| ssb_rom::title::packed_frames(p, ssb_rom::title::PRESS_START_SLOT)),
+        };
         let mut f = |d: Draw| match d {
+            Draw::Clear(rgba) => meshdraw::fill_rect_n64(VIEWPORT, rgba, draw_state),
             Draw::Sprite(piece) => draw_piece(&packs, draw_state, &piece, None),
             Draw::Tiled { piece, size } => draw_piece(&packs, draw_state, &piece, Some(size)),
             Draw::Fill { rect, rgba } => meshdraw::fill_rect_n64(rect, rgba, draw_state),
@@ -283,6 +408,12 @@ impl Menus {
             }
         };
         match active {
+            Active::Title(m) => m.visit(&title_anims, &mut f),
+            Active::ModeSelect(m) => m.visit(&mut f),
+            Active::OnePMode(m) => m.visit(&mut f),
+            Active::VsMode(m) => m.visit(&mut f),
+            Active::VsOptions(m) => m.visit(&mut f),
+            Active::VsItemSwitch(m) => m.visit(&mut f),
             Active::Option(m) => m.visit(&mut f),
             Active::ScreenAdjust(m) => m.visit(&mut f),
             Active::BackupClear(m) => m.visit(&mut f),
@@ -291,6 +422,22 @@ impl Menus {
             Active::Characters(m) => m.visit(&mut f),
         }
         gpu.set_viewport_fullscreen();
+    }
+}
+
+/// The title's baked plays (`ssb_rom::title`) from its sprite pack.
+struct TitleAnims<'a> {
+    labels: Option<&'a [u8]>,
+    press_start: Option<&'a [u8]>,
+}
+
+impl ssb_game::menu::title::Anims for TitleAnims<'_> {
+    fn labels(&self, play: usize, child: usize) -> Option<[f32; 4]> {
+        ssb_rom::title::packed(self.labels?, ssb_rom::title::LABEL_CHILDREN, play, child)
+    }
+
+    fn press_start(&self, play: usize) -> Option<[f32; 4]> {
+        ssb_rom::title::packed(self.press_start?, 1, play, 0)
     }
 }
 
@@ -312,6 +459,15 @@ impl<'a, 'b> Packs<'a, 'b> {
     }
 }
 
+/// `lbCommonPrepSObjDraw`'s whole-pixel corner.
+fn corner(v: f32) -> f32 {
+    if v < 0.0 {
+        (v - 0.9999) as i32 as f32
+    } else {
+        v as i32 as f32
+    }
+}
+
 /// One `SObj` through `lbCommonDrawSObjAttr`; a wrapping one over `size`.
 unsafe fn draw_piece(packs: &Packs<'_, '_>, draw_state: &mut meshdraw::DrawState, piece: &Piece, size: Option<[f32; 2]>) {
     const SP_FASTCOPY: u16 = 0x0020;
@@ -319,24 +475,37 @@ unsafe fn draw_piece(packs: &Packs<'_, '_>, draw_state: &mut meshdraw::DrawState
         return;
     };
     let [r, g, b, a] = s.color;
+    let a = piece.alpha.unwrap_or(a);
     let prim = piece.prim.map_or([r, g, b, a], |c| [c[0], c[1], c[2], a]);
+    let [sx, sy] = piece.scale;
+    // `lbCommonPrepSObjDraw` draws nothing this small.
+    if sx < 0.0001 || sy < 0.0001 {
+        return;
+    }
+    let (mut x, mut y) = (piece.x, piece.y);
+    if piece.centred {
+        x -= f32::from(s.width) * sx * 0.5;
+        y -= f32::from(s.height) * sy * 0.5;
+    }
     let attr = if piece.transparent {
         (s.attr & !SP_FASTCOPY) | ssb_rom::sprite::SP_TRANSPARENT
     } else {
         s.attr & !ssb_rom::sprite::SP_TRANSPARENT
     };
     let d = meshdraw::SObjDraw {
-        x: piece.x,
-        y: piece.y,
+        // `lbCommonPrepSObjDraw` truncates the corner to whole pixels,
+        // rounding a negative one down.
+        x: corner(x),
+        y: corner(y),
         scale: 1.0,
         prim,
         env: piece.env,
-        solid: false,
+        solid: piece.solid,
         attr,
     };
     match size {
         Some(size) => meshdraw::draw_sprite_tiled(p, &s, &d, size, draw_state),
-        None => meshdraw::draw_sprite(p, &s, &d, draw_state),
+        None => meshdraw::draw_sprite_xy(p, &s, &d, [sx, sy], draw_state),
     }
 }
 

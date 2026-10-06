@@ -36,6 +36,7 @@ mod training_screen;
 
 use ssb_engine::input::{newly_pressed, ControllerState, Input, N64Buttons, SSB64_GAME_MAPPING};
 use ssb_engine::renderer::Color;
+use ssb_game::menu::Scene as MScene;
 use ssb_rom::pack::Pack;
 
 use ssb_psp_runtime::assets;
@@ -114,6 +115,14 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::BackupClear => 50,
         GameScene::VsRecord => 40,
         GameScene::Characters => 90,
+        // The title from tic 169: "Press Start" shows at tic 280 (RE-462).
+        GameScene::Title => 140,
+        GameScene::ModeSelect | GameScene::OnePMode => 40,
+        GameScene::VsOptions | GameScene::ItemSwitch => 40,
+        // The bonus select places a fighter at tick 40.
+        GameScene::BonusSelect => 70,
+        // The course from tick 51; its timer has run some 200 tics.
+        GameScene::BonusPractice => 300,
         GameScene::OnePFinale => 2200,
         // Training starts at tick 8; C-Up at 13 enters jumpsquat, and this
         // lands in the rising portion of Mario's real button jump while the
@@ -439,7 +448,19 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         // swaps the scenes' sprite packs.
         (GameScene::VsRecord, 14) => return N64Buttons(N64Buttons::D_DOWN),
         (GameScene::VsRecord, 16 | 30) | (GameScene::Characters, 15) => return N64Buttons(N64Buttons::A),
-        (GameScene::Option | GameScene::ScreenAdjust | GameScene::BackupClear | GameScene::DataMenu | GameScene::VsRecord | GameScene::Characters, _) => {
+        // The front end's menus (RE-462): down once on the mode select and
+        // twice on the 1P mode menu; the damage ratio up on VS Options
+        // (down three rows, right twice); the Sword off on the Item
+        // Switch (down a row, A).
+        (GameScene::ModeSelect, 15) | (GameScene::OnePMode, 15 | 30) => return N64Buttons(N64Buttons::D_DOWN),
+        (GameScene::VsOptions, 12 | 15 | 18) | (GameScene::ItemSwitch, 15) => return N64Buttons(N64Buttons::D_DOWN),
+        (GameScene::VsOptions, 22 | 26) => return N64Buttons(N64Buttons::D_RIGHT),
+        (GameScene::ItemSwitch, 22) => return N64Buttons(N64Buttons::A),
+        // The bonus select: the held puck dropped on the portrait the
+        // hand reached.
+        (GameScene::BonusSelect | GameScene::BonusPractice, 40) => return N64Buttons(N64Buttons::A),
+        (GameScene::BonusPractice, 50) => return N64Buttons(N64Buttons::START),
+        (GameScene::Option | GameScene::ScreenAdjust | GameScene::BackupClear | GameScene::DataMenu | GameScene::VsRecord | GameScene::Characters | GameScene::Title | GameScene::ModeSelect | GameScene::OnePMode | GameScene::VsOptions | GameScene::ItemSwitch | GameScene::BonusSelect | GameScene::BonusPractice, _) => {
             return N64Buttons(0)
         }
         _ => {}
@@ -550,10 +571,12 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             4 | 8 => N64Buttons(N64Buttons::A),
             // `vsshield`: the shield is held from "Go".
             t if scene == GameScene::VsShield && t >= 398 => N64Buttons(N64Buttons::Z),
-            // `vsplayers`: A on the VS mode menu's Start at 20; the
+            // `vsplayers`: A on the VS mode menu's Start at 19; the
             // select's first tick is 21. A at 46 places the held puck on
             // Yoshi, and A at 62 on port 2's NA button opens a CPU.
-            20 | 46 | 62 if scene == GameScene::VsPlayers => N64Buttons(N64Buttons::A),
+            // VS Start loads the select the tick after its A
+            // (`mnVSModeMain`'s exit interrupt).
+            19 | 46 | 62 if scene == GameScene::VsPlayers => N64Buttons(N64Buttons::A),
             // `vsmode`: Rule, to Stock, then Time/Stock, one more stock.
             20 | 40 if scene == GameScene::VsModeMenu => N64Buttons(N64Buttons::D_DOWN),
             30 | 50 if scene == GameScene::VsModeMenu => N64Buttons(N64Buttons::D_RIGHT),
@@ -941,6 +964,10 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
+    // `bonusselect`: the hand and its puck up onto the portraits.
+    if matches!(scene, GameScene::BonusSelect | GameScene::BonusPractice) {
+        return if (12..=32).contains(&tick) { 80 } else { 0 };
+    }
     if capture_menu(scene).is_some() {
         return 0;
     }
@@ -1976,13 +2003,17 @@ fn psp_main() {
     unsafe { run() }
 }
 
-/// Which screen is active. Deliberately just these three: nothing here may
-/// grow stocks, a match timer, CPU AI, or items without widening `AGENTS.md`'s
-/// F1 carve-out first.
+/// Which screen is active.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Screen {
-    Intro,
-    Menu,
+    /// A capture build's scripted route in (RE-462): the two confirms its
+    /// scenes' input scripts were timed against (tick 4 past this, tick 8
+    /// on [`Screen::CaptureMenu`]'s entry), drawing nothing. A production
+    /// build boots the title ([`Screen::Menus`]).
+    CaptureIntro,
+    /// The capture route's entries: Training, VS, the 1P Game's select,
+    /// Option and Data.
+    CaptureMenu,
     /// The Training character select (`mnPlayers1PTraining`,
     /// `ssb_game::fighter_select`).
     FighterSelect,
@@ -1993,14 +2024,15 @@ enum Screen {
     /// The unlock message the VS results queued (`mnMessage`), then the
     /// VS character select.
     Message,
-    /// The VS mode menu (`mnVSMode`, `ssb_game::vs_mode`, RE-399).
-    VsMode,
     /// The VS character select (`mnPlayersVS`, `ssb_game::players_vs`,
     /// RE-404).
     PlayersVs,
     /// The 1P Game character select (`mnPlayers1PGame`,
     /// `ssb_game::players_1p`).
     Players1P,
+    /// The Bonus Practice select (`mnPlayers1PBonus`,
+    /// `ssb_game::players_1p_bonus`, RE-462).
+    Players1PBonus,
     /// The 1P Game's own scenes between battles: intro, continue and stage
     /// clear (`campaign`, RE-450). Its battles run on [`Screen::Training`].
     Campaign,
@@ -2013,8 +2045,8 @@ enum Screen {
     Training,
 }
 
-/// Main-menu entries: Training, VS, the 1P Game's select, Option and Data
-/// (`nMNModeSelectOptionOption` and `...Data`).
+/// The capture route's entries: Training, VS, the 1P Game's select, Option
+/// and Data.
 const MENU_ENTRIES: usize = 5;
 const TRAINING_ENTRY: usize = 0;
 /// A VS battle against the CPU pick, which stands still: CPU AI is not
@@ -2028,7 +2060,6 @@ const OPTION_ENTRY: usize = 3;
 /// `mnData` (RE-461).
 const DATA_ENTRY: usize = 4;
 
-const BG_INTRO: Color = Color::rgba(24, 32, 64, 255);
 const BG_MENU: Color = Color::rgba(16, 16, 24, 255);
 /// `mnVSResultsFuncStart`'s default camera fill,
 /// `GPACK_RGBA8888(0x00, 0x00, 0x00, 0xFF)`.
@@ -2477,16 +2508,25 @@ struct VsRules {
     time_limit: u8,
     stocks: i8,
     team_rules: ssb_game::team::TeamRules,
+    /// The item switches and appearance rate (`mnVSItemSwitch`).
+    items: ssb_game::item::normal::Switches,
+    /// VS Options' damage ratio (percent).
+    damage_ratio: u8,
 }
 
 impl VsRules {
     /// `dSCManagerDefaultBattleState`: a three-minute free-for-all time
     /// battle, stocks 2, Team Attack off.
-    const DEFAULT: VsRules = VsRules {
+    pub(crate) const DEFAULT: VsRules = VsRules {
         rule: ssb_game::battle::Rule::Time,
         time_limit: 3,
         stocks: 2,
         team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL,
+        items: ssb_game::item::normal::Switches {
+            appearance: ssb_game::item::normal::Appearance::Middle,
+            toggles: !0,
+        },
+        damage_ratio: ssb_game::stale::DAMAGE_RATIO_DEFAULT,
     };
 
     /// The rules `mnPlayersVSSetSceneData` left in the battle state.
@@ -2499,6 +2539,8 @@ impl VsRules {
                 is_team_battle: state.is_team_battle,
                 is_team_attack: state.is_team_attack,
             },
+            items: state.item_switches(),
+            damage_ratio: state.damage_ratio,
         }
     }
 }
@@ -2676,7 +2718,7 @@ unsafe fn training_frame(
         }
     }
     if let (Some(bonus), Some(b)) = (bonus, battle.as_ref()) {
-        campaign::bonus_frame(p, damage_hud, b, bonus.tasks_remain);
+        campaign::bonus_frame(p, damage_hud, b, bonus);
         return false;
     }
     if let (Some(boss), Some(b)) = (boss.as_deref_mut(), battle.as_mut()) {
@@ -2737,6 +2779,8 @@ fn entry_frame(
 /// countdown or sudden death's "GO!".
 struct Hud {
     bonus_tasks: Option<u8>,
+    /// Bonus Practice's time passed (`sc1PBonusStageMakeTimer`).
+    bonus_timer: Option<ssb_game::spgame::bonus_stage::PracticeTimer>,
     /// Black scene-entry fade alpha for a campaign bonus course.
     bonus_fade_alpha: u8,
     /// The boss wallpaper's closing fade this frame
@@ -2773,6 +2817,8 @@ struct Hud {
 #[derive(Clone, Copy)]
 struct PauseState {
     kind: ssb_game::pause::PauseKind,
+    /// Bonus Practice's L: RETRY (`ifCommonBattlePauseMakeSObjsAll`).
+    retry: bool,
     /// `sIFCommonBattlePauseCameraEyeXOrigin`/`YOrigin`.
     origin: (f32, f32),
     /// `sIFCommonBattlePausePlayerDetail`: the zoomed player draws at high
@@ -2814,6 +2860,7 @@ fn pause_frame(
         GameStatus::Go if pressed.contains(N64Buttons::START) && !pl.fighter.dead.is_menu_ignore => {
             let kind = if bonus.is_some() { PauseKind::Bonus } else { pause::kind_for(pl.fighter.pos, bounds) };
             hud.pause = Some(PauseState {
+                retry: bonus.as_deref().is_some_and(|b| b.practice),
                 kind,
                 origin: pl.camera.pause_eye,
                 detail: pl.fighter.model_parts.detail_curr,
@@ -2835,7 +2882,7 @@ fn pause_frame(
         }
         GameStatus::Pause => {
             let Some(state) = hud.pause else { return };
-            if state.kind == PauseKind::Bonus && pressed.contains(N64Buttons::L) {
+            if state.retry && pressed.contains(N64Buttons::L) {
                 if let Some(bonus) = bonus.as_deref_mut() {
                     bonus.retry_requested = true;
                 }
@@ -2880,6 +2927,7 @@ impl Hud {
     fn new() -> Hud {
         Hud {
             bonus_tasks: None,
+            bonus_timer: None,
             bonus_fade_alpha: 0,
             boss_fade: None,
             damage: core::array::from_fn(|port| ssb_game::hud::DamageDisplay::new(port, 0)),
@@ -2968,6 +3016,9 @@ fn start_sudden_death(
         time_limit: sudden.time_limit,
         stocks: 0,
         team_rules: sudden.team_rules(),
+        // `gSCManagerVSBattleState` keeps the battle's items and ratio.
+        items: world.items.normal_switches,
+        damage_ratio: ssb_game::stale::damage_ratio(),
     };
     // `gSCManagerVSBattleState`: only the tied players.
     let tied: Roster = core::array::from_fn(|port| roster[port].filter(|_| sudden.players[port].present));
@@ -3017,6 +3068,7 @@ fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game:
 /// outside a battle.
 fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     world.damage_hud.bonus_tasks = None;
+    world.damage_hud.bonus_timer = None;
     world.damage_hud.bonus_fade_alpha = 0;
     world.damage_hud.boss_fade = None;
     world.damage_hud.countdown = None;
@@ -3330,12 +3382,16 @@ fn enter_training(
     // `grMainSetupMakeGround`: any VS stage gets its controller; others run
     // an empty slot.
     // `gSCManagerBattleState`'s item switches: Training clears them
-    // (`sc1PTrainingModeFuncStart`); VS keeps `dSCManagerDefaultBattleState`'s,
-    // every item at middle appearance. `itManagerInitItems` builds the
-    // container drop table before the ground exists.
-    if vs.is_none() {
-        world.items.normal_switches.toggles = 0;
+    // (`sc1PTrainingModeFuncStart`); VS takes Item Switch's
+    // (`dSCManagerDefaultBattleState`'s until it is changed: every item at
+    // middle appearance). `itManagerInitItems` builds the container drop
+    // table before the ground exists.
+    match vs {
+        Some(rules) => world.items.normal_switches = rules.items,
+        None => world.items.normal_switches.toggles = 0,
     }
+    // `gSCManagerBattleState->damage_ratio`, which knockback reads.
+    ssb_game::stale::set_damage_ratio(vs.map_or(ssb_game::stale::DAMAGE_RATIO_DEFAULT, |r| r.damage_ratio));
     world.items.normal_drops = ssb_game::item::normal::DropWeights::new(
         world.items.normal_switches,
         stage.item_weights.as_ref(),
@@ -3453,21 +3509,11 @@ unsafe fn draw_frame(
     no_pack_color: Color,
 ) {
     match s.screen {
-        Screen::Intro => {
+        Screen::CaptureIntro | Screen::CaptureMenu => {
             gpu.set_viewport_fullscreen();
-            gpu.begin_frame(Some(BG_INTRO));
-        }
-        Screen::Menu => {
-            gpu.set_viewport_fullscreen();
-            gpu.begin_frame(Some(BG_MENU));
-            draw_menu(gpu, s.cursor);
+            gpu.begin_frame(Some(BG_RESULTS));
         }
         Screen::Menus => s.menus.draw(gpu, pack.as_ref(), draw_state, &s.backup),
-        Screen::VsMode => {
-            gpu.set_viewport_fullscreen();
-            gpu.begin_frame(Some(BG_MENU));
-            draw_vs_mode(gpu, &s.vs_mode);
-        }
         Screen::FighterSelect => draw_training_select(
             gpu,
             pack.as_ref(),
@@ -3483,6 +3529,7 @@ unsafe fn draw_frame(
             s.players_vs_fighters.as_deref(),
         ),
         Screen::Players1P => draw_players_1p(gpu, pack.as_ref(), draw_state, s),
+        Screen::Players1PBonus => draw_players_1p_bonus(gpu, pack.as_ref(), draw_state, s),
         Screen::Campaign => campaign::draw(gpu, pack.as_ref(), draw_state, s),
         Screen::StageSelect => match (pack.as_ref(), s.stage_select_layer.as_ref()) {
             // `gcMakeDefaultCameraGObj`'s black clear, then the cameras.
@@ -3620,14 +3667,14 @@ unsafe fn session_frame(
 ) {
         let mut lag_tic = false;
         match s.screen {
-            Screen::Intro => {
-                if let Some(scene) = capture_scene.and_then(capture_menu) {
-                    enter_menus(s, pack.as_ref(), scene, ssb_game::menu::Scene::ModeSelect, true);
+            Screen::CaptureIntro => {
+                if let Some((scene, prev)) = capture_scene.and_then(capture_menu) {
+                    go_scene(s, pack.as_ref(), scene, prev, true);
                 } else if pressed.contains(N64Buttons::A) || pressed.contains(N64Buttons::START) {
-                    s.screen = Screen::Menu;
+                    s.screen = Screen::CaptureMenu;
                 }
             }
-            Screen::Menu => {
+            Screen::CaptureMenu => {
                 if pressed.contains(N64Buttons::A) && (s.cursor == OPTION_ENTRY || s.cursor == DATA_ENTRY) {
                     let scene = if s.cursor == OPTION_ENTRY {
                         ssb_game::menu::Scene::Option
@@ -3683,9 +3730,7 @@ unsafe fn session_frame(
                     } else if route == Some(CaptureRoute::StageSelect) {
                         s.open_stage_select(s.maps_training_gkind);
                     } else if s.vs {
-                        // `mnVSModeFuncStartVars` from the last settings.
-                        s.vs_mode = vs_mode_menu(&s.vs_state);
-                        s.screen = Screen::VsMode;
+                        go_scene(s, pack.as_ref(), MScene::VsMode, MScene::ModeSelect, true);
                     } else {
                         s.fighter_select =
                             Some(new_fighter_select(s.training_scene, s.backup.fighter_mask, capture_scene.is_some(), sim_frame_index));
@@ -3695,30 +3740,11 @@ unsafe fn session_frame(
                 }
             }
             Screen::Menus => menus_frame(s, pack.as_ref(), controller, pressed, capture_scene.is_some()),
-            Screen::VsMode => {
-                use ssb_game::vs_mode::Action;
-                match vs_mode_frame(&mut s.vs_mode, controller, pressed) {
-                    Action::Start => {
-                        // `mnVSModeSaveSettings`.
-                        s.vs_state.rule = s.vs_mode.rule.battle_rule();
-                        s.vs_state.is_team_battle = s.vs_mode.rule.is_team();
-                        s.vs_state.time_limit = s.vs_mode.time;
-                        s.vs_state.stocks = s.vs_mode.stocks().max(0) as u8;
-                        s.vs_menu_rules = VsRules::of(&s.vs_state);
-                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
-                        s.players_vs_fighters = None;
-                        s.screen = Screen::PlayersVs;
-                    }
-                    Action::Back => s.screen = Screen::Menu,
-                    Action::Title => s.screen = Screen::Intro,
-                    // VS Options is not ported.
-                    Action::Options | Action::None => {}
-                }
-            }
             Screen::PlayersVs => {
                 players_vs_frame(s, pack, capture_scene.is_some(), sim_frame_index, controller, pressed);
             }
             Screen::Players1P => players_1p_frame(s, pack.as_ref(), controller, pressed),
+            Screen::Players1PBonus => players_1p_bonus_frame(s, pack.as_ref(), controller, pressed),
             Screen::Campaign => campaign::frame(s, pack.as_ref(), controller, pressed),
             Screen::FighterSelect => {
                 use ssb_game::fighter_select::Outcome;
@@ -3731,14 +3757,13 @@ unsafe fn session_frame(
                         let remembered = if s.vs { s.maps_vsmode_gkind } else { s.maps_training_gkind };
                         s.open_stage_select(remembered);
                     }
-                    // The menu stands in for the 1P mode menu.
                     Some(Outcome::Back(data)) => {
                         s.training_scene = data;
-                        s.screen = Screen::Menu;
+                        go_scene(s, pack.as_ref(), MScene::OnePMode, MScene::Players1PTraining, capture_scene.is_some());
                     }
                     Some(Outcome::Timeout(data)) => {
                         s.training_scene = data;
-                        s.screen = Screen::Intro;
+                        go_scene(s, pack.as_ref(), MScene::Title, MScene::Players1PTraining, capture_scene.is_some());
                     }
                     None => {}
                 }
@@ -3786,9 +3811,13 @@ unsafe fn session_frame(
                 }
                 Some(ssb_game::stage_select::Outcome::Timeout) => {
                     let saved = s.stage_select.save(s.scene_gkind, stage_select_rand);
-                    s.maps_training_gkind = saved.remembered;
+                    if s.vs {
+                        s.maps_vsmode_gkind = saved.remembered;
+                    } else {
+                        s.maps_training_gkind = saved.remembered;
+                    }
                     s.scene_gkind = saved.gkind;
-                    s.screen = Screen::Intro;
+                    go_scene(s, pack.as_ref(), MScene::Title, MScene::Maps, capture_scene.is_some());
                 }
                 None => tick_stage_select_layer(pack.as_ref(), s),
             },
@@ -3814,6 +3843,7 @@ unsafe fn session_frame(
                     let [first, next] = ssb_game::results::unlocks(&s.backup);
                     s.vs_message = first.map(ssb_game::spgame::message::Message::new);
                     s.vs_message_next = next;
+                    s.message_after = MScene::PlayersVs;
                     if s.vs_message.is_some() {
                         s.screen = Screen::Message;
                     } else {
@@ -3829,10 +3859,17 @@ unsafe fn session_frame(
                 let done = s.vs_message.as_mut().is_none_or(|m| m.tick(pressed, &mut s.backup));
                 if done {
                     s.vs_message = s.vs_message_next.take().map(ssb_game::spgame::message::Message::new);
+                    // `mnMessageFuncRun`'s last task: the VS select after
+                    // the VS results, else the N64 logo (skipped to the
+                    // title).
                     if s.vs_message.is_none() {
-                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
-                        s.players_vs_fighters = None;
-                        s.screen = Screen::PlayersVs;
+                        if s.message_after == MScene::PlayersVs {
+                            s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
+                            s.players_vs_fighters = None;
+                            s.screen = Screen::PlayersVs;
+                        } else {
+                            go_scene(s, pack.as_ref(), MScene::Startup, MScene::Message, capture_scene.is_some());
+                        }
                     }
                 }
             }
@@ -4077,9 +4114,18 @@ struct Session {
     /// The VS results' unlock message and the one queued after it.
     vs_message: Option<ssb_game::spgame::message::Message>,
     vs_message_next: Option<ssb_game::spgame::Unlock>,
+    /// The scene after the message: the VS select after the VS results'
+    /// unlocks, the N64 logo after Bonus Practice's (`mnMessage`).
+    message_after: MScene,
+    /// The Bonus Practice select (`mnPlayers1PBonus`), its fighter's pose
+    /// and its sprite pack.
+    players_1p_bonus: Option<alloc::boxed::Box<ssb_game::players_1p_bonus::Players1PBonus>>,
+    players_1p_bonus_fighters: Option<alloc::boxed::Box<players_screen::Fighters>>,
+    players_1p_bonus_sprites: Option<assets::AlignedBuf>,
+    /// `gSCManagerSceneData.player`, `.bonus_fkind` and `.bonus_costume`.
+    bonus_saved: ssb_game::players_1p_bonus::Saved,
     /// The results' fighters (RE-409), on the heap.
     vs_results_fighters: Option<alloc::boxed::Box<results_screen::Fighters>>,
-    vs_mode: ssb_game::vs_mode::VsMode,
     fighter_select: Option<ssb_game::fighter_select::FighterSelect>,
     /// The Training select's fighter poses, on the heap.
     fighter_select_fighters: Option<alloc::boxed::Box<players_screen::Fighters>>,
@@ -4244,7 +4290,7 @@ unsafe fn run() -> ! {
         items: ssb_game::item::ItemPool::default(),
         stage_objects: ssb_rom::ground_obj::GroundObjects::empty(),
         stage_ctl: ssb_game::stage::Stage::none(),
-        screen: Screen::Intro,
+        screen: Screen::CaptureIntro,
         cursor: 0,
         training_scene: ssb_game::fighter_select::SceneData::default(),
         roster: [None; 4],
@@ -4258,8 +4304,16 @@ unsafe fn run() -> ! {
         vs_transfer: None,
         vs_message: None,
         vs_message_next: None,
+        message_after: MScene::PlayersVs,
+        players_1p_bonus: None,
+        players_1p_bonus_fighters: None,
+        players_1p_bonus_sprites: None,
+        bonus_saved: ssb_game::players_1p_bonus::Saved {
+            player: 0,
+            bonus_fkind: None,
+            bonus_costume: 0,
+        },
         vs_results_fighters: None,
-        vs_mode: ssb_game::vs_mode::VsMode::new(ssb_game::vs_mode::VsRule::Time, 3, 2, false),
         fighter_select: None,
         fighter_select_fighters: None,
         vs_state: ssb_game::players_vs::BattleState::default(),
@@ -4287,6 +4341,11 @@ unsafe fn run() -> ! {
     // branch as the stage/fighter tick; draw only reads the resulting state.
     if let Some(p) = pack.as_ref() {
         s.material_anim.start(p);
+    }
+    // `scManagerRunLoop`'s first scene: the N64 logo (`mnStartup`), not
+    // ported, leaves for the title. A capture takes its scripted route.
+    if capture_scene.is_none() {
+        go_scene(&mut s, pack.as_ref(), MScene::Title, MScene::Startup, false);
     }
     // Built on each Training entry for the stage picked (`enter_training`).
     // `gSCManagerSceneData.gkind` and `s.maps_training_gkind`, both
@@ -4473,15 +4532,21 @@ fn apply_selections(s: &mut Session, c: ssb_game::backup::Selections) {
     s.maps_training_gkind = c.maps_training_gkind;
 }
 
-/// The menu scene a capture starts in.
-fn capture_menu(scene: GameScene) -> Option<ssb_game::menu::Scene> {
+/// The menu scene a capture starts in, and the scene before it.
+fn capture_menu(scene: GameScene) -> Option<(ssb_game::menu::Scene, ssb_game::menu::Scene)> {
     use ssb_game::menu::Scene;
     Some(match scene {
-        GameScene::Option => Scene::Option,
-        GameScene::ScreenAdjust => Scene::ScreenAdjust,
-        GameScene::BackupClear => Scene::BackupClear,
-        GameScene::DataMenu => Scene::Data,
-        GameScene::VsRecord | GameScene::Characters => Scene::Data,
+        GameScene::Option => (Scene::Option, Scene::ModeSelect),
+        GameScene::ScreenAdjust => (Scene::ScreenAdjust, Scene::Option),
+        GameScene::BackupClear => (Scene::BackupClear, Scene::Option),
+        GameScene::DataMenu => (Scene::Data, Scene::ModeSelect),
+        GameScene::VsRecord | GameScene::Characters => (Scene::Data, Scene::ModeSelect),
+        GameScene::Title => (Scene::Title, Scene::Startup),
+        GameScene::ModeSelect => (Scene::ModeSelect, Scene::Title),
+        GameScene::OnePMode => (Scene::OnePMode, Scene::ModeSelect),
+        GameScene::VsOptions => (Scene::VsOptions, Scene::VsMode),
+        GameScene::ItemSwitch => (Scene::VsItemSwitch, Scene::VsOptions),
+        GameScene::BonusSelect | GameScene::BonusPractice => (Scene::Players1PBonus1, Scene::OnePMode),
         _ => return None,
     })
 }
@@ -4496,6 +4561,7 @@ macro_rules! menus_host {
             selections: $selections,
             sound_quality: &mut $s.sound_quality,
             video_offsets: &mut $s.video_offsets,
+            vs_state: &mut $s.vs_state,
             capture: $capture,
         }
     };
@@ -4525,38 +4591,78 @@ fn menus_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: ControllerS
     let exit = menus.frame(&pad, &mut menus_host!(s, pack, &mut selections, capture));
     s.menus = menus;
     apply_selections(s, selections);
-    match exit {
-        Some(menus_screen::Exit::Title) => s.screen = Screen::Intro,
-        Some(menus_screen::Exit::ModeSelect) => s.screen = Screen::Menu,
-        None => {}
+    if let Some(scene) = exit {
+        let prev = s.menus.scene_prev;
+        start_scene(s, pack, scene, prev, capture);
     }
 }
 
-/// Draws the menu entries as a vertical stack of rectangles: one bar per
-/// entry, the selected one in `ENTRY_SELECTED`, `Training` in
-/// `ENTRY_ENABLED` when not selected, and the stubbed entries dimmed. No text
-/// yet (`gu.rs`'s module doc explains why), so entries are distinguished by
-/// screen position and enabled/disabled colour rather than a label.
+/// `syTaskmanSetLoadScene` from a host scene: the menus take their own
+/// scenes, the host the rest.
 #[inline(never)]
-fn draw_menu(gpu: &mut Gpu, cursor: usize) {
-    const ENTRY_HEIGHT: i32 = 32;
-    const ENTRY_GAP: i32 = 16;
-    const ENTRY_WIDTH: i32 = 200;
-    const LEFT: i32 = 40;
-    const TOP: i32 = 60;
-
-    for i in 0..MENU_ENTRIES {
-        let y0 = TOP + i as i32 * (ENTRY_HEIGHT + ENTRY_GAP);
-        let color = if i == cursor {
-            ENTRY_SELECTED
-        } else if i < MENU_ENTRIES {
-            ENTRY_ENABLED
-        } else {
-            ENTRY_DISABLED
-        };
-        gpu.draw_rect(LEFT, y0, LEFT + ENTRY_WIDTH, y0 + ENTRY_HEIGHT, color);
+fn go_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScene, capture: bool) {
+    if menus_screen::Menus::is_menu(scene) || matches!(scene, MScene::Explain | MScene::Startup | MScene::AutoDemo | MScene::SoundTest) {
+        let mut selections = selections(s);
+        let mut menus = core::mem::replace(&mut s.menus, menus_screen::Menus::new());
+        let next = menus.go(scene, prev, &mut menus_host!(s, pack, &mut selections, capture));
+        s.menus = menus;
+        apply_selections(s, selections);
+        match next {
+            Some(scene) => start_scene(s, pack, scene, prev, capture),
+            None => s.screen = Screen::Menus,
+        }
+    } else {
+        start_scene(s, pack, scene, prev, capture);
     }
 }
+
+/// Starts a scene the host runs, entered from `prev`.
+#[inline(never)]
+fn start_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScene, capture: bool) {
+    s.menus.scene = scene;
+    s.menus.scene_prev = prev;
+    match scene {
+        MScene::Players1PGame => {
+            s.players_1p = Some(ssb_game::players_1p::Players1P::new(s.one_p_scene, &s.backup));
+            s.players_1p_fighters = None;
+            s.screen = Screen::Players1P;
+        }
+        MScene::Players1PTraining => {
+            // Training always starts over from its select.
+            s.play_state = None;
+            s.dummies = Default::default();
+            s.vs = false;
+            s.fighter_select = Some(new_fighter_select(s.training_scene, s.backup.fighter_mask, capture, 0));
+            s.fighter_select_fighters = None;
+            s.screen = Screen::FighterSelect;
+        }
+        MScene::Players1PBonus1 | MScene::Players1PBonus2 => {
+            use ssb_game::players_1p_bonus::{BonusKind, Players1PBonus, SceneData};
+            let bonus = if scene == MScene::Players1PBonus1 { BonusKind::Targets } else { BonusKind::Platforms };
+            let data = SceneData { player: s.bonus_saved.player, bonus };
+            s.players_1p_bonus = Some(alloc::boxed::Box::new(Players1PBonus::new(data, &s.backup)));
+            s.players_1p_bonus_fighters = None;
+            s.players_1p_bonus_sprites = s
+                .pack_path
+                .and_then(|path| assets::load_menu_pack(path, ssb_rom::menu_pack::MenuScene::Players1PBonus).ok());
+            s.screen = Screen::Players1PBonus;
+        }
+        MScene::PlayersVs => {
+            // A VS battle always starts over.
+            s.play_state = None;
+            s.dummies = Default::default();
+            s.vs = true;
+            s.vs_menu_rules = VsRules::of(&s.vs_state);
+            s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
+            s.players_vs_fighters = None;
+            s.screen = Screen::PlayersVs;
+        }
+        // Not reached yet: the menus run every other scene they name, and
+        // the bonus practices' select is wired below.
+        _ => go_scene(s, pack, MScene::ModeSelect, scene, capture),
+    }
+}
+
 
 /// One frame of `mnPlayers1PTraining`: the select's tick, then its
 /// fighters'. Out of [`run`] for branch range.
@@ -4620,34 +4726,7 @@ fn new_fighter_select(
     })
 }
 
-/// One frame of `mnVSModeMain`. Out of [`run`] so `run` stays inside MIPS
-/// branch range.
-#[inline(never)]
-fn vs_mode_frame(
-    m: &mut ssb_game::vs_mode::VsMode,
-    controller: ControllerState,
-    pressed: N64Buttons,
-) -> ssb_game::vs_mode::Action {
-    m.tick(ssb_game::vs_mode::Input {
-        hold: controller.buttons.0,
-        tap: pressed.0,
-        stick_x: controller.stick_x,
-        stick_y: controller.stick_y,
-    })
-}
 
-/// `mnVSModeFuncStartVars`'s rule, time and stock from the battle settings.
-fn vs_mode_menu(state: &ssb_game::players_vs::BattleState) -> ssb_game::vs_mode::VsMode {
-    use ssb_game::battle::Rule;
-    use ssb_game::vs_mode::{VsMode, VsRule};
-    let rule = match (state.rule, state.is_team_battle) {
-        (Rule::Time, false) => VsRule::Time,
-        (Rule::Stock, false) => VsRule::Stock,
-        (Rule::Time, true) => VsRule::TimeTeam,
-        (Rule::Stock, true) => VsRule::StockTeam,
-    };
-    VsMode::new(rule, state.time_limit, state.stocks, false)
-}
 
 /// `mnPlayersVSStartScene` from the battle state, with one controller
 /// plugged into port 1.
@@ -4701,13 +4780,12 @@ fn players_vs_frame(
         Some(Outcome::Battle { state, gkind }) => (state, Some(gkind)),
         Some(Outcome::VsMode(state)) => {
             s.vs_state = state;
-            s.vs_mode = vs_mode_menu(&s.vs_state);
-            s.screen = Screen::VsMode;
+            go_scene(s, pack.as_ref(), MScene::VsMode, MScene::PlayersVs, capture);
             return;
         }
         Some(Outcome::Title(state)) => {
             s.vs_state = state;
-            s.screen = Screen::Intro;
+            go_scene(s, pack.as_ref(), MScene::Title, MScene::PlayersVs, capture);
             return;
         }
     };
@@ -4743,17 +4821,64 @@ fn players_1p_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: Contro
         None => return,
         // `nSCKind1PGame`: the campaign (RE-450).
         Some(Outcome::Proceed(saved)) => (saved, None),
-        // The menu stands in for the 1P mode menu.
-        Some(Outcome::Back(saved)) => (saved, Some(Screen::Menu)),
-        Some(Outcome::Timeout(saved)) => (saved, Some(Screen::Intro)),
+        Some(Outcome::Back(saved)) => (saved, Some(MScene::OnePMode)),
+        Some(Outcome::Timeout(saved)) => (saved, Some(MScene::Title)),
     };
     saved.apply(&mut s.spgame_scene, &mut s.backup);
     s.one_p_scene = saved.scene;
     s.players_1p = None;
     s.players_1p_fighters = None;
     match next {
-        Some(screen) => s.screen = screen,
+        Some(scene) => go_scene(s, pack, scene, MScene::Players1PGame, false),
         None => campaign::start(s, pack),
+    }
+}
+
+/// One frame of the Bonus Practice select (`mnPlayers1PBonus`).
+#[inline(never)]
+fn players_1p_bonus_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: ControllerState, pressed: N64Buttons) {
+    use ssb_game::players_1p_bonus::{BonusKind, Outcome};
+    let Some(select) = s.players_1p_bonus.as_mut() else {
+        return;
+    };
+    // `scene_curr` as the select was entered.
+    let entered = s.menus.scene;
+    let outcome = select.tick(controller, pressed);
+    let fighters = s.players_1p_bonus_fighters.get_or_insert_with(players_screen::start);
+    players_screen::tick_bonus(pack, select, fighters);
+    let Some(outcome) = outcome else {
+        return;
+    };
+    let of = |b: BonusKind| if b == BonusKind::Targets { MScene::Players1PBonus1 } else { MScene::Players1PBonus2 };
+    let (saved, next, prev) = match outcome {
+        Outcome::Proceed { saved, bonus } => (saved, None, of(bonus)),
+        Outcome::Back { saved, bonus } => (saved, Some(MScene::OnePMode), of(bonus)),
+        Outcome::Timeout(saved) => (saved, Some(MScene::Title), entered),
+    };
+    // `mnPlayers1PBonusSetSceneData`.
+    s.bonus_saved = saved;
+    s.players_1p_bonus = None;
+    s.players_1p_bonus_fighters = None;
+    s.players_1p_bonus_sprites = None;
+    match (next, outcome) {
+        (Some(scene), _) => go_scene(s, pack, scene, prev, false),
+        (None, Outcome::Proceed { bonus, .. }) => {
+            s.menus.scene = MScene::BonusStage;
+            s.menus.scene_prev = prev;
+            campaign::start_practice(s, pack, saved, bonus);
+        }
+        (None, _) => {}
+    }
+}
+
+/// `mnPlayers1PBonus`'s frame over its default camera's black.
+#[inline(never)]
+unsafe fn draw_players_1p_bonus(gpu: &mut Gpu, pack: Option<&Pack<'_>>, draw_state: &mut meshdraw::DrawState, s: &Session) {
+    gpu.set_viewport_fullscreen();
+    gpu.begin_frame(Some(BG_RESULTS));
+    if let (Some(p), Some(select)) = (pack, s.players_1p_bonus.as_deref()) {
+        let menu = s.players_1p_bonus_sprites.as_ref().and_then(|b| Pack::open(b.as_slice()).ok());
+        players_screen::draw_bonus(gpu, p, menu.as_ref(), draw_state, select, &s.backup, s.players_1p_bonus_fighters.as_deref());
     }
 }
 
@@ -4864,44 +4989,6 @@ fn draw_players_vs_slots(gpu: &mut Gpu, select: &ssb_game::players_vs::PlayersVs
     }
 }
 
-/// The VS mode menu as plain slots: the four buttons, the cursor's lit,
-/// the rule's four values with the chosen one lit, and the time or stock as
-/// a bar (full for an infinite time). The menu's sprites are not drawn.
-#[inline(never)]
-fn draw_vs_mode(gpu: &mut Gpu, m: &ssb_game::vs_mode::VsMode) {
-    use ssb_game::vs_mode::{Button, VsRule};
-    const LEFT: i32 = 40;
-    const TOP: i32 = 40;
-    const HEIGHT: i32 = 32;
-    const GAP: i32 = 16;
-    const WIDTH: i32 = 160;
-    let buttons = [Button::Start, Button::Rule, Button::TimeStock, Button::Options];
-    for (i, b) in buttons.into_iter().enumerate() {
-        let y0 = TOP + i as i32 * (HEIGHT + GAP);
-        let color = if b == m.cursor { ENTRY_SELECTED } else { ENTRY_ENABLED };
-        gpu.draw_rect(LEFT, y0, LEFT + WIDTH, y0 + HEIGHT, color);
-    }
-    let rules = [VsRule::Time, VsRule::Stock, VsRule::TimeTeam, VsRule::StockTeam];
-    let y0 = TOP + HEIGHT + GAP;
-    for (i, r) in rules.into_iter().enumerate() {
-        let x0 = LEFT + WIDTH + 16 + i as i32 * 40;
-        let color = if r == m.rule { ENTRY_SELECTED } else { ENTRY_DISABLED };
-        gpu.draw_rect(x0, y0, x0 + 32, y0 + HEIGHT, color);
-    }
-    let y0 = TOP + 2 * (HEIGHT + GAP);
-    let fraction = if m.rule.is_time() {
-        if m.time == ssb_game::battle::TIMELIMIT_INFINITE {
-            1.0
-        } else {
-            f32::from(m.time) / 99.0
-        }
-    } else {
-        f32::from(m.stock + 1) / 99.0
-    };
-    let x0 = LEFT + WIDTH + 16;
-    gpu.draw_rect(x0, y0, x0 + 152, y0 + HEIGHT, ENTRY_DISABLED);
-    gpu.draw_rect(x0, y0, x0 + (152.0 * fraction) as i32, y0 + HEIGHT, ENTRY_SELECTED);
-}
 
 /// Draws the character select in N64 screen coordinates scaled onto the
 /// PSP screen, for a run with no pack: the portrait grid (locked portraits
@@ -7135,7 +7222,7 @@ unsafe fn draw_training(
         return;
     }
     if let Some(pause) = damage_hud.pause {
-        draw_pause_menu(gpu, p, draw_state, pause.kind);
+        draw_pause_menu(gpu, p, draw_state, pause.kind, pause.retry);
         return;
     }
     // Training hides every Interface-link GObj while its PauseMenu link
@@ -7161,6 +7248,9 @@ unsafe fn draw_training(
                 draw_plain(p, draw_state, &icon, x as f32, (30 - i32::from(icon.height) / 2) as f32);
             }
         }
+    }
+    if let Some(t) = damage_hud.bonus_timer {
+        draw_practice_timer(p, draw_state, &t);
     }
     if let Some(b) = battle {
         draw_stocks(p, draw_state, b, damage_hud, fighters.map(|x| x.map(|x| &x.fighter)));
@@ -7437,6 +7527,7 @@ fn draw_pause_menu(
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
     kind: ssb_game::pause::PauseKind,
+    retry: bool,
 ) {
     use ssb_game::pause;
     let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
@@ -7471,7 +7562,7 @@ fn draw_pause_menu(
     for d in pause::decals(kind) {
         draw(d.sprite, d.pos, d.prim, d.env);
     }
-    if kind == ssb_game::pause::PauseKind::Bonus {
+    if retry {
         for d in pause::BONUS_RETRY {
             draw(d.sprite, d.pos, d.prim, d.env);
         }
@@ -7568,6 +7659,33 @@ fn draw_timer(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, b: &ssb_game::
     if let Some(s) = sprite(hud::TIMER_COLON) {
         let (x, y) = hud::timer_origin(hud::TIMER_COLON_X, s.width, s.height);
         draw_plain(p, draw_state, &s, x, y);
+    }
+}
+
+/// Bonus Practice's time passed: six `IFCommonTimer` digits centred at
+/// y 30, the tens of minutes hidden until they first change, and the
+/// seconds and hundredths marks (`sc1PBonusStageMakeTimer`).
+fn draw_practice_timer(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, t: &ssb_game::spgame::bonus_stage::PracticeTimer) {
+    use ssb_game::spgame::bonus_stage as bs;
+    let f = &ssb_rom::sprite::TIMER;
+    let sprite = |i: usize| f.offsets.get(i).and_then(|&at| p.sprite(f.file, at));
+    for (i, (&x, &digit)) in bs::TIMER_DIGIT_X.iter().zip(&t.digits).enumerate() {
+        if i == 0 && !t.tens_shown {
+            continue;
+        }
+        if let Some(s) = sprite(usize::from(digit)) {
+            let x0 = x - f32::from(s.width) * 0.5;
+            let y0 = 30.0 - f32::from(s.height) * 0.5;
+            draw_plain(p, draw_state, &s, x0 as i32 as f32, y0 as i32 as f32);
+        }
+    }
+    // `SymbolSec` and `SymbolCSec`, the list's last two.
+    for (i, at) in [(13, bs::TIMER_SEC_AT), (14, bs::TIMER_CSEC_AT)] {
+        if let Some(s) = sprite(i) {
+            let x0 = (at[0] - f32::from(s.width) * 0.5) as i32;
+            let y0 = (at[1] - f32::from(s.height) * 0.5) as i32;
+            draw_plain(p, draw_state, &s, x0 as f32, y0 as f32);
+        }
     }
 }
 

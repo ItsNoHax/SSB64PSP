@@ -31,16 +31,30 @@ pub enum MenuScene {
     Data = 3,
     VsRecord = 4,
     Characters = 5,
+    Title = 6,
+    ModeSelect = 7,
+    OnePMode = 8,
+    VsMode = 9,
+    VsOptions = 10,
+    VsItemSwitch = 11,
+    Players1PBonus = 12,
 }
 
 impl MenuScene {
-    pub const ALL: [MenuScene; 6] = [
+    pub const ALL: [MenuScene; 13] = [
         MenuScene::Option,
         MenuScene::ScreenAdjust,
         MenuScene::BackupClear,
         MenuScene::Data,
         MenuScene::VsRecord,
         MenuScene::Characters,
+        MenuScene::Title,
+        MenuScene::ModeSelect,
+        MenuScene::OnePMode,
+        MenuScene::VsMode,
+        MenuScene::VsOptions,
+        MenuScene::VsItemSwitch,
+        MenuScene::Players1PBonus,
     ];
 
     /// The scene's sprites (`dMN*FileIDs`, those it draws).
@@ -52,6 +66,19 @@ impl MenuScene {
             MenuScene::Data => &[COMMON_TABS, COMMON_DECALS, DATA],
             MenuScene::VsRecord => &[VS_RECORD, DATA_COMMON],
             MenuScene::Characters => &[CHARACTERS, DATA_COMMON],
+            MenuScene::Title => &[TITLE, TITLE_FIRE],
+            MenuScene::ModeSelect => &[MAIN],
+            MenuScene::OnePMode => &[COMMON_TABS, COMMON_DECALS, COMMON_GAME_MODE, ONE_P],
+            MenuScene::VsMode => &[
+                COMMON_TABS,
+                COMMON_DECALS,
+                COMMON_GAME_MODE,
+                COMMON_ARROWS,
+                VS_MODE,
+            ],
+            MenuScene::VsOptions => &[COMMON_OPTIONS, COMMON_SLASH, VS_OPTIONS],
+            MenuScene::VsItemSwitch => &[VS_ITEM_SWITCH],
+            MenuScene::Players1PBonus => &[BONUS_GAME_MODES, BONUS_RECORDS],
         }
     }
 
@@ -78,6 +105,106 @@ const BACKUP_CLEAR_NO: u32 = 0x7AB8;
 const BACKUP_CLEAR_YES_LUTS: [u32; 3] = [0x7500, 0x7528, 0x7550];
 /// `OptionNoHighlightPalette`, `OptionNoNotPalette`.
 const BACKUP_CLEAR_NO_LUTS: [u32; 2] = [0x7A60, 0x7A88];
+
+/// File 0xA7, `MNTitle`: `LogoAnimFull`, `BorderUpper`, `Cutout`,
+/// `TMUnk`, `Copyright`, `PressStart`, `Super`, `Smash`, `Bros` (the US
+/// title's sprites; the opening-only logo animation's are not drawn).
+/// The scene's pack also holds the labels' and "Press Start"'s baked
+/// animation plays (`crate::title`).
+pub const TITLE: SpriteFile = SpriteFile {
+    file: crate::title::FILE,
+    offsets: &[
+        0xBBB0, 0xC208, 0x11988, 0x11AA8, 0x15320, 0x15A48, 0x16728, 0x245C8, 0x25188,
+    ],
+};
+
+/// File 0xA8, `MNTitleFireAnim`: `Frame1Sprite` to `Frame30Sprite`.
+pub const TITLE_FIRE: SpriteFile = SpriteFile {
+    file: crate::title::FIRE_FILE,
+    offsets: &[
+        0x1018, 0x2078, 0x30D8, 0x4138, 0x5198, 0x61F8, 0x7258, 0x82B8, 0x9318, 0xA378, 0xB3D8,
+        0xC438, 0xD498, 0xE4F8, 0xF558, 0x105B8, 0x11618, 0x12678, 0x136D8, 0x14738, 0x15798,
+        0x167F8, 0x17858, 0x188B8, 0x19918, 0x1A978, 0x1B9D8, 0x1CA38, 0x1DA98, 0x1EAF8,
+    ],
+};
+
+/// File 1, `MNMain`: the mode select's icons, their dark versions, the
+/// labels, `ModeSelectText`, the decal bar and `SmashLogo` (the US build's
+/// sprites; not the Japanese subtitles).
+pub const MAIN: SpriteFile = SpriteFile {
+    file: 0x01,
+    offsets: &[
+        0x1990, 0x2520, 0x30B0, 0x40F0, 0x4C80, 0x5570, 0x57E0, 0x5980, 0x6048, 0x6708, 0x6DC8,
+        0x72E8, 0x7AA8, 0x7C38, 0x82F8, 0x84F8,
+    ],
+};
+
+/// File 2, `MN1P`: `OptionTab`, `1PGameText`, `ControllerIconDark`,
+/// `1PText`, `TrainingModeText`, `Bonus1PracticeText`,
+/// `Bonus2PracticeText`.
+pub const ONE_P: SpriteFile = SpriteFile {
+    file: 0x02,
+    offsets: &[0x1108, 0x2A28, 0x50F8, 0x5338, 0x5AC8, 0x5F28, 0x6388],
+};
+
+/// File 0: `ArrowL`, `ArrowR`, `Infinity`.
+pub const COMMON_ARROWS: SpriteFile = SpriteFile {
+    file: 0x00,
+    offsets: &[0xDE30, 0xDD90, 0xDC48],
+};
+
+/// File 0: `OnText`, `OffText`, `AutoText`, `Percentage`.
+pub const COMMON_OPTIONS: SpriteFile = SpriteFile {
+    file: 0x00,
+    offsets: &[0xB818, 0xB958, 0xDF48, 0xDB30],
+};
+
+/// File 6, `MNVSMode`: every sprite `mnvsmode.c` draws in the US build.
+pub const VS_MODE: SpriteFile = SpriteFile {
+    file: 0x06,
+    offsets: &[
+        0x5EB0, 0x6118, 0x24C8, 0x2748, 0x28E0, 0x2A80, 0x2C20, 0x2EC8, 0x2FC8, 0x3248, 0x3828,
+    ],
+};
+
+/// File 7, `MNVSOptions`: every sprite `mnvsoptions.c` draws in the US
+/// build.
+pub const VS_OPTIONS: SpriteFile = SpriteFile {
+    file: 0x07,
+    offsets: &[
+        0x5F60, 0x2668, 0x33D8, 0x3690, 0x3968, 0x3CF8, 0x3FC8, 0x4228,
+    ],
+};
+
+/// File 8, `MNVSItemSwitch`: every sprite `mnvsitemswitch.c` draws.
+pub const VS_ITEM_SWITCH: SpriteFile = SpriteFile {
+    file: 0x08,
+    offsets: &[
+        0x9A8, 0xB20, 0xCE8, 0xEA8, 0xF98, 0x10D0, 0x11E8, 0x13A8, 0x1488, 0x1568, 0x1608, 0x3430,
+        0x5E60, 0x63A8,
+    ],
+};
+
+/// File 18, `MNPlayersGameModes`: `Bonus1BreakTheTargetsText` and
+/// `Bonus2BoardThePlatformsText` (the Bonus Practice select's titles).
+pub const BONUS_GAME_MODES: SpriteFile = SpriteFile {
+    file: 18,
+    offsets: &[0xBD8, 0x1058],
+};
+
+/// File 23, `MNPlayers1PMode`: the Bonus Practice select's records,
+/// `BestTimeText`, `TotalBestTimeText`, `TargetsText`, `PlatformsText`,
+/// `Sec` and `CSec`.
+pub const BONUS_RECORDS: SpriteFile = SpriteFile {
+    file: 23,
+    offsets: &[0x12E0, 0x1410, 0x1658, 0x1898, 0x1F48, 0x1FC8],
+};
+
+/// File 0: `GameModeText`.
+pub const COMMON_GAME_MODE: SpriteFile = SpriteFile {
+    file: 0x00,
+    offsets: &[0xD240],
+};
 
 /// File 0, `MNCommon`: `OptionTabLeft`, `...Middle`, `...Right`.
 pub const COMMON_TABS: SpriteFile = SpriteFile {

@@ -129,12 +129,12 @@ pub struct Slot {
     pub is_selected: bool,
     pub is_fighter_selected: bool,
     pub is_recalling: bool,
-    recall_end_tic: i32,
-    recall_start: (f32, f32),
-    recall_end_x: f32,
-    recall_mid_y: f32,
-    recall_end_y: f32,
-    recall_tics: i32,
+    pub(crate) recall_end_tic: i32,
+    pub(crate) recall_start: (f32, f32),
+    pub(crate) recall_end_x: f32,
+    pub(crate) recall_mid_y: f32,
+    pub(crate) recall_end_y: f32,
+    pub(crate) recall_tics: i32,
     /// `holder_player` is the player (else `GMCOMMON_PLAYERS_MAX`).
     pub is_held: bool,
     /// The puck sprite's top-left corner.
@@ -143,8 +143,150 @@ pub struct Slot {
     /// The cursor sprite's top-left corner.
     pub cursor: (f32, f32),
     pub cursor_status: CursorStatus,
-    cursor_pickup: (f32, f32),
-    is_cursor_adjusting: bool,
+    pub(crate) cursor_pickup: (f32, f32),
+    pub(crate) is_cursor_adjusting: bool,
+}
+
+impl Slot {
+    /// `mnPlayers1PGameMakeCursor`, `MakePuck` and `ResetPlayer` (and
+    /// `mnPlayers1PBonus`'s): the cursor at `cursor` pointing, the puck at
+    /// (51, 161) held and nothing under it.
+    pub(crate) fn held(cursor: (f32, f32)) -> Self {
+        Slot {
+            kind: None,
+            costume: 0,
+            is_selected: false,
+            is_fighter_selected: false,
+            is_recalling: false,
+            recall_end_tic: 0,
+            recall_start: (0.0, 0.0),
+            recall_end_x: 0.0,
+            recall_mid_y: 0.0,
+            recall_end_y: 0.0,
+            recall_tics: 0,
+            is_held: true,
+            puck: (51.0, 161.0),
+            puck_vel: (0.0, 0.0),
+            cursor,
+            cursor_status: CursorStatus::Pointer,
+            cursor_pickup: (0.0, 0.0),
+            is_cursor_adjusting: false,
+        }
+    }
+
+    /// `mnPlayers1PGameAdjustCursor` (and `mnPlayers1PBonusAdjustCursor`).
+    pub(crate) fn adjust_cursor(&mut self, input: ControllerState) {
+        if self.is_cursor_adjusting {
+            let step = |target: f32, at: &mut f32| {
+                let delta = (target - *at) / 5.0;
+                if (-1.0..=1.0).contains(&delta) {
+                    *at = target;
+                } else {
+                    *at += delta;
+                }
+            };
+            step(self.cursor_pickup.0, &mut self.cursor.0);
+            step(self.cursor_pickup.1, &mut self.cursor.1);
+            if self.cursor == self.cursor_pickup {
+                self.is_cursor_adjusting = false;
+            }
+        } else if !self.is_recalling {
+            if !(-8..=8).contains(&input.stick_x) {
+                let x = f32::from(input.stick_x) / 20.0 + self.cursor.0;
+                if (0.0..=280.0).contains(&x) {
+                    self.cursor.0 = x;
+                }
+            }
+            if !(-8..=8).contains(&input.stick_y) {
+                let y = f32::from(input.stick_y) / -20.0 + self.cursor.1;
+                if (10.0..=205.0).contains(&y) {
+                    self.cursor.1 = y;
+                }
+            }
+        }
+    }
+
+    /// `mnPlayers1PGameCheckPuckInRange` (and `mnPlayers1PBonus`'s).
+    pub(crate) fn puck_in_range(&self) -> bool {
+        let (cx, cy) = self.cursor;
+        let (px, py) = self.puck;
+        let x = cx + 25.0;
+        let y = cy + 3.0;
+        (px..=px + 26.0).contains(&x) && (py..=py + 24.0).contains(&y)
+    }
+
+    /// `mnPlayers1PGameSetCursorPuckOffset` (and `mnPlayers1PBonus`'s).
+    pub(crate) fn set_cursor_puck_offset(&mut self) {
+        self.cursor_pickup = (self.puck.0 - 11.0, self.puck.1 - -14.0);
+    }
+
+    /// `mnPlayers1PGameRecallPuck` (and `mnPlayers1PBonusRecallPuck`).
+    pub(crate) fn recall_puck(&mut self) {
+        let cursor = self.cursor;
+        self.is_fighter_selected = false;
+        self.is_selected = false;
+        self.is_recalling = true;
+        self.recall_tics = 0;
+        self.recall_start = self.puck;
+        self.recall_end_x = (cursor.0 + 20.0).min(280.0);
+        self.recall_end_y = (cursor.1 + -15.0).max(10.0);
+        self.recall_mid_y = if self.recall_end_y < self.recall_start.1 {
+            self.recall_end_y
+        } else {
+            self.recall_start.1
+        } - 20.0;
+    }
+
+    /// The status `mnPlayers1PGameUpdateCursorNoRecall` (and
+    /// `mnPlayers1PBonus`'s) leaves the cursor in.
+    pub(crate) fn no_recall_status(&self) -> CursorStatus {
+        let status = if self.cursor.1 > 124.0 || self.cursor.1 < 38.0 {
+            CursorStatus::Pointer
+        } else if !self.is_held {
+            CursorStatus::Hover
+        } else {
+            CursorStatus::Grab
+        };
+        if status == CursorStatus::Pointer && self.is_selected && self.puck_in_range() {
+            CursorStatus::Hover
+        } else {
+            status
+        }
+    }
+
+    /// The puck's move in `mnPlayers1PGamePuckProcUpdate` (and
+    /// `mnPlayers1PBonus`'s): a held puck follows the cursor unless the
+    /// cursor is still gliding to it; otherwise `MovePuck`.
+    pub(crate) fn follow_or_move_puck(&mut self) {
+        if !self.is_selected && self.is_held {
+            if !self.is_cursor_adjusting {
+                self.puck = (self.cursor.0 + 11.0, self.cursor.1 + -14.0);
+            }
+        } else {
+            self.puck.0 += self.puck_vel.0;
+            self.puck.1 += self.puck_vel.1;
+        }
+    }
+
+    /// The first half of `mnPlayers1PGamePuckAdjustRecall` (and
+    /// `mnPlayers1PBonus`'s): one more recall tick, its velocity over the
+    /// first ten. True on the eleventh, when the caller grabs the puck
+    /// (`SetCursorGrab`) and stops it.
+    pub(crate) fn recall_step(&mut self) -> bool {
+        self.recall_tics += 1;
+        if self.recall_tics < 11 {
+            let vx = (self.recall_end_x - self.recall_start.0) / 10.0;
+            let vy = if self.recall_tics < 6 {
+                (self.recall_mid_y - self.recall_start.1) / 5.0
+            } else {
+                (self.recall_end_y - self.recall_mid_y) / 5.0
+            };
+            self.puck_vel = (vx, vy);
+            false
+        } else {
+            self.recall_tics == 11
+        }
+    }
 }
 
 /// `mnPlayers1PGameGetNextTimeValue` and `...GetPrevTimeValue`: both swap
@@ -315,7 +457,7 @@ impl Players1P {
 
     /// `mnPlayers1PGameCursorProcUpdate`.
     fn cursor_update(&mut self, input: ControllerState, taps: N64Buttons) {
-        self.adjust_cursor(input);
+        self.slot.adjust_cursor(input);
         if taps.contains(N64Buttons::A) && !self.select_fighter(0) && !self.check_cursor_puck_grab()
         {
             let (x, y) = (self.slot.cursor.0 + 20.0, self.slot.cursor.1 + 3.0);
@@ -348,7 +490,7 @@ impl Players1P {
         }
         // `mnPlayers1PGameCheckManFighterSelected`.
         if taps.contains(N64Buttons::B) && self.slot.is_selected {
-            self.recall_puck();
+            self.slot.recall_puck();
         }
         // `mnPlayers1PGameDetectBack`.
         if !self.slot.is_recalling && self.total_tics >= BACK_TICS && taps.contains(N64Buttons::B) {
@@ -402,48 +544,6 @@ impl Players1P {
         }
     }
 
-    /// `mnPlayers1PGameAdjustCursor`.
-    fn adjust_cursor(&mut self, input: ControllerState) {
-        let s = &mut self.slot;
-        if s.is_cursor_adjusting {
-            let step = |target: f32, at: &mut f32| {
-                let delta = (target - *at) / 5.0;
-                if (-1.0..=1.0).contains(&delta) {
-                    *at = target;
-                } else {
-                    *at += delta;
-                }
-            };
-            step(s.cursor_pickup.0, &mut s.cursor.0);
-            step(s.cursor_pickup.1, &mut s.cursor.1);
-            if s.cursor == s.cursor_pickup {
-                s.is_cursor_adjusting = false;
-            }
-        } else if !s.is_recalling {
-            if !(-8..=8).contains(&input.stick_x) {
-                let x = f32::from(input.stick_x) / 20.0 + s.cursor.0;
-                if (0.0..=280.0).contains(&x) {
-                    s.cursor.0 = x;
-                }
-            }
-            if !(-8..=8).contains(&input.stick_y) {
-                let y = f32::from(input.stick_y) / -20.0 + s.cursor.1;
-                if (10.0..=205.0).contains(&y) {
-                    s.cursor.1 = y;
-                }
-            }
-        }
-    }
-
-    /// `mnPlayers1PGameCheckPuckInRange`.
-    fn puck_in_range(&self) -> bool {
-        let (cx, cy) = self.slot.cursor;
-        let (px, py) = self.slot.puck;
-        let x = cx + 25.0;
-        let y = cy + 3.0;
-        (px..=px + 26.0).contains(&x) && (py..=py + 24.0).contains(&y)
-    }
-
     /// `mnPlayers1PGameCheckSelectFighter`. A, like C-Up, picks the first
     /// costume.
     fn select_fighter(&mut self, button: usize) -> bool {
@@ -495,9 +595,8 @@ impl Players1P {
         self.update_fighter();
         self.v_grab_priorities();
         // `mnPlayers1PGameSetCursorPuckOffset`.
-        let s = &mut self.slot;
-        s.cursor_pickup = (s.puck.0 - 11.0, s.puck.1 - -14.0);
-        s.is_cursor_adjusting = true;
+        self.slot.set_cursor_puck_offset();
+        self.slot.is_cursor_adjusting = true;
         self.v_destroy_portrait_flash();
         self.v_update_name_and_emblem();
     }
@@ -511,7 +610,7 @@ impl Players1P {
         {
             return false;
         }
-        if !s.is_held && self.puck_in_range() {
+        if !s.is_held && s.puck_in_range() {
             self.set_cursor_grab();
             return true;
         }
@@ -525,55 +624,15 @@ impl Players1P {
         }
     }
 
-    /// `mnPlayers1PGameRecallPuck`.
-    fn recall_puck(&mut self) {
-        let cursor = self.slot.cursor;
-        let s = &mut self.slot;
-        s.is_fighter_selected = false;
-        s.is_selected = false;
-        s.is_recalling = true;
-        s.recall_tics = 0;
-        s.recall_start = s.puck;
-        s.recall_end_x = (cursor.0 + 20.0).min(280.0);
-        s.recall_end_y = (cursor.1 + -15.0).max(10.0);
-        s.recall_mid_y = if s.recall_end_y < s.recall_start.1 {
-            s.recall_end_y
-        } else {
-            s.recall_start.1
-        } - 20.0;
-    }
-
     /// `mnPlayers1PGameUpdateCursorNoRecall`.
     fn update_cursor_no_recall(&mut self) {
-        let s = &self.slot;
-        let status = if s.cursor.1 > 124.0 || s.cursor.1 < 38.0 {
-            CursorStatus::Pointer
-        } else if !s.is_held {
-            CursorStatus::Hover
-        } else {
-            CursorStatus::Grab
-        };
-        let hover_placed = status == CursorStatus::Pointer && s.is_selected && self.puck_in_range();
-        self.slot.cursor_status = if hover_placed {
-            CursorStatus::Hover
-        } else {
-            status
-        };
+        self.slot.cursor_status = self.slot.no_recall_status();
     }
 
     /// `mnPlayers1PGamePuckProcUpdate`.
     fn puck_update(&mut self) {
         self.view.puck_shown = self.puck_visible();
-        let s = &mut self.slot;
-        if !s.is_selected && s.is_held {
-            if !s.is_cursor_adjusting {
-                s.puck = (s.cursor.0 + 11.0, s.cursor.1 + -14.0);
-            }
-        } else {
-            // `mnPlayers1PGameMovePuck`.
-            s.puck.0 += s.puck_vel.0;
-            s.puck.1 += s.puck_vel.1;
-        }
+        self.slot.follow_or_move_puck();
         let kind = puck_fighter_kind(self.slot.puck, self.fighter_mask);
         if !self.slot.is_selected && kind != self.slot.kind {
             self.slot.kind = kind;
@@ -598,17 +657,7 @@ impl Players1P {
 
     /// `mnPlayers1PGamePuckAdjustRecall`.
     fn adjust_recall(&mut self) {
-        let s = &mut self.slot;
-        s.recall_tics += 1;
-        if s.recall_tics < 11 {
-            let vx = (s.recall_end_x - s.recall_start.0) / 10.0;
-            let vy = if s.recall_tics < 6 {
-                (s.recall_mid_y - s.recall_start.1) / 5.0
-            } else {
-                (s.recall_end_y - s.recall_mid_y) / 5.0
-            };
-            s.puck_vel = (vx, vy);
-        } else if s.recall_tics == 11 {
+        if self.slot.recall_step() {
             self.set_cursor_grab();
             self.slot.puck_vel = (0.0, 0.0);
         }

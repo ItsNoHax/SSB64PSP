@@ -17,8 +17,8 @@
 - PSP-1000 ignores `MEMSIZE=1`; the full pack does not fit (RE-288). Support
   needs a per-scene or reduced pack.
 - The options and data menus' sprites are not resident: `ssb64-menus.pak`
-  holds one small pack per scene (160 KB to 2.7 MB), read when the scene
-  starts and freed when it ends (RE-461).
+  holds one small pack per scene (13 scenes, 56 KB to 2.7 MB), read when
+  the scene starts and freed when it ends (RE-461, RE-462).
 - The stage `MaterialAnimator` allocates one 448-byte joint per
   `MatAnimDesc` on the heap (103, 46 KiB; RE-322).
 - CPU time, not RAM, is the main constraint. Trade memory for CPU:

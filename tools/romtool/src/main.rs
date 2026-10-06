@@ -3676,6 +3676,9 @@ fn write_menu_packs(files: &[Option<ssb_rom::archive::File>], swizzle: bool, out
                 sprites += 1;
             }
         }
+        if scene == MenuScene::Title {
+            add_title_anims(&mut writer, file(ssb_rom::title::FILE)?)?;
+        }
         let bytes = writer.finish();
         ssb_rom::pack::Pack::open(&bytes)
             .map_err(|e| format!("menu pack {scene:?} will not load: {e:?}"))?;
@@ -3689,6 +3692,48 @@ fn write_menu_packs(files: &[Option<ssb_rom::archive::File>], swizzle: bool, out
         out.display(),
         bytes.len()
     );
+    Ok(())
+}
+
+/// `mnTitle`'s labels and "Press Start" trees played ahead
+/// (`ssb_rom::title`): the labels' 51 plays, and one creation play plus a
+/// loop of "Press Start"'s.
+fn add_title_anims(writer: &mut ssb_rom::pack::PackWriter, title: &ssb_rom::archive::File) -> Res {
+    use ssb_rom::title;
+    let pins: Vec<[f32; 2]> = title::LABEL_CENTRES
+        .iter()
+        .map(|c| title::pin(c[0], c[1]))
+        .collect();
+    let labels = title::bake(
+        &title.data,
+        title::LABELS_DOBJDESC,
+        title::LABELS_ANIM_JOINT,
+        &pins,
+        title::LABEL_PLAYS,
+    )
+    .map_err(|e| format!("title labels: {e:?}"))?;
+    let c = title::PRESS_START_CENTRE;
+    let press = title::bake(
+        &title.data,
+        title::PRESS_START_DOBJDESC,
+        title::PRESS_START_ANIM_JOINT,
+        &[title::pin(c[0], c[1])],
+        1 + title::PRESS_START_PERIOD,
+    )
+    .map_err(|e| format!("title press start: {e:?}"))?;
+    for (slot, frames) in [
+        (title::LABELS_SLOT, &labels),
+        (title::PRESS_START_SLOT, &press),
+    ] {
+        writer.add_anim(
+            ssb_rom::pack::AnimDesc::EFFECT,
+            slot,
+            slot,
+            frames.len() as u32,
+            &title::to_bytes(frames),
+            &[],
+        );
+    }
     Ok(())
 }
 
