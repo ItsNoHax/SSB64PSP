@@ -379,7 +379,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 102 gives Metal Mario, the Polygons and Giant Donkey Kong every motion slot
 // their base fighter has, and their own model and texture parts and
 // low-detail models (RE-458). No layout change.
-pub const VERSION: u32 = 102;
+// 103 adds the 1P Game's last scenes: the unlock message, challenger,
+// congratulations and staff roll sprites, the staff roll's letters and
+// credits tables, the ending's baked camera, the room's and staff roll's
+// script files, and the room's tissues graph. No layout change.
+pub const VERSION: u32 = 103;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

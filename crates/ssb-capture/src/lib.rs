@@ -312,6 +312,20 @@ pub enum GameScene {
     OnePContinue,
     OnePRetry,
     OnePClear,
+    /// `onepending`: the ending movie after the real select.
+    OnePEnding,
+    /// `onepstaffroll`: the staff roll, A pressed every 20 ticks from 400.
+    OnePStaffroll,
+    /// `onepcongra`: the congratulations picture.
+    OnePCongra,
+    /// `onepchallenger`: Ness's Challenger Approaching.
+    OnePChallenger,
+    /// `onepmessage`: Ness's unlock message.
+    OnePMessage,
+    /// `onepfinale`: from the ending through the staff roll (START at
+    /// 930 for the fast roll), congratulations and Ness's challenge into
+    /// his battle, with A every 150 ticks.
+    OnePFinale,
     /// `training`: jump, jab, freeze.
     Training,
     /// `fireball`: Training plus Mario's neutral B.
@@ -570,7 +584,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 127] = [
+    pub const ALL: [GameScene; 133] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -591,6 +605,12 @@ impl GameScene {
         GameScene::OnePContinue,
         GameScene::OnePRetry,
         GameScene::OnePClear,
+        GameScene::OnePEnding,
+        GameScene::OnePStaffroll,
+        GameScene::OnePCongra,
+        GameScene::OnePChallenger,
+        GameScene::OnePMessage,
+        GameScene::OnePFinale,
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
@@ -722,6 +742,12 @@ impl GameScene {
             GameScene::OnePContinue => "onepcontinue",
             GameScene::OnePRetry => "onepretry",
             GameScene::OnePClear => "onepclear",
+            GameScene::OnePEnding => "onepending",
+            GameScene::OnePStaffroll => "onepstaffroll",
+            GameScene::OnePCongra => "onepcongra",
+            GameScene::OnePChallenger => "onepchallenger",
+            GameScene::OnePMessage => "onepmessage",
+            GameScene::OnePFinale => "onepfinale",
             GameScene::Training => "training",
             GameScene::Fireball => "fireball",
             GameScene::Superjump => "superjump",

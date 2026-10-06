@@ -40,6 +40,10 @@ pub struct Manager {
     pub level_guard: u8,
     pub kirby_final_copy: FighterKind,
     pub kirby_model_part: u8,
+    /// The unlock the requested [`Scene::Message`] shows. The message scene
+    /// takes `unlock_messages[0]` itself (`mnMessageInitVars`), so the
+    /// manager remembers which message it queued to choose its next scene.
+    pub message: Option<Unlock>,
 }
 
 /// `sc1PManagerGetShuffledFighterKind` / `GetShuffledKirbyCopy`.
@@ -116,6 +120,7 @@ impl Manager {
             level_guard: 2,
             kirby_final_copy: FighterKind::Kirby,
             kirby_model_part: KIRBY_MODEL_PARTS[FighterKind::Kirby as usize],
+            message: None,
         };
         if data.stage >= Stage::CHALLENGER_START {
             out.begin_challenger(data);
@@ -186,6 +191,7 @@ impl Manager {
             && complete_mask & CHARACTER_MASK_STARTER == CHARACTER_MASK_STARTER
         {
             data.unlock_message = Some(Unlock::Inishie);
+            self.message = data.unlock_message;
             self.scene = Scene::Message;
         } else {
             self.scene = Scene::Startup;
@@ -230,6 +236,7 @@ impl Manager {
                         data.challenger_level_drop = 0;
                         data.unlock_message =
                             Some(NEWCOMERS[usize::from(data.stage - Stage::CHALLENGER_START)]);
+                        self.message = data.unlock_message;
                         self.scene = Scene::Message;
                     } else {
                         if data.challenger_level_drop < 9 {
@@ -301,7 +308,7 @@ impl Manager {
                 self.scene = Scene::Battle;
             }
             Scene::Message => {
-                if data.unlock_message == Some(Unlock::Inishie) {
+                if self.message.take() == Some(Unlock::Inishie) {
                     self.scene = Scene::Startup;
                 } else {
                     self.after_challenger(data, backup);

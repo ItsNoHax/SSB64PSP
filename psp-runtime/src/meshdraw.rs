@@ -2932,6 +2932,83 @@ pub unsafe fn fill_rect_n64(rect: [f32; 4], rgba: [u8; 4], draw_state: &mut Draw
     draw_state.invalidate_all();
 }
 
+/// A textured quad in the current model space, `[x0, y0, x1, y1]` with
+/// `(x0, y0)` the top-left texel corner, drawn with no depth test and
+/// blended by alpha. The texture modulates `color`: a sprite texture baked
+/// white with alpha I draws `color` through I, as the staff roll's
+/// `G_CC(0, 0, 0, PRIMITIVE, 0, 0, 0, TEXEL0)` letters do.
+///
+/// # Safety
+///
+/// Between `begin_frame` and `end_frame`; the pack must outlive the frame.
+pub unsafe fn draw_quad_3d(
+    pack: &Pack<'_>,
+    texture_index: u32,
+    rect: [f32; 4],
+    color: [u8; 4],
+    draw_state: &mut DrawState,
+) {
+    let Some(t) = pack.texture(texture_index) else {
+        return;
+    };
+    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    sys::sceGuTexScale(1.0, 1.0);
+    sys::sceGuTexOffset(0.0, 0.0);
+    sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
+    sys::sceGuTexFunc(sys::TextureEffect::Modulate, sys::TextureColorComponent::Rgba);
+    sys::sceGuDisable(GuState::Lighting);
+    sys::sceGuDisable(GuState::DepthTest);
+    sys::sceGuDisable(GuState::CullFace);
+    sys::sceGuDisable(GuState::AlphaTest);
+    sys::sceGuEnable(GuState::Blend);
+    sys::sceGuBlendFunc(
+        sys::BlendOp::Add,
+        sys::BlendFactor::SrcAlpha,
+        sys::BlendFactor::OneMinusSrcAlpha,
+        0,
+        0,
+    );
+    // The texture's own extent in its padded buffer.
+    let (w, h) = (u32::from(t.width), u32::from(t.height));
+    let (gw, gh) = ssb_rom::psp_texture::ge_texture_dims(w, h);
+    let (u1, v1) = (w as f32 / gw as f32, h as f32 / gh as f32);
+    let [x0, y0, x1, y1] = rect;
+    let abgr = u32::from_le_bytes(color);
+    let quad = [
+        (0.0, 0.0, x0, y0),
+        (u1, v1, x1, y1),
+        (u1, 0.0, x1, y0),
+        (0.0, 0.0, x0, y0),
+        (0.0, v1, x0, y1),
+        (u1, v1, x1, y1),
+    ];
+    let verts = sys::sceGuGetMemory((6 * core::mem::size_of::<TexQuadVertex>()) as i32)
+        as *mut TexQuadVertex;
+    for (i, (u, v, x, y)) in quad.into_iter().enumerate() {
+        verts.add(i).write(TexQuadVertex {
+            u,
+            v,
+            color: abgr,
+            x,
+            y,
+            z: 0.0,
+        });
+    }
+    sys::sceGumDrawArray(
+        GuPrimitive::Triangles,
+        VertexType::TEXTURE_32BITF
+            | VertexType::COLOR_8888
+            | VertexType::VERTEX_32BITF
+            | VertexType::TRANSFORM_3D,
+        6,
+        core::ptr::null(),
+        verts as *const c_void,
+    );
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuEnable(GuState::CullFace);
+    draw_state.invalidate_all();
+}
+
 /// Draws one live `LBParticle` as a camera-facing quad (RE-183).
 ///
 /// `lbParticleDrawTextures` (`refs/ssb-decomp-re/src/lb/lbparticle.c:

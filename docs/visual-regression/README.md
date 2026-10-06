@@ -172,6 +172,19 @@ From battle clock 1000 the fixture moves every enemy below the stage's
 bottom bound every 150 ticks; the real blast check, replacement and
 stage-clear logic do the rest. Captures live under
 `~/ppsspp-headless-test/re458-*`.
+
+RE-459 adds the campaign's last scenes. Fixtures seed each scene after the
+real select (Kirby), with the stage stepped past Master Hand where the
+manager expects it.
+
+| Spec | Captured display |
+|---|---|
+| `onepending@200`, `onepending` (400) | The figure dropped on the desk; the room props and window as the light rises |
+| `onepstaffroll@400`, `onepstaffroll` (900) | Director and Chief Programmer rolling; A every 20 ticks highlights a name with its role (C. Falcon hidden) and company |
+| `onepcongra` (200), `onepchallenger` (150), `onepmessage` (150) | Kirby's picture; Ness's silhouette under WARNING; Ness's unlock message |
+| `onepfinale@1520`, `@1700`, `onepfinale` (2200) | One run from the ending through the fast staff roll and congratulations into Ness's challenge and battle |
+
+Captures live under `~/ppsspp-headless-test/re459/`, outside the manifest.
 These diagnostics remain outside the 195-scene manifest. They do not prove
 unmodified traversal, a full campaign, N64 equivalence or physical PSP;
 see [RE-455](../evidence/re/RE-455.md) for source checks and capture limits.

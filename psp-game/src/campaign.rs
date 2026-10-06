@@ -7,11 +7,14 @@
 //! shared Training/VS world with the campaign's `Session` collecting its
 //! callbacks, falls and enemy replacements. Master Hand's stage runs its
 //! boss scene ([`BossScene`]: `sc1pgameboss.c`'s wallpaper and fades and
-//! `sc1pgame.c`'s camera animations and defeat). A scene the PSP cannot
-//! run yet (the ending, challengers, unlock messages, or a battle whose
-//! fighters the pack lacks) stops the campaign
-//! with an explicit blocked screen: it is never replaced by a VS battle or
-//! skipped. Authored presentation is bound by campaign_screen.
+//! `sc1pgame.c`'s camera animations and defeat). After the last stage the
+//! ending movie, staff roll and congratulations run, then a challenger's
+//! warning, battle and unlock message (`ssb_game::spgame`). A scene the PSP
+//! cannot run yet (the Bonus 1 select after Luigi's challenge, a staff
+//! roll whose ROM data the pack lacks, or a battle whose fighters the pack
+//! lacks) stops the campaign with an explicit blocked screen: it is never
+//! replaced by a VS battle or skipped. Authored presentation is bound by
+//! campaign_screen.
 
 use super::*;
 #[path = "campaign_screen.rs"]
@@ -56,11 +59,14 @@ impl Campaign {
 
 /// `nSCKind1PGame` from the 1P select's ready START, after the select
 /// applied its scene and backup data.
-pub(crate) fn start(s: &mut Session) {
+pub(crate) fn start(s: &mut Session, pack: Option<&Pack<'_>>) {
+    let mut frontend = alloc::boxed::Box::new(Frontend::campaign(s.spgame_scene.clone(), &s.backup));
+    // The staff roll's tables and name motion, from the pack.
+    frontend.staffroll_assets = pack.and_then(ssb_psp_runtime::ending::staffroll_assets);
     s.campaign = Some(Campaign {
         bonus: None,
         boss: None,
-        frontend: alloc::boxed::Box::new(Frontend::campaign(s.spgame_scene.clone(), &s.backup)),
+        frontend,
         tic: 0,
         blocked: None,
         presentation: presentation::Presentation::default(),
@@ -612,6 +618,11 @@ pub(crate) fn log_capture(s: &Session, tick: u64) {
                 Scene1P::Intro(_) => "intro",
                 Scene1P::Continue(_) => "continue",
                 Scene1P::StageClear(_) => "stage-clear",
+                Scene1P::Ending(_) => "ending",
+                Scene1P::Staffroll(_) => "staffroll",
+                Scene1P::Congra(_) => "congra",
+                Scene1P::Challenger(_) => "challenger",
+                Scene1P::Message(_) => "message",
                 Scene1P::Host(Scene::Battle) => "battle",
                 Scene1P::Host(Scene::BonusStage) => "bonus",
                 _ => "host",
@@ -621,7 +632,7 @@ pub(crate) fn log_capture(s: &Session, tick: u64) {
         "menu"
     };
     let line = alloc::format!(
-        "campaign tick={} scene={} stage={:?} clock={:?} countdown={:?} cpu={:?} targets={:?} end={:?} tasks={:?} stocks={:?}\n",
+        "campaign tick={} scene={} stage={:?} clock={:?} countdown={:?} cpu={:?} targets={:?} end={:?} tasks={:?} stocks={:?} free={} max_free={}\n",
         tick,
         state,
         s.campaign
@@ -634,6 +645,9 @@ pub(crate) fn log_capture(s: &Session, tick: u64) {
         s.vs_battle.as_ref().and_then(|b| b.end),
         s.campaign.as_ref().and_then(|c| c.frontend.session.as_ref().map(|sp| sp.data.bonus_tasks_complete)),
         s.campaign.as_ref().and_then(|c| c.frontend.session.as_ref().map(|sp| sp.state.players[sp.data.player as usize].stock_count)),
+        // The user partition's free memory, for the pack's headroom.
+        unsafe { psp::sys::sceKernelTotalFreeMemSize() },
+        unsafe { psp::sys::sceKernelMaxFreeMemSize() },
     );
     unsafe {
         psp::sys::sceIoWrite(
@@ -973,6 +987,32 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
             sp.state.players[sp.data.player as usize].total_damage_given = 321;
             sp.data.bonus_get_mask = [0x0018_0005, 0, 0];
             sp.manager.scene = Scene::StageClear;
+        }
+        // The manager steps past the last stage before the ending
+        // (`sc1PManagerUpdateScene`), and back before the challengers.
+        GameScene::OnePEnding | GameScene::OnePFinale => {
+            sp.data.stage = Stage::Boss as u8 + 1;
+            sp.manager.scene = Scene::Ending;
+        }
+        GameScene::OnePStaffroll => {
+            sp.data.stage = Stage::Boss as u8 + 1;
+            sp.manager.scene = Scene::Staffroll;
+        }
+        GameScene::OnePCongra => {
+            sp.data.stage = Stage::Boss as u8 + 1;
+            sp.data.score = 123456;
+            sp.manager.scene = Scene::Congratulations;
+        }
+        GameScene::OnePChallenger => {
+            sp.data.stage = Stage::Ness as u8;
+            sp.data.challenger_fkind = ssb_game::fighter::FighterKind::Ness;
+            sp.manager.scene = Scene::Challenger;
+        }
+        GameScene::OnePMessage => {
+            sp.data.stage = Stage::Ness as u8;
+            sp.data.unlock_message = Some(spgame::Unlock::Ness);
+            sp.manager.message = sp.data.unlock_message;
+            sp.manager.scene = Scene::Message;
         }
         _ => return,
     }

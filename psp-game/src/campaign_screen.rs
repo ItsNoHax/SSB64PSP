@@ -1,5 +1,7 @@
-//! Packed presentation adapter for sc1pintro, mn1pcontinue and sc1pstageclear.
-//! All scene/input/score clocks remain in ssb-game. Demo poses live on the heap.
+//! Packed presentation adapter for sc1pintro, mn1pcontinue and sc1pstageclear,
+//! and (in `campaign_ending_screen.rs`) mvending, scstaffroll, mncongra,
+//! sc1pchallenger and mnmessage. All scene/input/score clocks remain in
+//! ssb-game. Demo poses live on the heap.
 use alloc::{boxed::Box, vec::Vec};
 use ssb_game::{
     fighter::FighterKind,
@@ -11,11 +13,16 @@ use ssb_psp_runtime::{
 };
 use ssb_rom::{campaign as a, pack::Pack, skeleton::Skeleton};
 
+#[path = "campaign_ending_screen.rs"]
+mod ending;
+
 #[derive(Default)]
 pub struct Presentation {
     scene: Option<(u8, u8)>,
     models: Vec<Box<Model>>,
     snapshot_pending: bool,
+    /// The ending's room and camera, and the staff roll's textures.
+    last: ending::LastScenes,
 }
 struct Model {
     kind: FighterKind,
@@ -56,6 +63,12 @@ impl Presentation {
             Screen::Intro(s) => (0, s.stage as u8),
             Screen::Continue(_) => (1, data.stage),
             Screen::StageClear(_) => (2, data.stage),
+            Screen::Ending(_) => (4, data.stage),
+            Screen::Staffroll(_) => (5, data.stage),
+            Screen::Congra(_) => (6, data.stage),
+            Screen::Challenger(_) => (7, data.stage),
+            // Consecutive messages are separate tasks.
+            Screen::Message(m) => (8, m.unlock as u8),
             _ => (3, data.stage),
         };
         if self.scene == Some(id) {
@@ -64,6 +77,9 @@ impl Presentation {
         self.scene = Some(id);
         self.snapshot_pending = id.0 == 2;
         self.models.clear();
+        if ending::make(self, p, screen) {
+            return true;
+        }
         if let Screen::Intro(intro) = screen {
             let allies = match intro.stage {
                 Stage::Mario => 1,
@@ -283,7 +299,7 @@ impl Presentation {
                 play(p, m);
                 m.demo.tick();
             }
-            if matches!(screen, Screen::Continue(_))
+            if matches!(screen, Screen::Continue(_) | Screen::Ending(_))
                 && ssb_rom::anim::LEADING_RUNTIME_JOINT[m.kind as usize][m.slot as usize]
             {
                 if let Some(pose) = m.skeleton.pose(0) {
@@ -505,7 +521,7 @@ impl Presentation {
                 st.invalidate_all();
                 clear_text(p, st, s);
             }
-            _ => {}
+            _ => ending::draw(self, gpu, p, st, screen),
         }
         gpu.set_viewport_fullscreen();
     }
@@ -600,25 +616,70 @@ unsafe fn draw_model(
     planes: (f32, f32),
     light: [f32; 2],
 ) {
+    draw_model_ex(
+        gpu,
+        p,
+        st,
+        m,
+        pos,
+        scale,
+        planes,
+        light,
+        ModelView {
+            camera: m.camera,
+            aspect: 300.0 / 220.0,
+            yaw: 0.0,
+            fog: None,
+        },
+    );
+}
+
+/// How [`draw_model_ex`] projects and shades a demo fighter.
+#[derive(Clone, Copy)]
+pub(crate) struct ModelView {
+    /// The camera's eye (0..3), look-at point (4..7) and field of view (9).
+    pub camera: [f32; 10],
+    /// The camera's `persp.aspect`.
+    pub aspect: f32,
+    /// The fighter `DObj`'s yaw.
+    pub yaw: f32,
+    /// `ftDisplayMainCalcFogColor`'s blend towards a colour animation's
+    /// `color1`.
+    pub fog: Option<[u8; 4]>,
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_model_ex(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    st: &mut DrawState,
+    m: &Model,
+    pos: [f32; 3],
+    scale: f32,
+    planes: (f32, f32),
+    light: [f32; 2],
+    view: ModelView,
+) {
     use ssb_engine::math::{Mat4, Vec3};
     let Some(object) = p.object(m.object) else {
         return;
     };
-    let c = m.camera;
+    let c = view.camera;
     gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
-    gpu.set_perspective(c[9], 300.0 / 220.0, planes.0, planes.1);
+    gpu.set_perspective(c[9], view.aspect, planes.0, planes.1);
     gpu.reset_modelview();
     st.begin_frame();
-    gpu.set_view(&Mat4::look_at(
-        Vec3::new(c[0], c[1], c[2]),
-        Vec3::new(c[4], c[5], c[6]),
-        Vec3::new(0.0, 1.0, 0.0),
-    ));
+    let (eye, at) = (Vec3::new(c[0], c[1], c[2]), Vec3::new(c[4], c[5], c[6]));
+    gpu.set_view(&Mat4::look_at(eye, at, Vec3::new(0.0, 1.0, 0.0)));
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
     let n = m.skeleton.compose(p, &object, &mut posed);
-    gpu.model_transform(pos, [0.0; 3], meshdraw::MODEL_SCALE * m.scale * scale);
+    gpu.model_transform(pos, [0.0, view.yaw, 0.0], meshdraw::MODEL_SCALE * m.scale * scale);
     let base = gpu.model_matrix();
     st.configure_fighter_light(light);
+    if let Some(rgba) = view.fog {
+        let forward = (at - eye).normalized();
+        gpu.set_constant_fog((Vec3::new(pos[0], pos[1], pos[2]) - eye).dot(forward), rgba);
+    }
     let parts = m.demo.parts.draw_parts();
     meshdraw::draw_fighter_posed(
         p,
@@ -633,6 +694,9 @@ unsafe fn draw_model(
             accessory_before: m.kind == FighterKind::Purin,
         },
     );
+    if view.fog.is_some() {
+        gpu.clear_fog();
+    }
     st.finish_fighter_light();
 }
 #[allow(clippy::too_many_arguments)]

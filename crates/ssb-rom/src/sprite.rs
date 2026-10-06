@@ -564,7 +564,8 @@ pub const TRAINING_WALLPAPER_SPRITE: u32 = 0x20718;
 /// `SP_CLOUD`: drawn with `G_RM_CLD_SURF`, blended like `SP_TRANSPARENT`.
 pub const SP_CLOUD: u16 = 0x1000;
 
-/// Every sprite file the pack converts.
+/// Every sprite file the pack converts, besides the congratulations
+/// pictures ([`crate::ending::CONGRA`]).
 pub const FILES: &[SpriteFile] = &[
     crate::campaign::INTRO,
     crate::campaign::NAMES,
@@ -594,6 +595,10 @@ pub const FILES: &[SpriteFile] = &[
     PLAYERS_DIFFICULTY,
     STOCKS_ZAKO,
     COMMON_FONTS,
+    crate::ending::MESSAGE,
+    crate::ending::MESSAGE_COLLAGE,
+    crate::ending::CHALLENGER,
+    crate::ending::STAFFROLL,
 ];
 
 /// [`GATE_CARD`] decoded through `GATE_LUTS[lut]`.

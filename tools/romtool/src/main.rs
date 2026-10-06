@@ -6441,6 +6441,63 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         writer.add_anim(ssb_rom::pack::AnimDesc::EFFECT, slot, slot, 0, &bytes, &[]);
     }
 
+    // The staff roll's credits tables: `ovl59`'s `.data`, which no archive
+    // file holds (`ssb_game::spgame::staffroll::Credits`).
+    let credits = ssb_rom::ending::credits_bytes(&data).ok_or("ROM too short for ovl59")?;
+    if ssb_game::spgame::staffroll::Credits::parse(credits).is_none() {
+        return Err("ovl59's credits tables do not parse".into());
+    }
+    writer.add_anim(
+        ssb_rom::pack::AnimDesc::EFFECT,
+        ssb_rom::ending::CREDITS_SLOT,
+        ssb_rom::ending::CREDITS_SLOT,
+        0,
+        credits,
+        &[],
+    );
+    // `mvEndingSetupOperatorCamera`'s camera animation, baked one frame per
+    // play as Master Hand's are.
+    let ending = archive.load(ssb_rom::ending::ENDING_FILE)?;
+    let mut bytes = Vec::new();
+    for frame in ssb_rom::campaign::camera_frames(&ending.data, ssb_rom::ending::ENDING_CAMERA)? {
+        for value in frame {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    writer.add_anim(
+        ssb_rom::pack::AnimDesc::EFFECT,
+        ssb_rom::ending::ENDING_CAMERA_SLOT,
+        ssb_rom::ending::ENDING_CAMERA_SLOT,
+        0,
+        &bytes,
+        &[],
+    );
+    // The room's prop animations and the staff roll's path and tilt run
+    // from their files' own bytes: carry each whole file.
+    for (file, slot) in [
+        (
+            ssb_rom::ending::ROOM_FILE,
+            ssb_rom::ending::ROOM_SCRIPTS_SLOT,
+        ),
+        (
+            ssb_rom::ending::STAFFROLL_FILE,
+            ssb_rom::ending::STAFFROLL_SCRIPTS_SLOT,
+        ),
+    ] {
+        let f = loaded
+            .files
+            .get(file as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("file {file} missing"))?;
+        if writer
+            .anim_file_len(file)
+            .is_some_and(|len| len as usize != f.data.len())
+        {
+            return Err(format!("file {file}'s animation blob is not the whole file").into());
+        }
+        writer.add_anim(ssb_rom::pack::AnimDesc::EFFECT, slot, file, 0, &f.data, &[]);
+    }
+
     // `SObj` sprites (RE-392): each through its format's combiner, in 8888,
     // clamped on both axes like a texture rectangle.
     let mut sprites = 0usize;
@@ -6453,10 +6510,77 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         for &at in f.offsets {
             let s = ssb_rom::sprite::decode(file, at)
                 .map_err(|e| format!("sprite {}+{at:#x}: {e:?}", f.file))?;
-            let texture = add_sprite_texture(&mut writer, &s, swizzle);
+            // The unlock message's collage is CI4 through an RGBA16
+            // palette: 5551 holds it exactly at half 8888's size, as the
+            // wallpapers (RE-419).
+            let texture = if (f.file, at)
+                == (
+                    ssb_rom::ending::MESSAGE_COLLAGE.file,
+                    ssb_rom::ending::COLLAGE,
+                ) {
+                let image = ssb_rom::sprite::combined_image(&s);
+                let tex = ssb_rom::psp_texture::pack_rgba(
+                    &image,
+                    ssb_rom::psp_texture::Psm::Psm5551,
+                    swizzle,
+                );
+                writer.add_texture(&tex, true, true)
+            } else {
+                add_sprite_texture(&mut writer, &s, swizzle)
+            };
             writer.add_sprite(sprite_desc(f.file, at, &s, texture, 0, 0, 0));
             sprites += 1;
         }
+    }
+    // The congratulations pictures: 300 x 110 RGBA32, 24-bit throughout.
+    // Each is cut at column 256 so its two parts pad to 256 and 64 texels
+    // rather than 512, and stays exact in 8888.
+    for f in &ssb_rom::ending::CONGRA {
+        let file = loaded
+            .files
+            .get(f.file as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("congratulations file {} missing", f.file))?;
+        let s = ssb_rom::sprite::decode(file, ssb_rom::ending::CONGRA_SPRITE)
+            .map_err(|e| format!("congratulations picture {}: {e:?}", f.file))?;
+        for (at, part) in [
+            (
+                ssb_rom::ending::CONGRA_SPRITE,
+                ssb_rom::ending::congra_part(&s, 0),
+            ),
+            (
+                ssb_rom::ending::CONGRA_SPRITE_RIGHT,
+                ssb_rom::ending::congra_part(&s, 1),
+            ),
+        ] {
+            let texture = add_sprite_texture(&mut writer, &part, swizzle);
+            writer.add_sprite(sprite_desc(f.file, at, &part, texture, 0, 0, 0));
+            sprites += 1;
+        }
+    }
+    // The staff roll's name and job letters (`scStaffrollInitNameAndJobDisplayLists`):
+    // raw I4 images, each cut to the texels its quad samples, keyed by
+    // their offset in file 195.
+    let staffroll = loaded
+        .files
+        .get(ssb_rom::ending::STAFFROLL_FILE as usize)
+        .and_then(Option::as_ref)
+        .ok_or("staff roll file 195 missing")?;
+    for (i, &at) in ssb_rom::ending::NAME_IMAGES.iter().enumerate() {
+        let [w, h] = ssb_game::spgame::staffroll::NAME_GLYPHS[i];
+        let s = ssb_rom::ending::name_glyph(staffroll, at, u16::from(w), u16::from(h))
+            .map_err(|e| format!("staff roll letter {i} at {at:#x}: {e:?}"))?;
+        let texture = add_sprite_texture(&mut writer, &s, swizzle);
+        writer.add_sprite(sprite_desc(
+            ssb_rom::ending::STAFFROLL_FILE,
+            at,
+            &s,
+            texture,
+            0,
+            0,
+            0,
+        ));
+        sprites += 1;
     }
     // `sc1PTrainingModeLoadSprites`: the layout file's external pointers
     // select sprites in file 29. Keep the table-slot identity in the pack
@@ -9066,10 +9190,15 @@ fn load_all(archive: &Archive) -> Loaded {
         .flatten()
         .map(|f| (f.id, scene::find_scene_graphs(f)))
         .collect();
-    for &(file, graph) in DIRECT_WEAPON_GRAPHS.iter().chain(&[(
-        ssb_rom::player_interface::FILE,
-        ssb_rom::player_interface::POINTER,
-    )]) {
+    for &(file, graph) in DIRECT_WEAPON_GRAPHS.iter().chain(&[
+        (
+            ssb_rom::player_interface::FILE,
+            ssb_rom::player_interface::POINTER,
+        ),
+        // `mvEndingMakeRoomTissues`: one `DObj` on the bare list, which its
+        // joint animation moves.
+        (ssb_rom::ending::ROOM_FILE, ssb_rom::ending::ROOM_TISSUES),
+    ]) {
         let file_graphs = graphs.entry(file).or_default();
         if !file_graphs.iter().any(|g| g.offset == graph) {
             file_graphs.push(scene::SceneGraph {

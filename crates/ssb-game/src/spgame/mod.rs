@@ -11,26 +11,35 @@
 //! The original's scene calls block until the scene returns; here the
 //! manager is a state machine the host advances with each scene's result.
 //! [`frontend`] owns the select and the intro, stage-clear and continue
-//! controllers. [`bonus_stage`] owns Break the Targets' separate battle
+//! controllers, and after the last stage the [`ending`] movie, the
+//! [`staffroll`], the [`congra`] picture, the [`challenger`] warning and
+//! the unlock [`message`]. [`bonus_stage`] owns Break the Targets' separate battle
 //! and objective accounting; PSP drawing and scene orchestration live in
 //! the host.
 
 pub mod bonus;
 pub mod bonus_stage;
 pub mod boss;
+pub mod challenger;
+pub mod congra;
 pub mod continue_scene;
+pub mod ending;
 pub mod frontend;
 pub mod intro;
 pub mod live;
 pub mod manager;
+pub mod message;
 pub mod results;
 pub mod select;
 pub mod session;
 pub mod setup;
+pub mod staffroll;
 pub mod stage_clear;
 mod stat_flags;
 pub mod wait;
 
+#[cfg(test)]
+mod ending_tests;
 #[cfg(test)]
 mod frontend_tests;
 #[cfg(test)]
@@ -377,6 +386,9 @@ pub const ERROR_1PGAME_MARIO: u8 = 1 << 2;
 /// The `gSCManagerBackupData` fields the 1P Game reads and writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Backup {
+    /// `characters_fkind`: the Characters menu's last fighter, which
+    /// `mnMessageApplyUnlock` points at a newcomer.
+    pub characters_fkind: FighterKind,
     pub fighter_mask: u16,
     pub unlock_mask: u8,
     /// VS stages played.
@@ -393,6 +405,7 @@ pub struct Backup {
 impl Default for Backup {
     fn default() -> Self {
         Self {
+            characters_fkind: FighterKind::Mario,
             fighter_mask: CHARACTER_MASK_STARTER,
             unlock_mask: 0,
             ground_mask: 0,
