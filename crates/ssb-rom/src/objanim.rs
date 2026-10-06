@@ -163,6 +163,11 @@ pub struct StageJoint {
     /// `dobj->anim_joint.event32 = NULL`: the next command fetch ends the
     /// script instead ([`Self::clear_script`]).
     cleared: bool,
+    /// A camera's script (`gcParseCObjCamAnimJoint`): `SetInterp` names
+    /// its paths by flag, `0x08` for `EyeI` and `0x80` for `AtI`.
+    camera: bool,
+    /// The `AtI` track's `SYInterpDesc`, a camera's second path.
+    interp_at: Option<u32>,
 }
 
 /// `AOBJ_ANIM_END` (`F32_MIN / 3`), the frame an ended script reports.
@@ -182,7 +187,25 @@ impl StageJoint {
             changed: false,
             interp: None,
             cleared: false,
+            camera: false,
+            interp_at: None,
         }
+    }
+
+    /// `gcAddCObjCamAnimJoint`: a camera's script, parsed from its start
+    /// at `frame` on the next [`Self::tick`]. Tracks 0 to 9 are `EyeX` to
+    /// `FovY` (`nGCAnimTrackEyeX` on); [`Self::interp`] is `EyeI`'s path
+    /// and [`Self::interp_at`] `AtI`'s.
+    pub fn start_camera(script: u32, frame: f32) -> Self {
+        StageJoint {
+            camera: true,
+            ..Self::start_changed(script, frame)
+        }
+    }
+
+    /// The `AtI` track's `SYInterpDesc`, as a file offset (cameras only).
+    pub fn interp_at(&self) -> Option<u32> {
+        self.interp_at
     }
 
     /// `dobj->anim_joint.event32 = NULL` (`it{G,R}ShellCommonClearAnim`):
@@ -330,7 +353,20 @@ impl StageJoint {
                         }
                     }
                 }
-                // Hands the `TraI` track its `SYInterpDesc`.
+                // Hands the `TraI` track its `SYInterpDesc`; a camera's names
+                // `EyeI` (0x08) and `AtI` (0x80) by flag, a pointer each.
+                OP_SET_INTERP if self.camera => {
+                    if flags & 0x08 != 0 {
+                        self.interp =
+                            Some(u32_at(data, self.pc).ok_or(AnimError::Truncated { at })?);
+                        self.pc += 4;
+                    }
+                    if flags & 0x80 != 0 {
+                        self.interp_at =
+                            Some(u32_at(data, self.pc).ok_or(AnimError::Truncated { at })?);
+                        self.pc += 4;
+                    }
+                }
                 OP_SET_INTERP => {
                     self.interp = Some(u32_at(data, self.pc).ok_or(AnimError::Truncated { at })?);
                     self.pc += 4;

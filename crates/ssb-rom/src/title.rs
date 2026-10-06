@@ -30,10 +30,35 @@ pub const LABELS_ANIM_JOINT: u32 = 0x25350;
 pub const PRESS_START_DOBJDESC: u32 = 0x262C0;
 pub const PRESS_START_ANIM_JOINT: u32 = 0x258D0;
 
+/// `llMNTitleLogoDObjDesc` and `llMNTitleLogoAnimJoint`: the opening
+/// layout's logo (RE-467), whose root's children place the fire logo's
+/// cutout and two strikes (0 to 2) and the red logo (3).
+pub const LOGO_DOBJDESC: u32 = 0x26020;
+pub const LOGO_ANIM_JOINT: u32 = 0x251D0;
+/// `llMNTitleSlashDObjDesc` and `llMNTitleSlashAnimJoint` (its
+/// `MatAnimJoint` is in `crate::opening::MAT_ANIM_JOINTS`).
+pub const SLASH_DOBJDESC: u32 = 0x28DA8;
+pub const SLASH_ANIM_JOINT: u32 = 0x25E70;
+/// `llMNTitleFireDObjDesc` and `llMNTitleFireAnimJoint`: the tree whose
+/// node `root->child->sib_next->child` carries the logo fire's particle
+/// generator.
+pub const FIRE_DOBJDESC: u32 = 0x28EB0;
+pub const FIRE_ANIM_JOINT: u32 = 0x29010;
+/// `dMNTitleLogoAnimSprites`: `LogoAnimCutout`, `...StrikeV`,
+/// `...StrikeH`, `...Full`.
+pub const LOGO_ANIM_SPRITES: [u32; 4] = [0x8FC8, 0x97E8, 0x9B48, 0xBBB0];
+
 /// The reserved animation slots the baked plays are packed under
 /// (`AnimDesc::EFFECT`), in the title's menu pack.
 pub const LABELS_SLOT: u32 = 0xF200;
 pub const PRESS_START_SLOT: u32 = 0xF201;
+pub const LOGO_SLOT: u32 = 0xF202;
+
+/// The logo tree's plays the opening layout reads: the creation's, then
+/// ticks 1 to 170 (`mnTitleSetEndLogoPosition` stops it).
+pub const LOGO_PLAYS: usize = 171;
+/// Children of the logo tree's root.
+pub const LOGO_CHILDREN: usize = 4;
 
 /// Floats per child per play.
 pub const CHILD_FLOATS: usize = 4;

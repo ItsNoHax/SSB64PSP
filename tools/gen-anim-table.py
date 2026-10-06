@@ -777,6 +777,21 @@ BOSS_MOTIONS = ["Default", "Hippataku", "Harau", "Okuhikouki1", "Okuhikouki2",
                 "Appear"]
 BOSS_SLOTS = [f"Boss{m}" for m in BOSS_MOTIONS]
 
+# The opening movie's demo clips (`mvOpening*`), last so every earlier slot
+# keeps its index. The five named rows resolve through
+# `D_ovl1_80390BE8` like `DEMO_SLOTS`; a status from
+# `nFTDemoStatusSpecialStart` (0x1000F) on resolves through the fighter's
+# own `D_ovl1_80390D20[fkind]` table, whose every entry names motion
+# `status - 0x10000`, so special `i` is submotion row `15 + i`.
+OPENING_DEMO_SLOTS = [("DemoRun", "nFTDemoStatusRun"),
+                      ("DemoJump", "nFTDemoStatusJump"),
+                      ("FigurePulled", "nFTDemoStatusFigurePulled"),
+                      ("Clash", "nFTDemoStatusClash"),
+                      ("Stance", "nFTDemoStatusStance")]
+OPENING_SPECIAL_ROWS = 9
+OPENING_SLOTS = ([name for name, _ in OPENING_DEMO_SLOTS]
+                 + [f"Opening{i + 1}" for i in range(OPENING_SPECIAL_ROWS)])
+
 # The fighter whose motion enum a table uses.
 MOTION_ENUM_OWNER = {"MMario": "Mario", "NMario": "Mario", "NFox": "Fox",
                      "NDonkey": "Donkey", "GDonkey": "Donkey", "NSamus": "Samus",
@@ -795,7 +810,8 @@ ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
              + [(name, status, None) for name, status in TAIL_COMMON_SLOTS]
              + [(name, None, None) for name in APPEAR_SLOTS]
              + [(name, None, None) for name, _ in DEMO_SLOTS]
-             + [(name, None, None) for name in BOSS_SLOTS])
+             + [(name, None, None) for name in BOSS_SLOTS]
+             + [(name, None, None) for name in OPENING_SLOTS])
 
 # The slots whose animation ends on its own, and whose length the status
 # machine therefore reads (RE-035). Everything after them loops until it is
@@ -1290,6 +1306,22 @@ def resolve(refs):
             if ANIM_JOINT_MOTIONS["Boss"][motion]:
                 entry.append((slot, fid, sym, 0, runtime))
                 continue
+            if fid not in cache:
+                try:
+                    cache[fid] = file_frames(path)
+                except (ValueError, TypeError):
+                    cache[fid] = None
+            entry.append((slot, fid, sym, cache[fid], runtime))
+        opening_rows = ([demo[status] for _, status in OPENING_DEMO_SLOTS]
+                        + [15 + i for i in range(OPENING_SPECIAL_ROWS)])
+        for slot, motion in zip(OPENING_SLOTS, opening_rows):
+            sym, runtime, anim_joint = sub[motion] if motion < len(sub) else (None, 0, False)
+            if sym is None:
+                entry.append((slot, 0, None, 0, 0))
+                continue
+            if anim_joint:
+                problems.append(f"{fighter} {slot}: {sym} is an AnimJoint clip")
+            fid, path = files[sym]
             if fid not in cache:
                 try:
                     cache[fid] = file_frames(path)

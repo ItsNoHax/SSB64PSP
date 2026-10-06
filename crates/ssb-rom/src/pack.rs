@@ -387,7 +387,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // strips' absolute texel coordinates (RE-464). No layout change.
 // 105 adds How to Play's stage wallpaper (`ROLE_WALLPAPER`, `GRKind` 11) and
 // the menu packs' How to Play scene (RE-465). No layout change.
-pub const VERSION: u32 = 105;
+// 106 adds the opening movie's demo clips (`SLOT_COUNT` 667: the run, jump,
+// pulled, clash and stance rows and nine fighter-specific opening rows), the
+// opening graphs' material animations and display-list graphs, and the
+// menu packs' N64 logo and opening scenes. No layout change.
+pub const VERSION: u32 = 106;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

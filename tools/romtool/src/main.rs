@@ -2678,8 +2678,22 @@ fn initial_material_for(
             head1: ssb_rom::mesh::Head1Seed::LayerXlu,
             ..ssb_rom::mesh::InitialMaterial::SCENE
         }
-    } else if lb_transition_graphs.contains(&(file, graph_offset)) {
+    } else if lb_transition_graphs.contains(&(file, graph_offset))
+        || ssb_rom::opening::CAMERA_DEFAULT_GRAPHS.contains(&(file, graph_offset))
+    {
+        // The opening's lists run under the camera's untouched default too
+        // (RE-467).
         ssb_rom::mesh::InitialMaterial::LB_TRANSITION_EXTERNAL
+    } else if ssb_rom::opening::HEAD1_DL_GRAPHS.contains(&(file, graph_offset)) {
+        // The newcomers' lists run under the camera's head-1 default,
+        // `G_RM_AA_ZB_XLU_SURF` (RE-467).
+        ssb_rom::mesh::InitialMaterial {
+            depth_test: true,
+            depth_write: false,
+            depth_mode: ssb_rom::mesh::ZMode::Translucent,
+            translucent: true,
+            ..ssb_rom::mesh::InitialMaterial::SCENE
+        }
     } else if WEAPON_SEEDED_GRAPHS.contains(&(file, graph_offset)) {
         ssb_rom::mesh::InitialMaterial::WEAPON_EXTERNAL
     } else if (file, graph_offset) == SHIELD_GRAPH {
@@ -2974,6 +2988,8 @@ fn resolve_one_mat_anim(
     let mut max_palette = 0.0f32;
     let mut palette_seen = false;
     let mut max_texture = 0.0f32;
+    // The sprite indices the replay selects (RE-467: a sparse table).
+    let mut used_textures = BTreeSet::new();
     let mut frames = 0u32;
     let mut seen_material = false;
     // RE-318: tile-0 UV tracks against their rest values, per replayed frame.
@@ -2997,9 +3013,11 @@ fn resolve_one_mat_anim(
         if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT) {
             max_texture = max_texture.max(v);
             max_current = max_current.max(v);
+            used_textures.insert(v.max(0.0) as usize);
         }
         if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_NEXT) {
             max_texture = max_texture.max(v);
+            used_textures.insert(v.max(0.0) as usize);
         }
         seen_material |= (0..10).any(|track| j.track_value(track).is_some());
         if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_SET_LFRAC) {
@@ -3060,7 +3078,15 @@ fn resolve_one_mat_anim(
         0
     };
     let sprites = if texture_count > 0 {
-        ssb_rom::mobj::read_sprites(file, sub_offset, texture_count as usize)?
+        match ssb_rom::mobj::read_sprites(file, sub_offset, texture_count as usize) {
+            Some(s) => s,
+            None if (ssb_rom::opening::file::MV_COMMON..=ssb_rom::opening::file::RUN_CRASH)
+                .contains(&file.id) =>
+            {
+                sparse_opening_sprites(file, sub_offset, texture_count as usize, &used_textures)?
+            }
+            None => return None,
+        }
     } else {
         Vec::new()
     };
@@ -3104,6 +3130,30 @@ fn resolve_one_mat_anim(
             max_lod_frac,
         },
     ))
+}
+
+/// RE-467: an opening `MObjSub.sprites` array with NULL entries its script
+/// never selects (the standoff's lightning: 0, 2, 3 and 4 of five, entry 1
+/// NULL), which [`ssb_rom::mobj::read_sprites`] declines whole. Each NULL
+/// entry the replay never reaches takes the first real one's place, so the
+/// table keeps its indices; a NULL entry the script selects still declines.
+fn sparse_opening_sprites(
+    file: &ssb_rom::archive::File,
+    sub_offset: u32,
+    count: usize,
+    used: &BTreeSet<usize>,
+) -> Option<Vec<ssb_rom::mobj::Ptr>> {
+    let entries: Vec<Option<ssb_rom::mobj::Ptr>> = (0..count)
+        .map(|i| ssb_rom::mobj::read_sprite_at(file, sub_offset, i))
+        .collect();
+    if used
+        .iter()
+        .any(|&i| entries.get(i).is_none_or(|e| e.is_none()))
+    {
+        return None;
+    }
+    let fill = entries.iter().flatten().next().copied()?;
+    Some(entries.into_iter().map(|e| e.unwrap_or(fill)).collect())
 }
 
 /// Resolves an `AObjEvent32 ***` joint table (RE-089's `p_matanim_joints`
@@ -3426,6 +3476,26 @@ fn resolve_layer_mat_anims(
         );
     }
 
+    // The opening movie's trees and lists (RE-467): `gcAddMatAnimJointAll`
+    // against the `MObjSub` table the hand-entered pairings resolved.
+    if let Some(&(_, mat)) = ssb_rom::opening::MAT_ANIM_JOINTS
+        .iter()
+        .find(|(key, _)| *key == (file.id, graph_offset))
+    {
+        return resolve_mat_anims(
+            file,
+            mat,
+            materials,
+            |node, m| {
+                materials
+                    .get(node)?
+                    .get(m)
+                    .map(|s| (s.at, s.palette_entries))
+            },
+            mat_anim_data,
+        );
+    }
+
     // RE-442: the items' material scripts, against the materials their
     // `ITAttributes.p_mobjsubs` tables resolved.
     if let Some(target) = item_mat_target((file.id, graph_offset)) {
@@ -3628,7 +3698,12 @@ fn add_menu_sprite_texture(
 /// `ssb64-menus.pak` (`ssb_rom::menu_pack`): each options or data menu
 /// scene's sprites in a pack of their own, which the host loads with the
 /// scene.
-fn write_menu_packs(files: &[Option<ssb_rom::archive::File>], swizzle: bool, out: &Path) -> Res {
+fn write_menu_packs(
+    files: &[Option<ssb_rom::archive::File>],
+    swizzle: bool,
+    out: &Path,
+    mut opening_models: Vec<u8>,
+) -> Res {
     use ssb_rom::menu_pack::MenuScene;
     let file = |id: u32| {
         files
@@ -3639,6 +3714,11 @@ fn write_menu_packs(files: &[Option<ssb_rom::archive::File>], swizzle: bool, out
     let mut packs = Vec::new();
     let mut sprites = 0usize;
     for scene in MenuScene::ALL {
+        if scene == MenuScene::OpeningModels {
+            println!("  menu pack   {scene:?}: {} bytes", opening_models.len());
+            packs.push(core::mem::take(&mut opening_models));
+            continue;
+        }
         let mut writer = ssb_rom::pack::PackWriter::new();
         for f in scene.sprites() {
             let data = file(f.file)?;
@@ -3678,6 +3758,40 @@ fn write_menu_packs(files: &[Option<ssb_rom::archive::File>], swizzle: bool, out
         }
         if scene == MenuScene::Title {
             add_title_anims(&mut writer, file(ssb_rom::title::FILE)?)?;
+        }
+        // The whole files the scene's joint scripts play from, and its
+        // camera animations baked one play per frame (the opening, RE-467).
+        for &id in scene.blobs() {
+            let data = &file(id)?.data;
+            writer.add_anim(
+                ssb_rom::pack::AnimDesc::EFFECT,
+                ssb_rom::opening::blob_slot(id),
+                id,
+                0,
+                data,
+                &[],
+            );
+        }
+        for cam in scene.cameras() {
+            let frames = ssb_rom::camanim::bake(&file(cam.file)?.data, cam.offset, cam.init, 8192)
+                .map_err(|e| format!("camera {:#x}+{:#x}: {e:?}", cam.file, cam.offset))?;
+            if frames.is_empty() || frames.len() >= 8192 {
+                return Err(format!(
+                    "camera {:#x}+{:#x}: {} plays",
+                    cam.file,
+                    cam.offset,
+                    frames.len()
+                )
+                .into());
+            }
+            writer.add_anim(
+                ssb_rom::pack::AnimDesc::EFFECT,
+                cam.slot(),
+                cam.slot(),
+                frames.len() as u32,
+                &ssb_rom::camanim::to_bytes(&frames),
+                &[],
+            );
         }
         if scene == MenuScene::Explain {
             sprites += add_explain(
@@ -3795,9 +3909,20 @@ fn add_title_anims(writer: &mut ssb_rom::pack::PackWriter, title: &ssb_rom::arch
         1 + title::PRESS_START_PERIOD,
     )
     .map_err(|e| format!("title press start: {e:?}"))?;
+    // The opening layout's logo (RE-467): `mnTitleMakeLogo` zeroes each
+    // child's translation after the creation's play.
+    let logo = title::bake(
+        &title.data,
+        title::LOGO_DOBJDESC,
+        title::LOGO_ANIM_JOINT,
+        &[[0.0; 2]; title::LOGO_CHILDREN],
+        title::LOGO_PLAYS,
+    )
+    .map_err(|e| format!("title logo: {e:?}"))?;
     for (slot, frames) in [
         (title::LABELS_SLOT, &labels),
         (title::PRESS_START_SLOT, &press),
+        (title::LOGO_SLOT, &logo),
     ] {
         writer.add_anim(
             ssb_rom::pack::AnimDesc::EFFECT,
@@ -3841,6 +3966,24 @@ fn sprite_desc(
 }
 
 fn pack(path: &Path, opts: &[&str]) -> Res {
+    // The opening's own models first, in a pack of their own (RE-467);
+    // the resident pack then leaves their files out.
+    let mut opening_models = Vec::new();
+    pack_part(path, opts, PackPart::OpeningModels(&mut opening_models))?;
+    pack_part(path, opts, PackPart::Resident(opening_models))
+}
+
+/// Which pack [`pack_part`] builds.
+enum PackPart<'a> {
+    /// Only the objects of the opening's own files
+    /// (`ssb_rom::opening::is_model_file`), into the buffer.
+    OpeningModels(&'a mut Vec<u8>),
+    /// Everything else, written out with the menu packs; the opening's
+    /// models pack goes in with them.
+    Resident(Vec<u8>),
+}
+
+fn pack_part(path: &Path, opts: &[&str], part: PackPart<'_>) -> Res {
     use ssb_rom::{mesh, pack as fmt};
 
     let mut out_path = PathBuf::from("assets/generated/ssb64.pak");
@@ -3923,8 +4066,12 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let ground_graphs = ground_layer1_graphs(&loaded);
     let transition_graphs = lb_transition_graphs();
 
+    let opening_part = matches!(part, PackPart::OpeningModels(_));
     for id in 0..archive.len() as u32 {
         if only_file.is_some_and(|f| f != id) {
+            continue;
+        }
+        if ssb_rom::opening::is_model_file(id) != opening_part {
             continue;
         }
         let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
@@ -5309,6 +5456,19 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             }
         }
     }
+    let opening_models = match part {
+        PackPart::OpeningModels(out) => {
+            *out = writer.finish();
+            ssb_rom::pack::Pack::open(out)
+                .map_err(|e| format!("opening models pack will not load: {e:?}"))?;
+            println!(
+                "  opening models pack: {objects} objects, {} bytes",
+                out.len()
+            );
+            return Ok(());
+        }
+        PackPart::Resident(bytes) => bytes,
+    };
     println!(
         "  skeletons   {skeleton_parts_added} electric-skeleton part meshes for {} fighters \
          ({skeleton_parts_dropped} pre-matrix lists with triangles dropped)",
@@ -7004,6 +7164,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         &loaded.files,
         swizzle,
         &out_path.with_file_name(ssb_rom::menu_pack::FILE_NAME),
+        opening_models,
     )?;
 
     // Verify what we just wrote actually loads, rather than trusting it.
@@ -9406,15 +9567,25 @@ fn load_all(archive: &Archive) -> Loaded {
         .flatten()
         .map(|f| (f.id, scene::find_scene_graphs(f)))
         .collect();
-    for &(file, graph) in DIRECT_WEAPON_GRAPHS.iter().chain(&[
-        (
-            ssb_rom::player_interface::FILE,
-            ssb_rom::player_interface::POINTER,
-        ),
-        // `mvEndingMakeRoomTissues`: one `DObj` on the bare list, which its
-        // joint animation moves.
-        (ssb_rom::ending::ROOM_FILE, ssb_rom::ending::ROOM_TISSUES),
-    ]) {
+    for &(file, graph) in DIRECT_WEAPON_GRAPHS.iter().chain(
+        &[
+            (
+                ssb_rom::player_interface::FILE,
+                ssb_rom::player_interface::POINTER,
+            ),
+            // `mvEndingMakeRoomTissues`: one `DObj` on the bare list, which its
+            // joint animation moves.
+            (ssb_rom::ending::ROOM_FILE, ssb_rom::ending::ROOM_TISSUES),
+        ]
+        .into_iter()
+        .chain(
+            // The opening's lists on one `DObj` each (RE-467).
+            ssb_rom::opening::DL_GRAPHS
+                .iter()
+                .map(|&(file, dl, _)| (file, dl)),
+        )
+        .collect::<Vec<_>>(),
+    ) {
         let file_graphs = graphs.entry(file).or_default();
         if !file_graphs.iter().any(|g| g.offset == graph) {
             file_graphs.push(scene::SceneGraph {
@@ -9649,7 +9820,7 @@ fn load_all(archive: &Archive) -> Loaded {
     // in the decompilation (still just raw bytes there) or, on inspection,
     // turned out to be a substring coincidence in a symbol name rather than
     // a real address match, and are left unfixed rather than guessed at.
-    for &(file, graph, table) in &[
+    for (file, graph, table) in [
         // Both GBumper (file 251 + 0xCF0) and NBumper (+ 0x69C) name
         // 0x7648 exactly. 0x7BE8 is a separate tree, not a later start
         // of that graph (correction to RE-162, measured in RE-429).
@@ -9683,7 +9854,15 @@ fn load_all(archive: &Archive) -> Loaded {
         (75u32, 0x35F8u32, 0x2AA8u32),   // MVOpeningRunCrash MObjSub_0x2AA8_MObjSub
         (83u32, 0x7750u32, 0x73E0u32),   // EFCommonEffects1 DamageSlash_MObjSub
         (167u32, 0x28DA8u32, 0x287D8u32), // MNTitle SlashMObjSub_MObjSub
-    ] {
+    ]
+    .into_iter()
+    // The opening's one-`DObj` lists with a `gcAddMObjAll` table (RE-467).
+    .chain(
+        ssb_rom::opening::DL_GRAPHS
+            .iter()
+            .filter(|&&(_, _, mobjsub)| mobjsub != 0)
+            .map(|&(file, dl, mobjsub)| (file, dl, mobjsub)),
+    ) {
         let nodes = graphs
             .get(&file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
@@ -14879,7 +15058,9 @@ mod tests {
         // (335 + 0x8B40), whose one list is on link 1 and sets no mode.
         // RE-443 routes three scale-X direct effects to their source's
         // head 1. They inherit CLD rather than the camera's XLU state.
-        assert_eq!(total, 107);
+        // RE-467's one-node graphs add the opening room's haze, outside and
+        // sunlight lists (52 + 0x98F8, 0x24200, 0x24708), drawn by link.
+        assert_eq!(total, 110);
         assert_eq!(mode_writers, 3);
     }
 

@@ -13,6 +13,7 @@
 //! the scene count, then each scene's byte offset and length. Every
 //! scene's pack starts on a 64-byte boundary.
 
+use crate::opening as op;
 use crate::sprite::SpriteFile;
 
 /// `"SMNU"`.
@@ -42,10 +43,30 @@ pub enum MenuScene {
     /// spark's and overlay's textures and the scene's data blobs
     /// ([`crate::explain`]).
     Explain = 13,
+    /// The N64 logo (`mnStartup`).
+    Startup = 14,
+    /// The opening movie's scenes ([`crate::opening`]): each one's sprites,
+    /// baked cameras and script files. The eight fighter scenes share one.
+    OpeningRoom = 15,
+    OpeningPortraits = 16,
+    OpeningFighters = 17,
+    OpeningRun = 18,
+    OpeningCliff = 19,
+    OpeningYamabuki = 20,
+    OpeningJungle = 21,
+    OpeningYoster = 22,
+    OpeningSector = 23,
+    OpeningStandoff = 24,
+    OpeningClash = 25,
+    OpeningNewcomers = 26,
+    /// The opening's own models (`ssb_rom::opening::is_model_file`): their
+    /// objects, textures and material scripts in a pack of their own, loaded
+    /// for the whole opening rather than held in the resident pack.
+    OpeningModels = 27,
 }
 
 impl MenuScene {
-    pub const ALL: [MenuScene; 14] = [
+    pub const ALL: [MenuScene; 28] = [
         MenuScene::Option,
         MenuScene::ScreenAdjust,
         MenuScene::BackupClear,
@@ -60,6 +81,20 @@ impl MenuScene {
         MenuScene::VsItemSwitch,
         MenuScene::Players1PBonus,
         MenuScene::Explain,
+        MenuScene::Startup,
+        MenuScene::OpeningRoom,
+        MenuScene::OpeningPortraits,
+        MenuScene::OpeningFighters,
+        MenuScene::OpeningRun,
+        MenuScene::OpeningCliff,
+        MenuScene::OpeningYamabuki,
+        MenuScene::OpeningJungle,
+        MenuScene::OpeningYoster,
+        MenuScene::OpeningSector,
+        MenuScene::OpeningStandoff,
+        MenuScene::OpeningClash,
+        MenuScene::OpeningNewcomers,
+        MenuScene::OpeningModels,
     ];
 
     /// The scene's sprites (`dMN*FileIDs`, those it draws).
@@ -85,6 +120,61 @@ impl MenuScene {
             MenuScene::VsItemSwitch => &[VS_ITEM_SWITCH],
             MenuScene::Players1PBonus => &[BONUS_GAME_MODES, BONUS_RECORDS],
             MenuScene::Explain => &[crate::explain::SPRITES],
+            MenuScene::Startup => &[op::STARTUP_SPRITES],
+            MenuScene::OpeningPortraits => {
+                &[op::PORTRAITS_SET1_SPRITES, op::PORTRAITS_SET2_SPRITES]
+            }
+            MenuScene::OpeningRun => &[op::RUN_SPRITES],
+            MenuScene::OpeningCliff | MenuScene::OpeningStandoff => {
+                &[op::STANDOFF_WALLPAPER_SPRITES]
+            }
+            MenuScene::OpeningYamabuki => &[op::YAMABUKI_SPRITES],
+            MenuScene::OpeningSector => &[op::SECTOR_SPRITES, op::SECTOR_WALLPAPER_SPRITES],
+            MenuScene::OpeningRoom
+            | MenuScene::OpeningFighters
+            | MenuScene::OpeningJungle
+            | MenuScene::OpeningYoster
+            | MenuScene::OpeningClash
+            | MenuScene::OpeningNewcomers
+            | MenuScene::OpeningModels => &[],
+        }
+    }
+
+    /// Whole files the scene's joint scripts play from, each under
+    /// [`crate::opening::blob_slot`]. The room's `MVCommon` is resident
+    /// (the ending's `ROOM_SCRIPTS_SLOT`).
+    pub fn blobs(self) -> &'static [u32] {
+        use op::file as f;
+        match self {
+            MenuScene::Title => &[crate::title::FILE],
+            MenuScene::OpeningRoom => &[f::ROOM_TRANSITION],
+            MenuScene::OpeningRun => &[f::RUN],
+            MenuScene::OpeningCliff => &[f::CLIFF],
+            MenuScene::OpeningYamabuki => &[f::YAMABUKI],
+            MenuScene::OpeningYoster => &[f::YOSTER],
+            MenuScene::OpeningSector => &[f::SECTOR],
+            MenuScene::OpeningStandoff => &[f::STANDOFF],
+            MenuScene::OpeningClash => &[f::CLASH_WALLPAPER],
+            MenuScene::OpeningNewcomers => &[f::NEWCOMERS1, f::NEWCOMERS2],
+            _ => &[],
+        }
+    }
+
+    /// The scene's camera animations, baked one play per frame under
+    /// [`crate::opening::CamAnim::slot`].
+    pub fn cameras(self) -> &'static [op::CamAnim] {
+        match self {
+            MenuScene::OpeningRoom => &op::ROOM_CAMERAS,
+            MenuScene::OpeningFighters => &op::COMMON_CAMERAS,
+            MenuScene::OpeningRun => &[op::RUN_CAMERA],
+            MenuScene::OpeningCliff => &[op::CLIFF_CAMERA],
+            MenuScene::OpeningYamabuki => &[op::YAMABUKI_CAMERA],
+            MenuScene::OpeningJungle => &[op::JUNGLE_CAMERA],
+            MenuScene::OpeningYoster => &[op::YOSTER_CAMERA],
+            MenuScene::OpeningSector => &[op::SECTOR_CAMERA],
+            MenuScene::OpeningStandoff => &[op::STANDOFF_CAMERA],
+            MenuScene::OpeningClash => &[op::CLASH_FIGHTERS_CAMERA, op::CLASH_WALLPAPER_CAMERA],
+            _ => &[],
         }
     }
 
@@ -114,13 +204,15 @@ const BACKUP_CLEAR_NO_LUTS: [u32; 2] = [0x7A60, 0x7A88];
 
 /// File 0xA7, `MNTitle`: `LogoAnimFull`, `BorderUpper`, `Cutout`,
 /// `TMUnk`, `Copyright`, `PressStart`, `Super`, `Smash`, `Bros` (the US
-/// title's sprites; the opening-only logo animation's are not drawn).
+/// title's sprites), then the opening layout's `LogoAnimCutout`,
+/// `...StrikeV` and `...StrikeH` (RE-467).
 /// The scene's pack also holds the labels' and "Press Start"'s baked
 /// animation plays (`crate::title`).
 pub const TITLE: SpriteFile = SpriteFile {
     file: crate::title::FILE,
     offsets: &[
-        0xBBB0, 0xC208, 0x11988, 0x11AA8, 0x15320, 0x15A48, 0x16728, 0x245C8, 0x25188,
+        0xBBB0, 0xC208, 0x11988, 0x11AA8, 0x15320, 0x15A48, 0x16728, 0x245C8, 0x25188, 0x8FC8,
+        0x97E8, 0x9B48,
     ],
 };
 

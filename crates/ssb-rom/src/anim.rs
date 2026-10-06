@@ -168,8 +168,20 @@ pub const SLOT_INTRO_R: usize = 622;
 pub const SLOT_BOSS_DEFAULT: usize = 623;
 /// Number of Master Hand's own motion slots.
 pub const BOSS_SLOTS: usize = 30;
+/// The opening movie's demo clips (`mvOpening*`): `nFTDemoStatusRun`,
+/// `...Jump`, `...FigurePulled`, `...Clash` and `...Stance` (submotion
+/// rows 6, 7, 8, 11 and 12), then the nine fighter-specific statuses from
+/// `nFTDemoStatusSpecialStart` (0x1000F, rows 15 to 23). Figatrees.
+pub const SLOT_DEMO_RUN: usize = 653;
+pub const SLOT_DEMO_JUMP: usize = 654;
+pub const SLOT_FIGURE_PULLED: usize = 655;
+pub const SLOT_CLASH: usize = 656;
+pub const SLOT_STANCE: usize = 657;
+pub const SLOT_OPENING1: usize = 658;
+/// Number of fighter-specific opening slots from [`SLOT_OPENING1`].
+pub const OPENING_SLOTS: usize = 9;
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 653;
+pub const SLOT_COUNT: usize = 667;
 
 /// Whether a slot holds a 32-bit `AnimJoint` clip rather than a figatree:
 /// the seven entry slots, and Master Hand's motions whose descriptor sets
@@ -669,8 +681,12 @@ mod tests {
         // twelve lack only IntroR for Captain Falcon, Jigglypuff and Ness,
         // who are never a card's enemy; Master Hand lacks IntroL. Master
         // Hand's 30 own slots exist for him alone; his common statuses all
-        // play one idle.
-        assert_eq!(missing, 5686, "Twelve fighters and Master Hand");
+        // play one idle. The opening's 14 slots (RE-467) exist 61 times:
+        // DemoRun for the eight starters, Captain Falcon, Ness and Master
+        // Hand; DemoJump for Link and Master Hand; FigurePulled for the
+        // starters and Master Hand; Clash and Stance for the starters; and
+        // the fighters' own rows as far as each table goes (Fox's nine).
+        assert_eq!(missing, 5807, "Twelve fighters and Master Hand");
         // Metal Mario, the Polygons and Giant Donkey Kong carry every slot
         // their base fighter has (their `dFT<Name>MotionDescs` index the
         // base's motion enum), except: the demo and continue rows and
@@ -690,8 +706,11 @@ mod tests {
             let b = &FIGHTER_ANIMS[base(kind)];
             for (slot, name) in SLOT_NAMES.iter().enumerate() {
                 let (have, base_has) = (a.files[slot] != 0, b.files[slot] != 0);
+                // The opening's slots come from the twelve's own submotion
+                // rows, which the variants' tables do not carry (RE-467).
                 if have == base_has
                     || (SLOT_WIN1..=SLOT_INTRO_R).contains(&slot)
+                    || slot >= SLOT_DEMO_RUN
                     || (*name == "YoshiEgg" && matches!(kind, 23 | 26))
                 {
                     continue;
@@ -751,8 +770,15 @@ mod tests {
         assert_eq!(SLOT_NAMES[SLOT_INTRO_R], "IntroR");
         assert_eq!(SLOT_BOSS_DEFAULT, SLOT_INTRO_R + 1);
         assert_eq!(SLOT_NAMES[SLOT_BOSS_DEFAULT], "BossDefault");
-        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "BossAppear");
-        assert_eq!(SLOT_BOSS_DEFAULT + BOSS_SLOTS, SLOT_COUNT);
+        assert_eq!(SLOT_NAMES[SLOT_DEMO_RUN - 1], "BossAppear");
+        assert_eq!(SLOT_BOSS_DEFAULT + BOSS_SLOTS, SLOT_DEMO_RUN);
+        assert_eq!(SLOT_NAMES[SLOT_DEMO_RUN], "DemoRun");
+        assert_eq!(SLOT_NAMES[SLOT_DEMO_JUMP], "DemoJump");
+        assert_eq!(SLOT_NAMES[SLOT_FIGURE_PULLED], "FigurePulled");
+        assert_eq!(SLOT_NAMES[SLOT_CLASH], "Clash");
+        assert_eq!(SLOT_NAMES[SLOT_STANCE], "Stance");
+        assert_eq!(SLOT_NAMES[SLOT_OPENING1], "Opening1");
+        assert_eq!(SLOT_OPENING1 + OPENING_SLOTS, SLOT_COUNT);
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")

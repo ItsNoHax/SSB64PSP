@@ -3,9 +3,7 @@
 //! animation slots.
 
 use ssb_game::boss;
-use ssb_rom::anim::{
-    is_anim_joint_slot, BOSS_SLOTS, FIGHTER_ANIMS, SLOT_BOSS_DEFAULT, SLOT_COUNT, SLOT_NAMES,
-};
+use ssb_rom::anim::{is_anim_joint_slot, BOSS_SLOTS, FIGHTER_ANIMS, SLOT_BOSS_DEFAULT, SLOT_NAMES};
 use ssb_rom::{rom, Archive};
 
 const BOSS: usize = 12;
@@ -35,7 +33,8 @@ fn anim_joint_frames(archive: &Archive<'_>, file: u32) -> f32 {
 #[test]
 fn the_slots_follow_the_boss_motion_order() {
     assert_eq!(boss::SLOT_DEFAULT, SLOT_BOSS_DEFAULT);
-    assert_eq!(SLOT_BOSS_DEFAULT + BOSS_SLOTS, SLOT_COUNT);
+    // The opening's slots follow Master Hand's (RE-467).
+    assert_eq!(SLOT_BOSS_DEFAULT + BOSS_SLOTS, ssb_rom::anim::SLOT_DEMO_RUN);
     assert_eq!(SLOT_NAMES[SLOT_BOSS_DEFAULT + 17], "BossDrill");
     let row = &FIGHTER_ANIMS[BOSS];
     assert_eq!(row.name, "Boss");
@@ -43,9 +42,13 @@ fn the_slots_follow_the_boss_motion_order() {
     // (2124) for Okupunch1 and DyingStart's file 2130 for DeadRight.
     assert_eq!(row.files[SLOT_BOSS_DEFAULT], 2098);
     assert_eq!(row.files[SLOT_BOSS_DEFAULT + 22], 2124);
-    assert_eq!(row.files[SLOT_COUNT - 1], 2131);
+    assert_eq!(row.files[SLOT_BOSS_DEFAULT + BOSS_SLOTS - 1], 2131);
     for other in FIGHTER_ANIMS.iter().filter(|a| a.name != "Boss") {
-        assert!(other.files[SLOT_BOSS_DEFAULT..].iter().all(|&f| f == 0));
+        assert!(
+            other.files[SLOT_BOSS_DEFAULT..SLOT_BOSS_DEFAULT + BOSS_SLOTS]
+                .iter()
+                .all(|&f| f == 0)
+        );
     }
     let joint: Vec<usize> = (0..BOSS_SLOTS)
         .filter(|&i| is_anim_joint_slot(SLOT_BOSS_DEFAULT + i))
