@@ -745,6 +745,46 @@ pub fn make_common(
     pc
 }
 
+/// `lbParticleMakePosVel`: a root particle at `pos` moving at `vel` (not
+/// the script's velocity), updated once.
+pub fn make_pos_vel(
+    p: &mut Particles,
+    banks: &dyn Banks,
+    dead: &mut dyn ProcDead,
+    bank_id: u8,
+    script_id: u16,
+    pos: Vec3,
+    vel: Vec3,
+) -> u8 {
+    let id = bank_id & 7;
+    if id >= BANKS_NUM_MAX || script_id >= banks.script_count(id) {
+        return NIL;
+    }
+    let Some(script) = banks.script(id, script_id) else {
+        return NIL;
+    };
+    let pc = make_struct(
+        p,
+        NIL,
+        bank_id,
+        script.flags,
+        script.texture_id,
+        script_id,
+        script.particle_lifetime,
+        pos,
+        vel,
+        script.size,
+        script.gravity,
+        script.friction,
+        banks.texture_flags(id, script.texture_id),
+        NIL,
+    );
+    if pc != NIL {
+        update_struct(p, banks, dead, pc, NIL, usize::from(bank_id >> 3));
+    }
+    pc
+}
+
 /// `LBParticleProcessStruct`: one update of a particle, as the head of its
 /// list.
 pub fn process_struct(p: &mut Particles, banks: &dyn Banks, dead: &mut dyn ProcDead, pc: u8) {
@@ -1648,6 +1688,69 @@ pub fn project(
         center: [tx, ty],
         half: [k * mx, k * my],
         depth,
+        flip_s,
+        flip_t,
+    })
+}
+
+/// `lbParticleDrawTextures`' projection under a camera with no matrix
+/// `XObj`s (`gmCameraMakeEffectCamera`, the interface's link 25): the
+/// viewport's own scale and translation, `syRdpSetViewport`'s quarter
+/// pixels, so a particle at `(4 x, 4 y, 0)` lands on screen pixel `(x, y)`.
+/// `viewport` is `ulx, uly, lrx, lry` on the 320 x 240 screen.
+pub fn screen_projection([ulx, uly, lrx, lry]: [f32; 4]) -> Mat4 {
+    // `syRdpSetViewport`'s integer truncations, and `G_MAXZ / 2`.
+    let (h, v) = ((ulx + lrx) / 2.0, (uly + lry) / 2.0);
+    let vscale0 = ((lrx - h) * 4.0) as i32 as f32;
+    let vscale1 = -(((lry - v) * 4.0) as i32 as f32);
+    let vtrans0 = (h * 4.0) as i32 as f32;
+    let vtrans1 = (v * 4.0) as i32 as f32;
+    let (vscale2, vtrans2) = (511.0, 511.0);
+    let mut cols = IDENTITY;
+    cols[0][0] = 1.0 / vscale0;
+    cols[1][1] = 1.0 / vscale1;
+    cols[2][2] = -1.0 / vscale2;
+    cols[3][0] = -vtrans0 / vscale0;
+    cols[3][1] = -vtrans1 / vscale1;
+    cols[3][2] = vtrans2 / vscale2;
+    Mat4 { cols }
+}
+
+/// [`project`] through [`screen_projection`]'s matrix `proj`: the depth is
+/// the matrix's own `z / w`, which must lie in `[0, 1]` as the draw's cull
+/// requires (a particle at `z` 0 sits at 1).
+pub fn project_screen(pc: &Particle, xf: Option<&Transform>, proj: &Mat4) -> Option<Projected> {
+    if pc.size == 0.0 {
+        return None;
+    }
+    let a = Mat4 {
+        cols: xf.map_or(IDENTITY, |x| x.affine),
+    };
+    let m = proj.multiply(&a);
+    let p = pc.pos;
+    let row =
+        |r: usize| m.cols[0][r] * p.x + m.cols[1][r] * p.y + m.cols[2][r] * p.z + m.cols[3][r];
+    let cw = row(3);
+    if cw == 0.0 {
+        return None;
+    }
+    let tm = 1.0 / cw;
+    let (tx, ty, tz) = (row(0) * tm, row(1) * tm, row(2) * tm);
+    if !(-1.0..=1.0).contains(&tx) || !(-1.0..=1.0).contains(&ty) || !(0.0..=1.0).contains(&tz) {
+        return None;
+    }
+    let c = &m.cols;
+    let mx = sqrt(c[0][0] * c[0][0] + c[1][0] * c[1][0] + c[2][0] * c[2][0]);
+    let my = sqrt(c[0][1] * c[0][1] + c[1][1] * c[1][1] + c[2][1] * c[2][1]);
+    let k = (tm * pc.size).abs();
+    let (flip_s, flip_t) = match xf {
+        Some(x) => (x.affine[0][0] < 0.0, x.affine[1][1] < 0.0),
+        None => (false, false),
+    };
+    Some(Projected {
+        center: [tx, ty],
+        half: [k * mx, k * my],
+        depth: 0.0,
         flip_s,
         flip_t,
     })

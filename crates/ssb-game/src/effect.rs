@@ -920,6 +920,15 @@ const DUST_DASH_OFF_Y: f32 = 280.0;
 pub mod script {
     /// `efManagerConfettiMakeEffect` (the VS results, RE-420).
     pub const CONFETTI: u16 = 0x70;
+    /// `efManagerStockSnapMakeEffect` (RE-464).
+    pub const STOCK_SNAP: u16 = 0x26;
+    /// `efManagerStockStealStartMakeEffect`.
+    pub const STOCK_STEAL_START: u16 = 0x75;
+    /// `efManagerStockStealEndMakeEffect`.
+    pub const STOCK_STEAL_END: u16 = 0x76;
+    /// `efManagerBattleScoreMakeEffect`'s "+1" and "-1".
+    pub const SCORE_PLUS: u16 = 0x43;
+    pub const SCORE_MINUS: u16 = 0x44;
     /// `efManagerFlameLRMakeEffect`.
     pub const FLAME_LR: u16 = 0x12;
     /// `efManagerFlameRandomMakeEffect`, `...FlameStatic...`,
@@ -1849,6 +1858,78 @@ impl Effects {
             TransformStatus::Ready,
             |t| {
                 t.translate = pos;
+            },
+        )
+    }
+
+    /// `efManagerStockCommonMakeEffectID`: script `id` on list 3
+    /// (`LBPARTICLE_MASK_GENLINK(2)`, the interface's link 25) at the
+    /// interface's `(x, y)`, which its camera reads in quarter pixels.
+    fn stock_common(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        x: f32,
+        y: f32,
+        id: u16,
+    ) -> u8 {
+        let bank = self.bank | lb::genlink(2);
+        lb::make_pos_vel(
+            p,
+            banks,
+            self,
+            bank,
+            id,
+            Vec3::new(x * 4.0, y * 4.0, 0.0),
+            Vec3::ZERO,
+        )
+    }
+
+    /// `efManagerStockSnapMakeEffect`: a lost stock's burst over the
+    /// damage display (`ifCommonPlayerStockMakeStockSnap`).
+    pub fn stock_snap(&mut self, p: &mut Particles, banks: &dyn Banks, x: f32, y: f32) -> u8 {
+        self.stock_common(p, banks, x, y, script::STOCK_SNAP)
+    }
+
+    /// `efManagerStockStealStartMakeEffect`: over the stolen icon.
+    pub fn stock_steal_start(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        x: f32,
+        y: f32,
+    ) -> u8 {
+        self.stock_common(p, banks, x, y, script::STOCK_STEAL_START)
+    }
+
+    /// `efManagerStockStealEndMakeEffect`: where the icon lands.
+    pub fn stock_steal_end(&mut self, p: &mut Particles, banks: &dyn Banks, x: f32, y: f32) -> u8 {
+        self.stock_common(p, banks, x, y, script::STOCK_STEAL_END)
+    }
+
+    /// `efManagerBattleScoreMakeEffect`: "+1" (`score > 0`) or "-1" on list
+    /// 3 under a ready transform at `pos`, squashed to a quarter's height.
+    pub fn battle_score(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        pos: Vec3,
+        score: i32,
+    ) -> u8 {
+        let id = if score > 0 {
+            script::SCORE_PLUS
+        } else {
+            script::SCORE_MINUS
+        };
+        self.start_bare(
+            p,
+            banks,
+            self.bank | lb::genlink(2),
+            id,
+            TransformStatus::Ready,
+            |t| {
+                t.translate = pos;
+                t.scale.y = 0.25;
             },
         )
     }

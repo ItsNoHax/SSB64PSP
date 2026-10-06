@@ -16,6 +16,7 @@ use ssb_game::results_emblem;
 use ssb_game::results_scene::{self, Scene};
 use ssb_psp_runtime::gu::Gpu;
 use ssb_psp_runtime::meshdraw;
+use ssb_psp_runtime::transition::Transition;
 use ssb_rom::pack::Pack;
 use ssb_rom::skeleton::Skeleton;
 
@@ -44,6 +45,12 @@ pub struct Fighters {
     /// runtime.
     particles: Box<ssb_game::particle::Particles>,
     effects: ssb_game::effect::Effects,
+    /// `lbTransitionMakeTransition`'s wipe over the battle's last frame,
+    /// after a contest (RE-464).
+    wipe: Option<Transition>,
+    /// `lbTransitionSetupTransition`'s photo, still to be copied from the
+    /// screen before the scene's first frame opens.
+    pub photo_pending: bool,
 }
 
 /// The emblem and its material animation, started at the player's colour.
@@ -53,12 +60,16 @@ pub struct Emblem {
     model: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::skeleton::EffectMaterialAnimator)>,
 }
 
-/// `mnVSResultsFuncStart`: the scene's first random pick, then the emblem
-/// (`entrants` gives the winner's kind). Boxed so the session holds a
-/// pointer.
+/// `mnVSResultsFuncStart`: the scene's first random pick, the wipe it
+/// names (`lbTransitionSetupTransition`, `lbTransitionMakeTransition`), then
+/// the emblem (`entrants` gives the winner's kind). Boxed so the session
+/// holds a pointer.
 #[inline(never)]
 pub fn start(pack: Option<&Pack<'_>>, r: &Results, entrants: [Option<(FighterKind, u8)>; 4]) -> Box<Fighters> {
     let scene = Scene::start(r);
+    let wipe = scene
+        .transition
+        .and_then(|id| pack.and_then(|p| Transition::make(p, id as u32)));
     let winner_kind = r
         .winner
         .and_then(|w| entrants.get(w).copied().flatten())
@@ -76,6 +87,8 @@ pub fn start(pack: Option<&Pack<'_>>, r: &Results, entrants: [Option<(FighterKin
         emblem,
         particles: new_particles(),
         effects: ssb_game::effect::Effects::new(0),
+        photo_pending: wipe.is_some(),
+        wipe,
     })
 }
 
@@ -126,6 +139,11 @@ pub fn tick(pack: Option<&Pack<'_>>, r: &Results, f: &mut Fighters, entrants: [O
     let Some(p) = pack else {
         return;
     };
+    // `lbTransitionProcUpdate`, a link-0 process made after
+    // `mnVSResultsFuncRun`'s: the wipe ends when its clock does.
+    if f.wipe.as_mut().is_some_and(|w| !w.update(p)) {
+        f.wipe = None;
+    }
     // Link 0 again: `mnVSResultsFuncRun`'s confetti, then the particles'
     // `func_run`s, made after it (RE-420).
     if let Some(banks) = ssb_psp_runtime::particles::PackBanks::new(p) {
@@ -206,7 +224,7 @@ fn play(p: &Pack<'_>, m: &mut Model) {
 
 /// The screen back to front (`ssb_game::results_layer::Layer::visit`):
 /// the wallpaper and its fades, the fighters, then the tags, text, tint
-/// and table.
+/// and table; last the wipe (`lbTransitionMakeCamera`'s priority 10).
 #[inline(never)]
 pub unsafe fn draw_all(
     gpu: &mut Gpu,
@@ -221,15 +239,20 @@ pub unsafe fn draw_all(
         models,
         emblem,
         particles,
+        wipe,
         ..
     } = f;
+    let alpha = r.character_alpha.clamp(0, 0xFF) as u8;
     layer.visit(r, players, |d| match d {
         Draw::Wallpaper { prim, env } => draw_wallpaper(p, draw_state, prim, env),
         Draw::Fill { rect, color } => meshdraw::fill_rect_n64(rect, color, draw_state),
         Draw::Sprite(piece) => draw_piece(p, draw_state, &piece),
         Draw::Emblem => draw_emblem(gpu, p, draw_state, emblem.as_ref()),
-        Draw::Fighters => draw(gpu, p, draw_state, models, particles),
+        Draw::Fighters => draw(gpu, p, draw_state, models, particles, alpha),
     });
+    if let Some(w) = wipe.as_ref() {
+        w.draw(p, gpu, draw_state);
+    }
 }
 
 /// `mnVSResultsMakeEmblemCamera`'s camera over the emblem: its root at
@@ -351,7 +374,8 @@ unsafe fn draw_piece(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, piece: 
 }
 
 /// The fighters under `mnVSResultsMakeFighterCamera`'s camera, lit from
-/// `mnVSResultsFuncLights`'s angles. A clip that leads with a runtime
+/// `mnVSResultsFuncLights`'s angles and faded in at `alpha`
+/// (`scSubsysFighterSetLightParams`' `sMNVSResultsCharacterAlpha`, RE-464). A clip that leads with a runtime
 /// joint (Kirby's Win1 and Win2, Pikachu's Win1, Ness's Win2) poses the
 /// model as it stands: `ftMainSetStatus` detaches `TransN` from the
 /// hierarchy, and no demo status moves the fighter by it.
@@ -362,6 +386,7 @@ unsafe fn draw(
     draw_state: &mut meshdraw::DrawState,
     models: &[Option<Box<Model>>; 4],
     particles: &mut ssb_game::particle::Particles,
+    alpha: u8,
 ) {
     let cam = &results_scene::CAMERA;
     gpu.set_viewport_n64(cam.viewport);
@@ -383,6 +408,7 @@ unsafe fn draw(
         );
         let base = gpu.model_matrix();
         draw_state.configure_fighter_light(results_scene::LIGHT_ANGLE);
+        draw_state.set_fade_alpha(Some(alpha));
         // A demo fighter's model and texture parts (RE-426) and accessory
         // (RE-425).
         let parts = m.demo.parts.draw_parts();
@@ -401,6 +427,7 @@ unsafe fn draw(
         );
         draw_state.finish_fighter_light();
     }
+    draw_state.set_fade_alpha(None);
     // DL links 10, 15 and 18 of the same camera: particle list 4
     // (`efDisplayZPerspAAXLUProcDisplay`, depth-tested against the
     // fighters), 1, then 0 and 2. No results camera draws link 25's list 3.
@@ -410,6 +437,7 @@ unsafe fn draw(
         let camera = ssb_psp_runtime::particles::Camera {
             view: &view,
             proj: &proj,
+            screen: false,
             planes: (cam.near, cam.far),
             ge_planes: (cam.near, cam.far),
             rect: n64_rect(cam.viewport),

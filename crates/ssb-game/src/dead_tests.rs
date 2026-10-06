@@ -272,3 +272,61 @@ fn a_second_rebirth_takes_the_next_free_halo() {
     ];
     assert_eq!(halo_number(others.iter().copied()), 2);
 }
+
+/// Out of stocks in a team stock battle (`ftCommonSleepProcUpdate`).
+fn asleep(team_battle: bool) -> Fighter {
+    let mut f = mario();
+    f.dead.stock_rule = true;
+    f.dead.team_battle = team_battle;
+    f.stocks = 0;
+    f.pos.y = -2001.0;
+    check(&mut f);
+    for _ in 0..DEAD_WAIT {
+        status::update(&mut f);
+    }
+    assert!(is(&f, Status::Sleep));
+    f
+}
+
+fn tap_start(f: &mut Fighter) {
+    f.prev_input.buttons = ssb_engine::input::N64Buttons(0);
+    f.input.buttons = ssb_engine::input::N64Buttons(ssb_engine::input::N64Buttons::START);
+}
+
+#[test]
+fn a_sleeping_team_player_asks_to_steal_on_start_and_returns_thirty_frames_later() {
+    let mut f = asleep(true);
+    status::update(&mut f);
+    assert!(!f.dead.steal_request, "no tap, no request");
+    tap_start(&mut f);
+    status::update(&mut f);
+    assert!(f.dead.steal_request);
+    // The battle grants it (`Battle::steal_stock`).
+    f.dead.steal_request = false;
+    start_stock_steal(&mut f);
+    assert_eq!(f.stocks, -2);
+    f.input.buttons = ssb_engine::input::N64Buttons(0);
+    for frame in 1..=STOCK_STEAL_WAIT {
+        f.prev_input = f.input;
+        status::update(&mut f);
+        assert!(!f.dead.steal_request, "no request while one is pending");
+        assert_eq!(
+            f.dead.rebirth_pending,
+            frame == STOCK_STEAL_WAIT,
+            "frame {frame}"
+        );
+        if f.dead.rebirth_pending {
+            break;
+        }
+    }
+    assert!(f.dead.steal_landed);
+    assert_eq!(f.stocks, 0, "one life");
+}
+
+#[test]
+fn a_free_for_all_sleeper_never_steals() {
+    let mut f = asleep(false);
+    tap_start(&mut f);
+    status::update(&mut f);
+    assert!(!f.dead.steal_request);
+}

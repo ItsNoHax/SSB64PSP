@@ -265,3 +265,81 @@ fn master_hand_falls_in_slow_motion_until_the_wallpaper_fades() {
     }
     assert_eq!(b.begin_frame(), Frame::Done);
 }
+
+/// Four players, two teams: 0 and 2 on team 0, 1 and 3 on team 1.
+fn teams(stocks: [i8; 4]) -> Battle {
+    let mut p = [Player::default(); 4];
+    for (i, p) in p.iter_mut().enumerate() {
+        *p = Player {
+            present: true,
+            team: (i % 2) as u8,
+            ..Player::default()
+        };
+    }
+    with_stocks(
+        Battle::new(Rule::Stock, 0, 2, p).with_teams(true, false),
+        stocks,
+    )
+}
+
+fn with_stocks(mut b: Battle, stocks: [i8; 4]) -> Battle {
+    for (p, s) in b.players.iter_mut().zip(stocks) {
+        p.stock_count = s;
+    }
+    b
+}
+
+#[test]
+fn a_steal_takes_a_teammates_stock_and_marks_the_thief() {
+    let mut b = teams([-1, 0, 2, 3]);
+    assert_eq!(b.steal_stock(0), Some(2));
+    assert_eq!(b.players[2].stock_count, 1);
+    assert_eq!(b.players[0].stock_count, -2);
+    // The opposing team is untouched.
+    assert_eq!(b.players[3].stock_count, 3);
+    b.land_stolen_stock(0);
+    assert_eq!(b.players[0].stock_count, 0);
+}
+
+#[test]
+fn no_teammate_with_a_stock_to_spare_means_no_steal() {
+    let mut b = teams([-1, 2, 0, 2]);
+    assert_eq!(b.steal_stock(0), None);
+    assert_eq!(b.players[0].stock_count, -1);
+}
+
+#[test]
+fn the_steal_list_restarts_at_each_larger_count_in_port_order() {
+    // Thief 0 on team 0 with 1 (one stock) and 3 (two): the list holds
+    // only 3 once its larger count is met. Team membership by `team`.
+    let p = [Player {
+        present: true,
+        team: 0,
+        ..Player::default()
+    }; 4];
+    let battle = |stocks| {
+        with_stocks(
+            Battle::new(Rule::Stock, 0, 2, p).with_teams(true, false),
+            stocks,
+        )
+    };
+    crate::rng::set_seed(12345);
+    for _ in 0..32 {
+        assert_eq!(battle([-1, 1, 0, 2]).steal_stock(0), Some(3));
+    }
+    // A smaller count after the largest stays in the list.
+    crate::rng::set_seed(12345);
+    let picks: std::collections::BTreeSet<u8> = (0..64)
+        .map(|_| battle([-1, 2, 0, 1]).steal_stock(0).unwrap())
+        .collect();
+    assert_eq!(picks, [1, 3].into_iter().collect());
+}
+
+#[test]
+fn only_vs_battles_outside_sudden_death_show_scores() {
+    let b = teams([1; 4]);
+    assert!(b.is_show_score());
+    let mut sd = teams([1; 4]);
+    sd.is_sudden_death = true;
+    assert!(!sd.is_show_score());
+}

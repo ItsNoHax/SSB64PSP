@@ -1,11 +1,12 @@
-//! Results-screen wipe lifecycle (`lb/lbtransition.c`, RE-146/147).
+//! Results-screen wipe lifecycle (`lb/lbtransition.c`, RE-146/147, RE-464):
+//! the viewer's capture-then-play wrapper around
+//! `ssb_psp_runtime::transition`.
 
-use ssb_rom::pack::{AnimDesc, ObjectDesc, Pack};
-use ssb_rom::scene::Mat4;
-use ssb_rom::skeleton::{StageAnimator, MAX_NODES};
+use ssb_rom::pack::Pack;
 
 use ssb_psp_runtime::gu::Gpu;
-use ssb_psp_runtime::meshdraw::{self, DrawState};
+use ssb_psp_runtime::meshdraw::DrawState;
+use ssb_psp_runtime::transition::Transition;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -17,38 +18,24 @@ enum Phase {
 
 pub struct ResultsTransition {
     phase: Phase,
-    anim: Option<AnimDesc>,
-    object: Option<ObjectDesc>,
-    player: StageAnimator,
-    posed: [Mat4; MAX_NODES],
-    posed_len: usize,
+    wipe: Option<Transition>,
 }
 
 impl ResultsTransition {
     pub fn new() -> Self {
         Self {
             phase: Phase::Idle,
-            anim: None,
-            object: None,
-            player: StageAnimator::new(),
-            posed: [Mat4::IDENTITY; MAX_NODES],
-            posed_len: 0,
+            wipe: None,
         }
     }
 
     /// Starts a wipe while the completed battle scene is still current.
     #[cfg_attr(not(feature = "transition_audit_capture"), allow(dead_code))]
     pub fn begin(&mut self, pack: &Pack<'_>, id: u32) -> bool {
-        let Some(anim) = pack.transition_anim(id) else {
+        self.wipe = Transition::make(pack, id);
+        if self.wipe.is_none() {
             return false;
-        };
-        let Some(object) = pack.transition_object(&anim) else {
-            return false;
-        };
-        self.anim = Some(anim);
-        self.object = Some(object);
-        self.player.start(pack, &anim);
-        self.posed_len = 0;
+        }
         self.phase = Phase::AwaitingCapture;
         true
     }
@@ -74,45 +61,17 @@ impl ResultsTransition {
         if self.phase != Phase::Playing {
             return;
         }
-        let Some(anim) = self.anim else {
+        if !self.wipe.as_mut().is_some_and(|w| w.update(pack)) {
             self.phase = Phase::Idle;
-            return;
-        };
-        let Some(script) = pack.anim_script(&anim) else {
-            self.phase = Phase::Idle;
-            return;
-        };
-        if self.player.tick(script).is_err() || self.player.ended() {
-            self.phase = Phase::Idle;
+            self.wipe = None;
         }
     }
 
-    /// Draws through the original transition camera: 45° FOV, 15:11 aspect,
-    /// eye distance `1100 / tan(22.5°)` and an origin look-at.
+    /// Draws through `lbTransitionMakeCamera`'s camera.
     pub unsafe fn draw(&mut self, pack: &Pack<'_>, gpu: &mut Gpu, state: &mut DrawState) -> u32 {
-        if self.phase != Phase::Playing {
-            return 0;
+        match (&self.wipe, self.phase) {
+            (Some(w), Phase::Playing) => w.draw(pack, gpu, state),
+            _ => 0,
         }
-        const EYE_Z: f32 = 2655.6348;
-        let (Some(_anim), Some(object)) = (self.anim, self.object) else {
-            self.phase = Phase::Idle;
-            return 0;
-        };
-        gpu.set_perspective(45.0, 15.0 / 11.0, 100.0, 10_000.0);
-        gpu.reset_modelview();
-        gpu.model_transform([0.0, 0.0, -EYE_Z], [0.0; 3], meshdraw::MODEL_SCALE);
-        let base = gpu.model_matrix();
-        self.posed_len = self.player.compose(pack, &object, &mut self.posed);
-        meshdraw::draw_object_posed(
-            pack,
-            &object,
-            &base,
-            &self.posed[..self.posed_len],
-            None,
-            state,
-            None,
-            None,
-            0,
-        )
     }
 }

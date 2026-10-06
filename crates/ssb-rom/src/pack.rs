@@ -383,7 +383,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // congratulations and staff roll sprites, the staff roll's letters and
 // credits tables, the ending's baked camera, the room's and staff roll's
 // script files, and the room's tissues graph. No layout change.
-pub const VERSION: u32 = 103;
+// 104 makes the wipes' photo the whole 300 x 220 RGB565 picture, with the
+// strips' absolute texel coordinates (RE-464). No layout change.
+pub const VERSION: u32 = 104;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -2096,21 +2098,19 @@ impl PackWriter {
         index
     }
 
-    /// Adds a "framebuffer capture" texture entry: no baked bytes at all, a
-    /// small buffer the PSP device fills from the just-rendered screen the
-    /// first time the LB "loading transition" system starts (RE-099/RE-100,
-    /// `mobj::LB_TRANSITION_SEGMENT`). `width`/`height` come from the real
-    /// display list's own `G_SETTILESIZE` (`mesh::TextureRef::framebuffer`),
-    /// since that is what the primitive's baked UVs were authored against.
+    /// Adds a "framebuffer capture" texture entry: no baked bytes at all,
+    /// the transition photo the PSP device fills from the screen when a
+    /// wipe starts (RE-099, RE-464, `mobj::LB_TRANSITION_SEGMENT`):
+    /// `mobj::LB_TRANSITION_PHOTO`'s 300 x 220 in RGB565.
     pub fn add_framebuffer_texture(&mut self, width: u16, height: u16) -> u32 {
         self.textures.push(TextureDesc {
             width,
             height,
             // Matches every other `TextureDesc`'s convention: `stride` is
             // `sceGuTexImage`'s `bufferwidth`; `width` gives the declared
-            // size. 8888 rows this wide are already over 16 bytes.
+            // size.
             stride: width.next_power_of_two(),
-            psm: crate::psp_texture::Psm::Psm8888 as u8,
+            psm: crate::psp_texture::Psm::Psm5650 as u8,
             swizzled: 0,
             data_offset: 0,
             data_len: 0,
@@ -2119,9 +2119,9 @@ impl PackWriter {
             levels: 1,
             mat_anim: TextureDesc::NO_ANIM,
             role: TextureDesc::ROLE_FRAMEBUFFER,
-            // Always a single full-frame quad (RE-099/RE-100): its UVs never
-            // exceed the tile, so `Repeat` vs `Clamp` cannot be told apart.
-            wrap: 0,
+            // The vertices address the whole photo (RE-464); the device
+            // clamps it (`meshdraw::bind_texture`).
+            wrap: TextureDesc::CLAMP_S | TextureDesc::CLAMP_T,
             tile: 0,
             tile_mirror: 0,
             tile_period: [0; 2],

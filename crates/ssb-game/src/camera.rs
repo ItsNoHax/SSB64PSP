@@ -340,6 +340,9 @@ impl Camera {
 /// `gmCameraSetViewportDimensions(10, 10, 310, 230)`, which every battle
 /// scene makes: `gGMCameraStruct.viewport_width` and `viewport_height`.
 /// The camera's `persp.aspect` is their ratio.
+/// `gmCameraSetViewportDimensions(10, 10, 310, 230)`: the battle cameras'
+/// `ulx, uly, lrx, lry` on the 320 x 240 screen.
+pub const BATTLE_VIEWPORT: [f32; 4] = [10.0, 10.0, 310.0, 230.0];
 pub const BATTLE_VIEWPORT_WIDTH: f32 = 300.0;
 pub const BATTLE_VIEWPORT_HEIGHT: f32 = 220.0;
 

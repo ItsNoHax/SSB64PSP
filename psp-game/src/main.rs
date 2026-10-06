@@ -59,6 +59,11 @@ use ssb_psp_runtime::meshdraw;
 /// no fighters yet, so they started after 640 and the fighters come after
 /// 760; Kirby's 161-frame Win clips have ended by 1041.
 const VS_RESULTS_CAPTURE_TICK: u64 = 1100;
+/// `vsteamsteal`'s stick-left windows, the START tap that steals and the
+/// capture: the icon in flight (RE-464).
+const VS_TEAM_STEAL_RUNS: [core::ops::RangeInclusive<u64>; 2] = [398..=520, 800..=900];
+const VS_TEAM_STEAL_START_TICK: u64 = 1060;
+const VS_TEAM_STEAL_CAPTURE_TICK: u64 = 1075;
 /// The capture tick on which the `rebirth` scenes' Mario falls past Dream
 /// Land's bottom blast line (`ftCommonDeadDownSetStatus`), logged from a
 /// capture build (RE-412).
@@ -250,6 +255,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // "Go" at 398. From tick 935 Kirby's attack overlaps Mario, his
         // teammate, for 14 ticks and passes through (Team Attack off).
         GameScene::VsTeam => 940,
+        // The player's second fall, then START asleep (RE-464).
+        GameScene::VsTeamSteal => VS_TEAM_STEAL_CAPTURE_TICK,
         // "Go" at 398; Luigi, held left, falls off Dream Land and the
         // one-stock battle ends. The results make the fighters 120 tics
         // in; this is past the end of Kirby's Win clip.
@@ -442,6 +449,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     // Backup Clear: down three times to VS Record, then A for its confirm.
     match (scene, tick) {
+        (GameScene::VsTeamSteal, VS_TEAM_STEAL_START_TICK) => return N64Buttons(N64Buttons::START),
         (GameScene::BackupClear, 15 | 30 | 45) => return N64Buttons(N64Buttons::D_DOWN),
         (GameScene::BackupClear, 47) => return N64Buttons(N64Buttons::A),
         // VS Record and Characters start on Data, so the capture also
@@ -559,6 +567,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsPlayers
             | GameScene::Vs4
             | GameScene::VsTeam
+            | GameScene::VsTeamSteal
             | GameScene::VsResults
             | GameScene::VsResultsEmblem
             | GameScene::VsShield
@@ -893,6 +902,10 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     ) {
         return 0;
     }
+    // `vsteamsteal`: off the stage from "Go", and again once reborn.
+    if scene == GameScene::VsTeamSteal {
+        return if VS_TEAM_STEAL_RUNS.iter().any(|r| r.contains(&tick)) { -80 } else { 0 };
+    }
     // `vsresults`: held left from "Go", the player runs off the stage.
     if matches!(scene, GameScene::VsResults | GameScene::VsResultsEmblem) {
         return if (398..=520).contains(&tick) { -80 } else { 0 };
@@ -1014,6 +1027,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsNoContest
             | GameScene::Vs4
             | GameScene::VsTeam
+            | GameScene::VsTeamSteal
             | GameScene::VsResults
             | GameScene::VsResultsEmblem
             | GameScene::VsShield
@@ -2557,6 +2571,13 @@ fn vs_rules(scene: GameScene) -> VsRules {
             team_rules: ssb_game::team::TeamRules::TEAMS,
             ..VsRules::DEFAULT
         },
+        // Two lives each (`stock_setting` 1).
+        GameScene::VsTeamSteal => VsRules {
+            rule: ssb_game::battle::Rule::Stock,
+            stocks: 1,
+            team_rules: ssb_game::team::TeamRules::TEAMS,
+            ..VsRules::DEFAULT
+        },
         // One stock (`stock_setting` 0).
         GameScene::VsResults | GameScene::VsResultsEmblem => VsRules {
             rule: ssb_game::battle::Rule::Stock,
@@ -2716,6 +2737,12 @@ unsafe fn training_frame(
         if let Some(hud) = damage_hud.damage.get_mut(usize::from(f.fighter.port)) {
             update_damage_hud(hud, &f.fighter, fell, started);
         }
+        if let (true, Some(rt)) = (fell, rt.as_mut()) {
+            fall_effects(rt, &damage_hud.damage, battle.as_ref(), &f.fighter);
+        }
+    }
+    if let Some(b) = battle.as_mut() {
+        stock_steal_frame(p, &mut scenes(pl, dummies), b, &damage_hud.damage, &mut damage_hud.steals, rt.as_mut());
     }
     if let (Some(bonus), Some(b)) = (bonus, battle.as_ref()) {
         campaign::bonus_frame(p, damage_hud, b, bonus);
@@ -2806,6 +2833,9 @@ struct Hud {
     /// The 1P Game's `players[].is_single_stockicon`; `None` follows the
     /// VS battle's rule.
     single_stock: Option<[bool; 4]>,
+    /// `sIFCommonPlayerStealInterface` by thief: a stolen stock's icon in
+    /// flight (RE-464).
+    steals: [Option<ssb_game::hud::StockSteal>; 4],
     /// The 1P Game's team stock icons and their stage
     /// (`sc1PGameTeamStockDisplayProcDisplay`).
     team_stocks: Option<(ssb_game::spgame::Stage, alloc::vec::Vec<ssb_game::spgame::setup::StockIcon>)>,
@@ -2940,6 +2970,7 @@ impl Hud {
             particles: new_particles(),
             effects: ssb_game::effect::Effects::new(0),
             single_stock: None,
+            steals: [None; 4],
             team_stocks: None,
             display_scratch: new_display_scratch(),
         }
@@ -3064,6 +3095,91 @@ fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game:
     fell
 }
 
+/// The interface half of `ftCommonDeadUpdateScore` (RE-464): the lost
+/// stock's snap (`ifCommonPlayerStockMakeStockSnap`), then where the battle
+/// shows scores, "-1" over the fallen player and "+1" over the player
+/// credited with the fall (`ifCommonPlayerScoreMakeEffect`).
+fn fall_effects(
+    rt: &mut ssb_game::effect::EffectRuntime<'_>,
+    displays: &[ssb_game::hud::DamageDisplay; 4],
+    battle: Option<&ssb_game::battle::Battle>,
+    f: &ssb_game::fighter::Fighter,
+) {
+    let Some(own) = displays.get(usize::from(f.port)) else {
+        return;
+    };
+    let (x, y) = ssb_game::hud::stock_snap_position(own.pos_x);
+    rt.effects.stock_snap(rt.particles, rt.banks, x, y);
+    if !battle.is_some_and(|b| b.is_show_score()) {
+        return;
+    }
+    rt.effects
+        .battle_score(rt.particles, rt.banks, ssb_game::hud::score_position(own.pos_x), -1);
+    if let Some(scorer) = f.damage_player.and_then(|k| displays.get(usize::from(k))) {
+        rt.effects
+            .battle_score(rt.particles, rt.banks, ssb_game::hud::score_position(scorer.pos_x), 1);
+    }
+}
+
+/// `ftCommonSleepProcUpdate`'s battle half and the steals' interface
+/// (RE-464): a sleeping thief's START steals a teammate's stock
+/// (`ifCommonPlayerStockStealMakeInterface` and its start burst); a landed
+/// steal gives the thief one life; each icon in flight moves
+/// (`ifCommonPlayerStockStealProcUpdate`) and bursts at the thief's stocks
+/// when it lands. The fighters' halves run in their own updates
+/// (`ssb_game::dead::update_sleep`); the battle's run here, after every
+/// fighter's, in the same frame.
+fn stock_steal_frame(
+    p: &Pack<'_>,
+    s: &mut [Option<&mut play::FighterScene>; 4],
+    b: &mut ssb_game::battle::Battle,
+    displays: &[ssb_game::hud::DamageDisplay; 4],
+    steals: &mut [Option<ssb_game::hud::StockSteal>; 4],
+    mut rt: Option<&mut ssb_game::effect::EffectRuntime<'_>>,
+) {
+    use ssb_game::hud::{steal_effect_position, StockSteal};
+    for thief in 0..4 {
+        let Some(f) = s[thief].as_deref_mut().map(|x| &mut x.fighter) else {
+            continue;
+        };
+        if core::mem::take(&mut f.dead.steal_landed) {
+            b.land_stolen_stock(f.port);
+        }
+        if !core::mem::take(&mut f.dead.steal_request) {
+            continue;
+        }
+        let Some(stolen) = b.steal_stock(f.port) else {
+            continue;
+        };
+        ssb_game::dead::start_stock_steal(f);
+        let Some(victim) = s[usize::from(stolen)].as_deref_mut().map(|x| &mut x.fighter) else {
+            continue;
+        };
+        victim.stocks -= 1;
+        let (kind, costume) = (victim.kind, victim.costume);
+        let (Some(from), Some(to)) = (displays.get(usize::from(stolen)), displays.get(thief)) else {
+            continue;
+        };
+        let Some(icon) = p.fighter_sprite(kind as u8, ssb_rom::pack::SpriteDesc::ROLE_STOCK, costume) else {
+            continue;
+        };
+        steals[thief] = Some(StockSteal::make(stolen, from.pos_x, to.pos_x, icon.width, icon.height));
+        if let Some(rt) = rt.as_deref_mut() {
+            let (x, y) = steal_effect_position(from.pos_x);
+            rt.effects.stock_steal_start(rt.particles, rt.banks, x, y);
+        }
+    }
+    for (thief, slot) in steals.iter_mut().enumerate() {
+        if slot.as_mut().is_some_and(|steal| !steal.update()) {
+            *slot = None;
+            if let (Some(rt), Some(to)) = (rt.as_deref_mut(), displays.get(thief)) {
+                let (x, y) = steal_effect_position(to.pos_x);
+                rt.effects.stock_steal_end(rt.particles, rt.banks, x, y);
+            }
+        }
+    }
+}
+
 /// `ifCommonPlayerDamageInitInterface` for every port, shown at once
 /// outside a battle.
 fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
@@ -3078,6 +3194,7 @@ fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     world.damage_hud.effects = ssb_game::effect::Effects::new(0);
     world.damage_hud.entry_focus = None;
     world.damage_hud.single_stock = None;
+    world.damage_hud.steals = [None; 4];
     world.damage_hud.players = ssb_game::player_interface::Interface::default();
     let mut damage = [0; 4];
     if let Some(pl) = world.play_state.as_ref() {
@@ -3117,6 +3234,13 @@ unsafe fn draw_results(
     fighters: Option<&mut results_screen::Fighters>,
     roster: &Roster,
 ) {
+    // `lbTransitionSetupTransition`: the battle's last frame, still on
+    // display, before the results' first frame opens (RE-464).
+    let mut fighters = fighters;
+    if let Some(f) = fighters.as_deref_mut().filter(|f| f.photo_pending) {
+        gpu.capture_transition_photo_now();
+        f.photo_pending = false;
+    }
     gpu.set_viewport_fullscreen();
     gpu.begin_frame(Some(BG_RESULTS));
     let (Some(p), Some(r), Some(f)) = (pack, results, fighters) else {
@@ -3274,7 +3398,7 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
             [FighterKind::Mario, FighterKind::Fox, FighterKind::Donkey, FighterKind::Kirby],
             None,
         ),
-        GameScene::VsTeam => (
+        GameScene::VsTeam | GameScene::VsTeamSteal => (
             [FighterKind::Mario, FighterKind::Kirby, FighterKind::Fox, FighterKind::Donkey],
             Some([0, 0, 1, 1]),
         ),
@@ -3469,6 +3593,7 @@ fn enter_training(
                 .filter_map(|(_, e)| e.as_ref().and_then(spawn_x));
             f.fighter.facing = ssb_game::battle::start_facing(f.fighter.pos.x, others);
             f.fighter.dead.stock_rule = stock_rule;
+            f.fighter.dead.team_battle = rules.team_rules.is_team_battle;
             f.fighter.stocks = rules.stocks;
             // `ftParamUpdateDamage`'s and `ftParamUpdatePlayerBattleStats`'
             // totals, which the results save.
@@ -7198,14 +7323,17 @@ unsafe fn draw_training(
         );
     }
     gpu.set_viewport_pillarboxed();
-    // The interface's link 25.
-    draw_particles(
-        p,
-        pl,
-        damage_hud,
-        draw_state,
-        &ssb_psp_runtime::particles::LINK25_LISTS,
-    );
+    // The interface's link 25, under `gmCameraMakeEffectCamera`'s camera:
+    // the stock snaps and steals and the scores (RE-464).
+    if let Some(banks) = ssb_psp_runtime::particles::PackBanks::new(p) {
+        ssb_psp_runtime::particles::draw_screen(
+            &banks,
+            &mut damage_hud.particles,
+            ssb_game::camera::BATTLE_VIEWPORT,
+            &ssb_psp_runtime::particles::LINK25_LISTS,
+            draw_state,
+        );
+    }
     draw_screen_flash(gpu, draw_state, &damage_hud.ko);
     // `players[].color`: in a free-for-all the human's port and a CPU's
     // `GMCOMMON_PLAYERS_MAX`, in a team battle the team's colour.
@@ -7255,6 +7383,7 @@ unsafe fn draw_training(
     if let Some(b) = battle {
         draw_stocks(p, draw_state, b, damage_hud, fighters.map(|x| x.map(|x| &x.fighter)));
         draw_team_stocks(p, draw_state, damage_hud);
+        draw_stock_steals(p, draw_state, damage_hud, fighters.map(|x| x.map(|x| &x.fighter)));
         draw_timer(p, draw_state, b);
     }
     if let Some(c) = damage_hud.countdown.as_ref() {
@@ -7609,6 +7738,24 @@ fn draw_stocks(
         };
         for (x, y) in ssb_game::hud::stock_icons(pos_x, f.stocks, single, icon.width, icon.height) {
             draw_plain(p, draw_state, &icon, x, y);
+        }
+    }
+}
+
+/// `ifCommonPlayerStockStealMakeInterface`'s icons in flight: the stolen
+/// player's stock icon in its costume (RE-464).
+fn draw_stock_steals(
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    hud: &Hud,
+    fighters: [Option<&ssb_game::fighter::Fighter>; 4],
+) {
+    for steal in hud.steals.iter().flatten() {
+        let Some(f) = fighters.get(usize::from(steal.stolen)).copied().flatten() else {
+            continue;
+        };
+        if let Some(icon) = p.fighter_sprite(f.kind as u8, ssb_rom::pack::SpriteDesc::ROLE_STOCK, f.costume) {
+            draw_plain(p, draw_state, &icon, steal.x, steal.y);
         }
     }
 }

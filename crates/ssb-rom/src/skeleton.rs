@@ -427,6 +427,9 @@ pub struct StageAnimator {
     joints: [crate::objanim::StageJoint; MAX_STAGE_JOINTS],
     poses: [JointPose; MAX_STAGE_JOINTS],
     count: usize,
+    /// `GObj::anim_frame`: the start frame, then whatever the last joint in
+    /// tree order to write it wrote (`gcParseDObjAnimJoint`).
+    gobj_frame: f32,
 }
 
 impl Default for StageAnimator {
@@ -446,7 +449,14 @@ impl StageAnimator {
                 scale: [1.0; 3],
             }; MAX_STAGE_JOINTS],
             count: 0,
+            gobj_frame: 0.0,
         }
+    }
+
+    /// `GObj::anim_frame` after the last tick (`lbTransitionProcUpdate`
+    /// ejects its wipe once it is at or below 0).
+    pub fn gobj_frame(&self) -> f32 {
+        self.gobj_frame
     }
 
     pub fn joint_count(&self) -> usize {
@@ -462,6 +472,8 @@ impl StageAnimator {
     /// node's rest transform so a track the script never names keeps it.
     pub fn start(&mut self, pack: &Pack<'_>, anim: &AnimDesc) {
         self.count = 0;
+        // `gcAddAnimJointAll(gobj, ..., 0.0F)`.
+        self.gobj_frame = 0.0;
         for i in 0..anim.joint_count {
             if self.count == MAX_STAGE_JOINTS {
                 break;
@@ -572,6 +584,9 @@ impl StageAnimator {
     ) -> Result<(), crate::objanim::AnimError> {
         for i in 0..self.count {
             self.joints[i].tick(script, speed, &mut self.poses[i])?;
+            if let Some(f) = self.joints[i].gobj_frame() {
+                self.gobj_frame = f;
+            }
         }
         Ok(())
     }
@@ -585,6 +600,9 @@ impl StageAnimator {
         for i in 0..self.count {
             if enabled(self.nodes[i]) {
                 self.joints[i].tick(script, 1.0, &mut self.poses[i])?;
+                if let Some(f) = self.joints[i].gobj_frame() {
+                    self.gobj_frame = f;
+                }
             }
         }
         Ok(())

@@ -215,6 +215,16 @@ impl Battle {
 
     /// The battle with `gSCManagerBattleState->is_team_battle` and
     /// `is_team_attack` set, placed by team (`ifCommonBattleInitPlacement`).
+    /// `is_show_score`: `dSCManagerDefaultBattleState`'s TRUE for a VS
+    /// battle, cleared for sudden death (`scVSBattleSetScoreCheckSuddenDeath`),
+    /// the 1P Game (`sc1PManagerUpdateScene`) and the bonus stages
+    /// (`sc1PBonusStageInitVars`); Training clears it too
+    /// (`sc1PTrainingModeInitVars`). A fall
+    /// then shows "-1" and its scorer's "+1" (`ftCommonDeadUpdateScore`).
+    pub fn is_show_score(&self) -> bool {
+        !(self.is_sudden_death || self.is_1p_game || self.is_bonus)
+    }
+
     pub fn with_teams(mut self, is_team_battle: bool, is_team_attack: bool) -> Battle {
         self.is_team_battle = is_team_battle;
         self.is_team_attack = is_team_attack;
@@ -564,6 +574,43 @@ impl Battle {
         if self.is_bonus {
             self.set_end(EndKind::Failure);
         }
+    }
+
+    /// `ftCommonSleepProcUpdate`'s steal by sleeping player `thief`
+    /// (RE-464): its teammates with stocks, in port order, the list
+    /// starting over at each larger count it meets (`steal_from_player`),
+    /// one of them at random (`syUtilsRandIntRange`). The chosen player
+    /// loses a stock and the thief's count becomes -2 until its wait ends
+    /// ([`crate::dead::update_sleep`]). Returns the stolen player.
+    pub fn steal_stock(&mut self, thief: u8) -> Option<u8> {
+        let t = usize::from(thief).min(3);
+        let team = self.players[t].team;
+        let mut from = [0u8; 4];
+        let (mut count, mut most) = (0usize, 0i8);
+        for (j, p) in self.players.iter().enumerate() {
+            if j == t || !p.present || p.team != team || p.stock_count <= 0 {
+                continue;
+            }
+            if most < p.stock_count {
+                count = 0;
+                most = p.stock_count;
+            }
+            from[count] = j as u8;
+            count += 1;
+        }
+        if count == 0 {
+            return None;
+        }
+        let stolen = from[crate::rng::rand_int_range(count as i32) as usize];
+        self.players[usize::from(stolen)].stock_count -= 1;
+        self.players[t].stock_count = -2;
+        Some(stolen)
+    }
+
+    /// The end of a steal's wait: the thief has one life
+    /// (`stock_count = 0`).
+    pub fn land_stolen_stock(&mut self, thief: u8) {
+        self.players[usize::from(thief).min(3)].stock_count = 0;
     }
 
     /// `ifCommonBattleUpdateScoreStocks`.

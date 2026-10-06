@@ -157,6 +157,13 @@ pub struct DrawState {
     /// (`efManagerShieldProcDisplay`'s per-player PRIM and ENV, RE-384).
     /// Takes the place of a material animation's live colours while set.
     pub color_override: Option<ssb_rom::skeleton::EffectColors>,
+    /// A demo fighter's `ENV` alpha below 0xFF while set
+    /// (`scSubsysFighterDrawLightColorGetAlpha`, RE-464): its combiners end
+    /// in `COMBINED * ENV_ALPHA` and `ftDisplayMainDecideFogDraw` switches
+    /// the second cycle to `G_RM_AA_ZB_XLU_SURF2`, so every primitive
+    /// blends over what is drawn by that alpha, depth-tested without
+    /// writing depth.
+    fade_alpha: Option<u8>,
     /// The bound texture and the [`Pack::mat_anim_palette`] entry its CLUT
     /// holds ([`TextureDesc::NO_ANIM`] for the baked one): primitives
     /// sharing a texture can each cycle their own `MObj`'s palettes
@@ -330,6 +337,14 @@ pub struct BillboardCamera {
 }
 
 impl DrawState {
+    /// Sets or clears [`Self::fade_alpha`]: 0xFF draws opaque, as
+    /// `ftDisplayMainDecideFogDraw` does. Either way the next primitive
+    /// reissues its own blend and depth state.
+    pub fn set_fade_alpha(&mut self, alpha: Option<u8>) {
+        self.fade_alpha = alpha.filter(|&a| a < 0xFF);
+        self.last_flags = None;
+    }
+
     pub fn begin_frame(&mut self) {
         self.last_texture = None;
         self.last_flags = None;
@@ -652,7 +667,7 @@ fn psm_bits(psm: TexturePixelFormat) -> usize {
 ///
 /// The pack buffer must outlive the frame; the GE reads it asynchronously.
 unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
-    // A `ROLE_FRAMEBUFFER` texture has no baked bytes at all (RE-099/RE-100)
+    // A `ROLE_FRAMEBUFFER` texture has no baked bytes at all (RE-099, RE-464)
     // -- `pack.texture_data` would return an empty slice, not `None`, so it
     // must be intercepted here rather than falling into the ordinary path
     // below. The real pixels live in `crate::gu`'s transition-photo capture,
@@ -676,8 +691,10 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
         );
         sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
         // Coordinate scaling and offset are *not* set here; see
-        // `apply_texture_mapping`.
-        sys::sceGuTexWrap(sys::GuTexWrapMode::Repeat, sys::GuTexWrapMode::Repeat);
+        // `apply_texture_mapping`. Clamped: the vertices address the whole
+        // photo (RE-464), and the capture repeats its last column and row
+        // into the padding the filter reaches at the right and bottom.
+        sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
         return;
     }
 
@@ -1066,6 +1083,11 @@ unsafe fn apply_material(
         }
     }
 
+    // A fading fighter overrides the blend and depth write below on every
+    // primitive, so the cached flags cannot stand for the GE's state.
+    if st.fade_alpha.is_some() {
+        st.last_flags = None;
+    }
     if st.last_flags != Some(p.flags) {
         st.last_flags = Some(p.flags);
         st.state_changes += 1;
@@ -1205,6 +1227,23 @@ unsafe fn apply_material(
         } else {
             sys::sceGuDisable(GuState::Blend);
         }
+    }
+    // `G_RM_AA_ZB_XLU_SURF2` at the fighter's `ENV` alpha (RE-464): the
+    // pixel is `COMBINED * a + MEMORY * (1 - a)`. The fixed factors carry
+    // `a` whatever alpha the texel or vertex holds; a cutout keeps its
+    // alpha test.
+    if let Some(a) = st.fade_alpha {
+        let a = u32::from(a);
+        let b = 0xFF - a;
+        sys::sceGuEnable(GuState::Blend);
+        sys::sceGuBlendFunc(
+            sys::BlendOp::Add,
+            sys::BlendFactor::Fix,
+            sys::BlendFactor::Fix,
+            a | a << 8 | a << 16,
+            b | b << 8 | b << 16,
+        );
+        sys::sceGuDepthMask(1);
     }
 
     // `gSPLightColor` is independent of geometry mode and every other

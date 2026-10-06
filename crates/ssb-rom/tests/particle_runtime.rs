@@ -564,3 +564,50 @@ fn the_results_confetti_falls_on_lists_four_and_zero_and_ends() {
     assert_eq!(env_alpha, 0);
     println!("confetti: flags {flags:#x}, peak {structs_max} particles");
 }
+
+/// RE-464: the interface's effects (`efManagerStockSnapMakeEffect`,
+/// `...StockSteal{Start,End}...`, `...BattleScoreMakeEffect`) are packed
+/// common-bank scripts on list 3, the effect camera's, and each ends.
+#[test]
+fn the_interface_effects_run_on_list_three_and_end() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = open(&bytes);
+    let banks = PackBanks {
+        pack: &pack,
+        common: pack.particle_bank(0).unwrap(),
+    };
+    type Make = fn(&mut Effects, &mut Particles, &dyn Banks) -> u8;
+    let makers: [(&str, Make); 5] = [
+        ("snap", |e, p, b| e.stock_snap(p, b, 55.0, 210.0)),
+        ("steal start", |e, p, b| {
+            e.stock_steal_start(p, b, 171.0, 190.0)
+        }),
+        ("steal end", |e, p, b| e.stock_steal_end(p, b, 31.0, 190.0)),
+        ("+1", |e, p, b| {
+            e.battle_score(p, b, Vec3::new(220.0, 892.0, 0.0), 1)
+        }),
+        ("-1", |e, p, b| {
+            e.battle_score(p, b, Vec3::new(220.0, 892.0, 0.0), -1)
+        }),
+    ];
+    for (name, make) in makers {
+        let mut p = Box::new(Particles::new());
+        let mut e = Effects::new(0);
+        ssb_game::rng::set_seed(1);
+        let pc = make(&mut e, &mut p, &banks);
+        assert_ne!(pc, lb::NIL, "{name}");
+        assert!(p.list(3).count() > 0, "{name} on list 3");
+        assert_eq!(
+            (0..3).map(|l| p.list(l).count()).sum::<usize>(),
+            0,
+            "{name}"
+        );
+        if name.ends_with('1') {
+            let xf = p.particle(pc).xf;
+            assert_eq!(p.transform(xf).scale.y, 0.25, "{name}");
+        }
+        let mut census = Census::default();
+        run_until_empty(&mut p, &mut e, &banks, &mut census);
+        eprintln!("{name}: {census:?}");
+    }
+}

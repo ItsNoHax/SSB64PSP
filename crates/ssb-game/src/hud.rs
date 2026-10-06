@@ -30,6 +30,87 @@ const COLORS_B: [u8; 5] = [0xF0, 0xF0, 0xFF, 0xFF, 0xFF];
 pub const POSITION_X: [i32; 4] = [55, 125, 195, 265];
 pub const POSITION_Y: i32 = 210;
 
+/// `ifCommonPlayerStockMakeStockSnap`: where a lost stock's burst starts,
+/// the player's interface position (`efManagerStockSnapMakeEffect`).
+pub fn stock_snap_position(pos_x: i32) -> (f32, f32) {
+    (pos_x as f32, POSITION_Y as f32)
+}
+
+/// `ifCommonPlayerScoreMakeEffect`: the "+1" or "-1" at the player's
+/// interface position (`dIFCommonPlayerScorePositionOffsetsX` is all 0)
+/// and 13 below it, in the effect camera's quarter pixels.
+pub fn score_position(pos_x: i32) -> ssb_engine::math::Vec3 {
+    ssb_engine::math::Vec3::new((pos_x << 2) as f32, ((POSITION_Y + 13) << 2) as f32, 0.0)
+}
+
+/// `IFPlayerSteal` and `ifCommonPlayerStockSteal*` (RE-464): the stolen
+/// player's stock icon (`SP_TEXSHUF | SP_TRANSPARENT`, its costume's LUT)
+/// flying in an arc from its stocks to the thief's for 30 frames.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StockSteal {
+    /// The player whose stock icon flies.
+    pub stolen: u8,
+    pub anim_frames: u8,
+    pub steal_pos_x: u16,
+    pub steal_pos_y: u16,
+    pub target_pos_x: u16,
+    /// The icon's `SObj` position.
+    pub x: f32,
+    pub y: f32,
+}
+
+/// `ifCommonPlayerStockStealMakeInterface`'s `anim_frames`.
+pub const STOCK_STEAL_FRAMES: u8 = 30;
+
+/// Where `efManagerStockStealStartMakeEffect` and `...EndMakeEffect` burst:
+/// a player's first stock icon's centre.
+pub fn steal_effect_position(pos_x: i32) -> (f32, f32) {
+    ((pos_x + STOCK_ICON_X) as f32, (POSITION_Y - 20) as f32)
+}
+
+impl StockSteal {
+    /// `ifCommonPlayerStockStealMakeInterface`: a `w` by `h` icon from
+    /// `stolen`'s stocks (interface position `stolen_pos_x`) towards the
+    /// thief's (`thief_pos_x`).
+    pub fn make(stolen: u8, stolen_pos_x: i32, thief_pos_x: i32, w: u16, h: u16) -> StockSteal {
+        let half_w = (f32::from(w) * 0.5) as i32;
+        let half_h = (f32::from(h) * 0.5) as i32;
+        let steal_pos_x = (stolen_pos_x + STOCK_ICON_X - half_w) as u16;
+        let steal_pos_y = (POSITION_Y - half_h - 20) as u16;
+        let target_pos_x = (thief_pos_x + STOCK_ICON_X - half_w) as u16;
+        StockSteal {
+            stolen,
+            anim_frames: STOCK_STEAL_FRAMES,
+            steal_pos_x,
+            steal_pos_y,
+            target_pos_x,
+            x: f32::from(steal_pos_x),
+            y: f32::from(steal_pos_y),
+        }
+    }
+
+    /// `ifCommonPlayerStockStealProcUpdate`: one frame of the arc. `false`
+    /// once the frames run out, when the host makes the end burst at the
+    /// thief's [`steal_effect_position`] and drops the icon.
+    pub fn update(&mut self) -> bool {
+        self.anim_frames -= 1;
+        if self.anim_frames == 0 {
+            return false;
+        }
+        let dist_x = (i32::from(self.steal_pos_x) - i32::from(self.target_pos_x)) as f32;
+        let vel_x = (f32::from(self.anim_frames) * dist_x) / 30.0;
+        let vel_y = if vel_x < dist_x * 0.5 {
+            -(vel_x - dist_x * 0.5)
+        } else {
+            vel_x - dist_x * 0.5
+        };
+        let half = dist_x * 0.5;
+        self.x = f32::from(self.target_pos_x) + vel_x;
+        self.y = (f32::from(self.steal_pos_y) + (15.0 / (half * half)) * vel_y * vel_y) - 15.0;
+        true
+    }
+}
+
 /// `players[].color` of a CPU outside team battles, `GMCOMMON_PLAYERS_MAX`:
 /// its emblem takes the stage's fifth, grey colour.
 pub const CPU_COLOR: usize = 4;

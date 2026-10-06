@@ -48,6 +48,14 @@ pub const GRAPHICS_HEAP_SEGMENT: u8 = 0x0E;
 /// through to the device, which supplies the real pixels.
 pub const LB_TRANSITION_SEGMENT: u8 = 0x01;
 
+/// `sLBTransitionPhotoHeap`'s picture: `lbTransitionSetupTransition` copies
+/// 300 x 220 RGBA5551 texels, the screen's rows 230 up to 11 from column 10
+/// (RE-464). Every wipe's display lists load it in strips (`G_LOADTILE`
+/// with `ult` 0, 5, 10, ... 215) whose vertices carry absolute texel
+/// coordinates, so the whole picture is sampled, not one strip (which
+/// RE-100 assumed).
+pub const LB_TRANSITION_PHOTO: (u16, u16) = (300, 220);
+
 /// Bytes per `MObj` entry point in that segment: one `gSPBranchList`.
 const ENTRY_SIZE: u32 = 8;
 

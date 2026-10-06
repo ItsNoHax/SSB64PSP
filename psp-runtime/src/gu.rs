@@ -189,35 +189,21 @@ impl<const N: usize> core::fmt::Write for FixedStr<N> {
     }
 }
 
-/// Real content width of the LB "loading transition" framebuffer capture
-/// (RE-099/RE-100): the real ROM's own snapshot buffer is 300 texels wide
-/// (`sLBTransitionPhotoHeap`, `refs/ssb-decomp-re/src/lb/lbtransition.c:224`),
-/// and every real display list's own baked UVs were authored against exactly
-/// that width. Matches `TextureDesc::width` for every `ROLE_FRAMEBUFFER`
-/// entry the pack builds (`PackWriter::add_framebuffer_texture`).
-pub const TRANSITION_PHOTO_WIDTH: usize = 300;
+/// The LB transition photo's size, `sLBTransitionPhotoHeap`'s 300 x 220
+/// texels (`ssb_rom::mobj::LB_TRANSITION_PHOTO`, RE-464). Matches
+/// `TextureDesc::width`/`height` of the pack's one `ROLE_FRAMEBUFFER`
+/// entry (`PackWriter::add_framebuffer_texture`).
+pub const TRANSITION_PHOTO_WIDTH: usize = ssb_rom::mobj::LB_TRANSITION_PHOTO.0 as usize;
+/// See [`TRANSITION_PHOTO_WIDTH`].
+pub const TRANSITION_PHOTO_HEIGHT: usize = ssb_rom::mobj::LB_TRANSITION_PHOTO.1 as usize;
 
-/// Row stride in texels the GE actually addresses -- `TRANSITION_PHOTO_WIDTH`
-/// padded to a power of two, matching every other `TextureDesc::stride`'s own
-/// convention (`crate::meshdraw::bind_texture`'s general path already reads
-/// `t.stride`, never `t.width`, for `sceGuTexImage`'s `bufferwidth`). Real
-/// measured UV spans never exceed the real width (RE-100: U repeats maxed out
-/// at 1.00 across all 13 files), so the padding columns are never sampled.
-const TRANSITION_PHOTO_STRIDE: usize = 512; // TRANSITION_PHOTO_WIDTH.next_power_of_two()
+/// The row stride the GE addresses: the width padded to a power of two,
+/// every `TextureDesc::stride`'s convention.
+const TRANSITION_PHOTO_STRIDE: usize = 512;
 
-/// Height of the capture buffer, padded to a power of two.
-///
-/// RE-100 measured the real ROM only ever samples the top 5 or 6 rows of the
-/// N64's 220-row snapshot (both `G_SETTIMG`s bind offset 0, tiled/repeated
-/// across much taller geometry by ordinary wrap addressing) -- not the whole
-/// 220-row image RE-099 originally guessed a PSP port might need. 6 pads to
-/// 8, which also covers the 5-row case, so one capture buffer serves both of
-/// `TextureDesc::ROLE_FRAMEBUFFER`'s real shapes.
-pub const TRANSITION_PHOTO_HEIGHT: usize = 8;
-
-/// Real captured rows before the wrap-periodicity padding described on
-/// [`Gpu::capture_transition_photo`].
-const TRANSITION_PHOTO_REAL_ROWS: usize = 6;
+/// The rows the buffer holds: the height padded to the power of two
+/// `sceGuTexImage` is given (`ge_texture_dims`).
+const TRANSITION_PHOTO_ROWS: usize = 256;
 
 /// Captured by [`Gpu::request_transition_capture`], read by
 /// `meshdraw::bind_texture` whenever a primitive's `TextureDesc::role` is
@@ -228,33 +214,70 @@ const TRANSITION_PHOTO_REAL_ROWS: usize = 6;
 /// exactly one of these for the whole process, the same shape `DISPLAY_LIST`
 /// above already uses for the same reason.
 ///
-/// Captured in the PSP's own native `Psm8888` rather than the N64's
-/// RGBA5551 -- the GE already reads the real draw buffer in that format, so
-/// this is a plain block copy with no conversion, and a screen-colour smear
-/// has no need for the original's 16-bit precision. An accepted format
-/// deviation, not a fidelity gap that matters here.
+/// RGB565 (`Psm5650`): the N64's photo is RGBA5551, and its wipes' lists
+/// set no render mode (no `G_SETOTHERMODE_L` in files 40-51), so they draw
+/// opaque under the one `lbTransitionMakeCamera`'s pass leaves and the
+/// photo's alpha bit is never read. 16 bits keep its precision at half
+/// `Psm8888`'s 512 KiB.
 ///
 /// The CPU fills this through the D-cache and the GE samples it by DMA, so
-/// [`Gpu::capture_transition_photo`] writes it back after each copy. The
-/// 64-byte alignment keeps that writeback from spilling into, or being
-/// spilled into by, a `.bss` neighbour's cache line, the RE-360 failure
-/// shape. The size (16 KiB) is a whole number of lines.
-static mut TRANSITION_PHOTO: CacheLineAligned<
-    [u32; TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_HEIGHT],
-> = CacheLineAligned([0; TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_HEIGHT]);
+/// the capture writes it back after each copy. The 64-byte alignment keeps
+/// that writeback from spilling into, or being spilled into by, a `.bss`
+/// neighbour's cache line, the RE-360 failure shape. The size (256 KiB) is
+/// a whole number of lines.
+static mut TRANSITION_PHOTO: CacheLineAligned<[u16; TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_ROWS]> =
+    CacheLineAligned([0; TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_ROWS]);
 
 /// Bytes the GE should read for the transition photo capture.
 ///
 /// # Safety
 ///
-/// Aliases [`TRANSITION_PHOTO`]; the caller must not hold this across a call
-/// to [`Gpu::request_transition_capture`]'s eventual capture (i.e. not across
-/// a frame boundary), the same rule the pack's own texture data already
-/// follows since the GE reads it by DMA.
+/// Aliases [`TRANSITION_PHOTO`]; the caller must not hold this across a
+/// capture (i.e. not across a frame boundary), the same rule the pack's own
+/// texture data already follows since the GE reads it by DMA.
 pub unsafe fn transition_photo_data() -> &'static [u8] {
     let ptr = core::ptr::addr_of!(TRANSITION_PHOTO.0) as *const u8;
-    core::slice::from_raw_parts(ptr, TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_HEIGHT * 4)
+    core::slice::from_raw_parts(ptr, TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_ROWS * 2)
 }
+
+/// `lbTransitionSetupTransition`'s copy from an 8888 buffer holding the
+/// pillarboxed 4:3 picture: photo texel `(x, y)` is N64 screen pixel
+/// `(10 + x, 230 - y)`, the copy running from row 230 upwards, sampled at
+/// that pixel's centre on the PSP. The texel past the last column and the
+/// row past the last row repeat their neighbours, so the GE's clamped
+/// bilinear filter at the picture's right and bottom edges reads the
+/// picture rather than the padding.
+///
+/// # Safety
+///
+/// `src` must point at a complete `BUF_WIDTH`-stride 8888 frame.
+unsafe fn copy_transition_photo(src: *const u32) {
+    let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let dst = core::ptr::addr_of_mut!(TRANSITION_PHOTO.0) as *mut u16;
+    let rgb565 = |c: u32| -> u16 {
+        let (r, g, b) = (c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF);
+        ((r >> 3) | ((g >> 2) << 5) | ((b >> 3) << 11)) as u16
+    };
+    for y in 0..TRANSITION_PHOTO_HEIGHT {
+        let n64_y = 230 - y as i32;
+        let sy = (((n64_y as f32 + 0.5) * vh as f32 / 240.0) as usize).min(SCREEN_HEIGHT as usize - 1);
+        let row = dst.add(y * TRANSITION_PHOTO_STRIDE);
+        for x in 0..TRANSITION_PHOTO_WIDTH {
+            let sx = vx as usize + ((x as f32 + 10.5) * vw as f32 / 320.0) as usize;
+            row.add(x).write(rgb565(src.add(sy * BUF_WIDTH as usize + sx).read()));
+        }
+        row.add(TRANSITION_PHOTO_WIDTH).write(row.add(TRANSITION_PHOTO_WIDTH - 1).read());
+    }
+    core::ptr::copy_nonoverlapping(
+        dst.add((TRANSITION_PHOTO_HEIGHT - 1) * TRANSITION_PHOTO_STRIDE),
+        dst.add(TRANSITION_PHOTO_HEIGHT * TRANSITION_PHOTO_STRIDE),
+        TRANSITION_PHOTO_STRIDE,
+    );
+    // The GE reads this buffer by DMA and does not see the D-cache.
+    let bytes = transition_photo_data();
+    sys::sceKernelDcacheWritebackRange(bytes.as_ptr() as *const c_void, bytes.len() as u32);
+}
+
 
 /// Real content width of the 1P Stage Clear wallpaper-capture snapshot
 /// (`sc1PStageClearCopyFramebufToWallpaper`, RE-190/191): the same 300-texel
@@ -451,6 +474,15 @@ impl Gpu {
         }
     }
 
+    /// `COBJ_FLAG_ZBUFFER`'s fill of a camera's depth with `G_MAXFBZ`: the
+    /// far depth over the current scissor, colour untouched.
+    pub fn clear_depth(&mut self) {
+        unsafe {
+            sys::sceGuClearDepth(0);
+            sys::sceGuClear(ClearBuffer::DEPTH_BUFFER_BIT);
+        }
+    }
+
     /// Restores the full-screen viewport/scissor `init` set up, for flat 2D
     /// content (RE-289/290's pixel-confirmed evidence assumes this shape).
     /// Call when leaving a real 3D scene.
@@ -465,66 +497,39 @@ impl Gpu {
     /// transition photo buffer once it finishes rendering.
     ///
     /// This is the PSP-side equivalent of `lbTransitionSetupTransition`'s
-    /// one-time framebuffer photocopy (RE-099/RE-100): a plain block copy,
-    /// not a render pass, taken once and reused by every primitive whose
+    /// one-time framebuffer photocopy (RE-099, RE-464): a copy, not a render
+    /// pass, taken once and reused by every primitive whose
     /// `TextureDesc::role` is `ROLE_FRAMEBUFFER` until requested again.
     pub fn request_transition_capture(&mut self) {
         self.capture_requested = true;
     }
 
-    /// Copies the top-left corner of whichever buffer just finished
-    /// rendering into [`TRANSITION_PHOTO`].
+    /// Copies the frame that just finished rendering into
+    /// [`TRANSITION_PHOTO`] ([`copy_transition_photo`]).
     ///
     /// # Safety
     ///
     /// Must only be called between `sceGuSync(Finish, Wait)` completing (so
     /// the buffer's contents are final) and the next `sceGuSwapBuffers` (so
     /// `draw_is_fbp0` still names the buffer that was just drawn into).
-    ///
-    /// Rows beyond [`TRANSITION_PHOTO_REAL_ROWS`] are not left stale: the GE
-    /// wraps a `ROLE_FRAMEBUFFER` texture at `TRANSITION_PHOTO_HEIGHT` (8),
-    /// not at the real 6-row content, because `TextureDesc::height`'s padded
-    /// power-of-two is what `sceGuTexImage`/`sceGuTexScale` actually use
-    /// (same convention every other non-power-of-two-height texture in the
-    /// pack already follows). Filling them with a copy of rows 0-1 makes the
-    /// 8-row buffer repeat the real 6-row pattern seamlessly, matching the
-    /// real ROM's own period for the one primitive shape that measurably
-    /// wraps its V axis (RE-100: the 300x6 tile, up to 35.83 repeats) rather
-    /// than introducing two extra, unintended rows into that repeat.
-    ///
-    /// `TRANSITION_PHOTO_WIDTH`'s columns are read starting at the
-    /// pillarbox's own left edge (`pillarboxed_viewport().0`), not absolute
-    /// column 0 of the raw 480-wide buffer (RE-111). Every real draw --
-    /// including this project's own game content -- is scoped to the
-    /// pillarboxed 4:3 viewport by the permanently-enabled scissor
-    /// (`Gpu::new`), so columns left of it are never drawn to at all and
-    /// stay at their power-on value (zero, i.e. solid black) for the whole
-    /// program's life. `TRANSITION_PHOTO_WIDTH` (300) already fits entirely
-    /// inside the pillarboxed width (362) starting from that edge, so this
-    /// is a pure offset correction, not a re-tuned capture size.
     unsafe fn capture_transition_photo(&self) {
         let src = if self.draw_is_fbp0 {
             self.fbp0_direct
         } else {
             self.fbp1_direct
         } as *const u32;
-        let (vx, _, _, _) = ssb_engine::coord::pillarboxed_viewport();
-        let dst = core::ptr::addr_of_mut!(TRANSITION_PHOTO.0) as *mut u32;
-        for y in 0..TRANSITION_PHOTO_REAL_ROWS {
-            let src_row = src.add(y * BUF_WIDTH as usize + vx as usize);
-            let dst_row = dst.add(y * TRANSITION_PHOTO_STRIDE);
-            core::ptr::copy_nonoverlapping(src_row, dst_row, TRANSITION_PHOTO_WIDTH);
+        copy_transition_photo(src);
+    }
+
+    /// `lbTransitionSetupTransition` at a scene's start: copies the frame
+    /// on display, the previous scene's last, into [`TRANSITION_PHOTO`]
+    /// before this frame opens.
+    pub fn capture_transition_photo_now(&self) {
+        debug_assert!(!self.frame_open);
+        unsafe {
+            let src = if self.draw_is_fbp0 { self.fbp1_direct } else { self.fbp0_direct } as *const u32;
+            copy_transition_photo(src);
         }
-        for y in TRANSITION_PHOTO_REAL_ROWS..TRANSITION_PHOTO_HEIGHT {
-            let wrap_from = (y - TRANSITION_PHOTO_REAL_ROWS) * TRANSITION_PHOTO_STRIDE;
-            let dst_row = dst.add(y * TRANSITION_PHOTO_STRIDE);
-            core::ptr::copy_nonoverlapping(dst.add(wrap_from), dst_row, TRANSITION_PHOTO_WIDTH);
-        }
-        // The GE reads this buffer by DMA and does not see the D-cache.
-        // PPSSPP does not model the cache, so only hardware shows the
-        // stale texels this prevents.
-        let bytes = transition_photo_data();
-        sys::sceKernelDcacheWritebackRange(bytes.as_ptr() as *const c_void, bytes.len() as u32);
     }
 
     /// Requests that the frame currently in flight be copied into the

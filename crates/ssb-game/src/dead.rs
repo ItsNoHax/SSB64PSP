@@ -144,6 +144,9 @@ pub struct DeadState {
     /// `gSCManagerBattleState->game_rules & SCBATTLE_GAMERULE_STOCK`. Off in
     /// Training, whose rules are timed.
     pub stock_rule: bool,
+    /// `gSCManagerBattleState->is_team_battle`: with [`Self::stock_rule`],
+    /// a sleeping fighter can steal a teammate's stock (RE-464).
+    pub team_battle: bool,
     /// `SCBATTLE_GAMERULE_1PGAME`: a fall takes a stock, and an enemy
     /// ([`Self::team_bounds`]) is replaced rather than reborn.
     pub spgame_rule: bool,
@@ -200,6 +203,16 @@ pub struct DeadState {
     /// Set when `ftCommonDeadUpdateScore` runs, for the host to report the
     /// fall and `damage_player` to the battle ([`crate::battle`]).
     pub scored: bool,
+    /// `status_vars.common.sleep.stock_steal_wait`: the frames until a
+    /// fighter that stole a teammate's stock comes back (RE-464).
+    pub stock_steal_wait: u8,
+    /// `ftCommonSleepProcUpdate`'s START tap while no steal is pending, for
+    /// the host to resolve against the battle's teams
+    /// ([`crate::battle::Battle::steal_stock`]).
+    pub steal_request: bool,
+    /// The steal's wait ran out this frame: the fighter's stock count is 0
+    /// and it is reborn; the host sets the battle's count to match.
+    pub steal_landed: bool,
 }
 
 /// `ftMainSetStatus`'s resets of the fields this module owns. The entry's
@@ -426,6 +439,42 @@ pub fn set_sleep(f: &mut Fighter) {
     f.dead.is_ghost = true;
     f.dead.is_menu_ignore = true;
     f.dead.camera_mode = CameraMode::Ghost;
+    f.dead.stock_steal_wait = 0;
+}
+
+/// `FTCOMMON_SLEEP_STOCK_STEAL_WAIT`.
+pub const STOCK_STEAL_WAIT: u8 = 30;
+
+/// `ftCommonSleepProcUpdate`, the fighter's half. In a team stock battle
+/// a pending steal counts down and, at 0,
+/// leaves the fighter one life (`stock_count = 0`) and reborn
+/// (`ftCommonRebirthDownSetStatus`, through [`DeadState::rebirth_pending`]);
+/// otherwise a START tap asks the host to steal
+/// ([`DeadState::steal_request`]).
+pub fn update_sleep(f: &mut Fighter) {
+    if !(f.dead.stock_rule && f.dead.team_battle) {
+        return;
+    }
+    if f.dead.stock_steal_wait != 0 {
+        f.dead.stock_steal_wait -= 1;
+        if f.dead.stock_steal_wait == 0 {
+            f.stocks = 0;
+            f.dead.steal_landed = true;
+            f.dead.rebirth_pending = true;
+        }
+    } else if f
+        .button_tap()
+        .contains(ssb_engine::input::N64Buttons::START)
+    {
+        f.dead.steal_request = true;
+    }
+}
+
+/// The thief's half of a steal the battle granted: `stock_count = -2` and
+/// the wait (`ftCommonSleepProcUpdate`).
+pub fn start_stock_steal(f: &mut Fighter) {
+    f.stocks = -2;
+    f.dead.stock_steal_wait = STOCK_STEAL_WAIT;
 }
 
 /// `proc_update` and `proc_interrupt` of the dead and rebirth statuses.
@@ -440,6 +489,7 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
             }
         }
         Status::DeadUpStar => update_up_star(f),
+        Status::Sleep => update_sleep(f),
         Status::DeadUpFall => update_up_fall(f),
         // `ftCommonRebirthDownProcUpdate`.
         Status::RebirthDown => {
@@ -599,6 +649,7 @@ fn reinit(f: &mut Fighter, pos: Vec3, facing: Facing) {
     fresh.dead = DeadState {
         bounds: f.dead.bounds,
         stock_rule: f.dead.stock_rule,
+        team_battle: f.dead.team_battle,
         spgame_rule: f.dead.spgame_rule,
         team_bounds: f.dead.team_bounds,
         camera_eye: f.dead.camera_eye,

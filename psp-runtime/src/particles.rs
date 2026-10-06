@@ -158,6 +158,7 @@ pub unsafe fn draw(
     let camera = Camera {
         view,
         proj,
+        screen: false,
         planes: lb::BATTLE_PLANES,
         ge_planes: (
             ssb_game::camera::DEFAULT_NEAR,
@@ -173,11 +174,49 @@ pub unsafe fn draw(
     draw_lists(banks, particles, &camera, lists, DEPTH_TESTED, draw_state);
 }
 
+/// [`draw`] for `lists` under `gmCameraMakeEffectCamera`'s camera: no
+/// matrix `XObj`s, so particles sit in the viewport's quarter pixels
+/// ([`lb::screen_projection`]); `viewport` is `ulx, uly, lrx, lry` on the
+/// 320 x 240 screen.
+///
+/// # Safety
+///
+/// As [`draw`].
+pub unsafe fn draw_screen(
+    banks: &PackBanks<'_, '_>,
+    particles: &mut Particles,
+    viewport: [f32; 4],
+    lists: &[usize],
+    draw_state: &mut DrawState,
+) {
+    let (vx, vy, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+    let (kx, ky) = (vw as f32 / 320.0, vh as f32 / 240.0);
+    let proj = lb::screen_projection(viewport);
+    let [ulx, uly, lrx, lry] = viewport;
+    let camera = Camera {
+        view: &proj,
+        proj: &proj,
+        screen: true,
+        planes: lb::BATTLE_PLANES,
+        ge_planes: lb::BATTLE_PLANES,
+        rect: [
+            vx as f32 + ulx * kx,
+            vy as f32 + uly * ky,
+            (lrx - ulx) * kx,
+            (lry - uly) * ky,
+        ],
+    };
+    draw_lists(banks, particles, &camera, lists, 0, draw_state);
+}
+
 /// The camera a particle pass draws under: its view, projection and
 /// `near`/`far`, and its viewport on the PSP screen as `[x, y, w, h]`.
 pub struct Camera<'m> {
     pub view: &'m Mat4,
     pub proj: &'m Mat4,
+    /// `proj` is [`lb::screen_projection`]'s, under a camera with no matrix
+    /// `XObj`s: `view` and `planes` are unused ([`lb::project_screen`]).
+    pub screen: bool,
     pub planes: (f32, f32),
     /// The planes of the GE projection `proj` was built with, for a
     /// depth-tested list's GE depth.
@@ -209,7 +248,12 @@ pub unsafe fn draw_lists(
         let tested = depth_tested & (1 << link) != 0;
         for (_, pc) in particles.list(link) {
             let xf = (pc.xf != lb::NIL).then(|| particles.transform(pc.xf));
-            let Some(at) = lb::project(pc, xf, camera.view, camera.proj, camera.planes) else {
+            let at = if camera.screen {
+                lb::project_screen(pc, xf, camera.proj)
+            } else {
+                lb::project(pc, xf, camera.view, camera.proj, camera.planes)
+            };
+            let Some(at) = at else {
                 continue;
             };
             let Some((texture, desc)) = banks.frame_texture(pc) else {

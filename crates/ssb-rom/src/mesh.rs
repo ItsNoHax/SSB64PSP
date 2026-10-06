@@ -134,9 +134,9 @@ pub struct TextureRef {
     pub framebuffer: bool,
     /// `G_SETTILESIZE`'s `uls`/`ult` on the render tile — the tile's own
     /// origin, still in raw S10.2 fixed point (quarter-texel units, the same
-    /// form `dl::Cmd::SetTileSize` decodes). A framebuffer binding always
-    /// needs this rebased to its small runtime capture (RE-108/RE-109).
-    /// Ordinary ROM textures need it on every axis: the RDP subtracts the
+    /// form `dl::Cmd::SetTileSize` decodes). A framebuffer binding has none:
+    /// its strips address the whole photo (RE-464). Ordinary ROM textures
+    /// need it on every axis: the RDP subtracts the
     /// origin before clamp, mask and mirror (RE-359). The RDP clamps
     /// against the tile's absolute `uls..lrs`/`ult..lrt` window, whereas the
     /// PSP clamps against an uploaded image whose first texel is coordinate
@@ -2266,21 +2266,23 @@ impl State {
             .unwrap_or(w);
 
         let Some((offset, data_file)) = image else {
-            // No archive location: the real content is filled in on the
-            // device from a runtime framebuffer capture (RE-099/RE-100).
-            // `format`/`size`/`width`/`height` still describe the tile's real
-            // decoded shape, taken from the same `G_SETTILE`/`G_SETTILESIZE`
-            // commands as any other texture -- a pack-time converter uses
-            // these to size the runtime buffer, just skips decoding texels.
-            let (origin_s, origin_t) = tile.origin.unwrap_or((0, 0));
+            // No archive location: the content is the transition photo the
+            // device captures at run time (RE-099, RE-464). Each strip's
+            // `G_LOADTILE` puts the photo's rows `ult..=lrt` in TMEM and its
+            // `G_SETTILESIZE` origin is that same `ult`, so the RDP samples
+            // photo row `t - ult + ult = t`: a vertex's coordinate addresses
+            // the whole picture. The binding is therefore the full photo
+            // with no origin to subtract, whichever strip loaded it.
+            let (photo_w, photo_h) = crate::mobj::LB_TRANSITION_PHOTO;
+            let (origin_s, origin_t) = (0, 0);
             return Some(TextureRef {
                 data_file: None,
                 data_offset: 0,
                 format: Format::from_raw(fmt)?,
                 size: BitSize::from_raw(siz)?,
-                width: w,
-                height: h,
-                source_width,
+                width: photo_w,
+                height: photo_h,
+                source_width: photo_w,
                 palette_file: None,
                 palette_offset: None,
                 palette_entries: 0,
@@ -5584,8 +5586,9 @@ mod tests {
         );
         assert_eq!(t.data_file, None);
         assert_eq!(t.data_offset, 0);
-        assert_eq!(t.width, 300);
-        assert_eq!(t.height, 5);
+        // RE-464: whichever 300 x 5 strip loads it, the binding is the
+        // whole 300 x 220 photo.
+        assert_eq!((t.width, t.height), crate::mobj::LB_TRANSITION_PHOTO);
         assert_eq!(t.format, Format::Rgba);
         assert_eq!(t.size, BitSize::Bits16);
     }
@@ -5762,17 +5765,12 @@ mod tests {
     }
 
     #[test]
-    fn a_framebuffer_role_tile_not_at_the_origin_has_its_uv_rebased() {
-        // RE-108/RE-109: file 45's real 300x5 "photo" tile sets
-        // `ult = 860` (texel 215, the *bottom* of the real 220-texel-tall
-        // N64 buffer) with vertex V baked at exactly the same absolute
-        // position -- so the raw, un-rebased UV pointed at content this
-        // project's small top-of-buffer runtime capture never populates,
-        // reading back whatever was there instead (measured black on
-        // device). A conversion-time rebase must subtract the tile's own
-        // origin so the same vertex instead samples relative position 0,
-        // matching a tile whose origin genuinely is 0 (the working 300x6
-        // entry, RE-100).
+    fn a_framebuffer_strip_keeps_its_absolute_photo_row() {
+        // RE-464 (correcting RE-108/RE-109): file 45's 300x5 photo strip
+        // sets `ult = 860` (row 215) and loads rows 215..=219 into TMEM, so
+        // the RDP samples photo row `t - ult + ult = t`. The vertex keeps
+        // its absolute row against the whole 300 x 220 photo; subtracting
+        // the strip's origin folded every strip onto the photo's top rows.
         let mut file = Vec::new();
         // One vertex: x=0 y=0 z=0 pad=0 u=0 v=6881 rgba=opaque white.
         // `G_TEXTURE`'s default `scale_t` (0xFFFF) is the SDK's "no
@@ -5846,11 +5844,9 @@ mod tests {
             .texture
             .expect("a segment-0x1 bind must still produce a texture reference");
         assert!(t.framebuffer);
-        assert_eq!(t.origin_t, 860, "the tile's own origin must be recorded");
-        assert_eq!(
-            mesh.vertices[0].uv[1], 0,
-            "a vertex baked at the tile's own origin must rebase to 0, not stay at the tile's absolute position in the conceptual 220-row image"
-        );
+        assert_eq!(t.origin_t, 0, "the photo has no origin to subtract");
+        // Row 215 in S10.5.
+        assert_eq!(mesh.vertices[0].uv[1], 215 * 32);
     }
 
     #[test]

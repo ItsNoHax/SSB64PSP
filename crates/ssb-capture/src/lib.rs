@@ -621,10 +621,14 @@ pub enum GameScene {
     /// `bonuspractice`: START on that select: Yoshi's Break the Targets
     /// practice with its time-passed timer.
     BonusPractice,
+    /// `vsteamsteal`: `vsteam` with two lives each; the player runs off
+    /// twice and, asleep, steals a stock from the CPU on its team with
+    /// START (RE-464).
+    VsTeamSteal,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 148] = [
+    pub const ALL: [GameScene; 149] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -773,6 +777,7 @@ impl GameScene {
         GameScene::ItemSwitch,
         GameScene::BonusSelect,
         GameScene::BonusPractice,
+        GameScene::VsTeamSteal,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -926,6 +931,7 @@ impl GameScene {
             GameScene::ItemSwitch => "itemswitch",
             GameScene::BonusSelect => "bonusselect",
             GameScene::BonusPractice => "bonuspractice",
+            GameScene::VsTeamSteal => "vsteamsteal",
         }
     }
 

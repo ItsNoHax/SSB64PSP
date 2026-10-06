@@ -167,3 +167,29 @@ fn stock_icons_sit_above_the_damage() {
     assert_eq!(stock_icons(POSITION_X[0], 0, false, 8, 10).count(), 1);
     assert_eq!(stock_icons(POSITION_X[0], -1, true, 8, 10).count(), 0);
 }
+
+#[test]
+fn a_stolen_stock_arcs_fifteen_up_and_lands_after_thirty_frames() {
+    // Port 2's icon (16 x 16) flying to port 0's stocks.
+    let mut s = StockSteal::make(2, POSITION_X[2], POSITION_X[0], 16, 16);
+    assert_eq!((s.steal_pos_x, s.target_pos_x), (195 - 24 - 8, 55 - 24 - 8));
+    assert_eq!(s.steal_pos_y as i32, POSITION_Y - 8 - 20);
+    let start_y = f32::from(s.steal_pos_y);
+    let mut top = f32::MAX;
+    let mut frames = 0;
+    while s.update() {
+        frames += 1;
+        top = top.min(s.y);
+    }
+    assert_eq!(frames, i32::from(STOCK_STEAL_FRAMES) - 1);
+    // Half way the icon is 15 above where it started.
+    assert_eq!(top, start_y - 15.0);
+}
+
+#[test]
+fn scores_and_snaps_sit_on_the_interface_position() {
+    assert_eq!(stock_snap_position(55), (55.0, 210.0));
+    let s = score_position(125);
+    assert_eq!((s.x, s.y, s.z), (500.0, 892.0, 0.0));
+    assert_eq!(steal_effect_position(265), (241.0, 190.0));
+}

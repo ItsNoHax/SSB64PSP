@@ -266,3 +266,62 @@ fn a_particle_projects_to_its_size_over_depth() {
     let near = Mat4::look_at(Vec3::new(0.0, 0.0, 300.0), Vec3::ZERO, Vec3::Y);
     assert_eq!(project(&pc, None, &near, &proj, BATTLE_PLANES), None);
 }
+
+#[test]
+fn the_effect_camera_reads_quarter_pixels_of_its_viewport() {
+    let proj = screen_projection([10.0, 10.0, 310.0, 230.0]);
+    let mut pc = Particle::EMPTY;
+    pc.size = 40.0;
+    // Pixel (55, 210): a stock snap's start.
+    pc.pos = Vec3::new(55.0 * 4.0, 210.0 * 4.0, 0.0);
+    let got = project_screen(&pc, None, &proj).unwrap();
+    // NDC over the 300 x 220 viewport: x (55 - 160) / 150, y up.
+    assert!(
+        (got.center[0] - (55.0 - 160.0) / 150.0).abs() < 1e-5,
+        "{:?}",
+        got.center
+    );
+    assert!(
+        (got.center[1] - (120.0 - 210.0) / 110.0).abs() < 1e-5,
+        "{:?}",
+        got.center
+    );
+    // A size of 40 quarter pixels is 10 pixels: 10 / 150 of the half-width.
+    assert!((got.half[0] - 10.0 / 150.0).abs() < 1e-5, "{:?}", got.half);
+    // A score's transform squashes y by 4.
+    let mut xf = Transform::EMPTY;
+    xf.affine = tra_rot_rpy_r_sca(Vec3::ZERO, Vec3::ZERO, Vec3::new(1.0, 0.25, 1.0));
+    let got = project_screen(&pc, Some(&xf), &proj).unwrap();
+    assert!(
+        (got.half[1] - 0.25 * 10.0 / 110.0).abs() < 1e-5,
+        "{:?}",
+        got.half
+    );
+    // Off the viewport: culled.
+    pc.pos = Vec3::new(5.0 * 4.0, 100.0 * 4.0, 0.0);
+    assert_eq!(project_screen(&pc, None, &proj), None);
+}
+
+#[test]
+fn make_pos_vel_places_the_particle_and_updates_it_once() {
+    let mut script = TestBank::particle(10, 5.0, WAIT_THEN_END);
+    script.vel = Vec3::new(9.0, 9.0, 9.0);
+    let bank = TestBank::new(&[script]);
+    let mut p = boxed();
+    let mut dead = CountDead::default();
+    let pc = make_pos_vel(
+        &mut p,
+        &bank,
+        &mut dead,
+        genlink(2),
+        0,
+        Vec3::new(4.0, 8.0, 0.0),
+        Vec3::ZERO,
+    );
+    assert_ne!(pc, NIL);
+    let got = p.particle(pc);
+    // Its own velocity (zero), not the script's.
+    assert_eq!(got.vel, Vec3::ZERO);
+    assert_eq!(got.pos, Vec3::new(4.0, 8.0, 0.0));
+    assert_eq!(p.list(3).count(), 1, "GENLINK(2) is list 3");
+}

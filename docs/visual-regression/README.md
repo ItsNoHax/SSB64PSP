@@ -1363,3 +1363,20 @@ effects' head-1 CLD state. All 123 game goldens match and repeat exactly
 (122 together, Fall separately). Pixel deltas and original-game observation
 belong to [RE-443](../evidence/re/RE-443.md). Manifest 192 scenes; no full
 viewer matrix or physical-PSP run this batch.
+
+## 2026-10-06 RE-463 drift triage and RE-464 results presentation
+
+116 goldens had drifted since RE-444; bisecting with each commit's own pack
+traced them to RE-458's TopN scale (114), RE-449's Egg Lay combo credit
+(`f1-training-yoshi-egg`) and RE-454's platform materials
+(`r2-bonus-platform-small`), and all 116 were rebaselined
+([RE-463](../evidence/re/RE-463.md)). A stale staged pack shows as an
+all-blue Training frame; bisect only with the commit's own pack.
+
+RE-464's wipe, fade, stock snaps and scores change `f1-vs-results` (the
+confetti, as the fall's particles draw from the random sequence first) and
+`f1-training-rebirthblast` (the snap at Mario's display). The diagnostic
+`vsteamsteal` (a two-life team battle, outside the manifest) runs the
+player off twice and taps START asleep at 1060: `vsteamsteal@1066..1085`
+show the stolen icon's arc, `@1090` its landing and the rebirth. The
+manifest has 195 scenes.
