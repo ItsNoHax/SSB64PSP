@@ -40,6 +40,18 @@ impl<'p, 'a> PackBanks<'p, 'a> {
         })
     }
 
+    /// The title's banks (RE-467): `mnTitleMakeLogoFire` loads only
+    /// `mntitle`'s, which takes bank id 0.
+    pub fn title(pack: &'p Pack<'a>) -> Option<PackBanks<'p, 'a>> {
+        Some(PackBanks {
+            pack,
+            common: pack_bank(pack, "mntitle")?,
+            yoshi: None,
+            items: None,
+            yoster: None,
+        })
+    }
+
     fn bank(&self, id: u8) -> Option<ParticleBankDesc> {
         match id {
             0 => Some(self.common),

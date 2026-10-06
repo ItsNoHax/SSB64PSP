@@ -668,7 +668,57 @@ impl Gpu {
         ]);
     }
 
-    unsafe fn draw_wallpaper_rect(&self, [x0,y0,x1,y1]: [i16;4]) {
+    /// The opening room's last picture, held under its transition
+    /// (RE-467): the snapshot [`Gpu::capture_campaign_wallpaper`] took,
+    /// unshaded, at the picture's own place.
+    pub unsafe fn draw_frozen_picture(&self) {
+        let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+        self.draw_photo_rect(
+            [
+                (vx as f32 + 10.0 * vw as f32 / 320.0) as i16,
+                (10.0 * vh as f32 / 240.0) as i16,
+                (vx as f32 + 310.0 * vw as f32 / 320.0) as i16,
+                (230.0 * vh as f32 / 240.0) as i16,
+            ],
+            0xFFFF_FFFF,
+        );
+    }
+
+    /// The depth over the current scissor set to the nearest value, which
+    /// nothing drawn later passes: `mvOpeningRoomTransitionOutlineProcDisplay`'s
+    /// black fill of the depth image (RE-467).
+    pub fn fill_depth_near(&mut self) {
+        unsafe {
+            sys::sceGuClearDepth(65535);
+            sys::sceGuClear(ClearBuffer::DEPTH_BUFFER_BIT);
+        }
+    }
+
+    /// Draws what follows into the depth buffer alone, at the far depth:
+    /// colour writes masked, every fragment passing (`G_RM_PASS` into the
+    /// depth image with white primitive colour). `false` restores the
+    /// renderer's state.
+    pub fn depth_far_only(&mut self, on: bool) {
+        unsafe {
+            if on {
+                sys::sceGuPixelMask(0xFFFF_FFFF);
+                sys::sceGuDepthRange(0, 0);
+                sys::sceGuDepthFunc(DepthFunc::Always);
+            } else {
+                sys::sceGuPixelMask(0);
+                sys::sceGuDepthRange(65535, 0);
+                sys::sceGuDepthFunc(DepthFunc::GreaterOrEqual);
+            }
+        }
+    }
+
+    unsafe fn draw_wallpaper_rect(&self, rect: [i16; 4]) {
+        // ABGR-packed 0x80 red/green/blue, 0xFF alpha -- matches the real
+        // draw's own `gDPSetPrimColor(0, 0, 0x80, 0x80, 0x80, 0xFF)`.
+        self.draw_photo_rect(rect, 0xFF80_8080);
+    }
+
+    unsafe fn draw_photo_rect(&self, [x0, y0, x1, y1]: [i16; 4], prim_color: u32) {
         let data = wallpaper_photo_data();
 
         sys::sceGuEnable(GuState::Texture2D);
@@ -698,9 +748,6 @@ impl Gpu {
             sys::TextureColorComponent::Rgba,
         );
 
-        // ABGR-packed 0x80 red/green/blue, 0xFF alpha -- matches the real
-        // draw's own `gDPSetPrimColor(0, 0, 0x80, 0x80, 0x80, 0xFF)`.
-        const PRIM_COLOR: u32 = 0xFF80_8080;
         let u1 = WALLPAPER_PHOTO_WIDTH as f32;
         let v1 = WALLPAPER_PHOTO_HEIGHT as f32;
 
@@ -708,7 +755,7 @@ impl Gpu {
             SpriteVertex {
                 u: 0.0,
                 v: 0.0,
-                color: PRIM_COLOR,
+                color: prim_color,
                 x: x0,
                 y: y0,
                 z: 0,
@@ -717,7 +764,7 @@ impl Gpu {
             SpriteVertex {
                 u: u1,
                 v: v1,
-                color: PRIM_COLOR,
+                color: prim_color,
                 x: x1,
                 y: y1,
                 z: 0,

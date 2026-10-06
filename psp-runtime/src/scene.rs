@@ -1518,6 +1518,10 @@ impl FighterScene {
     /// `others` (the other fighters' [`FighterScene::camera_interest`]s, in
     /// link order); any past the fourth interest are ignored.
     pub fn tick_camera(&mut self, stage: &StageDesc, others: &[ssb_game::camera::Interest]) {
+        // `gcEndProcessAll` on the movie camera: its scene moves it.
+        if self.camera.movie.is_some() {
+            return;
+        }
         match self.camera_status {
             Some(CameraStatus::MapZoom { origin, target }) => {
                 self.camera.tick_map_zoom(origin, target);

@@ -27,12 +27,14 @@ mod campaign;
 mod capture;
 mod demo_screen;
 mod menus_screen;
+mod opening_screen;
 mod play;
 mod player_screen;
 mod players_screen;
 mod results_screen;
 mod save;
 mod stage_screen;
+mod title_opening;
 mod training_screen;
 
 use ssb_engine::input::{newly_pressed, ControllerState, Input, N64Buttons, SSB64_GAME_MAPPING};
@@ -127,6 +129,27 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // the auto demo's focus on player 1.
         GameScene::Explain => 300,
         GameScene::AutoDemo => 420,
+        // The N64 logo at rest (RE-467); an opening scene's 30th tic.
+        GameScene::Opening => 30,
+        GameScene::OpeningRoom
+        | GameScene::OpeningPortraits
+        | GameScene::OpeningMario
+        | GameScene::OpeningDonkey
+        | GameScene::OpeningLink
+        | GameScene::OpeningSamus
+        | GameScene::OpeningYoshi
+        | GameScene::OpeningKirby
+        | GameScene::OpeningFox
+        | GameScene::OpeningPikachu
+        | GameScene::OpeningRun
+        | GameScene::OpeningCliff
+        | GameScene::OpeningYamabuki
+        | GameScene::OpeningJungle
+        | GameScene::OpeningYoster
+        | GameScene::OpeningSector
+        | GameScene::OpeningStandoff
+        | GameScene::OpeningClash
+        | GameScene::OpeningNewcomers => 30,
         GameScene::ModeSelect | GameScene::OnePMode => 40,
         GameScene::VsOptions | GameScene::ItemSwitch => 40,
         // The bonus select places a fighter at tick 40.
@@ -473,9 +496,10 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         // hand reached.
         (GameScene::BonusSelect | GameScene::BonusPractice, 40) => return N64Buttons(N64Buttons::A),
         (GameScene::BonusPractice, 50) => return N64Buttons(N64Buttons::START),
-        (GameScene::Option | GameScene::ScreenAdjust | GameScene::BackupClear | GameScene::DataMenu | GameScene::VsRecord | GameScene::Characters | GameScene::Title | GameScene::ModeSelect | GameScene::OnePMode | GameScene::VsOptions | GameScene::ItemSwitch | GameScene::BonusSelect | GameScene::BonusPractice | GameScene::Explain | GameScene::AutoDemo, _) => {
+        (GameScene::Option | GameScene::ScreenAdjust | GameScene::BackupClear | GameScene::DataMenu | GameScene::VsRecord | GameScene::Characters | GameScene::Title | GameScene::ModeSelect | GameScene::OnePMode | GameScene::VsOptions | GameScene::ItemSwitch | GameScene::BonusSelect | GameScene::BonusPractice | GameScene::Explain | GameScene::AutoDemo | GameScene::Opening, _) => {
             return N64Buttons(0)
         }
+        (g, _) if opening_capture_kind(g).is_some() => return N64Buttons(0),
         _ => {}
     }
     if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
@@ -1101,6 +1125,34 @@ pub(crate) const JUMP_BUTTON_MASK: u16 =
 /// already converted the nub and neither this screen nor gameplay knows PSP
 /// button identities.
 const MENU_STICK_NAV_MIN: i8 = 40;
+
+/// The capture log's opening line every 30 ticks of an opening scene:
+/// the user partition's free memory, for the opening packs' headroom
+/// (RE-467).
+#[cfg(feature = "headless_capture")]
+#[inline(never)]
+fn log_opening_memory(sim_frame_index: u64, scene: MScene) {
+    let MScene::Opening(kind) = scene else {
+        return;
+    };
+    if sim_frame_index % 30 != 0 {
+        return;
+    }
+    let line = alloc::format!(
+        "opening tick={} scene={:?} free={} max_free={}\n",
+        sim_frame_index,
+        kind,
+        unsafe { psp::sys::sceKernelTotalFreeMemSize() },
+        unsafe { psp::sys::sceKernelMaxFreeMemSize() },
+    );
+    unsafe {
+        psp::sys::sceIoWrite(
+            psp::sys::sceKernelStdout(),
+            line.as_ptr() as *const core::ffi::c_void,
+            line.len(),
+        );
+    }
+}
 
 /// The capture log's results line: the tick and the results tic before
 /// this frame's (RE-420).
@@ -2116,6 +2168,9 @@ enum Screen {
     Campaign,
     /// The options and data menus (`ssb_game::menu`, RE-461).
     Menus,
+    /// The N64 logo and the opening movie's scenes that run without a
+    /// battle (`opening_screen`, RE-467).
+    Opening,
     /// Training Mode: a real stage and a real, physics-ticked fighter now
     /// draw here (`draw_training`) -- no combat yet, see
     /// `plans/gameplay/F1.md` acceptance criteria 5-7 for what still has to
@@ -2942,6 +2997,12 @@ struct Hud {
     team_stocks: Option<(ssb_game::spgame::Stage, alloc::vec::Vec<ssb_game::spgame::setup::StockIcon>)>,
     /// The display effects' players ([`draw_display_effects`]).
     display_scratch: alloc::boxed::Box<DisplayScratch>,
+    /// An opening battle (`nSCBattleGameTypeMovie`, RE-467): no interface,
+    /// tags or magnifiers.
+    movie: bool,
+    /// Samus's opening scene draws Zebes' kind-48 billboards flat
+    /// (`mvOpeningSamusMakeMotionWindow`).
+    movie_flat48: bool,
 }
 
 /// The pause menu's choices at the pause (`sIFCommonBattlePause*`).
@@ -3075,6 +3136,8 @@ impl Hud {
             steals: [None; 4],
             team_stocks: None,
             display_scratch: new_display_scratch(),
+            movie: false,
+            movie_flat48: false,
         }
     }
 }
@@ -3758,6 +3821,7 @@ unsafe fn draw_frame(
             gpu.begin_frame(Some(BG_RESULTS));
         }
         Screen::Menus => s.menus.draw(gpu, pack.as_ref(), draw_state, &s.backup),
+        Screen::Opening => opening_screen::draw(&s.opening, gpu, pack.as_ref(), draw_state),
         Screen::FighterSelect => draw_training_select(
             gpu,
             pack.as_ref(),
@@ -3804,6 +3868,12 @@ unsafe fn draw_frame(
                 s.vs_results_fighters.as_deref_mut(),
                 &s.roster,
             );
+        }
+        // An opening battle scene before its battle exists (RE-467).
+        Screen::Training if s.play_state.is_none() && matches!(s.demo, Some(demo_screen::Demo::Movie(_))) => {
+            if let Some(demo) = s.demo.as_ref() {
+                demo_screen::draw_movie_only(gpu, pack.as_ref(), draw_state, demo);
+            }
         }
         Screen::Training => {
             if let (Some(p), Some(pl)) = (pack.as_ref(), s.play_state.as_ref()) {
@@ -3917,6 +3987,24 @@ unsafe fn session_frame(
     pressed: N64Buttons,
 ) {
         let mut lag_tic = false;
+        // An opening scene, or the title after it, waiting for its tic:
+        // the picture holds.
+        if s.opening_pending.is_some() || s.title_pending {
+            s.opening.clock.retrace();
+            if let Some(kind) = s.opening_pending {
+                if s.opening.clock.ready(kind) {
+                    s.opening_pending = None;
+                    begin_opening(s, pack.as_ref(), kind, capture_scene.is_some());
+                }
+            } else if s.opening.clock.tic >= ssb_game::opening::TITLE_START_TIC {
+                s.title_pending = false;
+                let newcomers = MScene::Opening(ssb_game::opening::Kind::Newcomers);
+                go_scene(s, pack.as_ref(), MScene::Title, newcomers, capture_scene.is_some());
+            }
+            return;
+        }
+        #[cfg(feature = "headless_capture")]
+        log_opening_memory(sim_frame_index, s.menus.scene);
         match s.screen {
             Screen::CaptureIntro => {
                 if let Some((scene, prev)) = capture_scene.and_then(capture_menu) {
@@ -3995,6 +4083,14 @@ unsafe fn session_frame(
                 }
             }
             Screen::Menus => menus_frame(s, pack.as_ref(), controller, pressed, capture_scene.is_some()),
+            Screen::Opening => {
+                // `scSubsysControllerGetPlayerTapButtons(A_BUTTON | B_BUTTON | START_BUTTON)`.
+                let tapped = pressed.contains(N64Buttons::A | N64Buttons::B | N64Buttons::START);
+                if let Some(next) = opening_screen::frame(&mut s.opening, pack.as_ref(), s.pack_path, tapped) {
+                    let from = s.menus.scene;
+                    go_scene(s, pack.as_ref(), next, from, capture_scene.is_some());
+                }
+            }
             Screen::PlayersVs => {
                 players_vs_frame(s, pack, capture_scene.is_some(), sim_frame_index, controller, pressed);
             }
@@ -4080,7 +4176,7 @@ unsafe fn session_frame(
                 #[cfg(feature = "headless_capture")]
                 log_entry_state(capture_scene, sim_frame_index, s.play_state.as_ref(), s.dummies[0].as_deref());
                 // In a VS battle START is the pause menu's (`training_frame`).
-                if s.vs_battle.is_none() {
+                if s.vs_battle.is_none() && s.demo.is_none() {
                     lag_tic = training_menu_frame(pack.as_ref(), s, controller, pressed, capture_scene.is_some(), sim_frame_index);
                 }
             }
@@ -4206,10 +4302,17 @@ unsafe fn session_frame(
                 }
             }
         }
+        // An opening battle's movie camera and posed panel (RE-467).
+        if s.screen == Screen::Training && matches!(s.demo, Some(demo_screen::Demo::Movie(_))) {
+            demo_screen::movie_after_world(s, pack.as_ref());
+        }
         // A title demo's `syTaskmanSetLoadScene`.
         if let Some(next) = demo_load {
             let from = s.menus.scene;
-            demo_screen::leave(s);
+            // An opening battle stays up until the next scene starts.
+            if !(matches!(next, MScene::Opening(_)) && matches!(s.demo, Some(demo_screen::Demo::Movie(_)))) {
+                demo_screen::leave(s);
+            }
             go_scene(s, pack.as_ref(), next, from, capture_scene.is_some());
             return;
         }
@@ -4441,6 +4544,15 @@ struct Session {
     lead: play::Lead,
     /// The running title demo (`scExplain`, `scAutoDemo`, RE-465).
     demo: Option<demo_screen::Demo>,
+    /// The N64 logo and the opening movie (RE-467): its music clock and
+    /// running scene.
+    opening: alloc::boxed::Box<opening_screen::Opening>,
+    /// An opening scene whose start waits for the music's tic: nothing
+    /// ticks and the last picture holds until then.
+    opening_pending: Option<ssb_game::opening::Kind>,
+    /// The title after the newcomers, waiting for
+    /// [`ssb_game::opening::TITLE_START_TIC`].
+    title_pending: bool,
 }
 
 impl Session {
@@ -4616,6 +4728,9 @@ unsafe fn run() -> ! {
         wallpaper_sprite: None,
         lead: play::Lead::Pad,
         demo: None,
+        opening: alloc::boxed::Box::new(opening_screen::Opening::new()),
+        opening_pending: None,
+        title_pending: false,
     });
     // Stage MObj material joints are process-lifetime clocks in the original
     // layer setup. Start once with this pack and advance in the same simulation
@@ -4623,10 +4738,11 @@ unsafe fn run() -> ! {
     if let Some(p) = pack.as_ref() {
         s.material_anim.start(p);
     }
-    // `scManagerRunLoop`'s first scene: the N64 logo (`mnStartup`), not
-    // ported, leaves for the title. A capture takes its scripted route.
+    // `scManagerRunLoop`'s first scene: the N64 logo (`mnStartup`), then
+    // the opening movie and the title (RE-467). A capture takes its
+    // scripted route.
     if capture_scene.is_none() {
-        go_scene(&mut s, pack.as_ref(), MScene::Title, MScene::Startup, false);
+        go_scene(&mut s, pack.as_ref(), MScene::Startup, MScene::Startup, false);
     }
     // Built on each Training entry for the stage picked (`enter_training`).
     // `gSCManagerSceneData.gkind` and `s.maps_training_gkind`, both
@@ -4825,11 +4941,42 @@ fn capture_menu(scene: GameScene) -> Option<(ssb_game::menu::Scene, ssb_game::me
         GameScene::Title => (Scene::Title, Scene::Startup),
         GameScene::Explain => (Scene::Explain, Scene::Title),
         GameScene::AutoDemo => (Scene::AutoDemo, Scene::Characters),
+        GameScene::Opening => (Scene::Startup, Scene::Startup),
         GameScene::ModeSelect => (Scene::ModeSelect, Scene::Title),
         GameScene::OnePMode => (Scene::OnePMode, Scene::ModeSelect),
         GameScene::VsOptions => (Scene::VsOptions, Scene::VsMode),
         GameScene::ItemSwitch => (Scene::VsItemSwitch, Scene::VsOptions),
         GameScene::BonusSelect | GameScene::BonusPractice => (Scene::Players1PBonus1, Scene::OnePMode),
+        g => match opening_capture_kind(g) {
+            Some(kind) => (Scene::Opening(kind), Scene::Startup),
+            None => return None,
+        },
+    })
+}
+
+/// The opening scene an `op-*` capture starts at once (RE-467).
+fn opening_capture_kind(scene: GameScene) -> Option<ssb_game::opening::Kind> {
+    use ssb_game::opening::Kind;
+    Some(match scene {
+        GameScene::OpeningRoom => Kind::Room,
+        GameScene::OpeningPortraits => Kind::Portraits,
+        GameScene::OpeningMario => Kind::Mario,
+        GameScene::OpeningDonkey => Kind::Donkey,
+        GameScene::OpeningLink => Kind::Link,
+        GameScene::OpeningSamus => Kind::Samus,
+        GameScene::OpeningYoshi => Kind::Yoshi,
+        GameScene::OpeningKirby => Kind::Kirby,
+        GameScene::OpeningFox => Kind::Fox,
+        GameScene::OpeningPikachu => Kind::Pikachu,
+        GameScene::OpeningRun => Kind::Run,
+        GameScene::OpeningCliff => Kind::Cliff,
+        GameScene::OpeningYamabuki => Kind::Yamabuki,
+        GameScene::OpeningJungle => Kind::Jungle,
+        GameScene::OpeningYoster => Kind::Yoster,
+        GameScene::OpeningSector => Kind::Sector,
+        GameScene::OpeningStandoff => Kind::Standoff,
+        GameScene::OpeningClash => Kind::Clash,
+        GameScene::OpeningNewcomers => Kind::Newcomers,
         _ => return None,
     })
 }
@@ -4884,7 +5031,18 @@ fn menus_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: ControllerS
 /// scenes, the host the rest.
 #[inline(never)]
 fn go_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScene, capture: bool) {
-    if menus_screen::Menus::is_menu(scene) || matches!(scene, MScene::Explain | MScene::Startup | MScene::AutoDemo | MScene::SoundTest) {
+    // `mnTitleFuncStart` after the newcomers waits for the music's tic
+    // (RE-467).
+    if scene == MScene::Title
+        && prev == MScene::Opening(ssb_game::opening::Kind::Newcomers)
+        && s.opening.clock.tic < ssb_game::opening::TITLE_START_TIC
+    {
+        s.title_pending = true;
+        return;
+    }
+    // The opening's models stay loaded across its scenes (RE-467).
+    ssb_psp_runtime::movie::hold_models(s.pack_path, matches!(scene, MScene::Opening(_)));
+    if menus_screen::Menus::is_menu(scene) || matches!(scene, MScene::Explain | MScene::AutoDemo | MScene::SoundTest) {
         let mut selections = selections(s);
         let mut menus = core::mem::replace(&mut s.menus, menus_screen::Menus::new());
         let next = menus.go(scene, prev, &mut menus_host!(s, pack, &mut selections, capture));
@@ -4902,6 +5060,7 @@ fn go_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScen
 /// Starts a scene the host runs, entered from `prev`.
 #[inline(never)]
 fn start_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScene, capture: bool) {
+    ssb_psp_runtime::movie::hold_models(s.pack_path, matches!(scene, MScene::Opening(_)));
     s.menus.scene = scene;
     s.menus.scene_prev = prev;
     match scene {
@@ -4952,12 +5111,77 @@ fn start_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MS
                 go_scene(s, pack, MScene::Startup, MScene::AutoDemo, capture);
             }
         }
+        // `mnStartup` and the opening movie (RE-467).
+        MScene::Startup => {
+            s.menus.leave();
+            opening_screen::start(&mut s.opening, s.pack_path, None);
+            s.screen = Screen::Opening;
+        }
+        MScene::Opening(kind) => start_opening(s, pack, kind, prev, capture),
         // Not reached yet: the menus run every other scene they name, and
         // the bonus practices' select is wired below.
         _ => go_scene(s, pack, MScene::ModeSelect, scene, capture),
     }
 }
 
+
+/// `syTaskmanSetLoadScene` into an opening scene (RE-467). A scene whose
+/// start tic has not come yet holds the last picture until it has; a
+/// scene not yet ported passes on along its own exit.
+#[inline(never)]
+fn start_opening(s: &mut Session, pack: Option<&Pack<'_>>, kind: ssb_game::opening::Kind, prev: MScene, capture: bool) {
+    // `mvOpeningNewcomersFuncStart`'s unlocked characters.
+    s.opening.fighter_mask = s.backup.fighter_mask;
+    if kind == ssb_game::opening::Kind::Room {
+        // `mvOpeningRoomFuncStart`'s `sySchedulerSetTicCount(0)`.
+        s.opening.clock.reset();
+    }
+    // An `op-*` capture starts its scene at once, its clock at the
+    // scene's start tic.
+    if prev == MScene::Startup && s.screen == Screen::CaptureIntro {
+        s.opening.clock.tic = kind.start_tic().unwrap_or(0);
+    }
+    if !s.opening.clock.ready(kind) {
+        if s.screen == Screen::Opening && opening_screen::hold(&mut s.opening, kind) {
+            return;
+        }
+        let movie = matches!(s.demo, Some(demo_screen::Demo::Movie(_)));
+        if s.screen != Screen::Opening && !movie {
+            // Nothing of the opening's to hold: black until the start.
+            opening_screen::clear(&mut s.opening);
+            s.menus.leave();
+            s.screen = Screen::Opening;
+        }
+        s.opening_pending = Some(kind);
+        return;
+    }
+    begin_opening(s, pack, kind, capture);
+}
+
+/// An opening scene's start, its tic come.
+#[inline(never)]
+fn begin_opening(s: &mut Session, pack: Option<&Pack<'_>>, kind: ssb_game::opening::Kind, capture: bool) {
+    s.menus.scene = MScene::Opening(kind);
+    if kind.is_battle() {
+        if demo_screen::start_movie(s, pack, kind) {
+            s.menus.leave();
+            return;
+        }
+    } else if opening_screen::runs(Some(kind)) {
+        if s.demo.is_some() {
+            demo_screen::leave(s);
+        }
+        s.menus.leave();
+        opening_screen::start(&mut s.opening, s.pack_path, Some(kind));
+        s.screen = Screen::Opening;
+        return;
+    }
+    if s.demo.is_some() {
+        demo_screen::leave(s);
+    }
+    let next = kind.next().map_or(MScene::Title, MScene::Opening);
+    go_scene(s, pack, next, MScene::Opening(kind), capture);
+}
 
 /// One frame of `mnPlayers1PTraining`: the select's tick, then its
 /// fighters'. Out of [`run`] for branch range.
@@ -7158,7 +7382,9 @@ unsafe fn draw_training(
         return;
     };
 
-    gpu.begin_frame(Some(BG_TRAINING));
+    // The opening's default camera fills black (RE-467).
+    gpu.begin_frame(Some(if damage_hud.movie { BG_RESULTS } else { BG_TRAINING }));
+    draw_state.kind48_flat = damage_hud.movie_flat48;
     gpu.set_viewport_pillarboxed();
     // `gmCameraSetViewportDimensions`: How to Play's battle cameras (the
     // wallpaper's among them) stop above its window.
@@ -7172,7 +7398,13 @@ unsafe fn draw_training(
     // `gmCameraMakeWallpaperCamera` (priority 80) draws before the stage
     // camera (50). Race uses a black viewport without a sprite.
     if let Some((sprite, w)) = wallpaper.filter(|(_, w)| w.kind != ssb_game::wallpaper::Kind::Bonus3) {
-        meshdraw::draw_wallpaper(p, sprite, w.x, w.y, w.scale, draw_state);
+        if damage_hud.movie {
+            // The opening's wallpaper camera keeps its border (RE-467).
+            gpu.set_viewport_n64(viewport);
+            meshdraw::draw_wallpaper_n64(p, sprite, w.x, w.y, w.scale, draw_state);
+        } else {
+            meshdraw::draw_wallpaper(p, sprite, w.x, w.y, w.scale, draw_state);
+        }
     }
     // `sc1PGameBossMakeCamera`'s second camera (priority 60, tag 2): the
     // boss wallpaper's far effects, between the wallpaper and the stage.
@@ -7185,20 +7417,35 @@ unsafe fn draw_training(
     // Its default is 38 degrees; entry/pause zooms ease to their source FOV.
     // `dGMCameraPerspDefault` supplies near 256 and far 39,936 (RE-421/440).
     let (viewport_w, viewport_h) = pl.camera.viewport_size();
-    gpu.set_perspective(
-        pl.camera.fovy_degrees,
-        viewport_w / viewport_h,
-        ssb_game::camera::DEFAULT_NEAR,
-        ssb_game::camera::DEFAULT_FAR,
-    );
-    gpu.reset_modelview();
-    draw_state.begin_frame();
+    if let Some(m) = pl.camera.movie {
+        // An opening scene's movie camera (RE-467): its own viewport,
+        // aspect and planes, its view rolled by `up.x`.
+        gpu.set_viewport_n64(m.viewport);
+        gpu.set_perspective(pl.camera.fovy_degrees, m.aspect, m.near, m.far);
+        gpu.reset_modelview();
+        draw_state.begin_frame();
+        gpu.set_view(&ssb_psp_runtime::movie::view_matrix(
+            pl.camera.eye,
+            pl.camera.at,
+            m.up_x,
+            ssb_game::opening::movie::View::Roll,
+        ));
+    } else {
+        gpu.set_perspective(
+            pl.camera.fovy_degrees,
+            viewport_w / viewport_h,
+            ssb_game::camera::DEFAULT_NEAR,
+            ssb_game::camera::DEFAULT_FAR,
+        );
+        gpu.reset_modelview();
+        draw_state.begin_frame();
 
-    gpu.set_view(&ssb_engine::math::Mat4::look_at(
-        pl.camera.eye,
-        pl.camera.at,
-        ssb_engine::math::Vec3::Y,
-    ));
+        gpu.set_view(&ssb_engine::math::Mat4::look_at(
+            pl.camera.eye,
+            pl.camera.at,
+            ssb_engine::math::Vec3::Y,
+        ));
+    }
     gpu.model_transform([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], meshdraw::MODEL_SCALE);
     let base = gpu.model_matrix();
 
@@ -7517,6 +7764,11 @@ unsafe fn draw_training(
         );
     }
     draw_screen_flash(gpu, draw_state, &damage_hud.ko);
+    // The opening's battles (`nSCBattleGameTypeMovie`) make no interface.
+    if damage_hud.movie {
+        gpu.set_viewport_pillarboxed();
+        return;
+    }
     // `players[].color`: in a free-for-all the human's port and a CPU's
     // `GMCOMMON_PLAYERS_MAX`, in a team battle the team's colour.
     let emblems = fighters.map(|x| {

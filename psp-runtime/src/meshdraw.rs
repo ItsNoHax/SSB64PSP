@@ -242,6 +242,22 @@ pub struct DrawState {
     /// the ROM's own `CULL_BACK`/`CULL_FRONT` state faithfully (RE-068), and
     /// a real camera always views authored geometry from its intended side.
     pub force_no_cull: bool,
+    /// A display that sets a render mode without `Z_CMP`/`Z_UPD` before
+    /// its lists (the opening cliff's hills, `G_RM_AA_OPA_SURF`): no depth
+    /// test or write for what it draws.
+    pub depth_off: bool,
+    /// `mvOpeningSamusMakeMotionWindow` turns the ground's kind-48
+    /// (pitch-locked billboard) matrices into kind 37 ones: they draw with
+    /// their own rotation under the rolled movie camera (RE-467).
+    pub kind48_flat: bool,
+    /// `mvOpeningRoomTransitionOverlayProcDisplay` draws its list into the
+    /// depth image: every primitive tests (the caller sets the function)
+    /// and writes depth whatever its own render mode says (RE-467).
+    pub depth_write_only: bool,
+    /// `mvOpeningRoomWallpaperProcDisplay`'s `Z_CMP` at a fixed primitive
+    /// depth: sprites test against the depth buffer at depth 0 without
+    /// writing it (RE-467).
+    pub sprite_depth_test: bool,
     /// Debug-viewer-only override isolating one texture of the two-tile
     /// fractional blend (RE-321), so a capture of each can be checked per
     /// pixel against the RDP equation. `None` in every real build.
@@ -1144,7 +1160,7 @@ unsafe fn apply_material(
         // traced to genuine archive content -- the ROM's own display lists
         // setting `G_ZBUFFER` without a matching `Z_CMP`/`Z_UPD` -- so
         // `DEPTH_TEST` is strictly more correct, not merely different.
-        if p.flags & flags::DEPTH_TEST != 0 {
+        if (p.flags & flags::DEPTH_TEST != 0 && !st.depth_off) || st.depth_write_only {
             sys::sceGuEnable(GuState::DepthTest);
         } else {
             sys::sceGuDisable(GuState::DepthTest);
@@ -1155,7 +1171,7 @@ unsafe fn apply_material(
         // geometry drawn later in the same pass. `sceGuDepthMask`'s `mask`
         // argument is inverted from the source bit's own sense -- `1`
         // *disables* GE depth writes, matching `DEPTH_WRITE` clear.
-        sys::sceGuDepthMask(if p.flags & flags::DEPTH_WRITE != 0 {
+        sys::sceGuDepthMask(if (p.flags & flags::DEPTH_WRITE != 0 && !st.depth_off) || st.depth_write_only {
             0
         } else {
             1
@@ -2067,7 +2083,8 @@ unsafe fn draw_object_posed_nodes(
             },
         };
         sys::sceGumMatrixMode(sys::MatrixMode::Model);
-        if node.flags & NodeDesc::FLAG_BILLBOARD != 0 {
+        let kind48_flat = st.kind48_flat && node.flags & NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED != 0;
+        if node.flags & NodeDesc::FLAG_BILLBOARD != 0 && !kind48_flat {
             let (pos, mut sx, mut sy) = billboard_place(base, &local);
             if let Some(scale) = billboard_scales.and_then(|scales| scales.get(i as usize)) {
                 let base_sx = ssb_engine::math::sqrt(
@@ -2493,7 +2510,12 @@ pub unsafe fn draw_sprite_xy(
         sys::sceGuTexFunc(sys::TextureEffect::Modulate, sys::TextureColorComponent::Rgba);
     }
     sys::sceGuDisable(GuState::Lighting);
-    sys::sceGuDisable(GuState::DepthTest);
+    if draw_state.sprite_depth_test {
+        sys::sceGuEnable(GuState::DepthTest);
+        sys::sceGuDepthMask(1);
+    } else {
+        sys::sceGuDisable(GuState::DepthTest);
+    }
     sys::sceGuDisable(GuState::CullFace);
     sys::sceGuDisable(GuState::AlphaTest);
     if d.attr & (ssb_rom::sprite::SP_TRANSPARENT | ssb_rom::sprite::SP_CLOUD) != 0 {
@@ -2567,6 +2589,37 @@ pub unsafe fn draw_wallpaper(
     scale: f32,
     draw_state: &mut DrawState,
 ) {
+    draw_wallpaper_mapped(pack, sprite, x, y, scale, false, draw_state);
+}
+
+/// [`draw_wallpaper`] at its place on the N64's 320 x 240 screen, as every
+/// other `SObj` maps: the opening's battles keep their cameras' borders
+/// (RE-467). The caller's scissor clips it to the wallpaper camera's
+/// viewport.
+///
+/// # Safety
+///
+/// As [`draw_sprite`].
+pub unsafe fn draw_wallpaper_n64(
+    pack: &Pack<'_>,
+    sprite: &ssb_rom::pack::SpriteDesc,
+    x: f32,
+    y: f32,
+    scale: f32,
+    draw_state: &mut DrawState,
+) {
+    draw_wallpaper_mapped(pack, sprite, x, y, scale, true, draw_state);
+}
+
+unsafe fn draw_wallpaper_mapped(
+    pack: &Pack<'_>,
+    sprite: &ssb_rom::pack::SpriteDesc,
+    x: f32,
+    y: f32,
+    scale: f32,
+    n64_screen: bool,
+    draw_state: &mut DrawState,
+) {
     let Some(t) = pack.texture(sprite.texture) else {
         return;
     };
@@ -2580,7 +2633,11 @@ pub unsafe fn draw_wallpaper(
     );
     sprite_blend(0);
     let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let k = vh as f32 / WALLPAPER_VIEWPORT_HEIGHT;
+    let k = if n64_screen {
+        vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32
+    } else {
+        vh as f32 / WALLPAPER_VIEWPORT_HEIGHT
+    };
     let x0 = vx as f32 + vw as f32 * 0.5 + (x - 160.0) * k;
     let y0 = vh as f32 * 0.5 + (y - 120.0) * k;
     let (w, h) = (f32::from(sprite.width), f32::from(sprite.height));

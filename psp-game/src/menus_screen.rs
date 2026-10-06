@@ -83,6 +83,8 @@ pub(crate) struct Menus {
     pub demo: DemoData,
     /// `sMN1PModeOption`, which the 1P mode menu keeps between visits.
     one_p_option: OnePOption,
+    /// The title's opening layout's slash and logo fire (RE-467).
+    title_opening: Option<Box<crate::title_opening::TitleOpening>>,
 }
 
 /// What the menus read and write in the session.
@@ -112,6 +114,7 @@ impl Menus {
             scene_prev: Scene::Startup,
             demo: DemoData::default(),
             one_p_option: OnePOption::OnePGame,
+            title_opening: None,
         }
     }
 
@@ -151,9 +154,6 @@ impl Menus {
     pub(crate) fn go(&mut self, mut next: Scene, mut from: Scene, host: &mut Host<'_, '_>) -> Option<Scene> {
         loop {
             let (skip_to, skipped) = match next {
-                // `mnStartup` (the N64 logo, then the opening movie) goes
-                // to the title when skipped.
-                Scene::Startup => (Scene::Title, Scene::Startup),
                 // Sound Test is not ported: back to Data with its tab.
                 Scene::SoundTest => (Scene::Data, Scene::SoundTest),
                 scene if Self::is_menu(scene) => {
@@ -197,7 +197,14 @@ impl Menus {
                 // `mnTitleStartScene`.
                 ssb_game::menu::title::count_boot(&self.demo, host.backup);
                 let time = self.time(host.capture);
-                (MenuScene::Title, Active::Title(Box::new(Title::new(time))))
+                // `mnTitleInitVars`: the opening layout after the opening
+                // movie (RE-467).
+                let title = if prev == Scene::Opening(ssb_game::opening::Kind::Newcomers) {
+                    Title::new_opening(time)
+                } else {
+                    Title::new(time)
+                };
+                (MenuScene::Title, Active::Title(Box::new(title)))
             }
             Scene::ModeSelect => (MenuScene::ModeSelect, Active::ModeSelect(ModeSelect::new(prev))),
             Scene::OnePMode => (
@@ -249,6 +256,16 @@ impl Menus {
         self.sprites = host
             .pack_path
             .and_then(|path| assets::load_menu_pack(path, pack_scene).ok());
+        self.title_opening = None;
+        if let (Active::Title(t), Some(p), Some(scene)) = (
+            &active,
+            host.pack,
+            self.sprites.as_ref().and_then(|b| Pack::open(b.as_slice()).ok()),
+        ) {
+            if t.layout == ssb_game::menu::title::Layout::Opening {
+                self.title_opening = crate::title_opening::TitleOpening::new(p, &scene);
+            }
+        }
         if let (Active::Characters(m), Some(p)) = (&active, host.pack) {
             self.emblem = make_emblem(p, m.kind());
             self.fighter = Some(make_fighter(p, &m.fighter));
@@ -259,6 +276,7 @@ impl Menus {
     /// Leaves the menus, freeing the scene's sprites.
     pub(crate) fn leave(&mut self) {
         self.active = None;
+        self.title_opening = None;
         self.sprites = None;
         self.fighter = None;
         self.emblem = None;
@@ -284,6 +302,13 @@ impl Menus {
             Active::Title(m) => {
                 let mut range = ssb_game::rng::rand_int_range;
                 let next = m.tick(pad, self.scene_prev, &mut self.demo, host.backup, time, &mut range);
+                // The opening layout's processes (RE-467).
+                if let Some(scene) = self.sprites.as_ref().and_then(|b| Pack::open(b.as_slice()).ok()) {
+                    m.follow(&TitleAnims::new(&scene));
+                    if let (Some(o), Some(p)) = (self.title_opening.as_mut(), host.pack) {
+                        o.catch_up(p, &scene, m.effect_plays, m.effects_shown().0);
+                    }
+                }
                 (Scene::Title, next)
             }
             Active::ModeSelect(m) => (Scene::ModeSelect, m.tick(pad)),
@@ -366,7 +391,7 @@ impl Menus {
 
     /// The running scene back to front.
     pub(crate) unsafe fn draw(
-        &self,
+        &mut self,
         gpu: &mut Gpu,
         pack: Option<&Pack<'_>>,
         draw_state: &mut meshdraw::DrawState,
@@ -388,7 +413,9 @@ impl Menus {
             press_start: sprites
                 .as_ref()
                 .and_then(|p| ssb_rom::title::packed_frames(p, ssb_rom::title::PRESS_START_SLOT)),
+            logo: sprites.as_ref().and_then(|p| ssb_rom::title::packed_frames(p, ssb_rom::title::LOGO_SLOT)),
         };
+        let mut title_opening = self.title_opening.take();
         let mut f = |d: Draw| match d {
             Draw::Clear(rgba) => meshdraw::fill_rect_n64(VIEWPORT, rgba, draw_state),
             Draw::Sprite(piece) => draw_piece(&packs, draw_state, &piece, None),
@@ -402,6 +429,19 @@ impl Menus {
             Draw::Emblem => {
                 if let Some(p) = pack {
                     draw_emblem(gpu, p, draw_state, self.emblem.as_deref());
+                }
+            }
+            // The title's opening layout (RE-467).
+            Draw::TitleParticles => {
+                if let (Some(o), Some(p)) = (title_opening.as_mut(), pack) {
+                    o.draw_particles(gpu, p, draw_state);
+                    gpu.set_viewport_n64(VIEWPORT);
+                }
+            }
+            Draw::TitleSlash => {
+                if let (Some(o), Some(p)) = (title_opening.as_ref(), pack) {
+                    o.draw_slash(gpu, p, draw_state);
+                    gpu.set_viewport_n64(VIEWPORT);
                 }
             }
         };
@@ -419,6 +459,8 @@ impl Menus {
             Active::VsRecord(m) => m.visit(backup, &mut f),
             Active::Characters(m) => m.visit(&mut f),
         }
+        drop(f);
+        self.title_opening = title_opening;
         gpu.set_viewport_fullscreen();
     }
 }
@@ -427,6 +469,17 @@ impl Menus {
 struct TitleAnims<'a> {
     labels: Option<&'a [u8]>,
     press_start: Option<&'a [u8]>,
+    logo: Option<&'a [u8]>,
+}
+
+impl<'a> TitleAnims<'a> {
+    fn new(p: &Pack<'a>) -> TitleAnims<'a> {
+        TitleAnims {
+            labels: ssb_rom::title::packed_frames(p, ssb_rom::title::LABELS_SLOT),
+            press_start: ssb_rom::title::packed_frames(p, ssb_rom::title::PRESS_START_SLOT),
+            logo: ssb_rom::title::packed_frames(p, ssb_rom::title::LOGO_SLOT),
+        }
+    }
 }
 
 impl ssb_game::menu::title::Anims for TitleAnims<'_> {
@@ -436,6 +489,12 @@ impl ssb_game::menu::title::Anims for TitleAnims<'_> {
 
     fn press_start(&self, play: usize) -> Option<[f32; 4]> {
         ssb_rom::title::packed(self.press_start?, 1, play, 0)
+    }
+
+    /// The last baked play holds once the tree's process has ended.
+    fn logo(&self, play: usize, child: usize) -> Option<[f32; 4]> {
+        let play = play.min(ssb_rom::title::LOGO_PLAYS - 1);
+        ssb_rom::title::packed(self.logo?, ssb_rom::title::LOGO_CHILDREN, play, child)
     }
 }
 

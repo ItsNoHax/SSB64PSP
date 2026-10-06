@@ -30,6 +30,43 @@ use crate::{play, Entrant, Roster, Session, VsRules};
 pub(crate) enum Demo {
     Explain(Box<ExplainScene>),
     AutoDemo(Box<AutoDemoScene>),
+    /// An opening scene with a battle (`ssb_game::opening::fighters`,
+    /// RE-467).
+    Movie(Box<MovieScene>),
+}
+
+/// An opening battle scene's logic.
+pub(crate) enum MovieLogic {
+    Fighter(Box<ssb_game::opening::fighters::FighterScene>),
+    Jungle(Box<ssb_game::opening::fighters::Jungle>),
+}
+
+/// An opening battle scene: its logic, its scene pack (the posed
+/// fighters' and the jungle's cameras) and its own cameras' state.
+pub(crate) struct MovieScene {
+    logic: MovieLogic,
+    sprites: Option<AlignedBuf>,
+    runtime: ssb_psp_runtime::movie::Runtime,
+}
+
+impl MovieScene {
+    fn world(&self) -> &ssb_game::opening::movie::World {
+        match &self.logic {
+            MovieLogic::Fighter(f) => &f.world,
+            MovieLogic::Jungle(j) => &j.world,
+        }
+    }
+
+    fn camera(&self) -> Option<ssb_game::opening::fighters::MovieCamera> {
+        match &self.logic {
+            MovieLogic::Fighter(f) => f.camera,
+            MovieLogic::Jungle(j) => Some(j.camera),
+        }
+    }
+
+    fn scene_pack(&self) -> Option<Pack<'_>> {
+        Pack::open(self.sprites.as_ref()?.as_slice()).ok()
+    }
 }
 
 /// `scExplain`'s interface and its sprite pack.
@@ -428,6 +465,9 @@ pub(crate) fn before_world(
     pack: Option<&Pack<'_>>,
     tapped: bool,
 ) -> Option<MScene> {
+    if matches!(s.demo, Some(Demo::Movie(_))) {
+        return movie_before_world(s, pack, tapped);
+    }
     let p = pack?;
     if !matches!(s.demo, Some(Demo::AutoDemo(_))) {
         return None;
@@ -469,6 +509,7 @@ pub(crate) fn after_world(s: &mut Session, tapped: bool) -> Option<MScene> {
             fade_alpha(&mut e.fade)
         }
         Demo::AutoDemo(d) => fade_alpha(&mut d.fade),
+        Demo::Movie(_) => 0,
     };
     s.damage_hud.demo_fade_alpha = alpha;
     load
@@ -480,6 +521,7 @@ pub(crate) fn magnify_display(demo: &Demo) -> bool {
     match demo {
         Demo::Explain(_) => true,
         Demo::AutoDemo(d) => d.logic.magnify_display,
+        Demo::Movie(_) => false,
     }
 }
 
@@ -490,6 +532,8 @@ pub(crate) fn leave(s: &mut Session) {
         ssb_game::rng::set_seed(e.seed_outside);
     }
     ssb_game::item::set_explain(false);
+    s.damage_hud.movie = false;
+    s.damage_hud.movie_flat48 = false;
     s.lead = play::Lead::Pad;
     s.play_state = None;
     s.dummies = Default::default();
@@ -578,6 +622,7 @@ pub(crate) unsafe fn draw(
     demo: &Demo,
 ) {
     use ssb_rom::sprite::{SP_TEXSHUF, SP_TRANSPARENT};
+    draw_state.kind48_flat = false;
     gpu.set_viewport_pillarboxed();
     match demo {
         Demo::Explain(e) => {
@@ -650,6 +695,13 @@ pub(crate) unsafe fn draw(
                 );
             }
         }
+        Demo::Movie(m) => {
+            if let Some(p) = pack {
+                // The cameras after the battle camera (priority 50): the
+                // posed panel's.
+                draw_movie_cameras(gpu, p, draw_state, m, |priority| priority < 50);
+            }
+        }
         Demo::AutoDemo(d) => {
             let Some(p) = pack else { return };
             gpu.set_viewport_n64(ssb_game::camera::BATTLE_VIEWPORT);
@@ -683,4 +735,241 @@ pub(crate) unsafe fn draw(
         }
     }
     gpu.set_viewport_pillarboxed();
+}
+
+/// The movie scene's own cameras whose priority `keep` admits.
+///
+/// # Safety
+///
+/// Between `begin_frame` and `end_frame`.
+pub(crate) unsafe fn draw_movie_cameras(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    m: &MovieScene,
+    keep: impl Fn(u32) -> bool,
+) {
+    let mut world = m.world().clone();
+    world.cameras.retain(|c| keep(c.priority));
+    let scene = m.scene_pack();
+    let models = ssb_psp_runtime::movie::models();
+    let a = ssb_psp_runtime::movie::Assets {
+        main: p,
+        scene: scene.as_ref(),
+        models: models.as_ref(),
+    };
+    m.runtime
+        .draw(&world, gpu, draw_state, &a, &mut |_, _, _, _, _| {});
+}
+
+/// The movie scene's picture before its battle exists: its own cameras
+/// (the name's).
+///
+/// # Safety
+///
+/// Between `begin_frame` and `end_frame`.
+pub(crate) unsafe fn draw_movie_only(
+    gpu: &mut Gpu,
+    pack: Option<&Pack<'_>>,
+    draw_state: &mut meshdraw::DrawState,
+    demo: &Demo,
+) {
+    gpu.set_viewport_fullscreen();
+    gpu.begin_frame(Some(ssb_engine::renderer::Color::rgba(0, 0, 0, 0xFF)));
+    gpu.set_viewport_pillarboxed();
+    if let (Some(p), Demo::Movie(m)) = (pack, demo) {
+        draw_movie_cameras(gpu, p, draw_state, m, |_| true);
+    }
+    gpu.set_viewport_fullscreen();
+}
+
+/// `mvOpening*StartScene`: an opening battle scene. `false` when its data
+/// is missing.
+pub(crate) fn start_movie(
+    s: &mut Session,
+    pack: Option<&Pack<'_>>,
+    kind: ssb_game::opening::Kind,
+) -> bool {
+    use ssb_game::opening::fighters::{params, FighterScene, Jungle};
+    let Some(p) = pack else { return false };
+    let logic = match kind {
+        ssb_game::opening::Kind::Jungle => MovieLogic::Jungle(Box::new(Jungle::new())),
+        _ => match params(kind) {
+            Some(params) => MovieLogic::Fighter(Box::new(FighterScene::new(params))),
+            None => return false,
+        },
+    };
+    let scene = if kind == ssb_game::opening::Kind::Jungle {
+        MenuScene::OpeningJungle
+    } else {
+        MenuScene::OpeningFighters
+    };
+    let sprites = s
+        .pack_path
+        .and_then(|path| assets::load_menu_pack(path, scene).ok());
+    leave(s);
+    let mut m = Box::new(MovieScene {
+        logic,
+        sprites,
+        runtime: ssb_psp_runtime::movie::Runtime::new(),
+    });
+    // `mvOpeningJungleFuncStart` makes its battle at once.
+    let battle = match &mut m.logic {
+        MovieLogic::Jungle(j) => j.take_battle(),
+        MovieLogic::Fighter(_) => None,
+    };
+    s.demo = Some(Demo::Movie(m));
+    s.screen = crate::Screen::Training;
+    if let Some(b) = battle {
+        make_battle(s, p, &b);
+        movie_after_world(s, Some(p));
+    }
+    true
+}
+
+/// `mvOpening*MakeMotionWindow` / `mvOpeningJungleMakeFighters`: the stage,
+/// the fighters on their map objects with their input scripts, and the
+/// movie camera.
+fn make_battle(s: &mut Session, p: &Pack<'_>, b: &ssb_game::opening::fighters::Battle) {
+    let mut roster: Roster = [None; 4];
+    for (port, pl) in b.players.iter().enumerate() {
+        // `dSCManagerDefaultBattleState`'s players: costume 0, level 3.
+        roster[port] = Some(entrant(pl.kind, pl.spawn, 3, port as u8));
+    }
+    s.enter(Some(p), b.gkind, roster, Some(RULES));
+    s.scene_gkind = b.gkind;
+    s.damage_hud.movie = true;
+    // `mvOpeningSamusMakeMotionWindow`: Zebes' layer-1 kind-48 matrices
+    // become kind 37 (its only opening scene).
+    s.damage_hud.movie_flat48 = b.gkind == ssb_game::opening::fighters::gkind::ZEBES;
+    s.damage_hud.ko.flash_disabled = !b.screen_flash || !s.backup.is_allow_screenflash;
+    let Some(stage) = p.stage(s.training_stage) else {
+        return;
+    };
+    let Some(pl) = s.play_state.as_mut() else {
+        return;
+    };
+    for (port, f) in crate::scenes(pl, &mut s.dummies).into_iter().enumerate() {
+        let (Some(f), Some(desc)) = (f, b.players.get(port)) else {
+            continue;
+        };
+        // `mpCollisionGetMapObjPositionID`, then the scene's offset;
+        // `nFTPlayerKindKey` stands where it is made
+        // (`mpCommonSetFighterWaitOrFall`).
+        if let Some(pt) = p.spawn(&stage, desc.spawn) {
+            f.fighter.pos =
+                ssb_engine::math::Vec3::new(f32::from(pt.x), f32::from(pt.y), 0.0) + desc.offset;
+        }
+        f.fighter
+            .init_floor(ssb_psp_runtime::scene::FloorSegments::new(p, &stage));
+        ssb_game::status::set_wait_or_fall(&mut f.fighter);
+        f.fighter.facing = if desc.lr < 0 {
+            ssb_game::fighter::Facing::Left
+        } else {
+            ssb_game::fighter::Facing::Right
+        };
+        f.fighter.damage = desc.damage;
+        s.damage_hud.damage[port] = ssb_game::hud::DamageDisplay::new(port, i32::from(desc.damage));
+        match (desc.kind, desc.charge) {
+            (FighterKind::Donkey, Some(c)) => f.fighter.donkey_special_n.charge_level = c,
+            (FighterKind::Samus, Some(c)) => f.fighter.samus.charge_level = c,
+            _ => {}
+        }
+        f.fighter.interface.control_disable = false;
+    }
+    for (port, desc) in b.players.iter().enumerate() {
+        let key = ssb_game::key::Key::new(desc.keys.to_vec());
+        if port == 0 {
+            s.lead = play::Lead::Key(key);
+        } else if let Some(d) = s.dummies.get_mut(port - 1).and_then(|d| d.as_deref_mut()) {
+            d.key = Some(key);
+        }
+    }
+}
+
+/// The scene's `func_run`, before the battle's processes: the music
+/// clock's tic, then the scene's tick. Returns the scene to load.
+fn movie_before_world(s: &mut Session, pack: Option<&Pack<'_>>, tapped: bool) -> Option<MScene> {
+    let p = pack?;
+    s.opening.clock.retrace();
+    let Some(Demo::Movie(mut m)) = s.demo.take() else {
+        return None;
+    };
+    let tick = match &mut m.logic {
+        MovieLogic::Fighter(f) => {
+            // `MoviePlayer1`'s position on the scene's stage.
+            let spawn = ssb_psp_runtime::scene::common_stage_index(p, f.params.gkind)
+                .and_then(|i| p.stage(i))
+                .and_then(|stage| p.spawn(&stage, ssb_game::opening::fighters::MOVIE_PLAYER1))
+                .map_or(ssb_engine::math::Vec3::ZERO, |pt| {
+                    ssb_engine::math::Vec3::new(f32::from(pt.x), f32::from(pt.y), 0.0)
+                });
+            f.tick(tapped, spawn)
+        }
+        MovieLogic::Jungle(j) => j.tick(tapped),
+    };
+    s.demo = Some(Demo::Movie(m));
+    if let Some(b) = tick.battle.as_ref() {
+        make_battle(s, p, b);
+    }
+    tick.exit.map(|e| match e {
+        ssb_game::opening::Exit::Title => MScene::Title,
+        ssb_game::opening::Exit::Next(k) => MScene::Opening(k),
+    })
+}
+
+/// After the battle's processes: the movie camera into the battle camera
+/// and the posed panel's state.
+pub(crate) fn movie_after_world(s: &mut Session, pack: Option<&Pack<'_>>) {
+    let Some(p) = pack else { return };
+    let Some(Demo::Movie(m)) = s.demo.as_mut() else {
+        return;
+    };
+    let light = p.stage(s.training_stage).map(|st| st.light_angle_xy);
+    if let MovieLogic::Fighter(f) = &mut m.logic {
+        if let Some(l) = light {
+            f.world.light = l;
+        }
+    }
+    let cam = m.camera();
+    {
+        let scene = m
+            .sprites
+            .as_ref()
+            .and_then(|b| Pack::open(b.as_slice()).ok());
+        let models = ssb_psp_runtime::movie::models();
+        let a = ssb_psp_runtime::movie::Assets {
+            main: p,
+            scene: scene.as_ref(),
+            models: models.as_ref(),
+        };
+        let world = match &m.logic {
+            MovieLogic::Fighter(f) => &f.world,
+            MovieLogic::Jungle(j) => &j.world,
+        };
+        m.runtime.sync(world, &a);
+        if let (Some(c), Some(pl)) = (cam, s.play_state.as_mut()) {
+            let (mut eye, mut at, mut up_x, mut fovy) = (c.eye, c.at, c.up_x, c.fovy);
+            if let Some(anim) = c.anim {
+                if let Some(fr) = a.camera(anim.slot).and_then(|b| {
+                    ssb_rom::camanim::frame_at(b, (anim.plays as usize).saturating_sub(1))
+                }) {
+                    eye = ssb_engine::math::Vec3::new(fr[0], fr[1], fr[2]);
+                    at = ssb_engine::math::Vec3::new(fr[3], fr[4], fr[5]);
+                    up_x = fr[6];
+                    fovy = fr[7];
+                }
+            }
+            pl.camera.eye = eye;
+            pl.camera.at = at;
+            pl.camera.fovy_degrees = fovy;
+            pl.camera.movie = Some(ssb_game::camera::MovieView {
+                viewport: c.viewport,
+                aspect: c.aspect,
+                near: c.near,
+                far: c.far,
+                up_x,
+            });
+        }
+    }
 }
