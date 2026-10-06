@@ -19,10 +19,11 @@ description: Resume or continue SSB64PSP development from repository state. Acti
 ## Orchestrating
 
 When asked to orchestrate, do no batch work yourself; only dispatch and
-review. Per batch, spawn one agent per phase (see "Batch workflow" in
-`AGENTS.md`), each prompt giving: the batch, its phase, the handoff note
-path to read and to write, and the context-budget rules. Keep agent
-reports short: outcome, commit hash, blockers, handoff path.
+review. Per batch, run the phase agents in order: `batch-research`,
+`batch-implement` (repeat while the handoff lists remaining work),
+`batch-validate`. Each prompt gives the batch and the handoff note path
+(`<scratchpad>/<batch>-handoff.md`). On a validate failure, send the note
+back to `batch-implement`. Run `tools/token-report.py` after each batch.
 
 Do not scan unrelated milestones, `plans/` (archived) or evidence the batch
 does not need.

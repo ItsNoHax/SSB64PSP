@@ -79,8 +79,9 @@ When code and docs disagree, verify against source and fix the wrong record.
 6. Update `STATUS.md` and affected docs once, then commit.
 
 Large batches run as phases, one fresh agent each, linked by a scratchpad
-handoff note: research (steps 1–3, output: module map and port plan),
-implement (step 4 and targeted tests), validate (steps 5–6).
+handoff note: `batch-research` (steps 1–3, output: module map and port
+plan), `batch-implement` (step 4 and targeted tests), `batch-validate`
+(steps 5–6). Definitions: `.claude/agents/`.
 
 ## Evidence
 
