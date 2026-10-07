@@ -209,6 +209,9 @@ pub fn set_special_n(f: &mut Fighter) {
     };
     set(f, s, 0.0, POUND_LENGTH);
     f.purin.pound_boosted = false;
+    // The setter plays the first frame (RE-473: `anim_frame` 1 on the
+    // N64's first frame, on the ground and in the air).
+    status::play_anim_events(f);
 }
 
 /// `ftPurinSpecialHiSetStatus` / `ftPurinSpecialAirHiSetStatus`.
@@ -221,6 +224,9 @@ pub fn set_special_hi(f: &mut Fighter) {
     set(f, s, 0.0, SING_LENGTH);
     // `FTSTATUS_PRESERVE_NONE` stops any earlier notes.
     f.purin.sing_effect = None;
+    // The setter plays the first frame (RE-473); its time-zero flag 1
+    // makes the notes in the first update, as before.
+    status::play_anim_events(f);
 }
 
 /// The Sing notes' played animation frames, while they exist. The
@@ -244,6 +250,8 @@ pub fn set_special_lw(f: &mut Fighter) {
         P::SpecialAirLw
     };
     set(f, s, 0.0, REST_LENGTH);
+    // The setter plays the first frame (RE-473: the N64 sleeps 249 frames).
+    status::play_anim_events(f);
 }
 
 /// `ftPurinSpecialNGetAngle` (and `ftKirbyCopyPurinSpecialNGetAngle`).
@@ -540,13 +548,14 @@ mod tests {
     fn grounded_specials_switch_air_and_back_keeping_the_frame() {
         let mut f = purin(true);
         set_special_lw(&mut f);
+        // The setter played frame 1 (RE-473).
         steps(&mut f, 7);
         assert!(on_ground_lost(&mut f));
         assert_eq!(f.status.status, AnyStatus::Purin(P::SpecialAirLw));
-        assert_eq!(f.status.anim_frame, 7.0);
+        assert_eq!(f.status.anim_frame, 8.0);
         assert!(on_landing(&mut f, 0.0));
         assert_eq!(f.status.status, AnyStatus::Purin(P::SpecialLw));
-        assert_eq!(f.status.anim_frame, 7.0);
+        assert_eq!(f.status.anim_frame, 8.0);
         steps(&mut f, 250);
         assert_eq!(f.status.status, AnyStatus::Common(Status::Wait));
     }
@@ -606,7 +615,8 @@ mod tests {
         attacker.pos = dummy.pos;
         status::set_wait(&mut attacker);
         set_special_lw(&mut attacker);
-        steps(&mut attacker, 1);
+        // The setter played the pulse's frame (RE-473).
+        crate::combat::update_attack_positions(&mut attacker);
         assert!(crate::combat::is_body_intangible(&dummy));
         assert!(!apply_hit_from(&mut attacker, &mut dummy));
         // The attacker's own Rest pulse lands on a vulnerable target.

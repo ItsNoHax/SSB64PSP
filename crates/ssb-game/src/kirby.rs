@@ -534,6 +534,9 @@ pub fn set_special_hi(f: &mut Fighter) {
     };
     set_frames(f, s, 0.0, SPECIAL_HI_LENGTH);
     f.kirby.cutter_spawned = false;
+    // The setter plays the first frame (RE-473: the N64 takes off 22
+    // frames on and falls 59 frames on).
+    status::play_anim_events(f);
 }
 
 /// `ftKirbySpecialAirHiFallSetStatus`: the vertical velocity survives.
@@ -541,6 +544,8 @@ fn set_special_air_hi_fall(f: &mut Fighter) {
     let vel_y = f.physics.vel_air.y;
     f.become_airborne();
     set(f, K::SpecialAirHiFall, 0.0, StatusTiming::unknown());
+    // The setter plays the first frame (RE-473).
+    status::play_anim_events(f);
     f.physics.jumps_used = f.attributes.jumps_max;
     f.physics.vel_air.y = vel_y;
 }
@@ -598,6 +603,9 @@ fn cutter_drift(f: &mut Fighter) {
 pub fn set_special_lw(f: &mut Fighter) {
     if f.is_grounded() {
         set_frames(f, K::SpecialLwStart, 0.0, SPECIAL_LW_START_LENGTH);
+        // The setter plays the first frame (RE-473: Stone holds 5 frames
+        // on).
+        status::play_anim_events(f);
         f.kirby.stone_flag1 = false;
         f.kirby.stone_flag2 = false;
         f.physics.vel_ground = Vec3::ZERO;
@@ -605,6 +613,7 @@ pub fn set_special_lw(f: &mut Fighter) {
         // `ftKirbySpecialAirLwStartSetStatus` keeps `is_damage_resist`.
         let resist = f.kirby.is_damage_resist;
         set_frames(f, K::SpecialAirLwStart, 0.0, SPECIAL_AIR_LW_START_LENGTH);
+        status::play_anim_events(f);
         f.kirby.is_damage_resist = resist;
         f.kirby.stone_flag2 = resist;
         if !resist {
@@ -733,6 +742,9 @@ pub fn set_special_n(f: &mut Fighter) {
     f.kirby.inhale_dist = Vec2::ZERO;
     f.kirby.victim_is_kirby = false;
     set_catch_params(f);
+    // The setter plays the first frame (RE-473: the N64 loops 19 frames
+    // on).
+    status::play_anim_events(f);
 }
 
 /// `ftKirbySpecialNSetCatchParams`.
@@ -1026,7 +1038,10 @@ pub fn update(f: &mut Fighter) {
                 f.kirby.stone_flag1 = false;
             }
             if f.status.animation_ended() {
+                // `ftKirbySpecialAirLwHoldSetStatus` plays the first frame
+                // (RE-473).
                 set_stone(f, K::SpecialAirLwHold, 0.0);
+                status::play_anim_events(f);
                 f.physics.vel_air.y = STONE_FALL_VEL;
             }
         }
@@ -1047,6 +1062,9 @@ pub fn update(f: &mut Fighter) {
                     K::SpecialAirNLoop
                 };
                 set_inhale(f, s, 0.0, StatusTiming::unknown());
+                // `ftKirbySpecialNLoopSetStatus` plays the first frame
+                // (RE-473).
+                status::play_anim_events(f);
             }
         }
         K::SpecialNLoop | K::SpecialAirNLoop => {
@@ -1064,6 +1082,12 @@ pub fn update(f: &mut Fighter) {
                     K::SpecialAirNEnd
                 };
                 set_inhale(f, s, 0.0, StatusTiming::frames(SPECIAL_N_END_LENGTH));
+                // `ftKirbySpecialNEndSetStatus` plays the first frame
+                // (RE-473). The aerial end's setter has the same shape but
+                // no N64 trace yet, so it keeps the old timing.
+                if s == K::SpecialNEnd {
+                    status::play_anim_events(f);
+                }
             }
         }
         K::SpecialNEnd => {

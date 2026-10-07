@@ -75,6 +75,8 @@ pub mod results_layer;
 pub mod results_scene;
 pub mod rng;
 pub mod samus;
+#[cfg(test)]
+mod setter_tests;
 pub mod shadow;
 mod special_fighters;
 pub mod spgame;

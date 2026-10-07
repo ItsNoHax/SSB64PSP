@@ -289,6 +289,9 @@ pub fn set_special_n(f: &mut Fighter) {
     } else {
         set(f, LinkStatus::SpecialN, 0.0, SPECIAL_N_LENGTH);
     }
+    // The setter plays the first frame (RE-473: the N64's first frame shows
+    // `anim_frame` 1, the Boomerang leaves 25 frames on).
+    status::play_anim_events(f);
 }
 
 /// `ftLinkSpecialAirNSetStatus`.
@@ -300,6 +303,7 @@ pub fn set_special_air_n(f: &mut Fighter) {
     } else {
         set(f, LinkStatus::SpecialAirN, 0.0, SPECIAL_N_LENGTH);
     }
+    status::play_anim_events(f);
 }
 
 /// `ftLinkSpecialNGetSetStatus`, called by the weapon pool when a returning
@@ -310,6 +314,7 @@ pub fn set_special_n_get(f: &mut Fighter) {
     } else {
         set(f, LinkStatus::SpecialNGet, 0.0, SPECIAL_N_GET_LENGTH);
     }
+    status::play_anim_events(f);
 }
 
 /// `ftLinkSpecialNMakeBoomerang`: TopN, with the stick read at flag 0.
@@ -338,6 +343,8 @@ fn make_boomerang(f: &mut Fighter) {
 pub fn set_special_hi(f: &mut Fighter) {
     destroy_spin(f);
     set(f, LinkStatus::SpecialHi, 0.0, SPECIAL_HI_LENGTH);
+    // The setter plays the first frame (RE-473: 59 frames on the N64).
+    status::play_anim_events(f);
     let mut spin = SpinAttack::new(f);
     spin.step();
     f.link.spin = Some(spin);
@@ -350,6 +357,7 @@ pub fn set_special_hi(f: &mut Fighter) {
 pub fn set_special_air_hi(f: &mut Fighter) {
     destroy_spin(f);
     set(f, LinkStatus::SpecialAirHi, 0.0, SPECIAL_AIR_HI_LENGTH);
+    status::play_anim_events(f);
     f.link.flag0_done = true;
     make_spin_effect(f);
     f.physics.vel_air.y = SPINATTACK_AIR_VEL_Y;
@@ -390,6 +398,7 @@ pub fn spin_effect_rotate_y(f: &Fighter) -> f32 {
 /// `ftLinkSpecialHiEndSetStatus`.
 fn set_special_hi_end(f: &mut Fighter) {
     set(f, LinkStatus::SpecialHiEnd, 0.0, SPECIAL_HI_END_LENGTH);
+    status::play_anim_events(f);
 }
 
 /// `ftLinkSpecialHiDestroyWeapon`.
@@ -462,6 +471,9 @@ pub fn set_special_lw(f: &mut Fighter) {
     f.motion_script.flags[0] = 0;
     f.link.flag0_done = false;
     set(f, LinkStatus::SpecialLw, 0.0, SPECIAL_LW_LENGTH);
+    // The setter plays the first frame (RE-473: the Bomb comes out 28
+    // frames on, the status lasts 44).
+    status::play_anim_events(f);
 }
 
 /// `ftLinkSpecialAirLwSetStatus`.
@@ -472,6 +484,7 @@ pub fn set_special_air_lw(f: &mut Fighter) {
     f.motion_script.flags[0] = 0;
     f.link.flag0_done = false;
     set(f, LinkStatus::SpecialAirLw, 0.0, SPECIAL_LW_LENGTH);
+    status::play_anim_events(f);
 }
 
 /// `ftLinkSpecialLwMakeBomb`.
@@ -747,7 +760,9 @@ pub fn on_landing(f: &mut Fighter, floor_y: f32) -> bool {
         LinkStatus::SpecialAirHi => {
             destroy_spin(f);
             f.land(floor_y);
-            set_special_hi_end(f);
+            // A bare `ftMainSetStatus`: no first-frame play (RE-473: the
+            // N64 lands at `anim_frame` 0).
+            set(f, LinkStatus::SpecialHiEnd, 0.0, SPECIAL_HI_END_LENGTH);
         }
         _ => return false,
     }
@@ -850,11 +865,15 @@ mod tests {
         let mut f = link(true);
         set_special_n(&mut f);
         assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::SpecialN));
-        for _ in 0..25 {
+        // The setter played frame 1; the N64 makes the Boomerang 25 frames
+        // after the press, at `anim_frame` 26 (RE-473).
+        assert_eq!(f.status.anim_frame, 1.0);
+        for _ in 0..24 {
             status::update(&mut f);
             assert!(f.weapon_spawn.is_none());
         }
         status::update(&mut f);
+        assert_eq!(f.status.anim_frame, 26.0);
         let spawn = f.take_weapon_spawn().expect("flag 0 at frame 26");
         assert!(matches!(
             spawn.kind,
@@ -915,10 +934,12 @@ mod tests {
         for frame in 1..=40 {
             status::update(&mut f);
             let radius = f.link.spin.and_then(|s| s.radius);
+            // The setter played frame 1 (RE-473), so update `frame` stands
+            // at `anim_frame` `frame + 1`.
             let expected = match frame {
-                12..=19 => Some(120.0),
-                20..=25 => Some(100.0),
-                26..=29 => Some(80.0),
+                11..=18 => Some(120.0),
+                19..=24 => Some(100.0),
+                25..=28 => Some(80.0),
                 _ => None,
             };
             assert_eq!(radius, expected, "frame {frame}");
@@ -1009,6 +1030,8 @@ mod tests {
         set_special_air_hi(&mut f);
         assert!(on_landing(&mut f, 0.0));
         assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::SpecialHiEnd));
+        // `ftLinkSpecialAirHiProcMap` sets the status without a play (the
+        // N64 lands at `anim_frame` 0, RE-473).
         assert_eq!(f.status.anim_frame, 0.0);
         assert!(f.is_grounded());
     }
@@ -1088,7 +1111,7 @@ mod tests {
         }
         assert!(on_ground_lost(&mut f));
         assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::SpecialAirLw));
-        assert_eq!(f.status.anim_frame, 10.0);
+        assert_eq!(f.status.anim_frame, 11.0);
         while f.status.status == AnyStatus::Link(LinkStatus::SpecialAirLw) {
             status::update(&mut f);
         }

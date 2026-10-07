@@ -1412,16 +1412,6 @@ impl FighterScene {
         self.fighter.pikachu.map_bound_top = Some(stage.bounds.top as f32);
         self.fighter.set_input(input, tapped, released);
         self.sample_held_child_offset();
-        if matches!(
-            self.fighter.status.status,
-            AnyStatus::Fox(
-                ssb_game::status::FoxStatus::SpecialN | ssb_game::status::FoxStatus::SpecialAirN
-            )
-        ) {
-            if let Some(anchor) = self.weapon_anchor(pack, 17, 60.0) {
-                self.fighter.set_weapon_spawn_anchor(anchor);
-            }
-        }
         // Every status gets its TransN sample: `ssb-game`'s physics reads it
         // only where the source's `proc_physics` applies TransN, so a list
         // here could only miss statuses (Final Cutter, the Falcon Kick,
@@ -1502,6 +1492,12 @@ impl FighterScene {
         } else {
             // No TransN motion accrues while frozen.
             self.root_motion_before_tick = self.skeleton.pose(0).copied();
+        }
+        // `ftFoxSpecialNProcUpdate` makes the shot from the hand this
+        // frame's play posed, before the physics step (RE-473).
+        if ssb_game::status::fox_blaster_pending(&self.fighter) {
+            self.sample_gameplay_joints(pack);
+            ssb_game::status::fox_blaster_spawn(&mut self.fighter);
         }
         let t = crate::profile::start();
         self.fighter
@@ -1813,19 +1809,6 @@ impl FighterScene {
         };
     }
 
-    /// Maps an authored weapon attachment joint and forward offset into
-    /// match coordinates before the fighter's motion event consumes it.
-    /// Mario's Fireball uses joint 16; Fox's Blaster uses joint 17 plus 60.
-    fn weapon_anchor(
-        &self,
-        pack: &Pack<'_>,
-        joint: usize,
-        offset_x: f32,
-    ) -> Option<ssb_engine::math::Vec3> {
-        let node = self.skeleton.joint_node(joint)?;
-        self.node_anchor(pack, node, offset_x)
-    }
-
     /// Samples all posed model nodes once for gameplay collision. Joint IDs
     /// 4.. are the packed DObjDesc nodes; 0 is TopN. The other runtime joints
     /// have no packed node and are not used by the ported motion collisions.
@@ -1888,27 +1871,6 @@ impl FighterScene {
         }
     }
 
-    fn node_anchor(
-        &self,
-        pack: &Pack<'_>,
-        node: u32,
-        offset_x: f32,
-    ) -> Option<ssb_engine::math::Vec3> {
-        let object = pack.object(self.object)?;
-        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-        let count = self.compose_collision(pack, &object, &mut posed);
-        let local_index = node.checked_sub(object.first_node)? as usize;
-        if local_index >= count {
-            return None;
-        }
-        let local = posed[local_index].translation();
-        let scale = ssb_rom::pack::MODEL_SCALE * self.fighter.attributes.size;
-        let axes = ssb_game::item_throw::collision_axes(&self.fighter);
-        Some(self.fighter.pos
-            + axes[0] * (local[0] * scale)
-            + axes[1] * (local[1] * scale)
-            + axes[2] * (local[2] * scale + offset_x))
-    }
 }
 
 /// Which way to turn a model so it faces the way the fighter does.

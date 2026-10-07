@@ -2569,6 +2569,10 @@ pub fn set_fox_special_lw_start(f: &mut Fighter) {
         FoxStatus::SpecialAirLwStart
     };
     set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::frames(4.0));
+    // The setter plays the first frame (RE-473: the N64's Reflector start
+    // shows `anim_frame` 1 and loops 3 frames on, on the ground and in the
+    // air).
+    play_anim_events(f);
     f.fox_special_lw = FoxSpecialLwState {
         release_lag: 18,
         gravity_delay: 4,
@@ -2629,6 +2633,9 @@ pub fn set_fox_special_hi_start(f: &mut Fighter) {
         FoxStatus::SpecialAirHiStart
     };
     set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::frames(8.0));
+    // The setter plays the first frame (RE-473: the N64's Fire Fox start
+    // shows `anim_frame` 1 and holds 7 frames on).
+    play_anim_events(f);
     f.fox_special_hi = FoxSpecialHiState {
         gravity_delay: 15,
         ..Default::default()
@@ -2648,6 +2655,8 @@ fn set_fox_special_hi_hold(f: &mut Fighter) {
         FoxStatus::SpecialAirHiHold
     };
     set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::unknown());
+    // `ftFoxSpecialHiHoldSetStatus` plays the first frame (RE-473).
+    play_anim_events(f);
     f.fox_special_hi.launch_delay = 35;
 }
 
@@ -6187,11 +6196,9 @@ fn update_extended(f: &mut Fighter) {
                     owner_port: f.port,
                     team: f.team,
                     stale: crate::stale::WeaponStale::of(f),
-                    // `ftMarioSpecialNProcAccessory` asks the runtime for
-                    // Mario joint 16's world position. Host-only gameplay
-                    // stays usable without a skeleton by honestly falling
-                    // back to the fighter root.
-                    position: f.weapon_spawn_anchor.unwrap_or(f.pos),
+                    // `ftMarioSpecialNProcAccessory` places it at joint 16
+                    // (`item_use::accessory`); the root until then.
+                    position: f.pos,
                     facing: f.facing.sign(),
                 });
             }
@@ -6284,11 +6291,13 @@ fn update_extended(f: &mut Fighter) {
                     owner_port: f.port,
                     team: f.team,
                     stale: crate::stale::WeaponStale::of(f),
-                    position: f.weapon_spawn_anchor.unwrap_or(ssb_engine::math::Vec3::new(
+                    // `ftFoxSpecialNProcUpdate` takes joint 17 plus 60 as
+                    // this frame's play poses it ([`fox_blaster_spawn`]).
+                    position: ssb_engine::math::Vec3::new(
                         f.pos.x + 60.0 * f.facing.sign(),
                         f.pos.y,
                         f.pos.z,
-                    )),
+                    ),
                     facing: f.facing.sign(),
                 });
             }
@@ -6867,10 +6876,80 @@ pub fn set_ground_vel_abs_stick(p: &mut PhysicsState, stick_x: i8, vel: f32, fri
     }
 }
 
+/// `FTFOX_BLASTER_HOLD_JOINT` and `FTFOX_BLASTER_SPAWN_OFF_X`.
+pub const FOX_BLASTER_HOLD_JOINT: u8 = 17;
+pub const FOX_BLASTER_SPAWN_OFF_X: f32 = 60.0;
+
+/// Whether this frame's interrupt queued a Blaster shot, which
+/// [`fox_blaster_spawn`] places once the frame's play has posed the hand.
+pub fn fox_blaster_pending(f: &Fighter) -> bool {
+    f.weapon_spawn
+        .is_some_and(|w| w.kind == crate::weapon::WeaponKind::FoxBlaster)
+}
+
+/// `ftFoxSpecialNProcUpdate`: the shot leaves joint 17 plus 60 along its x
+/// axis (`gmCollisionGetFighterPartsWorldPosition`), as this frame's
+/// `ftMainPlayAnimEventsAll` posed it and before `ftMainProcPhysicsMap`
+/// moves the fighter. Call with `joint_transforms` sampled from that pose
+/// (RE-473).
+pub fn fox_blaster_spawn(f: &mut Fighter) {
+    if !fox_blaster_pending(f) {
+        return;
+    }
+    let Some(joint) = f.joint_transforms[usize::from(FOX_BLASTER_HOLD_JOINT)] else {
+        return;
+    };
+    if let Some(spawn) = f.weapon_spawn.as_mut() {
+        spawn.position = joint.point(ssb_engine::math::Vec3::new(
+            FOX_BLASTER_SPAWN_OFF_X,
+            0.0,
+            0.0,
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::fighter::FighterKind;
+
+    /// `ftFoxSpecialNProcUpdate`: the Blaster leaves joint 17 plus 60 along
+    /// the joint's own x axis, not the root's (RE-473: the opening's shot at
+    /// (346.67, 2058.01, -25.81) from Fox at (437.81, 1744.13)).
+    #[test]
+    fn the_blaster_leaves_joint_17_plus_60_along_its_axis() {
+        use crate::fighter::JointTransform;
+        use ssb_engine::math::Vec3;
+        let mut f = Fighter::new(FighterKind::Fox, 0, 0);
+        set_wait(&mut f);
+        set_any_status(
+            &mut f,
+            AnyStatus::Fox(FoxStatus::SpecialN),
+            0.0,
+            StatusTiming::unknown(),
+        );
+        for _ in 0..40 {
+            update(&mut f);
+            if fox_blaster_pending(&f) {
+                break;
+            }
+        }
+        assert!(fox_blaster_pending(&f));
+        let hand = JointTransform {
+            axes: [
+                Vec3::new(0.0, 0.6, 0.8),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 0.8, -0.6),
+            ],
+            origin: Vec3::new(400.0, 2000.0, -40.0),
+        };
+        f.joint_transforms[usize::from(FOX_BLASTER_HOLD_JOINT)] = Some(hand);
+        fox_blaster_spawn(&mut f);
+        assert_eq!(
+            f.weapon_spawn.unwrap().position,
+            Vec3::new(400.0, 2036.0, 8.0)
+        );
+    }
 
     fn mario() -> Fighter {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
@@ -7821,7 +7900,9 @@ mod tests {
             AnyStatus::Fox(FoxStatus::SpecialAirHiStart)
         );
         assert_eq!(f.fox_special_hi.gravity_delay, 15);
-        for _ in 0..8 {
+        // The setter played frame 1: the N64 holds 7 frames after the press
+        // and launches 35 after that (RE-473).
+        for _ in 0..7 {
             update(&mut f);
         }
         assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialAirHiHold));
@@ -7849,7 +7930,9 @@ mod tests {
         f.situation = Situation::Ground;
         f.input.buttons = N64Buttons(N64Buttons::B);
         set_fox_special_lw_start(&mut f);
-        for _ in 0..4 {
+        // The setter played frame 1: the N64 loops 3 frames after the press
+        // (RE-473).
+        for _ in 0..3 {
             update(&mut f);
         }
         assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialLwLoop));

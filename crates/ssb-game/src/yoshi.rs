@@ -191,12 +191,16 @@ fn set_catch_params(f: &mut Fighter) {
 pub fn set_special_n(f: &mut Fighter) {
     set(f, YoshiStatus::SpecialN, 0.0, SPECIAL_N_LENGTH);
     set_catch_params(f);
+    // The setter plays the first frame (RE-473: `anim_frame` 1 on the
+    // N64's first frame).
+    status::play_anim_events(f);
 }
 
 /// `ftYoshiSpecialAirNSetStatus`.
 pub fn set_special_air_n(f: &mut Fighter) {
     set(f, YoshiStatus::SpecialAirN, 0.0, SPECIAL_N_LENGTH);
     set_catch_params(f);
+    status::play_anim_events(f);
 }
 
 /// Whether this status's catch box is out: the Egg Lay search window.
@@ -232,6 +236,7 @@ fn set_release(f: &mut Fighter) {
         YoshiStatus::SpecialNRelease
     };
     set(f, next, 0.0, SPECIAL_N_RELEASE_LENGTH);
+    status::play_anim_events(f);
     f.grab.capture_immune = true;
 }
 
@@ -262,12 +267,16 @@ fn init_special_hi(f: &mut Fighter) {
 pub fn set_special_hi(f: &mut Fighter) {
     set(f, YoshiStatus::SpecialHi, 0.0, SPECIAL_HI_LENGTH);
     init_special_hi(f);
+    // The setter plays the first frame (RE-473: the N64 makes the egg 3
+    // frames on and waits 71 frames on).
+    status::play_anim_events(f);
 }
 
 /// `ftYoshiSpecialAirHiSetStatus`.
 pub fn set_special_air_hi(f: &mut Fighter) {
     set(f, YoshiStatus::SpecialAirHi, 0.0, SPECIAL_HI_LENGTH);
     init_special_hi(f);
+    status::play_anim_events(f);
 }
 
 /// `ftYoshiSpecialHiProcDamage`: a held egg is destroyed.
@@ -316,6 +325,8 @@ fn update_egg(f: &mut Fighter) {
 pub fn set_special_lw_start(f: &mut Fighter) {
     f.become_airborne();
     set(f, YoshiStatus::SpecialLwStart, 0.0, SPECIAL_LW_START_LENGTH);
+    // The setter plays the first frame (RE-473).
+    status::play_anim_events(f);
     f.physics.jumps_used = f.attributes.jumps_max;
 }
 
@@ -327,6 +338,7 @@ pub fn set_special_air_lw_start(f: &mut Fighter) {
         0.0,
         SPECIAL_AIR_LW_START_LENGTH,
     );
+    status::play_anim_events(f);
     f.physics.jumps_used = f.attributes.jumps_max;
 }
 
@@ -661,10 +673,12 @@ mod tests {
     fn egg_throw_makes_the_egg_at_4_and_throws_it_at_23_with_the_held_force() {
         let mut f = yoshi(true);
         set_special_hi(&mut f);
-        for frame in 1..=22 {
+        // The setter played frame 1, so update `n` stands at frame `n + 1`:
+        // the N64 makes the egg 3 frames after the press (RE-473).
+        for n in 1..=21 {
             hold(&mut f, N64Buttons::B, 0);
             status::update(&mut f);
-            assert_eq!(f.yoshi.egg_held, frame >= 4, "frame {frame}");
+            assert_eq!(f.yoshi.egg_held, n >= 3, "update {n}");
             assert!(f.weapon_spawn.is_none());
         }
         hold(&mut f, 0, 70);
@@ -673,7 +687,7 @@ mod tests {
         assert_eq!(
             spawn.kind,
             WeaponKind::YoshiEgg {
-                throw_force: 22,
+                throw_force: 21,
                 stick_x: 70
             }
         );
@@ -755,9 +769,10 @@ mod tests {
         let mut f = yoshi(true);
         set_special_n(&mut f);
         assert!(f.grab.is_catchstatus);
-        for frame in 1..=23 {
+        // The setter played frame 1 (RE-473): update `n` stands at `n + 1`.
+        for n in 1..=22 {
             status::update(&mut f);
-            assert_eq!(egg_lay_searching(&f), frame >= 18, "frame {frame}");
+            assert_eq!(egg_lay_searching(&f), n >= 17, "update {n}");
         }
         let held = Fighter::new(FighterKind::Mario, 1, 3);
         catch(&mut f, &held);

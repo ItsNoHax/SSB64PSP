@@ -388,11 +388,6 @@ pub struct Fighter {
     /// One weapon creation requested by this fighter's current status. The
     /// match-owned weapon pool consumes it after fighter callbacks finish.
     pub weapon_spawn: Option<crate::weapon::WeaponSpawn>,
-    /// This frame's runtime-sampled world position for a fighter motion's
-    /// weapon attachment joint. `ssb-game` deliberately stores plain data,
-    /// never a skeleton or pack handle; callers without a renderer fall back
-    /// to the fighter root when it is absent.
-    pub weapon_spawn_anchor: Option<Vec3>,
     /// Current posed joints, indexed as `FTStruct::joints` (four runtime
     /// joints precede the packed model nodes).
     pub joint_transforms: [Option<JointTransform>; FIGHTER_JOINTS],
@@ -549,7 +544,6 @@ impl Fighter {
             handicap: crate::stale::HANDICAP_DEFAULT,
             costume: 0,
             weapon_spawn: None,
-            weapon_spawn_anchor: None,
             joint_transforms: [None; FIGHTER_JOINTS],
             root_motion: RootMotion::default(),
             transn: Vec3::ZERO,
@@ -860,13 +854,6 @@ impl Fighter {
         self.root_motion = motion;
     }
 
-    /// Supplies a motion attachment sampled by the outer animation runtime
-    /// for the frame about to run. This is consumed only by a status event
-    /// that needs it, then cleared with the other per-frame runtime input.
-    pub fn set_weapon_spawn_anchor(&mut self, anchor: Vec3) {
-        self.weapon_spawn_anchor = Some(anchor);
-    }
-
     /// World position of a motion collision offset. Host-only callers with
     /// no skeleton use TopN's turn/facing transform for joint 0 and the previous
     /// root-offset fallback for non-root joints.
@@ -1013,19 +1000,16 @@ impl Fighter {
         // `proc_map` (if any) replaces the map step.
         if crate::dead::tick_status(self) {
             self.root_motion = RootMotion::default();
-            self.weapon_spawn_anchor = None;
             return;
         }
         // Master Hand's statuses own their physics and map callbacks.
         if crate::boss::tick_status(self, &surfaces) {
             self.root_motion = RootMotion::default();
-            self.weapon_spawn_anchor = None;
             return;
         }
         // The battle entry places the fighter itself and skips the map.
         if crate::appear::tick_status(self) {
             self.root_motion = RootMotion::default();
-            self.weapon_spawn_anchor = None;
             return;
         }
 
@@ -1039,7 +1023,6 @@ impl Fighter {
         // of its own velocity (`ftCommonCapturePulledProcPhysics`).
         if crate::grab::tick_held(self, || crate::map::floors(surfaces())) {
             self.root_motion = RootMotion::default();
-            self.weapon_spawn_anchor = None;
             crate::dead::check(self);
             return;
         }
@@ -1047,14 +1030,12 @@ impl Fighter {
         self.map_contacts = crate::map::Contacts::default();
         if crate::dokan::tick_status(self) {
             self.root_motion = RootMotion::default();
-            self.weapon_spawn_anchor = None;
             crate::dead::check(self);
             return;
         }
         if crate::hazard::tick_status(self, &surfaces) {
             crate::fteffect::kirby_map_star(self);
             self.root_motion = RootMotion::default();
-            self.weapon_spawn_anchor = None;
             crate::dead::check(self);
             return;
         }
@@ -1073,7 +1054,6 @@ impl Fighter {
         // Root motion is an input sample, not persistent fighter state. This
         // prevents a missed runtime sample from replaying an old displacement.
         self.root_motion = RootMotion::default();
-        self.weapon_spawn_anchor = None;
     }
 
     /// Finish a cliff damage callback in the match's hit-resolution pass.

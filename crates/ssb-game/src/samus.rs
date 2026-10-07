@@ -233,6 +233,9 @@ pub fn set_special_hi(f: &mut Fighter) {
         0.0,
         StatusTiming::frames(SPECIAL_HI_LENGTH),
     );
+    // The setter plays the first frame (RE-473: the N64 takes off 3
+    // frames on, at `anim_frame` 4).
+    status::play_anim_events(f);
     f.samus.takeoff_pending = true;
 }
 
@@ -244,6 +247,9 @@ pub fn set_special_air_hi(f: &mut Fighter) {
         0.0,
         StatusTiming::frames(SPECIAL_AIR_HI_LENGTH),
     );
+    // The setter plays the first frame (RE-473: the N64 falls 47 frames
+    // on).
+    status::play_anim_events(f);
     f.physics.jumps_used = f.attributes.jumps_max;
     f.physics.vel_air.y = SCREWATTACK_VEL_Y_BASE;
     physics::clamp_air_vel_x(&mut f.physics, SCREWATTACK_DRIFT_CLAMP);
@@ -257,6 +263,9 @@ pub fn set_special_lw(f: &mut Fighter) {
         0.0,
         StatusTiming::frames(SPECIAL_LW_LENGTH),
     );
+    // The setter plays the first frame (RE-473: the N64 hops 2 frames on
+    // and lays the Bomb 9 frames on).
+    status::play_anim_events(f);
     f.samus.takeoff_pending = true;
     f.samus.bomb_spawned = false;
 }
@@ -269,6 +278,7 @@ pub fn set_special_air_lw(f: &mut Fighter) {
         0.0,
         StatusTiming::frames(SPECIAL_LW_LENGTH),
     );
+    status::play_anim_events(f);
     f.samus.takeoff_pending = false;
     f.samus.bomb_spawned = false;
     f.physics.vel_air.y = BOMB_VEL_Y_BASE - BOMB_VEL_Y_SUB;
@@ -727,7 +737,9 @@ mod tests {
     fn grounded_screw_attack_takes_off_on_frame_four() {
         let mut f = samus(true);
         set_special_hi(&mut f);
-        for _ in 0..3 {
+        // The setter played frame 1: the N64 takes off 3 frames after the
+        // press, at `anim_frame` 4 (RE-473).
+        for _ in 0..2 {
             status::update(&mut f);
             assert!(f.is_grounded());
         }
@@ -744,7 +756,7 @@ mod tests {
                 .count()
         };
         assert_eq!(live(&f), 4);
-        for _ in 4..32 {
+        for _ in 3..31 {
             status::update(&mut f);
         }
         assert_eq!(live(&f), 1);
@@ -785,15 +797,15 @@ mod tests {
     fn grounded_bomb_hops_on_frame_three_and_drops_on_frame_ten() {
         let mut f = samus(true);
         set_special_lw(&mut f);
-        for _ in 0..2 {
-            status::update(&mut f);
-        }
+        // The setter played frame 1: the N64 hops 2 frames after the press
+        // (`anim_frame` 3) and lays the Bomb 9 frames after it (RE-473).
+        status::update(&mut f);
         assert!(f.is_grounded());
         status::update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Samus(SamusStatus::SpecialAirLw));
         assert_eq!(f.status.anim_frame, 3.0);
         assert_eq!(f.physics.vel_air.y, BOMB_VEL_Y_BASE);
-        for _ in 3..9 {
+        for _ in 2..8 {
             status::update(&mut f);
             assert!(f.weapon_spawn.is_none());
         }
