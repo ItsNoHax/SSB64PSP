@@ -4566,6 +4566,12 @@ impl<'a> Pack<'a> {
         (0..self.stage_count).find(|&i| self.stage(i).is_some_and(|s| s.source_file == file))
     }
 
+    /// The address of the pack's bytes: tells two packs apart, for caches
+    /// of decoded tables (RE-471).
+    pub fn identity(&self) -> usize {
+        self.data.as_ptr() as usize
+    }
+
     pub fn line(&self, i: u32) -> Option<LineDesc> {
         if i >= self.line_count {
             return None;

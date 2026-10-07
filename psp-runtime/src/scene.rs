@@ -14,9 +14,9 @@
 //! drags one crate into the other.
 //!
 //! [`FloorSegments`] allocates nothing: it reads segments straight out of the
-//! mapped pack as the query asks for them. A tick's collision work is
-//! therefore proportional to the stage's floor count with no per-frame setup,
-//! which is what keeps this affordable inside the frame budget.
+//! mapped pack as the query asks for them, for the few queries that place a
+//! fighter. [`MapSegments`], which every map query of every tick walks,
+//! decodes a stage's surfaces once and keeps the last two stages' (RE-471).
 //!
 //! This module owns only what connects `ssb-rom`'s `Pack` to `ssb-game`'s
 //! `Fighter` to skeleton/animation to battle-camera/runtime rendering state.
@@ -675,33 +675,47 @@ impl StageMap {
     }
 }
 
-pub struct MapSegments<'a, 'p> {
-    pack: &'a Pack<'p>,
-    stage: &'a StageDesc,
-    line: u32,
-    current: Option<LineDesc>,
-    point: u16,
-    prev: Option<(i16, i16, u16, u16)>,
+/// A stage's map surfaces in table order, each with its line's group:
+/// what [`Decoder`] gives with every group present and still.
+type Surfaces = alloc::rc::Rc<[(MapSurface, u16)]>;
+
+/// The surfaces of the last two stages queried, keyed by pack and line
+/// range (RE-471). Every map query walks every surface, several times per
+/// fighter per tick, and decoding them from the pack each time was most
+/// of the map's cost.
+static mut SURFACE_CACHE: [Option<((usize, u32, u32), Surfaces)>; 2] = [None, None];
+
+fn stage_surfaces(pack: &Pack<'_>, stage: &StageDesc) -> Surfaces {
+    let key = (pack.identity(), stage.first_line, stage.line_count);
+    // SAFETY: the game is single-threaded, and no reference into the cache
+    // outlives this function: callers hold their own `Rc`.
+    let cache = unsafe { &mut *core::ptr::addr_of_mut!(SURFACE_CACHE) };
+    if let Some((_, surfaces)) = cache.iter().flatten().find(|(k, _)| *k == key) {
+        return surfaces.clone();
+    }
+    let surfaces: Surfaces = Decoder::new(pack, stage).collect();
+    cache[1] = cache[0].take();
+    cache[0] = Some((key, surfaces.clone()));
+    surfaces
+}
+
+/// A stage's map surfaces as the map queries see them: in table order,
+/// those of lines whose group exists, each with its group's motion.
+pub struct MapSegments<'a> {
+    surfaces: Surfaces,
+    next: usize,
     groups: &'a [ssb_game::map::MapGroup],
 }
 
-impl<'a, 'p> MapSegments<'a, 'p> {
-    pub fn new(pack: &'a Pack<'p>, stage: &'a StageDesc) -> Self {
+impl<'a> MapSegments<'a> {
+    pub fn new(pack: &Pack<'_>, stage: &StageDesc) -> Self {
         Self {
-            pack,
-            stage,
-            line: 0,
-            current: None,
-            point: 0,
-            prev: None,
+            surfaces: stage_surfaces(pack, stage),
+            next: 0,
             groups: &[],
         }
     }
-    pub fn with_groups(
-        pack: &'a Pack<'p>,
-        stage: &'a StageDesc,
-        groups: &'a [ssb_game::map::MapGroup],
-    ) -> Self {
+    pub fn with_groups(pack: &Pack<'_>, stage: &StageDesc, groups: &'a [ssb_game::map::MapGroup]) -> Self {
         Self {
             groups,
             ..Self::new(pack, stage)
@@ -709,8 +723,49 @@ impl<'a, 'p> MapSegments<'a, 'p> {
     }
 }
 
-impl Iterator for MapSegments<'_, '_> {
+impl Iterator for MapSegments<'_> {
     type Item = MapSurface;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(&(surface, yakumono)) = self.surfaces.get(self.next) {
+            self.next += 1;
+            let group = self.groups.get(usize::from(yakumono));
+            if group.is_none_or(|g| g.exists()) {
+                return Some(MapSurface {
+                    motion: group.and_then(|g| g.motion()),
+                    ..surface
+                });
+            }
+        }
+        None
+    }
+}
+
+/// Decodes a stage's surfaces from the pack, each with its line's group.
+struct Decoder<'a, 'p> {
+    pack: &'a Pack<'p>,
+    stage: &'a StageDesc,
+    line: u32,
+    current: Option<LineDesc>,
+    point: u16,
+    prev: Option<(i16, i16, u16, u16)>,
+}
+
+impl<'a, 'p> Decoder<'a, 'p> {
+    fn new(pack: &'a Pack<'p>, stage: &'a StageDesc) -> Self {
+        Self {
+            pack,
+            stage,
+            line: 0,
+            current: None,
+            point: 0,
+            prev: None,
+        }
+    }
+}
+
+impl Iterator for Decoder<'_, '_> {
+    type Item = (MapSurface, u16);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -720,13 +775,7 @@ impl Iterator for MapSegments<'_, '_> {
                 }
                 let candidate = self.pack.line(self.stage.first_line + self.line);
                 self.line += 1;
-                if let Some(candidate) = candidate.filter(|line| {
-                    line.vertex_count >= 2
-                        && self
-                            .groups
-                            .get(line.yakumono as usize)
-                            .is_none_or(|g| g.exists())
-                }) {
+                if let Some(candidate) = candidate.filter(|line| line.vertex_count >= 2) {
                     self.current = Some(candidate);
                     self.point = 0;
                     self.prev = None;
@@ -757,27 +806,27 @@ impl Iterator for MapSegments<'_, '_> {
                 line_kind::LEFT_WALL => MapSurfaceKind::LeftWall,
                 _ => continue,
             };
-            return Some(MapSurface {
-                motion: self
-                    .groups
-                    .get(line.yakumono as usize)
-                    .and_then(|g| g.motion()),
-                topology: Some(SurfaceTopology {
-                    line: line.id,
-                    point: self.point - 2,
-                    segments: line.vertex_count - 1,
-                    vertex1,
-                    vertex2: vertex.vertex_id,
-                }),
-                kind,
-                segment: Segment {
-                    x1,
-                    y1,
-                    x2: vertex.x,
-                    y2: vertex.y,
-                    flags,
+            return Some((
+                MapSurface {
+                    motion: None,
+                    topology: Some(SurfaceTopology {
+                        line: line.id,
+                        point: self.point - 2,
+                        segments: line.vertex_count - 1,
+                        vertex1,
+                        vertex2: vertex.vertex_id,
+                    }),
+                    kind,
+                    segment: Segment {
+                        x1,
+                        y1,
+                        x2: vertex.x,
+                        y2: vertex.y,
+                        flags,
+                    },
                 },
-            });
+                line.yakumono,
+            ));
         }
     }
 }
