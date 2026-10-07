@@ -1133,6 +1133,16 @@ fn update_attack_stat(
 }
 
 /// `ftMainUpdateShieldStatFighter`.
+/// `gmCollisionGet{Fighter,Weapon,Item}AttackShieldPosition`: halfway
+/// from the attack's point to the shield joint's world point at the
+/// fighter's depth (`gmCollisionGetShieldPosition`,
+/// `gmCollisionGetCommonImpactPosition`).
+pub fn shield_impact(victim: &Fighter, attack: Vec3) -> Vec3 {
+    let mut shield = victim.joint_transforms[JOINT_YROTN].map_or(victim.pos, |t| t.origin);
+    shield.z = victim.pos.z;
+    impact_point(attack, shield)
+}
+
 fn update_shield_stat(
     attacker: &mut Fighter,
     i: usize,
@@ -1154,13 +1164,10 @@ fn update_shield_stat(
             -1.0
         };
     }
-    // `gmCollisionGetFighterAttackShieldPosition`: the shield joint's
-    // world point at the fighter's depth.
-    let mut shield = victim.joint_transforms[JOINT_YROTN].map_or(victim.pos, |t| t.origin);
-    shield.z = victim.pos.z;
-    let pos = impact_point(
+    // `gmCollisionGetFighterAttackShieldPosition`.
+    let pos = shield_impact(
+        victim,
         attack_point(coll.pos_curr, coll.pos_prev, coll.state),
-        shield,
     );
     victim.hits.push_set_off(pos, coll.damage);
 }
@@ -1238,7 +1245,7 @@ fn update_damage_stat(
 
 /// `gmCollisionGetDamageSlashRotation`: the angle of the attacker's air
 /// velocity for a new attack, else of the attack's sweep.
-fn slash_rotation(attacker: &Fighter, coll: &AttackColl) -> f32 {
+pub(crate) fn slash_rotation(attacker: &Fighter, coll: &AttackColl) -> f32 {
     let (x, y) = if coll.state == AttackState::Transfer {
         (attacker.physics.vel_air.x, attacker.physics.vel_air.y)
     } else {
@@ -1392,11 +1399,8 @@ fn weapon_hit_inner(victim: &mut Fighter, w: WeaponAttack, shield_only: bool) ->
         } else {
             0.0
         };
-        // `gmCollisionGetWeaponAttackShieldPosition`: halfway to the shield
-        // joint's point at the fighter's depth.
-        let mut shield = victim.joint_transforms[JOINT_YROTN].map_or(victim.pos, |t| t.origin);
-        shield.z = victim.pos.z;
-        let impact = impact_point(attack_point(w.pos_curr, w.pos_prev, state), shield);
+        // `gmCollisionGetWeaponAttackShieldPosition`.
+        let impact = shield_impact(victim, attack_point(w.pos_curr, w.pos_prev, state));
         victim
             .hits
             .push_set_off(impact, w.hitbox.shield_damage + w.hitbox.damage);

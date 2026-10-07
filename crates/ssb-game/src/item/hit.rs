@@ -82,6 +82,33 @@ pub(crate) struct Knock {
     pub base: i32,
 }
 
+/// The spark an item's hit search makes for a damage contact, by the
+/// attack's element (`itProcessUpdateDamageStat{Fighter,Item,Weapon}`): a
+/// fighter's slash (`rotate`) cuts, every other element without its own
+/// spark is the normal light one.
+pub(crate) fn damage_spark(
+    element: combat::Element,
+    pos: Vec3,
+    player: u8,
+    damage: i32,
+    rotate: Option<f32>,
+) -> crate::wpeffect::WeaponEffect {
+    use crate::effect::{HitEffect, HitEffectKind};
+    let kind = match (element, rotate) {
+        (combat::Element::Fire, _) => HitEffectKind::Fire,
+        (combat::Element::Electric, _) => HitEffectKind::Electric,
+        (combat::Element::Coin, _) => HitEffectKind::Coin,
+        (combat::Element::Slash, Some(rotate)) => HitEffectKind::Slash { rotate },
+        _ => HitEffectKind::NormalLight,
+    };
+    crate::wpeffect::WeaponEffect::Hit(HitEffect {
+        kind,
+        pos,
+        player,
+        damage,
+    })
+}
+
 /// The shared half of `itProcessUpdateDamageStat*`: a normal damage
 /// collision queues the damage and the strongest hit's angle, element and
 /// side.
@@ -198,12 +225,16 @@ impl ItemPool {
                 continue;
             }
             let id = ITEM_RECORD_BASE + slot;
+            let mut emit = crate::wpeffect::Emit::default();
             for f in fighters.iter_mut() {
-                fighter_attacks_item(f, item, id, rules);
+                fighter_attacks_item(f, item, id, rules, &mut emit);
             }
+            self.fx.extend(n as u32, &emit);
             self.items_attack_item(n);
             if let Some(item) = self.slots[usize::from(slot)].as_mut() {
-                weapons.hit_item(item, id);
+                let mut emit = crate::wpeffect::Emit::default();
+                weapons.hit_item(item, id, &mut emit);
+                self.fx.extend(n as u32, &emit);
             }
         }
         weapons.finish_item_hits();
@@ -260,7 +291,17 @@ impl ItemPool {
                 'clank: for i in 0..other.attack.count {
                     for j in 0..this.attack.count {
                         if crate::hurtbox::attacks_collide(sweep(&other, i), sweep(&this, j)) {
-                            update_attack_stat_item(&mut other, other_id, &mut this, this_id);
+                            // `gmCollisionGetItemAttackItemAttackPosition`.
+                            let point = |item: &Item, k: usize| {
+                                let (curr, prev, _, state) = sweep(item, k);
+                                combat::attack_point(curr, prev, state)
+                            };
+                            let pos = combat::impact_point(point(&this, j), point(&other, i));
+                            let mut emit = crate::wpeffect::Emit::default();
+                            update_attack_stat_item(
+                                &mut other, other_id, &mut this, this_id, pos, &mut emit,
+                            );
+                            self.fx.extend(n as u32, &emit);
                             if other.hit_attack_damage != 0 {
                                 to_hurtbox = false;
                                 break 'clank;
@@ -281,7 +322,9 @@ impl ItemPool {
                     }
                     let (curr, prev, size, state) = sweep(&other, i);
                     if touches_damage_coll(&this, curr, prev, size, state) {
-                        update_damage_stat_item(&mut other, &mut this, this_id);
+                        let mut emit = crate::wpeffect::Emit::default();
+                        update_damage_stat_item(&mut other, i, &mut this, this_id, &mut emit);
+                        self.fx.extend(n as u32, &emit);
                         break;
                     }
                 }
@@ -294,22 +337,44 @@ impl ItemPool {
 
 /// `itProcessUpdateAttackStatItem`: two item attacks meet; the lower (or
 /// equal) priority side records the other and is set off.
-fn update_attack_stat_item(this: &mut Item, this_id: u8, victim: &mut Item, victim_id: u8) {
+/// Each side's set-off (`efManagerSetOffMakeEffect`) goes to `emit`.
+fn update_attack_stat_item(
+    this: &mut Item,
+    this_id: u8,
+    victim: &mut Item,
+    victim_id: u8,
+    pos: Vec3,
+    emit: &mut crate::wpeffect::Emit,
+) {
     let victim_damage = victim.damage_output();
     let this_damage = this.damage_output();
     if victim.attack.priority <= this.attack.priority {
         victim.attack.set_hit_interact(this_id, HitType::Attack(0));
         victim.hit_attack_damage = victim.hit_attack_damage.max(victim_damage);
+        emit.push(crate::wpeffect::WeaponEffect::SetOff {
+            pos,
+            size: victim_damage,
+        });
     }
     if this.attack.priority <= victim.attack.priority {
         this.attack.set_hit_interact(victim_id, HitType::Attack(0));
         this.hit_attack_damage = this.hit_attack_damage.max(this_damage);
+        emit.push(crate::wpeffect::WeaponEffect::SetOff {
+            pos,
+            size: this_damage,
+        });
     }
 }
 
 /// `itProcessUpdateDamageStatItem`: `attack`'s hitbox touched `defend`'s
 /// damage collision.
-fn update_damage_stat_item(attack: &mut Item, defend: &mut Item, defend_id: u8) {
+fn update_damage_stat_item(
+    attack: &mut Item,
+    attack_index: usize,
+    defend: &mut Item,
+    defend_id: u8,
+    emit: &mut crate::wpeffect::Emit,
+) {
     let damage = attack.damage_output();
     let is_rehit = defend.ty == ItemType::Damage && attack.attack.can_rehit_item;
     attack.attack.set_hit_interact(
@@ -327,6 +392,22 @@ fn update_damage_stat_item(attack: &mut Item, defend: &mut Item, defend_id: u8) 
     }
     attack.hit_lr = attacker_lr(attack.vel_air.x, attack.pos.x, defend.pos.x);
     let lr = victim_lr(attack.vel_air.x, attack.pos.x, defend.pos.x);
+    // `ip->is_hitlag_victim` (`attr->is_give_hitlag`):
+    // `gmCollisionGetItemAttackItemDamagePosition` and the spark.
+    if defend.damage_coll.hitstatus == HitStatus::Normal && attack.attr.is_give_hitlag {
+        let (curr, prev, _, state) = sweep(attack, attack_index);
+        let pos = combat::impact_point(
+            combat::attack_point(curr, prev, state),
+            defend.damage_coll_pos(),
+        );
+        emit.push(damage_spark(
+            attack.attack.element,
+            pos,
+            attack.player.unwrap_or(0),
+            damage,
+            None,
+        ));
+    }
     queue_damage(
         defend,
         damage,
@@ -349,7 +430,13 @@ fn update_damage_stat_item(attack: &mut Item, defend: &mut Item, defend_id: u8) 
 
 /// `itProcessSearchHitFighter` for one fighter: its live attacks that reach
 /// the item's situation and have not recorded it test the damage box.
-fn fighter_attacks_item(f: &mut Fighter, item: &mut Item, id: u8, rules: TeamRules) {
+fn fighter_attacks_item(
+    f: &mut Fighter,
+    item: &mut Item,
+    id: u8,
+    rules: TeamRules,
+    emit: &mut crate::wpeffect::Emit,
+) {
     if item.damage_coll.interact_mask & INTERACT_FIGHTER == 0 {
         return;
     }
@@ -391,6 +478,21 @@ fn fighter_attacks_item(f: &mut Fighter, item: &mut Item, id: u8, rules: TeamRul
                 f.hits.attack_damage = c.damage;
             }
             let lr = if item.pos.x < f.pos.x { 1.0 } else { -1.0 };
+            if item.damage_coll.hitstatus == HitStatus::Normal {
+                // `gmCollisionGetFighterAttackItemDamagePosition` and the
+                // spark.
+                let pos = combat::impact_point(
+                    combat::attack_point(c.pos_curr, c.pos_prev, c.state),
+                    item.damage_coll_pos(),
+                );
+                emit.push(damage_spark(
+                    c.element,
+                    pos,
+                    f.port,
+                    c.damage,
+                    Some(combat::slash_rotation(f, &c)),
+                ));
+            }
             queue_damage(
                 item,
                 c.damage,
@@ -420,19 +522,27 @@ fn update_attack_stat_fighter(
     item: &mut Item,
     id: u8,
     f: &mut Fighter,
-    j: usize,
+    (i, j): (usize, usize),
     attack_detect: &mut [bool; 4],
 ) {
     let damage = item.damage_output();
     let coll = f.attack_colls[j];
+    // `gmCollisionGetItemAttackFighterAttackPosition`.
+    let (curr, prev, _, state) = sweep(item, i);
+    let pos = combat::impact_point(
+        combat::attack_point(curr, prev, state),
+        combat::attack_point(coll.pos_curr, coll.pos_prev, coll.state),
+    );
     if coll.damage - 10 < damage {
         combat::set_hit_interact(f, coll.group, id, combat::HitType::Attack(0), attack_detect);
         combat::set_hit_rebound(f, &coll, item.pos.x);
+        f.hits.push_set_off(pos, coll.damage);
     }
     if damage - 10 < coll.damage {
         item.attack
             .set_hit_interact(f.port, HitType::Attack(coll.group));
         item.hit_attack_damage = item.hit_attack_damage.max(damage);
+        f.hits.push_set_off(pos, damage);
     }
 }
 
@@ -476,7 +586,7 @@ fn search_item_on_fighter(item: &mut Item, slot: u8, f: &mut Fighter, rules: Tea
                         sweep(item, i),
                         (c.pos_curr, c.pos_prev, c.size, c.state),
                     ) {
-                        update_attack_stat_fighter(item, id, f, j, &mut attack_detect);
+                        update_attack_stat_fighter(item, id, f, (i, j), &mut attack_detect);
                         if item.hit_attack_damage != 0 {
                             return false;
                         }
@@ -519,7 +629,8 @@ fn search_item_on_fighter(item: &mut Item, slot: u8, f: &mut Fighter, rules: Tea
                 Vec3::ZERO,
                 Vec3::new(30.0, 30.0, 30.0),
             ) {
-                update_shield_stat(item, f, angle, dir);
+                let at = combat::attack_point(curr, prev, state);
+                update_shield_stat(item, f, angle, dir, at);
                 return false;
             }
         }
@@ -558,7 +669,7 @@ fn update_reflector_stat(item: &mut Item, f: &mut Fighter, r: &combat::SpecialCo
 }
 
 /// `ftMainUpdateShieldStatItem`.
-fn update_shield_stat(item: &mut Item, f: &mut Fighter, angle: f32, dir: Vec3) {
+fn update_shield_stat(item: &mut Item, f: &mut Fighter, angle: f32, dir: Vec3, at: Vec3) {
     let damage = item.damage_output();
     item.attack.set_hit_interact(
         f.port,
@@ -584,6 +695,9 @@ fn update_shield_stat(item: &mut Item, f: &mut Fighter, angle: f32, dir: Vec3) {
         f.hits.shield_damage = damage;
         f.hits.shield_lr = if item.vel_air.x < 0.0 { 1.0 } else { -1.0 };
     }
+    // `gmCollisionGetItemAttackShieldPosition`, `efManagerSetOffMakeEffect`.
+    let pos = combat::shield_impact(f, at);
+    f.hits.push_set_off(pos, item.attack.shield_damage + damage);
 }
 
 /// `ftMainUpdateDamageStatItem`. Returns whether the damage was taken.

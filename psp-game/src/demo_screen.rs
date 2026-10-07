@@ -490,7 +490,7 @@ pub(crate) fn before_world(
 /// The scene's processes after the battle's: How to Play's stick, spark
 /// and phases, then either demo's fade. Returns the scene the demo leaves
 /// for.
-pub(crate) fn after_world(s: &mut Session, tapped: bool) -> Option<MScene> {
+pub(crate) fn after_world(s: &mut Session, pack: Option<&Pack<'_>>, tapped: bool) -> Option<MScene> {
     let mut load = None;
     let alpha = match s.demo.as_mut()? {
         Demo::Explain(e) => {
@@ -504,6 +504,17 @@ pub(crate) fn after_world(s: &mut Session, tapped: bool) -> Option<MScene> {
                     explain::FIRE_FLOWER_VEL,
                     &core::iter::empty,
                 );
+                // `itManagerMakeItemSetupCommon` makes the item's spawn
+                // swirl at once, so its generators run from the next
+                // frame's start (RE-473).
+                if let Some(banks) = pack.and_then(ssb_psp_runtime::particles::PackBanks::new) {
+                    let mut rt = ssb_game::effect::EffectRuntime {
+                        particles: &mut s.damage_hud.particles,
+                        effects: &mut s.damage_hud.effects,
+                        banks: &banks,
+                    };
+                    s.items.flush_effects(&mut rt);
+                }
             }
             load = tick.load;
             fade_alpha(&mut e.fade)

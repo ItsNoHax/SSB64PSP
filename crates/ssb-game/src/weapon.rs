@@ -3296,7 +3296,12 @@ impl WeaponPool {
     /// queues the weapon's staled damage on the item and defers the weapon's
     /// `proc_hit` until all item searches finish. Attack clashes precede
     /// the hurtbox search and queue `proc_setoff` for `finish_clashes`.
-    pub fn hit_item(&mut self, item: &mut crate::item::Item, id: u8) {
+    pub fn hit_item(
+        &mut self,
+        item: &mut crate::item::Item,
+        id: u8,
+        emit: &mut crate::wpeffect::Emit,
+    ) {
         use crate::item::INTERACT_WEAPON;
         if item.damage_coll.interact_mask & INTERACT_WEAPON == 0 {
             return;
@@ -3402,6 +3407,26 @@ impl WeaponPool {
             } else {
                 -1.0
             };
+            // `wp->is_hitlag_victim` (the Boomerang, two Pokemon):
+            // `gmCollisionGetWeaponAttackItemDamagePosition` and the spark.
+            let is_hitlag_victim = match self.slots[i] {
+                Some(Weapon::Boomerang(_)) => true,
+                Some(Weapon::Monster(m)) => m.is_hitlag_victim(),
+                _ => false,
+            };
+            if is_hitlag_victim && item.damage_coll.hitstatus == crate::combat::HitStatus::Normal {
+                let impact = crate::combat::impact_point(
+                    crate::combat::attack_point(pos, prev, state),
+                    item.damage_coll_pos(),
+                );
+                emit.push(crate::item::damage_spark(
+                    hitbox.element,
+                    impact,
+                    owner,
+                    hitbox.damage,
+                    None,
+                ));
+            }
             crate::item::queue_damage(
                 item,
                 hitbox.damage,

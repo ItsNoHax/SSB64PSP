@@ -142,16 +142,16 @@ fn fire_flower_rehits_an_item_after_sixteen_weapon_updates() {
     let mut pool = WeaponPool::default();
     pool.spawn_monster_shot(shot);
     let id = crate::item::ITEM_RECORD_BASE + slot;
-    pool.hit_item(item, id);
+    pool.hit_item(item, id, &mut crate::wpeffect::Emit::default());
     assert_eq!(item.damage_queue, 3);
     item.damage_queue = 0;
     for _ in 0..15 {
         pool.tick(core::iter::empty, None);
-        pool.hit_item(item, id);
+        pool.hit_item(item, id, &mut crate::wpeffect::Emit::default());
     }
     assert_eq!(item.damage_queue, 0);
     pool.tick(core::iter::empty, None);
-    pool.hit_item(item, id);
+    pool.hit_item(item, id, &mut crate::wpeffect::Emit::default());
     assert_eq!(item.damage_queue, 3);
 }
 

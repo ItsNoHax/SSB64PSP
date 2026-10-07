@@ -611,3 +611,45 @@ fn the_interface_effects_run_on_list_three_and_end() {
         eprintln!("{name}: {census:?}");
     }
 }
+
+/// How to Play's Fire Flower (RE-473): `itManagerMakeItemSetupCommon`
+/// makes the item's spawn swirl at once, and the swirl's first update
+/// makes generators 0x66 to 0x68. The next frame's generator run draws
+/// from them nine times before anything else: the N64's generator goes
+/// from 436000293 (frame 3249) to -1873138207 at frame 3250, those nine
+/// draws and the three of Mario's dust after them.
+#[test]
+fn the_item_spawn_swirl_draws_nine_times_at_the_next_frame_start() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = open(&bytes);
+    let banks = PackBanks {
+        pack: &pack,
+        common: pack.particle_bank(0).unwrap(),
+    };
+    let step = |s: i32| s.wrapping_mul(214013).wrapping_add(2531011);
+    let n64_3249 = 436_000_293;
+    let after_generators = (0..9).fold(n64_3249, |s, _| step(s));
+    assert_eq!(
+        (0..3).fold(after_generators, |s, _| step(s)),
+        -1_873_138_207
+    );
+
+    let mut p = Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    ssb_game::rng::set_seed(n64_3249);
+    let pos = ssb_game::explain::FIRE_FLOWER_POS;
+    wpeffect::make(&WeaponEffect::ItemSpawnSwirl(pos), &mut e, &mut p, &banks);
+    assert_eq!(
+        ssb_game::rng::seed(),
+        n64_3249,
+        "the swirl's making draws nothing"
+    );
+    assert_eq!(p.generators().count(), 3);
+    EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &banks,
+    }
+    .run();
+    assert_eq!(ssb_game::rng::seed(), after_generators);
+}

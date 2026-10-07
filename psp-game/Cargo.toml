@@ -65,6 +65,8 @@ regression_capture_shadows = ["regression_capture"]
 # Requests one framebuffer capture from PPSSPPHeadless after the scripted
 # input above reaches its frozen tick. The devctl is ignored by real PSPs.
 headless_capture = []
+# Logs each random draw's call site per frame in the How to Play trace.
+rng_trace = ["ssb-game/rng_trace"]
 
 [profile.release]
 opt-level = 3

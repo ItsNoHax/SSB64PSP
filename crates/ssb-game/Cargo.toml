@@ -13,3 +13,5 @@ ssb-engine = { workspace = true }
 [features]
 default = ["std"]
 std = ["ssb-engine/std"]
+# Records each random draw's call site (`rng::trace`), for traces.
+rng_trace = []

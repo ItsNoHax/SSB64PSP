@@ -1265,6 +1265,26 @@ fn log_entry_state(
                 );
             }
         }
+        #[cfg(feature = "rng_trace")]
+        {
+            let mut line = alloc::format!("rngtrace tick={}", sim_frame_index);
+            ssb_game::rng::trace::take(|file, at, v| {
+                let name = file.rsplit('/').next().unwrap_or(file);
+                if v < 0 {
+                    line.push_str(&alloc::format!(" {}:{}", name, at));
+                } else {
+                    line.push_str(&alloc::format!(" G{:x}@{}:{}", v, name, at));
+                }
+            });
+            line.push('\n');
+            unsafe {
+                psp::sys::sceIoWrite(
+                    psp::sys::sceKernelStdout(),
+                    line.as_ptr() as *const core::ffi::c_void,
+                    line.len(),
+                );
+            }
+        }
         return;
     }
     if !matches!(
@@ -2111,8 +2131,10 @@ fn hit_pass(
         ssb_game::hazard::search_ground_hit(&mut f.fighter, stage_ctl);
     }
     // The hit sparks, made in each fighter's `ftMainProcSearchHitAll`, then
-    // the clash search's set-offs (weapon link, priority 1).
+    // the items' searches' set-offs and sparks (item link, RE-473) and the
+    // clash search's set-offs (weapon link; all priority 1).
     ssb_game::combat::finish_frame_between(&mut fighters_mut(s), effects, &mut |fx| {
+        items.flush_effects(fx);
         weapons.flush_clash_effects(fx)
     });
     // The weapons' hit collisions (priority 0, after every
@@ -4437,7 +4459,7 @@ unsafe fn session_frame(
                 m.tick_processes();
             }
             if s.demo.is_some() {
-                demo_load = demo_load.or(demo_screen::after_world(s, demo_tapped));
+                demo_load = demo_load.or(demo_screen::after_world(s, pack.as_ref(), demo_tapped));
             }
             let magnify_display = s.training_menu.as_ref().is_none_or(|m| m.magnify_display)
                 && s.demo.as_ref().is_none_or(demo_screen::magnify_display)

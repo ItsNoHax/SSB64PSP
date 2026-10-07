@@ -1184,6 +1184,11 @@ fn run_bytecode(
             0xA5 => {
                 let id = csr.u16();
                 let parent = p.structs[t];
+                #[cfg(feature = "rng_trace")]
+                crate::rng::trace::mark(
+                    core::panic::Location::caller(),
+                    0x4000_0000 | i32::from(parent.script),
+                );
                 let gn = make_generator(p, banks, parent.bank_id, id);
                 if gn != NIL {
                     let g = &mut p.gens[usize::from(gn)];
@@ -1435,7 +1440,13 @@ fn get_generator(p: &mut Particles) -> u8 {
 
 /// `lbParticleMakeGenerator`: a generator from script `script_id`'s header,
 /// at the origin.
+#[cfg_attr(feature = "rng_trace", track_caller)]
 pub fn make_generator(p: &mut Particles, banks: &dyn Banks, bank_id: u8, script_id: u16) -> u8 {
+    #[cfg(feature = "rng_trace")]
+    crate::rng::trace::mark(
+        core::panic::Location::caller(),
+        i32::from(bank_id) << 16 | i32::from(script_id),
+    );
     let id = bank_id & 7;
     if id >= BANKS_NUM_MAX || script_id >= banks.script_count(id) {
         return NIL;

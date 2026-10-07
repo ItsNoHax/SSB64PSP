@@ -64,7 +64,7 @@ pub mod equipment;
 pub mod gbumper;
 mod hit;
 pub mod normal;
-pub(crate) use hit::{queue_damage, touches_damage_coll, Attacker, Knock};
+pub(crate) use hit::{damage_spark, queue_damage, touches_damage_coll, Attacker, Knock};
 #[cfg(test)]
 mod heavy_tests;
 pub mod link_bomb;

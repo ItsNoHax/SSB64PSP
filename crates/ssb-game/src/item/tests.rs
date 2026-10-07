@@ -798,3 +798,84 @@ fn a_teammates_attack_passes_through_an_item_only_with_team_attack_off() {
         assert_eq!(hit > 0, lands, "{rules:?} team {attacker_team}");
     }
 }
+
+/// `ftMainUpdateShieldStatItem` ends with `efManagerSetOffMakeEffect`
+/// halfway between the attack and the shield joint, sized by the shield
+/// damage plus the damage (RE-473: the N64 draws its two at frame 3992 of
+/// How to Play, when the thrown Fire Flower meets Luigi's shield).
+#[test]
+fn an_item_on_a_shield_makes_its_set_off() {
+    use crate::effect::HitEffectKind;
+    let mut link = fighter(FighterKind::Link, 0);
+    let mut pool = ItemPool::default();
+    let slot = pull_bomb(&mut pool, &mut link);
+    throw_bomb(&mut pool, &mut link, Vec3::new(100.0, 0.0, 0.0));
+    let mut mario = fighter(FighterKind::Mario, 1);
+    mario.pos = Vec3::new(600.0, 0.0, 0.0);
+    mario.guard.is_shield = true;
+    let bomb = pool.get_mut(slot).unwrap();
+    bomb.pos = mario.pos + Vec3::new(-40.0, 30.0, 0.0);
+    bomb.update_attack_positions();
+    pool.search_fighter(&mut mario);
+    let bomb = *pool.get(slot).unwrap();
+    assert!(bomb.hit_shield_damage > 0, "the shield took the hit");
+    let set_offs: Vec<_> = mario.hits.effects[..mario.hits.effects_len]
+        .iter()
+        .flatten()
+        .filter(|e| e.kind == HitEffectKind::SetOff)
+        .collect();
+    assert_eq!(set_offs.len(), 1);
+    let p = bomb.attack.pos[0];
+    let at = crate::combat::attack_point(p.pos_curr, p.pos_prev, bomb.attack.state);
+    assert_eq!(set_offs[0].pos, crate::combat::impact_point(at, mario.pos));
+    assert_eq!(
+        set_offs[0].damage,
+        bomb.attack.shield_damage + bomb.damage_output()
+    );
+}
+
+/// `itProcessUpdateDamageStatFighter`: a fighter's attack on an item's
+/// damage box makes the element's spark halfway to the box
+/// (`gmCollisionGetFighterAttackItemDamagePosition`), in the item's search
+/// (RE-473).
+#[test]
+fn a_fighters_attack_on_an_item_makes_its_spark() {
+    use crate::effect::{HitEffect, HitEffectKind, HitEffectSink};
+    use crate::wpeffect::WeaponEffect;
+    #[derive(Default)]
+    struct Record(Vec<WeaponEffect>);
+    impl HitEffectSink for Record {
+        fn make(&mut self, _: &HitEffect) {}
+        fn weapon(&mut self, e: &WeaponEffect) {
+            self.0.push(*e);
+        }
+    }
+    let mut pool = ItemPool::default();
+    let slot = make_flame(&mut pool);
+    let pillar = *pool.get(slot).unwrap();
+    let mut attacker = fighter(FighterKind::Mario, 2);
+    let at = pillar.damage_coll_pos() + Vec3::new(20.0, 0.0, 0.0);
+    attacker.attack_colls[0] = crate::combat::AttackColl {
+        state: crate::combat::AttackState::Transfer,
+        damage: 10,
+        size: 150.0,
+        is_hit_air: true,
+        is_hit_ground: true,
+        pos_curr: at,
+        pos_prev: at,
+        ..Default::default()
+    };
+    pool.search_hurt(&mut [&mut attacker], &mut WeaponPool::default());
+    assert!(pool.get(slot).is_some_and(|p| p.damage_queue > 0));
+    let mut sink = Record::default();
+    pool.flush_effects(&mut sink);
+    assert_eq!(
+        sink.0,
+        [WeaponEffect::Hit(HitEffect {
+            kind: HitEffectKind::NormalLight,
+            pos: crate::combat::impact_point(at, pillar.damage_coll_pos()),
+            player: attacker.port,
+            damage: 10,
+        })]
+    );
+}

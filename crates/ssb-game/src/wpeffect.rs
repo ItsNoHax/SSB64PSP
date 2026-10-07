@@ -74,6 +74,9 @@ pub enum WeaponEffect {
     ItemSpawnSwirl(Vec3),
     /// `efManagerQuakeMakeEffect(magnitude)`.
     Quake(u8),
+    /// A damage spark from an item's hit search
+    /// (`itProcessUpdateDamageStat{Fighter,Item,Weapon}`).
+    Hit(crate::effect::HitEffect),
     /// `efManagerSetOffMakeEffect`: one side of a weapon clash.
     SetOff {
         pos: Vec3,
@@ -341,6 +344,9 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
         }
         WeaponEffect::SetOff { pos, size } => {
             effects.set_off(p, banks, pos, size);
+        }
+        WeaponEffect::Hit(ref h) => {
+            effects.make_hit(p, banks, h);
         }
         WeaponEffect::ThunderTrail {
             pos,

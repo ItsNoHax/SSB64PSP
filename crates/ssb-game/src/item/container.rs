@@ -767,7 +767,11 @@ mod tests {
             stale: crate::stale::WeaponStale::FRESH
         }));
         weapons.search_weapons();
-        weapons.hit_item(item, super::super::ITEM_RECORD_BASE + slot);
+        weapons.hit_item(
+            item,
+            super::super::ITEM_RECORD_BASE + slot,
+            &mut crate::wpeffect::Emit::default(),
+        );
         assert_eq!(item.damage_queue, 0);
         assert_eq!(item.hit_attack_damage, 3);
         assert_eq!(weapons.active_count(), 1);
