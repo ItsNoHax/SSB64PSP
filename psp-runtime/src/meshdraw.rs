@@ -1936,6 +1936,16 @@ pub unsafe fn draw_object_node(
 /// the node's own mesh, and another part its mesh in the costume, else its
 /// costume 0's, else the node's own.
 fn costume_node_mesh(pack: &Pack<'_>, global_node: u32, own: u32, costume: u32, part: Option<i8>) -> u32 {
+    // Every lookup below is this node's: its rows are found once, on the
+    // first lookup that can match (RE-470).
+    let rows = core::cell::OnceCell::new();
+    let costume_mesh = |node: u32, costume: u32| {
+        if costume == 0 {
+            return None;
+        }
+        let rows = rows.get_or_init(|| pack.costume_rows(global_node));
+        pack.costume_mesh_in(rows.clone(), node, costume)
+    };
     use ssb_game::modelpart::{ABSENT, HIDDEN};
     use ssb_rom::pack::{modelpart_costume, MODELPART_COSTUMES, MODELPART_COSTUME_BASE, SKELETON_COSTUME_BASE};
     if part == Some(ABSENT) {
@@ -1943,23 +1953,22 @@ fn costume_node_mesh(pack: &Pack<'_>, global_node: u32, own: u32, costume: u32, 
     }
     if costume >= MODELPART_COSTUME_BASE {
         let plain = (costume - MODELPART_COSTUME_BASE) % MODELPART_COSTUMES;
-        return pack
-            .costume_mesh(global_node, costume)
-            .or_else(|| pack.costume_mesh(global_node, costume - plain))
-            .or_else(|| pack.costume_mesh(global_node, plain))
+        return costume_mesh(global_node, costume)
+            .or_else(|| costume_mesh(global_node, costume - plain))
+            .or_else(|| costume_mesh(global_node, plain))
             .unwrap_or(own);
     }
     if costume >= SKELETON_COSTUME_BASE {
-        return pack.costume_mesh(global_node, costume).unwrap_or(NodeDesc::NO_MESH);
+        return costume_mesh(global_node, costume).unwrap_or(NodeDesc::NO_MESH);
     }
-    let plain = || pack.costume_mesh(global_node, costume).unwrap_or(own);
+    let plain = || costume_mesh(global_node, costume).unwrap_or(own);
     match part {
         None => plain(),
         Some(HIDDEN) => NodeDesc::NO_MESH,
         Some(p) if p >= 0 => {
             let p = p as u32;
-            pack.costume_mesh(global_node, modelpart_costume(p, costume))
-                .or_else(|| pack.costume_mesh(global_node, modelpart_costume(p, 0)))
+            costume_mesh(global_node, modelpart_costume(p, costume))
+                .or_else(|| costume_mesh(global_node, modelpart_costume(p, 0)))
                 .unwrap_or_else(plain)
         }
         Some(_) => NodeDesc::NO_MESH,
@@ -2919,11 +2928,23 @@ pub unsafe fn draw_depth_image(
             i
         }
     };
+    // A column's `s` and a row's `t` are the same on every row and column,
+    // so each is computed once rather than per pixel (RE-470).
+    let s_at = |px: i32| (((px as f32 + 0.5 - x0) / k) * image.width as f32 / width * 32.0) as i32;
+    let first_px = x0 as i32;
+    let mut columns = [0i32; 512];
+    let cols = (ceil(x1) - first_px).clamp(0, columns.len() as i32) as usize;
+    for (i, s) in columns[..cols].iter_mut().enumerate() {
+        *s = s_at(first_px + i as i32);
+    }
+    let column = |px: i32| match usize::try_from(px - first_px) {
+        Ok(i) if i < cols => columns[i],
+        _ => s_at(px),
+    };
     for py in (y0 as i32)..ceil(y1) {
+        let t = (((py as f32 + 0.5 - y0) / k) * image.height as f32 / height * 32.0) as i32;
         let sample = |px: i32| {
-            let s = (((px as f32 + 0.5 - x0) / k) * image.width as f32 / width * 32.0) as i32;
-            let t = (((py as f32 + 0.5 - y0) / k) * image.height as f32 / height * 32.0) as i32;
-            let rgba = ssb_rom::n64_filter::sample_3point(image, s, t);
+            let rgba = ssb_rom::n64_filter::sample_3point(image, column(px), t);
             let packed = (u16::from(rgba[0] >> 3) << 11)
                 | (u16::from(rgba[1] >> 3) << 6)
                 | (u16::from(rgba[2] >> 3) << 1)
@@ -2934,11 +2955,18 @@ pub unsafe fn draw_depth_image(
         };
         let mut px = x0 as i32;
         let end = ceil(x1);
+        // Each pixel is sampled once: the sample that ends a span starts
+        // the next (RE-470).
+        let mut depth = if px < end { sample(px) } else { 0 };
         while px < end {
-            let depth = sample(px);
             let start = px;
             px += 1;
-            while px < end && sample(px) == depth {
+            let mut next = depth;
+            while px < end {
+                next = sample(px);
+                if next != depth {
+                    break;
+                }
                 px += 1;
             }
             let verts = sys::sceGuGetMemory((2 * core::mem::size_of::<SObjVertex>()) as i32)
@@ -2966,6 +2994,7 @@ pub unsafe fn draw_depth_image(
                 core::ptr::null(),
                 verts.cast(),
             );
+            depth = next;
         }
     }
     sys::sceGuPixelMask(0);
@@ -3755,7 +3784,7 @@ pub unsafe fn draw_stage_preview(
             if hide.contains(&n) {
                 return true;
             }
-            match pack.node(n).map(|d| d.parent) {
+            match pack.node_parent(n) {
                 Some(parent) if parent != u32::MAX => n = parent,
                 _ => return false,
             }

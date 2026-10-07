@@ -5042,6 +5042,9 @@ unsafe fn run() -> ! {
 
         #[cfg(feature = "headless_capture")]
         if !headless_capture_sent && deterministic_capture_frozen(capture_spec, sim_frame_index) {
+            // The capture reads the buffer on screen: the frame just ended,
+            // from the next vblank on (`Gpu::end_frame`, RE-470).
+            gpu.wait_presented();
             emit_headless_screenshot();
             log_stack_peak(sim_frame_index);
             if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale)) {
@@ -7688,9 +7691,11 @@ unsafe fn draw_training(
         material_anim,
         2,
     );
+    let t = profile::start();
     stage_pass(0..=5, Head0, draw_state);
     stage_pass(0..=5, Head1, draw_state);
     stage_pass(6..=8, Head0, draw_state);
+    profile::stop(profile::Span::DrawStage, t);
 
     // The N64 puts shadows on their own display link between the stage and
     // fighters.  Resolve each independently from its live floor/air state;
@@ -7715,6 +7720,7 @@ unsafe fn draw_training(
     // Each fighter in port order, the CPUs drawn the same way as the
     // player's -- their own pose, their own per-fighter light rebuild
     // (RE-164).
+    let t = profile::start();
     for f in fighters
         .iter()
         .flatten()
@@ -7724,6 +7730,7 @@ unsafe fn draw_training(
             draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera, false);
         }
     }
+    profile::stop(profile::Span::DrawFighters, t);
     // Link 10: the title demos' fade (made before any effect), the entry
     // effects, the trapping egg, the halo, the impact wave and particle
     // list 4.
@@ -7899,6 +7906,7 @@ unsafe fn draw_training(
         }
     }
     // Arrow camera 35, magnifier camera 30, then the interface camera 20.
+    let hud_start = profile::start();
     let show_magnify = magnify_display
         && damage_hud.pause.is_none()
         && battle.is_none_or(|b| {
@@ -8013,6 +8021,7 @@ unsafe fn draw_training(
         meshdraw::fill_rect_n64(viewport, [0, 0, 0, damage_hud.bonus_fade_alpha], draw_state);
     }
     gpu.set_viewport_pillarboxed();
+    profile::stop(profile::Span::DrawHud, hud_start);
 }
 
 #[inline(never)]

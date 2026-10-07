@@ -353,6 +353,14 @@ pub struct Gpu {
     /// Set by [`Gpu::request_wallpaper_capture`]; consumed (and cleared) the
     /// next time `end_frame` finishes syncing the frame that was requested.
     wallpaper_capture_requested: bool,
+    /// GE-relative addresses of the two colour buffers, for
+    /// `sceGuDrawBuffer` and `sceDisplaySetFrameBuf`.
+    fbp0_rel: *mut c_void,
+    fbp1_rel: *mut c_void,
+    /// `sceDisplayGetVcount` just after the last frame was handed to the
+    /// display. That frame is latched at the next vblank, and the buffer it
+    /// replaces may not be drawn into before then (RE-470).
+    presented_vcount: Option<u32>,
 }
 
 impl Gpu {
@@ -384,6 +392,8 @@ impl Gpu {
         // GE's own relative addressing, not a pointer the CPU can dereference.
         let fbp0_direct = fbp0.as_mut_ptr_direct_to_vram();
         let fbp1_direct = fbp1.as_mut_ptr_direct_to_vram();
+        let fbp0_rel = fbp0.as_mut_ptr_from_zero() as *mut c_void;
+        let fbp1_rel = fbp1.as_mut_ptr_from_zero() as *mut c_void;
 
         sys::sceGuInit();
         sys::sceGuStart(GuContextType::Direct, Self::list_ptr());
@@ -439,6 +449,9 @@ impl Gpu {
             draw_is_fbp0: true,
             capture_requested: false,
             wallpaper_capture_requested: false,
+            fbp0_rel,
+            fbp1_rel,
+            presented_vcount: None,
         }
     }
 
@@ -814,7 +827,17 @@ impl Gpu {
         debug_assert!(!self.frame_open, "begin_frame called twice");
         self.frame_open = true;
         unsafe {
+            self.wait_presented();
             sys::sceGuStart(GuContextType::Direct, Self::list_ptr());
+            // The swap is this module's, not `sceGuSwapBuffers`' (see
+            // `end_frame`), so the target is named every frame. Through
+            // `sceGuDrawBuffer` rather than a bare list command, so
+            // `sceGuDebugFlush` writes into the same buffer.
+            sys::sceGuDrawBuffer(
+                DisplayPixelFormat::Psm8888,
+                if self.draw_is_fbp0 { self.fbp0_rel } else { self.fbp1_rel },
+                BUF_WIDTH as i32,
+            );
             if let Some(c) = clear {
                 sys::sceGuScissor(0, 0, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32);
                 sys::sceGuClearColor(c.to_abgr());
@@ -855,16 +878,45 @@ impl Gpu {
                 self.wallpaper_capture_requested = false;
                 self.capture_wallpaper_photo();
             }
-            let t = crate::profile::start();
-            sys::sceDisplayWaitVblankStart();
-            crate::profile::stop(crate::profile::Span::Vblank, t);
-            sys::sceGuSwapBuffers();
+            // RE-470: the finished frame is shown from the next vblank on
+            // (`NextFrame`), without waiting for it here. The game is
+            // CPU-bound, so the CPU starts the next frame's update at once,
+            // and only the next `begin_frame` waits, if no vblank has
+            // latched this frame yet. Waiting here instead (and swapping
+            // with `sceGuSwapBuffers`' `Immediate`) rounded every frame up
+            // to whole vblanks: a 20 ms frame took 33. A frame still never
+            // takes less than one vblank, and the GE never draws into the
+            // buffer on screen.
+            let drawn = if self.draw_is_fbp0 { self.fbp0_rel } else { self.fbp1_rel };
+            sys::sceDisplaySetFrameBuf(
+                sys::sceGeEdramGetAddr().add(drawn as usize) as *const u8,
+                BUF_WIDTH as usize,
+                DisplayPixelFormat::Psm8888,
+                sys::DisplaySetBufSync::NextFrame,
+            );
+            self.presented_vcount = Some(sys::sceDisplayGetVcount());
         }
-        // Mirrors the swap `sceGuSwapBuffers` just performed internally: the
-        // buffer that was the draw target for the frame just finished
-        // becomes the display buffer, and the GE will draw the next frame
-        // into whichever buffer was previously being displayed.
+        // The buffer that was the draw target for the frame just finished
+        // becomes the display buffer, and the GE draws the next frame into
+        // whichever buffer was previously being displayed.
         self.draw_is_fbp0 = !self.draw_is_fbp0;
+    }
+
+    /// Waits until the last frame [`Gpu::end_frame`] handed over is on
+    /// screen: until a vblank after it.
+    pub fn wait_presented(&mut self) {
+        let Some(vcount) = self.presented_vcount else {
+            return;
+        };
+        let t = crate::profile::start();
+        // SAFETY: display queries and waits have no preconditions.
+        unsafe {
+            while sys::sceDisplayGetVcount() == vcount {
+                sys::sceDisplayWaitVblankStart();
+            }
+        }
+        crate::profile::stop(crate::profile::Span::Vblank, t);
+        self.presented_vcount = None;
     }
 
     pub fn frame_count(&self) -> u64 {

@@ -2484,6 +2484,9 @@ unsafe fn run() -> ! {
         gpu.end_frame();
         #[cfg(feature = "headless_capture")]
         if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
+            // The capture reads the buffer on screen: the frame just ended,
+            // from the next vblank on (`Gpu::end_frame`, RE-470).
+            gpu.wait_presented();
             emit_headless_screenshot();
             headless_capture_sent = true;
         }

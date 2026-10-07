@@ -20,11 +20,13 @@ pub enum Span {
     Hit,
     /// The effect players' catch-up before the draw.
     EffectSync,
-    /// Building the frame's display list on the CPU.
+    /// Building the frame's display list on the CPU. Includes the
+    /// [`Span::Vblank`] wait in `Gpu::begin_frame` (RE-470).
     Draw,
     /// `sceGuSync`: waiting for the GE to finish the list after the CPU.
     GeSync,
-    /// `sceDisplayWaitVblankStart`.
+    /// `Gpu::wait_presented`: waiting for the vblank that shows the last
+    /// frame before drawing over the buffer it replaces (RE-470).
     Vblank,
     /// Inside the physics pass: the fighters' own physics, animation and
     /// map collision (`FighterScene::tick_fighter_physics`).
@@ -41,13 +43,20 @@ pub enum Span {
     Map,
     /// Inside the fighters' physics: the joint transforms gameplay reads.
     Joints,
+    /// Inside the draw: a battle's stage passes before the fighters (links
+    /// 0-8).
+    DrawStage,
+    /// Inside the draw: a battle's fighter models.
+    DrawFighters,
+    /// Inside the draw: a battle's arrows, magnifiers and interface.
+    DrawHud,
 }
 
-const SPANS: usize = 15;
+const SPANS: usize = 18;
 #[cfg_attr(not(feature = "profile"), allow(dead_code))]
 const NAMES: [&str; SPANS] = [
     "update", "interrupt", "physics", "hit", "effects", "draw", "ge", "vblank", "fphys", "items", "weapons", "camera", "anim",
-    "map", "joints",
+    "map", "joints", "dstage", "dfighters", "dhud",
 ];
 
 /// Frames per report: two seconds at 60 FPS.
