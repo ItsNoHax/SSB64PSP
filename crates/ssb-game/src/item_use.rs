@@ -277,6 +277,23 @@ pub fn update(f: &mut Fighter) -> bool {
 }
 /// The source's `proc_accessory`, after physics/map and forwarded effects.
 pub fn accessory(f: &mut Fighter) {
+    // `ftMarioSpecialNProcAccessory`: the Fireball leaves joint 16 as this
+    // frame's play and map step left it (RE-472).
+    if matches!(
+        f.status.status,
+        AnyStatus::Mario(
+            crate::status::MarioStatus::SpecialN | crate::status::MarioStatus::SpecialAirN
+        )
+    ) {
+        if let (Some(spawn), Some(joint)) = (f.weapon_spawn.as_mut(), f.joint_transforms[16]) {
+            if matches!(
+                spawn.kind,
+                crate::weapon::WeaponKind::MarioFireball | crate::weapon::WeaponKind::LuigiFireball
+            ) {
+                spawn.position = joint.origin;
+            }
+        }
+    }
     if f.is_in_hitlag() {
         return;
     }

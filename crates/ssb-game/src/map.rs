@@ -592,6 +592,35 @@ where
     move_air_inner(coll, previous, from, to, Vec3::ZERO, options, surfaces)
 }
 
+/// `mpCommonRunFighterCollisionDefault` (`mpCommonRunDefaultCollision`):
+/// one wall, ceiling and floor pass from `from` (`pos_prev`, with the
+/// `previous` diamond `mpCommonCopyCollDataStats` points at) to `to`, without
+/// `mpProcessUpdateMain`'s substeps. Returns the corrected position.
+pub fn run_default_collision<I, F>(
+    coll: &BodyColl,
+    previous: &BodyColl,
+    from: Vec3,
+    to: Vec3,
+    surfaces: F,
+) -> Vec3
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    move_air_steps(
+        coll,
+        previous,
+        from,
+        to,
+        Vec3::ZERO,
+        AirOptions::default(),
+        surfaces,
+        1,
+    )
+    .moved
+    .pos
+}
+
 fn move_air_inner<I, F>(
     coll: &BodyColl,
     previous: &BodyColl,
@@ -606,6 +635,24 @@ where
     I: IntoIterator<Item = MapSurface>,
 {
     let steps = ground::substep_count(from, to);
+    move_air_steps(coll, previous, from, to, push, options, surfaces, steps)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn move_air_steps<I, F>(
+    coll: &BodyColl,
+    previous: &BodyColl,
+    from: Vec3,
+    to: Vec3,
+    push: Vec3,
+    options: AirOptions,
+    surfaces: F,
+    steps: u32,
+) -> AirMoved
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
     let step = Vec3::new(
         (to.x - from.x) / steps as f32,
         (to.y - from.y) / steps as f32,

@@ -360,6 +360,7 @@ mod tests {
             anchor: Vec3::new(300.0, 120.0, 0.0),
             anchor_transform: None,
             floor_line: Some(0),
+            coll: crate::ground::BodyColl::default(),
             percent: 0,
             handicap: crate::stale::HANDICAP_DEFAULT,
             kirby_dist: ssb_engine::math::Vec2::ZERO,

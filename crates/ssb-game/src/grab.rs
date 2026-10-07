@@ -627,6 +627,9 @@ pub struct Holder {
     pub anchor_transform: Option<JointTransform>,
     /// The catcher's floor line, or `None` while it is airborne.
     pub floor_line: Option<u16>,
+    /// The catcher's map diamond (`coll_data.map_coll`), which
+    /// `mpCommonRunFighterCollisionDefault` sweeps a released fighter from.
+    pub coll: crate::ground::BodyColl,
     pub percent: u16,
     /// `capture_fp->handicap`.
     pub handicap: u8,
@@ -759,6 +762,10 @@ pub struct GrabState {
     pub held_child_offset: Option<Vec3>,
     /// `FTCOMMON_CAPTURECAPTAIN_MASK_NOUPDATE`: a grounded victim stays put.
     pub captain_no_update: bool,
+    /// `ftCommonThrownReleaseFighterLoseGrip`'s map sweep, from the catcher's
+    /// position with its diamond, run by the next physics step, which has
+    /// the map (RE-472).
+    pub release_sweep: Option<(Vec3, crate::ground::BodyColl)>,
     /// Events for the partner, drained by [`exchange`].
     pub outbox: [Option<GrabEvent>; OUTBOX],
     /// Port of the fighter last linked by [`GrabState::catch`] or
@@ -774,6 +781,16 @@ impl GrabState {
             *slot = Some(event);
         }
     }
+}
+
+/// Whether `f` has queued a throw's release (`GrabEvent::Release`) for its
+/// partner, which reads `f`'s hand as this frame's animation posed it.
+pub fn release_pending(f: &Fighter) -> bool {
+    f.grab
+        .outbox
+        .iter()
+        .flatten()
+        .any(|e| matches!(e, GrabEvent::Release { .. }))
 }
 
 pub(crate) fn is_donkey(kind: FighterKind) -> bool {
@@ -1355,11 +1372,30 @@ fn release_with(
     let Some(holder) = f.grab.holder else {
         return 0;
     };
+    // The TopN `joint 4` hangs from, before `ftCommonThrownProcPhysics`.
+    let sampled = f.joint_transforms[0].zip(f.joint_transforms[4]);
+    let mut topn = sampled.map(|(top, _)| top);
     if lr.is_some() {
         // `ftCommonThrownProcPhysics(catch_gobj)` runs just before release.
         if f.status.status != Status::CaptureCaptain {
             f.pos = held_attachment(f, holder);
+            if let Some(hand) = holder.anchor_transform {
+                topn = Some(JointTransform {
+                    axes: held_collision_axes(hand).map(|a| a * f.attributes.size),
+                    origin: f.pos,
+                });
+            }
         }
+    }
+    // `ftCommonThrownReleaseFighterLoseGrip`: a thrown fighter drops to its
+    // `joints[4]` less 300, the joint posed as it last was under the TopN
+    // just placed, and sweeps the map from its catcher (RE-472).
+    if is_thrown(f.status.status) {
+        if let (Some((old_top, joint)), Some(top)) = (sampled, topn) {
+            f.pos = reposed_joint(old_top, joint.origin, top);
+            f.pos.y -= 300.0;
+        }
+        f.grab.release_sweep = Some((holder.pos, holder.coll));
     }
     lose_grip(f);
     if lr.is_some() || !f.is_grounded() {
@@ -1861,10 +1897,17 @@ pub fn update(f: &mut Fighter) -> bool {
 /// `ftCommonCapturePulledRotateScale`: place the held fighter's TopN so its
 /// first child lands exactly on the catcher's heavy-item joint. The source
 /// scales the negative child translation by the held fighter's own TopN
-/// scale (`attr->size`) and transforms it through that joint's matrix.
+/// scale (`attr->size`) and transforms it through that joint's matrix as
+/// `func_ovl0_800C9A38` builds it: the joint's world origin with its scale
+/// removed from the axes, so the catcher's own `attr->size` does not scale
+/// the offset again (RE-472: Luigi caught at x 374.95, not 381.15).
 fn held_attachment(f: &Fighter, holder: Holder) -> Vec3 {
     match (holder.anchor_transform, f.grab.held_child_offset) {
-        (Some(joint), Some(child)) => joint.point(held_child_point(child, f.attributes.size)),
+        (Some(joint), Some(child)) => {
+            let axes = held_root_axes(joint);
+            let p = held_child_point(child, f.attributes.size);
+            joint.origin + axes[0] * p.x + axes[1] * p.y + axes[2] * p.z
+        }
         _ => holder.anchor,
     }
 }
@@ -1876,6 +1919,77 @@ fn held_attachment(f: &Fighter, holder: Holder) -> Vec3 {
 /// own facing adds nothing to its drawn orientation (RE-371).
 pub fn held_root_axes(joint: JointTransform) -> [Vec3; 3] {
     joint.axes.map(|axis| axis.normalized())
+}
+
+/// The TopN rotation `ftCommonCapturePulledRotateScale` writes for a held
+/// fighter, as the collision matrices rebuild it: `func_ovl2_800EDA0C`'s
+/// Euler angles from the catcher's unscaled heavy-item joint (the
+/// `syUtilsArcTan2`/`syUtilsArcSin` approximations), then
+/// `gmCollisionTransformMatrixAll`'s `lbCommonSin` rotation. Unit axes.
+pub fn held_collision_axes(joint: JointTransform) -> [Vec3; 3] {
+    use crate::particle::arc_tan2;
+    let d = held_root_axes(joint);
+    let (rx, ry, rz) = if d[0].z == -1.0 || d[0].z == 1.0 {
+        if d[0].z == -1.0 {
+            (arc_tan2(d[1].x, d[1].y), core::f32::consts::FRAC_PI_2, 0.0)
+        } else {
+            (
+                arc_tan2(-d[1].x, d[1].y),
+                -core::f32::consts::FRAC_PI_2,
+                0.0,
+            )
+        }
+    } else {
+        (
+            arc_tan2(d[1].z, d[2].z),
+            arc_sin(-d[0].z),
+            arc_tan2(d[0].y, d[0].x),
+        )
+    };
+    let (sx, cx) = ssb_engine::math::lb_sin_cos(rx);
+    let (sy, cy) = ssb_engine::math::lb_sin_cos(ry);
+    let (sz, cz) = ssb_engine::math::lb_sin_cos(rz);
+    [
+        Vec3::new(cz * cy, sz * cy, -sy),
+        Vec3::new(cz * sy * sx - sz * cx, sz * sy * sx + cz * cx, cy * sx),
+        Vec3::new(cz * sy * cx + sz * sx, sz * sy * cx - cz * sx, cy * cx),
+    ]
+}
+
+/// `syUtilsArcSin`.
+fn arc_sin(x: f32) -> f32 {
+    if x > 0.99999 {
+        core::f32::consts::FRAC_PI_2
+    } else if x < -0.99999 {
+        -core::f32::consts::FRAC_PI_2
+    } else {
+        crate::particle::arc_tan(x / ssb_engine::math::sqrt(1.0 - x * x))
+    }
+}
+
+/// Whether the status's `proc_physics` writes TopN's rotation from the
+/// catcher's hand (`ftCommonCapturePulledRotateScale`): the pulled and
+/// waiting captures, Yoshi's and the thrown statuses.
+pub fn rotates_topn(status: AnyStatus) -> bool {
+    matches!(
+        status,
+        AnyStatus::Common(Status::CapturePulled | Status::CaptureWait | Status::CaptureYoshi)
+    ) || is_thrown(status)
+}
+
+/// `world` (a joint posed under `old`) carried to the TopN `new`: the same
+/// TopN-space point through the new transform. The axes are orthogonal.
+fn reposed_joint(old: JointTransform, world: Vec3, new: JointTransform) -> Vec3 {
+    let d = world - old.origin;
+    let local = old.axes.map(|a| {
+        let n = a.dot(a);
+        if n == 0.0 {
+            0.0
+        } else {
+            d.dot(a) / n
+        }
+    });
+    new.origin + new.axes[0] * local[0] + new.axes[1] * local[1] + new.axes[2] * local[2]
 }
 
 /// `this_pos = -child->translate * TopN->scale`, component by component.
@@ -2101,6 +2215,7 @@ fn holder_of(f: &Fighter) -> Holder {
         anchor: f.grab.anchor.unwrap_or(f.pos),
         anchor_transform: f.grab.anchor_transform,
         floor_line: f.floor.map(|s| s.line),
+        coll: f.coll,
         percent: f.damage,
         handicap: f.handicap,
         kirby_dist: f.kirby.inhale_dist,
@@ -3597,5 +3712,93 @@ mod tests {
         dummy = grounded(FighterKind::Mario, 1, 150.0);
         throw_back(&mut mario, &mut dummy);
         assert_eq!(dummy.damage, 12);
+    }
+
+    /// The unit rows and origin of `ft` joint 28 (Mario's hand) on How to
+    /// Play's N64 frames, composed from the RDRAM `DObj`s (RE-472), at
+    /// Mario's TopN scale.
+    fn hand(rows: [[f32; 3]; 3], origin: [f32; 3]) -> JointTransform {
+        let axis = |r: [f32; 3]| Vec3::new(r[0], r[1], r[2]) * 1.12;
+        JointTransform {
+            axes: [axis(rows[0]), axis(rows[1]), axis(rows[2])],
+            origin: Vec3::new(origin[0], origin[1], origin[2]),
+        }
+    }
+
+    /// RE-472, How to Play frame 3274: `func_ovl0_800C9A38` takes the
+    /// scale off the hand's axes, so Luigi's child offset is scaled by his
+    /// own size alone and he stands at x 374.95, not 381.15.
+    #[test]
+    fn a_caught_fighters_offset_is_not_scaled_by_its_catcher() {
+        let (s, c) = (
+            ssb_engine::math::sin_cos(core::f32::consts::FRAC_PI_2 + 3.140_625).0,
+            ssb_engine::math::sin_cos(core::f32::consts::FRAC_PI_2 + 3.140_625).1,
+        );
+        let mut catcher = grounded(FighterKind::Mario, 0, 104.91);
+        let joint = hand(
+            [[c, 0.0, -s], [0.0, 1.0, 0.0], [s, 0.0, c]],
+            [323.31, 229.2, 33.0],
+        );
+        catcher.grab.anchor = Some(joint.origin);
+        catcher.grab.anchor_transform = Some(joint);
+        let mut held = grounded(FighterKind::Luigi, 1, 0.0);
+        held.attributes.size = 1.12;
+        capture_pulled(&mut held, catcher.port, holder_of(&catcher));
+        held.grab.held_child_offset = Some(Vec3::new(0.0, 210.0, 46.1111));
+        refresh_held_attachment(&mut held);
+        assert!((held.pos.x - 374.95).abs() < 0.02, "{:?}", held.pos);
+    }
+
+    /// RE-472, How to Play frame 3348: Mario's forward throw releases Luigi
+    /// from the hand this frame's play has posed, and
+    /// `ftCommonThrownReleaseFighterLoseGrip` drops his TopN to his
+    /// `joints[4]` (last posed 60 units under TopN) less 300; the release
+    /// then sweeps the map from Mario.
+    #[test]
+    fn a_thrown_fighter_drops_from_its_joint_4_under_the_hand_it_left() {
+        let before = hand(
+            [
+                [0.38425, -0.92304, -0.01875],
+                [0.92276, 0.38462, -0.02409],
+                [0.02945, -0.00804, 0.99953],
+            ],
+            [470.4531, 289.0762, -80.7397],
+        );
+        let now = hand(
+            [
+                [0.35473, -0.92304, 0.14888],
+                [0.84284, 0.38462, 0.37641],
+                [-0.40471, -0.00804, 0.91441],
+            ],
+            [540.1672, 309.0349, 48.49],
+        );
+        let mut catcher = grounded(FighterKind::Mario, 0, 104.91);
+        catcher.pos.y = -6.0;
+        catcher.grab.catch = Some(1);
+        let mut held = grounded(FighterKind::Luigi, 1, 0.0);
+        held.attributes.size = 1.12;
+        held.situation = Situation::Air;
+        held.floor = None;
+        held.status.status = Status::ThrownCommon.into();
+        held.grab.capture = Some(0);
+        held.grab.held_child_offset = Some(Vec3::ZERO);
+        // Luigi's last sample: TopN at the hand he hung from, joint 4 below.
+        let top = JointTransform {
+            axes: held_collision_axes(before).map(|a| a * 1.12),
+            origin: before.origin,
+        };
+        held.joint_transforms[0] = Some(top);
+        held.joint_transforms[4] = Some(JointTransform {
+            axes: top.axes,
+            origin: top.point(Vec3::new(0.0, -60.0, 0.0)),
+        });
+        catcher.grab.anchor = Some(now.origin);
+        catcher.grab.anchor_transform = Some(now);
+        release_thrown(&mut catcher, -1.0);
+        exchange(&mut catcher, &mut held);
+        let want = Vec3::new(483.53, 283.19 - 300.0, 23.19);
+        assert!((held.pos - want).length() < 0.2, "{:?}", held.pos);
+        assert_eq!(held.grab.release_sweep, Some((catcher.pos, catcher.coll)));
+        assert!(held.grab.capture.is_none());
     }
 }

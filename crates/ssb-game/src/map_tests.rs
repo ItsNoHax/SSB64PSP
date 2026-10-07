@@ -1028,3 +1028,31 @@ fn cliff_release_sweeps_from_the_outside_corner_into_the_live_pose() {
     assert_eq!(f.pos.x, -BODY.width);
     assert!(f.cliff.release_previous.is_none());
 }
+
+/// `mpCommonRunFighterCollisionDefault` as a throw's release runs it
+/// (RE-472): one pass from the catcher to a TopN dropped below the floor
+/// lands it on the floor where it is, however far the sweep.
+#[test]
+fn a_released_fighter_dropped_below_the_floor_is_put_back_on_it() {
+    let floor = surface(Kind::Floor, 0, (-1000, -6), (1000, -6), 0);
+    let pos = run_default_collision(
+        &BodyColl::MARIO,
+        &BodyColl::MARIO,
+        Vec3::new(104.91, -6.0, 0.0),
+        Vec3::new(483.53, -16.81, 23.19),
+        || [floor],
+    );
+    assert!((pos.x - 483.53).abs() < 0.01 && pos.y == -6.0, "{pos:?}");
+    // Above the floor nothing moves it.
+    let above = Vec3::new(483.53, 40.0, 0.0);
+    assert_eq!(
+        run_default_collision(
+            &BodyColl::MARIO,
+            &BodyColl::MARIO,
+            Vec3::new(104.91, -6.0, 0.0),
+            above,
+            || [floor]
+        ),
+        above
+    );
+}

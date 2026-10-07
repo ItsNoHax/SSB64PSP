@@ -2082,6 +2082,10 @@ fn hit_pass(
     for i in 0..s.len() {
         exchange_from(s, i);
     }
+    // A fighter caught above is at its catcher's hand this frame.
+    for f in s.iter_mut().flatten() {
+        f.settle_capture(p, stage, groups);
+    }
     ssb_game::combat::search_all(&mut fighters_mut(s), rules);
     for f in s.iter_mut().flatten() {
         items.search_fighter(&mut f.fighter);
@@ -2142,6 +2146,10 @@ fn hit_pass(
     }
     for i in 0..s.len() {
         exchange_from(s, i);
+    }
+    // The statuses the hit phase set stand at their first frame.
+    for f in s.iter_mut().flatten() {
+        f.settle_status(p);
     }
     flush_fighter_effects(s, effects);
 }

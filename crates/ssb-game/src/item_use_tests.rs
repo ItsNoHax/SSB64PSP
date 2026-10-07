@@ -491,3 +491,27 @@ fn smash_changes_star_rod_descriptor_for_later_tilts() {
         f.motion.set(crate::stale::MotionAttackId::StarRodSwing3);
     }
 }
+/// RE-472, How to Play frame 3701: Mario's `FireFlowerShootAir` lands, and
+/// `ftMainSetStatus` (inside the frame's passes, `is_events_forward`) runs
+/// the old status's `proc_accessory` before the switch, so the flame clock
+/// counts twice that frame (7 to 5 on the N64). The held pose stays still:
+/// `gcSetAnimSpeed(0)` is the clip's rate, not only the status clock's.
+#[test]
+fn a_flower_switching_in_the_frames_passes_counts_its_flame_clock_twice() {
+    let (mut f, _, _) = held(Kind::FireFlower);
+    item_use::check(&mut f, 0, false);
+    f.motion_script.flags[0] = 1;
+    item_use::accessory(&mut f);
+    f.take_weapon_spawn();
+    assert_eq!(status::clip_speed(&f), 0.0);
+    item_use::accessory(&mut f);
+    let wait = f.item_use.flame_wait;
+    f.motion_script.is_events_forward = true;
+    assert!(item_use::on_ground_lost(&mut f));
+    assert_eq!(f.item_use.flame_wait, wait - 1);
+    assert_eq!(status::clip_speed(&f), 0.0);
+    // Outside the passes (a setter's own call) the old accessory does not run.
+    f.motion_script.is_events_forward = false;
+    assert!(item_use::on_landing(&mut f));
+    assert_eq!(f.item_use.flame_wait, wait - 1);
+}

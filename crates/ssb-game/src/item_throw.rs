@@ -254,6 +254,12 @@ pub fn model_axes(f: &Fighter) -> [Vec3; 3] {
 /// [`model_axes`] as `gmCollisionTransformMatrixAll` builds TopN's matrix
 /// for gameplay positions, from the `lbCommonSin` table (RE-468).
 pub fn collision_axes(f: &Fighter) -> [Vec3; 3] {
+    // A held fighter's TopN is rotated to its catcher's hand (RE-472).
+    if crate::grab::rotates_topn(f.status.status) {
+        if let Some(hand) = f.grab.holder.and_then(|h| h.anchor_transform) {
+            return crate::grab::held_collision_axes(hand);
+        }
+    }
     let Some(yaw) = model_yaw(f) else {
         return model_axes(f);
     };

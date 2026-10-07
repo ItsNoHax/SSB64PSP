@@ -993,6 +993,15 @@ impl Fighter {
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         crate::appear::tick_effect_clock(self);
+        // `ftCommonThrownReleaseFighterLoseGrip`'s
+        // `mpCommonRunFighterCollisionDefault`: one collision pass from the
+        // catcher's position with its diamond to the dropped TopN.
+        if let Some((from, previous)) = self.grab.release_sweep.take() {
+            self.pos =
+                crate::map::run_default_collision(&self.coll, &previous, from, self.pos, || {
+                    surfaces()
+                });
+        }
         if self.is_in_hitlag() {
             // `proc_lagupdate`: Smash DI nudges a fighter frozen by a hit.
             self.smash_di(surfaces);

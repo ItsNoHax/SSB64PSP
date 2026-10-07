@@ -3870,6 +3870,20 @@ pub fn set_any_status_preserve(
     // (`ftMainUpdateMotionEventsForwardEffect`).
     if f.motion_script.is_events_forward {
         crate::motion::forward_effect(f);
+        // ... then runs the old status's `proc_accessory`: a Fire Flower or
+        // Ray Gun shot switching ground and air counts its flame clock
+        // twice that frame (RE-472).
+        if matches!(
+            f.status.status,
+            AnyStatus::Common(
+                Status::FireFlowerShoot
+                    | Status::FireFlowerShootAir
+                    | Status::LGunShoot
+                    | Status::LGunShootAir
+            )
+        ) {
+            crate::item_use::accessory(f);
+        }
     }
     // `fp->joints[nFTPartsJointTopN]->rotate.vec.f.y = fp->lr * 90°`.
     f.topn_lr = f.facing.sign();
@@ -4507,7 +4521,17 @@ pub(crate) fn set_landing_air_null(f: &mut Fighter, anim_speed: f32) {
 /// rate is the aerial's landing-lag flag and so lives only in the timing
 /// [`set_landing_air_null`] stored.
 pub fn clip_speed(f: &Fighter) -> f32 {
-    if f.status.status == Status::LandingAirNull {
+    // `gcSetAnimSpeed` on the fighter mid-status: the Fire Flower's hold
+    // (`ftCommonFireFlowerShootProcAccessory`) and the Giant Punch's full
+    // charge change the figatree's own rate, which the status clock
+    // mirrors (RE-472).
+    if f.status.status == Status::LandingAirNull
+        || matches!(
+            f.status.status,
+            AnyStatus::Common(Status::FireFlowerShoot | Status::FireFlowerShootAir)
+                | AnyStatus::Donkey(DonkeyStatus::SpecialNLoop | DonkeyStatus::SpecialAirNLoop)
+        )
+    {
         f.status.timing.anim_speed
     } else {
         f.status.status.anim_speed()

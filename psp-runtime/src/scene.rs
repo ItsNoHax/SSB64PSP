@@ -1082,6 +1082,9 @@ pub fn tick_skeleton_animation(
             }
         }
     }
+    // A rate the status changes mid-clip (`gcSetAnimSpeed`) applies from
+    // the next play.
+    skeleton.speed = speed;
     // The slot is read back rather than remembered, so a status whose
     // animation the pack lacks -- Kirby has no aerial jump -- simply keeps
     // the pose it had.
@@ -1198,6 +1201,10 @@ pub struct FighterScene {
     /// the next fighter tick it pairs with the current hidden pose to recover
     /// the exact `transn - anim_vel` delta the original physics reads.
     root_motion_before_tick: Option<ssb_rom::figatree::JointPose>,
+    /// This frame's clip was already played after the interrupt: a throw's
+    /// release reads the catcher's hand as `ftMainPlayAnimEventsAll` left it
+    /// (RE-472).
+    anim_ticked_early: bool,
 }
 
 impl FighterScene {
@@ -1350,6 +1357,7 @@ impl FighterScene {
             started: None,
             shield_yrotn: ssb_rom::figatree::JointPose::default(),
             root_motion_before_tick: None,
+            anim_ticked_early: false,
         }
     }
 
@@ -1406,17 +1414,6 @@ impl FighterScene {
         self.sample_held_child_offset();
         if matches!(
             self.fighter.status.status,
-            AnyStatus::Mario(
-                ssb_game::status::MarioStatus::SpecialN
-                    | ssb_game::status::MarioStatus::SpecialAirN
-            )
-        ) {
-            if let Some(anchor) = self.weapon_anchor(pack, 16, 0.0) {
-                self.fighter.set_weapon_spawn_anchor(anchor);
-            }
-        }
-        if matches!(
-            self.fighter.status.status,
             AnyStatus::Fox(
                 ssb_game::status::FoxStatus::SpecialN | ssb_game::status::FoxStatus::SpecialAirN
             )
@@ -1447,6 +1444,20 @@ impl FighterScene {
         }
         self.fighter
             .tick_interrupt(&|| MapSegments::with_groups(pack, stage, groups));
+        // `ftCommonThrowProcUpdate` releases from the hand this frame's play
+        // has posed (`ftCommonThrownProcPhysics` then the release), before
+        // `ftMainProcPhysicsMap`: play the clip now and sample the hand for
+        // the release `grab::exchange` delivers next.
+        if ssb_game::grab::release_pending(&self.fighter) && !self.fighter.is_in_hitlag() {
+            self.tick_animation(pack);
+            self.anim_ticked_early = true;
+            self.sample_gameplay_joints(pack);
+            if let Some(joint) = ssb_game::grab::itemheavy_joint(self.fighter.kind) {
+                let hand = self.fighter.joint_transforms.get(joint).copied().flatten();
+                self.fighter.grab.anchor = hand.map(|j| j.origin);
+                self.fighter.grab.anchor_transform = hand;
+            }
+        }
     }
 
     /// The priority-4 half: `ftMainProcPhysicsMap`, then the animation and
@@ -1463,9 +1474,11 @@ impl FighterScene {
         // frame the status is on (RE-466). Hitlag freezes the motion with
         // the status.
         if !self.fighter.is_in_hitlag() {
-            let t = crate::profile::start();
-            self.tick_animation(pack);
-            crate::profile::stop(crate::profile::Span::Anim, t);
+            if !core::mem::take(&mut self.anim_ticked_early) {
+                let t = crate::profile::start();
+                self.tick_animation(pack);
+                crate::profile::stop(crate::profile::Span::Anim, t);
+            }
             if let (Some(before), Some(current)) =
                 (self.root_motion_before_tick, self.skeleton.pose(0))
             {
@@ -1535,14 +1548,18 @@ impl FighterScene {
         ssb_game::item_use::accessory(&mut self.fighter);
         // A held fighter hangs from this fighter's `joint_itemheavy_id`; the
         // match loop hands the sampled position over in `grab::exchange`.
-        self.fighter.grab.anchor = if self.fighter.grab.catch.is_some() {
+        // A catch status samples it too: the catch is made in the hit phase
+        // and `ftCommonCapturePulledProcCapture` places the caught fighter
+        // from this frame's hand at once (RE-472).
+        let holds = self.fighter.grab.catch.is_some() || self.fighter.grab.is_catchstatus;
+        self.fighter.grab.anchor = if holds {
             ssb_game::grab::itemheavy_joint(self.fighter.kind)
                 .and_then(|joint| self.fighter.joint_transforms.get(joint).copied().flatten())
                 .map(|joint| joint.origin)
         } else {
             None
         };
-        self.fighter.grab.anchor_transform = if self.fighter.grab.catch.is_some() {
+        self.fighter.grab.anchor_transform = if holds {
             ssb_game::grab::itemheavy_joint(self.fighter.kind)
                 .and_then(|joint| self.fighter.joint_transforms.get(joint).copied().flatten())
         } else {
@@ -1743,6 +1760,46 @@ impl FighterScene {
             &mut self.skeleton,
             &mut self.shield_yrotn,
         );
+    }
+
+    /// The tail of `ftCommonCapturePulledProcCapture`, for a fighter caught
+    /// in this frame's hit phase: `ftMainPlayAnimEventsAll` plays
+    /// `CapturePulled`'s first frame, then `ftCommonCapturePulledProcPhysics`
+    /// and `ftCommonCapturePulledProcMap` place it at the catcher's hand on
+    /// the catch frame itself (RE-472). Call after `grab::exchange` has
+    /// delivered the capture.
+    pub fn settle_capture(
+        &mut self,
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        groups: &[ssb_game::map::MapGroup],
+    ) {
+        let status = &self.fighter.status;
+        if status.status != ssb_game::status::Status::CapturePulled
+            || self.started == Some((status.status, status.entry))
+            || self.fighter.grab.holder.is_none()
+        {
+            return;
+        }
+        self.tick_animation(pack);
+        self.sample_held_child_offset();
+        let segments = || MapSegments::with_groups(pack, stage, groups);
+        ssb_game::grab::tick_held(&mut self.fighter, || ssb_game::map::floors(segments()));
+        self.sample_gameplay_joints(pack);
+    }
+
+    /// `ftMainSetStatus` in the hit phase (a hit's damage status, a
+    /// release): the new figatree is parsed at its first frame at once, so
+    /// the pose drawn and the joints sampled through the hitlag that follows
+    /// are the new status's (RE-472: Luigi's `DamageAir1` joints while a
+    /// second flame meets him in hitlag). Call after the hit phase.
+    pub fn settle_status(&mut self, pack: &Pack<'_>) {
+        let status = &self.fighter.status;
+        if self.started == Some((status.status, status.entry)) {
+            return;
+        }
+        self.tick_animation(pack);
+        self.sample_gameplay_joints(pack);
     }
 
     fn sample_held_child_offset(&mut self) {
