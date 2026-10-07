@@ -4403,26 +4403,27 @@ impl<'a> Pack<'a> {
         if i >= self.node_count {
             return None;
         }
-        let at = self.node_table() + i as usize * NodeDesc::SIZE;
-        let mut world = [0f32; 16];
-        for (k, w) in world.iter_mut().enumerate() {
-            *w = f32_at(self.data, at + 8 + k * 4);
-        }
+        // One bounds check for the row; the field reads below need none (RE-470).
+        let row: &[u8; NodeDesc::SIZE] = self.data
+            [self.node_table() + i as usize * NodeDesc::SIZE..][..NodeDesc::SIZE]
+            .try_into()
+            .unwrap();
+        let world = core::array::from_fn(|k| f32_at(row, 8 + k * 4));
         let vec3 = |base: usize| {
             [
-                f32_at(self.data, base),
-                f32_at(self.data, base + 4),
-                f32_at(self.data, base + 8),
+                f32_at(row, base),
+                f32_at(row, base + 4),
+                f32_at(row, base + 8),
             ]
         };
         Some(NodeDesc {
-            mesh: u32_at(self.data, at),
-            parent: u32_at(self.data, at + 4),
+            mesh: u32_at(row, 0),
+            parent: u32_at(row, 4),
             world,
-            rest_translate: vec3(at + 72),
-            rest_rotate: vec3(at + 84),
-            rest_scale: vec3(at + 96),
-            flags: u32_at(self.data, at + 108),
+            rest_translate: vec3(72),
+            rest_rotate: vec3(84),
+            rest_scale: vec3(96),
+            flags: u32_at(row, 108),
         })
     }
 
@@ -4430,15 +4431,19 @@ impl<'a> Pack<'a> {
         if i >= self.mesh_count {
             return None;
         }
-        let at = self.mesh_table() + i as usize * MeshDesc::SIZE;
+        // One bounds check for the row; the field reads below need none (RE-470).
+        let row: &[u8; MeshDesc::SIZE] = self.data
+            [self.mesh_table() + i as usize * MeshDesc::SIZE..][..MeshDesc::SIZE]
+            .try_into()
+            .unwrap();
         Some(MeshDesc {
-            vertex_offset: u32_at(self.data, at),
-            vertex_count: u32_at(self.data, at + 4),
-            first_prim: u32_at(self.data, at + 8),
-            prim_count: u32_at(self.data, at + 12),
-            source_file: u32_at(self.data, at + 16),
-            source_offset: u32_at(self.data, at + 20),
-            binding_offset: u32_at(self.data, at + 24),
+            vertex_offset: u32_at(row, 0),
+            vertex_count: u32_at(row, 4),
+            first_prim: u32_at(row, 8),
+            prim_count: u32_at(row, 12),
+            source_file: u32_at(row, 16),
+            source_offset: u32_at(row, 20),
+            binding_offset: u32_at(row, 24),
         })
     }
 
@@ -4446,27 +4451,31 @@ impl<'a> Pack<'a> {
         if i >= self.prim_count {
             return None;
         }
-        let at = self.prim_table() + i as usize * PrimDesc::SIZE;
+        // One bounds check for the row; the field reads below need none (RE-470).
+        let row: &[u8; PrimDesc::SIZE] = self.data
+            [self.prim_table() + i as usize * PrimDesc::SIZE..][..PrimDesc::SIZE]
+            .try_into()
+            .unwrap();
         Some(PrimDesc {
-            texture: u32_at(self.data, at),
-            flags: u32_at(self.data, at + 4),
-            prim_color: u32_at(self.data, at + 8),
-            env_color: u32_at(self.data, at + 12),
-            index_offset: u32_at(self.data, at + 16),
-            index_count: u32_at(self.data, at + 20),
-            texture_blend_base: u32_at(self.data, at + 24),
-            texture_blend_target: u32_at(self.data, at + 28),
-            flat_color: u32_at(self.data, at + 32),
-            light1_color: u32_at(self.data, at + 36),
-            light2_color: u32_at(self.data, at + 40),
-            alpha_compare_ref: u32_at(self.data, at + 44),
-            mat_anim: u32_at(self.data, at + 48),
-            texgen_scale_s: u16_at(self.data, at + 52),
-            texgen_scale_t: u16_at(self.data, at + 54),
-            texgen_origin_s: u16_at(self.data, at + 56),
-            texgen_origin_t: u16_at(self.data, at + 58),
-            phase_s_q5: i16_at(self.data, at + 60),
-            phase_t_q5: i16_at(self.data, at + 62),
+            texture: u32_at(row, 0),
+            flags: u32_at(row, 4),
+            prim_color: u32_at(row, 8),
+            env_color: u32_at(row, 12),
+            index_offset: u32_at(row, 16),
+            index_count: u32_at(row, 20),
+            texture_blend_base: u32_at(row, 24),
+            texture_blend_target: u32_at(row, 28),
+            flat_color: u32_at(row, 32),
+            light1_color: u32_at(row, 36),
+            light2_color: u32_at(row, 40),
+            alpha_compare_ref: u32_at(row, 44),
+            mat_anim: u32_at(row, 48),
+            texgen_scale_s: u16_at(row, 52),
+            texgen_scale_t: u16_at(row, 54),
+            texgen_origin_s: u16_at(row, 56),
+            texgen_origin_t: u16_at(row, 58),
+            phase_s_q5: i16_at(row, 60),
+            phase_t_q5: i16_at(row, 62),
         })
     }
 
@@ -4474,27 +4483,31 @@ impl<'a> Pack<'a> {
         if i >= self.texture_count {
             return None;
         }
-        let at = self.texture_table() + i as usize * TextureDesc::SIZE;
+        // One bounds check for the row; the field reads below need none (RE-470).
+        let row: &[u8; TextureDesc::SIZE] = self.data
+            [self.texture_table() + i as usize * TextureDesc::SIZE..][..TextureDesc::SIZE]
+            .try_into()
+            .unwrap();
         Some(TextureDesc {
-            width: u16_at(self.data, at),
-            height: u16_at(self.data, at + 2),
-            stride: u16_at(self.data, at + 4),
-            psm: self.data[at + 6],
-            swizzled: self.data[at + 7],
-            data_offset: u32_at(self.data, at + 8),
-            data_len: u32_at(self.data, at + 12),
-            palette_offset: u32_at(self.data, at + 16),
-            palette_len: u32_at(self.data, at + 20),
-            levels: u32_at(self.data, at + 24).max(1),
-            mat_anim: u32_at(self.data, at + 28),
-            role: u32_at(self.data, at + 32),
-            wrap: self.data[at + 36],
-            tile: self.data[at + 37],
-            tile_mirror: self.data[at + 38],
-            tile_period: [u16_at(self.data, at + 40), u16_at(self.data, at + 42)],
-            tile_source_width: u16_at(self.data, at + 44),
-            texels: self.data[at + 39],
-            source_digest: u32_at(self.data, at + 48),
+            width: u16_at(row, 0),
+            height: u16_at(row, 2),
+            stride: u16_at(row, 4),
+            psm: row[6],
+            swizzled: row[7],
+            data_offset: u32_at(row, 8),
+            data_len: u32_at(row, 12),
+            palette_offset: u32_at(row, 16),
+            palette_len: u32_at(row, 20),
+            levels: u32_at(row, 24).max(1),
+            mat_anim: u32_at(row, 28),
+            role: u32_at(row, 32),
+            wrap: row[36],
+            tile: row[37],
+            tile_mirror: row[38],
+            tile_period: [u16_at(row, 40), u16_at(row, 42)],
+            tile_source_width: u16_at(row, 44),
+            texels: row[39],
+            source_digest: u32_at(row, 48),
         })
     }
 
@@ -4724,20 +4737,23 @@ impl<'a> Pack<'a> {
         if i >= self.sprite_count {
             return None;
         }
-        let d = self.data;
-        let at = self.sprite_table() + i as usize * SpriteDesc::SIZE;
+        // One bounds check for the row; the field reads below need none (RE-470).
+        let row: &[u8; SpriteDesc::SIZE] = self.data
+            [self.sprite_table() + i as usize * SpriteDesc::SIZE..][..SpriteDesc::SIZE]
+            .try_into()
+            .unwrap();
         Some(SpriteDesc {
-            source_file: u32_at(d, at),
-            source_offset: u32_at(d, at + 4),
-            texture: u32_at(d, at + 8),
-            width: u16_at(d, at + 12),
-            height: u16_at(d, at + 14),
-            color: [d[at + 16], d[at + 17], d[at + 18], d[at + 19]],
-            attr: u16_at(d, at + 20),
-            flags: u16_at(d, at + 22),
-            fighter: d[at + 24],
-            role: d[at + 25],
-            costume: d[at + 26],
+            source_file: u32_at(row, 0),
+            source_offset: u32_at(row, 4),
+            texture: u32_at(row, 8),
+            width: u16_at(row, 12),
+            height: u16_at(row, 14),
+            color: [row[16], row[17], row[18], row[19]],
+            attr: u16_at(row, 20),
+            flags: u16_at(row, 22),
+            fighter: row[24],
+            role: row[25],
+            costume: row[26],
             _pad: 0,
         })
     }

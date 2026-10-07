@@ -70,6 +70,20 @@ fn fetch_addressed(img: &Rgba8, x: i32, y: i32, s: GeAddressMode, t: GeAddressMo
 /// `s_q5`/`t_q5` are texel-space coordinates in 1/32-texel fixed point
 /// (the RDP's own `TC` precision).
 pub fn sample_3point(img: &Rgba8, s_q5: i32, t_q5: i32) -> [u8; 4] {
+    // A quad inside the image needs no clamping; when its four texels are
+    // equal it blends to them (see `sample_3point_addressed`), which is
+    // most of a magnifier mask (RE-470).
+    let (s0, t0) = (s_q5.div_euclid(32), t_q5.div_euclid(32));
+    let (w, h) = (img.width as i32, img.height as i32);
+    if s0 >= 0 && t0 >= 0 && s0 + 1 < w && t0 + 1 < h {
+        let top = (t0 * w + s0) as usize * 4;
+        let bottom = top + w as usize * 4;
+        let texel = |at: usize| -> [u8; 4] { img.pixels[at..at + 4].try_into().unwrap() };
+        let c00 = texel(top);
+        if c00 == texel(top + 4) && c00 == texel(bottom) && c00 == texel(bottom + 4) {
+            return c00;
+        }
+    }
     sample_3point_addressed(img, s_q5, t_q5, GeAddressMode::Clamp, GeAddressMode::Clamp)
 }
 
@@ -232,6 +246,33 @@ mod tests {
             img.put(i, color);
         }
         img
+    }
+
+    /// RE-470: the unclamped short cut agrees with the general sampler on
+    /// an image with flat areas, edges and its border.
+    #[test]
+    fn interior_short_cut_matches_the_addressed_sampler() {
+        let mut img = Rgba8::new(6, 5);
+        for i in 0..30u32 {
+            let v = if (i % 6) < 3 && i / 6 < 3 {
+                200
+            } else {
+                (i * 37 % 256) as u8
+            };
+            img.put(
+                i as usize,
+                [v, v / 2, 255 - v, if i % 4 == 0 { 0 } else { 255 }],
+            );
+        }
+        for s in -40..(6 * 32 + 40) {
+            for t in -40..(5 * 32 + 40) {
+                assert_eq!(
+                    sample_3point(&img, s, t),
+                    sample_3point_addressed(&img, s, t, GeAddressMode::Clamp, GeAddressMode::Clamp),
+                    "({s}, {t})"
+                );
+            }
+        }
     }
 
     #[test]
