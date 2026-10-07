@@ -31,6 +31,27 @@ pub fn tick_override() -> Option<u64> {
     }
 }
 
+/// A `stage=GKIND` line's stage, plus one, or 0 for the scene's own: a
+/// `profile` build runs a battle scene on any stage (RE-471).
+static STAGE_OVERRIDE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// The stage a `stage=GKIND` line asked for.
+pub fn stage_override() -> Option<u8> {
+    match STAGE_OVERRIDE.load(core::sync::atomic::Ordering::Relaxed) {
+        0 => None,
+        g => Some((g - 1) as u8),
+    }
+}
+
+/// A `hold` line: a `profile` build keeps drawing its frozen tick rather
+/// than exiting, for the sampling profiler (RE-471).
+static HOLD: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Whether a `hold` line asked to keep drawing the frozen tick.
+pub fn hold() -> bool {
+    HOLD.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 /// Picks this run's capture scene once at startup.
 pub fn select() -> Option<Capture> {
     #[cfg(feature = "capture_scene_file")]
@@ -39,7 +60,21 @@ pub fn select() -> Option<Capture> {
         if let Some(len) = ssb_psp_runtime::assets::read_capture_scene(&mut buf) {
             // `scene@tick` captures the scene at another tick, for matching
             // an N64 frame (RE-425); the goldens name none.
-            let line = core::str::from_utf8(&buf[..len]).ok().and_then(ssb_capture::spec_line);
+            let text = core::str::from_utf8(&buf[..len]).ok();
+            #[cfg(feature = "profile")]
+            if let Some(g) = text
+                .into_iter()
+                .flat_map(str::lines)
+                .find_map(|l| l.trim().strip_prefix("stage="))
+                .and_then(|g| g.parse::<u8>().ok())
+            {
+                STAGE_OVERRIDE.store(u32::from(g) + 1, core::sync::atomic::Ordering::Relaxed);
+            }
+            #[cfg(feature = "profile")]
+            if text.into_iter().flat_map(str::lines).any(|l| l.trim() == "hold") {
+                HOLD.store(true, core::sync::atomic::Ordering::Relaxed);
+            }
+            let line = text.and_then(ssb_capture::spec_line);
             if let Some(spec) = line.and_then(ssb_capture::GameSpec::parse) {
                 if let Some(tick) = spec.tick {
                     TICK_OVERRIDE.store(tick, core::sync::atomic::Ordering::Relaxed);

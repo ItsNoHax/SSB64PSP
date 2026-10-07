@@ -2365,6 +2365,9 @@ const CAPTURE_STAGE_GKIND: u8 = ssb_game::stage_select::gkind::PUPUPU;
 /// the stage whose wallpaper kind `vssector` and `vsyoshi` show, or the
 /// stage a `training<stage>` scene shows (RE-422).
 fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
+    if let Some(g) = capture::stage_override() {
+        return g;
+    }
     match scene {
         Some(GameScene::VsSector) => ssb_game::stage_select::gkind::SECTOR,
         Some(GameScene::VsYoshi) => ssb_game::stage_select::gkind::YOSTER,
@@ -4952,6 +4955,11 @@ unsafe fn run() -> ! {
         }
         let pressed = newly_pressed(previous_controller.buttons, controller.buttons);
 
+        profile::set_tick(if deterministic_capture_frozen(capture_spec, sim_frame_index) {
+            u32::MAX
+        } else {
+            sim_frame_index as u32
+        });
         let update_start = profile::start();
         if !deterministic_capture_frozen(capture_spec, sim_frame_index) {
             session_frame(
@@ -5064,6 +5072,11 @@ unsafe fn run() -> ! {
                 );
             }
             headless_capture_sent = true;
+            // A profiling run ends at its tick (RE-471).
+            if profile::ENABLED && capture.is_some_and(|c| c.from_file) && !capture::hold() {
+                profile::finish();
+                psp::sys::sceKernelExitGame();
+            }
         }
         #[cfg(feature = "golden_capture")]
         if headless_capture_sent && capture.is_some_and(|c| c.from_file) {
@@ -8097,7 +8110,9 @@ unsafe fn draw_magnifiers(
             mini_camera.at,
             ssb_engine::math::Vec3::Y,
         ));
+        let t = profile::start();
         draw_fighter_model(gpu, p, stage, st, f, &mini_camera, true);
+        profile::stop(profile::Span::MagnifyModel, t);
         player_screen::pointer(gpu, p, st, xy, v.direction, scale, color);
     }
 }

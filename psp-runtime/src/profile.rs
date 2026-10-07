@@ -52,21 +52,40 @@ pub enum Span {
     DrawHud,
     /// Inside the interface: the off-screen fighters' magnifiers.
     DrawMagnifiers,
+    /// Inside the magnifiers: their depth masks.
+    MagnifyMask,
+    /// Inside the magnifiers: their fighters' models.
+    MagnifyModel,
 }
 
-const SPANS: usize = 19;
+const SPANS: usize = 21;
 #[cfg_attr(not(feature = "profile"), allow(dead_code))]
 const NAMES: [&str; SPANS] = [
     "update", "interrupt", "physics", "hit", "effects", "draw", "ge", "vblank", "fphys", "items", "weapons", "camera", "anim",
-    "map", "joints", "dstage", "dfighters", "dhud", "dmagnify",
+    "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel",
 ];
 
 /// Frames per report: two seconds at 60 FPS.
 pub const REPORT_FRAMES: u32 = 120;
 
+/// A frame whose CPU time (update plus draw, less the vblank wait) passes
+/// this is logged on its own line with its tick and spans (RE-471): 12 ms,
+/// the average budget RE-470 leaves for the PSP's slower frames.
+#[cfg_attr(not(feature = "profile"), allow(dead_code))]
+const SPIKE_US: u32 = 12_000;
+/// Spike lines a run writes at most.
+#[cfg_attr(not(feature = "profile"), allow(dead_code))]
+const SPIKE_LINES: u32 = 400;
+/// The whole-run CPU-time histogram's bucket width and count: 0.1 ms
+/// buckets to 100 ms, the last holding everything slower.
+#[cfg_attr(not(feature = "profile"), allow(dead_code))]
+const BUCKET_US: u32 = 100;
+#[cfg_attr(not(feature = "profile"), allow(dead_code))]
+const BUCKETS: usize = 1000;
+
 #[cfg(feature = "profile")]
 mod imp {
-    use super::{Span, NAMES, REPORT_FRAMES, SPANS};
+    use super::{Span, BUCKETS, BUCKET_US, NAMES, REPORT_FRAMES, SPANS, SPIKE_LINES, SPIKE_US};
     use core::fmt::Write;
     use psp::sys;
 
@@ -81,6 +100,17 @@ mod imp {
         report_start: u32,
         min_free: u32,
         reports: u32,
+        tick: u32,
+        cpu_sum: u32,
+        cpu_max: u32,
+        cpu_max_tick: u32,
+        spikes: u32,
+        /// Every frame's CPU time since the start of the run, by
+        /// [`BUCKET_US`].
+        hist: [u32; BUCKETS],
+        hist_frames: u32,
+        run_max: u32,
+        run_max_tick: u32,
     }
 
     static mut STATE: State = State {
@@ -94,7 +124,35 @@ mod imp {
         report_start: 0,
         min_free: u32::MAX,
         reports: 0,
+        tick: 0,
+        cpu_sum: 0,
+        cpu_max: 0,
+        cpu_max_tick: 0,
+        spikes: 0,
+        hist: [0; BUCKETS],
+        hist_frames: 0,
+        run_max: 0,
+        run_max_tick: 0,
     };
+
+    pub fn set_tick(tick: u32) {
+        // SAFETY: the game is single-threaded.
+        unsafe { (*core::ptr::addr_of_mut!(STATE)).tick = tick };
+    }
+
+    /// The CPU time below which `per_mille` of the run's frames fall, in
+    /// microseconds (the bucket's upper edge).
+    fn percentile(s: &State, per_mille: u32) -> u32 {
+        let want = (u64::from(s.hist_frames) * u64::from(per_mille)).div_ceil(1000) as u32;
+        let mut seen = 0;
+        for (i, &n) in s.hist.iter().enumerate() {
+            seen += n;
+            if seen >= want.max(1) {
+                return (i as u32 + 1) * BUCKET_US;
+            }
+        }
+        BUCKETS as u32 * BUCKET_US
+    }
 
     fn now() -> u32 {
         unsafe { sys::sceKernelGetSystemTimeLow() }
@@ -127,7 +185,7 @@ mod imp {
         }
     }
 
-    pub fn frame_end(stack_free: usize) {
+    pub fn frame_end(_stack_free: usize) {
         let s = unsafe { &mut *core::ptr::addr_of_mut!(STATE) };
         let t = now();
         if s.last_end == 0 {
@@ -136,8 +194,39 @@ mod imp {
             s.frame = [0; SPANS];
             return;
         }
+        if s.tick == u32::MAX {
+            // A capture frozen at its tick: not a frame of the game.
+            s.last_end = t;
+            s.frame = [0; SPANS];
+            return;
+        }
         let frame_us = t.wrapping_sub(s.last_end);
         s.last_end = t;
+        let cpu = (s.frame[Span::Update as usize] + s.frame[Span::Draw as usize])
+            .saturating_sub(s.frame[Span::Vblank as usize]);
+        s.cpu_sum = s.cpu_sum.wrapping_add(cpu);
+        if cpu > s.cpu_max {
+            s.cpu_max = cpu;
+            s.cpu_max_tick = s.tick;
+        }
+        if cpu > s.run_max {
+            s.run_max = cpu;
+            s.run_max_tick = s.tick;
+        }
+        s.hist[((cpu / BUCKET_US) as usize).min(BUCKETS - 1)] += 1;
+        s.hist_frames += 1;
+        if cpu > SPIKE_US && s.spikes < SPIKE_LINES {
+            s.spikes += 1;
+            let mut line = Line { buf: [0; 768], len: 0 };
+            let _ = write!(line, "spike tick={} cpu={}", s.tick, cpu);
+            for i in 0..SPANS {
+                if s.frame[i] >= 200 {
+                    let _ = write!(line, " {}={}", NAMES[i], s.frame[i]);
+                }
+            }
+            let _ = writeln!(line);
+            emit(&line.buf[..line.len]);
+        }
         for i in 0..SPANS {
             s.sum[i] = s.sum[i].wrapping_add(s.frame[i]);
             s.max[i] = s.max[i].max(s.frame[i]);
@@ -146,11 +235,24 @@ mod imp {
         s.frames += 1;
         s.frame_sum = s.frame_sum.wrapping_add(frame_us);
         s.frame_max = s.frame_max.max(frame_us);
-        let free = unsafe { sys::sceKernelTotalFreeMemSize() } as u32;
-        s.min_free = s.min_free.min(free);
+        s.min_free = s.min_free.min(unsafe { sys::sceKernelTotalFreeMemSize() } as u32);
         if s.frames < REPORT_FRAMES {
             return;
         }
+        report(s, t);
+    }
+
+    /// Writes the last, partial report.
+    pub fn finish() {
+        let s = unsafe { &mut *core::ptr::addr_of_mut!(STATE) };
+        if s.frames > 0 {
+            report(s, now());
+        }
+    }
+
+    fn report(s: &mut State, t: u32) {
+        let free = unsafe { sys::sceKernelTotalFreeMemSize() } as u32;
+        let stack_free = crate::thread::stack_free_bytes();
         let wall = t.wrapping_sub(s.report_start).max(1);
         let n = s.frames;
         let mut line = Line { buf: [0; 768], len: 0 };
@@ -164,14 +266,32 @@ mod imp {
             s.frame_sum / n,
             s.frame_max
         );
+        let _ = write!(
+            line,
+            " cpu={}/{}@{} run_p50={} run_p99={} run_max={}@{} run_over12={} run_frames={}",
+            s.cpu_sum / n,
+            s.cpu_max,
+            s.cpu_max_tick,
+            percentile(s, 500),
+            percentile(s, 990),
+            s.run_max,
+            s.run_max_tick,
+            s.hist[(SPIKE_US / BUCKET_US) as usize..].iter().sum::<u32>(),
+            s.hist_frames
+        );
         for i in 0..SPANS {
             let _ = write!(line, " {}={}/{}", NAMES[i], s.sum[i] / n, s.max[i]);
         }
         let max_block = unsafe { sys::sceKernelMaxFreeMemSize() } as u32;
         let _ = writeln!(
             line,
-            " free={} maxblock={} minfree={} stackfree={}",
-            free, max_block, s.min_free, stack_free
+            " free={} maxblock={} minfree={} stackfree={} mhz={}/{}",
+            free,
+            max_block,
+            s.min_free,
+            stack_free,
+            unsafe { sys::scePowerGetCpuClockFrequency() },
+            unsafe { sys::scePowerGetBusClockFrequency() }
         );
         emit(&line.buf[..line.len]);
         s.sum = [0; SPANS];
@@ -179,6 +299,8 @@ mod imp {
         s.frames = 0;
         s.frame_sum = 0;
         s.frame_max = 0;
+        s.cpu_sum = 0;
+        s.cpu_max = 0;
         s.report_start = t;
         s.reports += 1;
     }
@@ -230,6 +352,17 @@ pub fn time<R>(span: Span, f: impl FnOnce() -> R) -> R {
     r
 }
 
+/// Names the simulation tick the frame being timed runs, for the spike
+/// lines and the reports' worst-frame ticks; `u32::MAX` leaves the frame
+/// out (a capture frozen at its tick).
+#[inline(always)]
+pub fn set_tick(tick: u32) {
+    #[cfg(feature = "profile")]
+    imp::set_tick(tick);
+    #[cfg(not(feature = "profile"))]
+    let _ = tick;
+}
+
 /// Ends a frame, reporting every [`REPORT_FRAMES`] frames. `stack_free` is
 /// the main thread's untouched stack (`thread::stack_free_bytes`).
 #[inline(always)]
@@ -238,6 +371,13 @@ pub fn frame_end(stack_free: impl FnOnce() -> usize) {
     imp::frame_end(stack_free());
     #[cfg(not(feature = "profile"))]
     let _ = stack_free;
+}
+
+/// Writes the last, partial report, before a profiling run exits.
+#[inline(always)]
+pub fn finish() {
+    #[cfg(feature = "profile")]
+    imp::finish();
 }
 
 /// Writes `line` to stdout and `profile.log` with the reports, so a
