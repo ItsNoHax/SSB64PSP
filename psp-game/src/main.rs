@@ -5136,6 +5136,11 @@ unsafe fn run() -> ! {
         );
         profile::stop(profile::Span::Draw, draw_start);
         gpu.end_frame();
+        #[cfg(feature = "frame_hash")]
+        {
+            let line = alloc::format!("fhash tick={} {:08x}\n", sim_frame_index, gpu.shown_frame_hash());
+            psp::sys::sceIoWrite(psp::sys::sceKernelStdout(), line.as_ptr() as *const core::ffi::c_void, line.len());
+        }
         ssb_psp_runtime::scene_files::safe_point();
         if let Some(e) = ssb_psp_runtime::scene_files::take_failure() {
             boot_log::log_args(format_args!("load failed: {}", e.as_str()));
@@ -5328,7 +5333,7 @@ fn go_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScen
         s.title_pending = true;
         return;
     }
-    scene_load::scene(scene_load::name(scene), scene_load::scene_roots(scene));
+    load_scene(s, scene);
     if menus_screen::Menus::is_menu(scene) || matches!(scene, MScene::Explain | MScene::AutoDemo | MScene::SoundTest) {
         let mut selections = selections(s);
         let mut menus = core::mem::replace(&mut s.menus, menus_screen::Menus::new());
@@ -5344,10 +5349,41 @@ fn go_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScen
     }
 }
 
+/// `scene`'s files as it starts (RE-475). An opening scene reads its own
+/// when it begins, after any hold that still draws the last scene
+/// (`opening_screen::load`, RE-476). The attract loop's scenes start
+/// reading the next one's: the title How to Play's, How to Play the
+/// characters', the characters the title demo's stage and every fighter
+/// it can field (players 3 and 4 are random: the ones it does not draw are
+/// dropped when it starts), the demo the N64 logo's.
+fn load_scene(s: &Session, scene: MScene) {
+    if matches!(scene, MScene::Opening(_)) {
+        return;
+    }
+    scene_load::scene(scene_load::name(scene), scene_load::scene_roots(scene));
+    let next = match scene {
+        MScene::Title => MScene::Explain,
+        MScene::Explain => MScene::Characters,
+        MScene::Characters => MScene::AutoDemo,
+        MScene::AutoDemo => MScene::Startup,
+        _ => return,
+    };
+    let mut roots = scene_load::scene_roots(next);
+    if next == MScene::AutoDemo {
+        if let Some(p) = ssb_psp_runtime::scene_files::pack() {
+            let demo = &s.menus.demo;
+            let kinds: alloc::vec::Vec<u32> =
+                ssb_game::auto_demo::candidate_kinds(demo, &s.backup).map(|k| k as u32).collect();
+            roots.extend(scene_load::battle_roots(p, ssb_game::auto_demo::next_gkind(demo), &kinds));
+        }
+    }
+    scene_load::prefetch(scene_load::name(next), roots);
+}
+
 /// Starts a scene the host runs, entered from `prev`.
 #[inline(never)]
 fn start_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScene, capture: bool) {
-    scene_load::scene(scene_load::name(scene), scene_load::scene_roots(scene));
+    load_scene(s, scene);
     s.menus.scene = scene;
     s.menus.scene_prev = prev;
     match scene {
@@ -5401,6 +5437,10 @@ fn start_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MS
             s.menus.leave();
             opening_screen::start(&mut s.opening, None);
             s.screen = Screen::Opening;
+            // The room follows the logo (RE-476).
+            let room = MScene::Opening(ssb_game::opening::Kind::Room);
+            opening_screen::room_figures(&mut s.opening);
+            scene_load::prefetch(scene_load::name(room), scene_load::scene_roots(room));
         }
         MScene::Opening(kind) => start_opening(s, pack, kind, prev, capture),
         // Not reached yet: the menus run every other scene they name, and
@@ -5446,6 +5486,7 @@ fn start_opening(s: &mut Session, pack: Option<&Pack<'_>>, kind: ssb_game::openi
 /// An opening scene's start, its tic come.
 #[inline(never)]
 fn begin_opening(s: &mut Session, pack: Option<&Pack<'_>>, kind: ssb_game::opening::Kind, capture: bool) {
+    opening_screen::load(&mut s.opening, kind);
     s.menus.scene = MScene::Opening(kind);
     if kind.is_battle() {
         if demo_screen::start_movie(s, pack, kind) {

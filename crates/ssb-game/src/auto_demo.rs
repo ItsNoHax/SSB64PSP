@@ -106,11 +106,31 @@ pub struct Setup {
     pub damage: [u16; 4],
 }
 
+/// The stage the next [`init`] picks: `GROUND_ORDER` in turn, without
+/// the random number generator, so a host can read its files ahead
+/// (RE-476).
+pub fn next_gkind(demo: &DemoData) -> u8 {
+    let order = usize::from(demo.demo_gkind_order).min(GROUND_ORDER.len() - 1);
+    GROUND_ORDER[order]
+}
+
+/// Every fighter the next [`init`] can field: the title's two, and the
+/// unlocked kinds players 3 and 4 are drawn from (RE-476). Without the
+/// random number generator.
+pub fn candidate_kinds(demo: &DemoData, backup: &Backup) -> impl Iterator<Item = FighterKind> {
+    let unlocked = backup.fighter_mask
+        | CHARACTER_MASK_STARTER
+        | (1 << demo.demo_fkind[0] as u16)
+        | (1 << demo.demo_fkind[1] as u16);
+    (0..16usize)
+        .filter(move |&k| unlocked & (1 << k) != 0)
+        .map(kind_of)
+}
+
 /// `scAutoDemoInitDemo`: the stage after the last, then each player's
 /// fighter and damage in turn.
 pub fn init(demo: &mut DemoData, backup: &Backup, rand: &mut impl FnMut(i32) -> i32) -> Setup {
-    let order = usize::from(demo.demo_gkind_order).min(GROUND_ORDER.len() - 1);
-    let gkind = GROUND_ORDER[order];
+    let gkind = next_gkind(demo);
     demo.demo_gkind_order += 1;
     if usize::from(demo.demo_gkind_order) >= GROUND_ORDER.len() {
         demo.demo_gkind_order = 0;
@@ -281,6 +301,27 @@ impl AutoDemo {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn candidate_kinds_hold_every_fighter_init_fields() {
+        let backup = crate::backup::Backup::default();
+        for seed in 0..64i32 {
+            let mut demo = crate::menu::title::DemoData::default();
+            let mut n = seed;
+            let mut rand = |range: i32| {
+                n = n.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                (n >> 8).rem_euclid(range.max(1))
+            };
+            demo.set_demo_fighter_kinds(&backup, &mut rand);
+            let candidates: alloc::vec::Vec<_> = super::candidate_kinds(&demo, &backup).collect();
+            let gkind = super::next_gkind(&demo);
+            let setup = super::init(&mut demo, &backup, &mut rand);
+            assert_eq!(setup.gkind, gkind);
+            for k in setup.fkinds {
+                assert!(candidates.contains(&k), "{k:?} not in {candidates:?}");
+            }
+        }
+    }
+
     use super::*;
 
     #[derive(Default)]

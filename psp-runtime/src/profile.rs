@@ -56,13 +56,23 @@ pub enum Span {
     MagnifyMask,
     /// Inside the magnifiers: their fighters' models.
     MagnifyModel,
+    /// Reading a scene's archive files (`scene_files`), in whatever span
+    /// waited for them (RE-476).
+    Io,
+    /// Of [`Span::Io`]: files loaded on demand, missing from the scene's
+    /// list.
+    Demand,
+    /// `scene_files::safe_point` after the frame: background reads
+    /// completed and registered, the last scene's files dropped. Counted
+    /// in the frame's CPU time (RE-476).
+    Files,
 }
 
-const SPANS: usize = 21;
+const SPANS: usize = 24;
 #[cfg_attr(not(feature = "profile"), allow(dead_code))]
 const NAMES: [&str; SPANS] = [
     "update", "interrupt", "physics", "hit", "effects", "draw", "ge", "vblank", "fphys", "items", "weapons", "camera", "anim",
-    "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel",
+    "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel", "io", "demand", "files",
 ];
 
 /// Frames per report: two seconds at 60 FPS.
@@ -140,6 +150,11 @@ mod imp {
         unsafe { (*core::ptr::addr_of_mut!(STATE)).tick = tick };
     }
 
+    pub fn tick() -> u32 {
+        // SAFETY: the game is single-threaded.
+        unsafe { (*core::ptr::addr_of!(STATE)).tick }
+    }
+
     /// The CPU time below which `per_mille` of the run's frames fall, in
     /// microseconds (the bucket's upper edge).
     fn percentile(s: &State, per_mille: u32) -> u32 {
@@ -186,6 +201,7 @@ mod imp {
     }
 
     pub fn frame_end(_stack_free: usize) {
+        flush();
         let s = unsafe { &mut *core::ptr::addr_of_mut!(STATE) };
         let t = now();
         if s.last_end == 0 {
@@ -202,7 +218,9 @@ mod imp {
         }
         let frame_us = t.wrapping_sub(s.last_end);
         s.last_end = t;
-        let cpu = (s.frame[Span::Update as usize] + s.frame[Span::Draw as usize])
+        let cpu = (s.frame[Span::Update as usize]
+            + s.frame[Span::Draw as usize]
+            + s.frame[Span::Files as usize])
             .saturating_sub(s.frame[Span::Vblank as usize]);
         s.cpu_sum = s.cpu_sum.wrapping_add(cpu);
         if cpu > s.cpu_max {
@@ -218,7 +236,13 @@ mod imp {
         if cpu > SPIKE_US && s.spikes < SPIKE_LINES {
             s.spikes += 1;
             let mut line = Line { buf: [0; 768], len: 0 };
-            let _ = write!(line, "spike tick={} cpu={}", s.tick, cpu);
+            let _ = write!(
+                line,
+                "spike tick={} scene={} cpu={}",
+                s.tick,
+                crate::scene_files::report().scene,
+                cpu
+            );
             for i in 0..SPANS {
                 if s.frame[i] >= 200 {
                     let _ = write!(line, " {}={}", NAMES[i], s.frame[i]);
@@ -244,6 +268,7 @@ mod imp {
 
     /// Writes the last, partial report.
     pub fn finish() {
+        flush();
         let s = unsafe { &mut *core::ptr::addr_of_mut!(STATE) };
         if s.frames > 0 {
             report(s, now());
@@ -305,6 +330,40 @@ mod imp {
         s.reports += 1;
     }
 
+    /// Lines [`log`] took during a frame, written at its end, outside the
+    /// timed spans: a write opens `profile.log` (RE-476).
+    static mut PENDING: [u8; 2048] = [0; 2048];
+    static mut PENDING_LEN: usize = 0;
+
+    pub fn log(bytes: &[u8]) {
+        // SAFETY: the game is single-threaded.
+        unsafe {
+            let buf = &mut *core::ptr::addr_of_mut!(PENDING);
+            let len = &mut *core::ptr::addr_of_mut!(PENDING_LEN);
+            if *len + bytes.len() > buf.len() {
+                flush();
+            }
+            if bytes.len() > buf.len() {
+                emit(bytes);
+                return;
+            }
+            buf[*len..*len + bytes.len()].copy_from_slice(bytes);
+            *len += bytes.len();
+        }
+    }
+
+    pub fn flush() {
+        // SAFETY: the game is single-threaded.
+        unsafe {
+            let len = &mut *core::ptr::addr_of_mut!(PENDING_LEN);
+            if *len > 0 {
+                let buf = &*core::ptr::addr_of!(PENDING);
+                emit(&buf[..*len]);
+                *len = 0;
+            }
+        }
+    }
+
     pub fn emit(bytes: &[u8]) {
         unsafe {
             sys::sceIoWrite(sys::sceKernelStdout(), bytes.as_ptr() as *const core::ffi::c_void, bytes.len());
@@ -363,6 +422,19 @@ pub fn set_tick(tick: u32) {
     let _ = tick;
 }
 
+/// The tick [`set_tick`] named; 0 without the feature.
+#[inline(always)]
+pub fn tick() -> u32 {
+    #[cfg(feature = "profile")]
+    {
+        imp::tick()
+    }
+    #[cfg(not(feature = "profile"))]
+    {
+        0
+    }
+}
+
 /// Ends a frame, reporting every [`REPORT_FRAMES`] frames. `stack_free` is
 /// the main thread's untouched stack (`thread::stack_free_bytes`).
 #[inline(always)]
@@ -381,11 +453,12 @@ pub fn finish() {
 }
 
 /// Writes `line` to stdout and `profile.log` with the reports, so a
-/// PSPLink run keeps it (RE-469). Nothing without the feature.
+/// PSPLink run keeps it (RE-469), at the frame's end, outside its timed
+/// spans (RE-476). Nothing without the feature.
 #[inline(always)]
 pub fn log(line: &[u8]) {
     #[cfg(feature = "profile")]
-    imp::emit(line);
+    imp::log(line);
     #[cfg(not(feature = "profile"))]
     let _ = line;
 }

@@ -10,6 +10,7 @@
 
 use alloc::boxed::Box;
 
+use ssb_game::fighter::FighterKind;
 use ssb_game::menu::Scene as MScene;
 use ssb_game::opening::movie::{Camera, Head, Object, World};
 use ssb_game::opening::{
@@ -84,6 +85,9 @@ pub(crate) struct Opening {
     /// The room's last picture is held in the wallpaper snapshot: the
     /// default camera stopped filling at tic 1037.
     frozen: core::cell::Cell<bool>,
+    /// The next room's figures, picked ahead to read their files
+    /// ([`room_figures`], RE-476).
+    room_figures: Option<(FighterKind, FighterKind)>,
 }
 
 impl Opening {
@@ -95,6 +99,7 @@ impl Opening {
             pending: None,
             fighter_mask: STARTERS_MASK,
             frozen: core::cell::Cell::new(false),
+            room_figures: None,
         }
     }
 
@@ -108,11 +113,29 @@ impl Opening {
 /// `LBBACKUP_MASK_FIGHTER` of the eight starters: a new save's mask.
 const STARTERS_MASK: u16 = 0x036F;
 
+/// The next room's figures (`mvOpeningRoomInitVars`), picked now if they
+/// have not been: the room's file list names them
+/// (`scene_load::set_room_figures`), so they can be read before the room
+/// starts. The room that starts next takes them. The pick reads the
+/// clock's low byte as the N64's does, earlier: a random draw either way.
+pub(crate) fn room_figures(o: &mut Opening) -> (FighterKind, FighterKind) {
+    let figures = *o
+        .room_figures
+        .get_or_insert_with(|| room::Room::pick_figures(&mut room_time()));
+    crate::scene_load::set_room_figures([figures.0 as u32, figures.1 as u32]);
+    figures
+}
+
 /// The scene's logic, if it is ported; `fighter_mask` is the backup's.
-fn make(kind: Option<Kind>, fighter_mask: u16) -> Option<Logic> {
+fn make(o: &mut Opening, kind: Option<Kind>) -> Option<Logic> {
+    let fighter_mask = o.fighter_mask;
     Some(match kind {
         None => Logic::Startup(Box::new(startup::Startup::new())),
-        Some(Kind::Room) => Logic::Room(Box::new(room::Room::new(&mut room_time()))),
+        Some(Kind::Room) => {
+            let (pulled, dropped) = room_figures(o);
+            o.room_figures = None;
+            Logic::Room(Box::new(room::Room::with_figures(pulled, dropped)))
+        }
         Some(Kind::Portraits) => Logic::Portraits(Box::new(portraits::Portraits::new())),
         Some(Kind::Run) => Logic::Run(Box::new(run::Run::new())),
         Some(Kind::Cliff) => Logic::Cliff(Box::new(cliff::Cliff::new())),
@@ -131,7 +154,7 @@ fn make(kind: Option<Kind>, fighter_mask: u16) -> Option<Logic> {
 /// `syTaskmanSetLoadScene` into `nSCKindStartup` (`kind` `None`) or an
 /// opening scene. Returns `false` for a scene this host does not run.
 pub(crate) fn start(o: &mut Opening, kind: Option<Kind>) -> bool {
-    let Some(logic) = make(kind, o.fighter_mask) else {
+    let Some(logic) = make(o, kind) else {
         return false;
     };
     if kind == Some(Kind::Room) {
@@ -143,6 +166,23 @@ pub(crate) fn start(o: &mut Opening, kind: Option<Kind>) -> bool {
     o.pending = None;
     o.frozen.set(false);
     true
+}
+
+/// Reads opening scene `kind`'s files as it starts, after any hold
+/// (whose picture still draws the last scene's), and starts reading the
+/// next scene's in the background: the opening's order is fixed
+/// (RE-476).
+pub(crate) fn load(o: &mut Opening, kind: Kind) {
+    if kind == Kind::Room {
+        room_figures(o);
+    }
+    let scene = MScene::Opening(kind);
+    crate::scene_load::scene(crate::scene_load::name(scene), crate::scene_load::scene_roots(scene));
+    let next = kind.next().map_or(MScene::Title, MScene::Opening);
+    if next == MScene::Opening(Kind::Room) {
+        room_figures(o);
+    }
+    crate::scene_load::prefetch(crate::scene_load::name(next), crate::scene_load::scene_roots(next));
 }
 
 /// Drops the running scene: a hold then shows black.
@@ -184,6 +224,7 @@ pub(crate) fn frame(
             return None;
         }
         o.pending = None;
+        load(o, kind);
         start(o, Some(kind));
     }
     let exit = o.logic.as_mut()?.tick(tapped);

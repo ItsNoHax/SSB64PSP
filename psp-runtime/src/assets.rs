@@ -16,6 +16,9 @@ use psp::sys;
 
 use ssb_rom::pack::ALIGN;
 
+/// The PSP's data-cache line.
+const CACHE_LINE: usize = 64;
+
 /// A heap buffer guaranteed to start on a 16-byte boundary.
 pub struct AlignedBuf {
     ptr: *mut u8,
@@ -26,10 +29,22 @@ pub struct AlignedBuf {
 impl AlignedBuf {
     /// Allocates `len` bytes aligned to [`ALIGN`].
     pub(crate) fn new(len: usize) -> Option<AlignedBuf> {
+        Self::with_align(len, ALIGN)
+    }
+
+    /// Allocates `len` bytes on whole 64-byte data-cache lines: no other
+    /// allocation shares a line with it, so a line another owner dirties
+    /// while a device writes this buffer cannot be written back over it
+    /// (RE-476).
+    pub(crate) fn cache_lines(len: usize) -> Option<AlignedBuf> {
+        Self::with_align(len, CACHE_LINE)
+    }
+
+    fn with_align(len: usize, align: usize) -> Option<AlignedBuf> {
         // Round the size up too: some allocators are happier, and it lets the
         // whole buffer be flushed in whole cache lines.
-        let size = len.max(1).div_ceil(ALIGN) * ALIGN;
-        let layout = Layout::from_size_align(size, ALIGN).ok()?;
+        let size = len.max(1).div_ceil(align) * align;
+        let layout = Layout::from_size_align(size, align).ok()?;
         // SAFETY: layout has non-zero size.
         let ptr = unsafe { alloc(layout) };
         if ptr.is_null() {
@@ -194,24 +209,4 @@ pub fn load_pack() -> Result<(AlignedBuf, &'static str), LoadError> {
         return Ok((buf, display_path(path)));
     }
     Err(LoadError::NotFound)
-}
-
-/// Reads `len` bytes at `at` of the NUL-terminated `path` into `dst`.
-pub(crate) fn read_at(path: &str, at: i64, dst: *mut u8, len: usize) -> Result<(), LoadError> {
-    // SAFETY: the caller's path is NUL-terminated and `dst` holds `len`
-    // bytes.
-    unsafe {
-        let fd = sys::sceIoOpen(path.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0o777);
-        if fd.0 < 0 {
-            return Err(LoadError::NotFound);
-        }
-        let ok = sys::sceIoLseek(fd, at, sys::IoWhence::Set) == at
-            && sys::sceIoRead(fd, dst as *mut core::ffi::c_void, len as u32) as usize == len;
-        sys::sceIoClose(fd);
-        if ok {
-            Ok(())
-        } else {
-            Err(LoadError::ShortRead)
-        }
-    }
 }

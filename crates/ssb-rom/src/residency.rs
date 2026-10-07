@@ -99,6 +99,42 @@ pub unsafe fn insert(span: Span) {
     r.last = i;
 }
 
+/// Registers `run`, spans in ascending order that no registered span
+/// lies between (one read's adjacent files): one move of the registry
+/// instead of one per span. Falls back to [`insert`] otherwise.
+///
+/// # Safety
+///
+/// As [`insert`], for every span of `run`.
+pub unsafe fn insert_run(run: &[Span]) {
+    let (Some(first), Some(last)) = (run.first(), run.last()) else {
+        return;
+    };
+    let r = unsafe { &mut *registry() };
+    let i = r.spans.partition_point(|s| s.start < first.start);
+    let fits = run.windows(2).all(|w| w[0].start < w[1].start)
+        && r.spans.get(i).is_none_or(|s| s.start > last.start);
+    if !fits {
+        for s in run {
+            unsafe { insert(*s) };
+        }
+        return;
+    }
+    r.spans.splice(i..i, run.iter().copied());
+    r.last = i;
+}
+
+/// Unregisters every span whose start `drop` names, in one pass.
+///
+/// # Safety
+///
+/// As [`remove`], for each span dropped.
+pub unsafe fn remove_where(mut drop: impl FnMut(u32) -> bool) {
+    let r = unsafe { &mut *registry() };
+    r.spans.retain(|s| !drop(s.start));
+    r.last = 0;
+}
+
 /// Unregisters the span starting at `start`, if one does.
 ///
 /// # Safety
@@ -239,6 +275,29 @@ mod tests {
             remove(64);
         }
         assert_eq!(span_count(), 0);
+        // A run of adjacent spans lands in order in one move; one that
+        // would straddle a registered span goes in span by span.
+        let bytes = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let at = |start: u32, k: usize| Span {
+            start,
+            len: 2,
+            ptr: bytes[k..].as_ptr(),
+        };
+        unsafe {
+            insert(at(40, 0));
+            insert_run(&[at(10, 2), at(12, 4)]);
+            insert_run(&[at(30, 6), at(50, 0)]);
+        }
+        assert_eq!(span_count(), 5);
+        assert_eq!(resolve(owner.as_ptr(), 10, 2), Some(&[3u8, 4][..]));
+        assert_eq!(resolve(owner.as_ptr(), 12, 2), Some(&[5u8, 6][..]));
+        assert_eq!(resolve(owner.as_ptr(), 30, 2), Some(&[7u8, 8][..]));
+        assert_eq!(resolve(owner.as_ptr(), 40, 2), Some(&[1u8, 2][..]));
+        assert_eq!(resolve(owner.as_ptr(), 50, 2), Some(&[1u8, 2][..]));
+        unsafe { remove_where(|start| start != 40) };
+        assert_eq!(span_count(), 1);
+        assert_eq!(resolve(owner.as_ptr(), 12, 2), None);
+        unsafe { remove(40) };
         unsafe { install(core::ptr::null(), None) };
     }
 }

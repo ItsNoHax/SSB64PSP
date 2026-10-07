@@ -17,6 +17,17 @@ use ssb_rom::scene_roots as r;
 /// The roots of the scene last set with [`scene`].
 static mut BASE: Vec<u32> = Vec::new();
 
+/// The opening room's two random figures (`mvOpeningRoomInitVars`), by
+/// `FTKind`, once [`set_room_figures`] has named them.
+static mut ROOM_FIGURES: Option<[u32; 2]> = None;
+
+/// Names the opening room's pulled and dropped figures, whose files its
+/// list then holds (RE-476).
+pub fn set_room_figures(figures: [u32; 2]) {
+    // SAFETY: the game thread alone calls this module.
+    unsafe { ROOM_FIGURES = Some(figures) };
+}
+
 /// Whether a battle keeps [`BASE`]: the scenes that are a battle (an
 /// opening fight, How to Play, the title demo, the 1P Game's stages). A VS
 /// or Training battle leaves its select's and stage select's files.
@@ -64,8 +75,15 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
     let mut v: Vec<u32> = Vec::new();
     // The opening scenes' demo fighters (`mvOpening*FuncStart`'s
     // `ftManagerSetupFilesAllKind` calls), by `FTKind`.
-    let opening_kinds: &[usize] = match s {
-        Scene::Opening(Kind::Room) => &[12],
+    // SAFETY: as `base`.
+    let room = unsafe { ROOM_FIGURES };
+    let room_kinds: [u32; 3] = match room {
+        Some([pulled, dropped]) => [12, pulled, dropped],
+        None => [12; 3],
+    };
+    let opening_kinds: &[u32] = match s {
+        // With its figures once picked (RE-476).
+        Scene::Opening(Kind::Room) => &room_kinds,
         Scene::Opening(Kind::Run | Kind::Clash) => &[0, 1, 2, 3, 5, 6, 8, 9],
         Scene::Opening(Kind::Yoster) => &[6],
         Scene::Opening(Kind::Cliff) => &[5],
@@ -73,10 +91,19 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
         Scene::Opening(Kind::Yamabuki) => &[9],
         _ => &[],
     };
+    let pack = scene_files::pack();
     if !opening_kinds.is_empty() {
         v.extend(r::EF_COMMON);
         v.extend(r::FT_MANAGER);
-        v.extend(opening_kinds.iter().map(|&k| r::FIGHTER_MAIN[k]));
+        v.extend(opening_kinds.iter().map(|&k| r::FIGHTER_MAIN[k as usize]));
+        // The figures' figatrees, which the N64 reads per status into each
+        // figure's figatree heap (`desc.figatree_heap`): read with the
+        // scene, as a battle's are (D-046), not on demand mid-scene.
+        if let Some(p) = pack {
+            for &k in opening_kinds {
+                v.extend(figatrees(p, r::anim_kind(k)));
+            }
+        }
     }
     // The opening's fights (`mvOpening<Kind>FuncStart`, `mvOpeningJungle`):
     // the stage and fighters, read with the scene rather than when its
@@ -100,6 +127,11 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
         v.extend(r::FT_MANAGER);
         v.extend(r::ground_map(gkind));
         v.extend(kinds.iter().map(|&k| r::FIGHTER_MAIN[k as usize]));
+        // The battle's own files, which `Session::enter` holds when the
+        // fight starts: read with the scene (RE-476).
+        if let Some(p) = pack {
+            v.extend(battle_roots(p, gkind as u8, kinds));
+        }
     }
     let playable = || r::FIGHTER_MAIN[..12].iter().copied();
     match s {
@@ -148,7 +180,13 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
             v.extend(playable());
         }
         Scene::Maps => v.extend(r::MAPS),
-        Scene::Explain => v.extend(r::EXPLAIN),
+        Scene::Explain => {
+            v.extend(r::EXPLAIN);
+            // Its battle's, held from the scene's start (RE-476).
+            if let Some(p) = pack {
+                v.extend(explain_battle_roots(p));
+            }
+        }
         Scene::AutoDemo => v.extend(r::AUTO_DEMO),
         Scene::OnePGame | Scene::BonusStage => {}
         Scene::Opening(k) => v.extend_from_slice(match k {
@@ -174,6 +212,30 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
         }),
     }
     v
+}
+
+/// How to Play's battle files (`demo_screen::start_explain`).
+pub fn explain_battle_roots(pack: &Pack<'_>) -> Vec<u32> {
+    let kinds = ssb_game::explain::FIGHTERS.map(|k| k as u32);
+    battle_roots(pack, ssb_game::explain::GKIND, &kinds)
+}
+
+/// Starts reading `roots`, the files of the scene expected next, in the
+/// background (`scene_files::prefetch`, RE-476).
+pub fn prefetch(name: &'static str, roots: Vec<u32>) {
+    let t = ssb_psp_runtime::profile::start();
+    scene_files::prefetch(&roots);
+    let t = unsafe { psp::sys::sceKernelGetSystemTimeLow() }.wrapping_sub(t);
+    if ssb_psp_runtime::profile::ENABLED {
+        let line = alloc::format!(
+            "prefetch tick={} scene={} roots={} cpu_us={}\n",
+            ssb_psp_runtime::profile::tick(),
+            name,
+            roots.len(),
+            t
+        );
+        ssb_psp_runtime::profile::log(line.as_bytes());
+    }
 }
 
 /// The files of a battle on stage `gkind` among `kinds` (`FTKind`
@@ -204,16 +266,38 @@ pub fn battle_roots(pack: &Pack<'_>, gkind: u8, kinds: &[u32]) -> Vec<u32> {
     v
 }
 
+/// [`figatrees`] of every kind, from one scan of the animation table the
+/// first time any is asked for: the scan decodes all 6,311 rows, a few
+/// milliseconds a pass (RE-476).
+static mut FIGATREES: Option<Vec<(u32, Vec<u32>)>> = None;
+
 /// The archive files of `kind`'s animation rows.
 pub fn figatrees(pack: &Pack<'_>, kind: u32) -> Vec<u32> {
-    let mut v: Vec<u32> = (0..pack.anim_count())
-        .filter_map(|i| pack.anim(i))
-        .filter(|a| a.fighter == kind && a.script_len > 0)
-        .map(|a| a.source_file)
-        .collect();
-    v.sort_unstable();
-    v.dedup();
-    v
+    // SAFETY: as `base`.
+    let cache = unsafe { &mut *core::ptr::addr_of_mut!(FIGATREES) };
+    let table = cache.get_or_insert_with(|| scan_figatrees(pack));
+    table
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map_or_else(Vec::new, |(_, v)| v.clone())
+}
+
+fn scan_figatrees(pack: &Pack<'_>) -> Vec<(u32, Vec<u32>)> {
+    let mut table: Vec<(u32, Vec<u32>)> = Vec::new();
+    for a in (0..pack.anim_count()).filter_map(|i| pack.anim(i)) {
+        if a.script_len == 0 {
+            continue;
+        }
+        match table.iter_mut().find(|(k, _)| *k == a.fighter) {
+            Some((_, v)) => v.push(a.source_file),
+            None => table.push((a.fighter, alloc::vec![a.source_file])),
+        }
+    }
+    for (_, v) in &mut table {
+        v.sort_unstable();
+        v.dedup();
+    }
+    table
 }
 
 /// The 1P manager's presentation scenes (`campaign_screen`'s scene ids):
@@ -293,36 +377,76 @@ pub fn scene(name: &'static str, roots: Vec<u32>) {
     *base() = roots;
     // SAFETY: as `base`.
     unsafe { BASE_IN_BATTLE = matches!(name, "opening" | "explain" | "auto-demo") };
-    load(name, &[]);
+    load(name, &[], false);
 }
 
 /// Starts battle `name` holding its files and the scene's.
 pub fn battle(name: &'static str, roots: &[u32]) {
     // SAFETY: as `base`.
-    if !unsafe { BASE_IN_BATTLE } {
+    let within = unsafe { BASE_IN_BATTLE };
+    if !within {
         base().clear();
     }
-    load(name, roots);
+    load(name, roots, within);
 }
 
-fn load(name: &'static str, extra: &[u32]) {
+/// `within`: a battle the scene starts, which leaves the next scene's
+/// prefetch running (`scene_files::enter_within`).
+fn load(name: &'static str, extra: &[u32], within: bool) {
     let mut roots = base().clone();
     roots.extend_from_slice(extra);
     let last = scene_files::report();
+    let last_demand = scene_files::demand_files();
     if last.demand_files > 0 {
         crate::boot_log::log_args(format_args!(
             "scene {} loaded on demand: {} files {}B {:x?}",
-            last.scene,
-            last.demand_files,
-            last.demand_bytes,
-            scene_files::demand_files()
+            last.scene, last.demand_files, last.demand_bytes, last_demand
         ));
     }
-    match scene_files::enter(name, &roots) {
-        Ok(rep) => crate::boot_log::log_args(format_args!(
-            "scene {} files={} bytes={} read={}/{}B reads={} us={}",
-            name, rep.files, rep.bytes, rep.loaded_files, rep.loaded_bytes, rep.reads, rep.micros
-        )),
+    let t = ssb_psp_runtime::profile::start();
+    let entered = if within {
+        scene_files::enter_within(name, &roots)
+    } else {
+        scene_files::enter(name, &roots)
+    };
+    let t = unsafe { psp::sys::sceKernelGetSystemTimeLow() }.wrapping_sub(t);
+    match entered {
+        Ok(rep) => {
+            crate::boot_log::log_args(format_args!(
+                "scene {} files={} bytes={} read={}/{}B reads={} us={} pre={}/{}B wait_us={}",
+                name,
+                rep.files,
+                rep.bytes,
+                rep.loaded_files,
+                rep.loaded_bytes,
+                rep.reads,
+                rep.micros,
+                rep.prefetched_files,
+                rep.prefetched_bytes,
+                rep.wait_micros
+            ));
+            if ssb_psp_runtime::profile::ENABLED {
+                let line = alloc::format!(
+                    "load tick={} scene={} files={} bytes={} read={}/{}B reads={} us={} prefetched={}/{}B wait_us={} cpu_us={} last_demand={}/{}B {:x?}\n",
+                    ssb_psp_runtime::profile::tick(),
+                    name,
+                    rep.files,
+                    rep.bytes,
+                    rep.loaded_files,
+                    rep.loaded_bytes,
+                    rep.reads,
+                    rep.micros,
+                    rep.prefetched_files,
+                    rep.prefetched_bytes,
+                    rep.wait_micros,
+                    t,
+                    last.demand_files,
+                    last.demand_bytes,
+                    last_demand
+                );
+                ssb_psp_runtime::profile::log(line.as_bytes());
+            }
+        }
         Err(e) => {
             crate::boot_log::log_args(format_args!("scene {} load failed: {}", name, e.as_str()));
             ssb_psp_runtime::memory::fatal(&[

@@ -31,6 +31,9 @@ memory_ballast = []
 # `profile.log` beside the executable and to stdout
 # (`ssb_psp_runtime::profile`, RE-469). Off by default.
 profile = ["ssb-psp-runtime/profile"]
+# Writes each finished frame's pixel hash to stdout (`fhash` lines), for
+# frame-by-frame A/B runs of two builds under PPSSPPHeadless (RE-476).
+frame_hash = []
 # One EBOOT for every scripted Training scene: the scene is read at startup
 # from `capture_scene.txt` beside the EBOOT (`src/capture.rs`), and the
 # program exits a few frames after its screenshot. The per-scene features

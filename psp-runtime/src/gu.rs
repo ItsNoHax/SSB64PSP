@@ -566,11 +566,18 @@ impl Gpu {
             let src = if self.draw_is_fbp0 { self.fbp1_direct } else { self.fbp0_direct } as *const u32;
             let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
             let dst = core::ptr::addr_of_mut!(WALLPAPER_PHOTO.0) as *mut u32;
+            // Each column's source, computed once rather than per pixel
+            // (RE-476): the same expression, so the same pixels.
+            let mut cols = [0u16; WALLPAPER_PHOTO_WIDTH];
+            for (x, c) in cols.iter_mut().enumerate() {
+                *c = (vx as usize + ((x as f32 + 10.5) * vw as f32 / 320.0) as usize) as u16;
+            }
             for y in 0..WALLPAPER_PHOTO_HEIGHT {
                 let sy = ((y as f32 + 10.5) * vh as f32 / 240.0) as usize;
-                for x in 0..WALLPAPER_PHOTO_WIDTH {
-                    let sx = vx as usize + ((x as f32 + 10.5) * vw as f32 / 320.0) as usize;
-                    dst.add(y * WALLPAPER_PHOTO_STRIDE + x).write(src.add(sy * BUF_WIDTH as usize + sx).read());
+                let row = src.add(sy * BUF_WIDTH as usize);
+                let out = dst.add(y * WALLPAPER_PHOTO_STRIDE);
+                for (x, &sx) in cols.iter().enumerate() {
+                    out.add(x).write(row.add(sx as usize).read());
                 }
             }
             let bytes = wallpaper_photo_data();
@@ -907,6 +914,22 @@ impl Gpu {
         // becomes the display buffer, and the GE draws the next frame into
         // whichever buffer was previously being displayed.
         self.draw_is_fbp0 = !self.draw_is_fbp0;
+    }
+
+    /// An FNV-1a hash of the visible 480x272 pixels of the frame
+    /// [`Gpu::end_frame`] last handed over, for frame-by-frame A/B runs
+    /// (`frame_hash`, RE-476).
+    pub fn shown_frame_hash(&self) -> u32 {
+        let src = if self.draw_is_fbp0 { self.fbp1_direct } else { self.fbp0_direct } as *const u32;
+        let mut h: u32 = 0x811C_9DC5;
+        for y in 0..272usize {
+            for x in 0..480usize {
+                // SAFETY: inside the 512-wide buffer's visible rows.
+                let p = unsafe { src.add(y * BUF_WIDTH as usize + x).read_volatile() };
+                h = (h ^ p).wrapping_mul(0x0100_0193);
+            }
+        }
+        h
     }
 
     /// Waits until the last frame [`Gpu::end_frame`] handed over is on

@@ -183,7 +183,13 @@ impl Room {
     /// `mvOpeningRoomFuncStart`. `time` is `osGetTime`'s low byte, read
     /// once per draw (`syUtilsRandTimeUCharRange`).
     pub fn new(time: &mut impl FnMut() -> u8) -> Room {
-        // `mvOpeningRoomInitVars`.
+        let (pulled_kind, dropped_kind) = Room::pick_figures(time);
+        Room::with_figures(pulled_kind, dropped_kind)
+    }
+
+    /// `mvOpeningRoomInitVars`' random figures: the pulled one, then a
+    /// different dropped one.
+    pub fn pick_figures(time: &mut impl FnMut() -> u8) -> (FighterKind, FighterKind) {
         let pulled_kind = FIGURES[time_range(time(), 8) as usize];
         let dropped_kind = loop {
             let k = FIGURES[time_range(time(), 8) as usize];
@@ -191,6 +197,13 @@ impl Room {
                 break k;
             }
         };
+        (pulled_kind, dropped_kind)
+    }
+
+    /// `mvOpeningRoomFuncStart` with the figures [`Room::pick_figures`]
+    /// gave. The host picks them before the scene starts, to read their
+    /// files ahead (RE-476).
+    pub fn with_figures(pulled_kind: FighterKind, dropped_kind: FighterKind) -> Room {
         let mut world = World::new();
         let ids = Ids {
             default_camera: world.camera(
