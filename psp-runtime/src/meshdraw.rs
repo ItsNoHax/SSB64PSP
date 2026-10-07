@@ -2958,6 +2958,10 @@ pub unsafe fn draw_depth_image(
         // Each pixel is sampled once: the sample that ends a span starts
         // the next (RE-470).
         let mut depth = if px < end { sample(px) } else { 0 };
+        // A row's spans go to the GE as one list of sprites, not one draw
+        // each: a magnifier's edge rows have dozens (RE-470).
+        let mut spans = [(0i32, 0i32, 0u16); 128];
+        let mut count = 0;
         while px < end {
             let start = px;
             px += 1;
@@ -2969,31 +2973,12 @@ pub unsafe fn draw_depth_image(
                 }
                 px += 1;
             }
-            let verts = sys::sceGuGetMemory((2 * core::mem::size_of::<SObjVertex>()) as i32)
-                as *mut SObjVertex;
-            for (i, (x, y)) in [(start as f32, py as f32), (px as f32, py as f32 + 1.0)]
-                .into_iter()
-                .enumerate()
-            {
-                verts.add(i).write(SObjVertex {
-                    u: 0.0,
-                    v: 0.0,
-                    color: 0,
-                    x,
-                    y,
-                    z: f32::from(depth),
-                });
+            spans[count] = (start, px, depth);
+            count += 1;
+            if count == spans.len() || px >= end {
+                draw_depth_spans(&spans[..count], py);
+                count = 0;
             }
-            sys::sceGuDrawArray(
-                GuPrimitive::Sprites,
-                VertexType::TEXTURE_32BITF
-                    | VertexType::COLOR_8888
-                    | VertexType::VERTEX_32BITF
-                    | VertexType::TRANSFORM_2D,
-                2,
-                core::ptr::null(),
-                verts.cast(),
-            );
             depth = next;
         }
     }
@@ -3001,6 +2986,39 @@ pub unsafe fn draw_depth_image(
     sys::sceGuDepthFunc(sys::DepthFunc::GreaterOrEqual);
     sys::sceGuEnable(GuState::CullFace);
     st.invalidate_all();
+}
+
+/// One row's `(start, end, depth)` spans of [`draw_depth_image`], as one
+/// draw of `GuPrimitive::Sprites`: each span a 1-pixel-high sprite, in
+/// order.
+unsafe fn draw_depth_spans(spans: &[(i32, i32, u16)], py: i32) {
+    let verts = sys::sceGuGetMemory((2 * spans.len() * core::mem::size_of::<SObjVertex>()) as i32)
+        as *mut SObjVertex;
+    for (i, &(start, end, depth)) in spans.iter().enumerate() {
+        for (j, (x, y)) in [(start as f32, py as f32), (end as f32, py as f32 + 1.0)]
+            .into_iter()
+            .enumerate()
+        {
+            verts.add(2 * i + j).write(SObjVertex {
+                u: 0.0,
+                v: 0.0,
+                color: 0,
+                x,
+                y,
+                z: f32::from(depth),
+            });
+        }
+    }
+    sys::sceGuDrawArray(
+        GuPrimitive::Sprites,
+        VertexType::TEXTURE_32BITF
+            | VertexType::COLOR_8888
+            | VertexType::VERTEX_32BITF
+            | VertexType::TRANSFORM_2D,
+        2 * spans.len() as i32,
+        core::ptr::null(),
+        verts.cast(),
+    );
 }
 
 /// An untextured `gDPFillRectangle` over `[x0, y0, x1, y1)` in N64 screen
