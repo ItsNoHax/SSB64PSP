@@ -70,9 +70,17 @@ fn fetch_addressed(img: &Rgba8, x: i32, y: i32, s: GeAddressMode, t: GeAddressMo
 /// `s_q5`/`t_q5` are texel-space coordinates in 1/32-texel fixed point
 /// (the RDP's own `TC` precision).
 pub fn sample_3point(img: &Rgba8, s_q5: i32, t_q5: i32) -> [u8; 4] {
+    sample_3point_quad(img, s_q5, t_q5).0
+}
+
+/// [`sample_3point`], and whether the sample came from an interior quad of
+/// four equal texels: then every coordinate with the same integer texel
+/// samples the same colour, which a caller sampling along a row can reuse
+/// (RE-470).
+pub fn sample_3point_quad(img: &Rgba8, s_q5: i32, t_q5: i32) -> ([u8; 4], bool) {
     // A quad inside the image needs no clamping; when its four texels are
     // equal it blends to them (see `sample_3point_addressed`), which is
-    // most of a magnifier mask (RE-470).
+    // most of a magnifier mask.
     let (s0, t0) = (s_q5.div_euclid(32), t_q5.div_euclid(32));
     let (w, h) = (img.width as i32, img.height as i32);
     if s0 >= 0 && t0 >= 0 && s0 + 1 < w && t0 + 1 < h {
@@ -81,10 +89,11 @@ pub fn sample_3point(img: &Rgba8, s_q5: i32, t_q5: i32) -> [u8; 4] {
         let texel = |at: usize| -> [u8; 4] { img.pixels[at..at + 4].try_into().unwrap() };
         let c00 = texel(top);
         if c00 == texel(top + 4) && c00 == texel(bottom) && c00 == texel(bottom + 4) {
-            return c00;
+            return (c00, true);
         }
     }
-    sample_3point_addressed(img, s_q5, t_q5, GeAddressMode::Clamp, GeAddressMode::Clamp)
+    let rgba = sample_3point_addressed(img, s_q5, t_q5, GeAddressMode::Clamp, GeAddressMode::Clamp);
+    (rgba, false)
 }
 
 pub fn sample_3point_addressed(

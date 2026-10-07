@@ -157,23 +157,26 @@ impl ItemPool {
         }
         let order = self.order;
         let rules = self.team_rules;
+        // Items are searched in place, not copied out and back: an `Item`
+        // is large, and the copies were most of a Break the Targets frame's
+        // hit pass (RE-470).
         for &slot in &order[..self.order_len] {
-            let Some(mut item) = self.slots[usize::from(slot)] else {
+            let Some(item) = self.slots[usize::from(slot)].as_mut() else {
                 continue;
             };
-            let landed = search_item_on_fighter(&mut item, slot, f, rules);
+            let landed = search_item_on_fighter(item, slot, f, rules);
             if landed {
                 if let Some(player) = item.player {
                     if player != f.port {
-                        self.landed[usize::from(slot)] = Some((
+                        let record = (
                             player,
                             item.attack.motion_attack_id,
                             item.attack.motion_count,
-                        ));
+                        );
+                        self.landed[usize::from(slot)] = Some(record);
                     }
                 }
             }
-            self.slots[usize::from(slot)] = Some(item);
         }
     }
 
@@ -187,7 +190,8 @@ impl ItemPool {
         let order = self.order;
         let len = self.order_len;
         for (n, &slot) in order.iter().enumerate().take(len) {
-            let Some(mut item) = self.slots[usize::from(slot)] else {
+            let rules = self.team_rules;
+            let Some(item) = self.slots[usize::from(slot)].as_mut() else {
                 continue;
             };
             if item.is_hold {
@@ -195,9 +199,8 @@ impl ItemPool {
             }
             let id = ITEM_RECORD_BASE + slot;
             for f in fighters.iter_mut() {
-                fighter_attacks_item(f, &mut item, id, self.team_rules);
+                fighter_attacks_item(f, item, id, rules);
             }
-            self.slots[usize::from(slot)] = Some(item);
             self.items_attack_item(n);
             if let Some(item) = self.slots[usize::from(slot)].as_mut() {
                 weapons.hit_item(item, id);
@@ -209,12 +212,15 @@ impl ItemPool {
     /// `itProcessSearchHitItem` for the item at link position `n`.
     fn items_attack_item(&mut self, n: usize) {
         let this_slot = self.order[n];
+        if self.slots[usize::from(this_slot)]
+            .as_ref()
+            .is_none_or(|this| this.damage_coll.interact_mask & INTERACT_ITEM == 0)
+        {
+            return;
+        }
         let Some(mut this) = self.slots[usize::from(this_slot)] else {
             return;
         };
-        if this.damage_coll.interact_mask & INTERACT_ITEM == 0 {
-            return;
-        }
         let this_id = ITEM_RECORD_BASE + this_slot;
         let order = self.order;
         for (m, &other_slot) in order[..self.order_len].iter().enumerate() {
@@ -223,22 +229,24 @@ impl ItemPool {
             }
             // Only items after this one in the link trade clanks with it.
             let is_check_self = m > n;
-            let Some(mut other) = self.slots[usize::from(other_slot)] else {
+            let Some(peek) = self.slots[usize::from(other_slot)].as_ref() else {
                 continue;
             };
             let other_id = ITEM_RECORD_BASE + other_slot;
-            if this.owner == other.owner && !this.is_damage_all {
+            if this.owner == peek.owner && !this.is_damage_all {
                 continue;
             }
-            if self.team_rules.spares(this.team, other.team) && !this.is_damage_all {
+            if self.team_rules.spares(this.team, peek.team) && !this.is_damage_all {
                 continue;
             }
-            if other.attack.state == AttackState::Off
-                || other.attack.interact_mask & INTERACT_ITEM == 0
-                || !other.attack.record(this_id).is_clear()
+            if peek.attack.state == AttackState::Off
+                || peek.attack.interact_mask & INTERACT_ITEM == 0
+                || !peek.attack.record(this_id).is_clear()
             {
                 continue;
             }
+            // Copied only once it can be hit: an `Item` is large (RE-470).
+            let mut other = *peek;
             let mut to_hurtbox = true;
             if is_check_self
                 && this.attack.can_setoff

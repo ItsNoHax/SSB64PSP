@@ -50,13 +50,15 @@ pub enum Span {
     DrawFighters,
     /// Inside the draw: a battle's arrows, magnifiers and interface.
     DrawHud,
+    /// Inside the interface: the off-screen fighters' magnifiers.
+    DrawMagnifiers,
 }
 
-const SPANS: usize = 18;
+const SPANS: usize = 19;
 #[cfg_attr(not(feature = "profile"), allow(dead_code))]
 const NAMES: [&str; SPANS] = [
     "update", "interrupt", "physics", "hit", "effects", "draw", "ge", "vblank", "fphys", "items", "weapons", "camera", "anim",
-    "map", "joints", "dstage", "dfighters", "dhud",
+    "map", "joints", "dstage", "dfighters", "dhud", "dmagnify",
 ];
 
 /// Frames per report: two seconds at 60 FPS.

@@ -2943,15 +2943,24 @@ pub unsafe fn draw_depth_image(
     };
     for py in (y0 as i32)..ceil(y1) {
         let t = (((py as f32 + 0.5 - y0) / k) * image.height as f32 / height * 32.0) as i32;
-        let sample = |px: i32| {
-            let rgba = ssb_rom::n64_filter::sample_3point(image, column(px), t);
+        // The last sample's integer texel and, when its quad was four
+        // equal texels, its depth: every pixel in that texel shares it.
+        let mut memo = (i32::MIN, None);
+        let mut sample = |px: i32| {
+            let s = column(px);
+            if let (true, Some(depth)) = (s.div_euclid(32) == memo.0, memo.1) {
+                return depth;
+            }
+            let (rgba, uniform) = ssb_rom::n64_filter::sample_3point_quad(image, s, t);
             let packed = (u16::from(rgba[0] >> 3) << 11)
                 | (u16::from(rgba[1] >> 3) << 6)
                 | (u16::from(rgba[2] >> 3) << 1)
                 | u16::from(rgba[3] >= 128);
             // The RDP reads this color-image word as compressed 18-bit Z.
             // GE stores linear 16-bit Z with the viewport range inverted.
-            u16::MAX - (ssb_rom::n64_depth::decode(packed) >> 2) as u16
+            let depth = u16::MAX - (ssb_rom::n64_depth::decode(packed) >> 2) as u16;
+            memo = (s.div_euclid(32), uniform.then_some(depth));
+            depth
         };
         let mut px = x0 as i32;
         let end = ceil(x1);

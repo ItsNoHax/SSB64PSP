@@ -7923,6 +7923,7 @@ unsafe fn draw_training(
         if !training_paused && stage.source_file != ssb_rom::ground_obj::BONUS3_FILE {
             player_screen::arrows(gpu, p, draw_state, &damage_hud.players, flags);
         }
+        let t = profile::start();
         draw_magnifiers(
             gpu,
             p,
@@ -7934,6 +7935,7 @@ unsafe fn draw_training(
             damage_hud.colors,
             assets.player_frame.as_ref(),
         );
+        profile::stop(profile::Span::DrawMagnifiers, t);
     }
     gpu.set_viewport_pillarboxed();
     // The interface's link 25, under `gmCameraMakeEffectCamera`'s camera:
