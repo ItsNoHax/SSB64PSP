@@ -4111,6 +4111,11 @@ impl<'a> Pack<'a> {
         self.anim_row(AnimDesc::ITEM, slot, false)
     }
 
+    /// A Sector Z Arwing script, by slot.
+    pub fn sector_anim(&self, slot: u32) -> Option<AnimDesc> {
+        self.anim_row(AnimDesc::SECTOR, slot, false)
+    }
+
     /// A manager effect's DObj transform animation in source inventory order.
     pub fn effect_anim(&self, effect: u32) -> Option<AnimDesc> {
         self.anim_row(AnimDesc::EFFECT, effect, false)

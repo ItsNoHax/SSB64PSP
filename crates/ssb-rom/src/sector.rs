@@ -17,13 +17,13 @@
 //! Node 0 draws through `grSectorArwingLaser3DFuncMatrix`, a matrix the
 //! controller derives from the path and stores in [`Arwing::root`]. Both
 //! files' bytes are packed whole under
-//! [`AnimDesc::SECTOR`], so every script, `SYInterpDesc` and path pointer
+//! [`AnimDesc::SECTOR`](crate::pack::AnimDesc::SECTOR), so every script, `SYInterpDesc` and path pointer
 //! is a file offset.
 
 use crate::figatree::JointPose;
 use crate::interp::Spline;
 use crate::objanim::{AnimError, StageJoint};
-use crate::pack::{AnimDesc, ObjectDesc, Pack, MODEL_SCALE};
+use crate::pack::{ObjectDesc, Pack, MODEL_SCALE};
 use crate::scene::Mat4;
 
 /// `llGRSectorMapFileID`: the `GRSectorMap` file with the header and the
@@ -47,7 +47,7 @@ pub const DL_LINK: u8 = 6;
 /// The `DObj`s `grModelSetupGroundDObjs` makes from the tree.
 pub const NODES: usize = 12;
 
-/// [`AnimDesc::SECTOR`] slots: which file's bytes.
+/// [`AnimDesc::SECTOR`](crate::pack::AnimDesc::SECTOR) slots: which file's bytes.
 pub const SLOT_FLIGHT: u32 = 0;
 pub const SLOT_ARWING: u32 = 1;
 
@@ -156,9 +156,7 @@ impl Arwing {
             .filter_map(|i| pack.object(i))
             .find(|o| (o.source_file, o.source_offset) == (ARWING_FILE, ARWING_GRAPH))?;
         let file = |slot| {
-            (0..pack.anim_count())
-                .filter_map(|i| pack.anim(i))
-                .find(|a| a.fighter == AnimDesc::SECTOR && a.slot == slot)
+            pack.sector_anim(slot)
                 .map(|a| (a.script_offset, a.script_len))
         };
         let files = [file(SLOT_FLIGHT)?, file(SLOT_ARWING)?];

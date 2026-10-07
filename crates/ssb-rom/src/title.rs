@@ -171,9 +171,7 @@ pub const PRESS_START_PERIOD: usize = 39;
 
 /// A packed bake's frames (the reserved `slot` of `AnimDesc::EFFECT`).
 pub fn packed_frames<'a>(pack: &crate::pack::Pack<'a>, slot: u32) -> Option<&'a [u8]> {
-    let a = (0..pack.anim_count())
-        .filter_map(|i| pack.anim(i))
-        .find(|a| a.fighter == crate::pack::AnimDesc::EFFECT && a.slot == slot)?;
+    let a = pack.effect_anim(slot)?;
     pack.anim_script(&a)
 }
 

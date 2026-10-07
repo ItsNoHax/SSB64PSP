@@ -335,9 +335,7 @@ pub fn initial_camera(data: &[u8], offset: u32) -> Result<[f32; 10], crate::obja
 }
 /// Native little-endian camera payload in the reserved animation slot.
 pub fn packed_camera(pack: &crate::pack::Pack<'_>, index: usize) -> Option<[f32; 10]> {
-    let a = (0..pack.anim_count())
-        .filter_map(|i| pack.anim(i))
-        .find(|a| a.fighter == crate::pack::AnimDesc::EFFECT && a.slot == CAMERA_SLOT)?;
+    let a = pack.effect_anim(CAMERA_SLOT)?;
     let bytes = pack.anim_script(&a)?.get(index * 40..index * 40 + 40)?;
     Some(core::array::from_fn(|i| {
         f32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap())
@@ -386,9 +384,7 @@ pub fn packed_camera_frames<'a>(
     pack: &'a crate::pack::Pack<'a>,
     slot: u32,
 ) -> Option<impl Iterator<Item = [f32; CAMERA_FRAME_FLOATS]> + 'a> {
-    let a = (0..pack.anim_count())
-        .filter_map(|i| pack.anim(i))
-        .find(|a| a.fighter == crate::pack::AnimDesc::EFFECT && a.slot == slot)?;
+    let a = pack.effect_anim(slot)?;
     let bytes = pack.anim_script(&a)?;
     let (frames, _) = bytes.as_chunks::<{ CAMERA_FRAME_FLOATS * 4 }>();
     Some(frames.iter().map(|c| {

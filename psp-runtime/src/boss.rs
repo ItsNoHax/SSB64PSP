@@ -34,6 +34,9 @@ struct Visual {
 /// The boss stage's effect visuals, one per controller slot.
 pub struct BossEffects {
     script: Option<(u32, u32)>,
+    /// File 114's objects, in table order: a new effect's tree is looked
+    /// up here rather than in the whole object table (RE-471).
+    objects: alloc::vec::Vec<ssb_rom::pack::ObjectDesc>,
     visuals: [Option<Visual>; MAX_EFFECTS],
 }
 
@@ -49,8 +52,13 @@ impl BossEffects {
             .filter_map(|i| pack.anim(i))
             .find(|a| a.source_file == EFFECT_FILE)
             .map(|a| (a.script_offset, a.script_len));
+        let objects = (0..pack.object_count())
+            .filter_map(|i| pack.object(i))
+            .filter(|o| o.source_file == EFFECT_FILE)
+            .collect();
         BossEffects {
             script,
+            objects,
             visuals: core::array::from_fn(|_| None),
         }
     }
@@ -72,7 +80,7 @@ impl BossEffects {
                 continue;
             };
             if slot.as_ref().is_none_or(|v| v.serial != e.serial) {
-                *slot = make_visual(pack, e);
+                *slot = make_visual(pack, &self.objects, data, e);
             }
             let (Some(v), Some(data)) = (slot.as_mut(), data) else {
                 continue;
@@ -151,15 +159,15 @@ impl BossEffects {
     }
 }
 
-fn make_visual(pack: &Pack<'_>, e: &Effect) -> Option<Visual> {
+/// A new effect's visual. `objects` are file 114's objects and `data` its
+/// animation script ([`BossEffects::new`]).
+fn make_visual(pack: &Pack<'_>, objects: &[ssb_rom::pack::ObjectDesc], data: Option<&[u8]>, e: &Effect) -> Option<Visual> {
     let asset = EFFECT_ASSETS
         .get(usize::from(e.wallpaper))?
         .get(usize::from(e.effect))
         .copied()
         .flatten()?;
-    let object = (0..pack.object_count())
-        .filter_map(|i| pack.object(i))
-        .find(|o| o.source_file == EFFECT_FILE && o.source_offset == asset.graph)?;
+    let object = *objects.iter().find(|o| o.source_offset == asset.graph)?;
     let count = (object.node_count as usize).min(MAX_NODES);
     let mut rest = [JointPose::default(); MAX_NODES];
     for (i, pose) in rest.iter_mut().enumerate().take(count) {
@@ -173,13 +181,7 @@ fn make_visual(pack: &Pack<'_>, e: &Effect) -> Option<Visual> {
     }
     let mut joints = [StageJoint::start(0, 0.0); MAX_NODES];
     let mut live = [false; MAX_NODES];
-    if let (Some(table), Some(data)) = (
-        asset.anim_joint,
-        (0..pack.anim_count())
-            .filter_map(|i| pack.anim(i))
-            .find(|a| a.source_file == EFFECT_FILE)
-            .and_then(|a| pack.anim_script(&a)),
-    ) {
+    if let (Some(table), Some(data)) = (asset.anim_joint, data) {
         for (i, script) in ssb_rom::objanim::joint_scripts(data, table, count)
             .into_iter()
             .enumerate()
