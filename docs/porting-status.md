@@ -101,8 +101,10 @@ Detail per domain: [`rendering.md`](rendering.md).
    repair on PSP-2000; the full golden matrix remains software-only.
    PPSSPP neither checks a thread's stack bound nor traps FPU exceptions;
    a PSP does both (RE-469). Battles ran at 8–15 FPS on a PSP-2000
-   (RE-469); RE-470 brings every profiled scene to about 60 FPS under
-   PPSSPP, not yet measured on the PSP.
+   (RE-469); RE-470 and RE-471 bring every scene to 60 FPS under PPSSPP
+   (averages under 5 ms of CPU a frame at 333 MHz, gameplay frames under
+   12 ms; scene loads still take one long frame), not yet measured on the
+   PSP.
 2. The debug HUD (`sceGuDebugFlush`) shows only under PPSSPP's software
    rasterizer (RE-014) and faults on real hardware (RE-202). It is off by
    default (`debug_overlay` feature).
