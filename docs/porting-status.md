@@ -100,8 +100,9 @@ Detail per domain: [`rendering.md`](rendering.md).
 1. PPSSPP is not hardware proof. RE-320 confirms v32's short-row texture
    repair on PSP-2000; the full golden matrix remains software-only.
    PPSSPP neither checks a thread's stack bound nor traps FPU exceptions;
-   a PSP does both (RE-469). Battles run at 8–15 FPS on a PSP-2000
-   (RE-469).
+   a PSP does both (RE-469). Battles ran at 8–15 FPS on a PSP-2000
+   (RE-469); RE-470 brings every profiled scene to about 60 FPS under
+   PPSSPP, not yet measured on the PSP.
 2. The debug HUD (`sceGuDebugFlush`) shows only under PPSSPP's software
    rasterizer (RE-014) and faults on real hardware (RE-202). It is off by
    default (`debug_overlay` feature).
