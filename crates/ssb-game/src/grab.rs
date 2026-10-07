@@ -2440,17 +2440,21 @@ pub fn nearest_catch<'a>(
     others: impl IntoIterator<Item = &'a Fighter>,
     rules: crate::team::TeamRules,
 ) -> Option<u8> {
-    let mut near: Option<(f32, u8)> = None;
+    // The nearest distance starts at infinity rather than in an `Option`:
+    // LLVM compared an empty `Option`'s uninitialised distance ahead of
+    // its `None` test, and a NaN there traps on the PSP (RE-475, as RE-469's
+    // speculated divisions did).
+    let mut near = (f32::INFINITY, None);
     for other in others {
         if other.port == catcher.port || !catch_touches(catcher, other, rules) {
             continue;
         }
         let dist = (other.pos.x - catcher.pos.x).abs();
-        if near.is_none_or(|(d, _)| dist < d) {
-            near = Some((dist, other.port));
+        if near.1.is_none() || dist < near.0 {
+            near = (dist, Some(other.port));
         }
     }
-    near.map(|(_, port)| port)
+    near.1
 }
 
 /// Whether `catcher`'s catch box finds `other` this frame
