@@ -3496,6 +3496,9 @@ pub struct Pack<'a> {
     fighter_model_count: u32,
     blob_offset: usize,
     blob_len: usize,
+    /// How many leading animation rows are in `(fighter, slot)` order, so
+    /// [`Pack::fighter_anim`] can binary-search them (RE-469).
+    anim_sorted: u32,
 }
 
 fn u32_at(d: &[u8], at: usize) -> u32 {
@@ -3587,7 +3590,7 @@ impl<'a> Pack<'a> {
             return Err(PackError::OutOfBounds);
         }
 
-        Ok(Pack {
+        let mut pack = Pack {
             data,
             mesh_count,
             prim_count,
@@ -3613,7 +3616,28 @@ impl<'a> Pack<'a> {
             fighter_model_count,
             blob_offset,
             blob_len,
-        })
+            anim_sorted: 0,
+        };
+        pack.anim_sorted = pack.anim_sorted_prefix();
+        Ok(pack)
+    }
+
+    /// An animation row's `(fighter, slot)`.
+    fn anim_key(&self, i: u32) -> (u32, u32) {
+        let at = self.anim_table() + i as usize * AnimDesc::SIZE;
+        (u32_at(self.data, at), u32_at(self.data, at + 4))
+    }
+
+    /// The length of the animation table's prefix in non-decreasing
+    /// `(fighter, slot)` order. `romtool` writes the fighters' rows in that
+    /// order and the special rows (`AnimDesc::GROUND` and the rest) after
+    /// them.
+    fn anim_sorted_prefix(&self) -> u32 {
+        let mut i = 1;
+        while i < self.anim_count && self.anim_key(i - 1) <= self.anim_key(i) {
+            i += 1;
+        }
+        i.min(self.anim_count)
     }
 
     pub fn mesh_count(&self) -> u32 {
@@ -3810,9 +3834,24 @@ impl<'a> Pack<'a> {
         if slot >= crate::anim::SLOT_COUNT as u32 {
             return None;
         }
-        (0..self.anim_count)
-            .filter_map(|i| self.anim(i))
-            .find(|a| a.fighter == fighter && a.slot == slot)
+        // The first row with the pair, as a scan in table order finds it:
+        // the lower bound in the sorted prefix, else the rest in order.
+        let key = (fighter, slot);
+        let (mut lo, mut hi) = (0, self.anim_sorted);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if self.anim_key(mid) < key {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if lo < self.anim_sorted && self.anim_key(lo) == key {
+            return self.anim(lo);
+        }
+        (self.anim_sorted..self.anim_count)
+            .find(|&i| self.anim_key(i) == key)
+            .and_then(|i| self.anim(i))
     }
 
     /// A fighter's shield pose for stick sector `sector` (RE-367).
@@ -6378,6 +6417,53 @@ mod tests {
                 node: AnimJoint::NO_NODE
             }
         );
+    }
+
+    /// RE-469: `fighter_anim`'s binary search over the sorted prefix finds
+    /// exactly the row a scan in table order finds, with duplicate keys, a
+    /// gap, a key only in the unsorted tail and one in both.
+    #[test]
+    fn fighter_anim_finds_the_first_row_in_table_order() {
+        let rows: &[(u32, u32)] = &[
+            (0, 1),
+            (0, 3),
+            (0, 3),
+            (1, 0),
+            (1, 7),
+            (2, 2),
+            // The unsorted tail: a special row, then fighter rows after it.
+            (AnimDesc::GROUND, 4),
+            (1, 5),
+            (0, 3),
+            (0, 9),
+        ];
+        let mut w = PackWriter::new();
+        for (i, &(fighter, slot)) in rows.iter().enumerate() {
+            w.add_anim(fighter, slot, 4000 + i as u32, 10, &[0u8; 4], &[]);
+        }
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        // The special row still sorts after the fighter rows before it.
+        assert_eq!(pack.anim_sorted, 7);
+        let scan = |fighter: u32, slot: u32| {
+            (0..pack.anim_count())
+                .filter_map(|i| pack.anim(i))
+                .find(|a| a.fighter == fighter && a.slot == slot)
+        };
+        for fighter in 0..4 {
+            for slot in 0..12 {
+                assert_eq!(
+                    pack.fighter_anim(fighter, slot),
+                    scan(fighter, slot),
+                    "({fighter}, {slot})"
+                );
+            }
+        }
+        // (0, 3)'s first row is index 1; (1, 5) and (0, 9) are only in the
+        // tail.
+        assert_eq!(pack.fighter_anim(0, 3).unwrap().source_file, 4001);
+        assert_eq!(pack.fighter_anim(1, 5).unwrap().source_file, 4007);
+        assert_eq!(pack.fighter_anim(0, 9).unwrap().source_file, 4009);
     }
 
     #[test]
