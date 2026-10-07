@@ -1049,10 +1049,12 @@ pub fn tick_skeleton_animation(
     // parses `frame_begin`, and a setter's `ftMainPlayAnimEventsAll` or the
     // frame's own advance has moved it on before this first parse, which
     // poses without advancing (RE-466).
-    let frame_begin = status.anim_frame;
+    // The status clock, not the figatree's `anim_frame`, which a short
+    // figatree has already looped or ended (RE-474).
+    let frame_begin = status.clock;
     // A setter's `ftMainPlayAnimEventsAll` after `ftMainSetStatus`'s own
     // first parse: the clip stands one play past `anim_frame_begin`.
-    let setter_played = status.anim_frame > status.anim_frame_begin;
+    let setter_played = status.clock > status.anim_frame_begin;
     let status = status.status;
     // The pack row is the fighter's; the slot is the status's. Common
     // statuses use the shared slots, which resolve per fighter through the
@@ -1596,7 +1598,7 @@ impl FighterScene {
             facing_left: matches!(facing, ssb_game::fighter::Facing::Left),
             zoom_frame: self.camera_zoom_frame,
             zoom_range: 1.0,
-            idle_zoomed_out: f.status.status == Status::Wait && f.status.anim_frame >= 120.0,
+            idle_zoomed_out: f.status.status == Status::Wait && f.status.clock >= 120.0,
             dead_up,
             team_bounds,
         })

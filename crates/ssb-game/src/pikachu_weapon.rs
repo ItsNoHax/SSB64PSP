@@ -779,7 +779,7 @@ mod tests {
     fn self_collision_removes_head_without_stopping_existing_trails() {
         let mut f = Fighter::new(FighterKind::Pikachu, 0, 3);
         crate::pikachu::set_special_lw(&mut f);
-        f.status.anim_frame = 24.0;
+        f.status.set_time(24.0);
         f.pikachu.map_bound_top = Some(1000.0);
         crate::pikachu::update(&mut f);
         let mut pool = WeaponPool::default();
@@ -799,7 +799,7 @@ mod tests {
     fn thunder_damage_callback_survives_damage_status_and_suppresses_notification() {
         let mut f = Fighter::new(FighterKind::Pikachu, 0, 3);
         crate::pikachu::set_special_lw(&mut f);
-        f.status.anim_frame = 24.0;
+        f.status.set_time(24.0);
         f.pikachu.map_bound_top = Some(20_000.0);
         crate::pikachu::update(&mut f);
         let mut pool = WeaponPool::default();

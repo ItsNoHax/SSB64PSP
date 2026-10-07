@@ -88,7 +88,8 @@ fn pk_fire_accessory_reads_situation_at_frame20_and_never_repeats() {
     let mut f = fighter(FighterKind::Ness, 0, true);
     f.facing = Facing::Left;
     set_special_n(&mut f);
-    steps(&mut f, 19);
+    // The setter played frame 1 (RE-474).
+    steps(&mut f, 18);
     assert!(f.weapon_spawn.is_none());
     assert!(on_ground_lost(&mut f));
     assert_eq!(f.status.anim_frame, 19.0);
@@ -218,7 +219,8 @@ fn down_air_and_fox_drill_have_signed_downward_angles() {
 fn thunder_launch_waits30_hold_frames_then_runs28_with_source_deceleration() {
     let mut f = fighter(FighterKind::Ness, 0, false);
     set_special_hi(&mut f);
-    steps(&mut f, 24);
+    // The start lasts 23 frames after its setter's play (RE-474).
+    steps(&mut f, 23);
     assert!(thunder_controlling(f.status.status));
     assert_eq!(f.physics.jumps_used, f.attributes.jumps_max);
     f.ness.thunder_position = Some(f.pos + Vec3::new(-100.0, 150.0, 0.0));
@@ -333,7 +335,8 @@ fn magnet_absorbs_staled_energy_heals_and_retains_timers_through_hit() {
     f.damage = 70;
     input(&mut f, N64Buttons::B, 0, -80);
     set_special_lw(&mut f);
-    steps(&mut f, 15);
+    // The start lasts 14 frames after its setter's play (RE-474).
+    steps(&mut f, 14);
     assert!(absorbing(&f));
     let center = f.joint_world(0, Vec3::new(300.0, 195.0, 0.0));
     let mut owner = fighter(FighterKind::Mario, 1, true);
@@ -352,7 +355,8 @@ fn magnet_absorbs_staled_energy_heals_and_retains_timers_through_hit() {
     assert_eq!(pool.active_count(), 0);
     assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialAirLwHit));
     assert_eq!(f.ness.release_lag, 30);
-    steps(&mut f, 14);
+    // The hit's setter played frame 1: flag 1 at 14 is 13 frames on.
+    steps(&mut f, 13);
     assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialAirLwHold));
     assert_eq!(f.ness.release_lag, 30);
     input(&mut f, 0, 0, 0);
@@ -551,9 +555,9 @@ fn magnet_field_starts_on_hold_and_ends_with_the_end_status() {
     // A Hit keeps the one field; the return to Hold does not make another.
     proc_absorb(&mut f, 1.0);
     let before = magnet_effect_ticks(&f).unwrap();
-    steps(&mut f, 14);
+    steps(&mut f, 13);
     assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialAirLwHold));
-    assert_eq!(magnet_effect_ticks(&f), Some(before + 14));
+    assert_eq!(magnet_effect_ticks(&f), Some(before + 13));
     input(&mut f, 0, 0, 0);
     while absorbing(&f) {
         status::update(&mut f);

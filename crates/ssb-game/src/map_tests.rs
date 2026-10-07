@@ -429,7 +429,7 @@ fn falcon_kick_wall_rebound_obeys_the_source_flag_window() {
         AnyStatus::Captain(CaptainStatus::SpecialLw),
         Vec3::ZERO,
     );
-    f.status.anim_frame = 12.0;
+    f.status.set_time(12.0);
     f.map_contacts.left_wall = Some(Contact {
         line: 1,
         flags: 0,
@@ -446,7 +446,7 @@ fn falcon_kick_wall_rebound_obeys_the_source_flag_window() {
         AnyStatus::Captain(CaptainStatus::SpecialLw),
         Vec3::ZERO,
     );
-    f.status.anim_frame = 32.0;
+    f.status.set_time(32.0);
     f.map_contacts.right_wall = Some(Contact {
         line: 1,
         flags: 0,
@@ -776,9 +776,9 @@ fn aerial_jump_and_recovery_cliff_gates_follow_their_source_callbacks() {
     f.status.status = AnyStatus::Purin(PurinStatus::JumpAerialF3);
     assert!(allows_cliff(&f));
     f.status.status = AnyStatus::Yoshi(status::YoshiStatus::SpecialAirLwStart);
-    f.status.anim_frame = 4.0;
+    f.status.set_time(4.0);
     assert!(!allows_cliff(&f));
-    f.status.anim_frame = 5.0;
+    f.status.set_time(5.0);
     assert!(allows_cliff(&f));
 }
 

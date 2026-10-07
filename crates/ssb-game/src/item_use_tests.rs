@@ -161,7 +161,7 @@ fn hammer_walk_keeps_animation_hits_and_colour_clock() {
     item_use::hammer_wait(&mut f);
     crate::colanim::run_update(&mut f);
     let colour = f.colanim;
-    f.status.anim_frame = 13.0;
+    f.status.set_time(13.0);
     f.stick.x = 20;
     f.attack_colls[0].damage = 17;
     item_use::update(&mut f);
@@ -400,7 +400,7 @@ fn shooting_switches_keep_clock_and_flower_pause() {
     for k in [Kind::RayGun, Kind::FireFlower] {
         let (mut f, _, _) = held(k);
         item_use::check(&mut f, 0, false);
-        f.status.anim_frame = 8.0;
+        f.status.set_time(8.0);
         if k == Kind::FireFlower {
             f.status.timing.anim_speed = 0.0;
         }

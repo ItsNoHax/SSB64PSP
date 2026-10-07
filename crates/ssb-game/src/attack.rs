@@ -1135,7 +1135,7 @@ mod tests {
         assert_eq!(f.status.status, Status::DamageAir2);
         assert!(!f.is_grounded());
         f.hitstun = 0;
-        f.status.anim_frame = 1000.0;
+        f.status.set_time(1000.0);
         status::update(&mut f);
         assert_eq!(f.status.status, Status::Fall);
 

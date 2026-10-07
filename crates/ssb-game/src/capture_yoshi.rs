@@ -165,6 +165,8 @@ pub fn capture(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     f.facing = holder.facing.flipped();
     f.become_airborne();
     status::set_status(f, Status::CaptureYoshi, 0.0, StatusTiming::unknown());
+    // `ftCommonCaptureYoshiProcCapture` plays the first frame (RE-474).
+    status::play_anim_events(f);
     f.egg = CaptureYoshiState::default();
     f.grab.breakout_wait = 0;
     f.grab.capture_immune = true;

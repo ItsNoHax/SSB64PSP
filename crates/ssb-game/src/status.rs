@@ -637,6 +637,8 @@ impl Status {
     pub fn anim_speed(self) -> f32 {
         match self {
             Status::LandingHeavy => 0.5,
+            // `FTCOMMON_CAPTURECAPTAIN_ANIM_SPEED`: the pose holds frame 4.
+            Status::CaptureCaptain => 0.0,
             _ => 1.0,
         }
     }
@@ -1719,6 +1721,57 @@ impl StatusTiming {
     }
 }
 
+/// The figatree's clock state behind `gobj->anim_frame` (RE-474).
+///
+/// `ftAnimParseDObjFigatree` counts `anim_frame` up by `anim_speed`; a
+/// `Loop` command at the figatree's end sets it to the overshoot (0 at
+/// whole speeds) and plays on, an `End` sets it to the negative overshoot
+/// and `gcPlayDObjAnimJoint` then stops the parse (`AOBJ_ANIM_NULL`), so
+/// it stands there until the next figatree.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Clip {
+    /// No walked figatree: the clock counts on.
+    #[default]
+    Unknown,
+    /// Ends after this many frames.
+    Ends(f32),
+    /// Loops back to its first frame after this many.
+    Loops(f32),
+    /// Ended: the clock stands still.
+    Stopped,
+}
+
+/// What `ftMainSetStatus` does to the figatree when it enters a status.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ClipStart {
+    /// A figatree of its own, started at `frame_begin`.
+    Restart(Clip),
+    /// No figatree of its own (`motion_id` -1, or `anim_file_id` 0): the
+    /// playing one plays on.
+    Keep,
+    /// `motion_id` -2: the playing one stands still.
+    Freeze,
+}
+
+impl Clip {
+    /// One play's step of `anim_frame` past `ftAnimParseDObjFigatree`'s
+    /// `Loop` and `End`.
+    fn settle(&mut self, anim_frame: &mut f32) {
+        match *self {
+            Clip::Loops(len) if len > 0.0 => {
+                while *anim_frame >= len {
+                    *anim_frame -= len;
+                }
+            }
+            Clip::Ends(len) if *anim_frame >= len => {
+                *anim_frame = len - *anim_frame;
+                *self = Clip::Stopped;
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Where a jumpsquat's input came from, which decides how the jump is scaled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum JumpInput {
@@ -1821,8 +1874,20 @@ fn step_tap(current: u8, now: i32, prev: i32) -> u8 {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StatusState {
     pub status: AnyStatus,
-    /// Frames of animation elapsed, counting up by `anim_speed`.
+    /// `gobj->anim_frame`: the figatree's clock, counting up by
+    /// `anim_speed` from `frame_begin` until [`Clip`] loops or ends it
+    /// (RE-474). The decomp's thresholds read this.
     pub anim_frame: f32,
+    /// The figatree [`anim_frame`](Self::anim_frame) follows.
+    pub clip: Clip,
+    /// A `motion_id` of -2: `ftParamPlayAnim` skips the figatree, whose
+    /// clock stands still until a status plays one again.
+    pub clip_paused: bool,
+    /// The status clock: `frame_begin` plus `anim_speed` per play, past
+    /// the figatree's end (wrapped only by [`StatusTiming::looping`]). The
+    /// port's [`StatusState::animation_ended`] and the drawn clip's start
+    /// read it; the original has no such field.
+    pub clock: f32,
     pub timing: StatusTiming,
     /// Jumpsquat: where the input came from, the best upward deflection seen
     /// so far, and whether the button was released early enough to short-hop.
@@ -1893,6 +1958,9 @@ impl Default for StatusState {
         StatusState {
             status: AnyStatus::Common(Status::Wait),
             anim_frame: 0.0,
+            clip: Clip::Unknown,
+            clip_paused: false,
+            clock: 0.0,
             timing: StatusTiming::unknown(),
             jump_input: JumpInput::None,
             jump_force: 0,
@@ -1906,13 +1974,21 @@ impl Default for StatusState {
 }
 
 impl StatusState {
+    /// Puts the status `t` frames in on both clocks, as a test's shortcut
+    /// past the frames before.
+    #[cfg(test)]
+    pub fn set_time(&mut self, t: f32) {
+        self.anim_frame = t;
+        self.clock = t;
+    }
+
     /// Whether the animation has run out, when its length is known.
     ///
     /// Always `false` for a status whose length lives in unextracted animation
     /// data — such a status ends only by being interrupted.
     pub fn animation_ended(&self) -> bool {
         match self.timing.anim_length {
-            Some(len) => self.anim_frame >= len,
+            Some(len) => self.clock >= len,
             None => false,
         }
     }
@@ -3009,6 +3085,8 @@ pub fn set_donkey_special_hi(f: &mut Fighter) {
         0.0,
         StatusTiming::frames(100.0),
     );
+    // `ftDonkeySpecialHiSetStatusFlagGA` plays the first frame (RE-474).
+    play_anim_events(f);
     f.physics.jumps_used = f.attributes.jumps_max;
     if ground {
         f.physics.vel_air.y = 0.0;
@@ -3046,11 +3124,7 @@ pub fn apply_donkey_special_hi_ground_physics(f: &mut Fighter) {
 
 pub fn apply_donkey_special_hi_air_physics(f: &mut Fighter) {
     // The aerial tail's first eight-frame loop sets motion flag1 at frame 57.
-    let gravity_mul = if f.status.anim_frame >= 57.0 {
-        1.0
-    } else {
-        0.07
-    };
+    let gravity_mul = if f.status.clock >= 57.0 { 1.0 } else { 0.07 };
     physics::apply_gravity_clamp_tvel(
         &mut f.physics,
         f.attributes.gravity * gravity_mul,
@@ -3479,7 +3553,7 @@ pub fn check_special_lw(f: &mut Fighter) -> bool {
 
 fn mario_tornado_clamp(f: &mut Fighter) -> f32 {
     let mut clamp = MARIO_TORNADO_VEL_X_CLAMP;
-    if f.status.anim_frame >= MARIO_TORNADO_FINISH_FRAME {
+    if f.status.clock >= MARIO_TORNADO_FINISH_FRAME {
         f.mario_special_lw.friction -= 2.0;
         clamp += f.mario_special_lw.friction;
     }
@@ -3862,8 +3936,28 @@ impl Preserve {
 /// animation and motion script, as several setters run right after
 /// `ftMainSetStatus`.
 pub fn play_anim_events(f: &mut Fighter) {
-    f.status.anim_frame += f.status.timing.anim_speed;
+    play_anim(f);
     crate::motion::advance(f);
+}
+
+/// `ftMainPlayAnim`'s clocks: the status clock and the figatree's
+/// (`ftAnimParseDObjFigatree`). A looping [`StatusTiming`] wraps both at
+/// its own length, which also resumes a paused script.
+pub fn play_anim(f: &mut Fighter) {
+    let speed = f.status.timing.anim_speed;
+    let s = &mut f.status;
+    s.clock += speed;
+    if let (true, Some(len)) = (s.timing.looping, s.timing.anim_length) {
+        if len > 0.0 && s.clock >= len {
+            s.clock -= len;
+        }
+        s.anim_frame = s.clock;
+        return;
+    }
+    if !s.clip_paused && s.clip != Clip::Stopped {
+        s.anim_frame += speed;
+        s.clip.settle(&mut s.anim_frame);
+    }
 }
 
 /// [`set_any_status`] with preserve flags.
@@ -3985,7 +4079,21 @@ pub fn set_any_status_preserve(
                 | Status::DokanWait
         )
     );
-    f.status.anim_frame = anim_frame_begin;
+    // `lbCommonAddFighterPartsFigatree` starts a figatree of the status's
+    // own at `frame_begin`; its first parse (`AOBJ_ANIM_CHANGED`) reaches
+    // an `End` or `Loop` there already when `frame_begin` is past it
+    // (RebirthDown's). Without one the old figatree plays on (RE-474).
+    match crate::motion::clip_on_set_status(f.kind, status) {
+        ClipStart::Restart(clip) => {
+            f.status.anim_frame = anim_frame_begin;
+            f.status.clip = clip;
+            f.status.clip.settle(&mut f.status.anim_frame);
+            f.status.clip_paused = false;
+        }
+        ClipStart::Keep => f.status.clip_paused = false,
+        ClipStart::Freeze => f.status.clip_paused = true,
+    }
+    f.status.clock = anim_frame_begin;
     f.status.anim_frame_begin = anim_frame_begin;
     f.status.entry = f.status.entry.wrapping_add(1);
     f.status.timing = timing;
@@ -4795,7 +4903,7 @@ fn update_attack11_flagged(f: &mut Fighter) {
     if f.status.animation_ended() {
         return anim_end_set_wait(f);
     }
-    if f.status.anim_frame <= 2.0 && crate::grab::check_catch_attack11(f) {
+    if f.status.clock <= 2.0 && crate::grab::check_catch_attack11(f) {
         return;
     }
     // `ftCommonAttack100StartCheckInterruptCommon` cannot start the loop
@@ -4870,6 +4978,8 @@ fn set_fox_rapid_start(f: &mut Fighter) {
         0.0,
         StatusTiming::frames(8.0),
     );
+    // `ftCommonAttack100StartSetStatus` plays the first frame (RE-474).
+    play_anim_events(f);
     f.attack1.rapid_keep_loop = false;
 }
 
@@ -5623,12 +5733,7 @@ pub fn update(f: &mut Fighter) {
     // `ftMainPlayAnimEventsAll`: the animation advances and the motion
     // script runs to the new frame before `proc_update`. A looping figatree
     // wraps its clock, which also resumes a paused script.
-    f.status.anim_frame += f.status.timing.anim_speed;
-    if let (true, Some(len)) = (f.status.timing.looping, f.status.timing.anim_length) {
-        if len > 0.0 && f.status.anim_frame >= len {
-            f.status.anim_frame -= len;
-        }
-    }
+    play_anim(f);
     crate::motion::advance(f);
     // `ftMainRunUpdateColAnim`, then the hit-status timers' end.
     crate::colanim::run_update_interrupt(f);
@@ -6182,7 +6287,7 @@ fn update_extended(f: &mut Fighter) {
             // `dMarioMainMotion_0x1688`: WaitAsync(16), then SetFlag0(1).
             // The source accessory callback consumes that flag exactly once
             // and hands weapon creation to `wpManager` after fighter update.
-            if f.status.anim_frame >= MARIO_FIREBALL_SPAWN_FRAME && !f.mario_special_n.spawned {
+            if f.status.clock >= MARIO_FIREBALL_SPAWN_FRAME && !f.mario_special_n.spawned {
                 f.mario_special_n.spawned = true;
                 // `ftMarioSpecialNProcAccessory`'s `fkind` switch picks
                 // the Fireball attribute row.
@@ -6246,7 +6351,7 @@ fn update_extended(f: &mut Fighter) {
             }
         }
         AnyStatus::Mario(MarioStatus::SpecialAirLw) => {
-            if f.status.anim_frame >= MARIO_TORNADO_FINISH_FRAME {
+            if f.status.clock >= MARIO_TORNADO_FINISH_FRAME {
                 f.mario_special_lw.rise_enabled = false;
                 f.mario_special_lw.rise_exhausted = true;
             }
@@ -6284,7 +6389,7 @@ fn update_extended(f: &mut Fighter) {
             } else {
                 15.0
             };
-            if f.status.anim_frame >= spawn_frame && !f.fox_special_n.spawned {
+            if f.status.clock >= spawn_frame && !f.fox_special_n.spawned {
                 f.fox_special_n.spawned = true;
                 f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
                     kind: crate::weapon::WeaponKind::FoxBlaster,
@@ -6306,7 +6411,7 @@ fn update_extended(f: &mut Fighter) {
             } else {
                 15.0
             };
-            if f.status.anim_frame >= repeat_frame && f.button_tap().contains(N64Buttons::B) {
+            if f.status.clock >= repeat_frame && f.button_tap().contains(N64Buttons::B) {
                 set_fox_special_n(f);
                 f.stats.restart();
             } else if f.status.animation_ended() {
@@ -6460,7 +6565,7 @@ pub fn set_attack13(f: &mut Fighter, status: AnyStatus) {
 fn update_kneebend(f: &mut Fighter) {
     // `ftCommonKneeBendProcUpdate`.
     if f.status.jump_input == JumpInput::Button
-        && f.status.anim_frame <= KNEEBEND_SHORTHOP_FRAMES
+        && f.status.clock <= KNEEBEND_SHORTHOP_FRAMES
         && f.stick.jump_released
     {
         f.status.is_shorthop = true;
@@ -7116,7 +7221,7 @@ mod tests {
         hold(&mut f, 30, 0);
         set_walk(&mut f, 0.0);
         assert_eq!(f.status.status, Status::WalkMiddle);
-        f.status.anim_frame = 30.0;
+        f.status.set_time(30.0);
 
         // Hold the tilt long enough for the tap window to lapse, or pushing
         // to full stick would be a dash — see the test below.
@@ -7565,7 +7670,7 @@ mod tests {
     fn a_dash_ending_keeps_three_quarters_of_its_speed() {
         let mut f = mario();
         set_dash(&mut f);
-        f.status.anim_frame = f.anim.dash;
+        f.status.set_time(f.anim.dash);
         f.physics.vel_ground.x = 40.0;
         hold(&mut f, 0, 0);
         update(&mut f);
@@ -7634,7 +7739,7 @@ mod tests {
         f.anim.dash = 0.0;
         set_dash(&mut f);
         assert_eq!(f.status.timing.anim_length, None);
-        f.status.anim_frame = 10_000.0;
+        f.status.set_time(10_000.0);
         assert!(!f.status.animation_ended());
     }
 
@@ -7780,13 +7885,13 @@ mod tests {
             update(&mut f);
         }
         assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::Attack100Start));
-        f.status.anim_frame = 8.0;
+        f.status.set_time(8.0);
         update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::Attack100Loop));
-        f.status.anim_frame = 32.0;
+        f.status.set_time(32.0);
         update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::Attack100End));
-        f.status.anim_frame = 8.0;
+        f.status.set_time(8.0);
         update(&mut f);
         assert_eq!(f.status.status, Status::Wait);
     }
@@ -7857,7 +7962,8 @@ mod tests {
             update(&mut f);
         }
         assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::Attack100Start));
-        assert_eq!(f.status.anim_frame, 0.0);
+        // `ftCommonAttack100StartSetStatus` plays its first frame (RE-474).
+        assert_eq!(f.status.anim_frame, 1.0);
 
         // Four edges are not enough.
         let mut f = link_on_ground();
@@ -7950,21 +8056,21 @@ mod tests {
         let mut f = Fighter::new(FighterKind::Fox, 0, 3);
         f.situation = Situation::Ground;
         set_fox_special_n(&mut f);
-        f.status.anim_frame = 23.0;
+        f.status.set_time(23.0);
         update(&mut f);
         assert!(f.weapon_spawn.is_none());
-        f.status.anim_frame = 24.0;
+        f.status.set_time(24.0);
         update(&mut f);
         let shot = f.weapon_spawn.take().unwrap();
         assert_eq!(shot.kind, crate::weapon::WeaponKind::FoxBlaster);
         assert_eq!(shot.position.x, 60.0);
-        f.status.anim_frame = 27.0;
+        f.status.set_time(27.0);
         f.input.buttons = N64Buttons(N64Buttons::B);
         update(&mut f);
         assert_eq!(f.status.anim_frame, 28.0);
         f.prev_input = f.input;
         f.input.buttons = N64Buttons::default();
-        f.status.anim_frame = 28.0;
+        f.status.set_time(28.0);
         update(&mut f);
         f.prev_input = f.input;
         f.input.buttons = N64Buttons(N64Buttons::B);
@@ -8967,7 +9073,7 @@ mod tests {
     fn fireball_map_transition_keeps_the_pending_spawn_and_animation_frame() {
         let mut f = airborne_mario();
         set_mario_special_air_n(&mut f);
-        f.status.anim_frame = 15.0;
+        f.status.set_time(15.0);
         switch_mario_fireball_ground(&mut f);
         assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::SpecialN));
         assert_eq!(f.status.anim_frame, 15.0);
@@ -9006,7 +9112,7 @@ mod tests {
     fn tornado_finisher_spends_its_rise_and_reduces_horizontal_clamp() {
         let mut f = airborne_mario();
         set_mario_special_air_lw(&mut f);
-        f.status.anim_frame = MARIO_TORNADO_FINISH_FRAME;
+        f.status.set_time(MARIO_TORNADO_FINISH_FRAME);
         update(&mut f);
         assert!(f.mario_special_lw.rise_exhausted);
         assert!(!f.mario_special_lw.rise_enabled);

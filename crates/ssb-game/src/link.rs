@@ -268,8 +268,10 @@ fn set(f: &mut Fighter, status: LinkStatus, frame: f32, length: f32) {
     );
 }
 
+/// The motion script's clock passing `at` this play: the status clock,
+/// which runs on past the figatree's end (RE-474).
 fn crossed(f: &Fighter, at: f32) -> bool {
-    let frame = f.status.anim_frame;
+    let frame = f.status.clock;
     frame >= at && frame - f.status.timing.anim_speed < at
 }
 
@@ -319,7 +321,7 @@ pub fn set_special_n_get(f: &mut Fighter) {
 
 /// `ftLinkSpecialNMakeBoomerang`: TopN, with the stick read at flag 0.
 fn make_boomerang(f: &mut Fighter) {
-    if f.link.flag0_done || f.status.anim_frame < BOOMERANG_SPAWN_FRAME {
+    if f.link.flag0_done || f.status.clock < BOOMERANG_SPAWN_FRAME {
         return;
     }
     f.link.flag0_done = true;
@@ -503,6 +505,8 @@ pub fn set_attack100_start(f: &mut Fighter) {
         return;
     }
     set(f, LinkStatus::Attack100Start, 0.0, ATTACK100_START_LENGTH);
+    // `ftCommonAttack100StartSetStatus` plays the first frame (RE-474).
+    status::play_anim_events(f);
     f.link.rapid_is_anim_end = false;
     f.link.rapid_is_goto_loop = false;
 }
@@ -668,7 +672,7 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
         }
         // `ftLinkSpecialAirHiProcPhysics`.
         LinkStatus::SpecialAirHi => {
-            let gravity = if f.status.anim_frame >= SPIN_FLAG1_FRAME {
+            let gravity = if f.status.clock >= SPIN_FLAG1_FRAME {
                 attr.gravity
             } else {
                 attr.gravity * SPINATTACK_GRAVITY_MUL
@@ -1014,11 +1018,11 @@ mod tests {
             f.physics.vel_air.y,
             SPINATTACK_AIR_VEL_Y - 2.0 * SPINATTACK_GRAVITY_MUL
         );
-        f.status.anim_frame = 12.0;
+        f.status.set_time(12.0);
         let before = f.physics.vel_air.y;
         apply_air_physics(&mut f);
         assert_eq!(f.physics.vel_air.y, before - 2.0);
-        f.status.anim_frame = 99.0;
+        f.status.set_time(99.0);
         status::update(&mut f);
         assert_eq!(f.status.status, Status::FallSpecial);
         assert!(f.fall_special.is_goto_landing);
@@ -1040,7 +1044,8 @@ mod tests {
     fn rapid_jab_ends_only_after_a_full_loop_without_input() {
         let mut f = link(true);
         set_attack100_start(&mut f);
-        for _ in 0..8 {
+        // The start's setter played its first frame: 7 more (RE-474).
+        for _ in 0..7 {
             press(&mut f, 0);
             status::update(&mut f);
         }
@@ -1093,7 +1098,7 @@ mod tests {
         // A hit past frame 35 restarts the swing at 35 and never refreshes.
         let mut late = link(false);
         status::set_air_attack(&mut late, Status::AttackAirLw);
-        late.status.anim_frame = 50.0;
+        late.status.set_time(50.0);
         on_attack_hit(&mut late);
         assert_eq!(late.status.anim_frame, DAIR_REHIT_FRAME_BEGIN);
         for _ in 0..30 {

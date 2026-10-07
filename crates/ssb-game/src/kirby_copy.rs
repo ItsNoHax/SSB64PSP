@@ -366,6 +366,7 @@ pub fn set_special_n(f: &mut Fighter) -> bool {
                 K::CopyCaptainSpecialAirN
             };
             set(f, s, 0.0, StatusTiming::frames(FALCONPUNCH_LENGTH));
+            status::play_anim_events(f);
             f.kirby.copy.captain_boosted = false;
         }
         FighterKind::Yoshi => {
@@ -376,6 +377,7 @@ pub fn set_special_n(f: &mut Fighter) -> bool {
             };
             set(f, s, 0.0, StatusTiming::frames(EGG_LAY_LENGTH));
             set_egg_lay_catch_params(f);
+            status::play_anim_events(f);
         }
         FighterKind::Pikachu => {
             let s = if ground {
@@ -384,6 +386,7 @@ pub fn set_special_n(f: &mut Fighter) -> bool {
                 K::CopyPikachuSpecialAirN
             };
             set(f, s, 0.0, StatusTiming::frames(THUNDERJOLT_LENGTH));
+            status::play_anim_events(f);
             f.kirby.copy.spawned = false;
         }
         FighterKind::Ness => {
@@ -397,6 +400,7 @@ pub fn set_special_n(f: &mut Fighter) -> bool {
                 0.0,
                 StatusTiming::frames(if ground { 72.0 } else { 60.0 }),
             );
+            status::play_anim_events(f);
             f.kirby.copy.spawned = false;
         }
         FighterKind::Purin => {
@@ -407,6 +411,7 @@ pub fn set_special_n(f: &mut Fighter) -> bool {
             };
             set(f, s, 0.0, StatusTiming::frames(POUND_LENGTH));
             f.kirby.copy.purin_boosted = false;
+            status::play_anim_events(f);
         }
         _ => return false,
     }
@@ -430,13 +435,14 @@ fn fireball_status(f: &Fighter, ground: bool) -> K {
 fn set_fireball(f: &mut Fighter, ground: bool) {
     let s = fireball_status(f, ground);
     set(f, s, 0.0, StatusTiming::frames(FIREBALL_LENGTH));
+    status::play_anim_events(f);
     f.kirby.copy.spawned = false;
 }
 
 /// `ftKirbyCopyMarioSpecialNProcAccessory`: the `copy_id` switch picks the
 /// Fireball's attribute row.
 fn make_fireball(f: &mut Fighter) {
-    if f.kirby.copy.spawned || f.status.anim_frame < FIREBALL_FRAME {
+    if f.kirby.copy.spawned || f.status.clock < FIREBALL_FRAME {
         return;
     }
     f.kirby.copy.spawned = true;
@@ -475,6 +481,7 @@ fn set_blaster(f: &mut Fighter, ground: bool) {
             StatusTiming::frames(BLASTER_AIR_LENGTH),
         );
     }
+    status::play_anim_events(f);
     f.kirby.copy.spawned = false;
 }
 
@@ -489,7 +496,7 @@ fn blaster_frames(s: K) -> (f32, f32) {
 /// `ftKirbyCopyFoxSpecialNProcUpdate`: the shot leaves joint 17, 70 along
 /// its X.
 fn update_blaster(f: &mut Fighter, s: K) {
-    if !f.kirby.copy.spawned && f.status.anim_frame >= blaster_frames(s).0 {
+    if !f.kirby.copy.spawned && f.status.clock >= blaster_frames(s).0 {
         f.kirby.copy.spawned = true;
         f.weapon_spawn = Some(WeaponSpawn {
             kind: WeaponKind::FoxBlaster,
@@ -511,7 +518,7 @@ fn update_blaster(f: &mut Fighter, s: K) {
 /// `ftKirbyCopyFoxSpecialNProcInterrupt`: B after flag 1 fires again, as a
 /// new motion.
 fn interrupt_blaster(f: &mut Fighter, s: K) {
-    if f.status.anim_frame >= blaster_frames(s).1 && taps(f).contains(N64Buttons::B) {
+    if f.status.clock >= blaster_frames(s).1 && taps(f).contains(N64Buttons::B) {
         set_blaster(f, f.is_grounded());
         f.motion.set(MotionAttackId::SpecialNCopyFox);
         f.stats.restart();
@@ -543,6 +550,7 @@ fn set_charge_start(f: &mut Fighter, ground: bool) {
         0.0,
         StatusTiming::at_speed(CHARGE_START_LENGTH, speed),
     );
+    status::play_anim_events(f);
     f.kirby.copy.samus_charge_shot = false;
     f.kirby.copy.spawned = false;
     f.kirby.copy.samus_is_release = !ground || f.kirby.copy.samus_charge_level == CHARGE_MAX;
@@ -636,6 +644,7 @@ fn set_giant_punch_start(f: &mut Fighter, ground: bool) {
         K::CopyDonkeySpecialAirNStart
     };
     set(f, s, 0.0, StatusTiming::frames(GIANTPUNCH_START_LENGTH));
+    status::play_anim_events(f);
     f.kirby.copy.donkey_is_release = f.kirby.copy.donkey_charge_level == GIANTPUNCH_CHARGE_MAX;
     f.kirby.copy.donkey_is_charging = false;
     f.kirby.copy.donkey_is_cancel = false;
@@ -739,6 +748,7 @@ fn set_boomerang(f: &mut Fighter, ground: bool) {
     if empty {
         f.is_special_interrupt = true;
     }
+    status::play_anim_events(f);
 }
 
 /// `ftKirbyCopyLinkSpecialNGetSetStatus`, called by the weapon pool when a
@@ -750,12 +760,13 @@ pub fn set_boomerang_get(f: &mut Fighter) {
         K::CopyLinkSpecialAirNReturn
     };
     set(f, s, 0.0, StatusTiming::frames(BOOMERANG_GET_LENGTH));
+    status::play_anim_events(f);
 }
 
 /// `ftKirbyCopyLinkSpecialNMakeBoomerang`: joint 0, with the stick read at
 /// flag 0.
 fn make_boomerang(f: &mut Fighter) {
-    if f.kirby.copy.spawned || f.status.anim_frame < BOOMERANG_FRAME {
+    if f.kirby.copy.spawned || f.status.clock < BOOMERANG_FRAME {
         return;
     }
     f.kirby.copy.spawned = true;
@@ -794,16 +805,16 @@ fn falcon_punch_angle(stick_y: i32) -> f32 {
 /// boost, 1 from frame 40 and 2 from frame 55.
 fn falcon_punch_air_physics(f: &mut Fighter) {
     let attr = f.attributes;
-    if !f.kirby.copy.captain_boosted && f.status.anim_frame >= FALCONPUNCH_BOOST_FRAME {
+    if !f.kirby.copy.captain_boosted && f.status.clock >= FALCONPUNCH_BOOST_FRAME {
         f.kirby.copy.captain_boosted = true;
         f.kirby.copy.captain_punch_count += 1;
         let (sin, cos) = sin_cos(falcon_punch_angle(i32::from(f.stick.y)));
         f.physics.vel_air.y = sin * FALCONPUNCH_VEL_BASE;
         f.physics.vel_air.x = cos * f.facing.sign() * FALCONPUNCH_VEL_BASE;
     }
-    if f.status.anim_frame < FALCONPUNCH_BOOST_FRAME {
+    if f.status.clock < FALCONPUNCH_BOOST_FRAME {
         air_vel_friction(f);
-    } else if f.status.anim_frame < FALCONPUNCH_DRIFT_FRAME {
+    } else if f.status.clock < FALCONPUNCH_DRIFT_FRAME {
         // Kirby's version multiplies by a single, Falcon's by a double.
         f.physics.vel_air.y *= FALCONPUNCH_VEL_MUL;
         f.physics.vel_air.x *= FALCONPUNCH_VEL_MUL;
@@ -831,7 +842,7 @@ pub fn egg_lay_searching(f: &Fighter) -> bool {
     matches!(
         f.status.status,
         AnyStatus::Kirby(K::CopyYoshiSpecialN | K::CopyYoshiSpecialAirN)
-    ) && EGG_LAY_CATCH_FRAMES.contains(&f.status.anim_frame)
+    ) && EGG_LAY_CATCH_FRAMES.contains(&f.status.clock)
 }
 
 /// `ftKirbyCopyYoshiSpecialNCatchProcCatch` / `...AirNCatchProcCatch` and
@@ -845,6 +856,7 @@ pub fn egg_lay_catch(f: &mut Fighter, held: &Fighter) {
         K::CopyYoshiSpecialAirNCatch
     };
     set(f, s, frame, StatusTiming::frames(EGG_LAY_LENGTH));
+    status::play_anim_events(f);
     f.grab.capture_immune = true;
     physics::stop_all(&mut f.physics);
     f.grab.catch = Some(held.port);
@@ -860,6 +872,7 @@ fn set_egg_lay_release(f: &mut Fighter, ground: bool) {
         K::CopyYoshiSpecialAirNRelease
     };
     set(f, s, 0.0, StatusTiming::frames(EGG_LAY_RELEASE_LENGTH));
+    status::play_anim_events(f);
     f.grab.capture_immune = true;
 }
 
@@ -875,8 +888,10 @@ fn update_egg_lay_capture_vars(f: &mut Fighter) {
     }
 }
 
+/// The motion script's clock passing `at` this play: the status clock,
+/// which runs on past the figatree's end (RE-474).
 fn crossed(f: &Fighter, at: f32) -> bool {
-    let frame = f.status.anim_frame;
+    let frame = f.status.clock;
     frame >= at && frame - f.status.timing.anim_speed < at
 }
 
@@ -887,7 +902,7 @@ fn crossed(f: &Fighter, at: f32) -> bool {
 /// `ftKirbyCopyPikachuSpecialNProcAccessory`: offset the root's world
 /// position in world X/Y, rather than transforming the offsets by the joint.
 fn make_thunder_jolt(f: &mut Fighter) {
-    if f.kirby.copy.spawned || f.status.anim_frame < THUNDERJOLT_FRAME {
+    if f.kirby.copy.spawned || f.status.clock < THUNDERJOLT_FRAME {
         return;
     }
     f.kirby.copy.spawned = true;
@@ -928,7 +943,7 @@ pub fn update(f: &mut Fighter) {
         }
         K::CopyFoxSpecialN | K::CopyFoxSpecialAirN => update_blaster(f, current),
         K::CopyNessSpecialN | K::CopyNessSpecialAirN => {
-            if !f.kirby.copy.spawned && f.status.anim_frame >= 20.0 {
+            if !f.kirby.copy.spawned && f.status.clock >= 20.0 {
                 f.kirby.copy.spawned = true;
                 crate::ness::make_pk_fire(f, true);
             }
@@ -1053,7 +1068,7 @@ pub fn update(f: &mut Fighter) {
         // `ftKirbyCopyYoshiSpecialNCatchUpdateProcStatus`. Flag 1 stays set
         // once the script reaches it.
         K::CopyYoshiSpecialNCatch | K::CopyYoshiSpecialAirNCatch => {
-            let flag1 = f.status.anim_frame >= EGG_LAY_CATCH_FLAG1_FRAME;
+            let flag1 = f.status.clock >= EGG_LAY_CATCH_FLAG1_FRAME;
             if (flag1 && f.grab.catch.is_some()) || f.status.animation_ended() {
                 set_egg_lay_release(f, current == K::CopyYoshiSpecialNCatch);
             }
@@ -1368,7 +1383,7 @@ mod tests {
     }
 
     fn step(f: &mut Fighter) {
-        f.status.anim_frame += f.status.timing.anim_speed;
+        crate::status::play_anim(f);
         update(f);
     }
 
@@ -1399,8 +1414,9 @@ mod tests {
     fn copied_fireball_leaves_at_frame_16_with_luigis_row() {
         let mut f = kirby(FighterKind::Luigi, true);
         set_special_n(&mut f);
-        // `WaitAsync(16)` then `SetFlag0(1)`.
-        for _ in 0..15 {
+        // `WaitAsync(16)` then `SetFlag0(1)`; the setter played frame 1
+        // (RE-474).
+        for _ in 0..14 {
             step(&mut f);
             assert!(f.weapon_spawn.is_none());
         }
@@ -1454,7 +1470,8 @@ mod tests {
                 origin: Vec3::new(100.0, 300.0, 50.0),
             });
             set_special_n(&mut f);
-            for _ in 0..20 {
+            // The setter played frame 1 (RE-474).
+            for _ in 0..19 {
                 step(&mut f);
                 assert!(f.weapon_spawn.is_none());
             }
@@ -1482,7 +1499,7 @@ mod tests {
     fn copied_thunder_jolt_keeps_spawn_consumption_and_frame_across_map_switches() {
         let mut f = kirby(FighterKind::Pikachu, true);
         set_special_n(&mut f);
-        for _ in 0..20 {
+        for _ in 0..19 {
             step(&mut f);
         }
         // The last ground step, which `vel_air` holds on the ground
@@ -1529,7 +1546,8 @@ mod tests {
         press(&mut f, N64Buttons::B);
         step(&mut f);
         assert_eq!(status(&f), K::CopyFoxSpecialN);
-        assert_eq!(f.status.anim_frame, 0.0);
+        // The setter plays the new motion's first frame (RE-474).
+        assert_eq!(f.status.anim_frame, 1.0);
         assert_ne!(f.motion.count, first);
     }
 
@@ -1686,7 +1704,8 @@ mod tests {
         while status(&f) == K::CopyYoshiSpecialNCatch {
             step(&mut f);
         }
-        assert_eq!(f.status.anim_frame, 0.0);
+        // The release's setter plays its first frame (RE-474).
+        assert_eq!(f.status.anim_frame, 1.0);
         assert_eq!(status(&f), K::CopyYoshiSpecialNRelease);
         for _ in 0..20 {
             step(&mut f);
@@ -1705,7 +1724,8 @@ mod tests {
         assert!(on_ground_lost(&mut f));
         assert_eq!(f.situation, Situation::Air);
         assert_eq!(status(&f), K::CopyMarioSpecialAirN);
-        assert_eq!(f.status.anim_frame, 5.0);
+        // Frame 1 from the setter's play, then five (RE-474).
+        assert_eq!(f.status.anim_frame, 6.0);
         assert!(on_landing(&mut f, 0.0));
         assert_eq!(status(&f), K::CopyMarioSpecialN);
         let mut f = kirby(FighterKind::Fox, true);

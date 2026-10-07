@@ -276,8 +276,10 @@ fn set_frames(f: &mut Fighter, s: K, frame: f32, length: f32) {
     set(f, s, frame, StatusTiming::frames(length));
 }
 
+/// The motion script's clock passing `at` this play: the status clock,
+/// which runs on past the figatree's end (RE-474).
 fn crossed(f: &Fighter, at: f32) -> bool {
-    let frame = f.status.anim_frame;
+    let frame = f.status.clock;
     frame >= at && frame - f.status.timing.anim_speed < at
 }
 
@@ -379,6 +381,8 @@ pub fn set_attack100_start(f: &mut Fighter) {
         return;
     }
     set_frames(f, K::Attack100Start, 0.0, ATTACK100_START_LENGTH);
+    // `ftCommonAttack100StartSetStatus` plays the first frame (RE-474).
+    status::play_anim_events(f);
     f.kirby.rapid_is_anim_end = false;
     f.kirby.rapid_is_goto_loop = false;
 }
@@ -439,7 +443,7 @@ pub fn check_jump_aerial(f: &mut Fighter) -> bool {
     let jump = if f.physics.jumps_used == 1 {
         status::jump_input_type(f, status::KNEEBEND_STICK_MIN) != status::JumpInput::None
     } else {
-        if is_jump_aerial(f.status.status) && f.status.anim_frame < JUMPAERIAL_FLAG1_FRAME {
+        if is_jump_aerial(f.status.status) && f.status.clock < JUMPAERIAL_FLAG1_FRAME {
             return false;
         }
         // `ftCommonJumpAerialMultiGetJumpInputType`: a held stick or a held
@@ -803,6 +807,9 @@ pub fn inhale_catch(f: &mut Fighter, held: &Fighter) {
     } else {
         copy_kind(COPY[held.kind as usize].0)
     };
+    // `ftKirbySpecialNCatchEatSetStatusParam` plays a frame; the catch has
+    // no figatree of its own, so the loop's plays on (RE-474).
+    status::play_anim_events(f);
 }
 
 fn copy_kind(id: u8) -> FighterKind {
@@ -837,6 +844,8 @@ fn update_inhale_wait(f: &mut Fighter) {
             K::SpecialAirNThrow
         };
         set_inhale(f, s, 0.0, StatusTiming::frames(SPECIAL_N_THROW_LENGTH));
+        // `ftKirbySpecialNThrowSetStatus` plays its first frame (RE-474).
+        status::play_anim_events(f);
         return;
     }
     if (taps.contains(N64Buttons::B) || i32::from(f.stick.y) < VACUUM_COPY_STICK_RANGE_MIN)
@@ -849,6 +858,8 @@ fn update_inhale_wait(f: &mut Fighter) {
             K::SpecialAirNCopy
         };
         set_inhale(f, s, 0.0, StatusTiming::frames(SPECIAL_N_COPY_LENGTH));
+        // `ftKirbySpecialNCopySetStatus` plays its first frame (RE-474).
+        status::play_anim_events(f);
         return;
     }
     if grounded {
@@ -863,6 +874,8 @@ fn update_inhale_wait(f: &mut Fighter) {
                 0.0,
                 StatusTiming::frames(SPECIAL_N_TURN_LENGTH),
             );
+            // `ftKirbySpecialNTurnSetStatus` plays its first frame (RE-474).
+            status::play_anim_events(f);
         }
     }
 }
@@ -1016,7 +1029,7 @@ pub fn update(f: &mut Fighter) {
         }
         K::SpecialAirHiFall => {}
         K::SpecialHiLanding => {
-            if !f.kirby.cutter_spawned && f.status.anim_frame >= CUTTER_WAVE_FRAME {
+            if !f.kirby.cutter_spawned && f.status.clock >= CUTTER_WAVE_FRAME {
                 make_cutter(f);
             }
             if f.status.animation_ended() {
@@ -1082,12 +1095,9 @@ pub fn update(f: &mut Fighter) {
                     K::SpecialAirNEnd
                 };
                 set_inhale(f, s, 0.0, StatusTiming::frames(SPECIAL_N_END_LENGTH));
-                // `ftKirbySpecialNEndSetStatus` plays the first frame
-                // (RE-473). The aerial end's setter has the same shape but
-                // no N64 trace yet, so it keeps the old timing.
-                if s == K::SpecialNEnd {
-                    status::play_anim_events(f);
-                }
+                // `ftKirbySpecialNEndSetStatus` and `...AirNEndSetStatus`
+                // play the first frame (RE-473, RE-474).
+                status::play_anim_events(f);
             }
         }
         K::SpecialNEnd => {
@@ -1112,6 +1122,9 @@ pub fn update(f: &mut Fighter) {
                     K::SpecialAirNEat
                 };
                 set_inhale(f, s, 0.0, StatusTiming::frames(SPECIAL_N_EAT_LENGTH));
+                // `ftKirbySpecialNEatSetStatusParam` plays its first frame
+                // (RE-474).
+                status::play_anim_events(f);
             } else {
                 // The victim's `ftCommonCaptureKirbyProcPhysics` pulls it in.
                 f.kirby.inhale_dist = crate::capture_kirby::decay_dist(d);
@@ -1125,6 +1138,9 @@ pub fn update(f: &mut Fighter) {
                     K::SpecialAirNWait
                 };
                 set_inhale(f, s, 0.0, StatusTiming::unknown());
+                // `ftKirbySpecialNWaitSetStatusFromEat` plays its first
+                // frame; the wait from a turn does not (RE-474).
+                status::play_anim_events(f);
             }
         }
         K::SpecialNWait | K::SpecialAirNWait => update_inhale_wait(f),
@@ -1503,9 +1519,9 @@ mod tests {
         f.physics.jumps_used = 2;
         set_jump_aerial(&mut f);
         press(&mut f, 0, 0, 80);
-        f.status.anim_frame = 27.0;
+        f.status.set_time(27.0);
         assert!(!check_jump_aerial(&mut f));
-        f.status.anim_frame = 28.0;
+        f.status.set_time(28.0);
         assert!(check_jump_aerial(&mut f));
         assert_eq!(f.status.status, AnyStatus::Kirby(K::JumpAerialF3));
     }
@@ -1591,7 +1607,7 @@ mod tests {
         let mut f = kirby();
         f.situation = Situation::Ground;
         set_special_lw(&mut f);
-        f.status.anim_frame = 6.0;
+        f.status.set_time(6.0);
         update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialLwHold));
         // `ftMainCheckGetUpdateDamage`: 30 of the 34 health is soaked, then a
@@ -1614,7 +1630,7 @@ mod tests {
         let mut f = kirby();
         f.situation = Situation::Ground;
         set_special_lw(&mut f);
-        f.status.anim_frame = 6.0;
+        f.status.set_time(6.0);
         update(&mut f);
         for _ in 0..STONE_DURATION_MAX {
             update(&mut f);
@@ -1630,7 +1646,7 @@ mod tests {
         let mut f = kirby();
         f.situation = Situation::Ground;
         set_special_n(&mut f);
-        f.status.anim_frame = SPECIAL_N_START_LENGTH;
+        f.status.set_time(SPECIAL_N_START_LENGTH);
         update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialNLoop));
         assert!(inhale_searching(&f));
@@ -1669,6 +1685,79 @@ mod tests {
             .any(|e| matches!(e, Some(GrabEvent::KirbyEat { is_kirby: false }))));
     }
 
+    /// RE-474's N64 Training trace of the swallow: each of these setters
+    /// plays its first frame (`anim_frame` 1), and the eat, turn, copy and
+    /// spit last 19, 11, 29 and 27 frames; the wait after a turn does not
+    /// play.
+    #[test]
+    fn the_swallows_setters_play_their_first_frame_as_the_n64s() {
+        fn frames_in(f: &mut Fighter) -> u32 {
+            let start = f.status.status;
+            let mut n = 1;
+            loop {
+                press(f, 0, 0, 0);
+                status::update(f);
+                if f.status.status != start {
+                    return n;
+                }
+                n += 1;
+                assert!(n < 200, "{start:?} never ends");
+            }
+        }
+        let held = |f: &mut Fighter| {
+            f.situation = Situation::Ground;
+            f.grab.catch = Some(1);
+            f.kirby.copy_pending = FighterKind::Mario;
+        };
+        let mut f = kirby();
+        held(&mut f);
+        set_inhale(&mut f, K::SpecialNCatch, 0.0, StatusTiming::unknown());
+        f.kirby.inhale_dist = Vec2::new(0.0, 0.0);
+        press(&mut f, 0, 0, 0);
+        status::update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialNEat));
+        assert_eq!(f.status.anim_frame, 1.0);
+        assert_eq!(frames_in(&mut f), 19);
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialNWait));
+        assert_eq!(f.status.anim_frame, 1.0, "the wait from the eat plays");
+        // A turn: 11 frames, then the wait without a play.
+        press(&mut f, 0, -90, 0);
+        status::update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialNTurn));
+        assert_eq!(f.status.anim_frame, 1.0);
+        assert_eq!(frames_in(&mut f), 11);
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialNWait));
+        assert_eq!(f.status.anim_frame, 0.0, "the wait from the turn");
+        for (buttons, y, status, frames) in [
+            (N64Buttons::A, 0, K::SpecialNThrow, 27),
+            (0, -90, K::SpecialNCopy, 29),
+        ] {
+            let mut f = kirby();
+            held(&mut f);
+            set_inhale(&mut f, K::SpecialNWait, 0.0, StatusTiming::unknown());
+            press(&mut f, buttons, 0, y);
+            status::update(&mut f);
+            assert_eq!(f.status.status, AnyStatus::Kirby(status));
+            assert_eq!(f.status.anim_frame, 1.0, "{status:?}");
+            assert_eq!(frames_in(&mut f), frames, "{status:?}");
+        }
+    }
+
+    /// RE-474: the aerial Inhale's end plays its first frame as the
+    /// grounded one does (an N64 Training trace off the ledge).
+    #[test]
+    fn the_aerial_inhale_end_plays_its_first_frame() {
+        let mut f = kirby();
+        f.physics.jumps_used = 1;
+        status::set_fall(&mut f);
+        set_inhale(&mut f, K::SpecialAirNLoop, 0.0, StatusTiming::unknown());
+        f.kirby.release_lag = 0;
+        press(&mut f, 0, 0, 0);
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialAirNEnd));
+        assert_eq!(f.status.anim_frame, 1.0);
+    }
+
     #[test]
     fn copy_takes_the_ability_and_sends_the_star_backward() {
         let mut f = kirby();
@@ -1676,7 +1765,7 @@ mod tests {
         f.grab.catch = Some(1);
         f.kirby.copy_pending = FighterKind::Captain;
         set_inhale(&mut f, K::SpecialNCopy, 0.0, StatusTiming::frames(30.0));
-        f.status.anim_frame = INHALE_COPY_FRAME;
+        f.status.set_time(INHALE_COPY_FRAME);
         update(&mut f);
         assert_eq!(f.kirby.copy_id, FighterKind::Captain);
         assert!(f.grab.catch.is_none());
@@ -1693,20 +1782,20 @@ mod tests {
         let mut f = kirby();
         f.situation = Situation::Ground;
         set_special_hi(&mut f);
-        f.status.anim_frame = 22.0;
+        f.status.set_time(22.0);
         update(&mut f);
         assert!(f.is_grounded());
-        f.status.anim_frame = 23.0;
+        f.status.set_time(23.0);
         update(&mut f);
         assert!(!f.is_grounded());
         assert_eq!(f.physics.jumps_used, 6);
         f.physics.vel_air.y = -10.0;
         assert!(on_landing(&mut f, 0.0));
         assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialHiLanding));
-        f.status.anim_frame = 2.0;
+        f.status.set_time(2.0);
         update(&mut f);
         assert!(f.weapon_spawn.is_none());
-        f.status.anim_frame = 3.0;
+        f.status.set_time(3.0);
         update(&mut f);
         let spawn = f.take_weapon_spawn().expect("wave at frame 3");
         assert!(matches!(

@@ -133,6 +133,8 @@ pub fn set_attack100_start(f: &mut Fighter) {
         return;
     }
     set(f, CaptainStatus::Attack100Start, 0.0, 6.0);
+    // `ftCommonAttack100StartSetStatus` plays the first frame (RE-474).
+    status::play_anim_events(f);
     f.captain.rapid_is_anim_end = false;
     f.captain.rapid_is_goto_loop = false;
 }
@@ -145,17 +147,24 @@ fn set_attack100_loop(f: &mut Fighter) {
     f.stats.restart();
 }
 
+/// The motion script's clock passing `at` this play: the status clock,
+/// which runs on past the figatree's end (RE-474).
 fn crossed(f: &Fighter, at: f32) -> bool {
-    f.status.anim_frame >= at && f.status.anim_frame - f.status.timing.anim_speed < at
+    f.status.clock >= at && f.status.clock - f.status.timing.anim_speed < at
 }
 
+/// `ftCaptainSpecialNSetStatus`: the first frame plays before the vars'
+/// reset (RE-474).
 pub fn set_special_n(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialN, 0.0, 90.0);
+    status::play_anim_events(f);
     init_special_n(f);
 }
 
+/// `ftCaptainSpecialAirNSetStatus`.
 pub fn set_special_air_n(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialAirN, 0.0, 90.0);
+    status::play_anim_events(f);
     init_special_n(f);
 }
 
@@ -207,14 +216,19 @@ pub fn punch_effect_rotate_y(f: &Fighter) -> f32 {
 /// (`fp->joints[16]`); Kirby's copy uses joint 30.
 pub const PUNCH_EFFECT_JOINT: u8 = 16;
 
+/// `ftCaptainSpecialLwSetStatus`: `ftMainSetStatus` runs `proc_status`
+/// (the vars' reset), then the first frame plays (RE-474).
 pub fn set_special_lw(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialLw, 0.0, 85.0);
     init_special_lw(f);
+    status::play_anim_events(f);
 }
 
+/// `ftCaptainSpecialAirLwSetStatus`.
 pub fn set_special_air_lw(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialAirLw, 0.0, 50.0);
     init_special_lw(f);
+    status::play_anim_events(f);
 }
 
 /// `ftCaptainSpecialLwProcStatus`. `ftMainSetStatus` with
@@ -277,10 +291,26 @@ pub fn kick_effect_rotate(f: &Fighter) -> [f32; 3] {
 /// `fp->joints[23]`.
 pub const KICK_EFFECT_JOINT: u8 = 23;
 
+/// `ftCaptainSpecialHiSetStatus`: `proc_status` and the catch params, then
+/// the first frame plays (RE-474).
 pub fn set_special_hi(f: &mut Fighter) {
     // Grounded Falcon Dive first enters air, and spends every jump.
     f.become_airborne();
     set(f, CaptainStatus::SpecialHi, 0.0, 65.0);
+    init_special_hi(f);
+    status::play_anim_events(f);
+}
+
+/// `ftCaptainSpecialAirHiSetStatus`.
+pub fn set_special_air_hi(f: &mut Fighter) {
+    f.become_airborne();
+    set(f, CaptainStatus::SpecialAirHi, 0.0, 65.0);
+    init_special_hi(f);
+    status::play_anim_events(f);
+}
+
+/// `ftCaptainSpecialHiProcStatus` and `ftCaptainSpecialHiSetCatchParams`.
+fn init_special_hi(f: &mut Fighter) {
     f.physics.jumps_used = f.attributes.jumps_max;
     f.captain.dive_vel = Vec3::ZERO;
     f.captain.dive_turn_done = false;
@@ -291,22 +321,17 @@ pub fn set_special_hi(f: &mut Fighter) {
     f.grab.throw_desc = Some(DIVE_THROW);
 }
 
-pub fn set_special_air_hi(f: &mut Fighter) {
-    set_special_hi(f);
-    set(f, CaptainStatus::SpecialAirHi, 0.0, 65.0);
-    f.grab.is_catchstatus = true;
-    f.grab.throw_desc = Some(DIVE_THROW);
-}
-
 pub fn dive_searching(f: &Fighter) -> bool {
     matches!(
         f.status.status,
         AnyStatus::Captain(CaptainStatus::SpecialHi | CaptainStatus::SpecialAirHi)
-    ) && (13.0..45.0).contains(&f.status.anim_frame)
+    ) && (13.0..45.0).contains(&f.status.clock)
 }
 
 pub fn dive_catch(f: &mut Fighter, held: &Fighter) {
     set(f, CaptainStatus::SpecialHiCatch, 0.0, 16.0);
+    // `ftCaptainSpecialHiProcCatch` plays the first frame (RE-474).
+    status::play_anim_events(f);
     f.grab.capture_immune = true;
     f.grab.is_catchstatus = false;
     f.grab.catch = Some(held.port);
@@ -319,6 +344,8 @@ pub fn dive_catch(f: &mut Fighter, held: &Fighter) {
 
 fn dive_throw(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialHiThrow, 0.0, 60.0);
+    // `ftCaptainSpecialHiThrowSetStatus` plays the first frame (RE-474).
+    status::play_anim_events(f);
     f.grab.capture_immune = false;
     if f.grab.catch.take().is_some() {
         f.grab.send(GrabEvent::Release {
@@ -351,7 +378,7 @@ pub fn on_kick_hit(f: &mut Fighter) {
 /// Ground Falcon Kick flag 1 is set at 12 and replaced by 2 at 32.
 pub(crate) fn map_wall(f: &mut Fighter) -> bool {
     if f.status.status != AnyStatus::Captain(CaptainStatus::SpecialLw)
-        || !(12.0..32.0).contains(&f.status.anim_frame)
+        || !(12.0..32.0).contains(&f.status.clock)
         || (f.map_contacts.left_wall.is_none() && f.map_contacts.right_wall.is_none())
     {
         return false;
@@ -431,17 +458,14 @@ pub fn update(f: &mut Fighter) {
             }
         }
         CaptainStatus::SpecialLw | CaptainStatus::SpecialLwAir => {
-            if current == CaptainStatus::SpecialLw
-                && !f.is_grounded()
-                && f.status.anim_frame >= 32.0
-            {
+            if current == CaptainStatus::SpecialLw && !f.is_grounded() && f.status.clock >= 32.0 {
                 set(f, CaptainStatus::SpecialLwAir, 0.0, 30.0);
             } else if f.status.animation_ended() {
                 status::set_wait_or_fall(f);
             }
         }
         CaptainStatus::SpecialHi | CaptainStatus::SpecialAirHi => {
-            if !f.captain.dive_turn_done && f.status.anim_frame >= 13.0 {
+            if !f.captain.dive_turn_done && f.status.clock >= 13.0 {
                 f.captain.dive_turn_done = true;
                 if (f.input.stick_x as i32).abs() > DIVE_TURN_STICK_MIN {
                     f.facing = if f.input.stick_x < 0 {
@@ -502,7 +526,7 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
     };
     match current {
         CaptainStatus::SpecialAirN => {
-            if !f.captain.punch_launched && f.status.anim_frame >= 40.0 {
+            if !f.captain.punch_launched && f.status.clock >= 40.0 {
                 f.captain.punch_launched = true;
                 let y = i32::from(f.input.stick_y);
                 let magnitude = (y.abs().min(50) - 10).max(0) as f32;
@@ -514,7 +538,7 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
                 f.physics.vel_air.y = sin * PUNCH_VEL_BASE;
             }
             update_punch_effect(f);
-            match f.status.anim_frame {
+            match f.status.clock {
                 frame if frame < 40.0 => {
                     physics::apply_gravity_default(&mut f.physics, &f.attributes);
                     if !physics::check_clamp_air_vel_x_dec(
@@ -544,8 +568,8 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
         | CaptainStatus::SpecialAirLw
         | CaptainStatus::SpecialLwBound
         | CaptainStatus::SpecialHiThrow => {
-            let coast = matches!(current, CaptainStatus::SpecialLw) && f.status.anim_frame >= 36.0
-                || matches!(current, CaptainStatus::SpecialLwAir) && f.status.anim_frame >= 16.0;
+            let coast = matches!(current, CaptainStatus::SpecialLw) && f.status.clock >= 36.0
+                || matches!(current, CaptainStatus::SpecialLwAir) && f.status.clock >= 16.0;
             if coast {
                 physics::apply_gravity_default(&mut f.physics, &f.attributes);
                 if !physics::check_clamp_air_vel_x_dec(&mut f.physics, f.attributes.air_speed_max_x)
@@ -702,10 +726,10 @@ mod tests {
         let mut f = captain();
         f.become_airborne();
         set_special_air_n(&mut f);
-        f.status.anim_frame = 39.0;
+        f.status.set_time(39.0);
         apply_air_physics(&mut f);
         assert!(!f.captain.punch_launched);
-        f.status.anim_frame = 40.0;
+        f.status.set_time(40.0);
         apply_air_physics(&mut f);
         assert!(f.captain.punch_launched);
         assert!((f.physics.vel_air.x - 65.0 * 0.92).abs() < 0.001);
@@ -803,11 +827,11 @@ mod tests {
         set_special_lw(&mut f);
         f.become_airborne();
         f.root_motion.delta.z = 20.0;
-        f.status.anim_frame = 35.0;
+        f.status.set_time(35.0);
         apply_air_physics(&mut f);
         assert_eq!(f.physics.vel_air.x, 20.0);
         f.root_motion.delta.z = 100.0;
-        f.status.anim_frame = 36.0;
+        f.status.set_time(36.0);
         apply_air_physics(&mut f);
         assert!(f.physics.vel_air.x < 20.0);
     }

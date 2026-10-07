@@ -986,6 +986,58 @@ def file_frames(path):
     return lengths[0]
 
 
+
+def script_clip(words):
+    """`(frames, loops)` for one joint script: the frames until its `End`
+    or its first `Loop`, and whether it loops. A `Loop` jumps back by a
+    word offset; every fighter loop jumps to the script's start, which this
+    requires, so the later passes last as long as the first."""
+    total, i, frame_at = 0, 0, {}
+    while True:
+        if i >= len(words):
+            raise ValueError("ran off the end without an End command")
+        frame_at[i] = total
+        word = words[i]
+        op, flags, toggle = word >> 11, (word >> 1) & 0x3FF, word & 1
+        i += 1
+        if op == OP_END:
+            return total, False
+        if op == OP_LOOP:
+            off = words[i] - 0x10000 if words[i] & 0x8000 else words[i]
+            if frame_at.get(i + off // 2) != 0:
+                raise ValueError("a loop that does not return to frame 0")
+            return total, True
+        if op == OP_TRANSLATE_INTERP:
+            i += 1
+            continue
+        payload = 0
+        if toggle:
+            payload, i = words[i], i + 1
+        if op in BLOCK_OPS:
+            total += payload
+        i += VALUES_PER_TRACK.get(op, 0) * bin(flags).count("1")
+
+
+def file_clip(path):
+    """[`script_clip`] of the animation, requiring every joint to agree."""
+    src = COMMENT_RE.sub(" ", open(path).read())
+    clips = []
+    for m in ARRAY_RE.finditer(src):
+        end = src.index("};", m.end())
+        clips.append(script_clip(expand(src[m.end():end])))
+    if not clips:
+        table = re.search(r"^u16\s*\*\s*d\w+_ptrs\d+\s*\[\d+\]\s*=\s*\{(.*?)\};", src, re.M | re.S)
+        if table:
+            for name in re.findall(r"\b(d\w+_script\d+_\d+)\b", table.group(1)):
+                m = re.search(r"^u16\s+" + name + r"\s*\[\d+\]\s*=\s*\{", src, re.M)
+                end = src.index("};", m.end())
+                clips.append(script_clip(expand(src[m.end():end])))
+    if not clips:
+        raise ValueError(f"{path}: no joint scripts")
+    if len(set(clips)) != 1:
+        raise ValueError(f"{path}: joints disagree: {sorted(set(clips))}")
+    return clips[0]
+
 # ── the three pairing records ───────────────────────────────────────────
 
 def motion_enum(refs):

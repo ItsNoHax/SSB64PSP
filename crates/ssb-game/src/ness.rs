@@ -97,6 +97,9 @@ fn timing(s: N) -> StatusTiming {
 fn set(f: &mut Fighter, s: N) {
     f.physics.is_fastfall = false;
     status::set_any_status(f, AnyStatus::Ness(s), 0.0, timing(s));
+    // Every one of Ness's special setters plays the first frame
+    // (`ftnessspecial*.c`; RE-474's N64 Training traces).
+    status::play_anim_events(f);
 }
 fn switch(f: &mut Fighter, s: N) {
     f.physics.is_fastfall = false;
@@ -430,7 +433,7 @@ pub fn update(f: &mut Fighter) {
             }
         }
         N::SpecialLwHit | N::SpecialAirLwHit => {
-            if f.status.anim_frame >= 14.0 {
+            if f.status.clock >= 14.0 {
                 set(
                     f,
                     if is_grounded(s) {
@@ -448,7 +451,7 @@ pub fn update(f: &mut Fighter) {
             }
         }
         N::SpecialN | N::SpecialAirN => {
-            if !f.ness.spawned && f.status.anim_frame >= 20.0 {
+            if !f.ness.spawned && f.status.clock >= 20.0 {
                 f.ness.spawned = true;
                 make_pk_fire(f, false);
             }

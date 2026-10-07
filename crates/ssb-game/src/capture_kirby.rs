@@ -98,6 +98,8 @@ pub fn capture(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     f.facing = holder.facing.flipped();
     f.become_airborne();
     status::set_status(f, Status::CaptureKirby, 0.0, StatusTiming::unknown());
+    // `ftCommonCaptureKirbyProcCapture` plays the first frame (RE-474).
+    status::play_anim_events(f);
     f.kirby_capture = CaptureKirbyState::default();
     f.grab.capture_immune = true;
     physics::stop_all(&mut f.physics);

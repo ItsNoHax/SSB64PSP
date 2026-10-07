@@ -141,8 +141,10 @@ fn set(f: &mut Fighter, status: YoshiStatus, frame: f32, length: f32) {
     );
 }
 
+/// The motion script's clock passing `at` this play: the status clock,
+/// which runs on past the figatree's end (RE-474).
 fn crossed(f: &Fighter, at: f32) -> bool {
-    let frame = f.status.anim_frame;
+    let frame = f.status.clock;
     frame >= at && frame - f.status.timing.anim_speed < at
 }
 
@@ -208,7 +210,7 @@ pub fn egg_lay_searching(f: &Fighter) -> bool {
     matches!(
         f.status.status,
         AnyStatus::Yoshi(YoshiStatus::SpecialN | YoshiStatus::SpecialAirN)
-    ) && EGG_LAY_CATCH_FRAMES.contains(&f.status.anim_frame)
+    ) && EGG_LAY_CATCH_FRAMES.contains(&f.status.clock)
 }
 
 /// `ftYoshiSpecialNCatchProcCatch` / `...AirNCatchProcCatch` and
@@ -439,7 +441,7 @@ pub fn update(f: &mut Fighter) {
         // `ftYoshiSpecialNCatchUpdateProcStatus`. Flag 1 stays set once the
         // script reaches it.
         YoshiStatus::SpecialNCatch | YoshiStatus::SpecialAirNCatch => {
-            let flag1 = f.status.anim_frame >= EGG_LAY_CATCH_FLAG1_FRAME;
+            let flag1 = f.status.clock >= EGG_LAY_CATCH_FLAG1_FRAME;
             if (flag1 && f.grab.catch.is_some()) || f.status.animation_ended() {
                 set_release(f);
             }
@@ -735,9 +737,11 @@ mod tests {
             AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop)
         );
         assert_eq!(f.physics.vel_air.y, YOSHIBOMB_VEL_Y_CLAMP);
-        assert_eq!(f.status.anim_frame, 30.0);
+        // The start's figatree ends at 30, so the loop takes `anim_frame` 0
+        // and holds it (the N64 Training trace, RE-474).
+        assert_eq!(f.status.anim_frame, 0.0);
         status::update(&mut f);
-        assert_eq!(f.status.anim_frame, 30.0, "the loop holds its frame");
+        assert_eq!(f.status.anim_frame, 0.0, "the loop holds its frame");
         apply_air_physics(&mut f);
         assert_eq!(f.physics.vel_air.y, YOSHIBOMB_VEL_Y_CLAMP);
         assert!(on_landing(&mut f, 0.0));
@@ -758,7 +762,7 @@ mod tests {
         let mut f = yoshi(false);
         set_special_air_lw_start(&mut f);
         f.physics.vel_air = Vec3::new(-50.0, -200.0, 0.0);
-        f.status.anim_frame = 27.0;
+        f.status.set_time(27.0);
         status::update(&mut f);
         assert_eq!(f.physics.vel_air.x, -YOSHIBOMB_VEL_X_CLAMP);
         assert_eq!(f.physics.vel_air.y, -200.0);

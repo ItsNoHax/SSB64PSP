@@ -1151,10 +1151,26 @@ fn capture_captain(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     f.grab.captain_no_update = f.is_grounded();
     f.facing = holder.facing.flipped();
     f.become_airborne();
-    status::set_status(f, Status::CaptureCaptain, 0.0, StatusTiming::unknown());
+    // `ftCommonCaptureCaptainProcCapture`: `FTCOMMON_CAPTURECAPTAIN_FRAME_BEGIN`
+    // (4) at `..._ANIM_SPEED` (0), then a play; the N64 holds `anim_frame`
+    // 4 through the catch (RE-474).
+    status::set_status(
+        f,
+        Status::CaptureCaptain,
+        CAPTURECAPTAIN_FRAME_BEGIN,
+        StatusTiming {
+            anim_length: None,
+            anim_speed: 0.0,
+            looping: false,
+        },
+    );
+    status::play_anim_events(f);
     f.grab.capture_immune = true;
     physics::stop_all(&mut f.physics);
 }
+
+/// `FTCOMMON_CAPTURECAPTAIN_FRAME_BEGIN`.
+const CAPTURECAPTAIN_FRAME_BEGIN: f32 = 4.0;
 
 fn update_capture_captain(f: &mut Fighter, holder: Holder) {
     if f.grab.captain_no_update {
@@ -1482,9 +1498,11 @@ fn walk_length(status: AnyStatus) -> f32 {
     }
 }
 
-/// `ftDonkeyThrowFWalkSetStatusParam` @ 0x8014D68C.
+/// `ftDonkeyThrowFWalkSetStatusParam` @ 0x8014D68C, which plays the
+/// first frame (RE-474).
 fn set_donkey_throwf_walk(f: &mut Fighter, frame: f32) {
     set_donkey(f, walk_status(f.stick.x), frame, StatusTiming::unknown());
+    status::play_anim_events(f);
 }
 
 /// `ftDonkeyThrowFFSetStatus` @ 0x8014DF14.
@@ -1496,6 +1514,8 @@ fn set_donkey_throwff(f: &mut Fighter, is_turn: bool) {
         DonkeyStatus::ThrowAirFF
     };
     set_donkey_keep_fastfall(f, status, StatusTiming::frames(DONKEY_THROWFF_LENGTH));
+    // The setter plays the first frame before the turn (RE-474).
+    status::play_anim_events(f);
     f.grab.throw_desc = Some(DONKEY_THROW_FF);
     f.grab.capture_immune = true;
     f.grab.throwff_turn_tics = 0;
@@ -1566,6 +1586,8 @@ fn check_donkey_turn(f: &mut Fighter) -> bool {
             0.0,
             StatusTiming::frames(DONKEY_THROWF_TURN_LENGTH),
         );
+        // `ftDonkeyThrowFTurnSetStatus` plays the first frame (RE-474).
+        status::play_anim_events(f);
         return true;
     }
     false
@@ -1859,7 +1881,7 @@ pub fn update(f: &mut Fighter) -> bool {
         // `landing_anim_frame <= 4.0F` after incrementing it, which is true on
         // the first update: the cargo landing lasts one frame.
         AnyStatus::Donkey(DonkeyStatus::ThrowFLanding) => {
-            if f.status.anim_frame <= 4.0 {
+            if f.status.clock <= 4.0 {
                 set_donkey_throwf_wait(f);
             }
         }
@@ -2454,7 +2476,7 @@ fn catch_touches(catcher: &Fighter, other: &Fighter, rules: crate::team::TeamRul
         && !dive
         && !inhale
         && (catcher.status.status != Status::Catch
-            || !catch_coll_frames(catcher.kind).contains(&catcher.status.anim_frame))
+            || !catch_coll_frames(catcher.kind).contains(&catcher.status.clock))
     {
         return false;
     }
@@ -2469,7 +2491,7 @@ fn catch_touches(catcher: &Fighter, other: &Fighter, rules: crate::team::TeamRul
     } else if copy_egg_lay {
         core::slice::from_ref(&crate::kirby_copy::EGG_LAY_CATCH)
     } else if dive {
-        if catcher.status.anim_frame < 14.0 {
+        if catcher.status.clock < 14.0 {
             &crate::captain::DIVE_CATCH
         } else {
             &crate::captain::DIVE_CATCH[..1]
@@ -2503,6 +2525,12 @@ mod tests {
         victim.situation = Situation::Ground;
         capture_captain(&mut victim, catcher.port, holder);
         assert_eq!(victim.status.status, Status::CaptureCaptain);
+        // The N64 holds `anim_frame` 4 through the catch (RE-474).
+        assert_eq!(victim.status.anim_frame, 4.0);
+        for _ in 0..10 {
+            status::play_anim(&mut victim);
+        }
+        assert_eq!(victim.status.anim_frame, 4.0);
         assert!(!victim.is_grounded());
         update_capture_captain(&mut victim, holder);
         assert_eq!(victim.pos.x, 500.0);
@@ -2787,7 +2815,7 @@ mod tests {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let dummy = grounded(FighterKind::Mario, 1, 400.0);
         set_catch(&mut mario);
-        mario.status.anim_frame = 6.0;
+        mario.status.set_time(6.0);
         assert!(!search_catch(&mut mario, &dummy, TeamRules::FREE_FOR_ALL));
         mario.joint_transforms[28] = Some(JointTransform {
             axes: [
@@ -2806,7 +2834,7 @@ mod tests {
         let far = grounded(FighterKind::Mario, 1, 160.0);
         let near = grounded(FighterKind::Mario, 2, 140.0);
         set_catch(&mut mario);
-        mario.status.anim_frame = 6.0;
+        mario.status.set_time(6.0);
         assert!(can_reach(&mario, &far) && can_reach(&mario, &near));
         assert_eq!(
             nearest_catch(&mario, [&far, &near], TeamRules::FREE_FOR_ALL),
@@ -2833,7 +2861,7 @@ mod tests {
         near.team = 0;
         far.team = 1;
         set_catch(&mut mario);
-        mario.status.anim_frame = 6.0;
+        mario.status.set_time(6.0);
         assert_eq!(
             nearest_catch(&mario, [&near, &far], TeamRules::TEAMS),
             Some(2)
@@ -3349,6 +3377,76 @@ mod tests {
         );
         assert_eq!(dummy.status.status, Status::DamageFlyN);
         assert_eq!(dummy.damage, 16);
+    }
+
+    /// RE-474's N64 Training trace of the cargo: the walk, the turn and
+    /// the throw each start on `anim_frame` 1; the turn lasts 11 frames
+    /// and the grounded throw 39, while the wait does not play.
+    #[test]
+    fn donkey_cargo_setters_play_their_first_frame_as_the_n64s() {
+        fn cargo() -> (Fighter, Fighter) {
+            let mut dk = grounded(FighterKind::Donkey, 0, 0.0);
+            let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+            grab(&mut dk, &mut dummy);
+            to_catch_wait(&mut dk, &mut dummy);
+            press(&mut dk, N64Buttons::A, 0);
+            frame(&mut dk, &mut dummy);
+            for _ in 0..30 {
+                press(&mut dk, 0, 0);
+                frame(&mut dk, &mut dummy);
+                if dk.status.status == AnyStatus::Donkey(DonkeyStatus::ThrowFWait) {
+                    break;
+                }
+            }
+            assert_eq!(dk.status.anim_frame, 0.0, "the wait does not play");
+            for _ in 0..3 {
+                press(&mut dk, 0, 0);
+                frame(&mut dk, &mut dummy);
+            }
+            (dk, dummy)
+        }
+        fn frames_in(dk: &mut Fighter, dummy: &mut Fighter) -> u32 {
+            let start = dk.status.status;
+            let mut n = 1;
+            loop {
+                press(dk, 0, 0);
+                frame(dk, dummy);
+                if dk.status.status != start {
+                    return n;
+                }
+                n += 1;
+                assert!(n < 100, "{start:?} never ends");
+            }
+        }
+        let (mut dk, mut dummy) = cargo();
+        press(&mut dk, 0, 40);
+        frame(&mut dk, &mut dummy);
+        assert!(matches!(
+            dk.status.status,
+            AnyStatus::Donkey(
+                DonkeyStatus::ThrowFWalkSlow
+                    | DonkeyStatus::ThrowFWalkMiddle
+                    | DonkeyStatus::ThrowFWalkFast
+            )
+        ));
+        assert_eq!(dk.status.anim_frame, 1.0, "the walk");
+
+        let (mut dk, mut dummy) = cargo();
+        press(&mut dk, 0, -100);
+        frame(&mut dk, &mut dummy);
+        assert_eq!(
+            dk.status.status,
+            AnyStatus::Donkey(DonkeyStatus::ThrowFTurn)
+        );
+        assert_eq!(dk.status.anim_frame, 1.0, "the turn");
+        assert_eq!(frames_in(&mut dk, &mut dummy), 11);
+
+        let (mut dk, mut dummy) = cargo();
+        press(&mut dk, N64Buttons::A, 0);
+        frame(&mut dk, &mut dummy);
+        assert_eq!(dk.status.status, AnyStatus::Donkey(DonkeyStatus::ThrowFF));
+        assert_eq!(dk.status.anim_frame, 1.0, "the throw");
+        assert_eq!(frames_in(&mut dk, &mut dummy), 39);
     }
 
     #[test]

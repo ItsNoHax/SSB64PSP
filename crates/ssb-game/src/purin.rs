@@ -125,7 +125,7 @@ pub fn check_jump_aerial(f: &mut Fighter) -> bool {
     let jump = if f.physics.jumps_used == 1 {
         status::jump_input_type(f, status::KNEEBEND_STICK_MIN) != status::JumpInput::None
     } else {
-        if is_jump_aerial(f.status.status) && f.status.anim_frame < JUMPAERIAL_FLAG1_FRAME {
+        if is_jump_aerial(f.status.status) && f.status.clock < JUMPAERIAL_FLAG1_FRAME {
             return false;
         }
         // `ftCommonJumpAerialMultiGetJumpInputType`: a held stick or a held

@@ -1449,7 +1449,7 @@ pub(crate) fn allows_cliff(f: &Fighter) -> bool {
                     s,
                     status::YoshiStatus::SpecialLwStart | status::YoshiStatus::SpecialAirLwStart
                 ) && f.physics.vel_air.y <= 0.0
-                    && f.status.anim_frame
+                    && f.status.clock
                         >= if s == status::YoshiStatus::SpecialLwStart {
                             30.0
                         } else {

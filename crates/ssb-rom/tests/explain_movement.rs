@@ -830,7 +830,7 @@ impl Posed {
         let first_node = pack.object(self.object).map_or(0, |o| o.first_node);
         let status = self.fighter.status;
         let slot = status.status.anim_slot() as u32;
-        let setter_played = status.anim_frame > status.anim_frame_begin;
+        let setter_played = status.clock > status.anim_frame_begin;
         let speed = ssb_game::status::clip_speed(&self.fighter);
         let mut restarted = false;
         if self.started != Some((status.status, status.entry)) {
@@ -840,9 +840,9 @@ impl Posed {
                 self.skeleton.speed = ssb_game::status::clip_speed(&self.fighter);
             } else if let Some(anim) = pack.fighter_anim(kind, slot) {
                 let frame = if setter_played {
-                    status.anim_frame - speed
+                    status.clock - speed
                 } else {
-                    status.anim_frame
+                    status.clock
                 };
                 self.skeleton.start(pack, &anim, frame, speed);
                 self.skeleton.lead_xrotn =

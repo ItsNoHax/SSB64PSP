@@ -51,9 +51,25 @@ pub struct MotionDesc {
     /// Frames the figatree runs for; `0` without one, `0xFFFF` when it
     /// loops.
     pub anim_length: u16,
+    /// The figatree's clock (RE-474): its frames to the `End` or the first
+    /// `Loop` command, with [`CLIP_LOOPS`] set when it loops, or
+    /// [`CLIP_UNKNOWN`] without a figatree the generator could walk.
+    pub clip: u16,
     /// `FTMotionDesc.anim_desc` (`FTANIM_FLAG_*`).
     pub anim_flags: u32,
 }
+
+/// [`MotionDesc::clip`]'s loop bit: the figatree ends in `Loop` (back to
+/// its first frame) rather than `End`.
+pub const CLIP_LOOPS: u16 = 0x8000;
+
+/// [`MotionDesc::clip`] without a figatree file (`anim_file_id` 0, or a
+/// shield pose): `ftMainSetStatus` leaves the playing figatree alone.
+pub const CLIP_NONE: u16 = 0xFFFE;
+
+/// [`MotionDesc::clip`] for a figatree the generator could not walk: the
+/// figatree clock then counts on, as the status clock does.
+pub const CLIP_UNKNOWN: u16 = 0xFFFF;
 
 /// `FTAnimDesc.flags.is_use_transn_joint`.
 pub const ANIM_FLAG_TRANSN: u32 = 0x4000_0000;
@@ -491,6 +507,39 @@ pub fn motion_id(kind: FighterKind, status: AnyStatus) -> Option<usize> {
 pub fn motion_desc(kind: FighterKind, status: AnyStatus) -> Option<MotionDesc> {
     let table = fighter_scripts(kind)?;
     table.motions.get(motion_id(kind, status)?).copied()
+}
+
+/// What `ftMainSetStatus` does to the figatree and its clock
+/// (`gobj->anim_frame`) when it enters `status` (RE-474).
+pub fn clip_on_set_status(kind: FighterKind, status: AnyStatus) -> crate::status::ClipStart {
+    use crate::status::{Clip, ClipStart};
+    let Some(table) = fighter_scripts(kind) else {
+        return ClipStart::Restart(Clip::Unknown);
+    };
+    let id = status.id();
+    let motion = if id < SPECIAL_STATUS_START {
+        COMMON_STATUS_MOTION.get(usize::from(id)).copied()
+    } else {
+        table
+            .special_status_motion
+            .get(usize::from(id - SPECIAL_STATUS_START))
+            .copied()
+    };
+    match motion {
+        None => ClipStart::Restart(Clip::Unknown),
+        // `motion_id` -1: the figatree plays on; -2: `ftParamPlayAnim`
+        // skips the figatrees, so it stands still.
+        Some(-1) => ClipStart::Keep,
+        Some(m) if m < 0 => ClipStart::Freeze,
+        Some(m) => match table.motions.get(m as usize).map(|d| d.clip) {
+            None | Some(CLIP_UNKNOWN) => ClipStart::Restart(Clip::Unknown),
+            Some(CLIP_NONE) => ClipStart::Keep,
+            Some(c) if c & CLIP_LOOPS != 0 => {
+                ClipStart::Restart(Clip::Loops(f32::from(c & !CLIP_LOOPS)))
+            }
+            Some(c) => ClipStart::Restart(Clip::Ends(f32::from(c))),
+        },
+    }
 }
 
 /// The status's figatree length in frames, for statuses that end with their

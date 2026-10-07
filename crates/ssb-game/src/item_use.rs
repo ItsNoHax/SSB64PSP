@@ -547,7 +547,7 @@ fn hammer_update(f: &mut Fighter, mut s: Status) {
         && f.stick.tap_y < status::PASS_BUFFER_TICS_MAX
         && f.floor.is_some_and(|s| s.passable())
     {
-        let frame = f.status.anim_frame;
+        let (frame, clock, clip) = (f.status.anim_frame, f.status.clock, f.status.clip);
         let line = f.floor.map(|s| s.line);
         hammer_fall(f);
         // `ftCommonPassSetStatusParam` keeps HammerWalk's animation and hits.
@@ -555,6 +555,8 @@ fn hammer_update(f: &mut Fighter, mut s: Status) {
         f.physics.vel_air.y = 0.0;
         f.stick.tap_y = status::STICKBUFFER_MAX;
         f.status.anim_frame = frame;
+        f.status.clock = clock;
+        f.status.clip = clip;
         if f.colanim.id != crate::colanim::ColAnimId::FIGHTER_HAMMER {
             crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_HAMMER, 0);
         }

@@ -564,7 +564,7 @@ fn guard_slide_and_escape_buffers_select_the_source_throw_statuses() {
     let mut pool = ItemPool::default();
     pull_bomb(&mut pool, &mut link);
     status::set_dash(&mut link);
-    link.status.anim_frame = 7.0;
+    link.status.set_time(7.0);
     status::set_guard_on(&mut link);
     assert_eq!(link.guard.slide_tics, 13);
     assert!(!crate::item_throw::check_guard(&mut link));

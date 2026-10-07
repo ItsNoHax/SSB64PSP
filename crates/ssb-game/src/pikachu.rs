@@ -82,6 +82,9 @@ fn set(f: &mut Fighter, s: P, frame: f32) {
         timing.anim_speed = 0.0;
     }
     status::set_any_status(f, AnyStatus::Pikachu(s), frame, timing);
+    // Every one of Pikachu's special setters plays the first frame
+    // (`ftpikachuspecial*.c`; RE-474's N64 Training traces).
+    status::play_anim_events(f);
 }
 /// A ground/air switch: every one of Pikachu's special switches keeps the
 /// hit status (`FTSTATUS_PRESERVE_HITSTATUS`, `ftpikachuspecial*.c`) and
@@ -259,7 +262,7 @@ pub fn update(f: &mut Fighter) {
         // The battle entry runs in `crate::appear`.
         P::AppearR | P::AppearL => {}
         P::SpecialN | P::SpecialAirN => {
-            if !f.pikachu.spawned && f.status.anim_frame >= 21.0 {
+            if !f.pikachu.spawned && f.status.clock >= 21.0 {
                 f.pikachu.spawned = true;
                 f.weapon_spawn = Some(WeaponSpawn {
                     kind: WeaponKind::PikachuThunderJolt,
@@ -284,7 +287,7 @@ pub fn update(f: &mut Fighter) {
             }
         }
         P::SpecialLwStart | P::SpecialAirLwStart => {
-            if f.status.anim_frame >= 24.0 && !f.pikachu.spawned {
+            if f.status.clock >= 24.0 && !f.pikachu.spawned {
                 make_thunder(f);
             }
             if f.status.animation_ended() {
@@ -320,7 +323,7 @@ pub fn update(f: &mut Fighter) {
                 if !ground {
                     f.physics.vel_air.y = 20.0;
                 }
-            } else if f.pikachu.thunder_destroyed || f.status.anim_frame >= 60.0 {
+            } else if f.pikachu.thunder_destroyed || f.status.clock >= 60.0 {
                 set(
                     f,
                     if ground {
@@ -333,7 +336,7 @@ pub fn update(f: &mut Fighter) {
             }
         }
         P::SpecialLwHit | P::SpecialAirLwHit => {
-            if f.status.anim_frame >= 30.0 {
+            if f.status.clock >= 30.0 {
                 set(
                     f,
                     if ground {
@@ -365,7 +368,7 @@ pub fn update(f: &mut Fighter) {
             }
         }
         P::SpecialHiEnd | P::SpecialAirHiEnd => {
-            if f.pikachu.zip_flag1 == 0 && f.status.anim_frame >= 9.0 {
+            if f.pikachu.zip_flag1 == 0 && f.status.clock >= 9.0 {
                 f.pikachu.zip_flag1 = 1;
             }
             if f.pikachu.zip_flag1 == 1 {
@@ -591,7 +594,8 @@ mod tests {
         });
         f.facing = Facing::Left;
         set_special_n(&mut f);
-        steps(&mut f, 20);
+        // The setter played frame 1 (RE-474).
+        steps(&mut f, 19);
         assert!(f.weapon_spawn.is_none());
         assert!(on_ground_lost(&mut f));
         assert_eq!(f.status.anim_frame, 20.0);
@@ -649,7 +653,8 @@ mod tests {
         assert_eq!(f.status.status, AnyStatus::Pikachu(P::SpecialAirHiEnd));
         close(f.physics.vel_air.x, 66.0);
         input(&mut f, 0, 0, 80);
-        steps(&mut f, 8);
+        // The end's setter played frame 1, so flag 1 at 9 is 8 on (RE-474).
+        steps(&mut f, 7);
         assert!(!f.pikachu.subsequent_zip);
         status::update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Pikachu(P::SpecialAirHi));
@@ -763,7 +768,8 @@ mod tests {
             origin: Vec3::new(123.0, 456.0, 78.0),
         });
         set_special_lw(&mut f);
-        steps(&mut f, 23);
+        // The setter played frame 1 (RE-474).
+        steps(&mut f, 22);
         assert!(f.weapon_spawn.is_none());
         status::update(&mut f);
         let spawn = f.take_weapon_spawn().expect("Thunder at frame 24");
@@ -782,7 +788,8 @@ mod tests {
         assert_eq!(f.status.status, AnyStatus::Pikachu(P::SpecialAirLwHit));
         assert!(f.pikachu.thunder_collide);
         close(f.physics.vel_air.y, 20.0);
-        steps(&mut f, 29);
+        // The hit lasts 29 frames with its setter's play, as the N64's.
+        steps(&mut f, 28);
         assert_eq!(f.status.status, AnyStatus::Pikachu(P::SpecialAirLwHit));
         status::update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Pikachu(P::SpecialAirLwEnd));

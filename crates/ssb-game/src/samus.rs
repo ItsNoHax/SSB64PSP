@@ -288,7 +288,7 @@ pub fn set_special_air_lw(f: &mut Fighter) {
 
 /// `ftSamusSpecialLwMakeBomb`: TopN plus 60 up.
 fn make_bomb(f: &mut Fighter) {
-    if f.samus.bomb_spawned || f.status.anim_frame < BOMB_SPAWN_FRAME {
+    if f.samus.bomb_spawned || f.status.clock < BOMB_SPAWN_FRAME {
         return;
     }
     f.samus.bomb_spawned = true;
@@ -361,7 +361,7 @@ pub fn update(f: &mut Fighter) {
             }
         }
         SamusStatus::SpecialHi => {
-            if f.samus.takeoff_pending && f.status.anim_frame >= SCREW_TAKEOFF_FRAME {
+            if f.samus.takeoff_pending && f.status.clock >= SCREW_TAKEOFF_FRAME {
                 f.samus.takeoff_pending = false;
                 air_jump_max(f);
                 // `SetFlag1(1)`, consumed by this frame's physics.
@@ -372,7 +372,7 @@ pub fn update(f: &mut Fighter) {
         SamusStatus::SpecialAirHi => end_screw_attack(f),
         SamusStatus::SpecialLw => {
             make_bomb(f);
-            if f.samus.takeoff_pending && f.status.anim_frame >= BOMB_HOP_FRAME {
+            if f.samus.takeoff_pending && f.status.clock >= BOMB_HOP_FRAME {
                 f.samus.takeoff_pending = false;
                 air_jump_max(f);
             }
