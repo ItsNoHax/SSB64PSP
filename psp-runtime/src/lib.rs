@@ -14,6 +14,7 @@ pub mod ending;
 pub mod gu;
 pub mod input;
 pub mod meshdraw;
+pub mod memops;
 pub mod movie;
 pub mod particles;
 pub mod profile;

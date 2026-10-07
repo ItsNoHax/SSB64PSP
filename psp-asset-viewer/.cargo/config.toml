@@ -1,0 +1,10 @@
+# Links `ssb_psp_runtime::memops`' word-at-a-time `memcpy`, `memmove` and
+# `memset` in place of the `psp` crate's byte loops (RE-471). Here rather
+# than in a build script: `cargo psp` names the EBOOT after the binary once
+# a package has more than one executable target, and a build script is one.
+[target.mipsel-sony-psp]
+rustflags = [
+    "-C", "link-arg=--wrap=memcpy",
+    "-C", "link-arg=--wrap=memmove",
+    "-C", "link-arg=--wrap=memset",
+]

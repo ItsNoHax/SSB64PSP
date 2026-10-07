@@ -110,10 +110,9 @@ jobs:
       - name: Build EBOOT.PBP
         working-directory: psp-asset-viewer
         # rust-psp's linker emits benign abicalls warnings, so -D warnings
-        # would fail the build for no reason here.
-        env:
-          RUSTFLAGS: ""
-        run: cargo +${{ env.PSP_NIGHTLY }} psp --release
+        # would fail the build for no reason here. Unset rather than empty:
+        # any RUSTFLAGS hides `.cargo/config.toml`'s link arguments (RE-471).
+        run: env -u RUSTFLAGS cargo +${{ env.PSP_NIGHTLY }} psp --release
 
       - name: Verify the artifact is a real PBP
         working-directory: psp-asset-viewer
