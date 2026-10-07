@@ -2219,29 +2219,52 @@ unsafe fn draw_node_mesh(
             ssb_rom::scene::Mat4(node.world).inverse_affine(),
         ) {
             // Arena memory remains alive until the GE finishes this frame.
-            // Only meshes borrowing RSP slots need a transient buffer.
+            // Only meshes borrowing RSP slots need a transient buffer. It is
+            // list memory, written through the uncached alias: each vertex
+            // is written once, from the pack's copy, and never read back.
             let dynamic = sys::sceGuGetMemory(verts.len() as i32) as *mut u8;
-            core::ptr::copy_nonoverlapping(verts.as_ptr(), dynamic, verts.len());
-            for (index, binding) in bindings.chunks_exact(8).enumerate() {
-                let source_node = u16::from_le_bytes([binding[0], binding[1]]);
-                if source_node == u16::MAX {
-                    continue;
-                }
-                let source = if source_node == u16::MAX - 1 {
-                    ssb_rom::scene::Mat4::IDENTITY
+            let count = verts.len() / ssb_rom::pack::VERTEX_SIZE;
+            let mut bound = bindings.chunks_exact(8);
+            // One source joint's matrices serve its run of vertices.
+            let mut pose: Option<(u16, ssb_rom::pack::CachedVertexPose)> = None;
+            for index in 0..count {
+                let at = index * ssb_rom::pack::VERTEX_SIZE;
+                let from = verts.as_ptr().add(at) as *const PackedVertex;
+                // Packed meshes are word-aligned; an aligned read is two
+                // loads per word fewer than an unaligned one.
+                let source_vertex = if from as usize % core::mem::align_of::<PackedVertex>() == 0 {
+                    from.read()
                 } else {
-                    posed.get(source_node as usize).copied().unwrap_or_else(|| {
-                        pack.node(object.first_node + u32::from(source_node))
-                            .map_or(ssb_rom::scene::Mat4::IDENTITY, |n| {
-                                ssb_rom::scene::Mat4(n.world)
-                            })
-                    })
+                    from.read_unaligned()
                 };
-                let vertex = dynamic.add(index * ssb_rom::pack::VERTEX_SIZE) as *mut PackedVertex;
-                vertex.write(ssb_rom::pack::pose_cached_vertex(
-                    *vertex, binding, inverse, source,
-                ));
+                let vertex = match bound.next() {
+                    Some(binding) if u16::from_le_bytes([binding[0], binding[1]]) != u16::MAX => {
+                        let source_node = u16::from_le_bytes([binding[0], binding[1]]);
+                        let poser = match &pose {
+                            Some((node, poser)) if *node == source_node => poser,
+                            _ => {
+                                let source = if source_node == u16::MAX - 1 {
+                                    ssb_rom::scene::Mat4::IDENTITY
+                                } else {
+                                    posed.get(source_node as usize).copied().unwrap_or_else(|| {
+                                        pack.node(object.first_node + u32::from(source_node))
+                                            .map_or(ssb_rom::scene::Mat4::IDENTITY, |n| {
+                                                ssb_rom::scene::Mat4(n.world)
+                                            })
+                                    })
+                                };
+                                &pose.insert((source_node, ssb_rom::pack::CachedVertexPose::new(inverse, source))).1
+                            }
+                        };
+                        poser.pose(source_vertex, binding)
+                    }
+                    _ => source_vertex,
+                };
+                (dynamic.add(at) as *mut PackedVertex).write(vertex);
             }
+            // A partial vertex at the end, as the copy carried it.
+            let tail = count * ssb_rom::pack::VERTEX_SIZE;
+            core::ptr::copy_nonoverlapping(verts.as_ptr().add(tail), dynamic.add(tail), verts.len() - tail);
             return draw_mesh_vertices(
                 pack,
                 mesh,

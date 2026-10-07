@@ -503,37 +503,61 @@ pub struct PackedVertex {
 /// Reconstruct a borrowed cache slot in the drawing joint's animated space.
 /// UVs and resolved material colour stay attached to the slot.
 pub fn pose_cached_vertex(
-    mut vertex: PackedVertex,
+    vertex: PackedVertex,
     binding: &[u8],
     inverse_current: crate::scene::Mat4,
     source: crate::scene::Mat4,
 ) -> PackedVertex {
-    let pos = [2, 4, 6].map(|i| i16::from_le_bytes([binding[i], binding[i + 1]]) as f32);
-    let mut relative = inverse_current.mul(&source);
-    // GE i16 positions are normalized by 32768, whereas packed/posed joint
-    // matrices already have normalized translations. Work in source units.
-    for c in &mut relative.0[12..15] {
-        *c *= MODEL_SCALE;
-    }
-    let round = |c: f32| (if c < 0.0 { c - 0.5 } else { c + 0.5 }) as i16;
-    let p = relative.transform_point(pos).map(round);
-    [vertex.x, vertex.y, vertex.z] = p;
-    // Normals were loaded under the same source matrix as the positions.
-    // Express their inverse-transpose transform in the destination frame so
-    // its GE lighting matrix reconstructs the source joint's lighting.
-    if let Some(inv) = relative.inverse_affine() {
-        let n = [vertex.nx as f32, vertex.ny as f32, vertex.nz as f32];
-        let transformed =
-            [0, 4, 8].map(|i| inv.0[i] * n[0] + inv.0[i + 1] * n[1] + inv.0[i + 2] * n[2]);
-        let length = libm::sqrtf(transformed.iter().map(|v| v * v).sum());
-        let original = libm::sqrtf(n.iter().map(|v| v * v).sum());
-        if length > 0.0 {
-            let n = transformed
-                .map(|v| round(v * original / length).clamp(i8::MIN as i16, i8::MAX as i16) as i8);
-            [vertex.nx, vertex.ny, vertex.nz] = n;
+    CachedVertexPose::new(inverse_current, source).pose(vertex, binding)
+}
+
+/// [`pose_cached_vertex`]'s matrices for one source joint: the same for
+/// every vertex the joint lends a mesh, so a caller posing many builds
+/// them once per joint (RE-471).
+#[derive(Debug, Clone, Copy)]
+pub struct CachedVertexPose {
+    relative: crate::scene::Mat4,
+    normals: Option<crate::scene::Mat4>,
+}
+
+impl CachedVertexPose {
+    pub fn new(inverse_current: crate::scene::Mat4, source: crate::scene::Mat4) -> Self {
+        let mut relative = inverse_current.mul(&source);
+        // GE i16 positions are normalized by 32768, whereas packed/posed joint
+        // matrices already have normalized translations. Work in source units.
+        for c in &mut relative.0[12..15] {
+            *c *= MODEL_SCALE;
+        }
+        Self {
+            relative,
+            normals: relative.inverse_affine(),
         }
     }
-    vertex
+
+    /// One vertex, as [`pose_cached_vertex`] poses it.
+    pub fn pose(&self, mut vertex: PackedVertex, binding: &[u8]) -> PackedVertex {
+        let pos = [2, 4, 6].map(|i| i16::from_le_bytes([binding[i], binding[i + 1]]) as f32);
+        let round = |c: f32| (if c < 0.0 { c - 0.5 } else { c + 0.5 }) as i16;
+        let p = self.relative.transform_point(pos).map(round);
+        [vertex.x, vertex.y, vertex.z] = p;
+        // Normals were loaded under the same source matrix as the positions.
+        // Express their inverse-transpose transform in the destination frame so
+        // its GE lighting matrix reconstructs the source joint's lighting.
+        if let Some(inv) = self.normals {
+            let n = [vertex.nx as f32, vertex.ny as f32, vertex.nz as f32];
+            let transformed =
+                [0, 4, 8].map(|i| inv.0[i] * n[0] + inv.0[i + 1] * n[1] + inv.0[i + 2] * n[2]);
+            let length = libm::sqrtf(transformed.iter().map(|v| v * v).sum());
+            let original = libm::sqrtf(n.iter().map(|v| v * v).sum());
+            if length > 0.0 {
+                let n = transformed.map(|v| {
+                    round(v * original / length).clamp(i8::MIN as i16, i8::MAX as i16) as i8
+                });
+                [vertex.nx, vertex.ny, vertex.nz] = n;
+            }
+        }
+        vertex
+    }
 }
 
 /// Material flags, kept as a bitfield so a primitive's state fits in one word.
