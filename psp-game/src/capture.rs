@@ -45,9 +45,11 @@ pub fn stage_override() -> Option<u8> {
 
 /// A `hold` line: a `profile` build keeps drawing its frozen tick rather
 /// than exiting, for the sampling profiler (RE-471).
+#[cfg_attr(not(feature = "headless_capture"), allow(dead_code))]
 static HOLD: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 /// Whether a `hold` line asked to keep drawing the frozen tick.
+#[cfg_attr(not(feature = "headless_capture"), allow(dead_code))]
 pub fn hold() -> bool {
     HOLD.load(core::sync::atomic::Ordering::Relaxed)
 }
