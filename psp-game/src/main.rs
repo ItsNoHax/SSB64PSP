@@ -4797,6 +4797,10 @@ unsafe fn run() -> ! {
     let (backup, save) = save::boot(loaded.as_ref().ok().map(|(_, p)| *p), capture_spec);
     let pack_buf = loaded.as_ref().ok().map(|(b, _)| b);
     let opened = pack_buf.map(|b| Pack::open(b.as_slice()));
+    // At boot, not in the first frame that looks a sprite up (RE-471).
+    if let Some(Ok(p)) = &opened {
+        p.build_indexes();
+    }
     // Which flat colour `draw_training` falls back to when there is no scene
     // to draw -- distinguishes *why* (open/read failure s.vs. a rejected
     // header) without needing `sceFont` text, extending the pixel-provable

@@ -4038,6 +4038,27 @@ impl<'a> Pack<'a> {
     /// sorted prefix and a scan of the unsorted rows after it. The special
     /// rows ([`AnimDesc::STAGE`] and the rest) are looked up every frame, and
     /// a scan of all 6,311 rows cost a PSP about 4 ms a call (RE-470).
+    /// The unsorted rows after the sorted prefix, by key then table order.
+    fn anim_tail(&self) -> &alloc::vec::Vec<u32> {
+        self.anim_tail.get_or_init(|| {
+            let mut rows: alloc::vec::Vec<u32> = (self.anim_sorted..self.anim_count).collect();
+            shell_sort_by_key(&mut rows, |i| (self.anim_key(i), i));
+            rows
+        })
+    }
+
+    /// Builds the lookup indexes the first sprite or special-animation
+    /// lookup would otherwise build, so a game can pay for them while it
+    /// loads rather than in the frame that first needs them: 2 ms of a
+    /// battle's first frame under PPSSPP (RE-471). Lookups return the same
+    /// either way.
+    pub fn build_indexes(&self) {
+        let _ = self.sprite_index();
+        if self.anim_count - self.anim_sorted >= ANIM_TAIL_INDEX_MIN {
+            let _ = self.anim_tail();
+        }
+    }
+
     fn anim_row(&self, fighter: u32, slot: u32, last: bool) -> Option<AnimDesc> {
         let key = (fighter, slot);
         // Lower bound, or upper bound for the last row.
@@ -4068,11 +4089,7 @@ impl<'a> Pack<'a> {
             return row.and_then(|i| self.anim(i));
         }
         let tail = || {
-            let rows = self.anim_tail.get_or_init(|| {
-                let mut rows: alloc::vec::Vec<u32> = (self.anim_sorted..self.anim_count).collect();
-                shell_sort_by_key(&mut rows, |i| (self.anim_key(i), i));
-                rows
-            });
+            let rows = self.anim_tail();
             // The rows keyed `key`, in table order.
             let start = rows.partition_point(|&i| self.anim_key(i) < key);
             let end = start + rows[start..].partition_point(|&i| self.anim_key(i) == key);
