@@ -173,6 +173,20 @@ hash, and pack hash in `docs/reverse-engineering.md`. PSPLink FPU traps may
 expose invalid or speculative floating-point code. Treat trap as correctness
 bug; map and fix cause, never disable trapping. `RE-201` is working example.
 
+### Shipped EBOOTs and symbols
+
+`psp-game`'s release profile has no debug info (RE-475: a 4 MB EBOOT
+instead of 31 MB). Debug info does not change the code, so to map an
+exception from a shipped EBOOT, build the same commit once more with
+`CARGO_PROFILE_RELEASE_DEBUG=true` and run `psp-addr2line` on that build's
+PRX.
+
+From the XMB the game gets about 4 MB less user memory than under PSPLink
+(RE-475). A `memory_ballast` build reads `ballast.txt` (free bytes,
+decimal) beside the EBOOT and holds the rest at boot, so a PSPLink or
+PPSSPP run sees an XMB launch's budget; `boot_log` writes boot and scene
+loads to `ms0:/PSP/GAME/ssb64/boot.log` without PSPLink.
+
 ### Native frame evidence
 
 ```bash

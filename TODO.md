@@ -59,7 +59,7 @@ Deferred by user instruction.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| PSP-1000 support | MEMSIZE=1 is ignored; the full pack requires 64 MiB mode (see docs/memory.md). Design a reduced or per-scene pack | RE-288, RE-426 |
+| PSP-1000 support | MEMSIZE=1 is ignored. Scenes now load per file (D-046); RE-475 measures the heaviest scenes against a PSP-1000-sized budget under PPSSPP. Not run on a PSP-1000 | RE-288, RE-426, RE-475 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
 | Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object, RE-326 three v35 stages and RE-341 the six `psp-game` scenes, not the viewer matrix | RE-320, RE-326, RE-341 |
 | Hand-input gameplay checks on hardware | R shield and grab, live throws, a held fighter hit by a Fireball and hand costume picks need a person at the controller | RE-339, RE-341 |
@@ -75,6 +75,14 @@ Deferred by user instruction.
 
 - Use `ssb_rom::reloc_link` from a runtime loader; its layout is checked against the original (RE-341, [D-011](docs/decisions/D-011.md))
 - Wire `ssb_engine::memory` arenas and pools into `psp-runtime` ([docs/memory.md](docs/memory.md))
+- Scene loads (RE-475) read in the frame the scene starts: 0.1–0.6 s on a
+  PSP-2000. Read the next scene's files on a thread during the outgoing
+  scene's fade, as the N64's loads hide behind its wipes; that needs both
+  scenes' files held at once
+- Scene file lists miss a few files that load on demand (select and
+  results figatrees, the opening room's random fighters, a Kirby copy's
+  absent kind): one read each, counted in the capture logs' `demand=`
+  (RE-475)
 - VFPU math, after `P5` profiling ([D-032](docs/decisions/D-032.md))
 - `sceAudio` mixer thread (`P4`)
 - Debug HUD uses `sceGuDebugFlush`: software-rasterizer-only in PPSSPP (RE-014) and faults on real hardware (RE-202); replace with GE geometry

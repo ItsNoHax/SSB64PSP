@@ -201,9 +201,8 @@ order in one `--job` directory and delete its `ssb64.sav` afterwards:
 | `saveplayers` (85) | `vsplayers` after loading that save: Ness's portrait instead of "?" |
 
 The options and data menus (RE-461) start in their scene (the last two on
-Data, so the capture loads one scene's sprite pack after another) with the
-default backup and neutral sticks; each needs `ssb64-menus.pak` staged beside the
-pack (`run-ppsspp-headless.sh` does):
+Data, so the capture loads one scene's files after another, RE-475) with
+the default backup and neutral sticks:
 
 | Spec | Captured display |
 |---|---|

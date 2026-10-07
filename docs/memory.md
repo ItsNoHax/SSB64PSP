@@ -8,20 +8,30 @@
 | Video memory | shared | 2 MiB VRAM | 2 MiB VRAM |
 | Fast scratch | 4 KiB TMEM | 16 KiB scratchpad | 16 KiB scratchpad |
 
-- Current pack size and production ELF totals live in
-  [STATUS.md](../STATUS.md), with measurements in RE-435. The twelve
-  5551 wallpapers occupy 3 MiB (RE-419). The full pack needs
-  `PARAM.SFO` `MEMSIZE=1` (64 MiB process mode). v34 ran on a PSP-2000 via
-  PSPLink (RE-322), v33 before it (RE-321); the earlier stock v32 pack loaded on a PSP-2000 via PSPLink (RE-320); the mode was also
-  confirmed with earlier packs (RE-255, RE-260).
-- PSP-1000 ignores `MEMSIZE=1`; the full pack does not fit (RE-288). Support
-  needs a per-scene or reduced pack.
-- The options and data menus' sprites are not resident: `ssb64-menus.pak`
-  holds one small pack per scene (13 scenes, 56 KB to 2.7 MB), read when
-  the scene starts and freed when it ends (RE-461, RE-462). The opening
-  adds a pack per scene and `OpeningModels` (1.6 MB, the objects of files
-  0x35–0x4B), held from the room to the title; the opening's lowest free
-  memory is 2.57 MB, in the Jungle scene (RE-467).
+- Scenes load their archive files (RE-475, [D-046](decisions/D-046.md)).
+  The pack (v107) holds a shared region and then each ROM archive file's
+  bytes; the game reads the header, tables and shared region at boot
+  (about 5.5 MB) and each scene's files, with their extern closure, when
+  the scene starts (`ssb_psp_runtime::scene_files`). Every scene measured
+  under PPSSPP uses at most about 17 MB in all (the VS results, which hold
+  all twelve fighters; four-player battles about 16 MB); the whole pack
+  needed 48 to 51 MB.
+  `MEMSIZE=1` stays set. The menus' and the opening's own content is in
+  the pack; `ssb64-menus.pak` and the opening models pack (RE-461, RE-467)
+  are gone.
+- From the XMB, a PSP-2000 with 6.61 ARK gives the game 47,891,712 free
+  bytes at `psp_main`, 4 MiB less than under PSPLink (RE-475). The
+  `memory_ballast` feature reproduces any such budget under PSPLink or
+  PPSSPP.
+- `psp`'s allocator takes each Rust allocation from
+  `sceKernelAllocPartitionMemory` and its allocation-error handler spins
+  forever: an allocation failure is a black screen and a hung HOME exit.
+  Large loads therefore allocate fallibly and end on
+  `ssb_psp_runtime::memory::fatal`'s text screen.
+- PSP-1000 ignores `MEMSIZE=1` (RE-288). With about 18 MB free at boot
+  (PPSSPP, `memory_ballast`), the heaviest scenes measured fit with
+  2–4 MB left except the VS results, which end on the out-of-memory
+  screen (RE-475).
 - The stage `MaterialAnimator` allocates one 448-byte joint per
   `MatAnimDesc` on the heap (103, 46 KiB; RE-322).
 - The game's main thread has a 512 KiB stack (`module_with_stack!`,
