@@ -84,9 +84,7 @@ impl<'a, 'b> Assets<'a, 'b> {
     }
 
     fn effect_blob(pack: &'a Pack<'b>, slot: u32) -> Option<&'a [u8]> {
-        let a = (0..pack.anim_count())
-            .filter_map(|i| pack.anim(i))
-            .find(|a| a.fighter == ssb_rom::pack::AnimDesc::EFFECT && a.slot == slot)?;
+        let a = pack.effect_anim(slot)?;
         pack.anim_script(&a)
     }
 

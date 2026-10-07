@@ -19,9 +19,7 @@ use ssb_rom::title as t;
 /// The title's file as the scene pack carries it.
 fn script_data<'a>(scene: &Pack<'a>) -> Option<&'a [u8]> {
     let slot = ssb_rom::opening::blob_slot(t::FILE);
-    let a = (0..scene.anim_count())
-        .filter_map(|i| scene.anim(i))
-        .find(|a| a.fighter == ssb_rom::pack::AnimDesc::EFFECT && a.slot == slot)?;
+    let a = scene.effect_anim(slot)?;
     scene.anim_script(&a)
 }
 

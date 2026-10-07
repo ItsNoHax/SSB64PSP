@@ -805,8 +805,8 @@ impl GroundObject {
     }
 
     fn parent(&self, pack: &Pack<'_>, i: usize) -> Option<usize> {
-        pack.node(self.object.first_node + i as u32)
-            .and_then(|n| n.parent.checked_sub(self.object.first_node))
+        pack.node_parent(self.object.first_node + i as u32)
+            .and_then(|parent| parent.checked_sub(self.object.first_node))
             .map(|p| p as usize)
             .filter(|&p| p < i)
     }

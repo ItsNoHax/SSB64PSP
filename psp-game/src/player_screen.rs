@@ -6,14 +6,12 @@ use ssb_psp_runtime::{
     scene,
 };
 use ssb_rom::{
-    pack::{AnimDesc, Pack},
+    pack::Pack,
     player_interface as asset,
 };
 
 pub fn frame_image(p: &Pack<'_>) -> Option<ssb_rom::texture::Rgba8> {
-    let a = (0..p.anim_count())
-        .filter_map(|i| p.anim(i))
-        .find(|a| a.fighter == AnimDesc::EFFECT && a.slot == asset::ARROWS_SLOT + 1)?;
+    let a = p.effect_anim(asset::ARROWS_SLOT + 1)?;
     Some(asset::frame(p.anim_script(&a)?)?.image)
 }
 
@@ -109,9 +107,7 @@ pub unsafe fn arrows(
     let Some(obj) = scene::object_keyed(p, (asset::FILE, asset::ARROWS)) else {
         return;
     };
-    let Some(anim) = (0..p.anim_count())
-        .filter_map(|i| p.anim(i))
-        .find(|a| a.fighter == AnimDesc::EFFECT && a.slot == asset::ARROWS_SLOT)
+    let Some(anim) = p.effect_anim(asset::ARROWS_SLOT)
     else {
         return;
     };

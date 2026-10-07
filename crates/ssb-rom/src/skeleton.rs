@@ -318,16 +318,20 @@ impl Skeleton {
             from_trs(t, p.rotate, p.scale)
         });
         for i in 0..count {
-            let Some(node) = pack.node(object.first_node + i as u32) else {
+            let global = object.first_node + i as u32;
+            let Some(parent) = pack.node_parent(global) else {
                 out[i] = Mat4::IDENTITY;
                 continue;
             };
-            let rest = JointPose {
-                rotate: node.rest_rotate,
-                translate: node.rest_translate,
-                scale: node.rest_scale,
+            // The rest pose is read only for a node no joint drives.
+            let rest;
+            let pose = match self.pose_for(global) {
+                Some(pose) => pose,
+                None => {
+                    rest = pack.node_rest(global).unwrap_or_default();
+                    &rest
+                }
             };
-            let pose = self.pose_for(object.first_node + i as u32).unwrap_or(&rest);
             // Into the same normalised space the packed matrices use.
             let t = [
                 pose.translate[0] / MODEL_SCALE,
@@ -338,7 +342,7 @@ impl Skeleton {
             // Parents always precede children in a `DObjDesc` array — a child
             // references `array_dobjs[depth - 1]`, which an earlier entry must
             // have filled — so the parent's matrix is already final.
-            out[i] = match node.parent {
+            out[i] = match parent {
                 NodeDesc::NO_PARENT => lead.map_or(local, |lead| lead.mul(&local)),
                 p if p >= object.first_node && (p - object.first_node) < i as u32 => {
                     out[(p - object.first_node) as usize].mul(&local)
@@ -597,7 +601,7 @@ impl StageAnimator {
             if self.flags(ancestor) & 2 != 0 {
                 return false;
             }
-            let Some(parent) = pack.node(ancestor).map(|n| n.parent) else {
+            let Some(parent) = pack.node_parent(ancestor) else {
                 return true;
             };
             if parent == u32::MAX {

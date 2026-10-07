@@ -90,6 +90,12 @@ pub fn sample_3point_addressed(
     let c10 = fetch_addressed(img, s0 + 1, t0, address_s, address_t);
     let c01 = fetch_addressed(img, s0, t0 + 1, address_s, address_t);
     let c11 = fetch_addressed(img, s0 + 1, t0 + 1, address_s, address_t);
+    // Four equal texels blend to themselves on either triangle: the
+    // weighted differences are zero and `0x10 >> 5` is zero. Most of a
+    // magnifier mask's quads are (RE-470).
+    if c00 == c10 && c00 == c01 && c00 == c11 {
+        return c00.map(|c| c as u8);
+    }
 
     // `upper = (sfrac + tfrac) & 0x20` in the real hardware: the lower/
     // right triangle (anchored at the diagonal texel c11) is picked once

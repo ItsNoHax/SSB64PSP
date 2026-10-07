@@ -3466,6 +3466,33 @@ pub enum PackError {
     OutOfBounds,
 }
 
+/// Byte offsets of the pack's tables (`Pack::open`).
+#[derive(Debug, Clone, Copy, Default)]
+struct TableOffsets {
+    mesh_table: usize,
+    prim_table: usize,
+    texture_table: usize,
+    object_table: usize,
+    node_table: usize,
+    stage_table: usize,
+    anim_table: usize,
+    anim_joint_table: usize,
+    mat_anim_table: usize,
+    mat_anim_palette_table: usize,
+    costume_override_table: usize,
+    particle_bank_table: usize,
+    particle_script_table: usize,
+    particle_texture_table: usize,
+    lod_blend_table: usize,
+    sprite_table: usize,
+    texture_part_table: usize,
+    fighter_model_table: usize,
+    line_table: usize,
+    coll_vertex_table: usize,
+    point_table: usize,
+    fighter_table: usize,
+}
+
 /// Zero-copy view over a loaded pack.
 ///
 /// Borrows the buffer; every accessor returns slices into it, so the renderer
@@ -3499,13 +3526,59 @@ pub struct Pack<'a> {
     /// How many leading animation rows are in `(fighter, slot)` order, so
     /// [`Pack::fighter_anim`] can binary-search them (RE-469).
     anim_sorted: u32,
+    tables: TableOffsets,
+    /// The unsorted animation rows after `anim_sorted`, by `(fighter, slot,
+    /// row)`: built on the first special-row lookup (RE-470).
+    anim_tail: core::cell::OnceCell<alloc::vec::Vec<u32>>,
+    /// The sprite table's lookup index, built on the first lookup of a pack
+    /// with [`SPRITE_INDEX_MIN`] sprites or more (RE-470).
+    sprite_index: core::cell::OnceCell<SpriteIndex>,
 }
 
+/// Unsorted animation tails at least this long are indexed (`anim_tail`).
+const ANIM_TAIL_INDEX_MIN: u32 = 64;
+
+/// Sprite tables at least this long get a [`SpriteIndex`]; shorter ones (the
+/// per-scene menu packs, opened every frame) are scanned.
+const SPRITE_INDEX_MIN: u32 = 64;
+
+/// Row numbers of a pack's sprite table, for lookups that agree with a scan
+/// in table order. The battle HUD looks up a dozen sprites a frame, and a
+/// scan of the main pack's 903 rows cost a PSP about 0.2 ms a lookup.
+struct SpriteIndex {
+    /// Every row, by `(source_file, source_offset, row)`.
+    by_source: alloc::vec::Vec<u16>,
+    /// The rows with a role ([`SpriteDesc::ROLE_NONE`] excluded), in table
+    /// order.
+    roles: alloc::vec::Vec<u16>,
+}
+
+/// Sorts `rows` by `key`, a total order. A shell sort rather than
+/// `sort_unstable_by_key`, whose two instantiations here added 35 KB of code
+/// for indexes built once (RE-470).
+fn shell_sort_by_key<T: Copy, K: Ord>(rows: &mut [T], key: impl Fn(T) -> K) {
+    const GAPS: [usize; 8] = [701, 301, 132, 57, 23, 10, 4, 1];
+    for gap in GAPS {
+        for i in gap..rows.len() {
+            let row = rows[i];
+            let k = key(row);
+            let mut j = i;
+            while j >= gap && key(rows[j - gap]) > k {
+                rows[j] = rows[j - gap];
+                j -= gap;
+            }
+            rows[j] = row;
+        }
+    }
+}
+
+// One bounds check per word rather than one per byte: these reads are in
+// every per-frame table lookup (RE-470).
 fn u32_at(d: &[u8], at: usize) -> u32 {
-    u32::from_le_bytes([d[at], d[at + 1], d[at + 2], d[at + 3]])
+    u32::from_le_bytes(d[at..at + 4].try_into().unwrap())
 }
 fn u16_at(d: &[u8], at: usize) -> u16 {
-    u16::from_le_bytes([d[at], d[at + 1]])
+    u16::from_le_bytes(d[at..at + 2].try_into().unwrap())
 }
 fn i16_at(d: &[u8], at: usize) -> i16 {
     u16_at(d, at) as i16
@@ -3617,6 +3690,33 @@ impl<'a> Pack<'a> {
             blob_offset,
             blob_len,
             anim_sorted: 0,
+            tables: TableOffsets::default(),
+            anim_tail: core::cell::OnceCell::new(),
+            sprite_index: core::cell::OnceCell::new(),
+        };
+        pack.tables = TableOffsets {
+            mesh_table: pack.compute_mesh_table(),
+            prim_table: pack.compute_prim_table(),
+            texture_table: pack.compute_texture_table(),
+            object_table: pack.compute_object_table(),
+            node_table: pack.compute_node_table(),
+            stage_table: pack.compute_stage_table(),
+            anim_table: pack.compute_anim_table(),
+            anim_joint_table: pack.compute_anim_joint_table(),
+            mat_anim_table: pack.compute_mat_anim_table(),
+            mat_anim_palette_table: pack.compute_mat_anim_palette_table(),
+            costume_override_table: pack.compute_costume_override_table(),
+            particle_bank_table: pack.compute_particle_bank_table(),
+            particle_script_table: pack.compute_particle_script_table(),
+            particle_texture_table: pack.compute_particle_texture_table(),
+            lod_blend_table: pack.compute_lod_blend_table(),
+            sprite_table: pack.compute_sprite_table(),
+            texture_part_table: pack.compute_texture_part_table(),
+            fighter_model_table: pack.compute_fighter_model_table(),
+            line_table: pack.compute_line_table(),
+            coll_vertex_table: pack.compute_coll_vertex_table(),
+            point_table: pack.compute_point_table(),
+            fighter_table: pack.compute_fighter_table(),
         };
         pack.anim_sorted = pack.anim_sorted_prefix();
         Ok(pack)
@@ -3703,61 +3803,133 @@ impl<'a> Pack<'a> {
         self.prim_count
     }
 
+    // Table offsets, computed once in `open` (RE-470): each is the sum of
+    // every earlier table's size, and the accessors read one every call.
     fn mesh_table(&self) -> usize {
-        Header::SIZE
+        self.tables.mesh_table
     }
     fn prim_table(&self) -> usize {
-        self.mesh_table() + self.mesh_count as usize * MeshDesc::SIZE
+        self.tables.prim_table
     }
     fn texture_table(&self) -> usize {
-        self.prim_table() + self.prim_count as usize * PrimDesc::SIZE
+        self.tables.texture_table
     }
     fn object_table(&self) -> usize {
-        self.texture_table() + self.texture_count as usize * TextureDesc::SIZE
+        self.tables.object_table
     }
     fn node_table(&self) -> usize {
-        self.object_table() + self.object_count as usize * ObjectDesc::SIZE
+        self.tables.node_table
     }
     fn stage_table(&self) -> usize {
-        self.node_table() + self.node_count as usize * NodeDesc::SIZE
+        self.tables.stage_table
     }
     fn anim_table(&self) -> usize {
-        self.fighter_table() + self.fighter_count as usize * FighterDesc::SIZE
+        self.tables.anim_table
     }
     fn anim_joint_table(&self) -> usize {
-        self.anim_table() + self.anim_count as usize * AnimDesc::SIZE
+        self.tables.anim_joint_table
     }
     fn mat_anim_table(&self) -> usize {
-        self.anim_joint_table() + self.anim_joint_count as usize * AnimJoint::SIZE
+        self.tables.mat_anim_table
     }
     fn mat_anim_palette_table(&self) -> usize {
-        self.mat_anim_table() + self.mat_anim_count as usize * MatAnimDesc::SIZE
+        self.tables.mat_anim_palette_table
     }
     fn costume_override_table(&self) -> usize {
-        self.mat_anim_palette_table() + self.mat_anim_palette_count as usize * MatAnimPalette::SIZE
+        self.tables.costume_override_table
     }
     fn particle_bank_table(&self) -> usize {
-        self.costume_override_table() + self.costume_override_count as usize * CostumeOverride::SIZE
+        self.tables.particle_bank_table
     }
     fn particle_script_table(&self) -> usize {
-        self.particle_bank_table() + self.particle_bank_count as usize * ParticleBankDesc::SIZE
+        self.tables.particle_script_table
     }
     fn particle_texture_table(&self) -> usize {
-        self.particle_script_table()
-            + self.particle_script_count as usize * ParticleScriptDesc::SIZE
+        self.tables.particle_texture_table
     }
     fn lod_blend_table(&self) -> usize {
-        self.particle_texture_table()
-            + self.particle_texture_count as usize * ParticleTextureDesc::SIZE
+        self.tables.lod_blend_table
     }
     fn sprite_table(&self) -> usize {
-        self.lod_blend_table() + self.lod_blend_count as usize * LodBlendDesc::SIZE
+        self.tables.sprite_table
     }
     fn texture_part_table(&self) -> usize {
-        self.sprite_table() + self.sprite_count as usize * SpriteDesc::SIZE
+        self.tables.texture_part_table
     }
     fn fighter_model_table(&self) -> usize {
-        self.texture_part_table() + self.texture_part_count as usize * TexturePartDesc::SIZE
+        self.tables.fighter_model_table
+    }
+    fn line_table(&self) -> usize {
+        self.tables.line_table
+    }
+    fn coll_vertex_table(&self) -> usize {
+        self.tables.coll_vertex_table
+    }
+    fn point_table(&self) -> usize {
+        self.tables.point_table
+    }
+    fn fighter_table(&self) -> usize {
+        self.tables.fighter_table
+    }
+
+    fn compute_mesh_table(&self) -> usize {
+        Header::SIZE
+    }
+    fn compute_prim_table(&self) -> usize {
+        self.compute_mesh_table() + self.mesh_count as usize * MeshDesc::SIZE
+    }
+    fn compute_texture_table(&self) -> usize {
+        self.compute_prim_table() + self.prim_count as usize * PrimDesc::SIZE
+    }
+    fn compute_object_table(&self) -> usize {
+        self.compute_texture_table() + self.texture_count as usize * TextureDesc::SIZE
+    }
+    fn compute_node_table(&self) -> usize {
+        self.compute_object_table() + self.object_count as usize * ObjectDesc::SIZE
+    }
+    fn compute_stage_table(&self) -> usize {
+        self.compute_node_table() + self.node_count as usize * NodeDesc::SIZE
+    }
+    fn compute_anim_table(&self) -> usize {
+        self.compute_fighter_table() + self.fighter_count as usize * FighterDesc::SIZE
+    }
+    fn compute_anim_joint_table(&self) -> usize {
+        self.compute_anim_table() + self.anim_count as usize * AnimDesc::SIZE
+    }
+    fn compute_mat_anim_table(&self) -> usize {
+        self.compute_anim_joint_table() + self.anim_joint_count as usize * AnimJoint::SIZE
+    }
+    fn compute_mat_anim_palette_table(&self) -> usize {
+        self.compute_mat_anim_table() + self.mat_anim_count as usize * MatAnimDesc::SIZE
+    }
+    fn compute_costume_override_table(&self) -> usize {
+        self.compute_mat_anim_palette_table()
+            + self.mat_anim_palette_count as usize * MatAnimPalette::SIZE
+    }
+    fn compute_particle_bank_table(&self) -> usize {
+        self.compute_costume_override_table()
+            + self.costume_override_count as usize * CostumeOverride::SIZE
+    }
+    fn compute_particle_script_table(&self) -> usize {
+        self.compute_particle_bank_table()
+            + self.particle_bank_count as usize * ParticleBankDesc::SIZE
+    }
+    fn compute_particle_texture_table(&self) -> usize {
+        self.compute_particle_script_table()
+            + self.particle_script_count as usize * ParticleScriptDesc::SIZE
+    }
+    fn compute_lod_blend_table(&self) -> usize {
+        self.compute_particle_texture_table()
+            + self.particle_texture_count as usize * ParticleTextureDesc::SIZE
+    }
+    fn compute_sprite_table(&self) -> usize {
+        self.compute_lod_blend_table() + self.lod_blend_count as usize * LodBlendDesc::SIZE
+    }
+    fn compute_texture_part_table(&self) -> usize {
+        self.compute_sprite_table() + self.sprite_count as usize * SpriteDesc::SIZE
+    }
+    fn compute_fighter_model_table(&self) -> usize {
+        self.compute_texture_part_table() + self.texture_part_count as usize * TexturePartDesc::SIZE
     }
 
     /// Fighter `kind`'s high- and low-detail objects (RE-426).
@@ -3771,17 +3943,17 @@ impl<'a> Pack<'a> {
             })
         })
     }
-    fn line_table(&self) -> usize {
-        self.stage_table() + self.stage_count as usize * StageDesc::SIZE
+    fn compute_line_table(&self) -> usize {
+        self.compute_stage_table() + self.stage_count as usize * StageDesc::SIZE
     }
-    fn coll_vertex_table(&self) -> usize {
-        self.line_table() + self.line_count as usize * LineDesc::SIZE
+    fn compute_coll_vertex_table(&self) -> usize {
+        self.compute_line_table() + self.line_count as usize * LineDesc::SIZE
     }
-    fn point_table(&self) -> usize {
-        self.coll_vertex_table() + self.coll_vertex_count as usize * CollisionVertex::SIZE
+    fn compute_point_table(&self) -> usize {
+        self.compute_coll_vertex_table() + self.coll_vertex_count as usize * CollisionVertex::SIZE
     }
-    fn fighter_table(&self) -> usize {
-        self.point_table() + self.point_count as usize * MapPoint::SIZE
+    fn compute_fighter_table(&self) -> usize {
+        self.compute_point_table() + self.point_count as usize * MapPoint::SIZE
     }
 
     /// One character's constants, by `FTKind` ordinal.
@@ -3834,24 +4006,60 @@ impl<'a> Pack<'a> {
         if slot >= crate::anim::SLOT_COUNT as u32 {
             return None;
         }
-        // The first row with the pair, as a scan in table order finds it:
-        // the lower bound in the sorted prefix, else the rest in order.
+        self.anim_row(fighter, slot, false)
+    }
+
+    /// The first (`last == false`) or last row keyed `(fighter, slot)`, as a
+    /// scan of the whole table in order finds it: a binary search of the
+    /// sorted prefix and a scan of the unsorted rows after it. The special
+    /// rows ([`AnimDesc::STAGE`] and the rest) are looked up every frame, and
+    /// a scan of all 6,311 rows cost a PSP about 4 ms a call (RE-470).
+    fn anim_row(&self, fighter: u32, slot: u32, last: bool) -> Option<AnimDesc> {
         let key = (fighter, slot);
+        // Lower bound, or upper bound for the last row.
         let (mut lo, mut hi) = (0, self.anim_sorted);
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            if self.anim_key(mid) < key {
+            let k = self.anim_key(mid);
+            if k < key || (last && k == key) {
                 lo = mid + 1;
             } else {
                 hi = mid;
             }
         }
-        if lo < self.anim_sorted && self.anim_key(lo) == key {
-            return self.anim(lo);
+        let sorted = if last {
+            lo.checked_sub(1).filter(|&i| self.anim_key(i) == key)
+        } else {
+            (lo < self.anim_sorted && self.anim_key(lo) == key).then_some(lo)
+        };
+        // A short tail (a per-scene pack's, opened every frame) is scanned
+        // rather than indexed, so no frame allocates.
+        if self.anim_count - self.anim_sorted < ANIM_TAIL_INDEX_MIN {
+            let mut tail = self.anim_sorted..self.anim_count;
+            let row = if last {
+                tail.rev().find(|&i| self.anim_key(i) == key).or(sorted)
+            } else {
+                sorted.or_else(|| tail.find(|&i| self.anim_key(i) == key))
+            };
+            return row.and_then(|i| self.anim(i));
         }
-        (self.anim_sorted..self.anim_count)
-            .find(|&i| self.anim_key(i) == key)
-            .and_then(|i| self.anim(i))
+        let tail = || {
+            let rows = self.anim_tail.get_or_init(|| {
+                let mut rows: alloc::vec::Vec<u32> = (self.anim_sorted..self.anim_count).collect();
+                shell_sort_by_key(&mut rows, |i| (self.anim_key(i), i));
+                rows
+            });
+            // The rows keyed `key`, in table order.
+            let start = rows.partition_point(|&i| self.anim_key(i) < key);
+            let end = start + rows[start..].partition_point(|&i| self.anim_key(i) == key);
+            &rows[start..end]
+        };
+        let row = if last {
+            tail().last().copied().or(sorted)
+        } else {
+            sorted.or_else(|| tail().first().copied())
+        };
+        row.and_then(|i| self.anim(i))
     }
 
     /// A fighter's shield pose for stick sector `sector` (RE-367).
@@ -3860,26 +4068,17 @@ impl<'a> Pack<'a> {
             return None;
         }
         let slot = fighter * AnimDesc::SHIELD_SECTORS + sector;
-        (0..self.anim_count)
-            .rev()
-            .filter_map(|i| self.anim(i))
-            .find(|a| a.fighter == AnimDesc::SHIELD_POSE && a.slot == slot)
+        self.anim_row(AnimDesc::SHIELD_POSE, slot, true)
     }
 
     /// The original fighter's `FTAttributes.translate_scales` vectors.
     pub fn fighter_translate_scales(&self, fighter: u32) -> Option<&'a [u8]> {
-        let anim = (0..self.anim_count)
-            .rev()
-            .filter_map(|i| self.anim(i))
-            .find(|a| a.fighter == AnimDesc::TRANSLATE_SCALES && a.slot == fighter)?;
+        let anim = self.anim_row(AnimDesc::TRANSLATE_SCALES, fighter, true)?;
         self.anim_script(&anim)
     }
 
     pub fn training_layout(&self) -> Option<&'a [u8]> {
-        let a = (0..self.anim_count)
-            .rev()
-            .filter_map(|i| self.anim(i))
-            .find(|a| a.fighter == AnimDesc::TRAINING_LAYOUT && a.slot == 0)?;
+        let a = self.anim_row(AnimDesc::TRAINING_LAYOUT, 0, true)?;
         self.anim_script(&a)
     }
 
@@ -3889,44 +4088,32 @@ impl<'a> Pack<'a> {
     /// keyed by `fighter * SLOT_COUNT + slot`, and stage entries are appended
     /// after it, so there is no arithmetic that finds them.
     pub fn stage_anim(&self, stage: u32) -> Option<AnimDesc> {
-        (0..self.anim_count)
-            .filter_map(|i| self.anim(i))
-            .find(|a| a.fighter == AnimDesc::STAGE && a.slot == stage)
+        self.anim_row(AnimDesc::STAGE, stage, false)
     }
 
     /// A stage controller object's animation, by `ground_obj::ANIMS` index.
     pub fn ground_anim(&self, anim: u32) -> Option<AnimDesc> {
-        (0..self.anim_count)
-            .filter_map(|i| self.anim(i))
-            .find(|a| a.fighter == AnimDesc::GROUND && a.slot == anim)
+        self.anim_row(AnimDesc::GROUND, anim, false)
     }
 
     /// A results-screen wipe animation in original descriptor-table order.
     pub fn transition_anim(&self, transition: u32) -> Option<AnimDesc> {
-        (0..self.anim_count)
-            .filter_map(|i| self.anim(i))
-            .find(|a| a.fighter == AnimDesc::TRANSITION && a.slot == transition)
+        self.anim_row(AnimDesc::TRANSITION, transition, false)
     }
 
     /// A weapon's DObj transform animation, by `AnimDesc::WEAPON_ANIM_*` key.
     pub fn weapon_anim(&self, slot: u32) -> Option<AnimDesc> {
-        (0..self.anim_count)
-            .filter_map(|i| self.anim(i))
-            .find(|a| a.fighter == AnimDesc::WEAPON && a.slot == slot)
+        self.anim_row(AnimDesc::WEAPON, slot, false)
     }
 
     /// An item's DObj transform animation, by `AnimDesc::ITEM_ANIM_*` key.
     pub fn item_anim(&self, slot: u32) -> Option<AnimDesc> {
-        (0..self.anim_count)
-            .filter_map(|i| self.anim(i))
-            .find(|a| a.fighter == AnimDesc::ITEM && a.slot == slot)
+        self.anim_row(AnimDesc::ITEM, slot, false)
     }
 
     /// A manager effect's DObj transform animation in source inventory order.
     pub fn effect_anim(&self, effect: u32) -> Option<AnimDesc> {
-        (0..self.anim_count)
-            .filter_map(|i| self.anim(i))
-            .find(|a| a.fighter == AnimDesc::EFFECT && a.slot == effect)
+        self.anim_row(AnimDesc::EFFECT, effect, false)
     }
 
     /// The object containing an absolute node index.
@@ -4063,18 +4250,60 @@ impl<'a> Pack<'a> {
     /// `(node, costume)` before writing it, so this needs no linear scan even
     /// though the table itself is unindexed by object.
     pub fn costume_mesh(&self, node: u32, costume: u32) -> Option<u32> {
-        if costume == 0 || self.costume_override_count == 0 {
-            return None;
-        }
-        let mut lo = 0u32;
-        let mut hi = self.costume_override_count;
+        self.costume_mesh_in(0..self.costume_override_count, node, costume)
+    }
+
+    /// The rows of the costume-override table that belong to `node`: the
+    /// range [`Pack::costume_mesh_in`] needs search no further than. A
+    /// drawn fighter node asks for up to four costumes (RE-470).
+    pub fn costume_rows(&self, node: u32) -> core::ops::Range<u32> {
+        let table = self.costume_override_table();
+        let node_at = |i: u32| u32_at(self.data, table + i as usize * CostumeOverride::SIZE);
+        let (mut lo, mut hi) = (0u32, self.costume_override_count);
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            let o = self.costume_override(mid)?;
-            match (o.node, o.costume).cmp(&(node, costume)) {
+            if node_at(mid) < node {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let start = lo;
+        hi = self.costume_override_count;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if node_at(mid) <= node {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        start..lo
+    }
+
+    /// [`Pack::costume_mesh`] searching only `rows`, which must hold every
+    /// row of `node` ([`Pack::costume_rows`]).
+    pub fn costume_mesh_in(
+        &self,
+        rows: core::ops::Range<u32>,
+        node: u32,
+        costume: u32,
+    ) -> Option<u32> {
+        if costume == 0 || rows.is_empty() {
+            return None;
+        }
+        // Keys read in place: this runs for every fighter node drawn.
+        let table = self.costume_override_table();
+        let at = |i: u32| table + i as usize * CostumeOverride::SIZE;
+        let mut lo = rows.start;
+        let mut hi = rows.end.min(self.costume_override_count);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let key = (u32_at(self.data, at(mid)), u32_at(self.data, at(mid) + 4));
+            match key.cmp(&(node, costume)) {
                 core::cmp::Ordering::Less => lo = mid + 1,
                 core::cmp::Ordering::Greater => hi = mid,
-                core::cmp::Ordering::Equal => return Some(o.mesh),
+                core::cmp::Ordering::Equal => return Some(u32_at(self.data, at(mid) + 8)),
             }
         }
         None
@@ -4135,6 +4364,38 @@ impl<'a> Pack<'a> {
             node_count: u32_at(self.data, at + 4),
             source_file: u32_at(self.data, at + 8),
             source_offset: u32_at(self.data, at + 12),
+        })
+    }
+
+    /// [`NodeDesc::parent`] alone, without decoding the rest of the row.
+    pub fn node_parent(&self, i: u32) -> Option<u32> {
+        (i < self.node_count).then(|| {
+            u32_at(
+                self.data,
+                self.node_table() + i as usize * NodeDesc::SIZE + 4,
+            )
+        })
+    }
+
+    /// A node's rest pose (`rest_rotate`, `rest_translate`, `rest_scale`)
+    /// alone: what [`crate::skeleton::Skeleton::compose`] reads of a node no
+    /// joint drives (RE-470).
+    pub fn node_rest(&self, i: u32) -> Option<crate::figatree::JointPose> {
+        if i >= self.node_count {
+            return None;
+        }
+        let at = self.node_table() + i as usize * NodeDesc::SIZE;
+        let vec3 = |base: usize| {
+            [
+                f32_at(self.data, base),
+                f32_at(self.data, base + 4),
+                f32_at(self.data, base + 8),
+            ]
+        };
+        Some(crate::figatree::JointPose {
+            translate: vec3(at + 72),
+            rotate: vec3(at + 84),
+            scale: vec3(at + 96),
         })
     }
 
@@ -4481,45 +4742,110 @@ impl<'a> Pack<'a> {
         })
     }
 
+    /// `(source_file, source_offset)` of sprite row `i`, read without
+    /// decoding the row.
+    fn sprite_key(&self, i: u32) -> (u32, u32) {
+        let at = self.sprite_table() + i as usize * SpriteDesc::SIZE;
+        (u32_at(self.data, at), u32_at(self.data, at + 4))
+    }
+
+    fn sprite_role(&self, i: u32) -> u8 {
+        self.data[self.sprite_table() + i as usize * SpriteDesc::SIZE + 25]
+    }
+
+    /// `(fighter, role, costume)` of sprite row `i`, undecoded.
+    fn sprite_owner(&self, i: u32) -> (u8, u8, u8) {
+        let at = self.sprite_table() + i as usize * SpriteDesc::SIZE;
+        (self.data[at + 24], self.data[at + 25], self.data[at + 26])
+    }
+
+    fn sprite_index(&self) -> Option<&SpriteIndex> {
+        if self.sprite_count < SPRITE_INDEX_MIN || self.sprite_count > u32::from(u16::MAX) {
+            return None;
+        }
+        Some(self.sprite_index.get_or_init(|| {
+            let mut by_source: alloc::vec::Vec<u16> = (0..self.sprite_count as u16).collect();
+            shell_sort_by_key(&mut by_source, |i| (self.sprite_key(u32::from(i)), i));
+            let roles = (0..self.sprite_count as u16)
+                .filter(|&i| self.sprite_role(u32::from(i)) != SpriteDesc::ROLE_NONE)
+                .collect();
+            SpriteIndex { by_source, roles }
+        }))
+    }
+
+    /// The first row in table order keyed `(file, offset)` that `want`
+    /// accepts.
+    fn sprite_by_source(
+        &self,
+        file: u32,
+        offset: u32,
+        want: impl Fn(&SpriteDesc) -> bool,
+    ) -> Option<SpriteDesc> {
+        let Some(index) = self.sprite_index() else {
+            return (0..self.sprite_count)
+                .filter(|&i| self.sprite_key(i) == (file, offset))
+                .filter_map(|i| self.sprite_at(i))
+                .find(|s| want(s));
+        };
+        let rows = &index.by_source;
+        let start = rows.partition_point(|&i| self.sprite_key(u32::from(i)) < (file, offset));
+        rows[start..]
+            .iter()
+            .map(|&i| u32::from(i))
+            .take_while(|&i| self.sprite_key(i) == (file, offset))
+            .filter_map(|i| self.sprite_at(i))
+            .find(|s| want(s))
+    }
+
+    /// The first row in table order with a role whose `(fighter, role,
+    /// costume)` bytes `want` accepts.
+    fn sprite_with_role(&self, want: impl Fn((u8, u8, u8)) -> bool) -> Option<SpriteDesc> {
+        let row = match self.sprite_index() {
+            Some(index) => index
+                .roles
+                .iter()
+                .map(|&i| u32::from(i))
+                .find(|&i| want(self.sprite_owner(i))),
+            None => (0..self.sprite_count).find(|&i| {
+                let owner = self.sprite_owner(i);
+                owner.1 != SpriteDesc::ROLE_NONE && want(owner)
+            }),
+        };
+        row.and_then(|i| self.sprite_at(i))
+    }
+
     /// A fighter's emblem or its stock icon in one costume.
     pub fn fighter_sprite(&self, fighter: u8, role: u8, costume: u8) -> Option<SpriteDesc> {
-        (0..self.sprite_count)
-            .filter_map(|i| self.sprite_at(i))
-            .find(|s| {
-                s.fighter == fighter
-                    && s.role == role
-                    && (role != SpriteDesc::ROLE_STOCK || s.costume == costume)
-            })
+        let want = |(f, r, c): (u8, u8, u8)| {
+            f == fighter && r == role && (role != SpriteDesc::ROLE_STOCK || c == costume)
+        };
+        if role == SpriteDesc::ROLE_NONE {
+            return (0..self.sprite_count)
+                .find(|&i| want(self.sprite_owner(i)))
+                .and_then(|i| self.sprite_at(i));
+        }
+        self.sprite_with_role(want)
     }
 
     /// The sprite at `offset` of `file`: `lbRelocGetFileData(Sprite*, ...)`.
     pub fn sprite(&self, file: u32, offset: u32) -> Option<SpriteDesc> {
-        (0..self.sprite_count)
-            .filter_map(|i| self.sprite_at(i))
-            .find(|s| {
-                s.source_file == file && s.source_offset == offset && s.role != SpriteDesc::ROLE_LUT
-            })
+        self.sprite_by_source(file, offset, |s| s.role != SpriteDesc::ROLE_LUT)
     }
 
     /// The `wallpaper` of the VS stage `gkind`
     /// ([`SpriteDesc::ROLE_WALLPAPER`]).
     pub fn stage_wallpaper(&self, gkind: u8) -> Option<SpriteDesc> {
-        (0..self.sprite_count)
-            .filter_map(|i| self.sprite_at(i))
-            .find(|s| s.role == SpriteDesc::ROLE_WALLPAPER && s.costume == gkind)
+        self.sprite_with_role(|(_, role, costume)| {
+            role == SpriteDesc::ROLE_WALLPAPER && costume == gkind
+        })
     }
 
     /// The sprite at `offset` of `file` through its `lut`th swapped TLUT
     /// ([`SpriteDesc::ROLE_LUT`]).
     pub fn sprite_lut(&self, file: u32, offset: u32, lut: u8) -> Option<SpriteDesc> {
-        (0..self.sprite_count)
-            .filter_map(|i| self.sprite_at(i))
-            .find(|s| {
-                s.source_file == file
-                    && s.source_offset == offset
-                    && s.role == SpriteDesc::ROLE_LUT
-                    && s.costume == lut
-            })
+        self.sprite_by_source(file, offset, |s| {
+            s.role == SpriteDesc::ROLE_LUT && s.costume == lut
+        })
     }
 
     pub fn lod_blend_count(&self) -> u32 {

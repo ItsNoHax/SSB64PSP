@@ -223,6 +223,10 @@ pub fn joint_id(kind: FighterKind, joint: i8) -> i8 {
 
 /// Makes every effect `f` queued, in order, and empties the queue.
 pub fn flush(f: &mut Fighter, rt: &mut EffectRuntime<'_>) {
+    // Nothing queued: taking the queue would only copy it (RE-470).
+    if f.effects.is_empty() && f.effects.dropped == 0 {
+        return;
+    }
     let queue = core::mem::take(&mut f.effects);
     for e in queue.iter() {
         match *e {

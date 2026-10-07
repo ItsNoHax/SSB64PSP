@@ -505,37 +505,59 @@ fn lb_sin_index(index: u16) -> f32 {
 /// angle) rounded to six decimals, which 1010 of the 1024 words are. The
 /// sine is taken in `f64`, whose rounding margin (5.7e-10 at worst) no
 /// platform's error reaches, so the PSP builds the same words as the host;
-/// the 14 authored exceptions are kept explicitly. The table itself is not
-/// carried (4 KiB of ROM data); `lbcommon_sine_table_matches_the_rom`
-/// checks every word against the ROM.
+/// the 14 authored exceptions are kept explicitly. The table is not copied
+/// from the ROM (4 KiB of ROM data): [`LB_SINE`] is computed by the compiler
+/// from this formula, because the PSP has no `f64` unit and summing the
+/// series at run time cost about 2 ms per fighter a frame in the collision
+/// matrices (RE-470). `lbcommon_sine_table_matches_the_rom` checks every
+/// word against the ROM.
 pub fn lb_sine_sample(index: u16) -> f32 {
-    let exception = match index {
-        355 => Some(0x3f04_9e99),
-        372 => Some(0x3f0a_48b6),
-        420 => Some(0x3f19_c1f8),
-        440 => Some(0x3f1f_f6d3),
-        500 => Some(0x3f31_a826),
-        503 => Some(0x3f32_80bf),
-        598 => Some(0x3f4b_41f2),
-        628 => Some(0x3f52_33be),
-        663 => Some(0x3f59_bda5),
-        677 => Some(0x3f5c_94d5),
-        722 => Some(0x3f65_0471),
-        804 => Some(0x3f71_8f60),
-        842 => Some(0x3f76_1672),
-        1023 => Some(0x3f80_0000),
-        _ => None,
-    };
-    if let Some(bits) = exception {
-        return f32::from_bits(bits);
+    match LB_SINE.get(index as usize) {
+        Some(&v) => v,
+        None => lb_sine_compute(index),
     }
-    let value = sin_f64(f64::from(index as f32 / 651.898_6));
+}
+
+/// [`lb_sine_sample`] for every index of the table, evaluated at compile
+/// time.
+static LB_SINE: [f32; 1024] = {
+    let mut table = [0.0f32; 1024];
+    let mut i = 0;
+    while i < 1024 {
+        table[i] = lb_sine_compute(i as u16);
+        i += 1;
+    }
+    table
+};
+
+const fn lb_sine_compute(index: u16) -> f32 {
+    let exception = match index {
+        355 => 0x3f04_9e99,
+        372 => 0x3f0a_48b6,
+        420 => 0x3f19_c1f8,
+        440 => 0x3f1f_f6d3,
+        500 => 0x3f31_a826,
+        503 => 0x3f32_80bf,
+        598 => 0x3f4b_41f2,
+        628 => 0x3f52_33be,
+        663 => 0x3f59_bda5,
+        677 => 0x3f5c_94d5,
+        722 => 0x3f65_0471,
+        804 => 0x3f71_8f60,
+        842 => 0x3f76_1672,
+        1023 => 0x3f80_0000,
+        _ => 0,
+    };
+    if exception != 0 {
+        return f32::from_bits(exception);
+    }
+    let value = sin_f64((index as f32 / 651.898_6) as f64);
     (((value * 1_000_000.0 + 0.5) as u64) as f64 / 1_000_000.0) as f32
 }
 
 /// Sine of an angle in `[0, π/2]` in `f64`, summed to its 25th power
 /// (the remainder is below 1e-22 there).
-fn sin_f64(x: f64) -> f64 {
+const fn sin_f64(x: f64) -> f64 {
     let x2 = x * x;
     let mut term = x;
     let mut sum = x;
@@ -661,6 +683,20 @@ pub fn transform_lookat_basis(columns: [[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
 #[cfg(test)]
 mod trig_tests {
     use super::{atan2_poly, sin_poly};
+
+    /// RE-470: the compile-time sine table holds what the series gives at
+    /// run time, word for word.
+    #[test]
+    fn the_compiled_sine_table_matches_the_series() {
+        for i in 0..1024u16 {
+            let runtime = super::lb_sine_compute(core::hint::black_box(i));
+            assert_eq!(
+                super::LB_SINE[i as usize].to_bits(),
+                runtime.to_bits(),
+                "entry {i}"
+            );
+        }
+    }
 
     #[test]
     fn the_device_trig_matches_libm() {

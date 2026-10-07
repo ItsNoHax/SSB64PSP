@@ -12,7 +12,7 @@ use ssb_game::spgame::{frontend::StaffrollAssets, staffroll};
 use ssb_rom::ending as asset;
 use ssb_rom::figatree::JointPose;
 use ssb_rom::objanim::StageJoint;
-use ssb_rom::pack::{AnimDesc, ObjectDesc, Pack, MODEL_SCALE};
+use ssb_rom::pack::{ObjectDesc, Pack, MODEL_SCALE};
 use ssb_rom::scene::Mat4;
 
 /// The most nodes a room prop has (the background: 53).
@@ -20,9 +20,7 @@ const MAX_NODES: usize = 64;
 
 /// A packed `AnimDesc::EFFECT` slot's bytes.
 fn effect_blob<'a>(pack: &Pack<'a>, slot: u32) -> Option<&'a [u8]> {
-    let a = (0..pack.anim_count())
-        .filter_map(|i| pack.anim(i))
-        .find(|a| a.fighter == AnimDesc::EFFECT && a.slot == slot)?;
+    let a = pack.effect_anim(slot)?;
     pack.anim_script(&a)
 }
 
