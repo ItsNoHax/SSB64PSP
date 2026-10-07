@@ -831,7 +831,9 @@ impl Gpu {
         self.frames += 1;
         unsafe {
             sys::sceGuFinish();
+            let t = crate::profile::start();
             sys::sceGuSync(GuSyncMode::Finish, GuSyncBehavior::Wait);
+            crate::profile::stop(crate::profile::Span::GeSync, t);
             // Debug text must be painted *here*, not earlier. sceGuDebugFlush
             // writes glyphs straight into the draw buffer rather than queueing
             // a GE command, so flushing before the sync would just get erased
@@ -853,7 +855,9 @@ impl Gpu {
                 self.wallpaper_capture_requested = false;
                 self.capture_wallpaper_photo();
             }
+            let t = crate::profile::start();
             sys::sceDisplayWaitVblankStart();
+            crate::profile::stop(crate::profile::Span::Vblank, t);
             sys::sceGuSwapBuffers();
         }
         // Mirrors the swap `sceGuSwapBuffers` just performed internally: the

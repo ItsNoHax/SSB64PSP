@@ -599,10 +599,12 @@ pub fn arc_tan(div: f32) -> f32 {
     if div == 0.0 {
         return 0.0;
     }
+    // Out of line, as `arc_tan2`'s ratio (RE-469).
+    let inv = ssb_engine::math::div_nonzero(1.0, div);
     let (d, kind) = if div > 1.0 {
-        (1.0 / div, 1)
+        (inv, 1)
     } else if div < -1.0 {
-        (1.0 / div, 2)
+        (inv, 2)
     } else {
         (div, 0)
     };
@@ -623,11 +625,15 @@ pub fn arc_tan(div: f32) -> f32 {
 /// `syUtilsArcTan2`.
 pub fn arc_tan2(y: f32, x: f32) -> f32 {
     use core::f32::consts::{FRAC_PI_2, PI};
+    // The divisions keep a nonzero denominator out of line: the KO
+    // explosion's generators have no velocity, and a PSP traps the `0 / 0`
+    // LLVM computes before the `x == 0` branch (RE-469).
+    let ratio = ssb_engine::math::div_nonzero(y, x);
     if x > 0.0 {
-        arc_tan(y / x)
+        arc_tan(ratio)
     } else if x < 0.0 {
         let sign = if y < 0.0 { -1.0 } else { 1.0 };
-        (PI - arc_tan((y / x).abs())) * sign
+        (PI - arc_tan(ratio.abs())) * sign
     } else if y != 0.0 {
         (if y < 0.0 { -1.0 } else { 1.0 }) * FRAC_PI_2
     } else {

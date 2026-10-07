@@ -17,7 +17,10 @@
 #
 # verify exits non-zero on any unexpected difference: a `pass` row that
 # differs, a `known-failing` row that now matches (update the manifest), a
-# failed capture, or (with --twice) two captures of one scene that differ.
+# failed capture, (with --twice) two captures of one scene that differ, or a
+# `psp-game` scene whose main-thread stack peak came within an eighth of the
+# stack's size (`stack-near-limit`, RE-469): PPSSPP does not check the bound
+# a PSP enforces, so the capture log's `stack` line is the only witness.
 #
 # rebaseline always captures twice, then copies each changed candidate over
 # its golden. Unchanged goldens are never touched. `known-failing` rows are
@@ -38,7 +41,9 @@ usage() {
   exit 2
 }
 
-# Internal: one capture, run by xargs. Arguments: run dir, golden, crate,
+# Internal: one capture, run by xargs. The 180 s timeout only bounds a hang:
+# `vstimeup`'s 4,200 ticks take 56 s alone and over 60 s under a full -j.
+# Arguments: run dir, golden, crate,
 # pass number, scene spec.
 if [ "${1:-}" = __capture ]; then
   run="$2" golden="$3" crate="$4" pass="$5" spec="$6"
@@ -50,10 +55,12 @@ if [ "${1:-}" = __capture ]; then
   status=ok
   if ! PPSSPP_HEADLESS_TEST_DIR="$run/jobs" \
       "$REPO/tools/run-ppsspp-headless.sh" --no-build --crate "$crate" \
-      --scene "$spec" --job "$job" > "$log" 2>&1; then
+      --scene "$spec" --job "$job" --log --seconds 180 > "$log" 2>&1; then
     status=capture-failed
   else
     cp -f "$run/jobs/$job/screenshot.png" "$dest/$golden.png"
+    grep -a -o 'stack tick=[0-9]* peak=[0-9]* size=[0-9]*' \
+      "$run/jobs/$job/ppsspp-headless.log" > "$run/stack/$golden-$pass.txt" || true
   fi
   end=$(date +%s.%N)
   printf '%s\t%s\t%s\t%s\n' "$golden" "$pass" "$status" \
@@ -113,7 +120,7 @@ done < "$MANIFEST"
 [ ${#goldens[@]} -gt 0 ] || { echo "no manifest rows match '${FILTER}'" >&2; exit 2; }
 
 RUN="$REPO/target/golden-run/$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$RUN"/{candidates,candidates-2,masks,logs,status,jobs}
+mkdir -p "$RUN"/{candidates,candidates-2,masks,logs,status,jobs,stack}
 echo "==> $MODE: ${#goldens[@]} scenes, -j $JOBS, run dir $RUN"
 run_start=$(date +%s)
 
@@ -144,9 +151,10 @@ capture_seconds=$(( $(date +%s) - capture_start ))
 build_seconds=$(( capture_start - run_start ))
 
 # ---- compare ---------------------------------------------------------------
-printf 'golden\tcrate\tscene_spec\tstatus\tpixels\ttwice_pixels\tresult\tcapture_seconds\n' \
+printf 'golden\tcrate\tscene_spec\tstatus\tpixels\ttwice_pixels\tresult\tcapture_seconds\tstack_peak\n' \
   > "$RUN/summary.tsv"
 failures=0
+stack_max=0 stack_max_golden=-
 for i in "${!goldens[@]}"; do
   golden=${goldens[$i]} status=${statuses[$i]}
   candidate="$RUN/candidates/$golden.png"
@@ -177,13 +185,23 @@ for i in "${!goldens[@]}"; do
       result=nondeterministic
     fi
   fi
+  # The game thread's deepest stack use (RE-469), from the capture log.
+  peak=-
+  if [ -s "$RUN/stack/$golden-1.txt" ]; then
+    peak=$(sed -n 's/.*peak=\([0-9]*\).*/\1/p' "$RUN/stack/$golden-1.txt" | tail -n 1)
+    size=$(sed -n 's/.*size=\([0-9]*\).*/\1/p' "$RUN/stack/$golden-1.txt" | tail -n 1)
+    if [ "$peak" -gt "$stack_max" ]; then stack_max=$peak stack_max_golden=$golden; fi
+    if [ $((peak * 8)) -gt $((size * 7)) ]; then result=stack-near-limit; fi
+  elif [ "${crates[$i]}" = psp-game ] && [ -f "$candidate" ]; then
+    result=no-stack-line
+  fi
   case "$result" in
     match|known-failing) ;;
     changed) [ "$MODE" = rebaseline ] || failures=$((failures + 1)) ;;
     *) failures=$((failures + 1)) ;;
   esac
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$golden" "${crates[$i]}" "${specs[$i]}" \
-    "$status" "$pixels" "$twice" "$result" "$seconds" >> "$RUN/summary.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$golden" "${crates[$i]}" "${specs[$i]}" \
+    "$status" "$pixels" "$twice" "$result" "$seconds" "$peak" >> "$RUN/summary.tsv"
 done
 
 # ---- report ----------------------------------------------------------------
@@ -218,7 +236,7 @@ HTML
   tail -n +2 "$RUN/summary.tsv" | awk -F'\t' '$7 != "match"' \
     | awk -F'\t' '{ print ($5 == "-" ? 1e12 : $5) "\t" $0 }' \
     | sort -t$'\t' -k1,1gr | cut -f2- \
-    | while IFS=$'\t' read -r golden crate spec status pixels twice result seconds; do
+    | while IFS=$'\t' read -r golden crate spec status pixels twice result seconds _peak; do
         echo "<div class=scene id=\"$golden\"><div><b>$golden</b> <span class=\"r-$result\">$result</span></div>"
         echo "<div class=meta>$crate &middot; scene: $(printf '%s' "$spec" | html_escape) &middot; manifest: $status &middot; pixels: $pixels &middot; twice: $twice &middot; ${seconds}s</div>"
         echo "<div class=row>"
@@ -231,7 +249,7 @@ HTML
       done
   echo "<details><summary><h2 style=\"display:inline\">Unchanged ($(awk -F'\t' 'NR > 1 && $7 == "match"' "$RUN/summary.tsv" | wc -l))</h2></summary><table>"
   tail -n +2 "$RUN/summary.tsv" | awk -F'\t' '$7 == "match"' \
-    | while IFS=$'\t' read -r golden _crate spec _status _pixels _twice _result seconds; do
+    | while IFS=$'\t' read -r golden _crate spec _status _pixels _twice _result seconds _peak; do
         echo "<tr><td><a href=\"candidates/$golden.png\">$golden</a></td><td class=meta>$(printf '%s' "$spec" | html_escape)</td><td class=meta>${seconds}s</td></tr>"
       done
   echo "</table></details></body></html>"
@@ -239,6 +257,7 @@ HTML
 
 awk -F'\t' 'NR == 1 || $7 != "match"' "$RUN/summary.tsv" | column -t -s$'\t'
 echo "==> $(awk -F'\t' 'NR > 1 && $7 == "match"' "$RUN/summary.tsv" | wc -l) of ${#goldens[@]} match; build ${build_seconds}s, captures ${capture_seconds}s"
+echo "==> deepest game stack: $stack_max bytes ($stack_max_golden)"
 echo "==> report: $RUN/index.html"
 
 # ---- rebaseline ------------------------------------------------------------
@@ -248,7 +267,7 @@ if [ "$MODE" = rebaseline ]; then
     exit 1
   fi
   copied=()
-  while IFS=$'\t' read -r golden _crate _spec status pixels _twice result _seconds; do
+  while IFS=$'\t' read -r golden _crate _spec status pixels _twice result _seconds _peak; do
     case "$result" in
       changed) ;;
       known-failing) [ -n "$FILTER" ] || continue ;;

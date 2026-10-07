@@ -4,7 +4,11 @@
 #   tools/run-ppsspp-headless.sh [--no-build] [--crate psp-asset-viewer|psp-game]
 #                                [--feature FEATURE] [--backend software]
 #                                [--seconds N] [--pack PATH]
-#                                [--scene SPEC] [--job NAME]
+#                                [--scene SPEC] [--job NAME] [--log]
+#
+# --log passes PPSSPPHeadless --log at the info level, without which the
+# game's own stdout (the capture log lines) is not written to
+# ppsspp-headless.log. The default level writes millions of debug lines.
 #
 # --scene writes SPEC to capture_scene.txt beside the staged EBOOT and
 # defaults the feature to `golden_capture`: one EBOOT then captures any golden
@@ -41,6 +45,7 @@ SCENE=
 JOB=
 BUILD=1
 CRATE=psp-asset-viewer
+LOG_FLAG=
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -52,6 +57,7 @@ while [ $# -gt 0 ]; do
     --pack)    PACK_OVERRIDE="$2"; shift 2 ;;
     --scene)   SCENE="$2"; shift 2 ;;
     --job)     JOB="$2"; shift 2 ;;
+    --log)     LOG_FLAG=--log; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -172,6 +178,7 @@ set +e
     --appendconfig="$OUT/no-status-overlay.ini" \
     --screenshot-save="$OUT/screenshot.bmp" \
     --timeout="$SECONDS_TO_RUN" \
+    ${LOG_FLAG:+"$LOG_FLAG" --loglevel=4} \
     "$MEMSTICK/EBOOT.PBP" > "$OUT/ppsspp-headless.log" 2>&1
 STATUS=$?
 set -e

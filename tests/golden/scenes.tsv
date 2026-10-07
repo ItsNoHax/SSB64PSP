@@ -208,3 +208,5 @@ f1-training-bumper-throw	psp-game	trainingbumperthrow@160	pass	RE-442
 f1-training-link-bomb-bloat	psp-game	linkbomb@270	pass	RE-444
 f1-training-link-bomb-turn	psp-game	linkbomb@305	pass	RE-444
 f1-training-link-bomb-loose	psp-game	linkbomb@320	pass	RE-444
+f1-vs-push-ko	psp-game	vspush	pass	RE-469
+f1-vs-knock-ko	psp-game	vsknock	pass	RE-469

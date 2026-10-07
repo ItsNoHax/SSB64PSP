@@ -935,6 +935,15 @@ impl GroundObjects {
     /// packed from its label in that file.
     pub fn new(pack: &Pack<'_>, gr_file: u32) -> Self {
         let mut this = Self::empty();
+        this.load(pack, gr_file);
+        this
+    }
+
+    /// [`Self::new`] in place: some 160 KB, too large to build on a PSP
+    /// thread's stack and move (RE-469).
+    pub fn load(&mut self, pack: &Pack<'_>, gr_file: u32) {
+        *self = Self::empty();
+        let this = self;
         if let Some(kind) = crate::bonus2::kind(gr_file) {
             if let Some((graph, _)) = crate::bonus2::BUMPERS[kind as usize] {
                 let placements = (0..pack.object_count())
@@ -957,7 +966,7 @@ impl GroundObjects {
                     }
                 }
             }
-            return this;
+            return;
         }
         if let Some(kind) = crate::bonus1::kind(gr_file) {
             let object = (0..pack.object_count())
@@ -975,7 +984,7 @@ impl GroundObjects {
                     this.target_anims[i] = pack.item_anim(crate::bonus1::anim(kind, i as u8));
                 }
             }
-            return this;
+            return;
         }
         if gr_file == crate::sector::MAP_FILE {
             this.arwing = crate::sector::Arwing::new(pack);
@@ -1009,7 +1018,7 @@ impl GroundObjects {
                 this.mat_anims[a.slot as usize] = Some(a);
             }
         }
-        let Some(file) = file else { return this };
+        let Some(file) = file else { return };
         let find = |file: u32, offset: u32| {
             (0..pack.object_count())
                 .filter_map(|i| pack.object(i))
@@ -1027,14 +1036,13 @@ impl GroundObjects {
             let leaf = asset.leaf.and_then(|l| find(source, l.dl));
             for instance in 0..asset.instances {
                 if n == MAX_STAGE_OBJECTS {
-                    return this;
+                    return;
                 }
                 this.objects[n] =
                     Some(GroundObject::new(pack, index as u8, instance, object, leaf));
                 n += 1;
             }
         }
-        this
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &GroundObject> {

@@ -1414,7 +1414,9 @@ impl FighterScene {
         // frame the status is on (RE-466). Hitlag freezes the motion with
         // the status.
         if !self.fighter.is_in_hitlag() {
+            let t = crate::profile::start();
             self.tick_animation(pack);
+            crate::profile::stop(crate::profile::Span::Anim, t);
             if let (Some(before), Some(current)) =
                 (self.root_motion_before_tick, self.skeleton.pose(0))
             {
@@ -1439,8 +1441,10 @@ impl FighterScene {
             // No TransN motion accrues while frozen.
             self.root_motion_before_tick = self.skeleton.pose(0).copied();
         }
+        let t = crate::profile::start();
         self.fighter
             .tick_physics_map_before_accessory(&|| MapSegments::with_groups(pack, stage, groups));
+        crate::profile::stop(crate::profile::Span::Map, t);
         if self.fighter.is_grounded() {
             self.airborne_ticks = 0;
         } else {
@@ -1451,7 +1455,9 @@ impl FighterScene {
         if !self.fighter.is_in_hitlag()
             && self.started != Some((self.fighter.status.status, self.fighter.status.entry))
         {
+            let t = crate::profile::start();
             self.tick_animation(pack);
+            crate::profile::stop(crate::profile::Span::Anim, t);
         }
         self.sample_held_child_offset();
         if (ssb_game::map::is_cliff_hold(self.fighter.status.status)
@@ -1472,7 +1478,9 @@ impl FighterScene {
             }
         }
         ssb_game::grab::refresh_held_attachment(&mut self.fighter);
+        let t = crate::profile::start();
         self.sample_gameplay_joints(pack);
+        crate::profile::stop(crate::profile::Span::Joints, t);
         // `proc_accessory` reads the updated hand, after the map and parts
         // transform pass (`ftMainProcPhysicsMap`).
         ssb_game::item_use::accessory(&mut self.fighter);

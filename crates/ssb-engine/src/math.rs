@@ -365,6 +365,18 @@ pub fn sin_cos(v: f32) -> (f32, f32) {
     (sin_poly(v), sin_poly(v + core::f32::consts::FRAC_PI_2))
 }
 
+/// `n / d` where the caller's own branch has already excluded `d == 0`.
+///
+/// A PSP traps the FPU's divide-by-zero and invalid operations (PSPLink
+/// enables them; RE-201, RE-469), and LLVM may compute a division before
+/// the branch that guards it, since in its default floating-point model a
+/// division has no side effects. Out of line, the denominator a speculated
+/// call sees is never zero. A zero `d` divides by 1.
+#[inline(never)]
+pub fn div_nonzero(n: f32, d: f32) -> f32 {
+    n / if d == 0.0 { 1.0 } else { d }
+}
+
 /// Four-quadrant arctangent for gameplay directions on host and PSP.
 #[cfg(feature = "std")]
 #[inline]
@@ -395,7 +407,7 @@ fn atan2_poly(y: f32, x: f32) -> f32 {
     }
     let ax = x.abs();
     let ay = y.abs();
-    let z = ax.min(ay) / ax.max(ay);
+    let z = div_nonzero(ax.min(ay), ax.max(ay));
     let angle = atan_unit(z);
     let angle = if ay > ax { FRAC_PI_2 - angle } else { angle };
     let angle = if x < 0.0 { PI - angle } else { angle };

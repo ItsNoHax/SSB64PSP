@@ -19,6 +19,11 @@ ssb-engine = { path = "../crates/ssb-engine", default-features = false }
 ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }
 
+[features]
+# Frame timing and free-memory reports (`profile.rs`, RE-469). Off by
+# default: the spans compile to nothing.
+profile = []
+
 [profile.release]
 opt-level = 3
 lto = true

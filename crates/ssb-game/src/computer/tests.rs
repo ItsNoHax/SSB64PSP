@@ -122,3 +122,53 @@ fn a_full_jump_prediction_reaches_above_the_floor() {
     assert_eq!(com.origin_pos, Vec2::new(0.0, 0.0));
     assert_eq!(com.floor_line, Some(3));
 }
+
+/// RE-469: a PK Thunder trail already on the target. The source's
+/// `1.0F / sqrtf(0)` and `0 * inf` trap on a PSP, whose FPU raises
+/// divide-by-zero and invalid; this enables the same traps on the host
+/// (glibc `feenableexcept`), so an infinite scale kills the test with
+/// SIGFPE.
+#[cfg(all(
+    target_os = "linux",
+    target_env = "gnu",
+    any(target_arch = "x86_64", target_arch = "x86")
+))]
+#[test]
+fn pk_thunder_on_its_target_raises_no_fpu_exception() {
+    extern "C" {
+        fn feenableexcept(excepts: i32) -> i32;
+        fn fedisableexcept(excepts: i32) -> i32;
+    }
+    const FE_INVALID: i32 = 0x01;
+    const FE_DIVBYZERO: i32 = 0x04;
+    const FE_OVERFLOW: i32 = 0x08;
+    let traps = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW;
+    let mut com = Computer {
+        target_pos: Vec2::new(120.0, 340.0),
+        ..Computer::default()
+    };
+    let senses = Senses {
+        pk_thunder_trail: Some(Vec2::new(120.0, 340.0)),
+        ..Senses::default()
+    };
+    let senses = core::hint::black_box(senses);
+    unsafe { feenableexcept(traps) };
+    com.control_pk_thunder(&senses);
+    unsafe { fedisableexcept(traps) };
+    assert_eq!(com.stick, (0, 0));
+}
+
+/// The trail steers at full stick toward a target off its position.
+#[test]
+fn pk_thunder_steers_toward_the_target() {
+    let mut com = Computer {
+        target_pos: Vec2::new(0.0, 300.0),
+        ..Computer::default()
+    };
+    let senses = Senses {
+        pk_thunder_trail: Some(Vec2::new(0.0, 0.0)),
+        ..Senses::default()
+    };
+    com.control_pk_thunder(&senses);
+    assert_eq!(com.stick, (0, STICK_MAX));
+}

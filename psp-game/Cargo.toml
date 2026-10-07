@@ -19,6 +19,10 @@ ssb-psp-runtime = { path = "../psp-runtime" }
 ssb-capture = { path = "../crates/ssb-capture" }
 
 [features]
+# Frame timing, free-memory and stack reports every 120 frames to
+# `profile.log` beside the executable and to stdout
+# (`ssb_psp_runtime::profile`, RE-469). Off by default.
+profile = ["ssb-psp-runtime/profile"]
 # One EBOOT for every scripted Training scene: the scene is read at startup
 # from `capture_scene.txt` beside the EBOOT (`src/capture.rs`), and the
 # program exits a few frames after its screenshot. The per-scene features

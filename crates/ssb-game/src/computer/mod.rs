@@ -434,12 +434,28 @@ impl Computer {
             Some(pos) => {
                 let dx = self.target_pos.x - pos.x;
                 let dy = self.target_pos.y - pos.y;
-                let scale = 1.0 / ssb_engine::math::sqrt(dx * dx + dy * dy);
+                let scale = inverse_length_or_zero(dx * dx + dy * dy);
                 let full = f32::from(STICK_MAX);
                 ((full * dx * scale) as i8, (full * dy * scale) as i8)
             }
             None => (0, 0),
         };
+    }
+}
+
+/// `1.0F / sqrtf(len_sq)` for `ftComputerSetControlPKThunder`, with 0 for
+/// a trail already on the target. The N64 masks FPU exceptions, so there
+/// the stick is `0 * inf`, a NaN its `(s8)` conversion takes. A PSP traps
+/// the division and the `0 * inf` (RE-469), and LLVM computes this scale
+/// even on the frames the command does not run, so the denominator stays
+/// nonzero out of line, where it cannot be folded into an infinity. A
+/// scale of 0 gives the stick Rust's conversion of that NaN: 0.
+#[inline(never)]
+fn inverse_length_or_zero(len_sq: f32) -> f32 {
+    if len_sq > 0.0 {
+        1.0 / ssb_engine::math::sqrt(len_sq)
+    } else {
+        0.0
     }
 }
 

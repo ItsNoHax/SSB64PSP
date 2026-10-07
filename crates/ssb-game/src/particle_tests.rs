@@ -325,3 +325,34 @@ fn make_pos_vel_places_the_particle_and_updates_it_once() {
     assert_eq!(got.pos, Vec3::new(4.0, 8.0, 0.0));
     assert_eq!(p.list(3).count(), 1, "GENLINK(2) is list 3");
 }
+
+/// RE-469: the KO explosion's generators have no velocity, so the
+/// arctangents see `(0, 0)`. Under the traps a PSP enables (divide by zero,
+/// invalid, overflow) they must still return 0 and raise nothing. glibc's
+/// `feenableexcept` sets the same traps on the host; a trapped operation
+/// kills the test with SIGFPE.
+#[cfg(all(
+    target_os = "linux",
+    target_env = "gnu",
+    any(target_arch = "x86_64", target_arch = "x86")
+))]
+#[test]
+fn arctangents_of_a_zero_vector_raise_no_fpu_exception() {
+    extern "C" {
+        fn feenableexcept(excepts: i32) -> i32;
+        fn fedisableexcept(excepts: i32) -> i32;
+    }
+    let traps = 0x01 | 0x04 | 0x08;
+    let (y, x) = core::hint::black_box((0.0f32, 0.0f32));
+    unsafe { feenableexcept(traps) };
+    let angles = (
+        arc_tan2(y, x),
+        arc_tan(x),
+        ssb_engine::math::div_nonzero(y, x),
+    );
+    unsafe { fedisableexcept(traps) };
+    assert_eq!(angles, (0.0, 0.0, 0.0));
+    assert_eq!(arc_tan2(1.0, 0.0), core::f32::consts::FRAC_PI_2);
+    assert!((arc_tan2(1.0, 1.0) - core::f32::consts::FRAC_PI_4).abs() < 1e-5);
+    assert!((arc_tan(2.0) - 2.0f32.atan()).abs() < 1e-5);
+}

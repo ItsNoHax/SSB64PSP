@@ -50,6 +50,7 @@ use ssb_psp_runtime::gu::emit_headless_screenshot;
 use ssb_psp_runtime::gu::Gpu;
 use ssb_psp_runtime::input::PspInput;
 use ssb_psp_runtime::meshdraw;
+use ssb_psp_runtime::profile;
 
 /// Loop-iteration count since boot. `psp-game` has no fixed-timestep sim
 /// accumulator yet (unlike `psp-asset-viewer/`'s `Clock`/`FixedClock`), so this is simply
@@ -88,6 +89,38 @@ const VS_SHIELD_SET_OFF_TICK: u64 = 885;
 /// `saveunlock`'s A: the message's two-second input wait, from its
 /// fixture at tick 105, has passed.
 const SAVE_UNLOCK_TICK: u64 = 240;
+
+/// "Go" in the VS capture scenes.
+const VS_GO_TICK: u64 = 398;
+/// `vspush`'s and `vsknock`'s stick toward the CPU, which spawns at the
+/// centre of Dream Land's main floor, to the right of the player's left
+/// platform (RE-469).
+const VS_PUSH_STICK: i8 = 80;
+/// `vspush`'s walk: `46 * walk_speed_mul` (0.3) is 13.8 a frame, just over
+/// the 13.5 at which a walker overlapping a standing fighter keeps pace
+/// with it while each is jostled 6.75 a frame apart, so the player stays
+/// against the CPU and pushes it along the floor and off its end. The
+/// stick is let go once the CPU has fallen.
+const VS_PUSH_WALK_STICK: i8 = 46;
+const VS_PUSH_RELEASE_TICK: u64 = 800;
+/// `physics.jumps_used` for `vspush`'s airborne CPU: past any fighter's
+/// `jumps_max`, so a standing CPU off the stage cannot jump back.
+const VS_PUSH_JUMPS_USED: i32 = 8;
+/// `vsknock`: the CPU's seeded damage at "Go", and the smashes: the player
+/// walks until just short of the CPU, then each period's flick of the
+/// stick from neutral, with A, is a forward smash.
+const VS_KNOCK_DAMAGE: i32 = 250;
+const VS_KNOCK_FIRST_SMASH: u64 = 430;
+const VS_KNOCK_SMASH_PERIOD: u64 = 50;
+/// `vspush`'s and `vsknock`'s capture ticks: the CPU, KO'd at 900 and
+/// 540, is back on the stage.
+const VS_PUSH_CAPTURE_TICK: u64 = 1100;
+const VS_KNOCK_CAPTURE_TICK: u64 = 750;
+
+/// Whether `vsknock` flicks the stick and presses A on `tick`.
+const fn vs_knock_smash(tick: u64) -> bool {
+    tick >= VS_KNOCK_FIRST_SMASH && (tick - VS_KNOCK_FIRST_SMASH) % VS_KNOCK_SMASH_PERIOD == 0
+}
 
 const fn capture_ticks(scene: GameScene) -> u64 {
     match scene {
@@ -285,6 +318,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::VsTeam => 940,
         // The player's second fall, then START asleep (RE-464).
         GameScene::VsTeamSteal => VS_TEAM_STEAL_CAPTURE_TICK,
+        // Past the KO and the CPU's rebirth (RE-469).
+        GameScene::VsPush => VS_PUSH_CAPTURE_TICK,
+        GameScene::VsKnock => VS_KNOCK_CAPTURE_TICK,
         // "Go" at 398; Luigi, held left, falls off Dream Land and the
         // one-stock battle ends. The results make the fighters 120 tics
         // in; this is past the end of Kirby's Win clip.
@@ -597,6 +633,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::Vs4
             | GameScene::VsTeam
             | GameScene::VsTeamSteal
+            | GameScene::VsPush
+            | GameScene::VsKnock
             | GameScene::VsResults
             | GameScene::VsResultsEmblem
             | GameScene::VsShield
@@ -609,6 +647,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             4 | 8 => N64Buttons(N64Buttons::A),
             // `vsshield`: the shield is held from "Go".
             t if scene == GameScene::VsShield && t >= 398 => N64Buttons(N64Buttons::Z),
+            // `vsknock`: a forward smash with each stick flick.
+            t if scene == GameScene::VsKnock && vs_knock_smash(t) => N64Buttons(N64Buttons::A),
             // `vsplayers`: A on the VS mode menu's Start at 19; the
             // select's first tick is 21. A at 46 places the held puck on
             // Yoshi, and A at 62 on port 2's NA button opens a CPU.
@@ -935,6 +975,19 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if scene == GameScene::VsTeamSteal {
         return if VS_TEAM_STEAL_RUNS.iter().any(|r| r.contains(&tick)) { -80 } else { 0 };
     }
+    // `vspush`: walks into the standing CPU from "Go" and keeps walking;
+    // `vsknock` flicks the stick for each smash (RE-469).
+    if scene == GameScene::VsPush {
+        return if (VS_GO_TICK..VS_PUSH_RELEASE_TICK).contains(&tick) { VS_PUSH_WALK_STICK } else { 0 };
+    }
+    if scene == GameScene::VsKnock {
+        return match tick {
+            t if t < VS_GO_TICK => 0,
+            t if t < VS_KNOCK_FIRST_SMASH - 1 => VS_PUSH_STICK,
+            t if vs_knock_smash(t) => VS_PUSH_STICK,
+            _ => 0,
+        };
+    }
     // `vsresults`: held left from "Go", the player runs off the stage.
     if matches!(scene, GameScene::VsResults | GameScene::VsResultsEmblem) {
         return if (398..=520).contains(&tick) { -80 } else { 0 };
@@ -1057,6 +1110,8 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::Vs4
             | GameScene::VsTeam
             | GameScene::VsTeamSteal
+            | GameScene::VsPush
+            | GameScene::VsKnock
             | GameScene::VsResults
             | GameScene::VsResultsEmblem
             | GameScene::VsShield
@@ -1590,6 +1645,7 @@ unsafe fn training_step(
     let groups = stage_map
         .as_ref()
         .map_or(&[][..], |map| map.groups.as_slice());
+    let t = profile::start();
     interrupt_pass(
         p,
         &stage,
@@ -1604,6 +1660,7 @@ unsafe fn training_step(
         effects,
         lead,
     );
+    profile::stop(profile::Span::Interrupt, t);
     // Bonus2's priority-4 process observes the fighter after interrupts,
     // before priority-3 movement, item hits and death scoring.
     if let (Some(bonus), Some(battle), Some(map)) = (bonus, battle.as_deref_mut(), stage_map.as_mut()) {
@@ -1671,11 +1728,13 @@ unsafe fn training_step(
         .as_ref()
         .map_or(&[][..], |map| map.groups.as_slice());
     let mut s = scenes(pl, dummies);
+    let t = profile::start();
     physics_pass(p, &stage, groups, &mut s, weapons, items,
         stage_ctl,
         stage_objects,
         started,
         effects);
+    profile::stop(profile::Span::Physics, t);
     // Priority 3, after the fighters', weapons' and items': the effects'
     // processes.
     effects.process();
@@ -1685,8 +1744,10 @@ unsafe fn training_step(
             f.camera.quake = quake_translate(p, magnitude, ticks).or(f.camera.quake);
         }
     }
+    let t = profile::start();
     hit_pass(p, &stage, groups, &mut s, weapons, items, stage_objects, stage_ctl, effects,
     );
+    profile::stop(profile::Span::Hit, t);
     // The stage calls the items made (`grInishiePowerBlockSetDamage` in
     // their hit collisions, `grInishiePowerBlockSetWait` in their main
     // process): no stage process runs between them and here.
@@ -1847,7 +1908,9 @@ fn physics_pass(
             continue;
         };
         f.fighter.occupied_cliffs = held;
+        let t = profile::start();
         f.tick_fighter_physics(p, stage, groups);
+        profile::stop(profile::Span::FighterPhysics, t);
         if core::mem::take(&mut f.fighter.dead.died) {
             weapons.destroy_boomerang(f.fighter.port);
         }
@@ -1870,7 +1933,9 @@ fn physics_pass(
     }
     // Master Hand's camera requests reach the camera before its process.
     campaign::take_boss_camera(s);
+    let t = profile::start();
     tick_battle_camera(stage, s);
+    profile::stop(profile::Span::Camera, t);
     for f in s.iter().flatten() {
         weapons.observe_owner(&f.fighter);
     }
@@ -1897,6 +1962,7 @@ fn physics_pass(
     }
     // The weapon link's last pass: free structs for the items' weapon
     // makers, and Onix's rock events.
+    let t = profile::start();
     items.observe_weapons(weapons);
     items.tick_appear(started, map);
     items.tick_with_effects(map, Some(blast_zone),
@@ -1922,6 +1988,8 @@ fn physics_pass(
     }
     items.flush_effects(effects);
     items.flush_monster_shots(weapons);
+    profile::stop(profile::Span::Items, t);
+    let t = profile::start();
     weapons.tick(map, Some(blast_zone));
     for f in s.iter_mut().flatten() {
         weapons.sync_owner(&mut f.fighter);
@@ -1929,6 +1997,7 @@ fn physics_pass(
     // The weapons' main processes' effects: the weapon link runs after the
     // item link (RE-416).
     weapons.flush_effects(effects);
+    profile::stop(profile::Span::Weapons, t);
 }
 
 /// The battle camera's process (priority 3, after every fighter's
@@ -2127,11 +2196,71 @@ fn menu_stick_up_pressed(previous: ControllerState, current: ControllerState) ->
 #[cfg(feature = "golden_capture")]
 const CAPTURE_EXIT_FRAMES: u32 = 2;
 
-psp::module!("ssb64_psp_game", 1, 0);
+/// The main thread's stack (RE-469). `psp::module!` gives it a fixed
+/// 256 KiB, which the game's frame overflows on a PSP.
+const GAME_STACK_BYTES: usize = 512 * 1024;
+
+ssb_psp_runtime::module_with_stack!("ssb64_psp_game", 1, 0, crate::GAME_STACK_BYTES);
 
 fn psp_main() {
     psp::enable_home_button();
     unsafe { run() }
+}
+
+/// `vspush`'s and `vsknock`'s progress line (RE-469): both fighters'
+/// positions, statuses and damage, the CPU's stocks and the player's score,
+/// and the stack's deepest use so far.
+#[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
+fn log_push_state(s: &Session, tick: u64) {
+    let (Some(pl), Some(d)) = (s.play_state.as_ref(), s.dummies[0].as_deref()) else {
+        return;
+    };
+    let players = s.vs_battle.as_ref().map(|b| b.players);
+    let line = alloc::format!(
+        "push tick={} player=({:.0},{:.0}) {:?} cpu=({:.0},{:.0}) {:?} dmg={} cpu_stocks={:?} score={:?} stack_free={}\n",
+        tick,
+        pl.fighter.pos.x,
+        pl.fighter.pos.y,
+        pl.fighter.status.status,
+        d.fighter.pos.x,
+        d.fighter.pos.y,
+        d.fighter.status.status,
+        d.fighter.damage,
+        players.map(|p| p[1].stock_count),
+        players.map(|p| p[0].score),
+        ssb_psp_runtime::thread::stack_free_bytes(),
+    );
+    profile::log(line.as_bytes());
+    if profile::ENABLED {
+        return;
+    }
+    unsafe {
+        psp::sys::sceIoWrite(
+            psp::sys::sceKernelStdout(),
+            line.as_ptr() as *const core::ffi::c_void,
+            line.len(),
+        );
+    }
+}
+
+/// The capture log's stack line (RE-469): the game thread's deepest stack
+/// use so far.
+#[cfg(feature = "headless_capture")]
+fn log_stack_peak(sim_frame_index: u64) {
+    let used = GAME_STACK_BYTES.saturating_sub(ssb_psp_runtime::thread::stack_free_bytes());
+    let line = alloc::format!(
+        "stack tick={} peak={} size={}\n",
+        sim_frame_index,
+        used,
+        GAME_STACK_BYTES
+    );
+    unsafe {
+        psp::sys::sceIoWrite(
+            psp::sys::sceKernelStdout(),
+            line.as_ptr() as *const core::ffi::c_void,
+            line.len(),
+        );
+    }
 }
 
 /// Which screen is active.
@@ -2599,7 +2728,9 @@ fn capture_cpu_behavior(scene: GameScene) -> Option<ssb_game::computer::Behavior
         | GameScene::VsTimeUpSign
         | GameScene::VsSuddenDeath
         | GameScene::VsResults
-        | GameScene::VsResultsEmblem => {
+        | GameScene::VsResultsEmblem
+        | GameScene::VsPush
+        | GameScene::VsKnock => {
             Some(ssb_game::computer::Behavior::Stand)
         }
         _ => None,
@@ -2726,6 +2857,12 @@ fn vs_rules(scene: GameScene) -> VsRules {
             rule: ssb_game::battle::Rule::Stock,
             stocks: 1,
             team_rules: ssb_game::team::TeamRules::TEAMS,
+            ..VsRules::DEFAULT
+        },
+        // Two lives each: the KO takes a stock and the CPU comes back.
+        GameScene::VsPush | GameScene::VsKnock => VsRules {
+            rule: ssb_game::battle::Rule::Stock,
+            stocks: 1,
             ..VsRules::DEFAULT
         },
         // One stock (`stock_setting` 0).
@@ -3571,6 +3708,15 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
             Some([0, 0, 1, 1]),
         ),
         GameScene::VsResults | GameScene::VsResultsEmblem => return vs_results_roster(),
+        // The CPU on the main floor's spawn, where it can be pushed off,
+        // and the player on the left platform's.
+        GameScene::VsPush | GameScene::VsKnock => {
+            let mut roster = training_roster(training);
+            if let [Some(player), Some(cpu), ..] = &mut roster {
+                core::mem::swap(&mut player.spawn, &mut cpu.spawn);
+            }
+            return roster;
+        }
         GameScene::VsArwing | GameScene::VsCar => return vs_pair_roster([FighterKind::Fox, FighterKind::Captain]),
         GameScene::VsBall | GameScene::VsRays => return vs_pair_roster([FighterKind::Pikachu, FighterKind::Purin]),
         _ => return training_roster(training),
@@ -3670,7 +3816,7 @@ fn enter_training(
     *world.stage_map = Some(alloc::boxed::Box::new(ssb_psp_runtime::scene::StageMap::new(
         p, index, &stage,
     )));
-    *world.stage_objects = ssb_rom::ground_obj::GroundObjects::new(p, stage.source_file);
+    world.stage_objects.load(p, stage.source_file);
     // `grMainSetupMakeGround`: any VS stage gets its controller; others run
     // an empty slot.
     // `gSCManagerBattleState`'s item switches: Training clears them
@@ -3878,6 +4024,7 @@ unsafe fn draw_frame(
         }
         Screen::Training => {
             if let (Some(p), Some(pl)) = (pack.as_ref(), s.play_state.as_ref()) {
+                let t = profile::start();
                 effect_visuals.sync(p, draw_assets, &pl.fighter, &s.weapons, &s.items);
                 effect_visuals.sync_entry(
                     p,
@@ -3895,6 +4042,7 @@ unsafe fn draw_frame(
                     draw_assets,
                     scenes_ref(pl, &s.dummies).map(|x| x.map(|x| &x.fighter)),
                 );
+                profile::stop(profile::Span::EffectSync, t);
             }
             // `grWallpaperCommonProcUpdate` or `grWallpaperSectorProcUpdate`:
             // process priority 3, after the battle camera's, so from this
@@ -4804,6 +4952,7 @@ unsafe fn run() -> ! {
         }
         let pressed = newly_pressed(previous_controller.buttons, controller.buttons);
 
+        let update_start = profile::start();
         if !deterministic_capture_frozen(capture_spec, sim_frame_index) {
             session_frame(
                 &mut s,
@@ -4815,7 +4964,29 @@ unsafe fn run() -> ! {
                 pressed,
             );
         }
+        profile::stop(profile::Span::Update, update_start);
         save::persist(&mut s.save, &s.backup);
+
+        // `vsknock`: the CPU starts the battle already damaged (RE-469).
+        if capture_spec == Some(GameScene::VsKnock) && sim_frame_index == VS_GO_TICK {
+            if let Some(d) = s.dummies[0].as_deref_mut() {
+                d.fighter.damage = VS_KNOCK_DAMAGE as u16;
+            }
+        }
+        // `vspush`: the pushed CPU has no jumps left to come back with and
+        // cannot catch the ledge.
+        if capture_spec == Some(GameScene::VsPush) && sim_frame_index >= VS_GO_TICK {
+            if let Some(d) = s.dummies[0].as_deref_mut() {
+                if !d.fighter.is_grounded() {
+                    d.fighter.physics.jumps_used = VS_PUSH_JUMPS_USED;
+                    d.fighter.cliffcatch_wait = u16::MAX;
+                }
+            }
+        }
+        #[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
+        if matches!(capture_spec, Some(GameScene::VsPush | GameScene::VsKnock)) && sim_frame_index % 30 == 0 {
+            log_push_state(&s, sim_frame_index);
+        }
 
         #[cfg(feature = "headless_capture")]
         if sim_frame_index == 105 {
@@ -4855,6 +5026,7 @@ unsafe fn run() -> ! {
             }
         }
 
+        let draw_start = profile::start();
         draw_frame(
             &mut gpu,
             &mut s,
@@ -4864,11 +5036,14 @@ unsafe fn run() -> ! {
             &draw_assets,
             no_pack_color,
         );
+        profile::stop(profile::Span::Draw, draw_start);
         gpu.end_frame();
+        profile::frame_end(ssb_psp_runtime::thread::stack_free_bytes);
 
         #[cfg(feature = "headless_capture")]
         if !headless_capture_sent && deterministic_capture_frozen(capture_spec, sim_frame_index) {
             emit_headless_screenshot();
+            log_stack_peak(sim_frame_index);
             if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale)) {
                 campaign::log_capture(&s, sim_frame_index);
             }

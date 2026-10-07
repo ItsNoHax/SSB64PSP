@@ -625,6 +625,14 @@ pub enum GameScene {
     /// twice and, asleep, steals a stock from the CPU on its team with
     /// START (RE-464).
     VsTeamSteal,
+    /// `vspush`: `vs` on two stocks; the player walks into the standing
+    /// CPU from "Go" and pushes it off the main floor's edge, through the
+    /// bottom blast zone (RE-469).
+    VsPush,
+    /// `vsknock`: `vspush`'s battle with the CPU's damage seeded at "Go";
+    /// the player's forward smashes send it through a side blast zone
+    /// (RE-469).
+    VsKnock,
     /// `explain`: How to Play (`scExplain`, RE-465) from the title, its
     /// fighters on their input scripts. Diagnostic: outside the manifest.
     Explain,
@@ -695,7 +703,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 171] = [
+    pub const ALL: [GameScene; 173] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -845,6 +853,8 @@ impl GameScene {
         GameScene::BonusSelect,
         GameScene::BonusPractice,
         GameScene::VsTeamSteal,
+        GameScene::VsPush,
+        GameScene::VsKnock,
         GameScene::Explain,
         GameScene::AutoDemo,
         GameScene::Opening,
@@ -1021,6 +1031,8 @@ impl GameScene {
             GameScene::BonusSelect => "bonusselect",
             GameScene::BonusPractice => "bonuspractice",
             GameScene::VsTeamSteal => "vsteamsteal",
+            GameScene::VsPush => "vspush",
+            GameScene::VsKnock => "vsknock",
             GameScene::Explain => "explain",
             GameScene::AutoDemo => "autodemo",
             GameScene::Opening => "opening",

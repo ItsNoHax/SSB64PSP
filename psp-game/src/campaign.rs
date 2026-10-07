@@ -125,6 +125,9 @@ pub(crate) fn start_practice(
 
 /// Ends the campaign for `next`: the 1P mode menu or the N64 logo (which
 /// is skipped to the title).
+// Out of line so `on_host`'s frame holds only one scene's locals: the
+// game thread's stack is 512 KiB (RE-469).
+#[inline(never)]
 fn leave(s: &mut Session, pack: Option<&Pack<'_>>, next: ssb_game::menu::Scene) {
     s.campaign = None;
     s.play_state = None;
@@ -208,6 +211,9 @@ fn on_host(s: &mut Session, pack: Option<&Pack<'_>>, scene: Scene) {
 
 /// `sc1PGameFuncStart`: the manager's stage setup and the fighters it
 /// describes, on the shared battle world.
+// Out of line so `on_host`'s frame holds only one scene's locals: the
+// game thread's stack is 512 KiB (RE-469).
+#[inline(never)]
 fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> {
     let c = s.campaign.as_mut().expect("campaign");
     let sp = c.session();
@@ -302,7 +308,7 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     }
     c.boss = None;
     if stage == Stage::Boss {
-        c.boss = Some(alloc::boxed::Box::new(BossScene::new(p, &desc, &mut s.dummies)?));
+        c.boss = Some(BossScene::new_boxed(p, &desc, &mut s.dummies)?);
     }
     c.tic = 0;
     Ok(())
@@ -327,6 +333,17 @@ pub(crate) struct BossScene {
 }
 
 impl BossScene {
+    /// [`Self::new`] on the heap, out of line: the scene is too large for
+    /// `enter_battle`'s frame on the game thread's 512 KiB stack (RE-469).
+    #[inline(never)]
+    fn new_boxed(
+        p: &Pack<'_>,
+        stage: &ssb_rom::pack::StageDesc,
+        dummies: &mut Dummies,
+    ) -> Result<alloc::boxed::Box<Self>, Blocked> {
+        Self::new(p, stage, dummies).map(alloc::boxed::Box::new)
+    }
+
     /// `sc1PGameBossInitWallpaper`, and `ftManagerInitFighter`'s Boss
     /// case for the enemy (`ftBossCommonSetNextAttackWait`,
     /// `...SetDefaultLineID`).
@@ -561,6 +578,9 @@ fn boss_defeat_init(
 
 /// `sc1PBonusStageFuncStart`: a separate bonus world, one fighter and ten
 /// objectives. Campaign stocks and accumulated battle records stay put.
+// Out of line so `on_host`'s frame holds only one scene's locals: the
+// game thread's stack is 512 KiB (RE-469).
+#[inline(never)]
 fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> {
     let c = s.campaign.as_mut().expect("campaign");
     let data = &c.frontend.session.as_ref().expect("campaign session").data;
