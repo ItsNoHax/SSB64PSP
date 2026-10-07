@@ -264,8 +264,6 @@ PACK="$REPO/assets/generated/ssb64.pak"
 if [ -f "$PACK" ]; then
   cp -f "$PACK" "$OUT/"
   echo "==> staged pack $(du -h "$PACK" | cut -f1) ($(date -r "$PACK" '+%H:%M:%S'))"
-  # The options and data menus' per-scene sprite packs (RE-461).
-  [ -f "$REPO/assets/generated/ssb64-menus.pak" ] && cp -f "$REPO/assets/generated/ssb64-menus.pak" "$OUT/"
 else
   echo "==> no asset pack at $PACK; run: cargo run --release -p romtool -- pack <rom>" >&2
 fi

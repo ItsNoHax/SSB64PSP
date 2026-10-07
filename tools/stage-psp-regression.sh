@@ -54,7 +54,6 @@ rm -f "$EBOOT"
 mkdir -p "$DEST"
 install -m 0644 "$EBOOT" "$DEST/EBOOT.PBP"
 install -m 0644 "$PACK" "$DEST/ssb64.pak"
-install -m 0644 "$(dirname "$PACK")/ssb64-menus.pak" "$DEST/ssb64-menus.pak"
 printf '%s\n' "$SCENE" > "$DEST/capture_scene.txt"
 
 {
@@ -63,7 +62,7 @@ printf '%s\n' "$SCENE" > "$DEST/capture_scene.txt"
   echo "golden=$GOLDEN"
   echo "scene=$SCENE"
   echo "generated_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  sha256sum "$DEST/EBOOT.PBP" "$DEST/ssb64.pak" "$DEST/ssb64-menus.pak" | sed "s|$DEST/||"
+  sha256sum "$DEST/EBOOT.PBP" "$DEST/ssb64.pak" | sed "s|$DEST/||"
 } > "$DEST/regression-manifest.txt"
 
 sync "$DEST"

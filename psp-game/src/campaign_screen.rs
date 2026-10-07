@@ -83,6 +83,7 @@ impl Presentation {
         }
         self.scene = Some(id);
         self.snapshot_pending = id.0 == 2;
+        crate::scene_load::campaign(id.0, data.fkind as u32);
         self.models.clear();
         if ending::make(self, p, screen) {
             return true;

@@ -3701,37 +3701,34 @@ fn add_menu_sprite_texture(
     writer.add_texture(&tex, true, true)
 }
 
-/// `ssb64-menus.pak` (`ssb_rom::menu_pack`): each options or data menu
-/// scene's sprites in a pack of their own, which the host loads with the
-/// scene.
-fn write_menu_packs(
+/// The menu, title, How to Play and opening scenes' sprites, baked plays
+/// and cameras (`ssb_rom::menu_pack::MenuScene`), into the pack itself
+/// (RE-475): each belongs to its archive file and loads with the scene
+/// that lists it. Sprites the pack already holds are not added again.
+fn add_menu_scenes(
+    writer: &mut ssb_rom::pack::PackWriter,
     files: &[Option<ssb_rom::archive::File>],
     swizzle: bool,
-    out: &Path,
-    mut opening_models: Vec<u8>,
-) -> Res {
+) -> Result<usize, Box<dyn std::error::Error>> {
     use ssb_rom::menu_pack::MenuScene;
+    use ssb_rom::pack::{AnimDesc, SpriteDesc};
     let file = |id: u32| {
         files
             .get(id as usize)
             .and_then(Option::as_ref)
             .ok_or_else(|| format!("menu sprite file {id:#x} missing"))
     };
-    let mut packs = Vec::new();
     let mut sprites = 0usize;
     for scene in MenuScene::ALL {
-        if scene == MenuScene::OpeningModels {
-            println!("  menu pack   {scene:?}: {} bytes", opening_models.len());
-            packs.push(core::mem::take(&mut opening_models));
-            continue;
-        }
-        let mut writer = ssb_rom::pack::PackWriter::new();
         for f in scene.sprites() {
             let data = file(f.file)?;
             for &at in f.offsets {
+                if writer.has_sprite(f.file, at, SpriteDesc::ROLE_NONE, 0) {
+                    continue;
+                }
                 let s = ssb_rom::sprite::decode(data, at)
                     .map_err(|e| format!("menu sprite {:#x}+{at:#x}: {e:?}", f.file))?;
-                let texture = add_menu_sprite_texture(&mut writer, &s, swizzle);
+                let texture = add_menu_sprite_texture(writer, &s, swizzle);
                 writer.add_sprite(sprite_desc(f.file, at, &s, texture, 0, 0, 0));
                 sprites += 1;
             }
@@ -3739,6 +3736,9 @@ fn write_menu_packs(
         for &(id, at, luts) in scene.lut_sprites() {
             let data = file(id)?;
             for (i, &lut) in luts.iter().enumerate() {
+                if writer.has_sprite(id, at, SpriteDesc::ROLE_LUT, i as u8) {
+                    continue;
+                }
                 let bytes = data
                     .data
                     .get(lut as usize..lut as usize + 32)
@@ -3749,36 +3749,42 @@ fn write_menu_packs(
                     &ssb_rom::texture::parse_tlut(bytes),
                 )
                 .map_err(|e| format!("menu sprite {id:#x}+{at:#x} LUT {i}: {e:?}"))?;
-                let texture = add_menu_sprite_texture(&mut writer, &s, swizzle);
+                let texture = add_menu_sprite_texture(writer, &s, swizzle);
                 writer.add_sprite(sprite_desc(
                     id,
                     at,
                     &s,
                     texture,
                     0,
-                    ssb_rom::pack::SpriteDesc::ROLE_LUT,
+                    SpriteDesc::ROLE_LUT,
                     i as u8,
                 ));
                 sprites += 1;
             }
         }
-        if scene == MenuScene::Title {
-            add_title_anims(&mut writer, file(ssb_rom::title::FILE)?)?;
+        if scene == MenuScene::Title
+            && !writer.has_anim(AnimDesc::EFFECT, ssb_rom::title::LABELS_SLOT)
+        {
+            add_title_anims(writer, file(ssb_rom::title::FILE)?)?;
+            for slot in [
+                ssb_rom::title::LABELS_SLOT,
+                ssb_rom::title::PRESS_START_SLOT,
+                ssb_rom::title::LOGO_SLOT,
+            ] {
+                writer.set_owner(slot, ssb_rom::title::FILE);
+            }
         }
-        // The whole files the scene's joint scripts play from, and its
-        // camera animations baked one play per frame (the opening, RE-467).
         for &id in scene.blobs() {
-            let data = &file(id)?.data;
-            writer.add_anim(
-                ssb_rom::pack::AnimDesc::EFFECT,
-                ssb_rom::opening::blob_slot(id),
-                id,
-                0,
-                data,
-                &[],
-            );
+            let slot = ssb_rom::opening::blob_slot(id);
+            if writer.has_anim(AnimDesc::EFFECT, slot) {
+                continue;
+            }
+            writer.add_anim(AnimDesc::EFFECT, slot, id, 0, &file(id)?.data, &[]);
         }
         for cam in scene.cameras() {
+            if writer.has_anim(AnimDesc::EFFECT, cam.slot()) {
+                continue;
+            }
             let frames = ssb_rom::camanim::bake(&file(cam.file)?.data, cam.offset, cam.init, 8192)
                 .map_err(|e| format!("camera {:#x}+{:#x}: {e:?}", cam.file, cam.offset))?;
             if frames.is_empty() || frames.len() >= 8192 {
@@ -3791,36 +3797,34 @@ fn write_menu_packs(
                 .into());
             }
             writer.add_anim(
-                ssb_rom::pack::AnimDesc::EFFECT,
+                AnimDesc::EFFECT,
                 cam.slot(),
                 cam.slot(),
                 frames.len() as u32,
                 &ssb_rom::camanim::to_bytes(&frames),
                 &[],
             );
+            writer.set_owner(cam.slot(), cam.file);
         }
-        if scene == MenuScene::Explain {
+        if scene == MenuScene::Explain
+            && !writer.has_anim(AnimDesc::EFFECT, ssb_rom::explain::PHASES_SLOT)
+        {
             sprites += add_explain(
-                &mut writer,
+                writer,
                 file(ssb_rom::explain::FILE_MAIN)?,
                 file(ssb_rom::explain::FILE_GRAPHICS)?,
                 swizzle,
             )?;
+            for slot in [ssb_rom::explain::PHASES_SLOT, ssb_rom::explain::KEYS_SLOT] {
+                writer.set_owner(slot, ssb_rom::explain::FILE_MAIN);
+            }
+            writer.set_owner(
+                ssb_rom::explain::ANIMS_SLOT,
+                ssb_rom::explain::FILE_GRAPHICS,
+            );
         }
-        let bytes = writer.finish();
-        ssb_rom::pack::Pack::open(&bytes)
-            .map_err(|e| format!("menu pack {scene:?} will not load: {e:?}"))?;
-        println!("  menu pack   {scene:?}: {} bytes", bytes.len());
-        packs.push(bytes);
     }
-    let bytes = ssb_rom::menu_pack::build(&packs);
-    fs::write(out, &bytes)?;
-    println!(
-        "menu packs -> {} ({} bytes, {sprites} sprites)",
-        out.display(),
-        bytes.len()
-    );
-    Ok(())
+    Ok(sprites)
 }
 
 /// How to Play's raw textures as sprites keyed by their texture's offset,
@@ -3971,25 +3975,10 @@ fn sprite_desc(
     }
 }
 
+/// One pack, the opening's models and the menu scenes' content included:
+/// each scene loads its own files from it (RE-475; the opening's models
+/// and the menus had packs of their own before it, RE-467 and RE-461).
 fn pack(path: &Path, opts: &[&str]) -> Res {
-    // The opening's own models first, in a pack of their own (RE-467);
-    // the resident pack then leaves their files out.
-    let mut opening_models = Vec::new();
-    pack_part(path, opts, PackPart::OpeningModels(&mut opening_models))?;
-    pack_part(path, opts, PackPart::Resident(opening_models))
-}
-
-/// Which pack [`pack_part`] builds.
-enum PackPart<'a> {
-    /// Only the objects of the opening's own files
-    /// (`ssb_rom::opening::is_model_file`), into the buffer.
-    OpeningModels(&'a mut Vec<u8>),
-    /// Everything else, written out with the menu packs; the opening's
-    /// models pack goes in with them.
-    Resident(Vec<u8>),
-}
-
-fn pack_part(path: &Path, opts: &[&str], part: PackPart<'_>) -> Res {
     use ssb_rom::{mesh, pack as fmt};
 
     let mut out_path = PathBuf::from("assets/generated/ssb64.pak");
@@ -4072,12 +4061,8 @@ fn pack_part(path: &Path, opts: &[&str], part: PackPart<'_>) -> Res {
     let ground_graphs = ground_layer1_graphs(&loaded);
     let transition_graphs = lb_transition_graphs();
 
-    let opening_part = matches!(part, PackPart::OpeningModels(_));
     for id in 0..archive.len() as u32 {
         if only_file.is_some_and(|f| f != id) {
-            continue;
-        }
-        if ssb_rom::opening::is_model_file(id) != opening_part {
             continue;
         }
         let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
@@ -5462,19 +5447,6 @@ fn pack_part(path: &Path, opts: &[&str], part: PackPart<'_>) -> Res {
             }
         }
     }
-    let opening_models = match part {
-        PackPart::OpeningModels(out) => {
-            *out = writer.finish();
-            ssb_rom::pack::Pack::open(out)
-                .map_err(|e| format!("opening models pack will not load: {e:?}"))?;
-            println!(
-                "  opening models pack: {objects} objects, {} bytes",
-                out.len()
-            );
-            return Ok(());
-        }
-        PackPart::Resident(bytes) => bytes,
-    };
     println!(
         "  skeletons   {skeleton_parts_added} electric-skeleton part meshes for {} fighters \
          ({skeleton_parts_dropped} pre-matrix lists with triangles dropped)",
@@ -7161,23 +7133,59 @@ fn pack_part(path: &Path, opts: &[&str], part: PackPart<'_>) -> Res {
         }
     }
 
+    // The scenes' own sprites, plays and cameras (RE-475; the menu packs
+    // before it, RE-461).
+    let menu_sprites = add_menu_scenes(&mut writer, &loaded.files, swizzle)?;
+    // Baked plays keyed by a slot load with the file their scene lists:
+    // Master Hand's cameras with his main file, the credits with the staff
+    // roll's, the ending's camera with `MVEnding` (RE-475).
+    for (slot, file) in [
+        (
+            ssb_rom::campaign::BOSS_INTRO_CAMERA_SLOT,
+            ssb_rom::scene_roots::FIGHTER_MAIN[12],
+        ),
+        (
+            ssb_rom::campaign::BOSS_DEFEAT_CAMERA_SLOT,
+            ssb_rom::scene_roots::FIGHTER_MAIN[12],
+        ),
+        (
+            ssb_rom::ending::CREDITS_SLOT,
+            ssb_rom::scene_roots::STAFFROLL[0],
+        ),
+        (
+            ssb_rom::ending::ENDING_CAMERA_SLOT,
+            ssb_rom::scene_roots::ENDING[1],
+        ),
+    ] {
+        writer.set_owner(slot, file);
+    }
+    println!("  menu scenes {menu_sprites} sprites");
+    // Each file's extern IDs, so a runtime loading a file loads what it
+    // points at (`lbRelocLoadFilesExtern`, RE-475).
+    for id in 0..archive.len() as u32 {
+        if let Ok(deps) = archive.extern_ids(id) {
+            writer.set_file_deps(id, &deps);
+        }
+    }
     let bytes = writer.finish();
     if let Some(dir) = out_path.parent() {
         fs::create_dir_all(dir)?;
     }
     fs::write(&out_path, &bytes)?;
-    write_menu_packs(
-        &loaded.files,
-        swizzle,
-        &out_path.with_file_name(ssb_rom::menu_pack::FILE_NAME),
-        opening_models,
-    )?;
 
     // Verify what we just wrote actually loads, rather than trusting it.
     let pack = ssb_rom::pack::Pack::open(&bytes)
         .map_err(|e| format!("wrote a pack that will not load: {e:?}"))?;
 
     println!("asset pack -> {}", out_path.display());
+    println!(
+        "  resident    {} bytes (tables {}, shared blob {}); {} archive files, {} bytes",
+        pack.resident_len(),
+        pack.blob_start(),
+        pack.shared_len(),
+        pack.file_count(),
+        bytes.len() - pack.resident_len()
+    );
     println!("  meshes      {meshes}");
     println!("  triangles   {triangles}");
     // One GE draw call per primitive, so this is the number the state-sorting

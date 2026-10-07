@@ -23,6 +23,7 @@
 // The asset pack is loaded into a heap buffer; `psp` provides the allocator.
 extern crate alloc;
 
+mod boot_log;
 mod campaign;
 mod capture;
 mod demo_screen;
@@ -33,6 +34,7 @@ mod player_screen;
 mod players_screen;
 mod results_screen;
 mod save;
+mod scene_load;
 mod stage_screen;
 mod title_opening;
 mod training_screen;
@@ -2233,6 +2235,14 @@ const GAME_STACK_BYTES: usize = 512 * 1024;
 ssb_psp_runtime::module_with_stack!("ssb64_psp_game", 1, 0, crate::GAME_STACK_BYTES);
 
 fn psp_main() {
+    boot_log::log("psp_main");
+    // A test build takes away the memory a smaller launch lacks (RE-475).
+    #[cfg(feature = "memory_ballast")]
+    if let Some(target) = ssb_psp_runtime::memory::ballast_target() {
+        let held = ssb_psp_runtime::memory::hold_ballast(target);
+        boot_log::log_args(format_args!("ballast target={target} held={held}"));
+    }
+    ssb_psp_runtime::memory::sample();
     psp::enable_home_button();
     ssb_psp_runtime::timing::full_speed();
     unsafe { run() }
@@ -2275,15 +2285,28 @@ fn log_push_state(s: &Session, tick: u64) {
 }
 
 /// The capture log's stack line (RE-469): the game thread's deepest stack
-/// use so far.
+/// use so far; and its memory line (RE-475): free user memory at boot, its
+/// lowest since and now.
 #[cfg(feature = "headless_capture")]
 fn log_stack_peak(sim_frame_index: u64) {
     let used = GAME_STACK_BYTES.saturating_sub(ssb_psp_runtime::thread::stack_free_bytes());
+    let (boot, low) = ssb_psp_runtime::memory::low_water();
+    let report = ssb_psp_runtime::scene_files::report();
+    let (held, blocks) = ssb_psp_runtime::scene_files::held();
     let line = alloc::format!(
-        "stack tick={} peak={} size={}\n",
+        "stack tick={} peak={} size={}\nmem tick={} boot={} low={} held={} blocks={} demand={}/{}\nscene {} demand files {:x?}\n",
         sim_frame_index,
         used,
-        GAME_STACK_BYTES
+        GAME_STACK_BYTES,
+        sim_frame_index,
+        boot,
+        low,
+        held,
+        blocks,
+        report.demand_files,
+        report.demand_bytes,
+        report.scene,
+        ssb_psp_runtime::scene_files::demand_files(),
     );
     unsafe {
         psp::sys::sceIoWrite(
@@ -4262,6 +4285,7 @@ unsafe fn session_frame(
                             Some(new_fighter_select(s.training_scene, s.backup.fighter_mask, capture_scene.is_some(), sim_frame_index));
                         s.fighter_select_fighters = None;
                         s.screen = Screen::FighterSelect;
+                        scene_load::scene("players-training", scene_load::scene_roots(MScene::Players1PTraining));
                     }
                 }
             }
@@ -4269,7 +4293,7 @@ unsafe fn session_frame(
             Screen::Opening => {
                 // `scSubsysControllerGetPlayerTapButtons(A_BUTTON | B_BUTTON | START_BUTTON)`.
                 let tapped = pressed.contains(N64Buttons::A | N64Buttons::B | N64Buttons::START);
-                if let Some(next) = opening_screen::frame(&mut s.opening, pack.as_ref(), s.pack_path, tapped) {
+                if let Some(next) = opening_screen::frame(&mut s.opening, pack.as_ref(), tapped) {
                     let from = s.menus.scene;
                     go_scene(s, pack.as_ref(), next, from, capture_scene.is_some());
                 }
@@ -4341,6 +4365,7 @@ unsafe fn session_frame(
                         ));
                         s.fighter_select_fighters = None;
                         s.screen = Screen::FighterSelect;
+                        scene_load::scene("players-training", scene_load::scene_roots(MScene::Players1PTraining));
                     }
                 }
                 Some(ssb_game::stage_select::Outcome::Timeout) => {
@@ -4550,6 +4575,13 @@ unsafe fn session_frame(
                     s.vs_results = results;
                     s.vs_results_fighters = fighters;
                     s.screen = Screen::Results;
+                    // `mnVSResultsFuncStart`'s files and all twelve kinds.
+                    let mut roots = alloc::vec::Vec::from(ssb_rom::scene_roots::VS_RESULTS);
+                    roots.extend(ssb_rom::scene_roots::EF_COMMON);
+                    roots.extend(ssb_rom::scene_roots::FT_MANAGER);
+                    roots.extend(&ssb_rom::scene_roots::FIGHTER_MAIN[..12]);
+                    roots.extend(ssb_rom::scene_roots::TRANSITIONS);
+                    scene_load::scene("results", roots);
                 }
             }
         }
@@ -4630,6 +4662,7 @@ fn training_menu_frame(
             s.fighter_select = Some(new_fighter_select(s.training_scene, s.backup.fighter_mask, is_capture, sim_frame_index));
             s.fighter_select_fighters = None;
             s.screen = Screen::FighterSelect;
+            scene_load::scene("players-training", scene_load::scene_roots(MScene::Players1PTraining));
         }
         return false;
     }
@@ -4681,7 +4714,6 @@ struct Session {
     /// and its sprite pack.
     players_1p_bonus: Option<alloc::boxed::Box<ssb_game::players_1p_bonus::Players1PBonus>>,
     players_1p_bonus_fighters: Option<alloc::boxed::Box<players_screen::Fighters>>,
-    players_1p_bonus_sprites: Option<assets::AlignedBuf>,
     /// `gSCManagerSceneData.player`, `.bonus_fkind` and `.bonus_costume`.
     bonus_saved: ssb_game::players_1p_bonus::Saved,
     /// The results' fighters (RE-409), on the heap.
@@ -4703,8 +4735,6 @@ struct Session {
     /// `gSCManagerBackupData`, loaded at boot and saved on every write.
     backup: ssb_game::backup::Backup,
     save: save::Save,
-    /// Where the pack loaded from: the menus' sprite packs sit beside it.
-    pack_path: Option<&'static str>,
     /// The options and data menus (RE-461).
     menus: menus_screen::Menus,
     /// `dSYAudioSoundQuality`, which `lbBackupApplyOptions` and Option set:
@@ -4743,6 +4773,15 @@ impl Session {
     /// remembering it for a sudden death.
     fn enter(&mut self, pack: Option<&Pack<'_>>, gkind: u8, roster: Roster, rules: Option<VsRules>) {
         self.roster = roster;
+        // The battle's files (RE-475): `*SetupFiles`, the map, the fighters.
+        if let Some(p) = pack {
+            let kinds: alloc::vec::Vec<u32> = roster.iter().flatten().map(|e| e.kind as u32).collect();
+            let mut roots = scene_load::battle_roots(p, gkind, &kinds);
+            if rules.is_none() {
+                roots.extend(ssb_rom::scene_roots::TRAINING);
+            }
+            scene_load::battle("battle", &roots);
+        }
         self.training_stage = enter_training(
             pack,
             gkind,
@@ -4804,6 +4843,7 @@ impl Session {
         self.stage_select = ssb_game::stage_select::StageSelect::new(remembered, self.backup.unlock_mask);
         self.stage_select_layer = Some(ssb_game::stage_select_layer::Layer::new(&self.stage_select, !self.vs));
         self.screen = Screen::StageSelect;
+        scene_load::scene("maps", scene_load::scene_roots(MScene::Maps));
     }
 }
 
@@ -4822,8 +4862,22 @@ unsafe fn run() -> ! {
     // reads vertex and texture data out of it by DMA once the training
     // scene draws real meshes below.
     let loaded = assets::load_pack();
+    boot_log::log_args(format_args!(
+        "load_pack {}",
+        loaded.as_ref().map_or_else(|e| e.as_str(), |_| "ok")
+    ));
     // `lbBackupIsSramValid` and `lbBackupApplyOptions`, before the first
     // scene.
+    // The archive files after the resident bytes load per scene (RE-475).
+    if let Ok((buf, path)) = &loaded {
+        // SAFETY: `loaded` lives until `run` returns, which it never does.
+        let bytes: &'static [u8] = core::slice::from_raw_parts(buf.as_ptr(), buf.as_slice().len());
+        if let Some(c) = assets::c_path(path) {
+            if let Err(assets::LoadError::OutOfMemory) = ssb_psp_runtime::scene_files::boot(bytes, c) {
+                ssb_psp_runtime::memory::fatal(&["Out of memory while opening ssb64.pak."]);
+            }
+        }
+    }
     let (backup, save) = save::boot(loaded.as_ref().ok().map(|(_, p)| *p), capture_spec);
     let pack_buf = loaded.as_ref().ok().map(|(b, _)| b);
     let opened = pack_buf.map(|b| Pack::open(b.as_slice()));
@@ -4885,7 +4939,6 @@ unsafe fn run() -> ! {
         message_after: MScene::PlayersVs,
         players_1p_bonus: None,
         players_1p_bonus_fighters: None,
-        players_1p_bonus_sprites: None,
         bonus_saved: ssb_game::players_1p_bonus::Saved {
             player: 0,
             bonus_fkind: None,
@@ -4901,7 +4954,6 @@ unsafe fn run() -> ! {
         players_1p_fighters: None,
         one_p_scene: ssb_game::players_1p::SceneData::default(),
         spgame_scene: ssb_game::spgame::SceneData::default(),
-        pack_path: loaded.as_ref().ok().map(|(_, p)| *p),
         menus: menus_screen::Menus::new(),
         // `lbBackupApplyOptions`.
         sound_quality: backup.sound_mono_or_stereo,
@@ -4965,6 +5017,9 @@ unsafe fn run() -> ! {
 
     loop {
         sim_frame_index = sim_frame_index.saturating_add(1);
+        if matches!(sim_frame_index, 1 | 60 | 600) {
+            boot_log::log_args(format_args!("frame {sim_frame_index}"));
+        }
         pad.poll();
         let (previous_controller, controller) = if let Some(scene) = capture_scene {
             (
@@ -5081,7 +5136,14 @@ unsafe fn run() -> ! {
         );
         profile::stop(profile::Span::Draw, draw_start);
         gpu.end_frame();
+        ssb_psp_runtime::scene_files::safe_point();
+        if let Some(e) = ssb_psp_runtime::scene_files::take_failure() {
+            boot_log::log_args(format_args!("load failed: {}", e.as_str()));
+            ssb_psp_runtime::memory::fatal(&["Could not load the game's data from ssb64.pak:", e.as_str()]);
+        }
         profile::frame_end(ssb_psp_runtime::thread::stack_free_bytes);
+        #[cfg(feature = "headless_capture")]
+        ssb_psp_runtime::memory::sample();
 
         #[cfg(feature = "headless_capture")]
         if !headless_capture_sent && deterministic_capture_frozen(capture_spec, sim_frame_index) {
@@ -5213,7 +5275,6 @@ macro_rules! menus_host {
     ($s:expr, $pack:expr, $selections:expr, $capture:expr) => {
         menus_screen::Host {
             pack: $pack,
-            pack_path: $s.pack_path,
             backup: &mut $s.backup,
             selections: $selections,
             sound_quality: &mut $s.sound_quality,
@@ -5267,8 +5328,7 @@ fn go_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScen
         s.title_pending = true;
         return;
     }
-    // The opening's models stay loaded across its scenes (RE-467).
-    ssb_psp_runtime::movie::hold_models(s.pack_path, matches!(scene, MScene::Opening(_)));
+    scene_load::scene(scene_load::name(scene), scene_load::scene_roots(scene));
     if menus_screen::Menus::is_menu(scene) || matches!(scene, MScene::Explain | MScene::AutoDemo | MScene::SoundTest) {
         let mut selections = selections(s);
         let mut menus = core::mem::replace(&mut s.menus, menus_screen::Menus::new());
@@ -5287,7 +5347,7 @@ fn go_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScen
 /// Starts a scene the host runs, entered from `prev`.
 #[inline(never)]
 fn start_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScene, capture: bool) {
-    ssb_psp_runtime::movie::hold_models(s.pack_path, matches!(scene, MScene::Opening(_)));
+    scene_load::scene(scene_load::name(scene), scene_load::scene_roots(scene));
     s.menus.scene = scene;
     s.menus.scene_prev = prev;
     match scene {
@@ -5304,6 +5364,7 @@ fn start_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MS
             s.fighter_select = Some(new_fighter_select(s.training_scene, s.backup.fighter_mask, capture, 0));
             s.fighter_select_fighters = None;
             s.screen = Screen::FighterSelect;
+            scene_load::scene("players-training", scene_load::scene_roots(MScene::Players1PTraining));
         }
         MScene::Players1PBonus1 | MScene::Players1PBonus2 => {
             use ssb_game::players_1p_bonus::{BonusKind, Players1PBonus, SceneData};
@@ -5311,9 +5372,6 @@ fn start_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MS
             let data = SceneData { player: s.bonus_saved.player, bonus };
             s.players_1p_bonus = Some(alloc::boxed::Box::new(Players1PBonus::new(data, &s.backup)));
             s.players_1p_bonus_fighters = None;
-            s.players_1p_bonus_sprites = s
-                .pack_path
-                .and_then(|path| assets::load_menu_pack(path, ssb_rom::menu_pack::MenuScene::Players1PBonus).ok());
             s.screen = Screen::Players1PBonus;
         }
         MScene::PlayersVs => {
@@ -5341,7 +5399,7 @@ fn start_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MS
         // `mnStartup` and the opening movie (RE-467).
         MScene::Startup => {
             s.menus.leave();
-            opening_screen::start(&mut s.opening, s.pack_path, None);
+            opening_screen::start(&mut s.opening, None);
             s.screen = Screen::Opening;
         }
         MScene::Opening(kind) => start_opening(s, pack, kind, prev, capture),
@@ -5399,7 +5457,7 @@ fn begin_opening(s: &mut Session, pack: Option<&Pack<'_>>, kind: ssb_game::openi
             demo_screen::leave(s);
         }
         s.menus.leave();
-        opening_screen::start(&mut s.opening, s.pack_path, Some(kind));
+        opening_screen::start(&mut s.opening, Some(kind));
         s.screen = Screen::Opening;
         return;
     }
@@ -5605,7 +5663,6 @@ fn players_1p_bonus_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: 
     s.bonus_saved = saved;
     s.players_1p_bonus = None;
     s.players_1p_bonus_fighters = None;
-    s.players_1p_bonus_sprites = None;
     match (next, outcome) {
         (Some(scene), _) => go_scene(s, pack, scene, prev, false),
         (None, Outcome::Proceed { bonus, .. }) => {
@@ -5623,8 +5680,7 @@ unsafe fn draw_players_1p_bonus(gpu: &mut Gpu, pack: Option<&Pack<'_>>, draw_sta
     gpu.set_viewport_fullscreen();
     gpu.begin_frame(Some(BG_RESULTS));
     if let (Some(p), Some(select)) = (pack, s.players_1p_bonus.as_deref()) {
-        let menu = s.players_1p_bonus_sprites.as_ref().and_then(|b| Pack::open(b.as_slice()).ok());
-        players_screen::draw_bonus(gpu, p, menu.as_ref(), draw_state, select, &s.backup, s.players_1p_bonus_fighters.as_deref());
+        players_screen::draw_bonus(gpu, p, None, draw_state, select, &s.backup, s.players_1p_bonus_fighters.as_deref());
     }
 }
 

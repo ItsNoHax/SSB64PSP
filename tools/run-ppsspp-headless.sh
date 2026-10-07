@@ -153,12 +153,8 @@ fi
 # it stays best-effort here, same as for psp-asset-viewer.
 if [ -f "$PACK" ]; then
   stage_pack "$PACK" "$MEMSTICK/ssb64.pak"
-  # The options and data menus' per-scene sprite packs sit beside the pack
-  # (`ssb_rom::menu_pack`, RE-461).
-  MENUS="$(dirname "$PACK")/ssb64-menus.pak"
-  if [ -f "$MENUS" ]; then
-    stage_pack "$MENUS" "$MEMSTICK/ssb64-menus.pak"
-  fi
+  # One pack since RE-475: drop a menus pack an older run staged here.
+  rm -f "$MEMSTICK/ssb64-menus.pak"
 elif [ "$CRATE" != psp-game ]; then
   echo "asset pack not found: $PACK" >&2
   exit 1

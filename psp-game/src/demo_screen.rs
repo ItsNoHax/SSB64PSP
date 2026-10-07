@@ -17,11 +17,9 @@ use ssb_game::explain::{self, Explain};
 use ssb_game::fighter::FighterKind;
 use ssb_game::menu::Scene as MScene;
 use ssb_game::spgame::congra::Fade;
-use ssb_psp_runtime::assets::{self, AlignedBuf};
 use ssb_psp_runtime::gu::Gpu;
 use ssb_psp_runtime::meshdraw;
 use ssb_rom::matanim::{MaterialJoint, TRACK_TEXTURE_ID_CURRENT};
-use ssb_rom::menu_pack::MenuScene;
 use ssb_rom::pack::Pack;
 
 use crate::{play, Entrant, Roster, Session, VsRules};
@@ -45,7 +43,6 @@ pub(crate) enum MovieLogic {
 /// fighters' and the jungle's cameras) and its own cameras' state.
 pub(crate) struct MovieScene {
     logic: MovieLogic,
-    sprites: Option<AlignedBuf>,
     runtime: ssb_psp_runtime::movie::Runtime,
 }
 
@@ -64,15 +61,15 @@ impl MovieScene {
         }
     }
 
-    fn scene_pack(&self) -> Option<Pack<'_>> {
-        Pack::open(self.sprites.as_ref()?.as_slice()).ok()
+    /// The scene's cameras: its files in the pack (RE-475).
+    fn scene_pack(&self) -> Option<&'static Pack<'static>> {
+        ssb_psp_runtime::scene_files::pack()
     }
 }
 
 /// `scExplain`'s interface and its sprite pack.
 pub(crate) struct ExplainScene {
     logic: Explain,
-    sprites: AlignedBuf,
     stick: Option<MaterialJoint>,
     spark: Option<MaterialJoint>,
     /// `lbFadeMakeActor`'s fade until it ejects itself.
@@ -143,17 +140,18 @@ impl explain::Anims for Anims<'_> {
 }
 
 impl ExplainScene {
-    fn pack(&self) -> Option<Pack<'_>> {
-        Pack::open(self.sprites.as_slice()).ok()
+    /// How to Play's sprites and plays: its files in the pack (RE-475).
+    fn pack(&self) -> Option<&'static Pack<'static>> {
+        ssb_psp_runtime::scene_files::pack()
     }
 
     /// One frame of the scene's processes, after the battle's.
     fn tick(&mut self, tapped: bool) -> explain::Tick {
-        let Ok(pack) = Pack::open(self.sprites.as_slice()) else {
+        let Some(pack) = ssb_psp_runtime::scene_files::pack() else {
             return explain::Tick::default();
         };
         let data =
-            ssb_rom::title::packed_frames(&pack, ssb_rom::explain::ANIMS_SLOT).unwrap_or(&[]);
+            ssb_rom::title::packed_frames(pack, ssb_rom::explain::ANIMS_SLOT).unwrap_or(&[]);
         let mut anims = Anims {
             data,
             stick: &mut self.stick,
@@ -205,19 +203,13 @@ pub(crate) fn start_explain(s: &mut Session, pack: Option<&Pack<'_>>) -> bool {
     if pack.is_none() {
         return false;
     }
-    let Some(sprites) = s
-        .pack_path
-        .and_then(|path| assets::load_menu_pack(path, MenuScene::Explain).ok())
-    else {
-        return false;
-    };
     let (phases, keys) = {
-        let Ok(ep) = Pack::open(sprites.as_slice()) else {
+        let Some(ep) = ssb_psp_runtime::scene_files::pack() else {
             return false;
         };
-        let phases = ssb_rom::title::packed_frames(&ep, ssb_rom::explain::PHASES_SLOT)
+        let phases = ssb_rom::title::packed_frames(ep, ssb_rom::explain::PHASES_SLOT)
             .and_then(explain::Phase::read_all);
-        let keys = ssb_rom::title::packed_frames(&ep, ssb_rom::explain::KEYS_SLOT).map(|k| {
+        let keys = ssb_rom::title::packed_frames(ep, ssb_rom::explain::KEYS_SLOT).map(|k| {
             [0, 1].map(|i| {
                 ssb_game::key::parse(k, explain::KEY_EVENTS[i] as usize).unwrap_or_default()
             })
@@ -275,10 +267,10 @@ pub(crate) fn start_explain(s: &mut Session, pack: Option<&Pack<'_>>) -> bool {
     let mut stick = None;
     let mut spark = None;
     let logic = {
-        let Ok(ep) = Pack::open(sprites.as_slice()) else {
+        let Some(ep) = ssb_psp_runtime::scene_files::pack() else {
             return false;
         };
-        let data = ssb_rom::title::packed_frames(&ep, ssb_rom::explain::ANIMS_SLOT).unwrap_or(&[]);
+        let data = ssb_rom::title::packed_frames(ep, ssb_rom::explain::ANIMS_SLOT).unwrap_or(&[]);
         let mut anims = Anims {
             data,
             stick: &mut stick,
@@ -288,7 +280,6 @@ pub(crate) fn start_explain(s: &mut Session, pack: Option<&Pack<'_>>) -> bool {
     };
     s.demo = Some(Demo::Explain(Box::new(ExplainScene {
         logic,
-        sprites,
         stick,
         spark,
         fade: Some(Fade::new(explain::FADE_LENGTH)),
@@ -762,12 +753,9 @@ pub(crate) unsafe fn draw_movie_cameras(
 ) {
     let mut world = m.world().clone();
     world.cameras.retain(|c| keep(c.priority));
-    let scene = m.scene_pack();
-    let models = ssb_psp_runtime::movie::models();
     let a = ssb_psp_runtime::movie::Assets {
         main: p,
-        scene: scene.as_ref(),
-        models: models.as_ref(),
+        scene: m.scene_pack(),
     };
     m.runtime
         .draw(&world, gpu, draw_state, &a, &mut |_, _, _, _, _| {});
@@ -810,18 +798,9 @@ pub(crate) fn start_movie(
             None => return false,
         },
     };
-    let scene = if kind == ssb_game::opening::Kind::Jungle {
-        MenuScene::OpeningJungle
-    } else {
-        MenuScene::OpeningFighters
-    };
-    let sprites = s
-        .pack_path
-        .and_then(|path| assets::load_menu_pack(path, scene).ok());
     leave(s);
     let mut m = Box::new(MovieScene {
         logic,
-        sprites,
         runtime: ssb_psp_runtime::movie::Runtime::new(),
     });
     // `mvOpeningJungleFuncStart` makes its battle at once.
@@ -944,15 +923,9 @@ pub(crate) fn movie_after_world(s: &mut Session, pack: Option<&Pack<'_>>) {
     }
     let cam = m.camera();
     {
-        let scene = m
-            .sprites
-            .as_ref()
-            .and_then(|b| Pack::open(b.as_slice()).ok());
-        let models = ssb_psp_runtime::movie::models();
         let a = ssb_psp_runtime::movie::Assets {
             main: p,
-            scene: scene.as_ref(),
-            models: models.as_ref(),
+            scene: m.scene_pack(),
         };
         let world = match &m.logic {
             MovieLogic::Fighter(f) => &f.world,

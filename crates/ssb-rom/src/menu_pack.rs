@@ -1,27 +1,12 @@
-//! The options and data menus' sprites, packed per scene (RE-461).
-//!
-//! The original loads each menu's files when its scene starts
-//! (`lbRelocLoadFilesListed`) and frees them with the scene. The resident
-//! pack has no room for them all (some 5 MB in 8888), so `romtool pack`
-//! writes them beside it as `ssb64-menus.pak`: an index, then one ordinary
-//! [`crate::pack`] per [`MenuScene`] holding only that scene's sprites. The
-//! host reads the index and the one scene's pack when the scene starts and
-//! drops it when the scene ends. Sprites a scene shares with the resident
-//! pack (the fonts and the portraits) stay there.
-//!
-//! The index is little-endian: [`MAGIC`], the pack [`crate::pack::VERSION`],
-//! the scene count, then each scene's byte offset and length. Every
-//! scene's pack starts on a 64-byte boundary.
+//! The menu, title, How to Play and opening scenes' own content (RE-461,
+//! RE-475): which sprites, whole files and baked cameras each scene
+//! draws. `romtool pack` adds them to the pack, where each belongs to its
+//! archive file and loads with the scene that lists it
+//! (`ssb_rom::scene_roots`). Before RE-475 each scene's lay in a pack of
+//! its own in `ssb64-menus.pak`.
 
 use crate::opening as op;
 use crate::sprite::SpriteFile;
-
-/// `"SMNU"`.
-pub const MAGIC: u32 = u32::from_le_bytes(*b"SMNU");
-/// The file the host loads beside `ssb64.pak`.
-pub const FILE_NAME: &str = "ssb64-menus.pak";
-/// Each scene's pack is aligned to this.
-pub const ALIGN: usize = 64;
 
 /// The scenes with their own sprites.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -392,73 +377,3 @@ pub const CHARACTERS: SpriteFile = SpriteFile {
         0x2F508, 0x2F648, 0x2F788, 0x2F8C8, 0x2FA08, 0x30888,
     ],
 };
-
-fn u32_at(b: &[u8], at: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?))
-}
-
-/// The index's length for `count` scenes.
-pub fn index_len(count: usize) -> usize {
-    12 + 8 * count
-}
-
-/// The scene's `(offset, len)` from the file's first bytes, if the index
-/// is this build's.
-pub fn locate(index: &[u8], scene: MenuScene) -> Option<(u32, u32)> {
-    if u32_at(index, 0)? != MAGIC || u32_at(index, 4)? != crate::pack::VERSION {
-        return None;
-    }
-    let count = u32_at(index, 8)? as usize;
-    let i = scene as usize;
-    if i >= count {
-        return None;
-    }
-    Some((u32_at(index, 12 + 8 * i)?, u32_at(index, 16 + 8 * i)?))
-}
-
-/// The file: the index, then each scene's pack in [`MenuScene::ALL`]'s
-/// order.
-#[cfg(feature = "std")]
-pub fn build(packs: &[Vec<u8>]) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.extend_from_slice(&MAGIC.to_le_bytes());
-    out.extend_from_slice(&crate::pack::VERSION.to_le_bytes());
-    out.extend_from_slice(&(packs.len() as u32).to_le_bytes());
-    out.resize(index_len(packs.len()), 0);
-    let mut at = index_len(packs.len()).next_multiple_of(ALIGN);
-    for (i, p) in packs.iter().enumerate() {
-        out[12 + 8 * i..16 + 8 * i].copy_from_slice(&(at as u32).to_le_bytes());
-        out[16 + 8 * i..20 + 8 * i].copy_from_slice(&(p.len() as u32).to_le_bytes());
-        at = (at + p.len()).next_multiple_of(ALIGN);
-    }
-    for p in packs {
-        out.resize(out.len().next_multiple_of(ALIGN), 0);
-        out.extend_from_slice(p);
-    }
-    out
-}
-
-#[cfg(all(test, feature = "std"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_index_finds_each_scene() {
-        let packs = vec![vec![1u8; 10], vec![2u8; 70], vec![3u8; 3]];
-        let file = build(&packs);
-        for (i, scene) in [
-            MenuScene::Option,
-            MenuScene::ScreenAdjust,
-            MenuScene::BackupClear,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let (at, len) = locate(&file, scene).unwrap();
-            assert_eq!(at as usize % ALIGN, 0);
-            assert_eq!(&file[at as usize..(at + len) as usize], &packs[i][..]);
-        }
-        assert_eq!(locate(&file, MenuScene::Characters), None);
-        assert_eq!(locate(&file[4..], MenuScene::Option), None);
-    }
-}

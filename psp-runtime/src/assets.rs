@@ -25,7 +25,7 @@ pub struct AlignedBuf {
 
 impl AlignedBuf {
     /// Allocates `len` bytes aligned to [`ALIGN`].
-    fn new(len: usize) -> Option<AlignedBuf> {
+    pub(crate) fn new(len: usize) -> Option<AlignedBuf> {
         // Round the size up too: some allocators are happier, and it lets the
         // whole buffer be flushed in whole cache lines.
         let size = len.max(1).div_ceil(ALIGN) * ALIGN;
@@ -36,6 +36,14 @@ impl AlignedBuf {
             return None;
         }
         Some(AlignedBuf { ptr, len, layout })
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.ptr
+    }
+
+    pub(crate) fn as_mut_ptr(&self) -> *mut u8 {
+        self.ptr
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -129,12 +137,22 @@ pub fn read_capture_scene(buf: &mut [u8]) -> Option<usize> {
     None
 }
 
+/// The NUL-terminated search path [`load_pack`] reported as `display`.
+pub fn c_path(display: &str) -> Option<&'static str> {
+    SEARCH_PATHS.iter().copied().find(|p| display_path(p) == display)
+}
+
 /// Human-readable form of a search path, without the C terminator.
 fn display_path(p: &'static str) -> &'static str {
     p.trim_end_matches('\0')
 }
 
-/// Loads the asset pack, returning the buffer and which path worked.
+/// Loads the asset pack's resident part (RE-475): its header, tables and
+/// shared blob region. The archive files after them load per scene
+/// ([`crate::scene_files`]). Returns the buffer and which path worked.
+///
+/// A pack of another version reads only its header, which
+/// `Pack::open` then rejects.
 pub fn load_pack() -> Result<(AlignedBuf, &'static str), LoadError> {
     for path in SEARCH_PATHS {
         // SAFETY: path is a NUL-terminated literal.
@@ -143,12 +161,21 @@ pub fn load_pack() -> Result<(AlignedBuf, &'static str), LoadError> {
             continue;
         }
 
-        let size = unsafe { sys::sceIoLseek(fd, 0, sys::IoWhence::End) };
+        let mut size = unsafe { sys::sceIoLseek(fd, 0, sys::IoWhence::End) };
         unsafe { sys::sceIoLseek(fd, 0, sys::IoWhence::Set) };
         if size <= 0 {
             unsafe { sys::sceIoClose(fd) };
             return Err(LoadError::Empty);
         }
+        let mut head = [0u8; ssb_rom::pack::Header::SIZE];
+        let n = unsafe { sys::sceIoRead(fd, head.as_mut_ptr() as *mut core::ffi::c_void, head.len() as u32) };
+        unsafe { sys::sceIoLseek(fd, 0, sys::IoWhence::Set) };
+        if n as usize != head.len() {
+            unsafe { sys::sceIoClose(fd) };
+            return Err(LoadError::ShortRead);
+        }
+        let resident = ssb_rom::pack::resident_len(&head).unwrap_or(head.len());
+        size = size.min(resident as i64);
 
         let Some(buf) = AlignedBuf::new(size as usize) else {
             unsafe { sys::sceIoClose(fd) };
@@ -169,47 +196,22 @@ pub fn load_pack() -> Result<(AlignedBuf, &'static str), LoadError> {
     Err(LoadError::NotFound)
 }
 
-/// `ssb_rom::menu_pack::FILE_NAME` beside each of [`SEARCH_PATHS`].
-const MENU_PATHS: &[(&str, &str)] = &[
-    ("ssb64.pak", "ssb64-menus.pak\0"),
-    ("ms0:/PSP/GAME/ssb64/ssb64.pak", "ms0:/PSP/GAME/ssb64/ssb64-menus.pak\0"),
-    ("ms0:/ssb64.pak", "ms0:/ssb64-menus.pak\0"),
-];
-
-/// One options or data menu scene's sprite pack from `ssb64-menus.pak`
-/// beside the pack at `pack_path` (`ssb_rom::menu_pack`): the index, then
-/// only that scene's bytes. The caller drops the buffer when the scene
-/// ends, as `lbRelocInitSetup` drops the original's files.
-pub fn load_menu_pack(pack_path: &str, scene: ssb_rom::menu_pack::MenuScene) -> Result<AlignedBuf, LoadError> {
-    let path = MENU_PATHS
-        .iter()
-        .find(|(pack, _)| *pack == pack_path)
-        .map_or(MENU_PATHS[0].1, |(_, menus)| *menus);
-    // SAFETY: the path is a NUL-terminated literal.
-    let fd = unsafe { sys::sceIoOpen(path.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0o777) };
-    if fd.0 < 0 {
-        return Err(LoadError::NotFound);
+/// Reads `len` bytes at `at` of the NUL-terminated `path` into `dst`.
+pub(crate) fn read_at(path: &str, at: i64, dst: *mut u8, len: usize) -> Result<(), LoadError> {
+    // SAFETY: the caller's path is NUL-terminated and `dst` holds `len`
+    // bytes.
+    unsafe {
+        let fd = sys::sceIoOpen(path.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0o777);
+        if fd.0 < 0 {
+            return Err(LoadError::NotFound);
+        }
+        let ok = sys::sceIoLseek(fd, at, sys::IoWhence::Set) == at
+            && sys::sceIoRead(fd, dst as *mut core::ffi::c_void, len as u32) as usize == len;
+        sys::sceIoClose(fd);
+        if ok {
+            Ok(())
+        } else {
+            Err(LoadError::ShortRead)
+        }
     }
-    let result = (|| {
-        let mut index = [0u8; 256];
-        let n = ssb_rom::menu_pack::index_len(ssb_rom::menu_pack::MenuScene::ALL.len());
-        let read = unsafe { sys::sceIoRead(fd, index.as_mut_ptr() as *mut core::ffi::c_void, n as u32) };
-        if read as usize != n {
-            return Err(LoadError::ShortRead);
-        }
-        let (at, len) = ssb_rom::menu_pack::locate(&index[..n], scene).ok_or(LoadError::Empty)?;
-        if len == 0 {
-            return Err(LoadError::Empty);
-        }
-        let buf = AlignedBuf::new(len as usize).ok_or(LoadError::OutOfMemory)?;
-        unsafe { sys::sceIoLseek(fd, i64::from(at), sys::IoWhence::Set) };
-        let read = unsafe { sys::sceIoRead(fd, buf.ptr as *mut core::ffi::c_void, len) };
-        if read as i64 != i64::from(len) {
-            return Err(LoadError::ShortRead);
-        }
-        buf.flush_cache();
-        Ok(buf)
-    })();
-    unsafe { sys::sceIoClose(fd) };
-    result
 }

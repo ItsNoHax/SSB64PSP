@@ -61,6 +61,9 @@ if [ "${1:-}" = __capture ]; then
     cp -f "$run/jobs/$job/screenshot.png" "$dest/$golden.png"
     grep -a -o 'stack tick=[0-9]* peak=[0-9]* size=[0-9]*' \
       "$run/jobs/$job/ppsspp-headless.log" > "$run/stack/$golden-$pass.txt" || true
+    # Free user memory at boot and its lowest (RE-475).
+    grep -a -o 'mem tick=[0-9]* boot=[0-9]* low=[0-9]*[^\r]*' \
+      "$run/jobs/$job/ppsspp-headless.log" > "$run/stack/$golden-$pass.mem" || true
   fi
   end=$(date +%s.%N)
   printf '%s\t%s\t%s\t%s\n' "$golden" "$pass" "$status" \
@@ -155,6 +158,8 @@ printf 'golden\tcrate\tscene_spec\tstatus\tpixels\ttwice_pixels\tresult\tcapture
   > "$RUN/summary.tsv"
 failures=0
 stack_max=0 stack_max_golden=-
+mem_max=0 mem_max_golden=-
+printf 'golden\tboot_free\tlow_free\tpeak_use\tline\n' > "$RUN/memory.tsv"
 for i in "${!goldens[@]}"; do
   golden=${goldens[$i]} status=${statuses[$i]}
   candidate="$RUN/candidates/$golden.png"
@@ -194,6 +199,17 @@ for i in "${!goldens[@]}"; do
     if [ $((peak * 8)) -gt $((size * 7)) ]; then result=stack-near-limit; fi
   elif [ "${crates[$i]}" = psp-game ] && [ -f "$candidate" ]; then
     result=no-stack-line
+  fi
+  # Peak user-memory use (RE-475): free at boot less the lowest free.
+  if [ -s "$RUN/stack/$golden-1.mem" ]; then
+    memline=$(tail -n 1 "$RUN/stack/$golden-1.mem")
+    boot=$(printf '%s' "$memline" | sed -n 's/.* boot=\([0-9]*\).*/\1/p')
+    low=$(printf '%s' "$memline" | sed -n 's/.* low=\([0-9]*\).*/\1/p')
+    if [ -n "$boot" ] && [ -n "$low" ]; then
+      use=$((boot - low))
+      printf '%s\t%s\t%s\t%s\t%s\n' "$golden" "$boot" "$low" "$use" "$memline" >> "$RUN/memory.tsv"
+      if [ "$use" -gt "$mem_max" ]; then mem_max=$use mem_max_golden=$golden; fi
+    fi
   fi
   case "$result" in
     match|known-failing) ;;
@@ -258,6 +274,7 @@ HTML
 awk -F'\t' 'NR == 1 || $7 != "match"' "$RUN/summary.tsv" | column -t -s$'\t'
 echo "==> $(awk -F'\t' 'NR > 1 && $7 == "match"' "$RUN/summary.tsv" | wc -l) of ${#goldens[@]} match; build ${build_seconds}s, captures ${capture_seconds}s"
 echo "==> deepest game stack: $stack_max bytes ($stack_max_golden)"
+echo "==> peak memory use: $mem_max bytes ($mem_max_golden); per scene: $RUN/memory.tsv"
 echo "==> report: $RUN/index.html"
 
 # ---- rebaseline ------------------------------------------------------------

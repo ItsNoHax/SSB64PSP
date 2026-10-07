@@ -327,13 +327,20 @@ unsafe fn run() -> ! {
     let mut pad = PspInput::init();
     let clock = PspClock;
 
-    // Load the converted asset pack. Held for the whole program: the GE reads
-    // vertex and texture data out of it by DMA every frame.
+    // Load the converted asset pack's tables and shared bytes. Held for the
+    // whole program: the GE reads vertex and texture data out of it by DMA
+    // every frame. Each archive file loads the first time a draw reads it
+    // and stays (RE-475): the viewer draws any object at any time.
     let loaded = assets::load_pack();
     let (pack_buf, pack_path) = match &loaded {
         Ok((b, p)) => (Some(b), *p),
         Err(e) => (None, e.as_str()),
     };
+    if let (Some(b), Some(c)) = (pack_buf, assets::c_path(pack_path)) {
+        // SAFETY: `loaded` lives for the rest of the program.
+        let bytes: &'static [u8] = unsafe { core::slice::from_raw_parts(b.as_ptr(), b.as_slice().len()) };
+        let _ = ssb_psp_runtime::scene_files::boot(bytes, c);
+    }
     // A pack that loads from disk but fails to *parse* is a different problem
     // from having no pack, and discarding the error made the two look
     // identical: a stale pack from an older format version silently showed the
@@ -2482,6 +2489,7 @@ unsafe fn run() -> ! {
             draw_state.invalidate_all();
         }
         gpu.end_frame();
+        ssb_psp_runtime::scene_files::safe_point();
         #[cfg(feature = "headless_capture")]
         if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
             // The capture reads the buffer on screen: the frame just ended,

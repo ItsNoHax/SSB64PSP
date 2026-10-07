@@ -391,7 +391,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // pulled, clash and stance rows and nine fighter-specific opening rows), the
 // opening graphs' material animations and display-list graphs, and the
 // menu packs' N64 logo and opening scenes. No layout change.
-pub const VERSION: u32 = 106;
+// 107 groups the blob by archive file (RE-475): the shared region, then each
+// file's bytes, with the `FileDesc` table and each file's extern IDs, so a
+// runtime holds the tables and the shared region and reads each scene's
+// files. `Header::SIZE` 104 -> 116.
+pub const VERSION: u32 = 107;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -460,10 +464,17 @@ pub struct Header {
     pub texture_part_count: u32,
     /// Fighters' high- and low-detail objects (RE-426).
     pub fighter_model_count: u32,
+    /// The blob's leading bytes every scene keeps (RE-475); each archive
+    /// file's bytes follow, in [`FileDesc`] order.
+    pub shared_len: u32,
+    /// Archive files with bytes or dependencies (RE-475).
+    pub file_count: u32,
+    /// `u16` file IDs in the dependency list, summed over every file.
+    pub file_dep_count: u32,
 }
 
 impl Header {
-    pub const SIZE: usize = 104;
+    pub const SIZE: usize = 116;
 }
 
 /// A vertex in the GE's expected layout.
@@ -2013,6 +2024,33 @@ pub fn align_up(v: usize) -> usize {
 // Writer
 // ---------------------------------------------------------------------------
 
+/// One archive file's bytes in the blob (RE-475): the descriptors whose
+/// `source_file` is `file` read only `blob_start..blob_start + len`, and
+/// loading it loads `deps` too (`lbRelocLoadFilesExtern`). Sorted by
+/// `file`; the ranges ascend in the same order, after the shared region.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FileDesc {
+    pub file: u32,
+    pub blob_start: u32,
+    pub len: u32,
+    /// First entry in the dependency list, and how many follow.
+    pub first_dep: u32,
+    pub dep_count: u32,
+}
+
+impl FileDesc {
+    pub const SIZE: usize = 20;
+}
+
+/// The blob regrouped by archive file (`PackWriter::relayout`).
+struct Layout {
+    blob: Vec<u8>,
+    shared_len: u32,
+    files: Vec<FileDesc>,
+    deps: Vec<u16>,
+}
+
 /// Builds a pack file.
 #[derive(Default)]
 pub struct PackWriter {
@@ -2046,6 +2084,34 @@ pub struct PackWriter {
     texture_parts: Vec<TexturePartDesc>,
     fighter_models: Vec<FighterModelDesc>,
     blob: Vec<u8>,
+    /// Every [`Self::push_blob`] range, in push order, with whose bytes
+    /// they are (RE-475): `finish` groups the blob by archive file.
+    chunks: Vec<Chunk>,
+    /// Each archive file's extern file IDs (`lbRelocGetExternBytesNum`'s
+    /// list), for the runtime's dependency closure (RE-475).
+    file_deps: alloc::collections::BTreeMap<u32, Vec<u16>>,
+    /// Synthetic `source_file` keys and the archive file whose bytes they
+    /// join (`set_owner`).
+    owner_alias: alloc::collections::BTreeMap<u32, u32>,
+}
+
+/// Whose bytes a blob range holds (RE-475).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChunkOwner {
+    /// The archive file's own data: a mesh, a figatree or material file.
+    File(u32),
+    /// A texture's texels or CLUT: the file of whatever references it,
+    /// settled in `finish`.
+    Texture(u32),
+    /// Resident in every scene (the particle banks).
+    Shared,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Chunk {
+    offset: u32,
+    len: u32,
+    owner: ChunkOwner,
 }
 
 impl PackWriter {
@@ -2054,11 +2120,24 @@ impl PackWriter {
     }
 
     /// Appends bytes to the blob, aligned, returning their offset.
-    fn push_blob(&mut self, bytes: &[u8]) -> u32 {
+    fn push_blob(&mut self, bytes: &[u8], owner: ChunkOwner) -> u32 {
         let at = align_up(self.blob.len());
         self.blob.resize(at, 0);
         self.blob.extend_from_slice(bytes);
+        self.chunks.push(Chunk {
+            offset: at as u32,
+            len: bytes.len() as u32,
+            owner,
+        });
         at as u32
+    }
+
+    /// Records archive file `file`'s extern file IDs (RE-475): loading it
+    /// loads them, as `lbRelocLoadFilesExtern` does.
+    pub fn set_file_deps(&mut self, file: u32, deps: &[u16]) {
+        if !deps.is_empty() {
+            self.file_deps.insert(file, deps.to_vec());
+        }
     }
 
     /// Adds a texture, returning its index. `clamp_s`/`clamp_t` are
@@ -2070,12 +2149,13 @@ impl PackWriter {
         clamp_s: bool,
         clamp_t: bool,
     ) -> u32 {
-        let data_offset = self.push_blob(&tex.data);
+        let owner = ChunkOwner::Texture(self.textures.len() as u32);
+        let data_offset = self.push_blob(&tex.data, owner);
         let palette_bytes: Vec<u8> = tex.palette.iter().flat_map(|c| c.to_le_bytes()).collect();
         let palette_offset = if palette_bytes.is_empty() {
             0
         } else {
-            self.push_blob(&palette_bytes)
+            self.push_blob(&palette_bytes, owner)
         };
         let wrap = (clamp_s as u8 * TextureDesc::CLAMP_S) | (clamp_t as u8 * TextureDesc::CLAMP_T);
 
@@ -2174,7 +2254,7 @@ impl PackWriter {
         let first_texture = self.particle_textures.len() as u32;
 
         for script in scripts {
-            let bytecode_offset = self.push_blob(script.bytecode);
+            let bytecode_offset = self.push_blob(script.bytecode, ChunkOwner::Shared);
             self.particle_scripts.push(ParticleScriptDesc {
                 kind: script.kind,
                 texture_id: script.texture_id,
@@ -2250,7 +2330,10 @@ impl PackWriter {
         let (file_offset, file_len) = match self.mat_anim_files.get(&source_file) {
             Some(&at) => at,
             None => {
-                let at = (self.push_blob(file_bytes), file_bytes.len() as u32);
+                let at = (
+                    self.push_blob(file_bytes, ChunkOwner::File(source_file)),
+                    file_bytes.len() as u32,
+                );
                 self.mat_anim_files.insert(source_file, at);
                 at
             }
@@ -2258,7 +2341,7 @@ impl PackWriter {
         let first_palette = self.mat_anim_palettes.len() as u32;
         for p in palettes {
             let bytes: Vec<u8> = p.iter().flat_map(|c| c.to_le_bytes()).collect();
-            let palette_offset = self.push_blob(&bytes);
+            let palette_offset = self.push_blob(&bytes, ChunkOwner::File(source_file));
             self.mat_anim_palettes.push(MatAnimPalette {
                 palette_offset,
                 palette_len: p.len() as u32,
@@ -2473,7 +2556,7 @@ impl PackWriter {
             // and the GE's stride requirement.
             verts.extend_from_slice(&[0u8; 2]);
         }
-        let vertex_offset = self.push_blob(&verts);
+        let vertex_offset = self.push_blob(&verts, ChunkOwner::File(source_file));
         let binding_offset = if mesh.vertices.iter().any(|v| v.binding.is_some()) {
             let mut bindings = Vec::with_capacity(mesh.vertices.len() * 8);
             for v in &mesh.vertices {
@@ -2483,7 +2566,7 @@ impl PackWriter {
                     bindings.extend_from_slice(&c.to_le_bytes());
                 }
             }
-            self.push_blob(&bindings)
+            self.push_blob(&bindings, ChunkOwner::File(source_file))
         } else {
             u32::MAX
         };
@@ -2491,7 +2574,7 @@ impl PackWriter {
         let first_prim = self.prims.len() as u32;
         for (i, p) in mesh.primitives.iter().enumerate() {
             let indices: Vec<u8> = p.indices.iter().flat_map(|i| i.to_le_bytes()).collect();
-            let index_offset = self.push_blob(&indices);
+            let index_offset = self.push_blob(&indices, ChunkOwner::File(source_file));
 
             let m = &p.material;
             let mut f = 0u32;
@@ -2690,6 +2773,31 @@ impl PackWriter {
         self.sprites.push(desc);
     }
 
+    /// Whether a sprite with this key is already added (RE-475: the menu
+    /// scenes' sprites join the pack once).
+    pub fn has_sprite(&self, file: u32, offset: u32, role: u8, costume: u8) -> bool {
+        self.sprites.iter().any(|s| {
+            s.source_file == file
+                && s.source_offset == offset
+                && s.role == role
+                && s.costume == costume
+        })
+    }
+
+    /// Whether an animation row `(fighter, slot)` is already added.
+    pub fn has_anim(&self, fighter: u32, slot: u32) -> bool {
+        self.anims
+            .iter()
+            .any(|a| a.fighter == fighter && a.slot == slot)
+    }
+
+    /// Makes `key`'s bytes (an animation's `source_file` that names no
+    /// archive file: a baked camera or title play) archive file `file`'s, so
+    /// they load with it (RE-475).
+    pub fn set_owner(&mut self, key: u32, file: u32) {
+        self.owner_alias.insert(key, file);
+    }
+
     /// Records that primitive `prim` of mesh `mesh` samples texture part
     /// `part`'s sprite, with its textures by `texture_id` (RE-426).
     pub fn add_texture_part(
@@ -2860,7 +2968,10 @@ impl PackWriter {
         let (script_offset, script_len) = match self.anim_files.get(&source_file) {
             Some(&at) => at,
             None => {
-                let at = (self.push_blob(script), script.len() as u32);
+                let at = (
+                    self.push_blob(script, ChunkOwner::File(source_file)),
+                    script.len() as u32,
+                );
                 self.anim_files.insert(source_file, at);
                 at
             }
@@ -3112,7 +3223,212 @@ impl PackWriter {
         });
     }
 
-    pub fn finish(self) -> Vec<u8> {
+    /// Each texture's owning archive file: the one file whose meshes,
+    /// sprites or material scripts use it, else `None` (shared).
+    fn texture_owners(&self) -> Vec<Option<u32>> {
+        // `u32::MAX - 1`: no owner seen yet; `u32::MAX`: shared.
+        const NONE: u32 = u32::MAX - 1;
+        const SHARED: u32 = u32::MAX;
+        let mut owner = alloc::vec![NONE; self.textures.len()];
+        let mut add = |t: u32, file: u32| {
+            if let Some(o) = owner.get_mut(t as usize) {
+                *o = match *o {
+                    NONE => file,
+                    x if x == file => x,
+                    _ => SHARED,
+                };
+            }
+        };
+        for m in &self.meshes {
+            for p in self
+                .prims
+                .iter()
+                .skip(m.first_prim as usize)
+                .take(m.prim_count as usize)
+            {
+                if p.texture != u32::MAX {
+                    add(p.texture, m.source_file);
+                }
+            }
+        }
+        for part in &self.texture_parts {
+            if let Some(m) = self.meshes.get(part.mesh as usize) {
+                for &t in part.textures.iter().filter(|&&t| t != u32::MAX) {
+                    add(t, m.source_file);
+                }
+            }
+        }
+        for sp in &self.sprites {
+            add(sp.texture, sp.source_file);
+        }
+        for a in &self.mat_anims {
+            for &t in a.textures.iter().take(a.texture_count as usize) {
+                add(t, a.source_file);
+            }
+        }
+        for lb in &self.lod_blends {
+            if let Some(a) = self.mat_anims.get(lb.mat_anim as usize) {
+                for &t in lb.next_textures.iter().take(lb.next_count as usize) {
+                    add(t, a.source_file);
+                }
+            }
+        }
+        for pt in &self.particle_textures {
+            if pt.first_frame != ParticleTextureDesc::NO_FRAME {
+                for t in pt.first_frame..pt.first_frame + pt.frame_count {
+                    add(t, SHARED);
+                }
+            }
+        }
+        for (i, t) in self.textures.iter().enumerate() {
+            if t.role != TextureDesc::ROLE_NORMAL {
+                add(i as u32, SHARED);
+            }
+        }
+        owner
+            .into_iter()
+            .map(|o| (o != NONE && o != SHARED).then_some(o))
+            .collect()
+    }
+
+    /// Regroups the blob (RE-475): the shared chunks first, then each
+    /// archive file's chunks together in file order, and rewrites every
+    /// descriptor offset into it. Each moved range is checked against its
+    /// old bytes.
+    fn relayout(&mut self) -> Layout {
+        let tex_owner = self.texture_owners();
+        // Material-animation files and palettes stay resident: the stage
+        // material clocks tick every script every frame for the process's
+        // life (`skeleton::MaterialAnimator::tick`).
+        let mat_chunks: alloc::collections::BTreeSet<u32> = self
+            .mat_anims
+            .iter()
+            .filter(|a| a.file_len > 0)
+            .map(|a| a.file_offset)
+            .chain(
+                self.mat_anim_palettes
+                    .iter()
+                    .filter(|p| p.palette_len > 0)
+                    .map(|p| p.palette_offset),
+            )
+            .collect();
+        let owner_of = |c: &Chunk| match c.owner {
+            ChunkOwner::File(_) if mat_chunks.contains(&c.offset) => None,
+            ChunkOwner::File(f) => Some(self.owner_alias.get(&f).copied().unwrap_or(f)),
+            ChunkOwner::Texture(t) => tex_owner.get(t as usize).copied().flatten(),
+            ChunkOwner::Shared => None,
+        };
+        let mut blob: Vec<u8> = Vec::with_capacity(self.blob.len());
+        // (old offset, len, new offset), in push (old offset) order.
+        let mut moved: Vec<(u32, u32, u32)> = alloc::vec![(0, 0, 0); self.chunks.len()];
+        let place = |blob: &mut Vec<u8>, c: &Chunk| -> u32 {
+            let at = align_up(blob.len());
+            blob.resize(at, 0);
+            blob.extend_from_slice(&self.blob[c.offset as usize..(c.offset + c.len) as usize]);
+            at as u32
+        };
+        let mut by_file: alloc::collections::BTreeMap<u32, Vec<usize>> = Default::default();
+        for (i, c) in self.chunks.iter().enumerate() {
+            match owner_of(c) {
+                None => moved[i] = (c.offset, c.len, place(&mut blob, c)),
+                Some(f) => by_file.entry(f).or_default().push(i),
+            }
+        }
+        blob.resize(align_up(blob.len()), 0);
+        let shared_len = blob.len() as u32;
+        let mut files = Vec::new();
+        let mut deps = Vec::new();
+        let mut ids: alloc::collections::BTreeSet<u32> = by_file.keys().copied().collect();
+        ids.extend(self.file_deps.keys().copied());
+        for file in ids {
+            let start = align_up(blob.len()) as u32;
+            for &i in by_file.get(&file).map_or(&[][..], |v| &v[..]) {
+                let c = self.chunks[i];
+                moved[i] = (c.offset, c.len, place(&mut blob, &c));
+            }
+            let len = if by_file.contains_key(&file) {
+                blob.len() as u32 - start
+            } else {
+                0
+            };
+            let own_deps = self.file_deps.get(&file).map_or(&[][..], |v| &v[..]);
+            files.push(FileDesc {
+                file,
+                blob_start: if len == 0 { blob.len() as u32 } else { start },
+                len,
+                first_dep: deps.len() as u32,
+                dep_count: own_deps.len() as u32,
+            });
+            deps.extend_from_slice(own_deps);
+        }
+        blob.resize(align_up(blob.len()), 0);
+
+        // The chunk holding `old` (the last one starting at or before it:
+        // an empty chunk shares its offset with the next).
+        let old_blob = core::mem::take(&mut self.blob);
+        let remap = |old: u32, len: u32| -> u32 {
+            let i = moved.partition_point(|&(o, _, _)| o <= old);
+            assert!(i > 0, "blob offset {old} precedes every chunk");
+            let (o, l, n) = moved[i - 1];
+            assert!(
+                len == 0 || old + len <= o + l,
+                "blob range {old}+{len} crosses chunk {o}+{l}"
+            );
+            let new = n + (old - o);
+            assert_eq!(
+                &old_blob[old as usize..(old + len) as usize],
+                &blob[new as usize..(new + len) as usize],
+                "relayout moved {old}+{len} wrongly"
+            );
+            new
+        };
+        for m in &mut self.meshes {
+            m.vertex_offset = remap(m.vertex_offset, m.vertex_count * VERTEX_SIZE as u32);
+            if m.binding_offset != u32::MAX {
+                m.binding_offset = remap(m.binding_offset, m.vertex_count * 8);
+            }
+        }
+        for p in &mut self.prims {
+            p.index_offset = remap(p.index_offset, p.index_count * 2);
+        }
+        for t in &mut self.textures {
+            if t.data_len > 0 {
+                t.data_offset = remap(t.data_offset, t.data_len);
+            }
+            if t.palette_len > 0 {
+                t.palette_offset = remap(t.palette_offset, t.palette_len * 4);
+            }
+        }
+        for a in &mut self.anims {
+            if a.script_len > 0 {
+                a.script_offset = remap(a.script_offset, a.script_len);
+            }
+        }
+        for a in &mut self.mat_anims {
+            if a.file_len > 0 {
+                a.file_offset = remap(a.file_offset, a.file_len);
+            }
+        }
+        for p in &mut self.mat_anim_palettes {
+            if p.palette_len > 0 {
+                p.palette_offset = remap(p.palette_offset, p.palette_len * 4);
+            }
+        }
+        for s in &mut self.particle_scripts {
+            if s.bytecode_len > 0 {
+                s.bytecode_offset = remap(s.bytecode_offset, s.bytecode_len);
+            }
+        }
+        Layout {
+            blob,
+            shared_len,
+            files,
+            deps,
+        }
+    }
+
+    pub fn finish(mut self) -> Vec<u8> {
+        let layout = self.relayout();
         let table_bytes = self.meshes.len() * MeshDesc::SIZE
             + self.prims.len() * PrimDesc::SIZE
             + self.textures.len() * TextureDesc::SIZE
@@ -3134,7 +3450,9 @@ impl PackWriter {
             + self.lod_blends.len() * LodBlendDesc::SIZE
             + self.sprites.len() * SpriteDesc::SIZE
             + self.texture_parts.len() * TexturePartDesc::SIZE
-            + self.fighter_models.len() * FighterModelDesc::SIZE;
+            + self.fighter_models.len() * FighterModelDesc::SIZE
+            + layout.files.len() * FileDesc::SIZE
+            + layout.deps.len() * 2;
         let blob_offset = align_up(Header::SIZE + table_bytes);
 
         // Sorted by (node, costume) so the reader can binary-search rather
@@ -3145,7 +3463,7 @@ impl PackWriter {
         let mut texture_parts = self.texture_parts;
         texture_parts.sort_unstable_by_key(|t| (t.mesh, t.prim));
 
-        let mut out = Vec::with_capacity(blob_offset + self.blob.len());
+        let mut out = Vec::with_capacity(blob_offset + layout.blob.len());
 
         // Header.
         out.extend_from_slice(&MAGIC.to_le_bytes());
@@ -3154,7 +3472,7 @@ impl PackWriter {
         out.extend_from_slice(&(self.prims.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.textures.len() as u32).to_le_bytes());
         out.extend_from_slice(&(blob_offset as u32).to_le_bytes());
-        out.extend_from_slice(&(self.blob.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(layout.blob.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.objects.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.nodes.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.stages.len() as u32).to_le_bytes());
@@ -3174,6 +3492,9 @@ impl PackWriter {
         out.extend_from_slice(&(self.sprites.len() as u32).to_le_bytes());
         out.extend_from_slice(&(texture_parts.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.fighter_models.len() as u32).to_le_bytes());
+        out.extend_from_slice(&layout.shared_len.to_le_bytes());
+        out.extend_from_slice(&(layout.files.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(layout.deps.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -3453,9 +3774,17 @@ impl PackWriter {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
+        for f in &layout.files {
+            for v in [f.file, f.blob_start, f.len, f.first_dep, f.dep_count] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        for d in &layout.deps {
+            out.extend_from_slice(&d.to_le_bytes());
+        }
 
         out.resize(blob_offset, 0);
-        out.extend_from_slice(&self.blob);
+        out.extend_from_slice(&layout.blob);
         out
     }
 
@@ -3511,10 +3840,21 @@ struct TableOffsets {
     sprite_table: usize,
     texture_part_table: usize,
     fighter_model_table: usize,
+    file_table: usize,
     line_table: usize,
     coll_vertex_table: usize,
     point_table: usize,
     fighter_table: usize,
+}
+
+/// The bytes a runtime must hold for every scene (header, tables and
+/// shared blob region; RE-475), from a pack file's first
+/// [`Header::SIZE`] bytes; `None` for another version's header.
+pub fn resident_len(head: &[u8]) -> Option<usize> {
+    if head.len() < Header::SIZE || u32_at(head, 0) != MAGIC || u32_at(head, 4) != VERSION {
+        return None;
+    }
+    Some(u32_at(head, 20) as usize + u32_at(head, 104) as usize)
 }
 
 /// Zero-copy view over a loaded pack.
@@ -3545,6 +3885,9 @@ pub struct Pack<'a> {
     sprite_count: u32,
     texture_part_count: u32,
     fighter_model_count: u32,
+    shared_len: u32,
+    file_count: u32,
+    file_dep_count: u32,
     blob_offset: usize,
     blob_len: usize,
     /// How many leading animation rows are in `(fighter, slot)` order, so
@@ -3658,6 +4001,9 @@ impl<'a> Pack<'a> {
         let sprite_count = u32_at(data, 92);
         let texture_part_count = u32_at(data, 96);
         let fighter_model_count = u32_at(data, 100);
+        let shared_len = u32_at(data, 104);
+        let file_count = u32_at(data, 108);
+        let file_dep_count = u32_at(data, 112);
 
         let tables_end = Header::SIZE
             + mesh_count as usize * MeshDesc::SIZE
@@ -3681,9 +4027,16 @@ impl<'a> Pack<'a> {
             + lod_blend_count as usize * LodBlendDesc::SIZE
             + sprite_count as usize * SpriteDesc::SIZE
             + texture_part_count as usize * TexturePartDesc::SIZE
-            + fighter_model_count as usize * FighterModelDesc::SIZE;
+            + fighter_model_count as usize * FighterModelDesc::SIZE
+            + file_count as usize * FileDesc::SIZE
+            + file_dep_count as usize * 2;
 
-        if blob_offset < tables_end || blob_offset.saturating_add(blob_len) > data.len() {
+        // The runtime holds only the tables and the shared bytes; the
+        // archive files' bytes are read per scene (RE-475, `residency`).
+        if blob_offset < tables_end
+            || shared_len as usize > blob_len
+            || blob_offset.saturating_add(shared_len as usize) > data.len()
+        {
             return Err(PackError::OutOfBounds);
         }
 
@@ -3711,6 +4064,9 @@ impl<'a> Pack<'a> {
             sprite_count,
             texture_part_count,
             fighter_model_count,
+            shared_len,
+            file_count,
+            file_dep_count,
             blob_offset,
             blob_len,
             anim_sorted: 0,
@@ -3737,6 +4093,7 @@ impl<'a> Pack<'a> {
             sprite_table: pack.compute_sprite_table(),
             texture_part_table: pack.compute_texture_part_table(),
             fighter_model_table: pack.compute_fighter_model_table(),
+            file_table: pack.compute_file_table(),
             line_table: pack.compute_line_table(),
             coll_vertex_table: pack.compute_coll_vertex_table(),
             point_table: pack.compute_point_table(),
@@ -3954,6 +4311,108 @@ impl<'a> Pack<'a> {
     }
     fn compute_fighter_model_table(&self) -> usize {
         self.compute_texture_part_table() + self.texture_part_count as usize * TexturePartDesc::SIZE
+    }
+    fn compute_file_table(&self) -> usize {
+        self.compute_fighter_model_table()
+            + self.fighter_model_count as usize * FighterModelDesc::SIZE
+    }
+
+    /// The bytes a runtime must hold for every scene: the header, the
+    /// tables and the shared blob region (RE-475). The archive files'
+    /// bytes after them are read per scene.
+    pub fn resident_len(&self) -> usize {
+        self.blob_offset + self.shared_len as usize
+    }
+
+    /// Where the blob region starts in the file.
+    pub fn blob_start(&self) -> usize {
+        self.blob_offset
+    }
+
+    /// The shared blob region's length (RE-475).
+    pub fn shared_len(&self) -> u32 {
+        self.shared_len
+    }
+
+    /// Archive files with bytes or dependencies (RE-475).
+    pub fn file_count(&self) -> u32 {
+        self.file_count
+    }
+
+    /// The `i`th archive file, in file-ID order.
+    pub fn file_at(&self, i: u32) -> Option<FileDesc> {
+        if i >= self.file_count {
+            return None;
+        }
+        let at = self.tables.file_table + i as usize * FileDesc::SIZE;
+        let word = |k: usize| u32_at(self.data, at + 4 * k);
+        Some(FileDesc {
+            file: word(0),
+            blob_start: word(1),
+            len: word(2),
+            first_dep: word(3),
+            dep_count: word(4),
+        })
+    }
+
+    /// Archive file `file`'s index in the file table.
+    pub fn file_index(&self, file: u32) -> Option<u32> {
+        let (mut lo, mut hi) = (0, self.file_count);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let f = u32_at(
+                self.data,
+                self.tables.file_table + mid as usize * FileDesc::SIZE,
+            );
+            match f.cmp(&file) {
+                core::cmp::Ordering::Less => lo = mid + 1,
+                core::cmp::Ordering::Greater => hi = mid,
+                core::cmp::Ordering::Equal => return Some(mid),
+            }
+        }
+        None
+    }
+
+    /// The file-table index of the archive file whose bytes hold blob
+    /// offset `offset`, if any does.
+    pub fn file_at_offset(&self, offset: u32) -> Option<u32> {
+        // Starts ascend with the index; take the last start at or before it.
+        let (mut lo, mut hi) = (0, self.file_count);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let start = u32_at(
+                self.data,
+                self.tables.file_table + mid as usize * FileDesc::SIZE + 4,
+            );
+            if start <= offset {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let mut i = lo.checked_sub(1)?;
+        // Empty files share their start with the next one.
+        loop {
+            let f = self.file_at(i)?;
+            if f.len > 0 {
+                return (offset < f.blob_start + f.len).then_some(i);
+            }
+            i = i.checked_sub(1)?;
+        }
+    }
+
+    /// Dependency `k` of the file table's entry `f`.
+    pub fn file_dep(&self, f: &FileDesc, k: u32) -> Option<u32> {
+        if k >= f.dep_count || f.first_dep + k >= self.file_dep_count {
+            return None;
+        }
+        let at = self.tables.file_table
+            + self.file_count as usize * FileDesc::SIZE
+            + (f.first_dep + k) as usize * 2;
+        Some(u32::from(u16::from_le_bytes([
+            self.data[at],
+            self.data[at + 1],
+        ])))
     }
 
     /// Fighter `kind`'s high- and low-detail objects (RE-426).
@@ -4959,12 +5418,19 @@ impl<'a> Pack<'a> {
 
     /// A slice of the blob region. Bounds-checked once, here, so the render
     /// loop can be free of checks.
+    ///
+    /// Bytes past the buffer the pack was opened on are an archive file's
+    /// held elsewhere (RE-475): [`crate::residency`] finds them, or `None`
+    /// when that file is not loaded.
     pub fn blob(&self, offset: u32, len: usize) -> Option<&'a [u8]> {
         let at = self.blob_offset.checked_add(offset as usize)?;
         if offset as usize + len > self.blob_len {
             return None;
         }
-        self.data.get(at..at + len)
+        match self.data.get(at..at + len) {
+            Some(bytes) => Some(bytes),
+            None => crate::residency::resolve(self.data.as_ptr(), offset, len),
+        }
     }
 
     /// Raw vertex bytes for a mesh, ready to hand to the GE.
@@ -5562,7 +6028,9 @@ mod tests {
             + pack.stage_count as usize * StageDesc::SIZE
             + pack.line_count as usize * LineDesc::SIZE
             + pack.coll_vertex_count as usize * CollisionVertex::SIZE
-            + pack.point_count as usize * MapPoint::SIZE;
+            + pack.point_count as usize * MapPoint::SIZE
+            + pack.file_count as usize * FileDesc::SIZE
+            + pack.file_dep_count as usize * 2;
         // Exactly, not merely "at least": a `SIZE` that overstates its
         // descriptor still satisfies `>=` while every reader offset is wrong.
         assert_eq!(
@@ -6291,8 +6759,75 @@ mod tests {
         let mut w = PackWriter::new();
         w.add_mesh(&sample_mesh(), 0, 0, |_| None, |_| None);
         let bytes = w.finish();
-        let truncated = &bytes[..bytes.len() - 8];
+        let resident = Pack::open(&bytes).unwrap().resident_len();
+        let truncated = &bytes[..resident - 8];
         assert!(matches!(Pack::open(truncated), Err(PackError::OutOfBounds)));
+    }
+
+    #[test]
+    fn the_blob_groups_by_archive_file() {
+        let mut w = PackWriter::new();
+        let tex = |n: u8| PspTexture {
+            width: 16,
+            height: 8,
+            stride: 32,
+            format: Psm::PsmT4,
+            data: alloc::vec![n; 64],
+            swizzled: false,
+            palette: alloc::vec![u32::from(n); 16],
+            levels: 1,
+        };
+        // Texture 0 is file 7's alone, texture 1 both files', texture 2
+        // nobody's.
+        for n in 0..3 {
+            w.add_texture(&tex(n + 1), false, false);
+        }
+        w.add_mesh(&sample_mesh(), 9, 0, |_| Some(1), |_| None);
+        w.add_mesh(&sample_mesh(), 7, 0, |_| Some(0), |_| None);
+        w.add_mesh(&sample_mesh(), 7, 0x40, |_| Some(1), |_| None);
+        w.set_file_deps(9, &[7, 3]);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        let files: Vec<FileDesc> = (0..pack.file_count())
+            .filter_map(|i| pack.file_at(i))
+            .collect();
+        assert_eq!(files.iter().map(|f| f.file).collect::<Vec<_>>(), [7, 9]);
+        assert_eq!(pack.file_index(9), Some(1));
+        assert_eq!(pack.file_index(8), None);
+        assert_eq!(
+            (0..files[1].dep_count)
+                .filter_map(|k| pack.file_dep(&files[1], k))
+                .collect::<Vec<_>>(),
+            [7, 3]
+        );
+        let within = |f: &FileDesc, off: u32| off >= f.blob_start && off < f.blob_start + f.len;
+        // The shared textures stay before every file.
+        for t in [1, 2] {
+            assert!(pack.texture(t).unwrap().data_offset < pack.shared_len());
+        }
+        assert!(within(&files[0], pack.texture(0).unwrap().data_offset));
+        for (m, f) in [(0, &files[1]), (1, &files[0]), (2, &files[0])] {
+            let mesh = pack.mesh(m).unwrap();
+            assert!(within(f, mesh.vertex_offset));
+            assert_eq!(
+                pack.file_at_offset(mesh.vertex_offset),
+                pack.file_index(f.file)
+            );
+            let prim = pack.prim(mesh.first_prim).unwrap();
+            assert!(within(f, prim.index_offset));
+        }
+        // Every texture still reads its own bytes.
+        for t in 0..3u8 {
+            let d = pack.texture(u32::from(t)).unwrap();
+            assert_eq!(pack.texture_data(&d).unwrap(), &[t + 1; 64][..]);
+        }
+
+        // Opened on the resident bytes only, the files' bytes are absent.
+        let resident = &bytes[..pack.resident_len()];
+        let short = Pack::open(resident).unwrap();
+        assert!(short.vertices(&short.mesh(0).unwrap()).is_none());
+        assert!(short.texture_data(&short.texture(1).unwrap()).is_some());
     }
 
     #[test]
@@ -7605,8 +8140,11 @@ mod tests {
         assert_eq!(pack.lod_blend(7), Some(first));
         assert_eq!(pack.lod_blend(9), Some(second));
         assert_eq!(pack.lod_blend(8), None);
-        let expected_tables =
-            Header::SIZE + MeshDesc::SIZE + PrimDesc::SIZE + 2 * LodBlendDesc::SIZE;
+        let expected_tables = Header::SIZE
+            + MeshDesc::SIZE
+            + PrimDesc::SIZE
+            + 2 * LodBlendDesc::SIZE
+            + pack.file_count as usize * FileDesc::SIZE;
         assert_eq!(pack.blob_offset, align_up(expected_tables));
 
         let prim = pack.prim(0).unwrap();
@@ -7728,7 +8266,7 @@ mod tests {
         assert_eq!(pack.prim(0).unwrap().flags & flags::LOD_BLEND, 0);
         assert_eq!(
             pack.blob_offset,
-            align_up(Header::SIZE + MeshDesc::SIZE + PrimDesc::SIZE)
+            align_up(Header::SIZE + MeshDesc::SIZE + PrimDesc::SIZE + FileDesc::SIZE)
         );
     }
 

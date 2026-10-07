@@ -332,6 +332,11 @@ pub unsafe fn wallpaper_photo_data() -> &'static [u8] {
 }
 
 /// Owns the GU context and the frame lifecycle.
+/// Whether a frame's display list is open, so the GE may be reading
+/// memory the CPU frees (`scene_files`, RE-475). False between
+/// [`Gpu::end_frame`]'s sync and the next [`Gpu::begin_frame`].
+pub static GE_LIST_OPEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 pub struct Gpu {
     frame_open: bool,
     frames: u64,
@@ -826,6 +831,7 @@ impl Gpu {
     pub fn begin_frame(&mut self, clear: Option<Color>) {
         debug_assert!(!self.frame_open, "begin_frame called twice");
         self.frame_open = true;
+        GE_LIST_OPEN.store(true, core::sync::atomic::Ordering::Relaxed);
         unsafe {
             self.wait_presented();
             sys::sceGuStart(GuContextType::Direct, Self::list_ptr());
@@ -857,6 +863,7 @@ impl Gpu {
             let t = crate::profile::start();
             sys::sceGuSync(GuSyncMode::Finish, GuSyncBehavior::Wait);
             crate::profile::stop(crate::profile::Span::GeSync, t);
+            GE_LIST_OPEN.store(false, core::sync::atomic::Ordering::Relaxed);
             // Debug text must be painted *here*, not earlier. sceGuDebugFlush
             // writes glyphs straight into the draw buffer rather than queueing
             // a GE command, so flushing before the sync would just get erased

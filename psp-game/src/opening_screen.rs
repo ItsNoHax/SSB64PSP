@@ -16,11 +16,9 @@ use ssb_game::opening::{
     clash, cliff, newcomers, portraits, room, run, sector, standoff, startup, yamabuki, yoster,
     Clock, Exit, Kind,
 };
-use ssb_psp_runtime::assets::{self, AlignedBuf};
 use ssb_psp_runtime::gu::Gpu;
 use ssb_psp_runtime::meshdraw::DrawState;
 use ssb_psp_runtime::movie::{self, Assets, Runtime};
-use ssb_rom::menu_pack::MenuScene;
 use ssb_rom::pack::Pack;
 
 /// The running scene's logic.
@@ -78,7 +76,6 @@ pub(crate) struct Opening {
     pub clock: Clock,
     logic: Option<Logic>,
     runtime: Runtime,
-    sprites: Option<AlignedBuf>,
     /// A scene whose start waits for [`Clock`].
     pending: Option<Kind>,
     /// `gSCManagerBackupData.fighter_mask`, which the newcomers read; the
@@ -95,35 +92,17 @@ impl Opening {
             clock: Clock::default(),
             logic: None,
             runtime: Runtime::new(),
-            sprites: None,
             pending: None,
             fighter_mask: STARTERS_MASK,
             frozen: core::cell::Cell::new(false),
         }
     }
 
-    fn scene_pack(&self) -> Option<Pack<'_>> {
-        Pack::open(self.sprites.as_ref()?.as_slice()).ok()
+    /// The scene's sprites, cameras and scripts: its files in the pack
+    /// (RE-475).
+    fn scene_pack(&self) -> Option<&'static Pack<'static>> {
+        ssb_psp_runtime::scene_files::pack()
     }
-}
-
-/// The scene pack each scene reads.
-fn menu_scene(kind: Option<Kind>) -> Option<MenuScene> {
-    Some(match kind {
-        None => MenuScene::Startup,
-        Some(Kind::Room) => MenuScene::OpeningRoom,
-        Some(Kind::Portraits) => MenuScene::OpeningPortraits,
-        Some(Kind::Run) => MenuScene::OpeningRun,
-        Some(Kind::Cliff) => MenuScene::OpeningCliff,
-        Some(Kind::Yamabuki) => MenuScene::OpeningYamabuki,
-        Some(Kind::Jungle) => MenuScene::OpeningJungle,
-        Some(Kind::Yoster) => MenuScene::OpeningYoster,
-        Some(Kind::Sector) => MenuScene::OpeningSector,
-        Some(Kind::Standoff) => MenuScene::OpeningStandoff,
-        Some(Kind::Clash) => MenuScene::OpeningClash,
-        Some(Kind::Newcomers) => MenuScene::OpeningNewcomers,
-        Some(_) => MenuScene::OpeningFighters,
-    })
 }
 
 /// `LBBACKUP_MASK_FIGHTER` of the eight starters: a new save's mask.
@@ -151,7 +130,7 @@ fn make(kind: Option<Kind>, fighter_mask: u16) -> Option<Logic> {
 
 /// `syTaskmanSetLoadScene` into `nSCKindStartup` (`kind` `None`) or an
 /// opening scene. Returns `false` for a scene this host does not run.
-pub(crate) fn start(o: &mut Opening, pack_path: Option<&'static str>, kind: Option<Kind>) -> bool {
+pub(crate) fn start(o: &mut Opening, kind: Option<Kind>) -> bool {
     let Some(logic) = make(kind, o.fighter_mask) else {
         return false;
     };
@@ -159,9 +138,6 @@ pub(crate) fn start(o: &mut Opening, pack_path: Option<&'static str>, kind: Opti
         // `mvOpeningRoomFuncStart`'s `sySchedulerSetTicCount(0)`.
         o.clock.reset();
     }
-    o.sprites = None;
-    o.sprites =
-        menu_scene(kind).and_then(|s| pack_path.and_then(|p| assets::load_menu_pack(p, s).ok()));
     o.runtime = Runtime::new();
     o.logic = Some(logic);
     o.pending = None;
@@ -172,7 +148,6 @@ pub(crate) fn start(o: &mut Opening, pack_path: Option<&'static str>, kind: Opti
 /// Drops the running scene: a hold then shows black.
 pub(crate) fn clear(o: &mut Opening) {
     o.logic = None;
-    o.sprites = None;
     o.runtime = Runtime::new();
 }
 
@@ -201,7 +176,6 @@ fn room_time() -> impl FnMut() -> u8 {
 pub(crate) fn frame(
     o: &mut Opening,
     pack: Option<&Pack<'_>>,
-    pack_path: Option<&'static str>,
     tapped: bool,
 ) -> Option<MScene> {
     o.clock.retrace();
@@ -210,19 +184,13 @@ pub(crate) fn frame(
             return None;
         }
         o.pending = None;
-        start(o, pack_path, Some(kind));
+        start(o, Some(kind));
     }
     let exit = o.logic.as_mut()?.tick(tapped);
     if let Some(p) = pack {
-        let scene = o
-            .sprites
-            .as_ref()
-            .and_then(|b| Pack::open(b.as_slice()).ok());
-        let models = ssb_psp_runtime::movie::models();
         let a = Assets {
             main: p,
-            scene: scene.as_ref(),
-            models: models.as_ref(),
+            scene: o.scene_pack(),
         };
         if let Some(l) = o.logic.as_ref() {
             o.runtime.sync(l.world(), &a);
@@ -267,12 +235,9 @@ pub(crate) unsafe fn draw(o: &Opening, gpu: &mut Gpu, pack: Option<&Pack<'_>>, s
     let (Some(p), Some(logic)) = (pack, o.logic.as_ref()) else {
         return;
     };
-    let scene = o.scene_pack();
-    let models = ssb_psp_runtime::movie::models();
     let a = Assets {
         main: p,
-        scene: scene.as_ref(),
-        models: models.as_ref(),
+        scene: o.scene_pack(),
     };
     let mut host = |gpu: &mut Gpu, st: &mut DrawState, _cam: &Camera, obj: &Object, head: Head| {
         host_draw(logic, &o.runtime, gpu, st, &a, obj, head);

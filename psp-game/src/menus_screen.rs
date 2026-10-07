@@ -32,10 +32,8 @@ use ssb_game::players_vs::BattleState;
 use ssb_game::vs_mode::VsMode;
 use ssb_game::menu::{Draw, Pad, Piece, Scene, VIEWPORT};
 use ssb_game::results_scene::Camera;
-use ssb_psp_runtime::assets::{self, AlignedBuf};
 use ssb_psp_runtime::gu::Gpu;
 use ssb_psp_runtime::meshdraw;
-use ssb_rom::menu_pack::MenuScene;
 use ssb_rom::pack::Pack;
 use ssb_rom::skeleton::Skeleton;
 
@@ -70,7 +68,6 @@ struct FighterModel {
 /// The menus' state and the running scene's sprite pack.
 pub(crate) struct Menus {
     pub active: Option<Active>,
-    sprites: Option<AlignedBuf>,
     fighter: Option<Box<FighterModel>>,
     emblem: Option<Box<(ssb_rom::pack::ObjectDesc, ssb_rom::skeleton::EffectMaterialAnimator)>>,
     /// A capture's stand-in for `osGetTime`'s low byte.
@@ -90,7 +87,6 @@ pub(crate) struct Menus {
 /// What the menus read and write in the session.
 pub(crate) struct Host<'h, 'p> {
     pub pack: Option<&'h Pack<'p>>,
-    pub pack_path: Option<&'static str>,
     pub backup: &'h mut Backup,
     pub selections: &'h mut Selections,
     /// `dSYAudioSoundQuality`: 1 stereo, 0 mono.
@@ -106,7 +102,6 @@ impl Menus {
     pub(crate) fn new() -> Menus {
         Menus {
             active: None,
-            sprites: None,
             fighter: None,
             emblem: None,
             clock: 0,
@@ -187,12 +182,11 @@ impl Menus {
     /// Starts `scene`, entered from `prev`: the previous scene's sprites are
     /// freed before this one's load.
     pub(crate) fn enter(&mut self, scene: Scene, prev: Scene, host: &mut Host<'_, '_>) {
-        self.sprites = None;
         self.fighter = None;
         self.emblem = None;
         self.scene_prev = prev;
         self.scene = scene;
-        let (pack_scene, active) = match scene {
+        let active = match scene {
             Scene::Title => {
                 // `mnTitleStartScene`.
                 ssb_game::menu::title::count_boot(&self.demo, host.backup);
@@ -204,38 +198,20 @@ impl Menus {
                 } else {
                     Title::new(time)
                 };
-                (MenuScene::Title, Active::Title(Box::new(title)))
+                Active::Title(Box::new(title))
             }
-            Scene::ModeSelect => (MenuScene::ModeSelect, Active::ModeSelect(ModeSelect::new(prev))),
-            Scene::OnePMode => (
-                MenuScene::OnePMode,
-                Active::OnePMode(OnePMode::new(prev, self.one_p_option)),
-            ),
-            Scene::VsMode => (
-                MenuScene::VsMode,
-                Active::VsMode(Box::new(VsMode::new(prev, host.vs_state))),
-            ),
-            Scene::VsOptions => (
-                MenuScene::VsOptions,
-                Active::VsOptions(Box::new(VsOptionsMenu::new(prev, host.vs_state, host.backup))),
-            ),
-            Scene::VsItemSwitch => (
-                MenuScene::VsItemSwitch,
-                Active::VsItemSwitch(Box::new(VsItemSwitchMenu::new(host.vs_state))),
-            ),
-            Scene::Option => (
-                MenuScene::Option,
-                Active::Option(OptionMenu::new(prev, *host.sound_quality, host.backup)),
-            ),
+            Scene::ModeSelect => Active::ModeSelect(ModeSelect::new(prev)),
+            Scene::OnePMode => Active::OnePMode(OnePMode::new(prev, self.one_p_option)),
+            Scene::VsMode => Active::VsMode(Box::new(VsMode::new(prev, host.vs_state))),
+            Scene::VsOptions => Active::VsOptions(Box::new(VsOptionsMenu::new(prev, host.vs_state, host.backup))),
+            Scene::VsItemSwitch => Active::VsItemSwitch(Box::new(VsItemSwitchMenu::new(host.vs_state))),
+            Scene::Option => Active::Option(OptionMenu::new(prev, *host.sound_quality, host.backup)),
             Scene::ScreenAdjust => {
                 let (h, v) = *host.video_offsets;
-                (MenuScene::ScreenAdjust, Active::ScreenAdjust(ScreenAdjust::new(h, v)))
+                Active::ScreenAdjust(ScreenAdjust::new(h, v))
             }
-            Scene::BackupClear => (MenuScene::BackupClear, Active::BackupClear(BackupClear::new())),
-            Scene::VsRecord => (
-                MenuScene::VsRecord,
-                Active::VsRecord(Box::new(VsRecordMenu::new(host.backup))),
-            ),
+            Scene::BackupClear => Active::BackupClear(BackupClear::new()),
+            Scene::VsRecord => Active::VsRecord(Box::new(VsRecordMenu::new(host.backup))),
             Scene::Characters => {
                 let capture = host.capture;
                 let backup: &Backup = host.backup;
@@ -247,23 +223,18 @@ impl Menus {
                 } else {
                     CharactersMenu::demo(backup, demo, &mut self.rand(capture))
                 };
-                (MenuScene::Characters, Active::Characters(Box::new(menu)))
+                Active::Characters(Box::new(menu))
             }
             // The Data menu; Sound Test is not ported, so leaving for it
             // comes back here with its tab chosen.
-            _ => (MenuScene::Data, Active::Data(DataMenu::new(prev, host.backup))),
+            _ => Active::Data(DataMenu::new(prev, host.backup)),
         };
-        self.sprites = host
-            .pack_path
-            .and_then(|path| assets::load_menu_pack(path, pack_scene).ok());
+        // The scene's sprites are its files in the pack, which `go_scene`
+        // loaded (RE-475).
         self.title_opening = None;
-        if let (Active::Title(t), Some(p), Some(scene)) = (
-            &active,
-            host.pack,
-            self.sprites.as_ref().and_then(|b| Pack::open(b.as_slice()).ok()),
-        ) {
+        if let (Active::Title(t), Some(p)) = (&active, host.pack) {
             if t.layout == ssb_game::menu::title::Layout::Opening {
-                self.title_opening = crate::title_opening::TitleOpening::new(p, &scene);
+                self.title_opening = crate::title_opening::TitleOpening::new(p, p);
             }
         }
         if let (Active::Characters(m), Some(p)) = (&active, host.pack) {
@@ -277,7 +248,6 @@ impl Menus {
     pub(crate) fn leave(&mut self) {
         self.active = None;
         self.title_opening = None;
-        self.sprites = None;
         self.fighter = None;
         self.emblem = None;
     }
@@ -303,10 +273,10 @@ impl Menus {
                 let mut range = ssb_game::rng::rand_int_range;
                 let next = m.tick(pad, self.scene_prev, &mut self.demo, host.backup, time, &mut range);
                 // The opening layout's processes (RE-467).
-                if let Some(scene) = self.sprites.as_ref().and_then(|b| Pack::open(b.as_slice()).ok()) {
-                    m.follow(&TitleAnims::new(&scene));
-                    if let (Some(o), Some(p)) = (self.title_opening.as_mut(), host.pack) {
-                        o.catch_up(p, &scene, m.effect_plays, m.effects_shown().0);
+                if let Some(scene) = host.pack {
+                    m.follow(&TitleAnims::new(scene));
+                    if let Some(o) = self.title_opening.as_mut() {
+                        o.catch_up(scene, scene, m.effect_plays, m.effects_shown().0);
                     }
                 }
                 (Scene::Title, next)
@@ -402,18 +372,17 @@ impl Menus {
         let Some(active) = self.active.as_ref() else {
             return;
         };
-        let sprites = self.sprites.as_ref().and_then(|b| Pack::open(b.as_slice()).ok());
-        let packs = Packs {
-            menu: sprites.as_ref(),
-            main: pack,
-        };
+        let packs = Packs { menu: None, main: pack };
         gpu.set_viewport_n64(VIEWPORT);
-        let title_anims = TitleAnims {
-            labels: sprites.as_ref().and_then(|p| ssb_rom::title::packed_frames(p, ssb_rom::title::LABELS_SLOT)),
-            press_start: sprites
-                .as_ref()
-                .and_then(|p| ssb_rom::title::packed_frames(p, ssb_rom::title::PRESS_START_SLOT)),
-            logo: sprites.as_ref().and_then(|p| ssb_rom::title::packed_frames(p, ssb_rom::title::LOGO_SLOT)),
+        // The title's baked plays are `MNTitle`'s, loaded with the title
+        // alone (RE-475).
+        let title_anims = match (active, pack) {
+            (Active::Title(_), Some(p)) => TitleAnims::new(p),
+            _ => TitleAnims {
+                labels: None,
+                press_start: None,
+                logo: None,
+            },
         };
         let mut title_opening = self.title_opening.take();
         let mut f = |d: Draw| match d {

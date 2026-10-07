@@ -19,6 +19,14 @@ ssb-psp-runtime = { path = "../psp-runtime" }
 ssb-capture = { path = "../crates/ssb-capture" }
 
 [features]
+# Boot and scene-load lines to `ms0:/PSP/GAME/ssb64/boot.log`
+# (`src/boot_log.rs`, RE-475), for XMB launches where PSPLink is not
+# running. Allocates nothing. Off by default.
+boot_log = []
+# Holds the memory that leaves `ballast.txt`'s byte count free at boot, so a
+# PPSSPP or PSPLink run sees an XMB launch's smaller budget
+# (`ssb_psp_runtime::memory::hold_ballast`, RE-475). Off by default.
+memory_ballast = []
 # Frame timing, free-memory and stack reports every 120 frames to
 # `profile.log` beside the executable and to stdout
 # (`ssb_psp_runtime::profile`, RE-469). Off by default.
@@ -72,8 +80,11 @@ rng_trace = ["ssb-game/rng_trace"]
 opt-level = 3
 lto = true
 codegen-units = 1
-# Debug symbols cost nothing at runtime and make psplink/psp-gdb usable.
-debug = true
+# No debug info in the shipped EBOOT (RE-475: 31 MB with it, 4 MB
+# without). The code is the same either way, so a build with
+# `CARGO_PROFILE_RELEASE_DEBUG=true` maps a shipped EBOOT's addresses with
+# `psp-addr2line` (the psp-hardware skill).
+debug = false
 
 [profile.dev]
 opt-level = 1

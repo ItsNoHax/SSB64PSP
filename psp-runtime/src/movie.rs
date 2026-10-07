@@ -25,7 +25,6 @@ use ssb_rom::pack::{ObjectDesc, Pack, SpriteDesc, MODEL_SCALE};
 use ssb_rom::scene::Mat4;
 use ssb_rom::skeleton::{EffectMaterialAnimator, Skeleton};
 
-use crate::assets::AlignedBuf;
 use crate::gu::Gpu;
 use crate::meshdraw::{self, DrawState};
 
@@ -33,54 +32,19 @@ use crate::meshdraw::{self, DrawState};
 /// Yoshis' nest: 73).
 const MAX_NODES: usize = 80;
 
-/// The opening's own models (`MenuScene::OpeningModels`), held from the
-/// room to the title as the opening's files stay loaded across its scenes.
-static mut MODELS: Option<AlignedBuf> = None;
-
-/// Loads the opening's models pack beside `pack_path` when `want` and not
-/// yet held, or drops it when not `want`.
-pub fn hold_models(pack_path: Option<&str>, want: bool) {
-    // SAFETY: the game runs on one thread; no `Pack` borrowed from the
-    // buffer outlives the frame that opened it.
-    let held = unsafe { &mut *core::ptr::addr_of_mut!(MODELS) };
-    if !want {
-        *held = None;
-    } else if held.is_none() {
-        *held = pack_path.and_then(|p| {
-            crate::assets::load_menu_pack(p, ssb_rom::menu_pack::MenuScene::OpeningModels).ok()
-        });
-    }
-}
-
-/// The opening's models pack, while held.
-pub fn models() -> Option<Pack<'static>> {
-    // SAFETY: as [`hold_models`]; the buffer is only dropped between
-    // frames, when no pack opened from it is alive.
-    let held = unsafe { &*core::ptr::addr_of!(MODELS) };
-    held.as_ref().and_then(|b| {
-        let bytes: &'static [u8] =
-            unsafe { core::slice::from_raw_parts(b.as_slice().as_ptr(), b.as_slice().len()) };
-        Pack::open(bytes).ok()
-    })
-}
-
-/// The packs a scene reads: its own (sprites, scripts, cameras), the
-/// opening's models, then the resident one.
+/// The packs a scene reads: its scene's (sprites, scripts, cameras), then
+/// the resident one. Since RE-475 both are the pack, its scene's files
+/// loaded (`scene_files`).
 #[derive(Clone, Copy)]
 pub struct Assets<'a, 'b> {
     pub main: &'a Pack<'b>,
     pub scene: Option<&'a Pack<'b>>,
-    pub models: Option<&'a Pack<'b>>,
 }
 
 impl<'a, 'b> Assets<'a, 'b> {
-    /// The pack holding `file`'s models: the opening's own for its files
-    /// (`ssb_rom::opening::is_model_file`), else the resident one.
-    pub fn model_pack(&self, file: u32) -> &'a Pack<'b> {
-        match self.models {
-            Some(m) if ssb_rom::opening::is_model_file(file) => m,
-            _ => self.main,
-        }
+    /// The pack holding `file`'s models.
+    pub fn model_pack(&self, _file: u32) -> &'a Pack<'b> {
+        self.main
     }
 
     fn effect_blob(pack: &'a Pack<'b>, slot: u32) -> Option<&'a [u8]> {

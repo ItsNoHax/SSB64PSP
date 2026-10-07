@@ -1,6 +1,6 @@
-//! Every sprite the options and data menus draw is in its scene's menu
-//! pack (`ssb_rom::menu_pack`) or the resident pack (RE-461), and every
-//! menu pack sprite decodes from the ROM.
+//! Every sprite the options and data menus draw is among its scene's own
+//! sprites (`ssb_rom::menu_pack`) or the common ones (RE-461; one pack
+//! since RE-475), and every scene sprite decodes from the ROM.
 
 use std::collections::BTreeSet;
 

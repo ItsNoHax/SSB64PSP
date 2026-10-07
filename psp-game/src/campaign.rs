@@ -268,6 +268,14 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
         damage_ratio: ssb_game::stale::DAMAGE_RATIO_DEFAULT,
         demo: false,
     };
+    // The 1P manager's battle drops the last presentation scene's files.
+    // `sc1PGameFuncStart`'s extras: the Kirby team's copies and the twelve
+    // Polygons, whatever the roster holds now (RE-475).
+    crate::scene_load::set_base(match stage {
+        Stage::Kirby => alloc::vec::Vec::from(ssb_rom::scene_roots::KIRBY_TEAM),
+        Stage::Zako => crate::scene_load::fighter_roots(p, 14..=25),
+        _ => alloc::vec::Vec::new(),
+    });
     s.enter(pack, gkind, roster, Some(rules));
     s.scene_gkind = gkind;
     // `itManagerInitItems` with the 1P stage's switches.
@@ -625,6 +633,7 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
         handicap: ssb_game::stale::HANDICAP_DEFAULT, spawn: spgame::setup::mapobj::PLAYER,
         team: 0, color: 0, human: true });
     let gkind = bonus.state.gkind;
+    crate::scene_load::set_base(alloc::vec::Vec::new());
     s.enter(pack, gkind, roster, Some(VsRules { rule: ssb_game::battle::Rule::Time,
         time_limit: bonus.state.time_limit, stocks: 0, team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL,
         ..VsRules::DEFAULT }));
