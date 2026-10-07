@@ -621,9 +621,11 @@ impl Runtime {
                             }
                             match &o.kind {
                                 ObjectKind::Sprites(pieces) => {
+                                    let t = crate::profile::start();
                                     for p in pieces {
                                         draw_piece(a, st, p);
                                     }
+                                    crate::profile::stop(crate::profile::Span::MovieSprites, t);
                                 }
                                 ObjectKind::Fills(fills) => {
                                     for f in fills {
@@ -721,8 +723,11 @@ impl Runtime {
             return;
         };
         let pack = a.model_pack(s.key.0);
+        let t = crate::profile::start();
         let mut posed = [Mat4::IDENTITY; MAX_NODES];
         let n = compose(pack, &s.object, &s.poses, &mut posed);
+        crate::profile::stop(crate::profile::Span::MoviePose, t);
+        let t = crate::profile::start();
         gpu.model_transform([0.0; 3], [0.0; 3], MODEL_SCALE);
         let base = gpu.model_matrix();
         let _ = m;
@@ -736,6 +741,7 @@ impl Runtime {
                 s.mats.as_deref(),
                 &|g| s.hidden(pack, g),
             );
+            crate::profile::stop(crate::profile::Span::MovieMesh, t);
             return;
         }
         meshdraw::draw_object_posed(
@@ -749,6 +755,7 @@ impl Runtime {
             s.mats.as_deref(),
             0,
         );
+        crate::profile::stop(crate::profile::Span::MovieMesh, t);
     }
 
     /// Model `id` drawn under the current camera, for a host's own display
@@ -784,9 +791,12 @@ impl Runtime {
         let Some(object) = a.main.object(s.object) else {
             return;
         };
+        let t = crate::profile::start();
         let mut posed = [Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
         let n = s.compose(a.main, &object, &mut posed);
         let base = psp_matrix(&s.root(f));
+        crate::profile::stop(crate::profile::Span::MoviePose, t);
+        let t = crate::profile::start();
         st.configure_fighter_light(light);
         let parts = s.demo.parts.draw_parts();
         meshdraw::draw_fighter_posed(
@@ -803,6 +813,7 @@ impl Runtime {
             },
         );
         st.finish_fighter_light();
+        crate::profile::stop(crate::profile::Span::MovieMesh, t);
     }
 }
 

@@ -1518,6 +1518,7 @@ unsafe fn draw_mesh_vertices(
             continue;
         }
 
+        let material_t = crate::profile::start();
         // RE-426: `sprites[texture_id_curr]` of a texture part's `MObj`.
         st.texture_override = st.texture_part_mesh.and_then(|mesh| {
             let t = pack.texture_part(mesh, i)?;
@@ -1532,6 +1533,7 @@ unsafe fn draw_mesh_vertices(
             .filter(|c| c.prim.is_some() || c.env.is_some());
         let linear_texgen = p.flags & flags::TEXTURE_GEN_LINEAR != 0;
         let signed_clamp_uv = p.flags & flags::SIGNED_CLAMP_UV != 0;
+        crate::profile::stop(crate::profile::Span::Material, material_t);
 
         // One submission, kept so a two-tile blend's second pass redraws the
         // exact same vertices (RE-321).
@@ -1638,6 +1640,7 @@ unsafe fn draw_mesh_vertices(
             )
         };
         let (vtype, index_ptr, vertex_ptr) = submission;
+        let submit_t = crate::profile::start();
         sys::sceGumDrawArray(
             GuPrimitive::Triangles,
             VertexType::from_bits_truncate(vtype.bits()),
@@ -1645,6 +1648,8 @@ unsafe fn draw_mesh_vertices(
             index_ptr,
             vertex_ptr,
         );
+        crate::profile::stop(crate::profile::Span::Submit, submit_t);
+        crate::profile::count(crate::profile::Span::Prims, 1);
         st.draws += 1;
         if p.flags & flags::LOD_BLEND != 0
             && draw_lod_blend_pass(
@@ -2091,6 +2096,7 @@ unsafe fn draw_object_posed_nodes(
                 w: node.world[15],
             },
         };
+        let matrix_t = crate::profile::start();
         sys::sceGumMatrixMode(sys::MatrixMode::Model);
         let kind48_flat = st.kind48_flat && node.flags & NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED != 0;
         if node.flags & NodeDesc::FLAG_BILLBOARD != 0 && !kind48_flat {
@@ -2184,6 +2190,7 @@ unsafe fn draw_object_posed_nodes(
         // matrix, so it has to be captured after the branch above -- both
         // arms leave a different matrix on the stack.
         st.note_model_matrix();
+        crate::profile::stop(crate::profile::Span::NodeMatrix, matrix_t);
         for mesh_index in meshes.into_iter().flatten() {
             let Some(mesh) = pack.mesh(mesh_index) else {
                 continue;
@@ -2218,6 +2225,7 @@ unsafe fn draw_node_mesh(
             pack.vertices(mesh),
             ssb_rom::scene::Mat4(node.world).inverse_affine(),
         ) {
+            let skin = crate::profile::start();
             // Arena memory remains alive until the GE finishes this frame.
             // Only meshes borrowing RSP slots need a transient buffer. It is
             // list memory, written through the uncached alias: each vertex
@@ -2265,6 +2273,7 @@ unsafe fn draw_node_mesh(
             // A partial vertex at the end, as the copy carried it.
             let tail = count * ssb_rom::pack::VERTEX_SIZE;
             core::ptr::copy_nonoverlapping(verts.as_ptr().add(tail), dynamic.add(tail), verts.len() - tail);
+            crate::profile::stop(crate::profile::Span::Skin, skin);
             return draw_mesh_vertices(
                 pack,
                 mesh,

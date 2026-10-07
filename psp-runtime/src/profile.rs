@@ -66,13 +66,30 @@ pub enum Span {
     /// completed and registered, the last scene's files dropped. Counted
     /// in the frame's CPU time (RE-476).
     Files,
+    /// The opening's movie draw (`movie::Runtime::draw`, RE-476): posing
+    /// models and fighters.
+    MoviePose,
+    /// The movie draw's mesh lists (`meshdraw`), skinning included.
+    MovieMesh,
+    /// Inside mesh lists: vertices re-posed on the CPU (`draw_node_mesh`).
+    Skin,
+    /// The movie draw's sprite pieces and fills.
+    MovieSprites,
+    /// Mesh lists: a node's matrix (`sceGum*`) before its meshes.
+    NodeMatrix,
+    /// Mesh lists: each primitive's material and texture state.
+    Material,
+    /// Mesh lists: each primitive's `sceGumDrawArray`.
+    Submit,
+    /// Mesh lists: primitives drawn (a count, not microseconds).
+    Prims,
 }
 
-const SPANS: usize = 24;
+const SPANS: usize = 32;
 #[cfg_attr(not(feature = "profile"), allow(dead_code))]
 const NAMES: [&str; SPANS] = [
     "update", "interrupt", "physics", "hit", "effects", "draw", "ge", "vblank", "fphys", "items", "weapons", "camera", "anim",
-    "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel", "io", "demand", "files",
+    "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel", "io", "demand", "files", "mpose", "mmesh", "skin", "msprites", "nodemat", "material", "submit", "prims",
 ];
 
 /// Frames per report: two seconds at 60 FPS.
@@ -183,6 +200,12 @@ mod imp {
         // SAFETY: the game is single-threaded.
         let s = unsafe { &mut *core::ptr::addr_of_mut!(STATE) };
         s.frame[span as usize] = s.frame[span as usize].wrapping_add(us);
+    }
+
+    pub fn count(span: Span, n: u32) {
+        // SAFETY: the game is single-threaded.
+        let s = unsafe { &mut *core::ptr::addr_of_mut!(STATE) };
+        s.frame[span as usize] = s.frame[span as usize].wrapping_add(n);
     }
 
     /// A fixed-capacity line buffer, so a report allocates nothing.
@@ -400,6 +423,15 @@ pub fn stop(span: Span, start: u32) {
     imp::stop(span, start);
     #[cfg(not(feature = "profile"))]
     let _ = (span, start);
+}
+
+/// Adds `n` to `span`'s share of this frame: a count rather than a time.
+#[inline(always)]
+pub fn count(span: Span, n: u32) {
+    #[cfg(feature = "profile")]
+    imp::count(span, n);
+    #[cfg(not(feature = "profile"))]
+    let _ = (span, n);
 }
 
 /// Times `f` as `span`.

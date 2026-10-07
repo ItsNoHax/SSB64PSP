@@ -366,6 +366,12 @@ pub struct Gpu {
     /// display. That frame is latched at the next vblank, and the buffer it
     /// replaces may not be drawn into before then (RE-470).
     presented_vcount: Option<u32>,
+    /// [`WALLPAPER_PHOTO`]'s copy in VRAM (the GE's address), which the
+    /// frozen picture samples: from main memory, the GE took about 27 ms
+    /// to draw that one 340x250 bilinear quad on a PSP-2000 (RE-476).
+    photo_vram: *mut c_void,
+    /// Whether [`Gpu::photo_vram`] holds the last capture.
+    photo_in_vram: core::cell::Cell<bool>,
 }
 
 impl Gpu {
@@ -391,6 +397,12 @@ impl Gpu {
             allocator.alloc_texture_pixels(BUF_WIDTH, SCREEN_HEIGHT, TexturePixelFormat::Psm8888);
         let zbp =
             allocator.alloc_texture_pixels(BUF_WIDTH, SCREEN_HEIGHT, TexturePixelFormat::Psm4444);
+        let photo = allocator.alloc_texture_pixels(
+            WALLPAPER_PHOTO_STRIDE as u32,
+            WALLPAPER_PHOTO_PADDED_HEIGHT as u32,
+            TexturePixelFormat::Psm8888,
+        );
+        let photo_vram = sys::sceGeEdramGetAddr().add(photo.as_mut_ptr_from_zero() as usize) as *mut c_void;
 
         // Retained past `init()` for `request_transition_capture`'s CPU-side
         // readback -- `as_mut_ptr_from_zero()` below is only meaningful as the
@@ -457,6 +469,8 @@ impl Gpu {
             fbp0_rel,
             fbp1_rel,
             presented_vcount: None,
+            photo_vram,
+            photo_in_vram: core::cell::Cell::new(false),
         }
     }
 
@@ -583,6 +597,7 @@ impl Gpu {
             let bytes = wallpaper_photo_data();
             sys::sceKernelDcacheWritebackRange(bytes.as_ptr() as *const c_void, bytes.len() as u32);
         }
+        self.photo_in_vram.set(false);
     }
 
     /// Copies the top-left 300x220 corner of whichever buffer just finished
@@ -611,6 +626,7 @@ impl Gpu {
         // Same GE DMA coherency requirement as the transition capture.
         let bytes = wallpaper_photo_data();
         sys::sceKernelDcacheWritebackRange(bytes.as_ptr() as *const c_void, bytes.len() as u32);
+        self.photo_in_vram.set(false);
     }
 
     /// Debug-only proof that [`WALLPAPER_PHOTO`] holds real pixel data:
@@ -745,6 +761,27 @@ impl Gpu {
 
     unsafe fn draw_photo_rect(&self, [x0, y0, x1, y1]: [i16; 4], prim_color: u32) {
         let data = wallpaper_photo_data();
+        // The whole padded buffer, padding included, so bilinear taps past
+        // the content read the same zeros (RE-476). Written back by the
+        // capture; the GE copies it before this draw reads it.
+        if !self.photo_in_vram.get() {
+            sys::sceGuCopyImage(
+                DisplayPixelFormat::Psm8888,
+                0,
+                0,
+                WALLPAPER_PHOTO_STRIDE as i32,
+                WALLPAPER_PHOTO_PADDED_HEIGHT as i32,
+                WALLPAPER_PHOTO_STRIDE as i32,
+                data.as_ptr() as *mut c_void,
+                0,
+                0,
+                WALLPAPER_PHOTO_STRIDE as i32,
+                self.photo_vram,
+            );
+            sys::sceGuTexSync();
+            sys::sceGuTexFlush();
+            self.photo_in_vram.set(true);
+        }
 
         sys::sceGuEnable(GuState::Texture2D);
         sys::sceGuDisable(GuState::Lighting);
@@ -757,7 +794,7 @@ impl Gpu {
             WALLPAPER_PHOTO_STRIDE as i32,
             WALLPAPER_PHOTO_PADDED_HEIGHT as i32,
             WALLPAPER_PHOTO_STRIDE as i32,
-            data.as_ptr() as *const c_void,
+            self.photo_vram as *const c_void,
         );
         sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
         sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
