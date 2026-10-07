@@ -2204,6 +2204,7 @@ ssb_psp_runtime::module_with_stack!("ssb64_psp_game", 1, 0, crate::GAME_STACK_BY
 
 fn psp_main() {
     psp::enable_home_button();
+    ssb_psp_runtime::timing::full_speed();
     unsafe { run() }
 }
 

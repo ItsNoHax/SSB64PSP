@@ -37,3 +37,11 @@ impl Stopwatch {
         now.wrapping_sub(self.start)
     }
 }
+
+/// Runs the CPU at 333 MHz and the bus at 166, the PSP's highest clocks,
+/// as `sf64-psp` and `oot-PSP` do: a game started from the XMB runs at 222
+/// and 111. Only time changes; every frame computes and draws the same
+/// (RE-471). Returns the kernel's result, negative on failure.
+pub fn full_speed() -> i32 {
+    unsafe { sys::scePowerSetClockFrequency(333, 333, 166) }
+}
