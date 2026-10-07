@@ -2893,12 +2893,14 @@ unsafe fn sobj_rect(corners: [(f32, f32, f32, f32); 2], abgr: u32) {
 
 /// Draws the RGBA5551 output of an RDP color-image pass into PSP's inverted
 /// depth buffer. Used by framebuffer masks. Pixel samples use the original
-/// 3-point filter; GE rasterisation places the resulting native pixel spans.
+/// 3-point filter; GE rasterisation places the resulting native pixel spans
+/// (`ssb_rom::depth_mask`, sampled per texel: RE-471).
 ///
 /// # Safety
 /// An active GU list and an ordinary full-screen/pillarbox scissor are required.
 pub unsafe fn draw_depth_image(
     image: &ssb_rom::texture::Rgba8,
+    tables: &ssb_rom::depth_mask::Tables,
     rect: [f32; 4],
     st: &mut DrawState,
 ) {
@@ -2907,8 +2909,15 @@ pub unsafe fn draw_depth_image(
     let k = vh as f32 / 240.0;
     let x0 = vx as f32 + x * k;
     let y0 = y * k;
-    let x1 = x0 + width * k;
-    let y1 = y0 + height * k;
+    let placement = ssb_rom::depth_mask::Placement {
+        x0,
+        y0,
+        x1: x0 + width * k,
+        y1: y0 + height * k,
+        k,
+        width,
+        height,
+    };
     sys::sceGuDisable(GuState::Texture2D);
     sys::sceGuDisable(GuState::Lighting);
     sys::sceGuDisable(GuState::CullFace);
@@ -2918,78 +2927,24 @@ pub unsafe fn draw_depth_image(
     sys::sceGuDepthFunc(sys::DepthFunc::Always);
     sys::sceGuDepthMask(0);
     sys::sceGuPixelMask(u32::MAX);
-    // Consecutive equal samples share one sprite. This is a data-derived
-    // span compression, with no threshold or guessed circle geometry.
-    let ceil = |v: f32| {
-        let i = v as i32;
-        if v > i as f32 {
-            i + 1
-        } else {
-            i
-        }
-    };
-    // A column's `s` and a row's `t` are the same on every row and column,
-    // so each is computed once rather than per pixel (RE-470).
-    let s_at = |px: i32| (((px as f32 + 0.5 - x0) / k) * image.width as f32 / width * 32.0) as i32;
-    let first_px = x0 as i32;
-    let mut columns = [0i32; 512];
-    let cols = (ceil(x1) - first_px).clamp(0, columns.len() as i32) as usize;
-    for (i, s) in columns[..cols].iter_mut().enumerate() {
-        *s = s_at(first_px + i as i32);
-    }
-    let column = |px: i32| match usize::try_from(px - first_px) {
-        Ok(i) if i < cols => columns[i],
-        _ => s_at(px),
-    };
-    for py in (y0 as i32)..ceil(y1) {
-        let t = (((py as f32 + 0.5 - y0) / k) * image.height as f32 / height * 32.0) as i32;
-        // The last sample's integer texel and, when its quad was four
-        // equal texels, its depth: every pixel in that texel shares it.
-        let mut memo = (i32::MIN, None);
-        let mut sample = |px: i32| {
-            let s = column(px);
-            if let (true, Some(depth)) = (s.div_euclid(32) == memo.0, memo.1) {
-                return depth;
-            }
-            let (rgba, uniform) = ssb_rom::n64_filter::sample_3point_quad(image, s, t);
-            let packed = (u16::from(rgba[0] >> 3) << 11)
-                | (u16::from(rgba[1] >> 3) << 6)
-                | (u16::from(rgba[2] >> 3) << 1)
-                | u16::from(rgba[3] >= 128);
-            // The RDP reads this color-image word as compressed 18-bit Z.
-            // GE stores linear 16-bit Z with the viewport range inverted.
-            let depth = u16::MAX - (ssb_rom::n64_depth::decode(packed) >> 2) as u16;
-            memo = (s.div_euclid(32), uniform.then_some(depth));
-            depth
-        };
-        let mut px = x0 as i32;
-        let end = ceil(x1);
-        // Each pixel is sampled once: the sample that ends a span starts
-        // the next (RE-470).
-        let mut depth = if px < end { sample(px) } else { 0 };
-        // A row's spans go to the GE as one list of sprites, not one draw
-        // each: a magnifier's edge rows have dozens (RE-470).
-        let mut spans = [(0i32, 0i32, 0u16); 128];
-        let mut count = 0;
-        while px < end {
-            let start = px;
-            px += 1;
-            let mut next = depth;
-            while px < end {
-                next = sample(px);
-                if next != depth {
-                    break;
-                }
-                px += 1;
-            }
-            spans[count] = (start, px, depth);
+    // Consecutive equal samples share one sprite: a data-derived span
+    // compression, with no threshold or guessed circle geometry. The spans
+    // go to the GE in order, many rows to a draw: each draw of a direct
+    // list updates the GE's stall address, a system call (RE-471).
+    let mut batch = [(0i32, 0i32, 0i32, 0u16); DEPTH_SPANS_PER_DRAW];
+    let mut count = 0;
+    ssb_rom::depth_mask::rows(image, tables, &placement, |py, spans| {
+        for &(start, end, depth) in spans {
+            batch[count] = (py, start, end, depth);
             count += 1;
-            if count == spans.len() || px >= end {
-                draw_depth_spans(&spans[..count], py);
+            if count == batch.len() {
+                draw_depth_spans(&batch);
                 count = 0;
             }
-            depth = next;
         }
+    });
+    if count > 0 {
+        draw_depth_spans(&batch[..count]);
     }
     sys::sceGuPixelMask(0);
     sys::sceGuDepthFunc(sys::DepthFunc::GreaterOrEqual);
@@ -2997,13 +2952,15 @@ pub unsafe fn draw_depth_image(
     st.invalidate_all();
 }
 
-/// One row's `(start, end, depth)` spans of [`draw_depth_image`], as one
-/// draw of `GuPrimitive::Sprites`: each span a 1-pixel-high sprite, in
-/// order.
-unsafe fn draw_depth_spans(spans: &[(i32, i32, u16)], py: i32) {
+/// Spans [`draw_depth_image`] sends in one draw.
+const DEPTH_SPANS_PER_DRAW: usize = 256;
+
+/// [`draw_depth_image`]'s `(row, start, end, depth)` spans as one draw of
+/// `GuPrimitive::Sprites`: each span a 1-pixel-high sprite, in order.
+unsafe fn draw_depth_spans(spans: &[(i32, i32, i32, u16)]) {
     let verts = sys::sceGuGetMemory((2 * spans.len() * core::mem::size_of::<SObjVertex>()) as i32)
         as *mut SObjVertex;
-    for (i, &(start, end, depth)) in spans.iter().enumerate() {
+    for (i, &(py, start, end, depth)) in spans.iter().enumerate() {
         for (j, (x, y)) in [(start as f32, py as f32), (end as f32, py as f32 + 1.0)]
             .into_iter()
             .enumerate()

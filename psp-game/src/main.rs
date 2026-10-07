@@ -5782,7 +5782,8 @@ fn tick_stage_select_layer(pack: Option<&Pack<'_>>, s: &mut Session) {
 #[derive(Default)]
 struct DrawAssets {
     shadow_texture: Option<ssb_rom::pack::TextureDesc>,
-    player_frame: Option<ssb_rom::texture::Rgba8>,
+    /// The magnifiers' depth mask and its quads (RE-471).
+    player_frame: Option<(ssb_rom::texture::Rgba8, ssb_rom::depth_mask::Tables)>,
     /// `ssb_psp_runtime::scene::ENTRY_PARTS`' objects and animations.
     entry_effects: [Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>; 14],
     /// Indexed by `MarioFireball::index`: Mario's palette, then Luigi's.
@@ -5919,7 +5920,10 @@ impl DrawAssets {
     fn resolve(p: &Pack<'_>) -> Self {
         DrawAssets {
             shadow_texture: meshdraw::fighter_shadow_texture(p),
-            player_frame: player_screen::frame_image(p),
+            player_frame: player_screen::frame_image(p).map(|image| {
+                let tables = ssb_rom::depth_mask::Tables::new(&image);
+                (image, tables)
+            }),
             entry_effects: ssb_psp_runtime::scene::ENTRY_PARTS
                 .map(|part| ssb_psp_runtime::scene::entry_part(p, &part)),
             fireball_meshes: ssb_psp_runtime::scene::fireball_meshes(p),
@@ -8049,7 +8053,7 @@ unsafe fn draw_magnifiers(
     camera: &ssb_game::camera::Camera,
     views: [ssb_game::player_interface::View; 4],
     colors: [u8; 4],
-    frame_image: Option<&ssb_rom::texture::Rgba8>,
+    frame_image: Option<&(ssb_rom::texture::Rgba8, ssb_rom::depth_mask::Tables)>,
 ) {
     use ssb_game::player_interface as logic;
     let Some(frame) = p.sprite(
@@ -8058,7 +8062,7 @@ unsafe fn draw_magnifiers(
     ) else {
         return;
     };
-    let Some(image) = frame_image else { return };
+    let Some((image, tables)) = frame_image else { return };
     let scale = logic::magnify_scale(camera);
     let distance = (camera.eye - camera.at).length();
     let mut mini_camera = *camera;
@@ -8087,7 +8091,9 @@ unsafe fn draw_magnifiers(
             32.0 * scale,
             32.0 * scale,
         ];
-        meshdraw::draw_depth_image(image, rect, st);
+        let t = profile::start();
+        meshdraw::draw_depth_image(image, tables, rect, st);
+        profile::stop(profile::Span::MagnifyMask, t);
         meshdraw::draw_sprite(
             p,
             &frame,

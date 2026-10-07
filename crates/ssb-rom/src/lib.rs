@@ -17,6 +17,7 @@ pub mod archive;
 pub mod camanim;
 pub mod campaign;
 pub mod collision;
+pub mod depth_mask;
 pub mod dl;
 pub mod effect;
 pub mod ending;
