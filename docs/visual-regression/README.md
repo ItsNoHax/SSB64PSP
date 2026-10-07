@@ -29,14 +29,19 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  The manifest currently has 195 scenes; RE-316 measured about 17 s for an
-  earlier full run.
+  The manifest currently has 197 scenes; a full run at `-j 16` captures
+  in about 110 s.
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
   of golden, candidate and mask with changed scenes first.
 - `verify` fails on a `pass` row that differs, a `known-failing` row that now
   matches (set it to `pass`), a failed capture, and with `--twice` on two
   captures of one scene that differ.
+- Each `psp-game` capture logs its game thread's deepest stack use;
+  `verify` also fails a scene past seven eighths of the stack
+  (`stack-near-limit`) or with no stack line. PPSSPP does not enforce the
+  stack bound a PSP does (RE-469). `tools/stack-check.sh` runs the same
+  check on the 1P Game and opening scenes outside the manifest.
 - `rebaseline` always captures twice. It copies only changed candidates over
   their goldens and prints a Markdown table (golden, pixel count, reason)
   for the evidence record. It skips `known-failing` rows unless `--filter`

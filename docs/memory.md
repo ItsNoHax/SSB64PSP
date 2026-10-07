@@ -24,6 +24,9 @@
   memory is 2.57 MB, in the Jungle scene (RE-467).
 - The stage `MaterialAnimator` allocates one 448-byte joint per
   `MatAnimDesc` on the heap (103, 46 KiB; RE-322).
+- The game's main thread has a 512 KiB stack (`module_with_stack!`,
+  RE-469); battle entry peaks at 239–294 KB. `psp::module!`'s fixed
+  256 KiB overflowed, which PPSSPP does not detect.
 - CPU time, not RAM, is the main constraint. Trade memory for CPU:
   preconverted assets, cached meshes, no runtime decompression.
 

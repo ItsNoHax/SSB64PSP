@@ -11,7 +11,9 @@ or evidence record covers it.
 | Independent fighter animation validation | Stage animation has a ROM-derived check (RE-050–052, RE-142); fighter costume/material animation does not | — |
 | Per-scene texture residency | Low detail reduces the v78 Dream Land Mario/Fox/DK/Kirby costume-0 closure, including wallpaper, to 726,924 bytes, 22,412 over the 704,512-byte VRAM pool; high needs 1,051,532. Other stages/costumes can need more. Runtime samples from main RAM; hardware residency and DK format work remain | RE-076, RE-077, RE-341, RE-426 |
 | Material-animation command 22 | `ssb-rom::matanim` rejects it; its writes are never read, so it can be skipped | RE-010 |
-| `Pack::fighter_anim` lookup | A linear scan of 6,246 clips, twice per fighter per frame; the variants' rows sit last (`P5`) | RE-458 |
+| CPU performance on a PSP (`P5`) | Battles run at 8–15 FPS on a PSP-2000, CPU-bound (GE waits under 1 ms): fighter animation (`Skeleton::tick_scaled`) about 5 ms per fighter a frame, display-list building 25–43 ms, gameplay joint sampling 3–14 ms. Measure with the `profile` feature | RE-469 |
+| FPU traps outside PSPLink | Whether a PSP started from the XMB traps divide-by-zero/invalid as PSPLink does is unchecked; any division LLVM can speculate past its guard needs a nonzero denominator (`math::div_nonzero`) | RE-201, RE-469 |
+| Large stack frames | The game thread has 512 KiB; battle entry peaks at 239–294 KB. `enter_training` (149 KB), `EffectVisuals::sync_ko` (100 KB) and other frames build large values in place on the stack; `golden.sh` and `tools/stack-check.sh` fail at seven eighths | RE-469 |
 | `WPAttributes` pairing shape | Only known instance (Link's boomerang) has no sub-objects; revisit if another appears | RE-058 |
 
 ## Gameplay
