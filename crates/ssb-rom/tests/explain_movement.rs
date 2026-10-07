@@ -8,12 +8,17 @@
 //! two players, frame 0 the first of `nSCKindExplain`): status id, x and y
 //! of each fighter, as measured; nothing here is ROM data.
 //!
-//! From frame 701 to 1964 the scripts attack: jabs, tilts, smashes, rolls
-//! and aerials hit and launch. That replay poses both skeletons from the
-//! built pack, places the hit and hurt collisions on them as
-//! `gmCollisionGetFighterPartsWorldPosition` does (RE-468) and runs the
-//! hit search and `ftMainProcParams`, then checks status, position and
-//! damage against the N64.
+//! From frame 701 to 3590 the scripts attack: jabs, tilts, smashes, rolls
+//! and aerials hit and launch, Luigi is KO'd and reborn, Mario catches a
+//! ledge, shields, grabs and throws Luigi, and his Fireball hits. That
+//! replay poses both skeletons from the built pack as the runtime does
+//! (the shield's pose, a held fighter's placement, the clip of a status
+//! the hit phase set), places the hit and hurt collisions on them as
+//! `gmCollisionGetFighterPartsWorldPosition` does (RE-468), runs the catch
+//! search, the grab exchange, the weapons, the hit search and
+//! `ftMainProcParams` (RE-472), then checks status, position and damage
+//! against the N64. Mario picks the Fire Flower up at 3591; the replay has
+//! no items.
 
 use ssb_engine::math::Vec3;
 use ssb_game::collision::Segment;
@@ -443,12 +448,244 @@ const N64_HITS: &[(u32, [HitRow; 2])] = &[
     (1964, [(10, 497.13, -6.00, 0), (55, 6257.74, 4146.08, 120)]),
 ];
 
-/// `dSCExplainRandomSeed1` as the N64's knockback draw at frame 1899 finds
-/// it (RE-468): the frame-1898 state (674066467, measured) one draw on, the
-/// draw the jump's effect makes first. The replay runs no effects, so it
-/// takes the generator here; `DamageFlyRoll` then follows from the ported
+/// `(frame, [Mario, Luigi])` from the N64, 1965 to 3590 (RE-472), as
+/// [`N64_HITS`]: every change of status or damage, every 25th frame and the
+/// grab's frames. Luigi's KO (blast zone at 1965) and rebirth (2010 to
+/// 2114), Mario's ledge (2469), his Tornado's hits (2611 to 2805), the
+/// shield grab (3250), the catch (3274), the hold and the forward throw's
+/// release (3348), and Mario's Fireball (3572). The rows end at 3590.
+#[rustfmt::skip]
+const N64_GRABS: &[(u32, [HitRow; 2])] = &[
+    (1965, [(10, 497.13, -6.00, 0), (1, 6317.93, 4160.21, 120)]),
+    (1975, [(10, 497.13, -6.00, 0), (1, 6317.93, 4160.21, 120)]),
+    (1981, [(190, 497.13, -6.00, 0), (1, 6317.93, 4160.21, 120)]),
+    (1998, [(10, 497.13, -6.00, 0), (1, 6317.93, 4160.21, 120)]),
+    (2000, [(10, 497.13, -6.00, 0), (1, 6317.93, 4160.21, 120)]),
+    (2001, [(152, 497.13, -6.00, 0), (1, 6317.93, 4160.21, 120)]),
+    (2003, [(156, 497.13, -6.00, 0), (1, 6317.93, 4160.21, 120)]),
+    (2010, [(156, 799.53, -6.00, 0), (7, 1050.00, 6000.00, 0)]),
+    (2025, [(156, 1344.69, -6.00, 0), (7, 1050.00, 4478.33, 0)]),
+    (2034, [(10, 1505.13, -6.00, 0), (7, 1050.00, 3698.13, 0)]),
+    (2045, [(12, 1491.63, -6.00, 0), (7, 1050.00, 2879.81, 0)]),
+    (2050, [(12, 1422.03, -6.00, 0), (7, 1050.00, 2557.04, 0)]),
+    (2064, [(10, 1209.63, -6.00, 0), (7, 1050.00, 1816.80, 0)]),
+    (2072, [(11, 1200.63, -6.00, 0), (7, 1050.00, 1502.01, 0)]),
+    (2075, [(11, 1184.43, -6.00, 0), (7, 1050.00, 1404.26, 0)]),
+    (2085, [(11, 1130.43, -6.00, 0), (8, 1050.00, 1158.33, 0)]),
+    (2100, [(11, 1051.23, -6.00, 0), (8, 1050.00, 1020.00, 0)]),
+    (2105, [(10, 1036.83, -6.00, 0), (8, 1050.00, 1020.00, 0)]),
+    (2114, [(10, 1036.83, -6.00, 0), (9, 1050.00, 1020.00, 0)]),
+    (2115, [(10, 1036.83, -6.00, 0), (26, 1050.00, 1020.00, 0)]),
+    (2123, [(10, 1036.83, -6.00, 0), (209, 1049.55, 608.70, 0)]),
+    (2125, [(10, 1036.83, -6.00, 0), (209, 1049.55, 473.70, 0)]),
+    (2126, [(39, 1036.83, -6.00, 14), (209, 1049.55, 406.20, 0)]),
+    (2141, [(39, 820.69, 124.86, 14), (219, 1049.55, -6.00, 0)]),
+    (2150, [(39, 633.03, 37.61, 14), (219, 1049.55, -6.00, 0)]),
+    (2155, [(39, 574.13, -6.00, 14), (10, 1049.55, -6.00, 0)]),
+    (2158, [(39, 556.64, -6.00, 14), (207, 1049.55, -6.00, 0)]),
+    (2161, [(15, 606.48, -6.00, 14), (207, 1049.55, -6.00, 0)]),
+    (2166, [(54, 876.48, -6.00, 33), (207, 1049.55, -6.00, 0)]),
+    (2175, [(54, 876.48, -6.00, 33), (207, 1049.55, -6.00, 0)]),
+    (2200, [(54, 699.60, 1341.37, 33), (207, 1049.55, -6.00, 0)]),
+    (2225, [(54, 606.10, 1310.09, 33), (207, 1049.55, -6.00, 0)]),
+    (2227, [(54, 602.62, 1261.86, 33), (10, 1049.55, -6.00, 0)]),
+    (2228, [(54, 601.10, 1235.20, 33), (15, 999.55, -6.00, 0)]),
+    (2235, [(57, 594.63, 1001.21, 33), (15, 657.95, -6.00, 0)]),
+    (2250, [(57, 594.07, 347.52, 33), (15, 327.95, -6.00, 0)]),
+    (2254, [(57, 594.07, 171.52, 33), (10, 327.95, -6.00, 0)]),
+    (2259, [(81, 594.07, -6.00, 33), (10, 327.95, -6.00, 0)]),
+    (2266, [(81, 594.07, -6.00, 33), (204, 327.95, -6.00, 0)]),
+    (2275, [(81, 594.07, -6.00, 33), (204, 327.95, -6.00, 0)]),
+    (2283, [(52, 594.07, -6.00, 48), (204, 327.95, -6.00, 0)]),
+    (2300, [(52, 1168.97, 434.40, 48), (204, 327.95, -6.00, 0)]),
+    (2316, [(52, 2078.12, 679.48, 48), (10, 327.95, -6.00, 0)]),
+    (2325, [(52, 2448.52, 622.88, 48), (10, 327.95, -6.00, 0)]),
+    (2348, [(57, 2933.84, 55.60, 48), (10, 327.95, -6.00, 0)]),
+    (2350, [(57, 2944.70, -74.44, 48), (10, 327.95, -6.00, 0)]),
+    (2375, [(57, 3024.26, -1818.12, 48), (10, 327.95, -6.00, 0)]),
+    (2383, [(24, 2922.98, -2236.72, 48), (10, 327.95, -6.00, 0)]),
+    (2400, [(24, 2921.58, -1390.12, 48), (10, 327.95, -6.00, 0)]),
+    (2425, [(24, 2921.58, -1405.12, 48), (10, 327.95, -6.00, 0)]),
+    (2434, [(226, 2921.58, -1720.42, 48), (10, 327.95, -6.00, 0)]),
+    (2448, [(226, 2456.97, -412.63, 48), (189, 327.95, -6.00, 0)]),
+    (2450, [(226, 2462.09, -263.70, 48), (189, 327.95, -6.00, 0)]),
+    (2469, [(84, 2656.10, -147.76, 48), (189, 327.95, -6.00, 0)]),
+    (2475, [(84, 2377.61, -363.69, 48), (189, 327.95, -6.00, 0)]),
+    (2476, [(85, 2385.20, -340.48, 48), (189, 327.95, -6.00, 0)]),
+    (2490, [(86, 2372.49, -346.22, 48), (189, 327.95, -6.00, 0)]),
+    (2500, [(86, 2385.20, -267.75, 48), (189, 327.95, -6.00, 0)]),
+    (2504, [(87, 2435.29, -145.66, 48), (189, 327.95, -6.00, 0)]),
+    (2509, [(88, 2313.00, -6.00, 48), (189, 327.95, -6.00, 0)]),
+    (2524, [(10, 2081.37, -6.00, 48), (189, 327.95, -6.00, 0)]),
+    (2525, [(10, 2081.37, -6.00, 48), (189, 327.95, -6.00, 0)]),
+    (2528, [(10, 2081.37, -6.00, 48), (10, 327.95, -6.00, 0)]),
+    (2530, [(10, 2081.37, -6.00, 48), (223, 327.95, -6.00, 0)]),
+    (2547, [(223, 2081.37, -6.00, 48), (223, 327.95, -6.00, 0)]),
+    (2550, [(223, 2081.37, -6.00, 48), (223, 327.95, -6.00, 0)]),
+    (2575, [(223, 2081.37, -6.00, 48), (10, 327.95, -6.00, 0)]),
+    (2577, [(223, 2081.37, -6.00, 48), (15, 377.95, -6.00, 0)]),
+    (2590, [(223, 2081.37, -6.00, 48), (16, 939.55, -6.00, 0)]),
+    (2592, [(10, 2081.37, -6.00, 48), (16, 1019.55, -6.00, 0)]),
+    (2600, [(10, 2081.37, -6.00, 48), (16, 1339.55, -6.00, 0)]),
+    (2608, [(10, 2081.37, -6.00, 48), (17, 1658.67, -6.00, 0)]),
+    (2610, [(225, 2081.37, -6.00, 48), (17, 1734.30, -6.00, 0)]),
+    (2611, [(225, 2081.37, -6.00, 48), (52, 1770.80, -6.00, 5)]),
+    (2622, [(225, 1946.55, 409.04, 48), (54, 1585.19, 459.87, 6)]),
+    (2625, [(225, 1946.55, 409.04, 48), (54, 1585.19, 459.87, 6)]),
+    (2628, [(225, 1828.25, 759.00, 48), (54, 1540.23, 621.35, 7)]),
+    (2644, [(225, 1360.98, 1738.05, 48), (47, 1296.89, 1365.72, 10)]),
+    (2650, [(225, 1335.48, 1750.77, 48), (47, 1274.49, 1390.31, 10)]),
+    (2667, [(58, 1109.35, 1182.97, 48), (47, 1060.86, 1287.91, 10)]),
+    (2672, [(58, 1076.91, 871.67, 48), (26, 1055.94, 1085.87, 10)]),
+    (2675, [(58, 1062.24, 661.67, 48), (26, 1055.94, 959.87, 10)]),
+    (2685, [(59, 1042.86, -6.00, 48), (26, 1055.94, 539.87, 10)]),
+    (2698, [(59, 1042.86, -6.00, 48), (31, 1055.94, -6.00, 10)]),
+    (2700, [(59, 1029.36, -6.00, 48), (31, 1069.44, -6.00, 10)]),
+    (2705, [(59, 995.61, -6.00, 48), (10, 1103.19, -6.00, 10)]),
+    (2710, [(28, 961.86, -6.00, 48), (10, 1136.94, -6.00, 10)]),
+    (2711, [(228, 955.17, 6.60, 48), (51, 1136.94, -6.00, 11)]),
+    (2721, [(228, 915.12, 31.80, 48), (52, 752.64, -6.00, 12)]),
+    (2725, [(228, 915.12, 31.80, 48), (52, 752.64, -6.00, 12)]),
+    (2728, [(228, 895.41, 12.00, 48), (51, 952.44, -6.00, 13)]),
+    (2734, [(227, 882.42, -6.00, 48), (51, 817.54, -6.00, 13)]),
+    (2735, [(227, 875.96, -6.00, 48), (52, 752.64, -6.00, 14)]),
+    (2742, [(227, 856.75, -6.00, 48), (51, 952.44, -6.00, 15)]),
+    (2749, [(227, 837.76, -6.00, 48), (52, 752.64, -6.00, 16)]),
+    (2750, [(227, 837.76, -6.00, 48), (52, 752.64, -6.00, 16)]),
+    (2756, [(227, 818.99, -6.00, 48), (52, 952.44, -6.00, 17)]),
+    (2763, [(227, 800.45, -6.00, 48), (51, 752.64, -6.00, 18)]),
+    (2770, [(227, 782.14, -6.00, 48), (52, 952.44, -6.00, 19)]),
+    (2775, [(227, 776.08, -6.00, 48), (52, 884.14, -6.00, 19)]),
+    (2777, [(227, 764.05, -6.00, 48), (51, 752.64, -6.00, 20)]),
+    (2784, [(227, 746.18, -6.00, 48), (52, 952.44, -6.00, 21)]),
+    (2791, [(227, 728.54, -6.00, 48), (51, 752.64, -6.00, 22)]),
+    (2798, [(227, 711.43, -6.00, 48), (52, 552.84, -6.00, 23)]),
+    (2800, [(227, 711.43, -6.00, 48), (52, 552.84, -6.00, 23)]),
+    (2805, [(227, 694.99, -6.00, 48), (54, 752.64, -6.00, 24)]),
+    (2825, [(227, 665.12, -6.00, 48), (54, 752.64, 1397.20, 24)]),
+    (2850, [(227, 665.12, -6.00, 48), (54, 752.64, 2127.30, 24)]),
+    (2853, [(10, 665.12, -6.00, 48), (54, 752.64, 2142.00, 24)]),
+    (2856, [(11, 661.52, -6.00, 48), (54, 752.64, 2141.40, 24)]),
+    (2863, [(10, 630.02, -6.00, 48), (54, 752.64, 2080.50, 24)]),
+    (2865, [(18, 630.02, -6.00, 48), (54, 752.64, 2047.80, 24)]),
+    (2873, [(18, 630.02, -6.00, 48), (57, 752.64, 1849.00, 24)]),
+    (2875, [(18, 630.02, -6.00, 48), (57, 752.64, 1782.30, 24)]),
+    (2876, [(10, 630.02, -6.00, 48), (57, 752.64, 1746.40, 24)]),
+    (2892, [(152, 630.02, -6.00, 48), (57, 752.64, 1082.51, 24)]),
+    (2895, [(153, 630.02, -6.00, 48), (57, 752.64, 956.51, 24)]),
+    (2900, [(153, 630.02, -6.00, 48), (209, 752.64, 746.51, 24)]),
+    (2906, [(155, 630.02, -6.00, 48), (209, 752.64, 494.51, 24)]),
+    (2925, [(155, 445.06, -6.00, 48), (209, 752.64, 32.51, 24)]),
+    (2926, [(155, 445.06, -6.00, 48), (219, 752.64, -6.00, 24)]),
+    (2940, [(153, 445.06, -6.00, 48), (10, 752.64, -6.00, 24)]),
+    (2943, [(153, 445.06, -6.00, 48), (190, 752.64, -6.00, 24)]),
+    (2944, [(155, 445.06, -6.00, 48), (190, 752.64, -6.00, 24)]),
+    (2950, [(155, 434.10, -6.00, 48), (190, 752.64, -6.00, 24)]),
+    (2956, [(153, 434.10, -6.00, 48), (191, 752.64, -6.00, 24)]),
+    (2958, [(155, 434.10, -6.00, 48), (191, 752.64, -6.00, 24)]),
+    (2970, [(153, 423.14, -6.00, 48), (191, 752.64, -6.00, 24)]),
+    (2972, [(153, 423.14, -6.00, 48), (220, 752.64, -6.00, 24)]),
+    (2974, [(155, 423.14, -6.00, 48), (220, 752.64, -6.00, 24)]),
+    (2975, [(155, 423.14, -6.00, 48), (220, 752.64, -6.00, 24)]),
+    (2990, [(153, 396.26, -6.00, 48), (220, 752.64, -6.00, 24)]),
+    (3000, [(153, 396.26, -6.00, 48), (220, 752.64, -6.00, 24)]),
+    (3002, [(153, 396.26, -6.00, 48), (10, 752.64, -6.00, 24)]),
+    (3003, [(153, 396.26, -6.00, 48), (190, 752.64, -6.00, 24)]),
+    (3004, [(155, 396.26, -6.00, 48), (190, 752.64, -6.00, 24)]),
+    (3016, [(153, 385.30, -6.00, 48), (191, 752.64, -6.00, 24)]),
+    (3018, [(155, 385.30, -6.00, 48), (191, 752.64, -6.00, 24)]),
+    (3025, [(155, 374.34, -6.00, 48), (191, 752.64, -6.00, 24)]),
+    (3030, [(153, 374.34, -6.00, 48), (191, 752.64, -6.00, 24)]),
+    (3039, [(153, 374.34, -6.00, 48), (10, 752.64, -6.00, 24)]),
+    (3043, [(153, 374.34, -6.00, 48), (220, 752.64, -6.00, 24)]),
+    (3045, [(155, 374.34, -6.00, 48), (220, 752.64, -6.00, 24)]),
+    (3050, [(155, 374.34, -6.00, 48), (220, 752.64, -6.00, 24)]),
+    (3061, [(153, 347.46, -6.00, 48), (220, 752.64, -6.00, 24)]),
+    (3073, [(153, 347.46, -6.00, 48), (10, 752.64, -6.00, 24)]),
+    (3074, [(153, 347.46, -6.00, 48), (195, 752.64, -6.00, 24)]),
+    (3075, [(156, 347.46, -6.00, 48), (195, 752.64, -6.00, 24)]),
+    (3100, [(156, 1269.21, -6.00, 48), (195, 739.14, -6.00, 24)]),
+    (3106, [(10, 1355.46, -6.00, 48), (195, 739.14, -6.00, 24)]),
+    (3116, [(10, 1355.46, -6.00, 48), (10, 739.14, -6.00, 24)]),
+    (3117, [(10, 1355.46, -6.00, 48), (204, 739.14, -6.00, 24)]),
+    (3119, [(152, 1355.46, -6.00, 48), (204, 739.14, -6.00, 24)]),
+    (3120, [(156, 1355.46, -6.00, 48), (204, 739.14, -6.00, 24)]),
+    (3125, [(156, 1355.46, -6.00, 48), (204, 739.14, -6.00, 24)]),
+    (3150, [(156, 347.46, -6.00, 48), (204, 725.64, -6.00, 24)]),
+    (3151, [(10, 347.46, -6.00, 48), (204, 725.64, -6.00, 24)]),
+    (3158, [(10, 347.46, -6.00, 48), (10, 725.64, -6.00, 24)]),
+    (3160, [(10, 347.46, -6.00, 48), (223, 725.64, -6.00, 24)]),
+    (3161, [(152, 347.46, -6.00, 48), (223, 725.64, -6.00, 24)]),
+    (3162, [(156, 347.46, -6.00, 48), (223, 725.64, -6.00, 24)]),
+    (3175, [(156, 905.26, -6.00, 48), (223, 712.14, -6.00, 24)]),
+    (3193, [(10, 1355.46, -6.00, 48), (223, 705.39, -6.00, 24)]),
+    (3199, [(12, 1341.06, -6.00, 48), (223, 705.39, -6.00, 24)]),
+    (3200, [(12, 1326.66, -6.00, 48), (223, 705.39, -6.00, 24)]),
+    (3205, [(12, 1248.66, -6.00, 48), (18, 705.39, -6.00, 24)]),
+    (3209, [(10, 1191.06, -6.00, 48), (18, 705.39, -6.00, 24)]),
+    (3210, [(10, 1187.16, -6.00, 48), (195, 705.39, -6.00, 24)]),
+    (3211, [(152, 1187.16, -6.00, 48), (195, 705.39, -6.00, 24)]),
+    (3213, [(156, 1187.16, -6.00, 48), (195, 705.39, -6.00, 24)]),
+    (3225, [(156, 666.73, -6.00, 48), (195, 671.64, -6.00, 24)]),
+    (3244, [(10, 179.16, -6.00, 48), (195, 712.14, -6.00, 24)]),
+    (3249, [(152, 179.16, -6.00, 48), (195, 712.14, -6.00, 24)]),
+    (3250, [(166, 179.16, -6.00, 48), (195, 712.14, -6.00, 24)]),
+    (3252, [(166, 179.16, -6.00, 48), (18, 712.14, -6.00, 24)]),
+    (3257, [(166, 179.16, -6.00, 48), (15, 662.14, -6.00, 24)]),
+    (3265, [(10, 165.66, -6.00, 48), (15, 292.44, -6.00, 24)]),
+    (3267, [(10, 152.16, -6.00, 48), (18, 231.14, -6.00, 24)]),
+    (3269, [(166, 138.66, -6.00, 48), (18, 181.04, -6.00, 24)]),
+    (3273, [(166, 111.66, -6.00, 48), (18, 114.44, -6.00, 24)]),
+    (3274, [(167, 104.91, -6.00, 48), (171, 374.95, -6.00, 24)]),
+    (3275, [(167, 104.91, -6.00, 48), (171, 369.51, -6.00, 24)]),
+    (3276, [(168, 104.91, -6.00, 48), (172, 372.66, -6.00, 24)]),
+    (3300, [(168, 104.91, -6.00, 48), (172, 372.66, -6.00, 24)]),
+    (3325, [(168, 104.91, -6.00, 48), (172, 372.66, -6.00, 24)]),
+    (3334, [(168, 104.91, -6.00, 48), (172, 372.66, -6.00, 24)]),
+    (3335, [(169, 104.91, -6.00, 48), (186, 295.42, 229.20, 24)]),
+    (3347, [(169, 104.91, -6.00, 48), (186, 470.15, 289.08, 24)]),
+    (3348, [(169, 104.91, -6.00, 48), (52, 565.36, 73.64, 36)]),
+    (3349, [(169, 104.91, -6.00, 48), (52, 645.90, 149.98, 36)]),
+    (3350, [(169, 104.91, -6.00, 48), (52, 725.23, 223.01, 36)]),
+    (3362, [(10, 104.91, -6.00, 48), (52, 1583.48, 841.86, 36)]),
+    (3375, [(10, 104.91, -6.00, 48), (52, 2317.92, 1051.30, 36)]),
+    (3400, [(10, 104.91, -6.00, 48), (52, 3159.31, 842.69, 36)]),
+    (3409, [(10, 104.91, -6.00, 48), (57, 3276.44, 583.67, 36)]),
+    (3425, [(10, 104.91, -6.00, 48), (24, 3045.62, 54.19, 36)]),
+    (3450, [(10, 104.91, -6.00, 48), (24, 2508.81, 1254.19, 36)]),
+    (3462, [(20, 104.91, -6.00, 48), (24, 2281.34, 1364.00, 36)]),
+    (3465, [(23, 80.36, 56.80, 48), (24, 2215.66, 1344.20, 36)]),
+    (3475, [(23, -181.96, 552.80, 48), (24, 1992.16, 1141.70, 36)]),
+    (3485, [(23, -425.46, 808.80, 48), (27, 1768.66, 751.70, 36)]),
+    (3494, [(25, -630.76, 912.20, 48), (27, 1567.51, 373.70, 36)]),
+    (3500, [(25, -772.96, 1290.20, 48), (27, 1435.66, 121.70, 36)]),
+    (3504, [(25, -862.96, 1494.20, 48), (31, 1348.21, -6.00, 36)]),
+    (3511, [(25, -1012.76, 1758.80, 48), (10, 1270.16, -6.00, 36)]),
+    (3525, [(25, -1280.96, 1935.20, 48), (10, 1270.16, -6.00, 36)]),
+    (3528, [(25, -1324.54, 1852.00, 48), (15, 1220.16, -6.00, 36)]),
+    (3536, [(224, -1427.34, 1292.00, 48), (15, 836.96, -6.00, 36)]),
+    (3541, [(224, -1485.09, 942.00, 48), (16, 658.56, -6.00, 36)]),
+    (3542, [(223, -1496.04, 897.00, 48), (16, 618.56, -6.00, 36)]),
+    (3550, [(223, -1500.99, 897.00, 48), (16, 298.56, -6.00, 36)]),
+    (3560, [(223, -1500.99, 897.00, 48), (20, -98.64, -6.00, 36)]),
+    (3563, [(223, -1500.99, 897.00, 48), (23, -142.29, 76.50, 36)]),
+    (3571, [(223, -1500.99, 897.00, 48), (23, -40.31, 660.90, 36)]),
+    (3572, [(223, -1500.99, 897.00, 48), (46, -37.24, 724.50, 43)]),
+    (3575, [(223, -1500.99, 897.00, 48), (46, -37.24, 724.50, 43)]),
+    (3580, [(223, -1500.99, 897.00, 48), (46, -9.85, 743.74, 43)]),
+    (3581, [(10, -1500.99, 897.00, 48), (46, 1.98, 748.47, 43)]),
+    (3585, [(10, -1500.99, 897.00, 48), (46, 36.86, 734.79, 43)]),
+    (3589, [(10, -1500.99, 897.00, 48), (26, 51.84, 668.97, 43)]),
+    (3590, [(10, -1500.99, 897.00, 48), (26, 52.48, 644.36, 43)]),
+];
+
+/// `dSCExplainRandomSeed1` as the N64's gameplay draws find it. The replay
+/// runs no effects, whose draws come first, so it takes the generator at
+/// these frames (measured; RE-468, RE-472). At 1899 it is the frame-1898
+/// state (674066467) one draw on, the draw the jump's effect makes first;
+/// `DamageFlyRoll` then follows from the ported
 /// `ftCommonDamageInitDamageVars` draw (0.4795 < 0.5).
-const N64_SEED_BEFORE_FLYROLL: (u32, i32) = (1899, -372_204_966);
+const N64_SEEDS: &[(u32, i32)] = &[(1899, -372_204_966)];
 
 /// Frame 736, Mario's `Attack13` kick on its first frame: the N64's
 /// `attack_colls[0..2].pos_curr` and Luigi's joints' world positions
@@ -473,9 +710,119 @@ struct Posed {
     object: u32,
     started: Option<(ssb_game::status::AnyStatus, u32)>,
     root_before: Option<ssb_rom::figatree::JointPose>,
+    /// The clip was played after the interrupt for a throw's release.
+    anim_ticked_early: bool,
+    /// `YRotN`'s guard pose (`apply_shield_pose`).
+    shield_yrotn: ssb_rom::figatree::JointPose,
 }
 
 impl Posed {
+    /// `sample_held_child_offset`: TopN's first child, while held.
+    fn sample_held_child_offset(&mut self) {
+        self.fighter.grab.held_child_offset = if ssb_game::grab::is_held(self.fighter.status.status)
+        {
+            self.skeleton
+                .pose(0)
+                .map(|p| Vec3::new(p.translate[0], p.translate[1], p.translate[2]))
+        } else {
+            None
+        };
+    }
+
+    /// The heavy-item joint a held fighter hangs from: while holding or
+    /// catching, or (`always`) for a release the catcher has just queued.
+    fn sample_anchor(&mut self, always: bool) {
+        let f = &mut self.fighter;
+        let hand = (always || f.grab.catch.is_some() || f.grab.is_catchstatus)
+            .then(|| ssb_game::grab::itemheavy_joint(f.kind))
+            .flatten()
+            .and_then(|joint| f.joint_transforms.get(joint).copied().flatten());
+        f.grab.anchor = hand.map(|j| j.origin);
+        f.grab.anchor_transform = hand;
+    }
+
+    /// The runtime's priority-5 half after `tick_interrupt`: a throw's
+    /// release reads the hand this frame's play posed.
+    fn after_interrupt(&mut self, pack: &ssb_rom::pack::Pack<'_>) {
+        if ssb_game::grab::release_pending(&self.fighter) && !self.fighter.is_in_hitlag() {
+            self.tick_animation(pack);
+            self.anim_ticked_early = true;
+            self.sample_joints(pack);
+            self.sample_anchor(true);
+        }
+    }
+
+    /// `tick_fighter_physics`.
+    fn physics<I, F>(&mut self, pack: &ssb_rom::pack::Pack<'_>, map: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        if !self.fighter.is_in_hitlag() {
+            if !std::mem::take(&mut self.anim_ticked_early) {
+                self.tick_animation(pack);
+            }
+            let rotate_z = self.fighter.root_motion.rotate_z;
+            self.set_root_motion(Some(rotate_z));
+        } else {
+            self.root_before = self.skeleton.pose(0).copied();
+        }
+        self.fighter.tick_physics_map_before_accessory(map);
+        if !self.fighter.is_in_hitlag()
+            && self.started != Some((self.fighter.status.status, self.fighter.status.entry))
+        {
+            self.tick_animation(pack);
+        }
+        self.sample_held_child_offset();
+        let status = self.fighter.status.status;
+        if (ssb_game::map::is_cliff_hold(status) || ssb_game::map::is_cliff_phase2(status))
+            && self.skeleton.joint_node(0).is_none()
+        {
+            if let Some(pose) = self.skeleton.pose(0) {
+                let f = &mut self.fighter;
+                f.transn = Vec3::new(pose.translate[0], pose.translate[1], pose.translate[2]);
+                if ssb_game::map::is_cliff_hold(status) {
+                    f.pos.x = f.cliff.corner.x + f.transn.z * f.facing.sign() * f.attributes.size;
+                    f.pos.y = f.cliff.corner.y + f.transn.y * f.attributes.size;
+                }
+            }
+        }
+        ssb_game::grab::refresh_held_attachment(&mut self.fighter);
+        self.sample_joints(pack);
+        ssb_game::item_use::accessory(&mut self.fighter);
+        self.sample_anchor(false);
+    }
+
+    /// `settle_capture`: a fighter caught in the hit phase is placed at the
+    /// hand on the catch frame.
+    fn settle_capture<I, F>(&mut self, pack: &ssb_rom::pack::Pack<'_>, map: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let status = self.fighter.status;
+        if status.status != Status::CapturePulled
+            || self.started == Some((status.status, status.entry))
+            || self.fighter.grab.holder.is_none()
+        {
+            return;
+        }
+        self.tick_animation(pack);
+        self.sample_held_child_offset();
+        ssb_game::grab::tick_held(&mut self.fighter, || ssb_game::map::floors(map()));
+        self.sample_joints(pack);
+    }
+
+    /// `settle_status`: a status the hit phase set stands at its first frame.
+    fn settle_status(&mut self, pack: &ssb_rom::pack::Pack<'_>) {
+        let status = self.fighter.status;
+        if self.started == Some((status.status, status.entry)) {
+            return;
+        }
+        self.tick_animation(pack);
+        self.sample_joints(pack);
+    }
+
     /// `tick_skeleton_animation`: a new status starts its clip on its
     /// current frame, then the clip advances one frame.
     fn tick_animation(&mut self, pack: &ssb_rom::pack::Pack<'_>) {
@@ -502,6 +849,7 @@ impl Posed {
                     ssb_game::motion::leads_with_xrotn(self.fighter.kind, status.status);
             }
         }
+        self.skeleton.speed = speed;
         self.root_before = if restarted && setter_played {
             if let Some(anim) = pack.fighter_anim(kind, slot) {
                 if let Some(script) = pack.anim_script(&anim) {
@@ -530,6 +878,34 @@ impl Posed {
                 );
             }
         }
+        self.apply_shield_pose(pack);
+    }
+
+    /// `apply_shield_pose`: `ftCommonGuardUpdateJoints` tilts the shield
+    /// and, in `Guard`, the whole fighter.
+    fn apply_shield_pose(&mut self, pack: &ssb_rom::pack::Pack<'_>) {
+        use ssb_game::status::ShieldPose;
+        use ssb_rom::skeleton::ShieldJoints;
+        let Some(pose) = ssb_game::status::shield_pose(&self.fighter) else {
+            return;
+        };
+        let guard = &self.fighter.guard;
+        let Some(anim) = pack.shield_pose(self.fighter.kind as u32, guard.angle_i as u32) else {
+            return;
+        };
+        let joints = match pose {
+            ShieldPose::ShieldJoint => ShieldJoints::ShieldJoint,
+            ShieldPose::AllJoints => ShieldJoints::All,
+        };
+        ssb_rom::skeleton::apply_shield_pose(
+            pack,
+            &anim,
+            guard.angle_f,
+            guard.shield_rotate_range,
+            joints,
+            &mut self.skeleton,
+            &mut self.shield_yrotn,
+        );
     }
 
     /// TransN's step since the last parse, for the status's physics.
@@ -578,6 +954,28 @@ impl Posed {
                 origin: f.pos + world(Vec3::new(t[0] * scale, t[1] * scale, t[2] * scale)),
             });
         }
+        // `YRotN` hangs off `XRotN`; only a raised shield reads it.
+        if ssb_game::status::shield_pose(&self.fighter).is_some() {
+            let local = |p: &ssb_rom::figatree::JointPose, s: [f32; 3]| {
+                let t = [
+                    p.translate[0] / scale,
+                    p.translate[1] / scale,
+                    p.translate[2] / scale,
+                ];
+                ssb_rom::scene::Mat4::from_trs_collision(t, p.rotate, s)
+            };
+            let mut m = local(&self.shield_yrotn, [1.0; 3]);
+            if let Some(lead) = self.skeleton.lead_xrotn_pose() {
+                m = local(lead, lead.scale).mul(&m);
+            }
+            let axis = |c: usize| world(Vec3::new(m.0[c * 4], m.0[c * 4 + 1], m.0[c * 4 + 2]));
+            let t = m.translation();
+            self.fighter.joint_transforms[3] = Some(JointTransform {
+                axes: [axis(0), axis(1), axis(2)],
+                origin: self.fighter.pos
+                    + world(Vec3::new(t[0] * scale, t[1] * scale, t[2] * scale)),
+            });
+        }
     }
 }
 
@@ -608,8 +1006,20 @@ fn how_to_play_hits_as_the_n64_does() {
             object: ssb_rom::scene_deps::fighter_object(&pack, kind as u32).unwrap(),
             started: None,
             root_before: None,
+            anim_ticked_early: false,
+            shield_yrotn: ssb_rom::figatree::JointPose::default(),
         })
         .collect();
+    let bounds = explain_bounds(&pack, &archive);
+    for p in &mut fighters {
+        p.fighter.dead.bounds = Some(bounds);
+        // `FTAttributes::cliffcatch_coll` and `cliff_air_mask`, as the
+        // runtime takes them from the pack.
+        let d = pack.fighter(p.fighter.kind as u32).unwrap();
+        p.fighter.cliff_reach =
+            ssb_engine::math::Vec2::new(d.cliffcatch_width, d.cliffcatch_height);
+        p.fighter.cliff_air_mask = d.cliff_air_mask;
+    }
     let mut scripts: Vec<ssb_game::key::Key> = (0..2)
         .map(|i| {
             ssb_game::key::Key::new(
@@ -618,14 +1028,21 @@ fn how_to_play_hits_as_the_n64_does() {
         })
         .collect();
     let mut jump_held = [false; 2];
-    let last = N64_HITS.last().unwrap().0;
-    let mut rows = N64_HITS.iter().peekable();
+    let mut weapons = Box::<ssb_game::weapon::WeaponPool>::default();
+    let last = N64_GRABS.last().unwrap().0;
+    let mut rows = N64_HITS.iter().chain(N64_GRABS).peekable();
+    let mut seeds = N64_SEEDS.iter().peekable();
     let mut checked = 0;
     for frame in 0..=last {
-        if frame == N64_SEED_BEFORE_FLYROLL.0 {
-            ssb_game::rng::set_seed(N64_SEED_BEFORE_FLYROLL.1);
+        while let Some(&&(at, seed)) = seeds.peek() {
+            if at != frame {
+                break;
+            }
+            seeds.next();
+            ssb_game::rng::set_seed(seed);
         }
-        // Priority 5: input, TransN's sample, the interrupt and jostle.
+        // Priority 5: input, TransN's sample, the interrupt, the rebirth's
+        // halo, jostle and the grab exchange.
         for i in 0..2 {
             scripts[i].process();
             let c = scripts[i].controller();
@@ -639,38 +1056,97 @@ fn how_to_play_hits_as_the_n64_does() {
             p.fighter
                 .set_input(c, held && !jump_held[i], !held && jump_held[i]);
             jump_held[i] = held;
+            p.sample_held_child_offset();
             p.set_root_motion(None);
             p.fighter.tick_interrupt(&map_fn);
-            if !p.fighter.is_in_hitlag() {
+            p.after_interrupt(&pack);
+            if fighters[i].fighter.dead.rebirth_pending {
+                let other = &fighters[1 - i].fighter;
+                let halo = ssb_game::dead::halo_number(core::iter::once((
+                    other.status.status,
+                    other.dead.rebirth.halo_number,
+                )));
+                ssb_game::dead::rebirth_down(&mut fighters[i].fighter, halo);
+            }
+            if !fighters[i].fighter.is_in_hitlag() {
                 let other = JostleBody::of(&fighters[1 - i].fighter);
                 ssb_game::fighter::jostle(&mut fighters[i].fighter, &[(other, i == 0)]);
             }
+            exchange(&mut fighters, i);
         }
-        // Priority 4: the clip, the physics and map, the joint samples.
+        // Priority 4: the clip, the physics and map, the joint samples, a
+        // weapon the fighter made; then the weapon link.
+        for i in 0..2 {
+            fighters[i].physics(&pack, &map_fn);
+            let spawn = fighters[i].fighter.take_weapon_spawn();
+            exchange(&mut fighters, i);
+            if let Some(spawn) = spawn {
+                weapons.spawn(spawn);
+                weapons.flush_effects(&mut ssb_game::effect::NoEffects);
+            }
+        }
+        for p in &fighters {
+            weapons.observe_owner(&p.fighter);
+        }
+        weapons.tick(map_fn, Some(bounds.map));
         for p in &mut fighters {
-            if !p.fighter.is_in_hitlag() {
-                p.tick_animation(&pack);
-                let rotate_z = p.fighter.root_motion.rotate_z;
-                p.set_root_motion(Some(rotate_z));
-            } else {
-                p.root_before = p.skeleton.pose(0).copied();
-            }
-            p.fighter.tick_physics_map_before_accessory(&map_fn);
-            if !p.fighter.is_in_hitlag()
-                && p.started != Some((p.fighter.status.status, p.fighter.status.entry))
-            {
-                p.tick_animation(&pack);
-            }
-            p.sample_joints(&pack);
-            ssb_game::item_use::accessory(&mut p.fighter);
+            weapons.sync_owner(&mut p.fighter);
         }
-        // Priorities 1 and 0: the hit search, then `ftMainProcParams`.
+        weapons.flush_effects(&mut ssb_game::effect::NoEffects);
+        // Priorities 1 and 0: the catch search, the hit search, then
+        // `ftMainProcParams`.
+        for i in 0..2 {
+            let [a, b] = &mut fighters[..] else {
+                unreachable!()
+            };
+            let (catcher, other) = if i == 0 { (a, b) } else { (b, a) };
+            if ssb_game::grab::nearest_catch(
+                &catcher.fighter,
+                core::iter::once(&other.fighter),
+                ssb_game::team::TeamRules::FREE_FOR_ALL,
+            )
+            .is_some()
+            {
+                ssb_game::grab::search_catch(
+                    &mut catcher.fighter,
+                    &other.fighter,
+                    ssb_game::team::TeamRules::FREE_FOR_ALL,
+                );
+            }
+        }
+        for i in 0..2 {
+            exchange(&mut fighters, i);
+        }
+        for p in &mut fighters {
+            p.settle_capture(&pack, &map_fn);
+        }
         {
             let [a, b] = &mut fighters[..] else {
                 unreachable!()
             };
             let mut both = [&mut a.fighter, &mut b.fighter];
-            ssb_game::combat::resolve_frame(&mut both);
+            ssb_game::combat::search_all(&mut both, ssb_game::team::TeamRules::FREE_FOR_ALL);
+            // `wpProcessProcSearchHitWeapon` against the weapons as they
+            // stand, then each fighter's weapon hits.
+            weapons.search_weapons();
+            for f in both.iter_mut() {
+                weapons.apply_hits(f);
+            }
+            weapons.finish_clashes();
+            ssb_game::combat::finish_frame(&mut both);
+            weapons.flush_effects(&mut ssb_game::effect::NoEffects);
+        }
+        for p in &mut fighters {
+            p.fighter.resolve_cliff_release(&map_fn);
+        }
+        for p in &mut fighters {
+            weapons.record_landed(&mut p.fighter);
+        }
+        for i in 0..2 {
+            exchange(&mut fighters, i);
+        }
+        for p in &mut fighters {
+            p.settle_status(&pack);
         }
         if frame == 736 {
             let close = |a: Vec3, b: Vec3| (a - b).length() < 0.02;
@@ -713,5 +1189,50 @@ fn how_to_play_hits_as_the_n64_does() {
             }
         }
     }
-    assert_eq!(checked, N64_HITS.len() * 2 + 1);
+    assert_eq!(checked, (N64_HITS.len() + N64_GRABS.len()) * 2 + 1);
+}
+
+/// `grab::exchange` from fighter `from` to the other, as the match loop's
+/// `exchange_from` runs it.
+fn exchange(fighters: &mut [Posed], from: usize) {
+    let [a, b] = fighters else { unreachable!() };
+    if from == 0 {
+        ssb_game::grab::exchange(&mut a.fighter, &mut b.fighter);
+    } else {
+        ssb_game::grab::exchange(&mut b.fighter, &mut a.fighter);
+    }
+}
+
+/// How to Play's blast zone, camera bounds and rebirth point, as
+/// `FighterScene::new` gives them to `dead`.
+fn explain_bounds(
+    pack: &ssb_rom::pack::Pack<'_>,
+    archive: &Archive<'_>,
+) -> ssb_game::dead::StageBounds {
+    let stage = (0..pack.stage_count())
+        .filter_map(|i| pack.stage(i))
+        .find(|s| s.source_file == EXPLAIN_MAP_FILE)
+        .unwrap();
+    let zone = |e: &ssb_rom::pack::Extent| ssb_game::status::BlastZone {
+        top: f32::from(e.top),
+        bottom: f32::from(e.bottom),
+        left: f32::from(e.left),
+        right: f32::from(e.right),
+    };
+    let map = archive.load(EXPLAIN_MAP_FILE).unwrap();
+    let geometry = map.extern_relocs.iter().find(|r| r.at == 0x40).unwrap();
+    let file = archive.load(u32::from(geometry.target_file)).unwrap();
+    let coll = ssb_rom::collision::read(&file, geometry.target_offset).unwrap();
+    let rebirth = coll
+        .map_objects
+        .iter()
+        .find(|o| o.kind == 0x20)
+        .unwrap()
+        .pos;
+    ssb_game::dead::StageBounds {
+        map: zone(&stage.bounds),
+        camera: zone(&stage.camera),
+        rebirth: ssb_engine::math::Vec2::new(f32::from(rebirth[0]), f32::from(rebirth[1])),
+        fog_color: stage.fog_color,
+    }
 }
