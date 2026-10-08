@@ -586,6 +586,7 @@ mod tests {
     /// The trip is 30 frames of cubic easing, hidden, to the other pipe,
     /// where the fighter comes out on the ground.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_pipe_carries_the_fighter_to_the_other_pipe() {
         let s = course();
         let mut f = enter_and_wait(FighterKind::Fox, &s, false);
@@ -629,6 +630,7 @@ mod tests {
     /// One time in four the trip ends at the wall pipe, just right of the
     /// wall, and the fighter walks out facing right and falls.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_wall_pipe_walks_the_fighter_out() {
         let s = course();
         let mut f = enter_and_wait(FighterKind::Fox, &s, true);
@@ -670,6 +672,7 @@ mod motion_tests {
     /// Every fighter's entry, exit and wall walk end on their own
     /// (`ftAnimEndCheckSetStatus`), so each needs its motion's length.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn every_fighter_has_its_pipe_motions() {
         for &kind in FighterKind::PLAYABLE {
             for s in [Status::DokanStart, Status::DokanEnd, Status::DokanWalk] {

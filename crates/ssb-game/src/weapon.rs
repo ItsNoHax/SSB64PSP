@@ -5261,6 +5261,7 @@ mod tests {
 
     /// `wpLinkBoomerangProcHop` / `ProcShield`.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_shielded_boomerang_hops_on_a_glancing_contact_and_returns_head_on() {
         let spawn = WeaponSpawn {
             kind: WeaponKind::LinkBoomerang {
@@ -5346,6 +5347,7 @@ mod tests {
     /// `ftMainUpdateAbsorbStatWeapon`: a Yoshi Star is absorbed and gone; a
     /// Final Cutter wave's `proc_absorb` is its `ProcShield`, so it flies on.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn psi_magnet_takes_stars_and_lets_cutter_waves_through() {
         let mut ness = Fighter::new(FighterKind::Ness, 1, 3);
         ness.situation = Situation::Ground;

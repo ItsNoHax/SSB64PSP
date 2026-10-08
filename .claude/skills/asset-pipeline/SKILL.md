@@ -21,5 +21,11 @@ Routing:
    (`crates/ssb-rom/src/{archive,vpk0,pack,texture,psp_texture,mesh}.rs`,
    `tools/romtool/src/main.rs`).
 
-Never commit ROM-derived assets; rebuild `assets/generated/ssb64.pak` when
-pipeline code changes (`AGENTS.md`).
+6. Tables the game code reads from the ROM's code segments (motion,
+   colour-animation and CPU scripts, status flags, the animation table) are
+   generated at build time by `crates/ssb-tablegen` into `OUT_DIR`
+   ([D-048](../../../docs/decisions/D-048.md)). Commit only their layout;
+   `cargo run -p ssb-tablegen -- DIR` dumps the generated Rust.
+
+Never commit ROM-derived assets, tables or screenshots; rebuild
+`assets/generated/ssb64.pak` when pipeline code changes (`AGENTS.md`).

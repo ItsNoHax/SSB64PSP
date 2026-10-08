@@ -1,0 +1,22 @@
+[package]
+name = "ssb-tablegen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generates ssb-game's and ssb-rom's ROM-derived tables at build time from the user's own ROM."
+
+# Used only as a build-dependency of `ssb-rom` and `ssb-game`: their build
+# scripts call `ssb_tablegen::build_script`, which writes the generated Rust
+# into Cargo's OUT_DIR. Nothing it produces is ever written into the source
+# tree or committed.
+
+[dependencies]
+sha1_smol = { version = "1.0", default-features = false }
+
+[features]
+# `ssb-rom`'s error type, compiled in here (`src/lib.rs`), gates its
+# `std::error::Error` impl on this feature.
+default = ["std"]
+std = []

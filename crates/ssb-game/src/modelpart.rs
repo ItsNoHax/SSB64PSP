@@ -596,6 +596,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_catch_makes_samuss_beam_strands_and_yoshis_tongue_then_ejects_them() {
         let mut f = Fighter::new(FighterKind::Samus, 0, 3);
         assert_eq!(f.model_parts.node_part(20), Some(ABSENT));
@@ -665,6 +666,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn donkey_kong_dashes_with_his_second_face_and_waits_with_his_own() {
         // `dDonkeyMainMotion_Dash` opens with `SetModelPartID(12, 2)`.
         let mut f = Fighter::new(FighterKind::Donkey, 0, 3);
@@ -697,6 +699,7 @@ mod tests {
     /// (`relocData/*MainMotion.c` and `scsubsysdata*.c`); Samus's 0x0D10 script (joints 17..25,
     /// never made) is reached too.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_scripts_name_the_decomps_model_part_events() {
         use crate::motion::model_part_events;
         let v = |k| model_part_events(k).into_iter().collect::<Vec<_>>();
@@ -745,6 +748,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn mario_demo_blink_follows_the_subroutine_waits() {
         // scsubsysdatamario.c: sprite 2 for two frames, 3 for three,
         // 2 for two, then 0. The wait loop calls it again at tick 98.
@@ -762,6 +766,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn kirby_win_mouth_changes_at_the_source_frame() {
         let mut d = DemoParts::start(FighterKind::Kirby, 1);
         for _ in 0..157 {

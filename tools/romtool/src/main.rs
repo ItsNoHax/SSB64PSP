@@ -12981,8 +12981,8 @@ fn extract(path: &Path, opts: &[&str]) -> Res {
 ///
 /// The decode is self-checking: each animation file holds one script per model
 /// joint, and `decode_length` requires all of them to agree. `--verify` adds
-/// the second, independent reading — the lengths `tools/gen-anim-table.py`
-/// computed from the decompilation's hand-written C sources.
+/// the second, independent reading — the lengths `crates/ssb-tablegen`'s own
+/// figatree walk generated into `ssb_rom::anim::EXPECTED_FRAMES`.
 /// Inspect selected figatree file durations without adding temporary
 /// fighter slots to the pack (useful when porting character statuses).
 fn anim_length(path: &Path, ids: &[&str]) -> Res {
@@ -14904,6 +14904,7 @@ mod tests {
     /// figatree lengths, because Layer A must not depend on `ssb-rom`. This
     /// pins both copies to the generated table.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn grab_slots_and_thrown_lengths_match_the_anim_table() {
         use ssb_game::fighter::FighterKind;
         use ssb_game::status::{
@@ -15009,6 +15010,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn grab_motion_flags_distinguish_model_parts_from_runtime_joints() {
         use ssb_rom::anim::{LEADING_RUNTIME_JOINT, SLOT_CATCH};
 

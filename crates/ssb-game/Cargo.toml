@@ -10,6 +10,10 @@ description = "Layer A: portable Smash 64 game logic, free of platform dependenc
 [dependencies]
 ssb-engine = { workspace = true }
 
+[build-dependencies]
+# Writes the tables read from the user's ROM into OUT_DIR (`build.rs`).
+ssb-tablegen = { workspace = true }
+
 [features]
 default = ["std"]
 std = ["ssb-engine/std"]

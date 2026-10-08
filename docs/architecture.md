@@ -69,7 +69,8 @@ detail, deviations and validation are in [`rendering.md`](rendering.md).
 `ssb-game` mirrors the decomp's `ft/`, `wp/`, `it/`, `ef/`, `gr/`, `gm/`,
 `if/`, `mn/` and `sc/` modules. Data the original keeps in its code segment
 (motion scripts, colour-animation scripts, CPU input scripts, status tables,
-animation file tables) is transcribed from the decomp by `tools/gen-*.py`;
+animation file tables) is read from the user's ROM at build time by
+`crates/ssb-tablegen` and never committed ([D-048](decisions/D-048.md));
 data that lives in the ROM's archive (models, animations, `FTAttributes`,
 collision, sprites) comes from the pack. Objects use explicit state
 machines in place of the original's `GObjProcess` coroutine threads.

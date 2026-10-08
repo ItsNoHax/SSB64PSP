@@ -1528,6 +1528,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn copied_blaster_refires_on_b_after_flag_1_as_a_new_motion() {
         let mut f = kirby(FighterKind::Fox, true);
         set_special_n(&mut f);
@@ -1688,6 +1689,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn copied_egg_lay_searches_18_to_23_then_lays_the_catch() {
         let mut f = kirby(FighterKind::Yoshi, true);
         set_special_n(&mut f);
@@ -1738,6 +1740,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn copied_pound_uses_jigglypuffs_boost_and_floor_callback() {
         let mut f = kirby(FighterKind::Purin, true);
         status::set_wait(&mut f);

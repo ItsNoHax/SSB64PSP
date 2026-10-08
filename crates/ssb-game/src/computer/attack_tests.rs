@@ -98,6 +98,7 @@ fn vs_cpu(f: &Fighter, level: u8) -> Computer {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_attack_names_a_script() {
     for (ground, air) in ATTACKS.iter() {
         for a in ground.iter().chain(air.iter()) {
@@ -196,6 +197,7 @@ fn the_link_trait_stands_until_hurt_or_the_wait_runs_out() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_rush_objective_walks_at_a_far_target_and_attacks_a_near_one() {
     crate::rng::set_seed(3);
     let f = standing_mario(0.0);
@@ -242,6 +244,7 @@ fn a_close_opponent_gives_the_attack_objective() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_target_in_reach_picks_an_attack_from_the_table() {
     let f = standing_mario(0.0);
     let opponents = [player_at(250.0)];
@@ -282,6 +285,7 @@ fn a_target_behind_is_out_of_the_forward_boxes() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_fourth_repeat_of_an_attack_turns_into_a_jump() {
     let f = standing_mario(0.0);
     let opponents = [player_at(250.0)];
@@ -358,6 +362,7 @@ fn an_incoming_weapon_is_answered() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_vs_cpu_fights_a_standing_player() {
     // Run the whole loop: a level-3 CPU next to a player waits out its
     // follow delay (96 to 120 ticks), then presses A or B. Level 3 does not
@@ -663,6 +668,7 @@ fn an_incoming_item_attack_is_answered_and_fox_reflects() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_held_bat_reaches_further_with_the_a_attacks() {
     // The forward tilt's box ends at 560, plus the target's 150: a target
     // at 800 is out of its reach until a Bat widens it by 1.3.
@@ -722,6 +728,7 @@ fn metal_mario_and_giant_donkey_ignore_incoming_weapons() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn variant_kinds_use_their_models_attack_table() {
     // `dFTComputerAttackList`: Metal Mario and Polygon Mario read Mario's.
     let opponents = [player_at(250.0)];

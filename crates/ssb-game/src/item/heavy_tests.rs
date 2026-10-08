@@ -52,6 +52,7 @@ fn pickup(pool: &mut ItemPool, kind: FighterKind) -> Fighter {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_fighters_heavy_get_script_reaches_its_source_carry_status() {
     for &kind in FighterKind::PLAYABLE {
         let mut pool = ItemPool::default();
@@ -67,6 +68,7 @@ fn every_fighters_heavy_get_script_reaches_its_source_carry_status() {
     }
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn lift_turn_flips_after_four_of_eight_source_steps_and_keeps_the_hold() {
     let mut pool = ItemPool::default();
     waiting(&mut pool, Kind::Crate);
@@ -88,6 +90,7 @@ fn lift_turn_flips_after_four_of_eight_source_steps_and_keeps_the_hold() {
     assert!(f.items.held.is_some());
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn common_and_donkey_heavy_throw_scripts_release_with_the_authored_velocity() {
     for kind in [FighterKind::Mario, FighterKind::Donkey] {
         for smash in [false, true] {
@@ -130,6 +133,7 @@ fn common_and_donkey_heavy_throw_scripts_release_with_the_authored_velocity() {
     }
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn common_carry_drops_on_damage_and_floor_loss_but_donkey_air_throw_keeps_kinetics() {
     let mut pool = ItemPool::default();
     waiting(&mut pool, Kind::Crate);
@@ -193,6 +197,7 @@ fn heavy_container_health_thresholds_apply_only_where_a_damage_callback_exists()
     }
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn barrel_drop_rolls_and_uses_a_stationary_lifetime_without_pickup() {
     let mut pool = ItemPool::default();
     let slot = waiting(&mut pool, Kind::Barrel);

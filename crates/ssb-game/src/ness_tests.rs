@@ -149,6 +149,7 @@ fn double_jump_keeps_input_velocity_separate_from_animation_drift_and_ends() {
     assert_eq!(f.status.status, AnyStatus::Common(Status::FallAerial));
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn jab_flags_chain_to_jab3_and_down_tilt_repeats_at_frame11() {
     let mut f = fighter(FighterKind::Ness, 0, true);
     status::set_attack11(&mut f);
@@ -175,6 +176,7 @@ fn jab_flags_chain_to_jab3_and_down_tilt_repeats_at_frame11() {
     assert_eq!(f.status.anim_frame, 1.0);
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn down_air_and_fox_drill_have_signed_downward_angles() {
     // The first live collisions each script makes for its down air.
     fn down_air(kind: FighterKind) -> [crate::combat::AttackColl; 4] {
@@ -216,6 +218,7 @@ fn down_air_and_fox_drill_have_signed_downward_angles() {
     assert!(hit.knockback_vel.y < 0.0);
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn thunder_launch_waits30_hold_frames_then_runs28_with_source_deceleration() {
     let mut f = fighter(FighterKind::Ness, 0, false);
     set_special_hi(&mut f);
@@ -294,6 +297,7 @@ fn thunder_steers_six_degrees_and_damage_removes_head_and_trails() {
     assert_eq!(pool.pk_trails().count(), 0);
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn thunder_reflection_cleans_trails_and_repeated_reflection_is_safe() {
     let mut f = fighter(FighterKind::Ness, 0, false);
     set_special_hi(&mut f);
@@ -330,6 +334,7 @@ fn thunder_reflection_cleans_trails_and_repeated_reflection_is_safe() {
     assert!(f.ness.thunder_destroyed);
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn magnet_absorbs_staled_energy_heals_and_retains_timers_through_hit() {
     let mut f = fighter(FighterKind::Ness, 0, false);
     f.damage = 70;
@@ -369,6 +374,7 @@ fn magnet_absorbs_staled_energy_heals_and_retains_timers_through_hit() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn first_thunder_reflection_consumes_the_head_when_replacement_allocation_fails() {
     let owner = fighter(FighterKind::Ness, 0, false);
     let mut pool = WeaponPool::default();
@@ -447,6 +453,7 @@ fn magnet_delay_and_ground_air_switches_preserve_state() {
     assert!(absorbing(&f));
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn bat_reflects_projectile_only_in_the_flag_window_without_changing_status() {
     let mut f = fighter(FighterKind::Ness, 0, true);
     status::set_status(&mut f, Status::AttackS4, 0.0, StatusTiming::frames(50.0));
@@ -521,6 +528,7 @@ fn pk_fire_hit_creates_independent_shrinking_pillar_with16_frame_rehit() {
     assert_eq!(items.active_count(), 0);
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn blast_hit_record_survives_floor_switch_and_invincibility_ends_at10() {
     let mut f = fighter(FighterKind::Ness, 0, false);
     set(&mut f, N::SpecialAirHiJibaku);

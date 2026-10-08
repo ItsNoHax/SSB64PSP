@@ -42,6 +42,7 @@ fn swing_physics_uses_authored_dash_and_character_smash_motion() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn ray_gun_tail_shield_precedes_head_hurtbox() {
     use crate::combat::{HitSource, WeaponAttack, WeaponContact};
     use crate::fighter::JointTransform;
@@ -87,6 +88,7 @@ fn ray_gun_tail_shield_precedes_head_hurtbox() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn ray_gun_second_box_hits_a_fighter_when_the_head_misses() {
     use crate::monster_weapon::{MonsterShot, ShotKind, ShotParent};
     let mut shot = MonsterShot::equipment(

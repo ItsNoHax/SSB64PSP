@@ -11,7 +11,11 @@
 
 pub mod attack;
 pub mod behave;
-mod scripts;
+/// The CPU's input scripts and attack tables, generated at build time from
+/// the user's ROM by `crates/ssb-tablegen` (never committed).
+mod scripts {
+    include!(concat!(env!("OUT_DIR"), "/computer_scripts.rs"));
+}
 
 use ssb_engine::input::{ControllerState, N64Buttons};
 use ssb_engine::math::Vec2;

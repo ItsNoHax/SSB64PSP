@@ -209,6 +209,7 @@ fn re474_setters_play_their_first_frame_and_last_the_n64s_frames() {
 /// Mario's `Wait` wraps at 50, `DamageFall` at 29, `DamageFlyN` ends at 29,
 /// `CatchWait` keeps the catch's ended clock).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_figatree_clock_loops_and_ends_as_the_n64s() {
     let mut f = fighter(FighterKind::Mario, true);
     assert_eq!(f.status.status, AnyStatus::Common(status::Status::Wait));

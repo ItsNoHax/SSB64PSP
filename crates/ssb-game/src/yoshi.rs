@@ -672,6 +672,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn egg_throw_makes_the_egg_at_4_and_throws_it_at_23_with_the_held_force() {
         let mut f = yoshi(true);
         set_special_hi(&mut f);
@@ -718,6 +719,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn yoshi_bomb_hops_holds_its_box_and_lands_into_stars() {
         let mut f = yoshi(true);
         set_special_lw_start(&mut f);

@@ -98,6 +98,7 @@ fn the_outer_edges_are_the_recovery_aims() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_standing_cpu_keeps_the_stick_neutral() {
     let f = standing_mario(500.0);
     let mut com = cpu(&f, Behavior::Stand);
@@ -111,6 +112,7 @@ fn a_standing_cpu_keeps_the_stick_neutral() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn off_the_side_a_cpu_recovers_back_toward_the_stage() {
     let mut f = standing_mario(3000.0);
     f.situation = Situation::Air;
@@ -131,6 +133,7 @@ fn off_the_side_a_cpu_recovers_back_toward_the_stage() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_walking_cpu_paces_inside_its_floor() {
     crate::rng::set_seed(7);
     let f = standing_mario(0.0);
@@ -150,6 +153,7 @@ fn a_walking_cpu_paces_inside_its_floor() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_jumping_cpu_tilts_the_stick_up_to_jump() {
     let f = standing_mario(0.0);
     let mut com = cpu(&f, Behavior::Jump);

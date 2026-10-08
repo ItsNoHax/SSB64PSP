@@ -31,6 +31,7 @@ fn anim_joint_frames(archive: &Archive<'_>, file: u32) -> f32 {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_slots_follow_the_boss_motion_order() {
     assert_eq!(boss::SLOT_DEFAULT, SLOT_BOSS_DEFAULT);
     // The opening's slots follow Master Hand's (RE-467).

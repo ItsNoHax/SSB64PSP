@@ -5,6 +5,7 @@ members = [
     "crates/ssb-engine",
     "crates/ssb-game",
     "crates/ssb-capture",
+    "crates/ssb-tablegen",
     "tools/romtool",
 ]
 
@@ -36,6 +37,8 @@ ssb-rom = { path = "crates/ssb-rom", default-features = false }
 ssb-engine = { path = "crates/ssb-engine", default-features = false }
 ssb-game = { path = "crates/ssb-game", default-features = false }
 ssb-capture = { path = "crates/ssb-capture" }
+# Build-dependency of ssb-rom and ssb-game: generates their ROM-derived tables.
+ssb-tablegen = { path = "crates/ssb-tablegen" }
 
 [profile.release]
 opt-level = 3

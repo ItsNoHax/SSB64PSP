@@ -35,7 +35,11 @@ pub mod session;
 pub mod setup;
 pub mod staffroll;
 pub mod stage_clear;
-mod stat_flags;
+/// `FTStatusDesc.sflags`, generated at build time from the user's ROM by
+/// `crates/ssb-tablegen` (never committed).
+mod stat_flags {
+    include!(concat!(env!("OUT_DIR"), "/stat_flags.rs"));
+}
 pub mod wait;
 
 #[cfg(test)]

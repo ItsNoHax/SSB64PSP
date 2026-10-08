@@ -18,6 +18,7 @@ fn run(c: &mut ColAnim, n: usize) -> Vec<(Option<[u8; 4]>, u8, bool)> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_dead_explode_flash_rises_for_6_frames_and_fades_for_30() {
     let mut c = ColAnim::default();
     assert!(c.check_set(ColAnimId::SCREEN_FLASH_DEAD_EXPLODE, 0));
@@ -44,6 +45,7 @@ fn the_dead_explode_flash_rises_for_6_frames_and_fades_for_30() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_rebirth_glow_is_lit_from_below_and_pulses_forever() {
     let mut c = ColAnim::default();
     c.check_set(ColAnimId::FIGHTER_REBIRTH, 0);
@@ -68,6 +70,7 @@ fn the_rebirth_glow_is_lit_from_below_and_pulses_forever() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_lower_priority_animation_does_not_replace_a_higher_one() {
     let mut c = ColAnim::default();
     c.check_set(ColAnimId::SCREEN_FLASH_DEAD_EXPLODE, 0);
@@ -77,6 +80,7 @@ fn a_lower_priority_animation_does_not_replace_a_higher_one() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_status_change_ends_an_unlocked_animation_unless_it_preserves_it() {
     let mut f = fighter(FighterKind::Mario);
     check_set(&mut f, ColAnimId::FIGHTER_REBIRTH, 0);
@@ -95,6 +99,7 @@ fn a_status_change_ends_an_unlocked_animation_unless_it_preserves_it() {
 /// `dGMColScriptsDescs` is indexed by id, whatever `GMColAnimKind` calls
 /// the entry.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_table_is_the_descs_order_with_their_priorities() {
     assert_eq!(DESCS.len(), 86);
     assert_eq!(ColAnimId(41).script(), Some(Script::FighterFoxSpecialLw));
@@ -135,6 +140,7 @@ fn every_script_runs_without_hanging() {
 /// `dGMColScriptsFighterDamageFireWeak`: four loops of `Sub1`'s two
 /// colours, then four of `Sub2`'s nested pair, then `End`.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_weak_fire_hit_runs_its_loops_and_subroutines() {
     let mut c = ColAnim::default();
     c.check_set(ColAnimId(ColAnimId::DAMAGE_FIRE_START), 0);
@@ -157,6 +163,7 @@ fn a_weak_fire_hit_runs_its_loops_and_subroutines() {
 /// The shared skeleton script: dark for 2 frames, the skeleton for 2, a
 /// clear frame, twice; then blue and white frames.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn an_electric_hit_flashes_the_skeleton_then_blue_and_white() {
     let mut f = fighter(FighterKind::Mario);
     assert!(damage_element_colanim(&mut f, Element::Electric, 0));
@@ -193,6 +200,7 @@ fn an_electric_hit_flashes_the_skeleton_then_blue_and_white() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_damaging_hit_flashes_by_element_and_a_strong_one_flashes_the_screen() {
     for (element, want) in [
         (Element::Normal, ColAnimId::FIGHTER_DAMAGE_COMMON),
@@ -230,6 +238,7 @@ fn a_damaging_hit_flashes_by_element_and_a_strong_one_flashes_the_screen() {
 /// `DamageCommon` turns the light and flashes white, then ends into
 /// `ftParamResetStatUpdateColAnim`.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn damage_common_ends_into_the_standing_states() {
     let mut f = fighter(FighterKind::Mario);
     check_set(&mut f, ColAnimId::FIGHTER_DAMAGE_COMMON, 0);
@@ -254,6 +263,7 @@ fn damage_common_ends_into_the_standing_states() {
 /// A roll's `SetHitStatusAll(Intangible)` starts the white flicker, and
 /// the status change back to normal ends it.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_roll_flickers_while_intangible() {
     let mut f = fighter(FighterKind::Mario);
     status::set_status(&mut f, Status::EscapeF, 0.0, StatusTiming::unknown());
@@ -299,6 +309,7 @@ fn the_rebirth_invincibility_flickers_until_it_runs_out() {
 /// `SetColAnim` in a motion script: the Fireball's red flash, lit from the
 /// front.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn mario_s_fireball_flashes_red_from_its_motion_script() {
     let mut f = fighter(FighterKind::Mario);
     status::set_mario_special_n(&mut f);
@@ -356,6 +367,7 @@ fn map_switches_and_a_move_s_later_statuses_keep_the_animation() {
 /// A full Giant Punch flashes, and the flash comes back after another
 /// animation ends.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_full_charge_flashes_until_it_is_spent() {
     let mut f = fighter(FighterKind::Donkey);
     f.donkey_special_n.charge_level = 10;
@@ -374,6 +386,7 @@ fn a_full_charge_flashes_until_it_is_spent() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_fast_fall_flashes_at_once() {
     let mut f = fighter(FighterKind::Mario);
     f.situation = crate::fighter::Situation::Air;

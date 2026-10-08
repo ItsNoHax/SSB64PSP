@@ -870,6 +870,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn jab_uses_the_posed_hand_joint() {
         use crate::fighter::{FighterKind, JointTransform};
         let mut attacker = Fighter::new(FighterKind::Mario, 0, 3);
@@ -980,6 +981,7 @@ mod tests {
     /// `DamageN1`, not just a bare knockback push (module docs' formerly-open
     /// "no Damage status" gap).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_landed_jab_puts_the_defender_into_a_damage_status() {
         let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
         let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
@@ -1012,6 +1014,7 @@ mod tests {
     /// hitstun, just shield-health loss and a `GuardSetOff` pushback —
     /// `is_shielding`/`apply_shield_hit`'s module docs.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_jab_landing_on_a_shield_pushes_back_instead_of_damaging() {
         let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
         let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
@@ -1035,6 +1038,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_hit_breaking_the_shield_goes_straight_to_shield_break() {
         let mut defender = grounded_mario();
         status::set_guard(&mut defender);
@@ -1129,6 +1133,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn an_air_hit_reaction_ends_in_fall_and_lands_without_leaving_it() {
         let mut f = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
         set_damage_status(&mut f, None, 30.0, 0, 1.0, DAMAGE_INDEX_N);
@@ -1151,6 +1156,7 @@ mod tests {
     /// damage, but the attack still connects: its record is spent and the
     /// attacker takes hitlag.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn an_invincible_defender_is_touched_but_not_hurt() {
         let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
         let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);

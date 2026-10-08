@@ -906,6 +906,24 @@ mod tests {
         out
     }
 
+    /// `crates/ssb-tablegen` reads the combat fields of `FTAttributes` from
+    /// the same files at the same offsets.
+    #[test]
+    fn the_table_generator_reads_the_same_attributes() {
+        let mut generator = ssb_tablegen::fighter_main_files();
+        generator.sort_by_key(|(name, _, _)| {
+            FIGHTER_FILES
+                .iter()
+                .position(|f| f.name == *name)
+                .expect("a fighter the generator knows")
+        });
+        let ours: Vec<(&str, u32, u32)> = FIGHTER_FILES
+            .iter()
+            .map(|f| (f.name, f.file, f.offset))
+            .collect();
+        assert_eq!(generator, ours);
+    }
+
     #[test]
     fn every_fighter_kind_has_exactly_one_file() {
         for (i, entry) in FIGHTER_FILES.iter().enumerate() {

@@ -71,6 +71,7 @@ fn global_stat_sequence_wraps_without_returning_zero() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn unchanged_stat_id_retains_flags_count_and_aerial_landing_does_not_recount() {
     let (mut s, _) = session(Stage::Link);
     let mut f = fighter(&mut s, 0);
@@ -103,6 +104,7 @@ fn unchanged_stat_id_retains_flags_count_and_aerial_landing_does_not_recount() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn jab_proc_status_and_final_status_update_both_count_initial_entry() {
     let (mut s, _) = session(Stage::Link);
     let mut f = fighter(&mut s, 0);
@@ -269,6 +271,7 @@ fn duplicate_stat_keeps_flags_but_changes_hit_owner_and_object_every_time() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn thrown_damage_uses_catcher_statistics_and_actual_amount_once() {
     let (mut s, _) = session(Stage::Link);
     let mut catcher = fighter(&mut s, 0);
@@ -349,6 +352,7 @@ fn noncampaign_fighter_retains_hit_provenance_without_queuing_campaign_events() 
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn fighter_hit_clears_projectile_flag_while_body_and_shot_share_attack_identity() {
     let flags = status_flags(
         FighterKind::Mario,
@@ -361,6 +365,7 @@ fn fighter_hit_clears_projectile_flag_while_body_and_shot_share_attack_identity(
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn fired_weapon_keeps_makers_stat_after_maker_changes_status() {
     let (mut s, _) = session(Stage::Link);
     let mut maker = fighter(&mut s, 0);
@@ -393,6 +398,7 @@ fn fired_weapon_keeps_makers_stat_after_maker_changes_status() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn reflected_weapon_uses_reflector_stat_and_credits_reflector() {
     let (mut s, _) = session(Stage::Link);
     let mut fox = Fighter::new(FighterKind::Fox, 0, 2);

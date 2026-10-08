@@ -44,6 +44,7 @@ fn params(f: &Fighter) -> std::vec::Vec<EffectRequest> {
 /// frame's passes, its status script skips it and the effect copy makes it
 /// at the end of the physics pass (`ftMainUpdateMotionEventsForwardEffect`).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_status_set_in_the_frame_makes_its_effects_after_the_physics_pass() {
     let mut f = mario();
     f.motion_script.is_events_forward = true;
@@ -63,6 +64,7 @@ fn a_status_set_in_the_frame_makes_its_effects_after_the_physics_pass() {
 /// Set outside the frame's passes (a hit's damage status), the script makes
 /// the effect at once and its copy starts past it: nothing is made twice.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_status_set_outside_the_frame_makes_them_at_once_and_once() {
     let mut f = mario();
     status::set_status(&mut f, Status::Dash, 0.0, StatusTiming::unknown());
@@ -74,6 +76,7 @@ fn a_status_set_outside_the_frame_makes_them_at_once_and_once() {
 /// The dash's loop: a cloud on its first frame and four frames later, and
 /// no more.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_dash_makes_two_clouds_four_frames_apart() {
     let mut f = mario();
     f.motion_script.is_events_forward = true;
@@ -137,6 +140,7 @@ fn the_scatter_draws_come_before_the_makers_in_axis_order() {
 /// Flames, sparks and shocks take the next of the five
 /// `effect_joint_ids` each time, starting from the second.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn flames_cycle_the_effect_joints() {
     let bank = bank(20);
     let mut p = std::boxed::Box::new(Particles::new());
@@ -301,6 +305,7 @@ fn a_hits_display_effects_draw_their_gate_first() {
 /// `dGMColScriptsFighterDamageFire*`'s flames and the fast fall's sparkle
 /// are queued as the animation runs.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn colour_animation_effect_events_are_queued() {
     let mut f = mario();
     assert!(crate::colanim::check_set(
@@ -456,6 +461,7 @@ fn a_refused_display_is_counted_only_for_a_full_pool() {
 /// status's pending effects: the dash's second cloud still comes when the
 /// dash ends on its frame.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_status_change_in_the_frame_makes_the_old_scripts_pending_effects() {
     let mut f = mario();
     f.motion_script.is_events_forward = true;
@@ -477,6 +483,7 @@ fn a_status_change_in_the_frame_makes_the_old_scripts_pending_effects() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn yoshis_roll_egg_hides_on_success_and_stops_on_a_status_change() {
     let bank = bank(20);
     let mut p = Box::new(Particles::new());

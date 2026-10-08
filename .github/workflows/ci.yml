@@ -19,11 +19,18 @@ env:
   # The project consumes its fork at one immutable revision, including the
   # matching cargo-psp that writes the required MEMSIZE PARAM.SFO key.
   RUST_PSP_REV: "a89142b237f3014fc15425d3549e44d3aa07d1c6"
+  # CI has no ROM. ssb-game's and ssb-rom's tables are generated from the
+  # user's ROM at build time (crates/ssb-tablegen, D-048); this builds empty
+  # stub tables of the same types instead, so every job type-checks and the
+  # tests that need ROM data are ignored (`cfg(ssb64_stub_tables)`). A stub
+  # build cannot run the game.
+  SSB64_STUB_TABLES: "1"
 
 jobs:
-  # Host-side crates and tools. No ROM required -- every test either uses
-  # synthetic data or asserts on constants, so CI never needs copyrighted
-  # material.
+  # Host-side crates and tools. No ROM required: every test either uses
+  # synthetic data or asserts on constants, and those that need the
+  # ROM-generated tables are ignored in the stub build, so CI never needs
+  # copyrighted material.
   host:
     name: Host tests (stable)
     runs-on: ubuntu-latest
@@ -133,7 +140,9 @@ jobs:
           path: psp-asset-viewer/target/mipsel-sony-psp/release/EBOOT.PBP
           if-no-files-found: error
 
-  # Guard against ever committing copyrighted material.
+  # Guard against ever committing copyrighted material. The docs job's
+  # validate_docs.py (check 9) also rejects tracked images outside the XMB
+  # artwork, packs, saves and generated tables.
   no_rom:
     name: No ROM data committed
     runs-on: ubuntu-latest

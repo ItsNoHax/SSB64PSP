@@ -69,6 +69,7 @@ fn the_entry_lasts_its_clip_then_waits_above_the_floor() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_attack_returns_to_wait_on_a_flat_floor() {
     let mut f = boss();
     set_wait(&mut f, &floor);
@@ -142,6 +143,7 @@ fn the_background_attacks_request_the_map_zoom_and_fog() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn three_hundred_damage_defeats_and_two_hundred_enrages() {
     let mut f = boss();
     set_wait(&mut f, &floor);

@@ -125,6 +125,7 @@ fn every_common_kind_fits_both_tables() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn tomato_and_heart_are_eaten_at_the_end_of_light_get_and_heal_one_percent_a_frame() {
     for (kind, heal) in [
         (Kind::Tomato, utility::TOMATO_DAMAGE_HEAL),
@@ -172,6 +173,7 @@ fn tomato_and_heart_are_eaten_at_the_end_of_light_get_and_heal_one_percent_a_fra
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn damage_during_light_get_eats_the_held_tomato() {
     let mut pool = ItemPool::default();
     let slot = waiting(&mut pool, Kind::Tomato);

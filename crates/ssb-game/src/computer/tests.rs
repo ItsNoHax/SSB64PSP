@@ -28,6 +28,7 @@ fn run(com: &mut Computer, f: &Fighter) -> std::vec::Vec<ControllerState> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn scripts_decode_as_the_table_the_decomp_builds() {
     assert_eq!(INPUT_SCRIPTS.len(), 49);
     // `nFTComputerInputStickN`: both axes to neutral, then the end.
@@ -42,6 +43,7 @@ fn scripts_decode_as_the_table_the_decomp_builds() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_jab_script_presses_a_for_its_wait_and_releases_it() {
     let f = mario_on_floor();
     let mut com = Computer::setup(&f, 9);
@@ -57,6 +59,7 @@ fn a_jab_script_presses_a_for_its_wait_and_releases_it() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn stick_auto_points_at_the_target() {
     let f = mario_on_floor();
     let mut com = Computer::setup(&f, 9);
@@ -68,6 +71,7 @@ fn stick_auto_points_at_the_target() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn move_auto_scales_the_grounded_stick_by_the_dash_reach() {
     let mut f = mario_on_floor();
     f.attributes = crate::physics::PhysicsAttributes::MARIO;
@@ -90,6 +94,7 @@ fn move_auto_scales_the_grounded_stick_by_the_dash_reach() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn move_auto_in_the_air_never_points_down_at_a_lower_target() {
     let mut f = Fighter::new(FighterKind::Mario, 1, 3);
     f.situation = Situation::Air;

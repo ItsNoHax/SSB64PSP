@@ -56,6 +56,7 @@ new evidence contradicts it.
 - [D-035](docs/decisions/D-035.md): Functional Validation Required, Not Just Compile
 - [D-037](docs/decisions/D-037.md): Reference Ports Are Technical References, Not Authorities
 - [D-041](docs/decisions/D-041.md): PPSSPPHeadless Is the Automated Visual-Verification Runner
+- [D-048](docs/decisions/D-048.md): Nothing Read From the ROM Is Committed — Tables Are Generated at Build Time, Goldens Are Pixel Hashes
 
 ## Rendering Fidelity
 

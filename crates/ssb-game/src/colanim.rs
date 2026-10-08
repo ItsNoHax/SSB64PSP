@@ -6,8 +6,9 @@
 //! (`ftDisplayMainCalcFogColor`) and the colour the screen flash fills with
 //! (`ifScreenFlashProcDisplay`), turns the fighter's light, and picks the
 //! electric skeleton (`skeleton_id`). Every script and the id table
-//! (`dGMColScriptsDescs`) are generated (`tools/gen-colanim-scripts.py`);
-//! the interpreter follows the source event for event.
+//! (`dGMColScriptsDescs`) are read from the user's ROM at build time
+//! (`crates/ssb-tablegen`); the interpreter follows the source event for
+//! event.
 //!
 //! One script thread is modelled: no script starts a parallel one
 //! (`nGMColEventSetParallelScript`), so `End` always ends the animation.
@@ -19,12 +20,17 @@ use crate::combat::{Element, HitStatus};
 use crate::fighter::{Fighter, FighterKind};
 use crate::status::AnyStatus;
 
-#[path = "colanim_scripts.rs"]
-mod scripts;
+/// The colour-animation scripts and `dGMColScriptsDescs`, generated at build
+/// time from the user's ROM by `crates/ssb-tablegen` (never committed).
+mod scripts {
+    include!(concat!(env!("OUT_DIR"), "/colanim_scripts.rs"));
+}
 
-pub use scripts::{
-    Script, DESCS, PRESERVE_COLANIM, PRESERVE_EFFECT, PRESERVE_MODELPART, PRESERVE_TEXTUREPART,
-};
+#[path = "colanim_preserve.rs"]
+mod preserve;
+
+pub use preserve::{PRESERVE_COLANIM, PRESERVE_EFFECT, PRESERVE_MODELPART, PRESERVE_TEXTUREPART};
+pub use scripts::{Script, DESCS};
 
 /// `gmColCommandEffect` / `...EffectItemHold`: `ftParamMakeEffect`'s
 /// arguments.

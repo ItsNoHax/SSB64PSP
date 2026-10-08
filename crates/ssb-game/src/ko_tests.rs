@@ -26,6 +26,7 @@ fn fighter(port: u8) -> Fighter {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_side_ko_sets_off_one_explosion_and_the_flash() {
     let mut ko = KoEffects::default();
     let mut f = fighter(2);
@@ -67,6 +68,7 @@ fn a_down_ko_points_down_and_a_left_ko_left() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_falling_top_out_flashes_when_it_lands_but_makes_no_explosion() {
     let mut ko = KoEffects::default();
     let mut f = fighter(1);
@@ -172,6 +174,7 @@ fn a_blast_makes_its_players_streaks_turned_like_the_blast() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_halo_and_the_glow_last_until_the_fighter_falls() {
     let mut f = fighter(0);
     f.pos.y = -2001.0;

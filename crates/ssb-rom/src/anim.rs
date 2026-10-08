@@ -244,7 +244,9 @@ pub struct FighterAnims {
     pub files: [u16; SLOT_COUNT],
 }
 
-include!("anim_table.rs");
+// The fighter animation table, generated at build time from the user's ROM
+// by `crates/ssb-tablegen` (never committed).
+include!(concat!(env!("OUT_DIR"), "/anim_table.rs"));
 
 /// A decoded animation length, in frames of playback at speed 1.0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -652,6 +654,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn every_fighter_has_a_file_for_every_slot() {
         assert_eq!(FIGHTER_ANIMS.len(), crate::fighter::FIGHTER_FILES.len());
         for (anims, files) in FIGHTER_ANIMS
@@ -692,6 +695,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn only_the_moves_a_character_lacks_are_absent() {
         // Kirby and Jigglypuff have no aerial jump; nobody is missing a timed
         // slot, which is what `decode_fighter` would trip over.

@@ -28,6 +28,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn super_jump_launches_on_frame_seven() {
         let mut f = luigi(Situation::Ground);
         press_b(&mut f, 0, 80);
@@ -71,6 +72,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn jab_combo_reaches_luigis_finisher_and_dair_lands_in_null() {
         assert_eq!(
             status::attack13_status(FighterKind::Luigi),

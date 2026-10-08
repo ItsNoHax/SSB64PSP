@@ -951,6 +951,7 @@ fn a_steep_tumble_landing_knocks_down_or_techs() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_fast_rise_into_a_ceiling_stops_ceil_then_falls() {
     let ceil = surface(Kind::Ceiling, 4, (-1000, 100), (1000, 100), 0);
     let mut f = fighter(

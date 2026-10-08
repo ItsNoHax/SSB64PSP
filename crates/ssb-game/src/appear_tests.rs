@@ -161,6 +161,7 @@ fn the_entry_camera_mode_lasts_through_the_statuses_until_go() {
 /// The Poké Ball opens on Appear frame 40: the motion script sets flag 1
 /// and `ftCommonAppearUpdateEffects` makes the rays (RE-425).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_poke_balls_rays_start_on_the_scripts_flag() {
     for kind in [FighterKind::Pikachu, FighterKind::Purin] {
         let mut f = standing(kind, Facing::Right);

@@ -383,6 +383,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_spat_star_hits_with_its_copy_table_damage_through_the_common_moveset() {
         // `dFTCommonMoveset_DamageBumpHit` makes the collision;
         // `ftCommonThrownKirbyStarSetStatus` rewrites its damage.

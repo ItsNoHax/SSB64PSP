@@ -1527,6 +1527,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn rapid_loop_resumes_its_script_on_the_wrap_and_ends_without_input() {
         let mut f = kirby();
         f.situation = Situation::Ground;
@@ -1690,6 +1691,7 @@ mod tests {
     /// spit last 19, 11, 29 and 27 frames; the wait after a turn does not
     /// play.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_swallows_setters_play_their_first_frame_as_the_n64s() {
         fn frames_in(f: &mut Fighter) -> u32 {
             let start = f.status.status;

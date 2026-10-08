@@ -561,6 +561,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn five_aerial_jumps_use_source_velocities_and_flag1_gate() {
         let mut f = purin(false);
         f.physics.jumps_used = 1;
@@ -608,6 +609,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn rest_is_intangible_for_its_first_30_frames_then_hits_hard() {
         let mut dummy = purin(true);
         set_special_lw(&mut dummy);
@@ -630,6 +632,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn sing_notes_start_on_the_first_update_and_survive_the_air_switch() {
         for ground in [true, false] {
             let mut f = purin(ground);
@@ -651,6 +654,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn sing_sleeps_grounded_targets_only_and_mashing_wakes_them() {
         let mut singer = purin(true);
         set_special_hi(&mut singer);

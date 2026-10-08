@@ -233,6 +233,7 @@ fn the_halo_lowers_the_fighter_onto_its_point_in_90_ticks() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_rebirth_runs_390_ticks_and_ends_in_fall_with_invincibility() {
     let mut f = mario();
     rebirth_down(&mut f, 0);

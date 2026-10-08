@@ -14,3 +14,7 @@ ssb-rom = { workspace = true, features = ["std"] }
 # checked the display-list decoder (RE-017).
 ssb-game = { workspace = true, features = ["std"] }
 ssb-engine = { workspace = true, features = ["std"] }
+
+[build-dependencies]
+# Only for the `ssb64_stub_tables` cfg (`build.rs`).
+ssb-tablegen = { workspace = true }

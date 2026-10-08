@@ -334,6 +334,7 @@ fn a_blaster_glows_when_made_and_at_a_wall() {
 /// A Fireball's `proc_hit` sparkles where it hit a fighter; the effect
 /// waits for the hit collisions' flush.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_fireball_sparkles_where_it_hits() {
     let mut pool = WeaponPool::default();
     pool.spawn(spawn(WeaponKind::MarioFireball, 0, 0.0, 1.0));

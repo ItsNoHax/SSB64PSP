@@ -3,8 +3,9 @@
 //!
 //! A status's attack collisions, hit-status windows, hurtbox edits and
 //! script flags are `ftMotionCommand` bytecode in the fighter's
-//! `relocData/*MainMotion.c`, not tables. The generated `scripts` module carries that bytecode
-//! word for word (`tools/gen-motion-scripts.py`), and this module runs it the
+//! `relocData/*MainMotion.c`, not tables. The `scripts` module, generated
+//! at build time from the user's ROM (`crates/ssb-tablegen`), carries that
+//! bytecode word for word, and this module runs it the
 //! way the original does: `ftMainSetStatus` starts the status's script with
 //! `script_wait = anim_speed - frame_begin`, and every frame outside hitlag
 //! the wait drops by the animation speed and the commands run until the next
@@ -25,7 +26,11 @@
 //! Sounds, rumble, slope contours and throw descriptors are
 //! decoded and skipped; the ported status code owns throws.
 
-mod scripts;
+/// The fighters' motion scripts and tables, generated at build time from the
+/// user's ROM by `crates/ssb-tablegen` (never committed).
+mod scripts {
+    include!(concat!(env!("OUT_DIR"), "/motion_scripts.rs"));
+}
 
 use ssb_engine::math::Vec3;
 
@@ -1153,6 +1158,7 @@ mod tests {
     /// `dMarioMainMotion_Jab1`: `WaitAsync(2)`, two boxes, `Wait(2)`,
     /// `ClearAttackCollAll`.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn mario_jab_boxes_follow_the_script() {
         let mut f = fighter(FighterKind::Mario);
         status::set_status(&mut f, Status::Attack11, 0.0, StatusTiming::frames(18.0));
@@ -1202,6 +1208,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn roll_is_intangible_from_frame_4_to_20() {
         let mut f = fighter(FighterKind::Mario);
         status::set_status(&mut f, Status::EscapeF, 0.0, StatusTiming::unknown());

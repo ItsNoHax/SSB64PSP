@@ -18,7 +18,7 @@ evidence behind each `RE-NNN` in [`docs/evidence/`](docs/evidence/INDEX.md).
 | Area | Current | Target |
 |---|---|---|
 | Architecture | Portable `ssb-rom`/`ssb-engine`/`ssb-game`, shared `psp-runtime`, thin `psp-game`, separate `psp-asset-viewer` ([D-044](docs/decisions/D-044.md)) | Same; runtime loader on `ssb_rom::reloc_link` and `ssb_engine::memory` arenas |
-| Asset pipeline | `romtool` builds pack v107 from the user's ROM: all 2,132 archive files, every reachable model, texture, animation, sprite and table; scenes load their own files ([D-046](docs/decisions/D-046.md)) | Same, plus converted audio; trimmed wallpaper padding |
+| Asset pipeline | Tables from the ROM's code segments generated at build time by `ssb-tablegen` ([D-048](docs/decisions/D-048.md)); `romtool` builds pack v107 from the user's ROM: all 2,132 archive files, every reachable model, texture, animation, sprite and table; scenes load their own files ([D-046](docs/decisions/D-046.md)) | Same, plus converted audio; trimmed wallpaper padding |
 | Rendering | Build-time display-list conversion, GE lowering with measured deviations (3-point filtering); battle draws in the original's display-link passes; CRT overscan crop ([D-047](docs/decisions/D-047.md)) | Remaining effect draws and N64 comparisons; per-scene texture residency in VRAM |
 | Gameplay | All 12 fighters, Master Hand, Metal Mario, Giant Donkey Kong and the Polygon Team; hits, shields, grabs, ledges, KO; How to Play matches an N64 trace on every frame (RE-472, RE-473) | Remaining fidelity items below |
 | Items | All 20 normal item makers, 13 Poké Ball Pokémon, stage items and hazards (RE-431–RE-446) | Event-aligned N64 comparisons; item audio |
@@ -29,7 +29,7 @@ evidence behind each `RE-NNN` in [`docs/evidence/`](docs/evidence/INDEX.md).
 | Audio | Not started (engine traits only) | Build-time sequence/VADPCM conversion, `sceAudio` mixer thread |
 | PSP performance | 60 FPS under PPSSPP (RE-470, RE-471); on a PSP-2000 three opening scenes run at 45–57 FPS (RE-476) | 60 FPS on a PSP-2000 in every scene |
 | Platform | PSP-2000 and later (64 MiB); PSP-1000 unsupported (RE-288, RE-475) | Same; PSP-1000 support deferred by user instruction |
-| Testing | Host tests (CI, no ROM), ROM-backed tests, 198 PPSSPPHeadless goldens ([visual regression](docs/visual-regression/README.md)), N64 RDRAM traces | Hardware acceptance matrix on a PSP |
+| Testing | Host tests (CI, no ROM, stub tables), ROM-backed tests, 198 PPSSPPHeadless goldens committed as pixel hashes ([visual regression](docs/visual-regression/README.md)), N64 RDRAM traces | Hardware acceptance matrix on a PSP |
 
 ## Milestones
 
@@ -120,6 +120,8 @@ closes it.
 
 ### Architecture
 
+- [ ] Rewrite Git history to drop the golden PNGs, the old documentation images and the five generated tables from earlier commits (the user's step; path list in `target/history-purge-paths.txt`, outside Git) ([D-048](docs/decisions/D-048.md)).
+
 - [ ] Use `ssb_rom::reloc_link` from a runtime loader; its layout matches the original's (RE-340, RE-341, [D-011](docs/decisions/D-011.md)).
 - [ ] Wire `ssb_engine::memory` arenas and pools into `psp-runtime` ([memory](docs/memory.md#allocators)).
 - [ ] Independent ROM-derived check of fighter costume and material animation, as stages have (RE-050–RE-052, RE-142).
@@ -145,5 +147,6 @@ closes it.
 - [x] Per-scene loading and background reads: no load hitch in the intro on a PSP-2000 (RE-475, RE-476).
 - [x] CRT overscan crop: the N64's visible box fills the PSP's height ([D-047](docs/decisions/D-047.md), RE-477).
 - [x] CPU performance: 60 FPS under PPSSPP (RE-469, RE-470, RE-471).
+- [x] Nothing read from the ROM is committed: motion, colour-animation and CPU scripts, status flags and the animation table are generated at build time from the user's ROM; goldens are pixel hashes ([D-048](docs/decisions/D-048.md)).
 
 [decomp]: https://github.com/VetriTheRetri/ssb-decomp-re

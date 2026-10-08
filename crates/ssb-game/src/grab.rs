@@ -2521,6 +2521,7 @@ mod tests {
     use crate::team::TeamRules;
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn captain_capture_freezes_grounded_victim_and_pulls_airborne_victim() {
         let catcher = Fighter::new(FighterKind::Captain, 0, 4);
         let holder = holder_of(&catcher);
@@ -2715,6 +2716,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn thrown_release_installs_owner_before_damage_events_for_every_thrower() {
         for &kind in FighterKind::PLAYABLE {
             for back in [false, true] {
@@ -2901,6 +2903,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn samus_grapple_beam_reaches_late_and_starts_the_pull_part_way() {
         let mut samus = grounded(FighterKind::Samus, 0, 0.0);
         let dummy = grounded(FighterKind::Mario, 1, 0.0);
@@ -3228,6 +3231,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn purin_throws_release_on_source_frames() {
         for (back, release, damage, status) in [
             (false, 8.0, 14, Status::DamageFlyRoll),
@@ -3265,6 +3269,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn ness_throws_exclude_held_target_from_boxes_and_release_at27() {
         for back in [false, true] {
             let mut ness = grounded(FighterKind::Ness, 0, 0.0);
@@ -3332,6 +3337,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn donkey_forward_throw_lifts_into_cargo_and_throws() {
         let mut dk = grounded(FighterKind::Donkey, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
@@ -3387,6 +3393,7 @@ mod tests {
     /// the throw each start on `anim_frame` 1; the turn lasts 11 frames
     /// and the grounded throw 39, while the wait does not play.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn donkey_cargo_setters_play_their_first_frame_as_the_n64s() {
         fn cargo() -> (Fighter, Fighter) {
             let mut dk = grounded(FighterKind::Donkey, 0, 0.0);
@@ -3635,6 +3642,7 @@ mod tests {
     /// `ftMainSearchFighterAttack` skips `capture_gobj`: Mario's back-throw
     /// swing hits a bystander but never the fighter he is holding.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn mario_back_throw_swing_hits_a_bystander_but_not_the_held_fighter() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
@@ -3768,6 +3776,7 @@ mod tests {
     /// Fox's back throw makes two boxes on joint 20 for frames 11..19. On
     /// release, the thrown body's `SetDamageThrown` box (6) also lands.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fox_back_throw_swing_hits_a_bystander() {
         let mut fox = grounded(FighterKind::Fox, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);

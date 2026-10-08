@@ -52,6 +52,7 @@ fn make_flame(pool: &mut ItemPool) -> u8 {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn bomb_pull_hold_throw_and_fast_hit_explode() {
     let mut link = fighter(FighterKind::Link, 0);
     let mut pool = ItemPool::default();
@@ -88,6 +89,7 @@ fn bomb_pull_hold_throw_and_fast_hit_explode() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_held_bomb_flashes_once_its_fuse_reaches_the_bloat() {
     let mut link = fighter(FighterKind::Link, 0);
     let mut pool = ItemPool::default();
@@ -112,6 +114,7 @@ fn a_held_bomb_flashes_once_its_fuse_reaches_the_bloat() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn damage_drop_obeys_the_hitlag_stack_gate_and_death_destroys_the_held_item() {
     for stacking in [false, true] {
         let mut link = fighter(FighterKind::Link, 0);
@@ -171,6 +174,7 @@ fn polygon_pickup_uses_its_own_authored_range() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn fuse_runs_in_the_hand_and_releases_before_explosion() {
     let mut link = fighter(FighterKind::Link, 0);
     let mut pool = ItemPool::default();
@@ -195,6 +199,7 @@ fn fuse_runs_in_the_hand_and_releases_before_explosion() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn bomb_explosion_can_hit_link_himself() {
     let mut link = fighter(FighterKind::Link, 0);
     let mut pool = ItemPool::default();
@@ -209,6 +214,7 @@ fn bomb_explosion_can_hit_link_himself() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn seven_damage_explodes_while_six_damage_recoils() {
     for damage in [6, 7] {
         let mut link = fighter(FighterKind::Link, 0);
@@ -248,6 +254,7 @@ fn seven_damage_explodes_while_six_damage_recoils() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn slow_bomb_hit_recoils_at_the_exact_speed_threshold() {
     let mut link = fighter(FighterKind::Link, 0);
     let mut pool = ItemPool::default();
@@ -268,6 +275,7 @@ fn slow_bomb_hit_recoils_at_the_exact_speed_threshold() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn pk_fire_loses_three_times_jab_damage_and_one_update_tick() {
     let mut pool = ItemPool::default();
     let slot = make_flame(&mut pool);
@@ -301,6 +309,7 @@ fn pk_fire_loses_three_times_jab_damage_and_one_update_tick() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn pickup_script_holds_the_published_bomb() {
     let mut pool = ItemPool::default();
     let mut bomb = link_bomb::make(Vec3::new(105.0, 0.0, 0.0), 1);
@@ -324,6 +333,7 @@ fn pickup_script_holds_the_published_bomb() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn fox_reflects_bomb_and_damage_growth_caps_at_one_hundred() {
     let mut link = fighter(FighterKind::Link, 0);
     let mut pool = ItemPool::default();
@@ -355,6 +365,7 @@ fn fox_reflects_bomb_and_damage_growth_caps_at_one_hundred() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn shield_hops_below_135_degrees_and_rebounds_at_the_boundary() {
     for degrees in [120.0_f32, 135.0] {
         let mut link = fighter(FighterKind::Link, 0);
@@ -379,6 +390,7 @@ fn shield_hops_below_135_degrees_and_rebounds_at_the_boundary() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn backward_throw_script_turns_link_before_releasing_the_bomb() {
     let mut link = fighter(FighterKind::Link, 0);
     let mut pool = ItemPool::default();
@@ -505,6 +517,7 @@ fn main_pass_runs_pokemon_made_by_a_destroyed_ball_after_existing_siblings() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn throw_flag_overlay_decodes_damage_velocity_and_signed_angle() {
     let mut link = fighter(FighterKind::Link, 0);
     let mut pool = ItemPool::default();
@@ -527,6 +540,7 @@ fn throw_flag_overlay_decodes_damage_velocity_and_signed_angle() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn aerial_bomb_throw_preserves_air_situation_and_finishes_in_fall() {
     let mut link = fighter(FighterKind::Link, 0);
     let mut pool = ItemPool::default();
@@ -558,6 +572,7 @@ fn aerial_bomb_throw_preserves_air_situation_and_finishes_in_fall() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn guard_slide_and_escape_buffers_select_the_source_throw_statuses() {
     use ssb_engine::input::{ControllerState, N64Buttons};
     let mut link = fighter(FighterKind::Link, 0);
@@ -804,6 +819,7 @@ fn a_teammates_attack_passes_through_an_item_only_with_team_attack_off() {
 /// damage plus the damage (RE-473: the N64 draws its two at frame 3992 of
 /// How to Play, when the thrown Fire Flower meets Luigi's shield).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn an_item_on_a_shield_makes_its_set_off() {
     use crate::effect::HitEffectKind;
     let mut link = fighter(FighterKind::Link, 0);

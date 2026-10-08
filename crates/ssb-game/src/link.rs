@@ -1029,6 +1029,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn aerial_spin_attack_lands_into_spin_end() {
         let mut f = link(false);
         set_special_air_hi(&mut f);
@@ -1072,6 +1073,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn down_air_bounces_and_rehits_only_when_hit_early() {
         let mut f = link(false);
         let mut target = Fighter::new(FighterKind::Mario, 1, 3);
@@ -1108,6 +1110,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn bomb_pull_plays_through_and_switches_situation_with_its_frame() {
         let mut f = link(true);
         set_special_lw(&mut f);

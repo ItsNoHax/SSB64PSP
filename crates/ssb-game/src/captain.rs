@@ -736,6 +736,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn punch_flame_lives_from_script_frame_42_to_55() {
         let mut f = captain();
         set_special_n(&mut f);
@@ -773,6 +774,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn kick_flame_lives_from_script_frame_12_to_32() {
         for air in [false, true] {
             let mut f = captain();

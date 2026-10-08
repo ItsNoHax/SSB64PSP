@@ -18,6 +18,14 @@
 /tests/golden/local/
 /tests/golden/*.png
 
+# ROM-generated Rust tables are written to Cargo's OUT_DIR at build time
+# (crates/ssb-tablegen). Never commit a generated copy.
+/crates/ssb-game/src/motion/scripts.rs
+/crates/ssb-rom/src/anim_table.rs
+/crates/ssb-game/src/colanim_scripts.rs
+/crates/ssb-game/src/computer/scripts.rs
+/crates/ssb-game/src/spgame/stat_flags.rs
+
 # ---------------------------------------------------------------------------
 # Reference repositories (cloned locally for study, not vendored)
 # ---------------------------------------------------------------------------

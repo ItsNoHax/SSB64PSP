@@ -617,6 +617,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn jab_buffers_another_attack11_at_flag_1_as_a_new_motion() {
         let mut f = pikachu(true);
         status::set_attack11(&mut f);
@@ -799,6 +800,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn zip_end_lands_into_landing_fall_special() {
         let mut f = pikachu(false);
         set(&mut f, P::SpecialAirHiEnd, 10.0);

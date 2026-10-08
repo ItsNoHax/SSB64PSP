@@ -227,6 +227,7 @@ fn meowth_throws_four_coins_every_eight_frames_turning_13_degrees() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_coin_lives_ten_updates_and_dies_on_a_hit() {
     let mut pool = WeaponPool::default();
     let p = crate::monster_weapon::ShotParent {

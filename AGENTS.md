@@ -26,6 +26,7 @@ assets or copyrighted data from reference projects
 | `crates/ssb-engine` | Engine systems: math, animation, collision, traits | PSP code |
 | `crates/ssb-rom` | ROM, archive, formats, asset pack | PSP code |
 | `crates/ssb-capture` | Golden-capture scene specs shared by both PSP binaries and host tests | PSP code, scene behaviour |
+| `crates/ssb-tablegen` | Build-time generation of the tables read from the ROM: their ROM layout and decoders | Data values from the ROM |
 | `psp-runtime` | All shared PSP code: GE, input, timing, audio, memory, asset loading | Gameplay logic |
 | `psp-game` | Thin game application: orchestration only | Gameplay or PSP backend code |
 | `psp-asset-viewer` | Debug and render-validation tool | Game logic, match state, player features |
@@ -110,7 +111,16 @@ retired too; cite the record, not the label, in new text.
   deviations.
 - PPSSPP is not physical-PSP proof.
 - Rebuild `assets/generated/ssb64.pak` when asset-pipeline code changes.
-  Never commit ROM-derived assets.
+- Never commit anything read or rendered from the ROM: no assets, packs,
+  saves, generated tables or screenshots ([D-048](docs/decisions/D-048.md)).
+  A table the game reads from the ROM is generated at build time by
+  `crates/ssb-tablegen` into `OUT_DIR`; commit only its layout (offsets,
+  sizes, counts, names). Goldens are pixel hashes in
+  `tests/golden/hashes.tsv`; captures and local PNGs stay out of Git.
+  `tools/docs/validate_docs.py` enforces this.
+- A test that needs the ROM-generated tables gets
+  `#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]`;
+  CI builds with `SSB64_STUB_TABLES=1` and has no ROM.
 - Preserve user changes. Use `apply_patch` for edits. Avoid destructive
   commands; resolve exact targets first. Never weaken acceptance
   criteria or delete failing tests to show progress.

@@ -990,6 +990,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_roll_is_intangible_and_ends_on_its_animation() {
         let mut f = grounded(FighterKind::Mario);
         set_escape(&mut f, Status::EscapeF);
@@ -1006,6 +1007,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_damage_fall_landing_without_a_tech_bounces_then_waits_down() {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
         status::set_status(&mut f, Status::DamageFall, 0.0, StatusTiming::unknown());
@@ -1083,6 +1085,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_broken_shield_flies_lands_and_gets_dizzy() {
         let mut f = grounded(FighterKind::Mario);
         set_shield_break_fly(&mut f);

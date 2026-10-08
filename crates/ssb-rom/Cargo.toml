@@ -13,6 +13,10 @@ libm = "0.2"
 # `lbCommonSin` for the collision matrices (`Mat4::from_trs_collision`).
 ssb-engine = { workspace = true }
 
+[build-dependencies]
+# Writes the tables read from the user's ROM into OUT_DIR (`build.rs`).
+ssb-tablegen = { workspace = true }
+
 [features]
 default = ["std"]
 std = []
@@ -25,3 +29,5 @@ std = []
 # crate, so there is no cycle.
 ssb-game = { workspace = true, features = ["std"] }
 ssb-engine = { workspace = true, features = ["std"] }
+# `fighter`'s test checks the generator's FTAttributes offsets.
+ssb-tablegen = { workspace = true }

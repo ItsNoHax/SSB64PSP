@@ -194,6 +194,7 @@ fn an_attached_motion_sensor_bomb_explodes_on_damage_and_falls_when_its_line_goe
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn bob_omb_walks_towards_the_fighters_after_180_frames_and_explodes_480_plus_90_later() {
     let mut pool = ItemPool::default();
     let slot = resting(&mut pool, 15, 0.0);

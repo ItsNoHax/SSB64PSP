@@ -82,6 +82,7 @@ fn star_lands(rules: TeamRules, thrower_team: u8, bystander_team: u8) -> bool {
 /// `(other_fp->throw_gobj != NULL) ? other_fp->throw_team : other_fp->team`:
 /// the star counts for its thrower's team, not its own.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_thrown_star_counts_for_its_throwers_team() {
     // The thrower's teammate is spared, though the star's own team is 1.
     assert!(!star_lands(TeamRules::TEAMS, 0, 0));
@@ -115,6 +116,7 @@ fn weapon_lands(rules: TeamRules, victim_team: u8) -> bool {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_teammates_weapon_passes_through_only_with_team_attack_off() {
     assert!(!weapon_lands(TeamRules::TEAMS, 0));
     assert!(weapon_lands(TeamRules::TEAMS, 1));

@@ -734,6 +734,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn grounded_screw_attack_takes_off_on_frame_four() {
         let mut f = samus(true);
         set_special_hi(&mut f);
@@ -774,6 +775,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn aerial_screw_attack_launches_and_ends_on_its_finisher() {
         let mut f = samus(false);
         f.physics.vel_air.x = 30.0;

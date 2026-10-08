@@ -21,6 +21,7 @@ fn body(kind: FighterKind, script_id: u8) -> Fighter {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn thrown_motion_calls_the_throwers_script_before_time_zero_events() {
     for &victim in FighterKind::PLAYABLE {
         for &kind in FighterKind::PLAYABLE.iter().chain(
@@ -85,6 +86,7 @@ fn ordinary_damage_and_forwarded_events_do_not_make_thrown_attacks() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn throw_pointer_preservation_is_explicit_and_callback_is_one_shot() {
     let mut f = body(FighterKind::Mario, 1);
     let o = f.thrown.owner;
@@ -106,6 +108,7 @@ fn throw_pointer_preservation_is_explicit_and_callback_is_one_shot() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn thrown_attack_speed_gate_uses_three_axes_before_velocity_decay() {
     let mut f = body(FighterKind::Fox, 0);
     f.pos.y = 1000.0;
@@ -123,6 +126,7 @@ fn thrown_attack_speed_gate_uses_three_axes_before_velocity_decay() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn thrown_body_hits_credit_thrower_team_player_and_stale_queue() {
     for (team, rules, lands) in [
         (2, crate::team::TeamRules::TEAMS, false),
@@ -170,6 +174,7 @@ fn two_thrown_bodies_do_not_alias_their_local_motion_counts() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn body_attacks_spare_throwers_and_team_weapons_and_items_in_clanks() {
     use crate::team::TeamRules;
     use crate::weapon::{WeaponKind, WeaponPool, WeaponSpawn};

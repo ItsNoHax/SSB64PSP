@@ -7,12 +7,12 @@ Where the project is now. The roadmap and every open task are in
 
 | Area | State |
 |---|---|
-| Build | Host workspace on Rust 1.98.0; `psp-game` and `psp-asset-viewer` on the pinned nightly; pack v107 (`487bfd8a…`) |
+| Build | Tables read from the ROM are generated at build time ([D-048](docs/decisions/D-048.md)); host workspace on Rust 1.98.0; `psp-game` and `psp-asset-viewer` on the pinned nightly; pack v107 (`487bfd8a…`) |
 | Gameplay | All fighters, VS, Training, 1P campaign through the ending; How to Play matches the N64 on every frame |
 | Rendering | CRT overscan crop done ([D-047](docs/decisions/D-047.md), RE-477): the N64's visible box fills the PSP's 272 lines |
 | Frontend | N64 logo, opening, title and attract loop; per-scene loading with background reads (RE-475, RE-476) |
 | PSP | 60 FPS under PPSSPP; on a PSP-2000 three opening scenes run at 45–57 FPS (RE-476); PSP-1000 unsupported |
-| Tests | 2,174 workspace tests, clippy and rustfmt pass; 198 of 198 goldens pass after the D-047 rebaseline |
+| Tests | 2,183 workspace tests with the ROM (1,993 with stub tables, as CI), clippy and rustfmt pass; 198 of 198 goldens pass by pixel hash |
 
 ## Current Work
 
@@ -28,13 +28,16 @@ special effects ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Verification
 
-Baseline at `ab751dd`, from the batch that produced it (not re-run by the
-documentation reorganisation):
+Baseline after D-048 (build-time tables, golden hashes):
 
-- `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,174 pass.
-  `cargo +1.98.0 clippy` (warnings denied) and rustfmt pass.
-- Goldens: `tools/golden.sh verify`: 198 of 198 pass.
-- How to Play's trace is identical to `e5b3b07`'s.
+- `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,183
+  pass. With `SSB64_STUB_TABLES=1` and no ROM: 1,993 pass, 190 ignored.
+  `cargo +1.98.0 clippy` (warnings denied) in both modes and rustfmt pass.
+- Goldens: `tools/golden.sh verify`: 198 of 198 hashes match.
+- How to Play's `rng_trace` (`explain@4460`): every value on all 13,347
+  lines identical to `de8793c`'s; ten call sites in `motion/mod.rs` moved
+  five lines.
+- Both PSP builds; PPSSPP smoke of `psp-game` at 60 FPS.
 - PPSSPP CPU per frame: `vs4@4000` averages 5.25 ms. Deepest game stack:
   239,840 of 524,288 bytes.
 - Production EBOOT: `target/release-re477/EBOOT.PBP`, 4,195,114 bytes

@@ -7770,6 +7770,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn turn_keeps_topn_yaw_past_its_pivot() {
         // `ftCommonTurnProcUpdate` flips `lr`, not TopN: the turn figatree
         // carries the model round (RE-468).
@@ -7789,6 +7790,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_smash_voice_draws_the_shared_generator_once() {
         // `nFTMotionEventPlaySmashVoice`: `syUtilsRandIntRange(3)` (RE-468).
         let mut f = mario();
@@ -7819,6 +7821,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fox_jab_uses_fox_script_length_and_five_angle_tilt() {
         let mut f = Fighter::new(FighterKind::Fox, 0, 3);
         set_attack11(&mut f);
@@ -7866,6 +7869,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fox_rapid_jab_counts_press_and_release_then_exits_after_idle_cycle() {
         let mut f = Fighter::new(FighterKind::Fox, 0, 3);
         set_attack11(&mut f);
@@ -7908,6 +7912,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn link_jab_chains_on_its_mid_animation_flag1() {
         let mut f = link_on_ground();
         set_attack11(&mut f);
@@ -7942,6 +7947,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn link_needs_five_a_edges_for_the_rapid_jab() {
         let mut f = link_on_ground();
         set_attack11(&mut f);
@@ -7980,6 +7986,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn link_lands_out_of_aerials_by_his_motion_table() {
         for (air, landing) in [
             (Status::AttackAirF, Status::LandingAirF),
@@ -8052,6 +8059,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fox_neutral_b_spawns_once_and_tap_restarts_after_gate() {
         let mut f = Fighter::new(FighterKind::Fox, 0, 3);
         f.situation = Situation::Ground;
@@ -8082,6 +8090,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_jab_is_not_interruptible_through_the_ground_chain() {
         // Attack1's own interrupt handling (item-throw branches, the Attack100
         // rapid-jab check) is not ported (`crate::attack`'s module docs); what
@@ -8098,6 +8107,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_jab_returns_to_wait_when_its_animation_ends() {
         let mut f = mario();
         set_attack11(&mut f);
@@ -8112,6 +8122,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_repeated_tap_mid_jab_chains_into_attack12() {
         let mut f = mario();
         set_attack11(&mut f);
@@ -8157,6 +8168,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_repeated_tap_mid_jab2_chains_into_the_attack13_finisher() {
         let mut f = mario();
         set_attack12(&mut f);
@@ -8241,6 +8253,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn straight_down_tap_does_a_down_tilt_and_ends_in_squat_wait() {
         let mut f = mario();
         hold_stale(&mut f, 0, -80);
@@ -8312,6 +8325,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn straight_up_flick_does_an_up_smash() {
         let mut f = mario();
         hold(&mut f, 0, 80);
@@ -8437,6 +8451,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn new_fighters_land_through_their_own_landing_motions() {
         // `LandingAirX` exists for these (figatree lengths), the rest play
         // `LandingAirNull` at the flag's speed.
@@ -8521,6 +8536,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn an_aerial_that_runs_out_without_landing_falls() {
         let mut f = airborne_mario();
         set_air_attack(&mut f, Status::AttackAirF);
@@ -8567,6 +8583,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fall_special_landing_takes_the_real_status_when_falling_fast() {
         let mut f = airborne_mario();
         set_fall_special(&mut f, 1.0, false, false, 0.5, true);
@@ -8606,6 +8623,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn landing_mid_aerial_with_a_dedicated_clip_takes_landing_air_then_wait() {
         let mut f = mid_aerial(FighterKind::Mario, Status::AttackAirF, 12);
         assert_ne!(
@@ -8623,6 +8641,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn landing_mid_neutral_aerial_plays_the_landing_at_the_scripts_speed() {
         // `dMarioMainMotion_AttackAirN`: `SetFlag1(50)` at frame 3.
         let mut f = mid_aerial(FighterKind::Mario, Status::AttackAirN, 5);
@@ -8640,6 +8659,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_z_tap_just_before_landing_cancels_the_aerials_landing_lag() {
         let mut f = mid_aerial(FighterKind::Mario, Status::AttackAirF, 12);
         f.tics_since_last_z = ATTACKAIR_SMOOTHLANDING_TICS_MAX;
@@ -8674,6 +8694,7 @@ mod tests {
     /// hit; the next `ftMainProcParams` (after the effect's update) clears
     /// it.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_shield_set_off_draws_the_damage_row_for_one_frame() {
         let mut f = mario();
         hold_z(&mut f, true);
@@ -8696,6 +8717,7 @@ mod tests {
     /// RE-418: Yoshi's egg (and his hidden model) comes with `is_shield`
     /// at the end of `GuardOn`, not at its start, and goes with it.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn yoshi_hides_in_his_egg_from_the_end_of_guard_on() {
         let mut f = Fighter::new(FighterKind::Yoshi, 0, 3);
         f.situation = Situation::Ground;
@@ -8723,6 +8745,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn holding_z_from_wait_shields_then_settles_into_guard() {
         let mut f = mario();
         hold_z(&mut f, true);
@@ -8740,6 +8763,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn releasing_z_leaves_guard_through_guard_off_and_back_to_wait() {
         let mut f = mario();
         hold_z(&mut f, true);
@@ -8755,6 +8779,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_quick_release_keeps_the_bubble_up_into_guard_off() {
         let mut f = mario();
         hold_z(&mut f, true);
@@ -8768,6 +8793,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_shield_held_long_enough_decays_and_eventually_breaks() {
         let mut f = mario();
         hold_z(&mut f, true);
@@ -8812,6 +8838,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn acting_during_rebirth_wait_cancels_it_early_with_invincibility() {
         let mut f = mario();
         f.dead.bounds = Some(rebirth_bounds());
@@ -8892,6 +8919,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn cliff_catch_preserves_its_authored_clock() {
         let mut f = mario();
         f.situation = Situation::Air;
@@ -8906,6 +8934,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn low_damage_gets_the_long_fall_wait_high_damage_the_short_one() {
         let mut f = mario();
         set_cliff_catch(&mut f, 3, Vec2::ZERO);
@@ -8920,6 +8949,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn holding_the_ledge_past_the_fall_wait_drops_into_damage_fall() {
         let mut f = mario();
         set_cliff_catch(&mut f, 3, Vec2::ZERO);
@@ -8934,6 +8964,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn tapping_attack_from_the_ledge_climbs_up_attacking() {
         let mut f = mario();
         f.facing = Facing::Right;
@@ -8954,6 +8985,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn holding_toward_the_stage_climbs_back_up() {
         let mut f = mario();
         f.facing = Facing::Right;
@@ -8967,6 +8999,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn holding_away_and_down_lets_go_of_the_ledge() {
         let mut f = mario();
         f.facing = Facing::Right;
@@ -8981,6 +9014,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn holding_straight_up_always_climbs_regardless_of_facing() {
         let mut f = mario();
         f.facing = Facing::Left;
@@ -9022,6 +9056,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn neutral_b_reverses_then_queues_one_fireball_on_source_frame_sixteen() {
         let mut f = mario();
         hold(&mut f, -30, 0);
@@ -9121,6 +9156,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn super_jump_steers_before_launch_then_selects_facing_once() {
         let mut f = mario();
         set_mario_special_hi(&mut f);
@@ -9198,6 +9234,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn donkey_giant_punch_adds_two_damage_per_charge_level() {
         // First damage of the punch's collisions for a given charge.
         let punch_damage = |charge: u8| {

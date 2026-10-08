@@ -67,6 +67,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn variants_have_their_own_motion_tables() {
         use crate::motion::{fighter_scripts, motion_desc};
         for kind in (13..=26).filter_map(FighterKind::from_ordinal) {
