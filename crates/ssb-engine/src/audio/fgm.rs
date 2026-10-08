@@ -1510,28 +1510,172 @@ mod tests {
     extern crate std;
     use super::*;
     use crate::audio::testdata;
-    use std::println;
 
+    use crate::audio::synth::Synth;
+
+    fn setup() -> Option<(AudioData, Synth, Fgm)> {
+        let d = testdata::data()?;
+        let mut syn = Synth::new(32006, None);
+        let fgm = Fgm::new(&mut syn, &d);
+        Some((d, syn, fgm))
+    }
+
+    /// fgm 0 (`nSYAudioFGMExplodeS`): `DE 00 D1 07 D2 FF D3 44 D2 21 D5 DC`,
+    /// then three notes `1F` (-1000 cents, varint duration) of 20, 30 and
+    /// 85 ticks with priorities 0x44, 0x32, 0x14 set between them, then
+    /// `D0`. The first note spawns the voice; the next two retune it.
     #[test]
-    fn zz_dump() {
+    fn fgm_explode_s_trace() {
+        let Some((d, mut syn, mut fgm)) = setup() else { return };
+        let h = fgm.play(0).expect("play");
+        assert_eq!((h.slot, h.serial), (0, 1));
+        let s = h.slot as usize;
+        assert_eq!(fgm.scripts[s].timer, 1);
+        let mut events = Vec::new();
+        let mut last_timer = 1u16;
+        for tick in 0..200 {
+            fgm.tick(&mut syn, &d);
+            let sc = fgm.scripts[s];
+            if sc.timer > last_timer || (sc.serial == 0 && last_timer != 0) {
+                let note = if sc.voice != NIL {
+                    fgm.voices[sc.voice as usize].note
+                } else {
+                    0
+                };
+                events.push((tick, sc.timer, sc.priority, note));
+            }
+            last_timer = if sc.serial == 0 { 0 } else { sc.timer };
+            if tick == 0 {
+                // The voice spawned this tick with the script's priority,
+                // volume scale (0xDC * 0x7F) >> 7 and the default pan.
+                let v = fgm.voices[sc.voice as usize];
+                assert_eq!(v.priority, 0x44);
+                assert_eq!(v.vol_scale, ((0xDC * 0x7F) >> 7) as u8);
+                assert_eq!(v.pan_offset, 0x40);
+                assert_eq!(v.fx_scale, 0x40);
+                assert_eq!(v.state, V_PLAYING, "started in the same tick");
+                assert_eq!(fgm.scripts[s].artic, 7);
+                assert_eq!(fgm.scripts[s].volume, 0xDC);
+            }
+        }
+        assert_eq!(
+            events,
+            [(0, 20, 0x44, -1000), (20, 30, 0x32, -1000), (50, 85, 0x14, -1000), (135, 0, 0x14, 0)]
+        );
+        // Ended at tick 135: reaped (timer and serial cleared), the voice
+        // faded that tick and was reaped on the next.
+        assert!(!fgm.alive(h));
+        assert_eq!(fgm.active_scripts(), 0);
+        assert_eq!(fgm.active_voices(), 0);
+        assert_eq!(syn.active_voices(), 0);
+    }
+
+    /// Both generators are the MSVC `rand` LCG (`0x343FD`, `0x269EC3`) from
+    /// seed 1; `randFloat` keeps 16 bits, so its low 15 are MSVC's `rand()`
+    /// sequence 41, 18467, 6334, 26500, 19169. `randFloat2` (`sRandomSeed1`)
+    /// advances once per tick; `randFloat1` (`sRandomSeed2`) only for LFO
+    /// shapes 4/5, and `Fgm::new` resets only `sRandomSeed2`.
+    #[test]
+    fn fgm_rng_sequences() {
+        let Some((d, mut syn, mut fgm)) = setup() else { return };
+        let msvc = [41u32, 18467, 6334, 26500, 19169];
+        for &want in &msvc {
+            let x = fgm.rand1();
+            assert_eq!((x * 65536.0) as u32 & 0x7FFF, want);
+            assert!((0.0..1.0).contains(&x));
+        }
+        assert_eq!(fgm.rng_seeds().0, 1, "rand1 leaves sRandomSeed1 alone");
+        for &want in &msvc {
+            fgm.tick(&mut syn, &d);
+            let (s1, _) = fgm.rng_seeds();
+            assert_eq!((s1 as u32 >> 16) & 0x7FFF, want);
+        }
+        let seeds = fgm.rng_seeds();
+        let mut syn2 = Synth::new(32006, None);
+        let mut again = Fgm::new(&mut syn2, &d);
+        assert_eq!(again.rng_seeds(), (1, 1));
+        again.set_rng_seed1(seeds.0);
+        assert_eq!(again.rng_seeds(), (seeds.0, 1));
+    }
+
+    /// Serials skip 0 on wrap, for scripts (`0x4A`) and voices (`0x48`).
+    #[test]
+    fn fgm_serials_skip_zero() {
+        let Some((d, mut syn, mut fgm)) = setup() else { return };
+        fgm.script_serial = 0xFFFF;
+        fgm.voice_serial = 0xFFFF;
+        let h = fgm.play(0).unwrap();
+        assert_eq!(h.serial, 1);
+        fgm.tick(&mut syn, &d);
+        let v = fgm.scripts[h.slot as usize].voice;
+        assert_eq!(fgm.voices[v as usize].serial, 1);
+    }
+
+    /// Pools: 24 scripts; the 25th play fails and is counted. Stopping by
+    /// a stale handle is a no-op; `stop_null` stops only root scripts.
+    #[test]
+    fn fgm_pools_and_stop() {
+        let Some((d, mut syn, mut fgm)) = setup() else { return };
+        let hs: Vec<_> = (0..SCRIPT_POOL).map(|_| fgm.play(0).unwrap()).collect();
+        // LIFO pool: node 0 first; the newest script heads the active list.
+        assert_eq!(hs[0].slot, 0);
+        assert_eq!(fgm.active_scripts, (SCRIPT_POOL - 1) as u8);
+        assert!(fgm.play(0).is_none());
+        assert_eq!(fgm.script_exhausted, 1);
+        fgm.stop(&mut syn, hs[3]);
+        assert!(!fgm.alive(hs[3]));
+        let again = fgm.play(1).unwrap();
+        assert_eq!(again.slot, hs[3].slot, "the freed node is reused first");
+        // The stale handle must not stop the new occupant.
+        fgm.stop(&mut syn, hs[3]);
+        assert!(fgm.alive(again));
+        fgm.stop_null(&mut syn);
+        assert_eq!(fgm.active_scripts(), 0);
+        fgm.tick(&mut syn, &d);
+        assert_eq!(fgm.active_voices(), 0);
+    }
+
+    /// `func_80026594` / `func_800264A4`: only priority-bit-7 nodes move;
+    /// paused playing pvoices are stopped in place and resumed later;
+    /// paused scripts do not run.
+    #[test]
+    fn fgm_pause_resume() {
+        let Some((d, mut syn, mut fgm)) = setup() else { return };
+        let a = fgm.play(0).unwrap();
+        let b = fgm.play(0).unwrap();
+        fgm.tick(&mut syn, &d);
+        // Mark `b` and its voice pausable.
+        fgm.scripts[b.slot as usize].priority |= 0x80;
+        let bv = fgm.scripts[b.slot as usize].voice;
+        fgm.voices[bv as usize].priority |= 0x80;
+        fgm.pause(&mut syn);
+        assert_eq!(fgm.active_scripts(), 1);
+        assert_eq!(fgm.active_voices(), 1);
+        let p = syn.vvoices[FGM_VOICE_BASE + bv as usize].pvoice.unwrap();
+        assert_eq!(syn.pvoices[p as usize].em_motion, AL_STOPPED);
+        let timer = fgm.scripts[b.slot as usize].timer;
+        for _ in 0..5 {
+            fgm.tick(&mut syn, &d);
+        }
+        assert_eq!(fgm.scripts[b.slot as usize].timer, timer, "paused script frozen");
+        fgm.resume(&mut syn);
+        assert_eq!(syn.pvoices[p as usize].em_motion, AL_PLAYING);
+        assert_eq!(fgm.active_scripts(), 2);
+        assert_eq!(fgm.active_voices(), 2);
+        assert_eq!(fgm.active_scripts, b.slot, "paused list goes in front");
+        assert!(fgm.alive(a) && fgm.alive(b));
+    }
+
+    /// No shipped `fgm.unk` record reads or writes the `spC0` scratch
+    /// (postproc 0, no target < 10), so the port's zeroed scratch is exact.
+    #[test]
+    fn fgm_unk_never_touches_scratch() {
         let Some(d) = testdata::data() else { return };
-        println!("ucd {} tbl {} unk {}", d.fgm_ucd_offsets.len(), d.fgm_tbl_offsets.len(), d.fgm_unk_count);
-        let inst = &d.sfx.instruments[d.sfx.inst_array[0] as usize];
-        println!("sounds {} inst_array {:?}", inst.sounds.len(), &d.sfx.inst_array[..d.sfx.inst_array.len().min(4)]);
-        println!("sin max {} [0..4] {:?} [512] {}", d.sin_table.iter().max().unwrap(), &d.sin_table[..4], d.sin_table[1024]);
-        for id in 0..2usize {
-            let o = d.fgm_ucd_offsets[id] as usize;
-            println!("ucd[{id}] @{o:#x}: {:02x?}", &d.fgm_ucd[o..o + 40]);
-        }
-        for id in 0..6usize {
-            let o = d.fgm_tbl_offsets[id] as usize;
-            println!("tbl[{id}] @{o:#x}: {:02x?}", &d.fgm_tbl[o..o + 24]);
-        }
-        let mut seen = std::collections::BTreeMap::new();
         for i in 0..d.fgm_unk_count {
             let r = &d.fgm_unk[4 + i * 16..][..16];
-            *seen.entry((r[0], r[1], r[2])).or_insert(0) += 1;
+            assert!(r[0] <= 8, "shape {}", r[0]);
+            assert_eq!(r[2], 0, "postproc of record {i}");
+            assert!(r[1] >= 10, "target of record {i}");
         }
-        println!("unk (shape,target,post): {seen:?}");
     }
 }
