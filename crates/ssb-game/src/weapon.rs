@@ -2665,6 +2665,7 @@ fn reflect_shot(velocity: &mut Vec3, owner: &mut u8, damage: &mut i32, reflector
 /// `ftMainProcParams`; the weapon reacts now. `velocity` also sweeps the
 /// hitbox back to where it was last frame and picks the push direction
 /// ([`attack::HitDirection::from_weapon`]).
+#[allow(clippy::too_many_arguments)]
 fn stale_hit(
     hitbox: &Hitbox,
     position: Vec3,

@@ -183,7 +183,11 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
                 *id = (be_u32(&data, off & !3)? >> 16) as u16;
             }
         }
-        let _ = writeln!(w, "    pub const {name}: [u16; 2] = [{}, {}];", ids[0], ids[1]);
+        let _ = writeln!(
+            w,
+            "    pub const {name}: [u16; 2] = [{}, {}];",
+            ids[0], ids[1]
+        );
     }
     w.push_str("}\n");
     Ok(w)

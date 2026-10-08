@@ -7804,6 +7804,7 @@ mod tests {
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_smash_voice_draws_the_shared_generator_once() {
         // `nFTMotionEventPlaySmashVoice`: `syUtilsRandIntRange(3)` (RE-468).
+        let r = crate::sound::testing::Recorder::install();
         let mut f = mario();
         crate::rng::set_seed(1);
         set_usmash(&mut f);
@@ -7813,6 +7814,21 @@ mod tests {
         let mut expected = 1i32;
         expected = expected.wrapping_mul(214013).wrapping_add(2531011);
         assert_eq!(crate::rng::seed(), expected);
+        // The voice is the drawn one of `attr->smash_sfx`, and the sound
+        // calls make no other draw.
+        let smash = crate::motion::combat_attrs(FighterKind::Mario)
+            .unwrap()
+            .smash_sfx;
+        let pick = smash[((i32::from((expected >> 16) as u16) * 3) / 65536) as usize];
+        let voices: alloc::vec::Vec<u16> = r
+            .take()
+            .into_iter()
+            .filter_map(|c| match c {
+                crate::sound::testing::Call::PlayFgm(id) if smash.contains(&id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(voices, [pick]);
     }
 
     /// Taps the N64 A button for one frame.

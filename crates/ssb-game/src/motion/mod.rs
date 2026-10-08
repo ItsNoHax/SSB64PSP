@@ -338,7 +338,6 @@ fn has_voice(f: &Fighter) -> bool {
 }
 
 /// The fighter's [`CombatAttrs`] (every kind has them).
-
 pub fn combat_attrs(kind: FighterKind) -> Option<&'static CombatAttrs> {
     Some(match kind {
         FighterKind::Mario => &scripts::MARIO_ATTRS,

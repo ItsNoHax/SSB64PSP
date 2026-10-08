@@ -202,7 +202,6 @@ const DEFEATED_VOICES: [u16; 4] = [
 ];
 
 /// `nGRKindInishie`.
-
 const GKIND_INISHIE: u8 = 8;
 
 /// `dIFCommonAnnounceTimerVoiceIDs`: "one" to "five".

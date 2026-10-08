@@ -13,6 +13,8 @@ extern crate alloc;
 
 pub mod appear;
 pub mod attack;
+#[cfg(test)]
+mod audio_battle_tests;
 pub mod auto_demo;
 pub mod backup;
 pub mod battle;
