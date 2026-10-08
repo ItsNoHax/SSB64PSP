@@ -1,5 +1,7 @@
 //! `mn1pcontinue.c`: the option gate, retry and Game Over clocks.
 //! Fade alphas advance on draw in the source, so `draw` is separate.
+//! [`Continue::tick`] makes the scene's sound calls.
+use crate::sound::{self, id};
 use ssb_engine::input::{ControllerState, N64Buttons};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,7 +49,11 @@ pub struct Frame {
 }
 
 impl Continue {
+    /// `mnPlayers1PGameContinueFuncStart`'s state, then its music: the
+    /// battle's stops, the choice's starts.
     pub fn new(score: u32) -> Self {
+        sound::stop_bgm_all();
+        sound::play_bgm(0, id::nSYAudioBGM1PGameEndChoice);
         Self {
             total_tics: 0,
             status: Status::Choose,
@@ -83,6 +89,8 @@ impl Continue {
         self.room_fade_out = Some(0);
         self.game_over_input_tic = self.total_tics + 90;
         self.game_over_auto_tic = self.total_tics + 1800;
+        sound::play_bgm(0, id::nSYAudioBGM1PGameOver);
+        sound::play_fgm(id::nSYAudioVoiceAnnounceGameOver);
     }
 
     pub fn tick(&mut self, input: ControllerState, taps: N64Buttons) -> Frame {
@@ -112,6 +120,7 @@ impl Continue {
                         self.score = (self.score as f32 * 0.5) as u32;
                         self.status = Status::Retry;
                         self.retry_tic = self.total_tics + 240;
+                        sound::play_fgm(id::nSYAudioFGM1PGameContinue);
                         frame.event = Some(Event::Accepted);
                     } else {
                         self.game_over();
@@ -126,6 +135,7 @@ impl Continue {
                         != 0
                         || (self.change_wait == 0 && sx < -15);
                     if left && !self.yes {
+                        sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                         self.yes = true;
                         self.change_wait = (sx + 160) / 5;
                     }
@@ -133,6 +143,7 @@ impl Continue {
                         taps.0 & (N64Buttons::R | N64Buttons::D_RIGHT | N64Buttons::C_RIGHT) != 0
                             || (self.change_wait == 0 && sx > 15);
                     if right && self.yes {
+                        sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                         self.yes = false;
                         self.change_wait = (160 - sx) / 5;
                     }
@@ -155,6 +166,7 @@ impl Continue {
                     self.room_shown = true;
                     self.prompt_shown = true;
                     self.room_fade_in = Some(255);
+                    sound::play_fgm(id::nSYAudioVoiceAnnounceContinue);
                     frame.event = Some(Event::Continue);
                 }
                 120 => {

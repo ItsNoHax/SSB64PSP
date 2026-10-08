@@ -1,6 +1,9 @@
 //! `sc1pstageclear.c`: timed score registration, nine-row bonus pages,
-//! and the input gate. Display state is portable; the host draws it.
+//! and the input gate. Display state is portable; the host draws it. The
+//! scene's sounds are made where its GObjs are (`sc1PStageClearMake*`,
+//! `sc1PStageClearGetAppendTotal*Score`, the targets' and rows' processes).
 use super::{results, BattleState, Difficulty, SceneData, Stage};
+use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +67,19 @@ impl StageClear {
             Stage::Bonus1 | Stage::Bonus2 | Stage::Bonus3 => Kind::Result,
             _ => Kind::Stage,
         };
+        // `sc1PStageClearFuncStart`'s BGM.
+        sound::play_bgm(
+            0,
+            match stage {
+                Stage::Boss => id::nSYAudioBGM1PGameClear,
+                Stage::Bonus1 | Stage::Bonus2 if data.bonus_tasks_complete == 10 => {
+                    id::nSYAudioBGM1PBonusStageClear
+                }
+                Stage::Bonus3 if data.time_remain != 0 => id::nSYAudioBGM1PBonusStageClear,
+                Stage::Bonus1 | Stage::Bonus2 | Stage::Bonus3 => id::nSYAudioBGM1PBonusStageFailure,
+                _ => id::nSYAudioBGM1PStageClear,
+            },
+        );
         Self {
             kind,
             stage,
@@ -101,10 +117,22 @@ impl StageClear {
         }
     }
 
+    /// `sc1PStageClearMakeScoreSObjs`.
     fn update_score(&mut self) {
         self.shown_score = self.total_score.max(0) as u32;
     }
+    /// `sc1PStageClearUpdateBonusScore`.
+    fn update_bonus_score(&mut self) {
+        self.update_score();
+        sound::play_fgm(id::nSYAudioFGMScoreDisplayBonus);
+    }
+    /// `sc1PStageClearMake*TextSObjs`' sound.
+    fn text_shown() {
+        sound::play_fgm(id::nSYAudioFGMStageClearScoreDisplay);
+    }
+    /// `sc1PStageClearGetAppendTotalTimeScore`.
     fn timer_score(&mut self) {
+        sound::play_fgm(id::nSYAudioFGMStageClearScoreRegister);
         self.timer_multiplied = true;
         let multiplier = match self.stage {
             Stage::Bonus3 => 500,
@@ -192,6 +220,7 @@ impl StageClear {
                 if !self.no_timer {
                     if t == 10 {
                         self.timer_text = true;
+                        Self::text_shown();
                     }
                     if t == 20 {
                         self.timer_digits = true;
@@ -200,7 +229,7 @@ impl StageClear {
                         self.timer_score();
                     }
                     if t == 80 {
-                        self.update_score();
+                        self.update_bonus_score();
                     }
                 }
                 let (text, digits, mult, eject) = if self.no_timer {
@@ -210,16 +239,19 @@ impl StageClear {
                 };
                 if t == text {
                     self.damage_text = true;
+                    Self::text_shown();
                 }
                 if t == digits {
                     self.damage_digits = true;
                 }
                 if t == mult {
+                    // `sc1PStageClearGetAppendTotalDamageScore`.
+                    sound::play_fgm(id::nSYAudioFGMStageClearScoreRegister);
                     self.damage_multiplied = true;
                     self.total_score += i64::from(self.damage) * 10;
                 }
                 if t == eject {
-                    self.update_score();
+                    self.update_bonus_score();
                     self.finish_base();
                 }
             }
@@ -227,6 +259,7 @@ impl StageClear {
                 if self.stage != Stage::Bonus3 {
                     if t == 10 {
                         self.target_text = true;
+                        Self::text_shown();
                     }
                     if t == 20 {
                         self.base_tic = 20 + u32::from(self.objectives) * 10;
@@ -237,6 +270,7 @@ impl StageClear {
                         && (t - 20).is_multiple_of(10)
                         && (t - 20) / 10 < u32::from(self.objectives)
                     {
+                        sound::play_fgm(id::nSYAudioFGMStageClearScoreRegister);
                         self.total_score += 1000;
                         self.update_score();
                     }
@@ -259,6 +293,7 @@ impl StageClear {
                         let timer = self.stage == Stage::Bonus3 || self.objectives == 10;
                         if t == self.base_tic + 10 && timer {
                             self.timer_text = true;
+                            Self::text_shown();
                         }
                         if t == self.base_tic + 30 && timer {
                             self.timer_digits = true;
@@ -268,7 +303,7 @@ impl StageClear {
                         }
                         if t == self.base_tic + 70 {
                             if timer {
-                                self.update_score();
+                                self.update_bonus_score();
                             }
                             self.finish_base();
                         }
@@ -280,13 +315,22 @@ impl StageClear {
             if t == self.common_tic {
                 self.bonus_page();
             } else if t == self.show_next_tic {
-                self.update_score();
+                self.update_bonus_score();
                 self.can_change_page = true;
                 if self.last_page {
                     self.bonus_advance_tic = t + 20;
                 }
             } else if t == self.bonus_advance_tic {
                 self.allow_proceed = true;
+            }
+            // `sc1PStageClearCommonProcUpdate`: each row's and the page
+            // arrow's process sounds at its reveal tic, its first run
+            // included.
+            let reveals = self.rows.iter().flatten().map(|r| r.reveal_tic);
+            for tic in reveals.chain(self.page_arrow_tic) {
+                if tic == t {
+                    Self::text_shown();
+                }
             }
         }
         None

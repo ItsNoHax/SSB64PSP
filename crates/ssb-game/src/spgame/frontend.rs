@@ -43,7 +43,6 @@ pub struct Frontend {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
     Host(Scene),
-    Announce(intro::Announce),
     Continue(continue_scene::Event),
 }
 
@@ -175,9 +174,6 @@ impl Frontend {
             }
             Screen::Intro(intro) => {
                 let frame = intro.tick(scheduler_tic, taps);
-                for announce in frame.announce.into_iter().flatten() {
-                    emit(Event::Announce(announce));
-                }
                 if frame.proceed {
                     let session = self.session.as_mut().expect("campaign session");
                     session
