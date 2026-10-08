@@ -316,6 +316,25 @@ pub struct CombatAttrs {
     pub effect_joint_ids: [u8; 5],
     /// `joint_itemlight_id`: `ftParamGetJointID`'s `-2`.
     pub joint_itemlight_id: u8,
+    /// `dead_fgm_ids`: the KO voice and sound `ftCommonDeadInitStatusVars`
+    /// queues.
+    pub dead_fgm_ids: [u16; 2],
+    /// `deadup_sfx`: the Star-KO voice.
+    pub deadup_sfx: u16,
+    /// `damage_sfx`: `ftCommonDamageInitDamageVars`'s voice.
+    pub damage_sfx: u16,
+    /// `smash_sfx`: `nFTMotionEventPlaySmashVoice` picks one at random.
+    pub smash_sfx: [u16; 3],
+    /// `heavyget_sfx`: `itMainSetFighterHold` for a heavy item.
+    pub heavyget_sfx: u16,
+    /// `is_have_voice`: gates `PlayVoiceStoreInfo` and
+    /// `PlayLoopVoiceStoreInfo`.
+    pub is_have_voice: bool,
+}
+
+/// `attr->is_have_voice`.
+fn has_voice(f: &Fighter) -> bool {
+    combat_attrs(f.kind).is_some_and(|a| a.is_have_voice)
 }
 
 /// The fighter's [`CombatAttrs`] (every kind has them).
@@ -368,6 +387,11 @@ mod op {
     pub const SET_THROW: u32 = 12;
     pub const SET_DAMAGE_THROWN: u32 = 13;
     pub const PLAY_FGM: u32 = 14;
+    pub const PLAY_LOOP_SFX_STORE_INFO: u32 = 15;
+    pub const STOP_LOOP_SFX: u32 = 16;
+    pub const PLAY_VOICE_STORE_INFO: u32 = 17;
+    pub const PLAY_LOOP_VOICE_STORE_INFO: u32 = 18;
+    pub const PLAY_FGM_STORE_INFO: u32 = 19;
     pub const PLAY_SMASH_VOICE: u32 = 20;
     pub const SET_FLAG0: u32 = 21;
     pub const SET_FLAG3: u32 = 24;
@@ -797,14 +821,40 @@ fn execute(
             }
         }
         op::CLEAR_ATTACK_COLL_ALL => crate::combat::clear_attack_colls(f),
-        // `nFTMotionEventPlaySmashVoice`: one of `attr->smash_sfx[3]` at
-        // random. Audio is not ported, but the draw advances the shared
-        // generator as the original's does (RE-468: Mario's up smash in
-        // How to Play). Only the Characters menu mutes a fighter
-        // (`is_muted`), and its fighters run no motion script here.
-        op::PLAY_SMASH_VOICE => {
-            let _ = crate::rng::rand_int_range(3);
+        // The sound commands. `is_muted` gates them all but
+        // `StopLoopSFX`; only the Characters menu mutes a fighter, and its
+        // fighters run no motion script here, so the gate always passes.
+        // `nFTMotionEventPlayFGMStoreInfo`.
+        op::PLAY_FGM_STORE_INFO => crate::fighter_sound::play_fgm_store_info(f, value as u16),
+        // `nFTMotionEventPlayFGM`: the handle is dropped.
+        op::PLAY_FGM => {
+            crate::sound::play_fgm(value as u16);
         }
+        op::PLAY_LOOP_SFX_STORE_INFO => crate::fighter_sound::play_loop_sfx(f, value as u16),
+        op::STOP_LOOP_SFX => crate::fighter_sound::stop_loop_sfx(f),
+        // `nFTMotionEventPlayVoiceStoreInfo` and
+        // `nFTMotionEventPlayLoopVoiceStoreInfo` (into the loop slot, so a
+        // status change stops it): `attr->is_have_voice` gates them.
+        op::PLAY_VOICE_STORE_INFO => {
+            if has_voice(f) {
+                crate::fighter_sound::play_voice(f, value as u16);
+            }
+        }
+        op::PLAY_LOOP_VOICE_STORE_INFO => {
+            if has_voice(f) {
+                crate::fighter_sound::play_loop_sfx(f, value as u16);
+            }
+        }
+        // `nFTMotionEventPlaySmashVoice`: one of `attr->smash_sfx[3]` at
+        // random. The draw comes first and always happens, as the
+        // original's does (RE-468: Mario's up smash in How to Play).
+        op::PLAY_SMASH_VOICE => {
+            let r = crate::rng::rand_int_range(3) as usize;
+            if let Some(a) = combat_attrs(f.kind) {
+                crate::fighter_sound::play_voice(f, a.smash_sfx[r]);
+            }
+        }
+
         op::SET_FLAG0..=op::SET_FLAG3 => {
             f.motion_script.flags[(opcode - op::SET_FLAG0) as usize] = value;
         }
@@ -1131,6 +1181,8 @@ fn make_attack_coll(f: &mut Fighter, w: [u32; 5], opcode: u32) {
     coll.is_hit_ground = w[3] & 2 != 0;
     coll.shield_damage = sign(w[4] >> 24, 8);
     coll.fgm_level = ((w[4] >> 21) & 7) as u8;
+    coll.fgm_kind = ((w[4] >> 17) & 0xF) as u8;
+
     coll.kb_base = ((w[4] >> 7) & 0x3FF) as i32;
     coll.is_scale_pos = opcode == op::MAKE_ATTACK_COLL_SCALED;
     coll.motion_attack_id = attack_id;

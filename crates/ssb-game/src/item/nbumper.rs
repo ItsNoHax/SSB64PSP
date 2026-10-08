@@ -34,6 +34,7 @@ pub const MAP_REBOUND_GROUND: f32 = 0.8;
 
 /// File 251, `llITCommonDataNBumperItemAttributes` (0x69C).
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::NBUMPER,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,

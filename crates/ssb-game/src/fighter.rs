@@ -471,6 +471,11 @@ pub struct Fighter {
     pub effect_joint_array_id: u8,
     /// `FTStruct::modelpart_status` ([`crate::modelpart`], RE-425).
     pub model_parts: crate::modelpart::ModelParts,
+    /// `p_sfx`, `p_voice` and `p_loop_sfx` ([`crate::fighter_sound`]).
+    pub sound: crate::fighter_sound::FighterSound,
+    /// `FTStruct::public_knockback`: the knockback the crowd reacts to
+    /// ([`crate::public`]).
+    pub public_knockback: f32,
 }
 
 impl Fighter {
@@ -569,6 +574,9 @@ impl Fighter {
                 _ => 0.0,
             },
             damage_knockback_stack: 0.0,
+            sound: crate::fighter_sound::FighterSound::default(),
+            public_knockback: 0.0,
+
             is_knockback_paused: false,
             hits: crate::combat::FrameHits::default(),
             jostle_width: 0.0,
@@ -661,18 +669,23 @@ impl Fighter {
         }
         // The Star's timer and the heal follow. Their colour animations
         // (`colanim_id` 0x4A and 9) end in the same deferred check. The
-        // Star's warning frame only restores the stage music.
+        // Star's warning frame only restores the stage music
+        // (`ftParamTryUpdateItemMusic`).
         if self.star_invincible_frames > 0 {
             self.star_invincible_frames -= 1;
             if self.star_invincible_frames == 0 {
                 self.colanim.is_star_expired = true;
+            } else if self.star_invincible_frames == crate::music::ITSTAR_WARN_BEGIN_FRAME {
+                crate::music::request_update();
             }
         }
         if self.damage_heal != 0 {
             self.damage_heal -= 1;
             if self.damage != 0 {
                 self.damage -= 1;
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMPlayerHeal);
             }
+
             if self.damage == 0 {
                 self.damage_heal = 0;
             }
@@ -685,6 +698,15 @@ impl Fighter {
         }
         if self.hitstun > 0 {
             self.hitstun -= 1;
+            // `ftCommonDamageDecHitStunSetPublic`: the damage statuses hand
+            // the hit's crowd knockback over when hitstun ends.
+            if self.hitstun == 0 {
+                if let crate::status::AnyStatus::Common(s) = self.status.status {
+                    if crate::reaction::is_damage_common(s) || crate::reaction::is_damage_air(s) {
+                        self.public_knockback = self.reaction.public_knockback;
+                    }
+                }
+            }
         }
         if self.cliffcatch_wait > 0 {
             self.cliffcatch_wait -= 1;
@@ -734,8 +756,25 @@ impl Fighter {
         self.physics.jumps_used = 0;
         // `mpCommonSetFighterGround`'s Samus case.
         self.samus.charge_recoil = 0;
+        self.landing_public();
         // `mpCommonSetFighterLandingParams`'s Jigglypuff case.
         self.purin.pound_count = 0;
+    }
+
+    /// `mpCommonSetFighterLandingParams`'s crowd half, on landing and on a
+    /// ledge catch: a fighter launched hard who lands or grabs near a side
+    /// of the stage makes the crowd gasp.
+    fn landing_public(&mut self) {
+        if self.public_knockback != 0.0 {
+            if self.public_knockback >= 100.0 {
+                if let Some(b) = self.dead.bounds {
+                    if self.pos.x < b.map.left + 450.0 || self.pos.x > b.map.right - 450.0 {
+                        crate::public::play_cliff_react(self.port, self.public_knockback);
+                    }
+                }
+            }
+            self.public_knockback = 0.0;
+        }
     }
 
     /// `ftManagerInitFighter`'s floor projection: a fighter made over a
@@ -980,6 +1019,7 @@ impl Fighter {
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         crate::appear::tick_effect_clock(self);
+        let y_prev = self.pos.y;
         // `ftCommonThrownReleaseFighterLoseGrip`'s
         // `mpCommonRunFighterCollisionDefault`: one collision pass from the
         // catcher's position with its diamond to the dropped TopN.
@@ -993,6 +1033,7 @@ impl Fighter {
             // `proc_lagupdate`: Smash DI nudges a fighter frozen by a hit.
             self.smash_di(surfaces);
             crate::dead::check(self);
+            self.after_dead_check(y_prev);
             return;
         }
         let surfaces = || surfaces();
@@ -1024,6 +1065,7 @@ impl Fighter {
         if crate::grab::tick_held(self, || crate::map::floors(surfaces())) {
             self.root_motion = RootMotion::default();
             crate::dead::check(self);
+            self.after_dead_check(y_prev);
             return;
         }
         self.map_contacts_prev = self.map_contacts;
@@ -1031,12 +1073,14 @@ impl Fighter {
         if crate::dokan::tick_status(self) {
             self.root_motion = RootMotion::default();
             crate::dead::check(self);
+            self.after_dead_check(y_prev);
             return;
         }
         if crate::hazard::tick_status(self, &surfaces) {
             crate::fteffect::kirby_map_star(self);
             self.root_motion = RootMotion::default();
             crate::dead::check(self);
+            self.after_dead_check(y_prev);
             return;
         }
         if !self.tick_cliff(&surfaces) {
@@ -1051,9 +1095,28 @@ impl Fighter {
         // and `proc_map` in `ftMainProcPhysicsMap`; here the ground and air
         // ticks do both, so it runs after the map step.
         crate::dead::check(self);
+        self.after_dead_check(y_prev);
         // Root motion is an input sample, not persistent fighter state. This
         // prevents a missed runtime sample from replaying an old displacement.
         self.root_motion = RootMotion::default();
+    }
+
+    /// `ftMainProcPhysicsMap` after `ftCommonDeadCheckInterruptCommon`:
+    /// the altitude whistle on falling below the ground's `alt_warning`
+    /// (not Master Hand), and the crowd forgetting a knockback once the
+    /// fighter is back 450 units inside the side bounds.
+    fn after_dead_check(&mut self, y_prev: f32) {
+        let alt = crate::stage::alt_warning();
+        if y_prev >= alt && self.pos.y < alt && self.kind != FighterKind::Boss {
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMAltitudeWarn);
+        }
+        if self.public_knockback != 0.0 {
+            if let Some(b) = self.dead.bounds {
+                if self.pos.x > b.map.left + 450.0 && self.pos.x < b.map.right - 450.0 {
+                    self.public_knockback = 0.0;
+                }
+            }
+        }
     }
 
     /// Finish a cliff damage callback in the match's hit-resolution pass.
@@ -1774,6 +1837,7 @@ impl Fighter {
         if moved.floor.is_none() {
             self.pos.y = moved.pos.y;
             if let Some((line, corner)) = result.cliff {
+                self.landing_public();
                 crate::status::set_cliff_catch(self, line, corner);
                 return;
             }

@@ -2230,6 +2230,7 @@ pub fn set_guard_on(f: &mut Fighter) {
     f.guard.is_release = false;
     f.guard.is_setoff = false;
     f.guard.slide_tics = slide_tics;
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMGuardOn);
 }
 
 /// `ftCommonGuardOnCheckInterruptCommon` @ `ftcommonguard1.c:460`. Sits
@@ -2276,6 +2277,7 @@ pub fn set_guard_off(f: &mut Fighter) {
     play_anim_events(f);
     f.guard.is_shield = flag;
     guard_update_joints(f);
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMGuardOff);
 }
 
 /// `ftCommonGuardSetStatusFromEscape` / `ftCommonGuardCheckInterruptEscape`:
@@ -2577,6 +2579,7 @@ pub fn set_fall_special(
         landing_allow_interrupt: false,
     };
     crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_FALL_SPECIAL, 0);
+    crate::public::try_play_fall_special_react(f.port, f.pos.y);
     f.is_special_interrupt = true;
 }
 
@@ -3902,6 +3905,9 @@ pub struct Preserve {
     /// `FTSTATUS_PRESERVE_FASTFALL`: keep `is_fastfall`, which every other
     /// status change clears (RE-468).
     pub fastfall: bool,
+    /// `FTSTATUS_PRESERVE_LOOPSFX`: keep the loop sound playing
+    /// (`ftParamStopLoopSFX` otherwise).
+    pub loop_sfx: bool,
 }
 
 impl Preserve {
@@ -3913,6 +3919,7 @@ impl Preserve {
         colanim: false,
         playertag: false,
         fastfall: false,
+        loop_sfx: false,
     };
     pub const FASTFALL: Preserve = Preserve {
         fastfall: true,
@@ -4006,7 +4013,11 @@ pub fn set_any_status_preserve(
     if !preserve.playertag {
         f.interface.tag_wait = 0;
     }
+    if !preserve.loop_sfx {
+        crate::fighter_sound::stop_loop_sfx(f);
+    }
     f.damage_knockback_stack = 0.0;
+
     f.damage_mul = 1.0;
     f.damage_e_status = None;
     f.reaction.is_passive_invincible = false;
@@ -7793,6 +7804,7 @@ mod tests {
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_smash_voice_draws_the_shared_generator_once() {
         // `nFTMotionEventPlaySmashVoice`: `syUtilsRandIntRange(3)` (RE-468).
+        let r = crate::sound::testing::Recorder::install();
         let mut f = mario();
         crate::rng::set_seed(1);
         set_usmash(&mut f);
@@ -7802,6 +7814,21 @@ mod tests {
         let mut expected = 1i32;
         expected = expected.wrapping_mul(214013).wrapping_add(2531011);
         assert_eq!(crate::rng::seed(), expected);
+        // The voice is the drawn one of `attr->smash_sfx`, and the sound
+        // calls make no other draw.
+        let smash = crate::motion::combat_attrs(FighterKind::Mario)
+            .unwrap()
+            .smash_sfx;
+        let pick = smash[((i32::from((expected >> 16) as u16) * 3) / 65536) as usize];
+        let voices: alloc::vec::Vec<u16> = r
+            .take()
+            .into_iter()
+            .filter_map(|c| match c {
+                crate::sound::testing::Call::PlayFgm(id) if smash.contains(&id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(voices, [pick]);
     }
 
     /// Taps the N64 A button for one frame.

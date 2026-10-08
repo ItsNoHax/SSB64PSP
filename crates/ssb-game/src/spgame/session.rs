@@ -327,7 +327,7 @@ impl Session {
             self.battle
                 .as_mut()
                 .expect("active battle")
-                .announce_complete();
+                .announce_complete(crate::sound::id::nSYAudioVoiceAnnounceComplete);
         }
     }
 

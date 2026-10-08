@@ -561,6 +561,11 @@ fn set_charge_loop(f: &mut Fighter) {
     set(f, K::CopySamusSpecialNLoop, 0.0, StatusTiming::unknown());
     f.kirby.copy.samus_charge_int = CHARGE_INT;
     f.kirby.copy.samus_charge_shot = true;
+    // `wpSamusChargeShotMakeWeapon` without `is_release`.
+    let charge = crate::weapon::SAMUS_CHARGE_SHOT_FGMS
+        [usize::from(f.kirby.copy.samus_charge_level.min(7))]
+    .1;
+    crate::fighter_sound::play_loop_sfx(f, charge);
 }
 
 /// `ftKirbyCopySamusSpecialNEndSetStatus`.
@@ -598,6 +603,9 @@ pub fn charge_shot_position(f: &Fighter) -> Vec3 {
 /// The flag-0 half of `ftKirbyCopySamusSpecialNEndProcUpdate`.
 fn fire_charge_shot(f: &mut Fighter) {
     let level = f.kirby.copy.samus_charge_level;
+    if f.kirby.copy.samus_charge_shot {
+        crate::fighter_sound::stop_loop_sfx(f);
+    }
     f.weapon_spawn = Some(WeaponSpawn {
         kind: WeaponKind::SamusChargeShot(level),
         owner_port: f.port,

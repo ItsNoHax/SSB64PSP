@@ -50,6 +50,7 @@ const DROP_UPDATE_WAIT: u16 = 10;
 /// hops, reflects and shields but never clanks, hit status none until it
 /// leaves the hand, 60% throw speed.
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::LINK_BOMB,
     is_give_hitlag: true,
     is_display_colanim: true,
     weight: ItemWeight::Light,
@@ -267,12 +268,14 @@ fn explode(item: &mut Item) {
     item.clear_owner_stats();
     set_hitstatus(item, HitStatus::None);
     item.hidden = true;
+    item.attack.fgm_id = crate::sound::id::nSYAudioFGMExplodeL;
     item.refresh_attack_coll();
     item.multi = 0;
     item.event_id = 0;
     item.attack.throw_mul = 1.0;
     update_attack_event(item);
     item.set_status(ItemStatus::LinkBomb(Status::Explode));
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeL);
 }
 
 /// `itLinkBombFallProcUpdate`.

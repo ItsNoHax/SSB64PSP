@@ -7167,6 +7167,12 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             writer.set_file_deps(id, &deps);
         }
     }
+    // The audio section: sequences, both banks, the FGM files and the
+    // synthesizer's constant tables, loaded once at boot (D-049).
+    let audio =
+        ssb_rom::audio::build_section(&data).map_err(|e| format!("audio section: {e:?}"))?;
+    println!("  audio section {} bytes", audio.len());
+    writer.set_audio(audio);
     let bytes = writer.finish();
     if let Some(dir) = out_path.parent() {
         fs::create_dir_all(dir)?;

@@ -8,12 +8,23 @@
 //! implements it over an [`AudioSystem`] it renders on its own thread.
 
 mod api;
+pub mod cseq;
+pub mod csplayer;
+pub mod data;
+pub mod dsp;
+pub mod evtq;
+pub mod fgm;
+pub mod osc;
+pub mod reverb;
 mod shared;
+pub mod synth;
 mod system;
+#[cfg(test)]
+pub(crate) mod testdata;
 
 pub use api::{AudioApi, FgmHandle};
 pub use shared::{RawLock, SharedAudio};
-pub use system::{AudioError, AudioSystem};
+pub use system::{AudioDrops, AudioError, AudioSystem};
 
 /// `osAiSetFrequency(32000)`'s real NTSC rate: 48,681,812 / 1521. The synth's
 /// timing (`_n_timeToSamples`, the FGM tick, the reverb) runs at this rate.

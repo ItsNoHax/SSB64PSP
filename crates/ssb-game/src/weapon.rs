@@ -383,7 +383,9 @@ impl BossBullet {
         let wanted = self.position + self.velocity;
         if let Some(hit) = map_contact(surfaces(), self.position, wanted, BOSS_BULLET_MAP_COLL) {
             self.position = hit.position;
+            // `wpBossBulletProcMap`.
             self.explode();
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
             fx.push(Fx::SparkleWhiteMultiExplode(self.position));
             return true;
         }
@@ -428,6 +430,55 @@ pub const SAMUS_CHARGE_SHOT_HITBOX: Hitbox = Hitbox {
     kb_base: 0,
     element: crate::combat::Element::Electric,
     shield_damage: 1,
+};
+
+/// `dWPSamusChargeShotWeaponAttributes`' `(shoot_fgm_id, charge_fgm_id,
+/// attack_fgm_id)` per charge level: the launch sound, the owner's charging
+/// loop, and the hit sound `wpSamusChargeShotLaunch` gives the shot.
+pub const SAMUS_CHARGE_SHOT_FGMS: [(u16, u16, u16); 8] = {
+    use crate::sound::id::*;
+    [
+        (
+            nSYAudioFGMSamusSpecialNShootS,
+            nSYAudioFGMSamusSpecialNCharge0,
+            nSYAudioFGMShockS,
+        ),
+        (
+            nSYAudioFGMSamusSpecialNShootS,
+            nSYAudioFGMSamusSpecialNCharge1,
+            nSYAudioFGMShockS,
+        ),
+        (
+            nSYAudioFGMSamusSpecialNShootM,
+            nSYAudioFGMSamusSpecialNCharge2,
+            nSYAudioFGMShockM,
+        ),
+        (
+            nSYAudioFGMSamusSpecialNShootM,
+            nSYAudioFGMSamusSpecialNCharge3,
+            nSYAudioFGMShockM,
+        ),
+        (
+            nSYAudioFGMSamusSpecialNShootM,
+            nSYAudioFGMSamusSpecialNCharge4,
+            nSYAudioFGMShockM,
+        ),
+        (
+            nSYAudioFGMSamusSpecialNShootL,
+            nSYAudioFGMSamusSpecialNCharge5,
+            nSYAudioFGMShockL,
+        ),
+        (
+            nSYAudioFGMSamusSpecialNShootL,
+            nSYAudioFGMSamusSpecialNCharge6,
+            nSYAudioFGMShockL,
+        ),
+        (
+            nSYAudioFGMSamusSpecialNShootF,
+            nSYAudioFGMSamusSpecialNCharge7,
+            nSYAudioFGMShockL,
+        ),
+    ]
 };
 
 /// A charge level's sprite scale, `gfx_size / WPCHARGESHOT_GFX_SIZE_DIV`.
@@ -611,8 +662,10 @@ impl SamusBomb {
             return self.lifetime != 0;
         }
         if self.lifetime == 0 {
+            // `wpSamusBombProcUpdate`.
             fx.push(Fx::SparkleWhiteMultiExplode(self.position));
             self.explode();
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
             return true;
         }
         self.floor = self
@@ -820,6 +873,8 @@ pub struct LinkBoomerang {
     pub grandchild_hidden: bool,
     /// `gcPlayAnimAll` calls so far: one per update. Presentation only.
     pub anim_ticks: u16,
+    /// `wp->p_sfx`/`sfx_id`: the flight sound (`wpMainPlayFGM`).
+    pub sfx: Option<crate::sound::FgmHandle>,
 }
 
 impl LinkBoomerang {
@@ -858,6 +913,7 @@ impl LinkBoomerang {
             model_rotate_y: DEG_90 * lr,
             grandchild_hidden: false,
             anim_ticks: 0,
+            sfx: None,
         }
     }
 
@@ -922,6 +978,9 @@ impl LinkBoomerang {
 
     /// `wpLinkBoomerangSetReturnVars`.
     fn set_return(&mut self, homing_max: bool) {
+        // `wpMainPlayFGM(wp, nSYAudioFGMLinkSpecialNReturn)`, the source's
+        // last line; nothing before it plays or reads a sound.
+        self.sfx = play_weapon_fgm(self.sfx, crate::sound::id::nSYAudioFGMLinkSpecialNReturn);
         self.is_return = true;
         self.grandchild_hidden = true;
         self.damage = BOOMERANG_RETURN_DAMAGE;
@@ -1232,6 +1291,7 @@ impl YoshiEgg {
             self.lifetime -= 1;
             if self.lifetime == 0 {
                 // `wpYoshiEggThrowProcUpdate`, then `wpYoshiEggExpireInitVars`.
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMYoshiEggShatter1);
                 fx.push(Fx::YoshiEggExplode(self.position));
                 fx.push(Fx::EggBreak(self.position));
                 self.explode();
@@ -1258,6 +1318,7 @@ impl YoshiEgg {
                 self.position = hit.position;
                 // `wpYoshiEggThrowProcMap`.
                 fx.push(Fx::Quake(2));
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMYoshiEggShatter1);
                 fx.push(Fx::YoshiEggExplode(hit.position));
                 fx.push(Fx::EggBreak(hit.position));
                 fx.push(Fx::DustExpandSmall(hit.position));
@@ -1774,7 +1835,87 @@ const fn wflags(
     }
 }
 
+/// `wpMainStopFGM`.
+pub(crate) fn stop_weapon_fgm(sfx: Option<crate::sound::FgmHandle>) {
+    if let Some(h) = sfx {
+        crate::sound::stop_fgm(h);
+    }
+}
+
+/// `wpMainPlayFGM`: stops the weapon's sound, then plays `sfx_id` in its
+/// place.
+pub(crate) fn play_weapon_fgm(
+    sfx: Option<crate::sound::FgmHandle>,
+    sfx_id: u16,
+) -> Option<crate::sound::FgmHandle> {
+    stop_weapon_fgm(sfx);
+    crate::sound::play_fgm(sfx_id)
+}
+
+/// `wpMainDestroyWeapon`: the slot empties and the weapon's sound stops.
+fn destroy(slot: &mut Option<Weapon>) {
+    if let Some(w) = slot.take() {
+        stop_weapon_fgm(w.sfx());
+    }
+}
+
 impl Weapon {
+    /// `wp->p_sfx`: only the Boomerang and the ground Thunder Jolt keep one.
+    fn sfx(&self) -> Option<crate::sound::FgmHandle> {
+        match self {
+            Weapon::Boomerang(b) => b.sfx,
+            Weapon::Jolt(j) => j.sfx,
+            _ => None,
+        }
+    }
+
+    /// `wp->attack_coll.fgm_id`: the weapon's `WPAttributes::sfx`, which
+    /// `ftMainUpdateDamageStatWeapon` and `itProcessUpdateDamageStatWeapon`
+    /// play on a hit.
+    fn fgm_id(&self) -> u16 {
+        use crate::item_sounds::weapon as wp;
+        use crate::monster_weapon::ShotKind as K;
+        match self {
+            Weapon::Fireball(f) if f.index == 0 => wp::MARIO_FIREBALL,
+            Weapon::Fireball(_) => wp::LUIGI_FIREBALL,
+            Weapon::Blaster(_) => wp::FOX_BLASTER,
+            // `wpSamusChargeShotLaunch` replaces the attributes' sound.
+            Weapon::ChargeShot(c) => SAMUS_CHARGE_SHOT_FGMS[usize::from(c.charge)].2,
+            Weapon::Bomb(_) => wp::SAMUS_BOMB,
+            Weapon::Boomerang(_) => wp::LINK_BOOMERANG,
+            Weapon::Egg(_) => wp::YOSHI_EGG_THROW,
+            Weapon::Star(_) => wp::YOSHI_STAR,
+            Weapon::Cutter(_) => wp::KIRBY_CUTTER,
+            Weapon::Jolt(j) if j.surface.is_some() => wp::PIKACHU_THUNDER_JOLT_GROUND,
+            Weapon::Jolt(_) => wp::PIKACHU_THUNDER_JOLT_AIR,
+            Weapon::Thunder(_) => wp::PIKACHU_THUNDER_HEAD,
+            Weapon::Trail(_) => wp::PIKACHU_THUNDER_TRAIL,
+            Weapon::PKFire(_) => wp::NESS_PK_FIRE,
+            Weapon::PKThunder(_) => wp::NESS_PK_THUNDER,
+            Weapon::PKTrail(_) => wp::NESS_PK_THUNDER_TRAIL,
+            Weapon::Laser(l) if l.three_d => wp::ARWING_LASER_3D,
+            Weapon::Laser(_) => wp::ARWING_LASER_2D,
+            Weapon::BossBullet(b) if b.hard => wp::BOSS_BULLET_HARD,
+            Weapon::BossBullet(_) => wp::BOSS_BULLET_NORMAL,
+            Weapon::Monster(m) => match m.kind {
+                K::HitokageFlame => wp::HITOKAGE_FLAME,
+                K::FushigibanaRazor => wp::FUSHIGIBANA_RAZOR,
+                K::IwarkRock => wp::WARK_ROCK,
+                K::NyarsCoin => wp::NYARS_COIN,
+                K::LizardonFlame => wp::LIZARDON_FLAME,
+                K::SpearSwarm => wp::SPEAR_SWARM,
+                K::PippiSwarm => wp::PIPPI_SWARM,
+                K::KamexHydro => wp::KAMEX_HYDRO,
+                K::StarmieSwift => wp::STARMIE_SWIFT,
+                K::DogasSmog => wp::DOGAS_SMOG,
+                K::RayGun => wp::LGUN_AMMO,
+                K::StarRod if m.star_smash => wp::STARROD_SMASH,
+                K::StarRod => wp::STARROD,
+                K::FireFlower => wp::FFLOWER_FLAME,
+            },
+        }
+    }
+
     /// `wp->attack_coll.can_*`.
     fn flags(&self) -> WeaponFlags {
         match self {
@@ -1865,7 +2006,10 @@ impl Weapon {
         let shock = |size| Fx::ImpactShock { pos, size };
         match self {
             // `wpMarioFireballProcHit` for all four.
-            Weapon::Fireball(_) => fx.push(Fx::SparkleWhite(pos)),
+            Weapon::Fireball(_) => {
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
+                fx.push(Fx::SparkleWhite(pos));
+            }
             // `wpFoxBlasterProcHit`.
             Weapon::Blaster(_) => fx.push(Fx::FoxBlasterGlow(pos)),
             // `grSectorArwingWeaponLaser2DProcHit` for all four;
@@ -1875,6 +2019,7 @@ impl Weapon {
                 if !l.three_d {
                     fx.push(shock(l.damage));
                 } else if !l.exploded {
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
                     fx.push(Fx::SparkleWhiteMultiExplode(pos));
                 }
             }
@@ -1884,6 +2029,7 @@ impl Weapon {
             // clears them.
             Weapon::Bomb(b) => {
                 if !b.exploded {
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
                     fx.push(Fx::SparkleWhiteMultiExplode(pos));
                 }
             }
@@ -1893,6 +2039,7 @@ impl Weapon {
             // clears it.
             Weapon::Egg(e) => {
                 if !e.exploded && proc != Proc::Absorb {
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMYoshiEggShatter1);
                     fx.push(Fx::YoshiEggExplode(pos));
                     fx.push(Fx::EggBreak(pos));
                 }
@@ -1903,6 +2050,7 @@ impl Weapon {
             // `...ProcShield` (also its `proc_absorb`) makes nothing.
             Weapon::Cutter(_) => {
                 if matches!(proc, Proc::Hit | Proc::SetOff) {
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
                     fx.push(Fx::SparkleWhite(pos));
                 }
             }
@@ -2155,6 +2303,7 @@ fn pre_hit_at(
         can_shield: true,
         owner: Some(owner),
         is_hitlag_victim: None,
+        fgm_id: None,
     };
     let reflector = crate::combat::reflector(defender).filter(|_| flags.can_reflect);
     // A thrown fighter's attacks do not meet its thrower's weapons, nor,
@@ -2225,6 +2374,7 @@ fn laser_hit(laser: &mut ArwingLaser, h: LaserHit<'_>, defender: &mut Fighter) -
     let mut staled = laser.hitbox();
     staled.damage = h.stale.damage(staled.damage);
     let owner_player = (owner != sector::GROUND_PORT).then_some(owner);
+    let laser_fgm = Weapon::Laser(*laser).fgm_id();
     let attack = |pos: Vec3, vel: Vec3, can_shield: bool| crate::combat::WeaponAttack {
         stat: h.stale.stat,
         object: crate::spgame::bonus::DamageObject::Arwing,
@@ -2236,6 +2386,7 @@ fn laser_hit(laser: &mut ArwingLaser, h: LaserHit<'_>, defender: &mut Fighter) -
         can_shield,
         owner: owner_player,
         is_hitlag_victim: None,
+        fgm_id: Some(laser_fgm),
     };
     let landed = |landed: &mut Option<_>| {
         if owner_player.is_some() {
@@ -2275,6 +2426,8 @@ fn laser_hit(laser: &mut ArwingLaser, h: LaserHit<'_>, defender: &mut Fighter) -
                 size: l.damage,
             });
         } else if !l.exploded {
+            // `grSectorArwingWeaponLaser3DProcHit` / `...ProcAbsorb`.
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
             emit.push(Fx::SparkleWhiteMultiExplode(l.position));
         }
     };
@@ -2462,6 +2615,7 @@ fn monster_hit(
             is_hitlag_victim: m
                 .is_hitlag_victim()
                 .then_some(m.player.unwrap_or(sector::GROUND_PORT)),
+            fgm_id: Some(Weapon::Monster(*m).fgm_id()),
         },
         if m.kind == ShotKind::RayGun {
             m.attack_tail
@@ -2511,6 +2665,7 @@ fn reflect_shot(velocity: &mut Vec3, owner: &mut u8, damage: &mut i32, reflector
 /// `ftMainProcParams`; the weapon reacts now. `velocity` also sweeps the
 /// hitbox back to where it was last frame and picks the push direction
 /// ([`attack::HitDirection::from_weapon`]).
+#[allow(clippy::too_many_arguments)]
 fn stale_hit(
     hitbox: &Hitbox,
     position: Vec3,
@@ -2519,6 +2674,7 @@ fn stale_hit(
     defender: &mut Fighter,
     landed: &mut Option<(u8, crate::stale::MotionAttackId, u16)>,
     owner: u8,
+    fgm_id: u16,
 ) -> attack::HitOutcome {
     let mut hitbox = *hitbox;
     hitbox.damage = stale.damage(hitbox.damage);
@@ -2536,6 +2692,7 @@ fn stale_hit(
             can_shield: true,
             owner: Some(owner),
             is_hitlag_victim: None,
+            fgm_id: Some(fgm_id),
         },
     ));
     if outcome == attack::HitOutcome::Damaged {
@@ -2555,6 +2712,7 @@ fn stale_contact(
     landed: &mut Option<(u8, crate::stale::MotionAttackId, u16)>,
     owner: u8,
     is_hitlag_victim: Option<u8>,
+    fgm_id: u16,
 ) -> crate::combat::WeaponContact {
     let mut hitbox = *hitbox;
     hitbox.damage = stale.damage(hitbox.damage);
@@ -2571,6 +2729,7 @@ fn stale_contact(
             can_shield: true,
             owner: Some(owner),
             is_hitlag_victim,
+            fgm_id: Some(fgm_id),
         },
     );
     if contact == crate::combat::WeaponContact::Hurt(true) {
@@ -2652,7 +2811,7 @@ impl WeaponPool {
                 // `wpNessPKThunderHeadProcDead` destroys the trails with the
                 // head; the owner learns of it from the missing head.
                 if !alive || bounds.is_some_and(|b| out_of_bounds(b, h.position)) {
-                    *slot = None;
+                    destroy(slot);
                 } else if h.trail_spawn {
                     pending[i] = Some((
                         PKThunderTrail::new(*h, 0),
@@ -2681,7 +2840,7 @@ impl WeaponPool {
                         pending[i] = Some((child, self.stale[i], self.teams[i], self.lrs[i]));
                     }
                 } else {
-                    *slot = None;
+                    destroy(slot);
                 }
             }
         }
@@ -2698,7 +2857,7 @@ impl WeaponPool {
         }
         for slot in &mut self.slots {
             if matches!(slot, Some(Weapon::PKTrail(t)) if !groups.contains(&Some(t.group))) {
-                *slot = None;
+                destroy(slot);
             }
         }
     }
@@ -2727,6 +2886,7 @@ impl WeaponPool {
                         defender,
                         &mut self.landed[i],
                         t.owner_port,
+                        crate::item_sounds::weapon::NESS_PK_THUNDER_TRAIL,
                     )
                     .registered()
                     {
@@ -2775,7 +2935,7 @@ impl WeaponPool {
                         PreHit::SetOff | PreHit::ReflectorBroke => {
                             self.set_off[i] = true;
                             pillars[i] = Some(spark.item_spawn(self.stale[i], self.teams[i]));
-                            *slot = None;
+                            destroy(slot);
                             free_slots += 1;
                             continue;
                         }
@@ -2783,7 +2943,7 @@ impl WeaponPool {
                         PreHit::Absorbed => {
                             self.fx
                                 .push(self.seq[i], Fx::DustExpandSmall(spark.position));
-                            *slot = None;
+                            destroy(slot);
                             free_slots += 1;
                             continue;
                         }
@@ -2799,6 +2959,7 @@ impl WeaponPool {
                         &mut self.landed[i],
                         spark.owner_port,
                         None,
+                        crate::item_sounds::weapon::NESS_PK_FIRE,
                     );
                     if let crate::combat::WeaponContact::Shielded(shield) = contact {
                         record_weapon_victim(&mut self.hit_records[i], defender.port);
@@ -2806,7 +2967,7 @@ impl WeaponPool {
                         let alive = w.on_shield(shield, &mut emit);
                         self.fx.extend(self.seq[i], &emit);
                         if !alive {
-                            *slot = None;
+                            destroy(slot);
                             free_slots += 1;
                         }
                         continue;
@@ -2816,7 +2977,7 @@ impl WeaponPool {
                         if outcome == attack::HitOutcome::Damaged {
                             pillars[i] = Some(spark.item_spawn(self.stale[i], self.teams[i]));
                         }
-                        *slot = None;
+                        destroy(slot);
                         free_slots += 1;
                     }
                 }
@@ -2843,7 +3004,7 @@ impl WeaponPool {
                             // First reflection allocates a new descriptor before ejecting
                             // the old head. Allocation failure still consumes the old one.
                             if !h.reflected && free_slots == 0 {
-                                *slot = None;
+                                destroy(slot);
                                 free_slots += 1;
                                 continue;
                             }
@@ -2872,7 +3033,7 @@ impl WeaponPool {
                                     size: h.damage,
                                 },
                             );
-                            *slot = None;
+                            destroy(slot);
                             free_slots += 1;
                             continue;
                         }
@@ -2887,6 +3048,7 @@ impl WeaponPool {
                         defender,
                         &mut self.landed[i],
                         h.owner_port,
+                        crate::item_sounds::weapon::NESS_PK_THUNDER,
                     )
                     .registered()
                     {
@@ -2897,7 +3059,7 @@ impl WeaponPool {
                                 size: h.damage,
                             },
                         );
-                        *slot = None;
+                        destroy(slot);
                         free_slots += 1;
                     }
                 }
@@ -3126,7 +3288,22 @@ impl WeaponPool {
             }
         };
         let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
-        self.insert(weapon, spawn.stale, spawn.team, lr)
+        let made = self.insert_at(weapon, spawn.stale, spawn.team, lr);
+        if let Some(i) = made {
+            match &mut self.slots[i] {
+                // `wpLinkBoomerangMakeWeapon`'s `wpMainPlayFGM`.
+                Some(Weapon::Boomerang(b)) => {
+                    b.sfx = play_weapon_fgm(b.sfx, crate::sound::id::nSYAudioFGMLinkSpecialNShoot);
+                }
+                // `wpSamusChargeShotMakeWeapon` with `is_release`, or the
+                // charging shot's release: `wpSamusChargeShotLaunch`.
+                Some(Weapon::ChargeShot(c)) => {
+                    crate::sound::play_fgm(SAMUS_CHARGE_SHOT_FGMS[usize::from(c.charge)].0);
+                }
+                _ => {}
+            }
+        }
+        made.is_some()
     }
 
     fn insert(
@@ -3446,6 +3623,10 @@ impl WeaponPool {
                     base: hitbox.kb_base,
                 },
             );
+            // `itProcessUpdateDamageStatWeapon`'s last line.
+            if let Some(w) = &self.slots[i] {
+                crate::sound::play_fgm(w.fgm_id());
+            }
             self.pending_item_hits[i] = true;
         }
     }
@@ -3483,7 +3664,7 @@ impl WeaponPool {
             }
             Weapon::PKFire(p) => {
                 let spawn = p.item_spawn(stale, self.teams[i]);
-                *slot = None;
+                destroy(slot);
                 self.queue_item_spawn(spawn);
             }
             // `grSectorArwingWeaponLaser3DProcHit`; the burst has none.
@@ -3496,7 +3677,7 @@ impl WeaponPool {
             // The burst has no `proc_hit`.
             Weapon::BossBullet(b) if b.exploded => {}
             Weapon::Monster(m) if m.survives(ShotProc::Hit) => {}
-            _ => *slot = None,
+            _ => destroy(slot),
         }
     }
 
@@ -3524,7 +3705,7 @@ impl WeaponPool {
     pub fn destroy_boomerang(&mut self, port: u8) {
         for slot in self.slots.iter_mut() {
             if matches!(slot, Some(Weapon::Boomerang(b)) if b.parent_port == Some(port)) {
-                *slot = None;
+                destroy(slot);
             }
         }
     }
@@ -3704,7 +3885,7 @@ impl WeaponPool {
                     && (matches!(weapon, Weapon::Thunder(_))
                         || !bounds.is_some_and(|b| out_of_bounds(b, weapon.position())));
                 if !alive {
-                    *slot = None;
+                    destroy(slot);
                 } else if matches!(weapon, Weapon::Monster(_)) {
                     // `wpProcessUpdateAttackRecords`: a rehit record clears
                     // when its timer runs out.
@@ -3740,6 +3921,7 @@ impl WeaponPool {
         let mut thunder_groups = [None; MAX_WEAPONS];
         for (i, slot) in self.slots.iter_mut().enumerate() {
             let Some(weapon) = slot else { continue };
+            let fgm_id = weapon.fgm_id();
             let records = &mut self.hit_records[i];
             // An item may have evicted a fighter's record since the last
             // search. Keep the kind's public port mask in sync with the
@@ -3781,6 +3963,7 @@ impl WeaponPool {
                         defender,
                         &mut self.landed[i],
                         t.owner_port,
+                        crate::item_sounds::weapon::PIKACHU_THUNDER_TRAIL,
                     )
                     .registered()
                     {
@@ -3818,7 +4001,7 @@ impl WeaponPool {
                     defender,
                 );
                 if !alive {
-                    *slot = None;
+                    destroy(slot);
                 }
                 continue;
             }
@@ -3839,7 +4022,7 @@ impl WeaponPool {
                     defender,
                 );
                 if !alive {
-                    *slot = None;
+                    destroy(slot);
                 }
                 continue;
             }
@@ -3905,6 +4088,7 @@ impl WeaponPool {
                         defender,
                         &mut self.landed[i],
                         owner,
+                        fgm_id,
                     )
                     .registered()
                     {
@@ -3926,6 +4110,7 @@ impl WeaponPool {
                     &mut self.landed[i],
                     owner,
                     None,
+                    fgm_id,
                 );
                 if let crate::combat::WeaponContact::Shielded(shield) = contact {
                     record_weapon_victim(records, defender.port);
@@ -3939,6 +4124,7 @@ impl WeaponPool {
                     bomb.hit_ports |= bit;
                     if !bomb.exploded {
                         // `wpSamusBombProcHit`.
+                        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
                         self.fx
                             .push(self.seq[i], Fx::SparkleWhiteMultiExplode(bomb.position));
                         bomb.explode();
@@ -3989,7 +4175,7 @@ impl WeaponPool {
                         Weapon::Star(_) => {}
                         // `wpKirbyCutterProcSetOff` and every `ProcHit` that
                         // returns TRUE.
-                        _ => *slot = None,
+                        _ => destroy(slot),
                     }
                     continue;
                 }
@@ -4057,7 +4243,7 @@ impl WeaponPool {
                             e.hit_ports |= bit;
                             e.explode();
                         }
-                        _ => *slot = None,
+                        _ => destroy(slot),
                     }
                     continue;
                 }
@@ -4068,7 +4254,7 @@ impl WeaponPool {
                             record_weapon_victim(records, defender.port);
                             c.hit_ports |= bit;
                         }
-                        _ => *slot = None,
+                        _ => destroy(slot),
                     }
                     continue;
                 }
@@ -4083,6 +4269,7 @@ impl WeaponPool {
                 owner,
                 // `wpLinkBoomerangMakeWeapon` sets `is_hitlag_victim`.
                 matches!(weapon, Weapon::Boomerang(_)).then_some(owner),
+                fgm_id,
             );
             // `ftMainUpdateShieldStatWeapon` records the fighter; then
             // `wpProcessProcHitCollisions` hops the weapon or runs its
@@ -4093,7 +4280,7 @@ impl WeaponPool {
                 let alive = weapon.on_shield(shield, &mut emit);
                 self.fx.extend(self.seq[i], &emit);
                 if !alive {
-                    *slot = None;
+                    destroy(slot);
                 }
                 continue;
             }
@@ -4125,7 +4312,7 @@ impl WeaponPool {
                     e.explode();
                     continue;
                 }
-                *slot = None;
+                destroy(slot);
             }
         }
         for w in self.slots.iter_mut().flatten() {
@@ -4430,7 +4617,7 @@ impl WeaponPool {
                 _ => false,
             };
             if !alive {
-                self.slots[i] = None;
+                destroy(&mut self.slots[i]);
             }
         }
         if thunder {

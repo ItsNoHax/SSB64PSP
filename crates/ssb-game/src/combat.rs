@@ -161,6 +161,9 @@ pub struct AttackColl {
     /// `fgm_level`: the hit sound's strength, which also gates the orbs and
     /// sparks of a normal hit.
     pub fgm_level: u8,
+    /// `fgm_kind`: the hit sound's row of
+    /// [`crate::fighter_sound::HIT_COLLISION_FGMS`].
+    pub fgm_kind: u8,
     pub is_hit_air: bool,
     pub is_hit_ground: bool,
     /// `MakeAttackCollScaled`: the offset is divided by `FTAttributes::size`.
@@ -1241,6 +1244,7 @@ fn update_damage_stat(
         // An invincible body or box, or damage a resist soaked.
         victim.hits.push_set_off(impact, damage);
     }
+    crate::fighter_sound::play_hit_sfx(attacker, coll.fgm_kind, coll.fgm_level);
 }
 
 /// `gmCollisionGetDamageSlashRotation`: the angle of the attacker's air
@@ -1293,6 +1297,10 @@ pub struct WeaponAttack {
     /// `wp->is_hitlag_victim` (Link's Boomerang): the hit makes its spark,
     /// in the colour of this player (`wp->player`).
     pub is_hitlag_victim: Option<u8>,
+    /// `wp_attack_coll->fgm_id` (`WPAttributes::sfx`), which
+    /// `ftMainUpdateDamageStatWeapon` plays for every hurtbox it touches.
+    /// `None` for a host stand-in with no weapon.
+    pub fgm_id: Option<u16>,
 }
 
 /// `ftMainSearchHitWeapon`'s shield and damage halves for one weapon hitbox
@@ -1445,9 +1453,19 @@ fn weapon_hit_inner(victim: &mut Fighter, w: WeaponAttack, shield_only: bool) ->
             },
         );
         victim.record_combo_damage(w.owner, victim.hits.damage_queue - damage_before);
+        play_weapon_fgm(w.fgm_id);
         return WeaponContact::Hurt(true);
     }
+    play_weapon_fgm(w.fgm_id);
     WeaponContact::Hurt(false)
+}
+
+/// `ftMainUpdateDamageStatWeapon`'s last line: `func_800269C0_275C0(
+/// wp_attack_coll->fgm_id)`.
+fn play_weapon_fgm(fgm_id: Option<u16>) {
+    if let Some(id) = fgm_id {
+        crate::sound::play_fgm(id);
+    }
 }
 
 /// Queues a hit that bypasses collision (a scripted or held-object hit), as
@@ -1718,9 +1736,14 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         } else {
             match f.hits.damage_kind {
                 DamageKind::None => {}
+                // `ftParamStopVoiceRunProcDamage` before both
+                // (`goto_damage_status` stops the voice itself).
                 DamageKind::Status => goto_damage_status(f),
                 DamageKind::ColAnim => set_damage_colanim(f),
-                DamageKind::Catch => update_catch_resist(f),
+                DamageKind::Catch => {
+                    crate::fighter_sound::stop_voice(f);
+                    update_catch_resist(f)
+                }
                 DamageKind::Default => update_main(f, partner),
             }
         }
@@ -1736,6 +1759,7 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         damage = f.hits.shield_damage;
     } else if f.hits.attack_shield_push != 0 {
         if f.hits.attack_rebound != 0.0 && f.grab.catch.is_none() && f.grab.capture.is_none() {
+            crate::fighter_sound::stop_voice(f);
             crate::reaction::set_rebound_wait(f, f.hits.attack_rebound, f.hits.hit_lr);
         }
         damage = f.hits.attack_shield_push;
@@ -1758,6 +1782,9 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
                 crate::fighter::Facing::Left
             };
             status::set_fox_special_lw_hit(f);
+        } else if base_kind(f.kind) == FighterKind::Ness {
+            // `nFTSpecialCollKindNessReflector`: the bat's reflect.
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMBatHit);
         }
     } else if f.hits.absorb_lr != 0.0 {
         crate::ness::proc_absorb(f, f.hits.absorb_lr);
@@ -1808,12 +1835,16 @@ fn update_catch_resist(f: &mut Fighter) {
             f.hits.damage_angle,
             f.hits.damage_lr,
         );
+        crate::fighter_sound::stop_voice(f);
         crate::grab::set_donkey_throwf_damage(f, kb, angle, lr);
     }
 }
 
-/// `ftCommonDamageGotoDamageStatus`.
+/// `ftCommonDamageGotoDamageStatus`. Every caller in the source runs
+/// `ftParamStopVoiceRunProcDamage` on the fighter first; that stop is here.
 pub fn goto_damage_status(f: &mut Fighter) {
+    crate::fighter_sound::stop_voice(f);
+
     // `is_cliff_hold`: set by the ledge-hang statuses.
     if matches!(
         f.status.status,

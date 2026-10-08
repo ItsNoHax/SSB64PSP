@@ -126,6 +126,9 @@ fn emit_motions(w: &mut String, label: &str, motions: &[Motion]) {
 fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
     let up = f.name.to_uppercase();
     let (mut floats, mut joints, mut light) = ([0f32; 9], [0i32; 5], 0i32);
+    // `dead_fgm_ids[2]`, `deadup_sfx`, `damage_sfx`, `smash_sfx[3]`,
+    // `heavyget_sfx`, and the `is_have_*` bitfield word.
+    let (mut sounds, mut have) = ([0u16; 8], 0u32);
     if let Some(rom) = rom {
         let main = rom.file(f.main_file)?;
         let at = f.attributes as usize;
@@ -142,7 +145,27 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
             *j = word(0x2A4 + 4 * i)? as i32;
         }
         light = word(0x33C)? as i32;
+        // `FTAttributes` from `dead_fgm_ids` (0xB4, after `cliffcatch_coll`)
+        // to `heavyget_sfx` (0xE8, after `item_pickup` and the two throw
+        // scales); `is_have_attack11..is_have_voice` is the word at 0x100.
+        let half = |off: usize| -> Result<u16> {
+            let w = word(off & !3)?;
+            Ok(if off & 2 == 0 {
+                (w >> 16) as u16
+            } else {
+                w as u16
+            })
+        };
+        for (i, off) in [0xB4, 0xB6, 0xB8, 0xBA, 0xBC, 0xBE, 0xC0, 0xE8]
+            .into_iter()
+            .enumerate()
+        {
+            sounds[i] = half(off)?;
+        }
+        have = word(0x100)?;
     }
+    // `is_have_voice`: the 22nd one-bit field, MSB first.
+    let is_have_voice = have & (1 << (31 - 21)) != 0;
     // Master Hand's -1: no item-light joint.
     let light = if light < 0 {
         "u8::MAX".to_string()
@@ -158,7 +181,10 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
          \x20   jostle_width: {},\n    jostle_x: {},\n\
          \x20   hit_detect_range: [{}, {}, {}],\n\
          \x20   effect_joint_ids: [{}],\n\
-         \x20   joint_itemlight_id: {light},\n}};\n\n",
+         \x20   joint_itemlight_id: {light},\n\
+         \x20   dead_fgm_ids: [{}, {}],\n    deadup_sfx: {},\n\
+         \x20   damage_sfx: {},\n    smash_sfx: [{}, {}, {}],\n\
+         \x20   heavyget_sfx: {},\n    is_have_voice: {is_have_voice},\n}};\n\n",
         f32_lit(floats[0]),
         f32_lit(floats[1]),
         f32_lit(floats[2]),
@@ -169,6 +195,14 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
         f32_lit(floats[7]),
         f32_lit(floats[8]),
         joints.join(", "),
+        sounds[0],
+        sounds[1],
+        sounds[2],
+        sounds[3],
+        sounds[4],
+        sounds[5],
+        sounds[6],
+        sounds[7],
     );
     Ok(())
 }

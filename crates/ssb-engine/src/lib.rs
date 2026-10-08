@@ -12,6 +12,9 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+// The audio system allocates its pools once at boot (D-049).
+extern crate alloc;
+
 pub mod audio;
 pub mod coord;
 pub mod input;

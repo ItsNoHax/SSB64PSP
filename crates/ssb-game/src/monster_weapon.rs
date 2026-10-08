@@ -649,7 +649,9 @@ impl MonsterShot {
                 lr: self.lr,
             }),
             // No `proc_absorb`.
+            // `it{Hitokage,Lizardon}WeaponFlameProcHit`.
             ShotKind::HitokageFlame | ShotKind::LizardonFlame if proc != ShotProc::Absorb => {
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
                 fx.push(Fx::SparkleWhite(pos));
             }
             ShotKind::NyarsCoin => fx.push(Fx::DamageCoin(pos)),
@@ -657,7 +659,11 @@ impl MonsterShot {
                 pos,
                 size: self.damage,
             }),
-            ShotKind::FireFlower if proc != ShotProc::Absorb => fx.push(Fx::SparkleWhite(pos)),
+            // `itFFlowerWeaponFlameProcHit`.
+            ShotKind::FireFlower if proc != ShotProc::Absorb => {
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
+                fx.push(Fx::SparkleWhite(pos));
+            }
             ShotKind::StarmieSwift | ShotKind::StarRod => fx.push(Fx::StarSplash {
                 pos,
                 lr: self.lr as i8,
@@ -867,10 +873,12 @@ impl MonsterShot {
                 if let Some(hit) = map_contact(surfaces(), prev, self.position, c) {
                     self.position = hit.position;
                     if self.kind == ShotKind::StarRod {
+                        // `itStarRodWeaponStarProcMap`.
                         fx.push(Fx::StarSplash {
                             pos: self.position,
                             lr: self.lr as i8,
                         });
+                        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMStarMapCollide);
                     } else {
                         fx.push(Fx::DustExpandSmall(self.position));
                     }
@@ -906,6 +914,7 @@ impl MonsterShot {
         self.velocity.x *= ROCK_COLLIDE_MUL_VEL;
         self.velocity.y *= ROCK_COLLIDE_MUL_VEL;
         self.floor_line = Some(hit.line);
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMIwarkRockMake);
         let pos = self.position + Vec3::new(0.0, ROCK_COLLIDE_ADD_Y, 0.0);
         fx.push(Fx::DustLight {
             pos,

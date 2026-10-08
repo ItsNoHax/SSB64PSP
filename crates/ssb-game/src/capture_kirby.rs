@@ -91,6 +91,8 @@ pub fn is_intangible(f: &Fighter) -> bool {
 /// `ftCommonCaptureKirbyProcCapture`, run on the victim once Kirby's
 /// snapshot has been delivered.
 pub fn capture(f: &mut Fighter, catcher_port: u8, holder: Holder) {
+    // `ftParamStopVoiceRunProcDamage`.
+    crate::fighter_sound::stop_voice(f);
     grab::drop_own_catch(f);
     f.grab.capture = Some(catcher_port);
     f.grab.holder = Some(holder);

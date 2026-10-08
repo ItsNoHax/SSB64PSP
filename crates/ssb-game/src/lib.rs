@@ -13,6 +13,8 @@ extern crate alloc;
 
 pub mod appear;
 pub mod attack;
+#[cfg(test)]
+mod audio_battle_tests;
 pub mod auto_demo;
 pub mod backup;
 pub mod battle;
@@ -33,6 +35,7 @@ pub mod effect;
 pub mod explain;
 pub mod fighter;
 pub mod fighter_select;
+pub mod fighter_sound;
 pub mod fteffect;
 pub mod grab;
 pub mod ground;
@@ -40,6 +43,7 @@ pub mod hazard;
 pub mod hud;
 pub mod hurtbox;
 pub mod item;
+pub mod item_sounds;
 pub mod item_throw;
 pub mod item_use;
 #[cfg(test)]
@@ -55,6 +59,8 @@ pub mod menu;
 pub mod modelpart;
 pub mod monster_weapon;
 pub mod motion;
+pub mod music;
+
 pub mod ness;
 pub mod opening;
 pub mod particle;
@@ -65,6 +71,7 @@ pub mod player_interface;
 pub mod players_1p;
 pub mod players_1p_bonus;
 pub mod players_vs;
+pub mod public;
 pub mod purin;
 pub mod reaction;
 pub mod results;

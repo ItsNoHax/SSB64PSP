@@ -327,8 +327,18 @@ fn update_damage_stat_ground(f: &mut Fighter, attack: GroundAttack, kind: i32, h
         combat::push_log(f, entry);
     }
     match kind {
-        ENV_ACID => f.hazard.acid_wait = ACID_WAIT,
-        4..=9 => f.hazard.damagefloor_wait = DAMAGEFLOOR_WAIT,
+        ENV_ACID => {
+            f.hazard.acid_wait = ACID_WAIT;
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMFloorDamageFire);
+        }
+        4..=9 => {
+            f.hazard.damagefloor_wait = DAMAGEFLOOR_WAIT;
+            crate::sound::play_fgm(if kind == 7 {
+                crate::sound::id::nSYAudioFGMShockML
+            } else {
+                crate::sound::id::nSYAudioFGMFloorDamageFire
+            });
+        }
         _ => {}
     }
 }
@@ -356,17 +366,23 @@ fn enter(f: &mut Fighter, status: Status) {
 
 /// `ftCommonTwisterSetStatus` @ 0x80143BC4.
 pub fn set_twister(f: &mut Fighter) {
+    // `ftParamStopVoiceRunProcDamage`.
+    crate::fighter_sound::stop_voice(f);
     if f.is_grounded() {
         f.become_airborne();
     }
     enter(f, Status::Twister);
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMHyruleTwisterTrapped);
 }
 
 /// `ftCommonTaruCannSetStatus` @ 0x80143F30.
 pub fn set_tarucann(f: &mut Fighter) {
+    // `ftParamStopVoiceRunProcDamage`.
+    crate::fighter_sound::stop_voice(f);
     enter(f, Status::TaruCann);
     crate::hurtbox::set_hit_status_all(f, HitStatus::Intangible);
     f.is_invisible = true;
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMJungleTaruCannEnter);
 }
 
 /// `proc_update` and `proc_interrupt` of both statuses. Returns `false` when
@@ -386,6 +402,9 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
         Status::TaruCann => {
             if f.hazard.shoot_wait != 0 {
                 f.hazard.shoot_wait -= 1;
+                if f.hazard.shoot_wait == TARUCANN_SHOOT_WAIT / 2 {
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMJungleTaruCannShoot);
+                }
                 if f.hazard.shoot_wait == 0 {
                     if let Some(t) = throw {
                         shoot_tarucann(f, t);
@@ -428,7 +447,7 @@ fn shoot_twister(f: &mut Fighter, t: HazardThrow) {
     } else {
         t.damage
     };
-    crate::attack::init_damage_vars_full(
+    crate::attack::init_damage_vars_sfx(
         f,
         None,
         damage,
@@ -437,6 +456,7 @@ fn shoot_twister(f: &mut Fighter, t: HazardThrow) {
         f.facing.sign(),
         0,
         Element::from_raw(t.element as u32),
+        true,
         true,
     );
     crate::spgame::live::hit(
@@ -471,7 +491,7 @@ fn shoot_tarucann(f: &mut Fighter, t: HazardThrow) {
     let degrees = ((f.hazard.barrel_rotate / core::f32::consts::PI) * 180.0) as i32;
     let mut angle = degrees * -(lr as i32) + 90;
     angle -= (angle / 360) * 360;
-    crate::attack::init_damage_vars_full(
+    crate::attack::init_damage_vars_sfx(
         f,
         Some(AnyStatus::Common(Status::DamageFlyRoll)),
         t.damage,
@@ -481,6 +501,7 @@ fn shoot_tarucann(f: &mut Fighter, t: HazardThrow) {
         0,
         Element::from_raw(t.element as u32),
         false,
+        true,
     );
     crate::spgame::live::hit(
         f,

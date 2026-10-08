@@ -77,6 +77,7 @@ fn ray_gun_tail_shield_precedes_head_hurtbox() {
         can_shield: true,
         owner: Some(0),
         is_hitlag_victim: None,
+        fgm_id: None,
     };
     assert!(matches!(
         crate::combat::weapon_hit_pair(&mut target, attack, Some((tail, tail))),

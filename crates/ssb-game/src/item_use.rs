@@ -242,6 +242,15 @@ pub fn update(f: &mut Fighter) -> bool {
         | Status::StarRodSwingDash
             if f.items.held.is_some() =>
         {
+            // The swing scripts' `SetFlag1` carries the swing sound.
+            let sfx = f.motion_script.flags[1];
+            if sfx != 0 {
+                if f.items.held_multi != 0 {
+                    crate::sound::play_fgm(sfx as u16);
+                } else {
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMStarRodEmpty);
+                }
+            }
             f.motion_script.flags[1] = 0;
             let flag = f.motion_script.flags[0];
             if flag != 0 {
@@ -329,6 +338,7 @@ pub fn accessory(f: &mut Fighter) {
                         false,
                         false,
                     );
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMLGunShoot);
                 } else {
                     fx(
                         f,
@@ -339,6 +349,7 @@ pub fn accessory(f: &mut Fighter) {
                         true,
                         true,
                     );
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMLGunEmpty);
                 }
                 f.motion_script.flags[0] = 0;
             }
@@ -375,6 +386,7 @@ fn flower(f: &mut Fighter) {
                     true,
                     true,
                 );
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMFireFlowerBurn);
             } else {
                 fx(
                     f,
@@ -385,6 +397,7 @@ fn flower(f: &mut Fighter) {
                     false,
                     false,
                 );
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMBurnE);
             }
         }
         f.item_use.flame_wait -= 1;
@@ -479,6 +492,9 @@ pub fn tick_hammer(f: &mut Fighter) {
     if f.item_use.hammer_tics == 0 {
         f.items.request(ItemRequest::Destroy);
         f.items.held = None;
+        // `ftHammerProcUpdate`: `ftParamTryUpdateItemMusic` after the
+        // Hammer is destroyed.
+        crate::music::request_update();
         if is_hammer(f.status.status) {
             status::set_wait_or_fall(f);
         }

@@ -19,6 +19,10 @@ pub struct BonusStage {
     /// pause menu offers L: RETRY and the time passed shows top right.
     pub practice: bool,
     pub timer: PracticeTimer,
+    /// The course's best time when practice already completed it
+    /// (`spgame_records[bonus_fkind].bonus*_task_count ==
+    /// SCBATTLE_BONUSGAME_TASK_MAX`): beating it is a new record.
+    pub record_time: Option<u32>,
 }
 
 /// `sc1PBonusStageWriteBackup` (unless the battle was reset): a fighter's
@@ -201,6 +205,19 @@ impl BonusStage {
             retry_requested: false,
             practice: false,
             timer: PracticeTimer::default(),
+            record_time: None,
+        }
+    }
+
+    /// The voice of the completed course
+    /// (`ifCommonAnnounceCompleteInitInterface`'s argument): a new record
+    /// in practice, else "Complete".
+    fn complete_voice(&self, battle: &Battle) -> u16 {
+        use crate::sound::id::*;
+        if self.practice && self.record_time.is_some_and(|t| battle.time_passed < t) {
+            nSYAudioVoiceAnnounceNewRecord
+        } else {
+            nSYAudioVoiceAnnounceComplete
         }
     }
 
@@ -230,8 +247,10 @@ impl BonusStage {
             .position(|p| p.is_some_and(|p| p.group == group && !p.boarded))?;
         self.platforms[i].as_mut().unwrap().boarded = true;
         self.tasks_remain -= 1;
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMBonus2PlatformLanding);
         if self.tasks_remain == 0 {
-            battle.announce_complete();
+            battle.announce_complete(self.complete_voice(battle));
+            battle.add_end_sound(crate::sound::id::nSYAudioFGMBonus2PlatformLanding);
         }
         Some(i)
     }
@@ -269,8 +288,10 @@ impl BonusStage {
         assert!(broken <= self.tasks_remain);
         self.tasks_remain -= broken;
         if self.tasks_remain == 0 {
-            battle.announce_complete();
+            battle.announce_complete(self.complete_voice(battle));
+            battle.add_end_sound(crate::sound::id::nSYAudioFGMBonus1TargetBreak);
         }
+
         fell
     }
 

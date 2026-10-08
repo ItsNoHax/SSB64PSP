@@ -499,13 +499,14 @@ pub fn on_floor_lost(f: &mut Fighter) {
 }
 
 /// `ftCommonLightGetProcDamage`: a held Tomato or Heart heals and is
-/// destroyed. The Hammer's timer and music are not ported.
+/// destroyed; the Hammer starts its timer and its music.
 pub fn light_get_proc_damage(f: &mut Fighter) {
     let Some(held) = f.items.held else {
         return;
     };
     if crate::item_use::holds_hammer(f) {
         f.item_use.hammer_tics = 720;
+        crate::music::try_play_item_music(crate::sound::id::nSYAudioBGMHammer);
         return;
     }
     if held.ty != ItemType::Consume {

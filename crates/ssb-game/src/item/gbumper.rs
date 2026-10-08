@@ -23,6 +23,7 @@ pub const HIT_ANIM_LENGTH: u16 = 3;
 /// bumper angle 362 with 50 scale and 200 set knockback, a throw item that
 /// rehits fighters and can be shielded.
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::GBUMPER,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,

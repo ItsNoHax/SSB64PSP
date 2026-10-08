@@ -110,6 +110,7 @@ where
     if let Some(f) = result.moved.floor {
         item.mask_curr |= MASK_FLOOR;
         item.floor = Some(f);
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMItemMapCollide);
         // The landing stops the item's spin and squares its root.
         item.spin_step = 0.0;
         item.rotate_z = 0.0;
@@ -140,6 +141,7 @@ where
         flags: hit.flags,
         normal: hit.normal,
     });
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMItemMapCollide);
     item.spin_step = 0.0;
     item.rotate_z = 0.0;
     true
@@ -163,7 +165,9 @@ fn scale(v: &mut Vec3, s: f32) {
 }
 
 /// `itMapCheckCollideAllRebound`: a surface first touched this frame that
-/// the item was moving into turns its velocity, scaled by `mod_vel`.
+/// the item was moving into turns its velocity, scaled by `mod_vel`. Each
+/// wall or floor it turns from plays `nSYAudioFGMItemMapCollide`; a ceiling
+/// is silent.
 pub(crate) fn check_collide_all_rebound(item: &mut Item, check: u16, mod_vel: f32) -> bool {
     let fresh = (item.mask_prev ^ item.mask_curr) & item.mask_curr & MASK_MAIN;
     let mut hit = false;
@@ -177,6 +181,9 @@ pub(crate) fn check_collide_all_rebound(item: &mut Item, check: u16, mod_vel: f3
         if fresh & check & mask != 0 && dot(item.vel_air, normal) < 0.0 {
             reflect(&mut item.vel_air, normal);
             hit = true;
+            if mask != MASK_CEIL {
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMItemMapCollide);
+            }
         }
     }
     if hit {
