@@ -9,6 +9,16 @@
 
 mod api;
 pub mod data;
+pub mod csplayer;
+pub mod cseq;
+pub mod dsp;
+pub mod evtq;
+pub mod fgm;
+pub mod osc;
+pub mod reverb;
+pub mod synth;
+#[cfg(test)]
+pub(crate) mod testdata;
 mod shared;
 mod system;
 

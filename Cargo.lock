@@ -31,6 +31,9 @@ version = "0.1.0"
 [[package]]
 name = "ssb-engine"
 version = "0.1.0"
+dependencies = [
+ "ssb-rom",
+]
 
 [[package]]
 name = "ssb-game"

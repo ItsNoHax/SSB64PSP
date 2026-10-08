@@ -140,7 +140,7 @@ impl<'a> Section<'a> {
 /// Reads a big-endian `s16` table.
 pub fn be_i16s<const N: usize>(d: &[u8]) -> [i16; N] {
     let mut out = [0i16; N];
-    for (o, b) in out.iter_mut().zip(d.chunks_exact(2)) {
+    for (o, b) in out.iter_mut().zip(d.as_chunks::<2>().0) {
         *o = i16::from_be_bytes([b[0], b[1]]);
     }
     out
@@ -149,7 +149,7 @@ pub fn be_i16s<const N: usize>(d: &[u8]) -> [i16; N] {
 /// Reads a big-endian `s32` table.
 pub fn be_i32s<const N: usize>(d: &[u8]) -> [i32; N] {
     let mut out = [0i32; N];
-    for (o, b) in out.iter_mut().zip(d.chunks_exact(4)) {
+    for (o, b) in out.iter_mut().zip(d.as_chunks::<4>().0) {
         *o = i32::from_be_bytes([b[0], b[1], b[2], b[3]]);
     }
     out
@@ -505,4 +505,94 @@ pub fn fgm_unk_count(file: &[u8]) -> Result<usize, ParseError> {
         return Err(ParseError("fgm.unk truncated"));
     }
     Ok(count)
+}
+
+// --- Everything the engine reads ----------------------------------------------
+
+/// The parsed section: both banks with their wave data, the sequences, the
+/// FGM files and the constant tables. Built once by `AudioSystem::new`.
+pub struct AudioData {
+    /// `B1_sounds1`: the sequence player's bank. [`WaveRef::bank`] 0.
+    pub music: Bank,
+    pub music_tbl: &'static [u8],
+    /// `B1_sounds2`: the FGM engine's sounds. [`WaveRef::bank`] 1.
+    pub sfx: Bank,
+    pub sfx_tbl: &'static [u8],
+    pub sbk: &'static [u8],
+    pub seqs: Vec<SeqEntry>,
+    /// `fgm.unk` records (16 bytes each, from file offset 4).
+    pub fgm_unk: &'static [u8],
+    pub fgm_unk_count: usize,
+    pub fgm_tbl: &'static [u8],
+    pub fgm_tbl_offsets: Vec<u32>,
+    pub fgm_ucd: &'static [u8],
+    pub fgm_ucd_offsets: Vec<u32>,
+    /// `n_aspMain`'s 64 x 4 resample filter.
+    pub resample: [[i16; 4]; 64],
+    /// `n_eqpower`, plus index 128: `SET_FXAMT_ALT` with `moredata` 0 reads
+    /// one past the table, the word after it in RDRAM, which is 0.
+    pub eqpower: [i16; 129],
+    pub custom_fx: [i32; 114],
+    pub presets: [i32; 100],
+    pub sin_table: [u16; 2048],
+}
+
+/// A wave table in one of the two banks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WaveRef {
+    pub bank: u8,
+    pub index: u16,
+}
+
+impl AudioData {
+    pub fn new(section: &'static [u8]) -> Result<Self, ParseError> {
+        let s = Section::open(section)?;
+        let music_tbl = s.part(Part::MusicTbl);
+        let sfx_tbl = s.part(Part::SfxTbl);
+        let mut resample = [[0i16; 4]; 64];
+        let flat: [i16; 256] = be_i16s(s.part(Part::ResampleTable));
+        for (row, c) in resample.iter_mut().zip(flat.as_chunks::<4>().0) {
+            *row = *c;
+        }
+        let mut eqpower = [0i16; 129];
+        let eq: [i16; 128] = be_i16s(s.part(Part::EqPower));
+        eqpower[..128].copy_from_slice(&eq);
+        let mut sin_table = [0u16; 2048];
+        for (o, b) in sin_table
+            .iter_mut()
+            .zip(s.part(Part::SinTable).as_chunks::<2>().0)
+        {
+            *o = u16::from_be_bytes([b[0], b[1]]);
+        }
+        Ok(Self {
+            music: Bank::parse(s.part(Part::MusicCtl), music_tbl.len())?,
+            music_tbl,
+            sfx: Bank::parse(s.part(Part::SfxCtl), sfx_tbl.len())?,
+            sfx_tbl,
+            sbk: s.part(Part::Sbk),
+            seqs: parse_sbk(s.part(Part::Sbk))?,
+            fgm_unk: s.part(Part::FgmUnk),
+            fgm_unk_count: fgm_unk_count(s.part(Part::FgmUnk))?,
+            fgm_tbl: s.part(Part::FgmTbl),
+            fgm_tbl_offsets: parse_package(s.part(Part::FgmTbl))?,
+            fgm_ucd: s.part(Part::FgmUcd),
+            fgm_ucd_offsets: parse_package(s.part(Part::FgmUcd))?,
+            resample,
+            eqpower,
+            custom_fx: be_i32s(s.part(Part::CustomFx)),
+            presets: be_i32s(s.part(Part::Presets)),
+            sin_table,
+        })
+    }
+
+    /// The bank and wave data a [`WaveRef`] names.
+    #[inline]
+    pub fn wave(&self, w: WaveRef) -> (&WaveTable, &Bank, &'static [u8]) {
+        let (bank, tbl) = if w.bank == 0 {
+            (&self.music, self.music_tbl)
+        } else {
+            (&self.sfx, self.sfx_tbl)
+        };
+        (&bank.wavetables[w.index as usize], bank, tbl)
+    }
 }
