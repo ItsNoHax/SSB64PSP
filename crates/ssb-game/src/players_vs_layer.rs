@@ -639,6 +639,9 @@ impl PlayersVs {
         if self.slots[p].pkind == PlayerKind::Not {
             if v.door_offset < DOOR_CLOSED {
                 v.door_offset = (v.door_offset + DOOR_STEP).min(DOOR_CLOSED);
+                if v.door_offset == DOOR_CLOSED {
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMPlayerSlotClose);
+                }
             }
         } else if v.door_offset > 0 {
             v.door_offset = (v.door_offset - DOOR_STEP).max(0);

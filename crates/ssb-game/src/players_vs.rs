@@ -7,8 +7,9 @@
 //! (`mnPlayersVSSetSceneData`). The display GObjs' state (portraits,
 //! gates and shutters, names, levels, flashes, blinking, puck glow, the
 //! ready banner and the fighters' turn and status) is [`layer`]'s (RE-411);
-//! the logic updates it at the source's call sites. Drawing, the spotlight
-//! and sounds stay with the host.
+//! the logic updates it at the source's call sites, as it makes the
+//! scene's sounds and announcer voices. Drawing and the spotlight stay
+//! with the host.
 //!
 //! One [`PlayersVs::tick`] runs the scene's processes in the original
 //! order: `mnPlayersVSFuncRun` (the scene GObj's `func_run`), then the
@@ -30,7 +31,6 @@
 //!
 //! Not ported:
 //! - The spotlight (`mnPlayersVSMakeSpotlight`), a 3D model.
-//! - `func_800266A0_272A0` and every sound or announcer voice.
 
 use ssb_engine::input::{ControllerState, N64Buttons};
 
@@ -38,10 +38,11 @@ use crate::battle::{Rule, TIMELIMIT_INFINITE};
 use crate::costume::{costume_common_id, costume_team_id};
 use crate::fighter::FighterKind;
 use crate::fighter_select::{
-    is_locked, portrait_center, portrait_edge_velocity, puck_fighter_kind, CursorStatus,
-    PUCK_HEIGHT, PUCK_WIDTH,
+    announce_fighter, is_locked, portrait_center, portrait_edge_velocity, puck_fighter_kind,
+    CursorStatus, PUCK_HEIGHT, PUCK_WIDTH,
 };
 use crate::item::normal::{Appearance, Switches};
+use crate::sound::{self, id, FgmHandle};
 use crate::stage_select::{gkind, UNLOCK_MASK_INISHIE};
 
 /// `GMCOMMON_PLAYERS_MAX`.
@@ -247,6 +248,9 @@ pub struct SceneContext {
     /// `gSCManagerSceneData.gkind`: the last stage, which a random stage
     /// pick avoids.
     pub gkind: u8,
+    /// `gSCManagerSceneData.scene_prev == nSCKindMaps`: back from the
+    /// stage select, the select's BGM plays on.
+    pub from_maps: bool,
 }
 
 /// One port's input this tick.
@@ -290,6 +294,8 @@ pub struct DrawKey {
 /// One `MNPlayersSlotVS`, the fields the logic reads.
 #[derive(Clone, Debug, Default)]
 pub struct Slot {
+    /// `p_sfx`: the cursor's last fighter-name voice, stopped by the next.
+    pub p_sfx: Option<FgmHandle>,
     pub pkind: PlayerKind,
     /// `fkind`; `None` is `nFTKindNull`.
     pub fkind: Option<FighterKind>,
@@ -491,6 +497,14 @@ impl PlayersVs {
             select.init_slot(p);
         }
         select.v_init();
+        if !scene.from_maps {
+            sound::play_bgm(0, id::nSYAudioBGMBattleSelect);
+        }
+        sound::play_fgm(if select.is_team_battle {
+            id::nSYAudioVoiceAnnounceTeamBattle
+        } else {
+            id::nSYAudioVoiceAnnounceFreeForAll
+        });
         select
     }
 
@@ -794,6 +808,7 @@ impl PlayersVs {
     fn back_to_vs_mode(&mut self) {
         self.leave(Outcome::VsMode);
         self.pause_slot_processes();
+        sound::stop_bgm_all();
     }
 
     /// One frame. `pads` are the four ports' input; `time_byte` stands for
@@ -872,11 +887,16 @@ impl PlayersVs {
                 .iter()
                 .zip(self.connected)
                 .any(|(pad, connected)| connected && pad.taps.contains(N64Buttons::START));
-            if start && self.total_tics > START_TICS && self.is_ready() {
-                self.set_idle_player_not_all();
-                self.start_proceed_wait = START_PROCEED_WAIT;
-                self.is_start = true;
-                self.pause_slot_processes();
+            if start && self.total_tics > START_TICS {
+                if self.is_ready() {
+                    sound::play_fgm(id::nSYAudioVoicePublicCheer);
+                    self.set_idle_player_not_all();
+                    self.start_proceed_wait = START_PROCEED_WAIT;
+                    self.is_start = true;
+                    self.pause_slot_processes();
+                } else {
+                    sound::play_fgm(id::nSYAudioFGMMenuDenied);
+                }
             }
             for p in 0..PLAYERS {
                 self.update_gate(p, time_byte);
@@ -1086,14 +1106,21 @@ impl PlayersVs {
         };
         self.refresh_player_kind(sel, time_byte);
         match self.slots[sel].pkind {
-            PlayerKind::Man => self.slots[sel].holder = Some(sel),
+            PlayerKind::Man => {
+                self.slots[sel].holder = Some(sel);
+                sound::play_fgm(id::nSYAudioFGMPlayerSlotWhoosh);
+            }
             PlayerKind::Com => {
                 self.slots[sel].holder = None;
+                self.announce_fighter(p, sel);
                 self.v_update_handicap_level(sel);
                 self.v_make_portrait_flash(sel);
             }
-            PlayerKind::Not => {}
+            PlayerKind::Not => {
+                sound::play_fgm(id::nSYAudioFGMPlayerSlotWhoosh);
+            }
         }
+        sound::play_fgm(id::nSYAudioFGMTitlePressStart);
         true
     }
 
@@ -1132,6 +1159,7 @@ impl PlayersVs {
                 } else {
                     self.stock_value += 1;
                 }
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             } else if time_arrow_l_in_range(c) {
                 if self.rule == Rule::Time {
                     self.time_value = prev_time_value(self.time_value);
@@ -1140,10 +1168,12 @@ impl PlayersVs {
                 } else {
                     self.stock_value -= 1;
                 }
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             } else if game_mode_in_range(c) {
                 self.update_game_mode();
             } else if back_in_range(c) {
                 self.back_to_vs_mode();
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             } else if !self.check_team_select_all(p) {
                 self.check_handicap_arrow_all(p);
             }
@@ -1181,6 +1211,13 @@ impl PlayersVs {
     /// every shown fighter's costume follows.
     fn update_game_mode(&mut self) {
         self.is_team_battle = !self.is_team_battle;
+        sound::stop_all_fgm();
+        sound::play_fgm(id::nSYAudioFGMMenuScroll2);
+        sound::play_fgm(if self.is_team_battle {
+            id::nSYAudioVoiceAnnounceTeamBattle
+        } else {
+            id::nSYAudioVoiceAnnounceFreeForAll
+        });
         if self.is_team_battle {
             for s in self.slots.iter_mut().filter(|s| s.fkind.is_some()) {
                 s.shade = 4;
@@ -1222,6 +1259,7 @@ impl PlayersVs {
                     s.costume = costume_team_id(kind, s.team);
                     self.slots[i].shade = self.shade(i);
                 }
+                sound::play_fgm(id::nSYAudioFGMTitlePressStart);
                 return true;
             }
         }
@@ -1248,6 +1286,7 @@ impl PlayersVs {
             };
             if handicap_arrow_r_in_range(c, i) {
                 if *value < VALUE_MAX {
+                    sound::play_fgm(id::nSYAudioFGMMenuScroll2);
                     *value += 1;
                     self.v_make_handicap_value(i);
                 }
@@ -1255,6 +1294,7 @@ impl PlayersVs {
             }
             if handicap_arrow_l_in_range(c, i) {
                 if *value > VALUE_MIN {
+                    sound::play_fgm(id::nSYAudioFGMMenuScroll2);
                     *value -= 1;
                     self.v_make_handicap_value(i);
                 }
@@ -1322,7 +1362,18 @@ impl PlayersVs {
             }
             // `held_player` -1 with a grab cursor would index out of
             // bounds in the source; it reads as no fighter here.
-            _ => false,
+            _ => {
+                sound::play_fgm(id::nSYAudioFGMMenuDenied);
+                false
+            }
+        }
+    }
+
+    /// `mnPlayersVSAnnounceFighter`: `p`'s cursor announces `slot`'s
+    /// fighter.
+    fn announce_fighter(&mut self, p: usize, slot: usize) {
+        if let Some(kind) = self.slots[slot].fkind {
+            self.slots[p].p_sfx = announce_fighter(self.slots[p].p_sfx, kind);
         }
     }
 
@@ -1339,6 +1390,7 @@ impl PlayersVs {
             };
             let costume = costume_common_id(kind, button);
             if self.costume_used(kind, held, costume) {
+                sound::play_fgm(id::nSYAudioFGMMenuDenied);
                 return;
             }
             self.slots[held].shade = self.shade(held);
@@ -1350,6 +1402,7 @@ impl PlayersVs {
         self.slots[p].cursor_status = CursorStatus::Hover;
         self.slots[p].held = None;
         self.slots[held].is_fighter_selected = true;
+        self.announce_fighter(p, held);
         if self.handicap != Handicap::Off || self.slots[held].pkind == PlayerKind::Com {
             self.v_update_handicap_level(held);
         }
@@ -1435,6 +1488,7 @@ impl PlayersVs {
         let (px, py) = self.slots[held].puck;
         self.slots[p].cursor_pickup = (px - 11.0, py - -14.0);
         self.slots[p].is_cursor_adjusting = true;
+        sound::play_fgm(id::nSYAudioFGMSamusDash);
         self.v_destroy_handicap_level(held);
         self.v_destroy_portrait_flash(held);
         self.v_update_name_and_emblem(held);
@@ -1492,9 +1546,12 @@ impl PlayersVs {
             return;
         };
         let costume = costume_common_id(kind, button);
-        if !self.costume_used(kind, p, costume) {
+        if self.costume_used(kind, p, costume) {
+            sound::play_fgm(id::nSYAudioFGMMenuDenied);
+        } else {
             self.slots[p].costume = costume;
             self.slots[p].shade = self.shade(p);
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
         }
     }
 

@@ -4,6 +4,7 @@
 //! the random pick and the idle return to the title. The previews, names
 //! and sound effects are presentation and stay with the host.
 
+use crate::sound::{self, id};
 use ssb_engine::input::{ControllerState, N64Buttons};
 
 /// `nGRKind` values of the nine VS stages (`gr/grdef.h`).
@@ -168,6 +169,7 @@ impl StageSelect {
             self.scroll_wait = 0;
         }
         if taps.0 & (N64Buttons::A | N64Buttons::START) != 0 {
+            sound::play_fgm(id::nSYAudioFGMStageSelect);
             return Some(Outcome::Confirm {
                 gkind: slot_gkind(self.cursor_slot),
             });
@@ -181,6 +183,7 @@ impl StageSelect {
         let stick = i32::from;
         if hold & UP != 0 || y > STICK_RANGE {
             if self.cursor_slot >= 5 && !self.is_locked(slot_gkind(self.cursor_slot - 5)) {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
                 self.cursor_slot -= 5;
             }
             self.scroll_wait = if hold & UP != 0 {
@@ -192,6 +195,7 @@ impl StageSelect {
         }
         if hold & DOWN != 0 || y < -STICK_RANGE {
             if self.cursor_slot < 5 && !self.is_locked(slot_gkind(self.cursor_slot + 5)) {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
                 self.cursor_slot += 5;
             }
             self.scroll_wait = if hold & DOWN != 0 {
@@ -208,6 +212,7 @@ impl StageSelect {
                 5 => 9,
                 s => s - 1,
             };
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.scroll_wait = if hold & LEFT != 0 {
                 BUTTON_SCROLL_WAIT
             } else {
@@ -223,6 +228,7 @@ impl StageSelect {
                 9 => 5,
                 s => s + 1,
             };
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.scroll_wait = if hold & RIGHT != 0 {
                 BUTTON_SCROLL_WAIT
             } else {
