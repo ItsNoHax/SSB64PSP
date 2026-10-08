@@ -71,3 +71,61 @@ fn a_reset_is_no_contest() {
     }
     assert!(r.tick(true));
 }
+
+#[test]
+fn the_winner_is_announced_then_the_fanfare_then_the_results_bgm() {
+    use crate::sound::{id, testing::*};
+    let rec = Recorder::install();
+    let kinds = [Some(FighterKind::Fox), Some(FighterKind::Kirby), None, None];
+    let mut r = Results::start(&battle(Rule::Time, [(1, 3, 0), (3, 1, 0)]), kinds);
+    assert_eq!(rec.take(), [Call::PlayFgm(id::nSYAudioVoicePublicWin)]);
+    let mut at = alloc::vec::Vec::new();
+    for _ in 0..300 {
+        r.tick(false);
+        for c in rec.take() {
+            at.push((r.total_tics, c));
+        }
+    }
+    // Kirby, on port 2, won: "This game's winner is... Kirby!", the crowd,
+    // and Kirby's fanfare at 120. The fanfare still plays.
+    assert_eq!(
+        at,
+        [
+            (81, Call::PlayFgm(id::nSYAudioVoiceAnnounceWinnerIs)),
+            (120, Call::PlayBgm(0, id::nSYAudioBGMWinKirby)),
+            (210, Call::PlayFgm(id::nSYAudioVoiceAnnounceKirby)),
+            (270, Call::PlayFgm(id::nSYAudioVoicePublicExcited)),
+        ]
+    );
+    // The fanfare ends: the thread starts the results BGM, once.
+    crate::sound::stop_bgm(0);
+    rec.take();
+    r.tick(false);
+    assert_eq!(rec.take(), [Call::PlayBgm(0, id::nSYAudioBGMResults)]);
+    r.tick(false);
+    assert_eq!(rec.take(), []);
+    // START leaves with the sounds and the music stopped.
+    while !r.tick(true) {}
+    assert_eq!(rec.take(), [Call::StopAllFgm, Call::StopBgmAll]);
+    crate::sound::uninstall();
+}
+
+#[test]
+fn no_contest_is_announced_without_any_music() {
+    use crate::sound::{id, testing::*};
+    let rec = Recorder::install();
+    let mut b = battle(Rule::Time, [(1, 0, 0), (0, 1, 0)]);
+    b.is_reset = true;
+    let mut r = Results::start(&b, [Some(FighterKind::Mario); 4]);
+    for _ in 0..300 {
+        r.tick(false);
+    }
+    assert_eq!(
+        rec.take(),
+        [
+            Call::PlayFgm(id::nSYAudioVoiceAnnounceNoContest),
+            Call::PlayFgm(id::nSYAudioVoicePublicNoContest),
+        ]
+    );
+    crate::sound::uninstall();
+}
