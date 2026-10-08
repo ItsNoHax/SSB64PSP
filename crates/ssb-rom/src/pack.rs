@@ -3857,6 +3857,15 @@ pub fn resident_len(head: &[u8]) -> Option<usize> {
     Some(u32_at(head, 20) as usize + u32_at(head, 104) as usize)
 }
 
+/// Where the pack's audio section lies in the file: `(offset, len)`, read
+/// from a header buffer like [`resident_len`]. The section is loaded once at
+/// boot and stays resident (D-049). PLACEHOLDER until the audio section is
+/// written: always `None`.
+pub fn audio_range(head: &[u8]) -> Option<(usize, usize)> {
+    let _ = head;
+    None
+}
+
 /// Zero-copy view over a loaded pack.
 ///
 /// Borrows the buffer; every accessor returns slices into it, so the renderer
