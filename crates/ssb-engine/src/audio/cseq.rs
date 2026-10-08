@@ -341,6 +341,10 @@ mod tests {
                 // The current loop counter a loop end at curLoc would read
                 // (FF 2D loopCt curLpCt ...).
                 let before_ct: [u8; 16] = core::array::from_fn(|t| rd(&buf, before_loc[t] + 3));
+                // After `__alCSeqNextDelta` the pending deltas are current.
+                let track = (0..16)
+                    .filter(|&t| (s.valid_tracks >> t) & 1 != 0)
+                    .min_by_key(|&t| s.evt_delta_ticks[t]);
                 let evt = s.next_event(&mut buf);
                 match evt {
                     Event::SeqMidi(m) => {
@@ -352,14 +356,11 @@ mod tests {
                         }
                     }
                     Event::LoopEnd => {
-                        // Exactly the track that read the loop end jumped.
-                        let t = (0..16)
-                            .find(|&t| {
-                                s.cur_loc[t] != before_loc[t]
-                                    && rd(&buf, before_loc[t]) == 0xFF
-                                    && rd(&buf, before_loc[t] + 1) == AL_CMIDI_LOOPEND_CODE
-                            })
-                            .expect("loop end track");
+                        // The track `n_alCSeqNextEvent` picked: the lowest
+                        // valid track with the smallest pending delta.
+                        let t = track.expect("loop end track");
+                        assert_eq!(rd(&buf, before_loc[t]), 0xFF, "seq {id}");
+                        assert_eq!(rd(&buf, before_loc[t] + 1), AL_CMIDI_LOOPEND_CODE, "seq {id}");
                         let p = before_loc[t] + 2;
                         let (loop_ct, now) = (buf[p], buf[p + 1]);
                         match before_ct[t] {
@@ -370,12 +371,14 @@ mod tests {
                             }
                             0xFF => {
                                 assert_eq!(now, 0xFF);
-                                assert!(s.cur_loc[t] < before_loc[t]);
+                                assert!(s.cur_loc[t] <= before_loc[t]);
                                 loop_forever += 1;
                             }
                             c => {
                                 assert_eq!(now, c - 1, "seq {id}: counter decrement");
-                                assert!(s.cur_loc[t] < before_loc[t], "seq {id}: loops back");
+                                // An empty loop body (only the delta before
+                                // the loop end) lands back on the same byte.
+                                assert!(s.cur_loc[t] <= before_loc[t], "seq {id}: loops back");
                                 loop_dec += 1;
                             }
                         }
@@ -392,6 +395,42 @@ mod tests {
         );
         assert!(notes > 10_000);
         assert!(backups > 100);
-        assert!(loop_dec > 0 && loop_reset > 0);
+        // Every shipped loop end loops forever (counter 0xFF); the
+        // finite-loop rewrite is covered by `cseq_loop_counter_rewrite`.
+        assert!(loop_forever > 0);
+        assert_eq!(loop_dec + loop_reset, 0);
+    }
+
+    /// A finite loop (`FF 2D 02 02`): the counter is decremented in the
+    /// sequence bytes on each pass, then reset to the loop count when the
+    /// loop falls through, as `__n_alCSeqGetTrackEvent` does.
+    #[test]
+    fn cseq_loop_counter_rewrite() {
+        let mut buf = alloc::vec![0u8; 68];
+        buf[3] = 68; // track 0 at offset 68
+        buf[67] = 96; // division
+        buf.extend_from_slice(&[
+            0x00, 0x90, 0x3C, 0x64, 0x01, // 68: delta 0, NoteOn dur 1
+            0x0A, // 73: delta 10
+            0xFF, 0x2D, 0x02, 0x02, 0x00, 0x00, 0x00, 0x0E, // 74: loop end, back 14 -> 68
+            0x00, 0xFF, 0x2F, // 82: delta 0, end of track
+        ]);
+        let mut s = CSeq::new(&buf);
+        let mut trace = Vec::new();
+        while s.next_delta().is_some() {
+            let e = s.next_event(&mut buf);
+            let tag = match e {
+                Event::SeqMidi(_) => 'n',
+                Event::LoopEnd => char::from(b'0' + buf[77]),
+                Event::SeqEnd => 'e',
+                _ => '?',
+            };
+            trace.push(tag);
+            if tag == 'e' {
+                break;
+            }
+        }
+        assert_eq!(trace, ['n', '1', 'n', '0', 'n', '2', 'e']);
+        assert_eq!(buf[77], 2, "counter restored for the next play");
     }
 }
