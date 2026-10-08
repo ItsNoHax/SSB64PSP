@@ -44,13 +44,13 @@
 //! firmware the port targets.
 
 use alloc::boxed::Box;
-use core::cell::UnsafeCell;
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 
 use psp::sys::{self, SceUid};
 use ssb_engine::audio::{
-    AudioApi, AudioError, AudioSystem, FgmHandle, RawLock, SharedAudio, FRAME_SAMPLES_MAX, N64_OUTPUT_RATE,
+    AudioApi, AudioError, AudioSystem, FgmHandle, RawLock, SharedAudio, FRAME_SAMPLES_MAX,
+    N64_OUTPUT_RATE,
 };
 
 use crate::assets::{AlignedBuf, LoadError};
@@ -80,7 +80,6 @@ pub const PRIORITY: i32 = 0x1C;
 pub const STACK_BYTES: i32 = 64 * 1024;
 
 /// `PSP_AUDIO_VOLUME_MAX`.
-const EXPERIMENT: bool = true;
 const VOLUME: i32 = 0x8000;
 
 /// The FIFO between N64 frames and hardware blocks: it is refilled while it
@@ -91,14 +90,44 @@ const FIFO_FRAMES: usize = BLOCK + FRAME_SAMPLES_MAX;
 pub struct SemaLock(SceUid);
 
 impl SemaLock {
-    /// A binary semaphore, initially free. `None` with the kernel's error.
+    /// A binary semaphore, initially free. `Err` with the kernel's error.
     pub fn new() -> Result<Self, i32> {
-        // SAFETY: a NUL-terminated name and no options.
-        let id = unsafe { sys::sceKernelCreateSema(b"ssb_audio_lock\0".as_ptr(), 0, 1, 1, core::ptr::null_mut()) };
-        if id.0 < 0 {
-            Err(id.0)
+        // rust-psp declares `sceKernelCreateSema` (5 arguments) without its
+        // `i5` ABI mapper, so a plain call leaves the option pointer in `$t0`
+        // unset (PPSSPP logs `deadbeef`, "invalid options parameter"). The
+        // kernel takes arguments 5-8 in `$t0-$t3` (MIPS EABI); rust-psp's
+        // global `i5` trampoline moves the fifth O32 stack argument there.
+        extern "C" {
+            fn i5(
+                a: u32,
+                b: u32,
+                c: u32,
+                d: u32,
+                e: u32,
+                f: extern "C" fn(u32, u32, u32, u32, u32) -> u32,
+            ) -> u32;
+            fn __sceKernelCreateSema_stub(
+                name: u32,
+                attr: u32,
+                init: u32,
+                max: u32,
+                option: u32,
+            ) -> u32;
+        }
+        // SAFETY: the stub is the kernel import rust-psp links; the name is
+        // NUL-terminated and the option pointer is null. The transmute only
+        // changes the declared ABI tag (both are `extern "C"`), from an
+        // `unsafe` to a safe fn pointer as `i5` expects.
+        let id = unsafe {
+            let stub: extern "C" fn(u32, u32, u32, u32, u32) -> u32 = core::mem::transmute(
+                __sceKernelCreateSema_stub as unsafe extern "C" fn(u32, u32, u32, u32, u32) -> u32,
+            );
+            i5(b"ssb_audio_lock\0".as_ptr() as u32, 0, 1, 1, 0, stub) as i32
+        };
+        if id < 0 {
+            Err(id)
         } else {
-            Ok(Self(id))
+            Ok(Self(SceUid(id)))
         }
     }
 }
@@ -244,21 +273,31 @@ struct ThreadState {
     latency_max: u32,
 }
 
-struct ThreadCell(UnsafeCell<ThreadState>);
-// SAFETY: only the audio thread dereferences it, after `start` set it up.
-unsafe impl Sync for ThreadCell {}
+impl ThreadState {
+    /// Allocated on the heap by [`start`] (game thread, at boot): 10 KB the
+    /// image does not carry when audio is off.
+    fn boxed() -> Box<Self> {
+        Box::new(Self {
+            out: [
+                Lines([0; BLOCK * 2]),
+                Lines([0; BLOCK * 2]),
+                Lines([0; BLOCK * 2]),
+            ],
+            fifo: Lines([0; FIFO_FRAMES * 2]),
+            fifo_len: 0,
+            next_out: 0,
+            ai: VirtualAi::new(),
+            epoch: 0,
+            max_us: 0,
+            rest_min: u32::MAX,
+            latency_max: 0,
+        })
+    }
+}
 
-static THREAD_STATE: ThreadCell = ThreadCell(UnsafeCell::new(ThreadState {
-    out: [Lines([0; BLOCK * 2]), Lines([0; BLOCK * 2]), Lines([0; BLOCK * 2])],
-    fifo: Lines([0; FIFO_FRAMES * 2]),
-    fifo_len: 0,
-    next_out: 0,
-    ai: VirtualAi::new(),
-    epoch: 0,
-    max_us: 0,
-    rest_min: u32::MAX,
-    latency_max: 0,
-}));
+/// The audio thread's state, set by [`start`] before the thread starts and
+/// then touched only by that thread.
+static THREAD_STATE: AtomicPtr<ThreadState> = AtomicPtr::new(core::ptr::null_mut());
 
 /// The running system, set by [`start`] before the thread starts.
 static mut SHARED: Option<&'static GameAudio> = None;
@@ -328,14 +367,14 @@ pub enum StartError {
 /// Reads the pack's audio section (`ssb_rom::pack::audio_range`, from the
 /// header in `head`) from `path` (NUL-terminated, as `assets::c_path`
 /// returns) into one 64-byte-aligned buffer that is never freed: the audio
-/// thread reads it for the life of the process. A pack without the section
-/// yields an empty slice.
-pub fn load_section(path: &'static str, head: &[u8]) -> Result<&'static [u8], LoadError> {
+/// thread reads it for the life of the process. `Ok(None)` when the pack
+/// has no audio section (a pack built before it existed).
+pub fn load_section(path: &'static str, head: &[u8]) -> Result<Option<&'static [u8]>, LoadError> {
     let Some((offset, len)) = ssb_rom::pack::audio_range(head) else {
-        return Ok(&[]);
+        return Ok(None);
     };
     if len == 0 {
-        return Ok(&[]);
+        return Ok(None);
     }
     // SAFETY: path is NUL-terminated.
     let fd = unsafe { sys::sceIoOpen(path.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0o777) };
@@ -358,7 +397,7 @@ pub fn load_section(path: &'static str, head: &[u8]) -> Result<&'static [u8], Lo
     // SAFETY: the buffer is leaked below, so the slice lives forever.
     let bytes = unsafe { core::slice::from_raw_parts(buf.as_ptr(), len) };
     core::mem::forget(buf);
-    Ok(bytes)
+    Ok(Some(bytes))
 }
 
 /// Builds the audio system over `section`, reserves the SRC channel and
@@ -368,7 +407,8 @@ pub fn start(section: &'static [u8]) -> Result<&'static GameAudio, StartError> {
     let sys_ = AudioSystem::new(section).map_err(StartError::System)?;
     let lock = SemaLock::new().map_err(StartError::Sema)?;
     // SAFETY: plain syscall; 2 = stereo, the only SRC format.
-    let ch = unsafe { sys::sceAudioSRCChReserve(BLOCK as i32, sys::AudioOutputFrequency::Khz32, 2) };
+    let ch =
+        unsafe { sys::sceAudioSRCChReserve(BLOCK as i32, sys::AudioOutputFrequency::Khz32, 2) };
     if ch < 0 {
         return Err(StartError::Channel(ch));
     }
@@ -377,6 +417,9 @@ pub fn start(section: &'static [u8]) -> Result<&'static GameAudio, StartError> {
     }));
     // SAFETY: written before the thread that reads it starts.
     unsafe { SHARED = Some(api) };
+    if THREAD_STATE.load(Ordering::Acquire).is_null() {
+        THREAD_STATE.store(Box::into_raw(ThreadState::boxed()), Ordering::Release);
+    }
     STOP.store(false, Ordering::Release);
     // SAFETY: a NUL-terminated name and a `extern "C"` entry. VFPU: the
     // synth may reach rust-psp's VFPU libm (R4 §1).
@@ -454,7 +497,10 @@ pub fn stats() -> Stats {
 
 /// Starts a new window for [`Stats`]' maxima (game thread).
 pub fn new_window() {
-    EPOCH.store(EPOCH.load(Ordering::Relaxed).wrapping_add(1), Ordering::Release);
+    EPOCH.store(
+        EPOCH.load(Ordering::Relaxed).wrapping_add(1),
+        Ordering::Release,
+    );
 }
 
 fn now() -> u32 {
@@ -464,7 +510,10 @@ fn now() -> u32 {
 /// Adds `n` to a counter only this thread writes.
 #[inline]
 fn bump(counter: &AtomicU32, n: u32) {
-    counter.store(counter.load(Ordering::Relaxed).wrapping_add(n), Ordering::Release);
+    counter.store(
+        counter.load(Ordering::Relaxed).wrapping_add(n),
+        Ordering::Release,
+    );
 }
 
 unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
@@ -472,8 +521,12 @@ unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
     let Some(api) = (unsafe { *core::ptr::addr_of!(SHARED) }) else {
         return 0;
     };
-    // SAFETY: only this thread touches the state.
-    let st = unsafe { &mut *THREAD_STATE.0.get() };
+    let st = THREAD_STATE.load(Ordering::Acquire);
+    if st.is_null() {
+        return 0;
+    }
+    // SAFETY: leaked by `start`; only this thread touches it.
+    let st = unsafe { &mut *st };
     let mut first = true;
     while !STOP.load(Ordering::Acquire) {
         let t0 = now();
@@ -511,7 +564,9 @@ unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
         st.fifo_len -= BLOCK;
         #[cfg(feature = "audio_dump")]
         dump::push(out);
-        unsafe { sys::sceKernelDcacheWritebackRange(out.as_ptr() as *const c_void, (BLOCK * 4) as u32) };
+        unsafe {
+            sys::sceKernelDcacheWritebackRange(out.as_ptr() as *const c_void, (BLOCK * 4) as u32)
+        };
 
         let rest = unsafe { sys::sceAudioOutput2GetRestSample() }.max(0) as u32;
         if rest == 0 && !first {
@@ -528,7 +583,9 @@ unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
         }
         first = false;
 
-        if EXPERIMENT { unsafe { sys::sceKernelDelayThread(16000) }; } else if unsafe { sys::sceAudioSRCOutputBlocking(VOLUME, out.as_mut_ptr() as *mut c_void) } < 0 {
+        // SAFETY: a block-sized, written-back buffer that stays untouched
+        // until two more blocks have been submitted.
+        if unsafe { sys::sceAudioSRCOutputBlocking(VOLUME, out.as_mut_ptr() as *mut c_void) } < 0 {
             bump(&OUTPUT_ERRORS, 1);
         }
         st.next_out = (st.next_out + 1) % BUFFERS;
@@ -544,6 +601,7 @@ unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
 #[cfg(feature = "audio_dump")]
 mod dump {
     use super::*;
+    use core::cell::UnsafeCell;
 
     /// Ring capacity in sample frames: 8 s (1 MB), a whole number of
     /// blocks so a block never wraps.

@@ -2251,9 +2251,10 @@ fn psp_main() {
 }
 
 /// Loads the pack's audio section, starts the audio thread and installs the
-/// system for `ssb_game::sound` (D-049). Without a section the system runs
-/// over an empty one if it accepts it; any failure leaves the game silent,
-/// with every sound call a no-op.
+/// system for `ssb_game::sound` (D-049). A pack without the section (built
+/// before it existed) is logged and handed to the system as an empty
+/// section, which the synthesizer rejects (`AudioError::BadSection`); any
+/// failure leaves the game silent, with every sound call a no-op.
 #[cfg(not(feature = "no_audio"))]
 fn start_audio(pack: &[u8], path: &'static str) {
     use ssb_psp_runtime::audio;
@@ -2262,7 +2263,11 @@ fn start_audio(pack: &[u8], path: &'static str) {
         return;
     };
     let section = match audio::load_section(c, head) {
-        Ok(s) => s,
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            audio_log(format_args!("audio: the pack has no audio section"));
+            &[]
+        }
         Err(e) => {
             audio_log(format_args!("audio: section not loaded ({}); no audio", e.as_str()));
             return;
