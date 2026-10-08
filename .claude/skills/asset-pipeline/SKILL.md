@@ -7,10 +7,10 @@ description: relocData, VPK0, texture packing, meshes, pack format, romtool, or 
 
 Routing:
 
-1. [docs/ssb-architecture.md](../../docs/ssb-architecture.md) §4
-   (relocData / VPK0) and §9 for where each subsystem lands.
-2. [docs/rendering/textures.md](../../docs/rendering/textures.md) and
-   [docs/rendering/geometry.md](../../docs/rendering/geometry.md) for texture
+1. [docs/architecture.md](../../../docs/architecture.md) "Original Game
+   Reference" (relocData / VPK0, where each subsystem lands).
+2. [docs/rendering/textures.md](../../../docs/rendering/textures.md) and
+   [docs/rendering/geometry.md](../../../docs/rendering/geometry.md) for texture
    and mesh conversion's current model.
 3. `docs/decisions/` — D-009 (VPK0), D-010/D-011 (relocData/extern
    relocations), D-002/D-003 (preconversion, texture formats), D-028 (asset

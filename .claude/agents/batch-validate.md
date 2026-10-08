@@ -14,8 +14,9 @@ You run steps 5–6 of the batch workflow in `AGENTS.md`. Follow its
 3. If anything fails beyond a trivial compile or doc fix, stop. Add the
    failure (command, shortest decisive error line, suspect `file:line`)
    to the handoff note and return.
-4. On success, update `STATUS.md` and affected docs once (see the
-   `documentation` skill), run `python3 tools/docs/validate_docs.py`, and
-   commit the batch as one unit.
+4. On success, replace `STATUS.md`, update `PLAN.md` (tick or remove the
+   closed items) and affected docs once (see the `documentation` skill), run
+   `python3 tools/docs/validate_docs.py`, and commit the batch as one unit.
+   Keep the handoff note out of the repository.
 
 Return only: pass or fail, commit hash, handoff path, blockers.

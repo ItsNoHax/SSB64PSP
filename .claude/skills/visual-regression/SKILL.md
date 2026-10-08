@@ -11,7 +11,7 @@ capture use [psp-hardware](../psp-hardware/SKILL.md) (PSPLink) instead; for
 live original-N64 behavior use [n64-emulator](../n64-emulator/SKILL.md)
 (headless Mupen64Plus) instead.
 
-1. Read [docs/visual-regression/README.md](../../docs/visual-regression/README.md)
+1. Read [docs/visual-regression/README.md](../../../docs/visual-regression/README.md)
    — setup, capture commands, rules, scene table (feature → golden →
    evidence), known failing goldens, physical-PSP staging. Load a scene's
    `RE-XXX` record only if you need its history.

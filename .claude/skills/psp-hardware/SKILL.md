@@ -17,13 +17,13 @@ Routing:
 
 1. This file (below) — PSPLink install, build/launch debug PRX, capture and
    map exceptions, shutdown, fast crash-loop procedure.
-2. [docs/memory.md](../../docs/memory.md) — PSP memory layout, allocator
+2. [docs/memory.md](../../../docs/memory.md) — PSP memory layout, allocator
    plan, `MEMSIZE`/RAM constraints (PSP-1000's 32 MiB vs Slim/2000/3000).
-3. [TODO.md](../../TODO.md) "Hardware acceptance" — what remains
-   (PSP-1000, long-duration runs, re-capturing current goldens).
-   [docs/visual-regression/README.md](../../docs/visual-regression/README.md)
-   "Physical PSP" — staging a capture build. Historical matrix:
-   `plans/rendering/R2.md`.
+3. [PLAN.md](../../../PLAN.md) "PSP performance and hardware" — what
+   remains (current EBOOT on the PSP-2000, GE fill cost, long-duration runs,
+   re-capturing current goldens; PSP-1000 is deferred).
+   [docs/visual-regression/README.md](../../../docs/visual-regression/README.md)
+   "Physical PSP" — staging a capture build.
 4. `docs/evidence/INDEX.md` filtered to the `hardware` topic tag for prior
    hardware-only bugs found (GE races, PSPLink module-manager state, etc.).
 5. For code, prefer Serena symbol search over reading whole files
@@ -125,7 +125,7 @@ live host-file loading.
 
 Before reload inspect `modlist`. Kill exact game UID if it remains, then
 `reset` before the next `ldstart` — not only after an observed fault.
-RE-212 found a case with no visible symptom at all (`exlist` empty,
+RE-212 (retired) found a case with no visible symptom at all (`exlist` empty,
 `thlist` showed a live `main_thread`, a plausible-looking rendered frame)
 where a bare `kill` still left PSPLink's own module-manager state stale
 enough that the next module's relative `sceIoOpen("ssb64.pak")` silently
@@ -169,7 +169,7 @@ psp-objdump -d --start-address=0x<nearby-offset> \
 ```
 
 Record exception code, EPC, TextAddr, module/thread IDs, symbol mapping, PRX
-hash, and pack hash in `docs/reverse-engineering.md`. PSPLink FPU traps may
+hash, and pack hash in an evidence record (`docs/evidence/re/RE-NNN.md`). PSPLink FPU traps may
 expose invalid or speculative floating-point code. Treat trap as correctness
 bug; map and fix cause, never disable trapping. `RE-201` is working example.
 

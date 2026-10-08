@@ -38,19 +38,20 @@ One owner per kind of state. Update the owner; link to it elsewhere.
 
 | State | Owner |
 |---|---|
-| Current batch, blockers, verification baseline | `STATUS.md` (replace, never append; 1–3 KB) |
-| Milestones | `PLAN.md` |
-| Per-subsystem status | `docs/porting-status.md` |
-| Deferred work | `TODO.md` |
-| Investigation evidence | `docs/evidence/INDEX.md` + `docs/evidence/re/RE-NNN.md` |
+| Roadmap, subsystem state, completed and remaining work (the only task list) | `PLAN.md` |
+| Current work, blockers, verification baseline | `STATUS.md` (replace, never append; under 4 KiB) |
 | Permanent decisions | `DECISIONS.md` + `docs/decisions/D-NNN.md` |
+| Architecture, current and target; original-game reference | `docs/architecture.md` |
 | Renderer model | `docs/rendering.md` + `docs/rendering/*.md` |
-| Golden captures | `docs/visual-regression/README.md` |
-| Original-game and memory reference | `docs/ssb-architecture.md`, `docs/memory.md` |
-| Project overview | `README.md` (no progress detail) |
-| Archived specs | `plans/**` (history only; add nothing) |
+| Memory layout and constraints | `docs/memory.md` |
+| Golden captures | `docs/visual-regression/README.md` + `tests/golden/scenes.tsv` |
+| Durable technical findings | `docs/evidence/INDEX.md` + `docs/evidence/re/RE-NNN.md` |
+| Project overview and legal | `README.md` (no progress detail) |
+| History | git |
 
-When code and docs disagree, verify against source and fix the wrong record.
+Do not create other plan, status, TODO, handoff or report documents in the
+repository; scratchpad handoff notes stay outside it. When code and docs
+disagree, verify against source and fix the wrong record.
 
 ## Batch mode
 
@@ -76,7 +77,8 @@ When code and docs disagree, verify against source and fix the wrong record.
    need them.
 4. Translate the whole subsystem and fix compile errors.
 5. Targeted tests → workspace tests → PSP builds → one integration smoke.
-6. Update `STATUS.md` and affected docs once, then commit.
+6. Update `STATUS.md`, `PLAN.md` (tick or remove closed items, add new
+   ones) and affected docs once, then commit.
 
 Large batches run as phases, one fresh agent each, linked by a scratchpad
 handoff note: `batch-research` (steps 1–3, output: module map and port
@@ -85,17 +87,25 @@ plan), `batch-implement` (step 4 and targeted tests), `batch-validate`
 
 ## Evidence
 
-Write an `RE-NNN` record only for ambiguous original behavior, RE
-discoveries, PSP deviations, rendering discrepancies or major architectural
-decisions — not routine ports. Hardware records include PSP model, firmware,
-build, pack version and observations. Then run
-`python3 tools/docs/gen_evidence_index.py` and
+Write an `RE-NNN` record only for a durable technical finding: ambiguous
+original behavior, RE discoveries, PSP or PPSSPP behavior, PSP deviations,
+rendering discrepancies, measured performance — not routine ports, progress
+reports or golden rebaselines (those go in the commit message). Hardware
+records include PSP model, firmware, build, pack version and observations.
+Then run `python3 tools/docs/gen_evidence_index.py` and
 `python3 tools/docs/validate_docs.py`.
+
+Retired IDs: a record with no durable fact of its own is deleted and listed
+in `docs/evidence/retired.tsv` (ID, title, where its fact lives now,
+reason); the index shows it under "Retired records". Code comments that cite
+a retired `RE-NNN` stay as they are and resolve through that table. Labels
+of earlier plans (`P0`–`P5`, `M0`–`M4`, `R0`–`R3`, `F1`, `G0`–`G5`) are
+retired too; cite the record, not the label, in new text.
 
 ## Constraints
 
-- Rendering performance is milestone `P5`, profiled on real workloads; it
-  never blocks gameplay.
+- Rendering performance is `PLAN.md` milestone `MS8`, profiled on real
+  workloads; it never blocks gameplay.
 - No unsupported rendering heuristics. Measure and document unavoidable PSP
   deviations.
 - PPSSPP is not physical-PSP proof.
@@ -107,10 +117,10 @@ build, pack version and observations. Then run
 
 ## Context budget
 
-- Start from `STATUS.md` and the indexes (`docs/evidence/INDEX.md`,
-  `DECISIONS.md`, `docs/porting-status.md`). Open only the records the batch
+- Start from `STATUS.md` and the indexes (`PLAN.md`,
+  `docs/evidence/INDEX.md`, `DECISIONS.md`). Open only the records the batch
   needs.
-- Never bulk-read `docs/evidence/re/` or `plans/`.
+- Never bulk-read `docs/evidence/re/`.
 - Every turn re-reads the whole context, so cost grows with context size
   times turns. Past ~250K tokens, write a handoff note (done, next, open
   questions, file:line pointers) to scratchpad and continue in a fresh agent.
@@ -142,7 +152,7 @@ build, pack version and observations. Then run
 | Resume work | `continue-plan` |
 | Original-game behavior from decomp or ROM | `reverse-engineering` |
 | Observe the running original game | `n64-emulator` |
-| Renderer bug or fidelity question | `rendering` (protocol: `docs/agent-rendering.md`) |
+| Renderer bug or fidelity question | `rendering` |
 | Goldens and PPSSPPHeadless | `visual-regression` |
 | Physical PSP, PSPLink | `psp-hardware` |
 | Asset pipeline, pack format, `romtool` | `asset-pipeline` |

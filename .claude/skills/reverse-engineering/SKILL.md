@@ -7,7 +7,7 @@ description: Original SSB64 (N64) behavior needs to be established from the deco
 
 1. Determine the concrete question (a specific struct field, opcode,
    behavior, or numeric value — not "how does rendering work" in general).
-2. Search [docs/evidence/INDEX.md](../../docs/evidence/INDEX.md) by ID or
+2. Search [docs/evidence/INDEX.md](../../../docs/evidence/INDEX.md) by ID or
    topic tag for prior work. Do not bulk-read the evidence corpus.
 3. Load only the matching `docs/evidence/re/RE-XXX.md` record(s).
 4. If existing evidence doesn't answer the question, consult the decomp
@@ -20,9 +20,9 @@ description: Original SSB64 (N64) behavior needs to be established from the deco
    guessing from source alone.
 5. Record uncertainty rather than guessing — an accepted deviation
    needs measurement and documentation, not a plausible-looking default.
-6. Create a new `docs/evidence/re/RE-XXX.md` record only for genuinely new
+6. Create a new `docs/evidence/re/RE-XXX.md` record only for a durable new
    investigation (next unused ID). Follow the shape of an existing record
-   (metadata header: Status/Topics/Related tasks/Relevant files, then the
+   (metadata header: Status/Topics/Relevant files, then the
    investigation body — Question/Evidence/Implementation/Verification/
    Conclusion/Confidence where applicable). Then run
    `python3 tools/docs/gen_evidence_index.py` to refresh the index.
