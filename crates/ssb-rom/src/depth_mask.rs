@@ -334,7 +334,8 @@ mod tests {
     }
 
     fn placements() -> impl Iterator<Item = Placement> {
-        let k = 272.0 / 240.0;
+        use ssb_engine::coord::{n64_to_psp_x, n64_to_psp_y, SCREEN_SCALE};
+        let k = SCREEN_SCALE;
         [0.4f32, 0.75, 1.0, 1.3, 2.0, 2.37, 3.9, 6.0]
             .into_iter()
             .flat_map(move |scale| {
@@ -347,8 +348,8 @@ mod tests {
                 .into_iter()
                 .map(move |(x, y)| {
                     let (w, h) = (32.0 * scale, 32.0 * scale);
-                    let x0 = 46.0 + x * k;
-                    let y0 = y * k;
+                    let x0 = n64_to_psp_x(x);
+                    let y0 = n64_to_psp_y(y);
                     Placement {
                         x0,
                         y0,

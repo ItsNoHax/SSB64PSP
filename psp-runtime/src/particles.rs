@@ -165,8 +165,6 @@ pub unsafe fn draw(
     lists: &[usize],
     draw_state: &mut DrawState,
 ) {
-    let (vx, vy, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let (kx, ky) = (vw as f32 / 320.0, vh as f32 / 240.0);
     let camera = Camera {
         view,
         proj,
@@ -176,12 +174,7 @@ pub unsafe fn draw(
             ssb_game::camera::DEFAULT_NEAR,
             ssb_game::camera::DEFAULT_FAR,
         ),
-        rect: [
-            vx as f32 + 10.0 * kx,
-            vy as f32 + 10.0 * ky,
-            300.0 * kx,
-            220.0 * ky,
-        ],
+        rect: ssb_engine::coord::n64_rect_to_psp_xywh(ssb_game::camera::BATTLE_VIEWPORT),
     };
     draw_lists(banks, particles, &camera, lists, DEPTH_TESTED, draw_state);
 }
@@ -201,22 +194,14 @@ pub unsafe fn draw_screen(
     lists: &[usize],
     draw_state: &mut DrawState,
 ) {
-    let (vx, vy, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let (kx, ky) = (vw as f32 / 320.0, vh as f32 / 240.0);
     let proj = lb::screen_projection(viewport);
-    let [ulx, uly, lrx, lry] = viewport;
     let camera = Camera {
         view: &proj,
         proj: &proj,
         screen: true,
         planes: lb::BATTLE_PLANES,
         ge_planes: lb::BATTLE_PLANES,
-        rect: [
-            vx as f32 + ulx * kx,
-            vy as f32 + uly * ky,
-            (lrx - ulx) * kx,
-            (lry - uly) * ky,
-        ],
+        rect: ssb_engine::coord::n64_rect_to_psp_xywh(viewport),
     };
     draw_lists(banks, particles, &camera, lists, 0, draw_state);
 }

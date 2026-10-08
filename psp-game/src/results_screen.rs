@@ -277,7 +277,7 @@ unsafe fn draw_emblem(gpu: &mut Gpu, p: &Pack<'_>, draw_state: &mut meshdraw::Dr
     draw_state.configure_fighter_light(results_scene::LIGHT_ANGLE);
     meshdraw::draw_object_posed(p, object, &base, &posed[..object.node_count as usize], None, draw_state, None, Some(mats), 0);
     draw_state.finish_fighter_light();
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
 }
 
 /// Every node's rest transform below a root the caller places: the root
@@ -451,7 +451,7 @@ unsafe fn draw(
             draw_state,
         );
     }
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
 }
 
 /// The lists `mnVSResultsMakeFighterCamera`'s DL links draw, in link
@@ -460,10 +460,6 @@ const RESULTS_PARTICLE_LISTS: [usize; 4] = [4, 1, 0, 2];
 
 /// A camera's N64 viewport on the PSP screen as `[x, y, w, h]`, as
 /// `Gpu::set_viewport_n64` places it.
-fn n64_rect([ulx, uly, lrx, lry]: [f32; 4]) -> [f32; 4] {
-    let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let (nw, nh) = ssb_engine::coord::N64_SCREEN;
-    let kx = vw as f32 / nw as f32;
-    let ky = vh as f32 / nh as f32;
-    [vx as f32 + ulx * kx, uly * ky, (lrx - ulx) * kx, (lry - uly) * ky]
+fn n64_rect(rect: [f32; 4]) -> [f32; 4] {
+    ssb_engine::coord::n64_rect_to_psp_xywh(rect)
 }

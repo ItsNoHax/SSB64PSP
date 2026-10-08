@@ -2494,7 +2494,7 @@ pub struct SObjDraw {
 
 /// Draws a libultra `Sprite` the way `lbCommonPrepSObjDraw` does
 /// (RE-392): a texture rectangle at N64 screen coordinates, mapped onto
-/// the pillarboxed viewport, `scale` times its size, blended under
+/// the PSP screen by `ssb_engine::coord`, `scale` times its size, blended under
 /// `SP_TRANSPARENT` or `SP_CLOUD`.
 ///
 /// The combiner follows `lbCommonPrepSObjAttr`: a tinted sprite
@@ -2571,12 +2571,11 @@ pub unsafe fn draw_sprite_xy(
     } else {
         sys::sceGuDisable(GuState::Blend);
     }
-    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
+    let k = ssb_engine::coord::SCREEN_SCALE;
     let abgr = u32::from_le_bytes(vertex);
     let (w, h) = (f32::from(sprite.width), f32::from(sprite.height));
-    let x0 = vx as f32 + d.x * k;
-    let y0 = d.y * k;
+    let x0 = ssb_engine::coord::n64_to_psp_x(d.x);
+    let y0 = ssb_engine::coord::n64_to_psp_y(d.y);
     let corners = [
         (0.0, 0.0, x0, y0),
         (w, h, x0 + w * scale_x * k, y0 + h * scale_y * k),
@@ -2610,14 +2609,9 @@ pub unsafe fn draw_sprite_xy(
 
 /// The battle's wallpaper `SObj` (`grWallpaperMakeDecideKind`, RE-419): the
 /// sprite at `(x, y)` on the 320 x 240 screen, `scale` times its size,
-/// opaque, under `G_CC_DECALRGBA`.
-///
-/// Every other `SObj` maps the N64 screen onto the pillarbox. This one is
-/// mapped as the battle's 3D is: the port draws the stage camera's
-/// `(10, 10)` to `(310, 230)` viewport over the whole pillarbox, scaled by
-/// `272 / 220` about its centre (its 38 degrees span the pillarbox's
-/// height), so the wallpaper keeps its place behind the stage and fills
-/// the frame as it fills the viewport. The pillarbox's scissor clips it.
+/// opaque, under `G_CC_DECALRGBA`, mapped as every other `SObj` is. The
+/// caller's scissor clips it to the wallpaper camera's viewport; the
+/// opening's battles keep their cameras' borders (RE-467).
 ///
 /// # Safety
 ///
@@ -2628,37 +2622,6 @@ pub unsafe fn draw_wallpaper(
     x: f32,
     y: f32,
     scale: f32,
-    draw_state: &mut DrawState,
-) {
-    draw_wallpaper_mapped(pack, sprite, x, y, scale, false, draw_state);
-}
-
-/// [`draw_wallpaper`] at its place on the N64's 320 x 240 screen, as every
-/// other `SObj` maps: the opening's battles keep their cameras' borders
-/// (RE-467). The caller's scissor clips it to the wallpaper camera's
-/// viewport.
-///
-/// # Safety
-///
-/// As [`draw_sprite`].
-pub unsafe fn draw_wallpaper_n64(
-    pack: &Pack<'_>,
-    sprite: &ssb_rom::pack::SpriteDesc,
-    x: f32,
-    y: f32,
-    scale: f32,
-    draw_state: &mut DrawState,
-) {
-    draw_wallpaper_mapped(pack, sprite, x, y, scale, true, draw_state);
-}
-
-unsafe fn draw_wallpaper_mapped(
-    pack: &Pack<'_>,
-    sprite: &ssb_rom::pack::SpriteDesc,
-    x: f32,
-    y: f32,
-    scale: f32,
-    n64_screen: bool,
     draw_state: &mut DrawState,
 ) {
     let Some(t) = pack.texture(sprite.texture) else {
@@ -2673,14 +2636,9 @@ unsafe fn draw_wallpaper_mapped(
         sys::TextureColorComponent::Rgba,
     );
     sprite_blend(0);
-    let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let k = if n64_screen {
-        vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32
-    } else {
-        vh as f32 / WALLPAPER_VIEWPORT_HEIGHT
-    };
-    let x0 = vx as f32 + vw as f32 * 0.5 + (x - 160.0) * k;
-    let y0 = vh as f32 * 0.5 + (y - 120.0) * k;
+    let k = ssb_engine::coord::SCREEN_SCALE;
+    let x0 = ssb_engine::coord::n64_to_psp_x(x);
+    let y0 = ssb_engine::coord::n64_to_psp_y(y);
     let (w, h) = (f32::from(sprite.width), f32::from(sprite.height));
     sobj_rect(
         [
@@ -2693,9 +2651,6 @@ unsafe fn draw_wallpaper_mapped(
     sys::sceGuEnable(GuState::CullFace);
     draw_state.invalidate_all();
 }
-
-/// The battle viewport's height, `230 - 10`.
-const WALLPAPER_VIEWPORT_HEIGHT: f32 = 220.0;
 
 /// A wrapping `SObj` (`cms`/`cmt` `G_TX_WRAP` with `masks`/`maskt`): the
 /// sprite repeated over `size` N64 pixels from `(d.x, d.y)`, texel for
@@ -2729,10 +2684,9 @@ pub unsafe fn draw_sprite_tiled(
     sys::sceGuTexWrap(wrap(size[0], sprite.width), wrap(size[1], sprite.height));
     let (_, vertex) = sprite_combiner(sprite, d);
     sprite_blend(d.attr);
-    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
-    let x0 = vx as f32 + d.x * k;
-    let y0 = d.y * k;
+    let k = ssb_engine::coord::SCREEN_SCALE;
+    let x0 = ssb_engine::coord::n64_to_psp_x(d.x);
+    let y0 = ssb_engine::coord::n64_to_psp_y(d.y);
     sobj_rect(
         [(0.0, 0.0, x0, y0), (size[0], size[1], x0 + size[0] * k, y0 + size[1] * k)],
         u32::from_le_bytes(vertex),
@@ -2774,10 +2728,9 @@ pub unsafe fn draw_sprite_mirror_t(
     sys::sceGuTexWrap(s_wrap, sys::GuTexWrapMode::Clamp);
     let (_, vertex) = sprite_combiner(sprite, d);
     sprite_blend(d.attr);
-    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
-    let x0 = vx as f32 + d.x * k;
-    let y0 = d.y * k;
+    let k = ssb_engine::coord::SCREEN_SCALE;
+    let x0 = ssb_engine::coord::n64_to_psp_x(d.x);
+    let y0 = ssb_engine::coord::n64_to_psp_y(d.y);
     let h = f32::from(sprite.height);
     let first = size[1].min(h);
     let abgr = u32::from_le_bytes(vertex);
@@ -2828,11 +2781,10 @@ pub unsafe fn draw_sprite_glow(
     sys::sceGuDisable(GuState::CullFace);
     sys::sceGuDisable(GuState::AlphaTest);
     sys::sceGuEnable(GuState::Blend);
-    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
+    let k = ssb_engine::coord::SCREEN_SCALE;
     let (w, h) = (f32::from(sprite.width), f32::from(sprite.height));
-    let x0 = vx as f32 + x * k;
-    let y0 = y * k;
+    let x0 = ssb_engine::coord::n64_to_psp_x(x);
+    let y0 = ssb_engine::coord::n64_to_psp_y(y);
     let corners = [(0.0, 0.0, x0, y0), (w, h, x0 + w * k, y0 + h * k)];
     // The texel times `glow`, alpha-blended.
     sys::sceGuTexFunc(sys::TextureEffect::Modulate, sys::TextureColorComponent::Rgba);
@@ -2937,10 +2889,9 @@ pub unsafe fn draw_depth_image(
     st: &mut DrawState,
 ) {
     let [x, y, width, height] = rect;
-    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let k = vh as f32 / 240.0;
-    let x0 = vx as f32 + x * k;
-    let y0 = y * k;
+    let k = ssb_engine::coord::SCREEN_SCALE;
+    let x0 = ssb_engine::coord::n64_to_psp_x(x);
+    let y0 = ssb_engine::coord::n64_to_psp_y(y);
     let placement = ssb_rom::depth_mask::Placement {
         x0,
         y0,
@@ -3034,15 +2985,13 @@ pub unsafe fn fill_rect_n64(rect: [f32; 4], rgba: [u8; 4], draw_state: &mut Draw
         y: f32,
         z: f32,
     }
-    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
     let color = u32::from_le_bytes(rgba);
     let verts = sys::sceGuGetMemory((2 * core::mem::size_of::<FillVertex>()) as i32) as *mut FillVertex;
     for (i, (x, y)) in [(rect[0], rect[1]), (rect[2], rect[3])].into_iter().enumerate() {
         verts.add(i).write(FillVertex {
             color,
-            x: vx as f32 + x * k,
-            y: y * k,
+            x: ssb_engine::coord::n64_to_psp_x(x),
+            y: ssb_engine::coord::n64_to_psp_y(y),
             z: 0.0,
         });
     }
@@ -3092,16 +3041,14 @@ pub unsafe fn fill_triangles_n64(tris: &[[[f32; 2]; 3]], rgba: [u8; 4], draw_sta
     if tris.is_empty() {
         return;
     }
-    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
     let color = u32::from_le_bytes(rgba);
     let count = tris.len() * 3;
     let verts = sys::sceGuGetMemory((count * core::mem::size_of::<FillVertex>()) as i32) as *mut FillVertex;
-    for (i, [x, y]) in tris.iter().flatten().enumerate() {
+    for (i, &[x, y]) in tris.iter().flatten().enumerate() {
         verts.add(i).write(FillVertex {
             color,
-            x: vx as f32 + x * k,
-            y: y * k,
+            x: ssb_engine::coord::n64_to_psp_x(x),
+            y: ssb_engine::coord::n64_to_psp_y(y),
             z: 0.0,
         });
     }

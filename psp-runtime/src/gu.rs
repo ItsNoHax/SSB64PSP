@@ -5,7 +5,7 @@
 //! sprinkled through gameplay.
 //!
 //! `Gpu::init` brings up a full-screen viewport/scissor. Callers that need
-//! the N64-aspect pillarbox (`ssb_engine::coord::pillarboxed_viewport`) for
+//! the N64 picture's pillarbox (`ssb_engine::coord::visible_area`) for
 //! real 3D content call [`Gpu::set_viewport_pillarboxed`] explicitly and
 //! [`Gpu::set_viewport_fullscreen`] to go back -- e.g. for a flat 2D
 //! intro/menu around a pillarboxed training scene. A caller that only ever
@@ -241,9 +241,9 @@ pub unsafe fn transition_photo_data() -> &'static [u8] {
 }
 
 /// `lbTransitionSetupTransition`'s copy from an 8888 buffer holding the
-/// pillarboxed 4:3 picture: photo texel `(x, y)` is N64 screen pixel
-/// `(10 + x, 230 - y)`, the copy running from row 230 upwards, sampled at
-/// that pixel's centre on the PSP. The texel past the last column and the
+/// picture: photo texel `(x, y)` is N64 screen pixel `(10 + x, 230 - y)`,
+/// the copy running from row 230 upwards, sampled at that pixel's centre
+/// on the PSP (`ssb_engine::coord`'s mapping). The texel past the last column and the
 /// row past the last row repeat their neighbours, so the GE's clamped
 /// bilinear filter at the picture's right and bottom edges reads the
 /// picture rather than the padding.
@@ -251,8 +251,15 @@ pub unsafe fn transition_photo_data() -> &'static [u8] {
 /// # Safety
 ///
 /// `src` must point at a complete `BUF_WIDTH`-stride 8888 frame.
+/// The N64's `(10, 10)`-`(310, 230)` box on the PSP, to the nearest pixel:
+/// where a 300 x 220 snapshot of it draws back.
+fn visible_rect() -> [i16; 4] {
+    let r = ssb_engine::coord::n64_rect_to_psp(ssb_engine::coord::N64_VISIBLE);
+    r.map(|v| (v + 0.5) as i16)
+}
+
 unsafe fn copy_transition_photo(src: *const u32) {
-    let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+    use ssb_engine::coord::{n64_pixel_to_psp_column, n64_pixel_to_psp_row};
     let dst = core::ptr::addr_of_mut!(TRANSITION_PHOTO.0) as *mut u16;
     let rgb565 = |c: u32| -> u16 {
         let (r, g, b) = (c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF);
@@ -260,10 +267,10 @@ unsafe fn copy_transition_photo(src: *const u32) {
     };
     for y in 0..TRANSITION_PHOTO_HEIGHT {
         let n64_y = 230 - y as i32;
-        let sy = (((n64_y as f32 + 0.5) * vh as f32 / 240.0) as usize).min(SCREEN_HEIGHT as usize - 1);
+        let sy = n64_pixel_to_psp_row(n64_y) as usize;
         let row = dst.add(y * TRANSITION_PHOTO_STRIDE);
         for x in 0..TRANSITION_PHOTO_WIDTH {
-            let sx = vx as usize + ((x as f32 + 10.5) * vw as f32 / 320.0) as usize;
+            let sx = n64_pixel_to_psp_column(10 + x as i32) as usize;
             row.add(x).write(rgb565(src.add(sy * BUF_WIDTH as usize + sx).read()));
         }
         row.add(TRANSITION_PHOTO_WIDTH).write(row.add(TRANSITION_PHOTO_WIDTH - 1).read());
@@ -372,6 +379,13 @@ pub struct Gpu {
     photo_vram: *mut c_void,
     /// Whether [`Gpu::photo_vram`] holds the last capture.
     photo_in_vram: core::cell::Cell<bool>,
+    /// The viewport the last `set_viewport_*` call chose, `[x scale, y
+    /// scale, x centre, y centre]` in GE screen space, and its scissor
+    /// `[x0, y0, x1, y1]` with exclusive ends. [`Gpu::begin_frame`] sends
+    /// both after its full-screen clear, so a call made between frames
+    /// takes effect (commands outside an open list never reach the GE).
+    viewport: [f32; 4],
+    scissor: [i32; 4],
 }
 
 impl Gpu {
@@ -471,38 +485,51 @@ impl Gpu {
             presented_vcount: None,
             photo_vram,
             photo_in_vram: core::cell::Cell::new(false),
+            viewport: [(SCREEN_WIDTH / 2) as f32, -((SCREEN_HEIGHT / 2) as f32), 2048.0, 2048.0],
+            scissor: [0, 0, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32],
         }
     }
 
-    /// Switches to the N64-aspect pillarboxed viewport/scissor real 3D
-    /// content needs -- a full-width 480px viewport stretches every
-    /// character about a third too wide relative to the N64's 4:3
-    /// projection (measured, not guessed: see `set_viewport_fullscreen`'s
-    /// sibling call sites). Call once when entering a real 3D scene.
+    /// The N64's whole 320 x 240 frame as the viewport, scissored to the
+    /// picture a CRT showed (`ssb_engine::coord`, D-047): the pillarboxed
+    /// area 2D and full-frame 3D content draw into. Call once when
+    /// entering a real 3D scene.
     pub fn set_viewport_pillarboxed(&mut self) {
-        let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-        unsafe {
-            sys::sceGuViewport(2048, 2048, vw as i32, vh as i32);
-            sys::sceGuScissor(vx as i32, 0, (vx + vw) as i32, vh as i32);
-        }
+        let (w, h) = ssb_engine::coord::N64_SCREEN;
+        self.set_viewport_n64([0.0, 0.0, w as f32, h as f32]);
     }
 
     /// A camera's own N64 viewport (`syRdpSetViewport`'s `ulx, uly, lrx,
-    /// lry` on the 320 x 240 screen), placed inside the pillarboxed area
-    /// and scissored to it.
-    pub fn set_viewport_n64(&mut self, [ulx, uly, lrx, lry]: [f32; 4]) {
-        let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-        let (nw, nh) = ssb_engine::coord::N64_SCREEN;
-        let kx = vw as f32 / nw as f32;
-        let ky = vh as f32 / nh as f32;
-        let (x0, x1) = (vx as f32 + ulx * kx, vx as f32 + lrx * kx);
-        let (y0, y1) = (uly * ky, lry * ky);
-        // `init`'s offset puts the screen's centre at 2048.
-        let cx = 2048 - (SCREEN_WIDTH / 2) as i32 + ((x0 + x1) / 2.0) as i32;
-        let cy = 2048 - (SCREEN_HEIGHT / 2) as i32 + ((y0 + y1) / 2.0) as i32;
+    /// lry` on the 320 x 240 screen) through `ssb_engine::coord`'s mapping,
+    /// scissored to it and to the visible picture: what fell in the CRT's
+    /// overscan is cropped.
+    pub fn set_viewport_n64(&mut self, rect: [f32; 4]) {
+        let [x0, y0, x1, y1] = ssb_engine::coord::n64_rect_to_psp(rect);
+        let [sx0, sy0, sx1, sy1] = ssb_engine::coord::n64_scissor(rect);
+        // `init`'s offset puts the screen's centre at 2048. The scale and
+        // centre go in as floats: `sceGuViewport` halves an integer width,
+        // and the mapped viewport is rarely a whole number of pixels.
+        let cx = 2048.0 - (SCREEN_WIDTH / 2) as f32 + (x0 + x1) * 0.5;
+        let cy = 2048.0 - (SCREEN_HEIGHT / 2) as f32 + (y0 + y1) * 0.5;
+        self.viewport = [(x1 - x0) * 0.5, -(y1 - y0) * 0.5, cx, cy];
+        self.scissor = [sx0, sy0, sx1, sy1];
+        self.apply_viewport();
+    }
+
+    /// Sends [`Gpu::viewport`] and [`Gpu::scissor`] into the open list;
+    /// between frames [`Gpu::begin_frame`] sends them instead.
+    fn apply_viewport(&self) {
+        if !self.frame_open {
+            return;
+        }
+        let [xs, ys, cx, cy] = self.viewport;
+        let [x0, y0, x1, y1] = self.scissor;
         unsafe {
-            sys::sceGuViewport(cx, cy, (x1 - x0) as i32, (y1 - y0) as i32);
-            sys::sceGuScissor(x0 as i32, y0 as i32, x1 as i32, y1 as i32);
+            sys::sceGuSendCommandf(sys::GeCommand::ViewportXScale, xs);
+            sys::sceGuSendCommandf(sys::GeCommand::ViewportYScale, ys);
+            sys::sceGuSendCommandf(sys::GeCommand::ViewportXCenter, cx);
+            sys::sceGuSendCommandf(sys::GeCommand::ViewportYCenter, cy);
+            sys::sceGuScissor(x0, y0, x1, y1);
         }
     }
 
@@ -515,14 +542,15 @@ impl Gpu {
         }
     }
 
-    /// Restores the full-screen viewport/scissor `init` set up, for flat 2D
-    /// content (RE-289/290's pixel-confirmed evidence assumes this shape).
-    /// Call when leaving a real 3D scene.
+    /// The whole PSP screen as viewport and scissor, as `init` set up:
+    /// only for the port's own diagnostics drawn in PSP pixels (a run
+    /// without a pack, a blocked campaign scene). N64 content uses
+    /// [`Gpu::set_viewport_pillarboxed`] or [`Gpu::set_viewport_n64`], whose
+    /// scissor crops the overscan strip.
     pub fn set_viewport_fullscreen(&mut self) {
-        unsafe {
-            sys::sceGuViewport(2048, 2048, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32);
-            sys::sceGuScissor(0, 0, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32);
-        }
+        self.viewport = [(SCREEN_WIDTH / 2) as f32, -((SCREEN_HEIGHT / 2) as f32), 2048.0, 2048.0];
+        self.scissor = [0, 0, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32];
+        self.apply_viewport();
     }
 
     /// Requests that the frame currently in flight be copied into the
@@ -578,16 +606,16 @@ impl Gpu {
         debug_assert!(!self.frame_open);
         unsafe {
             let src = if self.draw_is_fbp0 { self.fbp1_direct } else { self.fbp0_direct } as *const u32;
-            let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+            use ssb_engine::coord::{n64_pixel_to_psp_column, n64_pixel_to_psp_row};
             let dst = core::ptr::addr_of_mut!(WALLPAPER_PHOTO.0) as *mut u32;
             // Each column's source, computed once rather than per pixel
             // (RE-476): the same expression, so the same pixels.
             let mut cols = [0u16; WALLPAPER_PHOTO_WIDTH];
             for (x, c) in cols.iter_mut().enumerate() {
-                *c = (vx as usize + ((x as f32 + 10.5) * vw as f32 / 320.0) as usize) as u16;
+                *c = n64_pixel_to_psp_column(10 + x as i32) as u16;
             }
             for y in 0..WALLPAPER_PHOTO_HEIGHT {
-                let sy = ((y as f32 + 10.5) * vh as f32 / 240.0) as usize;
+                let sy = n64_pixel_to_psp_row(10 + y as i32) as usize;
                 let row = src.add(sy * BUF_WIDTH as usize);
                 let out = dst.add(y * WALLPAPER_PHOTO_STRIDE);
                 for (x, &sx) in cols.iter().enumerate() {
@@ -616,7 +644,7 @@ impl Gpu {
         } else {
             self.fbp1_direct
         } as *const u32;
-        let (vx, _, _, _) = ssb_engine::coord::pillarboxed_viewport();
+        let (vx, _, _, _) = ssb_engine::coord::visible_area();
         let dst = core::ptr::addr_of_mut!(WALLPAPER_PHOTO.0) as *mut u32;
         for y in 0..WALLPAPER_PHOTO_HEIGHT {
             let src_row = src.add(y * BUF_WIDTH as usize + vx as usize);
@@ -694,35 +722,20 @@ impl Gpu {
     /// Must be called between `begin_frame` and `end_frame`, the same window
     /// every other GE draw call uses.
     pub unsafe fn draw_wallpaper_sprite(&self) {
-        let (vx, _, _, _) = ssb_engine::coord::pillarboxed_viewport();
+        let (vx, _, _, _) = ssb_engine::coord::visible_area();
         self.draw_wallpaper_rect([vx as i16, 0, (vx as usize + WALLPAPER_PHOTO_WIDTH) as i16, WALLPAPER_PHOTO_HEIGHT as i16]);
     }
 
     /// Draw the campaign snapshot at sc1PStageClearMakeWallpaper's (10,10).
     pub unsafe fn draw_campaign_wallpaper(&self) {
-        let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-        self.draw_wallpaper_rect([
-            (vx as f32 + 10.0 * vw as f32 / 320.0) as i16,
-            (10.0 * vh as f32 / 240.0) as i16,
-            (vx as f32 + 310.0 * vw as f32 / 320.0) as i16,
-            (230.0 * vh as f32 / 240.0) as i16,
-        ]);
+        self.draw_wallpaper_rect(visible_rect());
     }
 
     /// The opening room's last picture, held under its transition
     /// (RE-467): the snapshot [`Gpu::capture_campaign_wallpaper`] took,
     /// unshaded, at the picture's own place.
     pub unsafe fn draw_frozen_picture(&self) {
-        let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-        self.draw_photo_rect(
-            [
-                (vx as f32 + 10.0 * vw as f32 / 320.0) as i16,
-                (10.0 * vh as f32 / 240.0) as i16,
-                (vx as f32 + 310.0 * vw as f32 / 320.0) as i16,
-                (230.0 * vh as f32 / 240.0) as i16,
-            ],
-            0xFFFF_FFFF,
-        );
+        self.draw_photo_rect(visible_rect(), 0xFFFF_FFFF);
     }
 
     /// The depth over the current scissor set to the nearest value, which
@@ -870,8 +883,10 @@ impl Gpu {
     /// and its pillarbox border kept whatever was in that VRAM region at
     /// allocation time for the rest of the program's life. Resetting the
     /// scissor here first makes every clear -- on both buffers, every frame
-    /// -- actually cover the screen; the caller's own narrowing call right
-    /// after this one still applies to that frame's subsequent 3D draws.
+    /// -- actually cover the screen. The clear then puts back the viewport
+    /// and scissor the last `set_viewport_*` call chose, so a caller that
+    /// set its viewport before this call still has the visible picture's
+    /// crop (D-047).
     pub fn begin_frame(&mut self, clear: Option<Color>) {
         debug_assert!(!self.frame_open, "begin_frame called twice");
         self.frame_open = true;
@@ -895,6 +910,9 @@ impl Gpu {
                 sys::sceGuClear(ClearBuffer::COLOR_BUFFER_BIT | ClearBuffer::DEPTH_BUFFER_BIT);
             }
         }
+        // Back to the caller's viewport and scissor (normally the visible
+        // picture), so nothing drawn this frame reaches the bars.
+        self.apply_viewport();
     }
 
     /// Submits the frame and swaps buffers on vblank.

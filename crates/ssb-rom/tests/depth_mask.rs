@@ -30,10 +30,9 @@ fn magnifier_mask_spans_match_sampling_every_pixel() {
     let image = asset::frame(pack.anim_script(&a).unwrap()).unwrap().image;
     let tables = depth_mask::Tables::new(&image);
     // `draw_magnifiers`: a 32-pixel mask times the magnify scale, centred
-    // anywhere in the 10..310 x 10..230 viewport, on the pillarboxed
-    // 480 x 272 screen.
-    let k = 272.0f32 / 240.0;
-    let vx = ((480.0 - 320.0 * k) / 2.0) as i32 as f32;
+    // anywhere in the 10..310 x 10..230 viewport, through
+    // `ssb_engine::coord`'s mapping onto the 480 x 272 screen.
+    let k = ssb_engine::coord::SCREEN_SCALE;
     let (mut fast_t, mut slow_t, mut cases) = (0u128, 0u128, 0);
     for step in 0..=40 {
         let scale = 0.5 + step as f32 * 0.0937;
@@ -46,8 +45,8 @@ fn magnifier_mask_spans_match_sampling_every_pixel() {
         ] {
             let (x, y) = (cx - 16.0 * scale, cy - 16.0 * scale);
             let (w, h) = (32.0 * scale, 32.0 * scale);
-            let x0 = vx + x * k;
-            let y0 = y * k;
+            let x0 = ssb_engine::coord::n64_to_psp_x(x);
+            let y0 = ssb_engine::coord::n64_to_psp_y(y);
             let p = Placement {
                 x0,
                 y0,

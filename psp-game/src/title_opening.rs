@@ -252,20 +252,13 @@ impl TitleOpening {
         gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
         let view = Mat4::look_at(Vec3::new(0.0, 0.0, 1000.0), Vec3::ZERO, Vec3::Y);
         let proj = Mat4::perspective(30.0f32.to_radians(), 4.0 / 3.0, 100.0, 12800.0);
-        let (vx, vy, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-        let (kx, ky) = (vw as f32 / 320.0, vh as f32 / 240.0);
         let camera = ssb_psp_runtime::particles::Camera {
             view: &view,
             proj: &proj,
             screen: false,
             planes: (100.0, 12800.0),
             ge_planes: (100.0, 12800.0),
-            rect: [
-                vx as f32 + 10.0 * kx,
-                vy as f32 + 10.0 * ky,
-                300.0 * kx,
-                220.0 * ky,
-            ],
+            rect: ssb_engine::coord::n64_rect_to_psp_xywh([10.0, 10.0, 310.0, 230.0]),
         };
         ssb_psp_runtime::particles::draw_lists(
             &banks,

@@ -20,7 +20,7 @@ mod ending;
 pub unsafe fn draw_message(gpu: &mut Gpu, p: &Pack<'_>, st: &mut DrawState, m: &spgame::message::Message) {
     gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
     ending::draw_message(p, st, m);
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
 }
 
 #[derive(Default)]
@@ -531,7 +531,7 @@ impl Presentation {
             }
             _ => ending::draw(self, gpu, p, st, screen),
         }
-        gpu.set_viewport_fullscreen();
+        gpu.set_viewport_pillarboxed();
     }
 
     unsafe fn draw_intro_models(

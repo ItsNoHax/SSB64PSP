@@ -277,7 +277,7 @@ pub unsafe fn draw_1p(
             }
         }
     });
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
 }
 
 /// The Bonus Practice select back to front (`Players1PBonus::visit`), with
@@ -313,7 +313,7 @@ pub unsafe fn draw_bonus(
             None => draw_piece(p, draw_state, &piece, size),
         }
     });
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
 }
 
 /// Whether `p` holds `piece`'s sprite (through its LUT, if it names one).
@@ -335,7 +335,7 @@ unsafe fn draw_screen(
     f: Option<&Fighters>,
 ) {
     visit(&mut |d| draw_select_piece(gpu, p, draw_state, d, shown, f));
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
 }
 
 /// One of a select's pieces.

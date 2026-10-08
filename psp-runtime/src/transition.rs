@@ -85,7 +85,7 @@ impl Transition {
             None,
             0,
         );
-        gpu.set_viewport_fullscreen();
+        gpu.set_viewport_pillarboxed();
         drawn
     }
 }

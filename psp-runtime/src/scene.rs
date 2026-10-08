@@ -1651,7 +1651,6 @@ impl FighterScene {
             );
             return;
         }
-        let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
         let bounds = ssb_game::camera::Bounds {
             top: stage.camera.top as f32,
             bottom: stage.camera.bottom as f32,
@@ -1688,14 +1687,11 @@ impl FighterScene {
             list[count] = interest;
             count += 1;
         }
-        // How to Play's battle viewport (300 x 150) frames by its own
-        // aspect; the full battle viewport keeps the screen's.
-        let aspect = if self.camera.viewport == ssb_game::camera::BATTLE_VIEWPORT {
-            vw as f32 / vh as f32
-        } else {
-            let (w, h) = self.camera.viewport_size();
-            w / h
-        };
+        // `gGMCameraStruct.viewport_width / .viewport_height`: 300 / 220 for
+        // the battle, 300 / 150 for How to Play's. The PSP shows the
+        // battle viewport at that aspect (D-047).
+        let (w, h) = self.camera.viewport_size();
+        let aspect = w / h;
         self.camera.tick_interests(&list[..count], bounds, stage.camera_light_angle_z, aspect);
     }
 

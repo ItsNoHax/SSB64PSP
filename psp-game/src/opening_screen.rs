@@ -266,7 +266,7 @@ pub(crate) unsafe fn draw(o: &Opening, gpu: &mut Gpu, pack: Option<&Pack<'_>>, s
         gpu.capture_campaign_wallpaper();
         o.frozen.set(true);
     }
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
     gpu.begin_frame(Some(ssb_engine::renderer::Color::rgba(0, 0, 0, 255)));
     gpu.set_viewport_pillarboxed();
     if freeze {
@@ -284,7 +284,7 @@ pub(crate) unsafe fn draw(o: &Opening, gpu: &mut Gpu, pack: Option<&Pack<'_>>, s
         host_draw(logic, &o.runtime, gpu, st, &a, obj, head);
     };
     o.runtime.draw(logic.world(), gpu, st, &a, &mut host);
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
 }
 
 /// The scenes' own displays.

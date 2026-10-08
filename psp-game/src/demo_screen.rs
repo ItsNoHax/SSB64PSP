@@ -543,10 +543,8 @@ pub(crate) fn leave(s: &mut Session) {
 }
 
 /// A rectangle in N64 screen pixels as the PSP's 2D rectangle.
-fn psp_rect([x0, y0, x1, y1]: [f32; 4]) -> [f32; 4] {
-    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
-    [vx as f32 + x0 * k, y0 * k, vx as f32 + x1 * k, y1 * k]
+fn psp_rect(rect: [f32; 4]) -> [f32; 4] {
+    ssb_engine::coord::n64_rect_to_psp(rect)
 }
 
 /// `lbCommonDrawSObjAttr` for one of the scene's `SObj`s.
@@ -773,13 +771,13 @@ pub(crate) unsafe fn draw_movie_only(
     draw_state: &mut meshdraw::DrawState,
     demo: &Demo,
 ) {
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
     gpu.begin_frame(Some(ssb_engine::renderer::Color::rgba(0, 0, 0, 0xFF)));
     gpu.set_viewport_pillarboxed();
     if let (Some(p), Demo::Movie(m)) = (pack, demo) {
         draw_movie_cameras(gpu, p, draw_state, m, |_| true);
     }
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
 }
 
 /// `mvOpening*StartScene`: an opening battle scene. `false` when its data

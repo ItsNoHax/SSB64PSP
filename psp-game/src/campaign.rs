@@ -1063,7 +1063,7 @@ pub(crate) unsafe fn draw(
             c.presentation.prepare_draw(gpu, p, &c.frontend.screen, sp);
         }
     }
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
     gpu.begin_frame(Some(BG_RESULTS));
     let Some(c) = s.campaign.as_mut() else { return };
     if let Some(blocked) = c.blocked {
@@ -1071,6 +1071,8 @@ pub(crate) unsafe fn draw(
             Blocked::Scene(scene) => (Color::rgba(160, 24, 24, 255), 40 + scene as i32 * 30),
             Blocked::Assets(stage) => (Color::rgba(200, 120, 0, 255), 40 + stage as i32 * 29),
         };
+        // The port's own diagnostic, in PSP pixels.
+        gpu.set_viewport_fullscreen();
         gpu.draw_rect(40, 100, 440, 172, color);
         gpu.draw_rect(x, 180, x + 24, 196, ENTRY_SELECTED);
         return;

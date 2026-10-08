@@ -367,7 +367,7 @@ impl Menus {
         draw_state: &mut meshdraw::DrawState,
         backup: &Backup,
     ) {
-        gpu.set_viewport_fullscreen();
+        gpu.set_viewport_pillarboxed();
         gpu.begin_frame(Some(ssb_engine::renderer::Color::rgba(0, 0, 0, 255)));
         let Some(active) = self.active.as_ref() else {
             return;
@@ -430,7 +430,7 @@ impl Menus {
         }
         drop(f);
         self.title_opening = title_opening;
-        gpu.set_viewport_fullscreen();
+        gpu.set_viewport_pillarboxed();
     }
 }
 

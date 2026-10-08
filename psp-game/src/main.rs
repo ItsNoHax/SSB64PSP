@@ -3603,7 +3603,7 @@ unsafe fn draw_results(
         gpu.capture_transition_photo_now();
         f.photo_pending = false;
     }
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
     gpu.begin_frame(Some(BG_RESULTS));
     let (Some(p), Some(r), Some(f)) = (pack, results, fighters) else {
         return;
@@ -4021,7 +4021,7 @@ unsafe fn draw_frame(
 ) {
     match s.screen {
         Screen::CaptureIntro | Screen::CaptureMenu => {
-            gpu.set_viewport_fullscreen();
+            gpu.set_viewport_pillarboxed();
             gpu.begin_frame(Some(BG_RESULTS));
         }
         Screen::Menus => s.menus.draw(gpu, pack.as_ref(), draw_state, &s.backup),
@@ -4046,18 +4046,19 @@ unsafe fn draw_frame(
         Screen::StageSelect => match (pack.as_ref(), s.stage_select_layer.as_ref()) {
             // `gcMakeDefaultCameraGObj`'s black clear, then the cameras.
             (Some(p), Some(layer)) => {
-                gpu.set_viewport_fullscreen();
+                gpu.set_viewport_pillarboxed();
                 gpu.begin_frame(Some(Color::rgba(0, 0, 0, 0xFF)));
                 stage_screen::draw_all(gpu, p, draw_state, &s.stage_select, layer, &s.stage_preview);
             }
             _ => {
+                // The port's own diagnostic, in PSP pixels.
                 gpu.set_viewport_fullscreen();
                 gpu.begin_frame(Some(BG_MENU));
                 draw_stage_select(gpu, &s.stage_select);
             }
         },
         Screen::Message => {
-            gpu.set_viewport_fullscreen();
+            gpu.set_viewport_pillarboxed();
             gpu.begin_frame(Some(BG_RESULTS));
             if let (Some(p), Some(m)) = (pack.as_ref(), s.vs_message.as_ref()) {
                 campaign::draw_message(gpu, p, draw_state, m);
@@ -5537,7 +5538,7 @@ unsafe fn draw_training_select(
     select: Option<&ssb_game::fighter_select::FighterSelect>,
     fighters: Option<&players_screen::Fighters>,
 ) {
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
     let Some(select) = select else {
         gpu.begin_frame(Some(BG_MENU));
         return;
@@ -5718,7 +5719,7 @@ fn players_1p_bonus_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: 
 /// `mnPlayers1PBonus`'s frame over its default camera's black.
 #[inline(never)]
 unsafe fn draw_players_1p_bonus(gpu: &mut Gpu, pack: Option<&Pack<'_>>, draw_state: &mut meshdraw::DrawState, s: &Session) {
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
     gpu.begin_frame(Some(BG_RESULTS));
     if let (Some(p), Some(select)) = (pack, s.players_1p_bonus.as_deref()) {
         players_screen::draw_bonus(gpu, p, None, draw_state, select, &s.backup, s.players_1p_bonus_fighters.as_deref());
@@ -5730,7 +5731,7 @@ unsafe fn draw_players_1p_bonus(gpu: &mut Gpu, pack: Option<&Pack<'_>>, draw_sta
 /// pack it draws nothing over the menu colour.
 #[inline(never)]
 unsafe fn draw_players_1p(gpu: &mut Gpu, pack: Option<&Pack<'_>>, draw_state: &mut meshdraw::DrawState, s: &Session) {
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
     match (pack, s.players_1p.as_ref()) {
         (Some(p), Some(select)) => {
             gpu.begin_frame(Some(BG_RESULTS));
@@ -5751,7 +5752,7 @@ unsafe fn draw_players_vs(
     select: Option<&ssb_game::players_vs::PlayersVs>,
     fighters: Option<&players_screen::Fighters>,
 ) {
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
     let Some(select) = select else {
         gpu.begin_frame(Some(BG_MENU));
         return;
@@ -5778,7 +5779,10 @@ unsafe fn draw_players_vs(
 fn draw_players_vs_slots(gpu: &mut Gpu, select: &ssb_game::players_vs::PlayersVs) {
     use ssb_game::fighter_select as fs;
     use ssb_game::players_vs::PlayerKind;
-    let map = |x: f32, y: f32| ((59.0 + x * 17.0 / 15.0) as i32, (y * 17.0 / 15.0) as i32);
+    let map = |x: f32, y: f32| {
+        use ssb_engine::coord::{n64_to_psp_x, n64_to_psp_y, psp_pixel_edge};
+        (psp_pixel_edge(n64_to_psp_x(x)), psp_pixel_edge(n64_to_psp_y(y)))
+    };
     let rect = |gpu: &mut Gpu, x: f32, y: f32, w: f32, h: f32, color: Color| {
         let (x0, y0) = map(x, y);
         let (x1, y1) = map(x + w, y + h);
@@ -5839,8 +5843,11 @@ fn draw_players_vs_slots(gpu: &mut Gpu, select: &ssb_game::players_vs::PlayersVs
 #[inline(never)]
 fn draw_fighter_select(gpu: &mut Gpu, select: &ssb_game::fighter_select::FighterSelect) {
     use ssb_game::fighter_select as fs;
-    // 320×240 onto 480×272 at 17/15, centred horizontally.
-    let map = |x: f32, y: f32| ((59.0 + x * 17.0 / 15.0) as i32, (y * 17.0 / 15.0) as i32);
+    // Through `ssb_engine::coord`'s N64 → PSP mapping.
+    let map = |x: f32, y: f32| {
+        use ssb_engine::coord::{n64_to_psp_x, n64_to_psp_y, psp_pixel_edge};
+        (psp_pixel_edge(n64_to_psp_x(x)), psp_pixel_edge(n64_to_psp_y(y)))
+    };
     let rect = |gpu: &mut Gpu, x: f32, y: f32, w: f32, h: f32, color: Color| {
         let (x0, y0) = map(x, y);
         let (x1, y1) = map(x + w, y + h);
@@ -7220,10 +7227,8 @@ fn draw_screen_flash(gpu: &mut Gpu, draw_state: &mut meshdraw::DrawState, ko: &s
     let Some([r, g, b, a]) = ko.flash_color() else {
         return;
     };
-    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
-    let px = |x: i16| (vx as f32 + f32::from(x) * k) as i32;
-    let py = |y: i16| (f32::from(y) * k) as i32;
+    let px = |x: i16| ssb_engine::coord::psp_pixel_edge(ssb_engine::coord::n64_to_psp_x(f32::from(x)));
+    let py = |y: i16| ssb_engine::coord::psp_pixel_edge(ssb_engine::coord::n64_to_psp_y(f32::from(y)));
     // A one-cycle fill leaves out the lower-right edge.
     gpu.draw_rect_translucent(px(10), py(10), px(310), py(230), Color::rgba(r, g, b, a));
     draw_state.invalidate_all();
@@ -7705,7 +7710,7 @@ unsafe fn draw_training(
         .and_then(|(p, pl)| p.stage(stage_index).map(|s| (p, pl, s)));
 
     let Some((p, pl, stage)) = scene else {
-        gpu.set_viewport_fullscreen();
+        gpu.set_viewport_pillarboxed();
         gpu.begin_frame(Some(no_pack_color));
         return;
     };
@@ -7726,13 +7731,10 @@ unsafe fn draw_training(
     // `gmCameraMakeWallpaperCamera` (priority 80) draws before the stage
     // camera (50). Race uses a black viewport without a sprite.
     if let Some((sprite, w)) = wallpaper.filter(|(_, w)| w.kind != ssb_game::wallpaper::Kind::Bonus3) {
-        if damage_hud.movie {
-            // The opening's wallpaper camera keeps its border (RE-467).
-            gpu.set_viewport_n64(viewport);
-            meshdraw::draw_wallpaper_n64(p, sprite, w.x, w.y, w.scale, draw_state);
-        } else {
-            meshdraw::draw_wallpaper(p, sprite, w.x, w.y, w.scale, draw_state);
-        }
+        // Under the wallpaper camera's viewport: the opening's battles
+        // keep their cameras' borders (RE-467).
+        gpu.set_viewport_n64(viewport);
+        meshdraw::draw_wallpaper(p, sprite, w.x, w.y, w.scale, draw_state);
     }
     // `sc1PGameBossMakeCamera`'s second camera (priority 60, tag 2): the
     // boss wallpaper's far effects, between the wallpaper and the stage.
@@ -8436,10 +8438,8 @@ fn draw_pause_menu(
     retry: bool,
 ) {
     use ssb_game::pause;
-    let (vx, _, _, vh) = ssb_engine::coord::pillarboxed_viewport();
-    let k = vh as f32 / ssb_engine::coord::N64_SCREEN.1 as f32;
-    let px = |x: i16| (vx as f32 + f32::from(x) * k) as i32;
-    let py = |y: i16| (f32::from(y) * k) as i32;
+    let px = |x: i16| ssb_engine::coord::psp_pixel_edge(ssb_engine::coord::n64_to_psp_x(f32::from(x)));
+    let py = |y: i16| ssb_engine::coord::psp_pixel_edge(ssb_engine::coord::n64_to_psp_y(f32::from(y)));
     for [ulx, uly, lrx, lry] in pause::BORDER {
         // `G_CYC_FILL` covers both corners.
         gpu.draw_rect_fill(px(ulx), py(uly), px(lrx + 1), py(lry + 1), Color::rgba(0xFF, 0xFF, 0xFF, 0xFF));

@@ -124,7 +124,7 @@ pub unsafe fn draw_all(
         Draw::Sprite(piece) => draw_piece(p, draw_state, &piece, None),
         Draw::Model => draw_model(gpu, p, draw_state, layer, preview),
     });
-    gpu.set_viewport_fullscreen();
+    gpu.set_viewport_pillarboxed();
 }
 
 /// One `SObj` through `lbCommonDrawSObjAttr`.

@@ -121,19 +121,108 @@ pub fn n64_uv_to_normalized(uv: [i16; 2], width: u32, height: u32) -> (f32, f32)
     (s / width.max(1) as f32, t / height.max(1) as f32)
 }
 
-/// Aspect-ratio correction for showing a 320x240 game on a 480x272 screen.
+/// The part of the N64's 320x240 frame a CRT showed: `(10, 10)` to
+/// `(310, 230)`.
 ///
-/// The PSP is 16:9-ish (1.76) against the N64's 4:3 (1.33). Stretching to fill
-/// would distort every character. Returns the viewport that preserves the
-/// original aspect ratio, pillarboxed horizontally.
-pub fn pillarboxed_viewport() -> (u32, u32, u32, u32) {
-    let (sw, sh) = PSP_SCREEN;
-    let (nw, nh) = N64_SCREEN;
-    // Scale to fit height, since 272/240 < 480/320.
-    let scale = sh as f32 / nh as f32;
-    let w = (nw as f32 * scale) as u32;
-    let x = (sw - w) / 2;
-    (x, 0, w, sh)
+/// SSB64 draws its 3D and its interface inside this inset box
+/// (`gmCameraSetViewportDimensions(10, 10, 310, 230)`, the wallpaper's
+/// `gsDPFillRectangle(10, 10, 310, 230)`); the 10-pixel strip around it
+/// held only background and fell into a television's overscan. The port
+/// crops it the same way ([D-047](../../../docs/decisions/D-047.md)).
+pub const N64_VISIBLE: [f32; 4] = [10.0, 10.0, 310.0, 230.0];
+
+/// PSP pixels per N64 pixel, on both axes: the visible box's 220 lines
+/// fill the PSP's 272.
+pub const SCREEN_SCALE: f32 = PSP_SCREEN.1 as f32 / (N64_VISIBLE[3] - N64_VISIBLE[1]);
+
+/// The one N64 → PSP screen mapping: an N64 screen x (in N64 pixels, edges
+/// at integers) to a PSP screen x. The visible box's centre, `(160, 120)`,
+/// lands on the PSP screen's centre; the box spans the PSP's full height
+/// and about 371 of its 480 columns; the strip lands off the screen or in
+/// the black bars beside the picture, outside [`visible_area`].
+#[inline]
+pub fn n64_to_psp_x(x: f32) -> f32 {
+    let c = (N64_VISIBLE[0] + N64_VISIBLE[2]) * 0.5;
+    PSP_SCREEN.0 as f32 * 0.5 + (x - c) * SCREEN_SCALE
+}
+
+/// The y half of [`n64_to_psp_x`].
+#[inline]
+pub fn n64_to_psp_y(y: f32) -> f32 {
+    let c = (N64_VISIBLE[1] + N64_VISIBLE[3]) * 0.5;
+    PSP_SCREEN.1 as f32 * 0.5 + (y - c) * SCREEN_SCALE
+}
+
+/// An N64 screen rectangle `[ulx, uly, lrx, lry]` in PSP screen
+/// coordinates, unclipped.
+#[inline]
+pub fn n64_rect_to_psp([ulx, uly, lrx, lry]: [f32; 4]) -> [f32; 4] {
+    [
+        n64_to_psp_x(ulx),
+        n64_to_psp_y(uly),
+        n64_to_psp_x(lrx),
+        n64_to_psp_y(lry),
+    ]
+}
+
+/// An N64 screen rectangle `[ulx, uly, lrx, lry]` as a PSP `[x, y, w, h]`.
+#[inline]
+pub fn n64_rect_to_psp_xywh(rect: [f32; 4]) -> [f32; 4] {
+    let [x0, y0, x1, y1] = n64_rect_to_psp(rect);
+    [x0, y0, x1 - x0, y1 - y0]
+}
+
+/// A PSP-space edge as a whole-pixel edge: the pixels between two such
+/// edges are those whose centres lie between the two PSP-space edges.
+#[inline]
+pub fn psp_pixel_edge(v: f32) -> i32 {
+    // `ceil(v - 0.5)`: truncation rounds towards zero, so step up when it
+    // fell below.
+    let v = v - 0.5;
+    let t = v as i32;
+    if (t as f32) < v {
+        t + 1
+    } else {
+        t
+    }
+}
+
+/// The PSP pixel whose area holds N64 pixel `x`'s centre: where a
+/// framebuffer copy samples that N64 pixel.
+#[inline]
+pub fn n64_pixel_to_psp_column(x: i32) -> u32 {
+    (n64_to_psp_x(x as f32 + 0.5) as u32).min(PSP_SCREEN.0 - 1)
+}
+
+/// The row half of [`n64_pixel_to_psp_column`].
+#[inline]
+pub fn n64_pixel_to_psp_row(y: i32) -> u32 {
+    (n64_to_psp_y(y as f32 + 0.5) as u32).min(PSP_SCREEN.1 - 1)
+}
+
+/// The PSP pixels showing the N64 picture, `(x, y, w, h)`: those whose
+/// centres lie inside [`N64_VISIBLE`]. Everything outside is a black
+/// pillarbox bar; nothing the game draws may reach it.
+pub fn visible_area() -> (u32, u32, u32, u32) {
+    let [x0, y0, x1, y1] = scissor_pixels(n64_rect_to_psp(N64_VISIBLE));
+    (x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32)
+}
+
+/// The PSP scissor `[x0, y0, x1, y1]` (ends exclusive) for an N64 screen
+/// rectangle: the pixels whose centres lie inside it, clipped to
+/// [`visible_area`] (the RDP's scissor likewise covers the pixels whose
+/// centres it holds, and the CRT shows only the visible box).
+pub fn n64_scissor(rect: [f32; 4]) -> [i32; 4] {
+    let [vx0, vy0, vx1, vy1] = scissor_pixels(n64_rect_to_psp(N64_VISIBLE));
+    let [x0, y0, x1, y1] = scissor_pixels(n64_rect_to_psp(rect));
+    let x0 = x0.clamp(vx0, vx1);
+    let y0 = y0.clamp(vy0, vy1);
+    [x0, y0, x1.clamp(x0, vx1), y1.clamp(y0, vy1)]
+}
+
+/// The pixels whose centres lie inside a PSP-space rectangle.
+fn scissor_pixels(rect: [f32; 4]) -> [i32; 4] {
+    rect.map(psp_pixel_edge)
 }
 
 #[cfg(test)]
@@ -216,13 +305,31 @@ mod tests {
     }
 
     #[test]
-    fn pillarbox_preserves_four_by_three() {
-        let (x, _, w, h) = pillarboxed_viewport();
-        assert_eq!((w, h), (362, 272));
-        // Centred, and never wider than the screen.
-        assert_eq!(x, (480 - 362) / 2);
-        assert!(w <= PSP_SCREEN.0);
-        let aspect = w as f32 / h as f32;
-        assert!((aspect - 4.0 / 3.0).abs() < 0.01, "aspect {aspect}");
+    fn visible_box_fills_the_height_at_four_by_three() {
+        assert_eq!(n64_to_psp_y(10.0), 0.0);
+        assert_eq!(n64_to_psp_y(230.0), 272.0);
+        assert_eq!(n64_to_psp_x(160.0), 240.0);
+        // The same scale on both axes: no stretching.
+        let [x0, y0, x1, y1] = n64_rect_to_psp(N64_VISIBLE);
+        let aspect = (x1 - x0) / (y1 - y0);
+        assert!((aspect - 300.0 / 220.0).abs() < 1e-5, "aspect {aspect}");
+        // About 371 columns wide, centred: 55..425 hold pixel centres.
+        assert_eq!(visible_area(), (55, 0, 370, 272));
+    }
+
+    #[test]
+    fn the_strip_is_cropped() {
+        // The whole frame scissors to the visible area.
+        assert_eq!(n64_scissor([0.0, 0.0, 320.0, 240.0]), [55, 0, 425, 272]);
+        // A rectangle wholly inside the strip covers nothing.
+        let [x0, _, x1, _] = n64_scissor([0.0, 0.0, 10.0, 240.0]);
+        assert_eq!(x0, x1);
+        let [_, y0, _, y1] = n64_scissor([0.0, 230.0, 320.0, 240.0]);
+        assert_eq!(y0, y1);
+        // The N64 pixels just inside the box sample the visible area.
+        assert_eq!(n64_pixel_to_psp_column(10), 55);
+        assert_eq!(n64_pixel_to_psp_column(309), 424);
+        assert_eq!(n64_pixel_to_psp_row(10), 0);
+        assert_eq!(n64_pixel_to_psp_row(229), 271);
     }
 }

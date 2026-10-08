@@ -797,8 +797,9 @@ unsafe fn run() -> ! {
 
     let mut sim = FixedClock::new(clock.now_us());
 
-    let (_vx, _, vw, vh) = coord::pillarboxed_viewport();
-    let aspect = vw as f32 / vh as f32;
+    // `set_viewport_pillarboxed`'s viewport is the N64's whole 4:3 frame.
+    let (nw, nh) = coord::N64_SCREEN;
+    let aspect = nw as f32 / nh as f32;
 
     // A fixed oblique angle keeps single-sided effect cards from landing
     // exactly edge-on during the deterministic transform/material audits
@@ -1373,7 +1374,7 @@ unsafe fn run() -> ! {
         gpu.begin_frame(Some(Color::rgba(0x20, 0x28, 0x38, 0xFF)));
         // `Gpu::init` defaults to a full-screen viewport (shared with
         // `psp-game`, which also needs a flat 2D intro/menu). This viewer
-        // always renders 3D content, so it switches to the N64-aspect
+        // always renders 3D content, so it switches to the N64 frame's
         // pillarbox every frame, inside the open display list `begin_frame`
         // just started -- `sceGuViewport`/`sceGuScissor` outside an open
         // `sceGuStart`/`sceGuSync` block are silently dropped, never reaching
