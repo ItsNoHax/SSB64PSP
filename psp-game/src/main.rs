@@ -2984,7 +2984,7 @@ unsafe fn training_frame(
         damage_hud.bonus_fade_alpha = bonus.fade_alpha();
     }
     if let (Some(c), Some((_, status))) = (campaign.as_deref_mut(), frame) {
-        campaign::update_game(c, status, &pl.fighter);
+        campaign::update_game(c, status, &pl.fighter, p.stage(stage_index).map(|d| d.bgm_id));
     }
     if let (Some(boss), Some(b)) = (boss.as_deref_mut(), battle.as_ref()) {
         campaign::boss_frame_start(boss, pl, b);
@@ -3103,6 +3103,7 @@ unsafe fn training_frame(
     }
     if let (Some(bonus), Some(b)) = (bonus, battle.as_ref()) {
         campaign::bonus_frame(p, damage_hud, b, bonus);
+        frame_end_audio(p, stage_index, pl, dummies, battle.as_ref());
         return false;
     }
     if let (Some(boss), Some(b)) = (boss.as_deref_mut(), battle.as_mut()) {
@@ -3122,7 +3123,27 @@ unsafe fn training_frame(
             }
         }
     }
+    frame_end_audio(p, stage_index, pl, dummies, battle.as_ref());
     false
+}
+
+/// The running frame's last audio: the `ftParamTryUpdateItemMusic` the
+/// fighters', items' and timer's processes asked for, then the crowd's
+/// `ftPublicProcUpdate` on link 13, after the interface's processes.
+fn frame_end_audio(
+    p: &Pack<'_>,
+    stage_index: u32,
+    pl: &play::FighterScene,
+    dummies: &Dummies,
+    battle: Option<&ssb_game::battle::Battle>,
+) {
+    let scenes = scenes_ref(pl, dummies);
+    ssb_game::music::flush_update(scenes.iter().flatten().map(|f| &f.fighter));
+    let fighters = scenes.map(|f| f.map(|f| &f.fighter));
+    // `gMPCollisionBounds.current.bottom`.
+    let bottom = p.stage(stage_index).map_or(f32::MIN, |d| f32::from(d.bounds.bottom));
+    let stock = battle.is_some_and(|b| b.rule == ssb_game::battle::Rule::Stock);
+    ssb_game::public::proc_update(&fighters, bottom, stock);
 }
 
 /// `ifCommonEntryFocusThread`'s slice of the frame: each fighter's entry on
@@ -3279,6 +3300,8 @@ fn pause_frame(
         GameStatus::Pause => {
             let Some(state) = hud.pause else { return };
             if state.retry && pressed.contains(N64Buttons::L) {
+                // `func_800266A0_272A0` before the scene reloads.
+                ssb_game::sound::stop_all_fgm();
                 if let Some(bonus) = bonus.as_deref_mut() {
                     bonus.retry_requested = true;
                 }
@@ -3448,8 +3471,12 @@ fn start_sudden_death(
     // fighters are at 300%, and `ifCommonSuddenDeathMakeInterface`.
     reset_damage_hud(world);
     world.damage_hud.countdown = Some(ssb_game::countdown::Countdown::sudden_death());
-    // `ifCommonSuddenDeathMakeInterface`.
+    // `ifCommonSuddenDeathMakeInterface`, then `mpCollisionSetPlayBGM` and
+    // the crowd.
     ssb_game::sound::play_fgm(ssb_game::sound::id::nSYAudioVoiceAnnounceSuddenDeath);
+    if let Some(bgm_id) = stage_bgm_id(pack, gkind) {
+        ssb_game::music::start_battle(bgm_id);
+    }
 
     *battle = Some(sudden);
     Some(index)
@@ -3870,6 +3897,8 @@ fn enter_training(
 ) -> u32 {
     world.weapons.reset();
     *world.items = ssb_game::item::ItemPool::default();
+    // `ftPublicMakeActor`: every battle scene starts with a quiet crowd.
+    ssb_game::public::make_actor();
     // `gSCManagerBattleState`'s team rule, which every hit search reads;
     // Training is a free-for-all.
     ssb_game::spgame::live::reset_count();
@@ -4354,6 +4383,14 @@ unsafe fn session_frame(
                         training_roster(s.training_scene)
                     };
                     s.enter(pack.as_ref(), saved.gkind, roster, s.vs.then_some(s.vs_menu_rules));
+                    // `scVSBattleStartBattle` / `sc1PTrainingModeFuncStart`.
+                    if s.vs {
+                        if let Some(bgm_id) = stage_bgm_id(pack.as_ref(), saved.gkind) {
+                            ssb_game::music::start_battle(bgm_id);
+                        }
+                    } else {
+                        ssb_game::music::start_training();
+                    }
                     s.screen = Screen::Training;
                 }
                 // B returns to the character select, with the fighters
@@ -4543,6 +4580,8 @@ unsafe fn session_frame(
         if vs_done && s.campaign.is_some() {
             campaign::finish_battle(s, pack.as_ref());
         } else if vs_done {
+            // `scVSBattleStartScene` after each battle's loop.
+            ssb_game::music::leave_battle();
             if s.vs_battle.as_ref().is_some_and(|b| !b.is_sudden_death) {
                 s.vs_transfer = s.vs_battle.clone();
             }
@@ -4665,9 +4704,12 @@ fn training_menu_frame(
     if frame.load_scene {
         // `sc1PTrainingModeStartScene`: Reset runs Training again; Exit
         // goes to its character select (`nSCKindPlayers1PTraining`).
+        // `sc1PTrainingModeStartScene` after the loop.
+        ssb_game::music::leave_battle();
         if menu.exit_or_reset {
             let roster = s.roster;
             s.enter(pack, s.scene_gkind, roster, None);
+            ssb_game::music::start_training();
         } else {
             s.play_state = None;
             s.dummies = Default::default();
@@ -5594,10 +5636,17 @@ fn new_fighter_select(
 
 
 
+/// The ground's `MPGroundData::bgm_id`, for `mpCollisionSetPlayBGM`.
+fn stage_bgm_id(pack: Option<&Pack<'_>>, gkind: u8) -> Option<u32> {
+    let p = pack?;
+    let index = ssb_psp_runtime::scene::common_stage_index(p, gkind)?;
+    Some(p.stage(index)?.bgm_id)
+}
+
 /// `mpCollisionSetPlayBGM` for the attract demos' grounds: the map's
 /// `bgm_id` on player 0.
 pub(crate) fn play_stage_bgm(bgm_id: u32) {
-    ssb_game::sound::play_bgm(0, bgm_id);
+    ssb_game::music::set_play_bgm(bgm_id);
 }
 
 /// `mnPlayersVSStartScene` from the battle state, with one controller
@@ -5674,6 +5723,10 @@ fn players_vs_frame(
         Some(gkind) => {
             s.scene_gkind = gkind;
             s.enter(pack.as_ref(), gkind, vs_roster(&state), Some(s.vs_menu_rules));
+            // `scVSBattleStartBattle`.
+            if let Some(bgm_id) = stage_bgm_id(pack.as_ref(), gkind) {
+                ssb_game::music::start_battle(bgm_id);
+            }
             s.screen = Screen::Training;
         }
     }

@@ -21,7 +21,7 @@
 #[cfg(not(test))]
 use core::ptr::addr_of_mut;
 
-use crate::fighter::{Fighter, FighterKind};
+use crate::fighter::Fighter;
 use crate::sound::{self, id::*, FgmHandle};
 
 /// `dFTCommonDataPublicFighterCallFGMs`: each fighter's chant, by `FTKind`
@@ -252,8 +252,17 @@ fn try_interrupt_call(s: &mut State) {
 
 /// `ftPublicTryStartCall`: a fighter at 100% or more who scores a big hit
 /// after 1200 quiet tics starts their name chant.
-fn try_start_call(s: &mut State, fighters: &[&Fighter], knockback: f32, player_num: i32) -> bool {
-    let Some(attacker) = fighters.iter().find(|f| i32::from(f.port) == player_num) else {
+fn try_start_call(
+    s: &mut State,
+    fighters: &[Option<&Fighter>],
+    knockback: f32,
+    player_num: i32,
+) -> bool {
+    let Some(attacker) = fighters
+        .iter()
+        .flatten()
+        .find(|f| i32::from(f.port) == player_num)
+    else {
         return false;
     };
     if attacker.damage < 100 || s.call_wait < 1200 {
@@ -284,7 +293,7 @@ fn try_start_call(s: &mut State, fighters: &[&Fighter], knockback: f32, player_n
 }
 
 /// `ftPublicDecideCall`.
-fn decide_call(s: &mut State, fighters: &[&Fighter], player_num: i32, knockback: f32) {
+fn decide_call(s: &mut State, fighters: &[Option<&Fighter>], player_num: i32, knockback: f32) {
     if knockback >= 130.0 {
         if try_start_call(s, fighters, knockback, player_num) {
             // `ftPublicCommonStop`.
@@ -307,7 +316,7 @@ fn decide_call(s: &mut State, fighters: &[&Fighter], player_num: i32, knockback:
 /// attacker had itself just been launched hard (`public_knockback >= 160`).
 fn decide_common(
     s: &mut State,
-    fighters: &[&Fighter],
+    fighters: &[Option<&Fighter>],
     player_num: i32,
     knockback: f32,
     is_force: bool,
@@ -337,7 +346,7 @@ fn decide_common(
     s.common_knockback = knockback;
 }
 
-fn run_event(s: &mut State, fighters: &[&Fighter], bounds_bottom: f32, event: Event) {
+fn run_event(s: &mut State, fighters: &[Option<&Fighter>], bounds_bottom: f32, event: Event) {
     match event {
         Event::Damage {
             attacker,
@@ -345,6 +354,7 @@ fn run_event(s: &mut State, fighters: &[&Fighter], bounds_bottom: f32, event: Ev
         } => {
             let is_force = fighters
                 .iter()
+                .flatten()
                 .find(|f| i32::from(f.port) == attacker)
                 .is_some_and(|f| f.public_knockback >= KNOCKBACK_VERYHIGH);
             decide_common(s, fighters, attacker, knockback, is_force);
@@ -379,10 +389,11 @@ fn run_event(s: &mut State, fighters: &[&Fighter], bounds_bottom: f32, event: Ev
 }
 
 /// `ftPublicProcUpdate`, once a frame after the interface (link 13), while
-/// the world runs. `fighters` are every fighter in the battle,
+/// the world runs. `fighters` are every fighter in the battle (in link
+/// order; `None` for an empty port),
 /// `bounds_bottom` is `gMPCollisionBounds.current.bottom` and `stock_rule`
 /// is `game_rules & SCBATTLE_GAMERULE_STOCK`.
-pub fn proc_update(fighters: &[&Fighter], bounds_bottom: f32, stock_rule: bool) {
+pub fn proc_update(fighters: &[Option<&Fighter>], bounds_bottom: f32, stock_rule: bool) {
     with(|s| {
         let n = core::mem::take(&mut s.events_num);
         for i in 0..n {
@@ -396,7 +407,7 @@ pub fn proc_update(fighters: &[&Fighter], bounds_bottom: f32, stock_rule: bool) 
         let players_down_bak = s.players_down;
         s.players_down = 0;
         let mut down: Option<&Fighter> = None;
-        for f in fighters.iter().copied() {
+        for f in fighters.iter().flatten().copied() {
             if !stock_rule || f.stocks != -1 {
                 if f.pos.y < bounds_bottom - 100.0 {
                     s.players_down += 1;
@@ -442,6 +453,6 @@ pub fn proc_update(fighters: &[&Fighter], bounds_bottom: f32, stock_rule: bool) 
 
 /// The fighter kinds that have a chant (tests).
 #[cfg(test)]
-pub(crate) fn has_call(kind: FighterKind) -> bool {
+pub(crate) fn has_call(kind: crate::fighter::FighterKind) -> bool {
     FIGHTER_CALL_FGMS[kind as usize] != nSYAudioFGMVoiceEnd
 }

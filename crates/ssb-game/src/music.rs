@@ -55,6 +55,51 @@ pub fn set_bgm(ground_bgm_id: u32) {
     BGM_CURRENT.store(ground_bgm_id, Ordering::Relaxed);
 }
 
+/// The battle scenes' start (`scVSBattleStartBattle`,
+/// `scVSBattleStartSuddenDeath`, `sc1PBonusStageFuncStart`,
+/// `scAutoDemoFuncStart`, `sc1PGameFuncStart` on most stages):
+/// `mpCollisionSetPlayBGM`, then the crowd's `nSYAudioVoicePublicExcited`.
+pub fn start_battle(ground_bgm_id: u32) {
+    set_play_bgm(ground_bgm_id);
+    sound::play_fgm(nSYAudioVoicePublicExcited);
+}
+
+/// `sc1PGameFuncStart` on Metal Mario's and the Fighting Polygon Team's
+/// stages: the music waits for Go ([`set_play_bgm`] from
+/// `sc1PGameSetGameStart`); the crowd hushes (`nSYAudioFGMPublicPrologue`).
+pub fn start_battle_prologue(ground_bgm_id: u32) {
+    set_bgm(ground_bgm_id);
+    sound::play_fgm(nSYAudioFGMPublicPrologue);
+}
+
+/// `sc1PTrainingModeFuncStart`: `sc1PTrainingModeSetPlayDefaultBGM`, every
+/// FGM stops, and the crowd cheers.
+pub fn start_training() {
+    set_bgm_default(nSYAudioBGMTrainingMode);
+    sound::play_bgm(0, bgm_default());
+    BGM_CURRENT.store(bgm_default(), Ordering::Relaxed);
+    sound::stop_all_fgm();
+    sound::play_fgm(nSYAudioVoicePublicExcited);
+}
+
+/// The battle scenes' `*StartScene` after their loop: the music stops (the
+/// N64 waits for `syAudioCheckBGMPlaying(0)` to clear; the port's sequence
+/// player handles the stop in order, D-049), the volume returns to normal
+/// and every FGM stops.
+pub fn leave_battle() {
+    sound::stop_bgm_all();
+    sound::set_bgm_volume(0, crate::battle::BGM_VOLUME_NORMAL);
+    sound::stop_all_fgm();
+}
+
+/// `sc1PGameUpdateGameStatusGo`'s boss half on Final Destination: the
+/// stage's music becomes `nSYAudioBGMLast`, then
+/// `ftParamTryUpdateItemMusic`.
+pub fn boss_go<'a>(fighters: impl IntoIterator<Item = &'a Fighter>) {
+    set_bgm_default(nSYAudioBGMLast);
+    try_update_item_music(fighters);
+}
+
 /// `ftParamGetItemMusicLength`. The source swaps the two lengths: the Star
 /// returns `ITHAMMER_BGM_DURATION` and the Hammer `ITSTAR_BGM_DURATION`,
 /// so the Star's music wins over the Hammer's. Kept.
