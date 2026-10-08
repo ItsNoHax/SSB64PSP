@@ -27,6 +27,7 @@ pub const COUNT: usize = 368;
 /// the looped ADPCM path can place a chunk past that on long loops, so the
 /// array is larger instead of wrapping into the microcode's own data.
 pub const WORDS: usize = 2048;
+const _: () = assert!(WORDS.is_power_of_two());
 
 pub const A_INIT: u32 = 1;
 pub const A_LOOP: u32 = 2;
@@ -199,15 +200,18 @@ impl Dmem {
         self.w[inp..inp + 4].copy_from_slice(&tmp[..4]);
         let incr = (pitch as u32) << 1;
         let o = out / 2;
+        // Indices wrap at the (power-of-two) workspace size instead of being
+        // bounds-checked per sample; in range they are the plain offsets.
+        const MASK: usize = WORDS - 1;
+        let w = &mut self.w;
         for i in 0..COUNT / 2 {
-            let t = &table[((acc * 64) >> 16) as usize];
-            let s = &self.w[inp..inp + 4];
-            let v = (s[0] as i32 * t[0] as i32
-                + s[1] as i32 * t[1] as i32
-                + s[2] as i32 * t[2] as i32
-                + s[3] as i32 * t[3] as i32)
+            let t = &table[((acc * 64) >> 16) as usize & 63];
+            let v = (w[inp & MASK] as i32 * t[0] as i32
+                + w[(inp + 1) & MASK] as i32 * t[1] as i32
+                + w[(inp + 2) & MASK] as i32 * t[2] as i32
+                + w[(inp + 3) & MASK] as i32 * t[3] as i32)
                 >> 15;
-            self.w[o + i] = clamp16(v);
+            w[(o + i) & MASK] = clamp16(v);
             acc += incr;
             inp += (acc >> 16) as usize;
             acc &= 0xFFFF;
