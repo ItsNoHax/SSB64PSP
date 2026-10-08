@@ -15,7 +15,7 @@
 //! caller serialises calls with [`Fgm::tick`] instead.
 
 use super::data::{AudioData, WaveRef};
-use super::synth::{Synth, VoiceConfig, AL_PLAYING, AL_STOPPED, Client, FGM_VOICE_BASE};
+use super::synth::{Client, Synth, VoiceConfig, AL_PLAYING, AL_STOPPED, FGM_VOICE_BASE};
 use super::FgmHandle;
 use alloc::vec::Vec;
 
@@ -43,24 +43,7 @@ const V_PLAYING: u8 = 1;
 const V_FADING: u8 = 2;
 const V_START: u8 = 3;
 
-/// `alCents2Ratio` (`src/libultra/audio/cents2ratio.c:18`): square and
-/// multiply in f32.
-pub fn cents2ratio(cents: i32) -> f32 {
-    let mut ratio = 1.0f32;
-    let (mut x, mut c) = if cents >= 0 {
-        (1.000_577_8_f32, cents as u32)
-    } else {
-        (0.999_422_54_f32, cents.unsigned_abs())
-    };
-    while c != 0 {
-        if c & 1 != 0 {
-            ratio *= x;
-        }
-        x *= x;
-        c >>= 1;
-    }
-    ratio
-}
+use super::osc::cents2ratio;
 
 /// `ALWhatever8009EDD0_siz24`: one LFO, linked into a voice's id-sorted list.
 #[derive(Debug, Clone, Copy, Default)]
@@ -330,7 +313,11 @@ impl Fgm {
             v.next = if i + 1 < VOICE_POOL { i as u8 + 1 } else { NIL };
         }
         for (i, s) in f.scripts.iter_mut().enumerate() {
-            s.next = if i + 1 < SCRIPT_POOL { i as u8 + 1 } else { NIL };
+            s.next = if i + 1 < SCRIPT_POOL {
+                i as u8 + 1
+            } else {
+                NIL
+            };
         }
         syn.add_client(Client::Snd);
         f
@@ -492,7 +479,8 @@ impl Fgm {
                                     param = -0x4B0;
                                 }
                             } else {
-                                param = param.wrapping_sub(0x960).wrapping_add(self.voices[v].pitch);
+                                param =
+                                    param.wrapping_sub(0x960).wrapping_add(self.voices[v].pitch);
                                 param = param.clamp(-0x4B0, 0x4B0);
                             }
                             self.voices[v].pitch = param;
@@ -540,7 +528,8 @@ impl Fgm {
                                 // `soundArray[idx]->wavetable`.
                                 let inst = &data.sfx.instruments[data.sfx.inst_array[0] as usize];
                                 let sound = inst.sounds[idx as usize];
-                                self.voices[v].wave = Some(data.sfx.sounds[sound as usize].wavetable);
+                                self.voices[v].wave =
+                                    Some(data.sfx.sounds[sound as usize].wavetable);
                                 self.voices[v].state = V_START;
                             }
                         }
@@ -739,10 +728,18 @@ impl Fgm {
         }
         match shape {
             4 | 8 => {
-                let r = if shape == 4 { self.rand1() } else { self.rand2() };
+                let r = if shape == 4 {
+                    self.rand1()
+                } else {
+                    self.rand2()
+                };
                 let l = self.lfos[node as usize];
                 self.lfos[node as usize].to = r * l.amp + l.offset;
-                let r = if shape == 4 { self.rand1() } else { self.rand2() };
+                let r = if shape == 4 {
+                    self.rand1()
+                } else {
+                    self.rand2()
+                };
                 let l = &mut self.lfos[node as usize];
                 l.hold = r * l.period;
                 l.phase = l.hold * phase0 * k;
@@ -792,10 +789,18 @@ impl Fgm {
             4 | 8 => {
                 self.lfos[li].phase += 1.0;
                 if self.lfos[li].hold < self.lfos[li].phase {
-                    let r = if shape == 4 { self.rand1() } else { self.rand2() };
+                    let r = if shape == 4 {
+                        self.rand1()
+                    } else {
+                        self.rand2()
+                    };
                     let l = self.lfos[li];
                     self.lfos[li].to = r * l.amp + l.offset;
-                    let r = if shape == 4 { self.rand1() } else { self.rand2() };
+                    let r = if shape == 4 {
+                        self.rand1()
+                    } else {
+                        self.rand2()
+                    };
                     let l = &mut self.lfos[li];
                     l.hold = r * l.period;
                     l.phase = 0.0;
@@ -899,7 +904,8 @@ impl Fgm {
                     0xD5 => self.scripts[s].volume = rd(&mut pc),
                     0xD6 => {
                         let d = rd(&mut pc) as i8 as i16;
-                        self.scripts[s].volume = (d + self.scripts[s].volume as i16).clamp(0, 0xFF) as u8;
+                        self.scripts[s].volume =
+                            (d + self.scripts[s].volume as i16).clamp(0, 0xFF) as u8;
                     }
                     0xD7 => self.scripts[s].pan = rd(&mut pc),
                     0xD8 => {
@@ -970,7 +976,11 @@ impl Fgm {
                             vo.note = note;
                             t5 = 0;
                             vo.vol_scale = ((sc.volume as u32 * sc.game_vol as u32) >> 7) as u8;
-                            vo.pan_offset = if sc.game_pan != 0x80 { sc.game_pan } else { sc.pan };
+                            vo.pan_offset = if sc.game_pan != 0x80 {
+                                sc.game_pan
+                            } else {
+                                sc.pan
+                            };
                             vo.fx_scale = if sc.game_fx != 0x80 {
                                 sc.game_fx.wrapping_mul(2)
                             } else {
@@ -1444,7 +1454,11 @@ impl Fgm {
         let visit = |fgm: &mut Self, i: usize| {
             let vi = fgm.scripts[i].voice;
             let (scripts, voices) = (&mut fgm.scripts, &mut fgm.voices);
-            let vo = if vi != NIL { Some(&mut voices[vi as usize]) } else { None };
+            let vo = if vi != NIL {
+                Some(&mut voices[vi as usize])
+            } else {
+                None
+            };
             f(&mut scripts[i], vo);
         };
         visit(self, slot as usize);
@@ -1526,7 +1540,9 @@ mod tests {
     /// `D0`. The first note spawns the voice; the next two retune it.
     #[test]
     fn fgm_explode_s_trace() {
-        let Some((d, mut syn, mut fgm)) = setup() else { return };
+        let Some((d, mut syn, mut fgm)) = setup() else {
+            return;
+        };
         let h = fgm.play(0).expect("play");
         assert_eq!((h.slot, h.serial), (0, 1));
         let s = h.slot as usize;
@@ -1560,7 +1576,12 @@ mod tests {
         }
         assert_eq!(
             events,
-            [(0, 20, 0x44, -1000), (20, 30, 0x32, -1000), (50, 85, 0x14, -1000), (135, 0, 0x14, 0)]
+            [
+                (0, 20, 0x44, -1000),
+                (20, 30, 0x32, -1000),
+                (50, 85, 0x14, -1000),
+                (135, 0, 0x14, 0)
+            ]
         );
         // Ended at tick 135: reaped (timer and serial cleared), the voice
         // faded that tick and was reaped on the next.
@@ -1577,7 +1598,9 @@ mod tests {
     /// shapes 4/5, and `Fgm::new` resets only `sRandomSeed2`.
     #[test]
     fn fgm_rng_sequences() {
-        let Some((d, mut syn, mut fgm)) = setup() else { return };
+        let Some((d, mut syn, mut fgm)) = setup() else {
+            return;
+        };
         let msvc = [41u32, 18467, 6334, 26500, 19169];
         for &want in &msvc {
             let x = fgm.rand1();
@@ -1601,7 +1624,9 @@ mod tests {
     /// Serials skip 0 on wrap, for scripts (`0x4A`) and voices (`0x48`).
     #[test]
     fn fgm_serials_skip_zero() {
-        let Some((d, mut syn, mut fgm)) = setup() else { return };
+        let Some((d, mut syn, mut fgm)) = setup() else {
+            return;
+        };
         fgm.script_serial = 0xFFFF;
         fgm.voice_serial = 0xFFFF;
         let h = fgm.play(0).unwrap();
@@ -1615,7 +1640,9 @@ mod tests {
     /// a stale handle is a no-op; `stop_null` stops only root scripts.
     #[test]
     fn fgm_pools_and_stop() {
-        let Some((d, mut syn, mut fgm)) = setup() else { return };
+        let Some((d, mut syn, mut fgm)) = setup() else {
+            return;
+        };
         let hs: Vec<_> = (0..SCRIPT_POOL).map(|_| fgm.play(0).unwrap()).collect();
         // LIFO pool: node 0 first; the newest script heads the active list.
         assert_eq!(hs[0].slot, 0);
@@ -1640,7 +1667,9 @@ mod tests {
     /// paused scripts do not run.
     #[test]
     fn fgm_pause_resume() {
-        let Some((d, mut syn, mut fgm)) = setup() else { return };
+        let Some((d, mut syn, mut fgm)) = setup() else {
+            return;
+        };
         let a = fgm.play(0).unwrap();
         let b = fgm.play(0).unwrap();
         fgm.tick(&mut syn, &d);
@@ -1657,7 +1686,10 @@ mod tests {
         for _ in 0..5 {
             fgm.tick(&mut syn, &d);
         }
-        assert_eq!(fgm.scripts[b.slot as usize].timer, timer, "paused script frozen");
+        assert_eq!(
+            fgm.scripts[b.slot as usize].timer, timer,
+            "paused script frozen"
+        );
         fgm.resume(&mut syn);
         assert_eq!(syn.pvoices[p as usize].em_motion, AL_PLAYING);
         assert_eq!(fgm.active_scripts(), 2);
