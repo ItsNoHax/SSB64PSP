@@ -153,6 +153,7 @@ impl AudioSystem {
     /// `out[..samples * 2]` (interleaved L, R), running the frame's
     /// sequencer, FGM and `syAudio` work. Applies the mono option.
     pub fn render_frame(&mut self, out: &mut [i16], samples: usize) {
+        let t_total = super::prof::start();
         let out = &mut out[..samples * 2];
         let mut players = Players {
             csp: &mut self.csp,
@@ -160,6 +161,7 @@ impl AudioSystem {
         };
         self.synth
             .audio_frame(&self.data, &mut players, out, samples);
+        let t = super::prof::start();
         if self.mono {
             mono(out);
         }
@@ -173,6 +175,8 @@ impl AudioSystem {
         }
         self.bgm_frame();
         self.volume_fade_frame();
+        super::prof::stop(super::prof::Stage::Post, t);
+        super::prof::stop(super::prof::Stage::Total, t_total);
     }
 
     /// The BGM status machine (audio.c:1097-1141).
@@ -595,6 +599,19 @@ mod tests {
         let (_, rms) = level(&tail[tail.len() - 552 * 2 * 10..]);
         assert!(rms < 50.0, "silence after stopping everything: rms {rms}");
         assert_eq!(sys.active_voices(), 0);
+    }
+
+    /// Locks the renderer's output (`golden`): every optimisation of the
+    /// synthesizer must keep these hashes.
+    #[test]
+    fn pcm_hash_golden() {
+        let Some(section) = testdata::section() else {
+            return;
+        };
+        let r = super::super::golden::run(section, || 0).unwrap();
+        std::println!("pcm hashes: {:#018x?}", r.hashes);
+        assert_eq!(r.max_voices, 16);
+        assert_eq!(r.hashes, super::super::golden::HASHES);
     }
 
     /// The same calls produce the same PCM, sample for sample, including

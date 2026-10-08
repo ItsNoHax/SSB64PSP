@@ -145,6 +145,8 @@ mod imp {
         run_max_tick: u32,
         /// The audio thread's counters at the last report.
         audio_last: crate::audio::Stats,
+        /// The renderer's stage totals at the last report.
+        stages_last: [u32; ssb_engine::audio::prof::STAGES],
     }
 
     static mut STATE: State = State {
@@ -168,6 +170,7 @@ mod imp {
         run_max: 0,
         run_max_tick: 0,
         audio_last: crate::audio::Stats::ZERO,
+        stages_last: [0; ssb_engine::audio::prof::STAGES],
     };
 
     pub fn set_tick(tick: u32) {
@@ -381,7 +384,7 @@ mod imp {
         let busy = a.busy_us.wrapping_sub(l.busy_us);
         let _ = writeln!(
             line,
-            "audio n={} blk/s={}.{} tic/s={}.{} busy_us/s={} per_frame={} max={} under={} under_total={} err={} rest_min={} lat_max={} voices={}/{} steals={} drops={} stk={} dump_drop={}",
+            "audio n={} blk/s={}.{} tic/s={}.{} busy_us/s={} per_frame={} max={} under={} under_total={} err={} rest_min={} lat_max={} voices={}/{} steals={} drops={} osc_drops={} stk={} dump_drop={}",
             s.reports,
             blk10 / 10,
             blk10 % 10,
@@ -399,10 +402,37 @@ mod imp {
             a.voices_max,
             a.steals,
             a.drops,
+            a.osc_drops,
             crate::audio::stack_free(),
             crate::audio::dump_dropped(),
         );
         emit(&line.buf[..line.len]);
+        // Renderer stages in microseconds per second (pulls: voice
+        // sub-frames per second; ns_pull: the per-voice stages' cost per
+        // pull).
+        let st = ssb_engine::audio::prof::read();
+        let d: [u32; ssb_engine::audio::prof::STAGES] =
+            core::array::from_fn(|i| per_s(st[i].wrapping_sub(s.stages_last[i])) / 10);
+        let per_voice = d[2] + d[3] + d[4];
+        let mut line = Line { buf: [0; 768], len: 0 };
+        let _ = writeln!(
+            line,
+            "astage n={} seq={} snd={} adpcm={} resample={} envmix={} reverb={} bus={} post={} total={} pulls/s={} ns_pull={}",
+            s.reports,
+            d[0],
+            d[1],
+            d[2],
+            d[3],
+            d[4],
+            d[5],
+            d[6],
+            d[7],
+            d[8],
+            d[9],
+            (u64::from(per_voice) * 1000 / u64::from(d[9].max(1))) as u32,
+        );
+        emit(&line.buf[..line.len]);
+        s.stages_last = st;
         s.audio_last = a;
         crate::audio::new_window();
     }
