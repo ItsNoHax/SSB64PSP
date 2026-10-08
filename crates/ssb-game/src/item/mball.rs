@@ -22,6 +22,7 @@ pub const MAP_REBOUND_GROUND: f32 = 0.2;
 
 /// File 251, `llITCommonDataMBallItemAttributes` (0x6E4).
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::MBALL,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,
@@ -128,6 +129,7 @@ pub(super) fn dropped(item: &mut Item) {
 fn open(item: &mut Item, common: &mut dyn CommonItems) {
     item.vel_air = Vec3::ZERO;
     item.vars.mball_open = !item.vars.mball_open;
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMBallOpen);
     item.attach_line = item.floor_line();
     item.vars.mball_rays = common.mball_rays(item.pos);
     item.clear_root_script();

@@ -46,6 +46,7 @@ pub enum Status {
 
 /// File 251's `ITAttributes` at 0x50 and 0xACC (US).
 pub static CAPSULE_ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::CAPSULE,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,
@@ -79,6 +80,7 @@ pub static CAPSULE_ATTRIBUTES: ItemAttributes = ItemAttributes {
     vel_scale: 80,
 };
 pub static EGG_ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::EGG,
     map_coll: BodyColl {
         top: 200.0,
         center: 0.0,
@@ -92,6 +94,7 @@ pub static EGG_ATTRIBUTES: ItemAttributes = ItemAttributes {
 };
 /// File 251, `llITCommonDataBoxItemAttributes` (0x5CC).
 pub static CRATE_ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::BOX,
     weight: ItemWeight::Heavy,
     damage_coll_size: Vec3::new(450.0, 450.0, 450.0),
     map_coll: BodyColl {
@@ -110,6 +113,7 @@ pub static CRATE_ATTRIBUTES: ItemAttributes = ItemAttributes {
 };
 /// File 251, `llITCommonDataTaruItemAttributes` (0x634).
 pub static BARREL_ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::TARU,
     damage_coll_size: Vec3::new(294.0, 316.0, 294.0),
     map_coll: BodyColl {
         top: 236.0,
@@ -267,7 +271,13 @@ fn explode(item: &mut Item, fx: &mut Emit) {
     item.hidden = true;
     item.multi = 0;
     item.event_id = 0;
+    item.attack.fgm_id = crate::sound::id::nSYAudioFGMExplodeL;
     item.attack.throw_mul = 1.0;
+    // `itCapsuleExplodeInitVars` and `itEggExplodeInitVars` sound the
+    // blast; the Crate's and Barrel's only set it as the hit sound.
+    if !kind(item).heavy() {
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeL);
+    }
     item.attack.can_rehit_item = true;
     if kind(item) != Kind::Barrel {
         item.attack.can_hop = false;
@@ -290,6 +300,8 @@ fn explode(item: &mut Item, fx: &mut Emit) {
 }
 fn open(item: &mut Item, common: &mut dyn CommonItems, fx: &mut Emit) -> bool {
     if kind(item).heavy() {
+        // `itBoxCommonCheckSpawnItems` / `itTaruCommonProcHit`.
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMContainerSmash);
         common.smash_container(item.pos, crate::effect::SmashPiece::Box);
     }
     let opened = if kind(item) == Kind::Crate {

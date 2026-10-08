@@ -18,6 +18,7 @@ use crate::ground::BodyColl;
 /// and 159 wide, an attack it never turns on, a fighter item with hit
 /// status none until it settles.
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::POWER_BLOCK,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,
@@ -129,6 +130,7 @@ pub(super) fn hit_proc(
             item.damage_coll.hitstatus = HitStatus::None;
             let write = anims.add_play(item.anim_target(), ItemAnim::PowerBlockDamage);
             item.apply_root_write(write);
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMInishiePowerBlock);
             events(StageItemEvent::PowerBlockDamage {
                 handicap: item.damage_handicap,
                 hitter: item.damage_by,

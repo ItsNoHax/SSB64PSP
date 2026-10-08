@@ -4,6 +4,7 @@ use super::*;
 
 /// `ITBonus1ObjectHeader` (file 253, US), checked against the ROM.
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::TARGET,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,
@@ -61,6 +62,7 @@ pub(super) fn hit(item: &Item, proc: HitProc, ctx: &mut HitCtx<'_>) -> Option<bo
         .push(crate::wpeffect::WeaponEffect::ShieldBreak(item.pos));
     ctx.fx
         .push(crate::wpeffect::WeaponEffect::FireGrind(item.pos));
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMBonus1TargetBreak);
     (ctx.events)(StageItemEvent::TargetBroken);
     Some(false)
 }

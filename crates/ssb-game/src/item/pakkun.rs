@@ -36,6 +36,7 @@ const DEG_180: f32 = core::f32::consts::PI;
 /// damage at 80 degrees with 80 scale and 80 base knockback, a fighter
 /// item whose attack clanks and rehits both items and fighters.
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::PAKKUN,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,

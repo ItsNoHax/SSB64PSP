@@ -242,6 +242,7 @@ const fn coll(top: f32, bottom: f32, width: f32) -> BodyColl {
 /// The fields every Pokémon shares: no hurtbox, a light `Fighter` item that
 /// gives hitlag, a shieldable attack of priority 1 that rehits items.
 const BASE: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::ItemSounds::NONE,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,
@@ -275,6 +276,7 @@ const BASE: ItemAttributes = ItemAttributes {
 /// (`reloc_data.us.h`).
 pub static ATTRIBUTES: [ItemAttributes; 13] = [
     ItemAttributes {
+        sounds: crate::item_sounds::item::WARK,
         map_coll: coll(324.0, -324.0, 459.0),
         size: 600.0,
         angle: 90,
@@ -284,6 +286,7 @@ pub static ATTRIBUTES: [ItemAttributes; 13] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::KABIGON,
         damage_coll_size: Vec3::new(580.0, 580.0, 780.0),
         map_coll: coll(585.0, -585.0, 780.0),
         size: 800.0,
@@ -293,22 +296,26 @@ pub static ATTRIBUTES: [ItemAttributes; 13] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::TOSAKINTO,
         map_coll: coll(135.0, -135.0, 195.0),
         size: 200.0,
         can_setoff: true,
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::NYARS,
         map_coll: coll(244.0, -244.0, 244.0),
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::LIZARDON,
         map_coll: coll(400.0, -390.0, 420.0),
         size: 600.0,
         damage: 18,
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::SPEAR,
         map_coll: coll(244.0, -244.0, 244.0),
         angle: 90,
         kb_scale: 100,
@@ -317,6 +324,7 @@ pub static ATTRIBUTES: [ItemAttributes; 13] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::KAMEX,
         map_coll: coll(317.0, -300.0, 300.0),
         size: 400.0,
         angle: 130,
@@ -325,6 +333,7 @@ pub static ATTRIBUTES: [ItemAttributes; 13] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::MLUCKY,
         damage_coll_size: Vec3::new(250.0, 250.0, 250.0),
         map_coll: coll(300.0, -200.0, 240.0),
         size: 500.0,
@@ -332,11 +341,13 @@ pub static ATTRIBUTES: [ItemAttributes; 13] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::STARMIE,
         map_coll: coll(300.0, -220.0, 300.0),
         size: 400.0,
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::SAWAMURA,
         map_coll: coll(317.0, -317.0, 195.0),
         angle: 90,
         kb_scale: 100,
@@ -347,16 +358,19 @@ pub static ATTRIBUTES: [ItemAttributes; 13] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::DOGAS,
         map_coll: coll(240.0, -240.0, 240.0),
         size: 50.0,
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::PIPPI,
         map_coll: coll(192.0, -192.0, 192.0),
         can_setoff: true,
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::MEW,
         map_coll: coll(218.0, -218.0, 218.0),
         can_setoff: true,
         ..BASE
@@ -543,6 +557,16 @@ where
         v(&mut item).xlu = true;
         item.vars.mmonster.link18_at = item.anim_ticks;
     }
+    // The makers' appear voices (`it{Kabigon,Pippi,Sawamura}MakeItem`);
+    // the caller has checked for a free item, so the make succeeds.
+    match k {
+        Kind::Kabigon => crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallKabigonAppear),
+        Kind::Pippi => crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallPippiAppear),
+        Kind::Sawamura => {
+            crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallSawamuraAppear)
+        }
+        _ => None,
+    };
     item
 }
 
@@ -667,6 +691,7 @@ pub(super) fn update(item: &mut Item, status: Status, ctx: &mut Ctx<'_>) -> bool
                 }
                 v(item).coin_rotate_step = v(item).coin_rotate_step.wrapping_add(1);
                 v(item).coin_spawn_wait = item.multi.wrapping_sub(NYARS_COIN_SPAWN_WAIT);
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMNyarsCoin);
             }
             if v(item).model_rotate_wait == 0 {
                 v(item).rotate_y += PI;
@@ -817,6 +842,9 @@ fn common_update(item: &mut Item, k: Kind, ctx: &mut Ctx<'_>) -> bool {
             }
             Kind::MLucky => {
                 item.vel_air.y = 0.0;
+                // `itMLuckyAppearSetStatus`: Chansey itself, not
+                // Clefairy's copy.
+                crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallLuckyAppear);
                 set(item, Status::MLuckyAppear);
             }
             Kind::Starmie => {
@@ -918,6 +946,9 @@ fn iwark_attack(item: &mut Item, k: Kind, ctx: &mut Ctx<'_>) {
         pos.y += -100.0;
     }
     ctx.fx.push(Fx::DustHeavyDouble { pos, lr: -1 });
+    if k == Kind::Iwark {
+        crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallIwarkAppear);
+    }
     set(item, Status::IwarkAttack);
 }
 
@@ -986,6 +1017,7 @@ pub(super) fn rock_event(item: &mut Item, dead: bool) {
 
 /// `itKabigonJumpSetStatus`.
 fn kabigon_jump(item: &mut Item) {
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKabigonJump);
     item.multi = KABIGON_DROP_WAIT;
     v(item).dust_effect_int = KABIGON_EFFECT_SPAWN_INT;
     item.vel_air.y = KABIGON_JUMP_VEL_Y;
@@ -999,6 +1031,10 @@ fn kabigon_fall(item: &mut Item, k: Kind) {
     item.pos.x += 2000.0 * crate::rng::rand_float() - 1000.0;
     item.refresh_attack_coll();
     v(item).kabigon_rumble_wait = 0;
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKabigonFall);
+    if k == Kind::Kabigon {
+        crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallKabigonFall);
+    }
     let size = if k == Kind::Kabigon {
         KABIGON_DROP_SIZE_KABIGON
     } else {
@@ -1015,6 +1051,9 @@ fn kabigon_fall(item: &mut Item, k: Kind) {
 /// `itTosakintoAppearSetStatus`.
 fn tosakinto_appear(item: &mut Item) {
     item.multi = TOSAKINTO_LIFETIME;
+    if kind(item) == Kind::Tosakinto {
+        crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallTosakintoAppear);
+    }
     set(item, Status::TosakintoAppear);
 }
 
@@ -1037,6 +1076,10 @@ fn mew_fly(item: &mut Item, ctx: &mut Ctx<'_>) {
         -MEW_STARTVEL_X
     };
     item.vel_air.y = MEW_STARTVEL_Y;
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMewFly);
+    if kind(item) == Kind::Mew {
+        crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallMewAppear);
+    }
     ctx.fx.push(Fx::Ripple(item.pos));
     v(item).esper_gfx_int = 0;
     set(item, Status::MewFly);
@@ -1177,6 +1220,9 @@ fn spear_fly_update(item: &mut Item, k: Kind, ctx: &mut Ctx<'_>) -> bool {
 /// `itKamexAppearSetStatus`.
 fn kamex_appear(item: &mut Item) {
     item.multi = KAMEX_LIFETIME;
+    if kind(item) == Kind::Kamex {
+        crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallKamexAppear);
+    }
     set(item, Status::KamexAppear);
 }
 
@@ -1231,6 +1277,7 @@ fn kamex_update_hydro(item: &mut Item, k: Kind, ctx: &mut Ctx<'_>) {
         pos,
         lr: item.lr as i8,
     });
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKamexHydro);
     v(item).hydro_spawn_wait =
         crate::rng::rand_int_range(KAMEX_HYDRO_SPAWN_WAIT_RANDOM) + KAMEX_HYDRO_SPAWN_WAIT_CONST;
     let attr = item.attr.map_coll;
@@ -1289,6 +1336,7 @@ fn mlucky_make_egg_update(item: &mut Item, ctx: &mut Ctx<'_>) {
                 0.0,
             );
             if let Some(egg_lr) = ctx.common.make_common_egg(item, pos, vel) {
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialLwStart);
                 v(item).egg_spawn_wait = MLUCKY_EGG_SPAWN_WAIT_CONST;
                 item.multi -= 1;
                 ctx.fx.push(Fx::DustLight { pos, lr: egg_lr });
@@ -1400,6 +1448,7 @@ fn dogas_attack(item: &mut Item, k: Kind) {
     v(item).smog_spawn_wait = 0;
     if k == Kind::Dogas {
         start_anim(item);
+        crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallDogasAppear);
     }
     set(item, Status::DogasAttack);
 }
@@ -1424,6 +1473,7 @@ fn dogas_update_smog(item: &mut Item, ctx: &mut Ctx<'_>) {
         ctx.shots
             .push(MonsterShot::smog(parent(item, ctx.handle), pos, vel));
     }
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMDogasSmog);
     v(item).smog_spawn_wait = DOGAS_SMOG_SPAWN_WAIT;
     item.multi -= 1;
 }
@@ -1479,6 +1529,7 @@ where
             if map::test_all_check_coll_end(item, surfaces) {
                 item.vel_air.y = TOSAKINTO_FLAP_VEL_Y;
                 tosakinto_bounce(item);
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMTosakintoSplash);
             }
         }
         Status::TosakintoBounce => {
@@ -1487,6 +1538,7 @@ where
                 if crate::rng::rand_int_range(2) != 0 {
                     item.vel_air.x = -item.vel_air.x;
                 }
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMTosakintoSplash);
             }
         }
         Status::LizardonFall => {

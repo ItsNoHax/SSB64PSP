@@ -34,6 +34,7 @@ pub const EXPLODE_COLANIM_DURATION: i32 = 90;
 
 /// File 251, `llITCommonDataBombHeiItemAttributes` (0x424).
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::BOMBHEI,
     is_give_hitlag: true,
     is_display_colanim: true,
     weight: ItemWeight::Light,
@@ -220,6 +221,7 @@ where
     item.add_root_script();
     check_edge(item, surfaces, true);
     item.clear_owner_stats();
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMBombHeiFuse);
     set(item, Status::Walk);
 }
 
@@ -265,6 +267,7 @@ fn explode(item: &mut Item, fx: &mut Emit) {
     });
     fx.push(Fx::Quake(1));
     item.hidden = true;
+    item.attack.fgm_id = crate::sound::id::nSYAudioFGMExplodeL;
     item.refresh_attack_coll();
     item.clear_owner_stats();
     item.multi = 0;
@@ -272,6 +275,7 @@ fn explode(item: &mut Item, fx: &mut Emit) {
     item.event_id = 0;
     attack_event(item);
     set(item, Status::Explode);
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeL);
 }
 
 /// `itBombHeiExplodeWaitSetStatus`.
@@ -346,6 +350,8 @@ where
             if item.multi == EXPLODE_WAIT {
                 dust(item, true, fx);
                 explode(item, fx);
+                // `itBombHeiExplodeWaitProcUpdate` sounds it a second time.
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeL);
             }
             item.multi += 1;
         }

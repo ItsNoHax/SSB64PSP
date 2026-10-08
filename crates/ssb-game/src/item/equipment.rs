@@ -64,6 +64,7 @@ const BASE: ItemAttributes = ItemAttributes {
 /// File 251: 0x190, 0x1D8, 0x220, 0x48C, 0x268, 0x2E4, 0x374.
 pub static ATTRIBUTES: [ItemAttributes; 7] = [
     ItemAttributes {
+        sounds: crate::item_sounds::item::SWORD,
         damage_coll_size: Vec3::new(150.0, 700.0, 150.0),
         map_coll: coll(422.0, -422.0, 72.0),
         size: 300.0,
@@ -74,6 +75,7 @@ pub static ATTRIBUTES: [ItemAttributes; 7] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::BAT,
         map_coll: coll(240.0, -240.0, 27.0),
         kb_scale: 80,
         damage: 12,
@@ -82,6 +84,7 @@ pub static ATTRIBUTES: [ItemAttributes; 7] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::HARISEN,
         map_coll: coll(210.0, -210.0, 90.0),
         angle: 96,
         damage: 1,
@@ -90,6 +93,7 @@ pub static ATTRIBUTES: [ItemAttributes; 7] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::STARROD,
         damage_coll_size: Vec3::new(60.0, 60.0, 60.0),
         map_coll: coll(195.0, -195.0, 90.0),
         angle: 0,
@@ -99,6 +103,7 @@ pub static ATTRIBUTES: [ItemAttributes; 7] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::LGUN,
         damage_coll_size: Vec3::new(60.0, 60.0, 60.0),
         map_coll: coll(100.0, -100.0, 100.0),
         kb_scale: 110,
@@ -108,6 +113,7 @@ pub static ATTRIBUTES: [ItemAttributes; 7] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::FFLOWER,
         damage_coll_size: Vec3::new(60.0, 60.0, 60.0),
         map_coll: coll(127.0, -107.0, 107.0),
         damage: 2,
@@ -118,6 +124,7 @@ pub static ATTRIBUTES: [ItemAttributes; 7] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::HAMMER,
         map_coll: coll(258.0, -249.0, 105.0),
         damage: 10,
         kb_base: 30,
