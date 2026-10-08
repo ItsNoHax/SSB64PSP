@@ -35,9 +35,34 @@ pub const A_LOOP: u32 = 2;
 /// 16 history samples: `ADPCM_STATE` / `RESAMPLE_STATE`.
 pub type State16 = [i16; 16];
 
+/// Saturates to 16 bits.
+#[cfg(not(target_arch = "mips"))]
 #[inline(always)]
-fn clamp16(v: i32) -> i16 {
+pub(crate) fn clamp16(v: i32) -> i16 {
     v.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+}
+
+/// Saturates to 16 bits with the Allegrex's `max` and `min` (no branch;
+/// LLVM's MIPS II code for a clamp is two compare-and-branch pairs). The
+/// target CPU is MIPS II, whose assembler has no mnemonic for them, so they
+/// are encoded: `max $8, $8, $9` (SPECIAL funct 0x2C) and
+/// `min $8, $8, $10` (funct 0x2D).
+#[cfg(target_arch = "mips")]
+#[inline(always)]
+pub(crate) fn clamp16(v: i32) -> i16 {
+    let r: i32;
+    // SAFETY: two register-only ALU instructions on the named registers.
+    unsafe {
+        core::arch::asm!(
+            ".word 0x0109402C",
+            ".word 0x010A402D",
+            inout("$8") v => r,
+            in("$9") i16::MIN as i32,
+            in("$10") i16::MAX as i32,
+            options(pure, nomem, nostack, preserves_flags),
+        );
+    }
+    r as i16
 }
 
 #[inline(always)]
@@ -138,11 +163,13 @@ impl Dmem {
         } else {
             o[..16].copy_from_slice(state);
         }
-        let mut pos = 16;
-        for f in 0..frames {
+        let (hist, body) = o.split_at_mut(16);
+        let mut prev2 = hist[14] as i32;
+        let mut prev1 = hist[15] as i32;
+        for (f, out) in body.as_chunks_mut::<16>().0.iter_mut().enumerate() {
             let mut frame = [0u8; 9];
             if let Some(src) = input.get(f * 9..f * 9 + 9) {
-                frame.copy_from_slice(src);
+                frame = src.try_into().unwrap_or([0; 9]);
             } else if let Some(src) = input.get(f * 9..) {
                 frame[..src.len()].copy_from_slice(src);
             }
@@ -150,26 +177,29 @@ impl Dmem {
             let pred = (frame[0] & 15) as usize;
             // Scale 12 means x4096 (rshift 0), not silence.
             let rshift = 12u32.saturating_sub(shift);
-            let c = book.get(pred * 16..pred * 16 + 16).unwrap_or(&[0; 16]);
-            let (c0, c1) = c.split_at(8);
-            for half in 0..2 {
-                let mut ins = [0i32; 8];
-                for (j, b) in frame[1 + half * 4..5 + half * 4].iter().enumerate() {
-                    ins[j * 2] = (((*b as u16 & 0xF0) << 8) as i16 >> rshift) as i32;
-                    ins[j * 2 + 1] = (((*b as u16 & 0x0F) << 12) as i16 >> rshift) as i32;
-                }
-                let prev1 = o[pos - 1] as i32;
-                let prev2 = o[pos - 2] as i32;
-                for j in 0..8 {
-                    let mut acc = c0[j] as i32 * prev2 + c1[j] as i32 * prev1 + (ins[j] << 11);
-                    for k in 0..j {
-                        acc += c1[j - k - 1] as i32 * ins[k];
-                    }
-                    o[pos + j] = clamp16(acc >> 11);
-                }
-                pos += 8;
+            let c: &[i16; 16] = match book.get(pred * 16..pred * 16 + 16) {
+                Some(c) => c.as_chunks::<16>().0.first().unwrap_or(&ZERO_BOOK),
+                None => &ZERO_BOOK,
+            };
+            let c0: [i32; 8] = core::array::from_fn(|j| c[j] as i32);
+            let c1: [i32; 8] = core::array::from_fn(|j| c[8 + j] as i32);
+            for (half, out) in out.as_chunks_mut::<8>().0.iter_mut().enumerate() {
+                let bytes = &frame[1 + half * 4..5 + half * 4];
+                let ins: [i32; 8] = core::array::from_fn(|j| {
+                    let b = bytes[j / 2] as u16;
+                    let nib = if j % 2 == 0 {
+                        (b & 0xF0) << 8
+                    } else {
+                        (b & 0x0F) << 12
+                    };
+                    (nib as i16 >> rshift) as i32
+                });
+                adpcm_8(&c0, &c1, &ins, prev2, prev1, out);
+                prev2 = out[6] as i32;
+                prev1 = out[7] as i32;
             }
         }
+        let pos = 16 + frames * 16;
         state.copy_from_slice(&o[pos - 16..pos]);
     }
 
@@ -251,18 +281,23 @@ impl Dmem {
         let (al, ar) = aux.split_at_mut(COUNT / 2);
         let (mr, al, ar) = (&mut mr[..COUNT / 2], &mut al[..], &mut ar[..COUNT / 2]);
         let n = COUNT / 2;
-        for i in 0..n {
-            let s = input[i] as i32;
-            let lv = ramp(&mut st, 0) as i32;
-            let rv = ramp(&mut st, 1) as i32;
-            let ld = clamp16((lv * dry + 0x4000) >> 15) as i32;
-            let rd = clamp16((rv * dry + 0x4000) >> 15) as i32;
-            let lw = clamp16((lv * wet + 0x4000) >> 15) as i32;
-            let rw = clamp16((rv * wet + 0x4000) >> 15) as i32;
-            ml[i] = clamp16(ml[i] as i32 + ((s * ld) >> 15));
-            mr[i] = clamp16(mr[i] as i32 + ((s * rd) >> 15));
-            al[i] = clamp16(al[i] as i32 + ((s * lw) >> 15));
-            ar[i] = clamp16(ar[i] as i32 + ((s * rw) >> 15));
+        // Each side's per-sample volume (`value >> 16`) for this call: it
+        // varies over the first `len` samples and is constant after them.
+        let mut lv = [0i32; COUNT / 2];
+        let mut rv = [0i32; COUNT / 2];
+        let llen = ramp_fill(&mut st, 0, &mut lv);
+        let rlen = ramp_fill(&mut st, 1, &mut rv);
+        // The four buses are independent: each gets its own pass, and a
+        // zero amount (gain 0 on every sample) adds nothing.
+        for (bus, v, len, amt) in [
+            (&mut ml[..n], &lv, llen, dry),
+            (&mut mr[..n], &rv, rlen, dry),
+            (&mut al[..n], &lv, llen, wet),
+            (&mut ar[..n], &rv, rlen, wet),
+        ] {
+            if amt != 0 {
+                env_bus(bus, &input[..n], v, len, amt);
+            }
         }
         *state = st;
     }
@@ -357,9 +392,109 @@ impl Dmem {
     }
 }
 
-/// One envmixer ramp step: `value += step` saturating, snapping to the
-/// target once reached (BattleShip's `ramp_step`).
+/// The predictor row a frame naming a missing predictor reads.
+static ZERO_BOOK: [i16; 16] = [0; 16];
+
+/// Eight `A_ADPCM` outputs: the predictor over the two previous outputs
+/// and the eight scaled nibbles (`acc` in Q11).
 #[inline(always)]
+#[rustfmt::skip]
+fn adpcm_8(c0: &[i32; 8], c1: &[i32; 8], i: &[i32; 8], p2: i32, p1: i32, out: &mut [i16; 8]) {
+    // Written out: the triangle `sum(c1[j - k - 1] * in[k], k < j)` with
+    // constant indices, so nothing is a loop or a bounds check.
+    out[0] = clamp16((c0[0] * p2 + c1[0] * p1 + (i[0] << 11)) >> 11);
+    out[1] = clamp16((c0[1] * p2 + c1[1] * p1 + (i[1] << 11) + c1[0] * i[0]) >> 11);
+    out[2] = clamp16((c0[2] * p2 + c1[2] * p1 + (i[2] << 11) + c1[1] * i[0] + c1[0] * i[1]) >> 11);
+    out[3] = clamp16((c0[3] * p2 + c1[3] * p1 + (i[3] << 11) + c1[2] * i[0] + c1[1] * i[1] + c1[0] * i[2]) >> 11);
+    out[4] = clamp16((c0[4] * p2 + c1[4] * p1 + (i[4] << 11) + c1[3] * i[0] + c1[2] * i[1] + c1[1] * i[2] + c1[0] * i[3]) >> 11);
+    out[5] = clamp16((c0[5] * p2 + c1[5] * p1 + (i[5] << 11) + c1[4] * i[0] + c1[3] * i[1] + c1[2] * i[2] + c1[1] * i[3] + c1[0] * i[4]) >> 11);
+    out[6] = clamp16((c0[6] * p2 + c1[6] * p1 + (i[6] << 11) + c1[5] * i[0] + c1[4] * i[1] + c1[3] * i[2] + c1[2] * i[3] + c1[1] * i[4] + c1[0] * i[5]) >> 11);
+    out[7] = clamp16((c0[7] * p2 + c1[7] * p1 + (i[7] << 11) + c1[6] * i[0] + c1[5] * i[1] + c1[4] * i[2] + c1[3] * i[3] + c1[2] * i[4] + c1[1] * i[5] + c1[0] * i[6]) >> 11);
+}
+
+/// `out += (in * g) >> 15`, saturating.
+#[inline(always)]
+fn mix_gain(out: &mut [i16], input: &[i16], g: i32) {
+    for (d, s) in out.iter_mut().zip(input) {
+        *d = clamp16(*d as i32 + ((*s as i32 * g) >> 15));
+    }
+}
+
+/// One envmixer bus: `bus += (in * clamp16((v * amt + 0x4000) >> 15)) >>
+/// 15`, saturating, with `v` constant from `len` on.
+#[inline(always)]
+fn env_bus(bus: &mut [i16], input: &[i16], v: &[i32; COUNT / 2], len: usize, amt: i32) {
+    let gain = |v: i32| clamp16((v * amt + 0x4000) >> 15) as i32;
+    let n = bus.len().min(input.len());
+    let len = len.min(n);
+    for k in 0..len {
+        let g = gain(v[k]);
+        bus[k] = clamp16(bus[k] as i32 + ((input[k] as i32 * g) >> 15));
+    }
+    if len < n {
+        let g = gain(v[len]);
+        if g != 0 {
+            mix_gain(&mut bus[len..n], &input[len..n], g);
+        }
+    }
+}
+
+/// Runs ramp `k` over a whole call ([`ramp`] once per sample), writing
+/// each sample's `value >> 16` to `out`. Returns how many leading samples
+/// may differ from the last one; the rest equal it.
+///
+/// A ramp adds `step` until a sum reaches the target (`>=` for a positive
+/// step, `<=` otherwise), which snaps it to the target with step 0; a
+/// saturating sum always reaches it. So the sample that snaps is the first
+/// `m >= 1` with `value + m * step` past the target in exact arithmetic,
+/// and the samples before it are plain sums.
+#[inline(always)]
+fn ramp_fill(st: &mut EnvMixState, k: usize, out: &mut [i32; COUNT / 2]) -> usize {
+    let (v, step, t) = (st.value[k] as i64, st.step[k] as i64, st.target[k] as i64);
+    let n = out.len();
+    let m = if step > 0 {
+        if t > v {
+            (t - v + step - 1) / step
+        } else {
+            1
+        }
+    } else if step < 0 {
+        if v > t {
+            (v - t + (-step) - 1) / (-step)
+        } else {
+            1
+        }
+    } else if v <= t {
+        1
+    } else {
+        // Step 0 above the target: never moves.
+        let c = st.value[k] >> 16;
+        out.fill(c);
+        return 0;
+    };
+    // Samples 1..m-1 (indices 0..m-2) are sums; sample m snaps.
+    let sums = (m - 1).min(n as i64) as usize;
+    let mut val = st.value[k];
+    let step = st.step[k];
+    for o in &mut out[..sums] {
+        val += step;
+        *o = val >> 16;
+    }
+    if sums < n {
+        st.value[k] = st.target[k];
+        st.step[k] = 0;
+        out[sums..].fill(st.target[k] >> 16);
+        sums + 1
+    } else {
+        st.value[k] = val;
+        n
+    }
+}
+
+/// One envmixer ramp step: `value += step` saturating, snapping to the
+/// target once reached (BattleShip's `ramp_step`). [`ramp_fill`] is the
+/// same over a whole call.
+#[cfg(test)]
 fn ramp(st: &mut EnvMixState, k: usize) -> i16 {
     let step = st.step[k];
     let v = st.value[k].saturating_add(step);
@@ -489,6 +624,44 @@ mod tests {
         assert_eq!(st.value[0], 184 * (0x8000 / 8));
         d.envmix(None, &mut st);
         assert_eq!(st.value[0], 2 * 184 * (0x8000 / 8));
+    }
+
+    /// `ramp_fill` equals `ramp` sample by sample, saturation included.
+    #[test]
+    fn ramp_fill_matches_per_sample_ramp() {
+        let mut x: u32 = 1;
+        let mut rnd = || {
+            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            x
+        };
+        let pick = |r: u32, small: i32| -> i32 {
+            match r % 6 {
+                0 => i32::MAX - (r >> 8) as i32 % 1000,
+                1 => i32::MIN + (r >> 8) as i32 % 1000,
+                2 => 0,
+                3 => ((r >> 4) as i32 % small) - small / 2,
+                _ => (r as i32) >> (r % 16),
+            }
+        };
+        for _ in 0..200_000 {
+            let (a, b, c) = (rnd(), rnd(), rnd());
+            let mut st = EnvMixState {
+                value: [pick(a, 1 << 20), 0],
+                target: [pick(b, 1 << 20), 0],
+                step: [pick(c, 1 << 16), 0],
+                ..Default::default()
+            };
+            let mut want = st;
+            let mut out = [0i32; COUNT / 2];
+            let len = ramp_fill(&mut st, 0, &mut out);
+            for (k, o) in out.iter().enumerate() {
+                assert_eq!(*o, ramp(&mut want, 0) as i32, "{k} {a} {b} {c}");
+                if k >= len {
+                    assert_eq!(*o, out[len.min(COUNT / 2 - 1)]);
+                }
+            }
+            assert_eq!((st.value, st.step), (want.value, want.step));
+        }
     }
 
     #[test]

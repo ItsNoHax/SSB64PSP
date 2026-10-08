@@ -31,6 +31,9 @@ memory_ballast = []
 # `profile.log` beside the executable and to stdout
 # (`ssb_psp_runtime::profile`, RE-469). Off by default.
 profile = ["ssb-psp-runtime/profile"]
+# Renders the fixed audio scenario (`ssb_engine::audio::golden`) at audio
+# start and appends its PCM hashes and render times to `selftest.log`.
+audio_selftest = ["ssb-psp-runtime/audio_selftest"]
 # Copies the audio thread's output into a ring written to `audio.raw`
 # beside the EBOOT (s16le stereo, 32000 Hz), for exact comparisons:
 # PPSSPPHeadless cannot record audio (`ssb_psp_runtime::audio`).

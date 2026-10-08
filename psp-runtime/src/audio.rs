@@ -322,6 +322,7 @@ static VOICES: AtomicU32 = AtomicU32::new(0);
 static VOICES_MAX: AtomicU32 = AtomicU32::new(0);
 static STEALS: AtomicU32 = AtomicU32::new(0);
 static DROPS: AtomicU32 = AtomicU32::new(0);
+static OSC_DROPS: AtomicU32 = AtomicU32::new(0);
 
 /// A snapshot of the audio thread's counters. The totals only grow
 /// (wrapping); the maxima and minimum cover the window since the last
@@ -351,9 +352,13 @@ pub struct Stats {
     pub voices_max: u32,
     /// Physical voices stolen so far (`AudioSystem::voice_steals`).
     pub steals: u32,
-    /// Work the fixed pools dropped so far, all kinds summed
-    /// (`AudioSystem::drops`; zero in normal play).
+    /// Work the fixed pools dropped so far, every kind but the oscillators
+    /// summed (`AudioSystem::drops`; zero in normal play).
     pub drops: u32,
+    /// `syAudioInitOsc` calls that found the oscillator pool empty: the
+    /// shipped vibrato leak (`Csp::handle_midi`), counted apart from
+    /// [`Stats::drops`].
+    pub osc_drops: u32,
 }
 
 impl Stats {
@@ -370,6 +375,7 @@ impl Stats {
         voices_max: 0,
         steals: 0,
         drops: 0,
+        osc_drops: 0,
     };
 }
 
@@ -423,7 +429,11 @@ pub fn load_section(path: &'static str, head: &[u8]) -> Result<Option<&'static [
 /// starts the audio thread. Returns the [`AudioApi`] to install with
 /// `ssb_game::sound::install`. Called once, on the game thread, at boot.
 pub fn start(section: &'static [u8]) -> Result<&'static GameAudio, StartError> {
+    #[cfg(feature = "audio_selftest")]
+    selftest(section);
     let sys_ = AudioSystem::new(section).map_err(StartError::System)?;
+    #[cfg(feature = "profile")]
+    ssb_engine::audio::prof::set_clock(now);
     let lock = SemaLock::new().map_err(StartError::Sema)?;
     // SAFETY: plain syscall; 2 = stereo, the only SRC format.
     let ch =
@@ -467,6 +477,60 @@ pub fn start(section: &'static [u8]) -> Result<&'static GameAudio, StartError> {
         return Err(StartError::Thread(r));
     }
     Ok(api)
+}
+
+/// The `audio_selftest` feature: renders `ssb_engine::audio::golden`'s
+/// fixed scenario on this thread before the audio thread starts and appends
+/// its hashes (`ok` when they match the host's) and per-segment render
+/// times to `selftest.log` beside the executable.
+#[cfg(feature = "audio_selftest")]
+fn selftest(section: &'static [u8]) {
+    use core::fmt::Write;
+    use ssb_engine::audio::golden;
+    struct Buf([u8; 512], usize);
+    impl Write for Buf {
+        fn write_str(&mut self, t: &str) -> core::fmt::Result {
+            let n = t.len().min(self.0.len() - self.1);
+            self.0[self.1..self.1 + n].copy_from_slice(&t.as_bytes()[..n]);
+            self.1 += n;
+            Ok(())
+        }
+    }
+    let mut b = Buf([0; 512], 0);
+    match golden::run(section, now) {
+        Ok(r) => {
+            let _ = write!(b, "selftest ok={} voices={}", r.ok(), r.max_voices);
+            for k in 0..golden::SEGMENTS {
+                let _ = write!(
+                    b,
+                    " seg{}: hash={:016x} {} frames={} us={} us/frame={}",
+                    k,
+                    r.hashes[k],
+                    if r.hashes[k] == golden::HASHES[k] { "ok" } else { "DIFF" },
+                    r.frames[k],
+                    r.ticks[k],
+                    r.ticks[k] / r.frames[k].max(1),
+                );
+            }
+            let _ = writeln!(b);
+        }
+        Err(e) => {
+            let _ = writeln!(b, "selftest error {e:?}");
+        }
+    }
+    // SAFETY: plain file syscalls on a NUL-terminated name and a live buffer.
+    unsafe {
+        sys::sceIoWrite(sys::sceKernelStdout(), b.0.as_ptr() as *const c_void, b.1);
+        let fd = sys::sceIoOpen(
+            b"selftest.log\0".as_ptr(),
+            sys::IoOpenFlags::WR_ONLY | sys::IoOpenFlags::CREAT | sys::IoOpenFlags::APPEND,
+            0o777,
+        );
+        if fd.0 >= 0 {
+            sys::sceIoWrite(fd, b.0.as_ptr() as *const c_void, b.1);
+            sys::sceIoClose(fd);
+        }
+    }
 }
 
 /// Stops the audio thread after its current block and releases the SRC
@@ -515,6 +579,7 @@ pub fn stats() -> Stats {
         voices_max: VOICES_MAX.load(Ordering::Acquire),
         steals: STEALS.load(Ordering::Acquire),
         drops: DROPS.load(Ordering::Acquire),
+        osc_drops: OSC_DROPS.load(Ordering::Acquire),
     }
 }
 
@@ -566,14 +631,13 @@ unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
             let ai_len = st.ai.ai_len;
             let off = st.fifo_len * 2;
             let fifo = &mut st.fifo.0[off..];
-            let (n, voices, steals, drops) = api.shared.with(|s| {
+            let (n, voices, steals, drops, osc_drops) = api.shared.with(|s| {
                 let n = s.frame_samples(ai_len).min(FRAME_SAMPLES_MAX);
                 s.render_frame(fifo, n);
                 let d = s.drops();
                 let drops = [
                     d.synth_params,
                     d.seq_events,
-                    d.oscillators,
                     d.fgm_scripts,
                     d.fgm_voices,
                     d.fgm_lfos,
@@ -581,7 +645,7 @@ unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
                 ]
                 .iter()
                 .fold(0u32, |a, &b| a.saturating_add(b));
-                (n, s.active_voices(), s.voice_steals(), drops)
+                (n, s.active_voices(), s.voice_steals(), drops, d.oscillators)
             });
             st.fifo_len += n;
             st.ai.tic(n as u32);
@@ -589,6 +653,7 @@ unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
             VOICES.store(voices, Ordering::Release);
             STEALS.store(steals, Ordering::Release);
             DROPS.store(drops, Ordering::Release);
+            OSC_DROPS.store(osc_drops, Ordering::Release);
             if voices > st.voices_max {
                 st.voices_max = voices;
                 VOICES_MAX.store(voices, Ordering::Release);

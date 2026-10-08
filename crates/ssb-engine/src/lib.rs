@@ -11,6 +11,10 @@
 //! way out (see [`coord`]).
 
 #![cfg_attr(not(feature = "std"), no_std)]
+// The audio DSP uses Allegrex instructions through inline assembly on the
+// PSP (`audio::dsp`); MIPS inline assembly is still unstable (the PSP build
+// is nightly).
+#![cfg_attr(target_arch = "mips", feature(asm_experimental_arch))]
 
 // The audio system allocates its pools once at boot (D-049).
 extern crate alloc;

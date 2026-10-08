@@ -153,6 +153,7 @@ impl AudioSystem {
     /// `out[..samples * 2]` (interleaved L, R), running the frame's
     /// sequencer, FGM and `syAudio` work. Applies the mono option.
     pub fn render_frame(&mut self, out: &mut [i16], samples: usize) {
+        let t_total = super::prof::start();
         let out = &mut out[..samples * 2];
         let mut players = Players {
             csp: &mut self.csp,
@@ -160,6 +161,7 @@ impl AudioSystem {
         };
         self.synth
             .audio_frame(&self.data, &mut players, out, samples);
+        let t = super::prof::start();
         if self.mono {
             mono(out);
         }
@@ -173,6 +175,8 @@ impl AudioSystem {
         }
         self.bgm_frame();
         self.volume_fade_frame();
+        super::prof::stop(super::prof::Stage::Post, t);
+        super::prof::stop(super::prof::Stage::Total, t_total);
     }
 
     /// The BGM status machine (audio.c:1097-1141).
@@ -597,90 +601,18 @@ mod tests {
         assert_eq!(sys.active_voices(), 0);
     }
 
-    /// FNV-1a over the samples.
-    fn fnv(pcm: &[i16]) -> u64 {
-        pcm.iter().fold(0xCBF2_9CE4_8422_2325, |h, s| {
-            (h ^ (*s as u16 as u64)).wrapping_mul(0x0100_0000_01B3)
-        })
-    }
-
-    /// Locks the renderer's output: every optimisation of the synthesizer
-    /// must keep these hashes (BGM 33 is sample-exact against the N64,
-    /// S-n64-compare). Segments: BGM 33 alone (10 s); BGM 37 with 8 FGMs
-    /// (10 s); 16 FGMs at once over BGM 37 (voice steals, all 16 voices),
-    /// with 368-sample frames, a volume fade and the low quality setting;
-    /// the tail after stopping everything.
+    /// Locks the renderer's output (`golden`): every optimisation of the
+    /// synthesizer must keep these hashes.
     #[test]
-    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn pcm_hash_golden() {
-        let Some(mut sys) = system() else { return };
-        let mut hashes = Vec::new();
-        let mut pcm = Vec::new();
-        sys.play_bgm(0, 33);
-        run(&mut sys, 580, &mut pcm);
-        hashes.push(fnv(&pcm));
-
-        pcm.clear();
-        sys.play_bgm(0, 37);
-        let fgms = [
-            (40, 0u16),
-            (90, 1),
-            (130, 2),
-            (200, 3),
-            (260, 30),
-            (330, 60),
-            (400, 100),
-            (470, 150),
-        ];
-        for f in 0..580 {
-            for &(at, id) in &fgms {
-                if f == at {
-                    sys.play_fgm(id);
-                }
-            }
-            run(&mut sys, 1, &mut pcm);
-        }
-        hashes.push(fnv(&pcm));
-
-        pcm.clear();
-        let mut buf = [0i16; FRAME_SAMPLES_MAX * 2];
-        let mut max_voices = 0;
-        for f in 0..400u32 {
-            if f < 64 && f % 4 == 0 {
-                sys.play_fgm((f * 7 % 200) as u16);
-            }
-            if f == 100 {
-                sys.set_bgm_volume_fade(0, 8000, 60);
-            }
-            if f == 200 {
-                sys.set_quality(0);
-            }
-            if f == 300 {
-                sys.set_quality(1);
-            }
-            let n = sys.frame_samples(if f % 5 == 0 { 400 } else { 0 });
-            sys.render_frame(&mut buf, n);
-            pcm.extend_from_slice(&buf[..n * 2]);
-            max_voices = max_voices.max(sys.active_voices());
-        }
-        assert_eq!(max_voices, 16);
-        hashes.push(fnv(&pcm));
-
-        pcm.clear();
-        sys.stop_bgm_all();
-        sys.stop_all_fgm();
-        run(&mut sys, 120, &mut pcm);
-        hashes.push(fnv(&pcm));
-        std::println!("pcm hashes: {hashes:#018x?}");
-        assert_eq!(hashes, GOLDEN_PCM_HASHES);
+        let Some(section) = testdata::section() else {
+            return;
+        };
+        let r = super::super::golden::run(section, || 0).unwrap();
+        std::println!("pcm hashes: {:#018x?}", r.hashes);
+        assert_eq!(r.max_voices, 16);
+        assert_eq!(r.hashes, super::super::golden::HASHES);
     }
-
-    const GOLDEN_PCM_HASHES: [u64; 4] = [
-        0x5ce6_7f15_a071_11f1,
-        0x3e70_06a2_223c_7aa0,
-        0x73ea_c1cc_68ee_83f5,
-        0xdb9d_797b_e79b_0a13,
-    ];
 
     /// The same calls produce the same PCM, sample for sample, including
     /// 368-sample frames and the mono pass.
