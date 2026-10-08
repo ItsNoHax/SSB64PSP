@@ -33,6 +33,7 @@ pub const MAP_REBOUND_COMMON: f32 = 0.5;
 /// squares it to 221), size 290, 10 damage at angle 70, 20 scale and 90
 /// base knockback, can set off, reflectable and shieldable.
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::TARUBOMB,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Heavy,
@@ -126,6 +127,7 @@ fn attack_event(item: &mut Item) {
 fn explode_set_status(item: &mut Item) {
     item.multi = 0;
     item.event_id = 0;
+    item.attack.fgm_id = crate::sound::id::nSYAudioFGMExplodeL;
     item.attack.can_rehit_item = true;
     item.attack.can_reflect = false;
     item.attack.throw_mul = 1.0;
@@ -140,6 +142,7 @@ fn explode_set_status(item: &mut Item) {
 /// `itTaruBombCommonProcHit`: the pieces, then
 /// `itTaruBombExplodeMakeEffectGotoSetStatus`.
 fn smash(item: &mut Item, common: &mut dyn CommonItems, fx: &mut Emit) {
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMTaruBombHit);
     common.smash_container(item.pos, SmashPiece::TaruBomb);
     item.attack.state = AttackState::Off;
     item.vel_air = Vec3::ZERO;
@@ -235,6 +238,7 @@ where
                     item.vel_air.y *= 0.2;
                     item.set_spin_vel_lr();
                 }
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMTaruBombMap);
                 item.clear_owner_stats();
             }
         }

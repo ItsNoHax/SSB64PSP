@@ -41,6 +41,7 @@ pub mod hazard;
 pub mod hud;
 pub mod hurtbox;
 pub mod item;
+pub mod item_sounds;
 pub mod item_throw;
 pub mod item_use;
 #[cfg(test)]

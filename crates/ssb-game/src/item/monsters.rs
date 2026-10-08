@@ -45,6 +45,7 @@ pub enum Status {
 
 /// `ITAttributes` in file 264: 0xBC, 0x104, 0x1FC, 0x278, 0x16C.
 const BASE: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::GLUCKY,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,
@@ -80,6 +81,7 @@ const BASE: ItemAttributes = ItemAttributes {
 pub static ATTRIBUTES: [ItemAttributes; 5] = [
     BASE,
     ItemAttributes {
+        sounds: crate::item_sounds::item::MARUMINE,
         map_coll: BodyColl {
             top: 225.0,
             center: 0.0,
@@ -98,6 +100,7 @@ pub static ATTRIBUTES: [ItemAttributes; 5] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::HITOKAGE,
         damage_coll_size: Vec3::new(200.0, 200.0, 200.0),
         map_coll: BodyColl {
             top: 252.0,
@@ -113,6 +116,7 @@ pub static ATTRIBUTES: [ItemAttributes; 5] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::FUSHIGIBANA,
         damage_coll_size: Vec3::new(200.0, 200.0, 200.0),
         map_coll: BodyColl {
             top: 360.0,
@@ -128,6 +132,7 @@ pub static ATTRIBUTES: [ItemAttributes; 5] = [
         ..BASE
     },
     ItemAttributes {
+        sounds: crate::item_sounds::item::PORYGON,
         map_coll: BodyColl {
             top: 300.0,
             center: 0.0,
@@ -178,6 +183,15 @@ pub(super) fn make(kind: Kind, pos: Vec3, prev: &mut u8) -> Item {
         item.attack.interact_mask = super::INTERACT_FIGHTER;
     }
     item.update_attack_positions();
+    // Each maker's last call, once the item exists (the caller checked
+    // for a free item).
+    crate::sound::play_fgm(match kind {
+        Kind::Chansey => crate::sound::id::nSYAudioVoiceYamabukiLucky,
+        Kind::Electrode => crate::sound::id::nSYAudioVoiceYamabukiMarumine,
+        Kind::Charmander => crate::sound::id::nSYAudioVoiceYamabukiHitokage,
+        Kind::Venusaur => crate::sound::id::nSYAudioVoiceYamabukiFushigibana,
+        Kind::Porygon => crate::sound::id::nSYAudioVoiceYamabukiPorygon,
+    });
     item
 }
 
@@ -198,6 +212,10 @@ fn monster_event(item: &mut Item, k: Kind) {
         a.element = Element::Normal;
         a.can_setoff = false;
         a.shield_damage = 0;
+        a.fgm_id = match k {
+            Kind::Porygon => crate::item_sounds::monster_event::PORYGON_HIT_PARTIES,
+            _ => crate::item_sounds::monster_event::FUSHIGIBANA_HIT_PARTIES,
+        }[usize::from(!first)];
         (a.angle, a.damage, a.kb_scale, a.kb_weight, a.kb_base) = match (k, first) {
             (Kind::Porygon, true) => (40, 18, 40, 0, 70),
             (Kind::Porygon, false) => (40, 8, 70, 0, 40),
@@ -278,8 +296,14 @@ pub(super) fn proc_update(
                 };
                 let pos = item.pos + Vec3::new(off, 0.0, 0.0);
                 shots.push(MonsterShot::saffron(k == Kind::Venusaur, pos));
+                // `itHitokageCommonMakeFlame` sounds the flame whether or
+                // not the weapon was made.
+                if k == Kind::Charmander {
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMLizardonFlame);
+                }
                 item.vars.monster_spawn_wait = if k == Kind::Charmander { 8 } else { 16 };
                 if k == Kind::Venusaur {
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMonsterShoot);
                     fx.push(Fx::DustCollide(pos));
                 }
             } else if k == Kind::Charmander {
@@ -304,6 +328,8 @@ pub(super) fn proc_update(
                 );
                 made = common.make_egg(item, pos, vel);
                 if made {
+                    // `itGLuckyCommonUpdateEggSpawn`'s sound (sic).
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialLwStart);
                     fx.push(Fx::ItemSpawnSwirl(pos));
                     fx.push(Fx::DustLight { pos, lr: -1 });
                 }
@@ -324,6 +350,7 @@ pub(super) fn proc_update(
             item.vars.monster_offset = Vec3::ZERO;
             item.damage_coll.hitstatus = HitStatus::None;
             item.hidden = true;
+            item.attack.fgm_id = crate::sound::id::nSYAudioFGMExplodeL;
             item.refresh_attack_coll();
             item.multi = 0;
             item.attack.throw_mul = 1.0;
@@ -335,6 +362,7 @@ pub(super) fn proc_update(
                 scale: 1.4,
             });
             fx.push(Fx::Quake(1));
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeL);
         } else {
             event(StageItemEvent::MonsterClose);
             return false;

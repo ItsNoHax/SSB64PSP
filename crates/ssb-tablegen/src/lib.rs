@@ -40,6 +40,7 @@ mod emit;
 mod figatree;
 mod fighters;
 mod ground;
+mod item_sounds;
 mod motion;
 mod source;
 mod stat_flags;
@@ -97,6 +98,10 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
             Generated {
                 name: "ground_tables.rs",
                 text: ground::generate(rom)?,
+            },
+            Generated {
+                name: "item_sounds.rs",
+                text: item_sounds::generate(rom)?,
             },
         ],
         Crate::Rom => vec![Generated {

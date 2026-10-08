@@ -278,6 +278,9 @@ pub struct ItemAttributes {
     pub hitstatus: HitStatus,
     /// Percent.
     pub vel_scale: u16,
+    /// `hit_sfx`, `drop_sfx`, `throw_sfx` and `smash_sfx`, generated from
+    /// the ROM ([`crate::item_sounds`]).
+    pub sounds: crate::item_sounds::ItemSounds,
 }
 
 /// `GMAttackRecord` for an item attack; `victim` is a record id.
@@ -376,6 +379,9 @@ pub struct ItemAttackColl {
     pub can_hop: bool,
     pub can_reflect: bool,
     pub can_shield: bool,
+    /// `fgm_id`: the hit sound, `attr->hit_sfx` until an explosion or a
+    /// monster event replaces it.
+    pub fgm_id: u16,
     pub motion_attack_id: MotionAttackId,
     pub stat: crate::spgame::live::AttackStat,
     pub motion_count: u16,
@@ -751,6 +757,7 @@ impl Item {
                 can_hop: attr.can_hop,
                 can_reflect: attr.can_reflect,
                 can_shield: attr.can_shield,
+                fgm_id: attr.sounds.hit,
                 motion_attack_id: MotionAttackId::None,
                 stat: crate::spgame::live::AttackStat {
                     flags: crate::spgame::live::Flags(
@@ -1541,6 +1548,7 @@ impl ItemPool {
         else {
             return;
         };
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMItemSpawn1);
         self.make_setup_common(spawn.kind, None, spawn.pos, Vec3::ZERO, &surfaces);
     }
     /// Reads the weapon pool before the item processes: its free structs
@@ -1840,6 +1848,15 @@ impl ItemPool {
             ItemKind::MBall => mball::hold(item, f.team, f.handicap),
             _ => {}
         }
+        // A light item's pickup sound, or the fighter's `heavyget_sfx`
+        // unless it has none (`nSYAudioFGMVoiceEnd`).
+        if item.weight == ItemWeight::Light {
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMItemGet);
+        } else if let Some(attr) = crate::motion::combat_attrs(f.kind) {
+            if attr.heavyget_sfx != crate::sound::id::nSYAudioFGMVoiceEnd {
+                crate::sound::play_fgm(attr.heavyget_sfx);
+            }
+        }
         item.pickup_wait = PICKUP_WAIT_DEFAULT;
         f.items.held = Some(held_item(slot, item));
         f.items.held_multi = item.multi;
@@ -1898,6 +1915,11 @@ impl ItemPool {
         }
         Self::set_fighter_release(item, &view, vel, throw_mul, surfaces);
         item.attack.stat = f.stats.attack;
+        crate::sound::play_fgm(if is_smash {
+            item.attr.sounds.smash
+        } else {
+            item.attr.sounds.throw
+        });
         // `itMainSetThrownSpin`.
         if let Some(spin) = item.kind.spin_speed() {
             item.spin_step =
@@ -1951,6 +1973,7 @@ impl ItemPool {
             flags: crate::spgame::live::Flags(crate::spgame::bonus::HitAttackId::ItemThrow as u16),
             count: f.stats.attack.count,
         };
+        crate::sound::play_fgm(item.attr.sounds.drop);
         f.items.held = None;
     }
 
@@ -2727,6 +2750,7 @@ where
             self.pool
                 .make_setup_common(kind, Some(parent_at), parent.pos, vel, self.surfaces);
         }
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMFireFlowerShoot);
         true
     }
 }

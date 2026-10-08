@@ -426,6 +426,7 @@ fn update_damage_stat_item(
             base: attack.attack.kb_base,
         },
     );
+    crate::sound::play_fgm(attack.attack.fgm_id);
 }
 
 /// `itProcessSearchHitFighter` for one fighter: its live attacks that reach
@@ -511,6 +512,7 @@ fn fighter_attacks_item(
                     base: c.kb_base,
                 },
             );
+            crate::fighter_sound::play_hit_sfx(f, c.fgm_kind, c.fgm_level);
         }
     }
 }
@@ -722,6 +724,8 @@ fn update_damage_stat(
                 item.attack.state = AttackState::Off;
                 item.hit_normal_damage = 1;
                 crate::colanim::set_star_invincible(f, super::utility::STAR_INVINCIBLE_TIME);
+                crate::music::try_play_item_music(crate::sound::id::nSYAudioBGMStar);
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMStarGet);
                 f.stats
                     .emit(crate::spgame::live::Event::Item(super::utility::Kind::Star));
             }
@@ -740,10 +744,10 @@ fn update_damage_stat(
     }
     item.hit_lr = attacker_lr(item.vel_air.x, item.pos.x, f.pos.x);
     let damage_before = f.hits.damage_queue;
-    if combat::is_body_normal(f)
+    let taken = combat::is_body_normal(f)
         && hit.hitstatus == HitStatus::Normal
-        && combat::check_get_update_damage(f, damage)
-    {
+        && combat::check_get_update_damage(f, damage);
+    if taken {
         f.record_combo_damage(item.player, f.hits.damage_queue - damage_before);
         combat::push_log(
             f,
@@ -768,7 +772,7 @@ fn update_damage_stat(
                 }),
             },
         );
-        return true;
     }
-    false
+    crate::sound::play_fgm(item.attack.fgm_id);
+    taken
 }
