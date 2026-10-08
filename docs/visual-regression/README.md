@@ -231,9 +231,14 @@ the default backup and neutral sticks:
 | `datamenu` (40) | Data on Characters, without Sound Test |
 | `vsrecord` (40) | From Data (down, A) into VS Record, A at tick 30: the Ranking page, Mario highlighted |
 | `characters` (90) | From Data (A at tick 15): Mario's page; the fighter's motion comes from a fixed byte sequence, not the clock |
+| `soundtest` (40) | Sound Test, entered from Data: down to Sound at 15, left at 20 to its last entry, 194, arrows shown |
 
 The first five match warp-booted N64 references of the same states to
 within edge resampling (`~/ppsspp-test/n64menus/`).
+`soundtest` matches the layout, colours and digit centring of an N64
+reference booted into the Sound Test (`dSCManagerDefaultSceneData` at ROM
+`0x42CD0` set to Sound Test after Data, header CRC refreshed) with the same
+inputs (`~/ppsspp-test/soundtest-n64/`).
 
 The front end's scenes (RE-462) start the same way, from the scene before
 them; `bonusselect` and `bonuspractice` stick the hand up from tick 12 to

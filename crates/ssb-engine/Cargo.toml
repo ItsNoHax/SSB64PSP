@@ -12,6 +12,8 @@ description = "Platform-agnostic engine abstractions (Layer B) for the SSB64 PSP
 [features]
 default = ["std"]
 std = []
+# Per-stage render timing (`audio::prof`) for platform profiling.
+audio_profile = []
 
 [dev-dependencies]
 # The audio tests build the pack's audio section from the user's ROM

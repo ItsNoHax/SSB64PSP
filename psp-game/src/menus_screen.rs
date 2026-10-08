@@ -1,6 +1,6 @@
 //! The front end's menus (`ssb_game::menu`): the title, the mode select
 //! and the 1P mode menu (RE-462), and Option, Screen Adjust, Backup Clear,
-//! Data, VS Record and Characters (RE-461).
+//! Data, VS Record, Characters (RE-461) and the Sound Test.
 //!
 //! The title's demos, How to Play and the auto demo, run on the host's
 //! battle (`demo_screen`, RE-465); the N64 logo and the opening movie it
@@ -24,6 +24,7 @@ use ssb_game::menu::mode_select::ModeSelect;
 use ssb_game::menu::one_p_mode::{OnePMode, OnePOption};
 use ssb_game::menu::option::OptionMenu;
 use ssb_game::menu::screen_adjust::ScreenAdjust;
+use ssb_game::menu::sound_test::SoundTest;
 use ssb_game::menu::title::{DemoData, Title};
 use ssb_game::menu::vs_item_switch::VsItemSwitchMenu;
 use ssb_game::menu::vs_options::VsOptionsMenu;
@@ -51,6 +52,7 @@ pub(crate) enum Active {
     Data(DataMenu),
     VsRecord(Box<VsRecordMenu>),
     Characters(Box<CharactersMenu>),
+    SoundTest(SoundTest),
 }
 
 
@@ -139,32 +141,22 @@ impl Menus {
                 | Scene::Data
                 | Scene::VsRecord
                 | Scene::Characters
+                | Scene::SoundTest
         )
     }
 
     /// Loads `next` after `from` (`syTaskmanSetLoadScene`): a menu starts
-    /// here; a scene that is not ported is skipped along its own exit; any
-    /// other scene (the title's demos among them) leaves the menus and is
-    /// returned for the host.
-    pub(crate) fn go(&mut self, mut next: Scene, mut from: Scene, host: &mut Host<'_, '_>) -> Option<Scene> {
-        loop {
-            let (skip_to, skipped) = match next {
-                // Sound Test is not ported: back to Data with its tab.
-                Scene::SoundTest => (Scene::Data, Scene::SoundTest),
-                scene if Self::is_menu(scene) => {
-                    self.enter(scene, from, host);
-                    return None;
-                }
-                scene => {
-                    self.leave();
-                    self.scene_prev = from;
-                    self.scene = scene;
-                    return Some(scene);
-                }
-            };
-            from = skipped;
-            next = skip_to;
+    /// here; any other scene (the title's demos among them) leaves the
+    /// menus and is returned for the host.
+    pub(crate) fn go(&mut self, next: Scene, from: Scene, host: &mut Host<'_, '_>) -> Option<Scene> {
+        if Self::is_menu(next) {
+            self.enter(next, from, host);
+            return None;
         }
+        self.leave();
+        self.scene_prev = from;
+        self.scene = next;
+        Some(next)
     }
 
     /// A random byte: the system clock's low byte, or a counter in a capture.
@@ -225,8 +217,7 @@ impl Menus {
                 };
                 Active::Characters(Box::new(menu))
             }
-            // The Data menu; Sound Test is not ported, so leaving for it
-            // comes back here with its tab chosen.
+            Scene::SoundTest => Active::SoundTest(SoundTest::new()),
             _ => Active::Data(DataMenu::new(prev, host.backup)),
         };
         // The scene's sprites are its files in the pack, which `go_scene`
@@ -314,6 +305,7 @@ impl Menus {
             }
             Active::Data(m) => (Scene::Data, m.tick(pad)),
             Active::VsRecord(m) => (Scene::VsRecord, m.tick(pad, host.backup)),
+            Active::SoundTest(m) => (Scene::SoundTest, m.tick(pad)),
             Active::Characters(_) => return None,
         })
     }
@@ -429,6 +421,7 @@ impl Menus {
             Active::Data(m) => m.visit(&mut f),
             Active::VsRecord(m) => m.visit(backup, &mut f),
             Active::Characters(m) => m.visit(&mut f),
+            Active::SoundTest(m) => m.visit(&mut f),
         }
         drop(f);
         self.title_opening = title_opening;

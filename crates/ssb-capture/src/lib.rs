@@ -602,6 +602,9 @@ pub enum GameScene {
     /// `characters`: Characters' first page, Mario playing a motion
     /// (`mnCharacters`).
     Characters,
+    /// `soundtest`: the Sound Test (`mnSoundTest`) moved to Sound and left
+    /// to its last entry, 194.
+    SoundTest,
     /// `title`: the title screen (`mnTitle`, RE-462) after the N64 logo,
     /// with "Press Start".
     Title,
@@ -703,7 +706,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 173] = [
+    pub const ALL: [GameScene; 174] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -845,6 +848,7 @@ impl GameScene {
         GameScene::DataMenu,
         GameScene::VsRecord,
         GameScene::Characters,
+        GameScene::SoundTest,
         GameScene::Title,
         GameScene::ModeSelect,
         GameScene::OnePMode,
@@ -1023,6 +1027,7 @@ impl GameScene {
             GameScene::DataMenu => "datamenu",
             GameScene::VsRecord => "vsrecord",
             GameScene::Characters => "characters",
+            GameScene::SoundTest => "soundtest",
             GameScene::Title => "title",
             GameScene::ModeSelect => "modeselect",
             GameScene::OnePMode => "onepmode",

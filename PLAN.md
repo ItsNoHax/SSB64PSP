@@ -24,7 +24,7 @@ evidence behind each `RE-NNN` in [`docs/evidence/`](docs/evidence/INDEX.md).
 | Items | All 20 normal item makers, 13 Poké Ball Pokémon, stage items and hazards (RE-431–RE-446) | Event-aligned N64 comparisons; item audio |
 | CPU | VS, Training and 1P CPU behaviours, traits and objectives (RE-390, RE-391, RE-437, RE-438, RE-447) | CPUs' special effects drawn; N64 trait checks |
 | Game modes | VS (up to four, teams), Training, 1P campaign through the ending, staff roll and challengers, bonus stages and Bonus Practice | Same, with audio and rumble |
-| Menus/UI | N64 logo, opening movie, title, attract loop (How to Play, Characters, auto demo), mode/1P/VS menus, selects, options and data menus, HUD | Sound Test; selects' spotlight; opening's remaining differences |
+| Menus/UI | N64 logo, opening movie, title, attract loop (How to Play, Characters, auto demo), mode/1P/VS menus, selects, options and data menus, HUD | Selects' spotlight; opening's remaining differences |
 | Save data | N64 SRAM image in `ssb64.sav` beside the pack ([D-045](docs/decisions/D-045.md)) | Anti-piracy validators |
 | Audio | Not started (engine traits only) | Build-time sequence/VADPCM conversion, `sceAudio` mixer thread |
 | PSP performance | 60 FPS under PPSSPP (RE-470, RE-471); on a PSP-2000 three opening scenes run at 45–57 FPS (RE-476) | 60 FPS on a PSP-2000 in every scene |
@@ -112,7 +112,6 @@ closes it.
 
 ### Front end and 1P (`MS6`)
 
-- [ ] Sound Test.
 - [ ] Both character selects' spotlight under a held puck; the VS select's CPU colour animation; locked shadows' noise (RE-411).
 - [ ] Opening movie: the room's falling-figure pose, spotlight cone and close-up overlay shade; Fox's laser under the rolled camera; the standoff ground's dropped triangles; Yoster clouds' fringes and tint; the run's dust puff; N64 references from an accurate video plugin (RE-467, RE-468).
 - [ ] Characters' fighter runs no motion-script events (effects, colour animations, part changes) (RE-461).

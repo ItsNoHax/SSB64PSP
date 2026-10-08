@@ -48,10 +48,13 @@ pub enum MenuScene {
     /// objects, textures and material scripts in a pack of their own, loaded
     /// for the whole opening rather than held in the resident pack.
     OpeningModels = 27,
+    /// The Sound Test (`mnSoundTest`); its digits and button decals are
+    /// the resident HUD's.
+    SoundTest = 28,
 }
 
 impl MenuScene {
-    pub const ALL: [MenuScene; 28] = [
+    pub const ALL: [MenuScene; 29] = [
         MenuScene::Option,
         MenuScene::ScreenAdjust,
         MenuScene::BackupClear,
@@ -80,6 +83,7 @@ impl MenuScene {
         MenuScene::OpeningClash,
         MenuScene::OpeningNewcomers,
         MenuScene::OpeningModels,
+        MenuScene::SoundTest,
     ];
 
     /// The scene's sprites (`dMN*FileIDs`, those it draws).
@@ -104,6 +108,7 @@ impl MenuScene {
             MenuScene::VsOptions => &[COMMON_OPTIONS, COMMON_SLASH, VS_OPTIONS],
             MenuScene::VsItemSwitch => &[VS_ITEM_SWITCH],
             MenuScene::Players1PBonus => &[BONUS_GAME_MODES, BONUS_RECORDS],
+            MenuScene::SoundTest => &[DATA_HEADER, COMMON_ARROWS_LR, SOUND_TEST],
             MenuScene::Explain => &[crate::explain::SPRITES],
             MenuScene::Startup => &[op::STARTUP_SPRITES],
             MenuScene::OpeningPortraits => {
@@ -236,6 +241,12 @@ pub const COMMON_ARROWS: SpriteFile = SpriteFile {
     offsets: &[0xDE30, 0xDD90, 0xDC48],
 };
 
+/// File 0: `ArrowL`, `ArrowR` (`mnSoundTestMakeArrowSObjs`).
+pub const COMMON_ARROWS_LR: SpriteFile = SpriteFile {
+    file: 0x00,
+    offsets: &[0xDE30, 0xDD90],
+};
+
 /// File 0: `OnText`, `OffText`, `AutoText`, `Percentage`.
 pub const COMMON_OPTIONS: SpriteFile = SpriteFile {
     file: 0x00,
@@ -343,6 +354,22 @@ pub const BACKUP_CLEAR: SpriteFile = SpriteFile {
 pub const BACKUP_CLEAR_HEADER: SpriteFile = SpriteFile {
     file: 0x4E,
     offsets: &[0xB40],
+};
+
+/// File 0x20, `MNDataCommon`: `DataHeader` alone (`mnSoundTest`).
+pub const DATA_HEADER: SpriteFile = SpriteFile {
+    file: 0x20,
+    offsets: &[0xB40],
+};
+
+/// File 0xC4, `MNSoundTest`: `MusicText`, `SoundText`, `VoiceText`,
+/// `CapsuleRight`, `ColonExitText`, `ColonFadeOutText`, `ColonPlayText`,
+/// `SoundTestText`, `StartButton`.
+pub const SOUND_TEST: SpriteFile = SpriteFile {
+    file: 0xC4,
+    offsets: &[
+        0x438, 0x9C0, 0xE48, 0x1138, 0x1208, 0x1348, 0x1450, 0x1BB8, 0x1D50,
+    ],
 };
 
 /// File 0x20, `MNDataCommon`: `DataHeader`, `ArrowL`, `ArrowR`.

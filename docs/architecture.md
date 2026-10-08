@@ -20,7 +20,7 @@ psp-asset-viewer ─┘    (PSP only)    ├──> crates/ssb-engine  math, coo
 |---|---|
 | `tools/romtool` | Verifies the ROM, decodes the relocData archive, converts display lists, textures, animations, sprites and tables, and writes the pack |
 | `crates/ssb-rom` | ROM and archive readers (`archive`, `vpk0`), F3DEX2 decoding (`dl`), mesh and texture conversion (`mesh`, `texture`, `psp_texture`, `filter_compensation`), pack format (`pack`), scene file closures, `reloc_link` |
-| `crates/ssb-engine` | Engine traits (renderer, audio, input, timing), math including the original's `lbCommonSin` table, the one N64 → PSP screen mapping (`coord`), allocators (`memory`) |
+| `crates/ssb-engine` | Engine traits (renderer, input, timing), the N64 audio system (`audio`: synthesizer, sequence player, FGM engine, `syAudio`), math including the original's `lbCommonSin` table, the one N64 → PSP screen mapping (`coord`), allocators (`memory`) |
 | `crates/ssb-game` | Gameplay translated from the decomp: fighters, statuses, motion scripts, combat, collision, items, weapons, effects, stages, CPU, camera, HUD, menus, 1P campaign (`spgame`), opening, save data (`backup`) |
 | `crates/ssb-capture` | Golden-capture scene specs shared by both PSP binaries and host tests |
 | `psp-runtime` | All PSP code: pack loading and per-scene files (`assets`, `scene_files`), GE setup and drawing (`gu`, `meshdraw`), input, timing, save file, profiler, the main thread, framebuffer transitions, movie and particle draws |
@@ -52,7 +52,7 @@ psp-asset-viewer ─┘    (PSP only)    ├──> crates/ssb-engine  math, coo
 | Asset loading | Scene files read whole into heap allocations; `reloc_link` unused at runtime | A runtime loader on `ssb_rom::reloc_link`, laying out each scene's closure as `lbRelocGetAllocSize` does |
 | Memory | `psp`'s allocator over `sceKernelAllocPartitionMemory`; fallible large loads | `ssb_engine::memory` arenas (`GameArena`, `AssetArena`, `FrameArena`) and pools in `psp-runtime` ([memory](memory.md#allocators)) |
 | Textures | Sampled from the pack in main RAM | Per-scene VRAM residency where it measurably helps |
-| Audio | Engine trait only | Build-time sequence and VADPCM conversion, software mixer on a `sceAudio` thread |
+| Audio | The N64 audio system ported whole, synthesized at run time on its own thread ([D-049](decisions/D-049.md)) | Same, within the PSP-2000's CPU budget |
 | Optimization | Scalar math, GE state cache | VFPU and state batching only where profiling shows a cost ([D-032](decisions/D-032.md), [D-036](decisions/D-036.md)) |
 | Debug HUD | `sceGuDebugFlush` (PPSSPP software renderer only) | GE geometry |
 
@@ -85,13 +85,29 @@ file's bytes. Paletted textures stay paletted ([D-003](decisions/D-003.md)).
 
 ### Audio
 
-Not implemented. The original uses libultra `n_audio`: 47 compressed-MIDI
-sequences (`S1_music.sbk`), two VADPCM sample banks (117 and 322
-waveforms) and the FGM sound-effect engine, synthesized by RSP microcode on
-its own thread. A 1024-sample PSP block (~23 ms) outlasts a 16.67 ms frame,
-so mixing must run on its own thread, not inline in the frame loop.
-Gameplay request points (menu sounds, BGM volume, voices) are ported and
-discarded.
+[D-049](decisions/D-049.md). The original's audio is three layers, all
+ported: libultra `n_audio` (the synthesizer and the compressed-sequence
+player), the FGM sound-effect engine in `n_env.c`, and the `syAudio` layer
+of `src/sys/audio.c`.
+
+| Original | Port |
+|---|---|
+| `S1_music.sbk`, `B1_sounds1/2.ctl/.tbl`, `fgm.unk/.tbl/.ucd`, the microcode's tables | The pack's audio section, read once at boot and never freed (`ssb_rom::audio`, `ssb_engine::audio::data`) |
+| RSP `n_aspMain` commands (ADPCM, resample, envelope mixer, mixer, interleave, pole filter) | `ssb_engine::audio::dsp`, integer fixed point |
+| `n_alSyn*`, `n_alAudioFrame`, the pull chain, the custom reverb | `synth`, `reverb` |
+| `n_alCSP*`, `__n_CSP*`, `n_alCSeq*`, the event queue, `n_seqplayer.c` helpers | `csplayer`, `cseq`, `evtq` |
+| `syAudioInitOsc`/`UpdateOsc`, `alCents2Ratio` | `osc` |
+| FGM engine (`func_80027460`, `func_80026B90`, LFOs, pools) | `fgm` |
+| `syAudioThreadMain`'s frame (552/368 samples), BGM status machine, fades, mono | `system::AudioSystem` |
+| The game's calls (`syAudioPlayBGM`, `func_800269C0_275C0`, ...) | `ssb_game::sound`, through `AudioApi` |
+| `syAudioThreadMain`'s thread (priority 110 > game 50) | `psp_runtime::audio`: a thread at priority 0x1C (game 32), 32 kHz SRC channel, 512-sample blocks |
+
+The game calls the API synchronously; `SharedAudio` serialises those calls
+with the audio thread's frames under a kernel semaphore, as the N64 masks
+interrupts around the same list operations. Each frame runs the
+sequencer's and the FGM engine's handlers, then mixes 184-sample
+sub-frames. The synth runs at the N64's 32006 Hz; the PSP plays it at
+32000 Hz.
 
 ### Frontend
 

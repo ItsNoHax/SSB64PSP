@@ -83,13 +83,18 @@ pub enum Span {
     Submit,
     /// Mesh lists: primitives drawn (a count, not microseconds).
     Prims,
+    /// The game thread's sound calls (`audio::GameAudio`): the lock, its
+    /// wait for an audio frame in progress, and the call.
+    Sound,
+    /// Sound calls made (a count, not microseconds).
+    SoundCalls,
 }
 
-const SPANS: usize = 32;
+const SPANS: usize = 34;
 #[cfg_attr(not(feature = "profile"), allow(dead_code))]
 const NAMES: [&str; SPANS] = [
     "update", "interrupt", "physics", "hit", "effects", "draw", "ge", "vblank", "fphys", "items", "weapons", "camera", "anim",
-    "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel", "io", "demand", "files", "mpose", "mmesh", "skin", "msprites", "nodemat", "material", "submit", "prims",
+    "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel", "io", "demand", "files", "mpose", "mmesh", "skin", "msprites", "nodemat", "material", "submit", "prims", "sound", "sndcalls",
 ];
 
 /// Frames per report: two seconds at 60 FPS.
@@ -138,6 +143,10 @@ mod imp {
         hist_frames: u32,
         run_max: u32,
         run_max_tick: u32,
+        /// The audio thread's counters at the last report.
+        audio_last: crate::audio::Stats,
+        /// The renderer's stage totals at the last report.
+        stages_last: [u32; ssb_engine::audio::prof::STAGES],
     }
 
     static mut STATE: State = State {
@@ -160,6 +169,8 @@ mod imp {
         hist_frames: 0,
         run_max: 0,
         run_max_tick: 0,
+        audio_last: crate::audio::Stats::ZERO,
+        stages_last: [0; ssb_engine::audio::prof::STAGES],
     };
 
     pub fn set_tick(tick: u32) {
@@ -342,6 +353,7 @@ mod imp {
             unsafe { sys::scePowerGetBusClockFrequency() }
         );
         emit(&line.buf[..line.len]);
+        audio_report(s, wall, n);
         s.sum = [0; SPANS];
         s.max = [0; SPANS];
         s.frames = 0;
@@ -351,6 +363,78 @@ mod imp {
         s.cpu_max = 0;
         s.report_start = t;
         s.reports += 1;
+    }
+
+    /// The audio thread's line: per-second rates over the window, the
+    /// window's worst render and queue, and its stack. `busy` and `per_frame`
+    /// are what the audio thread took from the CPU, which the game thread's
+    /// wall-time spans above include whenever it preempted them.
+    fn audio_report(s: &mut State, wall: u32, frames: u32) {
+        let mut line = Line { buf: [0; 768], len: 0 };
+        if !crate::audio::running() {
+            let _ = writeln!(line, "audio n={} off", s.reports);
+            emit(&line.buf[..line.len]);
+            return;
+        }
+        let a = crate::audio::stats();
+        let l = s.audio_last;
+        let per_s = |d: u32| (u64::from(d) * 10_000_000 / u64::from(wall)) as u32;
+        let blk10 = per_s(a.blocks.wrapping_sub(l.blocks));
+        let tic10 = per_s(a.tics.wrapping_sub(l.tics));
+        let busy = a.busy_us.wrapping_sub(l.busy_us);
+        let _ = writeln!(
+            line,
+            "audio n={} blk/s={}.{} tic/s={}.{} busy_us/s={} per_frame={} max={} under={} under_total={} err={} rest_min={} lat_max={} voices={}/{} steals={} drops={} osc_drops={} stk={} dump_drop={}",
+            s.reports,
+            blk10 / 10,
+            blk10 % 10,
+            tic10 / 10,
+            tic10 % 10,
+            (u64::from(busy) * 1_000_000 / u64::from(wall)) as u32,
+            busy / frames.max(1),
+            a.max_us,
+            a.underruns.wrapping_sub(l.underruns),
+            a.underruns,
+            a.errors.wrapping_sub(l.errors),
+            if a.rest_min == u32::MAX { 0 } else { a.rest_min },
+            a.latency_max,
+            a.voices,
+            a.voices_max,
+            a.steals,
+            a.drops,
+            a.osc_drops,
+            crate::audio::stack_free(),
+            crate::audio::dump_dropped(),
+        );
+        emit(&line.buf[..line.len]);
+        // Renderer stages in microseconds per second (pulls: voice
+        // sub-frames per second; ns_pull: the per-voice stages' cost per
+        // pull).
+        let st = ssb_engine::audio::prof::read();
+        let d: [u32; ssb_engine::audio::prof::STAGES] =
+            core::array::from_fn(|i| per_s(st[i].wrapping_sub(s.stages_last[i])) / 10);
+        let per_voice = d[2] + d[3] + d[4];
+        let mut line = Line { buf: [0; 768], len: 0 };
+        let _ = writeln!(
+            line,
+            "astage n={} seq={} snd={} adpcm={} resample={} envmix={} reverb={} bus={} post={} total={} pulls/s={} ns_pull={}",
+            s.reports,
+            d[0],
+            d[1],
+            d[2],
+            d[3],
+            d[4],
+            d[5],
+            d[6],
+            d[7],
+            d[8],
+            d[9],
+            (u64::from(per_voice) * 1000 / u64::from(d[9].max(1))) as u32,
+        );
+        emit(&line.buf[..line.len]);
+        s.stages_last = st;
+        s.audio_last = a;
+        crate::audio::new_window();
     }
 
     /// Lines [`log`] took during a frame, written at its end, outside the

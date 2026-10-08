@@ -8,6 +8,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::dsp::{self, Dmem, State16};
+use super::mem;
 
 /// `SCALE` (`n_drvrNew.c`), the low-pass coefficient scale.
 const SCALE: f32 = 16384.0;
@@ -89,6 +90,8 @@ pub struct Fx {
     input: usize,
     length: usize,
     delay: Vec<Delay>,
+    /// Whether [`Fx::pull_fused`] may run this effect (see there).
+    fused: bool,
 }
 
 /// `AL_FX_*`.
@@ -167,11 +170,26 @@ impl Fx {
             }
             delay.push(d);
         }
+        // The fused path needs plain sections (no chorus; the low-pass
+        // never changes the output, `APPLY_LOWPASS`) whose input and output
+        // windows never overlap, and no window longer than the line.
+        let fused = !APPLY_LOWPASS
+            && length >= FIXED_SAMPLE
+            && delay.iter().all(|d| {
+                let (i, o) = (d.input as usize, d.output as usize);
+                let gap = |a: usize, b: usize| (b + length - a % length) % length;
+                d.rs.is_none()
+                    && i < length
+                    && o < length
+                    && gap(i, o) >= FIXED_SAMPLE
+                    && gap(o, i) >= FIXED_SAMPLE
+            });
         Self {
             base: vec![0; length],
             input: 0,
             length,
             delay,
+            fused,
         }
     }
 
@@ -226,6 +244,10 @@ impl Fx {
     /// writes the delay line, runs every section into `AUX_R`, then copies
     /// it to `AUX_L`.
     pub fn pull(&mut self, dmem: &mut Dmem, table: &[[i16; 4]; 64]) {
+        if self.fused {
+            self.pull_fused(dmem);
+            return;
+        }
         let input = dsp::AUX_L;
         let output = dsp::AUX_R;
         let buff1 = dsp::TEMP_0;
@@ -279,6 +301,66 @@ impl Fx {
             self.input -= self.length;
         }
         dmem.dmem_move(output, dsp::AUX_L, FIXED_SAMPLE << 1);
+    }
+
+    /// [`Fx::pull`] for plain sections, computed in place on the delay
+    /// line in one pass per section. The original loads each section's
+    /// input and output windows into DMEM, mixes `ff` into the output, `fb`
+    /// into the input, saves both back and mixes `gain` of the output into
+    /// the bus. With the two windows disjoint (checked in [`Fx::new`]) every
+    /// sample's arithmetic only reads its own two delay-line samples, so
+    /// doing it in place, sample by sample, gives the same line and bus.
+    fn pull_fused(&mut self, dmem: &mut Dmem) {
+        let len = self.length;
+        let base = &mut self.base[..len];
+        // The wet buses to mono, written to the line at `input`:
+        // n_aMix(0xDA83, AUX_L -> AUX_L), n_aMix(0x5A82, AUX_R -> AUX_L).
+        {
+            let (l, r) = dmem.w[dsp::AUX_L / 2..].split_at_mut(FIXED_SAMPLE);
+            let r = &r[..FIXED_SAMPLE];
+            let l = &mut l[..FIXED_SAMPLE];
+            let g1 = 0xDA83u16 as i16 as i32;
+            for k in 0..FIXED_SAMPLE {
+                let a = l[k] as i32;
+                let a = clamp16(a + ((a * g1) >> 15)) as i32;
+                l[k] = clamp16(a + ((r[k] as i32 * 0x5A82) >> 15));
+            }
+            let at = self.input;
+            let first = (len - at).min(FIXED_SAMPLE);
+            mem::copy(&mut base[at..at + first], &l[..first]);
+            mem::copy(&mut base[..FIXED_SAMPLE - first], &l[first..]);
+        }
+        // The output bus, AUX_R, cleared first.
+        let (aux_l, out) = dmem.w[dsp::AUX_L / 2..].split_at_mut(FIXED_SAMPLE);
+        let out = &mut out[..FIXED_SAMPLE];
+        mem::zero(out);
+        for d in &self.delay {
+            let (ff, fb, gain) = (d.ffcoef as i32, d.fbcoef as i32, d.gain as i32);
+            // `r->input - d->input`, wrapped as `_n_loadBuffer` wraps it.
+            let mut xi = (self.input + len - d.input as usize) % len;
+            let mut yi = (self.input + len - d.output as usize) % len;
+            let mut k = 0;
+            while k < FIXED_SAMPLE {
+                let n = (FIXED_SAMPLE - k).min(len - xi).min(len - yi);
+                let (x, y) = if xi < yi {
+                    let (lo, hi) = base.split_at_mut(yi);
+                    (&mut lo[xi..xi + n], &mut hi[..n])
+                } else {
+                    let (lo, hi) = base.split_at_mut(xi);
+                    (&mut hi[..n], &mut lo[yi..yi + n])
+                };
+                section(x, y, &mut out[k..k + n], ff, fb, gain);
+                k += n;
+                xi = (xi + n) % len;
+                yi = (yi + n) % len;
+            }
+        }
+        self.input += FIXED_SAMPLE;
+        if self.input > self.length {
+            self.input -= self.length;
+        }
+        // The output bus is then moved to AUX_L.
+        mem::copy(&mut aux_l[..FIXED_SAMPLE], out);
     }
 
     /// `_n_loadOutputBuffer`.
@@ -342,5 +424,30 @@ impl Fx {
         );
         rs.first = 0;
         d.rsdelta += count - incount;
+    }
+}
+
+#[inline(always)]
+fn clamp16(v: i32) -> i16 {
+    dsp::clamp16(v)
+}
+
+/// One plain section over disjoint windows, sample by sample: `y += x *
+/// ff`, then `x += y * fb`, then `out += y * gain` (each `n_aMix`,
+/// saturating; a zero coefficient adds exactly 0, as skipping the mix does).
+#[inline(always)]
+fn section(x: &mut [i16], y: &mut [i16], out: &mut [i16], ff: i32, fb: i32, gain: i32) {
+    #[cfg(target_arch = "mips")]
+    return dsp::allegrex::section(x, y, out, ff, fb, gain);
+    #[cfg(not(target_arch = "mips"))]
+    {
+        let n = out.len();
+        let (x, y) = (&mut x[..n], &mut y[..n]);
+        for k in 0..n {
+            let yv = clamp16(y[k] as i32 + ((x[k] as i32 * ff) >> 15)) as i32;
+            y[k] = yv as i16;
+            x[k] = clamp16(x[k] as i32 + ((yv * fb) >> 15));
+            out[k] = clamp16(out[k] as i32 + ((yv * gain) >> 15));
+        }
     }
 }

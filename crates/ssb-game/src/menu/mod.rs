@@ -1,6 +1,6 @@
 //! The options and data menus that show and edit the backup: `mnOption`,
 //! `mnScreenAdjust` and `mnBackupClear` (`mn/mnoption/`), and `mnData`,
-//! `mnVSRecord` and `mnCharacters` (`mn/mndata/`).
+//! `mnVSRecord`, `mnCharacters` and `mnSoundTest` (`mn/mndata/`).
 //!
 //! Each menu is a state machine whose `tick` is the scene's `func_run`
 //! (with the processes it adds, in their run order) and whose `visit`
@@ -20,6 +20,7 @@ pub mod mode_select;
 pub mod one_p_mode;
 pub mod option;
 pub mod screen_adjust;
+pub mod sound_test;
 pub mod title;
 pub mod vs_item_switch;
 pub mod vs_options;

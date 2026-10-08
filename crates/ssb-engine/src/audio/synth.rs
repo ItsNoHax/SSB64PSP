@@ -10,6 +10,7 @@
 
 use super::data::{AudioData, WaveRef, AL_ADPCM_WAVE};
 use super::dsp::{self, Dmem, EnvMixInit, EnvMixState, State16};
+use super::prof;
 use super::reverb::Fx;
 
 pub const MAX_PVOICES: usize = 16;
@@ -369,7 +370,16 @@ impl Synth {
                 break;
             }
             self.param_samples &= !0xF;
+            let t = prof::start();
             let micros = clients.handle(client, self, data);
+            prof::stop(
+                if client == Client::Snd {
+                    prof::Stage::Snd
+                } else {
+                    prof::Stage::Seq
+                },
+                t,
+            );
             let add = self.time_to_samples_no_round(micros);
             if let Some(l) = &mut self.samples_left[client as usize] {
                 *l = l.wrapping_add(add);
@@ -393,35 +403,45 @@ impl Synth {
     fn save_pull(&mut self, data: &AudioData, out: &mut [i16]) {
         let offset = self.cur_samples;
         self.main_bus_pull(data, offset);
+        let t = prof::start();
         self.dmem.interleave();
         let n = out.len();
         self.dmem.save(dsp::TEMP_0, out);
+        prof::stop(prof::Stage::Bus, t);
         debug_assert_eq!(n, dsp::COUNT);
     }
 
     /// `n_alMainBusPull`.
     fn main_bus_pull(&mut self, data: &AudioData, offset: i32) {
+        let t = prof::start();
         self.dmem.clear(dsp::MAIN_L, dsp::DIVIDED << 1);
+        prof::stop(prof::Stage::Bus, t);
         if self.fx.is_some() {
             self.fx_pull(data, offset);
         } else {
             self.aux_bus_pull(data, offset);
         }
+        let t = prof::start();
         self.dmem.mix(0x7FFF, dsp::AUX_L, dsp::MAIN_L);
         self.dmem.mix(0x7FFF, dsp::AUX_R, dsp::MAIN_R);
+        prof::stop(prof::Stage::Bus, t);
     }
 
     /// `n_alFxPull`.
     fn fx_pull(&mut self, data: &AudioData, offset: i32) {
         self.aux_bus_pull(data, offset);
         if let Some(fx) = &mut self.fx {
+            let t = prof::start();
             fx.pull(&mut self.dmem, &data.resample);
+            prof::stop(prof::Stage::Reverb, t);
         }
     }
 
     /// `n_alAuxBusPull`: every pvoice, in creation order.
     fn aux_bus_pull(&mut self, data: &AudioData, offset: i32) {
+        let t = prof::start();
         self.dmem.clear(dsp::AUX_L, dsp::DIVIDED << 1);
+        prof::stop(prof::Stage::Bus, t);
         for i in 0..MAX_PVOICES {
             self.envmixer_pull(data, i, offset);
         }
@@ -831,7 +851,10 @@ impl Synth {
         } else {
             None
         };
+        let t = prof::start();
         self.dmem.envmix(init.as_ref(), &mut e.em_state);
+        prof::stop(prof::Stage::Envmix, t);
+        prof::count(prof::Stage::Pulls, 1);
         *inp += (FIXED_SAMPLE as usize) << 1;
         e.em_delta += FIXED_SAMPLE;
     }
@@ -842,7 +865,9 @@ impl Synth {
         let e = &mut self.pvoices[i];
         if e.rs_upitch != 0 {
             self.adpcm_pull(data, i, &mut inp, FIXED_SAMPLE);
+            let t = prof::start();
             self.dmem.dmem_move(inp, outp, (FIXED_SAMPLE as usize) << 1);
+            prof::stop(prof::Stage::Resample, t);
         } else {
             if e.rs_ratio > MAX_RATIO {
                 e.rs_ratio = MAX_RATIO;
@@ -855,6 +880,7 @@ impl Synth {
             self.adpcm_pull(data, i, &mut inp, in_count);
             let e = &mut self.pvoices[i];
             let incr = (e.rs_ratio * UNITY_PITCH) as i32;
+            let t = prof::start();
             // n_aResample's output selector is 0: the main workspace.
             self.dmem.resample(
                 e.rs_first as u32,
@@ -865,6 +891,7 @@ impl Synth {
                 &data.resample,
             );
             e.rs_first = 0;
+            prof::stop(prof::Stage::Resample, t);
         }
     }
 
@@ -1018,6 +1045,7 @@ fn decode_chunk(
         &[][..]
     };
     let lstate = f.dc_lstate;
+    let t = prof::start();
     dmem.adpcm(
         flags,
         &mut f.dc_state,
@@ -1027,6 +1055,7 @@ fn decode_chunk(
         outp,
         (tsam << 1) as usize,
     );
+    prof::stop(prof::Stage::Adpcm, t);
     f.dc_first = 0;
 }
 

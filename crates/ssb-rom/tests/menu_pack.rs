@@ -501,3 +501,23 @@ fn the_title_bakes_its_label_and_press_start_plays() {
     assert!(press[1..=19].iter().all(|v| v[2] == 1.0));
     assert!(press[20..39].iter().all(|v| v[2] < 0.0001));
 }
+
+#[test]
+fn sound_test_draws_only_packed_sprites() {
+    use ssb_game::menu::sound_test::SoundTest;
+
+    let mut drawn = BTreeSet::new();
+    let mut m = SoundTest::new();
+    // Every row, every digit at each place (up to 244), arrows shown.
+    for row in 0..3 {
+        for _ in 0..250 {
+            m.tick(&tap(N64Buttons::D_RIGHT));
+            m.change_wait = 0;
+            m.visit(&mut collect(&mut drawn));
+        }
+        m.tick(&tap(N64Buttons::D_DOWN));
+        m.change_wait = 0;
+        assert_eq!(m.option, (row + 1) % 3);
+    }
+    check(MenuScene::SoundTest, &drawn);
+}
