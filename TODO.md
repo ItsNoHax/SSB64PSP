@@ -9,9 +9,9 @@ or evidence record covers it.
 | Item | Reason deferred | Evidence |
 |---|---|---|
 | Independent fighter animation validation | Stage animation has a ROM-derived check (RE-050–052, RE-142); fighter costume/material animation does not | — |
-| Per-scene texture residency | Low detail reduces the v78 Dream Land Mario/Fox/DK/Kirby costume-0 closure, including wallpaper, to 726,924 bytes, 22,412 over the 704,512-byte VRAM pool; high needs 1,051,532. Other stages/costumes can need more. Runtime samples from main RAM; hardware residency and DK format work remain | RE-076, RE-077, RE-341, RE-426 |
+| Per-scene texture residency | Low detail reduces the v78 Dream Land Mario/Fox/DK/Kirby costume-0 closure, including wallpaper, to 726,924 bytes, 22,412 over the 704,512-byte VRAM pool; high needs 1,051,532. Other stages/costumes can need more; since RE-476 the frozen picture's 512 KiB copy leaves 180,224 bytes of VRAM. Runtime samples from main RAM; hardware residency and DK format work remain | RE-076, RE-077, RE-341, RE-426 |
 | Material-animation command 22 | `ssb-rom::matanim` rejects it; its writes are never read, so it can be skipped | RE-010 |
-| CPU performance on a PSP (`P5`) | RE-470 and RE-471 bring every scene's average under 5 ms of CPU a frame under PPSSPP at 333 MHz, the worst gameplay frame under 12 ms; **the PSP-2000 before/after run is pending** (RE-469's scenes, then RE-471's per-frame worst cases). Left: frames that load a scene's files (up to 39 ms in `sceIoRead` under PPSSPP: `title` 4934, `characters` 16, `opening` 56) and a battle's first frame (14–18 ms: fighters, stage and effect players built, about 0.5 MB of struct moves); the Polygon Team intro's drawing (11.7 ms); `ssb_engine::math::sqrt`'s four divisions on the PSP (a `sqrt.s` changes PSP pixels). Measure with the `profile` feature (RE-471: per-frame histogram, spike lines, `stage=`/`hold`) | RE-469, RE-470, RE-471 |
+| CPU performance on a PSP (`P5`) | Under PPSSPP every scene averages under 5 ms of CPU a frame (RE-470, RE-471) and the opening has no frame over 12 ms (RE-476). **The PSP-2000 is about 3.5× slower than PPSSPP's instruction clock on the opening** (median 7.8 ms against 2.1, RE-476): Run, Yoster/Sector and Clash run at 45–57 FPS with 12–14 ms of CPU a frame, nearly all in the movie draw's mesh lists (vertex expansion and skinning written through the uncached list alias, node matrices, material state, `sceGeListUpdateStallAddr` per draw); each opening fight's first frame takes 21–40 ms (building the battle; Mario's 19 ms of effect players). Next: expanded vertices through the cache into a line-aligned, written-back block (needs the PSP to verify coherency), then the battle's first frame. RE-469's other scenes and RE-471's worst cases are still unmeasured on the PSP; `ssb_engine::math::sqrt`'s four divisions (a `sqrt.s` changes PSP pixels). Measure with the `profile` feature (spans, spike lines, `stage=`/`hold`) | RE-469, RE-470, RE-471, RE-476 |
 | FPU traps outside PSPLink | Whether a PSP started from the XMB traps divide-by-zero/invalid as PSPLink does is unchecked; any division LLVM can speculate past its guard needs a nonzero denominator (`math::div_nonzero`) | RE-201, RE-469 |
 | Large stack frames | The game thread has 512 KiB; battle entry peaks at 239–294 KB. `enter_training` (149 KB), `EffectVisuals::sync_ko` (100 KB) and other frames build large values in place on the stack; `golden.sh` and `tools/stack-check.sh` fail at seven eighths | RE-469 |
 | `WPAttributes` pairing shape | Only known instance (Link's boomerang) has no sub-objects; revisit if another appears | RE-058 |
@@ -75,14 +75,15 @@ Deferred by user instruction.
 
 - Use `ssb_rom::reloc_link` from a runtime loader; its layout is checked against the original (RE-341, [D-011](docs/decisions/D-011.md))
 - Wire `ssb_engine::memory` arenas and pools into `psp-runtime` ([docs/memory.md](docs/memory.md))
-- Scene loads (RE-475) read in the frame the scene starts: 0.1–0.6 s on a
-  PSP-2000. Read the next scene's files on a thread during the outgoing
-  scene's fade, as the N64's loads hide behind its wipes; that needs both
-  scenes' files held at once
+- Scene loads outside the attract loop (the menus, the selects, VS, the
+  1P Game) still read in the scene's first frame: 0.1–0.6 s on a
+  PSP-2000. `scene_files::prefetch` reads ahead where the next scene is
+  known (the opening and attract loop, RE-476); a select could read its
+  stage's and fighters' files once they are picked
 - Scene file lists miss a few files that load on demand (select and
-  results figatrees, the opening room's random fighters, a Kirby copy's
-  absent kind): one read each, counted in the capture logs' `demand=`
-  (RE-475)
+  results figatrees, Characters' 2 KB figatree, a Kirby copy's absent
+  kind): one read each, counted in the capture logs' `demand=`
+  (RE-475, RE-476)
 - VFPU math, after `P5` profiling ([D-032](docs/decisions/D-032.md))
 - `sceAudio` mixer thread (`P4`)
 - Debug HUD uses `sceGuDebugFlush`: software-rasterizer-only in PPSSPP (RE-014) and faults on real hardware (RE-202); replace with GE geometry

@@ -187,6 +187,15 @@ decimal) beside the EBOOT and holds the rest at boot, so a PSPLink or
 PPSSPP run sees an XMB launch's budget; `boot_log` writes boot and scene
 loads to `ms0:/PSP/GAME/ssb64/boot.log` without PSPLink.
 
+A PRX started with `printf 'cd ms0:/PSP/GAME/ssb64/\nldstart host0:/<prx>\n' | pspsh`
+runs in its own directory: `capture_scene.txt`, `ballast.txt`,
+`probe` files and the `profile` feature's `profile.log` are read and
+written beside the PRX on `host0:`, while the pack, absent there, comes
+from `ms0:/PSP/GAME/ssb64/` (RE-476). Capture builds never write the
+save. PSPLink's clock is the PSP's: under PPSSPP the opening's CPU time
+is about a third of the PSP-2000's (RE-476), so measure frame times on
+the PSP.
+
 ### Native frame evidence
 
 ```bash

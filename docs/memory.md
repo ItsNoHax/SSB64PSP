@@ -28,6 +28,13 @@
   forever: an allocation failure is a black screen and a hung HOME exit.
   Large loads therefore allocate fallibly and end on
   `ssb_psp_runtime::memory::fatal`'s text screen.
+- While a scene runs, the next scene's files are read into memory beside
+  it (`scene_files::prefetch`, RE-476): the attract loop's lowest free
+  memory at the XMB's budget is 24.9 MB under PPSSPP. A prefetch stops
+  queuing reads with less than 6 MB free.
+- VRAM (2 MiB): two 32-bit colour buffers, the 16-bit depth buffer and
+  the 512 KiB copy of the wallpaper photo the frozen picture samples
+  (RE-476); about 180 KiB free.
 - PSP-1000 ignores `MEMSIZE=1` (RE-288). With about 18 MB free at boot
   (PPSSPP, `memory_ballast`), the heaviest scenes measured fit with
   2–4 MB left except the VS results, which end on the out-of-memory

@@ -42,7 +42,7 @@ Detail per domain: [`rendering.md`](rendering.md).
 
 | Subsystem | Status | Capability | Gap | Evidence |
 |---|---|---|---|---|
-| PSP asset loading | COMPLETE on PSP-2000 and later | Per-scene loading by archive file (D-046): the tables and shared region resident (5.5 MB), each scene's files and their extern closure read at its start, on-demand loads for anything a list misses, a text screen on any load failure; pack v107 with the menus and opening folded in (RE-475) | PSP-1000 (32 MiB) | RE-256, RE-260, RE-288, RE-320, RE-469, RE-475 |
+| PSP asset loading | COMPLETE on PSP-2000 and later | Per-scene loading by archive file (D-046): the tables and shared region resident (5.5 MB), each scene's files and their extern closure read at its start, on-demand loads for anything a list misses, a text screen on any load failure; pack v107 with the menus and opening folded in (RE-475); the next scene's files read in the background (`sceIoReadAsync`) through the opening and the attract loop, with the opening figures' figatrees and the fights' battle files in their lists: no load hitch left in the intro on a PSP-2000 (RE-476) | PSP-1000 (32 MiB); read-ahead for the menus, selects and battles | RE-256, RE-260, RE-288, RE-320, RE-469, RE-475, RE-476 |
 | Timing | COMPLETE | Fixed 60 Hz with catch-up cap | — | — |
 | Input | 85% | `psp-game` PSP→N64 layout (see README); viewer keeps its own; shared PSP polling is nonblocking; C-buttons are one jump button, R expands to A + Z; the fighter's stick is clamped to ±80 (`pl.stick_range`); L taunts (RE-466) | Nub deadzone unmeasured | RE-008, RE-009, RE-295, RE-329, RE-466 |
 | Engine traits | 70% | Renderer, audio, input, timing, clock | — | — |
@@ -103,8 +103,9 @@ Detail per domain: [`rendering.md`](rendering.md).
    a PSP does both (RE-469). Battles ran at 8–15 FPS on a PSP-2000
    (RE-469); RE-470 and RE-471 bring every scene to 60 FPS under PPSSPP
    (averages under 5 ms of CPU a frame at 333 MHz, gameplay frames under
-   12 ms; scene loads still take one long frame), not yet measured on the
-   PSP.
+   12 ms). On a PSP-2000 the opening's CPU time is about 3.5 times
+   PPSSPP's: its loads no longer stall (RE-476), but three of its scenes
+   run at 45–57 FPS and each opening fight's first frame takes 21–40 ms.
 2. The debug HUD (`sceGuDebugFlush`) shows only under PPSSPP's software
    rasterizer (RE-014) and faults on real hardware (RE-202). It is off by
    default (`debug_overlay` feature).
