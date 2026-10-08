@@ -152,14 +152,14 @@ Status: `SObj` sprites draw through the GE (RE-392 onwards); the
 developer overlay still uses `sceGuDebugFlush` (RE-014, RE-202).
 
 - `meshdraw::draw_sprite` and its variants draw a libultra `Sprite` as one
-  `GU_SPRITES` rectangle at N64 screen coordinates, the 320 × 240 screen
-  scaled by 272 / 240 onto the pillarbox, with `lbCommonPrepSObjAttr`'s
-  combiner per format (RE-392, RE-410, RE-411).
-- The battle wallpaper (`meshdraw::draw_wallpaper`, RE-419) is the one
-  exception: it is mapped as the battle's 3D is, the stage camera's
-  (10, 10) to (310, 230) viewport scaled by 272 / 220 about the
-  pillarbox's centre, so it stays registered with the stage. It is
-  drawn first, opaque and without depth, from a 5551 texture in main RAM.
+  `GU_SPRITES` rectangle at N64 screen coordinates through
+  `ssb_engine::coord`'s mapping. The visible (10, 10) to (310, 230) box
+  fills the PSP's height, scaled by 272 / 220 (D-047). Each format uses
+  `lbCommonPrepSObjAttr`'s combiner (RE-392, RE-410, RE-411).
+- The battle wallpaper (`meshdraw::draw_wallpaper`, RE-419) is mapped the
+  same way under the wallpaper camera's viewport, so it stays registered
+  with the stage. It is drawn first, opaque and without depth, from a 5551
+  texture in main RAM.
 - The stage select's preview model draws under its own camera over the
   select's sprites (`meshdraw::draw_stage_preview`, RE-419).
 - Training's interface uses its original sprite tables and signed label

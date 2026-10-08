@@ -40,12 +40,21 @@ vertex.
 - UVs are S10.5: divide by 32 for texels, then by the uploaded dimension.
   Linear filtering adds `+0.5 / uploaded_dim` after all tile-origin and
   material transforms; point sampling adds nothing (RE-304).
-- The original 320×240 screen maps to a centred, pillarboxed 362×272
-  area (`coord::pillarboxed_viewport`, RE-034,
-  [D-008](../decisions/D-008.md)). The battle camera uses the inset
-  (10,10)–(310,230) viewport, aspect 15/11 and its live FOV. Models,
-  particles and portable projection share it; tags use the same scissor.
-  Entry/pause zooms follow their live FOV (RE-440).
+- Screen mapping ([D-047](../decisions/D-047.md), RE-477): the N64's
+  visible (10,10)–(310,230) box fills the PSP's 272 lines at one scale,
+  272/220, centred. PSP x = 240 + (x − 160) · 272/220 and
+  PSP y = 136 + (y − 120) · 272/220. The box covers PSP columns 55–424, and
+  the 10-pixel strip around it is cropped as a CRT's overscan hid it.
+  `ssb_engine::coord` is the only place that converts. Every viewport,
+  scissor, sprite, fill, particle, mask and photo copy goes through it, and
+  every scissor is clipped to the visible area, as libgc clamps each
+  camera's scissor 10 pixels inside the frame. `Gpu::set_viewport_n64`
+  sends the viewport as floats.
+- The battle camera uses the inset (10,10)–(310,230) viewport, aspect 15/11
+  and its live FOV, and frames by that aspect as
+  `gGMCameraStruct.viewport_width / viewport_height` does. Models,
+  particles and portable projection share it, and tags use the same
+  scissor. Entry and pause zooms follow their live FOV (RE-440).
 
 ## Conversion results
 
@@ -122,5 +131,5 @@ colour never references it ([D-025](../decisions/D-025.md), RE-072).
 | Area | Status | Evidence | Remaining |
 |---|---|---|---|
 | Geometry and transforms | Complete; billboard kinds 44/46/48/50 and signed scale | RE-062, RE-063, RE-143–145 | Physical-PSP recheck |
-| Projection | Complete; battle camera matches original ROM state, inset viewport and live FOV | RE-034, RE-082–085, RE-131, RE-150, RE-151, RE-440 | Special camera modes (gameplay) |
+| Projection | Complete; battle camera matches original ROM state, inset viewport and live FOV; overscan strip cropped (D-047) | RE-034, RE-082–085, RE-131, RE-150, RE-151, RE-440, RE-477 | Special camera modes (gameplay) |
 | Culling | Complete; RDP default `CULL_BACK` | RE-068 | — |

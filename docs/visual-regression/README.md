@@ -1395,3 +1395,19 @@ other 157 are fighter scenes: fighters now stand on the floor when made
 and the status chains follow the decomp, so the camera framing of most
 Training scenes shifts. All 175 were rebaselined after a mask review and
 captured twice; 195 of 195 match ([RE-466](../evidence/re/RE-466.md)).
+
+## 2026-10-08 RE-477 CRT overscan crop
+
+D-047 maps the N64's visible (10,10)–(310,230) box onto the PSP's full
+height at 272/220 and crops the 10-pixel strip. This replaces D-008's
+362×272 pillarbox. 197 of 198 goldens change; `r2-mario-entry-pipe` does
+not, because its particle quad has its own fixed framing. All were
+rebaselined in one update. The rebaseline captured twice with no
+difference, and an earlier verify run matched byte for byte.
+
+Each old golden was resampled by the expected transform and compared with
+its new capture. Allowing one pixel of resampling, the median golden
+differs in 1% of its pixels (asset viewer 0.03%). VS battles differ in up
+to 6% because the battle camera now frames at the viewport's 15/11
+aspect. With the old framing they reach at most 3.4%.
+([RE-477](../evidence/re/RE-477.md)).

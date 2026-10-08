@@ -13,7 +13,8 @@ new evidence contradicts it.
 - [D-005](docs/decisions/D-005.md): Fixed 60 Hz Simulation Decoupled from Rendering
 - [D-006](docs/decisions/D-006.md): Vertex Format — 16-bit Normalized Requires Model Scale
 - [D-007](docs/decisions/D-007.md): Depth Buffer — Inverted Range
-- [D-008](docs/decisions/D-008.md): Aspect Ratio — Pillarboxed 362×272
+- [D-008](docs/decisions/D-008.md): Aspect Ratio — Pillarboxed 362×272 (superseded by D-047)
+- [D-047](docs/decisions/D-047.md): CRT Overscan Crop — the N64's Visible Box Fills the PSP's Height
 
 ## Asset Pipeline
 
