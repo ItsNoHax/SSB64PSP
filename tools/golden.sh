@@ -1,31 +1,48 @@
 #!/usr/bin/env bash
-# Verify or rebaseline golden screenshots from tests/golden/scenes.tsv.
+# Verify or rebaseline golden captures from tests/golden/scenes.tsv.
 #
 #   tools/golden.sh verify     [--filter REGEX] [-j N] [--twice] [--no-build]
 #   tools/golden.sh rebaseline [--filter REGEX] [-j N] [--no-build] --reason TEXT
+#   tools/golden.sh baseline   [--filter REGEX] [-j N] [--no-build]
 #
 # Builds each crate the selected rows need once with `golden_capture`, then
 # captures every scene from that one EBOOT in parallel (default: nproc jobs).
 # Each scene's EBOOT reads its scene from capture_scene.txt and exits after
 # its screenshot (docs/visual-regression/README.md).
 #
+# Goldens are pixel hashes, not images: tests/golden/hashes.tsv records each
+# scene's size and the SHA-256 of its decoded RGB pixels
+# (tools/lib/pixel-hash.sh). A capture passes when its hash equals the
+# recorded one, which is exactly a 0-pixel difference. The PNGs are never
+# committed; the gitignored tests/golden/local/ keeps a local copy of each
+# golden whose hash matches the manifest, used only for difference masks and
+# the review page.
+#
 # Output: target/golden-run/<timestamp>/
 #   candidates/<golden>.png   this run's captures
-#   masks/<golden>.png        white where the candidate differs from its golden
+#   masks/<golden>.png        white where the candidate differs from its local
+#                             golden PNG (only when tests/golden/local/ has one)
 #   summary.tsv               one row per scene
 #   index.html                side-by-side review, changed scenes first
 #
-# verify exits non-zero on any unexpected difference: a `pass` row that
+# verify exits non-zero on any unexpected difference: a `pass` row whose hash
 # differs, a `known-failing` row that now matches (update the manifest), a
 # failed capture, (with --twice) two captures of one scene that differ, or a
 # `psp-game` scene whose main-thread stack peak came within an eighth of the
 # stack's size (`stack-near-limit`, RE-469): PPSSPP does not check the bound
 # a PSP enforces, so the capture log's `stack` line is the only witness.
 #
-# rebaseline always captures twice, then copies each changed candidate over
-# its golden. Unchanged goldens are never touched. `known-failing` rows are
-# only rebaselined when --filter is given. It prints a Markdown table for the
-# evidence record.
+# rebaseline always captures twice, then writes each changed candidate's hash
+# into tests/golden/hashes.tsv and its PNG into tests/golden/local/.
+# Unchanged goldens are never touched. `known-failing` rows are only
+# rebaselined when --filter is given. It prints a Markdown table for the
+# commit message.
+#
+# baseline captures the selected scenes and stores each capture whose hash
+# equals the manifest's in tests/golden/local/, without touching the
+# manifest: run it on a commit whose goldens pass to (re)create the local
+# PNGs for difference masks. A capture that does not match is reported and
+# not stored.
 
 set -euo pipefail
 # Decimal points in timings and a stable sort order.
@@ -33,11 +50,15 @@ export LC_ALL=C
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$REPO/tests/golden/scenes.tsv"
+HASHES="$REPO/tests/golden/hashes.tsv"
+LOCAL="$REPO/tests/golden/local"
 # shellcheck source=lib/pixel-diff.sh
 . "$REPO/tools/lib/pixel-diff.sh"
+# shellcheck source=lib/pixel-hash.sh
+. "$REPO/tools/lib/pixel-hash.sh"
 
 usage() {
-  sed -n '2,5p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,6p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -80,7 +101,7 @@ fi
 
 MODE="${1:-}"
 case "$MODE" in
-  verify|rebaseline) shift ;;
+  verify|rebaseline|baseline) shift ;;
   *) usage ;;
 esac
 
@@ -123,7 +144,7 @@ done < "$MANIFEST"
 [ ${#goldens[@]} -gt 0 ] || { echo "no manifest rows match '${FILTER}'" >&2; exit 2; }
 
 RUN="$REPO/target/golden-run/$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$RUN"/{candidates,candidates-2,masks,logs,status,jobs,stack}
+mkdir -p "$RUN"/{candidates,candidates-2,masks,logs,status,jobs,stack,hashes}
 echo "==> $MODE: ${#goldens[@]} scenes, -j $JOBS, run dir $RUN"
 run_start=$(date +%s)
 
@@ -167,26 +188,44 @@ for i in "${!goldens[@]}"; do
   if [ -f "$RUN/status/$golden-1.tsv" ]; then
     seconds=$(cut -f4 "$RUN/status/$golden-1.tsv")
   fi
+  expected=$(golden_hash "$golden" "$HASHES")
+  local_png="$LOCAL/$golden.png"
   if [ ! -f "$candidate" ]; then
     result=capture-failed
-  elif ! pixels=$(pixel_diff_count "$REPO/tests/golden/$golden.png" "$candidate"); then
-    pixels=- result=size-mismatch
   else
-    if [ "$pixels" -gt 0 ]; then
-      pixel_diff_mask "$REPO/tests/golden/$golden.png" "$candidate" "$RUN/masks/$golden.png"
+    actual=$(pixel_hash "$candidate")
+    printf '%s\t%s\n' "$golden" "$actual" > "$RUN/hashes/$golden.txt"
+    if [ -z "$expected" ]; then
+      result=no-hash
+    elif [ "$actual" = "$expected" ]; then
+      pixels=0
+    elif [ "${actual%% *}" != "${expected%% *}" ]; then
+      result=size-mismatch
+    else
+      # The hash says the capture differs; a local golden PNG with the
+      # recorded hash says by how many pixels, and where.
+      pixels='?'
+      if [ -f "$local_png" ] && [ "$(pixel_hash "$local_png")" = "$expected" ]; then
+        pixels=$(pixel_diff_count "$local_png" "$candidate")
+        pixel_diff_mask "$local_png" "$candidate" "$RUN/masks/$golden.png"
+      fi
     fi
-    case "$status:$pixels" in
-      pass:0) result=match ;;
-      pass:*) result=changed ;;
-      known-failing:0) result=now-matches ;;
-      known-failing:*) result=known-failing ;;
-    esac
+    if [ "$pixels" != - ]; then
+      case "$status:$pixels" in
+        pass:0) result=match ;;
+        pass:*) result=changed ;;
+        known-failing:0) result=now-matches ;;
+        known-failing:*) result=known-failing ;;
+      esac
+    fi
   fi
   if [ "$TWICE" = 1 ] && [ -f "$candidate" ]; then
     if [ ! -f "$RUN/candidates-2/$golden.png" ]; then
       result=capture-failed
-    elif ! twice=$(pixel_diff_count "$candidate" "$RUN/candidates-2/$golden.png") \
-        || [ "$twice" != 0 ]; then
+    elif [ "$(pixel_hash "$RUN/candidates-2/$golden.png")" = "$actual" ]; then
+      twice=0
+    else
+      twice=$(pixel_diff_count "$candidate" "$RUN/candidates-2/$golden.png" || echo '?')
       result=nondeterministic
     fi
   fi
@@ -213,7 +252,7 @@ for i in "${!goldens[@]}"; do
   fi
   case "$result" in
     match|known-failing) ;;
-    changed) [ "$MODE" = rebaseline ] || failures=$((failures + 1)) ;;
+    changed|no-hash|size-mismatch) [ "$MODE" = rebaseline ] || failures=$((failures + 1)) ;;
     *) failures=$((failures + 1)) ;;
   esac
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$golden" "${crates[$i]}" "${specs[$i]}" \
@@ -256,7 +295,11 @@ HTML
         echo "<div class=scene id=\"$golden\"><div><b>$golden</b> <span class=\"r-$result\">$result</span></div>"
         echo "<div class=meta>$crate &middot; scene: $(printf '%s' "$spec" | html_escape) &middot; manifest: $status &middot; pixels: $pixels &middot; twice: $twice &middot; ${seconds}s</div>"
         echo "<div class=row>"
-        echo "<figure><img loading=lazy src=\"../../../tests/golden/$golden.png\" alt=\"\"><figcaption>golden</figcaption></figure>"
+        if [ -f "$LOCAL/$golden.png" ]; then
+          echo "<figure><img loading=lazy src=\"../../../tests/golden/local/$golden.png\" alt=\"\"><figcaption>golden (local copy)</figcaption></figure>"
+        else
+          echo "<figure><figcaption>no local golden PNG: run tools/golden.sh baseline on a passing commit</figcaption></figure>"
+        fi
         echo "<figure><img loading=lazy src=\"candidates/$golden.png\" alt=\"\"><figcaption>candidate</figcaption></figure>"
         if [ -f "$RUN/masks/$golden.png" ]; then
           echo "<figure><img loading=lazy src=\"masks/$golden.png\" alt=\"\"><figcaption>difference mask</figcaption></figure>"
@@ -277,20 +320,58 @@ echo "==> deepest game stack: $stack_max bytes ($stack_max_golden)"
 echo "==> peak memory use: $mem_max bytes ($mem_max_golden); per scene: $RUN/memory.tsv"
 echo "==> report: $RUN/index.html"
 
+# ---- baseline --------------------------------------------------------------
+if [ "$MODE" = baseline ]; then
+  mkdir -p "$LOCAL"
+  stored=0 skipped=0
+  while IFS=$'\t' read -r golden _crate _spec _status _pixels _twice result _seconds _peak; do
+    case "$result" in
+      match|known-failing) ;;
+      *) skipped=$((skipped + 1)); continue ;;
+    esac
+    # A known-failing row's capture is not its golden: store matches only.
+    [ "$(pixel_hash "$RUN/candidates/$golden.png")" = "$(golden_hash "$golden" "$HASHES")" ] \
+      || { skipped=$((skipped + 1)); continue; }
+    cp -f "$RUN/candidates/$golden.png" "$LOCAL/$golden.png"
+    stored=$((stored + 1))
+  done < <(tail -n +2 "$RUN/summary.tsv")
+  echo "==> stored $stored local golden PNG(s) in $LOCAL; $skipped capture(s) did not match the manifest"
+  [ "$skipped" -eq 0 ] || exit 1
+  exit 0
+fi
+
 # ---- rebaseline ------------------------------------------------------------
+# set_hash GOLDEN "WIDTHxHEIGHT SHA256": replaces or adds GOLDEN's row, then
+# keeps hashes.tsv in scenes.tsv's order.
+set_hash() {
+  local tmp="$HASHES.tmp"
+  awk -F'\t' -v OFS='\t' -v g="$1" -v size="${2%% *}" -v sum="${2##* }" '
+    FNR == NR { if ($0 !~ /^#/ && NF >= 4 && $1 != "golden") order[$1] = ++n; next }
+    /^#/ || $1 == "golden" { print; next }
+    $1 == g { next }
+    { rows[order[$1]] = $0 }
+    END {
+      rows[order[g]] = g OFS size OFS sum
+      for (i = 1; i <= n; i++) if (i in rows) print rows[i]
+    }' "$MANIFEST" "$HASHES" > "$tmp"
+  mv -f "$tmp" "$HASHES"
+}
+
 if [ "$MODE" = rebaseline ]; then
   if [ "$failures" -gt 0 ]; then
     echo "not rebaselining: $failures scene(s) failed to capture or were not deterministic" >&2
     exit 1
   fi
+  mkdir -p "$LOCAL"
   copied=()
   while IFS=$'\t' read -r golden _crate _spec status pixels _twice result _seconds _peak; do
     case "$result" in
-      changed) ;;
+      changed|no-hash|size-mismatch) ;;
       known-failing) [ -n "$FILTER" ] || continue ;;
       *) continue ;;
     esac
-    cp -f "$RUN/candidates/$golden.png" "$REPO/tests/golden/$golden.png"
+    set_hash "$golden" "$(pixel_hash "$RUN/candidates/$golden.png")"
+    cp -f "$RUN/candidates/$golden.png" "$LOCAL/$golden.png"
     copied+=("$golden	$pixels	$status")
   done < <(tail -n +2 "$RUN/summary.tsv")
   if [ ${#copied[@]} -eq 0 ]; then

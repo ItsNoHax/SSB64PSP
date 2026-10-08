@@ -18,6 +18,10 @@ live original-N64 behavior use [n64-emulator](../n64-emulator/SKILL.md)
 2. If a scene's golden changes, explain the semantic delta (differing-pixel
    count, what changed and why) before accepting the refresh — an
    unexplained golden change is a red flag, not a pass.
+   Goldens are pixel hashes in `tests/golden/hashes.tsv`; `rebaseline`
+   writes them. Never commit a capture or golden PNG: local PNGs live in the
+   gitignored `tests/golden/local/` (`tools/golden.sh baseline` recreates
+   them from a passing commit, for difference masks).
 3. A camera photograph of a physical PSP screen is qualitative evidence only
    and must not be passed to the exact PPSSPP pixel comparator.
 4. PPSSPP software rendering is the deterministic golden source; PPSSPP

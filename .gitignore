@@ -12,6 +12,12 @@
 /assets/generated/
 /build/
 
+# Golden captures show the game's characters and stages: only their pixel
+# hashes (tests/golden/hashes.tsv) are committed. tools/golden.sh keeps local
+# PNG copies here for difference masks.
+/tests/golden/local/
+/tests/golden/*.png
+
 # ---------------------------------------------------------------------------
 # Reference repositories (cloned locally for study, not vendored)
 # ---------------------------------------------------------------------------

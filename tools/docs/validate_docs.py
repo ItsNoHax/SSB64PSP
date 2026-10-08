@@ -17,6 +17,10 @@ Checks:
   6. No "PLAN.md <retired label>" references (PLAN.md has no such section).
   7. One task list: Markdown checkboxes appear only in PLAN.md.
   8. STATUS.md stays a snapshot: at most 4 KiB.
+  9. No Nintendo-derived file is tracked: no ROM, pack, save or other
+     binary, no image or audio/video outside the original XMB artwork
+     (psp-game/xmb/, psp-asset-viewer/xmb/; D-037, docs/xmb-assets.md).
+     Golden captures are committed as pixel hashes only.
 
 Exits 1 and prints one line per problem; exits 0 with a summary otherwise.
 Run after any documentation change (see the `documentation` skill).
@@ -54,6 +58,14 @@ DELETED_RE = re.compile(
 )
 PLAN_LABEL_RE = re.compile(r"PLAN\.md`?(?:'s)?\s+`?(?:R[0-3]|P[0-5]|M[0-4]|F1|G[0-5]|[TC]\d)\b")
 CHECKBOX_RE = re.compile(r"^\s*[-*] \[[ xX]\]", re.M)
+
+# Check 9: what may never be tracked.
+ORIGINAL_MEDIA_DIRS = ("psp-game/xmb/", "psp-asset-viewer/xmb/")
+MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tga", ".ppm",
+                  ".pgm", ".tif", ".tiff", ".at3", ".pmf", ".mp4", ".wav", ".aiff",
+                  ".mp3", ".ogg"}
+BINARY_SUFFIXES = {".z64", ".n64", ".v64", ".rom", ".pak", ".sav", ".bin", ".raw",
+                   ".pbp", ".prx", ".elf", ".o"}
 
 
 def tracked_files():
@@ -185,6 +197,16 @@ def main():
     size = (ROOT / "STATUS.md").stat().st_size
     if size > 4096:
         problems.append(f"STATUS.md is {size} bytes; keep the snapshot under 4 KiB")
+
+    # --- 9: no Nintendo-derived files tracked ---
+    listed = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True)
+    for name in filter(None, listed.stdout.decode().split("\0")):
+        suffix = Path(name).suffix.lower()
+        if suffix in BINARY_SUFFIXES:
+            problems.append(f"{name}: ROM, pack, save or binary file tracked")
+        elif suffix in MEDIA_SUFFIXES and not name.startswith(ORIGINAL_MEDIA_DIRS):
+            problems.append(f"{name}: image or media file outside the original XMB artwork; "
+                            "golden captures are committed as hashes (tests/golden/hashes.tsv)")
 
     if problems:
         print(f"{len(problems)} problem(s) found:\n")

@@ -1,8 +1,11 @@
 # Visual Regression
 
-Deterministic golden screenshots of the PSP renderer, captured with
-PPSSPPHeadless's software GPU ([D-041](../decisions/D-041.md)). Goldens live in
-`tests/golden/`.
+Deterministic golden captures of the PSP renderer, taken with
+PPSSPPHeadless's software GPU ([D-041](../decisions/D-041.md)). A golden is a
+pixel hash, not an image: [`tests/golden/hashes.tsv`](../../tests/golden/hashes.tsv)
+records each scene's size and the SHA-256 of its decoded pixels. The captures
+show the game's characters and stages, so no golden PNG is committed; local
+copies live in the gitignored `tests/golden/local/`.
 
 A golden pins current PSP output. It is not proof of original-N64 equivalence
 or of physical-PSP behavior.
@@ -23,6 +26,7 @@ ImageMagick (`magick`) are required.
 ```bash
 tools/golden.sh verify [--filter REGEX] [-j N] [--twice] [--no-build]
 tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
+tools/golden.sh baseline [--filter REGEX] [-j N] [--no-build]
 ```
 
 - [`tests/golden/scenes.tsv`](../../tests/golden/scenes.tsv) lists every
@@ -31,21 +35,36 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
   The manifest has 198 scenes; a full run at `-j 16` captures
   in about 110 s.
+- Comparison is exact. A capture matches when the SHA-256 of its decoded
+  pixels (8-bit RGB, row-major from the top-left, no header;
+  `tools/lib/pixel-hash.sh`) equals the recorded hash, which is the same
+  test as a 0-pixel difference. Hashing pixels rather than PNG bytes keeps
+  the result independent of the encoder. There is no tolerance: captures
+  freeze every animator at a fixed tick and are pixel-identical run to run.
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
-  of golden, candidate and mask with changed scenes first.
-- `verify` fails on a `pass` row that differs, a `known-failing` row that now
-  matches (set it to `pass`), a failed capture, and with `--twice` on two
-  captures of one scene that differ.
+  of golden, candidate and mask with changed scenes first. A hash only says
+  that a capture differs; the pixel count and mask need the scene's local
+  golden PNG in `tests/golden/local/` (used only when its own hash still
+  matches the manifest). Without one the pixel count reads `?`.
+- `verify` fails on a `pass` row whose hash differs, a row with no hash, a
+  `known-failing` row that now matches (set it to `pass`), a failed capture,
+  and with `--twice` on two captures of one scene that differ.
 - Each `psp-game` capture logs its game thread's deepest stack use;
   `verify` also fails a scene past seven eighths of the stack
   (`stack-near-limit`) or with no stack line. PPSSPP does not enforce the
   stack bound a PSP does (RE-469). `tools/stack-check.sh` runs the same
   check on the 1P Game and opening scenes outside the manifest.
-- `rebaseline` always captures twice. It copies only changed candidates over
-  their goldens and prints a Markdown table (golden, pixel count, reason)
-  for the evidence record. It skips `known-failing` rows unless `--filter`
-  is given.
+- `rebaseline` always captures twice. It writes only changed candidates'
+  hashes into `hashes.tsv` (and their PNGs into `tests/golden/local/`) and
+  prints a Markdown table (golden, pixel count, reason) for the commit
+  message. It skips `known-failing` rows unless `--filter` is given. A new
+  manifest row has no hash until its first rebaseline.
+- `baseline` (re)creates the local PNGs: it captures the selected scenes and
+  stores each capture whose hash equals the manifest's, without changing
+  the manifest. To get masks for a failing change, check out a commit whose
+  goldens pass (for example `git stash` or `git worktree add`), run
+  `tools/golden.sh baseline`, then return and run `verify`.
 - `tools/verify-fighter-goldens.sh` runs `verify --filter
   'fighter|link-costume'`.
 - `tools/golden-reference.sh` captures every scene with the per-feature
@@ -53,7 +72,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   `~/golden-reference/`. Use it as the byte-identity reference when changing
   the capture pipeline itself.
 - Serve `index.html` over HTTP from the repository root (for example
-  `python3 -m http.server`); it loads goldens from `tests/golden/`.
+  `python3 -m http.server`); it loads goldens from `tests/golden/local/`.
 
 ### How a scene is chosen
 
@@ -244,7 +263,7 @@ see [RE-455](../evidence/re/RE-455.md) for source checks and capture limits.
 ```bash
 tools/run-ppsspp-headless.sh --scene 'stage 17' [--job NAME] [--no-build]
 tools/run-ppsspp-headless.sh [--crate psp-game] --feature <feature>
-tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/screenshot.png
+tools/compare-screenshot.sh tests/golden/local/<golden>.png ~/ppsspp-headless-test/screenshot.png
 ```
 
 - The runner builds the EBOOT (`golden_capture` with `--scene`, otherwise
@@ -270,13 +289,17 @@ tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/scr
   uses both for the RE-312 visual review
   ([three-point-visual-review.md](../rendering/three-point-visual-review.md)).
 - `compare-screenshot.sh` defaults to an exact match (0 differing pixels).
-  It and `golden.sh` share `tools/lib/pixel-diff.sh`.
+  It and `golden.sh` share `tools/lib/pixel-diff.sh`; `golden.sh` and
+  `golden-reference.sh` share `tools/lib/pixel-hash.sh`.
 - Capture features must not ship in interactive builds; rebuild without them
   afterwards.
 
 ## Rules
 
 - Explain every golden change (pixel count, cause) before accepting it.
+- Never commit a capture, golden PNG or other screenshot of the game; commit
+  hashes only (`tools/docs/validate_docs.py` rejects tracked images outside
+  the original XMB artwork).
 - Confirm a new golden is deterministic with two captures.
 - PPSSPP software is the only exact tier. PPSSPP hardware backends and
   physical PSP captures are separate, qualitative tiers.

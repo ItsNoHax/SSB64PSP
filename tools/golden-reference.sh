@@ -13,7 +13,7 @@
 #   stage-index-map.tsv stage index -> golden name, exact matches only
 #   timing.tsv          per-scene wall time (build + capture)
 #
-# The references are the current pipeline's real output, not tests/golden/:
+# The references are the current pipeline's real output, not the goldens:
 # known-failing goldens differ from both. Later changes to the capture
 # pipeline must reproduce these bytes exactly.
 
@@ -84,22 +84,22 @@ for scene in "${scenes[@]}"; do
   printf '%s\t%s\n' "$name" "$(( $(date +%s) - start ))" >> "$REF/timing.tsv"
 done
 
-# Exact-match stage map: an index maps to a golden only when every pixel is
-# equal. Anything else is reported, never guessed.
-pixel_diff() {
-  magick "$1" "$2" -compose difference -composite -threshold 0 \
-    -format '%[fx:round(mean*w*h)]' info:
-}
+# Exact-match stage map: an index maps to a golden only when its pixel hash
+# equals the golden's recorded hash (tests/golden/hashes.tsv). Anything else
+# is reported, never guessed.
+# shellcheck source=lib/pixel-hash.sh
+. "$REPO/tools/lib/pixel-hash.sh"
 printf 'stage_index\tgolden\n' > "$REF/stage-index-map.tsv"
 unmatched=()
 for i in 1 2 3 5 6 7 8 $(seq 10 40); do
   match=""
-  for golden in "$REPO"/tests/golden/r2-stage-*.png; do
-    if [ "$(pixel_diff "$REF/stage-$i.png" "$golden")" = 0 ]; then
-      [ -n "$match" ] && { echo "stage $i matches both $match and $(basename "$golden" .png)" >&2; exit 1; }
-      match=$(basename "$golden" .png)
+  actual=$(pixel_hash "$REF/stage-$i.png")
+  while IFS=$'\t' read -r golden size sum; do
+    if [ "$size $sum" = "$actual" ]; then
+      [ -n "$match" ] && { echo "stage $i matches both $match and $golden" >&2; exit 1; }
+      match=$golden
     fi
-  done
+  done < <(awk -F'\t' '$1 ~ /^r2-stage-/' "$REPO/tests/golden/hashes.tsv")
   if [ -n "$match" ]; then
     printf '%s\t%s\n' "$i" "$match" >> "$REF/stage-index-map.tsv"
   else

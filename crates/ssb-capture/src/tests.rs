@@ -121,6 +121,7 @@ fn manifest_specs_round_trip() {
     let manifest = std::fs::read_to_string(path).expect("read tests/golden/scenes.tsv");
     let mut rows = 0;
     let mut goldens = std::collections::BTreeSet::new();
+    let mut goldens_in_order = std::vec::Vec::new();
     for line in manifest.lines() {
         if line.is_empty() || line.starts_with('#') || line.starts_with("golden\t") {
             continue;
@@ -130,11 +131,7 @@ fn manifest_specs_round_trip() {
         let (golden, krate, spec, status) = (cols[0], cols[1], cols[2], cols[3]);
         assert!(matches!(status, "pass" | "known-failing"), "{line:?}");
         assert!(goldens.insert(golden), "duplicate golden {golden}");
-        let png = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/");
-        assert!(
-            std::path::Path::new(&std::format!("{png}{golden}.png")).is_file(),
-            "{golden}.png missing"
-        );
+        goldens_in_order.push(golden);
         let canonical = match krate {
             "psp-asset-viewer" => ViewerScene::parse(spec).map(|s| s.to_string()),
             "psp-game" => crate::GameSpec::parse(spec).map(|s| s.to_string()),
@@ -143,17 +140,37 @@ fn manifest_specs_round_trip() {
         assert_eq!(canonical.as_deref(), Some(spec), "{golden}");
         rows += 1;
     }
-    let pngs = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden"))
-        .unwrap()
-        .filter(|e| {
-            e.as_ref()
-                .unwrap()
-                .path()
-                .extension()
-                .is_some_and(|x| x == "png")
+    // Goldens are pixel hashes (`tools/lib/pixel-hash.sh`); the PNGs are not
+    // committed. `hashes.tsv` has exactly one row per manifest row, in order.
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/hashes.tsv");
+    let hashes = std::fs::read_to_string(path).expect("read tests/golden/hashes.tsv");
+    let hashed: std::vec::Vec<&str> = hashes
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("golden\t"))
+        .map(|line| {
+            let cols: std::vec::Vec<&str> = line.split('\t').collect();
+            assert_eq!(cols.len(), 3, "{line:?}");
+            let (w, h) = cols[1].split_once('x').expect("WIDTHxHEIGHT");
+            assert!(
+                w.parse::<u32>().is_ok() && h.parse::<u32>().is_ok(),
+                "{line:?}"
+            );
+            assert!(
+                cols[2].len() == 64 && cols[2].bytes().all(|b| b.is_ascii_hexdigit()),
+                "{line:?}"
+            );
+            cols[0]
         })
-        .count();
-    assert_eq!(rows, pngs, "every golden PNG has exactly one manifest row");
+        .collect();
+    assert_eq!(
+        rows,
+        hashed.len(),
+        "every manifest row has exactly one hash"
+    );
+    assert!(
+        hashed.iter().copied().eq(goldens_in_order.iter().copied()),
+        "hashes.tsv follows scenes.tsv's order"
+    );
 }
 
 #[test]
