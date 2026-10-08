@@ -156,6 +156,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::BackupClear => 50,
         GameScene::VsRecord => 40,
         GameScene::Characters => 90,
+        GameScene::SoundTest => 40,
         // The title from tic 169: "Press Start" shows at tic 280 (RE-462).
         GameScene::Title => 140,
         // The title's demos (RE-465): How to Play's tap-the-stick phase,
@@ -520,6 +521,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         // swaps the scenes' sprite packs.
         (GameScene::VsRecord, 14) => return N64Buttons(N64Buttons::D_DOWN),
         (GameScene::VsRecord, 16 | 30) | (GameScene::Characters, 15) => return N64Buttons(N64Buttons::A),
+        // The Sound Test: down to Sound, then left to its last entry.
+        (GameScene::SoundTest, 15) => return N64Buttons(N64Buttons::D_DOWN),
+        (GameScene::SoundTest, 20) => return N64Buttons(N64Buttons::D_LEFT),
         // The front end's menus (RE-462): down once on the mode select and
         // twice on the 1P mode menu; the damage ratio up on VS Options
         // (down three rows, right twice); the Sword off on the Item
@@ -532,7 +536,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         // hand reached.
         (GameScene::BonusSelect | GameScene::BonusPractice, 40) => return N64Buttons(N64Buttons::A),
         (GameScene::BonusPractice, 50) => return N64Buttons(N64Buttons::START),
-        (GameScene::Option | GameScene::ScreenAdjust | GameScene::BackupClear | GameScene::DataMenu | GameScene::VsRecord | GameScene::Characters | GameScene::Title | GameScene::ModeSelect | GameScene::OnePMode | GameScene::VsOptions | GameScene::ItemSwitch | GameScene::BonusSelect | GameScene::BonusPractice | GameScene::Explain | GameScene::AutoDemo | GameScene::Opening, _) => {
+        (GameScene::Option | GameScene::ScreenAdjust | GameScene::BackupClear | GameScene::DataMenu | GameScene::VsRecord | GameScene::Characters | GameScene::SoundTest | GameScene::Title | GameScene::ModeSelect | GameScene::OnePMode | GameScene::VsOptions | GameScene::ItemSwitch | GameScene::BonusSelect | GameScene::BonusPractice | GameScene::Explain | GameScene::AutoDemo | GameScene::Opening, _) => {
             return N64Buttons(0)
         }
         (g, _) if opening_capture_kind(g).is_some() => return N64Buttons(0),
@@ -5358,6 +5362,7 @@ fn capture_menu(scene: GameScene) -> Option<(ssb_game::menu::Scene, ssb_game::me
         GameScene::BackupClear => (Scene::BackupClear, Scene::Option),
         GameScene::DataMenu => (Scene::Data, Scene::ModeSelect),
         GameScene::VsRecord | GameScene::Characters => (Scene::Data, Scene::ModeSelect),
+        GameScene::SoundTest => (Scene::SoundTest, Scene::Data),
         GameScene::Title => (Scene::Title, Scene::Startup),
         GameScene::Explain => (Scene::Explain, Scene::Title),
         GameScene::AutoDemo => (Scene::AutoDemo, Scene::Characters),
@@ -5460,7 +5465,7 @@ fn go_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScen
         return;
     }
     load_scene(s, scene);
-    if menus_screen::Menus::is_menu(scene) || matches!(scene, MScene::Explain | MScene::AutoDemo | MScene::SoundTest) {
+    if menus_screen::Menus::is_menu(scene) || matches!(scene, MScene::Explain | MScene::AutoDemo) {
         let mut selections = selections(s);
         let mut menus = core::mem::replace(&mut s.menus, menus_screen::Menus::new());
         let next = menus.go(scene, prev, &mut menus_host!(s, pack, &mut selections, capture));
