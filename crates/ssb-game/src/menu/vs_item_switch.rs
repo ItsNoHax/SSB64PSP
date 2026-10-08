@@ -6,7 +6,7 @@
 //!
 //! Unlike the other menus, the scene has no return to the title: its
 //! `sMNVSItemSwitchReturnTic` is set and never read. The US build's
-//! `mnItemSwitchMakeSubtitle` adds no display. The sounds are the host's.
+//! `mnItemSwitchMakeSubtitle` adds no display.
 
 use super::{
     fill_prim, Draw, Pad, Piece, Repeat, Scene, DOWN, FILE_VS_ITEM_SWITCH, LEFT, RIGHT, UP,

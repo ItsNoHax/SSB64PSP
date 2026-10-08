@@ -7,7 +7,7 @@
 //! player's handicap at once (`mnVSOptionsSetHandicapSettings`).
 //!
 //! The US build's `mnVSOptionsMakeSubtitle` adds no display, so the
-//! Japanese subtitle is not drawn. The sounds are the host's.
+//! Japanese subtitle is not drawn.
 
 use super::{
     common, fill, fill_prim, right_digits, Draw, Pad, Piece, Repeat, Scene, DOWN, FILE_COMMON,
