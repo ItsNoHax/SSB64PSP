@@ -33,6 +33,7 @@ pub mod effect;
 pub mod explain;
 pub mod fighter;
 pub mod fighter_select;
+pub mod fighter_sound;
 pub mod fteffect;
 pub mod grab;
 pub mod ground;
@@ -55,6 +56,8 @@ pub mod menu;
 pub mod modelpart;
 pub mod monster_weapon;
 pub mod motion;
+pub mod music;
+
 pub mod ness;
 pub mod opening;
 pub mod particle;

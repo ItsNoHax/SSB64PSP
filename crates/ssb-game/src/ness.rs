@@ -94,9 +94,30 @@ fn timing(s: N) -> StatusTiming {
         _ => StatusTiming::unknown(),
     }
 }
+/// `FTSTATUS_PRESERVE_LOOPSFX`: `ftNessSpecial(Air)HiHoldSetStatus` and
+/// `ftNessSpecial(Air)LwHoldSetStatus` keep the loop sound; of the switches,
+/// Hi Hold's and Lw Hit's (`FTNESS_SPECIALHIHOLD_STATUS_FLAGS`,
+/// `FTNESS_SPECIALLWHIT_STATUS_FLAGS`).
+fn preserve(s: N, is_switch: bool) -> status::Preserve {
+    let loop_sfx = if is_switch {
+        matches!(
+            s,
+            N::SpecialHiHold | N::SpecialAirHiHold | N::SpecialLwHit | N::SpecialAirLwHit
+        )
+    } else {
+        matches!(
+            s,
+            N::SpecialHiHold | N::SpecialAirHiHold | N::SpecialLwHold | N::SpecialAirLwHold
+        )
+    };
+    status::Preserve {
+        loop_sfx,
+        ..status::Preserve::NONE
+    }
+}
 fn set(f: &mut Fighter, s: N) {
     f.physics.is_fastfall = false;
-    status::set_any_status(f, AnyStatus::Ness(s), 0.0, timing(s));
+    status::set_any_status_preserve(f, AnyStatus::Ness(s), 0.0, timing(s), preserve(s, false));
     // Every one of Ness's special setters plays the first frame
     // (`ftnessspecial*.c`; RE-474's N64 Training traces).
     status::play_anim_events(f);
@@ -109,8 +130,9 @@ fn switch(f: &mut Fighter, s: N) {
     } else {
         f.status.anim_frame
     };
-    status::set_any_status(f, AnyStatus::Ness(s), frame, timing(s));
+    status::set_any_status_preserve(f, AnyStatus::Ness(s), frame, timing(s), preserve(s, true));
 }
+
 pub fn set_special_n(f: &mut Fighter) {
     set(
         f,

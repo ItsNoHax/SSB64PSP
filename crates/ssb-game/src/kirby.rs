@@ -757,8 +757,45 @@ fn set_catch_params(f: &mut Fighter) {
     f.grab.throw_desc = Some(crate::grab::KIRBY_INHALE);
 }
 
+/// The Inhale statuses' setters. `FTSTATUS_PRESERVE_LOOPSFX` keeps the
+/// inhale's loop sound into the Loop statuses
+/// (`ftKirbySpecialNLoopSetStatus`, the Start and Loop ground/air switches)
+/// and into Catch (`ftKirbySpecialNCatchEatSetStatusParam`), but not into a
+/// Catch switch or Eat.
 fn set_inhale(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming) {
-    set(f, s, frame, timing);
+    let loop_sfx = matches!(
+        s,
+        K::SpecialNStart
+            | K::SpecialAirNStart
+            | K::SpecialNLoop
+            | K::SpecialAirNLoop
+            | K::SpecialNCatch
+            | K::SpecialAirNCatch
+    );
+    set_inhale_preserve(f, s, frame, timing, loop_sfx);
+}
+
+/// A ground/air switch (`ftKirbySpecialN*SwitchStatus*`): only Start and
+/// Loop keep the loop sound.
+fn switch_inhale(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming) {
+    let loop_sfx = matches!(
+        s,
+        K::SpecialNStart | K::SpecialAirNStart | K::SpecialNLoop | K::SpecialAirNLoop
+    );
+    set_inhale_preserve(f, s, frame, timing, loop_sfx);
+}
+
+fn set_inhale_preserve(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming, loop_sfx: bool) {
+    status::set_any_status_preserve(
+        f,
+        AnyStatus::Kirby(s),
+        frame,
+        timing,
+        status::Preserve {
+            loop_sfx,
+            ..status::Preserve::NONE
+        },
+    );
     f.grab.is_catchstatus = matches!(
         s,
         K::SpecialNStart | K::SpecialAirNStart | K::SpecialNLoop | K::SpecialAirNLoop
@@ -1338,7 +1375,7 @@ fn switch_air(f: &mut Fighter) {
     };
     let (frame, timing) = (f.status.anim_frame, f.status.timing);
     f.become_airborne();
-    set_inhale(f, air, frame, timing);
+    switch_inhale(f, air, frame, timing);
 }
 
 fn switch_ground(f: &mut Fighter, y: f32) -> bool {
@@ -1359,7 +1396,8 @@ fn switch_ground(f: &mut Fighter, y: f32) -> bool {
     };
     let (frame, timing) = (f.status.anim_frame, f.status.timing);
     f.land(y);
-    set_inhale(f, ground, frame, timing);
+    switch_inhale(f, ground, frame, timing);
+
     true
 }
 

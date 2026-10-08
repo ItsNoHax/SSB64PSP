@@ -161,6 +161,9 @@ pub struct AttackColl {
     /// `fgm_level`: the hit sound's strength, which also gates the orbs and
     /// sparks of a normal hit.
     pub fgm_level: u8,
+    /// `fgm_kind`: the hit sound's row of
+    /// [`crate::fighter_sound::HIT_COLLISION_FGMS`].
+    pub fgm_kind: u8,
     pub is_hit_air: bool,
     pub is_hit_ground: bool,
     /// `MakeAttackCollScaled`: the offset is divided by `FTAttributes::size`.
@@ -1241,6 +1244,7 @@ fn update_damage_stat(
         // An invincible body or box, or damage a resist soaked.
         victim.hits.push_set_off(impact, damage);
     }
+    crate::fighter_sound::play_hit_sfx(attacker, coll.fgm_kind, coll.fgm_level);
 }
 
 /// `gmCollisionGetDamageSlashRotation`: the angle of the attacker's air

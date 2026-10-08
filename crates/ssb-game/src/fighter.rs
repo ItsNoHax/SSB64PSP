@@ -471,6 +471,11 @@ pub struct Fighter {
     pub effect_joint_array_id: u8,
     /// `FTStruct::modelpart_status` ([`crate::modelpart`], RE-425).
     pub model_parts: crate::modelpart::ModelParts,
+    /// `p_sfx`, `p_voice` and `p_loop_sfx` ([`crate::fighter_sound`]).
+    pub sound: crate::fighter_sound::FighterSound,
+    /// `FTStruct::public_knockback`: the knockback the crowd reacts to
+    /// ([`crate::public`]).
+    pub public_knockback: f32,
 }
 
 impl Fighter {
@@ -569,6 +574,9 @@ impl Fighter {
                 _ => 0.0,
             },
             damage_knockback_stack: 0.0,
+            sound: crate::fighter_sound::FighterSound::default(),
+            public_knockback: 0.0,
+
             is_knockback_paused: false,
             hits: crate::combat::FrameHits::default(),
             jostle_width: 0.0,

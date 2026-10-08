@@ -3902,6 +3902,9 @@ pub struct Preserve {
     /// `FTSTATUS_PRESERVE_FASTFALL`: keep `is_fastfall`, which every other
     /// status change clears (RE-468).
     pub fastfall: bool,
+    /// `FTSTATUS_PRESERVE_LOOPSFX`: keep the loop sound playing
+    /// (`ftParamStopLoopSFX` otherwise).
+    pub loop_sfx: bool,
 }
 
 impl Preserve {
@@ -3913,6 +3916,7 @@ impl Preserve {
         colanim: false,
         playertag: false,
         fastfall: false,
+        loop_sfx: false,
     };
     pub const FASTFALL: Preserve = Preserve {
         fastfall: true,
@@ -4006,7 +4010,11 @@ pub fn set_any_status_preserve(
     if !preserve.playertag {
         f.interface.tag_wait = 0;
     }
+    if !preserve.loop_sfx {
+        crate::fighter_sound::stop_loop_sfx(f);
+    }
     f.damage_knockback_stack = 0.0;
+
     f.damage_mul = 1.0;
     f.damage_e_status = None;
     f.reaction.is_passive_invincible = false;
