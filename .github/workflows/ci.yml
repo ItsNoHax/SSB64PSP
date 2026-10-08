@@ -148,6 +148,20 @@ jobs:
           fi
           echo "OK: no ROM files tracked"
 
+  # Documentation layout: evidence index current, links and IDs resolve,
+  # no references to deleted documents, one task list.
+  docs:
+    name: Documentation consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Evidence index is current
+        run: python3 tools/docs/gen_evidence_index.py --check
+
+      - name: Validate docs
+        run: python3 tools/docs/validate_docs.py
+
   # Early warning for lints introduced by newer toolchains. Deliberately
   # non-blocking: its job is to tell us to bump RUST_STABLE, not to fail a push
   # because an upstream release added a lint.

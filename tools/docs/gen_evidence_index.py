@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Regenerate docs/evidence/INDEX.md from docs/evidence/re/RE-*.md metadata.
 
-Deterministic: reads each record's heading + `Status:`/`Topics:`/
-`Related tasks:` metadata lines (written by this repo's evidence-record
-convention, see docs/evidence/re/RE-001.md for the shape) and rebuilds the
-index table. Run after adding or editing a RE-*.md record so the index does
+Deterministic: reads each record's heading + `Status:`/`Topics:` metadata
+lines (see docs/evidence/re/RE-001.md for the shape), plus
+docs/evidence/retired.tsv for records removed from the corpus, and rebuilds
+the index. Run after adding, editing or retiring a record so the index does
 not silently drift from the corpus.
 
 Usage: python3 tools/docs/gen_evidence_index.py [--check]
@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RE_DIR = ROOT / "docs" / "evidence" / "re"
+RETIRED_PATH = ROOT / "docs" / "evidence" / "retired.tsv"
 INDEX_PATH = ROOT / "docs" / "evidence" / "INDEX.md"
 
 HEADING_RE = re.compile(r"^# (RE-(\d+) — .*)$")
@@ -37,14 +38,12 @@ def parse_record(path: Path):
     if not m:
         raise ValueError(f"{path}: first line is not a '# RE-NNN — ...' heading")
     heading, num = m.group(1), m.group(2)
-    status, topics, task = "COMPLETE", "", ""
+    status, topics = "COMPLETE", ""
     for line in lines[2:9]:
         if line.startswith("Status:"):
             status = line.split(":", 1)[1].strip()
         elif line.startswith("Topics:"):
             topics = line.split(":", 1)[1].strip()
-        elif line.startswith("Related tasks:"):
-            task = line.split(":", 1)[1].strip().split(",")[0].strip()
         elif line.strip() == "":
             break
     title = heading.split(" — ", 1)[1] if " — " in heading else heading
@@ -54,8 +53,39 @@ def parse_record(path: Path):
         "title": short_title(title),
         "status": status,
         "topics": topics,
-        "task": task,
     }
+
+
+def parse_retired():
+    """(id, title, successor, reason) rows from docs/evidence/retired.tsv."""
+    rows = []
+    if not RETIRED_PATH.exists():
+        return rows
+    for line in RETIRED_PATH.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        cols = line.split("\t")
+        if len(cols) != 4 or not re.fullmatch(r"RE-\d{3}", cols[0]):
+            raise SystemExit(f"{RETIRED_PATH}: malformed row: {line!r}")
+        rows.append(cols)
+    rows.sort(key=lambda r: int(r[0][3:]))
+    return rows
+
+
+# Labels of the retired milestone systems that code comments and evidence
+# records still cite. PLAN.md's roadmap is the only current one.
+RETIRED_LABELS = [
+    ("`P0`–`P5`", "Previous roadmap: architecture, decomp compatibility, fighters, match, remaining systems, fidelity and performance", "Superseded by PLAN.md `MS1`–`MS8`"),
+    ("`M0`–`M4`", "Foundation: toolchain, ROM geometry, textured models, fighters and stages", "About RE-001–RE-053"),
+    ("`R0`, `R0.1`–`R0.18`", "Rendering correctness gate and its tasks", "About RE-054–RE-217"),
+    ("`R1`", "Rendering completeness", "RE-170–RE-200"),
+    ("`R2`, `R2.0` (`P0a`–`P2`)", "Physical PSP rendering validation; filtering and tile-addressing reopening", "RE-202–RE-288; R2.0 is RE-218–RE-224"),
+    ("`R2.1` (`T1`–`T10`)", "Texgen fidelity", "RE-225–RE-239, D-038–D-040"),
+    ("`R2.2` (`C1`–`C7`)", "Second renderer corrective gate", "RE-240–RE-261, D-042"),
+    ("`R3`", "Rendering performance", "PLAN.md `MS8`"),
+    ("`F1`", "Front end and Training Mode", "From RE-289"),
+    ("`G0`–`G5`", "Combat, match, menus, audio and optimization placeholders", "PLAN.md `MS4`–`MS8`"),
+]
 
 
 def build_index():
@@ -66,25 +96,57 @@ def build_index():
     if dupes:
         raise SystemExit(f"duplicate RE ids: {sorted(dupes)}")
 
+    retired = parse_retired()
+    clash = {r["id"] for r in records} & {row[0] for row in retired}
+    if clash:
+        raise SystemExit(f"retired IDs still have records: {sorted(clash)}")
+
     lines = [
-        "# Reverse-Engineering Evidence Index",
+        "# Evidence Index",
         "",
-        "One-line entry per investigation. Load `docs/evidence/re/RE-XXX.md` for the",
-        "full record (question, evidence, implementation, verification, conclusion).",
-        "Do not bulk-read this corpus; grep this index by ID or topic tag first.",
+        "Durable technical findings: original-game behaviour from the decomp and ROM,",
+        "asset formats, PSP GE and hardware behaviour, PPSSPP differences, measured",
+        "performance. One line per record; load `docs/evidence/re/RE-NNN.md` for the",
+        "full record. Do not bulk-read the corpus; grep this index by ID or topic.",
         "",
-        "Status `OPEN` = unresolved question, still tracked in `TODO.md`.",
-        "Status `COMPLETE` = investigation concluded (may still feed a task `IN_PROGRESS`).",
+        "Status `OPEN` marks an unresolved question; its task is in `PLAN.md`.",
         "",
-        "Regenerate with `python3 tools/docs/gen_evidence_index.py` after adding or",
-        "editing a record.",
+        "Generated by `python3 tools/docs/gen_evidence_index.py` from the records and",
+        "`docs/evidence/retired.tsv`. Do not edit by hand.",
         "",
-        "| ID | Title | Status | Topics | Task |",
-        "|---|---|---|---|---|",
+        "| ID | Title | Status | Topics |",
+        "|---|---|---|---|",
     ]
     for r in records:
         title = r["title"].replace("|", "\\|")
-        lines.append(f"| {r['id']} | {title} | {r['status']} | {r['topics']} | {r['task']} |")
+        lines.append(f"| {r['id']} | {title} | {r['status']} | {r['topics']} |")
+    lines += [
+        "",
+        "## Retired records",
+        "",
+        "Removed because they held no durable fact of their own (progress reports,",
+        "superseded hypotheses, audits). Code comments may still cite these IDs; the",
+        "fact, if any, lives where \"Now in\" points, and the full text is in git",
+        "history (`git log --all -- docs/evidence/re/RE-NNN.md`).",
+        "",
+        "| ID | Title | Now in | Reason |",
+        "|---|---|---|---|",
+    ]
+    for rid, title, succ, reason in retired:
+        cells = [c.replace("|", "\\|") for c in (rid, title, succ, reason)]
+        lines.append("| " + " | ".join(cells) + " |")
+    lines += [
+        "",
+        "## Retired labels",
+        "",
+        "Milestone and task labels from earlier plans, still cited by code comments,",
+        "golden names and records. They name no current work.",
+        "",
+        "| Label | Meant | Evidence |",
+        "|---|---|---|",
+    ]
+    for label, meant, ev in RETIRED_LABELS:
+        lines.append(f"| {label} | {meant} | {ev} |")
     return "\n".join(lines) + "\n"
 
 

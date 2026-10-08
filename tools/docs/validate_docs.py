@@ -1,152 +1,198 @@
 #!/usr/bin/env python3
-"""Deterministic documentation consistency checks for the progressive-
-disclosure doc layout (docs/evidence, docs/decisions, plans/, STATUS.md).
+"""Deterministic documentation consistency checks.
+
+Layout: PLAN.md (the only roadmap and task list), STATUS.md (snapshot),
+DECISIONS.md + docs/decisions/, docs/ (reference), docs/evidence/ (durable
+findings; retired IDs in docs/evidence/retired.tsv).
 
 Checks:
-  1. Duplicate RE record IDs (docs/evidence/re/RE-*.md).
-  2. RE-XXX IDs referenced anywhere in tracked docs/code but missing a record.
-  3. Duplicate D record IDs (docs/decisions/D-*.md).
-  4. D-XXX IDs referenced anywhere in tracked docs/code but missing a record.
-  5. Broken local Markdown links ([text](relative/path)) under docs/, plans/,
-     and the top-level *.md files.
-  6. PLAN.md task-table links pointing at a missing plans/**/*.md file.
-  7. STATUS.md referencing an RE-XXX/D-XXX ID or task-spec path that doesn't
-     exist.
+  1. Evidence: record filenames, duplicate IDs across records and
+     retired.tsv, and the generated INDEX.md being current.
+  2. RE-NNN cited in any tracked text file but neither a record nor retired.
+  3. Decisions: filenames, duplicates, every D-NNN.md listed in DECISIONS.md,
+     and D-NNN cited anywhere without a record.
+  4. Local Markdown links in every tracked .md file: the target exists, and
+     an #anchor into a Markdown file matches one of its headings.
+  5. No tracked file references a deleted document or directory.
+  6. No "PLAN.md <retired label>" references (PLAN.md has no such section).
+  7. One task list: Markdown checkboxes appear only in PLAN.md.
+  8. STATUS.md stays a snapshot: at most 4 KiB.
 
-Exits 1 and prints one line per problem if anything is wrong; exits 0 and
-prints a summary otherwise. Intended to be run after any documentation
-change (see the `documentation` Skill).
+Exits 1 and prints one line per problem; exits 0 with a summary otherwise.
+Run after any documentation change (see the `documentation` skill).
 
 Usage: python3 tools/docs/validate_docs.py
 """
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+THIS = Path(__file__).resolve()
 
 RE_ID_RE = re.compile(r"\bRE-(\d{3})\b")
 D_ID_RE = re.compile(r"\bD-(\d{3})\b")
-MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+MD_LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)|!\[[^\]]*\]\(([^)\s]+)\)")
+TEXT_SUFFIXES = {".md", ".rs", ".py", ".sh", ".toml", ".yml", ".yaml", ".tsv", ".json", ".txt"}
 
-SKIP_DIRS = {".git", "target", "refs", "rom", "assets", ".serena", "node_modules"}
+# Removed in the documentation reorganisation; nothing may point at them.
+DELETED_PATHS = [
+    "TODO.md",
+    "docs/porting-status.md",
+    "porting-status.md",
+    "plans/rendering",
+    "plans/gameplay",
+    "docs/images",
+    "docs/ssb-architecture.md",
+    "docs/reverse-engineering.md",
+    "docs/agent-rendering.md",
+    "docs/visual-regression.md",
+]
+DELETED_RE = re.compile(
+    "|".join(r"(?<![\w/.-])" + re.escape(p) + r"(?![\w-])" for p in DELETED_PATHS)
+)
+PLAN_LABEL_RE = re.compile(r"PLAN\.md`?(?:'s)?\s+`?(?:R[0-3]|P[0-5]|M[0-4]|F1|G[0-5]|[TC]\d)\b")
+CHECKBOX_RE = re.compile(r"^\s*[-*] \[[ xX]\]", re.M)
 
 
-def iter_text_files(exts):
-    for p in ROOT.rglob("*"):
-        if not p.is_file():
-            continue
-        if any(part in SKIP_DIRS for part in p.parts):
-            continue
-        if p.suffix in exts:
-            yield p
+def tracked_files():
+    out = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True)
+    for name in out.stdout.decode().split("\0"):
+        if name:
+            p = ROOT / name
+            if p.is_file():
+                yield p
+
+
+def slug(heading):
+    """GitHub's heading anchor."""
+    h = re.sub(r"[`*_]|<[^>]+>", "", heading.strip().lower())
+    h = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", h)
+    h = re.sub(r"[^\w\- ]", "", h)
+    return h.replace(" ", "-")
+
+
+_anchor_cache = {}
+
+
+def anchors(path):
+    if path not in _anchor_cache:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        text = re.sub(r"```.*?```", "", text, flags=re.S)
+        seen = {}
+        result = set()
+        for m in re.finditer(r"^#{1,6}\s+(.*?)\s*#*\s*$", text, re.M):
+            s = slug(m.group(1))
+            n = seen.get(s, 0)
+            seen[s] = n + 1
+            result.add(s if n == 0 else f"{s}-{n}")
+        _anchor_cache[path] = result
+    return _anchor_cache[path]
 
 
 def main():
     problems = []
+    files = [p for p in tracked_files() if p.suffix in TEXT_SUFFIXES]
+    texts = {p: p.read_text(encoding="utf-8", errors="ignore") for p in files}
 
-    # --- 1/2: RE IDs ---
+    # --- 1: evidence records and retired IDs ---
     re_dir = ROOT / "docs" / "evidence" / "re"
-    re_files = sorted(re_dir.glob("RE-*.md"))
-    re_ids_defined = {}
-    for f in re_files:
-        m = re.match(r"RE-(\d{3})\.md$", f.name)
+    re_defined = {}
+    for f in sorted(re_dir.glob("*.md")):
+        m = re.fullmatch(r"RE-(\d{3})\.md", f.name)
         if not m:
             problems.append(f"evidence: unexpected filename {f.relative_to(ROOT)}")
             continue
-        num = m.group(1)
-        if num in re_ids_defined:
-            problems.append(f"duplicate RE ID: RE-{num} ({re_ids_defined[num]} and {f})")
-        re_ids_defined[num] = f
+        re_defined[m.group(1)] = f
+    retired = set()
+    retired_path = ROOT / "docs" / "evidence" / "retired.tsv"
+    if retired_path.exists():
+        for line in retired_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.startswith("#"):
+                continue
+            cols = line.split("\t")
+            m = re.fullmatch(r"RE-(\d{3})", cols[0])
+            if len(cols) != 4 or not m:
+                problems.append(f"retired.tsv: malformed row {line[:60]!r}")
+                continue
+            num = m.group(1)
+            if num in retired:
+                problems.append(f"retired.tsv: RE-{num} listed twice")
+            if num in re_defined:
+                problems.append(f"RE-{num} is both a record and retired")
+            retired.add(num)
+    gen = subprocess.run([sys.executable, str(ROOT / "tools/docs/gen_evidence_index.py"), "--check"],
+                         cwd=ROOT, capture_output=True, text=True)
+    if gen.returncode != 0:
+        problems.append("docs/evidence/INDEX.md is stale; run tools/docs/gen_evidence_index.py")
 
-    re_ids_referenced = set()
-    for f in iter_text_files({".md", ".rs"}):
+    # --- 2: RE IDs cited anywhere ---
+    known_re = set(re_defined) | retired
+    for f, text in texts.items():
         if f.parent == re_dir:
-            continue  # a record referencing itself/siblings is not a "missing" signal
-        text = f.read_text(encoding="utf-8", errors="ignore")
-        for m in RE_ID_RE.finditer(text):
-            re_ids_referenced.add(m.group(1))
+            continue
+        for num in sorted({m.group(1) for m in RE_ID_RE.finditer(text)} - known_re):
+            problems.append(f"{f.relative_to(ROOT)}: RE-{num} has no record and is not retired")
 
-    for num in sorted(re_ids_referenced - set(re_ids_defined)):
-        problems.append(f"RE-{num} referenced but docs/evidence/re/RE-{num}.md does not exist")
-
-    # --- 3/4: D IDs ---
+    # --- 3: decisions ---
     d_dir = ROOT / "docs" / "decisions"
-    d_files = sorted(d_dir.glob("D-*.md"))
-    d_ids_defined = {}
-    for f in d_files:
-        m = re.match(r"D-(\d{3})\.md$", f.name)
+    d_defined = {}
+    for f in sorted(d_dir.glob("*.md")):
+        m = re.fullmatch(r"D-(\d{3})\.md", f.name)
         if not m:
             problems.append(f"decisions: unexpected filename {f.relative_to(ROOT)}")
             continue
-        num = m.group(1)
-        if num in d_ids_defined:
-            problems.append(f"duplicate D ID: D-{num} ({d_ids_defined[num]} and {f})")
-        d_ids_defined[num] = f
+        d_defined[m.group(1)] = f
+    decisions_index = (ROOT / "DECISIONS.md").read_text(encoding="utf-8")
+    for num in d_defined:
+        if f"(docs/decisions/D-{num}.md)" not in decisions_index:
+            problems.append(f"DECISIONS.md does not list D-{num}")
+    for f, text in texts.items():
+        for num in sorted({m.group(1) for m in D_ID_RE.finditer(text)} - set(d_defined)):
+            problems.append(f"{f.relative_to(ROOT)}: D-{num} has no decision record")
 
-    d_ids_referenced = set()
-    for f in iter_text_files({".md", ".rs"}):
-        if f.parent == d_dir:
-            continue
-        text = f.read_text(encoding="utf-8", errors="ignore")
-        for m in D_ID_RE.finditer(text):
-            d_ids_referenced.add(m.group(1))
-
-    for num in sorted(d_ids_referenced - set(d_ids_defined)):
-        problems.append(f"D-{num} referenced but docs/decisions/D-{num}.md does not exist")
-
-    # --- 5: broken local markdown links ---
-    link_check_roots = [ROOT / "docs", ROOT / "plans"] + [
-        ROOT / n for n in ("AGENTS.md", "STATUS.md", "PLAN.md", "TODO.md", "DECISIONS.md", "README.md")
-    ]
-    md_files = set()
-    for r in link_check_roots:
-        if r.is_dir():
-            md_files.update(r.rglob("*.md"))
-        elif r.is_file():
-            md_files.add(r)
-
-    for f in sorted(md_files):
-        text = f.read_text(encoding="utf-8", errors="ignore")
+    # --- 4: local Markdown links and anchors ---
+    md_files = [f for f in files if f.suffix == ".md"]
+    for f in md_files:
+        text = re.sub(r"```.*?```", "", texts[f], flags=re.S)
+        text = re.sub(r"`[^`\n]*`", "", text)
         for m in MD_LINK_RE.finditer(text):
-            target = m.group(1)
-            if target.startswith(("http://", "https://", "#", "mailto:")):
+            target = m.group(1) or m.group(2)
+            if target.startswith(("http://", "https://", "mailto:")):
                 continue
-            target_path = target.split("#", 1)[0]
-            if not target_path:
-                continue
-            resolved = (f.parent / target_path).resolve()
-            if not resolved.exists():
+            path_part, _, anchor = target.partition("#")
+            dest = f if not path_part else (f.parent / path_part).resolve()
+            if not dest.exists():
                 problems.append(f"broken link in {f.relative_to(ROOT)}: {target}")
+                continue
+            if anchor and dest.suffix == ".md" and anchor not in anchors(dest):
+                problems.append(f"broken anchor in {f.relative_to(ROOT)}: {target}")
 
-    # --- 6: PLAN.md task links ---
-    plan_text = (ROOT / "PLAN.md").read_text(encoding="utf-8")
-    for m in re.finditer(r"\((plans/[^)]+\.md)\)", plan_text):
-        rel = m.group(1)
-        if not (ROOT / rel).exists():
-            problems.append(f"PLAN.md links to missing task file: {rel}")
+    # --- 5/6/7: deleted paths, PLAN.md labels, checkboxes ---
+    for f, text in texts.items():
+        if f == THIS:
+            continue
+        rel = f.relative_to(ROOT)
+        for m in DELETED_RE.finditer(text):
+            problems.append(f"{rel}: references deleted {m.group(0)}")
+        for m in PLAN_LABEL_RE.finditer(text):
+            problems.append(f"{rel}: '{m.group(0)}' names a retired plan label; cite the RE/D record")
+        if f.suffix == ".md" and f.name != "PLAN.md" and CHECKBOX_RE.search(text):
+            problems.append(f"{rel}: task checkboxes outside PLAN.md (one task list)")
 
-    # --- 7: STATUS.md references ---
-    status_text = (ROOT / "STATUS.md").read_text(encoding="utf-8")
-    for m in RE_ID_RE.finditer(status_text):
-        if m.group(1) not in re_ids_defined:
-            problems.append(f"STATUS.md references RE-{m.group(1)}, no such evidence record")
-    for m in D_ID_RE.finditer(status_text):
-        if m.group(1) not in d_ids_defined:
-            problems.append(f"STATUS.md references D-{m.group(1)}, no such decision record")
-    for m in re.finditer(r"\((plans/[^)]+\.md)\)", status_text):
-        rel = m.group(1)
-        if not (ROOT / rel).exists():
-            problems.append(f"STATUS.md links to missing task file: {rel}")
+    # --- 8: STATUS.md size ---
+    size = (ROOT / "STATUS.md").stat().st_size
+    if size > 4096:
+        problems.append(f"STATUS.md is {size} bytes; keep the snapshot under 4 KiB")
 
     if problems:
         print(f"{len(problems)} problem(s) found:\n")
         for p in problems:
             print(" -", p)
         return 1
-
-    print(f"OK: {len(re_ids_defined)} RE records, {len(d_ids_defined)} D records, "
-          f"{len(md_files)} markdown files checked, no broken links or missing IDs.")
+    print(f"OK: {len(re_defined)} RE records ({len(retired)} retired IDs), "
+          f"{len(d_defined)} D records, {len(md_files)} Markdown files checked.")
     return 0
 
 
