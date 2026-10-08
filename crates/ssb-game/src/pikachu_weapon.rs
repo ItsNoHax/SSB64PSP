@@ -70,6 +70,8 @@ pub struct ThunderJolt {
     /// The ground weapon's root `rotate.y`: 180 or 0 degrees, set when it is
     /// made and on a reflect. Presentation only.
     pub model_rotate_y: f32,
+    /// `wp->p_sfx`/`sfx_id`: the ground weapon's loop.
+    pub sfx: Option<crate::sound::FgmHandle>,
 }
 
 /// `gcSetAllAnimSpeed(new_gobj, 0.5F)` in `wpPikachuThunderJoltGroundMakeWeapon`.
@@ -94,6 +96,7 @@ impl ThunderJolt {
             anim_frame: 0.0,
             anim_fresh: true,
             model_rotate_y: 0.0,
+            sfx: None,
         }
     }
     /// The ground weapon's root `rotate.z`: `wpPikachuThunderJoltGroundProcMap`
@@ -230,6 +233,10 @@ impl ThunderJolt {
                         (MapSurfaceKind::LeftWall, 3) | (MapSurfaceKind::RightWall, 2) => 0.0,
                         _ => DEG_180,
                     };
+                    // `wpMainPlayFGM(new_wp, nSYAudioFGMPikachuElectricLoop)`:
+                    // the new weapon has no sound yet.
+                    self.sfx =
+                        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMPikachuElectricLoop);
                     return true;
                 }
             }

@@ -13,7 +13,10 @@
 //! [`DeadState::rebirth_pending`], and the match calls [`rebirth_down`] at
 //! once, in the same slot of the frame.
 //!
-//! Scores, rumble, sounds and the effects are presentation. The
+//! The sounds play where the source plays them, and the KO sounds also
+//! wait for the battle's end queue ([`take_end_sounds`]). Scores, rumble
+//! and the effects are presentation. The
+
 //! explosion's placement ([`DeadState::explode`]), the quake request
 //! ([`DeadState::quake`], RE-420), the screen flash
 //! request ([`DeadState::flash`]) and the star KO sparkle's position
@@ -141,6 +144,14 @@ pub struct DeadState {
     /// The stage, set by the host when it spawns the fighter. `None`
     /// disables the check.
     pub bounds: Option<StageBounds>,
+    /// `ftCommonDeadAddDeadSFXSoundQueue`'s queue half: the sounds played
+    /// since the host last drained them, for the battle's end queue
+    /// (`ifCommonBattleEndAddSoundQueueID`, which keeps them only once the
+    /// battle has ended). The host hands them over right after the fall's
+    /// score ([`take_end_sounds`]), as the source queues them after
+    /// `ftCommonDeadUpdateScore`.
+    pub end_sounds: [u16; DEAD_SOUNDS_MAX],
+    pub end_sounds_num: u8,
     /// `FTStruct::is_limit_map_bounds`: Master Hand's defeat
     /// (`sc1PGameBossSetIgnorePlayerMapBounds`) keeps every fighter 500
     /// inside the blast zones instead of killing it.
@@ -304,9 +315,59 @@ pub fn check(f: &mut Fighter) -> bool {
     true
 }
 
+/// The most sounds one death queues: the explosion and both KO sounds.
+pub const DEAD_SOUNDS_MAX: usize = 4;
+
+/// `ftCommonDeadAddDeadSFXSoundQueue`: plays the sound now, and keeps it
+/// for the battle's end queue.
+fn add_dead_sfx(f: &mut Fighter, sfx_id: u16) {
+    crate::sound::play_fgm(sfx_id);
+    let d = &mut f.dead;
+    if (d.end_sounds_num as usize) < DEAD_SOUNDS_MAX {
+        d.end_sounds[d.end_sounds_num as usize] = sfx_id;
+        d.end_sounds_num += 1;
+    }
+}
+
+/// `ftCommonDeadInitStatusVars`'s and `ftCommonDeadUpFallProcUpdate`'s
+/// KO sounds (`attr->dead_fgm_ids`).
+fn add_dead_voices(f: &mut Fighter) {
+    if let Some(a) = crate::motion::combat_attrs(f.kind) {
+        for id in a.dead_fgm_ids {
+            if id != crate::sound::id::nSYAudioFGMVoiceEnd {
+                add_dead_sfx(f, id);
+            }
+        }
+    }
+}
+
+/// `ftCommonDeadDownSetStatus` and its siblings: the small explosion on a
+/// Break the Targets or Board the Platforms stage, else the large one.
+fn add_explode_sfx(f: &mut Fighter) {
+    add_dead_sfx(
+        f,
+        if f.dead.bonus_rule {
+            crate::sound::id::nSYAudioFGMDeadExplodeS
+        } else {
+            crate::sound::id::nSYAudioFGMDeadExplodeL
+        },
+    );
+}
+
+/// Hands the death's sounds to the battle's end queue
+/// (`ifCommonBattleEndAddSoundQueueID`), after the host has scored the fall.
+pub fn take_end_sounds(f: &mut Fighter, battle: &mut crate::battle::Battle) {
+    let n = core::mem::take(&mut f.dead.end_sounds_num) as usize;
+    for &id in &f.dead.end_sounds[..n] {
+        battle.add_end_sound(id);
+    }
+}
+
 /// `ftCommonDeadResetCommonVars`.
 fn reset_common_vars(f: &mut Fighter) {
     f.dead.died = true;
+    // `ftParamStopVoiceRunProcDamage`.
+    crate::fighter_sound::stop_voice(f);
     // `ftCommonThrownDecideDeadResult`.
     crate::grab::release_on_dead(f);
     f.situation = Situation::Air;
@@ -321,6 +382,8 @@ fn reset_common_vars(f: &mut Fighter) {
 /// `ftCommonDeadResetSpecialStats`.
 fn reset_special_stats(f: &mut Fighter) {
     f.star_invincible_frames = 0;
+    // `ftParamTryUpdateItemMusic`: the Star's music ends with it.
+    crate::music::request_update();
     f.dead.is_ghost = true;
     f.is_shadow_hidden = true;
 }
@@ -348,6 +411,7 @@ fn init_status_vars(f: &mut Fighter) {
     f.dead.is_menu_ignore = true;
     make_quake(f);
     update_score(f);
+    add_dead_voices(f);
 }
 
 fn enter(f: &mut Fighter, status: Status) {
@@ -378,18 +442,21 @@ fn explode(f: &mut Fighter, kind: ExplodeKind) {
 pub fn set_dead_down(f: &mut Fighter) {
     enter(f, Status::DeadDown);
     explode(f, ExplodeKind::Down);
+    add_explode_sfx(f);
 }
 
 /// `ftCommonDeadRightSetStatus`.
 pub fn set_dead_right(f: &mut Fighter) {
     enter(f, Status::DeadLeftRight);
     explode(f, ExplodeKind::Right);
+    add_explode_sfx(f);
 }
 
 /// `ftCommonDeadLeftSetStatus`.
 pub fn set_dead_left(f: &mut Fighter) {
     enter(f, Status::DeadLeftRight);
     explode(f, ExplodeKind::Left);
+    add_explode_sfx(f);
 }
 
 fn enter_up(f: &mut Fighter, status: Status) {
@@ -406,6 +473,12 @@ fn enter_up(f: &mut Fighter, status: Status) {
     f.dead.step = 0;
     reset_special_stats(f);
     f.interface.tag_wait = 1;
+    // `attr->deadup_sfx`, the Star-KO voice.
+    if let Some(a) = crate::motion::combat_attrs(f.kind) {
+        if a.deadup_sfx != crate::sound::id::nSYAudioFGMVoiceEnd {
+            crate::sound::play_fgm(a.deadup_sfx);
+        }
+    }
 }
 
 /// `ftCommonDeadUpStarSetStatus`, which ends with
@@ -479,6 +552,7 @@ pub fn update_sleep(f: &mut Fighter) {
 pub fn start_stock_steal(f: &mut Fighter) {
     f.stocks = -2;
     f.dead.stock_steal_wait = STOCK_STEAL_WAIT;
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMStockSteal);
 }
 
 /// `proc_update` and `proc_interrupt` of the dead and rebirth statuses.
@@ -559,6 +633,7 @@ fn update_up_star(f: &mut Fighter) {
             f.interface.tag_hide = true;
             f.dead.is_menu_ignore = true;
             update_score(f);
+            add_dead_sfx(f, crate::sound::id::nSYAudioFGMDeadUpStar);
             f.colanim.is_use_color1 = false;
             f.dead.wait = DEAD_WAIT;
             f.dead.step += 1;
@@ -599,7 +674,10 @@ fn update_up_fall(f: &mut Fighter) {
             f.interface.tag_hide = true;
             f.dead.is_menu_ignore = true;
             update_score(f);
+            add_explode_sfx(f);
+            add_dead_voices(f);
             f.dead.wait = DEAD_WAIT;
+
             f.dead.step += 1;
         }
         2 => check_rebirth(f),

@@ -73,6 +73,10 @@ pub struct ReactionState {
     /// read in the source, so they are not kept.)
     pub coll_mask_curr: u16,
     pub coll_mask_prev: u16,
+    /// `damage.public_knockback` / `throwfdamage.public_knockback`: the
+    /// hit's crowd knockback, handed to [`Fighter::public_knockback`] when
+    /// hitstun ends (`ftCommonDamageDecHitStunSetPublic`).
+    pub public_knockback: f32,
 }
 
 /// `FTCOMMON_WALLDAMAGE_INTANGIBLE_TIMER`.
@@ -657,14 +661,15 @@ pub fn set_down_bounce(f: &mut Fighter, floor_y: f32) {
     vel_damage_transfer_ground(f);
 }
 
-/// `ftCommonDownBounceUpdateEffects`: the impact wave (the sound and rumble
-/// are not ported).
-fn down_bounce_effects(f: &mut Fighter) {
+/// `ftCommonDownBounceUpdateEffects`: the impact wave and the fighter's
+/// bounce sound (rumble is not ported).
+pub(crate) fn down_bounce_effects(f: &mut Fighter) {
     let lr = f.facing.sign() as i8;
     crate::fteffect::request(
         f,
         crate::fteffect::EffectRequest::at_joint(crate::fteffect::kind::IMPACT_WAVE, 0, lr),
     );
+    crate::sound::play_fgm(crate::fighter_sound::DOWN_BOUNCE_SFX[f.kind as usize]);
 }
 
 fn is_down(f: &Fighter) -> bool {
@@ -905,6 +910,7 @@ pub fn set_shield_break_fly(f: &mut Fighter) {
     f.physics.vel_air.y =
         crate::motion::combat_attrs(f.kind).map_or(70.0, |a| a.shield_break_vel_y);
     crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_SHIELD_BREAK_FLY, 0);
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMShieldBreak);
 }
 
 /// `ftCommonShieldBreakFallSetStatus`.

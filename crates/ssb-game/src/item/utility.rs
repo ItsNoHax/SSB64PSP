@@ -61,6 +61,7 @@ const STAR_BOUNCE_Y: f32 = 50.0;
 
 /// File 251, `llITCommonDataTomatoItemAttributes` (0xB8).
 pub static TOMATO_ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::TOMATO,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,
@@ -95,6 +96,7 @@ pub static TOMATO_ATTRIBUTES: ItemAttributes = ItemAttributes {
 };
 /// File 251, `llITCommonDataHeartItemAttributes` (0x100).
 pub static HEART_ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::HEART,
     map_coll: BodyColl {
         top: 165.0,
         center: 0.0,
@@ -105,6 +107,7 @@ pub static HEART_ATTRIBUTES: ItemAttributes = ItemAttributes {
 };
 /// File 251, `llITCommonDataStarItemAttributes` (0x148).
 pub static STAR_ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::STAR,
     map_coll: BodyColl {
         top: 30.0,
         center: 0.0,
@@ -249,6 +252,7 @@ where
             }
             if is_collide_floor {
                 item.vel_air.y = STAR_BOUNCE_Y;
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMStarMapCollide);
             }
         }
     }

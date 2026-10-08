@@ -168,13 +168,16 @@ impl Yamabuki {
                 // `grYamabukiGateAddAnimOpenEntry`.
                 objects.play(StageAnim::GateOpen);
                 self.gate_pos = Vec3::new(GATE_FAR_X, gate_y(groups), self.gate_pos.z);
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMYamabukiGate);
             }
         }
         self.monster_wait = self.monster_wait.wrapping_sub(1);
         if self.monster_wait == 0 {
             if self.gate_wait != 0 {
                 objects.play(StageAnim::GateOpen);
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMYamabukiGate);
             }
+
             self.make_monster(items);
         }
     }

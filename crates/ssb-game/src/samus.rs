@@ -137,6 +137,10 @@ fn set_special_n_loop(f: &mut Fighter) {
     f.samus.charge_int = CHARGE_INT;
     f.samus.charge_shot = true;
     f.samus.charge_spin = 0;
+    // `wpSamusChargeShotMakeWeapon` without `is_release`: the owner's
+    // charging loop.
+    let charge = crate::weapon::SAMUS_CHARGE_SHOT_FGMS[usize::from(f.samus.charge_level.min(7))].1;
+    crate::fighter_sound::play_loop_sfx(f, charge);
 }
 
 /// `ftSamusSpecialNEndSetStatus`.
@@ -197,6 +201,9 @@ pub fn charge_shot_rotate_z(f: &Fighter) -> f32 {
 /// The flag-0 half of `ftSamusSpecialNEndProcUpdate`.
 fn fire_charge_shot(f: &mut Fighter) {
     let level = f.samus.charge_level;
+    if f.samus.charge_shot {
+        crate::fighter_sound::stop_loop_sfx(f);
+    }
     f.weapon_spawn = Some(WeaponSpawn {
         kind: WeaponKind::SamusChargeShot(level),
         owner_port: f.port,

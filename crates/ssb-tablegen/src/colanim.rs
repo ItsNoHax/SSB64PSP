@@ -332,7 +332,8 @@ fn events(rom: &Source, scripts: &Scripts, i: usize) -> Result<Vec<String>> {
                 sign(w & 0x1FFF, 13)
             ),
             16 => "ClearLight".to_string(),
-            17 => "PlayFgm".to_string(),
+            17 => format!("PlayFgm({arg})"),
+
             18 => format!("SetSkeletonId({arg})"),
             op => panic!("{name}: colour event {op} at 0x{:X}", at - 4),
         };

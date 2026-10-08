@@ -319,6 +319,13 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
         c.boss = Some(BossScene::new_boxed(p, &desc, &mut s.dummies)?);
     }
     c.tic = 0;
+    // `sc1PGameFuncStart`: Metal Mario's and the Polygon Team's music waits
+    // for Go (`sc1PGameSetGameStart`).
+    if matches!(stage, Stage::MMario | Stage::Zako) {
+        ssb_game::music::start_battle_prologue(desc.bgm_id);
+    } else {
+        ssb_game::music::start_battle(desc.bgm_id);
+    }
     Ok(())
 }
 
@@ -666,9 +673,19 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
     let c = s.campaign.as_mut().expect("campaign");
     let mut bonus = bonus;
     bonus.practice = c.practice.is_some();
+    // `sc1PBonusStageProcUpdate`'s new-record check reads the course's
+    // completed best time.
+    {
+        let rec = &s.backup.spgame_records[bonus.state.players[s.spgame_scene.player as usize].fkind as usize];
+        let (count, time) = if bonus.platforms[0].is_some() { (rec.bonus2_task_count, rec.bonus2_time) } else { (rec.bonus1_task_count, rec.bonus1_time) };
+        bonus.record_time = (count == spgame::BONUSGAME_TASK_MAX).then_some(time);
+    }
+
     // `sc1PBonusStageMakeTimer`'s practice digits.
     s.damage_hud.bonus_timer = bonus.practice.then(spgame::bonus_stage::PracticeTimer::default);
     c.bonus = Some(alloc::boxed::Box::new(bonus));
+    // `sc1PBonusStageFuncStart`'s `mpCollisionSetPlayBGM` and crowd.
+    ssb_game::music::start_battle(stage.bgm_id);
     Ok(())
 }
 
@@ -766,19 +783,25 @@ pub(crate) fn log_capture(s: &Session, tick: u64) {
 }
 
 /// `sc1PGameFuncUpdate`'s Go and Set checks, after the battle's frame.
+/// `bgm_id` is the stage's `MPGroundData::bgm_id`, which
+/// `sc1PGameSetGameStart` plays at Go on the stages that held it.
 pub(crate) fn update_game(
     sp: &mut Campaign1P,
     status: ssb_game::battle::GameStatus,
     player: &ssb_game::fighter::Fighter,
+    bgm_id: Option<u32>,
 ) {
     if let Some(game) = sp.game.as_mut() {
-        game.update(status, || {
+        let play_bgm = game.update(status, || {
             let end = match player.status.status {
                 ssb_game::status::AnyStatus::Common(s) => spgame::bonus::EndStatus::from(s),
                 _ => spgame::bonus::EndStatus::Other,
             };
             (end, u32::from(player.star_invincible_frames))
         });
+        if let (true, Some(bgm_id)) = (play_bgm, bgm_id) {
+            ssb_game::music::set_play_bgm(bgm_id);
+        }
     }
 }
 
@@ -833,12 +856,16 @@ pub(crate) fn entry_frame(
             }
             // The camera follows `zoom_port` below. Targets uses its
             // separate bonus entry path.
+            // `sc1PGameWaitStageBossUpdate` at Go: Final Destination's
+            // music, unless an item's plays.
+            Action::BossGo => ssb_game::music::boss_go(
+                crate::scenes(pl, dummies).into_iter().flatten().map(|f| &f.fighter),
+            ),
             Action::Zoom(_)
             | Action::CameraDefault
-            | Action::Go
             // "Go" itself is the battle's (`go_tick` 601), and the entry's
             // camera mode ends there (`appear::on_go`).
-            | Action::BossGo => {}
+            | Action::Go => {}
         }
     }
     if let Some(c) = hud.countdown.as_mut() {
@@ -1003,6 +1030,8 @@ fn finish_practice(
 #[inline(never)]
 pub(crate) fn finish_battle(s: &mut Session, pack: Option<&Pack<'_>>) {
     let Some(c) = s.campaign.as_mut() else { return };
+    // `sc1PGameStartScene` / `sc1PBonusStageStartScene` after the loop.
+    ssb_game::music::leave_battle();
     let sp = c.frontend.session.as_mut().expect("campaign session");
     if let Some(mut bonus) = c.bonus.take() {
         if bonus.retry_requested {

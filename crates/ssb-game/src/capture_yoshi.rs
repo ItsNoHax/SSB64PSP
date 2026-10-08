@@ -158,6 +158,8 @@ pub struct CaptureYoshiState {
 /// `ftCommonCaptureYoshiProcCapture`, run on the swallowed fighter once its
 /// catcher's snapshot has been delivered.
 pub fn capture(f: &mut Fighter, catcher_port: u8, holder: Holder) {
+    // `ftParamStopVoiceRunProcDamage`.
+    crate::fighter_sound::stop_voice(f);
     grab::drop_own_catch(f);
     f.grab.capture = Some(catcher_port);
     f.grab.holder = Some(holder);
@@ -259,7 +261,9 @@ pub fn update_egg(f: &mut Fighter) {
 }
 
 fn escape(f: &mut Fighter) {
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMYoshiEggLayShatter);
     f.physics.vel_air = Vec3::new(0.0, ESCAPE_VEL_Y, 0.0);
+
     f.pos.z = 0.0;
     f.pos.y += ESCAPE_OFF_Y;
     f.become_airborne();

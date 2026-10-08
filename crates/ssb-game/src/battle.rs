@@ -176,7 +176,49 @@ pub struct Battle {
     /// `...Demo`): the scene makes no battle interface, so there is no
     /// countdown, timer or pause, and "Go" is set at once.
     pub is_demo: bool,
+    /// `sIFCommonBattleEndSoundsQueue`/`...Num`: the sounds the end replays
+    /// after it stops every FGM ([`Battle::add_end_sound`]).
+    end_sounds: [u16; END_SOUNDS_MAX],
+    end_sounds_num: u8,
+    /// The voice `ifCommonAnnounceCompleteInitInterface` queues for a
+    /// completed bonus task ([`Battle::announce_complete`]).
+    complete_sfx: u16,
+    /// `sSC1PGameBossDefeatSoundTerminateTemp`: the FGM count Master Hand's
+    /// defeat saved before blocking every FGM.
+    boss_fgm_count: Option<u16>,
+    /// `sIFCommonIsAnnouncedSecond`: the last five seconds' voices.
+    announced_seconds: [bool; 5],
+    /// `gSCManagerBattleState->gkind`, which the timer reads for Mushroom
+    /// Kingdom's hurry music. `None` where the host has not set it.
+    pub gkind: Option<u8>,
 }
+
+/// `dIFCommonAnnounceDefeatedVoiceIDs`: "Player 1" to "Player 4".
+const DEFEATED_VOICES: [u16; 4] = [
+    crate::sound::id::nSYAudioVoiceAnnouncePlayer1,
+    crate::sound::id::nSYAudioVoiceAnnouncePlayer2,
+    crate::sound::id::nSYAudioVoiceAnnouncePlayer3,
+    crate::sound::id::nSYAudioVoiceAnnouncePlayer4,
+];
+
+/// `nGRKindInishie`.
+const GKIND_INISHIE: u8 = 8;
+
+/// `dIFCommonAnnounceTimerVoiceIDs`: "one" to "five".
+const TIMER_VOICES: [u16; 5] = [
+    crate::sound::id::nSYAudioVoiceAnnounceOne,
+    crate::sound::id::nSYAudioVoiceAnnounceTwo,
+    crate::sound::id::nSYAudioVoiceAnnounceThree,
+    crate::sound::id::nSYAudioVoiceAnnounceFour,
+    crate::sound::id::nSYAudioVoiceAnnounceFive,
+];
+
+/// `ARRAY_COUNT(sIFCommonBattleEndSoundsQueue)`.
+pub const END_SOUNDS_MAX: usize = 16;
+/// `syAudioSetBGMVolume(0, 0x7800)`: the battle music's normal volume.
+pub const BGM_VOLUME_NORMAL: u32 = 0x7800;
+/// `syAudioSetBGMVolume(0, 0x3C00)`: half volume while paused.
+pub const BGM_VOLUME_PAUSE: u32 = 0x3C00;
 
 impl Battle {
     /// `scVSBattleStartBattle`'s battle half: `ifCommonBattleInitPlacement`,
@@ -213,6 +255,12 @@ impl Battle {
             boss_wait: 0,
             boss_set: false,
             is_demo: false,
+            end_sounds: [0; END_SOUNDS_MAX],
+            end_sounds_num: 0,
+            complete_sfx: crate::sound::id::nSYAudioVoiceAnnounceComplete,
+            boss_fgm_count: None,
+            announced_seconds: [false; 5],
+            gkind: None,
         };
         b.init_placement();
         b
@@ -381,15 +429,26 @@ impl Battle {
                     Frame::Frozen
                 } else {
                     self.status = GameStatus::Go;
+                    Self::resume_audio();
                     Frame::Run
                 }
             }
             // `ifCommonBattleEndUpdateInterface` pauses the world and falls
             // through to `ifCommonBattleBossDefeatUpdateInterface`.
             GameStatus::End | GameStatus::BossDefeat if self.boss_defeat.is_some() => {
+                if self.status == GameStatus::End {
+                    self.boss_defeat_proc_update();
+                }
                 self.boss_frame()
             }
             GameStatus::End | GameStatus::BossDefeat => {
+                if self.status == GameStatus::End {
+                    // `ifCommonBattleInterfaceProcUpdate` and
+                    // `ifCommonBonusInterfaceProcUpdate`: every FGM stops
+                    // and the end's queue plays.
+                    crate::sound::stop_all_fgm();
+                    self.play_end_sounds();
+                }
                 self.status = GameStatus::BossDefeat;
                 if self.restore_wait != 0 {
                     self.restore_wait -= 1;
@@ -462,12 +521,32 @@ impl Battle {
         self.status = GameStatus::End;
         self.restore_wait = BOSS_DEFEAT_ZOOM_WAIT;
         self.end = Some(EndKind::BossDefeat);
+        self.end_sounds_num = 0;
         self.boss_defeat = Some(BossDefeat::Zoom);
+    }
+
+    /// `sc1PGameBossDefeatInterfaceProcUpdate`'s audio: every FGM and the
+    /// music stop, the queue and the defeat sounds play, then every later
+    /// FGM is blocked (`D_8009EDD0.sfx_max = 0`).
+    fn boss_defeat_proc_update(&mut self) {
+        use crate::sound::{self, id::*};
+        sound::stop_all_fgm();
+        sound::stop_bgm_all();
+        self.play_end_sounds();
+        sound::play_fgm(nSYAudioFGMExplodeL);
+        sound::play_fgm(nSYAudioVoiceBossDead);
+        sound::play_fgm(nSYAudioFGMBossDefeatL);
+        self.boss_fgm_count = Some(sound::fgm_count());
+        sound::set_fgm_count(0);
     }
 
     /// `ifCommonBattleEndSetBossDefeat`: the defeat wallpaper's last fade
     /// ended, and the next tick sets the scene.
     pub fn boss_wallpaper_done(&mut self) {
+        // `func_ovl65_8018F6DC`: the FGMs play again.
+        if let Some(count) = self.boss_fgm_count.take() {
+            crate::sound::set_fgm_count(count);
+        }
         if self.boss_defeat == Some(BossDefeat::Slow) {
             self.status = GameStatus::BossDefeat;
             self.restore_wait = 0;
@@ -481,19 +560,44 @@ impl Battle {
             return;
         }
         self.time_remain -= 1;
-        if self.time_remain == 0 {
-            self.set_end(if self.is_bonus || self.time_up_is_failure {
-                EndKind::Failure
+        if self.gkind == Some(GKIND_INISHIE)
+            && self.time_remain <= 30 * 60
+            && crate::music::bgm_default() != crate::sound::id::nSYAudioBGMInishieHurry
+        {
+            crate::music::set_bgm_default(crate::sound::id::nSYAudioBGMInishieHurry);
+            crate::music::request_update();
+        }
+        if self.time_remain <= 5 * 60 {
+            if self.time_remain == 0 {
+                self.set_end(if self.is_bonus || self.time_up_is_failure {
+                    EndKind::Failure
+                } else {
+                    EndKind::TimeUp
+                });
             } else {
-                EndKind::TimeUp
-            });
+                for (i, announced) in self.announced_seconds.iter_mut().enumerate() {
+                    if !*announced && self.time_remain <= (i as u32 + 1) * 60 {
+                        crate::sound::play_fgm(TIMER_VOICES[i]);
+                        *announced = true;
+                    }
+                }
+            }
+            // The music fades with the last five seconds.
+            crate::sound::set_bgm_volume(
+                0,
+                ((self.time_remain as f32 / 300.0) * 20480.0 + 10240.0) as u32,
+            );
         }
     }
 
-    /// `ifCommonBattlePauseInitInterface`: START during Go.
+    /// `ifCommonBattlePauseInitInterface`: START during Go. The pausable
+    /// FGMs hold, the pause chime plays and the music drops to half.
     pub fn pause(&mut self) {
         if self.status == GameStatus::Go {
             self.status = GameStatus::Pause;
+            crate::sound::pause_fgm();
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMGamePause);
+            crate::sound::set_bgm_volume(0, BGM_VOLUME_PAUSE);
         }
     }
 
@@ -506,10 +610,19 @@ impl Battle {
         }
     }
 
+    /// `ifCommonBattlePauseRestoreInterfaceAll`'s audio, as Go resumes:
+    /// the held FGMs play on and the music returns to full volume.
+    fn resume_audio() {
+        crate::sound::resume_fgm();
+        crate::sound::set_bgm_volume(0, BGM_VOLUME_NORMAL);
+    }
+
     /// A+B+R+Z in the pause menu: `is_reset`, then
     /// `ifCommonBattleInterfaceProcSet`.
     pub fn reset(&mut self) {
         if self.status == GameStatus::Pause {
+            // `func_800266A0_272A0`.
+            crate::sound::stop_all_fgm();
             self.is_reset = true;
             self.status = GameStatus::Set;
             self.restore_wait = SET_RESTORE_WAIT;
@@ -528,18 +641,54 @@ impl Battle {
 
     /// The bonus interface holds the completion message for 90 ticks,
     /// then uses the common three-tick scene return, without victory zoom.
-    pub fn announce_complete(&mut self) {
+    /// `sfx_id` is the voice `ifCommonAnnounceCompleteInitInterface` queues
+    /// (`nSYAudioVoiceAnnounceComplete` or `...NewRecord`).
+    pub fn announce_complete(&mut self, sfx_id: u16) {
+        if self.end.is_none() {
+            self.complete_sfx = sfx_id;
+        }
         self.set_end(EndKind::Complete);
     }
 
-    /// `ifCommonBattleSetInterface`.
+    /// `ifCommonBattleSetInterface`: the end's status, and its sound queue
+    /// emptied, then given the end's voice.
     fn set_end(&mut self, kind: EndKind) {
+        use crate::sound::id::*;
         if self.end.is_some() {
             return;
         }
         self.status = GameStatus::End;
         self.restore_wait = END_RESTORE_WAIT;
         self.end = Some(kind);
+        self.end_sounds_num = 0;
+        let sfx_id = match kind {
+            EndKind::TimeUp => nSYAudioVoiceAnnounceTimeUp,
+            // `ifCommonAnnounceEndMessage`: a bonus stage's fall fails it.
+            EndKind::GameSet if self.is_bonus => nSYAudioVoiceAnnounceFailure,
+            EndKind::GameSet => nSYAudioVoiceAnnounceGameSet,
+            EndKind::Complete => self.complete_sfx,
+            EndKind::Failure => nSYAudioVoiceAnnounceFailure,
+            EndKind::BossDefeat => nSYAudioFGMVoiceEnd,
+        };
+        if sfx_id != nSYAudioFGMVoiceEnd {
+            self.add_end_sound(sfx_id);
+        }
+    }
+
+    /// `ifCommonBattleEndAddSoundQueueID`: queued only once the battle has
+    /// ended, for the end to replay after it stops every FGM.
+    pub fn add_end_sound(&mut self, sfx_id: u16) {
+        if self.status == GameStatus::End && (self.end_sounds_num as usize) < END_SOUNDS_MAX {
+            self.end_sounds[self.end_sounds_num as usize] = sfx_id;
+            self.end_sounds_num += 1;
+        }
+    }
+
+    /// `ifCommonBattleEndPlaySoundQueue`.
+    fn play_end_sounds(&self) {
+        for &id in &self.end_sounds[..self.end_sounds_num as usize] {
+            crate::sound::play_fgm(id);
+        }
     }
 
     /// `ftParamUpdateDamage`'s and `ftParamUpdatePlayerBattleStats`'
@@ -668,6 +817,16 @@ impl Battle {
             if self.place == 0 {
                 self.set_end(EndKind::GameSet);
             }
+        }
+        // The announcer names a player who is out while the battle goes on.
+        if self.place != 0 && self.players[i].stock_count == -1 {
+            use crate::sound::id::*;
+            crate::public::defeated_add_id(if self.players[i].is_human {
+                DEFEATED_VOICES[i]
+            } else {
+                nSYAudioVoiceAnnounceComputerPlayer
+            });
+            crate::public::defeated_add_id(nSYAudioVoiceAnnounceDefeated);
         }
     }
 

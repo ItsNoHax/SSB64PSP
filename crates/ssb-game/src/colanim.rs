@@ -80,8 +80,10 @@ pub enum ColEvent {
     SetLight(i16, i16),
     /// `nGMColEventClearLight`.
     ClearLight,
-    /// `nGMColEventPlayFGM`.
-    PlayFgm,
+    /// `nGMColEventPlayFGM`: only a fighter's animation plays it
+    /// (`ftMainUpdateColAnim`; the item and screen-flash interpreters have
+    /// no such case).
+    PlayFgm(u16),
     /// `nGMColEventSetSkeletonID`.
     SetSkeletonId(u8),
 }
@@ -208,12 +210,12 @@ impl ColAnim {
     /// ends (its script's `End`, or its `length` running out). The
     /// screen flash's animation runs no `Effect` event.
     pub fn update(&mut self) -> bool {
-        self.update_effects(&mut |_| {})
+        self.update_effects(&mut |_| {}, false)
     }
 
     /// [`Self::update`], handing each `Effect` event to `effect` as it is
-    /// read.
-    pub fn update_effects(&mut self, effect: &mut dyn FnMut(ColEffect)) -> bool {
+    /// read, and with `play_fgm` (a fighter's) playing its `PlayFGM`s.
+    pub fn update_effects(&mut self, effect: &mut dyn FnMut(ColEffect), play_fgm: bool) -> bool {
         if self.pc.is_some() && self.timer != 0 {
             self.timer -= 1;
         }
@@ -296,7 +298,11 @@ impl ColAnim {
                 ColEvent::ClearLight => self.light = None,
                 ColEvent::SetSkeletonId(id) => self.skeleton_id = id,
                 ColEvent::Effect(e) => effect(e),
-                ColEvent::PlayFgm => {}
+                ColEvent::PlayFgm(id) => {
+                    if play_fgm {
+                        crate::sound::play_fgm(id);
+                    }
+                }
             }
         }
         for (keys, used) in [
@@ -414,32 +420,35 @@ pub fn run_update(f: &mut Fighter) {
         let (kind, lr) = (f.kind, f.facing.sign() as i8);
         let skip = f.dokan.is_effect_skip;
         let queue = &mut f.effects;
-        let ended = f.colanim.update_effects(&mut |e| {
-            // `is_effect_skip`: the event is read and dropped.
-            if skip {
-                return;
-            }
-            // `ftParamMakeEffect(..., fp->lr, is_item_hold, flag)`.
-            queue.push(crate::fteffect::FighterEffect::Param(
-                crate::fteffect::EffectRequest {
-                    kind: u16::from(e.kind),
-                    joint: crate::fteffect::joint_id(kind, e.joint),
-                    offset: Some(ssb_engine::math::Vec3::new(
-                        f32::from(e.offset[0]),
-                        f32::from(e.offset[1]),
-                        f32::from(e.offset[2]),
-                    )),
-                    scatter: Some(ssb_engine::math::Vec3::new(
-                        f32::from(e.scatter[0]),
-                        f32::from(e.scatter[1]),
-                        f32::from(e.scatter[2]),
-                    )),
-                    lr,
-                    is_scale_pos: e.item_hold,
-                    flag: u16::from(e.flag),
-                },
-            ));
-        });
+        let ended = f.colanim.update_effects(
+            &mut |e| {
+                // `is_effect_skip`: the event is read and dropped.
+                if skip {
+                    return;
+                }
+                // `ftParamMakeEffect(..., fp->lr, is_item_hold, flag)`.
+                queue.push(crate::fteffect::FighterEffect::Param(
+                    crate::fteffect::EffectRequest {
+                        kind: u16::from(e.kind),
+                        joint: crate::fteffect::joint_id(kind, e.joint),
+                        offset: Some(ssb_engine::math::Vec3::new(
+                            f32::from(e.offset[0]),
+                            f32::from(e.offset[1]),
+                            f32::from(e.offset[2]),
+                        )),
+                        scatter: Some(ssb_engine::math::Vec3::new(
+                            f32::from(e.scatter[0]),
+                            f32::from(e.scatter[1]),
+                            f32::from(e.scatter[2]),
+                        )),
+                        lr,
+                        is_scale_pos: e.item_hold,
+                        flag: u16::from(e.flag),
+                    },
+                ));
+            },
+            true,
+        );
         if !ended {
             return;
         }

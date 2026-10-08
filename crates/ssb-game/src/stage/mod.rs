@@ -18,8 +18,8 @@
 //! when the pool is full). The Pokémon are not ported yet. Sector Z's
 //! Arwing has an object port of its own ([`sector::ArwingObject`]), and its
 //! lasers go to the weapon pool. Of the bonus stages, Race to the Finish has
-//! its controller ([`bonus3`]); the others have none. Rumble and
-//! audio are not ported, as elsewhere in the gameplay layer.
+//! its controller ([`bonus3`]); the others have none. Rumble is not
+//! ported; the controllers play their sounds where the source does.
 
 pub mod bonus3;
 pub mod castle;
@@ -41,7 +41,34 @@ use crate::map::MapGroup;
 use crate::weapon::MapSurface;
 use ssb_engine::math::Vec3;
 
+mod ground_tables {
+    include!(concat!(env!("OUT_DIR"), "/ground_tables.rs"));
+}
+
+/// `gMPCollisionGroundData->alt_warning` of the loaded ground, set by
+/// [`set_ground_kind`].
+static ALT_WARNING: core::sync::atomic::AtomicI32 =
+    core::sync::atomic::AtomicI32::new(i16::MIN as i32);
+
+/// `mpCollisionInitGroundData`'s `dMPCollisionGroundFileInfos[gkind]`: the
+/// ground data the battle's checks read. Only `alt_warning` is kept here;
+/// the rest reaches the game through the pack's stage.
+pub fn set_ground_kind(gkind: u8) {
+    let alt = ground_tables::ALT_WARNING
+        .get(gkind as usize)
+        .copied()
+        .unwrap_or(i16::MIN);
+    ALT_WARNING.store(i32::from(alt), core::sync::atomic::Ordering::Relaxed);
+}
+
+/// `MPGroundData::alt_warning`: falling below it plays
+/// `nSYAudioFGMAltitudeWarn` (`ftMainProcPhysicsMap`).
+pub fn alt_warning() -> f32 {
+    ALT_WARNING.load(core::sync::atomic::Ordering::Relaxed) as f32
+}
+
 /// `GRKind` for the nine VS stages, in source order.
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageKind {
     Castle,

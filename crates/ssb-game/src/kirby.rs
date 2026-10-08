@@ -323,13 +323,14 @@ pub fn damage_check_lose_copy(f: &mut Fighter) {
     }
 }
 
-/// `ftKirbySpecialNLoseCopy`, without its star effect and sound.
+/// `ftKirbySpecialNLoseCopy`, without its star effect.
 pub fn lose_copy(f: &mut Fighter) {
     crate::kirby_copy::init_passive_vars(f);
     f.kirby.copy_id = FighterKind::Kirby;
     f.model_parts
         .set_default(crate::kirby_copy::COPY_MODELPARTS_JOINT, 0);
     crate::colanim::reset_stat_update(f);
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialNLoseCopy);
 }
 
 /// `FTKirbyCopy[27]` at `KirbyMainMotion` 0x0000: `(copy_id, star_damage)`
@@ -757,8 +758,45 @@ fn set_catch_params(f: &mut Fighter) {
     f.grab.throw_desc = Some(crate::grab::KIRBY_INHALE);
 }
 
+/// The Inhale statuses' setters. `FTSTATUS_PRESERVE_LOOPSFX` keeps the
+/// inhale's loop sound into the Loop statuses
+/// (`ftKirbySpecialNLoopSetStatus`, the Start and Loop ground/air switches)
+/// and into Catch (`ftKirbySpecialNCatchEatSetStatusParam`), but not into a
+/// Catch switch or Eat.
 fn set_inhale(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming) {
-    set(f, s, frame, timing);
+    let loop_sfx = matches!(
+        s,
+        K::SpecialNStart
+            | K::SpecialAirNStart
+            | K::SpecialNLoop
+            | K::SpecialAirNLoop
+            | K::SpecialNCatch
+            | K::SpecialAirNCatch
+    );
+    set_inhale_preserve(f, s, frame, timing, loop_sfx);
+}
+
+/// A ground/air switch (`ftKirbySpecialN*SwitchStatus*`): only Start and
+/// Loop keep the loop sound.
+fn switch_inhale(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming) {
+    let loop_sfx = matches!(
+        s,
+        K::SpecialNStart | K::SpecialAirNStart | K::SpecialNLoop | K::SpecialAirNLoop
+    );
+    set_inhale_preserve(f, s, frame, timing, loop_sfx);
+}
+
+fn set_inhale_preserve(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming, loop_sfx: bool) {
+    status::set_any_status_preserve(
+        f,
+        AnyStatus::Kirby(s),
+        frame,
+        timing,
+        status::Preserve {
+            loop_sfx,
+            ..status::Preserve::NONE
+        },
+    );
     f.grab.is_catchstatus = matches!(
         s,
         K::SpecialNStart | K::SpecialAirNStart | K::SpecialNLoop | K::SpecialAirNLoop
@@ -917,7 +955,10 @@ pub fn init_copy(f: &mut Fighter, copy_kind: FighterKind) {
 /// `ftKirbySpecialNCopyInitCopyVars` then
 /// `ftKirbySpecialNCopyUpdateCheckCopyStar`.
 fn copy(f: &mut Fighter) {
-    if f.kirby.copy_id != f.kirby.copy_pending {
+    if f.kirby.copy_id == f.kirby.copy_pending {
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialNCopyUnk);
+    } else {
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialNCopyThrow);
         f.kirby.copy_id = f.kirby.copy_pending;
         // `ftParamSetModelPartDefaultID(joint 6, copy_modelpart_id)` and
         // `ftParamResetModelPartAll` (RE-425).
@@ -1116,6 +1157,7 @@ pub fn update(f: &mut Fighter) {
                 f.grab.send(GrabEvent::KirbyEat {
                     is_kirby: f.kirby.victim_is_kirby,
                 });
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialNCopyEat);
                 let s = if current == K::SpecialNCatch {
                     K::SpecialNEat
                 } else {
@@ -1338,7 +1380,7 @@ fn switch_air(f: &mut Fighter) {
     };
     let (frame, timing) = (f.status.anim_frame, f.status.timing);
     f.become_airborne();
-    set_inhale(f, air, frame, timing);
+    switch_inhale(f, air, frame, timing);
 }
 
 fn switch_ground(f: &mut Fighter, y: f32) -> bool {
@@ -1359,7 +1401,8 @@ fn switch_ground(f: &mut Fighter, y: f32) -> bool {
     };
     let (frame, timing) = (f.status.anim_frame, f.status.timing);
     f.land(y);
-    set_inhale(f, ground, frame, timing);
+    switch_inhale(f, ground, frame, timing);
+
     true
 }
 

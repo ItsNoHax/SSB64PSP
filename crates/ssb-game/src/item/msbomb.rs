@@ -29,6 +29,7 @@ pub const EXPLODE_SCALE: f32 = 1.2;
 
 /// File 251, `llITCommonDataMSBombItemAttributes` (0x3BC).
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::MSBOMB,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,
@@ -182,6 +183,7 @@ fn attach(item: &mut Item) {
     update_surface(item);
     item.damage_coll.hitstatus = HitStatus::Normal;
     item.attack.state = AttackState::Off;
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMSBombAttach);
     item.clear_owner_stats();
     set(item, Status::Attached);
 }
@@ -231,6 +233,7 @@ fn explode(item: &mut Item, is_make_effect: bool, fx: &mut Emit) {
     item.multi = 0;
     item.event_id = 0;
     item.attack.throw_mul = 1.0;
+    item.attack.fgm_id = crate::sound::id::nSYAudioFGMExplodeL;
     item.damage_coll.hitstatus = HitStatus::None;
     attack_event(item);
     set(item, Status::Explode);
@@ -347,7 +350,10 @@ pub(super) fn hit_proc(
             item.common_proc_reflector(reflector_lr)
         }
         // `itMSBombCommonProcDamage`.
-        (Status::Attached | Status::Detached, HitProc::Damage) => explode(item, false, fx),
+        (Status::Attached | Status::Detached, HitProc::Damage) => {
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeL);
+            explode(item, false, fx)
+        }
         _ => return None,
     }
     Some(true)

@@ -66,6 +66,7 @@ pub const R_MAP_REBOUND_GROUND: f32 = 0.5;
 
 /// File 251, `llITCommonDataGShellItemAttributes` (0x53C).
 pub static GREEN_ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::GSHELL,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,
@@ -100,6 +101,7 @@ pub static GREEN_ATTRIBUTES: ItemAttributes = ItemAttributes {
 };
 /// File 251, `llITCommonDataRShellItemAttributes` (0x584).
 pub static RED_ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::RSHELL,
     damage: 10,
     kb_weight: 90,
     can_rehit_fighter: true,
@@ -297,6 +299,7 @@ fn spin(item: &mut Item) {
             item.add_root_script();
             item.is_damage_all = false;
             item.refresh_attack_coll();
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMBombHeiWalkStart);
         }
         Kind::Red => {
             if !item.vars.shell_is_setup {
@@ -307,6 +310,7 @@ fn spin(item: &mut Item) {
             item.vars.shell_dust_int = R_EFFECT_SPAWN_INT;
             // `itRShellSpinAddAnim`.
             item.add_root_script();
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMBombHeiWalkStart);
             item.clear_owner_stats();
             map::set_ground(item);
         }

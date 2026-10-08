@@ -62,6 +62,7 @@ pub const MAP_REBOUND_GROUND: f32 = 0.5;
 /// centred at y 200, 3 fire damage at 70° with 10/0/4 knockback, rehit on
 /// fighters and items, shieldable, not reflectable, no clank.
 pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
+    sounds: crate::item_sounds::item::PK_FIRE,
     is_give_hitlag: true,
     is_display_colanim: false,
     weight: ItemWeight::Light,
