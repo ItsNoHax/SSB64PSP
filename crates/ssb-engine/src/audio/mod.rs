@@ -15,6 +15,7 @@ pub mod dsp;
 pub mod evtq;
 pub mod fgm;
 pub mod golden;
+pub mod mem;
 pub mod osc;
 pub mod prof;
 pub mod reverb;

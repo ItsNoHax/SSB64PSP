@@ -49,6 +49,7 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 
 use psp::sys::{self, SceUid};
 use ssb_engine::audio::{
+    mem,
     AudioApi, AudioError, AudioSystem, FgmHandle, RawLock, SharedAudio, FRAME_SAMPLES_MAX,
     N64_OUTPUT_RATE,
 };
@@ -668,8 +669,9 @@ unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
         }
 
         let out = &mut st.out[st.next_out].0;
-        out.copy_from_slice(&st.fifo.0[..BLOCK * 2]);
-        st.fifo.0.copy_within(BLOCK * 2..st.fifo_len * 2, 0);
+        // `audio::mem`: word copies (the runtime's memcpy moves bytes).
+        mem::copy(out, &st.fifo.0[..BLOCK * 2]);
+        mem::copy_within(&mut st.fifo.0, BLOCK * 2, 0, (st.fifo_len - BLOCK) * 2);
         st.fifo_len -= BLOCK;
         #[cfg(feature = "audio_dump")]
         dump::push(out);

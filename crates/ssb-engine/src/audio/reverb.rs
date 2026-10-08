@@ -8,6 +8,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::dsp::{self, Dmem, State16};
+use super::mem;
 
 /// `SCALE` (`n_drvrNew.c`), the low-pass coefficient scale.
 const SCALE: f32 = 16384.0;
@@ -326,10 +327,13 @@ impl Fx {
             }
             let at = self.input;
             let first = (len - at).min(FIXED_SAMPLE);
-            base[at..at + first].copy_from_slice(&l[..first]);
-            base[..FIXED_SAMPLE - first].copy_from_slice(&l[first..]);
+            mem::copy(&mut base[at..at + first], &l[..first]);
+            mem::copy(&mut base[..FIXED_SAMPLE - first], &l[first..]);
         }
-        let mut out = [0i16; FIXED_SAMPLE];
+        // The output bus, AUX_R, cleared first.
+        let (aux_l, out) = dmem.w[dsp::AUX_L / 2..].split_at_mut(FIXED_SAMPLE);
+        let out = &mut out[..FIXED_SAMPLE];
+        mem::zero(out);
         for d in &self.delay {
             let (ff, fb, gain) = (d.ffcoef as i32, d.fbcoef as i32, d.gain as i32);
             // `r->input - d->input`, wrapped as `_n_loadBuffer` wraps it.
@@ -355,9 +359,8 @@ impl Fx {
         if self.input > self.length {
             self.input -= self.length;
         }
-        // The output bus (AUX_R, cleared first) is then moved to AUX_L.
-        dmem.w[dsp::AUX_R / 2..dsp::AUX_R / 2 + FIXED_SAMPLE].copy_from_slice(&out);
-        dmem.w[dsp::AUX_L / 2..dsp::AUX_L / 2 + FIXED_SAMPLE].copy_from_slice(&out);
+        // The output bus is then moved to AUX_L.
+        mem::copy(&mut aux_l[..FIXED_SAMPLE], out);
     }
 
     /// `_n_loadOutputBuffer`.
@@ -434,12 +437,17 @@ fn clamp16(v: i32) -> i16 {
 /// saturating; a zero coefficient adds exactly 0, as skipping the mix does).
 #[inline(always)]
 fn section(x: &mut [i16], y: &mut [i16], out: &mut [i16], ff: i32, fb: i32, gain: i32) {
-    let n = out.len();
-    let (x, y) = (&mut x[..n], &mut y[..n]);
-    for k in 0..n {
-        let yv = clamp16(y[k] as i32 + ((x[k] as i32 * ff) >> 15)) as i32;
-        y[k] = yv as i16;
-        x[k] = clamp16(x[k] as i32 + ((yv * fb) >> 15));
-        out[k] = clamp16(out[k] as i32 + ((yv * gain) >> 15));
+    #[cfg(target_arch = "mips")]
+    return dsp::allegrex::section(x, y, out, ff, fb, gain);
+    #[cfg(not(target_arch = "mips"))]
+    {
+        let n = out.len();
+        let (x, y) = (&mut x[..n], &mut y[..n]);
+        for k in 0..n {
+            let yv = clamp16(y[k] as i32 + ((x[k] as i32 * ff) >> 15)) as i32;
+            y[k] = yv as i16;
+            x[k] = clamp16(x[k] as i32 + ((yv * fb) >> 15));
+            out[k] = clamp16(out[k] as i32 + ((yv * gain) >> 15));
+        }
     }
 }

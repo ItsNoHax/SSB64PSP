@@ -29,6 +29,8 @@ pub const COUNT: usize = 368;
 pub const WORDS: usize = 2048;
 const _: () = assert!(WORDS.is_power_of_two());
 
+use super::mem;
+
 pub const A_INIT: u32 = 1;
 pub const A_LOOP: u32 = 2;
 
@@ -117,24 +119,24 @@ impl Dmem {
     /// `A_CLEARBUFF`.
     pub fn clear(&mut self, addr: usize, nbytes: usize) {
         let n = round_up(nbytes, 16);
-        self.words(addr, n).fill(0);
+        mem::zero(self.words(addr, n));
     }
 
     /// `A_DMEMMOVE` (memmove semantics).
     pub fn dmem_move(&mut self, src: usize, dst: usize, nbytes: usize) {
         let n = round_up(nbytes, 16) / 2;
-        self.w.copy_within(src / 2..src / 2 + n, dst / 2);
+        mem::copy_within(&mut self.w, src / 2, dst / 2, n);
     }
 
     /// `A_LOADBUFF` from an `s16` DRAM buffer (the reverb delay line);
     /// `src` holds exactly the words to load.
     pub fn load(&mut self, dst: usize, src: &[i16]) {
-        self.w[dst / 2..dst / 2 + src.len()].copy_from_slice(src);
+        mem::copy(&mut self.w[dst / 2..dst / 2 + src.len()], src);
     }
 
     /// `A_SAVEBUFF` to an `s16` DRAM buffer.
     pub fn save(&self, src: usize, dst: &mut [i16]) {
-        dst.copy_from_slice(&self.w[src / 2..src / 2 + dst.len()]);
+        mem::copy(dst, &self.w[src / 2..src / 2 + dst.len()]);
     }
 
     /// `A_ADPCM` (4-bit mode; n_env never sets the 2-bit flag). Writes the
@@ -281,22 +283,20 @@ impl Dmem {
         let (al, ar) = aux.split_at_mut(COUNT / 2);
         let (mr, al, ar) = (&mut mr[..COUNT / 2], &mut al[..], &mut ar[..COUNT / 2]);
         let n = COUNT / 2;
-        // Each side's per-sample volume (`value >> 16`) for this call: it
-        // varies over the first `len` samples and is constant after them.
-        let mut lv = [0i32; COUNT / 2];
-        let mut rv = [0i32; COUNT / 2];
-        let llen = ramp_fill(&mut st, 0, &mut lv);
-        let rlen = ramp_fill(&mut st, 1, &mut rv);
+        // Each side's volume (`value >> 16`) per sample: plain sums of the
+        // step for the ramp's first samples, then constant (`Ramp`).
+        let l = ramp_run(&mut st, 0);
+        let r = ramp_run(&mut st, 1);
         // The four buses are independent: each gets its own pass, and a
         // zero amount (gain 0 on every sample) adds nothing.
-        for (bus, v, len, amt) in [
-            (&mut ml[..n], &lv, llen, dry),
-            (&mut mr[..n], &rv, rlen, dry),
-            (&mut al[..n], &lv, llen, wet),
-            (&mut ar[..n], &rv, rlen, wet),
+        for (bus, ramp, amt) in [
+            (&mut ml[..n], l, dry),
+            (&mut mr[..n], r, dry),
+            (&mut al[..n], l, wet),
+            (&mut ar[..n], r, wet),
         ] {
             if amt != 0 {
-                env_bus(bus, &input[..n], v, len, amt);
+                env_bus(bus, &input[..n], ramp, amt);
             }
         }
         *state = st;
@@ -322,9 +322,7 @@ impl Dmem {
                 let (lo, hi) = self.w.split_at_mut(i);
                 (&hi[..n], &mut lo[o..o + n])
             };
-            for (d, s) in b.iter_mut().zip(a) {
-                *d = clamp16(*d as i32 + ((*s as i32 * g) >> 15));
-            }
+            mix_gain(b, a, g);
         } else {
             for k in 0..n {
                 self.w[o + k] = clamp16(self.w[o + k] as i32 + ((self.w[i + k] as i32 * g) >> 15));
@@ -335,15 +333,14 @@ impl Dmem {
     /// `A_INTERLEAVE` (N_MICRO): MAIN_L and MAIN_R into L,R pairs at
     /// [`TEMP_0`], 184 frames.
     pub fn interleave(&mut self) {
-        let mut l = [0i16; COUNT / 2];
-        let mut r = [0i16; COUNT / 2];
-        l.copy_from_slice(&self.w[MAIN_L / 2..MAIN_L / 2 + COUNT / 2]);
-        r.copy_from_slice(&self.w[MAIN_R / 2..MAIN_R / 2 + COUNT / 2]);
-        for (d, (a, b)) in self.w[..COUNT]
+        let (out, rest) = self.w.split_at_mut(MAIN_L / 2);
+        let l = &rest[..COUNT / 2];
+        let r = &rest[(MAIN_R - MAIN_L) / 2..(MAIN_R - MAIN_L) / 2 + COUNT / 2];
+        for (d, (a, b)) in out[..COUNT]
             .as_chunks_mut::<2>()
             .0
             .iter_mut()
-            .zip(l.iter().zip(&r))
+            .zip(l.iter().zip(r))
         {
             d[0] = *a;
             d[1] = *b;
@@ -414,34 +411,48 @@ fn adpcm_8(c0: &[i32; 8], c1: &[i32; 8], i: &[i32; 8], p2: i32, p1: i32, out: &m
 
 /// `out += (in * g) >> 15`, saturating.
 #[inline(always)]
-fn mix_gain(out: &mut [i16], input: &[i16], g: i32) {
+pub(crate) fn mix_gain(out: &mut [i16], input: &[i16], g: i32) {
+    #[cfg(target_arch = "mips")]
+    return allegrex::mix_gain(out, input, g);
+    #[cfg(not(target_arch = "mips"))]
     for (d, s) in out.iter_mut().zip(input) {
         *d = clamp16(*d as i32 + ((*s as i32 * g) >> 15));
     }
 }
 
 /// One envmixer bus: `bus += (in * clamp16((v * amt + 0x4000) >> 15)) >>
-/// 15`, saturating, with `v` constant from `len` on.
+/// 15`, saturating, with `v` per sample from `ramp`.
 #[inline(always)]
-fn env_bus(bus: &mut [i16], input: &[i16], v: &[i32; COUNT / 2], len: usize, amt: i32) {
+fn env_bus(bus: &mut [i16], input: &[i16], ramp: Ramp, amt: i32) {
     let gain = |v: i32| clamp16((v * amt + 0x4000) >> 15) as i32;
     let n = bus.len().min(input.len());
-    let len = len.min(n);
-    for k in 0..len {
-        let g = gain(v[k]);
+    let sums = ramp.sums.min(n);
+    let mut val = ramp.value;
+    for k in 0..sums {
+        val += ramp.step;
+        let g = gain(val >> 16);
         bus[k] = clamp16(bus[k] as i32 + ((input[k] as i32 * g) >> 15));
     }
-    if len < n {
-        let g = gain(v[len]);
+    if sums < n {
+        let g = gain(ramp.then);
         if g != 0 {
-            mix_gain(&mut bus[len..n], &input[len..n], g);
+            mix_gain(&mut bus[sums..n], &input[sums..n], g);
         }
     }
 }
 
-/// Runs ramp `k` over a whole call ([`ramp`] once per sample), writing
-/// each sample's `value >> 16` to `out`. Returns how many leading samples
-/// may differ from the last one; the rest equal it.
+/// A ramp over one envmixer call: `sums` samples of `value + k * step`
+/// (`k` from 1), then `then` (a volume, `>> 16` applied) for the rest.
+#[derive(Clone, Copy)]
+struct Ramp {
+    value: i32,
+    step: i32,
+    sums: usize,
+    then: i32,
+}
+
+/// Runs ramp `k` over a whole call ([`ramp`] once per sample), updating
+/// the state, and returns the volumes it gave.
 ///
 /// A ramp adds `step` until a sum reaches the target (`>=` for a positive
 /// step, `<=` otherwise), which snaps it to the target with step 0; a
@@ -449,50 +460,53 @@ fn env_bus(bus: &mut [i16], input: &[i16], v: &[i32; COUNT / 2], len: usize, amt
 /// `m >= 1` with `value + m * step` past the target in exact arithmetic,
 /// and the samples before it are plain sums.
 #[inline(always)]
-fn ramp_fill(st: &mut EnvMixState, k: usize, out: &mut [i32; COUNT / 2]) -> usize {
-    let (v, step, t) = (st.value[k] as i64, st.step[k] as i64, st.target[k] as i64);
-    let n = out.len();
+fn ramp_run(st: &mut EnvMixState, k: usize) -> Ramp {
+    let n = COUNT / 2;
+    let (value, step, target) = (st.value[k], st.step[k], st.target[k]);
+    // The distance and the step as non-negative i64s; i64 division is a
+    // library call, so it only runs when the snap could fall in this call.
+    let to_snap = |dist: i64, s: i64| -> usize {
+        if dist <= 0 {
+            1
+        } else if dist > s * n as i64 {
+            n + 1
+        } else {
+            ((dist + s - 1) / s) as usize
+        }
+    };
     let m = if step > 0 {
-        if t > v {
-            (t - v + step - 1) / step
-        } else {
-            1
-        }
+        to_snap(target as i64 - value as i64, step as i64)
     } else if step < 0 {
-        if v > t {
-            (v - t + (-step) - 1) / (-step)
-        } else {
-            1
-        }
-    } else if v <= t {
+        to_snap(value as i64 - target as i64, -(step as i64))
+    } else if value <= target {
         1
     } else {
         // Step 0 above the target: never moves.
-        let c = st.value[k] >> 16;
-        out.fill(c);
-        return 0;
+        return Ramp {
+            value,
+            step: 0,
+            sums: 0,
+            then: value >> 16,
+        };
     };
-    // Samples 1..m-1 (indices 0..m-2) are sums; sample m snaps.
-    let sums = (m - 1).min(n as i64) as usize;
-    let mut val = st.value[k];
-    let step = st.step[k];
-    for o in &mut out[..sums] {
-        val += step;
-        *o = val >> 16;
-    }
+    // Samples 1..m-1 are sums; sample m snaps.
+    let sums = (m - 1).min(n);
     if sums < n {
-        st.value[k] = st.target[k];
+        st.value[k] = target;
         st.step[k] = 0;
-        out[sums..].fill(st.target[k] >> 16);
-        sums + 1
     } else {
-        st.value[k] = val;
-        n
+        st.value[k] = value.wrapping_add(step.wrapping_mul(n as i32));
+    }
+    Ramp {
+        value,
+        step,
+        sums,
+        then: target >> 16,
     }
 }
 
 /// One envmixer ramp step: `value += step` saturating, snapping to the
-/// target once reached (BattleShip's `ramp_step`). [`ramp_fill`] is the
+/// target once reached (BattleShip's `ramp_step`). [`ramp_run`] is the
 /// same over a whole call.
 #[cfg(test)]
 fn ramp(st: &mut EnvMixState, k: usize) -> i16 {
@@ -510,6 +524,119 @@ fn ramp(st: &mut EnvMixState, k: usize) -> i16 {
         st.value[k] = v;
     }
     (st.value[k] >> 16) as i16
+}
+
+/// Allegrex kernels for the hottest DSP loops (PSP only). Each computes
+/// exactly what the portable loop beside it computes, and the golden
+/// scenario checks the two agree on the target (`audio::golden`). The
+/// target CPU is MIPS II, so the Allegrex's `max`/`min` (SPECIAL funct
+/// 0x2C/0x2D) are emitted as `.word`s on fixed registers.
+#[cfg(target_arch = "mips")]
+pub(crate) mod allegrex {
+    use core::arch::asm;
+
+    /// `out[k] = clamp16(out[k] + ((input[k] * g) >> 15))`.
+    #[inline(always)]
+    pub fn mix_gain(out: &mut [i16], input: &[i16], g: i32) {
+        let n = out.len().min(input.len());
+        if n == 0 {
+            return;
+        }
+        // SAFETY: reads `input[..n]`, writes `out[..n]`; registers named.
+        unsafe {
+            let o = out.as_mut_ptr();
+            asm!(
+                ".set push",
+                ".set noreorder",
+                "1:",
+                "lh $8, 0($4)",
+                "lh $9, 0($5)",
+                "mult $8, $7",
+                "addiu $4, $4, 2",
+                "addiu $5, $5, 2",
+                "mflo $8",
+                "sra $8, $8, 15",
+                "addu $9, $9, $8",
+                ".word 0x012a482c", // max $9, $9, $10
+                ".word 0x012b482d", // min $9, $9, $11
+                "bne $5, $6, 1b",
+                "sh $9, -2($5)",
+                ".set pop",
+                inout("$4") input.as_ptr() => _,
+                inout("$5") o => _,
+                in("$6") o.add(n),
+                in("$7") g,
+                out("$8") _,
+                out("$9") _,
+                in("$10") -32768,
+                in("$11") 32767,
+                options(nostack),
+            );
+        }
+    }
+
+    /// One plain reverb section (`reverb::section`): `y += x * ff`, then
+    /// `x += y * fb`, then `out += y * gain`, saturating, per sample.
+    #[inline(always)]
+    pub fn section(x: &mut [i16], y: &mut [i16], out: &mut [i16], ff: i32, fb: i32, gain: i32) {
+        let n = out.len().min(x.len()).min(y.len());
+        if n == 0 {
+            return;
+        }
+        // SAFETY: reads and writes `x[..n]`, `y[..n]`, `out[..n]` (three
+        // disjoint slices); registers named.
+        unsafe {
+            let o = out.as_mut_ptr();
+            asm!(
+                ".set push",
+                ".set noreorder",
+                "1:",
+                "lh $8, 0($4)",
+                "lh $9, 0($5)",
+                "mult $8, $12",
+                "lh $10, 0($6)",
+                "addiu $4, $4, 2",
+                "addiu $5, $5, 2",
+                "mflo $11",
+                "sra $11, $11, 15",
+                "addu $9, $9, $11",
+                ".word 0x012f482c", // max $9, $9, $15
+                ".word 0x0138482d", // min $9, $9, $24
+                "mult $9, $13",
+                "sh $9, -2($5)",
+                "addiu $6, $6, 2",
+                "mflo $11",
+                "sra $11, $11, 15",
+                "addu $8, $8, $11",
+                ".word 0x010f402c", // max $8, $8, $15
+                ".word 0x0118402d", // min $8, $8, $24
+                "mult $9, $14",
+                "sh $8, -2($4)",
+                "mflo $11",
+                "sra $11, $11, 15",
+                "addu $10, $10, $11",
+                ".word 0x014f502c", // max $10, $10, $15
+                ".word 0x0158502d", // min $10, $10, $24
+                "bne $6, $7, 1b",
+                "sh $10, -2($6)",
+                ".set pop",
+                inout("$4") x.as_mut_ptr() => _,
+                inout("$5") y.as_mut_ptr() => _,
+                inout("$6") o => _,
+                in("$7") o.add(n),
+                out("$8") _,
+                out("$9") _,
+                out("$10") _,
+                out("$11") _,
+                in("$12") ff,
+                in("$13") fb,
+                in("$14") gain,
+                in("$15") -32768,
+                in("$24") 32767,
+                options(nostack),
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -626,9 +753,9 @@ mod tests {
         assert_eq!(st.value[0], 2 * 184 * (0x8000 / 8));
     }
 
-    /// `ramp_fill` equals `ramp` sample by sample, saturation included.
+    /// `ramp_run` equals `ramp` sample by sample, saturation included.
     #[test]
-    fn ramp_fill_matches_per_sample_ramp() {
+    fn ramp_run_matches_per_sample_ramp() {
         let mut x: u32 = 1;
         let mut rnd = || {
             x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -652,13 +779,16 @@ mod tests {
                 ..Default::default()
             };
             let mut want = st;
-            let mut out = [0i32; COUNT / 2];
-            let len = ramp_fill(&mut st, 0, &mut out);
-            for (k, o) in out.iter().enumerate() {
-                assert_eq!(*o, ramp(&mut want, 0) as i32, "{k} {a} {b} {c}");
-                if k >= len {
-                    assert_eq!(*o, out[len.min(COUNT / 2 - 1)]);
-                }
+            let r = ramp_run(&mut st, 0);
+            let mut val = r.value;
+            for k in 0..COUNT / 2 {
+                let got = if k < r.sums {
+                    val += r.step;
+                    val >> 16
+                } else {
+                    r.then
+                };
+                assert_eq!(got, ramp(&mut want, 0) as i32, "{k} {a} {b} {c}");
             }
             assert_eq!((st.value, st.step), (want.value, want.step));
         }
