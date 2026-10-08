@@ -11,7 +11,8 @@
 //! The Arwing's twelve `DObj`s are the runtime's ([`ArwingObject`]); its
 //! lasers are the weapon pool's ([`crate::weapon::ArwingLaser`]), queued
 //! here and made by the match after the stage ticks
-//! ([`Sector::take_lasers`]). Audio is not ported, as elsewhere.
+//! ([`Sector::take_lasers`]). The Arwing plays its sounds where the source
+//! does.
 
 use super::MapQuery;
 use crate::fighter::Fighter;
@@ -269,6 +270,7 @@ impl Sector {
         self.is_line_active = true;
         self.is_z_collision = false;
         self.laser_ammo = 0;
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMSectorAmbient1);
     }
 
     /// `func_ovl2_80106C88` and `func_ovl2_80106CC4`: pilots 1 and 4 lift
@@ -412,6 +414,7 @@ impl Sector {
                 } else {
                     self.make_laser_3d(fighters, arwing, map);
                 }
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMSectorArwingLaser);
                 arwing.add_anim(node::GUN_L, Some(ArwingAnim::LaserFire));
                 arwing.add_anim(node::GUN_R, Some(ArwingAnim::LaserFire));
                 self.laser_timer = 30;
@@ -549,7 +552,9 @@ impl Sector {
     fn update_flare(&mut self, arwing: &mut dyn ArwingObject) {
         if arwing.anim_null(node::FLARE) && arwing.flags(node::HULL) == 0 {
             arwing.add_anim(node::FLARE, Some(ArwingAnim::Flare));
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMSectorAmbient2);
         }
+
     }
 
     /// `grSectorArwingUpdateCollisions` @ 0x80107BA0.

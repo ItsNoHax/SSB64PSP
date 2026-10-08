@@ -13,7 +13,10 @@
 //! [`DeadState::rebirth_pending`], and the match calls [`rebirth_down`] at
 //! once, in the same slot of the frame.
 //!
-//! Scores, rumble, sounds and the effects are presentation. The
+//! The sounds play where the source plays them, and the KO sounds also
+//! wait for the battle's end queue ([`take_end_sounds`]). Scores, rumble
+//! and the effects are presentation. The
+
 //! explosion's placement ([`DeadState::explode`]), the quake request
 //! ([`DeadState::quake`], RE-420), the screen flash
 //! request ([`DeadState::flash`]) and the star KO sparkle's position

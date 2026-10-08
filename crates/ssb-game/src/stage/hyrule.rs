@@ -183,6 +183,8 @@ impl Hyrule {
                     self.vel = lr * 10.0;
                     self.speed_wait = (rng::rand_int_range(120) + 180) as u16;
                     registry.add_obstacle(Obstacle::Twister);
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMHyruleTwisterAppear);
+
                 }
             }
             TwisterStatus::Move => {

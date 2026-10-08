@@ -193,7 +193,16 @@ pub struct Battle {
     pub gkind: Option<u8>,
 }
 
+/// `dIFCommonAnnounceDefeatedVoiceIDs`: "Player 1" to "Player 4".
+const DEFEATED_VOICES: [u16; 4] = [
+    crate::sound::id::nSYAudioVoiceAnnouncePlayer1,
+    crate::sound::id::nSYAudioVoiceAnnouncePlayer2,
+    crate::sound::id::nSYAudioVoiceAnnouncePlayer3,
+    crate::sound::id::nSYAudioVoiceAnnouncePlayer4,
+];
+
 /// `nGRKindInishie`.
+
 const GKIND_INISHIE: u8 = 8;
 
 /// `dIFCommonAnnounceTimerVoiceIDs`: "one" to "five".
@@ -809,6 +818,16 @@ impl Battle {
             if self.place == 0 {
                 self.set_end(EndKind::GameSet);
             }
+        }
+        // The announcer names a player who is out while the battle goes on.
+        if self.place != 0 && self.players[i].stock_count == -1 {
+            use crate::sound::id::*;
+            crate::public::defeated_add_id(if self.players[i].is_human {
+                DEFEATED_VOICES[i]
+            } else {
+                nSYAudioVoiceAnnounceComputerPlayer
+            });
+            crate::public::defeated_add_id(nSYAudioVoiceAnnounceDefeated);
         }
     }
 

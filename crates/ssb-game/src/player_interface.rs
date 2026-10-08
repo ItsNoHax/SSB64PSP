@@ -180,8 +180,9 @@ pub struct Interface {
 }
 
 impl Interface {
-    /// `ifCommonPlayerArrowsFuncRun`, before priority-5 arrow animation processes.
-    /// Returns a source sound request; audio dispatch belongs to the host.
+    /// `ifCommonPlayerArrowsFuncRun`, before priority-5 arrow animation
+    /// processes. Plays `nSYAudioFGMMagnify` every 30 ticks while an arrow
+    /// shows, and returns whether it played.
     pub fn tick(&mut self, magnify_display: bool) -> bool {
         let mut flags = 0;
         if magnify_display {
@@ -212,8 +213,10 @@ impl Interface {
         }
         let sound = self.sound_wait == 0;
         if sound {
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMagnify);
             self.sound_wait = 30;
         }
+
         self.sound_wait -= 1;
         sound
     }

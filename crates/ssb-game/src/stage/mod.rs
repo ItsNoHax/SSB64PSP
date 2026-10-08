@@ -18,8 +18,9 @@
 //! when the pool is full). The Pokémon are not ported yet. Sector Z's
 //! Arwing has an object port of its own ([`sector::ArwingObject`]), and its
 //! lasers go to the weapon pool. Of the bonus stages, Race to the Finish has
-//! its controller ([`bonus3`]); the others have none. Rumble and
-//! audio are not ported, as elsewhere in the gameplay layer.
+//! its controller ([`bonus3`]); the others have none. Rumble is not
+//! ported; the controllers play their sounds where the source does.
+
 
 pub mod bonus3;
 pub mod castle;

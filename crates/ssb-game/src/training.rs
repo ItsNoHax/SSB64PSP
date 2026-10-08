@@ -199,6 +199,9 @@ impl TrainingMenu {
     /// host pauses and locks both fighters' control.
     pub fn check_enter(&mut self, tapped: N64Buttons, menu_ignore: bool) -> bool {
         if tapped.contains(N64Buttons::START) && !menu_ignore {
+            // No FGM pause here, unlike the battle pause.
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMGamePause);
+            crate::sound::set_bgm_volume(0, crate::battle::BGM_VOLUME_PAUSE);
             self.is_read_menu_inputs = false;
             true
         } else {
@@ -245,11 +248,13 @@ impl TrainingMenu {
     }
 
     /// `sc1PTrainingModeCheckUpdateOptionID`: left/right steps `option`
-    /// through `0..count`, wrapping.
+    /// through `0..count`, wrapping; the option's update then plays
+    /// `sc1PTrainingModeUpdateScroll`'s sound.
     fn step_option(&self, option: &mut u8, count: u8) -> bool {
         if self.button_queue & (DIR_LEFT | DIR_RIGHT) == 0 {
             return false;
         }
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMenuScroll2);
         if self.button_queue & DIR_LEFT != 0 {
             *option = if *option == 0 { count - 1 } else { *option - 1 };
         } else {
@@ -290,9 +295,11 @@ impl TrainingMenu {
                         if let Some(kind) = item_option_kind(self.item_option) {
                             if item_count < ITEM_LIMIT {
                                 frame.spawn_item = Some(kind);
+                                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMenuSelect);
                                 self.item_spawn_wait = ITEM_SPAWN_WAIT;
                             } else {
                                 frame.spawn_denied = true;
+                                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMenuDenied);
                             }
                         }
                     }
@@ -325,11 +332,20 @@ impl TrainingMenu {
                 }
                 false
             }
+            // `sc1PTrainingModeUpdateResetOption`.
             MainOption::Reset if a => {
                 self.exit_or_reset = true;
+                crate::sound::stop_all_fgm();
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMTrainingSel2);
+                crate::sound::set_bgm_volume(0, crate::battle::BGM_VOLUME_NORMAL);
                 true
             }
-            MainOption::Exit if a => true,
+            // `sc1PTrainingModeUpdateExitOption`.
+            MainOption::Exit if a => {
+                crate::sound::stop_all_fgm();
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMTrainingSel2);
+                true
+            }
             MainOption::Reset | MainOption::Exit => false,
         };
         if chose {
@@ -350,11 +366,16 @@ impl TrainingMenu {
             };
             self.main_option = MainOption::ALL[i];
             frame.main_changed = true;
+            // `sc1PTrainingModeUpdateScroll`'s sound, then its own.
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMenuScroll2);
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMenuScroll2);
         }
         // `sc1PTrainingModeCheckLeaveMenu`.
         if tapped.0 & (N64Buttons::B | N64Buttons::START) != 0 {
             frame.leave = Some(tapped.contains(N64Buttons::B));
+            crate::sound::set_bgm_volume(0, crate::battle::BGM_VOLUME_NORMAL);
         }
+
         frame
     }
 

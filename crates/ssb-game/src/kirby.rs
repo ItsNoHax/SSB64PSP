@@ -323,14 +323,16 @@ pub fn damage_check_lose_copy(f: &mut Fighter) {
     }
 }
 
-/// `ftKirbySpecialNLoseCopy`, without its star effect and sound.
+/// `ftKirbySpecialNLoseCopy`, without its star effect.
 pub fn lose_copy(f: &mut Fighter) {
     crate::kirby_copy::init_passive_vars(f);
     f.kirby.copy_id = FighterKind::Kirby;
     f.model_parts
         .set_default(crate::kirby_copy::COPY_MODELPARTS_JOINT, 0);
     crate::colanim::reset_stat_update(f);
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialNLoseCopy);
 }
+
 
 /// `FTKirbyCopy[27]` at `KirbyMainMotion` 0x0000: `(copy_id, star_damage)`
 /// per swallowed `FTKind`. The model-part column is
@@ -954,7 +956,10 @@ pub fn init_copy(f: &mut Fighter, copy_kind: FighterKind) {
 /// `ftKirbySpecialNCopyInitCopyVars` then
 /// `ftKirbySpecialNCopyUpdateCheckCopyStar`.
 fn copy(f: &mut Fighter) {
-    if f.kirby.copy_id != f.kirby.copy_pending {
+    if f.kirby.copy_id == f.kirby.copy_pending {
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialNCopyUnk);
+    } else {
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialNCopyThrow);
         f.kirby.copy_id = f.kirby.copy_pending;
         // `ftParamSetModelPartDefaultID(joint 6, copy_modelpart_id)` and
         // `ftParamResetModelPartAll` (RE-425).
@@ -1153,6 +1158,7 @@ pub fn update(f: &mut Fighter) {
                 f.grab.send(GrabEvent::KirbyEat {
                     is_kirby: f.kirby.victim_is_kirby,
                 });
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialNCopyEat);
                 let s = if current == K::SpecialNCatch {
                     K::SpecialNEat
                 } else {
