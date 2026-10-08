@@ -9795,7 +9795,7 @@ fn load_all(archive: &Archive) -> Loaded {
     // `gobj`; these five have one; `RoomDesk`/`RoomTissues`/etc. do not and
     // are correctly left unpaired.
     //
-    // RE-077: the same category as file 86's still-blocked case (`PLAN.md`
+    // RE-077: the same category as file 86's still-blocked case (
     // R0.7, RE-061) -- a pairing `PartTables::scan` cannot find
     // structurally, only demand-matching `--search` can even suggest -- but
     // where file 86's search stayed at 27 ambiguous candidates with nothing
@@ -14220,7 +14220,7 @@ fn build_texgen_census(
     (census, graph_lists, discovered_lists)
 }
 
-/// `PLAN.md` R2.1/T10: the addressing check `texgen_addressing_census_against_real_archive_materials`
+/// R2.1/T10: the addressing check `texgen_addressing_census_against_real_archive_materials`
 /// already proved against `SSB64_ROM`, factored out so `romtool texgen
 /// --verify` runs the exact same walk against any ROM, not a second copy of
 /// the logic that could drift from what the test actually checks.
@@ -14331,7 +14331,7 @@ fn verify_texgen_addressing(census: &TexgenCensus) -> TexgenAddressingReport {
     report
 }
 
-/// `PLAN.md` R2.1/T10: the correctness-critical invariants `romtool texgen
+/// R2.1/T10: the correctness-critical invariants `romtool texgen
 /// --verify` fails on -- each one is a real ROM measurement this project has
 /// already pinned as a regression baseline elsewhere (RE-225/RE-230/RE-231/
 /// RE-232), reproduced here against whatever ROM is passed so CI or a
@@ -14358,7 +14358,7 @@ fn verify_texgen(census: &TexgenCensus) -> Vec<String> {
         if tile.shift != (0, 0) {
             failures.push(format!(
                 "texgen-bound tile shift {:?} used by {n} triangle(s) (want (0, 0), \
-                 PLAN.md R2.1/T6): N64 tile shifting is not implemented",
+                 R2.1/T6): N64 tile shifting is not implemented",
                 tile.shift
             ));
         }
@@ -14367,14 +14367,14 @@ fn verify_texgen(census: &TexgenCensus) -> Vec<String> {
     let addressing = verify_texgen_addressing(census);
     if addressing.non_clamp_axis_instances != 0 {
         failures.push(format!(
-            "non_clamp_axis_instances = {} (want 0, PLAN.md R2.1/T7): a real texgen tile now \
+            "non_clamp_axis_instances = {} (want 0, R2.1/T7): a real texgen tile now \
              has a non-clamp axis, which this addressing check does not cover",
             addressing.non_clamp_axis_instances
         ));
     }
     if addressing.diverging_axis_instances != 0 {
         failures.push(format!(
-            "diverging_axis_instances = {} (want 0, PLAN.md R2.1/T7a, RE-232): generated \
+            "diverging_axis_instances = {} (want 0, R2.1/T7a, RE-232): generated \
              texgen coordinates disagree with the hardware addressing model on {} distinct \
              (mode, scale, dim, mask) combination(s)",
             addressing.diverging_axis_instances,
@@ -15149,7 +15149,7 @@ mod tests {
     };
     use std::collections::BTreeSet;
 
-    /// `PLAN.md` R2.1/T10: `verify_texgen`'s failure branches, exercised
+    /// R2.1/T10: `verify_texgen`'s failure branches, exercised
     /// synthetically so they're host-testable without `SSB64_ROM` -- the
     /// real-archive walk (`texgen_addressing_census_against_real_archive_materials`,
     /// below) already proves the *current* ROM passes every one of these; this
@@ -15187,7 +15187,7 @@ mod tests {
         assert!(!verify_texgen(&nonzero_shift).is_empty());
     }
 
-    /// `PLAN.md` R2.1/T10 (RE-239): archive-wide check for the mapping-
+    /// R2.1/T10 (RE-239): archive-wide check for the mapping-
     /// transition test minimum's `textured→untextured→texgen` case. Walks
     /// every real file's converted meshes (`file_meshes`, the same path
     /// `pack` uses) and counts texgen-mode primitives with no bound texture.
@@ -16498,7 +16498,7 @@ mod tests {
             .all(|&(file, graph, _)| direct.contains(&(file, graph))));
     }
 
-    /// `PLAN.md` R2.0/P0a: measures `n64_filter::sample_3point` (the RDP's
+    /// R2.0/P0a: measures `n64_filter::sample_3point` (the RDP's
     /// real 3-point reconstruction) against `n64_filter::sample_bilinear`
     /// (PSP `Linear`'s symmetric four-tap reconstruction) densely across
     /// every unique real bound texture archive-wide, not a synthetic case.
@@ -16658,7 +16658,7 @@ mod tests {
         assert!(textures_censused > 0, "archive-wide walk found no textures");
     }
 
-    /// `PLAN.md` R2.0/P0b/P0c: measures two of the three addressing
+    /// R2.0/P0b/P0c: measures two of the three addressing
     /// questions against every real primitive archive-wide, using
     /// `ssb_rom::n64_addressing`'s hardware reference model (transcribed
     /// from `angrylion-rdp-plus`, not a reference port) and its paired
@@ -16733,7 +16733,7 @@ mod tests {
                     // regular texgen is generated live by the GE from the
                     // vertex normal, and linear texgen's CPU-generated
                     // replacement is computed at pack time, not here. This
-                    // census is authored-UV-scoped (`PLAN.md` R2.0/P0b);
+                    // census is authored-UV-scoped (R2.0/P0b);
                     // texgen addressing is `R2.1`/T7's job, consuming this
                     // same reference model with its own scale/origin wiring.
                     if t.framebuffer
@@ -16957,7 +16957,7 @@ mod tests {
         // must stay zero, or the fix has regressed.
         assert_eq!(
             mc.hw_psp_diverge, 0,
-            "hardware and PSP lowering diverge on a real mirror+clamp axis (PLAN.md R2.0/P0c regressed)"
+            "hardware and PSP lowering diverge on a real mirror+clamp axis (R2.0/P0c regressed)"
         );
         // RE-220: measured zero `mask == 0` render-tile axes on any real
         // drawn primitive, archive-wide -- `angrylion-rdp-plus`'s forced
@@ -16967,11 +16967,11 @@ mod tests {
         // regresses, the forced-clamp rule genuinely needs implementing.
         assert_eq!(
             m0.axis_instances, 0,
-            "a real mask == 0 axis now exists: implement forced clamp (PLAN.md R2.0/P0b bullet 2)"
+            "a real mask == 0 axis now exists: implement forced clamp (R2.0/P0b bullet 2)"
         );
     }
 
-    /// `PLAN.md` R2.0/P1: censuses every real render-tile-0 (`tile ==
+    /// R2.0/P1: censuses every real render-tile-0 (`tile ==
     /// RENDER_TILE`, `mesh.rs`'s own constant) `G_SETTILE` command
     /// archive-wide for the five fields `dl.rs`'s `Cmd::SetTile` decodes but
     /// `mesh.rs`'s only consumer discards behind a `..` wildcard
@@ -17191,7 +17191,7 @@ mod tests {
         // still holds before assuming it is still irrelevant.
         assert_eq!(
             stats.tmem_nonzero, 0,
-            "a real nonzero tmem now exists on a tile-0 G_SETTILE (PLAN.md R2.0/P1)"
+            "a real nonzero tmem now exists on a tile-0 G_SETTILE (R2.0/P1)"
         );
         // RE-223: real content never sets a render tile's shift, so
         // `n64_addressing::TileAxis::shift`'s "always 0 in practice" callers
@@ -17201,11 +17201,11 @@ mod tests {
         // `G_SETTILE` data becomes a real, material gap.
         assert_eq!(
             stats.shift_s_nonzero, 0,
-            "a real nonzero shift_s now exists on a tile-0 G_SETTILE (PLAN.md R2.0/P1)"
+            "a real nonzero shift_s now exists on a tile-0 G_SETTILE (R2.0/P1)"
         );
         assert_eq!(
             stats.shift_t_nonzero, 0,
-            "a real nonzero shift_t now exists on a tile-0 G_SETTILE (PLAN.md R2.0/P1)"
+            "a real nonzero shift_t now exists on a tile-0 G_SETTILE (R2.0/P1)"
         );
         // `palette` is deliberately NOT pinned to zero here: RE-223 found 7
         // real CI4 instances (file 86, `ITCommonObject`) requesting bank 1
@@ -17217,7 +17217,7 @@ mod tests {
         // a regression to guard against.
     }
 
-    /// `PLAN.md` R2.1/T6: tile-state and lighting audit for texgen-bound
+    /// R2.1/T6: tile-state and lighting audit for texgen-bound
     /// draws specifically. RE-223 (`R2.0`/P1) already measured `shift_s`/
     /// `shift_t` zero across every real render-tile-0 `G_SETTILE`
     /// archive-wide, but that census covered *all* tile-0 binds, not just
@@ -17272,17 +17272,17 @@ mod tests {
         // archive-wide. Re-checked here against only the texgen-bound
         // subset, since that is the only subset this project's texgen path
         // actually reads shift from. If this regresses, N64 tile shifting
-        // needs implementing before T6 can close (PLAN.md R2.1/T6).
+        // needs implementing before T6 can close (R2.1/T6).
         assert!(
             census
                 .texgen_tiles_by_mode
                 .keys()
                 .all(|(_, tile)| tile.shift == (0, 0)),
-            "a texgen-bound tile now has a nonzero shift_s/shift_t (PLAN.md R2.1/T6): implement N64 shifting"
+            "a texgen-bound tile now has a nonzero shift_s/shift_t (R2.1/T6): implement N64 shifting"
         );
     }
 
-    /// `PLAN.md` R2.1/T7: consumes `R2.0`/P0b's `n64_addressing` reference
+    /// R2.1/T7: consumes `R2.0`/P0b's `n64_addressing` reference
     /// model (`ssb_rom::n64_addressing::address_axis`/`psp_lowering_axis`,
     /// already proven against authored UVs by
     /// `tile_addressing_census_against_real_archive_textures`) rather than
@@ -17317,7 +17317,7 @@ mod tests {
     /// to `drawn` before clamping, matching the mirror+clamp case RE-220/
     /// RE-221 already fixed the same way -- the divergence count is 0
     /// again.
-    /// `PLAN.md` R2.1/T10 factored the sweep itself out into
+    /// R2.1/T10 factored the sweep itself out into
     /// `super::verify_texgen_addressing`, shared with `romtool texgen
     /// --verify`; this test supplies the assertions and diagnostics on top
     /// of that shared walk so the CLI and the test can never silently
@@ -17366,7 +17366,7 @@ mod tests {
         );
         assert_eq!(
             report.non_clamp_axis_instances, 0,
-            "a real texgen tile now has a non-clamp axis (PLAN.md R2.1/T7): this test's coverage assumes RE-230's \
+            "a real texgen tile now has a non-clamp axis (R2.1/T7): this test's coverage assumes RE-230's \
              finding that every texgen tile clamps on both axes, and needs extending before this can pass"
         );
         // RE-231/T7a: a mask-narrowed clamp-without-mirror texgen axis used
@@ -17375,17 +17375,17 @@ mod tests {
         // `texture::mirror_axis_len`/`mirror_fold`; back to a strict 0.
         assert_eq!(
             report.diverging_axis_instances, 0,
-            "measured texgen addressing divergence count changed (PLAN.md R2.1/T7a, RE-231): investigate before \
+            "measured texgen addressing divergence count changed (R2.1/T7a, RE-231): investigate before \
              re-pinning a nonzero baseline"
         );
         assert_eq!(
             report.diverging_at_non_extreme_dot, 0,
-            "a texgen addressing divergence now reaches beyond the sweep's dot=+1 extreme (PLAN.md R2.1/T7, \
+            "a texgen addressing divergence now reaches beyond the sweep's dot=+1 extreme (R2.1/T7, \
              RE-231): this is a materially different, likely larger, gap than what RE-231 measured"
         );
     }
 
-    /// `PLAN.md` R2.1/T7's own text asks for host/reference cases beyond
+    /// R2.1/T7's own text asks for host/reference cases beyond
     /// what RE-230 measured real archive content actually uses (every real
     /// texgen tile clamps both axes, `texgen_addressing_census_against_real_archive_materials`
     /// above) -- repeat+mask and mirror+repeat with no clamp bit, which the

@@ -314,7 +314,7 @@ pub fn texgen_dot(normal: [i8; 3], basis: [f32; 3]) -> f32 {
 
 /// The ordinary (non-`LINEAR`) `G_TEXTURE_GEN` curve: `(dot + 1) / 4`,
 /// `env_map_tex_scale`'s own derivation. The *only* difference from
-/// [`linear_texgen_curve`] (`PLAN.md` R2.1/T4's own wording) -- both take the
+/// [`linear_texgen_curve`] (R2.1/T4's own wording) -- both take the
 /// same [`texgen_dot`] input, cover the same `[0, 0.5]` output range, and feed
 /// the same [`texgen_s10_5_addressed`] scale-and-addressing step below; they
 /// differ only in shape (affine here, `acos` there).
@@ -331,10 +331,10 @@ pub fn regular_texgen_curve(dot: f32) -> f32 {
 /// (`v.uv[0] -= origin_s * 8`). The `* 8` there and here is the same
 /// S10.2-to-S10.5 scale alignment; see `push_vertex`'s own comment for the
 /// quarter-texel origin unit. Shared by both curves: "the only curve
-/// difference... followed by common scale and addressing" (`PLAN.md`
+/// difference... followed by common scale and addressing" (
 /// R2.1/T4).
 ///
-/// Truncates, does not round (`PLAN.md` R2.1/T5, RE-229): two independent
+/// Truncates, does not round (R2.1/T5, RE-229): two independent
 /// reference implementations of this exact conversion both cast straight to
 /// an integer with no `+ 0.5` -- `refs/n64psp`'s `n64psp_texgen_to_s10_5`
 /// (`tnl_scalar.c`, `(int16_t)scaled`) and `refs/BattleShip`'s
@@ -384,7 +384,7 @@ pub fn linear_texgen_uv(
 /// rendering path (the PSP GE's texture-matrix generator,
 /// `meshdraw::apply_texture_mapping`/`regular_texgen_matrix_coeffs`) is
 /// proven against, not something this project draws through directly (the GE
-/// generates its own coordinates per vertex in hardware). `PLAN.md` R2.1/T4,
+/// generates its own coordinates per vertex in hardware). R2.1/T4,
 /// RE-228.
 #[allow(clippy::too_many_arguments)]
 pub fn regular_texgen_uv(
@@ -427,7 +427,7 @@ pub fn regular_texgen_uv(
 /// `b` is the curve's zero-crossing constant (`dot = -1 -> u = 0`, half the
 /// normalised span) plus the tile's origin shift -- neither passes through
 /// the GE's per-component normal decoder, so compensating it by the same
-/// factor overcorrects. RE-228 (`PLAN.md` R2.1/T4) found and fixed exactly
+/// factor overcorrects. RE-228 (R2.1/T4) found and fixed exactly
 /// this: an earlier version used the same compensated value for both,
 /// producing a real (if sub-texel: `scale/127 - scale/128`, `<= 1` S10.5 unit
 /// for every real archive scale) systematic offset against
@@ -565,7 +565,7 @@ pub fn pack_rgba(img: &Rgba8, format: Psm, swizzle_it: bool) -> PspTexture {
         // Other 16-bit formats are not produced by `choose_psm` today.
         _ => alloc::vec![0u8; (stride * padded_h * format.bits() as u32 / 8) as usize],
     };
-    // `PLAN.md` R2.0/P0d: see `pad_edge_repeat`'s doc comment.
+    // R2.0/P0d: see `pad_edge_repeat`'s doc comment.
     pad_edge_repeat(
         &mut data,
         stride,
@@ -606,7 +606,7 @@ pub fn can_swizzle(stride_bytes: usize, height: usize) -> bool {
 /// Fills a packed texture's power-of-two padding region (columns
 /// `width..stride`, rows `height..padded_h`) with the repeated real edge
 /// row/column, in place of the zero fill every caller starts from
-/// (`PLAN.md` R2.0/P0d, RE-220/RE-222): real hardware clamps addressing to
+/// (R2.0/P0d, RE-220/RE-222): real hardware clamps addressing to
 /// the *logical* edge, so `sceGuTexFilter(Linear, Linear)`'s bilinear blend
 /// near a clamped, non-power-of-two edge should read real edge data, not a
 /// synthetic zero the RDP never produces.
@@ -797,7 +797,7 @@ pub fn pack_indexed(
 
     let palette = palette.to_vec();
 
-    // `PLAN.md` R2.0/P0d: see `pad_edge_repeat`'s doc comment.
+    // R2.0/P0d: see `pad_edge_repeat`'s doc comment.
     if format == Psm::PsmT4 {
         pad_edge_repeat_nibbles(&mut data, stride, padded_h, width, height);
     } else {
@@ -911,7 +911,7 @@ mod mip_tests {
         assert!(full.levels > 2);
     }
 
-    /// `PLAN.md` R2.0/P0d, end-to-end through the actual production path
+    /// R2.0/P0d, end-to-end through the actual production path
     /// (`convert_texture`'s `mipped` closure calls `pack_mipped`, not
     /// `pack_rgba`/`pack_indexed` directly): a non-power-of-two CI4 level 0
     /// pads its padding column with the repeated edge texel, not index 0.
@@ -1219,7 +1219,7 @@ mod tests {
         assert!((by_constant - by_real_length).abs() > 1e-4);
     }
 
-    /// `PLAN.md` R2.1/T10's texgen test minimum names the zero normal as its
+    /// R2.1/T10's texgen test minimum names the zero normal as its
     /// own case, distinct from `dot = 0.0` above (which feeds the curves
     /// directly): a degenerate `[0, 0, 0]` vertex normal must produce
     /// `dot = 0` through `texgen_dot` itself for *any* basis, not divide by
@@ -1253,7 +1253,7 @@ mod tests {
 
     #[test]
     fn texgen_s10_5_addressed_truncates_rather_than_rounds_at_half_unit_boundaries() {
-        // `PLAN.md` R2.1/T5: N+0.49/0.50/0.51 boundary cases at every real
+        // R2.1/T5: N+0.49/0.50/0.51 boundary cases at every real
         // ROM texgen scale (RE-214's census). Truncation means all three
         // land on `n` -- a round-to-nearest implementation (this function's
         // prior, incorrect behavior) would instead land N+0.50/N+0.51 on
@@ -1341,7 +1341,7 @@ mod tests {
         assert_eq!(pad_to_power_of_two(33), 64);
     }
 
-    /// `PLAN.md` R2.0/P0d: a non-power-of-two 3-wide, 1-tall single-byte-texel
+    /// R2.0/P0d: a non-power-of-two 3-wide, 1-tall single-byte-texel
     /// image pads out to a 4-wide stride with the last real column (`2`)
     /// repeated, not left zero.
     #[test]
@@ -1406,7 +1406,7 @@ mod tests {
         assert_eq!(data, before);
     }
 
-    /// End-to-end through `pack_paletted` (`PLAN.md` R2.0/P0d): a
+    /// End-to-end through `pack_paletted` (R2.0/P0d): a
     /// non-power-of-two CI8 texture's padded columns sample the same
     /// palette index as the real edge column, not index 0.
     #[test]
@@ -1642,7 +1642,7 @@ mod tests {
     /// GE's `/128` normal read, and a 4x4 matrix multiply with a fixed
     /// translation column is ordinary linear algebra, not a new thing to
     /// measure -- so this can run on the host for thousands of cases instead
-    /// of needing real `sceGu` for every one of them (`PLAN.md` R2.1/T4).
+    /// of needing real `sceGu` for every one of them (R2.1/T4).
     fn simulate_ge_matrix_output(normal: [i8; 3], basis: [f32; 3], a: f32, b: f32) -> f32 {
         let dot128 = normal[0] as f32 / 128.0 * basis[0]
             + normal[1] as f32 / 128.0 * basis[1]
@@ -1667,7 +1667,7 @@ mod tests {
         simulate_ge_matrix_output(normal, basis, a, b) * uploaded_dim as f32 * 32.0
     }
 
-    /// RE-228 (`PLAN.md` R2.1/T4): thousands of random normals, bases,
+    /// RE-228 (R2.1/T4): thousands of random normals, bases,
     /// scales, origins and dimensions, comparing the GE-matrix simulation
     /// above against [`regular_texgen_uv`]'s independent source-formula
     /// reference. Exact `i16` S10.5 equality isn't claimed or required here
@@ -1908,7 +1908,7 @@ fn encode_level(img: &Rgba8, format: Psm, palette: &[u32]) -> (Vec<u8>, u32) {
             }
         }
     }
-    // `PLAN.md` R2.0/P0d: real hardware clamps to the logical edge, so a
+    // R2.0/P0d: real hardware clamps to the logical edge, so a
     // bilinear sample near a clamped, non-power-of-two edge should read
     // real edge data rather than the zero fill above.
     if format == Psm::PsmT4 {

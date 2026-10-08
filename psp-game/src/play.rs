@@ -16,7 +16,7 @@ use ssb_rom::pack::{Pack, StageDesc};
 pub use ssb_psp_runtime::scene::{fighter_turn, FighterScene};
 
 /// A stationary, physics-ticked dummy target for Training Mode
-/// (`plans/gameplay/F1.md`: "One player-controlled fighter vs. one
+/// (the retired F1 spec: "One player-controlled fighter vs. one
 /// stationary/dummy target, no AI"). `psp-asset-viewer` has no equivalent --
 /// the debug viewer has no training combat -- so unlike [`FighterScene`],
 /// `Dummy` is `psp-game`-only, not shared runtime. Wraps a [`FighterScene`]

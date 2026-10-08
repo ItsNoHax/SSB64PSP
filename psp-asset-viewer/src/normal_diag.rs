@@ -1,11 +1,11 @@
 //! R2.1/T2 measurement rig (RE-226).
 //!
-//! `PLAN.md`'s T2 needs to know two things about `GU_NORMAL_8BIT` before
+//! T2 needs to know two things about `GU_NORMAL_8BIT` before
 //! `meshdraw::apply_texture_mapping` can switch off `NormalizedNormal`:
 //! whether the GE actually normalizes the quantized normal before feeding it
 //! to the texture-matrix generator (it should not -- the RSP's own texgen
 //! never does), and what divisor turns the raw signed byte into the [-1, 1]
-//! range the generator matrix expects. `docs/reverse-engineering.md` RE-226
+//! range the generator matrix expects. RE-226
 //! records the PPSSPP-source half of that (`GPU/Common/VertexReader.h`'s
 //! `ReadNrm` divides every `GE_PROJMAP_NORMAL` axis by 128.0, unconditionally,
 //! independent of the `GE_PROJMAP_NORMALIZED_NORMAL` case a few lines above

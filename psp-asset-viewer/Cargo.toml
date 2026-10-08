@@ -45,7 +45,7 @@ regression_capture = []
 lod_blend_current_only = []
 lod_blend_next_only = []
 
-# R1's second deterministic scene (`docs/visual-regression.md`'s test
+# R1's second deterministic scene (`docs/visual-regression/README.md`'s test
 # matrix): boots straight into the object viewer on file 52's `mvopeningroom`
 # graph (RE-198's CI8 and untextured/vertex-coloured examples both live in
 # it), disables the default Dream Land stage view, freezes at the same fixed
@@ -114,7 +114,7 @@ regression_capture_ness = ["fighter_regression_capture"]
 regression_capture_donkey_kong = ["fighter_regression_capture"]
 
 # R2.2/C6 broader-coverage scene (RE-257): Link, explicitly named in
-# `PLAN.md`'s C6 recheck list alongside Mario/Fox/Kirby/Ness/Captain Falcon
+# C6 recheck list alongside Mario/Fox/Kirby/Ness/Captain Falcon
 # but never given a golden. Selects the lower-offset of file 324's symmetric
 # 32-node graph pair (0x3AE8 vs 0x74B0), matching the other fighter captures'
 # convention

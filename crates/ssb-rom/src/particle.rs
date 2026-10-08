@@ -1781,7 +1781,7 @@ mod tests {
     /// RE-184: locks in the frame-4 (RE-183's own settle point) visibility
     /// census `romtool particles` reports. 148 of 160 real scripts resolve a
     /// texture frame at that instant; the other 12 are explained by name in
-    /// `docs/reverse-engineering.md` RE-184, not just counted. A drop in
+    /// RE-184, not just counted. A drop in
     /// `visible_count` below 148 without a matching RE update means either a
     /// real regression or an unreviewed decoder change.
     #[test]

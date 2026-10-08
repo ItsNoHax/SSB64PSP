@@ -1,4 +1,4 @@
-//! Host-side reference samplers for `PLAN.md` R2.0/P0a.
+//! Host-side reference samplers for R2.0/P0a.
 //!
 //! RE-218 found that RE-124's filtering conclusion only ever compared the
 //! N64 RDP's `G_MDSFT_TEXTFILT` *mode selector* against PSP's
@@ -29,7 +29,7 @@
 //! the GE even after its missing half-texel bias was corrected.
 //!
 //! Address clamping here is a simple edge clamp, not the real N64
-//! mirror/mask/clamp tile-addressing model — that model is `PLAN.md`
+//! mirror/mask/clamp tile-addressing model — that model is
 //! R2.0/P0b's job. These samplers are only valid for measuring interior
 //! (non-boundary) reconstruction error, which is what P0a asks for.
 

@@ -3,8 +3,7 @@
 //! A second, independent PSP application alongside the existing debug asset
 //! viewer in `psp-asset-viewer/` -- its own crate, its own EBOOT, sharing the
 //! portable `crates/ssb-engine`/`ssb-rom`/`ssb-game` libraries and the shared
-//! `psp-runtime` platform/rendering layer (`AGENTS.md`'s F1 carve-out,
-//! `plans/gameplay/F1.md`). `psp-asset-viewer/`'s own build and EBOOT are
+//! `psp-runtime` platform/rendering layer (`AGENTS.md`'s F1 carve-out). `psp-asset-viewer/`'s own build and EBOOT are
 //! unmodified by this crate's existence.
 //!
 //! Intro screen and main menu still draw flat coloured rectangles
@@ -13,9 +12,8 @@
 //! intro/menu navigation shape of criteria 2-3. Training Mode now loads the
 //! real pack, spawns a real fighter on a real stage, and draws both through
 //! `meshdraw`'s 3D pipeline and `play::FighterScene`'s real physics/animation/camera
-//! (`plans/gameplay/F1.md`'s "Scene loading" section) -- real hitbox/damage/
-//! knockback combat (criterion 5) and `sceFont` menu/select text are still
-//! outstanding, tracked there and in `TODO.md`.
+//! (the retired F1 spec's "Scene loading" section; open work is in
+//! `PLAN.md`).
 
 #![no_std]
 #![no_main]
@@ -2357,7 +2355,7 @@ enum Screen {
     Opening,
     /// Training Mode: a real stage and a real, physics-ticked fighter now
     /// draw here (`draw_training`) -- no combat yet, see
-    /// `plans/gameplay/F1.md` acceptance criteria 5-7 for what still has to
+    /// the retired F1 spec's acceptance criteria 5-7 for what still has to
     /// land.
     Training,
 }
@@ -2384,7 +2382,7 @@ const BG_RESULTS: Color = Color::rgba(0, 0, 0, 255);
 const BG_TRAINING: Color = Color::rgba(20, 48, 24, 255);
 /// Training background when the asset pack failed to load or parse. Distinct
 /// from `BG_TRAINING` so pack status is pixel-provable under PPSSPPHeadless
-/// without `sceFont` text (`plans/gameplay/F1.md`'s "Scene loading" section
+/// without `sceFont` text (the retired F1 spec's "Scene loading" section
 /// -- real on-screen text is later F1 work, not this increment).
 const BG_TRAINING_NO_PACK: Color = Color::rgba(80, 16, 16, 255);
 /// `assets::LoadError::Empty` -- the file opened but reported zero length.
@@ -4889,7 +4887,7 @@ unsafe fn run() -> ! {
     // Which flat colour `draw_training` falls back to when there is no scene
     // to draw -- distinguishes *why* (open/read failure s.vs. a rejected
     // header) without needing `sceFont` text, extending the pixel-provable
-    // convention `plans/gameplay/F1.md`'s "Scene loading" section already
+    // convention the retired F1 spec's "Scene loading" section already
     // established for the plain not-loaded case.
     let no_pack_color = match (&loaded, &opened) {
         (Err(assets::LoadError::NotFound), _) => BG_TRAINING_NO_PACK,
@@ -7677,7 +7675,7 @@ impl EffectVisuals {
 /// Falls back to a flat colour keyed to *why* (see the `BG_TRAINING_*`
 /// consts and `no_pack_color`'s computation in `run`) when the pack failed
 /// to load/parse or the stage isn't in it -- still the pixel-provable
-/// signal `plans/gameplay/F1.md`'s "Scene loading" section established (no
+/// signal the retired F1 spec's "Scene loading" section established (no
 /// `sceFont` text exists yet to say so in words), now distinguishing the
 /// failure reason too (RE-296).
 #[inline(never)]

@@ -646,7 +646,7 @@ pub mod flags {
     /// archive content, not a missing seed. RE-251 wires `GuState::DepthTest`
     /// (`psp/src/meshdraw.rs`) to this bit directly, superseding the interim
     /// `Z_BUFFER` proxy (RE-068) now that the data model is measured
-    /// complete -- see `docs/reverse-engineering.md` RE-251 for the
+    /// complete -- see RE-251 for the
     /// before/after golden-scene impact.
     pub const DEPTH_TEST: u32 = 1 << 15;
     /// RE-244: `G_SETRENDERMODE`'s `Z_UPD` bit -- whether this primitive

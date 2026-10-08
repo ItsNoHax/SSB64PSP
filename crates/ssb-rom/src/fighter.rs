@@ -1056,7 +1056,7 @@ mod tests {
 
     /// Cross-checks `common_parts`'s recovered model-file id against the
     /// decompilation's own relocData naming, for every fighter (RE-242,
-    /// `PLAN.md` R2.2/C2's mesh/costume-file-to-fighter recovery). Ground
+    /// R2.2/C2's mesh/costume-file-to-fighter recovery). Ground
     /// truth is `tools/fighter-model-ground-truth.py`, which reads the
     /// archive-file id straight out of each `<id>_<Name>Model.c` relocData
     /// source filename -- an independent record naming the same file, not a

@@ -147,8 +147,7 @@ if [ -n "$SCENE" ]; then
 else
   rm -f "$MEMSTICK/capture_scene.txt"
 fi
-# psp-game now loads the pack too (`assets.rs`, `plans/gameplay/F1.md`'s
-# "Scene loading" section), but its Training screen only recolours the
+# psp-game now loads the pack too (`assets.rs`), but its Training screen only recolours the
 # background on a missing/bad pack rather than failing to boot, so staging
 # it stays best-effort here, same as for psp-asset-viewer.
 if [ -f "$PACK" ]; then

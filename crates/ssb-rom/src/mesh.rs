@@ -145,7 +145,7 @@ pub struct TextureRef {
     /// made the PSP hold one black edge texel over the entire primitive.
     pub origin_s: u16,
     pub origin_t: u16,
-    /// `G_SETTILE`'s raw `mask_s`/`mask_t`, 0..15 (`PLAN.md` R2.0/P0b). Unlike
+    /// `G_SETTILE`'s raw `mask_s`/`mask_t`, 0..15 (R2.0/P0b). Unlike
     /// [`Self::mirror_s`]/[`Self::mirror_t`], not folded into a derived bool:
     /// distinguishing an axis with no repeat period at all (`mask == 0`, which
     /// real hardware always clamps regardless of the `cm` clamp bit --
@@ -159,7 +159,7 @@ pub struct TextureRef {
     /// `((lrs - uls) >> 2) + 1`. Together with [`Self::origin_s`]/
     /// [`Self::origin_t`] this reconstructs the tile's far edge (`sh`/`th`),
     /// which real hardware clamps against independently of the mask period
-    /// (`PLAN.md` R2.0/P0b's mirror+clamp-beyond-the-first-period question).
+    /// (R2.0/P0b's mirror+clamp-beyond-the-first-period question).
     pub drawn_width: u16,
     pub drawn_height: u16,
     /// `G_MDSFT_TEXTLUT` in force when this texture is drawn (RE-313). It
@@ -464,7 +464,7 @@ impl InitialMaterial {
 ///
 /// `PartialOrd`/`Ord` are derived only because struct-level derive needs every
 /// field to support them; nothing compares two `MeshMaterial`s by this order.
-/// A [`Mesh`]'s primitive order is submission order (RE-252, `PLAN.md`
+/// A [`Mesh`]'s primitive order is submission order (RE-252,
 /// R2.2/C4) -- see [`merge_by_material`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct MeshMaterial {
@@ -513,7 +513,7 @@ pub struct MeshMaterial {
     /// hardware itself applies (decals sit exactly at their target surface's
     /// depth; interpenetrating surfaces get a softer compare). The PSP GE has
     /// no equivalent hardware feature; kept as measured render state pending
-    /// a mapping decision (`PLAN.md` `R2.2`/C3), not yet consumed on the
+    /// a mapping decision (`R2.2`/C3), not yet consumed on the
     /// device side.
     pub depth_mode: ZMode,
     /// `G_SETPRIMCOLOR`, when the list or an `MObj` set one.
@@ -3294,7 +3294,7 @@ fn emit_tri(builder: &mut Builder, state: &State, tri: [u8; 3]) -> Result<(), Me
 
 /// Merges only *adjacent* same-material primitives, preserving draw order.
 ///
-/// RE-252 (`PLAN.md` R2.2/C4): this used to group every primitive by material
+/// RE-252 (R2.2/C4): this used to group every primitive by material
 /// archive-wide (a `BTreeMap<MeshMaterial, Vec<u16>>` keyed concatenation),
 /// which reorders triangles whenever the same material recurs non-adjacently
 /// -- `A B A` became `AA B`, drawing the second `A` run's triangles before
@@ -5658,7 +5658,7 @@ mod tests {
         assert_eq!(t.data_offset, 0x40);
     }
 
-    /// `PLAN.md` R2.1/T10 mapping-transition minimum: `textured→untextured→
+    /// R2.1/T10 mapping-transition minimum: `textured→untextured→
     /// texgen`. RE-239 (`tools/romtool`'s
     /// `no_real_texgen_primitive_is_missing_a_bound_texture`) measured this
     /// combination absent from the real archive (0 of 202 real texgen
@@ -5988,7 +5988,7 @@ mod tests {
 
     #[test]
     fn non_adjacent_same_material_runs_stay_separate_and_in_order() {
-        // RE-252 (`PLAN.md` R2.2/C4): an `A B A` material sequence used to
+        // RE-252 (R2.2/C4): an `A B A` material sequence used to
         // merge into `AA B`, reordering the second `A` run's triangles ahead
         // of `B`'s. Submission order must survive: three primitives, in the
         // order they were drawn, not two.

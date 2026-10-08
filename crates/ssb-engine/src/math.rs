@@ -666,7 +666,7 @@ pub fn quantize_lookat_basis(v: [f32; 3]) -> [f32; 3] {
 /// normalisation is also what makes a uniform model scale drop out, since
 /// the transpose of a scaled rotation scales every row by the same factor.
 /// Returns `[0.0; 3]` for a singular matrix rather than producing
-/// infinities. `PLAN.md` R2.1/T4: pulled out of `meshdraw::DrawState::
+/// infinities. R2.1/T4: pulled out of `meshdraw::DrawState::
 /// texgen_object_basis` so it is host-testable and shared by both texgen
 /// paths that call it, rather than a PSP-only inline closure.
 pub fn transform_lookat_basis(columns: [[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {

@@ -169,7 +169,7 @@ impl Rgba8 {
 /// periods): a plain `Repeat` wrap over that doubled image already mirrors
 /// forever, exactly, since wrapping back to the start resumes the same
 /// (unflipped) phase the doubled image began with. A mirrored axis *with*
-/// the clamp bit is different (`PLAN.md` R2.0/P0c, RE-220/RE-221): real
+/// the clamp bit is different (R2.0/P0c, RE-220/RE-221): real
 /// hardware keeps mirroring at every period boundary up to the tile's own
 /// drawn-rect far edge before it clamps, not just through the first
 /// mirrored pair, so this bakes every period the drawn rect spans --
@@ -180,7 +180,7 @@ impl Rgba8 {
 /// real drawn primitive can reach (see `n64_addressing::psp_lowering_axis`,
 /// which models this same fold for direct comparison). An unmirrored axis
 /// with the clamp bit needs the same `drawn`-wide bake whenever the mask
-/// narrows the texture below the drawn rect (`PLAN.md` R2.1/T7a, RE-231):
+/// narrows the texture below the drawn rect (R2.1/T7a, RE-231):
 /// real hardware keeps mask-wrapping every period up to the drawn rect's
 /// far edge before it clamps there, not at the narrowed period's own last
 /// texel, so an unmirrored axis with no such narrowing (`drawn == period`,
@@ -646,7 +646,7 @@ mod tests {
         assert_eq!(px(3, 3), [1, 0, 0, 255]);
     }
 
-    /// `PLAN.md` R2.0/P0c: a mirror+clamp axis bakes every period the
+    /// R2.0/P0c: a mirror+clamp axis bakes every period the
     /// drawn rect spans, not just the first mirrored pair. A 2-texel
     /// period spanning a 7-texel drawn rect covers periods 0,1,2 in full
     /// plus one texel of period 3 -- unflipped, flipped, unflipped, then
@@ -674,7 +674,7 @@ mod tests {
         assert_eq!(out.get(0), [1, 0, 0, 255]);
     }
 
-    /// `PLAN.md` R2.1/T7a (RE-231): a clamp-without-mirror axis whose mask
+    /// R2.1/T7a (RE-231): a clamp-without-mirror axis whose mask
     /// narrows the texture below the drawn rect must keep repeating every
     /// period up to the drawn rect's far edge before `sceGuTexWrap(Clamp)`
     /// takes over -- not clamp at the narrowed period's own last texel. A

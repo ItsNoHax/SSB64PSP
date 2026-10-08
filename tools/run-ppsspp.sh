@@ -36,7 +36,7 @@
 #  4. **Software rasteriser by default.** PPSSPP's hardware backends do not
 #     reflect CPU writes to emulated VRAM, and `sceGuDebugFlush` paints the
 #     debug overlay exactly that way, so under OpenGL the diagnostics are
-#     computed but invisible (docs/reverse-engineering.md RE-014). Forced
+#     computed but invisible (RE-014). Forced
 #     through `--appendconfig`, not `--graphics=software` -- the command-line
 #     flag was observed not to take effect.
 #

@@ -12,7 +12,7 @@
 # mutation (physics, skeleton/stage/material animation, and the live
 # perf-counter HUD fields) behind `regression_capture`'s tick target, and two
 # captures taken at different wall-clock times from that build have been
-# measured byte-identical (docs/reverse-engineering.md RE-123). A real
+# measured byte-identical (RE-123). A real
 # rendering regression should therefore show as a nonzero, not a
 # barely-over-threshold, difference -- so the default stays at 0 rather than
 # picking a tolerance that would hide a real one.

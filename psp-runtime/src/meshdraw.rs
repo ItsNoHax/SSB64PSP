@@ -615,7 +615,7 @@ impl DrawState {
     /// `refs/BattleShip`'s `CalculateNormalDir` is the reference: it
     /// dequantizes the look-at direction (stored as signed bytes, RE-227),
     /// multiplies by the transposed modelview, and normalises --
-    /// `ssb_engine::math::transform_lookat_basis` (`PLAN.md` R2.1/T4)
+    /// `ssb_engine::math::transform_lookat_basis` (R2.1/T4)
     /// reproduces exactly that, host-tested, so this method has no private
     /// copy of the matrix math to drift from it. The normalisation is also
     /// what makes a uniform model scale drop out, since the transpose of a
@@ -857,7 +857,7 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
 /// 64x64 sweeps 47x41 -- the rest is padding the RDP never samples.
 ///
 /// So the generator used is the texture-**matrix** one, with the projection
-/// source set to the raw, un-normalised vertex normal (RE-226, `PLAN.md`
+/// source set to the raw, un-normalised vertex normal (RE-226,
 /// R2.1/T2) -- the RSP's own `G_TEXTURE_GEN` never normalises the quantised
 /// normal either, only scales it, and measurement found the previous
 /// `NormalizedNormal` mode collapsing every normal to the same output
@@ -956,11 +956,11 @@ unsafe fn apply_texture_mapping(
     }
 
     let (basis_s, basis_t) = st.texgen_object_basis();
-    // RE-226 (`PLAN.md` R2.1/T2): the GE's raw `Normal` projection mode
+    // RE-226 (R2.1/T2): the GE's raw `Normal` projection mode
     // divides each `GU_NORMAL_8BIT` component by 128 before this matrix ever
     // sees it, measured against this project's own real `sceGu` draw calls,
     // not just read from PPSSPP source. The original hardware's own
-    // `G_TEXTURE_GEN` formula divides by 127 instead. RE-228 (`PLAN.md`
+    // `G_TEXTURE_GEN` formula divides by 127 instead. RE-228 (
     // R2.1/T4) found that compensating *both* `a` (the dot-product
     // coefficient, which is read through the GE's `/128` divisor) and `b`
     // (the curve's zero-crossing constant plus the tile-origin shift, which

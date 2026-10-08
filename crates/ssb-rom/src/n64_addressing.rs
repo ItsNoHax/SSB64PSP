@@ -1,4 +1,4 @@
-//! Host-side reference model for `PLAN.md` R2.0/P0b: the real N64 RDP tile
+//! Host-side reference model for R2.0/P0b: the real N64 RDP tile
 //! **addressing** pipeline (`coordinate -> tile shift -> tile-origin-relative
 //! -> mask/mirror/clamp`), as distinct from `n64_filter`'s reconstruction
 //! (P0a). RE-218 found that R0.5's mirror/clamp/mask completion claims were
@@ -89,7 +89,7 @@ pub fn address_axis(axis: &TileAxis, coord_s10_5: i32) -> i32 {
     let rel = shifted - (axis.origin_q2 << 3);
     // `calculate_tile_derivs`: `clampens = cs || !mask_s` -- a `mask == 0`
     // axis is *always* clamped by real hardware, regardless of the `cm`
-    // clamp bit (`PLAN.md` R2.0/P0b's `mask == 0` question).
+    // clamp bit (R2.0/P0b's `mask == 0` question).
     let clamp_enabled = axis.clamp_bit || axis.mask == 0;
     let mut s = if clamp_enabled {
         if past_far_edge {
@@ -152,14 +152,14 @@ fn fold_period_mirror(s: i32, period: i32, mirror: bool) -> i32 {
 ///
 /// A mirrored axis with no clamp bakes exactly one mirrored pair, which a
 /// plain `Repeat` wrap then mirrors forever, exactly. A mirrored *and*
-/// clamped axis (`PLAN.md` R2.0/P0c, RE-220/RE-221) bakes every period up
+/// clamped axis (R2.0/P0c, RE-220/RE-221) bakes every period up
 /// to `drawn` (the tile's own drawn-rect extent on this axis,
 /// `TextureRef::drawn_width`/`drawn_height`) instead of just the first
 /// mirrored pair, so `sceGuTexWrap(Clamp)` then holds exactly the real
 /// far-edge texel forever -- matching [`address_axis`]'s own clamp target
 /// (the drawn rect's far edge, folded through the same mask/mirror stage)
 /// for every coordinate a real drawn primitive can reach. A clamped axis
-/// with *no* mirror (`PLAN.md` R2.1/T7a, RE-231) needs the same `drawn`
+/// with *no* mirror (R2.1/T7a, RE-231) needs the same `drawn`
 /// extent, for the same reason: a mask-narrowed period (`period < drawn`)
 /// still wraps every period up to the drawn rect's far edge before real
 /// hardware clamps, so baking only ever `period` texels and clamping to
@@ -269,7 +269,7 @@ mod tests {
         );
     }
 
-    /// `PLAN.md` R2.0/P0b bullet 1: a drawn rect spanning *four* mask
+    /// R2.0/P0b bullet 1: a drawn rect spanning *four* mask
     /// periods (`sh - sl = 127 texels` over a 32-texel mask) with
     /// mirror+clamp (`cms == 3`). Real hardware keeps mirroring at every
     /// period boundary all the way to the drawn-rect edge, not just through
@@ -301,7 +301,7 @@ mod tests {
         );
     }
 
-    /// `PLAN.md` R2.0/P0c (RE-221): at the *third* mask period (past the
+    /// R2.0/P0c (RE-221): at the *third* mask period (past the
     /// first mirrored pair, still short of the drawn-rect far edge), the
     /// fixed PSP lowering model now agrees with real hardware -- pre-fix, a
     /// mirror-double + `sceGuTexWrap(Clamp)` model would have already
@@ -347,7 +347,7 @@ mod tests {
         );
     }
 
-    /// `PLAN.md` R2.1/T7a (RE-231): a clamp-without-mirror axis whose mask
+    /// R2.1/T7a (RE-231): a clamp-without-mirror axis whose mask
     /// genuinely narrows the texture below the drawn rect (`period <<
     /// drawn`) must keep mask-wrapping every period up to the drawn rect's
     /// far edge before real hardware clamps -- not clamp at the narrowed
@@ -377,7 +377,7 @@ mod tests {
         );
     }
 
-    /// `PLAN.md` R2.0/P0b bullet 2: `mask == 0` is *always* clamped by real
+    /// R2.0/P0b bullet 2: `mask == 0` is *always* clamped by real
     /// hardware (`clampens = cs || !mask_s`), even when the `cm` clamp bit
     /// itself is clear (`cms` requesting plain wrap/mirror with no period).
     #[test]
