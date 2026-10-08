@@ -12,3 +12,8 @@ description = "Platform-agnostic engine abstractions (Layer B) for the SSB64 PSP
 [features]
 default = ["std"]
 std = []
+
+[dev-dependencies]
+# The audio tests build the pack's audio section from the user's ROM
+# (`SSB64_ROM`); without it they skip.
+ssb-rom = { workspace = true }
