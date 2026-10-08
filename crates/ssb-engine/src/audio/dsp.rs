@@ -300,7 +300,12 @@ impl Dmem {
         let mut r = [0i16; COUNT / 2];
         l.copy_from_slice(&self.w[MAIN_L / 2..MAIN_L / 2 + COUNT / 2]);
         r.copy_from_slice(&self.w[MAIN_R / 2..MAIN_R / 2 + COUNT / 2]);
-        for (d, (a, b)) in self.w[..COUNT].as_chunks_mut::<2>().0.iter_mut().zip(l.iter().zip(&r)) {
+        for (d, (a, b)) in self.w[..COUNT]
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .zip(l.iter().zip(&r))
+        {
             d[0] = *a;
             d[1] = *b;
         }
@@ -308,7 +313,14 @@ impl Dmem {
 
     /// `A_POLEF` (the pole variant, `table[0..2] == 0`): in place on the 184
     /// samples at `addr`. `coefs` is what `A_LOADADPCM` loaded (32 bytes).
-    pub fn polef(&mut self, flags: u32, gain: u16, coefs: &[i16; 16], state: &mut [i16; 4], addr: usize) {
+    pub fn polef(
+        &mut self,
+        flags: u32,
+        gain: u16,
+        coefs: &[i16; 16],
+        state: &mut [i16; 4],
+        addr: usize,
+    ) {
         let h1 = &coefs[..8];
         let h2_before = &coefs[8..];
         let g = gain as i32;
@@ -423,7 +435,8 @@ mod tests {
         d.resample(A_INIT, 0x8000, &mut st, TEMP_1, TEMP_0, &table);
         let out = d.get(TEMP_0, COUNT);
         // An impulse comes out as the filter row reversed, delayed.
-        let expect: [i16; 4] = [-33, 3398, 26285, 3129].map(|t: i16| ((10000 * t as i32) >> 15) as i16);
+        let expect: [i16; 4] =
+            [-33, 3398, 26285, 3129].map(|t: i16| ((10000 * t as i32) >> 15) as i16);
         assert_eq!(&out[11..15], &expect);
         // 184 inputs consumed: the state holds the last four.
         assert_eq!(st[4], 0);

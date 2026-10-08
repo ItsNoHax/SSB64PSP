@@ -234,6 +234,8 @@ pub struct Synth {
     dmem: Dmem,
     /// `ALParam` allocations that found the pool empty.
     pub params_dropped: u32,
+    /// Physical voices stolen by `_allocatePVoice` (diagnostic).
+    pub steals: u32,
 }
 
 impl Synth {
@@ -260,6 +262,7 @@ impl Synth {
             fx,
             dmem: Dmem::default(),
             params_dropped: 0,
+            steals: 0,
         };
         for i in 0..MAX_PVOICES as u8 {
             s.link(i, FREE_LIST);
@@ -531,6 +534,7 @@ impl Synth {
             return false;
         };
         if stolen {
+            self.steals += 1;
             self.pvoices[pv as usize].offset = 512;
             if let Some(old) = self.pvoices[pv as usize].vvoice {
                 self.vvoices[old as usize].pvoice = None;
@@ -710,9 +714,10 @@ impl Synth {
                         e.em_cvol_l = 1;
                         e.em_cvol_r = 1;
                     } else {
-                        e.em_cvol_l = ((e.em_volume as i32 * eq[e.em_pan as usize] as i32) >> 15) as i16;
-                        e.em_cvol_r =
-                            ((e.em_volume as i32 * eq[127 - e.em_pan as usize] as i32) >> 15) as i16;
+                        e.em_cvol_l =
+                            ((e.em_volume as i32 * eq[e.em_pan as usize] as i32) >> 15) as i16;
+                        e.em_cvol_r = ((e.em_volume as i32 * eq[127 - e.em_pan as usize] as i32)
+                            >> 15) as i16;
                     }
                     e.rs_ratio = pitch;
                 }
@@ -724,9 +729,10 @@ impl Synth {
                     let eq = &data.eqpower;
                     let e = &mut self.pvoices[i];
                     if e.em_delta >= e.em_seg_end {
-                        e.em_ltgt = ((e.em_volume as i32 * eq[e.em_pan as usize] as i32) >> 15) as i16;
-                        e.em_rtgt =
-                            ((e.em_volume as i32 * eq[127 - e.em_pan as usize] as i32) >> 15) as i16;
+                        e.em_ltgt =
+                            ((e.em_volume as i32 * eq[e.em_pan as usize] as i32) >> 15) as i16;
+                        e.em_rtgt = ((e.em_volume as i32 * eq[127 - e.em_pan as usize] as i32)
+                            >> 15) as i16;
                         e.em_delta = e.em_seg_end;
                         e.em_cvol_l = e.em_ltgt;
                         e.em_cvol_r = e.em_rtgt;
@@ -801,9 +807,19 @@ impl Synth {
         let init = if e.em_first != 0 {
             e.em_first = 0;
             e.em_ltgt = ((e.em_volume as i32 * eq[e.em_pan as usize] as i32) >> 15) as i16;
-            e.em_lratm = get_rate(e.em_cvol_l as f32, e.em_ltgt as f32, e.em_seg_end, &mut e.em_lratl);
+            e.em_lratm = get_rate(
+                e.em_cvol_l as f32,
+                e.em_ltgt as f32,
+                e.em_seg_end,
+                &mut e.em_lratl,
+            );
             e.em_rtgt = ((e.em_volume as i32 * eq[127 - e.em_pan as usize] as i32) >> 15) as i16;
-            e.em_rratm = get_rate(e.em_cvol_r as f32, e.em_rtgt as f32, e.em_seg_end, &mut e.em_rratl);
+            e.em_rratm = get_rate(
+                e.em_cvol_r as f32,
+                e.em_rtgt as f32,
+                e.em_seg_end,
+                &mut e.em_rratl,
+            );
             Some(EnvMixInit {
                 vol: [e.em_cvol_l, e.em_cvol_r],
                 tgt: [e.em_ltgt, e.em_rtgt],
@@ -863,7 +879,9 @@ impl Synth {
             return;
         };
         let (wt, bank, tbl) = data.wave(table);
-        let book = wt.book.map_or(&[0i16; 64][..], |b| &bank.books[b as usize].book[..]);
+        let book = wt
+            .book
+            .map_or(&[0i16; 64][..], |b| &bank.books[b as usize].book[..]);
         let base = wt.base as i32;
         let len = ADPCMFBYTES * (wt.len / ADPCMFBYTES);
 
@@ -909,10 +927,22 @@ impl Synth {
                 nframes = (tsam + ADPCMFSIZE - 1) >> LFSAMPLES;
                 nbytes = nframes * ADPCMFBYTES;
                 let flags = f.dc_first as u32 | dsp::A_LOOP;
-                decode_chunk(&mut self.dmem, f, tbl, book, tsam, nbytes, op as usize, flags);
+                decode_chunk(
+                    &mut self.dmem,
+                    f,
+                    tbl,
+                    book,
+                    tsam,
+                    nbytes,
+                    op as usize,
+                    flags,
+                );
                 let lastsam = self.pvoices[i].dc_lastsam;
-                self.dmem
-                    .dmem_move((op + (lastsam << 1)) as usize, b_end as usize, (n_sam << 1) as usize);
+                self.dmem.dmem_move(
+                    (op + (lastsam << 1)) as usize,
+                    b_end as usize,
+                    (n_sam << 1) as usize,
+                );
             }
             let f = &mut self.pvoices[i];
             f.dc_lastsam = (out_count + f.dc_lastsam) & 0xF;
@@ -932,7 +962,16 @@ impl Synth {
         if (n_over - (n_over & 0xF)) < out_count {
             decoded = true;
             let first = f.dc_first as u32;
-            decode_chunk(&mut self.dmem, f, tbl, book, n_sam - n_over, nbytes, *outp, first);
+            decode_chunk(
+                &mut self.dmem,
+                f,
+                tbl,
+                book,
+                n_sam - n_over,
+                nbytes,
+                *outp,
+                first,
+            );
             let f = &mut self.pvoices[i];
             if f.dc_lastsam != 0 {
                 *outp += (f.dc_lastsam << 1) as usize;
@@ -979,7 +1018,15 @@ fn decode_chunk(
         &[][..]
     };
     let lstate = f.dc_lstate;
-    dmem.adpcm(flags, &mut f.dc_state, &lstate, book, input, outp, (tsam << 1) as usize);
+    dmem.adpcm(
+        flags,
+        &mut f.dc_state,
+        &lstate,
+        book,
+        input,
+        outp,
+        (tsam << 1) as usize,
+    );
     f.dc_first = 0;
 }
 
@@ -1095,7 +1142,17 @@ mod tests {
             unity_pitch: 0,
         };
         assert!(syn.alloc_voice(FGM_VOICE_BASE, &vc));
-        syn.start_voice_params(FGM_VOICE_BASE, WaveRef { bank: 1, index: 0 }, 1.0, 0x7FFF, 64, 0, 0, 0, 0x5F);
+        syn.start_voice_params(
+            FGM_VOICE_BASE,
+            WaveRef { bank: 1, index: 0 },
+            1.0,
+            0x7FFF,
+            64,
+            0,
+            0,
+            0,
+            0x5F,
+        );
         let mut out = [0i16; 552 * 2];
         let mut peak = 0i32;
         for _ in 0..20 {
@@ -1129,9 +1186,17 @@ mod unit_tests {
     fn get_rate_matches_c() {
         for (vol, tgt, count, m, l, v) in GET_RATE {
             let mut ratel = 0;
-            assert_eq!(get_rate(vol, tgt, count, &mut ratel), m, "{vol} {tgt} {count}");
+            assert_eq!(
+                get_rate(vol, tgt, count, &mut ratel),
+                m,
+                "{vol} {tgt} {count}"
+            );
             assert_eq!(ratel, l, "{vol} {tgt} {count}");
-            assert_eq!(get_vol(vol as i16, count, m, ratel), v, "{vol} {tgt} {count}");
+            assert_eq!(
+                get_vol(vol as i16, count, m, ratel),
+                v,
+                "{vol} {tgt} {count}"
+            );
         }
     }
 

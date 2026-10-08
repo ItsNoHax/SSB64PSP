@@ -77,7 +77,12 @@ impl CSeq {
     /// the division; each valid track's first delta is read at once.
     pub fn new(buf: &[u8]) -> Self {
         let be32 = |at: usize| {
-            u32::from_be_bytes([rd(buf, at), rd(buf, at + 1), rd(buf, at + 2), rd(buf, at + 3)])
+            u32::from_be_bytes([
+                rd(buf, at),
+                rd(buf, at + 1),
+                rd(buf, at + 2),
+                rd(buf, at + 3),
+            ])
         };
         let mut s = Self {
             delta_flag: 1,
@@ -314,7 +319,11 @@ mod tests {
     fn seq_bytes(data: &super::super::data::AudioData, id: usize) -> Vec<u8> {
         let e = data.seqs[id];
         let len = e.len as usize + (e.len as usize & 1);
-        let mut v: Vec<u8> = data.sbk[e.offset as usize..].iter().copied().take(len).collect();
+        let mut v: Vec<u8> = data.sbk[e.offset as usize..]
+            .iter()
+            .copied()
+            .take(len)
+            .collect();
         v.resize(len, 0);
         v
     }
@@ -348,7 +357,11 @@ mod tests {
                 let evt = s.next_event(&mut buf);
                 match evt {
                     Event::SeqMidi(m) => {
-                        assert!((0x80..0xF0).contains(&m.status), "seq {id}: status {:#x}", m.status);
+                        assert!(
+                            (0x80..0xF0).contains(&m.status),
+                            "seq {id}: status {:#x}",
+                            m.status
+                        );
                         assert!(m.byte1 < 0x80, "seq {id}: byte1 {:#x}", m.byte1);
                         if m.status & 0xF0 == NOTE_ON {
                             assert!((1..0x80).contains(&m.byte2), "seq {id}: vel {:#x}", m.byte2);
@@ -360,7 +373,11 @@ mod tests {
                         // valid track with the smallest pending delta.
                         let t = track.expect("loop end track");
                         assert_eq!(rd(&buf, before_loc[t]), 0xFF, "seq {id}");
-                        assert_eq!(rd(&buf, before_loc[t] + 1), AL_CMIDI_LOOPEND_CODE, "seq {id}");
+                        assert_eq!(
+                            rd(&buf, before_loc[t] + 1),
+                            AL_CMIDI_LOOPEND_CODE,
+                            "seq {id}"
+                        );
                         let p = before_loc[t] + 2;
                         let (loop_ct, now) = (buf[p], buf[p + 1]);
                         match before_ct[t] {
