@@ -261,6 +261,36 @@ pub fn init_damage_vars_full(
     element: crate::combat::Element,
     allow_losecopy: bool,
 ) {
+    init_damage_vars_sfx(
+        f,
+        status_replace,
+        damage,
+        knockback,
+        angle_i,
+        lr,
+        damage_index,
+        element,
+        allow_losecopy,
+        false,
+    );
+}
+
+/// [`init_damage_vars_full`] with `is_force_damage_sfx`: the stage throws
+/// (the Tornado, the barrel) and the throw releases play the damage voice
+/// whatever the hitstun.
+#[allow(clippy::too_many_arguments)]
+pub fn init_damage_vars_sfx(
+    f: &mut Fighter,
+    status_replace: Option<AnyStatus>,
+    damage: i32,
+    knockback: f32,
+    angle_i: i32,
+    lr: f32,
+    damage_index: usize,
+    element: crate::combat::Element,
+    allow_losecopy: bool,
+    is_force_damage_sfx: bool,
+) {
     if crate::map::is_cliff_hold(f.status.status) {
         crate::status::cliff_release_position(f);
     }
@@ -393,6 +423,16 @@ pub fn init_damage_vars_full(
     crate::reaction::set_dust_effect_interval(f);
     if f.reaction.dust_effect_int != 0 {
         f.reaction.dust_effect_int = 1;
+    }
+    // `attr->damage_sfx` from `FTCOMMON_DAMAGE_FIGHTER_DAMAGEVOICE_MIN`
+    // (80) hitstun, or when forced. As in the source, a forced voice
+    // plays even for a fighter whose `damage_sfx` is `VoiceEnd`.
+    if let Some(a) = crate::motion::combat_attrs(f.kind) {
+        if (hitstun_f >= 80.0 && a.damage_sfx != crate::sound::id::nSYAudioFGMVoiceEnd)
+            || is_force_damage_sfx
+        {
+            crate::sound::play_fgm(a.damage_sfx);
+        }
     }
 }
 

@@ -666,6 +666,14 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
     let c = s.campaign.as_mut().expect("campaign");
     let mut bonus = bonus;
     bonus.practice = c.practice.is_some();
+    // `sc1PBonusStageProcUpdate`'s new-record check reads the course's
+    // completed best time.
+    {
+        let rec = &s.backup.spgame_records[bonus.state.players[s.spgame_scene.player as usize].fkind as usize];
+        let (count, time) = if bonus.platforms[0].is_some() { (rec.bonus2_task_count, rec.bonus2_time) } else { (rec.bonus1_task_count, rec.bonus1_time) };
+        bonus.record_time = (count == spgame::BONUSGAME_TASK_MAX).then_some(time);
+    }
+
     // `sc1PBonusStageMakeTimer`'s practice digits.
     s.damage_hud.bonus_timer = bonus.practice.then(spgame::bonus_stage::PracticeTimer::default);
     c.bonus = Some(alloc::boxed::Box::new(bonus));

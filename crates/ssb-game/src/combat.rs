@@ -1722,9 +1722,14 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         } else {
             match f.hits.damage_kind {
                 DamageKind::None => {}
+                // `ftParamStopVoiceRunProcDamage` before both
+                // (`goto_damage_status` stops the voice itself).
                 DamageKind::Status => goto_damage_status(f),
                 DamageKind::ColAnim => set_damage_colanim(f),
-                DamageKind::Catch => update_catch_resist(f),
+                DamageKind::Catch => {
+                    crate::fighter_sound::stop_voice(f);
+                    update_catch_resist(f)
+                }
                 DamageKind::Default => update_main(f, partner),
             }
         }
@@ -1740,6 +1745,7 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         damage = f.hits.shield_damage;
     } else if f.hits.attack_shield_push != 0 {
         if f.hits.attack_rebound != 0.0 && f.grab.catch.is_none() && f.grab.capture.is_none() {
+            crate::fighter_sound::stop_voice(f);
             crate::reaction::set_rebound_wait(f, f.hits.attack_rebound, f.hits.hit_lr);
         }
         damage = f.hits.attack_shield_push;
@@ -1762,6 +1768,9 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
                 crate::fighter::Facing::Left
             };
             status::set_fox_special_lw_hit(f);
+        } else if base_kind(f.kind) == FighterKind::Ness {
+            // `nFTSpecialCollKindNessReflector`: the bat's reflect.
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMBatHit);
         }
     } else if f.hits.absorb_lr != 0.0 {
         crate::ness::proc_absorb(f, f.hits.absorb_lr);
@@ -1812,12 +1821,16 @@ fn update_catch_resist(f: &mut Fighter) {
             f.hits.damage_angle,
             f.hits.damage_lr,
         );
+        crate::fighter_sound::stop_voice(f);
         crate::grab::set_donkey_throwf_damage(f, kb, angle, lr);
     }
 }
 
-/// `ftCommonDamageGotoDamageStatus`.
+/// `ftCommonDamageGotoDamageStatus`. Every caller in the source runs
+/// `ftParamStopVoiceRunProcDamage` on the fighter first; that stop is here.
 pub fn goto_damage_status(f: &mut Fighter) {
+    crate::fighter_sound::stop_voice(f);
+
     // `is_cliff_hold`: set by the ledge-hang statuses.
     if matches!(
         f.status.status,

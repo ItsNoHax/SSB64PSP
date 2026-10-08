@@ -1086,6 +1086,8 @@ pub(crate) fn drop_own_catch(f: &mut Fighter) {
 /// `ftCommonCapturePulledProcCapture` @ 0x8014A860, run on the grabbed
 /// fighter once its catcher's snapshot has been delivered.
 fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
+    // `ftParamStopVoiceRunProcDamage`.
+    crate::fighter_sound::stop_voice(f);
     drop_own_catch(f);
     f.grab.capture = Some(catcher_port);
     f.grab.holder = Some(holder);
@@ -1145,6 +1147,8 @@ pub(crate) fn captain_offset(kind: FighterKind) -> Vec3 {
 }
 
 fn capture_captain(f: &mut Fighter, catcher_port: u8, holder: Holder) {
+    // `ftParamStopVoiceRunProcDamage`.
+    crate::fighter_sound::stop_voice(f);
     drop_own_catch(f);
     f.grab.capture = Some(catcher_port);
     f.grab.holder = Some(holder);
@@ -1438,7 +1442,9 @@ fn release_with(
         damage = 0;
     }
     f.thrown.pending = thrown;
-    attack::init_damage_vars_full(
+    // `is_force_damage_sfx`: TRUE for `ftCommonThrownReleaseThrownUpdateStats`,
+    // FALSE for `ftCommonThrownSetStatusDamageRelease`.
+    attack::init_damage_vars_sfx(
         f,
         desc.status.map(AnyStatus::Common),
         damage,
@@ -1452,6 +1458,7 @@ fn release_with(
             crate::combat::Element::Normal
         },
         true,
+        is_throw,
     );
     // The source updates percent after the damage status and its events.
     f.add_damage(damage);
@@ -1742,7 +1749,20 @@ fn set_no_damage_release(f: &mut Fighter) {
         f.handicap,
     );
     let lr = f.facing.sign();
-    attack::init_damage_vars(f, None, 0, knockback, d.angle, lr, false);
+    // `is_force_damage_sfx = TRUE`.
+    f.add_damage(0);
+    attack::init_damage_vars_sfx(
+        f,
+        None,
+        0,
+        knockback,
+        d.angle,
+        lr,
+        attack::DAMAGE_INDEX_N,
+        crate::combat::Element::Normal,
+        false,
+        true,
+    );
     clear_damage_stats(f);
 }
 

@@ -1733,7 +1733,10 @@ unsafe fn training_step(
     // death scoring. A timer callback already dispatched keeps its end.
     if let ssb_game::stage::Controller::Bonus3(race) = &stage_ctl.controller {
         if race.complete {
-            if let Some(battle) = battle.as_deref_mut() { battle.announce_complete(); }
+            if let Some(battle) = battle.as_deref_mut() {
+                battle.announce_complete(ssb_game::sound::id::nSYAudioVoiceAnnounceComplete);
+                battle.add_end_sound(ssb_game::sound::id::nSYAudioFGMBonusComplete);
+            }
         }
     }
     // The vapor and sparkles the stage process made.
@@ -3084,6 +3087,10 @@ unsafe fn training_frame(
             Some(c) => campaign::collect_fall(c, battle, &mut f.fighter),
             None => report_falls(battle.as_mut(), &mut f.fighter),
         }};
+        // `ftCommonDeadAddDeadSFXSoundQueue`'s queue half, after the score.
+        if let Some(b) = battle.as_mut() {
+            ssb_game::dead::take_end_sounds(&mut f.fighter, b);
+        }
         if let Some(hud) = damage_hud.damage.get_mut(usize::from(f.fighter.port)) {
             update_damage_hud(hud, &f.fighter, fell, started);
         }
@@ -3441,6 +3448,9 @@ fn start_sudden_death(
     // fighters are at 300%, and `ifCommonSuddenDeathMakeInterface`.
     reset_damage_hud(world);
     world.damage_hud.countdown = Some(ssb_game::countdown::Countdown::sudden_death());
+    // `ifCommonSuddenDeathMakeInterface`.
+    ssb_game::sound::play_fgm(ssb_game::sound::id::nSYAudioVoiceAnnounceSuddenDeath);
+
     *battle = Some(sudden);
     Some(index)
 }

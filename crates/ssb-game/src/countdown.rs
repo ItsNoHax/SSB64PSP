@@ -193,6 +193,7 @@ impl Countdown {
         self.go_wait = 60;
         // `gcEjectGObj(NULL)`: the thread's own letters go.
         self.sudden_death_letters = false;
+        crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceAnnounceGo);
     }
 
     fn push(&mut self, s: SObj) -> usize {
@@ -232,13 +233,23 @@ impl Countdown {
         } else if t < sec(6) {
             let mut changed = true;
             match t {
-                x if x == sec(2) => self.lamp_status = 6,
-                x if x == sec(3) => self.lamp_status = 7,
-                x if x == sec(4) => self.lamp_status = 8,
+                x if x == sec(2) => {
+                    self.lamp_status = 6;
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceAnnounceThree);
+                }
+                x if x == sec(3) => {
+                    self.lamp_status = 7;
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceAnnounceTwo);
+                }
+                x if x == sec(4) => {
+                    self.lamp_status = 8;
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceAnnounceOne);
+                }
                 x if x == sec(5) => {
                     // `ifCommonAnnounceGoMakeInterface`: 60 ticks on screen.
                     self.go_wait = 60;
                     self.lamp_status = 9;
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceAnnounceGo);
                 }
                 _ => changed = false,
             }

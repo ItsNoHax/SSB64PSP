@@ -86,3 +86,34 @@ pub fn play_hit_sfx(f: &mut Fighter, fgm_kind: u8, fgm_level: u8) {
     let row = HIT_COLLISION_FGMS[fgm_kind as usize & 7];
     sound::play_fgm_at(row[(fgm_level as usize).min(2)], f.pos.x);
 }
+
+/// `dFTCommonDataDownBounceSFX`, by `FTKind`.
+pub const DOWN_BOUNCE_SFX: [u16; 27] = [
+    nSYAudioFGMMarioDownBounce,
+    nSYAudioFGMFoxDownBounce,
+    nSYAudioFGMDonkeyDownBounce,
+    nSYAudioFGMSamusDownBounce,
+    nSYAudioFGMMarioDownBounce,
+    nSYAudioFGMLinkDownBounce,
+    nSYAudioFGMYoshiDownBounce,
+    nSYAudioFGMCaptainDownBounce,
+    nSYAudioFGMKirbyDownBounce,
+    nSYAudioFGMPikachuDownBounce,
+    nSYAudioFGMPurinDownBounce,
+    nSYAudioFGMNessDownBounce,
+    nSYAudioFGMMarioDownBounce,
+    nSYAudioFGMMarioDownBounce,
+    nSYAudioFGMMarioDownBounce,
+    nSYAudioFGMFoxDownBounce,
+    nSYAudioFGMDonkeyDownBounce,
+    nSYAudioFGMSamusDownBounce,
+    nSYAudioFGMMarioDownBounce,
+    nSYAudioFGMLinkDownBounce,
+    nSYAudioFGMYoshiDownBounce,
+    nSYAudioFGMCaptainDownBounce,
+    nSYAudioFGMKirbyDownBounce,
+    nSYAudioFGMPikachuDownBounce,
+    nSYAudioFGMPurinDownBounce,
+    nSYAudioFGMNessDownBounce,
+    nSYAudioFGMDonkeyDownBounce,
+];

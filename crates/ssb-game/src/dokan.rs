@@ -201,6 +201,7 @@ pub fn set_start(f: &mut Fighter, material: u16) {
     f.dokan.yaw = facing_yaw(f);
     start_update_yaw(f);
     f.dokan.plant_request = true;
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMarioDokan);
 }
 
 /// `ftCommonDokanWaitSetStatus`: into the pipe, bound for the other one or,
@@ -273,6 +274,7 @@ where
         f.dokan.turn_stop_wait = TURN_STOP_WAIT_DEFAULT;
         f.dokan.yaw = 0.0;
     }
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMarioDokan);
 }
 
 /// `ftCommonDokanWalkSetStatus`: out of the wall pipe, facing right.
@@ -289,6 +291,7 @@ fn set_walk(f: &mut Fighter) {
     f.pos = f.dokan.target_pos;
     f.dokan.playertag_wait = PLAYERTAG_WAIT;
     f.dokan.yaw = facing_yaw(f);
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMarioDokan);
 }
 
 /// `proc_update` of the four statuses (none has a `proc_interrupt`).

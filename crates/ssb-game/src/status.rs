@@ -2230,6 +2230,7 @@ pub fn set_guard_on(f: &mut Fighter) {
     f.guard.is_release = false;
     f.guard.is_setoff = false;
     f.guard.slide_tics = slide_tics;
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMGuardOn);
 }
 
 /// `ftCommonGuardOnCheckInterruptCommon` @ `ftcommonguard1.c:460`. Sits
@@ -2276,6 +2277,7 @@ pub fn set_guard_off(f: &mut Fighter) {
     play_anim_events(f);
     f.guard.is_shield = flag;
     guard_update_joints(f);
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMGuardOff);
 }
 
 /// `ftCommonGuardSetStatusFromEscape` / `ftCommonGuardCheckInterruptEscape`:
