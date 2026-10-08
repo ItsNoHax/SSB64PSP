@@ -395,7 +395,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // file's bytes, with the `FileDesc` table and each file's extern IDs, so a
 // runtime holds the tables and the shared region and reads each scene's
 // files. `Header::SIZE` 104 -> 116.
-pub const VERSION: u32 = 107;
+// 108 appends the audio section after the blob (D-049, `crate::audio`):
+// the sequence bank, both sound banks, the FGM files and the synthesizer's
+// constant tables, read at boot into their own buffer. `Header::SIZE`
+// 116 -> 124 (`audio_offset`, `audio_len`); [`resident_len`] is unchanged.
+pub const VERSION: u32 = 108;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -471,10 +475,14 @@ pub struct Header {
     pub file_count: u32,
     /// `u16` file IDs in the dependency list, summed over every file.
     pub file_dep_count: u32,
+    /// File offset of the audio section ([`crate::audio`], D-049), 64-byte
+    /// aligned after the blob; 0 with `audio_len` 0 when the pack has none.
+    pub audio_offset: u32,
+    pub audio_len: u32,
 }
 
 impl Header {
-    pub const SIZE: usize = 116;
+    pub const SIZE: usize = 124;
 }
 
 /// A vertex in the GE's expected layout.
@@ -2093,6 +2101,9 @@ pub struct PackWriter {
     /// Synthetic `source_file` keys and the archive file whose bytes they
     /// join (`set_owner`).
     owner_alias: alloc::collections::BTreeMap<u32, u32>,
+    /// The audio section ([`crate::audio::build_section`]), written after
+    /// the blob.
+    audio: Vec<u8>,
 }
 
 /// Whose bytes a blob range holds (RE-475).
@@ -2117,6 +2128,11 @@ struct Chunk {
 impl PackWriter {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets the audio section `finish` appends after the blob (D-049).
+    pub fn set_audio(&mut self, section: Vec<u8>) {
+        self.audio = section;
     }
 
     /// Appends bytes to the blob, aligned, returning their offset.
@@ -3495,6 +3511,13 @@ impl PackWriter {
         out.extend_from_slice(&layout.shared_len.to_le_bytes());
         out.extend_from_slice(&(layout.files.len() as u32).to_le_bytes());
         out.extend_from_slice(&(layout.deps.len() as u32).to_le_bytes());
+        let audio_offset = if self.audio.is_empty() {
+            0
+        } else {
+            (blob_offset + layout.blob.len()).next_multiple_of(AUDIO_ALIGN)
+        };
+        out.extend_from_slice(&(audio_offset as u32).to_le_bytes());
+        out.extend_from_slice(&(self.audio.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -3785,6 +3808,10 @@ impl PackWriter {
 
         out.resize(blob_offset, 0);
         out.extend_from_slice(&layout.blob);
+        if !self.audio.is_empty() {
+            out.resize(audio_offset, 0);
+            out.extend_from_slice(&self.audio);
+        }
         out
     }
 
@@ -3859,12 +3886,19 @@ pub fn resident_len(head: &[u8]) -> Option<usize> {
 
 /// Where the pack's audio section lies in the file: `(offset, len)`, read
 /// from a header buffer like [`resident_len`]. The section is loaded once at
-/// boot and stays resident (D-049). PLACEHOLDER until the audio section is
-/// written: always `None`.
+/// boot and stays resident (D-049). `None` for another version's header or
+/// a pack built without audio.
 pub fn audio_range(head: &[u8]) -> Option<(usize, usize)> {
-    let _ = head;
-    None
+    if head.len() < Header::SIZE || u32_at(head, 0) != MAGIC || u32_at(head, 4) != VERSION {
+        return None;
+    }
+    let len = u32_at(head, 120) as usize;
+    (len != 0).then(|| (u32_at(head, 116) as usize, len))
 }
+
+/// The audio section's file alignment: a cache line, so the boot read can
+/// land in an aligned buffer without a copy.
+pub const AUDIO_ALIGN: usize = 64;
 
 /// Zero-copy view over a loaded pack.
 ///

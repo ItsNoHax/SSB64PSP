@@ -8,6 +8,7 @@
 //! implements it over an [`AudioSystem`] it renders on its own thread.
 
 mod api;
+pub mod data;
 mod shared;
 mod system;
 
