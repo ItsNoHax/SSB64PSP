@@ -9,7 +9,7 @@ Status: complete.
 The build-time merge joins only adjacent primitives with the same material,
 preserving `A B A` order (RE-252). The texture cache key covers every
 conversion input (RE-253). Order fidelity costs about 113 extra draw calls,
-an optimization lead for `P5`.
+an optimization lead (`PLAN.md`, PSP performance).
 
 ## GE state cache
 
@@ -22,6 +22,6 @@ texture-function cache distinguishes "unknown" from "known `Modulate`"
 
 ## Optimization
 
-Batching, state sorting and further caching wait for `P5` profiling of real
-matches, and only on state that has passed its correctness checks
+Batching, state sorting and further caching wait for profiling of real
+matches on a PSP (`PLAN.md` milestone `MS8`), and only on state that has passed its correctness checks
 ([D-036](../decisions/D-036.md)).

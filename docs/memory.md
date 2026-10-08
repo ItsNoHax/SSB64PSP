@@ -83,8 +83,8 @@ samples textures directly from the pack in main RAM.
 
 The production game's largest frame is `enter_training`: it builds
 `GroundObjects`, including Sector Z's Arwing, by value. Preview model
-states are heap-owned. Current frame sizes and the remaining 256 KiB
-main-thread stack budget live in [STATUS.md](../STATUS.md) and RE-436.
+states are heap-owned. The deepest measured stack is in
+[STATUS.md](../STATUS.md); the stack is 512 KiB (RE-469).
 
 ## Original pattern
 

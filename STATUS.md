@@ -1,60 +1,44 @@
 # Status
 
-Current snapshot. History lives in git and `docs/evidence/`.
+Where the project is now. The roadmap and every open task are in
+[`PLAN.md`](PLAN.md); history is in git.
 
 ## Current
 
-- **Milestone:** gameplay source port (`P1`–`P4` combined; `P0` closed).
-  The front end boots into the N64 logo and runs the whole attract loop.
-- **Completed batch:** CRT overscan crop (D-047, RE-477, supersedes
-  D-008).
-  - The N64's visible (10,10)–(310,230) box fills the PSP's 272 lines at
-    272/220 and is centred, about 371 px wide with black bars.
-  - The 10-pixel strip is cropped. The N64 never draws there: libgc clamps
-    every scissor 10 px inside the frame.
-  - `ssb_engine::coord` is the only screen mapping.
-  - The battle camera frames at its viewport's 15/11, as the N64 does.
-- **Next batch:** the PSP-2000 checks of D-047's GE fill cost and RE-476's
-  frozen picture, and installing the new EBOOT. After that: the opening's
-  CPU-bound scenes on the PSP (`TODO.md`, CPU performance), the CPUs'
-  special effects and the status remainder.
+| Area | State |
+|---|---|
+| Build | Host workspace on Rust 1.98.0; `psp-game` and `psp-asset-viewer` on the pinned nightly; pack v107 (`487bfd8a…`) |
+| Gameplay | All fighters, VS, Training, 1P campaign through the ending; How to Play matches the N64 on every frame |
+| Rendering | CRT overscan crop done ([D-047](docs/decisions/D-047.md), RE-477): the N64's visible box fills the PSP's 272 lines |
+| Frontend | N64 logo, opening, title and attract loop; per-scene loading with background reads (RE-475, RE-476) |
+| PSP | 60 FPS under PPSSPP; on a PSP-2000 three opening scenes run at 45–57 FPS (RE-476); PSP-1000 unsupported |
+| Tests | 2,174 workspace tests, clippy and rustfmt pass; 198 of 198 goldens pass after the D-047 rebaseline |
 
-## Last completed
+## Current Work
 
-| Batch | Result | Evidence |
-|---|---|---|
-| Overscan crop | Visible box fills the height; strip cropped; one mapping | RE-477, D-047 |
-| Intro slowdowns | Background scene reads; no load hitch in the intro on a PSP-2000 | RE-476 |
-| Scene loading | Every scene under 17 MB; XMB budget on a PSP-2000 | RE-475, D-046 |
-| CPU performance | 60 FPS under PPSSPP | RE-470, RE-471 |
+Hardware check of the RE-476/RE-477 builds on the PSP-2000: install the
+production EBOOT, measure D-047's GE fill cost and confirm RE-476's frozen
+picture. Then the opening's CPU-bound scenes on the PSP and the CPUs'
+special effects ([`PLAN.md`](PLAN.md#remaining-work)).
 
-## Verification baseline
+## Blockers
 
-- Tests: 2,174 workspace tests pass on one thread with `SSB64_ROM` (Rust
-  1.98.0). Clippy (`cargo +1.98.0 clippy`, warnings denied) and rustfmt
-  pass.
-- Goldens: the matrix was rebaselined in one update; 197 of 198 changed
-  and 198 of 198 now pass. Three captures were identical.
+- The PSP was disconnected: the production EBOOT is built but not installed.
+  D-047 has not run on a PSP.
+
+## Verification
+
+Baseline at `ab751dd`, from the batch that produced it (not re-run by the
+documentation reorganisation):
+
+- `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,174 pass.
+  `cargo +1.98.0 clippy` (warnings denied) and rustfmt pass.
+- Goldens: `tools/golden.sh verify`: 198 of 198 pass.
 - How to Play's trace is identical to `e5b3b07`'s.
-- PPSSPP CPU per frame is unchanged; `vs4@4000` averages 5.25 ms.
-- Deepest game stack: 239,840 of 524,288 bytes.
-- Pack v107 is unchanged (`487bfd8a…`). No ROM assets are committed.
-- The production EBOOT has no debug info and no `boot_log`. It is
-  4,195,114 bytes (`45de0375…40ef`), in `target/release-re477/`, not
-  installed: the PSP was disconnected.
-- Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1 (RE-476). D-047 has not
-  run on it.
+- PPSSPP CPU per frame: `vs4@4000` averages 5.25 ms. Deepest game stack:
+  239,840 of 524,288 bytes.
+- Production EBOOT: `target/release-re477/EBOOT.PBP`, 4,195,114 bytes
+  (`45de0375…40ef`), no debug info, not installed.
+- Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1 (RE-476).
 - ROMs: `rom/Super Smash Bros. (USA).z64` and
-  `refs/ssb-decomp-re/baserom.us.z64` both SHA-1 `e2929e10…`.
-
-## Blockers and remaining scope
-
-- The PSP-2000 is unchecked on two counts:
-  - The GE fill cost of the crop: the battle viewport covers 19% more
-    pixels.
-  - The opening's CPU-bound scenes (Run, Yoster/Sector, Clash at 45–57
-    FPS).
-- Scenes outside the attract loop still load in their first frame
-  (`TODO.md`).
-- Still missing: the opening's rendering differences (RE-467), the CPUs'
-  special effects, Sound Test, rumble and all audio.
+  `refs/ssb-decomp-re/baserom.us.z64`, SHA-1 `e2929e10…`.

@@ -5,18 +5,42 @@ Not an emulator: gameplay is translated from the
 [SSB64 decompilation][decomp], and N64 display lists are converted to PSP GE
 geometry at build time.
 
-![Dream Land on PSP](docs/images/m4-stage-textured.png)
+> **Status:** in development. All 12 fighters, Master Hand and the special
+> fighters, VS and Training, the 1P campaign through the ending, save data and
+> the front end (title, opening movie, attract demos, menus) run; audio and
+> rumble are not started. See [`PLAN.md`](PLAN.md) for what is done and what
+> remains and [`STATUS.md`](STATUS.md) for current work.
 
-> **Status:** early development. Stages and fighters render at 60 FPS. Mario's
-> and Fox's movesets are ported and run in a Training sandbox against a dummy.
-> No full match, CPU AI, items, real menus or audio yet. See [`docs/porting-status.md`](docs/porting-status.md)
-> for per-subsystem detail and [`STATUS.md`](STATUS.md) for current work.
+## No ROM or extracted assets are included in this repository
 
-## Legal
+No Nintendo ROM, extracted asset files (textures, models, animations, audio,
+text) or asset pack are checked into this repo, and no build contains them:
+the EBOOT holds compiled code only, and the asset pack is a separate file you
+generate yourself.
 
-This repository contains no Nintendo code, ROM or game assets. You must supply
-your own legally obtained ROM. Assets are extracted locally into
-`assets/generated/`, which is gitignored along with `rom/`.
+You supply your own legally obtained ROM. `romtool pack` extracts and
+converts its assets locally into `assets/generated/ssb64.pak`, which is
+gitignored along with `rom/`.
+
+If you do not own a legal copy of Super Smash Bros. for the Nintendo 64, you
+cannot build the asset pack or run this project.
+
+The repository contains the source code and tools required to perform the
+conversion locally. Be aware of what that code is:
+
+- The gameplay code is a Rust translation of the community decompilation
+  ([`ssb-decomp-re`][decomp]).
+- Tables the original keeps in its code and data (fighter motion scripts,
+  colour-animation scripts, CPU input scripts, status flags, animation file
+  tables) are generated from the decompilation's sources by `tools/gen-*.py`
+  and committed as Rust (`crates/ssb-game/src/motion/scripts.rs`,
+  `colanim_scripts.rs`, `computer/scripts.rs`, `spgame/stat_flags.rs`,
+  `crates/ssb-rom/src/anim_table.rs`); they are compiled into the EBOOT.
+- `tests/golden/` holds PNG screenshots of the port's own output for
+  regression testing; they show the game's characters and stages.
+- The XMB icons, backgrounds and music in `psp-game/xmb/` and
+  `psp-asset-viewer/xmb/` are original work, not taken from the game
+  ([XMB assets](docs/xmb-assets.md)).
 
 ## Requirements
 
@@ -85,10 +109,11 @@ the costume, as the character select does.
 |---|---|---|
 | `crates/ssb-rom` | ROM validation, relocData archive, VPK0, N64 formats, asset pack | host + PSP |
 | `crates/ssb-engine` | Engine traits, math, coordinate conversion, timing | host + PSP |
-| `crates/ssb-game` | Portable gameplay: fighters, physics, collision, match logic | host + PSP |
+| `crates/ssb-game` | Portable gameplay: fighters, items, stages, CPU, menus, game modes | host + PSP |
+| `crates/ssb-capture` | Golden-capture scene specs | host + PSP |
 | `tools/romtool` | ROM verification, extraction, conversion, pack generation | host |
 | `psp-runtime/` | Shared PSP backend: GE rendering, input, timing, asset loading | PSP |
-| `psp-game/` | The game application (front end, Training) | PSP |
+| `psp-game/` | The game application | PSP |
 | `psp-asset-viewer/` | Asset browser and deterministic render-regression scenes | PSP |
 
 The portable crates never depend on `psp-runtime`. The three PSP crates sit
@@ -99,17 +124,16 @@ outside the Cargo workspace because they build with a pinned nightly and
 
 | Document | Contents |
 |---|---|
-| [`STATUS.md`](STATUS.md) | Current batch and blockers |
-| [`PLAN.md`](PLAN.md) | Roadmap (milestones `P0`–`P5`) |
-| [`docs/porting-status.md`](docs/porting-status.md) | Per-subsystem status |
-| [`TODO.md`](TODO.md) | Deferred work |
-| [`DECISIONS.md`](DECISIONS.md) | Architectural decisions |
-| [`docs/ssb-architecture.md`](docs/ssb-architecture.md) | How the original game is structured |
-| [`docs/rendering.md`](docs/rendering.md) | N64 → PSP rendering |
-| [`docs/memory.md`](docs/memory.md) | Memory budget and layout |
-| [`docs/visual-regression/README.md`](docs/visual-regression/README.md) | Golden-capture methodology |
-| [`docs/evidence/INDEX.md`](docs/evidence/INDEX.md) | Reverse-engineering and investigation records |
-| [`AGENTS.md`](AGENTS.md) | Contributor and agent workflow |
+| [`PLAN.md`](PLAN.md) | Project plan: completed work, remaining work, target state |
+| [`STATUS.md`](STATUS.md) | Current project snapshot |
+| [`DECISIONS.md`](DECISIONS.md) | Permanent architectural decisions |
+| [`docs/architecture.md`](docs/architecture.md) | Current and target architecture; original-game reference |
+| [`docs/rendering.md`](docs/rendering.md) | Rendering architecture and per-domain detail |
+| [`docs/memory.md`](docs/memory.md) | Memory layout and constraints |
+| [`docs/xmb-assets.md`](docs/xmb-assets.md) | XMB icon, background and music assets |
+| [`docs/visual-regression/`](docs/visual-regression/README.md) | Golden and visual regression testing |
+| [`docs/evidence/`](docs/evidence/INDEX.md) | Durable technical findings |
+| [`AGENTS.md`](AGENTS.md) | Development and agent rules |
 
 ## References
 

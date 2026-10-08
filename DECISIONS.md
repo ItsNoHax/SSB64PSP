@@ -63,5 +63,5 @@ new evidence contradicts it.
 - [D-038](docs/decisions/D-038.md): Generated Texture Coordinates Use the GE Texture Matrix, Not Environment Mapping
 - [D-039](docs/decisions/D-039.md): Texgen State Is Primitive-Level Because the Archive Says So
 - [D-040](docs/decisions/D-040.md): Exact Linear Texgen Is CPU-Generated into the Authored-UV Pipeline, Not a Second GE Mode or a Lookup Table
-- [D-042](docs/decisions/D-042.md): Renderer correctness claims stay provisional until the corrective gate passes
-- [D-043](docs/decisions/D-043.md): Filtering and Tile-Addressing Equivalence Claims Remain Provisional Pending R2.0
+- [D-042](docs/decisions/D-042.md): A Reopened Render State Stays Provisional Until It Is Measured
+- [D-043](docs/decisions/D-043.md): Filtering and Tile Addressing Are Measured Against an N64 Reference Model

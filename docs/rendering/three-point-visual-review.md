@@ -76,4 +76,4 @@ Shipped memory delta: +1,728 B level 0, +1,728 B pack.
 - **48 packed textures exceed the GE's 512-texel limit** after power-of-two
   padding, including `121:0x30`'s 576-texel variants (v902's texture is
   304×576). This predates RE-312. RE-314 caps their declared GE size at
-  512; texels past 512 remain unreachable (`TODO.md`).
+  512; texels past 512 remain unreachable.
