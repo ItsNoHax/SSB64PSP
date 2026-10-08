@@ -2250,6 +2250,56 @@ fn psp_main() {
     unsafe { run() }
 }
 
+/// Loads the pack's audio section, starts the audio thread and installs the
+/// system for `ssb_game::sound` (D-049). Without a section the system runs
+/// over an empty one if it accepts it; any failure leaves the game silent,
+/// with every sound call a no-op.
+#[cfg(not(feature = "no_audio"))]
+fn start_audio(pack: &[u8], path: &'static str) {
+    use ssb_psp_runtime::audio;
+    let head = &pack[..pack.len().min(ssb_rom::pack::Header::SIZE)];
+    let Some(c) = assets::c_path(path) else {
+        return;
+    };
+    let section = match audio::load_section(c, head) {
+        Ok(s) => s,
+        Err(e) => {
+            audio_log(format_args!("audio: section not loaded ({}); no audio", e.as_str()));
+            return;
+        }
+    };
+    match audio::start(section) {
+        Ok(api) => {
+            ssb_game::sound::install(api);
+            audio_log(format_args!(
+                "audio: started, section={} bytes, block={} prio={:#x}",
+                section.len(),
+                audio::BLOCK,
+                audio::PRIORITY
+            ));
+        }
+        Err(e) => audio_log(format_args!("audio: not started ({e:?}); no audio")),
+    }
+}
+
+/// A one-time boot line about audio: stdout, `boot.log` and the profile log.
+#[cfg(not(feature = "no_audio"))]
+fn audio_log(args: core::fmt::Arguments<'_>) {
+    let line = alloc::format!("{args}\n");
+    unsafe {
+        psp::sys::sceIoWrite(psp::sys::sceKernelStdout(), line.as_ptr() as *const core::ffi::c_void, line.len());
+    }
+    boot_log::log_args(args);
+}
+
+/// Before exiting: the last of an `audio_dump` run, and the thread and
+/// channel released.
+#[cfg(feature = "headless_capture")]
+fn exit_audio() {
+    ssb_psp_runtime::audio::dump_flush(true);
+    ssb_psp_runtime::audio::stop();
+}
+
 /// `vspush`'s and `vsknock`'s progress line (RE-469): both fighters'
 /// positions, statuses and damage, the CPU's stocks and the player's score,
 /// and the stack's deepest use so far.
@@ -4881,6 +4931,12 @@ unsafe fn run() -> ! {
             }
         }
     }
+    // The audio system (D-049), before the backup's options reach it and
+    // before the first scene's sound calls.
+    #[cfg(not(feature = "no_audio"))]
+    if let Ok((buf, path)) = &loaded {
+        start_audio(buf.as_slice(), path);
+    }
     let (backup, save) = save::boot(loaded.as_ref().ok().map(|(_, p)| *p), capture_spec);
     let pack_buf = loaded.as_ref().ok().map(|(b, _)| b);
     let opened = pack_buf.map(|b| Pack::open(b.as_slice()));
@@ -5149,6 +5205,7 @@ unsafe fn run() -> ! {
             boot_log::log_args(format_args!("load failed: {}", e.as_str()));
             ssb_psp_runtime::memory::fatal(&["Could not load the game's data from ssb64.pak:", e.as_str()]);
         }
+        ssb_psp_runtime::audio::dump_flush(false);
         profile::frame_end(ssb_psp_runtime::thread::stack_free_bytes);
         #[cfg(feature = "headless_capture")]
         ssb_psp_runtime::memory::sample();
@@ -5180,6 +5237,7 @@ unsafe fn run() -> ! {
             // A profiling run ends at its tick (RE-471).
             if profile::ENABLED && capture.is_some_and(|c| c.from_file) && !capture::hold() {
                 profile::finish();
+                exit_audio();
                 psp::sys::sceKernelExitGame();
             }
         }
@@ -5187,6 +5245,7 @@ unsafe fn run() -> ! {
         if headless_capture_sent && capture.is_some_and(|c| c.from_file) {
             frames_after_capture += 1;
             if frames_after_capture > CAPTURE_EXIT_FRAMES {
+                exit_audio();
                 psp::sys::sceKernelExitGame();
             }
         }

@@ -9,6 +9,7 @@
 extern crate alloc;
 
 pub mod assets;
+pub mod audio;
 pub mod boss;
 pub mod ending;
 pub mod gu;

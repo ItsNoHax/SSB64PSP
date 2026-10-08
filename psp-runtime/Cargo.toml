@@ -23,6 +23,10 @@ ssb-game = { path = "../crates/ssb-game", default-features = false }
 # Frame timing and free-memory reports (`profile.rs`, RE-469). Off by
 # default: the spans compile to nothing.
 profile = []
+# Copies every submitted audio block into a ring the game thread writes to
+# `audio.raw` beside the executable (`audio::dump_flush`): s16le stereo at
+# 32000 Hz. Off by default.
+audio_dump = []
 
 [profile.release]
 opt-level = 3

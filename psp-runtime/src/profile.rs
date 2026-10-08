@@ -83,13 +83,18 @@ pub enum Span {
     Submit,
     /// Mesh lists: primitives drawn (a count, not microseconds).
     Prims,
+    /// The game thread's sound calls (`audio::GameAudio`): the lock, its
+    /// wait for an audio frame in progress, and the call.
+    Sound,
+    /// Sound calls made (a count, not microseconds).
+    SoundCalls,
 }
 
-const SPANS: usize = 32;
+const SPANS: usize = 34;
 #[cfg_attr(not(feature = "profile"), allow(dead_code))]
 const NAMES: [&str; SPANS] = [
     "update", "interrupt", "physics", "hit", "effects", "draw", "ge", "vblank", "fphys", "items", "weapons", "camera", "anim",
-    "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel", "io", "demand", "files", "mpose", "mmesh", "skin", "msprites", "nodemat", "material", "submit", "prims",
+    "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel", "io", "demand", "files", "mpose", "mmesh", "skin", "msprites", "nodemat", "material", "submit", "prims", "sound", "sndcalls",
 ];
 
 /// Frames per report: two seconds at 60 FPS.
@@ -138,6 +143,8 @@ mod imp {
         hist_frames: u32,
         run_max: u32,
         run_max_tick: u32,
+        /// The audio thread's counters at the last report.
+        audio_last: crate::audio::Stats,
     }
 
     static mut STATE: State = State {
@@ -160,6 +167,7 @@ mod imp {
         hist_frames: 0,
         run_max: 0,
         run_max_tick: 0,
+        audio_last: crate::audio::Stats::ZERO,
     };
 
     pub fn set_tick(tick: u32) {
@@ -342,6 +350,7 @@ mod imp {
             unsafe { sys::scePowerGetBusClockFrequency() }
         );
         emit(&line.buf[..line.len]);
+        audio_report(s, wall, n);
         s.sum = [0; SPANS];
         s.max = [0; SPANS];
         s.frames = 0;
@@ -351,6 +360,47 @@ mod imp {
         s.cpu_max = 0;
         s.report_start = t;
         s.reports += 1;
+    }
+
+    /// The audio thread's line: per-second rates over the window, the
+    /// window's worst render and queue, and its stack. `busy` and `per_frame`
+    /// are what the audio thread took from the CPU, which the game thread's
+    /// wall-time spans above include whenever it preempted them.
+    fn audio_report(s: &mut State, wall: u32, frames: u32) {
+        let mut line = Line { buf: [0; 768], len: 0 };
+        if !crate::audio::running() {
+            let _ = writeln!(line, "audio n={} off", s.reports);
+            emit(&line.buf[..line.len]);
+            return;
+        }
+        let a = crate::audio::stats();
+        let l = s.audio_last;
+        let per_s = |d: u32| (u64::from(d) * 10_000_000 / u64::from(wall)) as u32;
+        let blk10 = per_s(a.blocks.wrapping_sub(l.blocks));
+        let tic10 = per_s(a.tics.wrapping_sub(l.tics));
+        let busy = a.busy_us.wrapping_sub(l.busy_us);
+        let _ = writeln!(
+            line,
+            "audio n={} blk/s={}.{} tic/s={}.{} busy_us/s={} per_frame={} max={} under={} under_total={} err={} rest_min={} lat_max={} stk={} dump_drop={}",
+            s.reports,
+            blk10 / 10,
+            blk10 % 10,
+            tic10 / 10,
+            tic10 % 10,
+            (u64::from(busy) * 1_000_000 / u64::from(wall)) as u32,
+            busy / frames.max(1),
+            a.max_us,
+            a.underruns.wrapping_sub(l.underruns),
+            a.underruns,
+            a.errors.wrapping_sub(l.errors),
+            if a.rest_min == u32::MAX { 0 } else { a.rest_min },
+            a.latency_max,
+            crate::audio::stack_free(),
+            crate::audio::dump_dropped(),
+        );
+        emit(&line.buf[..line.len]);
+        s.audio_last = a;
+        crate::audio::new_window();
     }
 
     /// Lines [`log`] took during a frame, written at its end, outside the

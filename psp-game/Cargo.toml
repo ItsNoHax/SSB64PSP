@@ -31,6 +31,13 @@ memory_ballast = []
 # `profile.log` beside the executable and to stdout
 # (`ssb_psp_runtime::profile`, RE-469). Off by default.
 profile = ["ssb-psp-runtime/profile"]
+# Copies the audio thread's output into a ring written to `audio.raw`
+# beside the EBOOT (s16le stereo, 32000 Hz), for exact comparisons:
+# PPSSPPHeadless cannot record audio (`ssb_psp_runtime::audio`).
+audio_dump = ["ssb-psp-runtime/audio_dump"]
+# Boots without the audio system (no thread, every sound call a no-op), for
+# A/B profiling against the default build.
+no_audio = []
 # Writes each finished frame's pixel hash to stdout (`fhash` lines), for
 # frame-by-frame A/B runs of two builds under PPSSPPHeadless (RE-476).
 frame_hash = []
