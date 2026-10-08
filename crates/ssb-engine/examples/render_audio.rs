@@ -4,9 +4,17 @@
 //! ```text
 //! cargo run --release -p ssb-engine --example render_audio -- \
 //!     [--pack assets/generated/ssb64.pak | --rom ROM.z64] \
-//!     [--bgm N[ --bgm-at FRAME]] [--bgm-volume V] [--fgm ID[@FRAME],...] [--seconds S] [--mono] \
-//!     [--out /tmp/ssb-audio/x.wav] [--raw /tmp/ssb-audio/x.raw]
+//!     [--bgm N[ --bgm-at FRAME]] [--bgm-volume V] [--fgm ID[@FRAME[:BALANCE]],...] [--seconds S] [--mono] \
+//!     [--bgm-seq ID@FRAME|stop@FRAME,...] [--stop-fgm FRAME,...] [--stop-id ID@FRAME,...] [--frames FILE] [--preroll N] [--out /tmp/ssb-audio/x.wav] [--raw /tmp/ssb-audio/x.raw]
 //! ```
+//!
+//! `--frames FILE` replays a recorded frame-length sequence (the second
+//! whitespace-separated column of each line, 552 or 368) instead of the
+//! simulated queue, so a render lines up sample for sample with an N64
+//! capture; `FRAME` in `--bgm-at` and `--fgm` is then that list's index.
+//! `--preroll N` renders and discards N 184-sample sub-frames first: it
+//! moves the sequence player's 512-sample tick phase (the N64 creates its
+//! player at boot, before the capture starts) without moving the frames.
 //!
 //! The section comes from the pack's audio section (`audio_range`) or is
 //! built from the ROM. Frames follow the N64's 552/368 rhythm, driven by a
@@ -16,7 +24,7 @@
 
 use std::time::Instant;
 
-use ssb_engine::audio::{AudioSystem, FRAME_SAMPLES_MAX, N64_OUTPUT_RATE};
+use ssb_engine::audio::{AudioSystem, FRAME_SAMPLES_MAX, FRAME_SAMPLES_MIN, N64_OUTPUT_RATE};
 
 struct Args {
     pack: String,
@@ -24,11 +32,19 @@ struct Args {
     bgm: Option<u32>,
     bgm_volume: Option<u32>,
     bgm_at: u32,
-    fgms: Vec<(u16, u32)>,
+    /// `(id, frame, balance)`: a balance plays it with `func_80026A10`.
+    fgms: Vec<(u16, u32, Option<u8>)>,
     seconds: f64,
     mono: bool,
     out: String,
     raw: Option<String>,
+    frames: Option<Vec<usize>>,
+    preroll: u32,
+    /// `(bgm or None = stop, frame)`.
+    bgm_seq: Vec<(Option<u32>, u32)>,
+    stop_fgm: Vec<u32>,
+    /// `(id, frame)`: `func_80026738` on the last handle `--fgm` got for `id`.
+    stop_id: Vec<(u16, u32)>,
 }
 
 fn parse() -> Result<Args, String> {
@@ -43,6 +59,11 @@ fn parse() -> Result<Args, String> {
         mono: false,
         out: "/tmp/ssb-audio/render.wav".into(),
         raw: None,
+        frames: None,
+        preroll: 0,
+        bgm_seq: Vec::new(),
+        stop_fgm: Vec::new(),
+        stop_id: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -57,14 +78,67 @@ fn parse() -> Result<Args, String> {
             "--bgm-at" => a.bgm_at = val()?.parse().map_err(|e| format!("--bgm-at: {e}"))?,
             "--seconds" => a.seconds = val()?.parse().map_err(|e| format!("--seconds: {e}"))?,
             "--mono" => a.mono = true,
+            "--bgm-seq" => {
+                for item in val()?.split(',') {
+                    let (id, at) = item.split_once('@').ok_or(format!("--bgm-seq {item}"))?;
+                    let id = match id {
+                        "stop" => None,
+                        id => Some(id.parse().map_err(|e| format!("--bgm-seq {item}: {e}"))?),
+                    };
+                    let at = at.parse().map_err(|e| format!("--bgm-seq {item}: {e}"))?;
+                    a.bgm_seq.push((id, at));
+                }
+            }
+            "--stop-id" => {
+                for item in val()?.split(',') {
+                    let (id, at) = item.split_once('@').ok_or(format!("--stop-id {item}"))?;
+                    a.stop_id.push((
+                        id.parse().map_err(|e| format!("--stop-id {item}: {e}"))?,
+                        at.parse().map_err(|e| format!("--stop-id {item}: {e}"))?,
+                    ));
+                }
+            }
+            "--stop-fgm" => {
+                for item in val()?.split(',') {
+                    a.stop_fgm.push(
+                        item.parse()
+                            .map_err(|e| format!("--stop-fgm {item}: {e}"))?,
+                    );
+                }
+            }
+            "--preroll" => a.preroll = val()?.parse().map_err(|e| format!("--preroll: {e}"))?,
             "--out" => a.out = val()?,
             "--raw" => a.raw = Some(val()?),
+            "--frames" => {
+                let path = val()?;
+                let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+                let mut lens = Vec::new();
+                for line in text.lines() {
+                    let Some(n) = line.split_whitespace().nth(1) else {
+                        continue;
+                    };
+                    let n: usize = n.parse().map_err(|e| format!("{path}: {e}"))?;
+                    if n != FRAME_SAMPLES_MAX && n != FRAME_SAMPLES_MIN {
+                        return Err(format!("{path}: frame length {n}"));
+                    }
+                    lens.push(n);
+                }
+                a.frames = Some(lens);
+            }
             "--fgm" => {
                 for item in val()?.split(',') {
                     let (id, at) = item.split_once('@').unwrap_or((item, "0"));
+                    let (at, bal) = match at.split_once(':') {
+                        Some((at, bal)) => (
+                            at,
+                            Some(bal.parse().map_err(|e| format!("--fgm {item}: {e}"))?),
+                        ),
+                        None => (at, None),
+                    };
                     a.fgms.push((
                         id.parse().map_err(|e| format!("--fgm {item}: {e}"))?,
                         at.parse().map_err(|e| format!("--fgm {item}: {e}"))?,
+                        bal,
                     ));
                 }
             }
@@ -138,10 +212,14 @@ fn main() {
         sys.set_bgm_volume(0, vol);
     }
 
+    let mut frame = [0i16; FRAME_SAMPLES_MAX * 2];
+    for _ in 0..a.preroll {
+        sys.render_frame(&mut frame, 184);
+    }
     let total = (a.seconds * N64_OUTPUT_RATE as f64) as usize;
     let per_vblank = N64_OUTPUT_RATE as f64 / 60.0;
     let mut pcm: Vec<i16> = Vec::with_capacity(total * 2 + FRAME_SAMPLES_MAX * 2);
-    let mut frame = [0i16; FRAME_SAMPLES_MAX * 2];
+    let mut handles = Vec::new();
     let mut queued = 0.0f64;
     let mut vblank = 0u32;
     let mut busy = std::time::Duration::ZERO;
@@ -154,12 +232,44 @@ fn main() {
                 sys.play_bgm(0, bgm);
             }
         }
-        for &(id, at) in &a.fgms {
+        for &(bgm, at) in &a.bgm_seq {
             if at == vblank {
-                sys.play_fgm(id);
+                match bgm {
+                    Some(bgm) => {
+                        sys.play_bgm(0, bgm);
+                    }
+                    None => sys.stop_bgm_all(),
+                }
             }
         }
-        let n = sys.frame_samples(queued as u32);
+        if a.stop_fgm.contains(&vblank) {
+            sys.stop_all_fgm();
+        }
+        for &(id, at) in &a.stop_id {
+            if at == vblank {
+                if let Some(h) = handles.iter().rev().find(|(i, _)| *i == id) {
+                    sys.stop_fgm(h.1);
+                }
+            }
+        }
+        for &(id, at, bal) in &a.fgms {
+            if at == vblank {
+                let h = match bal {
+                    Some(bal) => sys.play_fgm_balance(id, bal),
+                    None => sys.play_fgm(id),
+                };
+                if let Some(h) = h {
+                    handles.push((id, h));
+                }
+            }
+        }
+        let n = match &a.frames {
+            Some(lens) => match lens.get(vblank as usize) {
+                Some(&n) => n,
+                None => break,
+            },
+            None => sys.frame_samples(queued as u32),
+        };
         let t = Instant::now();
         sys.render_frame(&mut frame, n);
         let dt = t.elapsed();
