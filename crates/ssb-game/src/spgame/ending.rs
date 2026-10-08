@@ -60,8 +60,9 @@ pub struct Ending {
 }
 
 impl Ending {
-    /// `mvEndingInitVars` and `mvEndingFuncStart`'s objects.
+    /// `mvEndingInitVars` and `mvEndingFuncStart`'s objects and music.
     pub fn new(fkind: FighterKind, costume: u8, shade: u8) -> Self {
+        crate::sound::play_bgm(0, crate::sound::id::nSYAudioBGMEnding);
         Self {
             fkind,
             costume,
@@ -89,6 +90,7 @@ impl Ending {
                     self.props_shown = false;
                     self.fighter_shown = false;
                     self.light_alpha = None;
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMDoorClose);
                 }
                 END_TIC => self.finished = true,
                 _ => {}

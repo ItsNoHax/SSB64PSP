@@ -292,7 +292,8 @@ impl Menus {
             }
             Active::Option(m) => {
                 let next = m.tick(pad, host.backup);
-                // `syAudioSetQuality`.
+                // `dSYAudioSoundQuality` as the menu's `syAudioSetQuality`
+                // calls left it.
                 *host.sound_quality = m.sound_quality();
                 (Scene::Option, next)
             }
@@ -304,7 +305,8 @@ impl Menus {
             Active::BackupClear(m) => {
                 let next = m.tick(pad, host.backup, host.selections);
                 if m.apply_options {
-                    // `lbBackupApplyOptions`.
+                    // `lbBackupApplyOptions` (the menu made its
+                    // `syAudioSetQuality` call).
                     *host.sound_quality = host.backup.sound_mono_or_stereo;
                     *host.video_offsets = (host.backup.screen_adjust_h, host.backup.screen_adjust_v);
                 }

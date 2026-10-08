@@ -4,8 +4,7 @@
 //! the player's puck, the portrait grid, the costume picks, the title that
 //! switches between the two practices, the auto-start once a fighter is
 //! placed, and the scene data it saves. [`layer`] holds its presentation,
-//! with the records; the spotlight, the sounds and the announcer's voices
-//! stay with the host.
+//! with the records; the spotlight stays with the host.
 //!
 //! The scene is a copy of `mnPlayers1PGame` (`crate::players_1p`) with the
 //! options removed. What differs:
@@ -39,8 +38,9 @@ use ssb_engine::input::{ControllerState, N64Buttons};
 
 use crate::costume::costume_common_id;
 use crate::fighter::FighterKind;
-use crate::fighter_select::{portrait_edge_velocity, puck_fighter_kind};
+use crate::fighter_select::{announce_fighter, portrait_edge_velocity, puck_fighter_kind};
 use crate::players_1p::Slot;
+use crate::sound::{self, id, FgmHandle};
 use crate::spgame::{Backup, BONUSGAME_TASK_MAX, CHARACTER_MASK_ALL};
 
 pub use crate::fighter_select::{is_locked, portrait, CursorStatus, PORTRAIT_KINDS};
@@ -152,6 +152,8 @@ pub struct Players1PBonus {
     total_tics: i32,
     return_tic: i32,
     pending: Option<Outcome>,
+    /// The slot's `p_sfx`: the last fighter-name voice.
+    p_sfx: Option<FgmHandle>,
 }
 
 impl Players1PBonus {
@@ -170,8 +172,13 @@ impl Players1PBonus {
             total_tics: 0,
             return_tic: RETURN_TICS,
             pending: None,
+            p_sfx: None,
         };
         select.v_init();
+        // `mnPlayers1PBonusFuncStart`: `mnPlayers1PBonusMakeLabels`'s
+        // voice, then the BGM (never entered from the stage select).
+        select.announce_bonus();
+        sound::play_bgm(0, id::nSYAudioBGMBattleSelect);
         select
     }
 
@@ -223,6 +230,16 @@ impl Players1PBonus {
     fn leave_back(&mut self) {
         let (saved, bonus) = (self.saved(), self.bonus);
         self.leave(Outcome::Back { saved, bonus });
+        sound::stop_bgm_all();
+        sound::stop_all_fgm();
+    }
+
+    /// `mnPlayers1PBonusMakeLabels`' announcer voice.
+    fn announce_bonus(&self) {
+        sound::play_fgm(match self.bonus {
+            BonusKind::Targets => id::nSYAudioVoiceAnnounceBreakTheTargets,
+            BonusKind::Platforms => id::nSYAudioVoiceAnnounceBoardThePlatforms,
+        });
     }
 
     /// One frame. `input` is the player's controller; `taps` its newly
@@ -273,6 +290,7 @@ impl Players1PBonus {
             } else if (13.0..=34.0).contains(&y) && (244.0..=292.0).contains(&x) {
                 // `mnPlayers1PBonusCheckBackInRange`.
                 self.leave_back();
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             }
         }
         for (button, bit) in [
@@ -303,20 +321,26 @@ impl Players1PBonus {
     }
 
     /// `mnPlayers1PBonusUpdateGameMode`: the other practice, its title
-    /// (and announcer voice, the host's) and its records.
+    /// with its announcer voice, and its records.
     fn update_game_mode(&mut self) {
         self.bonus = self.bonus.other();
+        self.announce_bonus();
         self.v_make_hiscore();
     }
 
     /// `mnPlayers1PBonusCheckSelectFighter`. A, like C-Up, picks the first
     /// costume.
     fn select_fighter(&mut self, button: usize) -> bool {
-        if self.slot.cursor_status != CursorStatus::Grab || self.slot.kind.is_none() {
+        if self.slot.cursor_status != CursorStatus::Grab {
+            return false;
+        }
+        if self.slot.kind.is_none() {
+            sound::play_fgm(id::nSYAudioFGMMenuDenied);
             return false;
         }
         self.select_fighter_puck(button);
         self.slot.recall_end_tic = self.total_tics + GRAB_WAIT;
+        sound::play_fgm(id::nSYAudioFGMStageSelect);
         true
     }
 
@@ -331,6 +355,7 @@ impl Players1PBonus {
         s.is_held = false;
         s.cursor_status = CursorStatus::Hover;
         s.is_fighter_selected = true;
+        self.p_sfx = announce_fighter(self.p_sfx, kind);
         self.v_make_portrait_flash();
         self.start_wait = START_WAIT;
         self.is_selected = true;
@@ -363,6 +388,7 @@ impl Players1PBonus {
         self.update_fighter();
         self.slot.set_cursor_puck_offset();
         self.slot.is_cursor_adjusting = true;
+        sound::play_fgm(id::nSYAudioFGMSamusDash);
         self.v_destroy_portrait_flash();
         self.v_update_name_and_emblem();
     }
@@ -385,6 +411,7 @@ impl Players1PBonus {
         if let Some(kind) = self.slot.kind {
             self.slot.costume = costume_common_id(kind, button);
         }
+        sound::play_fgm(id::nSYAudioFGMMenuScroll2);
     }
 
     /// `mnPlayers1PBonusPuckProcUpdate`, ending with `MakeHiScore`.

@@ -12,6 +12,7 @@
 use super::{
     fill_prim, option_tab, Draw, Pad, Piece, Repeat, Scene, TabStatus, FILE_COMMON, IDLE_RETURN,
 };
+use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
 /// `llMN1PFileID`.
@@ -83,6 +84,9 @@ impl OnePMode {
             Scene::Players1PBonus2 => OnePOption::Bonus2Practice,
             _ => last,
         };
+        if scene_prev != Scene::ModeSelect {
+            sound::play_bgm(0, id::nSYAudioBGMModeSelect);
+        }
         OnePMode {
             option,
             is_proceed_scene: false,
@@ -121,6 +125,7 @@ impl OnePMode {
             self.change_wait = 0;
         }
         if pad.tap(N64Buttons::A | N64Buttons::START) {
+            sound::play_fgm(id::nSYAudioFGMMenuSelect);
             self.tab_status[self.option as usize] = TabStatus::Selected;
             self.scene_curr = self.option.scene();
             self.is_proceed_scene = true;
@@ -139,6 +144,7 @@ impl OnePMode {
             20,
             true,
         ) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_p(7);
             self.tab_status[self.option as usize] = TabStatus::Not;
             let i = self.option as usize;
@@ -156,6 +162,7 @@ impl OnePMode {
             -20,
             false,
         ) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_n(7);
             self.tab_status[self.option as usize] = TabStatus::Not;
             let i = self.option as usize;

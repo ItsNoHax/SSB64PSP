@@ -11,8 +11,7 @@
 //! [`VsMode::visit`] is the `gcDrawAll` after it.
 //!
 //! The US build's `mnVSModeMakeSubtitle` adds no display (the Japanese
-//! subtitle under the buttons is not drawn), and the menu's sounds
-//! (`func_800269C0_275C0`) are the host's.
+//! subtitle under the buttons is not drawn).
 
 use ssb_engine::input::N64Buttons;
 
@@ -23,6 +22,7 @@ use crate::menu::{
     DOWN, FILE_COMMON, FILE_VS_MODE, IDLE_RETURN, LEFT, RIGHT, UP,
 };
 use crate::players_vs::{BattleState, PLAYERS};
+use crate::sound::{self, id};
 
 /// `llMNVSMode*Sprite` (`reloc_data.us.h`).
 pub mod sprite {
@@ -169,8 +169,12 @@ pub struct VsMode {
 impl VsMode {
     /// `mnVSModeFuncStart` (`mnVSModeFuncStartVars`): the cursor on VS
     /// Options when coming back from it, the rule, time and stocks from
-    /// `gSCManagerTransferBattleState`.
+    /// `gSCManagerTransferBattleState`; `nSYAudioBGMModeSelect` when the
+    /// scene comes back from the VS character select.
     pub fn new(scene_prev: Scene, state: &BattleState) -> VsMode {
+        if scene_prev == Scene::PlayersVs {
+            sound::play_bgm(0, id::nSYAudioBGMModeSelect);
+        }
         let cursor = if scene_prev == Scene::VsOptions {
             Button::Options
         } else {
@@ -195,12 +199,6 @@ impl VsMode {
             time_stock_blink: 0,
             time_stock_remade: false,
         }
-    }
-
-    /// `mnVSModeFuncStart` plays `nSYAudioBGMModeSelect` when the scene
-    /// comes back from the VS character select.
-    pub fn plays_mode_select_bgm(scene_prev: Scene) -> bool {
-        scene_prev == Scene::PlayersVs
     }
 
     /// The battle's stock count (`gSCManagerTransferBattleState.stocks`).
@@ -276,6 +274,7 @@ impl VsMode {
                 _ => None,
             };
             if let Some(next) = next {
+                sound::play_fgm(id::nSYAudioFGMMenuSelect);
                 self.set_button(self.cursor, TabStatus::Selected);
                 self.save_settings(state);
                 self.exit_interrupt = true;
@@ -290,6 +289,7 @@ impl VsMode {
         }
         let mut r = Repeat::default();
         if r.check(self.change_wait, pad, UP, true, 20, true) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_p(7);
             if self.cursor == Button::Rule {
                 self.change_wait += 8;
@@ -306,6 +306,7 @@ impl VsMode {
             self.show_arrows();
         }
         if r.check(self.change_wait, pad, DOWN, true, -20, false) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_n(7);
             if self.cursor == Button::TimeStock {
                 self.change_wait += 8;
@@ -326,6 +327,7 @@ impl VsMode {
                 if r.check(self.change_wait, pad, LEFT, false, -20, false)
                     && self.rule > VsRule::Time
                 {
+                    sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                     self.rule = self.rule.prev();
                     if self.rule == VsRule::Stock {
                         set_costumes_and_shades(self.rule, state);
@@ -337,6 +339,7 @@ impl VsMode {
                 if r.check(self.change_wait, pad, RIGHT, false, 20, true)
                     && self.rule < VsRule::StockTeam
                 {
+                    sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                     self.rule = self.rule.next();
                     if self.rule == VsRule::TimeTeam {
                         set_costumes_and_shades(self.rule, state);
@@ -349,6 +352,7 @@ impl VsMode {
             }
             Button::TimeStock => {
                 if r.check(self.change_wait, pad, LEFT, false, -20, false) {
+                    sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                     self.change_wait = r.wait_n(14);
                     if self.direction != Direction::Left {
                         self.change_wait *= 2;
@@ -371,6 +375,7 @@ impl VsMode {
                     self.direction = Direction::Left;
                 }
                 if r.check(self.change_wait, pad, RIGHT, false, 20, true) {
+                    sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                     self.change_wait = r.wait_p(14);
                     if self.direction != Direction::Right {
                         self.change_wait *= 2;

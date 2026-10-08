@@ -24,6 +24,7 @@
 use super::{Draw, Pad, Piece, Scene};
 use crate::backup::{Backup, CHARACTER_MASK_STARTER};
 use crate::fighter::FighterKind;
+use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
 /// `llMNTitleFileID` and `llMNTitleFireAnimFileID`.
@@ -294,6 +295,15 @@ impl Title {
     /// (`mnTitleInitVars`'s `nMNTitleLayoutAnimate`). `time` is
     /// `osGetTime`'s low byte.
     pub fn new(time: u8) -> Title {
+        // `mnTitleInitVars`: not after the opening, whose BGM plays on.
+        sound::stop_bgm_all();
+        sound::stop_all_fgm();
+        Title::init(time)
+    }
+
+    /// `mnTitleInitVars`'s state for the animate layout, without its
+    /// audio.
+    fn init(time: u8) -> Title {
         let id = time_range(time, 7) as usize;
         let c = FIRE_COLORS[id];
         Title {
@@ -349,7 +359,7 @@ impl Title {
             slash_shown: true,
             particles_shown: true,
             logo_follows: true,
-            ..Title::new(time)
+            ..Title::init(time)
         }
     }
 
@@ -397,8 +407,12 @@ impl Title {
     ) {
         self.black = true;
         demo.set_demo_fighter_kinds(backup, rand_range);
+        sound::stop_all_fgm();
         self.scene_next = match scene_prev {
-            Scene::Explain => Scene::Characters,
+            Scene::Explain => {
+                sound::play_bgm(0, id::nSYAudioBGMExplain);
+                Scene::Characters
+            }
             Scene::ModeSelect | Scene::AutoDemo => Scene::Startup,
             _ => Scene::Explain,
         };
@@ -410,6 +424,8 @@ impl Title {
     fn proceed_mode_select(&mut self) {
         self.black = true;
         self.scene_next = Scene::ModeSelect;
+        sound::stop_all_fgm();
+        sound::play_fgm(id::nSYAudioFGMTitlePressStart);
         self.is_proceed_scene = true;
     }
 
@@ -462,6 +478,8 @@ impl Title {
                 self.transition_tics = 169;
                 self.layout = Layout::Animate;
                 self.transition_from_fire_logo(time);
+                sound::stop_bgm_all();
+                sound::stop_all_fgm();
             }
         }
         // `mnTitleFireFuncRun`.
@@ -510,6 +528,12 @@ impl Title {
                 self.labels_running = false;
             }
             280 => self.press_start_shown = true,
+            35 | 65 => {
+                sound::play_fgm(id::nSYAudioFGMOpeningBatM);
+            }
+            200 if self.layout == Layout::Animate => {
+                sound::play_fgm(id::nSYAudioFGMPublicPrologue);
+            }
             650 if !demo.is_extend_demo_wait => {
                 self.proceed_demo_next(scene_prev, demo, backup, rand_range)
             }

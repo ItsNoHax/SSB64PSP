@@ -2,7 +2,7 @@
 //! the hand cursor, the two pucks (the player's and the CPU's), the portrait
 //! grid, the recall, the costume picks and syncs, the ready check and the
 //! scene data it saves. [`layer`] holds its presentation; the
-//! spotlight and sounds stay with the host.
+//! spotlight stays with the host.
 //!
 //! One [`FighterSelect::tick`] runs the scene's processes in the original
 //! order: `mnPlayers1PTrainingFuncRun` (the scene GObj's `func_run`), then
@@ -17,6 +17,7 @@ use ssb_engine::input::{ControllerState, N64Buttons};
 
 use crate::costume::costume_common_id;
 use crate::fighter::FighterKind;
+use crate::sound::{self, id, FgmHandle};
 
 /// The player's slot (`sMNPlayers1PTrainingManPlayer`).
 pub const MAN: usize = 0;
@@ -183,6 +184,8 @@ pub struct FighterSelect {
     is_start: bool,
     start_proceed_wait: i32,
     pending: Option<Outcome>,
+    /// The player's cursor's `p_sfx`: its last fighter-name voice.
+    p_sfx: Option<FgmHandle>,
 }
 
 impl FighterSelect {
@@ -191,10 +194,17 @@ impl FighterSelect {
         self.fighter_mask
     }
 
-    /// `mnPlayers1PTrainingInitVars` and `mnPlayers1PTrainingInitSlotAll`.
+    /// `mnPlayers1PTrainingFuncStart`: `mnPlayers1PTrainingInitVars`,
+    /// `mnPlayers1PTrainingInitSlotAll` and the scene's audio. `from_maps`
+    /// is `scene_prev == nSCKindMaps` (the select's BGM plays on).
     /// `time_byte` stands for `osGetTime() & 0xFF`, read once per draw of
     /// the CPU's random fighter.
-    pub fn new(scene: SceneData, fighter_mask: u16, mut time_byte: impl FnMut() -> u8) -> Self {
+    pub fn new(
+        scene: SceneData,
+        fighter_mask: u16,
+        from_maps: bool,
+        mut time_byte: impl FnMut() -> u8,
+    ) -> Self {
         let mut man = Slot::blank(PlayerKind::Man);
         match scene.man_kind {
             // `mnPlayers1PTrainingResetPlayer`: the cursor holds its own
@@ -247,6 +257,7 @@ impl FighterSelect {
             is_start: false,
             start_proceed_wait: 0,
             pending: None,
+            p_sfx: None,
         };
         // `mnPlayers1PTrainingMakeCursor` and `MakePuck`.
         select.slots[MAN].cursor = (70.0, 170.0);
@@ -257,6 +268,11 @@ impl FighterSelect {
             };
         }
         select.v_init();
+        if !from_maps {
+            sound::play_bgm(0, id::nSYAudioBGMBattleSelect);
+        }
+        sound::stop_all_fgm();
+        sound::play_fgm(id::nSYAudioVoiceAnnounceTrainingMode);
         select
     }
 
@@ -325,12 +341,14 @@ impl FighterSelect {
             if self.start_proceed_wait == 0 {
                 self.leave(Outcome::Proceed);
             }
-        } else if taps.contains(N64Buttons::START)
-            && self.total_tics > START_TICS
-            && self.is_ready()
-        {
-            self.start_proceed_wait = START_PROCEED_WAIT;
-            self.is_start = true;
+        } else if taps.contains(N64Buttons::START) && self.total_tics > START_TICS {
+            if self.is_ready() {
+                sound::play_fgm(id::nSYAudioVoicePublicCheer);
+                self.start_proceed_wait = START_PROCEED_WAIT;
+                self.is_start = true;
+            } else {
+                sound::play_fgm(id::nSYAudioFGMMenuDenied);
+            }
         }
         self.is_start
     }
@@ -343,7 +361,8 @@ impl FighterSelect {
             && !self.check_cursor_puck_grab()
             && self.back_in_range()
         {
-            self.leave(Outcome::Back);
+            self.back_to_1p_mode();
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
         }
         for (button, bit) in [
             N64Buttons::C_UP,
@@ -373,11 +392,18 @@ impl FighterSelect {
             && self.total_tics >= BACK_TICS
             && taps.contains(N64Buttons::B)
         {
-            self.leave(Outcome::Back);
+            self.back_to_1p_mode();
         }
         if !self.slots[MAN].is_recalling {
             self.update_cursor_no_recall();
         }
+    }
+
+    /// `mnPlayers1PTrainingBackTo1PMode`.
+    fn back_to_1p_mode(&mut self) {
+        self.leave(Outcome::Back);
+        sound::stop_bgm_all();
+        sound::stop_all_fgm();
     }
 
     /// `mnPlayers1PTrainingAdjustCursor`.
@@ -433,7 +459,10 @@ impl FighterSelect {
                 self.slots[MAN].recall_end_tic = self.total_tics + GRAB_WAIT;
                 true
             }
-            _ => false,
+            _ => {
+                sound::play_fgm(id::nSYAudioFGMMenuDenied);
+                false
+            }
         }
     }
 
@@ -468,6 +497,7 @@ impl FighterSelect {
             };
             let costume = costume_common_id(kind, button);
             if self.costume_used(kind, held, costume) {
+                sound::play_fgm(id::nSYAudioFGMMenuDenied);
                 return;
             }
             self.slots[held].costume = costume;
@@ -478,6 +508,11 @@ impl FighterSelect {
         self.slots[slot].cursor_status = CursorStatus::Hover;
         self.slots[slot].held = None;
         self.slots[held].is_fighter_selected = true;
+        // `mnPlayers1PTrainingAnnounceFighter`: only the player's cursor
+        // places pucks, so its `p_sfx` is the one.
+        if let Some(kind) = self.slots[held].kind {
+            self.p_sfx = announce_fighter(self.p_sfx, kind);
+        }
         self.v_make_portrait_flash(held);
     }
 
@@ -503,6 +538,7 @@ impl FighterSelect {
         let (px, py) = self.slots[held].puck;
         self.slots[slot].cursor_pickup = (px - 11.0, py - -14.0);
         self.slots[slot].is_cursor_adjusting = true;
+        sound::play_fgm(id::nSYAudioFGMSamusDash);
         self.v_destroy_portrait_flash(held);
         self.v_update_name_and_emblem(held);
     }
@@ -542,8 +578,11 @@ impl FighterSelect {
             return;
         };
         let costume = costume_common_id(kind, button);
-        if !self.costume_used(kind, slot, costume) {
+        if self.costume_used(kind, slot, costume) {
+            sound::play_fgm(id::nSYAudioFGMMenuDenied);
+        } else {
             self.slots[slot].costume = costume;
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
         }
     }
 
@@ -762,6 +801,37 @@ pub fn portrait_center(kind: FighterKind) -> (f32, f32) {
     } else {
         ((p * 45 + 36) as f32, 46.0)
     }
+}
+
+/// `announce_names` in `mnPlayers*AnnounceFighter`: each playable
+/// fighter's name voice, in [`FighterKind`] order.
+pub const ANNOUNCE_NAMES: [u16; 12] = [
+    id::nSYAudioVoiceAnnounceMario,
+    id::nSYAudioVoiceAnnounceFox,
+    id::nSYAudioVoiceAnnounceDonkey,
+    id::nSYAudioVoiceAnnounceSamus,
+    id::nSYAudioVoiceAnnounceLuigi,
+    id::nSYAudioVoiceAnnounceLink,
+    id::nSYAudioVoiceAnnounceYoshi,
+    id::nSYAudioVoiceAnnounceCaptain,
+    id::nSYAudioVoiceAnnounceKirby,
+    id::nSYAudioVoiceAnnouncePikachu,
+    id::nSYAudioVoiceAnnouncePurin,
+    id::nSYAudioVoiceAnnounceNess,
+];
+
+/// `mnPlayers*AnnounceFighter`: stops the cursor's last name voice
+/// (`func_80026738_27338(p_sfx)`), plays `nSYAudioFGMMarioDash` and
+/// `kind`'s name, and returns the new `p_sfx`. A `NULL` `p_sfx` stops
+/// nothing here.
+pub fn announce_fighter(p_sfx: Option<FgmHandle>, kind: FighterKind) -> Option<FgmHandle> {
+    if let Some(h) = p_sfx {
+        sound::stop_fgm(h);
+    }
+    sound::play_fgm(id::nSYAudioFGMMarioDash);
+    ANNOUNCE_NAMES
+        .get(kind as usize)
+        .and_then(|&v| sound::play_fgm(v))
 }
 
 #[path = "fighter_select_layer.rs"]

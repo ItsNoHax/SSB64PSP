@@ -809,3 +809,58 @@ fn a_campaign_through_every_stage_raises_no_fpu_exception() {
     unsafe { fedisableexcept(traps) };
     assert_eq!(polygons, 3);
 }
+
+#[test]
+fn intro_plays_its_bgm_and_the_announcers_voices() {
+    use crate::sound::{id, testing::*};
+    let r = Recorder::install();
+    let mut i = intro::Intro::new(Stage::Yoshi, FighterKind::Donkey);
+    assert_eq!(r.take(), [Call::PlayBgm(0, id::nSYAudioBGM1PIntro)]);
+    for tic in 1..=200 {
+        i.tick(tic, N64Buttons(0));
+    }
+    assert_eq!(
+        r.take(),
+        [
+            Call::PlayFgm(id::nSYAudioVoiceAnnounceDonkey),
+            Call::PlayFgm(id::nSYAudioVoiceAnnounceVersus),
+            Call::PlayFgm(id::nSYAudioVoiceAnnounceYoshiTeam),
+        ]
+    );
+    // A tap after 60 tics leaves and stops the voices.
+    assert!(i.tick(201, N64Buttons(N64Buttons::A)).proceed);
+    assert_eq!(r.take(), [Call::StopAllFgm]);
+    let _ = intro::Intro::new(Stage::Boss, FighterKind::Mario);
+    assert_eq!(r.take(), [Call::PlayBgm(0, id::nSYAudioBGMBossStage)]);
+    crate::sound::uninstall();
+}
+
+#[test]
+fn continue_plays_the_choice_then_game_over() {
+    use crate::sound::{id, testing::*};
+    let r = Recorder::install();
+    let mut c = continue_scene::Continue::new(1000);
+    assert_eq!(
+        r.take(),
+        [
+            Call::StopBgmAll,
+            Call::PlayBgm(0, id::nSYAudioBGM1PGameEndChoice)
+        ]
+    );
+    let idle = ControllerState::default();
+    for _ in 0..151 {
+        c.tick(idle, N64Buttons(0));
+    }
+    assert_eq!(r.take(), [Call::PlayFgm(id::nSYAudioVoiceAnnounceContinue)]);
+    c.tick(idle, N64Buttons(N64Buttons::D_RIGHT));
+    assert_eq!(r.take(), [Call::PlayFgm(id::nSYAudioFGMMenuScroll1)]);
+    c.tick(idle, N64Buttons(N64Buttons::A));
+    assert_eq!(
+        r.take(),
+        [
+            Call::PlayBgm(0, id::nSYAudioBGM1PGameOver),
+            Call::PlayFgm(id::nSYAudioVoiceAnnounceGameOver),
+        ]
+    );
+    crate::sound::uninstall();
+}

@@ -3680,7 +3680,7 @@ fn make_results(
     b: &ssb_game::battle::Battle,
     roster: &Roster,
 ) -> (ssb_game::results::Results, alloc::boxed::Box<results_screen::Fighters>) {
-    let r = ssb_game::results::Results::new(b);
+    let r = ssb_game::results::Results::start(b, roster.map(|e| e.map(|e| e.kind)));
     let entrants = roster.map(|e| e.map(|e| (e.kind, e.costume)));
     let f = results_screen::start(pack, &r, entrants);
     (r, f)
@@ -4406,7 +4406,7 @@ unsafe fn session_frame(
                     // from.
                     if s.vs {
                         s.maps_vsmode_gkind = saved.remembered;
-                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
+                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup, true));
                         s.players_vs_fighters = None;
                         s.screen = Screen::PlayersVs;
                     } else {
@@ -4414,6 +4414,7 @@ unsafe fn session_frame(
                         s.fighter_select = Some(ssb_game::fighter_select::FighterSelect::new(
                             s.training_scene,
                             s.backup.fighter_mask,
+                            true,
                             clock_byte,
                         ));
                         s.fighter_select_fighters = None;
@@ -4459,7 +4460,7 @@ unsafe fn session_frame(
                     if s.vs_message.is_some() {
                         s.screen = Screen::Message;
                     } else {
-                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
+                        s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup, false));
                         s.players_vs_fighters = None;
                         s.screen = Screen::PlayersVs;
                     }
@@ -4476,7 +4477,7 @@ unsafe fn session_frame(
                     // title).
                     if s.vs_message.is_none() {
                         if s.message_after == MScene::PlayersVs {
-                            s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
+                            s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup, false));
                             s.players_vs_fighters = None;
                             s.screen = Screen::PlayersVs;
                         } else {
@@ -4790,8 +4791,9 @@ struct Session {
     save: save::Save,
     /// The options and data menus (RE-461).
     menus: menus_screen::Menus,
-    /// `dSYAudioSoundQuality`, which `lbBackupApplyOptions` and Option set:
-    /// 1 stereo, 0 mono. The port's audio has no mono mix (RE-461).
+    /// `dSYAudioSoundQuality`, which `lbBackupApplyOptions` and Option set
+    /// (`syAudioSetQuality`): 1 stereo, 0 mono. The Option menu starts
+    /// from it.
     sound_quality: u8,
     /// `syVideoSetCenterOffsets`' horizontal and vertical offsets. The PSP's
     /// picture does not move (RE-461).
@@ -4938,6 +4940,11 @@ unsafe fn run() -> ! {
         start_audio(buf.as_slice(), path);
     }
     let (backup, save) = save::boot(loaded.as_ref().ok().map(|(_, p)| *p), capture_spec);
+    // `scManagerRunLoop`: `syAudioSetFXType(AL_FX_CUSTOM)` and its waits on
+    // the audio thread are the audio system's own boot configuration
+    // (D-049), done where it is installed; then `lbBackupApplyOptions`,
+    // which needs the audio system installed (`ssb_game::sound::install`).
+    backup.apply_options();
     let pack_buf = loaded.as_ref().ok().map(|(b, _)| b);
     let opened = pack_buf.map(|b| Pack::open(b.as_slice()));
     // At boot, not in the first frame that looks a sprite up (RE-471).
@@ -5478,7 +5485,7 @@ fn start_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MS
             s.dummies = Default::default();
             s.vs = true;
             s.vs_menu_rules = VsRules::of(&s.vs_state);
-            s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup));
+            s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup, false));
             s.players_vs_fighters = None;
             s.screen = Screen::PlayersVs;
         }
@@ -5628,19 +5635,27 @@ fn new_fighter_select(
     frame: u64,
 ) -> ssb_game::fighter_select::FighterSelect {
     let time_byte = frame as u8;
-    ssb_game::fighter_select::FighterSelect::new(scene, fighter_mask, || {
+    // Never entered from the stage select: its B builds the select itself.
+    ssb_game::fighter_select::FighterSelect::new(scene, fighter_mask, false, || {
         if capture { time_byte } else { clock_byte() }
     })
 }
 
 
 
+/// `mpCollisionSetPlayBGM` for the attract demos' grounds: the map's
+/// `bgm_id` on player 0.
+pub(crate) fn play_stage_bgm(bgm_id: u32) {
+    ssb_game::sound::play_bgm(0, bgm_id);
+}
+
 /// `mnPlayersVSStartScene` from the battle state, with one controller
-/// plugged into port 1.
+/// plugged into port 1. `from_maps`: back from the stage select.
 fn new_players_vs(
     state: ssb_game::players_vs::BattleState,
     gkind: u8,
     backup: &ssb_game::backup::Backup,
+    from_maps: bool,
 ) -> ssb_game::players_vs::PlayersVs {
     ssb_game::players_vs::PlayersVs::new(
         state,
@@ -5648,6 +5663,7 @@ fn new_players_vs(
             fighter_mask: backup.fighter_mask,
             unlock_mask: backup.unlock_mask,
             gkind,
+            from_maps,
         },
         [true, false, false, false],
     )

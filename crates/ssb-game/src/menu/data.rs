@@ -10,6 +10,7 @@ use super::{
     IDLE_RETURN, UP,
 };
 use crate::backup::Backup;
+use crate::sound::{self, id};
 use crate::spgame::Unlock;
 use ssb_engine::input::N64Buttons;
 
@@ -65,6 +66,12 @@ impl DataMenu {
         };
         // `mnDataCheckSoundTestUnlocked`.
         let is_have_sound_test = backup.unlock_mask & Unlock::SoundTest.mask() != 0;
+        if matches!(
+            scene_prev,
+            Scene::VsRecord | Scene::Characters | Scene::SoundTest
+        ) {
+            sound::play_bgm(0, id::nSYAudioBGMModeSelect);
+        }
         DataMenu {
             option,
             last_option: if is_have_sound_test {
@@ -111,6 +118,8 @@ impl DataMenu {
             self.change_wait = 0;
         }
         if pad.tap(N64Buttons::A | N64Buttons::START) {
+            sound::play_fgm(id::nSYAudioFGMMenuSelect);
+            sound::stop_bgm_all();
             self.tab_status[self.option as usize] = TabStatus::Selected;
             self.scene_curr = match self.option {
                 DataOption::Characters => Scene::Characters,
@@ -125,6 +134,7 @@ impl DataMenu {
         }
         let mut r = Repeat::default();
         if r.check(self.change_wait, pad, UP, true, 20, true) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_p(7);
             let next = if self.option == DataOption::Characters {
                 self.last_option
@@ -137,6 +147,7 @@ impl DataMenu {
             }
         }
         if r.check(self.change_wait, pad, DOWN, true, -20, false) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_n(7);
             let next = if self.option == self.last_option {
                 DataOption::Characters

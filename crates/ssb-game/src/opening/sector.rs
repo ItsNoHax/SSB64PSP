@@ -117,8 +117,7 @@ impl Sector {
             ));
         }
         world.light = [45.0, 45.0];
-        // `func_800269C0_275C0(nSYAudioFGMOpeningSectorAmbient)`: no audio
-        // here.
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMOpeningSectorAmbient);
         Sector {
             tics: 0,
             world,

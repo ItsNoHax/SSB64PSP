@@ -9,6 +9,7 @@
 //! subtitle or frame.
 
 use super::{Draw, Pad, Piece, Repeat, Scene, IDLE_RETURN};
+use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
 /// `llMNMainFileID`.
@@ -107,6 +108,12 @@ impl ModeSelect {
             Scene::Data => ModeOption::Data,
             _ => ModeOption::OnePMode,
         };
+        if !matches!(
+            scene_prev,
+            Scene::OnePMode | Scene::VsMode | Scene::Option | Scene::Data
+        ) {
+            sound::play_bgm(0, id::nSYAudioBGMModeSelect);
+        }
         ModeSelect {
             option,
             change_wait: 0,
@@ -140,10 +147,12 @@ impl ModeSelect {
             self.change_wait = 0;
         }
         if pad.tap(N64Buttons::A | N64Buttons::START) {
+            sound::play_fgm(id::nSYAudioFGMMenuSelect);
             return Some(self.option.scene());
         }
         let mut load = None;
         if pad.tap(N64Buttons::B) {
+            sound::stop_bgm_all();
             load = Some(Scene::Title);
         }
         // Not up-and-left or down-and-right at once.
@@ -157,6 +166,7 @@ impl ModeSelect {
             || (self.change_wait == 0 && r.check_stick(self.change_wait, pad, false, 20, true))
         {
             self.change_wait = r.wait_p(7);
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             let i = self.option as usize;
             let next = if i == 0 { 3 } else { i - 1 };
             self.select(ModeOption::ALL[next]);
@@ -168,6 +178,7 @@ impl ModeSelect {
             || (self.change_wait == 0 && r.check_stick(self.change_wait, pad, false, -20, false))
         {
             self.change_wait = r.wait_n(7);
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             let i = self.option as usize;
             let next = if i == 3 { 0 } else { i + 1 };
             self.select(ModeOption::ALL[next]);

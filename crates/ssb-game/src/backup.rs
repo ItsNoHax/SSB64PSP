@@ -10,8 +10,9 @@
 //! the defaults. The host persists the image whenever [`Backup::writes`]
 //! moves (`lbBackupWrite`).
 //!
-//! `lbBackupApplyOptions` (audio quality, screen centre offsets) has nothing
-//! to apply on the PSP; the fields are kept and saved.
+//! [`Backup::apply_options`] is `lbBackupApplyOptions`: it sets the audio
+//! quality; the screen centre offsets have nothing to apply on the PSP
+//! display and are only kept and saved.
 
 use crate::fighter::FighterKind;
 use crate::spgame::{Difficulty, Unlock};
@@ -273,6 +274,12 @@ impl Backup {
     /// `lbBackupWrite`: the host saves [`Self::image`] when the count moves.
     pub fn write(&mut self) {
         self.writes = self.writes.wrapping_add(1);
+    }
+
+    /// `lbBackupApplyOptions`: `syAudioSetQuality` with the saved mono or
+    /// stereo setting. `syVideoSetCenterOffsets` has no PSP counterpart.
+    pub fn apply_options(&self) {
+        crate::sound::set_quality(u32::from(self.sound_mono_or_stereo));
     }
 
     /// One copy as the N64 lays out `LBBackupData`, with its checksum.
