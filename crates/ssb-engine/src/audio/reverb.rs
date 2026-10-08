@@ -14,6 +14,16 @@ const SCALE: f32 = 16384.0;
 const UNITY_PITCH: f32 = 32768.0;
 const FIXED_SAMPLE: usize = 184;
 
+/// Whether `_n_filterBuffer`'s `n_aPoleFilter` changes the section's
+/// output. In `n_aspMain` (N_MICRO) the command carries no buffer size and
+/// names its DMEM buffer only as `buff >> 8` (`TEMP_1` = 368 -> 1). The
+/// N64 reference capture (mupen64plus HLE audio, /tmp/ssb-audio/n64,
+/// S-n64-compare.md) matches the port sample for sample only when the
+/// low-pass leaves the saved output untouched; with the filter applied the
+/// reverb return differs from 0.2 s on (corr 0.988). The port follows the
+/// reference; real hardware is unverified (D-049).
+const APPLY_LOWPASS: bool = false;
+
 /// `ALLowPass`.
 #[derive(Debug, Clone)]
 struct LowPass {
@@ -185,7 +195,10 @@ impl Fx {
             let after = curr + count - self.length;
             let b = words(before).min(self.length - curr);
             dmem.load(buff, &self.base[curr..curr + b]);
-            dmem.load(buff + (before << 1), &self.base[..words(after).min(self.length)]);
+            dmem.load(
+                buff + (before << 1),
+                &self.base[..words(after).min(self.length)],
+            );
         } else {
             let n = words(count).min(self.length - curr);
             dmem.load(buff, &self.base[curr..curr + n]);
@@ -242,10 +255,16 @@ impl Fx {
                 dmem.mix(fb, buff2, buff1);
                 self.save_buffer(dmem, in_ptr, buff1);
             }
-            if let Some(lp) = &mut self.delay[i].lp {
+            if let Some(lp) = self.delay[i].lp.as_mut().filter(|_| APPLY_LOWPASS) {
                 // `_n_filterBuffer`: n_aLoadADPCM of the 16 coefficients,
                 // then n_aPoleFilter in place.
-                dmem.polef(lp.first as u32, lp.fgain as u16, &lp.coefs, &mut lp.fstate, buff2);
+                dmem.polef(
+                    lp.first as u32,
+                    lp.fgain as u16,
+                    &lp.coefs,
+                    &mut lp.fstate,
+                    buff2,
+                );
                 lp.first = 0;
             }
             if !has_rs {
@@ -263,7 +282,13 @@ impl Fx {
     }
 
     /// `_n_loadOutputBuffer`.
-    fn load_output_buffer(&mut self, dmem: &mut Dmem, i: usize, buff: usize, table: &[[i16; 4]; 64]) {
+    fn load_output_buffer(
+        &mut self,
+        dmem: &mut Dmem,
+        i: usize,
+        buff: usize,
+        table: &[[i16; 4]; 64],
+    ) {
         if self.delay[i].rs.is_none() {
             let out_ptr = self.at(-(self.delay[i].output as i32 as isize));
             self.load_buffer(dmem, out_ptr, buff, FIXED_SAMPLE);
@@ -302,7 +327,11 @@ impl Fx {
         let ratio = (fratio * UNITY_PITCH) as i32;
         let d = &mut self.delay[i];
         let rs = d.rs.as_mut().expect("chorus section");
-        let out = if buff >> 8 != 0 { dsp::TEMP_1 } else { dsp::TEMP_0 };
+        let out = if buff >> 8 != 0 {
+            dsp::TEMP_1
+        } else {
+            dsp::TEMP_0
+        };
         dmem.resample(
             rs.first as u32,
             ratio as u16,
