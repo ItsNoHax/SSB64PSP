@@ -1911,6 +1911,7 @@ pub fn update(f: &mut Fighter) -> bool {
                 if f.is_grounded() {
                     set_donkey_throwf_wait(f);
                 } else {
+                    f.public_knockback = f.reaction.public_knockback;
                     set_donkey_throwf_fall(f);
                 }
             }

@@ -2579,6 +2579,7 @@ pub fn set_fall_special(
         landing_allow_interrupt: false,
     };
     crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_FALL_SPECIAL, 0);
+    crate::public::try_play_fall_special_react(f.port, f.pos.y);
     f.is_special_interrupt = true;
 }
 

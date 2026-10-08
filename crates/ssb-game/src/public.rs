@@ -18,6 +18,7 @@
 //! at the end of the frame rather than at the hit: a PSP deviation that
 //! can only change which crowd sound plays.
 
+#[cfg(not(test))]
 use core::ptr::addr_of_mut;
 
 use crate::fighter::{Fighter, FighterKind};
@@ -67,8 +68,6 @@ const GASP_KNOCKBACK_MUL: f32 = 0.8;
 const DEFEATED_MAX: usize = 10;
 /// The reactions one frame can queue; more are dropped (and counted).
 const EVENTS_MAX: usize = 16;
-/// The player number of no player (`GMCOMMON_PLAYERS_MAX`).
-const NO_PLAYER: i32 = 4;
 
 /// A reaction a fighter's code asked for this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -167,8 +166,10 @@ fn push(event: Event) {
     });
 }
 
+/// `damage_player_num`: the attacker's player, which the source sets to 0
+/// for a hit by the stage (`ftMainSearchHitGround` and friends).
 fn player_num(port: Option<u8>) -> i32 {
-    port.map_or(NO_PLAYER, i32::from)
+    port.map_or(0, i32::from)
 }
 
 /// `ftCommonDamageSetPublic` from `ftCommonDamageInitDamageVars`: the hit

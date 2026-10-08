@@ -73,6 +73,10 @@ pub struct ReactionState {
     /// read in the source, so they are not kept.)
     pub coll_mask_curr: u16,
     pub coll_mask_prev: u16,
+    /// `damage.public_knockback` / `throwfdamage.public_knockback`: the
+    /// hit's crowd knockback, handed to [`Fighter::public_knockback`] when
+    /// hitstun ends (`ftCommonDamageDecHitStunSetPublic`).
+    pub public_knockback: f32,
 }
 
 /// `FTCOMMON_WALLDAMAGE_INTANGIBLE_TIMER`.

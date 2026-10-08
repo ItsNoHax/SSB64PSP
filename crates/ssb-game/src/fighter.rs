@@ -698,6 +698,15 @@ impl Fighter {
         }
         if self.hitstun > 0 {
             self.hitstun -= 1;
+            // `ftCommonDamageDecHitStunSetPublic`: the damage statuses hand
+            // the hit's crowd knockback over when hitstun ends.
+            if self.hitstun == 0 {
+                if let crate::status::AnyStatus::Common(s) = self.status.status {
+                    if crate::reaction::is_damage_common(s) || crate::reaction::is_damage_air(s) {
+                        self.public_knockback = self.reaction.public_knockback;
+                    }
+                }
+            }
         }
         if self.cliffcatch_wait > 0 {
             self.cliffcatch_wait -= 1;
@@ -747,8 +756,25 @@ impl Fighter {
         self.physics.jumps_used = 0;
         // `mpCommonSetFighterGround`'s Samus case.
         self.samus.charge_recoil = 0;
+        self.landing_public();
         // `mpCommonSetFighterLandingParams`'s Jigglypuff case.
         self.purin.pound_count = 0;
+    }
+
+    /// `mpCommonSetFighterLandingParams`'s crowd half, on landing and on a
+    /// ledge catch: a fighter launched hard who lands or grabs near a side
+    /// of the stage makes the crowd gasp.
+    fn landing_public(&mut self) {
+        if self.public_knockback != 0.0 {
+            if self.public_knockback >= 100.0 {
+                if let Some(b) = self.dead.bounds {
+                    if self.pos.x < b.map.left + 450.0 || self.pos.x > b.map.right - 450.0 {
+                        crate::public::play_cliff_react(self.port, self.public_knockback);
+                    }
+                }
+            }
+            self.public_knockback = 0.0;
+        }
     }
 
     /// `ftManagerInitFighter`'s floor projection: a fighter made over a
@@ -1811,6 +1837,7 @@ impl Fighter {
         if moved.floor.is_none() {
             self.pos.y = moved.pos.y;
             if let Some((line, corner)) = result.cliff {
+                self.landing_public();
                 crate::status::set_cliff_catch(self, line, corner);
                 return;
             }

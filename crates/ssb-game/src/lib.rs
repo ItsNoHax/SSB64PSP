@@ -63,6 +63,7 @@ pub mod ness;
 pub mod opening;
 pub mod particle;
 pub mod pause;
+pub mod public;
 pub mod physics;
 pub mod pikachu;
 pub mod player_interface;

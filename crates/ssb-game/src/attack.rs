@@ -360,6 +360,8 @@ pub fn init_damage_vars_sfx(
             status = Status::DamageFlyRoll;
         }
     }
+    // `ftCommonDamageSetPublic`: the crowd reacts to the hit.
+    crate::public::damage_set_public(f, knockback, angle);
     // `ftCommonDamageCheckElementSetColAnim` for a hit that did damage, then
     // `ftCommonDamageCheckMakeScreenFlash`.
     if damage != 0 {
