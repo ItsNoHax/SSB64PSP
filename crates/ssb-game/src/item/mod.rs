@@ -1628,6 +1628,8 @@ impl ItemPool {
         if item.is_hold {
             if let Some(port) = item.owner {
                 self.mark_released(port);
+                // `ftParamSetHammerParams`' `ftParamTryUpdateItemMusic`.
+                crate::music::request_update();
             }
         }
         if let Some(i) = self.order[..self.order_len].iter().position(|&s| s == slot) {
@@ -1881,6 +1883,9 @@ impl ItemPool {
         item.times_thrown = (item.times_thrown + 1) & 7;
         item.is_thrown = true;
         item.attack.throw_mul = throw_mul;
+        // `ftParamSetHammerParams`' `ftParamTryUpdateItemMusic` (and the
+        // Hammer's own `itHammer{Thrown,Dropped}SetStatus` one).
+        crate::music::request_update();
         item.refresh_attack_coll();
     }
 

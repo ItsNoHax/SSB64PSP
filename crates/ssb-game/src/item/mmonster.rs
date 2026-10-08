@@ -833,6 +833,8 @@ fn common_update(item: &mut Item, k: Kind, ctx: &mut Ctx<'_>) -> bool {
             Kind::Lizardon => {
                 item.multi = LIZARDON_LIFETIME;
                 item.vel_air.y = 0.0;
+                // `itLizardonCommonProcUpdate`: Charizard itself.
+                crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallLizardonAppear);
                 set(item, Status::LizardonFall);
             }
             Kind::Spear => spear_appear(item, k),
@@ -1128,6 +1130,8 @@ fn lizardon_attack_update(item: &mut Item, k: Kind, ctx: &mut Ctx<'_>) -> bool {
             shot.make_fx(ctx.fx);
             ctx.shots.push(shot);
         }
+        // `itLizardonAttackMakeFlame`'s last line.
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMLizardonFlame);
         v(item).flame_spawn_wait = LIZARDON_FLAME_SPAWN_WAIT;
     }
     v(item).flame_spawn_wait = v(item).flame_spawn_wait.wrapping_sub(1);
@@ -1160,6 +1164,8 @@ fn spear_appear(item: &mut Item, k: Kind) {
     item.vel_air.y = 0.0;
     if k == Kind::Spear {
         start_anim(item);
+        // `itSpearAppearInitVars`.
+        crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallSpearAppear);
     }
     v(item).spear_anim_frame = 0;
     set(item, Status::SpearAppear);
@@ -1176,6 +1182,10 @@ fn spear_fly(item: &mut Item, k: Kind) {
     // `dobj->child->anim_joint.event32 = NULL`: the appear script stops.
     if k == Kind::Spear {
         vars.anim_frozen = true;
+    }
+    // `itSpearFlyInitVars`: Beedrill itself.
+    if k == Kind::Spear {
+        crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallSpearSwarm);
     }
     set(item, Status::SpearFly);
 }
@@ -1374,6 +1384,8 @@ fn starmie_nfollow(item: &mut Item, k: Kind, owners: &[Option<OwnerView>; 4]) {
     }
     if k == Kind::Starmie {
         start_anim(item);
+        // `itStarmieNFollowInitVars`: Starmie itself.
+        crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallStarmieAppear);
     }
     set(item, Status::StarmieNFollow);
 }
@@ -1413,6 +1425,7 @@ fn starmie_update_swift(item: &mut Item, k: Kind, ctx: &mut Ctx<'_>) {
         shot.make_fx(ctx.fx);
         ctx.shots.push(shot);
     }
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMonsterShoot);
     v(item).swift_spawn_wait = crate::rng::rand_int_range(STARMIE_SWIFT_SPAWN_WAIT_RANDOM)
         + STARMIE_SWIFT_SPAWN_WAIT_CONST;
     item.vel_air.x = -item.lr * STARMIE_PUSH_VEL_X;
@@ -1436,6 +1449,8 @@ fn sawamura_attack(item: &mut Item, k: Kind, owners: &[Option<OwnerView>; 4]) {
     }
     if k == Kind::Sawamura {
         v(item).attack_dl = true;
+        // `itSawamuraAttackInitVars`: Hitmonlee itself.
+        crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceMBallSawamuraKick);
     }
     item.multi = SAWAMURA_LIFETIME;
     item.attack.size = SAWAMURA_KICK_SIZE;

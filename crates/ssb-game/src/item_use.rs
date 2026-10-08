@@ -492,6 +492,9 @@ pub fn tick_hammer(f: &mut Fighter) {
     if f.item_use.hammer_tics == 0 {
         f.items.request(ItemRequest::Destroy);
         f.items.held = None;
+        // `ftHammerProcUpdate`: `ftParamTryUpdateItemMusic` after the
+        // Hammer is destroyed.
+        crate::music::request_update();
         if is_hammer(f.status.status) {
             status::set_wait_or_fall(f);
         }
