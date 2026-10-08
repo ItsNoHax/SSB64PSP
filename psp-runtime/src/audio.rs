@@ -271,6 +271,7 @@ struct ThreadState {
     max_us: u32,
     rest_min: u32,
     latency_max: u32,
+    voices_max: u32,
 }
 
 impl ThreadState {
@@ -291,6 +292,7 @@ impl ThreadState {
             max_us: 0,
             rest_min: u32::MAX,
             latency_max: 0,
+            voices_max: 0,
         })
     }
 }
@@ -316,6 +318,10 @@ static MAX_US: AtomicU32 = AtomicU32::new(0);
 static REST_MIN: AtomicU32 = AtomicU32::new(u32::MAX);
 static LATENCY_MAX: AtomicU32 = AtomicU32::new(0);
 static EPOCH: AtomicU32 = AtomicU32::new(0);
+static VOICES: AtomicU32 = AtomicU32::new(0);
+static VOICES_MAX: AtomicU32 = AtomicU32::new(0);
+static STEALS: AtomicU32 = AtomicU32::new(0);
+static DROPS: AtomicU32 = AtomicU32::new(0);
 
 /// A snapshot of the audio thread's counters. The totals only grow
 /// (wrapping); the maxima and minimum cover the window since the last
@@ -339,6 +345,15 @@ pub struct Stats {
     /// The window's largest render-to-output latency at a submit, in
     /// sample frames (hardware queue + FIFO + the block submitted).
     pub latency_max: u32,
+    /// Physical voices playing after the last tic (`AudioSystem::active_voices`).
+    pub voices: u32,
+    /// The window's most voices playing after a tic.
+    pub voices_max: u32,
+    /// Physical voices stolen so far (`AudioSystem::voice_steals`).
+    pub steals: u32,
+    /// Work the fixed pools dropped so far, all kinds summed
+    /// (`AudioSystem::drops`; zero in normal play).
+    pub drops: u32,
 }
 
 impl Stats {
@@ -351,6 +366,10 @@ impl Stats {
         max_us: 0,
         rest_min: u32::MAX,
         latency_max: 0,
+        voices: 0,
+        voices_max: 0,
+        steals: 0,
+        drops: 0,
     };
 }
 
@@ -492,6 +511,10 @@ pub fn stats() -> Stats {
         max_us: MAX_US.load(Ordering::Acquire),
         rest_min: REST_MIN.load(Ordering::Acquire),
         latency_max: LATENCY_MAX.load(Ordering::Acquire),
+        voices: VOICES.load(Ordering::Acquire),
+        voices_max: VOICES_MAX.load(Ordering::Acquire),
+        steals: STEALS.load(Ordering::Acquire),
+        drops: DROPS.load(Ordering::Acquire),
     }
 }
 
@@ -530,29 +553,50 @@ unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
     let mut first = true;
     while !STOP.load(Ordering::Acquire) {
         let t0 = now();
-        while st.fifo_len < BLOCK {
-            let ai_len = st.ai.ai_len;
-            let off = st.fifo_len * 2;
-            let fifo = &mut st.fifo.0[off..];
-            let n = api.shared.with(|s| {
-                let n = s.frame_samples(ai_len).min(FRAME_SAMPLES_MAX);
-                s.render_frame(fifo, n);
-                n
-            });
-            st.fifo_len += n;
-            st.ai.tic(n as u32);
-            bump(&TICS, 1);
-        }
-        let us = now().wrapping_sub(t0);
-        bump(&BUSY_US, us);
-
         let epoch = EPOCH.load(Ordering::Acquire);
         if epoch != st.epoch {
             st.epoch = epoch;
             st.max_us = 0;
             st.rest_min = u32::MAX;
             st.latency_max = 0;
+            st.voices_max = 0;
+            VOICES_MAX.store(0, Ordering::Release);
         }
+        while st.fifo_len < BLOCK {
+            let ai_len = st.ai.ai_len;
+            let off = st.fifo_len * 2;
+            let fifo = &mut st.fifo.0[off..];
+            let (n, voices, steals, drops) = api.shared.with(|s| {
+                let n = s.frame_samples(ai_len).min(FRAME_SAMPLES_MAX);
+                s.render_frame(fifo, n);
+                let d = s.drops();
+                let drops = [
+                    d.synth_params,
+                    d.seq_events,
+                    d.oscillators,
+                    d.fgm_scripts,
+                    d.fgm_voices,
+                    d.fgm_lfos,
+                    d.fgm_synth_voices,
+                ]
+                .iter()
+                .fold(0u32, |a, &b| a.saturating_add(b));
+                (n, s.active_voices(), s.voice_steals(), drops)
+            });
+            st.fifo_len += n;
+            st.ai.tic(n as u32);
+            bump(&TICS, 1);
+            VOICES.store(voices, Ordering::Release);
+            STEALS.store(steals, Ordering::Release);
+            DROPS.store(drops, Ordering::Release);
+            if voices > st.voices_max {
+                st.voices_max = voices;
+                VOICES_MAX.store(voices, Ordering::Release);
+            }
+        }
+        let us = now().wrapping_sub(t0);
+        bump(&BUSY_US, us);
+
         if us > st.max_us {
             st.max_us = us;
             MAX_US.store(us, Ordering::Release);

@@ -381,7 +381,7 @@ mod imp {
         let busy = a.busy_us.wrapping_sub(l.busy_us);
         let _ = writeln!(
             line,
-            "audio n={} blk/s={}.{} tic/s={}.{} busy_us/s={} per_frame={} max={} under={} under_total={} err={} rest_min={} lat_max={} stk={} dump_drop={}",
+            "audio n={} blk/s={}.{} tic/s={}.{} busy_us/s={} per_frame={} max={} under={} under_total={} err={} rest_min={} lat_max={} voices={}/{} steals={} drops={} stk={} dump_drop={}",
             s.reports,
             blk10 / 10,
             blk10 % 10,
@@ -395,6 +395,10 @@ mod imp {
             a.errors.wrapping_sub(l.errors),
             if a.rest_min == u32::MAX { 0 } else { a.rest_min },
             a.latency_max,
+            a.voices,
+            a.voices_max,
+            a.steals,
+            a.drops,
             crate::audio::stack_free(),
             crate::audio::dump_dropped(),
         );
