@@ -543,6 +543,10 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             4 | 10 | 34 => N64Buttons(N64Buttons::A),
             166 if scene == GameScene::OnePGame => N64Buttons(N64Buttons::A),
             270 if scene == GameScene::OnePRetry => N64Buttons(N64Buttons::A),
+            // Past its capture, A every 30 ticks takes a stage the fixture
+            // clears through its results into the next stage (RE-478).
+            t if matches!(scene, GameScene::OnePTargetClear | GameScene::OnePPlatformClear | GameScene::OnePRaceClear | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePBossDefeat)
+                && t > capture_ticks(scene) && t % 30 == 0 => N64Buttons(N64Buttons::A),
             t if scene == GameScene::OnePStaffroll && t >= 400 && t % 20 == 0 => N64Buttons(N64Buttons::A),
             930 if scene == GameScene::OnePFinale => N64Buttons(N64Buttons::START),
             t if scene == GameScene::OnePFinale && t >= 150 && t % 150 == 0 => N64Buttons(N64Buttons::A),

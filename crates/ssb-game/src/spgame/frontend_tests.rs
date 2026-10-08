@@ -675,3 +675,137 @@ fn a_host_select_starts_the_campaign_at_its_intro_without_saving_again() {
     assert_eq!(session.data.costume, 2);
     assert_eq!(backup.writes, 0);
 }
+
+/// A whole campaign through the frontend, A every 30 ticks: each stage's
+/// intro, its battle (won; the Polygon Team lost once and continued), its
+/// results, to the ending. At each intro the fighters the VS name reads
+/// must have a name sprite. Returns how many intros had Polygons on the
+/// ally ports.
+fn campaign_walk() -> u32 {
+    let mut backup = Backup {
+        unlock_mask: !0,
+        ..Default::default()
+    };
+    let mut f = frontend::Frontend::new(Default::default(), &backup);
+    f.session = Some(alloc::boxed::Box::new(session::Session::new(
+        SceneData {
+            fkind: FighterKind::Kirby,
+            ..Default::default()
+        },
+        &backup,
+    )));
+    f.sync(&backup);
+    let mut polygons_on_ally_ports = 0;
+    let mut lost_zako = false;
+    let mut tic = 0;
+    for _ in 0..64 {
+        let s = f.session.as_ref().unwrap();
+        let Some(stage) = s.data.stage() else { break };
+        if s.manager.scene == Scene::Ending {
+            break;
+        }
+        assert_eq!(s.manager.scene, Scene::Intro, "{stage:?}");
+        // RE-478: `sc1PIntroMakeVSName` names only the stage's allies.
+        let named: alloc::vec::Vec<_> = intro::named_allies(stage, &s.data, &s.state).collect();
+        assert!(
+            named.iter().all(|k| k.is_playable()),
+            "{stage:?}: {named:?}"
+        );
+        assert_eq!(named.len(), intro::allies_num(stage));
+        if s.data
+            .ally_players
+            .iter()
+            .any(|&p| s.state.players[usize::from(p)].fkind.is_polygon())
+        {
+            polygons_on_ally_ports += 1;
+        }
+        let mut host = None;
+        for _ in 0..2000 {
+            tic += 1;
+            f.tick(
+                tic,
+                Default::default(),
+                N64Buttons(if tic % 30 == 0 { N64Buttons::A } else { 0 }),
+                &mut backup,
+                |e| {
+                    if let frontend::Event::Host(scene) = e {
+                        host = Some(scene);
+                    }
+                },
+            );
+            if host.is_some() {
+                break;
+            }
+        }
+        let sp = f.session.as_mut().unwrap();
+        match host.expect("intro ends") {
+            Scene::BonusStage => {
+                sp.finish_bonus_stage(&BattleState::default(), 0, &mut backup);
+            }
+            Scene::Battle => {
+                sp.start_battle(&backup);
+                if stage == Stage::Bonus3 {
+                    sp.complete_race();
+                }
+                if stage == Stage::Zako && !lost_zako {
+                    lost_zako = true;
+                    sp.battle.as_mut().unwrap().players[usize::from(sp.data.player)].stock_count =
+                        -1;
+                }
+                sp.finish_battle(&mut backup);
+            }
+            other => panic!("{other:?}"),
+        }
+        f.sync(&backup);
+        // The results (or the continue), A until the next intro.
+        for _ in 0..2000 {
+            let scene = f.session.as_ref().unwrap().manager.scene;
+            if matches!(scene, Scene::Intro | Scene::Ending) {
+                break;
+            }
+            tic += 1;
+            f.tick(
+                tic,
+                Default::default(),
+                N64Buttons(if tic % 30 == 0 { N64Buttons::A } else { 0 }),
+                &mut backup,
+                |_| {},
+            );
+        }
+    }
+    assert_eq!(f.session.as_ref().unwrap().manager.scene, Scene::Ending);
+    polygons_on_ally_ports
+}
+
+/// RE-478: the Polygon Team's intro after Race to the Finish (and again
+/// after its continue) and Master Hand's after the Polygon Team find
+/// Polygons on the ally ports; the intro must not name them.
+#[test]
+fn every_campaign_intro_names_only_its_own_allies() {
+    assert_eq!(campaign_walk(), 3);
+}
+
+/// RE-469's traps over the same campaign: a PSP traps the FPU's
+/// divide-by-zero, invalid and overflow, which a host does not by default
+/// (glibc `feenableexcept`); a `0 / 0` in the results' ledgers, the bonus
+/// checks or the intros' entrances kills this test with SIGFPE.
+#[cfg(all(
+    target_os = "linux",
+    target_env = "gnu",
+    any(target_arch = "x86_64", target_arch = "x86")
+))]
+#[test]
+fn a_campaign_through_every_stage_raises_no_fpu_exception() {
+    extern "C" {
+        fn feenableexcept(excepts: i32) -> i32;
+        fn fedisableexcept(excepts: i32) -> i32;
+    }
+    const FE_INVALID: i32 = 0x01;
+    const FE_DIVBYZERO: i32 = 0x04;
+    const FE_OVERFLOW: i32 = 0x08;
+    let traps = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW;
+    unsafe { feenableexcept(traps) };
+    let polygons = campaign_walk();
+    unsafe { fedisableexcept(traps) };
+    assert_eq!(polygons, 3);
+}

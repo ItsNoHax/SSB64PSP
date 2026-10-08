@@ -55,7 +55,7 @@ closes it.
 
 ### PSP performance and hardware (`MS8`)
 
-- [ ] Install the RE-477 production EBOOT (`target/release-re477/EBOOT.PBP`) and run it on the PSP-2000 (RE-476, RE-477).
+- [ ] Run the RE-478 production EBOOT (`target/release-re478/EBOOT.PBP`) on the PSP-2000: the campaign past Race to the Finish, then RE-476/RE-477's checks (RE-476, RE-477, RE-478).
 - [ ] Measure D-047's GE fill cost on a PSP-2000: the battle viewport covers 19% more pixels; profile `vs4@4000`, the opening and the selects (`ge` span) (RE-477).
 - [ ] Opening CPU cost on a PSP-2000 (~3.5× PPSSPP): Run, Yoster/Sector and Clash at 45–57 FPS with 12–14 ms of CPU, mostly the movie draw's mesh lists; each opening fight's first frame takes 21–40 ms. Next: expanded vertices through the cache into a line-aligned, written-back block, then the battle's first frame (RE-469, RE-470, RE-471, RE-476).
 - [ ] Measure RE-469's other scenes and RE-471's worst cases on the PSP; `vs4@4000` averages 5.2 ms against RE-471's 4.5, unexplained (RE-471, RE-476).
@@ -141,7 +141,7 @@ closes it.
 - [x] CPU AI: input scripts, objectives, traits, item use (RE-390, RE-391, RE-437, RE-438).
 - [x] VS mode: rules, countdown, HUD, pause, teams, four fighters, results (RE-389–RE-411, RE-420, RE-464).
 - [x] Training mode with its menu and stats (RE-438, RE-439, RE-440).
-- [x] 1P campaign: every stage, bonus stages, Master Hand, the ending, staff roll, congratulations, challengers and unlocks (RE-447–RE-459).
+- [x] 1P campaign: every stage, bonus stages, Master Hand, the ending, staff roll, congratulations, challengers and unlocks; a run through every stage transition (RE-447–RE-459, RE-478).
 - [x] Save data: `LBBackupData` in `ssb64.sav`, options and data menus ([D-045](docs/decisions/D-045.md), RE-460, RE-461).
 - [x] Front end: N64 logo, opening movie, title, attract loop with How to Play, Characters and the auto demo; mode, 1P and VS menus; Bonus Practice (RE-462, RE-465, RE-467).
 - [x] Per-scene loading and background reads: no load hitch in the intro on a PSP-2000 (RE-475, RE-476).

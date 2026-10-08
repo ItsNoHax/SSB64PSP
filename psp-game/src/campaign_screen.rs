@@ -89,11 +89,7 @@ impl Presentation {
             return true;
         }
         if let Screen::Intro(intro) = screen {
-            let allies = match intro.stage {
-                Stage::Mario => 1,
-                Stage::Donkey => 2,
-                _ => 0,
-            };
+            let allies = spgame::intro::allies_num(intro.stage);
             let player_card = match allies {
                 1 => 1,
                 2 => 3,
@@ -964,14 +960,14 @@ unsafe fn intro_text(
         _ => return,
     };
     let width = |file, at| p.sprite(file, at).map_or(0, |s| i32::from(s.width));
-    let allies = match s.stage {
-        Stage::Mario => 1,
-        Stage::Donkey => 2,
-        _ => 0,
-    };
-    let ally_names = core::array::from_fn::<_, 2, _>(|i| {
-        a::NAMES.offsets[session.state.players[data.ally_players[i] as usize].fkind as usize]
-    });
+    let allies = spgame::intro::allies_num(s.stage);
+    // Only the stage's own allies: on other stages the ally ports hold the
+    // last battle's Polygons, which have no name (RE-478).
+    let mut ally_names = [0; 2];
+    let named = spgame::intro::named_allies(s.stage, data, &session.state);
+    for (name, kind) in ally_names.iter_mut().zip(named) {
+        *name = a::NAMES.offsets[kind as usize];
+    }
     let ally_width = if allies == 0 {
         0
     } else {

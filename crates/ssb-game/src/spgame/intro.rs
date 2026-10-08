@@ -151,3 +151,29 @@ pub fn polygon_frames(kind: FighterKind, scene_tic: u32) -> [bool; 3] {
     [kind * 2 - 28, kind * 2 - 8, kind * 2 + 12]
         .map(|threshold| i64::from(threshold) < i64::from(scene_tic))
 }
+
+/// `sc1PIntroGetAlliesNum`: the Mario Bros.' one ally, Giant Donkey Kong's
+/// two.
+pub fn allies_num(stage: Stage) -> usize {
+    match stage {
+        Stage::Mario => 1,
+        Stage::Donkey => 2,
+        _ => 0,
+    }
+}
+
+/// The allies `sc1PIntroMakeVSName` names: the fighters on the first
+/// [`allies_num`] ally ports. On any other stage those ports still hold the
+/// last battle's opponents (after Race to the Finish and the Fighting
+/// Polygon Team, Polygons, which have no name sprite), and the source never
+/// looks them up (RE-478).
+pub fn named_allies<'a>(
+    stage: Stage,
+    data: &'a super::SceneData,
+    state: &'a super::BattleState,
+) -> impl Iterator<Item = FighterKind> + 'a {
+    data.ally_players
+        .iter()
+        .take(allies_num(stage))
+        .map(move |&port| state.players[usize::from(port)].fkind)
+}
