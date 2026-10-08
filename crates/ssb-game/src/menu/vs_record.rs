@@ -20,6 +20,7 @@ use super::{
 };
 use crate::backup::{Backup, VsRecord};
 use crate::players_1p::layer::{character_id, character_spacing, FONT, FONT_WIDTHS};
+use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
 /// `llMNVSRecordMain*Sprite` (`reloc_data.us.h`).
@@ -345,6 +346,7 @@ impl VsRecordMenu {
             change_wait: 0,
         };
         m.make_stats(backup);
+        sound::play_bgm(0, id::nSYAudioBGMData);
         m
     }
 
@@ -419,6 +421,7 @@ impl VsRecordMenu {
             if self.page == Page::BattleScore {
                 load = Some(Scene::Data);
             } else {
+                sound::play_fgm(id::nSYAudioFGMBurnS);
                 self.page = if self.page == Page::Indiv {
                     Page::Ranking
                 } else {
@@ -429,6 +432,7 @@ impl VsRecordMenu {
             }
         }
         if pad.tap(N64Buttons::A | N64Buttons::START) && self.page < Page::Indiv {
+            sound::play_fgm(id::nSYAudioFGMBurnS);
             self.page = if self.page == Page::BattleScore {
                 Page::Ranking
             } else {
@@ -440,14 +444,17 @@ impl VsRecordMenu {
         let mut r = Repeat::default();
         if self.page == Page::Ranking {
             if r.check(self.change_wait, pad, UP, true, 20, true) {
+                sound::play_fgm(id::nSYAudioFGMFoxFoot);
                 self.step_index(backup, false);
                 self.change_wait = r.wait_p(7);
             }
             if r.check(self.change_wait, pad, DOWN, true, -20, false) {
+                sound::play_fgm(id::nSYAudioFGMFoxFoot);
                 self.step_index(backup, true);
                 self.change_wait = r.wait_n(7);
             }
             if r.check(self.change_wait, pad, RIGHT, false, 20, true) {
+                sound::play_fgm(id::nSYAudioFGMFoxFoot);
                 self.first_column = if self.first_column == 0 {
                     COLUMNS - 1
                 } else {
@@ -458,6 +465,7 @@ impl VsRecordMenu {
                 self.change_wait = r.wait_p(7);
             }
             if r.check(self.change_wait, pad, LEFT, false, -20, false) {
+                sound::play_fgm(id::nSYAudioFGMFoxFoot);
                 self.first_column = if self.first_column == COLUMNS - 1 {
                     0
                 } else {
@@ -470,6 +478,7 @@ impl VsRecordMenu {
         }
         if self.page == Page::Indiv {
             if r.check(self.change_wait, pad, RIGHT, false, 20, true) {
+                sound::play_fgm(id::nSYAudioFGMFoxFoot);
                 self.step_index(backup, true);
                 self.make_stats(backup);
                 self.change_wait = if r.is_button {
@@ -479,6 +488,7 @@ impl VsRecordMenu {
                 };
             }
             if r.check(self.change_wait, pad, LEFT, false, -20, false) {
+                sound::play_fgm(id::nSYAudioFGMFoxFoot);
                 self.step_index(backup, false);
                 self.make_stats(backup);
                 self.change_wait = if r.is_button {

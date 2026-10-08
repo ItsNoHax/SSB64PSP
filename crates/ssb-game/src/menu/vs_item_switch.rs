@@ -13,6 +13,7 @@ use super::{
 };
 use crate::item::normal::Appearance;
 use crate::players_vs::BattleState;
+use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
 /// `llMNVSItemSwitch*Sprite` (`reloc_data.us.h`).
@@ -184,6 +185,7 @@ impl VsItemSwitchMenu {
         }
         let mut r = Repeat::default();
         if r.check(self.change_wait, pad, UP, true, 20, true) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_p(7);
             self.select = if self.select == 0 {
                 ROWS - 1
@@ -195,6 +197,7 @@ impl VsItemSwitchMenu {
             }
         }
         if r.check(self.change_wait, pad, DOWN, true, -20, false) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_n(7);
             self.select = if self.select == ROWS - 1 {
                 0
@@ -207,21 +210,26 @@ impl VsItemSwitchMenu {
         }
         if r.check(self.change_wait, pad, LEFT, false, -20, false) {
             if self.select == 0 {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                 self.step_rate(false);
             } else if self.statuses[self.select] == 0 {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                 self.statuses[self.select] = 1;
             }
             self.change_wait = r.wait_n(7);
         }
         if r.check(self.change_wait, pad, RIGHT, false, 20, true) {
             if self.select == 0 {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                 self.step_rate(true);
             } else if self.statuses[self.select] != 0 {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                 self.statuses[self.select] = 0;
             }
             self.change_wait = r.wait_p(7);
         }
         if pad.tap(N64Buttons::A) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll1);
             if self.select == 0 {
                 self.step_rate(true);
             } else {

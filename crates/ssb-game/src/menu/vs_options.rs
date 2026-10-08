@@ -15,6 +15,7 @@ use super::{
 };
 use crate::backup::Backup;
 use crate::players_vs::{BattleState, Handicap};
+use crate::sound::{self, id};
 use crate::spgame::Unlock;
 use ssb_engine::input::N64Buttons;
 
@@ -173,6 +174,7 @@ impl VsOptionsMenu {
             self.change_wait = 0;
         }
         if pad.tap(N64Buttons::A | N64Buttons::START) && self.option == VsOption::ItemSwitch {
+            sound::play_fgm(id::nSYAudioFGMMenuSelect);
             self.scene_curr = Scene::VsItemSwitch;
             self.set_all_settings(state);
             load = true;
@@ -184,6 +186,7 @@ impl VsOptionsMenu {
         }
         let mut r = Repeat::default();
         if r.check(self.change_wait, pad, UP, true, 20, true) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_p(7);
             self.option = self.step(false);
             if self.option == VsOption::Handicap {
@@ -191,6 +194,7 @@ impl VsOptionsMenu {
             }
         }
         if r.check(self.change_wait, pad, DOWN, true, -20, false) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_n(7);
             self.option = self.step(true);
             if self.option == self.last_option {
@@ -207,18 +211,26 @@ impl VsOptionsMenu {
                             Handicap::On
                         };
                         self.set_handicap_settings(state);
+                        sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                     }
                     self.change_wait = r.wait_n(7);
                 }
                 VsOption::TeamAttack => {
-                    self.team_attack = true;
+                    if !self.team_attack {
+                        self.team_attack = true;
+                        sound::play_fgm(id::nSYAudioFGMMenuScroll1);
+                    }
                     self.change_wait = r.wait_n(7);
                 }
                 VsOption::StageSelect => {
-                    self.stage_select = true;
+                    if !self.stage_select {
+                        self.stage_select = true;
+                        sound::play_fgm(id::nSYAudioFGMMenuScroll1);
+                    }
                     self.change_wait = r.wait_n(7);
                 }
                 VsOption::Damage => {
+                    sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                     self.damage = if self.damage == DAMAGE_MIN {
                         DAMAGE_MAX
                     } else {
@@ -243,15 +255,22 @@ impl VsOptionsMenu {
                             Handicap::Off
                         };
                         self.set_handicap_settings(state);
+                        sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                     }
                     self.change_wait = r.wait_p(7);
                 }
                 VsOption::TeamAttack => {
-                    self.team_attack = false;
+                    if self.team_attack {
+                        self.team_attack = false;
+                        sound::play_fgm(id::nSYAudioFGMMenuScroll1);
+                    }
                     self.change_wait = r.wait_p(7);
                 }
                 VsOption::StageSelect => {
-                    self.stage_select = false;
+                    if self.stage_select {
+                        self.stage_select = false;
+                        sound::play_fgm(id::nSYAudioFGMMenuScroll1);
+                    }
                     self.change_wait = r.wait_p(7);
                 }
                 VsOption::Damage => {
@@ -264,6 +283,7 @@ impl VsOptionsMenu {
                     if self.damage == DAMAGE_MAX {
                         self.change_wait += 8;
                     }
+                    sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                     self.damage_remade = true;
                 }
                 VsOption::ItemSwitch => {}
@@ -272,6 +292,7 @@ impl VsOptionsMenu {
         if pad.tap(N64Buttons::A) {
             match self.option {
                 VsOption::Handicap => {
+                    sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                     self.handicap = match self.handicap {
                         Handicap::Off => Handicap::On,
                         Handicap::Auto => Handicap::Off,
@@ -279,8 +300,14 @@ impl VsOptionsMenu {
                     };
                     self.set_handicap_settings(state);
                 }
-                VsOption::TeamAttack => self.team_attack = !self.team_attack,
-                VsOption::StageSelect => self.stage_select = !self.stage_select,
+                VsOption::TeamAttack => {
+                    sound::play_fgm(id::nSYAudioFGMMenuScroll1);
+                    self.team_attack = !self.team_attack;
+                }
+                VsOption::StageSelect => {
+                    sound::play_fgm(id::nSYAudioFGMMenuScroll1);
+                    self.stage_select = !self.stage_select;
+                }
                 _ => {}
             }
         }
