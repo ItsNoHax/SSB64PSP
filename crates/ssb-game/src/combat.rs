@@ -1297,6 +1297,10 @@ pub struct WeaponAttack {
     /// `wp->is_hitlag_victim` (Link's Boomerang): the hit makes its spark,
     /// in the colour of this player (`wp->player`).
     pub is_hitlag_victim: Option<u8>,
+    /// `wp_attack_coll->fgm_id` (`WPAttributes::sfx`), which
+    /// `ftMainUpdateDamageStatWeapon` plays for every hurtbox it touches.
+    /// `None` for a host stand-in with no weapon.
+    pub fgm_id: Option<u16>,
 }
 
 /// `ftMainSearchHitWeapon`'s shield and damage halves for one weapon hitbox
@@ -1449,9 +1453,19 @@ fn weapon_hit_inner(victim: &mut Fighter, w: WeaponAttack, shield_only: bool) ->
             },
         );
         victim.record_combo_damage(w.owner, victim.hits.damage_queue - damage_before);
+        play_weapon_fgm(w.fgm_id);
         return WeaponContact::Hurt(true);
     }
+    play_weapon_fgm(w.fgm_id);
     WeaponContact::Hurt(false)
+}
+
+/// `ftMainUpdateDamageStatWeapon`'s last line: `func_800269C0_275C0(
+/// wp_attack_coll->fgm_id)`.
+fn play_weapon_fgm(fgm_id: Option<u16>) {
+    if let Some(id) = fgm_id {
+        crate::sound::play_fgm(id);
+    }
 }
 
 /// Queues a hit that bypasses collision (a scripted or held-object hit), as

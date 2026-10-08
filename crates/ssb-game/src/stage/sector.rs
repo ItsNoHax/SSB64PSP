@@ -554,7 +554,6 @@ impl Sector {
             arwing.add_anim(node::FLARE, Some(ArwingAnim::Flare));
             crate::sound::play_fgm(crate::sound::id::nSYAudioFGMSectorAmbient2);
         }
-
     }
 
     /// `grSectorArwingUpdateCollisions` @ 0x80107BA0.

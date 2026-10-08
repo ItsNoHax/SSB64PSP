@@ -21,7 +21,6 @@
 //! its controller ([`bonus3`]); the others have none. Rumble is not
 //! ported; the controllers play their sounds where the source does.
 
-
 pub mod bonus3;
 pub mod castle;
 pub mod hyrule;

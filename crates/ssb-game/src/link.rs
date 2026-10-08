@@ -825,6 +825,7 @@ pub fn apply_spin_attack_hits(
                 can_shield: true,
                 owner: Some(attacker.port),
                 is_hitlag_victim: None,
+                fgm_id: Some(crate::item_sounds::weapon::LINK_SPIN_ATTACK),
             },
         ));
         if outcome.registered() {

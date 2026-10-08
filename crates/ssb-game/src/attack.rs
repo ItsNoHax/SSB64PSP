@@ -784,6 +784,7 @@ pub fn register_hitbox_contact_with(
             can_shield: true,
             owner: None,
             is_hitlag_victim,
+            fgm_id: None,
         },
     )
 }

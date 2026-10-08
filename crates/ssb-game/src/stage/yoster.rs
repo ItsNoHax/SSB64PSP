@@ -110,7 +110,6 @@ impl Yoster {
                                 cloud.pos + VAPOR_OFFSET,
                             ));
                             crate::sound::play_fgm(crate::sound::id::nSYAudioFGMYosterCloudVapor);
-
                         } else {
                             if Self::stood_on(fighters, map, id) {
                                 if cloud.pressure_timer == -1 {

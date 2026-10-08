@@ -305,7 +305,13 @@ fn decide_call(s: &mut State, fighters: &[&Fighter], player_num: i32, knockback:
 
 /// `ftPublicDecideCommon`. `is_force_curr_knockback` is set when the
 /// attacker had itself just been launched hard (`public_knockback >= 160`).
-fn decide_common(s: &mut State, fighters: &[&Fighter], player_num: i32, knockback: f32, is_force: bool) {
+fn decide_common(
+    s: &mut State,
+    fighters: &[&Fighter],
+    player_num: i32,
+    knockback: f32,
+    is_force: bool,
+) {
     if is_force {
         decide_call(s, fighters, player_num, knockback);
     } else if player_num == s.common_player_num && s.common_tics_past < 60 {

@@ -169,6 +169,7 @@ impl ArwingLaser {
         if wanted.z.abs() < LASER_3D_MAP_DEPTH {
             if let Some(hit) = map_contact(surfaces(), self.position, wanted, LASER_3D_MAP_COLL) {
                 self.position = hit.position;
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
                 fx.push(Fx::SparkleWhiteMultiExplode(self.position));
                 self.explode();
                 return (true, true);

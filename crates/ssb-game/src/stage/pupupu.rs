@@ -192,7 +192,6 @@ impl Pupupu {
                     self.rumble_wait = 0;
                     // `grPupupuWhispyLeavesMakeEffect`, then the wind.
                     crate::sound::play_fgm(crate::sound::id::nSYAudioFGMPupupuWhispyWind);
-
                 }
             }
             WindStatus::Blow => {
