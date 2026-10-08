@@ -18,15 +18,15 @@ evidence behind each `RE-NNN` in [`docs/evidence/`](docs/evidence/INDEX.md).
 | Area | Current | Target |
 |---|---|---|
 | Architecture | Portable `ssb-rom`/`ssb-engine`/`ssb-game`, shared `psp-runtime`, thin `psp-game`, separate `psp-asset-viewer` ([D-044](docs/decisions/D-044.md)) | Same; runtime loader on `ssb_rom::reloc_link` and `ssb_engine::memory` arenas |
-| Asset pipeline | Tables from the ROM's code segments generated at build time by `ssb-tablegen` ([D-048](docs/decisions/D-048.md)); `romtool` builds pack v107 from the user's ROM: all 2,132 archive files, every reachable model, texture, animation, sprite and table; scenes load their own files ([D-046](docs/decisions/D-046.md)) | Same, plus converted audio; trimmed wallpaper padding |
+| Asset pipeline | Tables from the ROM's code segments generated at build time by `ssb-tablegen` ([D-048](docs/decisions/D-048.md)); `romtool` builds pack v108 from the user's ROM: all 2,132 archive files, every reachable model, texture, animation, sprite and table, and the audio section; scenes load their own files ([D-046](docs/decisions/D-046.md)) | Same; trimmed wallpaper padding |
 | Rendering | Build-time display-list conversion, GE lowering with measured deviations (3-point filtering); battle draws in the original's display-link passes; CRT overscan crop ([D-047](docs/decisions/D-047.md)) | Remaining effect draws and N64 comparisons; per-scene texture residency in VRAM |
 | Gameplay | All 12 fighters, Master Hand, Metal Mario, Giant Donkey Kong and the Polygon Team; hits, shields, grabs, ledges, KO; How to Play matches an N64 trace on every frame (RE-472, RE-473) | Remaining fidelity items below |
-| Items | All 20 normal item makers, 13 Poké Ball Pokémon, stage items and hazards (RE-431–RE-446) | Event-aligned N64 comparisons; item audio |
+| Items | All 20 normal item makers, 13 Poké Ball Pokémon, stage items and hazards (RE-431–RE-446) | Event-aligned N64 comparisons |
 | CPU | VS, Training and 1P CPU behaviours, traits and objectives (RE-390, RE-391, RE-437, RE-438, RE-447) | CPUs' special effects drawn; N64 trait checks |
-| Game modes | VS (up to four, teams), Training, 1P campaign through the ending, staff roll and challengers, bonus stages and Bonus Practice | Same, with audio and rumble |
+| Game modes | VS (up to four, teams), Training, 1P campaign through the ending, staff roll and challengers, bonus stages and Bonus Practice | Same, with rumble |
 | Menus/UI | N64 logo, opening movie, title, attract loop (How to Play, Characters, auto demo), mode/1P/VS menus, selects, options and data menus, HUD | Selects' spotlight; opening's remaining differences |
 | Save data | N64 SRAM image in `ssb64.sav` beside the pack ([D-045](docs/decisions/D-045.md)) | Anti-piracy validators |
-| Audio | Not started (engine traits only) | Build-time sequence/VADPCM conversion, `sceAudio` mixer thread |
+| Audio | The N64 audio system ported whole: synthesizer, sequences, FGM sound effects and every call site, on a PSP audio thread; sample-exact against N64 captures ([D-049](docs/decisions/D-049.md), RE-479) | Same, within the PSP-2000's CPU budget in every scene |
 | PSP performance | 60 FPS under PPSSPP (RE-470, RE-471); on a PSP-2000 three opening scenes run at 45–57 FPS (RE-476) | 60 FPS on a PSP-2000 in every scene |
 | Platform | PSP-2000 and later (64 MiB); PSP-1000 unsupported (RE-288, RE-475) | Same; PSP-1000 support deferred by user instruction |
 | Testing | Host tests (CI, no ROM, stub tables), ROM-backed tests, 198 PPSSPPHeadless goldens committed as pixel hashes ([visual regression](docs/visual-regression/README.md)), N64 RDRAM traces | Hardware acceptance matrix on a PSP |
@@ -41,7 +41,7 @@ evidence behind each `RE-NNN` in [`docs/evidence/`](docs/evidence/INDEX.md).
 | `MS4` | Fighters, including Master Hand and the special fighters | Done; fidelity remainders below |
 | `MS5` | Match systems: VS, Training, stages, items, CPU, KO | In progress |
 | `MS6` | Front end, 1P campaign, save data | In progress |
-| `MS7` | Audio and rumble | Planned |
+| `MS7` | Audio and rumble | Audio done; rumble planned |
 | `MS8` | PSP performance and hardware acceptance | In progress; never gates `MS4`–`MS7` ([D-032](docs/decisions/D-032.md), [D-036](docs/decisions/D-036.md)) |
 
 Earlier labels (`P0`–`P5`, `M0`–`M4`, `R0`–`R3`, `F1`, `G0`–`G5`) are retired;
@@ -71,7 +71,9 @@ closes it.
 - [ ] Keep geometry non-indexed: audit `meshdraw` for indexed draws or transformed-vertex reuse; on the PSP rebatching non-indexed vertices beat reuse (sf64-psp: −39% VFPU instructions but +4.6 ms; rebatching won back 1.2 ms).
 - [ ] Instruction-cache locality (16 KB I + 16 KB D): profile hot functions with PSPLink's `profmode t` hardware counters and `psp-gprof`, then group the hottest code (link-section ordering); compare `opt-level` 3 against `s` on the PSP rather than assuming 3 (GBAdhoc measured 7–25%).
 - [ ] Texture bandwidth: every GE texture is swizzled already (`psp_texture`); measure whether CLUT4/CLUT8 for textures that fit their palette cuts main-memory bandwidth enough to matter. Earlier CLUT work was a red herring for RE-300's alpha bug, not a bandwidth measurement.
-- [ ] Media Engine for audio mixing, POPS-style: the mixer runs on the ME with the Allegrex posting commands through shared uncached memory. PPSSPP doesn't run custom ME code, so keep an Allegrex-thread fallback and select it at runtime (audio batch decision).
+- [ ] Audio on the PSP-2000: run the merged production EBOOT (`target/release-audio/EBOOT.PBP`, pack v108) and compare a `no_audio` build's frame times in the opening and `vs4@2400`; the opening's busiest stretches cost 16% of the CPU (RE-479).
+- [ ] Audio cost: an exact VFPU path for the custom reverb (constant coefficients; split products stay exact), then the voices; the Media Engine stays out ([D-049](docs/decisions/D-049.md)) unless profiling shows audio is what stops 60 FPS (RE-479).
+- [ ] rust-psp's `memcpy`/`memmove`/`memset` copy one byte per iteration; a word version in the fork would speed up every copy in the game (RE-479).
 - [ ] FPU traps outside PSPLink: check whether an XMB-started game traps divide-by-zero as PSPLink does; keep `math::div_nonzero` on speculated divisions (RE-201, RE-469).
 - [ ] Large stack frames: battle entry peaks at 239–294 KB of the 512 KiB stack (`enter_training`, `EffectVisuals::sync_ko`) (RE-469).
 - [ ] Keep `run` inside MIPS branch range: 22,884 code bytes against a 128 KiB reach (RE-431).
@@ -83,8 +85,7 @@ closes it.
 
 ### Audio and rumble (`MS7`)
 
-- [ ] Audio backend: build-time conversion of the 47 sequences and two VADPCM banks, a `sceAudio` mixer thread, FGM sound effects ([architecture](docs/architecture.md#audio)).
-- [ ] Wire the ported request points: menu and Training sounds, BGM volume, magnifier sounds, results BGM and voices, item and Star music, scene audio (RE-438, RE-439, RE-440).
+- [ ] Compare the attract capture's KO and later hits (97.6–124.5 s) and 99 near-full-scale samples with the N64; check the reverb's unapplied low-pass against a hardware recording (RE-479).
 - [ ] Rumble.
 
 ### Match systems (`MS5`)
@@ -153,6 +154,7 @@ closes it.
 - [x] Per-scene loading and background reads: no load hitch in the intro on a PSP-2000 (RE-475, RE-476).
 - [x] CRT overscan crop: the N64's visible box fills the PSP's height ([D-047](docs/decisions/D-047.md), RE-477).
 - [x] CPU performance: 60 FPS under PPSSPP (RE-469, RE-470, RE-471).
+- [x] Audio: the N64 audio system (synthesizer, sequence player, FGM engine, `syAudio`), every gameplay, menu and scene call, the Sound Test, a PSP audio thread on the 32 kHz SRC channel ([D-049](docs/decisions/D-049.md), RE-479).
 - [x] Nothing read from the ROM is committed: motion, colour-animation and CPU scripts, status flags and the animation table are generated at build time from the user's ROM; goldens are pixel hashes ([D-048](docs/decisions/D-048.md)).
 
 [decomp]: https://github.com/VetriTheRetri/ssb-decomp-re

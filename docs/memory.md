@@ -9,9 +9,10 @@
 | Fast scratch | 4 KiB TMEM | 16 KiB scratchpad | 16 KiB scratchpad |
 
 - Scenes load their archive files (RE-475, [D-046](decisions/D-046.md)).
-  The pack (v107) holds a shared region and then each ROM archive file's
-  bytes; the game reads the header, tables and shared region at boot
-  (about 5.5 MB) and each scene's files, with their extern closure, when
+  The pack (v108) holds a shared region, each ROM archive file's bytes
+  and the audio section; the game reads the header, tables and shared
+  region at boot (about 5.5 MB), and the audio section (4.4 MB, never
+  freed: the audio thread reads it at any time, [D-049](decisions/D-049.md)) and each scene's files, with their extern closure, when
   the scene starts (`ssb_psp_runtime::scene_files`). Every scene measured
   under PPSSPP uses at most about 17 MB in all (the VS results, which hold
   all twelve fighters; four-player battles about 16 MB); the whole pack
@@ -30,7 +31,8 @@
   `ssb_psp_runtime::memory::fatal`'s text screen.
 - While a scene runs, the next scene's files are read into memory beside
   it (`scene_files::prefetch`, RE-476): the attract loop's lowest free
-  memory at the XMB's budget is 24.9 MB under PPSSPP. A prefetch stops
+  memory at the XMB's budget is 23.1 MB under PPSSPP with audio (24.9 MB
+  before it, RE-479). A prefetch stops
   queuing reads with less than 6 MB free.
 - VRAM (2 MiB): two 32-bit colour buffers, the 16-bit depth buffer and
   the 512 KiB copy of the wallpaper photo the frozen picture samples
