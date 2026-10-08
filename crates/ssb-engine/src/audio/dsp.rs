@@ -169,36 +169,47 @@ impl Dmem {
         let mut prev2 = hist[14] as i32;
         let mut prev1 = hist[15] as i32;
         for (f, out) in body.as_chunks_mut::<16>().0.iter_mut().enumerate() {
-            let mut frame = [0u8; 9];
-            if let Some(src) = input.get(f * 9..f * 9 + 9) {
-                frame = src.try_into().unwrap_or([0; 9]);
-            } else if let Some(src) = input.get(f * 9..) {
-                frame[..src.len()].copy_from_slice(src);
-            }
+            let mut local = [0u8; 9];
+            let frame: &[u8; 9] = match input.get(f * 9..f * 9 + 9) {
+                Some(src) => src.as_chunks::<9>().0.first().unwrap_or(&local),
+                None => {
+                    if let Some(src) = input.get(f * 9..) {
+                        local[..src.len()].copy_from_slice(src);
+                    }
+                    &local
+                }
+            };
             let shift = (frame[0] >> 4) as u32;
             let pred = (frame[0] & 15) as usize;
-            // Scale 12 means x4096 (rshift 0), not silence.
-            let rshift = 12u32.saturating_sub(shift);
             let c: &[i16; 16] = match book.get(pred * 16..pred * 16 + 16) {
                 Some(c) => c.as_chunks::<16>().0.first().unwrap_or(&ZERO_BOOK),
                 None => &ZERO_BOOK,
             };
-            let c0: [i32; 8] = core::array::from_fn(|j| c[j] as i32);
-            let c1: [i32; 8] = core::array::from_fn(|j| c[8 + j] as i32);
-            for (half, out) in out.as_chunks_mut::<8>().0.iter_mut().enumerate() {
-                let bytes = &frame[1 + half * 4..5 + half * 4];
-                let ins: [i32; 8] = core::array::from_fn(|j| {
-                    let b = bytes[j / 2] as u16;
-                    let nib = if j % 2 == 0 {
-                        (b & 0xF0) << 8
-                    } else {
-                        (b & 0x0F) << 12
-                    };
-                    (nib as i16 >> rshift) as i32
-                });
-                adpcm_8(&c0, &c1, &ins, prev2, prev1, out);
-                prev2 = out[6] as i32;
-                prev1 = out[7] as i32;
+            #[cfg(target_arch = "mips")]
+            {
+                // A nibble scaled by `>> (12 - shift)` from `<< 12` is the
+                // signed nibble `<< min(shift, 12)`.
+                (prev2, prev1) = allegrex::adpcm_16(frame, c, shift.min(12), prev2, prev1, out);
+            }
+            #[cfg(not(target_arch = "mips"))]
+            {
+                // Scale 12 means x4096 (rshift 0), not silence.
+                let rshift = 12u32.saturating_sub(shift);
+                for (half, out) in out.as_chunks_mut::<8>().0.iter_mut().enumerate() {
+                    let bytes = &frame[1 + half * 4..5 + half * 4];
+                    let ins: [i32; 8] = core::array::from_fn(|j| {
+                        let b = bytes[j / 2] as u16;
+                        let nib = if j % 2 == 0 {
+                            (b & 0xF0) << 8
+                        } else {
+                            (b & 0x0F) << 12
+                        };
+                        (nib as i16 >> rshift) as i32
+                    });
+                    adpcm_8(c, &ins, prev2, prev1, out);
+                    prev2 = out[6] as i32;
+                    prev1 = out[7] as i32;
+                }
             }
         }
         let pos = 16 + frames * 16;
@@ -236,17 +247,29 @@ impl Dmem {
         // bounds-checked per sample; in range they are the plain offsets.
         const MASK: usize = WORDS - 1;
         let w = &mut self.w;
-        for i in 0..COUNT / 2 {
-            let t = &table[((acc * 64) >> 16) as usize & 63];
-            let v = (w[inp & MASK] as i32 * t[0] as i32
-                + w[(inp + 1) & MASK] as i32 * t[1] as i32
-                + w[(inp + 2) & MASK] as i32 * t[2] as i32
-                + w[(inp + 3) & MASK] as i32 * t[3] as i32)
-                >> 15;
-            w[(o + i) & MASK] = clamp16(v);
-            acc += incr;
-            inp += (acc >> 16) as usize;
-            acc &= 0xFFFF;
+        #[cfg(target_arch = "mips")]
+        let in_range = inp + ((acc as usize + (COUNT / 2) * incr as usize) >> 16) + 4 <= WORDS
+            && o + COUNT / 2 <= WORDS;
+        #[cfg(not(target_arch = "mips"))]
+        let in_range = false;
+        if in_range {
+            #[cfg(target_arch = "mips")]
+            {
+                (inp, acc) = allegrex::resample(w, inp, o, COUNT / 2, acc, incr, table);
+            }
+        } else {
+            for i in 0..COUNT / 2 {
+                let t = &table[((acc * 64) >> 16) as usize & 63];
+                let v = (w[inp & MASK] as i32 * t[0] as i32
+                    + w[(inp + 1) & MASK] as i32 * t[1] as i32
+                    + w[(inp + 2) & MASK] as i32 * t[2] as i32
+                    + w[(inp + 3) & MASK] as i32 * t[3] as i32)
+                    >> 15;
+                w[(o + i) & MASK] = clamp16(v);
+                acc += incr;
+                inp += (acc >> 16) as usize;
+                acc &= 0xFFFF;
+            }
         }
         state[4] = acc as i16;
         state[..4].copy_from_slice(&self.w[inp..inp + 4]);
@@ -276,19 +299,27 @@ impl Dmem {
             None => *state,
         };
         let (dry, wet) = (st.dry as i32, st.wet as i32);
+        // Each side's volume (`value >> 16`) per sample: plain sums of the
+        // step for the ramp's first samples, then constant (`Ramp`).
+        let l = ramp_run(&mut st, 0);
+        let r = ramp_run(&mut st, 1);
+        #[cfg(target_arch = "mips")]
+        self.envmix_allegrex(l, r, dry, wet);
+        #[cfg(not(target_arch = "mips"))]
+        self.envmix_buses(l, r, dry, wet);
+        *state = st;
+    }
+
+    /// The envmixer's four bus passes: each bus is independent, and a zero
+    /// amount (gain 0 on every sample) adds nothing.
+    #[cfg(not(target_arch = "mips"))]
+    fn envmix_buses(&mut self, l: Ramp, r: Ramp, dry: i32, wet: i32) {
         let (head, rest) = self.w.split_at_mut(MAIN_L / 2);
         let input = &head[..COUNT / 2];
         let (main, aux) = rest.split_at_mut((AUX_L - MAIN_L) / 2);
         let (ml, mr) = main.split_at_mut(COUNT / 2);
         let (al, ar) = aux.split_at_mut(COUNT / 2);
-        let (mr, al, ar) = (&mut mr[..COUNT / 2], &mut al[..], &mut ar[..COUNT / 2]);
         let n = COUNT / 2;
-        // Each side's volume (`value >> 16`) per sample: plain sums of the
-        // step for the ramp's first samples, then constant (`Ramp`).
-        let l = ramp_run(&mut st, 0);
-        let r = ramp_run(&mut st, 1);
-        // The four buses are independent: each gets its own pass, and a
-        // zero amount (gain 0 on every sample) adds nothing.
         for (bus, ramp, amt) in [
             (&mut ml[..n], l, dry),
             (&mut mr[..n], r, dry),
@@ -299,7 +330,58 @@ impl Dmem {
                 env_bus(bus, &input[..n], ramp, amt);
             }
         }
-        *state = st;
+    }
+
+    /// [`Dmem::envmix_buses`] as Allegrex kernels that run all four buses
+    /// per sample: while both volumes ramp, while one does (the other held
+    /// at its final volume, a step-0 ramp), then with constant gains.
+    #[cfg(target_arch = "mips")]
+    fn envmix_allegrex(&mut self, l: Ramp, r: Ramp, dry: i32, wet: i32) {
+        const _: () = assert!(
+            MAIN_R - MAIN_L == COUNT && AUX_L - MAIN_L == 2 * COUNT && AUX_R - MAIN_L == 3 * COUNT
+        );
+        let n = COUNT / 2;
+        let gain = |v: i32, amt: i32| clamp16((v * amt + 0x4000) >> 15) as i32;
+        let both = l.sums.min(r.sums).min(n);
+        let one = l.sums.max(r.sums).min(n);
+        // SAFETY: the input (TEMP_0) and the four buses are disjoint ranges
+        // of `w` (the layout is asserted above); every range is in bounds.
+        unsafe {
+            let input = self.w.as_ptr();
+            let bus = self.w.as_mut_ptr().add(MAIN_L / 2);
+            let (mut lv, mut rv) =
+                allegrex::env4_ramp(input, bus, both, l.value, l.step, r.value, r.step, dry, wet);
+            if one > both {
+                let (ls, rs) = (
+                    if l.sums > both { l.step } else { 0 },
+                    if r.sums > both { r.step } else { 0 },
+                );
+                if ls == 0 {
+                    lv = l.then << 16;
+                }
+                if rs == 0 {
+                    rv = r.then << 16;
+                }
+                let _ = allegrex::env4_ramp(
+                    input.add(both),
+                    bus.add(both),
+                    one - both,
+                    lv,
+                    ls,
+                    rv,
+                    rs,
+                    dry,
+                    wet,
+                );
+            }
+            let g = [
+                gain(l.then, dry),
+                gain(r.then, dry),
+                gain(l.then, wet),
+                gain(r.then, wet),
+            ];
+            allegrex::env4_const(input.add(one), bus.add(one), n - one, g);
+        }
     }
 
     /// `A_MIX` over 184 samples: `out += (in * gain) >> 15`, saturating;
@@ -394,9 +476,12 @@ static ZERO_BOOK: [i16; 16] = [0; 16];
 
 /// Eight `A_ADPCM` outputs: the predictor over the two previous outputs
 /// and the eight scaled nibbles (`acc` in Q11).
+#[cfg(not(target_arch = "mips"))]
 #[inline(always)]
 #[rustfmt::skip]
-fn adpcm_8(c0: &[i32; 8], c1: &[i32; 8], i: &[i32; 8], p2: i32, p1: i32, out: &mut [i16; 8]) {
+fn adpcm_8(c: &[i16; 16], i: &[i32; 8], p2: i32, p1: i32, out: &mut [i16; 8]) {
+    let c0: [i32; 8] = core::array::from_fn(|j| c[j] as i32);
+    let c1: [i32; 8] = core::array::from_fn(|j| c[8 + j] as i32);
     // Written out: the triangle `sum(c1[j - k - 1] * in[k], k < j)` with
     // constant indices, so nothing is a loop or a bounds check.
     out[0] = clamp16((c0[0] * p2 + c1[0] * p1 + (i[0] << 11)) >> 11);
@@ -422,6 +507,7 @@ pub(crate) fn mix_gain(out: &mut [i16], input: &[i16], g: i32) {
 
 /// One envmixer bus: `bus += (in * clamp16((v * amt + 0x4000) >> 15)) >>
 /// 15`, saturating, with `v` per sample from `ramp`.
+#[cfg(not(target_arch = "mips"))]
 #[inline(always)]
 fn env_bus(bus: &mut [i16], input: &[i16], ramp: Ramp, amt: i32) {
     let gain = |v: i32| clamp16((v * amt + 0x4000) >> 15) as i32;
@@ -575,6 +661,752 @@ pub(crate) mod allegrex {
         }
     }
 
+    /// One 16-sample `A_ADPCM` frame: the eight nibble bytes after the
+    /// header, each a signed nibble `<< lshift`, through the predictor
+    /// (`adpcm_8`, twice). Returns the last two outputs.
+    #[inline(always)]
+    pub fn adpcm_16(
+        frame: &[u8; 9],
+        c: &[i16; 16],
+        lshift: u32,
+        p2: i32,
+        p1: i32,
+        out: &mut [i16; 16],
+    ) -> (i32, i32) {
+        let (a, b): (i32, i32);
+        // SAFETY: reads `frame` and `c`, writes `out`; registers named.
+        unsafe {
+            asm!(
+                "lb $8, 1($4)",
+                "sll $9, $8, 28",
+                "sra $8, $8, 4",
+                "sra $9, $9, 28",
+                "sllv $8, $8, $19",
+                "sllv $9, $9, $19",
+                "lb $10, 2($4)",
+                "sll $11, $10, 28",
+                "sra $10, $10, 4",
+                "sra $11, $11, 28",
+                "sllv $10, $10, $19",
+                "sllv $11, $11, $19",
+                "lb $12, 3($4)",
+                "sll $13, $12, 28",
+                "sra $12, $12, 4",
+                "sra $13, $13, 28",
+                "sllv $12, $12, $19",
+                "sllv $13, $13, $19",
+                "lb $14, 4($4)",
+                "sll $15, $14, 28",
+                "sra $14, $14, 4",
+                "sra $15, $15, 28",
+                "sllv $14, $14, $19",
+                "sllv $15, $15, $19",
+                "lh $2, 0($18)",
+                "lh $3, 16($18)",
+                "mult $2, $6",
+                ".word 0x0067001c", // madd $3, $7
+                "sll $17, $8, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 0($5)",
+                "lh $2, 2($18)",
+                "lh $3, 18($18)",
+                "mult $2, $6",
+                "lh $2, 16($18)",
+                ".word 0x0067001c", // madd $3, $7
+                ".word 0x0048001c", // madd $2, $8
+                "sll $17, $9, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 2($5)",
+                "lh $3, 4($18)",
+                "lh $2, 20($18)",
+                "mult $3, $6",
+                "lh $3, 18($18)",
+                ".word 0x0047001c", // madd $2, $7
+                "lh $2, 16($18)",
+                ".word 0x0068001c", // madd $3, $8
+                ".word 0x0049001c", // madd $2, $9
+                "sll $17, $10, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 4($5)",
+                "lh $3, 6($18)",
+                "lh $2, 22($18)",
+                "mult $3, $6",
+                "lh $3, 20($18)",
+                ".word 0x0047001c", // madd $2, $7
+                "lh $2, 18($18)",
+                ".word 0x0068001c", // madd $3, $8
+                "lh $3, 16($18)",
+                ".word 0x0049001c", // madd $2, $9
+                ".word 0x006a001c", // madd $3, $10
+                "sll $17, $11, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 6($5)",
+                "lh $2, 8($18)",
+                "lh $3, 24($18)",
+                "mult $2, $6",
+                "lh $2, 22($18)",
+                ".word 0x0067001c", // madd $3, $7
+                "lh $3, 20($18)",
+                ".word 0x0048001c", // madd $2, $8
+                "lh $2, 18($18)",
+                ".word 0x0069001c", // madd $3, $9
+                "lh $3, 16($18)",
+                ".word 0x004a001c", // madd $2, $10
+                ".word 0x006b001c", // madd $3, $11
+                "sll $17, $12, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 8($5)",
+                "lh $2, 10($18)",
+                "lh $3, 26($18)",
+                "mult $2, $6",
+                "lh $2, 24($18)",
+                ".word 0x0067001c", // madd $3, $7
+                "lh $3, 22($18)",
+                ".word 0x0048001c", // madd $2, $8
+                "lh $2, 20($18)",
+                ".word 0x0069001c", // madd $3, $9
+                "lh $3, 18($18)",
+                ".word 0x004a001c", // madd $2, $10
+                "lh $2, 16($18)",
+                ".word 0x006b001c", // madd $3, $11
+                ".word 0x004c001c", // madd $2, $12
+                "sll $17, $13, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 10($5)",
+                "lh $3, 12($18)",
+                "lh $2, 28($18)",
+                "mult $3, $6",
+                "lh $3, 26($18)",
+                ".word 0x0047001c", // madd $2, $7
+                "lh $2, 24($18)",
+                ".word 0x0068001c", // madd $3, $8
+                "lh $3, 22($18)",
+                ".word 0x0049001c", // madd $2, $9
+                "lh $2, 20($18)",
+                ".word 0x006a001c", // madd $3, $10
+                "lh $3, 18($18)",
+                ".word 0x004b001c", // madd $2, $11
+                "lh $2, 16($18)",
+                ".word 0x006c001c", // madd $3, $12
+                ".word 0x004d001c", // madd $2, $13
+                "sll $17, $14, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 12($5)",
+                "move $20, $16",
+                "lh $3, 14($18)",
+                "lh $2, 30($18)",
+                "mult $3, $6",
+                "lh $3, 28($18)",
+                ".word 0x0047001c", // madd $2, $7
+                "lh $2, 26($18)",
+                ".word 0x0068001c", // madd $3, $8
+                "lh $3, 24($18)",
+                ".word 0x0049001c", // madd $2, $9
+                "lh $2, 22($18)",
+                ".word 0x006a001c", // madd $3, $10
+                "lh $3, 20($18)",
+                ".word 0x004b001c", // madd $2, $11
+                "lh $2, 18($18)",
+                ".word 0x006c001c", // madd $3, $12
+                "lh $3, 16($18)",
+                ".word 0x004d001c", // madd $2, $13
+                ".word 0x006e001c", // madd $3, $14
+                "sll $17, $15, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 14($5)",
+                "move $6, $20",
+                "move $7, $16",
+                "lb $8, 5($4)",
+                "sll $9, $8, 28",
+                "sra $8, $8, 4",
+                "sra $9, $9, 28",
+                "sllv $8, $8, $19",
+                "sllv $9, $9, $19",
+                "lb $10, 6($4)",
+                "sll $11, $10, 28",
+                "sra $10, $10, 4",
+                "sra $11, $11, 28",
+                "sllv $10, $10, $19",
+                "sllv $11, $11, $19",
+                "lb $12, 7($4)",
+                "sll $13, $12, 28",
+                "sra $12, $12, 4",
+                "sra $13, $13, 28",
+                "sllv $12, $12, $19",
+                "sllv $13, $13, $19",
+                "lb $14, 8($4)",
+                "sll $15, $14, 28",
+                "sra $14, $14, 4",
+                "sra $15, $15, 28",
+                "sllv $14, $14, $19",
+                "sllv $15, $15, $19",
+                "lh $2, 0($18)",
+                "lh $3, 16($18)",
+                "mult $2, $6",
+                ".word 0x0067001c", // madd $3, $7
+                "sll $17, $8, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 16($5)",
+                "lh $2, 2($18)",
+                "lh $3, 18($18)",
+                "mult $2, $6",
+                "lh $2, 16($18)",
+                ".word 0x0067001c", // madd $3, $7
+                ".word 0x0048001c", // madd $2, $8
+                "sll $17, $9, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 18($5)",
+                "lh $3, 4($18)",
+                "lh $2, 20($18)",
+                "mult $3, $6",
+                "lh $3, 18($18)",
+                ".word 0x0047001c", // madd $2, $7
+                "lh $2, 16($18)",
+                ".word 0x0068001c", // madd $3, $8
+                ".word 0x0049001c", // madd $2, $9
+                "sll $17, $10, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 20($5)",
+                "lh $3, 6($18)",
+                "lh $2, 22($18)",
+                "mult $3, $6",
+                "lh $3, 20($18)",
+                ".word 0x0047001c", // madd $2, $7
+                "lh $2, 18($18)",
+                ".word 0x0068001c", // madd $3, $8
+                "lh $3, 16($18)",
+                ".word 0x0049001c", // madd $2, $9
+                ".word 0x006a001c", // madd $3, $10
+                "sll $17, $11, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 22($5)",
+                "lh $2, 8($18)",
+                "lh $3, 24($18)",
+                "mult $2, $6",
+                "lh $2, 22($18)",
+                ".word 0x0067001c", // madd $3, $7
+                "lh $3, 20($18)",
+                ".word 0x0048001c", // madd $2, $8
+                "lh $2, 18($18)",
+                ".word 0x0069001c", // madd $3, $9
+                "lh $3, 16($18)",
+                ".word 0x004a001c", // madd $2, $10
+                ".word 0x006b001c", // madd $3, $11
+                "sll $17, $12, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 24($5)",
+                "lh $2, 10($18)",
+                "lh $3, 26($18)",
+                "mult $2, $6",
+                "lh $2, 24($18)",
+                ".word 0x0067001c", // madd $3, $7
+                "lh $3, 22($18)",
+                ".word 0x0048001c", // madd $2, $8
+                "lh $2, 20($18)",
+                ".word 0x0069001c", // madd $3, $9
+                "lh $3, 18($18)",
+                ".word 0x004a001c", // madd $2, $10
+                "lh $2, 16($18)",
+                ".word 0x006b001c", // madd $3, $11
+                ".word 0x004c001c", // madd $2, $12
+                "sll $17, $13, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 26($5)",
+                "lh $3, 12($18)",
+                "lh $2, 28($18)",
+                "mult $3, $6",
+                "lh $3, 26($18)",
+                ".word 0x0047001c", // madd $2, $7
+                "lh $2, 24($18)",
+                ".word 0x0068001c", // madd $3, $8
+                "lh $3, 22($18)",
+                ".word 0x0049001c", // madd $2, $9
+                "lh $2, 20($18)",
+                ".word 0x006a001c", // madd $3, $10
+                "lh $3, 18($18)",
+                ".word 0x004b001c", // madd $2, $11
+                "lh $2, 16($18)",
+                ".word 0x006c001c", // madd $3, $12
+                ".word 0x004d001c", // madd $2, $13
+                "sll $17, $14, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 28($5)",
+                "move $20, $16",
+                "lh $3, 14($18)",
+                "lh $2, 30($18)",
+                "mult $3, $6",
+                "lh $3, 28($18)",
+                ".word 0x0047001c", // madd $2, $7
+                "lh $2, 26($18)",
+                ".word 0x0068001c", // madd $3, $8
+                "lh $3, 24($18)",
+                ".word 0x0049001c", // madd $2, $9
+                "lh $2, 22($18)",
+                ".word 0x006a001c", // madd $3, $10
+                "lh $3, 20($18)",
+                ".word 0x004b001c", // madd $2, $11
+                "lh $2, 18($18)",
+                ".word 0x006c001c", // madd $3, $12
+                "lh $3, 16($18)",
+                ".word 0x004d001c", // madd $2, $13
+                ".word 0x006e001c", // madd $3, $14
+                "sll $17, $15, 11",
+                "mflo $16",
+                "addu $16, $16, $17",
+                "sra $16, $16, 11",
+                ".word 0x0218802c", // max $16, $16, $24
+                ".word 0x0219802d", // min $16, $16, $25
+                "sh $16, 30($5)",
+                "move $6, $20",
+                "move $7, $16",
+                in("$4") frame.as_ptr(),
+                in("$5") out.as_mut_ptr(),
+                inout("$6") p2 => a,
+                inout("$7") p1 => b,
+                out("$8") _,
+                out("$9") _,
+                out("$10") _,
+                out("$11") _,
+                out("$12") _,
+                out("$13") _,
+                out("$14") _,
+                out("$15") _,
+                in("$18") c.as_ptr(),
+                in("$19") lshift,
+                out("$20") _,
+                in("$24") -32768,
+                in("$25") 32767,
+                out("$2") _,
+                out("$3") _,
+                out("$16") _,
+                out("$17") _,
+                options(nostack),
+            );
+        }
+        (a, b)
+    }
+
+    /// The `A_RESAMPLE` loop over `n` outputs from `w[inp..]` to `w[o..]`
+    /// (`Dmem::resample`); returns the final `(inp, acc)`. The caller has
+    /// checked that every index stays inside `w`.
+    #[inline(always)]
+    pub fn resample(
+        w: &mut [i16],
+        inp: usize,
+        o: usize,
+        n: usize,
+        mut acc: u32,
+        incr: u32,
+        table: &[[i16; 4]; 64],
+    ) -> (usize, u32) {
+        if n == 0 {
+            return (inp, acc);
+        }
+        let base = w.as_mut_ptr();
+        let mut ip: *mut i16;
+        // SAFETY: the caller checked the ranges; registers named.
+        unsafe {
+            let op = base.add(o);
+            asm!(
+                ".set push",
+                ".set noreorder",
+                "1:",
+                "srl $10, $8, 7",
+                "lh $11, 0($4)",
+                "andi $10, $10, 0x1F8",
+                "addu $10, $10, $7",
+                "lh $12, 0($10)",
+                "lh $13, 2($4)",
+                "lh $14, 2($10)",
+                "mult $11, $12",
+                "lh $11, 4($4)",
+                "lh $12, 4($10)",
+                "addu $8, $8, $9",
+                "mflo $15",
+                "mult $13, $14",
+                "lh $13, 6($4)",
+                "lh $14, 6($10)",
+                "srl $25, $8, 16",
+                "mflo $24",
+                "mult $11, $12",
+                "addu $15, $15, $24",
+                "sll $25, $25, 1",
+                "andi $8, $8, 0xFFFF",
+                "mflo $24",
+                "mult $13, $14",
+                "addu $15, $15, $24",
+                "addu $4, $4, $25",
+                "addiu $5, $5, 2",
+                "mflo $24",
+                "addu $15, $15, $24",
+                "sra $15, $15, 15",
+                ".word 0x01e2782c", // max $15, $15, $2
+                ".word 0x01e3782d", // min $15, $15, $3
+                "bne $5, $6, 1b",
+                "sh $15, -2($5)",
+                ".set pop",
+                inout("$4") base.add(inp) => ip,
+                inout("$5") op => _,
+                in("$6") op.add(n),
+                in("$7") table.as_ptr(),
+                inout("$8") acc,
+                in("$9") incr,
+                out("$10") _,
+                out("$11") _,
+                out("$12") _,
+                out("$13") _,
+                out("$14") _,
+                out("$15") _,
+                out("$24") _,
+                out("$25") _,
+                in("$2") -32768,
+                in("$3") 32767,
+                options(nostack),
+            );
+            ((ip.offset_from(base)) as usize, acc)
+        }
+    }
+
+    /// `A_ENVMIXER` over `n` samples with constant gains `g` (left dry,
+    /// right dry, left wet, right wet): `bus += (in * g) >> 15`, saturating,
+    /// on the four buses at `bus`, `bus + 184`, `bus + 368`, `bus + 552`
+    /// (MAIN_L, MAIN_R, AUX_L, AUX_R).
+    ///
+    /// # Safety
+    /// `input[..n]` and the four bus ranges are valid and disjoint.
+    #[inline(always)]
+    pub unsafe fn env4_const(input: *const i16, bus: *mut i16, n: usize, g: [i32; 4]) {
+        if n == 0 {
+            return;
+        }
+        unsafe {
+            asm!(
+                ".set push",
+                ".set noreorder",
+                "1:",
+                "lh $12, 0($4)",
+                "lh $13, 0($5)",
+                "mult $12, $7",
+                "lh $14, 368($5)",
+                "lh $15, 736($5)",
+                "lh $24, 1104($5)",
+                "mflo $25",
+                "mult $12, $8",
+                "sra $25, $25, 15",
+                "addu $13, $13, $25",
+                ".word 0x01a2682c", // max $13, $13, $2
+                ".word 0x01a3682d", // min $13, $13, $3
+                "sh $13, 0($5)",
+                "mflo $25",
+                "mult $12, $9",
+                "sra $25, $25, 15",
+                "addu $14, $14, $25",
+                ".word 0x01c2702c", // max $14, $14, $2
+                ".word 0x01c3702d", // min $14, $14, $3
+                "sh $14, 368($5)",
+                "mflo $25",
+                "mult $12, $10",
+                "sra $25, $25, 15",
+                "addu $15, $15, $25",
+                ".word 0x01e2782c", // max $15, $15, $2
+                ".word 0x01e3782d", // min $15, $15, $3
+                "sh $15, 736($5)",
+                "addiu $4, $4, 2",
+                "mflo $25",
+                "sra $25, $25, 15",
+                "addu $24, $24, $25",
+                ".word 0x0302c02c", // max $24, $24, $2
+                ".word 0x0303c02d", // min $24, $24, $3
+                "addiu $5, $5, 2",
+                "bne $4, $6, 1b",
+                "sh $24, 1102($5)",
+                ".set pop",
+                inout("$4") input => _,
+                inout("$5") bus => _,
+                in("$6") input.add(n),
+                in("$7") g[0],
+                in("$8") g[1],
+                in("$9") g[2],
+                in("$10") g[3],
+                out("$12") _,
+                out("$13") _,
+                out("$14") _,
+                out("$15") _,
+                out("$24") _,
+                out("$25") _,
+                in("$2") -32768,
+                in("$3") 32767,
+                options(nostack),
+            );
+        }
+    }
+
+    /// `A_ENVMIXER` over `n` samples with ramping volumes: per sample
+    /// `lval += lstep`, `rval += rstep`, then each bus's gain is
+    /// `clamp16(((val >> 16) * amt + 0x4000) >> 15)` and the bus gets
+    /// `(in * gain) >> 15`, saturating (bus layout as [`env4_const`]).
+    /// Returns the final `(lval, rval)`.
+    ///
+    /// # Safety
+    /// As [`env4_const`].
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    pub unsafe fn env4_ramp(
+        input: *const i16,
+        bus: *mut i16,
+        n: usize,
+        lval: i32,
+        lstep: i32,
+        rval: i32,
+        rstep: i32,
+        dry: i32,
+        wet: i32,
+    ) -> (i32, i32) {
+        if n == 0 {
+            return (lval, rval);
+        }
+        let (l, r): (i32, i32);
+        unsafe {
+            asm!(
+                ".set push",
+                ".set noreorder",
+                "1:",
+                "addu $7, $7, $8",
+                "addu $9, $9, $10",
+                "sra $14, $7, 16",
+                "mult $14, $11",
+                "sra $15, $9, 16",
+                "lh $13, 0($4)",
+                "lh $24, 0($5)",
+                "mflo $16",
+                "mult $14, $12",
+                "addiu $16, $16, 0x4000",
+                "sra $16, $16, 15",
+                ".word 0x0202802c", // max $16, $16, $2
+                ".word 0x0203802d", // min $16, $16, $3
+                "mflo $17",
+                "mult $13, $16",
+                "addiu $17, $17, 0x4000",
+                "sra $17, $17, 15",
+                ".word 0x0222882c", // max $17, $17, $2
+                ".word 0x0223882d", // min $17, $17, $3
+                "mflo $25",
+                "mult $15, $11",
+                "sra $25, $25, 15",
+                "addu $24, $24, $25",
+                ".word 0x0302c02c", // max $24, $24, $2
+                ".word 0x0303c02d", // min $24, $24, $3
+                "sh $24, 0($5)",
+                "lh $24, 736($5)",
+                "mflo $16",
+                "mult $13, $17",
+                "addiu $16, $16, 0x4000",
+                "sra $16, $16, 15",
+                ".word 0x0202802c", // max $16, $16, $2
+                ".word 0x0203802d", // min $16, $16, $3
+                "mflo $25",
+                "mult $15, $12",
+                "sra $25, $25, 15",
+                "addu $24, $24, $25",
+                ".word 0x0302c02c", // max $24, $24, $2
+                ".word 0x0303c02d", // min $24, $24, $3
+                "sh $24, 736($5)",
+                "lh $24, 368($5)",
+                "mflo $17",
+                "mult $13, $16",
+                "addiu $17, $17, 0x4000",
+                "sra $17, $17, 15",
+                ".word 0x0222882c", // max $17, $17, $2
+                ".word 0x0223882d", // min $17, $17, $3
+                "mflo $25",
+                "mult $13, $17",
+                "sra $25, $25, 15",
+                "addu $24, $24, $25",
+                ".word 0x0302c02c", // max $24, $24, $2
+                ".word 0x0303c02d", // min $24, $24, $3
+                "sh $24, 368($5)",
+                "lh $24, 1104($5)",
+                "addiu $4, $4, 2",
+                "addiu $5, $5, 2",
+                "mflo $25",
+                "sra $25, $25, 15",
+                "addu $24, $24, $25",
+                ".word 0x0302c02c", // max $24, $24, $2
+                ".word 0x0303c02d", // min $24, $24, $3
+                "bne $4, $6, 1b",
+                "sh $24, 1102($5)",
+                ".set pop",
+                inout("$4") input => _,
+                inout("$5") bus => _,
+                in("$6") input.add(n),
+                inout("$7") lval => l,
+                in("$8") lstep,
+                inout("$9") rval => r,
+                in("$10") rstep,
+                in("$11") dry,
+                in("$12") wet,
+                out("$13") _,
+                out("$14") _,
+                out("$15") _,
+                out("$16") _,
+                out("$17") _,
+                out("$24") _,
+                out("$25") _,
+                in("$2") -32768,
+                in("$3") 32767,
+                options(nostack),
+            );
+        }
+        (l, r)
+    }
+
+    /// [`section`] two samples per iteration, the second sample's multiplies
+    /// filling the first's latencies; `n` even.
+    ///
+    /// # Safety
+    /// `x[..n]`, `y[..n]` and `out[..n]` are valid and pairwise disjoint.
+    #[inline(always)]
+    unsafe fn section_pairs(x: *mut i16, y: *mut i16, out: *mut i16, n: usize, c: [i32; 3]) {
+        unsafe {
+            asm!(
+                ".set push",
+                ".set noreorder",
+                "1:",
+                "lh $8, 0($4)",
+                "lh $9, 0($5)",
+                "lh $2, 2($4)",
+                "mult $8, $12",
+                "lh $3, 2($5)",
+                "lh $10, 0($6)",
+                "lh $25, 2($6)",
+                "addiu $4, $4, 4",
+                "addiu $5, $5, 4",
+                "mflo $11",
+                "mult $2, $12",
+                "sra $11, $11, 15",
+                "addu $9, $9, $11",
+                ".word 0x012f482c", // max $9, $9, $15
+                ".word 0x0138482d", // min $9, $9, $24
+                "sh $9, -4($5)",
+                "addiu $6, $6, 4",
+                "mflo $16",
+                "mult $9, $13",
+                "sra $16, $16, 15",
+                "addu $3, $3, $16",
+                ".word 0x006f182c", // max $3, $3, $15
+                ".word 0x0078182d", // min $3, $3, $24
+                "sh $3, -2($5)",
+                "mflo $11",
+                "mult $3, $13",
+                "sra $11, $11, 15",
+                "addu $8, $8, $11",
+                ".word 0x010f402c", // max $8, $8, $15
+                ".word 0x0118402d", // min $8, $8, $24
+                "sh $8, -4($4)",
+                "mflo $16",
+                "mult $9, $14",
+                "sra $16, $16, 15",
+                "addu $2, $2, $16",
+                ".word 0x004f102c", // max $2, $2, $15
+                ".word 0x0058102d", // min $2, $2, $24
+                "sh $2, -2($4)",
+                "mflo $11",
+                "mult $3, $14",
+                "sra $11, $11, 15",
+                "addu $10, $10, $11",
+                ".word 0x014f502c", // max $10, $10, $15
+                ".word 0x0158502d", // min $10, $10, $24
+                "sh $10, -4($6)",
+                "mflo $16",
+                "sra $16, $16, 15",
+                "addu $25, $25, $16",
+                ".word 0x032fc82c", // max $25, $25, $15
+                ".word 0x0338c82d", // min $25, $25, $24
+                "bne $6, $7, 1b",
+                "sh $25, -2($6)",
+                ".set pop",
+                inout("$4") x => _,
+                inout("$5") y => _,
+                inout("$6") out => _,
+                in("$7") out.add(n),
+                out("$2") _,
+                out("$3") _,
+                out("$8") _,
+                out("$9") _,
+                out("$10") _,
+                out("$11") _,
+                in("$12") c[0],
+                in("$13") c[1],
+                in("$14") c[2],
+                in("$15") -32768,
+                out("$16") _,
+                in("$24") 32767,
+                out("$25") _,
+                options(nostack),
+            );
+        }
+    }
+
     /// One plain reverb section (`reverb::section`): `y += x * ff`, then
     /// `x += y * fb`, then `out += y * gain`, saturating, per sample.
     #[inline(always)]
@@ -583,10 +1415,44 @@ pub(crate) mod allegrex {
         if n == 0 {
             return;
         }
-        // SAFETY: reads and writes `x[..n]`, `y[..n]`, `out[..n]` (three
-        // disjoint slices); registers named.
+        if ff == 0 && gain == 0 {
+            // `y` and `out` stay as they are: only `x += y * fb`.
+            mix_gain(&mut x[..n], &y[..n], fb);
+            return;
+        }
+        let pairs = n & !1;
+        // SAFETY: three disjoint slices of at least `n` samples.
         unsafe {
-            let o = out.as_mut_ptr();
+            if pairs > 0 {
+                section_pairs(
+                    x.as_mut_ptr(),
+                    y.as_mut_ptr(),
+                    out.as_mut_ptr(),
+                    pairs,
+                    [ff, fb, gain],
+                );
+            }
+            if n > pairs {
+                let k = n - 1;
+                section_one(
+                    x.as_mut_ptr().add(k),
+                    y.as_mut_ptr().add(k),
+                    out.as_mut_ptr().add(k),
+                    1,
+                    [ff, fb, gain],
+                );
+            }
+        }
+    }
+
+    /// [`section`] one sample per iteration.
+    ///
+    /// # Safety
+    /// As [`section_pairs`]; `n > 0`.
+    #[inline(always)]
+    unsafe fn section_one(x: *mut i16, y: *mut i16, o: *mut i16, n: usize, c: [i32; 3]) {
+        let (ff, fb, gain) = (c[0], c[1], c[2]);
+        unsafe {
             asm!(
                 ".set push",
                 ".set noreorder",
@@ -620,8 +1486,8 @@ pub(crate) mod allegrex {
                 "bne $6, $7, 1b",
                 "sh $10, -2($6)",
                 ".set pop",
-                inout("$4") x.as_mut_ptr() => _,
-                inout("$5") y.as_mut_ptr() => _,
+                inout("$4") x => _,
+                inout("$5") y => _,
                 inout("$6") o => _,
                 in("$7") o.add(n),
                 out("$8") _,
