@@ -123,9 +123,16 @@ def _state_cb(context, param, value):
 
 
 class Mupen64PlusHarness:
-    def __init__(self, rom_path, input_so_path, config_dir, data_dir):
+    def __init__(self, rom_path, input_so_path, config_dir, data_dir,
+                 audio_dump_path=None, audio_dump_so_path=None):
         self.rom_path = rom_path
         self.input_so_path = input_so_path
+        # With audio_dump_path set, n64_audio_dump.so replaces audio-sdl and
+        # writes the game's exact AI PCM there (see n64_audio_dump.c).
+        self.audio_dump_path = audio_dump_path
+        self.audio_dump_so_path = audio_dump_so_path or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "build", "n64_audio_dump.so")
+        self._audio_frame = None
         self.config_dir = config_dir
         self.data_dir = data_dir
 
@@ -186,7 +193,16 @@ class Mupen64PlusHarness:
             raise RuntimeError(f"ROM_OPEN failed: {rval}")
 
         self.gfx = self._load(os.path.join(PLUGIN_DIR, "mupen64plus-video-rice.so"))
-        self.audio = self._load(os.path.join(PLUGIN_DIR, "mupen64plus-audio-sdl.so"))
+        if self.audio_dump_path:
+            self.audio = self._load(self.audio_dump_so_path)
+            self.audio.n64_audio_dump_set_output.restype = ctypes.c_int
+            self.audio.n64_audio_dump_set_output.argtypes = [ctypes.c_char_p]
+            if not self.audio.n64_audio_dump_set_output(self.audio_dump_path.encode()):
+                raise RuntimeError(f"audio dump path rejected: {self.audio_dump_path}")
+            self._audio_frame = ctypes.c_uint32.in_dll(self.audio, "g_video_frame")
+            sys.stderr.write(f"[driver] audio dump -> {self.audio_dump_path}\n")
+        else:
+            self.audio = self._load(os.path.join(PLUGIN_DIR, "mupen64plus-audio-sdl.so"))
         self.rsp = self._load(os.path.join(PLUGIN_DIR, "mupen64plus-rsp-hle.so"))
         self.inp = self._load(self.input_so_path)
 
@@ -248,6 +264,8 @@ class Mupen64PlusHarness:
 
     def _on_frame(self, frame_index):
         self.current_frame = frame_index
+        if self._audio_frame is not None:
+            self._audio_frame.value = frame_index
         self._frame_event.set()
 
     # -- stepping -------------------------------------------------------------
@@ -388,9 +406,15 @@ def main():
                      help="';'-separated steps 'hold:btn+btn;hold:btn' (btn in a,b,start,z,l,r,dpad_u,dpad_d,dpad_l,dpad_r,c_u,c_d,c_l,c_r), applied to P1 only")
     ap.add_argument("--screenshot-every", type=int, default=0)
     ap.add_argument("--final-screenshot", action="store_true")
+    ap.add_argument("--audio-dump", default=None, metavar="PATH",
+                     help="replace audio-sdl with n64_audio_dump.so; write raw s16le stereo PCM to PATH "
+                          "and a rate/per-buffer sidecar to PATH.txt")
+    ap.add_argument("--audio-dump-so", default=None,
+                     help="path to n64_audio_dump.so (default: build/ beside this script)")
     args = ap.parse_args()
 
-    h = Mupen64PlusHarness(args.rom, args.input_so, args.config_dir, args.data_dir)
+    h = Mupen64PlusHarness(args.rom, args.input_so, args.config_dir, args.data_dir,
+                           audio_dump_path=args.audio_dump, audio_dump_so_path=args.audio_dump_so)
     h.start()
     print("started; state=", h._query_state(), file=sys.stderr)
     t0 = time.time()
