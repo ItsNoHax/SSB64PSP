@@ -16,6 +16,8 @@ pub mod evtq;
 pub mod fgm;
 pub mod golden;
 pub mod mem;
+#[cfg(test)]
+mod n64ref;
 pub mod osc;
 pub mod prof;
 pub mod reverb;
