@@ -140,7 +140,7 @@ impl Run {
                 }
             }
             if self.tics == 190 {
-                // `func_800269C0_275C0(nSYAudioFGMExplodeL)`: no audio here.
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeL);
                 self.make_crash();
             }
             if self.tics == 220 {

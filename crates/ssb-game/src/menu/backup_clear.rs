@@ -11,6 +11,7 @@ use super::{
     fill, Draw, Pad, Piece, Repeat, Scene, DOWN, FILE_BACKUP_CLEAR, FILE_BACKUP_CLEAR_HEADER, UP,
 };
 use crate::backup::{Backup, Selections};
+use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
 /// `llMNBackupClear*Sprite` and `*Palette`.
@@ -170,11 +171,13 @@ impl BackupClear {
             ClearOption::Prize => backup.clear_prize(),
             ClearOption::AllDataClear => {
                 backup.clear_all_data();
+                backup.apply_options();
                 self.apply_options = true;
             }
         }
         backup.correct_errors(selections);
         backup.write();
+        sound::play_fgm(id::nSYAudioFGMOptionBackupClear);
     }
 
     /// `mnBackupClearFuncRun`.
@@ -225,6 +228,7 @@ impl BackupClear {
     /// `mnBackupClearUpdateOptionMainMenu`.
     fn update_main(&mut self, pad: &Pad) -> Option<Scene> {
         if pad.tap(N64Buttons::A | N64Buttons::START) {
+            sound::play_fgm(id::nSYAudioFGMMenuSelect);
             self.options_shown = false;
             self.menu_kind = 1;
             self.yes_or_no = 1;
@@ -239,6 +243,7 @@ impl BackupClear {
         let index = all.iter().position(|&o| o == self.option).unwrap_or(0);
         let mut r = Repeat::default();
         if r.check(self.change_wait, pad, UP, true, 20, true) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_p(7);
             self.highlighted[index] = false;
             self.option = all[if index == 0 { all.len() - 1 } else { index - 1 }];
@@ -247,6 +252,7 @@ impl BackupClear {
             }
             self.highlighted[all.iter().position(|&o| o == self.option).unwrap_or(0)] = true;
         } else if r.check(self.change_wait, pad, DOWN, true, -20, false) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_n(7);
             self.highlighted[index] = false;
             self.option = all[if index == all.len() - 1 { 0 } else { index + 1 }];
@@ -268,6 +274,7 @@ impl BackupClear {
     ) {
         if pad.tap(N64Buttons::A | N64Buttons::START) {
             if self.yes_or_no == 0 {
+                sound::play_fgm(id::nSYAudioFGMMenuSelect);
                 if kind == 1 && self.option == ClearOption::AllDataClear {
                     self.menu_kind = 2;
                     self.yes_or_no = 1;
@@ -301,6 +308,7 @@ impl BackupClear {
         {
             self.change_wait = super::wait_n(r.stick, 7);
             if self.yes_or_no == 1 {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
                 self.yes_or_no = 0;
                 self.make_confirm(kind);
             }
@@ -308,6 +316,7 @@ impl BackupClear {
             || r.check_stick(self.change_wait, pad, false, -20, false))
             && self.yes_or_no == 0
         {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.yes_or_no = 1;
             self.change_wait = super::wait_n(r.stick, 7);
             self.make_confirm(kind);

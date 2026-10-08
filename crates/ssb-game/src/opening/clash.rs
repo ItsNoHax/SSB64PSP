@@ -151,8 +151,9 @@ impl Clash {
             if self.tics == 160 {
                 exit = Some(Exit::Next(Kind::Newcomers));
             }
-            // Tics 15, 75, 90 and 105: `func_800269C0_275C0(nSYAudioFGMOpeningClash)`,
-            // no audio here.
+            if matches!(self.tics, 15 | 75 | 90 | 105) {
+                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMOpeningClash);
+            }
         }
         for id in self.cameras {
             if let Some(p) = self.world.camera_mut(id).and_then(|c| c.persp_mut()) {

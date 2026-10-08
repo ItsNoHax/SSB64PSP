@@ -395,3 +395,50 @@ fn characters_fighter_runs_through_its_tracks() {
     assert!(changes > 10, "{changes}");
     assert!(m.fighter.rotate_y > 0.0 && m.fighter.rotate_y <= core::f32::consts::TAU);
 }
+
+#[test]
+fn option_mono_and_stereo_set_the_audio_quality() {
+    use crate::sound::{id, testing::*};
+    let r = Recorder::install();
+    let mut b = Backup::default();
+    let _ = OptionMenu::new(Scene::ScreenAdjust, 1, &b);
+    assert_eq!(r.take(), [Call::PlayBgm(0, id::nSYAudioBGMModeSelect)]);
+    let mut m = OptionMenu::new(Scene::ModeSelect, 1, &b);
+    assert_eq!(r.take(), []);
+    settle(&mut m, 9, |m, p| {
+        m.tick(p, &mut b);
+    });
+    m.tick(&tap(N64Buttons::D_RIGHT), &mut b);
+    assert_eq!(
+        r.take(),
+        [
+            Call::PlayFgm(id::nSYAudioFGMMenuScroll1),
+            Call::SetQuality(0)
+        ]
+    );
+    // Already mono: right again does nothing.
+    m.tick(&tap(N64Buttons::D_RIGHT), &mut b);
+    assert_eq!(r.take(), []);
+    m.tick(&tap(N64Buttons::A), &mut b);
+    assert_eq!(
+        r.take(),
+        [
+            Call::PlayFgm(id::nSYAudioFGMMenuScroll1),
+            Call::SetQuality(1)
+        ]
+    );
+    crate::sound::uninstall();
+}
+
+#[test]
+fn all_data_clear_applies_the_backups_quality() {
+    use crate::sound::testing::*;
+    let r = Recorder::install();
+    let b = Backup {
+        sound_mono_or_stereo: 0,
+        ..Backup::default()
+    };
+    b.apply_options();
+    assert_eq!(r.take(), [Call::SetQuality(0)]);
+    crate::sound::uninstall();
+}

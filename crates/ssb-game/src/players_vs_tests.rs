@@ -453,3 +453,31 @@ fn five_idle_minutes_return_to_the_title() {
     }
     assert!(matches!(outcome, Some(Outcome::Title(_))));
 }
+
+#[test]
+fn the_select_plays_its_bgm_unless_back_from_the_stage_select() {
+    use crate::sound::{id, testing::*};
+    let r = Recorder::install();
+    let from_maps = SceneContext {
+        from_maps: true,
+        ..SceneContext::default()
+    };
+    PlayersVs::new(BattleState::default(), from_maps, ONE_CONTROLLER);
+    assert_eq!(
+        r.take(),
+        [Call::PlayFgm(id::nSYAudioVoiceAnnounceFreeForAll)]
+    );
+    let team = BattleState {
+        is_team_battle: true,
+        ..BattleState::default()
+    };
+    first_visit(team);
+    assert_eq!(
+        r.take(),
+        [
+            Call::PlayBgm(0, id::nSYAudioBGMBattleSelect),
+            Call::PlayFgm(id::nSYAudioVoiceAnnounceTeamBattle),
+        ]
+    );
+    crate::sound::uninstall();
+}

@@ -285,6 +285,13 @@ pub(crate) fn start_explain(s: &mut Session, pack: Option<&Pack<'_>>) -> bool {
         fade: Some(Fade::new(explain::FADE_LENGTH)),
         seed_outside,
     })));
+    // `scExplainFuncStart`: `mpCollisionSetPlayBGM` (the How to Play
+    // map's `nSYAudioBGMExplain`, which plays on into Characters), then
+    // the announcer.
+    if let Some(stage) = pack.and_then(|p| p.stage(s.training_stage)) {
+        crate::play_stage_bgm(stage.bgm_id);
+    }
+    ssb_game::sound::play_fgm(ssb_game::sound::id::nSYAudioVoiceAnnounceHowToPlay);
     s.screen = crate::Screen::Training;
     true
 }
@@ -393,6 +400,12 @@ impl auto_demo::World for World<'_> {
 /// is missing.
 pub(crate) fn start_auto_demo(s: &mut Session, pack: Option<&Pack<'_>>) -> bool {
     let Some(p) = pack else { return false };
+    // `scAutoDemoStartScene`. Its wait on `syAudioCheckBGMPlaying` after
+    // the stop is not ported: the audio thread runs the stop before any
+    // later play (D-049).
+    ssb_game::sound::stop_bgm_all();
+    ssb_game::sound::set_bgm_volume(0, 0x7800);
+    ssb_game::sound::stop_all_fgm();
     // `scAutoDemoInitDemo`, then each player's start point in turn.
     let mut rand = ssb_game::rng::rand_int_range;
     let setup = auto_demo::init(&mut s.menus.demo, &s.backup, &mut rand);
@@ -445,6 +458,9 @@ pub(crate) fn start_auto_demo(s: &mut Session, pack: Option<&Pack<'_>>) -> bool 
         fade,
         names,
     })));
+    // `scAutoDemoFuncStart`: `mpCollisionSetPlayBGM`, then the crowd.
+    crate::play_stage_bgm(stage.bgm_id);
+    ssb_game::sound::play_fgm(ssb_game::sound::id::nSYAudioVoicePublicExcited);
     s.screen = crate::Screen::Training;
     true
 }

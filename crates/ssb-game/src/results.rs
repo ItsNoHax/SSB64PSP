@@ -4,9 +4,28 @@
 //! KOs, falls and points, the places they sort into, the winner, when the
 //! fighters appear and when START may leave. The fighters themselves are
 //! [`crate::results_scene`]; the text, table and wallpaper are
-//! [`crate::results_layer`]; the confetti is not ported.
+//! [`crate::results_layer`]; the confetti is not ported. The announcer,
+//! the winner's fanfare and the results BGM after it
+//! (`mnVSResultsAnnounceWinner`, `mnVSResultsPlayWinBGM`,
+//! `mnVSResultsAudioThreadUpdate`) run in [`Results::tick`].
 
 use crate::battle::{Battle, Rule};
+use crate::fighter::FighterKind;
+use crate::fighter_select::ANNOUNCE_NAMES;
+use crate::sound::{self, id};
+
+/// `mnVSResultsAudioThreadUpdate`, the GObj thread `mnVSResultsMakeAudioThread`
+/// starts with the win BGM: it waits for player 0 to leave `AL_STOPPED`,
+/// then for it to stop, then plays `nSYAudioBGMResults` and ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioThread {
+    /// Not made (before tic 120, or no contest), or ended.
+    None,
+    /// The first loop: the win BGM has not started yet.
+    WaitStart,
+    /// The second loop: the win BGM plays.
+    WaitEnd,
+}
 
 /// `nMNVSResultsKind*`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +68,11 @@ pub struct Results {
     pub init_fighters_all_tic: u32,
     /// `sMNVSResultsCharacterAlpha`: the fighters' fade-in, 0 to 0xFF.
     pub character_alpha: i32,
+    /// `sMNVSResultsFighterKinds`: the battle's fighters, set by
+    /// [`Results::start`].
+    pub fighter_kinds: [Option<FighterKind>; 4],
+    /// The results BGM's thread.
+    pub audio_thread: AudioThread,
 }
 
 /// `MNVSResultsScore`.
@@ -196,6 +220,8 @@ impl Results {
             make_results_tic: tics.1,
             init_fighters_all_tic: tics.2,
             character_alpha: 0,
+            fighter_kinds: [None; 4],
+            audio_thread: AudioThread::None,
         };
         r.winner = r.find_winner();
         r
@@ -247,16 +273,131 @@ impl Results {
         }
     }
 
+    /// `mnVSResultsFuncStart`: [`Results::new`] with the battle's
+    /// fighters, and the crowd's cheer unless there was no contest.
+    pub fn start(b: &Battle, fighter_kinds: [Option<FighterKind>; 4]) -> Results {
+        let r = Results {
+            fighter_kinds,
+            ..Results::new(b)
+        };
+        if r.kind != Kind::NoContest {
+            sound::play_fgm(id::nSYAudioVoicePublicWin);
+        }
+        r
+    }
+
     /// A frame of `mnVSResultsFuncRun`: the tic count, the fighters'
-    /// fade-in once they are made (0x16 a tic), and the exit check, START
-    /// once `allow_exit_wait` ticks have passed. Returns whether to leave.
-    /// [`Results::fighters_due`] says whether this tic makes the fighters.
+    /// fade-in once they are made (0x16 a tic), the announcer, the win BGM
+    /// at tic 120, and the exit check, START once `allow_exit_wait` ticks
+    /// have passed, which stops the sounds and the music. Then the results
+    /// BGM's thread. Returns whether to leave. [`Results::fighters_due`]
+    /// says whether this tic makes the fighters.
     pub fn tick(&mut self, start_tapped: bool) -> bool {
         self.total_tics += 1;
         if self.init_fighters_all_tic < self.total_tics && self.character_alpha < 0xFF {
             self.character_alpha = (self.character_alpha + 0x16).min(0xFF);
         }
-        self.total_tics >= self.allow_exit_wait && start_tapped
+        self.announce_winner();
+        let made_thread = self.kind != Kind::NoContest && self.total_tics == 120;
+        if made_thread {
+            self.play_win_bgm();
+        }
+        let leave = self.total_tics >= self.allow_exit_wait && start_tapped;
+        if leave {
+            sound::stop_all_fgm();
+            sound::stop_bgm_all();
+        }
+        // The thread's GObj (link 17) runs after the scene's; it starts on
+        // the next frame.
+        self.audio_thread_update();
+        if made_thread {
+            self.audio_thread = AudioThread::WaitStart;
+        }
+        leave
+    }
+
+    /// `mnVSResultsGetFighterKind(mnVSResultsGetWinPlayer())`.
+    fn winner_kind(&self) -> Option<FighterKind> {
+        self.winner.and_then(|w| self.fighter_kinds[w])
+    }
+
+    /// `mnVSResultsAnnounceWinner`, keyed on the tic count.
+    fn announce_winner(&self) {
+        let t = self.total_tics;
+        let voice = if self.kind == Kind::NoContest {
+            match t {
+                2 => Some(id::nSYAudioVoiceAnnounceNoContest),
+                71 => Some(id::nSYAudioVoicePublicNoContest),
+                _ => None,
+            }
+        } else if !self.is_team_battle {
+            match t {
+                81 => Some(id::nSYAudioVoiceAnnounceWinnerIs),
+                210 => self
+                    .winner_kind()
+                    .and_then(|k| ANNOUNCE_NAMES.get(k as usize).copied()),
+                270 => Some(id::nSYAudioVoicePublicExcited),
+                _ => None,
+            }
+        } else {
+            match t {
+                // `announcer_teams[mnVSResultsGetWinTeam()]`.
+                81 => self.winner.and_then(|w| {
+                    [
+                        id::nSYAudioVoiceAnnounceRedTeam,
+                        id::nSYAudioVoiceAnnounceBlueTeam,
+                        id::nSYAudioVoiceAnnounceGreenTeam,
+                    ]
+                    .get(usize::from(self.team[w]))
+                    .copied()
+                }),
+                130 => Some(id::nSYAudioVoiceAnnounceWins),
+                150 => Some(id::nSYAudioVoicePublicExcited),
+                _ => None,
+            }
+        };
+        if let Some(v) = voice {
+            sound::play_fgm(v);
+        }
+    }
+
+    /// `mnVSResultsPlayWinBGM`: the winner's series fanfare.
+    fn play_win_bgm(&self) {
+        use FighterKind::*;
+        let bgm = match self.winner_kind() {
+            Some(Mario | Luigi) => id::nSYAudioBGMWinMario,
+            Some(Fox) => id::nSYAudioBGMWinFox,
+            Some(Donkey) => id::nSYAudioBGMWinDonkey,
+            Some(Samus) => id::nSYAudioBGMWinMetroid,
+            Some(Link) => id::nSYAudioBGMWinZelda,
+            Some(Yoshi) => id::nSYAudioBGMWinYoshi,
+            Some(Captain) => id::nSYAudioBGMWinFZero,
+            Some(Pikachu | Purin) => id::nSYAudioBGMWinPMonsters,
+            Some(Kirby) => id::nSYAudioBGMWinKirby,
+            Some(Ness) => id::nSYAudioBGMWinMother,
+            _ => id::nSYAudioBGMWinDefault,
+        };
+        sound::play_bgm(0, bgm);
+    }
+
+    /// One wake of `mnVSResultsAudioThreadUpdate`: `syAudioCheckBGMPlaying`
+    /// stands for `gSYAudioCSPlayers[0]->state != AL_STOPPED`. The poll only
+    /// gates the results BGM.
+    fn audio_thread_update(&mut self) {
+        match self.audio_thread {
+            AudioThread::None => {}
+            AudioThread::WaitStart => {
+                if sound::bgm_playing(0) {
+                    self.audio_thread = AudioThread::WaitEnd;
+                }
+            }
+            AudioThread::WaitEnd => {
+                if !sound::bgm_playing(0) {
+                    sound::play_bgm(0, id::nSYAudioBGMResults);
+                    self.audio_thread = AudioThread::None;
+                }
+            }
+        }
     }
 
     /// Whether this tic runs `mnVSResultsInitFightersAll`.

@@ -128,8 +128,8 @@ impl Newcomers {
             );
         }
         world.light = [0.0, 0.0];
-        // `func_800269C0_275C0(nSYAudioFGMOpeningNewcomersClash)` and
-        // `(nSYAudioVoiceAnnounceTitleWait)`: no audio here.
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMOpeningNewcomersClash);
+        crate::sound::play_fgm(crate::sound::id::nSYAudioVoiceAnnounceTitleWait);
         Newcomers {
             tics: 0,
             world,

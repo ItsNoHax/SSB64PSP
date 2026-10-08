@@ -82,15 +82,20 @@ pub struct Congra {
 }
 
 impl Congra {
-    /// `mnCongraFuncStart`.
+    /// `mnCongraFuncStart`, which plays [`Voice`].
     pub fn new(fkind: FighterKind, score: u32) -> Self {
+        let voice = if score >= 1_000_000 {
+            Voice::Incredible
+        } else {
+            Voice::Congratulations
+        };
+        crate::sound::play_fgm(match voice {
+            Voice::Incredible => crate::sound::id::nSYAudioVoiceAnnounceIncredible,
+            Voice::Congratulations => crate::sound::id::nSYAudioVoiceAnnounceCongra,
+        });
         Self {
             fkind,
-            voice: if score >= 1_000_000 {
-                Voice::Incredible
-            } else {
-                Voice::Congratulations
-            },
+            voice,
             skip_wait: SKIP_WAIT,
             is_proceed: false,
             fade: None,

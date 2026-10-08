@@ -101,8 +101,17 @@ fn coming_back_from_vs_options_starts_on_it() {
     let m = VsMode::new(Scene::VsOptions, &state());
     assert_eq!(m.cursor, Button::Options);
     assert_eq!(m.button_status[3], TabStatus::Highlight);
-    assert!(VsMode::plays_mode_select_bgm(Scene::PlayersVs));
-    assert!(!VsMode::plays_mode_select_bgm(Scene::VsOptions));
+}
+
+#[test]
+fn mode_select_bgm_plays_only_back_from_the_character_select() {
+    use crate::sound::{id, testing::*};
+    let r = Recorder::install();
+    VsMode::new(Scene::VsOptions, &state());
+    assert_eq!(r.take(), []);
+    VsMode::new(Scene::PlayersVs, &state());
+    assert_eq!(r.take(), [Call::PlayBgm(0, id::nSYAudioBGMModeSelect)]);
+    crate::sound::uninstall();
 }
 
 #[test]

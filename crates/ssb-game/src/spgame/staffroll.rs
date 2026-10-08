@@ -589,15 +589,17 @@ pub struct Staffroll {
     pub blackout: bool,
     blackout_pending: bool,
     finished: bool,
-    /// Highlights made, for the host's `nSYAudioFGMTrainingSel`.
+    /// Highlights made, each with its `nSYAudioFGMTrainingSel`.
     pub highlights: u32,
 }
 
 impl Staffroll {
     /// `scStaffrollFuncStart`: the unlock-hidden texts, the crosshair, the
-    /// scroll and the camera, in that order.
+    /// scroll and the camera, in that order, then the music.
     pub fn new(mut credits: Credits, unlock_mask: u8) -> Self {
         credits.hide_unlocks(unlock_mask);
+        crate::sound::stop_bgm_all();
+        crate::sound::play_bgm(0, crate::sound::id::nSYAudioBGMStaffroll);
         Self {
             credits,
             name_id: 0,
@@ -668,6 +670,7 @@ impl Staffroll {
             self.finished = true;
         }
         if self.status == -1 {
+            crate::sound::stop_bgm_all();
             self.blackout_pending = true;
             self.status = -2;
         }
@@ -766,6 +769,7 @@ impl Staffroll {
             return;
         };
         self.highlights += 1;
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMTrainingSel);
         // `func_ovl59_8013202C`: make the frame once, else retarget it.
         match self.frame.as_mut() {
             Some(frame) => frame.target = hit.0,

@@ -11,6 +11,7 @@ use super::{
     FILE_OPTION, IDLE_RETURN, LEFT, RIGHT, UP,
 };
 use crate::backup::Backup;
+use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
 /// `llMNOption*Sprite` (`reloc_data.us.h`).
@@ -66,6 +67,9 @@ impl OptionMenu {
             Scene::BackupClear => Tab::BackupClear,
             _ => Tab::Sound,
         };
+        if scene_prev == Scene::ScreenAdjust {
+            sound::play_bgm(0, id::nSYAudioBGMModeSelect);
+        }
         OptionMenu {
             tab,
             mono_or_stereo: u8::from(sound_quality == 1),
@@ -125,6 +129,7 @@ impl OptionMenu {
                 Tab::Sound => None,
             };
             if let Some(next) = next {
+                sound::play_fgm(id::nSYAudioFGMMenuSelect);
                 self.write_backup(backup);
                 self.tab_status[self.tab.index()] = TabStatus::Selected;
                 self.scene_curr = next;
@@ -139,6 +144,7 @@ impl OptionMenu {
         }
         let mut r = Repeat::default();
         if r.check(self.change_wait, pad, UP, true, 20, true) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_p(7);
             let next = match self.tab {
                 Tab::Sound => Tab::BackupClear,
@@ -148,6 +154,7 @@ impl OptionMenu {
             self.select(next);
         }
         if r.check(self.change_wait, pad, DOWN, true, -20, false) {
+            sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             self.change_wait = r.wait_n(7);
             if self.tab == Tab::ScreenAdjust {
                 self.change_wait += 8;
@@ -163,17 +170,23 @@ impl OptionMenu {
             if (pad.tap(LEFT) || r.check_stick(self.change_wait, pad, false, -20, false))
                 && self.mono_or_stereo == 0
             {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                 self.mono_or_stereo = 1;
                 self.change_wait = super::wait_n(r.stick, 7);
+                sound::set_quality(u32::from(self.mono_or_stereo));
             }
             if (pad.tap(RIGHT) || r.check_stick(self.change_wait, pad, false, 20, true))
                 && self.mono_or_stereo == 1
             {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                 self.mono_or_stereo = 0;
                 self.change_wait = super::wait_p(r.stick, 7);
+                sound::set_quality(u32::from(self.mono_or_stereo));
             }
             if pad.tap(N64Buttons::A) {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll1);
                 self.mono_or_stereo = if self.mono_or_stereo == 1 { 0 } else { 1 };
+                sound::set_quality(u32::from(self.mono_or_stereo));
             }
         }
         load.then_some(self.scene_curr)
