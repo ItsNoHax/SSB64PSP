@@ -46,8 +46,12 @@ pub struct Message {
 }
 
 impl Message {
-    /// `mnMessageInitVars`, with the queue entry already taken.
+    /// `mnMessageFuncStart`: `mnMessageInitVars`, with the queue entry
+    /// already taken, then the message's BGM and sound. Each queued unlock
+    /// is its own task, so each starts them.
     pub fn new(unlock: Unlock) -> Self {
+        crate::sound::play_bgm(0, crate::sound::id::nSYAudioBGMMessage);
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMDeadUpStar);
         Self {
             unlock,
             total_tics: 0,

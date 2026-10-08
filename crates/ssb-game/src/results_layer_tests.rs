@@ -33,6 +33,8 @@ fn results(kind: Kind, places: &[i32], winner: Option<usize>) -> Results {
         make_results_tic: tic(120),
         init_fighters_all_tic: tic(120),
         character_alpha: 0,
+        fighter_kinds: [None; 4],
+        audio_thread: crate::results::AudioThread::None,
     }
 }
 

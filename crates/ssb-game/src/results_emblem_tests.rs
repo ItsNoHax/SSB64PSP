@@ -19,6 +19,8 @@ fn results(kind: Kind, winner: usize) -> Results {
         make_results_tic: if no_contest { 1 } else { 120 },
         init_fighters_all_tic: if no_contest { 1 } else { 120 },
         character_alpha: 0,
+        fighter_kinds: [None; 4],
+        audio_thread: crate::results::AudioThread::None,
     }
 }
 

@@ -309,6 +309,9 @@ impl Room {
         w.light = [45.0, 45.0];
         room.ids = ids;
         room.update_overlay_display();
+        // The opening's music plays on through the movie into the title.
+        crate::sound::stop_all_fgm();
+        crate::sound::play_bgm(0, crate::sound::id::nSYAudioBGMOpening);
         room
     }
 
