@@ -46,6 +46,7 @@ new evidence contradicts it.
 - [D-044](docs/decisions/D-044.md): PSP Backend Split Into Shared psp-runtime + Two Applications
 - [D-045](docs/decisions/D-045.md): Save Data Is the N64 SRAM Image in a Plain File Beside the Pack
 - [D-046](docs/decisions/D-046.md): Scenes Load Their Archive Files; Only the Pack's Index Stays Resident
+- [D-049](docs/decisions/D-049.md): The N64 Audio System Is Ported Whole and Synthesized at Run Time on Its Own Thread
 
 ## Engineering Process
 

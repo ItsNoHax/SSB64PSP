@@ -2,7 +2,7 @@
 //! hand cursor, the player's puck, the portrait grid, the recall, the
 //! costume picks, the level, stock and (hidden) time options, the ready
 //! check and the scene and backup data it saves. [`layer`] holds its
-//! presentation; the spotlight and sounds stay with the host.
+//! presentation; the spotlight stays with the host.
 //!
 //! The scene has one slot (`sMNPlayers1PGameSlot`), for the port in
 //! `gSCManagerSceneData.player` (`sMNPlayers1PGameManPlayer`). Unlike the
@@ -26,7 +26,10 @@ use ssb_engine::input::{ControllerState, N64Buttons};
 use crate::battle::TIMELIMIT_INFINITE;
 use crate::costume::costume_common_id;
 use crate::fighter::FighterKind;
-use crate::fighter_select::{portrait_center, portrait_edge_velocity, puck_fighter_kind};
+use crate::fighter_select::{
+    announce_fighter, portrait_center, portrait_edge_velocity, puck_fighter_kind,
+};
+use crate::sound::{self, id, FgmHandle};
 use crate::spgame::{self, Backup, Difficulty, CHARACTER_MASK_ALL};
 
 pub use crate::fighter_select::{is_locked, portrait, CursorStatus, PORTRAIT_KINDS};
@@ -330,6 +333,8 @@ pub struct Players1P {
     is_start: bool,
     start_proceed_wait: i32,
     pending: Option<Outcome>,
+    /// The slot's `p_sfx`: the last fighter-name voice.
+    p_sfx: Option<FgmHandle>,
 }
 
 impl Players1P {
@@ -370,8 +375,13 @@ impl Players1P {
             is_start: false,
             start_proceed_wait: 0,
             pending: None,
+            p_sfx: None,
         };
         select.v_init();
+        // `mnPlayers1PGameFuncStart`: never entered from the stage select
+        // (`scene_prev != nSCKindMaps`).
+        sound::play_bgm(0, id::nSYAudioBGMBattleSelect);
+        sound::play_fgm(id::nSYAudioVoiceAnnounceSelectPlayer);
         select
     }
 
@@ -446,12 +456,14 @@ impl Players1P {
             if self.start_proceed_wait == 0 {
                 self.leave(Outcome::Proceed);
             }
-        } else if taps.contains(N64Buttons::START)
-            && self.total_tics > START_TICS
-            && self.is_ready()
-        {
-            self.start_proceed_wait = START_PROCEED_WAIT;
-            self.is_start = true;
+        } else if taps.contains(N64Buttons::START) && self.total_tics > START_TICS {
+            if self.is_ready() {
+                sound::play_fgm(id::nSYAudioVoicePublicCheer);
+                self.start_proceed_wait = START_PROCEED_WAIT;
+                self.is_start = true;
+            } else {
+                sound::play_fgm(id::nSYAudioFGMMenuDenied);
+            }
         }
     }
 
@@ -465,12 +477,15 @@ impl Players1P {
             if time_row && (210.0..=230.0).contains(&x) {
                 // `mnPlayers1PGameCheckTimeArrowRInRange`.
                 self.time_setting = next_time_value(self.time_setting);
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             } else if time_row && (140.0..=160.0).contains(&x) {
                 // `mnPlayers1PGameCheckTimeArrowLInRange`.
                 self.time_setting = next_time_value(self.time_setting);
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             } else if (13.0..=34.0).contains(&y) && (244.0..=292.0).contains(&x) {
                 // `mnPlayers1PGameCheckBackInRange`.
-                self.leave(Outcome::Back);
+                self.back_to_1p_mode();
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
             } else if !self.check_level_arrow_press(x, y) {
                 self.check_stock_arrow_press(x, y);
             }
@@ -494,11 +509,18 @@ impl Players1P {
         }
         // `mnPlayers1PGameDetectBack`.
         if !self.slot.is_recalling && self.total_tics >= BACK_TICS && taps.contains(N64Buttons::B) {
-            self.leave(Outcome::Back);
+            self.back_to_1p_mode();
         }
         if !self.slot.is_recalling {
             self.update_cursor_no_recall();
         }
+    }
+
+    /// `mnPlayers1PGameBackTo1PMode`.
+    fn back_to_1p_mode(&mut self) {
+        self.leave(Outcome::Back);
+        sound::stop_bgm_all();
+        sound::stop_all_fgm();
     }
 
     /// `mnPlayers1PGameCheckLevelArrowPress`. `(x, y)` is the cursor's
@@ -509,12 +531,14 @@ impl Players1P {
         }
         if (258.0..=280.0).contains(&x) {
             if self.level < Difficulty::VeryHard as i32 {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
                 self.level += 1;
                 self.v_make_level();
             }
             true
         } else if (190.0..=212.0).contains(&x) {
             if self.level > Difficulty::VeryEasy as i32 {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
                 self.level -= 1;
                 self.v_make_level();
             }
@@ -531,11 +555,13 @@ impl Players1P {
         }
         if (258.0..=280.0).contains(&x) {
             if self.stock < STOCK_MAX {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
                 self.stock += 1;
             }
             true
         } else if (190.0..=212.0).contains(&x) {
             if self.stock > 0 {
+                sound::play_fgm(id::nSYAudioFGMMenuScroll2);
                 self.stock -= 1;
             }
             true
@@ -547,7 +573,11 @@ impl Players1P {
     /// `mnPlayers1PGameCheckSelectFighter`. A, like C-Up, picks the first
     /// costume.
     fn select_fighter(&mut self, button: usize) -> bool {
-        if self.slot.cursor_status != CursorStatus::Grab || self.slot.kind.is_none() {
+        if self.slot.cursor_status != CursorStatus::Grab {
+            return false;
+        }
+        if self.slot.kind.is_none() {
+            sound::play_fgm(id::nSYAudioFGMMenuDenied);
             return false;
         }
         self.select_fighter_puck(button);
@@ -566,6 +596,7 @@ impl Players1P {
         s.is_held = false;
         s.cursor_status = CursorStatus::Hover;
         s.is_fighter_selected = true;
+        self.p_sfx = announce_fighter(self.p_sfx, kind);
         self.v_placement_priorities();
         self.v_make_portrait_flash();
     }
@@ -597,6 +628,7 @@ impl Players1P {
         // `mnPlayers1PGameSetCursorPuckOffset`.
         self.slot.set_cursor_puck_offset();
         self.slot.is_cursor_adjusting = true;
+        sound::play_fgm(id::nSYAudioFGMSamusDash);
         self.v_destroy_portrait_flash();
         self.v_update_name_and_emblem();
     }
@@ -622,6 +654,7 @@ impl Players1P {
         if let Some(kind) = self.slot.kind {
             self.slot.costume = costume_common_id(kind, button);
         }
+        sound::play_fgm(id::nSYAudioFGMMenuScroll2);
     }
 
     /// `mnPlayers1PGameUpdateCursorNoRecall`.

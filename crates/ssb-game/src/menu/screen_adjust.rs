@@ -9,6 +9,7 @@
 
 use super::{fill_prim, Draw, Pad, Piece, Scene, FILE_SCREEN_ADJUST};
 use crate::backup::Backup;
+use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
 /// `llMNScreenAdjust*Sprite`.
@@ -31,8 +32,10 @@ pub struct ScreenAdjust {
 }
 
 impl ScreenAdjust {
-    /// `mnScreenAdjustInitVars`, from `gSYVideoOffsetLeft` and `...Top`.
+    /// `mnScreenAdjustFuncStart`: `mnScreenAdjustInitVars`, from
+    /// `gSYVideoOffsetLeft` and `...Top`, and `syAudioStopBGMAll`.
     pub fn new(video_offset_h: i16, video_offset_v: i16) -> ScreenAdjust {
+        sound::stop_bgm_all();
         ScreenAdjust {
             offset_h: f32::from(video_offset_h),
             offset_v: f32::from(video_offset_v),
@@ -60,6 +63,7 @@ impl ScreenAdjust {
             self.button_hold_wait = 0;
         }
         if pad.tap(N64Buttons::A | N64Buttons::B | N64Buttons::START) {
+            sound::play_fgm(id::nSYAudioFGMMenuSelect);
             // `mnScreenAdjustBackupOffsets`.
             backup.screen_adjust_h = self.offset_h as i16;
             backup.screen_adjust_v = self.offset_v as i16;

@@ -121,7 +121,7 @@ pub struct MenuFrame {
     /// `itManagerMakeItemSetupCommon` for this `ITKind`, 200 above the
     /// player, rising at 30.
     pub spawn_item: Option<u8>,
-    /// `nSYAudioFGMMenuDenied`: four items are already out.
+    /// Four items are already out (`nSYAudioFGMMenuDenied` played).
     pub spawn_denied: bool,
     /// The cursor moved to another row.
     pub main_changed: bool,
@@ -195,13 +195,13 @@ impl TrainingMenu {
     }
 
     /// `sc1PTrainingModeCheckEnterMenu`: START during Go opens the menu
-    /// unless the player's fighter ignores menus (`is_menu_ignore`). The
-    /// host pauses and locks both fighters' control.
+    /// unless the player's fighter ignores menus (`is_menu_ignore`), with
+    /// the pause sound and the BGM at half volume. The host pauses and
+    /// locks both fighters' control.
     pub fn check_enter(&mut self, tapped: N64Buttons, menu_ignore: bool) -> bool {
         if tapped.contains(N64Buttons::START) && !menu_ignore {
-            // No FGM pause here, unlike the battle pause.
             crate::sound::play_fgm(crate::sound::id::nSYAudioFGMGamePause);
-            crate::sound::set_bgm_volume(0, crate::battle::BGM_VOLUME_PAUSE);
+            crate::sound::set_bgm_volume(0, 0x3C00);
             self.is_read_menu_inputs = false;
             true
         } else {
@@ -248,8 +248,8 @@ impl TrainingMenu {
     }
 
     /// `sc1PTrainingModeCheckUpdateOptionID`: left/right steps `option`
-    /// through `0..count`, wrapping; the option's update then plays
-    /// `sc1PTrainingModeUpdateScroll`'s sound.
+    /// through `0..count`, wrapping; a step's caller then runs
+    /// `sc1PTrainingModeUpdateScroll`, with its sound.
     fn step_option(&self, option: &mut u8, count: u8) -> bool {
         if self.button_queue & (DIR_LEFT | DIR_RIGHT) == 0 {
             return false;
@@ -298,8 +298,8 @@ impl TrainingMenu {
                                 crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMenuSelect);
                                 self.item_spawn_wait = ITEM_SPAWN_WAIT;
                             } else {
-                                frame.spawn_denied = true;
                                 crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMenuDenied);
+                                frame.spawn_denied = true;
                             }
                         }
                     }
@@ -332,15 +332,13 @@ impl TrainingMenu {
                 }
                 false
             }
-            // `sc1PTrainingModeUpdateResetOption`.
             MainOption::Reset if a => {
                 self.exit_or_reset = true;
                 crate::sound::stop_all_fgm();
                 crate::sound::play_fgm(crate::sound::id::nSYAudioFGMTrainingSel2);
-                crate::sound::set_bgm_volume(0, crate::battle::BGM_VOLUME_NORMAL);
+                crate::sound::set_bgm_volume(0, 0x7800);
                 true
             }
-            // `sc1PTrainingModeUpdateExitOption`.
             MainOption::Exit if a => {
                 crate::sound::stop_all_fgm();
                 crate::sound::play_fgm(crate::sound::id::nSYAudioFGMTrainingSel2);
@@ -365,17 +363,16 @@ impl TrainingMenu {
                 (i + 1) % n
             };
             self.main_option = MainOption::ALL[i];
+            // `sc1PTrainingModeUpdateScroll`'s sound, then its caller's.
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMenuScroll2);
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMenuScroll2);
             frame.main_changed = true;
-            // `sc1PTrainingModeUpdateScroll`'s sound, then its own.
-            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMenuScroll2);
-            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMenuScroll2);
         }
         // `sc1PTrainingModeCheckLeaveMenu`.
         if tapped.0 & (N64Buttons::B | N64Buttons::START) != 0 {
             frame.leave = Some(tapped.contains(N64Buttons::B));
-            crate::sound::set_bgm_volume(0, crate::battle::BGM_VOLUME_NORMAL);
+            crate::sound::set_bgm_volume(0, 0x7800);
         }
-
         frame
     }
 

@@ -23,7 +23,7 @@ fn tap(s: &mut FighterSelect, button: u16) {
 
 /// A first visit with the CPU on Mario (a time byte of 0).
 fn first_visit() -> FighterSelect {
-    FighterSelect::new(SceneData::default(), 0, || 0)
+    FighterSelect::new(SceneData::default(), 0, false, || 0)
 }
 
 fn hover(s: &mut FighterSelect, kind: FighterKind) {
@@ -238,6 +238,7 @@ fn the_ready_banner_and_press_start_blink_on_one_counter() {
             com_costume: 1,
         },
         0,
+        false,
         || 0,
     );
     // Both placed from the start: both fighters made, both names shown.

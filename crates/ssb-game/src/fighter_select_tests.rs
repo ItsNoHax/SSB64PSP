@@ -19,7 +19,7 @@ fn tap(s: &mut FighterSelect, button: u16) -> Option<Outcome> {
 
 /// A first visit: no saved fighters, the CPU drawn from `byte`.
 fn first_visit(byte: u8) -> FighterSelect {
-    FighterSelect::new(SceneData::default(), 0, || byte)
+    FighterSelect::new(SceneData::default(), 0, false, || byte)
 }
 
 /// Puts the cursor where the held puck's centre lands on `kind`'s
@@ -41,7 +41,7 @@ fn a_first_visit_holds_the_players_puck_and_draws_an_unlocked_cpu() {
     // 90 * 12 / 256 = 4, Luigi: locked with an empty fighter mask, so the
     // draw repeats. 0 is Mario.
     let mut draws = [90u8, 0].into_iter();
-    let s = FighterSelect::new(SceneData::default(), 0, || draws.next().unwrap());
+    let s = FighterSelect::new(SceneData::default(), 0, false, || draws.next().unwrap());
     assert_eq!(s.slots[COM].kind, Some(FighterKind::Mario));
     assert!(s.slots[COM].is_fighter_selected);
     assert_eq!(s.slots[MAN].held, Some(MAN));
@@ -221,6 +221,7 @@ fn saved_fighters_start_placed_and_ready() {
             com_costume: 1,
         },
         0,
+        false,
         || unreachable!(),
     );
     assert!(s.is_ready());

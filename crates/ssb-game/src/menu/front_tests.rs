@@ -311,3 +311,71 @@ fn the_front_menus_go_back_to_the_title_after_five_idle_minutes() {
     }
     assert_eq!((a, b), (Some(Scene::Title), Some(Scene::Title)));
 }
+
+#[test]
+fn the_title_stops_the_audio_except_after_the_opening_and_plays_its_sounds() {
+    use crate::sound::{id, testing::*};
+    let r = Recorder::install();
+    let mut t = Title::new_opening(0);
+    // The opening's BGM plays on into the title.
+    assert_eq!(r.take(), []);
+    let mut demo = DemoData::default();
+    run_title(&mut t, &mut demo, 200);
+    assert_eq!(
+        r.take(),
+        [
+            Call::PlayFgm(id::nSYAudioFGMOpeningBatM),
+            Call::PlayFgm(id::nSYAudioFGMOpeningBatM),
+            Call::PlayFgm(id::nSYAudioFGMPublicPrologue),
+        ]
+    );
+    let _ = Title::new(0);
+    assert_eq!(r.take(), [Call::StopBgmAll, Call::StopAllFgm]);
+    crate::sound::uninstall();
+}
+
+#[test]
+fn the_title_after_how_to_play_keeps_its_bgm_into_characters() {
+    use crate::sound::{id, testing::*};
+    let r = Recorder::install();
+    let mut demo = DemoData::default();
+    let mut t = Title::new(0);
+    r.take();
+    let backup = Backup::default();
+    let mut next = None;
+    while next.is_none() {
+        next = t.tick(&idle(), Scene::Explain, &mut demo, &backup, 0, &mut |r| {
+            r - 1
+        });
+    }
+    assert_eq!(next, Some(Scene::Characters));
+    assert_eq!(
+        r.take(),
+        [Call::StopAllFgm, Call::PlayBgm(0, id::nSYAudioBGMExplain)]
+    );
+    crate::sound::uninstall();
+}
+
+#[test]
+fn mode_select_starts_its_bgm_from_the_title_and_scrolls_and_selects_with_sounds() {
+    use crate::sound::{id, testing::*};
+    let r = Recorder::install();
+    let _ = ModeSelect::new(Scene::OnePMode);
+    assert_eq!(r.take(), []);
+    let mut m = ModeSelect::new(Scene::Title);
+    assert_eq!(r.take(), [Call::PlayBgm(0, id::nSYAudioBGMModeSelect)]);
+    for _ in 0..10 {
+        m.tick(&idle());
+    }
+    m.tick(&tap(N64Buttons::D_DOWN));
+    assert_eq!(r.take(), [Call::PlayFgm(id::nSYAudioFGMMenuScroll2)]);
+    assert_eq!(m.tick(&tap(N64Buttons::A)), Some(Scene::VsMode));
+    assert_eq!(r.take(), [Call::PlayFgm(id::nSYAudioFGMMenuSelect)]);
+    let mut m = ModeSelect::new(Scene::Data);
+    for _ in 0..10 {
+        m.tick(&idle());
+    }
+    assert_eq!(m.tick(&tap(N64Buttons::B)), Some(Scene::Title));
+    assert_eq!(r.take(), [Call::StopBgmAll]);
+    crate::sound::uninstall();
+}

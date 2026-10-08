@@ -48,8 +48,10 @@ pub struct Startup {
 }
 
 impl Startup {
-    /// `mnStartupFuncStart`.
+    /// `mnStartupFuncStart`, after `mnStartupStartScene`'s
+    /// `syAudioStopBGMAll`.
     pub fn new() -> Startup {
+        crate::sound::stop_bgm_all();
         let mut world = World::new();
         world.camera(
             100,

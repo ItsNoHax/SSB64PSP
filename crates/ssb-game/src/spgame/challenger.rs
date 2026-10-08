@@ -79,8 +79,11 @@ pub struct Challenger {
 }
 
 impl Challenger {
-    /// `sc1PChallengerInitVars`.
+    /// `sc1PChallengerFuncStart`: `sc1PChallengerInitVars`, the
+    /// challenger's music and sound.
     pub fn new(fkind: FighterKind) -> Self {
+        crate::sound::play_bgm(0, crate::sound::id::nSYAudioBGM1PChallenger);
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMDeadUpStar);
         Self {
             fkind,
             total_tics: 0,

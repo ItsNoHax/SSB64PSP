@@ -259,3 +259,65 @@ fn records_sum_every_fighter() {
     assert_eq!(r.total_bonuses, 7);
     assert_eq!(Players1P::records(&backup, None).fighter, None);
 }
+
+#[test]
+fn a_placed_puck_announces_its_fighter_and_cuts_the_last_name_short() {
+    use crate::sound::{id, testing::*};
+    let r = Recorder::install();
+    let mut s = first_visit();
+    assert_eq!(
+        r.take(),
+        [
+            Call::PlayBgm(0, id::nSYAudioBGMBattleSelect),
+            Call::PlayFgm(id::nSYAudioVoiceAnnounceSelectPlayer),
+        ]
+    );
+    // START with nothing placed is denied.
+    for _ in 0..60 {
+        idle(&mut s);
+    }
+    tap(&mut s, N64Buttons::START);
+    assert_eq!(r.take(), [Call::PlayFgm(id::nSYAudioFGMMenuDenied)]);
+    place(&mut s, FighterKind::Yoshi);
+    assert_eq!(
+        r.take(),
+        [
+            Call::PlayFgm(id::nSYAudioFGMMarioDash),
+            Call::PlayFgm(id::nSYAudioVoiceAnnounceYoshi),
+        ]
+    );
+    // The name voice was the fourth play.
+    let yoshi = FgmHandle { slot: 0, serial: 4 };
+    s.slot.cursor = (150.0, 180.0);
+    tap(&mut s, N64Buttons::B);
+    while s.slot.is_recalling {
+        idle(&mut s);
+    }
+    r.take();
+    place(&mut s, FighterKind::Fox);
+    assert_eq!(
+        r.take(),
+        [
+            Call::StopFgm(yoshi),
+            Call::PlayFgm(id::nSYAudioFGMMarioDash),
+            Call::PlayFgm(id::nSYAudioVoiceAnnounceFox),
+        ]
+    );
+    tap(&mut s, N64Buttons::START);
+    assert_eq!(r.take(), [Call::PlayFgm(id::nSYAudioVoicePublicCheer)]);
+    crate::sound::uninstall();
+}
+
+#[test]
+fn b_back_to_the_1p_menu_stops_the_music_and_sounds() {
+    use crate::sound::testing::*;
+    let r = Recorder::install();
+    let mut s = first_visit();
+    for _ in 0..10 {
+        idle(&mut s);
+    }
+    r.take();
+    assert!(matches!(tap(&mut s, N64Buttons::B), Some(Outcome::Back(_))));
+    assert_eq!(r.take(), [Call::StopBgmAll, Call::StopAllFgm]);
+    crate::sound::uninstall();
+}

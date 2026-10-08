@@ -1,14 +1,51 @@
 //! `sc1PIntroFuncRun`, announcement and fighter entrance processes.
 use super::Stage;
 use crate::fighter::FighterKind;
+use crate::fighter_select::ANNOUNCE_NAMES;
+use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
+/// One of `sc1PIntroUpdateAnnounce`'s voices, which [`Intro::tick`] plays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Announce {
     Player(FighterKind),
     Versus,
     Opponent(Stage),
     Bonus(Stage),
+}
+
+/// `vs_fighter_voices`, by stage; the bonus stages' and Master Hand's 0
+/// entries are never read.
+const VS_FIGHTER_VOICES: [u16; 14] = [
+    id::nSYAudioVoiceAnnounceLink,
+    id::nSYAudioVoiceAnnounceYoshiTeam,
+    id::nSYAudioVoiceAnnounceFox,
+    0,
+    id::nSYAudioVoiceAnnounceMarioBros,
+    id::nSYAudioVoiceAnnouncePikachu,
+    id::nSYAudioVoiceAnnounceGDonkey,
+    0,
+    id::nSYAudioVoiceAnnounceKirbyTeam,
+    id::nSYAudioVoiceAnnounceSamus,
+    id::nSYAudioVoiceAnnounceMMario,
+    0,
+    id::nSYAudioVoiceAnnounceZako,
+    id::nSYAudioVoiceAnnounceZako,
+];
+
+impl Announce {
+    /// The voice `sc1PIntroUpdateAnnounce` plays for it.
+    pub fn voice(self) -> Option<u16> {
+        match self {
+            Announce::Player(kind) => ANNOUNCE_NAMES.get(kind as usize).copied(),
+            Announce::Versus => Some(id::nSYAudioVoiceAnnounceVersus),
+            Announce::Opponent(stage) => VS_FIGHTER_VOICES.get(stage as usize).copied(),
+            Announce::Bonus(Stage::Bonus1) => Some(id::nSYAudioVoiceAnnounceBreakTheTargets),
+            Announce::Bonus(Stage::Bonus2) => Some(id::nSYAudioVoiceAnnounceBoardThePlatforms),
+            Announce::Bonus(Stage::Bonus3) => Some(id::nSYAudioVoiceAnnounceRaceToTheFinish),
+            Announce::Bonus(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -27,8 +64,18 @@ pub struct Frame {
 }
 
 impl Intro {
+    /// `sc1PIntroFuncStart`'s state and its BGM: the boss's card has its
+    /// own.
     pub fn new(stage: Stage, player: FighterKind) -> Self {
         assert!(!stage.is_challenger());
+        sound::play_bgm(
+            0,
+            if stage == Stage::Boss {
+                id::nSYAudioBGMBossStage
+            } else {
+                id::nSYAudioBGM1PIntro
+            },
+        );
         Self {
             stage,
             player,
@@ -71,9 +118,15 @@ impl Intro {
         } else if self.total_tics == 1 && self.stage != Stage::Boss {
             frame.announce[0] = Some(Announce::Bonus(self.stage));
         }
+        for v in frame.announce.iter().flatten().filter_map(|a| a.voice()) {
+            sound::play_fgm(v);
+        }
         frame.proceed = scheduler_tic >= 60
             && (taps.0 & (N64Buttons::A | N64Buttons::B | N64Buttons::START) != 0
                 || scheduler_tic > 360);
+        if frame.proceed {
+            sound::stop_all_fgm();
+        }
         self.finished = frame.proceed;
         frame
     }

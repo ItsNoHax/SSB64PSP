@@ -630,7 +630,11 @@ impl CharactersMenu {
     /// `mnCharactersFuncStart` from Data: the backup's fighter
     /// (`characters_fkind`). `rand` is `syUtilsRandTimeUChar`.
     pub fn new(backup: &Backup, rand: &mut impl FnMut() -> u8) -> CharactersMenu {
-        Self::start(backup, false, [backup.characters_fkind; 2], rand)
+        let m = Self::start(backup, false, [backup.characters_fkind; 2], rand);
+        // `scene_prev == nSCKindData`; from the attract demo the Explain
+        // BGM plays on.
+        crate::sound::play_bgm(0, crate::sound::id::nSYAudioBGMData);
+        m
     }
 
     /// `mnCharactersFuncStart` from the title's attract demo:
