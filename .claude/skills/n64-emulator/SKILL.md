@@ -43,6 +43,20 @@ empty button list = idle for `hold` frames). Screenshots land under
 show plugin attach and every screenshot path — read them, don't guess
 whether a step landed.
 
+`--audio-dump PATH` swaps `mupen64plus-audio-sdl` for
+`n64_audio_dump.so` and writes the exact PCM the game hands the AI (raw
+s16le stereo, L,R, 32006.451 Hz, no resampling or volume) to PATH, with a
+sidecar `PATH.txt` holding the DAC rate and one `buf` record per AI buffer
+(callback frame, sample offset, byte length). The core delivers each game
+buffer (552 or 368 samples) in two pieces; consecutive `dram` ranges join
+up. It is HLE audio (rsp-hle). PATH must be writable inside the sandbox.
+The Mono/Stereo option comes from the SRAM save, and the M64Py core always
+loads the shared `data/mupen64plus/save/Super Smash Bros. (U) [!]-F7C52568.sra`
+(it ignores `SaveSRAMPath` and `XDG_DATA_HOME`); that save is set to Mono,
+so plain dumps have L == R. `tools/n64-headless/record_audio_ref.py
+--force-stereo` writes the fresh-cartridge default (Stereo) into RDRAM after
+frame 1 and logs route steps, scenes and How to Play hits beside the dump.
+
 For scripts needing RDRAM reads/writes or custom step sequences beyond what
 `--route` expresses, import `Mupen64PlusHarness` from
 `tools/n64-headless/n64_driver.py` directly (see `read_rdram`/`read_u32`/

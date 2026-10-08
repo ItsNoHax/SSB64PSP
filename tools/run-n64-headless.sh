@@ -5,9 +5,17 @@
 #   tools/run-n64-headless.sh [--no-build] [--visible] [--rom PATH]
 #                              [--frames N] [--route SPEC]
 #                              [--screenshot-every N] [--final-screenshot]
+#                              [--audio-dump PATH]
 #
-# --route/--screenshot-every/--final-screenshot are forwarded to
-# n64_driver.py verbatim; see that file's --help for the route grammar.
+# --route/--screenshot-every/--final-screenshot/--audio-dump are forwarded
+# to n64_driver.py verbatim; see that file's --help for the route grammar.
+# --audio-dump swaps audio-sdl for n64_audio_dump.so and writes the game's
+# exact AI PCM (raw s16le stereo, L,R) to PATH plus a sidecar PATH.txt with
+# the DAC rate and per-buffer video-frame/length records. PATH must be
+# writable inside the sandbox (e.g. under ~/ppsspp-test; the flatpak's /tmp
+# is private). The game's Mono/Stereo option comes from the shared SRAM save
+# the M64Py core always loads, which is set to Mono; for a stereo reference
+# use n64-headless/record_audio_ref.py --force-stereo.
 #
 # mupen64plus-video-rice creates its render surface via SDL2, not Qt --
 # M64Py's GUI is never launched (this drives the Core API directly). SDL2
@@ -53,12 +61,16 @@ flatpak info net.sourceforge.m64py.M64Py >/dev/null 2>&1 || {
 }
 
 SO="$TOOLDIR/build/n64_input.so"
+AUDIO_SO="$TOOLDIR/build/n64_audio_dump.so"
 if [ "$BUILD" = 1 ]; then
   mkdir -p "$TOOLDIR/build"
-  if [ ! -f "$SO" ] || [ "$TOOLDIR/n64_input.c" -nt "$SO" ]; then
-    echo "==> building n64_input.so" >&2
-    gcc -shared -fPIC -O2 -I"$TOOLDIR/include" "$TOOLDIR/n64_input.c" -o "$SO"
-  fi
+  for name in n64_input n64_audio_dump; do
+    out="$TOOLDIR/build/$name.so"
+    if [ ! -f "$out" ] || [ "$TOOLDIR/$name.c" -nt "$out" ]; then
+      echo "==> building $name.so" >&2
+      gcc -shared -fPIC -O2 -I"$TOOLDIR/include" "$TOOLDIR/$name.c" -o "$out"
+    fi
+  done
 fi
 [ -f "$SO" ] || { echo "n64_input.so not found and --no-build given: $SO" >&2; exit 1; }
 
@@ -66,4 +78,5 @@ ENV_ARGS=()
 [ -n "$SDL_DRIVER" ] && ENV_ARGS=(--env=SDL_VIDEODRIVER="$SDL_DRIVER")
 
 exec flatpak run "${ENV_ARGS[@]}" --command=python3 net.sourceforge.m64py.M64Py \
-  "$TOOLDIR/n64_driver.py" --rom "$ROM" --input-so "$SO" "${DRIVER_ARGS[@]}"
+  "$TOOLDIR/n64_driver.py" --rom "$ROM" --input-so "$SO" --audio-dump-so "$AUDIO_SO" \
+  "${DRIVER_ARGS[@]}"
