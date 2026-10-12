@@ -201,6 +201,15 @@ save. PSPLink's clock is the PSP's: under PPSSPP the opening's CPU time
 is about a third of the PSP-2000's (RE-476), so measure frame times on
 the PSP.
 
+`profile_hw` adds the PSP's hardware counters (cycles, memory/internal/FPU
+stalls, I/D-cache misses, uncached stores) to every `profile` span through
+ARK's `KUBridge` (`kuKernelPeekw`; never `kuKernelCall`, which flushes the
+caches on every call). It needs ARK and does not run under PPSSPP. A
+`profile_hw.txt` beside the PRX holding `frame` limits it to one read a
+frame. An unattended PSP auto-sleeps under a game that gets no input:
+`profile` builds call `scePowerTick` every frame, other builds do not
+(RE-481).
+
 ### Native frame evidence
 
 ```bash

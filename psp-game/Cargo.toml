@@ -31,6 +31,9 @@ memory_ballast = []
 # `profile.log` beside the executable and to stdout
 # (`ssb_psp_runtime::profile`, RE-469). Off by default.
 profile = ["ssb-psp-runtime/profile"]
+# The PSP's hardware counters per span (`ssb_psp_runtime::hwcount`,
+# RE-481). ARK only.
+profile_hw = ["profile", "ssb-psp-runtime/profile_hw"]
 # Renders the fixed audio scenario (`ssb_engine::audio::golden`) at audio
 # start and appends its PCM hashes and render times to `selftest.log`.
 audio_selftest = ["ssb-psp-runtime/audio_selftest"]

@@ -17,19 +17,21 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Four-player VS on the PSP-2000 is profiled (RE-480): 18.3 ms of CPU a
-frame without audio, spread over every span at 2.5–7× PPSSPP's count,
-with no single hot spot; `opt-level 3` stays. The battle's stage layers
-0, 1 and 3, previously recomposed twice a frame (once per head), are now
-posed once and cached (RE-480); 198/198 goldens unchanged. Next: count
-cache misses per span on the PSP, which needs a person at the PSP
+The PSP's hardware counters are read per span (`profile_hw`, through
+ARK's `KUBridge`, RE-481). Four-player VS on the PSP-2000 spends 55% of
+its cycles in memory stalls and a tenth in load-use and FPU stalls; the
+draw takes 22,900 I-cache misses a frame against 6,800 D-cache misses,
+and writes 20,300 uncached stores. Next: find the code behind the draw's
+I-cache misses, then the magnifier masks and the uncached list
 ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
 
 - The campaign past Race to the Finish needs a person at the PSP.
 - PSPLink falls over now and then (a `kill`, an `opt-level s` build):
-  restarting it needs a person at the PSP.
+  restarting it needs a person at the PSP. `profile` builds tick power
+  every frame; other builds still let an unattended PSP auto-sleep
+  (RE-481).
 
 ## Verification
 
@@ -50,6 +52,7 @@ Baseline after the audio batch:
   `ms0:/PSP/GAME/ssb64/` (verified byte-identical).
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1: the production PRX
   ran the attract loop for four minutes without an exception; `profile`
-  A/B runs with and without `no_audio` (RE-479).
+  A/B runs with and without `no_audio` (RE-479); a `profile_hw` run of
+  `vs4@2400`, 19 reports (RE-481).
 - ROMs: `rom/Super Smash Bros. (USA).z64` and
   `refs/ssb-decomp-re/baserom.us.z64`, SHA-1 `e2929e10…`.

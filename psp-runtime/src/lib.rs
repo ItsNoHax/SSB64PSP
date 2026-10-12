@@ -13,6 +13,8 @@ pub mod audio;
 pub mod boss;
 pub mod ending;
 pub mod gu;
+#[cfg(all(feature = "profile_hw", target_os = "psp"))]
+pub mod hwcount;
 pub mod input;
 pub mod memory;
 pub mod meshdraw;

@@ -225,10 +225,24 @@ mod imp {
 
     #[inline(always)]
     pub fn start() -> u32 {
-        now()
+        let t = now();
+        #[cfg(feature = "profile_hw")]
+        hw::push(t);
+        t
     }
 
     pub fn stop(span: Span, start: u32) {
+        #[cfg(feature = "profile_hw")]
+        hw::pop(span, start);
+        stop_fine(span, start);
+    }
+
+    #[inline(always)]
+    pub fn start_fine() -> u32 {
+        now()
+    }
+
+    pub fn stop_fine(span: Span, start: u32) {
         let us = now().wrapping_sub(start);
         // SAFETY: the game is single-threaded.
         let s = unsafe { &mut *core::ptr::addr_of_mut!(STATE) };
@@ -257,6 +271,9 @@ mod imp {
     }
 
     pub fn frame_end(_stack_free: usize) {
+        // A measurement run gets no input: keep the PSP from auto-sleeping
+        // under it (RE-481), frozen capture frames included.
+        unsafe { sys::scePowerTick(sys::PowerTick::All) };
         flush();
         let s = unsafe { &mut *core::ptr::addr_of_mut!(STATE) };
         let t = now();
@@ -312,6 +329,8 @@ mod imp {
             s.max[i] = s.max[i].max(s.frame[i]);
         }
         s.frame = [0; SPANS];
+        #[cfg(feature = "profile_hw")]
+        hw::frame_end();
         s.frames += 1;
         s.frame_sum = s.frame_sum.wrapping_add(frame_us);
         s.frame_max = s.frame_max.max(frame_us);
@@ -377,6 +396,8 @@ mod imp {
             unsafe { sys::scePowerGetBusClockFrequency() }
         );
         emit(&line.buf[..line.len]);
+        #[cfg(feature = "profile_hw")]
+        hw::report(s.reports, n);
         audio_report(s, wall, n);
         s.sum = [0; SPANS];
         s.max = [0; SPANS];
@@ -461,6 +482,229 @@ mod imp {
         crate::audio::new_window();
     }
 
+    /// The hardware counters per span (`profile_hw`, RE-481). Each
+    /// [`start`] pushes a snapshot keyed by its clock value and each
+    /// [`stop`] pops back to the innermost entry with that key, so call
+    /// sites stay as they are. A read's own counts are measured each report
+    /// (back-to-back reads) and subtracted once per read inside a span, and
+    /// once for its two boundary reads.
+    #[cfg(feature = "profile_hw")]
+    mod hw {
+        use super::{emit, Line, NAMES, SPANS};
+        use crate::hwcount::{self, REGS};
+        use core::fmt::Write;
+
+        const DEPTH: usize = 32;
+        /// Back-to-back reads per calibration.
+        const CAL_READS: u32 = 64;
+
+        struct Hw {
+            keys: [u32; DEPTH],
+            snaps: [[u32; REGS]; DEPTH],
+            reads_at: [u32; DEPTH],
+            depth: usize,
+            /// Reads since the run started.
+            reads: u32,
+            /// This frame's raw counts and inner reads per span.
+            frame: [[u32; REGS]; SPANS],
+            frame_reads: [u32; SPANS],
+            frame_samples: [u32; SPANS],
+            /// The report window's sums.
+            sum: [[u64; REGS]; SPANS],
+            sum_reads: [u64; SPANS],
+            sum_samples: [u32; SPANS],
+            /// Whole frames: the counters at the last frame end, the
+            /// window's sum and its reads.
+            last: [u32; REGS],
+            last_reads: u32,
+            whole: [u64; REGS],
+            whole_reads: u64,
+            /// Stops without a matching start, and starts past `DEPTH`.
+            lost: u32,
+        }
+
+        static mut HW: Hw = Hw {
+            keys: [0; DEPTH],
+            snaps: [[0; REGS]; DEPTH],
+            reads_at: [0; DEPTH],
+            depth: 0,
+            reads: 0,
+            frame: [[0; REGS]; SPANS],
+            frame_reads: [0; SPANS],
+            frame_samples: [0; SPANS],
+            sum: [[0; REGS]; SPANS],
+            sum_reads: [0; SPANS],
+            sum_samples: [0; SPANS],
+            last: [0; REGS],
+            last_reads: 0,
+            whole: [0; REGS],
+            whole_reads: 0,
+            lost: 0,
+        };
+
+        fn hw() -> &'static mut Hw {
+            // SAFETY: the game is single-threaded.
+            unsafe { &mut *core::ptr::addr_of_mut!(HW) }
+        }
+
+        fn read(h: &mut Hw, dst: &mut [u32; REGS]) {
+            h.reads = h.reads.wrapping_add(1);
+            hwcount::read(dst);
+        }
+
+        /// Whether spans read the counters: `profile_hw.txt` beside the
+        /// executable holding `frame` limits the reads to one a frame.
+        fn spans_on() -> bool {
+            // 0 unread, 1 spans, 2 frame only.
+            static mut MODE: u8 = 0;
+            // SAFETY: the game is single-threaded.
+            unsafe {
+                if MODE == 0 {
+                    MODE = 1;
+                    let fd = psp::sys::sceIoOpen(b"profile_hw.txt\0".as_ptr(), psp::sys::IoOpenFlags::RD_ONLY, 0);
+                    if fd.0 >= 0 {
+                        let mut buf = [0u8; 8];
+                        let n = psp::sys::sceIoRead(fd, buf.as_mut_ptr() as *mut core::ffi::c_void, 8);
+                        psp::sys::sceIoClose(fd);
+                        if n >= 5 && &buf[..5] == b"frame" {
+                            MODE = 2;
+                        }
+                    }
+                }
+                MODE == 1
+            }
+        }
+
+        pub fn push(key: u32) {
+            if !spans_on() {
+                return;
+            }
+            let h = hw();
+            if h.depth == DEPTH {
+                h.lost += 1;
+                return;
+            }
+            let mut snap = [0; REGS];
+            read(h, &mut snap);
+            let d = h.depth;
+            h.keys[d] = key;
+            h.snaps[d] = snap;
+            h.reads_at[d] = h.reads;
+            h.depth = d + 1;
+        }
+
+        pub fn pop(span: super::Span, key: u32) {
+            if !spans_on() {
+                return;
+            }
+            let h = hw();
+            let Some(i) = (0..h.depth).rev().find(|&i| h.keys[i] == key) else {
+                h.lost += 1;
+                return;
+            };
+            let inner = h.reads.wrapping_sub(h.reads_at[i]);
+            let mut now = [0; REGS];
+            read(h, &mut now);
+            let sp = span as usize;
+            for k in 0..REGS {
+                h.frame[sp][k] = h.frame[sp][k].wrapping_add(now[k].wrapping_sub(h.snaps[i][k]));
+            }
+            h.frame_reads[sp] += inner;
+            h.frame_samples[sp] += 1;
+            h.depth = i;
+        }
+
+        pub fn frame_end() {
+            let h = hw();
+            let mut now = [0; REGS];
+            read(h, &mut now);
+            if h.last_reads != 0 {
+                for k in 0..REGS {
+                    h.whole[k] += u64::from(now[k].wrapping_sub(h.last[k]));
+                }
+                // Every read since the last frame end, this one excluded.
+                h.whole_reads += u64::from(h.reads.wrapping_sub(h.last_reads).wrapping_sub(1));
+            }
+            h.last = now;
+            h.last_reads = h.reads;
+            for sp in 0..SPANS {
+                for k in 0..REGS {
+                    h.sum[sp][k] += u64::from(h.frame[sp][k]);
+                }
+                h.sum_reads[sp] += u64::from(h.frame_reads[sp]);
+                h.sum_samples[sp] += h.frame_samples[sp];
+            }
+            h.frame = [[0; REGS]; SPANS];
+            h.frame_reads = [0; SPANS];
+            h.frame_samples = [0; SPANS];
+        }
+
+        /// One read's counts, averaged over [`CAL_READS`] back-to-back
+        /// reads.
+        fn calibrate(h: &mut Hw) -> [u32; REGS] {
+            let mut a = [0; REGS];
+            let mut b = [0; REGS];
+            read(h, &mut a);
+            for _ in 0..CAL_READS {
+                read(h, &mut b);
+            }
+            core::array::from_fn(|k| b[k].wrapping_sub(a[k]) / CAL_READS)
+        }
+
+        /// Writes one line per span: per-frame averages of each counter,
+        /// less the reads' own counts.
+        fn line(name: &str, n: u32, samples: u32, reads: u64, sum: &[u64; REGS], cal: &[u32; REGS]) {
+            let mut l = Line { buf: [0; 1024], len: 0 };
+            let _ = write!(l, "hw {} n={} samples={} reads={}", name, n, samples, reads / u64::from(n));
+            for &k in hwcount::READ.iter() {
+                let v = sum[k].saturating_sub(reads * u64::from(cal[k])) / u64::from(n);
+                let _ = write!(l, " {}={}", hwcount::NAMES[k], v);
+            }
+            let _ = writeln!(l);
+            emit(&l.buf[..l.len]);
+        }
+
+        pub fn report(reports: u32, n: u32) {
+            let h = hw();
+            let cal = calibrate(h);
+            // The calibration's reads are not in any frame: skip them.
+            h.last = {
+                let mut now = [0; REGS];
+                read(h, &mut now);
+                now
+            };
+            h.last_reads = h.reads;
+            let mut l = Line { buf: [0; 1024], len: 0 };
+            let _ = write!(l, "hwcal n={} lost={}", reports, h.lost);
+            for &k in hwcount::READ.iter() {
+                let _ = write!(l, " {}={}", hwcount::NAMES[k], cal[k]);
+            }
+            let _ = writeln!(l);
+            emit(&l.buf[..l.len]);
+            let n = n.max(1);
+            // The whole frame loses one frame-end read's partial counts
+            // less than a span does; close enough at a frame's scale.
+            let whole = h.whole;
+            line("frame", n, n, h.whole_reads, &whole, &cal);
+            for sp in 0..SPANS {
+                if h.sum_samples[sp] == 0 {
+                    continue;
+                }
+                // Each sample's two boundary reads leave about one read's
+                // counts inside the span.
+                let reads = h.sum_reads[sp] + u64::from(h.sum_samples[sp]);
+                let sum = h.sum[sp];
+                line(NAMES[sp], n, h.sum_samples[sp], reads, &sum, &cal);
+            }
+            h.sum = [[0; REGS]; SPANS];
+            h.sum_reads = [0; SPANS];
+            h.sum_samples = [0; SPANS];
+            h.whole = [0; REGS];
+            h.whole_reads = 0;
+            h.lost = 0;
+        }
+    }
+
     /// Lines [`log`] took during a frame, written at its end, outside the
     /// timed spans: a write opens `profile.log` (RE-476).
     static mut PENDING: [u8; 2048] = [0; 2048];
@@ -529,6 +773,30 @@ pub fn start() -> u32 {
 pub fn stop(span: Span, start: u32) {
     #[cfg(feature = "profile")]
     imp::stop(span, start);
+    #[cfg(not(feature = "profile"))]
+    let _ = (span, start);
+}
+
+/// [`start`] for a span opened thousands of times a frame (per node, per
+/// primitive): timed, but never given the hardware counters, whose read
+/// costs too much at that rate (`profile_hw`, RE-481).
+#[inline(always)]
+pub fn start_fine() -> u32 {
+    #[cfg(feature = "profile")]
+    {
+        imp::start_fine()
+    }
+    #[cfg(not(feature = "profile"))]
+    {
+        0
+    }
+}
+
+/// [`stop`] for a span [`start_fine`] opened.
+#[inline(always)]
+pub fn stop_fine(span: Span, start: u32) {
+    #[cfg(feature = "profile")]
+    imp::stop_fine(span, start);
     #[cfg(not(feature = "profile"))]
     let _ = (span, start);
 }

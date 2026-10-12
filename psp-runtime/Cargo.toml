@@ -23,6 +23,10 @@ ssb-game = { path = "../crates/ssb-game", default-features = false }
 # Frame timing and free-memory reports (`profile.rs`, RE-469). Off by
 # default: the spans compile to nothing.
 profile = ["ssb-engine/audio_profile"]
+# Adds the PSP's hardware counters (cycles, stalls, cache misses) to every
+# span through ARK's KUBridge (`hwcount.rs`, RE-481). Needs ARK on the PSP;
+# not for PPSSPP.
+profile_hw = ["profile"]
 # Renders the fixed audio scenario (`ssb_engine::audio::golden`) at audio
 # start and appends its PCM hashes and render times to `selftest.log`.
 audio_selftest = []
