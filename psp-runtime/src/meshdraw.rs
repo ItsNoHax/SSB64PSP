@@ -3684,8 +3684,10 @@ pub unsafe fn draw_stage_links(
             if let Some(object) = object {
                 tris += match anim {
                     Some(a) => {
+                        let compose_t = crate::profile::start();
                         let n = a.compose(pack, &object, &mut posed);
                         let scale_count = a.billboard_scales(pack, &object, &mut billboard_scales);
+                        crate::profile::stop(crate::profile::Span::Compose, compose_t);
                         debug_assert_eq!(n, scale_count);
                         let hidden = |node: u32| !a.visible(pack, node);
                         draw_object_posed_filtered(

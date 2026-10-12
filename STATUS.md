@@ -17,14 +17,17 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Audio on the PSP-2000 is measured (RE-479): it costs 3 FPS in the opening
-and 1.6 in VS, so it is not what holds VS at 40 FPS. Next: profile
-four-player VS's game thread on the PSP (18.3 ms a frame without audio)
-and RE-471's worst cases ([`PLAN.md`](PLAN.md#remaining-work)).
+Four-player VS on the PSP-2000 is profiled (RE-480): 18.3 ms of CPU a
+frame without audio, spread over every span at 2.5–7× PPSSPP's count,
+with no single hot spot; `opt-level 3` stays. Next: count cache misses
+per span on the PSP, and pose each stage layer once a frame
+([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
 
-None. The campaign past Race to the Finish needs a person at the PSP.
+- The campaign past Race to the Finish needs a person at the PSP.
+- PSPLink falls over now and then (a `kill`, an `opt-level s` build):
+  restarting it needs a person at the PSP.
 
 ## Verification
 

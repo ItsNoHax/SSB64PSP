@@ -8428,8 +8428,10 @@ unsafe fn draw_fighter_model(
     let Some(obj) = p.object(f.object).filter(|_| !hidden) else {
         return;
     };
+    let compose_t = profile::start();
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
     let n = f.compose_model(p, &obj, &mut posed);
+    profile::stop(profile::Span::Compose, compose_t);
     // RE-426: the low-detail model, posed by the high-detail one's nodes.
     let drawn = ssb_psp_runtime::scene::fighter_draw_object(
         f.object,

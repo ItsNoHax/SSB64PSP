@@ -88,13 +88,18 @@ pub enum Span {
     Sound,
     /// Sound calls made (a count, not microseconds).
     SoundCalls,
+    /// Inside the draw: posing a drawn model's nodes (a stage layer's
+    /// `StageAnimator::compose` and billboard scales, a fighter's
+    /// `compose_model`).
+    Compose,
 }
 
-const SPANS: usize = 34;
+const SPANS: usize = 35;
 #[cfg_attr(not(feature = "profile"), allow(dead_code))]
 const NAMES: [&str; SPANS] = [
     "update", "interrupt", "physics", "hit", "effects", "draw", "ge", "vblank", "fphys", "items", "weapons", "camera", "anim",
     "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel", "io", "demand", "files", "mpose", "mmesh", "skin", "msprites", "nodemat", "material", "submit", "prims", "sound", "sndcalls",
+    "compose",
 ];
 
 /// Frames per report: two seconds at 60 FPS.
@@ -197,8 +202,25 @@ mod imp {
         BUCKETS as u32 * BUCKET_US
     }
 
+    /// Clock reads since the last report: each is a system call
+    /// (0.56 µs on a PSP-2000, RE-480), so the fine spans (per primitive,
+    /// per node) carry their own cost.
+    static mut CLOCK_READS: u32 = 0;
+
     fn now() -> u32 {
+        // SAFETY: the game is single-threaded.
+        unsafe { *core::ptr::addr_of_mut!(CLOCK_READS) += 1 };
         unsafe { sys::sceKernelGetSystemTimeLow() }
+    }
+
+    /// One clock read's cost in nanoseconds, over 1,000 back-to-back reads.
+    fn clock_read_ns() -> u32 {
+        let t = unsafe { sys::sceKernelGetSystemTimeLow() };
+        let mut last = t;
+        for _ in 0..1000 {
+            last = unsafe { sys::sceKernelGetSystemTimeLow() };
+        }
+        last.wrapping_sub(t)
     }
 
     #[inline(always)]
@@ -221,7 +243,7 @@ mod imp {
 
     /// A fixed-capacity line buffer, so a report allocates nothing.
     struct Line {
-        buf: [u8; 768],
+        buf: [u8; 1024],
         len: usize,
     }
 
@@ -269,7 +291,7 @@ mod imp {
         s.hist_frames += 1;
         if cpu > SPIKE_US && s.spikes < SPIKE_LINES {
             s.spikes += 1;
-            let mut line = Line { buf: [0; 768], len: 0 };
+            let mut line = Line { buf: [0; 1024], len: 0 };
             let _ = write!(
                 line,
                 "spike tick={} scene={} cpu={}",
@@ -314,7 +336,7 @@ mod imp {
         let stack_free = crate::thread::stack_free_bytes();
         let wall = t.wrapping_sub(s.report_start).max(1);
         let n = s.frames;
-        let mut line = Line { buf: [0; 768], len: 0 };
+        let mut line = Line { buf: [0; 1024], len: 0 };
         let fps10 = (u64::from(n) * 10_000_000 / u64::from(wall)) as u32;
         let _ = write!(
             line,
@@ -342,6 +364,8 @@ mod imp {
             let _ = write!(line, " {}={}/{}", NAMES[i], s.sum[i] / n, s.max[i]);
         }
         let max_block = unsafe { sys::sceKernelMaxFreeMemSize() } as u32;
+        let reads = unsafe { core::mem::replace(&mut *core::ptr::addr_of_mut!(CLOCK_READS), 0) };
+        let _ = write!(line, " clk_reads={} clk_ns={}", reads / n, clock_read_ns());
         let _ = writeln!(
             line,
             " free={} maxblock={} minfree={} stackfree={} mhz={}/{}",
@@ -370,7 +394,7 @@ mod imp {
     /// are what the audio thread took from the CPU, which the game thread's
     /// wall-time spans above include whenever it preempted them.
     fn audio_report(s: &mut State, wall: u32, frames: u32) {
-        let mut line = Line { buf: [0; 768], len: 0 };
+        let mut line = Line { buf: [0; 1024], len: 0 };
         if !crate::audio::running() {
             let _ = writeln!(line, "audio n={} off", s.reports);
             emit(&line.buf[..line.len]);
@@ -414,7 +438,7 @@ mod imp {
         let d: [u32; ssb_engine::audio::prof::STAGES] =
             core::array::from_fn(|i| per_s(st[i].wrapping_sub(s.stages_last[i])) / 10);
         let per_voice = d[2] + d[3] + d[4];
-        let mut line = Line { buf: [0; 768], len: 0 };
+        let mut line = Line { buf: [0; 1024], len: 0 };
         let _ = writeln!(
             line,
             "astage n={} seq={} snd={} adpcm={} resample={} envmix={} reverb={} bus={} post={} total={} pulls/s={} ns_pull={}",
