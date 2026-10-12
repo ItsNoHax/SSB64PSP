@@ -12,19 +12,19 @@ Where the project is now. The roadmap and every open task are in
 | Audio | The N64 audio system ported whole, every call site wired, Sound Test; sample-exact against N64 captures of the opening, menus and How to Play ([D-049](docs/decisions/D-049.md), RE-479) |
 | Rendering | CRT overscan crop ([D-047](docs/decisions/D-047.md), RE-477) |
 | Frontend | N64 logo, opening, title and attract loop; every menu including Sound Test; per-scene loading with background reads (RE-475, RE-476) |
-| PSP | 60 FPS under PPSSPP; on a PSP-2000 the audio thread costs 9% in a four-player VS and 16% in the opening, no underruns (RE-479); three opening scenes ran at 45–57 FPS before audio (RE-476); PSP-1000 unsupported |
+| PSP | 60 FPS under PPSSPP. PSP-2000 (RE-479): the production build plays the attract loop clean; the opening averages 55.8 FPS (58.7 without audio); four-player VS 39.0 (40.6 without audio), held under 60 by the game thread; no underruns. PSP-1000 unsupported |
 | Tests | 2,264 workspace tests with the ROM (2,073 with stub tables, as CI), clippy and rustfmt pass; 198 of 198 goldens pass by pixel hash |
 
 ## Current Work
 
-The audio batch is done (RE-479). Next: run its production EBOOT on the
-PSP-2000 and compare a `no_audio` build's frame times, then RE-476/RE-477's
-hardware checks and the opening's CPU-bound scenes ([`PLAN.md`](PLAN.md#remaining-work)).
+Audio on the PSP-2000 is measured (RE-479): it costs 3 FPS in the opening
+and 1.6 in VS, so it is not what holds VS at 40 FPS. Next: profile
+four-player VS's game thread on the PSP (18.3 ms a frame without audio)
+and RE-471's worst cases ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
 
-- The PSP was disconnected at the end of the audio batch: the merged
-  production EBOOT and pack v108 are built but not installed.
+None. The campaign past Race to the Finish needs a person at the PSP.
 
 ## Verification
 
@@ -41,8 +41,10 @@ Baseline after the audio batch:
   23.1 MB.
 - Production EBOOT: `target/release-audio/EBOOT.PBP`, 4,496,282 bytes
   (`d9bd863a…39f2`), no debug info, with `target/release-audio/ssb64.pak`
-  (64,174,736 bytes, `38ed322c…559c`); not installed.
-- Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1 (RE-479's
-  measurements, before the final merge).
+  (64,174,736 bytes, `38ed322c…559c`); installed in
+  `ms0:/PSP/GAME/ssb64/` (verified byte-identical).
+- Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1: the production PRX
+  ran the attract loop for four minutes without an exception; `profile`
+  A/B runs with and without `no_audio` (RE-479).
 - ROMs: `rom/Super Smash Bros. (USA).z64` and
   `refs/ssb-decomp-re/baserom.us.z64`, SHA-1 `e2929e10…`.

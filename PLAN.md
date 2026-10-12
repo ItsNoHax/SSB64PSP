@@ -55,10 +55,10 @@ closes it.
 
 ### PSP performance and hardware (`MS8`)
 
-- [ ] Run the RE-478 production EBOOT (`target/release-re478/EBOOT.PBP`) on the PSP-2000: the campaign past Race to the Finish, then RE-476/RE-477's checks (RE-476, RE-477, RE-478).
+- [ ] By hand on the PSP-2000, with the installed production EBOOT (`target/release-audio/EBOOT.PBP`, pack v108; the attract loop already runs clean, RE-479): the campaign past Race to the Finish, then RE-476/RE-477's checks (RE-476, RE-477, RE-478).
 - [ ] Measure D-047's GE fill cost on a PSP-2000: the battle viewport covers 19% more pixels; profile `vs4@4000`, the opening and the selects (`ge` span) (RE-477).
 - [ ] Opening CPU cost on a PSP-2000 (~3.5× PPSSPP): Run, Yoster/Sector and Clash at 45–57 FPS with 12–14 ms of CPU, mostly the movie draw's mesh lists; each opening fight's first frame takes 21–40 ms. Next: expanded vertices through the cache into a line-aligned, written-back block, then the battle's first frame (RE-469, RE-470, RE-471, RE-476).
-- [ ] Measure RE-469's other scenes and RE-471's worst cases on the PSP; `vs4@4000` averages 5.2 ms against RE-471's 4.5, unexplained (RE-471, RE-476).
+- [ ] Measure RE-469's other scenes and RE-471's worst cases on the PSP; `vs4@4000` averages 5.2 ms against RE-471's 4.5, unexplained. Four-player VS runs at 40 FPS on a PSP-2000 without audio (18.3 ms of game CPU a frame, `vs4@2400`): the game thread is what holds VS under 60 (RE-471, RE-476, RE-479).
 - [ ] Read ahead for scenes outside the attract loop (menus, selects, VS, 1P): they still load in their first frame, 0.1–0.6 s on a PSP-2000; a select could read its stage's and fighters' files once picked (RE-475, RE-476).
 - [ ] Add the few on-demand files to scene lists (select/results figatrees, Characters' figatree, a Kirby copy's absent kind; `demand=` in capture logs) (RE-475, RE-476).
 - [ ] Per-scene texture residency: v78 Dream Land with four fighters needs 726,924 bytes low detail against a 704,512-byte pool, and since RE-476 only 180,224 bytes of VRAM are free; the runtime samples from main RAM (RE-076, RE-077, RE-341, RE-426).
@@ -71,8 +71,7 @@ closes it.
 - [ ] Keep geometry non-indexed: audit `meshdraw` for indexed draws or transformed-vertex reuse; on the PSP rebatching non-indexed vertices beat reuse (sf64-psp: −39% VFPU instructions but +4.6 ms; rebatching won back 1.2 ms).
 - [ ] Instruction-cache locality (16 KB I + 16 KB D): profile hot functions with PSPLink's `profmode t` hardware counters and `psp-gprof`, then group the hottest code (link-section ordering); compare `opt-level` 3 against `s` on the PSP rather than assuming 3 (GBAdhoc measured 7–25%).
 - [ ] Texture bandwidth: every GE texture is swizzled already (`psp_texture`); measure whether CLUT4/CLUT8 for textures that fit their palette cuts main-memory bandwidth enough to matter. Earlier CLUT work was a red herring for RE-300's alpha bug, not a bandwidth measurement.
-- [ ] Audio on the PSP-2000: run the merged production EBOOT (`target/release-audio/EBOOT.PBP`, pack v108) and compare a `no_audio` build's frame times in the opening and `vs4@2400`; the opening's busiest stretches cost 16% of the CPU (RE-479).
-- [ ] Audio cost: an exact VFPU path for the custom reverb (constant coefficients; split products stay exact), then the voices; the Media Engine stays out ([D-049](docs/decisions/D-049.md)) unless profiling shows audio is what stops 60 FPS (RE-479).
+- [ ] Audio cost: an exact VFPU path for the custom reverb (constant coefficients; split products stay exact), then the voices; the Media Engine stays out ([D-049](docs/decisions/D-049.md)) unless profiling shows audio is what stops 60 FPS. On a PSP-2000 audio costs 3 FPS in the opening (55.8 against 58.7) and 1.6 in `vs4@2400` (39.0 against 40.6) (RE-479).
 - [ ] rust-psp's `memcpy`/`memmove`/`memset` copy one byte per iteration; a word version in the fork would speed up every copy in the game (RE-479).
 - [ ] FPU traps outside PSPLink: check whether an XMB-started game traps divide-by-zero as PSPLink does; keep `math::div_nonzero` on speculated divisions (RE-201, RE-469).
 - [ ] Large stack frames: battle entry peaks at 239–294 KB of the 512 KiB stack (`enter_training`, `EffectVisuals::sync_ko`) (RE-469).

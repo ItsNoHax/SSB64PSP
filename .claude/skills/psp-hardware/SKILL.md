@@ -140,6 +140,11 @@ pspsh -e 'kill 0x08800000' # Replace with game module UID from modlist.
 pspsh -e reset
 ```
 
+A `kill` of a running `profile` build once hung PSPLink until it was
+restarted on the PSP (RE-479). For scripted measurement runs, skip the
+`kill`, send a bare `reset` (it unloads the game), and wrap every `pspsh`
+call in `timeout`.
+
 Never load second game PRX before prior instance has stopped.
 
 ### Capture and map exception
