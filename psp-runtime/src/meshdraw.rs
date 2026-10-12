@@ -3605,6 +3605,61 @@ pub unsafe fn draw_stage(
 /// draws on.
 pub const STAGE_LAYER_LINKS: [u8; 4] = [4, 6, 13, 17];
 
+/// One render layer's posed node matrices and billboard scales.
+struct LayerPose {
+    posed: [ssb_rom::scene::Mat4; ssb_rom::skeleton::MAX_NODES],
+    node_count: usize,
+    billboard_scales: [[f32; 2]; ssb_rom::skeleton::MAX_NODES],
+    scale_count: usize,
+}
+
+impl LayerPose {
+    const fn new() -> Self {
+        LayerPose {
+            posed: [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES],
+            node_count: 0,
+            billboard_scales: [[1.0; 2]; ssb_rom::skeleton::MAX_NODES],
+            scale_count: 0,
+        }
+    }
+
+    fn compose(
+        &mut self,
+        anim: &ssb_rom::skeleton::StageAnimator,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+    ) {
+        let compose_t = crate::profile::start();
+        self.node_count = anim.compose(pack, object, &mut self.posed);
+        self.scale_count = anim.billboard_scales(pack, object, &mut self.billboard_scales);
+        crate::profile::stop(crate::profile::Span::Compose, compose_t);
+        debug_assert_eq!(self.node_count, self.scale_count);
+    }
+}
+
+/// The posed render layers of one battle frame, so the battle's head-0 and
+/// head-1 calls of one camera pass pose a layer once, not twice (RE-480).
+/// The N64 likewise poses a `DObj` tree once per pass and shares the matrices
+/// between both task heads (`gcDrawDObjTreeDLLinks`); only which head a
+/// display list goes to differs.
+///
+/// Make a fresh cache for each frame's draw: it holds whatever the animator
+/// posed when a layer was first drawn, and is keyed by layer object only.
+pub struct StagePoseCache {
+    /// The object each entry of `layers` was posed for, or `NO_LAYER`.
+    keys: [u32; 4],
+    layers: [LayerPose; 4],
+}
+
+impl Default for StagePoseCache {
+    fn default() -> Self {
+        StagePoseCache {
+            keys: [ssb_rom::pack::StageDesc::NO_LAYER; 4],
+            layers: [const { LayerPose::new() }; 4],
+        }
+    }
+}
+
 /// Draws a stage, optionally posed by its scenery animation: every render
 /// layer and controller object, in display-link order ([`draw_stage_links`]
 /// over all links).
@@ -3626,7 +3681,17 @@ pub unsafe fn draw_stage_animated(
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) -> (u32, u32) {
-    draw_stage_links(pack, stage, base, anim, objects, st, mat_anim, 0..=u8::MAX)
+    draw_stage_links(
+        pack,
+        stage,
+        base,
+        anim,
+        objects,
+        st,
+        mat_anim,
+        0..=u8::MAX,
+        None,
+    )
 }
 
 /// Draws the render layers and the stage controller's own objects (RE-357)
@@ -3637,6 +3702,9 @@ pub unsafe fn draw_stage_animated(
 /// layer 1 (6) and layer 2 (13) and the effects on link 15 before layer 3
 /// (17), so a caller draws each pass's share of the stage separately
 /// (RE-422). [`DrawState::heads`] selects the task heads drawn.
+///
+/// With `pose_cache`, a layer `anim` already posed in this cache is drawn with
+/// that pose instead of being posed again ([`StagePoseCache`]).
 ///
 /// Returns the triangles submitted and how many layer slots were drawn.
 ///
@@ -3653,11 +3721,11 @@ pub unsafe fn draw_stage_links(
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     links: core::ops::RangeInclusive<u8>,
+    mut pose_cache: Option<&mut StagePoseCache>,
 ) -> (u32, u32) {
     let mut tris = 0;
     let mut drawn = 0;
-    let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-    let mut billboard_scales = [[1.0; 2]; ssb_rom::skeleton::MAX_NODES];
+    let mut scratch = LayerPose::new();
     let object_links = objects
         .into_iter()
         .flat_map(|o| o.iter())
@@ -3684,18 +3752,26 @@ pub unsafe fn draw_stage_links(
             if let Some(object) = object {
                 tris += match anim {
                     Some(a) => {
-                        let compose_t = crate::profile::start();
-                        let n = a.compose(pack, &object, &mut posed);
-                        let scale_count = a.billboard_scales(pack, &object, &mut billboard_scales);
-                        crate::profile::stop(crate::profile::Span::Compose, compose_t);
-                        debug_assert_eq!(n, scale_count);
+                        let pose = match pose_cache.as_deref_mut() {
+                            Some(cache) => {
+                                if cache.keys[layer] != slot {
+                                    cache.layers[layer].compose(a, pack, &object);
+                                    cache.keys[layer] = slot;
+                                }
+                                &cache.layers[layer]
+                            }
+                            None => {
+                                scratch.compose(a, pack, &object);
+                                &scratch
+                            }
+                        };
                         let hidden = |node: u32| !a.visible(pack, node);
                         draw_object_posed_filtered(
                             pack,
                             &object,
                             base,
-                            &posed[..n],
-                            Some(&billboard_scales[..scale_count]),
+                            &pose.posed[..pose.node_count],
+                            Some(&pose.billboard_scales[..pose.scale_count]),
                             st,
                             mat_anim,
                             None,

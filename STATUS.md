@@ -13,14 +13,16 @@ Where the project is now. The roadmap and every open task are in
 | Rendering | CRT overscan crop ([D-047](docs/decisions/D-047.md), RE-477) |
 | Frontend | N64 logo, opening, title and attract loop; every menu including Sound Test; per-scene loading with background reads (RE-475, RE-476) |
 | PSP | 60 FPS under PPSSPP. PSP-2000 (RE-479): the production build plays the attract loop clean; the opening averages 55.8 FPS (58.7 without audio); four-player VS 39.0 (40.6 without audio), held under 60 by the game thread; no underruns. PSP-1000 unsupported |
-| Tests | 2,264 workspace tests with the ROM (2,073 with stub tables, as CI), clippy and rustfmt pass; 198 of 198 goldens pass by pixel hash |
+| Tests | 2,267 workspace tests with the ROM (2,076 with stub tables, as CI), clippy and rustfmt pass; 198 of 198 goldens pass by pixel hash |
 
 ## Current Work
 
 Four-player VS on the PSP-2000 is profiled (RE-480): 18.3 ms of CPU a
 frame without audio, spread over every span at 2.5–7× PPSSPP's count,
-with no single hot spot; `opt-level 3` stays. Next: count cache misses
-per span on the PSP, and pose each stage layer once a frame
+with no single hot spot; `opt-level 3` stays. The battle's stage layers
+0, 1 and 3, previously recomposed twice a frame (once per head), are now
+posed once and cached (RE-480); 198/198 goldens unchanged. Next: count
+cache misses per span on the PSP, which needs a person at the PSP
 ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
@@ -33,8 +35,8 @@ per span on the PSP, and pose each stage layer once a frame
 
 Baseline after the audio batch:
 
-- `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,264
-  pass. With `SSB64_STUB_TABLES=1` and no ROM: 2,073 pass, 191 ignored.
+- `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,267
+  pass. With `SSB64_STUB_TABLES=1` and no ROM: 2,076 pass, 191 ignored.
   `cargo +1.98.0 clippy` (warnings denied) in both modes and rustfmt pass.
 - Goldens: `tools/golden.sh verify`: 198 of 198 hashes match; deepest
   game stack 310,912 bytes (`f1-vs-sudden-death`).

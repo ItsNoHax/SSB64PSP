@@ -7940,7 +7940,10 @@ unsafe fn draw_training(
     // Land's front flowers, layer 3 and the link-18 effects). Layers 0, 2
     // and 3 and the front flowers clear `G_ZBUFFER`, so what a later pass
     // draws covers them and they cover what an earlier pass drew.
-    let stage_pass = |links: core::ops::RangeInclusive<u8>, heads, draw_state: &mut meshdraw::DrawState| {
+    // Each layer is posed once and the pose shared by its head-0 and head-1
+    // calls, as `gcDrawDObjTreeDLLinks` does (RE-480).
+    let mut pose_cache = meshdraw::StagePoseCache::default();
+    let mut stage_pass = |links: core::ops::RangeInclusive<u8>, heads, draw_state: &mut meshdraw::DrawState| {
         draw_state.heads = heads;
         // All twelve courses put empty yakumono parents 1..10 before
         // their other layer-1 nodes. Draw their inserted children there.
@@ -7958,6 +7961,7 @@ unsafe fn draw_training(
             draw_state,
             material_anim,
             links.clone(),
+            Some(&mut pose_cache),
         );
         draw_state.heads = meshdraw::Heads::Both;
     };

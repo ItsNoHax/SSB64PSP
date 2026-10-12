@@ -1788,6 +1788,41 @@ mod tests {
         assert_eq!(scales[2], [-2.0, -1.0]);
     }
 
+    #[test]
+    fn posing_a_stage_twice_gives_the_same_pose() {
+        // The battle poses a layer once and draws both task heads with that
+        // pose (`StagePoseCache`, RE-480): posing must read nothing but the
+        // animator and the pack, and posing again must write the same values.
+        let graph = chain();
+        let bytes = packed(&graph);
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let object = pack.object(0).unwrap();
+        let mut animator = StageAnimator::new();
+        animator.count = 1;
+        animator.nodes[0] = object.first_node + 1;
+        animator.poses[0] = JointPose {
+            rotate: [0.3, 1.2, -0.7],
+            translate: [5.0, -1.0, -2.0],
+            scale: [-2.0, 3.0, 4.0],
+        };
+
+        let mut first = [Mat4::IDENTITY; MAX_NODES];
+        let mut second = [Mat4([9.0; 16]); MAX_NODES];
+        let n = animator.compose(&pack, &object, &mut first);
+        assert_eq!(animator.compose(&pack, &object, &mut second), n);
+        assert_eq!(first[..n], second[..n]);
+
+        let mut first_scales = [[0.0; 2]; MAX_NODES];
+        let mut second_scales = [[9.0; 2]; MAX_NODES];
+        let s = animator.billboard_scales(&pack, &object, &mut first_scales);
+        assert_eq!(
+            animator.billboard_scales(&pack, &object, &mut second_scales),
+            s
+        );
+        assert_eq!(s, n);
+        assert_eq!(first_scales[..s], second_scales[..s]);
+    }
+
     fn mat_script(words: &[u32]) -> alloc::vec::Vec<u8> {
         words.iter().flat_map(|w| w.to_be_bytes()).collect()
     }
