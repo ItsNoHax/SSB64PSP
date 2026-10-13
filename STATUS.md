@@ -17,17 +17,17 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-494 replaced the heuristic link order with a searched one.
-`tools/icache/layout.c` replays a cache-model trace for each candidate order
-(exact against the relinked binary) and anneals the hot functions' order.
-On a PSP-2000, three layouts of one `profile` build ranked as the model
-ranked them: 47.6 / 51.2 / 54.8 FPS for 533K / 451K / 372K modelled misses.
-The shipped audio build's new order cuts modelled misses 21% (25% in the
-draw), about 1.5 ms a frame. That gain is the model's, since only `profile`
-builds report FPS. An order fits only its build: search again when hot code
-changes size (procedure in RE-494). `link-order.txt` edits now relink. Next:
-the flags-derived render-state table, or the next `MS8` lever
-([`PLAN.md`](PLAN.md#remaining-work)).
+RE-495 tested a shadowed, flags-derived render-state table for
+`apply_flags_state`. Of the ~520 GE words it writes a frame in
+`vs4@2400`, only ~90 change, but at ~6 instructions a word the skipped
+writes save less than building and diffing the state key costs. Three
+encodings kept GE state byte-identical, and none ran fewer instructions.
+On a PSP-2000 the best one was ~150 µs a frame slower than HEAD with each
+build relinked to its own searched order, so no code shipped. The A/B
+also showed that a second anneal seed found an order with 3% fewer misses
+that ran 0.6 FPS faster, so the shipped order may have headroom. Next:
+search the shipped audio build's order with several seeds, or the next
+`MS8` lever ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
 
@@ -39,12 +39,13 @@ the flags-derived render-state table, or the next `MS8` lever
 
 ## Verification
 
-Baseline after the searched link order (RE-494):
+Baseline after the render-state table experiment (RE-495, no code
+changed):
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,277
   pass. With `SSB64_STUB_TABLES=1` and no ROM: 2,086 pass, 191 ignored;
-  `cargo fmt --check` passes. Clippy was last run at RE-493 (this batch
-  changed no workspace code).
+  `cargo fmt --check` passes. Clippy was last run at RE-493 (RE-494 and
+  RE-495 changed no workspace code).
 - Both PSP builds (`psp-game`, `psp-asset-viewer`) compile clean in
   release.
 - Goldens: `tools/golden.sh verify --filter '^f1-vs'`: 24 of 24 match
@@ -54,7 +55,7 @@ Baseline after the searched link order (RE-494):
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1: the production PRX
   ran the attract loop for four minutes without an exception; a chain of
   `profile`/`profile_hw` A/B runs of `vs4@2400` validated each performance
-  change (RE-479, RE-481, RE-482, RE-485 through RE-494). The installed
+  change (RE-479, RE-481, RE-482, RE-485 through RE-495). The installed
   EBOOT and its `ms0:` pack are still v108.
 - ROMs: `rom/Super Smash Bros. (USA).z64` and
   `refs/ssb-decomp-re/baserom.us.z64`, SHA-1 `e2929e10…`.
