@@ -13,13 +13,17 @@ names onto them and passes the result to `rust-lld` as a
 
 Set as `psp-game`'s linker in `psp-game/.cargo/config.toml`; rustc calls it
 with `rust-lld`'s arguments and has `rust-lld` on `PATH`.
+
+`PSP_LINK_ORDER` replaces `link-order.txt`. `PSP_LINK_SAVE=DIR` copies the
+link's inputs into DIR, so `tools/icache/relink.py` can link them again with
+another order without recompiling (RE-494).
 """
 import os
 import re
 import struct
 import sys
 
-LIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'psp-game', 'link-order.txt')
+LIST = os.environ.get('PSP_LINK_ORDER') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'psp-game', 'link-order.txt')
 # A v0 crate root: `C`, the disambiguator `s<base62>_`, then the crate name's
 # `<length><identifier>`.
 CRATE_HASH = re.compile(r'Cs[0-9A-Za-z]*_(?=\d)')
@@ -65,10 +69,34 @@ def main():
             line = line.strip()
             if line and not line.startswith('#'):
                 order.extend(by_stable.get(line, []))
+    save = os.environ.get('PSP_LINK_SAVE')
+    if save:
+        # Keep the link's inputs, so another function order can be linked
+        # without recompiling: rustc deletes its temporary objects.
+        import json, shutil
+        os.makedirs(save, exist_ok=True)
+        kept = []
+        for i, arg in enumerate(args):
+            if arg.endswith('.o') and os.path.isfile(arg):
+                dst = os.path.join(save, '%d-%s' % (i, os.path.basename(arg)))
+                shutil.copy(arg, dst)
+                arg = dst
+            else:
+                # rustc's temporary directory (an rlib, the linker script).
+                m = re.search(r'^(.*/rustc[0-9A-Za-z]{6})(/.*)?$', arg)
+                if m and os.path.exists(m.group(1)):
+                    dst = os.path.join(save, 'rustc-tmp')
+                    if not os.path.exists(dst):
+                        shutil.copytree(m.group(1), dst)
+                    arg = dst + (m.group(2) or '')
+            kept.append(arg)
+        with open(os.path.join(save, 'args.json'), 'w') as f:
+            json.dump({'args': kept, 'out': out, 'cwd': os.getcwd()}, f)
     order_path = out + '.order'
     with open(order_path, 'w') as f:
         f.write(''.join(name + '\n' for name in order))
     os.execvp('rust-lld', ['rust-lld'] + args + ['--symbol-ordering-file=' + order_path, '--no-warn-symbol-ordering'])
 
 
-main()
+if __name__ == '__main__':
+    main()

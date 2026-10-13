@@ -215,8 +215,12 @@ misses, use the cache model in a local PPSSPP build
 (`tools/icache/ppsspp-icache.patch`, run with `--ir`; it is 86% of the
 PSP-2000's count in VS) and `tools/icache/*.py`, then confirm on the PSP
 with `profile_hw` (RE-482). `psp-game` links through `tools/psp-link.py`,
-which places `psp-game/link-order.txt`'s functions first. Regenerate that
-file with `tools/icache/order.py` when the draw code changes much.
+which places `psp-game/link-order.txt`'s functions first. An order fits only
+the build it was searched on: when hot code changes size, search it again on
+the shipped configuration with `tools/icache/layout.c`. The search replays a
+model trace for each candidate order. `tools/icache/relink.py` relinks a saved
+build with a new order in seconds, for hardware A/B runs. RE-494 has the
+procedure.
 
 ### Native frame evidence
 

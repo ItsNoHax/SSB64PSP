@@ -21,6 +21,11 @@
 // The asset pack is loaded into a heap buffer; `psp` provides the allocator.
 extern crate alloc;
 
+// `tools/psp-link.py` reads `link-order.txt` at link time, which Cargo does
+// not track: naming it here puts it in rustc's dep-info, so editing the order
+// relinks (RE-494). Unused, so nothing reaches the binary.
+const _LINK_ORDER: &[u8] = include_bytes!("../link-order.txt");
+
 mod boot_log;
 mod campaign;
 mod capture;
