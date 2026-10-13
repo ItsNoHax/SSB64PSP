@@ -14,6 +14,7 @@
 //! the first `begin_frame`.
 
 use core::ffi::c_void;
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use psp::sys::{
     self, ClearBuffer, DepthFunc, DisplayPixelFormat, FrontFaceDirection, GuContextType,
@@ -344,6 +345,80 @@ pub unsafe fn wallpaper_photo_data() -> &'static [u8] {
 /// [`Gpu::end_frame`]'s sync and the next [`Gpu::begin_frame`].
 pub static GE_LIST_OPEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// The GE address of the VRAM region that holds [`WALLPAPER_PHOTO`]'s copy
+/// for the frozen picture (RE-476), set by [`Gpu::init`]. Scenes that draw
+/// no photo lend it to one large texture through [`vram_resident`].
+static PHOTO_REGION: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+
+/// What [`PHOTO_REGION`] holds: [`PHOTO_NONE`], [`PHOTO_CAPTURE`] (the last
+/// capture) or the main-memory address of the texture [`vram_resident`]
+/// copied there.
+static PHOTO_HOLDS: AtomicUsize = AtomicUsize::new(PHOTO_NONE);
+const PHOTO_NONE: usize = 0;
+const PHOTO_CAPTURE: usize = 1;
+
+/// Bytes in a row of [`PHOTO_REGION`], the unit [`vram_resident`] copies.
+const PHOTO_ROW_BYTES: usize = WALLPAPER_PHOTO_STRIDE * 4;
+
+/// A new capture is in main memory only.
+fn forget_photo_capture() {
+    let _ = PHOTO_HOLDS.compare_exchange(PHOTO_CAPTURE, PHOTO_NONE, Ordering::Relaxed, Ordering::Relaxed);
+}
+
+/// The texture copied into VRAM by [`vram_resident`] may be freed: its
+/// address no longer names it. Called before the memory is released.
+pub fn forget_resident_texture() {
+    if PHOTO_HOLDS.load(Ordering::Relaxed) > PHOTO_CAPTURE {
+        PHOTO_HOLDS.store(PHOTO_NONE, Ordering::Relaxed);
+    }
+}
+
+/// `data`, a texture's image in main memory, copied into [`PHOTO_REGION`]
+/// by the GE the first time it is asked for and sampled from there until
+/// the region is needed for the photo again or the texture is freed. The
+/// GE's texel reads from main memory stall the CPU on the shared bus
+/// (RE-489, RE-490); the battle wallpaper is the one texture large enough
+/// to matter (RE-492). `None` when `data` does not fit the region or is
+/// not a whole number of its rows.
+///
+/// # Safety
+///
+/// Between `begin_frame` and `end_frame`; `data` stays alive and unchanged
+/// until [`forget_resident_texture`].
+pub unsafe fn vram_resident(data: &[u8]) -> Option<*const c_void> {
+    let region = PHOTO_REGION.load(Ordering::Relaxed);
+    let rows = data.len() / PHOTO_ROW_BYTES;
+    if region.is_null()
+        || data.is_empty()
+        || data.len() % PHOTO_ROW_BYTES != 0
+        || rows > WALLPAPER_PHOTO_PADDED_HEIGHT
+    {
+        return None;
+    }
+    let key = data.as_ptr() as usize;
+    if PHOTO_HOLDS.load(Ordering::Relaxed) != key {
+        // A raw copy: rows of 32-bit words, whatever the texture's format
+        // or swizzling.
+        sys::sceGuCopyImage(
+            DisplayPixelFormat::Psm8888,
+            0,
+            0,
+            WALLPAPER_PHOTO_STRIDE as i32,
+            rows as i32,
+            WALLPAPER_PHOTO_STRIDE as i32,
+            data.as_ptr() as *mut c_void,
+            0,
+            0,
+            WALLPAPER_PHOTO_STRIDE as i32,
+            region,
+        );
+        sys::sceGuTexSync();
+        sys::sceGuTexFlush();
+        PHOTO_HOLDS.store(key, Ordering::Relaxed);
+    }
+    Some(region)
+}
+
 pub struct Gpu {
     frame_open: bool,
     frames: u64,
@@ -377,8 +452,6 @@ pub struct Gpu {
     /// frozen picture samples: from main memory, the GE took about 27 ms
     /// to draw that one 340x250 bilinear quad on a PSP-2000 (RE-476).
     photo_vram: *mut c_void,
-    /// Whether [`Gpu::photo_vram`] holds the last capture.
-    photo_in_vram: core::cell::Cell<bool>,
     /// The viewport the last `set_viewport_*` call chose, `[x scale, y
     /// scale, x centre, y centre]` in GE screen space, and its scissor
     /// `[x0, y0, x1, y1]` with exclusive ends. [`Gpu::begin_frame`] sends
@@ -417,6 +490,7 @@ impl Gpu {
             TexturePixelFormat::Psm8888,
         );
         let photo_vram = sys::sceGeEdramGetAddr().add(photo.as_mut_ptr_from_zero() as usize) as *mut c_void;
+        PHOTO_REGION.store(photo_vram, Ordering::Relaxed);
 
         // Retained past `init()` for `request_transition_capture`'s CPU-side
         // readback -- `as_mut_ptr_from_zero()` below is only meaningful as the
@@ -484,7 +558,6 @@ impl Gpu {
             fbp1_rel,
             presented_vcount: None,
             photo_vram,
-            photo_in_vram: core::cell::Cell::new(false),
             viewport: [(SCREEN_WIDTH / 2) as f32, -((SCREEN_HEIGHT / 2) as f32), 2048.0, 2048.0],
             scissor: [0, 0, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32],
         }
@@ -625,7 +698,7 @@ impl Gpu {
             let bytes = wallpaper_photo_data();
             sys::sceKernelDcacheWritebackRange(bytes.as_ptr() as *const c_void, bytes.len() as u32);
         }
-        self.photo_in_vram.set(false);
+        forget_photo_capture();
     }
 
     /// Copies the top-left 300x220 corner of whichever buffer just finished
@@ -654,7 +727,7 @@ impl Gpu {
         // Same GE DMA coherency requirement as the transition capture.
         let bytes = wallpaper_photo_data();
         sys::sceKernelDcacheWritebackRange(bytes.as_ptr() as *const c_void, bytes.len() as u32);
-        self.photo_in_vram.set(false);
+        forget_photo_capture();
     }
 
     /// Debug-only proof that [`WALLPAPER_PHOTO`] holds real pixel data:
@@ -777,7 +850,7 @@ impl Gpu {
         // The whole padded buffer, padding included, so bilinear taps past
         // the content read the same zeros (RE-476). Written back by the
         // capture; the GE copies it before this draw reads it.
-        if !self.photo_in_vram.get() {
+        if PHOTO_HOLDS.load(Ordering::Relaxed) != PHOTO_CAPTURE {
             sys::sceGuCopyImage(
                 DisplayPixelFormat::Psm8888,
                 0,
@@ -793,7 +866,7 @@ impl Gpu {
             );
             sys::sceGuTexSync();
             sys::sceGuTexFlush();
-            self.photo_in_vram.set(true);
+            PHOTO_HOLDS.store(PHOTO_CAPTURE, Ordering::Relaxed);
         }
 
         sys::sceGuEnable(GuState::Texture2D);

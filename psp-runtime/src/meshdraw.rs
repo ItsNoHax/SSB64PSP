@@ -695,6 +695,41 @@ pub(crate) fn probe_cat(st: &mut DrawState, cat: crate::texprobe::Cat) -> ProbeC
 /// # Safety
 ///
 /// The pack buffer must outlive the frame; the GE reads it asynchronously.
+/// The level-0 image `bind_texture` gives the GE.
+struct TextureImage<'a> {
+    texels: &'a [u8],
+    ge_w: u32,
+    ge_h: u32,
+    bufw: u32,
+}
+
+impl TextureImage<'_> {
+    /// `sceGuTexImage` for this image, its texels at `at`.
+    unsafe fn bind(&self, at: *const c_void) {
+        sys::sceGuTexImage(
+            sys::MipmapLevel::None,
+            self.ge_w as i32,
+            self.ge_h as i32,
+            self.bufw as i32,
+            at,
+        );
+    }
+}
+
+fn texture_image<'a>(t: &TextureDesc, data: &'a [u8]) -> Option<TextureImage<'a>> {
+    let w = (t.width as u32).next_power_of_two();
+    let h = (t.height as u32).next_power_of_two();
+    // RE-319: rows are stored at least 16 bytes wide, the GE's minimum
+    // buffer row, so the buffer width can exceed the declared width.
+    let bufw = t.stride as u32;
+    let size = (bufw as usize * psm_bits(psm_of(t.psm))).div_ceil(8) * h as usize;
+    // RE-314: the buffer keeps its full stride, but the declared size
+    // is capped at 512 -- a 1024 dimension would encode as log2 15 and
+    // sample far past this texture's bytes into its pack neighbours.
+    let (ge_w, ge_h) = ssb_rom::psp_texture::ge_texture_dims(w, h);
+    Some(TextureImage { texels: data.get(..size)?, ge_w, ge_h, bufw })
+}
+
 unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
     // A `ROLE_FRAMEBUFFER` texture has no baked bytes at all (RE-099, RE-464)
     // -- `pack.texture_data` would return an empty slice, not `None`, so it
@@ -753,24 +788,8 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
     // lower levels in old packs harmless, but never let GE auto-select them:
     // only level 0 is ever given to the GE.
     sys::sceGuTexMode(psm, 0, 0, t.swizzled as i32);
-    let w = (t.width as u32).next_power_of_two();
-    let h = (t.height as u32).next_power_of_two();
-    // RE-319: rows are stored at least 16 bytes wide, the GE's minimum
-    // buffer row, so the buffer width can exceed the declared width.
-    let bufw = t.stride as u32;
-    let size = (bufw as usize * psm_bits(psm)).div_ceil(8) * h as usize;
-    if let Some(slice) = data.get(..size) {
-        // RE-314: the buffer keeps its full stride, but the declared size
-        // is capped at 512 -- a 1024 dimension would encode as log2 15 and
-        // sample far past this texture's bytes into its pack neighbours.
-        let (ge_w, ge_h) = ssb_rom::psp_texture::ge_texture_dims(w, h);
-        sys::sceGuTexImage(
-            sys::MipmapLevel::None,
-            ge_w as i32,
-            ge_h as i32,
-            bufw as i32,
-            slice.as_ptr() as *const c_void,
-        );
+    if let Some(image) = texture_image(t, data) {
+        image.bind(image.texels.as_ptr() as *const c_void);
     }
     // The texture function is *not* set here (it used to be, always
     // `Modulate`): `apply_material`'s per-primitive `TEXTURE_BLEND` handling
@@ -2747,6 +2766,13 @@ pub unsafe fn draw_wallpaper(
         return;
     };
     bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    // Sampled from VRAM: from main memory its texel reads stall the CPU
+    // 0.5 ms a frame even in strips (RE-490, RE-492).
+    if let Some(image) = pack.texture_data(&t).and_then(|d| texture_image(&t, d)) {
+        if let Some(vram) = crate::gu::vram_resident(image.texels) {
+            image.bind(vram);
+        }
+    }
     sys::sceGuTexScale(1.0, 1.0);
     sys::sceGuTexOffset(0.0, 0.0);
     sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);

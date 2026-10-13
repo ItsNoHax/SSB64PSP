@@ -12,21 +12,19 @@ Where the project is now. The roadmap and every open task are in
 | Audio | The N64 audio system ported whole, every call site wired, Sound Test; sample-exact against N64 captures of the opening, menus and How to Play ([D-049](docs/decisions/D-049.md), RE-479) |
 | Rendering | CRT overscan crop ([D-047](docs/decisions/D-047.md), RE-477) |
 | Frontend | N64 logo, opening, title and attract loop; every menu including Sound Test; per-scene loading with background reads (RE-475, RE-476) |
-| PSP | 60 FPS under PPSSPP. PSP-2000 (RE-479): the production build plays the attract loop clean; the opening averages 55.8 FPS (58.7 without audio); four-player VS 47.3 without audio (RE-491; 40.6 at RE-479), held under 60 by the game thread; no underruns. PSP-1000 unsupported |
+| PSP | 60 FPS under PPSSPP. PSP-2000 (RE-479): the production build plays the attract loop clean; the opening averages 55.8 FPS (58.7 without audio); four-player VS 48.0 without audio (RE-492; 40.6 at RE-479), held under 60 by the game thread; no underruns. PSP-1000 unsupported |
 | Tests | 2,277 workspace tests with the ROM (2,086 with stub tables, as CI), clippy and rustfmt pass; 198 of 198 goldens pass by pixel hash |
 
 ## Current Work
 
-Stored every direct-colour texture with at most 256 colours as CLUT4/CLUT8
-with a palette of its own colours (RE-491). The change is lossless: all 198
-goldens are unchanged. 1,433 of 1,761 8888 textures and 126 of 156 5551
-textures qualify, and the pack shrinks from 64.2 to 47.0 MB. On a PSP-2000,
-`vs4@2400` without audio goes from 45.7 to 47.3 FPS (CPU frame
-19.3 → 18.9 ms, all memory stall), with 4 MiB more RAM free in battle. No
-other large textured rectangle is drawn in the battle loop. About 1.15 ms
-of texel stall remains: the wallpaper (0.5 ms, 3,031 colours) and stage
-textures that are already CLUT4. Next: wallpaper residency, then the next
-`MS8` lever ([`PLAN.md`](PLAN.md#remaining-work)).
+The battle wallpaper (3,031 colours, no palette) is now sampled from the
+VRAM photo region, which no battle uses (RE-492). The GE copies it in
+once; the photo and the wallpaper each copy back in on their next use.
+All 198 goldens are unchanged. On a PSP-2000, `vs4@2400` without audio
+goes from 47.2 to 48.0 FPS (CPU frame 18.92 → 18.60 ms, all memory
+stall). About 0.65 ms of texel stall remains, mostly stage textures that
+are already CLUT4. Next: the next `MS8` lever
+([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
 
@@ -38,7 +36,7 @@ textures that are already CLUT4. Next: wallpaper residency, then the next
 
 ## Verification
 
-Baseline after lossless palettization (RE-491):
+Baseline after the VRAM-resident wallpaper (RE-492):
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,277
   pass. With `SSB64_STUB_TABLES=1` and no ROM: 2,086 pass, 191 ignored;
@@ -60,6 +58,7 @@ Baseline after lossless palettization (RE-491):
   (RE-488); textures-off diagnostic against `3dca012` (RE-489);
   per-category `texture_probe` and wallpaper-strip builds against
   `8650b0b` (RE-490); palettized-texture builds against the strips
-  (RE-491). The installed EBOOT and its `ms0:` pack are still v108.
+  (RE-491); VRAM-resident wallpaper builds against `fae2f93` (RE-492).
+  The installed EBOOT and its `ms0:` pack are still v108.
 - ROMs: `rom/Super Smash Bros. (USA).z64` and
   `refs/ssb-decomp-re/baserom.us.z64`, SHA-1 `e2929e10…`.

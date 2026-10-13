@@ -485,6 +485,9 @@ impl Loader {
 
     fn collect_retired(&mut self) {
         if !crate::gu::GE_LIST_OPEN.load(core::sync::atomic::Ordering::Relaxed) {
+            if !self.retired.is_empty() {
+                crate::gu::forget_resident_texture();
+            }
             self.retired.clear();
         }
     }
