@@ -606,6 +606,8 @@ impl StageMap {
     pub unsafe fn draw_platforms(&self, pack: &Pack<'_>, base: &psp::sys::ScePspFMatrix4, st: &mut crate::meshdraw::DrawState) {
         use crate::meshdraw;
         use ssb_rom::scene::Mat4;
+        #[cfg(feature = "texture_probe")]
+        let _cat = meshdraw::probe_cat(st, crate::texprobe::Cat::Stage);
         // The course's empty root still contributes its authored matrix.
         let root = pack.node(self.first_node).map_or(Mat4::IDENTITY, |n| Mat4(n.world));
         for platform in &self.platforms {

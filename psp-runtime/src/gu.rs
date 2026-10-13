@@ -891,6 +891,8 @@ impl Gpu {
         debug_assert!(!self.frame_open, "begin_frame called twice");
         self.frame_open = true;
         GE_LIST_OPEN.store(true, core::sync::atomic::Ordering::Relaxed);
+        #[cfg(feature = "texture_probe")]
+        crate::texprobe::frame();
         unsafe {
             self.wait_presented();
             sys::sceGuStart(GuContextType::Direct, Self::list_ptr());

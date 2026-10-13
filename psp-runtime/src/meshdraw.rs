@@ -660,6 +660,26 @@ fn psm_bits(psm: TexturePixelFormat) -> usize {
     }
 }
 
+/// Restores the previous [`crate::texprobe::Cat`] when a draw entry point
+/// returns (`texture_probe`, RE-489).
+#[cfg(feature = "texture_probe")]
+pub(crate) struct ProbeCat(crate::texprobe::Cat);
+
+#[cfg(feature = "texture_probe")]
+impl Drop for ProbeCat {
+    fn drop(&mut self) {
+        crate::texprobe::set_cat(self.0);
+    }
+}
+
+/// Starts `cat`'s draws: forgets the bound texture, so the first primitive
+/// rebinds it under the new category's mask.
+#[cfg(feature = "texture_probe")]
+pub(crate) fn probe_cat(st: &mut DrawState, cat: crate::texprobe::Cat) -> ProbeCat {
+    st.last_texture = None;
+    ProbeCat(crate::texprobe::set_cat(cat))
+}
+
 /// Binds a texture from the pack.
 ///
 /// `palette` overrides the baked CLUT with the current frame's resolved
@@ -690,6 +710,11 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
     let Some(data) = pack.texture_data(t) else {
         return;
     };
+    #[cfg(feature = "texture_probe")]
+    if crate::texprobe::bind(t.data_offset, t.width, t.height, t.psm, data.len()) {
+        sys::sceGuDisable(GuState::Texture2D);
+        return;
+    }
 
     sys::sceGuEnable(GuState::Texture2D);
     let psm = psm_of(t.psm);
@@ -1902,6 +1927,8 @@ pub unsafe fn draw_fighter_posed(
     st: &mut DrawState,
     look: Look<'_>,
 ) -> u32 {
+    #[cfg(feature = "texture_probe")]
+    let _cat = probe_cat(st, crate::texprobe::Cat::Fighter);
     draw_object_posed_filtered(pack, object, base, posed, None, st, None, None, look, None, None)
 }
 
@@ -2688,6 +2715,13 @@ pub unsafe fn draw_sprite_xy(
     draw_state.invalidate_all();
 }
 
+/// Texels per vertical strip of the wallpaper. The GE fills a sprite a row
+/// at a time; one 300-texel-wide rectangle evicts each texel row from the
+/// 8 KiB texture cache before the next screen row needs it again, and the
+/// refetches stall the CPU on the shared bus. 64 texels of 5551 are eight
+/// swizzle blocks (RE-490).
+const WALLPAPER_STRIP: f32 = 64.0;
+
 /// The battle's wallpaper `SObj` (`grWallpaperMakeDecideKind`, RE-419): the
 /// sprite at `(x, y)` on the 320 x 240 screen, `scale` times its size,
 /// opaque, under `G_CC_DECALRGBA`, mapped as every other `SObj` is. The
@@ -2705,6 +2739,8 @@ pub unsafe fn draw_wallpaper(
     scale: f32,
     draw_state: &mut DrawState,
 ) {
+    #[cfg(feature = "texture_probe")]
+    let _cat = probe_cat(draw_state, crate::texprobe::Cat::Wallpaper);
     let Some(t) = pack.texture(sprite.texture) else {
         return;
     };
@@ -2721,13 +2757,16 @@ pub unsafe fn draw_wallpaper(
     let x0 = ssb_engine::coord::n64_to_psp_x(x);
     let y0 = ssb_engine::coord::n64_to_psp_y(y);
     let (w, h) = (f32::from(sprite.width), f32::from(sprite.height));
-    sobj_rect(
-        [
-            (0.0, 0.0, x0, y0),
-            (w, h, x0 + w * scale * k, y0 + h * scale * k),
-        ],
-        0xFFFF_FFFF,
-    );
+    let step = scale * k;
+    let mut u = 0.0;
+    while u < w {
+        let u1 = (u + WALLPAPER_STRIP).min(w);
+        sobj_rect(
+            [(u, 0.0, x0 + u * step, y0), (u1, h, x0 + u1 * step, y0 + h * step)],
+            0xFFFF_FFFF,
+        );
+        u = u1;
+    }
     sys::sceGuEnable(GuState::DepthTest);
     sys::sceGuEnable(GuState::CullFace);
     draw_state.invalidate_all();
@@ -3815,6 +3854,8 @@ pub unsafe fn draw_stage_links(
     links: core::ops::RangeInclusive<u8>,
     mut pose_cache: Option<&mut StagePoseCache>,
 ) -> (u32, u32) {
+    #[cfg(feature = "texture_probe")]
+    let _cat = probe_cat(st, crate::texprobe::Cat::Stage);
     let mut tris = 0;
     let mut drawn = 0;
     // Links outside every layer's and object's are empty: skip them.

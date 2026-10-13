@@ -34,6 +34,10 @@ audio_selftest = []
 # `audio.raw` beside the executable (`audio::dump_flush`): s16le stereo at
 # 32000 Hz. Off by default.
 audio_dump = []
+# Splits the GE's texel traffic by draw category and texture
+# (`texprobe.rs`, RE-490): `texoff.txt` switches texturing off, and a
+# census of the bound textures goes to `texprobe.log`. Off by default.
+texture_probe = []
 
 [profile.release]
 opt-level = 3

@@ -17,15 +17,15 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Measured where four-player VS's CPU time goes next (RE-489). The GE's
-texel reads from main RAM cost the CPU 2.2 ms of memory stall a frame
-on a PSP-2000 (`vs4@2400` without audio, textures off: 42.0 → 48.5
-FPS). That is the largest measured lever. The rest of the shared draw
-pass costs under 1% of its I-cache misses, and `#[optimize(size)]` on
-the per-mesh path is worse. Next: which textures carry the texel
-traffic, and what VRAM can hold them: the frozen picture's 512 KiB
-photo outside its scenes; 16-bit colour buffers would change every
-golden and need a decision ([`PLAN.md`](PLAN.md#remaining-work)).
+Found which textures carry the GE's texel traffic in four-player VS
+(RE-490, `texture_probe`). The battle wallpaper was 1.8 ms of the 3 ms:
+one 300-texel-wide sprite thrashing the GE's texture cache. Drawn in
+64-texel strips it costs about 0.5 ms, and `vs4@2400` without audio goes
+from 42.0 to 45.8 FPS on a PSP-2000. What remains is about 0.5 ms
+wallpaper, 0.45 ms stage, 0.45 ms fighters (32-bit textures) and 0.2 ms
+the rest. Next: strip any other large textured rectangle in the battle
+loop, then weigh VRAM residency against smaller texture formats
+([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
 
@@ -37,8 +37,7 @@ golden and need a decision ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Verification
 
-Baseline after outlining `draw_stage_links` (RE-488); RE-489 changed
-no code:
+Baseline after the wallpaper strips (RE-490):
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,275
   pass. With `SSB64_STUB_TABLES=1` and no ROM: 2,084 pass, 191 ignored;
@@ -46,8 +45,10 @@ no code:
   pass (both as of RE-487; no workspace crate changed since).
 - Both PSP builds (`psp-game`, `psp-asset-viewer`) compile clean in
   release.
-- Goldens: `tools/golden.sh verify`: 198 of 198 hashes match; deepest
-  game stack 312,584 bytes (`f1-vs-sudden-death`).
+- Goldens: `tools/golden.sh verify`: 198 of 198 hashes match after
+  rebaselining the 119 battle and Training scenes (wallpaper pixels move
+  1–2 LSB, at most 9); deepest game stack 312,584 bytes
+  (`f1-vs-sudden-death`).
 - PPSSPP smoke test (`tools/run-ppsspp.sh`): runs clean.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1: the production PRX
   ran the attract loop for four minutes without an exception; `profile`
@@ -57,6 +58,8 @@ no code:
   builds against `91323e8` (RE-485); stall-interval builds against
   `2960b58` (RE-486); compacted-hot-path builds, both link orders,
   against RE-487; outlined `draw_stage_links` against `f0f4ed6`
-  (RE-488); textures-off diagnostic against `3dca012` (RE-489).
+  (RE-488); textures-off diagnostic against `3dca012` (RE-489);
+  per-category `texture_probe` and wallpaper-strip builds against
+  `8650b0b` (RE-490).
 - ROMs: `rom/Super Smash Bros. (USA).z64` and
   `refs/ssb-decomp-re/baserom.us.z64`, SHA-1 `e2929e10…`.

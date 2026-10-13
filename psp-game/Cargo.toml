@@ -44,6 +44,10 @@ audio_dump = ["ssb-psp-runtime/audio_dump"]
 # Boots without the audio system (no thread, every sound call a no-op), for
 # A/B profiling against the default build.
 no_audio = []
+# Texturing off by category or texture from `texoff.txt`, and a census of
+# the bound textures in `texprobe.log` (`ssb_psp_runtime::texprobe`,
+# RE-490). Diagnostic only.
+texture_probe = ["ssb-psp-runtime/texture_probe"]
 # Writes each finished frame's pixel hash to stdout (`fhash` lines), for
 # frame-by-frame A/B runs of two builds under PPSSPPHeadless (RE-476).
 frame_hash = []
