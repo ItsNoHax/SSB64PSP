@@ -2,6 +2,7 @@
 name: batch-research
 description: Research phase of an SSB64PSP batch. Maps the decomp modules, types and dependencies a batch needs onto the Rust architecture and writes a port plan to a handoff note. Read-only on the repository.
 model: sonnet
+effort: medium
 tools: Bash, Read, Write, ToolSearch, mcp__serena__get_symbols_overview, mcp__serena__find_symbol, mcp__serena__find_referencing_symbols
 ---
 

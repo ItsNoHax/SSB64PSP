@@ -35,6 +35,26 @@ the plan (crash, hardware fault, performance) uses the same phases:
 start a new agent with its handoff note rather than continuing it with
 `SendMessage`; continuing re-bills its whole context.
 
+### Model routing
+
+Each phase agent sets its model and effort in `.claude/agents/`; other
+subagents default to Sonnet (`CLAUDE_CODE_SUBAGENT_MODEL`). Orchestrating
+needs no Opus: start the orchestrating session on Sonnet. Spend Opus only
+where a weaker model causes rework:
+
+- A mechanical batch (data or constant tables, straight ports of small
+  modules with no new types or control flow) runs `batch-implement` with
+  `model: "sonnet"`. If it leaves failures in the handoff, or validate
+  fails, rerun it with no model override (Opus).
+- A validate failure that needs diagnosis goes to `batch-implement` on
+  Opus, never to a second validate run.
+- Read-only lookups use `Explore` (Haiku), which has a 200K window: give
+  it one narrow question, not a batch.
+
+Before changing a phase's model, compare one batch's per-agent cost in
+`tools/token-report.py`; a cheaper phase that causes Opus rework costs
+more.
+
 A running session keeps the skill text it already loaded and the
 settings it started with (`autoCompactWindow` included). After a change
 to `.claude/settings.json` or a skill, tell the user to restart the

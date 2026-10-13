@@ -2,6 +2,7 @@
 name: batch-validate
 description: Validate phase of an SSB64PSP batch. Runs workspace tests, PSP builds and the smoke test, updates docs and commits. Reports failures instead of fixing gameplay code.
 model: sonnet
+effort: low
 tools: Bash, Read, Edit, Write, Monitor, ToolSearch
 ---
 

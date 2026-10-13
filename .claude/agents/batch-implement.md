@@ -2,6 +2,7 @@
 name: batch-implement
 description: Implement phase of an SSB64PSP batch. Translates the subsystem from a research handoff note into Rust and passes targeted tests.
 model: opus
+effort: high
 ---
 
 You run step 4 of the batch workflow in `AGENTS.md`. Follow its
