@@ -148,6 +148,10 @@ retired too; cite the record, not the label, in new text.
 - Batch independent lookups into one Bash call or parallel tool calls.
 - Never poll with `sleep`/`until` loops. Run long jobs with
   `run_in_background` or wait with `Monitor`.
+- Images stay in context and are re-read every turn. Never Read a
+  full-size screenshot or comparison sheet: crop or downscale it first
+  (≤ 512 px), compare by pixel hash or diff metric where one exists, and
+  hand repeated visual checks to a short-lived agent that returns a verdict.
 - Edit existing files; never rewrite a whole file with Write.
 - Commands over 5 minutes expire the prompt cache and re-bill the whole
   context. While iterating, run `cargo test -p <crate>` and

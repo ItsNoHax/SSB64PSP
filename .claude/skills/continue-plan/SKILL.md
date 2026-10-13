@@ -28,5 +28,17 @@ review. Per batch, run the phase agents in order: `batch-research`,
 failure, send the note back to `batch-implement`. Run
 `tools/token-report.py` after each batch.
 
+Never hand batch work to `general-purpose`. A fix or investigation outside
+the plan (crash, hardware fault, performance) uses the same phases:
+`batch-research` to locate the cause, `batch-implement` for the fix,
+`batch-validate` to check and commit. When one agent reports more work,
+start a new agent with its handoff note rather than continuing it with
+`SendMessage`; continuing re-bills its whole context.
+
+A running session keeps the skill text it already loaded and the
+settings it started with (`autoCompactWindow` included). After a change
+to `.claude/settings.json` or a skill, tell the user to restart the
+orchestrating session.
+
 Do not scan unrelated `PLAN.md` sections or evidence the batch does not
 need.
