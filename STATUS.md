@@ -17,17 +17,19 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-495 tested a shadowed, flags-derived render-state table for
-`apply_flags_state`. Of the ~520 GE words it writes a frame in
-`vs4@2400`, only ~90 change, but at ~6 instructions a word the skipped
-writes save less than building and diffing the state key costs. Three
-encodings kept GE state byte-identical, and none ran fewer instructions.
-On a PSP-2000 the best one was ~150 µs a frame slower than HEAD with each
-build relinked to its own searched order, so no code shipped. The A/B
-also showed that a second anneal seed found an order with 3% fewer misses
-that ran 0.6 FPS faster, so the shipped order may have headroom. Next:
-search the shipped audio build's order with several seeds, or the next
-`MS8` lever ([`PLAN.md`](PLAN.md#remaining-work)).
+RE-496 followed up on RE-495's single-seed finding: sixteen anneal seeds
+at 30,000 iterations and twelve more at 90,000, scored against a held-out
+trace, found an order for the shipped audio build 3.7% below HEAD's
+modelled misses (556 fewer a frame). On a `profile,capture_scene_file,
+no_audio` proxy build the best of eight seeds ran 0.90 FPS faster than
+the single-seed method (56.50 vs 55.60 FPS) and hardware ranked all three
+candidate orders exactly as the model did. `psp-game/link-order.txt` now
+ships that order. Returns flattened past ~16 seeds / 90,000 iterations;
+a future re-search after hot code changes size should expect similar, not
+larger, gains. Next: the next `MS8` lever
+([`PLAN.md`](PLAN.md#remaining-work)), or add a trace-replay scorer that
+places blocks at a relinked ELF's real addresses (RE-496 found `layout`'s
+own "as linked" score can't be used to grade a relinked ELF directly).
 
 ## Blockers
 
@@ -39,23 +41,23 @@ search the shipped audio build's order with several seeds, or the next
 
 ## Verification
 
-Baseline after the render-state table experiment (RE-495, no code
-changed):
+Baseline after the link-order multi-seed search (RE-496; only
+`psp-game/link-order.txt` changed):
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,277
   pass. With `SSB64_STUB_TABLES=1` and no ROM: 2,086 pass, 191 ignored;
-  `cargo fmt --check` passes. Clippy was last run at RE-493 (RE-494 and
-  RE-495 changed no workspace code).
+  `cargo fmt --check` passes. Clippy was last run at RE-493 (no workspace
+  code changed since).
 - Both PSP builds (`psp-game`, `psp-asset-viewer`) compile clean in
   release.
-- Goldens: `tools/golden.sh verify --filter '^f1-vs'`: 24 of 24 match
-  (code placement only; all 198 matched at RE-493).
+- Goldens: `tools/golden.sh verify`: 198 of 198 match (pack v109, link
+  order change only — no rendering code changed).
 - PPSSPP smoke test (`tools/run-ppsspp-headless.sh --crate psp-game
   --scene vs4@2400`): runs clean.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1: the production PRX
   ran the attract loop for four minutes without an exception; a chain of
   `profile`/`profile_hw` A/B runs of `vs4@2400` validated each performance
-  change (RE-479, RE-481, RE-482, RE-485 through RE-495). The installed
+  change (RE-479, RE-481, RE-482, RE-485 through RE-496). The installed
   EBOOT and its `ms0:` pack are still v108.
 - ROMs: `rom/Super Smash Bros. (USA).z64` and
   `refs/ssb-decomp-re/baserom.us.z64`, SHA-1 `e2929e10…`.
