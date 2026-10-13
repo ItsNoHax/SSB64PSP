@@ -1,0 +1,267 @@
+diff --git a/Core/MIPS/ICacheSim.h b/Core/MIPS/ICacheSim.h
+new file mode 100644
+index 0000000..0d9d693
+--- /dev/null
++++ b/Core/MIPS/ICacheSim.h
+@@ -0,0 +1,141 @@
++// SSB64PSP: a model of the Allegrex's 16 KB, 2-way, 64-byte-line
++// instruction cache, fed by the IR interpreter's executed blocks (`--ir`).
++// Env: PPSSPP_ICACHE=path (dump at shutdown), PPSSPP_ICACHE_START /
++// PPSSPP_ICACHE_STOP (emulated seconds, the counting window).
++#pragma once
++
++#include <cstdio>
++#include <cstdlib>
++#include <unistd.h>
++#include <unordered_map>
++#include "Common/CommonTypes.h"
++#include "Core/CoreTiming.h"
++#include "Core/MIPS/MIPS.h"
++
++struct ICacheSimState {
++	int enabled = -1;
++	u64 start = 0, stop = ~0ULL;
++	u32 tags[128][2];
++	u8 lru[128];  // way to evict next
++	u64 misses = 0, fetches = 0, blocks = 0;
++	u64 firstTick = 0, lastTick = 0;
++	std::unordered_map<u32, u64> missHist;   // line -> misses
++	std::unordered_map<u32, u64> fetchHist;  // line -> line fetches
++	// PPSSPP_ICACHE_PHASE=hex: a function's entry; misses between its entry
++	// and its return go to the phase counts (frames = its calls).
++	u32 phaseEntry = 0, phaseRet = 0;
++	bool inPhase = false;
++	u64 frames = 0, phaseMisses = 0, phaseFetches = 0;
++	std::unordered_map<u32, u64> phaseMissHist;
++	// PPSSPP_ICACHE_TRACE=path: the first PPSSPP_ICACHE_TRACE_N blocks of the
++	// window as (addr, words | phase << 16) words; dumps and exits when full.
++	FILE *trace = nullptr;
++	u64 traceLeft = 0;
++};
++
++inline ICacheSimState g_icache;
++
++inline bool ICacheSimEnabled() {
++	if (g_icache.enabled < 0) {
++		g_icache.enabled = getenv("PPSSPP_ICACHE") ? 1 : 0;
++		if (getenv("PPSSPP_ICACHE_START"))
++			g_icache.start = (u64)usToCycles((s64)(atof(getenv("PPSSPP_ICACHE_START")) * 1e6));
++		if (getenv("PPSSPP_ICACHE_STOP"))
++			g_icache.stop = (u64)usToCycles((s64)(atof(getenv("PPSSPP_ICACHE_STOP")) * 1e6));
++		if (getenv("PPSSPP_ICACHE_TRACE")) {
++			g_icache.trace = fopen(getenv("PPSSPP_ICACHE_TRACE"), "wb");
++			g_icache.traceLeft = getenv("PPSSPP_ICACHE_TRACE_N") ? strtoull(getenv("PPSSPP_ICACHE_TRACE_N"), nullptr, 10) : 1000000;
++		}
++		if (getenv("PPSSPP_ICACHE_PHASE"))
++			g_icache.phaseEntry = (u32)strtoul(getenv("PPSSPP_ICACHE_PHASE"), nullptr, 16);
++		for (int i = 0; i < 128; i++) {
++			g_icache.tags[i][0] = g_icache.tags[i][1] = 0xFFFFFFFF;
++			g_icache.lru[i] = 0;
++		}
++	}
++	return g_icache.enabled == 1;
++}
++
++inline void ICacheSimBlock(u32 addr, u32 words) {
++	ICacheSimState &c = g_icache;
++	u64 t = CoreTiming::GetTicks();
++	bool count = t >= c.start && t < c.stop;
++	if (c.phaseEntry) {
++		if (c.inPhase && addr == c.phaseRet) {
++			c.inPhase = false;
++		} else if (!c.inPhase && addr == c.phaseEntry) {
++			c.inPhase = true;
++			c.phaseRet = currentMIPS->r[31];
++			if (count)
++				c.frames++;
++		}
++	}
++	if (count) {
++		if (c.blocks == 0)
++			c.firstTick = t;
++		c.lastTick = t;
++		c.blocks++;
++	}
++	if (count && c.trace) {
++		u32 rec[2] = { addr, words | (c.inPhase ? 0x10000u : 0u) };
++		fwrite(rec, sizeof(rec), 1, c.trace);
++		if (--c.traceLeft == 0) {
++			fclose(c.trace);
++			c.trace = nullptr;
++			void ICacheSimDump();
++			ICacheSimDump();
++			fflush(stdout);
++			_exit(0);
++		}
++	}
++	u32 first = (addr & 0x3FFFFFFF) >> 6;
++	u32 last = ((addr & 0x3FFFFFFF) + (words ? words * 4 - 1 : 0)) >> 6;
++	for (u32 line = first; line <= last; line++) {
++		u32 set = line & 127;
++		u32 tag = line;
++		int way;
++		bool hit = true;
++		if (c.tags[set][0] == tag) way = 0;
++		else if (c.tags[set][1] == tag) way = 1;
++		else {
++			hit = false;
++			way = c.lru[set];
++			c.tags[set][way] = tag;
++		}
++		c.lru[set] = (u8)(way ^ 1);
++		if (count) {
++			c.fetches++;
++			c.fetchHist[line << 6]++;
++			if (c.inPhase)
++				c.phaseFetches++;
++			if (!hit) {
++				c.misses++;
++				c.missHist[line << 6]++;
++				if (c.inPhase) {
++					c.phaseMisses++;
++					c.phaseMissHist[line << 6]++;
++				}
++			}
++		}
++	}
++}
++
++inline void ICacheSimDump() {
++	const char *path = getenv("PPSSPP_ICACHE");
++	if (!path || g_icache.enabled != 1)
++		return;
++	FILE *f = fopen(path, "w");
++	if (!f)
++		return;
++	fprintf(f, "# ticks %llu misses %llu fetches %llu blocks %llu frames %llu phase_misses %llu phase_fetches %llu\n",
++		(unsigned long long)(g_icache.lastTick - g_icache.firstTick), (unsigned long long)g_icache.misses,
++		(unsigned long long)g_icache.fetches, (unsigned long long)g_icache.blocks, (unsigned long long)g_icache.frames,
++		(unsigned long long)g_icache.phaseMisses, (unsigned long long)g_icache.phaseFetches);
++	for (auto &kv : g_icache.fetchHist) {
++		auto m = g_icache.missHist.find(kv.first);
++		auto pm = g_icache.phaseMissHist.find(kv.first);
++		fprintf(f, "%08x %llu %llu %llu\n", kv.first, (unsigned long long)(m == g_icache.missHist.end() ? 0 : m->second),
++			(unsigned long long)kv.second, (unsigned long long)(pm == g_icache.phaseMissHist.end() ? 0 : pm->second));
++	}
++	fclose(f);
++}
+diff --git a/Core/MIPS/IR/IRFrontend.cpp b/Core/MIPS/IR/IRFrontend.cpp
+index c25660a..ada7ef9 100644
+--- a/Core/MIPS/IR/IRFrontend.cpp
++++ b/Core/MIPS/IR/IRFrontend.cpp
+@@ -29,6 +29,7 @@
+ #include "Core/MIPS/IR/IRPassSimplify.h"
+ #include "Core/MIPS/IR/IRInterpreter.h"
+ #include "Core/MIPS/MIPSTracer.h"
++#include "Core/MIPS/ICacheSim.h"
+ 
+ #include <iterator>
+ 
+@@ -301,7 +302,7 @@ void IRFrontend::DoJit(u32 em_address, std::vector<IRInst> &instructions, u32 &m
+ 		//	logBlocks = 1;
+ 	}
+ 
+-	if (!mipsTracer.tracing_enabled) {
++	if (!mipsTracer.tracing_enabled && !ICacheSimEnabled()) {
+ 		instructions = code->GetInstructions();
+ 	}
+ 	else {
+@@ -309,7 +310,8 @@ void IRFrontend::DoJit(u32 em_address, std::vector<IRInst> &instructions, u32 &m
+ 		instructions.reserve(block_instructions.size() + 2); // +2 for Downcount and LogIRBlock
+ 		// The first instruction is "Downcount"
+ 		instructions.push_back(block_instructions.front());
+-		instructions.push_back({ IROp::LogIRBlock, {0}, 0, 0, 0 });
++		u32 words = mipsBytes / 4;
++		instructions.push_back({ IROp::LogIRBlock, {(u8)(words & 0xFF)}, (u8)((words >> 8) & 0xFF), 0, em_address });
+ 		std::copy(block_instructions.begin() + 1, block_instructions.end(), std::back_inserter(instructions));
+ 	}
+ 
+diff --git a/Core/MIPS/IR/IRInterpreter.cpp b/Core/MIPS/IR/IRInterpreter.cpp
+index ac8bd08..f1eac94 100644
+--- a/Core/MIPS/IR/IRInterpreter.cpp
++++ b/Core/MIPS/IR/IRInterpreter.cpp
+@@ -27,6 +27,7 @@
+ #include "Core/MIPS/IR/IRInterpreter.h"
+ #include "Core/System.h"
+ #include "Core/MIPS/MIPSTracer.h"
++#include "Core/MIPS/ICacheSim.h"
+ 
+ #if PPSSPP_ARCH(ARM64)
+ 
+@@ -1297,6 +1298,8 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst) {
+ 		case IROp::LogIRBlock:
+ 			if (mipsTracer.tracing_enabled) {
+ 				mipsTracer.executed_blocks.push_back(inst->constant);
++			} else {
++				ICacheSimBlock(inst->constant, (u32)inst->dest | ((u32)inst->src1 << 8));
+ 			}
+ 			break;
+ 
+diff --git a/Core/System.cpp b/Core/System.cpp
+index 69d3dbf..2f5dabd 100644
+--- a/Core/System.cpp
++++ b/Core/System.cpp
+@@ -46,6 +46,7 @@
+ #include "Core/MemFault.h"
+ #include "Core/HDRemaster.h"
+ #include "Core/MIPS/MIPS.h"
++#include "Core/MIPS/ICacheSim.h"
+ #include "Core/MIPS/MIPSAnalyst.h"
+ #include "Core/MIPS/MIPSVFPUUtils.h"
+ #include "Core/Debugger/SymbolMap.h"
+@@ -276,6 +277,38 @@ static void ShowCompatWarnings(const Compatibility &compat) {
+ extern const std::string INDEX_FILENAME;
+ 
+ // NOTE: The loader has already been fully resolved (ResolveFileLoaderTarget) and identified here.
++// ---- SSB64PSP guest sampling profiler (env PPSSPP_GUEST_PROFILE=path) ----
++#include <cstdio>
++#include <cstdlib>
++#include <unordered_map>
++#include "Core/MIPS/MIPS.h"
++static int g_guestProfEvent = -1;
++static std::unordered_map<uint64_t, uint32_t> g_guestProfHist;
++static int g_guestProfInterval = 2000;
++static void GuestProfSample(u64 userdata, int cyclesLate) {
++	uint64_t key = ((uint64_t)currentMIPS->r[31] << 32) | currentMIPS->pc;
++	g_guestProfHist[key]++;
++	CoreTiming::ScheduleEvent(g_guestProfInterval, g_guestProfEvent, 0);
++}
++static void GuestProfInit() {
++	if (!getenv("PPSSPP_GUEST_PROFILE")) return;
++	if (getenv("PPSSPP_GUEST_PROFILE_INTERVAL")) g_guestProfInterval = atoi(getenv("PPSSPP_GUEST_PROFILE_INTERVAL"));
++	g_guestProfHist.clear();
++	g_guestProfEvent = CoreTiming::RegisterEvent("GuestProf", GuestProfSample);
++	CoreTiming::ScheduleEvent(g_guestProfInterval, g_guestProfEvent, 0);
++}
++void GuestProfDump() {
++	const char *path = getenv("PPSSPP_GUEST_PROFILE");
++	if (!path || g_guestProfHist.empty()) return;
++	FILE *f = fopen(path, "w");
++	if (!f) return;
++	for (auto &kv : g_guestProfHist)
++		fprintf(f, "%08x %08x %u\n", (uint32_t)kv.first, (uint32_t)(kv.first >> 32), kv.second);
++	fclose(f);
++	g_guestProfHist.clear();
++}
++// ---- end profiler ----
++
+ static bool CPU_Init(FileLoader *fileLoader, IdentifiedFileType type, std::string *errorString) {
+ 	// Default memory settings
+ 	// Seems to be the safest place currently..
+@@ -436,6 +469,7 @@ static bool CPU_Init(FileLoader *fileLoader, IdentifiedFileType type, std::strin
+ 	mipsr4k.Reset();
+ 
+ 	CoreTiming::Init();
++	GuestProfInit();
+ 
+ 	DisplayHWInit();
+ 
+@@ -533,6 +567,8 @@ void CPU_Shutdown(bool success) {
+ 
+ 	Replacement_Shutdown();
+ 
++	GuestProfDump();
++	ICacheSimDump();
+ 	CoreTiming::Shutdown();
+ 	__KernelShutdown();
+ 	HLEShutdown();

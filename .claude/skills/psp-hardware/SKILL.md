@@ -210,6 +210,14 @@ frame. An unattended PSP auto-sleeps under a game that gets no input:
 `profile` builds call `scePowerTick` every frame, other builds do not
 (RE-481).
 
+The counters say how many misses, not where. For per-function I-cache
+misses, use the cache model in a local PPSSPP build
+(`tools/icache/ppsspp-icache.patch`, run with `--ir`; it is 86% of the
+PSP-2000's count in VS) and `tools/icache/*.py`, then confirm on the PSP
+with `profile_hw` (RE-482). `psp-game` links through `tools/psp-link.py`,
+which places `psp-game/link-order.txt`'s functions first. Regenerate that
+file with `tools/icache/order.py` when the draw code changes much.
+
 ### Native frame evidence
 
 ```bash

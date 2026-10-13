@@ -17,12 +17,12 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-The PSP's hardware counters are read per span (`profile_hw`, through
-ARK's `KUBridge`, RE-481). Four-player VS on the PSP-2000 spends 55% of
-its cycles in memory stalls and a tenth in load-use and FPU stalls; the
-draw takes 22,900 I-cache misses a frame against 6,800 D-cache misses,
-and writes 20,300 uncached stores. Next: find the code behind the draw's
-I-cache misses, then the magnifier masks and the uncached list
+The draw's I-cache misses are located (RE-482): a cache model in PPSSPP
+puts three quarters of them in the per-mesh path of
+`draw_object_posed_nodes`, 14.7 KB a pass scattered through ~60 KB of
+code. `psp-game` links those functions first (`tools/psp-link.py`):
+draw misses −8%, draw −0.5 ms on the PSP-2000. Next: the magnifier depth
+masks, then the uncached list, then compacting the per-mesh hot path
 ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
@@ -35,7 +35,7 @@ I-cache misses, then the magnifier masks and the uncached list
 
 ## Verification
 
-Baseline after the audio batch:
+Baseline after the I-cache batch:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,267
   pass. With `SSB64_STUB_TABLES=1` and no ROM: 2,076 pass, 191 ignored.
@@ -53,6 +53,7 @@ Baseline after the audio batch:
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1: the production PRX
   ran the attract loop for four minutes without an exception; `profile`
   A/B runs with and without `no_audio` (RE-479); a `profile_hw` run of
-  `vs4@2400`, 19 reports (RE-481).
+  `vs4@2400`, 19 reports (RE-481); function-ordered and `opt-level s`
+  `profile_hw` runs of `vs4@2400` (RE-482).
 - ROMs: `rom/Super Smash Bros. (USA).z64` and
   `refs/ssb-decomp-re/baserom.us.z64`, SHA-1 `e2929e10…`.

@@ -2,7 +2,11 @@
 # `memset` in place of the `psp` crate's byte loops (RE-471). Here rather
 # than in a build script: `cargo psp` names the EBOOT after the binary once
 # a package has more than one executable target, and a build script is one.
+#
+# `tools/psp-link.py` runs `rust-lld` with `link-order.txt`'s hot functions
+# placed first, for the instruction cache (RE-482).
 [target.mipsel-sony-psp]
+linker = "../tools/psp-link.py"
 rustflags = [
     "-C", "link-arg=--wrap=memcpy",
     "-C", "link-arg=--wrap=memmove",
