@@ -5,6 +5,8 @@
 //! `psp-game`; must never be depended on by `ssb-engine`, `ssb-rom`, or
 //! `ssb-game` themselves.
 #![no_std]
+// `psp::vfpu_asm!` expands to `asm!` for MIPS (`meshdraw`'s model matrix).
+#![feature(asm_experimental_arch)]
 
 extern crate alloc;
 

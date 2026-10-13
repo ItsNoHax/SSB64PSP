@@ -2279,21 +2279,40 @@ unsafe fn draw_object_posed_nodes(
     tris
 }
 
-/// `base * local` for the GE's column-major model matrix: column `j` is
-/// `base`'s columns weighted by `local`'s column `j`, summed in order, as
-/// `sceGumMultMatrix` does.
+/// `base * local` for the GE's column-major model matrix, with the VFPU's
+/// `vmmul.q` in the operand order `sceGumMultMatrix` uses.
+///
+/// It loads, multiplies and stores in banks 5–7 directly, without
+/// `vfpu_context`: `sceGum*` keeps its state in banks 0–3 and `psp::math`
+/// uses only bank 0, so nothing else in the thread holds these, and the
+/// kernel saves the whole VFPU on a switch between `VFPU` threads.
+/// `ScePspFMatrix4` is 16-byte aligned, as `lv.q`/`sv.q` need.
+#[inline(always)]
 fn compose_model_matrix(base: &ScePspFMatrix4, local: &ScePspFMatrix4) -> ScePspFMatrix4 {
-    let column = |c: &ScePspFVector4| ScePspFVector4 {
-        x: base.x.x * c.x + base.y.x * c.y + base.z.x * c.z + base.w.x * c.w,
-        y: base.x.y * c.x + base.y.y * c.y + base.z.y * c.z + base.w.y * c.w,
-        z: base.x.z * c.x + base.y.z * c.y + base.z.z * c.z + base.w.z * c.w,
-        w: base.x.w * c.x + base.y.w * c.y + base.z.w * c.z + base.w.w * c.w,
-    };
-    ScePspFMatrix4 {
-        x: column(&local.x),
-        y: column(&local.y),
-        z: column(&local.z),
-        w: column(&local.w),
+    let mut out = core::mem::MaybeUninit::<ScePspFMatrix4>::uninit();
+    // SAFETY: all three pointers are valid, 16-byte aligned 64-byte
+    // matrices; the banks written are owned by no other code (see above).
+    unsafe {
+        psp::vfpu_asm!(
+            "lv.q C500,  0({base})",
+            "lv.q C510, 16({base})",
+            "lv.q C520, 32({base})",
+            "lv.q C530, 48({base})",
+            "lv.q C600,  0({local})",
+            "lv.q C610, 16({local})",
+            "lv.q C620, 32({local})",
+            "lv.q C630, 48({local})",
+            "vmmul.q M700, M500, M600",
+            "sv.q C700,  0({dst})",
+            "sv.q C710, 16({dst})",
+            "sv.q C720, 32({dst})",
+            "sv.q C730, 48({dst})",
+            base = in(reg) base,
+            local = in(reg) local,
+            dst = in(reg) (out.as_mut_ptr()),
+            options(nostack),
+        );
+        out.assume_init()
     }
 }
 
@@ -2449,7 +2468,7 @@ unsafe fn draw_node_mesh(
                                 &pose.insert((source_node, ssb_rom::pack::CachedVertexPose::new(inverse, source))).1
                             }
                         };
-                        poser.pose(source_vertex, binding)
+                        poser.pose_with_sqrt(source_vertex, binding, fpu_sqrt)
                     }
                     _ => source_vertex,
                 };
@@ -2470,6 +2489,18 @@ unsafe fn draw_node_mesh(
         }
     }
     draw_mesh(pack, mesh, st, mat_anim, effect_mat_anim)
+}
+
+/// The FPU's `sqrt.s`: correctly rounded on the PSP-2000 (checked against
+/// exact bounds for 249,001 inputs on hardware), so skinning poses exactly
+/// as `libm`'s software `sqrtf` does, two of which a skinned vertex
+/// otherwise spends most of its time in.
+#[inline(always)]
+fn fpu_sqrt(x: f32) -> f32 {
+    let r: f32;
+    // SAFETY: `sqrt.s` only reads and writes FPU registers.
+    unsafe { core::arch::asm!("sqrt.s {0}, {1}", out(freg) r, in(freg) x, options(pure, nomem, nostack)) };
+    r
 }
 
 /// Bounding box of a whole object, in the pack's normalised units.

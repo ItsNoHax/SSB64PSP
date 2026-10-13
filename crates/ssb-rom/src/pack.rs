@@ -557,7 +557,20 @@ impl CachedVertexPose {
     }
 
     /// One vertex, as [`pose_cached_vertex`] poses it.
-    pub fn pose(&self, mut vertex: PackedVertex, binding: &[u8]) -> PackedVertex {
+    pub fn pose(&self, vertex: PackedVertex, binding: &[u8]) -> PackedVertex {
+        self.pose_with_sqrt(vertex, binding, libm::sqrtf)
+    }
+
+    /// [`Self::pose`] with the caller's square root, which must round
+    /// correctly as `libm::sqrtf` does so the result is bit-identical: the
+    /// PSP passes its FPU's `sqrt.s` instead of `libm`'s software one.
+    #[inline(always)]
+    pub fn pose_with_sqrt(
+        &self,
+        mut vertex: PackedVertex,
+        binding: &[u8],
+        sqrt: impl Fn(f32) -> f32,
+    ) -> PackedVertex {
         let pos = [2, 4, 6].map(|i| i16::from_le_bytes([binding[i], binding[i + 1]]) as f32);
         let round = |c: f32| (if c < 0.0 { c - 0.5 } else { c + 0.5 }) as i16;
         let p = self.relative.transform_point(pos).map(round);
@@ -569,8 +582,8 @@ impl CachedVertexPose {
             let n = [vertex.nx as f32, vertex.ny as f32, vertex.nz as f32];
             let transformed =
                 [0, 4, 8].map(|i| inv.0[i] * n[0] + inv.0[i + 1] * n[1] + inv.0[i + 2] * n[2]);
-            let length = libm::sqrtf(transformed.iter().map(|v| v * v).sum());
-            let original = libm::sqrtf(n.iter().map(|v| v * v).sum());
+            let length = sqrt(transformed.iter().map(|v| v * v).sum());
+            let original = sqrt(n.iter().map(|v| v * v).sum());
             if length > 0.0 {
                 let n = transformed.map(|v| {
                     round(v * original / length).clamp(i8::MIN as i16, i8::MAX as i16) as i8
@@ -5602,6 +5615,40 @@ mod tests {
             Mat4::IDENTITY,
         );
         assert_eq!(unchanged.nx, -128);
+    }
+
+    /// Any correctly rounded square root poses bit-identically to
+    /// `libm`'s, which is what lets the PSP pass its FPU's `sqrt.s`.
+    #[test]
+    fn pose_with_a_correctly_rounded_sqrt_matches_pose() {
+        use crate::scene::Mat4;
+        let current = Mat4::from_trs([0.3, -0.1, 0.2], [0.4, -1.1, 0.7], [1.0, 1.3, 0.8]);
+        let source = Mat4::from_trs([-0.2, 0.25, 0.1], [-0.9, 0.35, 2.1], [0.9, 1.1, 1.2]);
+        let poser = CachedVertexPose::new(current.inverse_affine().unwrap(), source);
+        // f64's square root rounded to f32 is the correctly rounded f32 one.
+        let sqrt = |x: f32| (x as f64).sqrt() as f32;
+        let mut seed = 0x2545_f491u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            seed
+        };
+        for _ in 0..20_000 {
+            let r = next();
+            let v = PackedVertex {
+                nx: r as i8,
+                ny: (r >> 8) as i8,
+                nz: (r >> 16) as i8,
+                ..Default::default()
+            };
+            let mut binding = [0u8; 8];
+            binding[2..8].copy_from_slice(&next().to_le_bytes()[..4].repeat(2)[..6]);
+            let a = poser.pose(v, &binding);
+            let b = poser.pose_with_sqrt(v, &binding, sqrt);
+            assert_eq!(
+                [a.x, a.y, a.z, a.nx as i16, a.ny as i16, a.nz as i16],
+                [b.x, b.y, b.z, b.nx as i16, b.ny as i16, b.nz as i16]
+            );
+        }
     }
 
     #[test]
