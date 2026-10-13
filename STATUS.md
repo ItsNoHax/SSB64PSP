@@ -17,15 +17,15 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Outlined `draw_stage_links` (RE-488): its inlined controller-object and
-Arwing posing, the uncached-layer path and an unrolled link-range fold
-made it 13.6 KB; the battle's per-link loop now keeps only the cached
-layer path (880 bytes). PSP-2000 draw time is down 1.7% (221 µs, 446
-fewer I-misses a frame) on `vs4@2400` without audio, 41.9 FPS. Next:
-the per-mesh GE state, so a draw pass touches well under 16 KB of code,
-or `draw_magnifiers`/`draw_training`, which share the pass; then the
-GE's main-memory reads (texture residency, CLUT formats) measured by the
-CPU's memory stalls ([`PLAN.md`](PLAN.md#remaining-work)).
+Measured where four-player VS's CPU time goes next (RE-489). The GE's
+texel reads from main RAM cost the CPU 2.2 ms of memory stall a frame
+on a PSP-2000 (`vs4@2400` without audio, textures off: 42.0 → 48.5
+FPS). That is the largest measured lever. The rest of the shared draw
+pass costs under 1% of its I-cache misses, and `#[optimize(size)]` on
+the per-mesh path is worse. Next: which textures carry the texel
+traffic, and what VRAM can hold them: the frozen picture's 512 KiB
+photo outside its scenes; 16-bit colour buffers would change every
+golden and need a decision ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
 
@@ -37,7 +37,8 @@ CPU's memory stalls ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Verification
 
-Baseline after outlining `draw_stage_links` (RE-488):
+Baseline after outlining `draw_stage_links` (RE-488); RE-489 changed
+no code:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,275
   pass. With `SSB64_STUB_TABLES=1` and no ROM: 2,084 pass, 191 ignored;
@@ -56,6 +57,6 @@ Baseline after outlining `draw_stage_links` (RE-488):
   builds against `91323e8` (RE-485); stall-interval builds against
   `2960b58` (RE-486); compacted-hot-path builds, both link orders,
   against RE-487; outlined `draw_stage_links` against `f0f4ed6`
-  (RE-488).
+  (RE-488); textures-off diagnostic against `3dca012` (RE-489).
 - ROMs: `rom/Super Smash Bros. (USA).z64` and
   `refs/ssb-decomp-re/baserom.us.z64`, SHA-1 `e2929e10…`.
