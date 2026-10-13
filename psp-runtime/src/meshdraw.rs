@@ -598,6 +598,12 @@ impl DrawState {
             },
         };
         sys::sceGumStoreMatrix(&mut m);
+        self.set_model_matrix(m);
+    }
+
+    /// Records `m` as the model matrix just loaded, like
+    /// [`Self::note_model_matrix`] for a matrix composed off `gum`'s stack.
+    pub fn set_model_matrix(&mut self, m: ScePspFMatrix4) {
         self.texgen_model = Some(m);
         // The matrix is part of the generated-coordinate mapping, so a node
         // change has to reinstall it even when nothing else about the
@@ -644,19 +650,6 @@ impl DrawState {
     }
 }
 
-fn mip_level(level: usize) -> sys::MipmapLevel {
-    match level {
-        0 => sys::MipmapLevel::None,
-        1 => sys::MipmapLevel::Level1,
-        2 => sys::MipmapLevel::Level2,
-        3 => sys::MipmapLevel::Level3,
-        4 => sys::MipmapLevel::Level4,
-        5 => sys::MipmapLevel::Level5,
-        6 => sys::MipmapLevel::Level6,
-        _ => sys::MipmapLevel::Level7,
-    }
-}
-
 /// Bits per texel, matching `ssb_rom::psp_texture::Psm::bits`.
 fn psm_bits(psm: TexturePixelFormat) -> usize {
     match psm {
@@ -690,27 +683,7 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
     // filled in by `Gpu::request_transition_capture` the first time the LB
     // "loading transition" system starts.
     if t.role == TextureDesc::ROLE_FRAMEBUFFER {
-        sys::sceGuEnable(GuState::Texture2D);
-        let psm = psm_of(t.psm);
-        sys::sceGuTexMode(psm, 0, 0, 0);
-        let data = crate::gu::transition_photo_data();
-        // Matches the general path below: the buffer width is `t.stride`,
-        // the declared size is `ge_texture_dims`, and `sceGuTexScale`'s
-        // denominators must be exactly what was handed to `sceGuTexImage`.
-        let (w, h) = ssb_rom::psp_texture::ge_texture_dims(t.width as u32, t.height as u32);
-        sys::sceGuTexImage(
-            mip_level(0),
-            w as i32,
-            h as i32,
-            t.stride as i32,
-            data.as_ptr() as *const c_void,
-        );
-        sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
-        // Coordinate scaling and offset are *not* set here; see
-        // `apply_texture_mapping`. Clamped: the vertices address the whole
-        // photo (RE-464), and the capture repeats its last column and row
-        // into the padding the filter reaches at the right and bottom.
-        sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
+        bind_transition_photo(t);
         return;
     }
 
@@ -750,39 +723,27 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
 
     // RE-127: SSB64 uses G_TL_TILE for every real texture-state command,
     // selecting tile 0 rather than RDP LOD/mipmap blending. Keep generated
-    // lower levels in old packs harmless, but never let GE auto-select them.
-    let top = 0;
-    sys::sceGuTexMode(psm, top as i32, 0, t.swizzled as i32);
-    let mut offset = 0usize;
-    let mut w = (t.width as u32).next_power_of_two();
-    let mut h = (t.height as u32).next_power_of_two();
-    for level in 0..=top {
-        // RE-319: rows are stored at least 16 bytes wide, the GE's minimum
-        // buffer row, so the buffer width can exceed the declared width.
-        let bufw = if level == 0 {
-            t.stride as u32
-        } else {
-            ssb_rom::psp_texture::ge_buffer_stride(w, psm_bits(psm))
-        };
-        let stride_bytes = (bufw as usize * psm_bits(psm)).div_ceil(8);
-        let size = stride_bytes * h as usize;
-        let Some(slice) = data.get(offset..offset + size) else {
-            break;
-        };
+    // lower levels in old packs harmless, but never let GE auto-select them:
+    // only level 0 is ever given to the GE.
+    sys::sceGuTexMode(psm, 0, 0, t.swizzled as i32);
+    let w = (t.width as u32).next_power_of_two();
+    let h = (t.height as u32).next_power_of_two();
+    // RE-319: rows are stored at least 16 bytes wide, the GE's minimum
+    // buffer row, so the buffer width can exceed the declared width.
+    let bufw = t.stride as u32;
+    let size = (bufw as usize * psm_bits(psm)).div_ceil(8) * h as usize;
+    if let Some(slice) = data.get(..size) {
         // RE-314: the buffer keeps its full stride, but the declared size
         // is capped at 512 -- a 1024 dimension would encode as log2 15 and
         // sample far past this texture's bytes into its pack neighbours.
         let (ge_w, ge_h) = ssb_rom::psp_texture::ge_texture_dims(w, h);
         sys::sceGuTexImage(
-            mip_level(level),
+            sys::MipmapLevel::None,
             ge_w as i32,
             ge_h as i32,
             bufw as i32,
             slice.as_ptr() as *const c_void,
         );
-        offset += size;
-        w = (w / 2).max(1);
-        h = (h / 2).max(1);
     }
     // The texture function is *not* set here (it used to be, always
     // `Modulate`): `apply_material`'s per-primitive `TEXTURE_BLEND` handling
@@ -829,6 +790,35 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
         wrap_of(t.wrap & TextureDesc::CLAMP_S != 0),
         wrap_of(t.wrap & TextureDesc::CLAMP_T != 0),
     );
+}
+
+/// [`bind_texture`] for the one `ROLE_FRAMEBUFFER` texture: the transition
+/// photo. Out of line and cold, apart from the per-mesh path for the
+/// instruction cache (RE-482).
+#[cold]
+#[inline(never)]
+unsafe fn bind_transition_photo(t: &TextureDesc) {
+    sys::sceGuEnable(GuState::Texture2D);
+    let psm = psm_of(t.psm);
+    sys::sceGuTexMode(psm, 0, 0, 0);
+    let data = crate::gu::transition_photo_data();
+    // Matches `bind_texture`'s general path: the buffer width is `t.stride`,
+    // the declared size is `ge_texture_dims`, and `sceGuTexScale`'s
+    // denominators must be exactly what was handed to `sceGuTexImage`.
+    let (w, h) = ssb_rom::psp_texture::ge_texture_dims(t.width as u32, t.height as u32);
+    sys::sceGuTexImage(
+        sys::MipmapLevel::None,
+        w as i32,
+        h as i32,
+        t.stride as i32,
+        data.as_ptr() as *const c_void,
+    );
+    sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
+    // Coordinate scaling and offset are *not* set here; see
+    // `apply_texture_mapping`. Clamped: the vertices address the whole
+    // photo (RE-464), and the capture repeats its last column and row
+    // into the padding the filter reaches at the right and bottom.
+    sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
 }
 
 /// Installs how the GE turns vertex data into texture coordinates.
@@ -954,7 +944,22 @@ unsafe fn apply_texture_mapping(
         );
         return;
     }
+    install_texgen_matrix(p, st, &t, (w, h), affine);
+}
 
+/// [`apply_texture_mapping`]'s environment-mapped (`G_TEXTURE_GEN`, not
+/// linear) arm: the texture matrix. Out of line and cold: only a minority
+/// of primitives take it, and keeping it apart leaves the per-mesh path's
+/// code compact in the instruction cache (RE-482).
+#[cold]
+#[inline(never)]
+unsafe fn install_texgen_matrix(
+    p: &PrimDesc,
+    st: &DrawState,
+    t: &TextureDesc,
+    (w, h): (u32, u32),
+    affine: ssb_rom::skeleton::UvAffine,
+) {
     let (basis_s, basis_t) = st.texgen_object_basis();
     // RE-226 (R2.1/T2): the GE's raw `Normal` projection mode
     // divides each `GU_NORMAL_8BIT` component by 128 before this matrix ever
@@ -1538,100 +1543,9 @@ unsafe fn draw_mesh_vertices(
         // One submission, kept so a two-tile blend's second pass redraws the
         // exact same vertices (RE-321).
         let submission = if signed_clamp_uv {
-            // N64 authored UVs are signed S10.5. The GE's 16-bit texture
-            // field is *unsigned*, so a negative value such as Fox's -41 is
-            // decoded as 65495 and Clamp samples the far edge across most of
-            // the triangle. Preserve the exact signed value through the GE's
-            // float texture-coordinate format. `apply_texture_mapping` keeps
-            // the same 1024/dimension scale, so divide by the integer path's
-            // 32768 normalisation here and no other state changes.
-            let bytes = p.index_count as usize * core::mem::size_of::<FloatUvVertex>();
-            let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut FloatUvVertex;
-            for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
-                let index = u16::from_le_bytes([raw_index[0], raw_index[1]]) as usize;
-                let source_offset = index * core::mem::size_of::<PackedVertex>();
-                let mut source = verts
-                    .get(source_offset..source_offset + core::mem::size_of::<PackedVertex>())
-                    .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
-                    .unwrap_or_default();
-                if let Some(colors) = effect_colors {
-                    source.color = colors.vertex_color(source.color, p.flags);
-                }
-                dynamic.add(corner).write(FloatUvVertex {
-                    u: source.u as f32 / VERTEX_16BIT_DIVISOR,
-                    v: source.v as f32 / VERTEX_16BIT_DIVISOR,
-                    color: source.color,
-                    nx: source.nx,
-                    ny: source.ny,
-                    nz: source.nz,
-                    _normal_pad: 0,
-                    x: source.x,
-                    y: source.y,
-                    z: source.z,
-                    _tail_pad: 0,
-                });
-            }
-            (
-                FLOAT_UV_VERTEX_FORMAT,
-                core::ptr::null(),
-                dynamic as *const c_void,
-            )
+            expand_float_uv_corners(&p, indices, verts, effect_colors)
         } else if effect_colors.is_some() || linear_texgen {
-            // `sceGuGetMemory` allocates from the current display-list arena,
-            // whose lifetime already matches this asynchronous GE submission.
-            // Expanding the indexed corners avoids mutating shared pack data
-            // or recolouring/regenerating another primitive that reuses one
-            // vertex.
-            //
-            // `texgen_object_basis` and the bound texture's clamp flags are
-            // per-primitive, not per-corner, so both are resolved once here
-            // rather than inside the loop below.
-            let texgen_basis = linear_texgen.then(|| st.texgen_object_basis());
-            let clamp = linear_texgen
-                .then(|| pack.texture(p.texture))
-                .flatten()
-                .map(|t| {
-                    (
-                        t.wrap & TextureDesc::CLAMP_S != 0,
-                        t.wrap & TextureDesc::CLAMP_T != 0,
-                    )
-                })
-                .unwrap_or((false, false));
-
-            let bytes = p.index_count as usize * core::mem::size_of::<PackedVertex>();
-            let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut PackedVertex;
-            for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
-                let index = u16::from_le_bytes([raw_index[0], raw_index[1]]) as usize;
-                let source_offset = index * core::mem::size_of::<PackedVertex>();
-                let mut v = verts
-                    .get(source_offset..source_offset + core::mem::size_of::<PackedVertex>())
-                    .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
-                    .unwrap_or_default();
-                if let Some(colors) = effect_colors {
-                    v.color = colors.vertex_color(v.color, p.flags);
-                }
-                if let Some((basis_s, basis_t)) = texgen_basis {
-                    let (u, uv) = ssb_rom::psp_texture::linear_texgen_uv(
-                        [v.nx, v.ny, v.nz],
-                        basis_s,
-                        basis_t,
-                        p.texgen_scale_s,
-                        p.texgen_scale_t,
-                        p.texgen_origin_s,
-                        p.texgen_origin_t,
-                        clamp.0,
-                        clamp.1,
-                    );
-                    v.u = u;
-                    v.v = uv;
-                }
-                dynamic.add(corner).write(v);
-            }
-            (
-                UNINDEXED_VERTEX_FORMAT,
-                core::ptr::null(),
-                dynamic as *const c_void,
-            )
+            expand_corners(pack, &p, st, indices, verts, effect_colors, linear_texgen)
         } else {
             (
                 VERTEX_FORMAT,
@@ -1668,6 +1582,130 @@ unsafe fn draw_mesh_vertices(
 
     st.triangles += tris;
     tris
+}
+
+/// [`draw_mesh_vertices`]' `SIGNED_CLAMP_UV` submission: each indexed
+/// corner expanded into display-list memory with float UVs. Out of line and
+/// cold, like [`expand_corners`]: rare primitives, kept apart from the
+/// per-mesh path for the instruction cache (RE-482).
+#[cold]
+#[inline(never)]
+unsafe fn expand_float_uv_corners(
+    p: &PrimDesc,
+    indices: &[u8],
+    verts: &[u8],
+    effect_colors: Option<ssb_rom::skeleton::EffectColors>,
+) -> (VertexType, *const c_void, *const c_void) {
+    // N64 authored UVs are signed S10.5. The GE's 16-bit texture
+    // field is *unsigned*, so a negative value such as Fox's -41 is
+    // decoded as 65495 and Clamp samples the far edge across most of
+    // the triangle. Preserve the exact signed value through the GE's
+    // float texture-coordinate format. `apply_texture_mapping` keeps
+    // the same 1024/dimension scale, so divide by the integer path's
+    // 32768 normalisation here and no other state changes.
+    let bytes = p.index_count as usize * core::mem::size_of::<FloatUvVertex>();
+    let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut FloatUvVertex;
+    for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
+        let index = u16::from_le_bytes([raw_index[0], raw_index[1]]) as usize;
+        let source_offset = index * core::mem::size_of::<PackedVertex>();
+        let mut source = verts
+            .get(source_offset..source_offset + core::mem::size_of::<PackedVertex>())
+            .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
+            .unwrap_or_default();
+        if let Some(colors) = effect_colors {
+            source.color = colors.vertex_color(source.color, p.flags);
+        }
+        dynamic.add(corner).write(FloatUvVertex {
+            u: source.u as f32 / VERTEX_16BIT_DIVISOR,
+            v: source.v as f32 / VERTEX_16BIT_DIVISOR,
+            color: source.color,
+            nx: source.nx,
+            ny: source.ny,
+            nz: source.nz,
+            _normal_pad: 0,
+            x: source.x,
+            y: source.y,
+            z: source.z,
+            _tail_pad: 0,
+        });
+    }
+    (
+        FLOAT_UV_VERTEX_FORMAT,
+        core::ptr::null(),
+        dynamic as *const c_void,
+    )
+}
+
+/// [`draw_mesh_vertices`]' recoloured or linear-texgen submission: each
+/// indexed corner expanded into display-list memory. Out of line and cold:
+/// a minority of primitives take it, and keeping it apart leaves the
+/// per-mesh path's code compact in the instruction cache (RE-482).
+#[cold]
+#[inline(never)]
+unsafe fn expand_corners(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    st: &DrawState,
+    indices: &[u8],
+    verts: &[u8],
+    effect_colors: Option<ssb_rom::skeleton::EffectColors>,
+    linear_texgen: bool,
+) -> (VertexType, *const c_void, *const c_void) {
+    // `sceGuGetMemory` allocates from the current display-list arena,
+    // whose lifetime already matches this asynchronous GE submission.
+    // Expanding the indexed corners avoids mutating shared pack data
+    // or recolouring/regenerating another primitive that reuses one
+    // vertex.
+    //
+    // `texgen_object_basis` and the bound texture's clamp flags are
+    // per-primitive, not per-corner, so both are resolved once here
+    // rather than inside the loop below.
+    let texgen_basis = linear_texgen.then(|| st.texgen_object_basis());
+    let clamp = linear_texgen
+        .then(|| pack.texture(p.texture))
+        .flatten()
+        .map(|t| {
+            (
+                t.wrap & TextureDesc::CLAMP_S != 0,
+                t.wrap & TextureDesc::CLAMP_T != 0,
+            )
+        })
+        .unwrap_or((false, false));
+
+    let bytes = p.index_count as usize * core::mem::size_of::<PackedVertex>();
+    let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut PackedVertex;
+    for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
+        let index = u16::from_le_bytes([raw_index[0], raw_index[1]]) as usize;
+        let source_offset = index * core::mem::size_of::<PackedVertex>();
+        let mut v = verts
+            .get(source_offset..source_offset + core::mem::size_of::<PackedVertex>())
+            .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
+            .unwrap_or_default();
+        if let Some(colors) = effect_colors {
+            v.color = colors.vertex_color(v.color, p.flags);
+        }
+        if let Some((basis_s, basis_t)) = texgen_basis {
+            let (u, uv) = ssb_rom::psp_texture::linear_texgen_uv(
+                [v.nx, v.ny, v.nz],
+                basis_s,
+                basis_t,
+                p.texgen_scale_s,
+                p.texgen_scale_t,
+                p.texgen_origin_s,
+                p.texgen_origin_t,
+                clamp.0,
+                clamp.1,
+            );
+            v.u = u;
+            v.v = uv;
+        }
+        dynamic.add(corner).write(v);
+    }
+    (
+        UNINDEXED_VERTEX_FORMAT,
+        core::ptr::null(),
+        dynamic as *const c_void,
+    )
 }
 
 /// Draws every node of one assembled object.
@@ -2097,99 +2135,30 @@ unsafe fn draw_object_posed_nodes(
             },
         };
         let matrix_t = crate::profile::start_fine();
-        sys::sceGumMatrixMode(sys::MatrixMode::Model);
         let kind48_flat = st.kind48_flat && node.flags & NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED != 0;
-        if node.flags & NodeDesc::FLAG_BILLBOARD != 0 && !kind48_flat {
-            let (pos, mut sx, mut sy) = billboard_place(base, &local);
-            if let Some(scale) = billboard_scales.and_then(|scales| scales.get(i as usize)) {
-                let base_sx = ssb_engine::math::sqrt(
-                    base.x.x * base.x.x + base.x.y * base.x.y + base.x.z * base.x.z,
-                );
-                let base_sy = ssb_engine::math::sqrt(
-                    base.y.x * base.y.x + base.y.y * base.y.y + base.y.z * base.y.z,
-                );
-                sx = base_sx * scale[0];
-                sy = base_sy * scale[1];
-            }
-            sys::sceGumLoadIdentity();
-            sys::sceGumTranslate(&ScePspFVector3 {
-                x: pos[0],
-                y: pos[1],
-                z: pos[2],
-            });
-            // RE-131: under a real (non-identity) view matrix, the object's
-            // own axes must be set to the camera's own right/up/forward for
-            // this to still be screen-aligned -- see `DrawState::
-            // billboard_camera`'s own doc comment for why this was not
-            // needed before. `None` (every mode except the real camera's
-            // own) leaves the basis at whatever `sceGumLoadIdentity` just
-            // set, identical to this code before RE-131.
-            //
-            // RE-132: `Kind48` gets the pitch-locked basis instead of the
-            // fully screen-aligned one -- see `NodeDesc::
-            // FLAG_BILLBOARD_PITCH_LOCKED`'s own doc comment for why this
-            // is the real, reachable transform, not `Kind46`'s.
-            if let Some((right, up)) = st.billboard_camera.map(|bc| {
-                if node.flags & NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED != 0 {
-                    bc.pitch_locked
-                } else {
-                    bc.screen
-                }
-            }) {
-                let forward = [
-                    right[1] * up[2] - right[2] * up[1],
-                    right[2] * up[0] - right[0] * up[2],
-                    right[0] * up[1] - right[1] * up[0],
-                ];
-                sys::sceGumMultMatrix(&ScePspFMatrix4 {
-                    x: ScePspFVector4 {
-                        x: right[0],
-                        y: right[1],
-                        z: right[2],
-                        w: 0.0,
-                    },
-                    y: ScePspFVector4 {
-                        x: up[0],
-                        y: up[1],
-                        z: up[2],
-                        w: 0.0,
-                    },
-                    z: ScePspFVector4 {
-                        x: forward[0],
-                        y: forward[1],
-                        z: forward[2],
-                        w: 0.0,
-                    },
-                    w: ScePspFVector4 {
-                        x: 0.0,
-                        y: 0.0,
-                        z: 0.0,
-                        w: 1.0,
-                    },
-                });
-            }
-            // ROM Kind46 reads rotate.z; kinds 44/48/50 have no spin.
-            // Case 45's rotate.x convention is not used by ROM descriptors.
-            sys::sceGumRotateZ(node.billboard_rest_spin());
-            // Every reachable original billboard case scales Z by the same
-            // signed `gGCScaleX` value as X (`gcPrepDObjMatrix` kinds
-            // 44/46/48/50). This is observable: 16 of the 109 shipped
-            // billboard meshes have a nonzero local Z span. Leaving Z at 1
-            // compressed that authored depth by MODEL_SCALE (RE-144).
-            sys::sceGumScale(&ScePspFVector3 {
-                x: sx,
-                y: sy,
-                z: sx,
-            });
-        } else {
-            sys::sceGumLoadMatrix(base);
-            sys::sceGumMultMatrix(&local);
-        }
-
         // The texgen path folds this node's own transform into the texture
-        // matrix, so it has to be captured after the branch above -- both
-        // arms leave a different matrix on the stack.
-        st.note_model_matrix();
+        // matrix, so it is captured from whichever arm loads it.
+        if node.flags & NodeDesc::FLAG_BILLBOARD != 0 && !kind48_flat {
+            sys::sceGumMatrixMode(sys::MatrixMode::Model);
+            load_billboard_matrix(
+                base,
+                &local,
+                &node,
+                billboard_scales.and_then(|scales| scales.get(i as usize)),
+                st.billboard_camera,
+            );
+            st.note_model_matrix();
+        } else {
+            // `base * local`, composed here instead of on `gum`'s matrix
+            // stack: the stack's VFPU context switches cost the per-node
+            // path more instruction-cache misses than the multiply (RE-482).
+            // Pending `gum` matrices go out first, so a later
+            // `sceGumDrawArray` has nothing left to overwrite this with.
+            let model = compose_model_matrix(base, &local);
+            sys::sceGumUpdateMatrix();
+            sys::sceGuSetMatrix(sys::MatrixMode::Model, &model);
+            st.set_model_matrix(model);
+        }
         crate::profile::stop_fine(crate::profile::Span::NodeMatrix, matrix_t);
         for mesh_index in meshes.into_iter().flatten() {
             let Some(mesh) = pack.mesh(mesh_index) else {
@@ -2204,6 +2173,118 @@ unsafe fn draw_object_posed_nodes(
         }
     }
     tris
+}
+
+/// `base * local` for the GE's column-major model matrix: column `j` is
+/// `base`'s columns weighted by `local`'s column `j`, summed in order, as
+/// `sceGumMultMatrix` does.
+fn compose_model_matrix(base: &ScePspFMatrix4, local: &ScePspFMatrix4) -> ScePspFMatrix4 {
+    let column = |c: &ScePspFVector4| ScePspFVector4 {
+        x: base.x.x * c.x + base.y.x * c.y + base.z.x * c.z + base.w.x * c.w,
+        y: base.x.y * c.x + base.y.y * c.y + base.z.y * c.z + base.w.y * c.w,
+        z: base.x.z * c.x + base.y.z * c.y + base.z.z * c.z + base.w.z * c.w,
+        w: base.x.w * c.x + base.y.w * c.y + base.z.w * c.z + base.w.w * c.w,
+    };
+    ScePspFMatrix4 {
+        x: column(&local.x),
+        y: column(&local.y),
+        z: column(&local.z),
+        w: column(&local.w),
+    }
+}
+
+/// Loads a billboard node's model matrix: [`draw_object_posed_nodes`]'
+/// arm for `NodeDesc::FLAG_BILLBOARD`. Out of line and cold: only sprite
+/// and effect nodes are billboards, and keeping this apart leaves the
+/// per-node path's code compact in the instruction cache (RE-482).
+#[cold]
+#[inline(never)]
+unsafe fn load_billboard_matrix(
+    base: &ScePspFMatrix4,
+    local: &ScePspFMatrix4,
+    node: &NodeDesc,
+    scale: Option<&[f32; 2]>,
+    billboard_camera: Option<BillboardCamera>,
+) {
+    let (pos, mut sx, mut sy) = billboard_place(base, local);
+    if let Some(scale) = scale {
+        let base_sx =
+            ssb_engine::math::sqrt(base.x.x * base.x.x + base.x.y * base.x.y + base.x.z * base.x.z);
+        let base_sy =
+            ssb_engine::math::sqrt(base.y.x * base.y.x + base.y.y * base.y.y + base.y.z * base.y.z);
+        sx = base_sx * scale[0];
+        sy = base_sy * scale[1];
+    }
+    sys::sceGumLoadIdentity();
+    sys::sceGumTranslate(&ScePspFVector3 {
+        x: pos[0],
+        y: pos[1],
+        z: pos[2],
+    });
+    // RE-131: under a real (non-identity) view matrix, the object's
+    // own axes must be set to the camera's own right/up/forward for
+    // this to still be screen-aligned -- see `DrawState::
+    // billboard_camera`'s own doc comment for why this was not
+    // needed before. `None` (every mode except the real camera's
+    // own) leaves the basis at whatever `sceGumLoadIdentity` just
+    // set, identical to this code before RE-131.
+    //
+    // RE-132: `Kind48` gets the pitch-locked basis instead of the
+    // fully screen-aligned one -- see `NodeDesc::
+    // FLAG_BILLBOARD_PITCH_LOCKED`'s own doc comment for why this
+    // is the real, reachable transform, not `Kind46`'s.
+    if let Some((right, up)) = billboard_camera.map(|bc| {
+        if node.flags & NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED != 0 {
+            bc.pitch_locked
+        } else {
+            bc.screen
+        }
+    }) {
+        let forward = [
+            right[1] * up[2] - right[2] * up[1],
+            right[2] * up[0] - right[0] * up[2],
+            right[0] * up[1] - right[1] * up[0],
+        ];
+        sys::sceGumMultMatrix(&ScePspFMatrix4 {
+            x: ScePspFVector4 {
+                x: right[0],
+                y: right[1],
+                z: right[2],
+                w: 0.0,
+            },
+            y: ScePspFVector4 {
+                x: up[0],
+                y: up[1],
+                z: up[2],
+                w: 0.0,
+            },
+            z: ScePspFVector4 {
+                x: forward[0],
+                y: forward[1],
+                z: forward[2],
+                w: 0.0,
+            },
+            w: ScePspFVector4 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                w: 1.0,
+            },
+        });
+    }
+    // ROM Kind46 reads rotate.z; kinds 44/48/50 have no spin.
+    // Case 45's rotate.x convention is not used by ROM descriptors.
+    sys::sceGumRotateZ(node.billboard_rest_spin());
+    // Every reachable original billboard case scales Z by the same
+    // signed `gGCScaleX` value as X (`gcPrepDObjMatrix` kinds
+    // 44/46/48/50). This is observable: 16 of the 109 shipped
+    // billboard meshes have a nonzero local Z span. Leaving Z at 1
+    // compressed that authored depth by MODEL_SCALE (RE-144).
+    sys::sceGumScale(&ScePspFVector3 {
+        x: sx,
+        y: sy,
+        z: sx,
+    });
 }
 
 /// One mesh of a node whose matrix is loaded: re-posed from `posed` where
