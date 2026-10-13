@@ -13,17 +13,17 @@ Where the project is now. The roadmap and every open task are in
 | Rendering | CRT overscan crop ([D-047](docs/decisions/D-047.md), RE-477) |
 | Frontend | N64 logo, opening, title and attract loop; every menu including Sound Test; per-scene loading with background reads (RE-475, RE-476) |
 | PSP | 60 FPS under PPSSPP. PSP-2000 (RE-479): the production build plays the attract loop clean; the opening averages 55.8 FPS (58.7 without audio); four-player VS 39.0 (40.6 without audio), held under 60 by the game thread; no underruns. PSP-1000 unsupported |
-| Tests | 2,267 workspace tests with the ROM (2,076 with stub tables, as CI), clippy and rustfmt pass; 198 of 198 goldens pass by pixel hash |
+| Tests | 2,268 workspace tests with the ROM (2,077 with stub tables, as CI), clippy and rustfmt pass; 198 of 198 goldens pass by pixel hash |
 
 ## Current Work
 
-The draw's I-cache misses are located (RE-482): a cache model in PPSSPP
-puts three quarters of them in the per-mesh path of
-`draw_object_posed_nodes`, 14.7 KB a pass scattered through ~60 KB of
-code. `psp-game` links those functions first (`tools/psp-link.py`):
-draw misses −8%, draw −0.5 ms on the PSP-2000. Next: the magnifier depth
-masks, then the uncached list, then compacting the per-mesh hot path
-([`PLAN.md`](PLAN.md#remaining-work)).
+The magnifier depth masks cost less than half as much (RE-483): a grey
+mask's depth is a 32-entry lookup, sprites are three word stores, and
+`rows` reuses its lists. `mmask` falls from 7.3 to 3.2 ms a frame in
+`vs4@2400`'s heavy window on the PSP-2000, with no pixel changed. Each
+heap allocation on the PSP is a kernel call (~9,400 cycles). Next:
+per-frame allocations, then the uncached list, then compacting the
+per-mesh hot path ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
 
@@ -35,13 +35,13 @@ masks, then the uncached list, then compacting the per-mesh hot path
 
 ## Verification
 
-Baseline after the I-cache batch:
+Baseline after the magnifier-mask batch:
 
-- `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,267
-  pass. With `SSB64_STUB_TABLES=1` and no ROM: 2,076 pass, 191 ignored.
+- `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,268
+  pass. With `SSB64_STUB_TABLES=1` and no ROM: 2,077 pass, 191 ignored.
   `cargo +1.98.0 clippy` (warnings denied) in both modes and rustfmt pass.
 - Goldens: `tools/golden.sh verify`: 198 of 198 hashes match; deepest
-  game stack 310,912 bytes (`f1-vs-sudden-death`).
+  game stack 310,944 bytes (`f1-vs-sudden-death`).
 - How to Play's `rng_trace` (`explain@4460`): identical to `06becb0`'s.
 - PPSSPP with `audio_dump`: title, mode select, `vs4@2400` and Sound Test
   play, no underrun; the attract loop at the XMB budget, lowest free

@@ -2914,21 +2914,16 @@ pub unsafe fn draw_depth_image(
     // compression, with no threshold or guessed circle geometry. The spans
     // go to the GE in order, many rows to a draw: each draw of a direct
     // list updates the GE's stall address, a system call (RE-471).
-    let mut batch = [(0i32, 0i32, 0i32, 0u16); DEPTH_SPANS_PER_DRAW];
-    let mut count = 0;
+    let mut batch = DepthSprites {
+        words: core::ptr::null_mut(),
+        count: 0,
+    };
     ssb_rom::depth_mask::rows(image, tables, &placement, |py, spans| {
         for &(start, end, depth) in spans {
-            batch[count] = (py, start, end, depth);
-            count += 1;
-            if count == batch.len() {
-                draw_depth_spans(&batch);
-                count = 0;
-            }
+            batch.push(py, start, end, depth);
         }
     });
-    if count > 0 {
-        draw_depth_spans(&batch[..count]);
-    }
+    batch.draw();
     sys::sceGuPixelMask(0);
     sys::sceGuDepthFunc(sys::DepthFunc::GreaterOrEqual);
     sys::sceGuEnable(GuState::CullFace);
@@ -2938,36 +2933,50 @@ pub unsafe fn draw_depth_image(
 /// Spans [`draw_depth_image`] sends in one draw.
 const DEPTH_SPANS_PER_DRAW: usize = 256;
 
-/// [`draw_depth_image`]'s `(row, start, end, depth)` spans as one draw of
-/// `GuPrimitive::Sprites`: each span a 1-pixel-high sprite, in order.
-unsafe fn draw_depth_spans(spans: &[(i32, i32, i32, u16)]) {
-    let verts = sys::sceGuGetMemory((2 * spans.len() * core::mem::size_of::<SObjVertex>()) as i32)
-        as *mut SObjVertex;
-    for (i, &(py, start, end, depth)) in spans.iter().enumerate() {
-        for (j, (x, y)) in [(start as f32, py as f32), (end as f32, py as f32 + 1.0)]
-            .into_iter()
-            .enumerate()
-        {
-            verts.add(2 * i + j).write(SObjVertex {
-                u: 0.0,
-                v: 0.0,
-                color: 0,
-                x,
-                y,
-                z: f32::from(depth),
-            });
+/// [`draw_depth_image`]'s spans, each a 1-pixel-high sprite, written in
+/// order straight into list memory and drawn [`DEPTH_SPANS_PER_DRAW`] at a
+/// time. A sprite is two through-mode 16-bit positions, `x, y, z` each,
+/// with no texture coordinates or colour (texturing is off and the pixel
+/// mask keeps the colour): 12 bytes as three word stores, against two
+/// 24-byte float vertices. List memory is written uncached, so stores are
+/// the cost (RE-481).
+struct DepthSprites {
+    words: *mut u32,
+    count: usize,
+}
+
+impl DepthSprites {
+    /// Row `py`'s pixels `start..end` at depth `z`.
+    #[inline(always)]
+    unsafe fn push(&mut self, py: i32, start: i32, end: i32, z: u16) {
+        if self.count == 0 {
+            self.words = sys::sceGuGetMemory((DEPTH_SPANS_PER_DRAW * 12) as i32) as *mut u32;
+        }
+        let half = |v: i32| u32::from(v as u16);
+        let w = self.words.add(3 * self.count);
+        w.write(half(start) | half(py) << 16);
+        w.add(1).write(u32::from(z) | half(end) << 16);
+        w.add(2).write(half(py + 1) | u32::from(z) << 16);
+        self.count += 1;
+        if self.count == DEPTH_SPANS_PER_DRAW {
+            self.draw();
         }
     }
-    sys::sceGuDrawArray(
-        GuPrimitive::Sprites,
-        VertexType::TEXTURE_32BITF
-            | VertexType::COLOR_8888
-            | VertexType::VERTEX_32BITF
-            | VertexType::TRANSFORM_2D,
-        2 * spans.len() as i32,
-        core::ptr::null(),
-        verts.cast(),
-    );
+
+    /// Draws the sprites written since the last draw.
+    unsafe fn draw(&mut self) {
+        if self.count == 0 {
+            return;
+        }
+        sys::sceGuDrawArray(
+            GuPrimitive::Sprites,
+            VertexType::VERTEX_16BIT | VertexType::TRANSFORM_2D,
+            2 * self.count as i32,
+            core::ptr::null(),
+            self.words.cast(),
+        );
+        self.count = 0;
+    }
 }
 
 /// An untextured `gDPFillRectangle` over `[x0, y0, x1, y1)` in N64 screen

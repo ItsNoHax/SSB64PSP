@@ -28,7 +28,9 @@
   `sceKernelAllocPartitionMemory` and its allocation-error handler spins
   forever: an allocation failure is a black screen and a hung HOME exit.
   Large loads therefore allocate fallibly and end on
-  `ssb_psp_runtime::memory::fatal`'s text screen.
+  `ssb_psp_runtime::memory::fatal`'s text screen. Each allocate-and-free
+  costs ~9,400 cycles on a PSP-2000 and evicts the caller's cache lines
+  (RE-483): keep allocation out of per-frame paths.
 - While a scene runs, the next scene's files are read into memory beside
   it (`scene_files::prefetch`, RE-476): the attract loop's lowest free
   memory at the XMB's budget is 23.1 MB under PPSSPP with audio (24.9 MB

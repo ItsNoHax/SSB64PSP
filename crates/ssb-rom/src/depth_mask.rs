@@ -12,6 +12,7 @@
 //! filtered one by one.
 
 use alloc::vec::Vec;
+use core::cell::RefCell;
 
 use crate::n64_filter::sample_3point_quad;
 use crate::texture::Rgba8;
@@ -75,6 +76,26 @@ pub struct Tables {
     /// The texels of the quads that are not uniform: `c00`, `c10`, `c01`,
     /// `c11`.
     mixed: Vec<[[u8; 4]; 4]>,
+    /// For a grey image (red, green and blue equal in every texel, as the
+    /// magnifier's IA8 frame is), the depth of each `v >> 3`: a grey quad's
+    /// three channels blend alike, and [`depth_of`] reads `v`'s top five
+    /// bits only (alpha and blue's fifth bit fall below the depth word's
+    /// two dropped bits). One channel is blended instead of four.
+    grey: Option<[u16; 32]>,
+    /// [`rows`]' working lists, kept between calls: on the PSP every heap
+    /// allocation is a kernel call (rust-psp's `SystemAlloc` takes each
+    /// from `sceKernelAllocPartitionMemory`), and the lists grow by
+    /// doubling.
+    scratch: RefCell<Scratch>,
+}
+
+/// [`rows`]' lists, reused from call to call.
+#[derive(Default)]
+struct Scratch {
+    columns: Vec<i32>,
+    runs: Vec<(i32, usize, usize)>,
+    segments: Vec<(usize, usize, i32)>,
+    band_at: Vec<Option<(usize, usize)>>,
 }
 
 impl Tables {
@@ -107,11 +128,19 @@ impl Tables {
                 }
             }
         }
+        let grey = (0..(w * h) as usize)
+            .all(|i| {
+                let c = image.get(i);
+                c[0] == c[1] && c[1] == c[2]
+            })
+            .then(|| core::array::from_fn(|j| depth_of([(j << 3) as u8; 4])));
         Self {
             width: w,
             height: h,
             quads,
             mixed,
+            grey,
+            scratch: RefCell::default(),
         }
     }
 
@@ -164,37 +193,56 @@ fn t_at(p: &Placement, image: &Rgba8, py: i32) -> i32 {
 /// `emit` [`SPANS_PER_CALL`] at a time. One buffer serves every row.
 struct Row<'a, F: FnMut(i32, &[Span])> {
     py: i32,
-    spans: &'a mut Vec<Span>,
-    open: Option<Span>,
+    spans: &'a mut [Span; SPANS_PER_CALL],
+    len: usize,
+    /// The span being extended: its start, end and depth, `depth` -1 for
+    /// none. Plain fields, not an `Option<Span>`: `put` runs once per
+    /// edge pixel.
+    start: i32,
+    end: i32,
+    depth: i32,
     emit: &'a mut F,
 }
 
-impl<F: FnMut(i32, &[Span])> Row<'_, F> {
-    /// Pixels `start..end` have `depth`.
-    #[inline(always)]
-    fn put(&mut self, start: i32, end: i32, depth: u16) {
-        match &mut self.open {
-            Some(open) if open.2 == depth => open.1 = end,
-            open => {
-                if let Some(done) = open.replace((start, end, depth)) {
-                    self.spans.push(done);
-                    if self.spans.len() == SPANS_PER_CALL {
-                        (self.emit)(self.py, self.spans);
-                        self.spans.clear();
-                    }
-                }
-            }
+impl<'a, F: FnMut(i32, &[Span])> Row<'a, F> {
+    fn new(py: i32, spans: &'a mut [Span; SPANS_PER_CALL], emit: &'a mut F) -> Self {
+        Self {
+            py,
+            spans,
+            len: 0,
+            start: 0,
+            end: 0,
+            depth: -1,
+            emit,
         }
     }
 
+    /// Pixels `start..end` have `depth`.
+    #[inline(always)]
+    fn put(&mut self, start: i32, end: i32, depth: u16) {
+        if i32::from(depth) == self.depth {
+            self.end = end;
+            return;
+        }
+        if self.depth >= 0 {
+            self.spans[self.len] = (self.start, self.end, self.depth as u16);
+            self.len += 1;
+            if self.len == SPANS_PER_CALL {
+                (self.emit)(self.py, &self.spans[..]);
+                self.len = 0;
+            }
+        }
+        self.start = start;
+        self.end = end;
+        self.depth = i32::from(depth);
+    }
+
     fn finish(&mut self) {
-        if let Some(done) = self.open.take() {
-            self.spans.push(done);
+        if self.depth >= 0 {
+            self.spans[self.len] = (self.start, self.end, self.depth as u16);
+            self.len += 1;
         }
-        if !self.spans.is_empty() {
-            (self.emit)(self.py, self.spans);
-            self.spans.clear();
-        }
+        (self.emit)(self.py, &self.spans[..self.len]);
     }
 }
 
@@ -208,8 +256,16 @@ pub fn rows(image: &Rgba8, tables: &Tables, p: &Placement, mut emit: impl FnMut(
     }
     // The columns' `s`, and their runs of one integer texel `s0`: the same
     // on every row.
-    let columns: Vec<i32> = (first..end).map(|px| s_at(p, image, px)).collect();
-    let mut runs: Vec<(i32, usize, usize)> = Vec::new();
+    let mut scratch = tables.scratch.borrow_mut();
+    let Scratch {
+        columns,
+        runs,
+        segments,
+        band_at,
+    } = &mut *scratch;
+    columns.clear();
+    columns.extend((first..end).map(|px| s_at(p, image, px)));
+    runs.clear();
     for (i, &s) in columns.iter().enumerate() {
         let s0 = s.div_euclid(32);
         match runs.last_mut() {
@@ -221,16 +277,17 @@ pub fn rows(image: &Rgba8, tables: &Tables, p: &Placement, mut emit: impl FnMut(
     // `(first column, end column, quad)`, uniform neighbours of one depth
     // merged. Built when a row first reaches the band.
     let bands = (tables.height + 1) as usize;
-    let mut segments: Vec<(usize, usize, i32)> = Vec::new();
-    let mut band_at: Vec<Option<(usize, usize)>> = alloc::vec![None; bands];
-    let mut spans = Vec::with_capacity(SPANS_PER_CALL);
+    segments.clear();
+    band_at.clear();
+    band_at.resize(bands, None);
+    let mut spans = [(0, 0, 0); SPANS_PER_CALL];
     for py in (p.y0 as i32)..ceil(p.y1) {
         let t = t_at(p, image, py);
         let t0 = t.div_euclid(32);
         let band = (t0.clamp(-1, tables.height - 1) + 1) as usize;
         let (lo, hi) = *band_at[band].get_or_insert_with(|| {
             let lo = segments.len();
-            for &(s0, a, b) in &runs {
+            for &(s0, a, b) in runs.iter() {
                 let quad = tables.quad(s0, t0);
                 let len = segments.len();
                 match segments.last_mut() {
@@ -240,21 +297,34 @@ pub fn rows(image: &Rgba8, tables: &Tables, p: &Placement, mut emit: impl FnMut(
             }
             (lo, segments.len())
         });
-        let mut row = Row {
-            py,
-            spans: &mut spans,
-            open: None,
-            emit: &mut emit,
-        };
+        let mut row = Row::new(py, &mut spans, &mut emit);
         let tfrac = t.rem_euclid(32);
         for &(a, b, quad) in &segments[lo..hi] {
             if quad >= 0 {
                 row.put(first + a as i32, first + b as i32, quad as u16);
             } else {
                 let q = &tables.mixed[!quad as usize];
-                for (i, &s) in columns[a..b].iter().enumerate() {
-                    let px = first + (a + i) as i32;
-                    row.put(px, px + 1, depth_of(blend(q, s.rem_euclid(32), tfrac)));
+                if let Some(lut) = &tables.grey {
+                    // `blend` on one channel, its `tfrac` terms per row.
+                    let [c00, c10, c01, c11] = q.map(|c| i32::from(c[0]));
+                    let near = tfrac * (c01 - c00) + 0x10;
+                    let far = (32 - tfrac) * (c10 - c11) + 0x10;
+                    for (i, &s) in columns[a..b].iter().enumerate() {
+                        let px = first + (a + i) as i32;
+                        let sfrac = s.rem_euclid(32);
+                        let v = if sfrac + tfrac < 32 {
+                            c00 + ((sfrac * (c10 - c00) + near) >> 5)
+                        } else {
+                            c11 + (((32 - sfrac) * (c01 - c11) + far) >> 5)
+                        };
+                        debug_assert!((0..=255).contains(&v));
+                        row.put(px, px + 1, lut[(v as usize >> 3) & 31]);
+                    }
+                } else {
+                    for (i, &s) in columns[a..b].iter().enumerate() {
+                        let px = first + (a + i) as i32;
+                        row.put(px, px + 1, depth_of(blend(q, s.rem_euclid(32), tfrac)));
+                    }
                 }
             }
         }
@@ -265,15 +335,10 @@ pub fn rows(image: &Rgba8, tables: &Tables, p: &Placement, mut emit: impl FnMut(
 /// [`rows`] the slow way, one filtered sample per pixel: the reference the
 /// tests hold it to.
 pub fn rows_per_pixel(image: &Rgba8, p: &Placement, mut emit: impl FnMut(i32, &[Span])) {
-    let mut spans = Vec::with_capacity(SPANS_PER_CALL);
+    let mut spans = [(0, 0, 0); SPANS_PER_CALL];
     for py in (p.y0 as i32)..ceil(p.y1) {
         let t = t_at(p, image, py);
-        let mut row = Row {
-            py,
-            spans: &mut spans,
-            open: None,
-            emit: &mut emit,
-        };
+        let mut row = Row::new(py, &mut spans, &mut emit);
         for px in (p.x0 as i32)..ceil(p.x1) {
             let s = s_at(p, image, px);
             row.put(px, px + 1, depth_of(sample_3point_quad(image, s, t).0));
@@ -363,9 +428,35 @@ mod tests {
             })
     }
 
+    /// [`disc`] with every texel's green and blue set to its red.
+    fn grey(mut img: Rgba8) -> Rgba8 {
+        for c in img.pixels.as_chunks_mut::<4>().0 {
+            c[1] = c[0];
+            c[2] = c[0];
+        }
+        img
+    }
+
+    #[test]
+    fn grey_depths_read_the_top_five_bits() {
+        let lut = Tables::new(&grey(disc(32))).grey.unwrap();
+        assert!(Tables::new(&disc(32)).grey.is_none());
+        for v in 0..=255u8 {
+            for a in [0, 0x7F, 0x80, 0xFF] {
+                assert_eq!(depth_of([v, v, v, a]), lut[usize::from(v >> 3)]);
+            }
+        }
+    }
+
     #[test]
     fn rows_match_sampling_every_pixel() {
-        for img in [disc(32), disc(7), Rgba8::new(1, 1)] {
+        for img in [
+            disc(32),
+            disc(7),
+            Rgba8::new(1, 1),
+            grey(disc(32)),
+            grey(disc(7)),
+        ] {
             let tables = Tables::new(&img);
             for p in placements() {
                 let fast = collect(|e| rows(&img, &tables, &p, e));
