@@ -3713,6 +3713,8 @@ impl LayerPose {
         }
     }
 
+    /// Out of line: it runs once per layer and frame, the draw many times.
+    #[inline(never)]
     fn compose(
         &mut self,
         anim: &ssb_rom::skeleton::StageAnimator,
@@ -3815,21 +3817,13 @@ pub unsafe fn draw_stage_links(
 ) -> (u32, u32) {
     let mut tris = 0;
     let mut drawn = 0;
-    let mut scratch = LayerPose::new();
-    let object_links = objects
-        .into_iter()
-        .flat_map(|o| o.iter())
-        .map(|o| ssb_rom::ground_obj::OBJECTS[o.asset as usize].dl_link)
-        .chain(
-            objects
-                .and_then(|o| o.arwing.as_ref())
-                .map(|_| ssb_rom::sector::DL_LINK),
-        );
-    let (first, last) = STAGE_LAYER_LINKS
-        .into_iter()
-        .chain(object_links)
-        .filter(|l| links.contains(l))
-        .fold((u8::MAX, 0), |(lo, hi), l| (lo.min(l), hi.max(l)));
+    // Links outside every layer's and object's are empty: skip them.
+    let (mut first, mut last) = (STAGE_LAYER_LINKS[0], STAGE_LAYER_LINKS[3]);
+    if let Some(objects) = objects {
+        let (lo, hi) = object_link_bounds(objects);
+        (first, last) = (first.min(lo), last.max(hi));
+    }
+    let (first, last) = (first.max(*links.start()), last.min(*links.end()));
     if first > last {
         return (0, 0);
     }
@@ -3840,53 +3834,113 @@ pub unsafe fn draw_stage_links(
                 .then(|| pack.object(slot))
                 .flatten();
             if let Some(object) = object {
-                tris += match anim {
-                    Some(a) => {
-                        let pose = match pose_cache.as_deref_mut() {
-                            Some(cache) => {
-                                if cache.keys[layer] != slot {
-                                    cache.layers[layer].compose(a, pack, &object);
-                                    cache.keys[layer] = slot;
-                                }
-                                &cache.layers[layer]
-                            }
-                            None => {
-                                scratch.compose(a, pack, &object);
-                                &scratch
-                            }
-                        };
-                        let hidden = |node: u32| !a.visible(pack, node);
-                        draw_object_posed_filtered(
-                            pack,
-                            &object,
-                            base,
-                            &pose.posed[..pose.node_count],
-                            Some(&pose.billboard_scales[..pose.scale_count]),
-                            st,
-                            mat_anim,
-                            None,
-                            Look::costume(0),
-                            None,
-                            Some(&hidden),
-                        )
+                tris += match (anim, pose_cache.as_deref_mut()) {
+                    (Some(a), Some(cache)) => {
+                        if cache.keys[layer] != slot {
+                            cache.layers[layer].compose(a, pack, &object);
+                            cache.keys[layer] = slot;
+                        }
+                        draw_layer_posed(pack, &object, base, a, &cache.layers[layer], st, mat_anim)
                     }
-                    None => draw_object(pack, &object, base, st, mat_anim, 0),
+                    _ => draw_layer_uncached(pack, &object, base, anim, st, mat_anim),
                 };
                 drawn += 1;
             }
         }
-        for o in objects.into_iter().flat_map(|o| o.iter()) {
-            if ssb_rom::ground_obj::OBJECTS[o.asset as usize].dl_link == link {
-                tris += draw_ground_object(pack, o, base, st, mat_anim);
-            }
-        }
-        if link == ssb_rom::sector::DL_LINK {
-            if let Some(a) = objects.and_then(|o| o.arwing.as_ref()) {
-                tris += draw_arwing(pack, a, base, st, mat_anim);
-            }
+        if let Some(objects) = objects {
+            tris += draw_link_objects(pack, objects, link, base, st, mat_anim);
         }
     }
     (tris, drawn)
+}
+
+/// Draws one render layer in `pose`, hiding the nodes `anim` hides.
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_layer_posed(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    base: &ScePspFMatrix4,
+    anim: &ssb_rom::skeleton::StageAnimator,
+    pose: &LayerPose,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) -> u32 {
+    let hidden = |node: u32| !anim.visible(pack, node);
+    draw_object_posed_filtered(
+        pack,
+        object,
+        base,
+        &pose.posed[..pose.node_count],
+        Some(&pose.billboard_scales[..pose.scale_count]),
+        st,
+        mat_anim,
+        None,
+        Look::costume(0),
+        None,
+        Some(&hidden),
+    )
+}
+
+/// [`draw_stage_links`] for a layer without a [`StagePoseCache`]: posed into
+/// a scratch [`LayerPose`], or still without `anim`. Out of line: the battle
+/// always passes a cache, and keeping this apart leaves the per-link loop
+/// compact in the instruction cache (RE-482).
+#[cold]
+#[inline(never)]
+unsafe fn draw_layer_uncached(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    base: &ScePspFMatrix4,
+    anim: Option<&ssb_rom::skeleton::StageAnimator>,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) -> u32 {
+    match anim {
+        Some(a) => {
+            let mut scratch = LayerPose::new();
+            scratch.compose(a, pack, object);
+            draw_layer_posed(pack, object, base, a, &scratch, st, mat_anim)
+        }
+        None => draw_object(pack, object, base, st, mat_anim, 0),
+    }
+}
+
+/// The lowest and highest display links of the stage controller's objects
+/// and the Arwing, or `(u8::MAX, 0)` with none.
+#[inline(never)]
+fn object_link_bounds(objects: &ssb_rom::ground_obj::GroundObjects) -> (u8, u8) {
+    objects
+        .iter()
+        .map(|o| ssb_rom::ground_obj::OBJECTS[o.asset as usize].dl_link)
+        .chain(objects.arwing.as_ref().map(|_| ssb_rom::sector::DL_LINK))
+        .fold((u8::MAX, 0), |(lo, hi), l| (lo.min(l), hi.max(l)))
+}
+
+/// [`draw_stage_links`]' stage controller objects and Sector Z's Arwing on
+/// `link`. Out of line, apart from the per-link loop, for the instruction
+/// cache (RE-482): their posing is most of the code, and most stages have
+/// neither.
+#[inline(never)]
+unsafe fn draw_link_objects(
+    pack: &Pack<'_>,
+    objects: &ssb_rom::ground_obj::GroundObjects,
+    link: u8,
+    base: &ScePspFMatrix4,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) -> u32 {
+    let mut tris = 0;
+    for o in objects.iter() {
+        if ssb_rom::ground_obj::OBJECTS[o.asset as usize].dl_link == link {
+            tris += draw_ground_object(pack, o, base, st, mat_anim);
+        }
+    }
+    if link == ssb_rom::sector::DL_LINK {
+        if let Some(a) = objects.arwing.as_ref() {
+            tris += draw_arwing(pack, a, base, st, mat_anim);
+        }
+    }
+    tris
 }
 
 /// The stage select's preview model (`mnMapsMakeModel`, RE-419): the four
@@ -3957,6 +4011,7 @@ pub unsafe fn draw_stage_preview(
 /// # Safety
 ///
 /// Same as [`draw_mesh`].
+#[inline(never)]
 pub unsafe fn draw_ground_object(
     pack: &Pack<'_>,
     object: &ssb_rom::ground_obj::GroundObject,
@@ -4020,6 +4075,7 @@ pub unsafe fn draw_ground_object(
 /// # Safety
 ///
 /// Same as [`draw_mesh`].
+#[inline(never)]
 pub unsafe fn draw_arwing(
     pack: &Pack<'_>,
     arwing: &ssb_rom::sector::Arwing,

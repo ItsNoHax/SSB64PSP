@@ -17,19 +17,15 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Compacted the per-mesh draw path (RE-487): outlining `bind_texture`'s
-loading-transition branch and always-single mip iteration,
-`draw_mesh_vertices`'s rare vertex-colour/texgen and signed-UV branches,
-and `draw_object_posed_nodes`'s billboard arm, plus composing the common
-per-node model matrix on the CPU instead of through `sceGum*`, cut a
-draw pass's modelled fetches 21% and PSP-2000 hardware draw time 4.8%
-(`profile_hw`, `vs4@2400`, no audio, ~41 FPS) against HEAD's link order.
-Regenerating `link-order.txt` from the smaller functions made hardware
-slower, so it stays at RE-482's order. Next: `draw_stage_links` (13.6 KB,
-~850 misses/frame), the largest function left in the shared per-pass
-footprint, and cutting the GE's main-memory reads (texture residency,
-CLUT formats) measured by the CPU's memory stalls
-([`PLAN.md`](PLAN.md#remaining-work)).
+Outlined `draw_stage_links` (RE-488): its inlined controller-object and
+Arwing posing, the uncached-layer path and an unrolled link-range fold
+made it 13.6 KB; the battle's per-link loop now keeps only the cached
+layer path (880 bytes). PSP-2000 draw time is down 1.7% (221 µs, 446
+fewer I-misses a frame) on `vs4@2400` without audio, 41.9 FPS. Next:
+the per-mesh GE state, so a draw pass touches well under 16 KB of code,
+or `draw_magnifiers`/`draw_training`, which share the pass; then the
+GE's main-memory reads (texture residency, CLUT formats) measured by the
+CPU's memory stalls ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
 
@@ -41,12 +37,12 @@ CLUT formats) measured by the CPU's memory stalls
 
 ## Verification
 
-Baseline after the per-mesh draw-path compaction (RE-487):
+Baseline after outlining `draw_stage_links` (RE-488):
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,275
-  pass. With `SSB64_STUB_TABLES=1` and no ROM: 2,084 pass, 191 ignored.
+  pass. With `SSB64_STUB_TABLES=1` and no ROM: 2,084 pass, 191 ignored;
   `cargo +1.98.0 clippy` (warnings denied) in both modes and rustfmt
-  pass.
+  pass (both as of RE-487; no workspace crate changed since).
 - Both PSP builds (`psp-game`, `psp-asset-viewer`) compile clean in
   release.
 - Goldens: `tools/golden.sh verify`: 198 of 198 hashes match; deepest
@@ -59,6 +55,7 @@ Baseline after the per-mesh draw-path compaction (RE-487):
   `profile_hw` runs of `vs4@2400` (RE-482); cached display-list
   builds against `91323e8` (RE-485); stall-interval builds against
   `2960b58` (RE-486); compacted-hot-path builds, both link orders,
-  against RE-487.
+  against RE-487; outlined `draw_stage_links` against `f0f4ed6`
+  (RE-488).
 - ROMs: `rom/Super Smash Bros. (USA).z64` and
   `refs/ssb-decomp-re/baserom.us.z64`, SHA-1 `e2929e10…`.
