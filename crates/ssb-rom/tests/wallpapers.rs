@@ -2,7 +2,7 @@
 //! Training's three and the stage select's sprites, the wallpapers exact in
 //! 5551.
 
-use ssb_rom::pack::{Pack, SpriteDesc};
+use ssb_rom::pack::{Pack, SpriteDesc, TextureDesc};
 use ssb_rom::psp_texture::Psm;
 use ssb_rom::Archive;
 
@@ -15,6 +15,16 @@ fn pack_bytes() -> Option<Vec<u8>> {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
+}
+
+/// A wallpaper is RGBA16: `Psm5551`, or a CLUT of its own colours when it
+/// has at most 256 (RE-491).
+fn assert_direct_or_palettized(t: &TextureDesc) {
+    if t.texels & TextureDesc::TEXELS_PALETTIZED != 0 {
+        assert!(t.psm == Psm::PsmT4 as u8 || t.psm == Psm::PsmT8 as u8);
+    } else {
+        assert_eq!(t.psm, Psm::Psm5551 as u8);
+    }
 }
 
 #[test]
@@ -32,8 +42,7 @@ fn every_stage_wallpaper_is_packed_under_its_kind() {
         assert_eq!((s.source_file, s.source_offset), (file, at), "kind {gkind}");
         assert_eq!(s.role, SpriteDesc::ROLE_WALLPAPER);
         assert_eq!((s.width, s.height), (300, 220));
-        let t = pack.texture(s.texture).unwrap();
-        assert_eq!(t.psm, Psm::Psm5551 as u8);
+        assert_direct_or_palettized(&pack.texture(s.texture).unwrap());
     }
     assert_eq!(pack.stage_wallpaper(9), None);
 }
@@ -49,7 +58,7 @@ fn trainings_wallpapers_and_the_stage_select_sprites_are_packed() {
             .sprite(file, ssb_rom::sprite::TRAINING_WALLPAPER_SPRITE)
             .unwrap();
         assert_eq!((s.width, s.height), (300, 220));
-        assert_eq!(pack.texture(s.texture).unwrap().psm, Psm::Psm5551 as u8);
+        assert_direct_or_palettized(&pack.texture(s.texture).unwrap());
     }
     for &at in ssb_rom::sprite::MN_MAPS.offsets {
         assert!(

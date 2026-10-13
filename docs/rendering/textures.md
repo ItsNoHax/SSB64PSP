@@ -19,6 +19,13 @@ are almost always 16 entries. Paletted formats stay paletted to fit VRAM
 `ssb-rom::texture` decodes to RGBA8888; `ssb-rom::psp_texture` packs to the
 chosen PSM and swizzles rows of at least 16 bytes (RE-022).
 
+The pack writer then stores any `Psm8888` or `Psm5551` texture whose level 0
+has at most 256 colours as `PsmT4`/`PsmT8` with a CLUT of exactly those
+colours, level 0 only (`psp_texture::palettize_lossless`,
+`TextureDesc::TEXELS_PALETTIZED`). The GE looks texels up before it filters,
+so the pixels do not change; most compensated and IA textures qualify, and
+the GE reads a quarter or an eighth of the bytes (RE-491).
+
 ### TLUT mode
 
 The RDP's `G_MDSFT_TEXTLUT`, not the texture format, decides palette lookup

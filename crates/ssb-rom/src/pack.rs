@@ -399,7 +399,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // the sequence bank, both sound banks, the FGM files and the synthesizer's
 // constant tables, read at boot into their own buffer. `Header::SIZE`
 // 116 -> 124 (`audio_offset`, `audio_len`); [`resident_len`] is unchanged.
-pub const VERSION: u32 = 108;
+// 109 stores a 16- or 32-bit texture whose level 0 has at most 256 colours
+// as `PsmT4`/`PsmT8` with its own CLUT, level 0 only
+// (`TextureDesc::TEXELS_PALETTIZED`, RE-491). No layout change.
+pub const VERSION: u32 = 109;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1034,6 +1037,10 @@ impl TextureDesc {
     pub const TILE_MIRROR_T: u8 = 1 << 1;
     /// `texels` bit: level 0 is a filter compensation, not the source.
     pub const TEXELS_COMPENSATED: u8 = 1 << 0;
+    /// `texels` bit: a direct-colour texture stored as `PsmT4`/`PsmT8` with
+    /// a CLUT of its own colours ([`crate::psp_texture::palettize_lossless`],
+    /// `VERSION` 109, RE-491). No material animation swaps its CLUT.
+    pub const TEXELS_PALETTIZED: u8 = 1 << 1;
 
     /// The recorded render tile's `(fmt, siz)`, or `None`.
     pub fn tile_format(&self) -> Option<(u8, u8)> {
@@ -2165,6 +2172,8 @@ impl PackWriter {
         clamp_s: bool,
         clamp_t: bool,
     ) -> u32 {
+        let palettized = crate::psp_texture::palettize_lossless(tex);
+        let tex = palettized.as_ref().unwrap_or(tex);
         let owner = ChunkOwner::Texture(self.textures.len() as u32);
         let data_offset = self.push_blob(&tex.data, owner);
         let palette_bytes: Vec<u8> = tex.palette.iter().flat_map(|c| c.to_le_bytes()).collect();
@@ -2193,7 +2202,7 @@ impl PackWriter {
             tile_mirror: 0,
             tile_period: [0; 2],
             tile_source_width: 0,
-            texels: 0,
+            texels: palettized.is_some() as u8 * TextureDesc::TEXELS_PALETTIZED,
             source_digest: 0,
         });
         (self.textures.len() - 1) as u32
@@ -2214,7 +2223,8 @@ impl PackWriter {
     pub fn set_texture_source(&mut self, i: u32, source: &[u8], compensated: bool) {
         let d = &mut self.textures[i as usize];
         d.source_digest = source_digest(source);
-        d.texels = compensated as u8 * TextureDesc::TEXELS_COMPENSATED;
+        d.texels = (d.texels & !TextureDesc::TEXELS_COMPENSATED)
+            | (compensated as u8 * TextureDesc::TEXELS_COMPENSATED);
     }
 
     /// Adds the source fighter-shadow texture with a stable semantic role.
@@ -6490,10 +6500,15 @@ mod tests {
         let pack = Pack::open(&bytes).unwrap();
 
         let a = pack.texture(raw).unwrap();
-        assert_eq!(a.texels, 0);
+        // One colour: both are stored palettized (RE-491).
+        assert_eq!(a.texels, TextureDesc::TEXELS_PALETTIZED);
+        assert_eq!(a.psm, Psm::PsmT4 as u8);
         assert_eq!(a.source_digest, source_digest(b"raw"));
         let b = pack.texture(compensated).unwrap();
-        assert_eq!(b.texels, TextureDesc::TEXELS_COMPENSATED);
+        assert_eq!(
+            b.texels,
+            TextureDesc::TEXELS_COMPENSATED | TextureDesc::TEXELS_PALETTIZED
+        );
         assert_eq!(b.source_digest, source_digest(b"source"));
         assert_ne!(a.source_digest, b.source_digest);
         // FNV-1a's published 32-bit value for "a".

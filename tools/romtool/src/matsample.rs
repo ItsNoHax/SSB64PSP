@@ -26,8 +26,38 @@ pub(crate) enum Texels {
     Rgba(Vec<[u8; 4]>),
 }
 
-/// Decodes level 0 of a packed texture over its logical size.
+/// The direct-colour format a palettized texture was converted from
+/// (RE-491): 5551 for an RGBA16 tile, else 8888. Any other texture's own.
+fn direct_psm(t: &TextureDesc) -> u8 {
+    if t.texels & TextureDesc::TEXELS_PALETTIZED == 0 {
+        t.psm
+    } else if t.tile_format() == Some((Format::Rgba as u8, BitSize::Bits16 as u8)) {
+        1
+    } else {
+        3
+    }
+}
+
+/// Decodes level 0 of a packed texture over its logical size. A palettized
+/// direct-colour texture reads back as its colours (RE-491).
 pub(crate) fn packed_texels(pack: &Pack<'_>, t: &TextureDesc) -> Option<Texels> {
+    let texels = packed_texels_raw(pack, t)?;
+    if t.texels & TextureDesc::TEXELS_PALETTIZED == 0 {
+        return Some(texels);
+    }
+    let Texels::Indices(indices) = texels else {
+        return None;
+    };
+    let palette = pack.palette_data(t)?;
+    indices
+        .iter()
+        .map(|&i| palette.get(usize::from(i) * 4..usize::from(i) * 4 + 4))
+        .map(|c| c.map(|c| [c[0], c[1], c[2], c[3]]))
+        .collect::<Option<Vec<_>>>()
+        .map(Texels::Rgba)
+}
+
+fn packed_texels_raw(pack: &Pack<'_>, t: &TextureDesc) -> Option<Texels> {
     let bits = match t.psm {
         0..=2 => 16,
         3 => 32,
@@ -243,7 +273,8 @@ pub(crate) fn compare_texture(
         Texels::Rgba(got) if format != Format::Ci => {
             let image = texture::decode(src, texel_width, ph as u32, format, size, None)
                 .map_err(|e| format!("{e:?}"))?;
-            let tol = tolerance(t.psm);
+            let psm = direct_psm(t);
+            let tol = tolerance(psm);
             for y in 0..h {
                 for x in 0..w {
                     let rom = image.get(fy(y) * texel_width as usize + fx(x));
@@ -251,7 +282,7 @@ pub(crate) fn compare_texture(
                     r.texels += 1;
                     let close = (0..4).all(|c| rom[c].abs_diff(g[c]) <= tol)
                         // 5551 keeps one alpha bit: the RDP's `a >= 128`.
-                        && (t.psm != 1 || (rom[3] >= 128) == (g[3] == 255));
+                        && (psm != 1 || (rom[3] >= 128) == (g[3] == 255));
                     if !close {
                         note(&mut r, x, y, format!("{rom:?}"), format!("{g:?}"));
                     }

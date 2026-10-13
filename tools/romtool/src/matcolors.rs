@@ -26,7 +26,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use ssb_rom::archive::Archive;
-use ssb_rom::pack::{flags, Pack};
+use ssb_rom::pack::{flags, Pack, TextureDesc};
 use ssb_rom::skeleton::{LodBlendState, MaterialUv};
 
 type Res = Result<(), Box<dyn std::error::Error>>;
@@ -750,6 +750,10 @@ fn check_resolvers(
             .ok_or("palettes[0] unreadable")?;
         for &t in &palette_statics {
             let desc = pack.texture(t).ok_or("missing packed texture")?;
+            // A palettized direct-colour texture's CLUT is its own (RE-491).
+            if desc.texels & TextureDesc::TEXELS_PALETTIZED != 0 {
+                continue;
+            }
             let Some(words) = pack.palette_data(&desc) else {
                 continue;
             };

@@ -477,7 +477,7 @@ pub fn swizzle(src: &[u8], stride_bytes: usize, height: usize) -> Vec<u8> {
     out
 }
 
-/// Reverses [`swizzle`]. Used only by tests, to prove the transform is
+/// Reverses [`swizzle`]; tests use it to prove the transform is
 /// lossless — a swizzler that silently drops texels is hard to spot by eye.
 pub fn unswizzle(src: &[u8], stride_bytes: usize, height: usize) -> Vec<u8> {
     const BLOCK_W: usize = 16;
@@ -601,6 +601,97 @@ pub fn pack_rgba(img: &Rgba8, format: Psm, swizzle_it: bool) -> PspTexture {
 /// unwidened row would be one.
 pub fn can_swizzle(stride_bytes: usize, height: usize) -> bool {
     stride_bytes >= 16 && stride_bytes.is_multiple_of(16) && height.is_multiple_of(8)
+}
+
+/// The GE's expansion of a 5:5:5:1 texel to 8888: each 5-bit channel's high
+/// bits repeated into its low bits, alpha 0 or 255.
+fn expand_5551(v: u16) -> u32 {
+    let c = |s: u16| {
+        let x = ((v >> s) & 0x1F) as u32;
+        (x << 3) | (x >> 2)
+    };
+    let a = if v & 0x8000 != 0 { 0xFF } else { 0 };
+    a << 24 | c(10) << 16 | c(5) << 8 | c(0)
+}
+
+/// Re-encodes a direct-colour texture as `PsmT4` or `PsmT8` when level 0
+/// holds at most 256 distinct colours, so the GE reads a quarter or an
+/// eighth of the bytes and samples the same colours: the GE looks each
+/// texel up in the CLUT before it filters (RE-491).
+///
+/// Only level 0 is kept: the GE is never given another (RE-127). Returns
+/// `None` for a paletted or 4444/5650 texture, or one with more colours.
+pub fn palettize_lossless(tex: &PspTexture) -> Option<PspTexture> {
+    let bytes_per_texel = match tex.format {
+        Psm::Psm8888 => 4,
+        Psm::Psm5551 => 2,
+        _ => return None,
+    };
+    let rows = pad_to_power_of_two(tex.height) as usize;
+    let stride_bytes = tex.stride as usize * bytes_per_texel;
+    let raw = tex.data.get(..stride_bytes * rows)?;
+    let linear = if tex.swizzled {
+        unswizzle(raw, stride_bytes, rows)
+    } else {
+        raw.to_vec()
+    };
+    let colours: Vec<u32> = match tex.format {
+        Psm::Psm8888 => linear
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&c| u32::from_le_bytes(c))
+            .collect(),
+        _ => linear
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&c| expand_5551(u16::from_le_bytes(c)))
+            .collect(),
+    };
+    let mut palette = colours.clone();
+    palette.sort_unstable();
+    palette.dedup();
+    let format = match palette.len() {
+        0..=16 => Psm::PsmT4,
+        17..=256 => Psm::PsmT8,
+        _ => return None,
+    };
+    let bits = format.bits();
+    let stride = ge_buffer_stride(tex.width, bits);
+    let new_stride_bytes = stride as usize * bits / 8;
+    if tex.swizzled && !can_swizzle(new_stride_bytes, rows) {
+        return None;
+    }
+    let mut data = alloc::vec![0u8; new_stride_bytes * rows];
+    for y in 0..rows {
+        for x in 0..stride as usize {
+            // Columns past the old stride repeat its last one, which the
+            // old padding already made the edge texel (RE-220).
+            let c = colours[y * tex.stride as usize + x.min(tex.stride as usize - 1)];
+            let i = palette.binary_search(&c).ok()? as u8;
+            if format == Psm::PsmT4 {
+                data[y * new_stride_bytes + x / 2] |= i << ((x & 1) * 4);
+            } else {
+                data[y * new_stride_bytes + x] = i;
+            }
+        }
+    }
+    if tex.swizzled {
+        data = swizzle(&data, new_stride_bytes, rows);
+    }
+    // `sceGuClutLoad` loads whole blocks of eight entries.
+    palette.resize(palette.len().next_multiple_of(8), 0);
+    Some(PspTexture {
+        width: tex.width,
+        height: tex.height,
+        stride,
+        format,
+        data,
+        swizzled: tex.swizzled,
+        palette,
+        levels: 1,
+    })
 }
 
 /// Fills a packed texture's power-of-two padding region (columns
@@ -1436,6 +1527,78 @@ mod tests {
         assert_eq!(sw.len(), src.len(), "swizzle must preserve size");
         assert_ne!(sw, src, "swizzle should actually reorder");
         assert_eq!(unswizzle(&sw, stride, height), src, "must round-trip");
+    }
+
+    /// Level 0 of `t`, unswizzled, as ABGR colours over `stride` x rows.
+    fn colours_of(t: &PspTexture) -> Vec<u32> {
+        let rows = pad_to_power_of_two(t.height) as usize;
+        let sb = (t.stride as usize * t.format.bits()).div_ceil(8);
+        let raw = &t.data[..sb * rows];
+        let lin = if t.swizzled {
+            unswizzle(raw, sb, rows)
+        } else {
+            raw.to_vec()
+        };
+        (0..rows)
+            .flat_map(|y| (0..t.width as usize).map(move |x| (x, y)))
+            .map(|(x, y)| match t.format {
+                Psm::Psm8888 => u32::from_le_bytes(lin[y * sb + x * 4..][..4].try_into().unwrap()),
+                Psm::Psm5551 => expand_5551(u16::from_le_bytes([
+                    lin[y * sb + x * 2],
+                    lin[y * sb + x * 2 + 1],
+                ])),
+                Psm::PsmT4 => t.palette[((lin[y * sb + x / 2] >> ((x & 1) * 4)) & 0xF) as usize],
+                Psm::PsmT8 => t.palette[lin[y * sb + x] as usize],
+                _ => unreachable!(),
+            })
+            .collect()
+    }
+
+    fn image(width: u32, height: u32, colours: usize) -> Rgba8 {
+        let mut img = Rgba8::new(width, height);
+        for (i, px) in img.pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let c = (i * 7 + i / width as usize) % colours;
+            *px = [
+                (c % 32 * 8) as u8,
+                (c / 32 * 8) as u8,
+                128,
+                if c.is_multiple_of(5) { 0 } else { 255 },
+            ];
+        }
+        img
+    }
+
+    #[test]
+    fn palettize_lossless_keeps_every_colour() {
+        for (w, h, n, want) in [
+            (64, 32, 16, Psm::PsmT4),
+            (24, 20, 200, Psm::PsmT8),
+            (8, 8, 3, Psm::PsmT4),
+        ] {
+            for swizzle_it in [true, false] {
+                for direct in [Psm::Psm8888, Psm::Psm5551] {
+                    let src = pack_rgba(&image(w, h, n), direct, swizzle_it);
+                    let out = palettize_lossless(&src).expect("fits a palette");
+                    assert_eq!(out.format, want);
+                    assert_eq!(out.swizzled, src.swizzled);
+                    assert_eq!(out.levels, 1);
+                    assert!(out.palette.len().is_multiple_of(8));
+                    assert_eq!(out.stride, ge_buffer_stride(w, want.bits()));
+                    assert_eq!(colours_of(&out), colours_of(&src), "{w}x{h} {n} {direct:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn palettize_lossless_refuses_too_many_colours() {
+        let src = pack_rgba(&image(32, 32, 1024), Psm::Psm8888, true);
+        assert!(palettize_lossless(&src).is_none());
+        let paletted = PspTexture {
+            format: Psm::PsmT8,
+            ..src
+        };
+        assert!(palettize_lossless(&paletted).is_none());
     }
 
     #[test]

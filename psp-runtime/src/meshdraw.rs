@@ -736,7 +736,9 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
         sys::sceGuClutLoad(blocks, pal.as_ptr() as *const c_void);
     }
 
-    if palette != TextureDesc::NO_ANIM {
+    // A palettized direct-colour texture's CLUT is its own colours, not a
+    // TLUT a material animation can swap (RE-491).
+    if palette != TextureDesc::NO_ANIM && t.texels & TextureDesc::TEXELS_PALETTIZED == 0 {
         if let Some(animated) = pack
             .mat_anim_palette(palette)
             .and_then(|p| pack.mat_anim_palette_data(&p))

@@ -9,7 +9,7 @@
 | Fast scratch | 4 KiB TMEM | 16 KiB scratchpad | 16 KiB scratchpad |
 
 - Scenes load their archive files (RE-475, [D-046](decisions/D-046.md)).
-  The pack (v108) holds a shared region, each ROM archive file's bytes
+  The pack (v109) holds a shared region, each ROM archive file's bytes
   and the audio section; the game reads the header, tables and shared
   region at boot (about 5.5 MB), and the audio section (4.4 MB, never
   freed: the audio thread reads it at any time, [D-049](decisions/D-049.md)) and each scene's files, with their extern closure, when
