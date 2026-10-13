@@ -13,6 +13,7 @@ pub mod audio;
 pub mod boss;
 pub mod ending;
 pub mod gu;
+pub mod heap;
 #[cfg(all(feature = "profile_hw", target_os = "psp"))]
 pub mod hwcount;
 pub mod input;

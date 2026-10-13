@@ -1632,7 +1632,9 @@ fn exchange_from(s: &mut [Option<&mut play::FighterScene>; 4], from: usize) {
 }
 
 /// Every fighter in `s` in port order, for the passes that take them all.
-fn fighters_mut<'b>(s: &'b mut [Option<&mut play::FighterScene>; 4]) -> alloc::vec::Vec<&'b mut ssb_game::fighter::Fighter> {
+fn fighters_mut<'b>(
+    s: &'b mut [Option<&mut play::FighterScene>; 4],
+) -> ssb_engine::array_vec::ArrayVec<&'b mut ssb_game::fighter::Fighter, 4> {
     s.iter_mut().flatten().map(|x| &mut x.fighter).collect()
 }
 
@@ -1873,7 +1875,7 @@ fn interrupt_pass(
                 play::Lead::Key(key) => play::key_input(key),
                 play::Lead::Computer(computer) => {
                     let all = scenes_ref(pl, dummies);
-                    let opponents: alloc::vec::Vec<_> = all
+                    let opponents: play::Opponents = all
                         .into_iter()
                         .flatten()
                         .filter(|x| ssb_game::computer::behave::is_opponent(&pl.fighter, &x.fighter))
@@ -1888,7 +1890,7 @@ fn interrupt_pass(
         } else {
             // The CPU's fighter walks skip itself and its team.
             let all = scenes_ref(pl, dummies);
-            let opponents: alloc::vec::Vec<_> = all[i].map_or_else(alloc::vec::Vec::new, |me| {
+            let opponents: play::Opponents = all[i].map_or_else(play::Opponents::new, |me| {
                 all.into_iter()
                     .flatten()
                     .filter(|x| ssb_game::computer::behave::is_opponent(&me.fighter, &x.fighter))

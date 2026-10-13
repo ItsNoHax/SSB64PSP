@@ -19,8 +19,10 @@
 // The audio system allocates its pools once at boot (D-049).
 extern crate alloc;
 
+pub mod array_vec;
 pub mod audio;
 pub mod coord;
+pub mod heap;
 pub mod input;
 pub mod math;
 pub mod memops;

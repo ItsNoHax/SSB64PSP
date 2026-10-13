@@ -10,6 +10,7 @@
 
 use core::ops::{Deref, DerefMut};
 
+use ssb_engine::array_vec::ArrayVec;
 use ssb_game::fighter::FighterKind;
 use ssb_rom::pack::{Pack, StageDesc};
 
@@ -214,12 +215,16 @@ pub fn lead_computer(
 /// `gSCManagerBattleState->players[dummy].level` in Training.
 pub const TRAINING_CPU_LEVEL: u8 = 3;
 
+/// Opponents a CPU sees: every other fighter.
+pub type Opponents = ArrayVec<ssb_game::computer::behave::Opponent, 3>;
+
 /// What a CPU reads of the match besides the fighters, as it stands when
 /// its interrupt runs: the items and weapons in link order, the Twister,
 /// the Zebes acid and its own PK Thunder trail.
 pub struct CpuSight {
-    pub items: alloc::vec::Vec<ssb_game::computer::behave::ItemSight>,
-    pub weapons: alloc::vec::Vec<ssb_game::computer::behave::WeaponThreat>,
+    pub items: ArrayVec<ssb_game::computer::behave::ItemSight, { ssb_game::item::ITEM_ALLOC_MAX }>,
+    /// Up to two threats a weapon (`WeaponPool::cpu_threats`).
+    pub weapons: ArrayVec<ssb_game::computer::behave::WeaponThreat, { 2 * ssb_game::weapon::MAX_WEAPONS }>,
     pub team_rules: ssb_game::team::TeamRules,
     pub twister: Option<ssb_engine::math::Vec2>,
     pub acid: Option<(f32, f32)>,
@@ -229,8 +234,8 @@ pub struct CpuSight {
 impl Default for CpuSight {
     fn default() -> Self {
         CpuSight {
-            items: alloc::vec::Vec::new(),
-            weapons: alloc::vec::Vec::new(),
+            items: ArrayVec::new(),
+            weapons: ArrayVec::new(),
             team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL,
             twister: None,
             acid: None,

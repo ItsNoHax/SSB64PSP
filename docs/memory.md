@@ -24,13 +24,16 @@
   bytes at `psp_main`, 4 MiB less than under PSPLink (RE-475). The
   `memory_ballast` feature reproduces any such budget under PSPLink or
   PPSSPP.
-- `psp`'s allocator takes each Rust allocation from
-  `sceKernelAllocPartitionMemory` and its allocation-error handler spins
-  forever: an allocation failure is a black screen and a hung HOME exit.
-  Large loads therefore allocate fallibly and end on
-  `ssb_psp_runtime::memory::fatal`'s text screen. Each allocate-and-free
-  costs ~9,400 cycles on a PSP-2000 and evicts the caller's cache lines
-  (RE-483): keep allocation out of per-frame paths.
+- The global allocator (`ssb_psp_runtime::heap`, RE-484) serves blocks
+  up to 32 KiB from size-class free lists over 256 KiB chunks it takes
+  once and keeps (512–768 KiB measured); larger blocks still come from
+  `sceKernelAllocPartitionMemory`, ~9,400 cycles an allocate-and-free on a
+  PSP-2000 that evicts the caller's cache lines (RE-483). rust-psp's
+  allocation-error handler spins forever: an allocation failure is a black
+  screen and a hung HOME exit. Large loads therefore allocate fallibly and
+  end on `ssb_psp_runtime::memory::fatal`'s text screen. Keep allocation
+  out of per-frame paths: battle makes one a frame (`profile`'s
+  `allocs`), bounded lists use `ssb_engine::array_vec::ArrayVec`.
 - While a scene runs, the next scene's files are read into memory beside
   it (`scene_files::prefetch`, RE-476): the attract loop's lowest free
   memory at the XMB's budget is 23.1 MB under PPSSPP with audio (24.9 MB

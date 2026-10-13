@@ -92,14 +92,19 @@ pub enum Span {
     /// `StageAnimator::compose` and billboard scales, a fighter's
     /// `compose_model`).
     Compose,
+    /// Heap allocations (a count, not microseconds; `heap`, RE-484).
+    Allocs,
+    /// Of [`Span::Allocs`]: those the kernel served (large blocks and the
+    /// small heap's chunks).
+    KernelAllocs,
 }
 
-const SPANS: usize = 35;
+const SPANS: usize = 37;
 #[cfg_attr(not(feature = "profile"), allow(dead_code))]
 const NAMES: [&str; SPANS] = [
     "update", "interrupt", "physics", "hit", "effects", "draw", "ge", "vblank", "fphys", "items", "weapons", "camera", "anim",
     "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel", "io", "demand", "files", "mpose", "mmesh", "skin", "msprites", "nodemat", "material", "submit", "prims", "sound", "sndcalls",
-    "compose",
+    "compose", "allocs", "kallocs",
 ];
 
 /// Frames per report: two seconds at 60 FPS.
@@ -152,6 +157,8 @@ mod imp {
         audio_last: crate::audio::Stats,
         /// The renderer's stage totals at the last report.
         stages_last: [u32; ssb_engine::audio::prof::STAGES],
+        /// `heap::counts` at the last frame end.
+        allocs_last: (u32, u32),
     }
 
     static mut STATE: State = State {
@@ -176,6 +183,7 @@ mod imp {
         run_max_tick: 0,
         audio_last: crate::audio::Stats::ZERO,
         stages_last: [0; ssb_engine::audio::prof::STAGES],
+        allocs_last: (0, 0),
     };
 
     pub fn set_tick(tick: u32) {
@@ -277,6 +285,8 @@ mod imp {
         flush();
         let s = unsafe { &mut *core::ptr::addr_of_mut!(STATE) };
         let t = now();
+        let allocs = crate::heap::counts();
+        let last_allocs = core::mem::replace(&mut s.allocs_last, allocs);
         if s.last_end == 0 {
             s.last_end = t;
             s.report_start = t;
@@ -291,6 +301,8 @@ mod imp {
         }
         let frame_us = t.wrapping_sub(s.last_end);
         s.last_end = t;
+        s.frame[Span::Allocs as usize] = allocs.0.wrapping_sub(last_allocs.0);
+        s.frame[Span::KernelAllocs as usize] = allocs.1.wrapping_sub(last_allocs.1);
         let cpu = (s.frame[Span::Update as usize]
             + s.frame[Span::Draw as usize]
             + s.frame[Span::Files as usize])
@@ -385,9 +397,12 @@ mod imp {
         let max_block = unsafe { sys::sceKernelMaxFreeMemSize() } as u32;
         let reads = unsafe { core::mem::replace(&mut *core::ptr::addr_of_mut!(CLOCK_READS), 0) };
         let _ = write!(line, " clk_reads={} clk_ns={}", reads / n, clock_read_ns());
+        let heap = crate::heap::stats();
         let _ = writeln!(
             line,
-            " free={} maxblock={} minfree={} stackfree={} mhz={}/{}",
+            " heap={}/{} free={} maxblock={} minfree={} stackfree={} mhz={}/{}",
+            heap.chunk_bytes,
+            heap.live_bytes,
             free,
             max_block,
             s.min_free,
