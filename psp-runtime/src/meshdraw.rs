@@ -928,13 +928,7 @@ unsafe fn apply_texture_mapping(
 ) {
     // RE-326: the offset is normalised by the dimensions the GE is given.
     let affine = match (uv, pack.texture(texture)) {
-        (Some(uv), Some(t)) => uv.ge_affine(
-            ssb_rom::psp_texture::ge_texture_dims(t.width as u32, t.height as u32),
-            (
-                t.wrap & TextureDesc::CLAMP_S != 0,
-                t.wrap & TextureDesc::CLAMP_T != 0,
-            ),
-        ),
+        (Some(uv), Some(t)) => animated_uv_affine(uv, &t),
         _ => ssb_rom::skeleton::UvAffine::IDENTITY,
     };
     let environment = p.flags & flags::TEXTURE_GEN != 0 && p.flags & flags::TEXTURE_GEN_LINEAR == 0;
@@ -957,7 +951,37 @@ unsafe fn apply_texture_mapping(
     }
     st.last_texture_mapping = Some(key);
     st.state_changes += 1;
+    emit_texture_mapping(pack, p, st, texture, environment, affine);
+}
 
+/// [`apply_texture_mapping`]'s animated window (RE-326), normalised by the
+/// dimensions the GE is given. Out of line: only a primitive whose `MObj`
+/// owns a window takes it (RE-482).
+#[inline(never)]
+fn animated_uv_affine(
+    uv: ssb_rom::skeleton::MaterialUv,
+    t: &TextureDesc,
+) -> ssb_rom::skeleton::UvAffine {
+    uv.ge_affine(
+        ssb_rom::psp_texture::ge_texture_dims(t.width as u32, t.height as u32),
+        (
+            t.wrap & TextureDesc::CLAMP_S != 0,
+            t.wrap & TextureDesc::CLAMP_T != 0,
+        ),
+    )
+}
+
+/// [`apply_texture_mapping`]'s GE writes for a mapping that differs from the
+/// last one. Kept inline, like [`apply_flags_state`].
+#[inline(always)]
+unsafe fn emit_texture_mapping(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    st: &mut DrawState,
+    texture: u32,
+    environment: bool,
+    affine: ssb_rom::skeleton::UvAffine,
+) {
     // An untextured primitive has no dimensions to scale against and samples
     // nothing; leave the generator off and the scale neutral.
     let Some(t) = pack.texture(texture) else {
@@ -1156,161 +1180,14 @@ unsafe fn apply_material(
         st.last_flags = None;
     }
     if st.last_flags != Some(p.flags) {
-        st.last_flags = Some(p.flags);
-        st.state_changes += 1;
-
-        let cull = !st.force_no_cull && p.flags & (flags::CULL_BACK | flags::CULL_FRONT) != 0;
-        if cull {
-            sys::sceGuEnable(GuState::CullFace);
-            // The N64's front-face winding is the opposite of the GE's default
-            // for the same triangle order.
-            sys::sceGuFrontFace(if p.flags & flags::CULL_FRONT != 0 {
-                sys::FrontFaceDirection::Clockwise
-            } else {
-                sys::FrontFaceDirection::CounterClockwise
-            });
-        } else {
-            sys::sceGuDisable(GuState::CullFace);
-        }
-
-        sys::sceGuShadeModel(if p.flags & flags::SMOOTH != 0 {
-            sys::ShadingModel::Smooth
-        } else {
-            sys::ShadingModel::Flat
-        });
-
-        // Texture-coordinate generation is applied in `apply_texture_mapping`
-        // below, not here: it also needs the bound texture's dimensions and
-        // the primitive's own `G_TEXTURE` scale, neither of which `flags`
-        // alone determines.
-
-        // `ftDisplayMainProcDisplay` enables N64 `G_LIGHTING` for the fighter
-        // pass, but not every primitive carries normals: decals and other
-        // authored literal-colour material draws must stay literal.  The pack
-        // records that source distinction as `LIT`; GE lighting is a draw
-        // state, so make the equivalent decision at the same granularity.
-        //
-        // RE-322: a stage primitive whose light colour is animated lights
-        // too, under the scene's stage light. Its flags carry
-        // `LIGHT1_ANIM`/`LIGHT2_ANIM`, so no other primitive shares this
-        // cached decision.
-        if light_scope != ssb_rom::anim_color::LightScope::Off {
-            sys::sceGuEnable(GuState::Lighting);
-        } else {
-            sys::sceGuDisable(GuState::Lighting);
-        }
-
-        // RE-244 through RE-250 (`R2.2`/C3): `DEPTH_TEST`/`DEPTH_WRITE` are
-        // `G_SETRENDERMODE`'s own `Z_CMP`/`Z_UPD` bits, seeded from the same
-        // per-frame/per-object/per-camera/per-list defaults `Z_BUFFER`
-        // (`G_ZBUFFER`, RE-068) already relies on, plus the external wrapper
-        // and `PlannedList.list_id` corrections `Z_BUFFER` alone cannot
-        // express (a real depth-test-without-write surface, e.g. a stage's
-        // translucent render-layer-1 list-1 entries). `Z_BUFFER` and
-        // `DEPTH_TEST` agree everywhere except the ~1578 primitives RE-249
-        // traced to genuine archive content -- the ROM's own display lists
-        // setting `G_ZBUFFER` without a matching `Z_CMP`/`Z_UPD` -- so
-        // `DEPTH_TEST` is strictly more correct, not merely different.
-        if (p.flags & flags::DEPTH_TEST != 0 && !st.depth_off) || st.depth_write_only {
-            sys::sceGuEnable(GuState::DepthTest);
-        } else {
-            sys::sceGuDisable(GuState::DepthTest);
-        }
-
-        // `Z_UPD`: a depth-tested translucent surface (`ZMODE_XLU`) tests
-        // against geometry already drawn but must not itself occlude
-        // geometry drawn later in the same pass. `sceGuDepthMask`'s `mask`
-        // argument is inverted from the source bit's own sense -- `1`
-        // *disables* GE depth writes, matching `DEPTH_WRITE` clear.
-        sys::sceGuDepthMask(if (p.flags & flags::DEPTH_WRITE != 0 && !st.depth_off) || st.depth_write_only {
-            0
-        } else {
-            1
-        });
-
-        // A cutout surface (foliage, grates): the RDP scales a pixel's
-        // coverage by its alpha (`CVG_X_ALPHA | ALPHA_CVG_SEL`) and writes
-        // nothing where no coverage is left, `alpha < 32` at full coverage
-        // (RE-424; RE-069 used `alpha > 0`).
-        //
-        // Both gates -- the cutout approximation and `G_AC_THRESHOLD` --
-        // resolve onto the GE's single alpha-test unit in
-        // `ssb_rom::pack::alpha_gate`, which carries the reasoning and the
-        // host-side regressions. This end only maps the result.
-        match ssb_rom::pack::alpha_gate(p.flags, p.alpha_compare_ref) {
-            ssb_rom::pack::AlphaGate::Off => sys::sceGuDisable(GuState::AlphaTest),
-            ssb_rom::pack::AlphaGate::Greater(reference) => {
-                sys::sceGuEnable(GuState::AlphaTest);
-                sys::sceGuAlphaFunc(sys::AlphaFunc::Greater, reference as i32, 0xFF);
-            }
-            ssb_rom::pack::AlphaGate::GreaterOrEqual(reference) => {
-                sys::sceGuEnable(GuState::AlphaTest);
-                sys::sceGuAlphaFunc(sys::AlphaFunc::GreaterOrEqual, reference as i32, 0xFF);
-            }
-        }
-
-        // `TRANSLUCENT` alone was deliberately not wired to `GuState::Blend`
-        // for a long time (RE-069 through RE-071): enabling it unconditionally
-        // on Dream Land's own translucent highlight surface (file 104's list
-        // at 0x708/0x820/0xA78) produced a harsh checkerboard, and re-testing
-        // after RE-070's dither fix made it *worse* (blown-out highlights).
-        // RE-129 found the real cause: this project never decoded
-        // `G_SETCOMBINE`'s *alpha* formula at all (only the colour one), so
-        // "enable blend, let the GE's existing `Modulate` do the rest" was
-        // silently multiplying texture alpha by whatever a vertex's own alpha
-        // byte happened to hold -- meaningful `SHADE_ALPHA` for this one
-        // surface, but garbage for most `TRANSLUCENT` primitives archive-wide
-        // (`push_vertex`'s own long-standing note: "Mario's vertices are all
-        // zero"). RE-130 classified the real shapes and `flags::ALPHA_BLEND`
-        // (`crates/ssb-rom/src/pack.rs`) now only sets alongside `TRANSLUCENT`
-        // when a primitive's vertices were actually baked for one of them --
-        // gating on both together is what makes this finally safe.
-        if p.flags & (flags::TRANSLUCENT | flags::ALPHA_BLEND)
-            == (flags::TRANSLUCENT | flags::ALPHA_BLEND)
-        {
-            sys::sceGuEnable(GuState::Blend);
-            sys::sceGuBlendFunc(
-                sys::BlendOp::Add,
-                sys::BlendFactor::SrcAlpha,
-                sys::BlendFactor::OneMinusSrcAlpha,
-                0,
-                0,
-            );
-        } else if p.flags & flags::ALPHA_TEST != 0 {
-            // RE-424: a `TEX_EDGE` pixel keeps `(alpha * 8 + 4) >> 8` of its
-            // coverage. The RDP writes its colour unblended over a fully
-            // covered background and stores the partial coverage, and the
-            // VI's antialiasing then mixes it with the background by that
-            // coverage. The GE has no coverage buffer; blending by the pixel's
-            // alpha is the same mix, taken from what is already drawn.
-            sys::sceGuEnable(GuState::Blend);
-            sys::sceGuBlendFunc(
-                sys::BlendOp::Add,
-                sys::BlendFactor::SrcAlpha,
-                sys::BlendFactor::OneMinusSrcAlpha,
-                0,
-                0,
-            );
-        } else {
-            sys::sceGuDisable(GuState::Blend);
-        }
+        apply_flags_state(p, st, light_scope);
     }
     // `G_RM_AA_ZB_XLU_SURF2` at the fighter's `ENV` alpha (RE-464): the
     // pixel is `COMBINED * a + MEMORY * (1 - a)`. The fixed factors carry
     // `a` whatever alpha the texel or vertex holds; a cutout keeps its
     // alpha test.
     if let Some(a) = st.fade_alpha {
-        let a = u32::from(a);
-        let b = 0xFF - a;
-        sys::sceGuEnable(GuState::Blend);
-        sys::sceGuBlendFunc(
-            sys::BlendOp::Add,
-            sys::BlendFactor::Fix,
-            sys::BlendFactor::Fix,
-            a | a << 8 | a << 16,
-            b | b << 8 | b << 16,
-        );
-        sys::sceGuDepthMask(1);
+        apply_fade_blend(a);
     }
 
     // `gSPLightColor` is independent of geometry mode and every other
@@ -1439,6 +1316,174 @@ unsafe fn apply_material(
     }
 }
 
+/// [`apply_material`]'s fading-fighter blend (RE-464). Out of line and
+/// cold: only a fading fighter takes it (RE-482).
+#[cold]
+#[inline(never)]
+unsafe fn apply_fade_blend(a: u8) {
+    let a = u32::from(a);
+    let b = 0xFF - a;
+    sys::sceGuEnable(GuState::Blend);
+    sys::sceGuBlendFunc(
+        sys::BlendOp::Add,
+        sys::BlendFactor::Fix,
+        sys::BlendFactor::Fix,
+        a | a << 8 | a << 16,
+        b | b << 8 | b << 16,
+    );
+    sys::sceGuDepthMask(1);
+}
+
+/// [`apply_material`]'s `last_flags` arm: cull, shading, lighting, depth,
+/// alpha gate and blend for a primitive whose flags differ from the last
+/// one's. Kept inline: out of line, even placed beside the per-mesh path,
+/// the PSP-2000 drew slower.
+#[inline(always)]
+unsafe fn apply_flags_state(
+    p: &PrimDesc,
+    st: &mut DrawState,
+    light_scope: ssb_rom::anim_color::LightScope,
+) {
+    st.last_flags = Some(p.flags);
+    st.state_changes += 1;
+
+    let cull = !st.force_no_cull && p.flags & (flags::CULL_BACK | flags::CULL_FRONT) != 0;
+    if cull {
+        sys::sceGuEnable(GuState::CullFace);
+        // The N64's front-face winding is the opposite of the GE's default
+        // for the same triangle order.
+        sys::sceGuFrontFace(if p.flags & flags::CULL_FRONT != 0 {
+            sys::FrontFaceDirection::Clockwise
+        } else {
+            sys::FrontFaceDirection::CounterClockwise
+        });
+    } else {
+        sys::sceGuDisable(GuState::CullFace);
+    }
+
+    sys::sceGuShadeModel(if p.flags & flags::SMOOTH != 0 {
+        sys::ShadingModel::Smooth
+    } else {
+        sys::ShadingModel::Flat
+    });
+
+    // Texture-coordinate generation is applied in `apply_texture_mapping`
+    // below, not here: it also needs the bound texture's dimensions and
+    // the primitive's own `G_TEXTURE` scale, neither of which `flags`
+    // alone determines.
+
+    // `ftDisplayMainProcDisplay` enables N64 `G_LIGHTING` for the fighter
+    // pass, but not every primitive carries normals: decals and other
+    // authored literal-colour material draws must stay literal.  The pack
+    // records that source distinction as `LIT`; GE lighting is a draw
+    // state, so make the equivalent decision at the same granularity.
+    //
+    // RE-322: a stage primitive whose light colour is animated lights
+    // too, under the scene's stage light. Its flags carry
+    // `LIGHT1_ANIM`/`LIGHT2_ANIM`, so no other primitive shares this
+    // cached decision.
+    if light_scope != ssb_rom::anim_color::LightScope::Off {
+        sys::sceGuEnable(GuState::Lighting);
+    } else {
+        sys::sceGuDisable(GuState::Lighting);
+    }
+
+    // RE-244 through RE-250 (`R2.2`/C3): `DEPTH_TEST`/`DEPTH_WRITE` are
+    // `G_SETRENDERMODE`'s own `Z_CMP`/`Z_UPD` bits, seeded from the same
+    // per-frame/per-object/per-camera/per-list defaults `Z_BUFFER`
+    // (`G_ZBUFFER`, RE-068) already relies on, plus the external wrapper
+    // and `PlannedList.list_id` corrections `Z_BUFFER` alone cannot
+    // express (a real depth-test-without-write surface, e.g. a stage's
+    // translucent render-layer-1 list-1 entries). `Z_BUFFER` and
+    // `DEPTH_TEST` agree everywhere except the ~1578 primitives RE-249
+    // traced to genuine archive content -- the ROM's own display lists
+    // setting `G_ZBUFFER` without a matching `Z_CMP`/`Z_UPD` -- so
+    // `DEPTH_TEST` is strictly more correct, not merely different.
+    if (p.flags & flags::DEPTH_TEST != 0 && !st.depth_off) || st.depth_write_only {
+        sys::sceGuEnable(GuState::DepthTest);
+    } else {
+        sys::sceGuDisable(GuState::DepthTest);
+    }
+
+    // `Z_UPD`: a depth-tested translucent surface (`ZMODE_XLU`) tests
+    // against geometry already drawn but must not itself occlude
+    // geometry drawn later in the same pass. `sceGuDepthMask`'s `mask`
+    // argument is inverted from the source bit's own sense -- `1`
+    // *disables* GE depth writes, matching `DEPTH_WRITE` clear.
+    sys::sceGuDepthMask(if (p.flags & flags::DEPTH_WRITE != 0 && !st.depth_off) || st.depth_write_only {
+        0
+    } else {
+        1
+    });
+
+    // A cutout surface (foliage, grates): the RDP scales a pixel's
+    // coverage by its alpha (`CVG_X_ALPHA | ALPHA_CVG_SEL`) and writes
+    // nothing where no coverage is left, `alpha < 32` at full coverage
+    // (RE-424; RE-069 used `alpha > 0`).
+    //
+    // Both gates -- the cutout approximation and `G_AC_THRESHOLD` --
+    // resolve onto the GE's single alpha-test unit in
+    // `ssb_rom::pack::alpha_gate`, which carries the reasoning and the
+    // host-side regressions. This end only maps the result.
+    match ssb_rom::pack::alpha_gate(p.flags, p.alpha_compare_ref) {
+        ssb_rom::pack::AlphaGate::Off => sys::sceGuDisable(GuState::AlphaTest),
+        ssb_rom::pack::AlphaGate::Greater(reference) => {
+            sys::sceGuEnable(GuState::AlphaTest);
+            sys::sceGuAlphaFunc(sys::AlphaFunc::Greater, reference as i32, 0xFF);
+        }
+        ssb_rom::pack::AlphaGate::GreaterOrEqual(reference) => {
+            sys::sceGuEnable(GuState::AlphaTest);
+            sys::sceGuAlphaFunc(sys::AlphaFunc::GreaterOrEqual, reference as i32, 0xFF);
+        }
+    }
+
+    // `TRANSLUCENT` alone was deliberately not wired to `GuState::Blend`
+    // for a long time (RE-069 through RE-071): enabling it unconditionally
+    // on Dream Land's own translucent highlight surface (file 104's list
+    // at 0x708/0x820/0xA78) produced a harsh checkerboard, and re-testing
+    // after RE-070's dither fix made it *worse* (blown-out highlights).
+    // RE-129 found the real cause: this project never decoded
+    // `G_SETCOMBINE`'s *alpha* formula at all (only the colour one), so
+    // "enable blend, let the GE's existing `Modulate` do the rest" was
+    // silently multiplying texture alpha by whatever a vertex's own alpha
+    // byte happened to hold -- meaningful `SHADE_ALPHA` for this one
+    // surface, but garbage for most `TRANSLUCENT` primitives archive-wide
+    // (`push_vertex`'s own long-standing note: "Mario's vertices are all
+    // zero"). RE-130 classified the real shapes and `flags::ALPHA_BLEND`
+    // (`crates/ssb-rom/src/pack.rs`) now only sets alongside `TRANSLUCENT`
+    // when a primitive's vertices were actually baked for one of them --
+    // gating on both together is what makes this finally safe.
+    if p.flags & (flags::TRANSLUCENT | flags::ALPHA_BLEND)
+        == (flags::TRANSLUCENT | flags::ALPHA_BLEND)
+    {
+        sys::sceGuEnable(GuState::Blend);
+        sys::sceGuBlendFunc(
+            sys::BlendOp::Add,
+            sys::BlendFactor::SrcAlpha,
+            sys::BlendFactor::OneMinusSrcAlpha,
+            0,
+            0,
+        );
+    } else if p.flags & flags::ALPHA_TEST != 0 {
+        // RE-424: a `TEX_EDGE` pixel keeps `(alpha * 8 + 4) >> 8` of its
+        // coverage. The RDP writes its colour unblended over a fully
+        // covered background and stores the partial coverage, and the
+        // VI's antialiasing then mixes it with the background by that
+        // coverage. The GE has no coverage buffer; blending by the pixel's
+        // alpha is the same mix, taken from what is already drawn.
+        sys::sceGuEnable(GuState::Blend);
+        sys::sceGuBlendFunc(
+            sys::BlendOp::Add,
+            sys::BlendFactor::SrcAlpha,
+            sys::BlendFactor::OneMinusSrcAlpha,
+            0,
+            0,
+        );
+    } else {
+        sys::sceGuDisable(GuState::Blend);
+    }
+}
+
 /// Draws the second pass of the RDP two-tile fractional image blend
 /// (RE-321) over the primitive [`draw_mesh`] just drew.
 ///
@@ -1466,6 +1511,8 @@ unsafe fn apply_material(
 ///
 /// Returns whether a draw was submitted. A zero fraction submits nothing:
 /// pass 1 already is the RDP result.
+#[cold]
+#[inline(never)]
 unsafe fn draw_lod_blend_pass(
     pack: &Pack<'_>,
     p: &PrimDesc,
@@ -1571,12 +1618,9 @@ unsafe fn draw_mesh_vertices(
 
         let material_t = crate::profile::start_fine();
         // RE-426: `sprites[texture_id_curr]` of a texture part's `MObj`.
-        st.texture_override = st.texture_part_mesh.and_then(|mesh| {
-            let t = pack.texture_part(mesh, i)?;
-            let id = *st.texture_part_ids.get(t.part as usize)?;
-            let texture = *t.textures.get(usize::try_from(id).ok().filter(|&id| id > 0)?)?;
-            (texture != TextureDesc::NO_ANIM).then_some(texture)
-        });
+        st.texture_override = st
+            .texture_part_mesh
+            .and_then(|mesh| texture_part_override(pack, mesh, i, st.texture_part_ids));
         apply_material(pack, &p, st, mat_anim, effect_mat_anim);
         st.texture_override = None;
 
@@ -1628,6 +1672,18 @@ unsafe fn draw_mesh_vertices(
 
     st.triangles += tris;
     tris
+}
+
+/// [`draw_mesh_vertices`]' texture-part sprite (RE-426) for primitive `i`
+/// of `mesh`. Out of line and cold: only a mesh with a texture part showing
+/// a non-default sprite takes it (RE-482).
+#[cold]
+#[inline(never)]
+fn texture_part_override(pack: &Pack<'_>, mesh: u32, i: u32, ids: [i8; 2]) -> Option<u32> {
+    let t = pack.texture_part(mesh, i)?;
+    let id = *ids.get(t.part as usize)?;
+    let texture = *t.textures.get(usize::try_from(id).ok().filter(|&id| id > 0)?)?;
+    (texture != TextureDesc::NO_ANIM).then_some(texture)
 }
 
 /// [`draw_mesh_vertices`]' `SIGNED_CLAMP_UV` submission: each indexed

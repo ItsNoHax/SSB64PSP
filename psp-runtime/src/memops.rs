@@ -1,8 +1,8 @@
 //! The C memory functions every large move and zeroing calls, word at a
 //! time (`ssb_engine::memops`, RE-471). The `psp` crate defines `memcpy`,
 //! `memmove` and `memset` a byte per loop iteration; each PSP binary's
-//! `build.rs` links with `--wrap` for the three, so every call, the
-//! compiler's own included, comes here instead.
+//! `.cargo/config.toml` links with `--wrap` for the three, so every call,
+//! the compiler's own included, comes here instead.
 
 /// `memcpy`.
 ///
