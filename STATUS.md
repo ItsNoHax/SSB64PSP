@@ -17,13 +17,13 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Allocation is off the kernel (RE-484): a size-class heap serves blocks up
-to 32 KiB, and VS's per-frame lists are `ArrayVec`s. VS makes one
-allocation a frame instead of 8–11; on the PSP-2000 `vs4@2400` goes from
-40.1 to 41.0 FPS (CPU 18.54 → 17.77 ms) for 0.3–0.7 MB of free memory.
-rust-psp is pinned at fork commit `3ecf457` (`external-allocator`).
-Next: the
-uncached list, then compacting the per-mesh hot path
+The display list stays uncached (RE-485): a cached list written back
+before each GE stall update removes ~16,900 uncached stores a frame but
+costs more I- and D-cache misses. `vs4@2400` on the PSP-2000 drops from
+41.2 to 39.8 FPS, and to 38.7 with Create Dirty Exclusive. The
+experiment is on rust-psp's local branch `cached-list-experiment`; the
+game still pins `3ecf457`. Next: fewer GE stall-address system calls,
+then compacting the per-mesh hot path
 ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
@@ -36,7 +36,8 @@ uncached list, then compacting the per-mesh hot path
 
 ## Verification
 
-Baseline after the allocator batch (RE-484):
+Baseline after the allocator batch (RE-484); RE-485 changed no game
+code:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: 2,275
   pass (stub-table count below is from the magnifier-mask batch). With `SSB64_STUB_TABLES=1` and no ROM: 2,077 pass, 191 ignored.
@@ -55,6 +56,7 @@ Baseline after the allocator batch (RE-484):
   ran the attract loop for four minutes without an exception; `profile`
   A/B runs with and without `no_audio` (RE-479); a `profile_hw` run of
   `vs4@2400`, 19 reports (RE-481); function-ordered and `opt-level s`
-  `profile_hw` runs of `vs4@2400` (RE-482).
+  `profile_hw` runs of `vs4@2400` (RE-482); cached display-list
+  builds against `91323e8` (RE-485).
 - ROMs: `rom/Super Smash Bros. (USA).z64` and
   `refs/ssb-decomp-re/baserom.us.z64`, SHA-1 `e2929e10…`.
