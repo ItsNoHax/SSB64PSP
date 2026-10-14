@@ -53,6 +53,9 @@ pub struct Persp {
     pub aspect: f32,
     pub near: f32,
     pub far: f32,
+    /// `nGCMatrixKindPerspF` (`syMatrixPerspF`, an exact cotangent) rather
+    /// than `PerspFastF` (the sine table's): the cliff's cameras only.
+    pub persp_f: bool,
     /// The camera animation that writes `eye`, `at`, `up.x` and `fovy`
     /// (its plays override the fields above).
     pub anim: Option<CamAnim>,
@@ -78,6 +81,7 @@ impl Persp {
         aspect: 4.0 / 3.0,
         near: 100.0,
         far: 12800.0,
+        persp_f: false,
         anim: None,
     };
 

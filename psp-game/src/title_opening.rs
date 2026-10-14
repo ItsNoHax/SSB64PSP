@@ -251,7 +251,7 @@ impl TitleOpening {
         };
         gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
         let view = Mat4::look_at(Vec3::new(0.0, 0.0, 1000.0), Vec3::ZERO, Vec3::Y);
-        let proj = Mat4::perspective(30.0f32.to_radians(), 4.0 / 3.0, 100.0, 12800.0);
+        let proj = Mat4::sy_persp_fast(30.0, 4.0 / 3.0, 100.0, 12800.0);
         let camera = ssb_psp_runtime::particles::Camera {
             view: &view,
             proj: &proj,

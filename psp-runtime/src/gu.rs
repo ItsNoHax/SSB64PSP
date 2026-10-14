@@ -1141,12 +1141,49 @@ impl Gpu {
         self.frames
     }
 
-    /// Sets the projection matrix from a field of view in degrees.
+    /// Sets the projection matrix from a field of view in degrees, as
+    /// `syMatrixPerspFastF` builds it: the cotangent from `gSYSinTable`
+    /// (RE-505, RE-506), not `sceGumPerspective`'s VFPU `vrot`. Every
+    /// perspective camera of the original is `PerspFastF` but the cliff's
+    /// ([`Gpu::set_perspective_f`]).
     pub fn set_perspective(&mut self, fovy_degrees: f32, aspect: f32, near: f32, far: f32) {
+        self.set_projection(&ssb_engine::math::Mat4::sy_persp_fast(
+            fovy_degrees,
+            aspect,
+            near,
+            far,
+        ));
+    }
+
+    /// [`Gpu::set_perspective`] for a `PerspF` camera (`syMatrixPerspF`:
+    /// libultra `cosf`/`sinf`, unquantised): the opening's cliff only.
+    pub fn set_perspective_f(&mut self, fovy_degrees: f32, aspect: f32, near: f32, far: f32) {
+        self.set_projection(&ssb_engine::math::Mat4::sy_persp_f(
+            fovy_degrees,
+            aspect,
+            near,
+            far,
+        ));
+    }
+
+    /// Loads `m` (column-major) as the projection.
+    pub fn set_projection(&mut self, m: &ssb_engine::math::Mat4) {
+        let a = m.as_array();
+        let v = |i: usize| sys::ScePspFVector4 {
+            x: a[i],
+            y: a[i + 1],
+            z: a[i + 2],
+            w: a[i + 3],
+        };
+        let fm = sys::ScePspFMatrix4 {
+            x: v(0),
+            y: v(4),
+            z: v(8),
+            w: v(12),
+        };
         unsafe {
             sys::sceGumMatrixMode(sys::MatrixMode::Projection);
-            sys::sceGumLoadIdentity();
-            sys::sceGumPerspective(fovy_degrees, aspect, near, far);
+            sys::sceGumLoadMatrix(&fm);
         }
     }
 

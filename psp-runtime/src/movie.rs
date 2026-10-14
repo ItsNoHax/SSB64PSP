@@ -705,7 +705,11 @@ impl Runtime {
                 }
             }
         }
-        gpu.set_perspective(fovy, p.aspect, p.near, p.far);
+        if p.persp_f {
+            gpu.set_perspective_f(fovy, p.aspect, p.near, p.far);
+        } else {
+            gpu.set_perspective(fovy, p.aspect, p.near, p.far);
+        }
         gpu.reset_modelview();
         st.begin_frame();
         gpu.set_view(&view_matrix(eye, at, up_x, p.view));

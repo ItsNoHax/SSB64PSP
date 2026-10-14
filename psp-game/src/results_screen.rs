@@ -433,7 +433,7 @@ unsafe fn draw(
     // fighters), 1, then 0 and 2. No results camera draws link 25's list 3.
     if let Some(banks) = ssb_psp_runtime::particles::PackBanks::new(p) {
         let view = ssb_engine::math::Mat4::look_at(cam.eye, cam.at, cam.up);
-        let proj = ssb_engine::math::Mat4::perspective(cam.fovy.to_radians(), cam.aspect, cam.near, cam.far);
+        let proj = ssb_engine::math::Mat4::sy_persp_fast(cam.fovy, cam.aspect, cam.near, cam.far);
         let camera = ssb_psp_runtime::particles::Camera {
             view: &view,
             proj: &proj,

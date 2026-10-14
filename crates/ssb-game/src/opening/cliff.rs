@@ -64,7 +64,10 @@ impl Cliff {
                 links,
                 FULL,
                 CameraKind::Persp {
-                    persp: Persp::animated(CAMERA_SLOT, View::LookAt, 128.0, 16384.0),
+                    persp: Persp {
+                        persp_f: true,
+                        ..Persp::animated(CAMERA_SLOT, View::LookAt, 128.0, 16384.0)
+                    },
                     zbuffer: false,
                 },
             )

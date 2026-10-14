@@ -7470,8 +7470,8 @@ fn draw_particles(
     };
     let view = ssb_engine::math::Mat4::look_at(pl.camera.eye, pl.camera.at, ssb_engine::math::Vec3::Y);
     let (w, h) = pl.camera.viewport_size();
-    let proj = ssb_engine::math::Mat4::perspective(
-        pl.camera.fovy_degrees.to_radians(),
+    let proj = ssb_engine::math::Mat4::sy_persp_fast(
+        pl.camera.fovy_degrees,
         w / h,
         ssb_game::camera::DEFAULT_NEAR,
         ssb_game::camera::DEFAULT_FAR,

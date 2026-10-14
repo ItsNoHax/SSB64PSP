@@ -275,6 +275,32 @@ impl Mat4 {
         m
     }
 
+    /// `syMatrixPerspFastF` (`sys/matrix.c:575`) with `scale` 1: the
+    /// projection every perspective camera but the cliff's builds, its
+    /// cotangent from `gSYSinTable` ([`sy_persp_cot`], RE-505).
+    pub fn sy_persp_fast(fovy_degrees: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
+        Self::persp_from_cot(sy_persp_cot(fovy_degrees), aspect, near, far)
+    }
+
+    /// `syMatrixPerspF` (`sys/matrix.c:645`) with `scale` 1: the cliff
+    /// cameras' exact projection ([`sy_persp_cot_exact`]).
+    pub fn sy_persp_f(fovy_degrees: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
+        Self::persp_from_cot(sy_persp_cot_exact(fovy_degrees), aspect, near, far)
+    }
+
+    /// The matrix both perspective builders write from a cotangent, in
+    /// their order of operations (`scale` 1 drops out exactly). `mf[i][j]`
+    /// is `cols[i][j]`.
+    fn persp_from_cot(cot: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
+        let mut m = Mat4::ZERO;
+        m.cols[0][0] = cot / aspect;
+        m.cols[1][1] = cot;
+        m.cols[2][2] = (near + far) / (near - far);
+        m.cols[2][3] = -1.0;
+        m.cols[3][2] = (2.0 * near * far) / (near - far);
+        m
+    }
+
     /// Right-handed orthographic projection, used for HUD and menus.
     pub fn ortho(l: f32, r: f32, b: f32, t: f32, near: f32, far: f32) -> Mat4 {
         let mut m = Mat4::IDENTITY;
@@ -938,6 +964,19 @@ pub fn sy_persp_cot(fovy_degrees: f32) -> f32 {
     div_nonzero(cos as f32, sin as f32)
 }
 
+/// `DTOR32` (`include/macros.h`): `(float)(PI64 / 180)`.
+const DTOR32: f32 = (core::f64::consts::PI / 180.0) as f32;
+
+/// `syMatrixPerspF`'s cotangent (`sys/matrix.c:645`): `fovy *= DTOR32`,
+/// then libultra's `cosf(fovy / 2) / sinf(fovy / 2)`, unquantised. Only
+/// the opening's cliff cameras (`mvOpeningCliffMakeMainCamera`) have this
+/// kind; every other perspective camera is `PerspFastF` ([`sy_persp_cot`]).
+/// A zero field of view divides by 1, as [`sy_persp_cot`] does.
+pub fn sy_persp_cot_exact(fovy_degrees: f32) -> f32 {
+    let fovy = fovy_degrees * DTOR32;
+    div_nonzero(cosf(fovy / 2.0), sinf(fovy / 2.0))
+}
+
 fn lb_angle_index(angle: f32) -> u16 {
     ((angle * 651.898_6) as i32 as u16) & 0x0fff
 }
@@ -1380,6 +1419,51 @@ mod sy_sin_tests {
         assert!((sy_persp_cot(38.0) - exact).abs() / exact < 2e-3);
         // fovy 0 would divide by zero on the PSP.
         assert!(sy_persp_cot(0.0).is_finite());
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_fast_projection_is_sy_matrix_persp_fast_f() {
+        // The battle camera: 38 degrees, near 256, far 39,936.
+        let (aspect, near, far) = (300.0f32 / 220.0, 256.0f32, 39_936.0f32);
+        for fovy in [38.0f32, 30.0, 18.607_187, 11.982_265, 60.0, 0.0] {
+            let m = Mat4::sy_persp_fast(fovy, aspect, near, far);
+            let cot = sy_persp_cot(fovy);
+            assert_eq!(m.cols[0][0].to_bits(), (cot / aspect).to_bits());
+            assert_eq!(m.cols[1][1].to_bits(), cot.to_bits());
+            assert_eq!(
+                m.cols[2][2].to_bits(),
+                ((near + far) / (near - far)).to_bits()
+            );
+            assert_eq!(m.cols[2][3], -1.0);
+            assert_eq!(
+                m.cols[3][2].to_bits(),
+                ((2.0 * near * far) / (near - far)).to_bits()
+            );
+            assert_eq!(m.cols[3][3], 0.0);
+            assert!(m.as_array().iter().all(|v| v.is_finite()));
+        }
+    }
+}
+
+#[cfg(test)]
+mod persp_f_tests {
+    use super::*;
+
+    #[test]
+    fn the_exact_projection_uses_libultra_cosf_and_sinf() {
+        // The cliff camera: `syMatrixPerspF`.
+        let half = 38.0f32 * DTOR32 / 2.0;
+        let cot = cosf(half) / sinf(half);
+        assert_eq!(sy_persp_cot_exact(38.0).to_bits(), cot.to_bits());
+        let m = Mat4::sy_persp_f(38.0, 4.0 / 3.0, 128.0, 16_384.0);
+        assert_eq!(m.cols[1][1].to_bits(), cot.to_bits());
+        assert_eq!(m.cols[0][0].to_bits(), (cot / (4.0 / 3.0)).to_bits());
+        // Unquantised: within float rounding of 1 / tan(19 degrees).
+        let exact = (1.0 / (19.0f64.to_radians()).tan()) as f32;
+        assert!((cot - exact).abs() / exact < 1e-6);
+        assert!(sy_persp_cot_exact(0.0).is_finite());
+        assert_eq!(DTOR32.to_bits(), 0.017_453_292_f32.to_bits());
     }
 }
 
