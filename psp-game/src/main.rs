@@ -7285,7 +7285,7 @@ fn draw_egg_effects(
         let top = f.joint_world(0, ssb_engine::math::Vec3::ZERO);
         let t0 = [root.translate[0] + e.wiggle[0], root.translate[1] + e.wiggle[1], root.translate[2]];
         let place = Mat4::from_trs([top.x, top.y, top.z], [0.0; 3], [size, size, 1.0])
-            .mul(&Mat4::from_trs(t0, root.rotate, root.scale));
+            .mul(&Mat4::from_trs_display(t0, root.rotate, root.scale));
         let [x, y, z] = place.transform_point(egg.translate);
         let scale = size * root.scale[0];
         gpu.model_transform_billboard(
@@ -7403,17 +7403,14 @@ fn draw_ko_effects(
         if let (Some(f), Some((object, _))) = (fighters[i], halo) {
             if let (Some(scale), Some(_)) = (ssb_game::dead::halo_scale(f), v.halo_ticks) {
                 let mut posed = [Mat4::IDENTITY; 8];
-                let n = v.halo.compose(p, object, &mut posed);
-                // `child->scale = scale`, about the child's own origin.
-                if let Some(child) = p.node(object.first_node + 1) {
-                    let t = child.rest_translate.map(|x| x / meshdraw::MODEL_SCALE);
-                    let k = Mat4::from_trs(t, [0.0; 3], [1.0; 3])
-                        .mul(&Mat4::from_trs([0.0; 3], [0.0; 3], [scale; 3]))
-                        .mul(&Mat4::from_trs(t.map(|x| -x), [0.0; 3], [1.0; 3]));
-                    for m in posed.iter_mut().take(n).skip(1) {
-                        *m = k.mul(m);
-                    }
-                }
+                // `child->scale = scale` (`efManagerRebirthHaloMakeEffect`): the
+                // child DObj's own scale, in its `TraRotRpyRSca` chain.
+                let n = v.halo.compose_scaled(
+                    p,
+                    object,
+                    &mut posed,
+                    Some((object.first_node + 1, scale)),
+                );
                 let top = f.joint_world(0, ssb_engine::math::Vec3::ZERO);
                 gpu.model_transform([top.x, top.y, top.z], [0.0; 3], meshdraw::MODEL_SCALE);
                 let base = gpu.model_matrix();
@@ -9191,8 +9188,10 @@ fn replay_materials(
     mats
 }
 
+/// A tree node's local matrix under `TraRotRpyRSca`, the kind its maker
+/// sets (`dITKamexWeaponHydroWeaponDesc`, the Dogas item's maker).
 fn local_trs(pose: &ssb_rom::figatree::JointPose) -> ssb_rom::scene::Mat4 {
-    ssb_rom::scene::Mat4::from_trs(
+    ssb_rom::scene::Mat4::from_trs_display(
         pose.translate.map(|t| t / meshdraw::MODEL_SCALE),
         pose.rotate,
         pose.scale,
@@ -9668,7 +9667,15 @@ unsafe fn draw_items_weapons_effects(
                         } else {
                             node.rest_scale
                         };
-                        let local = ssb_rom::scene::Mat4::from_trs(t, r, scale);
+                        // Sword and Fan are `TraRotRpyRSca`; the Bat, Star Rod, Ray
+                        // Gun, Fire Flower and Hammer `TraRotRpyR`, which does not
+                        // read the scale (`dIT*ItemDesc.transform_types`).
+                        use ssb_game::item::equipment::Kind as E;
+                        let local = if matches!(kind, E::Sword | E::Fan) {
+                            ssb_rom::scene::Mat4::from_trs_display(t, r, scale)
+                        } else {
+                            ssb_rom::scene::Mat4::from_tr_display(t, r)
+                        };
                         posed[i] = node
                             .parent
                             .checked_sub(object.first_node)
@@ -9719,14 +9726,16 @@ unsafe fn draw_items_weapons_effects(
                 // `itManagerMakeItem` ejects descriptor 0's placeholder, so the
                 // item root is node 1: at the item position loose, at its own
                 // descriptor translation under the attach joint (RE-432).
+                // Capsule, crate, barrel and the Bonus 3 barrel bomb are all
+                // `TraRotRpyR` (`dIT*ItemDesc`): the scale is not read.
                 let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
                 for i in 1..object.node_count as usize {
                     let Some(node) = p.node(object.first_node + i as u32) else { continue; };
                     let local = if i == 1 {
                         let t = if held.is_some() { node.rest_translate.map(|x| x / meshdraw::MODEL_SCALE) } else { [0.0; 3] };
-                        ssb_rom::scene::Mat4::from_trs(t, [item.vars.container_root_pitch, item.vars.container_root_yaw, item.rotate_z], node.rest_scale)
+                        ssb_rom::scene::Mat4::from_tr_display(t, [item.vars.container_root_pitch, item.vars.container_root_yaw, item.rotate_z])
                     } else {
-                        ssb_rom::scene::Mat4::from_trs(node.rest_translate.map(|x| x / meshdraw::MODEL_SCALE), node.rest_rotate, node.rest_scale)
+                        ssb_rom::scene::Mat4::from_tr_display(node.rest_translate.map(|x| x / meshdraw::MODEL_SCALE), node.rest_rotate)
                     };
                     posed[i] = node.parent.checked_sub(object.first_node).filter(|&parent| parent >= 1 && parent < i as u32).map_or(local, |parent| posed[parent as usize].mul(&local));
                 }
@@ -10117,10 +10126,9 @@ unsafe fn draw_items_weapons_effects(
         } else if let Some((object, _)) = assets.jolt_ground.as_ref() {
             let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 8];
             let n = visual.anim.compose(p, object, &mut posed);
-            let place = ssb_rom::scene::Mat4::from_trs(
+            let place = ssb_rom::scene::Mat4::from_tr_display(
                 [0.0; 3],
                 [0.0, jolt.model_rotate_y, jolt.rotate_z()],
-                [1.0; 3],
             );
             for m in &mut posed[..n] {
                 *m = place.mul(m);
@@ -10245,10 +10253,9 @@ unsafe fn draw_items_weapons_effects(
             let n = effect_visuals.cutter.compose(p, object, &mut posed);
             if let Some(root) = p.node(object.first_node) {
                 let t = root.rest_translate.map(|v| -v / meshdraw::MODEL_SCALE);
-                let place = ssb_rom::scene::Mat4::from_trs(
+                let place = ssb_rom::scene::Mat4::from_tr_display(
                     [0.0; 3],
                     [0.0, cutter.model_rotate_y, cutter.rotate_z],
-                    [1.0; 3],
                 )
                 .mul(&ssb_rom::scene::Mat4::from_trs(t, [0.0; 3], [1.0; 3]));
                 for m in &mut posed[..n] {
@@ -10551,10 +10558,9 @@ unsafe fn draw_items_weapons_effects(
         let n = effect_visuals.kick.compose(p, object, &mut posed);
         if let Some(root) = p.node(object.first_node) {
             let t = root.rest_translate.map(|v| -v / meshdraw::MODEL_SCALE);
-            let place = ssb_rom::scene::Mat4::from_trs(
+            let place = ssb_rom::scene::Mat4::from_tr_display(
                 [0.0; 3],
                 ssb_game::captain::kick_effect_rotate(&pl.fighter),
-                [1.0; 3],
             )
             .mul(&ssb_rom::scene::Mat4::from_trs(t, [0.0; 3], [1.0; 3]));
             for m in &mut posed[..n] {

@@ -246,6 +246,42 @@ fn whispy_wind_stops_after_its_duration_and_the_loop_end() {
     assert_eq!(w.flowers_front_status, pupupu::FlowerStatus::WindStop);
 }
 
+/// The effects Whispy's wind makes, in the order the source calls them: the
+/// leaves where the mouth opens into the blow, their eject where the wind
+/// ends, and the dust around the front flowers' loop. A blink roll that
+/// lands in the same frame as the leaves' make queues behind it, so the
+/// generator draws keep the source's order.
+#[test]
+fn whispy_wind_makes_and_ejects_its_leaves_and_dust_in_order() {
+    use crate::wpeffect::WeaponEffect as W;
+    let mut w = pupupu::Pupupu::new();
+    w.status = pupupu::WindStatus::Wait;
+    w.wind_wait = 0;
+    w.blink_wait = 30_000;
+    let mut clocks = Clocks::with_len(10.0);
+    let mut a = airborne(Vec3::new(-1000.0, 0.0, 0.0));
+    let mut seen = Vec::new();
+    for _ in 0..400 {
+        clocks.advance();
+        w.tick(&mut [&mut a], &mut clocks, true);
+        seen.extend(core::mem::take(&mut w.fx).iter());
+        if w.flowers_front_status == pupupu::FlowerStatus::WindStop && !seen.is_empty() {
+            break;
+        }
+    }
+    let lr = w.lr_players;
+    let want_leaves = W::PupupuLeavesMake { lr };
+    let want_dust = W::PupupuDustMake { lr };
+    let at = |e: W| seen.iter().position(|x| *x == e);
+    let (leaves, dust) = (at(want_leaves), at(want_dust));
+    assert!(leaves.is_some() && dust.is_some(), "{seen:?}");
+    assert!(leaves < dust, "{seen:?}");
+    assert!(at(W::PupupuLeavesEject).is_some_and(|i| i > leaves.unwrap()));
+    assert!(at(W::PupupuDustEject).is_some_and(|i| i > dust.unwrap()));
+    assert_eq!(seen.iter().filter(|x| **x == want_leaves).count(), 1);
+    assert_eq!(seen.iter().filter(|x| **x == want_dust).count(), 1);
+}
+
 #[test]
 fn acid_rises_to_its_next_level_and_burns() {
     let objects = [];

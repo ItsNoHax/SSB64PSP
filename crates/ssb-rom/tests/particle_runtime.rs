@@ -41,6 +41,12 @@ impl PackBanks<'_, '_> {
                     .position(|b| b.name == "grhyrule")?;
                 self.pack.particle_bank(i as u32)
             }
+            effect::PUPUPU_PARTICLE_BANK => {
+                let i = ssb_rom::particle::BANKS
+                    .iter()
+                    .position(|b| b.name == "grpupupu")?;
+                self.pack.particle_bank(i as u32)
+            }
             _ => None,
         }
     }
@@ -749,4 +755,47 @@ fn the_twister_vortex_follows_the_twister_and_ends_when_ejected() {
     run_until_empty(&mut p, &mut e, &banks, &mut rest);
     assert_eq!(p.xf_used_num, 0);
     println!("twister: {census:?}, then {} frames to empty", rest.frames);
+}
+
+/// Dream Land's Whispy (`grpupupu.c`): the leaves and the dust are bare
+/// effects on a ready transform; ejecting by the transform's generator id
+/// ends each, and every pool empties once its particles die.
+#[test]
+fn whispys_leaves_and_dust_run_until_ejected() {
+    let _rng = rng_lock();
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = open(&bytes);
+    let banks = PackBanks {
+        pack: &pack,
+        common: pack.particle_bank(0).unwrap(),
+    };
+    for lr in [0u8, 1] {
+        let mut p = Box::new(Particles::new());
+        let mut e = Effects::new(0);
+        let sink = |p: &mut Particles, e: &mut Effects, w: WeaponEffect| {
+            wpeffect::make(&w, e, p, &banks);
+        };
+        sink(&mut p, &mut e, WeaponEffect::PupupuLeavesMake { lr });
+        sink(&mut p, &mut e, WeaponEffect::PupupuDustMake { lr });
+        assert_ne!(e.leaves_xf, lb::NIL, "lr {lr}");
+        assert_ne!(e.dust_xf, lb::NIL, "lr {lr}");
+        let mut census = Census::default();
+        for _ in 0..60 {
+            EffectRuntime {
+                particles: &mut p,
+                effects: &mut e,
+                banks: &banks,
+            }
+            .frame();
+            census.generators_max = census.generators_max.max(p.gen_used_num);
+            census.structs_max = census.structs_max.max(p.used_num);
+        }
+        assert!(census.generators_max >= 2, "lr {lr}: {census:?}");
+        assert!(census.structs_max > 0, "lr {lr}: {census:?}");
+        sink(&mut p, &mut e, WeaponEffect::PupupuLeavesEject);
+        sink(&mut p, &mut e, WeaponEffect::PupupuDustEject);
+        let mut rest = Census::default();
+        run_until_empty(&mut p, &mut e, &banks, &mut rest);
+        assert_eq!(p.xf_used_num, 0, "lr {lr}");
+    }
 }

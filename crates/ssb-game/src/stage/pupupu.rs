@@ -7,6 +7,7 @@
 use super::{top_n, StageAnim, StageObj, StageObjects};
 use crate::fighter::Fighter;
 use crate::rng;
+use crate::wpeffect::WeaponEffect;
 use ssb_engine::math::Vec3;
 
 /// `GRPUPUPU_WHISPY_*` (`grvars.h`), US values.
@@ -83,6 +84,11 @@ pub struct Pupupu {
     pub flowers_back_anim: Option<u8>,
     /// `whispy_eyes_texture`, played on the front flowers.
     pub flowers_front_anim: Option<u8>,
+    /// The leaves' and dust's particle calls this frame made, in order
+    /// (`grPupupuWhispyLeavesMakeEffect`, `grPupupuWhispyDustMakeEffect`
+    /// and their ejects): the stage flushes them right after its tick
+    /// ([`super::Stage::flush_effects`]), which owns the particle runtime.
+    pub fx: crate::wpeffect::Emit,
 }
 
 impl Pupupu {
@@ -105,6 +111,7 @@ impl Pupupu {
             mouth_anim: None,
             flowers_back_anim: None,
             flowers_front_anim: None,
+            fx: crate::wpeffect::Emit::default(),
         }
     }
 
@@ -190,7 +197,9 @@ impl Pupupu {
                     self.wind_duration =
                         (rng::rand_int_range(WIND_DURATION_RANDOM) + WIND_DURATION_BASE) as u16;
                     self.rumble_wait = 0;
-                    // `grPupupuWhispyLeavesMakeEffect`, then the wind.
+                    self.fx.push(WeaponEffect::PupupuLeavesMake {
+                        lr: self.lr_players,
+                    });
                     crate::sound::play_fgm(crate::sound::id::nSYAudioFGMPupupuWhispyWind);
                 }
             }
@@ -201,6 +210,7 @@ impl Pupupu {
                     self.flowers_back_status = FlowerStatus::WindLoopEnd;
                     self.flowers_front_status = FlowerStatus::WindLoopEnd;
                     self.status = WindStatus::Stop;
+                    self.fx.push(WeaponEffect::PupupuLeavesEject);
                 }
                 // `grPupupuWhispyUpdateWindRumble`: only the quake effect.
                 if self.rumble_wait == 0 {
@@ -276,6 +286,9 @@ impl Pupupu {
                     self.flowers_front_anim = Some(1);
                     self.flowers_front_status = FlowerStatus::WindLoop;
                     self.flowers_front_wait = 22;
+                    self.fx.push(WeaponEffect::PupupuDustMake {
+                        lr: self.lr_players,
+                    });
                 }
             }
             FlowerStatus::WindLoop => self.push(fighters),
@@ -285,6 +298,7 @@ impl Pupupu {
                     self.flowers_front_anim = Some(2);
                     self.flowers_front_status = FlowerStatus::WindStop;
                     self.flowers_front_wait = 22;
+                    self.fx.push(WeaponEffect::PupupuDustEject);
                 } else {
                     self.push(fighters);
                 }

@@ -7,7 +7,7 @@
 use alloc::vec::Vec;
 
 use crate::texture::{BitSize, Format};
-use ssb_engine::math::{cosf, sin_cos, sinf, sqrt};
+use ssb_engine::math::{cosf, sin_cos, sinf, sqrt, sy_arc_tan2 as arctan2};
 
 /// One source-named particle bank pair in the supported US ROM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -393,8 +393,12 @@ pub fn decode_bank<'a>(
 //   - `LBPARTICLE_FLAG_VORTEX` is set by zero script headers and zero
 //     `SETFLAG` operands. Its physics branch (`lbparticle.c:1347-1386`) reads
 //     an `LBGenerator`'s own vortex table, which this module does not model;
-//     [`SimError::VortexUnsupported`] fails loudly instead of guessing if a
-//     future script ever sets it.
+//     [`SimError::VortexUnsupported`] fails loudly instead of guessing. The
+//     vortex particle is ported in `ssb-game`'s `particle.rs` (`vortex_step`,
+//     RE-507: the Hyrule Twister, oracle-pinned); `ssb-rom` cannot depend on
+//     it, and the only vortex generators are the Twister's, so this
+//     standalone simulation keeps declining rather than carrying a second
+//     copy.
 //   - `SETDISTVEL`/`ADDDISTVELMAG`/`SETATTACHID`'s write-back all require a
 //     live `DObj` (`sLBParticleAttachDObjs`). Zero real scripts use any of
 //     the three. Operands are still decoded (cursor stays in sync); no state
@@ -435,49 +439,6 @@ impl Rng {
         let step = self.0.wrapping_mul(214013).wrapping_add(2531011);
         self.0 = step;
         (((step >> 16) & 0xFFFF) as u32 as f32) / 65536.0
-    }
-}
-
-/// `syUtilsArcTan` (`refs/ssb-decomp-re/src/sys/utils.c:25-77`): an exact,
-/// dependency-free rational-polynomial approximation, not a table lookup, so
-/// it ports directly.
-fn arctan(div: f32) -> f32 {
-    const M_PI_F: f32 = core::f32::consts::PI;
-    let (div, kind) = if div == 0.0 {
-        return 0.0;
-    } else if div > 1.0 {
-        (1.0 / div, 1)
-    } else if div < -1.0 {
-        (1.0 / div, 2)
-    } else {
-        (div, 0)
-    };
-    let d2 = div * div;
-    let result = (d2
-        / (d2 / (d2 / (d2 / (d2 / -0.10810675 + -44.57192) + -0.1619081) + -15.774018)
-            + -0.55556977)
-        + -3.000003
-        + 1.0)
-        * div;
-    match kind {
-        1 => M_PI_F / 2.0 - result,
-        2 => -(M_PI_F / 2.0) - result,
-        _ => result,
-    }
-}
-
-/// `syUtilsArcTan2` (`refs/ssb-decomp-re/src/sys/utils.c:79-100`).
-fn arctan2(y: f32, x: f32) -> f32 {
-    const M_PI_F: f32 = core::f32::consts::PI;
-    if x > 0.0 {
-        arctan(y / x)
-    } else if x < 0.0 {
-        let sign = if y < 0.0 { -1.0 } else { 1.0 };
-        (M_PI_F - arctan((y / x).abs())) * sign
-    } else if y != 0.0 {
-        (if y < 0.0 { -1.0 } else { 1.0 }) * (M_PI_F / 2.0)
-    } else {
-        0.0
     }
 }
 
@@ -541,8 +502,10 @@ impl SpawnSink for Vec<SpawnRequest> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SimError {
     Truncated,
-    /// A script set `LBPARTICLE_FLAG_VORTEX`; see the module-level scope
-    /// note. Zero real US ROM scripts do this today.
+    /// A script set `LBPARTICLE_FLAG_VORTEX` (or a `kind == 2` generator
+    /// made such a particle); see the module-level scope note. The real
+    /// simulation is `ssb-game`'s `particle.rs` (RE-507); only the Hyrule
+    /// Twister's generators reach this.
     VortexUnsupported,
     /// A `MAKESCRIPT`/`MAKERAND`/`MAKEID` referenced a script index past the
     /// end of its own bank -- would be a real ROM-data bug, not decoded.
@@ -1461,7 +1424,9 @@ pub mod particle_tree {
 // [`Generator::tick`] can ever observe a `kind == 2` spawn's own
 // position/velocity -- it always errors before being handed back -- so this
 // module declines straight to that same error without porting the vortex
-// math, rather than computing something nothing downstream can see.
+// math, rather than computing something nothing downstream can see. The
+// vortex is ported in `ssb-game`'s `particle.rs` (`vortex_step`, RE-507),
+// which `ssb-rom` cannot depend on; the Twister is the only vortex generator.
 pub mod generator {
     use super::{arctan2, sin_cos, sqrt, Particle, Rng, Script, SimError, SpawnRequest};
     use alloc::vec::Vec;

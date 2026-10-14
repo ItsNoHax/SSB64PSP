@@ -224,7 +224,7 @@ fn compose(pack: &Pack<'_>, v: &Visual, e: &Effect, out: &mut [Mat4]) -> usize {
             pose.translate[1] / MODEL_SCALE,
             pose.translate[2] / MODEL_SCALE,
         ];
-        let local = Mat4::from_trs(t, pose.rotate, pose.scale);
+        let local = Mat4::from_trs_display(t, pose.rotate, pose.scale);
         let parent = pack
             .node(v.object.first_node + i as u32)
             .and_then(|n| n.parent.checked_sub(v.object.first_node))

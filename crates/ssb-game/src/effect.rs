@@ -50,6 +50,11 @@ pub const YOSTER_PARTICLE_BANK: u8 = 5;
 /// `efParticleGetLoadBankID` in `grHyruleInitAll`): the Twister.
 pub const HYRULE_PARTICLE_BANK: u8 = 6;
 
+/// Match bank for Dream Land's own pair (`lGRPupupuParticleScriptBank*`,
+/// `efParticleGetLoadBankID` in `grPupupuInitAll`): Whispy's leaves and
+/// dust.
+pub const PUPUPU_PARTICLE_BANK: u8 = 7;
+
 /// `dEFManagerDamageNormalLightIDs`, by the attacker's player.
 pub const NORMAL_LIGHT_IDS: [u16; 4] = [0x49, 0x4A, 0x4B, 0x4C];
 /// `efManagerDamageNormalHeavyMakeEffect`'s script.
@@ -172,6 +177,11 @@ pub struct Effects {
     /// or [`NIL`] when its make failed. Kept, as the source keeps the
     /// pointer, after the effect is ejected.
     pub twister_xf: u8,
+    /// `gGRCommonStruct.pupupu.leaves_xf`, [`NIL`] where the source has
+    /// `NULL`; kept after the effect is ejected.
+    pub leaves_xf: u8,
+    /// `gGRCommonStruct.pupupu.dust_xf`, likewise.
+    pub dust_xf: u8,
 }
 
 impl Default for Effects {
@@ -195,6 +205,8 @@ impl Effects {
             displays_refused: 0,
             quake_write: None,
             twister_xf: NIL,
+            leaves_xf: NIL,
+            dust_xf: NIL,
         };
         for i in 0..EFFECT_ALLOC_NUM {
             e.slots[i].next = if i + 1 < EFFECT_ALLOC_NUM {
@@ -692,6 +704,37 @@ impl Effects {
                 t.translate = pos;
             },
         )
+    }
+
+    /// `grPupupuWhispyLeavesMakeEffect` (script 0) and
+    /// `grPupupuWhispyDustMakeEffect` (script 1): the stage bank's script
+    /// on list 1 under a ready transform, processed once, then placed at
+    /// `pos` turned `rotate_y` about Y. [`NIL`] where the source's
+    /// transform is `NULL`.
+    pub fn pupupu_effect(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        script: u16,
+        pos: Vec3,
+        rotate_y: f32,
+    ) -> u8 {
+        let pc = self.start_bare(
+            p,
+            banks,
+            PUPUPU_PARTICLE_BANK | lb::genlink(0),
+            script,
+            TransformStatus::Ready,
+            |t| {
+                t.translate = pos;
+                t.rotate.y = rotate_y;
+            },
+        );
+        if pc == NIL {
+            NIL
+        } else {
+            p.particle(pc).xf
+        }
     }
 
     /// `efManagerYoshiEggExplodeMakeEffect`: Yoshi's script 3, first

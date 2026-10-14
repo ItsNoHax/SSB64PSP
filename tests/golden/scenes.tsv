@@ -150,6 +150,7 @@ f1-training-arwing	psp-game	trainingarwing	pass	RE-428 RE-440
 f1-training-castle	psp-game	trainingcastle	pass	RE-423 RE-440
 f1-training-hyrule	psp-game	traininghyrule	pass	RE-423 RE-440
 f1-training-twister	psp-game	trainingtwister@1700	pass	RE-507
+f1-training-whispy-wind	psp-game	trainingpupupu@1110	pass	RE-508
 f1-training-pupupu	psp-game	trainingpupupu	pass	RE-423 RE-440
 f1-training-pikachu-hat	psp-game	pikachuhat	pass	RE-425 RE-440
 f1-training-purin-bow	psp-game	purinbow	pass	RE-425 RE-440
@@ -211,7 +212,7 @@ f1-training-link-bomb-turn	psp-game	linkbomb@305	pass	RE-444
 f1-training-link-bomb-loose	psp-game	linkbomb@320	pass	RE-444
 f1-vs-push-ko	psp-game	vspush	pass	RE-469
 f1-vs-knock-ko	psp-game	vsknock	pass	RE-469
-f1-vs-four-magnifier	psp-game	vs4@2800	pass	RE-440 RE-470 RE-472 RE-473
+f1-vs-four-magnifier	psp-game	vs4@1330	pass	RE-440 RE-470 RE-472 RE-473 RE-508
 f1-opening-mario	psp-game	op-mario@60	pass	RE-467 RE-476 RE-497
 f1-opening-run	psp-game	op-run@140	pass	RE-467 RE-476 RE-497
 f1-opening-clash	psp-game	op-clash@80	pass	RE-467 RE-476 RE-497

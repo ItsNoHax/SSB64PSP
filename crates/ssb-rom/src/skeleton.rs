@@ -585,6 +585,13 @@ impl StageAnimator {
             .map(|i| self.joints[i].ended())
     }
 
+    /// `node`'s `track` value, or `None` while its animation has not keyed
+    /// that track (or no joint drives the node).
+    pub fn track_value(&self, node: u32, track: usize) -> Option<f32> {
+        let i = (0..self.count).find(|&i| self.nodes[i] == node)?;
+        self.joints[i].track_value(track)
+    }
+
     /// Source DObj flags: bit 0 hides this mesh; bit 1 hides its subtree.
     pub fn flags(&self, node: u32) -> u16 {
         (0..self.count)
@@ -663,6 +670,20 @@ impl StageAnimator {
     /// does. A node outside every animated ancestor chain keeps its packed
     /// matrix; an unanimated child of a moving joint is recomposed from rest.
     pub fn compose(&self, pack: &Pack<'_>, object: &ObjectDesc, out: &mut [Mat4]) -> usize {
+        self.compose_scaled(pack, object, out, None)
+    }
+
+    /// [`StageAnimator::compose`] with `node`'s own scale set to `scale` on
+    /// every axis its animation does not write: the original sets
+    /// `dobj->scale` after the effect is made (the rebirth halo's
+    /// `child->scale`) and only a scale track overwrites it again.
+    pub fn compose_scaled(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        out: &mut [Mat4],
+        set_scale: Option<(u32, f32)>,
+    ) -> usize {
         let count = (object.node_count as usize).min(out.len()).min(MAX_NODES);
         let mut changed = [false; MAX_NODES];
         for i in 0..count {
@@ -677,7 +698,10 @@ impl StageAnimator {
                 .filter(|&parent| parent < i as u32)
                 .map(|parent| parent as usize);
             let pose = self.pose_for(index);
-            changed[i] = pose.is_some() || parent_local.is_some_and(|parent| changed[parent]);
+            let scaled = set_scale.filter(|&(n, _)| n == index).map(|(_, v)| v);
+            changed[i] = pose.is_some()
+                || scaled.is_some()
+                || parent_local.is_some_and(|parent| changed[parent]);
             if !changed[i] {
                 // Neither this node nor an ancestor moved, so its packed world
                 // matrix remains exact and avoids needless recomposition.
@@ -689,7 +713,18 @@ impl StageAnimator {
                 translate: node.rest_translate,
                 scale: node.rest_scale,
             };
-            let pose = pose.unwrap_or(&rest);
+            let mut pose = *pose.unwrap_or(&rest);
+            if let Some(v) = scaled {
+                for (axis, s) in pose.scale.iter_mut().enumerate() {
+                    if self
+                        .track_value(index, crate::figatree::TRACK_SCA_X + axis)
+                        .is_none()
+                    {
+                        *s = v;
+                    }
+                }
+            }
+            let pose = &pose;
             let t = [
                 pose.translate[0] / MODEL_SCALE,
                 pose.translate[1] / MODEL_SCALE,

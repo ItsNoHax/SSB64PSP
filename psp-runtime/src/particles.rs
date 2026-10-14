@@ -14,7 +14,8 @@ use crate::meshdraw::{self, DrawState, ParticleRect};
 /// `itcommon` (pack bank 4), loaded by `itManagerInitItems` for monster flames.
 /// Runtime bank 5 is Yoshi's Island's `gryoster` (pack bank 7), whose
 /// cloud vapor only that stage makes; runtime bank 6 Hyrule Castle's
-/// `grhyrule`, its Twister. The other stage banks stay unloaded.
+/// `grhyrule`, its Twister; runtime bank 7 Dream Land's `grpupupu`, Whispy's
+/// leaves and dust. The other stage banks stay unloaded.
 pub struct PackBanks<'p, 'a> {
     pack: &'p Pack<'a>,
     common: ParticleBankDesc,
@@ -22,6 +23,7 @@ pub struct PackBanks<'p, 'a> {
     items: Option<ParticleBankDesc>,
     yoster: Option<ParticleBankDesc>,
     hyrule: Option<ParticleBankDesc>,
+    pupupu: Option<ParticleBankDesc>,
 }
 
 /// The pack bank of `ssb_rom::particle::BANKS` entry `name`: the pack
@@ -40,6 +42,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             items: pack.particle_bank(4),
             yoster: pack_bank(pack, "gryoster"),
             hyrule: pack_bank(pack, "grhyrule"),
+            pupupu: pack_bank(pack, "grpupupu"),
         })
     }
 
@@ -53,6 +56,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             items: None,
             yoster: None,
             hyrule: None,
+            pupupu: None,
         })
     }
 
@@ -63,6 +67,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             2 => self.items,
             ssb_game::effect::YOSTER_PARTICLE_BANK => self.yoster,
             ssb_game::effect::HYRULE_PARTICLE_BANK => self.hyrule,
+            ssb_game::effect::PUPUPU_PARTICLE_BANK => self.pupupu,
             _ => None,
         }
     }

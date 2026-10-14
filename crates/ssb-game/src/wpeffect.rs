@@ -73,6 +73,23 @@ pub enum WeaponEffect {
     /// `grHyruleTwisterUpdateSubside`'s end:
     /// `lbParticleEjectStructID(twister_xf->generator_id, 1)`.
     TwisterEject,
+    /// `grPupupuWhispyLeavesMakeEffect`: Whispy's leaves, script 0 of the
+    /// stage bank at the side `lr_players` names; the transform becomes
+    /// [`crate::effect::Effects::leaves_xf`].
+    PupupuLeavesMake {
+        lr: u8,
+    },
+    /// The wind's end: `lbParticleEjectStructID(leaves_xf->generator_id,
+    /// 1)`.
+    PupupuLeavesEject,
+    /// `grPupupuWhispyDustMakeEffect`: script 1 at the foot of the tree;
+    /// the transform becomes [`crate::effect::Effects::dust_xf`].
+    PupupuDustMake {
+        lr: u8,
+    },
+    /// `grPupupuFlowersFrontLoopEnd`'s
+    /// `lbParticleEjectStructID(dust_xf->generator_id, 1)`.
+    PupupuDustEject,
     /// `efManagerShieldBreakMakeEffect`: common-bank generator 3.
     ShieldBreak(Vec3),
     /// `efManagerDustCollideMakeEffect`: the Boomerang meets a surface.
@@ -134,6 +151,25 @@ pub enum WeaponEffect {
     /// keeps the frame on the trail (RE-417).
     TextureRand(u8),
 }
+
+/// `dGRPupupuWhispyLeavesEffectAttributes`, by `lr_players`: the position
+/// and `rotate.y` (`F_CLC_DTOR32`).
+const PUPUPU_LEAVES: [(Vec3, f32); 2] = [
+    (
+        Vec3::new(-715.0, 450.0, -696.0),
+        -157.0 * core::f32::consts::PI / 180.0,
+    ),
+    (
+        Vec3::new(-205.0, 450.0, -762.0),
+        -13.0 * core::f32::consts::PI / 180.0,
+    ),
+];
+
+/// `dGRPupupuWhispyDustEffectPositions`.
+const PUPUPU_DUST: [Vec3; 2] = [Vec3::new(-715.0, 100.0, 0.0), Vec3::new(-205.0, 100.0, 0.0)];
+
+/// `F_CST_DTOR32(180.0F)`: the dust's `rotate.y` when the wind blows left.
+const PUPUPU_DUST_TURN: f32 = 180.0 * ((core::f64::consts::PI / 180.0) as f32);
 
 /// The effects one weapon or item callback makes, in order. The most is an
 /// armed Motion-Sensor Bomb that four fighters reach in one frame: each
@@ -355,6 +391,27 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
         WeaponEffect::TwisterEject => {
             if effects.twister_xf != crate::particle::NIL {
                 let id = p.transform(effects.twister_xf).generator_id;
+                crate::particle::eject_struct_id(p, banks, effects, id, 1);
+            }
+        }
+        WeaponEffect::PupupuLeavesMake { lr } => {
+            let (pos, rotate) = PUPUPU_LEAVES[usize::from(lr.min(1))];
+            effects.leaves_xf = effects.pupupu_effect(p, banks, 0, pos, rotate);
+        }
+        WeaponEffect::PupupuLeavesEject => {
+            if effects.leaves_xf != crate::particle::NIL {
+                let id = p.transform(effects.leaves_xf).generator_id;
+                crate::particle::eject_struct_id(p, banks, effects, id, 1);
+            }
+        }
+        WeaponEffect::PupupuDustMake { lr } => {
+            let lr = usize::from(lr.min(1));
+            let rotate = if lr == 1 { 0.0 } else { PUPUPU_DUST_TURN };
+            effects.dust_xf = effects.pupupu_effect(p, banks, 1, PUPUPU_DUST[lr], rotate);
+        }
+        WeaponEffect::PupupuDustEject => {
+            if effects.dust_xf != crate::particle::NIL {
+                let id = p.transform(effects.dust_xf).generator_id;
                 crate::particle::eject_struct_id(p, banks, effects, id, 1);
             }
         }

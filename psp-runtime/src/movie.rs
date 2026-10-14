@@ -417,13 +417,22 @@ impl FighterState {
     /// held, and the hand's last place with its own rotation once let go.
     fn root(&self, f: &Fighter) -> Mat4 {
         let k = MODEL_SCALE;
-        let s = [f.scale.x * k, f.scale.y * k, f.scale.z * k];
+        let s = [f.scale.x, f.scale.y, f.scale.z];
         let r = [f.rotate.x, f.rotate.y, f.rotate.z];
+        // The fighter's TopN DObj is kind 0x4B, `lbCommonFighterPartsFuncMatrix`
+        // (`syMatrixTraRotRpy[R|RSca]`, `from_trs_display`); `units` carries
+        // the pack's model scale, which the original does not have.
+        let units = Mat4::from_trs([0.0; 3], [0.0; 3], [k; 3]);
         let mut m = match (&self.proxy, self.held) {
             (_, Some(held)) if f.attach.is_some() => held,
-            (_, Some(held)) => Mat4::from_trs(held.translation(), r, s),
-            (Some((_, pose, _)), None) => Mat4::from_trs(pose.translate, pose.rotate, s),
-            (None, None) => Mat4::from_trs([f.translate.x, f.translate.y, f.translate.z], r, s),
+            (_, Some(held)) => Mat4::from_trs_display(held.translation(), r, s).mul(&units),
+            (Some((_, pose, _)), None) => {
+                Mat4::from_trs_display(pose.translate, pose.rotate, s).mul(&units)
+            }
+            (None, None) => {
+                Mat4::from_trs_display([f.translate.x, f.translate.y, f.translate.z], r, s)
+                    .mul(&units)
+            }
         };
         let now = self.child_translate();
         for i in 0..3 {

@@ -81,17 +81,25 @@ fn fcr31() -> u32 {
 
 /// Puts back `before` with no cause bits pending: the run's last
 /// operations leave cause bits (a NaN compare's invalid) that writing the
-/// enables back would otherwise raise.
+/// enables back would otherwise raise. One `asm!` block, so the exact
+/// `add.s` that clears the cause bits cannot be scheduled away from
+/// between the two writes (a separate `pure` block was: PSPLink trapped
+/// the second `ctc1`).
 fn restore_fcr31(before: u32) {
-    set_fcr31(before & !0x0003_ff80);
-    let one = 1.0f32;
-    let r: f32;
-    // SAFETY: an exact `add.s`, so the FPU's cause bits read zero.
+    // SAFETY: writes the FPU control/status register back to the value
+    // the caller read; the `add.s` only touches FPU registers.
     unsafe {
-        core::arch::asm!("add.s {0}, {1}, {1}", out(freg) r, in(freg) one, options(pure, nomem, nostack))
+        core::arch::asm!(
+            "ctc1 {quiet}, $31",
+            "add.s {r}, {one}, {one}",
+            "ctc1 {before}, $31",
+            quiet = in(reg) before & !0x0003_ff80,
+            before = in(reg) before,
+            one = in(freg) 1.0f32,
+            r = out(freg) _,
+            options(nomem, nostack),
+        )
     };
-    core::hint::black_box(r);
-    set_fcr31(before);
 }
 
 fn set_fcr31(v: u32) {
