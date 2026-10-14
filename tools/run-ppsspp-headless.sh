@@ -13,8 +13,9 @@
 # --scene writes SPEC to capture_scene.txt beside the staged EBOOT and
 # defaults the feature to `golden_capture`: one EBOOT then captures any golden
 # scene (spec format: crates/ssb-capture) and exits a few frames after its
-# screenshot. The timeout defaults to 30 s in this mode and is a failure,
-# since a scene-file capture must exit by itself.
+# screenshot. The timeout defaults to 60 s in this mode and is a failure,
+# since a scene-file capture must exit by itself. An explicit --feature set
+# without golden_capture is refused with --scene: only golden_capture exits.
 #
 # --job gives this run its own memstick game directory
 # (ssb64_regression_<NAME>) and output directory ($OUT/<NAME>), so several
@@ -71,6 +72,14 @@ case "$CRATE" in
 esac
 
 if [ -n "$SCENE" ]; then
+  # Only `golden_capture` adds the exit after the screenshot; a `--scene` run
+  # of any other build (`capture_scene_file` alone, say) never exits, and the
+  # TIMEOUT check below would fail it after the full timeout.
+  if [ -n "$FEATURE" ] && [[ ",$FEATURE," != *,golden_capture,* ]]; then
+    echo "--scene needs a build with golden_capture: feature set '$FEATURE' never exits after its capture" >&2
+    echo "omit --feature (it defaults to golden_capture) or add golden_capture to it" >&2
+    exit 2
+  fi
   FEATURE="${FEATURE:-golden_capture}"
   # A scene exits by itself after its capture; this only bounds a hang.
   # `vstimeup` runs 4,200 ticks and needs over 30 s under a full -j.

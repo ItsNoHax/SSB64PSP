@@ -42,8 +42,10 @@ Baseline after the frame timer and link order s7 (RE-500):
 - Both PSP builds (`psp-game`, `psp-asset-viewer`) compile in release.
 - Goldens: `tools/golden.sh verify`: 201 of 201 match (pack v109).
 - PPSSPP smoke: `frame_timer` build of `vs4@2400` prints `prof` lines at
-  60.25 FPS and a screenshot. `run-ppsspp-headless.sh --scene` reports
-  "did not exit" for `vs4` scenes; the goldens are unaffected.
+  60.25 FPS and a screenshot. `run-ppsspp-headless.sh --crate psp-game
+  --scene vs4@2400` with the default features (`golden_capture`) exits 0.
+  Only `golden_capture` exits after a capture, so the script refuses
+  `--scene` with a feature set lacking it.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1, `profile,
   capture_scene_file,no_audio` builds of `vs4@2400`: +0.89 FPS same-binary toggle
   (RE-499; RE-498 55.31 to 56.45). The `ms0:` pack on the PSP is v108-sized (64 MB); hardware
