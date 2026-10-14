@@ -5258,6 +5258,11 @@ unsafe fn run() -> ! {
             }
         }
 
+        // A `frame_timer` build times the wait for the last frame to be on
+        // screen here, outside the draw's code; `Gpu::begin_frame` then
+        // finds it done (RE-500).
+        #[cfg(feature = "frame_timer")]
+        ssb_psp_runtime::frame_timer::vblank(|| gpu.wait_presented());
         let draw_start = profile::start();
         draw_frame(
             &mut gpu,
@@ -5282,6 +5287,7 @@ unsafe fn run() -> ! {
         }
         ssb_psp_runtime::audio::dump_flush(false);
         profile::frame_end(ssb_psp_runtime::thread::stack_free_bytes);
+        ssb_psp_runtime::frame_timer::frame_end(deterministic_capture_frozen(capture_spec, sim_frame_index));
         #[cfg(feature = "headless_capture")]
         ssb_psp_runtime::memory::sample();
 

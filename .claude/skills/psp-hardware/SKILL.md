@@ -220,7 +220,14 @@ the build it was searched on: when hot code changes size, search it again on
 the shipped configuration with `tools/icache/layout.c`. The search replays a
 model trace for each candidate order. `tools/icache/relink.py` relinks a saved
 build with a new order in seconds, for hardware A/B runs. RE-494 has the
-procedure.
+procedure. The model ranks orders weakly (RE-500), so choose among them on the
+PSP: a `capture_scene_file,frame_timer` build (no profile spans; also ticks
+power) prints `prof n= fps= frame= busy=` lines, and `tools/hw-link-order.sh`
+(`prep`/`run`/`rank`, `DRY_RUN=1`) relinks candidates, runs each on the PSP
+via PSPLink and ranks them with `tools/icache/hwrank.py` by BFPS (1e6/busy),
+because release code is vsync-bound. `tools/icache/cmpaddr.py --elf` checks a
+measurement build keeps the searched functions at release addresses;
+`tools/icache/summ.sh` summarises runs. Put `stage=N` after the scene line.
 
 ### Native frame evidence
 

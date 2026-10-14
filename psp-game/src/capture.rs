@@ -32,7 +32,8 @@ pub fn tick_override() -> Option<u64> {
 }
 
 /// A `stage=GKIND` line's stage, plus one, or 0 for the scene's own: a
-/// `profile` build runs a battle scene on any stage (RE-471).
+/// `profile` or `frame_timer` build runs a battle scene on any stage
+/// (RE-471, RE-500).
 static STAGE_OVERRIDE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// The stage a `stage=GKIND` line asked for.
@@ -63,7 +64,7 @@ pub fn select() -> Option<Capture> {
             // `scene@tick` captures the scene at another tick, for matching
             // an N64 frame (RE-425); the goldens name none.
             let text = core::str::from_utf8(&buf[..len]).ok();
-            #[cfg(feature = "profile")]
+            #[cfg(any(feature = "profile", feature = "frame_timer"))]
             if let Some(g) = text
                 .into_iter()
                 .flat_map(str::lines)
@@ -72,7 +73,7 @@ pub fn select() -> Option<Capture> {
             {
                 STAGE_OVERRIDE.store(u32::from(g) + 1, core::sync::atomic::Ordering::Relaxed);
             }
-            #[cfg(feature = "profile")]
+            #[cfg(any(feature = "profile", feature = "frame_timer"))]
             if text.into_iter().flat_map(str::lines).any(|l| l.trim() == "hold") {
                 HOLD.store(true, core::sync::atomic::Ordering::Relaxed);
             }

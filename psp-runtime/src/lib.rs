@@ -14,6 +14,7 @@ pub mod assets;
 pub mod audio;
 pub mod boss;
 pub mod ending;
+pub mod frame_timer;
 pub mod gu;
 pub mod heap;
 #[cfg(all(feature = "profile_hw", target_os = "psp"))]

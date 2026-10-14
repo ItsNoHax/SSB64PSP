@@ -27,6 +27,10 @@ profile = ["ssb-engine/audio_profile"]
 # span through ARK's KUBridge (`hwcount.rs`, RE-481). Needs ARK on the PSP;
 # not for PPSSPP.
 profile_hw = ["profile"]
+# One clock read per frame and a `prof n=` line of frames per second every
+# 120 frames (`frame_timer.rs`, RE-500): times the release build's code,
+# which `profile`'s spans change. Off by default.
+frame_timer = []
 # Renders the fixed audio scenario (`ssb_engine::audio::golden`) at audio
 # start and appends its PCM hashes and render times to `selftest.log`.
 audio_selftest = []

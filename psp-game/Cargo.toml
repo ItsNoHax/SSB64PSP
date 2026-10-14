@@ -34,6 +34,10 @@ profile = ["ssb-psp-runtime/profile"]
 # The PSP's hardware counters per span (`ssb_psp_runtime::hwcount`,
 # RE-481). ARK only.
 profile_hw = ["profile", "ssb-psp-runtime/profile_hw"]
+# Frames per second every 120 frames to `profile.log` and stdout, with the
+# release build's code unchanged (`ssb_psp_runtime::frame_timer`, RE-500):
+# for ranking link orders on hardware. Off by default.
+frame_timer = ["ssb-psp-runtime/frame_timer"]
 # Renders the fixed audio scenario (`ssb_engine::audio::golden`) at audio
 # start and appends its PCM hashes and render times to `selftest.log`.
 audio_selftest = ["ssb-psp-runtime/audio_selftest"]

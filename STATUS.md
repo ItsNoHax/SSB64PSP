@@ -17,34 +17,33 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-499: vertex blocks are taken from the display list one line larger,
-written through the cache and written back per block before the draw (the
-GE runs mid-frame). Same-binary toggle on a PSP-2000 `vs4@2400`: +0.89 FPS,
-CPU -163 us; uncached loads 2,531 to 1,154 a frame; opening neutral
-(vsync-bound). No measured shipped-build gain over the previous commit:
-equal-model link orders spread 2-3 FPS on hardware and the I-cache model
-does not rank them (HEAD's order was the model's worst and measured among
-the best). `link-order.txt` is seed s3. Next: choose the link order by
-hardware measurement of the release build ([`PLAN.md`](PLAN.md#remaining-work)).
+RE-500: the `frame_timer` feature (off by default) times release-code
+frames on hardware. Release code is vsync-bound (`vs4@2400` 59.32 FPS), so
+link orders are ranked by busy time (BFPS). The I-cache model ranks them
+weakly (Spearman 0.45); `link-order.txt` is now seed s7, 169-205 us busy
+faster than s3 on Dream Land, Sector Z and Hyrule (`tools/hw-link-order.sh`).
+Next: the next `MS8` lever ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
 
 - The campaign past Race to the Finish needs a person at the PSP.
 - PSPLink falls over now and then (a `kill`, an `opt-level s` build):
-  restarting it needs a person at the PSP. `profile` builds tick power
+  restarting it needs a person at the PSP. `profile` and `frame_timer` builds tick power
   every frame; other builds still let an unattended PSP auto-sleep
   (RE-481).
 
 ## Verification
 
-Baseline after the cached vertex blocks (RE-499):
+Baseline after the frame timer and link order s7 (RE-500):
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass. Clippy (`cargo +1.98.0`) and
   `cargo fmt --check` pass.
 - Both PSP builds (`psp-game`, `psp-asset-viewer`) compile in release.
 - Goldens: `tools/golden.sh verify`: 201 of 201 match (pack v109).
-- PPSSPP smoke test (`vs4@2400`): exit 0.
+- PPSSPP smoke: `frame_timer` build of `vs4@2400` prints `prof` lines at
+  60.25 FPS and a screenshot. `run-ppsspp-headless.sh --scene` reports
+  "did not exit" for `vs4` scenes; the goldens are unaffected.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1, `profile,
   capture_scene_file,no_audio` builds of `vs4@2400`: +0.89 FPS same-binary toggle
   (RE-499; RE-498 55.31 to 56.45). The `ms0:` pack on the PSP is v108-sized (64 MB); hardware
