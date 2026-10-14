@@ -1266,9 +1266,9 @@ fn tra_rot_rpy(t: [f32; 3], r: [f32; 3]) -> Mtx {
 }
 
 /// `func_ovl59_80131C88`: `syMatrixLookAtF` times `syMatrixPerspFastF`.
-/// The source reads its sine and cosine from a table; these are computed.
+/// The perspective's cotangent reads `gSYSinTable` ([`sy_persp_cot`]).
 fn camera_matrix(at: [f32; 3]) -> Mtx {
-    use ssb_engine::math::{sin_cos, sqrt};
+    use ssb_engine::math::{sqrt, sy_persp_cot};
     let [ex, ey, ez] = CAMERA_EYE;
     let (ux, uy, uz) = (0.0f32, 1.0f32, 0.0f32);
     let (mut lx, mut ly, mut lz) = (at[0] - ex, at[1] - ey, at[2] - ez);
@@ -1297,8 +1297,7 @@ fn camera_matrix(at: [f32; 3]) -> Mtx {
             1.0,
         ],
     ];
-    let (sin, cos) = sin_cos(CAMERA_FOVY * 0.008_726_646);
-    let cot = cos / sin;
+    let cot = sy_persp_cot(CAMERA_FOVY);
     let (near, far, scale) = (CAMERA_NEAR, CAMERA_FAR, 1.0);
     let persp = [
         [(cot / CAMERA_ASPECT) * scale, 0.0, 0.0, 0.0],
@@ -1328,4 +1327,24 @@ fn edge(a: [f32; 2], b: [f32; 2]) -> [f32; 3] {
 /// `scStaffrollCheckCursorNameOverlap`.
 fn inside(line: [f32; 3], cursor: [f32; 2]) -> bool {
     line[0] * cursor[0] + line[1] * cursor[1] + line[2] >= 0.0
+}
+
+#[cfg(test)]
+mod camera_tests {
+    use super::*;
+
+    /// Looking straight down -Z the view is the identity turn, so the
+    /// product's scales are the perspective's: the table cotangent of
+    /// `syMatrixPerspFastF` (RE-505), not a computed tangent.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_perspective_scale_is_the_tables_cotangent() {
+        let at = [CAMERA_EYE[0], CAMERA_EYE[1], CAMERA_EYE[2] - 1.0];
+        let m = camera_matrix(at);
+        let cot = ssb_engine::math::sy_persp_cot(CAMERA_FOVY);
+        assert_eq!(m[1][1], cot);
+        assert_eq!(m[0][0], cot / CAMERA_ASPECT);
+        let exact = 1.0 / (CAMERA_FOVY.to_radians() * 0.5).tan();
+        assert!(cot != exact && (cot - exact).abs() < 2e-3 * exact);
+    }
 }

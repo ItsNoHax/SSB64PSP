@@ -1,9 +1,10 @@
-//! Build-time generation of the tables `ssb-game` and `ssb-rom` read from
+//! Build-time generation of the tables `ssb-game`, `ssb-engine` and `ssb-rom` read from
 //! the original game's data: fighter motion scripts, colour-animation
-//! scripts, CPU input scripts, status flags and the fighter animation table.
+//! scripts, CPU input scripts, status flags, the fighter animation table and
+//! the `gSYSinTable` sine table.
 //!
 //! The values live in the user's ROM, so they are never committed. The build
-//! scripts of `ssb-game` and `ssb-rom` call [`build_script`], which finds the
+//! scripts of `ssb-game`, `ssb-engine` and `ssb-rom` call [`build_script`], which finds the
 //! ROM (`SSB64_ROM`, else the one `.z64` in `rom/`), verifies it, reads the
 //! tables and writes Rust source into Cargo's `OUT_DIR` for the crates to
 //! `include!`. What is committed here is only *where* each table is and how
@@ -42,6 +43,7 @@ mod fighters;
 mod ground;
 mod item_sounds;
 mod motion;
+mod sin_table;
 mod source;
 mod stat_flags;
 
@@ -66,6 +68,8 @@ pub enum Crate {
     Game,
     /// `ssb-rom`: the fighter animation table.
     Rom,
+    /// `ssb-engine`: `gSYSinTable`.
+    Engine,
 }
 
 /// One generated file: its name in `OUT_DIR` and its Rust source.
@@ -107,6 +111,10 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
         Crate::Rom => vec![Generated {
             name: "anim_table.rs",
             text: anim_table::generate(rom)?,
+        }],
+        Crate::Engine => vec![Generated {
+            name: "sin_table.rs",
+            text: sin_table::generate(rom)?,
         }],
     })
 }

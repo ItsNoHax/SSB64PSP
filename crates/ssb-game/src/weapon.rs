@@ -6080,6 +6080,7 @@ mod tests {
     /// `wpLinkBoomerangCheckOffCamera`: after the 130-frame homing delay the
     /// camera is sampled every ninth frame, 40 pixels past the viewport.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn an_off_camera_boomerang_is_removed_on_a_sampled_frame() {
         let camera = crate::camera::Camera::default();
         let mut b = LinkBoomerang::new(boomerang_spawn(true, 0, 1.0), true, 0, 0);

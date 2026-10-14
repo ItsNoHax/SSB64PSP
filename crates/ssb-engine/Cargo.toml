@@ -9,6 +9,10 @@ description = "Platform-agnostic engine abstractions (Layer B) for the SSB64 PSP
 
 [dependencies]
 
+[build-dependencies]
+# Writes `gSYSinTable` from the user's ROM into OUT_DIR (`build.rs`).
+ssb-tablegen = { workspace = true }
+
 # `math::sqrt_exact` on `no_std` targets other than the PSP (CI's
 # portability build): the PSP uses `sqrt.s`, the host `std`.
 [target.'cfg(not(target_arch = "mips"))'.dependencies]

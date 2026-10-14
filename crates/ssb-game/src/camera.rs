@@ -18,7 +18,7 @@
 //!   which the pause menu steers and [`Camera::tick_player_zoom`] reads
 //!   (`gmCameraPlayerZoomFuncCamera`, RE-398).
 
-use ssb_engine::math::Vec3;
+use ssb_engine::math::{sy_persp_cot, Vec3};
 
 /// The rectangle the camera's look-at target may not leave --
 /// `MPGroundData.camera_bounds` (`crates/ssb-rom/src/stage.rs`'s
@@ -334,15 +334,16 @@ impl Camera {
     /// offset from the battle viewport's centre in N64 pixels, Y up.
     ///
     /// `gGMCameraMatrix` is `syMatrixLookAtReflectF` (`guLookAtF`, up +Y)
-    /// times `syMatrixPerspFastF`. Only the X, Y and W columns matter, and
-    /// the perspective's `scale` cancels between them except in the
-    /// `|w| < 0.1` clamp; this keeps the default scale of 1.
+    /// times `syMatrixPerspFastF`, whose cotangent comes from `gSYSinTable`
+    /// ([`sy_persp_cot`], RE-505), not from a tangent. Only the X, Y and W
+    /// columns matter, and the perspective's `scale` cancels between them
+    /// except in the `|w| < 0.1` clamp; this keeps the default scale of 1.
     /// `gmCameraLookAtFuncMatrix` lowers it only when a matrix element passes
     /// 32000.
     pub fn project(&self, p: Vec3) -> (f32, f32) {
         let (width, height) = self.viewport_size();
         let aspect = width / height;
-        let cot = 1.0 / original_tan(self.fovy_degrees.to_radians() * 0.5);
+        let cot = sy_persp_cot(self.fovy_degrees);
         // `guLookAtF`: Look points from `at` back to the eye.
         let look = (self.at - self.eye).normalized() * -1.0;
         let right = Vec3::Y.cross(look).normalized();

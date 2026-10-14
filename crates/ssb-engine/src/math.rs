@@ -891,6 +891,53 @@ pub fn lb_tan(angle: f32) -> f32 {
     lb_sin_index(index) / lb_sin_index(index.wrapping_add(0x0400))
 }
 
+/// `gSYSinTable` (`sys/sintable.c`): `u16[2048]`, the sine over `[0, PI)`
+/// scaled by 32768, read from the user's ROM at build time (`build.rs`,
+/// `ssb-tablegen`). Hand-authored data, not a formula: rounding
+/// `sin(i * PI / 2048) * 32768` misses most entries (RE-505).
+mod sy_sin_table {
+    include!(concat!(env!("OUT_DIR"), "/sin_table.rs"));
+}
+
+/// `gSYSinTable` by entry (0..2048).
+pub fn sy_sin_table_entry(index: usize) -> u16 {
+    sy_sin_table::SY_SIN_TABLE[index]
+}
+
+/// `syGetSinCosUShort` (`lb/lbdef.h:85`): the sine and cosine words of a
+/// radian angle, as the original's integers (`-32768..=32768`, the table's
+/// own scale, not 1.0).
+///
+/// The angle becomes `(s32)(angle * (2048 / PI)) & 0xFFF` (truncated toward
+/// zero, a negative angle wraps by the mask); the sine is
+/// `gSYSinTable[id & 0x7FF]`, negated when bit 0x800 is set, and the cosine
+/// the same read at `id + 0x400`.
+pub fn sy_sin_cos_ushort(angle: f32) -> (i32, i32) {
+    let id = (angle * 651.898_6) as i32 as u32 & 0xFFF;
+    let word = |id: u32| {
+        let v = i32::from(sy_sin_table::SY_SIN_TABLE[(id & 0x7FF) as usize]);
+        if id & 0x800 != 0 {
+            -v
+        } else {
+            v
+        }
+    };
+    (word(id), word(id + 0x400))
+}
+
+/// `syMatrixPerspFastF`'s cotangent (`sys/matrix.c:575`) of a vertical field
+/// of view in degrees: `fovy *= 0.008726646F`, then the table's cosine
+/// over its sine, both converted to `f32` first. This is the original's
+/// `1 / tan(fovy / 2)` quantised to 4096 steps a turn (0.088 degrees).
+///
+/// The original divides by a sine of zero (a zero field of view) to
+/// infinity; a PSP traps that (RE-469), so this divides by 1 there. The
+/// camera never has one.
+pub fn sy_persp_cot(fovy_degrees: f32) -> f32 {
+    let (sin, cos) = sy_sin_cos_ushort(fovy_degrees * 0.008_726_646);
+    div_nonzero(cos as f32, sin as f32)
+}
+
 fn lb_angle_index(angle: f32) -> u16 {
     ((angle * 651.898_6) as i32 as u16) & 0x0fff
 }
@@ -1253,6 +1300,86 @@ mod trig_tests {
         }
         assert_eq!(super::lb_sin(core::f32::consts::FRAC_PI_2), 1.0);
         assert_eq!(super::lb_cos(core::f32::consts::FRAC_PI_2), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod sy_sin_tests {
+    use super::*;
+
+    /// `gSYSinTable` as `ssb-rom` reads it for the audio section.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_table_is_the_roms_gsysintable() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let rom = std::fs::read(path).unwrap();
+        let (at, len) = ssb_rom::audio::SIN_TABLE;
+        assert_eq!(len, 4096);
+        for i in 0..2048usize {
+            let word = u16::from_be_bytes([rom[at + i * 2], rom[at + i * 2 + 1]]);
+            assert_eq!(sy_sin_table_entry(i), word, "entry {i}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_table_has_the_shape_the_macro_relies_on() {
+        assert_eq!(sy_sin_table_entry(0), 0);
+        assert_eq!(sy_sin_table_entry(1), 50);
+        assert_eq!(sy_sin_table_entry(1024), 0x8000);
+        assert_eq!(sy_sin_table_entry(2047), 0);
+        // Not a formula: round(sin * 32768) misses most entries (RE-505).
+        let misses = (0..2048usize)
+            .filter(|&i| {
+                let v = (f64::from(i as u32) * core::f64::consts::PI / 2048.0).sin() * 32768.0;
+                sy_sin_table_entry(i) != v.round() as u16
+            })
+            .count();
+        assert!(misses > 1000, "{misses}");
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn sin_cos_words_follow_the_macro() {
+        let t = |i: usize| i32::from(sy_sin_table_entry(i));
+        // Index 0 and the angle just under the first step.
+        assert_eq!(sy_sin_cos_ushort(0.0), (0, t(1024)));
+        assert_eq!(sy_sin_cos_ushort(0.001), (0, t(1024)));
+        // Index 216 (fovy 38 degrees, the battle camera).
+        let a = 38.0f32 * 0.008_726_646;
+        assert_eq!(sy_sin_cos_ushort(a), (t(216), t(216 + 1024)));
+        // The angle in the middle of step `id`, so truncation picks `id`.
+        let step = |id: f32| (id + 0.5) / 651.898_6;
+        // Past a half turn the sine is negated (bit 0x800); the cosine's
+        // index `id + 0x400` has the bit set too, at 0xC02.
+        assert_eq!(sy_sin_cos_ushort(step(2050.0)), (-t(2), -t(1026)));
+        // Id 1500: sine entry 1500 positive; cosine at 0x9DC has the bit set.
+        assert_eq!(
+            sy_sin_cos_ushort(step(1500.0)),
+            (t(1500), -t(1500 + 1024 - 2048))
+        );
+        // A negative angle truncates toward zero, then wraps by the mask:
+        // -1.5 steps is -1, id 0xFFF, the sine of entry 2047 negated.
+        let m = sy_sin_cos_ushort(-1.5 / 651.898_6);
+        assert_eq!(m.0, -t(2047));
+        assert_eq!(m.1, t(1023));
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_cotangent_is_the_tables_cos_over_sin() {
+        let (s, c) = (
+            sy_sin_table_entry(216) as i32 as f32,
+            sy_sin_table_entry(216 + 1024) as i32 as f32,
+        );
+        assert_eq!(sy_persp_cot(38.0).to_bits(), (c / s).to_bits());
+        // Quantised but close to the exact cotangent.
+        let exact = 1.0 / (38.0f32.to_radians() * 0.5).tan();
+        assert!((sy_persp_cot(38.0) - exact).abs() / exact < 2e-3);
+        // fovy 0 would divide by zero on the PSP.
+        assert!(sy_persp_cot(0.0).is_finite());
     }
 }
 

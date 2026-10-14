@@ -279,6 +279,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn shifted_probe_culls_but_star_and_invisible_do_not_magnify() {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
         let c = Camera::default();

@@ -279,6 +279,7 @@ fn start_switches_the_roll_speed_and_b_pauses_until_a_tap() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_over_a_name_highlights_it_and_shows_its_role_and_company() {
     let mut s = Staffroll::new(credits(), !0);
     while !s.texts.iter().any(|t| t.is_name && t.interpolation > 0.0) {
