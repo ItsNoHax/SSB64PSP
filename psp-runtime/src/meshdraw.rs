@@ -1742,7 +1742,7 @@ unsafe fn expand_corners(
         .unwrap_or((false, false));
 
     let bytes = p.index_count as usize * core::mem::size_of::<PackedVertex>();
-    let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut PackedVertex;
+    let dynamic = crate::gu::cached_vertices(bytes) as *mut PackedVertex;
     for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
         let index = u16::from_le_bytes([raw_index[0], raw_index[1]]) as usize;
         let source_offset = index * core::mem::size_of::<PackedVertex>();
@@ -1770,6 +1770,7 @@ unsafe fn expand_corners(
         }
         dynamic.add(corner).write(v);
     }
+    crate::gu::writeback_vertices(dynamic as *const u8, bytes, false);
     (
         UNINDEXED_VERTEX_FORMAT,
         core::ptr::null(),
@@ -2407,9 +2408,10 @@ unsafe fn draw_node_mesh(
             let skin = crate::profile::start_fine();
             // Arena memory remains alive until the GE finishes this frame.
             // Only meshes borrowing RSP slots need a transient buffer. It is
-            // list memory, written through the uncached alias: each vertex
-            // is written once, from the pack's copy, and never read back.
-            let dynamic = sys::sceGuGetMemory(verts.len() as i32) as *mut u8;
+            // list memory written through the D-cache, and kept there after
+            // the writeback: `expand_corners` reads it back for primitives
+            // with effect colours or texgen.
+            let dynamic = crate::gu::cached_vertices(verts.len());
             let count = verts.len() / ssb_rom::pack::VERTEX_SIZE;
             let mut bound = bindings.chunks_exact(8);
             // One source joint's matrices serve its run of vertices.
@@ -2452,6 +2454,7 @@ unsafe fn draw_node_mesh(
             // A partial vertex at the end, as the copy carried it.
             let tail = count * ssb_rom::pack::VERTEX_SIZE;
             core::ptr::copy_nonoverlapping(verts.as_ptr().add(tail), dynamic.add(tail), verts.len() - tail);
+            crate::gu::writeback_vertices(dynamic, verts.len(), true);
             crate::profile::stop_fine(crate::profile::Span::Skin, skin);
             return draw_mesh_vertices(
                 pack,
@@ -3148,8 +3151,8 @@ const DEPTH_SPANS_PER_DRAW: usize = 256;
 /// time. A sprite is two through-mode 16-bit positions, `x, y, z` each,
 /// with no texture coordinates or colour (texturing is off and the pixel
 /// mask keeps the colour): 12 bytes as three word stores, against two
-/// 24-byte float vertices. List memory is written uncached, so stores are
-/// the cost (RE-481).
+/// 24-byte float vertices. The batch is written through the D-cache and
+/// written back before its draw ([`crate::gu::cached_vertices`]).
 struct DepthSprites {
     words: *mut u32,
     count: usize,
@@ -3160,7 +3163,7 @@ impl DepthSprites {
     #[inline(always)]
     unsafe fn push(&mut self, py: i32, start: i32, end: i32, z: u16) {
         if self.count == 0 {
-            self.words = sys::sceGuGetMemory((DEPTH_SPANS_PER_DRAW * 12) as i32) as *mut u32;
+            self.words = crate::gu::cached_vertices(DEPTH_SPANS_PER_DRAW * 12) as *mut u32;
         }
         let half = |v: i32| u32::from(v as u16);
         let w = self.words.add(3 * self.count);
@@ -3178,6 +3181,7 @@ impl DepthSprites {
         if self.count == 0 {
             return;
         }
+        crate::gu::writeback_vertices(self.words as *const u8, self.count * 12, false);
         sys::sceGuDrawArray(
             GuPrimitive::Sprites,
             VertexType::VERTEX_16BIT | VertexType::TRANSFORM_2D,

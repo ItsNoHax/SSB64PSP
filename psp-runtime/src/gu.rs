@@ -43,6 +43,64 @@ static mut DISPLAY_LIST: CacheLineAligned<[u32; 0x40000]> = CacheLineAligned([0;
 #[repr(C, align(64))]
 struct CacheLineAligned<T>(T);
 
+/// The Allegrex's D-cache line, in bytes.
+const DCACHE_LINE: usize = 64;
+
+/// List memory for vertices the CPU writes through the D-cache.
+///
+/// `sceGuGetMemory` hands out the display list's uncached alias. This takes
+/// a block from the same list, one line larger, and returns the cached alias
+/// of its first whole line: at least `bytes` bytes in lines that hold no
+/// command word, so writing them back can never overwrite the uncached
+/// commands around the block (RE-360). The block lives as long as the list.
+///
+/// The direct list runs while it is built: every draw and every
+/// `sceGuGetMemory` moves the GE's stall address, so the GE may read a block
+/// as soon as the draw that names it is sent. [`writeback_vertices`] must
+/// run after the last write and before that draw.
+///
+/// # Safety
+///
+/// Between `sceGuStart` and `sceGuFinish` of the direct list.
+pub(crate) unsafe fn cached_vertices(bytes: usize) -> *mut u8 {
+    let lines = (bytes + DCACHE_LINE - 1) & !(DCACHE_LINE - 1);
+    // `sceGuGetMemory` blocks are word-aligned, so aligning up skips at most
+    // 60 bytes of the extra line.
+    let raw = sys::sceGuGetMemory((lines + DCACHE_LINE) as i32) as usize;
+    let first = (raw + DCACHE_LINE - 1) & !(DCACHE_LINE - 1);
+    (first & !0x4000_0000) as *mut u8
+}
+
+/// Writes a [`cached_vertices`] block's lines back to memory for the GE.
+///
+/// `keep` leaves the lines in the D-cache (`cache 0x1a`, Hit Writeback) for
+/// a caller that reads the block back; otherwise they are written back and
+/// invalidated (`cache 0x1b`), which frees them for other data. LLVM's MIPS
+/// II assembler rejects the `cache` mnemonic, so it is emitted as a word
+/// with the address in `$a0` (RE-485).
+///
+/// # Safety
+///
+/// `ptr..ptr + bytes` must lie inside one [`cached_vertices`] block.
+pub(crate) unsafe fn writeback_vertices(ptr: *const u8, bytes: usize, keep: bool) {
+    let mut line = ptr as usize & !(DCACHE_LINE - 1);
+    let end = ptr as usize + bytes;
+    if keep {
+        while line < end {
+            core::arch::asm!(".word 0xbc9a0000", in("$4") line, options(nostack, preserves_flags));
+            line += DCACHE_LINE;
+        }
+    } else {
+        while line < end {
+            core::arch::asm!(".word 0xbc9b0000", in("$4") line, options(nostack, preserves_flags));
+            line += DCACHE_LINE;
+        }
+    }
+    // The lines reach memory before the stall update that lets the GE read
+    // them.
+    core::arch::asm!("sync", options(nostack, preserves_flags));
+}
+
 /// A vertex laid out the way the GE wants it.
 ///
 /// Field order is dictated by hardware, not taste: the GE reads texture

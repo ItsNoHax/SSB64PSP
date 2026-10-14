@@ -17,16 +17,15 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-498 closed two `MS8` items. The billboard arm's `sceGum*` chain is
-replaced by a closed-form scalar matrix (bit-exact against the old chain
-over 200,000 cases) with `sqrt.s` placement: billboard span 310 to 182 us,
-55.31 to 56.45 FPS on a PSP-2000 (each build on its own searched link
-order). Goldens cannot see 1 ULP of billboard scale, a standing blind spot
-shared with RE-497. Three animated opening goldens (`f1-opening-mario`,
-`-run`, `-clash`) now cover the movie draw path. The link order was
-re-searched for the new sizes and is byte-identical between
-`cargo psp --release` and `relink.py`. Next: the next `MS8` lever
-([`PLAN.md`](PLAN.md#remaining-work)).
+RE-499: vertex blocks are taken from the display list one line larger,
+written through the cache and written back per block before the draw (the
+GE runs mid-frame). Same-binary toggle on a PSP-2000 `vs4@2400`: +0.89 FPS,
+CPU -163 us; uncached loads 2,531 to 1,154 a frame; opening neutral
+(vsync-bound). No measured shipped-build gain over the previous commit:
+equal-model link orders spread 2-3 FPS on hardware and the I-cache model
+does not rank them (HEAD's order was the model's worst and measured among
+the best). `link-order.txt` is seed s3. Next: choose the link order by
+hardware measurement of the release build ([`PLAN.md`](PLAN.md#remaining-work)).
 
 ## Blockers
 
@@ -38,7 +37,7 @@ re-searched for the new sizes and is byte-identical between
 
 ## Verification
 
-Baseline after the billboard matrix change (RE-498):
+Baseline after the cached vertex blocks (RE-499):
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass. Clippy (`cargo +1.98.0`) and
@@ -47,8 +46,8 @@ Baseline after the billboard matrix change (RE-498):
 - Goldens: `tools/golden.sh verify`: 201 of 201 match (pack v109).
 - PPSSPP smoke test (`vs4@2400`): exit 0.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1, `profile,
-  capture_scene_file,no_audio` builds of `vs4@2400`: 55.31 to 56.45 FPS
-  (RE-498). The `ms0:` pack on the PSP is v108-sized (64 MB); hardware
+  capture_scene_file,no_audio` builds of `vs4@2400`: +0.89 FPS same-binary toggle
+  (RE-499; RE-498 55.31 to 56.45). The `ms0:` pack on the PSP is v108-sized (64 MB); hardware
   profile runs need a local pack symlink beside the host0 PRX, else
   nothing draws. The installed production EBOOT is v108 too.
 - ROMs: `rom/Super Smash Bros. (USA).z64` and
