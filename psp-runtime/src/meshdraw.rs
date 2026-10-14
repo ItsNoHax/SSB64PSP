@@ -566,43 +566,10 @@ impl DrawState {
         self.last_texture_mapping = None;
     }
 
-    /// Records the model matrix a node is about to draw under.
+    /// Records `m` as the model matrix a node is about to draw under.
     ///
-    /// Called once per node, from the same place the matrix is pushed, so the
-    /// texgen path never has to reconstruct it.
-    pub unsafe fn note_model_matrix(&mut self) {
-        let mut m = ScePspFMatrix4 {
-            x: ScePspFVector4 {
-                x: 1.0,
-                y: 0.0,
-                z: 0.0,
-                w: 0.0,
-            },
-            y: ScePspFVector4 {
-                x: 0.0,
-                y: 1.0,
-                z: 0.0,
-                w: 0.0,
-            },
-            z: ScePspFVector4 {
-                x: 0.0,
-                y: 0.0,
-                z: 1.0,
-                w: 0.0,
-            },
-            w: ScePspFVector4 {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-                w: 1.0,
-            },
-        };
-        sys::sceGumStoreMatrix(&mut m);
-        self.set_model_matrix(m);
-    }
-
-    /// Records `m` as the model matrix just loaded, like
-    /// [`Self::note_model_matrix`] for a matrix composed off `gum`'s stack.
+    /// Called once per node, from the same place the matrix is loaded, so
+    /// the texgen path never has to reconstruct it.
     pub fn set_model_matrix(&mut self, m: ScePspFMatrix4) {
         self.texgen_model = Some(m);
         // The matrix is part of the generated-coordinate mapping, so a node
@@ -1868,7 +1835,7 @@ fn billboard_place(base: &ScePspFMatrix4, local: &ScePspFMatrix4) -> ([f32; 3], 
             b[0][c] * l[2][0] + b[1][c] * l[2][1] + b[2][c] * l[2][2],
         ]
     };
-    let len = |v: [f32; 3]| ssb_engine::math::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    let len = |v: [f32; 3]| fpu_sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
     let t = [local.w.x, local.w.y, local.w.z];
     let pos = [
         b[0][0] * t[0] + b[1][0] * t[1] + b[2][0] * t[2] + base.w.x,
@@ -2243,15 +2210,19 @@ unsafe fn draw_object_posed_nodes(
         // The texgen path folds this node's own transform into the texture
         // matrix, so it is captured from whichever arm loads it.
         if node.flags & NodeDesc::FLAG_BILLBOARD != 0 && !kind48_flat {
-            sys::sceGumMatrixMode(sys::MatrixMode::Model);
-            load_billboard_matrix(
+            let billboard_t = crate::profile::start_fine();
+            let model = billboard_matrix(
                 base,
                 &local,
                 &node,
                 billboard_scales.and_then(|scales| scales.get(i as usize)),
                 st.billboard_camera,
             );
-            st.note_model_matrix();
+            sys::sceGumUpdateMatrix();
+            sys::sceGuSetMatrix(sys::MatrixMode::Model, &model);
+            st.set_model_matrix(model);
+            crate::profile::stop_fine(crate::profile::Span::Billboard, billboard_t);
+            crate::profile::count(crate::profile::Span::BillboardNodes, 1);
         } else {
             // `base * local`, composed here instead of on `gum`'s matrix
             // stack: the stack's VFPU context switches cost the per-node
@@ -2316,98 +2287,102 @@ fn compose_model_matrix(base: &ScePspFMatrix4, local: &ScePspFMatrix4) -> ScePsp
     }
 }
 
-/// Loads a billboard node's model matrix: [`draw_object_posed_nodes`]'
-/// arm for `NodeDesc::FLAG_BILLBOARD`. Out of line and cold: only sprite
-/// and effect nodes are billboards, and keeping this apart leaves the
-/// per-node path's code compact in the instruction cache (RE-482).
+/// A billboard node's model matrix: [`draw_object_posed_nodes`]' arm for
+/// `NodeDesc::FLAG_BILLBOARD`. Out of line and cold: only sprite and effect
+/// nodes are billboards, and keeping this apart leaves the per-node path's
+/// code compact in the instruction cache (RE-482).
+///
+/// `ssb_engine::math::billboard_matrix` writes out the chain of `sceGum*`
+/// calls this arm once made (identity, translate, the camera basis, the
+/// spin, the scale) with the same roundings. Those calls each saved and
+/// restored `gum`'s VFPU context, which cost a PSP-2000 about 14 µs a
+/// billboard (RE-498).
 #[cold]
 #[inline(never)]
-unsafe fn load_billboard_matrix(
+fn billboard_matrix(
     base: &ScePspFMatrix4,
     local: &ScePspFMatrix4,
     node: &NodeDesc,
     scale: Option<&[f32; 2]>,
     billboard_camera: Option<BillboardCamera>,
-) {
+) -> ScePspFMatrix4 {
     let (pos, mut sx, mut sy) = billboard_place(base, local);
     if let Some(scale) = scale {
-        let base_sx =
-            ssb_engine::math::sqrt(base.x.x * base.x.x + base.x.y * base.x.y + base.x.z * base.x.z);
-        let base_sy =
-            ssb_engine::math::sqrt(base.y.x * base.y.x + base.y.y * base.y.y + base.y.z * base.y.z);
+        let base_sx = fpu_sqrt(base.x.x * base.x.x + base.x.y * base.x.y + base.x.z * base.x.z);
+        let base_sy = fpu_sqrt(base.y.x * base.y.x + base.y.y * base.y.y + base.y.z * base.y.z);
         sx = base_sx * scale[0];
         sy = base_sy * scale[1];
     }
-    sys::sceGumLoadIdentity();
-    sys::sceGumTranslate(&ScePspFVector3 {
-        x: pos[0],
-        y: pos[1],
-        z: pos[2],
-    });
-    // RE-131: under a real (non-identity) view matrix, the object's
-    // own axes must be set to the camera's own right/up/forward for
-    // this to still be screen-aligned -- see `DrawState::
-    // billboard_camera`'s own doc comment for why this was not
-    // needed before. `None` (every mode except the real camera's
-    // own) leaves the basis at whatever `sceGumLoadIdentity` just
-    // set, identical to this code before RE-131.
+    // RE-131: under a real (non-identity) view matrix, the object's own
+    // axes must be set to the camera's own right/up/forward for this to
+    // still be screen-aligned -- see `DrawState::billboard_camera`'s own
+    // doc comment for why this was not needed before. `None` (every mode
+    // except the real camera's own) leaves the basis at the identity.
     //
-    // RE-132: `Kind48` gets the pitch-locked basis instead of the
-    // fully screen-aligned one -- see `NodeDesc::
-    // FLAG_BILLBOARD_PITCH_LOCKED`'s own doc comment for why this
-    // is the real, reachable transform, not `Kind46`'s.
-    if let Some((right, up)) = billboard_camera.map(|bc| {
+    // RE-132: `Kind48` gets the pitch-locked basis instead of the fully
+    // screen-aligned one -- see `NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED`'s
+    // own doc comment for why this is the real, reachable transform, not
+    // `Kind46`'s.
+    let basis = billboard_camera.map(|bc| {
         if node.flags & NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED != 0 {
             bc.pitch_locked
         } else {
             bc.screen
         }
-    }) {
-        let forward = [
-            right[1] * up[2] - right[2] * up[1],
-            right[2] * up[0] - right[0] * up[2],
-            right[0] * up[1] - right[1] * up[0],
-        ];
-        sys::sceGumMultMatrix(&ScePspFMatrix4 {
-            x: ScePspFVector4 {
-                x: right[0],
-                y: right[1],
-                z: right[2],
-                w: 0.0,
-            },
-            y: ScePspFVector4 {
-                x: up[0],
-                y: up[1],
-                z: up[2],
-                w: 0.0,
-            },
-            z: ScePspFVector4 {
-                x: forward[0],
-                y: forward[1],
-                z: forward[2],
-                w: 0.0,
-            },
-            w: ScePspFVector4 {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-                w: 1.0,
-            },
-        });
-    }
-    // ROM Kind46 reads rotate.z; kinds 44/48/50 have no spin.
-    // Case 45's rotate.x convention is not used by ROM descriptors.
-    sys::sceGumRotateZ(node.billboard_rest_spin());
-    // Every reachable original billboard case scales Z by the same
-    // signed `gGCScaleX` value as X (`gcPrepDObjMatrix` kinds
-    // 44/46/48/50). This is observable: 16 of the 109 shipped
-    // billboard meshes have a nonzero local Z span. Leaving Z at 1
-    // compressed that authored depth by MODEL_SCALE (RE-144).
-    sys::sceGumScale(&ScePspFVector3 {
-        x: sx,
-        y: sy,
-        z: sx,
     });
+    // ROM Kind46 reads rotate.z; kinds 44/48/50 have no spin. Case 45's
+    // rotate.x convention is not used by ROM descriptors.
+    let spin = node.billboard_rest_spin();
+    let cos_sin = if spin == 0.0 { (1.0, 0.0) } else { vfpu_cos_sin(spin) };
+    // Every reachable original billboard case scales Z by the same signed
+    // `gGCScaleX` value as X (`gcPrepDObjMatrix` kinds 44/46/48/50). This is
+    // observable: 16 of the 109 shipped billboard meshes have a nonzero
+    // local Z span. Leaving Z at 1 compressed that authored depth by
+    // MODEL_SCALE (RE-144).
+    let m = ssb_engine::math::billboard_matrix(pos, basis, cos_sin, sx, sy).cols;
+    let col = |c: [f32; 4]| ScePspFVector4 {
+        x: c[0],
+        y: c[1],
+        z: c[2],
+        w: c[3],
+    };
+    ScePspFMatrix4 {
+        x: col(m[0]),
+        y: col(m[1]),
+        z: col(m[2]),
+        w: col(m[3]),
+    }
+}
+
+/// The cosine and sine of `angle` radians as `sceGumRotateZ` takes them:
+/// the VFPU's `vrot` of `angle · 2/π`, so a spinning billboard rotates by
+/// exactly what the `sceGum*` chain gave it. Bank 5 only, like
+/// [`compose_model_matrix`], so no `vfpu_context` is needed.
+fn vfpu_cos_sin(angle: f32) -> (f32, f32) {
+    let (cos, sin): (f32, f32);
+    // SAFETY: reads and writes only bank-5 VFPU registers and the named
+    // general registers.
+    unsafe {
+        psp::vfpu_asm!(
+            "mfc1 {tmp}, {angle}",
+            "mtv {tmp}, S500",
+            "nop",
+            "vcst.s S501, VFPU_2_PI",
+            "vmul.s S500, S501, S500",
+            "vrot.p C510, S500, [C, S]",
+            "mfv {tmp}, S510",
+            "mtc1 {tmp}, {cos}",
+            "mfv {tmp}, S511",
+            "mtc1 {tmp}, {sin}",
+            "nop",
+            angle = in(freg) angle,
+            cos = out(freg) cos,
+            sin = out(freg) sin,
+            tmp = out(reg) _,
+            options(nostack, nomem),
+        );
+    }
+    (cos, sin)
 }
 
 /// One mesh of a node whose matrix is loaded: re-posed from `posed` where

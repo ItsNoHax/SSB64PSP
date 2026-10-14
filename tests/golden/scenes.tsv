@@ -211,3 +211,6 @@ f1-training-link-bomb-loose	psp-game	linkbomb@320	pass	RE-444
 f1-vs-push-ko	psp-game	vspush	pass	RE-469
 f1-vs-knock-ko	psp-game	vsknock	pass	RE-469
 f1-vs-four-magnifier	psp-game	vs4@2800	pass	RE-440 RE-470 RE-472 RE-473
+f1-opening-mario	psp-game	op-mario@60	pass	RE-467 RE-476 RE-497
+f1-opening-run	psp-game	op-run@140	pass	RE-467 RE-476 RE-497
+f1-opening-clash	psp-game	op-clash@80	pass	RE-467 RE-476 RE-497

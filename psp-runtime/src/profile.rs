@@ -75,7 +75,8 @@ pub enum Span {
     Skin,
     /// The movie draw's sprite pieces and fills.
     MovieSprites,
-    /// Mesh lists: a node's matrix (`sceGum*`) before its meshes.
+    /// Mesh lists: a node's matrix before its meshes (a raw VFPU compose,
+    /// or a billboard's written-out one).
     NodeMatrix,
     /// Mesh lists: each primitive's material and texture state.
     Material,
@@ -97,14 +98,19 @@ pub enum Span {
     /// Of [`Span::Allocs`]: those the kernel served (large blocks and the
     /// small heap's chunks).
     KernelAllocs,
+    /// Inside [`Span::NodeMatrix`]: a billboard node's matrix
+    /// (`meshdraw::billboard_matrix`).
+    Billboard,
+    /// Billboard node matrices loaded (a count, not microseconds).
+    BillboardNodes,
 }
 
-const SPANS: usize = 37;
+const SPANS: usize = 39;
 #[cfg_attr(not(feature = "profile"), allow(dead_code))]
 const NAMES: [&str; SPANS] = [
     "update", "interrupt", "physics", "hit", "effects", "draw", "ge", "vblank", "fphys", "items", "weapons", "camera", "anim",
     "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel", "io", "demand", "files", "mpose", "mmesh", "skin", "msprites", "nodemat", "material", "submit", "prims", "sound", "sndcalls",
-    "compose", "allocs", "kallocs",
+    "compose", "allocs", "kallocs", "billboard", "bbnodes",
 ];
 
 /// Frames per report: two seconds at 60 FPS.

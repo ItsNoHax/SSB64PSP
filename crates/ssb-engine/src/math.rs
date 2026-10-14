@@ -680,6 +680,47 @@ pub fn transform_lookat_basis(columns: [[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
     }
 }
 
+/// A billboard node's model matrix (`psp-runtime`'s billboard arm):
+/// `T(pos) · B · Rz · S(sx, sy, sx)`, the chain that arm once built with
+/// `sceGumTranslate`, `sceGumMultMatrix`, `sceGumRotateZ` and
+/// `sceGumScale`, written out (RE-498). `B`'s columns are `right`, `up` and
+/// `right × up` (the identity when `basis` is `None`), and `cos_sin` is the
+/// spin's cosine and sine as `sceGumRotateZ`'s `vrot` gives them.
+///
+/// Every term the chain multiplies by an exact 0 or 1 is dropped, which
+/// leaves each entry with the roundings the chain gives it on a `vmmul.q`
+/// that sums its products in order (PPSSPP's, RE-497): one product and sum
+/// per rotated column, one product per scaled entry. Only the sign of a
+/// zero entry can differ.
+pub fn billboard_matrix(
+    pos: [f32; 3],
+    basis: Option<([f32; 3], [f32; 3])>,
+    cos_sin: (f32, f32),
+    sx: f32,
+    sy: f32,
+) -> Mat4 {
+    let (right, up) = basis.unwrap_or(([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]));
+    let forward = match basis {
+        Some(_) => [
+            right[1] * up[2] - right[2] * up[1],
+            right[2] * up[0] - right[0] * up[2],
+            right[0] * up[1] - right[1] * up[0],
+        ],
+        None => [0.0, 0.0, 1.0],
+    };
+    let (c, s) = cos_sin;
+    let x = |i: usize| (right[i] * c + up[i] * s) * sx;
+    let y = |i: usize| (right[i] * -s + up[i] * c) * sy;
+    Mat4 {
+        cols: [
+            [x(0), x(1), x(2), 0.0],
+            [y(0), y(1), y(2), 0.0],
+            [forward[0] * sx, forward[1] * sx, forward[2] * sx, 0.0],
+            [pos[0], pos[1], pos[2], 1.0],
+        ],
+    }
+}
+
 #[cfg(test)]
 mod trig_tests {
     use super::{atan2_poly, sin_poly};
@@ -950,5 +991,101 @@ mod tests {
         let singular = [[0.0; 3]; 3];
         let r = transform_lookat_basis(singular, [1.0, 0.0, 0.0]);
         assert_eq!(r, [0.0; 3]);
+    }
+
+    /// RE-498: [`billboard_matrix`] equals the `sceGum*` chain it replaced,
+    /// replayed as PPSSPP's `vmmul.q` and `vscl.t` compute it (products
+    /// summed in order from 0, which [`Mat4::multiply`] does), bit for bit
+    /// apart from the sign of a zero.
+    #[test]
+    fn billboard_matrix_matches_the_gum_chain() {
+        fn gum_chain(
+            pos: [f32; 3],
+            basis: Option<([f32; 3], [f32; 3])>,
+            (c, s): (f32, f32),
+            sx: f32,
+            sy: f32,
+        ) -> Mat4 {
+            // sceGumLoadIdentity, sceGumTranslate.
+            let mut m =
+                Mat4::IDENTITY.multiply(&Mat4::from_translation(Vec3::new(pos[0], pos[1], pos[2])));
+            // sceGumMultMatrix with the camera basis.
+            if let Some((r, u)) = basis {
+                let f = [
+                    r[1] * u[2] - r[2] * u[1],
+                    r[2] * u[0] - r[0] * u[2],
+                    r[0] * u[1] - r[1] * u[0],
+                ];
+                let b = Mat4 {
+                    cols: [
+                        [r[0], r[1], r[2], 0.0],
+                        [u[0], u[1], u[2], 0.0],
+                        [f[0], f[1], f[2], 0.0],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ],
+                };
+                m = m.multiply(&b);
+            }
+            // sceGumRotateZ: `vrot` columns [C, S, 0, 0] and [-S, C, 0, 0].
+            let rz = Mat4 {
+                cols: [
+                    [c, s, 0.0, 0.0],
+                    [-s, c, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            };
+            m = m.multiply(&rz);
+            // sceGumScale: `vscl.t` on the first three columns.
+            for (col, k) in [(0, sx), (1, sy), (2, sx)] {
+                for r in 0..3 {
+                    m.cols[col][r] *= k;
+                }
+            }
+            m
+        }
+        // A fixed xorshift, so a failure reproduces.
+        let mut state = 0x9E37_79B9u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        let mut unit = move || (next() >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0;
+        let mut checked = 0;
+        for i in 0..200_000 {
+            let pos = [unit() * 4000.0, unit() * 4000.0, unit() * 4000.0];
+            let basis = match i % 3 {
+                0 => None,
+                _ => {
+                    let r = Vec3::new(unit(), unit(), unit()).normalized();
+                    let u = Vec3::new(unit(), unit(), unit()).normalized();
+                    Some((r.to_array(), u.to_array()))
+                }
+            };
+            let cos_sin = if i % 4 == 0 {
+                (1.0, 0.0)
+            } else {
+                let a = unit() * 7.0;
+                (a.cos(), a.sin())
+            };
+            let (sx, sy) = (unit() * 30.0, unit() * 30.0);
+            let want = gum_chain(pos, basis, cos_sin, sx, sy);
+            let got = billboard_matrix(pos, basis, cos_sin, sx, sy);
+            for c in 0..4 {
+                for r in 0..4 {
+                    let (w, g) = (want.cols[c][r], got.cols[c][r]);
+                    assert!(
+                        w == g && !w.is_nan(),
+                        "case {i} col {c} row {r}: chain {w:e} ({:#x}), direct {g:e} ({:#x})",
+                        w.to_bits(),
+                        g.to_bits()
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert_eq!(checked, 200_000 * 16);
     }
 }

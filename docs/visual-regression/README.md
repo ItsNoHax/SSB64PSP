@@ -33,7 +33,7 @@ tools/golden.sh baseline [--filter REGEX] [-j N] [--no-build]
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  The manifest has 198 scenes; a full run at `-j 16` captures
+  The manifest has 201 scenes; a full run at `-j 16` captures
   in about 110 s.
 - Comparison is exact. A capture matches when the SHA-256 of its decoded
   pixels (8-bit RGB, row-major from the top-left, no header;

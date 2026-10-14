@@ -653,7 +653,7 @@ pub enum GameScene {
     /// Diagnostic: outside the manifest.
     OpeningPortraits,
     /// `op-mario`: the opening's mario scene from its first tic (RE-467).
-    /// Diagnostic: outside the manifest.
+    /// `op-mario@60` is the golden `f1-opening-mario`.
     OpeningMario,
     /// `op-donkey`: the opening's donkey scene from its first tic (RE-467).
     /// Diagnostic: outside the manifest.
@@ -677,7 +677,7 @@ pub enum GameScene {
     /// Diagnostic: outside the manifest.
     OpeningPikachu,
     /// `op-run`: the opening's run scene from its first tic (RE-467).
-    /// Diagnostic: outside the manifest.
+    /// `op-run@140` is the golden `f1-opening-run`.
     OpeningRun,
     /// `op-cliff`: the opening's cliff scene from its first tic (RE-467).
     /// Diagnostic: outside the manifest.
@@ -698,7 +698,7 @@ pub enum GameScene {
     /// Diagnostic: outside the manifest.
     OpeningStandoff,
     /// `op-clash`: the opening's clash scene from its first tic (RE-467).
-    /// Diagnostic: outside the manifest.
+    /// `op-clash@80` is the golden `f1-opening-clash`.
     OpeningClash,
     /// `op-newcomers`: the opening's newcomers scene from its first tic (RE-467).
     /// Diagnostic: outside the manifest.
