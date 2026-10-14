@@ -1592,7 +1592,7 @@ pub(crate) fn air_callback(f: &mut Fighter) {
                     } else {
                         Facing::Left
                     };
-                    f.fox_special_hi.angle = ssb_engine::math::atan2(
+                    f.fox_special_hi.angle = ssb_engine::math::sy_arc_tan2(
                         f.physics.vel_air.y,
                         f.physics.vel_air.x * f.facing.sign(),
                     );

@@ -369,7 +369,7 @@ fn dispatch(f: &mut Fighter, rt: &mut EffectRuntime<'_>, effect: u16, mut pos: V
             let floor = f.floor.filter(|_| f.is_grounded());
             match floor {
                 Some(floor) => {
-                    let rotate = crate::particle::arc_tan2(-floor.normal.x, floor.normal.y);
+                    let rotate = ssb_engine::math::sy_arc_tan2(-floor.normal.x, floor.normal.y);
                     e.impact_wave(pos, 4, rotate);
                 }
                 None => {

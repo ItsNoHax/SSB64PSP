@@ -1157,7 +1157,7 @@ where
 
 /// `ftParamGetStickAngleRads`.
 fn stick_angle(f: &Fighter) -> f32 {
-    ssb_engine::math::atan2(f32::from(f.stick.y), f32::from(f.stick.x).abs())
+    ssb_engine::math::sy_arc_tan2(f32::from(f.stick.y), f32::from(f.stick.x).abs())
 }
 
 /// `ftBossWaitDecideStatusPlayer`: a human Master Hand (the debug

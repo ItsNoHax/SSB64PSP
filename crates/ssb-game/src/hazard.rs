@@ -525,7 +525,7 @@ where
             let t = f.hazard.release_wait as f32 * 0.016_666_668;
             let mul = ((400.0 * t) + 100.0) * 0.5;
             let spin = (1800.0 * t) * core::f32::consts::PI / 180.0;
-            let (sin, cos) = ssb_engine::math::sin_cos(spin);
+            let (sin, cos) = ssb_engine::math::lb_sin_cos(spin);
             let goal = f.hazard.anchor + Vec3::new(mul * cos, 500.0 * t, mul * sin);
             let mut vel = goal - f.pos;
             let mag = ssb_engine::math::sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);

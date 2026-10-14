@@ -187,29 +187,22 @@ impl ArwingLaser {
     }
 }
 
-/// `syUtilsArcSin`.
-fn arc_sin(x: f32) -> f32 {
-    if x > 0.99999 {
-        core::f32::consts::FRAC_PI_2
-    } else if x < -0.99999 {
-        -core::f32::consts::FRAC_PI_2
-    } else {
-        ssb_engine::math::atan2(x, ssb_engine::math::sqrt(1.0 - x * x))
-    }
-}
-
 /// `func_ovl2_801070A4`: the Euler angles of the frame whose X axis is
 /// `side` and whose Y axis is `up`, `dir` being the direction of travel.
 fn frame_rotate(dir: Vec3, side: Vec3, up: Vec3) -> Vec3 {
-    use ssb_engine::math::atan2;
+    use ssb_engine::math::{sy_arc_sin, sy_arc_tan2};
     if side.z == -1.0 || side.z == 1.0 {
         if side.z == -1.0 {
-            Vec3::new(atan2(up.x, up.y), core::f32::consts::FRAC_PI_2, 0.0)
+            Vec3::new(sy_arc_tan2(up.x, up.y), core::f32::consts::FRAC_PI_2, 0.0)
         } else {
-            Vec3::new(atan2(-up.x, up.y), -core::f32::consts::FRAC_PI_2, 0.0)
+            Vec3::new(sy_arc_tan2(-up.x, up.y), -core::f32::consts::FRAC_PI_2, 0.0)
         }
     } else {
-        Vec3::new(atan2(up.z, dir.z), arc_sin(-side.z), atan2(side.y, side.x))
+        Vec3::new(
+            sy_arc_tan2(up.z, dir.z),
+            sy_arc_sin(-side.z),
+            sy_arc_tan2(side.y, side.x),
+        )
     }
 }
 

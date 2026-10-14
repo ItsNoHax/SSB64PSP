@@ -425,8 +425,11 @@ fn light_throw_joints_turn_each_step_and_restore_facing_outside_the_status() {
             assert!((axes[2].x - sin).abs() < 0.00001);
             assert!((axes[2].z - cos).abs() < 0.00001);
             let point = link.joint_world(0, Vec3::new(0.0, 0.0, 100.0)) - link.pos;
-            assert!((point.x - 100.0 * sin).abs() < 0.001);
-            assert!((point.z - 100.0 * cos).abs() < 0.001);
+            // Gameplay positions take the `lbCommonSin` table axes.
+            let table = crate::item_throw::collision_axes(&link)[2];
+            assert!((table.x - sin).abs() < 0.005 && (table.z - cos).abs() < 0.005);
+            assert!((point.x - 100.0 * table.x).abs() < 0.001);
+            assert!((point.z - 100.0 * table.z).abs() < 0.001);
             assert_eq!(
                 link.facing,
                 if step < 4 { facing } else { facing.flipped() }

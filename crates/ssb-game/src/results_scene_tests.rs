@@ -85,7 +85,7 @@ fn a_two_player_winner_stands_in_front_and_the_loser_turns_to_it() {
     assert_eq!(winner.rotate_y, 0.0);
     assert_eq!(lose.pos, Vec3::new(-350.0, -450.0, -2000.0));
     assert_eq!(lose.status, Some(DemoStatus::Lose));
-    let expected = ssb_engine::math::atan2(450.0, 2000.0);
+    let expected = ssb_engine::math::sy_arc_tan2(450.0, 2000.0);
     assert!((lose.rotate_y - expected).abs() < 1e-6);
     assert!(lose.rotate_y > 0.0, "turned right, toward the winner");
 }

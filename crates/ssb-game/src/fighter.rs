@@ -895,12 +895,13 @@ impl Fighter {
 
     /// World position of a motion collision offset. Host-only callers with
     /// no skeleton use TopN's turn/facing transform for joint 0 and the previous
-    /// root-offset fallback for non-root joints.
+    /// root-offset fallback for non-root joints. Joint 0 takes the
+    /// `lbCommonSin` axes `gmCollisionTransformMatrixAll` builds.
     pub fn joint_world(&self, joint: u8, offset: Vec3) -> Vec3 {
         if let Some(transform) = self.joint_transforms.get(joint as usize).copied().flatten() {
             transform.point(offset)
         } else if joint == 0 {
-            let axes = crate::item_throw::model_axes(self);
+            let axes = crate::item_throw::collision_axes(self);
             self.pos + axes[0] * offset.x + axes[1] * offset.y + axes[2] * offset.z
         } else {
             self.pos + Vec3::new(offset.x * self.facing.sign(), offset.y, offset.z)

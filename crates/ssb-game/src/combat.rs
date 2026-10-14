@@ -1258,7 +1258,7 @@ pub(crate) fn slash_rotation(attacker: &Fighter, coll: &AttackColl) -> f32 {
             coll.pos_curr.y - coll.pos_prev.y,
         )
     };
-    crate::particle::arc_tan2(y, x)
+    ssb_engine::math::sy_arc_tan2(y, x)
 }
 
 /// `ftMainUpdateShieldStatWeapon`'s writes to the weapon:

@@ -829,10 +829,10 @@ impl CharactersMenu {
         c.eye.y = sin * 3000.0;
         c.eye.z = cos * 3000.0;
         // `syUtilsArcTan2(370.0F, 0.0F)` and `(1.0F, 0.0F)`: a quarter turn.
-        let (sin, cos) = math::sin_cos(math::atan2(370.0, 0.0) + r);
+        let (sin, cos) = math::sin_cos(math::sy_arc_tan2(370.0, 0.0) + r);
         c.at.y = sin * 370.0;
         c.at.z = cos * 370.0;
-        let (sin, cos) = math::sin_cos(math::atan2(1.0, 0.0) + r);
+        let (sin, cos) = math::sin_cos(math::sy_arc_tan2(1.0, 0.0) + r);
         c.up.y = sin;
         c.up.z = cos;
     }

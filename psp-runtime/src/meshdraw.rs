@@ -454,14 +454,21 @@ impl DrawState {
 }
 
 /// `ftDisplayLightsDrawReflect`'s direction from the stage's X/Y angles.
+/// The table `lbCommonSin`/`lbCommonCos` with the original's signs: the
+/// table truncates its index, so `-sin(-a)` and `cos(-a)` are not `sin(a)`
+/// and `cos(a)`. `F_CLC_DTOR32` multiplies by pi before dividing by 180.
 fn light_direction(angles_degrees: [f32; 2]) -> ScePspFVector3 {
-    let radians = core::f32::consts::PI / 180.0;
-    let (sin_x, cos_x) = ssb_engine::math::sin_cos(angles_degrees[0] * radians);
-    let (sin_y, cos_y) = ssb_engine::math::sin_cos(angles_degrees[1] * radians);
+    use ssb_engine::math::{lb_cos, lb_sin};
+    let pi = core::f32::consts::PI;
+    let angle_y = angles_degrees[1] * pi / 180.0;
+    let angle_x = angles_degrees[0] * pi / 180.0;
+    let y = -lb_sin(-angle_y);
+    let z = lb_cos(-angle_y);
+    let x = lb_sin(angle_x) * z;
     ScePspFVector3 {
-        x: sin_x * cos_y,
-        y: sin_y,
-        z: cos_x * cos_y,
+        x,
+        y,
+        z: z * lb_cos(angle_x),
     }
 }
 

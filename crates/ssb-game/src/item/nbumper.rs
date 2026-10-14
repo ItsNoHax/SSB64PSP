@@ -172,7 +172,7 @@ fn set_model_pitch(item: &mut Item) {
     if let Some(f) = item.floor {
         item.attach_line = Some(f.line);
         item.rotate_z =
-            ssb_engine::math::atan2(f.normal.y, f.normal.x) - core::f32::consts::FRAC_PI_2;
+            ssb_engine::math::sy_arc_tan2(f.normal.y, f.normal.x) - core::f32::consts::FRAC_PI_2;
     }
 }
 

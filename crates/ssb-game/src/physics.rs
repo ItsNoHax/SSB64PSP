@@ -448,7 +448,7 @@ pub fn update_damage_velocity(
         return;
     }
     if !grounded {
-        let angle = ssb_engine::math::atan2(v.y, v.x);
+        let angle = ssb_engine::math::sy_arc_tan2(v.y, v.x);
         let (sin, cos) = ssb_engine::math::sin_cos(angle);
         let (old_x, old_y) = (v.x, v.y);
         v.x -= DAMAGE_AIR_DECEL * cos;

@@ -406,7 +406,7 @@ fn ness_blast_rebounds_steep_contacts_and_slides_shallow_walls() {
         AnyStatus::Ness(NessStatus::SpecialAirHiJibaku),
         Vec3::new(20.0, 100.0, 0.0),
     );
-    f.ness.blast_angle = ssb_engine::math::atan2(100.0, 20.0);
+    f.ness.blast_angle = ssb_engine::math::sy_arc_tan2(100.0, 20.0);
     f.map_contacts.left_wall = Some(Contact {
         line: 2,
         flags: 0,

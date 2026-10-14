@@ -593,53 +593,7 @@ pub fn tra_rot_rpy_r_sca(t: Vec3, r: Vec3, s: Vec3) -> [[f32; 4]; 4] {
     m
 }
 
-/// `syUtilsArcTan` (`sys/utils.c`): a rational approximation.
-pub fn arc_tan(div: f32) -> f32 {
-    use core::f32::consts::FRAC_PI_2;
-    if div == 0.0 {
-        return 0.0;
-    }
-    // Out of line, as `arc_tan2`'s ratio (RE-469).
-    let inv = ssb_engine::math::div_nonzero(1.0, div);
-    let (d, kind) = if div > 1.0 {
-        (inv, 1)
-    } else if div < -1.0 {
-        (inv, 2)
-    } else {
-        (div, 0)
-    };
-    let c = d * d;
-    let a = c / -0.108_106_75 + -44.571_92;
-    let b = c / a + -0.161_908_1;
-    let e = c / b + -15.774_018;
-    let f = c / e + -0.555_569_77;
-    let g = c / f + -3.000_003;
-    let result = (c / g + 1.0) * d;
-    match kind {
-        1 => FRAC_PI_2 - result,
-        2 => -FRAC_PI_2 - result,
-        _ => result,
-    }
-}
-
-/// `syUtilsArcTan2`.
-pub fn arc_tan2(y: f32, x: f32) -> f32 {
-    use core::f32::consts::{FRAC_PI_2, PI};
-    // The divisions keep a nonzero denominator out of line: the KO
-    // explosion's generators have no velocity, and a PSP traps the `0 / 0`
-    // LLVM computes before the `x == 0` branch (RE-469).
-    let ratio = ssb_engine::math::div_nonzero(y, x);
-    if x > 0.0 {
-        arc_tan(ratio)
-    } else if x < 0.0 {
-        let sign = if y < 0.0 { -1.0 } else { 1.0 };
-        (PI - arc_tan(ratio.abs())) * sign
-    } else if y != 0.0 {
-        (if y < 0.0 { -1.0 } else { 1.0 }) * FRAC_PI_2
-    } else {
-        0.0
-    }
-}
+use ssb_engine::math::sy_arc_tan2;
 
 const TAU: f32 = core::f32::consts::TAU;
 
@@ -945,9 +899,9 @@ fn add_u8(v: u8, x: f32) -> u8 {
 /// `lbParticleRotateVel`.
 fn rotate_vel(pc: &mut Particle, angle: f32) {
     let v = pc.vel;
-    let pitch = arc_tan2(v.y, v.z);
+    let pitch = sy_arc_tan2(v.y, v.z);
     let (sin_pitch, cos_pitch) = sin_cos(pitch);
-    let yaw = arc_tan2(v.x, v.y * sin_pitch + v.z * cos_pitch);
+    let yaw = sy_arc_tan2(v.x, v.y * sin_pitch + v.z * cos_pitch);
     let (sin_yaw, cos_yaw) = sin_cos(yaw);
     let magnitude = sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
     let spin = rng::rand_float() * TAU;
@@ -1569,9 +1523,9 @@ pub fn generator_func_run(p: &mut Particles, banks: &dyn Banks, dead: &mut dyn P
             let g = p.gens[gi];
             match g.kind {
                 0 | 3 | 4 => {
-                    let angle1 = arc_tan2(vel.y, vel.z);
+                    let angle1 = sy_arc_tan2(vel.y, vel.z);
                     let (sin1, cos1) = sin_cos(angle1);
-                    let angle2 = arc_tan2(vel.x, vel.y * sin1 + vel.z * cos1);
+                    let angle2 = sy_arc_tan2(vel.x, vel.y * sin1 + vel.z * cos1);
                     let (sin2, cos2) = sin_cos(angle2);
                     let magnitude = sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
                     let (mut pv1, vmag, var_f20);

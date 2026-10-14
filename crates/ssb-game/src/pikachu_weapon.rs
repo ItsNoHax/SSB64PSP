@@ -102,7 +102,7 @@ impl ThunderJolt {
     /// The ground weapon's root `rotate.z`: `wpPikachuThunderJoltGroundProcMap`
     /// sets it to `atan2(-angle.x, angle.y)` of the line it rides.
     pub fn rotate_z(&self) -> f32 {
-        ssb_engine::math::atan2(-self.normal.x, self.normal.y)
+        ssb_engine::math::sy_arc_tan2(-self.normal.x, self.normal.y)
     }
     /// `wpPikachuThunderJoltGroundAddAnim`: restart the animation and play it
     /// once.
@@ -194,7 +194,7 @@ impl ThunderJolt {
                 if let Some(hit) = hit {
                     let s = hit.surface;
                     let pos = project(s, hit.position).unwrap_or(hit.position);
-                    let angle = ssb_engine::math::atan2(hit.normal.y, hit.normal.x);
+                    let angle = ssb_engine::math::sy_arc_tan2(hit.normal.y, hit.normal.x);
                     let direction = match kind {
                         MapSurfaceKind::Floor => {
                             if self.velocity.x >= 0.0 {

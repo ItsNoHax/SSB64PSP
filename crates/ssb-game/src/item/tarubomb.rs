@@ -180,8 +180,9 @@ pub(super) fn update(item: &mut Item, status: Status) -> bool {
         // `itTaruBombRollProcUpdate`: unlike the Barrel's roll, no clock.
         Status::Roll => {
             let n = item.floor.map_or(Vec2::new(0.0, 1.0), |f| f.normal);
-            item.vel_air.x +=
-                -(ssb_engine::math::atan2(n.y, n.x) - core::f32::consts::FRAC_PI_2) * MUL_VEL_X;
+            item.vel_air.x += -(ssb_engine::math::sy_arc_tan2(n.y, n.x)
+                - core::f32::consts::FRAC_PI_2)
+                * MUL_VEL_X;
             item.lr = if item.vel_air.x >= 0.0 { 1.0 } else { -1.0 };
             let speed = Vec2::new(item.vel_air.x, item.vel_air.y).length();
             item.vars.taru_roll_step = if item.lr == -1.0 {

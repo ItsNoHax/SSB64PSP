@@ -4,7 +4,7 @@ use crate::fighter::{Facing, Fighter, FighterKind};
 use crate::physics;
 use crate::status::{self, AnyStatus, PikachuStatus as P, StatusTiming};
 use crate::weapon::{WeaponKind, WeaponSpawn};
-use ssb_engine::math::{atan2, sin_cos, Vec2, Vec3};
+use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct PikachuState {
@@ -194,7 +194,7 @@ fn set_zip(f: &mut Fighter) {
             (Vec2::new(0.0, 80.0), 80.0)
         };
         f.pikachu.zip_stick = direction;
-        let angle = atan2(direction.y, direction.x * f.facing.sign());
+        let angle = sy_arc_tan2(direction.y, direction.x * f.facing.sign());
         let (sin, cos) = sin_cos(angle);
         let speed = (3.0 * magnitude + 90.0) * mul;
         f.physics.vel_air.x = cos * speed * f.facing.sign();

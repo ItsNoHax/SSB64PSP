@@ -9885,7 +9885,7 @@ unsafe fn draw_items_weapons_effects(
 
     if let Some(blaster_mesh) = assets.blaster_mesh.as_ref() {
         for shot in weapons.blasters() {
-            let pitch = ssb_engine::math::atan2(shot.velocity.y, shot.velocity.x);
+            let pitch = ssb_engine::math::sy_arc_tan2(shot.velocity.y, shot.velocity.x);
             gpu.model_transform_xyz(
                 [shot.position.x, shot.position.y, shot.position.z],
                 [0.0, 0.0, pitch],
@@ -9906,9 +9906,9 @@ unsafe fn draw_items_weapons_effects(
             // `syUtilsArcTan2` of the cross product is scale-free.
             let (vx, vy) = (shot.velocity.x, shot.velocity.y);
             let (yaw, pitch) = if vx > 0.0 {
-                (core::f32::consts::FRAC_PI_2, ssb_engine::math::atan2(-vy, vx))
+                (core::f32::consts::FRAC_PI_2, ssb_engine::math::sy_arc_tan2(-vy, vx))
             } else {
-                (-core::f32::consts::FRAC_PI_2, ssb_engine::math::atan2(-vy, -vx))
+                (-core::f32::consts::FRAC_PI_2, ssb_engine::math::sy_arc_tan2(-vy, -vx))
             };
             gpu.model_transform_xyz(
                 [shot.position.x, shot.position.y, shot.position.z],

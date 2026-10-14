@@ -1970,23 +1970,27 @@ pub fn held_root_axes(joint: JointTransform) -> [Vec3; 3] {
 /// `syUtilsArcTan2`/`syUtilsArcSin` approximations), then
 /// `gmCollisionTransformMatrixAll`'s `lbCommonSin` rotation. Unit axes.
 pub fn held_collision_axes(joint: JointTransform) -> [Vec3; 3] {
-    use crate::particle::arc_tan2;
+    use ssb_engine::math::{sy_arc_sin, sy_arc_tan2};
     let d = held_root_axes(joint);
     let (rx, ry, rz) = if d[0].z == -1.0 || d[0].z == 1.0 {
         if d[0].z == -1.0 {
-            (arc_tan2(d[1].x, d[1].y), core::f32::consts::FRAC_PI_2, 0.0)
+            (
+                sy_arc_tan2(d[1].x, d[1].y),
+                core::f32::consts::FRAC_PI_2,
+                0.0,
+            )
         } else {
             (
-                arc_tan2(-d[1].x, d[1].y),
+                sy_arc_tan2(-d[1].x, d[1].y),
                 -core::f32::consts::FRAC_PI_2,
                 0.0,
             )
         }
     } else {
         (
-            arc_tan2(d[1].z, d[2].z),
-            arc_sin(-d[0].z),
-            arc_tan2(d[0].y, d[0].x),
+            sy_arc_tan2(d[1].z, d[2].z),
+            sy_arc_sin(-d[0].z),
+            sy_arc_tan2(d[0].y, d[0].x),
         )
     };
     let (sx, cx) = ssb_engine::math::lb_sin_cos(rx);
@@ -1997,17 +2001,6 @@ pub fn held_collision_axes(joint: JointTransform) -> [Vec3; 3] {
         Vec3::new(cz * sy * sx - sz * cx, sz * sy * sx + cz * cx, cy * sx),
         Vec3::new(cz * sy * cx + sz * sx, sz * sy * cx - cz * sx, cy * cx),
     ]
-}
-
-/// `syUtilsArcSin`.
-fn arc_sin(x: f32) -> f32 {
-    if x > 0.99999 {
-        core::f32::consts::FRAC_PI_2
-    } else if x < -0.99999 {
-        -core::f32::consts::FRAC_PI_2
-    } else {
-        crate::particle::arc_tan(x / ssb_engine::math::sqrt(1.0 - x * x))
-    }
 }
 
 /// Whether the status's `proc_physics` writes TopN's rotation from the

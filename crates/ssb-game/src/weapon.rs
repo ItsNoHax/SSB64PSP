@@ -942,7 +942,7 @@ impl LinkBoomerang {
     pub fn launch_angle(stick_x: i8, stick_y: i8, lr: f32) -> f32 {
         let y = i32::from(stick_y);
         let mut angle = if y.abs() > BOOMERANG_ANGLE_STICK_THRESHOLD {
-            ssb_engine::math::atan2(y as f32, i32::from(stick_x).abs() as f32)
+            ssb_engine::math::sy_arc_tan2(y as f32, i32::from(stick_x).abs() as f32)
                 .clamp(-DEG_30, DEG_30)
         } else {
             0.0
@@ -1010,7 +1010,7 @@ impl LinkBoomerang {
                 return dist;
             }
         }
-        let mut angle = ssb_engine::math::atan2(dist_y, dist_x);
+        let mut angle = ssb_engine::math::sy_arc_tan2(dist_y, dist_x);
         if angle < -DEG_180 {
             angle += DEG_360;
         } else if angle > DEG_180 {
@@ -1037,8 +1037,10 @@ impl LinkBoomerang {
             if sim > -ssb_engine::math::sin_cos(DEG_30).0 {
                 self.velocity.x -= 2.0 * dot * normal.x;
                 self.velocity.y -= 2.0 * dot * normal.y;
-                self.default_angle =
-                    clamp_angle_360(ssb_engine::math::atan2(self.velocity.y, self.velocity.x));
+                self.default_angle = clamp_angle_360(ssb_engine::math::sy_arc_tan2(
+                    self.velocity.y,
+                    self.velocity.x,
+                ));
             } else {
                 return true;
             }
@@ -1140,7 +1142,7 @@ impl LinkBoomerang {
         }
         let dist_x = self.position.x - reflector.pos.x;
         let dist_y = self.position.y - (reflector.pos.y + 250.0);
-        self.default_angle = clamp_angle_360(ssb_engine::math::atan2(dist_y, dist_x));
+        self.default_angle = clamp_angle_360(ssb_engine::math::sy_arc_tan2(dist_y, dist_x));
         self.set_speed(self.speed());
         self.owner_port = reflector.port;
         self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
@@ -1429,7 +1431,7 @@ impl YoshiStar {
         if self.velocity.x * reflector.facing.sign() < 0.0 {
             self.velocity.x = -self.velocity.x;
         }
-        self.rotate_z = ssb_engine::math::atan2(self.velocity.y, self.velocity.x);
+        self.rotate_z = ssb_engine::math::sy_arc_tan2(self.velocity.y, self.velocity.x);
         self.lr = -self.lr;
         self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
     }
@@ -1558,7 +1560,7 @@ impl KirbyCutter {
         if let Some(segment) = self.floor {
             // `-syUtilsArcTan2(floor_angle.x, floor_angle.y)`.
             let normal = surface_normal(MapSurfaceKind::Floor, segment.segment);
-            self.rotate_z = -ssb_engine::math::atan2(normal.x, normal.y);
+            self.rotate_z = -ssb_engine::math::sy_arc_tan2(normal.x, normal.y);
         }
         self.floor = self.floor.and_then(|s| refresh_surface(surfaces(), s));
         if let Some(segment) = self.floor {
@@ -2150,7 +2152,7 @@ impl Weapon {
             // `wpYoshiStarProcHop`: facing from a strictly positive X.
             Weapon::Star(s) => {
                 s.velocity = turn(s.velocity);
-                s.rotate_z = ssb_engine::math::atan2(s.velocity.y, s.velocity.x);
+                s.rotate_z = ssb_engine::math::sy_arc_tan2(s.velocity.y, s.velocity.x);
                 s.lr = if s.velocity.x > 0.0 { 1.0 } else { -1.0 };
             }
             // `wpPikachuThunderJoltAirProcHop`.
@@ -5968,7 +5970,7 @@ mod tests {
         assert!(c.tick(|| slope, &mut crate::wpeffect::Emit::default()));
         assert_eq!(c.anim_ticks, 1);
         assert!(c.floor.is_some());
-        let want = ssb_engine::math::atan2(100.0, 1000.0);
+        let want = ssb_engine::math::sy_arc_tan2(100.0, 1000.0);
         assert!((c.rotate_z - want).abs() < 1e-4, "{} vs {want}", c.rotate_z);
     }
 

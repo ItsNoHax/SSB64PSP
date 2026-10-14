@@ -8,7 +8,7 @@ use crate::physics;
 use crate::status::{self, AnyStatus, NessStatus as N, Status, StatusTiming};
 use crate::weapon::{WeaponKind, WeaponSpawn};
 use ssb_engine::input::N64Buttons;
-use ssb_engine::math::{atan2, sin_cos, Vec2, Vec3};
+use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 
 #[cfg(test)]
 #[path = "ness_tests.rs"]
@@ -265,7 +265,7 @@ pub(crate) fn map_blast_contacts(f: &mut Fighter) {
             let mut angle = 0.0;
             for (contact, left) in [(contacts.left_wall, true), (contacts.right_wall, false)] {
                 if let Some(contact) = contact {
-                    angle = atan2(contact.normal.y, contact.normal.x);
+                    angle = sy_arc_tan2(contact.normal.y, contact.normal.x);
                     let plus = if left {
                         old + core::f32::consts::PI < angle
                     } else {
@@ -281,7 +281,7 @@ pub(crate) fn map_blast_contacts(f: &mut Fighter) {
             let (sin, cos) = sin_cos(angle - f.ness.blast_angle * lr);
             f.physics.vel_air.x = v.x * cos - v.y * sin;
             f.physics.vel_air.y = v.x * sin + v.y * cos;
-            f.ness.blast_angle = atan2(f.physics.vel_air.y, f.physics.vel_air.x * lr);
+            f.ness.blast_angle = sy_arc_tan2(f.physics.vel_air.y, f.physics.vel_air.x * lr);
         }
     }
 }
@@ -294,7 +294,7 @@ fn set_blast(f: &mut Fighter, thunder: Vec3) {
     } else {
         Facing::Left
     };
-    f.ness.blast_angle = atan2(dy, dx * f.facing.sign());
+    f.ness.blast_angle = sy_arc_tan2(dy, dx * f.facing.sign());
     let ground = f.is_grounded()
         && f.floor.is_some_and(|floor| {
             if floor.passable() {
@@ -628,7 +628,8 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
     f.become_airborne();
     switch(f, air);
     if air == N::SpecialAirHiJibaku {
-        f.ness.blast_angle = atan2(f.physics.vel_air.y, f.physics.vel_air.x * f.facing.sign());
+        f.ness.blast_angle =
+            sy_arc_tan2(f.physics.vel_air.y, f.physics.vel_air.x * f.facing.sign());
         f.physics.jumps_used = f.attributes.jumps_max;
     } else {
         physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);

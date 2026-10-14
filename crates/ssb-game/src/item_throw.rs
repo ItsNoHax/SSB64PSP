@@ -432,7 +432,7 @@ pub fn check_heavy_throw(f: &mut Fighter) -> bool {
         return false;
     }
     let x = i32::from(f.stick.x);
-    let angle = ssb_engine::math::atan2(f.stick.y as f32, x.abs() as f32);
+    let angle = ssb_engine::math::sy_arc_tan2(f.stick.y as f32, x.abs() as f32);
     let forward = x as f32 * f.facing.sign() >= 0.0;
     let s = if x.abs() >= 56 && f.stick.hold_x < 8 {
         if forward {
@@ -542,7 +542,7 @@ pub fn decide_set_status(f: &mut Fighter) {
     let x = i32::from(f.stick.x);
     let y = i32::from(f.stick.y);
     let forward = x as f32 * f.facing.sign() >= 0.0;
-    let angle = ssb_engine::math::atan2(y as f32, (x as f32).abs());
+    let angle = ssb_engine::math::sy_arc_tan2(y as f32, (x as f32).abs());
     let s = if x.abs() >= 56 && f.stick.hold_x < 8 {
         if forward {
             Status::LightThrowF4

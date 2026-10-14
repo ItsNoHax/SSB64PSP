@@ -170,7 +170,7 @@ fn update_surface(item: &mut Item) {
         }
     }
     if let Some(a) = angle {
-        item.rotate_z = ssb_engine::math::atan2(a.y, a.x) - core::f32::consts::FRAC_PI_2;
+        item.rotate_z = ssb_engine::math::sy_arc_tan2(a.y, a.x) - core::f32::consts::FRAC_PI_2;
     }
 }
 

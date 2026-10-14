@@ -17,11 +17,12 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-502: gameplay `sqrt` is a correctly-rounded `sqrt.s` on the PSP (as the
-N64's libultra), `std` on the host: bit-identical on 257,227 inputs. One
-golden rebaselined (`r2-metal-mario-fighter`, 2 pixels). Remaining math
-divergence (`sin_cos`, `atan2`, `tan`, `acos`) and the next `MS8` lever are
-in [`PLAN.md`](PLAN.md#remaining-work).
+RE-503: gameplay ArcTan, ArcTan2, ArcSin and ArcCos equal the ROM's own
+routines bit for bit (oracle `tools/r4300`), call sites routed to the
+decomp functions, `lb*` table sites fixed. 152 goldens rebaselined, each at
+most 1 LSB, all from the table light direction. Next: pass 2, the
+`sinf`/`cosf` double-precision port; then the `gSYSinTable` family and audit
+follow-ups in [`PLAN.md`](PLAN.md#remaining-work).
 
 ## Blockers
 
@@ -33,14 +34,14 @@ in [`PLAN.md`](PLAN.md#remaining-work).
 
 ## Verification
 
-Baseline after the exact gameplay sqrt (RE-502):
+Baseline after the trig fidelity pass 1 (RE-503):
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass. Clippy (`cargo +1.98.0`) and
   `cargo fmt --check` pass. One parallel run once failed `particle_runtime.rs:642`
   (swirl draw hash) and passed on rerun (PLAN.md).
 - Both PSP builds (`psp-game`, `psp-asset-viewer`) compile in release.
-- Goldens: `tools/golden.sh verify`: 201 of 201 match (pack v109; one rebaselined).
+- Goldens: `tools/golden.sh verify`: 201 of 201 match (pack v109; 152 rebaselined, RE-503).
 - PPSSPP smoke: `run-ppsspp-headless.sh --crate psp-game --scene vs4@2400`
   exits 0 and writes a screenshot.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1, `profile,

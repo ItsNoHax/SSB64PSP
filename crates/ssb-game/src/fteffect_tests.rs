@@ -372,7 +372,7 @@ fn the_impact_wave_follows_the_floor() {
         EffectRequest::at_joint(kind::IMPACT_WAVE, 0, 1),
     );
     let turns: std::vec::Vec<f32> = rt.effects.displays().map(|d| d.rotate.z).collect();
-    assert!((turns[0] - crate::particle::arc_tan2(0.5, 0.866)).abs() < 1e-5);
+    assert!((turns[0] - ssb_engine::math::sy_arc_tan2(0.5, 0.866)).abs() < 1e-5);
     assert!(turns[0] > 0.4);
     assert_eq!(turns[1], 0.0);
 }

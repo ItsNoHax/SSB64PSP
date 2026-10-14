@@ -24,7 +24,7 @@
 //!   reachable; the port follows the same path.
 
 use ssb_engine::input::N64Buttons;
-use ssb_engine::math::{atan2, sin_cos, Vec2, Vec3};
+use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 
 use crate::attack::Hitbox;
 use crate::fighter::{Facing, Fighter, FighterKind};
@@ -1254,7 +1254,8 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
                 .floor
                 .map(|s| (s.normal, s.flags))
                 .unwrap_or((Vec2::new(0.0, 1.0), 0));
-            let angle = (-atan2(normal.x, normal.y)).clamp(-STONE_SLIDE_ANGLE, STONE_SLIDE_ANGLE);
+            let angle =
+                (-sy_arc_tan2(normal.x, normal.y)).clamp(-STONE_SLIDE_ANGLE, STONE_SLIDE_ANGLE);
             let (sin, _) = sin_cos(angle);
             // `vel_ground` is facing-relative in the source.
             let lr = f.facing.sign();

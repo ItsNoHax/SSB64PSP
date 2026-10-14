@@ -186,7 +186,7 @@ pub unsafe fn pointer(
         [
             0.0,
             0.0,
-            ssb_engine::math::atan2(direction.1, direction.0).to_degrees() - 90.0,
+            ssb_engine::math::sy_arc_tan2(direction.1, direction.0).to_degrees() - 90.0,
         ],
         meshdraw::MODEL_SCALE * scale * 0.5,
     );

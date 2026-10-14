@@ -160,7 +160,10 @@ impl Wallpaper {
         let (angle_x, angle_y) = if dist.z < 0.0 {
             (0.0, 0.0)
         } else {
-            (arc_tan2(dist.y, dist.z), arc_tan2(dist.x, dist.z))
+            (
+                math::sy_arc_tan2(dist.y, dist.z),
+                math::sy_arc_tan2(dist.x, dist.z),
+            )
         };
         let scale = (20000.0 / (mag + 8000.0)).clamp(1.004, 2.0);
         self.scale = scale;
@@ -192,16 +195,6 @@ impl Wallpaper {
             self.x = 10.0 - WIDTH * grow;
             self.y = 10.0 - HEIGHT * grow;
         }
-    }
-}
-
-/// `syUtilsArcTan2`: `atan(y / x)`, mirrored for a negative `x`, and 0 at
-/// the origin.
-fn arc_tan2(y: f32, x: f32) -> f32 {
-    if x == 0.0 && y == 0.0 {
-        0.0
-    } else {
-        math::atan2(y, x)
     }
 }
 
@@ -294,8 +287,8 @@ mod tests {
         let width = 300.0 * scale;
         let height = 220.0 * scale;
         let pi = core::f32::consts::PI;
-        let x = math::atan2(1000.0, 6000.0) / pi * width - (width - 320.0) * 0.5;
-        let y = -math::atan2(-500.0, 6000.0) / pi * height - (height - 240.0) * 0.5;
+        let x = math::sy_arc_tan2(1000.0, 6000.0) / pi * width - (width - 320.0) * 0.5;
+        let y = -math::sy_arc_tan2(-500.0, 6000.0) / pi * height - (height - 240.0) * 0.5;
         assert!((w.x - x).abs() < 1e-4);
         assert!((w.y - y).abs() < 1e-4);
     }

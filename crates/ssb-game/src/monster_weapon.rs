@@ -15,7 +15,7 @@ use crate::ground::BodyColl;
 use crate::status::BlastZone;
 use crate::weapon::{map_contact, MapSurface};
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
-use ssb_engine::math::{atan2, sin_cos, Vec2, Vec3};
+use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 
 /// `nWPKindMonsterStart` .. `nWPKindMonsterEnd`, with the two swarm
 /// descriptors apart.
@@ -541,7 +541,7 @@ impl MonsterShot {
                     position + Vec3::new(-5.0, 0.0, 0.0),
                 ));
                 m.velocity.x = parent.lr * 300.0;
-                m.rotate_z = atan2(0.0, m.velocity.x);
+                m.rotate_z = sy_arc_tan2(0.0, m.velocity.x);
             }
             ShotKind::StarRod => {
                 m.position.z = 0.0;
@@ -705,7 +705,7 @@ impl MonsterShot {
                 self.lr = if self.velocity.x > 0.0 { 1.0 } else { -1.0 };
             }
             ShotKind::RayGun => {
-                self.rotate_z = atan2(self.velocity.y, self.velocity.x);
+                self.rotate_z = sy_arc_tan2(self.velocity.y, self.velocity.x);
                 self.scale_x = 1.0;
             }
             ShotKind::IwarkRock
@@ -713,7 +713,7 @@ impl MonsterShot {
             | ShotKind::StarmieSwift
             | ShotKind::StarRod => {
                 self.scale_x = 1.0;
-                self.rotate_z = atan2(self.velocity.y, self.velocity.x);
+                self.rotate_z = sy_arc_tan2(self.velocity.y, self.velocity.x);
                 self.lr = if self.velocity.x > 0.0 { 1.0 } else { -1.0 };
             }
             _ => {}
@@ -742,7 +742,7 @@ impl MonsterShot {
                 self.make_fx(fx);
             }
             ShotKind::RayGun => {
-                self.rotate_z = atan2(self.velocity.y, self.velocity.x);
+                self.rotate_z = sy_arc_tan2(self.velocity.y, self.velocity.x);
                 self.scale_x = 1.0;
             }
             ShotKind::FireFlower => {
@@ -759,7 +759,7 @@ impl MonsterShot {
             | ShotKind::StarmieSwift
             | ShotKind::StarRod => {
                 self.scale_x = 1.0;
-                self.rotate_z = atan2(self.velocity.y, self.velocity.x);
+                self.rotate_z = sy_arc_tan2(self.velocity.y, self.velocity.x);
                 self.lr = -self.lr;
             }
             _ => {}
@@ -925,6 +925,6 @@ impl MonsterShot {
     }
 
     pub(crate) fn reface(&mut self) {
-        self.rotate_z = atan2(self.velocity.y, self.velocity.x) + core::f32::consts::PI;
+        self.rotate_z = sy_arc_tan2(self.velocity.y, self.velocity.x) + core::f32::consts::PI;
     }
 }

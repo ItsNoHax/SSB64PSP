@@ -194,7 +194,7 @@ impl Scene {
         for f in self.fighters.iter_mut().flatten() {
             if r.places[f.player] != 0 {
                 f.rotate_y =
-                    ssb_engine::math::atan2(winner.pos.x - f.pos.x, winner.pos.z - f.pos.z);
+                    ssb_engine::math::sy_arc_tan2(winner.pos.x - f.pos.x, winner.pos.z - f.pos.z);
             }
         }
     }

@@ -2093,7 +2093,7 @@ pub const GUARD_ANGLE_MAX: f32 = 359.0;
 pub fn guard_update_shield_angle(f: &mut Fighter) {
     let x = f32::from(f.input.stick_x);
     let y = f32::from(f.input.stick_y);
-    let mut angle_r = ssb_engine::math::atan2(y, x * f.facing.sign());
+    let mut angle_r = ssb_engine::math::sy_arc_tan2(y, x * f.facing.sign());
     if angle_r < 0.0 {
         angle_r += 360.0 * (core::f32::consts::PI / 180.0);
     }
@@ -2751,13 +2751,16 @@ fn set_fox_special_hi_travel(f: &mut Fighter) {
     let on_ground = f.situation == Situation::Ground
         && angled
         && ground_normal.x * x + ground_normal.y * y <= 0.0;
-    if angled && x.abs() >= 11.0 {
+    // `ftParamSetStickLR`: unconditional on the ground path
+    // (`ftFoxSpecialHiDecideSetStatus`), behind the 11-unit model threshold
+    // in the air (`ftFoxSpecialAirHiSetStatusFromGround`).
+    if on_ground || (angled && x.abs() >= 11.0) {
         f.facing = if x < 0.0 { Facing::Left } else { Facing::Right };
     }
     let angle = if on_ground {
-        ssb_engine::math::atan2(-ground_normal.x * f.facing.sign(), ground_normal.y)
+        ssb_engine::math::sy_arc_tan2(-ground_normal.x * f.facing.sign(), ground_normal.y)
     } else if angled {
-        ssb_engine::math::atan2(y, x * f.facing.sign())
+        ssb_engine::math::sy_arc_tan2(y, x * f.facing.sign())
     } else {
         core::f32::consts::FRAC_PI_2
     };
@@ -2827,8 +2830,10 @@ pub fn fox_fire_fox_floor_contact(f: &mut Fighter, normal: Vec2, floor_y: f32) -
         };
         // `fp->joints[nFTPartsJointTopN]->rotate.vec.f.y = lr * 90°`.
         f.topn_lr = f.facing.sign();
-        f.fox_special_hi.angle =
-            ssb_engine::math::atan2(f.physics.vel_air.y, f.physics.vel_air.x * f.facing.sign());
+        f.fox_special_hi.angle = ssb_engine::math::sy_arc_tan2(
+            f.physics.vel_air.y,
+            f.physics.vel_air.x * f.facing.sign(),
+        );
         f.pos.y = floor_y;
         return true;
     }

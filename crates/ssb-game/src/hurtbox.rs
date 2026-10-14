@@ -1688,13 +1688,11 @@ pub fn test_sphere_angle(
     if at.y == 0.0 && at.z == 0.0 {
         return Some(STILL);
     }
-    let (ls, la) = (sub.length(), at.length());
+    let ls = sub.length();
     if ls == 0.0 {
         return Some(STILL);
     }
-    // `syVectorAngleDiff3D`.
-    let cos = ((sub.x * at.x + sub.y * at.y + sub.z * at.z) / (ls * la)).clamp(-1.0, 1.0);
-    let angle = ssb_engine::math::atan2(ssb_engine::math::sqrt(1.0 - cos * cos), cos);
+    let angle = crate::attack::angle_between(sub, at);
     if angle == core::f32::consts::PI {
         return Some(STILL);
     }

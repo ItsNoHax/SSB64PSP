@@ -264,7 +264,8 @@ impl Mat4 {
     /// `sceGumPerspective` produces on PSP: view space looks down `-Z`, and
     /// clip space is the OpenGL-style `[-w, w]` depth range.
     pub fn perspective(fovy: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
-        let f = 1.0 / tan(fovy * 0.5);
+        // Port-only (the draw's projection, not a decomp function).
+        let f = 1.0 / sy_tan(fovy * 0.5);
         let mut m = Mat4::ZERO;
         m.cols[0][0] = f / aspect;
         m.cols[1][1] = f;
@@ -328,6 +329,7 @@ impl Mul for Mat4 {
 // implementations, so the same source builds for host tests and the device.
 
 pub mod sqrt_golden;
+pub mod trig_golden;
 
 /// Correctly rounded single-precision square root, the N64's own: libultra's
 /// `sqrtf` is a leaf around `sqrt.s` (`refs/ssb-decomp-re/src/libultra/gu/sqrtf.s`),
@@ -403,81 +405,132 @@ pub fn div_nonzero(n: f32, d: f32) -> f32 {
     n / if d == 0.0 { 1.0 } else { d }
 }
 
-/// Four-quadrant arctangent for gameplay directions on host and PSP.
-#[cfg(feature = "std")]
-#[inline]
-pub fn atan2(y: f32, x: f32) -> f32 {
-    y.atan2(x)
-}
+// --- The original's inverse trigonometry (`sys/utils.c`) -------------------
+//
+// The N64 game links no `atan2f`, `acosf`, `asinf` or `tanf`: every angle it
+// takes back from a ratio comes from `syUtilsArcTan` and the four functions
+// built on it, a five-level continued fraction in single precision. Ported
+// operation for operation (one IEEE `f32` operation per step, never
+// reassociated or fused: the R4300 has no fused multiply-add, Rust never
+// contracts), so the host, the PSP and the N64 return the same bits; the
+// ROM's own machine code is the test oracle (`trig_golden`). No VFPU: its
+// `vasin`/`vrcp` approximations round differently. The N64 runs with
+// denormal results flushed to zero (`osInitialize`'s FCSR); these functions
+// only meet a denormal when an argument is beyond any game value, and give
+// the same result either way except where `sy_arc_tan2`'s ratio itself
+// underflows (`|y / x| < 2^-126`).
 
-#[cfg(not(feature = "std"))]
-pub fn atan2(y: f32, x: f32) -> f32 {
-    atan2_poly(y, x)
-}
+/// `syUtilsArcTan`'s continued-fraction coefficients
+/// (`refs/ssb-decomp-re/src/sys/utils.c:47-55`).
+const ARC_TAN_K: [f32; 6] = [
+    f32::from_bits(0xbddd_6712), // -0.10810675
+    f32::from_bits(0xc232_49a5), // -44.57192
+    f32::from_bits(0xbe25_cb3d), // -0.1619081
+    f32::from_bits(0xc17c_6261), // -15.774018
+    f32::from_bits(0xbf0e_39d2), // -0.55556977
+    f32::from_bits(0xc040_000d), // -3.000003
+];
 
-/// [`atan2`] without `std`: `atan` of the smaller axis over the larger,
-/// reduced below `tan(15°)` and summed to its 13th power, within a few ULP
-/// of `f32::atan2` — the N64's `atan2f` is a full-precision libm, and an
-/// angle off by milliradians moves a launch or a sweep (RE-466).
-#[cfg_attr(feature = "std", allow(dead_code))]
-fn atan2_poly(y: f32, x: f32) -> f32 {
-    use core::f32::consts::{FRAC_PI_2, PI};
-    if x == 0.0 {
-        return if y < 0.0 {
-            -FRAC_PI_2
-        } else if y > 0.0 {
-            FRAC_PI_2
-        } else {
-            0.0
-        };
+/// `M_DTOR_F(90)` and `M_PI_F / 2.0F`: both fold to the `f32` nearest π/2.
+const HALF_PI: f32 = core::f32::consts::FRAC_PI_2;
+/// `M_PI_F`.
+const PI_F: f32 = core::f32::consts::PI;
+/// `syUtilsArcSin`/`syUtilsArcCos`'s saturation bound, `0.99999F`.
+const ARC_SAT: f32 = 0.99999;
+
+/// `syUtilsArcTan` (`sys/utils.c:25`): the arctangent of a ratio, in
+/// `(-π/2, π/2]`. Outside `[-1, 1]` it takes the reciprocal and subtracts
+/// from `±π/2`.
+pub fn sy_arc_tan(div: f32) -> f32 {
+    if div == 0.0 {
+        return 0.0;
     }
-    let ax = x.abs();
-    let ay = y.abs();
-    let z = div_nonzero(ax.min(ay), ax.max(ay));
-    let angle = atan_unit(z);
-    let angle = if ay > ax { FRAC_PI_2 - angle } else { angle };
-    let angle = if x < 0.0 { PI - angle } else { angle };
-    if y < 0.0 {
-        -angle
+    // The reciprocal stays out of line: LLVM may compute it before the
+    // `div == 0` branch, and a PSP traps `1 / 0` (RE-469).
+    let inv = div_nonzero(1.0, div);
+    let (d, kind) = if div > 1.0 {
+        (inv, 1)
+    } else if div < -1.0 {
+        (inv, 2)
     } else {
-        angle
-    }
-}
-
-/// `atan(z)` for `z` in `[0, 1]`.
-#[cfg_attr(feature = "std", allow(dead_code))]
-fn atan_unit(z: f32) -> f32 {
-    // tan(15°) and the identity atan(z) = 30° + atan((√3·z − 1) / (√3 + z)).
-    const TAN_15: f32 = 0.267_949_2;
-    const SQRT_3: f32 = 1.732_050_8;
-    let (offset, t) = if z > TAN_15 {
-        (
-            core::f32::consts::FRAC_PI_6,
-            (SQRT_3 * z - 1.0) / (SQRT_3 + z),
-        )
-    } else {
-        (0.0, z)
+        (div, 0)
     };
-    let t2 = t * t;
-    let series = t
-        * (1.0
-            - t2 * (1.0 / 3.0
-                - t2 * (1.0 / 5.0
-                    - t2 * (1.0 / 7.0 - t2 * (1.0 / 9.0 - t2 * (1.0 / 11.0 - t2 / 13.0))))));
-    offset + series
+    let [k0, k1, k2, k3, k4, k5] = ARC_TAN_K;
+    let c = d * d;
+    let a = c / k0 + k1;
+    let b = c / a + k2;
+    let e = c / b + k3;
+    let f = c / e + k4;
+    let g = c / f + k5;
+    let result = (c / g + 1.0) * d;
+    match kind {
+        1 => HALF_PI - result,
+        2 => -HALF_PI - result,
+        _ => result,
+    }
 }
 
-/// Tangent (radians). Public for the same reason as [`sin_cos`].
-#[cfg(feature = "std")]
-#[inline]
-pub fn tan(v: f32) -> f32 {
-    v.tan()
+/// `syUtilsArcTan2` (`sys/utils.c:79`): the angle of `(x, y)`, in
+/// `[-π, π]`. Not libm's `atan2f`: `x < 0` takes `π - atan|y / x|` and
+/// signs it, `x == 0` gives exactly `±π/2`, and the origin gives 0.
+pub fn sy_arc_tan2(y: f32, x: f32) -> f32 {
+    // The ratio keeps a nonzero denominator out of line: the KO explosion's
+    // generators have no velocity, and a PSP traps the `0 / 0` LLVM
+    // computes before the `x == 0` branch (RE-469).
+    let div = div_nonzero(y, x);
+    if x > 0.0 {
+        sy_arc_tan(div)
+    } else if x < 0.0 {
+        let sign = if y < 0.0 { -1.0 } else { 1.0 };
+        // `ABSF`, which keeps a `-0.0` (and `sy_arc_tan` maps both zeros to
+        // `+0.0`).
+        let abs = if div < 0.0 { -div } else { div };
+        (PI_F - sy_arc_tan(abs)) * sign
+    } else if y != 0.0 {
+        (if y < 0.0 { -1.0 } else { 1.0 }) * HALF_PI
+    } else {
+        0.0
+    }
 }
 
-#[cfg(not(feature = "std"))]
-#[inline]
-pub fn tan(v: f32) -> f32 {
-    let (s, c) = sin_cos(v);
+/// `x / sqrtf(1 - x * x)`, the tangent of `asin(x)`, for `|x| <= 0.99999`
+/// (the root's argument is then at least `2e-5`). Guarded like a
+/// speculated division: LLVM may evaluate it for any `x`, and a PSP traps
+/// the square root of a negative number (RE-469); in range the guards
+/// change nothing.
+#[inline(never)]
+fn arc_sin_ratio(x: f32) -> f32 {
+    div_nonzero(x, sqrt(1.0 - x * x))
+}
+
+/// `syUtilsArcSin` (`sys/utils.c:102`): `±π/2` beyond `±0.99999`, else
+/// `syUtilsArcTan(x / sqrtf(1 - x²))`.
+pub fn sy_arc_sin(x: f32) -> f32 {
+    if x > ARC_SAT {
+        HALF_PI
+    } else if x < -ARC_SAT {
+        -HALF_PI
+    } else {
+        sy_arc_tan(arc_sin_ratio(x))
+    }
+}
+
+/// `syUtilsArcCos` (`sys/utils.c:115`): 0 above `0.99999`, π below
+/// `-0.99999`, else `π/2 - syUtilsArcTan(x / sqrtf(1 - x²))`.
+pub fn sy_arc_cos(x: f32) -> f32 {
+    if x > ARC_SAT {
+        0.0
+    } else if x < -ARC_SAT {
+        PI_F
+    } else {
+        HALF_PI - sy_arc_tan(arc_sin_ratio(x))
+    }
+}
+
+/// `syUtilsTan` (`sys/utils.c:20`): `__sinf(x) / __cosf(x)`, one `f32`
+/// division of libultra's sine and cosine (see [`sin_cos`]).
+pub fn sy_tan(x: f32) -> f32 {
+    let (s, c) = sin_cos(x);
     s / c
 }
 
@@ -749,7 +802,7 @@ pub fn billboard_matrix(
 
 #[cfg(test)]
 mod trig_tests {
-    use super::{atan2_poly, sin_poly};
+    use super::sin_poly;
 
     /// RE-470: the compile-time sine table holds what the series gives at
     /// run time, word for word.
@@ -777,14 +830,6 @@ mod trig_tests {
         }
         assert!(worst_sin < 2e-6, "sin off by {worst_sin}");
         assert!(worst_cos < 2e-6, "cos off by {worst_cos}");
-        let mut worst_atan = 0.0f32;
-        for i in -200..=200 {
-            for j in -200..=200 {
-                let (y, x) = (i as f32 * 0.37, j as f32 * 0.41);
-                worst_atan = worst_atan.max((atan2_poly(y, x) - y.atan2(x)).abs());
-            }
-        }
-        assert!(worst_atan < 2e-6, "atan2 off by {worst_atan}");
     }
 
     #[test]

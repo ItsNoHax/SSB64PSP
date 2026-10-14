@@ -167,7 +167,7 @@ fn set_preserve(f: &mut Fighter, status: Status, preserve: status::Preserve) {
 
 /// `ftParamGetStickAngleRads`: the stick's angle above horizontal.
 fn stick_angle(f: &Fighter) -> f32 {
-    ssb_engine::math::atan2(f.stick.y as f32, (f.stick.x as f32).abs())
+    ssb_engine::math::sy_arc_tan2(f.stick.y as f32, (f.stick.x as f32).abs())
 }
 
 /// `mpCommonSetFighterGround` for a reaction that lands.
@@ -203,7 +203,7 @@ pub fn is_face_down(f: &Fighter) -> bool {
     // The facing yaw maps model +Z to world `lr * X`; a pitch about the
     // model's X axis tips its Y axis toward model Z.
     let up = t.axes[1];
-    let theta = ssb_engine::math::atan2(up.x * f.facing.sign(), up.y);
+    let theta = ssb_engine::math::sy_arc_tan2(up.x * f.facing.sign(), up.y);
     let mut r = theta / core::f32::consts::TAU;
     r -= r as i32 as f32;
     r < -0.5 || (r > 0.0 && r < 0.5)

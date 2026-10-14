@@ -226,15 +226,16 @@ pub fn set_damage_status(
     );
 }
 
-/// `syVectorAngleDiff3D`: the angle between two vectors.
-fn angle_between(a: Vec3, b: Vec3) -> f32 {
-    let la = a.length();
-    let lb = b.length();
-    if la == 0.0 || lb == 0.0 {
+/// `syVectorAngleDiff3D` (`sys/vector.c:104`): the angle between two
+/// vectors, `syUtilsArcCos` of their clamped cosine; 0 when either is zero.
+pub(crate) fn angle_between(a: Vec3, b: Vec3) -> f32 {
+    let mag = a.length() * b.length();
+    if mag == 0.0 {
         return 0.0;
     }
-    let c = ((a.x * b.x + a.y * b.y + a.z * b.z) / (la * lb)).clamp(-1.0, 1.0);
-    ssb_engine::math::atan2(ssb_engine::math::sqrt(1.0 - c * c), c)
+    // Out of line: the division must not run before the branch (RE-469).
+    let c = ssb_engine::math::div_nonzero(a.x * b.x + a.y * b.y + a.z * b.z, mag);
+    ssb_engine::math::sy_arc_cos(c.clamp(-1.0, 1.0))
 }
 
 /// `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:473`, without the

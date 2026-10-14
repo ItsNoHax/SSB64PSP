@@ -1,4 +1,5 @@
 use super::*;
+use ssb_engine::math::{sy_arc_tan as arc_tan, sy_arc_tan2 as arc_tan2};
 
 /// A one-bank test double: scripts with their bytecode.
 pub(crate) struct TestBank {

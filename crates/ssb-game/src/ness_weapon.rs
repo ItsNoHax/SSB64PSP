@@ -4,7 +4,7 @@
 use super::{map_contact, BodyColl, Hitbox, MapSurface, OwnerView, WeaponSpawn};
 use crate::fighter::Fighter;
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
-use ssb_engine::math::{atan2, sin_cos, Vec2, Vec3};
+use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 
 pub const SPARK_HIT: Hitbox = Hitbox {
     damage: 4,
@@ -169,7 +169,7 @@ impl PKThunder {
     /// `wpNessPKThunderReflectHeadMakeWeapon` sets `atan2(vel_air)`.
     pub fn rotate_z(&self) -> f32 {
         if self.reflected {
-            atan2(self.velocity.y, self.velocity.x)
+            sy_arc_tan2(self.velocity.y, self.velocity.x)
         } else {
             self.angle - core::f32::consts::FRAC_PI_2
         }
@@ -217,27 +217,22 @@ impl PKThunder {
             self.history[(self.cursor + 11) % 12] =
                 Vec2::new(self.position.x as i16 as f32, self.position.y as i16 as f32);
             if i32::from(owner.stick.x).abs() + i32::from(owner.stick.y).abs() > 45 {
-                let target = atan2(owner.stick.y as f32, owner.stick.x as f32);
-                let mut diff = target - self.angle;
-                while diff > core::f32::consts::PI {
-                    diff -= core::f32::consts::TAU;
-                }
-                while diff < -core::f32::consts::PI {
-                    diff += core::f32::consts::TAU;
-                }
-                // At 180 degrees the zero cross product selects a negative step.
-                let sign = if (self.velocity.x * owner.stick.y as f32
-                    - self.velocity.y * owner.stick.x as f32)
-                    > 0.0
-                {
+                // `syVectorAngleDiff3D(vel_air, stick)`: `syUtilsArcCos` of
+                // the normalised dot product, unsigned.
+                let stick = Vec3::new(owner.stick.x as f32, owner.stick.y as f32, 0.0);
+                let angle_diff = crate::attack::angle_between(self.velocity, stick);
+                // The side is the sign of `syVectorNormCross3D`'s z, which
+                // normalising does not change; at 180 degrees the zero cross
+                // product selects a negative step.
+                let sign = if (self.velocity.x * stick.y - self.velocity.y * stick.x) > 0.0 {
                     1.0
                 } else {
                     -1.0
                 };
-                let step = if diff.abs() >= core::f32::consts::FRAC_PI_4 {
+                let step = if angle_diff >= core::f32::consts::FRAC_PI_4 {
                     6.0 * core::f32::consts::PI / 180.0
                 } else {
-                    diff.abs() / 7.5
+                    angle_diff / (45.0 / 6.0)
                 };
                 self.angle += step * sign;
                 let (sin, cos) = sin_cos(self.angle);
@@ -305,7 +300,7 @@ impl PKThunderTrail {
             // Reflected children inherit their parent's rotation minus 90°.
             // Keep the source's cumulative turns, including its janky offsets.
             rotation: if head.reflected {
-                atan2(head.velocity.y, head.velocity.x)
+                sy_arc_tan2(head.velocity.y, head.velocity.x)
                     - core::f32::consts::FRAC_PI_2 * (id as f32 + 1.0)
             } else {
                 0.0
@@ -323,7 +318,8 @@ impl PKThunderTrail {
             let pos = head.history[index];
             let prev = head.history[(index + 11) % 12];
             self.position = Vec3::new(pos.x, pos.y, 0.0);
-            self.rotation = atan2(pos.y - prev.y, pos.x - prev.x) - core::f32::consts::FRAC_PI_2;
+            self.rotation =
+                sy_arc_tan2(pos.y - prev.y, pos.x - prev.x) - core::f32::consts::FRAC_PI_2;
         }
         // `wpNessPKThunderTrailProcUpdate`'s (and the reflected trail's)
         // frame: `syUtilsRandIntRange(WPPKTHUNDER_TEXTURES_NUM - 1)`.

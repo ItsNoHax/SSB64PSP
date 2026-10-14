@@ -14,7 +14,7 @@
 //! The weapons they make are [`crate::monster_weapon`]'s. Sounds are not
 //! ported; the status animations are presentation ([`Vars::status_anim`]).
 
-use ssb_engine::math::{atan2, sin_cos, Vec3};
+use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec3};
 
 use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight};
 use super::{normal::CommonItems, OwnerView};
@@ -1372,7 +1372,7 @@ fn starmie_nfollow(item: &mut Item, k: Kind, owners: &[Option<OwnerView>; 4]) {
         let dist = target - item.pos;
         item.vel_air = rotate_z(
             Vec3::new(STARMIE_FOLLOW_VEL_X, 0.0, 0.0),
-            atan2(dist.y, dist.x),
+            sy_arc_tan2(dist.y, dist.x),
         );
         let vars = v(item);
         vars.target_pos = target;
@@ -1440,7 +1440,7 @@ fn sawamura_attack(item: &mut Item, k: Kind, owners: &[Option<OwnerView>; 4]) {
         let dist = target - item.pos;
         item.vel_air = rotate_z(
             Vec3::new(SAWAMURA_KICK_VEL_X, 0.0, 0.0),
-            atan2(dist.y, dist.x),
+            sy_arc_tan2(dist.y, dist.x),
         );
         item.lr = lr_sign(dist.x);
         if item.lr == 1.0 {
