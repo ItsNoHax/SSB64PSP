@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Hashes the ROM's own trig functions over trig_golden.rs's inputs.
 
-    python3 -I tools/r4300/trig_hashes.py [--rom PATH] [ArcTan ArcTan2 ArcSin ArcCos sinf cosf]
+    python3 -I tools/r4300/trig_hashes.py [--rom PATH] [ArcTan ArcTan2 ArcSin ArcCos sinf cosf
+                                                        sinf_angle cosf_angle Tan_angle]
 
-Mirrors crates/ssb-engine/src/math/trig_golden.rs (`unary`, `binary`,
+Mirrors crates/ssb-engine/src/math/trig_golden.rs (`unary`, `binary`, `angle`,
 FNV-1a with NaN canonicalised) and runs the original machine code in the
 R4300 interpreter (r4300.py), which reads the ROM at run time. Prints one
 `hash=` per function: the values pinned as trig_golden::HASH_*. About 0.1 ms
@@ -33,6 +34,21 @@ def unary(i):
     i -= USW
     c = [0x3f800000, 0xbf800000, 0x3f7fff58, 0xbf7fff58][i // 256]
     return (c + i % 256 - 128) & M
+AS = [0x39800000,0x397fffff,0x39800001,0x3fc00000,0x3fbfffff,0x3fc00001,0x4d800000,0x4d7fffff,
+      0x4d800001,0xb9800000,0xb97fffff,0xb9800001,0xbfc00000,0xbfbfffff,0xbfc00001,0xcd800000,
+      0xcd7fffff,0xcd800001]
+AR, AN = 65536, 129*33
+def angle(i):
+    if i < len(AS): return AS[i]
+    i -= len(AS)
+    if i < AR:
+        b = mix(i ^ 0x5eed0000); e = 112 + ((b >> 23) & 0xff) % 45
+        return (b & 0x807fffff) | (e << 23)
+    i -= AR
+    k = i // 33 - 64; step = i % 33 - 16
+    if k == 0: return (0x3f800000 + step) & M
+    return (fb(k * f32(1.5707963705062866)) + step) & M
+def f32(v): return struct.unpack('<f', struct.pack('<f', v))[0]
 def bounded(b):
     if b & 0xf == 0: return b & 0x80000000
     e = 87 + ((b >> 23) & 0xff) % 81
@@ -55,10 +71,15 @@ if '--rom' in args:
 names = args or ['ArcTan', 'ArcTan2', 'ArcSin', 'ArcCos']
 for name in names:
     t = time.time(); h = OFF; traps = 0
-    n = BR + BG if name == 'ArcTan2' else len(US) + UR + USW + UN
+    fn = name.split('_')[0]
+    if name == 'ArcTan2': n, inp = BR + BG, binary
+    elif name.endswith('_angle'): n, inp = len(AS) + AR + AN, lambda i: (angle(i),)
+    else: n, inp = len(US) + UR + USW + UN, lambda i: (unary(i),)
     for i in range(n):
-        args = binary(i) if name == 'ArcTan2' else (unary(i),)
-        r = run(name, *args)
+        args = inp(i)
+        if name == 'ArcTan2': pass
+        elif fn == 'Tan' and args[0] & 0x7fffffff >= 0x4d800000: continue
+        r = run(fn, *args)
         if r is None:
             traps += 1; print('TRAP', name, i, [hex(a) for a in args]); r = 0x7fc00000
         h = fnv(h, r)

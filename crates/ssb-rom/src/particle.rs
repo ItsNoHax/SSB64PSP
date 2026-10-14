@@ -7,7 +7,7 @@
 use alloc::vec::Vec;
 
 use crate::texture::{BitSize, Format};
-use ssb_engine::math::sqrt;
+use ssb_engine::math::{cosf, sin_cos, sinf, sqrt};
 
 /// One source-named particle bank pair in the supported US ROM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1183,23 +1183,17 @@ impl<'a> Particle<'a> {
 fn rotate_vel(s: &mut ParticleState, angle: f32, rng: &mut Rng) {
     let (vx, vy, vz) = (s.vel[0], s.vel[1], s.vel[2]);
     let pitch = arctan2(vy, vz);
-    let (sin_pitch, cos_pitch) = crate::scene::sin_cos(pitch);
+    let (sin_pitch, cos_pitch) = sin_cos(pitch);
     let yaw = arctan2(vx, vy * sin_pitch + vz * cos_pitch);
-    let (sin_yaw, cos_yaw) = crate::scene::sin_cos(yaw);
+    let (sin_yaw, cos_yaw) = sin_cos(yaw);
     let magnitude = sqrt(vx * vx + vy * vy + vz * vz);
 
     let spin = rng.next_float() * (360.0f32.to_radians());
-    let sin_angle = {
-        let (sa, _) = crate::scene::sin_cos(angle);
-        sa * magnitude
-    };
-    let cos_angle = {
-        let (_, ca) = crate::scene::sin_cos(angle);
-        ca * magnitude
-    };
+    let sin_angle = sinf(angle) * magnitude;
+    let cos_angle = cosf(angle) * magnitude;
 
     let new_vz = sin_yaw;
-    let (spin_sin, spin_cos) = crate::scene::sin_cos(spin);
+    let (spin_sin, spin_cos) = sin_cos(spin);
     let new_vx = spin_cos * sin_angle;
     let new_vy = spin_sin * sin_angle;
 
@@ -1469,7 +1463,7 @@ pub mod particle_tree {
 // module declines straight to that same error without porting the vortex
 // math, rather than computing something nothing downstream can see.
 pub mod generator {
-    use super::{arctan2, sqrt, Particle, Rng, Script, SimError, SpawnRequest};
+    use super::{arctan2, sin_cos, sqrt, Particle, Rng, Script, SimError, SpawnRequest};
     use alloc::vec::Vec;
     use core::f32::consts::TAU;
 
@@ -1572,9 +1566,9 @@ pub mod generator {
                 let vel = self.vel;
                 let vel_mag = sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
                 let angle1 = arctan2(vel[1], vel[2]);
-                let (sin1, cos1) = crate::scene::sin_cos(angle1);
+                let (sin1, cos1) = sin_cos(angle1);
                 let angle2 = arctan2(vel[0], vel[1] * sin1 + vel[2] * cos1);
-                let (sin2, cos2) = crate::scene::sin_cos(angle2);
+                let (sin2, cos2) = sin_cos(angle2);
 
                 // `generator_vars.rotate.{base,target}` inlined as `0`/`TAU`
                 // (see module doc comment) -- both the cone case's own outer
@@ -1601,8 +1595,8 @@ pub mod generator {
                                 vmag * self.unk_0x3c
                             };
 
-                            let (sin_pv0, cos_pv0) = crate::scene::sin_cos(pv0);
-                            let (sin_pv1, cos_pv1) = crate::scene::sin_cos(pv1);
+                            let (sin_pv0, cos_pv0) = sin_cos(pv0);
+                            let (sin_pv1, cos_pv1) = sin_cos(pv1);
                             let spec = cos_pv0 * var_f20;
                             let temp_f26 = sin_pv0 * var_f20;
                             let pm1 = sin_pv1 * vel_mag;

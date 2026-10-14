@@ -38,6 +38,11 @@ audio_selftest = []
 # inputs at boot and appends its result and output hash to `selftest.log`
 # (`sqrt_selftest.rs`). Off by default.
 sqrt_selftest = []
+# Runs the original's sine, cosine and inverse trigonometry and the FPU's
+# f32 divide/multiply/add over `ssb_engine::math::trig_golden`'s inputs at
+# boot, times a sine and cosine call, and appends the result to
+# `selftest.log` (`trig_selftest.rs`). Off by default.
+trig_selftest = []
 # Copies every submitted audio block into a ring the game thread writes to
 # `audio.raw` beside the executable (`audio::dump_flush`): s16le stereo at
 # 32000 Hz. Off by default.

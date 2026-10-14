@@ -379,18 +379,348 @@ pub fn sqrt(v: f32) -> f32 {
     }
 }
 
-/// Sine and cosine of the same angle (radians). Public, like [`sqrt`], so
-/// game code needs no `libm` dependency of its own.
-#[cfg(feature = "std")]
-#[inline]
-pub fn sin_cos(v: f32) -> (f32, f32) {
-    (v.sin(), v.cos())
+// --- The original's sine and cosine (libultra `__sinf`/`__cosf`) -----------
+//
+// The game's `__sinf`, `__cosf`, `sinf` and `cosf` (the `syVectorRotate*`,
+// `syMatrix*F` and particle code all call them) are libultra's
+// `fsin`/`fcos` (`refs/ssb-decomp-re/src/libultra/gu/sinf.c`, `cosf.c`):
+// a Cody-Waite reduction by π and a degree-9 odd polynomial, both in
+// DOUBLE precision, rounded to `f32` once at the end. They are not
+// correctly rounded (about one input in twenty differs from a correctly
+// rounded sine), so only the same operations in the same order give the
+// N64's bits. Ported operation for operation in `f64`: the R4300's
+// `add.d`/`mul.d`/`cvt` are IEEE round-to-nearest with no fused
+// multiply-add, as are the host's SSE2 and the PSP's software `f64`
+// (compiler-builtins), and Rust never reassociates or contracts. The
+// ROM's own machine code is the test oracle (`trig_golden`). No VFPU: its
+// `vsin`/`vcos` work in quarter turns with their own single-precision
+// approximation.
+
+/// `fsin`/`fcos`'s polynomial `P[1..=4]` (`sinf.c:39-49`, the ROM's rodata
+/// `0x8003f160`, identical); `P[0] = 1` is never read.
+const SINF_P: [f64; 4] = [
+    f64::from_bits(0xbfc5_5554_bc83_656d),
+    f64::from_bits(0x3f81_10ed_3804_c2a0),
+    f64::from_bits(0xbf29_f6ff_eea5_6814),
+    f64::from_bits(0x3ec5_dbdf_0e31_4bfe),
+];
+/// `rpi`: 1/π.
+const SINF_RPI: f64 = f64::from_bits(0x3fd4_5f30_6dc9_c883);
+/// `pihi`: π's leading 25 significant bits, so `n * pihi` is exact.
+const SINF_PIHI: f64 = f64::from_bits(0x4009_21fb_5000_0000);
+/// `pilo`: the rest of π.
+const SINF_PILO: f64 = f64::from_bits(0x3e61_10b4_611a_6263);
+/// `__libm_qnan_f`, what both return for a NaN.
+const SINF_QNAN: u32 = 0x7f81_0000;
+
+/// `xpt` of `sinf.c`/`cosf.c`: the exponent and the leading mantissa bit,
+/// sign dropped. `0xff` is `|x| = 1.5`, `0xe6` is `2^-12`, `0x136` is `2^28`.
+#[inline(always)]
+fn sinf_xpt(x: f32) -> u32 {
+    (x.to_bits() >> 22) & 0x1ff
 }
 
-#[cfg(not(feature = "std"))]
+/// `x` is a NaN, tested on the bits: a compare would raise the invalid
+/// operation a PSP traps on a signalling NaN (RE-469).
+#[inline(always)]
+fn sinf_is_nan(x: f32) -> bool {
+    x.to_bits() & 0x7fff_ffff > 0x7f80_0000
+}
+
+/// `dx + (dx * xsq) * poly`, the sine of a reduced argument, as `fsin` and
+/// `fcos` both write it (Horner from `P[4]`).
+#[inline(always)]
+fn sinf_poly(dx: f64) -> f64 {
+    let [p1, p2, p3, p4] = SINF_P;
+    let xsq = dx * dx;
+    let poly = ((p4 * xsq + p3) * xsq + p2) * xsq + p1;
+    dx + (dx * xsq) * poly
+}
+
+/// `ROUND` (`PR/guint.h:39`): half away from zero, then C's truncating
+/// `(int)`. `|d| < 2^27` here, so the cast never saturates.
+#[inline(always)]
+fn sinf_round(d: f64) -> i32 {
+    (if d >= 0.0 { d + 0.5 } else { d - 0.5 }) as i32
+}
+
+/// libultra's `__sinf` (`fsin`) in `f64`, the reference [`sinf`] falls
+/// back to.
+#[cold]
+#[inline(never)]
+fn sinf_f64(x: f32) -> f32 {
+    let xpt = sinf_xpt(x);
+    if xpt < 0xff {
+        if xpt >= 0xe6 {
+            return sinf_poly(x as f64) as f32;
+        }
+        return x;
+    }
+    if xpt < 0x136 {
+        let dx = x as f64;
+        let n = sinf_round(dx * SINF_RPI);
+        let dn = n as f64;
+        let dx = dx - dn * SINF_PIHI;
+        let dx = dx - dn * SINF_PILO;
+        let result = sinf_poly(dx) as f32;
+        return if n & 1 == 0 { result } else { -result };
+    }
+    if sinf_is_nan(x) {
+        return f32::from_bits(SINF_QNAN);
+    }
+    0.0
+}
+
+/// libultra's `__cosf` (`fcos`) in `f64`, the reference [`cosf`] falls
+/// back to. Not `sin(x + π/2)`: it reduces `|x|` by `(n - 1/2)π`.
+#[cold]
+#[inline(never)]
+fn cosf_f64(x: f32) -> f32 {
+    if sinf_xpt(x) < 0x136 {
+        // `ABS(x)`: `x > 0 ? x : -x`, in `f32` (so `+0` becomes `-0`, which
+        // the reduction below cannot tell apart).
+        let absx = if x > 0.0 { x } else { -x };
+        let dx = absx as f64;
+        let n = sinf_round(dx * SINF_RPI + 0.5);
+        let dn = n as f64 - 0.5;
+        let dx = dx - dn * SINF_PIHI;
+        let dx = dx - dn * SINF_PILO;
+        let result = sinf_poly(dx) as f32;
+        return if n & 1 == 0 { result } else { -result };
+    }
+    if sinf_is_nan(x) {
+        return f32::from_bits(SINF_QNAN);
+    }
+    0.0
+}
+
+// --- The same bits, faster: double-single arithmetic ------------------------
+//
+// The PSP has no `f64` hardware: [`sinf_f64`] costs about 8 us there
+// against about 1 us for a single-precision sine. The fast path below
+// evaluates the same reduction and polynomial in double-single arithmetic
+// (each value an unevaluated sum `hi + lo` of two `f32`s, about 48
+// significant bits; Dekker's exact product and Knuth's exact sum), then
+// rounds to `f32` only when the result is clear of a rounding boundary by a
+// margin of 2^-40 relative, and of every other decision `f64` makes (the
+// quotient `n`, the small-argument cut) by 2^-20. Otherwise it returns
+// `None` and the caller takes the `f64` path, about 1 call in 20,000 (or
+// `|x| >= 65536`, which no game angle reaches). `f32` adds and multiplies
+// are IEEE round-to-nearest on the host, the PSP's FPU and every other
+// target (`trig_golden::HASHES_ARITH`); none is fused. Proof: an
+// exhaustive test over all 2^32 inputs (`sinf_ds_matches_f64_everywhere`,
+// run on demand) finds no input where a `Some` differs from the `f64`
+// result, also at margins 16 times smaller.
+
+/// A double-single number: the unevaluated sum `.0 + .1`, `|.1| <= ulp(.0)/2`.
+#[derive(Clone, Copy)]
+struct Ds(f32, f32);
+
+/// `a + b` exactly, as a double-single (Knuth's two-sum).
+#[inline(always)]
+fn ds_two_sum(a: f32, b: f32) -> Ds {
+    let s = a + b;
+    let bb = s - a;
+    Ds(s, (a - (s - bb)) + (b - bb))
+}
+
+/// `a + b` exactly when `|a| >= |b|` (Dekker's fast two-sum).
+#[inline(always)]
+fn ds_fast_two_sum(a: f32, b: f32) -> Ds {
+    let s = a + b;
+    Ds(s, b - (s - a))
+}
+
+/// `a` as `hi + lo`, each with at most 12 significant bits (Veltkamp).
+#[inline(always)]
+fn ds_split(a: f32) -> (f32, f32) {
+    let c = 4097.0 * a;
+    let h = c - (c - a);
+    (h, a - h)
+}
+
+/// `a * b` exactly, as a double-single (Dekker's two-product).
+#[inline(always)]
+fn ds_two_prod(a: f32, b: f32) -> Ds {
+    let p = a * b;
+    let (ah, al) = ds_split(a);
+    let (bh, bl) = ds_split(b);
+    Ds(p, ((ah * bh - p) + ah * bl + al * bh) + al * bl)
+}
+
+#[inline(always)]
+fn ds_mul(a: Ds, b: Ds) -> Ds {
+    let p = ds_two_prod(a.0, b.0);
+    ds_fast_two_sum(p.0, p.1 + (a.0 * b.1 + a.1 * b.0))
+}
+
+#[inline(always)]
+fn ds_add(a: Ds, b: Ds) -> Ds {
+    let s = ds_two_sum(a.0, b.0);
+    ds_fast_two_sum(s.0, s.1 + (a.1 + b.1))
+}
+
+#[inline(always)]
+fn ds_add_f(a: Ds, b: f32) -> Ds {
+    let s = ds_two_sum(a.0, b);
+    ds_fast_two_sum(s.0, s.1 + a.1)
+}
+
+/// The double-single nearest `v`.
+const fn ds_of(v: f64) -> Ds {
+    let h = v as f32;
+    Ds(h, (v - h as f64) as f32)
+}
+
+const DS_P: [Ds; 4] = [
+    ds_of(SINF_P[0]),
+    ds_of(SINF_P[1]),
+    ds_of(SINF_P[2]),
+    ds_of(SINF_P[3]),
+];
+const DS_RPI: Ds = ds_of(SINF_RPI);
+/// `pihi` in two `f32`s of 24 and 1 significant bits: `dn * DS_PI_A` is
+/// exact as a two-product, `dn * DS_PI_B` exact in `f32` (`|dn| < 2^15`).
+const DS_PI_A: f32 = SINF_PIHI as f32;
+const DS_PI_B: f32 = (SINF_PIHI - DS_PI_A as f64) as f32;
+const DS_PILO: Ds = ds_of(SINF_PILO);
+/// `|x| < 65536`: the fast path's domain.
+const DS_LIMIT_BITS: u32 = 0x4780_0000;
+/// How close the fraction of `x/π` may come to where `f64`'s rounding of
+/// `n` could go either way.
+const DS_MARGIN_N: f32 = 1.0 / 1_048_576.0;
+/// How close (relative) the result may come to an `f32` rounding boundary.
+const DS_MARGIN: f32 = 1.0 / 1_099_511_627_776.0;
+
+/// `sinf_poly` in double-single.
+#[inline(always)]
+fn ds_poly(d: Ds) -> Ds {
+    let xsq = ds_mul(d, d);
+    let mut p = ds_add(ds_mul(DS_P[3], xsq), DS_P[2]);
+    p = ds_add(ds_mul(p, xsq), DS_P[1]);
+    p = ds_add(ds_mul(p, xsq), DS_P[0]);
+    ds_add(d, ds_mul(ds_mul(d, xsq), p))
+}
+
+/// `r` rounded to `f32`, or `None` when `r` is within [`DS_MARGIN`] of a
+/// rounding boundary (where `r`'s own error could decide the rounding).
+#[inline(always)]
+fn ds_round(r: Ds) -> Option<f32> {
+    let v = r.0 + r.1;
+    let e = (r.0 - v) + r.1;
+    let bits = v.to_bits() & 0x7fff_ffff;
+    // Half an ulp of `v`; toward zero from a power of two, a quarter.
+    let half = f32::from_bits((bits & 0x7f80_0000) - (24 << 23));
+    let toward_zero = (e < 0.0) == (v > 0.0);
+    let boundary = if bits & 0x007f_ffff == 0 && toward_zero {
+        half * 0.5
+    } else {
+        half
+    };
+    if (e.abs() - boundary).abs() <= f32::from_bits(bits) * DS_MARGIN {
+        return None;
+    }
+    Some(v)
+}
+
+/// `x - dn * pihi - dn * pilo` as a double-single (`dn` is an integer or a
+/// half-integer, exact in `f32`).
+#[inline(always)]
+fn ds_reduce(x: f32, dn: f32) -> Ds {
+    let h = ds_two_prod(dn, DS_PI_A);
+    let s = ds_two_sum(x, -h.0);
+    let s = ds_add_f(s, -h.1);
+    let s = ds_add_f(s, -(dn * DS_PI_B));
+    let lo = ds_mul(DS_PILO, Ds(dn, 0.0));
+    ds_add(s, Ds(-lo.0, -lo.1))
+}
+
+/// `(floor(p), p - floor(p))` of a double-single `p`, `|p| < 2^21`.
+#[inline(always)]
+fn ds_floor_frac(p: Ds) -> (f32, f32) {
+    let k = (p.0 as i32 - (p.0 < 0.0) as i32) as f32;
+    let k = if k > p.0 { k - 1.0 } else { k };
+    (k, (p.0 - k) + p.1)
+}
+
+/// [`sinf_f64`]'s bits, or `None` (see above).
+#[inline(always)]
+fn sinf_ds(x: f32) -> Option<f32> {
+    let xpt = sinf_xpt(x);
+    if xpt < 0xff {
+        if xpt >= 0xe6 {
+            return ds_round(ds_poly(Ds(x, 0.0)));
+        }
+        return Some(x);
+    }
+    if x.to_bits() & 0x7fff_ffff >= DS_LIMIT_BITS {
+        return None;
+    }
+    // `n = ROUND(x/π)`, half away from zero; the margin keeps clear of halves.
+    let (k, t) = ds_floor_frac(ds_mul(Ds(x, 0.0), DS_RPI));
+    if (t - 0.5).abs() <= DS_MARGIN_N {
+        return None;
+    }
+    let n = if t > 0.5 { k + 1.0 } else { k };
+    let d = ds_reduce(x, n);
+    if d.0.abs() < 1.0 / 4096.0 {
+        return None;
+    }
+    let r = ds_round(ds_poly(d))?;
+    Some(if n as i32 & 1 == 0 { r } else { -r })
+}
+
+/// [`cosf_f64`]'s bits, or `None` (see above).
+#[inline(always)]
+fn cosf_ds(x: f32) -> Option<f32> {
+    if x.to_bits() & 0x7fff_ffff >= DS_LIMIT_BITS {
+        return None;
+    }
+    let a = if x > 0.0 { x } else { -x };
+    // `n = ROUND(|x|/π + 1/2)`: clear of integers in `|x|/π`, except that
+    // `|x|/π < 1` always gives `n = 1`.
+    let (k, t) = ds_floor_frac(ds_mul(Ds(a, 0.0), DS_RPI));
+    if (t <= DS_MARGIN_N && k >= 1.0) || t >= 1.0 - DS_MARGIN_N {
+        return None;
+    }
+    let n = k + 1.0;
+    let d = ds_reduce(a, n - 0.5);
+    if d.0.abs() < 1.0 / 4096.0 {
+        return None;
+    }
+    let r = ds_round(ds_poly(d))?;
+    Some(if n as i32 & 1 == 0 { r } else { -r })
+}
+
+/// libultra's `__sinf` (= `sinf`, `fsin`; `sinf.c:69-156`, ROM
+/// `0x800303f0`), bit for bit. `|x| < 2^-12` returns `x` itself (signed
+/// zeros and denormals included); `|x| >= 2^28` and infinities return `+0`;
+/// a NaN returns the quiet NaN `0x7f810000`.
+#[inline(never)]
+pub fn sinf(x: f32) -> f32 {
+    match sinf_ds(x) {
+        Some(v) => v,
+        None => sinf_f64(x),
+    }
+}
+
+/// libultra's `__cosf` (= `cosf`, `fcos`; `cosf.c:61-126`, ROM
+/// `0x80035cd0`), bit for bit. `|x| >= 2^28` and infinities return `+0`; a
+/// NaN returns `0x7f810000`.
+#[inline(never)]
+pub fn cosf(x: f32) -> f32 {
+    match cosf_ds(x) {
+        Some(v) => v,
+        None => cosf_f64(x),
+    }
+}
+
+/// `(__sinf(v), __cosf(v))`: libultra's sine and cosine of the same angle
+/// (radians), the N64's bits on every target. Public, like [`sqrt`], so
+/// game code needs no `libm` dependency of its own.
 #[inline]
 pub fn sin_cos(v: f32) -> (f32, f32) {
-    (sin_poly(v), sin_poly(v + core::f32::consts::FRAC_PI_2))
+    (sinf(v), cosf(v))
 }
 
 /// `n / d` where the caller's own branch has already excluded `d == 0`.
@@ -649,34 +979,6 @@ const fn sin_f64(x: f64) -> f64 {
     sum
 }
 
-/// Sine without `std`: reduced to `[-π/2, π/2]` by `sin(π − x) = sin(x)`
-/// and summed to its 13th power, within a few ULP of `f32::sin` (the
-/// earlier `[-π, π]` series was 2e-3 out near ±π, which moved knockback,
-/// RE-466).
-#[cfg_attr(feature = "std", allow(dead_code))]
-fn sin_poly(v: f32) -> f32 {
-    use core::f32::consts::{FRAC_PI_2, PI};
-    // Reduce to [-PI, PI], then fold into [-PI/2, PI/2].
-    let mut x = v % (2.0 * PI);
-    if x > PI {
-        x -= 2.0 * PI;
-    } else if x < -PI {
-        x += 2.0 * PI;
-    }
-    if x > FRAC_PI_2 {
-        x = PI - x;
-    } else if x < -FRAC_PI_2 {
-        x = -PI - x;
-    }
-    let x2 = x * x;
-    x * (1.0
-        - x2 / 6.0
-            * (1.0
-                - x2 / 20.0
-                    * (1.0
-                        - x2 / 42.0 * (1.0 - x2 / 72.0 * (1.0 - x2 / 110.0 * (1.0 - x2 / 156.0))))))
-}
-
 // --- LookAt quantization (FTOFRAC8) ----------------------------------------
 //
 // `R2.1`/T3 (RE-227). The original RSP microcode never sees a full-precision
@@ -802,8 +1104,6 @@ pub fn billboard_matrix(
 
 #[cfg(test)]
 mod trig_tests {
-    use super::sin_poly;
-
     /// RE-470: the compile-time sine table holds what the series gives at
     /// run time, word for word.
     #[test]
@@ -818,18 +1118,131 @@ mod trig_tests {
         }
     }
 
+    /// `fsin`/`fcos` outside the ROM oracle's inputs (`trig_golden`): the
+    /// paths the R4300 would trap on or never computes.
     #[test]
-    fn the_device_trig_matches_libm() {
-        let mut worst_sin = 0.0f32;
-        let mut worst_cos = 0.0f32;
-        let mut a = -10.0f32;
-        while a < 10.0 {
-            worst_sin = worst_sin.max((sin_poly(a) - a.sin()).abs());
-            worst_cos = worst_cos.max((sin_poly(a + core::f32::consts::FRAC_PI_2) - a.cos()).abs());
-            a += 0.001;
+    fn libultra_sine_and_cosine_edge_cases() {
+        use super::{cosf, sinf};
+        let qnan = 0x7f81_0000;
+        for nan in [0x7fc0_0000u32, 0x7f80_0001, 0xffc0_0000, 0xff80_0001] {
+            assert_eq!(sinf(f32::from_bits(nan)).to_bits(), qnan);
+            assert_eq!(cosf(f32::from_bits(nan)).to_bits(), qnan);
         }
-        assert!(worst_sin < 2e-6, "sin off by {worst_sin}");
-        assert!(worst_cos < 2e-6, "cos off by {worst_cos}");
+        for big in [
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::MAX,
+            268_435_456.0,
+            -268_435_456.0,
+        ] {
+            assert_eq!(sinf(big).to_bits(), 0);
+            assert_eq!(cosf(big).to_bits(), 0);
+        }
+        // Tiny inputs pass straight through `fsin`, sign and denormals too.
+        for tiny in [0u32, 0x8000_0000, 1, 0x8000_0001, 0x007f_ffff, 0x397f_ffff] {
+            assert_eq!(sinf(f32::from_bits(tiny)).to_bits(), tiny);
+        }
+        assert_eq!(cosf(0.0), 1.0);
+        assert_eq!(cosf(-0.0), 1.0);
+        assert_eq!(cosf(f32::from_bits(1)), 1.0);
+        // Even in `x`, as `fcos` takes `|x|` first.
+        for i in 0..4096 {
+            let x = i as f32 * 0.37;
+            assert_eq!(cosf(x).to_bits(), cosf(-x).to_bits(), "{x}");
+            assert_eq!(sinf(x).to_bits(), (-sinf(-x)).to_bits(), "{x}");
+        }
+        // Not correctly rounded: some sweep inputs differ from the host's
+        // sine (about 5% of them), which the ROM hashes pin.
+        let differ = (0..4096)
+            .filter(|&i| {
+                let x = i as f32 * 0.37;
+                sinf(x) != x.sin()
+            })
+            .count();
+        assert!(differ > 50, "{differ}");
+    }
+
+    /// Whether the fast path's answer for `bits`, if it has one, is the
+    /// `f64` port's: `(sin ok, sin fell back, cos ok, cos fell back)`.
+    fn ds_check(bits: u32) -> (bool, bool, bool, bool) {
+        use super::{cosf_ds, cosf_f64, sinf_ds, sinf_f64};
+        let x = f32::from_bits(bits);
+        let s = sinf_ds(x);
+        let c = cosf_ds(x);
+        (
+            s.is_none_or(|v| v.to_bits() == sinf_f64(x).to_bits()),
+            s.is_none(),
+            c.is_none_or(|v| v.to_bits() == cosf_f64(x).to_bits()),
+            c.is_none(),
+        )
+    }
+
+    #[test]
+    fn sinf_ds_matches_f64_on_a_sample() {
+        // Every 4093rd bit pattern, and the dense neighbourhoods of the
+        // multiples of π/2 the reduction is hardest at.
+        let near = (-200i32..=200).flat_map(|k| {
+            let c = (k as f32 * core::f32::consts::FRAC_PI_2).to_bits();
+            (0..512u32).map(move |d| c.wrapping_add(d).wrapping_sub(256))
+        });
+        for bits in near {
+            let (s_ok, _, c_ok, _) = ds_check(bits);
+            assert!(s_ok && c_ok, "{bits:#010x}");
+        }
+        // Over the stride, which is not concentrated where `sin` or `cos`
+        // is near 0, the fast path almost never gives up.
+        let mut fell_back = 0;
+        let mut n = 0;
+        for bits in (0..=u32::MAX).step_by(4093) {
+            let (s_ok, s_fb, c_ok, c_fb) = ds_check(bits);
+            assert!(s_ok && c_ok, "{bits:#010x}");
+            fell_back += usize::from(s_fb && bits & 0x7fff_ffff < super::DS_LIMIT_BITS);
+            fell_back += usize::from(c_fb && bits & 0x7fff_ffff < super::DS_LIMIT_BITS);
+            n += 2;
+        }
+        assert!(fell_back * 1000 < n, "{fell_back} of {n}");
+    }
+
+    /// All 2^32 inputs; about 30 s on 24 threads in release:
+    /// `cargo test --release -p ssb-engine -- --ignored sinf_ds_matches_f64_everywhere --nocapture`.
+    #[test]
+    #[ignore = "exhaustive: run on demand, in release"]
+    fn sinf_ds_matches_f64_everywhere() {
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get()) as u64;
+        let total = 1u64 << 32;
+        let counts = std::thread::scope(|sc| {
+            let handles: std::vec::Vec<_> = (0..threads)
+                .map(|t| {
+                    sc.spawn(move || {
+                        let mut c = [0u64; 4];
+                        for bits in total * t / threads..total * (t + 1) / threads {
+                            let bits = bits as u32;
+                            let in_range = bits & 0x7fff_ffff < super::DS_LIMIT_BITS;
+                            let (s_ok, s_fb, c_ok, c_fb) = ds_check(bits);
+                            c[0] += u64::from(!s_ok);
+                            c[1] += u64::from(s_fb && in_range);
+                            c[2] += u64::from(!c_ok);
+                            c[3] += u64::from(c_fb && in_range);
+                        }
+                        c
+                    })
+                })
+                .collect();
+            handles.into_iter().fold([0u64; 4], |mut a, h| {
+                for (a, c) in a.iter_mut().zip(h.join().unwrap()) {
+                    *a += c;
+                }
+                a
+            })
+        });
+        std::println!(
+            "sinf: {} wrong, {} fell back; cosf: {} wrong, {} fell back (|x| < 65536)",
+            counts[0],
+            counts[1],
+            counts[2],
+            counts[3]
+        );
+        assert_eq!((counts[0], counts[2]), (0, 0));
     }
 
     #[test]

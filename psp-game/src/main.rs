@@ -2263,6 +2263,8 @@ fn psp_main() {
     ssb_psp_runtime::timing::full_speed();
     #[cfg(feature = "sqrt_selftest")]
     ssb_psp_runtime::sqrt_selftest::run();
+    #[cfg(feature = "trig_selftest")]
+    ssb_psp_runtime::trig_selftest::run();
     unsafe { run() }
 }
 

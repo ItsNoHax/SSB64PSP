@@ -45,6 +45,10 @@ audio_selftest = ["ssb-psp-runtime/audio_selftest"]
 # (`ssb_psp_runtime::sqrt_selftest`) and appends the result to
 # `selftest.log`.
 sqrt_selftest = ["ssb-psp-runtime/sqrt_selftest"]
+# Runs the original's trigonometry over fixed inputs at boot
+# (`ssb_psp_runtime::trig_selftest`) and appends the result to
+# `selftest.log`.
+trig_selftest = ["ssb-psp-runtime/trig_selftest"]
 # Copies the audio thread's output into a ring written to `audio.raw`
 # beside the EBOOT (s16le stereo, 32000 Hz), for exact comparisons:
 # PPSSPPHeadless cannot record audio (`ssb_psp_runtime::audio`).

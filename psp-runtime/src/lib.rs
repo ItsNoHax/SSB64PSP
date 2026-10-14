@@ -36,3 +36,5 @@ pub mod texprobe;
 pub mod thread;
 pub mod timing;
 pub mod transition;
+#[cfg(feature = "trig_selftest")]
+pub mod trig_selftest;
