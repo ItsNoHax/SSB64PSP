@@ -43,8 +43,18 @@ class Trap(Exception):
 def romword(a):
     if rom is None:
         load_rom()
-    o = a - 0x7FFFF400  # the boot segment: ROM 0x1000 at RAM 0x80000400
+    if OVL0_VRAM <= a < OVL0_END:
+        o = a - OVL0_VRAM + OVL0_ROM  # ovl0 (lb*): text, data and rodata
+    else:
+        o = a - 0x7FFFF400  # the boot segment: ROM 0x1000 at RAM 0x80000400
     return struct.unpack('>I', rom[o:o + 4])[0]
+
+
+# ovl0 (smashbrothers.us.yaml): ROM 0x043220..0x051C90 at 0x800C7840; its
+# .bss follows and is not in the ROM.
+OVL0_ROM = 0x043220
+OVL0_VRAM = 0x800C7840
+OVL0_END = OVL0_VRAM + (0x051C90 - OVL0_ROM)
 
 def f2b(f):
     return struct.unpack('<I', struct.pack('<f', f))[0]
@@ -102,7 +112,7 @@ class CPU:
     def lw(self, a):
         if a in self.mem:
             return self.mem[a]
-        if 0x80000400 <= a < 0x80100000:
+        if 0x80000400 <= a < 0x80100000 or OVL0_VRAM <= a < OVL0_END:
             return romword(a)
         raise Trap(f'read {a:#x}')
 

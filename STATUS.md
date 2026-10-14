@@ -13,16 +13,14 @@ Where the project is now. The roadmap and every open task are in
 | Rendering | CRT overscan crop ([D-047](docs/decisions/D-047.md), RE-477); per-node model matrices compose with a raw VFPU `vmmul.q` (RE-497) |
 | Frontend | N64 logo, opening, title and attract loop; every menu including Sound Test; per-scene loading with background reads (RE-475, RE-476) |
 | PSP | 60 FPS under PPSSPP. PSP-2000 `vs4@2400` (`profile` builds, own searched order each): 57.6 FPS from a VFPU matrix compose and a `sqrt.s` skin loop (RE-497), then 55.3 → 56.5 FPS from a scalar billboard matrix (RE-498, separate baseline). Production build (RE-479): attract loop clean, opening averages 55.8 FPS (58.7 without audio), four-player VS 48.27 without audio (RE-493). PSP-1000 unsupported |
-| Tests | workspace tests with the ROM (stub tables pass separately, as CI), clippy and rustfmt pass; 201 of 201 goldens pass by pixel hash |
+| Tests | workspace tests with the ROM (stub tables pass separately, as CI), clippy and rustfmt pass; 202 of 202 goldens pass by pixel hash |
 
 ## Current Work
 
-RE-506: every GU projection is `syMatrixPerspFastF` (the opening cliff uses
-`PerspF`), and the per-node display matrices use the original's
-`TraRotRpyR`/`Sca` fixed-point chains (checked against the ROM's code in
-tools/r4300). Pack rebuilt (world bake), 198 goldens rebaselined. Next, per
-[`PLAN.md`](PLAN.md#remaining-work): the vortex particle, then the trig
-audit follow-ups and the RE-506 follow-ups.
+RE-507: the vortex particle, the Hyrule Twister and the 0x45/`RotRpyR`/`Sca`/0x44
+effect matrices match the ROM; the Twister is bit-exact against an N64 RDRAM
+trace. Next, per [`PLAN.md`](PLAN.md#remaining-work): the RE-507 and RE-506
+follow-ups, then the trig audit follow-ups.
 
 ## Blockers
 
@@ -34,7 +32,7 @@ audit follow-ups and the RE-506 follow-ups.
 
 ## Verification
 
-Baseline after RE-506:
+Baseline after RE-507:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass (four display-matrix structural
@@ -42,8 +40,8 @@ Baseline after RE-506:
   +1.98.0`, workspace, `-D warnings`) passes; changed files add no rustfmt
   diffs. Parallel `ssb-game` runs fail global-state tests (PLAN.md).
 - Both PSP release builds compile.
-- Goldens: `tools/golden.sh verify`: 201 of 201 match (pack `ssb64.pak`
-  rebuilt, sha256 `2b855755...`).
+- Goldens: `tools/golden.sh verify`: 202 of 202 match (pack `ssb64.pak`
+  unchanged since RE-506, sha256 `2b855755...`).
 - PPSSPP smoke: `run-ppsspp-headless.sh --crate psp-game --scene vs4@2400`
   exits 0 and writes a screenshot.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1; RE-506 matrix cost

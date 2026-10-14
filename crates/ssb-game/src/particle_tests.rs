@@ -357,3 +357,183 @@ fn arctangents_of_a_zero_vector_raise_no_fpu_exception() {
     assert!((arc_tan2(1.0, 1.0) - core::f32::consts::FRAC_PI_4).abs() < 1e-5);
     assert!((arc_tan(2.0) - 2.0f32.atan()).abs() < 1e-5);
 }
+
+/// A vortex generator script: every frame (rate -1) for `life` frames,
+/// particles of `particle_life`, as grhyrule's (gravity is the spin,
+/// `unk_20` the radius, `unk_24` the pitch).
+fn vortex_script(life: u16, particle_life: u16, unk_20: f32, unk_24: f32) -> Script<'static> {
+    let mut gen = TestBank::particle(particle_life, 1.0, &[0x1F, 0xFF]);
+    gen.kind = 2;
+    gen.update_rate = -1.0;
+    gen.generator_lifetime = life;
+    gen.vel = Vec3::new(0.0, 25.0, 0.0);
+    gen.gravity = 0.5;
+    gen.friction = 0.999;
+    gen.unk_20 = unk_20;
+    gen.unk_24 = unk_24;
+    gen
+}
+
+#[test]
+fn a_vortex_generator_emits_vortex_particles_on_its_axis() {
+    let bank = TestBank::new(&[vortex_script(3, 10, 100.0, 0.698)]);
+    let mut p = boxed();
+    let mut dead = NoProcDead;
+    rng::set_seed(1);
+    let gn = make_generator(&mut p, &bank, 0, 0);
+    p.gens[usize::from(gn)].pos = Vec3::new(10.0, 20.0, 30.0);
+    // The draws: the pre-loop angle, then per particle the radius
+    // fraction before the angle.
+    let pre = rng::rand_float();
+    let pv1 = rng::rand_float();
+    let pv0 = rng::rand_float() * TAU;
+    let after = rng::seed();
+    rng::set_seed(1);
+    generator_func_run(&mut p, &bank, &mut dead);
+    assert_eq!(rng::seed(), after, "three draws: {pre}");
+    assert_eq!(p.used_num, 1);
+    let g = p.gens[usize::from(gn)];
+    assert_eq!(g.vortex_lifetime, 1);
+    assert_eq!(g.vortex_f, 25.0);
+    let (_, pc) = p.list(0).next().unwrap();
+    assert_eq!(pc.flags & flag::VORTEX, flag::VORTEX);
+    // The axis angles: the velocity (0, 25, 0) points along +y.
+    assert_eq!(pc.gravity, sy_arc_tan2(25.0, 0.0));
+    assert_eq!(pc.friction, sy_arc_tan2(0.0, 25.0 * sin_cos(pc.gravity).0));
+    // Updated once: the angle turned by the spin, risen once.
+    assert_eq!(pc.vel, Vec3::new(pv0 + 0.5, pv1, 25.0));
+    let mut want = Particle::EMPTY;
+    want.vel = Vec3::new(pv0, pv1, 0.0);
+    want.gravity = pc.gravity;
+    want.friction = pc.friction;
+    vortex_step(&mut want, &g);
+    assert_eq!(pc.pos, want.pos);
+}
+
+#[test]
+fn a_vortex_generator_lingers_until_its_particles_die() {
+    let bank = TestBank::new(&[vortex_script(3, 10, -50.0, -0.1)]);
+    let mut p = boxed();
+    let mut dead = NoProcDead;
+    let gn = make_generator(&mut p, &bank, 0, 0);
+    for _ in 0..3 {
+        run(&mut p, &bank, &mut dead);
+    }
+    // Its life is over, three particles live: it stays, emitting nothing.
+    assert_eq!(p.used_num, 3);
+    assert_eq!(p.gen_used_num, 1);
+    let g = p.gens[usize::from(gn)];
+    assert_eq!((g.vortex_lifetime, g.generator_lifetime), (3, 1));
+    assert_eq!(g.update_rate, 0.0);
+    // Negative radius and pitch: no draws, full radius, even steps.
+    for (_, pc) in p.list(0) {
+        assert_eq!(pc.vel.y, 1.0);
+    }
+    let mut frames = 0;
+    while p.gen_used_num != 0 {
+        run(&mut p, &bank, &mut dead);
+        frames += 1;
+        assert_eq!(p.gens[usize::from(gn)].vortex_lifetime, p.used_num);
+        assert!(frames < 20);
+    }
+    assert_eq!(p.used_num, 0);
+}
+
+#[test]
+fn eject_struct_id_ends_an_effects_particles_and_generators() {
+    // Two vortex generators on list 1, one ejected by id: its particles go
+    // at once, and with none left it goes too.
+    let bank = TestBank::new(&[vortex_script(0, 30, 100.0, 0.698)]);
+    let mut p = boxed();
+    let mut dead = NoProcDead;
+    let a = make_generator(&mut p, &bank, genlink(0), 0);
+    let b = make_generator(&mut p, &bank, genlink(0), 0);
+    for _ in 0..4 {
+        run(&mut p, &bank, &mut dead);
+    }
+    assert_eq!(p.used_num, 8);
+    let id = p.gens[usize::from(a)].generator_id;
+    eject_struct_id(&mut p, &bank, &mut dead, id, 1);
+    assert_eq!(p.used_num, 4);
+    assert_eq!(p.gen_used_num, 1);
+    assert_eq!(p.gens[usize::from(b)].vortex_lifetime, 4);
+    // Ejecting a vortex generator whose particles are on another list
+    // only stops it: it lingers until they die.
+    let id = p.gens[usize::from(b)].generator_id;
+    eject_struct_id(&mut p, &bank, &mut dead, id, 0);
+    assert_eq!(p.gen_used_num, 1);
+    assert_eq!(p.gens[usize::from(b)].update_rate, 0.0);
+    assert_eq!(p.gens[usize::from(b)].generator_lifetime, 1);
+}
+
+/// `tools/r4300/vortex_hashes.py`'s inputs: (axis angles, vel, (spin,
+/// radius, pitch, rise), generator position).
+#[allow(clippy::type_complexity)]
+fn vortex_inputs() -> std::vec::Vec<([f32; 2], [f32; 3], [f32; 4], [f32; 3])> {
+    let axes = [
+        [0.0, 0.0],
+        [0.3, 0.698],
+        [-1.2, -0.5],
+        [1.570_796_4, 2.2],
+        [3.0, -6.0],
+        [-std::f32::consts::PI, 0.1745],
+        [7.0, 1.0],
+    ];
+    let gens = [
+        ([0.5, 100.0, 0.698, 25.0], [10.0, -20.0, 30.0]),
+        ([0.0, 50.0, 0.0, 40.0], [0.0, 0.0, 0.0]),
+        ([-0.32, -60.0, -0.1745, 12.5], [1000.5, 200.25, -3.0]),
+        ([0.05, 0.0, 0.3, 0.0], [-512.0, 64.0, 7.5]),
+        ([3.0, 75.0, 1.2, 7.0], [1.0, 2.0, 3.0]),
+    ];
+    let vels = [
+        [0.0, 1.0, 0.0],
+        [2.5, 0.37, 0.0],
+        [6.0, 0.9, 13.0],
+        [-1.0, 0.5, -4.0],
+    ];
+    let mut out = std::vec::Vec::new();
+    for a in axes {
+        for (g, pos) in gens {
+            for v in vels {
+                out.push((a, v, g, pos));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_vortex_motion_matches_the_rom() {
+    // The hash of the ROM's own `lbParticleUpdateStruct` (0x800CEF4C) on
+    // a vortex particle, 140 cases of 12 updates, run by
+    // `tools/r4300/vortex_hashes.py`: the f32 bits of pos and vel after
+    // every update.
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    let inputs = vortex_inputs();
+    assert_eq!(inputs.len(), 140);
+    for (a, v, gv, gpos) in inputs {
+        let mut pc = Particle::EMPTY;
+        pc.flags = flag::VORTEX;
+        pc.vel = Vec3::new(v[0], v[1], v[2]);
+        pc.gravity = a[0];
+        pc.friction = a[1];
+        let mut g = Generator::EMPTY;
+        g.kind = 2;
+        g.gravity = gv[0];
+        g.unk_38 = gv[1];
+        g.unk_3c = gv[2];
+        g.vortex_f = gv[3];
+        g.pos = Vec3::new(gpos[0], gpos[1], gpos[2]);
+        for _ in 0..12 {
+            vortex_step(&mut pc, &g);
+            for f in [pc.pos.x, pc.pos.y, pc.pos.z, pc.vel.x, pc.vel.y, pc.vel.z] {
+                for b in f.to_bits().to_le_bytes() {
+                    h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+                }
+            }
+        }
+    }
+    assert_eq!(h, 0x046f_7167_8688_c5e8);
+}

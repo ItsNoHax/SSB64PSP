@@ -562,6 +562,9 @@ pub enum GameScene {
 
     /// `traininghyrule`: Training on Hyrule Castle (RE-423).
     TrainingHyrule,
+    /// `trainingtwister`: [`GameScene::TrainingHyrule`] with Mario walked
+    /// left toward the Twister's floor, its vortex in view (RE-507).
+    TrainingTwister,
     /// `trainingpupupu`: Training on Dream Land at the stage scenes' tick
     /// (RE-423).
     TrainingPupupu,
@@ -706,7 +709,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 174] = [
+    pub const ALL: [GameScene; 175] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -833,6 +836,7 @@ impl GameScene {
         GameScene::TrainingVenusaur,
         GameScene::TrainingPorygon,
         GameScene::TrainingHyrule,
+        GameScene::TrainingTwister,
         GameScene::TrainingPupupu,
         GameScene::PikachuHat,
         GameScene::PurinBow,
@@ -1012,6 +1016,7 @@ impl GameScene {
             GameScene::TrainingPorygon => "trainingporygon",
 
             GameScene::TrainingHyrule => "traininghyrule",
+            GameScene::TrainingTwister => "trainingtwister",
             GameScene::TrainingPupupu => "trainingpupupu",
             GameScene::PikachuHat => "pikachuhat",
             GameScene::PurinBow => "purinbow",

@@ -46,6 +46,10 @@ pub const YOSHI_PARTICLE_BANK: u8 = 1;
 /// fixed id of its own, so the runtime needs no stage to resolve it.
 pub const YOSTER_PARTICLE_BANK: u8 = 5;
 
+/// Match bank for Hyrule Castle's own pair (`lGRHyruleParticleScriptBank*`,
+/// `efParticleGetLoadBankID` in `grHyruleInitAll`): the Twister.
+pub const HYRULE_PARTICLE_BANK: u8 = 6;
+
 /// `dEFManagerDamageNormalLightIDs`, by the attacker's player.
 pub const NORMAL_LIGHT_IDS: [u16; 4] = [0x49, 0x4A, 0x4B, 0x4C];
 /// `efManagerDamageNormalHeavyMakeEffect`'s script.
@@ -164,6 +168,10 @@ pub struct Effects {
     /// The quake whose `gmCameraSetVelAt` this frame's processes left last,
     /// as `(magnitude, seq, gcPlayAnimAll count)` ([`Self::take_quake`]).
     quake_write: Option<(u8, u32, u16)>,
+    /// `gGRCommonStruct.hyrule.twister_xf`: the Twister effect's transform,
+    /// or [`NIL`] when its make failed. Kept, as the source keeps the
+    /// pointer, after the effect is ejected.
+    pub twister_xf: u8,
 }
 
 impl Default for Effects {
@@ -186,6 +194,7 @@ impl Effects {
             seq: 0,
             displays_refused: 0,
             quake_write: None,
+            twister_xf: NIL,
         };
         for i in 0..EFFECT_ALLOC_NUM {
             e.slots[i].next = if i + 1 < EFFECT_ALLOC_NUM {
@@ -663,6 +672,28 @@ impl Effects {
         pc
     }
 
+    /// `grHyruleTwisterMakeEffect` @ 0x8010A140: Hyrule's script `id` on
+    /// list 1 under a default transform, processed once, then placed at
+    /// `pos`.
+    pub fn hyrule_twister(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        pos: Vec3,
+        id: u16,
+    ) -> u8 {
+        self.start_bare(
+            p,
+            banks,
+            HYRULE_PARTICLE_BANK | lb::genlink(0),
+            id,
+            TransformStatus::Default,
+            |t| {
+                t.translate = pos;
+            },
+        )
+    }
+
     /// `efManagerYoshiEggExplodeMakeEffect`: Yoshi's script 3, first
     /// processed under a ready transform, then placed. No EFStruct.
     pub fn yoshi_egg_explode(&mut self, p: &mut Particles, banks: &dyn Banks, pos: Vec3) -> u8 {
@@ -832,6 +863,13 @@ pub trait HitEffectSink {
             rng::rand_int_range(i32::from(n));
         }
     }
+
+    /// Whether the last [`crate::wpeffect::WeaponEffect::TwisterMake`]
+    /// made its effect (`grHyruleMakeTwister` returns `NULL` when not).
+    /// Without a runtime the Twister still comes.
+    fn twister_made(&mut self) -> bool {
+        true
+    }
 }
 
 /// Drops every effect (host tests, or a scene without particles).
@@ -877,6 +915,10 @@ impl HitEffectSink for EffectRuntime<'_> {
 
     fn take_quake(&mut self) -> Option<(u8, u16)> {
         self.effects.take_quake()
+    }
+
+    fn twister_made(&mut self) -> bool {
+        self.effects.twister_xf != NIL
     }
 }
 

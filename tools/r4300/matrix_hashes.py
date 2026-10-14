@@ -1,7 +1,12 @@
-"""Runs the ROM's own syMatrixTraRotRpyRSca and syMatrixTraRotRpyR
-(sys/matrix.c) through the r4300 interpreter over a fixed input set, and
-prints the hashes and sample vectors pinned in
-crates/ssb-rom/src/scene.rs (`display_matrix_matches_the_rom`).
+"""Runs the ROM's own syMatrixTraRotRpyRSca, syMatrixTraRotRpyR,
+syMatrixRotRpyR (sys/matrix.c) and lbCommonMatrixRotSca (lb/lbcommon.c,
+in ovl0) through the r4300 interpreter over a fixed input set, and prints
+the hashes and sample vectors pinned in crates/ssb-rom/src/scene.rs
+(`display_matrix_matches_the_rom`). Then syMatrixPerspFastF and
+syMatrixPerspF (scale 1) over the cameras and a field-of-view sweep: the
+hash of every f32 of mf, pinned in crates/ssb-engine/src/math.rs
+(`the_projections_match_the_rom`); persp_norm is printed, not pinned (the
+port has no use for it).
 
 Inputs: angles as f32 bit patterns from a deterministic sweep (negative,
 multi-turn, exact quarter turns), scales around 1 including the non-1/256
@@ -12,12 +17,15 @@ fraction halves recombined), in input order. No ROM bytes are stored here
 
     python3 tools/r4300/matrix_hashes.py [ROM]
 """
-import struct, sys
+import math, struct, sys
 import numpy as np
 import r4300
 from r4300 import CPU, Trap, romword, f2b, sx16, MAGIC
 
-FN = {'TraRotRpyR': 0x8001C21C, 'TraRotRpyRSca': 0x8001C588}
+FN = {'TraRotRpyR': 0x8001C21C, 'TraRotRpyRSca': 0x8001C588,
+      'RotRpyR': 0x8001BF20, 'PerspFastF': 0x8001B248, 'PerspF': 0x8001B4CC,
+      'lbCommonMatrixRotSca': 0x800C82AC}
+OUT2 = 0x80400100
 OUT = 0x80400000
 FNV_OFFSET = 0xcbf29ce484222325
 FNV_PRIME = 0x100000001b3
@@ -95,6 +103,21 @@ class MtxCPU(CPU):
             else: raise Trap(f'regimm {rt} at {pc:#x}')
             if take: return btarget
             return 'nullify' if (op == 1 and rt in (2, 3)) else None
+        if op == 0x11 and rs == 16 and fn == 36:   # cvt.w.s in FCSR's mode
+            a = r4300.s_in(self.f[rd])
+            mode = self.fcsr & 3
+            if mode == 0:
+                v = round(float(a))  # Python rounds half to even
+            elif mode == 1:
+                v = math.trunc(float(a))
+            elif mode == 2:
+                v = math.ceil(float(a))
+            else:
+                v = math.floor(float(a))
+            if not -2**31 <= v < 2**31:
+                raise Trap('cvt range')
+            self.f[sh] = v & 0xffffffff
+            return None
         if op == 0x11 and rs == 2:   # cfc1
             setr(rt, self.fcsr if rd == 31 else 0); return None
         if op == 0x11 and rs == 6:   # ctc1
@@ -103,11 +126,11 @@ class MtxCPU(CPU):
             return None
         return super().step(w, pc)
 
-    def call_int(self, addr, words):
+    def call_int(self, addr, words, init=None):
         """o32: the first four argument words in a0-a3, the rest on the
-        stack from sp+16."""
+        stack from sp+16. `init` presets memory words (address -> word)."""
         self.r = [0] * 32
-        self.mem = {}
+        self.mem = dict(init or {})
         sp = 0x80300000
         self.r[29] = sp
         self.r[31] = MAGIC
@@ -178,20 +201,53 @@ def fnv(h, word):
     return h
 
 
+def row3_ok(cpu):
+    """The Mtx at OUT has no translation: row 3 is (0, 0, 0, 1)."""
+    w = [cpu.mem.get(OUT + 4 * i, 0) for i in range(16)]
+    return w[6] == 0 and w[7] == 1 and w[14] == 0 and w[15] == 0
+
+
+def persp_inputs():
+    """(fovy, aspect, near, far) as f32: the game's cameras, then a sweep.
+    The sweep starts where the table index leaves 0 (a zero sine divides
+    to infinity on the N64; the port divides by 1, RE-469)."""
+    f = np.float32
+    cams = [(38.0, 300.0 / 220.0, 256.0, 39936.0), (30.0, 300.0 / 220.0, 256.0, 39936.0),
+            (18.607187, 300.0 / 220.0, 128.0, 16384.0), (11.982265, 4.0 / 3.0, 100.0, 15000.0),
+            (60.0, 4.0 / 3.0, 10.0, 12800.0), (45.0, 1.0, 1.0, 4000.0)]
+    out = [tuple(f(v) for v in c) for c in cams]
+    aspects = [300.0 / 220.0, 4.0 / 3.0, 1.0, 16.0 / 9.0]
+    planes = [(256.0, 39936.0), (128.0, 16384.0), (32.0, 6400.0), (1.0, 1.5)]
+    k = 0
+    fov = 0.5
+    while fov < 170.0:
+        a = aspects[k % len(aspects)]
+        n, fa = planes[(k // 4) % len(planes)]
+        out.append((f(fov), f(a), f(n), f(fa)))
+        fov += 0.37
+        k += 1
+    return out
+
+
 def main():
     r4300.load_rom(sys.argv[1] if len(sys.argv) > 1 else None)
     cpu = MtxCPU()
     ins = inputs()
-    for name in ('TraRotRpyRSca', 'TraRotRpyR'):
+    for name in ('TraRotRpyRSca', 'TraRotRpyR', 'lbCommonMatrixRotSca', 'RotRpyR'):
         h = FNV_OFFSET
         samples = []
         for n, (r, p, y, sx, sy, sz) in enumerate(ins):
-            args = [OUT, f2b(np.float32(1.0)), f2b(np.float32(2.0)), f2b(np.float32(3.0)),
-                    f2b(r), f2b(p), f2b(y)]
-            if name == 'TraRotRpyRSca':
+            if name.startswith('Tra'):
+                args = [OUT, f2b(np.float32(1.0)), f2b(np.float32(2.0)), f2b(np.float32(3.0)),
+                        f2b(r), f2b(p), f2b(y)]
+            else:
+                args = [OUT, f2b(r), f2b(p), f2b(y)]
+            if name.endswith('Sca'):
                 args += [f2b(sx), f2b(sy), f2b(sz)]
             cpu.call_int(FN[name], args)
             words = mtx_words(cpu)
+            if not name.startswith('Tra') and not row3_ok(cpu):
+                raise SystemExit(f'{name} input {n}: a translation row')
             for v in words:
                 h = fnv(h, v)
             if n in (1, 5, 40, 123):
@@ -199,6 +255,21 @@ def main():
         print(f'{name}: {len(ins)} inputs, hash {h:#018x}')
         for n, words in samples:
             print(f'  input {n}: {ins[n]} -> {words}')
+    pins = persp_inputs()
+    for name in ('PerspFastF', 'PerspF'):
+        h = FNV_OFFSET
+        norms = FNV_OFFSET
+        for n, (fovy, aspect, near, far) in enumerate(pins):
+            cpu.call_int(FN[name], [OUT, OUT2, f2b(fovy), f2b(aspect), f2b(near), f2b(far),
+                                    f2b(np.float32(1.0))])
+            for i in range(16):
+                w = cpu.mem[OUT + 4 * i]
+                h = fnv(h, w - (1 << 32) if w & 0x80000000 else w)
+            norms = fnv(norms, cpu.mem[OUT2] >> 16)
+            if n in (0, 7, 200):
+                print(f'  {name} input {n}: {(float(fovy), float(aspect), float(near), float(far))} -> '
+                      f'{[hex(cpu.mem[OUT + 4 * i]) for i in (0, 5, 10, 11, 14, 15)]} norm {cpu.mem[OUT2] >> 16}')
+        print(f'{name}: {len(pins)} inputs, mf hash {h:#018x}, persp_norm hash {norms:#018x}')
 
 
 if __name__ == '__main__':

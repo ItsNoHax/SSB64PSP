@@ -36,6 +36,12 @@ pub struct Hyrule {
     /// `twister_pos_ids`, resolved to positions (at most ten).
     pub positions: [Vec3; 10],
     pub position_count: u8,
+    /// The Twister's particle effect calls this frame made
+    /// (`grHyruleTwisterMakeEffect`, `twister_xf->translate`,
+    /// `lbParticleEjectStructID`), in order: the stage flushes them right
+    /// after its tick ([`super::Stage::flush_effects`]), which owns the
+    /// transform.
+    pub fx: crate::wpeffect::Emit,
 }
 
 impl Hyrule {
@@ -63,6 +69,7 @@ impl Hyrule {
             line: 0,
             positions,
             position_count: count,
+            fx: crate::wpeffect::Emit::default(),
         }
     }
 
@@ -70,8 +77,10 @@ impl Hyrule {
         self.wait = (rng::rand_int_range(1200) + 1600) as u16;
     }
 
-    /// `grHyruleMakeTwister` @ 0x8010A1E4. The particle effect is not
-    /// ported, so its allocation cannot fail here.
+    /// `grHyruleMakeTwister` @ 0x8010A1E4. Its effect is made when the
+    /// stage flushes this frame's effects; if that fails,
+    /// [`Self::make_failed`] undoes the summon as the source's `NULL`
+    /// return does.
     fn make<I, F>(&mut self, pos: Vec3, map: &MapQuery<'_, F>) -> bool
     where
         F: Fn() -> I,
@@ -81,6 +90,8 @@ impl Hyrule {
             return false;
         };
         self.twister_pos = Vec3::new(pos.x, pos.y + dist, pos.z);
+        self.fx
+            .push(crate::wpeffect::WeaponEffect::TwisterMake(self.twister_pos));
         self.line = line;
         let edge_x = |right: bool| map::floor_edge(&map.surfaces, line, right).map_or(0.0, |p| p.x);
         let under = |right: bool| map::floor_edge_under(&map.surfaces, line, right);
@@ -95,6 +106,13 @@ impl Hyrule {
             edge_x(true)
         };
         true
+    }
+
+    /// `grHyruleTwisterUpdateWait`'s `NULL` branch, for an effect that
+    /// could not be made: no Twister, wait again.
+    pub fn make_failed(&mut self) {
+        self.status = TwisterStatus::Wait;
+        self.rearm();
     }
 
     /// `grHyruleTwisterGetLR` @ 0x8010A52C.
@@ -222,6 +240,8 @@ impl Hyrule {
                 {
                     self.twister_pos.y = y;
                 }
+                self.fx
+                    .push(crate::wpeffect::WeaponEffect::TwisterMove(self.twister_pos));
             }
             TwisterStatus::Turn => {
                 if self.lifetime_ended() {
@@ -244,12 +264,14 @@ impl Hyrule {
                 self.status = TwisterStatus::Subside;
                 self.wait = 32;
                 registry.clear_obstacle(Obstacle::Twister);
+                self.fx.push(crate::wpeffect::WeaponEffect::TwisterSubside);
             }
             TwisterStatus::Subside => {
                 self.wait = self.wait.wrapping_sub(1);
                 if self.wait == 0 {
                     self.status = TwisterStatus::Wait;
                     self.rearm();
+                    self.fx.push(crate::wpeffect::WeaponEffect::TwisterEject);
                 }
             }
         }

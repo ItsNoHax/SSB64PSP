@@ -8,6 +8,14 @@ use ssb_game::particle::{self as lb, flag, Banks, Particles, Script};
 use ssb_game::wpeffect::{self, WeaponEffect};
 use ssb_rom::pack::{Pack, ParticleBankDesc};
 
+/// The tests share `ssb_game::rng`'s one global seed: the item-spawn
+/// swirl test pins the draws one effect takes, so each test holds this
+/// while it runs.
+fn rng_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn pack_bytes() -> Option<Vec<u8>> {
     std::env::var_os("SSB64_ROM")?;
     let path =
@@ -27,6 +35,12 @@ impl PackBanks<'_, '_> {
         match id {
             0 => Some(self.common),
             effect::YOSHI_PARTICLE_BANK => self.pack.particle_bank(3),
+            effect::HYRULE_PARTICLE_BANK => {
+                let i = ssb_rom::particle::BANKS
+                    .iter()
+                    .position(|b| b.name == "grhyrule")?;
+                self.pack.particle_bank(i as u32)
+            }
             _ => None,
         }
     }
@@ -124,6 +138,7 @@ fn open(bytes: &[u8]) -> Pack<'_> {
 /// bank's script and textures, not common-bank script 3.
 #[test]
 fn yoshi_explosion_runs_the_packed_fighter_bank_and_ends() {
+    let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
     let pack = open(&bytes);
     let banks = PackBanks {
@@ -172,6 +187,7 @@ fn yoshi_explosion_runs_the_packed_fighter_bank_and_ends() {
 /// runtime does not model, and every one ends.
 #[test]
 fn every_match_maker_ends_without_the_unmodelled_features() {
+    let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
     let pack = open(&bytes);
     let banks = PackBanks {
@@ -325,6 +341,7 @@ fn every_match_maker_ends_without_the_unmodelled_features() {
 /// never run out.
 #[test]
 fn a_four_player_melee_stays_inside_the_source_pools() {
+    let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
     let pack = open(&bytes);
     let banks = PackBanks {
@@ -375,6 +392,7 @@ fn a_four_player_melee_stays_inside_the_source_pools() {
 /// five-free rule refuses, and the display pool never does.
 #[test]
 fn a_dusty_melee_stays_inside_the_source_pools() {
+    let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
     let pack = open(&bytes);
     let banks = PackBanks {
@@ -439,6 +457,7 @@ fn a_dusty_melee_stays_inside_the_source_pools() {
 /// run out.
 #[test]
 fn a_melee_of_weapons_stays_inside_the_source_pools() {
+    let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
     let pack = open(&bytes);
     let banks = PackBanks {
@@ -509,6 +528,7 @@ fn a_melee_of_weapons_stays_inside_the_source_pools() {
 /// pools.
 #[test]
 fn the_results_confetti_falls_on_lists_four_and_zero_and_ends() {
+    let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
     let pack = open(&bytes);
     let banks = PackBanks {
@@ -570,6 +590,7 @@ fn the_results_confetti_falls_on_lists_four_and_zero_and_ends() {
 /// common-bank scripts on list 3, the effect camera's, and each ends.
 #[test]
 fn the_interface_effects_run_on_list_three_and_end() {
+    let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
     let pack = open(&bytes);
     let banks = PackBanks {
@@ -620,6 +641,7 @@ fn the_interface_effects_run_on_list_three_and_end() {
 /// draws and the three of Mario's dust after them.
 #[test]
 fn the_item_spawn_swirl_draws_nine_times_at_the_next_frame_start() {
+    let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
     let pack = open(&bytes);
     let banks = PackBanks {
@@ -652,4 +674,79 @@ fn the_item_spawn_swirl_draws_nine_times_at_the_next_frame_start() {
     }
     .run();
     assert_eq!(ssb_game::rng::seed(), after_generators);
+}
+
+/// Hyrule Castle's Twister (`grhyrule.c`): the summon effect follows the
+/// Twister, its vortex generators run until the subside ejects them by
+/// generator id, and every pool empties once their particles die.
+#[test]
+fn the_twister_vortex_follows_the_twister_and_ends_when_ejected() {
+    let _rng = rng_lock();
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = open(&bytes);
+    let banks = PackBanks {
+        pack: &pack,
+        common: pack.particle_bank(0).unwrap(),
+    };
+    let mut p = Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut census = Census::default();
+    let sink = |p: &mut Particles, e: &mut Effects, w: WeaponEffect| {
+        wpeffect::make(&w, e, p, &banks);
+    };
+    let mut pos = Vec3::new(-1000.0, 200.0, 0.0);
+    sink(&mut p, &mut e, WeaponEffect::TwisterMake(pos));
+    assert_ne!(e.twister_xf, lb::NIL);
+    let xf = e.twister_xf;
+    for frame in 0..400 {
+        EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &banks,
+        }
+        .frame();
+        pos.x += 10.0;
+        sink(&mut p, &mut e, WeaponEffect::TwisterMove(pos));
+        let mut vortex = 0;
+        for link in 0..lb::LINKS_NUM {
+            for (_, pc) in p.list(link) {
+                census.flags |= pc.flags;
+                if pc.flags & flag::VORTEX != 0 {
+                    vortex += 1;
+                }
+            }
+        }
+        for g in p.generators() {
+            census.generator_kinds |= 1 << g.kind;
+        }
+        census.structs_max = census.structs_max.max(p.used_num);
+        census.generators_max = census.generators_max.max(p.gen_used_num);
+        if frame > 100 {
+            assert!(vortex > 0, "frame {frame}: no vortex particle");
+        }
+    }
+    // The summon runs until ejected: its transform still follows.
+    assert_eq!(p.transform(xf).translate, pos);
+    assert!(census.generator_kinds & (1 << 2) != 0);
+    assert!(census.flags & flag::VORTEX != 0);
+    // The pools never ran dry (112 structs, 24 generators).
+    assert!(census.structs_max < lb::STRUCTS_NUM as u16, "{census:?}");
+    assert!(
+        census.generators_max < lb::GENERATORS_NUM as u16,
+        "{census:?}"
+    );
+    sink(&mut p, &mut e, WeaponEffect::TwisterSubside);
+    for _ in 0..32 {
+        EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &banks,
+        }
+        .frame();
+    }
+    sink(&mut p, &mut e, WeaponEffect::TwisterEject);
+    let mut rest = Census::default();
+    run_until_empty(&mut p, &mut e, &banks, &mut rest);
+    assert_eq!(p.xf_used_num, 0);
+    println!("twister: {census:?}, then {} frames to empty", rest.frames);
 }

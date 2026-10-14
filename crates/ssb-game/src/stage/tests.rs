@@ -936,3 +936,86 @@ fn a_pipe_entry_tells_both_plants_to_wait() {
     tick(&mut stage, &mut f, &mut items);
     assert_eq!(items.waits.len(), 2, "one notification per entry");
 }
+
+fn hy(stage: &mut Stage) -> &mut hyrule::Hyrule {
+    match &mut stage.controller {
+        Controller::Hyrule(h) => h,
+        _ => panic!(),
+    }
+}
+
+/// Records the stage's effect calls; `made` answers `twister_made`.
+struct TwisterSink {
+    calls: Vec<crate::wpeffect::WeaponEffect>,
+    made: bool,
+}
+
+impl crate::effect::HitEffectSink for TwisterSink {
+    fn make(&mut self, _: &crate::effect::HitEffect) {}
+    fn weapon(&mut self, e: &crate::wpeffect::WeaponEffect) {
+        self.calls.push(*e);
+    }
+    fn twister_made(&mut self) -> bool {
+        self.made
+    }
+}
+
+#[test]
+fn the_twisters_effect_is_made_moved_subsided_and_ejected() {
+    use crate::wpeffect::WeaponEffect as W;
+    let surfaces = [floor(0, -2000, 2000, 0, 0)];
+    let objects = [MapObject {
+        kind: mapobj::TWISTER,
+        pos: Vec3::new(0.0, 500.0, 0.0),
+    }];
+    let i = init(StageKind::Hyrule, &objects);
+    let mut stage = Stage::new(&i, &mut [], &mut NoObjects, &mut NoItems);
+    let map = query(&surfaces, &no_group);
+    let mut f = standing(FighterKind::Mario, 0, Vec3::new(1200.0, 0.0, 0.0), 0, 0);
+    let mut sink = TwisterSink {
+        calls: Vec::new(),
+        made: true,
+    };
+    let step = |stage: &mut Stage, f: &mut crate::fighter::Fighter, sink: &mut TwisterSink| {
+        let Controller::Hyrule(h) = &mut stage.controller else {
+            panic!()
+        };
+        h.tick(&[f], &mut stage.registry, &map, true);
+        stage.flush_effects(sink);
+    };
+    hy(&mut stage).status = hyrule::TwisterStatus::Wait;
+    hy(&mut stage).wait = 1;
+    step(&mut stage, &mut f, &mut sink);
+    // Made where it touches the floor (`grHyruleTwisterMakeEffect(pos, 3)`).
+    assert_eq!(sink.calls, [W::TwisterMake(Vec3::ZERO)]);
+    hy(&mut stage).wait = 1;
+    step(&mut stage, &mut f, &mut sink);
+    assert_eq!(hy(&mut stage).status, hyrule::TwisterStatus::Move);
+    // Each Move frame moves the effect's transform with the Twister.
+    step(&mut stage, &mut f, &mut sink);
+    let pos = hy(&mut stage).twister_pos;
+    assert_eq!(sink.calls.last(), Some(&W::TwisterMove(pos)));
+    assert_eq!(sink.calls.len(), 2);
+    // Its life ends: no move that frame, then the subsiding effect, then
+    // 32 frames on the ejection.
+    hy(&mut stage).wait = 1;
+    step(&mut stage, &mut f, &mut sink);
+    assert_eq!(hy(&mut stage).status, hyrule::TwisterStatus::Stop);
+    assert_eq!(sink.calls.len(), 2);
+    step(&mut stage, &mut f, &mut sink);
+    assert_eq!(sink.calls.last(), Some(&W::TwisterSubside));
+    for _ in 0..31 {
+        step(&mut stage, &mut f, &mut sink);
+    }
+    assert_eq!(sink.calls.last(), Some(&W::TwisterSubside));
+    step(&mut stage, &mut f, &mut sink);
+    assert_eq!(sink.calls.last(), Some(&W::TwisterEject));
+    assert_eq!(hy(&mut stage).status, hyrule::TwisterStatus::Wait);
+    // An effect that cannot be made is no Twister: wait again.
+    sink.made = false;
+    hy(&mut stage).wait = 1;
+    step(&mut stage, &mut f, &mut sink);
+    assert_eq!(sink.calls.last(), Some(&W::TwisterMake(Vec3::ZERO)));
+    assert_eq!(hy(&mut stage).status, hyrule::TwisterStatus::Wait);
+    assert!(hy(&mut stage).wait >= 1600);
+}

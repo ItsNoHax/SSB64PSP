@@ -61,6 +61,18 @@ pub enum WeaponEffect {
     FoxBlasterGlow(Vec3),
     /// `efManagerFireGrindMakeEffect`: the Fireball's rebound.
     FireGrind(Vec3),
+    /// `grHyruleMakeTwister`'s `grHyruleTwisterMakeEffect(pos, 3)`: the
+    /// Twister's effect, whose transform becomes
+    /// [`crate::effect::Effects::twister_xf`].
+    TwisterMake(Vec3),
+    /// `grHyruleTwisterUpdateMove`: `twister_xf->translate = *pos`.
+    TwisterMove(Vec3),
+    /// `grHyruleTwisterUpdateStop`: `grHyruleTwisterMakeEffect(
+    /// &twister_xf->translate, 7)`, the Twister subsiding.
+    TwisterSubside,
+    /// `grHyruleTwisterUpdateSubside`'s end:
+    /// `lbParticleEjectStructID(twister_xf->generator_id, 1)`.
+    TwisterEject,
     /// `efManagerShieldBreakMakeEffect`: common-bank generator 3.
     ShieldBreak(Vec3),
     /// `efManagerDustCollideMakeEffect`: the Boomerang meets a surface.
@@ -320,6 +332,31 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
         }
         WeaponEffect::FireGrind(pos) => {
             effects.ready_at(p, banks, true, FIRE_GRIND_ID, pos, 1.0);
+        }
+        WeaponEffect::TwisterMake(pos) => {
+            let pc = effects.hyrule_twister(p, banks, pos, 3);
+            effects.twister_xf = if pc == crate::particle::NIL {
+                crate::particle::NIL
+            } else {
+                p.particle(pc).xf
+            };
+        }
+        WeaponEffect::TwisterMove(pos) => {
+            if effects.twister_xf != crate::particle::NIL {
+                p.transform_mut(effects.twister_xf).translate = pos;
+            }
+        }
+        WeaponEffect::TwisterSubside => {
+            if effects.twister_xf != crate::particle::NIL {
+                let pos = p.transform(effects.twister_xf).translate;
+                effects.hyrule_twister(p, banks, pos, 7);
+            }
+        }
+        WeaponEffect::TwisterEject => {
+            if effects.twister_xf != crate::particle::NIL {
+                let id = p.transform(effects.twister_xf).generator_id;
+                crate::particle::eject_struct_id(p, banks, effects, id, 1);
+            }
         }
         WeaponEffect::ShieldBreak(pos) => {
             let g = crate::particle::make_generator(p, banks, effects.bank, 3);

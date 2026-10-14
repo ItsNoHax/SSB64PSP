@@ -360,6 +360,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         | GameScene::TrainingCastle
         | GameScene::TrainingHyrule
         | GameScene::TrainingPupupu => 400,
+        // The Twister's summon (RE-507).
+        GameScene::TrainingTwister => 1700,
         // RE-428: the first pattern's low pass, its wing in the top right.
         GameScene::TrainingArwing => 1800,
         GameScene::TrainingBumper | GameScene::TrainingPlants => 240,
@@ -465,6 +467,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingVenusaur
             | GameScene::TrainingPorygon
             | GameScene::TrainingHyrule
+            | GameScene::TrainingTwister
             | GameScene::TrainingPupupu
     )
 }
@@ -748,6 +751,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingVenusaur
             | GameScene::TrainingPorygon
             | GameScene::TrainingHyrule
+            | GameScene::TrainingTwister
             | GameScene::TrainingPupupu
     ) {
         return match tick {
@@ -926,6 +930,10 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     }
     if scene == GameScene::TrainingInterface {
         return if tick == 68 || tick == 82 { 80 } else { 0 };
+    }
+    // Mario walks left toward the Twister's floor before its summon.
+    if scene == GameScene::TrainingTwister {
+        return if (1350..=1420).contains(&tick) { -80 } else { 0 };
     }
     if is_training_stage_scene(scene) {
         return 0;
@@ -2519,7 +2527,9 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
         Some(GameScene::TrainingCastle | GameScene::TrainingBumper) => {
             ssb_game::stage_select::gkind::CASTLE
         }
-        Some(GameScene::TrainingHyrule) => ssb_game::stage_select::gkind::HYRULE,
+        Some(GameScene::TrainingHyrule | GameScene::TrainingTwister) => {
+            ssb_game::stage_select::gkind::HYRULE
+        }
         _ => CAPTURE_STAGE_GKIND,
     }
 }
@@ -6663,17 +6673,25 @@ fn draw_display_effects(
         let rot = [d.rotate.x, d.rotate.y, d.rotate.z];
         let scale = [d.scale.x, d.scale.y, d.scale.z];
         let world = |x: [f32; 3]| x.map(|v| v / ms);
+        // `FTOFIX32`: a `Sca` or 0x44 matrix word keeps 1/65536, truncated.
+        let fix = |v: f32| (v * 65536.0) as i32 as f32 * (1.0 / 65536.0);
         let child = |kind: u8| -> Mat4 {
             let Some(pose) = pose else {
                 return Mat4::IDENTITY;
             };
             match kind {
-                // `Sca`.
-                0 => Mat4::from_trs([0.0; 3], [0.0; 3], pose.scale),
-                // 0x45 `lbCommonRotScaFuncMatrix`.
-                1 => Mat4::from_trs([0.0; 3], pose.rotate, pose.scale),
-                // 0x44 `func_ovl0_800CA024`: scale and translate.
-                _ => Mat4::from_trs(world(pose.translate), [0.0; 3], pose.scale),
+                // `Sca` (`syMatrixSca`).
+                0 => Mat4::from_trs([0.0; 3], [0.0; 3], pose.scale.map(fix)),
+                // 0x45 `lbCommonRotScaFuncMatrix`: `lbCommonMatrixRotSca`,
+                // the `TraRotRpyRSca` chain with no translation (RE-507).
+                1 => Mat4::from_trs_display([0.0; 3], pose.rotate, pose.scale),
+                // 0x44 `func_ovl0_800CA024`: scale and translate, each
+                // `FTOFIX32` (truncated to 1/65536).
+                _ => Mat4::from_trs(
+                    world(pose.translate.map(fix)),
+                    [0.0; 3],
+                    pose.scale.map(fix),
+                ),
             }
         };
         let units = Mat4::from_trs([0.0; 3], [0.0; 3], [ms; 3]);
@@ -6687,23 +6705,25 @@ fn draw_display_effects(
             K::ImpactWave => {
                 let s = pose.map_or([1.0; 3], |p| p.scale);
                 let t = [d.translate.x, d.translate.y, d.translate.z];
-                (Mat4::from_trs(t, rot, s).mul(&units), 1)
+                (Mat4::from_trs_display(t, rot, s).mul(&units), 1)
             }
             K::ShockSmall => (
-                bill.mul(&Mat4::from_trs([0.0; 3], rot, scale)).mul(&units),
+                bill.mul(&Mat4::from_trs_display([0.0; 3], rot, scale))
+                    .mul(&units),
                 1,
             ),
             K::Slash => {
                 let n = scratch.anim.compose(p, object, &mut posed);
                 (
-                    bill.mul(&Mat4::from_trs([0.0; 3], rot, scale)).mul(&units),
+                    bill.mul(&Mat4::from_trs_display([0.0; 3], rot, scale))
+                        .mul(&units),
                     n,
                 )
             }
             K::FlyOrbs => {
                 posed[0] = child(0);
                 (
-                    bill.mul(&Mat4::from_trs([0.0; 3], [0.0; 3], scale))
+                    bill.mul(&Mat4::from_trs([0.0; 3], [0.0; 3], scale.map(fix)))
                         .mul(&units),
                     1,
                 )
@@ -6711,23 +6731,22 @@ fn draw_display_effects(
             K::FlySparks => {
                 posed[0] = child(1);
                 (
-                    bill.mul(&Mat4::from_trs([0.0; 3], rot, [1.0; 3]))
-                        .mul(&units),
+                    bill.mul(&Mat4::from_tr_display([0.0; 3], rot)).mul(&units),
                     1,
                 )
             }
             K::StarRodSpark => {
                 posed[0] = child(1);
                 (
-                    bill.mul(&Mat4::from_trs([0.0; 3], rot, scale)).mul(&units),
+                    bill.mul(&Mat4::from_trs_display([0.0; 3], rot, scale))
+                        .mul(&units),
                     1,
                 )
             }
             K::FlyMDust => {
                 posed[0] = child(2);
                 (
-                    bill.mul(&Mat4::from_trs([0.0; 3], rot, [1.0; 3]))
-                        .mul(&units),
+                    bill.mul(&Mat4::from_tr_display([0.0; 3], rot)).mul(&units),
                     1,
                 )
             }

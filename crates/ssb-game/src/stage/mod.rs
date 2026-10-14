@@ -628,17 +628,23 @@ impl Stage {
     }
 
     /// Makes the effects this frame's stage process made
-    /// (`grYosterCloudVaporMakeEffect`, `efManagerSparkleWhiteScaleMakeEffect`),
-    /// in order. The runtime calls it right after [`Stage::tick`], where the
+    /// (`grYosterCloudVaporMakeEffect`, `efManagerSparkleWhiteScaleMakeEffect`,
+    /// Hyrule's Twister), in order. The runtime calls it right after [`Stage::tick`], where the
     /// source makes them.
     pub fn flush_effects(&mut self, sink: &mut dyn crate::effect::HitEffectSink) {
         let fx = match &mut self.controller {
             Controller::Yoster(c) => core::mem::take(&mut c.fx),
             Controller::Inishie(c) => core::mem::take(&mut c.fx),
+            Controller::Hyrule(c) => core::mem::take(&mut c.fx),
             _ => return,
         };
         for e in fx.iter() {
             sink.weapon(&e);
+            if matches!(e, crate::wpeffect::WeaponEffect::TwisterMake(_)) && !sink.twister_made() {
+                if let Controller::Hyrule(c) = &mut self.controller {
+                    c.make_failed();
+                }
+            }
         }
     }
 

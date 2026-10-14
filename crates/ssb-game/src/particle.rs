@@ -24,12 +24,16 @@
 //! Script data comes through [`Banks`]; randomness through the game's one
 //! [`crate::rng`] sequence, as `syUtilsRandFloat` does.
 //!
+//! - **Vortex.** A `kind` 2 generator (Hyrule Castle's Twister) emits
+//!   `LBPARTICLE_FLAG_VORTEX` particles that circle its position on a
+//!   cone ([`vortex_step`]); it outlives its own life until they die.
+//!   [`eject_struct_id`] ends an effect by generator id.
+//!
 //! Not modelled, each unused by any bank script a match reaches (RE-413):
-//! the vortex generator (`kind` 2) and `LBPARTICLE_FLAG_VORTEX`'s motion,
 //! the attach and distance opcodes' `DObj` (`sLBParticleAttachDObjs`,
-//! empty in a match), and a generator's `dobj`.
+//! empty in a match).
 
-use ssb_engine::math::{sin_cos, sqrt, Mat4, Vec3};
+use ssb_engine::math::{div_nonzero, sin_cos, sqrt, sy_sin_cos_ushort, Mat4, Vec3};
 
 use crate::rng;
 
@@ -249,6 +253,9 @@ pub struct Generator {
     rotate_base: f32,
     rotate_target: f32,
     move_to: Vec3,
+    /// `generator_vars.vortex.f`: the speed its last vortex particle
+    /// rises at (the generator velocity's magnitude).
+    vortex_f: f32,
     vortex_lifetime: u16,
     /// `gn->dobj`'s world matrix (N64 rows, translation in row 3), which
     /// the host keeps current: the generator emits from its translation,
@@ -281,6 +288,7 @@ impl Generator {
         rotate_base: 0.0,
         rotate_target: 0.0,
         move_to: Vec3::ZERO,
+        vortex_f: 0.0,
         vortex_lifetime: 0,
         dobj: None,
     };
@@ -847,6 +855,70 @@ fn vortex_release(p: &mut Particles, pc: u8) {
     }
 }
 
+/// `lbParticleEjectStructID`: ejects every particle on list `link` made
+/// for `generator_id`, then every queued generator with that id. A vortex
+/// generator whose particles still live (on other lists) is not ejected
+/// but stops emitting and lingers one frame at a time until they die, as
+/// at the end of its life.
+pub fn eject_struct_id(
+    p: &mut Particles,
+    banks: &dyn Banks,
+    dead: &mut dyn ProcDead,
+    generator_id: u16,
+    link: usize,
+) {
+    let mut prev = NIL;
+    let mut cur = p.links[link];
+    while cur != NIL {
+        let c = usize::from(cur);
+        let next = p.structs[c].next;
+        if p.structs[c].generator_id == generator_id {
+            if prev == NIL {
+                p.links[link] = next;
+            } else {
+                p.structs[usize::from(prev)].next = next;
+            }
+            vortex_release(p, cur);
+            let xf = p.structs[c].xf;
+            release_transform(p, banks, dead, xf);
+            p.structs[c].next = p.free;
+            p.free = cur;
+            p.used_num -= 1;
+        } else {
+            prev = cur;
+        }
+        cur = next;
+    }
+    let mut prev = NIL;
+    let mut cur = p.gen_queued;
+    while cur != NIL {
+        let c = usize::from(cur);
+        let next = p.gens[c].next;
+        if p.gens[c].generator_id == generator_id {
+            let g = &mut p.gens[c];
+            if g.kind == 2 && g.vortex_lifetime != 0 {
+                g.update_rate = 0.0;
+                g.generator_lifetime = 1;
+                prev = cur;
+            } else {
+                if prev == NIL {
+                    p.gen_queued = next;
+                } else {
+                    p.gens[usize::from(prev)].next = next;
+                }
+                let xf = p.gens[c].xf;
+                release_transform(p, banks, dead, xf);
+                p.gens[c].next = p.gen_free;
+                p.gen_free = cur;
+                p.gen_used_num -= 1;
+            }
+        } else {
+            prev = cur;
+        }
+        cur = next;
+    }
+}
+
 /// Bytecode reads. A read past the end yields `END` or zero; no bank
 /// script reaches one.
 struct Csr<'a> {
@@ -1027,8 +1099,14 @@ pub fn update_struct(
         p.used_num -= 1;
         return next;
     }
-    let s = &mut p.structs[t];
-    if s.flags & flag::VORTEX == 0 {
+    if p.structs[t].flags & flag::VORTEX != 0 {
+        // Only a vortex generator sets the flag, so `gn` is set; the
+        // source would read through `NULL` otherwise.
+        if let Some(&g) = p.gens.get(usize::from(p.structs[t].gn)) {
+            vortex_step(&mut p.structs[t], &g);
+        }
+    } else {
+        let s = &mut p.structs[t];
         if s.flags & flag::GRAVITY != 0 {
             s.vel.y -= s.gravity;
         }
@@ -1041,7 +1119,44 @@ pub fn update_struct(
         s.pos.y += s.vel.y;
         s.pos.z += s.vel.z;
     }
-    s.next
+    p.structs[t].next
+}
+
+/// The `LBPARTICLE_FLAG_VORTEX` arm of `lbParticleUpdateStruct`
+/// (`lb/lbparticle.c:1345`): the particle circles its generator's position
+/// on a cone. `vel.x` is its angle, which turns by the generator's
+/// `gravity` a frame; `vel.y` its fraction of the radius; `vel.z` its
+/// height, which rises by `vortex.f`. The radius is `|unk_gn_0x38|`,
+/// widened with height by the tangent of `|unk_gn_0x3C|`. The particle's
+/// `gravity` and `friction` hold the two angles that turn the cone's axis.
+///
+/// Every sine and cosine is a `gSYSinTable` word (`syGetSinCosUShort`),
+/// and the arithmetic keeps the source's `f32` order; checked against the
+/// ROM's own code by `tools/r4300/vortex_hashes.py`. A zero cosine (a
+/// pitch of exactly a quarter turn, which no script has) divides by 1
+/// rather than to infinity, which a PSP traps on (RE-469).
+fn vortex_step(s: &mut Particle, g: &Generator) {
+    const WORD: f32 = 1.0 / 32768.0;
+    let (sx1, cx1) = sy_sin_cos_ushort(s.gravity);
+    let (sx2, cx2) = sy_sin_cos_ushort(s.friction);
+    let (sx1, cx1) = (sx1 as f32 * WORD, cx1 as f32 * WORD);
+    let (sx2, cx2) = (sx2 as f32 * WORD, cx2 as f32 * WORD);
+    s.vel.z += g.vortex_f;
+    let mut r = g.unk_38.abs();
+    let (sx3, cx3) = sy_sin_cos_ushort(g.unk_3c.abs());
+    let h = s.vel.z;
+    r += s.vel.z * div_nonzero(sx3 as f32, cx3 as f32);
+    r *= s.vel.y;
+    s.vel.x += g.gravity;
+    let (sx4, cx4) = sy_sin_cos_ushort(s.vel.x);
+    let (sx4, cx4) = (sx4 as f32, cx4 as f32);
+    r *= WORD;
+    let f0 = cx4 * r;
+    s.pos.x = ((cx4 * r * cx2) + (h * sx2)) + g.pos.x;
+    let f1 = r * sx4;
+    let t1 = -f0;
+    s.pos.y = ((((t1 * sx1) * sx2) + (f1 * cx1)) + ((h * sx1) * cx2)) + g.pos.y;
+    s.pos.z = ((((t1 * cx1) * sx2) - (f1 * sx1)) + ((h * cx1) * cx2)) + g.pos.z;
 }
 
 /// The wait and opcode loop. Returns the wait left.
@@ -1446,35 +1561,42 @@ pub fn make_generator(p: &mut Particles, banks: &dyn Banks, bank_id: u8, script_
     gn
 }
 
-/// `lbParticleMakeParam`: a generator's particle, updated once.
+/// `lbParticleMakeParam`: a generator's particle, updated once. Returns
+/// the particle, or [`NIL`] when the pool is empty; a particle that dies
+/// in that update is still returned, as in the source.
+#[allow(clippy::too_many_arguments)]
 fn make_param(
     p: &mut Particles,
     banks: &dyn Banks,
     dead: &mut dyn ProcDead,
     gn: u8,
+    flags: u32,
     pos: Vec3,
     vel: Vec3,
-) {
+    gravity: f32,
+    friction: f32,
+) -> u8 {
     let g = p.gens[usize::from(gn)];
     let pc = make_struct(
         p,
         NIL,
         g.bank_id,
-        u32::from(g.flags),
+        flags,
         g.texture_id,
         g.script,
         g.particle_lifetime,
         pos,
         vel,
         g.size,
-        g.gravity,
-        g.friction,
+        gravity,
+        friction,
         0,
         gn,
     );
     if pc != NIL {
         update_struct(p, banks, dead, pc, NIL, usize::from(g.bank_id >> 3));
     }
+    pc
 }
 
 /// `lbParticleGeneratorFuncRun`: each queued generator accumulates its rate
@@ -1568,14 +1690,45 @@ pub fn generator_func_run(p: &mut Particles, banks: &dyn Banks, dead: &mut dyn P
                     if g.kind == 3 {
                         v *= vmag;
                     }
-                    make_param(p, banks, dead, gn, pos, v);
+                    let flags = u32::from(g.flags);
+                    make_param(p, banks, dead, gn, flags, pos, v, g.gravity, g.friction);
                 }
                 1 => {
                     let r = rng::rand_float();
                     let pos = g.pos + (g.move_to - g.pos) * r;
-                    make_param(p, banks, dead, gn, pos, vel);
+                    let flags = u32::from(g.flags);
+                    make_param(p, banks, dead, gn, flags, pos, vel, g.gravity, g.friction);
                 }
-                // The vortex (RE-413): not modelled, emits nothing.
+                2 => {
+                    // The vortex: the particle starts at angle `pv0` and
+                    // radius fraction `pv1` on a cone whose axis is the
+                    // velocity's direction, and rises at its magnitude
+                    // ([`vortex_step`]). Only `angle1`'s sine and cosine
+                    // are taken here.
+                    let angle1 = sy_arc_tan2(vel.y, vel.z);
+                    let (sin1, cos1) = sin_cos(angle1);
+                    let angle2 = sy_arc_tan2(vel.x, vel.y * sin1 + vel.z * cos1);
+                    let magnitude = sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+                    let pv1 = if g.unk_38 < 0.0 {
+                        1.0
+                    } else {
+                        rng::rand_float()
+                    };
+                    pv0 = if g.unk_3c < 0.0 {
+                        pv0 + spb8
+                    } else {
+                        rng::rand_float() * TAU
+                    };
+                    p.gens[gi].vortex_f = magnitude;
+                    let flags = u32::from(g.flags | flag::VORTEX);
+                    let vel = Vec3::new(pv0, pv1, 0.0);
+                    let pc = make_param(p, banks, dead, gn, flags, Vec3::ZERO, vel, angle1, angle2);
+                    if pc != NIL {
+                        let g = &mut p.gens[gi];
+                        g.vortex_lifetime = g.vortex_lifetime.wrapping_add(1);
+                    }
+                }
+                // `sLBParticleGeneratorFuncDefault`, which no scene sets.
                 _ => {}
             }
             p.gens[gi].frame -= 1.0;

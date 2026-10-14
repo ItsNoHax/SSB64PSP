@@ -13,13 +13,15 @@ use crate::meshdraw::{self, DrawState, ParticleRect};
 /// `particles_unk2` (pack bank 3, `dFTYoshiData`). Runtime bank 2 is
 /// `itcommon` (pack bank 4), loaded by `itManagerInitItems` for monster flames.
 /// Runtime bank 5 is Yoshi's Island's `gryoster` (pack bank 7), whose
-/// cloud vapor only that stage makes. The other stage banks stay unloaded.
+/// cloud vapor only that stage makes; runtime bank 6 Hyrule Castle's
+/// `grhyrule`, its Twister. The other stage banks stay unloaded.
 pub struct PackBanks<'p, 'a> {
     pack: &'p Pack<'a>,
     common: ParticleBankDesc,
     yoshi: Option<ParticleBankDesc>,
     items: Option<ParticleBankDesc>,
     yoster: Option<ParticleBankDesc>,
+    hyrule: Option<ParticleBankDesc>,
 }
 
 /// The pack bank of `ssb_rom::particle::BANKS` entry `name`: the pack
@@ -37,6 +39,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             yoshi: pack.particle_bank(3),
             items: pack.particle_bank(4),
             yoster: pack_bank(pack, "gryoster"),
+            hyrule: pack_bank(pack, "grhyrule"),
         })
     }
 
@@ -49,6 +52,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             yoshi: None,
             items: None,
             yoster: None,
+            hyrule: None,
         })
     }
 
@@ -58,6 +62,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             ssb_game::effect::YOSHI_PARTICLE_BANK => self.yoshi,
             2 => self.items,
             ssb_game::effect::YOSTER_PARTICLE_BANK => self.yoster,
+            ssb_game::effect::HYRULE_PARTICLE_BANK => self.hyrule,
             _ => None,
         }
     }

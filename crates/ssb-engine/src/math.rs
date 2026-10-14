@@ -1465,6 +1465,65 @@ mod persp_f_tests {
         assert!(sy_persp_cot_exact(0.0).is_finite());
         assert_eq!(DTOR32.to_bits(), 0.017_453_292_f32.to_bits());
     }
+
+    /// `tools/r4300/matrix_hashes.py`'s `persp_inputs`: the game's cameras,
+    /// then a field-of-view sweep from 0.5 to 170 degrees in 0.37 steps.
+    fn persp_inputs() -> Vec<[f32; 4]> {
+        let a = (300.0f64 / 220.0) as f32;
+        let mut out = vec![
+            [38.0, a, 256.0, 39_936.0],
+            [30.0, a, 256.0, 39_936.0],
+            [18.607_187, a, 128.0, 16_384.0],
+            [11.982_265, (4.0f64 / 3.0) as f32, 100.0, 15_000.0],
+            [60.0, (4.0f64 / 3.0) as f32, 10.0, 12_800.0],
+            [45.0, 1.0, 1.0, 4_000.0],
+        ];
+        let aspects = [a, (4.0f64 / 3.0) as f32, 1.0, (16.0f64 / 9.0) as f32];
+        let planes = [
+            (256.0, 39_936.0),
+            (128.0, 16_384.0),
+            (32.0, 6_400.0),
+            (1.0, 1.5),
+        ];
+        let (mut k, mut fov) = (0usize, 0.5f64);
+        while fov < 170.0 {
+            let (n, f) = planes[(k / 4) % planes.len()];
+            out.push([fov as f32, aspects[k % aspects.len()], n, f]);
+            fov += 0.37;
+            k += 1;
+        }
+        out
+    }
+
+    fn persp_hash(f: impl Fn(&[f32; 4]) -> Mat4) -> u64 {
+        persp_inputs().iter().fold(0xcbf2_9ce4_8422_2325, |h, i| {
+            let m = f(i);
+            m.cols.iter().flatten().fold(h, |h, v| {
+                v.to_bits().to_le_bytes().iter().fold(h, |h, &b| {
+                    (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+                })
+            })
+        })
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_projections_match_the_rom() {
+        // Hashes of the ROM's own `syMatrixPerspFastF` (0x8001B248) and
+        // `syMatrixPerspF` (0x8001B4CC), scale 1, over 465 inputs, run by
+        // `tools/r4300/matrix_hashes.py`: every f32 of `mf[i][j]`, which
+        // is `cols[i][j]`.
+        assert_eq!(persp_inputs().len(), 465);
+        let fast = persp_hash(|i| Mat4::sy_persp_fast(i[0], i[1], i[2], i[3]));
+        assert_eq!(fast, 0xec27_1c0f_303d_dfb5);
+        let exact = persp_hash(|i| Mat4::sy_persp_f(i[0], i[1], i[2], i[3]));
+        assert_eq!(exact, 0x4696_e72a_0b3f_7d6f);
+        // A sample the script prints: the battle camera.
+        let m = Mat4::sy_persp_fast(38.0, (300.0f64 / 220.0) as f32, 256.0, 39_936.0);
+        assert_eq!(m.cols[0][0].to_bits(), 0x4008_5c92);
+        assert_eq!(m.cols[1][1].to_bits(), 0x4039_f299);
+        assert_eq!(m.cols[3][2].to_bits(), 0xc400_d368);
+    }
 }
 
 #[cfg(test)]

@@ -874,6 +874,17 @@ mod tests {
         assert_eq!(sca, 0x7aa6_1fcf_d076_712c);
         let rpy = display_hash(|i| Mat4::from_tr_display([1.0, 2.0, 3.0], [i[0], i[1], i[2]]));
         assert_eq!(rpy, 0x9e2b_b5a5_8a59_aa47);
+        // The rotation-only builders hash the same and write no
+        // translation (the script checks row 3 is (0, 0, 0, 1)):
+        // `lbCommonMatrixRotSca` (0x800C82AC, matrix kind 0x45) and
+        // `syMatrixRotRpyR` (0x8001BF20). Here they are the same chains
+        // with a zero translation.
+        let rot_sca = display_hash(|i| {
+            Mat4::from_trs_display([0.0; 3], [i[0], i[1], i[2]], [i[3], i[4], i[5]])
+        });
+        assert_eq!(rot_sca, 0x7aa6_1fcf_d076_712c);
+        let rot = display_hash(|i| Mat4::from_tr_display([0.0; 3], [i[0], i[1], i[2]]));
+        assert_eq!(rot, 0x9e2b_b5a5_8a59_aa47);
         // A sample the script prints: scale 0.8 truncates to 204/256.
         let m = Mat4::from_trs_display(
             [0.0; 3],
