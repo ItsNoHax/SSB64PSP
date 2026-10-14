@@ -558,12 +558,12 @@ impl CachedVertexPose {
 
     /// One vertex, as [`pose_cached_vertex`] poses it.
     pub fn pose(&self, vertex: PackedVertex, binding: &[u8]) -> PackedVertex {
-        self.pose_with_sqrt(vertex, binding, libm::sqrtf)
+        self.pose_with_sqrt(vertex, binding, ssb_engine::math::sqrt_exact)
     }
 
     /// [`Self::pose`] with the caller's square root, which must round
-    /// correctly as `libm::sqrtf` does so the result is bit-identical: the
-    /// PSP passes its FPU's `sqrt.s` instead of `libm`'s software one.
+    /// correctly as [`ssb_engine::math::sqrt_exact`] does so the result is
+    /// bit-identical.
     #[inline(always)]
     pub fn pose_with_sqrt(
         &self,
@@ -5618,7 +5618,7 @@ mod tests {
     }
 
     /// Any correctly rounded square root poses bit-identically to
-    /// `libm`'s, which is what lets the PSP pass its FPU's `sqrt.s`.
+    /// `pose`'s, which is what lets the PSP's `sqrt.s` stand in.
     #[test]
     fn pose_with_a_correctly_rounded_sqrt_matches_pose() {
         use crate::scene::Mat4;

@@ -91,6 +91,9 @@ version = "0.1.0"
 [[package]]
 name = "ssb-engine"
 version = "0.1.0"
+dependencies = [
+ "libm",
+]
 
 [[package]]
 name = "ssb-game"
@@ -114,7 +117,6 @@ dependencies = [
 name = "ssb-rom"
 version = "0.1.0"
 dependencies = [
- "libm",
  "sha1_smol",
  "ssb-engine",
  "ssb-tablegen",

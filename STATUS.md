@@ -17,11 +17,11 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-501: scene read-ahead. Background reads started earlier take first-frame
-loads off VS to results (PSP-2000 130 to 27 ms), the stage select to battle
-(179 to 77 ms) and vs-mode to players-vs (141 to 84 ms); no tick or pixel
-changes. Gaps and the next `MS8` lever are in
-[`PLAN.md`](PLAN.md#remaining-work).
+RE-502: gameplay `sqrt` is a correctly-rounded `sqrt.s` on the PSP (as the
+N64's libultra), `std` on the host: bit-identical on 257,227 inputs. One
+golden rebaselined (`r2-metal-mario-fighter`, 2 pixels). Remaining math
+divergence (`sin_cos`, `atan2`, `tan`, `acos`) and the next `MS8` lever are
+in [`PLAN.md`](PLAN.md#remaining-work).
 
 ## Blockers
 
@@ -33,14 +33,14 @@ changes. Gaps and the next `MS8` lever are in
 
 ## Verification
 
-Baseline after scene read-ahead (RE-501):
+Baseline after the exact gameplay sqrt (RE-502):
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass. Clippy (`cargo +1.98.0`) and
   `cargo fmt --check` pass. One parallel run once failed `particle_runtime.rs:642`
   (swirl draw hash) and passed on rerun (PLAN.md).
 - Both PSP builds (`psp-game`, `psp-asset-viewer`) compile in release.
-- Goldens: `tools/golden.sh verify`: 201 of 201 match (pack v109).
+- Goldens: `tools/golden.sh verify`: 201 of 201 match (pack v109; one rebaselined).
 - PPSSPP smoke: `run-ppsspp-headless.sh --crate psp-game --scene vs4@2400`
   exits 0 and writes a screenshot.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1, `profile,

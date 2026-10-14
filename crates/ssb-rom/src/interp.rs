@@ -232,7 +232,9 @@ fn quart_sum(x: f32, cof: &[f32; 5]) -> f32 {
     if sum < 0.0 && sum > -0.001 {
         sum = 0.0;
     }
-    libm::sqrtf(sum)
+    // Unguarded, like the original's `sqrtf`: a sum at or below -0.001 is
+    // NaN, as on the N64.
+    ssb_engine::math::sqrt_exact(sum)
 }
 
 /// `syInterpGetCubicIntegralApprox`: Simpson's rule over eight intervals.

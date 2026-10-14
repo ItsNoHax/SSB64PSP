@@ -32,6 +32,7 @@ version = "0.1.0"
 name = "ssb-engine"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "ssb-rom",
 ]
 
@@ -47,7 +48,6 @@ dependencies = [
 name = "ssb-rom"
 version = "0.1.0"
 dependencies = [
- "libm",
  "sha1_smol",
  "ssb-engine",
  "ssb-game",

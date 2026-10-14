@@ -41,6 +41,10 @@ frame_timer = ["ssb-psp-runtime/frame_timer"]
 # Renders the fixed audio scenario (`ssb_engine::audio::golden`) at audio
 # start and appends its PCM hashes and render times to `selftest.log`.
 audio_selftest = ["ssb-psp-runtime/audio_selftest"]
+# Checks the FPU square root against the host's bits at boot
+# (`ssb_psp_runtime::sqrt_selftest`) and appends the result to
+# `selftest.log`.
+sqrt_selftest = ["ssb-psp-runtime/sqrt_selftest"]
 # Copies the audio thread's output into a ring written to `audio.raw`
 # beside the EBOOT (s16le stereo, 32000 Hz), for exact comparisons:
 # PPSSPPHeadless cannot record audio (`ssb_psp_runtime::audio`).

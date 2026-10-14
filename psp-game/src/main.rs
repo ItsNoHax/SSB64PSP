@@ -2261,6 +2261,8 @@ fn psp_main() {
     ssb_psp_runtime::memory::sample();
     psp::enable_home_button();
     ssb_psp_runtime::timing::full_speed();
+    #[cfg(feature = "sqrt_selftest")]
+    ssb_psp_runtime::sqrt_selftest::run();
     unsafe { run() }
 }
 

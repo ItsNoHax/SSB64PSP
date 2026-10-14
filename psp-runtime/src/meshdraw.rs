@@ -26,6 +26,10 @@ use psp::sys::{
     ScePspFVector3, ScePspFVector4, TexturePixelFormat, VertexType,
 };
 
+// The FPU's `sqrt.s`: correctly rounded on the PSP-2000 (RE-497), so skinning
+// poses exactly as the host does, two of which a skinned vertex otherwise
+// spends most of its time in. Unguarded: every input here is a sum of squares.
+use ssb_engine::math::sqrt_exact as fpu_sqrt;
 use ssb_rom::pack::{
     flags, MeshDesc, NodeDesc, ObjectDesc, Pack, PackedVertex, PrimDesc, TextureDesc,
 };
@@ -2467,18 +2471,6 @@ unsafe fn draw_node_mesh(
         }
     }
     draw_mesh(pack, mesh, st, mat_anim, effect_mat_anim)
-}
-
-/// The FPU's `sqrt.s`: correctly rounded on the PSP-2000 (checked against
-/// exact bounds for 249,001 inputs on hardware), so skinning poses exactly
-/// as `libm`'s software `sqrtf` does, two of which a skinned vertex
-/// otherwise spends most of its time in.
-#[inline(always)]
-fn fpu_sqrt(x: f32) -> f32 {
-    let r: f32;
-    // SAFETY: `sqrt.s` only reads and writes FPU registers.
-    unsafe { core::arch::asm!("sqrt.s {0}, {1}", out(freg) r, in(freg) x, options(pure, nomem, nostack)) };
-    r
 }
 
 /// Bounding box of a whole object, in the pack's normalised units.

@@ -9,6 +9,11 @@ description = "Platform-agnostic engine abstractions (Layer B) for the SSB64 PSP
 
 [dependencies]
 
+# `math::sqrt_exact` on `no_std` targets other than the PSP (CI's
+# portability build): the PSP uses `sqrt.s`, the host `std`.
+[target.'cfg(not(target_arch = "mips"))'.dependencies]
+libm = "0.2"
+
 [features]
 default = ["std"]
 std = []

@@ -29,6 +29,8 @@ pub mod profile;
 pub mod savedata;
 pub mod scene;
 pub mod scene_files;
+#[cfg(feature = "sqrt_selftest")]
+pub mod sqrt_selftest;
 #[cfg(feature = "texture_probe")]
 pub mod texprobe;
 pub mod thread;

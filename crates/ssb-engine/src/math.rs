@@ -323,32 +323,58 @@ impl Mul for Mat4 {
 
 // --- no_std math shims -----------------------------------------------------
 //
-// `f32::sqrt` and friends live in `std`. On the PSP we get them from `libm`
-// via the `psp` crate's intrinsics; here we route through `core` where
-// possible and fall back to small implementations otherwise, so the same
-// source builds for host tests and for the device.
+// `f32::sqrt` and friends live in `std`. The device has no `std`: square
+// root uses the FPU's `sqrt.s` and the rest fall back to small
+// implementations, so the same source builds for host tests and the device.
 
-/// Square root, routed through `std` on the host and a small Newton-Raphson
-/// on the device. Public so game code needs no `libm` dependency of its own.
+pub mod sqrt_golden;
+
+/// Correctly rounded single-precision square root, the N64's own: libultra's
+/// `sqrtf` is a leaf around `sqrt.s` (`refs/ssb-decomp-re/src/libultra/gu/sqrtf.s`),
+/// IEEE round-to-nearest-even on the R4300. The PSP's Allegrex `sqrt.s` rounds
+/// the same way on hardware (RE-497), so the device, the host and the original
+/// agree bit for bit.
+///
+/// No guard: a negative input is NaN on the host and a quiet NaN on the N64,
+/// but traps on a PSP with FPU exceptions enabled (RE-469). Use [`sqrt`]
+/// unless the input is known non-negative.
 #[cfg(feature = "std")]
-#[inline]
-pub fn sqrt(v: f32) -> f32 {
+#[inline(always)]
+pub fn sqrt_exact(v: f32) -> f32 {
     v.sqrt()
 }
 
-#[cfg(not(feature = "std"))]
-#[inline]
+#[cfg(all(not(feature = "std"), target_arch = "mips"))]
+#[inline(always)]
+pub fn sqrt_exact(v: f32) -> f32 {
+    let r: f32;
+    // SAFETY: `sqrt.s` only reads and writes FPU registers.
+    unsafe {
+        core::arch::asm!("sqrt.s {0}, {1}", out(freg) r, in(freg) v, options(pure, nomem, nostack));
+    }
+    r
+}
+
+/// Other `no_std` targets (CI's `thumbv7em-none-eabi` portability build) have
+/// no FPU square root to call; `libm`'s software one rounds correctly too.
+#[cfg(all(not(feature = "std"), not(target_arch = "mips")))]
+#[inline(always)]
+pub fn sqrt_exact(v: f32) -> f32 {
+    libm::sqrtf(v)
+}
+
+/// [`sqrt_exact`] with zero for zero, negative and `-0.0` inputs, on every
+/// target. The guard keeps a negative rounding residue from trapping on the
+/// PSP (RE-469) and gives `1 / sqrt` callers a positive zero to divide by.
+/// NaN passes through as NaN. Public so game code needs no `libm` dependency
+/// of its own.
+#[inline(always)]
 pub fn sqrt(v: f32) -> f32 {
-    // Newton-Raphson from a bit-twiddled seed. Accurate to well under a ULP
-    // after four iterations for the magnitudes this code sees.
     if v <= 0.0 {
-        return 0.0;
+        0.0
+    } else {
+        sqrt_exact(v)
     }
-    let mut x = f32::from_bits((v.to_bits() >> 1) + 0x1FC0_0000);
-    for _ in 0..4 {
-        x = 0.5 * (x + v / x);
-    }
-    x
 }
 
 /// Sine and cosine of the same angle (radians). Public, like [`sqrt`], so

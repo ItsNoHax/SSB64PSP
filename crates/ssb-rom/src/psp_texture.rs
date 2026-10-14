@@ -265,25 +265,11 @@ fn acos_poly(x: f32) -> f32 {
     ret = ret * x + 0.0742610;
     ret = ret * x - 0.2121144;
     ret = ret * x + 1.5707288;
-    ret *= sqrt_approx(1.0 - x);
+    // The guarded `sqrt`: `1 - |x|` is in `[0, 1]` for the clamped `dot`;
+    // anything past 1 gives 0, not NaN.
+    ret *= ssb_engine::math::sqrt(1.0 - x);
     ret -= 2.0 * negate * ret;
     negate * core::f32::consts::PI + ret
-}
-
-/// Newton-Raphson square root for [`acos_poly`]. Not exported --
-/// `ssb-engine::math::sqrt` is the public equivalent, but this crate has no
-/// dependency on `ssb-engine` and the domain here (`[0, 2]`) is narrow enough
-/// not to need one.
-#[cfg(any(not(feature = "std"), test))]
-fn sqrt_approx(v: f32) -> f32 {
-    if v <= 0.0 {
-        return 0.0;
-    }
-    let mut x = f32::from_bits((v.to_bits() >> 1) + 0x1FC0_0000);
-    for _ in 0..4 {
-        x = 0.5 * (x + v / x);
-    }
-    x
 }
 
 /// `G_TEXTURE_GEN_LINEAR`'s curve, mapping `dot` in `[-1, 1]` onto `u` in

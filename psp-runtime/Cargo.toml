@@ -34,6 +34,10 @@ frame_timer = []
 # Renders the fixed audio scenario (`ssb_engine::audio::golden`) at audio
 # start and appends its PCM hashes and render times to `selftest.log`.
 audio_selftest = []
+# Runs `ssb_engine::math::sqrt` over `ssb_engine::math::sqrt_golden`'s
+# inputs at boot and appends its result and output hash to `selftest.log`
+# (`sqrt_selftest.rs`). Off by default.
+sqrt_selftest = []
 # Copies every submitted audio block into a ring the game thread writes to
 # `audio.raw` beside the executable (`audio::dump_flush`): s16le stereo at
 # 32000 Hz. Off by default.

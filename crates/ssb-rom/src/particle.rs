@@ -7,6 +7,7 @@
 use alloc::vec::Vec;
 
 use crate::texture::{BitSize, Format};
+use ssb_engine::math::sqrt;
 
 /// One source-named particle bank pair in the supported US ROM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -435,20 +436,6 @@ impl Rng {
         self.0 = step;
         (((step >> 16) & 0xFFFF) as u32 as f32) / 65536.0
     }
-}
-
-/// Newton-Raphson square root. `core` has no `sqrt` without `std`/`libm`;
-/// mirrors the no-dependency convention `ssb_engine::math::sqrt` already
-/// uses for the same reason.
-fn sqrt(v: f32) -> f32 {
-    if v <= 0.0 {
-        return 0.0;
-    }
-    let mut x = f32::from_bits((v.to_bits() >> 1) + 0x1FC0_0000);
-    for _ in 0..4 {
-        x = 0.5 * (x + v / x);
-    }
-    x
 }
 
 /// `syUtilsArcTan` (`refs/ssb-decomp-re/src/sys/utils.c:25-77`): an exact,
