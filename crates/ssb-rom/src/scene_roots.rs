@@ -98,6 +98,68 @@ pub const PLAYERS_TRAINING: [u32; 8] = [0x11, 0x17, 0x00, 0x14, 0x15, 0x12, 0x13
 pub const PLAYERS_BONUS: [u32; 11] = PLAYERS_1P;
 /// `mnMaps` (`mnmaps.c:19`).
 pub const MAPS: [u32; 5] = [0x14, 0x15, 0x1E, 0x21, 0x1A];
+/// The stage model file (`llStage<Name>File2`) each VS stage's preview
+/// draws, by `gkind`: the file of the pack stage's layer objects, one file
+/// of the map closure `mnMapsLoadMapFile` reads into a model heap each time
+/// the cursor lands on the stage (`mnMapsMakePreview`).
+pub const STAGE_PREVIEW_MODELS: [u32; 9] = [0x6A, 0x6D, 0x6C, 0x69, 0x71, 0x6F, 0x68, 0x70, 0x6B];
+/// The file of each VS stage's `MPGroundData.wallpaper`, by `gkind`, which
+/// a VS stage select's preview shows (`mnMapsMakePreviewWallpaper`): the
+/// pack's stage wallpaper sprite's source, in the stage's map closure.
+pub const STAGE_WALLPAPERS: [u32; 9] = [0x5A, 0x63, 0x5C, 0x59, 0x5F, 0x5D, 0x58, 0x5E, 0x5B];
+/// The Training stage select's preview wallpapers past [`MAPS`]' black one
+/// (`dMNMapsTrainingModeFileInfos`): `GRWallpaperTrainingYellow`, `...Blue`.
+pub const MAPS_TRAINING_WALLPAPERS: [u32; 2] = [0x1B, 0x1C];
+
+/// The demo clips a character select poses its fighters with: `Wait`
+/// before a pick, `Win1` to `Win4` after (`mnPlayersVSGetStatusSelected`
+/// and the 1P selects').
+pub const SELECT_CLIP_SLOTS: [usize; 5] = [
+    crate::anim::SLOT_WAIT,
+    crate::anim::SLOT_WIN1,
+    crate::anim::SLOT_WIN2,
+    crate::anim::SLOT_WIN3,
+    crate::anim::SLOT_WIN4,
+];
+/// The demo clips the VS results screen poses its fighters with
+/// (`mnVSResultsMakeFighter`): `Win1` to `Win4` and `Lose`.
+pub const RESULTS_CLIP_SLOTS: [usize; 5] = [
+    crate::anim::SLOT_WIN1,
+    crate::anim::SLOT_WIN2,
+    crate::anim::SLOT_WIN3,
+    crate::anim::SLOT_WIN4,
+    crate::anim::SLOT_LOSE,
+];
+/// The 1P continue's clips (`mnPlayers1PGameContinue`): the dropped
+/// figure, then its standing pose.
+pub const CONTINUE_CLIP_SLOTS: [usize; 2] = [
+    crate::anim::SLOT_FIGURE_DROPPED,
+    crate::anim::SLOT_FIGURE_STAND,
+];
+/// The ending's clips (`mvEnding`): the dropped figure, then `Wait`.
+pub const ENDING_CLIP_SLOTS: [usize; 2] =
+    [crate::anim::SLOT_FIGURE_DROPPED, crate::anim::SLOT_WAIT];
+
+/// The archive files of `kinds`' clips in `slots` (the figatrees a scene's
+/// demo poses play), without the rest of each kind's set: the N64 reads
+/// each into the fighter's figatree heap as the status starts.
+pub fn clip_files(
+    pack: &crate::pack::Pack<'_>,
+    kinds: impl IntoIterator<Item = u32>,
+    slots: &[usize],
+) -> alloc::vec::Vec<u32> {
+    let mut v: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
+    for kind in kinds {
+        for &slot in slots {
+            if let Some(a) = pack.fighter_anim(kind, slot as u32) {
+                if a.script_len != 0 && !v.contains(&a.source_file) {
+                    v.push(a.source_file);
+                }
+            }
+        }
+    }
+    v
+}
 /// `mnVSResults` (`mnvsresults.c:72`).
 pub const VS_RESULTS: [u32; 8] = [0x22, 0x26, 0x12, 0xA4, 0x23, 0x24, 0x25, 0x19];
 /// `sc1PIntro` (`sc1pintro.c:18`).

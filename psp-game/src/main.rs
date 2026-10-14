@@ -4393,7 +4393,7 @@ unsafe fn session_frame(
                             Some(new_fighter_select(s.training_scene, s.backup.fighter_mask, capture_scene.is_some(), sim_frame_index));
                         s.fighter_select_fighters = None;
                         s.screen = Screen::FighterSelect;
-                        scene_load::scene("players-training", scene_load::scene_roots(MScene::Players1PTraining));
+                        load_players_training();
                     }
                 }
             }
@@ -4472,6 +4472,7 @@ unsafe fn session_frame(
                         s.players_vs = Some(new_players_vs(s.vs_state, s.scene_gkind, &s.backup, true));
                         s.players_vs_fighters = None;
                         s.screen = Screen::PlayersVs;
+                        load_scene(s, MScene::PlayersVs);
                     } else {
                         s.maps_training_gkind = saved.remembered;
                         s.fighter_select = Some(ssb_game::fighter_select::FighterSelect::new(
@@ -4482,7 +4483,7 @@ unsafe fn session_frame(
                         ));
                         s.fighter_select_fighters = None;
                         s.screen = Screen::FighterSelect;
-                        scene_load::scene("players-training", scene_load::scene_roots(MScene::Players1PTraining));
+                        load_players_training();
                     }
                 }
                 Some(ssb_game::stage_select::Outcome::Timeout) => {
@@ -4495,7 +4496,10 @@ unsafe fn session_frame(
                     s.scene_gkind = saved.gkind;
                     go_scene(s, pack.as_ref(), MScene::Title, MScene::Maps, capture_scene.is_some());
                 }
-                None => tick_stage_select_layer(pack.as_ref(), s),
+                None => {
+                    tick_stage_select_layer(pack.as_ref(), s);
+                    s.read_ahead_stage();
+                }
             },
             Screen::Training => {
                 #[cfg(feature = "headless_capture")]
@@ -4641,6 +4645,16 @@ unsafe fn session_frame(
             go_scene(s, pack.as_ref(), next, from, capture_scene.is_some());
             return;
         }
+        // The VS results' files, read while the battle's end plays (game
+        // set, time up, or a reset from the pause menu), D-046. A sudden
+        // death keeps them for the results after it.
+        if s.screen == Screen::Training
+            && s.campaign.is_none()
+            && s.demo.is_none()
+            && s.vs_battle.as_ref().is_some_and(|b| b.end.is_some() || b.is_reset)
+        {
+            scene_load::read_ahead("results", 0, scene_load::results_roots);
+        }
         // `scVSBattleStartScene`: a tied time battle goes to sudden
         // death on the same stage, then to the results.
         if vs_done && s.campaign.is_some() {
@@ -4695,12 +4709,7 @@ unsafe fn session_frame(
                     s.vs_results_fighters = fighters;
                     s.screen = Screen::Results;
                     // `mnVSResultsFuncStart`'s files and all twelve kinds.
-                    let mut roots = alloc::vec::Vec::from(ssb_rom::scene_roots::VS_RESULTS);
-                    roots.extend(ssb_rom::scene_roots::EF_COMMON);
-                    roots.extend(ssb_rom::scene_roots::FT_MANAGER);
-                    roots.extend(&ssb_rom::scene_roots::FIGHTER_MAIN[..12]);
-                    roots.extend(ssb_rom::scene_roots::TRANSITIONS);
-                    scene_load::scene("results", roots);
+                    scene_load::scene("results", scene_load::results_roots());
                 }
             }
         }
@@ -4784,7 +4793,7 @@ fn training_menu_frame(
             s.fighter_select = Some(new_fighter_select(s.training_scene, s.backup.fighter_mask, is_capture, sim_frame_index));
             s.fighter_select_fighters = None;
             s.screen = Screen::FighterSelect;
-            scene_load::scene("players-training", scene_load::scene_roots(MScene::Players1PTraining));
+            load_players_training();
         }
         return false;
     }
@@ -4872,6 +4881,9 @@ struct Session {
     stage_select_layer: Option<ssb_game::stage_select_layer::Layer>,
     /// The select's preview model and its clocks, on the heap.
     stage_preview: alloc::boxed::Box<stage_screen::Preview>,
+    /// The stage select's cursor slot and the ticks it has rested there,
+    /// for [`Session::read_ahead_stage`].
+    stage_dwell: (usize, u32),
     /// The battle's wallpaper `SObj` and its sprite (RE-419).
     wallpaper: ssb_game::wallpaper::Wallpaper,
     wallpaper_sprite: Option<ssb_rom::pack::SpriteDesc>,
@@ -4890,6 +4902,12 @@ struct Session {
     /// [`ssb_game::opening::TITLE_START_TIC`].
     title_pending: bool,
 }
+
+/// Ticks the stage select's cursor rests on a stage before its battle
+/// files are read ahead: longer than a held direction's scroll wait
+/// (`BUTTON_SCROLL_WAIT`, 12), so a stage the cursor passes over reads
+/// nothing.
+const STAGE_DWELL_TICS: u32 = 20;
 
 impl Session {
     /// [`enter_training`] into this session's world with `roster`,
@@ -4966,7 +4984,44 @@ impl Session {
         self.stage_select = ssb_game::stage_select::StageSelect::new(remembered, self.backup.unlock_mask);
         self.stage_select_layer = Some(ssb_game::stage_select_layer::Layer::new(&self.stage_select, !self.vs));
         self.screen = Screen::StageSelect;
-        scene_load::scene("maps", scene_load::scene_roots(MScene::Maps));
+        scene_load::scene("maps", scene_load::maps_roots(!self.vs));
+        // The battle's fighters are final: read their files while the
+        // stage is picked (D-046), and the stage's once the cursor rests.
+        let vs = self.vs;
+        let roster = if vs { vs_roster(&self.vs_state) } else { training_roster(self.training_scene) };
+        if let Some(p) = ssb_psp_runtime::scene_files::pack() {
+            let kinds: alloc::vec::Vec<u32> = roster.iter().flatten().map(|e| e.kind as u32).collect();
+            scene_load::read_ahead("battle", u32::MAX, || {
+                let mut roots = scene_load::fighter_battle_roots(p, &kinds);
+                if !vs {
+                    roots.extend(ssb_rom::scene_roots::TRAINING);
+                }
+                roots
+            });
+        }
+        self.stage_dwell = (self.stage_select.cursor_slot, STAGE_DWELL_TICS);
+        self.read_ahead_stage();
+    }
+
+    /// Reads the battle files of the stage under the stage select's cursor
+    /// in the background once the cursor has rested on it
+    /// [`STAGE_DWELL_TICS`] ticks, or at once on the slot the select opens
+    /// on. The random slot's stage is drawn only when it is confirmed
+    /// (`StageSelect::save`), so it reads nothing ahead.
+    fn read_ahead_stage(&mut self) {
+        let slot = self.stage_select.cursor_slot;
+        if self.stage_dwell.0 != slot {
+            self.stage_dwell = (slot, 0);
+        }
+        if self.stage_dwell.1 < STAGE_DWELL_TICS {
+            self.stage_dwell.1 += 1;
+            return;
+        }
+        if slot == ssb_game::stage_select::RANDOM_SLOT {
+            return;
+        }
+        let gkind = ssb_game::stage_select::slot_gkind(slot);
+        scene_load::read_ahead("battle", u32::from(gkind), || scene_load::stage_battle_roots(gkind));
     }
 }
 
@@ -5097,6 +5152,7 @@ unsafe fn run() -> ! {
         campaign: None,
         stage_select_layer: None,
         stage_preview: stage_screen::start(),
+        stage_dwell: (0, 0),
         wallpaper: ssb_game::wallpaper::Wallpaper::make(ssb_game::wallpaper::Kind::Static),
         wallpaper_sprite: None,
         lead: play::Lead::Pad,
@@ -5510,7 +5566,10 @@ fn load_scene(s: &Session, scene: MScene) {
         MScene::Explain => MScene::Characters,
         MScene::Characters => MScene::AutoDemo,
         MScene::AutoDemo => MScene::Startup,
-        _ => return,
+        _ => {
+            read_ahead_menus(scene);
+            return;
+        }
     };
     let mut roots = scene_load::scene_roots(next);
     if next == MScene::AutoDemo {
@@ -5522,6 +5581,42 @@ fn load_scene(s: &Session, scene: MScene) {
         }
     }
     scene_load::prefetch(scene_load::name(next), roots);
+}
+
+/// The menus' read-ahead (D-046): each menu starts reading the scenes its
+/// entries lead to, so a pick does not wait for the memory stick. The mode
+/// select reads its four small submenus; the 1P and VS mode menus their
+/// character selects; a character select the stage select's previews.
+fn read_ahead_menus(scene: MScene) {
+    let next: &[MScene] = match scene {
+        MScene::ModeSelect => &[MScene::OnePMode, MScene::VsMode, MScene::Option, MScene::Data],
+        MScene::OnePMode => &[
+            MScene::Players1PGame,
+            MScene::Players1PTraining,
+            MScene::Players1PBonus1,
+            MScene::Players1PBonus2,
+        ],
+        MScene::VsMode => &[MScene::PlayersVs],
+        MScene::PlayersVs => {
+            scene_load::read_ahead("maps", 0, || scene_load::maps_roots(false));
+            return;
+        }
+        MScene::Players1PTraining => {
+            scene_load::read_ahead("maps", 1, || scene_load::maps_roots(true));
+            return;
+        }
+        _ => return,
+    };
+    for &n in next {
+        scene_load::read_ahead(scene_load::name(n), 0, || scene_load::scene_roots(n));
+    }
+}
+
+/// Training's character select's files, and its stage select's read
+/// ahead (`nSCKindPlayers1PTraining`).
+fn load_players_training() {
+    scene_load::scene("players-training", scene_load::scene_roots(MScene::Players1PTraining));
+    read_ahead_menus(MScene::Players1PTraining);
 }
 
 /// Starts a scene the host runs, entered from `prev`.
@@ -5544,7 +5639,6 @@ fn start_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MS
             s.fighter_select = Some(new_fighter_select(s.training_scene, s.backup.fighter_mask, capture, 0));
             s.fighter_select_fighters = None;
             s.screen = Screen::FighterSelect;
-            scene_load::scene("players-training", scene_load::scene_roots(MScene::Players1PTraining));
         }
         MScene::Players1PBonus1 | MScene::Players1PBonus2 => {
             use ssb_game::players_1p_bonus::{BonusKind, Players1PBonus, SceneData};

@@ -134,6 +134,18 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
         }
     }
     let playable = || r::FIGHTER_MAIN[..12].iter().copied();
+    // A character select: its files, every playable kind, and the demo
+    // clips it poses them with (`Wait`, then `Win1` to `Win4` once
+    // picked), which the N64 reads per status into each figatree heap.
+    let players = |v: &mut Vec<u32>, files: &[u32]| {
+        v.extend_from_slice(files);
+        v.extend(r::EF_COMMON);
+        v.extend(r::FT_MANAGER);
+        v.extend(playable());
+        if let Some(p) = pack {
+            v.extend(r::clip_files(p, 0..12, &r::SELECT_CLIP_SLOTS));
+        }
+    };
     match s {
         Scene::Startup => v.extend(r::STARTUP),
         Scene::Title => v.extend(r::TITLE),
@@ -155,31 +167,11 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
             v.extend(r::FT_MANAGER);
             v.extend(playable());
         }
-        Scene::PlayersVs => {
-            v.extend(r::PLAYERS_VS);
-            v.extend(r::EF_COMMON);
-            v.extend(r::FT_MANAGER);
-            v.extend(playable());
-        }
-        Scene::Players1PGame => {
-            v.extend(r::PLAYERS_1P);
-            v.extend(r::EF_COMMON);
-            v.extend(r::FT_MANAGER);
-            v.extend(playable());
-        }
-        Scene::Players1PTraining => {
-            v.extend(r::PLAYERS_TRAINING);
-            v.extend(r::EF_COMMON);
-            v.extend(r::FT_MANAGER);
-            v.extend(playable());
-        }
-        Scene::Players1PBonus1 | Scene::Players1PBonus2 => {
-            v.extend(r::PLAYERS_BONUS);
-            v.extend(r::EF_COMMON);
-            v.extend(r::FT_MANAGER);
-            v.extend(playable());
-        }
-        Scene::Maps => v.extend(r::MAPS),
+        Scene::PlayersVs => players(&mut v, &r::PLAYERS_VS),
+        Scene::Players1PGame => players(&mut v, &r::PLAYERS_1P),
+        Scene::Players1PTraining => players(&mut v, &r::PLAYERS_TRAINING),
+        Scene::Players1PBonus1 | Scene::Players1PBonus2 => players(&mut v, &r::PLAYERS_BONUS),
+        Scene::Maps => v.extend(maps_roots(false)),
         Scene::Explain => {
             v.extend(r::EXPLAIN);
             // Its battle's, held from the scene's start (RE-476).
@@ -220,6 +212,27 @@ pub fn explain_battle_roots(pack: &Pack<'_>) -> Vec<u32> {
     battle_roots(pack, ssb_game::explain::GKIND, &kinds)
 }
 
+/// The read-aheads [`read_ahead`] started since the scene began, by name
+/// and key.
+static mut AHEAD: Vec<(&'static str, u32)> = Vec::new();
+
+fn ahead() -> &'static mut Vec<(&'static str, u32)> {
+    // SAFETY: as `base`.
+    unsafe { &mut *core::ptr::addr_of_mut!(AHEAD) }
+}
+
+/// [`prefetch`]es `roots()` for `name` once per scene for each `key` (a
+/// stage, say): the files the scene's next step will want, read while it
+/// runs. Nothing the game ticks or draws depends on it: a file not yet
+/// read when the next scene starts is read then (D-046).
+pub fn read_ahead(name: &'static str, key: u32, roots: impl FnOnce() -> Vec<u32>) {
+    if ahead().contains(&(name, key)) {
+        return;
+    }
+    ahead().push((name, key));
+    prefetch(name, roots());
+}
+
 /// Starts reading `roots`, the files of the scene expected next, in the
 /// background (`scene_files::prefetch`, RE-476).
 pub fn prefetch(name: &'static str, roots: Vec<u32>) {
@@ -239,16 +252,36 @@ pub fn prefetch(name: &'static str, roots: Vec<u32>) {
 }
 
 /// The files of a battle on stage `gkind` among `kinds` (`FTKind`
-/// ordinals): the interface, effects, items, the fighter manager's files,
-/// the stage's map closure, and each fighter's main closure and figatrees
-/// (all of them: the N64 streams one per status from the cartridge,
-/// which a memory stick is too slow for).
+/// ordinals): [`fighter_battle_roots`] and [`stage_battle_roots`].
 pub fn battle_roots(pack: &Pack<'_>, gkind: u8, kinds: &[u32]) -> Vec<u32> {
+    let mut v = fighter_battle_roots(pack, kinds);
+    v.extend(stage_battle_roots(gkind));
+    v
+}
+
+/// A battle's files that do not depend on its stage: the interface,
+/// effects, items, the fighter manager's files, and each fighter's main
+/// closure and figatrees (all of them: the N64 streams one per status
+/// from the cartridge, which a memory stick is too slow for).
+pub fn fighter_battle_roots(pack: &Pack<'_>, kinds: &[u32]) -> Vec<u32> {
     let mut v: Vec<u32> = Vec::new();
     v.extend(r::GM_COMMON);
     v.extend(r::EF_COMMON);
     v.extend(r::IT_COMMON);
     v.extend(r::FT_MANAGER);
+    for &k in kinds {
+        if let Some(&main) = r::FIGHTER_MAIN.get(k as usize) {
+            v.push(main);
+        }
+        v.extend(figatrees(pack, r::anim_kind(k)));
+    }
+    v
+}
+
+/// A battle's files for stage `gkind`: the map's closure and the stage
+/// kind's own files.
+pub fn stage_battle_roots(gkind: u8) -> Vec<u32> {
+    let mut v: Vec<u32> = Vec::new();
     v.extend(r::ground_map(u32::from(gkind)));
     match gkind {
         17..=28 => v.extend(r::BONUS1),
@@ -257,11 +290,35 @@ pub fn battle_roots(pack: &Pack<'_>, gkind: u8, kinds: &[u32]) -> Vec<u32> {
         14 => v.extend(r::ZAKO),
         _ => {}
     }
-    for &k in kinds {
-        if let Some(&main) = r::FIGHTER_MAIN.get(k as usize) {
-            v.push(main);
-        }
-        v.extend(figatrees(pack, r::anim_kind(k)));
+    v
+}
+
+/// The stage select's files (`mnMapsFuncStart`) and every stage's preview
+/// (`mnMapsMakePreview`): the model, and the stage's wallpaper in VS or
+/// Training's three. The N64 reads a stage's preview each time the cursor
+/// lands on it; the select holds them all from its start, read ahead from
+/// the character select (D-046).
+pub fn maps_roots(training: bool) -> Vec<u32> {
+    let mut v: Vec<u32> = Vec::from(r::MAPS);
+    v.extend(r::STAGE_PREVIEW_MODELS);
+    if training {
+        v.extend(r::MAPS_TRAINING_WALLPAPERS);
+    } else {
+        v.extend(r::STAGE_WALLPAPERS);
+    }
+    v
+}
+
+/// The VS results' files: `mnVSResultsFuncStart`'s, all twelve kinds, the
+/// wipes, and the demo clips its fighters play (`Win1` to `Win4`, `Lose`).
+pub fn results_roots() -> Vec<u32> {
+    let mut v: Vec<u32> = Vec::from(r::VS_RESULTS);
+    v.extend(r::EF_COMMON);
+    v.extend(r::FT_MANAGER);
+    v.extend(&r::FIGHTER_MAIN[..12]);
+    v.extend(r::TRANSITIONS);
+    if let Some(p) = scene_files::pack() {
+        v.extend(r::clip_files(p, 0..12, &r::RESULTS_CLIP_SLOTS));
     }
     v
 }
@@ -310,6 +367,12 @@ pub fn campaign(id: u8, fkind: u32) {
         v.extend(r::FT_MANAGER);
         v.extend(r::FIGHTER_MAIN.get(fkind as usize).copied());
     };
+    // The player's demo clips the scene poses it with.
+    let clips = |v: &mut Vec<u32>, slots: &[usize]| {
+        if let Some(p) = scene_files::pack() {
+            v.extend(r::clip_files(p, [fkind], slots));
+        }
+    };
     let mut v: Vec<u32> = Vec::new();
     let name = match id {
         0 => {
@@ -320,6 +383,7 @@ pub fn campaign(id: u8, fkind: u32) {
         1 => {
             v.extend(r::ONE_P_CONTINUE);
             fighters(&mut v);
+            clips(&mut v, &r::CONTINUE_CLIP_SLOTS);
             "1p-continue"
         }
         2 => {
@@ -329,6 +393,7 @@ pub fn campaign(id: u8, fkind: u32) {
         4 => {
             v.extend(r::ENDING);
             fighters(&mut v);
+            clips(&mut v, &r::ENDING_CLIP_SLOTS);
             "ending"
         }
         5 => {
@@ -393,6 +458,7 @@ pub fn battle(name: &'static str, roots: &[u32]) {
 /// `within`: a battle the scene starts, which leaves the next scene's
 /// prefetch running (`scene_files::enter_within`).
 fn load(name: &'static str, extra: &[u32], within: bool) {
+    ahead().clear();
     let mut roots = base().clone();
     roots.extend_from_slice(extra);
     let last = scene_files::report();
