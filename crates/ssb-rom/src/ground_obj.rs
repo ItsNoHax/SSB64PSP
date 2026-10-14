@@ -852,7 +852,7 @@ impl GroundObject {
             let local = if self.translate_only {
                 Mat4::from_trs(t, [0.0; 3], [1.0; 3])
             } else {
-                Mat4::from_trs(t, pose.rotate, pose.scale)
+                Mat4::from_trs_display(t, pose.rotate, pose.scale)
             };
             out[i] = match self.parent(pack, i) {
                 Some(p) => out[p].mul(&local),

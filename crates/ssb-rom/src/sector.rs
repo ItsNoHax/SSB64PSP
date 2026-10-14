@@ -362,7 +362,7 @@ impl Arwing {
                     }
                     m
                 }
-                Kind::TraRotRpyR => Mat4::from_trs(t, pose.rotate, [1.0; 3]),
+                Kind::TraRotRpyR => Mat4::from_tr_display(t, pose.rotate),
                 Kind::Tra => Mat4::from_trs(t, [0.0; 3], [1.0; 3]),
                 Kind::Null => Mat4::IDENTITY,
             };

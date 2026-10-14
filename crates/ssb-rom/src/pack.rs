@@ -6350,6 +6350,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn node_transforms_accumulate_and_are_scaled_into_vertex_space() {
         let mut w = PackWriter::new();
         w.add_object(&chain_graph(3), 0, |_| None, &[]);

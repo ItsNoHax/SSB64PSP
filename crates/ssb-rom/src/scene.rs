@@ -225,11 +225,14 @@ impl SceneGraph {
     ///
     /// Only [`TransformKind::TraRotSca`] is composed exactly; the four
     /// matrix-kind variants are animation-driven at runtime and fall back to
-    /// the same T*R*S here, which is their rest pose.
+    /// the same T*R*S here, which is their rest pose. Each local matrix is
+    /// the display's fixed-point one ([`Mat4::from_trs_display`]), so the
+    /// baked matrices equal what the runtime composes for an undriven node.
     pub fn world_transforms(&self) -> Vec<Mat4> {
         let mut out: Vec<Mat4> = Vec::with_capacity(self.nodes.len());
         for node in &self.nodes {
-            let local = Mat4::from_trs(node.desc.translate, node.desc.rotate, node.desc.scale);
+            let local =
+                Mat4::from_trs_display(node.desc.translate, node.desc.rotate, node.desc.scale);
             let world = match node.parent {
                 // Parents always precede children: `array_dobjs[depth - 1]` has
                 // to have been assigned by an earlier entry for the child to
@@ -268,6 +271,91 @@ impl Mat4 {
     /// and attachment positions come from (RE-468).
     pub fn from_trs_collision(t: [f32; 3], r: [f32; 3], s: [f32; 3]) -> Mat4 {
         Self::from_trs_with(t, r, s, ssb_engine::math::lb_sin_cos)
+    }
+
+    /// `syMatrixTraRotRpyRSca` (`sys/matrix.c:1086`): the fixed-point
+    /// display matrix the original builds for a DObj from its translation,
+    /// roll-pitch-yaw radians and scale (RE-506).
+    ///
+    /// Each angle becomes a `gSYSinTable` index truncated toward zero
+    /// (`syGetSinCosUShort`, 4096 steps a turn); the 3x3 is an integer chain
+    /// of those s1.15 words (`>> 14` to s15.16, three-term products `>> 15`
+    /// then `>> 14`, every shift an arithmetic truncation), each row times
+    /// its scale as `(s32)(scale * 256)` and `>> 8`. The translation stays
+    /// as given (`FTOFIX32` keeps 1/65536 of a unit; callers pass it already
+    /// divided by `MODEL_SCALE`).
+    ///
+    /// `lbCommonFighterPartsFuncMatrix` picks `syMatrixTraRotRpyR` for a
+    /// part whose scale is exactly 1: that is this with a scale word of 256,
+    /// which the chain reproduces exactly (`(e * 256) >> 8 == e`,
+    /// `(-sinp * 256) >> 7 == -sinp * 2`).
+    pub fn from_trs_display(t: [f32; 3], r: [f32; 3], s: [f32; 3]) -> Mat4 {
+        // `scalex = sx * 256`: an `s32` conversion, truncated toward zero.
+        let word = |v: f32| (v * 256.0) as i32;
+        Self::rpy_display(t, r, [word(s[0]), word(s[1]), word(s[2])])
+    }
+
+    /// `syMatrixTraRotRpyR` (`sys/matrix.c:1023`): [`Mat4::from_trs_display`]
+    /// for a DObj kind with no scale (`TraRotRpyR`): its scale is not read.
+    pub fn from_tr_display(t: [f32; 3], r: [f32; 3]) -> Mat4 {
+        Self::rpy_display(t, r, [256; 3])
+    }
+
+    /// The integer chain of `syMatrixTraRotRpyRSca`, `scale` as `s32`
+    /// words with 8 fraction bits. Products wrap as the R4300's `mult`/
+    /// `mflo` do.
+    fn rpy_display(t: [f32; 3], r: [f32; 3], scale: [i32; 3]) -> Mat4 {
+        use ssb_engine::math::sy_sin_cos_ushort;
+        let (sinr, cosr) = sy_sin_cos_ushort(r[0]);
+        let (sinp, cosp) = sy_sin_cos_ushort(r[1]);
+        let (siny, cosy) = sy_sin_cos_ushort(r[2]);
+        let m = |a: i32, b: i32| a.wrapping_mul(b);
+        let sca = |e: i32, k: i32| m(e, k) >> 8;
+        let (kx, ky, kz) = (scale[0], scale[1], scale[2]);
+        let srsp = m(sinr, sinp) >> 15;
+        let crsp = m(cosr, sinp) >> 15;
+        let e = [
+            // [0, 0] -> [0, 2]
+            sca(m(cosp, cosy) >> 14, kx),
+            sca(m(cosp, siny) >> 14, kx),
+            m(-sinp, kx) >> 7,
+            // [1, 0] -> [1, 2]
+            sca((m(srsp, cosy) >> 14).wrapping_sub(m(cosr, siny) >> 14), ky),
+            sca((m(srsp, siny) >> 14).wrapping_add(m(cosr, cosy) >> 14), ky),
+            sca(m(sinr, cosp) >> 14, ky),
+            // [2, 0] -> [2, 2]
+            sca((m(crsp, cosy) >> 14).wrapping_add(m(sinr, siny) >> 14), kz),
+            sca((m(crsp, siny) >> 14).wrapping_sub(m(sinr, cosy) >> 14), kz),
+            sca(m(cosr, cosp) >> 14, kz),
+        ];
+        // s15.16 to float: exact (|e| < 2^24, a power-of-two scale).
+        let f = |i: usize| e[i] as f32 * (1.0 / 65536.0);
+        Mat4([
+            f(0),
+            f(1),
+            f(2),
+            0.0,
+            f(3),
+            f(4),
+            f(5),
+            0.0,
+            f(6),
+            f(7),
+            f(8),
+            0.0,
+            t[0],
+            t[1],
+            t[2],
+            1.0,
+        ])
+    }
+
+    /// The display matrix's s15.16 words for the 3x3 (`[row][col]` as the
+    /// original's `Mtx`), for tests against the ROM's own code.
+    #[cfg(test)]
+    pub(crate) fn display_words(&self) -> [i32; 9] {
+        let w = |i: usize| (self.0[i] * 65536.0) as i32;
+        [w(0), w(1), w(2), w(4), w(5), w(6), w(8), w(9), w(10)]
     }
 
     fn from_trs_with(
@@ -716,10 +804,127 @@ fn resolve(descs: Vec<DObjDesc>, offset: u32) -> Option<SceneGraph> {
 }
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)] // the oracle inputs are exact f32 bit patterns
 mod tests {
     use super::*;
     use crate::archive::InternReloc;
     use alloc::vec;
+
+    /// `tools/r4300/matrix_hashes.py`'s input set: `(r, p, y, sx, sy, sz)`.
+    fn display_inputs() -> Vec<[f32; 6]> {
+        let angles: [f32; 18] = [
+            0.0,
+            1.570_796_4,
+            -1.570_796_4,
+            3.141_592_7,
+            -3.141_592_7,
+            0.1,
+            -0.1,
+            0.001,
+            -0.001,
+            0.785_398,
+            2.5,
+            -2.5,
+            6.283_185_5,
+            -6.283_185_5,
+            12.0,
+            -12.0,
+            0.001_533_980_8,
+            -0.001_533_980_8,
+        ];
+        let scales: [f32; 9] = [1.0, 0.5, 1.0537, 0.997, 2.0, 1.2, 0.8, 1.5, 0.003];
+        let mut out = Vec::new();
+        for (i, &r) in angles.iter().enumerate() {
+            for (j, &p) in angles.iter().enumerate() {
+                let y = angles[(i * 7 + j * 3) % angles.len()];
+                let s = scales[(i + j) % scales.len()];
+                let t = scales[(i * 5 + j) % scales.len()];
+                out.push([r, p, y, s, t, 1.0]);
+            }
+        }
+        for k in (-8192i32..8192).step_by(7) {
+            let a = (f64::from(k) * 0.001_533_980_8 + 0.0003) as f32;
+            out.push([a, -a * 0.5, a * 2.0, 1.0, 1.0, 1.0]);
+        }
+        out
+    }
+
+    fn display_hash(f: impl Fn(&[f32; 6]) -> Mat4) -> u64 {
+        display_inputs()
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325, |h, input| {
+                f(input).display_words().iter().fold(h, |h, w| {
+                    w.to_le_bytes().iter().fold(h, |h, &b| {
+                        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+                    })
+                })
+            })
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn display_matrix_matches_the_rom() {
+        // Hashes of the ROM's own `syMatrixTraRotRpyRSca` (0x8001C588) and
+        // `syMatrixTraRotRpyR` (0x8001C21C) over 2665 inputs, run by
+        // `tools/r4300/matrix_hashes.py`: every s15.16 word of every 3x3.
+        assert_eq!(display_inputs().len(), 2665);
+        let sca = display_hash(|i| {
+            Mat4::from_trs_display([1.0, 2.0, 3.0], [i[0], i[1], i[2]], [i[3], i[4], i[5]])
+        });
+        assert_eq!(sca, 0x7aa6_1fcf_d076_712c);
+        let rpy = display_hash(|i| Mat4::from_tr_display([1.0, 2.0, 3.0], [i[0], i[1], i[2]]));
+        assert_eq!(rpy, 0x9e2b_b5a5_8a59_aa47);
+        // A sample the script prints: scale 0.8 truncates to 204/256.
+        let m = Mat4::from_trs_display(
+            [0.0; 3],
+            [-1.570_796_4, -3.141_592_7, -0.001],
+            [0.8, 1.2, 1.0],
+        );
+        assert_eq!(m.display_words(), [-52224, 0, 0, 0, 0, 78592, 0, 65536, 0]);
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn display_matrix_identities() {
+        // No rotation, scale 1: the identity, exactly.
+        let m = Mat4::from_trs_display([0.5, -2.0, 3.0], [0.0; 3], [1.0; 3]);
+        assert_eq!(m, Mat4::from_trs([0.5, -2.0, 3.0], [0.0; 3], [1.0; 3]));
+        // Scale 1 is `syMatrixTraRotRpyR` bit for bit.
+        for input in display_inputs() {
+            let r = [input[0], input[1], input[2]];
+            assert_eq!(
+                Mat4::from_trs_display([0.0; 3], r, [1.0; 3]),
+                Mat4::from_tr_display([0.0; 3], r)
+            );
+        }
+        // An angle truncates toward zero to a 4096th of a turn: just short
+        // of one step is no rotation, either sign.
+        let step = core::f32::consts::TAU / 4096.0;
+        for a in [step * 0.99, -step * 0.99] {
+            let m = Mat4::from_tr_display([0.0; 3], [0.0, 0.0, a]);
+            assert_eq!(m.display_words(), [65536, 0, 0, 0, 65536, 0, 0, 0, 65536]);
+        }
+        // Scale 1.0537 is 269/256.
+        let m = Mat4::from_trs_display([0.0; 3], [0.0; 3], [1.0537; 3]);
+        assert_eq!(m.0[0], 269.0 / 256.0);
+        // Close to the exact matrix everywhere.
+        for input in display_inputs() {
+            let (r, s) = (
+                [input[0], input[1], input[2]],
+                [input[3], input[4], input[5]],
+            );
+            let a = Mat4::from_trs_display([0.0; 3], r, s);
+            let b = Mat4::from_trs([0.0; 3], r, s);
+            for k in 0..12 {
+                assert!(
+                    (a.0[k] - b.0[k]).abs() < 8e-3,
+                    "{input:?} {k}: {} {}",
+                    a.0[k],
+                    b.0[k]
+                );
+            }
+        }
+    }
 
     /// Serialises a descriptor the way the ROM stores it, post-relocation.
     fn emit(id: u32, dl: u32, t: [f32; 3], r: [f32; 3], s: [f32; 3]) -> Vec<u8> {
@@ -787,6 +992,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn depth_two_attaches_to_the_preceding_depth_one_node() {
         // Root, child A, A's child, then child B — B must reattach to the root,
         // and the grandchild must not be stolen by B.

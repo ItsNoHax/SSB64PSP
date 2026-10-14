@@ -83,7 +83,7 @@ impl Tree {
     fn compose(&self, main: &Pack<'_>, k: f32) -> Vec<ssb_rom::scene::Mat4> {
         let mut out: Vec<ssb_rom::scene::Mat4> = Vec::with_capacity(self.poses.len());
         for (i, pose) in self.poses.iter().enumerate() {
-            let local = ssb_rom::scene::Mat4::from_trs(
+            let local = ssb_rom::scene::Mat4::from_trs_display(
                 pose.translate.map(|v| v / k),
                 pose.rotate,
                 pose.scale,

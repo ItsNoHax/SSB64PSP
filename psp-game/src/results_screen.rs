@@ -290,7 +290,7 @@ pub(crate) fn rooted_rest_pose(p: &Pack<'_>, object: &ssb_rom::pack::ObjectDesc)
         let Some(node) = p.node(object.first_node + n as u32) else {
             continue;
         };
-        let local = Mat4::from_trs(
+        let local = Mat4::from_trs_display(
             node.rest_translate.map(|x| x / meshdraw::MODEL_SCALE),
             node.rest_rotate,
             node.rest_scale,

@@ -154,7 +154,7 @@ fn compose(pack: &Pack<'_>, object: &ObjectDesc, poses: &[JointPose], out: &mut 
     for i in 0..count {
         let pose = poses[i];
         let t = pose.translate.map(|v| v / MODEL_SCALE);
-        let local = Mat4::from_trs(t, pose.rotate, pose.scale);
+        let local = Mat4::from_trs_display(t, pose.rotate, pose.scale);
         let parent = pack
             .node(object.first_node + i as u32)
             .and_then(|n| n.parent.checked_sub(object.first_node))
@@ -403,7 +403,7 @@ impl FighterState {
         if self.transn_base.is_none() && self.skeleton.joint_node(0).is_none() {
             if let Some(pose) = self.skeleton.pose(0) {
                 let t = pose.translate.map(|v| v / MODEL_SCALE);
-                let transn = Mat4::from_trs(t, pose.rotate, pose.scale);
+                let transn = Mat4::from_trs_display(t, pose.rotate, pose.scale);
                 for m in &mut out[..count] {
                     *m = transn.mul(m);
                 }

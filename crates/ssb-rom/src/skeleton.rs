@@ -283,7 +283,7 @@ impl Skeleton {
     ///
     /// Returns how many matrices were written.
     pub fn compose(&self, pack: &Pack<'_>, object: &ObjectDesc, out: &mut [Mat4]) -> usize {
-        self.compose_with(pack, object, out, Mat4::from_trs)
+        self.compose_with(pack, object, out, Mat4::from_trs_display)
     }
 
     /// [`Skeleton::compose`] as `gmCollisionGetFighterPartsWorldPosition`
@@ -695,7 +695,7 @@ impl StageAnimator {
                 pose.translate[1] / MODEL_SCALE,
                 pose.translate[2] / MODEL_SCALE,
             ];
-            let local = Mat4::from_trs(t, pose.rotate, pose.scale);
+            let local = Mat4::from_trs_display(t, pose.rotate, pose.scale);
             out[i] = match parent_local {
                 Some(parent) => out[parent].mul(&local),
                 None => local,
@@ -733,7 +733,7 @@ impl StageAnimator {
                     scale: node.rest_scale,
                 })
             };
-            let local = Mat4::from_trs(
+            let local = Mat4::from_trs_display(
                 pose.translate.map(|t| t / MODEL_SCALE),
                 pose.rotate,
                 pose.scale,
@@ -1594,9 +1594,9 @@ mod tests {
             3
         );
         assert_eq!(out[0], Mat4::IDENTITY);
-        assert_eq!(out[1], Mat4::from_trs([0.0; 3], [0.0; 3], [1.5; 3]));
+        assert_eq!(out[1], Mat4::from_trs_display([0.0; 3], [0.0; 3], [1.5; 3]));
         let child = pack.node(object.first_node + 2).unwrap();
-        let expected = out[1].mul(&Mat4::from_trs(
+        let expected = out[1].mul(&Mat4::from_trs_display(
             child.rest_translate.map(|t| t / MODEL_SCALE),
             child.rest_rotate,
             child.rest_scale,
@@ -1633,6 +1633,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_joint_transform_moves_its_children_too() {
         // What makes it a skeleton rather than a list of transforms: rotating
         // a parent has to carry the leaf with it.
@@ -1709,6 +1710,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_stage_joint_transform_moves_an_unanimated_child() {
         // `gcAddAnimJointAll` permits a NULL child script. The child remains
         // attached to its DObj parent and must inherit that parent's motion.
