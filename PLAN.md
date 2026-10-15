@@ -95,7 +95,6 @@ closes it.
 - [ ] Optional: narrow the vs-four golden change to catch/thrown/relz/pulled; marks-only pixel share of the 27 display-plus-marks rows (RE-511).
 - [ ] Tooling: `tools/golden.sh` mem-line regex `[^\r]*` stops at the letter r; `SSB64_ROM` must be an absolute path for golden.sh.
 - [ ] D-048: `hidden_parts` (FTAttributes::hiddenparts, RE-468) in modelpart.rs is still a committed per-fighter ROM table: generate it in `ssb-tablegen` `model_parts.rs`; audit ssb-game for others. ssb-rom ROM tests return early without `SSB64_ROM` (use `ssb_tablegen::locate_rom`).
-- [ ] Fighter wind-reaction effects (efcommon ids 12-15) not compared against the N64 trace; they will shift the Dream Land VS goldens when ported (RE-508).
 - [ ] `syMatrixFastSin/Cos` (matrix.c:78/90) and lbcommon.c callers audit.
 - [x] `f1-vs-four-magnifier`: the raw scale was 2.397 (uncapped) at the old `vs4@2800`, measured before Whispy's RNG draws moved the timeline; the unchanged RE-505 hash is explained. The golden moved to `vs4@1330` to keep magnifier coverage (RE-508).
 - [ ] Trig audit follow-ups (RE-503): stick gates reframed as slope compares (status.rs, item_throw.rs vs `ftParamGetStickAngleRads`; `set_utilt` lacks the Hi3F/Hi3B split); `syVectorAngleDiff3D` reframed as dot/cos threshold compares (map.rs, pikachu*.rs, ness.rs, status.rs); dropped ArcTan2 calls (reaction.rs wall-damage wave, capture_kirby.rs, ness.rs bound wave, kirby.rs TopN, captain.rs tilt, UpdateModelPitch family); unported trig sites (`ftMainGetBumperDamageAngle`, mpcommon.c:342/400, ftparam.c:2619-2635, lbparticle.c:2482/2486 vortex, gmcollision.c:946, ftdisplaymain.c:513); reflector rotate normalisation; `Light.l.dir` s8 quantisation; Fox up-special `MAP_VERTEX_COLL_PASS` floor exclusion; `F_CST_DTOR32` vs `F_CLC_DTOR32` constants; add goldens for PK Thunder steering, hazard spin, ArcSin sites.
@@ -126,6 +125,7 @@ closes it.
 
 ### Match systems (`MS5`)
 
+- [ ] NEXT (user report, PSP): grabbing rarely connects, and after a grab the opponent can no longer be damaged. Audit the whole grab/catch/throw chain against the decomp (ftCommonCatch*, CatchWait, Capture*, Throw*, catch collision, hit/hurt state restore on release).
 - [ ] Draw the CPUs' special effects: Magnet, Sing, Spin Attack swirl, Falcon Punch/Kick, reflector, Charge Shot and the held egg draw for the player only (RE-389, RE-404, RE-405).
 - [ ] Remaining effects: Thunder Jolt ground effect, PK Thunder trail effects, the fire spark, Kirby's copy-bank scripts (0x4C, 0x4D), the results' fighter effects, stage particle banks; a magnitude-0 quake shakes one frame late (RE-413, RE-415, RE-416, RE-427).
 - [ ] Kirby: Inhale/spit stars and the copied Falcon Punch flame; Inhale's downward wiggle (RE-343, RE-348, RE-376, RE-378, RE-417).
@@ -149,7 +149,9 @@ closes it.
 
 ### Front end and 1P (`MS6`)
 
+- [ ] NEXT (user report, PSP): 1P stages with many opponents (not only the team stages: any stage with several enemy fighters) respawn opponents endlessly or end the round too early, and the stage before the final boss panics. Port the 1P spawn/respawn/KO/win logic faithfully to the decomp and fix the panic.
 - [ ] Both character selects' spotlight under a held puck; the VS select's CPU colour animation; locked shadows' noise (RE-411).
+- [ ] NEXT (user report, PSP): the intro (N64 logo, opening movie, title) has many issues: compare every scene frame-by-frame against N64 captures and fix all in-scope gaps, including the known items below.
 - [ ] Opening movie: the room's falling-figure pose, spotlight cone and close-up overlay shade; Fox's laser under the rolled camera; the standoff ground's dropped triangles; Yoster clouds' fringes and tint; the run's dust puff; N64 references from an accurate video plugin (RE-467, RE-468).
 - [ ] Characters' fighter runs no motion-script events (effects, colour animations, part changes) (RE-461).
 - [ ] Anti-piracy validators that set `error_flags` (RE-460, RE-461).

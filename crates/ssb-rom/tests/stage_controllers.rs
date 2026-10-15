@@ -13,6 +13,10 @@ use ssb_rom::figatree::JointPose;
 use ssb_rom::objanim::{joint_scripts, StageJoint};
 use ssb_rom::scene::find_scene_graphs;
 
+#[path = "common/dream_land.rs"]
+mod dream_land;
+use dream_land::{whispy_index, PackWhispy};
+
 /// Every Saffron item uses file 159, while the gate uses file 160. Replay
 /// each packed root against its ROM script, including the make-time play.
 #[test]
@@ -119,16 +123,6 @@ struct RomWhispy<'a> {
     objs: [GObjAnim; 4],
 }
 
-fn index(obj: StageObj) -> usize {
-    match obj {
-        StageObj::WhispyEyes => 0,
-        StageObj::WhispyMouth => 1,
-        StageObj::FlowersBack => 2,
-        StageObj::FlowersFront => 3,
-        _ => panic!("not a Dream Land object"),
-    }
-}
-
 impl RomWhispy<'_> {
     /// `gcPlayAnimAll` at priority 5 on every object.
     fn advance(&mut self) {
@@ -169,39 +163,7 @@ impl StageObjects for RomWhispy<'_> {
         o.tick(&self.file.data);
     }
     fn anim_frame(&self, obj: StageObj) -> f32 {
-        self.objs[index(obj)].frame
-    }
-}
-
-struct PackWhispy<'a, 'p> {
-    pack: &'a ssb_rom::pack::Pack<'p>,
-    objects: ssb_rom::ground_obj::GroundObjects,
-}
-
-impl StageObjects for PackWhispy<'_, '_> {
-    fn play(&mut self, anim: StageAnim) {
-        use ssb_rom::ground_obj as g;
-        let slot = match anim {
-            StageAnim::WhispyEyes { lr, status } => g::whispy_eyes(lr, status == EyesAnim::Blink),
-            StageAnim::WhispyMouth { lr, status } => g::whispy_mouth(
-                lr,
-                match status {
-                    MouthAnim::Stretch => 0,
-                    MouthAnim::Turn => 1,
-                    MouthAnim::Open => 2,
-                    MouthAnim::Close => 3,
-                },
-            ),
-            StageAnim::FlowersBack { lr, phase } => g::flowers_back(lr, phase),
-            StageAnim::FlowersFront { lr, phase } => g::flowers_front(lr, phase),
-            _ => panic!("not a Dream Land animation"),
-        };
-        assert!(self.objects.has(slot));
-        self.objects.play(self.pack, slot).unwrap();
-    }
-
-    fn anim_frame(&self, obj: StageObj) -> f32 {
-        self.objects.get(index(obj) as u8).unwrap().frame
+        self.objs[whispy_index(obj)].frame
     }
 }
 
@@ -232,6 +194,7 @@ fn whispy_blows_on_the_packed_animation_clocks() {
     }
     assert_eq!(start_clip, 37);
 
+    let _rng = rng_lock();
     ssb_game::rng::set_seed(1);
     let mut w = Pupupu::new();
     let mut a = Fighter::new(FighterKind::Mario, 0, 3);
@@ -430,6 +393,7 @@ fn whispy_blows_on_the_rom_animation_clocks() {
     };
     assert!(objects.objs.iter().all(|o| o.graph != 0 && o.nodes > 0));
 
+    let _rng = rng_lock();
     ssb_game::rng::set_seed(1);
     let mut w = Pupupu::new();
     let mut a = Fighter::new(FighterKind::Mario, 0, 3);
@@ -480,6 +444,186 @@ fn whispy_blows_on_the_rom_animation_clocks() {
     // The fighters are left of Whispy, so it blows left.
     assert_eq!(w.lr_players, 0);
     assert!(a.hazard.vel_push.x <= 0.0);
+}
+
+/// The global RNG's seed is shared by every test in this binary.
+fn rng_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// One frame of [`wind_replay`]: Whispy's status, then each fighter's
+/// status, TopN `x`, `y` (as the N64 trace prints them) and the DustLight
+/// requests it queued this frame.
+struct WindFrame {
+    wind: WindStatus,
+    fighters: Vec<(ssb_game::status::AnyStatus, String, String, usize)>,
+}
+
+/// Training on Dream Land with no input, frame by frame in the runtime's
+/// order: the ground objects play, the fighters' interrupts, the stage
+/// process (priority 4), then the fighters' physics and map pass. Frame 0 is
+/// the RE-508 N64 trace's (Mario and the Mario dummy, warp-boot Training):
+/// Whispy waits 960 frames with its blink at 240, seed 3357800067. The
+/// N64's particle scripts draw from the same RNG; nothing before the first
+/// Blow does, so the wind's duration is the N64's.
+fn wind_replay(pack: &ssb_rom::pack::Pack<'_>, ports: &[u8], frames: u32) -> Vec<WindFrame> {
+    use ssb_game::fteffect::{kind, FighterEffect};
+    let (stage, segments) = dream_land::dream_land(pack);
+    let map = dream_land::dream_land_map(pack, &stage);
+    let surfaces = || map.iter().copied();
+    let mut objects = PackWhispy {
+        pack,
+        objects: ssb_rom::ground_obj::GroundObjects::new(pack, ssb_rom::ground_obj::PUPUPU_FILE),
+    };
+    let mut fighters: Vec<Fighter> = ports
+        .iter()
+        .map(|&port| {
+            dream_land::training_fighter(pack, &stage, FighterKind::Mario, port, &segments)
+        })
+        .collect();
+    let mut w = Pupupu::new();
+    ssb_game::rng::set_seed(3_357_800_067_u32 as i32);
+    w.status = WindStatus::Wait;
+    w.wind_wait = 960;
+    w.blink_wait = 240;
+    let mut out = Vec::new();
+    for _ in 1..=frames {
+        objects.objects.advance(pack).unwrap();
+        for f in &mut fighters {
+            f.tick_interrupt(&surfaces);
+        }
+        let mut refs: Vec<&mut Fighter> = fighters.iter_mut().collect();
+        w.tick(&mut refs, &mut objects, true);
+        w.fx = Default::default();
+        for f in &mut fighters {
+            f.tick_physics_map(&surfaces);
+        }
+        out.push(WindFrame {
+            wind: w.status,
+            fighters: fighters
+                .iter_mut()
+                .map(|f| {
+                    let dust = f
+                        .effects
+                        .iter()
+                        .filter(
+                            |e| matches!(e, FighterEffect::Param(r) if r.kind == kind::DUST_LIGHT),
+                        )
+                        .count();
+                    f.effects.clear();
+                    (
+                        f.status.status,
+                        format!("{:.4}", f.pos.x),
+                        format!("{:.4}", f.pos.y),
+                        dust,
+                    )
+                })
+                .collect(),
+        });
+    }
+    out
+}
+
+/// The first frame from `from` on whose state passes `pred`.
+fn first(frames: &[WindFrame], from: usize, pred: impl Fn(&WindFrame) -> bool) -> usize {
+    (from..frames.len())
+        .find(|&i| pred(&frames[i]))
+        .map_or(usize::MAX, |i| i + 1)
+}
+
+/// RE-508: a left wind (`grPupupuWhispyGetLR` 0) pushes the Training dummy
+/// off its platform; its landing's motion script makes the DustLight puff
+/// the N64 makes on frame 1212 (generator id 12, efcommon script 0x55).
+/// Frames and TopN positions are the N64 trace's `lr0` run. The dummy alone
+/// is left of Whispy, so the wind blows left without a patch. Past frame
+/// 1276 the N64 CPU recovers with a double jump, which this replay has no
+/// CPU for.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn whispys_left_wind_lands_the_dummy_in_a_dust_puff_as_on_the_n64() {
+    use ssb_game::status::Status;
+    let Some((bytes, _)) = pack_and_rom() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let _rng = rng_lock();
+    let frames = wind_replay(&pack, &[1], 1276);
+    let at = |frame: usize| &frames[frame - 1].fighters[0];
+    let wind = |s: WindStatus| first(&frames, 0, |f| f.wind == s);
+    assert_eq!(
+        [WindStatus::Turn, WindStatus::Open, WindStatus::Blow].map(wind),
+        [961, 986, 1040]
+    );
+    assert!(frames.iter().all(|f| f.wind != WindStatus::Stop));
+    let status = |s: Status, from: usize| first(&frames, from, |f| f.fighters[0].0 == s);
+    let fall = status(Status::Fall, 0);
+    let landing = status(Status::LandingLight, fall);
+    let wait = status(Status::Wait, landing);
+    let fall_again = status(Status::Fall, wait);
+    assert_eq!([fall, landing, wait, fall_again], [1182, 1212, 1219, 1276]);
+    let pos = |frame: usize| (at(frame).1.as_str(), at(frame).2.as_str());
+    assert_eq!(pos(1182), ("-1845.7812", "904.0000"));
+    assert_eq!(pos(1212), ("-2000.6555", "0.0000"));
+    assert_eq!(pos(1219), ("-2036.3933", "0.0000"));
+    assert_eq!(pos(1276), ("-2321.8796", "0.0000"));
+    let puffs: Vec<usize> = (1..=frames.len()).filter(|&f| at(f).3 != 0).collect();
+    assert_eq!(puffs, [1212]);
+    assert_eq!(at(1212).3, 1);
+}
+
+/// RE-508: with one fighter each side of Whispy the wind keeps blowing
+/// right (`lr_players` 1); it pushes the player along the main floor and
+/// leaves the dummy on its platform, and nobody makes a DustLight puff: the
+/// N64 trace's `natural` run.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn whispys_right_wind_pushes_the_player_without_a_dust_puff_as_on_the_n64() {
+    use ssb_game::status::Status;
+    let Some((bytes, _)) = pack_and_rom() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let _rng = rng_lock();
+    let frames = wind_replay(&pack, &[0, 1], 1400);
+    let wind = |s: WindStatus| first(&frames, 0, |f| f.wind == s);
+    assert_eq!(
+        [WindStatus::Open, WindStatus::Blow, WindStatus::Stop].map(wind),
+        [961, 1015, 1269]
+    );
+    assert_eq!(first(&frames, 1269, |f| f.wind == WindStatus::Wait), 1289);
+    assert!(frames.iter().all(|f| f.wind != WindStatus::Turn));
+    for f in &frames {
+        assert!(f
+            .fighters
+            .iter()
+            .all(|&(s, _, _, dust)| s == Status::Wait && dust == 0));
+        assert_eq!(
+            (f.fighters[1].1.as_str(), f.fighters[1].2.as_str()),
+            ("-1397.0000", "904.0000")
+        );
+    }
+    let x = |frame: usize| frames[frame - 1].fighters[0].1.as_str();
+    assert_eq!(
+        [
+            x(1100),
+            x(1200),
+            x(1268),
+            x(1269),
+            x(1270),
+            x(1300),
+            x(1400)
+        ],
+        [
+            "219.2060",
+            "758.3786",
+            "1106.9619",
+            "1111.9828",
+            "1117.0006",
+            "1211.7690",
+            "1211.7690"
+        ]
+    );
 }
 
 /// Every `GRAttackColl` / `FTThrowHitDesc` a controller reads sits at
@@ -1420,6 +1564,7 @@ fn packed_arwing_flies_the_sector_controller() {
         player: 0,
     };
     let mut groups = vec![MapGroup::default(); 4];
+    let _rng = rng_lock();
     ssb_game::rng::set_seed(0x5EC7);
     let mut stage = Stage::new(
         &init,

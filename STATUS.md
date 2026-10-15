@@ -17,7 +17,7 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Swallowed-input audit: 26 fighter scenes retimed (the tick-8 A jab swallowed later inputs); shared scripts live in `ssb-capture` `script.rs` with a `scene_inputs` host replay test; Yoshi egg capture moved to tick 380 (RE-473 lays the egg at 293, the Training dummy wiggles out at 458). 28 goldens rebaselined. Next, per [`PLAN.md`](PLAN.md#remaining-work): the XMB FCR31 readout, then wind-reaction effects and the slope follow-ups.
+Closed: FCR31 at an XMB-style launch is `0x0e00` (RE-516, D-050); Dream Land wind DustLight puffs already match the N64 (RE-508 corrected, ROM-gated host tests). Next, per [`PLAN.md`](PLAN.md#remaining-work): the 1P many-opponent spawn/KO bug and the stage panic before the final boss, then the grab/catch audit.
 
 ## Blockers
 
@@ -29,14 +29,14 @@ Swallowed-input audit: 26 fighter scenes retimed (the tick-8 A jab swallowed lat
 
 ## Verification
 
-Baseline after the swallowed-input audit:
+Baseline after the wind-effects and FCR31 batches:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass (tests that need ROM tables, including
   the joint masks, are ignored there). Clippy (`cargo
   +1.98.0`, workspace, `-D warnings`) and `cargo fmt --all --check` pass. Parallel `ssb-game` runs fail global-state tests (PLAN.md).
 - Both PSP release builds compile.
-- Goldens: `tools/golden.sh verify`: 207 of 207 match after 28 rebaselines (pack v111).
+- Goldens: `tools/golden.sh verify`: 207 of 207 match (pack v111).
 - PPSSPP smoke: `run-ppsspp-headless.sh --crate psp-game --scene vs4@2400`
   exits 0 and writes a screenshot.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1; RE-506 matrix cost
