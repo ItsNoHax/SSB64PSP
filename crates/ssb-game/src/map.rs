@@ -175,6 +175,18 @@ where
     sweep(surfaces, Kind::Floor, from, to)
 }
 
+/// `mpCollisionCheckLWallLineCollisionSame` / `...RWall...` (`kind` is
+/// [`Kind::LeftWall`] or [`Kind::RightWall`]): where the nearest wall line
+/// of that side crosses the segment `from` to `to`, groups where they are now.
+pub fn wall_crossing<I, F>(surfaces: &F, kind: Kind, from: Vec2, to: Vec2) -> Option<Vec2>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    debug_assert!(matches!(kind, Kind::LeftWall | Kind::RightWall));
+    query(surfaces, kind, from, to).map(|(_, point)| point)
+}
+
 fn query<I, F>(surfaces: &F, kind: Kind, from: Vec2, to: Vec2) -> Option<(Contact, Vec2)>
 where
     F: Fn() -> I,

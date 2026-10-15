@@ -154,6 +154,9 @@ pub struct Battle {
     /// `SCBATTLE_GAMERULE_1PGAME`: a fall takes a stock without the stock
     /// rule's placement, and the 1P Game ([`crate::spgame`]) decides the end.
     pub is_1p_game: bool,
+    /// `is_not_teamshadows`: set by the 1P Game (`sc1PManagerUpdateScene`),
+    /// whose team battles keep the default shadow colour.
+    pub is_not_teamshadows: bool,
     pub is_bonus: bool,
     /// The timer callback selected by `sc1PGameInitTimeUpMessage`.
     /// Race uses FAILURE while retaining the ordinary campaign stock rule.
@@ -247,6 +250,7 @@ impl Battle {
             is_sudden_death: false,
             is_reset: false,
             is_1p_game: false,
+            is_not_teamshadows: false,
             is_bonus: false,
             time_up_is_failure: false,
             set_wait: SET_RESTORE_WAIT,
@@ -311,6 +315,7 @@ impl Battle {
             Battle::new(Rule::Time, time_limit, 0, players).with_teams(true, is_team_attack);
         b.players = players;
         b.is_1p_game = true;
+        b.is_not_teamshadows = true;
         b.go_tick = go_tick;
         b
     }

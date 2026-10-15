@@ -4086,29 +4086,30 @@ pub unsafe fn draw_fighter_shadow(
     );
 
     let packed = ssb_rom::psp_texture::pack_abgr(color);
+    // Source texels, scaled by the display list's `gsSPTexture` (31 tile
+    // texels across each axis), over the pack's pre-mirrored 32px period,
+    // plus the linear filter's half-texel correction (RE-304).
+    let width = u32::from(texture.width);
+    let height = u32::from(texture.height);
+    let u_of = |source: f32| {
+        ssb_game::shadow::tile_texel(source) / width as f32
+            + ssb_rom::psp_texture::ge_sample_offset(true, width)
+    };
+    let v_of = |source: f32| {
+        ssb_game::shadow::tile_texel(source) / height as f32
+            + ssb_rom::psp_texture::ge_sample_offset(true, height)
+    };
+    let (u_front, u_back) = (u_of(0.0), u_of(ssb_game::shadow::SOURCE_TEX_SPAN));
     let mut count = 0usize;
     for pair in geometry.points[..geometry.point_count].windows(2) {
         let [a, b] = [pair[0], pair[1]];
-        // 62 source texels over a pre-mirrored 32px PSP period.
-        let va = a.v / 32.0;
-        let vb = b.v / 32.0;
+        let va = v_of(a.v);
+        let vb = v_of(b.v);
         let q = [
-            (a.x, a.y, ssb_game::shadow::HALF_DEPTH, 0.0, va),
-            (
-                a.x,
-                a.y,
-                -ssb_game::shadow::HALF_DEPTH,
-                ssb_game::shadow::SOURCE_TEX_SPAN / 32.0,
-                va,
-            ),
-            (b.x, b.y, ssb_game::shadow::HALF_DEPTH, 0.0, vb),
-            (
-                b.x,
-                b.y,
-                -ssb_game::shadow::HALF_DEPTH,
-                ssb_game::shadow::SOURCE_TEX_SPAN / 32.0,
-                vb,
-            ),
+            (a.x, a.y, ssb_game::shadow::HALF_DEPTH, u_front, va),
+            (a.x, a.y, -ssb_game::shadow::HALF_DEPTH, u_back, va),
+            (b.x, b.y, ssb_game::shadow::HALF_DEPTH, u_front, vb),
+            (b.x, b.y, -ssb_game::shadow::HALF_DEPTH, u_back, vb),
         ];
         for (x, y, z, u, v) in [q[0], q[1], q[3], q[0], q[3], q[2]] {
             verts[count] = TexQuadVertex {

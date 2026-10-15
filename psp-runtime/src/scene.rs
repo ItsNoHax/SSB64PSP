@@ -1002,9 +1002,9 @@ pub fn body_of(d: &FighterDesc) -> BodyColl {
 }
 
 /// Resolves one fighter's source floor shadow from the live fighter and the
-/// stage map.  `ftShadowProcDisplay` uses the standing floor while grounded;
-/// otherwise it calls `mpCollisionCheckProjectFloor` from the fighter's root
-/// straight down.  It does *not* shrink or fade for altitude.
+/// stage map's surfaces where their groups are now
+/// ([`ssb_game::shadow::fighter_shadow`]). It does *not* shrink or fade for
+/// altitude.
 ///
 /// The portable fighter carries the source `is_invisible` and
 /// `is_shadow_hide` gates. Common lifecycle statuses maintain the latter;
@@ -1014,33 +1014,14 @@ pub fn body_of(d: &FighterDesc) -> BodyColl {
 pub fn fighter_shadow(
     pack: &Pack<'_>,
     stage: &StageDesc,
+    groups: &[ssb_game::map::MapGroup],
     fighter: &Fighter,
     shadow_size: f32,
 ) -> ssb_game::shadow::ShadowGeometry {
-    if !ssb_game::shadow::visible_for(
-        fighter.status.status,
-        fighter.is_invisible,
-        fighter.is_shadow_hidden,
-    ) {
-        return ssb_game::shadow::ShadowGeometry::EMPTY;
-    }
-
-    let line = fighter.floor.map(|f| f.line).or_else(|| {
-        ssb_game::collision::project_floor(
-            FloorSegments::new(pack, stage),
-            ssb_engine::math::Vec2::new(fighter.pos.x, fighter.pos.y),
-        )
-        .map(|f| f.line)
-    });
-    let Some(line) = line else {
-        return ssb_game::shadow::ShadowGeometry::EMPTY;
-    };
-    ssb_game::shadow::build(
-        fighter.pos,
+    ssb_game::shadow::fighter_shadow(
+        &|| MapSegments::with_groups(pack, stage, groups),
+        fighter,
         shadow_size,
-        FloorSegments::new(pack, stage)
-            .filter(move |(candidate, _)| *candidate == line)
-            .map(|(_, segment)| segment),
     )
 }
 

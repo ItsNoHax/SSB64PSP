@@ -8145,14 +8145,22 @@ unsafe fn draw_training(
     // safe to reuse for every fighter without a per-frame allocation.
     if let Some(shadow_texture) = assets.shadow_texture.as_ref() {
         let mut shadow_verts = [meshdraw::TexQuadVertex::default(); 18];
+        let groups = stage_map.map_or(&[][..], |m| &m.groups[..]);
+        let is_team_battle = battle.is_some_and(|b| b.is_team_battle);
+        let is_not_teamshadows = battle.is_some_and(|b| b.is_not_teamshadows);
         for f in fighters.iter().flatten() {
-            let shadow =
-                ssb_psp_runtime::scene::fighter_shadow(p, &stage, &f.fighter, f.shadow_size);
+            let shadow = ssb_psp_runtime::scene::fighter_shadow(
+                p,
+                &stage,
+                groups,
+                &f.fighter,
+                f.shadow_size,
+            );
             meshdraw::draw_fighter_shadow(
                 p,
                 shadow_texture,
                 &shadow,
-                [0x00, 0x00, 0x00, 0xA0],
+                ssb_game::shadow::color(is_team_battle, is_not_teamshadows, f.fighter.team),
                 &mut shadow_verts,
                 draw_state,
             );
