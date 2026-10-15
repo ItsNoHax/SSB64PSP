@@ -134,6 +134,8 @@ is a 3-point reference sampler; uncompensated, 5.6% of samples differ by
 output closer to the N64 reference on each primitive's real UV coverage.
 Runtime still uses plain `GU_LINEAR`.
 
+2D sprites (`sprite::psp_image`): alpha-0 texels with a visible 8-neighbour take that neighbour's RGB (one ring, orthogonal highest alpha first), baked at pack time, so Linear filtering at a sprite edge no longer pulls in black. Filters stay Linear, 5551 is unchanged (RE-517).
+
 | Stage | What it does | Evidence |
 |---|---|---|
 | Coverage | Real S10.5 barycentric UVs, plus critical probes at diagonals, half-texels, GE boundaries, extrema and seams | RE-305, RE-310 |

@@ -53,6 +53,8 @@ pub mod scene_roots;
 pub mod sector;
 pub mod skeleton;
 pub mod sprite;
+#[cfg(feature = "std")]
+pub mod sprite_fringe;
 pub mod stage;
 pub mod strict;
 pub mod texture;

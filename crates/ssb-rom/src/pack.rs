@@ -405,7 +405,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 110 adds the Thunder Shock spark's animations 1 and 2
 // (`AnimDesc::EFFECT` slots `effect::PIKACHU_THUNDER_SHOCK_ANIM_SLOT` on,
 // file 347 at 0x1850 and 0x1970). No layout change.
-pub const VERSION: u32 = 110;
+// 111 gives each transparent sprite texel next to a visible one that
+// neighbour's colour (`sprite::psp_image`, RE-517), and carries the impact
+// wave's translucent seed (RE-516), which changed content under 110. No
+// layout change.
+pub const VERSION: u32 = 111;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1448,7 +1452,8 @@ impl TexturePartDesc {
 
 /// A libultra `Sprite` an `SObj` draws, keyed by where it sits in its file
 /// (RE-392). `texture` holds the image already through the format's
-/// combiner ([`crate::sprite::combined_image`]); a draw modulates it by the
+/// combiner, its transparent edge texels bled ([`crate::sprite::psp_image`]);
+/// a draw modulates it by the
 /// primitive colour when [`SpriteDesc::TINTED`] is set, else by white.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

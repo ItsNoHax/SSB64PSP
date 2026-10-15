@@ -7,7 +7,7 @@ Where the project is now. The roadmap and every open task are in
 
 | Area | State |
 |---|---|
-| Build | Tables read from the ROM are generated at build time ([D-048](docs/decisions/D-048.md)); host workspace on Rust 1.98.0; `psp-game` and `psp-asset-viewer` on the pinned nightly; pack v110 with the audio section |
+| Build | Tables read from the ROM are generated at build time ([D-048](docs/decisions/D-048.md)); host workspace on Rust 1.98.0; `psp-game` and `psp-asset-viewer` on the pinned nightly; pack v111 with the audio section |
 | Gameplay | All fighters, VS, Training, 1P campaign through the ending; How to Play matches the N64 on every frame |
 | Audio | The N64 audio system ported whole, every call site wired, Sound Test; sample-exact against N64 captures of the opening, menus and How to Play ([D-049](docs/decisions/D-049.md), RE-479) |
 | Rendering | CRT overscan crop ([D-047](docs/decisions/D-047.md), RE-477); per-node model matrices compose with a raw VFPU `vmmul.q` (RE-497) |
@@ -17,7 +17,7 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-516: Samus Charge Shot no longer crashes the PSP (FPU traps, D-050), fighter light rows fixed, impact wave translucent. Next, per [`PLAN.md`](PLAN.md#remaining-work): the 2D sprite edge fringe (RE-515), the XMB FCR31 check and the swallowed-B audit (RE-516), then wind-reaction effects and the slope follow-ups.
+RE-517: 2D sprite edge fringe fixed by a one-ring RGB bleed baked at pack time (pack v111, filters unchanged). RE-516's Samus charge also ran on the PSP-2000 from the XMB without a crash. Next, per [`PLAN.md`](PLAN.md#remaining-work): the swallowed-B audit (RE-516), the XMB FCR31 readout, then wind-reaction effects and the slope follow-ups.
 
 ## Blockers
 
@@ -29,15 +29,14 @@ RE-516: Samus Charge Shot no longer crashes the PSP (FPU traps, D-050), fighter 
 
 ## Verification
 
-Baseline after RE-516:
+Baseline after RE-517:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass (tests that need ROM tables, including
   the joint masks, are ignored there). Clippy (`cargo
-  +1.98.0`, workspace, `-D warnings`) passes; `psp-runtime/src/scene.rs` and four psp-game screens already
-  carry rustfmt diffs. Parallel `ssb-game` runs fail global-state tests (PLAN.md).
+  +1.98.0`, workspace, `-D warnings`) and `cargo fmt --all --check` pass. Parallel `ssb-game` runs fail global-state tests (PLAN.md).
 - Both PSP release builds compile.
-- Goldens: `tools/golden.sh verify`: 207 of 207 match (pack `ssb64.pak` rebuilt as v110).
+- Goldens: `tools/golden.sh verify`: 207 of 207 match (pack `ssb64.pak` rebuilt as v111).
 - PPSSPP smoke: `run-ppsspp-headless.sh --crate psp-game --scene vs4@2400`
   exits 0 and writes a screenshot.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1; RE-506 matrix cost

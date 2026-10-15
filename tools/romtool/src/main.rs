@@ -3702,27 +3702,28 @@ fn residuals_cmd(path: &Path, opts: &[&str]) -> Res {
     residuals::run(&o)
 }
 
-/// A sprite's image through its combiner, in 8888, clamped like a texture
-/// rectangle (RE-392).
+/// A sprite's image through its combiner, its transparent edge bled
+/// (RE-517), in 8888, clamped like a texture rectangle (RE-392).
 fn add_sprite_texture(
     writer: &mut ssb_rom::pack::PackWriter,
     s: &ssb_rom::sprite::Sprite,
     swizzle: bool,
 ) -> u32 {
-    let image = ssb_rom::sprite::combined_image(s);
+    let image = ssb_rom::sprite::psp_image(s);
     let tex = ssb_rom::psp_texture::pack_rgba(&image, ssb_rom::psp_texture::Psm::Psm8888, swizzle);
     writer.add_texture(&tex, true, true)
 }
 
-/// A menu sprite's texture: 5551 when that holds its combined image
-/// exactly (the RGBA16-palette pictures), else 8888.
+/// A menu sprite's texture: 5551 when that holds its image exactly (the
+/// RGBA16-palette pictures; the bleed copies colours the image already
+/// holds, so it keeps a 5551 image 5551), else 8888.
 fn add_menu_sprite_texture(
     writer: &mut ssb_rom::pack::PackWriter,
     s: &ssb_rom::sprite::Sprite,
     swizzle: bool,
 ) -> u32 {
     use ssb_rom::psp_texture::{pack_rgba, Psm};
-    let image = ssb_rom::sprite::combined_image(s);
+    let image = ssb_rom::sprite::psp_image(s);
     let exact_5551 = image.pixels.as_chunks::<4>().0.iter().all(|p| {
         let c = |v: u8| (v >> 3) << 3 | v >> 5;
         c(p[0]) == p[0] && c(p[1]) == p[1] && c(p[2]) == p[2] && (p[3] == 0 || p[3] == 0xFF)
@@ -3891,7 +3892,9 @@ fn add_explain(
         ex::rgb_texture(graphics).ok_or("explain overlay")?,
     ));
     let count = images.len();
-    for (at, image) in images {
+    for (at, mut image) in images {
+        // Drawn as sprites: bled like the others (RE-517).
+        ssb_rom::sprite::bleed_transparent_rgb(&mut image);
         let texture = writer.add_texture(&pack_rgba(&image, Psm::Psm8888, swizzle), true, true);
         writer.add_sprite(ssb_rom::pack::SpriteDesc {
             source_file: ex::FILE_GRAPHICS,
@@ -6899,7 +6902,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     ssb_rom::ending::MESSAGE_COLLAGE.file,
                     ssb_rom::ending::COLLAGE,
                 ) {
-                let image = ssb_rom::sprite::combined_image(&s);
+                let image = ssb_rom::sprite::psp_image(&s);
                 let tex = ssb_rom::psp_texture::pack_rgba(
                     &image,
                     ssb_rom::psp_texture::Psm::Psm5551,

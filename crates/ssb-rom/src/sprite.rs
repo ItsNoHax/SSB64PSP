@@ -245,6 +245,56 @@ pub fn combined_image(s: &Sprite) -> Rgba8 {
     out
 }
 
+/// The image the pack stores for a sprite: [`combined_image`] with
+/// [`bleed_transparent_rgb`] applied (RE-517).
+pub fn psp_image(s: &Sprite) -> Rgba8 {
+    let mut out = combined_image(s);
+    bleed_transparent_rgb(&mut out);
+    out
+}
+
+/// Gives each fully transparent texel next to a visible one that
+/// neighbour's colour, its alpha left 0 (RE-517).
+///
+/// The N64 draws a sprite texel for pixel, so the colour stored under a
+/// transparent texel never shows; the PSP draws it 1.236 times larger
+/// through bilinear filtering, which mixes that colour into the visible
+/// edge. Only the eight texels around a visible one can share a bilinear
+/// footprint with it, so only they change. The colour is copied from the
+/// orthogonal neighbour with the highest alpha, else the diagonal one
+/// (left, right, up, down, then up-left, up-right, down-left, down-right
+/// on a tie), so the result holds no colour the image did not: a 5551
+/// image stays 5551.
+pub fn bleed_transparent_rgb(img: &mut Rgba8) {
+    const ORTHO: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+    const DIAG: [(i32, i32); 4] = [(-1, -1), (1, -1), (-1, 1), (1, 1)];
+    let (w, h) = (img.width as i32, img.height as i32);
+    let src = img.clone();
+    let at = |x: i32, y: i32| -> Option<[u8; 4]> {
+        (x >= 0 && y >= 0 && x < w && y < h).then(|| src.get((y * w + x) as usize))
+    };
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * w + x) as usize;
+            if src.get(i)[3] != 0 {
+                continue;
+            }
+            let pick = |ring: &[(i32, i32)]| {
+                ring.iter()
+                    .filter_map(|&(dx, dy)| at(x + dx, y + dy))
+                    .filter(|p| p[3] != 0)
+                    .fold(None, |best: Option<[u8; 4]>, p| match best {
+                        Some(b) if b[3] >= p[3] => Some(b),
+                        _ => Some(p),
+                    })
+            };
+            if let Some(p) = pick(&ORTHO).or_else(|| pick(&DIAG)) {
+                img.put(i, [p[0], p[1], p[2], 0]);
+            }
+        }
+    }
+}
+
 /// Whether the draw is tinted by the primitive colour.
 pub fn uses_prim_color(format: Format) -> bool {
     matches!(format, Format::I | Format::Ia)
@@ -633,6 +683,57 @@ pub fn decode_all(file: &File, f: &SpriteFile) -> Result<Vec<Sprite>, SpriteErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bleed_fills_only_the_ring_around_visible_texels() {
+        // 5 x 5, transparent black, one opaque red texel at (2, 2) and a
+        // half-transparent green one at (3, 2).
+        let mut img = Rgba8::new(5, 5);
+        img.put(12, [0xF8, 0, 0, 255]);
+        img.put(13, [0, 0x80, 0, 128]);
+        let before = img.clone();
+        bleed_transparent_rgb(&mut img);
+        for i in 0..25 {
+            let (b, a) = (before.get(i), img.get(i));
+            // Alpha never changes; visible texels keep their colour.
+            assert_eq!(a[3], b[3], "texel {i}");
+            if b[3] != 0 {
+                assert_eq!(a, b, "texel {i}");
+            }
+        }
+        // Left of red: red. Right of green: green. Above red: red (its
+        // orthogonal neighbour). Above-right of green: green (diagonal
+        // only). The outer ring two texels away keeps black.
+        assert_eq!(img.get(11), [0xF8, 0, 0, 0]);
+        assert_eq!(img.get(14), [0, 0x80, 0, 0]);
+        assert_eq!(img.get(7), [0xF8, 0, 0, 0]);
+        assert_eq!(img.get(9), [0, 0x80, 0, 0]);
+        assert_eq!(img.get(0), [0, 0, 0, 0]);
+        assert_eq!(img.get(10), [0, 0, 0, 0]);
+        // Between red (255) and green (128) the higher alpha wins.
+        let mut tie = Rgba8::new(3, 1);
+        tie.put(0, [0, 0x80, 0, 128]);
+        tie.put(2, [0xF8, 0, 0, 255]);
+        bleed_transparent_rgb(&mut tie);
+        assert_eq!(tie.get(1), [0xF8, 0, 0, 0]);
+    }
+
+    #[test]
+    fn bleed_leaves_opaque_and_empty_images_alone() {
+        let mut empty = Rgba8::new(4, 4);
+        for i in 0..16 {
+            empty.put(i, [9, 9, 9, 0]);
+        }
+        let mut solid = Rgba8::new(4, 4);
+        for i in 0..16 {
+            solid.put(i, [i as u8, 2, 3, 255]);
+        }
+        for img in [empty, solid] {
+            let mut out = img.clone();
+            bleed_transparent_rgb(&mut out);
+            assert_eq!(out, img);
+        }
+    }
 
     #[test]
     fn two_bit_texels_widen_most_significant_first() {
