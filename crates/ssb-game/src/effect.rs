@@ -1111,6 +1111,12 @@ pub enum DisplayKind {
     /// `llPikachuSpecial2ThunderShock{1,2}AnimJoint` otherwise). Paused
     /// through hitlag, stopped by `ftParamProcStopEffect`.
     ThunderShock { gfx: u8 },
+    /// `dEFManagerVulcanJabEffectDesc`: one of Kirby's rapid-jab puffs
+    /// (`efManagerKirbyVulcanJabMakeEffect`). Not attached to the fighter
+    /// (`fighter_gobj` stays `NULL`), so hitlag does not pause it and a
+    /// status change does not stop it; no animation. It moves six times and
+    /// ejects itself on its seventh update (RE-513).
+    VulcanJab,
 }
 
 /// `gcPlayAnimAll` calls until each display effect's animation reaches its
@@ -1156,7 +1162,8 @@ impl DisplayKind {
             | DisplayKind::FireSpark
             | DisplayKind::ThunderTrail
             | DisplayKind::YoshiEggEscape
-            | DisplayKind::ThunderShock { .. } => 15,
+            | DisplayKind::ThunderShock { .. }
+            | DisplayKind::VulcanJab => 15,
             DisplayKind::SpawnOrbs
             | DisplayKind::SpawnSparks
             | DisplayKind::SpawnMDust
@@ -1183,7 +1190,8 @@ impl DisplayKind {
             | DisplayKind::SpawnMDust
             | DisplayKind::ThunderTrail
             | DisplayKind::YoshiEggEscape
-            | DisplayKind::ContainerSmash => return None,
+            | DisplayKind::ContainerSmash
+            | DisplayKind::VulcanJab => return None,
         })
     }
 
@@ -1198,6 +1206,7 @@ impl DisplayKind {
                 | DisplayKind::ThunderTrail
                 | DisplayKind::YoshiEggEscape
                 | DisplayKind::ContainerSmash
+                | DisplayKind::VulcanJab
         )
     }
 }
@@ -1235,8 +1244,8 @@ pub struct Display {
     pub vel: [f32; 2],
     add: [f32; 2],
     add_timer: u16,
-    lifetime: i32,
-    lr: i8,
+    pub(crate) lifetime: i32,
+    pub(crate) lr: i8,
     /// A spawner's point.
     pos: Vec3,
     /// `effect_vars.impact_wave`: its colour index and alpha.
@@ -1309,6 +1318,25 @@ impl Effects {
     /// The live display effects, in pool order.
     pub fn displays(&self) -> impl Iterator<Item = &Display> + '_ {
         self.displays.iter().flatten()
+    }
+
+    /// The live display effects in `GObj` order, the order their DL link
+    /// draws them in. `efManagerMakeEffect` adds every one at display
+    /// priority 2 and `gcDLLinkGObjTail` keeps equal priorities in creation
+    /// order, so this is make order, not the pool's first-free-slot order
+    /// (RE-513).
+    pub fn displays_in_make_order(&self) -> impl Iterator<Item = &Display> + '_ {
+        let mut order = [(0u32, 0u8); DISPLAY_MAX];
+        let mut n = 0;
+        for (i, d) in self.displays.iter().enumerate() {
+            if let Some(d) = d {
+                order[n] = (d.seq, i as u8);
+                n += 1;
+            }
+        }
+        // The counter only wraps after years; see `process`.
+        order[..n].sort_unstable_by_key(|&(seq, _)| seq);
+        (0..n).filter_map(move |k| self.displays[usize::from(order[k].1)].as_ref())
     }
     /// `itBoxContainerSmashMakeEffect` and
     /// `itTaruBombContainerSmashMakeEffect`, which differ only in their
@@ -1479,6 +1507,20 @@ impl Effects {
                     }
                     _ => {}
                 }
+                self.displays[i] = Some(d);
+            }
+            // `efManagerKirbyVulcanJabProcUpdate`: `vel += add` and
+            // `translate += vel`, `x` then `y`, while the lifetime lasts.
+            DisplayKind::VulcanJab => {
+                if d.lifetime == 0 {
+                    self.eject_display(i);
+                    return;
+                }
+                d.vel[0] += d.add[0];
+                d.translate.x += d.vel[0];
+                d.vel[1] += d.add[1];
+                d.translate.y += d.vel[1];
+                d.lifetime -= 1;
                 self.displays[i] = Some(d);
             }
             // `efManagerPikachuThunderTrailProcUpdate`.
@@ -1776,6 +1818,37 @@ impl Effects {
         d.index = gfx;
         d.owner = owner;
         d.fighter = Some(owner);
+        true
+    }
+
+    /// `efManagerKirbyVulcanJabMakeEffect(&pos, lr, rotate, vel, add)`: a
+    /// non-forced struct (`efManagerMakeEffectNoForce`); `pos` (world) is the
+    /// root's `translate`. Facing left turns the root half a turn about `y`
+    /// and negates `rotate`, `vel` and `add`; `rotate` (degrees) becomes the
+    /// root's `rotate.z`, whose table sine and cosine (`lbCommonSin`,
+    /// `lbCommonCos`) aim `vel` and `add`. The kind-0x46 node it adds to
+    /// `dobj->child->child` spins by that node's own `rotate.z` (0), not the
+    /// root's (RE-513). `false` as the source returns `NULL`.
+    pub fn vulcan_jab(&mut self, pos: Vec3, lr: i8, rotate: f32, vel: f32, add: f32) -> bool {
+        let Some(i) = self.make_display(DisplayKind::VulcanJab) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.translate = pos;
+        let (mut rotate, mut vel, mut add) = (rotate, vel, add);
+        if lr == -1 {
+            d.rotate.y = dtor(180.0);
+            rotate = -rotate;
+            vel = -vel;
+            add = -add;
+        }
+        d.rotate.z = dtor(rotate);
+        let sin = ssb_engine::math::lb_sin(d.rotate.z);
+        let cos = ssb_engine::math::lb_cos(d.rotate.z);
+        d.lifetime = 6;
+        d.vel = [vel * cos, vel * sin];
+        d.add = [add * cos, add * sin];
+        d.lr = lr;
         true
     }
 

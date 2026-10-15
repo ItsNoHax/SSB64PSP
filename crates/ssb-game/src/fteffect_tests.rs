@@ -870,3 +870,108 @@ fn a_live_thunder_shock_spark_marks_topn_as_the_trace_records() {
         assert_eq!(got, want, "smash from {start}");
     }
 }
+
+/// RE-513 trace k1, Kirby's rapid jab from `ftCommonAttack100LoopSetStatus`
+/// (frame 1012) with A mashed: the puffs `ftCommonAttack100LoopKirbyUpdateEffect`
+/// makes (frame, `rotate` of the row) and TopN's `transform_update_mode`
+/// at the end of each frame. The first puff comes from the setter's
+/// frame-0 events, the later ones from flag 2 at loop frames 6, 11, 16 and
+/// 21, then 2 after the wrap (the script resumes at `SetFlag1`, then
+/// `Goto JabLoop`). The puff's query marks TopN on its frame, as the jab
+/// hitbox's position queries do on its two frames; the next frame's
+/// `ftMainPlayAnim` clears it.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn kirbys_vulcan_jab_puffs_and_topn_marks_follow_the_trace() {
+    use crate::collision::{flags, Segment};
+    use ssb_engine::input::{ControllerState, N64Buttons};
+    let floor = || {
+        [(
+            0u16,
+            Segment {
+                x1: -2318,
+                y1: 0,
+                x2: 2318,
+                y2: 0,
+                flags: flags::CLIFF,
+            },
+        )]
+    };
+    let bank = bank(20);
+    let mut p = std::boxed::Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    let mut f = Fighter::new(FighterKind::Kirby, 0, 4);
+    f.pos = Vec3::new(0.0, 4.0, 0.0);
+    assert!(f.place_on_stage(floor()));
+    status::set_wait(&mut f);
+    crate::kirby::set_attack100_start(&mut f);
+    f.effects.clear();
+    let looping = crate::status::AnyStatus::Kirby(crate::status::KirbyStatus::Attack100Loop);
+    let mut frame = None::<u32>;
+    let mut puffs = std::vec::Vec::new();
+    let mut marked = std::vec::Vec::new();
+    for tick in 0u32..80 {
+        f.set_input(
+            ControllerState {
+                buttons: N64Buttons(if tick.is_multiple_of(2) {
+                    N64Buttons::A
+                } else {
+                    0
+                }),
+                ..Default::default()
+            },
+            false,
+            false,
+        );
+        rt.run();
+        let surfaces = || floor().into_iter().map(crate::map::floor_surface);
+        f.tick_interrupt(&surfaces);
+        flush(&mut f, &mut rt);
+        f.tick_physics_map(&surfaces);
+        flush(&mut f, &mut rt);
+        crate::combat::update_attack_positions(&mut f);
+        rt.effects.process(rt.particles, rt.banks);
+        if frame.is_none() && f.status.status == looping {
+            frame = Some(1012);
+        }
+        let Some(now) = frame else { continue };
+        assert_eq!(f.status.status, looping, "frame {now}");
+        for d in rt.effects.displays() {
+            if d.kind == DisplayKind::VulcanJab && d.lifetime == 6 {
+                assert_eq!(d.lr, 1);
+                puffs.push((now, (d.rotate.z.to_degrees()).round() as i32));
+            }
+        }
+        if f.queried_joints.get() & 1 != 0 {
+            marked.push(now);
+        }
+        frame = Some(now + 1);
+        if now == 1044 {
+            break;
+        }
+    }
+    assert_eq!(
+        puffs,
+        [
+            (1012, 0),
+            (1018, 19),
+            (1023, -13),
+            (1028, 10),
+            (1033, -10),
+            (1039, 0),
+            (1043, 19)
+        ]
+    );
+    assert_eq!(
+        marked,
+        [
+            1012, 1013, 1018, 1019, 1023, 1024, 1028, 1029, 1033, 1034, 1037, 1038, 1039, 1040,
+            1043, 1044
+        ]
+    );
+}

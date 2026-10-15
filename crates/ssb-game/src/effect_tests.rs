@@ -432,3 +432,117 @@ fn a_thunder_shock_spark_pauses_with_its_fighter_and_stops_on_its_status_change(
     assert!(ticks(rt.effects, 1).is_some());
     assert_eq!(life::THUNDER_SHOCK, [7, 7, 7]);
 }
+
+/// RE-513 trace k1, puffs 7 (`lr` 1) and 12 (`lr` -1), both from row 2
+/// (`rotate` 19, `vel` 180, `add` -30): the root DObj's translate on the
+/// make frame and after each `efManagerKirbyVulcanJabProcUpdate`, bit for
+/// bit. The sixth update adds a zero velocity; the seventh ejects. The puff
+/// is not attached: a paused or stopped fighter leaves it alone.
+#[test]
+fn a_vulcan_jab_puff_moves_as_the_trace_records() {
+    let bits = |v: f32| v.to_bits();
+    let cases = [
+        (
+            1i8,
+            [0x44fbe846u32, 0x435a6667, 0x41da6667],
+            [
+                (0x44fbe846u32, 0x435a6667u32),
+                (0x4506d065, 0x43859927),
+                (0x450de700, 0x43991dea),
+                (0x451337f4, 0x43a7c17c),
+                (0x4516c342, 0x43b183dd),
+                (0x451888e9, 0x43b6650e),
+                (0x451888e9, 0x43b6650e),
+            ],
+            (0u32, 0x3ea9c91fu32),
+        ),
+        (
+            -1,
+            [0x44be7b78, 0x435a6667, 0xc1da6667],
+            [
+                (0x44be7b78, 0x435a6667),
+                (0x44acc2f4, 0x43857d4b),
+                (0x449e95be, 0x4398ebc4),
+                (0x4493f3d6, 0x43a77e9f),
+                (0x448cdd3b, 0x43b135dc),
+                (0x448951ee, 0x43b6117a),
+                (0x448951ee, 0x43b6117a),
+            ],
+            (0x40490fdb, 0xbea9c91f),
+        ),
+    ];
+    for (lr, pos, want, (rot_y, rot_z)) in cases {
+        let bank = bank(200);
+        let (mut p, mut e) = runtime();
+        let pos = Vec3::new(
+            f32::from_bits(pos[0]),
+            f32::from_bits(pos[1]),
+            f32::from_bits(pos[2]),
+        );
+        assert!(e.vulcan_jab(pos, lr, 19.0, 180.0, -30.0));
+        let mut rt = EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &bank,
+        };
+        let puff = |e: &Effects| {
+            e.displays()
+                .find(|d| d.kind == DisplayKind::VulcanJab)
+                .map(|d| {
+                    (
+                        bits(d.translate.x),
+                        bits(d.translate.y),
+                        d.translate.z,
+                        d.rotate,
+                    )
+                })
+        };
+        let (_, _, z, rotate) = puff(rt.effects).unwrap();
+        assert_eq!(z, pos.z);
+        assert_eq!((bits(rotate.y), bits(rotate.z)), (rot_y, rot_z), "lr {lr}");
+        let mut got = std::vec::Vec::new();
+        for frame in 0..7 {
+            let (x, y, _, _) = puff(rt.effects).unwrap();
+            got.push((x, y));
+            if frame == 2 {
+                // Neither the fighter's hitlag nor its status change
+                // touches an unattached puff.
+                rt.effects.pause_attached(0, true);
+                rt.effects.stop_attached(0);
+            }
+            rt.frame();
+        }
+        assert_eq!(got, want, "lr {lr}");
+        assert!(puff(rt.effects).is_none(), "the seventh update ejects");
+    }
+}
+
+/// A DL link draws its effects in `GObj` (make) order, which a reused
+/// pool slot does not follow: the third puff takes the first one's slot
+/// but still draws after the second (RE-513).
+#[test]
+fn display_effects_draw_in_make_order_not_pool_order() {
+    let bank = bank(200);
+    let (mut p, mut e) = runtime();
+    let at = |x: f32| Vec3::new(x, 0.0, 0.0);
+    assert!(e.vulcan_jab(at(1.0), 1, 0.0, 0.0, 0.0));
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    for _ in 0..3 {
+        rt.frame();
+    }
+    assert!(rt.effects.vulcan_jab(at(2.0), 1, 0.0, 0.0, 0.0));
+    // The first puff's seventh update ejects it.
+    for _ in 0..5 {
+        rt.frame();
+    }
+    assert!(rt.effects.vulcan_jab(at(3.0), 1, 0.0, 0.0, 0.0));
+    let xs = |it: &mut dyn Iterator<Item = &Display>| {
+        it.map(|d| d.translate.x).collect::<std::vec::Vec<_>>()
+    };
+    assert_eq!(xs(&mut rt.effects.displays()), [3.0, 2.0], "pool order");
+    assert_eq!(xs(&mut rt.effects.displays_in_make_order()), [2.0, 3.0]);
+}

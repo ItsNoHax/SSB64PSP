@@ -13,16 +13,17 @@ Where the project is now. The roadmap and every open task are in
 | Rendering | CRT overscan crop ([D-047](docs/decisions/D-047.md), RE-477); per-node model matrices compose with a raw VFPU `vmmul.q` (RE-497) |
 | Frontend | N64 logo, opening, title and attract loop; every menu including Sound Test; per-scene loading with background reads (RE-475, RE-476) |
 | PSP | 60 FPS under PPSSPP. PSP-2000 `vs4@2400` (`profile` builds, own searched order each): 57.6 FPS from a VFPU matrix compose and a `sqrt.s` skin loop (RE-497), then 55.3 → 56.5 FPS from a scalar billboard matrix (RE-498, separate baseline). Production build (RE-479): attract loop clean, opening averages 55.8 FPS (58.7 without audio), four-player VS 48.27 without audio (RE-493). PSP-1000 unsupported |
-| Tests | workspace tests with the ROM (stub tables pass separately, as CI), clippy and rustfmt pass; 206 of 206 goldens pass by pixel hash |
+| Tests | workspace tests with the ROM (stub tables pass separately, as CI), clippy and rustfmt pass; 207 of 207 goldens pass by pixel hash |
 
 ## Current Work
 
-RE-512: sword-trail renderer (Link sword, Beam Sword, magnifier pass) and the
-Pikachu Thunder Shock spark with its TopN query-mark timing, checked against
-N64 traces. Pack v110 (spark animations 1 and 2). 3 goldens added, 1 rebaselined.
-Next, per [`PLAN.md`](PLAN.md#remaining-work): Kirby attack100 vulcan and the
-Link/Captain attack100 interrupt, then fighter wind-reaction effects and the
-slope follow-ups.
+RE-513: Kirby attack100 vulcan puffs with their TopN marks, the
+Link/Captain/Kirby attack100 item-pickup interrupt, the Captain rapid-jab
+frame fix and make-order drawing of link-15 effects, checked against N64
+traces. 1 golden added (`f1-training-kirby-jab`).
+Next, per [`PLAN.md`](PLAN.md#remaining-work): Kirby fighter lighting
+investigation (PSP highlights paler than N64, plus the shadow under the feet),
+then fighter wind-reaction effects and the slope follow-ups.
 
 ## Blockers
 
@@ -34,7 +35,7 @@ slope follow-ups.
 
 ## Verification
 
-Baseline after RE-512:
+Baseline after RE-513:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass (tests that need ROM tables, including
@@ -42,7 +43,7 @@ Baseline after RE-512:
   +1.98.0`, workspace, `-D warnings`) passes; `psp-runtime/src/scene.rs` and four psp-game screens already
   carry rustfmt diffs. Parallel `ssb-game` runs fail global-state tests (PLAN.md).
 - Both PSP release builds compile.
-- Goldens: `tools/golden.sh verify`: 206 of 206 match (pack `ssb64.pak` rebuilt as v110).
+- Goldens: `tools/golden.sh verify`: 207 of 207 match (pack `ssb64.pak` rebuilt as v110).
 - PPSSPP smoke: `run-ppsspp-headless.sh --crate psp-game --scene vs4@2400`
   exits 0 and writes a screenshot.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1; RE-506 matrix cost

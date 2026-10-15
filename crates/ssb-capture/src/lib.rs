@@ -358,6 +358,9 @@ pub enum GameScene {
     CaptainKick,
     /// `kirby`: Kirby in Training, one Final Cutter wave on the floor.
     Kirby,
+    /// `kirbyjab`: Kirby in Training, mid rapid jab with its vulcan puffs
+    /// (RE-513).
+    KirbyJab,
     /// `pikachu`: Pikachu in Training, one Thunder Jolt crawling the floor.
     Pikachu,
     /// `pikachuair`: Pikachu in Training, one aerial Thunder Jolt after a
@@ -716,7 +719,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 178] = [
+    pub const ALL: [GameScene; 179] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -759,6 +762,7 @@ impl GameScene {
         GameScene::Captain,
         GameScene::CaptainKick,
         GameScene::Kirby,
+        GameScene::KirbyJab,
         GameScene::Pikachu,
         GameScene::PikachuAir,
         GameScene::PikachuSmash,
@@ -941,6 +945,7 @@ impl GameScene {
             GameScene::Captain => "captain",
             GameScene::CaptainKick => "captainkick",
             GameScene::Kirby => "kirby",
+            GameScene::KirbyJab => "kirbyjab",
             GameScene::Pikachu => "pikachu",
             GameScene::PikachuAir => "pikachuair",
             GameScene::PikachuSmash => "pikachusmash",

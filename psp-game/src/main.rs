@@ -251,6 +251,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // top platform near tick 77, and `SpecialHiLanding` frame 3 makes
         // the wave. It is some 6 of its 20 frames old here.
         GameScene::Kirby => 83,
+        // A from tick 50 on every other tick: jabs 1-3, then the rapid jab,
+        // whose loop makes a puff at its frames 0, 6, 11, 16 and 21 (RE-513).
+        GameScene::KirbyJab => 110,
         // B at tick 20; `SpecialN` makes the aerial jolt near tick 44, which
         // lands on its first frame as the ground jolt. Its animation is 8
         // plays into its first 15-frame push cycle here.
@@ -813,6 +816,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::Captain
             | GameScene::CaptainKick
             | GameScene::Kirby
+            | GameScene::KirbyJab
             | GameScene::Pikachu
             | GameScene::PikachuSmash
             | GameScene::Purin
@@ -828,6 +832,10 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             // tick 8 jabs on Training's first frame; both wait it out.
             50 if matches!(scene, GameScene::LinkSword | GameScene::PikachuSmash) => {
                 N64Buttons(N64Buttons::A)
+            }
+            // `kirbyjab` mashes A (no B at tick 20).
+            t if scene == GameScene::KirbyJab => {
+                N64Buttons(if t >= 50 && t % 2 == 0 { N64Buttons::A } else { 0 })
             }
             20 => N64Buttons(N64Buttons::B),
             60 if scene == GameScene::SamusShot => N64Buttons(N64Buttons::B),
@@ -1069,6 +1077,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::Captain
             | GameScene::CaptainKick
             | GameScene::Kirby
+            | GameScene::KirbyJab
             | GameScene::Pikachu
             | GameScene::PikachuAir
             | GameScene::Purin
@@ -2267,7 +2276,9 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Captain | GameScene::CaptainKick) => {
             ssb_game::fighter::FighterKind::Captain
         }
-        Some(GameScene::Kirby | GameScene::KirbyHat) => ssb_game::fighter::FighterKind::Kirby,
+        Some(GameScene::Kirby | GameScene::KirbyHat | GameScene::KirbyJab) => {
+            ssb_game::fighter::FighterKind::Kirby
+        }
         Some(
             GameScene::Pikachu
             | GameScene::PikachuAir
@@ -6321,7 +6332,7 @@ struct DrawAssets {
     rebirth_halo: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The display effects' objects and transform animations (RE-415), by
     /// [`display_asset`].
-    displays: [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 7],
+    displays: [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 8],
     /// Pikachu's Thunder frames by `texture_id_curr` (RE-417).
     thunder_frames: [Option<ssb_rom::pack::MeshDesc>; 4],
     /// The Egg Lay egg and its Wait, Break and Throw animations (RE-417).
@@ -6533,39 +6544,35 @@ const THUNDER_HEAD_FRAME: u8 = 3;
 /// `G_RM_AA_XLU_SURF` with no alpha compare. Its frame is the only thing
 /// that changes: the source sets no colour or alpha as it fades.
 #[inline(never)]
-unsafe fn draw_thunder_segments(
+unsafe fn draw_thunder_segment(
     gpu: &mut Gpu,
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
     assets: &DrawAssets,
-    effects: &ssb_game::effect::Effects,
+    d: &ssb_game::effect::Display,
 ) {
-    for d in effects
-        .displays()
-        .filter(|d| d.kind == ssb_game::effect::DisplayKind::ThunderTrail)
-    {
-        let Some(mesh) = assets.thunder_frames.get(usize::from(d.index)).and_then(Option::as_ref) else {
-            continue;
-        };
-        gpu.model_transform_xyz(
-            [d.translate.x, d.translate.y, d.translate.z],
-            [d.rotate.x, d.rotate.y, d.rotate.z],
-            [
-                meshdraw::MODEL_SCALE * d.scale.x,
-                meshdraw::MODEL_SCALE * d.scale.y,
-                meshdraw::MODEL_SCALE * d.scale.z,
-            ],
-        );
-        meshdraw::draw_mesh(p, mesh, draw_state, None, None);
-    }
+    let Some(mesh) = assets.thunder_frames.get(usize::from(d.index)).and_then(Option::as_ref) else {
+        return;
+    };
+    gpu.model_transform_xyz(
+        [d.translate.x, d.translate.y, d.translate.z],
+        [d.rotate.x, d.rotate.y, d.rotate.z],
+        [
+            meshdraw::MODEL_SCALE * d.scale.x,
+            meshdraw::MODEL_SCALE * d.scale.y,
+            meshdraw::MODEL_SCALE * d.scale.z,
+        ],
+    );
+    meshdraw::draw_mesh(p, mesh, draw_state, None, None);
 }
 
 /// The display effects' `EFDesc` objects (RE-415): the slash
 /// (`llEFCommonEffects1DamageSlashDObjDesc`), the flying orbs, the impact
 /// wave, the common spark (the flying sparks and the Star Rod spark), the
 /// metal dust, the small shock (`llEFCommonEffects2ShockSmallDObjDesc`) and
-/// the Poké Ball's rays (`llEFCommonEffects3MBallRaysDObjDesc`, RE-443).
-const DISPLAY_EFFECT_KEYS: [(u32, u32); 7] = [
+/// the Poké Ball's rays (`llEFCommonEffects3MBallRaysDObjDesc`, RE-443) and
+/// Kirby's rapid-jab puff (`llKirbySpecial2VulcanJabDObjDesc`, RE-513).
+const DISPLAY_EFFECT_KEYS: [(u32, u32); 8] = [
     (83, 0x7750),
     (83, 0x7E80),
     (83, 0x7C28),
@@ -6573,13 +6580,14 @@ const DISPLAY_EFFECT_KEYS: [(u32, u32); 7] = [
     (83, 0xCAC8),
     (84, 0x1500),
     (85, 0x0628),
+    (348, 0x0B20),
 ];
 
 /// [`DISPLAY_EFFECT_KEYS`]' objects and transform animations.
 #[inline(never)]
 fn display_assets(
     p: &Pack<'_>,
-) -> [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 7] {
+) -> [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 8] {
     DISPLAY_EFFECT_KEYS.map(|key| {
         let slot = ssb_rom::effect::MANAGER_EFFECT_KEYS
             .iter()
@@ -6603,6 +6611,7 @@ fn display_asset(kind: ssb_game::effect::DisplayKind) -> Option<usize> {
         K::FlyMDust => 4,
         K::ShockSmall => 5,
         K::MBallRays => 6,
+        K::VulcanJab => 7,
         K::SpawnOrbs
         | K::SpawnSparks
         | K::SpawnMDust
@@ -6703,13 +6712,13 @@ fn psp_matrix(m: &ssb_rom::scene::Mat4) -> psp::sys::ScePspFMatrix4 {
 /// animation once, as the make does, before its own.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
-fn draw_thunder_shocks(
+fn draw_thunder_shock(
     gpu: &mut Gpu,
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
     assets: &DrawAssets,
     scratch: &mut DisplayScratch,
-    effects: &ssb_game::effect::Effects,
+    d: &ssb_game::effect::Display,
     fighters: [Option<&ssb_game::fighter::Fighter>; 4],
     camera: &ssb_game::camera::Camera,
 ) {
@@ -6718,101 +6727,157 @@ fn draw_thunder_shocks(
         return;
     };
     let ms = meshdraw::MODEL_SCALE;
-    for d in effects.displays() {
-        let ssb_game::effect::DisplayKind::ThunderShock { gfx } = d.kind else {
-            continue;
-        };
-        let Some(f) = fighters.iter().flatten().find(|f| f.port == d.owner) else {
-            continue;
-        };
-        let gfx = usize::from(gfx.min(2));
-        // The make's play of the desc's animations, then the variant's.
-        let mats = object_mat_anims(p, object);
-        scratch.anim.start(p, &anims[0]);
-        scratch.materials.start(p, mats);
-        let plays = d.ticks;
-        if gfx != 0 {
-            if let Some(script) = p.anim_script(&anims[0]) {
-                let _ = scratch.anim.tick(script);
-            }
-            scratch.materials.tick(p);
-            scratch.anim.start(p, &anims[gfx]);
-            let script = ssb_rom::effect::PIKACHU_THUNDER_SHOCK_MAT_SCRIPTS[gfx];
-            for mat in object_mat_anims(p, object) {
-                scratch.materials.restart(mat, script);
-            }
+    let ssb_game::effect::DisplayKind::ThunderShock { gfx } = d.kind else {
+        return;
+    };
+    let Some(f) = fighters.iter().flatten().find(|f| f.port == d.owner) else {
+        return;
+    };
+    let gfx = usize::from(gfx.min(2));
+    // The make's play of the desc's animations, then the variant's.
+    let mats = object_mat_anims(p, object);
+    scratch.anim.start(p, &anims[0]);
+    scratch.materials.start(p, mats);
+    let plays = d.ticks;
+    if gfx != 0 {
+        if let Some(script) = p.anim_script(&anims[0]) {
+            let _ = scratch.anim.tick(script);
         }
-        if let Some(script) = p.anim_script(&anims[gfx]) {
-            for _ in 0..plays {
-                let _ = scratch.anim.tick(script);
-            }
+        scratch.materials.tick(p);
+        scratch.anim.start(p, &anims[gfx]);
+        let script = ssb_rom::effect::PIKACHU_THUNDER_SHOCK_MAT_SCRIPTS[gfx];
+        for mat in object_mat_anims(p, object) {
+            scratch.materials.restart(mat, script);
         }
+    }
+    if let Some(script) = p.anim_script(&anims[gfx]) {
         for _ in 0..plays {
-            scratch.materials.tick(p);
+            let _ = scratch.anim.tick(script);
         }
-        // `func_ovl0_800C994C`: the root's matrix marks TopN until the
-        // fighter's next `ftMainPlayAnim`.
-        let top = f.topn_world_matrix();
-        let scale_x = ssb_engine::math::sqrt_exact(
-            top[0][0] * top[0][0] + top[0][1] * top[0][1] + top[0][2] * top[0][2],
+    }
+    for _ in 0..plays {
+        scratch.materials.tick(p);
+    }
+    // `func_ovl0_800C994C`: the root's matrix marks TopN until the
+    // fighter's next `ftMainPlayAnim`.
+    let top = f.topn_world_matrix();
+    let scale_x = ssb_engine::math::sqrt_exact(
+        top[0][0] * top[0][0] + top[0][1] * top[0][1] + top[0][2] * top[0][2],
+    );
+    let root = Mat4([
+        top[0][0], top[0][1], top[0][2], 0.0, //
+        top[1][0], top[1][1], top[1][2], 0.0, //
+        top[2][0], top[2][1], top[2][2], 0.0, //
+        top[3][0], top[3][1], top[3][2], 1.0,
+    ]);
+    let base = root
+        .mul(&Mat4::from_trs(
+            [d.translate.x, d.translate.y, d.translate.z],
+            [0.0; 3],
+            [1.0; 3],
+        ))
+        .mul(&Mat4::from_trs([0.0; 3], [0.0; 3], [ms; 3]));
+    let mut posed = [Mat4::IDENTITY; 4];
+    let n = scratch.anim.compose(p, object, &mut posed).min(4);
+    // Node 3 under its `TraRotRpyRSca`.
+    unsafe {
+        meshdraw::draw_object_posed_hiding(
+            p,
+            object,
+            &psp_matrix(&base),
+            &posed[..n],
+            draw_state,
+            Some(&scratch.materials),
+            &|node| node != object.first_node + 3,
         );
-        let root = Mat4([
-            top[0][0], top[0][1], top[0][2], 0.0, //
-            top[1][0], top[1][1], top[1][2], 0.0, //
-            top[2][0], top[2][1], top[2][2], 0.0, //
-            top[3][0], top[3][1], top[3][2], 1.0,
-        ]);
-        let base = root
-            .mul(&Mat4::from_trs(
-                [d.translate.x, d.translate.y, d.translate.z],
-                [0.0; 3],
-                [1.0; 3],
-            ))
-            .mul(&Mat4::from_trs([0.0; 3], [0.0; 3], [ms; 3]));
-        let mut posed = [Mat4::IDENTITY; 4];
-        let n = scratch.anim.compose(p, object, &mut posed).min(4);
-        // Node 3 under its `TraRotRpyRSca`.
-        unsafe {
-            meshdraw::draw_object_posed_hiding(
-                p,
-                object,
-                &psp_matrix(&base),
-                &posed[..n],
-                draw_state,
-                Some(&scratch.materials),
-                &|node| node != object.first_node + 3,
-            );
-        }
-        // Node 2, kind 46.
-        let node = object.first_node + 2;
-        let (Some(pose), Some(mesh)) = (
-            stage_pose(&scratch.anim, node),
-            p.node(node)
-                .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
-                .and_then(|n| p.mesh(n.mesh)),
-        ) else {
-            continue;
-        };
-        let local = posed[2.min(n.saturating_sub(1))];
-        let at = ssb_engine::math::Vec3::new(
-            d.translate.x + local.0[12] * ms,
-            d.translate.y + local.0[13] * ms,
-            d.translate.z + local.0[14] * ms,
+    }
+    // Node 2, kind 46.
+    let node = object.first_node + 2;
+    let (Some(pose), Some(mesh)) = (
+        stage_pose(&scratch.anim, node),
+        p.node(node)
+            .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+            .and_then(|n| p.mesh(n.mesh)),
+    ) else {
+        return;
+    };
+    let local = posed[2.min(n.saturating_sub(1))];
+    let at = ssb_engine::math::Vec3::new(
+        d.translate.x + local.0[12] * ms,
+        d.translate.y + local.0[13] * ms,
+        d.translate.z + local.0[14] * ms,
+    );
+    let pos = ssb_game::slope_contour::world_position(&top, at);
+    let gx = scale_x * pose.scale[0];
+    let sy = pose.scale[1] * gx;
+    let sx = gx * pose.scale[0];
+    gpu.model_transform_billboard(
+        pos,
+        camera.eye,
+        camera.at,
+        pose.rotate[2],
+        [ms * sx, ms * sy],
+    );
+    unsafe {
+        meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&scratch.materials));
+    }
+}
+
+/// Kirby's rapid-jab puffs (`dEFManagerVulcanJabEffectDesc`, DL link 15,
+/// RE-513). The root `DObj` is `TraRotRpyRSca` at the puff's translate with
+/// its `rotate` (`y` pi facing left, `z` the row's spray angle), unscaled.
+/// Node 0 (`RotRpyR`, zero) draws its streak under it. Node 1, the
+/// maker's `dobj->child->child`, adds kind 0x46 (`func_ovl0_800CA194`):
+/// the projection's own rows replace the chain's rotation and scale, so its
+/// quad faces the screen at the composed position (the root's translate:
+/// both children sit at the origin), spun by its own `rotate.z`, which
+/// stays 0. N64 trace k1 (RE-513): the 0x46 matrix's rows are
+/// `gGCMatrixPerspF`'s on every frame, whatever the root's rotation.
+#[inline(never)]
+fn draw_vulcan_jab(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    assets: &DrawAssets,
+    d: &ssb_game::effect::Display,
+    camera: &ssb_game::camera::Camera,
+) {
+    use ssb_game::effect::DisplayKind as K;
+    use ssb_rom::scene::Mat4;
+    let Some((object, _)) = display_asset(K::VulcanJab).and_then(|i| assets.displays[i].as_ref())
+    else {
+        return;
+    };
+    let ms = meshdraw::MODEL_SCALE;
+    let units = Mat4::from_trs([0.0; 3], [0.0; 3], [ms; 3]);
+    let quad = object.first_node + 1;
+    let mesh = p
+        .node(quad)
+        .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+        .and_then(|n| p.mesh(n.mesh));
+    let root = Mat4::from_trs_display(
+        [d.translate.x, d.translate.y, d.translate.z],
+        [d.rotate.x, d.rotate.y, d.rotate.z],
+        [1.0; 3],
+    )
+    .mul(&units);
+    unsafe {
+        meshdraw::draw_object_posed_hiding(
+            p,
+            object,
+            &psp_matrix(&root),
+            &[Mat4::IDENTITY; 2],
+            draw_state,
+            None,
+            &|node| node == quad,
         );
-        let pos = ssb_game::slope_contour::world_position(&top, at);
-        let gx = scale_x * pose.scale[0];
-        let sy = pose.scale[1] * gx;
-        let sx = gx * pose.scale[0];
-        gpu.model_transform_billboard(
-            pos,
-            camera.eye,
-            camera.at,
-            pose.rotate[2],
-            [ms * sx, ms * sy],
-        );
-        unsafe {
-            meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&scratch.materials));
-        }
+    }
+    let Some(mesh) = mesh.as_ref() else {
+        return;
+    };
+    gpu.model_transform_billboard(d.translate, camera.eye, camera.at, 0.0, [ms, ms]);
+    unsafe {
+        meshdraw::draw_mesh(p, mesh, draw_state, None, None);
     }
 }
 
@@ -6823,21 +6888,43 @@ fn draw_thunder_shocks(
 /// `RotRpyR`); a flag-1 desc's own `DObj` hangs under it with its kind
 /// (`Sca`, `RotSca` 0x45 or the scale-and-translate 0x44). The impact wave
 /// is a `TraRotRpyRSca` `DObj` in its index's primitive colour. Only the
-/// effects on display link `link` draw (RE-422).
+/// effects on display link `link` draw (RE-422), in `GObj` order: every
+/// `efManagerMakeEffect` effect sits at display priority 2, so a link
+/// draws them in make order, the Thunder Shock sparks, Thunder trail
+/// segments and rapid-jab puffs among the rest (RE-513).
 #[inline(never)]
+#[allow(clippy::too_many_arguments)]
 fn draw_display_effects(
+    gpu: &mut Gpu,
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
     assets: &DrawAssets,
     scratch: &mut DisplayScratch,
     effects: &ssb_game::effect::Effects,
-    eye: ssb_engine::math::Vec3,
+    fighters: [Option<&ssb_game::fighter::Fighter>; 4],
+    camera: &ssb_game::camera::Camera,
     link: u8,
 ) {
     use ssb_game::effect::DisplayKind as K;
     use ssb_rom::scene::Mat4;
     let ms = meshdraw::MODEL_SCALE;
-    for d in effects.displays().filter(|d| d.kind.dl_link() == link) {
+    let eye = camera.eye;
+    for d in effects.displays_in_make_order().filter(|d| d.kind.dl_link() == link) {
+        match d.kind {
+            K::ThunderTrail => {
+                unsafe { draw_thunder_segment(gpu, p, draw_state, assets, d) };
+                continue;
+            }
+            K::ThunderShock { .. } => {
+                draw_thunder_shock(gpu, p, draw_state, assets, scratch, d, fighters, camera);
+                continue;
+            }
+            K::VulcanJab => {
+                draw_vulcan_jab(gpu, p, draw_state, assets, d, camera);
+                continue;
+            }
+            _ => {}
+        }
         let Some((object, anim)) = display_asset(d.kind).and_then(|i| assets.displays[i].as_ref())
         else {
             continue;
@@ -8387,12 +8474,14 @@ unsafe fn draw_training(
         REBIRTH_HALO_LINK,
     );
     draw_display_effects(
+        gpu,
         p,
         draw_state,
         assets,
         &mut damage_hud.display_scratch,
         &damage_hud.effects,
-        pl.camera.eye,
+        fighter_refs,
+        &pl.camera,
         10,
     );
     draw_particles(
@@ -8464,8 +8553,7 @@ unsafe fn draw_training(
     stage_pass(13..=15, meshdraw::Heads::Both, draw_state);
     battle_part(BattlePart::Weapons, draw_state, gpu);
     battle_part(BattlePart::Effects15, draw_state, gpu);
-    draw_thunder_segments(gpu, p, draw_state, assets, &damage_hud.effects);
-    draw_thunder_shocks(
+    draw_display_effects(
         gpu,
         p,
         draw_state,
@@ -8474,14 +8562,6 @@ unsafe fn draw_training(
         &damage_hud.effects,
         fighter_refs,
         &pl.camera,
-    );
-    draw_display_effects(
-        p,
-        draw_state,
-        assets,
-        &mut damage_hud.display_scratch,
-        &damage_hud.effects,
-        pl.camera.eye,
         15,
     );
     draw_particles(
@@ -8509,12 +8589,14 @@ unsafe fn draw_training(
         DEAD_EXPLODE_LINK,
     );
     draw_display_effects(
+        gpu,
         p,
         draw_state,
         assets,
         &mut damage_hud.display_scratch,
         &damage_hud.effects,
-        pl.camera.eye,
+        fighter_refs,
+        &pl.camera,
         18,
     );
     draw_particles(

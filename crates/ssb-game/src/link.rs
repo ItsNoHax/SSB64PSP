@@ -510,6 +510,8 @@ pub fn set_attack100_start(f: &mut Fighter) {
     status::play_anim_events(f);
     f.link.rapid_is_anim_end = false;
     f.link.rapid_is_goto_loop = false;
+    f.motion_script.flags[1] = 0;
+    f.motion_script.flags[2] = 0;
 }
 
 /// `ftCommonAttack100LoopSetStatus`. The vars carry over.
@@ -637,6 +639,11 @@ fn update_attack100_loop(f: &mut Fighter) {
     if flag1 {
         if f.link.rapid_is_anim_end && !f.link.rapid_is_goto_loop {
             set(f, LinkStatus::Attack100End, 0.0, ATTACK100_END_LENGTH);
+            return;
+        }
+        // `else if (ftCommonGetCheckInterruptCommon() == FALSE)`: an item in
+        // reach is picked up instead (RE-513).
+        if crate::item_throw::check_get(f) {
             return;
         }
         f.link.rapid_is_goto_loop = false;

@@ -42,6 +42,7 @@ mod figatree;
 mod fighters;
 mod ground;
 mod item_sounds;
+mod kirby_attack100;
 mod model_parts;
 mod motion;
 mod sin_table;
@@ -112,6 +113,10 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
             Generated {
                 name: "joint_masks.rs",
                 text: model_parts::generate(rom)?,
+            },
+            Generated {
+                name: "kirby_attack100.rs",
+                text: kirby_attack100::generate(rom)?,
             },
         ],
         Crate::Rom => vec![Generated {

@@ -82,7 +82,10 @@ closes it.
 - [x] Fighter TopN display (kind 0x4B), remaining query marks, item-swing attack joint -2, Kirby inhale/throw timing, Pikachu spark RNG; bit-exact against five N64 traces, 123 goldens rebaselined (RE-511).
 - [x] Sword-trail (afterimage) renderer for Link and the Beam Sword, with the magnifier pass, and the Pikachu Thunder Shock spark with its TopN query-mark timing; 4 goldens rebaselined or added (RE-512).
 - [ ] Thunder Shock spark ejection on a status change was not observed on the N64 (decomp only), and the Pikachu trace is short; capture a longer one (RE-512).
-- [ ] Kirby attack100 vulcan (`ftCommonAttack100LoopKirbyUpdateEffect`, TopN query on flag 2); Link/Captain attack100 `GetCheckInterruptCommon` else branch (`link.rs:630`, `captain.rs:424`) (RE-511).
+- [x] Kirby attack100 vulcan puffs (link-15 display, TopN query marks), Link/Captain/Kirby attack100 item-pickup interrupt, Captain rapid-jab flag-1 frames 6/14/22/30/37 with a 40-frame loop, link-15 displays drawn in make order; against N64 traces; 1 golden added (RE-513).
+- [ ] NEXT: Kirby fighter lighting/shading: PSP highlights are paler than N64 (same frame PSP ~(255,237,250) vs N64 (255,164,184)); affects every Kirby golden. Suspect `psp-runtime/src/meshdraw.rs:408` `configure_fighter_light`/`install_directional_light` (N64 clamps lit shade before the material multiply?). Evidence: RE-513 "Kirby shading".
+- [ ] Kirby shadow under the feet differs from the N64 (rows 164-168, x 210-222 on `f1-training-kirby-jab`: N64 (154,113,62), PSP (247,181,99)) (RE-513).
+- [ ] N64 shows stock icons next to the 0% damage displays in Training; the PSP does not (RE-513).
 - [ ] Optional: narrow the vs-four golden change to catch/thrown/relz/pulled; marks-only pixel share of the 27 display-plus-marks rows (RE-511).
 - [ ] Tooling: `tools/golden.sh` mem-line regex `[^\r]*` stops at the letter r; `SSB64_ROM` must be an absolute path for golden.sh.
 - [ ] D-048: `hidden_parts` (FTAttributes::hiddenparts, RE-468) in modelpart.rs is still a committed per-fighter ROM table: generate it in `ssb-tablegen` `model_parts.rs`; audit ssb-game for others. ssb-rom ROM tests return early without `SSB64_ROM` (use `ssb_tablegen::locate_rom`).

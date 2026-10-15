@@ -376,6 +376,33 @@ pub fn star_damage(kind: FighterKind) -> i32 {
 // Rapid jab (`ftcommonattack100.c`)
 // ---------------------------------------------------------------------------
 
+/// `ftKirbyAttack100Effect`: one rapid-jab puff's TopN-local offset, its
+/// angle in degrees and its speed and per-frame change.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Attack100Effect {
+    pub offset: Vec3,
+    pub rotate: f32,
+    pub vel: f32,
+    pub add: f32,
+}
+
+#[allow(clippy::all)]
+mod attack100_table {
+    include!(concat!(env!("OUT_DIR"), "/kirby_attack100.rs"));
+}
+
+/// Row `index` of `llKirbyMainMotionftKirbyAttack100Effect` (file 228),
+/// generated from the ROM (D-048); zeros in a stub build.
+pub fn attack100_effect(index: usize) -> Attack100Effect {
+    let [x, y, z, rotate, vel, add] = attack100_table::ATTACK100_EFFECT[index];
+    Attack100Effect {
+        offset: Vec3::new(x, y, z),
+        rotate,
+        vel,
+        add,
+    }
+}
+
 /// `ftCommonAttack100StartSetStatus`'s Kirby case.
 pub fn set_attack100_start(f: &mut Fighter) {
     if crate::item_throw::check_get(f) {
@@ -386,8 +413,12 @@ pub fn set_attack100_start(f: &mut Fighter) {
     status::play_anim_events(f);
     f.kirby.rapid_is_anim_end = false;
     f.kirby.rapid_is_goto_loop = false;
+    f.motion_script.flags[1] = 0;
+    f.motion_script.flags[2] = 0;
 }
 
+/// `ftCommonAttack100LoopSetStatus`: the loop's time-zero script sets flag
+/// 2, so the first puff is made here, before any `proc_update` (RE-513).
 fn set_attack100_loop(f: &mut Fighter) {
     // The figatree loops; the script pauses after its fifth pulse and
     // resumes on the wrap.
@@ -399,6 +430,32 @@ fn set_attack100_loop(f: &mut Fighter) {
         0.0,
         StatusTiming::looping(len),
     );
+    attack100_loop_update_effect(f);
+}
+
+/// `ftCommonAttack100LoopKirbyUpdateEffect`: Kirby only (`fp->fkind ==
+/// nFTKindKirby`, so not Polygon Kirby). On flag 2 the row `flag2 - 1`
+/// offset goes through TopN to the world, marking TopN queried
+/// (`gmCollisionGetFighterPartsWorldPosition`, RE-511), and a puff is made
+/// there; flag 2 clears whether or not the maker found a struct.
+fn attack100_loop_update_effect(f: &mut Fighter) {
+    if f.kind != FighterKind::Kirby {
+        return;
+    }
+    let flag2 = f.motion_script.flags[2];
+    if flag2 == 0 {
+        return;
+    }
+    let row = attack100_effect(usize::try_from(flag2 - 1).unwrap_or(0).min(5));
+    let pos = f.joint_query(0, row.offset);
+    f.effects.push(crate::fteffect::FighterEffect::VulcanJab {
+        pos,
+        lr: f.facing.sign() as i8,
+        rotate: row.rotate,
+        vel: row.vel,
+        add: row.add,
+    });
+    f.motion_script.flags[2] = 0;
 }
 
 /// `ftCommonAttack100LoopProcUpdate` and `...ProcInterrupt`.
@@ -416,8 +473,12 @@ fn update_attack100_loop(f: &mut Fighter) {
             set_frames(f, K::Attack100End, 0.0, ATTACK100_END_LENGTH);
             return;
         }
+        if crate::item_throw::check_get(f) {
+            return;
+        }
         f.kirby.rapid_is_goto_loop = false;
     }
+    attack100_loop_update_effect(f);
     if f.button_tap().contains(N64Buttons::A) || f.button_release().contains(N64Buttons::A) {
         f.kirby.rapid_is_goto_loop = true;
     }
@@ -1881,5 +1942,107 @@ mod tests {
             WeaponKind::KirbyCutter { grounded: true }
         ));
         assert_eq!(spawn.position.x, FINALCUTTER_OFF_X);
+    }
+
+    /// `ftCommonAttack100LoopKirbyUpdateEffect` tests `fkind ==
+    /// nFTKindKirby`: Polygon Kirby makes no puff and keeps its flag 2;
+    /// Kirby makes one through TopN, marking it, and clears the flag.
+    #[test]
+    fn only_kirby_makes_vulcan_puffs_and_the_flag_clears() {
+        for (kind, puffs) in [(FighterKind::Kirby, 1), (FighterKind::PolyKirby, 0)] {
+            let mut f = Fighter::new(kind, 0, 4);
+            f.effects.clear();
+            f.queried_joints.set(0);
+            f.motion_script.flags[2] = 2;
+            attack100_loop_update_effect(&mut f);
+            assert_eq!(f.effects.len(), puffs, "{kind:?}");
+            assert_eq!(f.motion_script.flags[2], if puffs == 1 { 0 } else { 2 });
+            assert_eq!(f.queried_joints.get() & 1, puffs as u64, "{kind:?}");
+        }
+    }
+
+    /// `ftCommonAttack100LoopProcUpdate`'s `else if
+    /// (ftCommonGetCheckInterruptCommon() == FALSE)`: at a flag 1 with an
+    /// item in reach the loop picks it up instead. RE-513 traces t2l/t2c:
+    /// Link and Captain Falcon go to `LightGet` (status 100) on a flag-1
+    /// frame of the loop; the first flag 1 is on loop frame 5 for Link, 6
+    /// for Captain Falcon and 8 for Kirby.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_rapid_jab_flag_picks_up_an_item_in_reach() {
+        use crate::item::{HeldItem, ItemKind, ItemType, ItemWeight, PickupCandidate};
+        use crate::status::Status;
+        type Case = (FighterKind, fn(&mut Fighter), AnyStatus, u32);
+        let cases: [Case; 3] = [
+            (
+                FighterKind::Kirby,
+                set_attack100_start,
+                AnyStatus::Kirby(K::Attack100Loop),
+                8,
+            ),
+            (
+                FighterKind::Link,
+                crate::link::set_attack100_start,
+                AnyStatus::Link(crate::status::LinkStatus::Attack100Loop),
+                5,
+            ),
+            (
+                FighterKind::Captain,
+                crate::captain::set_attack100_start,
+                AnyStatus::Captain(crate::status::CaptainStatus::Attack100Loop),
+                6,
+            ),
+        ];
+        for (kind, start, looping, flag1) in cases {
+            let mut f = Fighter::new(kind, 0, 4);
+            f.situation = Situation::Ground;
+            start(&mut f);
+            let mut frame = 0u32;
+            while f.status.status != looping {
+                press(
+                    &mut f,
+                    if frame.is_multiple_of(2) { 0x8000 } else { 0 },
+                    0,
+                    0,
+                );
+                status::update(&mut f);
+                frame += 1;
+                assert!(frame < 30, "{kind:?} never reached the loop");
+            }
+            let reach = crate::item_throw::pickup(kind).offset_light;
+            f.items.view.candidates[0] = Some(PickupCandidate {
+                item: HeldItem {
+                    slot: 0,
+                    kind: ItemKind::MSBomb,
+                    ty: ItemType::Swing,
+                    weight: ItemWeight::Light,
+                },
+                pos: Vec3::new(f.pos.x + f.facing.sign() * reach.x, f.pos.y + reach.y, 0.0),
+                coll: crate::ground::BodyColl::default(),
+                floor_line: f.floor.map(|s| s.line),
+            });
+            let mut updates = 0;
+            while f.status.status == looping {
+                press(
+                    &mut f,
+                    if (frame + updates).is_multiple_of(2) {
+                        0x8000
+                    } else {
+                        0
+                    },
+                    0,
+                    0,
+                );
+                status::update(&mut f);
+                updates += 1;
+                assert!(updates < 60, "{kind:?} never picked the item up");
+            }
+            assert_eq!(
+                f.status.status,
+                AnyStatus::Common(Status::LightGet),
+                "{kind:?}"
+            );
+            assert_eq!(updates, flag1, "{kind:?}");
+        }
     }
 }

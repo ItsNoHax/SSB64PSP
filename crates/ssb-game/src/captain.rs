@@ -128,6 +128,14 @@ fn set(f: &mut Fighter, s: CaptainStatus, frame: f32, length: f32) {
     );
 }
 
+/// `JabLoop` figatree cycle (N64 trace, RE-513: the flag 1 at frame 37 of
+/// one cycle and frame 6 of the next are 9 frames apart).
+pub const RAPID_LOOP_LENGTH: f32 = 40.0;
+/// The script's `WaitAsync(4, 12, 20, 28, 35)` each run a subroutine with a
+/// `Wait(2)` before `SetFlag1`, so flag 1 is set at these frames (N64 trace,
+/// RE-513).
+pub const RAPID_FLAG1_FRAMES: [f32; 5] = [6.0, 14.0, 22.0, 30.0, 37.0];
+
 pub fn set_attack100_start(f: &mut Fighter) {
     if crate::item_throw::check_get(f) {
         return;
@@ -137,10 +145,12 @@ pub fn set_attack100_start(f: &mut Fighter) {
     status::play_anim_events(f);
     f.captain.rapid_is_anim_end = false;
     f.captain.rapid_is_goto_loop = false;
+    f.motion_script.flags[1] = 0;
+    f.motion_script.flags[2] = 0;
 }
 
 fn set_attack100_loop(f: &mut Fighter) {
-    set(f, CaptainStatus::Attack100Loop, 0.0, 37.0);
+    set(f, CaptainStatus::Attack100Loop, 0.0, RAPID_LOOP_LENGTH);
     // `ftCommonAttack100LoopProcUpdate` calls `ftParamSetMotionID` at the
     // start of every loop, so each cycle is a new motion.
     f.motion.set(crate::stale::MotionAttackId::Attack100);
@@ -427,12 +437,15 @@ pub fn update(f: &mut Fighter) {
             if f.status.animation_ended() {
                 f.captain.rapid_is_anim_end = true;
             }
-            let flag = [4.0, 12.0, 20.0, 28.0, 35.0]
-                .into_iter()
-                .any(|at| crossed(f, at));
+            let flag = RAPID_FLAG1_FRAMES.into_iter().any(|at| crossed(f, at));
             if flag {
                 if f.captain.rapid_is_anim_end && !f.captain.rapid_is_goto_loop {
                     set(f, CaptainStatus::Attack100End, 0.0, 9.0);
+                    return;
+                }
+                // `else if (ftCommonGetCheckInterruptCommon() == FALSE)`: an item in
+                // reach is picked up instead (RE-513).
+                if crate::item_throw::check_get(f) {
                     return;
                 }
                 f.captain.rapid_is_goto_loop = false;

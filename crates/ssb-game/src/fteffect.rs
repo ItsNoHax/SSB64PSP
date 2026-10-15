@@ -120,6 +120,16 @@ pub enum FighterEffect {
     /// `pos` in TopN's frame, its `x` already mirrored by `lr`; success
     /// sets `is_effect_attach`.
     ThunderShock { pos: Vec3, gfx: u8 },
+    /// `efManagerKirbyVulcanJabMakeEffect(&pos, fp->lr, rotate, vel, add)`:
+    /// a rapid-jab puff at world `pos`. Not attached: `is_effect_attach` is
+    /// left alone (RE-513).
+    VulcanJab {
+        pos: Vec3,
+        lr: i8,
+        rotate: f32,
+        vel: f32,
+        add: f32,
+    },
     /// `ftParamProcStopEffect`: ejects the effects attached to the fighter.
     StopAttached,
     /// `ftParamProcPauseEffect` (`true`) or `ftParamProcResumeEffect`.
@@ -273,6 +283,15 @@ pub fn flush(f: &mut Fighter, rt: &mut EffectRuntime<'_>) {
                 }
             }
             // Queued only while one was attached or a maker was pending.
+            FighterEffect::VulcanJab {
+                pos,
+                lr,
+                rotate,
+                vel,
+                add,
+            } => {
+                rt.effects.vulcan_jab(pos, lr, rotate, vel, add);
+            }
             FighterEffect::StopAttached => {
                 rt.effects.stop_attached(f.port);
                 f.is_effect_attach = false;
