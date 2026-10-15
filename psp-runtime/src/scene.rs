@@ -1074,6 +1074,11 @@ pub fn tick_skeleton_animation(
     // A setter's `ftMainPlayAnimEventsAll` after `ftMainSetStatus`'s own
     // first parse: the clip stands one play past `anim_frame_begin`.
     let setter_played = status.clock > status.anim_frame_begin;
+    // `motion_id` -2: `ftParamUpdateAnimKeys` replays the installed clip's
+    // held values instead of advancing it (RE-510). The frame such a status
+    // starts on, its setter ran after that frame's `ftMainPlayAnim`, which
+    // still advanced the clip under the old motion.
+    let mut held = status.clip_paused;
     let status = status.status;
     // The pack row is the fighter's; the slot is the status's. Common
     // statuses use the shared slots, which resolve per fighter through the
@@ -1082,6 +1087,7 @@ pub fn tick_skeleton_animation(
     let mut restarted = false;
     if *started != Some((status, entry)) {
         *started = Some((status, entry));
+        held = false;
         restarted = !status.keeps_motion();
         // A status with no motion of its own (`CatchWait`, `CaptureWait`)
         // keeps playing the previous one; its slot is that status's slot.
@@ -1139,11 +1145,15 @@ pub fn tick_skeleton_animation(
     };
     if let Some(anim) = pack.fighter_anim(kind, slot) {
         if let Some(script) = pack.anim_script(&anim) {
-            let _ = skeleton.tick_scaled(
-                script,
-                pack.fighter_translate_scales(kind),
-                first_node,
-            );
+            if held {
+                skeleton.hold_scaled(script, pack.fighter_translate_scales(kind), first_node);
+            } else {
+                let _ = skeleton.tick_scaled(
+                    script,
+                    pack.fighter_translate_scales(kind),
+                    first_node,
+                );
+            }
         }
     }
     root_before
@@ -1530,8 +1540,8 @@ impl FighterScene {
             ssb_game::status::fox_blaster_spawn(&mut self.fighter);
         }
         let t = crate::profile::start();
-        self.fighter
-            .tick_physics_map_before_accessory(&|| MapSegments::with_groups(pack, stage, groups));
+        let segments = || MapSegments::with_groups(pack, stage, groups);
+        self.fighter.tick_physics_map_before_slope(&segments);
         crate::profile::stop(crate::profile::Span::Map, t);
         if self.fighter.is_grounded() {
             self.airborne_ticks = 0;
@@ -1566,6 +1576,10 @@ impl FighterScene {
             }
         }
         ssb_game::grab::refresh_held_attachment(&mut self.fighter);
+        // `proc_slope`, then the parts transform pass and the forward
+        // effects (`ftMainProcPhysicsMap`).
+        self.slope_contour(pack, &segments, false);
+        self.fighter.finish_physics_map();
         let t = crate::profile::start();
         self.sample_gameplay_joints(pack);
         crate::profile::stop(crate::profile::Span::Joints, t);
@@ -1798,9 +1812,18 @@ impl FighterScene {
         stage: &StageDesc,
         groups: &[ssb_game::map::MapGroup],
     ) {
-        // `ftCommonCatchPullProcCatch`'s `proc_slope` (RE-509).
-        self.fighter
-            .run_pending_slope_contour(&|| MapSegments::with_groups(pack, stage, groups));
+        // `ftCommonCatchPullProcCatch`'s `proc_slope` (RE-510), on the pose
+        // `ftMainSetStatus` parsed for `CatchPull`.
+        if self.fighter.slope_pending {
+            let status = &self.fighter.status;
+            if self.started != Some((status.status, status.entry)) {
+                self.tick_animation(pack);
+            }
+            let segments = || MapSegments::with_groups(pack, stage, groups);
+            if self.slope_contour(pack, &segments, true) {
+                self.sample_gameplay_joints(pack);
+            }
+        }
         let status = &self.fighter.status;
         if status.status != ssb_game::status::Status::CapturePulled
             || self.started == Some((status.status, status.entry))
@@ -1827,6 +1850,87 @@ impl FighterScene {
         }
         self.tick_animation(pack);
         self.sample_gameplay_joints(pack);
+    }
+
+    /// `mpCommonUpdateFighterSlopeContour` on this skeleton: hands the
+    /// parts' collision locals to the gameplay side's leg fit and puts the
+    /// rotations `func_ovl2_800EBD08` wrote on the poses, where the next
+    /// figatree tick overwrites the tracks it animates (RE-510). With
+    /// `pending`, only a slope a status change asked for. Returns whether a
+    /// leg moved.
+    fn slope_contour<I, F>(&mut self, pack: &Pack<'_>, surfaces: &F, pending: bool) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        use ssb_game::fighter::FIGHTER_JOINTS;
+        use ssb_game::slope_contour::PartLocals;
+        if pending && !self.fighter.slope_pending {
+            return false;
+        }
+        let Some(object) = pack.object(self.object) else {
+            return false;
+        };
+        self.refresh_joint_parents(pack, &object);
+        // `fp->is_use_animlocks` of the clip the map step left playing.
+        self.fighter.is_use_animlocks = self.skeleton.locks.flagged;
+        let mut parts = PartLocals::default();
+        if self.fighter.slope_contour != 0 {
+            let mut locals = [[[0.0f32; 3]; 4]; ssb_rom::skeleton::MAX_NODES];
+            let mut translate_x = [0.0f32; ssb_rom::skeleton::MAX_NODES];
+            let mut lead = None;
+            let count = self
+                .skeleton
+                .collision_parts(pack, &object, &mut locals, &mut translate_x, &mut lead)
+                .min(FIGHTER_JOINTS - 4);
+            for i in 0..count {
+                parts.set(i + 4, locals[i], translate_x[i]);
+            }
+            if let Some((local, x)) = lead {
+                parts.set(2, local, x);
+            }
+        }
+        let fits = if pending {
+            self.fighter
+                .run_pending_slope_contour(surfaces, Some(&parts))
+        } else {
+            self.fighter.slope_contour(surfaces, Some(&parts))
+        };
+        let mut moved = false;
+        for fit in fits.into_iter().flatten() {
+            let node = |joint: u8| object.first_node + u32::from(joint) - 4;
+            if let Some(pose) = self.skeleton.node_pose_mut(node(fit.thigh)) {
+                pose.rotate = fit.thigh_rotate;
+                moved = true;
+            }
+            if let Some(pose) = self.skeleton.node_pose_mut(node(fit.knee)) {
+                pose.rotate[2] = fit.knee_rotate_z;
+                moved = true;
+            }
+        }
+        moved
+    }
+
+    /// The part tree a query walks to TopN: node `n` is joint `n + 4`, a
+    /// root node hangs from the lead `XRotN` when the clip has one.
+    fn refresh_joint_parents(&mut self, pack: &Pack<'_>, object: &ObjectDesc) {
+        use ssb_game::fighter::FIGHTER_JOINTS;
+        let root_parent = if self.skeleton.lead_xrotn_pose().is_some() {
+            2
+        } else {
+            0
+        };
+        for i in 0..(object.node_count as usize).min(FIGHTER_JOINTS - 4) {
+            let parent = pack
+                .node_parent(object.first_node + i as u32)
+                .filter(|&p| {
+                    p != ssb_rom::pack::NodeDesc::NO_PARENT
+                        && p >= object.first_node
+                        && p - object.first_node < i as u32
+                })
+                .map_or(root_parent, |p| (p - object.first_node) as u8 + 4);
+            self.fighter.joint_parents[i + 4] = parent;
+        }
     }
 
     fn sample_held_child_offset(&mut self) {
@@ -1862,20 +1966,7 @@ impl FighterScene {
         let Some(object) = pack.object(self.object) else {
             return;
         };
-        // The part tree a query walks to TopN: node `n` is joint `n + 4`,
-        // a root node hangs from the lead `XRotN` when the clip has one.
-        let root_parent = if self.skeleton.lead_xrotn_pose().is_some() { 2 } else { 0 };
-        for i in 0..(object.node_count as usize).min(FIGHTER_JOINTS - 4) {
-            let parent = pack
-                .node_parent(object.first_node + i as u32)
-                .filter(|&p| {
-                    p != ssb_rom::pack::NodeDesc::NO_PARENT
-                        && p >= object.first_node
-                        && p - object.first_node < i as u32
-                })
-                .map_or(root_parent, |p| (p - object.first_node) as u8 + 4);
-            self.fighter.joint_parents[i + 4] = parent;
-        }
+        self.refresh_joint_parents(pack, &object);
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
         let count = self
             .compose_collision(pack, &object, &mut posed)

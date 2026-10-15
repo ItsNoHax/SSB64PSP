@@ -1507,6 +1507,31 @@ pub fn is_cliff_phase2(s: AnyStatus) -> bool {
     )
 }
 
+/// `mpCollisionGetFCCommonFloor`'s `dist` for a point at `(x, y)`: the
+/// line's height under `x` less `y`, both taken relative to a moving
+/// line's offset as the original does (`object_pos - yakumono translate`).
+pub fn floor_distance<I, F>(surfaces: &F, line: u16, x: f32, y: f32) -> Option<f32>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let offset = surfaces()
+        .into_iter()
+        .enumerate()
+        .find(|(i, s)| s.kind == Kind::Floor && line_id(*i, *s) == line)?
+        .1
+        .motion
+        .map(|m| m.offset);
+    let (ox, oy) = offset.map_or((x, y), |o| (x - o.x, y - o.y));
+    let f = collision::floor_height(
+        surfaces().into_iter().enumerate().filter_map(|(i, s)| {
+            (s.kind == Kind::Floor && line_id(i, s) == line).then_some((line, s.segment))
+        }),
+        ox,
+    )?;
+    Some(f.y - oy)
+}
+
 pub fn floor_point<I, F>(surfaces: F, line: u16, x: f32) -> Option<(f32, Standing)>
 where
     F: Fn() -> I,

@@ -83,6 +83,7 @@ pub mod samus;
 #[cfg(test)]
 mod setter_tests;
 pub mod shadow;
+pub mod slope_contour;
 pub mod sound;
 mod special_fighters;
 pub mod spgame;

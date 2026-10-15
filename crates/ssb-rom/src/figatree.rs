@@ -442,6 +442,20 @@ impl JointAnim {
         Ok(())
     }
 
+    /// `ftParamUpdateAnimKeys` while `fp->motion_id == -2`, for one joint:
+    /// `anim_wait` is forced to `AOBJ_ANIM_END` around
+    /// `gcPlayDObjAnimJoint` (or `lbCommonPlayTranslateScaledDObjAnim`)
+    /// and then restored. Every live track writes its value again without
+    /// ageing, so the held pose overwrites whatever else moved the joint
+    /// since the last play (a slope contour's legs, RE-510). A joint the
+    /// clip gives no script (`is_have_anim` false) has no live track.
+    pub fn hold_scaled(&mut self, data: &[u8], pose: &mut JointPose, translate_scale: [f32; 3]) {
+        let clock = self.clock;
+        self.clock = Clock::Ended;
+        self.play(data, 0.0, pose, translate_scale);
+        self.clock = clock;
+    }
+
     /// `ftAnimParseDObjFigatree` for one joint: runs commands until one blocks.
     fn parse(&mut self, data: &[u8], speed: f32) -> Result<(), Desynchronised> {
         match self.clock {

@@ -494,6 +494,16 @@ impl StageJoint {
         }
     }
 
+    /// `ftParamUpdateAnimKeys` while `fp->motion_id == -2`: one play with
+    /// `anim_wait` forced to `AOBJ_ANIM_END` and then restored, so every
+    /// live track writes its value again without ageing (RE-510).
+    pub fn hold_scaled(&mut self, data: &[u8], pose: &mut JointPose, translate_scale: [f32; 3]) {
+        let ended = self.ended;
+        self.ended = true;
+        self.play(data, 0.0, pose, translate_scale);
+        self.ended = ended;
+    }
+
     /// Whether the script has looped back to where it began.
     pub fn looped(&self) -> bool {
         self.pc == self.start

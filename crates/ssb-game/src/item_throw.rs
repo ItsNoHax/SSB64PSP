@@ -260,6 +260,16 @@ pub fn collision_axes(f: &Fighter) -> [Vec3; 3] {
             return crate::grab::held_collision_axes(hand);
         }
     }
+    // A slope tilt (`proc_slope`'s `FULL`) turns TopN about x as well.
+    if f.topn_rotate_x != 0.0 {
+        let yaw = model_yaw(f).unwrap_or(f.topn_lr * crate::slope_contour::dtor32(90.0));
+        let m = crate::slope_contour::transform_matrix(
+            Vec3::ZERO,
+            [f.topn_rotate_x, yaw, 0.0],
+            [1.0; 3],
+        );
+        return [0, 1, 2].map(|r| Vec3::new(m[r][0], m[r][1], m[r][2]));
+    }
     let Some(yaw) = model_yaw(f) else {
         return model_axes(f);
     };

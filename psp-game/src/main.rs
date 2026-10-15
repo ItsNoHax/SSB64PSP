@@ -8588,9 +8588,9 @@ unsafe fn draw_fighter_model(
     {
         gpu.model_transform_joint(f.fighter.pos, joint, scale);
     } else {
-        gpu.model_transform(
+        gpu.model_transform_rpy(
             [f.fighter.pos.x, f.fighter.pos.y, f.fighter.pos.z],
-            [0.0, play::fighter_turn(&f.fighter), 0.0],
+            [f.fighter.topn_rotate_x, play::fighter_turn(&f.fighter), 0.0],
             scale,
         );
     }

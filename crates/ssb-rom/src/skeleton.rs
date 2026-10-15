@@ -314,6 +314,31 @@ impl Skeleton {
         }
     }
 
+    /// `ftParamUpdateAnimKeys`'s `motion_id == -2` branch: a status with no
+    /// motion of its own (`CatchWait`, `CaptureWait`, ...) parses nothing,
+    /// but every joint the installed clip animates plays once more with
+    /// `anim_wait` forced to `AOBJ_ANIM_END`, rewriting its held values
+    /// without advancing the clock (RE-510). Same arguments as
+    /// [`Self::tick_scaled`].
+    pub fn hold_scaled(&mut self, script: &[u8], scales: Option<&[u8]>, first_node: u32) {
+        for i in 0..self.joint_count {
+            let scale = scales.map_or([1.0; 3], |bytes| {
+                if self.nodes[i] == AnimJoint::NO_NODE || self.nodes[i] < first_node {
+                    [1.0; 3]
+                } else {
+                    translation_scale(bytes, (self.nodes[i] - first_node) as usize + 4)
+                }
+            });
+            if self.anim_joint {
+                if let Some(joint) = self.joints32[i].as_mut() {
+                    joint.hold_scaled(script, &mut self.poses[i], scale);
+                }
+                continue;
+            }
+            self.anims[i].hold_scaled(script, &mut self.poses[i], scale);
+        }
+    }
+
     /// The local transform a joint currently holds.
     pub fn pose(&self, joint: usize) -> Option<&JointPose> {
         (joint < self.joint_count).then(|| &self.poses[joint])
@@ -351,7 +376,7 @@ impl Skeleton {
     ///
     /// Returns how many matrices were written.
     pub fn compose(&self, pack: &Pack<'_>, object: &ObjectDesc, out: &mut [Mat4]) -> usize {
-        self.compose_with(pack, object, out, Space::Display, None)
+        self.compose_with(pack, object, out, Space::Display, None, None)
     }
 
     /// [`Skeleton::compose`] with this frame's queried parts in place of
@@ -371,6 +396,7 @@ impl Skeleton {
             out,
             Space::Display,
             Some((queried, queried_lead)),
+            None,
         )
     }
 
@@ -385,7 +411,65 @@ impl Skeleton {
         object: &ObjectDesc,
         out: &mut [Mat4],
     ) -> usize {
-        self.compose_with(pack, object, out, Space::Collision, None)
+        self.compose_with(pack, object, out, Space::Collision, None, None)
+    }
+
+    /// Every node's collision local (`FTParts::unk_dobjtrans_0x10`) in the
+    /// original's units, rows 0 to 2 the axes and row 3 the translation,
+    /// and its `DObj::translate.x`; plus the interposed `XRotN`'s, when
+    /// the clip leads with it. The slope contour walks these (RE-510).
+    /// Returns how many nodes were written.
+    pub fn collision_parts(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        locals: &mut [[[f32; 3]; 4]],
+        translate_x: &mut [f32],
+        lead: &mut Option<([[f32; 3]; 4], f32)>,
+    ) -> usize {
+        let mut world = [Mat4::IDENTITY; MAX_NODES];
+        let mut local = [Mat4::IDENTITY; MAX_NODES];
+        let mut lead_local = None;
+        let count = self.compose_with(
+            pack,
+            object,
+            &mut world,
+            Space::Collision,
+            None,
+            Some((&mut local, &mut lead_local)),
+        );
+        let rows = |m: &Mat4| -> [[f32; 3]; 4] {
+            let r = |i: usize| [m.0[i * 4], m.0[i * 4 + 1], m.0[i * 4 + 2]];
+            let t = r(3);
+            // The pack's matrices are normalised by a power of two, so the
+            // product is exact.
+            [r(0), r(1), r(2), t.map(|v| v * MODEL_SCALE)]
+        };
+        let count = count.min(locals.len()).min(translate_x.len());
+        for i in 0..count {
+            locals[i] = rows(&local[i]);
+            let global = object.first_node + i as u32;
+            translate_x[i] = match self.pose_for(global) {
+                Some(p) => p.translate[0],
+                None => pack.node_rest(global).unwrap_or_default().translate[0],
+            };
+        }
+        *lead = lead_local.map(|m| {
+            (
+                rows(&m),
+                self.lead_xrotn_pose().map_or(0.0, |p| p.translate[0]),
+            )
+        });
+        count
+    }
+
+    /// The pose driving `node`, for code that adjusts it in place while the
+    /// animation keeps playing: the next tick (or a `motion_id` -2 hold,
+    /// [`Self::hold_scaled`]) writes the tracks it animates and leaves the
+    /// rest (`func_ovl2_800EBD08`'s leg fit).
+    pub fn node_pose_mut(&mut self, node: u32) -> Option<&mut JointPose> {
+        let i = (0..self.joint_count).find(|&i| self.nodes[i] == node)?;
+        Some(&mut self.poses[i])
     }
 
     /// A part's local matrix, and the scale its children accumulate from
@@ -424,6 +508,7 @@ impl Skeleton {
         out: &mut [Mat4],
         space: Space,
         queried: Option<(u64, bool)>,
+        mut locals_out: Option<(&mut [Mat4], &mut Option<Mat4>)>,
     ) -> usize {
         let count = (object.node_count as usize).min(out.len()).min(MAX_NODES);
         let mut locks = self.locks;
@@ -449,6 +534,9 @@ impl Skeleton {
             }
             None => (None, locks.root_scale),
         };
+        if let Some((_, lead_out)) = locals_out.as_mut() {
+            **lead_out = lead;
+        }
         for i in 0..count {
             let global = object.first_node + i as u32;
             let Some(parent) = pack.node_parent(global) else {
@@ -497,6 +585,11 @@ impl Skeleton {
                 scales[i] = s;
                 m
             };
+            if let Some((locals, _)) = locals_out.as_mut() {
+                if let Some(slot) = locals.get_mut(i) {
+                    *slot = local;
+                }
+            }
             // Parents always precede children in a `DObjDesc` array — a child
             // references `array_dobjs[depth - 1]`, which an earlier entry must
             // have filled — so the parent's matrix is already final.

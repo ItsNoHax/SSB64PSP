@@ -27,7 +27,10 @@
 //! decoded and skipped; the ported status code owns throws.
 
 /// The fighters' motion scripts and tables, generated at build time from the
-/// user's ROM by `crates/ssb-tablegen` (never committed).
+/// user's ROM by `crates/ssb-tablegen` (never committed). Its floats are the
+/// ROM's words, not approximations of `core` constants (`unk_0x320` reads
+/// as 0.5235988).
+#[allow(clippy::approx_constant)]
 mod scripts {
     include!(concat!(env!("OUT_DIR"), "/motion_scripts.rs"));
 }
@@ -348,6 +351,12 @@ pub struct CombatAttrs {
     /// `joint_rfoot_rotate`, `joint_lfoot_rotate`: the knee-local x of the
     /// point it holds over the floor.
     pub foot_rotates: [f32; 2],
+    /// `unk_0x31C`: how far below the leg root `func_ovl2_800DDF74` lets
+    /// the foot target reach.
+    pub foot_reach: f32,
+    /// `unk_0x320`: the steepest slope (radians) `func_ovl2_800DDF74` lets
+    /// a foot target drop below TopN along.
+    pub foot_slope_angle: f32,
 }
 
 /// `attr->is_have_voice`.
@@ -897,9 +906,14 @@ fn execute(
             f.motion_script.flags[(opcode - op::SET_FLAG0) as usize] = value;
         }
         // `nFTMotionEventSetSlopeContour`: the feet (and body) the map step
-        // fits to the floor. The body tilt (`FULL`) is not ported.
+        // fits to the floor. TopN's tilt goes back to 0 unless `FULL` stays
+        // on.
         op::SET_SLOPE_CONTOUR => {
+            let old = f.slope_contour;
             f.slope_contour = (value & 7) as u8;
+            if old & f.slope_contour & crate::slope_contour::FLAG_FULL == 0 {
+                f.topn_rotate_x = 0.0;
+            }
         }
         op::SET_AIR_JUMP_ADD => {
             f.become_airborne();

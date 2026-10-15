@@ -4009,8 +4009,10 @@ pub fn set_any_status_preserve(
             crate::item_use::accessory(f);
         }
     }
-    // `fp->joints[nFTPartsJointTopN]->rotate.vec.f.y = fp->lr * 90°`.
+    // `fp->joints[nFTPartsJointTopN]->rotate.vec.f.y = fp->lr * 90°`;
+    // `rotate.x = rotate.z = 0` drops a slope tilt.
     f.topn_lr = f.facing.sign();
+    f.topn_rotate_x = 0.0;
     if !preserve.hit {
         crate::combat::clear_attack_colls(f);
     }

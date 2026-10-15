@@ -773,7 +773,25 @@ fn set_inhale(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming) {
             | K::SpecialNCatch
             | K::SpecialAirNCatch
     );
-    set_inhale_preserve(f, s, frame, timing, loop_sfx);
+    // `ftKirbySpecialNEatSetStatusParam` and
+    // `ftKirbySpecialNCatchEatSetStatusParam` keep the slope contour
+    // (`FTSTATUS_PRESERVE_SLOPECONTOUR`); their ground/air switches do not.
+    let slope_contour = matches!(
+        s,
+        K::SpecialNCatch | K::SpecialAirNCatch | K::SpecialNEat | K::SpecialAirNEat
+    );
+    status::set_any_status_preserve(
+        f,
+        AnyStatus::Kirby(s),
+        frame,
+        timing,
+        status::Preserve {
+            loop_sfx,
+            slope_contour,
+            ..status::Preserve::NONE
+        },
+    );
+    after_set_inhale(f, s);
 }
 
 /// A ground/air switch (`ftKirbySpecialN*SwitchStatus*`): only Start and
@@ -797,6 +815,10 @@ fn set_inhale_preserve(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming, 
             ..status::Preserve::NONE
         },
     );
+    after_set_inhale(f, s);
+}
+
+fn after_set_inhale(f: &mut Fighter, s: K) {
     f.grab.is_catchstatus = matches!(
         s,
         K::SpecialNStart | K::SpecialAirNStart | K::SpecialNLoop | K::SpecialAirNLoop

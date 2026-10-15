@@ -1428,6 +1428,31 @@ impl Gpu {
         }
     }
 
+    /// [`Self::model_transform`] in the original's roll-pitch-yaw order,
+    /// `syMatrixTraRotRpyRSca`: x first, then y, then z. TopN's slope tilt
+    /// (`rotate.x`) turns the model before its facing yaw (RE-510).
+    pub fn model_transform_rpy(&mut self, pos: [f32; 3], rot_radians: [f32; 3], scale: f32) {
+        unsafe {
+            sys::sceGumMatrixMode(sys::MatrixMode::Model);
+            sys::sceGumLoadIdentity();
+            sys::sceGumTranslate(&sys::ScePspFVector3 {
+                x: pos[0],
+                y: pos[1],
+                z: pos[2],
+            });
+            sys::sceGumRotateZYX(&sys::ScePspFVector3 {
+                x: rot_radians[0],
+                y: rot_radians[1],
+                z: rot_radians[2],
+            });
+            sys::sceGumScale(&sys::ScePspFVector3 {
+                x: scale,
+                y: scale,
+                z: scale,
+            });
+        }
+    }
+
     /// Reads back the current model matrix.
     ///
     /// Object drawing needs the camera transform as a *base* to compose each

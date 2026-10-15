@@ -322,19 +322,23 @@ fn surface_y(s: &Segment, x: f32) -> f32 {
 }
 
 /// The upward unit normal of a floor segment, from `mpCollisionGetFCAngle`
-/// with `ud = +1`.
+/// with `ud = +1`, bit for bit (RE-510): `1 / sqrtf(py² + 1)` scales
+/// `(py, 1)`, then `syVectorNorm3D` multiplies both by `1 / |v|` again.
 fn normal_of(s: &Segment) -> Vec2 {
-    let dy = s.y2 as f32 - s.y1 as f32;
+    use ssb_engine::math::sqrt;
+    let dy = (i32::from(s.y2) - i32::from(s.y1)) as f32;
     if dy == 0.0 {
         return Vec2::new(0.0, 1.0);
     }
-    let slope = -(dy / (s.x2 as f32 - s.x1 as f32));
-    let n = Vec2::new(slope, 1.0);
-    let len = n.length();
-    if len == 0.0 {
-        return Vec2::new(0.0, 1.0);
+    let py = -(dy / (i32::from(s.x2) - i32::from(s.x1)) as f32);
+    let sqrt_py = 1.0 / sqrt(py * py + 1.0);
+    let (x, y) = (py * sqrt_py, sqrt_py);
+    // `syVectorNorm3D` with `z = 0`.
+    let mag = sqrt(x * x + y * y + 0.0 * 0.0);
+    if mag == 0.0 {
+        return Vec2::new(x, y);
     }
-    Vec2::new(n.x / len, n.y / len)
+    Vec2::new(x * (1.0 / mag), y * (1.0 / mag))
 }
 
 /// Shared FC/LR query kernel after widening the original signed vertices.

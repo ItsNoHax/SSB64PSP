@@ -155,6 +155,10 @@ fn set(f: &mut Fighter, status: Status) {
             ),
             // `ftCommonDamageFallSetStatusFromDamage` and `...FromCliffWait`.
             fastfall: status == Status::DamageFall,
+            // `FTCOMMON_DOWNBOUNCE_STATUS_FLAGS`: the wait keeps the
+            // bounce's slope contour, so a downed fighter stays tilted to
+            // the floor (RE-510).
+            slope_contour: matches!(status, Status::DownWaitD | Status::DownWaitU),
             ..status::Preserve::NONE
         },
     );
@@ -1025,6 +1029,24 @@ mod tests {
             step(&mut f);
         }
         assert_eq!(f.status.status, Status::DownWaitU);
+    }
+
+    /// RE-510: `FTCOMMON_DOWNBOUNCE_STATUS_FLAGS` keeps the bounce's
+    /// `SetSlopeContour(4)` into the wait, which has none of its own, so a
+    /// downed fighter stays tilted to a slope (N64 trace: Fox on Kongo
+    /// Jungle, TopN `rotate.x` 0.34326 through DownWaitU).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_downed_fighter_keeps_the_bounces_full_slope_contour() {
+        let mut f = Fighter::new(FighterKind::Fox, 0, 3);
+        status::set_status(&mut f, Status::DamageFall, 0.0, StatusTiming::unknown());
+        f.tics_since_last_z = status::ZTRIGLAST_TICS_MAX;
+        assert!(on_landing(&mut f, 0.0));
+        while f.status.status == Status::DownBounceU {
+            step(&mut f);
+        }
+        assert_eq!(f.status.status, Status::DownWaitU);
+        assert_eq!(f.slope_contour, crate::slope_contour::FLAG_FULL);
     }
 
     #[test]

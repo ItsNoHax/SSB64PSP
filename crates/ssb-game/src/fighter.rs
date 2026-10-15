@@ -423,6 +423,15 @@ pub struct Fighter {
     /// search; the match loop, which holds the map, runs it after the
     /// search ([`Fighter::run_pending_slope_contour`]).
     pub slope_pending: bool,
+    /// TopN's `rotate.x`: the `FULL` slope tilt `proc_slope` sets
+    /// (`syUtilsArcTan2(floor_angle) * lr`); a motion event and every
+    /// status change put it back to 0.
+    pub topn_rotate_x: f32,
+    /// TopN's collision local as the first query since its last reset
+    /// built it (`transform_update_mode = 1` keeps that matrix): a query
+    /// before the map step leaves `proc_slope` walking from the position
+    /// TopN had then.
+    pub topn_query_local: core::cell::Cell<Option<crate::slope_contour::PartMtx>>,
     /// The running motion scripts and their flags ([`crate::motion`]).
     pub motion_script: crate::motion::MotionState,
     /// `FTStruct::attack_colls`, made by the motion scripts.
@@ -587,6 +596,8 @@ impl Fighter {
             is_use_animlocks: false,
             slope_contour: 0,
             slope_pending: false,
+            topn_rotate_x: 0.0,
+            topn_query_local: core::cell::Cell::new(None),
             root_motion: RootMotion::default(),
             transn: Vec3::ZERO,
             cliff_air_mask: match kind {
@@ -967,6 +978,10 @@ impl Fighter {
             mask |= 1 << j;
             j = self.joint_parents[usize::from(j)];
         }
+        if mask & 1 != 0 && self.queried_joints.get() & 1 == 0 {
+            self.topn_query_local
+                .set(Some(crate::slope_contour::topn_local(self)));
+        }
         self.queried_joints.set(mask);
     }
 
@@ -986,6 +1001,7 @@ impl Fighter {
     /// every part back to mode 0.
     pub fn clear_joint_queries(&self) {
         self.queried_joints.set(0);
+        self.topn_query_local.set(None);
     }
 
     /// `ftParamsUpdateFighterPartsTransformAll(joint)`: only `joint`'s own
@@ -994,6 +1010,9 @@ impl Fighter {
         if usize::from(joint) < FIGHTER_JOINTS {
             self.queried_joints
                 .set(self.queried_joints.get() & !(1 << joint));
+            if joint == 0 {
+                self.topn_query_local.set(None);
+            }
         }
     }
 
@@ -1091,98 +1110,194 @@ impl Fighter {
         crate::item_use::accessory(self);
     }
 
-    /// A runtime that samples animated joints after the map pass calls this,
-    /// refreshes those joints, then runs `item_use::accessory`. Host callers
-    /// without a skeleton use `tick_physics_map` for the complete pass.
+    /// The map pass without the leg fit: a host caller with no skeleton.
+    /// A runtime with one runs [`Self::tick_physics_map_before_slope`],
+    /// samples the pose the map step left, runs [`Self::slope_contour`]
+    /// with the parts' locals, puts the fit on the skeleton, samples
+    /// again, then [`Self::finish_physics_map`] and `item_use::accessory`.
     pub fn tick_physics_map_before_accessory<I, F>(&mut self, surfaces: &F)
     where
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
+        self.tick_physics_map_before_slope(surfaces);
+        self.slope_contour(surfaces, None);
+        self.finish_physics_map();
+    }
+
+    /// `ftMainProcPhysicsMap` up to `proc_slope`: physics, the stage
+    /// collision and the status it may set.
+    pub fn tick_physics_map_before_slope<I, F>(&mut self, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
         self.tick_physics_map_procs(surfaces);
-        // `proc_slope`, then `ftParamsUpdateFighterPartsTransformAll(TopN)`.
-        self.slope_contour_queries(surfaces);
+    }
+
+    /// `ftMainProcPhysicsMap` after `proc_slope`:
+    /// `ftParamsUpdateFighterPartsTransformAll(TopN)`, then the motion
+    /// scripts' effects.
+    pub fn finish_physics_map(&mut self) {
         self.clear_joint_query(0);
         crate::motion::end_physics(self);
     }
 
-    /// The collision queries of `mpCommonUpdateFighterSlopeContour`
-    /// (RE-509): per flagged foot, `func_ovl2_800EBC0C` reads the knee
-    /// (`joint->child->child`) and the leg root, and when
-    /// `func_ovl2_800DDF74` finds the floor under that point off TopN's
-    /// height it reads the root again and `func_ovl2_800EBD08` resets the
-    /// thigh's and the knee's modes. The leg rotation `800EBD08` writes is
-    /// not ported.
     /// The `proc_slope` call a status set queued ([`Fighter::slope_pending`]).
-    pub fn run_pending_slope_contour<I, F>(&mut self, surfaces: &F)
+    pub fn run_pending_slope_contour<I, F>(
+        &mut self,
+        surfaces: &F,
+        parts: Option<&crate::slope_contour::PartLocals>,
+    ) -> [Option<crate::slope_contour::LegFit>; 2]
     where
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         if core::mem::take(&mut self.slope_pending) {
-            self.slope_contour_queries(surfaces);
+            self.slope_contour(surfaces, parts)
+        } else {
+            [None; 2]
         }
     }
 
-    fn slope_contour_queries<I, F>(&self, surfaces: &F)
+    /// `mpCommonUpdateFighterSlopeContour` (RE-510): per flagged foot,
+    /// right first, `func_ovl2_800EBC0C` takes the point `rotate` along
+    /// the knee (`joint->child->child`) into the leg root's space and the
+    /// thigh's twist; when `func_ovl2_800DDF74` finds the floor under that
+    /// point off TopN's height it moves the point onto it (clamped) and
+    /// `func_ovl2_800EBD08` bends the leg to reach it. `FULL` tilts TopN
+    /// to the floor. Returns the leg rotations for the caller's skeleton.
+    ///
+    /// Without `parts` (a host caller with no skeleton) only the queries'
+    /// marks and the tilt are made.
+    pub fn slope_contour<I, F>(
+        &mut self,
+        surfaces: &F,
+        parts: Option<&crate::slope_contour::PartLocals>,
+    ) -> [Option<crate::slope_contour::LegFit>; 2]
     where
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
-        const LFOOT: u8 = 1;
-        const RFOOT: u8 = 2;
+        use crate::slope_contour::{self as sc, LegFit, PartWalk};
+        let mut out = [None; 2];
         let Some(floor) = self.floor else {
-            return;
+            return out;
         };
         if self.situation != Situation::Ground || self.is_in_hitlag() {
-            return;
+            return out;
         }
         let Some(attrs) = crate::motion::combat_attrs(self.kind) else {
-            return;
+            return out;
         };
-        for (foot, flag) in [(0, RFOOT), (1, LFOOT)] {
+        // TopN's local as a query earlier this frame left it (mode 1), else
+        // as it stands now.
+        let topn = if self.queried_joints.get() & 1 != 0 {
+            self.topn_query_local
+                .get()
+                .unwrap_or_else(|| sc::topn_local(self))
+        } else {
+            sc::topn_local(self)
+        };
+        let parents = self.joint_parents;
+        let mut walk = parts.map(|p| PartWalk::new(p, topn, &parents, self.is_use_animlocks));
+        for (foot, flag) in [(0, sc::FLAG_RFOOT), (1, sc::FLAG_LFOOT)] {
             if self.slope_contour & flag == 0 {
                 continue;
             }
             let root = attrs.foot_joint_ids[foot];
+            let rotate = attrs.foot_rotates[foot];
             let Some(thigh) = self.first_child_joint(root) else {
                 continue;
             };
             let Some(knee) = self.first_child_joint(thigh) else {
                 continue;
             };
-            let target = self.joint_query(knee, Vec3::new(attrs.foot_rotates[foot], 0.0, 0.0));
+            let walk = walk.as_mut().filter(|w| {
+                [root, thigh, knee]
+                    .iter()
+                    .all(|&j| w.locals.has(usize::from(j)))
+            });
+            // `func_ovl2_800EBC0C`.
+            let ankle = Vec3::new(rotate, 0.0, 0.0);
+            self.mark_joint_query(knee);
+            let (mut target, angle, mut walk) = match walk {
+                Some(w) => {
+                    let world = w.point(usize::from(knee), ankle);
+                    let local = w.world_to_local(usize::from(root), world);
+                    let thigh_local = w.locals.locals[usize::from(thigh)];
+                    (world, sc::leg_twist(local, &thigh_local), Some(w))
+                }
+                None => (self.joint_world(knee, ankle), 0.0, None),
+            };
             // `func_ovl2_800EE018(joint)`.
             self.mark_joint_query(root);
-            if self.slope_floor_differs(surfaces, floor.line, target) {
-                self.mark_joint_query(root);
-                self.clear_joint_query(thigh);
-                self.clear_joint_query(knee);
+            // `func_ovl2_800DDF74`.
+            let Some(dy) = self.slope_floor_offset(surfaces, floor.line, target) else {
+                continue;
+            };
+            target.y += dy;
+            if target.y < self.pos.y {
+                let ternary = if self.pos.x < target.x {
+                    -(self.pos.x - target.x)
+                } else {
+                    self.pos.x - target.x
+                };
+                let tangent =
+                    self.pos.y - ternary * ssb_engine::math::sy_tan(attrs.foot_slope_angle);
+                if target.y < tangent {
+                    target.y = tangent;
+                }
             }
+            self.mark_joint_query(root);
+            let root_pos = match walk.as_mut() {
+                Some(w) => w.point(usize::from(root), Vec3::ZERO),
+                None => self.joint_world(root, Vec3::ZERO),
+            };
+            if target.y > root_pos.y - attrs.foot_reach {
+                target.y = root_pos.y - attrs.foot_reach;
+            }
+            // `func_ovl2_800EE018`, `func_ovl2_800EBD08`.
+            if let Some(w) = walk.as_mut() {
+                let local = w.world_to_local(usize::from(root), target);
+                let trax = w.locals.translate_x[usize::from(knee)];
+                let (thigh_rotate, knee_rotate_z) = sc::leg_ik(local, rotate, angle, trax);
+                w.reset_subtree(usize::from(thigh));
+                out[foot] = Some(LegFit {
+                    thigh,
+                    knee,
+                    thigh_rotate,
+                    knee_rotate_z,
+                });
+            }
+            self.clear_joint_query(thigh);
+            self.clear_joint_query(knee);
         }
+        if self.slope_contour & sc::FLAG_FULL != 0 {
+            self.topn_rotate_x =
+                ssb_engine::math::sy_arc_tan2(floor.normal.x, floor.normal.y) * self.facing.sign();
+        }
+        out
     }
 
-    /// `func_ovl2_800DDF74`'s `FALSE` test: the floor under `at` (or the
-    /// line's nearer end past it) within 0.0001 of TopN's height.
-    fn slope_floor_differs<I, F>(&self, surfaces: &F, line: u16, at: Vec3) -> bool
+    /// `func_ovl2_800DDF74`'s height step: the floor under `at` (or the
+    /// line's nearer end past it) less TopN's height, `None` within 0.0001.
+    fn slope_floor_offset<I, F>(&self, surfaces: &F, line: u16, at: Vec3) -> Option<f32>
     where
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
-        let dy = match crate::map::floor_point(surfaces, line, at.x) {
+        let dy = match crate::map::floor_distance(surfaces, line, at.x, at.y) {
             // `(vec->y + sp48) - translate.y`, `sp48` the floor's distance.
-            Some((y, _)) => (at.y + (y - at.y)) - self.pos.y,
+            Some(dist) => (at.y + dist) - self.pos.y,
             None => {
                 let edge = crate::map::floor_edge(surfaces, line, false)
                     .filter(|l| l.x >= at.x)
                     .or_else(|| crate::map::floor_edge(surfaces, line, true));
-                match edge {
-                    Some(e) => e.y - self.pos.y,
-                    None => return false,
-                }
+                edge?.y - self.pos.y
             }
         };
-        dy.abs() >= 0.0001
+        (dy.abs() >= 0.0001).then_some(dy)
     }
 
     /// `DObj::child`: the first joint hung from `joint`.
