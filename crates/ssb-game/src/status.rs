@@ -5210,6 +5210,9 @@ pub fn set_fsmash(f: &mut Fighter) {
     play_anim_events(f);
     if base == crate::fighter::FighterKind::Pikachu {
         f.pikachu.thunder_shock_gfx = 0;
+        // `proc_lagstart = ftParamProcPauseEffect`,
+        // `proc_lagend = ftParamProcResumeEffect`.
+        f.lag_pauses_effects = true;
     }
 }
 

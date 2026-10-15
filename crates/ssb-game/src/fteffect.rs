@@ -116,6 +116,14 @@ pub enum FighterEffect {
     /// A maker the status code calls at a point of its own
     /// (`efManagerFlashMiddleMakeEffect` at a caught ledge).
     At { kind: u16, pos: Vec3 },
+    /// `efManagerPikachuThunderShockMakeEffect(fighter_gobj, &pos, gfx)`:
+    /// `pos` in TopN's frame, its `x` already mirrored by `lr`; success
+    /// sets `is_effect_attach`.
+    ThunderShock { pos: Vec3, gfx: u8 },
+    /// `ftParamProcStopEffect`: ejects the effects attached to the fighter.
+    StopAttached,
+    /// `ftParamProcPauseEffect` (`true`) or `ftParamProcResumeEffect`.
+    Pause(bool),
 }
 
 /// Requests a fighter can queue between two flushes. A frame's worst case
@@ -186,6 +194,8 @@ pub fn request(f: &mut Fighter, r: EffectRequest) {
 /// `ftMainSetStatus` stops attachments unless `FTSTATUS_PRESERVE_EFFECT`
 /// holds. Queued makers and stops retain their order until the next flush.
 pub(crate) fn on_set_status(f: &mut Fighter, to: crate::status::AnyStatus) {
+    // `proc_lagstart = proc_lagend = NULL`, whatever the flags.
+    f.lag_pauses_effects = false;
     if crate::colanim::preserved_in(
         &crate::colanim::PRESERVE_EFFECT,
         f.kind,
@@ -194,6 +204,17 @@ pub(crate) fn on_set_status(f: &mut Fighter, to: crate::status::AnyStatus) {
     ) {
         return;
     }
+    // `ftParamProcStopEffect` when `is_effect_attach`; a maker still queued
+    // would have set it in the source, so its stop is queued behind it.
+    let attaching = f.effects.iter().any(|e| match e {
+        FighterEffect::ThunderShock { .. } => true,
+        FighterEffect::Param(r) => r.kind == kind::FIRE_SPARK,
+        _ => false,
+    });
+    if f.is_effect_attach || attaching {
+        f.effects.push(FighterEffect::StopAttached);
+    }
+    f.is_effect_attach = false;
     let pending = f
         .effects
         .iter()
@@ -245,6 +266,21 @@ pub fn flush(f: &mut Fighter, rt: &mut EffectRuntime<'_>) {
             FighterEffect::At { kind, pos } => {
                 let lr = f.facing.sign() as i8;
                 dispatch(f, rt, kind, pos, lr);
+            }
+            FighterEffect::ThunderShock { pos, gfx } => {
+                if rt.effects.thunder_shock(f.port, pos, gfx) {
+                    f.is_effect_attach = true;
+                }
+            }
+            // Queued only while one was attached or a maker was pending.
+            FighterEffect::StopAttached => {
+                rt.effects.stop_attached(f.port);
+                f.is_effect_attach = false;
+            }
+            FighterEffect::Pause(paused) => {
+                if f.is_effect_attach {
+                    rt.effects.pause_attached(f.port, paused);
+                }
             }
         }
     }
@@ -448,7 +484,9 @@ fn dispatch(f: &mut Fighter, rt: &mut EffectRuntime<'_>, effect: u16, mut pos: V
             e.ready_at(p, b, false, script::EGG_BREAK, pos, 1.0);
         }
         kind::FIRE_SPARK => {
-            e.fire_spark(f.port);
+            if e.fire_spark(f.port) {
+                f.is_effect_attach = true;
+            }
         }
         kind::YOSHI_EGG_ESCAPE => {
             if e.yoshi_egg_escape(f.port) {

@@ -11,6 +11,7 @@
 
 extern crate alloc;
 
+pub mod afterimage;
 pub mod appear;
 pub mod attack;
 #[cfg(test)]

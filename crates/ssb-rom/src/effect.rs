@@ -30,6 +30,37 @@ pub const YOSHI_EGG_LAY_ANIM_JOINTS: [u32; 2] = [0x0DB0, 0x09F0];
 /// The `AnimDesc::EFFECT` slot of the Wait table; Break follows.
 pub const YOSHI_EGG_LAY_ANIM_SLOT: u32 = 0x104;
 
+/// `dEFManagerPikachuThunderShockEffectDesc`'s tree in file 347
+/// (`llPikachuSpecial2ThunderShockDObjDesc`). Its `EFDesc` carries spark
+/// animation 0 (`...ThunderShock0AnimJoint` at 0x1720);
+/// `efManagerPikachuThunderShockMakeEffect` adds 1 or 2 in its place:
+/// `...ThunderShock1AnimJoint` and `...ThunderShock2AnimJoint`.
+pub const PIKACHU_THUNDER_SHOCK_KEY: (u32, u32) = (347, 0x1640);
+pub const PIKACHU_THUNDER_SHOCK_ANIM_JOINTS: [u32; 2] = [0x1850, 0x1970];
+/// The `AnimDesc::EFFECT` slot of animation 1; 2 follows.
+pub const PIKACHU_THUNDER_SHOCK_ANIM_SLOT: u32 = 0x106;
+/// Node 3's one `MObj` script under each spark animation
+/// (`llPikachuSpecial2ThunderShock{0,1,2}MatAnimJoint` at 0x1A80, 0x1AC0
+/// and 0x1B10, through their inner lists at 0x1ABC, 0x1B04 and 0x1B54),
+/// as file 347 offsets. The pack binds 0's.
+pub const PIKACHU_THUNDER_SHOCK_MAT_SCRIPTS: [u32; 3] = [0x1A90, 0x1AD0, 0x1B20];
+
+/// The transform tables a maker adds to a manager effect's tree in place
+/// of its `EFDesc`'s own: `(first AnimDesc::EFFECT slot, object key,
+/// tables)`, one slot per table.
+pub const VARIANT_ANIMS: [(u32, (u32, u32), &[u32]); 2] = [
+    (
+        YOSHI_EGG_LAY_ANIM_SLOT,
+        YOSHI_EGG_LAY_KEY,
+        &YOSHI_EGG_LAY_ANIM_JOINTS,
+    ),
+    (
+        PIKACHU_THUNDER_SHOCK_ANIM_SLOT,
+        PIKACHU_THUNDER_SHOCK_KEY,
+        &PIKACHU_THUNDER_SHOCK_ANIM_JOINTS,
+    ),
+];
+
 /// One [`ENTRY_ANIMS`] row.
 pub type EntryAnim = (u32, (u32, u32), u32, Option<u32>, &'static [(u32, u32)]);
 

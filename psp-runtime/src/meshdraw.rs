@@ -3299,6 +3299,98 @@ pub unsafe fn fill_triangles_n64(tris: &[[[f32; 2]; 3]], rgba: [u8; 4], draw_sta
     draw_state.invalidate_all();
 }
 
+/// The state a sword trail inherits from head 0 (`ftDisplayMainDrawAfterImage`
+/// sets only `G_CC_SHADE` and clears culling and lighting, RE-512).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrailMode {
+    /// `Z_CMP` with `G_ZBUFFER`.
+    pub depth_test: bool,
+    /// `Z_UPD`.
+    pub depth_write: bool,
+    /// `FORCE_BL` / an XLU blender: source alpha over the framebuffer.
+    pub blend: bool,
+}
+
+/// One sword trail (`ssb_game::afterimage`): world-space `s16` vertices
+/// under an identity model matrix and the current view and projection,
+/// sent as floats in world units (no scale: [`MODEL_SCALE`] only undoes
+/// 16-bit normalized vertices), `G_CC_SHADE` (vertex colour and alpha), no
+/// texture, lighting, fog or culling. `tris` index `verts`.
+///
+/// # Safety
+///
+/// Between `begin_frame` and `end_frame`.
+pub unsafe fn draw_trail(
+    gpu: &mut crate::gu::Gpu,
+    verts: &[ssb_game::afterimage::TrailVtx],
+    tris: impl Iterator<Item = [usize; 3]>,
+    mode: TrailMode,
+    draw_state: &mut DrawState,
+) {
+    #[repr(C, align(4))]
+    struct TrailVertex {
+        color: u32,
+        x: f32,
+        y: f32,
+        z: f32,
+    }
+    const MAX_TRIS: usize = ssb_game::afterimage::TRAIL_VTX_MAX;
+    let out = sys::sceGuGetMemory((MAX_TRIS * 3 * core::mem::size_of::<TrailVertex>()) as i32)
+        as *mut TrailVertex;
+    let mut count = 0;
+    for tri in tris.take(MAX_TRIS) {
+        for i in tri {
+            let v = &verts[i];
+            out.add(count).write(TrailVertex {
+                color: u32::from_le_bytes(v.rgba),
+                x: f32::from(v.pos[0]),
+                y: f32::from(v.pos[1]),
+                z: f32::from(v.pos[2]),
+            });
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return;
+    }
+    gpu.model_transform([0.0; 3], [0.0; 3], 1.0);
+    sys::sceGuDisable(GuState::Texture2D);
+    sys::sceGuDisable(GuState::Lighting);
+    sys::sceGuDisable(GuState::CullFace);
+    sys::sceGuDisable(GuState::AlphaTest);
+    sys::sceGuDisable(GuState::Fog);
+    sys::sceGuShadeModel(sys::ShadingModel::Smooth);
+    if mode.depth_test {
+        sys::sceGuEnable(GuState::DepthTest);
+    } else {
+        sys::sceGuDisable(GuState::DepthTest);
+    }
+    sys::sceGuDepthMask(if mode.depth_write { 0 } else { 1 });
+    if mode.blend {
+        sys::sceGuEnable(GuState::Blend);
+        sys::sceGuBlendFunc(
+            sys::BlendOp::Add,
+            sys::BlendFactor::SrcAlpha,
+            sys::BlendFactor::OneMinusSrcAlpha,
+            0,
+            0,
+        );
+    } else {
+        sys::sceGuDisable(GuState::Blend);
+    }
+    sys::sceGumDrawArray(
+        GuPrimitive::Triangles,
+        VertexType::COLOR_8888 | VertexType::VERTEX_32BITF | VertexType::TRANSFORM_3D,
+        count as i32,
+        core::ptr::null(),
+        out as *const c_void,
+    );
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuEnable(GuState::CullFace);
+    sys::sceGuDepthMask(0);
+    draw_state.invalidate_all();
+}
+
 /// A textured quad in the current model space, `[x0, y0, x1, y1]` with
 /// `(x0, y0)` the top-left texel corner, drawn with no depth test and
 /// blended by alpha. The texture modulates `color`: a sprite texture baked

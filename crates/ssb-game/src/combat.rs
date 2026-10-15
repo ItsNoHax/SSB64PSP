@@ -1809,6 +1809,11 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
             f.is_knockback_paused = true;
         }
         f.clear_taps();
+        // `proc_lagstart`, which walks the effects only while one is
+        // attached.
+        if f.lag_pauses_effects && f.is_effect_attach {
+            f.effects.push(crate::fteffect::FighterEffect::Pause(true));
+        }
     }
     if proc_hit {
         crate::item_use::proc_hit(f);

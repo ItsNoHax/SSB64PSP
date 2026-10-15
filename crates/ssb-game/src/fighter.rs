@@ -441,6 +441,13 @@ pub struct Fighter {
     /// marked part from its collision local (RE-509). A `Cell` because the
     /// queries read the fighter by shared reference.
     pub queried_joints: core::cell::Cell<u64>,
+    /// `FTParts::unk_dobjtrans_0x5` per joint (bit `j` is
+    /// `fp->joints[j]`): `func_ovl2_800EDBA4` built the part's world
+    /// matrix (`mtx_translate`) since the last reset. It marks the chain
+    /// as [`Self::queried_joints`] does; `ftMainPlayAnim` clears every
+    /// part's, `ftParamsUpdateFighterPartsTransformAll(joint)` the joint's
+    /// and its descendants' (RE-512).
+    pub world_joints: core::cell::Cell<u64>,
     /// Each joint's parent joint (`DObj::parent`), [`NO_JOINT`] for TopN
     /// and joints absent from the model. Set by the runtime from the
     /// skeleton; without one every joint hangs from TopN.
@@ -453,6 +460,15 @@ pub struct Fighter {
     pub slope_contour: u8,
     /// `FTStruct::afterimage`: the sword trail's sampling state.
     pub afterimage: AfterImage,
+    /// `FTStruct::is_effect_attach`: a maker gave one of its effect
+    /// structs this fighter (`ep->fighter_gobj`). `ftMainSetStatus` stops
+    /// them unless the switch preserves effects
+    /// ([`crate::fteffect::on_set_status`]).
+    pub is_effect_attach: bool,
+    /// `proc_lagstart == ftParamProcPauseEffect` and `proc_lagend ==
+    /// ftParamProcResumeEffect`: the status holds its attached effects
+    /// through hitlag. Every status change clears both.
+    pub lag_pauses_effects: bool,
     /// `FTStruct::is_item_show`: `nFTMotionEventHideItem`, back to TRUE on
     /// every status change; a held item draws only while it is set
     /// (`itDisplayCheckItemVisible`).
@@ -630,10 +646,13 @@ impl Fighter {
             weapon_spawn: None,
             joint_transforms: [None; FIGHTER_JOINTS],
             queried_joints: core::cell::Cell::new(0),
+            world_joints: core::cell::Cell::new(0),
             joint_parents: DEFAULT_JOINT_PARENTS,
             is_use_animlocks: false,
             slope_contour: 0,
             afterimage: AfterImage::default(),
+            is_effect_attach: false,
+            lag_pauses_effects: false,
             is_item_show: true,
             slope_pending: false,
             topn_rotate_x: 0.0,
@@ -737,6 +756,12 @@ impl Fighter {
             if self.hitlag == 0 {
                 self.is_knockback_paused = false;
                 lag_ended = true;
+                // `proc_lagend`, which walks the effects only while one is
+                // attached.
+                if self.lag_pauses_effects && self.is_effect_attach {
+                    self.effects
+                        .push(crate::fteffect::FighterEffect::Pause(false));
+                }
             }
         }
         // `intangible_tics`/`invincible_tics` run down in hitlag too. When
@@ -1027,6 +1052,38 @@ impl Fighter {
         self.queried_joints.set(mask);
     }
 
+    /// `func_ovl2_800EDBA4`: the world matrix of `joint` and of every
+    /// ancestor without one, each part's collision local built first where
+    /// its mode is 0. Marks the chain queried
+    /// ([`Self::mark_joint_query`]) and world-built
+    /// ([`Self::world_joints`]).
+    pub fn mark_joint_world(&self, joint: u8) {
+        self.mark_joint_query(joint);
+        let mut mask = self.world_joints.get();
+        let mut j = joint;
+        for _ in 0..FIGHTER_JOINTS {
+            if usize::from(j) >= FIGHTER_JOINTS || mask & 1 << j != 0 {
+                break;
+            }
+            mask |= 1 << j;
+            j = self.joint_parents[usize::from(j)];
+        }
+        self.world_joints.set(mask);
+    }
+
+    /// `func_ovl2_800EDBA4(TopN)`, then TopN's world matrix
+    /// (`mtx_translate`, its collision local). `func_ovl0_800C994C`, the
+    /// matrix kind of an effect whose root DObj hangs from TopN
+    /// (`dobj->user_data.p`), runs it at the effect's display, so TopN stays
+    /// marked until the fighter's next `ftMainPlayAnim` (RE-512);
+    /// `func_ovl2_800EE018` runs it before inverting the matrix.
+    pub fn topn_world_matrix(&self) -> crate::slope_contour::PartMtx {
+        self.mark_joint_world(0);
+        self.topn_query_local
+            .get()
+            .unwrap_or_else(|| crate::slope_contour::topn_local(self))
+    }
+
     /// `func_ovl0_800C9A38` on a non-root part outside a flagged motion:
     /// `gmCollisionTransformMatrixAll` on the part itself leaves its mode,
     /// `func_ovl2_800EDBA4` marks the parent's chain.
@@ -1043,19 +1100,44 @@ impl Fighter {
     /// every part back to mode 0.
     pub fn clear_joint_queries(&self) {
         self.queried_joints.set(0);
+        self.world_joints.set(0);
         self.topn_query_local.set(None);
     }
 
     /// `ftParamsUpdateFighterPartsTransformAll(joint)`: only `joint`'s own
-    /// mode is reset.
+    /// mode is reset; the word after it (`unk_dobjtrans_word`) of `joint`
+    /// and every descendant.
     pub fn clear_joint_query(&self, joint: u8) {
         if usize::from(joint) < FIGHTER_JOINTS {
             self.queried_joints
                 .set(self.queried_joints.get() & !(1 << joint));
+            let mut world = self.world_joints.get();
+            for j in 0..FIGHTER_JOINTS as u8 {
+                if self.joint_descends_from(j, joint) {
+                    world &= !(1 << j);
+                }
+            }
+            self.world_joints.set(world);
             if joint == 0 {
                 self.topn_query_local.set(None);
             }
         }
+    }
+
+    /// `joint` is `ancestor` or hangs below it (`DObj::parent` chain).
+    fn joint_descends_from(&self, joint: u8, ancestor: u8) -> bool {
+        let mut j = joint;
+        // A parent always has a lower index; the bound guards a bad table.
+        for _ in 0..FIGHTER_JOINTS {
+            if j == ancestor {
+                return true;
+            }
+            if usize::from(j) >= FIGHTER_JOINTS {
+                return false;
+            }
+            j = self.joint_parents[usize::from(j)];
+        }
+        false
     }
 
     /// Takes the one weapon creation emitted by this fighter's motion script.

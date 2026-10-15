@@ -609,3 +609,264 @@ fn yoshi_shield_release_makes_shell_fragments_once_at_yrotn() {
     status::guard_update_shield_vars(&mut mario);
     assert!(mario.effects.is_empty());
 }
+
+/// `is_effect_attach`: the Thunder Shock maker sets it, and a status change
+/// outside `PRESERVE_EFFECT` runs `ftParamProcStopEffect`, which ejects the
+/// fighter's attached effects and clears it.
+#[test]
+fn a_status_change_stops_the_attached_thunder_shock() {
+    let bank = bank(20);
+    let mut p = std::boxed::Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut f = Fighter::new(FighterKind::Pikachu, 0, 3);
+    f.situation = Situation::Ground;
+    f.effects.push(FighterEffect::ThunderShock {
+        pos: Vec3::new(0.0, 100.0, 50.0),
+        gfx: 2,
+    });
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    flush(&mut f, &mut rt);
+    assert!(f.is_effect_attach);
+    assert_eq!(rt.effects.displays().count(), 1);
+    f.effects.push(FighterEffect::Pause(true));
+    flush(&mut f, &mut rt);
+    assert!(rt.effects.displays().all(|d| d.paused));
+    on_set_status(&mut f, crate::status::AnyStatus::Common(Status::Wait));
+    assert!(!f.is_effect_attach);
+    flush(&mut f, &mut rt);
+    assert_eq!(rt.effects.displays().count(), 0);
+}
+
+/// RE-512 trace s3 (Pikachu port 0 at (-1222.5, 1022), `lr` 1, TopN scale
+/// 0.95): `func_ovl2_800EE018` takes the spark's joint-11 world point `A`
+/// into TopN's frame `B` through the inverse of TopN's collision matrix,
+/// for the six sparks of the first smash. Bit patterns from the trace.
+#[test]
+fn thunder_shock_points_enter_topn_frame_as_the_trace_records() {
+    use crate::slope_contour::{invert, transform_matrix, world_position};
+    let v = |b: [u32; 3]| {
+        Vec3::new(
+            f32::from_bits(b[0]),
+            f32::from_bits(b[1]),
+            f32::from_bits(b[2]),
+        )
+    };
+    // (TopN translate.z, A, B)
+    let cases: [(u32, [u32; 3], [u32; 3]); 6] = [
+        (
+            0x4170_0000,
+            [0xc491_5b4a, 0x4492_206c, 0x4170_3e37],
+            [0xbc82_fc00, 0x431a_c030, 0x427b_2560],
+        ),
+        (
+            0x40c0_0000,
+            [0xc47a_0f8a, 0x448d_d791, 0xc2ae_c1e8],
+            [0x42c4_9638, 0x42ed_5700, 0x4369_f478],
+        ),
+        (
+            0x0000_0000,
+            [0xc469_6246, 0x448e_ae54, 0x428d_c071],
+            [0xc295_365c, 0x42fb_7810, 0x4398_162a],
+        ),
+        (
+            0x0000_0000,
+            [0xc46a_b684, 0x448b_5230, 0xc25e_12cd],
+            [0x4269_c2f3, 0x42c2_e170, 0x4395_49de],
+        ),
+        (
+            0x0000_0000,
+            [0xc46a_c322, 0x4488_d456, 0x4233_e7e9],
+            [0xc23d_5fe8, 0x4298_eab0, 0x4395_2f4e],
+        ),
+        (
+            0x0000_0000,
+            [0xc46b_7402, 0x448a_4698, 0xc257_77d8],
+            [0x4262_ceff, 0x42b1_46a0, 0x4393_baf0],
+        ),
+    ];
+    let scale = f32::from_bits(0x3f73_3333);
+    for (i, (tz, a, b)) in cases.into_iter().enumerate() {
+        let top = transform_matrix(
+            v([0xc498_d000, 0x447f_8000, tz]),
+            [0.0, f32::from_bits(0x3fc9_0fdb), 0.0],
+            [scale; 3],
+        );
+        let got = world_position(&invert(&top), v(a));
+        let want = v(b);
+        let ulps = |x: f32, y: f32| (x.to_bits() as i64 - y.to_bits() as i64).abs();
+        assert!(
+            ulps(got.x, want.x) <= 2 && ulps(got.y, want.y) <= 2 && ulps(got.z, want.z) <= 2,
+            "spark {}: {got:?} vs {want:?}",
+            i + 1
+        );
+    }
+}
+
+/// RE-512 trace s3: a spark lives 6 frames (animation frames 0..=5), and a
+/// spark made on the frame its fighter's hitlag starts holds frame 0
+/// through the hitlag: 16 frames of hitlag give 21 frames, 9 give 14. The
+/// frame runs as the match does: `efManagerFuncRun`, the interrupt pass
+/// (`proc_lagend` when hitlag runs out), the update pass (the maker), the
+/// effect processes, then the hit pass (`proc_lagstart`).
+#[test]
+fn a_thunder_shock_spark_lives_six_frames_plus_the_hitlag_it_starts_in() {
+    for (hitlag, life_frames) in [(0u16, 6usize), (16, 21), (9, 14)] {
+        let bank = bank(20);
+        let mut p = std::boxed::Box::new(Particles::new());
+        let mut e = Effects::new(0);
+        let mut f = Fighter::new(FighterKind::Pikachu, 0, 3);
+        f.situation = Situation::Ground;
+        f.lag_pauses_effects = true;
+        let mut rt = EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &bank,
+        };
+        let mut frames = std::vec::Vec::new();
+        for frame in 0..40 {
+            rt.run();
+            f.tick_timers();
+            flush(&mut f, &mut rt);
+            if frame == 0 {
+                f.effects.push(FighterEffect::ThunderShock {
+                    pos: Vec3::new(0.0, 150.0, 60.0),
+                    gfx: 2,
+                });
+                flush(&mut f, &mut rt);
+            }
+            rt.effects.process(rt.particles, rt.banks);
+            if frame == 0 && hitlag > 0 {
+                // `ftMainProcParams`'s hitlag start (`combat::proc_params_with`).
+                f.hitlag = hitlag;
+                f.effects.push(FighterEffect::Pause(true));
+                flush(&mut f, &mut rt);
+            }
+            if let Some(d) = rt.effects.displays().next() {
+                frames.push(d.ticks - 1);
+            }
+        }
+        let mut want = std::vec![0u16; usize::from(hitlag.max(1))];
+        want.extend(1..=5);
+        assert_eq!(frames.len(), life_frames, "hitlag {hitlag}: {frames:?}");
+        assert_eq!(frames, want, "hitlag {hitlag}");
+    }
+}
+
+/// RE-512 trace s3: Pikachu's forward smash makes six sparks, the first on
+/// the 20th frame after the status is set and then every third frame.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn pikachu_forward_smash_makes_six_sparks_every_third_frame_from_frame_twenty() {
+    use crate::collision::{flags, Segment};
+    let floor = || {
+        [(
+            0u16,
+            Segment {
+                x1: -2318,
+                y1: 0,
+                x2: 2318,
+                y2: 0,
+                flags: flags::CLIFF,
+            },
+        )]
+    };
+    let mut f = Fighter::new(FighterKind::Pikachu, 0, 3);
+    f.pos = Vec3::new(0.0, 4.0, 0.0);
+    assert!(f.place_on_stage(floor()));
+    status::set_wait(&mut f);
+    status::set_fsmash(&mut f);
+    f.effects.clear();
+    let mut made = std::vec::Vec::new();
+    for frame in 1..=60 {
+        f.tick(floor);
+        for e in f.effects.iter() {
+            if let FighterEffect::ThunderShock { .. } = e {
+                made.push(frame);
+            }
+        }
+        f.effects.clear();
+    }
+    assert_eq!(made, [20, 23, 26, 29, 32, 35]);
+}
+
+/// RE-512 trace s3, port 0's TopN `FTParts` words (`transform_update_mode`,
+/// `unk_dobjtrans_0x5`) at the end of each frame of two forward smashes:
+/// status 204 set on frames 454 and 597, the first spark on +20 with 16
+/// and 9 frames of hitlag. A live spark's display (`func_ovl0_800C994C`)
+/// marks TopN (mode 1, byte 5 1) on every frame a spark lives (474..=509,
+/// 617..=645); on the frame the last one is gone the attack collision's
+/// position query (`gmCollisionGetFighterPartsWorldPosition`) still sets
+/// the mode alone (510, 646), and the frame after nothing does (511, 647).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_live_thunder_shock_spark_marks_topn_as_the_trace_records() {
+    use crate::collision::{flags, Segment};
+    let floor = || {
+        [(
+            0u16,
+            Segment {
+                x1: -2318,
+                y1: 0,
+                x2: 2318,
+                y2: 0,
+                flags: flags::CLIFF,
+            },
+        )]
+    };
+    // (status frame, hitlag, last frame with both marks, frames sampled)
+    for (start, hitlag, last_marked) in [(454u32, 16u16, 509u32), (597, 9, 645)] {
+        let bank = bank(20);
+        let mut p = std::boxed::Box::new(Particles::new());
+        let mut e = Effects::new(0);
+        let mut rt = EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &bank,
+        };
+        let mut f = Fighter::new(FighterKind::Pikachu, 0, 3);
+        f.pos = Vec3::new(0.0, 4.0, 0.0);
+        assert!(f.place_on_stage(floor()));
+        status::set_wait(&mut f);
+        status::set_fsmash(&mut f);
+        f.effects.clear();
+        let mut got = std::vec::Vec::new();
+        for frame in start + 1..=last_marked + 4 {
+            rt.run();
+            // The match's order: each pass's effects made after it.
+            let surfaces = || floor().into_iter().map(crate::map::floor_surface);
+            f.tick_interrupt(&surfaces);
+            flush(&mut f, &mut rt);
+            f.tick_physics_map(&surfaces);
+            flush(&mut f, &mut rt);
+            crate::combat::update_attack_positions(&mut f);
+            rt.effects.process(rt.particles, rt.banks);
+            if frame == start + 20 {
+                f.hitlag = hitlag;
+                f.effects.push(FighterEffect::Pause(true));
+                flush(&mut f, &mut rt);
+            }
+            // The display: one `func_ovl0_800C994C` per live spark.
+            for d in rt.effects.displays() {
+                if let DisplayKind::ThunderShock { .. } = d.kind {
+                    let _ = f.topn_world_matrix();
+                }
+            }
+            got.push((
+                frame,
+                f.queried_joints.get() & 1 != 0,
+                f.world_joints.get() & 1 != 0,
+            ));
+        }
+        let want: std::vec::Vec<_> = (start + 1..=last_marked + 4)
+            .map(|frame| {
+                let marked = (start + 20..=last_marked).contains(&frame);
+                (frame, marked || frame == last_marked + 1, marked)
+            })
+            .collect();
+        assert_eq!(got, want, "smash from {start}");
+    }
+}

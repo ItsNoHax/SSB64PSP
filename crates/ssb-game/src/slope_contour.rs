@@ -220,7 +220,7 @@ pub fn topn_rotate(f: &crate::fighter::Fighter) -> [f32; 3] {
 }
 
 /// `syVectorNorm3D`: a multiply by `1.0F / mag`, not a division.
-fn norm3(v: &mut Vec3) -> f32 {
+pub(crate) fn norm3(v: &mut Vec3) -> f32 {
     let mag = sqrt((v.x * v.x) + (v.y * v.y) + (v.z * v.z));
     if mag == 0.0 {
         return 0.0;
@@ -232,7 +232,7 @@ fn norm3(v: &mut Vec3) -> f32 {
 }
 
 /// `syVectorNormCross3D` / `lbCommonCross3D`'s cross product.
-fn cross(a: Vec3, b: Vec3) -> Vec3 {
+pub(crate) fn cross(a: Vec3, b: Vec3) -> Vec3 {
     Vec3::new(
         (a.y * b.z) - (a.z * b.y),
         (a.z * b.x) - (a.x * b.z),
@@ -264,7 +264,7 @@ fn remove_component(a: &mut Vec3, b: Vec3) -> f32 {
 }
 
 /// `syVectorAngleDiff3D` (`sys/vector.c:104`).
-fn angle_diff(a: Vec3, b: Vec3) -> f32 {
+pub(crate) fn angle_diff(a: Vec3, b: Vec3) -> f32 {
     let mag = mag3(a) * mag3(b);
     if mag != 0.0 {
         let cos_diff = (dot(a, b) / mag).clamp(-1.0, 1.0);

@@ -346,6 +346,8 @@ pub enum GameScene {
     Link,
     /// `linkspin`: Link in Training, mid ground Spin Attack.
     LinkSpin,
+    /// `linksword`: Link in Training, mid `Jab1` with the sword trail.
+    LinkSword,
     /// `yoshi`: Yoshi in Training, one Egg Throw egg in flight.
     Yoshi,
     /// `yoshibomb`: Yoshi in Training, the Yoshi Bomb's two landing stars.
@@ -361,6 +363,9 @@ pub enum GameScene {
     /// `pikachuair`: Pikachu in Training, one aerial Thunder Jolt after a
     /// jump.
     PikachuAir,
+    /// `pikachusmash`: Pikachu in Training, mid forward smash with its
+    /// Thunder Shock sparks.
+    PikachuSmash,
     /// `purin`: Jigglypuff in Training, mid Sing with its notes.
     Purin,
     /// `donkey`: Donkey Kong in Training, charging a Giant Punch.
@@ -545,6 +550,8 @@ pub enum GameScene {
     TrainingFlower,
     TrainingStarRod,
     TrainingHammer,
+    /// `trainingsword`: Training's Mario swings a Beam Sword, its trail out.
+    TrainingSword,
     /// `trainingcpuitem`: a level-9 CPU on the default behaviour with a Bat
     /// beside it: it tracks the Bat and picks it up (TrackItem).
     TrainingCpuItem,
@@ -709,7 +716,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 175] = [
+    pub const ALL: [GameScene; 178] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -746,6 +753,7 @@ impl GameScene {
         GameScene::SamusBomb,
         GameScene::Link,
         GameScene::LinkSpin,
+        GameScene::LinkSword,
         GameScene::Yoshi,
         GameScene::YoshiBomb,
         GameScene::Captain,
@@ -753,6 +761,7 @@ impl GameScene {
         GameScene::Kirby,
         GameScene::Pikachu,
         GameScene::PikachuAir,
+        GameScene::PikachuSmash,
         GameScene::Purin,
         GameScene::Donkey,
         GameScene::Ness,
@@ -827,6 +836,7 @@ impl GameScene {
         GameScene::TrainingFlower,
         GameScene::TrainingStarRod,
         GameScene::TrainingHammer,
+        GameScene::TrainingSword,
         GameScene::TrainingCpuItem,
         GameScene::TrainingMenu,
         GameScene::TrainingInterface,
@@ -925,6 +935,7 @@ impl GameScene {
             GameScene::SamusBomb => "samusbomb",
             GameScene::Link => "link",
             GameScene::LinkSpin => "linkspin",
+            GameScene::LinkSword => "linksword",
             GameScene::Yoshi => "yoshi",
             GameScene::YoshiBomb => "yoshibomb",
             GameScene::Captain => "captain",
@@ -932,6 +943,7 @@ impl GameScene {
             GameScene::Kirby => "kirby",
             GameScene::Pikachu => "pikachu",
             GameScene::PikachuAir => "pikachuair",
+            GameScene::PikachuSmash => "pikachusmash",
             GameScene::Purin => "purin",
             GameScene::Donkey => "donkey",
             GameScene::Ness => "ness",
@@ -1006,6 +1018,7 @@ impl GameScene {
             GameScene::TrainingFlower => "trainingflower",
             GameScene::TrainingStarRod => "trainingstarrod",
             GameScene::TrainingHammer => "traininghammer",
+            GameScene::TrainingSword => "trainingsword",
             GameScene::TrainingCpuItem => "trainingcpuitem",
             GameScene::TrainingMenu => "trainingmenu",
             GameScene::TrainingInterface => "traininginterface",

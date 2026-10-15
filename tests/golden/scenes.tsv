@@ -216,3 +216,6 @@ f1-vs-four-magnifier	psp-game	vs4@1330	pass	RE-440 RE-470 RE-472 RE-473 RE-508
 f1-opening-mario	psp-game	op-mario@60	pass	RE-467 RE-476 RE-497
 f1-opening-run	psp-game	op-run@140	pass	RE-467 RE-476 RE-497
 f1-opening-clash	psp-game	op-clash@80	pass	RE-467 RE-476 RE-497
+f1-training-link-sword	psp-game	linksword	pass	RE-512
+f1-training-sword	psp-game	trainingsword	pass	RE-512
+f1-training-pikachu-smash	psp-game	pikachusmash	pass	RE-512

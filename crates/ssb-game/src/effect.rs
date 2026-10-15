@@ -1106,6 +1106,11 @@ pub enum DisplayKind {
     /// flags lack `EFFECT_FLAG_USERDATA`, so it has no struct and runs
     /// `efManagerNoStructProcUpdate` (RE-443).
     MBallRays,
+    /// `dEFManagerPikachuThunderShockEffectDesc`: a forward-smash spark on
+    /// Pikachu's TopN, its animation `gfx` (the desc's own for 0,
+    /// `llPikachuSpecial2ThunderShock{1,2}AnimJoint` otherwise). Paused
+    /// through hitlag, stopped by `ftParamProcStopEffect`.
+    ThunderShock { gfx: u8 },
 }
 
 /// `gcPlayAnimAll` calls until each display effect's animation reaches its
@@ -1130,6 +1135,9 @@ pub mod life {
     pub const FIRE_SPARK: u16 = 11;
     /// `llEFCommonEffects3MBallRaysAnimJoint`.
     pub const MBALL_RAYS: u16 = 51;
+    /// `llPikachuSpecial2ThunderShock{0,1,2}AnimJoint`, each counting the
+    /// default animation's play at the make.
+    pub const THUNDER_SHOCK: [u16; 3] = [7, 7, 7];
 }
 
 impl DisplayKind {
@@ -1147,7 +1155,8 @@ impl DisplayKind {
             | DisplayKind::StarRodSpark
             | DisplayKind::FireSpark
             | DisplayKind::ThunderTrail
-            | DisplayKind::YoshiEggEscape => 15,
+            | DisplayKind::YoshiEggEscape
+            | DisplayKind::ThunderShock { .. } => 15,
             DisplayKind::SpawnOrbs
             | DisplayKind::SpawnSparks
             | DisplayKind::SpawnMDust
@@ -1167,6 +1176,7 @@ impl DisplayKind {
             DisplayKind::Quake { magnitude } => life::QUAKE[usize::from(magnitude.min(2))],
             DisplayKind::FireSpark => life::FIRE_SPARK,
             DisplayKind::MBallRays => life::MBALL_RAYS,
+            DisplayKind::ThunderShock { gfx } => life::THUNDER_SHOCK[usize::from(gfx.min(2))],
             DisplayKind::SpawnOrbs
             | DisplayKind::FlyOrbs
             | DisplayKind::SpawnSparks
@@ -1235,6 +1245,10 @@ pub struct Display {
     decay: f32,
     /// The fighter port a [`DisplayKind::FireSpark`] is attached to.
     pub owner: u8,
+    /// `ep->fighter_gobj`, which `ftParamRunProcEffect` matches.
+    fighter: Option<u8>,
+    /// `ep->is_pause_effect`: `efManagerHaveStructProcUpdate` skips it.
+    pub paused: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1280,6 +1294,8 @@ impl Display {
             alpha: 0.0,
             decay: 0.0,
             owner: 0,
+            fighter: None,
+            paused: false,
         }
     }
 }
@@ -1412,7 +1428,12 @@ impl Effects {
             | DisplayKind::StarRodSpark
             | DisplayKind::Quake { .. }
             | DisplayKind::FireSpark
-            | DisplayKind::MBallRays => {
+            | DisplayKind::MBallRays
+            | DisplayKind::ThunderShock { .. } => {
+                // `efManagerHaveStructProcUpdate`.
+                if d.paused {
+                    return;
+                }
                 d.ticks = d.ticks.saturating_add(1);
                 if d.kind.life().is_some_and(|life| d.ticks >= life) {
                     self.eject_display(i);
@@ -1738,7 +1759,51 @@ impl Effects {
         let d = self.display_mut(i);
         d.translate.y = 160.0;
         d.owner = owner;
+        d.fighter = Some(owner);
         true
+    }
+
+    /// `efManagerPikachuThunderShockMakeEffect`: `pos` becomes the root's
+    /// child's `translate` (TopN-local, `x` already mirrored by `lr`). A
+    /// variant animation replaces the desc's after its first play and is
+    /// played once itself; the clock counts that play.
+    pub fn thunder_shock(&mut self, owner: u8, pos: Vec3, gfx: u8) -> bool {
+        let Some(i) = self.make_display(DisplayKind::ThunderShock { gfx }) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.translate = pos;
+        d.index = gfx;
+        d.owner = owner;
+        d.fighter = Some(owner);
+        true
+    }
+
+    /// `ftParamRunProcEffect(fighter, ftParamStopEffect)`: ejects every
+    /// effect attached to `owner`, in `GObj` order.
+    pub fn stop_attached(&mut self, owner: u8) {
+        let mut order = [(u32::MAX, 0usize); DISPLAY_MAX];
+        let mut n = 0;
+        for (i, d) in self.displays.iter().enumerate() {
+            if let Some(d) = d.filter(|d| d.fighter == Some(owner)) {
+                order[n] = (d.seq, i);
+                n += 1;
+            }
+        }
+        order[..n].sort_unstable_by_key(|&(seq, _)| seq);
+        for &(_, i) in &order[..n] {
+            self.eject_display(i);
+        }
+    }
+
+    /// `ftParamRunProcEffect` with `ftParamPauseEffect` (`paused`) or
+    /// `ftParamResumeEffect`.
+    pub fn pause_attached(&mut self, owner: u8, paused: bool) {
+        for d in self.displays.iter_mut().flatten() {
+            if d.fighter == Some(owner) {
+                d.paused = paused;
+            }
+        }
     }
 
     /// The struct makers' shared tail: the process and the transform's

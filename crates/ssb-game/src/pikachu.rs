@@ -34,14 +34,12 @@ const THUNDERSHOCK_GFX_ID_MAX: i32 = 3;
 const THUNDERSHOCK_GFX_OFF: Vec3 = Vec3::new(60.0, 10.0, 100.0);
 
 /// `ftCommonAttackS4ProcUpdate`'s Pikachu case: on script flag 1 or 2 the
-/// forward smash advances its spark animation by a random 1 or 2 and places
+/// forward smash advances its spark animation by a random 1 or 2 and makes
 /// a Thunder Shock spark at joint 11 (`-X` for flag 1, `+X` for flag 2),
-/// which queries the joint's chain (RE-511).
-///
-/// DEVIATION: `efManagerPikachuThunderShockMakeEffect` (the spark, its
-/// TopN-relative position from `func_ovl2_800EE018` and
-/// `is_effect_attach`) is not ported; the draw, the query and the state
-/// are.
+/// which queries the joint's chain (RE-511). `func_ovl2_800EE018` maps the
+/// point into TopN's frame through the inverse of TopN's collision matrix;
+/// the maker mirrors its `x` by `lr` and, when it gets a struct, sets
+/// `is_effect_attach`.
 pub fn attack_s4_update(f: &mut Fighter) {
     let (flag1, flag2) = (f.motion_script.flags[1], f.motion_script.flags[2]);
     if flag1 == 0 && flag2 == 0 {
@@ -52,6 +50,7 @@ pub fn attack_s4_update(f: &mut Fighter) {
     if *gfx >= THUNDERSHOCK_GFX_ID_MAX {
         *gfx -= THUNDERSHOCK_GFX_ID_MAX;
     }
+    let gfx = *gfx as u8;
     let mut offset = THUNDERSHOCK_GFX_OFF;
     if flag1 != 0 {
         f.motion_script.flags[1] = 0;
@@ -61,9 +60,19 @@ pub fn attack_s4_update(f: &mut Fighter) {
         f.motion_script.flags[2] = 0;
         offset.x = THUNDERSHOCK_GFX_OFF.x;
     }
-    // `gmCollisionGetFighterPartsWorldPosition(fp->joints[11], &offset)`;
-    // `func_ovl2_800EE018` on TopN, already in that chain, marks nothing new.
-    let _ = f.joint_query(11, offset);
+    // `gmCollisionGetFighterPartsWorldPosition(fp->joints[11], &offset)`
+    // builds TopN's matrix on the way (`mtx_translate`, kept until the next
+    // reset); `func_ovl2_800EE018` inverts that one.
+    let world = f.joint_query(11, offset);
+    // `func_ovl2_800EDE00` builds TopN's world matrix first
+    // (`func_ovl2_800EDBA4`).
+    let top = f.topn_world_matrix();
+    let mut pos = crate::slope_contour::world_position(&crate::slope_contour::invert(&top), world);
+    if f.facing == Facing::Left {
+        pos.x = -pos.x;
+    }
+    f.effects
+        .push(crate::fteffect::FighterEffect::ThunderShock { pos, gfx });
 }
 
 pub fn is_pikachu(kind: FighterKind) -> bool {

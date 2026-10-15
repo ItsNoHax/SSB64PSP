@@ -402,7 +402,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 109 stores a 16- or 32-bit texture whose level 0 has at most 256 colours
 // as `PsmT4`/`PsmT8` with its own CLUT, level 0 only
 // (`TextureDesc::TEXELS_PALETTIZED`, RE-491). No layout change.
-pub const VERSION: u32 = 109;
+// 110 adds the Thunder Shock spark's animations 1 and 2
+// (`AnimDesc::EFFECT` slots `effect::PIKACHU_THUNDER_SHOCK_ANIM_SLOT` on,
+// file 347 at 0x1850 and 0x1970). No layout change.
+pub const VERSION: u32 = 110;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

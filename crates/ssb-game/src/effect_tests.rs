@@ -393,3 +393,42 @@ fn display_effects_draw_on_their_desc_links() {
         assert_eq!(k.dl_link(), 0, "{k:?}");
     }
 }
+
+/// `efManagerPikachuThunderShockMakeEffect`'s spark: attached to its
+/// fighter, held while `ftParamPauseEffect` pauses it, ended after its
+/// seven plays or at once by `ftParamStopEffect`, which leaves other
+/// fighters' sparks alone.
+#[test]
+fn a_thunder_shock_spark_pauses_with_its_fighter_and_stops_on_its_status_change() {
+    let bank = bank(200);
+    let (mut p, mut e) = runtime();
+    let pos = Vec3::new(30.0, 120.0, 0.0);
+    assert!(e.thunder_shock(0, pos, 1));
+    assert!(e.thunder_shock(1, pos, 2));
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    let ticks = |e: &Effects, owner: u8| e.displays().find(|d| d.owner == owner).map(|d| d.ticks);
+    rt.frame();
+    rt.frame();
+    let before = ticks(rt.effects, 0).unwrap();
+    rt.effects.pause_attached(0, true);
+    for _ in 0..10 {
+        rt.frame();
+    }
+    assert_eq!(ticks(rt.effects, 0), Some(before), "a paused spark holds");
+    assert!(
+        ticks(rt.effects, 1).is_none(),
+        "the other fighter's spark ran its 7 plays"
+    );
+    rt.effects.pause_attached(0, false);
+    rt.frame();
+    assert_eq!(ticks(rt.effects, 0), Some(before + 1));
+    assert!(rt.effects.thunder_shock(1, pos, 0));
+    rt.effects.stop_attached(0);
+    assert!(ticks(rt.effects, 0).is_none());
+    assert!(ticks(rt.effects, 1).is_some());
+    assert_eq!(life::THUNDER_SHOCK, [7, 7, 7]);
+}

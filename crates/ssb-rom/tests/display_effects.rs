@@ -154,6 +154,11 @@ fn display_effect_lives_match_the_rom() {
         ("metal dust", (83, 0xCAC8), DisplayKind::FlyMDust),
         ("fire spark", (84, 0x2040), DisplayKind::FireSpark),
         ("Poké Ball rays", (85, 0x0628), DisplayKind::MBallRays),
+        (
+            "thunder shock 0",
+            ssb_rom::effect::PIKACHU_THUNDER_SHOCK_KEY,
+            DisplayKind::ThunderShock { gfx: 0 },
+        ),
     ] {
         let (data, scripts) = packed_scripts(&pack, key);
         let n = dobj_life(data, &scripts);
@@ -179,6 +184,24 @@ fn display_effect_lives_match_the_rom() {
         let n = dobj_life(data, &[joint.script]);
         let kind = DisplayKind::Quake { magnitude: m as u8 };
         measured.push(("packed quake", n, kind.life().unwrap()));
+    }
+    // The Thunder Shock spark's animations 1 and 2 replace the desc's
+    // after its make-time play and play once there themselves: their own
+    // first play is the clock's 1.
+    for i in 0..2u32 {
+        let anim = pack
+            .effect_anim(ssb_rom::effect::PIKACHU_THUNDER_SHOCK_ANIM_SLOT + i)
+            .expect("packed spark animation");
+        let mut joints: Vec<_> = (0..anim.joint_count)
+            .filter_map(|j| pack.anim_joint(anim.first_joint + j))
+            .map(|j| (j.node, j.script))
+            .collect();
+        joints.sort_unstable();
+        let scripts: Vec<u32> = joints.iter().map(|j| j.1).collect();
+        let data = pack.anim_script(&anim).unwrap();
+        let n = dobj_life(data, &scripts);
+        let kind = DisplayKind::ThunderShock { gfx: i as u8 + 1 };
+        measured.push(("thunder shock", n, kind.life().unwrap()));
     }
     // The small shock's first `MObj`: `llEFCommonEffects2ShockSmallMatAnimJoint`
     // is `DObj -> MObj -> script`.

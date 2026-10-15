@@ -488,6 +488,21 @@ pub const SHIELD_COLORS: [([u8; 3], [u8; 3]); 5] = [
     ([0xFF, 0xFF, 0xFF], [0xC0, 0xC0, 0xC0]),
 ];
 
+/// `dEFManagerPikachuThunderShockEffectDesc`: file 347's four-node spark
+/// tree and its three animations, in `gfx_id` order: the desc's own, then
+/// `efManagerPikachuThunderShockMakeEffect`'s two variants
+/// (`ssb_rom::effect::PIKACHU_THUNDER_SHOCK_ANIM_SLOT` on).
+pub fn pikachu_thunder_shock_effect(
+    pack: &Pack<'_>,
+) -> Option<(ObjectDesc, [ssb_rom::pack::AnimDesc; 3])> {
+    let (object, own) = manager_effect(pack, ssb_rom::effect::PIKACHU_THUNDER_SHOCK_KEY)?;
+    let slot = ssb_rom::effect::PIKACHU_THUNDER_SHOCK_ANIM_SLOT;
+    Some((
+        object,
+        [own, pack.effect_anim(slot)?, pack.effect_anim(slot + 1)?],
+    ))
+}
+
 /// `dEFManagerPurinSingEffectDesc`: file 351's six-node note tree, at slot
 /// 32 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
 pub const PURIN_SING_EFFECT_KEY: (u32, u32) = (351, 0x2130);

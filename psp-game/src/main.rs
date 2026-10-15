@@ -224,6 +224,16 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Up+B at tick 20 enters `SpecialHi` with the swirl; 13 swirl
         // frames later its primitive alpha is 204 (RE-324).
         GameScene::LinkSpin => 33,
+        // A at tick 50 enters `Jab1` (tick 8's A jabs first); its trail
+        // samples from frame 5 and draws from the second sample: three
+        // samples here.
+        GameScene::LinkSword => 56,
+        // A at tick 60 picks the Beam Sword up and A at 100 swings it:
+        // `SwordSwing1`'s trail runs from frame 2 to frame 9.
+        GameScene::TrainingSword => 104,
+        // Forward and A at tick 50 enter `AttackS4`; a spark comes every 3
+        // frames from frame 21 and lasts 7 plays: two are out here.
+        GameScene::PikachuSmash => 76,
         // Up+B at tick 20; Egg Throw makes the egg on frame 4 and throws it
         // on frame 23, and it has flown some 16 frames here.
         GameScene::Yoshi => 60,
@@ -460,6 +470,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingFlower
             | GameScene::TrainingStarRod
             | GameScene::TrainingHammer
+            | GameScene::TrainingSword
             | GameScene::TrainingCpuItem
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
@@ -744,6 +755,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingFlower
             | GameScene::TrainingStarRod
             | GameScene::TrainingHammer
+            | GameScene::TrainingSword
             | GameScene::TrainingCpuItem
             | GameScene::TrainingChansey
             | GameScene::TrainingElectrode
@@ -764,6 +776,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
                     | GameScene::TrainingFlower
                     | GameScene::TrainingStarRod
                     | GameScene::TrainingHammer
+                    | GameScene::TrainingSword
             ) =>
             {
                 N64Buttons(N64Buttons::A)
@@ -775,6 +788,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
                     | GameScene::TrainingBumperThrow
                     | GameScene::TrainingRayGun
                     | GameScene::TrainingStarRod
+                    | GameScene::TrainingSword
             ) =>
             {
                 N64Buttons(N64Buttons::A)
@@ -793,12 +807,14 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::SamusBomb
             | GameScene::Link
             | GameScene::LinkSpin
+            | GameScene::LinkSword
             | GameScene::Yoshi
             | GameScene::YoshiBomb
             | GameScene::Captain
             | GameScene::CaptainKick
             | GameScene::Kirby
             | GameScene::Pikachu
+            | GameScene::PikachuSmash
             | GameScene::Purin
             | GameScene::Donkey
             | GameScene::Ness
@@ -808,6 +824,11 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
+            // `linksword` jabs; `pikachusmash` taps forward with A. The A at
+            // tick 8 jabs on Training's first frame; both wait it out.
+            50 if matches!(scene, GameScene::LinkSword | GameScene::PikachuSmash) => {
+                N64Buttons(N64Buttons::A)
+            }
             20 => N64Buttons(N64Buttons::B),
             60 if scene == GameScene::SamusShot => N64Buttons(N64Buttons::B),
             // Extended controls hold through the critical bloat, then throw
@@ -1042,6 +1063,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::SamusShot
             | GameScene::Link
             | GameScene::LinkSpin
+            | GameScene::LinkSword
             | GameScene::Yoshi
             | GameScene::YoshiBomb
             | GameScene::Captain
@@ -1065,6 +1087,11 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     }
     if scene == GameScene::SamusBomb {
         return if (80..100).contains(&tick) { 80 } else { 0 };
+    }
+    // A forward tap with the A edge: `ftCommonAttackS4CheckInterCommon`.
+    // Pikachu spawns facing left.
+    if scene == GameScene::PikachuSmash {
+        return if tick == 50 { -80 } else { 0 };
     }
     if scene == GameScene::PikachuThunder {
         return if (10..=34).contains(&tick) { 80 } else { 0 };
@@ -2231,7 +2258,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Samus | GameScene::SamusShot | GameScene::SamusBomb) => {
             ssb_game::fighter::FighterKind::Samus
         }
-        Some(GameScene::Link | GameScene::LinkSpin | GameScene::LinkBomb) => {
+        Some(GameScene::Link | GameScene::LinkSpin | GameScene::LinkSword | GameScene::LinkBomb) => {
             ssb_game::fighter::FighterKind::Link
         }
         Some(GameScene::Yoshi | GameScene::YoshiBomb | GameScene::YoshiEgg | GameScene::YoshiShield | GameScene::YoshiRollF | GameScene::YoshiRollB | GameScene::YoshiShieldBreak) => {
@@ -2241,9 +2268,12 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
             ssb_game::fighter::FighterKind::Captain
         }
         Some(GameScene::Kirby | GameScene::KirbyHat) => ssb_game::fighter::FighterKind::Kirby,
-        Some(GameScene::Pikachu | GameScene::PikachuAir | GameScene::PikachuThunder) => {
-            ssb_game::fighter::FighterKind::Pikachu
-        }
+        Some(
+            GameScene::Pikachu
+            | GameScene::PikachuAir
+            | GameScene::PikachuSmash
+            | GameScene::PikachuThunder,
+        ) => ssb_game::fighter::FighterKind::Pikachu,
         Some(GameScene::Purin | GameScene::PurinBow) => ssb_game::fighter::FighterKind::Purin,
         Some(GameScene::PikachuHat) => ssb_game::fighter::FighterKind::Pikachu,
         Some(GameScene::Donkey) => ssb_game::fighter::FighterKind::Donkey,
@@ -2617,6 +2647,7 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
                 | GameScene::TrainingFlower
                 | GameScene::TrainingStarRod
                 | GameScene::TrainingHammer
+                | GameScene::TrainingSword
         )
     ) {
         if let Some(pl) = s.play_state.as_ref() {
@@ -2627,6 +2658,7 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
                 Some(GameScene::TrainingFlower) => Some(12),
                 Some(GameScene::TrainingStarRod) => Some(10),
                 Some(GameScene::TrainingHammer) => Some(13),
+                Some(GameScene::TrainingSword) => Some(7),
                 _ => None,
             };
             for index in 7..=13 {
@@ -6277,6 +6309,8 @@ struct DrawAssets {
     magnet: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Jigglypuff's Sing notes and their transform animation.
     sing: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// Pikachu's Thunder Shock spark and its three animations.
+    thunder_shock: Option<(ssb_rom::pack::ObjectDesc, [ssb_rom::pack::AnimDesc; 3])>,
     /// Kirby's Final Cutter wave tree and its `anim_joints` flicker.
     cutter: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The Falcon Kick flame tree and its transform animation.
@@ -6436,6 +6470,7 @@ impl DrawAssets {
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             sing: ssb_psp_runtime::scene::purin_sing_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
+            thunder_shock: ssb_psp_runtime::scene::pikachu_thunder_shock_effect(p),
             cutter: ssb_psp_runtime::scene::kirby_cutter_object(p)
                 .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_KIRBY_CUTTER)),
             falcon_kick: ssb_psp_runtime::scene::captain_falcon_kick_effect(p)
@@ -6575,7 +6610,8 @@ fn display_asset(kind: ssb_game::effect::DisplayKind) -> Option<usize> {
         | K::FireSpark
         | K::ThunderTrail
         | K::YoshiEggEscape
-        | K::ContainerSmash => return None,
+        | K::ContainerSmash
+        | K::ThunderShock { .. } => return None,
     })
 }
 
@@ -6651,6 +6687,132 @@ fn psp_matrix(m: &ssb_rom::scene::Mat4) -> psp::sys::ScePspFMatrix4 {
         y: v(1),
         z: v(2),
         w: v(3),
+    }
+}
+
+/// The Thunder Shock sparks (`dEFManagerPikachuThunderShockEffectDesc`,
+/// DL link 15). The root is battle matrix function 79 - 66 = 13,
+/// `func_ovl0_800C994C`: `func_ovl2_800EDBA4` on the fighter's TopN (which
+/// marks TopN queried, RE-511), then TopN's collision matrix, whose first
+/// row's length starts `gGCScaleX`. Node 1 holds the maker's TopN-local
+/// point; nodes 2 and 3 play the spark's animation under it. Node 2 adds
+/// kind 46: a screen-aligned quad at its composed position, spun by its
+/// `rotate.z` and sized by `gGCScaleX`, which its `TraRotRpyRSca` and the
+/// kind each multiply by its `scale.x` (`y`: the kind's `scale.y` times
+/// the value after the first). A variant (`gfx` 1, 2) replays the desc's
+/// animation once, as the make does, before its own.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn draw_thunder_shocks(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    assets: &DrawAssets,
+    scratch: &mut DisplayScratch,
+    effects: &ssb_game::effect::Effects,
+    fighters: [Option<&ssb_game::fighter::Fighter>; 4],
+    camera: &ssb_game::camera::Camera,
+) {
+    use ssb_rom::scene::Mat4;
+    let Some((object, anims)) = assets.thunder_shock.as_ref() else {
+        return;
+    };
+    let ms = meshdraw::MODEL_SCALE;
+    for d in effects.displays() {
+        let ssb_game::effect::DisplayKind::ThunderShock { gfx } = d.kind else {
+            continue;
+        };
+        let Some(f) = fighters.iter().flatten().find(|f| f.port == d.owner) else {
+            continue;
+        };
+        let gfx = usize::from(gfx.min(2));
+        // The make's play of the desc's animations, then the variant's.
+        let mats = object_mat_anims(p, object);
+        scratch.anim.start(p, &anims[0]);
+        scratch.materials.start(p, mats);
+        let plays = d.ticks;
+        if gfx != 0 {
+            if let Some(script) = p.anim_script(&anims[0]) {
+                let _ = scratch.anim.tick(script);
+            }
+            scratch.materials.tick(p);
+            scratch.anim.start(p, &anims[gfx]);
+            let script = ssb_rom::effect::PIKACHU_THUNDER_SHOCK_MAT_SCRIPTS[gfx];
+            for mat in object_mat_anims(p, object) {
+                scratch.materials.restart(mat, script);
+            }
+        }
+        if let Some(script) = p.anim_script(&anims[gfx]) {
+            for _ in 0..plays {
+                let _ = scratch.anim.tick(script);
+            }
+        }
+        for _ in 0..plays {
+            scratch.materials.tick(p);
+        }
+        // `func_ovl0_800C994C`: the root's matrix marks TopN until the
+        // fighter's next `ftMainPlayAnim`.
+        let top = f.topn_world_matrix();
+        let scale_x = ssb_engine::math::sqrt_exact(
+            top[0][0] * top[0][0] + top[0][1] * top[0][1] + top[0][2] * top[0][2],
+        );
+        let root = Mat4([
+            top[0][0], top[0][1], top[0][2], 0.0, //
+            top[1][0], top[1][1], top[1][2], 0.0, //
+            top[2][0], top[2][1], top[2][2], 0.0, //
+            top[3][0], top[3][1], top[3][2], 1.0,
+        ]);
+        let base = root
+            .mul(&Mat4::from_trs(
+                [d.translate.x, d.translate.y, d.translate.z],
+                [0.0; 3],
+                [1.0; 3],
+            ))
+            .mul(&Mat4::from_trs([0.0; 3], [0.0; 3], [ms; 3]));
+        let mut posed = [Mat4::IDENTITY; 4];
+        let n = scratch.anim.compose(p, object, &mut posed).min(4);
+        // Node 3 under its `TraRotRpyRSca`.
+        unsafe {
+            meshdraw::draw_object_posed_hiding(
+                p,
+                object,
+                &psp_matrix(&base),
+                &posed[..n],
+                draw_state,
+                Some(&scratch.materials),
+                &|node| node != object.first_node + 3,
+            );
+        }
+        // Node 2, kind 46.
+        let node = object.first_node + 2;
+        let (Some(pose), Some(mesh)) = (
+            stage_pose(&scratch.anim, node),
+            p.node(node)
+                .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                .and_then(|n| p.mesh(n.mesh)),
+        ) else {
+            continue;
+        };
+        let local = posed[2.min(n.saturating_sub(1))];
+        let at = ssb_engine::math::Vec3::new(
+            d.translate.x + local.0[12] * ms,
+            d.translate.y + local.0[13] * ms,
+            d.translate.z + local.0[14] * ms,
+        );
+        let pos = ssb_game::slope_contour::world_position(&top, at);
+        let gx = scale_x * pose.scale[0];
+        let sy = pose.scale[1] * gx;
+        let sx = gx * pose.scale[0];
+        gpu.model_transform_billboard(
+            pos,
+            camera.eye,
+            camera.at,
+            pose.rotate[2],
+            [ms * sx, ms * sy],
+        );
+        unsafe {
+            meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&scratch.materials));
+        }
     }
 }
 
@@ -8287,6 +8449,15 @@ unsafe fn draw_training(
     }
     stage_pass(9..=12, Head0, draw_state);
     stage_pass(6..=12, Head1, draw_state);
+    // Link 9's head-1 lists: the sword trails, in fighter order, after the
+    // stage's link-6 head-1 lists (the stage has none on links 7-12).
+    for f in fighters
+        .iter()
+        .flatten()
+        .filter(|f| !f.fighter.entry.is_link_1 && !views[usize::from(f.fighter.port)].offscreen)
+    {
+        draw_fighter_trail(gpu, draw_state, &f.fighter, TRAIL_MODE);
+    }
 
     // Links 13-15: layer 2 (no head-1 lists on any stage), the weapons, then
     // the link-15 effects and particle list 1.
@@ -8294,6 +8465,16 @@ unsafe fn draw_training(
     battle_part(BattlePart::Weapons, draw_state, gpu);
     battle_part(BattlePart::Effects15, draw_state, gpu);
     draw_thunder_segments(gpu, p, draw_state, assets, &damage_hud.effects);
+    draw_thunder_shocks(
+        gpu,
+        p,
+        draw_state,
+        assets,
+        &mut damage_hud.display_scratch,
+        &damage_hud.effects,
+        fighter_refs,
+        &pl.camera,
+    );
     draw_display_effects(
         p,
         draw_state,
@@ -8506,6 +8687,7 @@ unsafe fn draw_magnifiers(
     let Some((image, tables)) = frame_image else { return };
     let scale = logic::magnify_scale(camera);
     let distance = (camera.eye - camera.at).length();
+    let mut magnified = [false; 4];
     let mut mini_camera = *camera;
     mini_camera.eye = ssb_engine::math::Vec3::new(0.0, 300.0, distance);
     mini_camera.at = ssb_engine::math::Vec3::new(0.0, 300.0, 0.0);
@@ -8561,6 +8743,33 @@ unsafe fn draw_magnifiers(
         draw_fighter_model(gpu, p, stage, st, f, &mini_camera, true);
         profile::stop(profile::Span::MagnifyModel, t);
         player_screen::pointer(gpu, p, st, xy, v.direction, scale, color);
+        magnified[port] = true;
+    }
+    // Camera 1005's head 1, after all of its head 0 (RE-512): each
+    // magnified fighter's `ftDisplayMainDrawAll` trail, in the state
+    // `ifCommonPlayerMagnifyProcDisplay` left: the full battle viewport and
+    // scissor and the camera's `gmCameraOrthoLookAtFuncMatrix` projection
+    // (an ortho of half the viewport, `100..12800`, from `(0, 0, 1000)`)
+    // over world-space vertices. The trail does not follow the miniature;
+    // it shows only where the world lands near the origin.
+    let (w, h) = camera.viewport_size();
+    let (half_w, half_h) = (((w as i32) / 2) as f32, ((h as i32) / 2) as f32);
+    let mut set = false;
+    for f in fighters.into_iter().flatten() {
+        if !magnified[usize::from(f.fighter.port).min(3)] {
+            continue;
+        }
+        if !set {
+            gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
+            gpu.set_ortho([-half_w, half_w, -half_h, half_h], 100.0, 12800.0);
+            gpu.set_view(&ssb_engine::math::Mat4::look_at(
+                ssb_engine::math::Vec3::new(0.0, 0.0, 1000.0),
+                ssb_engine::math::Vec3::ZERO,
+                ssb_engine::math::Vec3::Y,
+            ));
+            set = true;
+        }
+        draw_fighter_trail(gpu, st, &f.fighter, MAGNIFIER_TRAIL_MODE);
     }
 }
 
@@ -8640,6 +8849,63 @@ unsafe fn draw_fighter_model(
     }
     draw_state.finish_fighter_light();
 }
+
+/// `ftDisplayMainDrawAll`'s sword trail (`ftDisplayMainDrawAfterImage`):
+/// world-space `s16` vertices in head 1 under an identity modelview and the
+/// camera pass's projection, in the render state head 0 left (`mode`,
+/// RE-512). The trail is drawn from the frame `drawstatus` reaches 2.
+unsafe fn draw_fighter_trail(
+    gpu: &mut Gpu,
+    draw_state: &mut meshdraw::DrawState,
+    f: &ssb_game::fighter::Fighter,
+    mode: meshdraw::TrailMode,
+) {
+    use ssb_game::afterimage as ai;
+    if f.is_invisible || !ai::trail_visible(&f.afterimage) {
+        return;
+    }
+    let mut verts = [ai::TrailVtx::default(); ai::TRAIL_VTX_MAX];
+    let n = ai::trail_vertices(&f.afterimage, &mut verts);
+    meshdraw::draw_trail(
+        gpu,
+        &verts[..n],
+        ai::trail_triangles(n),
+        mode,
+        draw_state,
+    );
+}
+
+/// The main camera's state at the trail (RE-512, every traced record):
+/// the trail DLs set only `G_CC_SHADE` and clear `G_CULL_BOTH |
+/// G_LIGHTING`, so the othermode is the `G_RM_AA_ZB_XLU_SURF` that
+/// `gmCameraDefaultProcDisplay` sets in head 1 before the links-6..12
+/// capture, in both cycles (hi 0x00082C00, lo 0x005049D8: `Z_CMP` without `Z_UPD`,
+/// `FORCE_BL` with `CLR_IN * A_IN + CLR_MEM * (1 - A_IN)`, no alpha
+/// compare) under `G_ZBUFFER | G_SHADE | G_SHADING_SMOOTH` without
+/// `G_FOG`. `AA_EN`'s edge coverage has no GE equivalent.
+const TRAIL_MODE: meshdraw::TrailMode = meshdraw::TrailMode {
+    depth_test: true,
+    depth_write: false,
+    blend: true,
+};
+
+/// The magnifier camera's state at the trail (RE-512): camera 1005 sets no
+/// head-1 render mode and flushes its heads (`COBJ_FLAG_DLBUFFERS`) right
+/// after its capture, so the trail runs in the state the last
+/// `ifCommonPlayerMagnifyProcDisplay` left: `G_RM_AA_OPA_SURF` (lo
+/// 0x00552048, neither `Z_CMP` nor `Z_UPD`, no `FORCE_BL`, so covered
+/// pixels take the shade colour) under `G_SHADE | G_SHADING_SMOOTH`
+/// without `G_ZBUFFER`. The trace walks that follow the branch commands
+/// (21 records) read exactly this; the 112 records reading lo 0x00552078
+/// walked all of head 0, including the later interface and effect
+/// cameras' `G_RM_AA_ZB_OPA_SURF`, before head 1, which is not the order
+/// the RSP runs. Nothing writes depth. `AA_EN`'s edge coverage has no GE
+/// equivalent.
+const MAGNIFIER_TRAIL_MODE: meshdraw::TrailMode = meshdraw::TrailMode {
+    depth_test: false,
+    depth_write: false,
+    blend: false,
+};
 
 /// The costume a fighter's model draws in: its own, or, while its colour
 /// animation shows a skeleton (`ftDisplayMainDrawAll`), that skeleton set's

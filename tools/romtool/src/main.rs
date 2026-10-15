@@ -5978,29 +5978,26 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         }
     }
 
-    // The Egg Lay egg's Wait and Break tables (`dEFManagerYoshiEggLayAnimJoints`),
-    // which `efManagerYoshiEggLaySetAnim` adds to its tree in place of the
-    // `EFDesc`'s Throw table (RE-417).
-    {
-        let (file_id, graph_at) = ssb_rom::effect::YOSHI_EGG_LAY_KEY;
+    // The tables makers add in place of an `EFDesc`'s own
+    // (`ssb_rom::effect::VARIANT_ANIMS`): the Egg Lay egg's Wait and Break
+    // (`dEFManagerYoshiEggLayAnimJoints`, RE-417) and the Thunder Shock
+    // spark's animations 1 and 2.
+    for &(first_slot, (file_id, graph_at), tables) in &ssb_rom::effect::VARIANT_ANIMS {
         let file = loaded
             .files
             .get(file_id as usize)
             .and_then(Option::as_ref)
-            .ok_or_else(|| format!("egg lay: file {file_id} missing"))?;
+            .ok_or_else(|| format!("variant anim {first_slot:#X}: file {file_id} missing"))?;
         let graph = loaded
             .graphs
             .get(&file_id)
             .and_then(|graphs| graphs.iter().find(|graph| graph.offset == graph_at))
-            .ok_or("egg lay: graph missing")?;
+            .ok_or_else(|| format!("variant anim {first_slot:#X}: graph missing"))?;
         let object = object_index
             .get(&(file_id, graph_at))
             .and_then(|&index| writer.object(index))
-            .ok_or("egg lay: packed object missing")?;
-        for (i, &table) in ssb_rom::effect::YOSHI_EGG_LAY_ANIM_JOINTS
-            .iter()
-            .enumerate()
-        {
+            .ok_or_else(|| format!("variant anim {first_slot:#X}: packed object missing"))?;
+        for (i, &table) in tables.iter().enumerate() {
             let joints: Vec<_> =
                 ssb_rom::objanim::joint_scripts(&file.data, table, graph.nodes.len())
                     .into_iter()
@@ -6010,13 +6007,16 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     })
                     .collect();
             if joints.is_empty() {
-                return Err(format!("egg lay {i}: no animation scripts at 0x{table:X}").into());
+                return Err(format!(
+                    "variant anim {first_slot:#X} {i}: no animation scripts at 0x{table:X}"
+                )
+                .into());
             }
             effect_anim_joints += joints.len();
             effect_anims += 1;
             writer.add_anim(
                 ssb_rom::pack::AnimDesc::EFFECT,
-                ssb_rom::effect::YOSHI_EGG_LAY_ANIM_SLOT + i as u32,
+                first_slot + i as u32,
                 file_id,
                 0,
                 &file.data,
