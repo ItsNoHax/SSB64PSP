@@ -86,7 +86,8 @@ closes it.
 - [ ] Thunder Shock spark ejection on a status change was not observed on the N64 (decomp only), and the Pikachu trace is short; capture a longer one (RE-512).
 - [x] Kirby attack100 vulcan puffs (link-15 display, TopN query marks), Link/Captain/Kirby attack100 item-pickup interrupt, Captain rapid-jab flag-1 frames 6/14/22/30/37 with a 40-frame loop, link-15 displays drawn in make order; against N64 traces; 1 golden added (RE-513).
 - [x] Fighter lighting from the F3DEX2 microcode (CPU vertex lighting, normalised direction, shade clamp before PRIM; LLE 768/768) and the fighter shadow (matrix regression, no depth test) (RE-514).
-- [ ] N64 shows stock icons next to the 0% damage displays in Training; the PSP does not (RE-513).
+- [x] Training draws one stock icon per player (2 stocks, `is_single_stockicon`, the default battle state); icons and HUD match the N64 sprite and position (RE-515).
+- [ ] NEXT: 2D sprite edge fringe: transparent texels are black, so filtered scaled sprites (stock icons, damage digits, emblems) get a dark fringe vs the N64. Measure alpha-bleed of opaque colour into transparent texels at pack build (and the unfiltered alternative) against the `ssb_rom::n64_filter` reference model per D-043; pick the one closer to the N64 (RE-515).
 - [ ] Optional: narrow the vs-four golden change to catch/thrown/relz/pulled; marks-only pixel share of the 27 display-plus-marks rows (RE-511).
 - [ ] Tooling: `tools/golden.sh` mem-line regex `[^\r]*` stops at the letter r; `SSB64_ROM` must be an absolute path for golden.sh.
 - [ ] D-048: `hidden_parts` (FTAttributes::hiddenparts, RE-468) in modelpart.rs is still a committed per-fighter ROM table: generate it in `ssb-tablegen` `model_parts.rs`; audit ssb-game for others. ssb-rom ROM tests return early without `SSB64_ROM` (use `ssb_tablegen::locate_rom`).

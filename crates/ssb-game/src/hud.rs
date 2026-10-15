@@ -176,6 +176,21 @@ pub fn stock_icons(
     stock_icons_at(pos_x, POSITION_Y, stocks, single, w, h)
 }
 
+/// `players[player].is_single_stockicon`: the scene's per-player flags
+/// where it sets them (the 1P Game, Training's
+/// [`crate::training::SINGLE_STOCK`]), else a VS battle's rule (a time
+/// battle shows one icon). `None` when neither is known: no stock
+/// interface.
+pub fn is_single_stock(
+    per_player: Option<[bool; 4]>,
+    rule: Option<crate::battle::Rule>,
+    player: usize,
+) -> Option<bool> {
+    per_player
+        .map(|s| s[player])
+        .or_else(|| rule.map(|r| r == crate::battle::Rule::Time))
+}
+
 /// [`stock_icons`] at interface height `pos_y`.
 pub fn stock_icons_at(
     pos_x: i32,

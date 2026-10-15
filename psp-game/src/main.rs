@@ -4126,6 +4126,16 @@ fn enter_training(
         f.fighter.model_parts.detail_curr = detail;
         f.fighter.model_parts.detail_base = detail;
     }
+    if vs.is_none() {
+        // Training's `gSCManagerBattleState` is `dSCManagerDefaultBattleState`
+        // (`sc1PTrainingModeFuncStart`): two stocks (`desc.stock_count`), and
+        // every player's `is_single_stockicon`, which
+        // `ifCommonPlayerStockInitInterface` shows as one permanent icon.
+        world.damage_hud.single_stock = Some(ssb_game::training::SINGLE_STOCK);
+        for f in scenes(pl, world.dummies).into_iter().flatten() {
+            f.fighter.stocks = ssb_game::training::STOCKS;
+        }
+    }
     *battle = vs.map(|rules| {
         // `scVSBattleStartBattle`: each fighter faces the nearest other
         // player's spawn (`scVSBattleGetStartPlayerLR`), and a stock
@@ -8725,8 +8735,9 @@ unsafe fn draw_training(
     if let Some(t) = damage_hud.bonus_timer {
         draw_practice_timer(p, draw_state, &t);
     }
+    // `ifCommonPlayerStockInitInterface`: every battle scene, Training too.
+    draw_stocks(p, draw_state, battle, damage_hud, fighters.map(|x| x.map(|x| &x.fighter)));
     if let Some(b) = battle {
-        draw_stocks(p, draw_state, b, damage_hud, fighters.map(|x| x.map(|x| &x.fighter)));
         draw_team_stocks(p, draw_state, damage_hud);
         draw_stock_steals(p, draw_state, damage_hud, fighters.map(|x| x.map(|x| &x.fighter)));
         draw_timer(p, draw_state, b);
@@ -9142,17 +9153,17 @@ fn draw_plain(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, sprite: &ssb_r
 fn draw_stocks(
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
-    b: &ssb_game::battle::Battle,
+    b: Option<&ssb_game::battle::Battle>,
     hud: &Hud,
     fighters: [Option<&ssb_game::fighter::Fighter>; 4],
 ) {
     for f in fighters.into_iter().flatten() {
         let player = usize::from(f.port);
         // `players[].is_single_stockicon`: a VS time battle's, or the 1P
-        // Game's per player.
-        let single = hud
-            .single_stock
-            .map_or(b.rule == ssb_game::battle::Rule::Time, |s| s[player]);
+        // Game's and Training's per player.
+        let Some(single) = ssb_game::hud::is_single_stock(hud.single_stock, b.map(|b| b.rule), player) else {
+            continue;
+        };
         let (pos_x, pos_y) = (hud.damage[player].pos_x, hud.damage[player].pos_y);
         let Some(icon) = p.fighter_sprite(f.kind as u8, ssb_rom::pack::SpriteDesc::ROLE_STOCK, f.costume) else {
             continue;

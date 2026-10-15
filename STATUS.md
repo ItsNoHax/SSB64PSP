@@ -17,14 +17,13 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-514: fighter vertex lighting ported from SSB's F3DEX2 microcode (exact
-against an LLE RSP, 768/768) and lit on the CPU in `meshdraw`; the fighter
-shadow regression since RE-487 fixed and its depth test removed. Goldens
-rebaselined (lit fighters, restored shadows, animated stage lights).
-Next, per [`PLAN.md`](PLAN.md#remaining-work): Training stock icons next to
-the damage displays, then fighter wind-reaction effects and the slope
-follow-ups. MS8 gains the single-pass vertex lighting and a PSP-2000 check of
-its +1.6 ms CPU cost.
+RE-515: Training draws one stock icon per player (2 stocks, the default
+battle state), matching the N64 sprite and position; 105 training goldens
+rebaselined. Next, per [`PLAN.md`](PLAN.md#remaining-work): the 2D sprite edge
+fringe (transparent texels are black, so filtered scaled sprites get a dark
+edge): measure alpha-bleed against the unfiltered alternative with the
+`ssb_rom::n64_filter` model and pick the closer one (RE-515). Then fighter
+wind-reaction effects and the slope follow-ups.
 
 ## Blockers
 
@@ -36,7 +35,7 @@ its +1.6 ms CPU cost.
 
 ## Verification
 
-Baseline after RE-513:
+Baseline after RE-515:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass (tests that need ROM tables, including

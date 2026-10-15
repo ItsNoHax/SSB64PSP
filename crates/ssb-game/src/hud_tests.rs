@@ -169,6 +169,35 @@ fn stock_icons_sit_above_the_damage() {
 }
 
 #[test]
+fn single_stock_follows_the_scene_flags_then_the_rule() {
+    use crate::battle::Rule;
+    // Training sets every player's flag and has no VS battle.
+    let training = Some(crate::training::SINGLE_STOCK);
+    assert_eq!(is_single_stock(training, None, 1), Some(true));
+    // The 1P Game's per-player flags win over its stock rule.
+    let campaign = Some([false, true, false, false]);
+    assert_eq!(is_single_stock(campaign, Some(Rule::Stock), 0), Some(false));
+    assert_eq!(is_single_stock(campaign, Some(Rule::Stock), 1), Some(true));
+    // A VS battle: one icon under the time rule, one per stock otherwise.
+    assert_eq!(is_single_stock(None, Some(Rule::Time), 2), Some(true));
+    assert_eq!(is_single_stock(None, Some(Rule::Stock), 2), Some(false));
+    assert_eq!(is_single_stock(None, None, 0), None);
+}
+
+#[test]
+fn training_shows_one_stock_icon_per_player() {
+    // RE-515: an N64 warp-boot Training capture (Rice, 320x240) has
+    // `is_single_stockicon` 1 and `stock_count` 2 for both players, and
+    // each 8x10 icon's opaque texels exactly at these corners.
+    for (port, corner) in [(0, (27.0, 185.0)), (1, (97.0, 185.0))] {
+        let single = is_single_stock(Some(crate::training::SINGLE_STOCK), None, port).unwrap();
+        let icons: Vec<_> =
+            stock_icons(POSITION_X[port], crate::training::STOCKS, single, 8, 10).collect();
+        assert_eq!(icons, [corner]);
+    }
+}
+
+#[test]
 fn a_stolen_stock_arcs_fifteen_up_and_lands_after_thirty_frames() {
     // Port 2's icon (16 x 16) flying to port 0's stocks.
     let mut s = StockSteal::make(2, POSITION_X[2], POSITION_X[0], 16, 16);

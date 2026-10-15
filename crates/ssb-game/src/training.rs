@@ -36,6 +36,17 @@ impl MainOption {
     ];
 }
 
+/// `desc.stock_count`: `sc1PTrainingModeInitVars` copies
+/// `dSCManagerDefaultBattleState`, whose two stocks it keeps. Its time rule
+/// never takes one (`ftCommonDeadUpdateScore` decrements only under the
+/// stock and 1P Game rules).
+pub const STOCKS: i8 = 2;
+
+/// `players[].is_single_stockicon`, also `dSCManagerDefaultBattleState`'s:
+/// every player shows one permanent stock icon
+/// (`ifCommonPlayerStockInitInterface`).
+pub const SINGLE_STOCK: [bool; 4] = [true; 4];
+
 /// `nSC1PTrainingModeMenuCPEnumCount`.
 pub const CP_OPTION_COUNT: u8 = 5;
 /// `nSC1PTrainingModeMenuItemEnumCount`: None, then the 16 utilities.
