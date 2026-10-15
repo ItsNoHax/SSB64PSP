@@ -129,6 +129,9 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
     // `dead_fgm_ids[2]`, `deadup_sfx`, `damage_sfx`, `smash_sfx[3]`,
     // `heavyget_sfx`, and the `is_have_*` bitfield word.
     let (mut sounds, mut have) = ([0u16; 8], 0u32);
+    // `joint_rfoot_id`, `joint_rfoot_rotate`, `joint_lfoot_id`,
+    // `joint_lfoot_rotate` (0x2FC..0x30C, after `shield_anim_joints`).
+    let (mut feet, mut foot_rotates) = ([0i32; 2], [0f32; 2]);
     if let Some(rom) = rom {
         let main = rom.file(f.main_file)?;
         let at = f.attributes as usize;
@@ -163,6 +166,10 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
             sounds[i] = half(off)?;
         }
         have = word(0x100)?;
+        for i in 0..2 {
+            feet[i] = word(0x2FC + 8 * i)? as i32;
+            foot_rotates[i] = f32::from_bits(word(0x300 + 8 * i)?);
+        }
     }
     // `is_have_voice`: the 22nd one-bit field, MSB first.
     let is_have_voice = have & (1 << (31 - 21)) != 0;
@@ -184,7 +191,8 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
          \x20   joint_itemlight_id: {light},\n\
          \x20   dead_fgm_ids: [{}, {}],\n    deadup_sfx: {},\n\
          \x20   damage_sfx: {},\n    smash_sfx: [{}, {}, {}],\n\
-         \x20   heavyget_sfx: {},\n    is_have_voice: {is_have_voice},\n}};\n\n",
+         \x20   heavyget_sfx: {},\n    is_have_voice: {is_have_voice},\n\
+         \x20   foot_joint_ids: [{}, {}],\n    foot_rotates: [{}, {}],\n}};\n\n",
         f32_lit(floats[0]),
         f32_lit(floats[1]),
         f32_lit(floats[2]),
@@ -203,6 +211,10 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
         sounds[5],
         sounds[6],
         sounds[7],
+        feet[0].clamp(-1, 254) as u8,
+        feet[1].clamp(-1, 254) as u8,
+        f32_lit(foot_rotates[0]),
+        f32_lit(foot_rotates[1]),
     );
     Ok(())
 }

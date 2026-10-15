@@ -76,6 +76,9 @@ pub const CLIP_NONE: u16 = 0xFFFE;
 /// figatree clock then counts on, as the status clock does.
 pub const CLIP_UNKNOWN: u16 = 0xFFFF;
 
+/// `FTAnimDesc.flags.is_use_animlocks`, the word's lowest bit.
+pub const ANIM_FLAG_ANIMLOCKS: u32 = 0x0000_0001;
+
 /// `FTAnimDesc.flags.is_use_transn_joint`.
 pub const ANIM_FLAG_TRANSN: u32 = 0x4000_0000;
 
@@ -89,6 +92,15 @@ pub const ANIM_FLAG_XROTN: u32 = 0x8000_0000;
 pub fn leads_with_xrotn(kind: FighterKind, status: AnyStatus) -> bool {
     motion_desc(kind, status)
         .is_some_and(|d| d.anim_flags & (ANIM_FLAG_XROTN | ANIM_FLAG_TRANSN) == ANIM_FLAG_XROTN)
+}
+
+/// `FTAnimDesc::flags.is_use_animlocks`, bit 0: the motion animates the
+/// fighter's `animlock` parts and builds every part with the
+/// accumulated-scale matrices. Without it, those parts stay at their rest
+/// transform (`ftParamSetAnimLocks`, RE-509). `ftMainSetStatus` copies it
+/// to `fp->is_use_animlocks` only when the motion installs a figatree.
+pub fn uses_animlocks(kind: FighterKind, status: AnyStatus) -> bool {
+    motion_desc(kind, status).is_some_and(|d| d.anim_flags & ANIM_FLAG_ANIMLOCKS != 0)
 }
 
 /// Whether the status's motion moves the fighter by its TransN joint
@@ -330,6 +342,12 @@ pub struct CombatAttrs {
     /// `is_have_voice`: gates `PlayVoiceStoreInfo` and
     /// `PlayLoopVoiceStoreInfo`.
     pub is_have_voice: bool,
+    /// `joint_rfoot_id`, `joint_lfoot_id`: the leg roots
+    /// `mpCommonUpdateFighterSlopeContour` bends.
+    pub foot_joint_ids: [u8; 2],
+    /// `joint_rfoot_rotate`, `joint_lfoot_rotate`: the knee-local x of the
+    /// point it holds over the floor.
+    pub foot_rotates: [f32; 2],
 }
 
 /// `attr->is_have_voice`.
@@ -417,6 +435,7 @@ mod op {
     pub const SET_COL_ANIM: u32 = 44;
     pub const RESET_COL_ANIM: u32 = 45;
     pub const SET_PARALLEL_SCRIPT: u32 = 46;
+    pub const SET_SLOPE_CONTOUR: u32 = 47;
 }
 
 /// Words each command occupies (`ftMotionEventAdvance` sizes).
@@ -540,6 +559,25 @@ pub fn motion_desc(kind: FighterKind, status: AnyStatus) -> Option<MotionDesc> {
 
 /// What `ftMainSetStatus` does to the figatree and its clock
 /// (`gobj->anim_frame`) when it enters `status` (RE-474).
+/// Whether `ftMainSetStatus` sets a motion (`motion_id` neither -1 nor
+/// -2), and with it runs `ftMainPlayAnim`, which resets every part's
+/// `transform_update_mode` (RE-509).
+pub fn sets_motion(kind: FighterKind, status: AnyStatus) -> bool {
+    let Some(table) = fighter_scripts(kind) else {
+        return true;
+    };
+    let id = status.id();
+    let motion = if id < SPECIAL_STATUS_START {
+        COMMON_STATUS_MOTION.get(usize::from(id)).copied()
+    } else {
+        table
+            .special_status_motion
+            .get(usize::from(id - SPECIAL_STATUS_START))
+            .copied()
+    };
+    motion.is_none_or(|m| m >= 0)
+}
+
 pub fn clip_on_set_status(kind: FighterKind, status: AnyStatus) -> crate::status::ClipStart {
     use crate::status::{Clip, ClipStart};
     let Some(table) = fighter_scripts(kind) else {
@@ -857,6 +895,11 @@ fn execute(
 
         op::SET_FLAG0..=op::SET_FLAG3 => {
             f.motion_script.flags[(opcode - op::SET_FLAG0) as usize] = value;
+        }
+        // `nFTMotionEventSetSlopeContour`: the feet (and body) the map step
+        // fits to the floor. The body tilt (`FULL`) is not ported.
+        op::SET_SLOPE_CONTOUR => {
+            f.slope_contour = (value & 7) as u8;
         }
         op::SET_AIR_JUMP_ADD => {
             f.become_airborne();

@@ -261,7 +261,7 @@ fn effect_joint_position(f: &mut Fighter) -> Vec3 {
     let joint = attrs(f.kind).map_or(0, |a| {
         a.effect_joint_ids[usize::from(f.effect_joint_array_id)]
     });
-    f.joint_world(joint, Vec3::ZERO)
+    f.joint_query(joint, Vec3::ZERO)
 }
 
 /// `FTSAMUS_CHARGE_EFFECT_JOINT`, `FTDONKEY_...` and `FTKIRBY_...`.
@@ -305,7 +305,7 @@ pub fn make(f: &mut Fighter, rt: &mut EffectRuntime<'_>, r: EffectRequest) {
             let k = 1.0 / f.attributes.size;
             pos *= k;
         }
-        pos = f.joint_world(joint.max(0) as u8, pos);
+        pos = f.joint_query(joint.max(0) as u8, pos);
     }
     dispatch(f, rt, r.kind, pos, r.lr);
 }

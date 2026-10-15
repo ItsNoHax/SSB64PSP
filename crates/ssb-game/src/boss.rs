@@ -808,7 +808,7 @@ fn set_yubideppou2(f: &mut Fighter) {
 fn set_yubideppou3(f: &mut Fighter) {
     set(f, B::Yubideppou3);
     f.boss.bullet_count += 1;
-    let pos = f.joint_world(BULLET_JOINT_FIRST, Vec3::ZERO);
+    let pos = f.joint_query(BULLET_JOINT_FIRST, Vec3::ZERO);
     make_bullet(f, pos);
     f.boss.shoot_timer = 4;
 }
@@ -1382,7 +1382,7 @@ fn physics(f: &mut Fighter, s: B) {
             if f.boss.shoot_timer != 0 {
                 f.boss.shoot_timer -= 1;
                 if f.boss.shoot_timer == 0 {
-                    let pos = f.joint_world(BULLET_JOINT_FOLLOW, Vec3::ZERO);
+                    let pos = f.joint_query(BULLET_JOINT_FOLLOW, Vec3::ZERO);
                     make_bullet(f, pos);
                 }
             }

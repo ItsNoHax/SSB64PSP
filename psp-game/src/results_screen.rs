@@ -184,7 +184,9 @@ fn make_model(p: &Pack<'_>, fighter: results_scene::Fighter) -> Box<Model> {
         fighter,
         object: ssb_psp_runtime::scene::fighter_object(p, kind).unwrap_or(u32::MAX),
         slot: None,
-        skeleton: Skeleton::new(),
+        // Win and lose motions are unflagged: the `animlock` parts stay
+        // frozen (RE-509).
+        skeleton: ssb_psp_runtime::scene::fighter_skeleton(fighter.kind, 1.0),
         demo: ssb_game::modelpart::DemoParts::start(
             fighter.kind,
             fighter.status.map_or(0, |s| 1 + s.index()),

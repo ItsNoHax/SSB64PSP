@@ -147,7 +147,7 @@ pub fn set_special_n(f: &mut Fighter) {
 /// Accessory flag 0 at frame 20. Kirby uses its own TopN offset.
 pub(crate) fn make_pk_fire(f: &mut Fighter, copied: bool) {
     let ground = f.is_grounded();
-    let mut pos = f.joint_world(0, Vec3::ZERO);
+    let mut pos = f.joint_query(0, Vec3::ZERO);
     pos.x += if copied { 240.0 } else { 100.0 } * f.facing.sign();
     pos.y += if copied { 190.0 } else { 180.0 };
     if !copied {
@@ -197,7 +197,7 @@ fn set_thunder_hold(f: &mut Fighter) {
     );
     f.physics.jumps_used = f.attributes.jumps_max;
     f.ness.thunder_motion = f.motion.count;
-    let mut pos = f.joint_world(12, Vec3::ZERO);
+    let mut pos = f.joint_query(12, Vec3::ZERO);
     pos.z = 0.0;
     f.weapon_spawn = Some(WeaponSpawn {
         kind: WeaponKind::NessPKThunder,

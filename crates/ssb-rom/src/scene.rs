@@ -269,8 +269,179 @@ impl Mat4 {
     /// [`Mat4::from_trs`] with `gmCollisionTransformMatrixAll`'s trigonometry,
     /// `lbCommonSin`/`lbCommonCos`: the matrices the original's hit, hurt
     /// and attachment positions come from (RE-468).
+    ///
+    /// The products associate as the C writes them (`sinx * siny * cosz`
+    /// is `(sinx * siny) * cosz`), so every `f32` is the original's.
     pub fn from_trs_collision(t: [f32; 3], r: [f32; 3], s: [f32; 3]) -> Mat4 {
-        Self::from_trs_with(t, r, s, ssb_engine::math::lb_sin_cos)
+        Self::from_trs_ncs(t, r, s, None).0
+    }
+
+    /// `gmCollisionSetMatrixNcs` (`gm/gmcollision.c:82`): the collision
+    /// matrix of a fighter part while its motion uses the animation locks
+    /// (`is_use_animlocks`, RE-509). `scale_mul` is the parent part's
+    /// `vec_scale` (`None` for the root part); each row takes the
+    /// accumulated scale `scale_mul * scale`, and each column is divided by
+    /// the parent's, so a parent's scale moves its children without
+    /// stretching them ("no child scale"). Returns the matrix and the part's
+    /// new `vec_scale`.
+    ///
+    /// The original spins forever on a zero `scale_mul` component
+    /// ("zero div x in gcSetMatrixNcs()"); this divides to infinity instead.
+    pub fn from_trs_ncs(
+        t: [f32; 3],
+        r: [f32; 3],
+        s: [f32; 3],
+        scale_mul: Option<[f32; 3]>,
+    ) -> (Mat4, [f32; 3]) {
+        let (sinx, cosx) = ssb_engine::math::lb_sin_cos(r[0]);
+        let (siny, cosy) = ssb_engine::math::lb_sin_cos(r[1]);
+        let (sinz, cosz) = ssb_engine::math::lb_sin_cos(r[2]);
+        let nscale = match scale_mul {
+            Some(m) => [m[0] * s[0], m[1] * s[1], m[2] * s[2]],
+            None => s,
+        };
+        // `mtx[row][col]`, row-major as the C indexes it.
+        let mut m = [
+            [cosy * cosz, cosy * sinz, -siny],
+            [
+                (sinx * siny * cosz) - (cosx * sinz),
+                (sinx * siny * sinz) + (cosx * cosz),
+                sinx * cosy,
+            ],
+            [
+                (cosx * siny * cosz) + (sinx * sinz),
+                (cosx * siny * sinz) - (sinx * cosz),
+                cosx * cosy,
+            ],
+        ];
+        for (row, &k) in m.iter_mut().zip(&nscale) {
+            if k != 1.0 {
+                for e in row.iter_mut() {
+                    *e *= k;
+                }
+            }
+        }
+        if let Some(mul) = scale_mul {
+            for (col, &k) in mul.iter().enumerate() {
+                if k != 1.0 {
+                    let inv = 1.0 / k;
+                    for row in m.iter_mut() {
+                        row[col] *= inv;
+                    }
+                }
+            }
+        }
+        let mat = Mat4([
+            m[0][0], m[0][1], m[0][2], 0.0, //
+            m[1][0], m[1][1], m[1][2], 0.0, //
+            m[2][0], m[2][1], m[2][2], 0.0, //
+            t[0], t[1], t[2], 1.0,
+        ]);
+        (mat, nscale)
+    }
+
+    /// `syMatrixF2LFixedW` (`sys/matrix.c:44`): a float matrix as the
+    /// display's fixed-point `Mtx`, each 3x3 entry `FTOFIX32`
+    /// (`(s32)(x * 65536)`, truncated toward zero). The display draws a
+    /// fighter part this way while its `transform_update_mode` is set: a
+    /// part frozen by the animation locks shows its frozen
+    /// `gmCollisionTransformMatrixAll` matrix (RE-509). The translation
+    /// stays as given, as [`Mat4::from_trs_display`]'s does.
+    pub fn f2l_fixed_w(&self) -> Mat4 {
+        let q = |v: f32| (v * 65536.0) as i32 as f32 * (1.0 / 65536.0);
+        let m = &self.0;
+        Mat4([
+            q(m[0]),
+            q(m[1]),
+            q(m[2]),
+            0.0,
+            q(m[4]),
+            q(m[5]),
+            q(m[6]),
+            0.0,
+            q(m[8]),
+            q(m[9]),
+            q(m[10]),
+            0.0,
+            m[12],
+            m[13],
+            m[14],
+            1.0,
+        ])
+    }
+
+    /// `lbCommonMatrixTraRotScaInv` (`lb/lbcommon.c:491`): the display
+    /// matrix of a fighter part while its motion uses the animation locks
+    /// (RE-509). The chain of [`Mat4::from_trs_display`] with each row
+    /// times its accumulated `scale` word (`(s32)(scale * 256)`) and each
+    /// column times the parent's inverse word
+    /// (`(s32)((1 / scale_inv) * 256)`, `>> 8`): column 0 by x, 1 by y,
+    /// 2 by z. With every scale 1 it is `syMatrixTraRotRpyR` exactly.
+    pub fn from_trs_scale_inv_display(
+        t: [f32; 3],
+        r: [f32; 3],
+        scale_inv: [f32; 3],
+        scale: [f32; 3],
+    ) -> Mat4 {
+        use ssb_engine::math::sy_sin_cos_ushort;
+        let (sinx, cosx) = sy_sin_cos_ushort(r[0]);
+        let (siny, cosy) = sy_sin_cos_ushort(r[1]);
+        let (sinz, cosz) = sy_sin_cos_ushort(r[2]);
+        let m = |a: i32, b: i32| a.wrapping_mul(b);
+        let word = |v: f32| (v * 256.0) as i32;
+        let (kx, ky, kz) = (word(scale[0]), word(scale[1]), word(scale[2]));
+        let inv = |v: f32| ((1.0 / v) * 256.0) as i32;
+        let (ix, iy, iz) = (inv(scale_inv[0]), inv(scale_inv[1]), inv(scale_inv[2]));
+        // `((e * scale_l) >> 8) * inv_l >> 8`.
+        let sca = |e: i32, k: i32, i: i32| m(m(e, k) >> 8, i) >> 8;
+        let srsp = m(sinx, siny) >> 15;
+        let crsp = m(cosx, siny) >> 15;
+        let e = [
+            sca(m(cosy, cosz) >> 14, kx, ix),
+            sca(m(cosy, sinz) >> 14, kx, iy),
+            m(m(-siny, kx) >> 7, iz) >> 8,
+            sca(
+                (m(srsp, cosz) >> 14).wrapping_sub(m(cosx, sinz) >> 14),
+                ky,
+                ix,
+            ),
+            sca(
+                (m(srsp, sinz) >> 14).wrapping_add(m(cosx, cosz) >> 14),
+                ky,
+                iy,
+            ),
+            sca(m(sinx, cosy) >> 14, ky, iz),
+            sca(
+                (m(crsp, cosz) >> 14).wrapping_add(m(sinx, sinz) >> 14),
+                kz,
+                ix,
+            ),
+            sca(
+                (m(crsp, sinz) >> 14).wrapping_sub(m(sinx, cosz) >> 14),
+                kz,
+                iy,
+            ),
+            sca(m(cosx, cosy) >> 14, kz, iz),
+        ];
+        let f = |i: usize| e[i] as f32 * (1.0 / 65536.0);
+        Mat4([
+            f(0),
+            f(1),
+            f(2),
+            0.0,
+            f(3),
+            f(4),
+            f(5),
+            0.0,
+            f(6),
+            f(7),
+            f(8),
+            0.0,
+            t[0],
+            t[1],
+            t[2],
+            1.0,
+        ])
     }
 
     /// `syMatrixTraRotRpyRSca` (`sys/matrix.c:1086`): the fixed-point
@@ -893,6 +1064,78 @@ mod tests {
         );
         assert_eq!(m.display_words(), [-52224, 0, 0, 0, 0, 78592, 0, 65536, 0]);
     }
+
+    fn fnv_words(h: u64, words: impl IntoIterator<Item = i32>) -> u64 {
+        words.into_iter().fold(h, |h, w| {
+            w.to_le_bytes().iter().fold(h, |h, &b| {
+                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+            })
+        })
+    }
+
+    /// `INVS` of `tools/r4300/matrix_hashes.py`, three in a row from `n`.
+    fn animlock_inv(n: usize) -> [f32; 3] {
+        const INVS: [f32; 9] = [1.0, 1.1, 0.5, 1.24, 2.0, 0.91, 1.05, 5.0, 0.039_794_922];
+        [INVS[n % 9], INVS[(n + 1) % 9], INVS[(n + 2) % 9]]
+    }
+
+    fn float_words(m: &Mat4) -> [i32; 9] {
+        let b = |i: usize| m.0[i].to_bits() as i32;
+        [b(0), b(1), b(2), b(4), b(5), b(6), b(8), b(9), b(10)]
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn animlock_matrices_match_the_rom() {
+        // RE-509: hashes `tools/r4300/matrix_hashes.py` prints for the ROM's
+        // own `lbCommonMatrixTraRotScaInv` (0x800C7DB4),
+        // `gmCollisionTransformMatrixAll` (0x800ECDE4, every f32 of the
+        // 3x3), `syMatrixF2LFixedW` (0x80019EA0) of those, and
+        // `gmCollisionSetMatrixNcs` (0x800ECFF4, the 3x3 and `vec_scale`;
+        // no parent every fifth input) over the display inputs.
+        let inputs = display_inputs();
+        let (mut inv_h, mut all_h, mut f2l_h, mut ncs_h) = (FNV, FNV, FNV, FNV);
+        for (n, i) in inputs.iter().enumerate() {
+            let (r, s) = ([i[0], i[1], i[2]], [i[3], i[4], i[5]]);
+            let inv = animlock_inv(n);
+            let m = Mat4::from_trs_scale_inv_display([1.0, 2.0, 3.0], r, inv, s);
+            inv_h = fnv_words(inv_h, m.display_words());
+            let all = Mat4::from_trs_collision([1.0, 2.0, 3.0], r, s);
+            all_h = fnv_words(all_h, float_words(&all));
+            f2l_h = fnv_words(f2l_h, all.f2l_fixed_w().display_words());
+            let (ncs, scale) =
+                Mat4::from_trs_ncs([1.0, 2.0, 3.0], r, s, (n % 5 != 0).then_some(inv));
+            ncs_h = fnv_words(ncs_h, float_words(&ncs));
+            ncs_h = fnv_words(ncs_h, scale.map(|v| v.to_bits() as i32));
+        }
+        assert_eq!(inv_h, 0x84b0_dda3_fcfe_e912);
+        assert_eq!(all_h, 0x3982_7526_1df6_fe50);
+        assert_eq!(f2l_h, 0x48d5_b00e_44b4_0a2d);
+        assert_eq!(ncs_h, 0xf758_2515_856b_a73e);
+        // A sample the script prints: input 40, scale_inv (2, 0.91, 1.05).
+        let i = inputs[40];
+        let m = Mat4::from_trs_scale_inv_display(
+            [0.0; 3],
+            [i[0], i[1], i[2]],
+            animlock_inv(40),
+            [i[3], i[4], i[5]],
+        );
+        assert_eq!(m.display_words(), [-26112, 0, 0, 0, 0, 74601, 0, 71936, 0]);
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn scale_inv_with_unit_scales_is_rpy() {
+        for input in display_inputs() {
+            let r = [input[0], input[1], input[2]];
+            assert_eq!(
+                Mat4::from_trs_scale_inv_display([0.0; 3], r, [1.0; 3], [1.0; 3]),
+                Mat4::from_tr_display([0.0; 3], r)
+            );
+        }
+    }
+
+    const FNV: u64 = 0xcbf2_9ce4_8422_2325;
 
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]

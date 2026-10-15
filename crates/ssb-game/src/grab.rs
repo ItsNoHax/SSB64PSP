@@ -933,11 +933,44 @@ pub fn check_catch_attack11(f: &mut Fighter) -> bool {
 fn catch_pull(f: &mut Fighter, held: &Fighter) {
     let length = catch_pull_length(f.kind);
     let begin = f.grab.catch_pull_frame_begin;
-    status::set_status(f, Status::CatchPull, begin, StatusTiming::frames(length));
+    // `FTSTATUS_PRESERVE_SLOPECONTOUR`.
+    status::set_any_status_preserve(
+        f,
+        Status::CatchPull.into(),
+        begin,
+        StatusTiming::frames(length),
+        status::Preserve::SLOPE_CONTOUR,
+    );
     f.grab.catch = Some(held.port);
     f.grab.catch_kind = Some(held.kind);
     f.grab.is_catchstatus = false;
     f.grab.capture_immune = true;
+    // `fp->proc_slope`, run once the match loop has the map; then the swirl
+    // effect and the victim's `ftCommonCapturePulledProcCapture` query the
+    // hand.
+    f.slope_pending = true;
+    mark_held_queries(f);
+}
+
+/// The catcher's parts the held fighter's processes query each frame:
+/// `ftCommonCapturePulledRotateScale`'s `func_ovl0_800C9A38` on
+/// `joint_itemheavy_id` (CapturePulled, CaptureWait, CaptureYoshi and
+/// `ftCommonThrownProcPhysics` until the release), or
+/// `ftCommonCaptureCaptainUpdatePositions`' query of joint 29 while the
+/// Captain's dive holds (RE-509).
+pub fn mark_held_queries(f: &Fighter) {
+    if f.grab.catch.is_none() {
+        return;
+    }
+    let Some(joint) = itemheavy_joint(f.kind) else {
+        return;
+    };
+    let joint = joint as u8;
+    if f.status.status == AnyStatus::Captain(crate::status::CaptainStatus::SpecialHiCatch) {
+        f.mark_joint_query(joint);
+    } else {
+        f.mark_joint_query_parent(joint);
+    }
 }
 
 /// `ftCommonCatchWaitProcInterrupt` @ 0x80149FCC.
@@ -950,7 +983,13 @@ fn catch_wait_interrupt(f: &mut Fighter) {
 
 /// `ftCommonCatchWaitSetStatus` @ 0x8014A000.
 fn set_catch_wait(f: &mut Fighter) {
-    status::set_status(f, Status::CatchWait, 0.0, StatusTiming::unknown());
+    status::set_any_status_preserve(
+        f,
+        Status::CatchWait.into(),
+        0.0,
+        StatusTiming::unknown(),
+        status::Preserve::SLOPE_CONTOUR,
+    );
     f.grab.throw_wait = CATCH_THROW_WAIT;
     f.grab.capture_immune = true;
     // Link takes his shield in hand; Yoshi's jaw closes (RE-425).
@@ -1041,6 +1080,9 @@ fn update_throw(f: &mut Fighter) {
 /// The release half of a throw's `SetFlag2`: the held fighter takes the
 /// throw's knockback and the link is dropped.
 pub(crate) fn release_thrown(f: &mut Fighter, lr: f32) {
+    // `ftCommonThrowProcUpdate`'s `ftCommonThrownProcPhysics` reads the hand
+    // once more before the release (RE-509).
+    mark_held_queries(f);
     let desc = f.grab.throw_desc.map(|d| d[0]).unwrap_or(MARIO_CATCH[0]);
     f.grab.send(GrabEvent::Release {
         lr,
@@ -2521,7 +2563,7 @@ fn catch_touches(catcher: &Fighter, other: &Fighter, rules: crate::team::TeamRul
     let hit = colls.iter().any(|(hitbox, joint)| {
         crate::hurtbox::catch_touches(
             other,
-            catcher.joint_world(*joint, hitbox.offset),
+            catcher.joint_query(*joint, hitbox.offset),
             hitbox.radius,
         )
     });

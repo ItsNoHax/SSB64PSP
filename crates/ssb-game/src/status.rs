@@ -2170,7 +2170,7 @@ pub fn guard_update_shield_vars(f: &mut Fighter) {
             // `ftCommonGuardUpdateShieldVars` places shell fragments at YRotN.
             f.model_parts.reset_all();
             crate::hurtbox::set_hit_status_part_all(f, crate::combat::HitStatus::Normal);
-            let pos = f.joint_world(3, ssb_engine::math::Vec3::ZERO);
+            let pos = f.joint_query(3, ssb_engine::math::Vec3::ZERO);
             f.effects.push(crate::fteffect::FighterEffect::At {
                 kind: crate::fteffect::kind::EGG_BREAK,
                 pos,
@@ -3913,6 +3913,8 @@ pub struct Preserve {
     /// `FTSTATUS_PRESERVE_LOOPSFX`: keep the loop sound playing
     /// (`ftParamStopLoopSFX` otherwise).
     pub loop_sfx: bool,
+    /// `FTSTATUS_PRESERVE_SLOPECONTOUR`: keep `slope_contour`.
+    pub slope_contour: bool,
 }
 
 impl Preserve {
@@ -3925,6 +3927,11 @@ impl Preserve {
         playertag: false,
         fastfall: false,
         loop_sfx: false,
+        slope_contour: false,
+    };
+    pub const SLOPE_CONTOUR: Preserve = Preserve {
+        slope_contour: true,
+        ..Preserve::NONE
     };
     pub const FASTFALL: Preserve = Preserve {
         fastfall: true,
@@ -3956,6 +3963,8 @@ pub fn play_anim_events(f: &mut Fighter) {
 /// (`ftAnimParseDObjFigatree`). A looping [`StatusTiming`] wraps both at
 /// its own length, which also resumes a paused script.
 pub fn play_anim(f: &mut Fighter) {
+    // `ftParamsUpdateFighterPartsTransform(TopN)` (RE-509).
+    f.clear_joint_queries();
     let speed = f.status.timing.anim_speed;
     let s = &mut f.status;
     s.clock += speed;
@@ -4034,6 +4043,9 @@ pub fn set_any_status_preserve(
     if !preserve.fastfall {
         f.physics.is_fastfall = false;
     }
+    if !preserve.slope_contour {
+        f.slope_contour = 0;
+    }
     f.is_smash_di = false;
     // `attack1_followup_frames` survives only into Wait and the walks.
     if !matches!(
@@ -4099,6 +4111,9 @@ pub fn set_any_status_preserve(
     // own at `frame_begin`; its first parse (`AOBJ_ANIM_CHANGED`) reaches
     // an `End` or `Loop` there already when `frame_begin` is past it
     // (RebirthDown's). Without one the old figatree plays on (RE-474).
+    if crate::motion::sets_motion(f.kind, status) {
+        f.clear_joint_queries();
+    }
     match crate::motion::clip_on_set_status(f.kind, status) {
         ClipStart::Restart(clip) => {
             f.status.anim_frame = anim_frame_begin;

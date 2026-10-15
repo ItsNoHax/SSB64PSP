@@ -233,6 +233,16 @@ impl JointTransform {
 
 pub const FIGHTER_JOINTS: usize = 40;
 
+/// [`Fighter::joint_parents`]' "no parent".
+pub const NO_JOINT: u8 = u8::MAX;
+
+/// Every joint under TopN until the runtime supplies the skeleton's tree.
+const DEFAULT_JOINT_PARENTS: [u8; FIGHTER_JOINTS] = {
+    let mut parents = [0; FIGHTER_JOINTS];
+    parents[0] = NO_JOINT;
+    parents
+};
+
 /// `FTCOMMON_DAMAGE_SMASH_DI_*` (US).
 pub const SMASH_DI_RANGE_MIN: i32 = 53;
 pub const SMASH_DI_BUFFER_TICS_MAX: u8 = 4;
@@ -391,6 +401,28 @@ pub struct Fighter {
     /// Current posed joints, indexed as `FTStruct::joints` (four runtime
     /// joints precede the packed model nodes).
     pub joint_transforms: [Option<JointTransform>; FIGHTER_JOINTS],
+    /// `FTParts::transform_update_mode == 1` per joint (bit `j` is
+    /// `fp->joints[j]`): the parts a collision query has read since their
+    /// last reset. `gmCollisionGetFighterPartsWorldPosition` and its kin
+    /// mark the joint and every ancestor; `ftMainPlayAnim` clears all,
+    /// `ftParamsUpdateFighterPartsTransformAll` one. The display draws a
+    /// marked part from its collision local (RE-509). A `Cell` because the
+    /// queries read the fighter by shared reference.
+    pub queried_joints: core::cell::Cell<u64>,
+    /// Each joint's parent joint (`DObj::parent`), [`NO_JOINT`] for TopN
+    /// and joints absent from the model. Set by the runtime from the
+    /// skeleton; without one every joint hangs from TopN.
+    pub joint_parents: [u8; FIGHTER_JOINTS],
+    /// `FTStruct::is_use_animlocks`, which the runtime copies from the
+    /// figatree it installed: the collision queries' flagged path.
+    pub is_use_animlocks: bool,
+    /// `FTStruct::slope_contour` (`FTSLOPECONTOUR_FLAG_*`), set by the
+    /// motion scripts and cleared by a status change.
+    pub slope_contour: u8,
+    /// `ftCommonCatchPullProcCatch` calls `proc_slope` in the catch
+    /// search; the match loop, which holds the map, runs it after the
+    /// search ([`Fighter::run_pending_slope_contour`]).
+    pub slope_pending: bool,
     /// The running motion scripts and their flags ([`crate::motion`]).
     pub motion_script: crate::motion::MotionState,
     /// `FTStruct::attack_colls`, made by the motion scripts.
@@ -550,6 +582,11 @@ impl Fighter {
             costume: 0,
             weapon_spawn: None,
             joint_transforms: [None; FIGHTER_JOINTS],
+            queried_joints: core::cell::Cell::new(0),
+            joint_parents: DEFAULT_JOINT_PARENTS,
+            is_use_animlocks: false,
+            slope_contour: 0,
+            slope_pending: false,
             root_motion: RootMotion::default(),
             transn: Vec3::ZERO,
             cliff_air_mask: match kind {
@@ -908,6 +945,58 @@ impl Fighter {
         }
     }
 
+    /// [`Self::joint_world`] through `gmCollisionGetFighterPartsWorldPosition`:
+    /// the query also marks the joint's chain ([`Self::mark_joint_query`]).
+    /// Only the original's query sites use this; drawing and HUD reads use
+    /// [`Self::joint_world`].
+    pub fn joint_query(&self, joint: u8, offset: Vec3) -> Vec3 {
+        self.mark_joint_query(joint);
+        self.joint_world(joint, offset)
+    }
+
+    /// `transform_update_mode = 1` on `joint` and every ancestor up to TopN
+    /// (`gmCollisionGetFighterPartsWorldPosition`, `func_ovl2_800EDBA4`).
+    pub fn mark_joint_query(&self, joint: u8) {
+        let mut mask = self.queried_joints.get();
+        let mut j = joint;
+        // A parent always has a lower index; the bound guards a bad table.
+        for _ in 0..FIGHTER_JOINTS {
+            if usize::from(j) >= FIGHTER_JOINTS {
+                break;
+            }
+            mask |= 1 << j;
+            j = self.joint_parents[usize::from(j)];
+        }
+        self.queried_joints.set(mask);
+    }
+
+    /// `func_ovl0_800C9A38` on a non-root part outside a flagged motion:
+    /// `gmCollisionTransformMatrixAll` on the part itself leaves its mode,
+    /// `func_ovl2_800EDBA4` marks the parent's chain.
+    pub fn mark_joint_query_parent(&self, joint: u8) {
+        match self.joint_parents.get(usize::from(joint)) {
+            Some(&parent) if !self.is_use_animlocks && parent != NO_JOINT => {
+                self.mark_joint_query(parent);
+            }
+            _ => self.mark_joint_query(joint),
+        }
+    }
+
+    /// `ftParamsUpdateFighterPartsTransform(TopN)` in `ftMainPlayAnim`:
+    /// every part back to mode 0.
+    pub fn clear_joint_queries(&self) {
+        self.queried_joints.set(0);
+    }
+
+    /// `ftParamsUpdateFighterPartsTransformAll(joint)`: only `joint`'s own
+    /// mode is reset.
+    pub fn clear_joint_query(&self, joint: u8) {
+        if usize::from(joint) < FIGHTER_JOINTS {
+            self.queried_joints
+                .set(self.queried_joints.get() & !(1 << joint));
+        }
+    }
+
     /// Takes the one weapon creation emitted by this fighter's motion script.
     /// The request is one-shot until a later animation event queues another.
     pub fn take_weapon_spawn(&mut self) -> Option<crate::weapon::WeaponSpawn> {
@@ -1011,7 +1100,96 @@ impl Fighter {
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         self.tick_physics_map_procs(surfaces);
+        // `proc_slope`, then `ftParamsUpdateFighterPartsTransformAll(TopN)`.
+        self.slope_contour_queries(surfaces);
+        self.clear_joint_query(0);
         crate::motion::end_physics(self);
+    }
+
+    /// The collision queries of `mpCommonUpdateFighterSlopeContour`
+    /// (RE-509): per flagged foot, `func_ovl2_800EBC0C` reads the knee
+    /// (`joint->child->child`) and the leg root, and when
+    /// `func_ovl2_800DDF74` finds the floor under that point off TopN's
+    /// height it reads the root again and `func_ovl2_800EBD08` resets the
+    /// thigh's and the knee's modes. The leg rotation `800EBD08` writes is
+    /// not ported.
+    /// The `proc_slope` call a status set queued ([`Fighter::slope_pending`]).
+    pub fn run_pending_slope_contour<I, F>(&mut self, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        if core::mem::take(&mut self.slope_pending) {
+            self.slope_contour_queries(surfaces);
+        }
+    }
+
+    fn slope_contour_queries<I, F>(&self, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        const LFOOT: u8 = 1;
+        const RFOOT: u8 = 2;
+        let Some(floor) = self.floor else {
+            return;
+        };
+        if self.situation != Situation::Ground || self.is_in_hitlag() {
+            return;
+        }
+        let Some(attrs) = crate::motion::combat_attrs(self.kind) else {
+            return;
+        };
+        for (foot, flag) in [(0, RFOOT), (1, LFOOT)] {
+            if self.slope_contour & flag == 0 {
+                continue;
+            }
+            let root = attrs.foot_joint_ids[foot];
+            let Some(thigh) = self.first_child_joint(root) else {
+                continue;
+            };
+            let Some(knee) = self.first_child_joint(thigh) else {
+                continue;
+            };
+            let target = self.joint_query(knee, Vec3::new(attrs.foot_rotates[foot], 0.0, 0.0));
+            // `func_ovl2_800EE018(joint)`.
+            self.mark_joint_query(root);
+            if self.slope_floor_differs(surfaces, floor.line, target) {
+                self.mark_joint_query(root);
+                self.clear_joint_query(thigh);
+                self.clear_joint_query(knee);
+            }
+        }
+    }
+
+    /// `func_ovl2_800DDF74`'s `FALSE` test: the floor under `at` (or the
+    /// line's nearer end past it) within 0.0001 of TopN's height.
+    fn slope_floor_differs<I, F>(&self, surfaces: &F, line: u16, at: Vec3) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        let dy = match crate::map::floor_point(surfaces, line, at.x) {
+            // `(vec->y + sp48) - translate.y`, `sp48` the floor's distance.
+            Some((y, _)) => (at.y + (y - at.y)) - self.pos.y,
+            None => {
+                let edge = crate::map::floor_edge(surfaces, line, false)
+                    .filter(|l| l.x >= at.x)
+                    .or_else(|| crate::map::floor_edge(surfaces, line, true));
+                match edge {
+                    Some(e) => e.y - self.pos.y,
+                    None => return false,
+                }
+            }
+        };
+        dy.abs() >= 0.0001
+    }
+
+    /// `DObj::child`: the first joint hung from `joint`.
+    fn first_child_joint(&self, joint: u8) -> Option<u8> {
+        (usize::from(joint) + 1..FIGHTER_JOINTS)
+            .find(|&j| self.joint_parents[j] == joint)
+            .map(|j| j as u8)
     }
 
     fn tick_physics_map_procs<I, F>(&mut self, surfaces: &F)

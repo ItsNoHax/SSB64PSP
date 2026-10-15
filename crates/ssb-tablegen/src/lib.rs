@@ -1,7 +1,7 @@
 //! Build-time generation of the tables `ssb-game`, `ssb-engine` and `ssb-rom` read from
 //! the original game's data: fighter motion scripts, colour-animation
-//! scripts, CPU input scripts, status flags, the fighter animation table and
-//! the `gSYSinTable` sine table.
+//! scripts, CPU input scripts, status flags, the fighters' joint masks, the
+//! fighter animation table and the `gSYSinTable` sine table.
 //!
 //! The values live in the user's ROM, so they are never committed. The build
 //! scripts of `ssb-game`, `ssb-engine` and `ssb-rom` call [`build_script`], which finds the
@@ -42,6 +42,7 @@ mod figatree;
 mod fighters;
 mod ground;
 mod item_sounds;
+mod model_parts;
 mod motion;
 mod sin_table;
 mod source;
@@ -64,7 +65,8 @@ pub fn fighter_main_files() -> Vec<(&'static str, u32, u32)> {
 /// The crate whose tables a build script generates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Crate {
-    /// `ssb-game`: motion, colour-animation and CPU scripts, status flags.
+    /// `ssb-game`: motion, colour-animation and CPU scripts, status flags,
+    /// joint masks.
     Game,
     /// `ssb-rom`: the fighter animation table.
     Rom,
@@ -106,6 +108,10 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
             Generated {
                 name: "item_sounds.rs",
                 text: item_sounds::generate(rom)?,
+            },
+            Generated {
+                name: "joint_masks.rs",
+                text: model_parts::generate(rom)?,
             },
         ],
         Crate::Rom => vec![Generated {

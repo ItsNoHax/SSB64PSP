@@ -456,7 +456,7 @@ fn make_fireball(f: &mut Fighter) {
         owner_port: f.port,
         team: f.team,
         stale: crate::stale::WeaponStale::of(f),
-        position: f.joint_world(FIREBALL_SPAWN_JOINT, Vec3::ZERO),
+        position: f.joint_query(FIREBALL_SPAWN_JOINT, Vec3::ZERO),
         facing: f.facing.sign(),
     });
 }
@@ -503,7 +503,7 @@ fn update_blaster(f: &mut Fighter, s: K) {
             owner_port: f.port,
             team: f.team,
             stale: crate::stale::WeaponStale::of(f),
-            position: f.joint_world(
+            position: f.joint_query(
                 BLASTER_SPAWN_JOINT,
                 Vec3::new(BLASTER_SPAWN_OFF_X, 0.0, 0.0),
             ),
@@ -611,7 +611,10 @@ fn fire_charge_shot(f: &mut Fighter) {
         owner_port: f.port,
         team: f.team,
         stale: crate::stale::WeaponStale::of(f),
-        position: charge_shot_position(f),
+        position: {
+            f.mark_joint_query(CHARGE_JOINT);
+            charge_shot_position(f)
+        },
         facing: f.facing.sign(),
     });
     f.kirby.copy.samus_charge_shot = false;
@@ -787,7 +790,7 @@ fn make_boomerang(f: &mut Fighter) {
         owner_port: f.port,
         team: f.team,
         stale: crate::stale::WeaponStale::of(f),
-        position: f.joint_world(BOOMERANG_SPAWN_JOINT, Vec3::ZERO),
+        position: f.joint_query(BOOMERANG_SPAWN_JOINT, Vec3::ZERO),
         facing: f.facing.sign(),
     });
     f.link.boomerang_out = true;
@@ -919,7 +922,7 @@ fn make_thunder_jolt(f: &mut Fighter) {
         owner_port: f.port,
         team: f.team,
         stale: crate::stale::WeaponStale::of(f),
-        position: f.joint_world(THUNDERJOLT_SPAWN_JOINT, Vec3::ZERO)
+        position: f.joint_query(THUNDERJOLT_SPAWN_JOINT, Vec3::ZERO)
             + Vec3::new(
                 THUNDERJOLT_SPAWN_OFF_X * f.facing.sign(),
                 THUNDERJOLT_SPAWN_OFF_Y,

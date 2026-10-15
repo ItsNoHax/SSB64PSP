@@ -309,7 +309,7 @@ impl FighterState {
             serial: f.serial,
             row: f.row,
             object,
-            skeleton: Box::new(Skeleton::new()),
+            skeleton: Box::new(crate::scene::fighter_skeleton(f.kind, 1.0)),
             slot: None,
             demo: ssb_game::modelpart::DemoParts::start(f.kind, usize::from(f.row)),
             played: 0,
@@ -339,7 +339,10 @@ impl FighterState {
         self.row = row;
         self.demo = ssb_game::modelpart::DemoParts::start(self.kind, usize::from(row));
         self.slot = demo_row_slot(row).map(|s| s as u32);
-        *self.skeleton = Skeleton::new();
+        // The demo motions are all unflagged: the `animlock` parts stay
+        // frozen, and the root scale, read only by a flagged motion, is
+        // moot (RE-509).
+        *self.skeleton = crate::scene::fighter_skeleton(self.kind, 1.0);
         if let Some(anim) = self
             .slot
             .and_then(|slot| p.fighter_anim(self.kind as u32, slot))

@@ -1257,6 +1257,8 @@ fn search(
             continue;
         };
         posed = true;
+        // `func_ovl2_800EDE00` + `func_ovl2_800EDE5C` (RE-509).
+        f.mark_joint_query(desc.joint);
         if box_contains(&t, &desc, pos, radius) {
             return Some(Some(usize::from(desc.placement)));
         }
@@ -1407,6 +1409,9 @@ pub fn search_attack(
         if hitstatus == HitStatus::Intangible {
             continue;
         }
+        // `gmCollisionCheck*AttackDamageCollide`: `func_ovl2_800EDE00` +
+        // `func_ovl2_800EDE5C` (RE-509).
+        f.mark_joint_query(desc.joint);
         let (offset, size) = slot
             .and_then(|i| f.damage_colls.overrides[i])
             .unwrap_or((desc.offset, desc.size));

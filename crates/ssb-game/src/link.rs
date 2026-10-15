@@ -334,7 +334,7 @@ fn make_boomerang(f: &mut Fighter) {
         owner_port: f.port,
         team: f.team,
         stale: crate::stale::WeaponStale::of(f),
-        position: f.joint_world(0, Vec3::ZERO),
+        position: f.joint_query(0, Vec3::ZERO),
         facing: f.facing.sign(),
     });
     f.link.boomerang_out = true;
@@ -1084,7 +1084,7 @@ mod tests {
         for _ in 0..9 {
             status::update(&mut f);
         }
-        target.pos = f.joint_world(11, Vec3::new(0.0, 0.0, 100.0));
+        target.pos = f.joint_query(11, Vec3::new(0.0, 0.0, 100.0));
         // `proc_hit` runs in the attacker's `ftMainProcParams`.
         assert!(crate::attack::apply_hit_from(&mut f, &mut target));
         assert_eq!(f.physics.vel_air.y, DAIR_REHIT_BOUNCE_VEL_Y);

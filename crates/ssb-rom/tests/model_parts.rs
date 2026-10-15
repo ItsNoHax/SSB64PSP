@@ -35,6 +35,7 @@ fn playable() -> impl Iterator<Item = (FighterFile, ssb_game::fighter::FighterKi
 /// `ssb_game::modelpart`'s joint table is each fighter's `setup_parts` and
 /// its high-detail descriptors' lists.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_joint_masks_are_the_roms() {
     let Some(rom) = rom() else {
         return;
@@ -62,6 +63,45 @@ fn the_joint_masks_are_the_roms() {
             "{}",
             entry.name
         );
+    }
+}
+
+/// `ssb_game::modelpart::animlock_mask` is each fighter's
+/// `FTAttributes::animlock`, every locked descriptor is one
+/// `setup_parts` makes a joint of, and only Samus's four grabs and
+/// Yoshi's 71 motions (and their Polygons') animate them (RE-509).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_animlock_masks_are_the_roms() {
+    let Some(rom) = rom() else {
+        return;
+    };
+    let info = ssb_rom::rom::identify(&rom).unwrap();
+    let archive = Archive::open(&rom, info.region).unwrap();
+    for entry in fighter::FIGHTER_FILES.iter() {
+        let kind = ssb_game::fighter::FighterKind::from_ordinal(entry.kind).unwrap();
+        let main = archive.load(entry.file).unwrap();
+        let mask = fighter::animlock(&main, *entry).unwrap();
+        let setup = fighter::setup_parts(&main, *entry).unwrap();
+        assert_eq!(
+            ssb_game::modelpart::animlock_mask(kind),
+            mask,
+            "{}",
+            entry.name
+        );
+        assert_eq!(mask & !setup, 0, "{}", entry.name);
+        let flagged = ssb_game::motion::fighter_scripts(kind).map_or(0, |t| {
+            t.motions
+                .iter()
+                .filter(|m| m.anim_flags & ssb_game::motion::ANIM_FLAG_ANIMLOCKS != 0)
+                .count()
+        });
+        let expected = match kind {
+            ssb_game::fighter::FighterKind::Samus | ssb_game::fighter::FighterKind::PolySamus => 4,
+            ssb_game::fighter::FighterKind::Yoshi | ssb_game::fighter::FighterKind::PolyYoshi => 71,
+            _ => 0,
+        };
+        assert_eq!(flagged, expected, "{}", entry.name);
     }
 }
 

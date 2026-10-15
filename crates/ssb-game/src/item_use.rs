@@ -187,7 +187,7 @@ fn shoot(
     cost: u16,
 ) {
     let joint = crate::item_throw::itemlight_joint(f.kind) as u8;
-    let pos = f.joint_world(joint, offset * (1.0 / f.attributes.size));
+    let pos = f.joint_query(joint, offset * (1.0 / f.attributes.size));
     f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
         kind: crate::weapon::WeaponKind::Equipment {
             kind,
@@ -294,6 +294,10 @@ pub fn accessory(f: &mut Fighter) {
             crate::status::MarioStatus::SpecialN | crate::status::MarioStatus::SpecialAirN
         )
     ) {
+        if f.weapon_spawn.is_some() && f.joint_transforms[16].is_some() {
+            // `gmCollisionGetFighterPartsWorldPosition` (RE-509).
+            f.mark_joint_query(16);
+        }
         if let (Some(spawn), Some(joint)) = (f.weapon_spawn.as_mut(), f.joint_transforms[16]) {
             if matches!(
                 spawn.kind,
@@ -464,6 +468,7 @@ fn hammer_set(f: &mut Fighter, s: Status) {
             Preserve {
                 hit: true,
                 colanim: true,
+                slope_contour: true,
                 ..Preserve::NONE
             }
         } else {

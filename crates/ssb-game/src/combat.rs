@@ -782,7 +782,11 @@ pub fn update_attack_positions(f: &mut Fighter) {
         if coll.is_scale_pos {
             offset *= size_mul;
         }
-        let world = f.joint_world(coll.joint, offset);
+        if coll.state == AttackState::Off {
+            continue;
+        }
+        // `gmCollisionGetFighterPartsWorldPosition`.
+        let world = f.joint_query(coll.joint, offset);
         let coll = &mut f.attack_colls[i];
         match coll.state {
             AttackState::Off => {}

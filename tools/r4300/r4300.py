@@ -45,6 +45,8 @@ def romword(a):
         load_rom()
     if OVL0_VRAM <= a < OVL0_END:
         o = a - OVL0_VRAM + OVL0_ROM  # ovl0 (lb*): text, data and rodata
+    elif OVL2_VRAM <= a < OVL2_END:
+        o = a - OVL2_VRAM + OVL2_ROM  # ovl2 (ft*, gm*): text, data and rodata
     else:
         o = a - 0x7FFFF400  # the boot segment: ROM 0x1000 at RAM 0x80000400
     return struct.unpack('>I', rom[o:o + 4])[0]
@@ -55,6 +57,9 @@ def romword(a):
 OVL0_ROM = 0x043220
 OVL0_VRAM = 0x800C7840
 OVL0_END = OVL0_VRAM + (0x051C90 - OVL0_ROM)
+OVL2_ROM = 0x051C90
+OVL2_VRAM = 0x800D6490
+OVL2_END = OVL2_VRAM + (0x0AC540 - OVL2_ROM)
 
 def f2b(f):
     return struct.unpack('<I', struct.pack('<f', f))[0]
@@ -112,7 +117,7 @@ class CPU:
     def lw(self, a):
         if a in self.mem:
             return self.mem[a]
-        if 0x80000400 <= a < 0x80100000 or OVL0_VRAM <= a < OVL0_END:
+        if 0x80000400 <= a < 0x80100000 or OVL0_VRAM <= a < OVL0_END or OVL2_VRAM <= a < OVL2_END:
             return romword(a)
         raise Trap(f'read {a:#x}')
 

@@ -351,7 +351,13 @@ pub fn update(f: &mut Fighter) -> bool {
     }
     if current == Status::LiftWait {
         if !check_heavy_throw(f) && f.stick.forward(f.facing) <= status::TURN_STICK_MIN {
-            status::set_status(f, Status::LiftTurn, 0.0, StatusTiming::unknown());
+            status::set_any_status_preserve(
+                f,
+                Status::LiftTurn.into(),
+                0.0,
+                StatusTiming::unknown(),
+                status::Preserve::SLOPE_CONTOUR,
+            );
             f.item_throw.model_yaw = Some(facing_yaw(f));
             f.item_throw.lift_turn_tics = 8;
             lift_turn(f);
@@ -413,7 +419,13 @@ pub fn update(f: &mut Fighter) -> bool {
     true
 }
 fn set_lift_wait(f: &mut Fighter) {
-    status::set_status(f, Status::LiftWait, 0.0, StatusTiming::unknown());
+    status::set_any_status_preserve(
+        f,
+        Status::LiftWait.into(),
+        0.0,
+        StatusTiming::unknown(),
+        status::Preserve::SLOPE_CONTOUR,
+    );
 }
 fn lift_turn(f: &mut Fighter) {
     f.item_throw.lift_turn_tics -= 1;

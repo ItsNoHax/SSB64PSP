@@ -146,7 +146,9 @@ fn make_model(p: &Pack<'_>, fighter: layer::Fighter) -> Box<Model> {
         skips_scales: fighter
             .status
             .is_some_and(|s| s.skips_translate_scales(fighter.kind)),
-        skeleton: Skeleton::new(),
+        // The select motions are unflagged: the `animlock` parts stay
+        // frozen (RE-509).
+        skeleton: ssb_psp_runtime::scene::fighter_skeleton(fighter.kind, 1.0),
         demo: ssb_game::modelpart::DemoParts::start(
             fighter.kind,
             fighter.status.map_or(0, |s| 1 + s.index()),

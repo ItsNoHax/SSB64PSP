@@ -28,68 +28,32 @@ pub const HIDDEN: i8 = -1;
 /// the joints).
 pub const ABSENT: i8 = i8::MIN;
 
-/// Per fighter, bit `n` for descriptor `n` (joint `n + 4`): which
-/// descriptors `lbCommonSetupFighterPartsDObjs` makes a joint of
-/// (`setup_parts`), and which of those have a high-detail display list
-/// (`commonparts[0].dobjdesc[n].dl`). Read from each fighter's `*Main` and
-/// `*Model` files; `crates/ssb-rom/tests/model_parts.rs` checks them
-/// against the ROM.
-const JOINT_MASKS: [(u64, u64); 27] = [
-    // Mario: 25 descriptors
-    (0xffffff, 0xb59d74),
-    // Fox: 27 descriptors
-    (0x3ffffff, 0x3b59df6),
-    // Donkey: 26 descriptors
-    (0x1ffffff, 0x16b5d76),
-    // Samus: 33 descriptors
-    (0xffc01fff, 0xb5801a76),
-    // Luigi: 25 descriptors
-    (0xffffff, 0xb59d74),
-    // Link: 32 descriptors
-    (0x7fff9fff, 0x5adc8ef6),
-    // Yoshi: 28 descriptors
-    (0x7ffffdf, 0x5adbb9e),
-    // Captain: 26 descriptors
-    (0x1ffffff, 0x16b5df6),
-    // Kirby: 27 descriptors
-    (0x3ff3ef7, 0x21018c4),
-    // Pikachu: 27 descriptors
-    (0x3ffffff, 0x36b66e6),
-    // Purin: 26 descriptors
-    (0x1ff9ff7, 0x1080cc4),
-    // Ness: 27 descriptors
-    (0x3ffffff, 0x34d1d74),
-    // Master Hand: not read (his parts never change).
-    (0x1ffffff, 0x1fffffc),
-    // Metal Mario (`300_MMarioModel`): Mario's masks.
-    (0xffffff, 0xb59d74),
-    // Polygon Mario (and Polygon Luigi, who wears his model).
-    (0xffffff, 0xb59d74),
-    // Polygon Fox
-    (0x3ffffff, 0x3b59df6),
-    // Polygon Donkey Kong: no list on descriptor 14.
-    (0x1ffffff, 0x16b1d76),
-    // Polygon Samus
-    (0xffc01fff, 0xb5801a76),
-    // Polygon Luigi (`301_NMarioModel`)
-    (0xffffff, 0xb59d74),
-    // Polygon Link: no list on descriptor 16.
-    (0x7fff9fff, 0x5acc8ef6),
-    // Polygon Yoshi
-    (0x7ffffdf, 0x5adbb9e),
-    // Polygon Captain Falcon: no list on descriptor 14.
-    (0x1ffffff, 0x16b1d76),
-    // Polygon Kirby
-    (0x3ff3ef7, 0x21018c4),
-    // Polygon Pikachu: no lists on descriptors 9 and 10.
-    (0x3ffffff, 0x36b60e6),
-    // Polygon Jigglypuff
-    (0x1ff9ff7, 0x1080cc4),
-    // Polygon Ness
-    (0x3ffffff, 0x34d1d74),
-    // Giant Donkey Kong (Donkey Kong's model)
-    (0x1ffffff, 0x16b5d76),
-];
+/// Per fighter, generated from the ROM by `crates/ssb-tablegen`
+/// (`model_parts.rs`), bit `n` for descriptor `n` (joint `n + 4`):
+///
+/// - `JOINT_MASKS`: which descriptors `lbCommonSetupFighterPartsDObjs`
+///   makes a joint of (`setup_parts`), and which of those have a
+///   high-detail display list (`commonparts[0].dobjdesc[n].dl`), from each
+///   fighter's `*Main` and `*Model` files.
+/// - `ANIMLOCK_MASKS`: `FTAttributes::animlock`, the parts a motion without
+///   `FTANIM_FLAG_ANIMLOCKS` leaves at their rest transform
+///   (`ftParamSetAnimLocks`, RE-509).
+///
+/// `crates/ssb-rom/tests/model_parts.rs` checks both against `ssb-rom`'s
+/// own decoders.
+#[allow(clippy::all)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/joint_masks.rs"));
+}
+
+/// `FTAttributes::animlock` (`generated::ANIMLOCK_MASKS`): bit `n` for
+/// descriptor `n`.
+pub fn animlock_mask(kind: FighterKind) -> u64 {
+    generated::ANIMLOCK_MASKS
+        .get(kind as usize)
+        .copied()
+        .unwrap_or(0)
+}
 
 /// `FTAttributes::hiddenparts` from joint 4 on, per fighter: the part's
 /// index (its `anim_desc` bit is `0x80000000 >> index`), its root joint and
@@ -164,9 +128,9 @@ pub fn hidden_part_joints(kind: FighterKind) -> &'static [(u8, u8, bool)] {
 const ANIM_DESC_FLAGS: u32 = 0x1F;
 
 /// `(setup_parts, has a display list)` for a playable fighter, as
-/// [`JOINT_MASKS`] holds them.
+/// `generated::JOINT_MASKS` holds them.
 pub fn joint_masks(kind: FighterKind) -> Option<(u64, u64)> {
-    JOINT_MASKS
+    generated::JOINT_MASKS
         .get(kind as usize)
         .copied()
         .filter(|_| kind != FighterKind::Boss)
@@ -616,6 +580,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn joints_start_shown_with_a_list_and_hidden_without() {
         let p = ModelParts::new(FighterKind::Mario);
         // Mario's descriptor 0 (TransN's child) has no list; 2 has one.
@@ -629,6 +594,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_set_part_lasts_until_the_reset_and_a_missing_joint_ignores_it() {
         let mut p = ModelParts::new(FighterKind::Donkey);
         p.set(12, 2);
@@ -645,6 +611,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn link_moves_his_shield_to_his_back_on_the_first_reset() {
         let mut p = ModelParts::new(FighterKind::Link);
         // Joint 19 has the shield's list; joint 21 has none.
@@ -657,6 +624,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn hide_all_hides_every_made_joint() {
         let mut p = ModelParts::new(FighterKind::Kirby);
         p.hide_all();
@@ -679,6 +647,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_preserving_switch_keeps_the_part() {
         use crate::status::{AnyStatus, StatusTiming};
         // Yoshi's ground and air Egg Lay switch with
@@ -784,6 +753,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn texture_status_and_material_differ_after_a_model_part_remake() {
         let mut p = ModelParts::new(FighterKind::Kirby);
         p.set_texture(0, 5);
@@ -800,6 +770,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn detail_switch_reapplies_the_face_and_status_restores_the_base() {
         use crate::status::{AnyStatus, Status, StatusTiming};
         assert_eq!(Detail::for_fighters(2), Detail::High);

@@ -209,7 +209,10 @@ fn fire_charge_shot(f: &mut Fighter) {
         owner_port: f.port,
         team: f.team,
         stale: crate::stale::WeaponStale::of(f),
-        position: charge_shot_position(f),
+        position: {
+            f.mark_joint_query(CHARGE_JOINT);
+            charge_shot_position(f)
+        },
         facing: f.facing.sign(),
     });
     f.samus.charge_shot = false;
@@ -304,7 +307,7 @@ fn make_bomb(f: &mut Fighter) {
         owner_port: f.port,
         team: f.team,
         stale: crate::stale::WeaponStale::of(f),
-        position: f.joint_world(0, Vec3::new(0.0, BOMB_OFF_Y, 0.0)),
+        position: f.joint_query(0, Vec3::new(0.0, BOMB_OFF_Y, 0.0)),
         facing: f.facing.sign(),
     });
 }

@@ -572,7 +572,9 @@ fn make_model(
         slot: slot as u32,
         object: ssb_psp_runtime::scene::fighter_object(p, kind as u32)
             .expect("campaign fighter object"),
-        skeleton: Skeleton::new(),
+        // The intro and figure motions are unflagged: the `animlock` parts
+        // stay frozen (RE-509).
+        skeleton: ssb_psp_runtime::scene::fighter_skeleton(kind, 1.0),
         demo: ssb_game::modelpart::DemoParts::start(kind, row),
         entrance,
         camera,

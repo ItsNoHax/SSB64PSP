@@ -1029,6 +1029,23 @@ pub fn fighter_shadow(
     )
 }
 
+/// A fighter's skeleton as `ftManagerMakeFighter` leaves it: TopN scaled
+/// by `attr->size` and the `animlock` parts frozen (`ftParamSetAnimLocks`)
+/// until a flagged motion's figatree clears them (RE-509).
+pub fn fighter_skeleton(kind: FighterKind, size: f32) -> ssb_rom::skeleton::Skeleton {
+    let mut skeleton = ssb_rom::skeleton::Skeleton::new();
+    skeleton.locks = ssb_rom::skeleton::AnimLocks {
+        mask: ssb_game::modelpart::animlock_mask(kind),
+        flagged: false,
+        root_scale: [size; 3],
+        // Copied from the fighter's queried joints before each display
+        // (RE-509).
+        queried: 0,
+        queried_lead: false,
+    };
+    skeleton
+}
+
 /// Advances a fighter's skeleton pose for `status`. Shared by every fighter
 /// scene that owns a skeleton: restarted on a status *entry* rather than
 /// every tick, since an animation carries its own clock and re-seeding it
@@ -1079,10 +1096,13 @@ pub fn tick_skeleton_animation(
                     if setter_played { frame_begin - speed } else { frame_begin },
                     speed,
                 );
-                skeleton.lead_xrotn = u8::try_from(kind)
-                    .ok()
-                    .and_then(FighterKind::from_ordinal)
+                let fighter_kind = u8::try_from(kind).ok().and_then(FighterKind::from_ordinal);
+                skeleton.lead_xrotn = fighter_kind
                     .is_some_and(|k| ssb_game::motion::leads_with_xrotn(k, status));
+                // `fp->is_use_animlocks`: only a figatree's install moves it
+                // (RE-509).
+                skeleton.locks.flagged = fighter_kind
+                    .is_some_and(|k| ssb_game::motion::uses_animlocks(k, status));
             }
         }
     }
@@ -1223,7 +1243,12 @@ impl FighterScene {
         object: &ObjectDesc,
         out: &mut [ssb_rom::scene::Mat4],
     ) -> usize {
-        self.skeleton.compose(pack, object, out)
+        // The parts this frame's gameplay queried draw from their collision
+        // locals (`transform_update_mode == 1`, RE-509). Joint `n + 4` is
+        // node `n`; joint 2 is the lead `XRotN` when the clip interposes it.
+        let queried = self.fighter.queried_joints.get();
+        let lead = self.skeleton.lead_xrotn_pose().is_some() && queried & 1 << 2 != 0;
+        self.skeleton.compose_queried(pack, object, out, queried >> 4, lead)
     }
 
     /// [`Self::compose_model`] for gameplay positions: the joints' matrices
@@ -1332,13 +1357,14 @@ impl FighterScene {
                 fog_color: stage.fog_color,
             });
         }
+        let skeleton = fighter_skeleton(kind, fighter.attributes.size);
         FighterScene {
             fighter,
             placed,
             airborne_ticks: 0,
             jump_was_held: false,
             from_pack,
-            skeleton: ssb_rom::skeleton::Skeleton::new(),
+            skeleton,
             // Which object a character's animations drive is stored per joint,
             // so any one of them names it; a scan over the objects finds which
             // one owns that node. Done once, here, rather than per tick.
@@ -1551,6 +1577,8 @@ impl FighterScene {
         // A catch status samples it too: the catch is made in the hit phase
         // and `ftCommonCapturePulledProcCapture` places the caught fighter
         // from this frame's hand at once (RE-472).
+        // The held fighter's capture processes query the hand (RE-509).
+        ssb_game::grab::mark_held_queries(&self.fighter);
         let holds = self.fighter.grab.catch.is_some() || self.fighter.grab.is_catchstatus;
         self.fighter.grab.anchor = if holds {
             ssb_game::grab::itemheavy_joint(self.fighter.kind)
@@ -1770,6 +1798,9 @@ impl FighterScene {
         stage: &StageDesc,
         groups: &[ssb_game::map::MapGroup],
     ) {
+        // `ftCommonCatchPullProcCatch`'s `proc_slope` (RE-509).
+        self.fighter
+            .run_pending_slope_contour(&|| MapSegments::with_groups(pack, stage, groups));
         let status = &self.fighter.status;
         if status.status != ssb_game::status::Status::CapturePulled
             || self.started == Some((status.status, status.entry))
@@ -1826,9 +1857,25 @@ impl FighterScene {
             origin: self.fighter.pos,
         };
         self.fighter.joint_transforms[0] = Some(root);
+        // `fp->is_use_animlocks` picks which parts a query marks (RE-509).
+        self.fighter.is_use_animlocks = self.skeleton.locks.flagged;
         let Some(object) = pack.object(self.object) else {
             return;
         };
+        // The part tree a query walks to TopN: node `n` is joint `n + 4`,
+        // a root node hangs from the lead `XRotN` when the clip has one.
+        let root_parent = if self.skeleton.lead_xrotn_pose().is_some() { 2 } else { 0 };
+        for i in 0..(object.node_count as usize).min(FIGHTER_JOINTS - 4) {
+            let parent = pack
+                .node_parent(object.first_node + i as u32)
+                .filter(|&p| {
+                    p != ssb_rom::pack::NodeDesc::NO_PARENT
+                        && p >= object.first_node
+                        && p - object.first_node < i as u32
+                })
+                .map_or(root_parent, |p| (p - object.first_node) as u8 + 4);
+            self.fighter.joint_parents[i + 4] = parent;
+        }
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
         let count = self
             .compose_collision(pack, &object, &mut posed)

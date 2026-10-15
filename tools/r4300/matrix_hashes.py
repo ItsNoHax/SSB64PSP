@@ -6,7 +6,11 @@ the hashes and sample vectors pinned in crates/ssb-rom/src/scene.rs
 syMatrixPerspF (scale 1) over the cameras and a field-of-view sweep: the
 hash of every f32 of mf, pinned in crates/ssb-engine/src/math.rs
 (`the_projections_match_the_rom`); persp_norm is printed, not pinned (the
-port has no use for it).
+port has no use for it). Then the animation-lock builders (RE-509):
+lbCommonMatrixTraRotScaInv over parent scales INVS,
+gmCollisionTransformMatrixAll, gmCollisionSetMatrixNcs (its matrix and the
+vec_scale it stores) and syMatrixF2LFixedW, pinned beside the display
+matrices in crates/ssb-rom/src/scene.rs.
 
 Inputs: angles as f32 bit patterns from a deterministic sweep (negative,
 multi-turn, exact quarter turns), scales around 1 including the non-1/256
@@ -24,7 +28,16 @@ from r4300 import CPU, Trap, romword, f2b, sx16, MAGIC
 
 FN = {'TraRotRpyR': 0x8001C21C, 'TraRotRpyRSca': 0x8001C588,
       'RotRpyR': 0x8001BF20, 'PerspFastF': 0x8001B248, 'PerspF': 0x8001B4CC,
-      'lbCommonMatrixRotSca': 0x800C82AC}
+      'lbCommonMatrixRotSca': 0x800C82AC, 'lbCommonMatrixTraRotScaInv': 0x800C7DB4,
+      'syMatrixF2LFixedW': 0x80019EA0, 'gmCollisionTransformMatrixAll': 0x800ECDE4,
+      'gmCollisionSetMatrixNcs': 0x800ECFF4}
+# Parent scales for the animation-lock builders (RE-509): fighter sizes,
+# scale-track values and 1.
+INVS = [1.0, 1.1, 0.5, 1.24, 2.0, 0.91, 1.05, 5.0, 0.039794922]
+DOBJ = 0x80410000   # translate.vec at +0x1C, rotate.vec +0x30, scale.vec +0x40
+PARTS = 0x80411000  # vec_scale at +0x90
+SMUL = 0x80412000
+FMTX = 0x80413000
 OUT2 = 0x80400100
 OUT = 0x80400000
 FNV_OFFSET = 0xcbf29ce484222325
@@ -255,6 +268,7 @@ def main():
         print(f'{name}: {len(ins)} inputs, hash {h:#018x}')
         for n, words in samples:
             print(f'  input {n}: {ins[n]} -> {words}')
+    animlock_hashes(cpu, ins)
     pins = persp_inputs()
     for name in ('PerspFastF', 'PerspF'):
         h = FNV_OFFSET
@@ -270,6 +284,77 @@ def main():
                 print(f'  {name} input {n}: {(float(fovy), float(aspect), float(near), float(far))} -> '
                       f'{[hex(cpu.mem[OUT + 4 * i]) for i in (0, 5, 10, 11, 14, 15)]} norm {cpu.mem[OUT2] >> 16}')
         print(f'{name}: {len(pins)} inputs, mf hash {h:#018x}, persp_norm hash {norms:#018x}')
+
+
+def inv_for(n):
+    f = np.float32
+    return tuple(f(INVS[(n + k) % len(INVS)]) for k in range(3))
+
+
+def animlock_hashes(cpu, ins):
+    """RE-509: lbCommonMatrixTraRotScaInv over (angles, scale_inv = inv_for(n),
+    scale); gmCollisionTransformMatrixAll and gmCollisionSetMatrixNcs
+    (scale_mul = inv_for(n), NULL every fifth input) over every f32 of the
+    3x3 and vec_scale; syMatrixF2LFixedW of each TransformMatrixAll matrix."""
+    f = np.float32
+    h = FNV_OFFSET
+    for n, (r, p, y, sx, sy, sz) in enumerate(ins):
+        inv = inv_for(n)
+        args = [OUT] + [f2b(v) for v in (f(1.0), f(2.0), f(3.0), r, p, y, *inv, sx, sy, sz)]
+        cpu.call_int(FN['lbCommonMatrixTraRotScaInv'], args)
+        words = mtx_words(cpu)
+        for v in words:
+            h = fnv(h, v)
+        if n in (1, 5, 40, 123):
+            print(f'  ScaInv input {n}: inv {inv} -> {words}')
+    print(f'lbCommonMatrixTraRotScaInv: {len(ins)} inputs, hash {h:#018x}')
+    hall = hf2l = hncs = FNV_OFFSET
+
+    def dobj_init(r, p, y, sx, sy, sz):
+        init = {}
+        for i, v in enumerate((f(1.0), f(2.0), f(3.0))):
+            init[DOBJ + 0x1C + 4 * i] = f2b(v)
+        for i, v in enumerate((r, p, y)):
+            init[DOBJ + 0x30 + 4 * i] = f2b(v)
+        for i, v in enumerate((sx, sy, sz)):
+            init[DOBJ + 0x40 + 4 * i] = f2b(v)
+        return init
+
+    for n, (r, p, y, sx, sy, sz) in enumerate(ins):
+        init = dobj_init(r, p, y, sx, sy, sz)
+        cpu.call_int(FN['gmCollisionTransformMatrixAll'], [DOBJ, PARTS, FMTX], init)
+        mtx = [cpu.mem.get(FMTX + 4 * i, 0) for i in range(16)]
+        for row in range(3):
+            for col in range(3):
+                hall = fnv(hall, s32w(mtx[row * 4 + col]))
+        init2 = {FMTX + 4 * i: mtx[i] for i in range(16)}
+        init2[FMTX + 0x3C] = f2b(f(1.0))
+        cpu.call_int(FN['syMatrixF2LFixedW'], [FMTX, OUT], init2)
+        for v in mtx_words(cpu):
+            hf2l = fnv(hf2l, v)
+        if n in (1, 5, 40, 123):
+            print(f'  TransformMatrixAll input {n}: {[hex(mtx[i]) for i in (0, 1, 2, 4, 5, 6, 8, 9, 10)]}')
+        inv = inv_for(n)
+        init = dobj_init(r, p, y, sx, sy, sz)
+        smul = 0
+        if n % 5 != 0:
+            smul = SMUL
+            for i, v in enumerate(inv):
+                init[SMUL + 4 * i] = f2b(v)
+        cpu.call_int(FN['gmCollisionSetMatrixNcs'], [DOBJ, PARTS, FMTX, smul], init)
+        mtx = [cpu.mem.get(FMTX + 4 * i, 0) for i in range(16)]
+        for row in range(3):
+            for col in range(3):
+                hncs = fnv(hncs, s32w(mtx[row * 4 + col]))
+        for i in range(3):
+            hncs = fnv(hncs, s32w(cpu.mem.get(PARTS + 0x90 + 4 * i, 0)))
+    print(f'gmCollisionTransformMatrixAll: {len(ins)} inputs, f32 hash {hall:#018x}')
+    print(f'syMatrixF2LFixedW of those: hash {hf2l:#018x}')
+    print(f'gmCollisionSetMatrixNcs: {len(ins)} inputs, f32 hash {hncs:#018x}')
+
+
+def s32w(w):
+    return w - (1 << 32) if w & 0x80000000 else w
 
 
 if __name__ == '__main__':

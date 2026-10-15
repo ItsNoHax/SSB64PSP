@@ -537,7 +537,9 @@ impl JointAnim {
                     aobj.value_target = target_value(cmd.value(data, word), track, false);
                     aobj.kind = Kind::Linear;
                     if payload != 0.0 {
-                        aobj.rate_base = (aobj.value_target - aobj.value_base) * payload_inverse;
+                        // Divided, not multiplied by the inverse: the two
+                        // differ by an ulp (`ftanim.c`, RE-509).
+                        aobj.rate_base = (aobj.value_target - aobj.value_base) / payload;
                     }
                     aobj.length = length;
                     aobj.rate_target = 0.0;

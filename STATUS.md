@@ -17,12 +17,12 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-508: remaining display-matrix consumers use the original's kinds; Whispy's
-leaves and dust are bit-exact against an N64 trace (they consume the global
-RNG, so Dream Land goldens past the first wind move with RNG changes). Next,
-per [`PLAN.md`](PLAN.md#remaining-work): the `is_use_animlocks` batch
-(`TraRotScaInv`; Samus 4 and Yoshi 71 motions), then the fighter wind-reaction
-effects.
+RE-509: fighter animation locks. Mask joints are frozen at their rest local
+unless the motion sets `is_use_animlocks`; flagged motions use the
+`TraRotScaInv` and `Ncs` chains; bit-exact against N64 traces for Yoshi,
+Samus and Mario (legs excluded). Every fighter golden moved. Next, per
+[`PLAN.md`](PLAN.md#remaining-work): the slope-contour leg rewrite, then the
+pre-display joint query log and the fighter wind-reaction effects.
 
 ## Blockers
 
@@ -34,13 +34,13 @@ effects.
 
 ## Verification
 
-Baseline after RE-508:
+Baseline after RE-509:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
-  `SSB64_STUB_TABLES=1` with no ROM: pass (four display-matrix structural
-  tests are ignored there: the stub sine table is zeros). Clippy (`cargo
-  +1.98.0`, workspace, `-D warnings`) passes; changed files add no rustfmt
-  diffs. Parallel `ssb-game` runs fail global-state tests (PLAN.md).
+  `SSB64_STUB_TABLES=1` with no ROM: pass (tests that need ROM tables, including
+  the joint masks, are ignored there). Clippy (`cargo
+  +1.98.0`, workspace, `-D warnings`) passes; `psp-runtime/src/scene.rs` and four psp-game screens already
+  carry rustfmt diffs. Parallel `ssb-game` runs fail global-state tests (PLAN.md).
 - Both PSP release builds compile.
 - Goldens: `tools/golden.sh verify`: 203 of 203 match (pack `ssb64.pak`
   unchanged since RE-506, sha256 `2b855755...`).

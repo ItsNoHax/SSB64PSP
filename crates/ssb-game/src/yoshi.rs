@@ -309,7 +309,7 @@ fn update_egg(f: &mut Fighter) {
                 owner_port: f.port,
                 team: f.team,
                 stale: crate::stale::WeaponStale::of(f),
-                position: f.joint_world(EGGTHROW_JOINT, Vec3::ZERO),
+                position: f.joint_query(EGGTHROW_JOINT, Vec3::ZERO),
                 facing: f.facing.sign(),
             });
         }
@@ -383,7 +383,7 @@ fn make_stars(f: &mut Fighter) {
         owner_port: f.port,
         team: f.team,
         stale: crate::stale::WeaponStale::of(f),
-        position: f.joint_world(0, Vec3::ZERO),
+        position: f.joint_query(0, Vec3::ZERO),
         facing: f.facing.sign(),
     });
 }

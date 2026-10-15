@@ -81,6 +81,73 @@ pub struct Skeleton {
     /// pose parents every root node. A `TransN` leading joint (bit 30) is
     /// detached instead and only moves the fighter (RE-468).
     pub lead_xrotn: bool,
+    /// A fighter's animation locks (RE-509). Left at their default, no
+    /// node is locked and nothing changes.
+    pub locks: AnimLocks,
+}
+
+/// A fighter's animation locks: `FTAttributes::animlock` and
+/// `fp->is_use_animlocks` (RE-509).
+///
+/// The name reads backwards. A motion *without* `FTANIM_FLAG_ANIMLOCKS`
+/// (every motion but Samus's four grabs and Yoshi's 71) freezes the mask's
+/// parts: `ftParamSetAnimLocks` stores each one's
+/// `gmCollisionTransformMatrixAll` matrix right after `ftMainSetStatus` has
+/// reset every part to its `DObjDesc` transform, and sets
+/// `transform_update_mode = 3`. Until a flagged motion clears them
+/// (`ftParamClearAnimLocks`) the display draws those parts with
+/// `syMatrixF2LFixedW` of that rest matrix and the collision walk uses it,
+/// whatever the figatree does to them. A flagged motion animates every part
+/// and builds each with the "no child scale" matrices instead:
+/// `lbCommonMatrixTraRotScaInv` on screen and `gmCollisionSetMatrixNcs`
+/// for collisions, both carrying the scale accumulated from TopN down
+/// (`gLBCommonScale`, `FTParts::vec_scale`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AnimLocks {
+    /// `FTAttributes::animlock`: bit `n` locks descriptor `n`, the object's
+    /// node `n` (joint `n + 4`).
+    pub mask: u64,
+    /// The playing motion's `FTANIM_FLAG_ANIMLOCKS` (`is_use_animlocks`).
+    pub flagged: bool,
+    /// TopN's scale, `attr->size`: where the flagged chain's accumulated
+    /// scale starts.
+    pub root_scale: [f32; 3],
+    /// Nodes a collision query read before this frame's display
+    /// (`gmCollisionGetFighterPartsWorldPosition` and its kin set
+    /// `transform_update_mode = 1` on the joint and every ancestor; the
+    /// map process clears it next frame). The display then draws them from
+    /// the collision local, `syMatrixF2LFixedW(&unk_dobjtrans_0x10)`.
+    /// The set is exact, ancestors included: the gameplay side marks the
+    /// chain and the resets clear single parts (the thigh and knee after a
+    /// slope contour, TopN in the map process). The words differ from the
+    /// display's own by up to about 100/65536 per entry: `lbCommonSin`'s
+    /// matrix against `syMatrixTraRotRpyR`'s, or `gmCollisionSetMatrixNcs`'s
+    /// against `lbCommonMatrixTraRotScaInv`'s (RE-509).
+    pub queried: u64,
+    /// The lead `XRotN`'s mode 1, when the clip interposes it: a query
+    /// below it walks through it to TopN.
+    pub queried_lead: bool,
+}
+
+impl Default for AnimLocks {
+    fn default() -> Self {
+        AnimLocks {
+            mask: 0,
+            flagged: false,
+            root_scale: [1.0; 3],
+            queried: 0,
+            queried_lead: false,
+        }
+    }
+}
+
+/// Which of a part's two matrices [`Skeleton::compose_with`] builds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Space {
+    /// `lbCommonFighterPartsFuncMatrix`'s fixed-point display matrix.
+    Display,
+    /// `gmCollisionTransformMatrixAll` / `gmCollisionSetMatrixNcs`.
+    Collision,
 }
 
 impl Default for Skeleton {
@@ -95,6 +162,7 @@ impl Default for Skeleton {
             joint_count: 0,
             speed: 1.0,
             lead_xrotn: false,
+            locks: AnimLocks::default(),
         }
     }
 }
@@ -283,7 +351,27 @@ impl Skeleton {
     ///
     /// Returns how many matrices were written.
     pub fn compose(&self, pack: &Pack<'_>, object: &ObjectDesc, out: &mut [Mat4]) -> usize {
-        self.compose_with(pack, object, out, Mat4::from_trs_display)
+        self.compose_with(pack, object, out, Space::Display, None)
+    }
+
+    /// [`Skeleton::compose`] with this frame's queried parts in place of
+    /// [`AnimLocks::queried`] and [`AnimLocks::queried_lead`]: a fighter's
+    /// gameplay records them as it queries (RE-509).
+    pub fn compose_queried(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        out: &mut [Mat4],
+        queried: u64,
+        queried_lead: bool,
+    ) -> usize {
+        self.compose_with(
+            pack,
+            object,
+            out,
+            Space::Display,
+            Some((queried, queried_lead)),
+        )
     }
 
     /// [`Skeleton::compose`] as `gmCollisionGetFighterPartsWorldPosition`
@@ -297,7 +385,36 @@ impl Skeleton {
         object: &ObjectDesc,
         out: &mut [Mat4],
     ) -> usize {
-        self.compose_with(pack, object, out, Mat4::from_trs_collision)
+        self.compose_with(pack, object, out, Space::Collision, None)
+    }
+
+    /// A part's local matrix, and the scale its children accumulate from
+    /// (`vec_scale`, read only by a flagged motion's chain).
+    fn local(&self, pose: &JointPose, parent_scale: [f32; 3], space: Space) -> (Mat4, [f32; 3]) {
+        // Into the same normalised space the packed matrices use.
+        let t = [
+            pose.translate[0] / MODEL_SCALE,
+            pose.translate[1] / MODEL_SCALE,
+            pose.translate[2] / MODEL_SCALE,
+        ];
+        let (r, s) = (pose.rotate, pose.scale);
+        match (self.locks.flagged, space) {
+            (false, Space::Display) => (Mat4::from_trs_display(t, r, s), s),
+            (false, Space::Collision) => (Mat4::from_trs_collision(t, r, s), s),
+            // `parts->vec_scale = dobj->scale * gLBCommonScale`.
+            (true, Space::Display) => {
+                let acc = [
+                    s[0] * parent_scale[0],
+                    s[1] * parent_scale[1],
+                    s[2] * parent_scale[2],
+                ];
+                (
+                    Mat4::from_trs_scale_inv_display(t, r, parent_scale, acc),
+                    acc,
+                )
+            }
+            (true, Space::Collision) => Mat4::from_trs_ncs(t, r, s, Some(parent_scale)),
+        }
     }
 
     fn compose_with(
@@ -305,48 +422,87 @@ impl Skeleton {
         pack: &Pack<'_>,
         object: &ObjectDesc,
         out: &mut [Mat4],
-        from_trs: fn([f32; 3], [f32; 3], [f32; 3]) -> Mat4,
+        space: Space,
+        queried: Option<(u64, bool)>,
     ) -> usize {
         let count = (object.node_count as usize).min(out.len()).min(MAX_NODES);
-        // `XRotN`, when the clip interposes it, under every root node.
-        let lead = self.lead_xrotn_pose().map(|p| {
-            let t = [
-                p.translate[0] / MODEL_SCALE,
-                p.translate[1] / MODEL_SCALE,
-                p.translate[2] / MODEL_SCALE,
-            ];
-            from_trs(t, p.rotate, p.scale)
-        });
+        let mut locks = self.locks;
+        if let Some((nodes, lead)) = queried {
+            locks.queried = nodes;
+            locks.queried_lead = lead;
+        }
+        // `vec_scale` per node: the flagged chain's accumulated scale.
+        let mut scales = [[1.0f32; 3]; MAX_NODES];
+        // `XRotN`, when the clip interposes it, under every root node; TopN
+        // (`attr->size`) above both.
+        let queried = |i: usize| i < 64 && locks.queried >> i & 1 != 0;
+        let (lead, root_scale) = match self.lead_xrotn_pose() {
+            Some(p) => {
+                let (m, s) = match space {
+                    Space::Display if locks.queried_lead => {
+                        let (m, s) = self.local(p, locks.root_scale, Space::Collision);
+                        (m.f2l_fixed_w(), s)
+                    }
+                    _ => self.local(p, locks.root_scale, space),
+                };
+                (Some(m), s)
+            }
+            None => (None, locks.root_scale),
+        };
         for i in 0..count {
             let global = object.first_node + i as u32;
             let Some(parent) = pack.node_parent(global) else {
                 out[i] = Mat4::IDENTITY;
                 continue;
             };
-            // The rest pose is read only for a node no joint drives.
-            let rest;
-            let pose = match self.pose_for(global) {
-                Some(pose) => pose,
-                None => {
-                    rest = pack.node_rest(global).unwrap_or_default();
-                    &rest
+            let parent_index = match parent {
+                p if p != NodeDesc::NO_PARENT
+                    && p >= object.first_node
+                    && (p - object.first_node) < i as u32 =>
+                {
+                    Some((p - object.first_node) as usize)
                 }
+                _ => None,
             };
-            // Into the same normalised space the packed matrices use.
-            let t = [
-                pose.translate[0] / MODEL_SCALE,
-                pose.translate[1] / MODEL_SCALE,
-                pose.translate[2] / MODEL_SCALE,
-            ];
-            let local = from_trs(t, pose.rotate, pose.scale);
+            let parent_scale = parent_index.map_or(root_scale, |p| scales[p]);
+            let local = if !locks.flagged && i < 64 && locks.mask >> i & 1 != 0 {
+                // Frozen at the rest pose `ftParamSetAnimLocks` stored, in
+                // `gmCollisionTransformMatrixAll`'s floats: the collision
+                // walk reads them as they are, the display through
+                // `syMatrixF2LFixedW`.
+                let rest = pack.node_rest(global).unwrap_or_default();
+                let (m, _) = self.local(&rest, parent_scale, Space::Collision);
+                scales[i] = rest.scale;
+                match space {
+                    Space::Display => m.f2l_fixed_w(),
+                    Space::Collision => m,
+                }
+            } else {
+                // The rest pose is read only for a node no joint drives.
+                let rest;
+                let pose = match self.pose_for(global) {
+                    Some(pose) => pose,
+                    None => {
+                        rest = pack.node_rest(global).unwrap_or_default();
+                        &rest
+                    }
+                };
+                let (m, s) = match space {
+                    Space::Display if queried(i) => {
+                        let (m, s) = self.local(pose, parent_scale, Space::Collision);
+                        (m.f2l_fixed_w(), s)
+                    }
+                    _ => self.local(pose, parent_scale, space),
+                };
+                scales[i] = s;
+                m
+            };
             // Parents always precede children in a `DObjDesc` array — a child
             // references `array_dobjs[depth - 1]`, which an earlier entry must
             // have filled — so the parent's matrix is already final.
-            out[i] = match parent {
-                NodeDesc::NO_PARENT => lead.map_or(local, |lead| lead.mul(&local)),
-                p if p >= object.first_node && (p - object.first_node) < i as u32 => {
-                    out[(p - object.first_node) as usize].mul(&local)
-                }
+            out[i] = match (parent, parent_index) {
+                (_, Some(p)) => out[p].mul(&local),
+                (NodeDesc::NO_PARENT, None) => lead.map_or(local, |lead| lead.mul(&local)),
                 // A parent outside this object, or one that has not been
                 // composed yet, cannot be applied. Leaving the node in its own
                 // space is wrong but bounded; silently using a stale matrix
@@ -1726,6 +1882,69 @@ mod tests {
         }
         assert_eq!(sk.pose(0).unwrap().translate, [0.0, 7.5, 0.0]);
         assert!(sk.ended(), "a skeleton with no live script has ended");
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn animation_locks_freeze_masked_parts_and_queries_draw_the_collision_chain() {
+        // RE-509, checked against N64 RDRAM traces of Yoshi and Samus.
+        let graph = chain();
+        let bytes = packed(&graph);
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let object = pack.object(0).unwrap();
+        let pose = JointPose {
+            rotate: [0.4, -1.1, 0.25],
+            translate: [3.0, -2.0, 1.5],
+            scale: [1.0, 1.0, 1.0],
+        };
+        let mut sk = Skeleton::new();
+        sk.joint_count = 3;
+        for i in 0..3 {
+            sk.nodes[i] = object.first_node + i as u32;
+            sk.poses[i] = pose;
+        }
+        sk.locks.root_scale = [1.1; 3];
+        let t = pose.translate.map(|v| v / MODEL_SCALE);
+        let rest = pack.node_rest(object.first_node + 1).unwrap();
+        let rest_t = rest.translate.map(|v| v / MODEL_SCALE);
+        let mut out = [Mat4::IDENTITY; MAX_NODES];
+        let local =
+            |out: &[Mat4; MAX_NODES], i: usize| out[i - 1].inverse_affine().unwrap().mul(&out[i]);
+        let close = |a: &Mat4, b: &Mat4| {
+            a.0.iter()
+                .zip(b.0.iter())
+                .all(|(x, y)| (x - y).abs() < 1e-4)
+        };
+
+        // A normal motion: the masked middle part is drawn at its rest pose,
+        // through the collision matrix, whatever its joint does.
+        sk.locks.mask = 0b010;
+        sk.compose(&pack, &object, &mut out);
+        let frozen = Mat4::from_trs_collision(rest_t, rest.rotate, rest.scale).f2l_fixed_w();
+        assert!(close(&local(&out, 1), &frozen));
+        assert!(close(
+            &local(&out, 2),
+            &Mat4::from_trs_display(t, pose.rotate, pose.scale)
+        ));
+
+        // A flagged motion animates it, without the children's scale.
+        sk.locks.flagged = true;
+        sk.compose(&pack, &object, &mut out);
+        let inv = Mat4::from_trs_scale_inv_display(t, pose.rotate, [1.1; 3], [1.1; 3]);
+        assert!(close(&local(&out, 1), &inv));
+        assert!(close(&local(&out, 2), &inv));
+
+        // A query of the leaf marks it and its ancestors; the marked parts
+        // draw from their `gmCollisionSetMatrixNcs` locals.
+        sk.locks.queried = 0b111;
+        sk.compose(&pack, &object, &mut out);
+        let (ncs, _) = Mat4::from_trs_ncs(t, pose.rotate, pose.scale, Some([1.1; 3]));
+        assert!(close(&local(&out, 1), &ncs.f2l_fixed_w()));
+        assert!(close(&local(&out, 2), &ncs.f2l_fixed_w()));
+        assert!(
+            !close(&ncs.f2l_fixed_w(), &inv),
+            "the test tells the two apart"
+        );
     }
 
     #[test]

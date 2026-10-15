@@ -552,7 +552,15 @@ fn make_fighter(p: &Pack<'_>, f: &characters::Fighter) -> Box<FighterModel> {
             Motion::Demo(d) => d.skips_translate_scales(f.kind),
             _ => false,
         },
-        skeleton: Skeleton::new(),
+        // TopN is scaled by `dSCSubsysFighterScales`; a battle status may
+        // be flagged (Yoshi's attacks), which animates the `animlock` parts
+        // (RE-509).
+        skeleton: {
+            let mut s = ssb_psp_runtime::scene::fighter_skeleton(f.kind, f.scale());
+            s.locks.flagged = matches!(f.motion, Motion::Status(st)
+                if ssb_game::motion::uses_animlocks(f.kind, st));
+            s
+        },
         // A battle status's model and texture part events are not run
         // (RE-461): those statuses show the make's parts.
         demo: ssb_game::modelpart::DemoParts::start(f.kind, if demo { row } else { 0 }),

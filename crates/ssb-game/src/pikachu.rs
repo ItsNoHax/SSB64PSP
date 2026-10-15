@@ -232,7 +232,7 @@ fn make_thunder(f: &mut Fighter) {
     f.pikachu.spawned = true;
     f.pikachu.thunder_motion = f.motion.count;
     if let Some(top) = f.pikachu.map_bound_top {
-        let anchor = f.joint_world(11, Vec3::ZERO);
+        let anchor = f.joint_query(11, Vec3::ZERO);
         f.weapon_spawn = Some(WeaponSpawn {
             kind: WeaponKind::PikachuThunder,
             owner_port: f.port,
@@ -268,7 +268,7 @@ pub fn update(f: &mut Fighter) {
                     kind: WeaponKind::PikachuThunderJolt,
                     owner_port: f.port,
                     team: f.team,
-                    position: f.joint_world(11, Vec3::ZERO),
+                    position: f.joint_query(11, Vec3::ZERO),
                     facing: f.facing.sign(),
                     stale: crate::stale::WeaponStale::of(f),
                 });
