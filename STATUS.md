@@ -17,7 +17,7 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Closed: the 1P many-opponent bug (`Sleep` had no physics/map proc in the C; Rust ran the air tick, cleared `is_ghost` and re-KO'd sleepers, double-counting defeats and overflowing the Zako bonus record array). Next, per [`PLAN.md`](PLAN.md#remaining-work): the grab/catch audit, then the intro batches.
+Closed: the grab/catch audit (RE-518): status changes now reset `is_catchstatus` and the capture-immune mask as in the C, so grabs connect and a released grabber can hit again. Next, per [`PLAN.md`](PLAN.md#remaining-work): the intro batches (research in the scratchpad `intro-handoff.md`). Batch 1 is the room (rug floor, shadow, spotlight glow, colour grade); then Yoster clouds, standoff ground, fighter-scene effects and the title slash/fire details.
 
 ## Blockers
 
@@ -29,7 +29,7 @@ Closed: the 1P many-opponent bug (`Sleep` had no physics/map proc in the C; Rust
 
 ## Verification
 
-Baseline after the 1P many-opponent batch:
+Baseline after the grab audit batch:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass (tests that need ROM tables, including

@@ -172,7 +172,7 @@ pub fn capture(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     status::play_anim_events(f);
     f.egg = CaptureYoshiState::default();
     f.grab.breakout_wait = 0;
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     physics::stop_all(&mut f.physics);
     f.hitstun = 0;
 }
@@ -219,7 +219,7 @@ fn set_egg(f: &mut Fighter) {
         epoch: f.egg.effect.epoch,
         ..EggLayEffect::default()
     };
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     f.is_invisible = true;
     grab::init_breakout(f, BREAKOUT_INPUTS_MIN);
     f.add_damage(i32::from(LAY_DAMAGE));
@@ -275,7 +275,7 @@ fn escape(f: &mut Fighter) {
         StatusTiming::unknown(),
         status::Preserve::DAMAGE_PLAYER,
     );
-    f.grab.capture_immune = false;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::NONE;
     // `ftParamSetTimedHitStatusIntangible`: the port's timed invincibility
     // is the one that lets attacks pass through.
     f.invincible_frames = f.invincible_frames.max(INTANGIBLE_TIMER);
@@ -445,7 +445,7 @@ mod tests {
         assert_eq!(f.status.status, Status::Fall);
         assert_eq!(f.physics.vel_air, Vec3::new(0.0, ESCAPE_VEL_Y, 0.0));
         assert_eq!(f.invincible_frames, INTANGIBLE_TIMER);
-        assert!(!f.is_invisible && !f.grab.capture_immune);
+        assert!(!f.is_invisible && f.grab.capture_immune_mask == 0);
     }
 
     #[test]

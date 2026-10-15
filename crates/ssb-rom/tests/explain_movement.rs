@@ -833,7 +833,7 @@ fn how_to_play_hits_as_the_n64_does() {
             {
                 ssb_game::grab::search_catch(
                     &mut catcher.fighter,
-                    &other.fighter,
+                    &mut other.fighter,
                     ssb_game::team::TeamRules::FREE_FOR_ALL,
                 );
             }

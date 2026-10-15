@@ -709,8 +709,14 @@ fn set_down_wait(f: &mut Fighter) {
     };
     set(f, status);
     f.reaction.stand_wait = DOWNWAIT_STAND_WAIT;
-    // `ftParamSetCaptureImmuneMask`: grabs and Egg Lay miss a downed fighter.
-    f.grab.capture_immune = true;
+    // `ftParamSetCaptureImmuneMask`: the fighters' grabs (Catch, Inhale,
+    // Egg Lay, Falcon Dive) miss a downed fighter; the Barrel Cannon and
+    // the tornado still take it.
+    {
+        use crate::grab::catch_kind::*;
+        f.grab.capture_immune_mask =
+            CAPTAIN_SPECIAL_HI | COMMON | KIRBY_SPECIAL_N | YOSHI_SPECIAL_N;
+    }
     f.damage_mul = 0.5;
 }
 

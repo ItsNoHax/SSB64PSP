@@ -361,7 +361,7 @@ fn enter(f: &mut Fighter, status: Status) {
     f.hazard.release_wait = 0;
     f.hazard.shoot_wait = 0;
     f.hazard.shoot_request = false;
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
 }
 
 /// `ftCommonTwisterSetStatus` @ 0x80143BC4.

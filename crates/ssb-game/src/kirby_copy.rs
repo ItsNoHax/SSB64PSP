@@ -868,7 +868,7 @@ pub fn egg_lay_catch(f: &mut Fighter, held: &Fighter) {
     };
     set(f, s, frame, StatusTiming::frames(EGG_LAY_LENGTH));
     status::play_anim_events(f);
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     physics::stop_all(&mut f.physics);
     f.grab.catch = Some(held.port);
     f.grab.catch_kind = Some(held.kind);
@@ -884,7 +884,7 @@ fn set_egg_lay_release(f: &mut Fighter, ground: bool) {
     };
     set(f, s, 0.0, StatusTiming::frames(EGG_LAY_RELEASE_LENGTH));
     status::play_anim_events(f);
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
 }
 
 /// `ftKirbyCopyYoshiSpecialAirNCatchUpdateCaptureVars`.
@@ -895,7 +895,7 @@ fn update_egg_lay_capture_vars(f: &mut Fighter) {
     if crossed(f, EGG_LAY_LAY_FRAME) && f.grab.catch.take().is_some() {
         f.grab.catch_kind = None;
         f.grab.send(GrabEvent::YoshiEggStage(3));
-        f.grab.capture_immune = false;
+        f.grab.capture_immune_mask = crate::grab::catch_kind::NONE;
     }
 }
 
@@ -1724,7 +1724,7 @@ mod tests {
             step(&mut f);
         }
         assert!(f.grab.catch.is_none());
-        assert!(!f.grab.capture_immune);
+        assert_eq!(f.grab.capture_immune_mask, 0);
     }
 
     #[test]

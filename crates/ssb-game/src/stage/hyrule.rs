@@ -285,7 +285,7 @@ impl Hyrule {
     pub fn check_twister(&self, f: &Fighter) -> bool {
         if f.hazard.twister_wait != 0
             || f.status.status == AnyStatus::Common(Status::Twister)
-            || f.grab.capture_immune
+            || f.grab.capture_immune_mask & crate::grab::catch_kind::TWISTER != 0
             || crate::hazard::best_hit_status_all(f) != crate::combat::HitStatus::Normal
         {
             return false;

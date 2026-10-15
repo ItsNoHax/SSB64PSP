@@ -125,7 +125,6 @@ closes it.
 
 ### Match systems (`MS5`)
 
-- [ ] NEXT (user report, PSP): grabbing rarely connects, and after a grab the opponent can no longer be damaged. Audit the whole grab/catch/throw chain against the decomp (ftCommonCatch*, CatchWait, Capture*, Throw*, catch collision, hit/hurt state restore on release).
 - [ ] Draw the CPUs' special effects: Magnet, Sing, Spin Attack swirl, Falcon Punch/Kick, reflector, Charge Shot and the held egg draw for the player only (RE-389, RE-404, RE-405).
 - [ ] Remaining effects: Thunder Jolt ground effect, PK Thunder trail effects, the fire spark, Kirby's copy-bank scripts (0x4C, 0x4D), the results' fighter effects, stage particle banks; a magnitude-0 quake shakes one frame late (RE-413, RE-415, RE-416, RE-427).
 - [ ] Kirby: Inhale/spit stars and the copied Falcon Punch flame; Inhale's downward wiggle (RE-343, RE-348, RE-376, RE-378, RE-417).

@@ -342,7 +342,7 @@ pub fn dive_catch(f: &mut Fighter, held: &Fighter) {
     set(f, CaptainStatus::SpecialHiCatch, 0.0, 16.0);
     // `ftCaptainSpecialHiProcCatch` plays the first frame (RE-474).
     status::play_anim_events(f);
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     f.grab.is_catchstatus = false;
     f.grab.catch = Some(held.port);
     f.grab.catch_kind = Some(held.kind);
@@ -358,7 +358,7 @@ fn dive_throw(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialHiThrow, 0.0, 60.0);
     // `ftCaptainSpecialHiThrowSetStatus` plays the first frame (RE-474).
     status::play_anim_events(f);
-    f.grab.capture_immune = false;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::NONE;
     if f.grab.catch.take().is_some() {
         f.grab.send(GrabEvent::Release {
             lr: f.facing.sign(),

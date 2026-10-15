@@ -3760,6 +3760,9 @@ pub fn set_cliff_catch(f: &mut Fighter, line: u16, corner: Vec2) {
         kind: crate::fteffect::kind::FLASH_MIDDLE,
         pos: Vec3::new(corner.x, corner.y, 0.0),
     });
+    // `ftParamSetCaptureImmuneMask(fp, FTCATCHKIND_MASK_TARUCANN)`: only the
+    // Barrel Cannon misses a ledge hanger; a grab still takes it.
+    f.grab.capture_immune_mask = crate::grab::catch_kind::TARU_CANN;
 }
 
 /// `ftCommonCliffWaitSetStatus` @ `ftcommoncliffcatchwait.c:98`.
@@ -3772,6 +3775,8 @@ pub fn set_cliff_wait(f: &mut Fighter) {
     } else {
         CLIFF_FALL_WAIT_DAMAGE_HIGH
     };
+    // `ftParamSetCaptureImmuneMask(fp, FTCATCHKIND_MASK_TARUCANN)`.
+    f.grab.capture_immune_mask = crate::grab::catch_kind::TARU_CANN;
 }
 
 /// `ftCommonCliffQuickOrSlowSetStatus`: select the damage-dependent dispatch
@@ -4090,6 +4095,13 @@ pub fn set_any_status_preserve(
     // `ftMainSetStatus` clears it; the setters that allow a boomerang catch
     // set it again afterwards.
     f.is_special_interrupt = false;
+    // `ftMainSetStatus`: `ftParamSetCaptureImmuneMask(fp, NONE)` and
+    // `is_catchstatus = FALSE` (ftmain.c:4505, 4522). The catch and held
+    // setters set them again after this call. A catch status left any other
+    // way (hit out of, off an edge) must not keep skipping the fighter's own
+    // attacks, nor a knockdown keep refusing grabs.
+    f.grab.capture_immune_mask = crate::grab::catch_kind::NONE;
+    f.grab.is_catchstatus = false;
     // `ftMainSetStatus` resets `knockback_resist_status`; Yoshi's aerial
     // jump sets it again.
     f.knockback_resist = 0.0;

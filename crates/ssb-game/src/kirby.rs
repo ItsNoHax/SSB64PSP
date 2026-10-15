@@ -888,7 +888,7 @@ fn after_set_inhale(f: &mut Fighter, s: K) {
         s,
         K::SpecialNStart | K::SpecialAirNStart | K::SpecialNLoop | K::SpecialAirNLoop
     ) {
-        f.grab.capture_immune = true;
+        f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     }
 }
 
@@ -914,7 +914,7 @@ pub fn inhale_catch(f: &mut Fighter, held: &Fighter) {
     f.grab.catch = Some(held.port);
     f.grab.is_catch_or_capture = false;
     f.grab.catch_kind = Some(held.kind);
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     let lr = f.facing.sign();
     let point = Vec2::new(
         f.pos.x + crate::capture_kirby::CAPTURE_OFF.x * lr,
@@ -1008,7 +1008,7 @@ fn spit(f: &mut Fighter) {
         return;
     }
     f.grab.catch_kind = None;
-    f.grab.capture_immune = false;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::NONE;
     let lr = f.facing.sign();
     // `-victim.lr * 120`, and the victim faces Kirby.
     f.grab.send(GrabEvent::KirbyStar {
@@ -1056,7 +1056,7 @@ fn copy(f: &mut Fighter) {
         return;
     }
     f.grab.catch_kind = None;
-    f.grab.capture_immune = false;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::NONE;
     let victim_lr = -f.facing.sign();
     let (sin, cos) = sin_cos(VACUUM_COPY_ANGLE);
     f.grab.send(GrabEvent::KirbyStar {
@@ -1111,8 +1111,10 @@ fn inhale_loop_interrupt(f: &mut Fighter, current: K) {
             K::SpecialAirNEnd
         };
         set_inhale(f, s, 0.0, StatusTiming::frames(SPECIAL_N_END_LENGTH));
-        // `ftKirbySpecialNEndSetStatus` and `...AirNEndSetStatus` play the
-        // first frame (RE-473, RE-474).
+        // Unlike their ground/air switches, `ftKirbySpecialNEndSetStatus`
+        // and `...AirNEndSetStatus` leave the mask `ftMainSetStatus` cleared.
+        f.grab.capture_immune_mask = crate::grab::catch_kind::NONE;
+        // They play the first frame (RE-473, RE-474).
         status::play_anim_events(f);
     }
 }
@@ -1287,6 +1289,9 @@ pub fn update(f: &mut Fighter) {
                     K::SpecialAirNWait
                 };
                 set_inhale(f, s, 0.0, StatusTiming::unknown());
+                // `ftKirbySpecialNWaitSetStatusFromTurn` leaves the mask
+                // `ftMainSetStatus` cleared; the wait from the eat sets it.
+                f.grab.capture_immune_mask = crate::grab::catch_kind::NONE;
             }
         }
         K::SpecialNThrow | K::SpecialAirNThrow => {

@@ -721,6 +721,26 @@ pub enum GrabEvent {
 
 const OUTBOX: usize = 4;
 
+/// `FTCATCHKIND_MASK_*` (`ftdef.h:59-75`): a catch status's kind
+/// (`catch_mask`) and the kinds a fighter's `capture_immune_mask` refuses.
+pub mod catch_kind {
+    /// Yoshi's Egg Lay, and Kirby's copy of it.
+    pub const YOSHI_SPECIAL_N: u8 = 1 << 0;
+    /// Kirby's Inhale.
+    pub const KIRBY_SPECIAL_N: u8 = 1 << 1;
+    /// Kongo Jungle's Barrel Cannon.
+    pub const TARU_CANN: u8 = 1 << 2;
+    /// Hyrule Castle's tornado.
+    pub const TWISTER: u8 = 1 << 3;
+    /// The common `Catch`.
+    pub const COMMON: u8 = 1 << 4;
+    /// Captain Falcon's Falcon Dive.
+    pub const CAPTAIN_SPECIAL_HI: u8 = 1 << 5;
+    pub const NONE: u8 = 0;
+    pub const ALL: u8 =
+        CAPTAIN_SPECIAL_HI | COMMON | TWISTER | TARU_CANN | KIRBY_SPECIAL_N | YOSHI_SPECIAL_N;
+}
+
 /// One fighter's side of a grab.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct GrabState {
@@ -732,8 +752,9 @@ pub struct GrabState {
     pub holder: Option<Holder>,
     /// `is_catchstatus`: this status searches for a fighter to grab.
     pub is_catchstatus: bool,
-    /// `capture_immune_mask != 0`: cannot be grabbed.
-    pub capture_immune: bool,
+    /// `capture_immune_mask`: the [`catch_kind`] grabs that miss this
+    /// fighter. `ftMainSetStatus` clears it on every status change.
+    pub capture_immune_mask: u8,
     pub is_shield_catch: bool,
     /// `throw_desc`, set by the current motion script's `SetThrow`.
     pub throw_desc: Option<[ThrowHitDesc; 2]>,
@@ -954,7 +975,7 @@ fn catch_pull(f: &mut Fighter, held: &Fighter) {
     f.grab.catch_kind = Some(held.kind);
     f.grab.is_catchstatus = false;
     f.grab.is_catch_or_capture = false;
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = catch_kind::ALL;
     // `fp->proc_slope`, run once the match loop has the map; then the swirl
     // effect and the victim's `ftCommonCapturePulledProcCapture` query the
     // hand.
@@ -1006,7 +1027,7 @@ fn set_catch_wait(f: &mut Fighter) {
         status::Preserve::SLOPE_CONTOUR,
     );
     f.grab.throw_wait = CATCH_THROW_WAIT;
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = catch_kind::ALL;
     // Link takes his shield in hand; Yoshi's jaw closes (RE-425).
     match f.kind {
         crate::fighter::FighterKind::Link | crate::fighter::FighterKind::PolyLink => {
@@ -1054,7 +1075,7 @@ fn set_throw(f: &mut Fighter, is_throwf: bool) {
     if let Some(desc) = script.desc {
         f.grab.throw_desc = Some(desc);
     }
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = catch_kind::ALL;
     let held = f.grab.catch_kind.unwrap_or(FighterKind::Mario);
     let (first, then) = thrown_status(f.kind, held, back);
     f.grab.send(GrabEvent::Thrown { first, then });
@@ -1108,7 +1129,7 @@ pub(crate) fn release_thrown(f: &mut Fighter, lr: f32) {
     });
     f.grab.catch = None;
     f.grab.catch_kind = None;
-    f.grab.capture_immune = false;
+    f.grab.capture_immune_mask = catch_kind::NONE;
 }
 
 /// `ftCommonCatchCaptureSetStatusRelease` @ 0x80149AC8: the catcher left its
@@ -1169,7 +1190,7 @@ fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     // The capture plays its first frame (RE-468).
     status::play_anim_events(f);
     f.grab.is_goto_pulled_wait = false;
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = catch_kind::ALL;
     f.physics.vel_air = Vec3::ZERO;
     f.physics.vel_ground = Vec3::ZERO;
     f.physics.vel_knockback = Vec3::ZERO;
@@ -1237,7 +1258,7 @@ fn capture_captain(f: &mut Fighter, catcher_port: u8, holder: Holder) {
         },
     );
     status::play_anim_events(f);
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = catch_kind::ALL;
     physics::stop_all(&mut f.physics);
 }
 
@@ -1268,7 +1289,7 @@ fn update_capture_captain(f: &mut Fighter, holder: Holder) {
 /// `ftCommonCaptureWaitSetStatus` @ 0x8014AA58.
 fn set_capture_wait(f: &mut Fighter) {
     status::set_status(f, Status::CaptureWait, 0.0, StatusTiming::unknown());
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = catch_kind::ALL;
 }
 
 /// `ftCommonThrownSetStatusQueue` / `ftCommonThrownSetStatusImmediate`.
@@ -1283,7 +1304,7 @@ fn set_thrown(f: &mut Fighter, status: Status, queue: Option<Status>) {
     status::set_status(f, status, 0.0, timing);
     // Both setters play the first frame (RE-468).
     status::play_anim_events(f);
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = catch_kind::ALL;
     f.grab.thrown_queue = queue;
 }
 
@@ -1442,7 +1463,7 @@ pub(crate) fn lose_grip(f: &mut Fighter) {
     f.grab.capture = None;
     f.grab.holder = None;
     f.grab.thrown_queue = None;
-    f.grab.capture_immune = false;
+    f.grab.capture_immune_mask = catch_kind::NONE;
     f.grab.captain_no_update = false;
     f.kirby_capture.intangible = false;
     f.is_invisible = false;
@@ -1616,7 +1637,7 @@ fn set_donkey_throwff(f: &mut Fighter, is_turn: bool) {
     // The setter plays the first frame before the turn (RE-474).
     status::play_anim_events(f);
     f.grab.throw_desc = Some(DONKEY_THROW_FF);
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = catch_kind::ALL;
     f.grab.throwff_turn_tics = 0;
     if is_turn {
         f.facing = f.facing.flipped();
@@ -1760,7 +1781,7 @@ pub fn cargo_resists(f: &Fighter, knockback: f32) -> bool {
 pub fn release_on_hit(f: &mut Fighter) {
     if f.grab.catch.take().is_some() {
         f.grab.catch_kind = None;
-        f.grab.capture_immune = false;
+        f.grab.capture_immune_mask = catch_kind::NONE;
         let desc = f.grab.throw_desc.map(|d| d[1]).unwrap_or(MARIO_CATCH[1]);
         f.grab.send(GrabEvent::DamageRelease {
             desc,
@@ -1797,7 +1818,7 @@ pub fn thrown_update_damage_stats(held: &mut Fighter, catcher: &mut Fighter) {
 pub fn lose_grip_pair(catcher: &mut Fighter, held: &mut Fighter) {
     catcher.grab.catch = None;
     catcher.grab.catch_kind = None;
-    catcher.grab.capture_immune = false;
+    catcher.grab.capture_immune_mask = catch_kind::NONE;
     lose_grip(held);
 }
 
@@ -1866,7 +1887,7 @@ pub fn release_on_dead(f: &mut Fighter) {
     f.grab.catch_kind = None;
     f.grab.holder = None;
     f.grab.thrown_queue = None;
-    f.grab.capture_immune = false;
+    f.grab.capture_immune_mask = catch_kind::NONE;
     f.grab.is_catchstatus = false;
 }
 
@@ -2312,7 +2333,7 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
             f.become_airborne();
             let (frame, timing) = (f.status.anim_frame, f.status.timing);
             set_donkey(f, DonkeyStatus::ThrowAirFF, frame, timing);
-            f.grab.capture_immune = true;
+            f.grab.capture_immune_mask = catch_kind::ALL;
             true
         }
         _ => false,
@@ -2343,7 +2364,7 @@ pub fn on_landing(f: &mut Fighter, floor_y: f32) -> bool {
             let (frame, timing) = (f.status.anim_frame, f.status.timing);
             set_donkey(f, DonkeyStatus::ThrowFF, frame, timing);
             f.grab.throwff_turn_tics = 0;
-            f.grab.capture_immune = true;
+            f.grab.capture_immune_mask = catch_kind::ALL;
             true
         }
         AnyStatus::Donkey(DonkeyStatus::ThrowFDamage) => {
@@ -2481,7 +2502,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
         GrabEvent::CaptureHitRelease => {
             if to.grab.catch.take().is_some() {
                 to.grab.catch_kind = None;
-                to.grab.capture_immune = false;
+                to.grab.capture_immune_mask = catch_kind::NONE;
                 set_no_damage_release(to);
             }
         }
@@ -2496,7 +2517,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
         GrabEvent::BreakoutKnockback => {
             if to.grab.catch.take().is_some() {
                 to.grab.catch_kind = None;
-                to.grab.capture_immune = false;
+                to.grab.capture_immune_mask = catch_kind::NONE;
                 apply_catch_knockback(to, from.handicap);
             }
         }
@@ -2526,7 +2547,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
         GrabEvent::KirbyBreakout => {
             if to.grab.catch.take().is_some() {
                 to.grab.catch_kind = None;
-                to.grab.capture_immune = false;
+                to.grab.capture_immune_mask = catch_kind::NONE;
                 apply_catch_knockback_with(
                     to,
                     from.handicap,
@@ -2546,10 +2567,25 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
 /// here and the grabbed fighter's `CapturePulled` is queued for
 /// [`exchange`]. Yoshi's Egg Lay searches with its own box and
 /// `proc_catch`/`proc_capture` pair.
-pub fn search_catch(catcher: &mut Fighter, other: &Fighter, rules: crate::team::TeamRules) -> bool {
+///
+/// The original runs the victim's `proc_capture` here too, so the fighters
+/// searching after this one in the frame find it captured. The capture
+/// itself waits for [`exchange`], which hands over the hand `proc_catch`
+/// posed (RE-511); what those later searches read of it is set now: its
+/// `ftMainSetStatus` cleared `is_catchstatus`, and every capture status
+/// sets `capture_immune_mask` to `ALL`. So a victim does not grab on the
+/// frame it is grabbed, and two catchers never share one.
+pub fn search_catch(
+    catcher: &mut Fighter,
+    other: &mut Fighter,
+    rules: crate::team::TeamRules,
+) -> bool {
     if !catch_touches(catcher, other, rules) {
         return false;
     }
+    other.grab.is_catchstatus = false;
+    other.grab.capture_immune_mask = catch_kind::ALL;
+    let other = &*other;
     let inhale = crate::kirby::inhale_searching(catcher);
     let egg_lay = crate::yoshi::egg_lay_searching(catcher);
     let copy_egg_lay = crate::kirby_copy::egg_lay_searching(catcher);
@@ -2627,7 +2663,21 @@ fn catch_touches(catcher: &Fighter, other: &Fighter, rules: crate::team::TeamRul
         return false;
     }
     // Any non-normal body-wide hit status (special, star, status) blocks it.
-    if other.grab.capture_immune || !crate::combat::is_body_normal(other) || other.stocks <= 0 {
+    // `other_fp->capture_immune_mask & this_fp->catch_mask`, the mask
+    // `ftParamSetCatchParams` gave the catch status.
+    let catch_mask = if inhale {
+        catch_kind::KIRBY_SPECIAL_N
+    } else if egg_lay || copy_egg_lay {
+        catch_kind::YOSHI_SPECIAL_N
+    } else if dive {
+        catch_kind::CAPTAIN_SPECIAL_HI
+    } else {
+        catch_kind::COMMON
+    };
+    if other.grab.capture_immune_mask & catch_mask != 0
+        || !crate::combat::is_body_normal(other)
+        || other.stocks <= 0
+    {
         return false;
     }
     let colls: &[(Hitbox, u8)] = if inhale {
@@ -2961,10 +3011,14 @@ mod tests {
     #[test]
     fn catch_uses_animated_hand_position() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
-        let dummy = grounded(FighterKind::Mario, 1, 400.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 400.0);
         set_catch(&mut mario);
         mario.status.set_time(6.0);
-        assert!(!search_catch(&mut mario, &dummy, TeamRules::FREE_FOR_ALL));
+        assert!(!search_catch(
+            &mut mario,
+            &mut dummy,
+            TeamRules::FREE_FOR_ALL
+        ));
         mario.joint_transforms[28] = Some(JointTransform {
             axes: [
                 Vec3::new(0.0, 0.0, -1.0),
@@ -2973,7 +3027,11 @@ mod tests {
             ],
             origin: Vec3::new(400.0, 0.0, 0.0),
         });
-        assert!(search_catch(&mut mario, &dummy, TeamRules::FREE_FOR_ALL));
+        assert!(search_catch(
+            &mut mario,
+            &mut dummy,
+            TeamRules::FREE_FOR_ALL
+        ));
     }
 
     #[test]
@@ -3014,7 +3072,11 @@ mod tests {
             nearest_catch(&mario, [&near, &far], TeamRules::TEAMS),
             Some(2)
         );
-        assert!(!search_catch(&mut mario.clone(), &near, TeamRules::TEAMS));
+        assert!(!search_catch(
+            &mut mario.clone(),
+            &mut near.clone(),
+            TeamRules::TEAMS
+        ));
         let team_attack = TeamRules {
             is_team_attack: true,
             ..TeamRules::TEAMS
@@ -3048,7 +3110,7 @@ mod tests {
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn samus_grapple_beam_reaches_late_and_starts_the_pull_part_way() {
         let mut samus = grounded(FighterKind::Samus, 0, 0.0);
-        let dummy = grounded(FighterKind::Mario, 1, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 0.0);
         set_catch(&mut samus);
         assert_eq!(samus.status.timing.anim_length, Some(100.0));
         // `ftCommonCatchSetStatus` plays frame 1 at once.
@@ -3057,7 +3119,7 @@ mod tests {
             press(&mut samus, 0, 0);
             tick(&mut samus);
             assert!(
-                !search_catch(&mut samus, &dummy, TeamRules::FREE_FOR_ALL),
+                !search_catch(&mut samus, &mut dummy, TeamRules::FREE_FOR_ALL),
                 "no beam before frame 20"
             );
         }
@@ -3067,7 +3129,11 @@ mod tests {
         assert_eq!(samus.status.anim_frame, 21.0);
         // Flag2 = 9 over flag1 = 17 frames, one step already taken.
         assert_eq!(samus.grab.catch_pull_frame_begin, 9.0 - 9.0 / 17.0);
-        assert!(search_catch(&mut samus, &dummy, TeamRules::FREE_FOR_ALL));
+        assert!(search_catch(
+            &mut samus,
+            &mut dummy,
+            TeamRules::FREE_FOR_ALL
+        ));
         assert_eq!(samus.status.status, Status::CatchPull);
         assert_eq!(samus.status.anim_frame, 9.0 - 9.0 / 17.0);
         assert_eq!(samus.status.timing.anim_length, Some(10.0));
@@ -3092,7 +3158,7 @@ mod tests {
     #[test]
     fn link_hookshot_reaches_late_and_starts_the_pull_part_way() {
         let mut link = grounded(FighterKind::Link, 0, 0.0);
-        let dummy = grounded(FighterKind::Mario, 1, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 0.0);
         set_catch(&mut link);
         assert_eq!(link.status.timing.anim_length, Some(85.0));
         assert_eq!(link.status.anim_frame, 1.0);
@@ -3100,7 +3166,7 @@ mod tests {
             press(&mut link, 0, 0);
             tick(&mut link);
             assert!(
-                !search_catch(&mut link, &dummy, TeamRules::FREE_FOR_ALL),
+                !search_catch(&mut link, &mut dummy, TeamRules::FREE_FOR_ALL),
                 "no hook before frame 17"
             );
         }
@@ -3110,7 +3176,7 @@ mod tests {
         assert_eq!(link.status.anim_frame, 18.0);
         // Flag2 = 5 over flag1 = 12 frames, one step already taken.
         assert_eq!(link.grab.catch_pull_frame_begin, 5.0 - 5.0 / 12.0);
-        assert!(search_catch(&mut link, &dummy, TeamRules::FREE_FOR_ALL));
+        assert!(search_catch(&mut link, &mut dummy, TeamRules::FREE_FOR_ALL));
         assert_eq!(link.status.status, Status::CatchPull);
         assert_eq!(link.status.timing.anim_length, Some(6.0));
         assert_eq!(catch_coll_frames(FighterKind::Link), 17.0..29.0);
@@ -4059,5 +4125,318 @@ mod tests {
         assert!((held.pos - want).length() < 0.2, "{:?}", held.pos);
         assert_eq!(held.grab.release_sweep, Some((catcher.pos, catcher.coll)));
         assert!(held.grab.capture.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Grab audit: `ftMainSetStatus` clears `is_catchstatus` and
+    // `capture_immune_mask` on every status change (ftmain.c:4505, 4522).
+    // -----------------------------------------------------------------------
+
+    /// Whether common grabs miss `f` (`capture_immune_mask & COMMON`).
+    fn immune(f: &Fighter) -> bool {
+        f.grab.capture_immune_mask & catch_kind::COMMON != 0
+    }
+
+    fn light_hit() -> Hitbox {
+        Hitbox {
+            damage: 9,
+            offset: Vec3::ZERO,
+            radius: 80.0,
+            angle: 361,
+            kb_scale: 100,
+            kb_weight: 0,
+            kb_base: 10,
+            element: crate::combat::Element::Normal,
+            shield_damage: 0,
+        }
+    }
+
+    /// Z held, then Z + A: `Catch`'s first frame.
+    fn start_catch(a: &mut Fighter, b: &mut Fighter) {
+        press(a, N64Buttons::Z, 0);
+        tick(a);
+        press(a, N64Buttons::Z | N64Buttons::A, 0);
+        press(b, 0, 0);
+        frame(a, b);
+        assert_eq!(a.status.status, Status::Catch, "{:?}", a.kind);
+    }
+
+    /// Ticks `f` with no input until it stands in `Wait`.
+    fn settle(f: &mut Fighter, other: &mut Fighter) {
+        for _ in 0..900 {
+            if f.status.status == Status::Wait && other.status.status == Status::Wait {
+                return;
+            }
+            press(f, 0, 0);
+            press(other, 0, 0);
+            tick(f);
+            exchange(f, other);
+            tick(other);
+            exchange(other, f);
+        }
+        panic!(
+            "{:?} {:?} / {:?} {:?} never settled",
+            f.kind, f.status.status, other.kind, other.status.status
+        );
+    }
+
+    /// `attacker` jabs `victim` from up close: whether the jab deals damage.
+    fn jab_lands(attacker: &mut Fighter, victim: &mut Fighter) -> bool {
+        victim.pos = attacker.pos + Vec3::new(90.0 * attacker.facing.sign(), 0.0, 0.0);
+        victim.facing = attacker.facing.flipped();
+        let before = victim.damage;
+        for i in 0..20 {
+            let a = if i == 0 { N64Buttons::A } else { 0 };
+            press(attacker, a, 0);
+            press(victim, 0, 0);
+            tick(attacker);
+            tick(victim);
+            crate::combat::resolve_frame(&mut [&mut *attacker, &mut *victim]);
+            if victim.damage != before {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Mario's whiffed `Catch`, hit out of on its third frame: the damage
+    /// status clears `is_catchstatus`, so Mario's attacks land again.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_catch_hit_out_of_leaves_no_catch_status() {
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 900.0);
+        start_catch(&mut mario, &mut dummy);
+        for _ in 0..2 {
+            press(&mut mario, 0, 0);
+            press(&mut dummy, 0, 0);
+            frame(&mut mario, &mut dummy);
+        }
+        assert_eq!(mario.status.status, Status::Catch);
+        let at = mario.pos + Vec3::new(100.0, 0.0, 0.0);
+        assert!(crate::combat::direct_hit(
+            &mut mario,
+            light_hit(),
+            at,
+            -1.0,
+            9,
+            crate::combat::DamageBy::World,
+        ));
+        crate::combat::finish_frame(&mut [&mut mario]);
+        assert_ne!(mario.status.status, Status::Catch);
+        assert!(!mario.grab.is_catchstatus, "{:?}", mario.status.status);
+        assert!(!immune(&mario));
+        settle(&mut mario, &mut dummy);
+        assert!(jab_lands(&mut mario, &mut dummy), "Mario's jab never lands");
+    }
+
+    /// `ftCommonCatchProcMap`'s `ftCommonCatchCaptureSetStatusRelease`:
+    /// walking off an edge mid-`Catch` falls with no catch status, and a
+    /// catcher that was holding is grabbable again.
+    #[test]
+    fn a_ledge_fall_mid_catch_leaves_no_catch_status_or_immunity() {
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 900.0);
+        start_catch(&mut mario, &mut dummy);
+        press(&mut mario, 0, 0);
+        frame(&mut mario, &mut dummy);
+        mario.floor = None;
+        assert!(on_ground_lost(&mut mario));
+        assert_eq!(mario.status.status, Status::Fall);
+        assert!(!mario.grab.is_catchstatus);
+        assert!(!crate::combat::is_catchstatus(&mario));
+        assert!(!immune(&mario));
+
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+        grab(&mut mario, &mut dummy);
+        to_catch_wait(&mut mario, &mut dummy);
+        mario.floor = None;
+        assert!(on_ground_lost(&mut mario));
+        exchange(&mut mario, &mut dummy);
+        assert_eq!(mario.status.status, Status::Fall);
+        assert!(!mario.grab.is_catchstatus);
+        assert!(!immune(&mario), "the dropped catcher is grabbable");
+        assert!(!immune(&dummy), "the dropped fighter is grabbable");
+    }
+
+    /// Every playable fighter grabs on its catch box's first frame, throws,
+    /// and afterwards both fighters can be grabbed and hit again.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn every_fighter_grab_throw_then_regrab_and_hit() {
+        for &kind in FighterKind::PLAYABLE {
+            let mut catcher = grounded(kind, 0, 0.0);
+            let mut held = grounded(FighterKind::Mario, 1, 150.0);
+            held.facing = Facing::Left;
+            start_catch(&mut catcher, &mut held);
+            let window = catch_coll_frames(kind);
+            let mut caught_at = None;
+            for _ in 0..60 {
+                let clock = catcher.status.clock;
+                press(&mut catcher, 0, 0);
+                press(&mut held, 0, 0);
+                frame(&mut catcher, &mut held);
+                if catcher.grab.catch.is_some() {
+                    caught_at = Some(clock + 1.0);
+                    break;
+                }
+            }
+            let at = caught_at.unwrap_or_else(|| panic!("{kind:?} never grabbed"));
+            assert!(
+                window.contains(&at),
+                "{kind:?} caught at {at}, window {window:?}"
+            );
+            to_catch_wait(&mut catcher, &mut held);
+            // Kirby's suplex rises and falls by its figatree's root motion,
+            // which a host test has no skeleton for: Kirby throws back.
+            let back = crate::kirby::is_kirby(kind);
+            for _ in 0..200 {
+                if back {
+                    let stick = (-80.0 * catcher.facing.sign()) as i8;
+                    press(&mut catcher, 0, stick);
+                } else {
+                    press(&mut catcher, N64Buttons::A, 0);
+                }
+                press(&mut held, 0, 0);
+                frame(&mut catcher, &mut held);
+                press(&mut catcher, 0, 0);
+                frame(&mut catcher, &mut held);
+                if held.grab.capture.is_none() && catcher.grab.catch.is_none() {
+                    break;
+                }
+            }
+            assert!(held.grab.capture.is_none(), "{kind:?}: never released");
+            assert!(held.damage > 0, "{kind:?}: the throw dealt no damage");
+            settle(&mut catcher, &mut held);
+            assert!(!catcher.grab.is_catchstatus, "{kind:?}");
+            assert!(!immune(&catcher), "{kind:?}: catcher stays immune");
+            assert!(!immune(&held), "{kind:?}: thrown fighter stays immune");
+            // Re-grab, from the front.
+            held.pos = catcher.pos + Vec3::new(150.0 * catcher.facing.sign(), 0.0, 0.0);
+            held.facing = catcher.facing.flipped();
+            start_catch(&mut catcher, &mut held);
+            for _ in 0..60 {
+                press(&mut catcher, 0, 0);
+                press(&mut held, 0, 0);
+                frame(&mut catcher, &mut held);
+                if catcher.grab.catch.is_some() {
+                    break;
+                }
+            }
+            assert_eq!(catcher.grab.catch, Some(1), "{kind:?}: no re-grab");
+            // Hit out of the hold: both fighters take damage statuses.
+            let at = held.pos;
+            assert!(crate::combat::direct_hit(
+                &mut catcher,
+                light_hit(),
+                at,
+                1.0,
+                9,
+                crate::combat::DamageBy::World,
+            ));
+            crate::combat::finish_frame(&mut [&mut catcher, &mut held]);
+            exchange(&mut catcher, &mut held);
+            exchange(&mut held, &mut catcher);
+            settle(&mut catcher, &mut held);
+            assert!(!catcher.grab.is_catchstatus, "{kind:?}");
+            assert!(!immune(&catcher) && !immune(&held), "{kind:?}");
+            assert!(
+                jab_lands(&mut catcher, &mut held),
+                "{kind:?}: jab never lands"
+            );
+            settle(&mut catcher, &mut held);
+            assert!(
+                jab_lands(&mut held, &mut catcher),
+                "{kind:?}: held's jab never lands"
+            );
+        }
+    }
+
+    /// `ftMainProcSearchCatch` in link order, then the exchanges, as the
+    /// match loop runs them.
+    fn search_in_order(fs: &mut [&mut Fighter]) {
+        let n = fs.len();
+        for i in 0..n {
+            let caught = {
+                let others = fs
+                    .iter()
+                    .enumerate()
+                    .filter(|&(j, _)| j != i)
+                    .map(|(_, f)| &**f);
+                nearest_catch(fs[i], others, TeamRules::FREE_FOR_ALL)
+            };
+            let Some(j) = caught.and_then(|port| fs.iter().position(|f| f.port == port)) else {
+                continue;
+            };
+            let (lo, hi) = fs.split_at_mut(i.max(j));
+            let (catcher, other) = if i < j {
+                (&mut *lo[i], &mut *hi[0])
+            } else {
+                (&mut *hi[0], &mut *lo[j])
+            };
+            search_catch(catcher, other, TeamRules::FREE_FOR_ALL);
+        }
+        for i in 0..n {
+            for j in 0..n {
+                if i != j && partner(fs[i]) == Some(fs[j].port) {
+                    let (lo, hi) = fs.split_at_mut(i.max(j));
+                    let (a, b) = if i < j {
+                        (&mut *lo[i], &mut *hi[0])
+                    } else {
+                        (&mut *hi[0], &mut *lo[j])
+                    };
+                    exchange(a, b);
+                }
+            }
+        }
+    }
+
+    /// `ftMainProcSearchCatch` runs `proc_catch` and `proc_capture` inside
+    /// each fighter's search: a fighter grabbed earlier in the frame is in
+    /// `CapturePulled` (no catch status, immune) when the later fighters
+    /// search. Two catchers never share one victim, and a victim never
+    /// grabs on the frame it is grabbed.
+    #[test]
+    fn same_frame_catches_take_one_victim_once() {
+        let at_catch = |kind, port, x: f32, facing| {
+            let mut f = grounded(kind, port, x);
+            f.facing = facing;
+            set_catch(&mut f);
+            // Into the catch box's first frame.
+            while !catch_coll_frames(f.kind).contains(&f.status.clock) {
+                status::play_anim(&mut f);
+            }
+            f
+        };
+        // Two catchers, one victim between them.
+        let mut a = at_catch(FighterKind::Mario, 0, 0.0, Facing::Right);
+        let mut b = grounded(FighterKind::Mario, 1, 150.0);
+        let mut c = at_catch(FighterKind::Mario, 2, 300.0, Facing::Left);
+        search_in_order(&mut [&mut a, &mut b, &mut c]);
+        let holders = [a.grab.catch, c.grab.catch].iter().flatten().count();
+        assert_eq!(holders, 1, "a {:?} c {:?}", a.grab.catch, c.grab.catch);
+        assert_eq!(a.grab.catch, Some(1), "the first in link order wins");
+        assert_ne!(c.status.status, Status::CatchPull);
+        assert_eq!(b.grab.capture, Some(0));
+
+        // A chain: a grabs b while b's own box touches c.
+        let mut a = at_catch(FighterKind::Mario, 0, 0.0, Facing::Right);
+        let mut b = at_catch(FighterKind::Mario, 1, 150.0, Facing::Right);
+        let mut c = grounded(FighterKind::Mario, 2, 300.0);
+        search_in_order(&mut [&mut a, &mut b, &mut c]);
+        assert_eq!(a.grab.catch, Some(1));
+        assert_eq!(b.grab.capture, Some(0));
+        assert_eq!(b.grab.catch, None, "b was grabbed before its search");
+        assert!(c.grab.capture.is_none());
+        assert_eq!(c.status.status, Status::Wait);
+
+        // Face to face, same frame: one catch.
+        let mut a = at_catch(FighterKind::Mario, 0, 0.0, Facing::Right);
+        let mut b = at_catch(FighterKind::Mario, 1, 150.0, Facing::Left);
+        search_in_order(&mut [&mut a, &mut b]);
+        assert_eq!(a.grab.catch, Some(1));
+        assert_eq!(b.grab.catch, None);
+        assert_eq!(b.status.status, Status::CapturePulled);
     }
 }

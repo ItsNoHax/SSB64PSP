@@ -223,7 +223,7 @@ pub fn catch(f: &mut Fighter, held: &Fighter) {
         YoshiStatus::SpecialNCatch
     };
     set(f, next, frame, SPECIAL_N_LENGTH);
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     physics::stop_all(&mut f.physics);
     f.grab.catch = Some(held.port);
     f.grab.catch_kind = Some(held.kind);
@@ -239,7 +239,7 @@ fn set_release(f: &mut Fighter) {
     };
     set(f, next, 0.0, SPECIAL_N_RELEASE_LENGTH);
     status::play_anim_events(f);
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
 }
 
 /// `ftYoshiSpecialNCatchUpdateCaptureVars`.
@@ -250,7 +250,7 @@ fn update_capture_vars(f: &mut Fighter) {
     if crossed(f, EGG_LAY_LAY_FRAME) && f.grab.catch.take().is_some() {
         f.grab.catch_kind = None;
         f.grab.send(GrabEvent::YoshiEggStage(3));
-        f.grab.capture_immune = false;
+        f.grab.capture_immune_mask = crate::grab::catch_kind::NONE;
     }
 }
 

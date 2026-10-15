@@ -73,7 +73,7 @@ impl Jungle {
 pub fn check_tarucann(f: &Fighter, barrel: Vec3, taken: bool) -> bool {
     if f.hazard.tarucann_wait != 0
         || f.status.status == AnyStatus::Common(Status::TaruCann)
-        || f.grab.capture_immune
+        || f.grab.capture_immune_mask & crate::grab::catch_kind::TARU_CANN != 0
     {
         return false;
     }

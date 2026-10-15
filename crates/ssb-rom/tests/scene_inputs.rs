@@ -374,7 +374,7 @@ fn yoshi_egg_lays_the_dummy_in_an_egg() {
             {
                 ssb_game::grab::search_catch(
                     &mut catcher.fighter,
-                    &other.fighter,
+                    &mut other.fighter,
                     ssb_game::team::TeamRules::FREE_FOR_ALL,
                 );
             }

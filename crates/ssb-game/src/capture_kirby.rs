@@ -104,7 +104,7 @@ pub fn capture(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     // `ftCommonCaptureKirbyProcCapture` plays the first frame (RE-474).
     status::play_anim_events(f);
     f.kirby_capture = CaptureKirbyState::default();
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     physics::stop_all(&mut f.physics);
     f.hitstun = 0;
     place(f, holder);
@@ -146,7 +146,7 @@ pub fn update_held(f: &mut Fighter, holder: Holder) {
 /// `ftCommonCaptureWaitKirbySetStatus`.
 fn set_capture_wait(f: &mut Fighter) {
     status::set_status(f, Status::CaptureWaitKirby, 0.0, StatusTiming::unknown());
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     f.is_invisible = true;
     f.kirby_capture.intangible = true;
     grab::init_breakout(f, WAIT_BREAKOUT);
@@ -239,7 +239,7 @@ pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, owner: crate::thrown::Th
     f.physics.vel_air = vel;
     f.physics.vel_ground = Vec3::ZERO;
     f.physics.vel_knockback = Vec3::ZERO;
-    f.grab.capture_immune = true;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     f.is_invisible = true;
     f.is_shadow_hidden = true;
     f.interface.tag_wait = 1;
@@ -267,7 +267,7 @@ fn escape(f: &mut Fighter) {
     );
     f.interface.tag_wait = 1;
     f.kirby_capture.intangible = false;
-    f.grab.capture_immune = false;
+    f.grab.capture_immune_mask = crate::grab::catch_kind::NONE;
     f.is_invisible = false;
     f.is_shadow_hidden = false;
 }

@@ -11322,7 +11322,8 @@ fn jumptest(path: &Path, opts: &[&str]) -> Res {
         dummy.tick(floors);
         ssb_game::grab::exchange(&mut f, &mut dummy);
         ssb_game::grab::exchange(&mut dummy, &mut f);
-        if ssb_game::grab::search_catch(&mut f, &dummy, ssb_game::team::TeamRules::FREE_FOR_ALL) {
+        if ssb_game::grab::search_catch(&mut f, &mut dummy, ssb_game::team::TeamRules::FREE_FOR_ALL)
+        {
             println!("  *** CATCH at tick {tick} ***");
         }
         ssb_game::grab::exchange(&mut f, &mut dummy);
