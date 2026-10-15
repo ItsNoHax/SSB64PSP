@@ -17,13 +17,14 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-513: Kirby attack100 vulcan puffs with their TopN marks, the
-Link/Captain/Kirby attack100 item-pickup interrupt, the Captain rapid-jab
-frame fix and make-order drawing of link-15 effects, checked against N64
-traces. 1 golden added (`f1-training-kirby-jab`).
-Next, per [`PLAN.md`](PLAN.md#remaining-work): Kirby fighter lighting
-investigation (PSP highlights paler than N64, plus the shadow under the feet),
-then fighter wind-reaction effects and the slope follow-ups.
+RE-514: fighter vertex lighting ported from SSB's F3DEX2 microcode (exact
+against an LLE RSP, 768/768) and lit on the CPU in `meshdraw`; the fighter
+shadow regression since RE-487 fixed and its depth test removed. Goldens
+rebaselined (lit fighters, restored shadows, animated stage lights).
+Next, per [`PLAN.md`](PLAN.md#remaining-work): Training stock icons next to
+the damage displays, then fighter wind-reaction effects and the slope
+follow-ups. MS8 gains the single-pass vertex lighting and a PSP-2000 check of
+its +1.6 ms CPU cost.
 
 ## Blockers
 

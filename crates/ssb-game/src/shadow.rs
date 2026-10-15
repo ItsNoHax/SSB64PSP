@@ -25,9 +25,11 @@ pub struct RenderState {
     pub cull: bool,
 }
 
-/// `G_RM_AA_XLU_SURF`, alpha threshold 15, and no culling.
+/// `G_RM_AA_XLU_SURF`, alpha threshold 15, and no culling. The display list
+/// clears `G_ZBUFFER` and the render mode has no `Z_CMP`, so the source shadow
+/// is drawn without a depth test (RE-514).
 pub const RENDER_STATE: RenderState = RenderState {
-    depth_test: true,
+    depth_test: false,
     depth_write: false,
     alpha_test_greater: 0x0F,
     alpha_blend: true,
@@ -270,9 +272,9 @@ mod tests {
     }
 
     #[test]
-    fn source_material_requires_translucent_depth_test_without_depth_write() {
+    fn source_material_is_translucent_without_depth_test_or_write() {
         let state = core::hint::black_box(RENDER_STATE);
-        assert!(state.depth_test);
+        assert!(!state.depth_test);
         assert!(!state.depth_write);
         assert_eq!(state.alpha_test_greater, 0x0F);
         assert!(state.alpha_blend);

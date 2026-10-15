@@ -55,6 +55,8 @@ closes it.
 
 ### PSP performance and hardware (`MS8`)
 
+- [ ] Lit primitives draw through the expanded per-corner path: light each vertex once and keep the indexed draw (RE-514).
+- [ ] Confirm the RE-514 CPU lighting cost on a physical PSP-2000 (`vs4@2400` profile; +1.6 ms CPU under PPSSPP) (RE-514).
 - [ ] By hand on the PSP-2000, with the installed production EBOOT (`target/release-audio/EBOOT.PBP`, pack v108; the attract loop already runs clean, RE-479): the campaign past Race to the Finish, then RE-476/RE-477's checks (RE-476, RE-477, RE-478).
 - [ ] Measure D-047's GE fill cost on a PSP-2000: the battle viewport covers 19% more pixels; profile `vs4@4000`, the opening and the selects (`ge` span) (RE-477).
 - [ ] Opening CPU cost on a PSP-2000 (~3.5× PPSSPP): Run, Yoster/Sector and Clash at 45–57 FPS with 12–14 ms of CPU, mostly the movie draw's mesh lists; each opening fight's first frame takes 21–40 ms. Cached, written-back vertex blocks gave +0.89 FPS and -163 us CPU on `vs4@2400` in a same-binary toggle but are neutral in the vsync-bound opening (RE-499). Next: the battle's first frame (RE-469, RE-470, RE-471, RE-476).
@@ -83,8 +85,7 @@ closes it.
 - [x] Sword-trail (afterimage) renderer for Link and the Beam Sword, with the magnifier pass, and the Pikachu Thunder Shock spark with its TopN query-mark timing; 4 goldens rebaselined or added (RE-512).
 - [ ] Thunder Shock spark ejection on a status change was not observed on the N64 (decomp only), and the Pikachu trace is short; capture a longer one (RE-512).
 - [x] Kirby attack100 vulcan puffs (link-15 display, TopN query marks), Link/Captain/Kirby attack100 item-pickup interrupt, Captain rapid-jab flag-1 frames 6/14/22/30/37 with a 40-frame loop, link-15 displays drawn in make order; against N64 traces; 1 golden added (RE-513).
-- [ ] NEXT: Kirby fighter lighting/shading: PSP highlights are paler than N64 (same frame PSP ~(255,237,250) vs N64 (255,164,184)); affects every Kirby golden. Suspect `psp-runtime/src/meshdraw.rs:408` `configure_fighter_light`/`install_directional_light` (N64 clamps lit shade before the material multiply?). Evidence: RE-513 "Kirby shading".
-- [ ] Kirby shadow under the feet differs from the N64 (rows 164-168, x 210-222 on `f1-training-kirby-jab`: N64 (154,113,62), PSP (247,181,99)) (RE-513).
+- [x] Fighter lighting from the F3DEX2 microcode (CPU vertex lighting, normalised direction, shade clamp before PRIM; LLE 768/768) and the fighter shadow (matrix regression, no depth test) (RE-514).
 - [ ] N64 shows stock icons next to the 0% damage displays in Training; the PSP does not (RE-513).
 - [ ] Optional: narrow the vs-four golden change to catch/thrown/relz/pulled; marks-only pixel share of the 27 display-plus-marks rows (RE-511).
 - [ ] Tooling: `tools/golden.sh` mem-line regex `[^\r]*` stops at the letter r; `SSB64_ROM` must be an absolute path for golden.sh.

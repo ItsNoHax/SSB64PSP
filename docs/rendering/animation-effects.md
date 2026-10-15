@@ -124,7 +124,7 @@ Status: complete for the Training runtime (RE-302).
 - Clips `x ± FTAttributes::shadow_size` to the floor line and follows up to
   two bends (eight-vertex capacity).
 - Texture: file 84 `0x3A68`, 16×16 I4, mirror-repeat pre-baked.
-- Material: black `(0,0,0,0xA0)`, `AA_XLU_SURF` depth test without write,
+- Material: black `(0,0,0,0xA0)`, `AA_XLU_SURF` without depth test or write (RE-514),
   alpha threshold `0x0F`, blended, unlit, no cull.
 - Drawn after stage geometry, before fighters. No altitude fade.
 - Hidden during entry, KO/sleep and rebirth.

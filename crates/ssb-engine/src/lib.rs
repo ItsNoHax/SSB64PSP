@@ -28,6 +28,7 @@ pub mod math;
 pub mod memops;
 pub mod memory;
 pub mod renderer;
+pub mod rsp_light;
 pub mod timing;
 
 pub use math::{Mat4, Vec2, Vec3};

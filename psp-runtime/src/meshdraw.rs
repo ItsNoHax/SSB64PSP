@@ -22,8 +22,8 @@
 use core::ffi::c_void;
 
 use psp::sys::{
-    self, ClutPixelFormat, GuPrimitive, GuState, LightComponent, LightType, ScePspFMatrix4,
-    ScePspFVector3, ScePspFVector4, TexturePixelFormat, VertexType,
+    self, ClutPixelFormat, GuPrimitive, GuState, ScePspFMatrix4, ScePspFVector4,
+    TexturePixelFormat, VertexType,
 };
 
 // The FPU's `sqrt.s`: correctly rounded on the PSP-2000 (RE-497), so skinning
@@ -190,17 +190,18 @@ pub struct DrawState {
     /// either alone would under-count a real state change if this
     /// piggybacked on those fields.
     last_texture_func: Option<TextureFuncState>,
-    /// Last complete pair of original `G_MW_LIGHTCOL` register values applied
-    /// during the current fighter-light scope. This is deliberately separate
-    /// from `last_flags`: light-colour writes are independent RSP state, so
-    /// two primitives with identical geometry/render flags can still require
-    /// different GE light colours (RE-166).
-    last_fighter_light_colors: ssb_rom::anim_color::Latch<(Option<u32>, Option<u32>)>,
-    /// The combiner's resolved scale on `SHADE`, installed as the GE material
-    /// colour for a runtime-lit primitive.  Vertex colour carried this scale
-    /// while lighting was baked; the GE ignores that vertex colour when
-    /// `sceGuColorMaterial` is disabled, so it must be applied here instead.
-    last_fighter_material_color: ssb_rom::anim_color::Latch<u32>,
+    /// The `G_MW_LIGHTCOL` registers as the RSP holds them inside a light
+    /// scope: `LIGHT_1`'s colour, then `LIGHT_2`'s (the ambient). They are
+    /// independent RSP state, so a primitive that writes neither inherits
+    /// the last values written (RE-166); RGB 0 is an authored value.
+    light_registers: [[u8; 3]; 2],
+    /// `ftDisplayLightsDrawReflect`'s world light direction, as the signed
+    /// bytes its `Light` holds, while [`Self::runtime_fighter_light`] is set.
+    fighter_light: [i8; 3],
+    /// The active light in the current node's object space, cached with the
+    /// world direction it was computed from: `continue_light_dir_xfrm`
+    /// recomputes it whenever the modelview changes (RE-514).
+    node_light: Option<([i8; 3], [i8; 3])>,
     /// `Some` only while the caller has installed SSB64's per-fighter light.
     ///
     /// A `LIT` primitive alone is deliberately insufficient to enable GE
@@ -217,10 +218,7 @@ pub struct DrawState {
     /// [`Self::set_stage_light`]. Only primitives whose `LIGHT_1`/`LIGHT_2`
     /// register is animated (`LIGHT1_ANIM`/`LIGHT2_ANIM`, RE-322) light with
     /// it; every other stage primitive keeps its baked shade.
-    stage_light: Option<ScePspFVector3>,
-    /// Whether the GE's light 0 currently holds [`Self::stage_light`]. The
-    /// fighter scope reprograms the same channel, so it clears this.
-    stage_light_installed: bool,
+    stage_light: Option<[i8; 3]>,
     /// `Some` while an item colour animation's draw has installed its
     /// constant fog ([`crate::gu::Gpu::set_constant_fog`]): only
     /// [`flags::ENV_LERP`] primitives, whose second combiner cycle blends
@@ -369,14 +367,12 @@ impl DrawState {
         self.last_texture = None;
         self.last_flags = None;
         self.last_texture_func = None;
-        self.last_fighter_light_colors.invalidate();
-        self.last_fighter_material_color.invalidate();
         self.last_texture_mapping = None;
         self.texgen_model = None;
         self.runtime_fighter_light = false;
         self.authored_lights_only = false;
         self.stage_light = None;
-        self.stage_light_installed = false;
+        self.node_light = None;
         self.env_lerp_fog = None;
         self.draws = 0;
         self.triangles = 0;
@@ -397,23 +393,27 @@ impl DrawState {
         self.env_lerp_fog = None;
     }
 
-    /// Installs the original fighter display's one directional light.
+    /// Records the original fighter display's one directional light.
     ///
     /// `ftDisplayLightsDrawReflect` converts the stage's X/Y angles (degrees)
     /// into this exact direction before each fighter draw.  The original
     /// follows it with `gSPNumLights(1)`/`gSPLight(..., 1)`: one directional
-    /// source plus LIGHT_2 as ambient. Literal-colour primitives remain safe
-    /// because [`apply_material`] enables `GuState::Lighting` only when both
-    /// this context and their packed `flags::LIT` are present.
+    /// source plus LIGHT_2 as ambient. Only primitives with `flags::LIT`
+    /// light; [`draw_mesh_vertices`] shades them on the CPU with the RSP's
+    /// own arithmetic (RE-514), so nothing is written to the GE here.
+    ///
+    /// # Safety
+    ///
+    /// None beyond the other `DrawState` entry points; kept `unsafe` with
+    /// [`Self::finish_fighter_light`], which writes GE state.
     pub unsafe fn configure_fighter_light(&mut self, angles_degrees: [f32; 2]) {
-        install_directional_light(&light_direction(angles_degrees));
+        self.fighter_light = ssb_engine::rsp_light::reflect_light_dir(angles_degrees);
         self.runtime_fighter_light = true;
-        self.stage_light_installed = false;
-        self.last_fighter_light_colors.invalidate();
-        self.last_fighter_material_color.invalidate();
+        // A primitive that writes no ambient reads 0, as the GE path did.
+        self.light_registers[1] = [0; 3];
     }
 
-    /// Installs the stage light for the items' draw (RE-441). Items draw
+    /// Lights the items' draw with the stage light (RE-441). Items draw
     /// after the fighters, the last of which restored the stage's light
     /// (`ftDisplayMainProcDisplay`), under the pass's `G_LIGHTING`. Only a
     /// primitive whose list writes both `G_MW_LIGHTCOL` registers is lit at
@@ -430,73 +430,66 @@ impl DrawState {
     /// `sc1PGameFuncLights`/`scVSBattleFuncLights` enable `G_LIGHTING` and
     /// load one directional light from the stage's `light_angle.x/y` before
     /// anything draws; a stage `MObj` that animates `LIGHT_1`/`LIGHT_2` is lit
-    /// by it. Nothing is written to the GE here: the first animated-light
-    /// primitive installs it, so frames without one cost nothing.
+    /// by it.
     pub fn set_stage_light(&mut self, angles_degrees: [f32; 2]) {
-        self.stage_light = Some(light_direction(angles_degrees));
-        self.stage_light_installed = false;
+        self.stage_light = Some(ssb_engine::rsp_light::reflect_light_dir(angles_degrees));
     }
 
-    /// Installs [`Self::stage_light`] on the GE if a fighter scope or a new
-    /// frame replaced it.
-    unsafe fn ensure_stage_light(&mut self) {
-        if self.stage_light_installed {
-            return;
+    /// The world light a lit primitive of the current scope reads: the
+    /// fighter display's inside its scope, else the stage's.
+    fn active_light(&self) -> Option<[i8; 3]> {
+        if self.runtime_fighter_light {
+            Some(self.fighter_light)
+        } else {
+            self.stage_light
         }
-        if let Some(direction) = self.stage_light {
-            install_directional_light(&direction);
-            self.stage_light_installed = true;
-            self.last_fighter_light_colors.invalidate();
-            self.last_fighter_material_color.invalidate();
-            self.state_changes += 1;
+    }
+
+    /// [`Self::active_light`] in the current node's object space, as
+    /// `continue_light_dir_xfrm` stores it (RE-514).
+    fn object_light(&mut self) -> Option<[i8; 3]> {
+        let world = self.active_light()?;
+        if let Some((cached, object)) = self.node_light {
+            if cached == world {
+                return Some(object);
+            }
         }
+        let object = ssb_engine::rsp_light::object_light_dir(
+            self.texgen_model.map_or(IDENTITY_ROWS, |m| matrix_rows(&m)),
+            world,
+        );
+        self.node_light = Some((world, object));
+        Some(object)
     }
 }
 
-/// `ftDisplayLightsDrawReflect`'s direction from the stage's X/Y angles.
-/// The table `lbCommonSin`/`lbCommonCos` with the original's signs: the
-/// table truncates its index, so `-sin(-a)` and `cos(-a)` are not `sin(a)`
-/// and `cos(a)`. `F_CLC_DTOR32` multiplies by pi before dividing by 180.
-fn light_direction(angles_degrees: [f32; 2]) -> ScePspFVector3 {
-    use ssb_engine::math::{lb_cos, lb_sin};
-    let pi = core::f32::consts::PI;
-    let angle_y = angles_degrees[1] * pi / 180.0;
-    let angle_x = angles_degrees[0] * pi / 180.0;
-    let y = -lb_sin(-angle_y);
-    let z = lb_cos(-angle_y);
-    let x = lb_sin(angle_x) * z;
-    ScePspFVector3 {
-        x,
-        y,
-        z: z * lb_cos(angle_x),
-    }
+/// `m` as a [`ssb_rom::scene::Mat4`]: the same 16 floats, axis images first.
+fn mat4_of(m: &ScePspFMatrix4) -> ssb_rom::scene::Mat4 {
+    ssb_rom::scene::Mat4([
+        m.x.x, m.x.y, m.x.z, m.x.w, m.y.x, m.y.y, m.y.z, m.y.w, m.z.x, m.z.y, m.z.z, m.z.w, m.w.x,
+        m.w.y, m.w.z, m.w.w,
+    ])
 }
 
-/// Programs GE light 0 as the original's one directional light plus LIGHT_2
-/// ambient, with a white material and vertex colour ignored.
-unsafe fn install_directional_light(direction: &ScePspFVector3) {
-    // The GE otherwise treats the packed colour as a material colour.
-    // For a lit N64 vertex those bytes are a normal, not a colour; leave
-    // material white and source colour solely from the directional light.
-    sys::sceGuColorMaterial(LightComponent::empty());
-    sys::sceGuMaterial(
-        LightComponent::AMBIENT | LightComponent::DIFFUSE,
-        0xFFFF_FFFF,
-    );
-    // The actual LIGHT_1/LIGHT_2 colours are material state and are
-    // applied from each `PrimDesc` below. Start neutral so a primitive
-    // that contains no colour command cannot inherit a prior render pass.
-    sys::sceGuAmbient(0);
-    sys::sceGuLight(
-        0,
-        LightType::Directional,
-        LightComponent::DIFFUSE,
-        direction,
-    );
-    // `sceGuLight` programs the channel but does not enable it. Both the
-    // per-channel gate and the per-primitive `Lighting` gate below are
-    // required; omitting this left only LIGHT_2's gray ambient term.
-    sys::sceGuEnable(GuState::Light0);
+/// [`matrix_rows`] of a [`ssb_rom::scene::Mat4`].
+fn mat4_rows(m: &ssb_rom::scene::Mat4) -> [[f32; 3]; 3] {
+    [
+        [m.0[0], m.0[1], m.0[2]],
+        [m.0[4], m.0[5], m.0[6]],
+        [m.0[8], m.0[9], m.0[10]],
+    ]
+}
+
+/// The identity 3x3, for a draw before any node matrix is placed.
+const IDENTITY_ROWS: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+/// `m`'s 3x3 as the images of the three object axes (the N64 `Mtx` rows).
+fn matrix_rows(m: &ScePspFMatrix4) -> [[f32; 3]; 3] {
+    [
+        [m.x.x, m.x.y, m.x.z],
+        [m.y.x, m.y.y, m.y.z],
+        [m.z.x, m.z.y, m.z.z],
+    ]
 }
 
 impl DrawState {
@@ -507,10 +500,7 @@ impl DrawState {
     pub unsafe fn finish_fighter_light(&mut self) {
         self.runtime_fighter_light = false;
         self.authored_lights_only = false;
-        self.stage_light_installed = false;
         self.last_flags = None;
-        self.last_fighter_light_colors.invalidate();
-        self.last_fighter_material_color.invalidate();
         sys::sceGuDisable(GuState::Lighting);
         sys::sceGuDisable(GuState::Light0);
     }
@@ -571,9 +561,6 @@ impl DrawState {
         self.last_texture = None;
         self.last_flags = None;
         self.last_texture_func = None;
-        self.last_fighter_light_colors.invalidate();
-        self.last_fighter_material_color.invalidate();
-        self.stage_light_installed = false;
         self.last_texture_mapping = None;
     }
 
@@ -583,6 +570,7 @@ impl DrawState {
     /// the texgen path never has to reconstruct it.
     pub fn set_model_matrix(&mut self, m: ScePspFMatrix4) {
         self.texgen_model = Some(m);
+        self.node_light = None;
         // The matrix is part of the generated-coordinate mapping, so a node
         // change has to reinstall it even when nothing else about the
         // primitive moved. Only the generated mapping depends on it: an
@@ -1129,7 +1117,7 @@ unsafe fn apply_material(
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
-) {
+) -> ssb_rom::anim_color::LightScope {
     let effect_colors = material_colors(st.color_override, p, mat_anim, effect_mat_anim);
     let authored = flags::LIGHT1_COLOR | flags::LIGHT2_COLOR;
     let light_scope = ssb_rom::anim_color::light_scope(
@@ -1137,9 +1125,6 @@ unsafe fn apply_material(
         st.runtime_fighter_light && (!st.authored_lights_only || p.flags & authored == authored),
         st.stage_light.is_some(),
     );
-    if light_scope == ssb_rom::anim_color::LightScope::StageAnimated {
-        st.ensure_stage_light();
-    }
     if let Some(on) = st.env_lerp_fog {
         let want = p.flags & flags::ENV_LERP != 0;
         if want != on {
@@ -1158,7 +1143,7 @@ unsafe fn apply_material(
         st.last_flags = None;
     }
     if st.last_flags != Some(p.flags) {
-        apply_flags_state(p, st, light_scope);
+        apply_flags_state(p, st);
     }
     // `G_RM_AA_ZB_XLU_SURF2` at the fighter's `ENV` alpha (RE-464): the
     // pixel is `COMBINED * a + MEMORY * (1 - a)`. The fixed factors carry
@@ -1169,41 +1154,16 @@ unsafe fn apply_material(
     }
 
     // `gSPLightColor` is independent of geometry mode and every other
-    // material bit. Do not hide it behind `last_flags`: a later MObj/display
-    // list may write a new colour while retaining the same flags. Presence is
-    // carried explicitly because RGB=0 is an authored light state, not an
-    // absent write (RE-166).
+    // material bit: a later MObj/display list may write a new colour while
+    // retaining the same flags. Presence is carried explicitly because
+    // RGB=0 is an authored light state, not an absent write (RE-166). The
+    // registers feed the CPU shade of [`draw_mesh_vertices`] (RE-514).
     if light_scope != ssb_rom::anim_color::LightScope::Off {
         let colors = ssb_rom::anim_color::light_registers(effect_colors, p);
-        if st.last_fighter_light_colors.set(colors) {
-            st.state_changes += 1;
-            if let Some(color) = colors.0 {
-                sys::sceGuLightColor(0, LightComponent::DIFFUSE, color);
+        for (register, color) in st.light_registers.iter_mut().zip([colors.0, colors.1]) {
+            if let Some(color) = color {
+                *register = [color as u8, (color >> 8) as u8, (color >> 16) as u8];
             }
-            if let Some(color) = colors.1 {
-                sys::sceGuAmbient(color);
-            }
-        }
-
-        // The N64 combiner applies `prim_color` after lighting as a scale on
-        // SHADE (`PRIM * SHADE` for Mario's costume materials). RE-106 folded
-        // that scale into vertex colour for the baked-light path, but GE
-        // lighting does not read vertex colour with ColorMaterial disabled.
-        // Applying the same scale as both ambient and diffuse material colour
-        // reproduces `(ambient + diffuse) * PRIM`; leaving it white preserves
-        // an identity/absent scale. This is source combiner state already
-        // retained in PrimDesc, not a colour chosen from the screenshot.
-        let material_color = if p.prim_color == 0 {
-            0xFFFF_FFFF
-        } else {
-            p.prim_color
-        };
-        if st.last_fighter_material_color.set(material_color) {
-            st.state_changes += 1;
-            sys::sceGuMaterial(
-                LightComponent::AMBIENT | LightComponent::DIFFUSE,
-                material_color,
-            );
         }
     }
 
@@ -1292,6 +1252,7 @@ unsafe fn apply_material(
             }
         }
     }
+    light_scope
 }
 
 /// [`apply_material`]'s fading-fighter blend (RE-464). Out of line and
@@ -1317,11 +1278,7 @@ unsafe fn apply_fade_blend(a: u8) {
 /// one's. Kept inline: out of line, even placed beside the per-mesh path,
 /// the PSP-2000 drew slower.
 #[inline(always)]
-unsafe fn apply_flags_state(
-    p: &PrimDesc,
-    st: &mut DrawState,
-    light_scope: ssb_rom::anim_color::LightScope,
-) {
+unsafe fn apply_flags_state(p: &PrimDesc, st: &mut DrawState) {
     st.last_flags = Some(p.flags);
     st.state_changes += 1;
 
@@ -1350,21 +1307,10 @@ unsafe fn apply_flags_state(
     // the primitive's own `G_TEXTURE` scale, neither of which `flags`
     // alone determines.
 
-    // `ftDisplayMainProcDisplay` enables N64 `G_LIGHTING` for the fighter
-    // pass, but not every primitive carries normals: decals and other
-    // authored literal-colour material draws must stay literal.  The pack
-    // records that source distinction as `LIT`; GE lighting is a draw
-    // state, so make the equivalent decision at the same granularity.
-    //
-    // RE-322: a stage primitive whose light colour is animated lights
-    // too, under the scene's stage light. Its flags carry
-    // `LIGHT1_ANIM`/`LIGHT2_ANIM`, so no other primitive shares this
-    // cached decision.
-    if light_scope != ssb_rom::anim_color::LightScope::Off {
-        sys::sceGuEnable(GuState::Lighting);
-    } else {
-        sys::sceGuDisable(GuState::Lighting);
-    }
+    // GE lighting stays off: a `LIT` primitive's shade is computed on the
+    // CPU with the RSP's integer arithmetic, which clamps before the
+    // combiner's `PRIM` multiply where the GE cannot (RE-514).
+    sys::sceGuDisable(GuState::Lighting);
 
     // RE-244 through RE-250 (`R2.2`/C3): `DEPTH_TEST`/`DEPTH_WRITE` are
     // `G_SETRENDERMODE`'s own `Z_CMP`/`Z_UPD` bits, seeded from the same
@@ -1599,8 +1545,14 @@ unsafe fn draw_mesh_vertices(
         st.texture_override = st
             .texture_part_mesh
             .and_then(|mesh| texture_part_override(pack, mesh, i, st.texture_part_ids));
-        apply_material(pack, &p, st, mat_anim, effect_mat_anim);
+        let light_scope = apply_material(pack, &p, st, mat_anim, effect_mat_anim);
         st.texture_override = None;
+        let lit = if light_scope == ssb_rom::anim_color::LightScope::Off {
+            None
+        } else {
+            st.object_light()
+                .map(|dir| LitPrim::new(&p, dir, st.light_registers))
+        };
 
         let effect_colors = material_colors(st.color_override, &p, mat_anim, effect_mat_anim)
             .filter(|c| c.prim.is_some() || c.env.is_some());
@@ -1611,9 +1563,18 @@ unsafe fn draw_mesh_vertices(
         // One submission, kept so a two-tile blend's second pass redraws the
         // exact same vertices (RE-321).
         let submission = if signed_clamp_uv {
-            expand_float_uv_corners(&p, indices, verts, effect_colors)
-        } else if effect_colors.is_some() || linear_texgen {
-            expand_corners(pack, &p, st, indices, verts, effect_colors, linear_texgen)
+            expand_float_uv_corners(&p, indices, verts, effect_colors, lit)
+        } else if effect_colors.is_some() || linear_texgen || lit.is_some() {
+            expand_corners(
+                pack,
+                &p,
+                st,
+                indices,
+                verts,
+                effect_colors,
+                linear_texgen,
+                lit,
+            )
         } else {
             (
                 VERTEX_FORMAT,
@@ -1675,6 +1636,7 @@ unsafe fn expand_float_uv_corners(
     indices: &[u8],
     verts: &[u8],
     effect_colors: Option<ssb_rom::skeleton::EffectColors>,
+    lit: Option<LitPrim>,
 ) -> (VertexType, *const c_void, *const c_void) {
     // N64 authored UVs are signed S10.5. The GE's 16-bit texture
     // field is *unsigned*, so a negative value such as Fox's -41 is
@@ -1692,6 +1654,9 @@ unsafe fn expand_float_uv_corners(
             .get(source_offset..source_offset + core::mem::size_of::<PackedVertex>())
             .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
             .unwrap_or_default();
+        if let Some(l) = lit {
+            source.color = l.color(&source, light_mark(verts, source_offset));
+        }
         if let Some(colors) = effect_colors {
             source.color = colors.vertex_color(source.color, p.flags);
         }
@@ -1716,12 +1681,79 @@ unsafe fn expand_float_uv_corners(
     )
 }
 
-/// [`draw_mesh_vertices`]' recoloured or linear-texgen submission: each
-/// indexed corner expanded into display-list memory. Out of line and cold:
-/// a minority of primitives take it, and keeping it apart leaves the
-/// per-mesh path's code compact in the instruction cache (RE-482).
-#[cold]
+/// A lit primitive's CPU shade (RE-514): the RSP's per-vertex lighting
+/// ([`ssb_engine::rsp_light`]) from the object-space light, the
+/// `G_MW_LIGHTCOL` registers and the combiner's `PRIM` scale on `SHADE`.
+#[derive(Clone, Copy)]
+struct LitPrim {
+    dir: [i8; 3],
+    light: [u8; 3],
+    ambient: [u8; 3],
+    prim: Option<[u8; 3]>,
+    /// `FLAT_COLOR`/`TEXTURE_BLEND` read no shade: the packed colour is the
+    /// combiner's constant and stays.
+    keep_rgb: bool,
+}
+
+impl LitPrim {
+    fn new(p: &PrimDesc, dir: [i8; 3], registers: [[u8; 3]; 2]) -> Self {
+        let prim = (p.prim_color != 0).then(|| {
+            let c = p.prim_color;
+            [c as u8, (c >> 8) as u8, (c >> 16) as u8]
+        });
+        LitPrim {
+            dir,
+            light: registers[0],
+            ambient: registers[1],
+            prim,
+            keep_rgb: p.flags & (flags::FLAT_COLOR | flags::TEXTURE_BLEND) != 0,
+        }
+    }
+
+    /// `v`'s packed colour with its RGB replaced by the lit shade. `mark` is
+    /// the skin loop's precomputed dot product ([`light_mark`]), if any.
+    /// Alpha keeps the packed vertex or `PRIM` alpha.
+    #[inline(always)]
+    fn color(&self, v: &PackedVertex, mark: u16) -> u32 {
+        if self.keep_rgb {
+            return v.color;
+        }
+        let dot = if mark & LIGHT_MARK_SET != 0 {
+            mark & !LIGHT_MARK_SET
+        } else {
+            ssb_engine::rsp_light::dot16([v.nx, v.ny, v.nz], self.dir)
+        };
+        let rgb = ssb_engine::rsp_light::lit_rgb(dot, self.light, self.ambient, self.prim);
+        (v.color & 0xFF00_0000)
+            | u32::from(rgb[2]) << 16
+            | u32::from(rgb[1]) << 8
+            | u32::from(rgb[0])
+    }
+}
+
+/// Byte offset of a packed vertex's two tail-padding bytes, which the GE
+/// never reads. The skin loop stores there the dot product a vertex was lit
+/// with under its *source* joint's modelview, as the RSP lit it at `G_VTX`
+/// time; the pack leaves them zero.
+const LIGHT_MARK_OFFSET: usize = 18;
+/// Set in a [`LIGHT_MARK_OFFSET`] value that holds a dot product.
+const LIGHT_MARK_SET: u16 = 0x8000;
+const _: () = assert!(core::mem::size_of::<PackedVertex>() == LIGHT_MARK_OFFSET + 2);
+
+/// The [`LIGHT_MARK_OFFSET`] value of the vertex at `offset` in `verts`.
+#[inline(always)]
+fn light_mark(verts: &[u8], offset: usize) -> u16 {
+    verts
+        .get(offset + LIGHT_MARK_OFFSET..offset + LIGHT_MARK_OFFSET + 2)
+        .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
+}
+
+/// [`draw_mesh_vertices`]' recoloured, lit or linear-texgen submission: each
+/// indexed corner expanded into display-list memory. Out of line: lit
+/// fighter primitives take it every frame (RE-514); keeping it apart leaves
+/// the per-mesh path's code compact in the instruction cache (RE-482).
 #[inline(never)]
+#[allow(clippy::too_many_arguments)]
 unsafe fn expand_corners(
     pack: &Pack<'_>,
     p: &PrimDesc,
@@ -1730,6 +1762,7 @@ unsafe fn expand_corners(
     verts: &[u8],
     effect_colors: Option<ssb_rom::skeleton::EffectColors>,
     linear_texgen: bool,
+    lit: Option<LitPrim>,
 ) -> (VertexType, *const c_void, *const c_void) {
     // `sceGuGetMemory` allocates from the current display-list arena,
     // whose lifetime already matches this asynchronous GE submission.
@@ -1761,6 +1794,9 @@ unsafe fn expand_corners(
             .get(source_offset..source_offset + core::mem::size_of::<PackedVertex>())
             .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
             .unwrap_or_default();
+        if let Some(l) = lit {
+            v.color = l.color(&v, light_mark(verts, source_offset));
+        }
         if let Some(colors) = effect_colors {
             v.color = colors.vertex_color(v.color, p.flags);
         }
@@ -2425,8 +2461,16 @@ unsafe fn draw_node_mesh(
             let dynamic = crate::gu::cached_vertices(verts.len());
             let count = verts.len() / ssb_rom::pack::VERTEX_SIZE;
             let mut bound = bindings.chunks_exact(8);
-            // One source joint's matrices serve its run of vertices.
-            let mut pose: Option<(u16, ssb_rom::pack::CachedVertexPose)> = None;
+            // RE-514: a lit vertex borrowed from another joint was lit at
+            // `G_VTX` time under *that* joint's modelview. Its dot product
+            // is taken here, from the source normal and the light in the
+            // source joint's space, and left in the vertex's tail padding.
+            let light = st.active_light();
+            let model = st
+                .texgen_model
+                .map_or(ssb_rom::scene::Mat4::IDENTITY, |m| mat4_of(&m));
+            // One source joint's matrices (and light) serve its run of vertices.
+            let mut pose: Option<(u16, ssb_rom::pack::CachedVertexPose, [i8; 3])> = None;
             for index in 0..count {
                 let at = index * ssb_rom::pack::VERTEX_SIZE;
                 let from = verts.as_ptr().add(at) as *const PackedVertex;
@@ -2437,11 +2481,11 @@ unsafe fn draw_node_mesh(
                 } else {
                     from.read_unaligned()
                 };
-                let vertex = match bound.next() {
+                let (vertex, source_light) = match bound.next() {
                     Some(binding) if u16::from_le_bytes([binding[0], binding[1]]) != u16::MAX => {
                         let source_node = u16::from_le_bytes([binding[0], binding[1]]);
-                        let poser = match &pose {
-                            Some((node, poser)) if *node == source_node => poser,
+                        let (_, poser, source_light) = match &pose {
+                            Some(entry) if entry.0 == source_node => entry,
                             _ => {
                                 let source = if source_node == u16::MAX - 1 {
                                     ssb_rom::scene::Mat4::IDENTITY
@@ -2453,14 +2497,39 @@ unsafe fn draw_node_mesh(
                                             })
                                     })
                                 };
-                                &pose.insert((source_node, ssb_rom::pack::CachedVertexPose::new(inverse, source))).1
+                                let source_light = light.map_or([0; 3], |world| {
+                                    let world_source = model.mul(&inverse.mul(&source));
+                                    ssb_engine::rsp_light::object_light_dir(
+                                        mat4_rows(&world_source),
+                                        world,
+                                    )
+                                });
+                                &*pose.insert((
+                                    source_node,
+                                    ssb_rom::pack::CachedVertexPose::new(inverse, source),
+                                    source_light,
+                                ))
                             }
                         };
-                        poser.pose_with_sqrt(source_vertex, binding, fpu_sqrt)
+                        (
+                            poser.pose_with_sqrt(source_vertex, binding, fpu_sqrt),
+                            Some(*source_light),
+                        )
                     }
-                    _ => source_vertex,
+                    _ => (source_vertex, None),
                 };
                 (dynamic.add(at) as *mut PackedVertex).write(vertex);
+                if light.is_some() {
+                    // Written whole: the struct store leaves padding undefined.
+                    let mark = source_light.map_or(0, |dir| {
+                        LIGHT_MARK_SET
+                            | ssb_engine::rsp_light::dot16(
+                                [source_vertex.nx, source_vertex.ny, source_vertex.nz],
+                                dir,
+                            )
+                    });
+                    (dynamic.add(at + LIGHT_MARK_OFFSET) as *mut u16).write_unaligned(mark.to_le());
+                }
             }
             // A partial vertex at the end, as the copy carried it.
             let tail = count * ssb_rom::pack::VERTEX_SIZE;
@@ -3754,6 +3823,13 @@ pub unsafe fn draw_fighter_shadow(
     if !geometry.visible() {
         return;
     }
+    // The strip is world-space floats under an identity model, like the
+    // source's. The node path uploads its matrices with `sceGuSetMatrix`
+    // behind `gum`'s back (RE-487), so `gum`'s model has to be reloaded:
+    // left clean, `sceGumDrawArray` reuses the last stage node's transform
+    // and the shadow lands far off screen (RE-514).
+    sys::sceGumMatrixMode(sys::MatrixMode::Model);
+    sys::sceGumLoadIdentity();
     bind_texture(pack, texture, TextureDesc::NO_ANIM);
     sys::sceGuTexFunc(
         sys::TextureEffect::Modulate,
@@ -3763,7 +3839,11 @@ pub unsafe fn draw_fighter_shadow(
     sys::sceGuDisable(GuState::CullFace);
     sys::sceGuDisable(GuState::Lighting);
     sys::sceGuShadeModel(sys::ShadingModel::Flat);
-    sys::sceGuEnable(GuState::DepthTest);
+    if FIGHTER_SHADOW_MATERIAL.depth_test {
+        sys::sceGuEnable(GuState::DepthTest);
+    } else {
+        sys::sceGuDisable(GuState::DepthTest);
+    }
     sys::sceGuDepthMask(1);
     sys::sceGuEnable(GuState::AlphaTest);
     sys::sceGuAlphaFunc(
