@@ -24,6 +24,7 @@ pub mod audio;
 pub mod coord;
 #[cfg(test)]
 mod fpu_traps;
+pub mod guard_clip;
 pub mod heap;
 pub mod input;
 pub mod math;

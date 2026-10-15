@@ -132,6 +132,15 @@ pub struct TextureRef {
     /// pack-time converter must skip decoding texels for these and emit a
     /// runtime-filled entry instead.
     pub framebuffer: bool,
+    /// The combiner's colour formula reads no texel, only its alpha formula
+    /// does: `G_CC` `SHADE` colour with `TEXEL0` (or `TEXEL0 * PRIM`)
+    /// alpha, the opening room's spotlight cone (`52+0x22E18`) and its box
+    /// lid's "Nintendo" glow (`52+0x1C358`). The GE's `Modulate` multiplies
+    /// the texel's colour in regardless, so a converter must give this
+    /// binding white texels with the original alpha: `Cv = Cf * 1`,
+    /// `Av = Af * At`, which is the RDP's result for any shade. Set by
+    /// `Builder::material_now`, never by tile state.
+    pub rgb_unused: bool,
     /// `G_SETTILESIZE`'s `uls`/`ult` on the render tile — the tile's own
     /// origin, still in raw S10.2 fixed point (quarter-texel units, the same
     /// form `dl::Cmd::SetTileSize` decodes). A framebuffer binding has none:
@@ -1527,6 +1536,30 @@ struct TileView {
     line: u16,
 }
 
+/// Whether the combined colour is the shade alone, scaled by nothing but
+/// constants: no texel, no additive constant. A bound texture then only
+/// reaches the pixel through the alpha formula ([`TextureRef::rgb_unused`]).
+/// An unset `PRIMITIVE`/`ENVIRONMENT` the formula reads declines, as in
+/// [`combiner_flat_color`].
+fn combiner_rgb_is_shade_only(
+    hi: u32,
+    lo: u32,
+    two_cycle: bool,
+    prim: Option<[u8; 4]>,
+    env: Option<[u8; 4]>,
+) -> bool {
+    if combiner_reads(hi, lo, two_cycle, 3) && prim.is_none() {
+        return false;
+    }
+    if combiner_reads(hi, lo, two_cycle, 5) && env.is_none() {
+        return false;
+    }
+    let p = prim.map_or([0.0; 3], to_f);
+    let e = env.map_or([0.0; 3], to_f);
+    evaluate_combiner(hi, lo, two_cycle, p, e)
+        .is_some_and(|out| out.s_used && !out.k_used && !out.t_used && !out.st_used)
+}
+
 /// Tracks RDP/RSP state while walking a display list.
 struct State {
     cache: [Option<CacheEntry>; VTX_CACHE_SIZE as usize],
@@ -2042,8 +2075,13 @@ impl State {
                 .is_some_and(|(hi, lo)| combiner_alpha_is_shade(hi, lo, self.two_cycle));
         // The player's arrows use a flat PRIM colour and PRIM alpha 128.
         // There is no texel or shade alpha in this known constant formula.
+        // The opening room's floor shadows (`52+0x77C0`, `52+0x1F790`) are
+        // the same alpha with an unlit `SHADE` colour: `G_SETCOMBINE
+        // FCFFFFFF FFFE773B` under the head-1 `G_RM_AA_ZB_XLU_SURF`, with
+        // their own `G_SETPRIMCOLOR` alpha (GLideN64 RDRAM walk). An unknown
+        // register declines, as for `prim_alpha_blend` above.
         let flat_prim_alpha_untextured = texture.is_none()
-            && flat_color.is_some()
+            && (flat_color.is_some() || self.material.prim_color.is_some())
             && !self.material.lit
             && self
                 .combiner
@@ -2066,13 +2104,30 @@ impl State {
             }
             flat => (flat, texture_blend),
         };
+        // The colour formula reads no texel (the spotlight cone and lid glow
+        // of the opening room, `SHADE` colour and `TEXEL0 * PRIM` or
+        // `TEXEL0` alpha): the converter whitens the texture's colour.
+        let rgb_unused = flat_color.is_none()
+            && combiner.is_some_and(|(hi, lo)| {
+                combiner_rgb_is_shade_only(
+                    hi,
+                    lo,
+                    self.two_cycle,
+                    self.material.prim_color,
+                    self.material.env_color,
+                )
+            });
         MeshMaterial {
             // `TEXEL` genuinely never enters this shape's formula (RE-079),
             // so a bound texture would be sampled and modulated in for
             // nothing the real hardware does -- force untextured rather than
             // let the GE's default `Modulate` silently darken/tint the flat
             // colour by whatever happens to be bound.
-            texture: if flat_color.is_some() { None } else { texture },
+            texture: if flat_color.is_some() {
+                None
+            } else {
+                texture.map(|t| TextureRef { rgb_unused, ..t })
+            },
             flat_color,
             // Identity is not worth storing: it means "use the shade as it is".
             prim_color: scale.filter(|s| *s != [1.0; 3]).map(|s| {
@@ -2292,6 +2347,7 @@ impl State {
                 clamp_s,
                 clamp_t,
                 framebuffer: true,
+                rgb_unused: false,
                 origin_s,
                 origin_t,
                 mask_s,
@@ -2322,6 +2378,7 @@ impl State {
             clamp_s,
             clamp_t,
             framebuffer: false,
+            rgb_unused: false,
             origin_s: tile.origin.map_or(0, |o| o.0),
             origin_t: tile.origin.map_or(0, |o| o.1),
             mask_s,
@@ -2445,6 +2502,7 @@ impl State {
             clamp_s,
             clamp_t,
             framebuffer: false,
+            rgb_unused: false,
             origin_s: self.tile0_origin.map_or(0, |o| o.0),
             origin_t: self.tile0_origin.map_or(0, |o| o.1),
             mask_s,
@@ -4637,6 +4695,54 @@ mod tests {
         let mut m = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
         let p = m.pop().unwrap().unwrap().primitives.pop().unwrap();
         assert_eq!(p.material.alpha_blend, None);
+    }
+
+    /// The opening room's floor shadows: unlit, untextured, `G_SETCOMBINE
+    /// FCFFFFFF FFFE773B` (RGB `SHADE`, alpha `PRIM`) with their own prim
+    /// alpha under the head-1 XLU seed blend by that alpha, keeping the
+    /// vertex colour; an unknown register still declines.
+    #[test]
+    fn an_unlit_shade_colour_with_prim_alpha_blends_by_the_prim_alpha() {
+        use crate::scene::Mat4;
+
+        let file = vertex_data_rgba(3, [0x20, 0x20, 0x20, 0xFF]);
+        let unlit = Cmd::GeometryMode {
+            clear: G_LIGHTING | G_SHADING_SMOOTH,
+            set: 0,
+        };
+        let combine = Cmd::SetCombine {
+            hi: 0x00FF_FFFF,
+            lo: 0xFFFE_773B,
+        };
+        let run = |prim: bool| {
+            let mut cmds = vec![unlit, combine];
+            if prim {
+                cmds.push(Cmd::SetPrimColor {
+                    m: 0,
+                    l: 0,
+                    rgba: [0xFF, 0xFF, 0xFF, 0x4C],
+                });
+            }
+            cmds.extend([vtx(3), Cmd::Tri1([0, 1, 2])]);
+            let items = [SequenceItem {
+                cmds: &cmds,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+                depth_seed: XLU_SEED,
+                stream: 1,
+            }];
+            let mut m = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
+            let mesh = m.pop().unwrap().unwrap();
+            (mesh.primitives[0].material, mesh.vertices[0].rgba)
+        };
+        let (m, rgba) = run(true);
+        assert!(m.translucent);
+        assert_eq!(m.alpha_blend, Some(AlphaBlend::Prim(0x4C)));
+        assert_eq!(m.flat_color, None);
+        assert_eq!(rgba, [0x20, 0x20, 0x20, 0x4C]);
+        let (m, _) = run(false);
+        assert!(!m.translucent, "an unknown prim alpha declines");
     }
 
     #[test]
@@ -7816,6 +7922,71 @@ mod tests {
         let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
         assert!(m.texture.is_none(), "no texture bound this time");
         assert_eq!(m.texture_blend, None, "TEXEL means nothing without one");
+    }
+
+    #[test]
+    fn a_colour_formula_without_a_texel_marks_the_texture_rgb_unused() {
+        // The opening room's spotlight cone (`52+0x22E18`: `SHADE` colour,
+        // `TEXEL0 * PRIM` alpha), its lid glow (`52+0x1C358`: `SHADE`,
+        // `TEXEL0`) and the lid's own picture (`TEXEL0 * SHADE`), as the
+        // GLideN64 RDRAM walk of the room reads them.
+        let file = vertex_data(3);
+        let bind_texture = [
+            Cmd::SetTimg {
+                format: 4,
+                size: 1,
+                width: 32,
+                addr: SegAddr(0x100),
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: 4,
+                size: 1,
+                line: 4,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 0,
+                mask_t: 0,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 31 << 2,
+                lrt: 31 << 2,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0,
+                scale_t: 0,
+            },
+        ];
+        let prim = Cmd::SetPrimColor {
+            m: 0,
+            l: 0,
+            rgba: [0xFF; 4],
+        };
+        let rgb_unused = |hi: u32, lo: u32| {
+            let mut cmds: Vec<Cmd> = vec![vtx(3), Cmd::SetCombine { hi, lo }, prim];
+            cmds.extend(bind_texture);
+            cmds.extend([Cmd::Tri1([0, 1, 2]), Cmd::End]);
+            let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
+            m.texture.expect("the test binds a texture").rgb_unused
+        };
+        assert!(rgb_unused(0x006F_96DF, 0xFF2E_7F3F), "spotlight cone");
+        assert!(rgb_unused(0x00FF_97FF, 0xFF2E_7F3F), "spotlight floor pool");
+        assert!(rgb_unused(0x00FF_FFFF, 0xFFFE_7339), "lid glow");
+        assert!(
+            !rgb_unused(0x0012_1624, 0xFF2F_FFFF),
+            "the lid picture reads its texel"
+        );
     }
 
     #[test]

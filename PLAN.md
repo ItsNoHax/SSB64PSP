@@ -125,6 +125,8 @@ closes it.
 
 ### Match systems (`MS5`)
 
+- [ ] NEXT (user report, PSP): fighter entry animations (match start) look buggy; compare every fighter's entry against the N64.
+- [ ] NEXT (user report, PSP): sometimes four shadows draw under one fighter; find the duplicate shadow draw.
 - [ ] Draw the CPUs' special effects: Magnet, Sing, Spin Attack swirl, Falcon Punch/Kick, reflector, Charge Shot and the held egg draw for the player only (RE-389, RE-404, RE-405).
 - [ ] Remaining effects: Thunder Jolt ground effect, PK Thunder trail effects, the fire spark, Kirby's copy-bank scripts (0x4C, 0x4D), the results' fighter effects, stage particle banks; a magnitude-0 quake shakes one frame late (RE-413, RE-415, RE-416, RE-427).
 - [ ] Kirby: Inhale/spit stars and the copied Falcon Punch flame; Inhale's downward wiggle (RE-343, RE-348, RE-376, RE-378, RE-417).
@@ -148,8 +150,10 @@ closes it.
 
 ### Front end and 1P (`MS6`)
 
+- [ ] NEXT (user report, PSP): Board the Platforms (2nd bonus round) does not match the N64; some platforms are unreachable. Compare the stage geometry, collision and per-fighter layouts with the N64.
+  - Note: the N64 bonus backdrop quads (texture `120+0x5a8`) show a teal/blue pattern where the port draws a flat (32,40,56). The bonus layer-0 translucent rectangles were missing until pack v113 (RE-521).
 - [ ] Both character selects' spotlight under a held puck; the VS select's CPU colour animation; locked shadows' noise (RE-411).
-- [ ] NEXT (user report, PSP): the intro (N64 logo, opening movie, title) has many issues: compare every scene frame-by-frame against N64 captures and fix all in-scope gaps, including the known items below.
+- [ ] NEXT (user report, PSP): the intro (N64 logo, opening movie, title) has many issues: compare every scene frame-by-frame against N64 captures and fix all in-scope gaps, including the known items below. Batch 1 (the room: guard-band clipping, shade-only combiners, prim-alpha shadows; RE-519, RE-520, RE-521) is done; batches 2-5 remain, and the colour grade (R4) stays open until an accurate N64 reference exists.
 - [ ] Opening movie: the room's falling-figure pose, spotlight cone and close-up overlay shade; Fox's laser under the rolled camera; the standoff ground's dropped triangles; Yoster clouds' fringes and tint; the run's dust puff; N64 references from an accurate video plugin (RE-467, RE-468).
 - [ ] Characters' fighter runs no motion-script events (effects, colour animations, part changes) (RE-461).
 - [ ] Anti-piracy validators that set `error_flags` (RE-460, RE-461).

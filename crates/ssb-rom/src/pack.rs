@@ -409,7 +409,14 @@ pub const MAGIC: u32 = 0x5342_5350;
 // neighbour's colour (`sprite::psp_image`, RE-517), and carries the impact
 // wave's translucent seed (RE-516), which changed content under 110. No
 // layout change.
-pub const VERSION: u32 = 111;
+// 112 blends an unlit, untextured primitive whose combined alpha is `PRIM`
+// alone by that alpha whatever its colour (`mesh::material_now`): the
+// opening room's floor shadows. It adds `flags::ALPHA_NO_PRIM`. No layout
+// change.
+// 113 whitens the colour of a texture whose combiner colour formula reads no
+// texel (`mesh::TextureRef::rgb_unused`): the opening room's spotlight and
+// lid glow. No layout change.
+pub const VERSION: u32 = 113;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -747,6 +754,12 @@ pub mod flags {
     /// `MeshMaterial::env_lerp`: the second colour cycle blends towards
     /// ENV by its alpha. An item colour animation's draw sets ENV.
     pub const ENV_LERP: u32 = 1 << 30;
+    /// `MeshMaterial::alpha_blend` is `TexelOnly` or `Shade`: the combined
+    /// alpha reads no `PRIMITIVE`, so a live prim track
+    /// (`EffectColors::vertex_color`) leaves the vertex alpha alone. The
+    /// opening room's "Nintendo" glow pass (`52+0x1BFC8`, alpha `TEXEL0`
+    /// under a prim-animated `MObj` at alpha 0x80) drew at half alpha.
+    pub const ALPHA_NO_PRIM: u32 = 1 << 31;
 }
 
 /// The one GE alpha comparison that reproduces a primitive's RDP alpha
@@ -2680,6 +2693,12 @@ impl PackWriter {
             // `flags::ALPHA_BLEND`'s own doc comment.
             if m.translucent && m.alpha_blend.is_some() {
                 f |= flags::ALPHA_BLEND;
+            }
+            if matches!(
+                m.alpha_blend,
+                Some(crate::mesh::AlphaBlend::TexelOnly | crate::mesh::AlphaBlend::Shade)
+            ) {
+                f |= flags::ALPHA_NO_PRIM;
             }
             if m.texture_blend.is_some() {
                 f |= flags::TEXTURE_BLEND;
@@ -5712,6 +5731,7 @@ mod tests {
             clamp_s: true,
             clamp_t: false,
             framebuffer: false,
+            rgb_unused: false,
             origin_s: 0,
             origin_t: 0,
             mask_s: 5,
@@ -5844,6 +5864,7 @@ mod tests {
             clamp_s: true,
             clamp_t: false,
             framebuffer: false,
+            rgb_unused: false,
             // S10.2 quarter-texels: 3 texels across, none down. The largest
             // real value `romtool texgen` measures.
             origin_s: 12,

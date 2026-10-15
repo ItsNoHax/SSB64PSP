@@ -11,6 +11,23 @@ preserving `A B A` order (RE-252). The texture cache key covers every
 conversion input (RE-253). Order fidelity costs about 113 extra draw calls,
 an optimization lead (`PLAN.md`, PSP performance).
 
+## Guard-band clipping
+
+Status: complete for movie scenes.
+
+The GE drops a whole triangle when a vertex in front of the near plane
+projects past its 4096-pixel range; the RSP clips. Triangles that need it
+are clipped on the CPU against |x|,|y| <= 2w and z >= -w (RE-519).
+
+## Shade-only combiners
+
+Status: complete.
+
+A colour formula with no texel (SHADE times constants) lowers to a texture
+whitened by romtool with its alpha kept, since the GE's Modulate always
+multiplies the texel colour (RE-520). Unlit untextured prim-alpha surfaces
+keep their SETPRIMCOLOR alpha (RE-521).
+
 ## GE state cache
 
 Status: complete.

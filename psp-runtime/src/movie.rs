@@ -680,18 +680,23 @@ impl Runtime {
                                 }
                                 ObjectKind::Model(m) => self.draw_model(gpu, st, a, o.id, m),
                                 ObjectKind::Fighter(f) if head == Head::Zero => {
+                                    let clip = st.clip_view_proj.take();
                                     st.heads = meshdraw::Heads::Both;
                                     self.draw_fighter(gpu, st, a, o.id, f, world.light);
                                     st.heads = meshdraw::Heads::Head0;
+                                    st.clip_view_proj = clip;
                                 }
                                 ObjectKind::Host(_) | ObjectKind::HostModel(..) => {
-                                    host(gpu, st, cam, o, head)
+                                    let clip = st.clip_view_proj.take();
+                                    host(gpu, st, cam, o, head);
+                                    st.clip_view_proj = clip;
                                 }
                                 _ => {}
                             }
                         }
                     }
                     st.heads = meshdraw::Heads::Both;
+                    st.clip_view_proj = None;
                 }
             }
         }
@@ -717,14 +722,19 @@ impl Runtime {
                 }
             }
         }
-        if p.persp_f {
-            gpu.set_perspective_f(fovy, p.aspect, p.near, p.far);
+        let proj = if p.persp_f {
+            ssb_engine::math::Mat4::sy_persp_f(fovy, p.aspect, p.near, p.far)
         } else {
-            gpu.set_perspective(fovy, p.aspect, p.near, p.far);
-        }
+            ssb_engine::math::Mat4::sy_persp_fast(fovy, p.aspect, p.near, p.far)
+        };
+        gpu.set_projection(&proj);
         gpu.reset_modelview();
         st.begin_frame();
-        gpu.set_view(&view_matrix(eye, at, up_x, p.view));
+        let view = view_matrix(eye, at, up_x, p.view);
+        gpu.set_view(&view);
+        // The RSP clips what the GE would drop (`meshdraw::clip_submission`):
+        // the room's floor and rug run under the camera.
+        st.clip_view_proj = Some((proj * view).cols);
     }
 
     unsafe fn draw_model(

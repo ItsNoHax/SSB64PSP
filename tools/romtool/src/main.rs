@@ -983,6 +983,7 @@ struct TexKey {
     mirror_t: bool,
     clamp_s: bool,
     clamp_t: bool,
+    rgb_unused: bool,
     compensation_version: u8,
     coverage_hash: u64,
     animated_relationship: bool,
@@ -1044,6 +1045,7 @@ fn texture_cache_key(
         mirror_t: t.mirror_t,
         clamp_s: t.clamp_s,
         clamp_t: t.clamp_t,
+        rgb_unused: t.rgb_unused,
         compensation_version: ssb_rom::filter_compensation::ALGORITHM_VERSION,
         coverage_hash,
         animated_relationship: animated_relationship.is_some(),
@@ -1422,6 +1424,7 @@ fn pack_mesh(
                     mirror_t: false,
                     clamp_s: false,
                     clamp_t: false,
+                    rgb_unused: false,
                     compensation_version: 0,
                     coverage_hash: 0,
                     animated_relationship: false,
@@ -7672,6 +7675,13 @@ fn convert_texture(
     } else {
         Vec::new()
     };
+    // `TextureRef::rgb_unused`: only the texel's alpha reaches the pixel, so
+    // its colour is white and the GE's `Modulate` leaves the shade as it is.
+    let index_colours: Vec<u32> = if t.rgb_unused {
+        index_colours.into_iter().map(|c| c | 0x00FF_FFFF).collect()
+    } else {
+        index_colours
+    };
     if natural.is_paletted() && index_colours.is_empty() {
         return None;
     }
@@ -7688,7 +7698,12 @@ fn convert_texture(
     // reproduces it exactly, since `sceGuTexScale` renormalises UVs against
     // whatever dimensions the packed texture actually reports (RE-067).
     let decode_mirrored = |tlut: &[u16]| {
-        let img = decode_texture(file, t, tlut)?;
+        let mut img = decode_texture(file, t, tlut)?;
+        if t.rgb_unused {
+            for px in img.pixels.as_chunks_mut::<4>().0 {
+                px[..3].fill(0xFF);
+            }
+        }
         Some(texture::mirror_extend(
             &img,
             t.mirror_s,
@@ -17589,6 +17604,7 @@ mod tests {
             clamp_s: false,
             clamp_t: false,
             framebuffer: false,
+            rgb_unused: false,
             origin_s: 0,
             origin_t: 0,
             mask_s: 0,
@@ -17723,6 +17739,7 @@ mod tests {
             clamp_s: false,
             clamp_t: false,
             framebuffer: false,
+            rgb_unused: false,
             origin_s: 0,
             origin_t: 0,
             mask_s: 0,
@@ -17982,6 +17999,7 @@ mod tests {
             clamp_s: true,
             clamp_t: true,
             framebuffer: false,
+            rgb_unused: false,
             origin_s: 2 << 2,
             origin_t: 0,
             mask_s: 0,

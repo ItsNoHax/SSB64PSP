@@ -1570,7 +1570,8 @@ impl EffectColors {
     /// source-backed combiner mappings of RE-073/080 and RE-418; other RGB
     /// shapes retain their converter-resolved value. PRIM alpha is
     /// independent of RGB and replaces the packed vertex alpha whenever its
-    /// track is live.
+    /// track is live, unless the alpha formula reads no `PRIMITIVE`
+    /// (`ALPHA_NO_PRIM`).
     pub fn vertex_color(self, packed: u32, prim_flags: u32) -> u32 {
         use crate::pack::flags;
         let mut rgba = packed.to_le_bytes();
@@ -1591,7 +1592,7 @@ impl EffectColors {
                 }
             }
         }
-        if let Some(prim) = self.prim {
+        if let Some(prim) = self.prim.filter(|_| prim_flags & flags::ALPHA_NO_PRIM == 0) {
             rgba[3] = prim[3];
         }
         crate::psp_texture::pack_abgr(rgba)
@@ -1813,6 +1814,13 @@ mod tests {
             crate::psp_texture::pack_abgr([0xFF - 0x55, 0, 0, 0x44])
         );
         assert_eq!(colors.packed_prim(), Some(0x4433_2211));
+        // An alpha formula without `PRIMITIVE` keeps the packed alpha; the
+        // colour mapping is unchanged.
+        let flags = crate::pack::flags::TEXTURE_BLEND | crate::pack::flags::ALPHA_NO_PRIM;
+        assert_eq!(
+            colors.vertex_color(original, flags),
+            crate::psp_texture::pack_abgr([0x55, 0x66, 0x77, 4])
+        );
     }
 
     /// A three-deep chain with a rotation, a translation and a scale at each

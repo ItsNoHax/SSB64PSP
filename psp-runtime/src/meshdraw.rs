@@ -309,6 +309,10 @@ pub struct DrawState {
     /// texture matrix. `None` means no node has been placed yet, in which
     /// case object and world space coincide.
     texgen_model: Option<ScePspFMatrix4>,
+    /// The camera's `projection * view` (column-major) while a caller wants
+    /// triangles the GE would discard clipped on the CPU first
+    /// ([`ssb_engine::guard_clip`]). `None` draws every primitive as packed.
+    pub clip_view_proj: Option<[[f32; 4]; 4]>,
     /// Coordinate mapping last installed.
     ///
     /// Separate from `last_texture` because the scale depends on *both* the
@@ -1112,7 +1116,16 @@ fn material_colors(
         return None;
     }
     match effect_mat_anim {
-        Some(m) => m.resolved_colors(p.mat_anim),
+        // RE-322: a list that sets its own `PRIMITIVE` after the `MObj`
+        // (the opening room's box shadow, alpha 0x4C) draws with that, not
+        // the track: only `PRIM_ANIM` marks the register as still the
+        // `MObj`'s.
+        Some(m) => m
+            .resolved_colors(p.mat_anim)
+            .map(|c| ssb_rom::skeleton::EffectColors {
+                prim: c.prim.filter(|_| p.flags & flags::PRIM_ANIM != 0),
+                ..c
+            }),
         None => mat_anim
             .and_then(|m| m.resolved_colors(p.mat_anim))
             .map(|c| ssb_rom::anim_color::stage_colors(c, p.flags)),
@@ -1453,6 +1466,7 @@ unsafe fn draw_lod_blend_pass(
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
     (vtype, index_ptr, vertex_ptr): (VertexType, *const c_void, *const c_void),
+    count: u32,
 ) -> bool {
     let Some(lod) = (match effect_mat_anim {
         Some(m) => m.resolved_lod_blend(pack, p.mat_anim),
@@ -1496,7 +1510,7 @@ unsafe fn draw_lod_blend_pass(
     sys::sceGumDrawArray(
         GuPrimitive::Triangles,
         vtype,
-        p.index_count as i32,
+        count as i32,
         index_ptr,
         vertex_ptr,
     );
@@ -1535,6 +1549,9 @@ unsafe fn draw_mesh_vertices(
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
 ) -> u32 {
     let mut tris = 0u32;
+    let clip_mvp = st
+        .clip_view_proj
+        .and_then(|vp| guard_clip_mvp(&vp, st.texgen_model.as_ref()?, verts));
     for i in 0..mesh.prim_count {
         let Some(p) = pack.prim(mesh.first_prim + i) else {
             continue;
@@ -1592,11 +1609,16 @@ unsafe fn draw_mesh_vertices(
             )
         };
         let (vtype, index_ptr, vertex_ptr) = submission;
+        let (vtype, index_ptr, vertex_ptr, count) = match clip_mvp {
+            Some(mvp) => clip_submission(&mvp, (vtype.bits(), index_ptr, vertex_ptr), p.index_count),
+            None => None,
+        }
+        .unwrap_or((vtype, index_ptr, vertex_ptr, p.index_count));
         let submit_t = crate::profile::start_fine();
         sys::sceGumDrawArray(
             GuPrimitive::Triangles,
             VertexType::from_bits_truncate(vtype.bits()),
-            p.index_count as i32,
+            count as i32,
             index_ptr,
             vertex_ptr,
         );
@@ -1611,6 +1633,7 @@ unsafe fn draw_mesh_vertices(
                 mat_anim,
                 effect_mat_anim,
                 (vtype, index_ptr, vertex_ptr),
+                count,
             )
         {
             st.draws += 1;
@@ -1632,6 +1655,193 @@ fn texture_part_override(pack: &Pack<'_>, mesh: u32, i: u32, ids: [i8; 2]) -> Op
     let id = *ids.get(t.part as usize)?;
     let texture = *t.textures.get(usize::try_from(id).ok().filter(|&id| id > 0)?)?;
     (texture != TextureDesc::NO_ANIM).then_some(texture)
+}
+
+/// The guard band [`clip_submission`] clips to, in units of `w`: twice the
+/// viewport's half extent, inside the GE's 4096-pixel screen range for any
+/// viewport up to 1024 pixels wide, and off screen for every viewport this
+/// port sets.
+const GUARD_BAND: f32 = 2.0;
+
+/// [`draw_mesh_vertices`]' clip transform for `verts` under `model`: the
+/// camera's `projection * view * model`, when some vertex lies outside the
+/// guard band or behind the near plane and the GE could drop a triangle the
+/// N64 draws ([`ssb_engine::guard_clip`]). `None` otherwise, the common
+/// case, leaving the mesh's submission as packed.
+fn guard_clip_mvp(
+    vp: &[[f32; 4]; 4],
+    model: &ScePspFMatrix4,
+    verts: &[u8],
+) -> Option<[[f32; 4]; 4]> {
+    let cols = [model.x, model.y, model.z, model.w].map(|c| [c.x, c.y, c.z, c.w]);
+    let mut mvp = [[0.0f32; 4]; 4];
+    for (c, out) in mvp.iter_mut().enumerate() {
+        for (r, o) in out.iter_mut().enumerate() {
+            *o = (0..4).map(|k| vp[k][r] * cols[c][k]).sum();
+        }
+    }
+    let size = core::mem::size_of::<PackedVertex>();
+    let mut union = 0u8;
+    for bytes in verts.chunks_exact(size) {
+        // SAFETY: `bytes` is one whole `PackedVertex`, read unaligned.
+        let v = unsafe { (bytes.as_ptr() as *const PackedVertex).read_unaligned() };
+        let p = [v.x, v.y, v.z].map(|c| f32::from(c) / VERTEX_16BIT_DIVISOR);
+        union |= ssb_engine::guard_clip::outcode(clip_position(&mvp, p), GUARD_BAND);
+    }
+    (union != 0).then_some(mvp)
+}
+
+/// `mvp * (p, 1)`.
+#[inline(always)]
+fn clip_position(mvp: &[[f32; 4]; 4], p: [f32; 3]) -> [f32; 4] {
+    core::array::from_fn(|r| mvp[0][r] * p[0] + mvp[1][r] * p[1] + mvp[2][r] * p[2] + mvp[3][r])
+}
+
+/// A clipped corner: float texture coordinates and position, since a clip
+/// point falls between the packed 16-bit values.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct ClipVertex {
+    u: f32,
+    v: f32,
+    color: u32,
+    nx: i8,
+    ny: i8,
+    nz: i8,
+    _normal_pad: u8,
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+const CLIP_VERTEX_FORMAT: VertexType = VertexType::from_bits_truncate(
+    VertexType::TEXTURE_32BITF.bits()
+        | VertexType::COLOR_8888.bits()
+        | VertexType::NORMAL_8BIT.bits()
+        | VertexType::VERTEX_32BITF.bits()
+        | VertexType::TRANSFORM_3D.bits(),
+);
+
+/// Corner `corner` of a submission as the GE decodes it: texture
+/// coordinates, colour channels, normal and position in its own units.
+/// `None` for a vertex format this does not read.
+unsafe fn decode_corner(
+    (vtype, index_ptr, vertex_ptr): (i32, *const c_void, *const c_void),
+    corner: usize,
+) -> Option<[f32; ssb_engine::guard_clip::ATTRS]> {
+    let packed = |v: PackedVertex| {
+        // `GU_TEXTURE_16BIT` and `GU_VERTEX_16BIT` read unsigned and signed
+        // fractions of 32768.
+        (
+            [v.u as u16, v.v as u16].map(|c| f32::from(c) / VERTEX_16BIT_DIVISOR),
+            v.color,
+            [v.nx, v.ny, v.nz],
+            [v.x, v.y, v.z],
+        )
+    };
+    let (uv, color, n, p) = if vtype == VERTEX_FORMAT.bits() {
+        let index = (index_ptr as *const u16).add(corner).read_unaligned();
+        packed((vertex_ptr as *const PackedVertex).add(usize::from(index)).read_unaligned())
+    } else if vtype == UNINDEXED_VERTEX_FORMAT.bits() {
+        packed((vertex_ptr as *const PackedVertex).add(corner).read_unaligned())
+    } else if vtype == FLOAT_UV_VERTEX_FORMAT.bits() {
+        let v = (vertex_ptr as *const FloatUvVertex).add(corner).read_unaligned();
+        ([v.u, v.v], v.color, [v.nx, v.ny, v.nz], [v.x, v.y, v.z])
+    } else {
+        return None;
+    };
+    let c = color.to_le_bytes();
+    Some([
+        uv[0],
+        uv[1],
+        f32::from(c[0]),
+        f32::from(c[1]),
+        f32::from(c[2]),
+        f32::from(c[3]),
+        f32::from(n[0]),
+        f32::from(n[1]),
+        f32::from(n[2]),
+        f32::from(p[0]) / VERTEX_16BIT_DIVISOR,
+        f32::from(p[1]) / VERTEX_16BIT_DIVISOR,
+        f32::from(p[2]) / VERTEX_16BIT_DIVISOR,
+    ])
+}
+
+fn encode_corner(a: &[f32; ssb_engine::guard_clip::ATTRS]) -> ClipVertex {
+    let byte = |x: f32| (x + 0.5).clamp(0.0, 255.0) as u8;
+    let normal = |x: f32| (x + if x < 0.0 { -0.5 } else { 0.5 }).clamp(-128.0, 127.0) as i8;
+    ClipVertex {
+        u: a[0],
+        v: a[1],
+        color: u32::from_le_bytes([byte(a[2]), byte(a[3]), byte(a[4]), byte(a[5])]),
+        nx: normal(a[6]),
+        ny: normal(a[7]),
+        nz: normal(a[8]),
+        _normal_pad: 0,
+        x: a[9],
+        y: a[10],
+        z: a[11],
+    }
+}
+
+/// A submission whose triangles leave the guard band or cross the near
+/// plane, rebuilt as unindexed [`ClipVertex`] triangles with those clipped
+/// ([`ssb_engine::guard_clip`]). The GE drops a whole triangle with a vertex
+/// in front of the near plane outside its screen range; the RSP clips it.
+/// `None` when no triangle needs it, or for a vertex format
+/// [`decode_corner`] does not read. Out of line and cold: only meshes
+/// running past the camera take it.
+#[cold]
+#[inline(never)]
+unsafe fn clip_submission(
+    mvp: &[[f32; 4]; 4],
+    submission: (i32, *const c_void, *const c_void),
+    count: u32,
+) -> Option<(VertexType, *const c_void, *const c_void, u32)> {
+    use ssb_engine::guard_clip::{clip_triangle, outcode, Vertex, MAX_CLIPPED};
+    let corner = |i: usize| -> Option<Vertex> {
+        let attrs = decode_corner(submission, i)?;
+        let clip = clip_position(mvp, [attrs[9], attrs[10], attrs[11]]);
+        Some(Vertex { clip, attrs })
+    };
+    let tris = count as usize / 3;
+    let mut clipped = 0usize;
+    for t in 0..tris {
+        let mut union = 0;
+        let mut inter = 0xFF;
+        for k in 0..3 {
+            let code = outcode(corner(t * 3 + k)?.clip, GUARD_BAND);
+            union |= code;
+            inter &= code;
+        }
+        if union != 0 && inter == 0 {
+            clipped += 1;
+        }
+    }
+    if clipped == 0 {
+        return None;
+    }
+    let capacity = (tris - clipped) * 3 + clipped * 3 * (MAX_CLIPPED - 2);
+    let out = sys::sceGuGetMemory((capacity * core::mem::size_of::<ClipVertex>()) as i32)
+        as *mut ClipVertex;
+    let mut n = 0usize;
+    let mut poly = [Vertex::default(); MAX_CLIPPED];
+    for t in 0..tris {
+        let tri = [corner(t * 3)?, corner(t * 3 + 1)?, corner(t * 3 + 2)?];
+        let count = clip_triangle(&tri, GUARD_BAND, &mut poly);
+        for i in 1..count.saturating_sub(1) {
+            for v in [&poly[0], &poly[i], &poly[i + 1]] {
+                out.add(n).write(encode_corner(&v.attrs));
+                n += 1;
+            }
+        }
+    }
+    Some((
+        CLIP_VERTEX_FORMAT,
+        core::ptr::null(),
+        out as *const c_void,
+        n as u32,
+    ))
 }
 
 /// [`draw_mesh_vertices`]' `SIGNED_CLAMP_UV` submission: each indexed
