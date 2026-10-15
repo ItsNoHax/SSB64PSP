@@ -14,6 +14,8 @@ pub mod assets;
 pub mod audio;
 pub mod boss;
 pub mod ending;
+#[cfg(all(feature = "fcr31_probe", target_os = "psp"))]
+pub mod fcr31_probe;
 pub mod fpu;
 pub mod frame_timer;
 pub mod gu;

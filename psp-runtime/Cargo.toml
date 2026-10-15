@@ -23,6 +23,10 @@ ssb-game = { path = "../crates/ssb-game", default-features = false }
 # Masks every FPU exception on the game's threads (`fpu.rs`) instead of
 # keeping the enables the system starts them with. Off by default.
 fpu_mask = []
+# Replaces the game with the FCR31 launch probe (`fcr31_probe.rs`, RE-516):
+# PSPLink ldstart, then an XMB-style LoadExec of a probe EBOOT, then back to
+# PSPLink. Needs ARK. Off by default.
+fcr31_probe = []
 # Frame timing and free-memory reports (`profile.rs`, RE-469). Off by
 # default: the spans compile to nothing.
 profile = ["ssb-engine/audio_profile"]

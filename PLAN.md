@@ -89,7 +89,7 @@ closes it.
 - [x] Training draws one stock icon per player (2 stocks, `is_single_stockicon`, the default battle state); icons and HUD match the N64 sprite and position (RE-515).
 - [x] Samus Charge Shot PSP crash: FGM LFO divide-by-zero and RSP-light float-to-int traps fixed with N64-faithful helpers, six more trap sites, fighter light rows no longer scaled by MODEL_SCALE, impact wave translucent, samus/samusshot/donkey scripts press B at tick 40 (RE-516, D-050).
 - [x] RE-516: XMB Samus charge run on the PSP-2000: no crash (user test, RE-516).
-- [ ] RE-516: read FCR31 at an XMB launch (the `fpu: fcr31 at start` log line; needs a person at the PSP).
+- [x] RE-516: FCR31 at an XMB-style launch (`sctrlKernelLoadExecVSHMs2`, `fcr31_probe`) is `0x0e00` on both threads, as under PSPLink; D-050 holds (RE-516).
 - [ ] RE-516: latent FPU trap sites from the audit that no test reaches; extend `with_traps` sweeps (items, stages, effects).
 - [x] 2D sprite edge fringe: one-ring nearest-neighbour RGB bleed into transparent texels at pack build (`sprite::psp_image`), filters stay Linear; pack v111 (RE-517).
 - [ ] Optional: narrow the vs-four golden change to catch/thrown/relz/pulled; marks-only pixel share of the 27 display-plus-marks rows (RE-511).

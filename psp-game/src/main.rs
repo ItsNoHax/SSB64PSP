@@ -2014,7 +2014,10 @@ const GAME_STACK_BYTES: usize = 512 * 1024;
 
 ssb_psp_runtime::module_with_stack!("ssb64_psp_game", 1, 0, crate::GAME_STACK_BYTES);
 
+#[cfg_attr(feature = "fcr31_probe", allow(unreachable_code))]
 fn psp_main() {
+    #[cfg(feature = "fcr31_probe")]
+    ssb_psp_runtime::fcr31_probe::run();
     boot_log::log("psp_main");
     // A test build takes away the memory a smaller launch lacks (RE-475).
     #[cfg(feature = "memory_ballast")]

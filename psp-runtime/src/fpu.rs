@@ -5,8 +5,9 @@
 //!   operation traps; divide-by-zero, overflow, underflow and inexact give
 //!   their IEEE results (`refs/ssb-decomp-re/src/libultra/os/initialize.c:37`,
 //!   `createthread.c:35`). The original's `x / 0` is an infinity.
-//! - A PSP thread under PSPLink starts with FCR31 `0x00000E00`: invalid,
-//!   divide-by-zero and overflow trap (RE-201, RE-502). [`init_thread`]
+//! - A PSP thread starts with FCR31 `0x00000E00`, under PSPLink and at an
+//!   XMB-style LoadExec launch alike: invalid, divide-by-zero and overflow
+//!   trap (RE-201, RE-502, RE-516). [`init_thread`]
 //!   records what each game thread starts with, so a `boot_log` build shows
 //!   an XMB launch's value too.
 //! - Rust and LLVM assume the IEEE default, every exception masked: `as`
