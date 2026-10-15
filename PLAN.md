@@ -149,7 +149,6 @@ closes it.
 
 ### Front end and 1P (`MS6`)
 
-- [ ] NEXT (user report, PSP): 1P stages with many opponents (not only the team stages: any stage with several enemy fighters) respawn opponents endlessly or end the round too early, and the stage before the final boss panics. Port the 1P spawn/respawn/KO/win logic faithfully to the decomp and fix the panic.
 - [ ] Both character selects' spotlight under a held puck; the VS select's CPU colour animation; locked shadows' noise (RE-411).
 - [ ] NEXT (user report, PSP): the intro (N64 logo, opening movie, title) has many issues: compare every scene frame-by-frame against N64 captures and fix all in-scope gaps, including the known items below.
 - [ ] Opening movie: the room's falling-figure pose, spotlight cone and close-up overlay shade; Fox's laser under the rolled camera; the standoff ground's dropped triangles; Yoster clouds' fringes and tint; the run's dust puff; N64 references from an accurate video plugin (RE-467, RE-468).

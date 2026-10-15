@@ -452,3 +452,385 @@ fn very_hard_samus_and_master_hand_use_the_original_extended_handicaps() {
         assert_eq!(s.state.players[0].total_damage_all, 90);
     }
 }
+
+/// How the KO order of a team stage's members overlaps: each death is
+/// scored at once and its replacement made at the end of its `Dead*` wait
+/// (`ftCommonDeadCheckRebirth`), so a second member can fall before the
+/// first is replaced.
+#[derive(Clone, Copy, Debug)]
+enum KoPattern {
+    OneAtATime,
+    /// Both of two live members fall, then both are replaced, first first.
+    Pairs,
+    /// Both fall, then the second is replaced before the first.
+    PairsReversed,
+}
+
+/// Drive a started stage's enemies to the last KO through `Session`'s
+/// `fall` and `next_enemy` alone: the stage's team counts, the order its
+/// members are made in, and the end at the last stock.
+fn clear_enemies(s: &mut session::Session, pattern: KoPattern) -> alloc::vec::Vec<u8> {
+    let stage = s.data.stage().unwrap();
+    let desc = setup::STAGE_DESC[stage as usize];
+    let total = usize::from(desc.opponent_count);
+    let at_once = match stage {
+        Stage::Kirby => KIRBY_SIM_COUNT,
+        Stage::Yoshi | Stage::Zako => MAX_OPPONENT_COUNT,
+        _ => total,
+    }
+    .min(total);
+    let mut live: alloc::vec::Vec<u8> = s
+        .state
+        .present()
+        .filter(|(_, p)| p.is_spgame_enemy)
+        .map(|(i, _)| i as u8)
+        .collect();
+    assert_eq!(live.len(), at_once, "{stage:?} initial enemies");
+    let game = s.game.as_ref().unwrap();
+    assert_eq!(
+        usize::from(game.team_players_remaining),
+        total - at_once,
+        "{stage:?} queued members"
+    );
+    let mut orders: alloc::vec::Vec<u8> = live
+        .iter()
+        .map(|&p| game.setups[usize::from(p)].team_order)
+        .collect();
+    let point = [ssb_engine::math::Vec3::new(1000.0, 0.0, 0.0)];
+    let mut kos = 0;
+    let mut spawns = 0;
+    while !live.is_empty() {
+        let n = match pattern {
+            KoPattern::OneAtATime => 1,
+            _ => live.len().min(2),
+        };
+        let fallen: alloc::vec::Vec<u8> = live.drain(..n).collect();
+        for &port in &fallen {
+            let order = s.game.as_ref().unwrap().setups[usize::from(port)].team_order;
+            let kind = s.state.players[usize::from(port)].fkind;
+            assert_ne!(
+                s.battle.as_ref().unwrap().status,
+                crate::battle::GameStatus::End,
+                "{stage:?}: a KO after the stage ended"
+            );
+            s.fall(
+                port,
+                bonus::DefeatRecord {
+                    team_order: order,
+                    damage_player: Some(s.data.player),
+                    ..Default::default()
+                },
+                kind,
+            );
+            kos += 1;
+            let g = s.game.as_ref().unwrap();
+            assert_eq!(
+                usize::from(g.enemy_stocks_remaining),
+                total - kos,
+                "{stage:?} stocks after KO {kos}"
+            );
+            assert_eq!(g.bonus.defeat_count, kos);
+            assert_eq!(
+                s.battle.as_ref().unwrap().status == crate::battle::GameStatus::End,
+                kos == total,
+                "{stage:?}: the end at KO {kos} of {total}"
+            );
+        }
+        let order: alloc::vec::Vec<u8> = match pattern {
+            KoPattern::PairsReversed => fallen.iter().rev().copied().collect(),
+            _ => fallen,
+        };
+        for port in order {
+            match s.next_enemy(port, &point, 3000.0, 8000.0) {
+                setup::NextEnemy::Spawn(e) => {
+                    spawns += 1;
+                    assert_eq!(e.player, port);
+                    assert_eq!(usize::from(e.team_order), at_once + spawns - 1);
+                    assert_eq!(e.pos, ssb_engine::math::Vec3::new(1000.0, 5500.0, 0.0));
+                    assert_eq!(e.facing, crate::fighter::Facing::Left);
+                    assert_eq!(s.state.players[usize::from(port)].stock_count, 0);
+                    let b = s.battle.as_ref().unwrap().players[usize::from(port)];
+                    assert_eq!((b.present, b.stock_count, b.falls), (true, 0, 0));
+                    orders.push(e.team_order);
+                    live.push(port);
+                }
+                setup::NextEnemy::Sleep => {}
+            }
+        }
+    }
+    let g = s.game.as_ref().unwrap();
+    assert_eq!(kos, total, "{stage:?} KOs");
+    assert_eq!(spawns, total - at_once, "{stage:?} replacements");
+    assert_eq!((g.team_players_remaining, g.enemy_stocks_remaining), (0, 0));
+    if at_once < total {
+        assert_eq!(g.current_variation as usize, total, "{stage:?} variations");
+    }
+    assert_eq!(g.bonus.defeat_count, total);
+    if matches!(stage, Stage::Yoshi | Stage::Kirby | Stage::Zako) {
+        let mut sorted = orders.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted,
+            (0..total as u8).collect::<alloc::vec::Vec<_>>(),
+            "{stage:?} orders"
+        );
+        let all = if total >= 32 {
+            u32::MAX
+        } else {
+            (1u32 << total) - 1
+        };
+        assert_eq!(g.enemy_stock_sprite_flags, all);
+        assert!(g.team_stock_icons().is_empty());
+    }
+    assert_eq!(
+        s.battle.as_ref().unwrap().status,
+        crate::battle::GameStatus::End
+    );
+    orders
+}
+
+/// The user's report: in the stages with many opponents the members keep
+/// coming or the stage ends early, and the stage before Master Hand
+/// panics. Every multi-fighter stage runs to its last KO, the stage clear
+/// and the next stage, for every overlap of falls.
+#[test]
+fn every_multi_fighter_stage_clears_at_its_last_ko_and_hands_over() {
+    for pattern in [
+        KoPattern::OneAtATime,
+        KoPattern::Pairs,
+        KoPattern::PairsReversed,
+    ] {
+        for (stage, next) in [
+            (Stage::Mario, Stage::Pikachu),
+            (Stage::Donkey, Stage::Bonus2),
+            (Stage::Yoshi, Stage::Fox),
+            (Stage::Kirby, Stage::Samus),
+            (Stage::Zako, Stage::Boss),
+            (Stage::Link, Stage::Yoshi),
+            (Stage::Boss, Stage::Boss),
+        ] {
+            let mut backup = Backup::default();
+            let mut s = session::Session::new(
+                SceneData {
+                    stage: stage as u8,
+                    ..Default::default()
+                },
+                &backup,
+            );
+            assert_eq!(
+                s.manager.advance(&mut s.data, &mut s.state, &mut backup),
+                Scene::Battle
+            );
+            s.start_battle(&backup);
+            let allies = s
+                .state
+                .present()
+                .filter(|&(i, p)| i != usize::from(s.data.player) && !p.is_spgame_enemy)
+                .count();
+            assert_eq!(
+                allies,
+                usize::from(setup::STAGE_DESC[stage as usize].ally_count),
+                "{stage:?} allies"
+            );
+            clear_enemies(&mut s, pattern);
+            if stage == Stage::Boss {
+                continue;
+            }
+            // Through `Set` to the end of the battle.
+            let mut frames = 0;
+            while s.battle.as_mut().unwrap().begin_frame() != crate::battle::Frame::Done {
+                frames += 1;
+                assert!(frames < 1000);
+            }
+            assert_eq!(
+                s.finish_battle(&mut backup),
+                Scene::StageClear,
+                "{stage:?} {pattern:?}"
+            );
+            assert_eq!(s.finish_stage_clear(&mut backup), Scene::Intro);
+            assert_eq!(s.data.stage(), Some(next));
+            assert_eq!(
+                s.manager.advance(&mut s.data, &mut s.state, &mut backup),
+                if next == Stage::Bonus2 {
+                    Scene::BonusStage
+                } else {
+                    Scene::Battle
+                }
+            );
+            if next != Stage::Bonus2 {
+                s.start_battle(&backup);
+                let enemies = s.state.present().filter(|(_, p)| p.is_spgame_enemy).count();
+                assert!(enemies >= 1, "{next:?} enemies");
+            }
+        }
+    }
+}
+
+/// The campaign host's KO loop over real fighters: each frame every
+/// fighter ticks, its fall is collected, then an enemy whose `Dead*` wait
+/// ended is replaced or put to sleep (`psp-game`'s `collect_fall` and
+/// `replace_enemies`). With no floor every member falls out of the
+/// Polygon stage's team bounds by itself; `drift[i]` sends the i-th member
+/// made sideways, and `hold[i]` keeps it still for that many frames, so
+/// the KOs come one at a time, in pairs and in threes, through each side.
+/// Returns the frame of each KO.
+fn play_team_stage(stage: Stage, drift: &[f32], hold: &[u32]) -> alloc::vec::Vec<u32> {
+    use crate::dead::StageBounds;
+    use crate::fighter::Fighter;
+    use crate::status::BlastZone;
+    use ssb_engine::math::{Vec2, Vec3};
+    let mut backup = Backup::default();
+    let mut s = session::Session::new(
+        SceneData {
+            stage: stage as u8,
+            ..Default::default()
+        },
+        &backup,
+    );
+    s.manager.advance(&mut s.data, &mut s.state, &mut backup);
+    s.start_battle(&backup);
+    // `0x10C`'s (the Polygon stage's) bounds.
+    let bounds = StageBounds {
+        map: BlastZone {
+            top: 9000.0,
+            bottom: -4200.0,
+            left: -9000.0,
+            right: 9000.0,
+        },
+        camera: BlastZone {
+            top: 3000.0,
+            bottom: -2000.0,
+            left: -4000.0,
+            right: 4000.0,
+        },
+        rebirth: Vec2::new(0.0, 1800.0),
+        fog_color: [0; 3],
+    };
+    let team = BlastZone {
+        top: 8000.0,
+        bottom: -3800.0,
+        left: -7500.0,
+        right: 7500.0,
+    };
+    let points = [
+        Vec3::new(-1170.0, 2.0, 0.0),
+        Vec3::new(1200.0, 2.0, 0.0),
+        Vec3::new(0.0, 1803.0, 0.0),
+    ];
+    let total = usize::from(setup::STAGE_DESC[stage as usize].opponent_count);
+    let mut made = 0usize;
+    let mut make = |s: &mut session::Session, port: u8, kind: FighterKind, pos: Vec3| {
+        let mut f = Fighter::new(kind, port, 3);
+        f.dead.bounds = Some(bounds);
+        f.pos = pos;
+        f.situation = crate::fighter::Situation::Air;
+        crate::status::set_fall(&mut f);
+        s.configure_fighter(&mut f, team);
+        f.physics.vel_air.x = drift.get(made).copied().unwrap_or(0.0);
+        let wait = hold.get(made).copied().unwrap_or(0);
+        made += 1;
+        (f, wait)
+    };
+    let mut fighters: alloc::vec::Vec<(Fighter, u32)> = alloc::vec::Vec::new();
+    let enemies: alloc::vec::Vec<(u8, FighterKind)> = s
+        .state
+        .present()
+        .filter(|(_, p)| p.is_spgame_enemy)
+        .map(|(i, p)| (i as u8, p.fkind))
+        .collect();
+    for (i, (port, kind)) in enemies.into_iter().enumerate() {
+        let f = make(
+            &mut s,
+            port,
+            kind,
+            Vec3::new(i as f32 * 1000.0 - 1000.0, 1000.0, 0.0),
+        );
+        fighters.push(f);
+    }
+    let none = || core::iter::empty::<crate::weapon::MapSurface>();
+    let mut kos = alloc::vec::Vec::new();
+    for frame in 0..200_000u32 {
+        if s.battle.as_ref().unwrap().status == crate::battle::GameStatus::End {
+            break;
+        }
+        for (f, wait) in fighters.iter_mut() {
+            if *wait != 0 {
+                *wait -= 1;
+                continue;
+            }
+            f.tick_map(none);
+        }
+        for (f, _) in fighters.iter_mut() {
+            let fell = f.dead.scored;
+            s.collect_fall(f);
+            if fell {
+                kos.push(frame);
+                assert!(kos.len() <= total, "{stage:?}: KO {} of {total}", kos.len());
+            }
+        }
+        for slot in fighters.iter_mut() {
+            if !core::mem::take(&mut slot.0.dead.enemy_next_pending) {
+                continue;
+            }
+            let port = slot.0.port;
+            match s.next_enemy(port, &points, bounds.camera.top, bounds.map.top) {
+                setup::NextEnemy::Sleep => crate::dead::set_sleep(&mut slot.0),
+                setup::NextEnemy::Spawn(e) => *slot = make(&mut s, port, e.fkind, e.pos),
+            }
+        }
+    }
+    let g = s.game.as_ref().unwrap();
+    assert_eq!(kos.len(), total, "{stage:?} KOs");
+    assert_eq!((g.enemy_stocks_remaining, g.team_players_remaining), (0, 0));
+    assert_eq!(g.bonus.defeat_count, total);
+    assert_eq!(made, total);
+    assert_eq!(
+        s.battle.as_ref().unwrap().status,
+        crate::battle::GameStatus::End
+    );
+    // Every member was made and KO'd: each fighter is asleep or dead.
+    for (f, _) in &fighters {
+        use crate::status::{AnyStatus, Status};
+        assert!(
+            matches!(
+                f.status.status,
+                AnyStatus::Common(
+                    Status::Sleep
+                        | Status::DeadDown
+                        | Status::DeadLeftRight
+                        | Status::DeadUpStar
+                        | Status::DeadUpFall
+                )
+            ),
+            "{stage:?}: {:?}",
+            f.status.status
+        );
+    }
+    kos
+}
+
+/// The user's report on a PSP: the team stages ended with members still
+/// on the stage, and the Polygon Team (the stage before Master Hand)
+/// panicked. A member put to sleep when the team had no one left was KO'd
+/// again every wait where it died, taking the team's stocks and, with two
+/// sleepers on one frame at the last stock, a 31st Polygon KO record.
+#[test]
+fn team_stages_end_on_the_last_members_ko_with_sleepers_kept_asleep() {
+    for stage in [Stage::Yoshi, Stage::Kirby, Stage::Zako, Stage::Mario] {
+        // All at once, every drop in step: the KOs come in threes.
+        let kos = play_team_stage(stage, &[], &[]);
+        assert!(kos.windows(2).any(|w| w[0] == w[1]));
+        // One at a time, through the sides and the bottom.
+        let drift: alloc::vec::Vec<f32> = (0..30).map(|i| [0.0, 90.0, -90.0][i % 3]).collect();
+        let hold: alloc::vec::Vec<u32> = (0..30).map(|i| (i as u32 % 3) * 40).collect();
+        play_team_stage(stage, &drift, &hold);
+        // In pairs, through the bottom, while a third member waits: the
+        // Polygon Team's last two members fall on one frame at three
+        // stocks left, the panic's order.
+        let hold: alloc::vec::Vec<u32> =
+            (0..30).map(|i| if i % 3 == 2 { 120 } else { 0 }).collect();
+        let kos = play_team_stage(stage, &[], &hold);
+        assert!(kos.windows(2).any(|w| w[0] == w[1]));
+        play_team_stage(stage, &drift, &hold);
+    }
+}

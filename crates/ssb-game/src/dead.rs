@@ -513,6 +513,7 @@ fn check_rebirth(f: &mut Fighter) {
 /// `ftCommonSleepSetStatus`.
 pub fn set_sleep(f: &mut Fighter) {
     status::set_status(f, Status::Sleep, 0.0, StatusTiming::unknown());
+    f.is_invisible = true;
     f.dead.is_ghost = true;
     f.dead.is_menu_ignore = true;
     f.dead.camera_mode = CameraMode::Ghost;
@@ -827,15 +828,23 @@ fn set_rebirth_wait(f: &mut Fighter) {
 }
 
 /// The position step and `proc_map` of these statuses, in place of the
-/// ordinary ground and air ticks. The `Dead*` statuses have neither
-/// `proc_physics` nor `proc_map`: the fighter only moves by its air
-/// velocity. The rebirth statuses lower the fighter along
+/// ordinary ground and air ticks. The `Dead*` statuses and `Sleep`
+/// (`ftcommonstatus.h`) have neither `proc_physics` nor `proc_map`: the
+/// fighter only moves by its air velocity, and its `is_ghost` skips the
+/// blast check. The ordinary ticks would set `Fall` on a sleeper, which
+/// clears `is_ghost` and kills it again where it died: a 1P Game enemy put
+/// to sleep below the team bounds then scored a KO every replacement wait.
+/// The rebirth statuses lower the fighter along
 /// `ftCommonRebirthCommonProcMap`'s curve. Returns `false` for any other
 /// status.
 pub fn tick_status(f: &mut Fighter) -> bool {
     match f.status.status {
         AnyStatus::Common(
-            Status::DeadDown | Status::DeadLeftRight | Status::DeadUpStar | Status::DeadUpFall,
+            Status::DeadDown
+            | Status::DeadLeftRight
+            | Status::DeadUpStar
+            | Status::DeadUpFall
+            | Status::Sleep,
         ) => {
             f.pos += f.physics.vel_air;
             true

@@ -335,3 +335,59 @@ fn a_free_for_all_sleeper_never_steals() {
     status::update(&mut f);
     assert!(!f.dead.steal_request);
 }
+
+/// `Sleep` has no `proc_physics` or `proc_map` (`ftcommonstatus.h`): a
+/// fighter put to sleep where it died stays there, a ghost, and is never
+/// KO'd again. The ordinary air tick used to set `Fall`, which cleared
+/// `is_ghost`, and the blast check then scored one more KO per wait (the
+/// 1P team stages' early end and the Polygon Team's 31st KO record).
+#[test]
+fn a_sleeper_stays_where_it_died_and_never_scores_again() {
+    let none = || core::iter::empty::<crate::weapon::MapSurface>();
+    let team = BlastZone {
+        bottom: -1000.0,
+        ..stage().map
+    };
+    let outside = [
+        Vec3::new(0.0, team.bottom - 1.0, 0.0),
+        Vec3::new(team.right + 1.0, 0.0, 0.0),
+        Vec3::new(team.left - 1.0, 0.0, 0.0),
+        Vec3::new(0.0, team.top + 1.0, 0.0),
+        Vec3::new(0.0, team.top + 1.0, 0.0),
+    ];
+    for (i, pos) in outside.into_iter().enumerate() {
+        // A 1P Game enemy, its team out of members; then a stock match's
+        // last stock, which sleeps from inside its own update.
+        for enemy in [true, false] {
+            let mut f = mario();
+            f.situation = crate::fighter::Situation::Air;
+            f.dead.spgame_rule = enemy;
+            f.dead.stock_rule = !enemy;
+            f.dead.team_bounds = enemy.then_some(team);
+            f.stocks = 0;
+            f.pos = pos;
+            // The top-outs, each way, without the blast check's draw.
+            match i {
+                3 => set_dead_up_star(&mut f),
+                4 => set_dead_up_fall(&mut f),
+                _ => {}
+            }
+            let mut deaths = 0;
+            for _ in 0..600 {
+                f.tick_map(none);
+                deaths += u32::from(core::mem::take(&mut f.dead.scored));
+                if core::mem::take(&mut f.dead.enemy_next_pending) {
+                    // `sc1PGameSpawnEnemyTeamNext` with no member left.
+                    set_sleep(&mut f);
+                }
+            }
+            assert_eq!(deaths, 1, "case {i} enemy={enemy}");
+            assert!(is(&f, Status::Sleep), "case {i}: {:?}", f.status.status);
+            assert!(f.dead.is_ghost && f.is_invisible);
+            assert_eq!(f.stocks, -1);
+            let held = f.pos;
+            f.tick_map(none);
+            assert_eq!(f.pos, held);
+        }
+    }
+}

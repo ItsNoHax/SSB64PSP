@@ -17,7 +17,7 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Closed: FCR31 at an XMB-style launch is `0x0e00` (RE-516, D-050); Dream Land wind DustLight puffs already match the N64 (RE-508 corrected, ROM-gated host tests). Next, per [`PLAN.md`](PLAN.md#remaining-work): the 1P many-opponent spawn/KO bug and the stage panic before the final boss, then the grab/catch audit.
+Closed: the 1P many-opponent bug (`Sleep` had no physics/map proc in the C; Rust ran the air tick, cleared `is_ghost` and re-KO'd sleepers, double-counting defeats and overflowing the Zako bonus record array). Next, per [`PLAN.md`](PLAN.md#remaining-work): the grab/catch audit, then the intro batches.
 
 ## Blockers
 
@@ -29,7 +29,7 @@ Closed: FCR31 at an XMB-style launch is `0x0e00` (RE-516, D-050); Dream Land win
 
 ## Verification
 
-Baseline after the wind-effects and FCR31 batches:
+Baseline after the 1P many-opponent batch:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass (tests that need ROM tables, including
