@@ -17,13 +17,7 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-515: Training draws one stock icon per player (2 stocks, the default
-battle state), matching the N64 sprite and position; 105 training goldens
-rebaselined. Next, per [`PLAN.md`](PLAN.md#remaining-work): the 2D sprite edge
-fringe (transparent texels are black, so filtered scaled sprites get a dark
-edge): measure alpha-bleed against the unfiltered alternative with the
-`ssb_rom::n64_filter` model and pick the closer one (RE-515). Then fighter
-wind-reaction effects and the slope follow-ups.
+RE-516: Samus Charge Shot no longer crashes the PSP (FPU traps, D-050), fighter light rows fixed, impact wave translucent. Next, per [`PLAN.md`](PLAN.md#remaining-work): the 2D sprite edge fringe (RE-515), the XMB FCR31 check and the swallowed-B audit (RE-516), then wind-reaction effects and the slope follow-ups.
 
 ## Blockers
 
@@ -35,7 +29,7 @@ wind-reaction effects and the slope follow-ups.
 
 ## Verification
 
-Baseline after RE-515:
+Baseline after RE-516:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass (tests that need ROM tables, including

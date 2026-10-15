@@ -606,6 +606,8 @@ fn bump(counter: &AtomicU32, n: u32) {
 }
 
 unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
+    // Records the FPU control word the synthesizer runs under.
+    crate::fpu::init_thread(crate::fpu::GameThread::Audio);
     // SAFETY: set by `start` before this thread began.
     let Some(api) = (unsafe { *core::ptr::addr_of!(SHARED) }) else {
         return 0;

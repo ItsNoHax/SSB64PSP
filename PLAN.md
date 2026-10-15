@@ -87,6 +87,11 @@ closes it.
 - [x] Kirby attack100 vulcan puffs (link-15 display, TopN query marks), Link/Captain/Kirby attack100 item-pickup interrupt, Captain rapid-jab flag-1 frames 6/14/22/30/37 with a 40-frame loop, link-15 displays drawn in make order; against N64 traces; 1 golden added (RE-513).
 - [x] Fighter lighting from the F3DEX2 microcode (CPU vertex lighting, normalised direction, shade clamp before PRIM; LLE 768/768) and the fighter shadow (matrix regression, no depth test) (RE-514).
 - [x] Training draws one stock icon per player (2 stocks, `is_single_stockicon`, the default battle state); icons and HUD match the N64 sprite and position (RE-515).
+- [x] Samus Charge Shot PSP crash: FGM LFO divide-by-zero and RSP-light float-to-int traps fixed with N64-faithful helpers, six more trap sites, fighter light rows no longer scaled by MODEL_SCALE, impact wave translucent, samus/samusshot/donkey scripts press B at tick 40 (RE-516, D-050).
+- [ ] RE-516: confirm FCR31 at an XMB launch and run an XMB Samus charge on the PSP-2000 (needs a person).
+- [ ] RE-516: audit the other golden scenes where an A at tick 8 swallows a later B (check each logged status).
+- [ ] RE-516: latent FPU trap sites from the audit that no test reaches; extend `with_traps` sweeps (items, stages, effects).
+- [ ] Pack `VERSION` stayed 110 although the impact-wave seed changed pack content; a v110 pack built earlier renders the wave opaque. Bump at the next pack change.
 - [ ] NEXT: 2D sprite edge fringe: transparent texels are black, so filtered scaled sprites (stock icons, damage digits, emblems) get a dark fringe vs the N64. Measure alpha-bleed of opaque colour into transparent texels at pack build (and the unfiltered alternative) against the `ssb_rom::n64_filter` reference model per D-043; pick the one closer to the N64 (RE-515).
 - [ ] Optional: narrow the vs-four golden change to catch/thrown/relz/pulled; marks-only pixel share of the 27 display-plus-marks rows (RE-511).
 - [ ] Tooling: `tools/golden.sh` mem-line regex `[^\r]*` stops at the letter r; `SSB64_ROM` must be an absolute path for golden.sh.

@@ -16,7 +16,8 @@
 use psp::sys;
 
 /// `psp::module!` (rust-psp `a89142b`) with the main thread's stack size,
-/// in bytes, as a fourth argument. Everything else is that macro's.
+/// in bytes, as a fourth argument; the main thread calls
+/// [`crate::fpu::init_thread`] first. Everything else is that macro's.
 #[macro_export]
 macro_rules! module_with_stack {
     ($name:expr, $version_major:expr, $version_minor:expr, $stack_bytes:expr) => {
@@ -75,6 +76,7 @@ macro_rules! module_with_stack {
             #[no_mangle]
             extern "C" fn module_start(argc_bytes: usize, argv: *mut c_void) -> isize {
                 extern "C" fn main_thread(argc: usize, argv: *mut c_void) -> i32 {
+                    $crate::fpu::init_thread($crate::fpu::GameThread::Main);
                     ::psp::_start!(super::psp_main, argc, argv)
                 }
 

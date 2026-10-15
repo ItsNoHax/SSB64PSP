@@ -22,6 +22,8 @@ extern crate alloc;
 pub mod array_vec;
 pub mod audio;
 pub mod coord;
+#[cfg(test)]
+mod fpu_traps;
 pub mod heap;
 pub mod input;
 pub mod math;

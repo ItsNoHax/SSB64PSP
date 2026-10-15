@@ -208,12 +208,13 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::Fox => 46,
         // B at tick 20, as in the Fox scene; the Fireball is in flight.
         GameScene::Luigi => 46,
-        // B at tick 20; `SpecialNStart` runs 16 frames, then the charge
-        // grows a level every 20 frames. Level 2 is on the arm cannon here.
-        GameScene::Samus => 80,
-        // A second B at tick 60 ends the charge; the level-1 shot is in
+        // B at tick 40, once Training's opening jab is over;
+        // `SpecialNStart` runs 16 frames, then the charge grows a level every
+        // 20 frames. Level 2 is on the arm cannon here.
+        GameScene::Samus => 100,
+        // A second B at tick 80 ends the charge; the level-1 shot is in
         // flight a few frames later.
-        GameScene::SamusShot => 64,
+        GameScene::SamusShot => 84,
         // Down+B at tick 20; the Bomb spawns on `SpecialLw` frame 10 and
         // rests under Samus. She walks right from tick 80, uncovering it
         // with some 30 frames of its 100-frame fuse left.
@@ -264,7 +265,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::PikachuAir => 56,
         // Up+B at tick 20; Sing makes its notes on its first update.
         GameScene::Purin => 50,
-        // B at tick 20 starts the Giant Punch; it is charging here.
+        // B at tick 40 starts the Giant Punch; it is charging here.
         GameScene::Donkey => 60,
         // B at tick 20; PK Fire's spark appears near tick 45 and is in
         // flight here.
@@ -837,8 +838,16 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             t if scene == GameScene::KirbyJab => {
                 N64Buttons(if t >= 50 && t % 2 == 0 { N64Buttons::A } else { 0 })
             }
-            20 => N64Buttons(N64Buttons::B),
-            60 if scene == GameScene::SamusShot => N64Buttons(N64Buttons::B),
+            // Samus's and Donkey Kong's jabs from the A at tick 8 are still
+            // running at tick 20 and swallow a B there; their Charge Shot and
+            // Giant Punch start at 40.
+            40 if matches!(scene, GameScene::Samus | GameScene::SamusShot | GameScene::Donkey) => {
+                N64Buttons(N64Buttons::B)
+            }
+            80 if scene == GameScene::SamusShot => N64Buttons(N64Buttons::B),
+            20 if !matches!(scene, GameScene::Samus | GameScene::SamusShot | GameScene::Donkey) => {
+                N64Buttons(N64Buttons::B)
+            }
             // Extended controls hold through the critical bloat, then throw
             // backward. The original Link Bomb capture stays at tick 55.
             300 if scene == GameScene::LinkBomb => N64Buttons(N64Buttons::A),
@@ -2330,6 +2339,25 @@ fn psp_main() {
     #[cfg(feature = "trig_selftest")]
     ssb_psp_runtime::trig_selftest::run();
     unsafe { run() }
+}
+
+/// The FPU control word each game thread started with
+/// (`ssb_psp_runtime::fpu`), once, to stdout and `boot.log`: under PSPLink
+/// `0x00000e00` (invalid, divide-by-zero and overflow trap).
+fn log_launch_fcr31() {
+    use ssb_psp_runtime::fpu::{launch_fcr31, GameThread};
+    // 0xffffffff: the thread has not started.
+    let show = |t| launch_fcr31(t).unwrap_or(u32::MAX);
+    let line = alloc::format!(
+        "fpu: fcr31 at start main={:#010x} audio={:#010x} masked={}\n",
+        show(GameThread::Main),
+        show(GameThread::Audio),
+        cfg!(feature = "fpu_mask")
+    );
+    unsafe {
+        psp::sys::sceIoWrite(psp::sys::sceKernelStdout(), line.as_ptr() as *const core::ffi::c_void, line.len());
+    }
+    boot_log::log_args(format_args!("{}", line.trim_end()));
 }
 
 /// Loads the pack's audio section, starts the audio thread and installs the
@@ -5291,6 +5319,9 @@ unsafe fn run() -> ! {
         sim_frame_index = sim_frame_index.saturating_add(1);
         if matches!(sim_frame_index, 1 | 60 | 600) {
             boot_log::log_args(format_args!("frame {sim_frame_index}"));
+        }
+        if sim_frame_index == 60 {
+            log_launch_fcr31();
         }
         pad.poll();
         let (previous_controller, controller) = if let Some(scene) = capture_scene {

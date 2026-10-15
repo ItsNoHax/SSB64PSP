@@ -1115,7 +1115,8 @@ pub fn get_rate(mut vol: f32, mut tgt: f32, count: i32, ratel: &mut u16) -> i16 
         *ratel = 0;
         return 0;
     }
-    let invn = 1.0f32 / count as f32;
+    // Out of line: LLVM may divide before the early return (RE-469).
+    let invn = crate::math::div_nonzero(1.0, count as f32);
     if tgt < 1.0 {
         tgt = 1.0;
     }

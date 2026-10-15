@@ -101,11 +101,12 @@ impl CSeq {
         let division = be32(64);
         // A zero division would be a float divide by zero, which the PSP
         // traps; the shipped sequences all have one (and the C would give
-        // an infinite qnpt).
+        // an infinite qnpt). Out of line: LLVM may divide before the
+        // branch (RE-469).
         s.qnpt = if division == 0 {
             f32::INFINITY
         } else {
-            1.0 / division as f32
+            crate::math::div_nonzero(1.0, division as f32)
         };
         s
     }

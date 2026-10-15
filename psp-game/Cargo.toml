@@ -19,6 +19,10 @@ ssb-psp-runtime = { path = "../psp-runtime" }
 ssb-capture = { path = "../crates/ssb-capture" }
 
 [features]
+# Masks every FPU exception on the game's threads
+# (`ssb_psp_runtime::fpu`). Off by default: the threads keep the enables the
+# system starts them with, and a trap is a bug to fix.
+fpu_mask = ["ssb-psp-runtime/fpu_mask"]
 # Boot and scene-load lines to `ms0:/PSP/GAME/ssb64/boot.log`
 # (`src/boot_log.rs`, RE-475), for XMB launches where PSPLink is not
 # running. Allocates nothing. Off by default.

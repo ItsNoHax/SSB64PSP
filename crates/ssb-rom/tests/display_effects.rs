@@ -55,6 +55,29 @@ fn scale_x_effects_draw_on_head_one_under_the_effect_links_cld_state() {
 
 /// The play on which a `DObj` tree's `GObj::anim_frame` first reads at or
 /// below zero after creation, counting creation's play as 1.
+/// `efManagerImpactWaveProcDisplay` sets `G_RM_AA_ZB_XLU_SURF`, PRIM and
+/// ENV before the list, which sets no render mode before its triangles:
+/// the wave blends by `TEXEL0 * PRIM` alpha, depth-tested, no depth write.
+#[test]
+fn the_impact_wave_draws_translucent_under_its_display_proc_state() {
+    use ssb_rom::pack::flags;
+    let Some(bytes) = pack_bytes() else {
+        return;
+    };
+    let p = Pack::open(&bytes).unwrap();
+    let o = (0..p.object_count())
+        .filter_map(|i| p.object(i))
+        .find(|o| (o.source_file, o.source_offset) == (83, 0x7C28))
+        .unwrap();
+    let m = p.mesh(p.node(o.first_node).unwrap().mesh).unwrap();
+    assert!(m.prim_count > 0);
+    for pr in (0..m.prim_count).map(|i| p.prim(m.first_prim + i).unwrap()) {
+        let want = flags::TRANSLUCENT | flags::ALPHA_BLEND | flags::DEPTH_TEST;
+        assert_eq!(pr.flags & want, want, "{:#x}", pr.flags);
+        assert_eq!(pr.flags & flags::DEPTH_WRITE, 0, "{:#x}", pr.flags);
+    }
+}
+
 fn dobj_life(data: &[u8], scripts: &[u32]) -> u16 {
     let mut joints: Vec<StageJoint> = scripts
         .iter()

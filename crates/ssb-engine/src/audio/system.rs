@@ -601,6 +601,31 @@ mod tests {
         assert_eq!(sys.active_voices(), 0);
     }
 
+    /// Every FGM and the first BGMs, rendered with the FPU traps a PSP arms
+    /// under PSPLink (`fpu_traps`). The Charge Shot FGMs (5, 239-245)
+    /// divided by a zero LFO period and killed the PSP's audio thread.
+    #[test]
+    fn every_fgm_renders_without_an_fpu_trap() {
+        let Some(mut sys) = system() else { return };
+        let mut pcm = Vec::new();
+        let count = sys.fgm_count();
+        assert!(count > 246, "fgm count {count}");
+        crate::fpu_traps::with_traps(|| {
+            for id in 0..count {
+                sys.play_fgm(id);
+                run(&mut sys, 40, &mut pcm);
+                sys.stop_all_fgm();
+                run(&mut sys, 2, &mut pcm);
+                pcm.clear();
+            }
+            for bgm in 0..8 {
+                sys.play_bgm(0, bgm);
+                run(&mut sys, 60, &mut pcm);
+                pcm.clear();
+            }
+        });
+    }
+
     /// Locks the renderer's output (`golden`): every optimisation of the
     /// synthesizer must keep these hashes.
     #[test]

@@ -575,7 +575,13 @@ impl CachedVertexPose {
         sqrt: impl Fn(f32) -> f32,
     ) -> PackedVertex {
         let pos = [2, 4, 6].map(|i| i16::from_le_bytes([binding[i], binding[i + 1]]) as f32);
-        let round = |c: f32| (if c < 0.0 { c - 0.5 } else { c + 0.5 }) as i16;
+        // `as i16`'s saturation without `trunc.w.s` on an out-of-range value
+        // (a joint scaled almost to 0 makes `relative` huge), which a PSP
+        // traps.
+        let round = |c: f32| {
+            ssb_engine::math::f32_to_i32_sat(if c < 0.0 { c - 0.5 } else { c + 0.5 })
+                .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+        };
         let p = self.relative.transform_point(pos).map(round);
         [vertex.x, vertex.y, vertex.z] = p;
         // Normals were loaded under the same source matrix as the positions.
@@ -589,7 +595,9 @@ impl CachedVertexPose {
             let original = sqrt(n.iter().map(|v| v * v).sum());
             if length > 0.0 {
                 let n = transformed.map(|v| {
-                    round(v * original / length).clamp(i8::MIN as i16, i8::MAX as i16) as i8
+                    // Out of line: LLVM may divide before the branch (RE-469).
+                    round(ssb_engine::math::div_nonzero(v * original, length))
+                        .clamp(i8::MIN as i16, i8::MAX as i16) as i8
                 });
                 [vertex.nx, vertex.ny, vertex.nz] = n;
             }

@@ -315,6 +315,7 @@ fn fighter_regression_scene(scene: Option<CaptureScene>) -> Option<FighterRegres
 }
 
 fn psp_main() {
+    ssb_psp_runtime::fpu::init_thread(ssb_psp_runtime::fpu::GameThread::Main);
     psp::enable_home_button();
     unsafe { run() }
 }

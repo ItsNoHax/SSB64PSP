@@ -697,7 +697,8 @@ impl Mat4 {
         if !det.is_finite() || det.abs() < 1e-20 {
             return None;
         }
-        let inv_det = 1.0 / det;
+        // Out of line: LLVM may divide before the early return (RE-469).
+        let inv_det = ssb_engine::math::div_nonzero(1.0, det);
 
         // `c` is the adjugate in *row*-major order, `out` is column-major, so
         // the copy transposes.

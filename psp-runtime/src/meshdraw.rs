@@ -455,7 +455,7 @@ impl DrawState {
             }
         }
         let object = ssb_engine::rsp_light::object_light_dir(
-            self.texgen_model.map_or(IDENTITY_ROWS, |m| matrix_rows(&m)),
+            self.texgen_model.map_or(IDENTITY_ROWS, |m| light_rows(matrix_rows(&m))),
             world,
         );
         self.node_light = Some((world, object));
@@ -478,6 +478,15 @@ fn mat4_rows(m: &ssb_rom::scene::Mat4) -> [[f32; 3]; 3] {
         [m.0[4], m.0[5], m.0[6]],
         [m.0[8], m.0[9], m.0[10]],
     ]
+}
+
+/// A node matrix's 3x3 in the original's units, as the RSP's modelview
+/// holds it: node matrices carry [`MODEL_SCALE`] for the normalised 16-bit
+/// vertices, which would put every entry of a unit rotation on the s15.16
+/// limit in [`ssb_engine::rsp_light::fixed_rows`] (RE-514). A power of two:
+/// the division is exact.
+fn light_rows(rows: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    rows.map(|r| r.map(|v| v / MODEL_SCALE))
 }
 
 /// The identity 3x3, for a draw before any node matrix is placed.
@@ -2469,6 +2478,8 @@ unsafe fn draw_node_mesh(
             let model = st
                 .texgen_model
                 .map_or(ssb_rom::scene::Mat4::IDENTITY, |m| mat4_of(&m));
+            // Only a node matrix carries `MODEL_SCALE`.
+            let scaled_model = st.texgen_model.is_some();
             // One source joint's matrices (and light) serve its run of vertices.
             let mut pose: Option<(u16, ssb_rom::pack::CachedVertexPose, [i8; 3])> = None;
             for index in 0..count {
@@ -2500,7 +2511,11 @@ unsafe fn draw_node_mesh(
                                 let source_light = light.map_or([0; 3], |world| {
                                     let world_source = model.mul(&inverse.mul(&source));
                                     ssb_engine::rsp_light::object_light_dir(
-                                        mat4_rows(&world_source),
+                                        if scaled_model {
+                                            light_rows(mat4_rows(&world_source))
+                                        } else {
+                                            mat4_rows(&world_source)
+                                        },
                                         world,
                                     )
                                 });

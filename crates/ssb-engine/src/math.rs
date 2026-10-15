@@ -761,6 +761,71 @@ pub fn div_nonzero(n: f32, d: f32) -> f32 {
     n / if d == 0.0 { 1.0 } else { d }
 }
 
+/// `n / d` with the IEEE 754 result for a zero `d` -- `±inf` by the signs
+/// of `n` and `d`, NaN for `0 / 0` or a NaN `n` -- without ever dividing by
+/// zero.
+///
+/// The N64 masks divide-by-zero (`osInitialize` and `osCreateThread` set
+/// the FCSR to `FPCSR_FS | FPCSR_EV`: only invalid operations trap), so the
+/// original's `x / 0` is the IEEE infinity. A PSP under PSPLink traps the
+/// division instead (FCR31 `0x00000E00`, RE-502), so the port reproduces the
+/// value without executing it. The division only ever sees a nonzero
+/// divisor, so LLVM may hoist it past the branch freely. Only `d == 0` is
+/// special: `inf / inf` still divides.
+#[inline]
+pub fn div_ieee(n: f32, d: f32) -> f32 {
+    let q = n / if d == 0.0 { 1.0 } else { d };
+    if d != 0.0 {
+        q
+    } else if n == 0.0 || n.is_nan() {
+        f32::NAN
+    } else if n.is_sign_negative() != d.is_sign_negative() {
+        f32::NEG_INFINITY
+    } else {
+        f32::INFINITY
+    }
+}
+
+/// `x as i32` -- truncation toward zero, saturating at `i32::MIN`/`i32::MAX`,
+/// NaN to 0 -- computed on the bits, so no FPU conversion ever sees an
+/// out-of-range value.
+///
+/// Rust's `as` gives the same result, but on MIPS it runs `trunc.w.s` first
+/// and fixes the result up after: `trunc.w.s` of NaN, `±inf` or anything
+/// outside `[-2^31, 2^31)` raises the FPU's invalid operation, which a PSP
+/// under PSPLink traps (RE-469). The N64 never converts such a value either:
+/// the R4300 raises its unmaskable unimplemented-operation exception there.
+/// For every in-range input the result is `trunc.w.s`'s.
+#[inline]
+pub fn f32_to_i32_sat(x: f32) -> i32 {
+    let bits = x.to_bits();
+    let exponent = ((bits >> 23) & 0xFF) as i32;
+    if exponent == 0xFF && bits & 0x007F_FFFF != 0 {
+        return 0;
+    }
+    if exponent < 127 {
+        // |x| < 1, zeros and denormals included.
+        return 0;
+    }
+    let negative = bits >> 31 != 0;
+    let e = exponent - 127;
+    if e >= 31 {
+        // |x| >= 2^31, infinities included; -2^31 itself is i32::MIN.
+        return if negative { i32::MIN } else { i32::MAX };
+    }
+    let mantissa = (bits & 0x007F_FFFF) | 0x0080_0000;
+    let magnitude = if e >= 23 {
+        mantissa << (e - 23)
+    } else {
+        mantissa >> (23 - e)
+    } as i32;
+    if negative {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
 // --- The original's inverse trigonometry (`sys/utils.c`) -------------------
 //
 // The N64 game links no `atan2f`, `acosf`, `asinf` or `tanf`: every angle it
@@ -1141,7 +1206,8 @@ pub fn transform_lookat_basis(columns: [[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
     let r = [dot(columns[0]), dot(columns[1]), dot(columns[2])];
     let len = sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
     if len > 1.0e-6 {
-        [r[0] / len, r[1] / len, r[2] / len]
+        // Out of line: LLVM may divide before the branch (RE-469).
+        r.map(|c| div_nonzero(c, len))
     } else {
         [0.0; 3]
     }
@@ -1841,5 +1907,60 @@ mod tests {
             }
         }
         assert_eq!(checked, 200_000 * 16);
+    }
+
+    #[test]
+    fn div_ieee_gives_the_ieee_quotient_without_dividing_by_zero() {
+        crate::fpu_traps::with_traps(|| {
+            let z = core::hint::black_box(0.0f32);
+            assert_eq!(div_ieee(255.0, z), f32::INFINITY);
+            assert_eq!(div_ieee(-255.0, z), f32::NEG_INFINITY);
+            assert_eq!(div_ieee(255.0, -z), f32::NEG_INFINITY);
+            assert_eq!(div_ieee(-255.0, -z), f32::INFINITY);
+            assert!(div_ieee(0.0, z).is_nan());
+            assert!(div_ieee(-0.0, -z).is_nan());
+            assert!(div_ieee(f32::NAN, z).is_nan());
+            assert_eq!(div_ieee(f32::INFINITY, z), f32::INFINITY);
+            assert_eq!(div_ieee(255.0 * 3.0, 4.0), 191.25);
+            assert_eq!(div_ieee(-7.0, 2.0), -3.5);
+        });
+        // Masked, the host's own division agrees.
+        for (n, d) in [(255.0f32, 0.0f32), (-1.0, 0.0), (1.0, -0.0), (3.0, 0.75)] {
+            let (n, d) = core::hint::black_box((n, d));
+            assert_eq!(div_ieee(n, d).to_bits(), (n / d).to_bits());
+        }
+    }
+
+    #[test]
+    fn f32_to_i32_sat_is_rusts_cast_without_a_trapping_conversion() {
+        crate::fpu_traps::with_traps(|| {
+            assert_eq!(f32_to_i32_sat(2_147_483_648.0), i32::MAX);
+            assert_eq!(f32_to_i32_sat(-2_147_483_648.0), i32::MIN);
+            assert_eq!(f32_to_i32_sat(-2_147_483_904.0), i32::MIN);
+            assert_eq!(f32_to_i32_sat(f32::INFINITY), i32::MAX);
+            assert_eq!(f32_to_i32_sat(f32::NEG_INFINITY), i32::MIN);
+            assert_eq!(f32_to_i32_sat(f32::NAN), 0);
+            assert_eq!(f32_to_i32_sat(-f32::NAN), 0);
+            assert_eq!(f32_to_i32_sat(2_147_483_520.0), 2_147_483_520);
+            assert_eq!(f32_to_i32_sat(-1.5), -1);
+            assert_eq!(f32_to_i32_sat(0.99999994), 0);
+            assert_eq!(f32_to_i32_sat(-0.0), 0);
+        });
+        // Every exponent, with a sweep of mantissas, against `as` (masked).
+        let mut checked = 0u32;
+        for bits in (0..=u32::MAX).step_by(4093) {
+            let x = f32::from_bits(bits);
+            assert_eq!(f32_to_i32_sat(x), x as i32, "{bits:#010x}");
+            checked += 1;
+        }
+        for e in 0..=255u32 {
+            for m in [0u32, 1, 0x40_0000, 0x7F_FFFF] {
+                for s in [0u32, 1] {
+                    let x = f32::from_bits(s << 31 | e << 23 | m);
+                    assert_eq!(f32_to_i32_sat(x), x as i32, "{x:e}");
+                }
+            }
+        }
+        assert!(checked > 1_000_000);
     }
 }

@@ -20,6 +20,9 @@ ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }
 
 [features]
+# Masks every FPU exception on the game's threads (`fpu.rs`) instead of
+# keeping the enables the system starts them with. Off by default.
+fpu_mask = []
 # Frame timing and free-memory reports (`profile.rs`, RE-469). Off by
 # default: the spans compile to nothing.
 profile = ["ssb-engine/audio_profile"]

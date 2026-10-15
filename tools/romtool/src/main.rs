@@ -2500,6 +2500,17 @@ const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[
 /// ENV (RE-384).
 const SHIELD_GRAPH: (u32, u32) = (163, 0x300);
 
+/// `dEFManagerImpactWaveEffectDesc`'s list (file 83 + 0x7C28), drawn by
+/// `efManagerImpactWaveProcDisplay`: `G_RM_AA_ZB_XLU_SURF`, PRIM
+/// (`dEFManagerImpactWavePrimColor*[index]`, the fading alpha) and ENV
+/// (black), then `gcDrawDObjDLHead0`. The list sets its own combiner
+/// (`(PRIM - ENV) * TEXEL0 + ENV`, alpha `TEXEL0 * PRIM`) but no render mode
+/// before its triangles, so it draws translucent, depth-tested, without a
+/// depth write. Unseeded, it drew opaque and hid the fighter it surrounds
+/// (Samus's and Kirby's Charge Shot, Donkey Kong's Spinning Kong and Hand
+/// Slap, landings).
+const IMPACT_WAVE_GRAPH: (u32, u32) = (83, 0x7C28);
+
 /// `efManagerMakeEffect` effects on DL link 15 or 18 whose display draws
 /// the tree's `DObjDLLink` lists (`gcDrawDObjTreeDLLinksForGObj`): the
 /// head-1 lists start under `efDisplayCLDProcDisplay`'s state, which every
@@ -2632,6 +2643,30 @@ fn seed_player_interface_commands(key: (u32, u32), decoded: &mut [Vec<ssb_rom::d
                     len: 29,
                     data: 0x0055_3078,
                 },
+            );
+        }
+        return;
+    }
+    if key == IMPACT_WAVE_GRAPH {
+        // efManagerImpactWaveProcDisplay, before the list's own writes:
+        // index 4 (every fighter's wave, `ftParamMakeEffect`) is white, the
+        // alpha starts at 255 and the renderer replaces it per frame.
+        if let Some(cmds) = decoded.first_mut() {
+            cmds.splice(
+                0..0,
+                [
+                    Cmd::SetOtherModeL {
+                        shift: 3,
+                        len: 29,
+                        data: 0x0050_49D8, // G_RM_AA_ZB_XLU_SURF, SURF2
+                    },
+                    Cmd::SetPrimColor {
+                        m: 0,
+                        l: 0,
+                        rgba: [0xFF; 4],
+                    },
+                    Cmd::SetEnvColor([0, 0, 0, 0xFF]),
+                ],
             );
         }
         return;

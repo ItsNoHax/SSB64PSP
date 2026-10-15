@@ -42,9 +42,23 @@ pub fn reflect_light_dir(angles_degrees: [f32; 2]) -> [i8; 3] {
 
 /// `guMtxF2L`'s s15.16 fixed point for a 3x3 block: `(long)(f * 65536)`.
 /// `rows[i]` is the image of object axis `i` (the N64 `Mtx` row and the
-/// PSP's `ScePspFMatrix4` `x`/`y`/`z` vector alike).
+/// PSP's `ScePspFMatrix4` `x`/`y`/`z` vector alike), in the original's
+/// units: a PSP model matrix carries `MODEL_SCALE` for its normalised
+/// 16-bit vertices and must be divided by it first, or every entry of a
+/// unit rotation lands on the s15.16 limit.
+///
+/// The modelview the RSP lights with is its own product of the joints'
+/// `G_MTX_MUL` matrices (`gcDrawDObjTree...`, `objdisplay.c:1111`), and the
+/// microcode's matrix multiply ends in `vmadn`/`vmadh`, which clamp an
+/// overflowing entry to `0x7FFF_FFFF` or `0x8000_0000` ([`saturate`]). The
+/// port's float product saturates the same way; a NaN entry, which would
+/// fault the N64's conversion, becomes 0. [`f32_to_i32_sat`] does both on
+/// the bits: Rust's `as` would run `trunc.w.s` on the out-of-range value
+/// first, an invalid operation a PSP under PSPLink traps.
+///
+/// [`f32_to_i32_sat`]: crate::math::f32_to_i32_sat
 pub fn fixed_rows(rows: [[f32; 3]; 3]) -> [[i32; 3]; 3] {
-    rows.map(|r| r.map(|v| (v * 65536.0) as i32))
+    rows.map(|r| r.map(|v| crate::math::f32_to_i32_sat(v * 65536.0)))
 }
 
 /// The RSP's `VRSQ` table (ares `RSP::power`): entry `i` holds the largest
@@ -249,6 +263,41 @@ mod tests {
             [95732, 88823, -11210],
         ];
         assert_eq!(transform_light_dir(mixed, [-28, 81, -50]), [68, 96, 49]);
+    }
+
+    #[test]
+    fn fixed_rows_saturate_at_the_s15_16_limits_without_an_fpu_trap() {
+        let rows = core::hint::black_box([
+            [32768.0, -32768.0, 40000.0],
+            [-40000.0, f32::NAN, f32::INFINITY],
+            [32767.999, -32767.5, 1.0e30],
+        ]);
+        let fixed = crate::fpu_traps::with_traps(|| fixed_rows(rows));
+        assert_eq!(
+            fixed,
+            [
+                [i32::MAX, i32::MIN, i32::MAX],
+                [i32::MIN, 0, i32::MAX],
+                [0x7FFF_FF80, -0x7FFF_8000, i32::MAX],
+            ]
+        );
+        // Unit rows are exact.
+        assert_eq!(
+            fixed_rows([[1.0, -0.5, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]]),
+            [[65536, -32768, 0], [0, 65536, 0], [0, 0, -65536]]
+        );
+    }
+
+    /// The identity case above at the PSP's `MODEL_SCALE` (32768): unscaled
+    /// first, it is the RSP's answer; left scaled, every entry hits the
+    /// s15.16 limit and the direction saturates.
+    #[test]
+    fn model_scale_must_come_off_before_the_transform() {
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let scaled = identity.map(|r: [f32; 3]| r.map(|v| v * 32768.0));
+        let unscaled = scaled.map(|r| r.map(|v| v / 32768.0));
+        assert_eq!(object_light_dir(unscaled, [47, -10, 87]), [60, -13, 112]);
+        assert_ne!(object_light_dir(scaled, [47, -10, 87]), [60, -13, 112]);
     }
 
     #[test]

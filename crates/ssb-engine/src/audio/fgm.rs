@@ -17,6 +17,7 @@
 use super::data::{AudioData, WaveRef};
 use super::synth::{Client, Synth, VoiceConfig, AL_PLAYING, AL_STOPPED, FGM_VOICE_BASE};
 use super::FgmHandle;
+use crate::math::{div_ieee, f32_to_i32_sat};
 use alloc::vec::Vec;
 
 /// `audio_config.unk_80026204_0x0` = `unk31`, 48 in the settings but set to
@@ -567,24 +568,27 @@ impl Fgm {
                 _ => {}
             }
             let vo = &mut self.voices[v];
+            // A NaN passes the original's clamps and faults the N64 at the
+            // integer store; the port stores Rust's 0 for it without the
+            // conversion a PSP traps.
             match l.target {
                 10 | 11 => {
                     if l.target == 11 {
                         val += vo.vol as f32;
                     }
-                    vo.vol = val.clamp(0.0, 127.0) as u8;
+                    vo.vol = f32_to_i32_sat(val.clamp(0.0, 127.0)) as u8;
                 }
                 12 | 13 => {
                     if l.target == 13 {
                         val += vo.pitch as f32;
                     }
-                    vo.pitch = val.clamp(-1200.0, 1200.0) as i16;
+                    vo.pitch = f32_to_i32_sat(val.clamp(-1200.0, 1200.0)) as i16;
                 }
                 14 | 15 => {
                     if l.target == 15 {
                         val += vo.pan as f32;
                     }
-                    vo.pan = val.clamp(0.0, 127.0) as u8;
+                    vo.pan = f32_to_i32_sat(val.clamp(0.0, 127.0)) as u8;
                 }
                 t if t < 10 => scratch[t as usize] = val,
                 t => {
@@ -759,6 +763,14 @@ impl Fgm {
     }
 
     /// One LFO step (`func_80027460_28060`'s second switch).
+    ///
+    /// The ramps divide by the LFO's `period` (`hold` for shape 5), which
+    /// shipped data sets to 0: the Charge Shot FGMs (ids 5 and 239-245) ramp
+    /// the volume with shape 2 and `period = 0`. The N64 masks
+    /// divide-by-zero, so the step is `+inf` and the volume clamps to 127;
+    /// [`div_ieee`] gives that value without the division a PSP traps. A
+    /// `0 / 0` (zero `amp`) is NaN, which the N64 traps as an invalid
+    /// operation; no shipped FGM reaches it.
     fn lfo_value(&mut self, li: usize, data: &AudioData) -> f32 {
         let shape = self.lfos[li].shape;
         if shape < 4 {
@@ -772,8 +784,11 @@ impl Fgm {
         match shape {
             0 => {
                 // `gSYSinTable[0x800]` is the first half period of a sine
-                // scaled to 0x7FFF; / 65536 gives a half-amplitude sine.
-                let id = (((l.phase / l.period) * 4096.0) as i32 & 0xFFF) as u16;
+                // scaled to 0x7FFF; / 65536 gives a half-amplitude sine. A
+                // zero period makes the `(s32)` conversion an infinity, the
+                // R4300's unimplemented-operation exception: no shipped FGM
+                // has it, and the port takes Rust's saturated value.
+                let id = (f32_to_i32_sat(div_ieee(l.phase, l.period) * 4096.0) & 0xFFF) as u16;
                 let angle = data.sin_table[(id & 0x7FF) as usize] as f32 / 65536.0;
                 (if id & 0x800 != 0 { -angle } else { angle }) * l.amp + l.offset
             }
@@ -784,8 +799,8 @@ impl Fgm {
                     l.offset
                 }
             }
-            2 => (l.amp * l.phase) / l.period + l.offset,
-            3 => (l.amp * (l.period - l.phase)) / l.period + l.offset,
+            2 => div_ieee(l.amp * l.phase, l.period) + l.offset,
+            3 => div_ieee(l.amp * (l.period - l.phase), l.period) + l.offset,
             4 | 8 => {
                 self.lfos[li].phase += 1.0;
                 if self.lfos[li].hold < self.lfos[li].phase {
@@ -820,7 +835,7 @@ impl Fgm {
                     l.phase = 0.0;
                 }
                 let l = self.lfos[li];
-                ((l.to - l.from) * l.phase) / l.hold + l.from
+                div_ieee((l.to - l.from) * l.phase, l.hold) + l.from
             }
             6 | 7 => {
                 let l = &mut self.lfos[li];
@@ -829,9 +844,9 @@ impl Fgm {
                     l.phase = l.period;
                 }
                 if shape == 6 {
-                    (l.amp * l.phase) / l.period + l.offset
+                    div_ieee(l.amp * l.phase, l.period) + l.offset
                 } else {
-                    (l.amp * (l.period - l.phase)) / l.period + l.offset
+                    div_ieee(l.amp * (l.period - l.phase), l.period) + l.offset
                 }
             }
             _ => 0.0,
@@ -1532,6 +1547,56 @@ mod tests {
         let mut syn = Synth::new(32006, None);
         let fgm = Fgm::new(&mut syn, &d);
         Some((d, syn, fgm))
+    }
+
+    /// The Charge Shot FGMs ramp their volume with an LFO of period 0
+    /// (shape 2, target 10, `amp` 255, `offset` 12). The N64 masks the
+    /// divide-by-zero: the step is `+inf`, so the voice's first
+    /// articulation sets volume 127. With the PSP's traps armed on the host
+    /// the division used to end the test with SIGFPE.
+    #[test]
+    fn charge_shot_zero_period_ramp_is_full_volume_without_an_fpu_trap() {
+        let Some((d, mut syn, mut fgm)) = setup() else {
+            return;
+        };
+        for id in [5u16, 239, 245] {
+            let lfo =
+                (0..fgm.lfos.len()).find(|&i| fgm.lfos[i].period == 0.0 && fgm.lfos[i].shape == 2);
+            assert!(lfo.is_none(), "pool starts clean");
+            let h = fgm.play(id).expect("play");
+            let s = h.slot as usize;
+            let mut vols = Vec::new();
+            crate::fpu_traps::with_traps(|| {
+                for _ in 0..30 {
+                    fgm.tick(&mut syn, &d);
+                    let v = fgm.scripts[s].voice;
+                    if v != NIL {
+                        vols.push(fgm.voices[v as usize].vol);
+                    }
+                }
+            });
+            assert!(!vols.is_empty(), "fgm {id} spawned a voice");
+            std::eprintln!("fgm {id}: {vols:?}");
+            assert_eq!(vols[0], 127, "fgm {id}: {vols:?}");
+            fgm.stop_all(&mut syn);
+            for _ in 0..4 {
+                fgm.tick(&mut syn, &d);
+            }
+        }
+        // The shape itself: +inf for the up ramp, -inf for the down ramp.
+        let mut l = fgm.lfos[0];
+        (l.shape, l.period, l.amp, l.offset, l.phase) = (2, 0.0, 255.0, 12.0, 1.0);
+        fgm.lfos[0] = l;
+        assert_eq!(
+            crate::fpu_traps::with_traps(|| fgm.lfo_value(0, &d)),
+            f32::INFINITY
+        );
+        l.shape = 3;
+        fgm.lfos[0] = l;
+        assert_eq!(
+            crate::fpu_traps::with_traps(|| fgm.lfo_value(0, &d)),
+            f32::NEG_INFINITY
+        );
     }
 
     /// fgm 0 (`nSYAudioFGMExplodeS`): `DE 00 D1 07 D2 FF D3 44 D2 21 D5 DC`,
