@@ -403,12 +403,7 @@ unsafe fn draw(
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
         let n = m.skeleton.compose(p, &obj, &mut posed);
         let pos = m.fighter.pos;
-        gpu.model_transform(
-            [pos.x, pos.y, pos.z],
-            [0.0, m.fighter.rotate_y, 0.0],
-            meshdraw::MODEL_SCALE * m.fighter.scale,
-        );
-        let base = gpu.model_matrix();
+        let base = crate::topn_base([pos.x, pos.y, pos.z], m.fighter.rotate_y, m.fighter.scale, m.skeleton.locks.flagged);
         draw_state.configure_fighter_light(results_scene::LIGHT_ANGLE);
         draw_state.set_fade_alpha(Some(alpha));
         // A demo fighter's model and texture parts (RE-426) and accessory

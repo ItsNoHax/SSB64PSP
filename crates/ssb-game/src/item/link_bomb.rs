@@ -313,6 +313,7 @@ where
                     item.is_hold = false;
                 }
                 effects.release_owner = owner;
+                effects.release_query = view.map(|_| item.weight);
                 item.clear_owner_stats();
                 explode(item);
             }

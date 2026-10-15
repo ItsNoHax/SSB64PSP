@@ -570,7 +570,8 @@ fn boss_defeat_init(
     };
     // `fp->joints[fp->damage_joint_id]`: the port does not record the
     // struck hurtbox, so the zoom takes the palm's (RE-457).
-    let world = f.fighter.joint_world(ssb_game::boss::DEFEAT_ZOOM_JOINT, ssb_engine::math::Vec3::ZERO);
+    // `gmCollisionGetFighterPartsWorldPosition` queries the joint (RE-511).
+    let world = f.fighter.joint_query(ssb_game::boss::DEFEAT_ZOOM_JOINT, ssb_engine::math::Vec3::ZERO);
     boss.zoom = world;
     pl.camera.begin_map_zoom(world, world + ssb_engine::math::Vec3::new(0.0, 0.0, 3000.0));
     pl.camera_status = Some(ssb_psp_runtime::scene::CameraStatus::MapZoom {

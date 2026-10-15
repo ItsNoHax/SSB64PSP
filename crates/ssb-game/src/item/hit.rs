@@ -623,7 +623,7 @@ fn search_item_on_fighter(item: &mut Item, slot: u8, f: &mut Fighter, rules: Tea
             }
             let (curr, prev, size, state) = sweep(item, i);
             if let Some((angle, dir)) = crate::hurtbox::test_sphere_angle(
-                &combat::shield_transform(f),
+                &combat::shield_query_transform(f),
                 curr,
                 prev,
                 size,

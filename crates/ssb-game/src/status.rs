@@ -3673,7 +3673,9 @@ pub struct Attack1State {
     /// Fox rapid-jab input count. Source counts both A taps and releases.
     pub rapid_input_count: u8,
     pub rapid_requested: bool,
-    pub rapid_keep_loop: bool,
+    /// Fox's `status_vars.common.attack100.is_anim_end` and `.is_goto_loop`.
+    pub rapid_is_anim_end: bool,
+    pub rapid_is_goto_loop: bool,
     /// `attack1_status_id`: the last jab of the chain, which a tap during
     /// `followup_frames` continues from `Wait`.
     pub status_id: Option<AnyStatus>,
@@ -4048,6 +4050,10 @@ pub fn set_any_status_preserve(
     if !preserve.slope_contour {
         f.slope_contour = 0;
     }
+    // `ftMainSetStatus`: `is_item_show = TRUE`; the sword trail stops
+    // (no status passes `FTSTATUS_PRESERVE_AFTERIMAGE`).
+    f.is_item_show = true;
+    f.afterimage.drawstatus = -1;
     f.is_smash_di = false;
     // `attack1_followup_frames` survives only into Wait and the walks.
     if !matches!(
@@ -4887,7 +4893,8 @@ pub fn set_attack12(f: &mut Fighter) {
         is_goto_followup: false,
         rapid_input_count,
         rapid_requested,
-        rapid_keep_loop: false,
+        rapid_is_anim_end: false,
+        rapid_is_goto_loop: false,
         status_id: Some(Status::Attack12.into()),
     };
 }
@@ -5013,18 +5020,25 @@ fn set_fox_rapid_start(f: &mut Fighter) {
     );
     // `ftCommonAttack100StartSetStatus` plays the first frame (RE-474).
     play_anim_events(f);
-    f.attack1.rapid_keep_loop = false;
+    f.attack1.rapid_is_anim_end = false;
+    f.attack1.rapid_is_goto_loop = false;
 }
 
+/// `FTFoxAnimJabLoop`'s cycle: the N64 trace's `anim_frame` runs 0..37 and
+/// wraps on the 38th update (RE-511).
+const FOX_RAPID_LOOP_LENGTH: f32 = 38.0;
+/// Where the loop's motion script sets flag 1: each pulse's end, and the
+/// wrap, where the paused script resumes.
+const FOX_RAPID_FLAG1_FRAMES: [f32; 6] = [4.0, 11.0, 18.0, 25.0, 32.0, FOX_RAPID_LOOP_LENGTH];
+
+/// `ftCommonAttack100LoopSetStatus`. The vars carry over.
 fn set_fox_rapid_loop(f: &mut Fighter) {
-    // File 754 loops; its motion script has five pulse windows over 32 frames.
     set_any_status(
         f,
         AnyStatus::Fox(FoxStatus::Attack100Loop),
         0.0,
-        StatusTiming::frames(32.0),
+        StatusTiming::frames(FOX_RAPID_LOOP_LENGTH),
     );
-    f.attack1.rapid_keep_loop = false;
     // `ftCommonAttack100LoopProcUpdate` calls `ftParamSetMotionID` at the
     // start of every loop, so each cycle is a new motion.
     f.motion.set(crate::stale::MotionAttackId::Attack100);
@@ -5179,10 +5193,24 @@ pub fn set_fsmash(f: &mut Fighter) {
         AngleVariants::Three => Status::AttackS4,
         AngleVariants::Five => fsmash_five(x, y),
     };
+    // `ftMainSetStatus` keeps the motion flags: Pikachu's spark flags and
+    // Ness's reflector flag start clear.
+    let base = crate::grab::base_kind(f.kind);
+    match base {
+        crate::fighter::FighterKind::Pikachu => {
+            f.motion_script.flags[2] = 0;
+            f.motion_script.flags[1] = 0;
+        }
+        crate::fighter::FighterKind::Ness => f.motion_script.flags[1] = 0,
+        _ => {}
+    }
     let len = attack_length(f, status);
     set_status(f, status, 0.0, StatusTiming::frames(len));
     // The setter plays the first frame (`ftMainPlayAnimEventsAll`).
     play_anim_events(f);
+    if base == crate::fighter::FighterKind::Pikachu {
+        f.pikachu.thunder_shock_gfx = 0;
+    }
 }
 
 fn fsmash_five(x: f32, y: f32) -> Status {
@@ -5898,6 +5926,19 @@ pub fn update(f: &mut Fighter) {
         | Status::AttackS4Lw
         | Status::AttackHi4
         | Status::AttackLw4 => {
+            // `ftCommonAttackS4ProcUpdate`'s Pikachu case; Ness's
+            // `is_reflect` follows flag 1 in `combat::reflector`.
+            if matches!(
+                current,
+                Status::AttackS4Hi
+                    | Status::AttackS4HiS
+                    | Status::AttackS4
+                    | Status::AttackS4LwS
+                    | Status::AttackS4Lw
+            ) && crate::pikachu::is_pikachu(f.kind)
+            {
+                crate::pikachu::attack_s4_update(f);
+            }
             if f.status.animation_ended() {
                 anim_end_set_wait(f);
             }
@@ -6398,17 +6439,35 @@ fn update_extended(f: &mut Fighter) {
             }
         }
         AnyStatus::Fox(FoxStatus::Attack100Loop) => {
+            // `ftCommonAttack100LoopProcUpdate` @ `ftcommonattack100.c:107`:
+            // the loop ends on a flag 1 once the animation has wrapped and
+            // no A edge came since the previous flag 1.
+            let wrapped = f.status.animation_ended();
+            if wrapped {
+                f.attack1.rapid_is_anim_end = true;
+            }
+            let clock = f.status.clock;
+            let speed = f.status.timing.anim_speed;
+            if FOX_RAPID_FLAG1_FRAMES
+                .iter()
+                .any(|&at| clock >= at && clock - speed < at)
+            {
+                if f.attack1.rapid_is_anim_end && !f.attack1.rapid_is_goto_loop {
+                    set_fox_rapid_end(f);
+                    return;
+                }
+                if crate::item_throw::check_get(f) {
+                    return;
+                }
+                f.attack1.rapid_is_goto_loop = false;
+            }
+            if wrapped {
+                set_fox_rapid_loop(f);
+            }
             // `ftCommonAttack100LoopProcInterrupt` records either A edge.
             if f.button_tap().contains(N64Buttons::A) || f.button_release().contains(N64Buttons::A)
             {
-                f.attack1.rapid_keep_loop = true;
-            }
-            if f.status.animation_ended() {
-                if f.attack1.rapid_keep_loop {
-                    set_fox_rapid_loop(f);
-                } else {
-                    set_fox_rapid_end(f);
-                }
+                f.attack1.rapid_is_goto_loop = true;
             }
         }
         AnyStatus::Fox(FoxStatus::Attack100End) => {
@@ -7034,6 +7093,8 @@ pub fn fox_blaster_spawn(f: &mut Fighter) {
     if !fox_blaster_pending(f) {
         return;
     }
+    // `gmCollisionGetFighterPartsWorldPosition` (RE-511).
+    f.mark_joint_query(FOX_BLASTER_HOLD_JOINT);
     let Some(joint) = f.joint_transforms[usize::from(FOX_BLASTER_HOLD_JOINT)] else {
         return;
     };
@@ -7941,7 +8002,13 @@ mod tests {
         f.status.set_time(8.0);
         update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::Attack100Loop));
-        f.status.set_time(32.0);
+        // `update` plays the frame first. The fifth pulse's flag 1 (frame
+        // 32) only clears `is_goto_loop`: the animation has not wrapped.
+        f.status.set_time(31.0);
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::Attack100Loop));
+        // The wrap's flag 1, with no A edge since the last one, ends it.
+        f.status.set_time(FOX_RAPID_LOOP_LENGTH - 1.0);
         update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::Attack100End));
         f.status.set_time(8.0);

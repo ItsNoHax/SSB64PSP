@@ -336,6 +336,8 @@ pub fn dive_catch(f: &mut Fighter, held: &Fighter) {
     f.grab.is_catchstatus = false;
     f.grab.catch = Some(held.port);
     f.grab.catch_kind = Some(held.kind);
+    // `ftCaptainSpecialHiProcCatch`: a grounded victim runs first.
+    f.grab.is_catch_or_capture = held.is_grounded();
     f.captain.dive_target_pos = held.is_grounded().then_some(held.pos);
     f.captain.dive_target_kind = Some(held.kind);
     f.grab.send(GrabEvent::CaptureCaptain);

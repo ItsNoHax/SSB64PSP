@@ -445,6 +445,10 @@ mod op {
     pub const RESET_COL_ANIM: u32 = 45;
     pub const SET_PARALLEL_SCRIPT: u32 = 46;
     pub const SET_SLOPE_CONTOUR: u32 = 47;
+    pub const HIDE_ITEM: u32 = 48;
+    pub const MAKE_RUMBLE: u32 = 49;
+    pub const STOP_RUMBLE: u32 = 50;
+    pub const SET_AFTER_IMAGE: u32 = 51;
 }
 
 /// Words each command occupies (`ftMotionEventAdvance` sizes).
@@ -915,6 +919,16 @@ fn execute(
                 f.topn_rotate_x = 0.0;
             }
         }
+        // `nFTMotionEventHideItem`: `is_item_show = value`.
+        op::HIDE_ITEM => f.is_item_show = value != 0,
+        // `nFTMotionEventMakeRumble` / `StopRumble`: the PSP has no rumble pak.
+        op::MAKE_RUMBLE | op::STOP_RUMBLE => {}
+        // `nFTMotionEventSetAfterImage`: `is_itemswing : 8`, `drawstatus : 18`
+        // stored into the `s8`.
+        op::SET_AFTER_IMAGE => {
+            f.afterimage.is_itemswing = (w >> 18) & 0xFF != 0;
+            f.afterimage.drawstatus = sign(w & 0x3FFFF, 18) as i8;
+        }
         op::SET_AIR_JUMP_ADD => {
             f.become_airborne();
             f.physics.vel_air.z = 0.0;
@@ -1214,9 +1228,12 @@ fn make_attack_coll(f: &mut Fighter, w: [u32; 5], opcode: u32) {
             None => coll.clear_records(),
         }
     }
-    // `ftParamGetJointID`'s `-2` (the item joint) is used only by the item
-    // movesets, which live outside the fighter files.
-    let joint = sign((w[0] >> 13) & 0x7F, 7);
+    // `ftParamGetJointID`: `-2` is the light-item joint, which the common
+    // item-swing scripts (sword, bat, fan, star rod) attack from.
+    let joint = i32::from(crate::fteffect::joint_id(
+        f.kind,
+        sign((w[0] >> 13) & 0x7F, 7) as i8,
+    ));
     let raw_damage = ((w[0] >> 5) & 0xFF) as i32;
     let (attack_id, count) = (f.motion.attack_id, f.motion.count);
     let damage = f.stale.staled_damage(raw_damage, attack_id, count);

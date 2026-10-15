@@ -96,6 +96,7 @@ pub fn capture(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     grab::drop_own_catch(f);
     f.grab.capture = Some(catcher_port);
     f.grab.holder = Some(holder);
+    f.grab.is_catch_or_capture = false;
     f.grab.is_catchstatus = false;
     f.facing = holder.facing.flipped();
     f.become_airborne();

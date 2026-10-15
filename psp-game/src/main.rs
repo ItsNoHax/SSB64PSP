@@ -1927,7 +1927,9 @@ fn interrupt_pass(
 }
 
 /// Priority 4, Fighter link: every fighter's `ftMainProcPhysicsMap` in port
-/// order, then the weapon and item pools.
+/// order (`ftMainProcPhysicsMapDefault`), then priority 3's
+/// `ftMainProcPhysicsMapCapture` for the held fighters, which follow their
+/// catchers' (RE-511), then the weapon and item pools.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn physics_pass(
@@ -1943,38 +1945,46 @@ fn physics_pass(
     effects: &mut dyn ssb_game::effect::HitEffectSink,
 ) {
     let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, stage, groups);
-    for i in 0..s.len() {
-        let mut held = [None; 3];
-        let others = s.iter().enumerate().filter(|&(j, _)| j != i).filter_map(|(_, x)| x.as_deref());
-        for (slot, o) in held.iter_mut().zip(others) {
-            *slot = ssb_game::map::is_cliff_hold(o.fighter.status.status).then_some((o.fighter.cliff.line, o.fighter.facing));
-        }
-        campaign::refresh_boss_targets(s);
-        let Some(f) = s[i].as_deref_mut() else {
-            continue;
-        };
-        f.fighter.occupied_cliffs = held;
-        let t = profile::start();
-        f.tick_fighter_physics(p, stage, groups);
-        profile::stop(profile::Span::FighterPhysics, t);
-        if core::mem::take(&mut f.fighter.dead.died) {
-            weapons.destroy_boomerang(f.fighter.port);
-        }
-        if i == 0 {
-            // The Boomerang projects through the camera last drawn.
-            weapons.observe_camera(&f.camera);
-        }
-        items.take_requests(&mut f.fighter, map);
-        let spawn = f.fighter.take_weapon_spawn();
-        exchange_from(s, i);
-        // The motion scripts' effects, made at the end of this fighter's
-        // `ftMainProcPhysicsMap`.
-        flush_fighter_effects(s, effects);
-        if let Some(spawn) = spawn {
-            weapons.spawn(spawn);
-            // A weapon's making effect (the Blaster's glow), in the
-            // fighter's process.
-            weapons.flush_effects(effects);
+    // The capture pass is priority 3 on the Fighter link (3): after the
+    // item actor (link 2), which no fighter reads, and before the camera,
+    // item and weapon processes.
+    for capture_pass in [false, true] {
+        for i in 0..s.len() {
+            if s[i].as_deref().is_none_or(|f| ssb_game::grab::runs_in_capture_pass(&f.fighter) != capture_pass) {
+                continue;
+            }
+            let mut held = [None; 3];
+            let others = s.iter().enumerate().filter(|&(j, _)| j != i).filter_map(|(_, x)| x.as_deref());
+            for (slot, o) in held.iter_mut().zip(others) {
+                *slot = ssb_game::map::is_cliff_hold(o.fighter.status.status).then_some((o.fighter.cliff.line, o.fighter.facing));
+            }
+            campaign::refresh_boss_targets(s);
+            let Some(f) = s[i].as_deref_mut() else {
+                continue;
+            };
+            f.fighter.occupied_cliffs = held;
+            let t = profile::start();
+            f.tick_fighter_physics(p, stage, groups);
+            profile::stop(profile::Span::FighterPhysics, t);
+            if core::mem::take(&mut f.fighter.dead.died) {
+                weapons.destroy_boomerang(f.fighter.port);
+            }
+            if i == 0 {
+                // The Boomerang projects through the camera last drawn.
+                weapons.observe_camera(&f.camera);
+            }
+            items.take_requests(&mut f.fighter, map);
+            let spawn = f.fighter.take_weapon_spawn();
+            exchange_from(s, i);
+            // The motion scripts' effects, made at the end of this fighter's
+            // `ftMainProcPhysicsMap`.
+            flush_fighter_effects(s, effects);
+            if let Some(spawn) = spawn {
+                weapons.spawn(spawn);
+                // A weapon's making effect (the Blaster's glow), in the
+                // fighter's process.
+                weapons.flush_effects(effects);
+            }
         }
     }
     // Master Hand's camera requests reach the camera before its process.
@@ -2124,6 +2134,11 @@ fn hit_pass(
         if let Some((catcher, other)) = caught.and_then(|j| pair(s, i, j)) {
             ssb_game::grab::search_catch(catcher, other, rules);
         }
+    }
+    // The catcher's `proc_catch` poses `CatchPull` before the caught
+    // fighter's `proc_capture` reads the hand (RE-511).
+    for f in s.iter_mut().flatten() {
+        f.settle_catch(p, stage, groups);
     }
     for i in 0..s.len() {
         exchange_from(s, i);
@@ -6613,6 +6628,17 @@ fn eye_billboard(pos: ssb_engine::math::Vec3, eye: ssb_engine::math::Vec3) -> ss
     ])
 }
 
+/// A menu or results fighter's TopN display matrix (kind `0x4B`,
+/// `lbCommonFighterPartsFuncMatrix`): `rotate (0, yaw, 0)`, `scale` its
+/// DObj scale, never queried; the pack's model scale multiplied in.
+fn topn_base(pos: [f32; 3], yaw: f32, scale: f32, flagged: bool) -> psp::sys::ScePspFMatrix4 {
+    let k = ssb_rom::pack::MODEL_SCALE;
+    psp_matrix(
+        &ssb_rom::scene::Mat4::fighter_topn_display(pos, [0.0, yaw, 0.0], [scale; 3], flagged, None)
+            .mul(&ssb_rom::scene::Mat4::from_trs([0.0; 3], [0.0; 3], [k; 3])),
+    )
+}
+
 fn psp_matrix(m: &ssb_rom::scene::Mat4) -> psp::sys::ScePspFMatrix4 {
     let v = |c: usize| psp::sys::ScePspFVector4 {
         x: m.0[c * 4],
@@ -8570,31 +8596,18 @@ unsafe fn draw_fighter_model(
         f.fighter.model_parts.detail_curr,
     );
     let obj = p.object(drawn).unwrap_or(obj);
-    // TopN's scale is `attr->size` (`ftManagerMakeFighter`): Giant Donkey
-    // Kong twice the size of his model, Mario 1.12, Kirby 0.91 (RE-458).
-    let scale = meshdraw::MODEL_SCALE * f.fighter.attributes.size;
+    // TopN, kind 0x4B (`lbCommonFighterPartsFuncMatrix`): its scale is
+    // `attr->size` (`ftManagerMakeFighter`: Giant Donkey Kong twice the size
+    // of his model, Mario 1.12, Kirby 0.91, RE-458), its rotate the catcher's
+    // hand while held (RE-511).
+    let mut topn = f.topn_display();
     if miniature {
-        gpu.model_transform(
-            [0.0; 3],
-            [0.0, play::fighter_turn(&f.fighter), 0.0],
-            scale,
-        );
-    } else if let Some(joint) = f
-        .fighter
-        .grab
-        .holder
-        .and_then(|h| h.anchor_transform)
-        .filter(|_| ssb_game::grab::is_held(f.fighter.status.status))
-    {
-        gpu.model_transform_joint(f.fighter.pos, joint, scale);
-    } else {
-        gpu.model_transform_rpy(
-            [f.fighter.pos.x, f.fighter.pos.y, f.fighter.pos.z],
-            [f.fighter.topn_rotate_x, play::fighter_turn(&f.fighter), 0.0],
-            scale,
-        );
+        // `ifCommonPlayerMagnifyUpdateViewport` draws the same DObj tree
+        // under a camera centred on the fighter; the miniature camera here
+        // is centred on the origin.
+        topn.0[12..15].fill(0.0);
     }
-    let m = gpu.model_matrix();
+    let m = psp_matrix(&topn);
     // `ftDisplayLightsDrawReflect`: a colour animation's light turns with
     // the fighter (`lr * light_angle_x`).
     let light = f.fighter.colanim.light.map_or(stage.light_angle_xy, |(x, y)| [f.fighter.facing.sign() * x, y]);
@@ -9547,6 +9560,12 @@ unsafe fn draw_items_weapons_effects(
     // normalized hand joint. The fuse inherits the body's billboard frame
     // and then applies its own kind-46 spin and scale.
     if part == BattlePart::Items {
+    // `func_ovl0_800C9F70` (DObj kind 0x52): a held item drawing after the
+    // fighters queries its owner's hand chain (`func_ovl0_800C9A38`). The
+    // marks outlive a hitlag frame that skips PlayAnim (RE-511).
+    for s in scenes_ref(pl, dummies).into_iter().flatten() {
+        items.mark_held_display(&s.fighter);
+    }
     // `itDisplayColAnim{OPA,XLU}ProcDisplay`: an item whose attributes set
     // `is_display_colanim` draws with ENV its colour animation's `color1`
     // (or clear), which its `ENV_LERP` primitives blend towards by its
@@ -9560,6 +9579,18 @@ unsafe fn draw_items_weapons_effects(
             env_fog = false;
         }
         if item.hidden {
+            continue;
+        }
+        // `itDisplayCheckItemVisible`: a held item draws only while its
+        // owner's `is_item_show` is set and the owner is not invisible.
+        let owner_hides = item.owner.filter(|_| item.is_hold).is_some_and(|port| {
+            scenes_ref(pl, dummies)
+                .into_iter()
+                .flatten()
+                .find(|s| s.fighter.port == port)
+                .is_some_and(|s| !s.fighter.is_item_show || s.fighter.is_invisible)
+        });
+        if owner_hides {
             continue;
         }
         if let Some(rgba) = item.colanim.color().filter(|c| item.attr.is_display_colanim && c[3] != 0) {
@@ -10297,7 +10328,10 @@ unsafe fn draw_items_weapons_effects(
     if let Some(object) = assets.shield.as_ref() {
         let fighters = scenes_ref(pl, dummies).into_iter().flatten().map(|x| &x.fighter);
         for f in fighters.filter(|f| f.guard.is_shield && f.kind != ssb_game::fighter::FighterKind::Yoshi) {
-            let joint = ssb_game::combat::shield_transform(f);
+            // Kind 79 is `func_ovl0_800C994C`: `func_ovl2_800EDBA4` on
+            // `YRotN` marks its chain queried after the fighter has drawn
+            // (RE-511).
+            let joint = ssb_game::combat::shield_query_transform(f);
             let size = joint.axes[0].length();
             let (prim, env) = ssb_psp_runtime::scene::SHIELD_COLORS[ssb_game::combat::shield_color_row(f)];
             draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
@@ -10363,9 +10397,12 @@ unsafe fn draw_items_weapons_effects(
                     .and_then(|o| scene.skeleton.node_pose(o.first_node + 1))
                     .map_or(0.0, |p| p.rotate[0]);
                 let positive = f.joint_transforms[5].is_some_and(|j| j.axes[0].z > 0.0);
+                // Kind 0x50 is `func_ovl0_800C99CC`:
+                // `gmCollisionGetFighterPartsWorldPosition` marks the chain.
+                f.mark_joint_query(5);
                 (f.joint_world(5, ssb_engine::math::Vec3::ZERO), if positive { angle } else { -angle })
             } else {
-                (ssb_game::combat::shield_transform(f).origin, 0.0)
+                (ssb_game::combat::shield_query_transform(f).origin, 0.0)
             };
             gpu.model_transform_billboard(
                 origin,

@@ -494,6 +494,7 @@ fn make_bomb(f: &mut Fighter) {
     if f.motion_script.flags[0] != 0 {
         f.motion_script.flags[0] = 0;
         f.link.flag0_done = true;
+        crate::item::mark_hold_query(f, crate::item::ItemWeight::Light);
         f.items
             .request(crate::item::ItemRequest::MakeLinkBomb { pos: f.pos });
     }

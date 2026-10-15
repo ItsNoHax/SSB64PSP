@@ -17,11 +17,11 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-510: fighter slope contour. The leg IK, FULL TopN tilt, pending-slope
-sites and the motion_id -2 animation hold are bit-exact against N64 traces
-(Mario, Samus, Jungle). 19 golden rows rebaselined. Next, per
-[`PLAN.md`](PLAN.md#remaining-work): the pre-display joint query log, then
-the fighter wind-reaction effects and the slope follow-ups.
+RE-511: fighter TopN display matrix (kind 0x4B), remaining query marks and
+trace-verified gameplay fixes (item-swing joint -2, Kirby timing, Pikachu RNG),
+bit-exact against five N64 traces. 123 golden rows rebaselined. Next, per
+[`PLAN.md`](PLAN.md#remaining-work): the sword-trail renderer and Thunder
+Shock spark, then the fighter wind-reaction effects and slope follow-ups.
 
 ## Blockers
 
@@ -33,7 +33,7 @@ the fighter wind-reaction effects and the slope follow-ups.
 
 ## Verification
 
-Baseline after RE-510:
+Baseline after RE-511:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass (tests that need ROM tables, including

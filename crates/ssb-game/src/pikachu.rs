@@ -23,6 +23,47 @@ pub struct PikachuState {
     /// The active Loop/Hit damage callback marks its head Destroy.
     pub thunder_damage: bool,
     pub thunder_motion: u16,
+    /// `status_vars.common.attack4.gfx_id`: the forward smash's Thunder
+    /// Shock spark animation, `0..FTCOMMON_ATTACKS4_THUNDERSHOCK_GFX_ID_MAX`.
+    pub thunder_shock_gfx: i32,
+}
+
+/// `FTCOMMON_ATTACKS4_THUNDERSHOCK_GFX_ID_MAX`.
+const THUNDERSHOCK_GFX_ID_MAX: i32 = 3;
+/// `FTCOMMON_ATTACKS4_THUNDERSHOCK_GFX_OFF_{X,Y,Z}`.
+const THUNDERSHOCK_GFX_OFF: Vec3 = Vec3::new(60.0, 10.0, 100.0);
+
+/// `ftCommonAttackS4ProcUpdate`'s Pikachu case: on script flag 1 or 2 the
+/// forward smash advances its spark animation by a random 1 or 2 and places
+/// a Thunder Shock spark at joint 11 (`-X` for flag 1, `+X` for flag 2),
+/// which queries the joint's chain (RE-511).
+///
+/// DEVIATION: `efManagerPikachuThunderShockMakeEffect` (the spark, its
+/// TopN-relative position from `func_ovl2_800EE018` and
+/// `is_effect_attach`) is not ported; the draw, the query and the state
+/// are.
+pub fn attack_s4_update(f: &mut Fighter) {
+    let (flag1, flag2) = (f.motion_script.flags[1], f.motion_script.flags[2]);
+    if flag1 == 0 && flag2 == 0 {
+        return;
+    }
+    let gfx = &mut f.pikachu.thunder_shock_gfx;
+    *gfx += crate::rng::rand_int_range(THUNDERSHOCK_GFX_ID_MAX - 1) + 1;
+    if *gfx >= THUNDERSHOCK_GFX_ID_MAX {
+        *gfx -= THUNDERSHOCK_GFX_ID_MAX;
+    }
+    let mut offset = THUNDERSHOCK_GFX_OFF;
+    if flag1 != 0 {
+        f.motion_script.flags[1] = 0;
+        offset.x = -THUNDERSHOCK_GFX_OFF.x;
+    }
+    if flag2 != 0 {
+        f.motion_script.flags[2] = 0;
+        offset.x = THUNDERSHOCK_GFX_OFF.x;
+    }
+    // `gmCollisionGetFighterPartsWorldPosition(fp->joints[11], &offset)`;
+    // `func_ovl2_800EE018` on TopN, already in that chain, marks nothing new.
+    let _ = f.joint_query(11, offset);
 }
 
 pub fn is_pikachu(kind: FighterKind) -> bool {

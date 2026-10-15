@@ -851,6 +851,7 @@ pub fn inhale_catch(f: &mut Fighter, held: &Fighter) {
     let timing = f.status.timing;
     set_inhale(f, s, frame, timing);
     f.grab.catch = Some(held.port);
+    f.grab.is_catch_or_capture = false;
     f.grab.catch_kind = Some(held.kind);
     f.grab.capture_immune = true;
     let lr = f.facing.sign();
@@ -1033,6 +1034,28 @@ pub fn on_wiggle(f: &mut Fighter, up: bool, push_x: Option<f32>) {
 // ---------------------------------------------------------------------------
 
 /// `proc_update` and `proc_interrupt` for Kirby's statuses.
+/// `ftKirbySpecialNLoopProcInterrupt` / `ftKirbySpecialAirNLoopProcInterrupt`
+/// with `ftKirbySpecialNLoopCheckContinueLoop`.
+fn inhale_loop_interrupt(f: &mut Fighter, current: K) {
+    let hold = if f.kirby.release_lag != 0 {
+        f.kirby.release_lag -= 1;
+        true
+    } else {
+        f.input.buttons.contains(N64Buttons::B)
+    };
+    if !hold {
+        let s = if current == K::SpecialNLoop {
+            K::SpecialNEnd
+        } else {
+            K::SpecialAirNEnd
+        };
+        set_inhale(f, s, 0.0, StatusTiming::frames(SPECIAL_N_END_LENGTH));
+        // `ftKirbySpecialNEndSetStatus` and `...AirNEndSetStatus` play the
+        // first frame (RE-473, RE-474).
+        status::play_anim_events(f);
+    }
+}
+
 pub fn update(f: &mut Fighter) {
     let AnyStatus::Kirby(current) = f.status.status else {
         return;
@@ -1141,28 +1164,13 @@ pub fn update(f: &mut Fighter) {
                 // `ftKirbySpecialNLoopSetStatus` plays the first frame
                 // (RE-473).
                 status::play_anim_events(f);
+                // `ftMainProcUpdateInterrupt` runs `proc_interrupt` after
+                // `proc_update`, so the new Loop's interrupt already counts
+                // this frame (RE-511: the N64 inhale ends a frame earlier).
+                inhale_loop_interrupt(f, s);
             }
         }
-        K::SpecialNLoop | K::SpecialAirNLoop => {
-            // `ftKirbySpecialNLoopCheckContinueLoop`.
-            let hold = if f.kirby.release_lag != 0 {
-                f.kirby.release_lag -= 1;
-                true
-            } else {
-                f.input.buttons.contains(N64Buttons::B)
-            };
-            if !hold {
-                let s = if current == K::SpecialNLoop {
-                    K::SpecialNEnd
-                } else {
-                    K::SpecialAirNEnd
-                };
-                set_inhale(f, s, 0.0, StatusTiming::frames(SPECIAL_N_END_LENGTH));
-                // `ftKirbySpecialNEndSetStatus` and `...AirNEndSetStatus`
-                // play the first frame (RE-473, RE-474).
-                status::play_anim_events(f);
-            }
-        }
+        K::SpecialNLoop | K::SpecialAirNLoop => inhale_loop_interrupt(f, current),
         K::SpecialNEnd => {
             if f.status.animation_ended() {
                 status::anim_end_set_wait(f);
@@ -1717,7 +1725,9 @@ mod tests {
         update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialNLoop));
         assert!(inhale_searching(&f));
-        for _ in 0..VACUUM_RELEASE_LAG {
+        // The Loop's interrupt already counted the Start -> Loop frame
+        // (RE-511).
+        for _ in 0..VACUUM_RELEASE_LAG - 1 {
             update(&mut f);
         }
         assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialNLoop));

@@ -840,6 +840,15 @@ const GUARD_SIZE_SCALE_MUL_INIT: f32 = 0.65;
 const GUARD_SIZE_SCALE_MUL_ADD: f32 = 0.35;
 const GUARD_SIZE_SCALE_MUL_DIV: f32 = 30.0;
 
+/// [`shield_transform`] as a shield collision reads it:
+/// `gmCollisionCheck*ShieldCollide` runs `func_ovl2_800EDE00` and
+/// `func_ovl2_800EDE5C` on `YRotN`, which mark its chain queried
+/// (`func_ovl2_800EDBA4`, RE-511).
+pub fn shield_query_transform(f: &Fighter) -> JointTransform {
+    f.mark_joint_query(JOINT_YROTN as u8);
+    shield_transform(f)
+}
+
 /// The shield's joint (`YRotN`, scaled by `ftCommonGuardUpdateShieldCollision`).
 pub fn shield_transform(f: &Fighter) -> JointTransform {
     let attrs = crate::motion::combat_attrs(f.kind);
@@ -922,7 +931,7 @@ fn attack_hits_shield(
     state: AttackState,
     f: &Fighter,
 ) -> bool {
-    let t = shield_transform(f);
+    let t = shield_query_transform(f);
     crate::hurtbox::test_sphere(
         &t,
         pos_curr,
@@ -1366,7 +1375,7 @@ fn weapon_hit_inner(victim: &mut Fighter, w: WeaponAttack, shield_only: bool) ->
     }
     let shield = if is_shield(victim) && w.can_shield {
         crate::hurtbox::test_sphere_angle(
-            &shield_transform(victim),
+            &shield_query_transform(victim),
             w.pos_curr,
             w.pos_prev,
             w.hitbox.radius,
@@ -1687,6 +1696,7 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
     let mut damage = 0;
     let mut is_shieldbreak = false;
     let status_before = f.status.status;
+    let hitlag_tics = f.hitlag;
     let mut is_knockback_paused = false;
     let mut proc_hit = false;
 
@@ -1804,7 +1814,60 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         crate::item_use::proc_hit(f);
     }
     f.hits = FrameHits::default();
+    if hitlag_tics == 0 {
+        update_afterimage(f);
+    }
     proc_hit
+}
+
+/// `syVectorNorm3D`: a zero vector stays as it is.
+fn sy_vector_norm(v: Vec3) -> Vec3 {
+    // A sum of squares: `sqrtf` cannot see a negative input.
+    let mag = ssb_engine::math::sqrt_exact(v.x * v.x + v.y * v.y + v.z * v.z);
+    if mag == 0.0 {
+        return v;
+    }
+    Vec3::new(v.x * (1.0 / mag), v.y * (1.0 / mag), v.z * (1.0 / mag))
+}
+
+/// The end of `ftMainProcParams`: while the sword trail is on, sample the
+/// blade into the next of three descriptors. Link's own sword is joint 11's
+/// world matrix (`func_ovl2_800EDBA4`, which marks the chain, RE-511),
+/// shown only while its model part is 0; a held Beam Sword is the item
+/// joint's unscaled matrix (`func_ovl0_800C9A38`) along its normalized Y.
+fn update_afterimage(f: &mut Fighter) {
+    const LINK_SWORD_JOINT: u8 = 11;
+    if f.afterimage.drawstatus == -1 {
+        return;
+    }
+    let sample = if !f.afterimage.is_itemswing {
+        let part = usize::from(LINK_SWORD_JOINT - crate::modelpart::JOINT_COMMON_START);
+        if base_kind(f.kind) != FighterKind::Link || f.model_parts.curr[part] != 0 {
+            return;
+        }
+        f.mark_joint_query(LINK_SWORD_JOINT);
+        f.joint_transforms[usize::from(LINK_SWORD_JOINT)].map(|t| (t.origin, t.axes[2]))
+    } else {
+        if !f.is_item_show
+            || crate::item_use::held_kind(f) != Some(crate::item::equipment::Kind::Sword)
+        {
+            return;
+        }
+        let joint = crate::item_throw::itemlight_joint(f.kind) as u8;
+        f.mark_joint_query_parent(joint);
+        f.joint_transforms[usize::from(joint)].map(|t| (t.origin, sy_vector_norm(t.axes[1])))
+    };
+    let a = &mut f.afterimage;
+    if let Some((origin, vec)) = sample {
+        a.desc[usize::from(a.desc_id)] = crate::fighter::AfterImageDesc {
+            translate: [origin.x as i16, origin.y as i16, origin.z as i16],
+            vec,
+        };
+    }
+    a.desc_id = if a.desc_id == 2 { 0 } else { a.desc_id + 1 };
+    if a.drawstatus <= 2 {
+        a.drawstatus += 1;
+    }
 }
 
 /// `ftParamGetHitLag` (US), with the electric multiplier.

@@ -738,7 +738,11 @@ impl Posed {
             .flatten()
             .and_then(|joint| f.joint_transforms.get(joint).copied().flatten());
         f.grab.anchor = hand.map(|j| j.origin);
-        f.grab.anchor_transform = hand;
+        // `func_ovl0_800C9A38`: the hand without its scale (RE-511).
+        f.grab.anchor_transform = hand.map(|j| ssb_game::fighter::JointTransform {
+            axes: ssb_game::grab::held_root_axes(j),
+            origin: j.origin,
+        });
     }
 
     /// The runtime's priority-5 half after `tick_interrupt`: a throw's

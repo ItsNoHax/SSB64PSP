@@ -679,8 +679,7 @@ unsafe fn draw_model_ex(
     gpu.set_view(&Mat4::look_at(eye, at, Vec3::new(0.0, 1.0, 0.0)));
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
     let n = m.skeleton.compose(p, &object, &mut posed);
-    gpu.model_transform(pos, [0.0, view.yaw, 0.0], meshdraw::MODEL_SCALE * m.scale * scale);
-    let base = gpu.model_matrix();
+    let base = crate::topn_base(pos, view.yaw, m.scale * scale, m.skeleton.locks.flagged);
     st.configure_fighter_light(light);
     if let Some(rgba) = view.fog {
         let forward = (at - eye).normalized();

@@ -370,6 +370,70 @@ impl Mat4 {
         ])
     }
 
+    /// A fighter's TopN display matrix: its DObj is kind `0x4B`
+    /// (`ftManagerMakeFighter`, `lbCommonInitDObj3Transforms`), drawn by
+    /// `lbCommonFighterPartsFuncMatrix` (`lb/lbcommon.c:1369`).
+    ///
+    /// - Queried this frame (`transform_update_mode != 0`):
+    ///   `syMatrixF2LFixedW` of the collision local `queried` (rows 0 to 2
+    ///   the scaled axes, row 3 the translation).
+    /// - Otherwise, outside a flagged motion: `syMatrixTraRotRpyRSca`, or
+    ///   `syMatrixTraRotRpyR` when every scale is exactly 1.
+    /// - Otherwise, in a flagged motion (`is_use_animlocks`):
+    ///   `lbCommonMatrixTraRotScaInv` with `gLBCommonScale`, which
+    ///   `ftDisplayMainProcDisplay` resets to 1 before each fighter.
+    ///
+    /// World units: the caller multiplies in the pack's model scale.
+    pub fn fighter_topn_display(
+        translate: [f32; 3],
+        rotate: [f32; 3],
+        scale: [f32; 3],
+        flagged: bool,
+        queried: Option<[[f32; 3]; 4]>,
+    ) -> Mat4 {
+        // `syMatrixTraRotRpyR(Sca)`, `lbCommonMatrixTraRotScaInv` and
+        // `guMtxF2L` all store the translation as `(s32)(t * 65536.0F)`,
+        // truncated toward zero; TopN's is in the original's units, so the
+        // words are exact here (RE-511).
+        let fixed = |t: f32| {
+            let w = t * 65536.0;
+            if w.abs() < 2_147_483_648.0 {
+                w as i32 as f32 * (1.0 / 65536.0)
+            } else {
+                t
+            }
+        };
+        if let Some(m) = queried {
+            return Mat4([
+                m[0][0],
+                m[0][1],
+                m[0][2],
+                0.0,
+                m[1][0],
+                m[1][1],
+                m[1][2],
+                0.0,
+                m[2][0],
+                m[2][1],
+                m[2][2],
+                0.0,
+                fixed(m[3][0]),
+                fixed(m[3][1]),
+                fixed(m[3][2]),
+                1.0,
+            ])
+            .f2l_fixed_w();
+        }
+        let translate = translate.map(fixed);
+        if flagged {
+            Self::from_trs_scale_inv_display(translate, rotate, [1.0; 3], scale)
+        } else if scale == [1.0; 3] {
+            Self::from_tr_display(translate, rotate)
+        } else {
+            Self::from_trs_display(translate, rotate, scale)
+        }
+    }
+
     /// `lbCommonMatrixTraRotScaInv` (`lb/lbcommon.c:491`): the display
     /// matrix of a fighter part while its motion uses the animation locks
     /// (RE-509). The chain of [`Mat4::from_trs_display`] with each row
@@ -1132,6 +1196,40 @@ mod tests {
                 Mat4::from_trs_scale_inv_display([0.0; 3], r, [1.0; 3], [1.0; 3]),
                 Mat4::from_tr_display([0.0; 3], r)
             );
+        }
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn fighter_topn_display_kinds() {
+        let (t, r) = (
+            [-210.0, 1399.25, 0.0],
+            [0.0, core::f32::consts::FRAC_PI_2, 0.0],
+        );
+        // Unflagged: `TraRotRpyRSca` with Mario's 1.12 as the word 286, and
+        // `TraRotRpyR` at scale 1.
+        let m = Mat4::fighter_topn_display(t, r, [1.12; 3], false, None);
+        assert_eq!(m, Mat4::from_trs_display(t, r, [1.12; 3]));
+        assert_eq!(m.display_words()[2], -286 * 256);
+        assert_eq!(
+            Mat4::fighter_topn_display(t, r, [1.0; 3], false, None),
+            Mat4::from_tr_display(t, r)
+        );
+        // Flagged: `TraRotScaInv` against `gLBCommonScale` = 1.
+        assert_eq!(
+            Mat4::fighter_topn_display(t, r, [1.12; 3], true, None),
+            Mat4::from_trs_scale_inv_display(t, r, [1.0; 3], [1.12; 3])
+        );
+        // Queried: the collision local through `syMatrixF2LFixedW`, flagged
+        // or not.
+        let local = [[0.1, 0.2, -1.12], [0.0, 1.12, 0.0], [1.12, 0.0, 0.3], t];
+        for flagged in [false, true] {
+            let q = Mat4::fighter_topn_display([0.0; 3], [0.0; 3], [1.0; 3], flagged, Some(local));
+            assert_eq!(
+                q.display_words(),
+                [6553, 13107, -73400, 0, 73400, 0, 73400, 0, 19660]
+            );
+            assert_eq!(q.translation(), t);
         }
     }
 

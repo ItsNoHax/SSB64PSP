@@ -1278,6 +1278,9 @@ pub struct ItemPool {
     owners: [Option<OwnerView>; 4],
     /// A held item left this port's hand from the item's side.
     released: [bool; 4],
+    /// The hand an item-side `itMainSetFighterRelease` queried, marked on
+    /// the owner at [`ItemPool::sync_owner`].
+    release_queries: [Option<ItemWeight>; 4],
     /// A registered hit to record in its thrower's stale queue:
     /// `(port, attack id, motion count)`.
     landed: [Option<(u8, MotionAttackId, u16)>; ITEM_ALLOC_MAX],
@@ -1324,6 +1327,7 @@ impl Default for ItemPool {
             order_len: 0,
             owners: [None; 4],
             released: [false; 4],
+            release_queries: [None; 4],
             landed: [None; ITEM_ALLOC_MAX],
             team_rules: crate::team::TeamRules::FREE_FOR_ALL,
             normal_switches: normal::Switches::default(),
@@ -1407,6 +1411,9 @@ impl MonsterData {
 pub(crate) struct Effects {
     /// The item left this fighter's hand (`fp->item_gobj = NULL`).
     pub release_owner: Option<u8>,
+    /// `itMainSetFighterRelease` from the item's own update queried the
+    /// owner's hand joint for this weight.
+    pub release_query: Option<ItemWeight>,
 }
 
 impl ItemPool {
@@ -1649,6 +1656,9 @@ impl ItemPool {
     fn apply_effects(&mut self, effects: Effects) {
         if let Some(port) = effects.release_owner {
             self.mark_released(port);
+            if let Some(q) = self.release_queries.get_mut(usize::from(port)) {
+                *q = effects.release_query.or(*q);
+            }
         }
     }
 
@@ -1667,6 +1677,11 @@ impl ItemPool {
         let port = usize::from(f.port);
         if port < 4 && core::mem::take(&mut self.mew_caught[port]) {
             f.stats.emit(crate::spgame::live::Event::Mew);
+        }
+        // `itMainSetFighterRelease`'s `gmCollisionGetFighterPartsWorldPosition`
+        // on the hand, made during the item's update (RE-511).
+        if let Some(weight) = self.release_queries.get_mut(port).and_then(Option::take) {
+            mark_hold_query(f, weight);
         }
         if port < self.released.len() && self.released[port] {
             self.released[port] = false;
@@ -1821,6 +1836,30 @@ impl ItemPool {
                 .as_ref()
                 .is_some_and(|i| i.is_hold && i.owner == Some(f.port))
         })
+    }
+
+    /// A held item's attach joint (`gcAddXObjForDObjFixed(joint, 0x52)`,
+    /// `func_ovl0_800C9F70`) reads the owner's hand through
+    /// `func_ovl0_800C9A38` as the item draws, after the fighters, and only
+    /// while `itDisplayCheckItemVisible` lets it draw. The marks reach the
+    /// next frame's display when hitlag skips `ftMainPlayAnim` (RE-511).
+    pub fn mark_held_display(&self, f: &Fighter) {
+        if !f.is_item_show || f.is_invisible {
+            return;
+        }
+        let Some(item) = self.held_slot(f).and_then(|s| self.get(s)) else {
+            return;
+        };
+        if item.hidden {
+            return;
+        }
+        let joint = match item.weight {
+            ItemWeight::Heavy => crate::grab::itemheavy_joint(f.kind),
+            ItemWeight::Light => Some(crate::item_throw::itemlight_joint(f.kind)),
+        };
+        if let Some(j) = joint {
+            f.mark_joint_query_parent(j as u8);
+        }
     }
 
     /// `itMainSetFighterHold`.
@@ -2292,6 +2331,21 @@ fn held_item(slot: u8, item: &Item) -> HeldItem {
         kind: item.kind,
         ty: item.ty,
         weight: item.weight,
+    }
+}
+
+/// `itMainSetFighterHold` and `itMainSetFighterRelease` read the hand
+/// through `gmCollisionGetFighterPartsWorldPosition`, which marks the
+/// joint's chain queried (RE-511). The fighter's own process calls them, so
+/// the mark is made where the fighter queues the request: one made in its
+/// update loses TopN's mark to `ftMainProcPhysicsMap`'s clear, as on the N64.
+pub(crate) fn mark_hold_query(f: &Fighter, weight: ItemWeight) {
+    let joint = match weight {
+        ItemWeight::Heavy => crate::grab::itemheavy_joint(f.kind),
+        ItemWeight::Light => Some(crate::item_throw::itemlight_joint(f.kind)),
+    };
+    if let Some(j) = joint {
+        f.mark_joint_query(j as u8);
     }
 }
 

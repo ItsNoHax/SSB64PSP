@@ -339,6 +339,7 @@ pub fn update(f: &mut Fighter) -> bool {
                     ItemWeight::Light
                 }),
             ) {
+                crate::item::mark_hold_query(f, item.weight);
                 f.items.request(ItemRequest::Hold { slot: item.slot });
             }
         }
@@ -411,6 +412,9 @@ pub fn update(f: &mut Fighter) -> bool {
         let (sin, cos) = ssb_engine::math::sin_cos(r);
         let vel = Vec3::new(cos * speed * f.facing.sign(), sin * speed, 0.0);
         let throw_mul = d.damage_scale * 0.01 * f.item_throw.damage;
+        if let Some(held) = f.items.held {
+            crate::item::mark_hold_query(f, held.weight);
+        }
         f.items.request(if s == Status::LightThrowDrop {
             ItemRequest::Drop { vel, throw_mul }
         } else {
@@ -665,6 +669,9 @@ pub fn check_air(f: &mut Fighter) -> bool {
 
 /// `ftSetupDropItem`: release with zero velocity and ordinary damage.
 pub fn drop_item(f: &mut Fighter) {
+    if let Some(held) = f.items.held {
+        crate::item::mark_hold_query(f, held.weight);
+    }
     f.items.request(ItemRequest::Drop {
         vel: Vec3::ZERO,
         throw_mul: 1.0,

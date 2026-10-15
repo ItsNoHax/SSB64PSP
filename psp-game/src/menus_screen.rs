@@ -661,12 +661,7 @@ unsafe fn draw_fighter(
     camera_view(gpu, draw_state, &menu.camera);
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
     let n = m.skeleton.compose(p, &obj, &mut posed);
-    gpu.model_transform(
-        characters::FIGHTER_POSITION,
-        [0.0, menu.fighter.rotate_y, 0.0],
-        meshdraw::MODEL_SCALE * menu.fighter.scale(),
-    );
-    let base = gpu.model_matrix();
+    let base = crate::topn_base(characters::FIGHTER_POSITION, menu.fighter.rotate_y, menu.fighter.scale(), m.skeleton.locks.flagged);
     draw_state.configure_fighter_light(characters::LIGHT_ANGLE);
     let parts = m.demo.parts.draw_parts();
     meshdraw::draw_fighter_posed(

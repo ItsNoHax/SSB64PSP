@@ -760,8 +760,17 @@ pub struct GrabState {
     /// Translation of this fighter's first child of TopN, sampled from its
     /// current runtime joint pose for capture placement.
     pub held_child_offset: Option<Vec3>,
+    /// While thrown: `joints[4]`'s origin carried through its collision
+    /// locals up to TopN's space, as `gmCollisionGetFighterPartsWorldPosition`
+    /// walks it for `ftCommonThrownReleaseFighterLoseGrip` (RE-511). The
+    /// runtime samples it with the joints.
+    pub thrown_part4: Option<Vec3>,
     /// `FTCOMMON_CAPTURECAPTAIN_MASK_NOUPDATE`: a grounded victim stays put.
     pub captain_no_update: bool,
+    /// `fp->is_catch_or_capture`: with the link it picks the fighter's
+    /// physics pass ([`runs_in_capture_pass`]). Only the Falcon Dive sets
+    /// it; the catches and captures that clear it are the source's.
+    pub is_catch_or_capture: bool,
     /// `ftCommonThrownReleaseFighterLoseGrip`'s map sweep, from the catcher's
     /// position with its diamond, run by the next physics step, which has
     /// the map (RE-472).
@@ -839,7 +848,7 @@ pub fn is_held(status: AnyStatus) -> bool {
     )
 }
 
-fn is_thrown(status: AnyStatus) -> bool {
+pub fn is_thrown(status: AnyStatus) -> bool {
     is_held(status)
         && !matches!(
             status,
@@ -944,12 +953,18 @@ fn catch_pull(f: &mut Fighter, held: &Fighter) {
     f.grab.catch = Some(held.port);
     f.grab.catch_kind = Some(held.kind);
     f.grab.is_catchstatus = false;
+    f.grab.is_catch_or_capture = false;
     f.grab.capture_immune = true;
     // `fp->proc_slope`, run once the match loop has the map; then the swirl
     // effect and the victim's `ftCommonCapturePulledProcCapture` query the
     // hand.
     f.slope_pending = true;
     mark_held_queries(f);
+    // `efManagerCatchSwirlMakeEffect`'s position:
+    // `gmCollisionGetFighterPartsWorldPosition` on the hand itself (RE-511).
+    if let Some(joint) = itemheavy_joint(f.kind) {
+        f.mark_joint_query(joint as u8);
+    }
 }
 
 /// The catcher's parts the held fighter's processes query each frame:
@@ -1125,6 +1140,15 @@ pub(crate) fn drop_own_catch(f: &mut Fighter) {
     }
 }
 
+/// Whether the fighter's `ftMainProcPhysicsMap` runs in the priority-3
+/// `ftMainProcPhysicsMapCapture` pass instead of the priority-4 default:
+/// a held fighter after every catcher, or a Falcon Dive catcher whose victim
+/// was grounded after its victim (`ftmain.c:1918-1937`, RE-511).
+pub fn runs_in_capture_pass(f: &Fighter) -> bool {
+    (f.grab.capture.is_some() && !f.grab.is_catch_or_capture)
+        || (f.grab.catch.is_some() && f.grab.is_catch_or_capture)
+}
+
 /// `ftCommonCapturePulledProcCapture` @ 0x8014A860, run on the grabbed
 /// fighter once its catcher's snapshot has been delivered.
 fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
@@ -1134,6 +1158,7 @@ fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     f.grab.capture = Some(catcher_port);
     f.grab.holder = Some(holder);
     f.grab.is_catchstatus = false;
+    f.grab.is_catch_or_capture = false;
     f.facing = holder.facing.flipped();
     status::set_status(
         f,
@@ -1195,6 +1220,7 @@ fn capture_captain(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     f.grab.capture = Some(catcher_port);
     f.grab.holder = Some(holder);
     f.grab.captain_no_update = f.is_grounded();
+    f.grab.is_catch_or_capture = f.is_grounded();
     f.facing = holder.facing.flipped();
     f.become_airborne();
     // `ftCommonCaptureCaptainProcCapture`: `FTCOMMON_CAPTURECAPTAIN_FRAME_BEGIN`
@@ -1222,6 +1248,11 @@ fn update_capture_captain(f: &mut Fighter, holder: Holder) {
     if f.grab.captain_no_update {
         return;
     }
+    // `ftCommonCaptureCaptainUpdatePositions` reads the victim's TopN
+    // through `gmCollisionGetFighterPartsWorldPosition` before moving it:
+    // the query marks TopN, whose display then shows this pre-move matrix
+    // (RE-511). The Captain's joint 29 is marked by `mark_held_queries`.
+    f.mark_joint_query(0);
     let (x, y) = CAPTAIN_OFFSETS[f.kind as usize];
     let want = holder.anchor - Vec3::new(x * holder.facing.sign(), y, 0.0);
     let delta = want - f.pos;
@@ -1453,7 +1484,18 @@ fn release_with(
     // `joints[4]` less 300, the joint posed as it last was under the TopN
     // just placed, and sweeps the map from its catcher (RE-472).
     if is_thrown(f.status.status) {
-        if let (Some((old_top, joint)), Some(top)) = (sampled, topn) {
+        // `gmCollisionGetFighterPartsWorldPosition(joints[4])` (RE-511):
+        // the part's locals point by point, then TopN's, cached if a query
+        // already built it this frame.
+        f.mark_joint_query(4);
+        if let Some(local) = f.grab.thrown_part4 {
+            let top = f
+                .topn_query_local
+                .get()
+                .unwrap_or_else(|| crate::slope_contour::topn_local(f));
+            f.pos = crate::slope_contour::world_position(&top, local);
+            f.pos.y -= 300.0;
+        } else if let (Some((old_top, joint)), Some(top)) = (sampled, topn) {
             f.pos = reposed_joint(old_top, joint.origin, top);
             f.pos.y -= 300.0;
         }
@@ -1461,7 +1503,15 @@ fn release_with(
     }
     lose_grip(f);
     if lr.is_some() || !f.is_grounded() {
+        // `mpCommonSetFighterAir`, unconditional after a throw
+        // (`ftCommonThrownReleaseThrownUpdateStats`), in the air otherwise
+        // (`ftCommonThrownSetStatusDamageRelease`): it also zeroes TopN's
+        // depth, which the hand's placement above may have left non-zero
+        // (RE-511), and spends the first jump.
         f.become_airborne();
+        f.pos.z = 0.0;
+        f.physics.vel_air.z = 0.0;
+        f.physics.jumps_used = 1;
     }
     let knockback = attack::knockback(
         f.damage,
@@ -1862,13 +1912,14 @@ pub fn update(f: &mut Fighter) -> bool {
         }
         AnyStatus::Common(Status::CatchWait) => catch_wait_interrupt(f),
         AnyStatus::Common(Status::ThrowF | Status::ThrowB) => update_throw(f),
-        // `ftCommonCapturePulledProcPhysics`'s status switch.
-        AnyStatus::Common(Status::CapturePulled) => {
-            if f.grab.is_goto_pulled_wait {
-                set_capture_wait(f);
-            }
-        }
-        AnyStatus::Common(Status::CaptureWait | Status::CaptureYoshi | Status::CaptureCaptain) => {}
+        // `ftCommonCapturePulledProcPhysics` switches to `CaptureWait`
+        // ([`tick_held`]).
+        AnyStatus::Common(
+            Status::CapturePulled
+            | Status::CaptureWait
+            | Status::CaptureYoshi
+            | Status::CaptureCaptain,
+        ) => {}
         AnyStatus::Common(Status::CaptureKirby | Status::CaptureWaitKirby) => {
             crate::capture_kirby::update_captured(f)
         }
@@ -1986,24 +2037,42 @@ pub fn update(f: &mut Fighter) -> bool {
 /// `func_ovl0_800C9A38` builds it: the joint's world origin with its scale
 /// removed from the axes, so the catcher's own `attr->size` does not scale
 /// the offset again (RE-472: Luigi caught at x 374.95, not 381.15).
+///
+/// `holder.anchor_transform` is that matrix (the runtime builds it with
+/// [`crate::slope_contour::unscaled_world`]); `gmCollisionGetWorldPosition`
+/// applies it in the original's statement order (RE-511).
 fn held_attachment(f: &Fighter, holder: Holder) -> Vec3 {
     match (holder.anchor_transform, f.grab.held_child_offset) {
         (Some(joint), Some(child)) => {
-            let axes = held_root_axes(joint);
             let p = held_child_point(child, f.attributes.size);
-            joint.origin + axes[0] * p.x + axes[1] * p.y + axes[2] * p.z
+            crate::slope_contour::world_position(&joint_mtx(joint), p)
         }
         _ => holder.anchor,
     }
+}
+
+/// A joint transform as the collision `Mtx44f` rows it was built from.
+fn joint_mtx(joint: JointTransform) -> crate::slope_contour::PartMtx {
+    let row = |v: Vec3| [v.x, v.y, v.z];
+    [
+        row(joint.axes[0]),
+        row(joint.axes[1]),
+        row(joint.axes[2]),
+        row(joint.origin),
+    ]
 }
 
 /// `func_ovl2_800EDA0C`, as `ftCommonCapturePulledProcPhysics` applies it:
 /// the held fighter's root rotation is the catcher's heavy-item joint with
 /// its scale removed. That root DObj is also `joints[TopN]`, so this rotation
 /// replaces the `lr * 90°` yaw `ftMainSetStatus` wrote; the held fighter's
-/// own facing adds nothing to its drawn orientation (RE-371).
+/// own facing adds nothing to its drawn orientation (RE-371). Each row is
+/// multiplied by `1.0F / sqrtf(...)` of its own length.
 pub fn held_root_axes(joint: JointTransform) -> [Vec3; 3] {
-    joint.axes.map(|axis| axis.normalized())
+    joint.axes.map(|axis| {
+        let s = crate::slope_contour::inverse_row_scale([axis.x, axis.y, axis.z]);
+        Vec3::new(axis.x * s, axis.y * s, axis.z * s)
+    })
 }
 
 /// The TopN rotation `ftCommonCapturePulledRotateScale` writes for a held
@@ -2012,6 +2081,22 @@ pub fn held_root_axes(joint: JointTransform) -> [Vec3; 3] {
 /// `syUtilsArcTan2`/`syUtilsArcSin` approximations), then
 /// `gmCollisionTransformMatrixAll`'s `lbCommonSin` rotation. Unit axes.
 pub fn held_collision_axes(joint: JointTransform) -> [Vec3; 3] {
+    let [rx, ry, rz] = held_root_rotate(joint);
+    let (sx, cx) = ssb_engine::math::lb_sin_cos(rx);
+    let (sy, cy) = ssb_engine::math::lb_sin_cos(ry);
+    let (sz, cz) = ssb_engine::math::lb_sin_cos(rz);
+    [
+        Vec3::new(cz * cy, sz * cy, -sy),
+        Vec3::new(cz * sy * sx - sz * cx, sz * sy * sx + cz * cx, cy * sx),
+        Vec3::new(cz * sy * cx + sz * sx, sz * sy * cx - cz * sx, cy * cx),
+    ]
+}
+
+/// `func_ovl2_800EDA0C`'s Euler angles of the catcher's unscaled
+/// heavy-item joint: the `rotate` `ftCommonCapturePulledRotateScale` writes
+/// to a held fighter's TopN, which its display (kind `0x4B`) and collision
+/// matrices are built from.
+pub fn held_root_rotate(joint: JointTransform) -> [f32; 3] {
     use ssb_engine::math::{sy_arc_sin, sy_arc_tan2};
     let d = held_root_axes(joint);
     let (rx, ry, rz) = if d[0].z == -1.0 || d[0].z == 1.0 {
@@ -2035,14 +2120,7 @@ pub fn held_collision_axes(joint: JointTransform) -> [Vec3; 3] {
             sy_arc_tan2(d[0].y, d[0].x),
         )
     };
-    let (sx, cx) = ssb_engine::math::lb_sin_cos(rx);
-    let (sy, cy) = ssb_engine::math::lb_sin_cos(ry);
-    let (sz, cz) = ssb_engine::math::lb_sin_cos(rz);
-    [
-        Vec3::new(cz * cy, sz * cy, -sy),
-        Vec3::new(cz * sy * sx - sz * cx, sz * sy * sx + cz * cx, cy * sx),
-        Vec3::new(cz * sy * cx + sz * sx, sz * sy * cx - cz * sx, cy * cx),
-    ]
+    [rx, ry, rz]
 }
 
 /// Whether the status's `proc_physics` writes TopN's rotation from the
@@ -2145,6 +2223,14 @@ where
     f.pos.z = attachment.z;
     if !pulled {
         f.pos.y = attachment.y;
+    }
+    // `ftCommonCapturePulledProcPhysics`'s status switch, after the
+    // placement: the catcher's `ftCommonCatchPullProcUpdate` raised the flag
+    // in this frame's update pass, so a catcher later in the link switches
+    // its victim the same frame (RE-511). The map pass then runs
+    // `CaptureWait`'s `proc_map`.
+    if f.status.status == Status::CapturePulled && f.grab.is_goto_pulled_wait {
+        set_capture_wait(f);
     }
     if pulled {
         // `ftCommonCapturePulledProcMap` / `ftCommonCaptureWaitProcMap`.
@@ -3907,7 +3993,12 @@ mod tests {
             [323.31, 229.2, 33.0],
         );
         catcher.grab.anchor = Some(joint.origin);
-        catcher.grab.anchor_transform = Some(joint);
+        // The runtime hands over `func_ovl0_800C9A38`'s unscaled matrix
+        // (`slope_contour::unscaled_world`, RE-511).
+        catcher.grab.anchor_transform = Some(JointTransform {
+            axes: held_root_axes(joint),
+            origin: joint.origin,
+        });
         let mut held = grounded(FighterKind::Luigi, 1, 0.0);
         held.attributes.size = 1.12;
         capture_pulled(&mut held, catcher.port, holder_of(&catcher));
@@ -3963,7 +4054,8 @@ mod tests {
         catcher.grab.anchor_transform = Some(now);
         release_thrown(&mut catcher, -1.0);
         exchange(&mut catcher, &mut held);
-        let want = Vec3::new(483.53, 283.19 - 300.0, 23.19);
+        // `mpCommonSetFighterAir` zeroes TopN's depth after the drop.
+        let want = Vec3::new(483.53, 283.19 - 300.0, 0.0);
         assert!((held.pos - want).length() < 0.2, "{:?}", held.pos);
         assert_eq!(held.grab.release_sweep, Some((catcher.pos, catcher.coll)));
         assert!(held.grab.capture.is_none());

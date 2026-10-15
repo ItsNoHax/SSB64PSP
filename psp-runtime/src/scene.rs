@@ -1261,6 +1261,31 @@ impl FighterScene {
         self.skeleton.compose_queried(pack, object, out, queried >> 4, lead)
     }
 
+    /// The fighter's TopN display matrix in world units, the pack's model
+    /// scale multiplied in: the base [`Self::compose_model`]'s matrices draw
+    /// under. TopN is kind `0x4B` (`lbCommonFighterPartsFuncMatrix`): the
+    /// collision local through `syMatrixF2LFixedW` once a query this frame
+    /// marked it, otherwise the fixed-point rotate-translate-scale chain
+    /// (`lbCommonMatrixTraRotScaInv` in a flagged motion). Its `rotate` is
+    /// the catcher's hand for a held fighter
+    /// (`ftCommonCapturePulledRotateScale`), its `scale` `attr->size`.
+    pub fn topn_display(&self) -> ssb_rom::scene::Mat4 {
+        use ssb_rom::scene::Mat4;
+        let f = &self.fighter;
+        let queried = (f.queried_joints.get() & 1 != 0)
+            .then(|| f.topn_query_local.get())
+            .flatten();
+        let k = ssb_rom::pack::MODEL_SCALE;
+        Mat4::fighter_topn_display(
+            [f.pos.x, f.pos.y, f.pos.z],
+            ssb_game::slope_contour::topn_rotate(f),
+            [f.attributes.size; 3],
+            self.skeleton.locks.flagged,
+            queried,
+        )
+        .mul(&Mat4::from_trs([0.0; 3], [0.0; 3], [k; 3]))
+    }
+
     /// [`Self::compose_model`] for gameplay positions: the joints' matrices
     /// from `lbCommonSin`, as `gmCollisionGetFighterPartsWorldPosition`
     /// builds them for hit and hurt collisions and attachments (RE-468).
@@ -1482,11 +1507,9 @@ impl FighterScene {
             self.tick_animation(pack);
             self.anim_ticked_early = true;
             self.sample_gameplay_joints(pack);
-            if let Some(joint) = ssb_game::grab::itemheavy_joint(self.fighter.kind) {
-                let hand = self.fighter.joint_transforms.get(joint).copied().flatten();
-                self.fighter.grab.anchor = hand.map(|j| j.origin);
-                self.fighter.grab.anchor_transform = hand;
-            }
+            let hand = self.hand_transform(pack);
+            self.fighter.grab.anchor = hand.map(|j| j.origin);
+            self.fighter.grab.anchor_transform = hand;
         }
     }
 
@@ -1593,20 +1616,20 @@ impl FighterScene {
         // from this frame's hand at once (RE-472).
         // The held fighter's capture processes query the hand (RE-509).
         ssb_game::grab::mark_held_queries(&self.fighter);
+        self.sample_anchor(pack);
+    }
+
+    /// The heavy-item joint a held fighter hangs from, while this fighter
+    /// holds or is in a catch status; `grab::exchange` hands it over.
+    fn sample_anchor(&mut self, pack: &Pack<'_>) {
         let holds = self.fighter.grab.catch.is_some() || self.fighter.grab.is_catchstatus;
-        self.fighter.grab.anchor = if holds {
-            ssb_game::grab::itemheavy_joint(self.fighter.kind)
-                .and_then(|joint| self.fighter.joint_transforms.get(joint).copied().flatten())
-                .map(|joint| joint.origin)
+        let hand = if holds {
+            self.hand_transform(pack)
         } else {
             None
         };
-        self.fighter.grab.anchor_transform = if holds {
-            ssb_game::grab::itemheavy_joint(self.fighter.kind)
-                .and_then(|joint| self.fighter.joint_transforms.get(joint).copied().flatten())
-        } else {
-            None
-        };
+        self.fighter.grab.anchor = hand.map(|joint| joint.origin);
+        self.fighter.grab.anchor_transform = hand;
     }
 
     /// The fighter's entry in `gmCameraUpdateInterests`, by its camera mode:
@@ -1800,30 +1823,46 @@ impl FighterScene {
         );
     }
 
-    /// The tail of `ftCommonCapturePulledProcCapture`, for a fighter caught
-    /// in this frame's hit phase: `ftMainPlayAnimEventsAll` plays
-    /// `CapturePulled`'s first frame, then `ftCommonCapturePulledProcPhysics`
-    /// and `ftCommonCapturePulledProcMap` place it at the catcher's hand on
-    /// the catch frame itself (RE-472). Call after `grab::exchange` has
-    /// delivered the capture.
-    pub fn settle_capture(
+    /// A status set in the hit phase that asked for its `proc_slope`
+    /// (`ftCommonCatchPullProcCatch` and the other pending-slope sites):
+    /// the new pose, the slope, and the joints and hand resampled from it.
+    /// Call for every fighter before [`Self::settle_capture`].
+    pub fn settle_catch(
         &mut self,
         pack: &Pack<'_>,
         stage: &StageDesc,
         groups: &[ssb_game::map::MapGroup],
     ) {
         // `ftCommonCatchPullProcCatch`'s `proc_slope` (RE-510), on the pose
-        // `ftMainSetStatus` parsed for `CatchPull`.
-        if self.fighter.slope_pending {
-            let status = &self.fighter.status;
-            if self.started != Some((status.status, status.entry)) {
-                self.tick_animation(pack);
-            }
-            let segments = || MapSegments::with_groups(pack, stage, groups);
-            if self.slope_contour(pack, &segments, true) {
-                self.sample_gameplay_joints(pack);
-            }
+        // `ftMainSetStatus` parsed for `CatchPull`. The caught fighter's
+        // `ftCommonCapturePulledProcCapture` then reads the hand from that
+        // pose (`func_ovl0_800C9A38` on the DObjs as they stand), not the
+        // `Catch` frame the physics pass sampled (RE-511).
+        if !self.fighter.slope_pending {
+            return;
         }
+        let status = &self.fighter.status;
+        if self.started != Some((status.status, status.entry)) {
+            self.tick_animation(pack);
+        }
+        let segments = || MapSegments::with_groups(pack, stage, groups);
+        self.slope_contour(pack, &segments, true);
+        self.sample_gameplay_joints(pack);
+        self.sample_anchor(pack);
+    }
+
+    /// The tail of `ftCommonCapturePulledProcCapture`, for a fighter caught
+    /// in this frame's hit phase: `ftMainPlayAnimEventsAll` plays
+    /// `CapturePulled`'s first frame, then `ftCommonCapturePulledProcPhysics`
+    /// and `ftCommonCapturePulledProcMap` place it at the catcher's hand on
+    /// the catch frame itself (RE-472). Call after [`Self::settle_catch`]
+    /// and the `grab::exchange` that delivers the capture and the hand.
+    pub fn settle_capture(
+        &mut self,
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        groups: &[ssb_game::map::MapGroup],
+    ) {
         let status = &self.fighter.status;
         if status.status != ssb_game::status::Status::CapturePulled
             || self.started == Some((status.status, status.entry))
@@ -1863,7 +1902,6 @@ impl FighterScene {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        use ssb_game::fighter::FIGHTER_JOINTS;
         use ssb_game::slope_contour::PartLocals;
         if pending && !self.fighter.slope_pending {
             return false;
@@ -1874,22 +1912,11 @@ impl FighterScene {
         self.refresh_joint_parents(pack, &object);
         // `fp->is_use_animlocks` of the clip the map step left playing.
         self.fighter.is_use_animlocks = self.skeleton.locks.flagged;
-        let mut parts = PartLocals::default();
-        if self.fighter.slope_contour != 0 {
-            let mut locals = [[[0.0f32; 3]; 4]; ssb_rom::skeleton::MAX_NODES];
-            let mut translate_x = [0.0f32; ssb_rom::skeleton::MAX_NODES];
-            let mut lead = None;
-            let count = self
-                .skeleton
-                .collision_parts(pack, &object, &mut locals, &mut translate_x, &mut lead)
-                .min(FIGHTER_JOINTS - 4);
-            for i in 0..count {
-                parts.set(i + 4, locals[i], translate_x[i]);
-            }
-            if let Some((local, x)) = lead {
-                parts.set(2, local, x);
-            }
-        }
+        let parts = if self.fighter.slope_contour != 0 {
+            self.part_locals(pack, &object)
+        } else {
+            PartLocals::default()
+        };
         let fits = if pending {
             self.fighter
                 .run_pending_slope_contour(surfaces, Some(&parts))
@@ -1909,6 +1936,64 @@ impl FighterScene {
             }
         }
         moved
+    }
+
+    /// Every part's collision local (`unk_dobjtrans_0x10`) and
+    /// `translate.x` as the skeleton poses them now, the lead `XRotN` as
+    /// joint 2.
+    fn part_locals(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+    ) -> ssb_game::slope_contour::PartLocals {
+        use ssb_game::fighter::FIGHTER_JOINTS;
+        let mut parts = ssb_game::slope_contour::PartLocals::default();
+        let mut locals = [[[0.0f32; 3]; 4]; ssb_rom::skeleton::MAX_NODES];
+        let mut translate_x = [0.0f32; ssb_rom::skeleton::MAX_NODES];
+        let mut lead = None;
+        let count = self
+            .skeleton
+            .collision_parts(pack, object, &mut locals, &mut translate_x, &mut lead)
+            .min(FIGHTER_JOINTS - 4);
+        for i in 0..count {
+            parts.set(i + 4, locals[i], translate_x[i]);
+        }
+        if let Some((local, x)) = lead {
+            parts.set(2, local, x);
+        }
+        parts
+    }
+
+    /// `func_ovl0_800C9A38` on `joint_itemheavy_id`: the hand a held
+    /// fighter hangs from, its axes without scale, in the original's
+    /// arithmetic (`ftCommonCapturePulledRotateScale`, RE-511).
+    fn hand_transform(&mut self, pack: &Pack<'_>) -> Option<ssb_game::fighter::JointTransform> {
+        use ssb_engine::math::Vec3;
+        let joint = ssb_game::grab::itemheavy_joint(self.fighter.kind)?;
+        let object = pack.object(self.object)?;
+        self.refresh_joint_parents(pack, &object);
+        let parts = self.part_locals(pack, &object);
+        if !parts.has(joint) {
+            // No part locals: the sampled joint with its scale taken out.
+            return self.fighter.joint_transforms.get(joint).copied().flatten().map(|j| {
+                ssb_game::fighter::JointTransform {
+                    axes: ssb_game::grab::held_root_axes(j),
+                    origin: j.origin,
+                }
+            });
+        }
+        let m = ssb_game::slope_contour::unscaled_world(
+            &parts,
+            ssb_game::slope_contour::topn_local(&self.fighter),
+            &self.fighter.joint_parents,
+            self.skeleton.locks.flagged,
+            joint,
+        );
+        let v = |r: [f32; 3]| Vec3::new(r[0], r[1], r[2]);
+        Some(ssb_game::fighter::JointTransform {
+            axes: [v(m[0]), v(m[1]), v(m[2])],
+            origin: v(m[3]),
+        })
     }
 
     /// The part tree a query walks to TopN: node `n` is joint `n + 4`, a
@@ -1931,6 +2016,13 @@ impl FighterScene {
                 .map_or(root_parent, |p| (p - object.first_node) as u8 + 4);
             self.fighter.joint_parents[i + 4] = parent;
         }
+        // The runtime joints: `TransN` under TopN (RE-510 traces), `YRotN`
+        // under `XRotN` (the shield's matrix composes through it), and
+        // `XRotN` under TopN. A shield collision marks `YRotN`'s chain
+        // (RE-511); the YRotN link awaits an N64 shield trace.
+        self.fighter.joint_parents[1] = 0;
+        self.fighter.joint_parents[2] = 0;
+        self.fighter.joint_parents[3] = 2;
     }
 
     fn sample_held_child_offset(&mut self) {
@@ -1984,6 +2076,21 @@ impl FighterScene {
                     + world(Vec3::new(t[0] * scale, t[1] * scale, t[2] * scale)),
             });
         }
+        // `ftCommonThrownReleaseFighterLoseGrip` drops a thrown fighter to
+        // `joints[4]` (RE-511).
+        self.fighter.grab.thrown_part4 = if ssb_game::grab::is_thrown(self.fighter.status.status) {
+            let parts = self.part_locals(pack, &object);
+            parts.has(4).then(|| {
+                ssb_game::slope_contour::point_below_topn(
+                    &parts,
+                    &self.fighter.joint_parents,
+                    4,
+                    Vec3::ZERO,
+                )
+            })
+        } else {
+            None
+        };
         // `YRotN` hangs off `XRotN`, which nothing rotates, so its local
         // pose is its model-space pose. Only a raised shield reads it.
         if ssb_game::status::shield_pose(&self.fighter).is_some() {
@@ -2105,13 +2212,7 @@ pub fn play_camera_anim(scene: &mut FighterScene, anim: &CameraAnim) -> bool {
 /// (`lr = 0` faces the camera; Captain Falcon's leftward entry turns
 /// around), `ssb_game::appear::model_yaw`.
 pub fn fighter_turn(f: &ssb_game::fighter::Fighter) -> f32 {
-    ssb_game::boss::model_yaw(f)
-        .or_else(|| ssb_game::appear::model_yaw(f))
-        .or_else(|| ssb_game::item_throw::model_yaw(f))
-        .or_else(|| ssb_game::dokan::model_yaw(f))
-        // TopN's yaw, set from `lr` by `ftMainSetStatus`: a status that
-        // flips `lr` part-way (Turn's pivot, a roll) keeps it (RE-468).
-        .unwrap_or_else(|| core::f32::consts::FRAC_PI_2 * f.topn_lr)
+    ssb_game::slope_contour::topn_yaw(f)
 }
 
 /// The file data `grMainSetupMakeGround` hands a stage's controller:

@@ -259,6 +259,38 @@ pub enum Situation {
     Air,
 }
 
+/// One sample of the sword trail (`FTAfterImage`): the blade's origin,
+/// truncated to `s16`, and its direction.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct AfterImageDesc {
+    pub translate: [i16; 3],
+    pub vec: Vec3,
+}
+
+/// `FTStruct::afterimage` (`FTAfterImageInfo`): `nFTMotionEventSetAfterImage`
+/// turns it on; every status change without `FTSTATUS_PRESERVE_AFTERIMAGE`
+/// (none sets it) turns it off; `ftMainProcParams` samples three
+/// descriptors round-robin while it is on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AfterImage {
+    pub is_itemswing: bool,
+    /// `-1` off; counts samples up to 3.
+    pub drawstatus: i8,
+    pub desc_id: u8,
+    pub desc: [AfterImageDesc; 3],
+}
+
+impl Default for AfterImage {
+    fn default() -> Self {
+        Self {
+            is_itemswing: false,
+            drawstatus: -1,
+            desc_id: 0,
+            desc: [AfterImageDesc::default(); 3],
+        }
+    }
+}
+
 /// Per-fighter runtime state.
 ///
 /// A pared-down `FTStruct`. The original is ~0x18 KB per fighter and carries
@@ -419,6 +451,12 @@ pub struct Fighter {
     /// `FTStruct::slope_contour` (`FTSLOPECONTOUR_FLAG_*`), set by the
     /// motion scripts and cleared by a status change.
     pub slope_contour: u8,
+    /// `FTStruct::afterimage`: the sword trail's sampling state.
+    pub afterimage: AfterImage,
+    /// `FTStruct::is_item_show`: `nFTMotionEventHideItem`, back to TRUE on
+    /// every status change; a held item draws only while it is set
+    /// (`itDisplayCheckItemVisible`).
+    pub is_item_show: bool,
     /// `ftCommonCatchPullProcCatch` calls `proc_slope` in the catch
     /// search; the match loop, which holds the map, runs it after the
     /// search ([`Fighter::run_pending_slope_contour`]).
@@ -595,6 +633,8 @@ impl Fighter {
             joint_parents: DEFAULT_JOINT_PARENTS,
             is_use_animlocks: false,
             slope_contour: 0,
+            afterimage: AfterImage::default(),
+            is_item_show: true,
             slope_pending: false,
             topn_rotate_x: 0.0,
             topn_query_local: core::cell::Cell::new(None),
@@ -767,8 +807,7 @@ impl Fighter {
         if self.is_in_hitlag() {
             return;
         }
-        let v = crate::physics::total_velocity(&self.physics, self.is_grounded());
-        self.pos += Vec3::new(v.x, v.y, crate::physics::clamp_z_velocity(self.pos.z, v.z));
+        self.pos = crate::physics::integrated_position(self.pos, &self.physics, self.is_grounded());
     }
 
     /// Leaves the ground, carrying momentum into the air vector.
@@ -778,9 +817,12 @@ impl Fighter {
         }
         self.situation = Situation::Air;
         // `mpCommonSetFighterAir`: `vel_air` already holds the last ground
-        // step (`ftPhysicsSetGroundVelTransferAir`); only its depth stops.
+        // step (`ftPhysicsSetGroundVelTransferAir`); only its depth stops,
+        // and TopN's depth returns to 0 (RE-511: a jostled Captain Falcon
+        // jumps from z 60 to z 0).
         self.physics.vel_ground = Vec3::ZERO;
         self.physics.vel_air.z = 0.0;
+        self.pos.z = 0.0;
     }
 
     /// Lands, clearing air state.
@@ -1859,7 +1901,9 @@ impl Fighter {
         }
         // `ftPhysicsSetGroundVelTransferAir`: the jostle adds to the step.
         let want = Vec3::new(
-            self.pos.x + ground_x + self.physics.vel_jostle_x + self.physics.vel_knockback.x,
+            // `syVectorAdd3D(translate, &vel_air)` adds the jostle already
+            // summed into `vel_air.x`, then the damage velocity on its own.
+            (self.pos.x + (ground_x + self.physics.vel_jostle_x)) + self.physics.vel_knockback.x,
             self.pos.y,
             self.pos.z
                 + ground_vel_z(
@@ -2073,12 +2117,7 @@ impl Fighter {
             0.0,
             self.attributes.traction,
         );
-        let v = crate::physics::total_velocity(&self.physics, false);
-        let want = Vec3::new(
-            self.pos.x + v.x,
-            self.pos.y + v.y,
-            self.pos.z + crate::physics::clamp_z_velocity(self.pos.z, v.z),
-        );
+        let want = crate::physics::integrated_position(self.pos, &self.physics, false);
 
         let skip_pass = self.status.status
             == crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialAirHi)

@@ -474,6 +474,23 @@ pub fn total_velocity(p: &PhysicsState, grounded: bool) -> Vec3 {
     base + p.vel_knockback
 }
 
+/// `pos` advanced by one frame of `ftMainProcPhysicsMap`: the base velocity
+/// first (`syVectorAdd3D(topn_translate, &vel_air)`, its depth clamped),
+/// then the damage velocity's X and Y on their own. The order is the C's:
+/// summing the two velocities first rounds differently (RE-511: Mario's
+/// DamageFly height off by one ulp).
+pub fn integrated_position(pos: Vec3, p: &PhysicsState, grounded: bool) -> Vec3 {
+    let base = if grounded { p.vel_ground } else { p.vel_air };
+    let mut out = Vec3::new(
+        pos.x + base.x,
+        pos.y + base.y,
+        pos.z + clamp_z_velocity(pos.z, base.z),
+    );
+    out.x += p.vel_knockback.x;
+    out.y += p.vel_knockback.y;
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

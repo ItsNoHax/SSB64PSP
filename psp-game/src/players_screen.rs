@@ -441,12 +441,7 @@ unsafe fn draw_fighters(
         };
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
         let n = m.skeleton.compose(p, &obj, &mut posed);
-        gpu.model_transform(
-            shown.position,
-            [0.0, fighter.rotate_y, 0.0],
-            meshdraw::MODEL_SCALE * fighter.scale(),
-        );
-        let base = gpu.model_matrix();
+        let base = crate::topn_base(shown.position, fighter.rotate_y, fighter.scale(), m.skeleton.locks.flagged);
         draw_state.configure_fighter_light(LIGHT_ANGLE);
         if let Some(rgba) = shown.tint {
             // The view looks down -z from `CAMERA.eye`.

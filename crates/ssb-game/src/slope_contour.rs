@@ -191,8 +191,32 @@ pub fn topn_local(f: &crate::fighter::Fighter) -> PartMtx {
         };
         return [row(a[0]), row(a[1]), row(a[2]), [f.pos.x, f.pos.y, f.pos.z]];
     }
-    let yaw = crate::item_throw::model_yaw(f).unwrap_or(f.topn_lr * dtor32(90.0));
-    transform_matrix(f.pos, [f.topn_rotate_x, yaw, 0.0], [size; 3])
+    transform_matrix(f.pos, [f.topn_rotate_x, topn_yaw(f), 0.0], [size; 3])
+}
+
+/// TopN's `rotate.y`: `lr * 90°` from `ftMainSetStatus` (a status that
+/// flips `lr` part-way, Turn's pivot or a roll, keeps it, RE-468), or the
+/// yaw a status writes itself: Master Hand's `lr = 0`, an entry's, an item
+/// throw's or turn's, a pipe's.
+pub fn topn_yaw(f: &crate::fighter::Fighter) -> f32 {
+    crate::boss::model_yaw(f)
+        .or_else(|| crate::appear::model_yaw(f))
+        .or_else(|| crate::item_throw::model_yaw(f))
+        .or_else(|| crate::dokan::model_yaw(f))
+        .unwrap_or(f.topn_lr * dtor32(90.0))
+}
+
+/// TopN's `rotate`, as its display (kind `0x4B`) builds it: a held
+/// fighter's from its catcher's hand (`ftCommonCapturePulledRotateScale`),
+/// otherwise `(rotate.x, yaw, 0)` with the slope tilt in `rotate.x`.
+pub fn topn_rotate(f: &crate::fighter::Fighter) -> [f32; 3] {
+    let hand = crate::grab::rotates_topn(f.status.status)
+        .then(|| f.grab.holder.and_then(|h| h.anchor_transform))
+        .flatten();
+    match hand {
+        Some(joint) => crate::grab::held_root_rotate(joint),
+        None => [f.topn_rotate_x, topn_yaw(f), 0.0],
+    }
 }
 
 /// `syVectorNorm3D`: a multiply by `1.0F / mag`, not a division.
@@ -479,6 +503,88 @@ impl<'a> PartWalk<'a> {
                 self.world[k] = None;
                 self.inverse[k] = None;
             }
+        }
+    }
+}
+
+/// `gmCollisionGetFighterPartsWorldPosition`'s walk outside a flagged
+/// motion, with no part's world matrix cached, stopped below TopN: `v`
+/// through part `j`'s collision local and each ancestor's in turn, into
+/// TopN's space.
+pub fn point_below_topn(
+    locals: &PartLocals,
+    parents: &[u8; FIGHTER_JOINTS],
+    j: usize,
+    v: Vec3,
+) -> Vec3 {
+    let mut v = v;
+    let mut cur = j;
+    for _ in 0..FIGHTER_JOINTS {
+        if cur == 0 || cur >= FIGHTER_JOINTS {
+            break;
+        }
+        v = world_position(&locals.locals[cur], v);
+        cur = usize::from(parents[cur]);
+    }
+    v
+}
+
+/// `1.0F / sqrtf(SQUARE(r[0]) + SQUARE(r[1]) + SQUARE(r[2]))`, or 0 for a
+/// zero row, as `func_ovl0_800C9A38` and `func_ovl2_800EDA0C` take a
+/// row's scale out.
+pub fn inverse_row_scale(r: [f32; 3]) -> f32 {
+    let scale = sqrt(((r[0] * r[0]) + (r[1] * r[1])) + (r[2] * r[2]));
+    if scale != 0.0 {
+        1.0 / scale
+    } else {
+        scale
+    }
+}
+
+/// `func_ovl0_800C9A38` (`lb/lbcommon.c:1477`, the US build of
+/// `ftCommonCapturePulledRotateScale`): part `j`'s world matrix with the
+/// scale taken out of its axes. In a flagged motion, or for a part without
+/// a parent, that is `func_ovl2_800EDBA4`'s `mtx_translate` with each axis
+/// row normalised; otherwise the part's own collision local, its rows
+/// normalised, its columns divided by the parent's axis lengths, times the
+/// parent's `mtx_translate` (`func_ovl2_800ED490`). The translation row is
+/// the part's world origin.
+pub fn unscaled_world(
+    locals: &PartLocals,
+    topn: PartMtx,
+    parents: &[u8; FIGHTER_JOINTS],
+    flagged: bool,
+    j: usize,
+) -> PartMtx {
+    let mut walk = PartWalk::new(locals, topn, parents, flagged);
+    let parent = walk.parent(j);
+    match parent {
+        Some(p) if !flagged => {
+            let mut f = walk.local(j);
+            for row in f.iter_mut().take(3) {
+                let s = inverse_row_scale(*row);
+                for e in row.iter_mut() {
+                    *e *= s;
+                }
+            }
+            let pw = walk.world(p);
+            for (k, prow) in pw.iter().take(3).enumerate() {
+                let s = inverse_row_scale(*prow);
+                for row in f.iter_mut().take(3) {
+                    row[k] *= s;
+                }
+            }
+            mul(&pw, &f)
+        }
+        _ => {
+            let mut m = walk.world(j);
+            for row in m.iter_mut().take(3) {
+                let s = inverse_row_scale(*row);
+                for e in row.iter_mut() {
+                    *e *= s;
+                }
+            }
+            m
         }
     }
 }
