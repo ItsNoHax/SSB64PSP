@@ -129,6 +129,12 @@ const fn vs_knock_smash(tick: u64) -> bool {
 
 const fn capture_ticks(scene: GameScene) -> u64 {
     match scene {
+        // The fighter-move scenes' capture ticks live with their scripts;
+        // a test in `ssb-capture` checks that each of them has one.
+        ssb_capture::scripted_scene!() => match ssb_capture::script::capture_tick(scene) {
+            Some(tick) => tick,
+            None => panic!("a scripted scene without a capture tick"),
+        },
         GameScene::OnePGame => 600,
         GameScene::OnePIntro => 150,
         GameScene::OnePBonus => 150,
@@ -196,98 +202,10 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // The course from tick 51; its timer has run some 200 tics.
         GameScene::BonusPractice => 300,
         GameScene::OnePFinale => 2200,
-        // Training starts at tick 8; C-Up at 13 enters jumpsquat, and this
-        // lands in the rising portion of Mario's real button jump while the
-        // dummy is still on Dream Land's main floor.
-        GameScene::Shadows => 22,
-        GameScene::Fireball => 167,
-        // B+up is pressed at tick 150; frame 2's strong opening hit has
-        // resolved by this point while the source TransN launch is still
-        // clearly visible.
-        GameScene::Superjump => 156,
-        GameScene::Fox => 46,
-        // B at tick 20, as in the Fox scene; the Fireball is in flight.
-        GameScene::Luigi => 46,
-        // B at tick 40, once Training's opening jab is over;
-        // `SpecialNStart` runs 16 frames, then the charge grows a level every
-        // 20 frames. Level 2 is on the arm cannon here.
-        GameScene::Samus => 100,
-        // A second B at tick 80 ends the charge; the level-1 shot is in
-        // flight a few frames later.
-        GameScene::SamusShot => 84,
-        // Down+B at tick 20; the Bomb spawns on `SpecialLw` frame 10 and
-        // rests under Samus. She walks right from tick 80, uncovering it
-        // with some 30 frames of its 100-frame fuse left.
-        GameScene::SamusBomb => 100,
-        // B at tick 20; `SpecialN` throws the Boomerang on frame 26, and it
-        // has flown some 14 frames here.
-        GameScene::Link => 60,
-        // Up+B at tick 20 enters `SpecialHi` with the swirl; 13 swirl
-        // frames later its primitive alpha is 204 (RE-324).
-        GameScene::LinkSpin => 33,
-        // A at tick 50 enters `Jab1` (tick 8's A jabs first); its trail
-        // samples from frame 5 and draws from the second sample: three
-        // samples here.
-        GameScene::LinkSword => 56,
         // A at tick 60 picks the Beam Sword up and A at 100 swings it:
         // `SwordSwing1`'s trail runs from frame 2 to frame 9.
         GameScene::TrainingSword => 104,
-        // Forward and A at tick 50 enter `AttackS4`; a spark comes every 3
-        // frames from frame 21 and lasts 7 plays: two are out here.
-        GameScene::PikachuSmash => 76,
-        // Up+B at tick 20; Egg Throw makes the egg on frame 4 and throws it
-        // on frame 23, and it has flown some 16 frames here.
-        GameScene::Yoshi => 60,
-        // Down+B at tick 20; the Yoshi Bomb hops on its TransN, drops and
-        // lands near tick 59, and `SpecialLwLanding` frame 3 makes the two
-        // stars. They are some 6 of their 16 frames old here (RE-378).
-        GameScene::YoshiBomb => 68,
-        // B at tick 20; `SpecialN` makes the flame on frame 42 and stops it
-        // on frame 55. It has played some 7 frames here.
-        GameScene::Captain => 69,
-        // Down+B at tick 20; `SpecialLw` makes the flame on frame 12 and
-        // stops it on frame 32. It has played some 12 frames here.
-        GameScene::CaptainKick => 44,
-        // Up+B at tick 20; Final Cutter rises on its TransN, lands on the
-        // top platform near tick 77, and `SpecialHiLanding` frame 3 makes
-        // the wave. It is some 6 of its 20 frames old here.
-        GameScene::Kirby => 83,
-        // A from tick 50 on every other tick: jabs 1-3, then the rapid jab,
-        // whose loop makes a puff at its frames 0, 6, 11, 16 and 21 (RE-513).
-        GameScene::KirbyJab => 110,
-        // B at tick 20; `SpecialN` makes the aerial jolt near tick 44, which
-        // lands on its first frame as the ground jolt. Its animation is 8
-        // plays into its first 15-frame push cycle here.
-        GameScene::Pikachu => 52,
-        // C-Up at tick 13 jumps; B at tick 24 enters `SpecialAirN`, which
-        // makes the aerial jolt near tick 45. It is some 11 frames into its
-        // flight here, still in the air.
-        GameScene::PikachuAir => 56,
-        // Up+B at tick 20; Sing makes its notes on its first update.
-        GameScene::Purin => 50,
-        // B at tick 40 starts the Giant Punch; it is charging here.
-        GameScene::Donkey => 60,
-        // B at tick 20; PK Fire's spark appears near tick 45 and is in
-        // flight here.
-        GameScene::Ness => 50,
-        // Up+B at tick 20; PK Thunder's head rises with its four trails
-        // while Ness holds `SpecialHiHold`.
-        GameScene::NessThunder => 60,
-        // Down+B at tick 20, held; PSI Magnet's field is up in
-        // `SpecialLwHold`.
-        GameScene::NessMagnet => 50,
-        // Down+B at tick 20 pulls a Bomb; it is in Link's hand here.
-        GameScene::LinkBomb => 55,
         GameScene::Training => 106,
-        // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
-        // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
-        GameScene::Grab => 118,
-        // A at tick 108 lands on tick 109 (host `romtool jumptest`); the
-        // dummy's hitlag is over and it is in `DamageN1`.
-        GameScene::Jab => 118,
-        // Z begins at tick 40; the diagonal stick is applied after GuardOn
-        // has entered Guard, then frozen with the shield still raised.
-        GameScene::Shield => 60,
         // Both fighters have settled on Dream Land's main floor.
         GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3 => 40,
         // Hyrule Castle is confirmed at tick 30; both fighters have
@@ -348,14 +266,6 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Results tic 100: the emblem has shrunk and risen for 61 tics; the
         // text and confetti come at 120 (RE-420).
         GameScene::VsResultsEmblem => VS_RESULTS_EMBLEM_CAPTURE_TICK,
-        GameScene::PikachuThunder => 92,
-        GameScene::KirbyHat => 260,
-        GameScene::YoshiEgg => 460,
-        // Z from tick 40: the egg is up from the end of `GuardOn`, and 16
-        // ticks a point of the shield's 55 decays, darkening it.
-        GameScene::YoshiShield => 600,
-        GameScene::YoshiRollF | GameScene::YoshiRollB => 69,
-        GameScene::YoshiShieldBreak => 84,
         // "Go" at 398 with Z held; the CPU's first hit on the shield sets
         // it off on this tick (the capture log's `re418` lines).
         GameScene::VsShield => VS_SHIELD_SET_OFF_TICK,
@@ -535,6 +445,11 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
+    // The fighter-move scenes' scripts (`ssb_capture::script`), shared with
+    // the host test that replays them.
+    if let Some(pad) = ssb_capture::script::fighter_pad(scene, tick) {
+        return N64Buttons(pad.buttons);
+    }
     // Backup Clear: down three times to VS Record, then A for its confirm.
     match (scene, tick) {
         (GameScene::VsTeamSteal, VS_TEAM_STEAL_START_TICK) => return N64Buttons(N64Buttons::START),
@@ -802,151 +717,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
-    // The Samus, Link, Yoshi and Captain scenes stay on the spawn floor: no
-    // jump route.
-    if matches!(
-        scene,
-        GameScene::Samus
-            | GameScene::SamusShot
-            | GameScene::SamusBomb
-            | GameScene::Link
-            | GameScene::LinkSpin
-            | GameScene::LinkSword
-            | GameScene::Yoshi
-            | GameScene::YoshiBomb
-            | GameScene::Captain
-            | GameScene::CaptainKick
-            | GameScene::Kirby
-            | GameScene::KirbyJab
-            | GameScene::Pikachu
-            | GameScene::PikachuSmash
-            | GameScene::Purin
-            | GameScene::Donkey
-            | GameScene::Ness
-            | GameScene::NessThunder
-            | GameScene::NessMagnet
-            | GameScene::LinkBomb
-    ) {
-        return match tick {
-            4 | 8 => N64Buttons(N64Buttons::A),
-            // `linksword` jabs; `pikachusmash` taps forward with A. The A at
-            // tick 8 jabs on Training's first frame; both wait it out.
-            50 if matches!(scene, GameScene::LinkSword | GameScene::PikachuSmash) => {
-                N64Buttons(N64Buttons::A)
-            }
-            // `kirbyjab` mashes A (no B at tick 20).
-            t if scene == GameScene::KirbyJab => {
-                N64Buttons(if t >= 50 && t % 2 == 0 { N64Buttons::A } else { 0 })
-            }
-            // Samus's and Donkey Kong's jabs from the A at tick 8 are still
-            // running at tick 20 and swallow a B there; their Charge Shot and
-            // Giant Punch start at 40.
-            40 if matches!(scene, GameScene::Samus | GameScene::SamusShot | GameScene::Donkey) => {
-                N64Buttons(N64Buttons::B)
-            }
-            80 if scene == GameScene::SamusShot => N64Buttons(N64Buttons::B),
-            20 if !matches!(scene, GameScene::Samus | GameScene::SamusShot | GameScene::Donkey) => {
-                N64Buttons(N64Buttons::B)
-            }
-            // Extended controls hold through the critical bloat, then throw
-            // backward. The original Link Bomb capture stays at tick 55.
-            300 if scene == GameScene::LinkBomb => N64Buttons(N64Buttons::A),
-            // PSI Magnet lasts while B is held.
-            t if scene == GameScene::NessMagnet && t > 20 => N64Buttons(N64Buttons::B),
-            _ => N64Buttons(0),
-        };
-    }
-    // `kirbyhat` and `yoshiegg` take the grab scene's route onto the
-    // dummy's platform, then B: Kirby inhales and, with a second B from
-    // `SpecialNWait`, copies (`ftKirbySpecialNCopyCheckGotoCopy`); Yoshi's
-    // tongue swallows and lays the dummy.
-    if matches!(scene, GameScene::KirbyHat | GameScene::YoshiEgg) {
-        return match tick {
-            4 | 8 => N64Buttons(N64Buttons::A),
-            13 | 30 if scene == GameScene::KirbyHat => N64Buttons(N64Buttons::C_UP),
-            108 | 170 if scene == GameScene::KirbyHat => N64Buttons(N64Buttons::B),
-            // Yoshi walks under the platform and jumps twice straight up.
-            // The aerial tongue at 250 drops him onto the platform beside
-            // the dummy; joint 31, the tongue tip, reaches 340-785 units
-            // ahead in the catch window, so he backs off, turns and tongues
-            // the dummy at 330 (RE-432).
-            130 | 148 if scene == GameScene::YoshiEgg => N64Buttons(N64Buttons::C_UP),
-            250 | 330 if scene == GameScene::YoshiEgg => N64Buttons(N64Buttons::B),
-            _ => N64Buttons(0),
-        };
-    }
-    // `pikachuthunder`: Pikachu dashes right, out from under the top
-    // platform that would stop the head, then Down+B.
-    if scene == GameScene::PikachuThunder {
-        return match tick {
-            4 | 8 => N64Buttons(N64Buttons::A),
-            50 => N64Buttons(N64Buttons::B),
-            _ => N64Buttons(0),
-        };
-    }
-    if scene == GameScene::PikachuAir {
-        return match tick {
-            4 | 8 => N64Buttons(N64Buttons::A),
-            13 => N64Buttons(N64Buttons::C_UP),
-            24 => N64Buttons(N64Buttons::B),
-            _ => N64Buttons(0),
-        };
-    }
-    if matches!(scene, GameScene::Fox | GameScene::Luigi) && tick == 20 {
-        return N64Buttons(N64Buttons::B);
-    }
-    if scene == GameScene::Fireball && tick == 150 {
-        return N64Buttons(N64Buttons::B);
-    }
-    if scene == GameScene::Superjump && tick == 150 {
-        return N64Buttons(N64Buttons::B);
-    }
-    // The grab scene has its own route onto the dummy's platform, found
-    // with `romtool jumptest --jump-tick 5 --jump2-tick 22 --stick-x -30
-    // --stick-switch-tick 6 --stick-release-tick 44` (local ticks): Mario
-    // lands at x -1253, 144 units right of the dummy, still facing left
-    // from his spawn at x = 0 (RE-387); tick 108 is Z held with an A edge
-    // (`ftCommonCatchCheckInterruptCommon`).
-    if scene == GameScene::Grab {
-        return match tick {
-            4 | 8 => N64Buttons(N64Buttons::A),
-            13 | 30 => N64Buttons(N64Buttons::C_UP),
-            108 => N64Buttons(N64Buttons::Z | N64Buttons::A),
-            _ => N64Buttons(0),
-        };
-    }
-    // The jab scene takes the grab's route and taps A where the grab
-    // pressed Z+A (RE-351).
-    if scene == GameScene::Jab {
-        return match tick {
-            4 | 8 | 108 => N64Buttons(N64Buttons::A),
-            13 | 30 => N64Buttons(N64Buttons::C_UP),
-            _ => N64Buttons(0),
-        };
-    }
-    if scene == GameScene::Shield {
-        return match tick {
-            4 | 8 => N64Buttons(N64Buttons::A),
-            40..=60 => N64Buttons(N64Buttons::Z),
-            _ => N64Buttons(0),
-        };
-    }
-    if matches!(scene, GameScene::YoshiShield | GameScene::YoshiRollF | GameScene::YoshiRollB | GameScene::YoshiShieldBreak) {
-        return match tick {
-            4 | 8 => N64Buttons(N64Buttons::A),
-            t if t >= 40 && (scene != GameScene::YoshiShieldBreak || t < 80) => {
-                N64Buttons(N64Buttons::Z)
-            }
-            _ => N64Buttons(0),
-        };
-    }
-
-    match tick {
-        4 | 8 => N64Buttons(N64Buttons::A),
-        13 | 33 => N64Buttons(N64Buttons::C_UP),
-        98 => N64Buttons(N64Buttons::A),
-        _ => N64Buttons(0),
-    }
+    N64Buttons(ssb_capture::script::default_buttons(tick))
 }
 
 /// The scripted stick under `regression_capture`, alongside
@@ -957,14 +728,14 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
 fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
+    if let Some(pad) = ssb_capture::script::fighter_pad(scene, tick) {
+        return pad.stick_x;
+    }
     if capture_menu(scene).is_some() {
         return 0;
     }
     if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         return if (14..=24).contains(&tick) { 80 } else { 0 };
-    }
-    if scene == GameScene::LinkBomb && tick == 300 {
-        return 80;
     }
     if scene == GameScene::TrainingInterface {
         return if tick == 68 || tick == 82 { 80 } else { 0 };
@@ -998,9 +769,6 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             36..=46 => -80,
             _ => 0,
         };
-    }
-    if scene == GameScene::Shield {
-        return if (50..=60).contains(&tick) { 40 } else { 0 };
     }
     // Held left, Mario dashes off the main floor's left end.
     if matches!(scene, GameScene::Rebirth | GameScene::RebirthBlast) {
@@ -1051,24 +819,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if matches!(scene, GameScene::VsResults | GameScene::VsResultsEmblem) {
         return if (398..=520).contains(&tick) { -80 } else { 0 };
     }
-    if matches!(scene, GameScene::Grab | GameScene::Jab | GameScene::KirbyHat) {
-        return if (14..52).contains(&tick) { -30 } else { 0 };
-    }
-    if scene == GameScene::YoshiEgg {
-        // Then backs off right and turns to face the dummy (RE-432).
-        return match tick {
-            14..123 => -30,
-            296..308 => 40,
-            318..320 => -30,
-            _ => 0,
-        };
-    }
-    if matches!(scene, GameScene::YoshiRollF | GameScene::YoshiRollB) {
-        return if (60..62).contains(&tick) {
-            // Dream Land spawn 0 is at x=0 and faces left.
-            if scene == GameScene::YoshiRollF { -80 } else { 80 }
-        } else { 0 };
-    }
+    // Standing still: the costume and select scenes.
     if matches!(
         scene,
         GameScene::Costume1
@@ -1076,55 +827,22 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::Costume3
             | GameScene::PikachuHat
             | GameScene::PurinBow
-            | GameScene::Samus
-            | GameScene::SamusShot
-            | GameScene::Link
-            | GameScene::LinkSpin
-            | GameScene::LinkSword
-            | GameScene::Yoshi
-            | GameScene::YoshiBomb
-            | GameScene::Captain
-            | GameScene::CaptainKick
-            | GameScene::Kirby
-            | GameScene::KirbyJab
-            | GameScene::Pikachu
-            | GameScene::PikachuAir
-            | GameScene::Purin
-            | GameScene::Donkey
-            | GameScene::Ness
-            | GameScene::NessThunder
-            | GameScene::NessMagnet
-            | GameScene::LinkBomb
             | GameScene::StageSelect
             | GameScene::StageSelectView
             | GameScene::StageSelectYoshi
-            | GameScene::YoshiShield
-            | GameScene::YoshiShieldBreak
     ) {
         return 0;
     }
-    if scene == GameScene::SamusBomb {
-        return if (80..100).contains(&tick) { 80 } else { 0 };
-    }
-    // A forward tap with the A edge: `ftCommonAttackS4CheckInterCommon`.
-    // Pikachu spawns facing left.
-    if scene == GameScene::PikachuSmash {
-        return if tick == 50 { -80 } else { 0 };
-    }
-    if scene == GameScene::PikachuThunder {
-        return if (10..=34).contains(&tick) { 80 } else { 0 };
-    }
-    if (34..90).contains(&tick) {
-        -30
-    } else {
-        0
-    }
+    ssb_capture::script::default_stick_x(tick)
 }
 
 /// The Super Jump Punch input shares the source `check_special_hi` gate with
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
 fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
+    if let Some(pad) = ssb_capture::script::fighter_pad(scene, tick) {
+        return pad.stick_y;
+    }
     // `bonusselect`: the hand and its puck up onto the portraits.
     if matches!(scene, GameScene::BonusSelect | GameScene::BonusPractice) {
         return if (12..=32).contains(&tick) { 80 } else { 0 };
@@ -1204,34 +922,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             _ => 0,
         };
     }
-    if scene == GameScene::Shield && (50..=60).contains(&tick) {
-        40
-    } else if (scene == GameScene::Superjump && tick == 150)
-        || (matches!(
-            scene,
-            GameScene::LinkSpin
-                | GameScene::Yoshi
-                | GameScene::Kirby
-                | GameScene::Purin
-                | GameScene::NessThunder
-        ) && tick == 20)
-    {
-        80
-    } else if (matches!(
-        scene,
-        GameScene::SamusBomb
-            | GameScene::YoshiBomb
-            | GameScene::CaptainKick
-            | GameScene::LinkBomb
-    ) && tick == 20)
-        || (scene == GameScene::PikachuThunder && tick == 50)
-        || (scene == GameScene::NessMagnet && tick >= 20)
-    {
-        // The special-low check's downward stick with the B edge.
-        -80
-    } else {
-        0
-    }
+    0
 }
 
 /// Any N64 C-button, real `FTCOMMON_KNEEBEND` jump-by-button input

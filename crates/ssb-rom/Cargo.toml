@@ -28,5 +28,7 @@ std = []
 # crate, so there is no cycle.
 ssb-game = { workspace = true, features = ["std"] }
 ssb-engine = { workspace = true, features = ["std"] }
+# `tests/scene_inputs.rs` replays the golden scenes' input scripts.
+ssb-capture = { workspace = true }
 # `fighter`'s test checks the generator's FTAttributes offsets.
 ssb-tablegen = { workspace = true }

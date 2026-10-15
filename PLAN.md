@@ -92,7 +92,6 @@ closes it.
 - [ ] RE-516: read FCR31 at an XMB launch (the `fpu: fcr31 at start` log line; needs a person at the PSP).
 - [ ] RE-516: latent FPU trap sites from the audit that no test reaches; extend `with_traps` sweeps (items, stages, effects).
 - [x] 2D sprite edge fringe: one-ring nearest-neighbour RGB bleed into transparent texels at pack build (`sprite::psp_image`), filters stay Linear; pack v111 (RE-517).
-- [ ] NEXT: RE-516: audit the other golden scenes where an A at tick 8 swallows a later B (check each logged status).
 - [ ] Optional: narrow the vs-four golden change to catch/thrown/relz/pulled; marks-only pixel share of the 27 display-plus-marks rows (RE-511).
 - [ ] Tooling: `tools/golden.sh` mem-line regex `[^\r]*` stops at the letter r; `SSB64_ROM` must be an absolute path for golden.sh.
 - [ ] D-048: `hidden_parts` (FTAttributes::hiddenparts, RE-468) in modelpart.rs is still a committed per-fighter ROM table: generate it in `ssb-tablegen` `model_parts.rs`; audit ssb-game for others. ssb-rom ROM tests return early without `SSB64_ROM` (use `ssb_tablegen::locate_rom`).

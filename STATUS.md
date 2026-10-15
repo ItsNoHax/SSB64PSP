@@ -17,7 +17,7 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-RE-517: 2D sprite edge fringe fixed by a one-ring RGB bleed baked at pack time (pack v111, filters unchanged). RE-516's Samus charge also ran on the PSP-2000 from the XMB without a crash. Next, per [`PLAN.md`](PLAN.md#remaining-work): the swallowed-B audit (RE-516), the XMB FCR31 readout, then wind-reaction effects and the slope follow-ups.
+Swallowed-input audit: 26 fighter scenes retimed (the tick-8 A jab swallowed later inputs); shared scripts live in `ssb-capture` `script.rs` with a `scene_inputs` host replay test; Yoshi egg capture moved to tick 380 (RE-473 lays the egg at 293, the Training dummy wiggles out at 458). 28 goldens rebaselined. Next, per [`PLAN.md`](PLAN.md#remaining-work): the XMB FCR31 readout, then wind-reaction effects and the slope follow-ups.
 
 ## Blockers
 
@@ -29,14 +29,14 @@ RE-517: 2D sprite edge fringe fixed by a one-ring RGB bleed baked at pack time (
 
 ## Verification
 
-Baseline after RE-517:
+Baseline after the swallowed-input audit:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`: pass.
   `SSB64_STUB_TABLES=1` with no ROM: pass (tests that need ROM tables, including
   the joint masks, are ignored there). Clippy (`cargo
   +1.98.0`, workspace, `-D warnings`) and `cargo fmt --all --check` pass. Parallel `ssb-game` runs fail global-state tests (PLAN.md).
 - Both PSP release builds compile.
-- Goldens: `tools/golden.sh verify`: 207 of 207 match (pack `ssb64.pak` rebuilt as v111).
+- Goldens: `tools/golden.sh verify`: 207 of 207 match after 28 rebaselines (pack v111).
 - PPSSPP smoke: `run-ppsspp-headless.sh --crate psp-game --scene vs4@2400`
   exits 0 and writes a screenshot.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1; RE-506 matrix cost

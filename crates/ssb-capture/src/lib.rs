@@ -1153,5 +1153,7 @@ fn parse_decimal(s: &str) -> Option<u32> {
     s.parse().ok()
 }
 
+pub mod script;
+
 #[cfg(test)]
 mod tests;

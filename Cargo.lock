@@ -50,6 +50,7 @@ name = "ssb-rom"
 version = "0.1.0"
 dependencies = [
  "sha1_smol",
+ "ssb-capture",
  "ssb-engine",
  "ssb-game",
  "ssb-tablegen",
