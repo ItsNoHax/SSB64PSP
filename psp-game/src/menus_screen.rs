@@ -526,6 +526,10 @@ unsafe fn draw_piece(packs: &Packs<'_, '_>, draw_state: &mut meshdraw::DrawState
     };
     match size {
         Some(size) => meshdraw::draw_sprite_tiled(p, &s, &d, size, draw_state),
+        // A custom display's `TEXEL0 * PRIMITIVE` alpha (the title's fire).
+        None if piece.alpha.is_some() && !piece.solid => {
+            meshdraw::draw_sprite_xy_prim_alpha(p, &s, &d, [sx, sy], draw_state)
+        }
         None => meshdraw::draw_sprite_xy(p, &s, &d, [sx, sy], draw_state),
     }
 }

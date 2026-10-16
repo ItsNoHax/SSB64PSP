@@ -3033,7 +3033,37 @@ pub unsafe fn draw_sprite_xy(
     pack: &Pack<'_>,
     sprite: &ssb_rom::pack::SpriteDesc,
     d: &SObjDraw,
+    scale: [f32; 2],
+    draw_state: &mut DrawState,
+) {
+    draw_sprite_xy_with(pack, sprite, d, scale, false, draw_state);
+}
+
+/// [`draw_sprite_xy`] under a custom display's
+/// `G_CC(0, 0, 0, TEXEL0, TEXEL0, 0, PRIMITIVE, 0)`: an RGBA or CI sprite's
+/// texel colour through its alpha times `prim[3]` (`mnTitleFireProcDisplay`).
+/// `G_CC_DECALRGBA` ignores the primitive alpha, so [`draw_sprite_xy`]
+/// leaves it out.
+///
+/// # Safety
+///
+/// As [`draw_sprite`].
+pub unsafe fn draw_sprite_xy_prim_alpha(
+    pack: &Pack<'_>,
+    sprite: &ssb_rom::pack::SpriteDesc,
+    d: &SObjDraw,
+    scale: [f32; 2],
+    draw_state: &mut DrawState,
+) {
+    draw_sprite_xy_with(pack, sprite, d, scale, true, draw_state);
+}
+
+unsafe fn draw_sprite_xy_with(
+    pack: &Pack<'_>,
+    sprite: &ssb_rom::pack::SpriteDesc,
+    d: &SObjDraw,
     [scale_x, scale_y]: [f32; 2],
+    prim_alpha: bool,
     draw_state: &mut DrawState,
 ) {
     let Some(t) = pack.texture(sprite.texture) else {
@@ -3048,6 +3078,8 @@ pub unsafe fn draw_sprite_xy(
         [d.prim[0], d.prim[1], d.prim[2], d.prim[3]]
     } else if tinted {
         [d.env[0], d.env[1], d.env[2], d.prim[3]]
+    } else if prim_alpha {
+        [0xFF, 0xFF, 0xFF, d.prim[3]]
     } else {
         [0xFF; 4]
     };

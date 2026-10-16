@@ -334,6 +334,56 @@ fn the_title_stops_the_audio_except_after_the_opening_and_plays_its_sounds() {
     crate::sound::uninstall();
 }
 
+/// The opening logo tree with the red logo (child 3) still at scale 0, as
+/// until tic 111.
+struct HiddenLogo;
+
+impl title::Anims for HiddenLogo {
+    fn labels(&self, _: usize, _: usize) -> Option<[f32; 4]> {
+        None
+    }
+    fn press_start(&self, _: usize) -> Option<[f32; 4]> {
+        None
+    }
+    fn logo(&self, _: usize, _: usize) -> Option<[f32; 4]> {
+        Some([0.0, 0.0, 0.0, 0.0])
+    }
+}
+
+#[test]
+fn the_opening_logo_fades_once_on_its_first_tic_and_the_fire_fades_in_from_111() {
+    let mut t = Title::new_opening(0);
+    let mut demo = DemoData::default();
+    let alphas = |t: &Title| {
+        let shown = sprites(|f| t.visit(&HiddenLogo, &mut |d| f(d)));
+        let logo = shown
+            .iter()
+            .find(|p| p.solid && p.prim == Some([0xFF, 0, 0]));
+        let fire = shown.iter().find(|p| p.file == title::FILE_FIRE);
+        (logo.and_then(|p| p.alpha), fire.and_then(|p| p.alpha))
+    };
+    let mut seen = Vec::new();
+    for tic in 1..=112 {
+        run_title(&mut t, &mut demo, 1);
+        t.follow(&HiddenLogo);
+        if [1, 110, 111, 112].contains(&tic) {
+            seen.push(alphas(&t));
+        }
+    }
+    // The N64's `sMNTitleLogoAlpha` reads 251 from the first tic (the
+    // sprite's own scale is 1.0 before `mnTitleLogoProcUpdate`), and the
+    // fire, shown at 111, rises by 0x0D from tic 112 (`mnTitleFireFuncRun`).
+    assert_eq!(
+        seen,
+        [
+            (Some(251), None),
+            (Some(251), None),
+            (Some(251), Some(0)),
+            (Some(251), Some(13)),
+        ]
+    );
+}
+
 #[test]
 fn the_title_after_how_to_play_keeps_its_bgm_into_characters() {
     use crate::sound::{id, testing::*};

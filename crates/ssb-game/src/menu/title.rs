@@ -359,6 +359,10 @@ impl Title {
             slash_shown: true,
             particles_shown: true,
             logo_follows: true,
+            // `lbCommonMakeSpriteGObj` copies the sprite's own scale, 1.0:
+            // the first `mnTitleFadeOutLogoFuncRun` runs before
+            // `mnTitleLogoProcUpdate` and fades the logo once.
+            logo_place: [0.0, 0.0, 1.0, 1.0],
             ..Title::init(time)
         }
     }

@@ -338,7 +338,9 @@ pub struct Piece {
     /// up and left (`mnTitleSetPosition`, `mnTitlePlayAnim`).
     pub centred: bool,
     /// The primitive alpha a custom display sets; `None` keeps the
-    /// sprite's.
+    /// sprite's. Without [`Piece::solid`] the display is
+    /// `G_CC(0, 0, 0, TEXEL0, TEXEL0, 0, PRIMITIVE, 0)`: the texel through
+    /// its alpha times this one (`mnTitleFireProcDisplay`).
     pub alpha: Option<u8>,
     /// `G_CC(0, 0, 0, PRIMITIVE, TEXEL0, 0, PRIMITIVE, 0)`: the primitive
     /// colour through the texel's alpha times the primitive alpha.

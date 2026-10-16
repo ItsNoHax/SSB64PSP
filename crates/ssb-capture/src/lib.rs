@@ -720,10 +720,14 @@ pub enum GameScene {
     /// `op-newcomers`: the opening's newcomers scene from its first tic (RE-467).
     /// Diagnostic: outside the manifest.
     OpeningNewcomers,
+    /// `op-title`: the title's opening layout (`nMNTitleLayoutOpening`,
+    /// RE-467) from its first tic, entered from the newcomers with the
+    /// clock at the title's start tic.
+    OpeningTitle,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 180] = [
+    pub const ALL: [GameScene; 181] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -904,6 +908,7 @@ impl GameScene {
         GameScene::OpeningStandoff,
         GameScene::OpeningClash,
         GameScene::OpeningNewcomers,
+        GameScene::OpeningTitle,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -1089,6 +1094,7 @@ impl GameScene {
             GameScene::OpeningStandoff => "op-standoff",
             GameScene::OpeningClash => "op-clash",
             GameScene::OpeningNewcomers => "op-newcomers",
+            GameScene::OpeningTitle => "op-title",
         }
     }
 

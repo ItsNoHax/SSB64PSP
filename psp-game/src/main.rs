@@ -195,7 +195,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         | GameScene::OpeningSector
         | GameScene::OpeningStandoff
         | GameScene::OpeningClash
-        | GameScene::OpeningNewcomers => 30,
+        | GameScene::OpeningNewcomers
+        | GameScene::OpeningTitle => 30,
         GameScene::ModeSelect | GameScene::OnePMode => 40,
         GameScene::VsOptions | GameScene::ItemSwitch => 40,
         // The bonus select places a fighter at tick 40.
@@ -478,7 +479,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         (GameScene::Option | GameScene::ScreenAdjust | GameScene::BackupClear | GameScene::DataMenu | GameScene::VsRecord | GameScene::Characters | GameScene::SoundTest | GameScene::Title | GameScene::ModeSelect | GameScene::OnePMode | GameScene::VsOptions | GameScene::ItemSwitch | GameScene::BonusSelect | GameScene::BonusPractice | GameScene::Explain | GameScene::AutoDemo | GameScene::Opening, _) => {
             return N64Buttons(0)
         }
-        (g, _) if opening_capture_kind(g).is_some() => return N64Buttons(0),
+        (g, _) if opening_capture_kind(g).is_some() || g == GameScene::OpeningTitle => return N64Buttons(0),
         _ => {}
     }
     if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
@@ -4134,6 +4135,11 @@ unsafe fn session_frame(
         match s.screen {
             Screen::CaptureIntro => {
                 if let Some((scene, prev)) = capture_scene.and_then(capture_menu) {
+                    // `op-title` starts the title at once, its clock at the
+                    // title's start tic.
+                    if capture_scene == Some(GameScene::OpeningTitle) {
+                        s.opening.clock.tic = ssb_game::opening::TITLE_START_TIC;
+                    }
                     // The title picks the demo fighters on its way out.
                     if scene == MScene::AutoDemo {
                         s.menus.demo.set_demo_fighter_kinds(&s.backup, &mut ssb_game::rng::rand_int_range);
@@ -5245,6 +5251,8 @@ fn capture_menu(scene: GameScene) -> Option<(ssb_game::menu::Scene, ssb_game::me
         GameScene::Explain => (Scene::Explain, Scene::Title),
         GameScene::AutoDemo => (Scene::AutoDemo, Scene::Characters),
         GameScene::Opening => (Scene::Startup, Scene::Startup),
+        // `mnTitleInitVars`'s opening layout after the newcomers (RE-467).
+        GameScene::OpeningTitle => (Scene::Title, Scene::Opening(ssb_game::opening::Kind::Newcomers)),
         GameScene::ModeSelect => (Scene::ModeSelect, Scene::Title),
         GameScene::OnePMode => (Scene::OnePMode, Scene::ModeSelect),
         GameScene::VsOptions => (Scene::VsOptions, Scene::VsMode),

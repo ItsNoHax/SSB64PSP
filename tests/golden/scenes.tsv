@@ -223,6 +223,9 @@ f1-opening-run-dust	psp-game	op-run@55	pass	RE-467
 f1-opening-fox-laser	psp-game	op-fox@55	pass	RE-467
 f1-opening-yoster-clouds	psp-game	op-yoster@60	pass	RE-467
 f1-opening-standoff	psp-game	op-standoff@201	pass	RE-467 RE-519
+f1-opening-title-sparks	psp-game	op-title@70	pass	RE-467
+f1-opening-title-fire	psp-game	op-title@119	pass	RE-467
+f1-opening-title-logo	psp-game	op-title@152	pass	RE-467
 f1-training-link-sword	psp-game	linksword	pass	RE-512
 f1-training-sword	psp-game	trainingsword	pass	RE-512
 f1-training-pikachu-smash	psp-game	pikachusmash	pass	RE-512
