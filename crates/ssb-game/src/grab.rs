@@ -756,6 +756,10 @@ pub struct GrabState {
     /// fighter. `ftMainSetStatus` clears it on every status change.
     pub capture_immune_mask: u8,
     pub is_shield_catch: bool,
+    /// `efManagerSamusGrappleBeamGlowMakeEffect`'s glow: its played
+    /// animation frames while it exists (`is_effect_attach`). Read it
+    /// through [`grapple_glow_ticks`].
+    pub grapple_glow: Option<u16>,
     /// `throw_desc`, set by the current motion script's `SetThrow`.
     pub throw_desc: Option<[ThrowHitDesc; 2]>,
     /// Kind of the held fighter, for the thrown-status table.
@@ -909,7 +913,31 @@ pub fn set_catch(f: &mut Fighter) {
     // `ftParamSetCatchParams(fp, FTCATCHKIND_MASK_COMMON, ...)`.
     f.grab.is_catchstatus = true;
     f.grab.is_shield_catch = false;
+    make_grapple_glow(f);
 }
+
+/// `efManagerSamusGrappleBeamGlowMakeEffect`, which `ftCommonCatchSetStatus`
+/// and `ftCommonThrowSetStatus` make for Samus: the glow on `joints[23]`,
+/// made with one `gcPlayAnimAll`. `ftMainSetStatus` stops it on any status
+/// change that does not pass `FTSTATUS_PRESERVE_EFFECT`; only Catch to
+/// CatchPull does.
+fn make_grapple_glow(f: &mut Fighter) {
+    f.grab.grapple_glow = (base_kind(f.kind) == FighterKind::Samus).then_some(1);
+}
+
+/// The Grapple Beam glow's played animation frames, while it exists: made
+/// in Catch (kept into CatchPull) or in a throw.
+pub fn grapple_glow_ticks(f: &Fighter) -> Option<u16> {
+    f.grab.grapple_glow.filter(|_| {
+        matches!(
+            f.status.status,
+            AnyStatus::Common(Status::Catch | Status::CatchPull | Status::ThrowF | Status::ThrowB)
+        )
+    })
+}
+
+/// `efManagerSamusGrappleBeamGlowMakeEffect`'s attach joint, `fp->joints[23]`.
+pub const GRAPPLE_GLOW_JOINT: u8 = 23;
 
 /// `ftCommonCatchCheckInterruptGuard` @ 0x80149C60: A while shielding.
 pub fn check_catch_guard(f: &mut Fighter) -> bool {
@@ -1076,6 +1104,8 @@ fn set_throw(f: &mut Fighter, is_throwf: bool) {
         f.grab.throw_desc = Some(desc);
     }
     f.grab.capture_immune_mask = catch_kind::ALL;
+    // `ftCommonThrowSetStatus`: Samus's branch makes a new glow.
+    make_grapple_glow(f);
     let held = f.grab.catch_kind.unwrap_or(FighterKind::Mario);
     let (first, then) = thrown_status(f.kind, held, back);
     f.grab.send(GrabEvent::Thrown { first, then });
@@ -1899,6 +1929,11 @@ pub fn release_on_dead(f: &mut Fighter) {
 /// Runs `proc_update`/`proc_interrupt` for the grab statuses. Returns `false`
 /// when the current status is not one of them.
 pub fn update(f: &mut Fighter) -> bool {
+    // The glow's `gcPlayAnimAll` process; `ftParamProcPauseEffect` holds it
+    // through hitlag.
+    if !f.is_in_hitlag() && grapple_glow_ticks(f).is_some() {
+        f.grab.grapple_glow = f.grab.grapple_glow.map(|t| t.saturating_add(1));
+    }
     match f.status.status {
         // `ftCommonCatchProcUpdate`. Only Samus's and Link's scripts set
         // flag2.

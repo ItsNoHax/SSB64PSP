@@ -6063,6 +6063,7 @@ struct DrawAssets {
     cutter: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The Falcon Kick flame tree and its transform animation.
     falcon_kick: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    grapple_glow: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The KO blast and the respawn halo, with their transform animations
     /// (RE-412).
     dead_explode: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
@@ -6222,6 +6223,8 @@ impl DrawAssets {
             cutter: ssb_psp_runtime::scene::kirby_cutter_object(p)
                 .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_KIRBY_CUTTER)),
             falcon_kick: ssb_psp_runtime::scene::captain_falcon_kick_effect(p)
+                .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
+            grapple_glow: ssb_psp_runtime::scene::samus_grapple_beam_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             dead_explode: ssb_psp_runtime::scene::manager_effect(
                 p,
@@ -6473,7 +6476,9 @@ fn draw_thunder_shock(
     let gfx = usize::from(gfx.min(2));
     // The make's play of the desc's animations, then the variant's.
     let mats = object_mat_anims(p, object);
-    scratch.anim.start(p, &anims[0]);
+    // Both makes are `gcAddAnimAll` (`AOBJ_ANIM_CHANGED`) then
+    // `gcPlayAnimAll`, which parses frame zero without advancing.
+    scratch.anim.start_changed(p, &anims[0]);
     scratch.materials.start(p, mats);
     let plays = d.ticks;
     if gfx != 0 {
@@ -6481,7 +6486,7 @@ fn draw_thunder_shock(
             let _ = scratch.anim.tick(script);
         }
         scratch.materials.tick(p);
-        scratch.anim.start(p, &anims[gfx]);
+        scratch.anim.start_changed(p, &anims[gfx]);
         let script = ssb_rom::effect::PIKACHU_THUNDER_SHOCK_MAT_SCRIPTS[gfx];
         for mat in object_mat_anims(p, object) {
             scratch.materials.restart(mat, script);
@@ -6618,6 +6623,137 @@ fn draw_vulcan_jab(
     }
 }
 
+/// A kind-46 billboard's model transform: the view's own right and up
+/// axes, so a rolled movie camera (RE-467) keeps the quad screen-aligned as
+/// kind 46's clip-space rows do. Without a movie camera this is
+/// [`Gpu::model_transform_billboard`].
+fn billboard_transform(
+    gpu: &mut Gpu,
+    camera: &ssb_game::camera::Camera,
+    pos: ssb_engine::math::Vec3,
+    spin: f32,
+    scale: [f32; 2],
+) {
+    let Some(m) = camera.movie else {
+        gpu.model_transform_billboard(pos, camera.eye, camera.at, spin, scale);
+        return;
+    };
+    let v = ssb_psp_runtime::movie::view_matrix(
+        camera.eye,
+        camera.at,
+        m.up_x,
+        ssb_game::opening::movie::View::Roll,
+    );
+    let row = |r: usize| ssb_engine::math::Vec3::new(v.cols[0][r], v.cols[1][r], v.cols[2][r]);
+    gpu.model_transform_billboard_axes(pos, [row(0), row(1), row(2)], spin, scale);
+}
+
+/// The ground's billboard bases under an opening scene's movie camera
+/// (RE-467), as `gcPrepDObjMatrix` builds them in clip space. Kind 46 takes
+/// `gGCMatrixPerspF` alone, so its quad lies along the rolled view's own
+/// right and up. Kind 48 takes `sGCMatrixMod1F`, which camera matrix mode 3
+/// (`gmCameraDefaultProcDisplay`) rebuilds each frame as
+/// `syMatrixLookAtF((0, eye.y, d), (0, at.y, 0), up (0, 1, 0))` times the
+/// perspective, `d` being the eye's horizontal distance from `at`: a local
+/// vector is posed by that pitch-only view, neither yaw nor roll. Here the
+/// real view multiplies the model, so the basis is the real view's inverse
+/// times that one: local x along the view's right, local y along
+/// `d/n * up - dy/n * back`. A zero `d` scales the node to nothing, as
+/// `syMatrixScaF(0, 0, 0)` does.
+fn movie_billboard_camera(camera: &ssb_game::camera::Camera) -> Option<meshdraw::BillboardCamera> {
+    let m = camera.movie?;
+    let v = ssb_psp_runtime::movie::view_matrix(
+        camera.eye,
+        camera.at,
+        m.up_x,
+        ssb_game::opening::movie::View::Roll,
+    );
+    let row = |r: usize| ssb_engine::math::Vec3::new(v.cols[0][r], v.cols[1][r], v.cols[2][r]);
+    let (right, up, back) = (row(0), row(1), row(2));
+    let dx = camera.at.x - camera.eye.x;
+    let dz = camera.at.z - camera.eye.z;
+    let dy = camera.at.y - camera.eye.y;
+    let d = ssb_engine::math::sqrt(dx * dx + dz * dz);
+    let pitch_locked = if d < 0.0001 {
+        ([0.0; 3], [0.0; 3])
+    } else {
+        let n = ssb_engine::math::sqrt(d * d + dy * dy);
+        (right.to_array(), (up * (d / n) - back * (dy / n)).to_array())
+    };
+    Some(meshdraw::BillboardCamera {
+        screen: (right.to_array(), up.to_array()),
+        pitch_locked,
+    })
+}
+
+/// Samus's Grapple Beam glow (`dEFManagerSamusGrappleBeamEffectDesc`, DL
+/// link 15), which `ftCommonCatchSetStatus` and `ftCommonThrowSetStatus`
+/// make. Its root is battle matrix function 79 (`func_ovl0_800C994C`):
+/// `joints[23]`'s whole world matrix, after `func_ovl2_800EDBA4` marks that
+/// chain queried, whose first row's length starts `gGCScaleX`. Its one
+/// child is kind 46 alone: a screen-aligned quad at the root's origin, spun
+/// by its animated `rotate.z` and sized by `gGCScaleX` times its `scale.x`
+/// and `scale.y`. `gcPlayAnimAll` plays the joint and material animations
+/// (two textures alternating) once at the make and once a frame after.
+#[allow(clippy::too_many_arguments)]
+fn draw_grapple_glows(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    assets: &DrawAssets,
+    scratch: &mut DisplayScratch,
+    fighters: [Option<&ssb_game::fighter::Fighter>; 4],
+    camera: &ssb_game::camera::Camera,
+) {
+    let Some((object, anim)) = assets.grapple_glow.as_ref() else {
+        return;
+    };
+    let Some(script) = p.anim_script(anim) else {
+        return;
+    };
+    let node = object.first_node + 1;
+    let Some(mesh) = p
+        .node(node)
+        .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+        .and_then(|n| p.mesh(n.mesh))
+    else {
+        return;
+    };
+    for f in fighters.iter().flatten() {
+        let Some(plays) = ssb_game::grab::grapple_glow_ticks(f) else {
+            continue;
+        };
+        // `gcAddAnimAll` then the make's `gcPlayAnimAll`, which parses
+        // frame zero without advancing time.
+        scratch.anim.start_changed(p, anim);
+        scratch.materials.start(p, object_mat_anims(p, object));
+        for _ in 0..plays {
+            let _ = scratch.anim.tick(script);
+            scratch.materials.tick(p);
+        }
+        let Some(pose) = stage_pose(&scratch.anim, node) else {
+            continue;
+        };
+        let joint = ssb_game::grab::GRAPPLE_GLOW_JOINT;
+        f.mark_joint_query(joint);
+        let Some(top) = f.joint_transforms[usize::from(joint)] else {
+            continue;
+        };
+        let scale_x = top.axes[0].length();
+        let ms = meshdraw::MODEL_SCALE;
+        billboard_transform(
+            gpu,
+            camera,
+            top.origin,
+            pose.rotate[2],
+            [ms * scale_x * pose.scale[0], ms * scale_x * pose.scale[1]],
+        );
+        unsafe {
+            meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&scratch.materials));
+        }
+    }
+}
+
 /// Draws the display effects (RE-415) through the battle camera: each
 /// replays its animations to its clock, then draws under its `EFDesc`'s
 /// matrix kinds. The root of all but the impact wave is kind 40
@@ -6668,7 +6804,11 @@ fn draw_display_effects(
         };
         match anim {
             Some(anim) => {
-                scratch.anim.start(p, anim);
+                // `efManagerMakeEffect`'s `gcAddAnimAll` (`AOBJ_ANIM_CHANGED`):
+                // the make's play parses frame zero without advancing time.
+                // N64 RDRAM at the Donkey Kong scene's tic 41: the
+                // Impact Wave's `anim_frame` is 7 after 8 plays.
+                scratch.anim.start_changed(p, anim);
                 if let Some(script) = p.anim_script(anim) {
                     for _ in 0..d.ticks {
                         let _ = scratch.anim.tick(script);
@@ -7507,6 +7647,38 @@ fn draw_particles(
     let Some(banks) = ssb_psp_runtime::particles::PackBanks::new(p) else {
         return;
     };
+    if let Some(m) = pl.camera.movie {
+        // An opening scene's movie camera (RE-467): `lbParticleDrawTextures`
+        // projects through the camera it draws under, so the particles take
+        // its rolled view, its own projection and planes, and its viewport,
+        // as `draw_training` sets them for the scene.
+        let view = ssb_psp_runtime::movie::view_matrix(
+            pl.camera.eye,
+            pl.camera.at,
+            m.up_x,
+            ssb_game::opening::movie::View::Roll,
+        );
+        let proj = ssb_engine::math::Mat4::sy_persp_fast(pl.camera.fovy_degrees, m.aspect, m.near, m.far);
+        let camera = ssb_psp_runtime::particles::Camera {
+            view: &view,
+            proj: &proj,
+            screen: false,
+            planes: (m.near, m.far),
+            ge_planes: (m.near, m.far),
+            rect: ssb_engine::coord::n64_rect_to_psp_xywh(m.viewport),
+        };
+        unsafe {
+            ssb_psp_runtime::particles::draw_lists(
+                &banks,
+                &mut hud.particles,
+                &camera,
+                lists,
+                ssb_psp_runtime::particles::DEPTH_TESTED,
+                draw_state,
+            );
+        }
+        return;
+    }
     let view = ssb_engine::math::Mat4::look_at(pl.camera.eye, pl.camera.at, ssb_engine::math::Vec3::Y);
     let (w, h) = pl.camera.viewport_size();
     let proj = ssb_engine::math::Mat4::sy_persp_fast(
@@ -8018,6 +8190,7 @@ unsafe fn draw_training(
     // The opening's default camera fills black (RE-467).
     gpu.begin_frame(Some(if damage_hud.movie { BG_RESULTS } else { BG_TRAINING }));
     draw_state.kind48_flat = damage_hud.movie_flat48;
+    draw_state.billboard_camera = movie_billboard_camera(&pl.camera);
     gpu.set_viewport_pillarboxed();
     // `gmCameraSetViewportDimensions`: How to Play's battle cameras (the
     // wallpaper's among them) stop above its window.
@@ -8322,6 +8495,15 @@ unsafe fn draw_training(
         &pl.camera,
         15,
     );
+    draw_grapple_glows(
+        gpu,
+        p,
+        draw_state,
+        assets,
+        &mut damage_hud.display_scratch,
+        fighter_refs,
+        &pl.camera,
+    );
     draw_particles(
         p,
         pl,
@@ -8385,6 +8567,8 @@ unsafe fn draw_training(
             meshdraw::fill_rect_n64([10.0, 10.0, 310.0, 230.0], color, draw_state);
         }
     }
+    // The movie camera's billboard bases end with its scene.
+    draw_state.billboard_camera = None;
     // Arrow camera 35, magnifier camera 30, then the interface camera 20.
     let hud_start = profile::start();
     let show_magnify = magnify_display

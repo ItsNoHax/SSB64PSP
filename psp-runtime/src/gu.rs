@@ -1273,12 +1273,27 @@ impl Gpu {
         let forward = (at - eye).normalized();
         let right = forward.cross(ssb_engine::math::Vec3::Y).normalized();
         let up = right.cross(forward);
+        self.model_transform_billboard_axes(pos, [right, up, -forward], spin, scale);
+    }
+
+    /// [`Gpu::model_transform_billboard`] on the view's own axes: `axes` are
+    /// the view matrix's right, up and back rows, so a rolled view (an
+    /// opening scene's movie camera, RE-467) keeps the quad screen-aligned,
+    /// as kind 46 builds it straight in clip space.
+    pub fn model_transform_billboard_axes(
+        &mut self,
+        pos: ssb_engine::math::Vec3,
+        axes: [ssb_engine::math::Vec3; 3],
+        spin: f32,
+        scale: [f32; 2],
+    ) {
+        let [right, up, back] = axes;
         let (s, c) = ssb_engine::math::sin_cos(spin);
         // Column 0 is the object's X axis after the in-plane spin, column 1
         // its Y axis, column 2 points back at the camera.
         let x = right * c + up * s;
         let y = up * c - right * s;
-        let z = -forward;
+        let z = back;
         let axis = |v: ssb_engine::math::Vec3, k: f32| sys::ScePspFVector4 {
             x: v.x * k,
             y: v.y * k,

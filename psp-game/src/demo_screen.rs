@@ -639,6 +639,7 @@ pub(crate) unsafe fn draw(
 ) {
     use ssb_rom::sprite::{SP_TEXSHUF, SP_TRANSPARENT};
     draw_state.kind48_flat = false;
+    draw_state.billboard_camera = None;
     gpu.set_viewport_pillarboxed();
     match demo {
         Demo::Explain(e) => {

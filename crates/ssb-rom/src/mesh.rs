@@ -1200,21 +1200,27 @@ pub enum AlphaBlend {
     Prim(u8),
 }
 
-/// Whether single-cycle alpha is `(TEXEL0_ALPHA - 0) * PRIM_ALPHA + 0`, the
-/// alpha half of Race to the Finish's glow combiner (RE-322).
+/// Whether the combined alpha is `(TEXEL0_ALPHA - 0) * PRIM_ALPHA + 0`, the
+/// alpha half of Race to the Finish's glow combiner (RE-322). In two-cycle
+/// mode the second cycle must pass it through unchanged, `(A - B) * 0 +
+/// COMBINED_ALPHA` (`G_ACMUX_COMBINED` is code 0 in the `D` slot; only the
+/// `C` slot reads 0 as `LOD_FRACTION`, and `C` is the constant 0 here): Yoshi's
+/// Island's clouds, `llGRYosterMapCloudDisplayList` (`FC309604 5FFEFFF8`
+/// under a two-cycle `G_RM_AA_ZB_XLU_SURF2`), whose `MObj` fades the
+/// primitive alpha in.
 fn combiner_alpha_is_texel_times_prim(hi: u32, lo: u32, two_cycle: bool) -> bool {
-    if two_cycle {
-        return false;
-    }
+    const COMBINED_A: u32 = 0;
     const TEXEL0_A: u32 = 1;
     const PRIM_A: u32 = 3;
     const ZERO: u32 = 7;
+    let cycle1_passes = || ((lo >> 18) & 0x7, lo & 0x7) == (ZERO, COMBINED_A);
     (
         (hi >> 12) & 0x7,
         (lo >> 12) & 0x7,
         (hi >> 9) & 0x7,
         (lo >> 9) & 0x7,
     ) == (TEXEL0_A, ZERO, PRIM_A, ZERO)
+        && (!two_cycle || cycle1_passes())
 }
 
 /// Classifies `G_SETCOMBINE`'s alpha formula into one of the two shapes
@@ -3455,6 +3461,21 @@ fn render_mode_is_translucent(data: u32) -> bool {
 mod tests {
     use super::*;
     use crate::dl::SegAddr;
+
+    /// `llGRYosterMapCloudDisplayList`'s two-cycle combiner: `TEXEL0 *
+    /// PRIM` alpha in cycle 0, passed through by cycle 1. Breaking cycle 1's
+    /// `D` slot (to `TEXEL0`) or its `C` slot (to `PRIM`) declines it.
+    #[test]
+    fn two_cycle_texel_times_prim_needs_a_pass_through_second_cycle() {
+        let (hi, lo) = (0x0030_9604, 0x5FFE_FFF8);
+        assert!(combiner_alpha_is_texel_times_prim(hi, lo, true));
+        assert!(!combiner_alpha_is_texel_times_prim(hi, lo | 1, true));
+        assert!(!combiner_alpha_is_texel_times_prim(
+            hi,
+            (lo & !(7 << 18)) | (3 << 18),
+            true
+        ));
+    }
 
     /// Builds `n` vertices at file offset 0, each at a distinct position.
     fn vertex_data(n: usize) -> Vec<u8> {

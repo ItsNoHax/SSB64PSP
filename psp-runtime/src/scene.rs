@@ -532,6 +532,18 @@ pub fn captain_falcon_kick_effect(pack: &Pack<'_>) -> Option<(ObjectDesc, u32)> 
     Some((object, slot as u32))
 }
 
+/// `dEFManagerSamusGrappleBeamEffectDesc`: file 349's two-node glow tree,
+/// at slot 27 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
+pub const SAMUS_GRAPPLE_BEAM_EFFECT_KEY: (u32, u32) = (349, 0x0380);
+
+/// The Grapple Beam glow's object and its manager-effect inventory slot.
+pub fn samus_grapple_beam_effect(pack: &Pack<'_>) -> Option<(ObjectDesc, u32)> {
+    let slot = ssb_rom::effect::MANAGER_EFFECT_KEYS
+        .iter()
+        .position(|&key| key == SAMUS_GRAPPLE_BEAM_EFFECT_KEY)?;
+    Some((object_keyed(pack, SAMUS_GRAPPLE_BEAM_EFFECT_KEY)?, slot as u32))
+}
+
 /// Fox Special2's three-entry Reflector effect hierarchy.
 /// Master Hand's bullets' `WPAttributes.data`: `dBossModel_DObjDescs_0x2CB8`
 /// in `BossModel` (file 344).

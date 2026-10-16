@@ -151,7 +151,7 @@ closes it.
 ### Front end and 1P (`MS6`)
 
 - [ ] Both character selects' spotlight under a held puck; the VS select's CPU colour animation; locked shadows' noise (RE-411).
-- [ ] NEXT (user report, PSP): the intro (N64 logo, opening movie, title) has many issues: compare every scene frame-by-frame against N64 captures and fix all in-scope gaps, including the known items below. Batch 1 (the room: guard-band clipping, shade-only combiners, prim-alpha shadows; RE-519, RE-520, RE-521) is done; batches 2-5 remain, and the colour grade (R4) stays open until an accurate N64 reference exists.
+- [ ] NEXT (user report, PSP): the intro (N64 logo, opening movie, title) has many issues: compare every scene frame-by-frame against N64 captures and fix all in-scope gaps, including the known items below. Batches 1 (the room; RE-519, RE-520, RE-521) and 2 (fighter-scene effects: movie-camera particles and billboards, display effects one frame earlier, Samus grapple glow, Yoshi cloud fade; RE-525, RE-526) are done; batches 3-5 remain (run dust, Yoster cloud fringes and tint, standoff ground triangles, Fox laser roll, title slash/fire), and the colour grade (R4) stays open until an accurate N64 reference exists.
 - [ ] Opening movie: the room's falling-figure pose, spotlight cone and close-up overlay shade; Fox's laser under the rolled camera; the standoff ground's dropped triangles; Yoster clouds' fringes and tint; the run's dust puff; N64 references from an accurate video plugin (RE-467, RE-468).
 - [ ] Characters' fighter runs no motion-script events (effects, colour animations, part changes) (RE-461).
 - [ ] Anti-piracy validators that set `error_flags` (RE-460, RE-461).

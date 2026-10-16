@@ -420,7 +420,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // capsule tube (`349+0xAD0`). No layout change.
 // 115 adds the bonus stages' static wallpaper (`ROLE_WALLPAPER`, `GRKind`
 // 17 to 40, one texture: `119+0x26C88`, RE-524). No layout change.
-pub const VERSION: u32 = 115;
+// 116 blends a two-cycle `TEXEL0 * PRIM` alpha whose second cycle passes it
+// through (`mesh::combiner_alpha_is_texel_times_prim`): Yoshi's Island's
+// clouds fade in by their `MObj`'s primitive alpha. No layout change.
+pub const VERSION: u32 = 116;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
