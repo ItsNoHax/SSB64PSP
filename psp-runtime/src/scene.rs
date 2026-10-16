@@ -1193,9 +1193,9 @@ pub struct FighterScene {
     /// frame in [`FighterScene::tick`].
     pub camera: ssb_game::camera::Camera,
     /// The entry focus's zoom (`ifCommonEntryFocusThread`'s
-    /// `gmCameraSetStatusPlayerZoom`, RE-402): a target with its
-    /// `cam_offset_y` added and a distance. `None` runs the battle camera.
-    pub entry_zoom: Option<(ssb_engine::math::Vec3, f32)>,
+    /// `gmCameraSetStatusPlayerZoom`, RE-402): the fighter's position,
+    /// its `cam_offset_y` and a distance. `None` runs the battle camera.
+    pub entry_zoom: Option<(ssb_engine::math::Vec3, f32, f32)>,
     pub bonus_follow: bool,
     /// A camera status other than the battle camera's
     /// (`gmCameraSetStatusMapZoom`, `gmCameraSetStatusAnim`): Master Hand's
@@ -1704,22 +1704,29 @@ impl FighterScene {
             self.camera.tick_player_zoom(target, (0.0, pitch * core::f32::consts::PI / 180.0), if race { 7000.0 } else { 9000.0 }, 0.3, 31.5);
             return;
         }
-        if let Some((target, dist)) = self.entry_zoom {
-            self.camera.tick_player_zoom(
-                target,
-                (0.0, 0.0),
-                dist,
-                ssb_game::pause::ZOOM_PAN_SCALE,
-                ssb_game::appear::FOCUS_ZOOM_FOV,
-            );
-            return;
-        }
         let bounds = ssb_game::camera::Bounds {
             top: stage.camera.top as f32,
             bottom: stage.camera.bottom as f32,
             left: stage.camera.left as f32,
             right: stage.camera.right as f32,
         };
+        // `gmCameraPlayerZoomFuncCamera`: the battle camera while the
+        // zoomed fighter is out of the camera bounds or more than 1000
+        // units off the stage plane (Kirby's star, Fox's Arwing), tested
+        // on its `TopN` translate before `cam_offset_y` is added.
+        if let Some((pos, cam_offset_y, dist)) = self.entry_zoom {
+            if ssb_game::pause::kind_for(pos, bounds) != ssb_game::pause::PauseKind::PlayerNA {
+                let target = ssb_engine::math::Vec3::new(pos.x, pos.y + cam_offset_y, pos.z);
+                self.camera.tick_player_zoom(
+                    target,
+                    (0.0, 0.0),
+                    dist,
+                    ssb_game::pause::ZOOM_PAN_SCALE,
+                    ssb_game::appear::FOCUS_ZOOM_FOV,
+                );
+                return;
+            }
+        }
         // `gmCameraPlayerZoomFuncCamera`: the battle camera while the
         // fighter is out of the camera bounds.
         if let Some(z) = self.demo_zoom {
@@ -1817,6 +1824,30 @@ impl FighterScene {
             &mut self.skeleton,
             &mut self.shield_yrotn,
         );
+    }
+
+    /// The entry thread's `ftCommonAppearSetStatus`, for a fighter it has
+    /// just entered: the thread runs at process priority 5 after every
+    /// fighter's `ftMainProcUpdateInterrupt` (link 10 after link 3), and
+    /// before the priority-4 `ftMainProcPhysicsMap`. So the clip's first
+    /// frame, which `ftMainSetStatus` plays (`ftMainPlayAnimEventsAll`),
+    /// and `ftCommonAppearProcPhysics`'s placement from that frame's TransN
+    /// both land on the entry frame itself: the fighter is drawn there
+    /// already posed and moved (Pikachu's 6000 units in front, Ness's
+    /// 15000), not standing at its spawn. The next frame's play advances
+    /// from this one. Call right after [`ssb_game::appear::appear_set_status`].
+    pub fn settle_appear(&mut self, pack: &Pack<'_>) {
+        let status = &self.fighter.status;
+        if ssb_game::appear::slot(status.status).is_none() {
+            return;
+        }
+        if self.started != Some((status.status, status.entry)) {
+            self.tick_animation(pack);
+        }
+        if let Some(p) = self.skeleton.pose(0) {
+            let t = ssb_engine::math::Vec3::new(p.translate[0], p.translate[1], p.translate[2]);
+            ssb_game::appear::place(&mut self.fighter, t);
+        }
     }
 
     /// A status set in the hit phase that asked for its `proc_slope`

@@ -827,6 +827,7 @@ pub(crate) fn entry_frame(
             Action::Appear(port) => {
                 if let Some(f) = scenes(pl, dummies)[usize::from(port)].as_deref_mut() {
                     ssb_game::appear::appear_set_status(&mut f.fighter);
+                    f.settle_appear(p);
                 }
             }
             Action::AppearPosition(port) => {
@@ -887,12 +888,10 @@ pub(crate) fn entry_frame(
         .flatten();
     pl.entry_zoom = zoom_port.and_then(|port| {
         let f = scenes_ref(pl, dummies)[usize::from(port)]?;
-        let mut pos = f.fighter.pos;
-        pos.y += f.cam_offset_y;
         let dist = p
             .fighter(f.fighter.kind as u32)
             .map_or(1000.0, |d| d.closeup_camera_zoom);
-        Some((pos, dist))
+        Some((f.fighter.pos, f.cam_offset_y, dist))
     });
 }
 

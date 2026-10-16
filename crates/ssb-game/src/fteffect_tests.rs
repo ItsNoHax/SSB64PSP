@@ -975,3 +975,45 @@ fn kirbys_vulcan_jab_puffs_and_topn_marks_follow_the_trace() {
         ]
     );
 }
+
+/// `dDonkeyMainMotion_AppearR` bursts Donkey Kong out of his entry barrel
+/// with `Effect(.., BoxSmash, ..)`: `ftParamMakeEffect` calls
+/// `itBoxContainerSmashMakeEffect`, seven crate staves from one struct and
+/// the source's 42 draws.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn donkey_kongs_box_smash_makes_the_crate_staves() {
+    let bank = bank(20);
+    let mut p = Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut f = Fighter::new(FighterKind::Donkey, 0, 3);
+    f.situation = Situation::Ground;
+    rng::set_seed(7);
+    let free = e.free_num;
+    make(
+        &mut f,
+        &mut EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &bank,
+        },
+        EffectRequest {
+            kind: kind::BOX_SMASH,
+            joint: 0,
+            offset: Some(Vec3::new(0.0, 250.0, 0.0)),
+            scatter: None,
+            lr: 1,
+            is_scale_pos: false,
+            flag: 0,
+        },
+    );
+    assert_eq!(rng::seed(), after_draws(7, 42));
+    assert_eq!(e.free_num, free - 1);
+    let d = e
+        .displays()
+        .find(|d| d.kind == DisplayKind::ContainerSmash)
+        .expect("the staves are made");
+    let (piece, pieces) = e.container_pieces(d).unwrap();
+    assert_eq!(piece, crate::effect::SmashPiece::Box);
+    assert!(pieces.iter().all(|s| s.pos == pieces[0].pos));
+}

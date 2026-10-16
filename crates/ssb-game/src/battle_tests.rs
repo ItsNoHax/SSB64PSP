@@ -343,3 +343,33 @@ fn only_vs_battles_outside_sudden_death_show_scores() {
     sd.is_sudden_death = true;
     assert!(!sd.is_show_score());
 }
+
+#[test]
+fn arrows_and_magnifiers_stay_hidden_until_go() {
+    // `ifCommonPlayerMagnifyMakeInterface` clears `is_magnify_display`;
+    // `ifCommonAnnounceGoSetStatus` sets it (ifcommon.c:2020).
+    let mut b = Battle::new(Rule::Time, 3, 2, two_players());
+    let mut frames = 0;
+    while b.status == GameStatus::Wait {
+        assert!(!b.is_magnify_display(), "shown on wait frame {frames}");
+        b.begin_frame();
+        frames += 1;
+    }
+    assert_eq!(frames, Battle::GO_TICK);
+    assert!(b.is_magnify_display());
+    // The pause clears it; the restore sets it with Go.
+    b.pause();
+    assert!(!b.is_magnify_display());
+    b.unpause(false);
+    assert!(!b.is_magnify_display());
+    b.begin_frame();
+    assert_eq!(b.status, GameStatus::Go);
+    assert!(b.is_magnify_display());
+    // The demos' battles start at Go.
+    assert!(Battle::new_demo(two_players()).is_magnify_display());
+    // Sudden death and the 1P Game wait for their Go too.
+    let mut sd = Battle::new(Rule::Stock, 3, 0, two_players());
+    sd.is_sudden_death = true;
+    assert!(!sd.is_magnify_display());
+    assert!(!Battle::new_1p(3, two_players(), false, 100).is_magnify_display());
+}

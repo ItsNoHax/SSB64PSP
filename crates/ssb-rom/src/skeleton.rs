@@ -351,6 +351,56 @@ impl Skeleton {
             .then(|| &self.poses[0])
     }
 
+    /// A joint's `DObj::flags`, as its clip's `SetFlags` commands last
+    /// wrote them (`gcParseDObjAnimJoint`, `ftAnimParseDObjFigatree`).
+    /// `ftMainSetStatus` clears every model joint's and the interposed
+    /// runtime joints' flags when it installs a clip, as [`Self::start`]
+    /// starts each stream at 0.
+    fn joint_flags(&self, joint: usize) -> u16 {
+        if self.anim_joint {
+            self.joints32[joint].as_ref().map_or(0, |j| j.flags)
+        } else {
+            self.anims[joint].flags
+        }
+    }
+
+    /// Whether any joint's clip has set `DObj::flags`: the only case in
+    /// which [`Self::hidden`] can hide anything.
+    pub fn any_flags(&self) -> bool {
+        (0..self.joint_count).any(|i| self.joint_flags(i) != 0)
+    }
+
+    /// Whether `ftDisplayMainDrawDefault` skips `node`'s display list:
+    /// its own `DOBJ_FLAG_NOTEXTURE` (bit 0), or `DOBJ_FLAG_HIDDEN` (bit 1)
+    /// on it or an ancestor, which skips the whole subtree. The leading
+    /// runtime joints that bind no model node (`TransN`, an interposed
+    /// `XRotN`) are ancestors of every model node. Yoshi's entry clip hides
+    /// his model root until he hatches (RE-401).
+    pub fn hidden(&self, pack: &Pack<'_>, node: u32) -> bool {
+        let flags = |n: u32| {
+            (0..self.joint_count)
+                .find(|&i| self.nodes[i] == n)
+                .map_or(0, |i| self.joint_flags(i))
+        };
+        if flags(node) & 1 != 0 {
+            return true;
+        }
+        if (0..self.joint_count)
+            .any(|i| self.nodes[i] == AnimJoint::NO_NODE && self.joint_flags(i) & 2 != 0)
+        {
+            return true;
+        }
+        let mut at = Some(node);
+        for _ in 0..MAX_NODES {
+            let Some(n) = at else { break };
+            if flags(n) & 2 != 0 {
+                return true;
+            }
+            at = pack.node_parent(n).filter(|&p| p != u32::MAX);
+        }
+        false
+    }
+
     /// The node a joint drives.
     pub fn joint_node(&self, joint: usize) -> Option<u32> {
         (joint < self.joint_count)

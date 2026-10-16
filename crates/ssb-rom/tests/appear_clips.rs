@@ -102,3 +102,33 @@ fn the_skeleton_plays_marios_entry_to_its_end() {
         .fold((f32::MAX, f32::MIN), |(l, h), &v| (l.min(v), h.max(v)));
     assert!(hi - lo > 100.0, "{lo}..{hi}");
 }
+
+#[test]
+fn yoshis_entry_hides_his_model_until_he_hatches() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = Pack::open(&bytes).unwrap();
+    const YOSHI: u32 = 6;
+    let anim = pack.fighter_anim(YOSHI, SLOT_APPEAR_R as u32).unwrap();
+    let script = pack.anim_script(&anim).unwrap();
+    let root = pack.anim_joint(anim.first_joint + 1).unwrap().node;
+    let model = pack.fighter_anim(YOSHI, SLOT_GUARD_ON).unwrap();
+    let last = (0..model.joint_count)
+        .map(|j| pack.anim_joint(model.first_joint + j).unwrap().node)
+        .filter(|&n| n != AnimJoint::NO_NODE)
+        .max()
+        .unwrap();
+    let mut skeleton = ssb_rom::skeleton::Skeleton::new();
+    skeleton.start(&pack, &anim, 0.0, 1.0);
+    assert!(!skeleton.any_flags());
+    // The model root's stream sets `DOBJ_FLAG_HIDDEN` on its first parse
+    // and clears it 61 frames later; the flag hides the whole subtree,
+    // down to the last model node.
+    let mut hidden = Vec::new();
+    for _ in 0..80 {
+        skeleton.tick(script).unwrap();
+        hidden.push(skeleton.hidden(&pack, root) && skeleton.hidden(&pack, last));
+    }
+    assert!(hidden[..61].iter().all(|&h| h), "{hidden:?}");
+    assert!(hidden[61..].iter().all(|&h| !h), "{hidden:?}");
+    assert!(!skeleton.any_flags());
+}

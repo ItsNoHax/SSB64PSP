@@ -416,7 +416,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 113 whitens the colour of a texture whose combiner colour formula reads no
 // texel (`mesh::TextureRef::rgb_unused`): the opening room's spotlight and
 // lid glow. No layout change.
-pub const VERSION: u32 = 113;
+// 114 extends 112 to lit lists, whose colour alone is lit: Samus's entry
+// capsule tube (`349+0xAD0`). No layout change.
+pub const VERSION: u32 = 114;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

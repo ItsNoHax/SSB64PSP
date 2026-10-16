@@ -2079,10 +2079,13 @@ impl State {
         // the same alpha with an unlit `SHADE` colour: `G_SETCOMBINE
         // FCFFFFFF FFFE773B` under the head-1 `G_RM_AA_ZB_XLU_SURF`, with
         // their own `G_SETPRIMCOLOR` alpha (GLideN64 RDRAM walk). An unknown
-        // register declines, as for `prim_alpha_blend` above.
+        // register declines, as for `prim_alpha_blend` above. Lighting only
+        // changes the colour: Samus's entry capsule tube (`349+0xAD0`) is the
+        // same combiner on a lit list (`G_MW_LIGHTCOL` white and `80FFFF`,
+        // prim alpha 0x4C) under head 1, and its alpha is the prim alpha
+        // alone, never the lit vertex's normal byte.
         let flat_prim_alpha_untextured = texture.is_none()
             && (flat_color.is_some() || self.material.prim_color.is_some())
-            && !self.material.lit
             && self
                 .combiner
                 .is_some_and(|(hi, lo)| combiner_alpha_is_prim(hi, lo, self.two_cycle));
@@ -4743,6 +4746,52 @@ mod tests {
         assert_eq!(rgba, [0x20, 0x20, 0x20, 0x4C]);
         let (m, _) = run(false);
         assert!(!m.translucent, "an unknown prim alpha declines");
+    }
+
+    /// Samus's entry capsule tube (`349+0xAD0`): the same `SHADE` colour and
+    /// `PRIM` alpha on a lit list. Lighting decides the colour only; the
+    /// alpha is the prim alpha, not the vertex's normal byte.
+    #[test]
+    fn a_lit_shade_colour_with_prim_alpha_blends_by_the_prim_alpha() {
+        use crate::scene::Mat4;
+
+        let file = vertex_data_rgba(3, [0x40, 0x7F, 0x00, 0xFF]);
+        let cmds = [
+            Cmd::GeometryMode {
+                clear: 0,
+                set: G_LIGHTING,
+            },
+            Cmd::SetCombine {
+                hi: 0x00FF_FFFF,
+                lo: 0xFFFE_773B,
+            },
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [0xFF, 0xFF, 0xFF, 0x4C],
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &[],
+            mat_anims: &[],
+            depth_seed: XLU_SEED,
+            stream: 1,
+        }];
+        let mut m = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
+        let mesh = m.pop().unwrap().unwrap();
+        let material = mesh.primitives[0].material;
+        assert!(material.lit && material.translucent);
+        assert_eq!(material.alpha_blend, Some(AlphaBlend::Prim(0x4C)));
+        assert_eq!(material.flat_color, None);
+        assert_eq!(
+            mesh.vertices[0].rgba,
+            [0x40, 0x7F, 0x00, 0x4C],
+            "normal kept"
+        );
     }
 
     #[test]

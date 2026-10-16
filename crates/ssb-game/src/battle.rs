@@ -387,6 +387,26 @@ impl Battle {
         self.rule == Rule::Time && self.time_limit != TIMELIMIT_INFINITE
     }
 
+    /// `gIFCommonPlayerInterface.is_magnify_display` as the status leaves
+    /// it, which gates the offscreen arrows (`ifCommonPlayerArrowsFuncRun`)
+    /// and the magnifiers (`ftDisplayMainProcDisplay`). The VS battle,
+    /// sudden death and the 1P Game clear it when they make the magnifier
+    /// (`ifCommonPlayerMagnifyMakeInterface`) and set it only at "Go"
+    /// (`ifCommonAnnounceGoSetStatus`, `sc1PGameWaitStageBossUpdate`), so
+    /// nothing shows through the entry and the countdown; the pause
+    /// clears it and its restore sets it with Go again
+    /// (`ifCommonBattlePauseInitInterface`,
+    /// `ifCommonBattlePauseRestoreInterfaceAll`). The demos start at Go.
+    /// The bonus stages make neither interface; their wait keeps the
+    /// earlier behaviour here.
+    pub fn is_magnify_display(&self) -> bool {
+        match self.status {
+            GameStatus::Go => true,
+            GameStatus::Wait => self.is_bonus,
+            _ => false,
+        }
+    }
+
     /// The frame "Go" lands on, counting the scene's first frame as 1: the
     /// entry thread first runs on frame 1 and sleeps 90, and the countdown
     /// thread it then makes reads 300 another 300 frames on.

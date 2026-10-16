@@ -3026,13 +3026,12 @@ fn entry_frame(
     for (i, f) in scenes(pl, dummies).into_iter().flatten().enumerate() {
         if t == focus.appear_tick(i) {
             ssb_game::appear::appear_set_status(&mut f.fighter);
+            f.settle_appear(p);
         }
     }
     let target = |scene: &play::FighterScene| {
-        let mut pos = scene.fighter.pos;
-        pos.y += scene.cam_offset_y;
         let dist = p.fighter(scene.fighter.kind as u32).map_or(1000.0, |d| d.closeup_camera_zoom);
-        (pos, dist)
+        (scene.fighter.pos, scene.cam_offset_y, dist)
     };
     let zoom = focus
         .zoom(t)
@@ -4025,7 +4024,7 @@ unsafe fn draw_frame(
                     effects.sync(p, &b.wallpaper);
                 }
             }
-            let magnify_hidden = boss_magnify_hidden(s);
+            let magnify_hidden = battle_magnify_hidden(s);
             // The boss wallpaper's fades step once per drawn frame.
             s.damage_hud.boss_fade = s
                 .campaign
@@ -4081,13 +4080,11 @@ unsafe fn draw_frame(
     }
 }
 
-/// Master Hand's stage shows the magnifiers only from its "Go"
-/// (`sc1PGameWaitStageBossUpdate` sets `is_magnify_display`).
-fn boss_magnify_hidden(s: &Session) -> bool {
-    s.campaign.as_ref().is_some_and(|c| c.boss.is_some())
-        && s.vs_battle
-            .as_ref()
-            .is_some_and(|b| b.status == ssb_game::battle::GameStatus::Wait)
+/// A battle shows its arrows and magnifiers only from its "Go"
+/// ([`ssb_game::battle::Battle::is_magnify_display`]): not through the
+/// entry and the countdown, nor while paused or ended.
+fn battle_magnify_hidden(s: &Session) -> bool {
+    s.vs_battle.as_ref().is_some_and(|b| !b.is_magnify_display())
 }
 
 /// One frame of the screens' logic and the world, when not frozen for a
@@ -4413,13 +4410,7 @@ unsafe fn session_frame(
             }
             let magnify_display = s.training_menu.as_ref().is_none_or(|m| m.magnify_display)
                 && s.demo.as_ref().is_none_or(demo_screen::magnify_display)
-                && !boss_magnify_hidden(s)
-                && s.vs_battle.as_ref().is_none_or(|b| {
-                    matches!(
-                        b.status,
-                        ssb_game::battle::GameStatus::Wait | ssb_game::battle::GameStatus::Go
-                    )
-                });
+                && !battle_magnify_hidden(s);
             s.damage_hud.players.tick(magnify_display);
             #[cfg(feature = "headless_capture")]
             if capture_scene == Some(GameScene::TrainingInterface) && sim_frame_index >= 40 {
@@ -7056,34 +7047,33 @@ impl EffectVisuals {
                     continue;
                 };
                 let turned = part.turns_left && f.is_some_and(|f| f.entry.lr == Some(ssb_game::fighter::Facing::Left));
+                // The maker's `gcPlayAnimAll` (`efManagerMakeEffect`, or the
+                // Arwing's and the car's own) poses the effect on the frame
+                // it is made, before the maker's sort; each later frame's
+                // update plays once more. The clock counts the later ones.
                 if restart {
-                    v.anim.start(p, anim);
+                    v.anim.start_changed(p, anim);
                     v.materials.start(p, object_mat_anims(p, object));
-                    v.link = match part.link {
-                        EntryLink::Fixed(link) => link,
-                        // The maker's own sort, on the rest pose until the
-                        // first play.
-                        EntryLink::SortZNeg(n) | EntryLink::Ball(n) => sort_z_neg(entry_node_z(p, object, &v.anim, n)),
-                        EntryLink::SortCar(n) if turned => sort_z_pos(entry_node_z(p, object, &v.anim, n)),
-                        EntryLink::SortCar(n) => sort_z_neg(entry_node_z(p, object, &v.anim, n)),
-                    };
+                    if let EntryLink::Fixed(link) = part.link {
+                        v.link = link;
+                    }
                 }
                 let Some(script) = p.anim_script(anim) else {
                     continue;
                 };
-                for t in 0..ticks {
-                    let first = restart && t == 0;
+                for t in 0..ticks + u16::from(restart) {
+                    let make = restart && t == 0;
                     // `efManagerMBallThrownProcUpdate` sorts on the pose
                     // before it plays.
                     if let EntryLink::Ball(n) = part.link {
-                        if !first {
+                        if !make {
                             v.link = if entry_node_z(p, object, &v.anim, n) > 1000.0 { 20 } else { 10 };
                         }
                     }
                     let _ = v.anim.tick(script);
                     v.materials.tick(p);
                     match part.link {
-                        EntryLink::Ball(n) if first => v.link = sort_z_neg(entry_node_z(p, object, &v.anim, n)),
+                        EntryLink::Ball(n) if make => v.link = sort_z_neg(entry_node_z(p, object, &v.anim, n)),
                         EntryLink::SortZNeg(n) => v.link = sort_z_neg(entry_node_z(p, object, &v.anim, n)),
                         EntryLink::SortCar(n) if turned => v.link = sort_z_pos(entry_node_z(p, object, &v.anim, n)),
                         EntryLink::SortCar(n) => v.link = sort_z_neg(entry_node_z(p, object, &v.anim, n)),
@@ -7119,8 +7109,14 @@ fn draw_entry_effects(
     fighters: [Option<&ssb_game::fighter::Fighter>; 4],
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     link: u8,
+    light: [f32; 2],
 ) {
     use ssb_psp_runtime::scene::{EntryClock, EntryRoot, ENTRY_PARTS};
+    // The effects draw under the pass's `G_LIGHTING` with the stage's light
+    // (the scene's, or the one each fighter's display restores): a lit list
+    // that writes its own `G_MW_LIGHTCOL` takes that direction and its own
+    // colours, as the items do (RE-441). Samus's capsule tube is one.
+    let mut lit = false;
     for (vs, f) in visuals.entry.iter().zip(fighters) {
         let Some(f) = f else { continue };
         let parts = ssb_psp_runtime::scene::entry_effect_parts(f);
@@ -7171,6 +7167,9 @@ fn draw_entry_effects(
             let base = gpu.model_matrix();
             let hidden = |node: u32| !v.anim.visible(p, node);
             unsafe {
+                if !core::mem::replace(&mut lit, true) {
+                    draw_state.configure_item_light(light);
+                }
                 meshdraw::draw_object_posed_scaled_hiding(
                     p,
                     object,
@@ -7184,6 +7183,9 @@ fn draw_entry_effects(
                 );
             }
         }
+    }
+    if lit {
+        unsafe { draw_state.finish_fighter_light() };
     }
 }
 
@@ -8132,6 +8134,7 @@ unsafe fn draw_training(
         fighter_refs,
         material_anim,
         2,
+        stage.light_angle_xy,
     );
     let t = profile::start();
     stage_pass(0..=5, Head0, draw_state);
@@ -8205,6 +8208,7 @@ unsafe fn draw_training(
         fighter_refs,
         material_anim,
         10,
+        stage.light_angle_xy,
     );
     draw_ko_effects(
         gpu,
@@ -8360,6 +8364,7 @@ unsafe fn draw_training(
         fighter_refs,
         material_anim,
         20,
+        stage.light_angle_xy,
     );
     // The boss's first camera (priority 40, tag 1): the near comets and
     // the closing effect, whose fades cover the battle.
@@ -8373,12 +8378,7 @@ unsafe fn draw_training(
     let hud_start = profile::start();
     let show_magnify = magnify_display
         && damage_hud.pause.is_none()
-        && battle.is_none_or(|b| {
-            matches!(
-                b.status,
-                ssb_game::battle::GameStatus::Wait | ssb_game::battle::GameStatus::Go
-            )
-        });
+        && battle.is_none_or(ssb_game::battle::Battle::is_magnify_display);
     if show_magnify {
         let flags = views
             .iter()
@@ -8630,6 +8630,7 @@ unsafe fn draw_fighter_model(
         f.object_low,
         f.fighter.model_parts.detail_curr,
     );
+    let model_first = obj.first_node;
     let obj = p.object(drawn).unwrap_or(obj);
     // TopN, kind 0x4B (`lbCommonFighterPartsFuncMatrix`): its scale is
     // `attr->size` (`ftManagerMakeFighter`: Giant Donkey Kong twice the size
@@ -8657,19 +8658,22 @@ unsafe fn draw_fighter_model(
     }
     // Its model parts and headgear accessory (RE-425).
     let parts = f.fighter.model_parts.draw_parts();
-    meshdraw::draw_fighter_posed(
-        p,
-        &obj,
-        &m,
-        &posed[..n],
-        draw_state,
-        meshdraw::Look {
-            costume: fighter_draw_costume(p, &obj, &f.fighter),
-            textures: f.fighter.model_parts.draw_textures(),
-            parts: parts.as_ref().map(|p| &p[..]),
-            accessory_before: f.fighter.kind == ssb_game::fighter::FighterKind::Purin,
-        },
-    );
+    let look = meshdraw::Look {
+        costume: fighter_draw_costume(p, &obj, &f.fighter),
+        textures: f.fighter.model_parts.draw_textures(),
+        parts: parts.as_ref().map(|p| &p[..]),
+        accessory_before: f.fighter.kind == ssb_game::fighter::FighterKind::Purin,
+    };
+    // The joints the clip's `SetFlags` hid (`ftDisplayMainDrawDefault`):
+    // Yoshi inside his entry egg. The low-detail model is indexed as the
+    // high-detail one the skeleton drives.
+    if f.skeleton.any_flags() {
+        let first = obj.first_node;
+        let hidden = |node: u32| f.skeleton.hidden(p, model_first + (node - first));
+        meshdraw::draw_fighter_posed_hiding(p, &obj, &m, &posed[..n], draw_state, look, &hidden);
+    } else {
+        meshdraw::draw_fighter_posed(p, &obj, &m, &posed[..n], draw_state, look);
+    }
     if fog.is_some() {
         gpu.clear_fog();
     }

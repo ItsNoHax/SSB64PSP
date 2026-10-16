@@ -513,10 +513,14 @@ fn dispatch(f: &mut Fighter, rt: &mut EffectRuntime<'_>, effect: u16, mut pos: V
                 f.yoshi.egg_escape_active = true;
             }
         }
+        // `itBoxContainerSmashMakeEffect`: the crate's staves Donkey Kong
+        // bursts out of his entry barrel with (his `AppearR` motion).
+        kind::BOX_SMASH => {
+            e.container_smash(pos, crate::effect::SmashPiece::Box);
+        }
         // Not made (RE-415): the Kirby bank's two scripts (the bank is not
-        // loaded), Donkey Kong's crate pieces (the item file's) and
-        // `func_ovl2_8010183C`.
-        kind::KIRBY_BANK_2 | kind::KIRBY_BANK_5 | kind::BOX_SMASH | kind::CRASH_THE_GAME => {}
+        // loaded) and `func_ovl2_8010183C`.
+        kind::KIRBY_BANK_2 | kind::KIRBY_BANK_5 | kind::CRASH_THE_GAME => {}
         _ => {}
     }
 }

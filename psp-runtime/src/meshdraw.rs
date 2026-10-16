@@ -2243,6 +2243,26 @@ pub unsafe fn draw_fighter_posed(
     draw_object_posed_filtered(pack, object, base, posed, None, st, None, None, look, None, None)
 }
 
+/// [`draw_fighter_posed`] without the nodes `hidden` names: the joints a
+/// clip's `SetFlags` hid ([`ssb_rom::skeleton::Skeleton::hidden`]).
+///
+/// # Safety
+///
+/// Same as [`draw_mesh`].
+pub unsafe fn draw_fighter_posed_hiding(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    base: &ScePspFMatrix4,
+    posed: &[ssb_rom::scene::Mat4],
+    st: &mut DrawState,
+    look: Look<'_>,
+    hidden: &dyn Fn(u32) -> bool,
+) -> u32 {
+    #[cfg(feature = "texture_probe")]
+    let _cat = probe_cat(st, crate::texprobe::Cat::Fighter);
+    draw_object_posed_filtered(pack, object, base, posed, None, st, None, None, look, None, Some(hidden))
+}
+
 /// [`draw_object_posed`] without the nodes `hidden` names: the source's
 /// `DOBJ_FLAG_NOTEXTURE`, which skips a DObj's display list but still
 /// composes its matrix for its children.
