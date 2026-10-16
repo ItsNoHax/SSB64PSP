@@ -67,6 +67,14 @@ pub struct Standing {
 }
 
 impl Standing {
+    /// Every field written: the defined stand-in for no floor when float
+    /// math must not read a `None`'s unwritten payload (RE-531).
+    pub const NONE: Standing = Standing {
+        line: 0,
+        flags: 0,
+        normal: Vec2::ZERO,
+    };
+
     /// Whether this surface can be dropped through.
     pub fn passable(&self) -> bool {
         self.flags & collision::flags::PASS != 0

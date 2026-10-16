@@ -224,10 +224,14 @@ fn set_stick_lr(f: &mut Fighter) {
 fn set_zip(f: &mut Fighter) {
     let stick = Vec2::new(f.stick.x as f32, f.stick.y as f32);
     let magnitude = stick.length().min(80.0);
+    // A flag and a defined floor: the dot product must never read a
+    // `None`'s unwritten payload (RE-531).
+    let (on_floor, s) = ssb_engine::math::defined_or(f.floor, crate::ground::Standing::NONE);
     let ground = f.is_grounded()
         && magnitude >= 60.0
-        && f.floor
-            .is_some_and(|s| !s.passable() && s.normal.x * stick.x + s.normal.y * stick.y <= 0.0);
+        && on_floor
+        && !s.passable()
+        && s.normal.x * stick.x + s.normal.y * stick.y <= 0.0;
     set_stick_lr(f);
     f.pikachu.zip_frames = 5;
     f.physics.jumps_used = f.attributes.jumps_max;

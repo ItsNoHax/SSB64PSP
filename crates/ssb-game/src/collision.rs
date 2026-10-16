@@ -26,7 +26,7 @@
 //! caller must not feed those lines in, or they will be tested where they
 //! rest rather than where they are.
 
-use ssb_engine::math::Vec2;
+use ssb_engine::math::{div_nonzero, Vec2};
 
 /// Surface bits in a collision vertex's flags.
 pub mod flags {
@@ -321,7 +321,9 @@ fn surface_y(s: &Segment, x: f32) -> f32 {
         // than a NaN that would propagate into a position.
         return s.y1 as f32;
     }
-    s.y1 as f32 + ((x - s.x1 as f32) / dx) * (s.y2 as f32 - s.y1 as f32)
+    // `dx != 0` here; `div_nonzero` keeps LLVM from dividing before the
+    // guard (D-050, RE-531).
+    s.y1 as f32 + div_nonzero(x - s.x1 as f32, dx) * (s.y2 as f32 - s.y1 as f32)
 }
 
 /// The upward unit normal of a floor segment, from `mpCollisionGetFCAngle`

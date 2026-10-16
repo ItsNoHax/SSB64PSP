@@ -1214,10 +1214,12 @@ impl Computer {
                 continue;
             };
             if world.gkind == Some(gkind::ZEBES) {
-                if let Some((level, step)) = world.acid {
-                    if edge.y < level + 500.0 || edge.y < 5.0 * step + level + 500.0 {
-                        continue;
-                    }
+                // A flag and defined values: LLVM may hoist the sums out
+                // of the loop before the `None` test (RE-531).
+                let (has_acid, (level, step)) =
+                    ssb_engine::math::defined_or(world.acid, (0.0, 0.0));
+                if has_acid && (edge.y < level + 500.0 || edge.y < 5.0 * step + level + 500.0) {
+                    continue;
                 }
             }
             if world.gkind == Some(gkind::INISHIE) && s.motion.is_some() {

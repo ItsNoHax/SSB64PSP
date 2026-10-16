@@ -2777,7 +2777,7 @@ impl VsRules {
 /// A capture scene's VS rules: `vstimeup` picks one minute, `vsteam` a
 /// team battle.
 fn vs_rules(scene: GameScene) -> VsRules {
-    match scene {
+    let mut rules = match scene {
         GameScene::VsTimeUp | GameScene::VsTimeUpSign | GameScene::VsSuddenDeath => VsRules {
             time_limit: 1,
             ..VsRules::DEFAULT
@@ -2806,7 +2806,11 @@ fn vs_rules(scene: GameScene) -> VsRules {
             ..VsRules::DEFAULT
         },
         _ => VsRules::DEFAULT,
+    };
+    if let Some(appearance) = capture::items_override() {
+        rules.items.appearance = appearance;
     }
+    rules
 }
 
 /// One Training or VS frame: `ifCommonBattleUpdateInterfaceAll`'s say on
@@ -3689,6 +3693,8 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
         GameScene::VsBall | GameScene::VsRays => return vs_pair_roster([FighterKind::Pikachu, FighterKind::Purin]),
         _ => return training_roster(training),
     };
+    let kinds: [FighterKind; 4] =
+        core::array::from_fn(|port| capture::fighter_override(port).unwrap_or(kinds[port]));
     core::array::from_fn(|port| {
         let (costume, team, color) = match teams {
             Some(teams) => {
@@ -3708,7 +3714,7 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
         Some(Entrant {
             kind: kinds[port],
             costume,
-            level: 3,
+            level: capture::level_override().unwrap_or(3),
             handicap: ssb_game::stale::HANDICAP_DEFAULT,
             spawn: port as u16,
             team,

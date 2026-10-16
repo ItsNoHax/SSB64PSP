@@ -477,7 +477,10 @@ where
         }
     };
     // `y` is left at the last query's distance: zero when both failed.
-    let dist = floor_y.map_or(0.0, |y| y - translate.y);
+    // A flag and a defined height, so the subtraction never reads a
+    // `None`'s unwritten payload (RE-531).
+    let (found, y) = ssb_engine::math::defined_or(floor_y, 0.0);
+    let dist = if found { y - translate.y } else { 0.0 };
     Vec3::new(out_x, translate.y + dist + vel_y, 0.0)
 }
 

@@ -62,6 +62,23 @@ pub struct Contact {
     pub normal: Vec2,
 }
 
+impl Contact {
+    /// Every field written: what [`contact_or_none`] reads for a `None`.
+    pub const NONE: Contact = Contact {
+        line: 0,
+        flags: 0,
+        normal: Vec2::ZERO,
+    };
+}
+
+/// A found flag and a contact whose floats are always written. Float math
+/// on a `None`'s unwritten payload may run before the tag test, and stack
+/// garbage that is a signalling NaN traps a PSP (RE-531): loops over the
+/// [`Contacts`] that read a contact's normal go through this.
+pub fn contact_or_none(c: Option<Contact>) -> (bool, Contact) {
+    ssb_engine::math::defined_or(c, Contact::NONE)
+}
+
 /// Source current contacts, retained across frames for first-contact callbacks.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Contacts {
@@ -1888,10 +1905,12 @@ pub(crate) fn air_callback(f: &mut Fighter) {
         return;
     }
     if f.status.status == AnyStatus::Pikachu(PikachuStatus::SpecialAirHi) {
-        for hit in [contacts.ceiling, contacts.left_wall, contacts.right_wall]
-            .into_iter()
-            .flatten()
+        for (found, hit) in
+            [contacts.ceiling, contacts.left_wall, contacts.right_wall].map(contact_or_none)
         {
+            if !found {
+                continue;
+            }
             let v = f.physics.vel_air;
             if hit.normal.x * v.x + hit.normal.y * v.y
                 < v.length() * -core::f32::consts::FRAC_1_SQRT_2
@@ -1907,7 +1926,8 @@ pub(crate) fn air_callback(f: &mut Fighter) {
             (contacts.left_wall, f.map_contacts_prev.left_wall),
             (contacts.right_wall, f.map_contacts_prev.right_wall),
         ] {
-            if let Some(hit) = hit.filter(|_| prev.is_none()) {
+            let (found, hit) = contact_or_none(hit);
+            if found && prev.is_none() {
                 if adjust_velocity(&mut f.physics.vel_air, hit.normal, -0.342_020_15) {
                     f.facing = if f.physics.vel_air.x >= 0.0 {
                         Facing::Right

@@ -18,7 +18,7 @@
 //! caller with no posed joints (host tests) keeps the former stand-in: one
 //! sphere at the fighter's root, read as a middle hit.
 
-use ssb_engine::math::Vec3;
+use ssb_engine::math::{div_nonzero, Vec3};
 
 use crate::attack::{DAMAGE_INDEX_N, MARIO_HURTBOX_RADIUS};
 use crate::combat::{AttackState, HitStatus};
@@ -1711,7 +1711,7 @@ pub fn test_sphere_angle(
     let axis = if len == 0.0 {
         cross
     } else {
-        cross * (1.0 / len)
+        cross * div_nonzero(1.0, len)
     };
     Some((angle, axis))
 }
@@ -1727,25 +1727,29 @@ pub fn attacks_collide(
     ) {
         return false;
     }
-    // `func_ovl2_800EE050`: the second attack's segment frame.
+    // `func_ovl2_800EE050`: the second attack's segment frame. The C keeps
+    // an `is_mtx` flag beside the matrix; the matrix stays initialised so
+    // no float is ever read from an unwritten `Option` payload (RE-531).
     let mut half = 0.0;
-    let mut frame: Option<[[f32; 3]; 4]> = None;
+    let mut has_frame = false;
+    let mut m = [[0.0f32; 3]; 4];
     if b_state == AttackState::Interpolate {
         let d = b_prev - b_curr;
         let len = d.length();
         if len != 0.0 {
-            let d = d * (1.0 / len);
-            let mut m = [[0.0f32; 3]; 4];
+            let d = d * div_nonzero(1.0, len);
             if d.x * d.x == 1.0 {
                 let s = if d.x >= 0.0 { 1.0 } else { -1.0 };
                 m[0][0] = s;
                 m[1][1] = s;
                 m[2][2] = 1.0;
             } else {
+                // `d.x² != 1` here, so neither divisor is zero; the guard
+                // above must not be hoisted past (D-050).
                 m[0][0] = d.x;
-                m[1][2] = (d.z * d.y) / (1.0 + d.x);
-                m[2][1] = (d.z * d.y) / (1.0 + d.x);
-                let inv = 1.0 / (1.0 - d.x * d.x);
+                m[1][2] = div_nonzero(d.z * d.y, 1.0 + d.x);
+                m[2][1] = div_nonzero(d.z * d.y, 1.0 + d.x);
+                let inv = div_nonzero(1.0, 1.0 - d.x * d.x);
                 m[1][1] = ((1.0 - (d.z * d.z * inv)) * d.x) + (d.z * d.z * inv);
                 m[2][0] = d.z;
                 m[0][2] = -d.z;
@@ -1755,20 +1759,21 @@ pub fn attacks_collide(
             }
             half = len * 0.5;
             m[3] = [half, 0.0, 0.0];
-            frame = Some(m);
+            has_frame = true;
         }
     }
     // `func_ovl2_800EEEAC`.
     let c = Vec3::new(half + b_size + a_size, b_size + a_size, b_size + a_size);
     let to_frame = |p: Vec3| -> Vec3 {
         let p = p - b_curr;
-        match frame {
-            Some(m) => Vec3::new(
+        if has_frame {
+            Vec3::new(
                 m[0][0] * p.x + m[1][0] * p.y + m[2][0] * p.z + m[3][0],
                 m[0][1] * p.x + m[1][1] * p.y + m[2][1] * p.z + m[3][1],
                 m[0][2] * p.x + m[1][2] * p.y + m[2][2] * p.z + m[3][2],
-            ),
-            None => p,
+            )
+        } else {
+            p
         }
     };
     let p0 = to_frame(a_curr);

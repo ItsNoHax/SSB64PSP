@@ -91,7 +91,8 @@ closes it.
 - [x] Samus Charge Shot PSP crash: FGM LFO divide-by-zero and RSP-light float-to-int traps fixed with N64-faithful helpers, six more trap sites, fighter light rows no longer scaled by MODEL_SCALE, impact wave translucent, samus/samusshot/donkey scripts press B at tick 40 (RE-516, D-050).
 - [x] RE-516: XMB Samus charge run on the PSP-2000: no crash (user test, RE-516).
 - [x] RE-516: FCR31 at an XMB-style launch (`sctrlKernelLoadExecVSHMs2`, `fcr31_probe`) is `0x0e00` on both threads, as under PSPLink; D-050 holds (RE-516).
-- [ ] RE-516: latent FPU trap sites from the audit that no test reaches; extend `with_traps` sweeps (items, stages, effects). The `stack_poison` hardware sweep (opening, 1P modes, VS on all nine stages, vscpu, vsteam) is clean after RE-531's fixes; untested: Training, other CPU levels, items and effects not reached in those runs. Residual: `hurtbox.rs` `frame: Option<[[f32;3];4]>`, `collision::surface_y` (RE-531).
+- [x] Hoisted-float-compare trap sweep (RE-531): `stack_poison` sweep on the PSP-2000 over VS (items high, CPU levels 1/5/9, all stages), Training, fighter specials, bonus stages and the 1P boss is clean. Fixes use `math::defined_or` / `div_nonzero`.
+- [ ] Optional: resolve the `take_weapon_spawns` unwritten-slot `add.s` (RE-531 residual); it has never trapped.
 - [x] 2D sprite edge fringe: one-ring nearest-neighbour RGB bleed into transparent texels at pack build (`sprite::psp_image`), filters stay Linear; pack v111 (RE-517).
 - [ ] Optional: narrow the vs-four golden change to catch/thrown/relz/pulled; marks-only pixel share of the 27 display-plus-marks rows (RE-511).
 - [ ] Tooling: `tools/golden.sh` mem-line regex `[^\r]*` stops at the letter r; `SSB64_ROM` must be an absolute path for golden.sh.

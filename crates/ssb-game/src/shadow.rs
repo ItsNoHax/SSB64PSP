@@ -5,7 +5,7 @@
 //! this data independent of the PSP renderer makes the source behaviour
 //! host-testable and leaves GU state in `psp-runtime`.
 
-use ssb_engine::math::{Vec2, Vec3};
+use ssb_engine::math::{div_nonzero, Vec2, Vec3};
 
 use crate::fighter::Fighter;
 use crate::map;
@@ -163,8 +163,11 @@ where
     let from = Vec2::new(pos.x, pos.y);
     let to = Vec2::new(pos.x, pos.y - WALL_PROBE_DEPTH);
     for kind in [MapSurfaceKind::LeftWall, MapSurfaceKind::RightWall] {
-        if map::wall_crossing(surfaces, kind, from, to).is_some_and(|hit| pos.y - hit.y < -ga_dist)
-        {
+        // A flag and a defined point, so the compare never reads a `None`'s
+        // unwritten payload (RE-531).
+        let hit = map::wall_crossing(surfaces, kind, from, to);
+        let (found, hit) = ssb_engine::math::defined_or(hit, from);
+        if found && pos.y - hit.y < -ga_dist {
             return ShadowGeometry::EMPTY;
         }
     }
@@ -218,7 +221,7 @@ pub fn build(
             let y = if denom == 0.0 {
                 y1
             } else {
-                ((x - x1) * (y2 - y1) / denom) + y1
+                div_nonzero((x - x1) * (y2 - y1), denom) + y1
             };
             out.points[out.point_count] = ShadowPoint {
                 x,

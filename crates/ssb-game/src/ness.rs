@@ -239,9 +239,12 @@ pub(crate) fn map_blast_contacts(f: &mut Fighter) {
         (contacts.left_wall, true),
         (contacts.right_wall, true),
     ] {
-        let Some(hit) = hit else {
+        // A flag and a defined contact: the hardware trapped on this loop
+        // speculating the normal's compare onto a `None` (RE-531).
+        let (found, hit) = crate::map::contact_or_none(hit);
+        if !found {
             continue;
-        };
+        }
         let v = f.physics.vel_air;
         if hit.normal.x * v.x + hit.normal.y * v.y < v.length() * -0.906_307_8 {
             let factor = -2.0 * (hit.normal.x * v.x + hit.normal.y * v.y);
@@ -264,7 +267,8 @@ pub(crate) fn map_blast_contacts(f: &mut Fighter) {
             };
             let mut angle = 0.0;
             for (contact, left) in [(contacts.left_wall, true), (contacts.right_wall, false)] {
-                if let Some(contact) = contact {
+                let (found, contact) = crate::map::contact_or_none(contact);
+                if found {
                     angle = sy_arc_tan2(contact.normal.y, contact.normal.x);
                     let plus = if left {
                         old + core::f32::consts::PI < angle

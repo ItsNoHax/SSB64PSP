@@ -17,7 +17,7 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Closed: the PSP-2000 opening crash. A float compare LLVM hoisted onto an unwritten `Option` payload trapped on stack garbage; fixed at three sites and swept with the `stack_poison` feature (RE-531, D-050). Goldens unchanged. Next: the opening CPU-cost item in `PLAN.md` (MS8): measure Yoster, Sector and Clash on a PSP-2000, then the remaining levers (batched lighting, guard-clip I-cache cost).
+Closed: the PSP-2000 opening crash and its follow-up sweep. Float compares LLVM hoisted onto unwritten `Option` payloads trapped on stack garbage; fixed at four sites and swept with the `stack_poison` feature over VS, Training, specials, bonus stages and the 1P boss (RE-531, D-050). `math::defined_or` is the barrier for such payloads. Goldens unchanged. Next: the opening CPU-cost item in `PLAN.md` (MS8): measure Yoster, Sector and Clash on a PSP-2000, then the remaining levers (batched lighting, guard-clip I-cache cost).
 
 ## Blockers
 
@@ -26,7 +26,7 @@ Closed: the PSP-2000 opening crash. A float compare LLVM hoisted onto an unwritt
 
 ## Verification
 
-Baseline after the opening crash fix:
+Baseline after RE-531 sweep 2:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`, and with `SSB64_STUB_TABLES=1` and no ROM: pass. Clippy (`cargo +1.98.0`, `-D warnings`) and `cargo fmt --all --check` pass.
 - Both PSP release builds compile.

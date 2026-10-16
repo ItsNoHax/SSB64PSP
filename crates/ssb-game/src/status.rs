@@ -1987,10 +1987,10 @@ impl StatusState {
     /// Always `false` for a status whose length lives in unextracted animation
     /// data — such a status ends only by being interrupted.
     pub fn animation_ended(&self) -> bool {
-        match self.timing.anim_length {
-            Some(len) => self.clock >= len,
-            None => false,
-        }
+        // The compare reads a defined length, never a `None`'s unwritten
+        // payload, which LLVM may compare before the tag test (RE-531).
+        let (known, len) = ssb_engine::math::defined_or(self.timing.anim_length, 0.0);
+        known && self.clock >= len
     }
 }
 

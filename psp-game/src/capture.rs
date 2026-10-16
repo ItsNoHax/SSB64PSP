@@ -44,6 +44,47 @@ pub fn stage_override() -> Option<u8> {
     }
 }
 
+/// Diagnostic battle overrides for `profile` or `frame_timer` hardware
+/// sweeps (RE-531's `stack_poison` runs), each stored plus one, 0 for the
+/// scene's own: an `items=N` line's VS item appearance (0 none .. 5 very
+/// high), a `level=N` line's CPU level (1..=9), and a `fighters=a,b,c,d`
+/// line's fighter ordinals for the VS roster's four ports (the first also
+/// the 1P campaign's fighter).
+static ITEMS_OVERRIDE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static LEVEL_OVERRIDE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static FIGHTERS_OVERRIDE: [core::sync::atomic::AtomicU32; 4] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; 4];
+
+fn load_plus_one(a: &core::sync::atomic::AtomicU32) -> Option<u8> {
+    match a.load(core::sync::atomic::Ordering::Relaxed) {
+        0 => None,
+        v => Some((v - 1) as u8),
+    }
+}
+
+/// The VS item appearance an `items=N` line asked for.
+pub fn items_override() -> Option<ssb_game::item::normal::Appearance> {
+    use ssb_game::item::normal::Appearance;
+    Some(match load_plus_one(&ITEMS_OVERRIDE)? {
+        0 => Appearance::None,
+        1 => Appearance::VeryLow,
+        2 => Appearance::Low,
+        3 => Appearance::Middle,
+        4 => Appearance::High,
+        _ => Appearance::VeryHigh,
+    })
+}
+
+/// The CPU level a `level=N` line asked for.
+pub fn level_override() -> Option<u8> {
+    load_plus_one(&LEVEL_OVERRIDE)
+}
+
+/// The fighter a `fighters=` line put on `port`.
+pub fn fighter_override(port: usize) -> Option<ssb_game::fighter::FighterKind> {
+    ssb_game::fighter::FighterKind::from_ordinal(load_plus_one(FIGHTERS_OVERRIDE.get(port)?)?)
+}
+
 /// A `hold` line: a `profile` build keeps drawing its frozen tick rather
 /// than exiting, for the sampling profiler (RE-471).
 #[cfg_attr(not(feature = "headless_capture"), allow(dead_code))]
@@ -72,6 +113,23 @@ pub fn select() -> Option<Capture> {
                 .and_then(|g| g.parse::<u8>().ok())
             {
                 STAGE_OVERRIDE.store(u32::from(g) + 1, core::sync::atomic::Ordering::Relaxed);
+            }
+            #[cfg(any(feature = "profile", feature = "frame_timer"))]
+            for l in text.into_iter().flat_map(str::lines).map(str::trim) {
+                let store = |a: &core::sync::atomic::AtomicU32, v: &str| {
+                    if let Ok(v) = v.trim().parse::<u8>() {
+                        a.store(u32::from(v) + 1, core::sync::atomic::Ordering::Relaxed);
+                    }
+                };
+                if let Some(v) = l.strip_prefix("items=") {
+                    store(&ITEMS_OVERRIDE, v);
+                } else if let Some(v) = l.strip_prefix("level=") {
+                    store(&LEVEL_OVERRIDE, v);
+                } else if let Some(v) = l.strip_prefix("fighters=") {
+                    for (a, v) in FIGHTERS_OVERRIDE.iter().zip(v.split(',')) {
+                        store(a, v);
+                    }
+                }
             }
             #[cfg(any(feature = "profile", feature = "frame_timer"))]
             if text.into_iter().flat_map(str::lines).any(|l| l.trim() == "hold") {

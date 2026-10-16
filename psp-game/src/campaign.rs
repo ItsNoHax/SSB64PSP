@@ -1120,6 +1120,13 @@ pub(crate) unsafe fn draw(
 pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
     let Some(c) = s.campaign.as_mut() else { return };
     let sp = c.frontend.session.as_mut().expect("campaign");
+    // A `fighters=` line's first fighter (hardware sweeps, RE-531); scenes
+    // that pin their own fighter below still do.
+    if let Some(kind) = crate::capture::fighter_override(0) {
+        sp.data.fkind = kind;
+        // The battle state's player entry, which the normal stages read.
+        sp.state.players[sp.data.player as usize].fkind = kind;
+    }
     match scene {
         GameScene::OnePIntro => {
             sp.data.stage = Stage::Yoshi as u8;

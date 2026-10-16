@@ -425,12 +425,20 @@ fn project(s: MapSurface, p: Vec3) -> Option<Vec3> {
         if p.x < x1.min(x2) - 0.001 || p.x > x1.max(x2) + 0.001 || x1 == x2 {
             return None;
         }
-        Some(Vec3::new(p.x, y1 + (p.x - x1) * (y2 - y1) / (x2 - x1), p.z))
+        Some(Vec3::new(
+            p.x,
+            y1 + div_nonzero((p.x - x1) * (y2 - y1), x2 - x1),
+            p.z,
+        ))
     } else {
         if p.y < y1.min(y2) - 0.001 || p.y > y1.max(y2) + 0.001 || y1 == y2 {
             return None;
         }
-        Some(Vec3::new(x1 + (p.y - y1) * (x2 - x1) / (y2 - y1), p.y, p.z))
+        Some(Vec3::new(
+            x1 + div_nonzero((p.y - y1) * (x2 - x1), y2 - y1),
+            p.y,
+            p.z,
+        ))
     }
 }
 fn endpoint<I, F>(surfaces: F, current: MapSurface, positive: bool) -> Option<(Vec2, u16)>
@@ -442,18 +450,25 @@ where
         current.kind,
         MapSurfaceKind::Floor | MapSurfaceKind::Ceiling
     );
-    let mut ends = [None, None];
+    // Found flags beside defined ends: the compare below must never read
+    // an unwritten `Option` payload, which LLVM may compare before the
+    // tag test (RE-531).
+    let mut ends = [(false, Vec2::ZERO, 0); 2];
     for s in surfaces().into_iter().filter(|s| same_line(*s, current)) {
         let Some(t) = s.topology else { continue };
         let [x1, y1, x2, y2] = s.coords();
         if t.point == 0 {
-            ends[0] = Some((Vec2::new(x1, y1), t.vertex1));
+            ends[0] = (true, Vec2::new(x1, y1), t.vertex1);
         }
         if t.point + 1 == t.segments {
-            ends[1] = Some((Vec2::new(x2, y2), t.vertex2));
+            ends[1] = (true, Vec2::new(x2, y2), t.vertex2);
         }
     }
-    let (a, b) = (ends[0]?, ends[1]?);
+    let [(found_a, pa, va), (found_b, pb, vb)] = ends;
+    if !(found_a && found_b) {
+        return None;
+    }
+    let (a, b) = ((pa, va), (pb, vb));
     let first_lower = if floor { a.0.x < b.0.x } else { a.0.y < b.0.y };
     Some(if first_lower == positive { b } else { a })
 }

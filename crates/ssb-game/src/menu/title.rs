@@ -688,9 +688,14 @@ impl Title {
                 } else {
                     None
                 };
-                let (centre, scale) = match at {
-                    Some([x, y, sx, sy]) => ([x + 160.0, 120.0 - y], [sx, sy]),
-                    None => (desc.0, [1.0, 1.0]),
+                // A flag and defined values: the sums must never read a
+                // `None`'s unwritten payload (RE-531).
+                let (found, [x, y, sx, sy]) =
+                    ssb_engine::math::defined_or(at, [0.0, 0.0, 1.0, 1.0]);
+                let (centre, scale) = if found {
+                    ([x + 160.0, 120.0 - y], [sx, sy])
+                } else {
+                    (desc.0, [1.0, 1.0])
                 };
                 f(Self::label(kind, centre, scale));
             }
@@ -700,10 +705,12 @@ impl Title {
             }
         }
         if self.press_start_shown {
-            let (centre, scale) = match anims.press_start(press_start_frame(self.press_start_play))
-            {
-                Some([x, y, sx, sy]) => ([x + 160.0, 120.0 - y], [sx, sy]),
-                None => (SPRITE_DESCS[KIND_PRESS_START].0, [1.0, 1.0]),
+            let at = anims.press_start(press_start_frame(self.press_start_play));
+            let (found, [x, y, sx, sy]) = ssb_engine::math::defined_or(at, [0.0, 0.0, 1.0, 1.0]);
+            let (centre, scale) = if found {
+                ([x + 160.0, 120.0 - y], [sx, sy])
+            } else {
+                (SPRITE_DESCS[KIND_PRESS_START].0, [1.0, 1.0])
             };
             f(Self::label(KIND_PRESS_START, centre, scale));
         }

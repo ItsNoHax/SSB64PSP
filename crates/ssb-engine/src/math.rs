@@ -86,7 +86,9 @@ impl Vec3 {
         if len_sq <= f32::EPSILON {
             Vec3::ZERO
         } else {
-            self * (1.0 / sqrt(len_sq))
+            // Never a zero divisor, even if LLVM divides before the guard
+            // (D-050).
+            self * div_nonzero(1.0, sqrt(len_sq))
         }
     }
 
@@ -747,6 +749,20 @@ pub fn cosf(x: f32) -> f32 {
 #[inline]
 pub fn sin_cos(v: f32) -> (f32, f32) {
     (sinf(v), cosf(v))
+}
+
+/// Whether `opt` holds a value, and that value or `default`, with every
+/// float written before any use.
+///
+/// A PSP traps float operations on a signalling NaN (D-050), and LLVM may
+/// compute a compare or a sum on an `Option`'s payload before the tag test
+/// that guards it. A `None`'s payload is unwritten stack or a copy of it,
+/// so that garbage can trap (RE-531). A plain `unwrap_or(default)` is not
+/// enough: when the operation folds on a constant `default`, LLVM moves it
+/// back onto the raw payload. The barrier keeps the chosen value opaque.
+#[inline(always)]
+pub fn defined_or<T: Copy>(opt: Option<T>, default: T) -> (bool, T) {
+    (opt.is_some(), core::hint::black_box(opt.unwrap_or(default)))
 }
 
 /// `n / d` where the caller's own branch has already excluded `d == 0`.

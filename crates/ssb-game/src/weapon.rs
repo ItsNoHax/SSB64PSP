@@ -6,7 +6,7 @@
 //! boundary explicit prevents projectile lifetime/collision from becoming a
 //! hidden per-fighter side effect.
 
-use ssb_engine::math::{sin_cos, Vec2, Vec3};
+use ssb_engine::math::{div_nonzero, sin_cos, Vec2, Vec3};
 
 use crate::attack::{self, Hitbox};
 use crate::collision::Segment;
@@ -761,7 +761,8 @@ fn segment_y(s: MapSurface, x: f32) -> f32 {
     if x1 == x2 {
         return y1;
     }
-    y1 + (x - x1) * (y2 - y1) / (x2 - x1)
+    // `x1 != x2` here; `div_nonzero` keeps the guard (D-050).
+    y1 + div_nonzero((x - x1) * (y2 - y1), x2 - x1)
 }
 
 /// `wpvars.h` Boomerang constants.

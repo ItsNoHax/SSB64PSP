@@ -227,7 +227,7 @@ power) prints `prof n= fps= frame= busy=` lines, and `tools/hw-link-order.sh`
 via PSPLink and ranks them with `tools/icache/hwrank.py` by BFPS (1e6/busy),
 because release code is vsync-bound. `tools/icache/cmpaddr.py --elf` checks a
 measurement build keeps the searched functions at release addresses;
-`tools/icache/summ.sh` summarises runs. Put `stage=N` after the scene line.
+`tools/icache/summ.sh` summarises runs. Put `stage=N` after the scene line. `profile` and `frame_timer` builds also read `items=N` (VS item appearance 0..5), `level=N` (CPU level 1..9) and `fighters=a,b,c,d` (fighter ordinals per port; the first is also the 1P fighter) lines; release and `golden_capture` builds ignore them (RE-531).
 
 ### Native frame evidence
 
