@@ -27,6 +27,12 @@ fpu_mask = []
 # PSPLink ldstart, then an XMB-style LoadExec of a probe EBOOT, then back to
 # PSPLink. Needs ARK. Off by default.
 fcr31_probe = []
+# Fills the stack below each fighter, stage, item and weapon pass with a
+# signalling NaN (`stack_poison.rs`), so a float operation LLVM speculates
+# onto an unwritten slot traps on the first frame that reaches it instead of
+# depending on stack garbage. Diagnostic only: off by default and never in a
+# release build.
+stack_poison = []
 # Frame timing and free-memory reports (`profile.rs`, RE-469). Off by
 # default: the spans compile to nothing.
 profile = ["ssb-engine/audio_profile"]

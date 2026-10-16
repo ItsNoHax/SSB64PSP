@@ -26,6 +26,12 @@ fpu_mask = ["ssb-psp-runtime/fpu_mask"]
 # The FCR31 launch probe instead of the game (`ssb_psp_runtime::fcr31_probe`,
 # RE-516). Needs ARK. Off by default.
 fcr31_probe = ["ssb-psp-runtime/fcr31_probe"]
+# Signalling-NaN stack poison before each fighter, stage, item and weapon
+# pass (`ssb_psp_runtime::stack_poison`): the hardware detector for float
+# operations speculated onto unwritten stack slots. Pair it with a
+# PSP-2000 run under PSPLink; PPSSPP never traps. Diagnostic only: off by
+# default and never in a release build.
+stack_poison = ["ssb-psp-runtime/stack_poison"]
 # Boot and scene-load lines to `ms0:/PSP/GAME/ssb64/boot.log`
 # (`src/boot_log.rs`, RE-475), for XMB launches where PSPLink is not
 # running. Allocates nothing. Off by default.

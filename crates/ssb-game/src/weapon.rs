@@ -4793,6 +4793,10 @@ where
     I: IntoIterator<Item = MapSurface>,
 {
     let mut first: Option<MapContact> = None;
+    // The first contact's time beside it, always written: LLVM may compute
+    // the compare before the `None` test, and a signalling NaN in an
+    // unwritten payload traps a PSP (D-050).
+    let mut first_time = 0.0f32;
     let delta = Vec2::new(to.x - from.x, to.y - from.y);
 
     for surface in surfaces {
@@ -4811,9 +4815,10 @@ where
         let Some(time) = swept_coords_intersection(probe_from, probe_to, surface.coords()) else {
             continue;
         };
-        if first.is_some_and(|known| time >= known.time) {
+        if first.is_some() && time >= first_time {
             continue;
         }
+        first_time = time;
         first = Some(MapContact {
             position: Vec3::new(from.x + delta.x * time, from.y + delta.y * time, from.z),
             normal,

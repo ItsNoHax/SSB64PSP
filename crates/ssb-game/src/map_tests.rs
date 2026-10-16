@@ -221,7 +221,8 @@ fn cliff_material_four_exclusion_is_left_only_and_cooldown_applies() {
 fn cliff_is_tested_per_substep_and_an_occupied_corner_is_skipped() {
     let floor = surface(Kind::Floor, 3, (-100, 0), (100, 0), collision::flags::CLIFF);
     let query = CliffQuery {
-        facing: 1.0,
+        enabled: true,
+        facing: crate::fighter::Facing::Right,
         wait: 0,
         reach: Vec2::new(100.0, 100.0),
         occupied: [None; 3],
@@ -233,7 +234,7 @@ fn cliff_is_tested_per_substep_and_an_occupied_corner_is_skipped() {
         from,
         to,
         AirOptions {
-            cliff: Some(query),
+            cliff: query,
             ..AirOptions::default()
         },
         || [floor],
@@ -245,10 +246,10 @@ fn cliff_is_tested_per_substep_and_an_occupied_corner_is_skipped() {
         from,
         to,
         AirOptions {
-            cliff: Some(CliffQuery {
-                occupied: [None, Some((3, 1.0)), None],
+            cliff: CliffQuery {
+                occupied: [None, Some((3, crate::fighter::Facing::Right)), None],
                 ..query
-            }),
+            },
             ..AirOptions::default()
         },
         || [floor],
@@ -285,6 +286,78 @@ fn edge_stops_are_selected_by_status_and_do_not_affect_walk_offs() {
         .is_none());
     assert!(stops_at_edge(AnyStatus::Purin(PurinStatus::SpecialHi)));
     assert!(!stops_at_edge(AnyStatus::Common(Status::WalkFast)));
+}
+
+/// A `None` `Option<CliffEdge>` leaves its payload unwritten, and LLVM
+/// hoisted the old `facing: f32` compares above the tag test: on a PSP a
+/// signalling NaN in that stack garbage raised an FPU Invalid trap in
+/// the opening's Jungle fight. The payload must hold no float.
+#[test]
+fn cliff_edge_payload_has_no_float() {
+    let c = CliffEdge {
+        facing: crate::fighter::Facing::Left,
+        stick_x: 0,
+    };
+    assert_eq!(c.facing, crate::fighter::Facing::Left);
+    assert!(core::mem::size_of::<CliffEdge>() <= 2);
+    assert!(core::mem::size_of::<Option<CliffEdge>>() <= 3);
+}
+
+/// `mpCommonCheckSetFighterCliffEdge`: past the floor's left end the
+/// fighter teeters only facing left (`lr == -1`) with the stick above
+/// -60; past its right end only facing right (`lr == +1`) with the
+/// stick below 60. It then stands 40 units in from that end.
+#[test]
+fn cliff_edge_teeters_only_facing_the_end_with_the_stick_short_of_60() {
+    use crate::fighter::Facing::{Left, Right};
+    let floor = surface(Kind::Floor, 1, (-100, 0), (100, 0), 0);
+    let walk = |from: f32, to: f32, facing, stick_x| {
+        move_ground_pushed(
+            &BODY,
+            Vec3::new(from, 0.0, 0.0),
+            Vec3::new(to, 0.0, 0.0),
+            Vec3::ZERO,
+            1,
+            false,
+            Some(CliffEdge { facing, stick_x }),
+            || [floor],
+        )
+    };
+    let cases = [
+        // (from, to, facing, stick_x, teeters)
+        (90.0, 120.0, Right, 59, true),
+        (90.0, 120.0, Right, -60, true),
+        (90.0, 120.0, Right, 60, false),
+        (90.0, 120.0, Left, 0, false),
+        (90.0, 120.0, Left, -59, false),
+        (-90.0, -120.0, Left, -59, true),
+        (-90.0, -120.0, Left, 60, true),
+        (-90.0, -120.0, Left, -60, false),
+        (-90.0, -120.0, Right, 0, false),
+        (-90.0, -120.0, Right, 59, false),
+    ];
+    for (from, to, facing, stick_x, teeters) in cases {
+        let (m, c) = walk(from, to, facing, stick_x);
+        let case = (from, to, facing, stick_x);
+        assert_eq!(c.floor_edge, teeters, "{case:?}");
+        assert_eq!(m.floor.is_some(), teeters, "{case:?}");
+        if teeters {
+            assert_eq!(m.pos.x, from.signum() * 60.0, "{case:?}");
+        }
+    }
+    // No query: a walk off the end just falls.
+    let (m, c) = move_ground_pushed(
+        &BODY,
+        Vec3::new(90.0, 0.0, 0.0),
+        Vec3::new(120.0, 0.0, 0.0),
+        Vec3::ZERO,
+        1,
+        false,
+        None,
+        || [floor],
+    );
+    assert!(!c.floor_edge);
+    assert!(m.floor.is_none());
 }
 
 fn fighter(kind: FighterKind, s: AnyStatus, velocity: Vec3) -> Fighter {
@@ -1056,4 +1129,117 @@ fn a_released_fighter_dropped_below_the_floor_is_put_back_on_it() {
         ),
         above
     );
+}
+
+/// The map queries never compute on an unwritten stack slot. LLVM may run
+/// a float compare or division before the branch that guards it (an
+/// `Option` payload, a loop accumulator that starts as `None`), and a PSP
+/// traps when that stack garbage is a signalling NaN (D-050). Each query
+/// below runs on a stack filled with one, with the PSP's traps armed: a
+/// speculated operation on garbage ends the process with SIGFPE. Only an
+/// optimised build speculates (`cargo test --release`); a debug build
+/// still runs the queries. `stack_poison` is the PSP-side detector.
+#[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+#[test]
+fn map_queries_compute_nothing_on_unwritten_stack() {
+    extern "C" {
+        fn feenableexcept(excepts: i32) -> i32;
+        fn fedisableexcept(excepts: i32) -> i32;
+    }
+    /// `FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW`: what a PSP thread traps.
+    const TRAPS: i32 = 0x01 | 0x04 | 0x08;
+    /// Fills the stack the next call's frames reuse, and every SSE
+    /// register, with a signalling NaN: an unwritten payload may live in
+    /// either.
+    #[inline(never)]
+    fn poison() {
+        let mut a = [0x7FA0_0000u32; 4096];
+        core::hint::black_box(&mut a);
+        // SAFETY: writes only the registers it declares clobbered.
+        unsafe {
+            core::arch::asm!(
+                "movd xmm0, {snan:e}",
+                "pshufd xmm0, xmm0, 0",
+                "movaps xmm1, xmm0",
+                "movaps xmm2, xmm0",
+                "movaps xmm3, xmm0",
+                "movaps xmm4, xmm0",
+                "movaps xmm5, xmm0",
+                "movaps xmm6, xmm0",
+                "movaps xmm7, xmm0",
+                "movaps xmm8, xmm0",
+                "movaps xmm9, xmm0",
+                "movaps xmm10, xmm0",
+                "movaps xmm11, xmm0",
+                "movaps xmm12, xmm0",
+                "movaps xmm13, xmm0",
+                "movaps xmm14, xmm0",
+                "movaps xmm15, xmm0",
+                snan = in(reg) 0x7FA0_0000u32,
+                out("xmm0") _, out("xmm1") _, out("xmm2") _, out("xmm3") _,
+                out("xmm4") _, out("xmm5") _, out("xmm6") _, out("xmm7") _,
+                out("xmm8") _, out("xmm9") _, out("xmm10") _, out("xmm11") _,
+                out("xmm12") _, out("xmm13") _, out("xmm14") _, out("xmm15") _,
+            );
+        }
+    }
+    #[inline(never)]
+    fn ground(s: &[MapSurface], from: Vec3, to: Vec3, c: Option<CliffEdge>) -> (Moved, Contacts) {
+        move_ground_pushed(&BODY, from, to, Vec3::ZERO, 1, false, c, || {
+            s.iter().copied()
+        })
+    }
+    #[inline(never)]
+    fn fall(s: &[MapSurface], from: Vec3, to: Vec3) -> AirMoved {
+        move_air(&BODY, from, to, AirOptions::default(), || s.iter().copied())
+    }
+    #[inline(never)]
+    fn weapon(s: &[MapSurface], from: Vec3, to: Vec3) -> Option<crate::weapon::MapContact> {
+        crate::weapon::map_contact(s.iter().copied(), from, to, BODY)
+    }
+    let s = [
+        surface(Kind::Floor, 1, (-100, 0), (100, 0), collision::flags::CLIFF),
+        surface(Kind::LeftWall, 2, (150, 100), (150, -200), 0),
+        surface(Kind::RightWall, 3, (-150, -200), (-150, 100), 0),
+        surface(Kind::Ceiling, 4, (-50, 300), (50, 300), 0),
+    ];
+    let teeter = Some(CliffEdge {
+        facing: crate::fighter::Facing::Right,
+        stick_x: 0,
+    });
+    // SAFETY: glibc's own functions; they change only this thread's FPU
+    // control words.
+    unsafe { feenableexcept(TRAPS) };
+    poison();
+    let off = ground(
+        &s,
+        Vec3::new(90.0, 0.0, 0.0),
+        Vec3::new(120.0, 0.0, 0.0),
+        None,
+    );
+    poison();
+    let walk = ground(&s, Vec3::ZERO, Vec3::new(30.0, 0.0, 0.0), None);
+    poison();
+    let edge = ground(
+        &s,
+        Vec3::new(90.0, 0.0, 0.0),
+        Vec3::new(120.0, 0.0, 0.0),
+        teeter,
+    );
+    poison();
+    let rise = fall(&s, Vec3::new(0.0, 100.0, 0.0), Vec3::new(10.0, 350.0, 0.0));
+    poison();
+    let past = fall(
+        &s,
+        Vec3::new(-150.0, 100.0, 0.0),
+        Vec3::new(-150.0, -300.0, 0.0),
+    );
+    poison();
+    let land = fall(&s, Vec3::new(50.0, 10.0, 0.0), Vec3::new(60.0, -10.0, 0.0));
+    poison();
+    let shot = weapon(&s, Vec3::new(0.0, 10.0, 0.0), Vec3::new(0.0, -10.0, 0.0));
+    unsafe { fedisableexcept(TRAPS) };
+    assert!(off.0.floor.is_none() && walk.0.floor.is_some() && edge.1.floor_edge);
+    assert!(rise.contacts.ceiling.is_some() && past.contacts.right_wall.is_some());
+    assert!(land.moved.floor.is_some() && shot.is_some());
 }

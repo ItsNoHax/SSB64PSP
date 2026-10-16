@@ -11,7 +11,7 @@ use crate::status::{
     Status,
 };
 use crate::weapon::{MapSurface, MapSurfaceKind as Kind, SurfaceTopology};
-use ssb_engine::math::{Vec2, Vec3};
+use ssb_engine::math::{div_nonzero, Vec2, Vec3};
 
 #[cfg(test)]
 #[path = "map_tests.rs"]
@@ -80,8 +80,10 @@ pub struct Contacts {
 /// the stick past 60, stops 40 units in instead.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CliffEdge {
-    /// `lr`.
-    pub facing: f32,
+    /// `lr`. An enum, not a sign float: a `None` `Option<CliffEdge>` leaves
+    /// its payload unwritten, and a float compare LLVM hoists above the tag
+    /// test would trap on stack garbage (a PSP traps on a signalling NaN).
+    pub facing: Facing,
     /// `input.pl.stick_range.x`.
     pub stick_x: i8,
 }
@@ -90,20 +92,32 @@ pub struct CliffEdge {
 const CLIFF_EDGE_INSET: f32 = 40.0;
 const CLIFF_EDGE_STICK_MAX: i32 = 60;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// `mpProcessCheckTestLCliffCollision`/`RCliffCollision`'s inputs.
+///
+/// Not an `Option`: a `None` leaves its payload unwritten, and LLVM hoists
+/// `reach.x * facing` out of [`move_air`]'s substep loop above the test,
+/// so a signalling NaN in that stack garbage trapped a PSP (D-050). Every
+/// field is written; [`Self::enabled`] gates the check instead, as
+/// `MAP_PROC_TYPE_CLIFF` does in `mpCommonRunFighterSpecialCollisions`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct CliffQuery {
-    pub facing: f32,
+    /// `MAP_PROC_TYPE_CLIFF`: the status's map process catches ledges.
+    pub enabled: bool,
+    /// `lr`.
+    pub facing: Facing,
     pub wait: u16,
+    /// `cliffcatch_coll`.
     pub reach: Vec2,
-    /// The other fighters' held `(line, facing)`.
-    pub occupied: [Option<(u16, f32)>; 3],
+    /// The other fighters' held `(line, lr)`.
+    pub occupied: [Option<(u16, Facing)>; 3],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct AirOptions {
     pub ignore_line: Option<u16>,
     pub skip_pass: bool,
-    pub cliff: Option<CliffQuery>,
+    /// Disabled by default: no ledge catch.
+    pub cliff: CliffQuery,
     /// `MAP_PROC_TYPE_CEILHEAVY` with `vel_air.y >= 30`
     /// ([`CEILHEAVY_VEL_Y_MIN`]): a ceiling contact stops the sweep and
     /// reports [`AirMoved::ceil_stop`].
@@ -304,7 +318,11 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
-    let mut found: Option<(Vec2, u16)> = None;
+    // A flag beside written values, not an `Option<(Vec2, u16)>`: LLVM
+    // computes the compare below before the `None` test, and a signalling
+    // NaN in an unwritten payload traps a PSP (D-050).
+    let mut found = false;
+    let mut best = (Vec2::ZERO, u16::MAX);
     for (i, s) in surfaces().into_iter().enumerate() {
         if s.kind != kind || line_id(i, s) != line {
             continue;
@@ -319,18 +337,19 @@ where
                     v.y
                 }
             };
-            if found.is_none_or(|(old, _)| {
-                if high {
-                    axis(p) > axis(old)
+            if !found
+                || if high {
+                    axis(p) > axis(best.0)
                 } else {
-                    axis(p) < axis(old)
+                    axis(p) < axis(best.0)
                 }
-            }) {
-                found = Some((p, id));
+            {
+                found = true;
+                best = (p, id);
             }
         }
     }
-    found
+    found.then_some(best)
 }
 
 /// Original neighbor builder: shared vertex IDs, last matching line wins.
@@ -479,16 +498,24 @@ where
                 let hi = (y1).max(y2);
                 if y >= lo - 0.001 && y <= hi + 0.001 && y1 != y2 {
                     let y = y.clamp(lo, hi);
-                    let x = x1 + (y - y1) * (x2 - x1) / (y2 - y1);
+                    // `div_nonzero`: LLVM computes a guarded division
+                    // before its guard (RE-469).
+                    let x = x1 + div_nonzero((y - y1) * (x2 - x1), y2 - y1);
                     consider(x - side * width);
                 }
             }
             for (x, y) in [(x1, y1), (x2, y2)] {
                 let y = y - pos.y;
                 let width = if y >= coll.bottom && y <= coll.center && coll.center != coll.bottom {
-                    Some((y - coll.bottom) * coll.width / (coll.center - coll.bottom))
+                    Some(div_nonzero(
+                        (y - coll.bottom) * coll.width,
+                        coll.center - coll.bottom,
+                    ))
                 } else if y >= coll.center && y <= coll.top && coll.top != coll.center {
-                    Some((coll.top - y) * coll.width / (coll.top - coll.center))
+                    Some(div_nonzero(
+                        (coll.top - y) * coll.width,
+                        coll.top - coll.center,
+                    ))
                 } else {
                     None
                 };
@@ -761,10 +788,16 @@ where
                 ceil_stop,
             };
         }
-        if let Some(check) = options.cliff {
-            if let Some((line, corner)) =
-                cliff(&surfaces, check.facing, check.wait, check.reach, prev, pos)
-            {
+        let check = options.cliff;
+        if check.enabled {
+            if let Some((line, corner)) = cliff(
+                &surfaces,
+                check.facing.sign(),
+                check.wait,
+                check.reach,
+                prev,
+                pos,
+            ) {
                 if !check.occupied.contains(&Some((line, check.facing))) {
                     return AirMoved {
                         moved: Moved { pos, floor: None },
@@ -994,12 +1027,12 @@ where
 {
     let (left, _) = edge(surfaces, Kind::Floor, line, false)?;
     let (x, kind, far) = if pos.x <= left.x {
-        if !(c.facing < 0.0 && i32::from(c.stick_x) > -CLIFF_EDGE_STICK_MAX) {
+        if !(c.facing == Facing::Left && i32::from(c.stick_x) > -CLIFF_EDGE_STICK_MAX) {
             return None;
         }
         (left.x + CLIFF_EDGE_INSET, Kind::LeftWall, coll.width)
     } else {
-        if !(c.facing > 0.0 && i32::from(c.stick_x) < CLIFF_EDGE_STICK_MAX) {
+        if !(c.facing == Facing::Right && i32::from(c.stick_x) < CLIFF_EDGE_STICK_MAX) {
             return None;
         }
         let (right, _) = edge(surfaces, Kind::Floor, line, true)?;
@@ -1256,7 +1289,7 @@ fn faces(diff: Vec3, normal: Vec2) -> bool {
     if n == 0.0 || d == 0.0 {
         return false;
     }
-    (diff.x * normal.x + diff.y * normal.y) / (n * d) < DAMAGE_COLLIDE_COS_MAX
+    div_nonzero(diff.x * normal.x + diff.y * normal.y, n * d) < DAMAGE_COLLIDE_COS_MAX
 }
 
 /// `mpProcessSetCollideFloor` for an airborne body: put it on the floor line
@@ -1923,7 +1956,9 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
-    let mut best: Option<(u16, f32)> = None;
+    // A flag beside written values, as in [`edge`].
+    let mut found = false;
+    let mut best = (0u16, 0.0f32);
     for (i, s) in surfaces().into_iter().enumerate() {
         if s.kind != Kind::Floor {
             continue;
@@ -1933,11 +1968,12 @@ where
         let Some(hit) = collision::project_floor([(line_id(i, s), s.segment)], local) else {
             continue;
         };
-        if best.is_none_or(|(_, d)| hit.dist.abs() < d.abs()) {
-            best = Some((hit.line, hit.dist));
+        if !found || hit.dist.abs() < best.1.abs() {
+            found = true;
+            best = (hit.line, hit.dist);
         }
     }
-    best
+    found.then_some(best)
 }
 
 /// `mpCollisionCheckProjectRWall`'s `ga_dist`: the signed X distance from
@@ -1948,7 +1984,9 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
-    let mut best: Option<f32> = None;
+    // A flag beside a written value, as in [`edge`].
+    let mut found = false;
+    let mut best = 0.0f32;
     for s in surfaces().into_iter() {
         if s.kind != Kind::RightWall {
             continue;
@@ -1961,14 +1999,15 @@ where
         let x = if y1 == y2 {
             x1
         } else {
-            x1 + (pos.y - y1) * (x2 - x1) / (y2 - y1)
+            x1 + div_nonzero((pos.y - y1) * (x2 - x1), y2 - y1)
         };
         let dist = x - pos.x;
-        if x <= pos.x && best.is_none_or(|d| dist.abs() < d.abs()) {
-            best = Some(dist);
+        if x <= pos.x && (!found || dist.abs() < best.abs()) {
+            found = true;
+            best = dist;
         }
     }
-    best
+    found.then_some(best)
 }
 
 /// `mpCollisionGet{Floor,Ceil}Edge{L,R}` and `mpCollisionGet{L,R}WallEdge{D,U}`:

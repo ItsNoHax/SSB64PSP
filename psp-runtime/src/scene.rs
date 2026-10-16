@@ -1494,6 +1494,7 @@ impl FighterScene {
         jump_held: bool,
         groups: &[ssb_game::map::MapGroup],
     ) {
+        crate::stack_poison::poison();
         let tapped = jump_held && !self.jump_was_held;
         let released = !jump_held && self.jump_was_held;
         self.jump_was_held = jump_held;
@@ -1545,6 +1546,7 @@ impl FighterScene {
         stage: &StageDesc,
         groups: &[ssb_game::map::MapGroup],
     ) {
+        crate::stack_poison::poison();
         // `ftMainProcUpdateInterrupt`'s `ftMainPlayAnimEventsAll` has played
         // this frame's pose before `ftMainProcPhysicsMap` runs, so TransN's
         // step (`translate - anim_vel`) and the entry's placement read the

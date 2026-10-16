@@ -292,20 +292,23 @@ pub fn line_edge<I>(segments: I, x: f32) -> Option<Vec2>
 where
     I: IntoIterator<Item = (u16, Segment)>,
 {
-    let mut left: Option<Vec2> = None;
-    let mut right: Option<Vec2> = None;
-    for (_, s) in segments {
-        for (px, py) in [(s.x1, s.y1), (s.x2, s.y2)] {
-            let p = Vec2::new(px as f32, py as f32);
-            if left.is_none_or(|l| p.x < l.x) {
-                left = Some(p);
-            }
-            if right.is_none_or(|r| p.x > r.x) {
-                right = Some(p);
-            }
+    // The first vertex seeds both ends, so no float is ever read from an
+    // unwritten `Option<Vec2>`: LLVM computes the compares before the
+    // `None` test, and a signalling NaN in that garbage traps a PSP
+    // (D-050).
+    let mut points = segments.into_iter().flat_map(|(_, s)| {
+        [(s.x1, s.y1), (s.x2, s.y2)].map(|(px, py)| Vec2::new(px as f32, py as f32))
+    });
+    let first = points.next()?;
+    let (mut l, mut r) = (first, first);
+    for p in points {
+        if p.x < l.x {
+            l = p;
+        }
+        if p.x > r.x {
+            r = p;
         }
     }
-    let (l, r) = (left?, right?);
     Some(if x <= l.x { l } else { r })
 }
 

@@ -1466,6 +1466,7 @@ unsafe fn training_step(
         };
         let mut s = scenes(pl, dummies);
         let mut fighters = fighters_mut(&mut s);
+        ssb_psp_runtime::stack_poison::poison();
         stage_ctl.tick(
             &mut fighters,
             ssb_game::stage::TickInput {
@@ -1757,6 +1758,7 @@ fn physics_pass(
     // The weapon link's last pass: free structs for the items' weapon
     // makers, and Onix's rock events.
     let t = profile::start();
+    ssb_psp_runtime::stack_poison::poison();
     items.observe_weapons(weapons);
     items.tick_appear(started, map);
     items.tick_with_effects(map, Some(blast_zone),
@@ -1784,6 +1786,7 @@ fn physics_pass(
     items.flush_monster_shots(weapons);
     profile::stop(profile::Span::Items, t);
     let t = profile::start();
+    ssb_psp_runtime::stack_poison::poison();
     weapons.tick(map, Some(blast_zone));
     for f in s.iter_mut().flatten() {
         weapons.sync_owner(&mut f.fighter);
@@ -2045,10 +2048,11 @@ fn log_launch_fcr31() {
     // 0xffffffff: the thread has not started.
     let show = |t| launch_fcr31(t).unwrap_or(u32::MAX);
     let line = alloc::format!(
-        "fpu: fcr31 at start main={:#010x} audio={:#010x} masked={}\n",
+        "fpu: fcr31 at start main={:#010x} audio={:#010x} masked={} stack_poison={}\n",
         show(GameThread::Main),
         show(GameThread::Audio),
-        cfg!(feature = "fpu_mask")
+        cfg!(feature = "fpu_mask"),
+        cfg!(feature = "stack_poison")
     );
     unsafe {
         psp::sys::sceIoWrite(psp::sys::sceKernelStdout(), line.as_ptr() as *const core::ffi::c_void, line.len());

@@ -1713,7 +1713,7 @@ impl Fighter {
                     crate::map::AirOptions {
                         ignore_line: self.ignore_line,
                         skip_pass: false,
-                        cliff: None,
+                        cliff: crate::map::CliffQuery::default(),
                         ceil_heavy: false,
                     },
                     surfaces,
@@ -2021,7 +2021,7 @@ impl Fighter {
         );
         let stop_edge = crate::map::stops_at_edge(self.status.status);
         let cliff_edge = crate::map::teeters_at_edge(self).then_some(crate::map::CliffEdge {
-            facing: self.facing.sign(),
+            facing: self.facing,
             stick_x: self.input.stick_x,
         });
         if self.status.status == crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialHi)
@@ -2265,12 +2265,13 @@ impl Fighter {
             self.tick_damage_map(from, want, &surfaces);
             return;
         }
-        let cliff = crate::map::allows_cliff(self).then_some(crate::map::CliffQuery {
-            facing: self.facing.sign(),
+        let cliff = crate::map::CliffQuery {
+            enabled: crate::map::allows_cliff(self),
+            facing: self.facing,
             wait: self.cliffcatch_wait,
             reach: self.cliff_reach,
-            occupied: self.occupied_cliffs.map(|c| c.map(|(l, f)| (l, f.sign()))),
-        });
+            occupied: self.occupied_cliffs,
+        };
         let result = crate::map::move_air_pushed(
             &self.coll,
             from,
