@@ -606,6 +606,22 @@ impl StageMap {
                     .is_some_and(|(n, _)| n == first_node.saturating_add(i as u32))
             });
         }
+        // `grDisplayMakeGeometryLayer`'s `gcPlayAnimAll` has posed the
+        // groups before their first tick, so the first speed
+        // `mpCollisionPlayYakumonoAnim` measures starts there (RE-524).
+        if let Some(created) =
+            anim.and_then(|a| ssb_rom::skeleton::StageAnimator::creation_pose(pack, &a).ok())
+        {
+            for (i, group) in groups.iter_mut().enumerate() {
+                if let Some(pose) = created.node_pose(first_node.saturating_add(i as u32)) {
+                    group.translate = ssb_engine::math::Vec3::new(
+                        pose.translate[0],
+                        pose.translate[1],
+                        pose.translate[2],
+                    );
+                }
+            }
+        }
         Self {
             platforms: alloc::vec::Vec::new(),
             animator,

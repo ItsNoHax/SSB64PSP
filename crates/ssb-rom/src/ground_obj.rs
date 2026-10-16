@@ -1240,10 +1240,18 @@ impl GroundObjects {
             return [None; 3];
         }
         let t = obj.poses[r].translate;
+        // `TraI` writes the whole translation from its path (Board the
+        // Platforms' orbiting Bumpers, RE-524).
+        let path = obj.joints[r]
+            .track_value(crate::figatree::TRACK_TRA_I)
+            .is_some()
+            && obj.joints[r].interp().is_some();
         core::array::from_fn(|i| {
-            obj.joints[r]
-                .track_value(crate::figatree::TRACK_TRA_X + i)
-                .map(|_| t[i])
+            (path
+                || obj.joints[r]
+                    .track_value(crate::figatree::TRACK_TRA_X + i)
+                    .is_some())
+            .then_some(t[i])
         })
     }
 

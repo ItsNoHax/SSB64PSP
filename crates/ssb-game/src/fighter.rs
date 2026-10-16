@@ -850,6 +850,15 @@ impl Fighter {
         self.pos.z = 0.0;
     }
 
+    /// `mpCommonSetFighterAir`: [`Fighter::become_airborne`], and the
+    /// ground jump counts as spent (`jumps_used = 1`) however the fighter
+    /// left the ground (RE-524: Fox dropping through a platform has one
+    /// aerial jump, not two).
+    pub fn set_fighter_air(&mut self) {
+        self.become_airborne();
+        self.physics.jumps_used = 1;
+    }
+
     /// Lands, clearing air state.
     ///
     /// The air-to-ground velocity transfer is guarded on actually being
@@ -1827,7 +1836,9 @@ impl Fighter {
             && !crate::capture_yoshi::on_ground_lost(self)
             && !crate::grab::on_ground_lost(self)
         {
-            self.become_airborne();
+            // `ftCommonFallSetStatus` (or its hammer twin) runs
+            // `mpCommonSetFighterAir` on a grounded fighter.
+            self.set_fighter_air();
             crate::status::set_fall(self);
         }
     }
@@ -1875,6 +1886,7 @@ impl Fighter {
             | crate::status::AnyStatus::Ness(_)
             | crate::status::AnyStatus::Boss(_) => crate::status::Status::Wait,
         };
+        let no_physics = crate::status::is_ottotto(self.status.status);
         if crate::dokan::apply_ground_physics(self)
             || crate::item_use::apply_ground_physics(self)
             || crate::captain::apply_ground_physics(self)
@@ -1884,6 +1896,8 @@ impl Fighter {
             || crate::ness::apply_ground_physics(self)
             || crate::reaction::apply_ground_physics(self)
         {
+        } else if no_physics {
+            // The teeters have no `proc_physics`.
         } else if crate::status::uses_ground_friction_or_transn(self.status.status)
             && crate::motion::uses_transn(self.kind, self.status.status)
         {
@@ -1974,6 +1988,7 @@ impl Fighter {
         // out of a jostle keeps its -6.75).
         if self.status.status
             != crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialHi)
+            && !no_physics
         {
             self.physics.vel_air = Vec3::new(
                 ground_x + self.physics.vel_jostle_x,
@@ -1985,16 +2000,30 @@ impl Fighter {
         let want = Vec3::new(
             // `syVectorAdd3D(translate, &vel_air)` adds the jostle already
             // summed into `vel_air.x`, then the damage velocity on its own.
-            (self.pos.x + (ground_x + self.physics.vel_jostle_x)) + self.physics.vel_knockback.x,
+            if no_physics {
+                // `ftCommonOttottoSetStatus` zeroed `vel_air`, and nothing
+                // transfers the jostle.
+                self.pos.x + self.physics.vel_air.x + self.physics.vel_knockback.x
+            } else {
+                (self.pos.x + (ground_x + self.physics.vel_jostle_x)) + self.physics.vel_knockback.x
+            },
             self.pos.y,
-            self.pos.z
-                + ground_vel_z(
-                    self.pos.z,
-                    self.physics.vel_jostle_z,
-                    self.physics.vel_ground.z,
-                ),
+            if no_physics {
+                self.pos.z + self.physics.vel_air.z
+            } else {
+                self.pos.z
+                    + ground_vel_z(
+                        self.pos.z,
+                        self.physics.vel_jostle_z,
+                        self.physics.vel_ground.z,
+                    )
+            },
         );
         let stop_edge = crate::map::stops_at_edge(self.status.status);
+        let cliff_edge = crate::map::teeters_at_edge(self).then_some(crate::map::CliffEdge {
+            facing: self.facing.sign(),
+            stick_x: self.input.stick_x,
+        });
         if self.status.status == crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialHi)
         {
             self.fox_special_hi.pass_timer = self.fox_special_hi.pass_timer.saturating_add(1);
@@ -2006,17 +2035,29 @@ impl Fighter {
             self.hazard.vel_push,
             standing.line,
             stop_edge,
+            cliff_edge,
             &surfaces,
         );
         self.map_contacts = contacts;
         self.pos = moved.pos;
+
+        // `mpCommonProcFighterOnCliffEdge`: caught at the floor's end, the
+        // fighter teeters there.
+        if contacts.floor_edge {
+            self.floor = moved.floor;
+            crate::status::set_ottotto(self);
+            return;
+        }
 
         if crate::map::ground_callback(self, moved.floor) {
             return;
         }
 
         match moved.floor {
-            Some(f) => self.floor = Some(f),
+            Some(f) => {
+                self.floor = Some(f);
+                crate::status::ottotto_proc_map(self, &surfaces);
+            }
             // Walked off the end of the line. `mpCommonSetFighterFallOnGroundBreak`
             // drops the fighter into a fall rather than leaving it in a walk
             // with no ground under it.
@@ -2682,7 +2723,10 @@ mod tests {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
         f.pos = Vec3::new(2300.0, 4.0, 0.0);
         assert!(f.place_on_stage(dream_land()));
-        // A push toward the ledge, faster than friction can stop.
+        // A push toward the ledge, faster than friction can stop. Facing
+        // away: facing the ledge, Wait would teeter at it
+        // (`mpCommonProcFighterOnCliffEdge`).
+        f.facing = Facing::Left;
         f.physics.vel_ground.x = 30.0;
         for _ in 0..30 {
             f.tick(dream_land);
@@ -2902,8 +2946,10 @@ mod tests {
         assert!(f.place_on_stage(dream_land()));
         crate::status::set_wait(&mut f);
 
+        // A full push: short of 60 the walk teeters at the end instead
+        // (`mpCommonCheckSetFighterCliffEdge`).
         for _ in 0..40 {
-            step(&mut f, 30, 0);
+            step(&mut f, 80, 0);
             if !f.is_grounded() {
                 break;
             }
@@ -2911,6 +2957,67 @@ mod tests {
         assert!(!f.is_grounded(), "should have walked off the end");
         assert!(f.pos.x > 2318.0);
         assert_eq!(f.status.status, Status::Fall);
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_slow_walk_teeters_40_units_in_from_the_end() {
+        use crate::status::Status;
+
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.pos = Vec3::new(2200.0, 4.0, 0.0);
+        assert!(f.place_on_stage(dream_land()));
+        crate::status::set_wait(&mut f);
+        for _ in 0..60 {
+            step(&mut f, 30, 0);
+            if f.status.status == Status::Ottotto {
+                break;
+            }
+        }
+        assert_eq!(f.status.status, Status::Ottotto);
+        assert!(f.is_grounded());
+        // Dream Land's main platform ends at x = 2318.
+        assert_eq!(f.pos.x, 2318.0 - 40.0);
+        assert_eq!(f.physics.vel_ground.x, 0.0);
+        // A push short of 60 keeps teetering; the clip ends in OttottoWait.
+        for _ in 0..120 {
+            step(&mut f, 30, 0);
+        }
+        assert_eq!(f.status.status, Status::OttottoWait);
+        assert_eq!(f.pos.x, 2318.0 - 40.0);
+        // A full push walks off.
+        for _ in 0..40 {
+            step(&mut f, 80, 0);
+            if !f.is_grounded() {
+                break;
+            }
+        }
+        assert_eq!(f.status.status, Status::Fall);
+    }
+
+    /// `mpCommonSetFighterFallOnEdgeBreak` (`MAP_PROC_TYPE_STOPEDGE`): a
+    /// jab or a tilt carried to the floor's end stops on it, as
+    /// Kirby's getup roll does on the N64 (RE-524). (The roll's speed is
+    /// its animation's root motion, which this fixture does not play.)
+    #[test]
+    fn a_jab_or_a_tilt_stops_at_the_floors_end() {
+        use crate::status::{Status, StatusTiming};
+
+        for status in [Status::Attack11, Status::AttackS3] {
+            let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+            f.pos = Vec3::new(2300.0, 4.0, 0.0);
+            assert!(f.place_on_stage(dream_land()));
+            f.facing = Facing::Right;
+            crate::status::set_status(&mut f, status, 0.0, StatusTiming::unknown());
+            for _ in 0..3 {
+                f.physics.vel_ground.x = 30.0;
+                step(&mut f, 0, 0);
+            }
+            assert!(f.is_grounded(), "{status:?}");
+            assert_eq!(f.status.status, status);
+            // Dream Land's main platform ends at x = 2318.
+            assert_eq!(f.pos.x, 2318.0, "{status:?}");
+        }
     }
 
     #[test]

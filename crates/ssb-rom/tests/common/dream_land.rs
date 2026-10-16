@@ -49,7 +49,19 @@ pub fn training_fighter(
     port: u8,
     floors: &[(u16, ssb_game::collision::Segment)],
 ) -> Fighter {
-    let spawn = pack.spawn(stage, u16::from(port)).expect("spawn point");
+    training_fighter_at(pack, stage, kind, port, u16::from(port), floors)
+}
+
+/// [`training_fighter`] on `port` at the stage's map object `spawn`.
+pub fn training_fighter_at(
+    pack: &ssb_rom::pack::Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    kind: FighterKind,
+    port: u8,
+    spawn: u16,
+    floors: &[(u16, ssb_game::collision::Segment)],
+) -> Fighter {
+    let spawn = pack.spawn(stage, spawn).expect("spawn point");
     let mut f = Fighter::new(kind, port, 3);
     let d = pack.fighter(kind as u32).expect("fighter in pack");
     f.attributes = ssb_game::physics::PhysicsAttributes {

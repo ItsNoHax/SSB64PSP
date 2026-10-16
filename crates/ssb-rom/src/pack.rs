@@ -418,7 +418,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // lid glow. No layout change.
 // 114 extends 112 to lit lists, whose colour alone is lit: Samus's entry
 // capsule tube (`349+0xAD0`). No layout change.
-pub const VERSION: u32 = 114;
+// 115 adds the bonus stages' static wallpaper (`ROLE_WALLPAPER`, `GRKind`
+// 17 to 40, one texture: `119+0x26C88`, RE-524). No layout change.
+pub const VERSION: u32 = 115;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

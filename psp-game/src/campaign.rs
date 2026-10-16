@@ -267,6 +267,7 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
         items: switches,
         damage_ratio: ssb_game::stale::DAMAGE_RATIO_DEFAULT,
         demo: false,
+        skip_entry: false,
     };
     // The 1P manager's battle drops the last presentation scene's files.
     // `sc1PGameFuncStart`'s extras: the Kirby team's copies and the twelve
@@ -644,6 +645,7 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
     crate::scene_load::set_base(alloc::vec::Vec::new());
     s.enter(pack, gkind, roster, Some(VsRules { rule: ssb_game::battle::Rule::Time,
         time_limit: bonus.state.time_limit, stocks: 0, team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL,
+        skip_entry: true,
         ..VsRules::DEFAULT }));
     s.scene_gkind = gkind;
     s.vs_battle = Some(bonus.battle());
@@ -1128,9 +1130,10 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
             sp.data.stage = Stage::Bonus1 as u8;
             sp.manager.scene = Scene::Intro;
         }
-        GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall => {
+        GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide => {
             sp.data.stage = Stage::Bonus2 as u8;
-            if scene != GameScene::OnePPlatforms { sp.data.fkind = ssb_game::fighter::FighterKind::Mario; }
+            if matches!(scene, GameScene::OnePPlatformClear | GameScene::OnePPlatformFall) { sp.data.fkind = ssb_game::fighter::FighterKind::Mario; }
+            if scene == GameScene::OnePPlatformsRide { sp.data.fkind = ssb_game::fighter::FighterKind::Fox; }
             sp.manager.scene = Scene::Intro;
         }
         GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards => {

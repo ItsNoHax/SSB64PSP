@@ -4057,6 +4057,10 @@ pub fn set_any_status_preserve(
     }
     // `ftMainSetStatus`: `is_item_show = TRUE`; the sword trail stops
     // (no status passes `FTSTATUS_PRESERVE_AFTERIMAGE`).
+    // `ftMainSetStatus` forgets the platform being dropped through; only
+    // `ftCommonPassSetStatusParam` sets it again, after the change (RE-524:
+    // Fox jumping out of a Pass lands on the same platform).
+    f.ignore_line = None;
     f.is_item_show = true;
     f.afterimage.drawstatus = -1;
     f.is_smash_di = false;
@@ -4161,6 +4165,70 @@ pub fn set_wait(f: &mut Fighter) {
     set_status(f, Status::Wait, 0.0, StatusTiming::unknown());
     f.is_special_interrupt = true;
     f.interface.tag_wait = 120;
+}
+
+/// `FTCOMMON_OTTOTTO_WALK_STICK_RANGE_MIN`, `FTCOMMON_OTTOTTO_WALK_DIST_X_MIN`.
+const OTTOTTO_WALK_STICK_MIN: i32 = 60;
+const OTTOTTO_WALK_DIST_X_MIN: f32 = 60.0;
+
+/// The teeters (`ftcommonottotto.c`).
+pub fn is_ottotto(s: AnyStatus) -> bool {
+    matches!(s, AnyStatus::Common(Status::Ottotto | Status::OttottoWait))
+}
+
+fn clip_timing(f: &Fighter, status: Status) -> StatusTiming {
+    match crate::motion::anim_length(f.kind, status.into()) {
+        Some(len) => StatusTiming::frames(len),
+        None => StatusTiming::unknown(),
+    }
+}
+
+/// `ftCommonOttottoSetStatus` @ 0x80142B08: caught at a floor's end
+/// (`mpCommonProcFighterOnCliffEdge`), the fighter stops dead and teeters.
+pub fn set_ottotto(f: &mut Fighter) {
+    let t = clip_timing(f, Status::Ottotto);
+    set_status(f, Status::Ottotto, 0.0, t);
+    f.physics.vel_air = Vec3::ZERO;
+    f.physics.vel_ground.x = 0.0;
+    f.is_special_interrupt = true;
+}
+
+/// `ftCommonOttottoWaitSetStatus` @ 0x80142AC4.
+pub fn set_ottotto_wait(f: &mut Fighter) {
+    let t = clip_timing(f, Status::OttottoWait);
+    set_status(f, Status::OttottoWait, 0.0, t);
+    f.is_special_interrupt = true;
+}
+
+/// `ftCommonOttottoProcInterrupt` @ 0x80142874: the ground chain without
+/// its walk, which takes a forward push of 60.
+fn ottotto_interrupt(f: &mut Fighter) {
+    if landing_chain(f) || check_squat(f) || check_turn(f) {
+        return;
+    }
+    if f.stick.forward(f.facing) >= OTTOTTO_WALK_STICK_MIN {
+        check_walk(f);
+    }
+}
+
+/// `ftCommonOttottoProcMap` @ 0x801429F4, once the floor held: a teeter
+/// carried more than 60 units from the end it faces stands again.
+pub(crate) fn ottotto_proc_map<I, F>(f: &mut Fighter, surfaces: &F)
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = crate::weapon::MapSurface>,
+{
+    if !is_ottotto(f.status.status) {
+        return;
+    }
+    let Some(standing) = f.floor else { return };
+    // `mpCollisionGetFloorEdgeR` facing right, `...L` facing left.
+    let Some(edge) = crate::map::floor_edge(surfaces, standing.line, f.facing.sign() > 0.0) else {
+        return;
+    };
+    if (f.pos.x - edge.x).abs() > OTTOTTO_WALK_DIST_X_MIN {
+        set_wait(f);
+    }
 }
 
 /// `ftCommonWalkGetWalkStatus` @ 0x8013E340.
@@ -4523,7 +4591,9 @@ pub fn jump_force_button(stick_x: i8, is_shorthop: bool) -> (f32, f32) {
         vel_y = KNEEBEND_BUTTON_HEIGHT_CLAMP;
     }
     let out_x = if stick_x >= 0 { vel_x } else { -vel_x };
-    (out_x, vel_y)
+    // The C returns both through `s32 *`: the force is truncated toward
+    // zero before every caller scales it (RE-524).
+    (out_x as i32 as f32, vel_y as i32 as f32)
 }
 
 /// `ftCommonJumpSetStatus` @ 0x8013F880.
@@ -4617,6 +4687,9 @@ pub fn set_fall(f: &mut Fighter) {
     if crate::item_use::holds_hammer(f) {
         crate::item_use::hammer_fall(f);
         return;
+    }
+    if f.situation == Situation::Ground {
+        f.set_fighter_air();
     }
     let status = if f.physics.jumps_used >= f.attributes.jumps_max {
         Status::FallAerial
@@ -4805,6 +4878,25 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
                 set_landing(f);
             }
         }
+        // `mpCommonProcFighterCliffFloorCeil`'s `mpCommonSetFighterWaitOrLanding`
+        // (`ftcommonstatus.h`): a jump, fall or pass meeting a floor slower
+        // than 20 skips the landing (RE-524: Fox's jump onto a platform at
+        // its apex lands in Wait).
+        Status::JumpF
+        | Status::JumpB
+        | Status::JumpAerialF
+        | Status::JumpAerialB
+        | Status::Fall
+        | Status::FallAerial
+        | Status::Pass
+        | Status::GuardPass
+        | Status::StopCeil => {
+            if f.physics.vel_air.y > ATTACKAIR_SKIPLANDING_VEL_Y_MAX {
+                set_wait(f);
+            } else {
+                set_landing(f);
+            }
+        }
         // `ftCommonFallSpecialProcMap`: the shared map solver handles pass
         // and cliff checks before dispatching this landing branch.
         Status::FallSpecial => {
@@ -4835,11 +4927,13 @@ pub fn set_pass(f: &mut Fighter) {
 
 /// `ftCommonPassSetStatusParam`: `Pass`, or `GuardPass` out of a shield.
 pub fn set_pass_status(f: &mut Fighter, status: Status) {
-    f.ignore_line = f.floor.map(|s| s.line);
+    let line = f.floor.map(|s| s.line);
+    f.set_fighter_air();
     let len = f.anim.pass;
     // `ftCommonSquatProcInterrupt` and `ftCommonGuardPassSetStatus` both
     // pass `frame_begin` 1.
     set_status(f, status, 1.0, StatusTiming::animation(len, 1.0));
+    f.ignore_line = line;
     physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
     f.physics.vel_air.y = 0.0;
     f.stick.tap_y = STICKBUFFER_MAX;
@@ -5875,6 +5969,14 @@ pub fn update(f: &mut Fighter) {
             }
         }
         Status::SquatWait => squat_wait_interrupt(f),
+        // `ftCommonOttottoProcUpdate`, then the interrupt both teeters share.
+        Status::Ottotto => {
+            if f.status.animation_ended() {
+                set_ottotto_wait(f);
+            }
+            ottotto_interrupt(f);
+        }
+        Status::OttottoWait => ottotto_interrupt(f),
         Status::SquatRv => {
             if f.status.animation_ended() {
                 return anim_end_set_wait(f);
@@ -7532,6 +7634,23 @@ mod tests {
         assert_eq!(x, 80.0);
         // Never below the per-length floor, however far sideways.
         assert!(angled >= KNEEBEND_BUTTON_SHORT_MIN);
+    }
+
+    /// `ftCommonJumpGetJumpForceButton` hands its force back through
+    /// `s32 *`: an angled hop's height is truncated before
+    /// `jump_height_mul` scales it (RE-524; Mario's N64 JumpB at stick -30
+    /// leaves at 54.40, not 54.64).
+    #[test]
+    fn a_button_jumps_force_is_whole() {
+        for stick in [-80i8, -30, -11, 0, 25, 47, 80] {
+            for short in [false, true] {
+                let (x, y) = jump_force_button(stick, short);
+                assert_eq!(x, f32::from(stick));
+                assert_eq!(y, y.trunc(), "stick {stick} short {short}");
+            }
+        }
+        // 9 * sqrt(1 - (30/80)^2) + 36 = 44.34..., stored as 44.
+        assert_eq!(jump_force_button(-30, true).1, 44.0);
     }
 
     #[test]

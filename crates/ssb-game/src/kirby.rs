@@ -1558,9 +1558,9 @@ pub fn on_landing(f: &mut Fighter, y: f32) -> bool {
         return false;
     };
     match current {
+        // `mpCommonProcFighterCliffWaitOrLanding` (`ftkirbystatus.h`).
         K::JumpAerialF1 | K::JumpAerialF2 | K::JumpAerialF3 | K::JumpAerialF4 | K::JumpAerialF5 => {
-            status::set_landing(f);
-            f.land(y);
+            wait_or_landing(f, y);
         }
         K::ThrowF | K::ThrowFFall => {
             if f.physics.vel_air.y < 0.0 {

@@ -292,6 +292,10 @@ pub enum GameScene {
     OnePPlatforms,
     OnePPlatformClear,
     OnePPlatformFall,
+    /// `onepplatformsride`: Fox's Board the Platforms course, idle for 600
+    /// frames: no entry, the platform under the spawn carrying him up, and
+    /// the bonus stages' static wallpaper (RE-524).
+    OnePPlatformsRide,
     OnePRace,
     OnePRaceClear,
     OnePRaceFall,
@@ -719,7 +723,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 179] = [
+    pub const ALL: [GameScene; 180] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -728,6 +732,7 @@ impl GameScene {
         GameScene::OnePPlatforms,
         GameScene::OnePPlatformClear,
         GameScene::OnePPlatformFall,
+        GameScene::OnePPlatformsRide,
         GameScene::OnePRace,
         GameScene::OnePRaceClear,
         GameScene::OnePRaceFall,
@@ -911,6 +916,7 @@ impl GameScene {
             GameScene::OnePPlatforms => "onepplatforms",
             GameScene::OnePPlatformClear => "onepplatformclear",
             GameScene::OnePPlatformFall => "onepplatformfall",
+            GameScene::OnePPlatformsRide => "onepplatformsride",
             GameScene::OnePRace => "oneprace",
             GameScene::OnePRaceClear => "onepraceclear",
             GameScene::OnePRaceFall => "onepracefall",

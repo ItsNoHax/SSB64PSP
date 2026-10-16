@@ -66,10 +66,29 @@ pub struct Contact {
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Contacts {
     pub floor: bool,
+    /// `MAP_FLAG_FLOOREDGE`: [`CliffEdge`] caught the fighter at a floor's
+    /// end (`mpCommonCheckSetFighterCliffEdge`); it is grounded 40 units in
+    /// and teeters (`ftCommonOttottoSetStatus`).
+    pub floor_edge: bool,
     pub left_wall: Option<Contact>,
     pub right_wall: Option<Contact>,
     pub ceiling: Option<Contact>,
 }
+
+/// `MAP_PROC_TYPE_CLIFFEDGE` (`mpCommonProcFighterOnCliffEdge`): a fighter
+/// walking off its floor's end towards the way it faces, without pushing
+/// the stick past 60, stops 40 units in instead.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CliffEdge {
+    /// `lr`.
+    pub facing: f32,
+    /// `input.pl.stick_range.x`.
+    pub stick_x: i8,
+}
+
+/// `mpCommonCheckSetFighterCliffEdge`'s inset and stick limit.
+const CLIFF_EDGE_INSET: f32 = 40.0;
+const CLIFF_EDGE_STICK_MAX: i32 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CliffQuery {
@@ -955,12 +974,55 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
-    move_ground_pushed(coll, from, to, Vec3::ZERO, line, stop_edge, surfaces)
+    move_ground_pushed(coll, from, to, Vec3::ZERO, line, stop_edge, None, surfaces)
+}
+
+/// `mpCommonCheckSetFighterCliffEdge` @ 0x800DD820: past the floor's left
+/// end facing left (or its right end facing right) with the stick short of
+/// 60, the fighter stands 40 units in from that end, unless a wall within
+/// its width stands there.
+fn cliff_edge<I, F>(
+    surfaces: &F,
+    coll: &BodyColl,
+    line: u16,
+    pos: Vec3,
+    c: CliffEdge,
+) -> Option<Moved>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let (left, _) = edge(surfaces, Kind::Floor, line, false)?;
+    let (x, kind, far) = if pos.x <= left.x {
+        if !(c.facing < 0.0 && i32::from(c.stick_x) > -CLIFF_EDGE_STICK_MAX) {
+            return None;
+        }
+        (left.x + CLIFF_EDGE_INSET, Kind::LeftWall, coll.width)
+    } else {
+        if !(c.facing > 0.0 && i32::from(c.stick_x) < CLIFF_EDGE_STICK_MAX) {
+            return None;
+        }
+        let (right, _) = edge(surfaces, Kind::Floor, line, true)?;
+        (right.x - CLIFF_EDGE_INSET, Kind::RightWall, -coll.width)
+    };
+    // `mpCollisionGetFCCommonFloor`: the floor's height 40 units in.
+    let moved = follow_floor(surfaces, coll, Vec3::new(x, pos.y, pos.z), line);
+    moved.floor?;
+    let y = moved.pos.y + coll.bottom;
+    query(
+        surfaces,
+        kind,
+        Vec2::new(x, y),
+        Vec2::new(x + far, coll.center + y - coll.bottom),
+    )
+    .is_none()
+    .then_some(moved)
 }
 
 /// [`move_ground`] with `coll_data.vel_push`, added beside the line speed on
 /// the first substep. Unlike the line speed it is not part of the displacement
 /// `mpProcessUpdateMain` splits.
+#[allow(clippy::too_many_arguments)]
 pub fn move_ground_pushed<I, F>(
     coll: &BodyColl,
     from: Vec3,
@@ -968,6 +1030,7 @@ pub fn move_ground_pushed<I, F>(
     push: Vec3,
     line: u16,
     stop_edge: bool,
+    cliff_edge_query: Option<CliffEdge>,
     surfaces: F,
 ) -> (Moved, Contacts)
 where
@@ -1026,6 +1089,15 @@ where
                 }
             }
         }
+        // `MAP_PROC_TYPE_CLIFFEDGE` ends the pass either way
+        // (`is_coll_end`); only a teeter keeps the fighter grounded.
+        let mut teeter = None;
+        if let Some(c) = cliff_edge_query.filter(|_| moved.floor.is_none()) {
+            teeter = Some(cliff_edge(&surfaces, coll, line, pos, c));
+            if let Some(Some(edge)) = teeter {
+                moved = edge;
+            }
+        }
         if moved.floor.is_none() && stop_edge {
             if let Some(corner) = edge(
                 &surfaces,
@@ -1081,6 +1153,11 @@ where
         {
             moved = land(&surfaces, coll, moved.pos, hit);
             contacts.floor = moved.floor.is_some();
+            return (moved, contacts);
+        }
+        if let Some(edge) = teeter {
+            contacts.floor = false;
+            contacts.floor_edge = edge.is_some();
             return (moved, contacts);
         }
         pos = moved.pos;
@@ -1374,22 +1451,197 @@ where
     out
 }
 
+/// The statuses whose `proc_map` is `mpCommonProcFighterOnCliffEdge`
+/// (`ftcommonstatus.h`; `Dash` once it may run, `ftCommonDashProcMap`).
+pub(crate) fn teeters_at_edge(f: &Fighter) -> bool {
+    match f.status.status {
+        AnyStatus::Common(Status::Dash) => f.attributes.dash_to_run <= f.status.anim_frame,
+        AnyStatus::Common(s) => matches!(
+            s,
+            Status::Wait
+                | Status::WalkSlow
+                | Status::WalkMiddle
+                | Status::WalkFast
+                | Status::RunBrake
+                | Status::LandingLight
+                | Status::LandingHeavy
+                | Status::LandingFallSpecial
+                | Status::Appeal
+        ),
+        _ => false,
+    }
+}
+
+/// The grounded statuses whose map pass is `MAP_PROC_TYPE_STOPEDGE`
+/// (`mpCommonCheckFighterOnEdge`): `mpCommonSetFighterFallOnEdgeBreak` in
+/// the status tables (`ftcommonstatus.h`, `ft*status.h`), and the
+/// `proc_map`s that call `mpCommonProcFighterOnEdge` or check
+/// `mpCommonCheckFighterOnEdge` themselves (catch, heavy throw, item
+/// shoot, Kirby's Final Cutter and the fighters' ground specials). They
+/// stop at the floor's end instead of walking off it (RE-524: Kirby's
+/// getup roll).
 pub(crate) fn stops_at_edge(s: AnyStatus) -> bool {
-    matches!(
-        s,
-        AnyStatus::Purin(PurinStatus::SpecialN | PurinStatus::SpecialHi)
-            | AnyStatus::Ness(
-                NessStatus::SpecialHiStart | NessStatus::SpecialHiHold | NessStatus::SpecialHiEnd
+    use status::{DonkeyStatus as D, LinkStatus as L, MarioStatus as M, SamusStatus as S};
+    match s {
+        AnyStatus::Common(s) => matches!(
+            s,
+            Status::LightThrowDrop
+                | Status::LightThrowDash
+                | Status::LightThrowF
+                | Status::LightThrowB
+                | Status::LightThrowHi
+                | Status::LightThrowLw
+                | Status::LightThrowF4
+                | Status::LightThrowB4
+                | Status::LightThrowHi4
+                | Status::LightThrowLw4
+                | Status::HeavyThrowF
+                | Status::HeavyThrowB
+                | Status::HeavyThrowF4
+                | Status::HeavyThrowB4
+                | Status::SwordSwing1
+                | Status::SwordSwing3
+                | Status::SwordSwing4
+                | Status::SwordSwingDash
+                | Status::BatSwing1
+                | Status::BatSwing3
+                | Status::BatSwing4
+                | Status::BatSwingDash
+                | Status::HarisenSwing1
+                | Status::HarisenSwing3
+                | Status::HarisenSwing4
+                | Status::HarisenSwingDash
+                | Status::StarRodSwing1
+                | Status::StarRodSwing3
+                | Status::StarRodSwing4
+                | Status::StarRodSwingDash
+                | Status::LGunShoot
+                | Status::FireFlowerShoot
+                | Status::EscapeF
+                | Status::EscapeB
+                | Status::Catch
+                | Status::CatchPull
+                | Status::CatchWait
+                | Status::ThrowF
+                | Status::ThrowB
+                | Status::Attack11
+                | Status::Attack12
+                | Status::AttackDash
+                | Status::AttackS3Hi
+                | Status::AttackS3HiS
+                | Status::AttackS3
+                | Status::AttackS3LwS
+                | Status::AttackS3Lw
+                | Status::AttackHi3F
+                | Status::AttackHi3
+                | Status::AttackHi3B
+                | Status::AttackLw3
+                | Status::AttackS4Hi
+                | Status::AttackS4HiS
+                | Status::AttackS4
+                | Status::AttackS4LwS
+                | Status::AttackS4Lw
+                | Status::AttackHi4
+                | Status::AttackLw4
+                | Status::DokanStart
+                | Status::DokanEnd
+                | Status::PassiveStandF
+                | Status::PassiveStandB
+                | Status::DownForwardD
+                | Status::DownForwardU
+                | Status::DownBackD
+                | Status::DownBackU
+                | Status::DownAttackD
+                | Status::DownAttackU
+        ),
+        // Luigi shares Mario's table.
+        AnyStatus::Mario(s) => matches!(s, M::Attack13 | M::SpecialN),
+        AnyStatus::Fox(s) => matches!(
+            s,
+            FoxStatus::Attack100Start
+                | FoxStatus::Attack100Loop
+                | FoxStatus::Attack100End
+                | FoxStatus::SpecialN
+                | FoxStatus::SpecialLwStart
+                | FoxStatus::SpecialLwHit
+                | FoxStatus::SpecialLwEnd
+                | FoxStatus::SpecialLwLoop
+                | FoxStatus::SpecialLwTurn
+        ),
+        AnyStatus::Donkey(s) => matches!(
+            s,
+            D::SpecialNStart
+                | D::SpecialNLoop
+                | D::SpecialNEnd
+                | D::SpecialNFull
+                | D::SpecialLwStart
+                | D::SpecialLwLoop
+                | D::SpecialLwEnd
+        ),
+        AnyStatus::Samus(s) => {
+            matches!(
+                s,
+                S::SpecialNStart | S::SpecialNLoop | S::SpecialNEnd | S::SpecialLw
             )
-            | AnyStatus::Kirby(KirbyStatus::SpecialHi)
-            | AnyStatus::Common(Status::Catch | Status::LGunShoot | Status::FireFlowerShoot)
-            | AnyStatus::Common(
-                Status::HeavyThrowF
-                    | Status::HeavyThrowB
-                    | Status::HeavyThrowF4
-                    | Status::HeavyThrowB4
-            )
-    )
+        }
+        AnyStatus::Link(s) => matches!(
+            s,
+            L::Attack13 | L::Attack100Start | L::Attack100Loop | L::Attack100End
+        ),
+        // `ftCaptainSpecialLwDecideMapCollide` stops only once `flag3` is
+        // set; the port keeps the Falcon Kick's own map pass.
+        AnyStatus::Captain(s) => matches!(
+            s,
+            CaptainStatus::Attack13
+                | CaptainStatus::Attack100Start
+                | CaptainStatus::Attack100Loop
+                | CaptainStatus::Attack100End
+                | CaptainStatus::SpecialN
+                | CaptainStatus::SpecialLwLanding
+        ),
+        AnyStatus::Kirby(s) => matches!(
+            s,
+            KirbyStatus::Attack100Start
+                | KirbyStatus::Attack100Loop
+                | KirbyStatus::Attack100End
+                | KirbyStatus::CopyMarioSpecialN
+                | KirbyStatus::CopyLuigiSpecialN
+                | KirbyStatus::CopyFoxSpecialN
+                | KirbyStatus::CopySamusSpecialNStart
+                | KirbyStatus::CopySamusSpecialNLoop
+                | KirbyStatus::CopySamusSpecialNEnd
+                | KirbyStatus::CopyDonkeySpecialNStart
+                | KirbyStatus::CopyDonkeySpecialNLoop
+                | KirbyStatus::CopyDonkeySpecialNEnd
+                | KirbyStatus::CopyDonkeySpecialNFull
+                | KirbyStatus::SpecialHi
+                | KirbyStatus::SpecialNThrow
+                | KirbyStatus::CopyCaptainSpecialN
+        ),
+        AnyStatus::Pikachu(s) => matches!(
+            s,
+            PikachuStatus::SpecialN
+                | PikachuStatus::SpecialLwStart
+                | PikachuStatus::SpecialLwLoop
+                | PikachuStatus::SpecialLwHit
+                | PikachuStatus::SpecialLwEnd
+        ),
+        // Jigglypuff's Attack100 statuses (220 to 222) are not ported.
+        AnyStatus::Purin(s) => matches!(s, PurinStatus::SpecialN | PurinStatus::SpecialHi),
+        AnyStatus::Ness(s) => matches!(
+            s,
+            NessStatus::Attack13
+                | NessStatus::SpecialN
+                | NessStatus::SpecialHiStart
+                | NessStatus::SpecialHiHold
+                | NessStatus::SpecialHiEnd
+                | NessStatus::SpecialLwStart
+                | NessStatus::SpecialLwHold
+                | NessStatus::SpecialLwHit
+                | NessStatus::SpecialLwEnd
+        ),
+        AnyStatus::Yoshi(_) | AnyStatus::Boss(_) => false,
+    }
 }
 
 /// The statuses on `mpCommonProcFighterCliffFloorCeil`, whose ceiling test

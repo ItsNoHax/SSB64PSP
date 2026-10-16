@@ -47,6 +47,30 @@ fn every_stage_wallpaper_is_packed_under_its_kind() {
     assert_eq!(pack.stage_wallpaper(9), None);
 }
 
+/// `grWallpaperMakeStatic`: every bonus stage (Break the Targets, Board the
+/// Platforms) draws its map's one static wallpaper, the same sprite for
+/// all 24 kinds (RE-524).
+#[test]
+fn every_bonus_stage_wallpaper_is_packed_under_its_kind() {
+    let (Some(rom), Some(bytes)) = (rom(), pack_bytes()) else {
+        return;
+    };
+    let info = ssb_rom::rom::identify(&rom).unwrap();
+    let archive = Archive::open(&rom, info.region).unwrap();
+    let pack = Pack::open(&bytes).unwrap();
+    for gkind in ssb_rom::stage::BONUS_WALLPAPER_GROUNDS {
+        let map_id = ssb_rom::scene_roots::ground_map(u32::from(gkind)).unwrap();
+        let map = archive.load(map_id).unwrap();
+        let target = ssb_rom::stage::wallpaper(&map, ssb_rom::stage::BONUS_MAP_HEADER).unwrap();
+        assert_eq!(target, (119, 0x26C88), "kind {gkind}");
+        let s = pack.stage_wallpaper(gkind).unwrap();
+        assert_eq!((s.source_file, s.source_offset), target, "kind {gkind}");
+        assert_eq!(s.role, SpriteDesc::ROLE_WALLPAPER);
+        assert_eq!((s.width, s.height), (300, 220));
+        assert_direct_or_palettized(&pack.texture(s.texture).unwrap());
+    }
+}
+
 #[test]
 fn trainings_wallpapers_and_the_stage_select_sprites_are_packed() {
     let Some(bytes) = pack_bytes() else {

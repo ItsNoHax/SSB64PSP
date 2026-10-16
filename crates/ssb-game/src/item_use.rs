@@ -483,6 +483,10 @@ pub fn hammer_wait(f: &mut Fighter) {
     hammer_set(f, Status::HammerWait);
 }
 pub fn hammer_fall(f: &mut Fighter) {
+    // `ftCommonHammerFallSetStatus`.
+    if f.is_grounded() {
+        f.set_fighter_air();
+    }
     hammer_set(f, Status::HammerFall);
     crate::physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
 }

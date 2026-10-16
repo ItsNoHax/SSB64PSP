@@ -150,8 +150,6 @@ closes it.
 
 ### Front end and 1P (`MS6`)
 
-- [ ] NEXT (user report, PSP): Board the Platforms (2nd bonus round) does not match the N64; some platforms are unreachable. Compare the stage geometry, collision and per-fighter layouts with the N64.
-  - Note: the N64 bonus backdrop quads (texture `120+0x5a8`) show a teal/blue pattern where the port draws a flat (32,40,56). The bonus layer-0 translucent rectangles were missing until pack v113 (RE-521).
 - [ ] Both character selects' spotlight under a held puck; the VS select's CPU colour animation; locked shadows' noise (RE-411).
 - [ ] NEXT (user report, PSP): the intro (N64 logo, opening movie, title) has many issues: compare every scene frame-by-frame against N64 captures and fix all in-scope gaps, including the known items below. Batch 1 (the room: guard-band clipping, shade-only combiners, prim-alpha shadows; RE-519, RE-520, RE-521) is done; batches 2-5 remain, and the colour grade (R4) stays open until an accurate N64 reference exists.
 - [ ] Opening movie: the room's falling-figure pose, spotlight cone and close-up overlay shade; Fox's laser under the rolled camera; the standoff ground's dropped triangles; Yoster clouds' fringes and tint; the run's dust puff; N64 references from an accurate video plugin (RE-467, RE-468).

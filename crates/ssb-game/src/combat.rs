@@ -1593,12 +1593,37 @@ pub fn process_hit_collision(this: &mut Fighter) {
         }
         HitSource::Direct { lr } => lr,
     };
+    if let HitSource::Weapon { .. } = entry.source {
+        bumper_damage_angle(this, entry.attacker_pos);
+    }
     this.hits.damage_index = entry.placement;
     this.hits.damage_knockback = best;
     crate::spgame::live::hit(this, entry.attacker, entry.stat, entry.object);
     if this.hits.damage_element == Element::Electric {
         this.hits.hitlag_mul = 1.5;
     }
+}
+
+/// `ftMainGetBumperDamageAngle`: a weapon or item hit at angle 362 (the
+/// Bumpers') knocks the fighter away from the attacker, at the angle from
+/// the attacker to the fighter's collision centre, truncated to whole
+/// degrees, and facing it (RE-524).
+pub fn bumper_damage_angle(this: &mut Fighter, attacker: Vec3) {
+    if this.hits.damage_angle != 362 {
+        return;
+    }
+    let mut dist_x = this.pos.x - attacker.x;
+    this.hits.damage_lr = if dist_x < 0.0 { 1.0 } else { -1.0 };
+    if dist_x < 0.0 {
+        dist_x = -dist_x;
+    }
+    let dist_y = (this.pos.y + this.coll.center) - attacker.y;
+    // `F_CLC_RTOD32(syUtilsArcTan(dist_y / dist_x))` into the `s32`.
+    this.hits.damage_angle = if dist_x == 0.0 {
+        0
+    } else {
+        (ssb_engine::math::sy_arc_tan(dist_y / dist_x) / core::f32::consts::PI * 180.0) as i32
+    };
 }
 
 /// The hit effects of one logged hit, by its element
@@ -2193,5 +2218,45 @@ fn pair_mut<'a>(
     } else {
         let (lo, hi) = fighters.split_at_mut(a);
         (&mut *hi[0], &mut *lo[b])
+    }
+}
+
+#[cfg(test)]
+mod bumper_angle_tests {
+    use super::*;
+
+    fn fighter_at(x: f32, y: f32, angle: i32) -> Fighter {
+        let mut f = Fighter::new(FighterKind::Fox, 0, 0);
+        f.pos = Vec3::new(x, y, 0.0);
+        f.coll.center = 250.0;
+        f.hits.damage_angle = angle;
+        f.hits.damage_lr = 0.0;
+        f
+    }
+
+    /// `ftMainGetBumperDamageAngle`: away from the attacker, at the
+    /// truncated angle to the collision centre.
+    #[test]
+    fn angle_362_points_from_the_attacker_to_the_fighter() {
+        let mut f = fighter_at(100.0, 0.0, 362);
+        bumper_damage_angle(&mut f, Vec3::new(0.0, 100.0, 0.0));
+        // atan(150 / 100) = 56.3 degrees; the fighter is right of it.
+        assert_eq!((f.hits.damage_angle, f.hits.damage_lr), (56, -1.0));
+
+        let mut f = fighter_at(-100.0, 0.0, 362);
+        bumper_damage_angle(&mut f, Vec3::new(0.0, 350.0, 0.0));
+        // Below and left: atan(-1) truncates to -45 and faces right.
+        assert_eq!((f.hits.damage_angle, f.hits.damage_lr), (-45, 1.0));
+
+        let mut f = fighter_at(0.0, 0.0, 362);
+        bumper_damage_angle(&mut f, Vec3::new(0.0, -500.0, 0.0));
+        assert_eq!((f.hits.damage_angle, f.hits.damage_lr), (0, -1.0));
+    }
+
+    #[test]
+    fn other_angles_are_left_alone() {
+        let mut f = fighter_at(100.0, 0.0, 361);
+        bumper_damage_angle(&mut f, Vec3::new(0.0, 100.0, 0.0));
+        assert_eq!((f.hits.damage_angle, f.hits.damage_lr), (361, 0.0));
     }
 }

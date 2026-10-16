@@ -862,6 +862,24 @@ impl StageAnimator {
         }
     }
 
+    /// The pose `grDisplayMakeGeometryLayer`'s `gcPlayAnimAll` leaves on a
+    /// stage layer when it is made, before its first tick: frame zero
+    /// parsed, time not advanced. [`Self::start`]'s first tick plays this
+    /// and the next frame at once, so a moving collision group's first
+    /// speed is measured from here, not from the rest pose
+    /// (`mpCollisionPlayYakumonoAnim`, RE-524).
+    pub fn creation_pose(
+        pack: &Pack<'_>,
+        anim: &AnimDesc,
+    ) -> Result<Self, crate::objanim::AnimError> {
+        let mut a = Self::new();
+        a.start_changed(pack, anim);
+        if let Some(script) = pack.anim_script(anim) {
+            a.tick(script)?;
+        }
+        Ok(a)
+    }
+
     /// The node a joint drives, and the pose it has reached. Exposed so a
     /// verifier can compare a packed replay against one run straight off the
     /// archive, which is the check that the packing path — script offsets, node

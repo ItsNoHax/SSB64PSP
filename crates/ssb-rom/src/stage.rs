@@ -396,6 +396,17 @@ pub const COMMON_GROUND_FILES: [u32; 17] = [
 /// Final Destination. Race to the Finish has none.
 pub const ONE_P_WALLPAPER_GROUNDS: [(u8, u32); 4] = [(12, 0x14), (13, 0x14), (14, 0x14), (16, 0)];
 
+/// The bonus stages by `GRKind` (`nGRKindBonusStageStart` to
+/// `nGRKindBonusStageEnd`: Break the Targets, then Board the Platforms,
+/// Mario to Ness), which `grWallpaperMakeDecideKind` gives the static
+/// wallpaper of their map's header (`ll*MapMapHeader`, at
+/// [`BONUS_MAP_HEADER`]).
+pub const BONUS_WALLPAPER_GROUNDS: core::ops::RangeInclusive<u8> = 17..=40;
+
+/// `llGRBonus1MarioMapMapHeader` to `llGRBonus2NessMapMapHeader`: every
+/// bonus map holds its `MPGroundData` at 0.
+pub const BONUS_MAP_HEADER: u32 = 0;
+
 /// How to Play's stage (`nGRKindExplain`), whose header
 /// (`llGRExplainMapMapHeader`) is at 0: `grWallpaperMakeCommon` draws its
 /// wallpaper.

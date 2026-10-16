@@ -7103,6 +7103,51 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         )?;
         sprites += 1;
     }
+    // The bonus stages' wallpaper (`grWallpaperMakeStatic` for every
+    // `gkind >= nGRKindBonusStageStart`): each Break the Targets and Board
+    // the Platforms map names one sprite, packed once under every kind.
+    let mut bonus: Option<((u32, u32), ssb_rom::sprite::Sprite, u32)> = None;
+    for gkind in ssb_rom::stage::BONUS_WALLPAPER_GROUNDS {
+        let map_id = ssb_rom::scene_roots::ground_map(u32::from(gkind))
+            .ok_or_else(|| format!("bonus kind {gkind}: no map"))?;
+        let map = loaded
+            .files
+            .get(map_id as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("stage file {map_id} missing"))?;
+        let target = ssb_rom::stage::wallpaper(map, ssb_rom::stage::BONUS_MAP_HEADER)
+            .ok_or_else(|| format!("stage file {map_id}: no wallpaper"))?;
+        if bonus.as_ref().is_none_or(|(t, _, _)| *t != target) {
+            let (file, at) = target;
+            let f = loaded
+                .files
+                .get(file as usize)
+                .and_then(Option::as_ref)
+                .ok_or_else(|| format!("wallpaper file {file} missing"))?;
+            let s = ssb_rom::sprite::decode(f, at)
+                .map_err(|e| format!("wallpaper {file}+{at:#x}: {e:?}"))?;
+            let tex = ssb_rom::psp_texture::pack_rgba(
+                &s.image,
+                ssb_rom::psp_texture::Psm::Psm5551,
+                swizzle,
+            );
+            let texture = writer.add_texture(&tex, true, true);
+            bonus = Some((target, s, texture));
+        }
+        let Some(((file, at), s, texture)) = bonus.as_ref() else {
+            unreachable!()
+        };
+        writer.add_sprite(sprite_desc(
+            *file,
+            *at,
+            s,
+            *texture,
+            0,
+            ssb_rom::pack::SpriteDesc::ROLE_WALLPAPER,
+            gkind,
+        ));
+        sprites += 1;
+    }
     for file in ssb_rom::sprite::TRAINING_WALLPAPER_FILES {
         add_wallpaper(
             &mut writer,
