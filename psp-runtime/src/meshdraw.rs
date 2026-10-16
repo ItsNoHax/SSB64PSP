@@ -217,8 +217,13 @@ pub struct DrawState {
     /// The scene's stage light direction for this frame, set by
     /// [`Self::set_stage_light`]. Only primitives whose `LIGHT_1`/`LIGHT_2`
     /// register is animated (`LIGHT1_ANIM`/`LIGHT2_ANIM`, RE-322) light with
-    /// it; every other stage primitive keeps its baked shade.
+    /// it, plus, under [`Self::static_lights`], those that write both
+    /// colours; every other primitive keeps its baked shade.
     stage_light: Option<[i8; 3]>,
+    /// Set by [`Self::set_scene_light`]: a lit primitive whose own list
+    /// writes both light colours is lit by [`Self::stage_light`] too
+    /// (`ssb_rom::anim_color::light_scope`, RE-529).
+    static_lights: bool,
     /// `Some` while an item colour animation's draw has installed its
     /// constant fog ([`crate::gu::Gpu::set_constant_fog`]): only
     /// [`flags::ENV_LERP`] primitives, whose second combiner cycle blends
@@ -376,6 +381,7 @@ impl DrawState {
         self.runtime_fighter_light = false;
         self.authored_lights_only = false;
         self.stage_light = None;
+        self.static_lights = false;
         self.node_light = None;
         self.env_lerp_fog = None;
         self.draws = 0;
@@ -437,6 +443,17 @@ impl DrawState {
     /// by it.
     pub fn set_stage_light(&mut self, angles_degrees: [f32; 2]) {
         self.stage_light = Some(ssb_engine::rsp_light::reflect_light_dir(angles_degrees));
+    }
+
+    /// Records a movie's scene light for this frame (RE-529): the
+    /// `*FuncLights` list's `ftDisplayLightsDrawReflect` direction, which
+    /// the RSP applies to every lit vertex. Unlike [`Self::set_stage_light`]
+    /// it also lights a primitive whose own list writes both light colours
+    /// as literals (the opening's ships write `LIGHT_1` white and `LIGHT_2`
+    /// 0x80 before each part), instead of the pack's fixed-direction bake.
+    pub fn set_scene_light(&mut self, angles_degrees: [f32; 2]) {
+        self.set_stage_light(angles_degrees);
+        self.static_lights = true;
     }
 
     /// The world light a lit primitive of the current scope reads: the
@@ -1146,6 +1163,7 @@ unsafe fn apply_material(
         p.flags,
         st.runtime_fighter_light && (!st.authored_lights_only || p.flags & authored == authored),
         st.stage_light.is_some(),
+        st.static_lights,
     );
     if let Some(on) = st.env_lerp_fog {
         let want = p.flags & flags::ENV_LERP != 0;

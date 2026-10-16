@@ -717,7 +717,7 @@ impl Runtime {
                         gpu.clear_depth();
                     }
                     self.view(gpu, st, a, persp);
-                    st.set_stage_light(world.light);
+                    st.set_scene_light(world.light);
                     for head in [Head::Zero, Head::One] {
                         st.heads = match head {
                             Head::One => meshdraw::Heads::Head1,
