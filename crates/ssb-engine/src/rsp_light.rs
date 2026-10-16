@@ -50,7 +50,7 @@ pub fn reflect_light_dir(angles_degrees: [f32; 2]) -> [i8; 3] {
 /// The modelview the RSP lights with is its own product of the joints'
 /// `G_MTX_MUL` matrices (`gcDrawDObjTree...`, `objdisplay.c:1111`), and the
 /// microcode's matrix multiply ends in `vmadn`/`vmadh`, which clamp an
-/// overflowing entry to `0x7FFF_FFFF` or `0x8000_0000` ([`saturate`]). The
+/// overflowing entry to `0x7FFF_FFFF` or `0x8000_0000` (`accumulatorSaturate`). The
 /// port's float product saturates the same way; a NaN entry, which would
 /// fault the N64's conversion, becomes 0. [`f32_to_i32_sat`] does both on
 /// the bits: Rust's `as` would run `trunc.w.s` on the out-of-range value
@@ -58,7 +58,21 @@ pub fn reflect_light_dir(angles_degrees: [f32; 2]) -> [i8; 3] {
 ///
 /// [`f32_to_i32_sat`]: crate::math::f32_to_i32_sat
 pub fn fixed_rows(rows: [[f32; 3]; 3]) -> [[i32; 3]; 3] {
-    rows.map(|r| r.map(|v| crate::math::f32_to_i32_sat(v * 65536.0)))
+    let mut fixed = [[0; 3]; 3];
+    for (out, row) in fixed.iter_mut().zip(rows) {
+        for (out, v) in out.iter_mut().zip(row) {
+            *out = to_fixed(v);
+        }
+    }
+    fixed
+}
+
+/// One [`fixed_rows`] entry. Out of line, like the steps of
+/// [`transform_light_dir`]: a per-node light runs each once, so a copy per
+/// entry would cost the PSP's instruction cache more than the calls.
+#[inline(never)]
+fn to_fixed(v: f32) -> i32 {
+    crate::math::f32_to_i32_sat(v * 65536.0)
 }
 
 /// The RSP's `VRSQ` table (ares `RSP::power`): entry `i` holds the largest
@@ -87,6 +101,7 @@ const RSQ: [u16; 512] = {
 };
 
 /// `VRSQL` after `VRSQH`: the 32-bit reciprocal square root of `input`.
+#[inline(never)]
 fn vrsq(input: i32) -> u32 {
     let mask = input >> 31;
     let mut data = input ^ mask;
@@ -101,29 +116,11 @@ fn vrsq(input: i32) -> u32 {
     }
     let data = data as u32;
     let shift = data.leading_zeros();
-    let index = ((u64::from(data) << shift) & 0x7fc0_0000) >> 22;
+    // `data << shift` keeps every bit: `shift` is its leading zeros.
+    let index = ((data << shift) & 0x7fc0_0000) >> 22;
     let r = i32::from(RSQ[(index as usize & 0x1fe) | (shift as usize & 1)]);
     let r = (0x10000 | r) << 14;
     ((r >> ((31 - shift) >> 1)) ^ mask) as u32
-}
-
-/// Wraps to the vector unit's 48-bit accumulator.
-fn acc48(a: i64) -> i64 {
-    (a << 16) >> 16
-}
-
-/// `accumulatorSaturate`: the middle (`upper`) or low slice when the
-/// accumulator fits in 32 signed bits, else the clamp value.
-fn saturate(acc: i64, upper: bool, negative: u16, positive: u16) -> u16 {
-    if acc < -(1i64 << 31) {
-        negative
-    } else if acc >= 1i64 << 31 {
-        positive
-    } else if upper {
-        (acc >> 16) as u16
-    } else {
-        acc as u16
-    }
 }
 
 /// F3DEX2 2.04H `continue_light_dir_xfrm`: the world light direction in the
@@ -131,56 +128,89 @@ fn saturate(acc: i64, upper: bool, negative: u16, positive: u16) -> u16 {
 /// and stored back as signed bytes. Component `k` is `rows[k] . dir`.
 pub fn transform_light_dir(rows: [[i32; 3]; 3], dir: [i8; 3]) -> [i8; 3] {
     // vmudn/vmadh over y, x, z: X_k = sum(m[k][j] * (dir_j << 8)) >> 16.
-    let mut lo = [0i64; 3];
-    let mut hi = [0i64; 3];
-    for k in 0..3 {
-        let mut acc = 0i64;
-        for j in [1, 0, 2] {
-            let v = i64::from(dir[j]) << 8;
-            let raw = rows[k][j] as u32;
-            let int = i64::from((raw >> 16) as u16 as i16);
-            let frac = i64::from(raw & 0xFFFF);
-            acc = acc48(acc + frac * v);
-            acc = acc48(acc + ((int * v) << 16));
-        }
-        lo[k] = (acc >> 16) & 0xFFFF;
-        hi[k] = i64::from((acc >> 32) as u16 as i16);
-    }
-    // Squares: vmudl/vmadm/vmadn (low slice) then vmadh (middle slice).
-    let mut sq_lo = [0i64; 3];
-    let mut sq_hi = [0i64; 3];
-    for k in 0..3 {
-        let mut acc = (lo[k] * lo[k]) >> 16;
-        acc = acc48(acc + hi[k] * lo[k]);
-        acc = acc48(acc + lo[k] * hi[k]);
-        sq_lo[k] = i64::from(saturate(acc, false, 0, 0xFFFF));
-        acc = acc48(acc + ((hi[k] * hi[k]) << 16));
-        sq_hi[k] = i64::from(saturate(acc, true, 0x8000, 0x7FFF) as i16);
-    }
+    // The rest reads the 48-bit accumulator's bits 16..47 only. It wraps,
+    // so they are floor(sum / 2^16) modulo 2^32 in any order of the terms,
+    // which 32-bit wrapping arithmetic gives exactly: every `int * v` and
+    // `frac * v` fits in 32 bits, and the products' low halves carry in.
+    //
+    // No later step wraps the 48-bit accumulator either, so each is the
+    // exact product it stands for, read through the microcode's
+    // saturations: on the PSP's 32-bit core a fraction of the 64-bit
+    // form's code and time (the tests keep that form as
+    // `transform_light_dir_wide`).
+    //
+    // Each step is out of line and called per component: the PSP runs this
+    // once per lit node, from a cold instruction cache, so its size is its
+    // cost (RE-514).
+    let x = [0, 1, 2].map(|k| light_component(rows[k], dir));
+    let squares = x.map(square_slices);
     // vaddc/vadd: the 32-bit sum of squares, carry from the low halves.
-    let clamp16 = |v: i64| v.clamp(-32768, 32767);
-    let sum = sq_lo[0] + sq_lo[1];
-    let high = clamp16(sq_hi[0] + sq_hi[1] + (sum >> 16));
-    let sum2 = (sum & 0xFFFF) + sq_lo[2];
-    let high = clamp16(high + sq_hi[2] + (sum2 >> 16));
-    let r = vrsq(((high as i32) << 16) | (sum2 & 0xFFFF) as i32);
-    let r_lo = i64::from(r & 0xFFFF);
-    let r_hi = i64::from((r >> 16) as u16 as i16);
-    // Normalise (vmudl/vmadm/vmadn/vmadh), scale by 0x100, `spv` the bytes.
-    let mut out = [0i8; 3];
-    for k in 0..3 {
-        let mut acc = (lo[k] * r_lo) >> 16;
-        acc = acc48(acc + hi[k] * r_lo);
-        acc = acc48(acc + lo[k] * r_hi);
-        let low = i64::from(saturate(acc, false, 0, 0xFFFF));
-        acc = acc48(acc + ((hi[k] * r_hi) << 16));
-        let high = i64::from(saturate(acc, true, 0x8000, 0x7FFF) as i16);
-        let mut acc = acc48(low * 0x100);
-        acc = acc48(acc + ((high * 0x100) << 16));
-        let e = saturate(acc, true, 0x8000, 0x7FFF) as i16;
-        out[k] = (e >> 8) as i8;
+    let clamp16 = |v: i32| v.clamp(-32768, 32767);
+    let sum = squares[0].0 + squares[1].0;
+    let high = clamp16(squares[0].1 + squares[1].1 + (sum >> 16));
+    let sum2 = (sum & 0xFFFF) + squares[2].0;
+    let high = clamp16(high + squares[2].1 + (sum2 >> 16));
+    let r = vrsq((high << 16) | (sum2 & 0xFFFF)) as i32;
+    x.map(|x| normalize_component(x, r))
+}
+
+/// Component `X` of [`transform_light_dir`]: `row . (dir << 8)`, bits
+/// 16..47 of the 48-bit accumulator.
+#[inline(never)]
+fn light_component(row: [i32; 3], dir: [i8; 3]) -> i32 {
+    let mut high = 0i32;
+    let mut low = 0i32;
+    for j in 0..3 {
+        let v = i32::from(dir[j]) << 8;
+        let raw = row[j] as u32;
+        let int = i32::from((raw >> 16) as u16 as i16);
+        let frac = (raw & 0xFFFF) as i32;
+        let p = frac * v;
+        high = high.wrapping_add(int * v).wrapping_add(p >> 16);
+        low += p & 0xFFFF;
     }
-    out
+    high.wrapping_add(low >> 16)
+}
+
+/// `X^2`'s low and middle slices (vmudl/vmadm/vmadn, then vmadh). With
+/// `X = hi * 2^16 + lo`, the low slice reads `lo*lo >> 16 + 2*hi*lo` and the
+/// middle one `floor(X^2 / 2^16)`, whose middle slice is `X^2`'s high word
+/// (never negative).
+#[inline(never)]
+fn square_slices(x: i32) -> (i32, i32) {
+    let (lo, hi) = halves(x);
+    let low = low_slice(i64::from(((lo as u32 * lo as u32) >> 16) as i32) + 2 * i64::from(hi * lo));
+    let high = ((i64::from(x) * i64::from(x)) >> 32).min(0x7FFF) as i32;
+    (low, high)
+}
+
+/// Normalises component `x` by the reciprocal square root `r`
+/// (vmudl/vmadm/vmadn/vmadh), scales it by 0x100 and stores its byte
+/// (`spv`). The normalised value's middle slice `high` is `X * R`'s high
+/// word clamped to 16 bits, and with its low slice `low` the stored byte is
+/// the middle slice of `0x100 * (high * 2^16 + low)` shifted down 8: `high`
+/// clamped to a byte, whatever `low` is.
+fn normalize_component(x: i32, r: i32) -> i8 {
+    ((i64::from(x) * i64::from(r)) >> 32).clamp(-128, 127) as i8
+}
+
+/// `x`'s unsigned low and signed high 16 bits: `x = hi * 2^16 + lo`.
+#[inline(always)]
+fn halves(x: i32) -> (i32, i32) {
+    (x & 0xFFFF, x >> 16)
+}
+
+/// `accumulatorSaturate`'s low slice of an accumulator `acc`: the low 16
+/// bits when it fits in 32 signed bits, else the clamp value.
+#[inline(always)]
+fn low_slice(acc: i64) -> i32 {
+    if acc < -(1i64 << 31) {
+        0
+    } else if acc >= 1i64 << 31 {
+        0xFFFF
+    } else {
+        acc as i32 & 0xFFFF
+    }
 }
 
 /// [`transform_light_dir`] for a float 3x3 (`rows[i]` = image of axis `i`).
@@ -191,6 +221,7 @@ pub fn object_light_dir(rows: [[f32; 3]; 3], dir: [i8; 3]) -> [i8; 3] {
 /// `lights_dircoloraccum2`'s clamped dot product of a vertex's signed-byte
 /// normal and the object-space light: `2 * (n . d)`, 0 when facing away,
 /// saturated at `0x7FFF`.
+#[inline]
 pub fn dot16(normal: [i8; 3], dir: [i8; 3]) -> u16 {
     let s: i32 = (0..3)
         .map(|i| i32::from(normal[i]) * i32::from(dir[i]))
@@ -205,6 +236,7 @@ pub fn dot16(normal: [i8; 3], dir: [i8; 3]) -> u16 {
 /// One shade channel: ambient (`LIGHT_2`) plus light colour (`LIGHT_1`)
 /// times [`dot16`], through `vmulf`/`vmacf` and the `suv` store. Saturates
 /// at 255.
+#[inline]
 pub fn shade(ambient: u8, color: u8, dot: u16) -> u8 {
     // `(a << 7) * 0x7FFF * 2 + 0x8000 + (c << 7) * dot * 2`, `>> 16`: every
     // term is a multiple of 256, so it stays in 32 bits divided by 256.
@@ -214,17 +246,20 @@ pub fn shade(ambient: u8, color: u8, dot: u16) -> u8 {
 
 /// A lit vertex's shade alpha: its own fourth byte through the ambient
 /// path's `vmulf` (255 becomes 254).
+#[inline]
 pub fn shade_alpha(alpha: u8) -> u8 {
     shade(alpha, 0, 0)
 }
 
 /// The RDP colour combiner's `PRIM * SHADE`: `(p * s + 0x80) >> 8`.
+#[inline]
 pub fn prim_times_shade(prim: u8, shade: u8) -> u8 {
     ((u32::from(prim) * u32::from(shade) + 0x80) >> 8) as u8
 }
 
 /// A lit vertex's RGB: [`shade`] per channel from `light` (`LIGHT_1`) and
 /// `ambient` (`LIGHT_2`), scaled by the combiner's `PRIM` when it has one.
+#[inline]
 pub fn lit_rgb(dot: u16, light: [u8; 3], ambient: [u8; 3], prim: Option<[u8; 3]>) -> [u8; 3] {
     let s = [0, 1, 2].map(|i| shade(ambient[i], light[i], dot));
     match prim {
@@ -236,6 +271,128 @@ pub fn lit_rgb(dot: u16, light: [u8; 3], ambient: [u8; 3], prim: Option<[u8; 3]>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Wraps to the vector unit's 48-bit accumulator.
+    fn acc48(a: i64) -> i64 {
+        (a << 16) >> 16
+    }
+
+    /// `accumulatorSaturate`: the middle (`upper`) or low slice when the
+    /// accumulator fits in 32 signed bits, else the clamp value.
+    fn saturate(acc: i64, upper: bool, negative: u16, positive: u16) -> u16 {
+        if acc < -(1i64 << 31) {
+            negative
+        } else if acc >= 1i64 << 31 {
+            positive
+        } else if upper {
+            (acc >> 16) as u16
+        } else {
+            acc as u16
+        }
+    }
+
+    /// `transform_light_dir` as first written: the microcode's 48-bit
+    /// accumulator in 64-bit arithmetic.
+    fn transform_light_dir_wide(rows: [[i32; 3]; 3], dir: [i8; 3]) -> [i8; 3] {
+        let mut lo = [0i64; 3];
+        let mut hi = [0i64; 3];
+        for k in 0..3 {
+            let mut acc = 0i64;
+            for j in [1, 0, 2] {
+                let v = i64::from(dir[j]) << 8;
+                let raw = rows[k][j] as u32;
+                let int = i64::from((raw >> 16) as u16 as i16);
+                let frac = i64::from(raw & 0xFFFF);
+                acc = acc48(acc + frac * v);
+                acc = acc48(acc + ((int * v) << 16));
+            }
+            lo[k] = (acc >> 16) & 0xFFFF;
+            hi[k] = i64::from((acc >> 32) as u16 as i16);
+        }
+        let mut sq_lo = [0i64; 3];
+        let mut sq_hi = [0i64; 3];
+        for k in 0..3 {
+            let mut acc = (lo[k] * lo[k]) >> 16;
+            acc = acc48(acc + hi[k] * lo[k]);
+            acc = acc48(acc + lo[k] * hi[k]);
+            sq_lo[k] = i64::from(saturate(acc, false, 0, 0xFFFF));
+            acc = acc48(acc + ((hi[k] * hi[k]) << 16));
+            sq_hi[k] = i64::from(saturate(acc, true, 0x8000, 0x7FFF) as i16);
+        }
+        let clamp16 = |v: i64| v.clamp(-32768, 32767);
+        let sum = sq_lo[0] + sq_lo[1];
+        let high = clamp16(sq_hi[0] + sq_hi[1] + (sum >> 16));
+        let sum2 = (sum & 0xFFFF) + sq_lo[2];
+        let high = clamp16(high + sq_hi[2] + (sum2 >> 16));
+        let r = vrsq(((high as i32) << 16) | (sum2 & 0xFFFF) as i32);
+        let r_lo = i64::from(r & 0xFFFF);
+        let r_hi = i64::from((r >> 16) as u16 as i16);
+        let mut out = [0i8; 3];
+        for k in 0..3 {
+            let mut acc = (lo[k] * r_lo) >> 16;
+            acc = acc48(acc + hi[k] * r_lo);
+            acc = acc48(acc + lo[k] * r_hi);
+            let low = i64::from(saturate(acc, false, 0, 0xFFFF));
+            acc = acc48(acc + ((hi[k] * r_hi) << 16));
+            let high = i64::from(saturate(acc, true, 0x8000, 0x7FFF) as i16);
+            let mut acc = acc48(low * 0x100);
+            acc = acc48(acc + ((high * 0x100) << 16));
+            let e = saturate(acc, true, 0x8000, 0x7FFF) as i16;
+            out[k] = (e >> 8) as i8;
+        }
+        out
+    }
+
+    /// The 32-bit accumulation gives the 48-bit one's result for every
+    /// input: random matrices over the whole s15.16 range, the extremes,
+    /// and every direction byte.
+    #[test]
+    fn the_32_bit_light_transform_matches_the_48_bit_accumulator() {
+        const EDGES: [i32; 10] = [
+            i32::MIN,
+            i32::MIN + 1,
+            -65536,
+            -1,
+            0,
+            1,
+            0xFFFF,
+            0x10000,
+            i32::MAX - 1,
+            i32::MAX,
+        ];
+        let mut state = 0x1234_5678u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        for case in 0..400_000 {
+            let rows = [0; 3].map(|_| {
+                [0; 3].map(|_| match case % 3 {
+                    0 => next() as i32,
+                    1 => EDGES[next() as usize % EDGES.len()],
+                    _ => (next() as i32) >> (next() % 24),
+                })
+            });
+            let dir = [0; 3].map(|_| next() as i8);
+            assert_eq!(
+                transform_light_dir_wide(rows, dir),
+                transform_light_dir(rows, dir),
+                "{rows:?} {dir:?}"
+            );
+        }
+        for x in [i8::MIN, -1, 0, 1, i8::MAX] {
+            for y in i8::MIN..=i8::MAX {
+                let rows = [[i32::MIN, i32::MAX, -1], [i32::MAX; 3], [i32::MIN; 3]];
+                let dir = [x, y, y.wrapping_neg()];
+                assert_eq!(
+                    transform_light_dir_wide(rows, dir),
+                    transform_light_dir(rows, dir)
+                );
+            }
+        }
+    }
 
     // Every expected byte below is SSB64's F3DEX2 2.04H output on the cxd4
     // LLE RSP for these synthetic inputs (RE-514).

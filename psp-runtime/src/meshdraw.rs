@@ -97,6 +97,12 @@ const FLOAT_UV_VERTEX_FORMAT: VertexType = VertexType::from_bits_truncate(
         | VertexType::TRANSFORM_3D.bits(),
 );
 
+/// [`FLOAT_UV_VERTEX_FORMAT`] drawn through a primitive's own index list
+/// ([`expand_float_uv_corners`]' range copy).
+const INDEXED_FLOAT_UV_VERTEX_FORMAT: VertexType = VertexType::from_bits_truncate(
+    FLOAT_UV_VERTEX_FORMAT.bits() | VertexType::INDEX_16BIT.bits(),
+);
+
 /// Maps a packed `Psm` discriminant back to the GE enum.
 ///
 /// The discriminants come from `ssb_rom::psp_texture::Psm`; keep in step.
@@ -1149,15 +1155,16 @@ fn material_colors(
     }
 }
 
-/// Applies a primitive's material state.
+/// Applies a primitive's material state. `effect_colors` is
+/// [`material_colors`] for `p`, which the caller computes once and reuses.
 unsafe fn apply_material(
     pack: &Pack<'_>,
     p: &PrimDesc,
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
+    effect_colors: Option<ssb_rom::skeleton::EffectColors>,
 ) -> ssb_rom::anim_color::LightScope {
-    let effect_colors = material_colors(st.color_override, p, mat_anim, effect_mat_anim);
     let authored = flags::LIGHT1_COLOR | flags::LIGHT2_COLOR;
     let light_scope = ssb_rom::anim_color::light_scope(
         p.flags,
@@ -1567,9 +1574,9 @@ unsafe fn draw_mesh_vertices(
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
 ) -> u32 {
     let mut tris = 0u32;
-    let clip_mvp = st
+    let clip = st
         .clip_view_proj
-        .and_then(|vp| guard_clip_mvp(&vp, st.texgen_model.as_ref()?, verts));
+        .and_then(|vp| guard_clip(&vp, st.texgen_model.as_ref()?, verts));
     for i in 0..mesh.prim_count {
         let Some(p) = pack.prim(mesh.first_prim + i) else {
             continue;
@@ -1589,7 +1596,8 @@ unsafe fn draw_mesh_vertices(
         st.texture_override = st
             .texture_part_mesh
             .and_then(|mesh| texture_part_override(pack, mesh, i, st.texture_part_ids));
-        let light_scope = apply_material(pack, &p, st, mat_anim, effect_mat_anim);
+        let effect_colors = material_colors(st.color_override, &p, mat_anim, effect_mat_anim);
+        let light_scope = apply_material(pack, &p, st, mat_anim, effect_mat_anim, effect_colors);
         st.texture_override = None;
         let lit = if light_scope == ssb_rom::anim_color::LightScope::Off {
             None
@@ -1598,8 +1606,7 @@ unsafe fn draw_mesh_vertices(
                 .map(|dir| LitPrim::new(&p, dir, st.light_registers))
         };
 
-        let effect_colors = material_colors(st.color_override, &p, mat_anim, effect_mat_anim)
-            .filter(|c| c.prim.is_some() || c.env.is_some());
+        let effect_colors = effect_colors.filter(|c| c.prim.is_some() || c.env.is_some());
         let linear_texgen = p.flags & flags::TEXTURE_GEN_LINEAR != 0;
         let signed_clamp_uv = p.flags & flags::SIGNED_CLAMP_UV != 0;
         crate::profile::stop_fine(crate::profile::Span::Material, material_t);
@@ -1627,8 +1634,13 @@ unsafe fn draw_mesh_vertices(
             )
         };
         let (vtype, index_ptr, vertex_ptr) = submission;
-        let (vtype, index_ptr, vertex_ptr, count) = match clip_mvp {
-            Some(mvp) => clip_submission(&mvp, (vtype.bits(), index_ptr, vertex_ptr), p.index_count),
+        let (vtype, index_ptr, vertex_ptr, count) = match &clip {
+            Some(clip) => clip_submission(
+                clip,
+                indices,
+                (vtype.bits(), index_ptr, vertex_ptr),
+                p.index_count,
+            ),
             None => None,
         }
         .unwrap_or((vtype, index_ptr, vertex_ptr, p.index_count));
@@ -1681,16 +1693,73 @@ fn texture_part_override(pack: &Pack<'_>, mesh: u32, i: u32, ids: [i8; 2]) -> Op
 /// port sets.
 const GUARD_BAND: f32 = 2.0;
 
-/// [`draw_mesh_vertices`]' clip transform for `verts` under `model`: the
-/// camera's `projection * view * model`, when some vertex lies outside the
-/// guard band or behind the near plane and the GE could drop a triangle the
-/// N64 draws ([`ssb_engine::guard_clip`]). `None` otherwise, the common
-/// case, leaving the mesh's submission as packed.
-fn guard_clip_mvp(
+/// Most vertices a mesh's [`GuardClip`] outcode table holds. A larger mesh
+/// takes each corner's outcode from its vertex instead, with the same
+/// result. The opening's movie meshes stay far below it.
+const CLIP_CODES_MAX: usize = 2048;
+
+/// [`guard_clip`]'s per-vertex outcode table, one mesh at a time: only
+/// [`draw_mesh_vertices`] reads it, while it draws that mesh.
+static mut CLIP_CODES: [u8; CLIP_CODES_MAX] = [0; CLIP_CODES_MAX];
+
+/// A mesh's guard-band clip ([`ssb_engine::guard_clip`]): its clip
+/// transform and every vertex's outcode, taken once per mesh and read by
+/// each primitive through its index list (RE-519).
+struct GuardClip<'a> {
+    mvp: [[f32; 4]; 4],
+    verts: &'a [u8],
+    /// `codes[i]` is vertex `i`'s outcode; `None` for a mesh past
+    /// [`CLIP_CODES_MAX`].
+    codes: Option<&'a [u8]>,
+}
+
+impl GuardClip<'_> {
+    /// The outcode of vertex `index`.
+    #[inline(always)]
+    fn code(&self, index: usize) -> u8 {
+        match self.codes.and_then(|codes| codes.get(index)) {
+            Some(&code) => code,
+            None => self.vertex_code(index),
+        }
+    }
+
+    /// [`Self::code`] without the table.
+    #[cold]
+    #[inline(never)]
+    fn vertex_code(&self, index: usize) -> u8 {
+        vertex_outcode(&self.mvp, self.verts, index)
+    }
+}
+
+/// The outcode of the packed vertex at `index` in `verts` under `mvp`:
+/// its position as the GE's `GU_VERTEX_16BIT` reads it, as
+/// [`decode_corner`] decodes it. A vertex past the end is the origin, the
+/// default vertex an expanded submission draws there.
+fn vertex_outcode(mvp: &[[f32; 4]; 4], verts: &[u8], index: usize) -> u8 {
+    let size = core::mem::size_of::<PackedVertex>();
+    let p = verts
+        .get(index * size..(index + 1) * size)
+        // SAFETY: `bytes` is one whole `PackedVertex`, read unaligned.
+        .map(|bytes| unsafe { (bytes.as_ptr() as *const PackedVertex).read_unaligned() })
+        .map_or([0; 3], |v| [v.x, v.y, v.z]);
+    position_outcode(mvp, p)
+}
+
+#[inline(always)]
+fn position_outcode(mvp: &[[f32; 4]; 4], p: [i16; 3]) -> u8 {
+    let p = p.map(|c| f32::from(c) / VERTEX_16BIT_DIVISOR);
+    ssb_engine::guard_clip::outcode(ssb_engine::guard_clip::clip_position(mvp, p), GUARD_BAND)
+}
+
+/// [`draw_mesh_vertices`]' guard clip for `verts` under `model`, when some
+/// vertex lies outside the guard band or behind the near plane and the GE
+/// could drop a triangle the N64 draws ([`ssb_engine::guard_clip`]). `None`
+/// otherwise, the common case, leaving the mesh's submissions as packed.
+fn guard_clip<'a>(
     vp: &[[f32; 4]; 4],
     model: &ScePspFMatrix4,
-    verts: &[u8],
-) -> Option<[[f32; 4]; 4]> {
+    verts: &'a [u8],
+) -> Option<GuardClip<'a>> {
     let cols = [model.x, model.y, model.z, model.w].map(|c| [c.x, c.y, c.z, c.w]);
     let mut mvp = [[0.0f32; 4]; 4];
     for (c, out) in mvp.iter_mut().enumerate() {
@@ -1699,20 +1768,39 @@ fn guard_clip_mvp(
         }
     }
     let size = core::mem::size_of::<PackedVertex>();
+    let count = verts.len() / size;
+    // Packed meshes and skin buffers are word-aligned: an aligned read is
+    // two loads per word fewer than an unaligned one.
+    let aligned = verts.as_ptr() as usize % core::mem::align_of::<PackedVertex>() == 0;
+    let position = |bytes: &[u8]| {
+        let from = bytes.as_ptr() as *const PackedVertex;
+        // SAFETY: `bytes` is one whole `PackedVertex`.
+        let v = unsafe {
+            if aligned {
+                from.read()
+            } else {
+                from.read_unaligned()
+            }
+        };
+        [v.x, v.y, v.z]
+    };
     let mut union = 0u8;
-    for bytes in verts.chunks_exact(size) {
-        // SAFETY: `bytes` is one whole `PackedVertex`, read unaligned.
-        let v = unsafe { (bytes.as_ptr() as *const PackedVertex).read_unaligned() };
-        let p = [v.x, v.y, v.z].map(|c| f32::from(c) / VERTEX_16BIT_DIVISOR);
-        union |= ssb_engine::guard_clip::outcode(clip_position(&mvp, p), GUARD_BAND);
-    }
-    (union != 0).then_some(mvp)
-}
-
-/// `mvp * (p, 1)`.
-#[inline(always)]
-fn clip_position(mvp: &[[f32; 4]; 4], p: [f32; 3]) -> [f32; 4] {
-    core::array::from_fn(|r| mvp[0][r] * p[0] + mvp[1][r] * p[1] + mvp[2][r] * p[2] + mvp[3][r])
+    let codes = if count <= CLIP_CODES_MAX {
+        // SAFETY: the table is only touched here and by this mesh's draw,
+        // on the one thread that draws.
+        let table = unsafe { &mut (&mut *core::ptr::addr_of_mut!(CLIP_CODES))[..count] };
+        for (code, bytes) in table.iter_mut().zip(verts.chunks_exact(size)) {
+            *code = position_outcode(&mvp, position(bytes));
+            union |= *code;
+        }
+        Some(&*table)
+    } else {
+        for bytes in verts.chunks_exact(size) {
+            union |= position_outcode(&mvp, position(bytes));
+        }
+        None
+    };
+    (union != 0).then_some(GuardClip { mvp, verts, codes })
 }
 
 /// A clipped corner: float texture coordinates and position, since a clip
@@ -1759,11 +1847,23 @@ unsafe fn decode_corner(
     };
     let (uv, color, n, p) = if vtype == VERTEX_FORMAT.bits() {
         let index = (index_ptr as *const u16).add(corner).read_unaligned();
-        packed((vertex_ptr as *const PackedVertex).add(usize::from(index)).read_unaligned())
+        // An indexed range copy's base lies before its block
+        // ([`expand_corners`]): only based reads land inside it.
+        packed(
+            (vertex_ptr as *const PackedVertex)
+                .wrapping_add(usize::from(index))
+                .read_unaligned(),
+        )
     } else if vtype == UNINDEXED_VERTEX_FORMAT.bits() {
         packed((vertex_ptr as *const PackedVertex).add(corner).read_unaligned())
     } else if vtype == FLOAT_UV_VERTEX_FORMAT.bits() {
         let v = (vertex_ptr as *const FloatUvVertex).add(corner).read_unaligned();
+        ([v.u, v.v], v.color, [v.nx, v.ny, v.nz], [v.x, v.y, v.z])
+    } else if vtype == INDEXED_FLOAT_UV_VERTEX_FORMAT.bits() {
+        let index = (index_ptr as *const u16).add(corner).read_unaligned();
+        let v = (vertex_ptr as *const FloatUvVertex)
+            .wrapping_add(usize::from(index))
+            .read_unaligned();
         ([v.u, v.v], v.color, [v.nx, v.ny, v.nz], [v.x, v.y, v.z])
     } else {
         return None;
@@ -1807,53 +1907,65 @@ fn encode_corner(a: &[f32; ssb_engine::guard_clip::ATTRS]) -> ClipVertex {
 /// ([`ssb_engine::guard_clip`]). The GE drops a whole triangle with a vertex
 /// in front of the near plane outside its screen range; the RSP clips it.
 /// `None` when no triangle needs it, or for a vertex format
-/// [`decode_corner`] does not read. Out of line and cold: only meshes
-/// running past the camera take it.
-#[cold]
-#[inline(never)]
+/// [`decode_corner`] does not read.
+///
+/// Corner `i` of the submission is the primitive's vertex `indices[i]`: an
+/// expanded submission keeps the corner order and positions and changes
+/// only colour or texture coordinates. Each corner's outcode is therefore
+/// the mesh table's, a byte read; only a primitive with a crossing
+/// triangle is decoded, in [`rebuild_clipped`].
+#[inline(always)]
 unsafe fn clip_submission(
-    mvp: &[[f32; 4]; 4],
+    clip: &GuardClip<'_>,
+    indices: &[u8],
     submission: (i32, *const c_void, *const c_void),
     count: u32,
 ) -> Option<(VertexType, *const c_void, *const c_void, u32)> {
-    use ssb_engine::guard_clip::{clip_triangle, outcode, Vertex, MAX_CLIPPED};
-    let corner = |i: usize| -> Option<Vertex> {
-        let attrs = decode_corner(submission, i)?;
-        let clip = clip_position(mvp, [attrs[9], attrs[10], attrs[11]]);
-        Some(Vertex { clip, attrs })
-    };
     let tris = count as usize / 3;
-    let mut clipped = 0usize;
-    for t in 0..tris {
-        let mut union = 0;
-        let mut inter = 0xFF;
-        for k in 0..3 {
-            let code = outcode(corner(t * 3 + k)?.clip, GUARD_BAND);
-            union |= code;
-            inter &= code;
-        }
-        if union != 0 && inter == 0 {
-            clipped += 1;
-        }
-    }
-    if clipped == 0 {
+    let code = |c: usize| clip.code(usize::from(u16::from_le_bytes([indices[2 * c], indices[2 * c + 1]])));
+    let crossing = ssb_engine::guard_clip::crossing_triangles(tris, code);
+    if crossing == 0 {
         return None;
     }
-    let capacity = (tris - clipped) * 3 + clipped * 3 * (MAX_CLIPPED - 2);
+    rebuild_clipped(clip, indices, submission, tris, crossing)
+}
+
+/// [`clip_submission`]'s rebuild of a primitive with `crossing` of its
+/// `tris` triangles crossing a plane. Out of line and cold: only meshes
+/// running past the camera take it.
+#[cold]
+#[inline(never)]
+unsafe fn rebuild_clipped(
+    clip: &GuardClip<'_>,
+    indices: &[u8],
+    submission: (i32, *const c_void, *const c_void),
+    tris: usize,
+    crossing: usize,
+) -> Option<(VertexType, *const c_void, *const c_void, u32)> {
+    use ssb_engine::guard_clip::{clip_position, clip_triangles, ATTRS, MAX_CLIPPED};
+    let vtype = submission.0;
+    if vtype != VERTEX_FORMAT.bits()
+        && vtype != UNINDEXED_VERTEX_FORMAT.bits()
+        && vtype != FLOAT_UV_VERTEX_FORMAT.bits()
+        && vtype != INDEXED_FLOAT_UV_VERTEX_FORMAT.bits()
+    {
+        return None;
+    }
+    let capacity = (tris - crossing) * 3 + crossing * 3 * (MAX_CLIPPED - 2);
     let out = sys::sceGuGetMemory((capacity * core::mem::size_of::<ClipVertex>()) as i32)
         as *mut ClipVertex;
     let mut n = 0usize;
-    let mut poly = [Vertex::default(); MAX_CLIPPED];
-    for t in 0..tris {
-        let tri = [corner(t * 3)?, corner(t * 3 + 1)?, corner(t * 3 + 2)?];
-        let count = clip_triangle(&tri, GUARD_BAND, &mut poly);
-        for i in 1..count.saturating_sub(1) {
-            for v in [&poly[0], &poly[i], &poly[i + 1]] {
-                out.add(n).write(encode_corner(&v.attrs));
-                n += 1;
-            }
-        }
-    }
+    clip_triangles(
+        tris,
+        GUARD_BAND,
+        |c| clip.code(usize::from(u16::from_le_bytes([indices[2 * c], indices[2 * c + 1]]))),
+        |c| decode_corner(submission, c).unwrap_or([0.0; ATTRS]),
+        |a| clip_position(&clip.mvp, [a[9], a[10], a[11]]),
+        |a| {
+            out.add(n).write(encode_corner(a));
+            n += 1;
+        },
+    );
     Some((
         CLIP_VERTEX_FORMAT,
         core::ptr::null(),
@@ -1862,11 +1974,11 @@ unsafe fn clip_submission(
     ))
 }
 
-/// [`draw_mesh_vertices`]' `SIGNED_CLAMP_UV` submission: each indexed
-/// corner expanded into display-list memory with float UVs. Out of line and
-/// cold, like [`expand_corners`]: rare primitives, kept apart from the
-/// per-mesh path for the instruction cache (RE-482).
-#[cold]
+/// [`draw_mesh_vertices`]' `SIGNED_CLAMP_UV` submission: the primitive's
+/// vertices with float UVs, in display-list memory. Out of line, like
+/// [`expand_corners`], and drawn the same way: one copy of the primitive's
+/// vertex range through its own index list, or one copy per corner when the
+/// range is sparser than its corners or indexes past its vertices.
 #[inline(never)]
 unsafe fn expand_float_uv_corners(
     p: &PrimDesc,
@@ -1875,47 +1987,99 @@ unsafe fn expand_float_uv_corners(
     effect_colors: Option<ssb_rom::skeleton::EffectColors>,
     lit: Option<LitPrim>,
 ) -> (VertexType, *const c_void, *const c_void) {
-    // N64 authored UVs are signed S10.5. The GE's 16-bit texture
-    // field is *unsigned*, so a negative value such as Fox's -41 is
-    // decoded as 65495 and Clamp samples the far edge across most of
-    // the triangle. Preserve the exact signed value through the GE's
-    // float texture-coordinate format. `apply_texture_mapping` keeps
-    // the same 1024/dimension scale, so divide by the integer path's
-    // 32768 normalisation here and no other state changes.
-    let bytes = p.index_count as usize * core::mem::size_of::<FloatUvVertex>();
+    let size = core::mem::size_of::<PackedVertex>();
+    let float_size = core::mem::size_of::<FloatUvVertex>();
+    if let Some((low, high)) = vertex_range(indices, verts.len() / size) {
+        let bytes = (high - low + 1) * float_size;
+        let dynamic = crate::gu::cached_vertices(bytes) as *mut FloatUvVertex;
+        for slot in 0..=high - low {
+            let at = (low + slot) * size;
+            // In range: `high` indexes a whole vertex.
+            let v = *(verts.as_ptr().add(at) as *const PackedVertex);
+            let mark = light_mark(verts, at);
+            dynamic
+                .add(slot)
+                .write(float_uv_vertex(v, mark, p, lit, effect_colors));
+        }
+        crate::gu::writeback_vertices(dynamic as *const u8, bytes, false);
+        // As in `expand_corners`: the base lies before the block.
+        return (
+            INDEXED_FLOAT_UV_VERTEX_FORMAT,
+            indices.as_ptr() as *const c_void,
+            dynamic.wrapping_sub(low) as *const c_void,
+        );
+    }
+
+    let bytes = p.index_count as usize * float_size;
     let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut FloatUvVertex;
     for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
         let index = u16::from_le_bytes([raw_index[0], raw_index[1]]) as usize;
-        let source_offset = index * core::mem::size_of::<PackedVertex>();
-        let mut source = verts
-            .get(source_offset..source_offset + core::mem::size_of::<PackedVertex>())
+        let source_offset = index * size;
+        let source = verts
+            .get(source_offset..source_offset + size)
             .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
             .unwrap_or_default();
-        if let Some(l) = lit {
-            source.color = l.color(&source, light_mark(verts, source_offset));
-        }
-        if let Some(colors) = effect_colors {
-            source.color = colors.vertex_color(source.color, p.flags);
-        }
-        dynamic.add(corner).write(FloatUvVertex {
-            u: source.u as f32 / VERTEX_16BIT_DIVISOR,
-            v: source.v as f32 / VERTEX_16BIT_DIVISOR,
-            color: source.color,
-            nx: source.nx,
-            ny: source.ny,
-            nz: source.nz,
-            _normal_pad: 0,
-            x: source.x,
-            y: source.y,
-            z: source.z,
-            _tail_pad: 0,
-        });
+        let mark = light_mark(verts, source_offset);
+        dynamic
+            .add(corner)
+            .write(float_uv_vertex(source, mark, p, lit, effect_colors));
     }
     (
         FLOAT_UV_VERTEX_FORMAT,
         core::ptr::null(),
         dynamic as *const c_void,
     )
+}
+
+/// [`expand_float_uv_corners`]' vertex `source` as primitive `p` draws it:
+/// lit and recoloured like [`corner_vertex`], with float UVs.
+///
+/// N64 authored UVs are signed S10.5. The GE's 16-bit texture field is
+/// *unsigned*, so a negative value such as Fox's -41 is decoded as 65495
+/// and Clamp samples the far edge across most of the triangle. Preserve the
+/// exact signed value through the GE's float texture-coordinate format.
+/// `apply_texture_mapping` keeps the same 1024/dimension scale, so divide by
+/// the integer path's 32768 normalisation here and no other state changes.
+#[inline(always)]
+fn float_uv_vertex(
+    mut source: PackedVertex,
+    mark: u16,
+    p: &PrimDesc,
+    lit: Option<LitPrim>,
+    effect_colors: Option<ssb_rom::skeleton::EffectColors>,
+) -> FloatUvVertex {
+    if let Some(l) = lit {
+        source.color = l.color(&source, mark);
+    }
+    if let Some(colors) = effect_colors {
+        source.color = colors.vertex_color(source.color, p.flags);
+    }
+    FloatUvVertex {
+        u: source.u as f32 / VERTEX_16BIT_DIVISOR,
+        v: source.v as f32 / VERTEX_16BIT_DIVISOR,
+        color: source.color,
+        nx: source.nx,
+        ny: source.ny,
+        nz: source.nz,
+        _normal_pad: 0,
+        x: source.x,
+        y: source.y,
+        z: source.z,
+        _tail_pad: 0,
+    }
+}
+
+/// The vertex range `low..=high` a primitive's index list covers, when one
+/// copy of it is no larger than one copy per corner and every index lies
+/// inside `vertex_count` vertices.
+#[inline(always)]
+fn vertex_range(indices: &[u8], vertex_count: usize) -> Option<(usize, usize)> {
+    let (low, high) = indices
+        .chunks_exact(2)
+        .map(|raw| usize::from(u16::from_le_bytes([raw[0], raw[1]])))
+        .fold((usize::MAX, 0), |(low, high), i| (low.min(i), high.max(i)));
+    let corners = indices.len() / 2;
+    (low <= high && high < vertex_count && high - low < corners).then_some((low, high))
 }
 
 /// A lit primitive's CPU shade (RE-514): the RSP's per-vertex lighting
@@ -1985,10 +2149,17 @@ fn light_mark(verts: &[u8], offset: usize) -> u16 {
         .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
 }
 
-/// [`draw_mesh_vertices`]' recoloured, lit or linear-texgen submission: each
-/// indexed corner expanded into display-list memory. Out of line: lit
-/// fighter primitives take it every frame (RE-514); keeping it apart leaves
-/// the per-mesh path's code compact in the instruction cache (RE-482).
+/// [`draw_mesh_vertices`]' recoloured, lit or linear-texgen submission. Out
+/// of line: lit fighter primitives take it every frame (RE-514); keeping it
+/// apart leaves the per-mesh path's code compact in the instruction cache
+/// (RE-482).
+///
+/// Each new colour and texture coordinate is a function of its source
+/// vertex alone, so the primitive's vertex range is copied once, each vertex
+/// lit or regenerated once, and drawn through the primitive's own index
+/// list: the GE reads the same vertices in the same order as from one copy
+/// per corner. A primitive whose range is sparser than its corners, or
+/// indexes past its vertices, takes one copy per corner instead.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
 unsafe fn expand_corners(
@@ -2003,9 +2174,8 @@ unsafe fn expand_corners(
 ) -> (VertexType, *const c_void, *const c_void) {
     // `sceGuGetMemory` allocates from the current display-list arena,
     // whose lifetime already matches this asynchronous GE submission.
-    // Expanding the indexed corners avoids mutating shared pack data
-    // or recolouring/regenerating another primitive that reuses one
-    // vertex.
+    // Copying the vertices avoids mutating shared pack data or
+    // recolouring/regenerating another primitive that reuses one vertex.
     //
     // `texgen_object_basis` and the bound texture's clamp flags are
     // per-primitive, not per-corner, so both are resolved once here
@@ -2021,38 +2191,44 @@ unsafe fn expand_corners(
             )
         })
         .unwrap_or((false, false));
+    let texgen = texgen_basis.map(|basis| (basis, clamp));
+    let size = core::mem::size_of::<PackedVertex>();
+    let index_at = |raw: &[u8]| usize::from(u16::from_le_bytes([raw[0], raw[1]]));
 
-    let bytes = p.index_count as usize * core::mem::size_of::<PackedVertex>();
+    if let Some((low, high)) = vertex_range(indices, verts.len() / size) {
+        let bytes = (high - low + 1) * size;
+        let dynamic = crate::gu::cached_vertices(bytes) as *mut PackedVertex;
+        for slot in 0..=high - low {
+            let at = (low + slot) * size;
+            // In range: `high` indexes a whole vertex.
+            let v = *(verts.as_ptr().add(at) as *const PackedVertex);
+            let mark = light_mark(verts, at);
+            dynamic
+                .add(slot)
+                .write(corner_vertex(v, mark, p, lit, effect_colors, texgen));
+        }
+        crate::gu::writeback_vertices(dynamic as *const u8, bytes, false);
+        // Vertex `i` of the list is `dynamic[i - low]`: the GE adds the
+        // index to this base, which lies before the block.
+        return (
+            VERTEX_FORMAT,
+            indices.as_ptr() as *const c_void,
+            dynamic.wrapping_sub(low) as *const c_void,
+        );
+    }
+
+    let bytes = p.index_count as usize * size;
     let dynamic = crate::gu::cached_vertices(bytes) as *mut PackedVertex;
     for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
-        let index = u16::from_le_bytes([raw_index[0], raw_index[1]]) as usize;
-        let source_offset = index * core::mem::size_of::<PackedVertex>();
-        let mut v = verts
-            .get(source_offset..source_offset + core::mem::size_of::<PackedVertex>())
+        let at = index_at(raw_index) * size;
+        let v = verts
+            .get(at..at + size)
             .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
             .unwrap_or_default();
-        if let Some(l) = lit {
-            v.color = l.color(&v, light_mark(verts, source_offset));
-        }
-        if let Some(colors) = effect_colors {
-            v.color = colors.vertex_color(v.color, p.flags);
-        }
-        if let Some((basis_s, basis_t)) = texgen_basis {
-            let (u, uv) = ssb_rom::psp_texture::linear_texgen_uv(
-                [v.nx, v.ny, v.nz],
-                basis_s,
-                basis_t,
-                p.texgen_scale_s,
-                p.texgen_scale_t,
-                p.texgen_origin_s,
-                p.texgen_origin_t,
-                clamp.0,
-                clamp.1,
-            );
-            v.u = u;
-            v.v = uv;
-        }
-        dynamic.add(corner).write(v);
+        let mark = light_mark(verts, at);
+        dynamic
+            .add(corner)
+            .write(corner_vertex(v, mark, p, lit, effect_colors, texgen));
     }
     crate::gu::writeback_vertices(dynamic as *const u8, bytes, false);
     (
@@ -2060,6 +2236,42 @@ unsafe fn expand_corners(
         core::ptr::null(),
         dynamic as *const c_void,
     )
+}
+
+/// [`expand_corners`]' vertex `v` as primitive `p` draws it: lit, recoloured
+/// and its linear texgen coordinates generated, each from `v` alone. `mark`
+/// is its [`light_mark`].
+#[inline(always)]
+fn corner_vertex(
+    mut v: PackedVertex,
+    mark: u16,
+    p: &PrimDesc,
+    lit: Option<LitPrim>,
+    effect_colors: Option<ssb_rom::skeleton::EffectColors>,
+    texgen: Option<(([f32; 3], [f32; 3]), (bool, bool))>,
+) -> PackedVertex {
+    if let Some(l) = lit {
+        v.color = l.color(&v, mark);
+    }
+    if let Some(colors) = effect_colors {
+        v.color = colors.vertex_color(v.color, p.flags);
+    }
+    if let Some(((basis_s, basis_t), clamp)) = texgen {
+        let (u, uv) = ssb_rom::psp_texture::linear_texgen_uv(
+            [v.nx, v.ny, v.nz],
+            basis_s,
+            basis_t,
+            p.texgen_scale_s,
+            p.texgen_scale_t,
+            p.texgen_origin_s,
+            p.texgen_origin_t,
+            clamp.0,
+            clamp.1,
+        );
+        v.u = u;
+        v.v = uv;
+    }
+    v
 }
 
 /// Draws every node of one assembled object.
