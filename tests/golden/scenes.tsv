@@ -219,6 +219,10 @@ f1-opening-clash	psp-game	op-clash@80	pass	RE-467 RE-476 RE-497
 f1-opening-donkey-impact	psp-game	op-donkey@41	pass	RE-415 RE-467
 f1-opening-samus-grapple	psp-game	op-samus@40	pass	RE-467
 f1-opening-yoshi-cloud	psp-game	op-yoshi@26	pass	RE-365 RE-467
+f1-opening-run-dust	psp-game	op-run@55	pass	RE-467
+f1-opening-fox-laser	psp-game	op-fox@55	pass	RE-467
+f1-opening-yoster-clouds	psp-game	op-yoster@60	pass	RE-467
+f1-opening-standoff	psp-game	op-standoff@201	pass	RE-467 RE-519
 f1-training-link-sword	psp-game	linksword	pass	RE-512
 f1-training-sword	psp-game	trainingsword	pass	RE-512
 f1-training-pikachu-smash	psp-game	pikachusmash	pass	RE-512

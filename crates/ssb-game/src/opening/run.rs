@@ -60,6 +60,8 @@ impl Run {
     /// `mvOpeningRunFuncStart`.
     pub fn new() -> Run {
         let mut world = World::new();
+        // `efManagerInitEffects`: Link's Jump makes a dust cloud.
+        world.particle_displays();
         world.camera(
             100,
             0,

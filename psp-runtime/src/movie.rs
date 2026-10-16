@@ -132,6 +132,18 @@ enum State {
 #[derive(Default)]
 pub struct Runtime {
     states: Vec<(u16, State)>,
+    /// The demo fighters' effect events this frame, placed
+    /// ([`Runtime::take_effects`]).
+    effects: Vec<DemoEffect>,
+}
+
+/// A demo fighter's `nFTMotionEventEffect`, placed: `ftParamMakeEffect`'s
+/// kind, world position (offset and scatter applied) and `fp->lr`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DemoEffect {
+    pub kind: u16,
+    pub pos: Vec3,
+    pub lr: i8,
 }
 
 fn rest_poses(pack: &Pack<'_>, object: &ObjectDesc) -> Vec<JointPose> {
@@ -376,14 +388,16 @@ impl FighterState {
         let _ = self.skeleton.tick_scaled(script, scales, first);
     }
 
-    fn catch_up(&mut self, a: &Assets<'_, '_>, f: &Fighter) {
+    fn catch_up(&mut self, a: &Assets<'_, '_>, f: &Fighter, effects: &mut Vec<DemoEffect>) {
         if f.serial != self.serial {
             self.serial = f.serial;
             self.set_status(a.main, f.row);
+            self.run_events(f, effects);
         }
         while self.played < f.plays {
             self.play(a.main);
             self.demo.tick();
+            self.run_events(f, effects);
             self.played += 1;
         }
         if let (Some((joint, pose, played)), Some(j)) = (self.proxy.as_mut(), f.proxy) {
@@ -391,6 +405,48 @@ impl FighterState {
             while *played < j.plays {
                 let _ = joint.tick(data, 1.0, pose);
                 *played += 1;
+            }
+        }
+    }
+
+    /// The demo script's last step's sound and effect events, before this
+    /// frame's proxy update (the scene's `func_run` and the fighter's
+    /// update run ahead of `mvOpening*FighterProcUpdate`). An effect is
+    /// placed on its joint (`gmCollisionGetFighterPartsWorldPosition`):
+    /// only TopN (joint 0) has a place here, the one joint an opening demo
+    /// row names (Link's Jump, `D_ovl1_8039198C`'s `DustHeavyDouble`). A
+    /// demo fighter's `lr` is `dFTManagerDefaultFighterDesc`'s, right.
+    fn run_events(&self, f: &Fighter, effects: &mut Vec<DemoEffect>) {
+        use ssb_game::motion::DemoEvent;
+        for e in self.demo.events() {
+            match *e {
+                DemoEvent::PlayFgm(id) => {
+                    ssb_game::sound::play_fgm(id);
+                }
+                DemoEvent::Effect {
+                    kind,
+                    joint,
+                    offset,
+                    scatter,
+                    is_scale_pos,
+                    flag: _,
+                } => {
+                    if joint != 0 {
+                        continue;
+                    }
+                    let mut pos = ssb_game::fteffect::scattered(offset, scatter);
+                    if is_scale_pos {
+                        let size = ssb_game::motion::combat_attrs(self.kind).map_or(1.0, |c| c.size);
+                        pos = Vec3::new(pos.x / size, pos.y / size, pos.z / size);
+                    }
+                    let k = MODEL_SCALE;
+                    let p = self.root(f).transform_point([pos.x / k, pos.y / k, pos.z / k]);
+                    effects.push(DemoEffect {
+                        kind,
+                        pos: Vec3::new(p[0], p[1], p[2]),
+                        lr: 1,
+                    });
+                }
             }
         }
     }
@@ -487,6 +543,12 @@ impl Runtime {
         Runtime::default()
     }
 
+    /// The demo fighters' effects since the last call, in the order
+    /// their scripts ran them.
+    pub fn take_effects(&mut self) -> Vec<DemoEffect> {
+        core::mem::take(&mut self.effects)
+    }
+
     /// Makes, drops and plays each object's state to match `world`.
     pub fn sync(&mut self, world: &World, a: &Assets<'_, '_>) {
         self.states
@@ -522,7 +584,7 @@ impl Runtime {
                     if let Some((_, State::Fighter(s))) =
                         self.states.iter_mut().find(|(id, _)| *id == o.id)
                     {
-                        s.catch_up(a, f);
+                        s.catch_up(a, f, &mut self.effects);
                     }
                 }
                 _ => {}
@@ -686,7 +748,9 @@ impl Runtime {
                                     st.heads = meshdraw::Heads::Head0;
                                     st.clip_view_proj = clip;
                                 }
-                                ObjectKind::Host(_) | ObjectKind::HostModel(..) => {
+                                ObjectKind::Host(_)
+                                | ObjectKind::HostModel(..)
+                                | ObjectKind::Particles(_) => {
                                     let clip = st.clip_view_proj.take();
                                     host(gpu, st, cam, o, head);
                                     st.clip_view_proj = clip;
@@ -706,6 +770,21 @@ impl Runtime {
     /// The camera's view and projection: its animation's play where it has
     /// one.
     unsafe fn view(&self, gpu: &mut Gpu, st: &mut DrawState, a: &Assets<'_, '_>, p: &Persp) {
+        let (view, proj) = Self::persp_matrices(a, p);
+        gpu.set_projection(&proj);
+        gpu.reset_modelview();
+        st.begin_frame();
+        gpu.set_view(&view);
+        // The RSP clips what the GE would drop (`meshdraw::clip_submission`):
+        // the room's floor and rug run under the camera.
+        st.clip_view_proj = Some((proj * view).cols);
+    }
+
+    /// Camera `p`'s view and projection matrices this frame.
+    pub fn persp_matrices(
+        a: &Assets<'_, '_>,
+        p: &Persp,
+    ) -> (ssb_engine::math::Mat4, ssb_engine::math::Mat4) {
         let mut eye = p.eye;
         let mut at = p.at;
         let mut up_x = p.up_x;
@@ -727,14 +806,7 @@ impl Runtime {
         } else {
             ssb_engine::math::Mat4::sy_persp_fast(fovy, p.aspect, p.near, p.far)
         };
-        gpu.set_projection(&proj);
-        gpu.reset_modelview();
-        st.begin_frame();
-        let view = view_matrix(eye, at, up_x, p.view);
-        gpu.set_view(&view);
-        // The RSP clips what the GE would drop (`meshdraw::clip_submission`):
-        // the room's floor and rug run under the camera.
-        st.clip_view_proj = Some((proj * view).cols);
+        (view_matrix(eye, at, up_x, p.view), proj)
     }
 
     unsafe fn draw_model(

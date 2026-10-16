@@ -169,15 +169,68 @@ pub fn demo_scripts(kind: FighterKind) -> Option<&'static DemoScripts> {
     })
 }
 
+/// An event of a demo status script that its host carries out: the
+/// fighter's place is the host's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DemoEvent {
+    /// `nFTMotionEventEffect`: `ftParamMakeEffect(fighter_gobj, kind,
+    /// joint, &offset, &scatter, fp->lr, FALSE, flag)`.
+    Effect {
+        kind: u16,
+        joint: i8,
+        offset: Vec3,
+        scatter: Vec3,
+        /// `nFTMotionEventEffectItemHold`: the offset divides by the
+        /// fighter's size.
+        is_scale_pos: bool,
+        flag: u16,
+    },
+    /// `nFTMotionEventPlayFGM`: `func_800269C0(id)` (a demo fighter is
+    /// not muted).
+    PlayFgm(u16),
+}
+
+/// The events one [`DemoScript`] step ran, in order.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DemoEvents {
+    list: [DemoEvent; DEMO_EVENTS_MAX],
+    len: u8,
+}
+
+/// More events than any demo row runs in one frame (Samus's Win1 runs
+/// two).
+const DEMO_EVENTS_MAX: usize = 4;
+
+impl DemoEvents {
+    const EMPTY: DemoEvents = DemoEvents {
+        list: [DemoEvent::PlayFgm(0); DEMO_EVENTS_MAX],
+        len: 0,
+    };
+
+    fn push(&mut self, e: DemoEvent) {
+        if let Some(slot) = self.list.get_mut(usize::from(self.len)) {
+            *slot = e;
+            self.len += 1;
+        }
+    }
+
+    pub fn as_slice(&self) -> &[DemoEvent] {
+        &self.list[..usize::from(self.len)]
+    }
+}
+
 /// A demo fighter's status script (`scSubsysFighterSetStatus`, then
 /// `scSubsysFighterProcUpdate`'s `ftMainPlayAnimEventsAll` each frame), of
 /// which the port runs the flow and the model- and texture-part events
-/// (RE-426). Demo statuses play at speed 1 from frame 0.
+/// (RE-426) and hands the effect and sound events to its host
+/// ([`DemoEvent`]). Demo statuses play at speed 1 from frame 0.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DemoScript {
     kind: FighterKind,
     thread: ScriptThread,
     anim_frame: f32,
+    /// The last step's events.
+    events: DemoEvents,
 }
 
 impl DemoScript {
@@ -204,6 +257,7 @@ impl DemoScript {
                 ..ScriptThread::default()
             },
             anim_frame: 0.0,
+            events: DemoEvents::EMPTY,
         };
         d.run(parts);
         d
@@ -215,7 +269,14 @@ impl DemoScript {
         self.run(parts);
     }
 
+    /// The effect and sound events the last [`Self::start`] or
+    /// [`Self::tick`] ran.
+    pub fn events(&self) -> &[DemoEvent] {
+        self.events.as_slice()
+    }
+
     fn run(&mut self, parts: &mut crate::modelpart::ModelParts) {
+        self.events = DemoEvents::EMPTY;
         let Some(words) = demo_scripts(self.kind).map(|d| d.words) else {
             return;
         };
@@ -303,6 +364,30 @@ impl DemoScript {
                 op::SET_TEXTURE_PART_ID => {
                     let (part, id) = texture_part_event(w);
                     parts.set_texture(part, id);
+                }
+                op::PLAY_FGM => self.events.push(DemoEvent::PlayFgm(value as u16)),
+                op::EFFECT | op::EFFECT_ITEM_HOLD => {
+                    let at = |i: usize| words.get(t.pc as usize + i).copied().unwrap_or(0);
+                    let (w2, w3, w4) = (at(1), at(2), at(3));
+                    self.events.push(DemoEvent::Effect {
+                        kind: ((w >> 10) & 0x1FF) as u16,
+                        joint: crate::fteffect::joint_id(
+                            self.kind,
+                            sign((w >> 19) & 0x7F, 7) as i8,
+                        ),
+                        offset: Vec3::new(
+                            sign(w2 >> 16, 16) as f32,
+                            sign(w2 & 0xFFFF, 16) as f32,
+                            sign(w3 >> 16, 16) as f32,
+                        ),
+                        scatter: Vec3::new(
+                            sign(w3 & 0xFFFF, 16) as f32,
+                            sign(w4 >> 16, 16) as f32,
+                            sign(w4 & 0xFFFF, 16) as f32,
+                        ),
+                        is_scale_pos: opcode == op::EFFECT_ITEM_HOLD,
+                        flag: (w & 0x3FF) as u16,
+                    });
                 }
                 _ => {}
             }

@@ -88,6 +88,15 @@ pub(crate) struct Opening {
     /// The next room's figures, picked ahead to read their files
     /// ([`room_figures`], RE-476).
     room_figures: Option<(FighterKind, FighterKind)>,
+    /// `efParticleInitAll`'s and `efManagerInitEffects`' pools, for a
+    /// scene with particle displays.
+    effects: Option<SceneEffects>,
+}
+
+/// A scene's particles and effects.
+struct SceneEffects {
+    particles: Box<ssb_game::particle::Particles>,
+    effects: ssb_game::effect::Effects,
 }
 
 impl Opening {
@@ -100,6 +109,7 @@ impl Opening {
             fighter_mask: STARTERS_MASK,
             frozen: core::cell::Cell::new(false),
             room_figures: None,
+            effects: None,
         }
     }
 
@@ -162,6 +172,17 @@ pub(crate) fn start(o: &mut Opening, kind: Option<Kind>) -> bool {
         o.clock.reset();
     }
     o.runtime = Runtime::new();
+    // The scene's `efParticleInitAll` and `efManagerInitEffects` (the
+    // common bank, loaded first, is bank 0).
+    o.effects = logic
+        .world()
+        .objects
+        .iter()
+        .any(|obj| matches!(obj.kind, ssb_game::opening::movie::ObjectKind::Particles(_)))
+        .then(|| SceneEffects {
+            particles: new_particles(),
+            effects: ssb_game::effect::Effects::new(0),
+        });
     o.logic = Some(logic);
     o.pending = None;
     o.frozen.set(false);
@@ -189,6 +210,18 @@ pub(crate) fn load(o: &mut Opening, kind: Kind) {
 pub(crate) fn clear(o: &mut Opening) {
     o.logic = None;
     o.runtime = Runtime::new();
+    o.effects = None;
+}
+
+/// `efParticleInitAll`'s pools, built in place on the heap.
+#[inline(never)]
+fn new_particles() -> Box<ssb_game::particle::Particles> {
+    let mut b = Box::<ssb_game::particle::Particles>::new_uninit();
+    // SAFETY: `write_new` initialises every field.
+    unsafe {
+        ssb_game::particle::Particles::write_new(b.as_mut_ptr());
+        b.assume_init()
+    }
 }
 
 /// Whether `kind` runs on this screen (rather than as a battle).
@@ -236,6 +269,26 @@ pub(crate) fn frame(
         if let Some(l) = o.logic.as_ref() {
             o.runtime.sync(l.world(), &a);
         }
+        // Link 0: the scene's `func_run` (whose status changes run the
+        // demo fighters' time-zero events), then the particles'
+        // `func_run`s, made after it; then the effect processes
+        // (priority 3).
+        let made = o.runtime.take_effects();
+        if let (Some(fx), Some(banks)) = (
+            o.effects.as_mut(),
+            ssb_psp_runtime::particles::PackBanks::new(p),
+        ) {
+            let mut rt = ssb_game::effect::EffectRuntime {
+                particles: &mut fx.particles,
+                effects: &mut fx.effects,
+                banks: &banks,
+            };
+            for e in made {
+                ssb_game::fteffect::make_at(&mut rt, e.kind, e.pos, e.lr);
+            }
+            rt.run();
+            rt.effects.process(rt.particles, rt.banks);
+        }
     }
     match exit? {
         Exit::Title => Some(MScene::Title),
@@ -258,7 +311,12 @@ pub(crate) fn hold(o: &mut Opening, kind: Kind) -> bool {
 /// # Safety
 ///
 /// Between `begin_frame` and `end_frame`.
-pub(crate) unsafe fn draw(o: &Opening, gpu: &mut Gpu, pack: Option<&Pack<'_>>, st: &mut DrawState) {
+pub(crate) unsafe fn draw(
+    o: &mut Opening,
+    gpu: &mut Gpu,
+    pack: Option<&Pack<'_>>,
+    st: &mut DrawState,
+) {
     // `mvOpeningRoomFuncRun` at tic 1037: the default camera stops filling,
     // and the transition opens over the picture left on screen.
     let freeze = matches!(&o.logic, Some(Logic::Room(r)) if r.tics() >= 1037);
@@ -280,11 +338,52 @@ pub(crate) unsafe fn draw(o: &Opening, gpu: &mut Gpu, pack: Option<&Pack<'_>>, s
         main: p,
         scene: o.scene_pack(),
     };
-    let mut host = |gpu: &mut Gpu, st: &mut DrawState, _cam: &Camera, obj: &Object, head: Head| {
-        host_draw(logic, &o.runtime, gpu, st, &a, obj, head);
+    let banks = ssb_psp_runtime::particles::PackBanks::new(p);
+    let effects = &mut o.effects;
+    let runtime = &o.runtime;
+    let mut host = |gpu: &mut Gpu, st: &mut DrawState, cam: &Camera, obj: &Object, head: Head| {
+        if let ssb_game::opening::movie::ObjectKind::Particles(lists) = obj.kind {
+            if let (Some(fx), Some(banks), Some(persp)) =
+                (effects.as_mut(), banks.as_ref(), cam.persp())
+            {
+                draw_particles(&mut fx.particles, banks, &a, cam, persp, lists, st);
+            }
+            return;
+        }
+        host_draw(logic, runtime, gpu, st, &a, obj, head);
     };
     o.runtime.draw(logic.world(), gpu, st, &a, &mut host);
     gpu.set_viewport_pillarboxed();
+}
+
+/// `efDisplayZPerspCLDProcDisplay` or `efDisplayZPerspAAXLUProcDisplay`
+/// under a perspective camera: `lists`, list 4 depth-tested.
+unsafe fn draw_particles(
+    particles: &mut ssb_game::particle::Particles,
+    banks: &ssb_psp_runtime::particles::PackBanks<'_, '_>,
+    a: &Assets<'_, '_>,
+    cam: &Camera,
+    persp: &ssb_game::opening::movie::Persp,
+    lists: &[usize],
+    st: &mut DrawState,
+) {
+    let (view, proj) = Runtime::persp_matrices(a, persp);
+    let camera = ssb_psp_runtime::particles::Camera {
+        view: &view,
+        proj: &proj,
+        screen: false,
+        planes: (persp.near, persp.far),
+        ge_planes: (persp.near, persp.far),
+        rect: ssb_engine::coord::n64_rect_to_psp_xywh(cam.viewport),
+    };
+    ssb_psp_runtime::particles::draw_lists(
+        banks,
+        particles,
+        &camera,
+        lists,
+        ssb_psp_runtime::particles::DEPTH_TESTED,
+        st,
+    );
 }
 
 /// The scenes' own displays.

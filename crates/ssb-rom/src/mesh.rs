@@ -141,6 +141,15 @@ pub struct TextureRef {
     /// `Av = Af * At`, which is the RDP's result for any shade. Set by
     /// `Builder::material_now`, never by tile state.
     pub rgb_unused: bool,
+    /// The combiner's colour is the shade times a blend of two constants by
+    /// the texel, `SHADE * ((PRIM - ENV) * TEXEL0 + ENV)` in two cycles:
+    /// the Yoshi's Island opening's clouds (`67+0xB608`, white to
+    /// `0066FF`). The GE has one texture stage, so a converter must give
+    /// this binding texels already blended, `base + (target - base) *
+    /// texel` per channel with the alpha kept, and the GE's `Modulate`
+    /// then multiplies the shade in: `[base, target]`. Set by
+    /// `Builder::material_now`, never by tile state.
+    pub rgb_lerp: Option<[[u8; 3]; 2]>,
     /// `G_SETTILESIZE`'s `uls`/`ult` on the render tile — the tile's own
     /// origin, still in raw S10.2 fixed point (quarter-texel units, the same
     /// form `dl::Cmd::SetTileSize` decodes). A framebuffer binding has none:
@@ -1006,7 +1015,30 @@ impl Combined {
                         ..Combined::ZERO
                     })
             };
-            return shade_by_texel(self, o).or_else(|| shade_by_texel(o, self));
+            // And shade times a texel-driven blend of constants, a second
+            // cycle's `COMBINED * SHADE` after `(PRIM - ENV) * TEXEL0 + ENV`
+            // (the Yoshi's Island opening's clouds): `s` and `st` terms.
+            let shade_by_lerp = |a: &Combined, b: &Combined| {
+                (a.s_used
+                    && !a.k_used
+                    && !a.t_used
+                    && !a.st_used
+                    && b.k_used
+                    && b.t_used
+                    && !b.s_used
+                    && !b.st_used)
+                    .then(|| Combined {
+                        s: [a.s[0] * b.k[0], a.s[1] * b.k[1], a.s[2] * b.k[2]],
+                        s_used: true,
+                        st: [a.s[0] * b.t[0], a.s[1] * b.t[1], a.s[2] * b.t[2]],
+                        st_used: true,
+                        ..Combined::ZERO
+                    })
+            };
+            return shade_by_texel(self, o)
+                .or_else(|| shade_by_texel(o, self))
+                .or_else(|| shade_by_lerp(self, o))
+                .or_else(|| shade_by_lerp(o, self));
         };
         if !c_used {
             // A structurally empty constant's real value is unconditionally
@@ -1226,17 +1258,15 @@ fn combiner_alpha_is_texel_times_prim(hi: u32, lo: u32, two_cycle: bool) -> bool
 /// Classifies `G_SETCOMBINE`'s alpha formula into one of the two shapes
 /// [`AlphaBlend`] names, or declines.
 ///
-/// Two-cycle mode is declined entirely rather than guessed at: its second
-/// cycle's own D-slot code `0` means `LOD_FRACTION` (an RDP-computed,
-/// per-pixel mip blend fraction), not `COMBINED_ALPHA` the way the *A*/*B*
-/// slots' code `0` does -- the alpha multiplexer table is context-dependent
-/// per slot, the same trap the colour table already sprang once (RE-129).
-/// Since this ROM never actually engages real RDP LOD blending at all
-/// (RE-127: `G_TL_LOD` is 0/131 archive-wide), what real hardware would
-/// output there is not confidently known, so two-cycle alpha is left
-/// unclassified rather than assumed to behave like the single-cycle case.
+/// In two-cycle mode the second cycle must pass the first's alpha through,
+/// `(A - B) * 0 + COMBINED_ALPHA`: code `0` is `COMBINED_ALPHA` in the
+/// `A`, `B` and `D` slots and `LOD_FRACTION` only in `C` (`gbi.h`'s
+/// `G_ACMUX_*`), as for [`combiner_alpha_is_texel_times_prim`]. The
+/// Yoshi's Island opening's clouds (`67+0xB608`, `FC30FE04 5FFEF3F8`):
+/// `TEXEL0_ALPHA`, then `COMBINED_ALPHA`. Any other second cycle declines.
 fn combiner_alpha_blend(hi: u32, lo: u32, two_cycle: bool) -> Option<AlphaBlend> {
-    if two_cycle {
+    const COMBINED_A: u32 = 0;
+    if two_cycle && ((lo >> 18) & 0x7, lo & 0x7) != (7, COMBINED_A) {
         return None;
     }
     // Cycle 0's alpha slots, per `gbi.h`'s `GCCc0w0`/`GCCc0w1` macros
@@ -1564,6 +1594,51 @@ fn combiner_rgb_is_shade_only(
     let e = env.map_or([0.0; 3], to_f);
     evaluate_combiner(hi, lo, two_cycle, p, e)
         .is_some_and(|out| out.s_used && !out.k_used && !out.t_used && !out.st_used)
+}
+
+/// The two constants the combined colour blends between by the texel
+/// before the shade multiplies it: `SHADE * (base + (target - base) *
+/// TEXEL0)` with both a shade term and a shade-times-texel term and no
+/// other ([`TextureRef::rgb_lerp`]). An unset `PRIMITIVE`/`ENVIRONMENT` the
+/// formula reads declines, as in [`combiner_flat_color`].
+fn combiner_rgb_shade_texel_lerp(
+    hi: u32,
+    lo: u32,
+    two_cycle: bool,
+    prim: Option<[u8; 4]>,
+    env: Option<[u8; 4]>,
+) -> Option<[[u8; 3]; 2]> {
+    if combiner_reads(hi, lo, two_cycle, 3) && prim.is_none() {
+        return None;
+    }
+    if combiner_reads(hi, lo, two_cycle, 5) && env.is_none() {
+        return None;
+    }
+    let p = prim.map_or([0.0; 3], to_f);
+    let e = env.map_or([0.0; 3], to_f);
+    let out = evaluate_combiner(hi, lo, two_cycle, p, e)?;
+    if !(out.s_used && out.st_used) || out.k_used || out.t_used {
+        return None;
+    }
+    let byte = |v: f32| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+    let base = out.s.map(byte);
+    let target = [
+        byte(out.s[0] + out.st[0]),
+        byte(out.s[1] + out.st[1]),
+        byte(out.s[2] + out.st[2]),
+    ];
+    Some([base, target])
+}
+
+/// A texel under [`TextureRef::rgb_lerp`]: each colour channel is the
+/// combiner's `(target - base) * texel + base` in the RDP's fixed point
+/// (`((a - b) * c + (d << 8) + 0x80) >> 8`); the alpha is kept.
+pub fn rgb_lerp_texel([base, target]: [[u8; 3]; 2], px: [u8; 4]) -> [u8; 4] {
+    let ch = |i: usize| {
+        let (b, t, c) = (i32::from(base[i]), i32::from(target[i]), i32::from(px[i]));
+        (((t - b) * c + (b << 8) + 0x80) >> 8).clamp(0, 255) as u8
+    };
+    [ch(0), ch(1), ch(2), px[3]]
 }
 
 /// Tracks RDP/RSP state while walking a display list.
@@ -2126,6 +2201,22 @@ impl State {
                     self.material.env_color,
                 )
             });
+        // The colour is the shade times a texel-driven blend of two
+        // constants (the Yoshi's Island opening's clouds): the converter
+        // blends the texture's colour.
+        let rgb_lerp = if flat_color.is_none() && texture_blend.is_none() && scale.is_none() {
+            combiner.and_then(|(hi, lo)| {
+                combiner_rgb_shade_texel_lerp(
+                    hi,
+                    lo,
+                    self.two_cycle,
+                    self.material.prim_color,
+                    self.material.env_color,
+                )
+            })
+        } else {
+            None
+        };
         MeshMaterial {
             // `TEXEL` genuinely never enters this shape's formula (RE-079),
             // so a bound texture would be sampled and modulated in for
@@ -2135,7 +2226,11 @@ impl State {
             texture: if flat_color.is_some() {
                 None
             } else {
-                texture.map(|t| TextureRef { rgb_unused, ..t })
+                texture.map(|t| TextureRef {
+                    rgb_unused,
+                    rgb_lerp,
+                    ..t
+                })
             },
             flat_color,
             // Identity is not worth storing: it means "use the shade as it is".
@@ -2357,6 +2452,7 @@ impl State {
                 clamp_t,
                 framebuffer: true,
                 rgb_unused: false,
+                rgb_lerp: None,
                 origin_s,
                 origin_t,
                 mask_s,
@@ -2388,6 +2484,7 @@ impl State {
             clamp_t,
             framebuffer: false,
             rgb_unused: false,
+            rgb_lerp: None,
             origin_s: tile.origin.map_or(0, |o| o.0),
             origin_t: tile.origin.map_or(0, |o| o.1),
             mask_s,
@@ -2512,6 +2609,7 @@ impl State {
             clamp_t,
             framebuffer: false,
             rgb_unused: false,
+            rgb_lerp: None,
             origin_s: self.tile0_origin.map_or(0, |o| o.0),
             origin_t: self.tile0_origin.map_or(0, |o| o.1),
             mask_s,
@@ -8439,15 +8537,58 @@ mod tests {
     }
 
     #[test]
-    fn two_cycle_alpha_is_always_declined() {
-        // The canopy highlight's own word again, but real hardware only
-        // ever uses it in one-cycle mode -- confirm the *two_cycle* flag
-        // alone is enough to decline, regardless of what the bits say,
-        // since this model does not confidently know what two-cycle
-        // alpha's own D-slot code 0 (`LOD_FRACTION`, not `COMBINED_ALPHA`)
-        // means on a ROM that never engages real RDP LOD (RE-127).
+    fn two_cycle_alpha_needs_a_pass_through_second_cycle() {
+        // The canopy highlight's own word again, in two-cycle mode: its
+        // second cycle's alpha is `(A - B) * SHADE_ALPHA + 0`, not a
+        // pass-through, so it declines whatever the first cycle is.
         let (hi, lo) = (0x0012_1824, 0xFF33_FFFF);
         assert_eq!(combiner_alpha_blend(hi, lo, true), None);
+        // The Yoshi's Island opening's clouds (`67+0xB608`): `TEXEL0_ALPHA`,
+        // then `(0 - 0) * 0 + COMBINED_ALPHA`.
+        let (hi, lo) = (0xFC30_FE04, 0x5FFE_F3F8);
+        assert_eq!(
+            combiner_alpha_blend(hi, lo, true),
+            Some(AlphaBlend::TexelOnly)
+        );
+        // `D` reading `SHADE_ALPHA` in the second cycle is not a pass-through.
+        assert_eq!(combiner_alpha_blend(hi, lo | 4, true), None);
+    }
+
+    #[test]
+    fn a_shade_times_texel_blend_bakes_its_constants_into_the_texture() {
+        // The Yoshi's Island opening's clouds (`67+0xB608`): cycle 0
+        // `(PRIM - ENV) * TEXEL0 + ENV`, cycle 1 `COMBINED * SHADE`, PRIM
+        // white and ENV `0066FF`.
+        let (hi, lo) = (0xFC30_FE04, 0x5FFE_F3F8);
+        let prim = Some([0xFF; 4]);
+        let env = Some([0x00, 0x66, 0xFF, 0xFF]);
+        assert_eq!(
+            combiner_rgb_shade_texel_lerp(hi, lo, true, prim, env),
+            Some([[0x00, 0x66, 0xFF], [0xFF; 3]])
+        );
+        // None of the other readings takes it.
+        assert_eq!(combiner_shade_scale(hi, lo, true, prim, env), None);
+        assert_eq!(combiner_texture_blend(hi, lo, true, prim, env), None);
+        assert_eq!(combiner_flat_color(hi, lo, true, prim, env), None);
+        assert!(!combiner_rgb_is_shade_only(hi, lo, true, prim, env));
+        // Its first cycle alone has no shade: the GE's own `Blend` reading.
+        assert_eq!(
+            combiner_rgb_shade_texel_lerp(hi, lo, false, prim, env),
+            None
+        );
+        // Plain `TEXEL0 * SHADE` is the GE's `Modulate` as it is.
+        let (hi, lo) = combine(TEXEL0, ZERO_A, SHADE, ZERO_D, 0, 0, 0, 0);
+        assert_eq!(
+            combiner_rgb_shade_texel_lerp(hi, lo, false, prim, env),
+            None
+        );
+        // The texel blend in the RDP's fixed point (a full texel reads
+        // 255/256, so PRIM's white comes out 254), ENV at none, the alpha
+        // kept.
+        let lerp = [[0x00, 0x66, 0xFF], [0xFF; 3]];
+        assert_eq!(rgb_lerp_texel(lerp, [0xFF; 4]), [0xFE, 0xFE, 0xFF, 0xFF]);
+        assert_eq!(rgb_lerp_texel(lerp, [0, 0, 0, 0]), [0x00, 0x66, 0xFF, 0x00]);
+        assert_eq!(rgb_lerp_texel(lerp, [0x88; 4]), [0x87, 0xB7, 0xFF, 0x88]);
     }
 
     #[test]

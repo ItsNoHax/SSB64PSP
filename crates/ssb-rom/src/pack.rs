@@ -423,7 +423,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 116 blends a two-cycle `TEXEL0 * PRIM` alpha whose second cycle passes it
 // through (`mesh::combiner_alpha_is_texel_times_prim`): Yoshi's Island's
 // clouds fade in by their `MObj`'s primitive alpha. No layout change.
-pub const VERSION: u32 = 116;
+// 117 blends a texture's colour between two constants when the combiner
+// multiplies such a blend by the shade (`mesh::TextureRef::rgb_lerp`), and
+// classifies a two-cycle alpha whose second cycle passes it through: the
+// Yoshi's Island opening's clouds (`67+0xB608`). No layout change.
+pub const VERSION: u32 = 117;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -5739,6 +5743,7 @@ mod tests {
             clamp_t: false,
             framebuffer: false,
             rgb_unused: false,
+            rgb_lerp: None,
             origin_s: 0,
             origin_t: 0,
             mask_s: 5,
@@ -5872,6 +5877,7 @@ mod tests {
             clamp_t: false,
             framebuffer: false,
             rgb_unused: false,
+            rgb_lerp: None,
             // S10.2 quarter-texels: 3 texels across, none down. The largest
             // real value `romtool texgen` measures.
             origin_s: 12,

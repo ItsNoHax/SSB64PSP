@@ -319,7 +319,13 @@ pub enum ObjectKind {
     /// scene's own (a custom render mode around `gcDrawDObjDLHead0`): the
     /// host draws it with its display id.
     HostModel(u16, Model),
+    /// One of `efDisplayInitAll`'s particle displays: the particle lists
+    /// it draws, in order. The host owns the particles.
+    Particles(&'static [usize]),
 }
+
+/// `efDisplayInitAll`'s displays in creation order: link and lists.
+const PARTICLE_DISPLAYS: [(u8, &[usize]); 4] = [(18, &[0, 2]), (15, &[1]), (25, &[3]), (10, &[4])];
 
 /// One display `GObj`.
 #[derive(Debug, Clone, PartialEq)]
@@ -383,6 +389,15 @@ impl World {
             hidden: false,
         });
         id
+    }
+
+    /// `efDisplayInitAll` (`efManagerInitEffects`): the particle displays,
+    /// lists 0 and 2 on link 18, 1 on 15, 3 on 25 and 4 on 10
+    /// (`efDisplayZPerspAAXLUProcDisplay`, depth-tested).
+    pub fn particle_displays(&mut self) {
+        for (link, lists) in PARTICLE_DISPLAYS {
+            self.object(link, Head::Zero, ObjectKind::Particles(lists));
+        }
     }
 
     /// `gcEjectGObj`.

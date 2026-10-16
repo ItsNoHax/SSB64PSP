@@ -514,6 +514,7 @@ mod tests {
             clamp_t: true,
             framebuffer: false,
             rgb_unused: false,
+            rgb_lerp: None,
             origin_s: 0,
             origin_t: 0,
             mask_s: period_log2,

@@ -515,6 +515,12 @@ impl DemoParts {
     pub fn tick(&mut self) {
         self.script.tick(&mut self.parts);
     }
+
+    /// The effect and sound events the last [`Self::start`] or
+    /// [`Self::tick`] ran, for the host to carry out.
+    pub fn events(&self) -> &[crate::motion::DemoEvent] {
+        self.script.events()
+    }
 }
 
 /// `ftMainSetStatus`: `if (!(flags & FTSTATUS_PRESERVE_MODELPART) &&
@@ -732,6 +738,34 @@ mod tests {
             d.tick();
         }
         assert_eq!(d.parts.draw_textures()[0], 2);
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn link_opening_jump_plays_its_sound_and_dust_at_time_zero() {
+        use crate::motion::DemoEvent;
+        use ssb_engine::math::Vec3;
+        // `D_ovl1_8039198C` (the opening run's Jump): `PlayFGM(0x62)`, then
+        // `Effect(nEFKindDustHeavyDouble, TopN)`, both before any wait.
+        let mut d = DemoParts::start(FighterKind::Link, 7);
+        assert_eq!(
+            d.events(),
+            [
+                DemoEvent::PlayFgm(0x62),
+                DemoEvent::Effect {
+                    kind: crate::fteffect::kind::DUST_HEAVY_DOUBLE,
+                    joint: 0,
+                    offset: Vec3::ZERO,
+                    scatter: Vec3::ZERO,
+                    is_scale_pos: false,
+                    flag: 0,
+                },
+            ]
+        );
+        d.tick();
+        assert!(d.events().is_empty());
+        // Mario's run row has no script.
+        assert!(DemoParts::start(FighterKind::Mario, 6).events().is_empty());
     }
 
     #[test]

@@ -984,6 +984,7 @@ struct TexKey {
     clamp_s: bool,
     clamp_t: bool,
     rgb_unused: bool,
+    rgb_lerp: Option<[[u8; 3]; 2]>,
     compensation_version: u8,
     coverage_hash: u64,
     animated_relationship: bool,
@@ -1046,6 +1047,7 @@ fn texture_cache_key(
         clamp_s: t.clamp_s,
         clamp_t: t.clamp_t,
         rgb_unused: t.rgb_unused,
+        rgb_lerp: t.rgb_lerp,
         compensation_version: ssb_rom::filter_compensation::ALGORITHM_VERSION,
         coverage_hash,
         animated_relationship: animated_relationship.is_some(),
@@ -1425,6 +1427,7 @@ fn pack_mesh(
                     clamp_s: false,
                     clamp_t: false,
                     rgb_unused: false,
+                    rgb_lerp: None,
                     compensation_version: 0,
                     coverage_hash: 0,
                     animated_relationship: false,
@@ -7727,6 +7730,15 @@ fn convert_texture(
     } else {
         index_colours
     };
+    // `TextureRef::rgb_lerp`: the combiner blends two constants by the
+    // texel before the shade multiplies it in.
+    let index_colours: Vec<u32> = match t.rgb_lerp {
+        Some(lerp) => index_colours
+            .into_iter()
+            .map(|c| psp::pack_abgr(ssb_rom::mesh::rgb_lerp_texel(lerp, c.to_le_bytes())))
+            .collect(),
+        None => index_colours,
+    };
     if natural.is_paletted() && index_colours.is_empty() {
         return None;
     }
@@ -7747,6 +7759,11 @@ fn convert_texture(
         if t.rgb_unused {
             for px in img.pixels.as_chunks_mut::<4>().0 {
                 px[..3].fill(0xFF);
+            }
+        }
+        if let Some(lerp) = t.rgb_lerp {
+            for px in img.pixels.as_chunks_mut::<4>().0 {
+                *px = ssb_rom::mesh::rgb_lerp_texel(lerp, *px);
             }
         }
         Some(texture::mirror_extend(
@@ -17650,6 +17667,7 @@ mod tests {
             clamp_t: false,
             framebuffer: false,
             rgb_unused: false,
+            rgb_lerp: None,
             origin_s: 0,
             origin_t: 0,
             mask_s: 0,
@@ -17785,6 +17803,7 @@ mod tests {
             clamp_t: false,
             framebuffer: false,
             rgb_unused: false,
+            rgb_lerp: None,
             origin_s: 0,
             origin_t: 0,
             mask_s: 0,
@@ -18045,6 +18064,7 @@ mod tests {
             clamp_t: true,
             framebuffer: false,
             rgb_unused: false,
+            rgb_lerp: None,
             origin_s: 2 << 2,
             origin_t: 0,
             mask_s: 0,

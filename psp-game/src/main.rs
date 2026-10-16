@@ -3946,7 +3946,7 @@ unsafe fn draw_frame(
             gpu.begin_frame(Some(BG_RESULTS));
         }
         Screen::Menus => s.menus.draw(gpu, pack.as_ref(), draw_state, &s.backup),
-        Screen::Opening => opening_screen::draw(&s.opening, gpu, pack.as_ref(), draw_state),
+        Screen::Opening => opening_screen::draw(&mut s.opening, gpu, pack.as_ref(), draw_state),
         Screen::FighterSelect => draw_training_select(
             gpu,
             pack.as_ref(),

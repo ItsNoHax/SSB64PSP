@@ -344,18 +344,10 @@ pub fn make(f: &mut Fighter, rt: &mut EffectRuntime<'_>, r: EffectRequest) {
     // a script reaches that way places itself.
     let mut pos = Vec3::ZERO;
     if joint != -1 {
-        pos = offset.unwrap_or(Vec3::ZERO);
-        if let Some(s) = r.scatter {
-            if s.x != 0.0 {
-                pos.x += (crate::rng::rand_float() - 0.5) * (s.x * 2.0);
-            }
-            if s.y != 0.0 {
-                pos.y += (crate::rng::rand_float() - 0.5) * (s.y * 2.0);
-            }
-            if s.z != 0.0 {
-                pos.z += (crate::rng::rand_float() - 0.5) * (s.z * 2.0);
-            }
-        }
+        pos = scattered(
+            offset.unwrap_or(Vec3::ZERO),
+            r.scatter.unwrap_or(Vec3::ZERO),
+        );
         if r.is_scale_pos {
             let k = 1.0 / f.attributes.size;
             pos *= k;
@@ -365,26 +357,29 @@ pub fn make(f: &mut Fighter, rt: &mut EffectRuntime<'_>, r: EffectRequest) {
     dispatch(f, rt, r.kind, pos, r.lr);
 }
 
-/// `ftParamMakeEffect`'s second switch: the maker for `kind` at `pos`.
-fn dispatch(f: &mut Fighter, rt: &mut EffectRuntime<'_>, effect: u16, mut pos: Vec3, lr: i8) {
+/// `ftParamMakeEffect`'s offset, moved by up to `scatter` either way on
+/// each axis that has one (a random draw per such axis, x first).
+pub fn scattered(offset: Vec3, scatter: Vec3) -> Vec3 {
+    let mut pos = offset;
+    if scatter.x != 0.0 {
+        pos.x += (crate::rng::rand_float() - 0.5) * (scatter.x * 2.0);
+    }
+    if scatter.y != 0.0 {
+        pos.y += (crate::rng::rand_float() - 0.5) * (scatter.y * 2.0);
+    }
+    if scatter.z != 0.0 {
+        pos.z += (crate::rng::rand_float() - 0.5) * (scatter.z * 2.0);
+    }
+    pos
+}
+
+/// `ftParamMakeEffect`'s second switch for the kinds whose maker reads
+/// only the place and `lr` (the dusts): `false` for any other kind. The
+/// opening movies' demo fighters, which have no battle [`Fighter`], make
+/// their scripts' effects through it.
+pub fn make_at(rt: &mut EffectRuntime<'_>, effect: u16, mut pos: Vec3, lr: i8) -> bool {
     let (p, e, b) = (&mut *rt.particles, &mut *rt.effects, rt.banks);
     match effect {
-        kind::DAMAGE_NORMAL => {
-            let pos = effect_joint_position(f);
-            e.damage_normal_light(p, b, pos, f.port, 10, false);
-        }
-        kind::FLAME_LR => {
-            let pos = effect_joint_position(f);
-            e.flame_lr(p, b, pos, lr);
-        }
-        kind::FLAME_RANDOM | kind::FLAME_STATIC => {
-            let pos = effect_joint_position(f);
-            e.flame(p, b, pos, effect == kind::FLAME_RANDOM);
-        }
-        kind::SHOCK_SMALL => {
-            let pos = effect_joint_position(f);
-            e.shock_small(pos);
-        }
         kind::DUST_LIGHT => {
             e.dust_light(p, b, pos, lr, 1.0);
         }
@@ -416,6 +411,34 @@ fn dispatch(f: &mut Fighter, rt: &mut EffectRuntime<'_>, effect: u16, mut pos: V
         }
         kind::DUST_DASH_LARGE => {
             e.dust_dash(p, b, pos, lr, 1.5);
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// `ftParamMakeEffect`'s second switch: the maker for `kind` at `pos`.
+fn dispatch(f: &mut Fighter, rt: &mut EffectRuntime<'_>, effect: u16, pos: Vec3, lr: i8) {
+    if make_at(rt, effect, pos, lr) {
+        return;
+    }
+    let (p, e, b) = (&mut *rt.particles, &mut *rt.effects, rt.banks);
+    match effect {
+        kind::DAMAGE_NORMAL => {
+            let pos = effect_joint_position(f);
+            e.damage_normal_light(p, b, pos, f.port, 10, false);
+        }
+        kind::FLAME_LR => {
+            let pos = effect_joint_position(f);
+            e.flame_lr(p, b, pos, lr);
+        }
+        kind::FLAME_RANDOM | kind::FLAME_STATIC => {
+            let pos = effect_joint_position(f);
+            e.flame(p, b, pos, effect == kind::FLAME_RANDOM);
+        }
+        kind::SHOCK_SMALL => {
+            let pos = effect_joint_position(f);
+            e.shock_small(pos);
         }
         kind::DAMAGE_FLY_ORBS => {
             e.damage_spawn_orbs(pos);
