@@ -14,7 +14,7 @@ use ssb_engine::array_vec::ArrayVec;
 use ssb_game::fighter::FighterKind;
 use ssb_rom::pack::{Pack, StageDesc};
 
-pub use ssb_psp_runtime::scene::{fighter_turn, FighterScene};
+pub use ssb_psp_runtime::scene::FighterScene;
 
 /// A stationary, physics-ticked dummy target for Training Mode
 /// (the retired F1 spec: "One player-controlled fighter vs. one
@@ -41,6 +41,9 @@ pub struct Dummy {
     /// How to Play's input script (`nFTPlayerKindGameKey`), which drives
     /// the fighter instead of the CPU.
     pub key: Option<ssb_game::key::Key>,
+    /// Capture only (`cpufx-*`): the fighter reads the player's pad, as
+    /// the N64 reference ROM's humans all read controller 0.
+    pub mirror: bool,
 }
 
 impl Deref for Dummy {
@@ -117,6 +120,7 @@ impl Dummy {
             computer,
             is_1p_game: false,
             key: None,
+            mirror: false,
         }
     }
 

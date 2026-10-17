@@ -297,7 +297,8 @@ pub struct EntryPart {
     /// `dobj->rotate.vec.f.y = F_CLC_DTOR32(180.0F)` for `lr == -1`.
     pub turns_left: bool,
     /// The node whose script's end ejects it (`dobj->child->anim_frame`);
-    /// `None` for the object's (`efManagerHaveStructProcUpdate`).
+    /// `None` for the object's `GObj::anim_frame` reaching 0
+    /// (`efManagerHaveStructProcUpdate`, `efManagerNoStructProcUpdate`).
     pub end_node: Option<usize>,
     pub link: EntryLink,
     pub clock: EntryClock,
@@ -557,6 +558,23 @@ pub fn fox_reflector_object(pack: &Pack<'_>) -> Option<ObjectDesc> {
     (0..pack.object_count())
         .filter_map(|i| pack.object(i))
         .find(|object| object.source_file == 346 && object.source_offset == 0x2B0)
+}
+
+/// `dEFManagerFoxReflectorEffectDesc`: the hexagon's tree and its four
+/// tables by `effect_vars.reflector.index`: the `EFDesc`'s own Start, then
+/// Loop, Hit and End (`ssb_rom::effect::FOX_REFLECTOR_ANIM_SLOT` on).
+pub fn fox_reflector_effect(pack: &Pack<'_>) -> Option<(ObjectDesc, [ssb_rom::pack::AnimDesc; 4])> {
+    let (object, start) = manager_effect(pack, ssb_rom::effect::FOX_REFLECTOR_KEY)?;
+    let slot = ssb_rom::effect::FOX_REFLECTOR_ANIM_SLOT;
+    Some((
+        object,
+        [
+            start,
+            pack.effect_anim(slot)?,
+            pack.effect_anim(slot + 1)?,
+            pack.effect_anim(slot + 2)?,
+        ],
+    ))
 }
 
 /// Walks a stage's floor polylines as the `(line_id, segment)` pairs the

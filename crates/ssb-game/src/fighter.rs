@@ -1209,6 +1209,10 @@ impl Fighter {
         if self.is_in_hitlag() {
             // `ftMainRunUpdateColAnim` runs in hitlag too.
             crate::colanim::run_update_interrupt(self);
+            // So does the effect process of an effect no `proc_lagstart`
+            // pauses.
+            crate::kirby_copy::tick_punch_effect(self);
+            crate::status::tick_fox_reflector_effect(self);
             return;
         }
 

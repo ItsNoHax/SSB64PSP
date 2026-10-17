@@ -427,7 +427,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // multiplies such a blend by the shade (`mesh::TextureRef::rgb_lerp`), and
 // classifies a two-cycle alpha whose second cycle passes it through: the
 // Yoshi's Island opening's clouds (`67+0xB608`). No layout change.
-pub const VERSION: u32 = 117;
+// 118 adds the Reflector hexagon's Loop, Hit and End tables
+// (`effect::FOX_REFLECTOR_ANIM_SLOT`, file 346). No layout change.
+pub const VERSION: u32 = 118;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

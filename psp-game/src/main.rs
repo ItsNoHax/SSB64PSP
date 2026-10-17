@@ -122,6 +122,37 @@ const VS_KNOCK_SMASH_PERIOD: u64 = 50;
 const VS_PUSH_CAPTURE_TICK: u64 = 1100;
 const VS_KNOCK_CAPTURE_TICK: u64 = 750;
 
+/// The `cpufx-*` scenes' press: B, with the stick down (`cpufx-d`) or up
+/// (`cpufx-u`), from this tick. The N64 reference trace presses 30 frames
+/// after "Go" (its `el` 30); every animation-driven status change in it
+/// (Ness's `SpecialLwHold` at `el` 44, Fox's `SpecialLwLoop` at 33,
+/// Captain Falcon's `SpecialLwAir` at 61) lands on PSP tick `el + 399`,
+/// so the press is at `el` 30 on that clock.
+const CPUFX_PRESS_TICK: u64 = VS_GO_TICK + 31;
+
+/// PSP tick of the N64 reference trace's frame `el`, as above.
+const fn cpufx_tick(el: u64) -> u64 {
+    VS_GO_TICK + 1 + el
+}
+
+/// The `cpufx-*` scenes, which mirror the player's pad to the CPUs.
+const fn is_cpufx(scene: GameScene) -> bool {
+    matches!(scene, GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK)
+}
+
+/// Whether a `cpufx-*` scene holds its press on `tick`: 40 frames for
+/// Down+B, 30 for Up+B and 60 for B in the N64 reference's scripts, which
+/// it reads a frame late on release (Fox's `SpecialLwEnd` at `el` 71,
+/// Kirby's `SpecialNEnd` at 91), so one tick more here.
+const fn cpufx_held(scene: GameScene, tick: u64) -> bool {
+    let hold = match scene {
+        GameScene::CpuFxD => 41,
+        GameScene::CpuFxU => 31,
+        _ => 61,
+    };
+    is_cpufx(scene) && tick >= CPUFX_PRESS_TICK && tick < CPUFX_PRESS_TICK + hold
+}
+
 /// Whether `vsknock` flicks the stick and presses A on `tick`.
 const fn vs_knock_smash(tick: u64) -> bool {
     tick >= VS_KNOCK_FIRST_SMASH && (tick - VS_KNOCK_FIRST_SMASH) % VS_KNOCK_SMASH_PERIOD == 0
@@ -261,6 +292,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Past the KO and the CPU's rebirth (RE-469).
         GameScene::VsPush => VS_PUSH_CAPTURE_TICK,
         GameScene::VsKnock => VS_KNOCK_CAPTURE_TICK,
+        // The N64 reference's frame with every effect of `cpufx-k` and
+        // `cpufx-n` on screen (`el` 74).
+        GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK => cpufx_tick(74),
         // "Go" at 398; Luigi, held left, falls off Dream Land and the
         // one-stock battle ends. The results make the fighters 120 tics
         // in; this is past the end of Kirby's Win clip.
@@ -624,9 +658,14 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsCar
             | GameScene::VsBall
             | GameScene::VsRays
+            | GameScene::CpuFxD
+            | GameScene::CpuFxU
+            | GameScene::CpuFxN
+            | GameScene::CpuFxK
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
+            t if cpufx_held(scene, t) => N64Buttons(N64Buttons::B),
             // `vsshield`: the shield is held from "Go".
             t if scene == GameScene::VsShield && t >= 398 => N64Buttons(N64Buttons::Z),
             // `vsknock`: a forward smash with each stick flick.
@@ -831,6 +870,10 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsRays
             | GameScene::CpuWalk
             | GameScene::CpuJump
+            | GameScene::CpuFxD
+            | GameScene::CpuFxU
+            | GameScene::CpuFxN
+            | GameScene::CpuFxK
     ) {
         return 0;
     }
@@ -939,8 +982,17 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsCar
             | GameScene::VsBall
             | GameScene::VsRays
+            | GameScene::CpuFxD
+            | GameScene::CpuFxU
+            | GameScene::CpuFxN
+            | GameScene::CpuFxK
     ) {
-        return if tick == 6 { -80 } else { 0 };
+        return match tick {
+            6 => -80,
+            t if scene == GameScene::CpuFxD && cpufx_held(scene, t) => -80,
+            t if scene == GameScene::CpuFxU && cpufx_held(scene, t) => 80,
+            _ => 0,
+        };
     }
     // Seventeen ticks at 80 move the cursor 68 pixels up, from y 170 to
     // 102: the held puck's centre lands on Kirby's portrait.
@@ -1689,7 +1741,11 @@ fn interrupt_pass(
             items.publish(&mut d.fighter);
             // The items as the fighters before it left them this pass.
             let sight = play::CpuSight::observe(d.fighter.port, items, weapons, stage_ctl);
-            d.tick_interrupt(p, stage, groups, &opponents, &sight, locked);
+            if d.mirror && !locked {
+                d.tick_fighter_interrupt(p, stage, controller, jump_held, groups);
+            } else {
+                d.tick_interrupt(p, stage, groups, &opponents, &sight, locked);
+            }
         }
         let mut s = scenes(pl, dummies);
         after_interrupt(&mut s, i);
@@ -2833,6 +2889,16 @@ fn vs_rules(scene: GameScene) -> VsRules {
             stocks: 1,
             ..VsRules::DEFAULT
         },
+        // The N64 reference: stock 3, items off.
+        GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK => VsRules {
+            rule: ssb_game::battle::Rule::Stock,
+            stocks: 3,
+            items: ssb_game::item::normal::Switches {
+                appearance: ssb_game::item::normal::Appearance::None,
+                toggles: 0,
+            },
+            ..VsRules::DEFAULT
+        },
         // One stock (`stock_setting` 0).
         GameScene::VsResults | GameScene::VsResultsEmblem => VsRules {
             rule: ssb_game::battle::Rule::Stock,
@@ -3714,6 +3780,11 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
             Some([0, 0, 1, 1]),
         ),
         GameScene::VsResults | GameScene::VsResultsEmblem => return vs_results_roster(),
+        // The N64 reference ROMs' fighters (`~/ppsspp-test/cpufx`).
+        GameScene::CpuFxD => ([FighterKind::Ness, FighterKind::Captain, FighterKind::Fox, FighterKind::Purin], None),
+        GameScene::CpuFxU => ([FighterKind::Link, FighterKind::Purin, FighterKind::Yoshi, FighterKind::Ness], None),
+        GameScene::CpuFxN => ([FighterKind::Samus, FighterKind::Captain, FighterKind::Link, FighterKind::Kirby], None),
+        GameScene::CpuFxK => ([FighterKind::Kirby, FighterKind::Kirby, FighterKind::Samus, FighterKind::Captain], None),
         // The CPU on the main floor's spawn, where it can be pushed off,
         // and the player on the left platform's.
         GameScene::VsPush | GameScene::VsKnock => {
@@ -4049,7 +4120,13 @@ unsafe fn draw_frame(
         Screen::Training => {
             if let (Some(p), Some(pl)) = (pack.as_ref(), s.play_state.as_ref()) {
                 let t = profile::start();
-                effect_visuals.sync(p, draw_assets, &pl.fighter, &s.weapons, &s.items);
+                effect_visuals.sync(
+                    p,
+                    draw_assets,
+                    scenes_ref(pl, &s.dummies).map(|x| x.map(|x| &x.fighter)),
+                    &s.weapons,
+                    &s.items,
+                );
                 effect_visuals.sync_entry(
                     p,
                     draw_assets,
@@ -4235,6 +4312,22 @@ unsafe fn session_frame(
                         s.scene_gkind = gkind;
                         // These scenes set the behaviour directly rather than
                         // through Training's CP option (`trainingmenu` does).
+                        if capture_scene.is_some_and(is_cpufx) {
+                            for d in s.dummies.iter_mut().flatten() {
+                                d.mirror = true;
+                            }
+                        }
+                        // `cpufx-k`'s Kirbys are made holding their copies
+                        // (`FTCreateDesc::copy_kind`).
+                        if capture_scene == Some(GameScene::CpuFxK) {
+                            use ssb_game::fighter::FighterKind;
+                            if let Some(pl) = s.play_state.as_mut() {
+                                ssb_game::kirby::init_copy(&mut pl.fighter, FighterKind::Samus);
+                            }
+                            if let Some(d) = s.dummies[0].as_mut() {
+                                ssb_game::kirby::init_copy(&mut d.fighter, FighterKind::Captain);
+                            }
+                        }
                         if let Some(b) = capture_scene.and_then(capture_cpu_behavior) {
                             for d in s.dummies.iter_mut().flatten() {
                                 d.computer.behavior = b;
@@ -6043,7 +6136,8 @@ struct DrawAssets {
     /// Indexed by `MarioFireball::index`: Mario's palette, then Luigi's.
     fireball_meshes: [Option<ssb_rom::pack::MeshDesc>; 2],
     blaster_mesh: Option<ssb_rom::pack::MeshDesc>,
-    reflector: Option<ssb_rom::pack::ObjectDesc>,
+    /// The Reflector hexagon and its Start, Loop, Hit and End tables.
+    reflector: Option<(ssb_rom::pack::ObjectDesc, [ssb_rom::pack::AnimDesc; 4])>,
     /// Master Hand's bullet tree.
     boss_bullet: Option<ssb_rom::pack::ObjectDesc>,
     charge_shot_mesh: Option<ssb_rom::pack::MeshDesc>,
@@ -6185,7 +6279,7 @@ impl DrawAssets {
                 .map(|part| ssb_psp_runtime::scene::entry_part(p, &part)),
             fireball_meshes: ssb_psp_runtime::scene::fireball_meshes(p),
             blaster_mesh: ssb_psp_runtime::scene::fox_blaster_mesh(p),
-            reflector: ssb_psp_runtime::scene::fox_reflector_object(p),
+            reflector: ssb_psp_runtime::scene::fox_reflector_effect(p),
             boss_bullet: ssb_psp_runtime::scene::boss_bullet_object(p),
             charge_shot_mesh: ssb_psp_runtime::scene::samus_charge_shot_mesh(p),
             bomb_meshes: ssb_psp_runtime::scene::samus_bomb_meshes(p),
@@ -7020,12 +7114,14 @@ fn draw_mball_rays(
     }
 }
 
-/// The animation players for Link's Boomerang and Spin Attack swirl,
-/// Captain Falcon's Falcon Punch and Falcon Kick flames, Kirby's Final
-/// Cutter wave, Pikachu's Thunder Jolts, Jigglypuff's Sing notes and Ness's
-/// PK Fire spark, PK Thunder head and PSI Magnet field. The game state counts each one's
-/// `gcPlayAnimAll` calls; [`Self::sync`] plays the players up to that
-/// count, restarting when it goes back.
+/// The animation players of the effects fighters and their weapons own:
+/// each port's PSI Magnet field, Sing notes, Spin Attack swirl, Falcon
+/// Punch flame (Captain Falcon's or a Kirby copy's), Falcon Kick flame and
+/// Reflector hexagon ([`PortFx`]), and each animated weapon's: Boomerang,
+/// Final Cutter wave, Thunder Jolt, PK Fire spark and PK Thunder head
+/// ([`WeaponFx`]). The game state counts each one's `gcPlayAnimAll` calls;
+/// [`Self::sync`] plays the players up to that count, restarting when it
+/// goes back.
 #[derive(Default)]
 struct EffectVisuals {
     /// Each port's entry effect parts (RE-403), made on the first
@@ -7038,37 +7134,20 @@ struct EffectVisuals {
     /// Each port's Egg Lay egg (RE-417), made on the first
     /// [`Self::sync_eggs`].
     eggs: alloc::vec::Vec<EggVisual>,
-    boomerang: ssb_rom::skeleton::StageAnimator,
-    boomerang_ticks: Option<u16>,
-    spin: ssb_rom::skeleton::StageAnimator,
-    spin_materials: ssb_rom::skeleton::EffectMaterialAnimator,
-    spin_ticks: Option<u16>,
-    punch_materials: ssb_rom::skeleton::EffectMaterialAnimator,
-    punch_ticks: Option<u16>,
-    kick: ssb_rom::skeleton::StageAnimator,
-    kick_materials: ssb_rom::skeleton::EffectMaterialAnimator,
-    kick_ticks: Option<u16>,
-    cutter: ssb_rom::skeleton::StageAnimator,
-    cutter_ticks: Option<u16>,
-    jolts: [JoltVisual; MAX_JOLT_VISUALS],
-    sing: ssb_rom::skeleton::StageAnimator,
-    sing_materials: ssb_rom::skeleton::EffectMaterialAnimator,
-    sing_ticks: Option<u16>,
-    pk_fire_materials: ssb_rom::skeleton::EffectMaterialAnimator,
-    pk_fire_ticks: Option<u16>,
-    pk_thunder: ssb_rom::skeleton::StageAnimator,
-    pk_thunder_materials: ssb_rom::skeleton::EffectMaterialAnimator,
-    pk_thunder_ticks: Option<u16>,
-    magnet: ssb_rom::skeleton::StageAnimator,
-    magnet_materials: ssb_rom::skeleton::EffectMaterialAnimator,
-    magnet_ticks: Option<u16>,
+    /// Each port's own effects, in [`scenes_ref`] order, made on the first
+    /// [`Self::sync`].
+    ports: alloc::vec::Vec<PortFx>,
+    /// Each weapon pool slot's players, made on the first [`Self::sync`]:
+    /// a weapon is its own `GObj` on the N64, so two Links' Boomerangs or
+    /// every Thunder Jolt in the air play their own animations.
+    weapons: alloc::vec::Vec<WeaponFx>,
     items: [ItemVisual; MAX_ITEM_VISUALS],
 }
 
 impl EffectVisuals {
     /// The players, built in place on the heap one field at a time: the
-    /// whole is some 380 KB, past the main thread's 256 KB stack
-    /// (`psp::module!`), and `Box::default` builds it on the stack first.
+    /// whole is past the main thread's 256 KB stack (`psp::module!`), and
+    /// `Box::default` builds it on the stack first.
     #[inline(never)]
     fn new_boxed() -> alloc::boxed::Box<EffectVisuals> {
         use core::ptr;
@@ -7080,37 +7159,189 @@ impl EffectVisuals {
             ptr::addr_of_mut!((*p).entry).write(Default::default());
             ptr::addr_of_mut!((*p).ko).write(Default::default());
             ptr::addr_of_mut!((*p).eggs).write(Default::default());
-            ptr::addr_of_mut!((*p).boomerang).write(Default::default());
-            ptr::addr_of_mut!((*p).boomerang_ticks).write(Default::default());
-            ptr::addr_of_mut!((*p).spin).write(Default::default());
-            ptr::addr_of_mut!((*p).spin_materials).write(Default::default());
-            ptr::addr_of_mut!((*p).spin_ticks).write(Default::default());
-            ptr::addr_of_mut!((*p).punch_materials).write(Default::default());
-            ptr::addr_of_mut!((*p).punch_ticks).write(Default::default());
-            ptr::addr_of_mut!((*p).kick).write(Default::default());
-            ptr::addr_of_mut!((*p).kick_materials).write(Default::default());
-            ptr::addr_of_mut!((*p).kick_ticks).write(Default::default());
-            ptr::addr_of_mut!((*p).cutter).write(Default::default());
-            ptr::addr_of_mut!((*p).cutter_ticks).write(Default::default());
-            for i in 0..MAX_JOLT_VISUALS {
-                ptr::addr_of_mut!((*p).jolts[i]).write(Default::default());
-            }
-            ptr::addr_of_mut!((*p).sing).write(Default::default());
-            ptr::addr_of_mut!((*p).sing_materials).write(Default::default());
-            ptr::addr_of_mut!((*p).sing_ticks).write(Default::default());
-            ptr::addr_of_mut!((*p).pk_fire_materials).write(Default::default());
-            ptr::addr_of_mut!((*p).pk_fire_ticks).write(Default::default());
-            ptr::addr_of_mut!((*p).pk_thunder).write(Default::default());
-            ptr::addr_of_mut!((*p).pk_thunder_materials).write(Default::default());
-            ptr::addr_of_mut!((*p).pk_thunder_ticks).write(Default::default());
-            ptr::addr_of_mut!((*p).magnet).write(Default::default());
-            ptr::addr_of_mut!((*p).magnet_materials).write(Default::default());
-            ptr::addr_of_mut!((*p).magnet_ticks).write(Default::default());
+            ptr::addr_of_mut!((*p).ports).write(Default::default());
+            ptr::addr_of_mut!((*p).weapons).write(Default::default());
             for i in 0..MAX_ITEM_VISUALS {
                 ptr::addr_of_mut!((*p).items[i]).write(Default::default());
             }
             b.assume_init()
         }
+    }
+}
+
+/// One effect's transform and material players: some 27 KB, so each
+/// [`FxSlot`] makes its own on the heap the first time its effect lives.
+#[derive(Default)]
+struct FxPlayers {
+    anim: ssb_rom::skeleton::StageAnimator,
+    materials: ssb_rom::skeleton::EffectMaterialAnimator,
+}
+
+impl FxPlayers {
+    #[inline(never)]
+    fn new_boxed() -> alloc::boxed::Box<FxPlayers> {
+        alloc::boxed::Box::default()
+    }
+}
+
+/// One effect's players and the play count they have reached.
+#[derive(Default)]
+struct FxSlot {
+    clock: Option<u16>,
+    players: Option<alloc::boxed::Box<FxPlayers>>,
+}
+
+impl FxSlot {
+    /// Plays the effect up to `target` plays ([`catch_up`]): `anim`'s
+    /// transform script and, given its `object`, the material scripts on
+    /// the object's own primitives. `None` hides the effect.
+    #[inline(never)]
+    fn sync(
+        &mut self,
+        p: &Pack<'_>,
+        target: Option<u16>,
+        object: Option<&ssb_rom::pack::ObjectDesc>,
+        anim: Option<&ssb_rom::pack::AnimDesc>,
+        speed: f32,
+    ) {
+        let Some((restart, ticks)) = catch_up(&mut self.clock, target) else {
+            return;
+        };
+        let players = self.players.get_or_insert_with(FxPlayers::new_boxed);
+        if restart {
+            if let Some(anim) = anim {
+                players.anim.start(p, anim);
+            }
+            if let Some(object) = object {
+                players.materials.start(p, object_mat_anims(p, object));
+            }
+        }
+        let script = anim.and_then(|a| p.anim_script(a));
+        for _ in 0..ticks {
+            if let Some(script) = script {
+                let _ = if speed == 1.0 {
+                    players.anim.tick(script)
+                } else {
+                    players.anim.tick_speed(script, speed)
+                };
+            }
+            if object.is_some() {
+                if speed == 1.0 {
+                    players.materials.tick(p);
+                } else {
+                    players.materials.tick_speed(p, speed);
+                }
+            }
+        }
+    }
+
+    /// The players while the effect lives.
+    fn live(&self) -> Option<&FxPlayers> {
+        self.clock.and(self.players.as_deref())
+    }
+}
+
+/// One port's effects.
+#[derive(Default)]
+struct PortFx {
+    magnet: FxSlot,
+    sing: FxSlot,
+    spin: FxSlot,
+    /// Captain Falcon's Falcon Punch flame, or a Kirby copy's: one
+    /// `EFDesc`, and a fighter is one or the other.
+    punch: FxSlot,
+    kick: FxSlot,
+    reflector: ReflectorFx,
+}
+
+/// One weapon pool slot's players, keyed by the weapon's kind and
+/// animation epoch.
+#[derive(Default)]
+struct WeaponFx {
+    key: Option<(u8, u16)>,
+    fx: FxSlot,
+}
+
+/// The Reflector hexagon's players (`efManagerFoxReflectorProcUpdate`),
+/// replayed from the game's [`ssb_game::status::FoxReflectorEffect`].
+#[derive(Default)]
+struct ReflectorFx {
+    clock: Option<u16>,
+    /// `effect_vars.reflector.index`: the table playing.
+    index: u8,
+    /// End's table ran out: `gcEjectGObj`.
+    ended: bool,
+    players: Option<alloc::boxed::Box<FxPlayers>>,
+}
+
+impl ReflectorFx {
+    /// Each process run plays the table; at its end Start and Hit go on to
+    /// Loop, End ejects the effect. Then the run applies the request
+    /// `ftFoxSpecialLwUpdateEffect` made that frame
+    /// (`efManagerFoxReflectorSetAnimID`: the table, played once).
+    #[inline(never)]
+    fn sync(
+        &mut self,
+        p: &Pack<'_>,
+        anims: Option<&[ssb_rom::pack::AnimDesc; 4]>,
+        effect: Option<ssb_game::status::FoxReflectorEffect>,
+    ) {
+        let (Some(anims), Some(e)) = (anims, effect) else {
+            self.clock = None;
+            return;
+        };
+        let players = self.players.get_or_insert_with(FxPlayers::new_boxed);
+        let set = |players: &mut FxPlayers, index: &mut u8, id: u8| {
+            let Some(anim) = anims.get(usize::from(id)) else {
+                return;
+            };
+            // `gcAddAnimJointAll` then `gcPlayAnimAll`: frame zero, parsed
+            // without advancing (`crates/ssb-rom/tests/fox_reflector_tables.rs`
+            // replays the N64 trace).
+            players.anim.start_changed(p, anim);
+            if let Some(script) = p.anim_script(anim) {
+                let _ = players.anim.tick(script);
+            }
+            *index = id;
+        };
+        let mut at = match self.clock {
+            Some(at) if at <= e.ticks => at,
+            _ => {
+                players.anim.start(p, &anims[0]);
+                self.index = 0;
+                self.ended = false;
+                0
+            }
+        };
+        while at < e.ticks && !self.ended {
+            at += 1;
+            if let Some(script) = p.anim_script(&anims[usize::from(self.index)]) {
+                let _ = players.anim.tick(script);
+            }
+            if players.anim.gobj_frame() <= 0.0 {
+                match self.index {
+                    0 | 2 => set(players, &mut self.index, 1),
+                    3 => {
+                        self.ended = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            if let Some((run, id)) = e.request {
+                if run == at {
+                    set(players, &mut self.index, id);
+                }
+            }
+        }
+        self.clock = Some(e.ticks);
+    }
+
+    /// The players while the hexagon is drawn.
+    fn live(&self) -> Option<&FxPlayers> {
+        self.clock
+            .filter(|_| !self.ended)
+            .and(self.players.as_deref())
     }
 }
 
@@ -7177,10 +7408,6 @@ fn stage_pose(
         .map(|(_, pose)| *pose)
 }
 
-/// Thunder Jolts drawn at once; `ftPikachuSpecialNProcUpdate` fires one per
-/// Thunder Jolt and each lives 100 frames.
-const MAX_JOLT_VISUALS: usize = 4;
-
 /// One entry effect part's players, the clock they have caught up to and
 /// the DL link it draws on this frame (RE-425).
 #[derive(Default)]
@@ -7189,6 +7416,11 @@ struct EntryVisual {
     anim: ssb_rom::skeleton::StageAnimator,
     materials: ssb_rom::skeleton::EffectMaterialAnimator,
     link: u8,
+    /// `GObj::anim_frame <= 0` after a later frame's play: the eject
+    /// `efManagerHaveStructProcUpdate` and `efManagerNoStructProcUpdate`
+    /// make. Latched, because a looping script (Link's wave and beam
+    /// wrap at frame 120) carries the frame positive again.
+    ejected: bool,
 }
 
 /// A node's local z in an entry part's animation, as the sort helpers
@@ -7254,6 +7486,7 @@ impl EffectVisuals {
                 if restart {
                     v.anim.start_changed(p, anim);
                     v.materials.start(p, object_mat_anims(p, object));
+                    v.ejected = false;
                     if let EntryLink::Fixed(link) = part.link {
                         v.link = link;
                     }
@@ -7272,6 +7505,11 @@ impl EffectVisuals {
                     }
                     let _ = v.anim.tick(script);
                     v.materials.tick(p);
+                    // The maker's own play is not the update's: only the
+                    // later frames test the eject.
+                    if !make && v.anim.gobj_frame() <= 0.0 {
+                        v.ejected = true;
+                    }
                     match part.link {
                         EntryLink::Ball(n) if make => v.link = sort_z_neg(entry_node_z(p, object, &v.anim, n)),
                         EntryLink::SortZNeg(n) => v.link = sort_z_neg(entry_node_z(p, object, &v.anim, n)),
@@ -7285,12 +7523,16 @@ impl EffectVisuals {
     }
 }
 
-/// Whether an entry part has been ejected: its end node's script, or every
-/// script, has ended.
+/// Whether an entry part has been ejected: its end node's script has
+/// ended, or, for a part `efManagerHaveStructProcUpdate` or
+/// `efManagerNoStructProcUpdate` updates, its `GObj::anim_frame` has
+/// reached 0. Every entry desc without `EFFECT_FLAG_USERDATA` (Link's wave
+/// and beam among them) gets the latter whatever its `proc_update`
+/// (`efManagerFuncRun`).
 fn entry_part_ended(part: &ssb_psp_runtime::scene::EntryPart, object: &ssb_rom::pack::ObjectDesc, v: &EntryVisual) -> bool {
     match part.end_node {
         Some(n) => v.anim.node_ended(object.first_node + n as u32).unwrap_or(true),
-        None => v.anim.ended(),
+        None => v.ejected,
     }
 }
 
@@ -7755,15 +7997,6 @@ fn draw_screen_flash(gpu: &mut Gpu, draw_state: &mut meshdraw::DrawState, ko: &s
     draw_state.invalidate_all();
 }
 
-/// One Thunder Jolt's players, keyed by its animation epoch.
-#[derive(Default)]
-struct JoltVisual {
-    epoch: Option<u16>,
-    ticks: u16,
-    anim: ssb_rom::skeleton::StageAnimator,
-    materials: ssb_rom::skeleton::EffectMaterialAnimator,
-}
-
 /// `gcAddAnimAll`'s material half: the material scripts bound to an
 /// effect object's own primitives (RE-175).
 fn object_mat_anims<'p>(
@@ -7965,7 +8198,7 @@ impl EffectVisuals {
         &mut self,
         p: &Pack<'_>,
         assets: &DrawAssets,
-        player: &ssb_game::fighter::Fighter,
+        fighters: [Option<&ssb_game::fighter::Fighter>; 4],
         weapons: &ssb_game::weapon::WeaponPool,
         items: &ssb_game::item::ItemPool,
     ) {
@@ -8006,185 +8239,101 @@ impl EffectVisuals {
             }
         }
 
-        // `ftLinkSpecialNProcUpdate` allows one Boomerang per Link, and
-        // Training has one Link.
-        let boomerang = weapons.boomerangs().next().map(|b| b.anim_ticks);
-        if let (Some((restart, ticks)), Some((_, anim))) = (
-            catch_up(&mut self.boomerang_ticks, boomerang),
-            assets.boomerang.as_ref(),
-        ) {
-            if restart {
-                self.boomerang.start(p, anim);
-            }
-            if let Some(script) = p.anim_script(anim) {
-                for _ in 0..ticks {
-                    let _ = self.boomerang.tick(script);
-                }
-            }
+        self.sync_weapons(p, assets, weapons);
+        if self.ports.len() < 4 {
+            self.ports.resize_with(4, Default::default);
         }
-
-        // `ftKirbySpecialHiLanding` makes one wave per Final Cutter, and
-        // Training has one Kirby.
-        let cutter = weapons.cutters().next().map(|c| c.anim_ticks);
-        if let (Some((restart, ticks)), Some((_, anim))) = (
-            catch_up(&mut self.cutter_ticks, cutter),
-            assets.cutter.as_ref(),
-        ) {
-            if restart {
-                self.cutter.start(p, anim);
+        for (v, f) in self.ports.iter_mut().zip(fighters) {
+            fn pair(
+                a: &Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+            ) -> (Option<&ssb_rom::pack::ObjectDesc>, Option<&ssb_rom::pack::AnimDesc>) {
+                a.as_ref().map(|(o, a)| (o, a)).unzip()
             }
-            if let Some(script) = p.anim_script(anim) {
-                for _ in 0..ticks {
-                    let _ = self.cutter.tick(script);
-                }
-            }
+            let (object, anim) = pair(&assets.magnet);
+            v.magnet.sync(p, f.and_then(ssb_game::ness::magnet_effect_ticks), object, anim, 1.0);
+            let (object, anim) = pair(&assets.sing);
+            v.sing.sync(p, f.and_then(ssb_game::purin::sing_effect_ticks), object, anim, 1.0);
+            let (object, anim) = pair(&assets.spin_effect);
+            v.spin.sync(p, f.and_then(ssb_game::link::spin_effect_ticks), object, anim, 1.0);
+            let punch = f.and_then(|f| {
+                ssb_game::captain::punch_effect_ticks(f)
+                    .or_else(|| ssb_game::kirby_copy::punch_effect_ticks(f))
+            });
+            v.punch.sync(p, punch, assets.falcon_punch.as_ref(), None, 1.0);
+            let (object, anim) = pair(&assets.falcon_kick);
+            v.kick.sync(p, f.and_then(ssb_game::captain::kick_effect_ticks), object, anim, 1.0);
+            v.reflector.sync(
+                p,
+                assets.reflector.as_ref().map(|(_, anims)| anims),
+                f.and_then(ssb_game::status::fox_reflector_effect),
+            );
         }
+    }
 
-        // The jolts in pool order. A jolt whose epoch changed (it landed, or
-        // `wpPikachuThunderJoltGroundAddAnim` restarted it) replays from the
-        // start; the ground form plays at `gcSetAllAnimSpeed`'s 0.5.
-        let mut jolts = weapons.jolts();
-        for visual in &mut self.jolts {
-            let Some(jolt) = jolts.next() else {
-                visual.epoch = None;
+    /// Each animated weapon's players, by pool slot. A slot whose weapon
+    /// changed kind or epoch (a jolt landed, or
+    /// `wpPikachuThunderJoltGroundAddAnim` restarted it) replays from the
+    /// start; the ground jolt plays at `gcSetAllAnimSpeed`'s 0.5. The
+    /// Boomerang and the Final Cutter wave have no material scripts, and the
+    /// PK Fire spark no transform script.
+    #[inline(never)]
+    fn sync_weapons(&mut self, p: &Pack<'_>, assets: &DrawAssets, weapons: &ssb_game::weapon::WeaponPool) {
+        use ssb_game::weapon::AnimatedWeapon as W;
+        if self.weapons.len() < ssb_game::weapon::MAX_WEAPONS {
+            self.weapons
+                .resize_with(ssb_game::weapon::MAX_WEAPONS, Default::default);
+        }
+        let mut seen = [false; ssb_game::weapon::MAX_WEAPONS];
+        for (slot, w) in weapons.animated() {
+            let Some(v) = self.weapons.get_mut(slot) else {
                 continue;
             };
-            let ground = jolt.surface.is_some();
-            let Some((object, anim)) = (if ground {
-                assets.jolt_ground.as_ref()
-            } else {
-                assets.jolt_air.as_ref()
-            }) else {
-                continue;
+            seen[slot] = true;
+            let anim_of = |a: &Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>| {
+                a.as_ref().map(|(_, a)| *a)
             };
-            if visual.epoch != Some(jolt.anim_epoch) || visual.ticks > jolt.anim_ticks {
-                visual.epoch = Some(jolt.anim_epoch);
-                visual.ticks = 0;
-                visual.anim.start(p, anim);
-                visual.materials.start(p, object_mat_anims(p, object));
-            }
-            let speed = if ground {
-                ssb_game::weapon::JOLT_GROUND_ANIM_SPEED
-            } else {
-                1.0
+            let (key, ticks, object, anim, speed) = match w {
+                W::Boomerang(b) => ((0, 0), b.anim_ticks, None, anim_of(&assets.boomerang), 1.0),
+                W::Cutter(c) => ((1, 0), c.anim_ticks, None, anim_of(&assets.cutter), 1.0),
+                W::Jolt(j) => {
+                    let ground = j.surface.is_some();
+                    let asset = if ground {
+                        assets.jolt_ground.as_ref()
+                    } else {
+                        assets.jolt_air.as_ref()
+                    };
+                    let speed = if ground {
+                        ssb_game::weapon::JOLT_GROUND_ANIM_SPEED
+                    } else {
+                        1.0
+                    };
+                    (
+                        (2, j.anim_epoch),
+                        j.anim_ticks,
+                        asset.map(|(o, _)| *o),
+                        asset.map(|(_, a)| *a),
+                        speed,
+                    )
+                }
+                W::PKFire(f) => ((3, 0), f.anim_ticks, assets.pk_fire, None, 1.0),
+                W::PKThunder(t) => (
+                    (4, 0),
+                    t.anim_ticks,
+                    assets.pk_thunder.as_ref().map(|(o, _)| *o),
+                    anim_of(&assets.pk_thunder),
+                    1.0,
+                ),
             };
-            if let Some(script) = p.anim_script(anim) {
-                while visual.ticks < jolt.anim_ticks {
-                    let _ = visual.anim.tick_speed(script, speed);
-                    visual.materials.tick_speed(p, speed);
-                    visual.ticks += 1;
-                }
+            if v.key != Some(key) {
+                v.key = Some(key);
+                v.fx.clock = None;
             }
+            v.fx.sync(p, Some(ticks), object.as_ref(), anim.as_ref(), speed);
         }
-
-        // One PK Fire and one PK Thunder per Ness, and Training has one Ness.
-        let pk_fire = weapons.pk_fires().next().map(|w| w.anim_ticks);
-        if let (Some((restart, ticks)), Some(object)) = (
-            catch_up(&mut self.pk_fire_ticks, pk_fire),
-            assets.pk_fire.as_ref(),
-        ) {
-            if restart {
-                self.pk_fire_materials.start(p, object_mat_anims(p, object));
-            }
-            for _ in 0..ticks {
-                self.pk_fire_materials.tick(p);
-            }
-        }
-        let pk_thunder = weapons.pk_thunders().next().map(|w| w.anim_ticks);
-        if let (Some((restart, ticks)), Some((object, anim))) = (
-            catch_up(&mut self.pk_thunder_ticks, pk_thunder),
-            assets.pk_thunder.as_ref(),
-        ) {
-            if restart {
-                self.pk_thunder.start(p, anim);
-                self.pk_thunder_materials
-                    .start(p, object_mat_anims(p, object));
-            }
-            if let Some(script) = p.anim_script(anim) {
-                for _ in 0..ticks {
-                    let _ = self.pk_thunder.tick(script);
-                    self.pk_thunder_materials.tick(p);
-                }
-            }
-        }
-
-        let magnet = ssb_game::ness::magnet_effect_ticks(player);
-        if let (Some((restart, ticks)), Some((object, anim))) = (
-            catch_up(&mut self.magnet_ticks, magnet),
-            assets.magnet.as_ref(),
-        ) {
-            if restart {
-                self.magnet.start(p, anim);
-                self.magnet_materials.start(p, object_mat_anims(p, object));
-            }
-            if let Some(script) = p.anim_script(anim) {
-                for _ in 0..ticks {
-                    let _ = self.magnet.tick(script);
-                    self.magnet_materials.tick(p);
-                }
-            }
-        }
-
-        let sing = ssb_game::purin::sing_effect_ticks(player);
-        if let (Some((restart, ticks)), Some((object, anim))) =
-            (catch_up(&mut self.sing_ticks, sing), assets.sing.as_ref())
-        {
-            if restart {
-                self.sing.start(p, anim);
-                self.sing_materials.start(p, object_mat_anims(p, object));
-            }
-            if let Some(script) = p.anim_script(anim) {
-                for _ in 0..ticks {
-                    let _ = self.sing.tick(script);
-                    self.sing_materials.tick(p);
-                }
-            }
-        }
-
-        let spin = ssb_game::link::spin_effect_ticks(player);
-        if let (Some((restart, ticks)), Some((object, anim))) = (
-            catch_up(&mut self.spin_ticks, spin),
-            assets.spin_effect.as_ref(),
-        ) {
-            if restart {
-                self.spin.start(p, anim);
-                self.spin_materials.start(p, object_mat_anims(p, object));
-            }
-            if let Some(script) = p.anim_script(anim) {
-                for _ in 0..ticks {
-                    let _ = self.spin.tick(script);
-                    self.spin_materials.tick(p);
-                }
-            }
-        }
-
-        let punch = ssb_game::captain::punch_effect_ticks(player);
-        if let (Some((restart, ticks)), Some(object)) = (
-            catch_up(&mut self.punch_ticks, punch),
-            assets.falcon_punch.as_ref(),
-        ) {
-            if restart {
-                self.punch_materials.start(p, object_mat_anims(p, object));
-            }
-            for _ in 0..ticks {
-                self.punch_materials.tick(p);
-            }
-        }
-
-        let kick = ssb_game::captain::kick_effect_ticks(player);
-        if let (Some((restart, ticks)), Some((object, anim))) = (
-            catch_up(&mut self.kick_ticks, kick),
-            assets.falcon_kick.as_ref(),
-        ) {
-            if restart {
-                self.kick.start(p, anim);
-                self.kick_materials.start(p, object_mat_anims(p, object));
-            }
-            if let Some(script) = p.anim_script(anim) {
-                for _ in 0..ticks {
-                    let _ = self.kick.tick(script);
-                    self.kick_materials.tick(p);
-                }
+        for (v, seen) in self.weapons.iter_mut().zip(seen) {
+            if !seen {
+                v.key = None;
+                v.fx.clock = None;
             }
         }
     }
@@ -10335,12 +10484,21 @@ unsafe fn draw_items_weapons_effects(
             );
             meshdraw::draw_mesh(p, shot_mesh, draw_state, None, None);
         };
-        if ssb_game::samus::is_charging(&pl.fighter) {
-            draw_shot(
-                ssb_game::samus::charge_shot_position(&pl.fighter),
-                ssb_game::samus::charge_shot_rotate_z(&pl.fighter),
-                ssb_game::weapon::samus_charge_shot_scale(pl.fighter.samus.charge_level),
-            );
+        // Each fighter's charging shot, Samus's or a Kirby copy's.
+        for f in scenes_ref(pl, dummies).into_iter().flatten().map(|x| &x.fighter) {
+            if ssb_game::samus::is_charging(f) {
+                draw_shot(
+                    ssb_game::samus::charge_shot_position(f),
+                    ssb_game::samus::charge_shot_rotate_z(f),
+                    ssb_game::weapon::samus_charge_shot_scale(f.samus.charge_level),
+                );
+            } else if ssb_game::kirby_copy::is_charging(f) {
+                draw_shot(
+                    ssb_game::kirby_copy::charge_shot_position(f),
+                    ssb_game::kirby_copy::charge_shot_rotate_z(f),
+                    ssb_game::weapon::samus_charge_shot_scale(f.kirby.copy.samus_charge_level),
+                );
+            }
         }
         for shot in weapons.charge_shots() {
             draw_shot(shot.position, shot.rotate_z, shot.scale());
@@ -10364,8 +10522,10 @@ unsafe fn draw_items_weapons_effects(
             );
             meshdraw::draw_mesh(p, egg_mesh, draw_state, None, None);
         };
-        if let Some(pos) = ssb_game::yoshi::held_egg_position(&pl.fighter) {
-            draw_egg(pos, 0.0);
+        for f in scenes_ref(pl, dummies).into_iter().flatten().map(|x| &x.fighter) {
+            if let Some(pos) = ssb_game::yoshi::held_egg_position(f) {
+                draw_egg(pos, 0.0);
+            }
         }
         for egg in weapons.eggs().filter(|egg| !egg.exploded) {
             draw_egg(egg.position, egg.rotate_z);
@@ -10428,9 +10588,15 @@ unsafe fn draw_items_weapons_effects(
     // `wpMainVelSetModelPitch`'s `rotate.y`; node 1 spins under the
     // `anim_joints` stream. The return hides node 2 (`DOBJ_FLAG_NOTEXTURE`).
     if let Some((object, _)) = assets.boomerang.as_ref() {
-        for boomerang in weapons.boomerangs() {
+        for (slot, w) in weapons.animated() {
+            let ssb_game::weapon::AnimatedWeapon::Boomerang(boomerang) = w else {
+                continue;
+            };
+            let Some(fx) = effect_visuals.weapons.get(slot).and_then(|v| v.fx.live()) else {
+                continue;
+            };
             let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
-            let n = effect_visuals.boomerang.compose(p, object, &mut posed);
+            let n = fx.anim.compose(p, object, &mut posed);
             if let Some(root) = p.node(object.first_node) {
                 let t = root.rest_translate.map(|v| -v / meshdraw::MODEL_SCALE);
                 let unplace = ssb_rom::scene::Mat4::from_trs(t, [0.0; 3], [1.0; 3]);
@@ -10467,7 +10633,13 @@ unsafe fn draw_items_weapons_effects(
     // its `scale.x`/`scale.y`. The ground jolt is a `DObjDesc` tree whose
     // root takes the position and `rotate` (0, `model_rotate_y`, the line's
     // slope); nodes 2-7 blink through their `SetFlags` events.
-    for (jolt, visual) in weapons.jolts().zip(effect_visuals.jolts.iter()) {
+    for (slot, w) in weapons.animated() {
+        let ssb_game::weapon::AnimatedWeapon::Jolt(jolt) = w else {
+            continue;
+        };
+        let Some(visual) = effect_visuals.weapons.get(slot).and_then(|v| v.fx.live()) else {
+            continue;
+        };
         if jolt.surface.is_none() {
             let Some((object, _)) = assets.jolt_air.as_ref() else {
                 continue;
@@ -10544,7 +10716,13 @@ unsafe fn draw_items_weapons_effects(
             .and_then(|n| p.mesh(n.mesh))
     };
     if let Some(mesh) = assets.pk_fire.as_ref().and_then(|o| first_mesh(o, 0)) {
-        for spark in weapons.pk_fires() {
+        for (slot, w) in weapons.animated() {
+            let ssb_game::weapon::AnimatedWeapon::PKFire(spark) = w else {
+                continue;
+            };
+            let Some(fx) = effect_visuals.weapons.get(slot).and_then(|v| v.fx.live()) else {
+                continue;
+            };
             gpu.model_transform_billboard(
                 spark.position,
                 pl.camera.eye,
@@ -10557,15 +10735,21 @@ unsafe fn draw_items_weapons_effects(
                 &mesh,
                 draw_state,
                 None,
-                Some(&effect_visuals.pk_fire_materials),
+                Some(&fx.materials),
             );
         }
     }
     if let Some((object, _)) = assets.pk_thunder.as_ref() {
         if let Some(mesh) = first_mesh(object, 1) {
-            let scale = stage_pose(&effect_visuals.pk_thunder, object.first_node)
-                .map_or([1.0, 1.0], |pose| [pose.scale[0], pose.scale[1]]);
-            for head in weapons.pk_thunders() {
+            for (slot, w) in weapons.animated() {
+                let ssb_game::weapon::AnimatedWeapon::PKThunder(head) = w else {
+                    continue;
+                };
+                let Some(fx) = effect_visuals.weapons.get(slot).and_then(|v| v.fx.live()) else {
+                    continue;
+                };
+                let scale = stage_pose(&fx.anim, object.first_node)
+                    .map_or([1.0, 1.0], |pose| [pose.scale[0], pose.scale[1]]);
                 gpu.model_transform_billboard(
                     head.position,
                     pl.camera.eye,
@@ -10581,7 +10765,7 @@ unsafe fn draw_items_weapons_effects(
                     &mesh,
                     draw_state,
                     None,
-                    Some(&effect_visuals.pk_thunder_materials),
+                    Some(&fx.materials),
                 );
             }
         }
@@ -10619,9 +10803,15 @@ unsafe fn draw_items_weapons_effects(
     // `RotRpyR` of `wpMainVelSetModelPitch`'s yaw and the floor slope; node 1
     // flickers under the `anim_joints` stream.
     if let Some((object, _)) = assets.cutter.as_ref() {
-        for cutter in weapons.cutters() {
+        for (slot, w) in weapons.animated() {
+            let ssb_game::weapon::AnimatedWeapon::Cutter(cutter) = w else {
+                continue;
+            };
+            let Some(fx) = effect_visuals.weapons.get(slot).and_then(|v| v.fx.live()) else {
+                continue;
+            };
             let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
-            let n = effect_visuals.cutter.compose(p, object, &mut posed);
+            let n = fx.anim.compose(p, object, &mut posed);
             if let Some(root) = p.node(object.first_node) {
                 let t = root.rest_translate.map(|v| -v / meshdraw::MODEL_SCALE);
                 let place = ssb_rom::scene::Mat4::from_tr_display(
@@ -10756,18 +10946,37 @@ unsafe fn draw_items_weapons_effects(
         }
     }
 
+    for (scene, v) in scenes_ref(pl, dummies).into_iter().zip(effect_visuals.ports.iter()) {
+        if let Some(scene) = scene {
+            draw_fighter_effects(gpu, draw_state, p, pl, &scene.fighter, v, assets, material_anim);
+        }
+    }
+}
+
+/// One fighter's own effects, in the order their kinds were written for
+/// the player: PSI Magnet, Sing, Spin Attack, Falcon Punch, Falcon Kick,
+/// Reflector. The N64 draws link 15's effects in creation order; each
+/// fighter's effects here draw after the previous port's.
+#[inline(never)]
+unsafe fn draw_fighter_effects(
+    gpu: &mut Gpu,
+    draw_state: &mut meshdraw::DrawState,
+    p: &Pack<'_>,
+    pl: &play::FighterScene,
+    f: &ssb_game::fighter::Fighter,
+    v: &PortFx,
+    assets: &DrawAssets,
+    material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) {
     // Ness's PSI Magnet field. The root is battle matrix function 80, a pure
     // translation to TopN's world position; each child is `Tra` then kind
     // 46, a camera-facing quad spun by its `rotate.z` and sized by its
     // `scale.x`/`scale.y`. So each drawn node is a billboard at TopN plus
     // its composed offset, in world axes.
-    if let (Some(_), Some((object, _))) = (
-        ssb_game::ness::magnet_effect_ticks(&pl.fighter),
-        assets.magnet.as_ref(),
-    ) {
+    if let (Some(fx), Some((object, _))) = (v.magnet.live(), assets.magnet.as_ref()) {
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 8];
-        let n = effect_visuals.magnet.compose(p, object, &mut posed);
-        let top = pl.fighter.joint_world(0, ssb_engine::math::Vec3::ZERO);
+        let n = fx.anim.compose(p, object, &mut posed);
+        let top = f.joint_world(0, ssb_engine::math::Vec3::ZERO);
         for (i, local) in posed[..n].iter().enumerate() {
             let node_index = object.first_node + i as u32;
             let Some(mesh) = p
@@ -10783,7 +10992,7 @@ unsafe fn draw_items_weapons_effects(
                     local.0[13] * meshdraw::MODEL_SCALE,
                     local.0[14] * meshdraw::MODEL_SCALE,
                 );
-            let (spin, scale) = stage_pose(&effect_visuals.magnet, node_index)
+            let (spin, scale) = stage_pose(&fx.anim, node_index)
                 .map_or((0.0, [1.0, 1.0]), |pose| {
                     (pose.rotate[2], [pose.scale[0], pose.scale[1]])
                 });
@@ -10802,7 +11011,7 @@ unsafe fn draw_items_weapons_effects(
                 &mesh,
                 draw_state,
                 None,
-                Some(&effect_visuals.magnet_materials),
+                Some(&fx.materials),
             );
         }
     }
@@ -10814,13 +11023,10 @@ unsafe fn draw_items_weapons_effects(
     // each drawn node is a billboard at its composed position. Node 2's
     // `RotRpyR` swings the notes around it. `efManagerHaveStructProcUpdate`
     // ejects the effect when its animation ends.
-    if let (Some(_), Some((object, _))) = (
-        ssb_game::purin::sing_effect_ticks(&pl.fighter),
-        assets.sing.as_ref(),
-    ) {
-        if !effect_visuals.sing.ended() {
+    if let (Some(fx), Some((object, _))) = (v.sing.live(), assets.sing.as_ref()) {
+        if !fx.anim.ended() {
             let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 8];
-            let n = effect_visuals.sing.compose(p, object, &mut posed);
+            let n = fx.anim.compose(p, object, &mut posed);
             for (i, local) in posed[..n].iter().enumerate() {
                 let node_index = object.first_node + i as u32;
                 let Some(mesh) = p
@@ -10835,9 +11041,9 @@ unsafe fn draw_items_weapons_effects(
                     local.0[13] * meshdraw::MODEL_SCALE,
                     local.0[14] * meshdraw::MODEL_SCALE,
                 );
-                let pos = pl.fighter.joint_world(0, offset);
+                let pos = f.joint_world(0, offset);
                 let spin = if i == 1 {
-                    stage_pose(&effect_visuals.sing, node_index).map_or(0.0, |pose| pose.rotate[2])
+                    stage_pose(&fx.anim, node_index).map_or(0.0, |pose| pose.rotate[2])
                 } else {
                     0.0
                 };
@@ -10853,7 +11059,7 @@ unsafe fn draw_items_weapons_effects(
                     &mesh,
                     draw_state,
                     None,
-                    Some(&effect_visuals.sing_materials),
+                    Some(&fx.materials),
                 );
             }
         }
@@ -10863,15 +11069,12 @@ unsafe fn draw_items_weapons_effects(
     // `func_ovl0_800C99CC`: a translation to TopN's world position. Its
     // second transform, `RotRpyR`, applies the 30- or 210-degree yaw
     // `efManagerLinkSpinAttackMakeEffect` sets.
-    if let (Some(_), Some((object, _))) = (
-        ssb_game::link::spin_effect_ticks(&pl.fighter),
-        assets.spin_effect.as_ref(),
-    ) {
+    if let (Some(fx), Some((object, _))) = (v.spin.live(), assets.spin_effect.as_ref()) {
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
-        let n = effect_visuals.spin.compose(p, object, &mut posed);
+        let n = fx.anim.compose(p, object, &mut posed);
         gpu.model_transform(
-            [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
-            [0.0, ssb_game::link::spin_effect_rotate_y(&pl.fighter), 0.0],
+            [f.pos.x, f.pos.y, f.pos.z],
+            [0.0, ssb_game::link::spin_effect_rotate_y(f), 0.0],
             meshdraw::MODEL_SCALE,
         );
         let base = gpu.model_matrix();
@@ -10883,7 +11086,7 @@ unsafe fn draw_items_weapons_effects(
             None,
             draw_state,
             material_anim,
-            Some(&effect_visuals.spin_materials),
+            Some(&fx.materials),
             0,
         );
     }
@@ -10891,19 +11094,19 @@ unsafe fn draw_items_weapons_effects(
     // The Falcon Punch flame is one DObj: battle matrix function 80 places
     // it at joint 16's world position, and `RotRpyR` applies the
     // `lr * -90`-degree yaw `efManagerCaptainFalconPunchMakeEffect` sets.
-    if let (Some(_), Some(object)) = (
-        ssb_game::captain::punch_effect_ticks(&pl.fighter),
-        assets.falcon_punch.as_ref(),
-    ) {
-        let pos = pl.fighter.joint_world(
-            ssb_game::captain::PUNCH_EFFECT_JOINT,
-            ssb_engine::math::Vec3::ZERO,
-        );
+    if let (Some(fx), Some(object)) = (v.punch.live(), assets.falcon_punch.as_ref()) {
+        // `fp->joints[16]` for Captain Falcon, `[30]` for a Kirby copy.
+        let joint = if ssb_game::kirby::is_kirby(f.kind) {
+            ssb_game::kirby_copy::PUNCH_EFFECT_JOINT
+        } else {
+            ssb_game::captain::PUNCH_EFFECT_JOINT
+        };
+        let pos = f.joint_world(joint, ssb_engine::math::Vec3::ZERO);
         gpu.model_transform(
             [pos.x, pos.y, pos.z],
             [
                 0.0,
-                ssb_game::captain::punch_effect_rotate_y(&pl.fighter),
+                ssb_game::captain::punch_effect_rotate_y(f),
                 0.0,
             ],
             meshdraw::MODEL_SCALE,
@@ -10917,7 +11120,7 @@ unsafe fn draw_items_weapons_effects(
             None,
             draw_state,
             material_anim,
-            Some(&effect_visuals.punch_materials),
+            Some(&fx.materials),
             0,
         );
     }
@@ -10927,24 +11130,21 @@ unsafe fn draw_items_weapons_effects(
     // `RotRpyR` applies the root rotation
     // `efManagerCaptainFalconKickMakeEffect` sets. `Mat4::from_trs` is that
     // x-then-y-then-z order.
-    if let (Some(_), Some((object, _))) = (
-        ssb_game::captain::kick_effect_ticks(&pl.fighter),
-        assets.falcon_kick.as_ref(),
-    ) {
+    if let (Some(fx), Some((object, _))) = (v.kick.live(), assets.falcon_kick.as_ref()) {
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
-        let n = effect_visuals.kick.compose(p, object, &mut posed);
+        let n = fx.anim.compose(p, object, &mut posed);
         if let Some(root) = p.node(object.first_node) {
             let t = root.rest_translate.map(|v| -v / meshdraw::MODEL_SCALE);
             let place = ssb_rom::scene::Mat4::from_tr_display(
                 [0.0; 3],
-                ssb_game::captain::kick_effect_rotate(&pl.fighter),
+                ssb_game::captain::kick_effect_rotate(f),
             )
             .mul(&ssb_rom::scene::Mat4::from_trs(t, [0.0; 3], [1.0; 3]));
             for m in &mut posed[..n] {
                 *m = place.mul(m);
             }
         }
-        let pos = pl.fighter.joint_world(
+        let pos = f.joint_world(
             ssb_game::captain::KICK_EFFECT_JOINT,
             ssb_engine::math::Vec3::ZERO,
         );
@@ -10958,34 +11158,52 @@ unsafe fn draw_items_weapons_effects(
             None,
             draw_state,
             material_anim,
-            Some(&effect_visuals.kick_materials),
+            Some(&fx.materials),
             0,
         );
     }
 
-    if matches!(
-        pl.fighter.status.status,
-        ssb_game::status::AnyStatus::Fox(
-            ssb_game::status::FoxStatus::SpecialLwStart
-                | ssb_game::status::FoxStatus::SpecialLwLoop
-                | ssb_game::status::FoxStatus::SpecialLwTurn
-                | ssb_game::status::FoxStatus::SpecialLwHit
-                | ssb_game::status::FoxStatus::SpecialLwEnd
-                | ssb_game::status::FoxStatus::SpecialAirLwStart
-                | ssb_game::status::FoxStatus::SpecialAirLwLoop
-                | ssb_game::status::FoxStatus::SpecialAirLwTurn
-                | ssb_game::status::FoxStatus::SpecialAirLwHit
-                | ssb_game::status::FoxStatus::SpecialAirLwEnd
-        )
-    ) {
-        if let Some(reflector) = assets.reflector.as_ref() {
-            gpu.model_transform(
-                [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
-                [0.0, play::fighter_turn(&pl.fighter), 0.0],
-                meshdraw::MODEL_SCALE,
+    // The Reflector hexagon (`dEFManagerFoxReflectorEffectDesc`): the
+    // root is battle matrix function 79, TopN's whole world matrix; the
+    // drawn child is `Tra` then kind 44, a camera-facing quad sized by the
+    // accumulated scale (TopN's times its own animated one) as the shield's
+    // is. Start grows it, Loop pulses its scale every two frames, Hit
+    // flashes and End shrinks it away.
+    if let (Some(fx), Some((object, _))) = (v.reflector.live(), assets.reflector.as_ref()) {
+        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
+        let n = fx.anim.compose(p, object, &mut posed);
+        let size = f.joint_transforms[0].map_or(1.0, |j| j.axes[0].length());
+        for (i, local) in posed[..n].iter().enumerate() {
+            let node_index = object.first_node + i as u32;
+            let Some(node) = p.node(node_index) else {
+                continue;
+            };
+            let Some(mesh) = (node.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                .then(|| p.mesh(node.mesh))
+                .flatten()
+            else {
+                continue;
+            };
+            let offset = ssb_engine::math::Vec3::new(
+                local.0[12] * meshdraw::MODEL_SCALE,
+                local.0[13] * meshdraw::MODEL_SCALE,
+                local.0[14] * meshdraw::MODEL_SCALE,
             );
-            let base = gpu.model_matrix();
-            meshdraw::draw_object(p, reflector, &base, draw_state, None, 0);
+            let scale = stage_pose(&fx.anim, node_index)
+                .map_or([node.rest_scale[0], node.rest_scale[1]], |pose| {
+                    [pose.scale[0], pose.scale[1]]
+                });
+            gpu.model_transform_billboard(
+                f.joint_world(0, offset),
+                pl.camera.eye,
+                pl.camera.at,
+                0.0,
+                [
+                    meshdraw::MODEL_SCALE * size * scale[0],
+                    meshdraw::MODEL_SCALE * size * scale[1],
+                ],
+            );
+            meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
         }
     }
 }

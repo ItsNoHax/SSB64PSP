@@ -191,3 +191,19 @@ fn game_capture_ticks_round_trip_and_reject_malformed_values() {
         assert!(crate::GameSpec::parse(bad).is_none(), "{bad}");
     }
 }
+
+#[test]
+fn cpufx_scenes_parse_with_their_dashes_and_ticks() {
+    for (name, scene) in [
+        ("cpufx-d", GameScene::CpuFxD),
+        ("cpufx-u", GameScene::CpuFxU),
+        ("cpufx-n", GameScene::CpuFxN),
+        ("cpufx-k", GameScene::CpuFxK),
+    ] {
+        let text = std::format!("{name}@472");
+        let spec = crate::GameSpec::parse(&text).unwrap();
+        assert_eq!(spec.scene, scene);
+        assert_eq!(spec.tick, Some(472));
+        assert_eq!(spec.to_string(), text);
+    }
+}

@@ -136,9 +136,11 @@ fn set_special_n_loop(f: &mut Fighter) {
     f.samus.damage_resets_charge = true;
     f.samus.charge_int = CHARGE_INT;
     f.samus.charge_shot = true;
-    f.samus.charge_spin = 0;
     // `wpSamusChargeShotMakeWeapon` without `is_release`: the owner's
-    // charging loop.
+    // charging loop. The new weapon's `wpSamusChargeShotProcUpdate` runs
+    // later in the frame it is made, so the shot shows one step on the
+    // loop's frame 0 (N64 trace: Loop frame 0, `rotate.z` = -pi/10).
+    f.samus.charge_spin = 1;
     let charge = crate::weapon::SAMUS_CHARGE_SHOT_FGMS[usize::from(f.samus.charge_level.min(7))].1;
     crate::fighter_sound::play_loop_sfx(f, charge);
 }
@@ -646,11 +648,13 @@ mod tests {
         }
         assert_eq!(f.status.status, AnyStatus::Samus(SamusStatus::SpecialNLoop));
         assert!(is_charging(&f));
-        assert_eq!(charge_shot_rotate_z(&f), 0.0);
+        // The weapon's own update already ran once on its make frame.
+        let step = -charge_shot_rotate_z(&f) * f.facing.sign();
+        assert!((step - crate::weapon::SAMUS_CHARGE_SHOT_ROTATE_SPEED).abs() < 1e-6);
         press(&mut f, 0);
         status::update(&mut f);
         let step = -charge_shot_rotate_z(&f) * f.facing.sign();
-        assert!((step - crate::weapon::SAMUS_CHARGE_SHOT_ROTATE_SPEED).abs() < 1e-6);
+        assert!((step - 2.0 * crate::weapon::SAMUS_CHARGE_SHOT_ROTATE_SPEED).abs() < 1e-6);
         for _ in 0..19 {
             press(&mut f, 0);
             status::update(&mut f);

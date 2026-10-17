@@ -2517,6 +2517,25 @@ pub struct FoxSpecialLwState {
     pub gravity_delay: u8,
     pub turn_frames: u8,
     pub turned: bool,
+    /// `status_vars.fox.speciallw.effect_gobj`. Presentation only; read it
+    /// through [`fox_reflector_effect`].
+    pub effect: Option<FoxReflectorEffect>,
+}
+
+/// The Reflector's hexagon (`efManagerFoxReflectorMakeEffect`): how many
+/// times `efManagerFoxReflectorProcUpdate` has run, and the last animation
+/// `ftFoxSpecialLwUpdateEffect` handed it. The process plays the current
+/// table, moves Start and Hit on to Loop and ejects the effect when End
+/// ends, then applies a pending request (`efManagerFoxReflectorSetAnimID`:
+/// add the table and play it once). A request replaces the whole table, so
+/// the last one and the runs since it give the effect's state.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FoxReflectorEffect {
+    /// Process runs, the one on the frame it was made included.
+    pub ticks: u16,
+    /// `(run, dEFManagerFoxReflectorAnimJointOffsets index)` of the last
+    /// request: 1 Loop, 2 Hit, 3 End.
+    pub request: Option<(u16, u8)>,
 }
 
 /// `ftMarioSpecialLwStatusVars` plus the persistent tornado-rise expenditure.
@@ -2652,9 +2671,17 @@ pub fn set_fox_special_lw_start(f: &mut Fighter) {
     // shows `anim_frame` 1 and loops 3 frames on, on the ground and in the
     // air).
     play_anim_events(f);
+    // `ftFoxSpecialLwStartInitStatusVars`, after the first frame's events:
+    // flag 2 = 4 is "no request", and the hexagon is made, its own process
+    // running once this frame.
+    f.motion_script.flags[2] = 4;
     f.fox_special_lw = FoxSpecialLwState {
         release_lag: 18,
         gravity_delay: 4,
+        effect: Some(FoxReflectorEffect {
+            ticks: 1,
+            request: None,
+        }),
         ..Default::default()
     };
     if !ground {
@@ -2678,6 +2705,52 @@ fn set_fox_special_lw_phase(f: &mut Fighter, phase: u8) {
     if phase == 1 {
         f.fox_special_lw.turn_frames = 4;
         f.fox_special_lw.turned = false;
+    }
+}
+
+/// The Reflector's hexagon while it exists: every Reflector status passes
+/// `FTSTATUS_PRESERVE_EFFECT` to the next; any other status stops it.
+pub fn fox_reflector_effect(f: &Fighter) -> Option<FoxReflectorEffect> {
+    f.fox_special_lw.effect.filter(|_| {
+        matches!(
+            f.status.status,
+            AnyStatus::Fox(
+                FoxStatus::SpecialLwStart
+                    | FoxStatus::SpecialLwLoop
+                    | FoxStatus::SpecialLwTurn
+                    | FoxStatus::SpecialLwHit
+                    | FoxStatus::SpecialLwEnd
+                    | FoxStatus::SpecialAirLwStart
+                    | FoxStatus::SpecialAirLwLoop
+                    | FoxStatus::SpecialAirLwTurn
+                    | FoxStatus::SpecialAirLwHit
+                    | FoxStatus::SpecialAirLwEnd
+            )
+        )
+    })
+}
+
+/// `efManagerFoxReflectorProcUpdate`'s run this frame. The effect has no
+/// `proc_lagstart` pause, so this also runs in hitlag.
+pub fn tick_fox_reflector_effect(f: &mut Fighter) {
+    if fox_reflector_effect(f).is_some() {
+        if let Some(e) = f.fox_special_lw.effect.as_mut() {
+            e.ticks = e.ticks.saturating_add(1);
+        }
+    }
+}
+
+/// `ftFoxSpecialLwUpdateEffect`, first in every Reflector `proc_update`:
+/// hand the motion script's flag 2 to the hexagon, which applies it in
+/// this frame's run.
+fn update_fox_reflector_effect(f: &mut Fighter) {
+    tick_fox_reflector_effect(f);
+    let flag = f.motion_script.flags[2];
+    if flag != 4 {
+        if let Some(e) = f.fox_special_lw.effect.as_mut() {
+            e.request = Some((e.ticks, flag as u8));
+        }
+        f.motion_script.flags[2] = 4;
     }
 }
 
@@ -6664,6 +6737,7 @@ fn update_extended(f: &mut Fighter) {
             }
         }
         AnyStatus::Fox(FoxStatus::SpecialLwStart | FoxStatus::SpecialAirLwStart) => {
+            update_fox_reflector_effect(f);
             if !f.input.buttons.contains(N64Buttons::B) {
                 f.fox_special_lw.released = true;
             }
@@ -6672,6 +6746,7 @@ fn update_extended(f: &mut Fighter) {
             }
         }
         AnyStatus::Fox(FoxStatus::SpecialLwLoop | FoxStatus::SpecialAirLwLoop) => {
+            update_fox_reflector_effect(f);
             if !f.input.buttons.contains(N64Buttons::B) {
                 f.fox_special_lw.released = true;
             }
@@ -6683,6 +6758,7 @@ fn update_extended(f: &mut Fighter) {
             }
         }
         AnyStatus::Fox(FoxStatus::SpecialLwTurn | FoxStatus::SpecialAirLwTurn) => {
+            update_fox_reflector_effect(f);
             if !f.input.buttons.contains(N64Buttons::B) {
                 f.fox_special_lw.released = true;
             }
@@ -6701,6 +6777,7 @@ fn update_extended(f: &mut Fighter) {
             }
         }
         AnyStatus::Fox(FoxStatus::SpecialLwHit | FoxStatus::SpecialAirLwHit) => {
+            update_fox_reflector_effect(f);
             if !f.input.buttons.contains(N64Buttons::B) {
                 f.fox_special_lw.released = true;
             }
@@ -6717,6 +6794,7 @@ fn update_extended(f: &mut Fighter) {
             }
         }
         AnyStatus::Fox(FoxStatus::SpecialLwEnd | FoxStatus::SpecialAirLwEnd) => {
+            update_fox_reflector_effect(f);
             if f.status.animation_ended() {
                 if f.situation == Situation::Ground {
                     anim_end_set_wait(f);
@@ -8306,6 +8384,58 @@ mod tests {
         assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialLwLoop));
         update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialLwEnd));
+    }
+
+    /// The N64 (a CPU Fox on port 2): Start at el 31 with the hexagon's
+    /// Start table, its own end moving it to Loop; B released at el 70,
+    /// End at el 71 and the End table from el 72, the next frame's run.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn fox_reflector_hexagon_takes_the_end_and_hit_tables_from_flag_2() {
+        let mut f = Fighter::new(FighterKind::Fox, 2, 3);
+        f.situation = Situation::Ground;
+        f.input.buttons = N64Buttons(N64Buttons::B);
+        set_fox_special_lw_start(&mut f);
+        assert_eq!(
+            fox_reflector_effect(&f),
+            Some(FoxReflectorEffect {
+                ticks: 1,
+                request: None
+            })
+        );
+        for _ in 0..30 {
+            update(&mut f);
+        }
+        let e = fox_reflector_effect(&f).unwrap();
+        assert_eq!((e.ticks, e.request), (31, None));
+        f.input.buttons = N64Buttons::default();
+        let mut end_set = None;
+        while end_set.is_none() {
+            update(&mut f);
+            if f.status.status == AnyStatus::Fox(FoxStatus::SpecialLwEnd) {
+                end_set = Some(fox_reflector_effect(&f).unwrap().ticks);
+            }
+        }
+        assert_eq!(fox_reflector_effect(&f).unwrap().request, None);
+        update(&mut f);
+        let e = fox_reflector_effect(&f).unwrap();
+        assert_eq!(e.request, Some((end_set.unwrap() + 1, 3)));
+        while f.status.status == AnyStatus::Fox(FoxStatus::SpecialLwEnd) {
+            update(&mut f);
+        }
+        assert_eq!(fox_reflector_effect(&f), None);
+
+        let mut f = Fighter::new(FighterKind::Fox, 2, 3);
+        f.situation = Situation::Ground;
+        f.input.buttons = N64Buttons(N64Buttons::B);
+        set_fox_special_lw_start(&mut f);
+        for _ in 0..10 {
+            update(&mut f);
+        }
+        set_fox_special_lw_hit(&mut f);
+        update(&mut f);
+        let e = fox_reflector_effect(&f).unwrap();
+        assert_eq!(e.request, Some((e.ticks, 2)));
     }
 
     #[test]

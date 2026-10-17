@@ -45,10 +45,19 @@ pub const PIKACHU_THUNDER_SHOCK_ANIM_SLOT: u32 = 0x106;
 /// as file 347 offsets. The pack binds 0's.
 pub const PIKACHU_THUNDER_SHOCK_MAT_SCRIPTS: [u32; 3] = [0x1A90, 0x1AD0, 0x1B20];
 
+/// `dEFManagerFoxReflectorEffectDesc`'s tree in file 346
+/// (`llFoxSpecial2ReflectorDObjDesc`), whose `EFDesc` carries the Start
+/// table. `efManagerFoxReflectorSetAnimID` adds index 1 to 3 of
+/// `dEFManagerFoxReflectorAnimJointOffsets` in its place: Loop, Hit, End.
+pub const FOX_REFLECTOR_KEY: (u32, u32) = (346, 0x02B0);
+pub const FOX_REFLECTOR_ANIM_JOINTS: [u32; 3] = [0x04C0, 0x03A0, 0x0430];
+/// The `AnimDesc::EFFECT` slot of the Loop table; Hit and End follow.
+pub const FOX_REFLECTOR_ANIM_SLOT: u32 = 0x108;
+
 /// The transform tables a maker adds to a manager effect's tree in place
 /// of its `EFDesc`'s own: `(first AnimDesc::EFFECT slot, object key,
 /// tables)`, one slot per table.
-pub const VARIANT_ANIMS: [(u32, (u32, u32), &[u32]); 2] = [
+pub const VARIANT_ANIMS: [(u32, (u32, u32), &[u32]); 3] = [
     (
         YOSHI_EGG_LAY_ANIM_SLOT,
         YOSHI_EGG_LAY_KEY,
@@ -58,6 +67,11 @@ pub const VARIANT_ANIMS: [(u32, (u32, u32), &[u32]); 2] = [
         PIKACHU_THUNDER_SHOCK_ANIM_SLOT,
         PIKACHU_THUNDER_SHOCK_KEY,
         &PIKACHU_THUNDER_SHOCK_ANIM_JOINTS,
+    ),
+    (
+        FOX_REFLECTOR_ANIM_SLOT,
+        FOX_REFLECTOR_KEY,
+        &FOX_REFLECTOR_ANIM_JOINTS,
     ),
 ];
 

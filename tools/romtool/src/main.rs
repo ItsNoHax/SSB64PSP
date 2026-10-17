@@ -6024,8 +6024,9 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
 
     // The tables makers add in place of an `EFDesc`'s own
     // (`ssb_rom::effect::VARIANT_ANIMS`): the Egg Lay egg's Wait and Break
-    // (`dEFManagerYoshiEggLayAnimJoints`, RE-417) and the Thunder Shock
-    // spark's animations 1 and 2.
+    // (`dEFManagerYoshiEggLayAnimJoints`, RE-417), the Thunder Shock
+    // spark's animations 1 and 2, and the Reflector hexagon's Loop, Hit and
+    // End.
     for &(first_slot, (file_id, graph_at), tables) in &ssb_rom::effect::VARIANT_ANIMS {
         let file = loaded
             .files

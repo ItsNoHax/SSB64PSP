@@ -1722,11 +1722,12 @@ impl MarioFireball {
     }
 }
 
-/// The portable stand-in for `wpManager`'s live-object list. It is fixed-size
-/// so PSP gameplay stays allocation-free; a full four-player game has room
-/// for sixteen simultaneous weapons while Fireball and Blaster each consume
-/// one slot per shot.
-pub const MAX_WEAPONS: usize = 16;
+/// The portable stand-in for `wpManager`'s live-object list: fixed-size so
+/// PSP gameplay stays allocation-free, with `WEAPON_ALLOC_MAX`'s 32 structs
+/// (`wp/wpdef.h`), so a four-fighter match spawns every weapon the N64
+/// would. `wpManagerMakeWeapon` fails, as [`WeaponPool`]'s spawn does, only
+/// once all 32 are live.
+pub const MAX_WEAPONS: usize = 32;
 
 /// Player ports the pool keeps owner views and catch events for.
 const MAX_OWNERS: usize = 4;
@@ -4769,6 +4770,33 @@ impl WeaponPool {
             _ => None,
         })
     }
+
+    /// The live weapons that play an animation of their own, each with its
+    /// pool slot: the slot is the weapon's `GObj` for as long as it lives,
+    /// so a presentation layer keys one set of players on it.
+    pub fn animated(&self) -> impl Iterator<Item = (usize, AnimatedWeapon)> + '_ {
+        self.slots.iter().enumerate().filter_map(|(i, w)| {
+            let w = match w.as_ref()? {
+                Weapon::Boomerang(b) => AnimatedWeapon::Boomerang(*b),
+                Weapon::Cutter(c) => AnimatedWeapon::Cutter(*c),
+                Weapon::Jolt(j) => AnimatedWeapon::Jolt(*j),
+                Weapon::PKFire(p) => AnimatedWeapon::PKFire(*p),
+                Weapon::PKThunder(p) => AnimatedWeapon::PKThunder(*p),
+                _ => return None,
+            };
+            Some((i, w))
+        })
+    }
+}
+
+/// A weapon [`WeaponPool::animated`] yields.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AnimatedWeapon {
+    Boomerang(LinkBoomerang),
+    Cutter(KirbyCutter),
+    Jolt(ThunderJolt),
+    PKFire(PKFire),
+    PKThunder(PKThunder),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

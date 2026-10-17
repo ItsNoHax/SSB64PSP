@@ -22,7 +22,7 @@ evidence behind each `RE-NNN` in [`docs/evidence/`](docs/evidence/INDEX.md).
 | Rendering | Build-time display-list conversion, GE lowering with measured deviations (3-point filtering); battle draws in the original's display-link passes; CRT overscan crop ([D-047](docs/decisions/D-047.md)) | Remaining effect draws and N64 comparisons; per-scene texture residency in VRAM |
 | Gameplay | All 12 fighters, Master Hand, Metal Mario, Giant Donkey Kong and the Polygon Team; hits, shields, grabs, ledges, KO; How to Play matches an N64 trace on every frame (RE-472, RE-473) | Remaining fidelity items below |
 | Items | All 20 normal item makers, 13 Poké Ball Pokémon, stage items and hazards (RE-431–RE-446) | Event-aligned N64 comparisons |
-| CPU | VS, Training and 1P CPU behaviours, traits and objectives (RE-390, RE-391, RE-437, RE-438, RE-447) | CPUs' special effects drawn; N64 trait checks |
+| CPU | VS, Training and 1P CPU behaviours, traits and objectives (RE-390, RE-391, RE-437, RE-438, RE-447) | N64 trait checks |
 | Game modes | VS (up to four, teams), Training, 1P campaign through the ending, staff roll and challengers, bonus stages and Bonus Practice | Same, with rumble |
 | Menus/UI | N64 logo, opening movie, title, attract loop (How to Play, Characters, auto demo), mode/1P/VS menus, selects, options and data menus, HUD | Selects' spotlight; opening's remaining differences |
 | Save data | N64 SRAM image in `ssb64.sav` beside the pack ([D-045](docs/decisions/D-045.md)) | Anti-piracy validators |
@@ -137,9 +137,9 @@ closes it.
 
 - [ ] Kirby's late entry poses (N64 frames 326-332) look about one frame ahead of the N64; the star phase is frame-exact. Not diagnosed.
 - [ ] No N64 focus-2 capture of Captain Falcon's car, so the battle-camera fallback before his TopN comes in bounds is unverified for that phase (`f1-vs-car`). A warp-boot capture with focus id 2 and Captain closes it (RE-523).
-- [ ] Draw the CPUs' special effects: Magnet, Sing, Spin Attack swirl, Falcon Punch/Kick, reflector, Charge Shot and the held egg draw for the player only (RE-389, RE-404, RE-405).
 - [ ] Remaining effects: Thunder Jolt ground effect, PK Thunder trail effects, the fire spark, Kirby's copy-bank scripts (0x4C, 0x4D), the results' fighter effects, stage particle banks; a magnitude-0 quake shakes one frame late (RE-413, RE-415, RE-416, RE-427).
-- [ ] Kirby: Inhale/spit stars and the copied Falcon Punch flame; Inhale's downward wiggle (RE-343, RE-348, RE-376, RE-378, RE-417).
+- [ ] N64 pixel captures of the cpufx scenes (cpufx-d/u/n/k): RE-536 compared status timelines only. Also: effect draw order is per type then per port (N64: creation order); check the second Kirby costume against the N64 HUD icons in cpufx-k; the PSP VS camera frames tighter than the N64 (makes global MAE unusable).
+- [ ] Kirby: Inhale/spit stars; Inhale's downward wiggle (RE-343, RE-348, RE-376, RE-378, RE-417). The copied Falcon Punch flame and Charge Shot are drawn (RE-536).
 - [ ] Pikachu: ground Thunder Jolt node 4's texture script is declined by `resolve_one_mat_anim`; Quick Attack effects (RE-345, RE-379).
 - [ ] Reach the PK Fire flame on the dummy in a capture; draw the Bomb's critical flash and held bloat (RE-352, RE-382, RE-383).
 - [ ] Battle draw order: an object's head-1 lists do not wait for the stage's head-1 lists of the same pass (RE-422).

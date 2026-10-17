@@ -138,6 +138,12 @@ pub struct CopyState {
     pub samus_charge_int: u8,
     /// `charge_gobj != NULL`: a charging shot on Kirby.
     pub samus_charge_shot: bool,
+    /// Updates the charging shot has run, presentation only: the copy
+    /// makes the same weapon as Samus, so `wpSamusChargeShotProcUpdate`
+    /// subtracts `WPCHARGESHOT_ROTATE_SPEED * lr` from its `rotate.z` each
+    /// one. See [`charge_shot_rotate_z`]; the twin of
+    /// [`crate::samus::SamusState::charge_spin`].
+    pub samus_charge_spin: u16,
     /// `passive_vars.kirby.copydonkey_charge_level`.
     pub donkey_charge_level: u8,
     /// `status_vars.kirby.copydonkey_specialn.charge_level`: the level the
@@ -153,6 +159,12 @@ pub struct CopyState {
     /// `passive_vars.kirby.copycaptain_falcon_punch_unk`: aerial punches
     /// thrown. Nothing reads it.
     pub captain_punch_count: i32,
+    /// The Falcon Punch flame's played animation frames
+    /// (`efManagerCaptainFalconPunchMakeEffect` from
+    /// `ftKirbyCopyCaptainSpecialNUpdateEffect`), as
+    /// [`crate::captain::CaptainState::punch_effect`]; read through
+    /// [`punch_effect_ticks`].
+    pub captain_punch_effect: Option<u16>,
     /// Pound's flag 1 was consumed.
     pub purin_boosted: bool,
     /// `passive_vars.kirby.copypurin_unk`: aerial Pounds. Nothing reads it.
@@ -368,6 +380,10 @@ pub fn set_special_n(f: &mut Fighter) -> bool {
             set(f, s, 0.0, StatusTiming::frames(FALCONPUNCH_LENGTH));
             status::play_anim_events(f);
             f.kirby.copy.captain_boosted = false;
+            // `ftKirbyCopyCaptainSpecialNInitStatusVars`, after the first
+            // frame's events; `FTSTATUS_PRESERVE_NONE` stopped any flame.
+            f.motion_script.flags[..3].fill(0);
+            f.kirby.copy.captain_punch_effect = None;
         }
         FighterKind::Yoshi => {
             let s = if ground {
@@ -561,7 +577,10 @@ fn set_charge_loop(f: &mut Fighter) {
     set(f, K::CopySamusSpecialNLoop, 0.0, StatusTiming::unknown());
     f.kirby.copy.samus_charge_int = CHARGE_INT;
     f.kirby.copy.samus_charge_shot = true;
-    // `wpSamusChargeShotMakeWeapon` without `is_release`.
+    // `wpSamusChargeShotMakeWeapon` without `is_release`; its first
+    // `wpSamusChargeShotProcUpdate` runs in this frame (see
+    // `crate::samus::set_special_n_loop`).
+    f.kirby.copy.samus_charge_spin = 1;
     let charge = crate::weapon::SAMUS_CHARGE_SHOT_FGMS
         [usize::from(f.kirby.copy.samus_charge_level.min(7))]
     .1;
@@ -598,6 +617,14 @@ fn set_charge_air_end(f: &mut Fighter) {
 /// (0, 200, 210).
 pub fn charge_shot_position(f: &Fighter) -> Vec3 {
     f.joint_world(CHARGE_JOINT, Vec3::new(0.0, CHARGE_OFF_Y, CHARGE_OFF_Z))
+}
+
+/// `rotate.z` of Kirby's charging shot, as `crate::samus::charge_shot_rotate_z`:
+/// the copy makes Samus's weapon, whose update spins it every frame.
+pub fn charge_shot_rotate_z(f: &Fighter) -> f32 {
+    -crate::weapon::SAMUS_CHARGE_SHOT_ROTATE_SPEED
+        * f32::from(f.kirby.copy.samus_charge_spin)
+        * f.facing.sign()
 }
 
 /// The flag-0 half of `ftKirbyCopySamusSpecialNEndProcUpdate`.
@@ -800,6 +827,53 @@ fn make_boomerang(f: &mut Fighter) {
 // Falcon Punch (`ftkirbycopycaptainspecialn.c`)
 // ---------------------------------------------------------------------------
 
+/// `efManagerCaptainFalconPunchMakeEffect`'s attach joint for any fighter
+/// but Captain Falcon: Kirby's `fp->joints[30]`.
+pub const PUNCH_EFFECT_JOINT: u8 = 30;
+
+/// `ftKirbyCopyCaptainSpecialNUpdateEffect`, from both copy Falcon
+/// Punches' `proc_physics`: script flag 0 makes the flame, and stops it the
+/// next time it is set (`crate::captain`'s twin).
+fn update_punch_effect(f: &mut Fighter) {
+    if f.kirby.copy.captain_punch_effect.is_none() {
+        if f.motion_script.flags[0] == 1 {
+            // The effect's own update plays its animation once on the
+            // frame it is made.
+            f.kirby.copy.captain_punch_effect = Some(1);
+            f.motion_script.flags[0] = 0;
+        }
+    } else if f.motion_script.flags[0] == 1 {
+        f.kirby.copy.captain_punch_effect = None;
+        f.motion_script.flags[0] = 2;
+    }
+}
+
+/// `efManagerNoEjectProcUpdate` on the copied Falcon Punch flame. Unlike
+/// Captain Falcon's statuses, `ftkirbycopycaptainspecialn.c` sets no
+/// `proc_lagstart = ftParamProcPauseEffect`, so the flame plays through
+/// Kirby's hitlag: [`Fighter`]'s update calls this in hitlag too.
+pub fn tick_punch_effect(f: &mut Fighter) {
+    if punch_effect_ticks(f).is_some() {
+        f.kirby.copy.captain_punch_effect = f
+            .kirby
+            .copy
+            .captain_punch_effect
+            .map(|t| t.saturating_add(1));
+    }
+}
+
+/// The copied Falcon Punch flame's played animation frames, while it
+/// exists. `ftMainSetStatus` stops it on any status change except the
+/// ground/air switches, which pass `FTSTATUS_PRESERVE_EFFECT`.
+pub fn punch_effect_ticks(f: &Fighter) -> Option<u16> {
+    f.kirby.copy.captain_punch_effect.filter(|_| {
+        matches!(
+            f.status.status,
+            AnyStatus::Kirby(K::CopyCaptainSpecialN | K::CopyCaptainSpecialAirN)
+        )
+    })
+}
+
 /// `ftKirbyCopyCaptainSpecialNGetAngle`.
 fn falcon_punch_angle(stick_y: i32) -> f32 {
     let mut y = stick_y.abs().min(50) - 10;
@@ -823,6 +897,7 @@ fn falcon_punch_air_physics(f: &mut Fighter) {
         f.physics.vel_air.y = sin * FALCONPUNCH_VEL_BASE;
         f.physics.vel_air.x = cos * f.facing.sign() * FALCONPUNCH_VEL_BASE;
     }
+    update_punch_effect(f);
     if f.status.clock < FALCONPUNCH_BOOST_FRAME {
         air_vel_friction(f);
     } else if f.status.clock < FALCONPUNCH_DRIFT_FRAME {
@@ -942,6 +1017,12 @@ pub fn update(f: &mut Fighter) {
     let AnyStatus::Kirby(current) = f.status.status else {
         return;
     };
+    // `wpSamusChargeShotProcUpdate` on the charging shot, as
+    // `crate::samus::update` counts it.
+    if f.kirby.copy.samus_charge_shot {
+        f.kirby.copy.samus_charge_spin = f.kirby.copy.samus_charge_spin.wrapping_add(1);
+    }
+    tick_punch_effect(f);
     match current {
         K::CopyMarioSpecialN
         | K::CopyMarioSpecialAirN
@@ -1187,6 +1268,9 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
         AnyStatus::Kirby(K::CopyCaptainSpecialN | K::CopyPurinSpecialN)
     ) {
         return false;
+    }
+    if f.status.status == AnyStatus::Kirby(K::CopyCaptainSpecialN) {
+        update_punch_effect(f);
     }
     physics::apply_ground_vel_transn(&mut f.physics, f.root_motion, f.topn_lr, f.attributes.size);
     true
@@ -1599,6 +1683,54 @@ mod tests {
         f.land(0.0);
         status::set_wait(&mut f);
         assert_eq!(f.kirby.copy.samus_charge_recoil, 1);
+    }
+
+    /// The copy makes Samus's charging weapon, so its spin counts the same
+    /// updates as hers: one per loop frame from the make frame, `-ROTATE_SPEED * lr`
+    /// each (`wpSamusChargeShotProcUpdate`).
+    #[test]
+    fn copied_charging_shot_spins_like_samuss() {
+        let mut f = kirby(FighterKind::Samus, true);
+        f.port = 2;
+        set_special_n(&mut f);
+        while status(&f) == K::CopySamusSpecialNStart {
+            step(&mut f);
+        }
+        assert!(is_charging(&f));
+        assert_eq!(f.kirby.copy.samus_charge_spin, 1);
+        for _ in 0..7 {
+            step(&mut f);
+        }
+        assert_eq!(f.kirby.copy.samus_charge_spin, 8);
+        let want = -crate::weapon::SAMUS_CHARGE_SHOT_ROTATE_SPEED * 8.0 * f.facing.sign();
+        assert_eq!(charge_shot_rotate_z(&f), want);
+    }
+
+    /// `ftKirbyCopyCaptainSpecialNUpdateEffect` is Captain Falcon's: the
+    /// flame lives while script flag 0 is between its two sets, on any
+    /// port, and it is attached to joint 30, not 16.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn copied_falcon_punch_flame_lives_between_the_scripts_flag_sets() {
+        let mut f = kirby(FighterKind::Captain, true);
+        f.port = 3;
+        set_special_n(&mut f);
+        let mut made = None;
+        let mut stopped = None;
+        while f.status.status == AnyStatus::Kirby(K::CopyCaptainSpecialN) {
+            crate::status::update(&mut f);
+            apply_ground_physics(&mut f);
+            let live = punch_effect_ticks(&f).is_some();
+            if live && made.is_none() {
+                made = Some(f.status.anim_frame);
+                assert_eq!(punch_effect_ticks(&f), Some(1));
+            } else if !live && made.is_some() && stopped.is_none() {
+                stopped = Some(f.status.anim_frame);
+            }
+        }
+        assert_eq!(made, Some(42.0));
+        assert_eq!(stopped, Some(55.0));
+        assert_ne!(PUNCH_EFFECT_JOINT, crate::captain::PUNCH_EFFECT_JOINT);
     }
 
     #[test]

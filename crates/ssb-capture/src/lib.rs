@@ -653,6 +653,22 @@ pub enum GameScene {
     /// the player's forward smashes send it through a side blast zone
     /// (RE-469).
     VsKnock,
+    /// `cpufx-d`: a four-fighter VS on Dream Land, items off, the CPUs
+    /// mirroring the player's pad as the N64 reference ROM's four humans
+    /// on controller 0 do: Down+B from 30 ticks after "Go", B held 40.
+    /// Ness's Magnet, Captain Falcon's Falcon Kick, Fox's Reflector and
+    /// Jigglypuff's Rest, each on a CPU but the first.
+    CpuFxD,
+    /// `cpufx-u`: `cpufx-d` with Up+B held 30: Link's Spin Attack,
+    /// Jigglypuff's Sing, Yoshi's egg and Ness's PK Thunder.
+    CpuFxU,
+    /// `cpufx-n`: `cpufx-d` with B held 60: Samus's Charge Shot, Captain
+    /// Falcon's Falcon Punch, Link's Boomerang and Kirby's inhale.
+    CpuFxN,
+    /// `cpufx-k`: `cpufx-n`'s B with two Kirbys made holding Samus's and
+    /// Captain Falcon's powers (`FTCreateDesc::copy_kind`), and a Samus
+    /// and a Captain Falcon.
+    CpuFxK,
     /// `explain`: How to Play (`scExplain`, RE-465) from the title, its
     /// fighters on their input scripts. Diagnostic: outside the manifest.
     Explain,
@@ -727,7 +743,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 181] = [
+    pub const ALL: [GameScene; 185] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -886,6 +902,10 @@ impl GameScene {
         GameScene::VsTeamSteal,
         GameScene::VsPush,
         GameScene::VsKnock,
+        GameScene::CpuFxD,
+        GameScene::CpuFxU,
+        GameScene::CpuFxN,
+        GameScene::CpuFxK,
         GameScene::Explain,
         GameScene::AutoDemo,
         GameScene::Opening,
@@ -1072,6 +1092,10 @@ impl GameScene {
             GameScene::VsTeamSteal => "vsteamsteal",
             GameScene::VsPush => "vspush",
             GameScene::VsKnock => "vsknock",
+            GameScene::CpuFxD => "cpufx-d",
+            GameScene::CpuFxU => "cpufx-u",
+            GameScene::CpuFxN => "cpufx-n",
+            GameScene::CpuFxK => "cpufx-k",
             GameScene::Explain => "explain",
             GameScene::AutoDemo => "autodemo",
             GameScene::Opening => "opening",
