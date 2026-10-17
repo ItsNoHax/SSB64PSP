@@ -740,26 +740,56 @@ fn texture_image<'a>(t: &TextureDesc, data: &'a [u8]) -> Option<TextureImage<'a>
 /// pair records them in [`BIND_CACHE`] and later binds replay them,
 /// without the lookups and the calls that compute them (RE-534).
 unsafe fn bind_texture(pack: &Pack<'_>, index: u32, t: &TextureDesc, palette: u32) {
+    if bind_texture_cached(pack, index, palette) {
+        return;
+    }
+    bind_texture_uncached(pack, index, t, palette);
+}
+
+/// Replays the recorded bind of `(index, palette)`, if [`BIND_CACHE`] has
+/// one: whether it did. A caller that has not decoded the texture yet asks
+/// this first and decodes it only on a miss (`apply_material`; -0.27 ms
+/// busy in four-player VS on a PSP-2000, RE-535).
+#[inline(always)]
+unsafe fn bind_texture_cached(pack: &Pack<'_>, index: u32, palette: u32) -> bool {
+    #[cfg(feature = "texture_probe")]
+    {
+        let _ = (pack, index, palette);
+        false
+    }
+    #[cfg(not(feature = "texture_probe"))]
+    {
+        let cache = &mut *core::ptr::addr_of_mut!(BIND_CACHE);
+        let Some(block) = cache.find(pack, index, palette) else {
+            return false;
+        };
+        block.replay();
+        true
+    }
+}
+
+/// [`bind_texture`] after a [`bind_texture_cached`] miss: the live bind,
+/// recorded for the next time.
+unsafe fn bind_texture_uncached(pack: &Pack<'_>, index: u32, t: &TextureDesc, palette: u32) {
     // A `ROLE_FRAMEBUFFER` texture has no baked bytes at all (RE-099, RE-464)
     // -- `pack.texture_data` would return an empty slice, not `None`, so it
     // must be intercepted here rather than falling into the ordinary path
     // below. The real pixels live in `crate::gu`'s transition-photo capture,
     // filled in by `Gpu::request_transition_capture` the first time the LB
-    // "loading transition" system starts.
+    // "loading transition" system starts. It is never recorded.
     if t.role == TextureDesc::ROLE_FRAMEBUFFER {
         bind_transition_photo(t);
         return;
     }
     // `texture_probe` decides per bind whether to texture at all.
     #[cfg(feature = "texture_probe")]
-    bind_texture_live(pack, t, palette);
+    {
+        let _ = index;
+        bind_texture_live(pack, t, palette);
+    }
     #[cfg(not(feature = "texture_probe"))]
     {
         let cache = &mut *core::ptr::addr_of_mut!(BIND_CACHE);
-        if let Some(block) = cache.find(pack, index, palette) {
-            block.replay();
-            return;
-        }
         let generation = ssb_rom::residency::generation();
         let from = sys::sceGuCheckList();
         if bind_texture_live(pack, t, palette) {
@@ -830,17 +860,24 @@ impl BindCache {
 
     /// The recorded bind of `(texture, palette)` for `pack` as the
     /// residency registry stands now, if there is one.
+    #[inline(always)]
     fn find(&mut self, pack: &Pack<'_>, texture: u32, palette: u32) -> Option<&BindBlock> {
         let now = (pack.base(), ssb_rom::residency::generation());
         if self.valid_for != Some(now) {
-            self.valid_for = Some(now);
-            for b in self.blocks.iter_mut() {
-                b.len = 0;
-            }
+            self.invalidate(now);
             return None;
         }
         let b = &self.blocks[Self::slot(texture, palette)];
         (b.len != 0 && b.texture == texture && b.palette == palette).then_some(b)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn invalidate(&mut self, now: (*const u8, u32)) {
+        self.valid_for = Some(now);
+        for b in self.blocks.iter_mut() {
+            b.len = 0;
+        }
     }
 
     /// Records the list words between byte offsets `from` and `to` of the
@@ -1120,6 +1157,25 @@ unsafe fn emit_texture_mapping(
     environment: bool,
     affine: ssb_rom::skeleton::UvAffine,
 ) {
+    let key = MapKey {
+        texture,
+        phase: (p.phase_s_q5 as u16 as u32) << 16 | p.phase_t_q5 as u16 as u32,
+        affine: [
+            affine.scale_s.to_bits(),
+            affine.scale_t.to_bits(),
+            affine.offset_s.to_bits(),
+            affine.offset_t.to_bits(),
+        ],
+    };
+    if !environment {
+        let cache = &mut *core::ptr::addr_of_mut!(MAP_CACHE);
+        if let Some([su, sv, ou, ov]) = cache.find(pack, &key) {
+            sys::sceGuTexMapMode(sys::TextureMapMode::TextureCoords, 0, 0);
+            sys::sceGuTexScale(su, sv);
+            sys::sceGuTexOffset(ou, ov);
+            return;
+        }
+    }
     // An untextured primitive has no dimensions to scale against and samples
     // nothing; leave the generator off and the scale neutral.
     let Some(t) = pack.texture(texture) else {
@@ -1136,23 +1192,88 @@ unsafe fn emit_texture_mapping(
     let (w, h) = ssb_rom::psp_texture::ge_texture_dims(t.width as u32, t.height as u32);
 
     if !environment {
-        sys::sceGuTexMapMode(sys::TextureMapMode::TextureCoords, 0, 0);
-        sys::sceGuTexScale(
+        let out = [
             ssb_rom::psp_texture::authored_uv_tex_scale(w) * affine.scale_s,
             ssb_rom::psp_texture::authored_uv_tex_scale(h) * affine.scale_t,
-        );
-        // Authored UVs already had the tile origin baked out at pack time.
-        sys::sceGuTexOffset(
+            // Authored UVs already had the tile origin baked out at pack time.
             affine.offset_s
                 + ssb_rom::psp_texture::ge_sample_offset(true, w)
                 + ssb_rom::psp_texture::ge_phase_offset(p.phase_s_q5, w),
             affine.offset_t
                 + ssb_rom::psp_texture::ge_sample_offset(true, h)
                 + ssb_rom::psp_texture::ge_phase_offset(p.phase_t_q5, h),
-        );
+        ];
+        sys::sceGuTexMapMode(sys::TextureMapMode::TextureCoords, 0, 0);
+        sys::sceGuTexScale(out[0], out[1]);
+        sys::sceGuTexOffset(out[2], out[3]);
+        (*core::ptr::addr_of_mut!(MAP_CACHE)).record(key, out);
         return;
     }
     install_texgen_matrix(p, st, &t, (w, h), affine);
+}
+
+/// What an authored-UV mapping's GE words depend on: the texture (its
+/// dimensions), the tile phase and the animated window.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct MapKey {
+    texture: u32,
+    phase: u32,
+    affine: [u32; 4],
+}
+
+/// Slots in [`MAP_CACHE`]; a power of two.
+const MAP_CACHE_SLOTS: usize = 256;
+
+/// [`emit_texture_mapping`]'s authored-UV scale and offset, direct-mapped
+/// by [`MapKey`], so a texture change does not decode the descriptor and
+/// divide again (-0.15 ms busy in four-player VS on a PSP-2000, RE-535).
+/// Valid for one pack buffer (the dimensions are the pack's texture
+/// table): `valid_for` is `None` until the first lookup, and a new pack
+/// empties every slot. `out` is `None` in an empty slot, never a default.
+struct MapCache {
+    valid_for: Option<*const u8>,
+    slots: [(MapKey, Option<[f32; 4]>); MAP_CACHE_SLOTS],
+}
+
+static mut MAP_CACHE: MapCache = MapCache {
+    valid_for: None,
+    slots: [(MapKey { texture: 0, phase: 0, affine: [0; 4] }, None); MAP_CACHE_SLOTS],
+};
+
+impl MapCache {
+    fn slot(key: &MapKey) -> usize {
+        let h = key.texture.wrapping_mul(0x9E37_79B1) ^ key.phase.wrapping_mul(0x85EB_CA6B) ^ key.affine[0];
+        (h >> (32 - MAP_CACHE_SLOTS.trailing_zeros())) as usize
+    }
+
+    #[inline(always)]
+    fn find(&mut self, pack: &Pack<'_>, key: &MapKey) -> Option<[f32; 4]> {
+        if self.valid_for != Some(pack.base()) {
+            self.invalidate(pack.base());
+            return None;
+        }
+        let (k, out) = &self.slots[Self::slot(key)];
+        if k == key {
+            *out
+        } else {
+            None
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn invalidate(&mut self, base: *const u8) {
+        self.valid_for = Some(base);
+        for s in self.slots.iter_mut() {
+            s.1 = None;
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn record(&mut self, key: MapKey, out: [f32; 4]) {
+        self.slots[Self::slot(&key)] = (key, Some(out));
+    }
 }
 
 /// [`apply_texture_mapping`]'s environment-mapped (`G_TEXTURE_GEN`, not
@@ -1377,9 +1498,12 @@ unsafe fn apply_material(
     if st.last_texture != Some((effective_texture, palette)) {
         st.last_texture = Some((effective_texture, palette));
         st.state_changes += 1;
-        match pack.texture(effective_texture) {
-            Some(t) => bind_texture(pack, effective_texture, &t, palette),
-            None => sys::sceGuDisable(GuState::Texture2D),
+        // The recorded bind first: the descriptor is decoded only on a miss.
+        if !bind_texture_cached(pack, effective_texture, palette) {
+            match pack.texture(effective_texture) {
+                Some(t) => bind_texture_uncached(pack, effective_texture, &t, palette),
+                None => sys::sceGuDisable(GuState::Texture2D),
+            }
         }
     }
 

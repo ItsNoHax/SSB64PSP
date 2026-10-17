@@ -12,12 +12,12 @@ Where the project is now. The roadmap and every open task are in
 | Audio | N64 audio system ported whole, sample-exact against N64 captures ([D-049](docs/decisions/D-049.md), RE-479) |
 | Rendering | CRT overscan crop ([D-047](docs/decisions/D-047.md)); fighter shadow is one mirrored ellipse with team colours (RE-302); CPU guard-band clipping for movie scenes (RE-519); shade-only combiners whitened (RE-520); prim-alpha untextured surfaces (RE-521); fighter entries match the N64: effects play at make time, Samus's lit glass tube, Yoshi hidden in the egg, focus-2 camera fallback (RE-522, RE-523); opening fighter scenes: movie-camera particles and billboards, Samus grapple glow, Yoshi cloud fade (RE-525); run dust from demo-script events (RE-528); two-cycle shade x texel-lerp baked into the texture, so Yoster clouds are tinted and soft (RE-527) |
 | Frontend | N64 logo, opening, title (fire fade matches Rice within MAE 2-6); opening sector and Yoster models lit by display-list lights (RE-529), attract loop, every menu; opening room now matches the N64 closely (MAE vs Rice 5-11 at most tics) |
-| PSP | 60 FPS under PPSSPP; PSP-2000 baselines in RE-497, RE-498, RE-479, RE-493. Opening on a PSP-2000 (RE-530, RE-532): room 12.9 ms busy at 59.5 FPS, Run 40.5 FPS, Yoster 38, Clash 35; `vs4@2400` 16.46 ms busy, 57.9 FPS (120-frame reports; RE-534). PSP-1000 unsupported |
+| PSP | 60 FPS under PPSSPP; PSP-2000 baselines in RE-497, RE-498, RE-479, RE-493. Opening on a PSP-2000 (RE-530, RE-532): room 12.9 ms busy at 59.5 FPS, Run 40.5 FPS, Yoster 38, Clash 35; `vs4@2400` 16.24 ms busy, 58.6 FPS (120-frame reports; RE-535). PSP-1000 unsupported |
 | Tests | Workspace tests with the ROM, stub tests, clippy, rustfmt pass; 218 of 218 goldens match by pixel hash |
 
 ## Current Work
 
-Closed: VS GE batch (RE-534): texture bind-block cache, `draw_rect` CPU/GE race fixed, link order re-searched (seed 11). `vs4@2400` 17.13 -> 16.46 ms busy (54.9 -> 57.9 FPS) on a PSP-2000; opening Run 42 -> 50 FPS; bit-identical (2402-frame RGBA, 218 of 218 goldens). Stall batching held (PPSSPP bin-range dependence). Next: the stall-batching evaluation and bind-block extensions (item list in `PLAN.md` MS8); the XMB-launch memory check of the extra 80 KB `.bss` is not done.
+Closed: VS GE batch 2 (RE-535): descriptor prelookup before the bind cache, a texture-mapping cache, link order seed 3, `room_time()` fixed under `regression_capture` so PSPLink opening runs repeat. `vs4@2400` 16.53 -> 16.24 ms busy (57.7 -> 58.6 FPS) on a PSP-2000; opening Run 49 -> 53 FPS; bit-identical (2402-frame RGBA, 218 of 218 goldens). XMB budget checked: lowest free 29.16 MB. Stall batching is bit-identical on hardware (-0.39 ms) but changes 7 PPSSPP VS goldens: needs a decision and a production route (`PLAN.md` MS8).
 
 ## Blockers
 
@@ -26,7 +26,7 @@ Closed: VS GE batch (RE-534): texture bind-block cache, `draw_rect` CPU/GE race 
 
 ## Verification
 
-Baseline after RE-534:
+Baseline after RE-535:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`, and with `SSB64_STUB_TABLES=1` and no ROM: pass. Clippy (`cargo +1.98.0`, `-D warnings`) and `cargo fmt --all --check` pass.
 - Both PSP release builds compile.

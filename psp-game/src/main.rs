@@ -354,6 +354,40 @@ fn deterministic_capture_frozen(scene: Option<GameScene>, sim_frame_index: u64) 
     scene.is_some_and(|scene| sim_frame_index >= capture::tick_override().unwrap_or(capture_ticks(scene)))
 }
 
+/// Writes one `fhash tick=<tick> <hash>` line for the frame just shown
+/// (`frame_hash`, RE-476): to stdout at once, which PPSSPPHeadless prints,
+/// and, 120 lines at a time, appended to `fhash.log` beside the
+/// executable, which a PSP under PSPLink writes to `host0:` (RE-535).
+#[cfg(feature = "frame_hash")]
+fn frame_hash_log(tick: u64, hash: u32) {
+    use core::fmt::Write;
+    static mut PENDING: alloc::string::String = alloc::string::String::new();
+    static mut LINES: u32 = 0;
+    // SAFETY: the main loop's thread only.
+    unsafe {
+        let pending = &mut *core::ptr::addr_of_mut!(PENDING);
+        let start = pending.len();
+        let _ = writeln!(pending, "fhash tick={} {:08x}", tick, hash);
+        let line = &pending.as_bytes()[start..];
+        psp::sys::sceIoWrite(psp::sys::sceKernelStdout(), line.as_ptr() as *const core::ffi::c_void, line.len());
+        LINES += 1;
+        if LINES < 120 {
+            return;
+        }
+        LINES = 0;
+        let fd = psp::sys::sceIoOpen(
+            b"fhash.log\0".as_ptr(),
+            psp::sys::IoOpenFlags::WR_ONLY | psp::sys::IoOpenFlags::CREAT | psp::sys::IoOpenFlags::APPEND,
+            0o777,
+        );
+        if fd.0 >= 0 {
+            psp::sys::sceIoWrite(fd, pending.as_ptr() as *const core::ffi::c_void, pending.len());
+            psp::sys::sceIoClose(fd);
+        }
+        pending.clear();
+    }
+}
+
 /// The `training<stage>` scenes (RE-422): Training on one stage with no
 /// input after the menu confirm.
 fn is_training_stage_scene(scene: GameScene) -> bool {
@@ -5157,10 +5191,7 @@ unsafe fn run() -> ! {
         profile::stop(profile::Span::Draw, draw_start);
         gpu.end_frame();
         #[cfg(feature = "frame_hash")]
-        {
-            let line = alloc::format!("fhash tick={} {:08x}\n", sim_frame_index, gpu.shown_frame_hash());
-            psp::sys::sceIoWrite(psp::sys::sceKernelStdout(), line.as_ptr() as *const core::ffi::c_void, line.len());
-        }
+        frame_hash_log(sim_frame_index, gpu.shown_frame_hash());
         ssb_psp_runtime::scene_files::safe_point();
         if let Some(e) = ssb_psp_runtime::scene_files::take_failure() {
             boot_log::log_args(format_args!("load failed: {}", e.as_str()));

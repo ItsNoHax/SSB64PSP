@@ -231,12 +231,13 @@ pub(crate) fn runs(kind: Option<Kind>) -> bool {
 
 /// `osGetTime`'s low byte for `syUtilsRandTimeUCharRange`. A capture build
 /// draws the N64 reference's figures (Pikachu pulled, Donkey Kong dropped)
-/// so its frames compare.
+/// so its frames compare: a PPSSPPHeadless one and a PSP one
+/// (`capture_scene_file`, which has no `headless_capture`; RE-535).
 fn room_time() -> impl FnMut() -> u8 {
     let mut n = 0usize;
     move || {
         n += 1;
-        if cfg!(feature = "headless_capture") {
+        if cfg!(any(feature = "headless_capture", feature = "regression_capture")) {
             [0xE0, 0x40][(n - 1).min(1)]
         } else {
             unsafe { psp::sys::sceKernelGetSystemTimeLow() as u8 }
