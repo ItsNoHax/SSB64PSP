@@ -2174,7 +2174,7 @@ impl Draw {
 
     #[inline(always)]
     unsafe fn draw(&self) {
-        sys::sceGumDrawArray(
+        crate::gu::gum_draw_array(
             GuPrimitive::Triangles,
             VertexType::from_bits_truncate(self.vtype),
             self.count as i32,
@@ -2380,7 +2380,7 @@ unsafe fn rebuild_clipped(
         return None;
     }
     let capacity = (tris - crossing) * 3 + crossing * 3 * (MAX_CLIPPED - 2);
-    let out = sys::sceGuGetMemory((capacity * core::mem::size_of::<ClipVertex>()) as i32)
+    let out = crate::gu::list_memory(capacity * core::mem::size_of::<ClipVertex>())
         as *mut ClipVertex;
     let mut n = 0usize;
     clip_triangles(
@@ -2439,7 +2439,7 @@ unsafe fn expand_float_uv_corners(
     }
 
     let bytes = p.index_count as usize * float_size;
-    let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut FloatUvVertex;
+    let dynamic = crate::gu::list_memory(bytes) as *mut FloatUvVertex;
     for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
         let index = u16::from_le_bytes([raw_index[0], raw_index[1]]) as usize;
         let source_offset = index * size;
@@ -3777,7 +3777,7 @@ pub unsafe fn draw_texture_quad(
 
     // Undo the tex scale set for 16-bit mesh UVs: these UVs are already 0..1.
     sys::sceGuTexScale(1.0, 1.0);
-    sys::sceGumDrawArray(
+    crate::gu::gum_draw_array(
         GuPrimitive::Triangles,
         VertexType::TEXTURE_32BITF
             | VertexType::COLOR_8888
@@ -3798,7 +3798,7 @@ pub unsafe fn draw_texture_quad(
 /// the GE reads a draw's vertices after the call returns, and from memory,
 /// not the D-cache (RE-534).
 unsafe fn list_copy(verts: &[TexQuadVertex; 6]) -> *const TexQuadVertex {
-    let list = sys::sceGuGetMemory(core::mem::size_of_val(verts) as i32) as *mut TexQuadVertex;
+    let list = crate::gu::list_memory(core::mem::size_of_val(verts)) as *mut TexQuadVertex;
     core::ptr::copy_nonoverlapping(verts.as_ptr(), list, verts.len());
     list
 }
@@ -3957,7 +3957,7 @@ unsafe fn draw_sprite_xy_with(
         (0.0, 0.0, x0, y0),
         (w, h, x0 + w * scale_x * k, y0 + h * scale_y * k),
     ];
-    let verts = sys::sceGuGetMemory((2 * core::mem::size_of::<SObjVertex>()) as i32)
+    let verts = crate::gu::list_memory(2 * core::mem::size_of::<SObjVertex>())
         as *mut SObjVertex;
     for (i, (u, v, px, py)) in corners.into_iter().enumerate() {
         verts.add(i).write(SObjVertex {
@@ -3969,7 +3969,7 @@ unsafe fn draw_sprite_xy_with(
             z: 0.0,
         });
     }
-    sys::sceGuDrawArray(
+    crate::gu::draw_array(
         GuPrimitive::Sprites,
         VertexType::TEXTURE_32BITF
             | VertexType::COLOR_8888
@@ -4247,7 +4247,7 @@ unsafe fn sprite_blend(attr: u16) {
 
 /// One `GU_SPRITES` rectangle from two `(u, v, x, y)` corners.
 unsafe fn sobj_rect(corners: [(f32, f32, f32, f32); 2], abgr: u32) {
-    let verts = sys::sceGuGetMemory((2 * core::mem::size_of::<SObjVertex>()) as i32)
+    let verts = crate::gu::list_memory(2 * core::mem::size_of::<SObjVertex>())
         as *mut SObjVertex;
     for (i, (u, v, px, py)) in corners.into_iter().enumerate() {
         verts.add(i).write(SObjVertex {
@@ -4259,7 +4259,7 @@ unsafe fn sobj_rect(corners: [(f32, f32, f32, f32); 2], abgr: u32) {
             z: 0.0,
         });
     }
-    sys::sceGuDrawArray(
+    crate::gu::draw_array(
         GuPrimitive::Sprites,
         VertexType::TEXTURE_32BITF
             | VertexType::COLOR_8888
@@ -4365,7 +4365,7 @@ impl DepthSprites {
             return;
         }
         crate::gu::writeback_vertices(self.words as *const u8, self.count * 12, false);
-        sys::sceGuDrawArray(
+        crate::gu::draw_array(
             GuPrimitive::Sprites,
             VertexType::VERTEX_16BIT | VertexType::TRANSFORM_2D,
             2 * self.count as i32,
@@ -4392,7 +4392,7 @@ pub unsafe fn fill_rect_n64(rect: [f32; 4], rgba: [u8; 4], draw_state: &mut Draw
         z: f32,
     }
     let color = u32::from_le_bytes(rgba);
-    let verts = sys::sceGuGetMemory((2 * core::mem::size_of::<FillVertex>()) as i32) as *mut FillVertex;
+    let verts = crate::gu::list_memory(2 * core::mem::size_of::<FillVertex>()) as *mut FillVertex;
     for (i, (x, y)) in [(rect[0], rect[1]), (rect[2], rect[3])].into_iter().enumerate() {
         verts.add(i).write(FillVertex {
             color,
@@ -4418,7 +4418,7 @@ pub unsafe fn fill_rect_n64(rect: [f32; 4], rgba: [u8; 4], draw_state: &mut Draw
             0,
         );
     }
-    sys::sceGuDrawArray(
+    crate::gu::draw_array(
         GuPrimitive::Sprites,
         VertexType::COLOR_8888 | VertexType::VERTEX_32BITF | VertexType::TRANSFORM_2D,
         2,
@@ -4449,7 +4449,7 @@ pub unsafe fn fill_triangles_n64(tris: &[[[f32; 2]; 3]], rgba: [u8; 4], draw_sta
     }
     let color = u32::from_le_bytes(rgba);
     let count = tris.len() * 3;
-    let verts = sys::sceGuGetMemory((count * core::mem::size_of::<FillVertex>()) as i32) as *mut FillVertex;
+    let verts = crate::gu::list_memory(count * core::mem::size_of::<FillVertex>()) as *mut FillVertex;
     for (i, &[x, y]) in tris.iter().flatten().enumerate() {
         verts.add(i).write(FillVertex {
             color,
@@ -4471,7 +4471,7 @@ pub unsafe fn fill_triangles_n64(tris: &[[[f32; 2]; 3]], rgba: [u8; 4], draw_sta
         0,
         0,
     );
-    sys::sceGuDrawArray(
+    crate::gu::draw_array(
         GuPrimitive::Triangles,
         VertexType::COLOR_8888 | VertexType::VERTEX_32BITF | VertexType::TRANSFORM_2D,
         count as i32,
@@ -4519,7 +4519,7 @@ pub unsafe fn draw_trail(
         z: f32,
     }
     const MAX_TRIS: usize = ssb_game::afterimage::TRAIL_VTX_MAX;
-    let out = sys::sceGuGetMemory((MAX_TRIS * 3 * core::mem::size_of::<TrailVertex>()) as i32)
+    let out = crate::gu::list_memory(MAX_TRIS * 3 * core::mem::size_of::<TrailVertex>())
         as *mut TrailVertex;
     let mut count = 0;
     for tri in tris.take(MAX_TRIS) {
@@ -4562,7 +4562,7 @@ pub unsafe fn draw_trail(
     } else {
         sys::sceGuDisable(GuState::Blend);
     }
-    sys::sceGumDrawArray(
+    crate::gu::gum_draw_array(
         GuPrimitive::Triangles,
         VertexType::COLOR_8888 | VertexType::VERTEX_32BITF | VertexType::TRANSFORM_3D,
         count as i32,
@@ -4625,7 +4625,7 @@ pub unsafe fn draw_quad_3d(
         (0.0, v1, x0, y1),
         (u1, v1, x1, y1),
     ];
-    let verts = sys::sceGuGetMemory((6 * core::mem::size_of::<TexQuadVertex>()) as i32)
+    let verts = crate::gu::list_memory(6 * core::mem::size_of::<TexQuadVertex>())
         as *mut TexQuadVertex;
     for (i, (u, v, x, y)) in quad.into_iter().enumerate() {
         verts.add(i).write(TexQuadVertex {
@@ -4637,7 +4637,7 @@ pub unsafe fn draw_quad_3d(
             z: 0.0,
         });
     }
-    sys::sceGumDrawArray(
+    crate::gu::gum_draw_array(
         GuPrimitive::Triangles,
         VertexType::TEXTURE_32BITF
             | VertexType::COLOR_8888
@@ -4736,7 +4736,7 @@ pub unsafe fn draw_particle(
     }
 
     sys::sceGuTexScale(1.0, 1.0);
-    sys::sceGumDrawArray(
+    crate::gu::gum_draw_array(
         GuPrimitive::Triangles,
         VertexType::TEXTURE_32BITF
             | VertexType::COLOR_8888
@@ -4856,7 +4856,7 @@ pub unsafe fn draw_particle_rect(
     let (xs, nx) = spans(r.x0, r.x1, w, r.flip_s, r.mirror_s);
     let (ys, ny) = spans(r.y0, r.y1, h, r.flip_t, r.mirror_t);
     let count = 2 * nx * ny;
-    let verts = sys::sceGuGetMemory((count * core::mem::size_of::<SObjVertex>()) as i32) as *mut SObjVertex;
+    let verts = crate::gu::list_memory(count * core::mem::size_of::<SObjVertex>()) as *mut SObjVertex;
     let mut k = 0;
     for &(y0, y1, v0, v1) in &ys[..ny] {
         for &(x0, x1, u0, u1) in &xs[..nx] {
@@ -4879,7 +4879,7 @@ pub unsafe fn draw_particle_rect(
             k += 2;
         }
     }
-    sys::sceGuDrawArray(
+    crate::gu::draw_array(
         GuPrimitive::Sprites,
         VertexType::TEXTURE_32BITF | VertexType::COLOR_8888 | VertexType::VERTEX_32BITF | VertexType::TRANSFORM_2D,
         count as i32,
@@ -5015,9 +5015,9 @@ pub unsafe fn draw_fighter_shadow(
         }
     }
     let bytes = count * core::mem::size_of::<TexQuadVertex>();
-    let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut TexQuadVertex;
+    let dynamic = crate::gu::list_memory(bytes) as *mut TexQuadVertex;
     core::ptr::copy_nonoverlapping(verts.as_ptr(), dynamic, count);
-    sys::sceGumDrawArray(
+    crate::gu::gum_draw_array(
         GuPrimitive::Triangles,
         VertexType::TEXTURE_32BITF
             | VertexType::COLOR_8888

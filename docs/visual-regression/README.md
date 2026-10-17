@@ -306,6 +306,10 @@ tools/compare-screenshot.sh tests/golden/local/<golden>.png ~/ppsspp-headless-te
   hashes only (`tools/docs/validate_docs.py` rejects tracked images outside
   the original XMB artwork).
 - Confirm a new golden is deterministic with two captures.
+- A renderer-path change may move PPSSPP hashes only under D-051: a
+  hardware `frame_hash` comparison proves the PSP output identical, the new
+  hashes are stable over at least 3 runs including `-j 1`, and the changed
+  rows are listed with pixel counts (RE-537).
 - PPSSPP software is the only exact tier. PPSSPP hardware backends and
   physical PSP captures are separate, qualitative tiers.
 - Never pass a camera photo of a PSP screen to the pixel comparator.

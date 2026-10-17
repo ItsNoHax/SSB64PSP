@@ -17,8 +17,8 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use psp::sys::{
-    self, ClearBuffer, DepthFunc, DisplayPixelFormat, FrontFaceDirection, GuContextType,
-    GuPrimitive, GuState, GuSyncBehavior, GuSyncMode, ShadingModel, TexturePixelFormat, VertexType,
+    self, ClearBuffer, DepthFunc, DisplayPixelFormat, FrontFaceDirection, GeCommand,
+    GuContextType, GuPrimitive, GuState, GuSyncBehavior, GuSyncMode, ShadingModel, TexturePixelFormat, VertexType,
 };
 use psp::vram_alloc::get_vram_allocator;
 use psp::{BUF_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH};
@@ -54,10 +54,10 @@ const DCACHE_LINE: usize = 64;
 /// command word, so writing them back can never overwrite the uncached
 /// commands around the block (RE-360). The block lives as long as the list.
 ///
-/// The direct list runs while it is built: every draw and every
-/// `sceGuGetMemory` moves the GE's stall address, so the GE may read a block
-/// as soon as the draw that names it is sent. [`writeback_vertices`] must
-/// run after the last write and before that draw.
+/// The direct list runs while it is built: [`draw_array`] and every
+/// `sceGuGetMemory` may move the GE's stall address, so the GE may read a
+/// block as soon as the draw that names it is sent. [`writeback_vertices`]
+/// must run after the last write and before that draw.
 ///
 /// # Safety
 ///
@@ -102,16 +102,151 @@ const VERTEX_CHUNK_BYTES: usize = 8192;
 /// Starts [`cached_vertices`] on a new list block: the last one belonged to
 /// the previous list. Call after each `sceGuStart` of the direct list.
 fn reset_vertex_chunk() {
-    // SAFETY: the render thread alone touches the chunk.
-    unsafe { *core::ptr::addr_of_mut!(VERTEX_CHUNK) = (0, 0) };
+    // SAFETY: the render thread alone touches the chunks and the count.
+    unsafe {
+        *core::ptr::addr_of_mut!(VERTEX_CHUNK) = (0, 0);
+        *core::ptr::addr_of_mut!(LIST_CHUNK) = (0, 0);
+        // `sceGuStart` enqueues the list with its stall address at its
+        // first word.
+        *core::ptr::addr_of_mut!(STALL_PENDING) = 0;
+    }
 }
+
+/// Draws between two GE stall-address updates in the direct list (RE-537).
+///
+/// PSPSDK's `sceGuDrawArray` moves the stall address after every draw, a
+/// `sceGeListUpdateStallAddr` syscall of about 3.3 us on a PSP-2000. Moving
+/// it every 16th draw (and at every `sceGuGetMemory` and `sceGuFinish`)
+/// sends the same command words; the GE only starts on them later. Chosen
+/// on a PSP-2000 (RE-537).
+const STALL_INTERVAL: u32 = 16;
+
+/// Draws [`draw_array`] has sent since the stall address last moved.
+static mut STALL_PENDING: u32 = 0;
+
+/// `sceGuGetMemory`: a block of the open list, through its uncached alias,
+/// that the GE jumps over. It moves the stall address past the block.
+///
+/// # Safety
+///
+/// A list must be open.
+#[inline]
+unsafe fn get_memory(bytes: usize) -> *mut u8 {
+    *core::ptr::addr_of_mut!(STALL_PENDING) = 0;
+    sys::sceGuGetMemory(bytes as i32) as *mut u8
+}
+
+/// [`list_memory`]'s current list block: its next free byte and its end,
+/// uncached-alias addresses; empty (0) from each `sceGuStart` of the direct
+/// list ([`reset_vertex_chunk`]).
+static mut LIST_CHUNK: (usize, usize) = (0, 0);
+/// The list block [`list_memory`] carves small blocks from.
+const LIST_CHUNK_BYTES: usize = 8192;
+/// [`list_memory`]'s block alignment.
+const LIST_BLOCK_ALIGN: usize = 16;
+
+/// `bytes` of list memory, through the uncached alias, 16-byte aligned: the
+/// `sceGuGetMemory` the draws' vertex blocks came from, without its
+/// stall-address syscall for each block. Small blocks come out of one 8 KiB
+/// list block in turn, as [`cached_vertices`]' do; the two never share a
+/// block, so no line written through the cache holds a byte written here.
+/// The block lives as long as the list.
+///
+/// The CPU writes the block through the uncached alias before the draw that
+/// names it is sent, and the GE reads it no earlier than that draw.
+///
+/// # Safety
+///
+/// Between `sceGuStart` and `sceGuFinish` of the direct list.
+pub(crate) unsafe fn list_memory(bytes: usize) -> *mut u8 {
+    let size = (bytes + LIST_BLOCK_ALIGN - 1) & !(LIST_BLOCK_ALIGN - 1);
+    let chunk = &mut *core::ptr::addr_of_mut!(LIST_CHUNK);
+    if chunk.0 != 0 && size <= chunk.1 - chunk.0 {
+        let block = chunk.0;
+        chunk.0 += size;
+        return block as *mut u8;
+    }
+    // `sceGuGetMemory` blocks are word-aligned: one 12-byte allowance
+    // aligns the first block up.
+    if size > LIST_CHUNK_BYTES / 2 {
+        let raw = get_memory(size + LIST_BLOCK_ALIGN - 4) as usize;
+        return ((raw + LIST_BLOCK_ALIGN - 1) & !(LIST_BLOCK_ALIGN - 1)) as *mut u8;
+    }
+    let raw = get_memory(LIST_CHUNK_BYTES + LIST_BLOCK_ALIGN - 4) as usize;
+    let block = (raw + LIST_BLOCK_ALIGN - 1) & !(LIST_BLOCK_ALIGN - 1);
+    *chunk = (block + size, block + LIST_CHUNK_BYTES);
+    block as *mut u8
+}
+
+/// `sceGuDrawArray` with the stall address moved every
+/// [`STALL_INTERVAL`]th draw. The command words are PSPSDK's, sent through
+/// `sceGuSendCommandi`; the draw that completes an interval goes through
+/// `sceGuDrawArray` itself, which writes the same words and moves the stall
+/// address. The list is word for word the one `sceGuDrawArray` alone
+/// builds.
+///
+/// Every buffer the draw names must hold its final bytes for the GE when
+/// this is called and keep them until the list finishes: the GE reads them
+/// up to 16 draws later than a `sceGuDrawArray` would let it (RE-534's
+/// `draw_rect` race).
+///
+/// # Safety
+///
+/// As `sceGuDrawArray`.
+#[inline]
+pub(crate) unsafe fn draw_array(
+    prim: GuPrimitive,
+    vtype: VertexType,
+    count: i32,
+    indices: *const c_void,
+    vertices: *const c_void,
+) {
+    let pending = &mut *core::ptr::addr_of_mut!(STALL_PENDING);
+    if *pending + 1 >= STALL_INTERVAL {
+        *pending = 0;
+        sys::sceGuDrawArray(prim, vtype, count, indices, vertices);
+        return;
+    }
+    *pending += 1;
+    if !vtype.is_empty() {
+        sys::sceGuSendCommandi(GeCommand::VertexType, vtype.bits());
+    }
+    if !indices.is_null() {
+        sys::sceGuSendCommandi(GeCommand::Base, (indices as u32 >> 8) as i32 & 0xf0000);
+        sys::sceGuSendCommandi(GeCommand::Iaddr, indices as i32 & 0xffffff);
+    }
+    if !vertices.is_null() {
+        sys::sceGuSendCommandi(GeCommand::Base, (vertices as u32 >> 8) as i32 & 0xf0000);
+        sys::sceGuSendCommandi(GeCommand::Vaddr, vertices as i32 & 0xffffff);
+    }
+    sys::sceGuSendCommandi(GeCommand::Prim, ((prim as i32) << 16) | count);
+}
+
+/// `sceGumDrawArray` through [`draw_array`]: the matrices first, as
+/// `sceGumDrawArray` loads them.
+///
+/// # Safety
+///
+/// As [`draw_array`].
+#[inline]
+pub(crate) unsafe fn gum_draw_array(
+    prim: GuPrimitive,
+    vtype: VertexType,
+    count: i32,
+    indices: *const c_void,
+    vertices: *const c_void,
+) {
+    sys::sceGumUpdateMatrix();
+    draw_array(prim, vtype, count, indices, vertices);
+}
+
 
 /// `lines` bytes of list memory in whole D-cache lines, through the cached
 /// alias: a block one line larger, from its first whole line.
 /// `sceGuGetMemory` blocks are word-aligned, so aligning up skips at most
 /// 60 bytes of the extra line.
 unsafe fn list_lines(lines: usize) -> usize {
-    let raw = sys::sceGuGetMemory((lines + DCACHE_LINE) as i32) as usize;
+    let raw = get_memory(lines + DCACHE_LINE) as usize;
     let first = (raw + DCACHE_LINE - 1) & !(DCACHE_LINE - 1);
     first & !0x4000_0000
 }
@@ -1023,9 +1158,9 @@ impl Gpu {
                 _pad: 0,
             },
         ];
-        let dynamic = sys::sceGuGetMemory(core::mem::size_of_val(&verts) as i32) as *mut SpriteVertex;
+        let dynamic = list_memory(core::mem::size_of_val(&verts)) as *mut SpriteVertex;
         core::ptr::copy_nonoverlapping(verts.as_ptr(), dynamic, verts.len());
-        sys::sceGuDrawArray(
+        draw_array(
             GuPrimitive::Sprites,
             SpriteVertex::FORMAT,
             2,
@@ -1593,9 +1728,9 @@ impl Gpu {
     pub unsafe fn draw_triangles(&mut self, verts: &[GuVertex]) {
         sys::sceGuDisable(GuState::Texture2D);
         let bytes = verts.len() * core::mem::size_of::<GuVertex>();
-        let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut GuVertex;
+        let dynamic = list_memory(bytes) as *mut GuVertex;
         core::ptr::copy_nonoverlapping(verts.as_ptr(), dynamic, verts.len());
-        sys::sceGumDrawArray(
+        gum_draw_array(
             GuPrimitive::Triangles,
             GuVertex::FORMAT,
             verts.len() as i32,
@@ -1632,9 +1767,9 @@ impl Gpu {
         }
         sys::sceGuDisable(GuState::Texture2D);
         let bytes = verts.len() * core::mem::size_of::<GuVertex>();
-        let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut GuVertex;
+        let dynamic = list_memory(bytes) as *mut GuVertex;
         core::ptr::copy_nonoverlapping(verts.as_ptr(), dynamic, verts.len());
-        sys::sceGumDrawArray(
+        gum_draw_array(
             GuPrimitive::LineStrip,
             GuVertex::FORMAT,
             verts.len() as i32,
@@ -1669,9 +1804,9 @@ impl Gpu {
             sys::sceGuDisable(GuState::CullFace);
             // `sceGuGetMemory` hands out the list's uncached alias, so the
             // corners are in memory before the draw that names them.
-            let list = sys::sceGuGetMemory(core::mem::size_of_val(&verts) as i32) as *mut RectVertex;
+            let list = list_memory(core::mem::size_of_val(&verts)) as *mut RectVertex;
             core::ptr::copy_nonoverlapping(verts.as_ptr(), list, verts.len());
-            sys::sceGuDrawArray(
+            draw_array(
                 GuPrimitive::Sprites,
                 RectVertex::FORMAT,
                 2,
