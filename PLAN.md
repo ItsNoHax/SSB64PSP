@@ -55,11 +55,14 @@ closes it.
 
 ### PSP performance and hardware (`MS8`)
 
-- [ ] Four-player VS on a PSP-2000: `vs4@2400` 17.13 ms busy / 54.8 FPS (120-frame reports 4..19) against RE-500's 13.64 / 59.9.
+- [ ] Four-player VS on a PSP-2000: `vs4@2400` 16.46 ms busy / 57.9 FPS (120-frame reports 4..19) against RE-500's 13.64 / 59.9.
   - The RE-514 CPU lighting regression (+5.2 ms) is recovered; lighting is 0.8 ms busy.
   - The RE-509/510 collision compose runs once per fighter tick, with a joint table and a re-searched order (RE-533): -0.27 ms.
-  - Left: `bind_texture` (121 binds a frame, ~1.3 ms) and the `sceGumDrawArray` stall-address syscalls (~3.3 us a draw, 128 draws), then other small gameplay/draw additions.
+  - A texture bind-block cache, the `draw_rect` CPU/GE race fix and a re-searched order (seed 11) took 17.13 to 16.46 ms; opening Run 42 to 50 FPS; bit-identical (RE-534).
+  - Left: other small gameplay/draw additions.
   - The lit expand is memory-bound (~0.68 us a vertex) (RE-532, RE-533).
+- [ ] Stall-update batching (`sceGumDrawArray` stall syscalls, ~3.3 us a draw): held, worth -0.25 to -0.30 ms. PPSSPP's software renderer output depends on bin ranges, which flush chunking moves, so goldens cannot pin it. Needs a hardware-only comparison method (frame hashes on a PSP) and a production route (rust-psp change or psp-runtime-owned draw words) (RE-534).
+- [ ] Bind-block extensions: a sub-list via `sceGuCallList`, and caching the texture-mapping block (about 0.2-0.3 ms estimated) (RE-534).
 - [x] Lit primitives light each vertex once and keep the indexed draw; guard clip uses an outcode table (RE-514, RE-530).
 - [x] RE-514 CPU lighting cost confirmed on a PSP-2000: +5.2 ms, since recovered (RE-533, RE-514).
 - [ ] By hand on the PSP-2000, with the installed production EBOOT (`target/release-audio/EBOOT.PBP`, pack v108; the attract loop already runs clean, RE-479): the campaign past Race to the Finish, then RE-476/RE-477's checks (RE-476, RE-477, RE-478).

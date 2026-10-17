@@ -82,6 +82,16 @@ pub(crate) unsafe fn cached_vertices(bytes: usize) -> *mut u8 {
     block as *mut u8
 }
 
+/// The direct list's first word, through the uncached alias `sceGuStart`
+/// writes it by: `sceGuCheckList`'s byte offsets count from here.
+///
+/// # Safety
+///
+/// Read only words the open direct list has written.
+pub(crate) unsafe fn direct_list_words() -> *const u32 {
+    (core::ptr::addr_of!(DISPLAY_LIST.0) as usize | 0x4000_0000) as *const u32
+}
+
 /// [`cached_vertices`]' current list block: its next free line and its
 /// end, cached-alias addresses; empty (0) from each `sceGuStart` of the
 /// direct list ([`reset_vertex_chunk`]).
@@ -1642,6 +1652,13 @@ impl Gpu {
     /// `TRANSFORM_2D` primitive must neither be depth-tested against stale
     /// buffer contents nor culled by a winding order that has no meaning in
     /// screen space.
+    ///
+    /// The two corners go into list memory, as [`Gpu::draw_triangles`]'
+    /// vertices do: the GE reads them after this returns, and from memory,
+    /// not the D-cache. A stack array here was read after its frame was
+    /// reused, and on a PSP possibly before its lines were written back:
+    /// the KO flash came out in another colour when the GE ran behind
+    /// (RE-534).
     pub fn draw_rect(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
         let verts = [
             RectVertex::new(x0 as i16, y0 as i16, color.to_abgr()),
@@ -1650,12 +1667,16 @@ impl Gpu {
         unsafe {
             sys::sceGuDisable(GuState::DepthTest);
             sys::sceGuDisable(GuState::CullFace);
+            // `sceGuGetMemory` hands out the list's uncached alias, so the
+            // corners are in memory before the draw that names them.
+            let list = sys::sceGuGetMemory(core::mem::size_of_val(&verts) as i32) as *mut RectVertex;
+            core::ptr::copy_nonoverlapping(verts.as_ptr(), list, verts.len());
             sys::sceGuDrawArray(
                 GuPrimitive::Sprites,
                 RectVertex::FORMAT,
                 2,
                 core::ptr::null(),
-                verts.as_ptr() as *const c_void,
+                list as *const c_void,
             );
             sys::sceGuEnable(GuState::DepthTest);
             sys::sceGuEnable(GuState::CullFace);

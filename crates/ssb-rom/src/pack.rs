@@ -4446,6 +4446,12 @@ impl<'a> Pack<'a> {
         self.shared_len
     }
 
+    /// The first byte of the buffer the pack was opened on: which pack this
+    /// is, for a cache of what its lookups found.
+    pub fn base(&self) -> *const u8 {
+        self.data.as_ptr()
+    }
+
     /// Archive files with bytes or dependencies (RE-475).
     pub fn file_count(&self) -> u32 {
         self.file_count

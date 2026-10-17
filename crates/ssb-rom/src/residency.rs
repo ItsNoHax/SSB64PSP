@@ -45,6 +45,8 @@ struct Registry {
     miss: Option<MissHook>,
     misses: u32,
     unresolved: u32,
+    /// Bumped by every change to `owner` or `spans` ([`generation`]).
+    generation: u32,
 }
 
 struct Cell(UnsafeCell<Registry>);
@@ -59,6 +61,7 @@ static REGISTRY: Cell = Cell(UnsafeCell::new(Registry {
     miss: None,
     misses: 0,
     unresolved: 0,
+    generation: 0,
 }));
 
 fn registry() -> *mut Registry {
@@ -80,6 +83,7 @@ pub unsafe fn install(owner: *const u8, miss: Option<MissHook>) {
     r.miss = miss;
     r.misses = 0;
     r.unresolved = 0;
+    r.generation = r.generation.wrapping_add(1);
 }
 
 /// Registers `span`; replaces a span with the same start.
@@ -97,6 +101,7 @@ pub unsafe fn insert(span: Span) {
         r.spans.insert(i, span);
     }
     r.last = i;
+    r.generation = r.generation.wrapping_add(1);
 }
 
 /// Registers `run`, spans in ascending order that no registered span
@@ -122,6 +127,7 @@ pub unsafe fn insert_run(run: &[Span]) {
     }
     r.spans.splice(i..i, run.iter().copied());
     r.last = i;
+    r.generation = r.generation.wrapping_add(1);
 }
 
 /// Unregisters every span whose start `drop` names, in one pass.
@@ -133,6 +139,7 @@ pub unsafe fn remove_where(mut drop: impl FnMut(u32) -> bool) {
     let r = unsafe { &mut *registry() };
     r.spans.retain(|s| !drop(s.start));
     r.last = 0;
+    r.generation = r.generation.wrapping_add(1);
 }
 
 /// Unregisters the span starting at `start`, if one does.
@@ -146,7 +153,17 @@ pub unsafe fn remove(start: u32) {
     if r.spans.get(i).is_some_and(|s| s.start == start) {
         r.spans.remove(i);
         r.last = 0;
+        r.generation = r.generation.wrapping_add(1);
     }
+}
+
+/// A count that changes whenever the registry does: [`install`] and
+/// every insert or removal. Equal values mean every slice [`resolve`]
+/// returned in between is still where it was, so a cache of what a lookup
+/// found (`psp-runtime`'s texture bind blocks) is valid while it holds.
+pub fn generation() -> u32 {
+    // SAFETY: module threading note.
+    unsafe { (*registry()).generation }
 }
 
 /// How many spans are registered.
@@ -262,18 +279,25 @@ mod tests {
                 ptr: backing.as_ptr(),
             });
         }
+        let g = generation();
         assert_eq!(resolve(owner.as_ptr(), 20, 4), Some(&[7u8; 4][..]));
+        // A lookup leaves the generation alone.
+        assert_eq!(generation(), g);
         // Crossing the span's end is not served.
         assert_eq!(resolve(owner.as_ptr(), 30, 4), None);
         // Another buffer's offsets are not ours.
         assert_eq!(resolve(backing.as_ptr(), 20, 4), None);
-        // A miss loads the file through the hook.
+        // A miss loads the file through the hook, whose insert moves the
+        // generation; so does each removal.
         assert_eq!(resolve(owner.as_ptr(), 66, 2), Some(&[3u8, 4][..]));
+        assert_ne!(generation(), g);
         assert_eq!(take_misses(), (2, 1));
-        unsafe {
-            remove(16);
-            remove(64);
-        }
+        let g = generation();
+        unsafe { remove(16) };
+        assert_ne!(generation(), g);
+        let g = generation();
+        unsafe { remove(64) };
+        assert_ne!(generation(), g);
         assert_eq!(span_count(), 0);
         // A run of adjacent spans lands in order in one move; one that
         // would straddle a registered span goes in span by span.

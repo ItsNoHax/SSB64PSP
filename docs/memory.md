@@ -34,6 +34,7 @@
   end on `ssb_psp_runtime::memory::fatal`'s text screen. Keep allocation
   out of per-frame paths: battle makes one a frame (`profile`'s
   `allocs`), bounded lists use `ssb_engine::array_vec::ArrayVec`.
+- Static state is small: the texture bind-block cache is about 80 KB of `.bss` (RE-534), against 47,891,712 free bytes at `psp_main` from the XMB and a 20.7 MB measured peak.
 - While a scene runs, the next scene's files are read into memory beside
   it (`scene_files::prefetch`, RE-476): the attract loop's lowest free
   memory at the XMB's budget is 23.1 MB under PPSSPP with audio (24.9 MB

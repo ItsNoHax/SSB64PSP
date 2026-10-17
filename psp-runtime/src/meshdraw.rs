@@ -732,7 +732,14 @@ fn texture_image<'a>(t: &TextureDesc, data: &'a [u8]) -> Option<TextureImage<'a>
     Some(TextureImage { texels: data.get(..size)?, ge_w, ge_h, bufw })
 }
 
-unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
+/// Binds texture `index` of `pack` (`t` is `pack.texture(index)`), its CLUT
+/// swapped for `palette`'s unless that is [`TextureDesc::NO_ANIM`].
+///
+/// The words a bind writes to the list depend only on `(index, palette)`
+/// and on where the pack finds the texels and CLUTs, so the first bind of a
+/// pair records them in [`BIND_CACHE`] and later binds replay them,
+/// without the lookups and the calls that compute them (RE-534).
+unsafe fn bind_texture(pack: &Pack<'_>, index: u32, t: &TextureDesc, palette: u32) {
     // A `ROLE_FRAMEBUFFER` texture has no baked bytes at all (RE-099, RE-464)
     // -- `pack.texture_data` would return an empty slice, not `None`, so it
     // must be intercepted here rather than falling into the ordinary path
@@ -743,14 +750,140 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
         bind_transition_photo(t);
         return;
     }
+    // `texture_probe` decides per bind whether to texture at all.
+    #[cfg(feature = "texture_probe")]
+    bind_texture_live(pack, t, palette);
+    #[cfg(not(feature = "texture_probe"))]
+    {
+        let cache = &mut *core::ptr::addr_of_mut!(BIND_CACHE);
+        if let Some(block) = cache.find(pack, index, palette) {
+            block.replay();
+            return;
+        }
+        let generation = ssb_rom::residency::generation();
+        let from = sys::sceGuCheckList();
+        if bind_texture_live(pack, t, palette) {
+            cache.record(index, palette, generation, from, sys::sceGuCheckList());
+        }
+    }
+}
 
+/// The most list words one bind writes after its `TextureMapEnable`: CLUT
+/// mode and load (4), an animated CLUT load (3), mode, format and flush (3),
+/// image, width, size and flush (4), level, filter and wrap (3).
+const BIND_BLOCK_WORDS: usize = 17;
+/// Slots in [`BIND_CACHE`]; a power of two. A four-player battle binds about
+/// 100 distinct pairs a frame.
+const BIND_CACHE_SLOTS: usize = 1024;
+/// The `TextureMapEnable` word `sceGuEnable(Texture2D)` writes.
+const TEXTURE_ENABLE_WORD: u32 = (sys::GeCommand::TextureMapEnable as u32) << 24 | 1;
+
+/// One recorded bind: the list words [`bind_texture_live`] wrote after its
+/// `TextureMapEnable`, for `(texture, palette)`. `len` 0 is an empty slot,
+/// never a recorded bind of no words: a bind that writes nothing (texels
+/// not loaded) is not recorded.
+#[derive(Clone, Copy)]
+struct BindBlock {
+    texture: u32,
+    palette: u32,
+    len: u32,
+    words: [u32; BIND_BLOCK_WORDS],
+}
+
+impl BindBlock {
+    const EMPTY: Self = Self { texture: 0, palette: 0, len: 0, words: [0; BIND_BLOCK_WORDS] };
+
+    /// Writes the recorded bind: `sceGuEnable` (it also keeps the library's
+    /// state bits), then the words as they were.
+    unsafe fn replay(&self) {
+        sys::sceGuEnable(GuState::Texture2D);
+        for &w in &self.words[..self.len as usize] {
+            // SAFETY: every word was written by a `sceGu*` call, so its top
+            // byte is a `GeCommand`.
+            let cmd: sys::GeCommand = core::mem::transmute((w >> 24) as u8);
+            sys::sceGuSendCommandi(cmd, (w & 0x00FF_FFFF) as i32);
+        }
+    }
+}
+
+/// [`bind_texture`]'s recorded binds, direct-mapped by `(texture, palette)`.
+///
+/// Valid for one pack buffer and one [`ssb_rom::residency::generation`]:
+/// `valid_for` is `None` until the first lookup, and either changing
+/// empties every slot, since a recorded texel or CLUT address may then be
+/// stale. A miss is never mistaken for a hit on an empty slot (`len` 0).
+struct BindCache {
+    valid_for: Option<(*const u8, u32)>,
+    blocks: [BindBlock; BIND_CACHE_SLOTS],
+}
+
+static mut BIND_CACHE: BindCache = BindCache {
+    valid_for: None,
+    blocks: [BindBlock::EMPTY; BIND_CACHE_SLOTS],
+};
+
+impl BindCache {
+    fn slot(texture: u32, palette: u32) -> usize {
+        let h = texture.wrapping_mul(0x9E37_79B1) ^ palette.wrapping_mul(0x85EB_CA6B);
+        (h >> (32 - BIND_CACHE_SLOTS.trailing_zeros())) as usize
+    }
+
+    /// The recorded bind of `(texture, palette)` for `pack` as the
+    /// residency registry stands now, if there is one.
+    fn find(&mut self, pack: &Pack<'_>, texture: u32, palette: u32) -> Option<&BindBlock> {
+        let now = (pack.base(), ssb_rom::residency::generation());
+        if self.valid_for != Some(now) {
+            self.valid_for = Some(now);
+            for b in self.blocks.iter_mut() {
+                b.len = 0;
+            }
+            return None;
+        }
+        let b = &self.blocks[Self::slot(texture, palette)];
+        (b.len != 0 && b.texture == texture && b.palette == palette).then_some(b)
+    }
+
+    /// Records the list words between byte offsets `from` and `to` of the
+    /// direct list (`sceGuCheckList`), which a [`bind_texture_live`] of
+    /// `(texture, palette)` just wrote, unless the residency registry
+    /// changed while it ran (`generation` is the one before) or the words
+    /// are not a whole bind.
+    #[cold]
+    #[inline(never)]
+    unsafe fn record(&mut self, texture: u32, palette: u32, generation: u32, from: i32, to: i32) {
+        if ssb_rom::residency::generation() != generation || from < 0 || to <= from {
+            return;
+        }
+        let n = (to - from) as usize / 4;
+        if n < 2 || n - 1 > BIND_BLOCK_WORDS {
+            return;
+        }
+        let words = crate::gu::direct_list_words().add(from as usize / 4);
+        if words.read_volatile() != TEXTURE_ENABLE_WORD {
+            return;
+        }
+        let b = &mut self.blocks[Self::slot(texture, palette)];
+        for (k, w) in b.words[..n - 1].iter_mut().enumerate() {
+            *w = words.add(1 + k).read_volatile();
+        }
+        b.texture = texture;
+        b.palette = palette;
+        b.len = (n - 1) as u32;
+    }
+}
+
+/// [`bind_texture`]'s bind of a pack texture, from its lookups; whether it
+/// wrote anything (nothing while the texels are not loaded).
+#[cold]
+#[inline(never)]
+unsafe fn bind_texture_live(pack: &Pack<'_>, t: &TextureDesc, palette: u32) -> bool {
     let Some(data) = pack.texture_data(t) else {
-        return;
+        return false;
     };
     #[cfg(feature = "texture_probe")]
     if crate::texprobe::bind(t.data_offset, t.width, t.height, t.psm, data.len()) {
         sys::sceGuDisable(GuState::Texture2D);
-        return;
+        return true;
     }
 
     sys::sceGuEnable(GuState::Texture2D);
@@ -838,6 +971,7 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
         wrap_of(t.wrap & TextureDesc::CLAMP_S != 0),
         wrap_of(t.wrap & TextureDesc::CLAMP_T != 0),
     );
+    true
 }
 
 /// [`bind_texture`] for the one `ROLE_FRAMEBUFFER` texture: the transition
@@ -1244,7 +1378,7 @@ unsafe fn apply_material(
         st.last_texture = Some((effective_texture, palette));
         st.state_changes += 1;
         match pack.texture(effective_texture) {
-            Some(t) => bind_texture(pack, &t, palette),
+            Some(t) => bind_texture(pack, effective_texture, &t, palette),
             None => sys::sceGuDisable(GuState::Texture2D),
         }
     }
@@ -1512,7 +1646,7 @@ unsafe fn draw_lod_blend_pass(
     if st.last_texture != Some((lod.texture, TextureDesc::NO_ANIM)) {
         st.last_texture = Some((lod.texture, TextureDesc::NO_ANIM));
         st.state_changes += 1;
-        bind_texture(pack, &t, TextureDesc::NO_ANIM);
+        bind_texture(pack, lod.texture, &t, TextureDesc::NO_ANIM);
     }
     apply_texture_mapping(pack, p, st, lod.texture, lod.uv);
     if st.last_texture_func != Some(TextureFuncState::Modulate) {
@@ -3489,7 +3623,7 @@ pub unsafe fn draw_texture_quad(
     draw_state: &mut DrawState,
 ) {
     let Some(t) = pack.texture(index) else { return };
-    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    bind_texture(pack, index, &t, TextureDesc::NO_ANIM);
     // `bind_texture` no longer sets this itself (RE-073); this diagnostic
     // always wants the plain, unblended sample.
     sys::sceGuTexFunc(
@@ -3527,13 +3661,22 @@ pub unsafe fn draw_texture_quad(
             | VertexType::TRANSFORM_3D,
         6,
         core::ptr::null(),
-        verts.as_ptr() as *const c_void,
+        list_copy(verts) as *const c_void,
     );
     // R2.2/C5 (RE-254): `bind_texture`/`sceGuTexFunc`/`sceGuTexScale` above
     // ran raw, bypassing `draw_state` entirely -- the next cached mesh draw
     // sharing it must not trust stale comparisons this call already
     // invalidated.
     draw_state.invalidate_all();
+}
+
+/// A copy of `verts` in list memory, for a draw of a caller's scratch:
+/// the GE reads a draw's vertices after the call returns, and from memory,
+/// not the D-cache (RE-534).
+unsafe fn list_copy(verts: &[TexQuadVertex; 6]) -> *const TexQuadVertex {
+    let list = sys::sceGuGetMemory(core::mem::size_of_val(verts) as i32) as *mut TexQuadVertex;
+    core::ptr::copy_nonoverlapping(verts.as_ptr(), list, verts.len());
+    list
 }
 
 /// A `GU_TRANSFORM_2D` textured vertex: texel UVs, ABGR colour, screen
@@ -3640,7 +3783,7 @@ unsafe fn draw_sprite_xy_with(
     let Some(t) = pack.texture(sprite.texture) else {
         return;
     };
-    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    bind_texture(pack, sprite.texture, &t, TextureDesc::NO_ANIM);
     sys::sceGuTexScale(1.0, 1.0);
     sys::sceGuTexOffset(0.0, 0.0);
     sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
@@ -3746,7 +3889,7 @@ pub unsafe fn draw_wallpaper(
     let Some(t) = pack.texture(sprite.texture) else {
         return;
     };
-    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    bind_texture(pack, sprite.texture, &t, TextureDesc::NO_ANIM);
     // Sampled from VRAM: from main memory its texel reads stall the CPU
     // 0.5 ms a frame even in strips (RE-490, RE-492).
     if let Some(image) = pack.texture_data(&t).and_then(|d| texture_image(&t, d)) {
@@ -3800,7 +3943,7 @@ pub unsafe fn draw_sprite_tiled(
     let Some(t) = pack.texture(sprite.texture) else {
         return;
     };
-    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    bind_texture(pack, sprite.texture, &t, TextureDesc::NO_ANIM);
     sys::sceGuTexScale(1.0, 1.0);
     sys::sceGuTexOffset(0.0, 0.0);
     let wrap = |extent: f32, own: u16| {
@@ -3846,7 +3989,7 @@ pub unsafe fn draw_sprite_mirror_t(
     let Some(t) = pack.texture(sprite.texture) else {
         return;
     };
-    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    bind_texture(pack, sprite.texture, &t, TextureDesc::NO_ANIM);
     sys::sceGuTexScale(1.0, 1.0);
     sys::sceGuTexOffset(0.0, 0.0);
     let s_wrap = if size[0] > f32::from(sprite.width) {
@@ -3901,7 +4044,7 @@ pub unsafe fn draw_sprite_glow(
     let Some(t) = pack.texture(sprite.texture) else {
         return;
     };
-    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    bind_texture(pack, sprite.texture, &t, TextureDesc::NO_ANIM);
     sys::sceGuTexScale(1.0, 1.0);
     sys::sceGuTexOffset(0.0, 0.0);
     sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
@@ -4327,7 +4470,7 @@ pub unsafe fn draw_quad_3d(
     let Some(t) = pack.texture(texture_index) else {
         return;
     };
-    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    bind_texture(pack, texture_index, &t, TextureDesc::NO_ANIM);
     sys::sceGuTexScale(1.0, 1.0);
     sys::sceGuTexOffset(0.0, 0.0);
     sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
@@ -4429,7 +4572,7 @@ pub unsafe fn draw_particle(
     let Some(t) = pack.texture(texture_index) else {
         return;
     };
-    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    bind_texture(pack, texture_index, &t, TextureDesc::NO_ANIM);
 
     let color = match envcolor {
         Some(env) => {
@@ -4477,7 +4620,7 @@ pub unsafe fn draw_particle(
             | VertexType::TRANSFORM_3D,
         6,
         core::ptr::null(),
-        verts.as_ptr() as *const c_void,
+        list_copy(verts) as *const c_void,
     );
     // R2.2/C5 (RE-254): same raw bypass as `draw_texture_quad` above.
     draw_state.invalidate_all();
@@ -4533,7 +4676,7 @@ pub unsafe fn draw_particle_rect(
     let Some(t) = pack.texture(texture_index) else {
         return;
     };
-    bind_texture(pack, &t, TextureDesc::NO_ANIM);
+    bind_texture(pack, texture_index, &t, TextureDesc::NO_ANIM);
     sys::sceGuTexScale(1.0, 1.0);
     sys::sceGuTexOffset(0.0, 0.0);
     sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
@@ -4678,7 +4821,8 @@ pub unsafe fn draw_fighter_shadow(
     // and the shadow lands far off screen (RE-514).
     sys::sceGumMatrixMode(sys::MatrixMode::Model);
     sys::sceGumLoadIdentity();
-    bind_texture(pack, texture, TextureDesc::NO_ANIM);
+    // Not through the bind cache: the caller holds the row, not its index.
+    bind_texture_live(pack, texture, TextureDesc::NO_ANIM);
     sys::sceGuTexFunc(
         sys::TextureEffect::Modulate,
         sys::TextureColorComponent::Rgba,
