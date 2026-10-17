@@ -64,11 +64,46 @@ const DCACHE_LINE: usize = 64;
 /// Between `sceGuStart` and `sceGuFinish` of the direct list.
 pub(crate) unsafe fn cached_vertices(bytes: usize) -> *mut u8 {
     let lines = (bytes + DCACHE_LINE - 1) & !(DCACHE_LINE - 1);
-    // `sceGuGetMemory` blocks are word-aligned, so aligning up skips at most
-    // 60 bytes of the extra line.
+    // Small blocks come out of one larger list block in turn: each
+    // `sceGuGetMemory` is a stall-address syscall, and a lit fighter asks
+    // for one block per primitive. Every block still starts on its own
+    // line and holds whole lines, so no two blocks share one.
+    let chunk = &mut *core::ptr::addr_of_mut!(VERTEX_CHUNK);
+    if chunk.0 != 0 && lines <= chunk.1 - chunk.0 {
+        let block = chunk.0;
+        chunk.0 += lines;
+        return block as *mut u8;
+    }
+    if lines > VERTEX_CHUNK_BYTES / 2 {
+        return list_lines(lines) as *mut u8;
+    }
+    let block = list_lines(VERTEX_CHUNK_BYTES);
+    *chunk = (block + lines, block + VERTEX_CHUNK_BYTES);
+    block as *mut u8
+}
+
+/// [`cached_vertices`]' current list block: its next free line and its
+/// end, cached-alias addresses; empty (0) from each `sceGuStart` of the
+/// direct list ([`reset_vertex_chunk`]).
+static mut VERTEX_CHUNK: (usize, usize) = (0, 0);
+/// The list block [`cached_vertices`] carves small blocks from.
+const VERTEX_CHUNK_BYTES: usize = 8192;
+
+/// Starts [`cached_vertices`] on a new list block: the last one belonged to
+/// the previous list. Call after each `sceGuStart` of the direct list.
+fn reset_vertex_chunk() {
+    // SAFETY: the render thread alone touches the chunk.
+    unsafe { *core::ptr::addr_of_mut!(VERTEX_CHUNK) = (0, 0) };
+}
+
+/// `lines` bytes of list memory in whole D-cache lines, through the cached
+/// alias: a block one line larger, from its first whole line.
+/// `sceGuGetMemory` blocks are word-aligned, so aligning up skips at most
+/// 60 bytes of the extra line.
+unsafe fn list_lines(lines: usize) -> usize {
     let raw = sys::sceGuGetMemory((lines + DCACHE_LINE) as i32) as usize;
     let first = (raw + DCACHE_LINE - 1) & !(DCACHE_LINE - 1);
-    (first & !0x4000_0000) as *mut u8
+    first & !0x4000_0000
 }
 
 /// Writes a [`cached_vertices`] block's lines back to memory for the GE.
@@ -560,6 +595,7 @@ impl Gpu {
 
         sys::sceGuInit();
         sys::sceGuStart(GuContextType::Direct, Self::list_ptr());
+        reset_vertex_chunk();
 
         sys::sceGuDrawBuffer(
             DisplayPixelFormat::Psm8888,
@@ -1027,6 +1063,7 @@ impl Gpu {
         unsafe {
             self.wait_presented();
             sys::sceGuStart(GuContextType::Direct, Self::list_ptr());
+            reset_vertex_chunk();
             // The swap is this module's, not `sceGuSwapBuffers`' (see
             // `end_frame`), so the target is named every frame. Through
             // `sceGuDrawBuffer` rather than a bare list command, so

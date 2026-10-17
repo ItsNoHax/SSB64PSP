@@ -268,6 +268,56 @@ pub fn lit_rgb(dot: u16, light: [u8; 3], ambient: [u8; 3], prim: Option<[u8; 3]>
     }
 }
 
+/// [`lit_rgb`] with one primitive's registers folded in once, for a loop
+/// that lights many vertices under the same registers (RE-514). Exactly
+/// [`lit_rgb`]: `shade`'s `(acc >> 8).min(0x7FFF) >> 7` is
+/// `(acc >> 15).min(255)` (a shift is monotone and `0x7FFF >> 7` is 255),
+/// with `acc`'s constant `a * 32767 + 128` taken once; a missing `PRIM`
+/// is the factor 256, for which `(256 * s + 0x80) >> 8` is `s`; and a
+/// vertex facing away (`dot` 0) takes the colour computed once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LitShade {
+    base: [u32; 3],
+    light: [u32; 3],
+    prim: [u32; 3],
+    dark: [u8; 3],
+}
+
+impl LitShade {
+    pub fn new(light: [u8; 3], ambient: [u8; 3], prim: Option<[u8; 3]>) -> Self {
+        let base = ambient.map(|a| u32::from(a) * 32_767 + 128);
+        let light = light.map(u32::from);
+        let prim = prim.map_or([256; 3], |p| p.map(u32::from));
+        let mut shade = LitShade {
+            base,
+            light,
+            prim,
+            dark: [0; 3],
+        };
+        shade.dark = [0, 1, 2].map(|i| shade.channel(i, 0));
+        shade
+    }
+
+    #[inline(always)]
+    fn channel(&self, i: usize, dot: u16) -> u8 {
+        let s = ((self.base[i] + self.light[i] * u32::from(dot)) >> 15).min(255);
+        ((self.prim[i] * s + 0x80) >> 8) as u8
+    }
+
+    /// [`lit_rgb`]`(dot, light, ambient, prim)`.
+    #[inline(always)]
+    pub fn rgb(&self, dot: u16) -> [u8; 3] {
+        if dot == 0 {
+            return self.dark;
+        }
+        [
+            self.channel(0, dot),
+            self.channel(1, dot),
+            self.channel(2, dot),
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,6 +551,52 @@ mod tests {
         assert_eq!(shade_alpha(64), 64);
         assert_eq!(shade_alpha(33), 33);
         assert_eq!(shade_alpha(3), 3);
+    }
+
+    /// Every ambient and light value against sampled dots (all of them
+    /// near 0 and at the saturation edge), and every dot against sampled
+    /// registers, with and without `PRIM`.
+    #[test]
+    fn lit_shade_matches_lit_rgb_exactly() {
+        let mut dots: Vec<u16> = (0..=40).collect();
+        dots.extend((40..=0x7FFF).step_by(509));
+        dots.extend(0x7FF0..=0x7FFF);
+        let prims = [
+            None,
+            Some([0, 1, 2]),
+            Some([128, 255, 7]),
+            Some([255, 254, 64]),
+        ];
+        for prim in [prims[0], prims[2]] {
+            for a in 0..=255u8 {
+                for c in 0..=255u8 {
+                    let regs = (
+                        [c, c.wrapping_mul(7), 255 - c],
+                        [a, a.wrapping_add(91), 255 - a],
+                    );
+                    let fast = LitShade::new(regs.0, regs.1, prim);
+                    for &dot in &dots {
+                        assert_eq!(
+                            fast.rgb(dot),
+                            lit_rgb(dot, regs.0, regs.1, prim),
+                            "{regs:?} {prim:?} {dot}"
+                        );
+                    }
+                }
+            }
+        }
+        for (light, ambient) in [
+            ([255; 3], [255; 3]),
+            ([200, 100, 3], [60, 0, 250]),
+            ([1, 0, 255], [0, 255, 128]),
+        ] {
+            for prim in prims {
+                let fast = LitShade::new(light, ambient, prim);
+                for dot in 0..=0x7FFF {
+                    assert_eq!(fast.rgb(dot), lit_rgb(dot, light, ambient, prim));
+                }
+            }
+        }
     }
 
     #[test]

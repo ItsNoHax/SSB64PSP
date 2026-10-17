@@ -929,9 +929,11 @@ unsafe fn apply_texture_mapping(
     uv: Option<ssb_rom::skeleton::MaterialUv>,
 ) {
     // RE-326: the offset is normalised by the dimensions the GE is given.
-    let affine = match (uv, pack.texture(texture)) {
-        (Some(uv), Some(t)) => animated_uv_affine(uv, &t),
-        _ => ssb_rom::skeleton::UvAffine::IDENTITY,
+    // The texture is decoded only for an animated window: most primitives
+    // have none and take the identity.
+    let affine = match uv.and_then(|uv| Some((uv, pack.texture(texture)?))) {
+        Some((uv, t)) => animated_uv_affine(uv, &t),
+        None => ssb_rom::skeleton::UvAffine::IDENTITY,
     };
     let environment = p.flags & flags::TEXTURE_GEN != 0 && p.flags & flags::TEXTURE_GEN_LINEAR == 0;
     let key = TextureMapping {
@@ -1490,8 +1492,7 @@ unsafe fn draw_lod_blend_pass(
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
-    (vtype, index_ptr, vertex_ptr): (VertexType, *const c_void, *const c_void),
-    count: u32,
+    draws: &[Draw],
 ) -> bool {
     let Some(lod) = (match effect_mat_anim {
         Some(m) => m.resolved_lod_blend(pack, p.mat_anim),
@@ -1532,13 +1533,9 @@ unsafe fn draw_lod_blend_pass(
         fix_b,
     );
     sys::sceGuDepthMask(1);
-    sys::sceGumDrawArray(
-        GuPrimitive::Triangles,
-        vtype,
-        count as i32,
-        index_ptr,
-        vertex_ptr,
-    );
+    for d in draws {
+        d.draw();
+    }
     st.last_flags = None;
     st.state_changes += 1;
     true
@@ -1633,25 +1630,21 @@ unsafe fn draw_mesh_vertices(
                 verts.as_ptr() as *const c_void,
             )
         };
-        let (vtype, index_ptr, vertex_ptr) = submission;
-        let (vtype, index_ptr, vertex_ptr, count) = match &clip {
-            Some(clip) => clip_submission(
-                clip,
-                indices,
-                (vtype.bits(), index_ptr, vertex_ptr),
-                p.index_count,
-            ),
-            None => None,
-        }
-        .unwrap_or((vtype, index_ptr, vertex_ptr, p.index_count));
+        let (vtype, index, vertex) = submission;
+        let whole = [Draw {
+            vtype: vtype.bits(),
+            index,
+            vertex,
+            count: p.index_count,
+        }];
+        let draws: &[Draw] = match &clip {
+            Some(clip) => clip_submission(clip, indices, &whole[0]).unwrap_or(&whole),
+            None => &whole,
+        };
         let submit_t = crate::profile::start_fine();
-        sys::sceGumDrawArray(
-            GuPrimitive::Triangles,
-            VertexType::from_bits_truncate(vtype.bits()),
-            count as i32,
-            index_ptr,
-            vertex_ptr,
-        );
+        for d in draws {
+            d.draw();
+        }
         crate::profile::stop_fine(crate::profile::Span::Submit, submit_t);
         crate::profile::count(crate::profile::Span::Prims, 1);
         st.draws += 1;
@@ -1662,8 +1655,7 @@ unsafe fn draw_mesh_vertices(
                 st,
                 mat_anim,
                 effect_mat_anim,
-                (vtype, index_ptr, vertex_ptr),
-                count,
+                draws,
             )
         {
             st.draws += 1;
@@ -1902,32 +1894,210 @@ fn encode_corner(a: &[f32; ssb_engine::guard_clip::ATTRS]) -> ClipVertex {
     }
 }
 
+
+/// One `sceGumDrawArray` of a primitive: its whole submission, or one piece
+/// of a guard-clipped one ([`clip_submission`]).
+#[derive(Clone, Copy)]
+struct Draw {
+    /// The `VertexType` bits.
+    vtype: i32,
+    index: *const c_void,
+    vertex: *const c_void,
+    count: u32,
+}
+
+impl Draw {
+    const EMPTY: Self = Self {
+        vtype: 0,
+        index: core::ptr::null(),
+        vertex: core::ptr::null(),
+        count: 0,
+    };
+
+    #[inline(always)]
+    unsafe fn draw(&self) {
+        sys::sceGumDrawArray(
+            GuPrimitive::Triangles,
+            VertexType::from_bits_truncate(self.vtype),
+            self.count as i32,
+            self.index,
+            self.vertex,
+        );
+    }
+}
+
+/// Most pieces [`rebuild_runs`] splits one primitive into; past it the
+/// primitive is rebuilt whole by [`rebuild_clipped`], with the same result.
+const CLIP_DRAWS_MAX: usize = 128;
+
+/// [`rebuild_runs`]' pieces, one primitive at a time: [`draw_mesh_vertices`]
+/// draws them (and a two-tile blend's second pass redraws them) before the
+/// next primitive is clipped.
+static mut CLIP_DRAWS: [Draw; CLIP_DRAWS_MAX] = [Draw::EMPTY; CLIP_DRAWS_MAX];
+
 /// A submission whose triangles leave the guard band or cross the near
-/// plane, rebuilt as unindexed [`ClipVertex`] triangles with those clipped
-/// ([`ssb_engine::guard_clip`]). The GE drops a whole triangle with a vertex
-/// in front of the near plane outside its screen range; the RSP clips it.
-/// `None` when no triangle needs it, or for a vertex format
-/// [`decode_corner`] does not read.
+/// plane, as the draws that clip them ([`ssb_engine::guard_clip`]). The GE
+/// drops a whole triangle with a vertex in front of the near plane outside
+/// its screen range; the RSP clips it. `None` when no triangle needs it,
+/// or for a vertex format [`decode_corner`] does not read.
 ///
 /// Corner `i` of the submission is the primitive's vertex `indices[i]`: an
 /// expanded submission keeps the corner order and positions and changes
 /// only colour or texture coordinates. Each corner's outcode is therefore
 /// the mesh table's, a byte read; only a primitive with a crossing
-/// triangle is decoded, in [`rebuild_clipped`].
-#[inline(always)]
+/// triangle is rebuilt, in [`rebuild_runs`]. Out of line, so its scan
+/// does not grow [`draw_mesh_vertices`]' loop.
+#[inline(never)]
 unsafe fn clip_submission(
     clip: &GuardClip<'_>,
     indices: &[u8],
-    submission: (i32, *const c_void, *const c_void),
-    count: u32,
-) -> Option<(VertexType, *const c_void, *const c_void, u32)> {
-    let tris = count as usize / 3;
-    let code = |c: usize| clip.code(usize::from(u16::from_le_bytes([indices[2 * c], indices[2 * c + 1]])));
-    let crossing = ssb_engine::guard_clip::crossing_triangles(tris, code);
+    whole: &Draw,
+) -> Option<&'static [Draw]> {
+    let tris = whole.count as usize / 3;
+    let crossing = match clip.codes {
+        Some(table) => ssb_engine::guard_clip::crossing_triangles_indexed(
+            indices,
+            tris,
+            table,
+            |i| clip.vertex_code(i),
+        ),
+        None => ssb_engine::guard_clip::crossing_triangles(tris, |c| {
+            clip.code(usize::from(u16::from_le_bytes([
+                indices[2 * c],
+                indices[2 * c + 1],
+            ])))
+        }),
+    };
     if crossing == 0 {
         return None;
     }
-    rebuild_clipped(clip, indices, submission, tris, crossing)
+    rebuild_runs(clip, indices, whole, tris, crossing)
+}
+
+/// [`clip_submission`]'s rebuild of a primitive with `crossing` of its
+/// `tris` triangles crossing a plane, by runs
+/// ([`ssb_engine::guard_clip::clip_triangle_runs`]): each run of triangles
+/// inside every plane is drawn from the submission itself, through a slice
+/// of its index list or its vertices, and only the crossing triangles are
+/// decoded, clipped and drawn as [`ClipVertex`] fans, in the original
+/// triangle order. Every corner the GE reads is the value
+/// [`rebuild_clipped`]'s whole rebuild re-encodes from it, so the pixels
+/// are the same. Out of line and cold: only meshes running past the camera
+/// take it.
+#[cold]
+#[inline(never)]
+unsafe fn rebuild_runs(
+    clip: &GuardClip<'_>,
+    indices: &[u8],
+    whole: &Draw,
+    tris: usize,
+    crossing: usize,
+) -> Option<&'static [Draw]> {
+    use ssb_engine::guard_clip::{clip_position, clip_triangle_runs, Piece, ATTRS, MAX_CLIPPED};
+    let vtype = whole.vtype;
+    // Bytes from one triangle to the next: in the index list for an
+    // indexed submission, in the vertices for an unindexed one.
+    let (indexed, stride) = if vtype == VERTEX_FORMAT.bits()
+        || vtype == INDEXED_FLOAT_UV_VERTEX_FORMAT.bits()
+    {
+        (true, 3 * core::mem::size_of::<u16>())
+    } else if vtype == UNINDEXED_VERTEX_FORMAT.bits() {
+        (false, 3 * core::mem::size_of::<PackedVertex>())
+    } else if vtype == FLOAT_UV_VERTEX_FORMAT.bits() {
+        (false, 3 * core::mem::size_of::<FloatUvVertex>())
+    } else {
+        return None;
+    };
+    let submission = (vtype, whole.index, whole.vertex);
+    let capacity = crossing * 3 * (MAX_CLIPPED - 2);
+    // Written through the cache and written back once, before the draws
+    // ([`crate::gu::cached_vertices`]): uncached stores stall per word.
+    let out = crate::gu::cached_vertices(capacity * core::mem::size_of::<ClipVertex>())
+        as *mut ClipVertex;
+    // SAFETY: only this primitive's draw reads the pieces, on the one
+    // thread that draws.
+    let draws = &mut *core::ptr::addr_of_mut!(CLIP_DRAWS);
+    let mut pieces = 0usize;
+    let mut overflow = false;
+    let mut push = |d: Draw| {
+        if pieces < CLIP_DRAWS_MAX {
+            draws[pieces] = d;
+            pieces += 1;
+        } else {
+            overflow = true;
+        }
+    };
+    let fan = |from: usize, to: usize| Draw {
+        vtype: CLIP_VERTEX_FORMAT.bits(),
+        index: core::ptr::null(),
+        vertex: out.add(from) as *const c_void,
+        count: (to - from) as u32,
+    };
+    let mut n = 0usize;
+    let mut block = 0usize;
+    clip_triangle_runs(
+        tris,
+        GUARD_BAND,
+        |c| clip.code(usize::from(u16::from_le_bytes([indices[2 * c], indices[2 * c + 1]]))),
+        |c| decode_corner(submission, c).unwrap_or([0.0; ATTRS]),
+        |a| clip_position(&clip.mvp, [a[9], a[10], a[11]]),
+        |piece| match piece {
+            Piece::Fan(poly) => {
+                // Each polygon vertex encoded once, then copied into
+                // every fan triangle that uses it.
+                let mut encoded = [ClipVertex::default(); MAX_CLIPPED];
+                for (e, v) in encoded.iter_mut().zip(poly) {
+                    *e = encode_corner(&v.attrs);
+                }
+                for i in 1..poly.len() - 1 {
+                    for k in [0, i, i + 1] {
+                        out.add(n).write(encoded[k]);
+                        n += 1;
+                    }
+                }
+            }
+            Piece::Run(first, end) => {
+                if n > block {
+                    push(fan(block, n));
+                    block = n;
+                }
+                let skip = first * stride;
+                push(Draw {
+                    vtype: whole.vtype,
+                    index: if indexed {
+                        (whole.index as *const u8).add(skip) as *const c_void
+                    } else {
+                        whole.index
+                    },
+                    vertex: if indexed {
+                        whole.vertex
+                    } else {
+                        (whole.vertex as *const u8).add(skip) as *const c_void
+                    },
+                    count: (3 * (end - first)) as u32,
+                });
+            }
+        },
+    );
+    if n > block {
+        push(fan(block, n));
+    }
+    crate::gu::writeback_vertices(
+        out as *const u8,
+        n * core::mem::size_of::<ClipVertex>(),
+        false,
+    );
+    if overflow {
+        let (vtype, index, vertex, count) = rebuild_clipped(clip, indices, submission, tris, crossing)?;
+        draws[0] = Draw {
+            vtype: vtype.bits(),
+            index,
+            vertex,
+            count,
+        };
+        return Some(&draws[..1]);
+    }
+    Some(&draws[..pieces])
 }
 
 /// [`clip_submission`]'s rebuild of a primitive with `crossing` of its
@@ -2088,9 +2258,9 @@ fn vertex_range(indices: &[u8], vertex_count: usize) -> Option<(usize, usize)> {
 #[derive(Clone, Copy)]
 struct LitPrim {
     dir: [i8; 3],
-    light: [u8; 3],
-    ambient: [u8; 3],
-    prim: Option<[u8; 3]>,
+    /// The `G_MW_LIGHTCOL` registers and the combiner's `PRIM` scale,
+    /// folded once per primitive.
+    shade: ssb_engine::rsp_light::LitShade,
     /// `FLAT_COLOR`/`TEXTURE_BLEND` read no shade: the packed colour is the
     /// combiner's constant and stays.
     keep_rgb: bool,
@@ -2104,9 +2274,7 @@ impl LitPrim {
         });
         LitPrim {
             dir,
-            light: registers[0],
-            ambient: registers[1],
-            prim,
+            shade: ssb_engine::rsp_light::LitShade::new(registers[0], registers[1], prim),
             keep_rgb: p.flags & (flags::FLAT_COLOR | flags::TEXTURE_BLEND) != 0,
         }
     }
@@ -2124,7 +2292,7 @@ impl LitPrim {
         } else {
             ssb_engine::rsp_light::dot16([v.nx, v.ny, v.nz], self.dir)
         };
-        let rgb = ssb_engine::rsp_light::lit_rgb(dot, self.light, self.ambient, self.prim);
+        let rgb = self.shade.rgb(dot);
         (v.color & 0xFF00_0000)
             | u32::from(rgb[2]) << 16
             | u32::from(rgb[1]) << 8
@@ -2193,19 +2361,24 @@ unsafe fn expand_corners(
         .unwrap_or((false, false));
     let texgen = texgen_basis.map(|basis| (basis, clamp));
     let size = core::mem::size_of::<PackedVertex>();
-    let index_at = |raw: &[u8]| usize::from(u16::from_le_bytes([raw[0], raw[1]]));
 
     if let Some((low, high)) = vertex_range(indices, verts.len() / size) {
         let bytes = (high - low + 1) * size;
         let dynamic = crate::gu::cached_vertices(bytes) as *mut PackedVertex;
-        for slot in 0..=high - low {
-            let at = (low + slot) * size;
-            // In range: `high` indexes a whole vertex.
-            let v = *(verts.as_ptr().add(at) as *const PackedVertex);
-            let mark = light_mark(verts, at);
-            dynamic
-                .add(slot)
-                .write(corner_vertex(v, mark, p, lit, effect_colors, texgen));
+        match (lit, effect_colors, texgen) {
+            // A lit primitive's own loop, the common case (RE-514): the
+            // shade is the only change, and the mark sits in range.
+            (Some(l), None, None) if !l.keep_rgb => {
+                for slot in 0..=high - low {
+                    let at = (low + slot) * size;
+                    let source = verts.as_ptr().add(at);
+                    let mut v = *(source as *const PackedVertex);
+                    let mark = u16::from_le_bytes(*(source.add(LIGHT_MARK_OFFSET) as *const [u8; 2]));
+                    v.color = l.color(&v, mark);
+                    dynamic.add(slot).write(v);
+                }
+            }
+            _ => expand_range(verts, low, high, dynamic, p, lit, effect_colors, texgen),
         }
         crate::gu::writeback_vertices(dynamic as *const u8, bytes, false);
         // Vertex `i` of the list is `dynamic[i - low]`: the GE adds the
@@ -2216,7 +2389,50 @@ unsafe fn expand_corners(
             dynamic.wrapping_sub(low) as *const c_void,
         );
     }
+    expand_sparse(p, indices, verts, lit, effect_colors, texgen)
+}
 
+/// [`expand_corners`]' range copy for every other combination of light,
+/// effect colours and texgen.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+unsafe fn expand_range(
+    verts: &[u8],
+    low: usize,
+    high: usize,
+    dynamic: *mut PackedVertex,
+    p: &PrimDesc,
+    lit: Option<LitPrim>,
+    effect_colors: Option<ssb_rom::skeleton::EffectColors>,
+    texgen: Option<(([f32; 3], [f32; 3]), (bool, bool))>,
+) {
+    let size = core::mem::size_of::<PackedVertex>();
+    for slot in 0..=high - low {
+        let at = (low + slot) * size;
+        // In range: `high` indexes a whole vertex.
+        let v = *(verts.as_ptr().add(at) as *const PackedVertex);
+        let mark = light_mark(verts, at);
+        dynamic
+            .add(slot)
+            .write(corner_vertex(v, mark, p, lit, effect_colors, texgen));
+    }
+}
+
+/// [`expand_corners`]' copy per corner, for a primitive whose range is
+/// sparser than its corners or indexes past its vertices. Out of line and
+/// cold.
+#[cold]
+#[inline(never)]
+unsafe fn expand_sparse(
+    p: &PrimDesc,
+    indices: &[u8],
+    verts: &[u8],
+    lit: Option<LitPrim>,
+    effect_colors: Option<ssb_rom::skeleton::EffectColors>,
+    texgen: Option<(([f32; 3], [f32; 3]), (bool, bool))>,
+) -> (VertexType, *const c_void, *const c_void) {
+    let size = core::mem::size_of::<PackedVertex>();
+    let index_at = |raw: &[u8]| usize::from(u16::from_le_bytes([raw[0], raw[1]]));
     let bytes = p.index_count as usize * size;
     let dynamic = crate::gu::cached_vertices(bytes) as *mut PackedVertex;
     for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
@@ -2606,7 +2822,69 @@ fn costume_node_mesh(pack: &Pack<'_>, global_node: u32, own: u32, costume: u32, 
     }
 }
 
-/// The accessory a node draws beside its mesh (`ftDisplayMainDrawAccessory`,
+/// [`costume_node_mesh`] and [`accessory_mesh`] of one node. Both are pure
+/// functions of the pack's tables and their arguments, so a node drawn in a
+/// costume or with a part key keeps its answer in [`NODE_MESH_MEMO`] from
+/// one frame to the next instead of searching the override table again.
+#[inline(always)]
+fn node_meshes(pack: &Pack<'_>, global_node: u32, own: u32, costume: u32, part: Option<i8>) -> (u32, Option<u32>) {
+    if costume == 0 && part.is_none() {
+        // Neither function reads the table for the plain costume.
+        return (own, None);
+    }
+    node_meshes_memo(pack, global_node, own, costume, part)
+}
+
+/// One [`NODE_MESH_MEMO`] slot: the arguments and the answer.
+#[derive(Clone, Copy)]
+struct NodeMeshMemo {
+    node: u32,
+    own: u32,
+    costume: u32,
+    part: i16,
+    mesh: u32,
+    accessory: Option<u32>,
+}
+
+const NODE_MESH_MEMO_LEN: usize = 512;
+/// Direct-mapped by node and costume; [`NODE_MESH_MEMO_PACK`] names the
+/// pack its answers came from ([`Pack::identity`], as RE-471's caches).
+static mut NODE_MESH_MEMO: [NodeMeshMemo; NODE_MESH_MEMO_LEN] = [NodeMeshMemo {
+    node: u32::MAX,
+    own: 0,
+    costume: 0,
+    part: 0,
+    mesh: 0,
+    accessory: None,
+}; NODE_MESH_MEMO_LEN];
+static mut NODE_MESH_MEMO_PACK: usize = 0;
+
+#[inline(never)]
+fn node_meshes_memo(pack: &Pack<'_>, global_node: u32, own: u32, costume: u32, part: Option<i8>) -> (u32, Option<u32>) {
+    let part_key = part.map_or(i16::MIN, i16::from);
+    // SAFETY: drawing runs on one thread; nothing else touches the memo.
+    unsafe {
+        let memo = &mut *core::ptr::addr_of_mut!(NODE_MESH_MEMO);
+        let identity = pack.identity();
+        if *core::ptr::addr_of!(NODE_MESH_MEMO_PACK) != identity {
+            for slot in memo.iter_mut() {
+                slot.node = u32::MAX;
+            }
+            *core::ptr::addr_of_mut!(NODE_MESH_MEMO_PACK) = identity;
+        }
+        let slot = &mut memo[(global_node ^ costume.wrapping_mul(0x9E37) ^ (part_key as u32) << 3) as usize
+            % NODE_MESH_MEMO_LEN];
+        if slot.node == global_node && slot.own == own && slot.costume == costume && slot.part == part_key {
+            return (slot.mesh, slot.accessory);
+        }
+        let mesh = costume_node_mesh(pack, global_node, own, costume, part);
+        let accessory = accessory_mesh(pack, global_node, costume, mesh);
+        *slot = NodeMeshMemo { node: global_node, own, costume, part: part_key, mesh, accessory };
+        (mesh, accessory)
+    }
+}
+
+/// The accessory a node draws beside its mesh (`ftDisplayMainDrawAccessory`,/// The accessory a node draws beside its mesh (`ftDisplayMainDrawAccessory`,
 /// RE-425): only in a plain costume, and only while the joint has a list.
 fn accessory_mesh(pack: &Pack<'_>, global_node: u32, costume: u32, mesh: u32) -> Option<u32> {
     if costume == 0 || costume >= ssb_rom::pack::SKELETON_COSTUME_BASE || mesh == NodeDesc::NO_MESH {
@@ -2662,6 +2940,7 @@ unsafe fn draw_object_posed_nodes(
 ) -> u32 {
     let mut tris = 0;
     let costume = look.costume;
+    let prepass = light_prepass(pack, object, base, posed, st, look, only_node, node_override);
     for i in 0..object.node_count {
         let global_node = object.first_node + i;
         if hidden.is_some_and(|hidden| hidden(global_node)) {
@@ -2676,9 +2955,8 @@ unsafe fn draw_object_posed_nodes(
         let part = look.parts.map(|p| {
             p.get(i as usize).copied().unwrap_or(ssb_game::modelpart::ABSENT)
         });
-        let mesh_index = costume_node_mesh(pack, global_node, node.mesh, costume, part);
         // `ftDisplayMainDrawAccessory` (RE-425), in the joint's matrix.
-        let accessory = accessory_mesh(pack, global_node, costume, mesh_index);
+        let (mesh_index, accessory) = node_meshes(pack, global_node, node.mesh, costume, part);
         let meshes = if look.accessory_before {
             [accessory, Some(mesh_index)]
         } else {
@@ -2750,6 +3028,9 @@ unsafe fn draw_object_posed_nodes(
             sys::sceGumUpdateMatrix();
             sys::sceGuSetMatrix(sys::MatrixMode::Model, &model);
             st.set_model_matrix(model);
+            if let Some(world) = prepass.filter(|_| i < 64 && LIGHT_PREPASS.0 & 1 << i != 0) {
+                st.node_light = Some((world, LIGHT_PREPASS.1[i as usize]));
+            }
         }
         crate::profile::stop_fine(crate::profile::Span::NodeMatrix, matrix_t);
         for mesh_index in meshes.into_iter().flatten() {
@@ -2775,6 +3056,66 @@ unsafe fn draw_object_posed_nodes(
 /// uses only bank 0, so nothing else in the thread holds these, and the
 /// kernel saves the whole VFPU on a switch between `VFPU` threads.
 /// `ScePspFMatrix4` is 16-byte aligned, as `lv.q`/`sv.q` need.
+/// [`light_prepass`]'s answers for the object being drawn: bit `i` of the
+/// mask says node `i`'s object-space light is entry `i`.
+static mut LIGHT_PREPASS: (u64, [[i8; 3]; 64]) = (0, [[0; 3]; 64]);
+
+/// [`DrawState::object_light`] of every node of a fighter-lit object, in one
+/// loop before [`draw_object_posed_nodes`] draws it: the transform's code
+/// stays in the instruction cache across the nodes, where one call per node
+/// between primitives found it cold every time (RE-514). The same function
+/// of the same matrix (`base * world`, as the node loop composes it) and
+/// world light, so the same answer; a billboard node, or an object past 64
+/// nodes, keeps the lazy path. Returns the world light the answers are for.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+unsafe fn light_prepass(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    base: &ScePspFMatrix4,
+    posed: &[ssb_rom::scene::Mat4],
+    st: &DrawState,
+    look: Look<'_>,
+    only_node: Option<u32>,
+    node_override: Option<&dyn Fn(usize, NodeDesc) -> NodeDesc>,
+) -> Option<[i8; 3]> {
+    let prepass = &mut *core::ptr::addr_of_mut!(LIGHT_PREPASS);
+    prepass.0 = 0;
+    // Fighters light nearly every primitive; a stage's unlit nodes would
+    // pay for answers nobody reads.
+    if !st.runtime_fighter_light || node_override.is_some() || only_node.is_some() || object.node_count > 64 {
+        return None;
+    }
+    let world = st.active_light()?;
+    for i in 0..object.node_count {
+        let global_node = object.first_node + i;
+        let Some(node) = pack.node(global_node) else {
+            continue;
+        };
+        let part = look.parts.map(|p| {
+            p.get(i as usize).copied().unwrap_or(ssb_game::modelpart::ABSENT)
+        });
+        if node_meshes(pack, global_node, node.mesh, look.costume, part).0 == NodeDesc::NO_MESH {
+            continue;
+        }
+        let kind48_flat = st.kind48_flat && node.flags & NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED != 0;
+        if node.flags & NodeDesc::FLAG_BILLBOARD != 0 && !kind48_flat {
+            continue;
+        }
+        let world_m = posed.get(i as usize).map_or(node.world, |m| m.0);
+        let local = ScePspFMatrix4 {
+            x: ScePspFVector4 { x: world_m[0], y: world_m[1], z: world_m[2], w: world_m[3] },
+            y: ScePspFVector4 { x: world_m[4], y: world_m[5], z: world_m[6], w: world_m[7] },
+            z: ScePspFVector4 { x: world_m[8], y: world_m[9], z: world_m[10], w: world_m[11] },
+            w: ScePspFVector4 { x: world_m[12], y: world_m[13], z: world_m[14], w: world_m[15] },
+        };
+        let model = compose_model_matrix(base, &local);
+        prepass.1[i as usize] = ssb_engine::rsp_light::object_light_dir(light_rows(matrix_rows(&model)), world);
+        prepass.0 |= 1 << i;
+    }
+    Some(world)
+}
+
 #[inline(always)]
 fn compose_model_matrix(base: &ScePspFMatrix4, local: &ScePspFMatrix4) -> ScePspFMatrix4 {
     let mut out = core::mem::MaybeUninit::<ScePspFMatrix4>::uninit();

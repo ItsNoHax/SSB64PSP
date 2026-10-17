@@ -83,15 +83,46 @@ fn lerp(a: &Vertex, b: &Vertex, t: f32) -> Vertex {
 /// winding. Returns its vertex count: 0 when nothing of the triangle is
 /// inside, otherwise at least 3, to draw as the fan `(0, i, i + 1)`.
 pub fn clip_triangle(tri: &[Vertex; 3], guard: f32, out: &mut [Vertex; MAX_CLIPPED]) -> usize {
+    clip_polygon(tri, guard, |poly| {
+        for (o, v) in out.iter_mut().zip(poly) {
+            *o = **v;
+        }
+    })
+}
+
+/// Vertices [`clip_polygon`] can hold: the triangle's three and at most
+/// [`MAX_CLIPPED`] new ones per plane (an output past [`MAX_CLIPPED`]
+/// panics first, as an index into the polygon).
+const POOL: usize = 3 + PLANES * MAX_CLIPPED;
+
+/// [`clip_triangle`]'s polygon, passed to `emit` as references instead of
+/// copied: `emit` runs only for a polygon of at least 3 vertices, whose
+/// count is returned (0 otherwise). Each plane's polygon is a list of
+/// indices into one pool of vertices, so a vertex kept by a plane is never
+/// copied, and each vertex's distance from a plane is taken once. Every
+/// clip point is the same [`lerp`] of the same two vertices with the same
+/// `t` as in the copying clip, so the output is the same, bit for bit.
+#[inline]
+fn clip_polygon(tri: &[Vertex; 3], guard: f32, emit: impl FnOnce(&[&Vertex])) -> usize {
     let codes = tri.map(|v| outcode(v.clip, guard));
     if codes[0] & codes[1] & codes[2] != 0 {
         return 0;
     }
     let union = codes[0] | codes[1] | codes[2];
-    // Two polygons, each plane reading one and writing the other: only the
-    // live vertices are ever read, so nothing is copied between planes.
-    let mut polys = [[Vertex::default(); MAX_CLIPPED]; 2];
-    polys[0][..3].copy_from_slice(tri);
+    let mut pool = core::mem::MaybeUninit::<[Vertex; POOL]>::uninit();
+    let base = pool.as_mut_ptr().cast::<Vertex>();
+    // SAFETY: `base` holds `POOL` vertices; the first three are written
+    // here, and every later read is of an entry written before it.
+    let vertex = |i: u8| unsafe { &*base.add(usize::from(i)) };
+    unsafe {
+        base.write(tri[0]);
+        base.add(1).write(tri[1]);
+        base.add(2).write(tri[2]);
+    }
+    let mut used = 3usize;
+    // Two index polygons, each plane reading one and writing the other.
+    let mut polys = [[0u8; MAX_CLIPPED]; 2];
+    polys[0][..3].copy_from_slice(&[0, 1, 2]);
     let mut n = 3;
     let mut src = 0;
     for plane in 0..PLANES {
@@ -104,18 +135,25 @@ pub fn clip_triangle(tri: &[Vertex; 3], guard: f32, out: &mut [Vertex; MAX_CLIPP
         } else {
             (&second[0], &mut first[0])
         };
+        let mut d = [0.0f32; MAX_CLIPPED];
+        for (d, &i) in d.iter_mut().zip(&a[..n]) {
+            *d = distance(plane, vertex(i).clip, guard);
+        }
         let mut m = 0;
         for i in 0..n {
-            let cur = &a[i];
-            let next = &a[(i + 1) % n];
-            let dc = distance(plane, cur.clip, guard);
-            let dn = distance(plane, next.clip, guard);
+            let j = if i + 1 == n { 0 } else { i + 1 };
+            let (dc, dn) = (d[i], d[j]);
             if dc >= 0.0 {
-                b[m] = *cur;
+                b[m] = a[i];
                 m += 1;
             }
             if (dc >= 0.0) != (dn >= 0.0) {
-                b[m] = lerp(cur, next, dc / (dc - dn));
+                b[m] = used as u8;
+                let v = lerp(vertex(a[i]), vertex(a[j]), dc / (dc - dn));
+                // SAFETY: `used < POOL`: at most `MAX_CLIPPED` new
+                // vertices per plane, `b[m]` checked first.
+                unsafe { base.add(used).write(v) };
+                used += 1;
                 m += 1;
             }
         }
@@ -125,7 +163,11 @@ pub fn clip_triangle(tri: &[Vertex; 3], guard: f32, out: &mut [Vertex; MAX_CLIPP
             return 0;
         }
     }
-    out[..n].copy_from_slice(&polys[src][..n]);
+    let mut refs = [&tri[0]; MAX_CLIPPED];
+    for (r, &i) in refs.iter_mut().zip(&polys[src][..n]) {
+        *r = vertex(i);
+    }
+    emit(&refs[..n]);
     n
 }
 
@@ -143,6 +185,100 @@ pub fn crossing_triangles(tris: usize, code: impl Fn(usize) -> u8) -> usize {
         }
     }
     crossing
+}
+
+/// [`crossing_triangles`] for a list of 16-bit little-endian corner
+/// `indices` over a per-vertex outcode `table`: corner `c`'s code is
+/// `table[index]`, or `past(index)` for an index past the table. The same
+/// count, in two tight loops: one OR over every corner's code, which is
+/// zero for most primitives and then settles the count at zero, and the
+/// per-triangle count only when it is not.
+#[inline]
+pub fn crossing_triangles_indexed(
+    indices: &[u8],
+    tris: usize,
+    table: &[u8],
+    past: impl Fn(usize) -> u8,
+) -> usize {
+    let corners = &indices[..tris * 6];
+    // SAFETY: any bytes are a valid `u16`; `align_to` only reinterprets the
+    // aligned middle.
+    let (head, words, _) = unsafe { corners.align_to::<u16>() };
+    if !head.is_empty() {
+        return crossing_triangles(tris, |c| {
+            let i = usize::from(u16::from_le_bytes([corners[2 * c], corners[2 * c + 1]]));
+            table.get(i).copied().unwrap_or_else(|| past(i))
+        });
+    }
+    let code = |c: usize| {
+        let i = usize::from(u16::from_le(words[c]));
+        match table.get(i) {
+            Some(&code) => code,
+            None => past(i),
+        }
+    };
+    let mut any = 0u8;
+    let mut beyond = false;
+    for &w in words {
+        match table.get(usize::from(u16::from_le(w))) {
+            Some(&code) => any |= code,
+            None => beyond = true,
+        }
+    }
+    if any == 0 && !beyond {
+        return 0;
+    }
+    crossing_triangles(tris, code)
+}
+
+/// One piece of [`clip_triangle_runs`]' output, in draw order.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Piece<'a> {
+    /// Triangles `start..end` of the list, every one inside every plane:
+    /// drawn as they are, from the list itself.
+    Run(usize, usize),
+    /// A crossing triangle's clipped polygon, at least 3 vertices, drawn
+    /// as the fan `(0, i, i + 1)`.
+    Fan(&'a [&'a Vertex]),
+}
+
+/// [`clip_triangles`] without decoding what it would re-emit unchanged:
+/// each maximal run of consecutive triangles inside every plane comes out
+/// as one [`Piece::Run`], and only a crossing triangle is decoded, clipped
+/// and emitted, as one [`Piece::Fan`]. Triangles wholly outside a plane are
+/// dropped and end a run, as [`clip_triangles`] drops them. Expanding each
+/// run to its corners' `corner` attributes gives [`clip_triangles`]'
+/// output exactly, in the same order.
+pub fn clip_triangle_runs(
+    tris: usize,
+    guard: f32,
+    code: impl Fn(usize) -> u8,
+    mut corner: impl FnMut(usize) -> [f32; ATTRS],
+    clip: impl Fn(&[f32; ATTRS]) -> [f32; 4],
+    mut out: impl FnMut(Piece<'_>),
+) {
+    let mut run = None;
+    for t in 0..tris {
+        let codes = [code(t * 3), code(t * 3 + 1), code(t * 3 + 2)];
+        if codes[0] | codes[1] | codes[2] == 0 {
+            run.get_or_insert(t);
+            continue;
+        }
+        if let Some(start) = run.take() {
+            out(Piece::Run(start, t));
+        }
+        if codes[0] & codes[1] & codes[2] != 0 {
+            continue;
+        }
+        let tri = [corner(t * 3), corner(t * 3 + 1), corner(t * 3 + 2)].map(|attrs| Vertex {
+            clip: clip(&attrs),
+            attrs,
+        });
+        clip_polygon(&tri, guard, |poly| out(Piece::Fan(poly)));
+    }
+    if let Some(start) = run {
+        out(Piece::Run(start, tris));
+    }
 }
 
 /// A triangle list's `tris` triangles clipped in order, each emitted as
@@ -458,6 +594,137 @@ mod tests {
         }
         // The cases exercise the rebuild, not only the packed fallback.
         assert!(rebuilt > 500 && drawn > 10_000, "{rebuilt} {drawn}");
+    }
+
+    /// `clip_triangle_runs`, with each run expanded to its corners, emits
+    /// exactly what `clip_triangles` does, bit for bit and in order; its
+    /// runs are maximal and hold only triangles inside every plane; and
+    /// `crossing_triangles_indexed` counts what `crossing_triangles` does,
+    /// for aligned and unaligned index lists and indices past the table.
+    #[test]
+    fn the_run_rebuild_and_indexed_scan_match_the_whole_rebuild_bit_for_bit() {
+        let mut rng = Rng(0x0A11_7E57);
+        let (mut runs, mut split, mut clipped) = (0, 0, 0);
+        for case in 0..4000 {
+            let exact = case % 4 == 3;
+            let mvp = if exact {
+                exact_mvp()
+            } else {
+                random_mvp(&mut rng)
+            };
+            let pool: Vec<Packed> = (0..1 + rng.next() as usize % 48)
+                .map(|_| random_vertex(&mut rng, exact))
+                .collect();
+            // Some meshes keep most vertices inside, so long runs occur.
+            let inside_bias = case % 3 == 0;
+            let tris = 1 + rng.next() as usize % 40;
+            let table: Vec<u8> = pool
+                .iter()
+                .map(|v| {
+                    outcode(
+                        clip_position(&mvp, v.pos.map(|c| f32::from(c) / DIVISOR)),
+                        GUARD,
+                    )
+                })
+                .collect();
+            let inside: Vec<usize> = (0..pool.len()).filter(|&i| table[i] == 0).collect();
+            let indices: Vec<usize> = (0..tris * 3)
+                .map(|_| {
+                    if inside_bias && !inside.is_empty() && !rng.next().is_multiple_of(8) {
+                        inside[rng.next() as usize % inside.len()]
+                    } else {
+                        rng.next() as usize % pool.len()
+                    }
+                })
+                .collect();
+            let corner = |c: usize| decode(&pool[indices[c]]);
+            let code = |c: usize| table[indices[c]];
+            let clip = |a: &[f32; ATTRS]| clip_position(&mvp, [a[9], a[10], a[11]]);
+
+            let mut whole = Vec::new();
+            clip_triangles(tris, GUARD, code, corner, clip, |a| {
+                whole.push(a.map(f32::to_bits))
+            });
+
+            let mut pieces = Vec::new();
+            let mut expanded = Vec::new();
+            clip_triangle_runs(tris, GUARD, code, corner, clip, |p| match p {
+                Piece::Run(a, b) => {
+                    pieces.push((true, a, b));
+                    for c in a * 3..b * 3 {
+                        expanded.push(corner(c).map(f32::to_bits));
+                    }
+                }
+                Piece::Fan(poly) => {
+                    assert!(poly.len() >= 3);
+                    if pieces.last().is_none_or(|p| p.0) {
+                        pieces.push((false, 0, 0));
+                    }
+                    for i in 1..poly.len() - 1 {
+                        for v in [poly[0], poly[i], poly[i + 1]] {
+                            expanded.push(v.attrs.map(f32::to_bits));
+                        }
+                    }
+                }
+            });
+            assert_eq!(whole, expanded, "case {case}");
+            for w in pieces.windows(2) {
+                assert!(
+                    !(w[0].0 && w[1].0 && w[0].2 == w[1].1),
+                    "case {case}: runs not maximal"
+                );
+            }
+            for &(is_run, a, b) in &pieces {
+                if is_run {
+                    assert!(a < b);
+                    assert!((a * 3..b * 3).all(|c| code(c) == 0));
+                    runs += 1;
+                } else {
+                    clipped += 1;
+                }
+            }
+            if pieces.iter().filter(|p| p.0).count() > 1 {
+                split += 1;
+            }
+
+            // The indexed scan, on the 16-bit list `draw_mesh_vertices`
+            // reads, aligned and one byte off, with part of the table cut
+            // so some indices fall past it.
+            let cut = if case % 5 == 0 {
+                pool.len() / 2
+            } else {
+                pool.len()
+            };
+            let short = &table[..cut];
+            let past = |i: usize| table[i] ^ 0x10;
+            let reference = crossing_triangles(tris, |c| {
+                let i = indices[c];
+                short.get(i).copied().unwrap_or_else(|| past(i))
+            });
+            let mut bytes = vec![0u8; 1 + tris * 6];
+            for (c, &i) in indices.iter().enumerate() {
+                bytes[1 + 2 * c..3 + 2 * c].copy_from_slice(&(i as u16).to_le_bytes());
+            }
+            let mut aligned = vec![0u16; tris * 3];
+            for (w, &i) in aligned.iter_mut().zip(&indices) {
+                *w = (i as u16).to_le();
+            }
+            // SAFETY: a `u16` slice viewed as its bytes.
+            let aligned =
+                unsafe { core::slice::from_raw_parts(aligned.as_ptr() as *const u8, tris * 6) };
+            assert_eq!(
+                crossing_triangles_indexed(aligned, tris, short, past),
+                reference
+            );
+            assert_eq!(
+                crossing_triangles_indexed(&bytes[1..], tris, short, past),
+                reference
+            );
+        }
+        assert!(
+            runs > 2000 && split > 300 && clipped > 1000,
+            "{runs} {split} {clipped}"
+        );
     }
 
     #[test]
