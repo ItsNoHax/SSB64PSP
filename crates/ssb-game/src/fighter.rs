@@ -1293,6 +1293,25 @@ impl Fighter {
         }
     }
 
+    /// Whether [`Self::slope_contour`] would read its `parts` now: a foot
+    /// flagged, and past the checks it makes before reading any. A caller
+    /// can skip composing the parts otherwise.
+    pub fn slope_contour_reads_parts(&self) -> bool {
+        use crate::slope_contour as sc;
+        self.slope_contour & (sc::FLAG_RFOOT | sc::FLAG_LFOOT) != 0
+            && self.slope_contour_gate().is_some()
+    }
+
+    /// [`Self::slope_contour`]'s early outs: the floor it stands on and its
+    /// attributes, when it is on the ground and out of hitlag.
+    fn slope_contour_gate(&self) -> Option<(Standing, &'static crate::motion::CombatAttrs)> {
+        let floor = self.floor?;
+        if self.situation != Situation::Ground || self.is_in_hitlag() {
+            return None;
+        }
+        Some((floor, crate::motion::combat_attrs(self.kind)?))
+    }
+
     /// `mpCommonUpdateFighterSlopeContour` (RE-510): per flagged foot,
     /// right first, `func_ovl2_800EBC0C` takes the point `rotate` along
     /// the knee (`joint->child->child`) into the leg root's space and the
@@ -1314,13 +1333,7 @@ impl Fighter {
     {
         use crate::slope_contour::{self as sc, LegFit, PartWalk};
         let mut out = [None; 2];
-        let Some(floor) = self.floor else {
-            return out;
-        };
-        if self.situation != Situation::Ground || self.is_in_hitlag() {
-            return out;
-        }
-        let Some(attrs) = crate::motion::combat_attrs(self.kind) else {
+        let Some((floor, attrs)) = self.slope_contour_gate() else {
             return out;
         };
         // TopN's local as a query earlier this frame left it (mode 1), else

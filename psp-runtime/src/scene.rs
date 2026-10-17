@@ -1626,11 +1626,15 @@ impl FighterScene {
         }
         ssb_game::grab::refresh_held_attachment(&mut self.fighter);
         // `proc_slope`, then the parts transform pass and the forward
-        // effects (`ftMainProcPhysicsMap`).
-        self.slope_contour(pack, &segments, false);
+        // effects (`ftMainProcPhysicsMap`). The parts' locals the slope
+        // composed give the pass its matrices when no leg moved: nothing
+        // between touches the skeleton, so they are the ones a second
+        // compose would build, bit for bit.
+        let mut kept = None;
+        let moved = self.slope_contour(pack, &segments, false, &mut kept);
         self.fighter.finish_physics_map();
         let t = crate::profile::start();
-        self.sample_gameplay_joints(pack);
+        self.sample_gameplay_joints_from(pack, kept.as_ref().filter(|_| !moved));
         crate::profile::stop(crate::profile::Span::Joints, t);
         // `proc_accessory` reads the updated hand, after the map and parts
         // transform pass (`ftMainProcPhysicsMap`).
@@ -1903,7 +1907,7 @@ impl FighterScene {
             self.tick_animation(pack);
         }
         let segments = || MapSegments::with_groups(pack, stage, groups);
-        self.slope_contour(pack, &segments, true);
+        self.slope_contour(pack, &segments, true, &mut None);
         self.sample_gameplay_joints(pack);
         self.sample_anchor(pack);
     }
@@ -1953,8 +1957,15 @@ impl FighterScene {
     /// rotations `func_ovl2_800EBD08` wrote on the poses, where the next
     /// figatree tick overwrites the tracks it animates (RE-510). With
     /// `pending`, only a slope a status change asked for. Returns whether a
-    /// leg moved.
-    fn slope_contour<I, F>(&mut self, pack: &Pack<'_>, surfaces: &F, pending: bool) -> bool
+    /// leg moved. The parts' locals, when it composed them, are left in
+    /// `kept` for [`Self::sample_gameplay_joints_from`].
+    fn slope_contour<I, F>(
+        &mut self,
+        pack: &Pack<'_>,
+        surfaces: &F,
+        pending: bool,
+        kept: &mut Option<ssb_rom::skeleton::CollisionLocals>,
+    ) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
@@ -1969,8 +1980,11 @@ impl FighterScene {
         self.refresh_joint_parents(pack, &object);
         // `fp->is_use_animlocks` of the clip the map step left playing.
         self.fighter.is_use_animlocks = self.skeleton.locks.flagged;
-        let parts = if self.fighter.slope_contour != 0 {
-            self.part_locals(pack, &object)
+        // Composed only when the leg fit reads them: not in the air, in
+        // hitlag or off a floor.
+        let parts = if self.fighter.slope_contour != 0 && self.fighter.slope_contour_reads_parts() {
+            let kept = kept.insert(ssb_rom::skeleton::CollisionLocals::new());
+            Self::part_locals_into(&self.skeleton, pack, &object, kept)
         } else {
             PartLocals::default()
         };
@@ -2003,14 +2017,24 @@ impl FighterScene {
         pack: &Pack<'_>,
         object: &ObjectDesc,
     ) -> ssb_game::slope_contour::PartLocals {
+        let mut kept = ssb_rom::skeleton::CollisionLocals::new();
+        Self::part_locals_into(&self.skeleton, pack, object, &mut kept)
+    }
+
+    /// [`Self::part_locals`], keeping the composed locals in `kept`.
+    fn part_locals_into(
+        skeleton: &ssb_rom::skeleton::Skeleton,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        kept: &mut ssb_rom::skeleton::CollisionLocals,
+    ) -> ssb_game::slope_contour::PartLocals {
         use ssb_game::fighter::FIGHTER_JOINTS;
         let mut parts = ssb_game::slope_contour::PartLocals::default();
         let mut locals = [[[0.0f32; 3]; 4]; ssb_rom::skeleton::MAX_NODES];
         let mut translate_x = [0.0f32; ssb_rom::skeleton::MAX_NODES];
         let mut lead = None;
-        let count = self
-            .skeleton
-            .collision_parts(pack, object, &mut locals, &mut translate_x, &mut lead)
+        let count = skeleton
+            .collision_parts_keep(pack, object, kept, &mut locals, &mut translate_x, &mut lead)
             .min(FIGHTER_JOINTS - 4);
         for i in 0..count {
             parts.set(i + 4, locals[i], translate_x[i]);
@@ -2097,6 +2121,17 @@ impl FighterScene {
     /// 4.. are the packed DObjDesc nodes; 0 is TopN. The other runtime joints
     /// have no packed node and are not used by the ported motion collisions.
     fn sample_gameplay_joints(&mut self, pack: &Pack<'_>) {
+        self.sample_gameplay_joints_from(pack, None);
+    }
+
+    /// [`Self::sample_gameplay_joints`], its matrices built from `kept`
+    /// when given: the locals a [`Self::slope_contour`] composed on the
+    /// skeleton as it still stands.
+    fn sample_gameplay_joints_from(
+        &mut self,
+        pack: &Pack<'_>,
+        kept: Option<&ssb_rom::skeleton::CollisionLocals>,
+    ) {
         use ssb_engine::math::Vec3;
         use ssb_game::fighter::{JointTransform, FIGHTER_JOINTS};
         self.fighter.joint_transforms = [None; FIGHTER_JOINTS];
@@ -2117,9 +2152,11 @@ impl FighterScene {
         };
         self.refresh_joint_parents(pack, &object);
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-        let count = self
-            .compose_collision(pack, &object, &mut posed)
-            .min(FIGHTER_JOINTS - 4);
+        let count = match kept {
+            Some(kept) => ssb_rom::skeleton::Skeleton::compose_collision_from(kept, &mut posed),
+            None => self.compose_collision(pack, &object, &mut posed),
+        }
+        .min(FIGHTER_JOINTS - 4);
         let scale = ssb_rom::pack::MODEL_SCALE;
         for (i, matrix) in posed[..count].iter().enumerate() {
             let axis = |col: usize| {

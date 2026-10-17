@@ -55,9 +55,13 @@ closes it.
 
 ### PSP performance and hardware (`MS8`)
 
-- [ ] Four-player VS regressed: `vs4@2400` on a PSP-2000 runs 17.7 ms busy / 48.5 FPS at 0f1cdfc against RE-500's 13-14 ms / 59.3 FPS (56.0 FPS, 16.0 ms after RE-532). Bisect which commit slowed it; suspect RE-514 CPU lighting (eddb65a, 2e215b9) (RE-532, RE-500).
+- [ ] Four-player VS on a PSP-2000: `vs4@2400` 17.13 ms busy / 54.8 FPS (120-frame reports 4..19) against RE-500's 13.64 / 59.9.
+  - The RE-514 CPU lighting regression (+5.2 ms) is recovered; lighting is 0.8 ms busy.
+  - The RE-509/510 collision compose runs once per fighter tick, with a joint table and a re-searched order (RE-533): -0.27 ms.
+  - Left: `bind_texture` (121 binds a frame, ~1.3 ms) and the `sceGumDrawArray` stall-address syscalls (~3.3 us a draw, 128 draws), then other small gameplay/draw additions.
+  - The lit expand is memory-bound (~0.68 us a vertex) (RE-532, RE-533).
 - [x] Lit primitives light each vertex once and keep the indexed draw; guard clip uses an outcode table (RE-514, RE-530).
-- [ ] Confirm the RE-514 CPU lighting cost on a physical PSP-2000 (`vs4@2400` profile; +1.6 ms CPU under PPSSPP) (RE-514).
+- [x] RE-514 CPU lighting cost confirmed on a PSP-2000: +5.2 ms, since recovered (RE-533, RE-514).
 - [ ] By hand on the PSP-2000, with the installed production EBOOT (`target/release-audio/EBOOT.PBP`, pack v108; the attract loop already runs clean, RE-479): the campaign past Race to the Finish, then RE-476/RE-477's checks (RE-476, RE-477, RE-478).
 - [ ] Measure D-047's GE fill cost on a PSP-2000: the battle viewport covers 19% more pixels; profile `vs4@4000`, the opening and the selects (`ge` span) (RE-477).
 - [ ] Opening CPU cost on a PSP-2000: after RE-530 and RE-532 the room is 12.9 ms busy (2-23; 11.5 in 2-5, target 10.5) at 59.5 FPS, Run 17.6 ms (40.5 FPS), Yoster 17.3 (38.1), Clash 18.0 (34.9), Jungle 12.7, Sector 13.0 (target: 45 FPS, under 17 ms). Remaining levers: `bind_texture` (121 binds a frame at about 11 us), the lit expand's memory traffic (about 1.2 us a vertex), `sceGumDrawArray`'s stall-address syscall per draw (about 3.3 us, 216 draws in Run); Clash did not respond to the link order (profile it). Each opening fight's first frame takes 21-40 ms (RE-469, RE-470, RE-471, RE-476).

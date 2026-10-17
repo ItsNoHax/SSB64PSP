@@ -141,6 +141,44 @@ impl Default for AnimLocks {
     }
 }
 
+/// The collision locals one compose built, and how each node's matrix
+/// composes from them, kept so the matrices can follow without a second
+/// compose ([`Skeleton::collision_parts_keep`],
+/// [`Skeleton::compose_collision_from`]).
+#[derive(Debug, Clone)]
+pub struct CollisionLocals {
+    count: usize,
+    local: [Mat4; MAX_NODES],
+    /// Node `i`'s parent index, or one of the `LINK_` cases.
+    link: [u8; MAX_NODES],
+    /// The interposed `XRotN`'s local, when the clip leads with it.
+    lead: Option<Mat4>,
+}
+
+impl CollisionLocals {
+    /// No such node in the pack: the identity.
+    const LINK_NONE: u8 = 0xFF;
+    /// A root node: under the lead `XRotN` when there is one.
+    const LINK_ROOT: u8 = 0xFE;
+    /// A parent outside the object: left in its own space.
+    const LINK_OWN: u8 = 0xFD;
+
+    pub fn new() -> Self {
+        CollisionLocals {
+            count: 0,
+            local: [Mat4::IDENTITY; MAX_NODES],
+            link: [Self::LINK_NONE; MAX_NODES],
+            lead: None,
+        }
+    }
+}
+
+impl Default for CollisionLocals {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Which of a part's two matrices [`Skeleton::compose_with`] builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Space {
@@ -426,7 +464,7 @@ impl Skeleton {
     ///
     /// Returns how many matrices were written.
     pub fn compose(&self, pack: &Pack<'_>, object: &ObjectDesc, out: &mut [Mat4]) -> usize {
-        self.compose_with(pack, object, out, Space::Display, None, None)
+        self.compose_with::<true>(pack, object, out, Space::Display, None, None)
     }
 
     /// [`Skeleton::compose`] with this frame's queried parts in place of
@@ -440,7 +478,7 @@ impl Skeleton {
         queried: u64,
         queried_lead: bool,
     ) -> usize {
-        self.compose_with(
+        self.compose_with::<true>(
             pack,
             object,
             out,
@@ -461,7 +499,7 @@ impl Skeleton {
         object: &ObjectDesc,
         out: &mut [Mat4],
     ) -> usize {
-        self.compose_with(pack, object, out, Space::Collision, None, None)
+        self.compose_with::<true>(pack, object, out, Space::Collision, None, None)
     }
 
     /// Every node's collision local (`FTParts::unk_dobjtrans_0x10`) in the
@@ -477,16 +515,31 @@ impl Skeleton {
         translate_x: &mut [f32],
         lead: &mut Option<([[f32; 3]; 4], f32)>,
     ) -> usize {
-        let mut world = [Mat4::IDENTITY; MAX_NODES];
-        let mut local = [Mat4::IDENTITY; MAX_NODES];
-        let mut lead_local = None;
-        let count = self.compose_with(
+        let mut composed = CollisionLocals::new();
+        self.collision_parts_keep(pack, object, &mut composed, locals, translate_x, lead)
+    }
+
+    /// [`Skeleton::collision_parts`] that keeps the composed locals in
+    /// `composed`, so [`Skeleton::compose_collision_from`] can build the
+    /// matrices [`Skeleton::compose_collision`] would from them while the
+    /// poses stay as they are. Only the locals are composed here; the world
+    /// products are left to that call.
+    pub fn collision_parts_keep(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        composed: &mut CollisionLocals,
+        locals: &mut [[[f32; 3]; 4]],
+        translate_x: &mut [f32],
+        lead: &mut Option<([[f32; 3]; 4], f32)>,
+    ) -> usize {
+        let count = self.compose_with::<false>(
             pack,
             object,
-            &mut world,
+            &mut [],
             Space::Collision,
             None,
-            Some((&mut local, &mut lead_local)),
+            Some(composed),
         );
         let rows = |m: &Mat4| -> [[f32; 3]; 4] {
             let r = |i: usize| [m.0[i * 4], m.0[i * 4 + 1], m.0[i * 4 + 2]];
@@ -495,21 +548,40 @@ impl Skeleton {
             // product is exact.
             [r(0), r(1), r(2), t.map(|v| v * MODEL_SCALE)]
         };
+        let joint_of = self.joint_table(object.first_node);
         let count = count.min(locals.len()).min(translate_x.len());
         for i in 0..count {
-            locals[i] = rows(&local[i]);
+            locals[i] = rows(&composed.local[i]);
             let global = object.first_node + i as u32;
-            translate_x[i] = match self.pose_for(global) {
+            translate_x[i] = match self.pose_at(&joint_of, i) {
                 Some(p) => p.translate[0],
                 None => pack.node_rest(global).unwrap_or_default().translate[0],
             };
         }
-        *lead = lead_local.map(|m| {
+        *lead = composed.lead.map(|m| {
             (
                 rows(&m),
                 self.lead_xrotn_pose().map_or(0.0, |p| p.translate[0]),
             )
         });
+        count
+    }
+
+    /// The matrices [`Skeleton::compose_collision`] builds, from the locals
+    /// a [`Skeleton::collision_parts_keep`] call kept: the same products in
+    /// the same order, so the same bits, as long as no pose changed between
+    /// the two calls.
+    pub fn compose_collision_from(composed: &CollisionLocals, out: &mut [Mat4]) -> usize {
+        let count = composed.count.min(out.len());
+        for i in 0..count {
+            let local = composed.local[i];
+            out[i] = match composed.link[i] {
+                CollisionLocals::LINK_NONE => Mat4::IDENTITY,
+                CollisionLocals::LINK_ROOT => composed.lead.map_or(local, |lead| lead.mul(&local)),
+                CollisionLocals::LINK_OWN => local,
+                p => out[usize::from(p)].mul(&local),
+            };
+        }
         count
     }
 
@@ -551,16 +623,50 @@ impl Skeleton {
         }
     }
 
-    fn compose_with(
+    /// Which joint drives each of `object`'s nodes, indexed from
+    /// `first_node`: [`Self::pose_for`]'s answer for every node at once,
+    /// instead of one scan of the joints per node.
+    fn joint_table(&self, first_node: u32) -> [u8; MAX_NODES] {
+        let mut table = [u8::MAX; MAX_NODES];
+        // Backwards, so the first joint naming a node wins, as `pose_for`'s
+        // `find` has it.
+        for j in (0..self.joint_count).rev() {
+            let k = self.nodes[j].wrapping_sub(first_node) as usize;
+            if k < MAX_NODES {
+                table[k] = j as u8;
+            }
+        }
+        table
+    }
+
+    /// [`Self::pose_for`] of node `first_node + i`, through a
+    /// [`Self::joint_table`] built for `first_node`.
+    #[inline(always)]
+    fn pose_at(&self, table: &[u8; MAX_NODES], i: usize) -> Option<&JointPose> {
+        match table.get(i) {
+            Some(&j) if j != u8::MAX => Some(&self.poses[usize::from(j)]),
+            _ => None,
+        }
+    }
+
+    /// Composes `object`'s nodes. With `WORLD`, writes each node's matrix to
+    /// `out`; without, `out` is not touched and only `locals_out` is filled
+    /// (its locals do not depend on the world matrices).
+    fn compose_with<const WORLD: bool>(
         &self,
         pack: &Pack<'_>,
         object: &ObjectDesc,
         out: &mut [Mat4],
         space: Space,
         queried: Option<(u64, bool)>,
-        mut locals_out: Option<(&mut [Mat4], &mut Option<Mat4>)>,
+        mut locals_out: Option<&mut CollisionLocals>,
     ) -> usize {
-        let count = (object.node_count as usize).min(out.len()).min(MAX_NODES);
+        let count = if WORLD {
+            (object.node_count as usize).min(out.len()).min(MAX_NODES)
+        } else {
+            (object.node_count as usize).min(MAX_NODES)
+        };
+        let joint_of = self.joint_table(object.first_node);
         let mut locks = self.locks;
         if let Some((nodes, lead)) = queried {
             locks.queried = nodes;
@@ -584,13 +690,20 @@ impl Skeleton {
             }
             None => (None, locks.root_scale),
         };
-        if let Some((_, lead_out)) = locals_out.as_mut() {
-            **lead_out = lead;
+        if let Some(kept) = locals_out.as_deref_mut() {
+            kept.lead = lead;
+            kept.count = count;
         }
         for i in 0..count {
             let global = object.first_node + i as u32;
             let Some(parent) = pack.node_parent(global) else {
-                out[i] = Mat4::IDENTITY;
+                if WORLD {
+                    out[i] = Mat4::IDENTITY;
+                }
+                if let Some(kept) = locals_out.as_deref_mut() {
+                    kept.local[i] = Mat4::IDENTITY;
+                    kept.link[i] = CollisionLocals::LINK_NONE;
+                }
                 continue;
             };
             let parent_index = match parent {
@@ -618,7 +731,7 @@ impl Skeleton {
             } else {
                 // The rest pose is read only for a node no joint drives.
                 let rest;
-                let pose = match self.pose_for(global) {
+                let pose = match self.pose_at(&joint_of, i) {
                     Some(pose) => pose,
                     None => {
                         rest = pack.node_rest(global).unwrap_or_default();
@@ -635,28 +748,36 @@ impl Skeleton {
                 scales[i] = s;
                 m
             };
-            if let Some((locals, _)) = locals_out.as_mut() {
-                if let Some(slot) = locals.get_mut(i) {
-                    *slot = local;
-                }
+            if let Some(kept) = locals_out.as_deref_mut() {
+                kept.local[i] = local;
+                kept.link[i] = match (parent, parent_index) {
+                    (_, Some(p)) => p as u8,
+                    (NodeDesc::NO_PARENT, None) => CollisionLocals::LINK_ROOT,
+                    _ => CollisionLocals::LINK_OWN,
+                };
             }
-            // Parents always precede children in a `DObjDesc` array — a child
-            // references `array_dobjs[depth - 1]`, which an earlier entry must
-            // have filled — so the parent's matrix is already final.
-            out[i] = match (parent, parent_index) {
-                (_, Some(p)) => out[p].mul(&local),
-                (NodeDesc::NO_PARENT, None) => lead.map_or(local, |lead| lead.mul(&local)),
-                // A parent outside this object, or one that has not been
-                // composed yet, cannot be applied. Leaving the node in its own
-                // space is wrong but bounded; silently using a stale matrix
-                // would not be.
-                _ => local,
-            };
+            if WORLD {
+                // Parents always precede children in a `DObjDesc` array — a
+                // child references `array_dobjs[depth - 1]`, which an earlier
+                // entry must have filled — so the parent's matrix is already
+                // final.
+                out[i] = match (parent, parent_index) {
+                    (_, Some(p)) => out[p].mul(&local),
+                    (NodeDesc::NO_PARENT, None) => lead.map_or(local, |lead| lead.mul(&local)),
+                    // A parent outside this object, or one that has not been
+                    // composed yet, cannot be applied. Leaving the node in its
+                    // own space is wrong but bounded; silently using a stale
+                    // matrix would not be.
+                    _ => local,
+                };
+            }
         }
         count
     }
 
-    /// The pose driving `node`, if any joint does.
+    /// The pose driving `node`, if any joint does: what a
+    /// [`Self::joint_table`] answers for every node at once.
+    #[cfg(test)]
     fn pose_for(&self, node: u32) -> Option<&JointPose> {
         (0..self.joint_count)
             .find(|&i| self.nodes[i] == node)
@@ -3080,5 +3201,481 @@ mod tests {
             MAX_EFFECT_MAT_ANIMS,
             "every slot is a distinct script, duplicates did not waste one"
         );
+    }
+}
+
+/// The kept-locals and table-driven composes against the compose as it was
+/// before them, bit for bit.
+#[cfg(test)]
+mod compose_equivalence_tests {
+    use super::*;
+    use crate::scene::{DObjDesc, DObjNode, SceneGraph};
+
+    /// `compose_with` before the joint table, the kept locals and the
+    /// locals-only pass, kept verbatim as the reference.
+    fn reference_compose(
+        sk: &Skeleton,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        out: &mut [Mat4],
+        space: Space,
+        queried: Option<(u64, bool)>,
+        mut locals_out: Option<(&mut [Mat4], &mut Option<Mat4>)>,
+    ) -> usize {
+        let count = (object.node_count as usize).min(out.len()).min(MAX_NODES);
+        let mut locks = sk.locks;
+        if let Some((nodes, lead)) = queried {
+            locks.queried = nodes;
+            locks.queried_lead = lead;
+        }
+        let mut scales = [[1.0f32; 3]; MAX_NODES];
+        let queried = |i: usize| i < 64 && locks.queried >> i & 1 != 0;
+        let (lead, root_scale) = match sk.lead_xrotn_pose() {
+            Some(p) => {
+                let (m, s) = match space {
+                    Space::Display if locks.queried_lead => {
+                        let (m, s) = sk.local(p, locks.root_scale, Space::Collision);
+                        (m.f2l_fixed_w(), s)
+                    }
+                    _ => sk.local(p, locks.root_scale, space),
+                };
+                (Some(m), s)
+            }
+            None => (None, locks.root_scale),
+        };
+        if let Some((_, lead_out)) = locals_out.as_mut() {
+            **lead_out = lead;
+        }
+        for i in 0..count {
+            let global = object.first_node + i as u32;
+            let Some(parent) = pack.node_parent(global) else {
+                out[i] = Mat4::IDENTITY;
+                continue;
+            };
+            let parent_index = match parent {
+                p if p != NodeDesc::NO_PARENT
+                    && p >= object.first_node
+                    && (p - object.first_node) < i as u32 =>
+                {
+                    Some((p - object.first_node) as usize)
+                }
+                _ => None,
+            };
+            let parent_scale = parent_index.map_or(root_scale, |p| scales[p]);
+            let local = if !locks.flagged && i < 64 && locks.mask >> i & 1 != 0 {
+                let rest = pack.node_rest(global).unwrap_or_default();
+                let (m, _) = sk.local(&rest, parent_scale, Space::Collision);
+                scales[i] = rest.scale;
+                match space {
+                    Space::Display => m.f2l_fixed_w(),
+                    Space::Collision => m,
+                }
+            } else {
+                let rest;
+                let pose = match sk.pose_for(global) {
+                    Some(pose) => pose,
+                    None => {
+                        rest = pack.node_rest(global).unwrap_or_default();
+                        &rest
+                    }
+                };
+                let (m, s) = match space {
+                    Space::Display if queried(i) => {
+                        let (m, s) = sk.local(pose, parent_scale, Space::Collision);
+                        (m.f2l_fixed_w(), s)
+                    }
+                    _ => sk.local(pose, parent_scale, space),
+                };
+                scales[i] = s;
+                m
+            };
+            if let Some((locals, _)) = locals_out.as_mut() {
+                if let Some(slot) = locals.get_mut(i) {
+                    *slot = local;
+                }
+            }
+            out[i] = match (parent, parent_index) {
+                (_, Some(p)) => out[p].mul(&local),
+                (NodeDesc::NO_PARENT, None) => lead.map_or(local, |lead| lead.mul(&local)),
+                _ => local,
+            };
+        }
+        count
+    }
+
+    /// `collision_parts` before the change, on the reference compose.
+    #[allow(clippy::type_complexity)]
+    fn reference_parts(
+        sk: &Skeleton,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+    ) -> (
+        usize,
+        [[[f32; 3]; 4]; MAX_NODES],
+        [f32; MAX_NODES],
+        Option<([[f32; 3]; 4], f32)>,
+    ) {
+        let mut world = [Mat4::IDENTITY; MAX_NODES];
+        let mut local = [Mat4::IDENTITY; MAX_NODES];
+        let mut lead_local = None;
+        let count = reference_compose(
+            sk,
+            pack,
+            object,
+            &mut world,
+            Space::Collision,
+            None,
+            Some((&mut local, &mut lead_local)),
+        );
+        let rows = |m: &Mat4| -> [[f32; 3]; 4] {
+            let r = |i: usize| [m.0[i * 4], m.0[i * 4 + 1], m.0[i * 4 + 2]];
+            let t = r(3);
+            [r(0), r(1), r(2), t.map(|v| v * MODEL_SCALE)]
+        };
+        let mut locals = [[[0.0f32; 3]; 4]; MAX_NODES];
+        let mut translate_x = [0.0f32; MAX_NODES];
+        for i in 0..count {
+            locals[i] = rows(&local[i]);
+            let global = object.first_node + i as u32;
+            translate_x[i] = match sk.pose_for(global) {
+                Some(p) => p.translate[0],
+                None => pack.node_rest(global).unwrap_or_default().translate[0],
+            };
+        }
+        let lead = lead_local.map(|m| {
+            (
+                rows(&m),
+                sk.lead_xrotn_pose().map_or(0.0, |p| p.translate[0]),
+            )
+        });
+        (count, locals, translate_x, lead)
+    }
+
+    fn bits(m: &[Mat4]) -> alloc::vec::Vec<[u32; 16]> {
+        m.iter().map(|m| m.0.map(f32::to_bits)).collect()
+    }
+
+    fn rows_bits(r: &[[[f32; 3]; 4]]) -> alloc::vec::Vec<[[u32; 3]; 4]> {
+        r.iter()
+            .map(|m| m.map(|row| row.map(f32::to_bits)))
+            .collect()
+    }
+
+    /// Every compose this file offers against the reference, on `sk` as it
+    /// stands.
+    fn check(sk: &Skeleton, pack: &Pack<'_>, object: &ObjectDesc, what: &str) {
+        let mut want = [Mat4::IDENTITY; MAX_NODES];
+        let mut got = [Mat4::IDENTITY; MAX_NODES];
+        // Display, with the skeleton's own queried set and with another.
+        for queried in [
+            None,
+            Some((0x5555_5555_5555_5555u64, true)),
+            Some((0, false)),
+        ] {
+            let n = reference_compose(sk, pack, object, &mut want, Space::Display, queried, None);
+            let m = match queried {
+                None => sk.compose(pack, object, &mut got),
+                Some((q, l)) => sk.compose_queried(pack, object, &mut got, q, l),
+            };
+            assert_eq!(n, m, "{what}");
+            assert_eq!(
+                bits(&want[..n]),
+                bits(&got[..n]),
+                "{what} display {queried:?}"
+            );
+        }
+        // Collision.
+        let n = reference_compose(sk, pack, object, &mut want, Space::Collision, None, None);
+        assert_eq!(sk.compose_collision(pack, object, &mut got), n, "{what}");
+        assert_eq!(bits(&want[..n]), bits(&got[..n]), "{what} collision");
+        // The parts, plain and kept, and the world from the kept locals.
+        let (rn, rlocals, rx, rlead) = reference_parts(sk, pack, object);
+        let mut locals = [[[0.0f32; 3]; 4]; MAX_NODES];
+        let mut tx = [0.0f32; MAX_NODES];
+        let mut lead = None;
+        assert_eq!(
+            sk.collision_parts(pack, object, &mut locals, &mut tx, &mut lead),
+            rn
+        );
+        assert_eq!(
+            rows_bits(&rlocals[..rn]),
+            rows_bits(&locals[..rn]),
+            "{what} parts"
+        );
+        assert_eq!(
+            rx[..rn].map_or_bits(),
+            tx[..rn].map_or_bits(),
+            "{what} translate_x"
+        );
+        assert_eq!(
+            rlead.map(|(r, x)| (r.map(|row| row.map(f32::to_bits)), x.to_bits())),
+            lead.map(|(r, x)| (r.map(|row| row.map(f32::to_bits)), x.to_bits())),
+            "{what} lead"
+        );
+        let mut kept = CollisionLocals::new();
+        // Stale contents must not leak into the next keep.
+        kept.local = [Mat4::from_trs([1.0; 3], [0.5; 3], [2.0; 3]); MAX_NODES];
+        kept.link = [7; MAX_NODES];
+        let mut locals2 = [[[0.0f32; 3]; 4]; MAX_NODES];
+        let mut tx2 = [0.0f32; MAX_NODES];
+        let mut lead2 = None;
+        let k =
+            sk.collision_parts_keep(pack, object, &mut kept, &mut locals2, &mut tx2, &mut lead2);
+        assert_eq!(k, rn);
+        assert_eq!(
+            rows_bits(&locals[..rn]),
+            rows_bits(&locals2[..rn]),
+            "{what} kept parts"
+        );
+        let mut from = [Mat4::IDENTITY; MAX_NODES];
+        let f = Skeleton::compose_collision_from(&kept, &mut from);
+        assert_eq!(f, n, "{what}");
+        assert_eq!(
+            bits(&want[..n]),
+            bits(&from[..f]),
+            "{what} world from kept locals"
+        );
+    }
+
+    trait Bits {
+        fn map_or_bits(&self) -> alloc::vec::Vec<u32>;
+    }
+    impl Bits for [f32] {
+        fn map_or_bits(&self) -> alloc::vec::Vec<u32> {
+            self.iter().map(|v| v.to_bits()).collect()
+        }
+    }
+
+    struct Lcg(u32);
+    impl Lcg {
+        fn next(&mut self) -> u32 {
+            self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            self.0 >> 8
+        }
+        fn f(&mut self, lo: f32, hi: f32) -> f32 {
+            lo + (hi - lo) * (self.next() as f32 / (1u32 << 24) as f32)
+        }
+        fn pose(&mut self) -> JointPose {
+            JointPose {
+                translate: [
+                    self.f(-80.0, 80.0),
+                    self.f(-80.0, 80.0),
+                    self.f(-80.0, 80.0),
+                ],
+                rotate: [self.f(-7.0, 7.0), self.f(-7.0, 7.0), self.f(-7.0, 7.0)],
+                scale: [self.f(0.5, 1.6), self.f(0.5, 1.6), self.f(0.5, 1.6)],
+            }
+        }
+    }
+
+    /// A branching tree: two roots, a node whose parent comes later
+    /// (left in its own space) and chains three deep.
+    fn tree() -> SceneGraph {
+        let node = |id: u32, parent| DObjNode {
+            desc: DObjDesc {
+                id,
+                dl: None,
+                translate: [id as f32 * 3.0, 1.5, -(id as f32)],
+                rotate: [0.1 * id as f32, -0.2, 0.05 * id as f32],
+                scale: [1.0, 1.0 + 0.1 * id as f32, 1.0],
+            },
+            parent,
+        };
+        let parents = [
+            None,
+            Some(0),
+            Some(1),
+            Some(1),
+            Some(0),
+            None,
+            Some(5),
+            Some(6),
+            Some(3),
+            Some(8),
+        ];
+        SceneGraph {
+            offset: 0x100,
+            nodes: parents
+                .iter()
+                .enumerate()
+                .map(|(i, &p)| node(i as u32, p))
+                .collect(),
+        }
+    }
+
+    fn randomise(sk: &mut Skeleton, rng: &mut Lcg, first_node: u32, nodes: u32, lead: bool) {
+        sk.joint_count = 0;
+        if lead {
+            sk.nodes[0] = AnimJoint::NO_NODE;
+            sk.poses[0] = rng.pose();
+            sk.joint_count = 1;
+        }
+        sk.lead_xrotn = lead;
+        for n in 0..nodes {
+            if sk.joint_count == MAX_JOINTS {
+                break;
+            }
+            // Leave some nodes undriven, so their rest pose is read.
+            if rng.next().is_multiple_of(4) {
+                continue;
+            }
+            let j = sk.joint_count;
+            sk.nodes[j] = first_node + n;
+            sk.poses[j] = rng.pose();
+            sk.joint_count += 1;
+        }
+        // A second joint on an already driven node: the first one wins.
+        if sk.joint_count > 2 && sk.joint_count < MAX_JOINTS {
+            let j = sk.joint_count;
+            sk.nodes[j] = sk.nodes[sk.joint_count - 1];
+            sk.poses[j] = rng.pose();
+            sk.joint_count += 1;
+        }
+        // And one on a node of no object.
+        if sk.joint_count < MAX_JOINTS {
+            let j = sk.joint_count;
+            sk.nodes[j] = first_node + 1000;
+            sk.poses[j] = rng.pose();
+            sk.joint_count += 1;
+        }
+        sk.locks = AnimLocks {
+            mask: (u64::from(rng.next()) << 32 | u64::from(rng.next())) & 0x3_FFFF,
+            flagged: rng.next().is_multiple_of(2),
+            root_scale: [rng.f(0.8, 1.7); 3],
+            queried: u64::from(rng.next()) << 32 | u64::from(rng.next()),
+            queried_lead: rng.next().is_multiple_of(2),
+        };
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn every_compose_matches_the_reference_on_random_poses() {
+        let graph = tree();
+        let mut w = crate::pack::PackWriter::new();
+        w.add_object(&graph, 296, |_| None, &[]);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let whole = pack.object(0).unwrap();
+        // The object as packed; one starting a node in, whose first node's
+        // parent lies outside it; one running past the node table, whose
+        // last nodes have no entry at all.
+        let objects = [
+            whole,
+            ObjectDesc {
+                first_node: whole.first_node + 1,
+                node_count: whole.node_count - 1,
+                ..whole
+            },
+            ObjectDesc {
+                first_node: whole.first_node + 4,
+                node_count: whole.node_count,
+                ..whole
+            },
+        ];
+        let mut rng = Lcg(0x5EED);
+        for round in 0..600 {
+            let object = objects[round % 3];
+            let mut sk = Skeleton::new();
+            randomise(
+                &mut sk,
+                &mut rng,
+                object.first_node,
+                object.node_count,
+                round % 4 < 2,
+            );
+            if round % 5 == 0 {
+                sk.locks = AnimLocks::default();
+            }
+            check(&sk, &pack, &object, &alloc::format!("round {round}"));
+        }
+    }
+
+    #[test]
+    fn the_joint_table_answers_as_pose_for_does() {
+        let mut rng = Lcg(77);
+        for _ in 0..200 {
+            let mut sk = Skeleton::new();
+            let first = rng.next() % 300;
+            let lead = rng.0.is_multiple_of(2);
+            randomise(&mut sk, &mut rng, first, 50, lead);
+            // Joints outside the object around it, too.
+            if sk.joint_count + 2 <= MAX_JOINTS {
+                sk.nodes[sk.joint_count] = first.wrapping_sub(1);
+                sk.nodes[sk.joint_count + 1] = first + MAX_NODES as u32;
+                sk.joint_count += 2;
+            }
+            let table = sk.joint_table(first);
+            for i in 0..MAX_NODES {
+                let want = sk.pose_for(first + i as u32).map(|p| p as *const JointPose);
+                let got = sk.pose_at(&table, i).map(|p| p as *const JointPose);
+                assert_eq!(want, got, "node {i}");
+            }
+        }
+    }
+
+    fn real_pack() -> Option<alloc::vec::Vec<u8>> {
+        std::env::var_os("SSB64_ROM")?;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/generated/ssb64.pak");
+        std::fs::read(path).ok()
+    }
+
+    /// Every fighter's model, through a spread of its own clips, each a few
+    /// frames in, with and without locks and the lead `XRotN`.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn every_compose_matches_the_reference_on_every_fighter() {
+        let Some(bytes) = real_pack() else { return };
+        let pack = Pack::open(&bytes).unwrap();
+        let mut checked = 0;
+        for kind in 0..27u32 {
+            let Some(index) = crate::scene_deps::fighter_object(&pack, kind) else {
+                continue;
+            };
+            let object = pack.object(index).unwrap();
+            let mut rng = Lcg(kind + 1);
+            for slot in (0..700u32).step_by(23) {
+                let Some(anim) = pack.fighter_anim(kind, slot) else {
+                    continue;
+                };
+                let Some(script) = pack.anim_script(&anim) else {
+                    continue;
+                };
+                let mut sk = Skeleton::new();
+                sk.start(&pack, &anim, 0.0, 1.0);
+                for _ in 0..(rng.next() % 9) {
+                    let _ = sk.tick(script);
+                }
+                sk.lead_xrotn = rng.next().is_multiple_of(2);
+                sk.locks = AnimLocks {
+                    mask: if rng.next().is_multiple_of(2) {
+                        0x1_C3F0
+                    } else {
+                        0
+                    },
+                    flagged: rng.next().is_multiple_of(3),
+                    root_scale: [rng.f(0.8, 1.7); 3],
+                    queried: u64::from(rng.next()) << 32 | u64::from(rng.next()),
+                    queried_lead: rng.next().is_multiple_of(2),
+                };
+                check(
+                    &sk,
+                    &pack,
+                    &object,
+                    &alloc::format!("kind {kind} slot {slot}"),
+                );
+                // Every node's joint as `pose_for` finds it.
+                let table = sk.joint_table(object.first_node);
+                for i in 0..(object.node_count as usize).min(MAX_NODES) {
+                    let want = sk
+                        .pose_for(object.first_node + i as u32)
+                        .map(|p| p as *const _);
+                    let got = sk.pose_at(&table, i).map(|p| p as *const _);
+                    assert_eq!(want, got, "kind {kind} slot {slot} node {i}");
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 100, "{checked}");
     }
 }

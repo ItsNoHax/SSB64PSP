@@ -12,12 +12,12 @@ Where the project is now. The roadmap and every open task are in
 | Audio | N64 audio system ported whole, sample-exact against N64 captures ([D-049](docs/decisions/D-049.md), RE-479) |
 | Rendering | CRT overscan crop ([D-047](docs/decisions/D-047.md)); fighter shadow is one mirrored ellipse with team colours (RE-302); CPU guard-band clipping for movie scenes (RE-519); shade-only combiners whitened (RE-520); prim-alpha untextured surfaces (RE-521); fighter entries match the N64: effects play at make time, Samus's lit glass tube, Yoshi hidden in the egg, focus-2 camera fallback (RE-522, RE-523); opening fighter scenes: movie-camera particles and billboards, Samus grapple glow, Yoshi cloud fade (RE-525); run dust from demo-script events (RE-528); two-cycle shade x texel-lerp baked into the texture, so Yoster clouds are tinted and soft (RE-527) |
 | Frontend | N64 logo, opening, title (fire fade matches Rice within MAE 2-6); opening sector and Yoster models lit by display-list lights (RE-529), attract loop, every menu; opening room now matches the N64 closely (MAE vs Rice 5-11 at most tics) |
-| PSP | 60 FPS under PPSSPP; PSP-2000 baselines in RE-497, RE-498, RE-479, RE-493. Opening on a PSP-2000 (RE-530, RE-532): room 12.9 ms busy at 59.5 FPS, Run 40.5 FPS, Yoster 38, Clash 35; `vs4@2400` 56.0 FPS (was 48.5 at 0f1cdfc, against RE-500's 59.3). PSP-1000 unsupported |
+| PSP | 60 FPS under PPSSPP; PSP-2000 baselines in RE-497, RE-498, RE-479, RE-493. Opening on a PSP-2000 (RE-530, RE-532): room 12.9 ms busy at 59.5 FPS, Run 40.5 FPS, Yoster 38, Clash 35; `vs4@2400` 17.13 ms busy, 54.8 FPS (120-frame reports; RE-533). PSP-1000 unsupported |
 | Tests | Workspace tests with the ROM, stub tests, clippy, rustfmt pass; 218 of 218 goldens match by pixel hash |
 
 ## Current Work
 
-Closed: the opening CPU-cost batch (RE-532): index-run guard clip rebuild, pool clip, light-direction pre-pass, exact lit shade, costume mesh memo, affine texture skip, chunked vertex blocks and a re-searched link order. Output bit-identical, 218 of 218 goldens unchanged; hardware gains 1-3.5 ms busy a scene. Next: the four-player VS regression in `PLAN.md` (MS8): `vs4@2400` runs 17.7 ms busy at 0f1cdfc against RE-500's 13-14 ms; bisect the commit, suspect RE-514 CPU lighting (eddb65a, 2e215b9).
+Closed: four-player VS batch (RE-533): one collision compose per fighter tick, a joint table instead of `pose_for`, and a re-searched link order. Output is bit-identical (218 of 218 goldens, frame-hash A/B on three stages). `vs4@2400` 17.40 -> 17.13 ms busy (54.8 FPS); the opening is unchanged within spread. Next: `bind_texture` and the `sceGumDrawArray` stall syscalls (item 7, `PLAN.md` MS8).
 
 ## Blockers
 
@@ -26,7 +26,7 @@ Closed: the opening CPU-cost batch (RE-532): index-run guard clip rebuild, pool 
 
 ## Verification
 
-Baseline after RE-532:
+Baseline after RE-533:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`, and with `SSB64_STUB_TABLES=1` and no ROM: pass. Clippy (`cargo +1.98.0`, `-D warnings`) and `cargo fmt --all --check` pass.
 - Both PSP release builds compile.
