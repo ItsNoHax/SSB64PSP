@@ -17,11 +17,13 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Landed: RE-540 (anim-joint effects play from frame 0 on the creation frame), RE-541 (Kirby Stone bank scripts, ground Thunder Jolt burst and timing; `f1-vs-four` rebaselined for the shared RNG), RE-542 (link-15 display effects share one creation order; Thunder Jolt node 4 texture script) and RE-543 (pack v121). RE-543: `PackWriter::add_anim` shared blobs by file id, so the jolt's script windows got the whole-file blob and the six arcs drew unanimated over Pikachu; a blob is now shared only when file id and bytes match. Thunder Jolts parse frame 0 on the creation frame; five goldens rebaselined, `f1-cpufx-jolt-end` added.
+Landed: RE-544 (D-048 fighter tables): hidden parts, texture parts, hurtboxes (`DAMAGE_COLLS`) and the Falcon Dive capture offsets are now generated from the ROM by `ssb-tablegen`; no pack change (v121). The committed US Luigi hurtbox row 1 size.y was the JP value (200); the ROM says 160 and is now used. Before that: RE-540 to RE-543 (effects, Thunder Jolt, pack v121).
+
+Open user question: do the decomp `d*` arrays (D-048 groups C and D, e.g. `dFTParamCostumeIDs`, `dFTCommonYoshiEggDamageCollDescs`) count as ROM tables? Until answered they stay committed.
 
 Uncommitted in the working tree: the perf batch (VRAM lit-expand vertex blocks, photo texture pool, 1P stage-override fix, link order s7b). It is blocked on the hung PSPLink: D-051 hardware proof of r2-stage-final-destination and r2-stage-bonus2-captain-falcon, and the s7b link-order re-check. Hardware runs need pack v121 staged.
 
-Next: Kirby's roster-A2 entry camera (needs an N64 trace of eye and at for rec 320-340), Thunder Jolt burst spikes, effects process order (needs a warp ROM with distinct per-port inputs), then the MS8 list in `PLAN.md`.
+Next: remaining D-048 items in `PLAN.md` (ITAttributes statics, monster WPAttributes, `PhysicsAttributes::MARIO`, `locate_rom` helper, validate_docs ratchet), Kirby's roster-A2 entry camera (needs an N64 trace of eye and at for rec 320-340), Thunder Jolt burst spikes, effects process order (needs a warp ROM with distinct per-port inputs), then the MS8 list in `PLAN.md`.
 
 ## Blockers
 
@@ -30,7 +32,7 @@ Next: Kirby's roster-A2 entry camera (needs an N64 trace of eye and at for rec 3
 
 ## Verification
 
-Baseline after RE-543:
+Baseline after RE-544:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`, and with `SSB64_STUB_TABLES=1` and no ROM: pass. Clippy (`cargo +1.98.0`, `-D warnings`) and `cargo fmt --all --check` pass.
 - Both PSP release builds compile.
