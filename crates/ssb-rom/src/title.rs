@@ -46,7 +46,7 @@ pub const FIRE_DOBJDESC: u32 = 0x28EB0;
 pub const FIRE_ANIM_JOINT: u32 = 0x29010;
 /// `dMNTitleLogoAnimSprites`: `LogoAnimCutout`, `...StrikeV`,
 /// `...StrikeH`, `...Full`.
-pub const LOGO_ANIM_SPRITES: [u32; 4] = [0x8FC8, 0x97E8, 0x9B48, 0xBBB0];
+pub const LOGO_ANIM_SPRITES: [u32; 4] = crate::d_arrays::MN_TITLE_LOGO_ANIM_SPRITES;
 
 /// The reserved animation slots the baked plays are packed under
 /// (`AnimDesc::EFFECT`), in the title's menu pack.
@@ -148,17 +148,28 @@ pub fn pin(x: f32, y: f32) -> [f32; 2] {
 
 /// `dMNTitleCommonSpriteDescs`' centres (US) for the labels' seven
 /// children (`DropShadow`, `Smash`, `Super`, `Bros`, `TM`, `Footer`,
-/// `Header`) and "Press Start".
-pub const LABEL_CENTRES: [[f32; 2]; 7] = [
-    [157.0, 94.0],
-    [161.0, 88.0],
-    [55.0, 96.0],
-    [268.0, 96.0],
-    [270.0, 132.0],
-    [160.0, 208.0],
-    [160.0, 15.0],
-];
-pub const PRESS_START_CENTRE: [f32; 2] = [162.0, 177.0];
+/// `Header`) and "Press Start", generated from the ROM
+/// ([`crate::d_arrays`]).
+pub const LABEL_CENTRES: [[f32; 2]; 7] = {
+    let mut centres = [[0.0; 2]; 7];
+    let mut i = 0;
+    while i < 7 {
+        centres[i] = sprite_centre(i);
+        i += 1;
+    }
+    centres
+};
+/// `dMNTitleCommonSpriteDescs[7]`, `PressStart`'s.
+pub const PRESS_START_CENTRE: [f32; 2] = sprite_centre(7);
+
+/// The centre of `dMNTitleCommonSpriteDescs[row]` (US), generated from the
+/// ROM (`ssb-tablegen`, D-048).
+const fn sprite_centre(row: usize) -> [f32; 2] {
+    [
+        crate::d_arrays::MN_TITLE_COMMON_SPRITE_DESCS_X[row] as f32,
+        crate::d_arrays::MN_TITLE_COMMON_SPRITE_DESCS_Y[row] as f32,
+    ]
+}
 
 /// Plays the labels' tree takes: the creation's, then ticks 170 to 219.
 pub const LABEL_PLAYS: usize = 51;

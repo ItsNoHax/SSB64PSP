@@ -19,10 +19,11 @@ fn half(d: &[u8], at: usize) -> i16 {
     i16::from_be_bytes(d[at..at + 2].try_into().unwrap())
 }
 fn rom() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM").map(|p| std::fs::read(p).unwrap())
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).map(|p| std::fs::read(p).unwrap())
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn utility_models_are_present_in_the_pack() {
     let Some(rom) = rom() else {
         return;
@@ -216,6 +217,7 @@ fn container_attributes_and_explosion_tables_match_the_rom() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn link_bomb_promotes_its_body_and_animates_the_billboard_fuse_child() {
     let Some(rom) = rom() else {
         return;
@@ -266,6 +268,7 @@ fn link_bomb_promotes_its_body_and_animates_the_billboard_fuse_child() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn egg_scale_animation_replays_the_rom_for_two_hundred_plays() {
     let Some(rom) = rom() else {
         return;
@@ -303,6 +306,7 @@ fn egg_scale_animation_replays_the_rom_for_two_hundred_plays() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn heavy_models_and_smash_piece_are_present_in_the_pack() {
     if rom().is_none() {
         return;
@@ -325,6 +329,7 @@ fn heavy_models_and_smash_piece_are_present_in_the_pack() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn vs_stages_have_item_points_and_weights() {
     if rom().is_none() {
         return;
@@ -346,6 +351,7 @@ fn vs_stages_have_item_points_and_weights() {
 
 /// The items' material scripts and root lists (RE-442).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn item_scripts_and_root_lists_are_packed() {
     if rom().is_none() {
         return;

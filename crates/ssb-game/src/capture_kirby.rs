@@ -48,8 +48,10 @@ pub const WAIT_OFF_X: f32 = 10.0;
 pub const CAPTURE_OFF: Vec2 = Vec2::new(160.0, 100.0);
 /// `dFTCommonCaptureKirbyKnockbackCatch` and `...KnockbackCapture`:
 /// `{ angle, kbs, kbw, kbb }`.
-pub const KNOCKBACK_CATCH: (i32, i32, i32, i32) = (361, 100, 90, 0);
-pub const KNOCKBACK_CAPTURE: (i32, i32, i32, i32) = (80, 100, 60, 0);
+pub const KNOCKBACK_CATCH: (i32, i32, i32, i32) =
+    crate::grab::release_desc(crate::d_arrays::FT_COMMON_CAPTURE_KIRBY_KNOCKBACK_CATCH);
+pub const KNOCKBACK_CAPTURE: (i32, i32, i32, i32) =
+    crate::grab::release_desc(crate::d_arrays::FT_COMMON_CAPTURE_KIRBY_KNOCKBACK_CAPTURE);
 
 /// The victim's `status_vars.common.capturekirby` and the star's motion
 /// flags.

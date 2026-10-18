@@ -70,10 +70,23 @@ pub fn decide_kind(is_training: bool, gkind: u8) -> Kind {
     }
 }
 
+/// A generated wallpaper ID table (`s32`) as `u8`s.
+const fn wallpaper_ids<const N: usize>(ids: [i32; N]) -> [u8; N] {
+    let mut out = [0u8; N];
+    let mut i = 0;
+    while i < N {
+        assert!(ids[i] >= 0 && ids[i] <= u8::MAX as i32);
+        out[i] = ids[i] as u8;
+        i += 1;
+    }
+    out
+}
+
 /// `dSC1PTrainingModeWallpaperIDs`: which of Training's wallpapers
 /// ([`TRAINING_WALLPAPERS`]) each VS stage shows. `mnMapsPreviewWallpaper`'s
 /// copy, `dMNMapsTrainingModeWallpaperIDs`, is the same with a tenth 0.
-const TRAINING_WALLPAPER_IDS: [u8; 9] = [2, 0, 0, 0, 2, 1, 2, 2, 2];
+const TRAINING_WALLPAPER_IDS: [u8; 9] =
+    wallpaper_ids(crate::d_arrays::SC1P_TRAINING_MODE_WALLPAPER_IDS);
 
 /// Training's wallpapers (`dSC1PTrainingModeWallpaperDescs`): the file
 /// (`llGRWallpaperTraining*FileID`) and the fog colour
@@ -84,21 +97,25 @@ pub struct TrainingWallpaper {
     pub fog_color: [u8; 3],
 }
 
+/// `dSC1PTrainingModeWallpaperDescs`' file IDs and fog colours.
+const fn training_wallpapers() -> [TrainingWallpaper; 3] {
+    let mut out = [TrainingWallpaper {
+        file: 0,
+        fog_color: [0; 3],
+    }; 3];
+    let mut i = 0;
+    while i < 3 {
+        out[i] = TrainingWallpaper {
+            file: crate::d_arrays::SC1P_TRAINING_MODE_WALLPAPER_DESCS_FILE_ID[i],
+            fog_color: crate::d_arrays::SC1P_TRAINING_MODE_WALLPAPER_DESCS_FOG_COLOR[i],
+        };
+        i += 1;
+    }
+    out
+}
+
 /// Black, yellow and blue.
-pub const TRAINING_WALLPAPERS: [TrainingWallpaper; 3] = [
-    TrainingWallpaper {
-        file: 0x1A,
-        fog_color: [0x00, 0x00, 0x00],
-    },
-    TrainingWallpaper {
-        file: 0x1B,
-        fog_color: [0xEE, 0x9E, 0x06],
-    },
-    TrainingWallpaper {
-        file: 0x1C,
-        fog_color: [0xAF, 0xF5, 0xFF],
-    },
-];
+pub const TRAINING_WALLPAPERS: [TrainingWallpaper; 3] = training_wallpapers();
 
 /// `llGRWallpaperTraining*Sprite`: the sprite's offset in each file.
 pub const TRAINING_WALLPAPER_SPRITE: u32 = 0x20718;
@@ -216,6 +233,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn training_picks_its_own_wallpaper_and_fog() {
         // Peach's Castle, Hyrule, Dream Land, Saffron and Mushroom Kingdom
         // blue; Sector Z, Kongo Jungle and Zebes black; Yoshi's Island

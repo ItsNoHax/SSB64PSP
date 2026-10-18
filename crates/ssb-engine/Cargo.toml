@@ -28,3 +28,5 @@ audio_profile = []
 # The audio tests build the pack's audio section from the user's ROM
 # (`SSB64_ROM`); without it they skip.
 ssb-rom = { workspace = true }
+# `ssb_tablegen::test_rom` finds the ROM.
+ssb-tablegen = { workspace = true }

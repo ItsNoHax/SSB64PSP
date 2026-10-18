@@ -322,6 +322,7 @@ fn a_stock_battles_table_is_places_bar_then_header_and_kos() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_results_text_names_the_winner_then_wins() {
     let mut r = results(Kind::StockRoyal, &[1, 0], Some(1));
     let players = [

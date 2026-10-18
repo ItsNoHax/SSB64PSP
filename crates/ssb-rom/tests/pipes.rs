@@ -4,8 +4,9 @@ use ssb_game::dokan;
 use ssb_rom::{archive::Archive, collision::LineKind};
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn inishie_has_its_pipe_points_and_floors() {
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let rom = std::fs::read(path).unwrap();

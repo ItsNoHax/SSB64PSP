@@ -260,6 +260,7 @@ fn item_switch(st: &BattleState) -> VsItemSwitchMenu {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_item_switch_reads_and_writes_the_toggles() {
     let st = BattleState {
         item_toggles: !(1 << kind::BAT),

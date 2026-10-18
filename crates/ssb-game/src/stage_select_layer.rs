@@ -622,6 +622,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_preview_wallpaper_is_trainings_or_the_stages() {
         let select = StageSelect::new(gkind::SECTOR, 0);
         let training = Layer::new(&select, true);

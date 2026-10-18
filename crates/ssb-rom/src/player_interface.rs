@@ -37,8 +37,9 @@ pub fn frame(file: &[u8]) -> Option<crate::sprite::Sprite> {
 mod tests {
     use super::*;
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn rom_frame_and_arrow_cycles_keep_original_samples() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let rom = std::fs::read(path).unwrap();

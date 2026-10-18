@@ -533,20 +533,39 @@ const FLYTOP_ANGLE_HIGH: f32 = 1.919_862_2; // 110 degrees
 /// placement column. The `DamageFlyTop` override is
 /// [`set_damage_status`]'s.
 pub fn damage_status(level: u8, defender_was_airborne: bool, damage_index: usize) -> Status {
-    const GROUND: [[Status; 3]; 4] = [
-        [Status::DamageLw1, Status::DamageN1, Status::DamageHi1],
-        [Status::DamageLw2, Status::DamageN2, Status::DamageHi2],
-        [Status::DamageLw3, Status::DamageN3, Status::DamageHi3],
-        [Status::DamageFlyLw, Status::DamageFlyN, Status::DamageFlyHi],
+    let table = if defender_was_airborne {
+        &crate::d_arrays::FT_COMMON_DAMAGE_STATUS_AIR_IDS
+    } else {
+        &crate::d_arrays::FT_COMMON_DAMAGE_STATUS_GROUND_IDS
+    };
+    damage_status_from_id(table[usize::from(level.min(3))][damage_index.min(2)])
+}
+
+/// The damage-family [`Status`] that `nFTCommonStatusDamage*` id names.
+fn damage_status_from_id(id: i32) -> Status {
+    const DAMAGE_STATUSES: [Status; 17] = [
+        Status::DamageHi1,
+        Status::DamageHi2,
+        Status::DamageHi3,
+        Status::DamageN1,
+        Status::DamageN2,
+        Status::DamageN3,
+        Status::DamageLw1,
+        Status::DamageLw2,
+        Status::DamageLw3,
+        Status::DamageAir1,
+        Status::DamageAir2,
+        Status::DamageAir3,
+        Status::DamageE1,
+        Status::DamageE2,
+        Status::DamageFlyHi,
+        Status::DamageFlyN,
+        Status::DamageFlyLw,
     ];
-    const AIR: [[Status; 3]; 4] = [
-        [Status::DamageAir1; 3],
-        [Status::DamageAir2; 3],
-        [Status::DamageAir3; 3],
-        [Status::DamageFlyLw, Status::DamageFlyN, Status::DamageFlyHi],
-    ];
-    let table = if defender_was_airborne { &AIR } else { &GROUND };
-    table[usize::from(level.min(3))][damage_index.min(2)]
+    DAMAGE_STATUSES
+        .into_iter()
+        .find(|s| *s as i32 == id)
+        .expect("a damage status id in dFTCommonDamageStatus*IDs")
 }
 
 /// The outcome of a hit landing, ready to apply to the defending
@@ -954,6 +973,7 @@ mod tests {
         assert_eq!(damage_level(32.0), 3);
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn damage_status_picks_the_table_and_the_placement_column() {
         assert_eq!(damage_status(0, false, DAMAGE_INDEX_N), Status::DamageN1);
@@ -979,6 +999,7 @@ mod tests {
         f
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn a_tumble_is_flytop_only_within_the_near_vertical_window() {
         for (angle, expected) in [
@@ -992,6 +1013,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn a_flat_grounded_hit_slides_along_the_floor() {
         let mut f = grounded_mario();
@@ -1004,6 +1026,7 @@ mod tests {
         assert_eq!(f.facing, crate::fighter::Facing::Right);
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn an_upward_grounded_hit_launches_with_its_ground_status() {
         let mut f = grounded_mario();
@@ -1016,6 +1039,7 @@ mod tests {
         assert_eq!(f.facing, crate::fighter::Facing::Left);
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn a_downward_grounded_tumble_bounces_off_the_floor() {
         let mut f = grounded_mario();

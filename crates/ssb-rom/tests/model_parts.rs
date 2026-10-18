@@ -7,11 +7,11 @@ use ssb_rom::pack::{accessory_costume, modelpart_costume, NodeDesc, Pack};
 use ssb_rom::Archive;
 
 fn rom() -> Option<Vec<u8>> {
-    std::fs::read(std::env::var_os("SSB64_ROM")?).ok()
+    std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?).ok()
 }
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -108,6 +108,7 @@ fn the_animlock_masks_are_the_roms() {
 /// Pikachu wears his hat on joint 11 and Jigglypuff her bow on joint 6,
 /// each from its model file; nobody else has an accessory.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn only_pikachu_and_jigglypuff_have_an_accessory() {
     let Some(rom) = rom() else {
         return;
@@ -139,6 +140,7 @@ fn only_pikachu_and_jigglypuff_have_an_accessory() {
 /// Every costume but 0 of Pikachu and Jigglypuff has an accessory mesh on
 /// its joint's node, from the accessory's list, and no other node has one.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_costume_but_the_first_packs_its_accessory() {
     let (Some(rom), Some(bytes)) = (rom(), pack_bytes()) else {
         return;
@@ -268,6 +270,7 @@ fn every_reachable_model_part_is_packed() {
 /// The entry makers' tables are packed on their trees' nodes, and the
 /// car's exhaust sprites are billboards.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_entry_vehicles_animations_are_packed() {
     let Some(bytes) = pack_bytes() else {
         return;

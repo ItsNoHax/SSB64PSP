@@ -152,15 +152,24 @@ const NUMBER_COLORS: [[u8; 3]; 5] = [
     [0xFF, 0xFF, 0xFF],
 ];
 
+/// Colour channel tables (`dIFCommonPlayerTagPrimColors{R,G,B}`) as RGB.
+const fn rgb(r: [u8; 5], g: [u8; 5], b: [u8; 5]) -> [[u8; 3]; 5] {
+    let mut out = [[0u8; 3]; 5];
+    let mut i = 0;
+    while i < 5 {
+        out[i] = [r[i], g[i], b[i]];
+        i += 1;
+    }
+    out
+}
+
 /// `dIFCommonPlayerTagPrimColors{R,G,B}` (`if/ifcommon.c`); the
 /// environment colours are all black.
-const TAG_COLORS: [[u8; 3]; 5] = [
-    [0xED, 0x36, 0x36],
-    [0x4E, 0x4E, 0xE9],
-    [0xFF, 0xDF, 0x1A],
-    [0x4E, 0xB9, 0x4E],
-    [0xAC, 0xAC, 0xAC],
-];
+const TAG_COLORS: [[u8; 3]; 5] = rgb(
+    crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_R,
+    crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_G,
+    crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_B,
+);
 
 /// `mnVSResultMakeFighterName`'s `names`, `pos_x` and `scales` (US), by
 /// fighter kind.

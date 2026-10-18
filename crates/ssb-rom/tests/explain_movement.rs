@@ -226,8 +226,9 @@ fn fighter(
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn how_to_play_moves_the_fighters_as_the_n64_does() {
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let rom = std::fs::read(path).unwrap();
@@ -707,8 +708,9 @@ const N64_LUIGI_JOINTS: [(usize, Vec3); 4] = [
 ];
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn how_to_play_hits_as_the_n64_does() {
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let pack_path =

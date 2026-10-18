@@ -75,7 +75,7 @@ pub enum Page {
 }
 
 /// `dMNVSRecordRankingColumnWidths`.
-const COLUMN_WIDTHS: [i32; 7] = [33, 33, 33, 33, 46, 35, 34];
+const COLUMN_WIDTHS: [i32; 7] = crate::d_arrays::MN_VS_RECORD_RANKING_COLUMN_WIDTHS;
 /// `nMNVSRecordRankingKindEnumCount`.
 const COLUMNS: usize = 7;
 

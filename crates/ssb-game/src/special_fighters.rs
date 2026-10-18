@@ -119,6 +119,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn metal_mario_and_giant_donkey_enter_as_their_bases() {
         use crate::appear::{entry_effect, EntryEffect};

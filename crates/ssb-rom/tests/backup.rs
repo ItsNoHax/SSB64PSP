@@ -7,10 +7,11 @@ use ssb_game::backup::{Backup, SIZE};
 const DEFAULT_BACKUP_ROM: usize = 0x800A_3994 - 0x800A_1980 + 0x406D0;
 
 fn rom_bytes() -> Option<Vec<u8>> {
-    std::fs::read(std::env::var_os("SSB64_ROM")?).ok()
+    std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?).ok()
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_default_backup_matches_the_rom_byte_for_byte() {
     let Some(bytes) = rom_bytes() else { return };
     let info = ssb_rom::rom::identify(&bytes).unwrap();

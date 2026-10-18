@@ -204,9 +204,16 @@ pub(crate) const KIRBY_INHALE: [ThrowHitDesc; 2] = [desc(None, 6, 361, 100, 0, 0
 
 /// `FTThrowReleaseDesc dFTCommonCaptureKnockbackCatch`: what the catcher
 /// suffers when the held fighter breaks free. `{ angle, kbs, kbw, kbb }`.
-const CAPTURE_KNOCKBACK_CATCH: (i32, i32, i32, i32) = (361, 100, 30, 0);
+const CAPTURE_KNOCKBACK_CATCH: (i32, i32, i32, i32) =
+    release_desc(crate::d_arrays::FT_COMMON_CAPTURE_KNOCKBACK_CATCH);
 /// `dFTCommonCaptureKnockbackCapture`: what the escaping fighter suffers.
-const CAPTURE_KNOCKBACK_CAPTURE: (i32, i32, i32, i32) = (361, 80, 0, 20);
+const CAPTURE_KNOCKBACK_CAPTURE: (i32, i32, i32, i32) =
+    release_desc(crate::d_arrays::FT_COMMON_CAPTURE_KNOCKBACK_CAPTURE);
+
+/// An `FTThrowReleaseDesc` as the `{ angle, kbs, kbw, kbb }` tuple.
+pub(crate) const fn release_desc(d: [i32; 4]) -> (i32, i32, i32, i32) {
+    (d[0], d[1], d[2], d[3])
+}
 
 /// The motion flag and frame at which a script's `SetFlag` fires, or `None`.
 /// Frame numbers are the scripts' `Wait`/`WaitAsync` cursors.
@@ -1855,8 +1862,12 @@ pub fn send_catcher_hitlag(f: &mut Fighter, damage_lag: i32) {
     }
 }
 
-/// `dFTCommonThrownNoDamageKnockback`: `{ -1, 0, 361, 0, 0, 20, 0 }`.
-const NO_DAMAGE_KNOCKBACK: ThrowHitDesc = desc(None, 0, 361, 0, 0, 20);
+/// `dFTCommonThrownNoDamageKnockback`, an `FTThrowHitDesc`: `{ status_id,
+/// damage, angle, kbs, kbw, kbb, element }` with `-1` for no forced status.
+const NO_DAMAGE_KNOCKBACK: ThrowHitDesc = {
+    let d = crate::d_arrays::FT_COMMON_THROWN_NO_DAMAGE_KNOCKBACK;
+    desc(None, d[1], d[2], d[3], d[4], d[5])
+};
 
 /// `ftCommonThrownSetStatusNoDamageRelease` @ 0x8014B5B4, on the catcher.
 /// The attack handicap is the source's literal `9`, and the fighter keeps
@@ -2976,6 +2987,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn damage_release_and_falcon_dive_do_not_install_throw_pointer() {
         for dive in [false, true] {
@@ -3352,6 +3364,7 @@ mod tests {
         assert_eq!(dummy.status.status, Status::Wait);
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn grab_after_shield_hit_keeps_shield_catch_damage_reduction() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
@@ -3692,6 +3705,7 @@ mod tests {
         assert_eq!(frames_in(&mut dk, &mut dummy), 39);
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn mashing_out_of_the_shoulder_knocks_both_back() {
         let mut dk = grounded(FighterKind::Donkey, 0, 0.0);
@@ -4036,6 +4050,7 @@ mod tests {
     /// A second back throw of the same fighter is staled by the first:
     /// `ftParamGetStaledDamage(16) == (16 * 0.75 + 0.999) as i32 == 12`.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_repeated_throw_is_staled() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
@@ -4108,6 +4123,7 @@ mod tests {
     /// `ftCommonThrownReleaseFighterLoseGrip` drops his TopN to his
     /// `joints[4]` (last posed 60 units under TopN) less 300; the release
     /// then sweeps the map from Mario.
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn a_thrown_fighter_drops_from_its_joint_4_under_the_hand_it_left() {
         let before = hand(

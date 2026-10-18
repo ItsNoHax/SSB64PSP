@@ -540,20 +540,7 @@ pub fn set_hit_status_colanim(f: &mut Fighter, status: HitStatus) {
 /// swapped: Kirby and Jigglypuff take 24, whose script flashes skeleton 2
 /// (which only their `FTAttributes::skeleton` has), and Samus 28.
 pub fn skeleton_colanim_base(kind: FighterKind) -> u8 {
-    match kind {
-        FighterKind::Samus => 0x1C,
-        FighterKind::Kirby | FighterKind::Purin => 0x18,
-        FighterKind::Mario
-        | FighterKind::Fox
-        | FighterKind::Donkey
-        | FighterKind::Luigi
-        | FighterKind::Link
-        | FighterKind::Yoshi
-        | FighterKind::Captain
-        | FighterKind::Pikachu
-        | FighterKind::Ness => 0x14,
-        _ => 0x10,
-    }
+    crate::d_arrays::FT_PARAM_SKELETON_COL_ANIM_IDS[kind as usize] as u8
 }
 
 /// `ftCommonDamageCheckElementSetColAnim`: the damage animation for the

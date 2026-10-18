@@ -140,6 +140,7 @@ fn render(c: &Capture) -> Option<u64> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn b_menu_matches_the_n64_capture() {
     if let Some(h) = render(&B_MENU) {
         assert_eq!(h, B_MENU.hash);
@@ -147,6 +148,7 @@ fn b_menu_matches_the_n64_capture() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn c_attract_opening_fights_match_the_n64_capture() {
     if let Some(h) = render(&C_ATTRACT) {
         assert_eq!(h, C_ATTRACT.hash);

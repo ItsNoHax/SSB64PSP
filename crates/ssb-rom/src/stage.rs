@@ -363,38 +363,42 @@ pub fn wallpaper(file: &File, base: u32) -> Option<Target> {
 
 /// The nine VS stages' `GR*Map` files (`ll*MapFileID`, US), in `GRKind`
 /// order: the first nine rows of `dMPCollisionGroundFileInfos`. Each file
-/// holds its `MPGroundData` at `ll*MapMapHeader` (0x14).
-pub const VS_GROUND_FILES: [u32; 9] = [
-    0x103, // Castle
-    0x106, // Sector
-    0x105, // Jungle
-    0x101, // Zebes
-    0x109, // Hyrule
-    0x107, // Yoster
-    0xFF,  // Pupupu
-    0x108, // Yamabuki
-    0x104, // Inishie
-];
+/// holds its `MPGroundData` at `ll*MapMapHeader` ([`MAP_HEADER`]).
+pub const VS_GROUND_FILES: [u32; 9] = ground_files();
 
 /// `dMPCollisionGroundFileInfos[..=nGRKindCommonEnd]`: the `GR*Map` file
 /// of every common `GRKind`, the VS stages first, then Beta Dream Land,
 /// the test stage, How to Play and the 1P Game's stages.
-pub const COMMON_GROUND_FILES: [u32; 17] = [
-    0x103, 0x106, 0x105, 0x101, 0x109, 0x107, 0xFF, 0x108, 0x104, // VS
-    0x100, // PupupuSmall
-    0x102, // PupupuTest
-    0x10B, // Explain
-    0x10E, // YosterSmall
-    0x10D, // Metal
-    0x10C, // Zako
-    0x127, // Bonus3
-    0x10A, // Last
-];
+pub const COMMON_GROUND_FILES: [u32; 17] = ground_files();
+
+/// The first `N` rows of `dMPCollisionGroundFileInfos[].file_id`, which the
+/// build reads from the ROM (`ssb-tablegen`, D-048).
+const fn ground_files<const N: usize>() -> [u32; N] {
+    let files = crate::d_arrays::MP_COLLISION_GROUND_FILE_INFOS_FILE_ID;
+    let mut out = [0; N];
+    let mut i = 0;
+    while i < N {
+        out[i] = files[i];
+        i += 1;
+    }
+    out
+}
+
+/// `dMPCollisionGroundFileInfos[gkind].offset`: where `gkind`'s `GR*Map`
+/// file keeps its `MPGroundData` (`ll*MapMapHeader`).
+const fn map_header(gkind: usize) -> u32 {
+    crate::d_arrays::MP_COLLISION_GROUND_FILE_INFOS_OFFSET[gkind]
+}
 
 /// The 1P Game stages with a wallpaper, by `GRKind`, and their
 /// `ll*MapMapHeader`: Small Yoshi's Island, Meta Crystal, Duel Zone and
 /// Final Destination. Race to the Finish has none.
-pub const ONE_P_WALLPAPER_GROUNDS: [(u8, u32); 4] = [(12, 0x14), (13, 0x14), (14, 0x14), (16, 0)];
+pub const ONE_P_WALLPAPER_GROUNDS: [(u8, u32); 4] = [
+    (12, map_header(12)),
+    (13, map_header(13)),
+    (14, map_header(14)),
+    (16, map_header(16)),
+];
 
 /// The bonus stages by `GRKind` (`nGRKindBonusStageStart` to
 /// `nGRKindBonusStageEnd`: Break the Targets, then Board the Platforms,
@@ -405,12 +409,12 @@ pub const BONUS_WALLPAPER_GROUNDS: core::ops::RangeInclusive<u8> = 17..=40;
 
 /// `llGRBonus1MarioMapMapHeader` to `llGRBonus2NessMapMapHeader`: every
 /// bonus map holds its `MPGroundData` at 0.
-pub const BONUS_MAP_HEADER: u32 = 0;
+pub const BONUS_MAP_HEADER: u32 = map_header(17);
 
 /// How to Play's stage (`nGRKindExplain`), whose header
 /// (`llGRExplainMapMapHeader`) is at 0: `grWallpaperMakeCommon` draws its
 /// wallpaper.
-pub const EXPLAIN_WALLPAPER_GROUND: (u8, u32) = (11, 0);
+pub const EXPLAIN_WALLPAPER_GROUND: (u8, u32) = (11, map_header(11));
 
 /// `GRKind` of a common stage's `GR*Map` file.
 pub fn common_ground_kind(file: u32) -> Option<u8> {
@@ -421,7 +425,7 @@ pub fn common_ground_kind(file: u32) -> Option<u8> {
 }
 
 /// `ll*MapMapHeader`: where each VS `GR*Map` file keeps its header.
-pub const MAP_HEADER: u32 = 0x14;
+pub const MAP_HEADER: u32 = map_header(0);
 
 /// `GRKind` of a VS stage's `GR*Map` file.
 pub fn vs_ground_kind(file: u32) -> Option<u8> {
@@ -543,6 +547,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_common_stage_table_keeps_the_vs_rows_and_race_to_the_finish() {
         assert_eq!(&COMMON_GROUND_FILES[..9], &VS_GROUND_FILES);
         assert_eq!(COMMON_GROUND_FILES[15], crate::ground_obj::BONUS3_FILE);
@@ -595,6 +600,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn common_ground_files_extend_the_vs_table() {
         assert_eq!(COMMON_GROUND_FILES[..9], VS_GROUND_FILES);
         assert_eq!(common_ground_kind(0x127), Some(15));
@@ -602,8 +608,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn team_bounds_match_the_decomp_us_headers() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -631,8 +638,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn item_weights_match_the_decomp_us_tables() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -668,8 +676,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_vs_stages_fog_colours_match_the_decomp() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -695,8 +704,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn every_vs_stage_has_five_emblem_colours() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();

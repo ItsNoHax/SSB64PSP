@@ -8,8 +8,9 @@ use ssb_rom::archive::Archive;
 use ssb_rom::collision::LineKind;
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn cliff_rom_joint_inventory() {
-    let Ok(path) = std::env::var("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let rom = std::fs::read(path).unwrap();
@@ -39,8 +40,9 @@ fn cliff_rom_joint_inventory() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn dream_land_rom_geometry_drives_floor_wall_ceiling_and_cliff_queries() {
-    let Ok(path) = std::env::var("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let rom = std::fs::read(path).expect("SSB64_ROM readable");
@@ -132,8 +134,9 @@ fn dream_land_rom_geometry_drives_floor_wall_ceiling_and_cliff_queries() {
 /// motions without hidden model parts, fits every motion that has them, and
 /// ends HeavyGet on each fighter's `joint_itemheavy_id` descriptor.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn hidden_part_walk_matches_mask_order_and_reaches_the_item_heavy_joint() {
-    let Ok(path) = std::env::var("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let rom = std::fs::read(path).unwrap();

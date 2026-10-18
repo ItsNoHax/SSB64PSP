@@ -15,8 +15,9 @@ fn float(d: &[u8], at: usize) -> f32 {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_target_course_placement_and_animation_matches_rom() {
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let rom = std::fs::read(path).unwrap();
@@ -91,7 +92,7 @@ fn every_target_course_placement_and_animation_matches_rom() {
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn target_attributes_match_the_rom() {
     use ssb_game::item::{target, ItemType, ItemWeight};
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let rom = std::fs::read(path).unwrap();

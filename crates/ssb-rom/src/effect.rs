@@ -26,7 +26,8 @@ pub const PIKACHU_THUNDER_SPRITES: [u32; 4] = [0x9020, 0x8C18, 0x8810, 0x8408];
 /// played on its tree (RE-417). Index 2, the Throw table, is the `EFDesc`'s
 /// own (`MANAGER_EFFECT_ANIM_JOINTS`).
 pub const YOSHI_EGG_LAY_KEY: (u32, u32) = (339, 0x0960);
-pub const YOSHI_EGG_LAY_ANIM_JOINTS: [u32; 2] = [0x0DB0, 0x09F0];
+pub const YOSHI_EGG_LAY_ANIM_JOINTS: [u32; 2] =
+    crate::d_arrays::EF_MANAGER_YOSHI_EGG_LAY_ANIM_JOINTS;
 /// The `AnimDesc::EFFECT` slot of the Wait table; Break follows.
 pub const YOSHI_EGG_LAY_ANIM_SLOT: u32 = 0x104;
 
@@ -50,7 +51,10 @@ pub const PIKACHU_THUNDER_SHOCK_MAT_SCRIPTS: [u32; 3] = [0x1A90, 0x1AD0, 0x1B20]
 /// table. `efManagerFoxReflectorSetAnimID` adds index 1 to 3 of
 /// `dEFManagerFoxReflectorAnimJointOffsets` in its place: Loop, Hit, End.
 pub const FOX_REFLECTOR_KEY: (u32, u32) = (346, 0x02B0);
-pub const FOX_REFLECTOR_ANIM_JOINTS: [u32; 3] = [0x04C0, 0x03A0, 0x0430];
+pub const FOX_REFLECTOR_ANIM_JOINTS: [u32; 3] = {
+    let table = crate::d_arrays::EF_MANAGER_FOX_REFLECTOR_ANIM_JOINT_OFFSETS;
+    [table[1], table[2], table[3]]
+};
 /// The `AnimDesc::EFFECT` slot of the Loop table; Hit and End follow.
 pub const FOX_REFLECTOR_ANIM_SLOT: u32 = 0x108;
 

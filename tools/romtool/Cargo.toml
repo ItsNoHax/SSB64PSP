@@ -18,3 +18,7 @@ ssb-engine = { workspace = true, features = ["std"] }
 [build-dependencies]
 # Only for the `ssb64_stub_tables` cfg (`build.rs`).
 ssb-tablegen = { workspace = true }
+
+[dev-dependencies]
+# `ssb_tablegen::test_rom` finds the ROM for the ROM-backed tests.
+ssb-tablegen = { workspace = true }

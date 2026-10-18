@@ -3624,7 +3624,7 @@ mod compose_equivalence_tests {
     }
 
     fn real_pack() -> Option<alloc::vec::Vec<u8>> {
-        std::env::var_os("SSB64_ROM")?;
+        ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/generated/ssb64.pak");
         std::fs::read(path).ok()

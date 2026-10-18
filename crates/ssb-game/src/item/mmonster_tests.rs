@@ -497,6 +497,7 @@ fn goldeen_bounces_where_it_crosses_the_floor() {
     assert!(bounces > 5);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn chansey_lays_three_eggs_and_a_hit_holds_the_next_one() {
     let mut w = World::new(&[(0, -2000.0), (1, 2000.0)]);

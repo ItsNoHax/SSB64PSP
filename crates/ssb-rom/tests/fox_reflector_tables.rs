@@ -9,13 +9,14 @@ use ssb_rom::pack::Pack;
 use ssb_rom::skeleton::StageAnimator;
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn reflector_tables_replay_the_n64_trace() {
     let Some(bytes) = pack_bytes() else {
         eprintln!("skipping: SSB64_ROM unset or pack not built");

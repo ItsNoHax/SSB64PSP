@@ -18,9 +18,7 @@ use ssb_engine::math::Vec3;
 pub const TRANSITION_COUNT: i32 = 11;
 
 /// `dSCSubsysFighterScales` (`sc/scsubsys/scsubsysdata.c`), by fighter kind.
-pub const FIGHTER_SCALES: [f32; 12] = [
-    1.25, 1.15, 1.00, 1.03, 1.21, 1.33, 1.05, 1.07, 1.22, 1.20, 1.26, 1.30,
-];
+pub const FIGHTER_SCALES: [f32; 12] = crate::d_arrays::SC_SUBSYS_FIGHTER_SCALES;
 
 /// `mnVSResultsFuncLights`: the fighters' light angles
 /// (`scSubsysFighterSetLightParams(10.0F, 10.0F, ...)`).
@@ -42,8 +40,9 @@ pub struct Camera {
 }
 
 /// `mnVSResultsMakeFighterCamera`: eye (0, 0, 1800) on the origin, and
-/// `dGCPerspDefault`'s projection (30 degrees, 4:3, 100 to 12800), which
-/// `gcAddCameraMatrixSets` gives every camera it makes.
+/// `dGCPerspDefault`'s projection (generated from the ROM,
+/// [`crate::d_arrays`]), which `gcAddCameraMatrixSets` gives every camera
+/// it makes.
 pub const CAMERA: Camera = Camera {
     eye: Vec3 {
         x: 0.0,
@@ -60,10 +59,10 @@ pub const CAMERA: Camera = Camera {
         y: 1.0,
         z: 0.0,
     },
-    fovy: 30.0,
-    aspect: 4.0 / 3.0,
-    near: 100.0,
-    far: 12800.0,
+    fovy: crate::d_arrays::GC_PERSP_DEFAULT_FOVY[0],
+    aspect: crate::d_arrays::GC_PERSP_DEFAULT_ASPECT[0],
+    near: crate::d_arrays::GC_PERSP_DEFAULT_NEAR[0],
+    far: crate::d_arrays::GC_PERSP_DEFAULT_FAR[0],
     viewport: [10.0, 10.0, 310.0, 230.0],
 };
 

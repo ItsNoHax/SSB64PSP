@@ -23,9 +23,10 @@ Checks:
      and no ROM-generated table (a generated header or a known generated
      path; D-048). Golden captures are committed as pixel hashes only.
  10. No new hand-transcribed ROM table: a const/static array with 24 or more
-     numeric literals in ssb-game, ssb-rom or ssb-engine must be listed in
-     tools/docs/rom_tables_baseline.tsv, and every row there must still
-     exist (tools/docs/rom_tables.py; D-048).
+     numeric literals in ssb-game, ssb-rom or ssb-engine, or a const/static
+     with 2 or more whose doc comment names a decomp `d*` symbol (and that
+     does not read the generated `d_arrays`), must be listed in tools/docs/rom_tables_baseline.tsv, and every row there must
+     still exist (tools/docs/rom_tables.py; D-048).
 
 Exits 1 and prints one line per problem; exits 0 with a summary otherwise.
 Run after any documentation change (see the `documentation` skill).
@@ -234,7 +235,7 @@ def main():
             if GENERATED_HEADER_RE.search(head):
                 problems.append(f"{name}: generated source tracked; generate it at build time")
 
-    # --- 10: large numeric tables ratchet ---
+    # --- 10: ROM tables ratchet (large tables, d*-citing tables) ---
     problems.extend(rom_tables.problems())
 
     if problems:

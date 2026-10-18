@@ -392,6 +392,7 @@ fn acid_writes_its_root_and_reads_its_animated_surface() {
     assert_eq!(g.hits.log_len, 0);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn twister_rides_its_floor_catches_and_throws() {
     let surfaces = [floor(0, -2000, 2000, 0, 0)];
@@ -449,6 +450,7 @@ fn twister_rides_its_floor_catches_and_throws() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn clouds_sink_under_weight_then_evaporate_and_return() {
     let mut groups = vec![MapGroup::default(); 4];
     groups[1].translate = Vec3::new(-1000.0, 800.0, 0.0);
@@ -496,6 +498,7 @@ fn clouds_sink_under_weight_then_evaporate_and_return() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn scales_tip_toward_the_weight_and_fall_past_the_limit() {
     let objects = [
         MapObject {

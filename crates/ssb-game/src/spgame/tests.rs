@@ -197,6 +197,7 @@ fn sound_test_needs_all_twelve_records_for_both_tasks() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn waits_preserve_scene_clock_entry_order_and_hud_wrap() {
     use wait::Action::*;
     let w = wait::Wait::with_pattern(Stage::Link, 3, 2, 0, 0);

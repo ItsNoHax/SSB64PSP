@@ -8,11 +8,11 @@ use ssb_rom::Archive;
 const EGG: (u32, u32) = (338, 0xA860);
 
 fn rom() -> Option<Vec<u8>> {
-    std::fs::read(std::env::var_os("SSB64_ROM")?).ok()
+    std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?).ok()
 }
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -21,6 +21,7 @@ fn pack_bytes() -> Option<Vec<u8>> {
 /// The list's one `G_SETCOMBINE` is `(SHADE - ENV) * TEXEL0 + 0` in both
 /// cycles, with alpha `TEXEL0`.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_egg_list_subtracts_env_from_the_shade() {
     let Some(rom) = rom() else {
         return;
@@ -60,6 +61,7 @@ fn the_egg_list_subtracts_env_from_the_shade() {
 /// Only file 338's egg meshes carry `SHADE_MINUS_ENV`, and the egg's vertex
 /// shade is white, so with no ENV it draws as before.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn only_the_egg_carries_shade_minus_env() {
     let Some(bytes) = pack_bytes() else {
         return;
@@ -94,6 +96,7 @@ fn only_the_egg_carries_shade_minus_env() {
 /// reads fighter joint 5's local rotate.x. The figatree omits three of the
 /// four runtime joints, so animation index 2 drives the second model node.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_roll_egg_attachment_pose_matches_the_n64_trace() {
     let Some(bytes) = pack_bytes() else { return };
     let pack = Pack::open(&bytes).unwrap();

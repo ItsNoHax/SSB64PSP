@@ -9,7 +9,7 @@ use ssb_rom::{rom, Archive};
 const BOSS: usize = 12;
 
 fn rom_bytes() -> Option<Vec<u8>> {
-    let path = std::env::var_os("SSB64_ROM")?;
+    let path = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     std::fs::read(path).ok()
 }
 
@@ -58,6 +58,7 @@ fn the_slots_follow_the_boss_motion_order() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_anim_joint_lengths_match_the_rom() {
     let Some(bytes) = rom_bytes() else { return };
     let info = rom::identify(&bytes).unwrap();
@@ -80,6 +81,7 @@ fn the_anim_joint_lengths_match_the_rom() {
 /// segment starts at ROM 0x0AC540 for VRAM 0x80131B00
 /// (`smashbrothers.us.yaml`); the next 16 bytes are `ftkirbyspecialn.o`'s.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_attack_choice_bytes_match_the_rom() {
     let Some(bytes) = rom_bytes() else { return };
     let at = 0x0AC540 + (0x8018_8DC0 - 0x8013_1B00);
@@ -106,6 +108,7 @@ fn gobj_frames(data: &[u8], script: u32, speed: f32, plays: usize) -> Vec<Option
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_wallpaper_effects_loop_and_end_as_the_controller_reads() {
     let Some(bytes) = rom_bytes() else { return };
     let f = last_file(&bytes);
@@ -162,6 +165,7 @@ fn boss_wallpaper_loop(frames: &[Option<f32>]) -> usize {
 /// camera animations (file 114 + 0x6010 and + 0x6450): plain eye and look-at
 /// tracks without a path, 601 and 541 plays long.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_boss_camera_animations_end_on_their_own() {
     let Some(bytes) = rom_bytes() else { return };
     let f = last_file(&bytes);
@@ -189,7 +193,7 @@ fn the_boss_camera_animations_end_on_their_own() {
 }
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -198,6 +202,7 @@ fn pack_bytes() -> Option<Vec<u8>> {
 /// Every Master Hand motion is packed over his model, the `AnimJoint`
 /// clips at their ROM lengths, and both camera animations are baked.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_pack_carries_master_hands_motions_and_cameras() {
     let Some(bytes) = pack_bytes() else { return };
     let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();

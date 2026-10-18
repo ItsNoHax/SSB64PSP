@@ -150,6 +150,28 @@ pub enum Difficulty {
     VeryHard,
 }
 
+/// The playable `FTKind` with this ordinal, for the generated `FTKind`
+/// tables ([`crate::d_arrays`]); a table entry outside the roster fails the
+/// build.
+const fn playable_kind(ordinal: u8) -> FighterKind {
+    FighterKind::PLAYABLE[ordinal as usize]
+}
+
+/// The `nLBBackupUnlock*` with this value, for the generated unlock tables
+/// ([`crate::d_arrays`]).
+const fn unlock(value: u32) -> Unlock {
+    match value {
+        0 => Unlock::Luigi,
+        1 => Unlock::Ness,
+        2 => Unlock::Captain,
+        3 => Unlock::Purin,
+        4 => Unlock::Inishie,
+        5 => Unlock::SoundTest,
+        6 => Unlock::ItemSwitch,
+        _ => panic!("not an nLBBackupUnlock"),
+    }
+}
+
 /// `nLBBackupUnlock*`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unlock {

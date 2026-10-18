@@ -18,17 +18,18 @@ use ssb_rom::pack::Pack;
 use ssb_rom::Archive;
 
 fn rom() -> Option<Vec<u8>> {
-    std::fs::read(std::env::var_os("SSB64_ROM")?).ok()
+    std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?).ok()
 }
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn scale_x_effects_draw_on_head_one_under_the_effect_links_cld_state() {
     use ssb_rom::pack::flags;
     let Some(bytes) = pack_bytes() else {
@@ -59,6 +60,7 @@ fn scale_x_effects_draw_on_head_one_under_the_effect_links_cld_state() {
 /// ENV before the list, which sets no render mode before its triangles:
 /// the wave blends by `TEXEL0 * PRIM` alpha, depth-tested, no depth write.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_impact_wave_draws_translucent_under_its_display_proc_state() {
     use ssb_rom::pack::flags;
     let Some(bytes) = pack_bytes() else {
@@ -161,6 +163,7 @@ fn packed_scripts<'a>(pack: &Pack<'a>, key: (u32, u32)) -> (&'a [u8], Vec<u32>) 
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn display_effect_lives_match_the_rom() {
     let (Some(rom), Some(pack)) = (rom(), pack_bytes()) else {
         return;
@@ -255,6 +258,7 @@ fn display_effect_lives_match_the_rom() {
 /// tables (`dEFManagerYoshiEggLayAnimJoints`) replay the archive's: Break
 /// ends on its tenth play after the set (`EGG_BREAK_FRAMES`), and Wait loops.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn egg_lay_animations_match_the_rom() {
     use ssb_game::capture_yoshi::{EGG_BREAK_FRAMES, EGG_THROW_PLAYS};
     let (Some(rom), Some(pack)) = (rom(), pack_bytes()) else {

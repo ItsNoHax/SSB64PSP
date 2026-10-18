@@ -157,21 +157,43 @@ pub enum WeaponEffect {
     TextureRand(u8),
 }
 
+/// `dGRPupupuWhispyLeavesEffectAttributes`' position and `rotate.y` per
+/// `lr_players`, from the ROM ([`crate::d_arrays`]).
+const fn pupupu_leaves() -> [(Vec3, f32); 2] {
+    use crate::d_arrays as d;
+    let mut out = [(Vec3::ZERO, 0.0); 2];
+    let mut i = 0;
+    while i < 2 {
+        let p = d::GR_PUPUPU_WHISPY_LEAVES_EFFECT_ATTRIBUTES_POS[i];
+        out[i] = (
+            Vec3::new(p[0], p[1], p[2]),
+            d::GR_PUPUPU_WHISPY_LEAVES_EFFECT_ATTRIBUTES_ROTATE[i],
+        );
+        i += 1;
+    }
+    out
+}
+
 /// `dGRPupupuWhispyLeavesEffectAttributes`, by `lr_players`: the position
 /// and `rotate.y` (`F_CLC_DTOR32`).
-const PUPUPU_LEAVES: [(Vec3, f32); 2] = [
-    (
-        Vec3::new(-715.0, 450.0, -696.0),
-        -157.0 * core::f32::consts::PI / 180.0,
-    ),
-    (
-        Vec3::new(-205.0, 450.0, -762.0),
-        -13.0 * core::f32::consts::PI / 180.0,
-    ),
-];
+const PUPUPU_LEAVES: [(Vec3, f32); 2] = pupupu_leaves();
+
+/// `dGRPupupuWhispyDustEffectPositions`, from the ROM
+/// ([`crate::d_arrays`]).
+const fn pupupu_dust() -> [Vec3; 2] {
+    use crate::d_arrays as d;
+    let mut out = [Vec3::ZERO; 2];
+    let mut i = 0;
+    while i < 2 {
+        let p = d::GR_PUPUPU_WHISPY_DUST_EFFECT_POSITIONS[i];
+        out[i] = Vec3::new(p[0], p[1], p[2]);
+        i += 1;
+    }
+    out
+}
 
 /// `dGRPupupuWhispyDustEffectPositions`.
-const PUPUPU_DUST: [Vec3; 2] = [Vec3::new(-715.0, 100.0, 0.0), Vec3::new(-205.0, 100.0, 0.0)];
+const PUPUPU_DUST: [Vec3; 2] = pupupu_dust();
 
 /// `F_CST_DTOR32(180.0F)`: the dust's `rotate.y` when the wind blows left.
 const PUPUPU_DUST_TURN: f32 = 180.0 * ((core::f64::consts::PI / 180.0) as f32);

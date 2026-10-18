@@ -4,13 +4,14 @@
 use ssb_rom::pack::Pack;
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn fighter_anim_matches_a_table_scan() {
     let Some(bytes) = pack_bytes() else {
         eprintln!("skipping: SSB64_ROM unset or pack not built");
@@ -43,6 +44,7 @@ fn fighter_anim_matches_a_table_scan() {
 /// clips) agree with the scans they replaced: first match in table order,
 /// or last for the ones that searched from the end.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn special_rows_match_a_table_scan() {
     use ssb_rom::pack::AnimDesc;
     let Some(bytes) = pack_bytes() else {
@@ -125,6 +127,7 @@ fn special_rows_match_a_table_scan() {
 /// RE-470: the sprite lookups' index agrees with a scan of the sprite table
 /// in order, for every row's key and every fighter, role, costume and stage.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn sprite_lookups_match_a_table_scan() {
     use ssb_rom::pack::SpriteDesc;
     let Some(bytes) = pack_bytes() else {
@@ -192,6 +195,7 @@ fn sprite_lookups_match_a_table_scan() {
 /// RE-470: a costume lookup within a node's own rows agrees with the
 /// search of the whole table, for every override row and its neighbours.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn costume_rows_hold_every_override_of_their_node() {
     let Some(bytes) = pack_bytes() else {
         eprintln!("skipping: SSB64_ROM unset or pack not built");

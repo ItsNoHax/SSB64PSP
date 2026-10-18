@@ -67,25 +67,21 @@ pub mod kind {
     pub const M_BALL: u8 = 19;
 }
 
+/// A generated `nITKind*` table (`s32`) as the port's `u8` kinds.
+const fn item_kinds(kinds: [i32; ROWS]) -> [u8; ROWS] {
+    let mut out = [0u8; ROWS];
+    let mut i = 0;
+    while i < ROWS {
+        assert!(kinds[i] >= 0 && kinds[i] <= u8::MAX as i32);
+        out[i] = kinds[i] as u8;
+        i += 1;
+    }
+    out
+}
+
 /// `dMNVSItemSwitchTogglesItemKinds`: row 0 is the appearance rate.
-pub const TOGGLE_KINDS: [u8; ROWS] = [
-    0,
-    kind::SWORD,
-    kind::BAT,
-    kind::HAMMER,
-    kind::HARISEN,
-    kind::MS_BOMB,
-    kind::BOMB_HEI,
-    kind::N_BUMPER,
-    kind::G_SHELL,
-    kind::M_BALL,
-    kind::L_GUN,
-    kind::F_FLOWER,
-    kind::STAR_ROD,
-    kind::TOMATO,
-    kind::HEART,
-    kind::STAR,
-];
+pub const TOGGLE_KINDS: [u8; ROWS] =
+    item_kinds(crate::d_arrays::MN_VS_ITEM_SWITCH_TOGGLES_ITEM_KINDS);
 
 /// `(nITKindUtilityEnd - nITKindUtilityStart) + 1`: the rows.
 pub const ROWS: usize = 16;

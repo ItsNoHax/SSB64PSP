@@ -5,13 +5,14 @@ use ssb_rom::camanim;
 use ssb_rom::opening as op;
 
 fn archive() -> Option<(Vec<u8>, ssb_rom::Region)> {
-    let path = std::env::var_os("SSB64_ROM")?;
+    let path = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let data = std::fs::read(path).unwrap();
     let info = ssb_rom::rom::identify(&data).unwrap();
     Some((data, info.region))
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_camera_bakes_to_its_end() {
     let Some((data, region)) = archive() else {
         return;
@@ -49,6 +50,7 @@ fn every_camera_bakes_to_its_end() {
 /// select only 0, 2, 3 and 4, so romtool fills the hole
 /// (`sparse_opening_sprites`) rather than declining the animation.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_standoff_lightning_swaps_textures_from_a_sparse_table() {
     let Some((data, region)) = archive() else {
         return;

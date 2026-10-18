@@ -460,6 +460,7 @@ mod tests {
     /// audio.c:1097-1141: play -> 1 (stop, then read) -> 2 (start) -> 3;
     /// stop -> 1 (stop the player) -> 0 with the id cleared.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn bgm_status_machine() {
         let Some(mut sys) = system() else { return };
         let mut pcm = Vec::new();
@@ -505,6 +506,7 @@ mod tests {
     /// when fading down, although `vol` is a u32), applied per frame and
     /// clamped to [0, 30720]; the target is clamped to 30720 first.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fade_rate_negative() {
         let Some(mut sys) = system() else { return };
         let mut pcm = Vec::new();
@@ -528,6 +530,7 @@ mod tests {
     /// `syAudioPlayFGM` slots: the first free slot, freed by the thread
     /// when the script ends; the id is truncated to u16.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn sy_play_fgm_slots() {
         let Some(mut sys) = system() else { return };
         let mut pcm = Vec::new();
@@ -555,6 +558,7 @@ mod tests {
     /// BGMs, then a burst of FGMs over the music: audible, the music
     /// unclipped, at most 16 voices, nothing dropped, silent once stopped.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn renders_bgm_and_fgms() {
         let Some(mut sys) = system() else { return };
         for bgm in [33, 34] {
@@ -605,6 +609,7 @@ mod tests {
     /// under PSPLink (`fpu_traps`). The Charge Shot FGMs (5, 239-245)
     /// divided by a zero LFO period and killed the PSP's audio thread.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn every_fgm_renders_without_an_fpu_trap() {
         let Some(mut sys) = system() else { return };
         let mut pcm = Vec::new();
@@ -629,6 +634,7 @@ mod tests {
     /// Locks the renderer's output (`golden`): every optimisation of the
     /// synthesizer must keep these hashes.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn pcm_hash_golden() {
         let Some(section) = testdata::section() else {
             return;
@@ -642,6 +648,7 @@ mod tests {
     /// The same calls produce the same PCM, sample for sample, including
     /// 368-sample frames and the mono pass.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn deterministic() {
         let Some(section) = testdata::section() else {
             return;

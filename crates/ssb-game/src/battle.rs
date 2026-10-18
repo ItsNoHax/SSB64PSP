@@ -197,24 +197,13 @@ pub struct Battle {
 }
 
 /// `dIFCommonAnnounceDefeatedVoiceIDs`: "Player 1" to "Player 4".
-const DEFEATED_VOICES: [u16; 4] = [
-    crate::sound::id::nSYAudioVoiceAnnouncePlayer1,
-    crate::sound::id::nSYAudioVoiceAnnouncePlayer2,
-    crate::sound::id::nSYAudioVoiceAnnouncePlayer3,
-    crate::sound::id::nSYAudioVoiceAnnouncePlayer4,
-];
+const DEFEATED_VOICES: [u16; 4] = crate::d_arrays::IF_COMMON_ANNOUNCE_DEFEATED_VOICE_IDS;
 
 /// `nGRKindInishie`.
 const GKIND_INISHIE: u8 = 8;
 
 /// `dIFCommonAnnounceTimerVoiceIDs`: "one" to "five".
-const TIMER_VOICES: [u16; 5] = [
-    crate::sound::id::nSYAudioVoiceAnnounceOne,
-    crate::sound::id::nSYAudioVoiceAnnounceTwo,
-    crate::sound::id::nSYAudioVoiceAnnounceThree,
-    crate::sound::id::nSYAudioVoiceAnnounceFour,
-    crate::sound::id::nSYAudioVoiceAnnounceFive,
-];
+const TIMER_VOICES: [u16; 5] = crate::d_arrays::IF_COMMON_ANNOUNCE_TIMER_VOICE_IDS;
 
 /// `ARRAY_COUNT(sIFCommonBattleEndSoundsQueue)`.
 pub const END_SOUNDS_MAX: usize = 16;
@@ -275,7 +264,8 @@ impl Battle {
     /// timer (`ifCommonTimerMakeInterface` is not made) and the status
     /// "Go" from the first frame.
     pub fn new_demo(players: [Player; 4]) -> Battle {
-        let mut b = Battle::new(Rule::Time, TIMELIMIT_INFINITE, 2, players);
+        let stocks = crate::d_arrays::SC_MANAGER_DEFAULT_BATTLE_STATE_STOCKS[0] as i8;
+        let mut b = Battle::new(Rule::Time, TIMELIMIT_INFINITE, stocks, players);
         b.status = GameStatus::Go;
         b.go_tick = 0;
         b.is_demo = true;

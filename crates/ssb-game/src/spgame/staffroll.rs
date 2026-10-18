@@ -83,15 +83,56 @@ pub const BRACKET_COLOR: [u8; 3] = [0x78, 0x6E, 0x40];
 pub const BRACKET_SCALE: [f32; 2] = [2.0, 2.4];
 pub const BRACKET_LEFT: [f32; 2] = [328.0, 30.0];
 pub const BRACKET_RIGHT: [f32; 2] = [588.0, 30.0];
+/// `dSCStaffrollTextBoxDisplayList`, from the ROM ([`crate::d_arrays`]):
+/// `gsDPPipeSync`, `gsDPSetCycleType`, `gsDPSetRenderMode`,
+/// `gsDPSetFillColor`, four `gsDPFillRectangle`s and `gsSPEndDisplayList`,
+/// two words each.
+const TEXT_BOX_LIST: [u32; 18] = crate::d_arrays::SC_STAFFROLL_TEXT_BOX_DISPLAY_LIST;
+/// The word index of `gsDPSetFillColor`'s second word.
+const TEXT_BOX_FILL_COLOR_WORD: usize = 7;
+/// The word index of the first `gsDPFillRectangle`.
+const TEXT_BOX_FIRST_RECT_WORD: usize = 8;
+
+/// A 5-bit `RGBA5551` channel as 8 bits, the way the video interface widens
+/// it (the high bits repeated).
+const fn widen_5bit(c: u32) -> u8 {
+    ((c << 3) | (c >> 2)) as u8
+}
+
+/// `GPACK_FILL16(GPACK_RGBA5551(..))`: the fill colour as 8-bit channels.
+const fn text_box_color() -> [u8; 3] {
+    let fill = TEXT_BOX_LIST[TEXT_BOX_FILL_COLOR_WORD] >> 16;
+    [
+        widen_5bit((fill >> 11) & 0x1F),
+        widen_5bit((fill >> 6) & 0x1F),
+        widen_5bit((fill >> 1) & 0x1F),
+    ]
+}
+
 /// `dSCStaffrollTextBoxDisplayList`'s fill colour and rectangles
 /// (`G_CYC_FILL`, both corners inclusive).
-pub const TEXT_BOX_COLOR: [u8; 3] = [0x42, 0x3A, 0x31];
-pub const TEXT_BOX_RECTS: [[i32; 4]; 4] = [
-    [346, 35, 348, 164],
-    [346, 35, 584, 37],
-    [582, 35, 584, 164],
-    [346, 162, 584, 164],
-];
+pub const TEXT_BOX_COLOR: [u8; 3] = text_box_color();
+/// `gsDPFillRectangle(ulx, uly, lrx, lry)`'s corners, both inclusive: the
+/// command packs `lrx`, `lry` in its first word and `ulx`, `uly` in its
+/// second, each as 10.2 fixed point.
+const fn text_box_rects() -> [[i32; 4]; 4] {
+    let mut out = [[0; 4]; 4];
+    let mut i = 0;
+    while i < 4 {
+        let w0 = TEXT_BOX_LIST[TEXT_BOX_FIRST_RECT_WORD + i * 2];
+        let w1 = TEXT_BOX_LIST[TEXT_BOX_FIRST_RECT_WORD + i * 2 + 1];
+        out[i] = [
+            ((w1 >> 12) & 0xFFF) as i32 >> 2,
+            (w1 & 0xFFF) as i32 >> 2,
+            ((w0 >> 12) & 0xFFF) as i32 >> 2,
+            (w0 & 0xFFF) as i32 >> 2,
+        ];
+        i += 1;
+    }
+    out
+}
+
+pub const TEXT_BOX_RECTS: [[i32; 4]; 4] = text_box_rects();
 /// `scStaffrollHighlightProcDisplay`'s fill colour.
 pub const HIGHLIGHT_COLOR: [u8; 3] = [0x80, 0x00, 0x00];
 /// The role and company texts' colours.

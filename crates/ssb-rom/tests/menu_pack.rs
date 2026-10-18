@@ -219,8 +219,9 @@ fn data_menus_draw_only_packed_sprites() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_menu_pack_sprite_decodes() {
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let data = std::fs::read(path).unwrap();
@@ -453,8 +454,9 @@ fn the_bonus_select_pack_holds_its_records() {
 /// The title's baked plays: seven label children ending at their sprites'
 /// places, and "Press Start" looping every 39 plays.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_title_bakes_its_label_and_press_start_plays() {
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     use ssb_rom::title;
@@ -504,6 +506,7 @@ fn the_title_bakes_its_label_and_press_start_plays() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn sound_test_draws_only_packed_sprites() {
     use ssb_game::menu::sound_test::SoundTest;
 

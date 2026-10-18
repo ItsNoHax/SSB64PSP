@@ -10,12 +10,13 @@ fn word(d: &[u8], at: usize) -> u32 {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn pokemon_status_materials_and_conditional_meshes_are_bound_in_the_pack() {
     use ssb_rom::{
         mmonster as asset,
         pack::{flags, Pack},
     };
-    if std::env::var_os("SSB64_ROM").is_none() {
+    if ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).is_none() {
         return;
     }
     let bytes = std::fs::read(
@@ -94,7 +95,7 @@ fn half(d: &[u8], at: usize) -> i16 {
     i16::from_be_bytes(d[at..at + 2].try_into().unwrap())
 }
 fn archive_files(ids: &[u32]) -> Option<Vec<ssb_rom::archive::File>> {
-    let rom = std::fs::read(std::env::var_os("SSB64_ROM")?).unwrap();
+    let rom = std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?).unwrap();
     let archive = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();
     Some(ids.iter().map(|&id| archive.load(id).unwrap()).collect())
 }
@@ -264,6 +265,7 @@ fn item_weapon_attributes_match_the_rom() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn star_rod_smash_record_and_flower_angles_match_the_rom() {
     let Some(files) = archive_files(&[251]) else {
         return;

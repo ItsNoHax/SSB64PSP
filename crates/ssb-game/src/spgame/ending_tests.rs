@@ -350,6 +350,7 @@ fn finished_boss_session(backup: &Backup) -> session::Session {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_cleared_campaign_runs_the_ending_staff_roll_and_congratulations_into_a_challenger() {
     let mut backup = Backup {
         spgame_difficulty: Difficulty::Normal,
@@ -422,6 +423,7 @@ fn without_its_assets_the_staff_roll_stays_a_host_request() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_won_challenge_shows_its_newcomer_message_then_returns_to_startup() {
     let mut backup = Backup::default();
     let mut f = frontend::Frontend::new(Default::default(), &backup);
@@ -450,6 +452,7 @@ fn a_won_challenge_shows_its_newcomer_message_then_returns_to_startup() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_classic_mario_message_follows_a_newcomers_when_due() {
     let mut backup = Backup {
         ground_mask: GROUND_MASK_ALL,

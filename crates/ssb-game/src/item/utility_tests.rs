@@ -47,6 +47,7 @@ fn waiting(pool: &mut ItemPool, kind: Kind) -> u8 {
     panic!("{kind:?} never came to rest");
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn appear_actor_draws_its_wait_then_drops_a_weighted_kind_on_an_item_point() {
     let mut weights = [0; 20];
@@ -114,6 +115,7 @@ fn appear_actor_draws_its_wait_then_drops_a_weighted_kind_on_an_item_point() {
     }
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn every_common_kind_fits_both_tables() {
     let weights = [1; 20];

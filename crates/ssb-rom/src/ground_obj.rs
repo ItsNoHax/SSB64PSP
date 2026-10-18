@@ -39,6 +39,10 @@
 //! ([`Leaf`]). The pack builder gives each of these a one-node graph keyed
 //! by the label the controller passes (RE-365).
 
+use crate::d_arrays::{
+    GR_PUPUPU_WHISPY_EYES_ANIMS, GR_PUPUPU_WHISPY_EYES_TEXTURES, GR_PUPUPU_WHISPY_MOUTH_ANIMS,
+    GR_PUPUPU_WHISPY_MOUTH_TEXTURES, GR_YOSTER_CLOUD_MAT_ANIM_JOINTS,
+};
 use crate::figatree::JointPose;
 use crate::objanim::{AnimError, StageJoint};
 use crate::pack::{AnimDesc, AnimJoint, ObjectDesc, Pack, MODEL_SCALE};
@@ -373,33 +377,129 @@ const fn table(name: &'static str, object: u8, script: u32) -> GroundAnimAsset {
 /// the lookup functions below compute; do not reorder.
 pub const ANIMS: [GroundAnimAsset; 44] = [
     // `dGRPupupuWhispyEyesAnims[lr][status][0]`: Turn, Blink.
-    table("WhispyEyesLeftTurn", WHISPY_EYES, 0x11A0),
-    table("WhispyEyesLeftBlink", WHISPY_EYES, 0x12B0),
-    table("WhispyEyesRightTurn", WHISPY_EYES, 0x1220),
-    table("WhispyEyesRightBlink", WHISPY_EYES, 0x1330),
+    table(
+        "WhispyEyesLeftTurn",
+        WHISPY_EYES,
+        GR_PUPUPU_WHISPY_EYES_ANIMS[0][0][0],
+    ),
+    table(
+        "WhispyEyesLeftBlink",
+        WHISPY_EYES,
+        GR_PUPUPU_WHISPY_EYES_ANIMS[0][1][0],
+    ),
+    table(
+        "WhispyEyesRightTurn",
+        WHISPY_EYES,
+        GR_PUPUPU_WHISPY_EYES_ANIMS[1][0][0],
+    ),
+    table(
+        "WhispyEyesRightBlink",
+        WHISPY_EYES,
+        GR_PUPUPU_WHISPY_EYES_ANIMS[1][1][0],
+    ),
     // `dGRPupupuWhispyMouthAnims[lr][status][0]`: Stretch, Turn, Open, Close.
-    table("WhispyMouthLeftStretch", WHISPY_MOUTH, 0x18B0),
-    table("WhispyMouthLeftTurn", WHISPY_MOUTH, 0x1BE0),
-    table("WhispyMouthLeftOpen", WHISPY_MOUTH, 0x1E80),
-    table("WhispyMouthLeftClose", WHISPY_MOUTH, 0x2100),
-    table("WhispyMouthRightStretch", WHISPY_MOUTH, 0x1A40),
-    table("WhispyMouthRightTurn", WHISPY_MOUTH, 0x1D30),
-    table("WhispyMouthRightOpen", WHISPY_MOUTH, 0x22F0),
-    table("WhispyMouthRightClose", WHISPY_MOUTH, 0x2590),
+    table(
+        "WhispyMouthLeftStretch",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][0][0],
+    ),
+    table(
+        "WhispyMouthLeftTurn",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][1][0],
+    ),
+    table(
+        "WhispyMouthLeftOpen",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][2][0],
+    ),
+    table(
+        "WhispyMouthLeftClose",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][3][0],
+    ),
+    table(
+        "WhispyMouthRightStretch",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][0][0],
+    ),
+    table(
+        "WhispyMouthRightTurn",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][1][0],
+    ),
+    table(
+        "WhispyMouthRightOpen",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][2][0],
+    ),
+    table(
+        "WhispyMouthRightClose",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][3][0],
+    ),
     // `dGRPupupuWhispyMouthTextures[lr][phase]`, on the back flowers.
-    table("WhispyMouthLeftOpenTexture", FLOWERS_BACK, 0x2BE0),
-    table("WhispyMouthLeftBlowTexture", FLOWERS_BACK, 0x2C30),
-    table("WhispyMouthLeftCloseTexture", FLOWERS_BACK, 0x2C80),
-    table("WhispyMouthRightOpenTexture", FLOWERS_BACK, 0x2CD0),
-    table("WhispyMouthRightBlowTexture", FLOWERS_BACK, 0x2D20),
-    table("WhispyMouthRightCloseTexture", FLOWERS_BACK, 0x2D70),
+    table(
+        "WhispyMouthLeftOpenTexture",
+        FLOWERS_BACK,
+        GR_PUPUPU_WHISPY_MOUTH_TEXTURES[0][0],
+    ),
+    table(
+        "WhispyMouthLeftBlowTexture",
+        FLOWERS_BACK,
+        GR_PUPUPU_WHISPY_MOUTH_TEXTURES[0][1],
+    ),
+    table(
+        "WhispyMouthLeftCloseTexture",
+        FLOWERS_BACK,
+        GR_PUPUPU_WHISPY_MOUTH_TEXTURES[0][2],
+    ),
+    table(
+        "WhispyMouthRightOpenTexture",
+        FLOWERS_BACK,
+        GR_PUPUPU_WHISPY_MOUTH_TEXTURES[1][0],
+    ),
+    table(
+        "WhispyMouthRightBlowTexture",
+        FLOWERS_BACK,
+        GR_PUPUPU_WHISPY_MOUTH_TEXTURES[1][1],
+    ),
+    table(
+        "WhispyMouthRightCloseTexture",
+        FLOWERS_BACK,
+        GR_PUPUPU_WHISPY_MOUTH_TEXTURES[1][2],
+    ),
     // `dGRPupupuWhispyEyesTextures[lr][phase]`, on the front flowers.
-    table("WhispyEyesLeft0Texture", FLOWERS_FRONT, 0x33E0),
-    table("WhispyEyesLeft1Texture", FLOWERS_FRONT, 0x3450),
-    table("WhispyEyesLeft2Texture", FLOWERS_FRONT, 0x34B0),
-    table("WhispyEyesRight0Texture", FLOWERS_FRONT, 0x3510),
-    table("WhispyEyesRight1Texture", FLOWERS_FRONT, 0x35C0),
-    table("WhispyEyesRight2Texture", FLOWERS_FRONT, 0x3660),
+    table(
+        "WhispyEyesLeft0Texture",
+        FLOWERS_FRONT,
+        GR_PUPUPU_WHISPY_EYES_TEXTURES[0][0],
+    ),
+    table(
+        "WhispyEyesLeft1Texture",
+        FLOWERS_FRONT,
+        GR_PUPUPU_WHISPY_EYES_TEXTURES[0][1],
+    ),
+    table(
+        "WhispyEyesLeft2Texture",
+        FLOWERS_FRONT,
+        GR_PUPUPU_WHISPY_EYES_TEXTURES[0][2],
+    ),
+    table(
+        "WhispyEyesRight0Texture",
+        FLOWERS_FRONT,
+        GR_PUPUPU_WHISPY_EYES_TEXTURES[1][0],
+    ),
+    table(
+        "WhispyEyesRight1Texture",
+        FLOWERS_FRONT,
+        GR_PUPUPU_WHISPY_EYES_TEXTURES[1][1],
+    ),
+    table(
+        "WhispyEyesRight2Texture",
+        FLOWERS_FRONT,
+        GR_PUPUPU_WHISPY_EYES_TEXTURES[1][2],
+    ),
     // `grJungleMakeTaruCann`, `grJungleTaruCannAddAnimOffset` (the
     // barrel's child DObj).
     table("TaruCannDefault", TARUCANN, 0xB20),
@@ -543,22 +643,62 @@ const YOSTER_HEAD: u32 = 0x100;
 /// the index [`mat_anim_of`] and the cloud constants name; do not reorder.
 pub const MAT_ANIMS: [GroundMatAnimAsset; 15] = [
     // `dGRPupupuWhispyEyesAnims[lr][Turn][1]`; Blink has none.
-    mat("WhispyEyesLeftTurn", WHISPY_EYES, 0x11E0),
-    mat("WhispyEyesRightTurn", WHISPY_EYES, 0x1270),
+    mat(
+        "WhispyEyesLeftTurn",
+        WHISPY_EYES,
+        GR_PUPUPU_WHISPY_EYES_ANIMS[0][0][1],
+    ),
+    mat(
+        "WhispyEyesRightTurn",
+        WHISPY_EYES,
+        GR_PUPUPU_WHISPY_EYES_ANIMS[1][0][1],
+    ),
     // `dGRPupupuWhispyMouthAnims[lr][status][1]`.
-    mat("WhispyMouthLeftStretch", WHISPY_MOUTH, 0x1A00),
-    mat("WhispyMouthLeftTurn", WHISPY_MOUTH, 0x1CE0),
-    mat("WhispyMouthLeftOpen", WHISPY_MOUTH, 0x20B0),
-    mat("WhispyMouthLeftClose", WHISPY_MOUTH, 0x22A0),
-    mat("WhispyMouthRightStretch", WHISPY_MOUTH, 0x1BA0),
-    mat("WhispyMouthRightTurn", WHISPY_MOUTH, 0x1E30),
-    mat("WhispyMouthRightOpen", WHISPY_MOUTH, 0x2540),
-    mat("WhispyMouthRightClose", WHISPY_MOUTH, 0x2740),
+    mat(
+        "WhispyMouthLeftStretch",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][0][1],
+    ),
+    mat(
+        "WhispyMouthLeftTurn",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][1][1],
+    ),
+    mat(
+        "WhispyMouthLeftOpen",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][2][1],
+    ),
+    mat(
+        "WhispyMouthLeftClose",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][3][1],
+    ),
+    mat(
+        "WhispyMouthRightStretch",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][0][1],
+    ),
+    mat(
+        "WhispyMouthRightTurn",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][1][1],
+    ),
+    mat(
+        "WhispyMouthRightOpen",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][2][1],
+    ),
+    mat(
+        "WhispyMouthRightClose",
+        WHISPY_MOUTH,
+        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][3][1],
+    ),
     // `grZebesMakeAcid`: `llGRZebesMapAcidMatAnimJoint`.
     mat("Acid", ACID, 0xBD0),
     // `dGRYosterCloudMatAnimJoints`.
-    mat("CloudSolid", CLOUD, 0x670),
-    mat("CloudEvaporate", CLOUD, 0x690),
+    mat("CloudSolid", CLOUD, GR_YOSTER_CLOUD_MAT_ANIM_JOINTS[0]),
+    mat("CloudEvaporate", CLOUD, GR_YOSTER_CLOUD_MAT_ANIM_JOINTS[1]),
     // `itPakkunWaitProcUpdate` / `itPakkunAppearProcDamage`.
     root_mat("PakkunAppear", PAKKUN, 0xCF8),
     root_mat("PakkunDamaged", PAKKUN, 0xE04),

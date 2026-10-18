@@ -33,6 +33,7 @@ fn digits_then_percent() {
     assert_eq!(digits[..3], [4, 0, PERCENT]);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn zero_percent_is_centred_on_the_player_slot() {
     let d = shown(0, 0);
@@ -55,6 +56,7 @@ fn zero_percent_is_centred_on_the_player_slot() {
     assert!(!g[1].solid);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn a_hit_swells_and_flashes_then_settles() {
     let mut d = shown(1, 0);
@@ -79,6 +81,7 @@ fn a_hit_swells_and_flashes_then_settles() {
     assert_eq!(d.scale, 1.0);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn damage_darkens_the_digits() {
     let d = shown(2, 150);
@@ -123,6 +126,7 @@ fn hidden_until_shown_and_gone_after_the_last_stock() {
     assert_eq!(d.glyphs(true, &SIZES).count(), 0);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn the_emblem_sits_behind_the_digits() {
     // Mario's 27x25 emblem for player 1: 55 - 13.5 + 3, 210 - 12.5 - 3.
@@ -130,6 +134,7 @@ fn the_emblem_sits_behind_the_digits() {
     assert_eq!(emblem_origin(POSITION_X[1], 30, 24), (113.0, 195.0));
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn the_timer_rounds_up_below_the_limit() {
     let limit = 3 * 3600;
@@ -147,6 +152,7 @@ fn timer_glyphs_are_centred_on_their_slots() {
     assert_eq!(timer_origin(232.0, 13, 17), (225.0, 21.0));
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn stock_icons_sit_above_the_damage() {
     // A time battle: one 8x10 icon, 55 - 24 - 4 across, 210 - 5 - 20 down.
@@ -184,6 +190,7 @@ fn single_stock_follows_the_scene_flags_then_the_rule() {
     assert_eq!(is_single_stock(None, None, 0), None);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn training_shows_one_stock_icon_per_player() {
     // RE-515: an N64 warp-boot Training capture (Rice, 320x240) has
@@ -197,6 +204,7 @@ fn training_shows_one_stock_icon_per_player() {
     }
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn a_stolen_stock_arcs_fifteen_up_and_lands_after_thirty_frames() {
     // Port 2's icon (16 x 16) flying to port 0's stocks.
@@ -215,6 +223,7 @@ fn a_stolen_stock_arcs_fifteen_up_and_lands_after_thirty_frames() {
     assert_eq!(top, start_y - 15.0);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn scores_and_snaps_sit_on_the_interface_position() {
     assert_eq!(stock_snap_position(55), (55.0, 210.0));

@@ -14,7 +14,7 @@ fn fighters() -> impl Iterator<Item = FighterKind> {
 }
 
 fn inputs() -> Option<(Vec<u8>, Vec<u8>)> {
-    let rom = std::fs::read(std::env::var_os("SSB64_ROM")?).unwrap();
+    let rom = std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?).unwrap();
     let pack = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../assets/generated/ssb64.pak"
@@ -173,6 +173,7 @@ fn both_details_pack_the_source_models_fallbacks_and_reachable_parts() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn packed_texture_parts_have_every_reachable_sprite_and_valid_texture() {
     let Some((_, bytes)) = inputs() else { return };
     let p = Pack::open(&bytes).unwrap();

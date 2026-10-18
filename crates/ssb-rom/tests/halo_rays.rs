@@ -9,8 +9,11 @@ use ssb_rom::Archive;
 const RAYS: (u32, u32) = (85, 0x2A88);
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_rays_list_is_primitive_colour_and_texel_alpha() {
-    let Some(rom) = std::env::var_os("SSB64_ROM").and_then(|p| std::fs::read(p).ok()) else {
+    let Some(rom) =
+        ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).and_then(|p| std::fs::read(p).ok())
+    else {
         return;
     };
     let info = ssb_rom::rom::identify(&rom).unwrap();
@@ -32,8 +35,9 @@ fn the_rays_list_is_primitive_colour_and_texel_alpha() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_packed_rays_keep_their_texture_and_blend_by_its_alpha() {
-    let Some(_) = std::env::var_os("SSB64_ROM") else {
+    let Some(_) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let path =

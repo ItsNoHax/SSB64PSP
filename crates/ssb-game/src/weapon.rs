@@ -147,21 +147,21 @@ pub struct WeaponSpawn {
     pub stale: crate::stale::WeaponStale,
 }
 
-/// Mario's `dMarioSpecial1_Fireball_WeaponAttributes` and the fixed wrapper
-/// attributes in `wpmariofireball.c` (US version).
-pub const MARIO_FIREBALL_LIFETIME: u16 = 140;
-pub const MARIO_FIREBALL_GRAVITY: f32 = 1.2;
-pub const MARIO_FIREBALL_TERMINAL_VELOCITY: f32 = 55.0;
-pub const MARIO_FIREBALL_SPEED: f32 = 50.0;
-pub const MARIO_FIREBALL_ANGLE: f32 = -0.087_266_46; // -5 degrees
-pub const MARIO_FIREBALL_REBOUND: f32 = 0.85;
-pub const MARIO_FIREBALL_MIN_SPEED: f32 = 30.0;
+/// Mario's row of `dWPMarioFireballWeaponAttributes` (`wpmariofireball.c`,
+/// US version), read from the ROM at build time ([`FIREBALL_ATTRIBUTES`]).
+pub const MARIO_FIREBALL_LIFETIME: u16 = FIREBALL_ATTRIBUTES[0].lifetime;
+pub const MARIO_FIREBALL_GRAVITY: f32 = FIREBALL_ATTRIBUTES[0].gravity;
+pub const MARIO_FIREBALL_TERMINAL_VELOCITY: f32 = FIREBALL_ATTRIBUTES[0].vel_terminal;
+pub const MARIO_FIREBALL_SPEED: f32 = FIREBALL_ATTRIBUTES[0].vel_base;
+pub const MARIO_FIREBALL_ANGLE: f32 = FIREBALL_ATTRIBUTES[0].angle;
+pub const MARIO_FIREBALL_REBOUND: f32 = FIREBALL_ATTRIBUTES[0].rebound;
+pub const MARIO_FIREBALL_MIN_SPEED: f32 = FIREBALL_ATTRIBUTES[0].vel_min;
 
 /// Luigi's row of `dWPMarioFireballWeaponAttributes` (US): no gravity, a
 /// slower level shot and a shorter life. Its `WPAttributes` in
 /// `222_LuigiSpecial1.c` differ from Mario's only in damage.
-pub const LUIGI_FIREBALL_LIFETIME: u16 = 80;
-pub const LUIGI_FIREBALL_SPEED: f32 = 36.0;
+pub const LUIGI_FIREBALL_LIFETIME: u16 = FIREBALL_ATTRIBUTES[1].lifetime;
+pub const LUIGI_FIREBALL_SPEED: f32 = FIREBALL_ATTRIBUTES[1].vel_base;
 pub const LUIGI_FIREBALL_DAMAGE: i32 = 6;
 
 /// The per-kind values `wpMarioFireball*` read through
@@ -183,31 +183,46 @@ pub struct FireballAttributes {
     pub damage: i32,
 }
 
-/// `dWPMarioFireballWeaponAttributes`: index 0 is Mario, 1 is Luigi.
+/// `dWPMarioFireballWeaponAttributes`: index 0 is Mario, 1 is Luigi. The
+/// values are the ROM's ([`crate::d_arrays`]); the damage is the hitbox's
+/// (`WPAttributes`, not part of this table).
 pub const FIREBALL_ATTRIBUTES: [FireballAttributes; 2] = [
-    FireballAttributes {
-        lifetime: MARIO_FIREBALL_LIFETIME,
-        vel_terminal: MARIO_FIREBALL_TERMINAL_VELOCITY,
-        vel_min: MARIO_FIREBALL_MIN_SPEED,
-        gravity: MARIO_FIREBALL_GRAVITY,
-        rebound: MARIO_FIREBALL_REBOUND,
-        rotate_speed: 0.349_065_87, // F_CLC_DTOR32(20.0F)
-        angle: MARIO_FIREBALL_ANGLE,
-        vel_base: MARIO_FIREBALL_SPEED,
-        damage: MARIO_FIREBALL_HITBOX.damage,
-    },
-    FireballAttributes {
-        lifetime: LUIGI_FIREBALL_LIFETIME,
-        vel_terminal: 55.0,
-        vel_min: 30.0,
-        gravity: 0.0,
-        rebound: 0.85,
-        rotate_speed: 0.436_332_3, // F_CLC_DTOR32(25.0F)
-        angle: 0.0,
-        vel_base: LUIGI_FIREBALL_SPEED,
-        damage: LUIGI_FIREBALL_DAMAGE,
-    },
+    fireball_attributes(0, MARIO_FIREBALL_HITBOX.damage),
+    fireball_attributes(1, LUIGI_FIREBALL_DAMAGE),
 ];
+
+/// [`FireballAttributes::angle`] is one value because both rows have the
+/// same ground and air angle (`angle_ground`, `angle_air`), so the spawn does
+/// not need the owner's situation.
+const _: () = {
+    use crate::d_arrays as d;
+    let mut row = 0;
+    while row < 2 {
+        assert!(
+            d::WP_MARIO_FIREBALL_WEAPON_ATTRIBUTES_ANGLE_GROUND[row].to_bits()
+                == d::WP_MARIO_FIREBALL_WEAPON_ATTRIBUTES_ANGLE_AIR[row].to_bits()
+        );
+        row += 1;
+    }
+};
+
+/// One row of `dWPMarioFireballWeaponAttributes`.
+const fn fireball_attributes(row: usize, damage: i32) -> FireballAttributes {
+    use crate::d_arrays as d;
+    let lifetime = d::WP_MARIO_FIREBALL_WEAPON_ATTRIBUTES_LIFETIME[row];
+    assert!(lifetime >= 0 && lifetime <= u16::MAX as i32);
+    FireballAttributes {
+        lifetime: lifetime as u16,
+        vel_terminal: d::WP_MARIO_FIREBALL_WEAPON_ATTRIBUTES_VEL_TERMINAL[row],
+        vel_min: d::WP_MARIO_FIREBALL_WEAPON_ATTRIBUTES_VEL_MIN[row],
+        gravity: d::WP_MARIO_FIREBALL_WEAPON_ATTRIBUTES_GRAVITY[row],
+        rebound: d::WP_MARIO_FIREBALL_WEAPON_ATTRIBUTES_COLLIDE_REBOUND[row],
+        rotate_speed: d::WP_MARIO_FIREBALL_WEAPON_ATTRIBUTES_ROTATE_SPEED[row],
+        angle: d::WP_MARIO_FIREBALL_WEAPON_ATTRIBUTES_ANGLE_GROUND[row],
+        vel_base: d::WP_MARIO_FIREBALL_WEAPON_ATTRIBUTES_VEL_BASE[row],
+        damage,
+    }
+}
 
 /// `WPAttributes.map_coll` from Mario Special1: the projectile's collision
 /// diamond is deliberately larger than its rendered sprite.
@@ -430,54 +445,26 @@ pub const SAMUS_CHARGE_SHOT_HITBOX: Hitbox = Hitbox {
     shield_damage: 1,
 };
 
+/// `dWPSamusChargeShotWeaponAttributes`' sound IDs, a charge level each.
+const fn samus_charge_shot_fgms() -> [(u16, u16, u16); 8] {
+    use crate::d_arrays as d;
+    let mut out = [(0, 0, 0); 8];
+    let mut i = 0;
+    while i < 8 {
+        let shoot = d::WP_SAMUS_CHARGE_SHOT_WEAPON_ATTRIBUTES_SHOOT_FGM_ID[i];
+        let charge = d::WP_SAMUS_CHARGE_SHOT_WEAPON_ATTRIBUTES_CHARGE_FGM_ID[i];
+        let attack = d::WP_SAMUS_CHARGE_SHOT_WEAPON_ATTRIBUTES_ATTACK_FGM_ID[i];
+        assert!(shoot <= u16::MAX as u32 && charge <= u16::MAX as u32 && attack <= u16::MAX as u32);
+        out[i] = (shoot as u16, charge as u16, attack as u16);
+        i += 1;
+    }
+    out
+}
+
 /// `dWPSamusChargeShotWeaponAttributes`' `(shoot_fgm_id, charge_fgm_id,
 /// attack_fgm_id)` per charge level: the launch sound, the owner's charging
 /// loop, and the hit sound `wpSamusChargeShotLaunch` gives the shot.
-pub const SAMUS_CHARGE_SHOT_FGMS: [(u16, u16, u16); 8] = {
-    use crate::sound::id::*;
-    [
-        (
-            nSYAudioFGMSamusSpecialNShootS,
-            nSYAudioFGMSamusSpecialNCharge0,
-            nSYAudioFGMShockS,
-        ),
-        (
-            nSYAudioFGMSamusSpecialNShootS,
-            nSYAudioFGMSamusSpecialNCharge1,
-            nSYAudioFGMShockS,
-        ),
-        (
-            nSYAudioFGMSamusSpecialNShootM,
-            nSYAudioFGMSamusSpecialNCharge2,
-            nSYAudioFGMShockM,
-        ),
-        (
-            nSYAudioFGMSamusSpecialNShootM,
-            nSYAudioFGMSamusSpecialNCharge3,
-            nSYAudioFGMShockM,
-        ),
-        (
-            nSYAudioFGMSamusSpecialNShootM,
-            nSYAudioFGMSamusSpecialNCharge4,
-            nSYAudioFGMShockM,
-        ),
-        (
-            nSYAudioFGMSamusSpecialNShootL,
-            nSYAudioFGMSamusSpecialNCharge5,
-            nSYAudioFGMShockL,
-        ),
-        (
-            nSYAudioFGMSamusSpecialNShootL,
-            nSYAudioFGMSamusSpecialNCharge6,
-            nSYAudioFGMShockL,
-        ),
-        (
-            nSYAudioFGMSamusSpecialNShootF,
-            nSYAudioFGMSamusSpecialNCharge7,
-            nSYAudioFGMShockL,
-        ),
-    ]
-};
+pub const SAMUS_CHARGE_SHOT_FGMS: [(u16, u16, u16); 8] = samus_charge_shot_fgms();
 
 /// A charge level's sprite scale, `gfx_size / WPCHARGESHOT_GFX_SIZE_DIV`.
 /// The charging shot takes it from the current level every update.
@@ -5146,6 +5133,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn mario_fireball_uses_the_sourced_launch_and_lifetime() {
         let mut weapons = WeaponPool::default();
         assert!(weapons.spawn(WeaponSpawn {
@@ -5163,7 +5151,10 @@ mod tests {
 
         weapons.tick(open_air, None);
         let fireball = weapons.first_fireball().unwrap();
-        assert_eq!(fireball.lifetime, MARIO_FIREBALL_LIFETIME - 1);
+        assert_eq!(
+            fireball.lifetime,
+            std::hint::black_box(MARIO_FIREBALL_LIFETIME) - 1
+        );
         let (sin, _) = sin_cos(MARIO_FIREBALL_ANGLE);
         assert_eq!(
             fireball.velocity.y,
@@ -5176,6 +5167,7 @@ mod tests {
     /// `wpMarioFireballProcUpdate` adds the row's `rotate_speed` to
     /// `rotate.x` on every update: 20 degrees for Mario, 25 for Luigi.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fireballs_spin_by_their_rows_rotate_speed_each_update() {
         for (kind, degrees) in [
             (WeaponKind::MarioFireball, 20.0f32),
@@ -5369,6 +5361,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fox_reflector_transfers_fireball_ownership_and_reverses_it() {
         let mut weapons = WeaponPool::default();
         weapons.spawn(WeaponSpawn {
@@ -6123,6 +6116,7 @@ mod tests {
 
     /// `wpProcessProcWeaponMain`: strictly outside any edge deletes it.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_weapon_past_the_blast_zone_is_deleted() {
         let bounds = BlastZone {
             top: 5000.0,

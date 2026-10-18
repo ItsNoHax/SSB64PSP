@@ -17,7 +17,7 @@ fn rng_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -149,6 +149,7 @@ fn open(bytes: &[u8]) -> Pack<'_> {
 /// `dFTYoshiData` names `particles_unk2`. An explosion must use that
 /// bank's script and textures, not common-bank script 3.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn yoshi_explosion_runs_the_packed_fighter_bank_and_ends() {
     let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
@@ -157,7 +158,7 @@ fn yoshi_explosion_runs_the_packed_fighter_bank_and_ends() {
         pack: &pack,
         common: pack.particle_bank(0).unwrap(),
     };
-    let rom = std::fs::read(std::env::var_os("SSB64_ROM").unwrap()).unwrap();
+    let rom = std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).unwrap()).unwrap();
     let (scripts, textures) =
         ssb_rom::particle::decode_bank(&rom, ssb_rom::particle::BANKS[3]).unwrap();
     let expected = &scripts[3];
@@ -198,6 +199,7 @@ fn yoshi_explosion_runs_the_packed_fighter_bank_and_ends() {
 /// uses the vortex, the attach `DObj`s or the distance opcodes, which the
 /// runtime does not model, and every one ends.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_match_maker_ends_without_the_unmodelled_features() {
     let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
@@ -352,6 +354,7 @@ fn every_match_maker_ends_without_the_unmodelled_features() {
 /// particles, 80 transforms and 24 generators, and the 38 effect structs,
 /// never run out.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_four_player_melee_stays_inside_the_source_pools() {
     let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
@@ -403,6 +406,7 @@ fn a_four_player_melee_stays_inside_the_source_pools() {
 /// quake plays. The particle pools never run out: only the source's own
 /// five-free rule refuses, and the display pool never does.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_dusty_melee_stays_inside_the_source_pools() {
     let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
@@ -468,6 +472,7 @@ fn a_dusty_melee_stays_inside_the_source_pools() {
 /// source's five-free rule refuses; the particle and display pools never
 /// run out.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_melee_of_weapons_stays_inside_the_source_pools() {
     let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
@@ -539,6 +544,7 @@ fn a_melee_of_weapons_stays_inside_the_source_pools() {
 /// list 0. Each uses only what the runtime models and ends inside the
 /// pools.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_results_confetti_falls_on_lists_four_and_zero_and_ends() {
     let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
@@ -601,6 +607,7 @@ fn the_results_confetti_falls_on_lists_four_and_zero_and_ends() {
 /// `...StockSteal{Start,End}...`, `...BattleScoreMakeEffect`) are packed
 /// common-bank scripts on list 3, the effect camera's, and each ends.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_interface_effects_run_on_list_three_and_end() {
     let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
@@ -652,6 +659,7 @@ fn the_interface_effects_run_on_list_three_and_end() {
 /// from 436000293 (frame 3249) to -1873138207 at frame 3250, those nine
 /// draws and the three of Mario's dust after them.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_item_spawn_swirl_draws_nine_times_at_the_next_frame_start() {
     let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
@@ -692,6 +700,7 @@ fn the_item_spawn_swirl_draws_nine_times_at_the_next_frame_start() {
 /// Twister, its vortex generators run until the subside ejects them by
 /// generator id, and every pool empties once their particles die.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_twister_vortex_follows_the_twister_and_ends_when_ejected() {
     let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
@@ -767,6 +776,7 @@ fn the_twister_vortex_follows_the_twister_and_ends_when_ejected() {
 /// effects on a ready transform; ejecting by the transform's generator id
 /// ends each, and every pool empties once its particles die.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn whispys_leaves_and_dust_run_until_ejected() {
     let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };
@@ -811,6 +821,7 @@ fn whispys_leaves_and_dust_run_until_ejected() {
 /// 5, struct-less, under a ready transform at the place; each runs to its
 /// end in the Kirby bank (RE-541).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn kirbys_stone_bank_scripts_run_in_the_kirby_bank_and_end() {
     let _rng = rng_lock();
     let Some(bytes) = pack_bytes() else { return };

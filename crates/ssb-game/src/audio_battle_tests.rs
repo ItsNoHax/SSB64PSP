@@ -81,6 +81,7 @@ fn a_reset_stops_every_fgm_and_no_music() {
     assert_eq!(r.take(), [Call::StopAllFgm]);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn the_last_five_seconds_count_down_and_fade_the_music() {
     let r = Recorder::install();
@@ -275,6 +276,7 @@ fn the_battle_scenes_start_and_leave_their_music_in_the_source_order() {
     assert_eq!(r.take(), [Call::PlayBgm(0, nSYAudioBGMLast)]);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn a_hit_sound_pans_against_the_attackers_side() {
     let r = Recorder::install();
@@ -294,6 +296,7 @@ fn a_hit_sound_pans_against_the_attackers_side() {
     );
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn a_hit_stops_the_attackers_store_info_sound_first() {
     let r = Recorder::install();
@@ -394,6 +397,7 @@ mod crowd {
         }
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn a_fighter_at_100_percent_landing_a_combo_starts_the_chant() {
         let r = Recorder::install();
@@ -436,6 +440,7 @@ mod crowd {
         assert_eq!(plays(&r.take()), [nSYAudioVoiceAnnounceDefeated]);
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn only_the_twelve_fighters_have_a_chant() {
         assert!(public::has_call(FighterKind::Ness));

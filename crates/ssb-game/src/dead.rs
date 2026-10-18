@@ -52,7 +52,7 @@ pub const HALO_STAND_WAIT: i32 = 75;
 /// `ftCommonRebirthDownSetStatus`'s `frame_begin`.
 pub const REBIRTH_DOWN_FRAME_BEGIN: f32 = 100.0;
 /// `dFTCommonRebirthOffsetsX`, by halo number.
-pub const REBIRTH_OFFSETS_X: [f32; 4] = [0.0, -1000.0, 1000.0, -2000.0];
+pub const REBIRTH_OFFSETS_X: [f32; 4] = crate::d_arrays::FT_COMMON_REBIRTH_OFFSETS_X;
 
 /// `nFTCameraMode*`: how the battle camera treats the fighter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -22,6 +22,14 @@ extern crate alloc;
 pub mod array_vec;
 pub mod audio;
 pub mod coord;
+/// The decomp's small `d*` data arrays, generated at build time from the
+/// ROM by `ssb-tablegen` (`d_arrays`; D-048). Each constant is the symbol's
+/// name without the `d`, in `UPPER_SNAKE`. The sine table's words are
+/// ROM data, not approximations of the standard constants.
+#[allow(clippy::approx_constant)]
+mod d_arrays {
+    include!(concat!(env!("OUT_DIR"), "/d_arrays.rs"));
+}
 #[cfg(test)]
 mod fpu_traps;
 pub mod guard_clip;

@@ -141,6 +141,7 @@ fn particles() -> (
     )
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn a_blast_makes_its_players_streaks_turned_like_the_blast() {
     let mut ko = KoEffects::default();

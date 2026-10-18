@@ -57,7 +57,7 @@ pub const TEAM_GREEN: u8 = 2;
 const DEFAULT_TEAMS: [u8; PLAYERS] = [TEAM_RED, TEAM_RED, TEAM_BLUE, TEAM_BLUE];
 
 /// `dIFCommonPlayerTeamColorIDs` (`if/ifcommon.c`), indexed by team.
-pub const TEAM_COLOR_IDS: [u8; 5] = [0, 1, 3, 4, 0];
+pub const TEAM_COLOR_IDS: [u8; 5] = crate::d_arrays::IF_COMMON_PLAYER_TEAM_COLOR_IDS;
 
 /// `I_MIN_TO_TICS(5)`.
 const RETURN_TICS: i32 = 5 * 60 * 60;

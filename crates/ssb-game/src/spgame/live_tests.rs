@@ -517,6 +517,7 @@ fn shield_drain_clears_attack_identity_without_awarding_shield_breaker() {
     assert!(!s.game.as_ref().unwrap().bonus.shield_breaker);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn capture_preserves_last_hit_until_escape_resets_world_attribution() {
     let (mut s, _) = session(Stage::Link);

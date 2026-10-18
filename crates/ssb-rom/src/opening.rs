@@ -270,12 +270,14 @@ impl CamAnim {
 
 /// `gmCameraMakeMovieCamera`'s camera before Jungle's script:
 /// `dGMCameraPerspDefault`'s 38 degrees and the eye
-/// `gmCameraMakeDefaultCamera` puts 10000 out from (0, 300, 0).
+/// `gmCameraMakeDefaultCamera` puts 10000 out from (0, 300, 0). The field
+/// of view is generated from the ROM ([`crate::d_arrays`]); the eye and
+/// `at` are that function's constants.
 pub const MOVIE_CAMERA_INIT: CamInit = CamInit {
     eye: [0.0, 300.0, 10000.0],
     at: [0.0, 300.0, 0.0],
     up_x: 0.0,
-    fovy: 38.0,
+    fovy: crate::d_arrays::GM_CAMERA_PERSP_DEFAULT_FOVY[0],
 };
 
 /// `mvOpeningRoomInitScene3Cameras`' camera before its script.

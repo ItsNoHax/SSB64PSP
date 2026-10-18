@@ -105,16 +105,27 @@ pub fn finish_practice(
     }
 }
 
+/// A generated `s32` position table as `f32`s.
+const fn to_f32<const N: usize>(positions: [i32; N]) -> [f32; N] {
+    let mut out = [0.0f32; N];
+    let mut i = 0;
+    while i < N {
+        out[i] = positions[i] as f32;
+        i += 1;
+    }
+    out
+}
+
 /// `dSC1PBonusStageTimerDigitPositions`: each digit's centre x; their
 /// centre y is 30.
-pub const TIMER_DIGIT_X: [f32; 6] = [207.0, 222.0, 240.0, 255.0, 273.0, 288.0];
+pub const TIMER_DIGIT_X: [f32; 6] = to_f32(crate::d_arrays::SC1P_BONUS_STAGE_TIMER_DIGIT_POSITIONS);
 /// The `SymbolSec` and `SymbolCSec` marks' centres.
 pub const TIMER_SEC_AT: [f32; 2] = [231.0, 20.0];
 pub const TIMER_CSEC_AT: [f32; 2] = [264.0, 20.0];
 
 /// `dSC1PBonusStageTimerUnitLengths`: ten minutes, a minute, ten seconds,
 /// a second, a tenth and `277 / 500` of a tic.
-const TIMER_UNITS: [f32; 6] = [36000.0, 3600.0, 600.0, 60.0, 6.0, 277.0 / 500.0];
+const TIMER_UNITS: [f32; 6] = crate::d_arrays::SC1P_BONUS_STAGE_TIMER_UNIT_LENGTHS;
 
 /// `sc1PBonusStageMakeTimer`'s practice timer: minutes, seconds and
 /// hundredths of `time_passed`, the tens of minutes hidden until they

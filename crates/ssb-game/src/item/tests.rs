@@ -410,6 +410,7 @@ fn backward_throw_script_turns_link_before_releasing_the_bomb() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn light_throw_joints_turn_each_step_and_restore_facing_outside_the_status() {
     for facing in [Facing::Right, Facing::Left] {
         let mut link = fighter(FighterKind::Link, 0);
@@ -444,6 +445,7 @@ fn light_throw_joints_turn_each_step_and_restore_facing_outside_the_status() {
     }
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn main_pass_runs_a_chansey_egg_once_without_skipping_its_surviving_parent() {
     let mut pool = ItemPool::default();

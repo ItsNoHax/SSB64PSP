@@ -164,6 +164,7 @@ fn a_coins_end_makes_a_dust_cloud_200_above() {
     );
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn the_blasts_streaks_take_the_players_script_and_the_blasts_turn() {
     let bank = bank(20);
@@ -370,6 +371,7 @@ fn a_hit_spark_draws_the_common_banks_script_for_its_player() {
 
 /// RE-422: each drawn display effect's `EFDesc::dl_link`, which places it
 /// before (15, 10) or after (18) stage layer 3.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn display_effects_draw_on_their_desc_links() {
     use DisplayKind as K;
@@ -442,6 +444,7 @@ fn a_thunder_shock_spark_pauses_with_its_fighter_and_stops_on_its_status_change(
 /// bit. The sixth update adds a zero velocity; the seventh ejects. The puff
 /// is not attached: a paused or stopped fighter leaves it alone.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_vulcan_jab_puff_moves_as_the_trace_records() {
     let bits = |v: f32| v.to_bits();
     let cases = [

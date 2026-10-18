@@ -213,18 +213,20 @@ fn a_star_survives_its_set_off_and_a_cutter_does_not() {
 /// `wpMarioFireballProcUpdate`: the dust cloud on its last frame, where it
 /// was before that frame's move, and nothing before.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_fireball_makes_its_dust_on_the_frame_it_expires() {
+    let lifetime = std::hint::black_box(MARIO_FIREBALL_LIFETIME);
     let mut pool = WeaponPool::default();
     pool.spawn(spawn(WeaponKind::MarioFireball, 0, 0.0, 1.0));
     let mut last = Vec3::ZERO;
-    for tick in 1..=MARIO_FIREBALL_LIFETIME {
+    for tick in 1..=lifetime {
         if let Some(f) = pool.first_fireball() {
             last = f.position;
         }
         pool.tick(open_air, None);
         let mut r = Record::default();
         pool.flush_effects(&mut r);
-        if tick < MARIO_FIREBALL_LIFETIME {
+        if tick < lifetime {
             assert!(r.0.is_empty(), "{tick}");
         } else {
             assert_eq!(r.0, [WeaponEffect::DustExpandSmall(last)]);
@@ -236,13 +238,15 @@ fn a_fireball_makes_its_dust_on_the_frame_it_expires() {
 /// The queue is made in link order, not slot order: stars made into a
 /// freed first slot come after the older Fireball.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn effects_are_made_in_link_order() {
+    let lifetime = std::hint::black_box(MARIO_FIREBALL_LIFETIME);
     let mut pool = WeaponPool::default();
     // Slot 0: Luigi's Fireball (80 frames); slot 1: Mario's (140).
     pool.spawn(spawn(WeaponKind::LuigiFireball, 0, 0.0, 1.0));
     pool.spawn(spawn(WeaponKind::MarioFireball, 1, 0.0, 1.0));
-    for tick in 1..=MARIO_FIREBALL_LIFETIME {
-        if tick == MARIO_FIREBALL_LIFETIME - crate::weapon::YOSHISTAR_LIFETIME + 1 {
+    for tick in 1..=lifetime {
+        if tick == lifetime - crate::weapon::YOSHISTAR_LIFETIME + 1 {
             // Two stars: the freed slot 0, then slot 2. They expire with the
             // Mario Fireball.
             assert!(pool.spawn(spawn(WeaponKind::YoshiStars, 2, -5000.0, 1.0)));
@@ -250,7 +254,7 @@ fn effects_are_made_in_link_order() {
         pool.tick(open_air, None);
         let mut r = Record::default();
         pool.flush_effects(&mut r);
-        if tick == MARIO_FIREBALL_LIFETIME {
+        if tick == lifetime {
             let xs: std::vec::Vec<f32> =
                 r.0.iter()
                     .map(|e| match e {
@@ -559,6 +563,7 @@ fn the_strongest_live_quake_moves_the_camera() {
 
 /// `gmCameraApplyVel` adds the quake's `(z, y)` after the camera's own
 /// update, scaled past `EFCOMMON_QUAKE_MAGNITUDE`, once.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn a_quake_shifts_the_camera_at_after_its_update() {
     use crate::camera::{Bounds, Camera, Interest, QUAKE_MAGNITUDE};

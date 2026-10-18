@@ -312,9 +312,7 @@ pub struct SpriteFile {
 /// `...SymbolHPSprite` (`dIFCommonPlayerDamageDigitSpriteOffsets`).
 pub const PLAYER_DAMAGE: SpriteFile = SpriteFile {
     file: 164,
-    offsets: &[
-        0x148, 0x2D8, 0x500, 0x698, 0x8C0, 0xA58, 0xC80, 0xE18, 0x1040, 0x1270, 0x1458, 0x15D8,
-    ],
+    offsets: &crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_SPRITE_OFFSETS,
 };
 
 /// `FTAttributes.sprites`, counted on from `translate_scales` at 0x324
@@ -385,10 +383,27 @@ pub const GAME_STATUS: SpriteFile = SpriteFile {
 /// (`dIFCommonTimerDigitSpriteOffsets`).
 pub const TIMER: SpriteFile = SpriteFile {
     file: 165,
-    offsets: &[
-        0x138, 0x228, 0x3A8, 0x528, 0x6A8, 0x828, 0x9A8, 0xB28, 0xCA8, 0xE28, 0xF08, 0x1018,
-        0x1090, 0x1140, 0x1238,
-    ],
+    offsets: &TIMER_OFFSETS,
+};
+
+/// [`TIMER`]'s offsets: `dIFCommonTimerDigitSpriteOffsets` (the digits and
+/// the colon, then `Sec` and `CSec`), with `SymbolCross` and
+/// `SymbolUnderscore` (`llIFCommonTimerSymbolCrossSprite`,
+/// `llIFCommonTimerSymbolUnderscoreSprite`), which the table omits, after
+/// the colon.
+const TIMER_OFFSETS: [u32; 15] = {
+    let table = crate::d_arrays::IF_COMMON_TIMER_DIGIT_SPRITE_OFFSETS;
+    let mut offsets = [0; 15];
+    let mut i = 0;
+    while i < 11 {
+        offsets[i] = table[i];
+        i += 1;
+    }
+    offsets[11] = 0x1018;
+    offsets[12] = 0x1090;
+    offsets[13] = table[11];
+    offsets[14] = table[12];
+    offsets
 };
 
 /// File 37, `IFCommonAnnounceCommon` (`gGMCommonFiles[7]`): `LetterA` to
@@ -597,10 +612,12 @@ pub const MN_MAPS: SpriteFile = SpriteFile {
 /// `...BlueFileID` (`dSC1PTrainingModeWallpaperDescs`): Training's three
 /// wallpapers, each a 300 x 220 RGBA16 `Sprite` at
 /// [`TRAINING_WALLPAPER_SPRITE`] (RE-419).
-pub const TRAINING_WALLPAPER_FILES: [u32; 3] = [0x1A, 0x1B, 0x1C];
+pub const TRAINING_WALLPAPER_FILES: [u32; 3] =
+    crate::d_arrays::SC_1P_TRAINING_MODE_WALLPAPER_DESCS_FILE_ID;
 
 /// `llGRWallpaperTrainingBlackSprite` (the yellow and blue share it).
-pub const TRAINING_WALLPAPER_SPRITE: u32 = 0x20718;
+pub const TRAINING_WALLPAPER_SPRITE: u32 =
+    crate::d_arrays::SC_1P_TRAINING_MODE_WALLPAPER_DESCS_SPRITE_OFFSET[0];
 
 /// `SP_CLOUD`: drawn with `G_RM_CLD_SURF`, blended like `SP_TRANSPARENT`.
 pub const SP_CLOUD: u16 = 0x1000;
@@ -744,8 +761,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn every_fighter_has_an_emblem_and_stock_icons() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -789,8 +807,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_game_status_sprites_decode() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -816,8 +835,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_1p_select_sprites_decode() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -865,8 +885,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_results_screen_sprites_decode() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -901,8 +922,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_vs_select_sprites_decode() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -1023,8 +1045,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_stage_select_sprites_and_wallpapers_decode() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -1099,8 +1122,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_announce_letters_decode() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -1131,8 +1155,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn training_resolves_external_sprites_and_the_pack_preserves_table_identity() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -1189,8 +1214,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_pause_menu_sprites_decode() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -1218,8 +1244,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_timer_digits_decode() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -1244,8 +1271,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_damage_digits_decode() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();

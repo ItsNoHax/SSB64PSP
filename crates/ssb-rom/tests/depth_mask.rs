@@ -7,7 +7,7 @@ use ssb_rom::pack::Pack;
 use ssb_rom::player_interface as asset;
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -20,6 +20,7 @@ fn collect(f: impl FnOnce(&mut dyn FnMut(i32, &[Span]))) -> Vec<(i32, Span)> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn magnifier_mask_spans_match_sampling_every_pixel() {
     let Some(bytes) = pack_bytes() else {
         eprintln!("skipping: SSB64_ROM unset or pack not built");

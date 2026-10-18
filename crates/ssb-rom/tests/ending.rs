@@ -5,10 +5,11 @@ use ssb_game::spgame::staffroll::{self, Credits, Staffroll};
 use ssb_rom::{ending, rom, Archive};
 
 fn rom_bytes() -> Option<Vec<u8>> {
-    std::fs::read(std::env::var_os("SSB64_ROM")?).ok()
+    std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?).ok()
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_credits_tables_parse_with_the_sources_counts() {
     let Some(bytes) = rom_bytes() else { return };
     let c = Credits::parse(ending::credits_bytes(&bytes).unwrap()).unwrap();
@@ -28,6 +29,7 @@ fn the_credits_tables_parse_with_the_sources_counts() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_roll_reaches_its_last_name_with_the_rom_tables() {
     let Some(bytes) = rom_bytes() else { return };
     let info = rom::identify(&bytes).unwrap();

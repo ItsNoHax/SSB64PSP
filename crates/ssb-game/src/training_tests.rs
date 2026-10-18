@@ -102,6 +102,7 @@ fn open_menu() -> TrainingMenu {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_menu_starts_as_init_vars_sets_it() {
     let m = TrainingMenu::new(0);
     assert_eq!(m.main_option, MainOption::Cp);
@@ -263,6 +264,7 @@ fn runs(speed: u8, n: usize) -> Vec<bool> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn slow_speeds_skip_ticks() {
     assert!(runs(0, 12).iter().all(|&r| r));
     // 2/3: two run, one skips.
@@ -276,6 +278,7 @@ fn slow_speeds_skip_ticks() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_speed_change_restarts_the_skip_pattern() {
     let mut m = open_menu();
     m.main_option = MainOption::Speed;

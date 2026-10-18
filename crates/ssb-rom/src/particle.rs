@@ -1709,8 +1709,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn real_rom_has_160_scripts_and_65_textures() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let rom = std::fs::read(path).unwrap();
@@ -1731,8 +1732,9 @@ mod tests {
     /// `visible_count` below 148 without a matching RE update means either a
     /// real regression or an unreviewed decoder change.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn real_rom_frame_4_particle_visibility_census_is_148_of_160() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let rom = std::fs::read(path).unwrap();
@@ -1768,8 +1770,9 @@ mod tests {
     /// point, not merely unimplemented. A nonzero count here without a
     /// matching RE update means a real script now reaches a declined path.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn real_rom_frame_4_combine_mode_census_is_envcolor_90_noise_dither_alphablend_0() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let rom = std::fs::read(path).unwrap();
@@ -1825,8 +1828,9 @@ mod tests {
     /// frame 4. Zero spawn-tree errors (`UnknownScriptId`/`VortexUnsupported`)
     /// across all 160 real scripts.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn real_rom_spawn_tree_rescues_exactly_one_of_twelve_root_invisible_scripts() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let rom = std::fs::read(path).unwrap();
@@ -1888,8 +1892,9 @@ mod tests {
     /// `MAKEGENERATOR` call, then run each distinct target as a `Generator`
     /// for up to 240 frames (seed 1) or until it ejects/errors.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn real_rom_generator_targets_run_to_completion_or_a_catalogued_decline() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let rom = std::fs::read(path).unwrap();
@@ -1990,8 +1995,9 @@ mod tests {
     /// this script's own decode changed or `spawn_at`'s override stopped
     /// taking effect.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn real_rom_ripple_manager_effect_spawns_a_visible_particle_near_its_live_position() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let rom = std::fs::read(path).unwrap();

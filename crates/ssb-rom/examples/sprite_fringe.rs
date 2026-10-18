@@ -619,7 +619,7 @@ fn sizes(items: &[Item]) {
 }
 
 fn main() {
-    let rom = std::env::var_os("SSB64_ROM").expect("SSB64_ROM");
+    let rom = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).expect("SSB64_ROM");
     let data = std::fs::read(rom).unwrap();
     let info = ssb_rom::rom::identify(&data).unwrap();
     let archive = Archive::open(&data, info.region).unwrap();

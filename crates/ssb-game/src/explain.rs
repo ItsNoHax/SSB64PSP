@@ -60,7 +60,7 @@ pub mod graphics {
     /// neutral, neutral with the arrows, hold up, tap up, hold forward, tap
     /// forward. Each is an `AObjEvent32**` whose first word points at the
     /// script.
-    pub const STICK_MAT_ANIM_JOINTS: [u32; 7] = [0, 0x5390, 0x5390, 0x53C0, 0x53F0, 0x5430, 0x5450];
+    pub const STICK_MAT_ANIM_JOINTS: [u32; 7] = crate::d_arrays::SC_EXPLAIN_STICK_MAT_ANIM_JOINTS;
     /// `llSCExplainGraphicsTapSparkMatAnimJoint`.
     pub const TAP_SPARK_MAT_ANIM_JOINT: u32 = 0x5C20;
     /// The stick's `MObjSub` sprites array: five IA8 64 x 64 frames,
@@ -101,7 +101,7 @@ pub mod graphics {
 
 /// `dSCExplainInterfacePositions` and `scExplainSetPlayerInterfacePositions`'
 /// `player_pos_y`.
-pub const INTERFACE_POSITIONS_X: [i32; 4] = [55, 125, 195, 265];
+pub const INTERFACE_POSITIONS_X: [i32; 4] = crate::d_arrays::SC_EXPLAIN_INTERFACE_POSITIONS;
 pub const INTERFACE_POSITION_Y: i32 = 150;
 /// `gmCameraSetViewportDimensions(10, 10, 310, 160)`: the battle above the
 /// window.
@@ -120,7 +120,7 @@ pub const GKIND: u8 = 11;
 pub const FADE_LENGTH: u32 = 12;
 /// `dSCExplainRandomSeed1`: the scene's update runs on its own seed,
 /// starting at 1 each time the overlay loads.
-pub const RANDOM_SEED: i32 = 1;
+pub const RANDOM_SEED: i32 = crate::d_arrays::SC_EXPLAIN_RANDOM_SEED1[0];
 /// `scExplainTryMakeFireFlower`: when phase 16 ends, a Fire Flower at
 /// this position, moving up.
 pub const FIRE_FLOWER_PHASE: i32 = 16;

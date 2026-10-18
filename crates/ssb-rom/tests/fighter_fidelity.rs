@@ -4,13 +4,17 @@
 use ssb_rom::archive::Archive;
 
 fn rom() -> Option<Vec<u8>> {
-    Some(std::fs::read(std::env::var_os("SSB64_ROM")?).unwrap())
+    Some(std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?).unwrap())
 }
 
 /// `dLBCommonSinLookup` (`0x800D4CA0`): every one of its 1024 words is the
-/// one `ssb_engine::math::lb_sine_sample` builds, so the collision matrices
-/// (`gmCollisionTransformMatrixAll`) read the ROM's own sine.
+/// one `ssb_engine::math::lb_sine_sample` returns (generated from the ROM
+/// by `ssb-tablegen`), so the collision matrices
+/// (`gmCollisionTransformMatrixAll`) read the ROM's own sine. This finds
+/// the table by its words rather than its address, so it also checks the
+/// generator's address and overlay.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn lbcommon_sine_table_matches_the_rom() {
     let Some(rom) = rom() else {
         return;
@@ -49,6 +53,7 @@ fn donkey_loop_frames(slot_name: &str) -> Option<f32> {
 /// `ftDonkeySpecialLwLoopProcUpdate` checks (the N64 shows anim frames 0 to
 /// 33, then 0 again).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn donkey_hand_slap_loop_is_34_frames() {
     if let Some(frames) = donkey_loop_frames("DonkeySpecialLwLoop") {
         assert_eq!(frames, ssb_game::status::DONKEY_SPECIAL_LW_LOOP_FRAMES);
@@ -58,6 +63,7 @@ fn donkey_hand_slap_loop_is_34_frames() {
 /// The Giant Punch charge loop wraps every 12 frames, the period
 /// `ftDonkeySpecialNLoopProcUpdate` counts charge levels by.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn donkey_giant_punch_loop_is_12_frames() {
     if let Some(frames) = donkey_loop_frames("DonkeySpecialNLoop") {
         assert_eq!(frames, ssb_game::status::DONKEY_SPECIAL_N_LOOP_FRAMES);

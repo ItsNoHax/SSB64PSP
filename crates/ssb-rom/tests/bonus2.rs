@@ -10,7 +10,7 @@ use ssb_rom::{
 };
 
 fn assets() -> Option<(Vec<u8>, Vec<u8>)> {
-    let rom = std::fs::read(std::env::var_os("SSB64_ROM")?).unwrap();
+    let rom = std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?).unwrap();
     let pack = std::fs::read(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak"),
     )
@@ -25,6 +25,7 @@ fn object(p: &Pack<'_>, file: u32, offset: u32) -> ssb_rom::pack::ObjectDesc {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn all_platform_courses_have_ten_distinct_detect_groups_and_original_geometry() {
     let Some((rom, bytes)) = assets() else { return };
     let a = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();
@@ -75,6 +76,7 @@ fn all_platform_courses_have_ten_distinct_detect_groups_and_original_geometry() 
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn all_six_platform_trees_replay_original_joint_streams_and_restart_when_boarded() {
     let Some((rom, bytes)) = assets() else { return };
     let a = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();
@@ -175,6 +177,7 @@ fn all_six_platform_trees_replay_original_joint_streams_and_restart_when_boarded
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_course_bumper_uses_shared_item_tree_and_independent_rom_root_clock() {
     let Some((rom, bytes)) = assets() else { return };
     let a = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();

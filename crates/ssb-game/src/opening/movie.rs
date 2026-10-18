@@ -64,25 +64,30 @@ pub struct Persp {
 impl Persp {
     /// `gcAddXObjForCamera`'s defaults: `dGCPerspDefault` and
     /// `dGCCObjVecDefault`.
-    pub const DEFAULT: Persp = Persp {
-        eye: Vec3 {
-            x: 0.0,
-            y: 0.0,
-            z: 1500.0,
-        },
-        at: Vec3 {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-        },
-        up_x: 0.0,
-        view: View::LookAt,
-        fovy: 30.0,
-        aspect: 4.0 / 3.0,
-        near: 100.0,
-        far: 12800.0,
-        persp_f: false,
-        anim: None,
+    /// Both are generated from the ROM ([`crate::d_arrays`]).
+    pub const DEFAULT: Persp = {
+        use crate::d_arrays as d;
+        let (eye, at) = (d::GC_COBJ_VEC_DEFAULT_EYE, d::GC_COBJ_VEC_DEFAULT_AT);
+        Persp {
+            eye: Vec3 {
+                x: eye[0],
+                y: eye[1],
+                z: eye[2],
+            },
+            at: Vec3 {
+                x: at[0],
+                y: at[1],
+                z: at[2],
+            },
+            up_x: d::GC_COBJ_VEC_DEFAULT_UP[0],
+            view: View::LookAt,
+            fovy: d::GC_PERSP_DEFAULT_FOVY[0],
+            aspect: d::GC_PERSP_DEFAULT_ASPECT[0],
+            near: d::GC_PERSP_DEFAULT_NEAR[0],
+            far: d::GC_PERSP_DEFAULT_FAR[0],
+            persp_f: false,
+            anim: None,
+        }
     };
 
     /// The camera playing `slot`'s baked animation from its start.

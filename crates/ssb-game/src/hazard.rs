@@ -564,6 +564,7 @@ mod tests {
         assert_eq!(kb, 2500.0);
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn barrel_angle_truncates_like_the_source() {
         // 0.07 rad * 3 = 12.03°; facing right: -12 + 90 = 78.
@@ -582,6 +583,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn twister_launch_replaces_the_last_player_hit_even_when_intangible() {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);

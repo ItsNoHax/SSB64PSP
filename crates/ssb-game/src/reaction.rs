@@ -1055,6 +1055,7 @@ mod tests {
         assert_eq!(f.slope_contour, crate::slope_contour::FLAG_FULL);
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn a_knockback_overrun_is_invincible_for_one_frame_after_hitlag() {
         for (kb, expect) in [(65000.0, true), (64999.0, false)] {

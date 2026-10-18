@@ -48,6 +48,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn neutral_b_queues_a_luigi_fireball_on_frame_sixteen() {
         let mut f = luigi(Situation::Ground);
         press_b(&mut f, 0, 0);

@@ -4,8 +4,9 @@
 use ssb_rom::{pack::Pack, particle};
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_cloud_vapor_is_the_yoster_banks_first_generator() {
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let rom = std::fs::read(path).unwrap();

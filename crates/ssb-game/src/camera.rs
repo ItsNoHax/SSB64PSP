@@ -61,7 +61,7 @@ const MIN_DIST: f32 = 2500.0;
 const MAX_DIST: f32 = 30000.0;
 
 /// `dGMCameraPlayerZoomRanges[1]` -- the single-player zoom multiplier.
-const ONE_PLAYER_ZOOM: f32 = 1.50;
+const ONE_PLAYER_ZOOM: f32 = crate::d_arrays::GM_CAMERA_PLAYER_ZOOM_RANGES[1];
 
 /// The final battle-camera state produced by `gmCameraMakeDefaultCamera`.
 ///
@@ -71,14 +71,14 @@ const ONE_PLAYER_ZOOM: f32 = 1.50;
 /// observable initial values; the intermediate `{1500, 0, 0}` eye is not.
 pub const DEFAULT_EYE: Vec3 = Vec3::new(0.0, 300.0, 10000.0);
 pub const DEFAULT_AT: Vec3 = Vec3::new(0.0, 300.0, 0.0);
-pub const DEFAULT_FOVY_DEGREES: f32 = 38.0;
+pub const DEFAULT_FOVY_DEGREES: f32 = crate::d_arrays::GM_CAMERA_PERSP_DEFAULT_FOVY[0];
 /// `dGMCameraPerspDefault.near` and `.far` (`gm/gmcamera.c`): the battle
 /// camera's clip planes, which the PSP's battle projection uses too. A star
 /// KO flies 15,000 units away and stays inside them (RE-420). The shield
 /// bubble and the other link-15/18 effects cover their fighter because the
 /// original draws them with no depth test, not by a depth tie (RE-421).
-pub const DEFAULT_NEAR: f32 = 256.0;
-pub const DEFAULT_FAR: f32 = 39936.0;
+pub const DEFAULT_NEAR: f32 = crate::d_arrays::GM_CAMERA_PERSP_DEFAULT_NEAR[0];
+pub const DEFAULT_FAR: f32 = crate::d_arrays::GM_CAMERA_PERSP_DEFAULT_FAR[0];
 const DEFAULT_TARGET_DIST: f32 = 10000.0;
 
 /// One fighter entry consumed by `gmCameraUpdateInterests`.
@@ -593,6 +593,7 @@ use ssb_engine::math::{lb_cos as original_cos, lb_sin as original_sin, lb_tan as
 mod tests {
     use super::*;
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn default_matches_the_post_constructor_battle_camera_state() {
         let camera = Camera::default();
@@ -603,13 +604,24 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn original_camera_trig_uses_the_roms_quantized_table_words() {
-        // tan(19 degrees) reads entries 216 and 807. Entry 372 is one of the
-        // 13 authored values that differs from rounded mathematical sine.
-        assert_eq!(ssb_engine::math::lb_sine_sample(216).to_bits(), 0x3ea6_8f08);
-        assert_eq!(ssb_engine::math::lb_sine_sample(807).to_bits(), 0x3f71_f288);
-        assert_eq!(ssb_engine::math::lb_sine_sample(372).to_bits(), 0x3f0a_48b6);
-        assert!((original_tan(19.0f32.to_radians()) - 0.3442044).abs() < 1e-7);
+        use ssb_engine::math::lb_sine_sample;
+        // tan(19 degrees) reads entries 216 and 807 of the ROM-generated
+        // table. Entry 372 is one of the authored words that differs from
+        // the rounded mathematical sine.
+        let tan19 = lb_sine_sample(216) / lb_sine_sample(807);
+        assert_eq!(
+            original_tan(19.0f32.to_radians()).to_bits(),
+            tan19.to_bits()
+        );
+        assert!((tan19 - 0.3442044).abs() < 1e-7);
+        let rounded = |i: u16| {
+            let s = f64::from(i as f32 / 651.898_6).sin();
+            ((s * 1_000_000.0).round() / 1_000_000.0) as f32
+        };
+        assert_eq!(lb_sine_sample(216).to_bits(), rounded(216).to_bits());
+        assert_ne!(lb_sine_sample(372).to_bits(), rounded(372).to_bits());
     }
 
     #[test]
@@ -664,6 +676,7 @@ mod tests {
         assert!((pan_scale(14999.0) - 0.050004).abs() < 1e-4);
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn a_stationary_fighter_lets_the_camera_settle_and_stay_settled() {
         // No hand-derived target position here (that both duplicates the
@@ -696,6 +709,7 @@ mod tests {
         assert!(cam.eye.x.is_finite() && cam.eye.y.is_finite() && cam.eye.z.is_finite());
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn the_camera_follows_a_fighter_that_walks_away() {
         let mut cam = Camera::default();
@@ -723,6 +737,7 @@ mod tests {
         assert!(cam.eye.x.is_finite() && cam.eye.y.is_finite() && cam.eye.z.is_finite());
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn one_fighter_wrapper_matches_the_general_interest_path() {
         let bounds = Bounds {
@@ -809,6 +824,7 @@ mod tests {
         assert_eq!(calculate_interest(&[enemy(far)], bounds), want);
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn a_followed_weapon_widens_the_box_within_1000_of_the_fighters() {
         let bounds = Bounds {
@@ -884,6 +900,7 @@ mod tests {
         assert!((interest.y - expected_y).abs() < 1e-4);
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn settled_dream_land_camera_matches_the_original_rom_trace() {
         let bounds = Bounds {

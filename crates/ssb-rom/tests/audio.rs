@@ -5,10 +5,11 @@ use ssb_engine::audio::data::{self, Bank, Part, Section};
 use ssb_rom::audio;
 
 fn rom() -> Option<Vec<u8>> {
-    Some(std::fs::read(std::env::var_os("SSB64_ROM")?).unwrap())
+    Some(std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?).unwrap())
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn audio_section_counts() {
     let Some(rom) = rom() else {
         return;

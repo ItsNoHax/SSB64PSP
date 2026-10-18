@@ -7,7 +7,7 @@ use ssb_rom::explain as ex;
 use ssb_rom::matanim::{MaterialJoint, TRACK_TEXTURE_ID_CURRENT};
 
 fn files() -> Option<(ssb_rom::archive::File, ssb_rom::archive::File)> {
-    let path = std::env::var_os("SSB64_ROM")?;
+    let path = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let data = std::fs::read(path).unwrap();
     let info = ssb_rom::rom::identify(&data).unwrap();
     let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
@@ -18,6 +18,7 @@ fn files() -> Option<(ssb_rom::archive::File, ssb_rom::archive::File)> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_phase_table_names_packed_captions() {
     let Some((main, _)) = files() else {
         return;
@@ -61,6 +62,7 @@ fn the_phase_table_names_packed_captions() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_input_scripts_parse() {
     let Some((main, _)) = files() else {
         return;
@@ -86,6 +88,7 @@ fn script(data: &[u8], joint: u32) -> u32 {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_stick_taps_loop_and_fire_on_frame_15() {
     let Some((_, graphics)) = files() else {
         return;
@@ -109,6 +112,7 @@ fn the_stick_taps_loop_and_fire_on_frame_15() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_spark_plays_out() {
     let Some((_, graphics)) = files() else {
         return;
@@ -128,6 +132,7 @@ fn the_spark_plays_out() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_textures_decode() {
     let Some((_, graphics)) = files() else {
         return;

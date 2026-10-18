@@ -11,7 +11,7 @@ use crate::rng;
 use ssb_engine::math::Vec3;
 
 /// `dGRInishieScaleLineGroups`.
-pub const SCALE_GROUPS: [u8; 2] = [1, 2];
+pub const SCALE_GROUPS: [u8; 2] = crate::d_arrays::GR_INISHIE_SCALE_LINE_GROUPS;
 /// The scale height at which both platforms fall.
 pub const SCALE_ALT_MAX: f32 = 1100.0;
 /// `scale[i].string_dobj`: `map_dobjs[4]` and `map_dobjs[2]`.

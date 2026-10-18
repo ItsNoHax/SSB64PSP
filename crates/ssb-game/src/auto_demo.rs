@@ -15,26 +15,16 @@ use crate::backup::{Backup, CHARACTER_MASK_STARTER};
 use crate::fighter::FighterKind;
 use crate::menu::title::{kind_of, kinds_num, shuffled_kind, DemoData};
 use crate::menu::Scene;
-use crate::stage_select::gkind;
 
 /// `dSCAutoDemoGroundOrder`.
-pub const GROUND_ORDER: [u8; 8] = [
-    gkind::PUPUPU,
-    gkind::ZEBES,
-    gkind::CASTLE,
-    gkind::JUNGLE,
-    gkind::SECTOR,
-    gkind::YOSTER,
-    gkind::YAMABUKI,
-    gkind::HYRULE,
-];
+pub const GROUND_ORDER: [u8; 8] = crate::d_arrays::SC_AUTO_DEMO_GROUND_ORDER;
 
 /// `dSCAutoDemoMapObjKindList`: `nMPMapObjKindAutoDemoPlayer1..8`.
-pub const MAP_OBJ_KINDS: [u16; 8] = [0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F];
+pub const MAP_OBJ_KINDS: [u16; 8] = crate::d_arrays::SC_AUTO_DEMO_MAP_OBJ_KIND_LIST;
 
 /// `dSCAutoDemoZoomEyeX` and `...Y`, in degrees.
-pub const ZOOM_EYE_X: [f32; 6] = [-40.0, -28.0, -14.0, 14.0, 28.0, 40.0];
-pub const ZOOM_EYE_Y: [f32; 5] = [2.0, 0.0, -6.0, -9.0, -30.0];
+pub const ZOOM_EYE_X: [f32; 6] = crate::d_arrays::SC_AUTO_DEMO_ZOOM_EYE_X;
+pub const ZOOM_EYE_Y: [f32; 5] = crate::d_arrays::SC_AUTO_DEMO_ZOOM_EYE_Y;
 /// `scAutoDemoSetCameraPlayerZoom`'s pan scale and field of view; the
 /// distance is the fighter's `closeup_camera_zoom`.
 pub const ZOOM_PAN_SCALE: f32 = 0.3;
@@ -66,17 +56,21 @@ pub enum Change {
     Exit,
 }
 
-/// `dSCAutoDemoFuncList`: frames until the next change, the change, and
-/// the player whose death cuts the step short (`func_focus`).
-pub const FOCUS: [(u16, Option<Change>, Option<usize>); 7] = [
-    (0, None, None),
-    (340, Some(Change::Fade), None),
-    (340, Some(Change::FocusPlayer1), None),
-    (340, Some(Change::FocusPlayer2), Some(0)),
-    (400, Some(Change::ResetFocus), Some(1)),
-    (60, Some(Change::MagnifyOn), None),
-    (1, Some(Change::Exit), None),
-];
+/// `dSCAutoDemoFuncList`: frames until the next change (`focus_end_wait`),
+/// the change, and the player whose death cuts the step short
+/// (`func_focus`).
+pub const FOCUS: [(u16, Option<Change>, Option<usize>); 7] = {
+    let w = crate::d_arrays::SC_AUTO_DEMO_FUNC_LIST_FOCUS_END_WAIT;
+    [
+        (w[0], None, None),
+        (w[1], Some(Change::Fade), None),
+        (w[2], Some(Change::FocusPlayer1), None),
+        (w[3], Some(Change::FocusPlayer2), Some(0)),
+        (w[4], Some(Change::ResetFocus), Some(1)),
+        (w[5], Some(Change::MagnifyOn), None),
+        (w[6], Some(Change::Exit), None),
+    ]
+};
 
 /// What the battle shows the focus script, and what the script does to it.
 pub trait World {
@@ -323,6 +317,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::stage_select::gkind;
 
     #[derive(Default)]
     struct Log {
@@ -357,6 +352,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn the_focus_script_runs_its_course() {
         let mut w = Log::default();
@@ -393,6 +389,7 @@ mod tests {
         assert_eq!((exit, frame), (Scene::Startup, 1480));
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn a_dead_focus_moves_on_at_once() {
         let mut w = Log::default();
@@ -406,6 +403,7 @@ mod tests {
         assert_eq!(w.zoom, Some(1));
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn start_points_take_eight_distinct_points() {
         let mut picks = [3, 3, 0, 4].into_iter();
@@ -413,6 +411,7 @@ mod tests {
         assert_eq!(points, [0x1B, 0x1C, 0x18, 0x1F]);
     }
 
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn init_walks_the_ground_order() {
         let mut demo = DemoData {

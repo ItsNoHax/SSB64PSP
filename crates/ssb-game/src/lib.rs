@@ -18,6 +18,12 @@ pub mod attack;
 mod audio_battle_tests;
 pub mod auto_demo;
 pub mod backup;
+/// The decomp's small `d*` data arrays, generated at build time from the
+/// ROM by `ssb-tablegen` (`d_arrays`; D-048). Each constant is the symbol's
+/// name without the `d`, in `UPPER_SNAKE`.
+mod d_arrays {
+    include!(concat!(env!("OUT_DIR"), "/d_arrays.rs"));
+}
 pub mod battle;
 pub mod boss;
 pub mod camera;

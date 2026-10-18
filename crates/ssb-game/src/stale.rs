@@ -94,7 +94,7 @@ pub enum MotionAttackId {
 
 /// `dFTParamStaleTable` (`ftparam.c`): the multiplier for a move found 1st,
 /// 2nd, 3rd or 4th most recently in the queue.
-pub const STALE_TABLE: [f32; 4] = [0.75, 0.82, 0.89, 0.96];
+pub const STALE_TABLE: [f32; 4] = crate::d_arrays::FT_PARAM_STALE_TABLE;
 
 /// `ARRAY_COUNT(SCPlayerData::stale_info)`.
 pub const STALE_QUEUE_LEN: usize = 5;
@@ -610,6 +610,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn repeated_move_steps_through_the_stale_table() {
         let mut q = StaleQueue::default();
         q.push(MotionAttackId::AttackS4, 1);
@@ -625,6 +626,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_same_motion_does_not_stale_itself() {
         let mut q = StaleQueue::default();
         q.push(MotionAttackId::AttackS4, 1);
@@ -641,6 +643,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn staled_damage_rounds_up() {
         let mut q = StaleQueue::default();
         q.push(MotionAttackId::AttackS4, 1);

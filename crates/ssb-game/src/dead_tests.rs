@@ -189,6 +189,7 @@ fn a_fall_top_out_drops_from_above_the_camera() {
     assert_eq!(f.physics.vel_air.y, (-1000.0 - 3001.0) / 180.0);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn a_rebirth_starts_at_the_top_and_resets_the_fighter() {
     let mut f = mario();

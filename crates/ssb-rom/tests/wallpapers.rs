@@ -7,11 +7,11 @@ use ssb_rom::psp_texture::Psm;
 use ssb_rom::Archive;
 
 fn rom() -> Option<Vec<u8>> {
-    std::fs::read(std::env::var_os("SSB64_ROM")?).ok()
+    std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?).ok()
 }
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -28,6 +28,7 @@ fn assert_direct_or_palettized(t: &TextureDesc) {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_stage_wallpaper_is_packed_under_its_kind() {
     let (Some(rom), Some(bytes)) = (rom(), pack_bytes()) else {
         return;
@@ -51,6 +52,7 @@ fn every_stage_wallpaper_is_packed_under_its_kind() {
 /// Platforms) draws its map's one static wallpaper, the same sprite for
 /// all 24 kinds (RE-524).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_bonus_stage_wallpaper_is_packed_under_its_kind() {
     let (Some(rom), Some(bytes)) = (rom(), pack_bytes()) else {
         return;
@@ -72,6 +74,7 @@ fn every_bonus_stage_wallpaper_is_packed_under_its_kind() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn trainings_wallpapers_and_the_stage_select_sprites_are_packed() {
     let Some(bytes) = pack_bytes() else {
         return;
@@ -95,6 +98,7 @@ fn trainings_wallpapers_and_the_stage_select_sprites_are_packed() {
 /// 5551 holds an RGBA16 texel exactly: the packed wallpaper reads back as
 /// the ROM's texels.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_packed_wallpaper_keeps_its_texels() {
     let (Some(rom), Some(bytes)) = (rom(), pack_bytes()) else {
         return;

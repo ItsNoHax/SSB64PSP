@@ -1,7 +1,8 @@
 //! All US 1P knockback multipliers, including Master Hand and Samus.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn forty_handicap_rows_match_the_us_rom_bit_for_bit() {
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let rom = std::fs::read(path).unwrap();

@@ -9,20 +9,27 @@ use crate::{
 };
 use ssb_engine::math::Vec3;
 
-pub const TAG_COLORS: [[u8; 4]; 5] = [
-    [0xED, 0x36, 0x36, 255],
-    [0x4E, 0x4E, 0xE9, 255],
-    [255, 0xDF, 0x1A, 255],
-    [0x4E, 0xB9, 0x4E, 255],
-    [0xAC, 0xAC, 0xAC, 255],
-];
-pub const MAGNIFY_COLORS: [[u8; 4]; 5] = [
-    [0xEF, 0x0D, 0x17, 255],
-    [0, 0, 255, 255],
-    [255, 0xE1, 0, 255],
-    [0, 255, 0, 255],
-    [255; 4],
-];
+/// Colour channel tables (`dIFCommonPlayer*Colors{R,G,B}`) as opaque RGBA.
+const fn rgba(r: [u8; 5], g: [u8; 5], b: [u8; 5]) -> [[u8; 4]; 5] {
+    let mut out = [[0u8; 4]; 5];
+    let mut i = 0;
+    while i < 5 {
+        out[i] = [r[i], g[i], b[i], 255];
+        i += 1;
+    }
+    out
+}
+
+pub const TAG_COLORS: [[u8; 4]; 5] = rgba(
+    crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_R,
+    crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_G,
+    crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_B,
+);
+pub const MAGNIFY_COLORS: [[u8; 4]; 5] = rgba(
+    crate::d_arrays::IF_COMMON_PLAYER_MAGNIFY_COLORS_R,
+    crate::d_arrays::IF_COMMON_PLAYER_MAGNIFY_COLORS_G,
+    crate::d_arrays::IF_COMMON_PLAYER_MAGNIFY_COLORS_B,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct FighterInterface {

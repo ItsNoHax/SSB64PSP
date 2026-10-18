@@ -1074,8 +1074,9 @@ mod tests {
     /// (file 300), polygon Fox (303) and the Metal stage's linear-texgen
     /// geometry (117), at list offsets `romtool texgen` reports.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn real_rom_metal_fighter_and_stage_texgen_coverage() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();

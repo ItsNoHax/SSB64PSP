@@ -330,6 +330,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn cseq_backup_and_loop() {
         let Some(data) = testdata::data() else {
             return;

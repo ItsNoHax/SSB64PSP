@@ -2,7 +2,7 @@
 use ssb_rom::{anim, campaign as a, pack::Pack, Archive};
 
 fn fixtures() -> Option<(Vec<u8>, Vec<u8>)> {
-    let path = std::env::var_os("SSB64_ROM")?;
+    let path = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let rom = std::fs::read(path).expect("SSB64_ROM");
     let pack = std::fs::read(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak"),
@@ -51,6 +51,7 @@ fn authored_campaign_sprites_keep_their_rom_dimensions_and_attributes() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn camera_initial_play_matches_independent_instant_command_values() {
     let Some((rom, bytes)) = fixtures() else {
         return;
@@ -94,6 +95,7 @@ fn camera_initial_play_matches_independent_instant_command_values() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn playable_fighters_have_intro_and_continue_figatrees() {
     let Some((rom, bytes)) = fixtures() else {
         return;
@@ -122,6 +124,7 @@ fn playable_fighters_have_intro_and_continue_figatrees() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn frozen_yoshi_cards_use_distinct_authored_frames_without_advancing() {
     let Some((_, bytes)) = fixtures() else { return };
     let pack = Pack::open(&bytes).unwrap();
@@ -153,6 +156,7 @@ fn frozen_yoshi_cards_use_distinct_authored_frames_without_advancing() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn continue_drop_moves_from_authored_first_sample_to_the_floor() {
     let Some((_, bytes)) = fixtures() else { return };
     let pack = Pack::open(&bytes).unwrap();

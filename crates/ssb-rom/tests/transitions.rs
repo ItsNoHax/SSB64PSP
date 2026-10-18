@@ -8,7 +8,7 @@ use ssb_rom::skeleton::StageAnimator;
 use ssb_rom::transition::ASSETS;
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -45,6 +45,7 @@ fn photo_texels(pack: &Pack<'_>, id: u32) -> Vec<(f32, f32)> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_photo_is_one_full_picture_texture() {
     let Some(bytes) = pack_bytes() else {
         return;
@@ -61,6 +62,7 @@ fn the_photo_is_one_full_picture_texture() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_wipe_addresses_the_whole_photo() {
     let Some(bytes) = pack_bytes() else {
         return;
@@ -118,6 +120,7 @@ fn updates(pack: &Pack<'_>, id: u32) -> u32 {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_wipe_ends_on_its_clock() {
     let Some(bytes) = pack_bytes() else {
         return;

@@ -246,6 +246,7 @@ fn arc_tan2_follows_the_rational_approximation() {
     }
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn a_particle_projects_to_its_size_over_depth() {
     // A camera 1000 units back looking down -z, 90 degrees vertical.

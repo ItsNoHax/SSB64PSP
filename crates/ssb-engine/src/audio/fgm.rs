@@ -1555,6 +1555,7 @@ mod tests {
     /// articulation sets volume 127. With the PSP's traps armed on the host
     /// the division used to end the test with SIGFPE.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn charge_shot_zero_period_ramp_is_full_volume_without_an_fpu_trap() {
         let Some((d, mut syn, mut fgm)) = setup() else {
             return;
@@ -1604,6 +1605,7 @@ mod tests {
     /// 85 ticks with priorities 0x44, 0x32, 0x14 set between them, then
     /// `D0`. The first note spawns the voice; the next two retune it.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fgm_explode_s_trace() {
         let Some((d, mut syn, mut fgm)) = setup() else {
             return;
@@ -1662,6 +1664,7 @@ mod tests {
     /// advances once per tick; `randFloat1` (`sRandomSeed2`) only for LFO
     /// shapes 4/5, and `Fgm::new` resets only `sRandomSeed2`.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fgm_rng_sequences() {
         let Some((d, mut syn, mut fgm)) = setup() else {
             return;
@@ -1688,6 +1691,7 @@ mod tests {
 
     /// Serials skip 0 on wrap, for scripts (`0x4A`) and voices (`0x48`).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fgm_serials_skip_zero() {
         let Some((d, mut syn, mut fgm)) = setup() else {
             return;
@@ -1704,6 +1708,7 @@ mod tests {
     /// Pools: 24 scripts; the 25th play fails and is counted. Stopping by
     /// a stale handle is a no-op; `stop_null` stops only root scripts.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fgm_pools_and_stop() {
         let Some((d, mut syn, mut fgm)) = setup() else {
             return;
@@ -1731,6 +1736,7 @@ mod tests {
     /// paused playing pvoices are stopped in place and resumed later;
     /// paused scripts do not run.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fgm_pause_resume() {
         let Some((d, mut syn, mut fgm)) = setup() else {
             return;
@@ -1766,6 +1772,7 @@ mod tests {
     /// No shipped `fgm.unk` record reads or writes the `spC0` scratch
     /// (postproc 0, no target < 10), so the port's zeroed scratch is exact.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fgm_unk_never_touches_scratch() {
         let Some(d) = testdata::data() else { return };
         for i in 0..d.fgm_unk_count {

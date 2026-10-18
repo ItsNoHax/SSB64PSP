@@ -2834,11 +2834,13 @@ const CONTAINER_VEL_Y: [f32; 20] = [
     26.0, 26.0, 26.0, 26.0,
 ];
 /// `dITBoxItemSpawnVelocities`: one item, two, then three.
-const BOX_SPAWN_VELOCITIES: [(f32, f32); 6] = [
-    (0.0, 48.0),
-    (-2.0, 48.0),
-    (2.0, 48.0),
-    (-5.0, 48.2),
-    (0.0, 48.2),
-    (5.2, 48.2),
-];
+const BOX_SPAWN_VELOCITIES: [(f32, f32); 6] = {
+    let v = crate::d_arrays::IT_BOX_ITEM_SPAWN_VELOCITIES;
+    let mut out = [(0.0, 0.0); 6];
+    let mut i = 0;
+    while i < out.len() {
+        out[i] = (v[i][0], v[i][1]);
+        i += 1;
+    }
+    out
+};

@@ -22,6 +22,7 @@ fn run(f: &mut Fighter, frames: u32) {
     }
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn a_vs_fighter_waits_hidden_then_enters_facing_the_camera() {
     let mut f = standing(FighterKind::Mario, Facing::Right);
@@ -57,6 +58,7 @@ fn a_vs_fighter_waits_hidden_then_enters_facing_the_camera() {
     assert!(!f.interface.tag_hide);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn a_leftward_captain_turns_around_and_has_two_phases() {
     let mut f = standing(FighterKind::Captain, Facing::Left);
@@ -82,6 +84,7 @@ fn a_leftward_captain_turns_around_and_has_two_phases() {
     assert_eq!(f.facing, Facing::Left);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn ness_enters_in_three_phases() {
     let mut f = standing(FighterKind::Ness, Facing::Right);
@@ -97,6 +100,7 @@ fn ness_enters_in_three_phases() {
     assert_eq!(f.status.status, AnyStatus::Common(Status::Wait));
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn every_playable_fighter_has_an_entry() {
     use FighterKind::*;
@@ -112,6 +116,7 @@ fn every_playable_fighter_has_an_entry() {
     }
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn the_entry_focus_staggers_two_fighters() {
     let f = |id| EntryFocus { id, count: 2 };
@@ -142,6 +147,7 @@ fn the_entry_effect_clock_starts_with_the_entry() {
     assert_eq!(n.entry.effect_ticks, None, "Ness makes no effect");
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn the_entry_camera_mode_lasts_through_the_statuses_until_go() {
     let mut f = standing(FighterKind::Mario, Facing::Right);
@@ -186,6 +192,7 @@ fn the_poke_balls_rays_start_on_the_scripts_flag() {
 
 /// Captain Falcon's leftward entry draws him on DL link 1 until his TopN
 /// is nearer than z -1000; a rightward one never moves him (RE-425).
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn falcon_draws_before_the_stage_while_far_on_a_leftward_entry() {
     let mut f = standing(FighterKind::Captain, Facing::Left);

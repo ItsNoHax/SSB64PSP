@@ -16,6 +16,21 @@ pub enum Appearance {
     VeryHigh,
 }
 
+impl Appearance {
+    /// The `nSCBattleItemSwitch*` value as an appearance rate; out-of-range
+    /// values read as the highest.
+    pub const fn from_switch(value: u8) -> Self {
+        match value {
+            0 => Self::None,
+            1 => Self::VeryLow,
+            2 => Self::Low,
+            3 => Self::Middle,
+            4 => Self::High,
+            _ => Self::VeryHigh,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Switches {
     pub appearance: Appearance,
@@ -27,8 +42,10 @@ impl Default for Switches {
     /// `dSCManagerDefaultBattleState`: every item, middle appearance.
     fn default() -> Self {
         Self {
-            appearance: Appearance::Middle,
-            toggles: !0,
+            appearance: Appearance::from_switch(
+                crate::d_arrays::SC_MANAGER_DEFAULT_BATTLE_STATE_ITEM_APPEARANCE_RATE[0],
+            ),
+            toggles: crate::d_arrays::SC_MANAGER_DEFAULT_BATTLE_STATE_ITEM_TOGGLES[0],
         }
     }
 }
@@ -92,20 +109,9 @@ impl DropWeights {
     }
 }
 
-/// `I_SEC_TO_TICS(n)`.
-const fn secs(n: u16) -> u16 {
-    n * 60
-}
 /// `dITManagerAppearanceRatesMin` / `Max`, by [`Appearance`].
-const APPEARANCE_RATES_MIN: [u16; 6] = [secs(0), secs(30), secs(25), secs(20), secs(15), secs(10)];
-const APPEARANCE_RATES_MAX: [u16; 6] = [
-    secs(0),
-    secs(30) + 90,
-    secs(25) + 75,
-    secs(20) + 60,
-    secs(15) + 45,
-    secs(10) + 30,
-];
+const APPEARANCE_RATES_MIN: [u16; 6] = crate::d_arrays::IT_MANAGER_APPEARANCE_RATES_MIN;
+const APPEARANCE_RATES_MAX: [u16; 6] = crate::d_arrays::IT_MANAGER_APPEARANCE_RATES_MAX;
 /// `item_mapobj_ids[30]`: more item points halt the source.
 pub const APPEAR_POINTS_MAX: usize = 30;
 

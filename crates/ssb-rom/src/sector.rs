@@ -52,10 +52,10 @@ pub const SLOT_FLIGHT: u32 = 0;
 pub const SLOT_ARWING: u32 = 1;
 
 /// `dGRSectorArwingSectorDescs`, in [`FLIGHT_FILE`].
-pub const SECTOR_DESCS: [u32; 8] = [0x0, 0x250, 0x6D0, 0x3E0, 0xD10, 0xEB0, 0x1510, 0x11D0];
+pub const SECTOR_DESCS: [u32; 8] = crate::d_arrays::GR_SECTOR_ARWING_SECTOR_DESCS;
 /// `dGRSectorArwingAnimJoints`, in [`FLIGHT_FILE`]. Entry 0 is never
 /// played: pilot 0 means no manoeuvre.
-pub const PILOT_ANIMS: [u32; 6] = [0x0, 0x1D34, 0x1DA4, 0x1DC4, 0x1D54, 0x1DE4];
+pub const PILOT_ANIMS: [u32; 6] = crate::d_arrays::GR_SECTOR_ARWING_ANIM_JOINTS;
 /// The `GRSectorDesc` fields `func_ovl2_80107D50` starts, with their nodes.
 pub const DESC_FIELDS: [(u32, usize); 4] = [(0x0, 0), (0x1C, 7), (0x24, 9), (0x2C, 11)];
 
@@ -396,7 +396,8 @@ mod tests {
     #[test]
     fn a_flight_field_reads_the_descriptor_pointer() {
         let mut flight = alloc::vec![0u8; 0x300];
-        flight[0x250 + 0x1C..0x250 + 0x20].copy_from_slice(&0x3B8u32.to_be_bytes());
+        let desc = SECTOR_DESCS[1] as usize;
+        flight[desc + 0x1C..desc + 0x20].copy_from_slice(&0x3B8u32.to_be_bytes());
         let s = Script::Flight {
             pattern: 1,
             field: 1,

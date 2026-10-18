@@ -1,5 +1,6 @@
 use super::*;
 use crate::computer::attack::Trait as T;
+use crate::fighter::FighterKind as K;
 use crate::spgame::{manager::Manager, Backup};
 
 fn stage_setup(stage: Stage, kind: FighterKind) -> (Game, BattleState, SceneData) {

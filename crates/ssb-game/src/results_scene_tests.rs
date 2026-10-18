@@ -47,6 +47,7 @@ fn fighter(s: &Scene, i: usize) -> Fighter {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn no_contest_puts_both_fighters_one_row_back_clapping_and_draws_nothing() {
     let _rng = rng_lock();
     let r = results(Kind::NoContest, &[0, 0], None);
@@ -161,6 +162,7 @@ fn a_sole_three_player_winner_takes_the_middle_column() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn four_players_in_order_swap_the_winner_inward() {
     let _rng = rng_lock();
     let r = results(Kind::StockRoyal, &[0, 1, 2, 3], Some(0));

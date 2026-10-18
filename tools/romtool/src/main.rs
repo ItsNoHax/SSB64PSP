@@ -14709,8 +14709,9 @@ mod tests {
     /// selects sprites 0 and 2 of `[0xC18, NULL, 0x408]`; the unselected
     /// NULL takes entry 0's place instead of declining the script.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn ground_jolt_node_4_texture_script_attaches() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let rom = std::fs::read(path).unwrap();
@@ -14734,8 +14735,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn player_interface_wrapper_colours_reach_rom_primitives() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let rom = std::fs::read(path).unwrap();
@@ -15198,8 +15200,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn camera_head1_graphs_restore_xlu_mode() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -15373,8 +15376,9 @@ mod tests {
     /// not a real-archive regression here (same "not seen in the real
     /// archive" shape as T7's `texgen_addressing_reference_cases_for_material_combinations_not_seen_in_the_real_archive`).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn no_real_texgen_primitive_is_missing_a_bound_texture() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -15427,8 +15431,9 @@ mod tests {
     /// resolved that silently made them common again would be the kind of
     /// regression worth re-measuring, not just re-fixing.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn texture_key_fields_never_vary_for_a_fixed_data_and_palette_location() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -15515,8 +15520,9 @@ mod tests {
     /// states it and runs lit under the scene. `(file, graph, variant,
     /// vertex offset, count, lit)`.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn packed_lighting_matches_the_n64_traces() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -15582,8 +15588,9 @@ mod tests {
     /// a generous multiple of the unrelated without-branch baseline, rather
     /// than assuming either can be exactly zero.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn census_lit_primitives_with_a_colour_baking_branch() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -15679,8 +15686,9 @@ mod tests {
     /// `add_mesh` (pack.rs) would need this same measurement redone to
     /// notice it silently reintroduced the bug.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn census_g_vtx_vs_triangle_time_lighting_state() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -15741,8 +15749,9 @@ mod tests {
     /// kept as a permanent census so a future change to either signal has a
     /// concrete number to check against.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn census_initial_lit_seed_measured_impact_on_skeleton_graphs() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -15830,9 +15839,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn mario_and_luigi_buttons_use_tile_relative_mirror_phase() {
         use std::collections::BTreeMap;
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -15907,9 +15917,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn mario_knees_retain_thigh_cache_vertices() {
         use std::collections::BTreeMap;
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -15954,8 +15965,9 @@ mod tests {
     /// an unlit primitive (RE-240's own dedup precedent), or non-fighter
     /// geometry that never carries `G_LIGHTING` at all (RE-241).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn census_looks_like_unit_normal_fallback_after_skeleton_lighting_seed() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -16028,8 +16040,9 @@ mod tests {
     /// device-validated); switching to raw `depth_test` now would regress
     /// the ~4468 primitives this census has not yet explained.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn census_independent_depth_state_vs_z_buffer_geometry_bit() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -16093,8 +16106,9 @@ mod tests {
     /// remainder, which is why this seed exists but no per-item-type one
     /// does yet.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn census_lb_transition_seed_measured_impact() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -16187,8 +16201,9 @@ mod tests {
     /// with depth testing and writing both off, contradicting `G_ZBUFFER`
     /// being on for the same primitives.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn census_depth_seed_measured_impact_on_skeleton_graphs() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -16315,8 +16330,9 @@ mod tests {
     /// `PlannedList`/`list_id` remainder [`ssb_rom::mesh::InitialMaterial::
     /// GROUND_LAYER1_EXTERNAL`]'s own doc comment left open.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn census_ground_layer_depth_state_vs_z_buffer() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -16436,8 +16452,9 @@ mod tests {
     /// (`census_independent_depth_state_vs_z_buffer_geometry_bit`, re-run
     /// after this seed).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn census_ground_layer1_seed_measured_impact() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -16682,8 +16699,9 @@ mod tests {
     /// project's own established "measure through the real pipeline, not a
     /// separate heuristic scan" precedent (RE-112).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn filter_reconstruction_census_against_real_archive_textures() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -16857,8 +16875,9 @@ mod tests {
     /// actually leaves the tile's logical bounds -- the only condition under
     /// which the forced-clamp rule changes anything observable.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn tile_addressing_census_against_real_archive_textures() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -17165,8 +17184,9 @@ mod tests {
     /// that may find nothing worth keeping (RE-121/RE-122's "temporary,
     /// reverted census" standard).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn settile_field_census_against_real_archive_textures() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -17406,8 +17426,9 @@ mod tests {
     /// at each texgen `G_VTX`, so a future task can see the full addressing
     /// and lighting shape at a glance instead of re-deriving it.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn texgen_tile_state_and_lighting_audit() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
@@ -17499,8 +17520,9 @@ mod tests {
     /// of that shared walk so the CLI and the test can never silently
     /// disagree about what "addressing agrees with hardware" means.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn texgen_addressing_census_against_real_archive_materials() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let (data, info) = super::load_rom(path.as_ref()).unwrap();

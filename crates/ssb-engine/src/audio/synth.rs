@@ -1160,6 +1160,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn one_voice_renders_sound() {
         let Some(data) = testdata::data() else {
             return;

@@ -1453,8 +1453,9 @@ mod tests {
     /// real ROM at the same three `MObjSub`s, end to end through
     /// `read_material` itself (not hand-copied constants).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn real_rom_tile0_and_texture_scale_match_measured_values() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();

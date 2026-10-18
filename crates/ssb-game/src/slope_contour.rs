@@ -594,6 +594,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn invert_undoes_a_transform() {
         let m = transform_matrix(
             Vec3::new(10.0, -4.0, 2.5),
@@ -609,6 +610,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn leg_ik_reaches_the_target() {
         // Thigh 50 long (the knee's translate.x), shin 60 (`rotate`).
         let (trax, shin) = (50.0f32, 60.0f32);

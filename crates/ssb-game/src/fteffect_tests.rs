@@ -224,6 +224,7 @@ fn the_slash_takes_no_struct_and_a_refused_effect_draws_nothing() {
 /// `efManagerDamageSpawnSparksProcUpdate`: a spark at lifetimes 8, 4 and
 /// 0, flying at 18, 0 and -18 degrees on the fighter's side, then the
 /// spawner ends.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn a_spark_spawner_throws_three_sparks_at_its_angles() {
     let bank = bank(20);
@@ -646,6 +647,7 @@ fn a_status_change_stops_the_attached_thunder_shock() {
 /// into TopN's frame `B` through the inverse of TopN's collision matrix,
 /// for the six sparks of the first smash. Bit patterns from the trace.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn thunder_shock_points_enter_topn_frame_as_the_trace_records() {
     use crate::slope_contour::{invert, transform_matrix, world_position};
     let v = |b: [u32; 3]| {

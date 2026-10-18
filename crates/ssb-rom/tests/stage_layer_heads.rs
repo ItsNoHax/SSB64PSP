@@ -7,7 +7,7 @@
 use ssb_rom::pack::{flags, Pack, StageDesc};
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -25,6 +25,7 @@ fn prims(pack: &Pack<'_>, key: (u32, u32)) -> Vec<u32> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn head1_glows_blend_and_layer_head1_lists_have_no_depth_test() {
     let Some(bytes) = pack_bytes() else {
         return;
@@ -62,6 +63,7 @@ fn head1_glows_blend_and_layer_head1_lists_have_no_depth_test() {
 /// layer 1 of Zebes, Sector Z and Saffron City, layer 0 of Mushroom Kingdom,
 /// Sector Z and Hyrule Castle, and layer 3 of Saffron City.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn vs_stage_layers_keep_their_depth_state_and_heads() {
     let Some(bytes) = pack_bytes() else {
         return;

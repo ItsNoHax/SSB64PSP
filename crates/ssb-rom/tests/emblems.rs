@@ -7,7 +7,7 @@ use ssb_rom::pack::{flags, Pack};
 use ssb_rom::skeleton::EffectMaterialAnimator;
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -50,6 +50,7 @@ fn lights(pack: &Pack<'_>, dobjdesc: u32, frame: f32) -> Vec<([u8; 4], [u8; 4])>
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_emblem_animates_both_light_colours() {
     let Some(bytes) = pack_bytes() else {
         return;
@@ -73,6 +74,7 @@ fn every_emblem_animates_both_light_colours() {
 /// blue, yellow and green one frame apart, over a `(0x26, 0x26, 0x26)`
 /// ambient; frame 4 is the CPU's grey over black.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn an_emblems_start_frame_is_its_players_colour() {
     let Some(bytes) = pack_bytes() else {
         return;

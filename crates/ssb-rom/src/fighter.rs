@@ -1061,8 +1061,9 @@ mod tests {
     /// `halo_size` in `relocData/2xx_*Main.c`, which `ssb_game::dead::halo_size`
     /// transcribes.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn real_rom_halo_sizes_match_the_decomp() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -1091,8 +1092,9 @@ mod tests {
     /// `dFoxModel_gap_0x5A38_sub_0x808`, 0x6240; Samus's parts are `dls`
     /// pairs; Kirby's second set is `dKirbyMain_sub_0x724`).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn real_rom_skeletons_match_the_decomp() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();
@@ -1137,8 +1139,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn real_rom_common_parts_match_every_named_model_file() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();

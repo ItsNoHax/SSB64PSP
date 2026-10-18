@@ -20,14 +20,14 @@ pub const HIT_POINTS: u8 = 0xB;
 pub const BOSS_HIT_POINTS: i32 = 300;
 
 /// `dIFCommonPlayerDamageDigitWidths`: each glyph's advance.
-pub const DIGIT_WIDTHS: [i32; 12] = [14, 9, 15, 14, 15, 13, 15, 14, 15, 15, 17, 20];
+pub const DIGIT_WIDTHS: [i32; 12] = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_WIDTHS;
 /// `dIFCommonPlayerDamageDigitColors{R,G,B}`; index 4 is the flash.
-const COLORS_R: [u8; 5] = [0xFF, 0xF0, 0xF0, 0xFF, 0xFF];
-const COLORS_G: [u8; 5] = [0xF0, 0xFF, 0xF0, 0xFF, 0xFF];
-const COLORS_B: [u8; 5] = [0xF0, 0xF0, 0xFF, 0xFF, 0xFF];
-/// `dIFCommonPlayerDamagePositionOffsetsX` and
+const COLORS_R: [u8; 5] = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_COLORS_R;
+const COLORS_G: [u8; 5] = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_COLORS_G;
+const COLORS_B: [u8; 5] = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_COLORS_B;
+/// `dIFCommonPlayerDamagePositionOffsetsX`; the Y is
 /// `ifCommonPlayerDamageSetDigitPositions`'s `player_pos_y`.
-pub const POSITION_X: [i32; 4] = [55, 125, 195, 265];
+pub const POSITION_X: [i32; 4] = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_POSITION_OFFSETS_X;
 pub const POSITION_Y: i32 = 210;
 
 /// `ifCommonPlayerStockMakeStockSnap`: where a lost stock's burst starts,
@@ -152,13 +152,19 @@ pub fn emblem_origin(pos_x: i32, w: u16, h: u16) -> (f32, f32) {
 
 /// [`emblem_origin`] at interface height `pos_y`.
 pub fn emblem_origin_at(pos_x: i32, pos_y: i32, w: u16, h: u16) -> (f32, f32) {
-    let x = (pos_x as f32 - f32::from(w) * 0.5) + 3.0;
-    let y = (pos_y as f32 - f32::from(h) * 0.5) - 3.0;
+    let x = (pos_x as f32 - f32::from(w) * 0.5) + EMBLEM_OFFSET_X as f32;
+    let y = (pos_y as f32 - f32::from(h) * 0.5) + EMBLEM_OFFSET_Y as f32;
     (x as i32 as f32, y as i32 as f32)
 }
 
-/// `dIFCommonPlayerStocksIconOffsetsX`: -24 for every player.
-const STOCK_ICON_X: i32 = -24;
+/// `dIFCommonPlayerStocksIconOffsetsX`: the same for every player, which is
+/// why the port's stock-icon functions take no player.
+const STOCK_ICON_X: i32 = crate::d_arrays::IF_COMMON_PLAYER_STOCKS_ICON_OFFSETS_X[0];
+
+/// `dIFCommonPlayerDamageEmblemOffsetsX` and `...Y`: the same for every
+/// player, which is why [`emblem_origin_at`] takes no player.
+const EMBLEM_OFFSET_X: i32 = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_EMBLEM_OFFSETS_X[0];
+const EMBLEM_OFFSET_Y: i32 = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_EMBLEM_OFFSETS_Y[0];
 
 /// Where a fighter's stock icons sit (`ifCommonPlayerStock*`), top-left
 /// corners of `w` by `h` icons. A time battle's single icon
@@ -221,7 +227,10 @@ pub fn stock_icons_at(
 
 /// `dIFCommonTimerDigitsSpritePositionsX`: the centres of `M M : S S`'s
 /// digits, and the colon's (`ifCommonTimerMakeDigits`).
-pub const TIMER_X: [f32; 4] = [232.0, 247.0, 273.0, 288.0];
+pub const TIMER_X: [f32; 4] = {
+    let x = crate::d_arrays::IF_COMMON_TIMER_DIGITS_SPRITE_POSITIONS_X;
+    [x[0] as f32, x[1] as f32, x[2] as f32, x[3] as f32]
+};
 pub const TIMER_COLON_X: f32 = 260.0;
 /// Every timer glyph is centred on y 30.
 pub const TIMER_Y: f32 = 30.0;
@@ -232,7 +241,7 @@ pub const TIMER_COLON: u8 = 10;
 /// seconds, seconds. Below the limit the count rounds up (`+ 59`), so the
 /// last second shows `0:01`; at zero it reads `0:00`.
 pub fn timer_digits(time_remain: u32, limit: u32) -> [u8; 4] {
-    const UNITS: [u32; 4] = [36000, 3600, 600, 60];
+    let units = crate::d_arrays::IF_COMMON_TIMER_DIGITS_UNIT_LENGTHS.map(u32::from);
     if time_remain == 0 {
         return [0; 4];
     }
@@ -241,7 +250,7 @@ pub fn timer_digits(time_remain: u32, limit: u32) -> [u8; 4] {
     } else {
         time_remain + 59
     };
-    UNITS.map(|u| {
+    units.map(|u| {
         let d = time / u;
         time -= d * u;
         d as u8

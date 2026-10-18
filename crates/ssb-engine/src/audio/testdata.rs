@@ -11,7 +11,7 @@ use super::data::AudioData;
 pub fn section() -> Option<&'static [u8]> {
     static SECTION: OnceLock<Option<&'static [u8]>> = OnceLock::new();
     *SECTION.get_or_init(|| {
-        let path = std::env::var_os("SSB64_ROM")?;
+        let path = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
         let rom = std::fs::read(path).ok()?;
         let bytes = ssb_rom::audio::build_section(&rom).expect("audio section");
         Some(std::boxed::Box::leak(bytes.into_boxed_slice()))

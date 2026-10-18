@@ -34,7 +34,7 @@ const FRAMES: [[u32; 5]; PLAYABLE as usize] = [
 ];
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -50,6 +50,7 @@ fn leads_with_runtime_joint(kind: u32, slot: u32) -> bool {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_fighter_has_its_demo_clips_over_its_model_joints() {
     let Some(bytes) = pack_bytes() else { return };
     let pack = Pack::open(&bytes).unwrap();
@@ -110,6 +111,7 @@ fn every_fighter_has_its_demo_clips_over_its_model_joints() {
 /// leading TransN joint its `anim_desc` flags (FigureDropped and
 /// FigureStand, which `scSubsysFighterApplyVelTransN` moves by).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_campaign_demo_clips_are_packed() {
     use ssb_rom::anim::{
         EXPECTED_FRAMES, FIGHTER_ANIMS, LEADING_RUNTIME_JOINT, SLOT_FIGURE_DROPPED, SLOT_INTRO_R,

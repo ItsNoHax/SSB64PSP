@@ -18,6 +18,12 @@ pub mod audio;
 pub mod camanim;
 pub mod campaign;
 pub mod collision;
+/// The decomp's small `d*` data arrays, generated at build time from the
+/// ROM by `ssb-tablegen` (`d_arrays`; D-048). Each constant is the symbol's
+/// name without the `d`, in `UPPER_SNAKE`.
+mod d_arrays {
+    include!(concat!(env!("OUT_DIR"), "/d_arrays.rs"));
+}
 pub mod depth_mask;
 pub mod dl;
 pub mod effect;

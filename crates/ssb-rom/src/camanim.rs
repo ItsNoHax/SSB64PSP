@@ -36,10 +36,10 @@ impl CamInit {
     /// scene camera holds once `gcAddXObjForCamera` has given it a view and
     /// a perspective.
     pub const DEFAULT: CamInit = CamInit {
-        eye: [0.0, 0.0, 1500.0],
-        at: [0.0; 3],
-        up_x: 0.0,
-        fovy: 30.0,
+        eye: crate::d_arrays::GC_COBJ_VEC_DEFAULT_EYE,
+        at: crate::d_arrays::GC_COBJ_VEC_DEFAULT_AT,
+        up_x: crate::d_arrays::GC_COBJ_VEC_DEFAULT_UP_X[0],
+        fovy: crate::d_arrays::GC_PERSP_DEFAULT_FOVY[0],
     };
 
     fn frame(&self) -> Frame {

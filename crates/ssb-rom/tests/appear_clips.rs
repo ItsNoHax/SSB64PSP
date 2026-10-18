@@ -12,13 +12,14 @@ const NESS: u32 = 11;
 const SLOT_GUARD_ON: u32 = 600;
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_fighter_has_an_entry_clip_over_its_model_joints() {
     let Some(bytes) = pack_bytes() else { return };
     let pack = Pack::open(&bytes).unwrap();
@@ -78,6 +79,7 @@ fn every_fighter_has_an_entry_clip_over_its_model_joints() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_skeleton_plays_marios_entry_to_its_end() {
     let Some(bytes) = pack_bytes() else { return };
     let pack = Pack::open(&bytes).unwrap();
@@ -104,6 +106,7 @@ fn the_skeleton_plays_marios_entry_to_its_end() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn yoshis_entry_hides_his_model_until_he_hatches() {
     let Some(bytes) = pack_bytes() else { return };
     let pack = Pack::open(&bytes).unwrap();

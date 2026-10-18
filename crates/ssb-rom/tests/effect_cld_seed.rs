@@ -12,8 +12,9 @@ use ssb_rom::pack::{flags, Pack};
 const LISTS: [(u32, u32); 3] = [(163, 0x248), (351, 0x1F38), (352, 0x8E0)];
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_link_15_effect_lists_are_packed_with_no_depth_test() {
-    let Some(_) = std::env::var_os("SSB64_ROM") else {
+    let Some(_) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let path =

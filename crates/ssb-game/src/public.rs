@@ -26,35 +26,7 @@ use crate::sound::{self, id::*, FgmHandle};
 
 /// `dFTCommonDataPublicFighterCallFGMs`: each fighter's chant, by `FTKind`
 /// (none for Master Hand, the Polygons and Giant Donkey Kong).
-const FIGHTER_CALL_FGMS: [u16; 27] = [
-    nSYAudioVoicePublicMario,
-    nSYAudioVoicePublicFox,
-    nSYAudioVoicePublicDonkey,
-    nSYAudioVoicePublicSamus,
-    nSYAudioVoicePublicLuigi,
-    nSYAudioVoicePublicLink,
-    nSYAudioVoicePublicYoshi,
-    nSYAudioVoicePublicCaptain,
-    nSYAudioVoicePublicKirby,
-    nSYAudioVoicePublicPikachu,
-    nSYAudioVoicePublicPurin,
-    nSYAudioVoicePublicNess,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioVoicePublicMario,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioFGMVoiceEnd,
-    nSYAudioFGMVoiceEnd,
-];
+const FIGHTER_CALL_FGMS: [u16; 27] = crate::d_arrays::FT_COMMON_DATA_PUBLIC_FIGHTER_CALL_FGMS;
 
 /// `FTCOMMON_DAMAGE_KNOCKBACK_VERYHIGH`.
 const KNOCKBACK_VERYHIGH: f32 = 160.0;

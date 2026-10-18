@@ -6,7 +6,7 @@
 use ssb_rom::pack::{flags, Pack};
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -24,6 +24,7 @@ fn env_lerp(pack: &Pack<'_>, key: (u32, u32)) -> Vec<bool> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_colour_animated_items_blend_towards_env() {
     let Some(bytes) = pack_bytes() else {
         return;

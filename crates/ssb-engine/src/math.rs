@@ -1078,73 +1078,17 @@ fn lb_sin_index(index: u16) -> f32 {
 }
 
 /// `dLBCommonSinLookup[index]`: the sine of `index / 651.8986` (an `f32`
-/// angle) rounded to six decimals, which 1010 of the 1024 words are. The
-/// sine is taken in `f64`, whose rounding margin (5.7e-10 at worst) no
-/// platform's error reaches, so the PSP builds the same words as the host;
-/// the 14 authored exceptions are kept explicitly. The table is not copied
-/// from the ROM (4 KiB of ROM data): [`LB_SINE`] is computed by the compiler
-/// from this formula, because the PSP has no `f64` unit and summing the
-/// series at run time cost about 2 ms per fighter a frame in the collision
-/// matrices (RE-470). `lbcommon_sine_table_matches_the_rom` checks every
-/// word against the ROM.
+/// angle) rounded to six decimals, for the 1024 steps of a quarter turn.
+/// The table is generated at build time from the ROM by `ssb-tablegen`
+/// (D-048) and never committed. `lb_sin_index` folds every angle into
+/// `0..1024`, so no caller indexes past the table; an index past its end
+/// reads 0.0.
 pub fn lb_sine_sample(index: u16) -> f32 {
-    match LB_SINE.get(index as usize) {
-        Some(&v) => v,
-        None => lb_sine_compute(index),
-    }
+    LB_SINE.get(index as usize).copied().unwrap_or(0.0)
 }
 
-/// [`lb_sine_sample`] for every index of the table, evaluated at compile
-/// time.
-static LB_SINE: [f32; 1024] = {
-    let mut table = [0.0f32; 1024];
-    let mut i = 0;
-    while i < 1024 {
-        table[i] = lb_sine_compute(i as u16);
-        i += 1;
-    }
-    table
-};
-
-const fn lb_sine_compute(index: u16) -> f32 {
-    let exception = match index {
-        355 => 0x3f04_9e99,
-        372 => 0x3f0a_48b6,
-        420 => 0x3f19_c1f8,
-        440 => 0x3f1f_f6d3,
-        500 => 0x3f31_a826,
-        503 => 0x3f32_80bf,
-        598 => 0x3f4b_41f2,
-        628 => 0x3f52_33be,
-        663 => 0x3f59_bda5,
-        677 => 0x3f5c_94d5,
-        722 => 0x3f65_0471,
-        804 => 0x3f71_8f60,
-        842 => 0x3f76_1672,
-        1023 => 0x3f80_0000,
-        _ => 0,
-    };
-    if exception != 0 {
-        return f32::from_bits(exception);
-    }
-    let value = sin_f64((index as f32 / 651.898_6) as f64);
-    (((value * 1_000_000.0 + 0.5) as u64) as f64 / 1_000_000.0) as f32
-}
-
-/// Sine of an angle in `[0, π/2]` in `f64`, summed to its 25th power
-/// (the remainder is below 1e-22 there).
-const fn sin_f64(x: f64) -> f64 {
-    let x2 = x * x;
-    let mut term = x;
-    let mut sum = x;
-    let mut n = 1.0;
-    while n < 25.0 {
-        term = -term * x2 / ((n + 1.0) * (n + 2.0));
-        sum += term;
-        n += 2.0;
-    }
-    sum
-}
+/// The generated table, kept in one place in `.rodata`.
+static LB_SINE: [f32; 1024] = crate::d_arrays::LB_COMMON_SIN_LOOKUP;
 
 // --- LookAt quantization (FTOFRAC8) ----------------------------------------
 //
@@ -1272,20 +1216,6 @@ pub fn billboard_matrix(
 
 #[cfg(test)]
 mod trig_tests {
-    /// RE-470: the compile-time sine table holds what the series gives at
-    /// run time, word for word.
-    #[test]
-    fn the_compiled_sine_table_matches_the_series() {
-        for i in 0..1024u16 {
-            let runtime = super::lb_sine_compute(core::hint::black_box(i));
-            assert_eq!(
-                super::LB_SINE[i as usize].to_bits(),
-                runtime.to_bits(),
-                "entry {i}"
-            );
-        }
-    }
-
     /// `fsin`/`fcos` outside the ROM oracle's inputs (`trig_golden`): the
     /// paths the R4300 would trap on or never computes.
     #[test]
@@ -1414,11 +1344,8 @@ mod trig_tests {
     }
 
     #[test]
-    fn the_table_sine_is_exact_where_it_must_be() {
-        for i in 0..1024u16 {
-            let a = f64::from(i as f32 / 651.898_6);
-            assert!((super::sin_f64(a) - a.sin()).abs() < 1e-14, "entry {i}");
-        }
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_table_sine_is_exact_at_a_quarter_turn() {
         assert_eq!(super::lb_sin(core::f32::consts::FRAC_PI_2), 1.0);
         assert_eq!(super::lb_cos(core::f32::consts::FRAC_PI_2), 0.0);
     }
@@ -1432,7 +1359,7 @@ mod sy_sin_tests {
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_table_is_the_roms_gsysintable() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let rom = std::fs::read(path).unwrap();

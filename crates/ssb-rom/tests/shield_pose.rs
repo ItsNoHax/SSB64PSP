@@ -13,7 +13,7 @@ const PLAYABLE: u32 = 12;
 const SLOT_GUARD_ON: u32 = 600;
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -30,6 +30,7 @@ fn bound_nodes(pack: &Pack<'_>, anim: &AnimDesc) -> Vec<u32> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_fighter_has_eight_sectors_over_its_own_joints() {
     let Some(bytes) = pack_bytes() else { return };
     let pack = Pack::open(&bytes).unwrap();
@@ -71,6 +72,7 @@ fn every_fighter_has_eight_sectors_over_its_own_joints() {
 /// (0.4712, -0.7330, -0.4712); its `dobj_lookup` entry is (0, -0.5236, 0).
 /// The range blends between them.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_stick_range_blends_foxs_sector_toward_the_neutral_pose() {
     let Some(bytes) = pack_bytes() else { return };
     let pack = Pack::open(&bytes).unwrap();
@@ -118,6 +120,7 @@ fn the_stick_range_blends_foxs_sector_toward_the_neutral_pose() {
 
 /// `GuardOn`/`GuardOff` move only `YRotN`.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_shield_joint_pose_leaves_the_body_alone() {
     let Some(bytes) = pack_bytes() else { return };
     let pack = Pack::open(&bytes).unwrap();
@@ -145,6 +148,7 @@ fn the_shield_joint_pose_leaves_the_body_alone() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn luigi_scales_come_from_the_pack_and_scale_the_shield_neutral() {
     let Some(bytes) = pack_bytes() else { return };
     let pack = Pack::open(&bytes).unwrap();
@@ -206,6 +210,7 @@ fn luigi_scales_come_from_the_pack_and_scale_the_shield_neutral() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn luigi_clip_translation_uses_the_matching_model_joint_vector() {
     let Some(bytes) = pack_bytes() else { return };
     let pack = Pack::open(&bytes).unwrap();

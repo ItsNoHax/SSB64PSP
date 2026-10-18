@@ -189,42 +189,79 @@ pub fn appear_set_status(f: &mut Fighter) {
         rays_ticks: None,
         is_link_1: f.kind == FighterKind::Captain && !right,
     };
-    // `dFTCommonEntryAppearStatusIDs`: Metal Mario's row is Mario's and
-    // Giant Donkey Kong's Donkey Kong's.
-    let kind = match f.kind {
+    // `dFTCommonEntryAppearStatusIDs[fkind][lr]`: the ROM names the status
+    // id and the fighter's own status table (Metal Mario's row is Mario's
+    // and Giant Donkey Kong's Donkey Kong's) says which status it is.
+    let id =
+        crate::d_arrays::FT_COMMON_ENTRY_APPEAR_STATUS_IDS[f.kind as usize][usize::from(!right)];
+    let table_kind = match f.kind {
         FighterKind::MetalMario => FighterKind::Mario,
         FighterKind::GiantDonkey => FighterKind::Donkey,
         k => k,
     };
-    let s = match (kind, right) {
-        (FighterKind::Mario | FighterKind::Luigi, true) => AnyStatus::Mario(MarioStatus::AppearR),
-        (FighterKind::Mario | FighterKind::Luigi, false) => AnyStatus::Mario(MarioStatus::AppearL),
-        (FighterKind::Fox, true) => AnyStatus::Fox(FoxStatus::AppearR),
-        (FighterKind::Fox, false) => AnyStatus::Fox(FoxStatus::AppearL),
-        (FighterKind::Donkey, true) => AnyStatus::Donkey(DonkeyStatus::AppearR),
-        (FighterKind::Donkey, false) => AnyStatus::Donkey(DonkeyStatus::AppearL),
-        (FighterKind::Samus, true) => AnyStatus::Samus(SamusStatus::AppearR),
-        (FighterKind::Samus, false) => AnyStatus::Samus(SamusStatus::AppearL),
-        (FighterKind::Link, true) => AnyStatus::Link(LinkStatus::AppearR),
-        (FighterKind::Link, false) => AnyStatus::Link(LinkStatus::AppearL),
-        (FighterKind::Yoshi, true) => AnyStatus::Yoshi(YoshiStatus::AppearR),
-        (FighterKind::Yoshi, false) => AnyStatus::Yoshi(YoshiStatus::AppearL),
-        (FighterKind::Captain, true) => AnyStatus::Captain(CaptainStatus::AppearRStart),
-        (FighterKind::Captain, false) => AnyStatus::Captain(CaptainStatus::AppearLStart),
-        (FighterKind::Kirby, true) => AnyStatus::Kirby(KirbyStatus::AppearR),
-        (FighterKind::Kirby, false) => AnyStatus::Kirby(KirbyStatus::AppearL),
-        (FighterKind::Pikachu, true) => AnyStatus::Pikachu(PikachuStatus::AppearR),
-        (FighterKind::Pikachu, false) => AnyStatus::Pikachu(PikachuStatus::AppearL),
-        (FighterKind::Purin, true) => AnyStatus::Purin(PurinStatus::AppearR),
-        (FighterKind::Purin, false) => AnyStatus::Purin(PurinStatus::AppearL),
-        (FighterKind::Ness, true) => AnyStatus::Ness(NessStatus::AppearRStart),
-        (FighterKind::Ness, false) => AnyStatus::Ness(NessStatus::AppearLStart),
+    let Some(s) = appear_statuses(table_kind)
+        .into_iter()
+        .flatten()
+        .find(|s| i32::from(s.id()) == id)
+    else {
         // The Polygons' rows are `nFTCommonStatusEntryNull`.
-        _ => return status::set_wait(f),
+        return status::set_wait(f);
     };
     set(f, s);
     // `ftCommonAppearInitStatusVars`.
     f.dead.camera_mode = crate::dead::CameraMode::Entry;
+}
+
+/// The appear statuses of a fighter's own status table, facing right and
+/// left, which `dFTCommonEntryAppearStatusIDs` picks between.
+fn appear_statuses(kind: FighterKind) -> Option<[AnyStatus; 2]> {
+    Some(match kind {
+        FighterKind::Mario | FighterKind::Luigi => [
+            AnyStatus::Mario(MarioStatus::AppearR),
+            AnyStatus::Mario(MarioStatus::AppearL),
+        ],
+        FighterKind::Fox => [
+            AnyStatus::Fox(FoxStatus::AppearR),
+            AnyStatus::Fox(FoxStatus::AppearL),
+        ],
+        FighterKind::Donkey => [
+            AnyStatus::Donkey(DonkeyStatus::AppearR),
+            AnyStatus::Donkey(DonkeyStatus::AppearL),
+        ],
+        FighterKind::Samus => [
+            AnyStatus::Samus(SamusStatus::AppearR),
+            AnyStatus::Samus(SamusStatus::AppearL),
+        ],
+        FighterKind::Link => [
+            AnyStatus::Link(LinkStatus::AppearR),
+            AnyStatus::Link(LinkStatus::AppearL),
+        ],
+        FighterKind::Yoshi => [
+            AnyStatus::Yoshi(YoshiStatus::AppearR),
+            AnyStatus::Yoshi(YoshiStatus::AppearL),
+        ],
+        FighterKind::Captain => [
+            AnyStatus::Captain(CaptainStatus::AppearRStart),
+            AnyStatus::Captain(CaptainStatus::AppearLStart),
+        ],
+        FighterKind::Kirby => [
+            AnyStatus::Kirby(KirbyStatus::AppearR),
+            AnyStatus::Kirby(KirbyStatus::AppearL),
+        ],
+        FighterKind::Pikachu => [
+            AnyStatus::Pikachu(PikachuStatus::AppearR),
+            AnyStatus::Pikachu(PikachuStatus::AppearL),
+        ],
+        FighterKind::Purin => [
+            AnyStatus::Purin(PurinStatus::AppearR),
+            AnyStatus::Purin(PurinStatus::AppearL),
+        ],
+        FighterKind::Ness => [
+            AnyStatus::Ness(NessStatus::AppearRStart),
+            AnyStatus::Ness(NessStatus::AppearLStart),
+        ],
+        _ => return None,
+    })
 }
 
 /// `ftCommonAppearSetPosition`: a 1P Game team member drops in from
@@ -365,7 +402,10 @@ pub fn place(f: &mut Fighter, t: Vec3) {
 }
 
 /// `dIFCommonEntryFocusSleepTics`.
-const FOCUS_SLEEP: [u32; 3] = [22, 15, 60];
+const FOCUS_SLEEP: [u32; 3] = {
+    let a = crate::d_arrays::IF_COMMON_ENTRY_FOCUS_SLEEP_TICS;
+    [a[0] as u32, a[1] as u32, a[2] as u32]
+};
 
 /// `ifCommonEntryFocusThread`, made at the countdown's creation with
 /// `syUtilsRandIntRange(3)` as its `id`: when each fighter enters, and for

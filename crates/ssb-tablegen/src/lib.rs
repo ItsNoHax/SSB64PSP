@@ -67,6 +67,7 @@ mod battle_data;
 mod capture_captain;
 mod colanim;
 mod computer;
+mod d_arrays;
 mod emit;
 mod ending_data;
 mod fighters;
@@ -86,6 +87,8 @@ mod physics;
 mod rom_layout;
 mod sc1p_data;
 mod sin_table;
+// Every code overlay is listed; the generators use some of them.
+#[allow(dead_code)]
 mod source;
 mod stat_flags;
 
@@ -196,6 +199,7 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
             files.extend(sc1p_data::generate(rom)?);
             files.extend(ending_data::generate(rom)?);
             files.extend(opening_data::generate(rom)?);
+            files.push(d_arrays::generate_game(rom)?);
             files
         }
         Crate::Rom => {
@@ -206,12 +210,16 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
             files.extend(sc1p_data::generate_rom(rom)?);
             files.extend(ending_data::generate_rom(rom)?);
             files.extend(rom_layout::generate_rom(rom)?);
+            files.push(d_arrays::generate_rom(rom)?);
             files
         }
-        Crate::Engine => vec![Generated {
-            name: "sin_table.rs",
-            text: sin_table::generate(rom)?,
-        }],
+        Crate::Engine => vec![
+            Generated {
+                name: "sin_table.rs",
+                text: sin_table::generate(rom)?,
+            },
+            d_arrays::generate_engine(rom)?,
+        ],
     })
 }
 
@@ -264,6 +272,14 @@ pub fn locate_rom(repo: &Path) -> std::result::Result<Option<PathBuf>, String> {
             found.len()
         )),
     }
+}
+
+/// The ROM for a test or tool of the crate at `manifest_dir`
+/// (`env!("CARGO_MANIFEST_DIR")`, two levels below the repository root):
+/// [`locate_rom`] from that root. `None` when there is none (CI); panics
+/// when `SSB64_ROM` names no file or `rom/` holds more than one ROM.
+pub fn test_rom(manifest_dir: &str) -> Option<PathBuf> {
+    locate_rom(&Path::new(manifest_dir).join("../..")).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// The build-script entry point for `krate`, whose manifest directory is

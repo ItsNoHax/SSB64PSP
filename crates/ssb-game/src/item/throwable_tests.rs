@@ -563,6 +563,7 @@ fn a_reflected_poke_ball_stays_its_throwers() {
     assert_eq!(ball.attack.state, AttackState::Off);
 }
 
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn the_released_pokemon_never_repeats_either_of_the_last_two() {
     let mut data = MonsterData::default();

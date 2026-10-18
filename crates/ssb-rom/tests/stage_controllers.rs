@@ -10,6 +10,7 @@ use ssb_game::stage::pupupu::{EyesAnim, MouthAnim, Pupupu, WindStatus};
 use ssb_game::stage::{NoItems, StageAnim, StageObj, StageObjects};
 use ssb_rom::archive::{Archive, File};
 use ssb_rom::figatree::JointPose;
+use ssb_rom::ground_obj as g;
 use ssb_rom::objanim::{joint_scripts, StageJoint};
 use ssb_rom::scene::find_scene_graphs;
 
@@ -20,6 +21,7 @@ use dream_land::{whispy_index, PackWhispy};
 /// Every Saffron item uses file 159, while the gate uses file 160. Replay
 /// each packed root against its ROM script, including the make-time play.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn saffron_item_clocks_and_texture_frames_match_the_rom() {
     use ssb_rom::ground_obj::{self as g, GroundObjects};
     use ssb_rom::pack::{NodeDesc, Pack};
@@ -87,16 +89,24 @@ const MOUTH: u32 = 0x1770;
 const FLOWERS_BACK: u32 = 0x2A80;
 const FLOWERS_FRONT: u32 = 0x31F8;
 
-/// `dGRPupupuWhispyEyesAnims[lr][status][0]`.
-const EYES_ANIMS: [[u32; 2]; 2] = [[0x11A0, 0x12B0], [0x1220, 0x1330]];
+/// The script offsets the controllers start, from the ROM-generated `d*`
+/// tables behind `ssb_rom::ground_obj::ANIMS`: `dGRPupupuWhispyEyesAnims`
+/// `[lr][status][0]`.
+fn eyes_anim(lr: u8, blink: bool) -> u32 {
+    g::ANIMS[g::whispy_eyes(lr, blink)].script
+}
 /// `dGRPupupuWhispyMouthAnims[lr][status][0]`.
-const MOUTH_ANIMS: [[u32; 4]; 2] = [
-    [0x18B0, 0x1BE0, 0x1E80, 0x2100],
-    [0x1A40, 0x1D30, 0x22F0, 0x2590],
-];
-/// `dGRPupupuWhispyMouthTextures` / `dGRPupupuWhispyEyesTextures`.
-const BACK_ANIMS: [[u32; 3]; 2] = [[0x2BE0, 0x2C30, 0x2C80], [0x2CD0, 0x2D20, 0x2D70]];
-const FRONT_ANIMS: [[u32; 3]; 2] = [[0x33E0, 0x3450, 0x34B0], [0x3510, 0x35C0, 0x3660]];
+fn mouth_anim(lr: u8, status: u8) -> u32 {
+    g::ANIMS[g::whispy_mouth(lr, status)].script
+}
+/// `dGRPupupuWhispyMouthTextures[lr][phase]`.
+fn back_anim(lr: u8, phase: u8) -> u32 {
+    g::ANIMS[g::flowers_back(lr, phase)].script
+}
+/// `dGRPupupuWhispyEyesTextures[lr][phase]`.
+fn front_anim(lr: u8, phase: u8) -> u32 {
+    g::ANIMS[g::flowers_front(lr, phase)].script
+}
 
 struct GObjAnim {
     graph: u32,
@@ -135,10 +145,7 @@ impl RomWhispy<'_> {
 impl StageObjects for RomWhispy<'_> {
     fn play(&mut self, anim: StageAnim) {
         let (obj, table) = match anim {
-            StageAnim::WhispyEyes { lr, status } => (
-                0,
-                EYES_ANIMS[lr as usize][(status == EyesAnim::Blink) as usize],
-            ),
+            StageAnim::WhispyEyes { lr, status } => (0, eyes_anim(lr, status == EyesAnim::Blink)),
             StageAnim::WhispyMouth { lr, status } => {
                 let i = match status {
                     MouthAnim::Stretch => 0,
@@ -146,10 +153,10 @@ impl StageObjects for RomWhispy<'_> {
                     MouthAnim::Open => 2,
                     MouthAnim::Close => 3,
                 };
-                (1, MOUTH_ANIMS[lr as usize][i])
+                (1, mouth_anim(lr, i))
             }
-            StageAnim::FlowersBack { lr, phase } => (2, BACK_ANIMS[lr as usize][phase as usize]),
-            StageAnim::FlowersFront { lr, phase } => (3, FRONT_ANIMS[lr as usize][phase as usize]),
+            StageAnim::FlowersBack { lr, phase } => (2, back_anim(lr, phase)),
+            StageAnim::FlowersFront { lr, phase } => (3, front_anim(lr, phase)),
             _ => panic!("not a Dream Land animation"),
         };
         let o = &mut self.objs[obj];
@@ -168,8 +175,9 @@ impl StageObjects for RomWhispy<'_> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn whispy_blows_on_the_packed_animation_clocks() {
-    if std::env::var_os("SSB64_ROM").is_none() {
+    if ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).is_none() {
         return;
     }
     let path =
@@ -235,8 +243,9 @@ fn whispy_blows_on_the_packed_animation_clocks() {
 /// entries and the barrel's single-child replacement. Poses and flags persist
 /// across changes; only table replacements restart the owning GObj clock.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn packed_controller_poses_match_the_rom() {
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let pack_path =
@@ -371,8 +380,9 @@ fn whispy_file(archive: &Archive<'_>) -> File {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn whispy_blows_on_the_rom_animation_clocks() {
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let data = std::fs::read(path).unwrap();
@@ -631,8 +641,9 @@ fn whispys_right_wind_pushes_the_player_without_a_dust_puff_as_on_the_n64() {
 /// header is at `llGR*MapMapHeader` (0x14); the acid surface is the second
 /// node of `llGRZebesMapAcidDObjDesc` in the `map_nodes` file.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn hazard_descriptors_sit_where_the_controllers_read_them() {
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let data = std::fs::read(path).unwrap();
@@ -678,9 +689,10 @@ fn hazard_descriptors_sit_where_the_controllers_read_them() {
 /// and only the four hazard stages yield a descriptor, of the struct their
 /// controller reads.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn vs_ground_files_yield_their_kind_and_hazard() {
     use ssb_game::stage::StageKind;
-    let Some(path) = std::env::var_os("SSB64_ROM") else {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let data = std::fs::read(path).unwrap();
@@ -716,8 +728,9 @@ fn vs_ground_files_yield_their_kind_and_hazard() {
 
 /// The pack carries each VS stage's hazard data where the loader reads it.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn packed_vs_stages_carry_their_hazard_data() {
-    if std::env::var_os("SSB64_ROM").is_none() {
+    if ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).is_none() {
         return;
     }
     let path =
@@ -760,11 +773,12 @@ fn packed_vs_stages_carry_their_hazard_data() {
 /// minute of ticks with no fighters and no object runtime: the loader path
 /// `psp-runtime::scene::StageSetup` feeds `Stage::new`.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_packed_vs_stage_builds_and_runs_its_controller() {
     use ssb_game::stage::{
         Controller, MapObject, NoObjects, Stage, StageInit, StageKind, TickInput,
     };
-    if std::env::var_os("SSB64_ROM").is_none() {
+    if ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).is_none() {
         return;
     }
     let path =
@@ -828,6 +842,7 @@ fn every_packed_vs_stage_builds_and_runs_its_controller() {
 /// Y (`grZebesMakeAcid`, `grZebesAcidUpdateRise`) and the surface it tests
 /// is the child's `llGRZebesMapAcidAnimJoint` Y, read after the animation.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn packed_acid_follows_the_zebes_controller() {
     use ssb_game::stage::{Controller, Stage, StageInit, StageKind, TickInput};
     use ssb_rom::ground_obj::{self as g, GroundObjects};
@@ -851,7 +866,7 @@ fn packed_acid_follows_the_zebes_controller() {
             Some(ssb_engine::math::Vec3::new(x, y, z))
         }
     }
-    if std::env::var_os("SSB64_ROM").is_none() {
+    if ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).is_none() {
         return;
     }
     let path =
@@ -940,11 +955,12 @@ fn packed_acid_follows_the_zebes_controller() {
 /// replay of the same script on the archive file, tick for tick. An `MObj`
 /// the controller has not reached keeps no clock (its rest material).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn packed_ground_materials_replay_the_rom() {
     use ssb_rom::ground_obj::{self as g, GroundObjects};
     use ssb_rom::matanim::MaterialJoint;
     use ssb_rom::pack::{AnimDesc, AnimJoint, Pack};
-    let Some(rom) = std::env::var_os("SSB64_ROM") else {
+    let Some(rom) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let path =
@@ -1046,11 +1062,12 @@ fn packed_ground_materials_replay_the_rom() {
 /// for as long as the ROM replay does, and idles again on the parse that
 /// reads `End`. Only the next `gcPlayAnimAll` parses a new script.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn packed_cloud_fades_end_when_the_rom_replay_does() {
     use ssb_rom::ground_obj::{self as g, GroundObjects};
     use ssb_rom::matanim::{resolve_scripts, MaterialJoint};
     use ssb_rom::pack::Pack;
-    let Some(rom) = std::env::var_os("SSB64_ROM") else {
+    let Some(rom) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
         return;
     };
     let path =
@@ -1094,7 +1111,7 @@ fn packed_cloud_fades_end_when_the_rom_replay_does() {
 /// Opens the generated pack and the ROM archive, or `None` when either is
 /// missing.
 fn pack_and_rom() -> Option<(Vec<u8>, Vec<u8>)> {
-    let rom = std::env::var_os("SSB64_ROM")?;
+    let rom = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     Some((std::fs::read(path).ok()?, std::fs::read(rom).ok()?))
@@ -1183,6 +1200,7 @@ impl StageObjects for ListPort<'_, '_> {
 /// `llGRInishieMapScaleDObjDesc`, each platform one node drawing
 /// `llGRInishieMapMapHead`, and the Castle ground one node with no mesh.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn packed_display_list_objects_build_as_the_controllers_do() {
     use ssb_rom::ground_obj::{self as g, GroundObjects};
     use ssb_rom::pack::{AnimDesc, NodeDesc, Pack};
@@ -1261,6 +1279,7 @@ fn packed_display_list_objects_build_as_the_controllers_do() {
 /// RE-365: the Castle ground root follows `map_nodes`' own table, replayed
 /// on the archive file: X sweeps 0, -1050, 1050, 0 and loops.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn packed_castle_ground_replays_the_rom() {
     use ssb_game::stage::castle::Castle;
     use ssb_game::stage::{StageInit, StageKind};
@@ -1327,6 +1346,7 @@ fn packed_castle_ground_replays_the_rom() {
 /// platforms at their map objects and hangs each string node from its
 /// platform.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn packed_scales_follow_the_inishie_controller() {
     use ssb_game::stage::inishie::{Inishie, STRING_NODES};
     use ssb_game::stage::{MapObject, StageInit, StageKind};
@@ -1539,6 +1559,7 @@ impl StageObjects for ArwingPort<'_, '_> {
 /// as close), every fourth pattern is a background one, and every pattern
 /// ends hidden with the wing off.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn packed_arwing_flies_the_sector_controller() {
     use ssb_game::map::{GroupStatus, MapGroup};
     use ssb_game::stage::sector::{node, ArwingStatus, WING_GROUP};
@@ -1678,6 +1699,7 @@ fn packed_arwing_flies_the_sector_controller() {
 /// this playback to four decimals. These are frames `k` after the pattern
 /// started (`func_ovl2_80107D50`'s parse and play is `k` 0).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn packed_arwing_paths_match_the_n64_trace() {
     use ssb_rom::sector::{Arwing, Script};
     let Some((bytes, _)) = pack_and_rom() else {
@@ -1713,6 +1735,7 @@ fn packed_arwing_paths_match_the_n64_trace() {
 /// RE-429: the Castle Bumper is the exact GBumper attribute extern target,
 /// not the separate horizontal tree at 0x7BE8 (RE-162).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn castle_bumper_graph_matches_its_rom_attribute() {
     let Some((bytes, rom)) = pack_and_rom() else {
         return;
@@ -1756,6 +1779,7 @@ fn castle_bumper_graph_matches_its_rom_attribute() {
 /// Piranha Plant's rise (0xCC8) writes the root's Y as the ROM replay does
 /// and ends on its 141st play. Both material scripts are packed.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn packed_item_trees_play_on_the_ejected_root() {
     use ssb_rom::ground_obj::{self as g, GroundObjects};
     use ssb_rom::pack::Pack;

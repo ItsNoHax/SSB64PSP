@@ -462,7 +462,8 @@ impl InitialMaterial {
     /// `G_SETENVCOLOR` (`dEFManagerShieldColors[player]`, alpha 0xC0) before
     /// `gcDrawDObjTreeDLLinksForGObj`. The list sets the same PRIM and reads
     /// ENV, so ENV is seeded with player 1's; the renderer replaces it per
-    /// player at draw time (RE-384). The tree draws on DL link 15 at
+    /// player at draw time (RE-384); the seed is generated from the ROM
+    /// ([`crate::d_arrays`]). The tree draws on DL link 15 at
     /// priority 2, so its head-1 list starts under `efDisplayCLDProcDisplay`'s
     /// state and, setting no render mode or `G_ZBUFFER` of its own, draws with
     /// no depth test (RE-421).
@@ -473,7 +474,10 @@ impl InitialMaterial {
         depth_mode: ZMode::Opaque,
         translucent: false,
         alpha_blend: None,
-        env_color: Some([0xFF, 0x00, 0x00, 0xC0]),
+        env_color: {
+            let env = crate::d_arrays::EF_MANAGER_SHIELD_COLORS_ENV[0];
+            Some([env[0], env[1], env[2], 0xC0])
+        },
         head1: Head1Seed::EffectCld,
     };
 }
@@ -6495,8 +6499,9 @@ mod tests {
     /// texgen draws at `G_TEXTURE` scale `(0x0400, 0x0200)`, with both the
     /// ordinary and the linear form present.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn real_rom_metal_stage_retains_texgen_mode_and_scale() {
-        let Some(path) = std::env::var_os("SSB64_ROM") else {
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
             return;
         };
         let data = std::fs::read(path).unwrap();

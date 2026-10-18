@@ -189,7 +189,7 @@ pub trait Anims {
 }
 
 /// `dMNTitleLogoAnimSprites`' cutout and strikes, then the full logo.
-pub const LOGO_ANIM_SPRITES: [u32; 4] = [0x8FC8, 0x97E8, 0x9B48, sprite::LOGO_ANIM_FULL];
+pub const LOGO_ANIM_SPRITES: [u32; 4] = crate::d_arrays::MN_TITLE_LOGO_ANIM_SPRITES;
 
 /// No baked plays: every child stays at its sprite's place.
 pub struct NoAnims;

@@ -56,18 +56,33 @@ pub const SPEED_OPTION_COUNT: u8 = 4;
 /// `nSC1PTrainingModeMenuViewEnumCount`.
 pub const VIEW_OPTION_COUNT: u8 = 2;
 
+/// A generated `nFTComputerBehavior*` table (`s32`, the decomp's enum
+/// values) as the port's [`Behavior`]s.
+const fn behaviors<const N: usize>(ids: [i32; N]) -> [Behavior; N] {
+    let mut out = [Behavior::Default; N];
+    let mut i = 0;
+    while i < N {
+        out[i] = match ids[i] {
+            0 => Behavior::Default,
+            15 => Behavior::Stand,
+            16 => Behavior::Walk,
+            17 => Behavior::Evade,
+            18 => Behavior::Jump,
+            _ => panic!("a behaviour Training's dummy does not use"),
+        };
+        i += 1;
+    }
+    out
+}
+
 /// `dSC1PTrainingModeDummyBehaviors`: Stand, Walk, Evade, Jump, Attack.
-pub const DUMMY_BEHAVIORS: [Behavior; CP_OPTION_COUNT as usize] = [
-    Behavior::Stand,
-    Behavior::Walk,
-    Behavior::Evade,
-    Behavior::Jump,
-    Behavior::Default,
-];
+pub const DUMMY_BEHAVIORS: [Behavior; CP_OPTION_COUNT as usize] =
+    behaviors(crate::d_arrays::SC1P_TRAINING_MODE_DUMMY_BEHAVIORS);
 
 /// `dSC1PTrainingModeLagIntervals`: per speed, the ticks that run before
 /// a skip and the ticks skipped. Full, 2/3, 1/2, 1/4.
-pub const LAG_INTERVALS: [[u8; 2]; SPEED_OPTION_COUNT as usize] = [[0, 0], [1, 1], [0, 1], [0, 3]];
+pub const LAG_INTERVALS: [[u8; 2]; SPEED_OPTION_COUNT as usize] =
+    crate::d_arrays::SC1P_TRAINING_MODE_LAG_INTERVALS;
 
 /// `nSC1PTrainingModeMenuViewCloseUp`.
 pub const VIEW_CLOSE_UP: u8 = 0;

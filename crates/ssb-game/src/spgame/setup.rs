@@ -83,19 +83,21 @@ mod generated {
 }
 pub use generated::{COMPUTER_DESC, STAGE_DESC};
 
-use FighterKind as K;
+/// A generated `FTKind` table (`u8`) as the port's [`FighterKind`]s.
+const fn playable_kinds<const N: usize>(kinds: [u8; N]) -> [FighterKind; N] {
+    let mut out = [FighterKind::Mario; N];
+    let mut i = 0;
+    while i < N {
+        out[i] = super::playable_kind(kinds[i]);
+        i += 1;
+    }
+    out
+}
 
 /// `dSC1PGameKirbyTeamCopyKinds`: the copy each Kirby of the team wears,
 /// in the order they appear.
-pub const KIRBY_TEAM_COPY_KINDS: [FighterKind; 7] = [
-    K::Mario,
-    K::Donkey,
-    K::Link,
-    K::Samus,
-    K::Yoshi,
-    K::Fox,
-    K::Pikachu,
-];
+pub const KIRBY_TEAM_COPY_KINDS: [FighterKind; 7] =
+    playable_kinds(crate::d_arrays::SC1P_GAME_KIRBY_TEAM_COPY_KINDS);
 
 /// `nFTKindNStart`: the Fighting Polygon Team's first kind.
 const POLY_START: u8 = FighterKind::PolyMario as u8;
@@ -689,9 +691,9 @@ pub struct StockIcon {
 }
 
 /// `dSC1PGameZoomEyeX`, degrees.
-pub const ZOOM_EYE_X: [f32; 6] = [-15.0, 0.0, 15.0, 30.0, 45.0, 60.0];
+pub const ZOOM_EYE_X: [f32; 6] = crate::d_arrays::SC1P_GAME_ZOOM_EYE_X;
 /// `dSC1PGameZoomEyeY`, degrees.
-pub const ZOOM_EYE_Y: [f32; 4] = [1.0, 2.0, -8.0, -30.0];
+pub const ZOOM_EYE_Y: [f32; 4] = crate::d_arrays::SC1P_GAME_ZOOM_EYE_Y;
 
 /// `sc1PGameSetCameraZoom`'s angles in radians: a random eye x turned by
 /// the player's facing, then a random eye y. The camera eases at 0.06

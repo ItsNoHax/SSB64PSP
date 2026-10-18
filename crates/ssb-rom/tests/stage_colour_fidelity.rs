@@ -4,7 +4,7 @@
 use ssb_rom::pack::{flags, Pack, VERTEX_SIZE};
 
 fn pack_bytes() -> Option<Vec<u8>> {
-    std::env::var_os("SSB64_ROM")?;
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
     std::fs::read(path).ok()
@@ -21,6 +21,7 @@ fn mesh(pack: &Pack<'_>, key: (u32, u32)) -> ssb_rom::pack::MeshDesc {
 /// five `G_LOADTILE` strips; each binds its own rows, so no two strips
 /// share a texture.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_fruit_panel_strips_bind_their_own_rows() {
     let Some(bytes) = pack_bytes() else {
         return;
@@ -41,6 +42,7 @@ fn the_fruit_panel_strips_bind_their_own_rows() {
 /// so the platform tops keep their vertex colours: the right one (227, 227,
 /// 132), the left one (191, 170, 156), the top one (180, 180, 205).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_platform_tops_keep_their_vertex_colours() {
     let Some(bytes) = pack_bytes() else {
         return;
@@ -61,6 +63,7 @@ fn the_platform_tops_keep_their_vertex_colours() {
 /// its `G_ZBUFFER` and `G_RM_AA_ZB_OPA_SURF`: the three head-0 panels test
 /// and write depth, so the door frame's lights show past them.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_saffron_gate_tests_and_writes_depth() {
     let Some(bytes) = pack_bytes() else {
         return;
