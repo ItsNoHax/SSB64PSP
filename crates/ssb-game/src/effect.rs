@@ -1391,6 +1391,26 @@ impl Effects {
         order[..n].sort_unstable_by_key(|&(seq, _)| seq);
         (0..n).filter_map(move |k| self.displays[usize::from(order[k].1)].as_ref())
     }
+
+    /// The live display effects as `(seq, pool slot)`, in pool order: the
+    /// make order key [`crate::effect_order::collect`] merges with the
+    /// fighters' link-15 effects (RE-542).
+    pub fn display_seqs(&self) -> impl Iterator<Item = (u32, u8)> + '_ {
+        self.displays
+            .iter()
+            .enumerate()
+            .filter_map(|(i, d)| d.as_ref().map(|d| (d.seq, i as u8)))
+    }
+
+    /// The live display effect in pool slot `slot`.
+    pub fn display_at(&self, slot: u8) -> Option<&Display> {
+        self.displays.get(usize::from(slot))?.as_ref()
+    }
+
+    /// The `GObj` counter: the `seq` of the last effect made.
+    pub fn last_seq(&self) -> u32 {
+        self.seq
+    }
     /// `itBoxContainerSmashMakeEffect` and
     /// `itTaruBombContainerSmashMakeEffect`, which differ only in their
     /// pieces' display list. One non-forced struct is obtained before the

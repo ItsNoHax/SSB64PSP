@@ -3131,7 +3131,8 @@ fn resolve_one_mat_anim(
         match ssb_rom::mobj::read_sprites(file, sub_offset, texture_count as usize) {
             Some(s) => s,
             None if (ssb_rom::opening::file::MV_COMMON..=ssb_rom::opening::file::RUN_CRASH)
-                .contains(&file.id) =>
+                .contains(&file.id)
+                || file.id == GROUND_THUNDER_JOLT_FILE =>
             {
                 sparse_opening_sprites(file, sub_offset, texture_count as usize, &used_textures)?
             }
@@ -3182,9 +3183,15 @@ fn resolve_one_mat_anim(
     ))
 }
 
+/// File 342, Pikachu's Thunder Jolt. The ground jolt's node 4 `MObjSub`
+/// (0x1170) names sprites `[0xC18, NULL, 0x408]` and its script (0x1B68)
+/// selects only 0 and 2 (RE-542), so it takes the sparse table below.
+const GROUND_THUNDER_JOLT_FILE: u32 = 342;
+
 /// RE-467: an opening `MObjSub.sprites` array with NULL entries its script
 /// never selects (the standoff's lightning: 0, 2, 3 and 4 of five, entry 1
-/// NULL), which [`ssb_rom::mobj::read_sprites`] declines whole. Each NULL
+/// NULL), which [`ssb_rom::mobj::read_sprites`] declines whole. The ground
+/// Thunder Jolt's node 4 has the same shape (RE-542). Each NULL
 /// entry the replay never reaches takes the first real one's place, so the
 /// table keeps its indices; a NULL entry the script selects still declines.
 fn sparse_opening_sprites(
@@ -14698,6 +14705,34 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
 
 #[cfg(test)]
 mod tests {
+    /// RE-542: the ground Thunder Jolt's node 4 script (342 + 0x1B68)
+    /// selects sprites 0 and 2 of `[0xC18, NULL, 0x408]`; the unselected
+    /// NULL takes entry 0's place instead of declining the script.
+    #[test]
+    fn ground_jolt_node_4_texture_script_attaches() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let rom = std::fs::read(path).unwrap();
+        let info = ssb_rom::rom::identify(&rom).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&rom, info.region).unwrap();
+        let file = archive.load(super::GROUND_THUNDER_JOLT_FILE).unwrap();
+        let (_, data) = super::resolve_one_mat_anim(
+            &file,
+            4,
+            0,
+            0x1B68,
+            &|_, _| Some((0x1170, 0)),
+            [0; 10],
+            0,
+            [0; 3],
+        )
+        .expect("node 4's script attaches");
+        let offsets: Vec<u32> = data.sprites.iter().map(|s| s.offset).collect();
+        assert_eq!(offsets, [0xC18, 0xC18, 0x408]);
+        assert_eq!(data.max_current, 2);
+    }
+
     #[test]
     fn player_interface_wrapper_colours_reach_rom_primitives() {
         let Some(path) = std::env::var_os("SSB64_ROM") else {

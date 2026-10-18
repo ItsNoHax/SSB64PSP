@@ -431,7 +431,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // (`effect::FOX_REFLECTOR_ANIM_SLOT`, file 346). No layout change.
 // 119 adds the Spin Attack weapon's table (324 + 0x11990) as weapon slot 7
 // and its material scripts (324 + 0x11A40). No layout change.
-pub const VERSION: u32 = 119;
+// 120 attaches the ground Thunder Jolt's node 4 texture script (342 +
+// 0x1B68): its `MObjSub.sprites[1]` is NULL and never selected (RE-542).
+// No layout change.
+pub const VERSION: u32 = 120;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

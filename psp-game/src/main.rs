@@ -4147,6 +4147,7 @@ unsafe fn draw_frame(
                     scenes_ref(pl, &s.dummies).map(|x| x.map(|x| &x.fighter)),
                     &s.weapons,
                     &s.items,
+                    s.damage_hud.effects.last_seq(),
                 );
                 effect_visuals.sync_entry(
                     p,
@@ -6871,13 +6872,13 @@ fn movie_billboard_camera(camera: &ssb_game::camera::Camera) -> Option<meshdraw:
 /// and `scale.y`. `gcPlayAnimAll` plays the joint and material animations
 /// (two textures alternating) once at the make and once a frame after.
 #[allow(clippy::too_many_arguments)]
-fn draw_grapple_glows(
+fn draw_grapple_glow(
     gpu: &mut Gpu,
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
     assets: &DrawAssets,
     scratch: &mut DisplayScratch,
-    fighters: [Option<&ssb_game::fighter::Fighter>; 4],
+    f: &ssb_game::fighter::Fighter,
     camera: &ssb_game::camera::Camera,
 ) {
     let Some((object, anim)) = assets.grapple_glow.as_ref() else {
@@ -6894,38 +6895,36 @@ fn draw_grapple_glows(
     else {
         return;
     };
-    for f in fighters.iter().flatten() {
-        let Some(plays) = ssb_game::grab::grapple_glow_ticks(f) else {
-            continue;
-        };
-        // `gcAddAnimAll` then the make's `gcPlayAnimAll`, which parses
-        // frame zero without advancing time.
-        scratch.anim.start_changed(p, anim);
-        scratch.materials.start(p, object_mat_anims(p, object));
-        for _ in 0..plays {
-            let _ = scratch.anim.tick(script);
-            scratch.materials.tick(p);
-        }
-        let Some(pose) = stage_pose(&scratch.anim, node) else {
-            continue;
-        };
-        let joint = ssb_game::grab::GRAPPLE_GLOW_JOINT;
-        f.mark_joint_query(joint);
-        let Some(top) = f.joint_transforms[usize::from(joint)] else {
-            continue;
-        };
-        let scale_x = top.axes[0].length();
-        let ms = meshdraw::MODEL_SCALE;
-        billboard_transform(
-            gpu,
-            camera,
-            top.origin,
-            pose.rotate[2],
-            [ms * scale_x * pose.scale[0], ms * scale_x * pose.scale[1]],
-        );
-        unsafe {
-            meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&scratch.materials));
-        }
+    let Some(plays) = ssb_game::grab::grapple_glow_ticks(f) else {
+        return;
+    };
+    // `gcAddAnimAll` then the make's `gcPlayAnimAll`, which parses
+    // frame zero without advancing time.
+    scratch.anim.start_changed(p, anim);
+    scratch.materials.start(p, object_mat_anims(p, object));
+    for _ in 0..plays {
+        let _ = scratch.anim.tick(script);
+        scratch.materials.tick(p);
+    }
+    let Some(pose) = stage_pose(&scratch.anim, node) else {
+        return;
+    };
+    let joint = ssb_game::grab::GRAPPLE_GLOW_JOINT;
+    f.mark_joint_query(joint);
+    let Some(top) = f.joint_transforms[usize::from(joint)] else {
+        return;
+    };
+    let scale_x = top.axes[0].length();
+    let ms = meshdraw::MODEL_SCALE;
+    billboard_transform(
+        gpu,
+        camera,
+        top.origin,
+        pose.rotate[2],
+        [ms * scale_x * pose.scale[0], ms * scale_x * pose.scale[1]],
+    );
+    unsafe {
+        meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&scratch.materials));
     }
 }
 
@@ -6953,164 +6952,180 @@ fn draw_display_effects(
     camera: &ssb_game::camera::Camera,
     link: u8,
 ) {
+    for d in effects.displays_in_make_order().filter(|d| d.kind.dl_link() == link) {
+        draw_one_display(gpu, p, draw_state, assets, scratch, d, fighters, camera);
+    }
+}
+
+/// One display effect of [`draw_display_effects`].
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn draw_one_display(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    assets: &DrawAssets,
+    scratch: &mut DisplayScratch,
+    d: &ssb_game::effect::Display,
+    fighters: [Option<&ssb_game::fighter::Fighter>; 4],
+    camera: &ssb_game::camera::Camera,
+) {
     use ssb_game::effect::DisplayKind as K;
     use ssb_rom::scene::Mat4;
     let ms = meshdraw::MODEL_SCALE;
     let eye = camera.eye;
-    for d in effects.displays_in_make_order().filter(|d| d.kind.dl_link() == link) {
-        match d.kind {
-            K::ThunderTrail => {
-                unsafe { draw_thunder_segment(gpu, p, draw_state, assets, d) };
-                continue;
-            }
-            K::ThunderShock { .. } => {
-                draw_thunder_shock(gpu, p, draw_state, assets, scratch, d, fighters, camera);
-                continue;
-            }
-            K::VulcanJab => {
-                draw_vulcan_jab(gpu, p, draw_state, assets, d, camera);
-                continue;
-            }
-            _ => {}
+    match d.kind {
+        K::ThunderTrail => {
+            unsafe { draw_thunder_segment(gpu, p, draw_state, assets, d) };
+            return;
         }
-        let Some((object, anim)) = display_asset(d.kind).and_then(|i| assets.displays[i].as_ref())
-        else {
-            continue;
-        };
-        match anim {
-            Some(anim) => {
-                // `efManagerMakeEffect`'s `gcAddAnimAll` (`AOBJ_ANIM_CHANGED`):
-                // the make's play parses frame zero without advancing time.
-                // N64 RDRAM at the Donkey Kong scene's tic 41: the
-                // Impact Wave's `anim_frame` is 7 after 8 plays.
-                scratch.anim.start_changed(p, anim);
-                if let Some(script) = p.anim_script(anim) {
-                    for _ in 0..d.ticks {
-                        let _ = scratch.anim.tick(script);
-                    }
+        K::ThunderShock { .. } => {
+            draw_thunder_shock(gpu, p, draw_state, assets, scratch, d, fighters, camera);
+            return;
+        }
+        K::VulcanJab => {
+            draw_vulcan_jab(gpu, p, draw_state, assets, d, camera);
+            return;
+        }
+        _ => {}
+    }
+    let Some((object, anim)) = display_asset(d.kind).and_then(|i| assets.displays[i].as_ref())
+    else {
+        return;
+    };
+    match anim {
+        Some(anim) => {
+            // `efManagerMakeEffect`'s `gcAddAnimAll` (`AOBJ_ANIM_CHANGED`):
+            // the make's play parses frame zero without advancing time.
+            // N64 RDRAM at the Donkey Kong scene's tic 41: the
+            // Impact Wave's `anim_frame` is 7 after 8 plays.
+            scratch.anim.start_changed(p, anim);
+            if let Some(script) = p.anim_script(anim) {
+                for _ in 0..d.ticks {
+                    let _ = scratch.anim.tick(script);
                 }
             }
-            None => scratch.anim = ssb_rom::skeleton::StageAnimator::new(),
         }
-        scratch.materials.start(p, object_mat_anims(p, object));
-        for _ in 0..d.ticks {
-            scratch.materials.tick(p);
-        }
-        let pose = stage_pose(&scratch.anim, object.first_node);
-        let rot = [d.rotate.x, d.rotate.y, d.rotate.z];
-        let scale = [d.scale.x, d.scale.y, d.scale.z];
-        let world = |x: [f32; 3]| x.map(|v| v / ms);
-        // `FTOFIX32`: a `Sca` or 0x44 matrix word keeps 1/65536, truncated.
-        let fix = |v: f32| (v * 65536.0) as i32 as f32 * (1.0 / 65536.0);
-        let child = |kind: u8| -> Mat4 {
-            let Some(pose) = pose else {
-                return Mat4::IDENTITY;
-            };
-            match kind {
-                // `Sca` (`syMatrixSca`).
-                0 => Mat4::from_trs([0.0; 3], [0.0; 3], pose.scale.map(fix)),
-                // 0x45 `lbCommonRotScaFuncMatrix`: `lbCommonMatrixRotSca`,
-                // the `TraRotRpyRSca` chain with no translation (RE-507).
-                1 => Mat4::from_trs_display([0.0; 3], pose.rotate, pose.scale),
-                // 0x44 `func_ovl0_800CA024`: scale and translate, each
-                // `FTOFIX32` (truncated to 1/65536).
-                _ => Mat4::from_trs(
-                    world(pose.translate.map(fix)),
-                    [0.0; 3],
-                    pose.scale.map(fix),
-                ),
-            }
+        None => scratch.anim = ssb_rom::skeleton::StageAnimator::new(),
+    }
+    scratch.materials.start(p, object_mat_anims(p, object));
+    for _ in 0..d.ticks {
+        scratch.materials.tick(p);
+    }
+    let pose = stage_pose(&scratch.anim, object.first_node);
+    let rot = [d.rotate.x, d.rotate.y, d.rotate.z];
+    let scale = [d.scale.x, d.scale.y, d.scale.z];
+    let world = |x: [f32; 3]| x.map(|v| v / ms);
+    // `FTOFIX32`: a `Sca` or 0x44 matrix word keeps 1/65536, truncated.
+    let fix = |v: f32| (v * 65536.0) as i32 as f32 * (1.0 / 65536.0);
+    let child = |kind: u8| -> Mat4 {
+        let Some(pose) = pose else {
+            return Mat4::IDENTITY;
         };
-        let units = Mat4::from_trs([0.0; 3], [0.0; 3], [ms; 3]);
-        if d.kind == K::MBallRays {
-            draw_mball_rays(p, draw_state, scratch, object, d.translate);
-            continue;
+        match kind {
+            // `Sca` (`syMatrixSca`).
+            0 => Mat4::from_trs([0.0; 3], [0.0; 3], pose.scale.map(fix)),
+            // 0x45 `lbCommonRotScaFuncMatrix`: `lbCommonMatrixRotSca`,
+            // the `TraRotRpyRSca` chain with no translation (RE-507).
+            1 => Mat4::from_trs_display([0.0; 3], pose.rotate, pose.scale),
+            // 0x44 `func_ovl0_800CA024`: scale and translate, each
+            // `FTOFIX32` (truncated to 1/65536).
+            _ => Mat4::from_trs(
+                world(pose.translate.map(fix)),
+                [0.0; 3],
+                pose.scale.map(fix),
+            ),
         }
-        let bill = eye_billboard(d.translate, eye);
-        let mut posed = [Mat4::IDENTITY; 8];
-        let (root, n) = match d.kind {
-            K::ImpactWave => {
-                let s = pose.map_or([1.0; 3], |p| p.scale);
-                let t = [d.translate.x, d.translate.y, d.translate.z];
-                (Mat4::from_trs_display(t, rot, s).mul(&units), 1)
-            }
-            K::ShockSmall => (
+    };
+    let units = Mat4::from_trs([0.0; 3], [0.0; 3], [ms; 3]);
+    if d.kind == K::MBallRays {
+        draw_mball_rays(p, draw_state, scratch, object, d.translate);
+        return;
+    }
+    let bill = eye_billboard(d.translate, eye);
+    let mut posed = [Mat4::IDENTITY; 8];
+    let (root, n) = match d.kind {
+        K::ImpactWave => {
+            let s = pose.map_or([1.0; 3], |p| p.scale);
+            let t = [d.translate.x, d.translate.y, d.translate.z];
+            (Mat4::from_trs_display(t, rot, s).mul(&units), 1)
+        }
+        K::ShockSmall => (
+            bill.mul(&Mat4::from_trs_display([0.0; 3], rot, scale))
+                .mul(&units),
+            1,
+        ),
+        K::Slash => {
+            let n = scratch.anim.compose(p, object, &mut posed);
+            (
+                bill.mul(&Mat4::from_trs_display([0.0; 3], rot, scale))
+                    .mul(&units),
+                n,
+            )
+        }
+        // Both joints `TraRotRpyRSca`: the root at the jolt with its
+        // `rotate.z`, joint 1 played by the desc's animation (RE-541).
+        K::ThunderJolt => {
+            let n = scratch.anim.compose(p, object, &mut posed);
+            let t = [d.translate.x, d.translate.y, d.translate.z];
+            (Mat4::from_trs_display(t, rot, scale).mul(&units), n)
+        }
+        K::FlyOrbs => {
+            posed[0] = child(0);
+            (
+                bill.mul(&Mat4::from_trs([0.0; 3], [0.0; 3], scale.map(fix)))
+                    .mul(&units),
+                1,
+            )
+        }
+        K::FlySparks => {
+            posed[0] = child(1);
+            (
+                bill.mul(&Mat4::from_tr_display([0.0; 3], rot)).mul(&units),
+                1,
+            )
+        }
+        K::StarRodSpark => {
+            posed[0] = child(1);
+            (
                 bill.mul(&Mat4::from_trs_display([0.0; 3], rot, scale))
                     .mul(&units),
                 1,
-            ),
-            K::Slash => {
-                let n = scratch.anim.compose(p, object, &mut posed);
-                (
-                    bill.mul(&Mat4::from_trs_display([0.0; 3], rot, scale))
-                        .mul(&units),
-                    n,
-                )
-            }
-            // Both joints `TraRotRpyRSca`: the root at the jolt with its
-            // `rotate.z`, joint 1 played by the desc's animation (RE-541).
-            K::ThunderJolt => {
-                let n = scratch.anim.compose(p, object, &mut posed);
-                let t = [d.translate.x, d.translate.y, d.translate.z];
-                (Mat4::from_trs_display(t, rot, scale).mul(&units), n)
-            }
-            K::FlyOrbs => {
-                posed[0] = child(0);
-                (
-                    bill.mul(&Mat4::from_trs([0.0; 3], [0.0; 3], scale.map(fix)))
-                        .mul(&units),
-                    1,
-                )
-            }
-            K::FlySparks => {
-                posed[0] = child(1);
-                (
-                    bill.mul(&Mat4::from_tr_display([0.0; 3], rot)).mul(&units),
-                    1,
-                )
-            }
-            K::StarRodSpark => {
-                posed[0] = child(1);
-                (
-                    bill.mul(&Mat4::from_trs_display([0.0; 3], rot, scale))
-                        .mul(&units),
-                    1,
-                )
-            }
-            K::FlyMDust => {
-                posed[0] = child(2);
-                (
-                    bill.mul(&Mat4::from_tr_display([0.0; 3], rot)).mul(&units),
-                    1,
-                )
-            }
-            _ => continue,
-        };
-        let n = n.min(object.node_count as usize).max(1);
-        if d.kind == K::ImpactWave {
-            let [r, g, b] = ssb_game::effect::IMPACT_WAVE_PRIM[usize::from(d.index.min(4))];
-            draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
-                prim: Some([r, g, b, d.alpha as u8]),
-                env: Some([0, 0, 0, 0xFF]),
-                ..Default::default()
-            });
+            )
         }
-        let base = psp_matrix(&root);
-        unsafe {
-            meshdraw::draw_object_posed(
-                p,
-                object,
-                &base,
-                &posed[..n],
-                None,
-                draw_state,
-                None,
-                Some(&scratch.materials),
-                0,
-            );
+        K::FlyMDust => {
+            posed[0] = child(2);
+            (
+                bill.mul(&Mat4::from_tr_display([0.0; 3], rot)).mul(&units),
+                1,
+            )
         }
-        draw_state.color_override = None;
+        _ => return,
+    };
+    let n = n.min(object.node_count as usize).max(1);
+    if d.kind == K::ImpactWave {
+        let [r, g, b] = ssb_game::effect::IMPACT_WAVE_PRIM[usize::from(d.index.min(4))];
+        draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
+            prim: Some([r, g, b, d.alpha as u8]),
+            env: Some([0, 0, 0, 0xFF]),
+            ..Default::default()
+        });
     }
+    let base = psp_matrix(&root);
+    unsafe {
+        meshdraw::draw_object_posed(
+            p,
+            object,
+            &base,
+            &posed[..n],
+            None,
+            draw_state,
+            None,
+            Some(&scratch.materials),
+            0,
+        );
+    }
+    draw_state.color_override = None;
 }
 
 /// The opened Poké Ball's rays (RE-443), drawn as the entry's rays are
@@ -8279,6 +8294,7 @@ impl EffectVisuals {
         fighters: [Option<&ssb_game::fighter::Fighter>; 4],
         weapons: &ssb_game::weapon::WeaponPool,
         items: &ssb_game::item::ItemPool,
+        last_seq: u32,
     ) {
         // The items in pool order; a kind change or a play count that went
         // back restarts a player.
@@ -8318,6 +8334,9 @@ impl EffectVisuals {
         }
 
         self.sync_weapons(p, assets, weapons);
+        // This frame's new fighter effects sort before the display effects
+        // it made, after earlier frames' (`ssb_game::effect_order`, RE-542).
+        self.order.begin(last_seq);
         if self.ports.len() < 4 {
             self.ports.resize_with(4, Default::default);
         }
@@ -8367,6 +8386,11 @@ impl EffectVisuals {
                 (K::Punch, v.punch.live().is_some(), punch),
                 (K::Kick, v.kick.live().is_some(), kick),
                 (K::Reflector, v.reflector.live().is_some(), false),
+                (
+                    K::GrappleGlow,
+                    f.and_then(ssb_game::grab::grapple_glow_ticks).is_some(),
+                    false,
+                ),
             ];
             for (kind, live, remade) in lives {
                 self.order.stamp(&mut v.stamps[kind as usize], live, remade);
@@ -8785,26 +8809,17 @@ unsafe fn draw_training(
     // the link-15 effects and particle list 1.
     stage_pass(13..=15, meshdraw::Heads::Both, draw_state);
     battle_part(BattlePart::Weapons, draw_state, gpu);
-    battle_part(BattlePart::Effects15, draw_state, gpu);
-    draw_display_effects(
+    draw_link15_effects(
         gpu,
-        p,
         draw_state,
+        p,
+        pl,
+        dummies,
         assets,
+        effect_visuals,
+        material_anim,
         &mut damage_hud.display_scratch,
         &damage_hud.effects,
-        fighter_refs,
-        &pl.camera,
-        15,
-    );
-    draw_grapple_glows(
-        gpu,
-        p,
-        draw_state,
-        assets,
-        &mut damage_hud.display_scratch,
-        fighter_refs,
-        &pl.camera,
     );
     draw_particles(
         p,
@@ -9577,13 +9592,13 @@ fn draw_countdown(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, c: &ssb_ga
 }
 
 /// The part of [`draw_items_weapons_effects`] a battle camera pass draws
-/// (RE-422): items on DL link 11 (the fighters' pass), weapons on 14 and the
-/// effects on 15 (the pass after it, with stage layer 2 on 13 first).
+/// (RE-422): items on DL link 11 (the fighters' pass) and weapons on 14 (the
+/// pass after it, with stage layer 2 on 13 first). Link 15 is
+/// [`draw_link15_effects`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BattlePart {
     Items,
     Weapons,
-    Effects15,
 }
 
 /// The item pass (DL link 11) and the weapon and effect pass (links 13 to 15)
@@ -10948,10 +10963,28 @@ unsafe fn draw_items_weapons_effects(
         }
     }
     }
+}
 
-    if part != BattlePart::Effects15 {
-        return;
-    }
+/// Display link 15 (RE-542): the Spin Attack weapon graphic on link 14
+/// first, then every priority-2 effect in make order
+/// (`gcDLLinkGObjTail`, [`ssb_game::effect_order`]): the fighters' own
+/// effects, Samus's Grapple Beam glow and the display effects together.
+/// Particle list 1 draws after them (`efDisplayZPerspCLDProcDisplay`, link
+/// 15 priority 1).
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_link15_effects(
+    gpu: &mut Gpu,
+    draw_state: &mut meshdraw::DrawState,
+    p: &Pack<'_>,
+    pl: &play::FighterScene,
+    dummies: &Dummies,
+    assets: &DrawAssets,
+    effect_visuals: &EffectVisuals,
+    material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    scratch: &mut DisplayScratch,
+    effects: &ssb_game::effect::Effects,
+) {
 
     // The Spin Attack weapon's graphic is display link 14: before every
     // link-15 effect.
@@ -10961,26 +10994,33 @@ unsafe fn draw_items_weapons_effects(
         }
     }
 
-    // Link 15's priority-2 effects in the order they were made
-    // (`gcDLLinkGObjTail`, `ssb_game::effect_order`).
+    // Link 15's priority-2 effects in the order they were made.
     let mut stamps = [[ssb_game::effect_order::Stamp::default(); ssb_game::effect_order::Kind::COUNT]; 4];
     for (row, v) in stamps.iter_mut().zip(effect_visuals.ports.iter()) {
         *row = v.stamps;
     }
-    let mut entries = [ssb_game::effect_order::Entry {
-        seq: 0,
-        port: 0,
-        kind: ssb_game::effect_order::Kind::Shield,
-    }; ssb_game::effect_order::MAX_ENTRIES];
-    let n = ssb_game::effect_order::collect(&stamps, &mut entries);
+    let mut entries = [ssb_game::effect_order::Entry::EMPTY; ssb_game::effect_order::MAX_ENTRIES];
+    let displays = effects
+        .display_seqs()
+        .filter(|&(_, slot)| effects.display_at(slot).is_some_and(|d| d.kind.dl_link() == 15));
+    let n = ssb_game::effect_order::collect(&stamps, displays, &mut entries);
     let scenes = scenes_ref(pl, dummies);
+    let fighters = scenes.map(|s| s.map(|s| &s.fighter));
     for e in &entries[..n] {
-        let port = usize::from(e.port);
+        use ssb_game::effect_order::{Item, Kind as K};
+        let (port, kind) = match e.item {
+            Item::Display(slot) => {
+                if let Some(d) = effects.display_at(slot) {
+                    draw_one_display(gpu, p, draw_state, assets, scratch, d, fighters, &pl.camera);
+                }
+                continue;
+            }
+            Item::Fighter { port, kind } => (usize::from(port), kind),
+        };
         let (Some(Some(scene)), Some(v)) = (scenes.get(port), effect_visuals.ports.get(port)) else {
             continue;
         };
-        use ssb_game::effect_order::Kind as K;
-        match e.kind {
+        match kind {
             K::Shield => {
                 if let Some(object) = assets.shield.as_ref() {
                     draw_shield_bubble(gpu, draw_state, p, pl, &scene.fighter, object);
@@ -10991,6 +11031,7 @@ unsafe fn draw_items_weapons_effects(
                     draw_yoshi_egg_shield(gpu, draw_state, p, pl, scene, egg_mesh);
                 }
             }
+            K::GrappleGlow => draw_grapple_glow(gpu, p, draw_state, assets, scratch, &scene.fighter, &pl.camera),
             kind => draw_fighter_effect(gpu, draw_state, p, pl, &scene.fighter, v, assets, material_anim, kind),
         }
     }
