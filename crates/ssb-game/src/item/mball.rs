@@ -8,9 +8,8 @@
 use ssb_engine::math::Vec3;
 
 use super::normal::CommonItems;
-use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight};
-use crate::combat::{AttackState, Element, HitStatus};
-use crate::ground::BodyColl;
+use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
+use crate::combat::AttackState;
 use crate::weapon::MapSurface;
 
 /// `ITMBALL_*`.
@@ -21,40 +20,7 @@ pub const MAP_REBOUND_COMMON: f32 = 0.2;
 pub const MAP_REBOUND_GROUND: f32 = 0.2;
 
 /// File 251, `llITCommonDataMBallItemAttributes` (0x6E4).
-pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::MBALL,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::ZERO; 2],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(150.0, 150.0, 150.0),
-    map_coll: BodyColl {
-        top: 109.0,
-        center: 0.0,
-        bottom: -109.0,
-        width: 164.0,
-    },
-    size: 200.0,
-    angle: 361,
-    kb_scale: 80,
-    damage: 12,
-    element: Element::Normal,
-    kb_weight: 0,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: true,
-    priority: 1,
-    can_rehit_item: false,
-    can_rehit_fighter: false,
-    can_hop: true,
-    can_reflect: true,
-    can_shield: true,
-    kb_base: 60,
-    ty: ItemType::Throw,
-    hitstatus: HitStatus::None,
-    vel_scale: 80,
-};
+pub static ATTRIBUTES: ItemAttributes = super::attributes::MBALL;
 
 /// `itMBallStatus`, with the descriptor's procs as `Init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

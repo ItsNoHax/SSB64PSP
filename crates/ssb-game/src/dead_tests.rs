@@ -342,6 +342,7 @@ fn a_free_for_all_sleeper_never_steals() {
 /// `is_ghost`, and the blast check then scored one more KO per wait (the
 /// 1P team stages' early end and the Polygon Team's 31st KO record).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_sleeper_stays_where_it_died_and_never_scores_again() {
     let none = || core::iter::empty::<crate::weapon::MapSurface>();
     let team = BlastZone {

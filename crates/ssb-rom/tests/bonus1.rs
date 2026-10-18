@@ -88,6 +88,7 @@ fn every_target_course_placement_and_animation_matches_rom() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn target_attributes_match_the_rom() {
     use ssb_game::item::{target, ItemType, ItemWeight};
     let Some(path) = std::env::var_os("SSB64_ROM") else {

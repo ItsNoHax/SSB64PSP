@@ -19,6 +19,8 @@ fn swing_physics_uses_authored_dash_and_character_smash_motion() {
         FighterKind::Purin,
     ] {
         let mut f = Fighter::new(kind, 0, 3);
+        // Expectations below are in unit size.
+        f.attributes.size = 1.0;
         f.root_motion.delta.z = 23.0;
         status::set_status(
             &mut f,
@@ -120,6 +122,7 @@ fn ray_gun_second_box_hits_a_fighter_when_the_head_misses() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn fire_flower_rehits_an_item_after_sixteen_weapon_updates() {
     use crate::monster_weapon::{MonsterShot, ShotKind, ShotParent};
     let mut items = ItemPool::default();
@@ -175,6 +178,7 @@ fn hammer_walk_keeps_animation_hits_and_colour_clock() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn ray_gun_tail_grows_and_hop_and_reflection_reset_it() {
     use crate::monster_weapon::{MonsterShot, ShotKind, ShotParent};
     let parent = ShotParent {
@@ -470,6 +474,7 @@ fn hammer_landing_exits_on_first_update_and_turn_flips_halfway() {
     assert_eq!(f.facing, facing.flipped());
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn smash_changes_star_rod_descriptor_for_later_tilts() {
     use crate::monster_weapon::ShotKind;
     let (mut f, _, _) = held(Kind::StarRod);

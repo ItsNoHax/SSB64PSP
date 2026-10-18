@@ -6,9 +6,7 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{
-    map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight, OwnerView,
-};
+use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, OwnerView};
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::ground::BodyColl;
 use crate::map::{MASK_CEIL, MASK_FLOOR, MASK_LWALL, MASK_RWALL};
@@ -28,40 +26,7 @@ pub const COLL_SIZE: f32 = 30.0;
 pub const EXPLODE_SCALE: f32 = 1.2;
 
 /// File 251, `llITCommonDataMSBombItemAttributes` (0x3BC).
-pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::MSBOMB,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::ZERO; 2],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(150.0, 150.0, 150.0),
-    map_coll: BodyColl {
-        top: 60.0,
-        center: 0.0,
-        bottom: -60.0,
-        width: 60.0,
-    },
-    size: 200.0,
-    angle: 361,
-    kb_scale: 100,
-    damage: 5,
-    element: Element::Normal,
-    kb_weight: 0,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: true,
-    priority: 1,
-    can_rehit_item: false,
-    can_rehit_fighter: false,
-    can_hop: true,
-    can_reflect: true,
-    can_shield: true,
-    kb_base: 10,
-    ty: ItemType::Throw,
-    hitstatus: HitStatus::None,
-    vel_scale: 90,
-};
+pub static ATTRIBUTES: ItemAttributes = super::attributes::MSBOMB;
 
 /// File 251, `llITCommonDataMSBombAttackEvents` (0x404): timer, angle,
 /// damage, size.

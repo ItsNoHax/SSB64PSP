@@ -14,8 +14,8 @@
 
 use std::fmt::Write;
 
+use crate::anim_length::Lengths;
 use crate::emit::{self, f32_lit};
-use crate::figatree::Lengths;
 use crate::fighters::{
     self, demo_words, motion_descs, Fighter, MainMotion, MotionDesc, RegionKind,
     ANIM_FLAG_SUBMOTION_SCRIPT, COMMON_MOVESET, FIGHTERS, NO_OFFSET,

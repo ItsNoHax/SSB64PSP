@@ -553,6 +553,8 @@ fn a_held_cliff_uses_its_authored_pose_without_air_gravity() {
         AnyStatus::Common(Status::CliffWait),
         Vec3::ZERO,
     );
+    // Expectations below are in unit size.
+    f.attributes.size = 1.0;
     f.cliff.fall_wait = 100;
     f.cliff.line = 3;
     f.transn = Vec3::new(0.0, -180.0, -100.0);
@@ -702,6 +704,7 @@ fn hitlag_keeps_fighter_attached_to_moving_floor() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn hanging_pose_follows_group_and_releases_when_group_is_disabled() {
     let floor = moving(
         surface(Kind::Floor, 3, (100, 0), (1000, 0), 0),
@@ -732,6 +735,8 @@ fn cliff_phase_two_places_on_the_current_corner_and_follows_transn() {
         Status::CliffClimbQuick2.into(),
         Vec3::new(-400.0, -100.0, 0.0),
     );
+    // Expectations below are in unit size.
+    f.attributes.size = 1.0;
     f.cliff.line = 3;
     f.cliff.place_phase2 = true;
     f.set_root_motion(crate::physics::RootMotion {
@@ -771,6 +776,7 @@ fn full_signed_vertex_range_survives_axis_reflection_and_widening() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_live_fighter_catches_with_hand_reach_and_respects_ledge_hog() {
     let floor = surface(Kind::Floor, 3, (-100, 0), (100, 0), collision::flags::CLIFF);
     let mut f = fighter(
@@ -791,6 +797,7 @@ fn a_live_fighter_catches_with_hand_reach_and_respects_ledge_hog() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn helpless_fall_pass_callback_uses_the_exact_down_stick_threshold() {
     let floor = surface(Kind::Floor, 3, (-100, 0), (100, 0), collision::flags::PASS);
     let mut f = fighter(
@@ -1056,6 +1063,7 @@ fn a_fast_rise_into_a_ceiling_stops_ceil_then_falls() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn damage_fall_catches_a_ledge() {
     let floor = surface(Kind::Floor, 3, (-100, 0), (100, 0), collision::flags::CLIFF);
     let mut f = fighter(

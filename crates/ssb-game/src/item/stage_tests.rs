@@ -243,6 +243,7 @@ fn power_block_settles_squashes_and_leaves() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn piranha_plant_waits_for_a_clear_pipe_then_bites() {
     let mut pool = ItemPool::default();
     let mut anims = Scripted::new(141);

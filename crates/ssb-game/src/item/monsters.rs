@@ -2,12 +2,8 @@
 //! `ithitokage.c`, `itfushigibana.c`, `itporygon.c`). Their animations
 //! write local X/Y each play; the callbacks add the map object's offset.
 
-use super::{
-    HitProc, Item, ItemAnims, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight,
-    StageItemEvent,
-};
+use super::{HitProc, Item, ItemAnims, ItemAttributes, ItemKind, ItemStatus, StageItemEvent};
 use crate::combat::{AttackState, Element, HitStatus};
-use crate::ground::BodyColl;
 use crate::monster_weapon::MonsterShot;
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
 use ssb_engine::math::{sin_cos, Vec3};
@@ -43,112 +39,14 @@ pub enum Status {
     Explode,
 }
 
-/// `ITAttributes` in file 264: 0xBC, 0x104, 0x1FC, 0x278, 0x16C.
-const BASE: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::GLUCKY,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::ZERO; 2],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(390.0, 360.0, 360.0),
-    map_coll: BodyColl {
-        top: 180.0,
-        center: 0.0,
-        bottom: -180.0,
-        width: 195.0,
-    },
-    size: 300.0,
-    angle: 361,
-    kb_scale: 100,
-    damage: 5,
-    element: Element::Normal,
-    kb_weight: 0,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: false,
-    priority: 1,
-    can_rehit_item: false,
-    can_rehit_fighter: false,
-    can_hop: false,
-    can_reflect: false,
-    can_shield: false,
-    kb_base: 20,
-    ty: ItemType::Touch,
-    hitstatus: HitStatus::Normal,
-    vel_scale: 100,
-};
+/// Per [`Kind`]: file 264's `ll*ItemAttributes` at 0xBC, 0x104, 0x1FC, 0x278
+/// and 0x16C.
 pub static ATTRIBUTES: [ItemAttributes; 5] = [
-    BASE,
-    ItemAttributes {
-        sounds: crate::item_sounds::item::MARUMINE,
-        map_coll: BodyColl {
-            top: 225.0,
-            center: 0.0,
-            bottom: -225.0,
-            width: 248.0,
-        },
-        size: 400.0,
-        damage: 10,
-        element: Element::Fire,
-        can_rehit_item: true,
-        can_rehit_fighter: true,
-        can_shield: true,
-        kb_base: 40,
-        ty: ItemType::Fighter,
-        hitstatus: HitStatus::None,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::HITOKAGE,
-        damage_coll_size: Vec3::new(200.0, 200.0, 200.0),
-        map_coll: BodyColl {
-            top: 252.0,
-            center: 0.0,
-            bottom: -252.0,
-            width: 273.0,
-        },
-        size: 340.0,
-        can_rehit_item: true,
-        can_rehit_fighter: true,
-        can_shield: true,
-        ty: ItemType::Fighter,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::FUSHIGIBANA,
-        damage_coll_size: Vec3::new(200.0, 200.0, 200.0),
-        map_coll: BodyColl {
-            top: 360.0,
-            center: 0.0,
-            bottom: -360.0,
-            width: 510.0,
-        },
-        size: 200.0,
-        can_rehit_item: true,
-        can_rehit_fighter: true,
-        can_shield: true,
-        ty: ItemType::Fighter,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::PORYGON,
-        map_coll: BodyColl {
-            top: 300.0,
-            center: 0.0,
-            bottom: -300.0,
-            width: 360.0,
-        },
-        size: 200.0,
-        kb_scale: 40,
-        damage: 16,
-        can_rehit_item: true,
-        can_rehit_fighter: true,
-        can_shield: true,
-        kb_base: 80,
-        ty: ItemType::Fighter,
-        ..BASE
-    },
+    super::attributes::GLUCKY,
+    super::attributes::MARUMINE,
+    super::attributes::HITOKAGE,
+    super::attributes::FUSHIGIBANA,
+    super::attributes::PORYGON,
 ];
 
 /// The shared `dGRYamabukiMonsterAttackKind` anti-repeat rule. Draw only

@@ -44,9 +44,8 @@ mod stat_tests {
     }
 }
 
-use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight};
-use crate::combat::{AttackState, Element, HitStatus};
-use crate::ground::BodyColl;
+use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
+use crate::combat::AttackState;
 use crate::weapon::MapSurface;
 
 /// `ITPKFIRE_*` (US).
@@ -57,44 +56,8 @@ pub const TVEL: f32 = 55.0;
 pub const MAP_REBOUND_COMMON: f32 = 0.2;
 pub const MAP_REBOUND_GROUND: f32 = 0.5;
 
-/// `llNessSpecial1PKFireItemAttributes` (offset 0x34 of relocData file 240,
-/// US): two boxes of size 200 at y 100 and 350, a 200×400×200 damage box
-/// centred at y 200, 3 fire damage at 70° with 10/0/4 knockback, rehit on
-/// fighters and items, shieldable, not reflectable, no clank.
-pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::PK_FIRE,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::new(0.0, 100.0, 0.0), Vec3::new(0.0, 350.0, 0.0)],
-    damage_coll_offset: Vec3::new(0.0, 200.0, 0.0),
-    damage_coll_size: Vec3::new(200.0, 400.0, 200.0),
-    map_coll: BodyColl {
-        top: 400.0,
-        center: 200.0,
-        bottom: 0.0,
-        width: 100.0,
-    },
-    size: 200.0,
-    angle: 70,
-    kb_scale: 10,
-    damage: 3,
-    element: Element::Fire,
-    kb_weight: 0,
-    shield_damage: 0,
-    attack_count: 2,
-    can_setoff: false,
-    priority: 1,
-    can_rehit_item: true,
-    can_rehit_fighter: true,
-    can_hop: false,
-    can_reflect: false,
-    can_shield: true,
-    kb_base: 4,
-    ty: ItemType::Fighter,
-    hitstatus: HitStatus::Normal,
-    vel_scale: 100,
-};
+/// `llNessSpecial1PKFireItemAttributes` (file 240, 0x34).
+pub static ATTRIBUTES: ItemAttributes = super::attributes::PK_FIRE;
 
 /// `ITNessPKFireStatus`, with the descriptor's own procs as `Init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

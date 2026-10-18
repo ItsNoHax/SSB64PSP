@@ -442,6 +442,7 @@ fn reflected_weapon_uses_reflector_stat_and_credits_reflector() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn real_consumable_star_and_mew_callbacks_reach_campaign_once() {
     use crate::item::{self, utility::Kind};
     let (mut s, _) = session(Stage::Link);

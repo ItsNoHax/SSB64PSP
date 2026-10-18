@@ -16,9 +16,9 @@
 
 use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec3};
 
-use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight};
+use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
 use super::{normal::CommonItems, OwnerView};
-use crate::combat::{AttackState, Element, HitStatus};
+use crate::combat::{AttackState, HitStatus};
 use crate::ground::BodyColl;
 use crate::monster_weapon::{MonsterShot, ShotParent};
 use crate::status::BlastZone;
@@ -239,142 +239,23 @@ const fn coll(top: f32, bottom: f32, width: f32) -> BodyColl {
     }
 }
 
-/// The fields every Pokémon shares: no hurtbox, a light `Fighter` item that
-/// gives hitlag, a shieldable attack of priority 1 that rehits items.
-const BASE: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::ItemSounds::NONE,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::ZERO; 2],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(150.0, 150.0, 150.0),
-    map_coll: coll(0.0, 0.0, 0.0),
-    size: 300.0,
-    angle: 361,
-    kb_scale: 80,
-    damage: 12,
-    element: Element::Normal,
-    kb_weight: 0,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: false,
-    priority: 1,
-    can_rehit_item: true,
-    can_rehit_fighter: true,
-    can_hop: false,
-    can_reflect: false,
-    can_shield: true,
-    kb_base: 60,
-    ty: ItemType::Fighter,
-    hitstatus: HitStatus::None,
-    vel_scale: 100,
-};
-
-/// File 251's `ITAttributes`: 0x72C, 0x7A8, 0x7F0, 0x880, 0x8FC, 0x98C,
-/// 0xA08, 0xA84, 0xB34, 0xBB0, 0xBF8, 0xC74 and 0x838
+/// Per [`Kind`]: file 251's `ll*ItemAttributes` at 0x72C, 0x7A8, 0x7F0,
+/// 0x880, 0x8FC, 0x98C, 0xA08, 0xA84, 0xB34, 0xBB0, 0xBF8, 0xC74 and 0x838
 /// (`reloc_data.us.h`).
 pub static ATTRIBUTES: [ItemAttributes; 13] = [
-    ItemAttributes {
-        sounds: crate::item_sounds::item::WARK,
-        map_coll: coll(324.0, -324.0, 459.0),
-        size: 600.0,
-        angle: 90,
-        kb_scale: 100,
-        damage: 21,
-        can_rehit_fighter: false,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::KABIGON,
-        damage_coll_size: Vec3::new(580.0, 580.0, 780.0),
-        map_coll: coll(585.0, -585.0, 780.0),
-        size: 800.0,
-        kb_scale: 70,
-        damage: 22,
-        can_rehit_fighter: false,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::TOSAKINTO,
-        map_coll: coll(135.0, -135.0, 195.0),
-        size: 200.0,
-        can_setoff: true,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::NYARS,
-        map_coll: coll(244.0, -244.0, 244.0),
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::LIZARDON,
-        map_coll: coll(400.0, -390.0, 420.0),
-        size: 600.0,
-        damage: 18,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::SPEAR,
-        map_coll: coll(244.0, -244.0, 244.0),
-        angle: 90,
-        kb_scale: 100,
-        damage: 18,
-        can_rehit_fighter: false,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::KAMEX,
-        map_coll: coll(317.0, -300.0, 300.0),
-        size: 400.0,
-        angle: 130,
-        kb_scale: 60,
-        damage: 13,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::MLUCKY,
-        damage_coll_size: Vec3::new(250.0, 250.0, 250.0),
-        map_coll: coll(300.0, -200.0, 240.0),
-        size: 500.0,
-        can_setoff: true,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::STARMIE,
-        map_coll: coll(300.0, -220.0, 300.0),
-        size: 400.0,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::SAWAMURA,
-        map_coll: coll(317.0, -317.0, 195.0),
-        angle: 90,
-        kb_scale: 100,
-        damage: 24,
-        shield_damage: 30,
-        can_rehit_fighter: false,
-        kb_base: 20,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::DOGAS,
-        map_coll: coll(240.0, -240.0, 240.0),
-        size: 50.0,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::PIPPI,
-        map_coll: coll(192.0, -192.0, 192.0),
-        can_setoff: true,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::MEW,
-        map_coll: coll(218.0, -218.0, 218.0),
-        can_setoff: true,
-        ..BASE
-    },
+    super::attributes::WARK,
+    super::attributes::KABIGON,
+    super::attributes::TOSAKINTO,
+    super::attributes::NYARS,
+    super::attributes::LIZARDON,
+    super::attributes::SPEAR,
+    super::attributes::KAMEX,
+    super::attributes::MLUCKY,
+    super::attributes::STARMIE,
+    super::attributes::SAWAMURA,
+    super::attributes::DOGAS,
+    super::attributes::PIPPI,
+    super::attributes::MEW,
 ];
 
 /// `ITStruct::item_vars` for the Pokémon (a union in the source; Clefairy

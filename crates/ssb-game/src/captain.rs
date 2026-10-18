@@ -824,6 +824,8 @@ mod tests {
     #[test]
     fn kick_hit_scale_stops_after_six_contacts() {
         let mut f = captain();
+        // Expectations below are in unit size.
+        f.attributes.size = 1.0;
         set_special_lw(&mut f);
         for _ in 0..7 {
             on_kick_hit(&mut f);
@@ -841,6 +843,8 @@ mod tests {
     #[test]
     fn kick_stops_using_root_motion_after_flag_zero() {
         let mut f = captain();
+        // Expectations below are in unit size.
+        f.attributes.size = 1.0;
         set_special_lw(&mut f);
         f.become_airborne();
         f.root_motion.delta.z = 20.0;

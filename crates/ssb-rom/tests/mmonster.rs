@@ -100,6 +100,7 @@ fn archive_files(ids: &[u32]) -> Option<Vec<ssb_rom::archive::File>> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn pokemon_item_attributes_match_the_rom() {
     let Some(files) = archive_files(&[251]) else {
         return;
@@ -185,6 +186,7 @@ fn pokemon_item_attributes_match_the_rom() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn item_weapon_attributes_match_the_rom() {
     let Some(files) = archive_files(&[251, 264]) else {
         return;
@@ -256,12 +258,7 @@ fn item_weapon_attributes_match_the_rom() {
             [6, 5, 4, 3, 2].map(|b| w2 & (1 << b) != 0),
             "{kind:?}"
         );
-        if matches!(
-            kind,
-            ShotKind::RayGun | ShotKind::StarRod | ShotKind::FireFlower
-        ) {
-            assert_eq!(a.can_rehit_item, w2 & (1 << 7) != 0, "{kind:?}");
-        }
+        assert_eq!(a.can_rehit_item, w2 & (1 << 7) != 0, "{kind:?}");
         assert_eq!(a.kb_base, (w3 >> 22) as i32, "{kind:?}");
     }
 }
@@ -311,6 +308,7 @@ fn replay(data: &[u8], script: u32, rest: JointPose, plays: usize) -> Vec<(Joint
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_animation_values_gameplay_reads_replay_the_rom() {
     let Some(files) = archive_files(&[86]) else {
         return;

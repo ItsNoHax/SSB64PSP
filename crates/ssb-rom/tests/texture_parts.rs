@@ -43,6 +43,7 @@ fn texture_part_joint_and_material_positions_equal_the_rom() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn both_details_pack_the_source_models_fallbacks_and_reachable_parts() {
     let Some((rom, bytes)) = inputs() else { return };
     let p = Pack::open(&bytes).unwrap();

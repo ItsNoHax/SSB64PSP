@@ -8,13 +8,9 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{
-    map, Effects, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight,
-    OwnerView,
-};
+use super::{map, Effects, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, OwnerView};
 use crate::colanim::ColAnimId;
 use crate::combat::{AttackState, Element, HitStatus};
-use crate::ground::BodyColl;
 use crate::weapon::MapSurface;
 
 /// `ITLINKBOMB_*`.
@@ -44,45 +40,8 @@ const THROWN_REBOUND_GROUND: f32 = 0.3;
 /// `itLinkBombDroppedSetStatus`.
 const DROP_UPDATE_WAIT: u16 = 10;
 
-/// `llLinkMainBombItemAttributes` (offset 0x40 of relocData file 225, US):
-/// light, a 100-unit damage cube, map box 113 either side of the centre,
-/// size 220, 2 damage at 80° with 20/0/60 knockback, a throw item that
-/// hops, reflects and shields but never clanks, hit status none until it
-/// leaves the hand, 60% throw speed.
-pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::LINK_BOMB,
-    is_give_hitlag: true,
-    is_display_colanim: true,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::ZERO, Vec3::ZERO],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(100.0, 100.0, 100.0),
-    map_coll: BodyColl {
-        top: 113.0,
-        center: 0.0,
-        bottom: -113.0,
-        width: 113.0,
-    },
-    size: 220.0,
-    angle: 80,
-    kb_scale: 20,
-    damage: 2,
-    element: Element::Normal,
-    kb_weight: 0,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: false,
-    priority: 1,
-    can_rehit_item: false,
-    can_rehit_fighter: false,
-    can_hop: true,
-    can_reflect: true,
-    can_shield: true,
-    kb_base: 60,
-    ty: ItemType::Throw,
-    hitstatus: HitStatus::None,
-    vel_scale: 60,
-};
+/// `llLinkMainBombItemAttributes` (file 225, 0x40).
+pub static ATTRIBUTES: ItemAttributes = super::attributes::LINK_BOMB;
 
 /// `ITAttackEvent`: from `timer` on, the explosion's angle, damage and
 /// radius.

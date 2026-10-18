@@ -10,9 +10,8 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight};
-use crate::combat::{AttackState, Element, HitStatus};
-use crate::ground::BodyColl;
+use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
+use crate::combat::AttackState;
 use crate::weapon::MapSurface;
 
 /// `ITBUMPER_*`.
@@ -33,40 +32,7 @@ pub const MAP_REBOUND_COMMON: f32 = 0.8;
 pub const MAP_REBOUND_GROUND: f32 = 0.8;
 
 /// File 251, `llITCommonDataNBumperItemAttributes` (0x69C).
-pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::NBUMPER,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::ZERO; 2],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(150.0, 150.0, 150.0),
-    map_coll: BodyColl {
-        top: 180.0,
-        center: 0.0,
-        bottom: -180.0,
-        width: 180.0,
-    },
-    size: 200.0,
-    angle: 362,
-    kb_scale: 50,
-    damage: 1,
-    element: Element::Normal,
-    kb_weight: 250,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: false,
-    priority: 1,
-    can_rehit_item: false,
-    can_rehit_fighter: true,
-    can_hop: true,
-    can_reflect: true,
-    can_shield: true,
-    kb_base: 0,
-    ty: ItemType::Throw,
-    hitstatus: HitStatus::None,
-    vel_scale: 100,
-};
+pub static ATTRIBUTES: ItemAttributes = super::attributes::NBUMPER;
 
 /// `itNBumperStatus`, with the descriptor's procs as `Init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

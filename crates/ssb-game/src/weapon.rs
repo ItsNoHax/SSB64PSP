@@ -3594,7 +3594,10 @@ impl WeaponPool {
             }
             // `itProcessUpdateDamageStatWeapon`.
             record_weapon_victim(&mut self.hit_records[i], id);
-            if matches!(self.slots[i], Some(Weapon::Monster(m)) if m.attributes().can_rehit_item) {
+            // `is_rehit`: only a `nITTypeDamage` item is rehit.
+            if item.ty == crate::item::ItemType::Damage
+                && matches!(self.slots[i], Some(Weapon::Monster(m)) if m.attributes().can_rehit_item)
+            {
                 if let Some(r) = self.hit_records[i].iter().position(|r| *r == Some(id)) {
                     self.rehit[i][r] = 16;
                 }
@@ -4974,6 +4977,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn saffron_flame_survives_a_recorded_hit_while_razor_is_destroyed() {
         use crate::monster_weapon::MonsterShot;
         for razor in [false, true] {
@@ -4991,6 +4995,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn saffron_reflection_keeps_source_lr_and_resets_only_the_flame_life() {
         use crate::monster_weapon::MonsterShot;
         for razor in [false, true] {
@@ -5045,6 +5050,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fireball_damages_every_overlapping_item_before_its_hit_callback() {
         let mut items = flames_at_damage_centres(&[Vec3::ZERO; 2]);
         let mut weapons = WeaponPool::default();
@@ -5064,6 +5070,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn item_contact_expands_bomb_only_after_all_item_searches() {
         let mut items = flames_at_damage_centres(&[Vec3::ZERO, Vec3::new(250.0, 0.0, 0.0)]);
         let mut weapons = WeaponPool::default();
@@ -5082,6 +5089,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn surviving_weapon_evicts_first_item_record_after_four_victims() {
         let mut items = flames_at_damage_centres(&[Vec3::ZERO; 5]);
         let mut weapons = WeaponPool::default();
@@ -5116,6 +5124,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn item_victims_share_the_four_records_with_fighter_victims() {
         let mut items = flames_at_damage_centres(&[Vec3::ZERO; 4]);
         let mut weapons = WeaponPool::default();

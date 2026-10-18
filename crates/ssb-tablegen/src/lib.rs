@@ -31,22 +31,48 @@ pub mod error;
 pub mod rom;
 #[path = "../../ssb-rom/src/vpk0.rs"]
 pub mod vpk0;
+// `ssb-rom`'s animation player, for a table gameplay keeps as the values a
+// fixed `AObjEvent32` script produces (`monster_weapons`).
+#[path = "../../ssb-rom/src/figatree.rs"]
+#[allow(dead_code)]
+pub mod figatree;
+#[path = "../../ssb-rom/src/interp.rs"]
+#[allow(dead_code)]
+pub mod interp;
+#[path = "../../ssb-rom/src/objanim.rs"]
+#[allow(dead_code)]
+pub mod objanim;
+
+// `interp` calls `ssb_engine::math::sqrt_exact`. `ssb-engine`'s build script
+// runs this crate too, so the name resolves to this crate's `math` instead,
+// the host `std` square root that `ssb-engine` uses with `std`.
+extern crate self as ssb_engine;
+mod math {
+    /// `ssb_engine::math::sqrt_exact` with `std`.
+    pub fn sqrt_exact(v: f32) -> f32 {
+        v.sqrt()
+    }
+}
 
 pub use error::{Error, Result};
 
+mod anim_length;
 mod anim_table;
 mod capture_captain;
 mod colanim;
 mod computer;
 mod emit;
-mod figatree;
 mod fighters;
 mod ground;
 mod hurtbox;
+mod item_attributes;
 mod item_sounds;
 mod kirby_attack100;
+mod kirby_copy;
 mod model_parts;
+mod monster_weapons;
 mod motion;
+mod physics;
 mod sin_table;
 mod source;
 mod stat_flags;
@@ -70,7 +96,9 @@ pub fn fighter_main_files() -> Vec<(&'static str, u32, u32)> {
 pub enum Crate {
     /// `ssb-game`: motion, colour-animation and CPU scripts, status flags,
     /// joint masks and hidden/texture parts, hurtboxes, Falcon Dive's
-    /// capture offsets.
+    /// capture offsets, the items' `ITAttributes`, the item weapons'
+    /// `WPAttributes` and the Smog's scale, Mario's `FTAttributes` physics
+    /// and Kirby's copy table.
     Game,
     /// `ssb-rom`: the fighter animation table.
     Rom,
@@ -128,6 +156,22 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
             Generated {
                 name: "capture_captain.rs",
                 text: capture_captain::generate(rom)?,
+            },
+            Generated {
+                name: "item_attributes.rs",
+                text: item_attributes::generate(rom)?,
+            },
+            Generated {
+                name: "monster_weapons.rs",
+                text: monster_weapons::generate(rom)?,
+            },
+            Generated {
+                name: "mario_physics.rs",
+                text: physics::generate(rom)?,
+            },
+            Generated {
+                name: "kirby_copy.rs",
+                text: kirby_copy::generate(rom)?,
             },
         ],
         Crate::Rom => vec![Generated {

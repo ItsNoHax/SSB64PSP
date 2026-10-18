@@ -322,8 +322,9 @@ pub const COPY_MODELPARTS_JOINT: u8 = 6;
 /// `dKirbyMainMotion_0x0000[kind].copy_modelpart_id`
 /// (`llKirbyMainMotionSpecialNFTKirbyCopy`, `228_KirbyMainMotion.c`) for the
 /// twelve playable kinds: joint 6's part while Kirby holds that copy
-/// (RE-417). Kirby's own row is 0, his bare head.
-pub const COPY_MODELPART_IDS: [u8; 12] = [12, 7, 4, 8, 11, 10, 5, 9, 0, 6, 3, 13];
+/// (RE-417). Kirby's own row is 0, his bare head. ROM data generated at
+/// build time by `ssb-tablegen`, never committed; zeros in stub builds.
+pub use crate::kirby::generated_copy::COPY_MODELPART_IDS;
 
 /// `copy[copy_id].copy_modelpart_id` (0 outside the twelve).
 pub fn copy_modelpart_id(copy_id: FighterKind) -> i8 {
@@ -1445,6 +1446,7 @@ mod tests {
     /// The copy hat follows `copy_id` through `COPY_MODELPART_IDS`; Kirby's
     /// own head and other fighters wear none (RE-417).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_copy_hat_is_the_copied_fighters_model_part() {
         assert_eq!(copy_hat(&kirby(FighterKind::Mario, true)), Some(12));
         assert_eq!(copy_hat(&kirby(FighterKind::Ness, true)), Some(13));
@@ -1549,6 +1551,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn copied_thunder_jolt_leaves_at_21_from_world_offsets_of_joint_zero() {
         use crate::fighter::{Facing, JointTransform};
         for ground in [true, false] {
@@ -1860,6 +1863,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn copy_statuses_switch_between_ground_and_air_keeping_the_frame() {
         let mut f = kirby(FighterKind::Mario, true);
         set_special_n(&mut f);

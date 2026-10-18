@@ -7502,6 +7502,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn switching_walk_speed_keeps_the_animation_in_phase() {
         // Mario's medium walk is 60 frames and his fast walk 40. Halfway
         // through the medium one is frame 30; the same phase in the fast one
@@ -7648,6 +7649,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_jumpsquat_lasts_the_characters_own_frames() {
         // Mario's is 3, Link's 7 — real extracted values, not a shared number.
         let mut f = mario();
@@ -7667,6 +7669,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn releasing_the_jump_button_early_short_hops() {
         let mut f = mario();
         f.stick.step(0, 0, true, false); // button tap
@@ -7732,6 +7735,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_dash_becomes_a_run_only_in_its_one_frame_window() {
         let mut f = mario();
         hold(&mut f, 80, 0);
@@ -7832,6 +7836,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_midair_jump_uses_full_height_however_far_the_stick_went() {
         let mut f = mario();
         f.situation = Situation::Air;
@@ -7850,6 +7855,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn ground_jump_consumes_one_of_marios_two_jumps() {
         let mut f = mario();
         hold(&mut f, 0, 80);
@@ -7878,6 +7884,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn falling_with_no_jumps_left_is_a_different_status() {
         let mut f = mario();
         f.situation = Situation::Air;
@@ -7908,6 +7915,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn walking_snaps_up_to_speed_and_eases_down() {
         let attr = PhysicsAttributes::MARIO;
         let mut p = PhysicsState::default();
@@ -7937,6 +7945,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_run_holds_its_speed_but_a_brake_scrubs_it_faster_than_traction() {
         let attr = PhysicsAttributes::MARIO;
         let mut run = PhysicsState::default();
@@ -7952,6 +7961,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_dash_that_is_not_converted_to_a_run_ends_on_its_own() {
         // Mario's dash animation is 23 frames. Without a forward hold there is
         // no run to convert into, so the dash has to end by itself.
@@ -8050,6 +8060,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_status_change_ends_a_fast_fall_unless_the_setter_keeps_it() {
         // RE-468: `ftMainSetStatus` clears `is_fastfall`; the aerial jump
         // out of a fast-falling DamageFall rises.

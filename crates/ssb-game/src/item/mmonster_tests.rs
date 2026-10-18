@@ -130,6 +130,7 @@ fn seed_for(range: i32, want: i32) -> i32 {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_draw_makes_its_pokemon_rising_for_22_frames() {
     let mut w = World::new(&[(0, -2000.0), (1, 2000.0)]);
     for (i, kind) in Kind::ALL.into_iter().enumerate() {
@@ -277,6 +278,7 @@ fn koffing_makes_31_clouds_and_leaves_90_frames_later() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_smog_grows_with_its_animation_and_passes_shields() {
     let mut pool = WeaponPool::default();
     let shot = MonsterShot::smog(

@@ -127,6 +127,8 @@ fn copied_pk_fire_uses_kirbys_offsets_slots_and_air_length() {
 #[test]
 fn double_jump_keeps_input_velocity_separate_from_animation_drift_and_ends() {
     let mut f = fighter(FighterKind::Ness, 0, false);
+    // Expectations below are in unit size.
+    f.attributes.size = 1.0;
     input(&mut f, 0, 40, 0);
     f.physics.is_fastfall = true;
     status::set_jump_aerial(&mut f);
@@ -432,6 +434,7 @@ fn fire_pillar_allocation_and_initial_fall_are_independent_of_a_full_weapon_pool
     close(items.items().next().unwrap().vel_air.y, -0.45);
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn magnet_delay_and_ground_air_switches_preserve_state() {
     let mut f = fighter(FighterKind::Ness, 0, false);
     f.physics.vel_air = Vec3::new(10.0, 20.0, 0.0);
@@ -482,6 +485,7 @@ fn bat_reflects_projectile_only_in_the_flag_window_without_changing_status() {
     assert!(crate::combat::reflector(&f).is_none());
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn pk_fire_hit_creates_independent_shrinking_pillar_with16_frame_rehit() {
     let owner = fighter(FighterKind::Ness, 0, true);
     let spawn = request(

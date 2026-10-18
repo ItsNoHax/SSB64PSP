@@ -1,0 +1,80 @@
+# Large numeric tables (24+ literals) known in ssb-game, ssb-rom and ssb-engine
+# (tools/docs/rom_tables.py; D-048). validate_docs.py fails on a large table not
+# listed here and on a row whose table is gone: remove rows, never add ROM data.
+# path	item	reason
+crates/ssb-game/src/boss.rs	WAIT_DATA	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/capture_yoshi.rs	EGG_EFFECT_SIZES	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md) (dFTCommonYoshiEggDamageCollDescs)
+crates/ssb-game/src/colanim_preserve.rs	PRESERVE_COLANIM	decomp code sites: ftMainSetStatus flag columns per call
+crates/ssb-game/src/colanim_preserve.rs	PRESERVE_MODELPART	decomp code sites: ftMainSetStatus flag columns per call
+crates/ssb-game/src/colanim_preserve.rs	PRESERVE_TEXTUREPART	decomp code sites: ftMainSetStatus flag columns per call
+crates/ssb-game/src/colanim_preserve.rs	PRESERVE_EFFECT	decomp code sites: ftMainSetStatus flag columns per call
+crates/ssb-game/src/costume.rs	ROYAL	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md) (dFTParamCostumeIDs)
+crates/ssb-game/src/costume.rs	TEAM	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md) (dFTParamCostumeIDs)
+crates/ssb-game/src/countdown.rs	TRAFFIC	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/countdown.rs	SUDDEN_DEATH	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/countdown_tests.rs	SIZES	test fixture
+crates/ssb-game/src/explain.rs	ARROWS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/hazard.rs	DAMAGE_FLOORS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md) (dFTMainGroundHitCollisionAttributes)
+crates/ssb-game/src/hud.rs	COMPLETE	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/hud_tests.rs	SIZES	test fixture
+crates/ssb-game/src/item_throw.rs	THROW_DESCS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/menu/characters.rs	MOTION_NAMES	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/menu/characters.rs	NAME_AT	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/menu/title.rs	FIRE	layout: archive file IDs, offsets, labels or sizes (dMNTitleFireSpriteOffsets)
+crates/ssb-game/src/menu/vs_record.rs	OFFSETS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/opening/fighters.rs	LETTERS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/opening/fighters.rs	JUNGLE_DONKEY	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/opening/fighters.rs	JUNGLE_SAMUS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/opening/fighters.rs	SCENES	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/opening/room.rs	SPOTLIGHT_TRANSLATES	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/opening/room.rs	SPOTLIGHT_SCALES	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/pause.rs	DECALS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/players_1p_layer.rs	FONT	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/players_1p_layer.rs	FONT_WIDTHS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/players_vs_layer.rs	CURSOR_COLORS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/results_layer.rs	WALLPAPER_COLORS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/results_layer.rs	STRING_COLORS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/results_layer.rs	LETTER_WIDTHS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/results_layer.rs	NAMES	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/results_layer.rs	TAG_POS_3P	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/results_layer.rs	TAG_POS_4P	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/spgame/boss.rs	WALLPAPERS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/spgame/results.rs	BONUS_POINTS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/spgame/setup.rs	COMPUTER_DESC	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/spgame/setup.rs	STAGE_DESC	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/spgame/staffroll.rs	NAME_GLYPHS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/spgame/staffroll.rs	TEXT_GLYPHS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/stage/sector.rs	PILOT_IDS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/stage/zebes.rs	ACID_STEPS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/stale.rs	HANDICAP_TABLE	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-game/src/weapon.rs	SAMUS_CHARGE_SHOT_LEVELS	D-048 group C: overlay data table, awaiting the decomp d* array decision (PLAN.md)
+crates/ssb-rom/src/bonus1.rs	COURSES	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/bonus2.rs	TREES	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/campaign.rs	BONUS_LABELS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/campaign.rs	ALLY_CAMERAS	D-048 group D: value table to check (PLAN.md)
+crates/ssb-rom/src/effect.rs	ENTRY_ANIMS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/effect.rs	EMBLEMS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/effect.rs	MANAGER_EFFECT_KEYS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/effect.rs	MANAGER_EFFECT_ANIM_JOINTS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/effect.rs	MANAGER_EFFECT_MAT_ANIM_JOINTS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/ending.rs	CONGRA_FILES	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/ending.rs	CONGRA	D-048 group D: value table to check (PLAN.md)
+crates/ssb-rom/src/ending.rs	NAME_IMAGES	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/ending.rs	TEXT_SPRITES	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/fighter.rs	FIGHTER_FILES	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/fighter.rs	EXPECTED	test fixture
+crates/ssb-rom/src/ground_obj.rs	OBJECTS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/ground_obj.rs	ANIMS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/mmonster.rs	VISUALS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/opening.rs	LETTERS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/opening.rs	DL_GRAPHS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/particle.rs	BANKS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/scene_roots.rs	FIGHTER_MAIN	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/scene_roots.rs	CONGRA	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/src/transition.rs	ASSETS	layout: archive file IDs, offsets, labels or sizes
+crates/ssb-rom/tests/demo_clips.rs	FRAMES	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/explain_movement.rs	N64	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/explain_movement.rs	N64_HITS	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/explain_movement.rs	N64_GRABS	test fixture: N64 measurements or expected ROM values
+crates/ssb-engine/src/audio/synth.rs	GET_RATE	test fixture: _getRate/_getVol compiled as C
+crates/ssb-engine/src/math/sqrt_golden.rs	SPECIALS	test fixture: sqrt test vectors

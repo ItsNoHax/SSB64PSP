@@ -203,6 +203,7 @@ fn falcon_draws_before_the_stage_while_far_on_a_leftward_entry() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_team_member_drops_in_from_between_the_camera_and_blast_tops() {
     let mut f = standing(FighterKind::Yoshi, Facing::Left);
     entry_set_status(&mut f);
@@ -216,6 +217,7 @@ fn a_team_member_drops_in_from_between_the_camera_and_blast_tops() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_team_member_drops_in_from_halfway_up_framed_at_its_start() {
     let mut f = standing(FighterKind::Yoshi, Facing::Left);
     entry_set_status(&mut f);

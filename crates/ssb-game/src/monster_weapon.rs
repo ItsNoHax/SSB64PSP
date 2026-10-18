@@ -6,8 +6,9 @@
 //!
 //! A weapon takes its parent item's owner, player, team and facing. The
 //! Hydro Pump's attack offset and the Smog's size follow their own `DObj`
-//! animations; both scripts are fixed, so the port keeps their per-play
-//! values ([`hydro_offset_x`], [`SMOG_SCALE`]) and a ROM test replays them.
+//! animations; both scripts are fixed. The Hydro Pump's per-play offset is
+//! [`hydro_offset_x`] (a ROM test replays it); [`SMOG_SCALE`] is replayed
+//! from the ROM at build time by `ssb-tablegen`.
 
 use crate::attack::Hitbox;
 use crate::combat::Element;
@@ -58,185 +59,19 @@ pub struct ShotAttributes {
     pub kb_base: i32,
 }
 
-const fn coll(top: f32, bottom: f32, width: f32) -> BodyColl {
-    BodyColl {
-        top,
-        center: 0.0,
-        bottom,
-        width,
-    }
+#[allow(clippy::all)]
+mod generated {
+    use super::ShotAttributes;
+    use crate::combat::Element;
+    use crate::ground::BodyColl;
+    include!(concat!(env!("OUT_DIR"), "/monster_weapons.rs"));
 }
 
-const BASE: ShotAttributes = ShotAttributes {
-    map_coll: coll(0.0, 0.0, 0.0),
-    size: 0.0,
-    angle: 0,
-    kb_scale: 100,
-    damage: 0,
-    element: Element::Normal,
-    kb_weight: 0,
-    shield_damage: 1,
-    can_setoff: true,
-    can_rehit_fighter: false,
-    can_rehit_item: false,
-    can_hop: false,
-    can_reflect: false,
-    can_absorb: false,
-    can_shield: true,
-    kb_base: 0,
-};
-
-/// File 264 + 0x244 and 0x308 (Saffron); file 251 + 0x774, 0x8C8, 0x944,
-/// 0x9D4, 0xCBC, 0xA50, 0xB7C and 0xC40 (`reloc_data.us.h`).
-pub static ATTRIBUTES: [ShotAttributes; 13] = [
-    ShotAttributes {
-        map_coll: coll(50.0, -50.0, 50.0),
-        size: 320.0,
-        damage: 2,
-        element: Element::Fire,
-        kb_weight: 3,
-        can_setoff: false,
-        can_reflect: true,
-        can_absorb: true,
-        ..BASE
-    },
-    ShotAttributes {
-        map_coll: coll(120.0, -120.0, 360.0),
-        size: 200.0,
-        angle: 90,
-        kb_scale: 60,
-        damage: 3,
-        kb_base: 30,
-        can_hop: true,
-        can_reflect: true,
-        can_absorb: true,
-        ..BASE
-    },
-    ShotAttributes {
-        map_coll: coll(210.0, -210.0, 210.0),
-        size: 360.0,
-        angle: 80,
-        kb_scale: 80,
-        damage: 8,
-        can_hop: true,
-        kb_base: 30,
-        ..BASE
-    },
-    ShotAttributes {
-        map_coll: coll(113.0, -113.0, 94.0),
-        size: 200.0,
-        angle: 90,
-        kb_scale: 60,
-        damage: 6,
-        element: Element::Coin,
-        shield_damage: 2,
-        can_hop: true,
-        can_reflect: true,
-        can_absorb: true,
-        kb_base: 30,
-        ..BASE
-    },
-    ShotAttributes {
-        map_coll: coll(4.0, -4.0, 4.0),
-        size: 320.0,
-        damage: 4,
-        element: Element::Fire,
-        kb_weight: 8,
-        can_setoff: false,
-        can_reflect: true,
-        can_absorb: true,
-        ..BASE
-    },
-    ShotAttributes {
-        map_coll: coll(244.0, -244.0, 244.0),
-        size: 300.0,
-        angle: 80,
-        damage: 12,
-        kb_base: 40,
-        ..BASE
-    },
-    ShotAttributes {
-        map_coll: coll(192.0, -192.0, 192.0),
-        size: 200.0,
-        angle: 80,
-        damage: 12,
-        can_rehit_fighter: true,
-        kb_base: 40,
-        ..BASE
-    },
-    ShotAttributes {
-        map_coll: coll(213.0, -213.0, 180.0),
-        size: 200.0,
-        kb_scale: 30,
-        damage: 6,
-        kb_base: 78,
-        ..BASE
-    },
-    ShotAttributes {
-        map_coll: coll(113.0, -113.0, 309.0),
-        size: 200.0,
-        angle: 100,
-        kb_scale: 20,
-        damage: 3,
-        can_hop: true,
-        can_reflect: true,
-        can_absorb: true,
-        kb_base: 40,
-        ..BASE
-    },
-    ShotAttributes {
-        map_coll: coll(75.0, -75.0, 75.0),
-        size: 50.0,
-        angle: 150,
-        damage: 3,
-        kb_weight: 60,
-        can_shield: false,
-        ..BASE
-    },
-    ShotAttributes {
-        map_coll: coll(10.0, -10.0, 10.0),
-        size: 120.0,
-        angle: 70,
-        kb_scale: 40,
-        damage: 10,
-        element: Element::Electric,
-        shield_damage: -8,
-        can_setoff: false,
-        can_hop: true,
-        can_reflect: true,
-        can_absorb: true,
-        kb_base: 50,
-        ..BASE
-    },
-    ShotAttributes {
-        map_coll: BodyColl {
-            top: 10.0,
-            center: -10.0,
-            bottom: -10.0,
-            width: 10.0,
-        },
-        size: 200.0,
-        angle: 361,
-        damage: 8,
-        can_hop: true,
-        can_reflect: true,
-        can_absorb: true,
-        kb_base: 10,
-        ..BASE
-    },
-    ShotAttributes {
-        map_coll: coll(50.0, -50.0, 50.0),
-        size: 270.0,
-        damage: 3,
-        can_rehit_item: true,
-        element: Element::Fire,
-        kb_weight: 3,
-        can_setoff: false,
-        can_reflect: true,
-        can_absorb: true,
-        ..BASE
-    },
-];
+/// Per [`ShotKind`]: file 264 + 0x244 and 0x308 (Saffron); file 251 +
+/// 0x774, 0x8C8, 0x944, 0x9D4, 0xCBC, 0xA50, 0xB7C and 0xC40
+/// (`reloc_data.us.h`). ROM data generated at build time by
+/// `ssb-tablegen`, never committed; zeros in stub builds.
+pub use generated::SHOT_ATTRIBUTES as ATTRIBUTES;
 
 /// `ITKAMEX_HYDRO_LIFETIME`, `ITSTARMIE_SWIFT_LIFETIME`,
 /// `ITDOGAS_SMOG_LIFETIME`, `ITLIZARDON_FLAME_LIFETIME`,
@@ -269,39 +104,10 @@ pub fn hydro_offset_x(play: u16) -> f32 {
 }
 
 /// The Smog's child `DObj` X scale over its 30 plays (file 86 + 0x13198);
-/// its attack radius is this times `WPAttributes::size` (50).
-pub const SMOG_SCALE: [f32; 30] = [
-    1.0,
-    1.0,
-    1.685_911_3,
-    2.302_642_8,
-    2.853_437,
-    3.341_536_3,
-    3.770_181_7,
-    4.142_616_7,
-    4.462_083,
-    4.731_823,
-    4.955_078_6,
-    5.135_091,
-    5.275_103_6,
-    5.378_359,
-    5.448_098_7,
-    5.487_565,
-    5.5,
-    5.5,
-    5.5,
-    5.5,
-    5.5,
-    5.5,
-    5.5,
-    5.5,
-    5.5,
-    5.5,
-    5.5,
-    5.5,
-    5.5,
-    5.5,
-];
+/// its attack radius is this times `WPAttributes::size` (50). Replayed from
+/// the ROM at build time by `ssb-tablegen`, never committed; zeros in stub
+/// builds.
+pub use generated::SMOG_SCALE;
 
 /// The item a weapon is made from: `wpManagerMakeWeapon`'s
 /// `WEAPON_FLAG_PARENT_ITEM` copies.

@@ -119,6 +119,7 @@ fn the_wait_before_a_command_shrinks_with_the_level() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_full_jump_prediction_reaches_above_the_floor() {
     let mut f = mario_on_floor();
     f.attributes = crate::physics::PhysicsAttributes::MARIO;

@@ -12,8 +12,8 @@
 use std::collections::BTreeSet;
 use std::fmt::Write;
 
+use crate::anim_length::Lengths;
 use crate::emit;
-use crate::figatree::Lengths;
 use crate::fighters::{self, motion_descs, MotionDesc, ANIM_FLAG_ANIMJOINT};
 use crate::{Result, Source};
 

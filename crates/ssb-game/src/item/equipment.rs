@@ -1,7 +1,6 @@
 //! The seven held utilities (`it{Sword,Bat,Harisen,StarRod,LGun,FFlower,Hammer}.c`).
-use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType};
-use crate::combat::{AttackState, Element};
-use crate::ground::BodyColl;
+use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
+use crate::combat::AttackState;
 use crate::weapon::MapSurface;
 use ssb_engine::math::Vec3;
 
@@ -28,14 +27,18 @@ impl Kind {
             _ => return None,
         })
     }
+    /// `ITAttributes::spin_speed` as a fraction.
     pub fn spin_speed(self) -> f32 {
-        match self {
-            Self::Sword | Self::Bat => 1.0,
-            Self::Fan => 0.5,
-            Self::StarRod => 1.1,
-            Self::RayGun => 1.4,
-            Self::FireFlower | Self::Hammer => 0.0,
-        }
+        use super::spin;
+        f32::from(match self {
+            Self::Sword => spin::SWORD,
+            Self::Bat => spin::BAT,
+            Self::Fan => spin::HARISEN,
+            Self::StarRod => spin::STARROD,
+            Self::RayGun => spin::LGUN,
+            Self::FireFlower => spin::FFLOWER,
+            Self::Hammer => spin::HAMMER,
+        }) * 0.01
     }
     fn physics(self) -> (f32, f32, f32, f32) {
         match self {
@@ -48,91 +51,16 @@ impl Kind {
         }
     }
 }
-const fn coll(top: f32, bottom: f32, width: f32) -> BodyColl {
-    BodyColl {
-        top,
-        center: 0.0,
-        bottom,
-        width,
-    }
-}
-const BASE: ItemAttributes = ItemAttributes {
-    can_rehit_item: false,
-    ty: ItemType::Swing,
-    ..super::utility::TOMATO_ATTRIBUTES
-};
-/// File 251: 0x190, 0x1D8, 0x220, 0x48C, 0x268, 0x2E4, 0x374.
+/// Per [`Kind`]: file 251's `ll*ItemAttributes` at 0x190, 0x1D8, 0x220,
+/// 0x48C, 0x268, 0x2E4 and 0x374.
 pub static ATTRIBUTES: [ItemAttributes; 7] = [
-    ItemAttributes {
-        sounds: crate::item_sounds::item::SWORD,
-        damage_coll_size: Vec3::new(150.0, 700.0, 150.0),
-        map_coll: coll(422.0, -422.0, 72.0),
-        size: 300.0,
-        kb_scale: 80,
-        damage: 10,
-        element: Element::Slash,
-        kb_base: 60,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::BAT,
-        map_coll: coll(240.0, -240.0, 27.0),
-        kb_scale: 80,
-        damage: 12,
-        kb_base: 60,
-        vel_scale: 110,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::HARISEN,
-        map_coll: coll(210.0, -210.0, 90.0),
-        angle: 96,
-        damage: 1,
-        kb_base: 70,
-        vel_scale: 70,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::STARROD,
-        damage_coll_size: Vec3::new(60.0, 60.0, 60.0),
-        map_coll: coll(195.0, -195.0, 90.0),
-        angle: 0,
-        kb_scale: 70,
-        damage: 6,
-        kb_base: 20,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::LGUN,
-        damage_coll_size: Vec3::new(60.0, 60.0, 60.0),
-        map_coll: coll(100.0, -100.0, 100.0),
-        kb_scale: 110,
-        damage: 2,
-        kb_base: 10,
-        ty: ItemType::Shoot,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::FFLOWER,
-        damage_coll_size: Vec3::new(60.0, 60.0, 60.0),
-        map_coll: coll(127.0, -107.0, 107.0),
-        damage: 2,
-        element: Element::Fire,
-        kb_base: 30,
-        vel_scale: 80,
-        ty: ItemType::Shoot,
-        ..BASE
-    },
-    ItemAttributes {
-        sounds: crate::item_sounds::item::HAMMER,
-        map_coll: coll(258.0, -249.0, 105.0),
-        damage: 10,
-        kb_base: 30,
-        can_reflect: false,
-        ty: ItemType::Consume,
-        is_display_colanim: true,
-        ..BASE
-    },
+    super::attributes::SWORD,
+    super::attributes::BAT,
+    super::attributes::HARISEN,
+    super::attributes::STARROD,
+    super::attributes::LGUN,
+    super::attributes::FFLOWER,
+    super::attributes::HAMMER,
 ];
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {

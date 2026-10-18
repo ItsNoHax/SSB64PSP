@@ -11,11 +11,8 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{
-    map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight, OwnerView,
-};
-use crate::combat::{AttackState, Element, HitStatus};
-use crate::ground::BodyColl;
+use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, OwnerView};
+use crate::combat::{AttackState, HitStatus};
 use crate::map::{MASK_CEIL, MASK_LWALL, MASK_RWALL};
 use crate::weapon::MapSurface;
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
@@ -65,48 +62,9 @@ pub const R_MAP_REBOUND_COMMON: f32 = 0.25;
 pub const R_MAP_REBOUND_GROUND: f32 = 0.5;
 
 /// File 251, `llITCommonDataGShellItemAttributes` (0x53C).
-pub static GREEN_ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::GSHELL,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::ZERO; 2],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(150.0, 150.0, 150.0),
-    map_coll: BodyColl {
-        top: 150.0,
-        center: 0.0,
-        bottom: -150.0,
-        width: 150.0,
-    },
-    size: 200.0,
-    angle: 361,
-    kb_scale: 80,
-    damage: 18,
-    element: Element::Normal,
-    kb_weight: 0,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: false,
-    priority: 1,
-    can_rehit_item: false,
-    can_rehit_fighter: false,
-    can_hop: true,
-    can_reflect: true,
-    can_shield: true,
-    kb_base: 60,
-    ty: ItemType::Throw,
-    hitstatus: HitStatus::None,
-    vel_scale: 100,
-};
+pub static GREEN_ATTRIBUTES: ItemAttributes = super::attributes::GSHELL;
 /// File 251, `llITCommonDataRShellItemAttributes` (0x584).
-pub static RED_ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::RSHELL,
-    damage: 10,
-    kb_weight: 90,
-    can_rehit_fighter: true,
-    ..GREEN_ATTRIBUTES
-};
+pub static RED_ATTRIBUTES: ItemAttributes = super::attributes::RSHELL;
 
 /// `itGShellStatus` / `itRShellStatus`, with the descriptor's procs as
 /// `Init`.

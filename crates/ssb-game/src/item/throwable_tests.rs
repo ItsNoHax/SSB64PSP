@@ -86,6 +86,7 @@ fn status_of(pool: &ItemPool, slot: u8) -> ItemStatus {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_six_kinds_are_made_by_their_item_ids_with_rom_attributes() {
     let mut pool = ItemPool::default();
     for (index, kind, ty) in [
@@ -250,6 +251,7 @@ fn bob_omb_walks_towards_the_fighters_after_180_frames_and_explodes_480_plus_90_
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_walking_bob_omb_turns_at_the_floor_edge() {
     let mut pool = ItemPool::default();
     let slot = pool
@@ -587,6 +589,7 @@ fn drain_fx(pool: &mut ItemPool) -> Vec<crate::wpeffect::WeaponEffect> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn bob_omb_walk_adds_its_root_script_and_explode_wait_clears_it() {
     let mut pool = ItemPool::default();
     let slot = resting(&mut pool, 15, 0.0);
@@ -635,6 +638,7 @@ fn bob_omb_walk_adds_its_root_script_and_explode_wait_clears_it() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_bob_omb_starting_its_walk_left_tests_only_the_left_edge() {
     // `itBombHeiWalkInitVars` turns a left-walking Bob-omb at its line's
     // left edge, and leaves a right-walking one at its right edge to the

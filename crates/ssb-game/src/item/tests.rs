@@ -160,6 +160,7 @@ fn aerial_throw_landing_uses_the_source_descent_threshold() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn polygon_pickup_uses_its_own_authored_range() {
     let mut pool = ItemPool::default();
     let mut bomb = link_bomb::make(Vec3::new(550.0, 0.0, 0.0), 1);
@@ -755,6 +756,7 @@ fn item_animation_plays_once_at_creation_and_per_update_outside_hitlag() {
 /// (`itNessPKFireMakeItem`) and, with team attack off, spares his
 /// teammates.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_teammates_item_passes_through_only_with_team_attack_off() {
     use crate::team::TeamRules;
     let team_attack = TeamRules {
@@ -786,6 +788,7 @@ fn a_teammates_item_passes_through_only_with_team_attack_off() {
 /// `itProcessSearchHitFighter`: with team attack off a fighter's attacks
 /// pass through its team's items.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_teammates_attack_passes_through_an_item_only_with_team_attack_off() {
     use crate::team::TeamRules;
     for (rules, attacker_team, lands) in [
@@ -858,6 +861,7 @@ fn an_item_on_a_shield_makes_its_set_off() {
 /// (`gmCollisionGetFighterAttackItemDamagePosition`), in the item's search
 /// (RE-473).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_fighters_attack_on_an_item_makes_its_spark() {
     use crate::effect::{HitEffect, HitEffectKind, HitEffectSink};
     use crate::wpeffect::WeaponEffect;

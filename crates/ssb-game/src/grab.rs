@@ -3265,6 +3265,8 @@ mod tests {
         catcher.grab.anchor = Some(joint.origin);
         catcher.grab.anchor_transform = Some(joint);
         let mut held = grounded(FighterKind::Mario, 1, 0.0);
+        // Expectations below are in unit size.
+        held.attributes.size = 1.0;
         held.grab.capture = Some(0);
         held.grab.holder = Some(holder_of(&catcher));
         held.grab.held_child_offset = Some(Vec3::new(0.0, 50.0, 60.0));
@@ -3759,6 +3761,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn walking_off_an_edge_while_holding_drops_the_hold() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
@@ -4253,6 +4256,7 @@ mod tests {
     /// walking off an edge mid-`Catch` falls with no catch status, and a
     /// catcher that was holding is grabbable again.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_ledge_fall_mid_catch_leaves_no_catch_status_or_immunity() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 900.0);

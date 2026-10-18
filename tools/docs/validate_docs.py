@@ -22,6 +22,10 @@ Checks:
      (psp-game/xmb/, psp-asset-viewer/xmb/; D-037, docs/xmb-assets.md),
      and no ROM-generated table (a generated header or a known generated
      path; D-048). Golden captures are committed as pixel hashes only.
+ 10. No new hand-transcribed ROM table: a const/static array with 24 or more
+     numeric literals in ssb-game, ssb-rom or ssb-engine must be listed in
+     tools/docs/rom_tables_baseline.tsv, and every row there must still
+     exist (tools/docs/rom_tables.py; D-048).
 
 Exits 1 and prints one line per problem; exits 0 with a summary otherwise.
 Run after any documentation change (see the `documentation` skill).
@@ -32,6 +36,10 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import rom_tables  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 THIS = Path(__file__).resolve()
@@ -225,6 +233,9 @@ def main():
             head = path.read_bytes()[:512].decode("utf-8", "ignore") if path.is_file() else ""
             if GENERATED_HEADER_RE.search(head):
                 problems.append(f"{name}: generated source tracked; generate it at build time")
+
+    # --- 10: large numeric tables ratchet ---
+    problems.extend(rom_tables.problems())
 
     if problems:
         print(f"{len(problems)} problem(s) found:\n")

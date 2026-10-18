@@ -48,6 +48,7 @@ fn utility_models_are_present_in_the_pack() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn container_attributes_and_explosion_tables_match_the_rom() {
     let Some(rom) = rom() else {
         return;

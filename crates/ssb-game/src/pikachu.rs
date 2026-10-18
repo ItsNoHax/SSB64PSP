@@ -846,6 +846,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn thunder_uses_stage_top_at_24_then_strict_collision_and_hit_recovery() {
         let mut f = pikachu(false);
         f.pikachu.map_bound_top = Some(5000.0);

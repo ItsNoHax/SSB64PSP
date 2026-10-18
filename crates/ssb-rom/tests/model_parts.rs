@@ -180,6 +180,7 @@ fn every_costume_but_the_first_packs_its_accessory() {
 /// makes draws: its costume-0 mesh is packed on the joint's node from the
 /// part's list, unless it is exactly the node's own mesh.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_reachable_model_part_is_packed() {
     let (Some(rom), Some(bytes)) = (rom(), pack_bytes()) else {
         return;

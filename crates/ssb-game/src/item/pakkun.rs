@@ -8,12 +8,9 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{
-    HitProc, Item, ItemAnim, ItemAnims, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight,
-};
-use crate::combat::{AttackState, Element, HitStatus};
+use super::{HitProc, Item, ItemAnim, ItemAnims, ItemAttributes, ItemKind, ItemStatus};
+use crate::combat::{AttackState, HitStatus};
 use crate::fighter::Fighter;
-use crate::ground::BodyColl;
 
 /// `ITPAKKUN_*`.
 pub const APPEAR_WAIT: u16 = 180;
@@ -30,45 +27,8 @@ pub const TVEL: f32 = 100.0;
 /// `F_CST_DTOR32(180.0F)`.
 const DEG_180: f32 = core::f32::consts::PI;
 
-/// `llGRInishieMapPakkunItemAttributes` (offset 0x120 of relocData file
-/// 260, US): light, a 450 x 490 x 450 damage box that starts out normal
-/// (inside the pipe), map box 110 either side and 159 wide, size 200, 5
-/// damage at 80 degrees with 80 scale and 80 base knockback, a fighter
-/// item whose attack clanks and rehits both items and fighters.
-pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::PAKKUN,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::ZERO, Vec3::ZERO],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(450.0, 490.0, 450.0),
-    map_coll: BodyColl {
-        top: 110.0,
-        center: 0.0,
-        bottom: -110.0,
-        width: 159.0,
-    },
-    size: 200.0,
-    angle: 80,
-    kb_scale: 80,
-    damage: 5,
-    element: Element::Normal,
-    kb_weight: 0,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: true,
-    priority: 1,
-    can_rehit_item: true,
-    can_rehit_fighter: true,
-    can_hop: false,
-    can_reflect: false,
-    can_shield: true,
-    kb_base: 80,
-    ty: ItemType::Fighter,
-    hitstatus: HitStatus::Normal,
-    vel_scale: 100,
-};
+/// `llGRInishieMapPakkunItemAttributes` (file 260, 0x120).
+pub static ATTRIBUTES: ItemAttributes = super::attributes::PAKKUN;
 
 /// `itPakkunStatus`. The descriptor's procs are the Wait ones, so a new
 /// plant starts in `Wait`.

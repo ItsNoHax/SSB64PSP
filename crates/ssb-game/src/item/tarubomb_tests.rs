@@ -61,6 +61,7 @@ fn make_barrel(pool: &mut ItemPool, pos: Vec3) -> u8 {
 /// Made on its side: the map box is the width either way, no owner, and
 /// the attributes' 10-damage, angle-70 attack is live from the start.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_barrel_is_made_on_its_side_and_live() {
     let mut pool = ItemPool::default();
     let slot = make_barrel(&mut pool, Vec3::new(0.0, 900.0, 0.0));
@@ -85,6 +86,7 @@ fn the_barrel_is_made_on_its_side_and_live() {
 /// slower than 30 upward), keeps its speed on the flat and smashes into
 /// the wall: seven barrel pieces, then a six-frame explosion.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_barrel_falls_rolls_and_smashes_into_a_wall() {
     let s = course(true);
     let mut fx = Smashes::default();
@@ -219,6 +221,7 @@ fn ten_percent_or_any_contact_smashes_the_barrel() {
 
 /// Off an edge the roll falls again, velocity and all.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_barrel_rolling_off_an_edge_falls() {
     let s = [surface(Kind::Floor, 0, (-400, 0), (400, 0))];
     let mut fx = Smashes::default();

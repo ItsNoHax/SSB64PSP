@@ -2703,6 +2703,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_fighter_dropped_onto_a_stage_lands_and_stays_put() {
         // The property the whole vertical slice rests on. Falling for a second
         // and then standing for a second must end exactly on the surface, with
@@ -2737,6 +2738,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn sliding_off_the_edge_leaves_the_ground() {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
         f.pos = Vec3::new(2300.0, 4.0, 0.0);
@@ -2755,6 +2757,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn hitlag_freezes_a_fighter_in_mid_air() {
         // A fighter frozen by a hit must not fall during the freeze; that is
         // what gives a hit its weight.
@@ -2775,6 +2778,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn ice_lets_a_fighter_slide_further_than_common_ground() {
         // The only thing a floor's material does is scale traction.
         let slide = |material: u16| {
@@ -2816,6 +2820,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_fighter_walks_along_the_stage_and_stops_when_the_stick_is_released() {
         use crate::status::Status;
 
@@ -2845,6 +2850,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_harder_push_walks_faster() {
         let mut slow = Fighter::new(FighterKind::Mario, 0, 3);
         let mut fast = Fighter::new(FighterKind::Mario, 0, 3);
@@ -2866,6 +2872,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_fighter_jumps_off_the_stage_and_lands_back_on_it() {
         use crate::status::Status;
 
@@ -2920,6 +2927,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_double_jump_goes_higher_than_a_single_one() {
         let apex = |double: bool| {
             let mut f = Fighter::new(FighterKind::Mario, 0, 3);
@@ -2955,6 +2963,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn walking_off_the_edge_falls_rather_than_staying_in_a_walk() {
         use crate::status::Status;
 
@@ -3039,6 +3048,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn landing_keeps_the_horizontal_momentum_a_jump_carried() {
         // Entering the landing status transfers air velocity to ground
         // velocity, and so does `land`. Doing both would zero it, and the

@@ -1096,6 +1096,7 @@ mod tests {
     /// `ftMainProcessHitCollisionStatsMain` passes the frame's
     /// `damage_queue`, which already holds this hit, as `recent_damage`.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn knockback_counts_the_hit_on_top_of_the_prior_percent() {
         let hitbox = Hitbox {
             damage: 10,
@@ -1119,6 +1120,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn crouching_takes_two_thirds_of_the_knockback() {
         let hitbox = Hitbox {
             damage: 10,

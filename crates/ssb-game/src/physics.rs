@@ -83,44 +83,10 @@ pub struct PhysicsAttributes {
 }
 
 impl PhysicsAttributes {
-    /// Mario's, transcribed from `dMarioMain_attr` in the decompilation and
-    /// confirmed against the bytes `romtool fighters --verify` reads out of
-    /// file 203 at `0x428`.
-    ///
-    /// These replaced a hand-picked "neutral baseline" that turned out to be
-    /// wrong by more than an order of magnitude in every term — `0.09` gravity
-    /// against `2.4`, `1.7` terminal velocity against `44.0`. Smash 64 works
-    /// in the same large units as its collision geometry, where Mario is 320
-    /// tall and a stage spans several thousand, so small-looking constants are
-    /// not conservative, they are simply a different game. A fighter under the
-    /// old numbers still fell and still landed; it just took three hundred
-    /// frames to drop what should take twenty.
-    pub const MARIO: PhysicsAttributes = PhysicsAttributes {
-        size: 1.0,
-        traction: 1.5,
-        dash_speed: 54.0,
-        dash_decel: 2.8,
-        run_speed: 44.0,
-        walk_speed_mul: 0.3,
-        jump_vel_x: 0.35,
-        jump_height_mul: 0.7,
-        jump_height_base: 26.0,
-        jumpaerial_vel_x: 0.35,
-        jumpaerial_height: 0.9,
-        air_accel: 0.025,
-        air_speed_max_x: 30.0,
-        air_friction: 0.2,
-        gravity: 2.4,
-        tvel_base: 44.0,
-        tvel_fast: 70.0,
-        jumps_max: 2,
-        weight: 1.0,
-        kneebend_anim_length: 3.0,
-        dash_to_run: 14.0,
-        walkslow_anim_length: 90.0,
-        walkmiddle_anim_length: 60.0,
-        walkfast_anim_length: 40.0,
-    };
+    /// Mario's: `dMarioMain_attr`, file 203 at `0x428` (US `size` 1.12;
+    /// the JP build's is 1.0). ROM data generated at build time by
+    /// `ssb-tablegen`, never committed; zeros in stub builds.
+    pub const MARIO: PhysicsAttributes = generated::MARIO;
 }
 
 impl Default for PhysicsAttributes {
@@ -130,6 +96,12 @@ impl Default for PhysicsAttributes {
     fn default() -> Self {
         PhysicsAttributes::MARIO
     }
+}
+
+#[allow(clippy::all)]
+mod generated {
+    use super::PhysicsAttributes;
+    include!(concat!(env!("OUT_DIR"), "/mario_physics.rs"));
 }
 
 /// A fighter's velocity state.
@@ -569,6 +541,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn terminal_velocity_is_reached_in_the_expected_frame_count() {
         let attr = PhysicsAttributes::default();
         let mut p = state();
@@ -614,6 +587,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn ice_slides_further_than_normal_ground() {
         // At Mario's run speed: the common material takes 1.5/frame off and
         // stops him in 30 frames, ice takes a fifth of that and does not.
@@ -632,6 +606,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn air_friction_decays_toward_zero_without_reversing() {
         let attr = PhysicsAttributes::default();
         let mut p = state();
@@ -660,6 +635,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn full_stick_drift_scales_with_how_far_it_is_pushed() {
         // Half deflection accelerates at half the rate. Using only the stick's
         // sign would make these two identical, which is the bug the real
@@ -676,6 +652,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_stick_inside_the_deadzone_only_gets_friction() {
         // 7 is below `AIRDRIFT_STICK_MIN`, so no acceleration is added at all
         // — but friction still runs, exactly as it does at neutral.
@@ -691,6 +668,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn neutral_stick_applies_friction_instead_of_drift() {
         let attr = PhysicsAttributes::default();
         let mut p = state();

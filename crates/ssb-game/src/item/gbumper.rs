@@ -6,9 +6,8 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight};
-use crate::combat::{AttackState, Element, HitStatus};
-use crate::ground::BodyColl;
+use super::{HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
+use crate::combat::AttackState;
 
 /// `ITBUMPER_CASTLE_KNOCKBACK`, `ITBUMPER_CASTLE_ANGLE`.
 pub const CASTLE_KNOCKBACK: i32 = 300;
@@ -17,45 +16,8 @@ pub const CASTLE_ANGLE: i32 = 361;
 pub const HIT_SCALE: u16 = 10;
 pub const HIT_ANIM_LENGTH: u16 = 3;
 
-/// `llITCommonDataGBumperItemAttributes` (offset 0xCF0 of relocData file
-/// 251, US): the NBumper model, light, a 150-unit damage cube it never uses
-/// (hit status none), map box 180 either side, size 250, 1 damage at the
-/// bumper angle 362 with 50 scale and 200 set knockback, a throw item that
-/// rehits fighters and can be shielded.
-pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::GBUMPER,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::ZERO, Vec3::ZERO],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(150.0, 150.0, 150.0),
-    map_coll: BodyColl {
-        top: 180.0,
-        center: 0.0,
-        bottom: -180.0,
-        width: 180.0,
-    },
-    size: 250.0,
-    angle: 362,
-    kb_scale: 50,
-    damage: 1,
-    element: Element::Normal,
-    kb_weight: 200,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: false,
-    priority: 1,
-    can_rehit_item: false,
-    can_rehit_fighter: true,
-    can_hop: false,
-    can_reflect: false,
-    can_shield: true,
-    kb_base: 0,
-    ty: ItemType::Throw,
-    hitstatus: HitStatus::None,
-    vel_scale: 100,
-};
+/// `llITCommonDataGBumperItemAttributes` (file 251, 0xCF0).
+pub static ATTRIBUTES: ItemAttributes = super::attributes::GBUMPER;
 
 /// The Bumper has no statuses: its descriptor's procs run throughout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

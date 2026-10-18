@@ -7,50 +7,12 @@
 use ssb_engine::math::Vec3;
 
 use super::{
-    HitProc, Item, ItemAnim, ItemAnims, ItemAttributes, ItemKind, ItemStatus, ItemType, ItemWeight,
-    StageItemEvent,
+    HitProc, Item, ItemAnim, ItemAnims, ItemAttributes, ItemKind, ItemStatus, StageItemEvent,
 };
-use crate::combat::{AttackState, Element, HitStatus};
-use crate::ground::BodyColl;
+use crate::combat::{AttackState, HitStatus};
 
-/// `llGRInishieMapPowerBlockItemAttributes` (offset 0xD8 of relocData file
-/// 260, US): light, a 400 x 300 x 300 damage box, map box 110 either side
-/// and 159 wide, an attack it never turns on, a fighter item with hit
-/// status none until it settles.
-pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::POWER_BLOCK,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::ZERO, Vec3::ZERO],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(400.0, 300.0, 300.0),
-    map_coll: BodyColl {
-        top: 110.0,
-        center: 0.0,
-        bottom: -110.0,
-        width: 159.0,
-    },
-    size: 10.0,
-    angle: 361,
-    kb_scale: 100,
-    damage: 5,
-    element: Element::Normal,
-    kb_weight: 0,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: true,
-    priority: 1,
-    can_rehit_item: true,
-    can_rehit_fighter: false,
-    can_hop: true,
-    can_reflect: false,
-    can_shield: true,
-    kb_base: 20,
-    ty: ItemType::Fighter,
-    hitstatus: HitStatus::None,
-    vel_scale: 100,
-};
+/// `llGRInishieMapPowerBlockItemAttributes` (file 260, 0xD8).
+pub static ATTRIBUTES: ItemAttributes = super::attributes::POWER_BLOCK;
 
 /// `itPowerBlockStatus`, with the descriptor's own procs as `Init` and
 /// `itPowerBlockWaitProcDamage`'s swapped `proc_update` as `Damaged`.

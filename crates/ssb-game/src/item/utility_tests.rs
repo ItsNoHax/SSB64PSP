@@ -195,6 +195,7 @@ fn damage_during_light_get_eats_the_held_tomato() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn star_bounces_towards_the_camera_and_touching_it_makes_a_fighter_invincible() {
     // The camera looks at x = 0.
     let mut pool = ItemPool::default();
@@ -252,6 +253,7 @@ fn star_bounces_towards_the_camera_and_touching_it_makes_a_fighter_invincible() 
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_crate_drops_one_to_three_utilities_from_the_drop_table() {
     let mut weights = [0; 20];
     weights[4] = 1;

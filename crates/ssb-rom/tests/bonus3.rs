@@ -121,6 +121,7 @@ fn packed_race_ground_barrel_and_bumper_roots_match_original_scripts() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn bonus3_ground_data_matches_the_rom() {
     let Some(path) = std::env::var_os("SSB64_ROM") else {
         return;

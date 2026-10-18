@@ -2,41 +2,9 @@
 //! callback. The scene consumes its objective event after the hit pass.
 use super::*;
 
-/// `ITBonus1ObjectHeader` (file 253, US), checked against the ROM.
-pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::TARGET,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::ZERO; 2],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(300.0, 300.0, 300.0),
-    map_coll: BodyColl {
-        top: 180.0,
-        center: 0.0,
-        bottom: -180.0,
-        width: 180.0,
-    },
-    size: 200.0,
-    angle: 361,
-    kb_scale: 100,
-    damage: 1,
-    element: Element::Normal,
-    kb_weight: 400,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: true,
-    priority: 1,
-    can_rehit_item: true,
-    can_rehit_fighter: true,
-    can_hop: true,
-    can_reflect: true,
-    can_shield: true,
-    kb_base: 10,
-    ty: ItemType::Fighter,
-    hitstatus: HitStatus::Normal,
-    vel_scale: 100,
-};
+/// `dITTargetItemDesc`'s attributes: offset 0 of file 253
+/// (`ITBonus1ObjectHeader`).
+pub static ATTRIBUTES: ItemAttributes = super::attributes::TARGET;
 
 pub(super) fn make(pos: Vec3, instance: u8) -> Item {
     let mut item = Item::new(
@@ -77,6 +45,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn weapons_break_all_ten_targets_once_through_the_real_hit_pass() {
         let mut pool = ItemPool::default();
         for i in 0..10 {
@@ -105,6 +74,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn targets_are_grounded_non_pickup_items_with_no_attack() {
         let mut item = make(Vec3::new(50.0, 100.0, 0.0), 4);
         assert_eq!(item.ga, Ga::Ground);

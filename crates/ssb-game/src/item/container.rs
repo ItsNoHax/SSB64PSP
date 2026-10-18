@@ -1,11 +1,7 @@
 //! Normal containers: `itbox.c`, `ittaru.c`, `itegg.c`, `itcapsule.c`.
-use super::{
-    map, normal::CommonItems, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType,
-    ItemWeight,
-};
+use super::{map, normal::CommonItems, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
 use crate::{
     combat::{AttackState, Element, HitStatus},
-    ground::BodyColl,
     weapon::MapSurface,
     wpeffect::{Emit, WeaponEffect as Fx},
 };
@@ -20,13 +16,15 @@ pub enum Kind {
     Egg = 3,
 }
 impl Kind {
+    /// `ITAttributes::spin_speed` as a fraction.
     pub fn spin_speed(self) -> f32 {
-        match self {
-            Self::Crate => 40.0 * 0.01,
-            Self::Barrel => 0.0,
-            Self::Capsule => 120.0 * 0.01,
-            Self::Egg => 1.0,
-        }
+        use super::spin;
+        f32::from(match self {
+            Self::Crate => spin::BOX,
+            Self::Barrel => spin::TARU,
+            Self::Capsule => spin::CAPSULE,
+            Self::Egg => spin::EGG,
+        }) * 0.01
     }
     pub fn heavy(self) -> bool {
         matches!(self, Self::Crate | Self::Barrel)
@@ -44,87 +42,14 @@ pub enum Status {
     Roll,
 }
 
-/// File 251's `ITAttributes` at 0x50 and 0xACC (US).
-pub static CAPSULE_ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::CAPSULE,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Light,
-    attack_offsets: [Vec3::ZERO; 2],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(150.0, 150.0, 150.0),
-    map_coll: BodyColl {
-        top: 120.0,
-        center: 0.0,
-        bottom: -100.0,
-        width: 60.0,
-    },
-    size: 200.0,
-    angle: 361,
-    kb_scale: 80,
-    damage: 5,
-    element: Element::Normal,
-    kb_weight: 0,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: true,
-    priority: 1,
-    can_rehit_item: false,
-    can_rehit_fighter: false,
-    can_hop: true,
-    can_reflect: true,
-    can_shield: true,
-    kb_base: 20,
-    ty: ItemType::Throw,
-    hitstatus: HitStatus::Normal,
-    vel_scale: 80,
-};
-pub static EGG_ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::EGG,
-    map_coll: BodyColl {
-        top: 200.0,
-        center: 0.0,
-        bottom: -140.0,
-        width: 280.0,
-    },
-    damage: 3,
-    kb_base: 60,
-    vel_scale: 100,
-    ..CAPSULE_ATTRIBUTES
-};
+/// File 251, `llITCommonDataCapsuleItemAttributes` (0x50).
+pub static CAPSULE_ATTRIBUTES: ItemAttributes = super::attributes::CAPSULE;
+/// File 251, `llITCommonDataEggItemAttributes` (0xACC).
+pub static EGG_ATTRIBUTES: ItemAttributes = super::attributes::EGG;
 /// File 251, `llITCommonDataBoxItemAttributes` (0x5CC).
-pub static CRATE_ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::BOX,
-    weight: ItemWeight::Heavy,
-    damage_coll_size: Vec3::new(450.0, 450.0, 450.0),
-    map_coll: BodyColl {
-        top: 225.0,
-        center: 0.0,
-        bottom: -225.0,
-        width: 225.0,
-    },
-    damage: 15,
-    kb_scale: 100,
-    kb_base: 40,
-    can_hop: false,
-    ty: ItemType::Damage,
-    vel_scale: 100,
-    ..CAPSULE_ATTRIBUTES
-};
+pub static CRATE_ATTRIBUTES: ItemAttributes = super::attributes::BOX;
 /// File 251, `llITCommonDataTaruItemAttributes` (0x634).
-pub static BARREL_ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::TARU,
-    damage_coll_size: Vec3::new(294.0, 316.0, 294.0),
-    map_coll: BodyColl {
-        top: 236.0,
-        center: 0.0,
-        bottom: -236.0,
-        width: 221.0,
-    },
-    size: 290.0,
-    damage: 12,
-    ..CRATE_ATTRIBUTES
-};
+pub static BARREL_ATTRIBUTES: ItemAttributes = super::attributes::TARU;
 pub const HEAVY_EVENTS: [(u16, i32, i32, f32); 4] = [
     (0, 361, 20, 350.0),
     (4, 361, 15, 250.0),
@@ -618,6 +543,7 @@ mod tests {
         }
     }
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn dropped_container_honours_forced_despawn_and_thrown_container_explodes_on_floor() {
         for kind in [Kind::Egg, Kind::Capsule] {
             let mut item = make(
@@ -653,6 +579,7 @@ mod tests {
         }
     }
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn normal_landing_resets_the_thrower_and_can_be_picked_up_again() {
         let mut pool = ItemPool::default();
         let slot = pool
@@ -691,6 +618,7 @@ mod tests {
         assert!(f.items.held.is_none());
     }
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn capsule_throw_scales_velocity_and_drop_keeps_its_source_flags() {
         let mut pool = ItemPool::default();
         let slot = pool
@@ -712,6 +640,7 @@ mod tests {
         assert!(item.is_thrown);
     }
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn chansey_allocates_in_link_order_and_retries_a_full_pool_without_extra_rng() {
         let mut pool = ItemPool::default();
         let h = pool.make_item(StageItem::Monster(0), Vec3::ZERO).unwrap();
@@ -759,6 +688,7 @@ mod tests {
         }
     }
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_weapon_container_clash_precedes_the_hurtbox_and_defers_setoff() {
         let mut pool = ItemPool::default();
         let slot = pool

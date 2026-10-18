@@ -815,6 +815,7 @@ fn play_team_stage(stage: Stage, drift: &[f32], hold: &[u32]) -> alloc::vec::Vec
 /// again every wait where it died, taking the team's stocks and, with two
 /// sleepers on one frame at the last stock, a 31st Polygon KO record.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn team_stages_end_on_the_last_members_ko_with_sleepers_kept_asleep() {
     for stage in [Stage::Yoshi, Stage::Kirby, Stage::Zako, Stage::Mario] {
         // All at once, every drop in step: the KOs come in threes.

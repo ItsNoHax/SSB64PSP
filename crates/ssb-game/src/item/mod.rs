@@ -95,6 +95,20 @@ pub mod utility;
 #[cfg(test)]
 mod utility_tests;
 
+/// Every item's `ITAttributes` ([`attributes`]) and `spin_speed`
+/// ([`spin`]), named after its `ll*ItemAttributes` symbol: ROM data,
+/// generated at build time from the user's ROM by `crates/ssb-tablegen`
+/// (never committed; zeros in a stub build).
+#[allow(clippy::all)]
+mod generated {
+    use super::{ItemAttributes, ItemType, ItemWeight};
+    use crate::combat::{Element, HitStatus};
+    use crate::ground::BodyColl;
+    use ssb_engine::math::Vec3;
+    include!(concat!(env!("OUT_DIR"), "/item_attributes.rs"));
+}
+pub use generated::{attributes, spin};
+
 /// `ITEM_ALLOC_MAX`.
 pub const ITEM_ALLOC_MAX: usize = 16;
 
@@ -203,13 +217,13 @@ impl ItemKind {
             Self::Container(k) => Some(k.spin_speed()),
             Self::Utility(k) => Some(k.spin_speed()),
             Self::Equipment(k) => Some(k.spin_speed()),
-            // `ITAttributes::spin_speed` (file 251).
-            Self::MSBomb => Some(120.0 * 0.01),
-            Self::NBumper => Some(70.0 * 0.01),
-            Self::MBall => Some(20.0 * 0.01),
-            Self::BombHei | Self::Shell(_) => Some(0.0),
-            // `llGRBonus3MapTaruBombItemAttributes` (file 0x127).
-            Self::TaruBomb => Some(0.0),
+            Self::MSBomb => Some(f32::from(spin::MSBOMB) * 0.01),
+            Self::NBumper => Some(f32::from(spin::NBUMPER) * 0.01),
+            Self::MBall => Some(f32::from(spin::MBALL) * 0.01),
+            Self::BombHei => Some(f32::from(spin::BOMBHEI) * 0.01),
+            Self::Shell(shell::Kind::Green) => Some(f32::from(spin::GSHELL) * 0.01),
+            Self::Shell(shell::Kind::Red) => Some(f32::from(spin::RSHELL) * 0.01),
+            Self::TaruBomb => Some(f32::from(spin::TARUBOMB) * 0.01),
             _ => None,
         }
     }

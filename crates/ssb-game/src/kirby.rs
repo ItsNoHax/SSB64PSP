@@ -337,39 +337,16 @@ pub fn lose_copy(f: &mut Fighter) {
     crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialNLoseCopy);
 }
 
-/// `FTKirbyCopy[27]` at `KirbyMainMotion` 0x0000: `(copy_id, star_damage)`
-/// per swallowed `FTKind`. The model-part column is
+/// `FTKirbyCopy[27]` (file 228 + 0x0, `llKirbyMainMotionSpecialNFTKirbyCopy`):
+/// `(copy_id, star_damage)` per swallowed `FTKind`. The model-part column is
 /// [`crate::kirby_copy::COPY_MODELPART_IDS`] (RE-417); the scale column is
-/// presentation.
-pub const COPY: [(u8, i32); 27] = [
-    (0, 17),
-    (1, 17),
-    (2, 30),
-    (3, 17),
-    (4, 17),
-    (5, 17),
-    (6, 25),
-    (7, 17),
-    (8, 17),
-    (9, 17),
-    (10, 17),
-    (11, 17),
-    (8, 17),
-    (8, 17),
-    (8, 17),
-    (8, 17),
-    (8, 30),
-    (8, 17),
-    (8, 17),
-    (8, 17),
-    (8, 17),
-    (8, 17),
-    (8, 17),
-    (8, 17),
-    (8, 17),
-    (8, 17),
-    (2, 50),
-];
+/// presentation. ROM data generated at build time by `ssb-tablegen`, never
+/// committed; zeros in stub builds.
+pub use generated_copy::COPY;
+#[allow(clippy::all)]
+pub(crate) mod generated_copy {
+    include!(concat!(env!("OUT_DIR"), "/kirby_copy.rs"));
+}
 
 /// `FTKirbyCopy::star_damage` for a swallowed fighter kind.
 pub fn star_damage(kind: FighterKind) -> i32 {
@@ -1747,6 +1724,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_kirby_made_with_a_copy_keeps_it_and_its_hat() {
         let mut f = kirby();
         f.kirby.copy.samus_charge_level = 3;
@@ -1854,6 +1832,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn inhale_eats_once_the_victim_is_pulled_in_and_offers_its_copy() {
         let mut f = kirby();
         f.situation = Situation::Ground;

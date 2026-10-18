@@ -26,6 +26,7 @@ fn kirby() -> ssb_rom::fighter::FighterFile {
 /// 228, and part 0's high-detail list is joint 6's own, graph node 2's
 /// (`nFTPartsJointCommonStart` is 4).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_copy_table_and_joint_six_match_the_rom() {
     let Some(rom) = rom() else {
         return;
@@ -62,6 +63,7 @@ fn the_copy_table_and_joint_six_match_the_rom() {
 /// Every copy hat has a costume-0 mesh on joint 6's node, built from its
 /// own list, and no other node has one.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_copy_hat_is_packed_on_joint_six() {
     let (Some(rom), Some(bytes)) = (rom(), pack_bytes()) else {
         return;

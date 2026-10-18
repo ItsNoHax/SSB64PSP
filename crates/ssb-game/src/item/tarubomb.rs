@@ -6,13 +6,9 @@
 
 use ssb_engine::math::{Vec2, Vec3};
 
-use super::{
-    map, normal::CommonItems, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, ItemType,
-    ItemWeight,
-};
+use super::{map, normal::CommonItems, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::effect::SmashPiece;
-use crate::ground::BodyColl;
 use crate::map::{MASK_CEIL, MASK_FLOOR, MASK_LWALL, MASK_RWALL};
 use crate::weapon::MapSurface;
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
@@ -27,45 +23,8 @@ pub const GRAVITY: f32 = 4.0;
 pub const TVEL: f32 = 90.0;
 pub const MAP_REBOUND_COMMON: f32 = 0.5;
 
-/// `llGRBonus3MapTaruBombItemAttributes` (offset 0xA8 of relocData file
-/// 0x127, US): a heavy item whose model is file 162 at 0x788, a 294 by
-/// 316 by 294 damage box, map box 236 up and down and 221 wide (the maker
-/// squares it to 221), size 290, 10 damage at angle 70, 20 scale and 90
-/// base knockback, can set off, reflectable and shieldable.
-pub static ATTRIBUTES: ItemAttributes = ItemAttributes {
-    sounds: crate::item_sounds::item::TARUBOMB,
-    is_give_hitlag: true,
-    is_display_colanim: false,
-    weight: ItemWeight::Heavy,
-    attack_offsets: [Vec3::ZERO; 2],
-    damage_coll_offset: Vec3::ZERO,
-    damage_coll_size: Vec3::new(294.0, 316.0, 294.0),
-    map_coll: BodyColl {
-        top: 236.0,
-        center: 0.0,
-        bottom: -236.0,
-        width: 221.0,
-    },
-    size: 290.0,
-    angle: 70,
-    kb_scale: 20,
-    damage: 10,
-    element: Element::Normal,
-    kb_weight: 0,
-    shield_damage: 0,
-    attack_count: 1,
-    can_setoff: true,
-    priority: 1,
-    can_rehit_item: false,
-    can_rehit_fighter: false,
-    can_hop: false,
-    can_reflect: true,
-    can_shield: true,
-    kb_base: 90,
-    ty: ItemType::Fighter,
-    hitstatus: HitStatus::Normal,
-    vel_scale: 100,
-};
+/// `llGRBonus3MapTaruBombItemAttributes` (file 0x127, 0xA8).
+pub static ATTRIBUTES: ItemAttributes = super::attributes::TARUBOMB;
 
 /// `llGRBonus3MapTaruBombAttackEvents` (0xF0 of file 0x127): timer,
 /// angle, damage, size.
