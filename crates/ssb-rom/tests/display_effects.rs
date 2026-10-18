@@ -182,6 +182,7 @@ fn display_effect_lives_match_the_rom() {
             ssb_rom::effect::PIKACHU_THUNDER_SHOCK_KEY,
             DisplayKind::ThunderShock { gfx: 0 },
         ),
+        ("thunder jolt", (342, 0x2258), DisplayKind::ThunderJolt),
     ] {
         let (data, scripts) = packed_scripts(&pack, key);
         let n = dobj_life(data, &scripts);

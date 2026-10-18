@@ -137,7 +137,7 @@ const fn cpufx_tick(el: u64) -> u64 {
 
 /// The `cpufx-*` scenes, which mirror the player's pad to the CPUs.
 const fn is_cpufx(scene: GameScene) -> bool {
-    matches!(scene, GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK)
+    matches!(scene, GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK | GameScene::CpuFxS)
 }
 
 /// Whether a `cpufx-*` scene holds its press on `tick`: 40 frames for
@@ -146,11 +146,19 @@ const fn is_cpufx(scene: GameScene) -> bool {
 /// Kirby's `SpecialNEnd` at 91), so one tick more here.
 const fn cpufx_held(scene: GameScene, tick: u64) -> bool {
     let hold = match scene {
-        GameScene::CpuFxD => 41,
+        GameScene::CpuFxD | GameScene::CpuFxS => 41,
         GameScene::CpuFxU => 31,
         _ => 61,
     };
     is_cpufx(scene) && tick >= CPUFX_PRESS_TICK && tick < CPUFX_PRESS_TICK + hold
+}
+
+/// `cpufx-s`'s B taps, after its Down+B: the N64 reference script's
+/// `el` 120-121 and 140-141, each a tick longer as above.
+const fn cpufx_s_tap(scene: GameScene, tick: u64) -> bool {
+    let a = CPUFX_PRESS_TICK + 90;
+    let b = CPUFX_PRESS_TICK + 110;
+    matches!(scene, GameScene::CpuFxS) && ((tick >= a && tick < a + 3) || (tick >= b && tick < b + 3))
 }
 
 /// Whether `vsknock` flicks the stick and presses A on `tick`.
@@ -294,7 +302,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::VsKnock => VS_KNOCK_CAPTURE_TICK,
         // The N64 reference's frame with every effect of `cpufx-k` and
         // `cpufx-n` on screen (`el` 74).
-        GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK => cpufx_tick(74),
+        GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK | GameScene::CpuFxS => cpufx_tick(74),
         // "Go" at 398; Luigi, held left, falls off Dream Land and the
         // one-stock battle ends. The results make the fighters 120 tics
         // in; this is past the end of Kirby's Win clip.
@@ -662,10 +670,11 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::CpuFxU
             | GameScene::CpuFxN
             | GameScene::CpuFxK
+            | GameScene::CpuFxS
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
-            t if cpufx_held(scene, t) => N64Buttons(N64Buttons::B),
+            t if cpufx_held(scene, t) || cpufx_s_tap(scene, t) => N64Buttons(N64Buttons::B),
             // `vsshield`: the shield is held from "Go".
             t if scene == GameScene::VsShield && t >= 398 => N64Buttons(N64Buttons::Z),
             // `vsknock`: a forward smash with each stick flick.
@@ -874,6 +883,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::CpuFxU
             | GameScene::CpuFxN
             | GameScene::CpuFxK
+            | GameScene::CpuFxS
     ) {
         return 0;
     }
@@ -986,10 +996,11 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::CpuFxU
             | GameScene::CpuFxN
             | GameScene::CpuFxK
+            | GameScene::CpuFxS
     ) {
         return match tick {
             6 => -80,
-            t if scene == GameScene::CpuFxD && cpufx_held(scene, t) => -80,
+            t if matches!(scene, GameScene::CpuFxD | GameScene::CpuFxS) && cpufx_held(scene, t) => -80,
             t if scene == GameScene::CpuFxU && cpufx_held(scene, t) => 80,
             _ => 0,
         };
@@ -2898,7 +2909,7 @@ fn vs_rules(scene: GameScene) -> VsRules {
             ..VsRules::DEFAULT
         },
         // The N64 reference: stock 3, items off.
-        GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK => VsRules {
+        GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK | GameScene::CpuFxS => VsRules {
             rule: ssb_game::battle::Rule::Stock,
             stocks: 3,
             items: ssb_game::item::normal::Switches {
@@ -3793,6 +3804,7 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
         GameScene::CpuFxU => ([FighterKind::Link, FighterKind::Purin, FighterKind::Yoshi, FighterKind::Ness], None),
         GameScene::CpuFxN => ([FighterKind::Samus, FighterKind::Captain, FighterKind::Link, FighterKind::Kirby], None),
         GameScene::CpuFxK => ([FighterKind::Kirby, FighterKind::Kirby, FighterKind::Samus, FighterKind::Captain], None),
+        GameScene::CpuFxS => ([FighterKind::Kirby, FighterKind::Pikachu, FighterKind::Ness, FighterKind::Mario], None),
         // The CPU on the main floor's spawn, where it can be pushed off,
         // and the player on the left platform's.
         GameScene::VsPush | GameScene::VsKnock => {
@@ -6224,7 +6236,7 @@ struct DrawAssets {
     rebirth_halo: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The display effects' objects and transform animations (RE-415), by
     /// [`display_asset`].
-    displays: [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 8],
+    displays: [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 9],
     /// Pikachu's Thunder frames by `texture_id_curr` (RE-417).
     thunder_frames: [Option<ssb_rom::pack::MeshDesc>; 4],
     /// The Egg Lay egg and its Wait, Break and Throw animations (RE-417).
@@ -6470,8 +6482,10 @@ unsafe fn draw_thunder_segment(
 /// wave, the common spark (the flying sparks and the Star Rod spark), the
 /// metal dust, the small shock (`llEFCommonEffects2ShockSmallDObjDesc`) and
 /// the Poké Ball's rays (`llEFCommonEffects3MBallRaysDObjDesc`, RE-443) and
-/// Kirby's rapid-jab puff (`llKirbySpecial2VulcanJabDObjDesc`, RE-513).
-const DISPLAY_EFFECT_KEYS: [(u32, u32); 8] = [
+/// Kirby's rapid-jab puff (`llKirbySpecial2VulcanJabDObjDesc`, RE-513) and
+/// the ground Thunder Jolt's burst (`llPikachuSpecial3ThunderJoltDObjDesc`,
+/// RE-541).
+const DISPLAY_EFFECT_KEYS: [(u32, u32); 9] = [
     (83, 0x7750),
     (83, 0x7E80),
     (83, 0x7C28),
@@ -6480,13 +6494,14 @@ const DISPLAY_EFFECT_KEYS: [(u32, u32); 8] = [
     (84, 0x1500),
     (85, 0x0628),
     (348, 0x0B20),
+    (342, 0x2258),
 ];
 
 /// [`DISPLAY_EFFECT_KEYS`]' objects and transform animations.
 #[inline(never)]
 fn display_assets(
     p: &Pack<'_>,
-) -> [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 8] {
+) -> [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 9] {
     DISPLAY_EFFECT_KEYS.map(|key| {
         let slot = ssb_rom::effect::MANAGER_EFFECT_KEYS
             .iter()
@@ -6511,6 +6526,7 @@ fn display_asset(kind: ssb_game::effect::DisplayKind) -> Option<usize> {
         K::ShockSmall => 5,
         K::MBallRays => 6,
         K::VulcanJab => 7,
+        K::ThunderJolt => 8,
         K::SpawnOrbs
         | K::SpawnSparks
         | K::SpawnMDust
@@ -7030,6 +7046,13 @@ fn draw_display_effects(
                         .mul(&units),
                     n,
                 )
+            }
+            // Both joints `TraRotRpyRSca`: the root at the jolt with its
+            // `rotate.z`, joint 1 played by the desc's animation (RE-541).
+            K::ThunderJolt => {
+                let n = scratch.anim.compose(p, object, &mut posed);
+                let t = [d.translate.x, d.translate.y, d.translate.z];
+                (Mat4::from_trs_display(t, rot, scale).mul(&units), n)
             }
             K::FlyOrbs => {
                 posed[0] = child(0);

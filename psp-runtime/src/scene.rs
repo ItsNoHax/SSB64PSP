@@ -1610,6 +1610,11 @@ impl FighterScene {
             self.sample_gameplay_joints(pack);
             ssb_game::status::fox_blaster_spawn(&mut self.fighter);
         }
+        // `ftPikachuSpecialNProcUpdate` likewise (RE-541).
+        if ssb_game::pikachu::thunder_jolt_pending(&self.fighter) {
+            self.sample_gameplay_joints(pack);
+            ssb_game::pikachu::thunder_jolt_spawn(&mut self.fighter);
+        }
         let t = crate::profile::start();
         let segments = || MapSegments::with_groups(pack, stage, groups);
         self.fighter.tick_physics_map_before_slope(&segments);

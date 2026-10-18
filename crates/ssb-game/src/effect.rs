@@ -1160,6 +1160,11 @@ pub enum DisplayKind {
     /// status change does not stop it; no animation. It moves six times and
     /// ejects itself on its seventh update (RE-513).
     VulcanJab,
+    /// `dEFManagerThunderJoltEffectDesc`: the burst where a ground Thunder
+    /// Jolt is made and each time its animation reaches the push frame
+    /// (`efManagerPikachuThunderJoltMakeEffect`). No `EFFECT_FLAG_USERDATA`,
+    /// so no struct; it ends with its animation (RE-541).
+    ThunderJolt,
 }
 
 /// `gcPlayAnimAll` calls until each display effect's animation reaches its
@@ -1187,6 +1192,9 @@ pub mod life {
     /// `llPikachuSpecial2ThunderShock{0,1,2}AnimJoint`, each counting the
     /// default animation's play at the make.
     pub const THUNDER_SHOCK: [u16; 3] = [7, 7, 7];
+    /// `llPikachuSpecial3ThunderJoltAnimJoint`: drawn on eight frames, its
+    /// make's and seven more, as in the N64 cpufx-s trace (RE-541).
+    pub const THUNDER_JOLT: u16 = 9;
 }
 
 impl DisplayKind {
@@ -1206,7 +1214,8 @@ impl DisplayKind {
             | DisplayKind::ThunderTrail
             | DisplayKind::YoshiEggEscape
             | DisplayKind::ThunderShock { .. }
-            | DisplayKind::VulcanJab => 15,
+            | DisplayKind::VulcanJab
+            | DisplayKind::ThunderJolt => 15,
             DisplayKind::SpawnOrbs
             | DisplayKind::SpawnSparks
             | DisplayKind::SpawnMDust
@@ -1227,6 +1236,7 @@ impl DisplayKind {
             DisplayKind::FireSpark => life::FIRE_SPARK,
             DisplayKind::MBallRays => life::MBALL_RAYS,
             DisplayKind::ThunderShock { gfx } => life::THUNDER_SHOCK[usize::from(gfx.min(2))],
+            DisplayKind::ThunderJolt => life::THUNDER_JOLT,
             DisplayKind::SpawnOrbs
             | DisplayKind::FlyOrbs
             | DisplayKind::SpawnSparks
@@ -1437,7 +1447,10 @@ impl Effects {
             self.displays_refused = self.displays_refused.saturating_add(1);
             return None;
         };
-        let ep = if matches!(kind, DisplayKind::Slash | DisplayKind::MBallRays) {
+        let ep = if matches!(
+            kind,
+            DisplayKind::Slash | DisplayKind::MBallRays | DisplayKind::ThunderJolt
+        ) {
             NIL
         } else if kind == DisplayKind::YoshiEggEscape {
             self.get_force()?
@@ -1500,7 +1513,8 @@ impl Effects {
             | DisplayKind::Quake { .. }
             | DisplayKind::FireSpark
             | DisplayKind::MBallRays
-            | DisplayKind::ThunderShock { .. } => {
+            | DisplayKind::ThunderShock { .. }
+            | DisplayKind::ThunderJolt => {
                 // `efManagerHaveStructProcUpdate`.
                 if d.paused {
                     return;
@@ -1835,6 +1849,18 @@ impl Effects {
         true
     }
 
+    /// `efManagerPikachuThunderJoltMakeEffect(pos, rotate)`: no struct; the
+    /// root's `translate` is `pos` and its `rotate.z` the jolt's.
+    pub fn thunder_jolt(&mut self, pos: Vec3, rotate_z: f32) -> bool {
+        let Some(i) = self.make_display(DisplayKind::ThunderJolt) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.translate = pos;
+        d.rotate.z = rotate_z;
+        true
+    }
+
     /// `efManagerFireSparkMakeEffect`: the struct and `GObj`, held for the
     /// animation; not drawn.
     pub fn fire_spark(&mut self, owner: u8) -> bool {
@@ -1987,6 +2013,29 @@ impl Effects {
         s.fighter = Some(owner);
         s.proc = Proc::KirbyInhaleWind;
         true
+    }
+
+    /// `func_ovl2_801031E0` (script 2, effect kind 0x4C, Stone start) and
+    /// `func_ovl2_80103280` (script 5, kind 0x4D, Stone cancel): Kirby's
+    /// bank script `script` (no generator-link mask) under a `Ready`
+    /// transform, processed once, then placed at `pos`. No struct.
+    pub fn kirby_bank_ready(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        script: u16,
+        pos: Vec3,
+    ) -> u8 {
+        self.start_bare(
+            p,
+            banks,
+            KIRBY_PARTICLE_BANK,
+            script,
+            TransformStatus::Ready,
+            |t| {
+                t.translate = pos;
+            },
+        )
     }
 
     /// `ftParamRunProcEffect` with `ftParamPauseEffect` (`paused`) or

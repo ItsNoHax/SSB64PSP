@@ -149,13 +149,13 @@ impl ThunderJolt {
         F: Fn() -> I + Copy,
         I: IntoIterator<Item = MapSurface>,
     {
-        let alive = self.tick_map(surfaces);
+        let alive = self.tick_map(surfaces, fx);
         if !alive {
             fx.push(Fx::DustExpandSmall(self.position));
         }
         alive
     }
-    fn tick_map<I, F>(&mut self, surfaces: F) -> bool
+    fn tick_map<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I + Copy,
         I: IntoIterator<Item = MapSurface>,
@@ -167,8 +167,14 @@ impl ThunderJolt {
         } else if self.surface.is_some() {
             self.anim_frame += JOLT_GROUND_ANIM_SPEED;
         }
-        // `wpPikachuThunderJoltGroundProcUpdate`, ahead of the lifetime.
+        // `wpPikachuThunderJoltGroundProcUpdate`, ahead of the lifetime:
+        // `efManagerPikachuThunderJoltMakeEffect` at the DObj, then the
+        // animation restarts.
         if self.surface.is_some() && self.anim_frame == JOLT_ANIM_PUSH_FRAME {
+            fx.push(Fx::ThunderJolt {
+                pos: self.position,
+                rotate_z: self.rotate_z(),
+            });
             self.restart_anim();
         }
         self.lifetime = self.lifetime.saturating_sub(1);
@@ -193,7 +199,17 @@ impl ThunderJolt {
                 );
                 if let Some(hit) = hit {
                     let s = hit.surface;
-                    let pos = project(s, hit.position).unwrap_or(hit.position);
+                    // A floor landing keeps the full step's x and puts y
+                    // on the floor there: the N64 cpufx-s trace's jolt
+                    // lands one whole 28.28 step on from its last air
+                    // place (RE-541).
+                    let landed = match kind {
+                        MapSurfaceKind::Floor => project(s, wanted),
+                        _ => None,
+                    };
+                    let pos = landed
+                        .or_else(|| project(s, hit.position))
+                        .unwrap_or(hit.position);
                     let angle = ssb_engine::math::sy_arc_tan2(hit.normal.y, hit.normal.x);
                     let direction = match kind {
                         MapSurfaceKind::Floor => {
@@ -233,11 +249,22 @@ impl ThunderJolt {
                         (MapSurfaceKind::LeftWall, 3) | (MapSurfaceKind::RightWall, 2) => 0.0,
                         _ => DEG_180,
                     };
+                    // `wpPikachuThunderJoltGroundMakeWeapon`'s
+                    // `efManagerPikachuThunderJoltMakeEffect` at the new
+                    // weapon's DObj, before its FGM.
+                    fx.push(Fx::ThunderJolt {
+                        pos: self.position,
+                        rotate_z: self.rotate_z(),
+                    });
                     // `wpMainPlayFGM(new_wp, nSYAudioFGMPikachuElectricLoop)`:
                     // the new weapon has no sound yet.
                     self.sfx =
                         crate::sound::play_fgm(crate::sound::id::nSYAudioFGMPikachuElectricLoop);
-                    return true;
+                    // `wpManagerMakeWeapon` links the ground weapon after
+                    // this one, so `gcRunAll` runs its process this same
+                    // frame: the N64 cpufx-s trace's new jolt has already
+                    // spent a life and moved 55 (RE-541).
+                    return self.tick_map(surfaces, fx);
                 }
             }
             self.position = map_contact(
@@ -632,11 +659,22 @@ mod tests {
             (-1000, 0, 0),
             (1000, 0, 1),
         )];
-        assert!(j.tick(|| floor, &mut crate::wpeffect::Emit::default()));
-        assert_eq!(j.lifetime, 99);
+        let mut fx = crate::wpeffect::Emit::default();
+        assert!(j.tick(|| floor, &mut fx));
+        // The air jolt's life, then the ground weapon's first process in
+        // the same frame: a second life and one 55 step (RE-541).
+        assert_eq!(j.lifetime, 98);
         assert_eq!(j.position.y, 0.0);
         assert_eq!(j.hit().0.damage, 7);
         assert_eq!(j.hit().1.y, 100.0);
+        // The burst stays where the ground weapon was made.
+        let made = fx.iter().find_map(|e| match e {
+            crate::wpeffect::WeaponEffect::ThunderJolt { pos, rotate_z } => Some((pos, rotate_z)),
+            _ => None,
+        });
+        let (made, rotate_z) = made.expect("the ground make's burst");
+        assert_eq!(j.position.x - made.x, 55.0);
+        assert_eq!((made.y, rotate_z), (0.0, 0.0));
         let x = j.position.x;
         assert!(j.tick(|| floor, &mut crate::wpeffect::Emit::default()));
         assert_eq!(j.position.x - x, 55.0);
@@ -651,13 +689,16 @@ mod tests {
             (10000, 0, 1),
         )];
         assert!(j.tick(|| floor, &mut crate::wpeffect::Emit::default()));
-        // A new ground weapon: its animation is added, not yet played.
-        assert_eq!((j.anim_epoch, j.anim_ticks), (1, 0));
+        // A new ground weapon: its animation is added and, its process
+        // running in the frame it is made, played once, which only parses
+        // (RE-541).
+        assert_eq!((j.anim_epoch, j.anim_ticks), (1, 1));
+        assert_eq!(j.anim_frame, 0.0);
         assert_eq!(j.model_rotate_y, core::f32::consts::PI);
         assert_eq!(j.rotate_z(), 0.0);
-        // The first play only parses; each later one adds 0.5, and
-        // `anim_frame == 7.5` restarts it with one play.
-        for ticks in 1..=15 {
+        // Each later play adds 0.5, and `anim_frame == 7.5` restarts it
+        // with one play.
+        for ticks in 2..=15 {
             assert!(j.tick(|| floor, &mut crate::wpeffect::Emit::default()));
             assert_eq!((j.anim_epoch, j.anim_ticks), (1, ticks));
         }

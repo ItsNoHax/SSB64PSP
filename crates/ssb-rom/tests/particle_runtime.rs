@@ -47,6 +47,12 @@ impl PackBanks<'_, '_> {
                     .position(|b| b.name == "grpupupu")?;
                 self.pack.particle_bank(i as u32)
             }
+            effect::KIRBY_PARTICLE_BANK => {
+                let i = ssb_rom::particle::BANKS
+                    .iter()
+                    .position(|b| b.name == "particles_unk0")?;
+                self.pack.particle_bank(i as u32)
+            }
             _ => None,
         }
     }
@@ -797,5 +803,35 @@ fn whispys_leaves_and_dust_run_until_ejected() {
         let mut rest = Census::default();
         run_until_empty(&mut p, &mut e, &banks, &mut rest);
         assert_eq!(p.xf_used_num, 0, "lr {lr}");
+    }
+}
+
+/// Kirby's Stone start and cancel (`func_ovl2_801031E0` and
+/// `func_ovl2_80103280`, effect kinds 0x4C and 0x4D): bank scripts 2 and
+/// 5, struct-less, under a ready transform at the place; each runs to its
+/// end in the Kirby bank (RE-541).
+#[test]
+fn kirbys_stone_bank_scripts_run_in_the_kirby_bank_and_end() {
+    let _rng = rng_lock();
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = open(&bytes);
+    let banks = PackBanks {
+        pack: &pack,
+        common: pack.particle_bank(0).unwrap(),
+    };
+    for script in [2u16, 5] {
+        let mut p = Box::new(Particles::new());
+        let mut e = Effects::new(0);
+        ssb_game::rng::set_seed(1);
+        let pos = Vec3::new(-300.0, 420.0, 0.0);
+        let pc = e.kirby_bank_ready(&mut p, &banks, script, pos);
+        assert_ne!(pc, lb::NIL, "script {script}");
+        assert_eq!(p.particle(pc).bank_id & 7, effect::KIRBY_PARTICLE_BANK);
+        assert_eq!(p.transform(p.particle(pc).xf).translate, pos);
+        assert_eq!(e.free_num as usize, effect::EFFECT_ALLOC_NUM);
+        let mut census = Census::default();
+        run_until_empty(&mut p, &mut e, &banks, &mut census);
+        assert_eq!(p.xf_used_num, 0, "script {script}");
+        eprintln!("Kirby bank script {script}: {census:?}");
     }
 }

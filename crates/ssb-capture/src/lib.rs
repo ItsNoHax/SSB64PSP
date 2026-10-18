@@ -669,6 +669,11 @@ pub enum GameScene {
     /// Captain Falcon's powers (`FTCreateDesc::copy_kind`), and a Samus
     /// and a Captain Falcon.
     CpuFxK,
+    /// `cpufx-s`: a Kirby, a Pikachu, a Ness and a Mario, the N64
+    /// reference's script: Down+B from 30 ticks after "Go" held 40, then B
+    /// tapped at `el` 120 and 140. Kirby's Stone start and cancel (bank
+    /// scripts 2 and 5) and Pikachu's ground Thunder Jolt (RE-541).
+    CpuFxS,
     /// `explain`: How to Play (`scExplain`, RE-465) from the title, its
     /// fighters on their input scripts. Diagnostic: outside the manifest.
     Explain,
@@ -743,7 +748,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 185] = [
+    pub const ALL: [GameScene; 186] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -906,6 +911,7 @@ impl GameScene {
         GameScene::CpuFxU,
         GameScene::CpuFxN,
         GameScene::CpuFxK,
+        GameScene::CpuFxS,
         GameScene::Explain,
         GameScene::AutoDemo,
         GameScene::Opening,
@@ -1096,6 +1102,7 @@ impl GameScene {
             GameScene::CpuFxU => "cpufx-u",
             GameScene::CpuFxN => "cpufx-n",
             GameScene::CpuFxK => "cpufx-k",
+            GameScene::CpuFxS => "cpufx-s",
             GameScene::Explain => "explain",
             GameScene::AutoDemo => "autodemo",
             GameScene::Opening => "opening",

@@ -556,9 +556,16 @@ fn dispatch(f: &mut Fighter, rt: &mut EffectRuntime<'_>, effect: u16, pos: Vec3,
         kind::BOX_SMASH => {
             e.container_smash(pos, crate::effect::SmashPiece::Box);
         }
-        // Not made (RE-415): the Kirby bank's two scripts (the bank is not
-        // loaded) and `func_ovl2_8010183C`.
-        kind::KIRBY_BANK_2 | kind::KIRBY_BANK_5 | kind::CRASH_THE_GAME => {}
+        // `func_ovl2_801031E0` / `func_ovl2_80103280`: Kirby's bank scripts
+        // 2 and 5 (Stone start and cancel; RE-541).
+        kind::KIRBY_BANK_2 => {
+            e.kirby_bank_ready(p, b, 2, pos);
+        }
+        kind::KIRBY_BANK_5 => {
+            e.kirby_bank_ready(p, b, 5, pos);
+        }
+        // Not made (RE-415): `func_ovl2_8010183C`.
+        kind::CRASH_THE_GAME => {}
         _ => {}
     }
 }

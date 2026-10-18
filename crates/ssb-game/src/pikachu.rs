@@ -299,6 +299,36 @@ fn make_thunder(f: &mut Fighter) {
         f.pikachu.thunder_destroyed = true;
     }
 }
+/// `FTPIKACHU_THUNDERJOLT_SPAWN_JOINT`.
+pub const THUNDERJOLT_SPAWN_JOINT: u8 = 11;
+
+/// Whether this frame's interrupt queued Pikachu's own Thunder Jolt, which
+/// [`thunder_jolt_spawn`] places once the frame's play has posed joint 11.
+pub fn thunder_jolt_pending(f: &Fighter) -> bool {
+    f.kind == FighterKind::Pikachu
+        && f.weapon_spawn
+            .is_some_and(|w| w.kind == WeaponKind::PikachuThunderJolt)
+}
+
+/// `ftPikachuSpecialNProcUpdate`: the jolt leaves joint 11
+/// (`gmCollisionGetFighterPartsWorldPosition`) as this frame's
+/// `ftMainPlayAnimEventsAll` posed it, the play whose event set flag 0.
+/// Call with `joint_transforms` sampled from that pose. The N64 cpufx-s
+/// trace's jolt is one 40-unit step from joint 11's frame-21 place, not
+/// its frame-20 one (RE-541).
+pub fn thunder_jolt_spawn(f: &mut Fighter) {
+    if !thunder_jolt_pending(f) {
+        return;
+    }
+    f.mark_joint_query(THUNDERJOLT_SPAWN_JOINT);
+    let Some(joint) = f.joint_transforms[usize::from(THUNDERJOLT_SPAWN_JOINT)] else {
+        return;
+    };
+    if let Some(spawn) = f.weapon_spawn.as_mut() {
+        spawn.position = joint.point(Vec3::ZERO);
+    }
+}
+
 pub fn thunder_controlling(s: AnyStatus) -> bool {
     matches!(
         s,
@@ -322,7 +352,8 @@ pub fn update(f: &mut Fighter) {
                     kind: WeaponKind::PikachuThunderJolt,
                     owner_port: f.port,
                     team: f.team,
-                    position: f.joint_query(11, Vec3::ZERO),
+                    // Re-placed by [`thunder_jolt_spawn`] after the play.
+                    position: f.joint_query(THUNDERJOLT_SPAWN_JOINT, Vec3::ZERO),
                     facing: f.facing.sign(),
                     stale: crate::stale::WeaponStale::of(f),
                 });
@@ -868,5 +899,34 @@ mod tests {
         // `FTPIKACHU_QUICKATTACK_LANDING_LAG` is the landing's speed.
         close(f.status.timing.anim_speed, 0.4);
         assert!(!f.fall_special.landing_allow_interrupt);
+    }
+
+    /// `ftPikachuSpecialNProcUpdate` reads joint 11 after the frame's play:
+    /// the host re-samples the joints and [`thunder_jolt_spawn`] re-places
+    /// the queued jolt from them (RE-541).
+    #[test]
+    fn the_jolt_spawn_reads_joint_11_after_the_play() {
+        let mut f = pikachu(true);
+        let at = |origin| JointTransform {
+            axes: [
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(0.0, 0.0, 1.0),
+            ],
+            origin,
+        };
+        f.joint_transforms[11] = Some(at(Vec3::new(-1307.9, 1031.465, 0.0)));
+        set_special_n(&mut f);
+        while f.weapon_spawn.is_none() {
+            assert!(f.status.anim_frame < 30.0, "flag 0 never fired");
+            status::update(&mut f);
+        }
+        assert!(thunder_jolt_pending(&f));
+        f.joint_transforms[11] = Some(at(Vec3::new(-1261.542, 1008.992, 0.0)));
+        thunder_jolt_spawn(&mut f);
+        assert_eq!(
+            f.weapon_spawn.unwrap().position,
+            Vec3::new(-1261.542, 1008.992, 0.0)
+        );
     }
 }

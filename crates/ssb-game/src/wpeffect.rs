@@ -111,6 +111,11 @@ pub enum WeaponEffect {
         pos: Vec3,
         size: i32,
     },
+    /// `efManagerPikachuThunderJoltMakeEffect(pos, rotate)`.
+    ThunderJolt {
+        pos: Vec3,
+        rotate_z: f32,
+    },
     /// `efManagerPikachuThunderTrailMakeEffect(pos, lifetime, texture)`.
     ThunderTrail {
         pos: Vec3,
@@ -448,6 +453,9 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
             texture,
         } => {
             effects.thunder_trail(pos, lifetime, texture);
+        }
+        WeaponEffect::ThunderJolt { pos, rotate_z } => {
+            effects.thunder_jolt(pos, rotate_z);
         }
         WeaponEffect::DustHeavy { pos, lr } => {
             effects.dust_heavy(p, banks, pos, lr);

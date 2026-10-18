@@ -199,6 +199,7 @@ fn cpufx_scenes_parse_with_their_dashes_and_ticks() {
         ("cpufx-u", GameScene::CpuFxU),
         ("cpufx-n", GameScene::CpuFxN),
         ("cpufx-k", GameScene::CpuFxK),
+        ("cpufx-s", GameScene::CpuFxS),
     ] {
         let text = std::format!("{name}@472");
         let spec = crate::GameSpec::parse(&text).unwrap();
