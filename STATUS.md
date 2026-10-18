@@ -12,12 +12,12 @@ Where the project is now. The roadmap and every open task are in
 | Audio | N64 audio system ported whole, sample-exact against N64 captures ([D-049](docs/decisions/D-049.md), RE-479) |
 | Rendering | CRT overscan crop ([D-047](docs/decisions/D-047.md)); fighter shadow is one mirrored ellipse with team colours (RE-302); CPU guard-band clipping for movie scenes (RE-519); shade-only combiners whitened (RE-520); prim-alpha untextured surfaces (RE-521); fighter entries match the N64: effects play at make time, Samus's lit glass tube, Yoshi hidden in the egg, focus-2 camera fallback (RE-522, RE-523); opening fighter scenes: movie-camera particles and billboards, Samus grapple glow, Yoshi cloud fade (RE-525); run dust from demo-script events (RE-528); two-cycle shade x texel-lerp baked into the texture, so Yoster clouds are tinted and soft (RE-527) |
 | Frontend | N64 logo, opening, title (fire fade matches Rice within MAE 2-6); opening sector and Yoster models lit by display-list lights (RE-529), attract loop, every menu; opening room now matches the N64 closely (MAE vs Rice 5-11 at most tics) |
-| PSP | 60 FPS under PPSSPP; PSP-2000 baselines in RE-497, RE-498, RE-479, RE-493. Opening on a PSP-2000 (RE-530, RE-532): room 12.4 ms busy at 59.5 FPS, Run 53 FPS, Yoster 50, Clash 52 (RE-537); `vs4@2400` 15.73 ms busy, 59.2 FPS (120-frame reports; RE-537). PSP-1000 unsupported |
+| PSP | 60 FPS under PPSSPP; PSP-2000 baselines in RE-497, RE-498, RE-479. Opening on a PSP-2000 (RE-530, RE-532): room 12.4 ms busy at 59.5 FPS, Run 53 FPS, Yoster 50, Clash 52 (RE-537); `vs4@2400` 15.73 ms busy, 59.2 FPS (120-frame reports; RE-537). PSP-1000 unsupported |
 | Tests | Workspace tests with the ROM, stub tests, clippy, rustfmt pass; 225 of 225 goldens match by pixel hash |
 
 ## Current Work
 
-Landed: RE-547 (D-048 part 4): `ssb-tablegen`'s `d_arrays` generates the small `d*` arrays from the ROM (187 constants, among them `dLBCommonSinLookup`), with a `test_rom` helper for ROM-only tests; validate_docs check 10 now also flags small tables whose doc names a `d*` symbol but do not read the generated data (baseline 62 rows, each with a reason). No pack change (v121). Two fireball angles moved by 1 ULP to the ROM's words. The staff-roll box fill green is one lower (RGBA5551 widened); it is not measured against the N64, as there is no staff-roll capture.
+Landed: RE-547 (D-048 part 4): `ssb-tablegen`'s `d_arrays` generates the small `d*` arrays from the ROM, with a `test_rom` helper for ROM-only tests; validate_docs check 10 now also flags small tables whose doc names a `d*` symbol but do not read the generated data. No pack change (v121). Two fireball angles moved 1 ULP. The staff-roll box fill green is one lower (RGBA5551 widened); it is not measured against the N64, as there is no staff-roll capture.
 
 Open user question: function-local arrays inside decompiled functions are still committed; should they be generated too?
 
