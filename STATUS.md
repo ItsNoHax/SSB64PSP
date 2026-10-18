@@ -17,11 +17,13 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Landed: RE-546 (D-048 part 3): per the user's 2026-10-18 decision the decomp `d*` arrays in code and overlay segments are ROM tables; `ssb-tablegen` now generates them at build time (`battle_data`, `ifcommon`, `menu_data`, `sc1p_data`, `ending_data`, `opening_data`, `rom_layout`), no pack change (v121). The ratchet baseline fell to 41 rows. Boss wallpaper effects now use the ROM's `dobj_color_id` fade step. D-049 is confirmed sample-exact (user decision).
+Landed: RE-547 (D-048 part 4): `ssb-tablegen`'s `d_arrays` generates the small `d*` arrays from the ROM (187 constants, among them `dLBCommonSinLookup`), with a `test_rom` helper for ROM-only tests; validate_docs check 10 now also flags small tables whose doc names a `d*` symbol but do not read the generated data (baseline 62 rows, each with a reason). No pack change (v121). Two fireball angles moved by 1 ULP to the ROM's words. The staff-roll box fill green is one lower (RGBA5551 widened); it is not measured against the N64, as there is no staff-roll capture.
+
+Open user question: function-local arrays inside decompiled functions are still committed; should they be generated too?
 
 Uncommitted in the working tree: the perf batch (VRAM lit-expand vertex blocks, photo texture pool, 1P stage-override fix, link order s7b). It is blocked on the hung PSPLink: D-051 hardware proof of r2-stage-final-destination and r2-stage-bonus2-captain-falcon, and the s7b link-order re-check. Hardware runs need pack v121 staged.
 
-Next: D-048 leftovers in `PLAN.md` (function-local arrays question, `ground_obj` ANIMS, sub-threshold `d*` arrays, `locate_rom` helper, ratchet blind spots), Kirby's roster-A2 entry camera (needs an N64 trace of eye and at for rec 320-340), Thunder Jolt burst spikes, effects process order (needs a warp ROM with distinct per-port inputs), then the MS8 list in `PLAN.md`.
+Next: D-048 leftovers in `PLAN.md` (the function-local arrays answer, check 10 blind spots, re-triage the sprite file-ID rows), Kirby's roster-A2 entry camera (needs an N64 trace of eye and at for rec 320-340), Thunder Jolt burst spikes, effects process order (needs a warp ROM with distinct per-port inputs), then the MS8 list in `PLAN.md`.
 
 ## Blockers
 
@@ -30,7 +32,7 @@ Next: D-048 leftovers in `PLAN.md` (function-local arrays question, `ground_obj`
 
 ## Verification
 
-Baseline after RE-546:
+Baseline after RE-547:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`, and with `SSB64_STUB_TABLES=1` and no ROM: pass. Clippy (`cargo +1.98.0`, `-D warnings`) and `cargo fmt --all --check` pass.
 - Both PSP release builds compile.
