@@ -140,6 +140,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_variants_us_hurtboxes_keep_the_unrevised_sizes() {
         let mario = crate::hurtbox::damage_colls(FighterKind::Mario).unwrap();
         let metal = crate::hurtbox::damage_colls(FighterKind::MetalMario).unwrap();

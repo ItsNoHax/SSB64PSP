@@ -24,6 +24,7 @@ fn inputs() -> Option<(Vec<u8>, Vec<u8>)> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn texture_part_joint_and_material_positions_equal_the_rom() {
     let Some((rom, _)) = inputs() else { return };
     let a = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();

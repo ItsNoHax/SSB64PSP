@@ -69,6 +69,7 @@ fn donkey_giant_punch_loop_is_12_frames() {
 /// descriptor carries a display list: Samus's beam strands (24, 25) and
 /// Yoshi's tongue (9) are the only ones that draw.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_hidden_parts_are_the_roms() {
     let Some(rom) = rom() else {
         return;

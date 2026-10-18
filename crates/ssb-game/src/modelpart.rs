@@ -38,9 +38,12 @@ pub const ABSENT: i8 = i8::MIN;
 /// - `ANIMLOCK_MASKS`: `FTAttributes::animlock`, the parts a motion without
 ///   `FTANIM_FLAG_ANIMLOCKS` leaves at their rest transform
 ///   (`ftParamSetAnimLocks`, RE-509).
+/// - `HIDDEN_PARTS`: `FTAttributes::hiddenparts` ([`hidden_parts`]).
+/// - `TEXTURE_PARTS`: `FTAttributes::textureparts_container`
+///   ([`texture_part_table`]).
 ///
-/// `crates/ssb-rom/tests/model_parts.rs` checks both against `ssb-rom`'s
-/// own decoders.
+/// `crates/ssb-rom/tests/model_parts.rs`, `fighter_fidelity.rs` and
+/// `texture_parts.rs` check them against `ssb-rom`'s own decoders.
 #[allow(clippy::all)]
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/joint_masks.rs"));
@@ -55,68 +58,17 @@ pub fn animlock_mask(kind: FighterKind) -> u64 {
         .unwrap_or(0)
 }
 
-/// `FTAttributes::hiddenparts` from joint 4 on, per fighter: the part's
-/// index (its `anim_desc` bit is `0x80000000 >> index`), its root joint and
-/// whether its high-detail descriptor has a display list. Samus's grapple
-/// beam strands (joints 24 and 25) and Yoshi's tongue (joint 9) draw; the
-/// rest are joints only. `crates/ssb-rom/tests/fighter_fidelity.rs` checks
-/// them against the ROM (RE-468).
+/// `FTAttributes::hiddenparts` from joint 4 on, per fighter
+/// (`generated::HIDDEN_PARTS`): the part's index (its `anim_desc` bit is
+/// `0x80000000 >> index`), its root joint and whether its high-detail
+/// descriptor has a display list. Empty for Master Hand, who has no
+/// model-part state. `crates/ssb-rom/tests/fighter_fidelity.rs` checks them
+/// against `ssb-rom`'s decoder (RE-468).
 fn hidden_parts(kind: FighterKind) -> &'static [(u8, u8, bool)] {
-    use FighterKind as K;
-    const SAMUS: &[(u8, u8, bool)] = &[
-        (3, 36, false),
-        (4, 17, false),
-        (5, 18, false),
-        (6, 19, false),
-        (7, 20, false),
-        (8, 21, false),
-        (9, 22, false),
-        (10, 23, false),
-        (11, 24, true),
-        (12, 25, true),
-    ];
-    const POLY_SAMUS: &[(u8, u8, bool)] = &[
-        (3, 36, false),
-        (4, 17, false),
-        (5, 18, false),
-        (6, 19, false),
-        (7, 20, false),
-        (8, 21, false),
-        (9, 22, false),
-        (10, 23, false),
-        (11, 24, false),
-        (12, 25, false),
-    ];
-    const LINK: &[(u8, u8, bool)] = &[(3, 35, false), (4, 17, false), (5, 18, false)];
-    const KIRBY: &[(u8, u8, bool)] = &[
-        (3, 30, false),
-        (4, 7, false),
-        (5, 19, false),
-        (6, 12, false),
-        (7, 18, false),
-    ];
-    const POLY_KIRBY: &[(u8, u8, bool)] = &[(3, 30, false), (4, 7, false), (5, 19, false)];
-    match kind {
-        K::Mario | K::Luigi | K::MetalMario | K::PolyMario | K::PolyLuigi => &[(3, 28, false)],
-        K::Fox | K::PolyFox | K::Pikachu | K::PolyPikachu | K::Ness | K::PolyNess => {
-            &[(3, 30, false)]
-        }
-        K::Donkey
-        | K::PolyDonkey
-        | K::GiantDonkey
-        | K::Captain
-        | K::PolyCaptain
-        | K::Purin
-        | K::PolyPurin => &[(3, 29, false)],
-        K::Samus => SAMUS,
-        K::PolySamus => POLY_SAMUS,
-        K::Link | K::PolyLink => LINK,
-        K::Yoshi => &[(3, 31, false), (4, 9, true)],
-        K::PolyYoshi => &[(3, 31, false), (4, 9, false)],
-        K::Kirby => KIRBY,
-        K::PolyKirby => POLY_KIRBY,
-        K::Boss => &[],
-    }
+    generated::HIDDEN_PARTS
+        .get(kind as usize)
+        .copied()
+        .unwrap_or(&[])
 }
 
 /// [`hidden_parts`], for the ROM test.
@@ -169,47 +121,21 @@ impl Detail {
 /// Texture parts per fighter (`FTTexturePartContainer`).
 pub const TEXTURE_PARTS: usize = 2;
 
-/// `FTAttributes::textureparts_container`, per playable fighter: each
-/// part's joint and the position of its `MObj` in that joint's chain at
-/// high and low detail; `None` for a NULL container (Donkey Kong, Samus).
+/// `FTAttributes::textureparts_container`, per fighter
+/// (`generated::TEXTURE_PARTS`): each part's joint and the position of its
+/// `MObj` in that joint's chain at high and low detail; `None` for a NULL
+/// container (Donkey Kong, Samus).
 /// A fighter the decompilation gives one part reads the next bytes as its
 /// second (joint 0, `TopN`, which has no `MObj`) and never sets it.
 /// `crates/ssb-rom/tests/texture_parts.rs` checks them against the ROM.
 pub type TexturePartTable = [(u8, [u8; 2]); TEXTURE_PARTS];
 
-const TEXTURE_PART_TABLE: [Option<TexturePartTable>; 27] = [
-    Some([(12, [0, 0]), (0, [0, 0])]),  // Mario
-    Some([(12, [0, 0]), (12, [1, 1])]), // Fox
-    None,                               // Donkey
-    None,                               // Samus
-    Some([(12, [0, 0]), (0, [0, 0])]),  // Luigi
-    Some([(23, [0, 0]), (23, [1, 1])]), // Link
-    Some([(7, [0, 0]), (7, [1, 1])]),   // Yoshi
-    Some([(12, [0, 0]), (0, [0, 0])]),  // Captain
-    Some([(6, [0, 0]), (0, [0, 0])]),   // Kirby
-    Some([(11, [0, 0]), (11, [1, 1])]), // Pikachu
-    Some([(6, [0, 0]), (6, [1, 1])]),   // Purin
-    Some([(12, [0, 0]), (0, [0, 0])]),  // Ness
-    None,                               // Master Hand
-    Some([(12, [0, 0]), (0, [0, 0])]),  // Metal Mario
-    Some([(12, [0, 0]), (0, [0, 0])]),  // Polygon Mario
-    Some([(12, [0, 0]), (12, [1, 1])]), // Polygon Fox
-    None,                               // Polygon Donkey Kong
-    None,                               // Polygon Samus
-    Some([(12, [0, 0]), (0, [0, 0])]),  // Polygon Luigi
-    Some([(23, [0, 0]), (23, [1, 1])]), // Polygon Link
-    Some([(7, [0, 0]), (7, [1, 1])]),   // Polygon Yoshi
-    Some([(12, [0, 0]), (0, [0, 0])]),  // Polygon Captain Falcon
-    Some([(6, [0, 0]), (0, [0, 0])]),   // Polygon Kirby
-    Some([(11, [0, 0]), (11, [1, 1])]), // Polygon Pikachu
-    Some([(6, [0, 0]), (6, [1, 1])]),   // Polygon Jigglypuff
-    Some([(12, [0, 0]), (0, [0, 0])]),  // Polygon Ness
-    None,                               // Giant Donkey Kong
-];
-
-/// [`TEXTURE_PART_TABLE`]'s row for `kind`.
+/// `generated::TEXTURE_PARTS`' row for `kind`.
 pub fn texture_part_table(kind: FighterKind) -> Option<TexturePartTable> {
-    TEXTURE_PART_TABLE.get(kind as usize).copied().flatten()
+    generated::TEXTURE_PARTS
+        .get(kind as usize)
+        .copied()
+        .flatten()
 }
 
 /// `FTStruct::texturepart_status` and `is_texturepart_modify`, with what

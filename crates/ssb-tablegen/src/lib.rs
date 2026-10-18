@@ -35,12 +35,14 @@ pub mod vpk0;
 pub use error::{Error, Result};
 
 mod anim_table;
+mod capture_captain;
 mod colanim;
 mod computer;
 mod emit;
 mod figatree;
 mod fighters;
 mod ground;
+mod hurtbox;
 mod item_sounds;
 mod kirby_attack100;
 mod model_parts;
@@ -67,7 +69,8 @@ pub fn fighter_main_files() -> Vec<(&'static str, u32, u32)> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Crate {
     /// `ssb-game`: motion, colour-animation and CPU scripts, status flags,
-    /// joint masks.
+    /// joint masks and hidden/texture parts, hurtboxes, Falcon Dive's
+    /// capture offsets.
     Game,
     /// `ssb-rom`: the fighter animation table.
     Rom,
@@ -117,6 +120,14 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
             Generated {
                 name: "kirby_attack100.rs",
                 text: kirby_attack100::generate(rom)?,
+            },
+            Generated {
+                name: "hurtboxes.rs",
+                text: hurtbox::generate(rom)?,
+            },
+            Generated {
+                name: "capture_captain.rs",
+                text: capture_captain::generate(rom)?,
             },
         ],
         Crate::Rom => vec![Generated {

@@ -1227,40 +1227,23 @@ fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     f.hitstun = 0;
 }
 
-// `dCaptainMainMotion_0x0000`: offset from the victim's TopN to Falcon's
-// heavy-item joint, indexed by FTKind. These are signed short pairs in file 235.
-const CAPTAIN_OFFSETS: [(f32, f32); 27] = [
-    (30.0, 70.0),
-    (40.0, 40.0),
-    (100.0, 250.0),
-    (80.0, 210.0),
-    (30.0, 70.0),
-    (100.0, 160.0),
-    (0.0, 110.0),
-    (80.0, 210.0),
-    (20.0, 100.0),
-    (-10.0, 80.0),
-    (20.0, 100.0),
-    (30.0, 70.0),
-    (0.0, 0.0),
-    (30.0, 70.0),
-    (30.0, 70.0),
-    (40.0, 40.0),
-    (120.0, 260.0),
-    (80.0, 210.0),
-    (30.0, 70.0),
-    (100.0, 160.0),
-    (0.0, 0.0),
-    (80.0, 210.0),
-    (20.0, 100.0),
-    (-10.0, 80.0),
-    (20.0, 100.0),
-    (50.0, 150.0),
-    (100.0, 250.0),
-];
+/// `dCaptainMainMotion_0x0000` (`llCaptainMainMotionSpecialHiVec2h`):
+/// offset from the victim's TopN to Falcon's heavy-item joint, per victim
+/// `FTKind`; generated from file 235 of the user's ROM by
+/// `crates/ssb-tablegen` (`capture_captain.rs`).
+#[allow(clippy::all)]
+mod capture_captain {
+    include!(concat!(env!("OUT_DIR"), "/capture_captain.rs"));
+}
+
+/// [`capture_captain::CAPTURE_OFFSETS`]' `(x, y)` for `kind`.
+fn captain_offset_xy(kind: FighterKind) -> (f32, f32) {
+    let (x, y) = capture_captain::CAPTURE_OFFSETS[kind as usize];
+    (f32::from(x), f32::from(y))
+}
 
 pub(crate) fn captain_offset(kind: FighterKind) -> Vec3 {
-    let (x, y) = CAPTAIN_OFFSETS[kind as usize];
+    let (x, y) = captain_offset_xy(kind);
     Vec3::new(x, y, 0.0)
 }
 
@@ -1304,7 +1287,7 @@ fn update_capture_captain(f: &mut Fighter, holder: Holder) {
     // the query marks TopN, whose display then shows this pre-move matrix
     // (RE-511). The Captain's joint 29 is marked by `mark_held_queries`.
     f.mark_joint_query(0);
-    let (x, y) = CAPTAIN_OFFSETS[f.kind as usize];
+    let (x, y) = captain_offset_xy(f.kind);
     let want = holder.anchor - Vec3::new(x * holder.facing.sign(), y, 0.0);
     let delta = want - f.pos;
     let d2 = delta.length_squared();
