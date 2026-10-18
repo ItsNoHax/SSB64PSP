@@ -54,6 +54,8 @@ Each item cites the evidence that describes it. Delete an item when a batch
 closes it.
 
 ### PSP performance and hardware (`MS8`)
+- [ ] 1P Kirby-vs-Yoshi-team intro runs at about 30 FPS on a PSP-2000; profile it.
+- [ ] Falcon Punch FxSlot creation-frame `gcPlayAnimAll` (`efmanager.c:2008-2014`, `psp-game/src/main.rs` near line 8291): the PSP flame runs about 2 frames ahead of the N64 (RE-538).
 
 - [ ] Four-player VS on a PSP-2000: `vs4@2400` 15.73 ms busy / 59.2 FPS (120-frame reports 4..19) against RE-500's 13.64 / 59.9.
   - The RE-514 CPU lighting regression (+5.2 ms) is recovered; lighting is 0.8 ms busy.
@@ -128,6 +130,7 @@ closes it.
 
 ### Audio and rumble (`MS7`)
 
+- [ ] D-049 audio-priority question, awaiting the user (recommendation: keep sample-exact).
 - [ ] Compare the attract capture's KO and later hits (97.6–124.5 s) and 99 near-full-scale samples with the N64; check the reverb's unapplied low-pass against a hardware recording (RE-479).
 - [ ] Rumble.
 
