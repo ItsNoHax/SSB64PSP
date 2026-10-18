@@ -429,7 +429,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 // Yoshi's Island opening's clouds (`67+0xB608`). No layout change.
 // 118 adds the Reflector hexagon's Loop, Hit and End tables
 // (`effect::FOX_REFLECTOR_ANIM_SLOT`, file 346). No layout change.
-pub const VERSION: u32 = 118;
+// 119 adds the Spin Attack weapon's table (324 + 0x11990) as weapon slot 7
+// and its material scripts (324 + 0x11A40). No layout change.
+pub const VERSION: u32 = 119;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1300,6 +1302,9 @@ impl AnimDesc {
     /// (86 + 0x13190), RE-435.
     pub const WEAPON_ANIM_KAMEX_HYDRO: u32 = 5;
     pub const WEAPON_ANIM_DOGAS_SMOG: u32 = 6;
+    /// [`Self::WEAPON`] slot of Link's Spin Attack weapon graphic
+    /// (`llLinkMainSpinAttackWeaponAttributes.anim_joints`, 324 + 0x11990).
+    pub const WEAPON_ANIM_LINK_SPIN_ATTACK: u32 = 7;
 
     /// `shield_anim_joints` has one table per 45-degree stick sector.
     pub const SHIELD_SECTORS: u32 = 8;

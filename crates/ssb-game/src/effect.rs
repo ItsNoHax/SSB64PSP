@@ -55,6 +55,18 @@ pub const HYRULE_PARTICLE_BANK: u8 = 6;
 /// dust.
 pub const PUPUPU_PARTICLE_BANK: u8 = 7;
 
+/// Match bank for Kirby's pair (`gFTDataKirbyParticleBankID`: the
+/// `particles_unk0` scripts and textures `dFTKirbyData` names, loaded with
+/// the fighter). Like the others it keeps a fixed id of its own.
+pub const KIRBY_PARTICLE_BANK: u8 = 3;
+
+/// `efManagerKirbyInhaleWindMakeEffect`'s script in Kirby's bank.
+const KIRBY_INHALE_WIND_SCRIPT: u16 = 0xC;
+/// Its transform's offset from the fighter's `TopN`: `lr * 800` across,
+/// 230 up.
+const KIRBY_INHALE_WIND_OFF_X: f32 = 800.0;
+const KIRBY_INHALE_WIND_OFF_Y: f32 = 230.0;
+
 /// `dEFManagerDamageNormalLightIDs`, by the attacker's player.
 pub const NORMAL_LIGHT_IDS: [u16; 4] = [0x49, 0x4A, 0x4B, 0x4C];
 /// `efManagerDamageNormalHeavyMakeEffect`'s script.
@@ -124,6 +136,9 @@ enum Proc {
         frame: i32,
         lr: i8,
     },
+    /// `efManagerKirbyInhaleWindProcUpdate`: the transform follows
+    /// `ep->fighter_gobj`'s `TopN` ([`Effects::fighter_anchors`]).
+    KirbyInhaleWind,
 }
 
 /// One `EFStruct` and its effect `GObj`.
@@ -137,6 +152,11 @@ struct Slot {
     proc: Proc,
     /// When its `GObj` was made: processes run in `GObj` order.
     seq: u32,
+    /// `ep->bank_id`, where a maker records it.
+    bank_id: u8,
+    /// `ep->fighter_gobj`'s port, for the effects a fighter attaches
+    /// (`ftParamRunProcEffect` finds them by it).
+    fighter: Option<u8>,
 }
 
 impl Slot {
@@ -147,6 +167,8 @@ impl Slot {
         vel: [0.0; 2],
         proc: Proc::None,
         seq: 0,
+        bank_id: 0,
+        fighter: None,
     };
 }
 
@@ -182,6 +204,10 @@ pub struct Effects {
     pub leaves_xf: u8,
     /// `gGRCommonStruct.pupupu.dust_xf`, likewise.
     pub dust_xf: u8,
+    /// Each port's fighter `TopN` translate and `lr` as its last effect
+    /// flush left them ([`EffectRuntime`]'s `fighter`): what an attached
+    /// effect's process reads from `DObjGetStruct(ep->fighter_gobj)`.
+    pub fighter_anchors: [Option<(Vec3, i8)>; 4],
 }
 
 impl Default for Effects {
@@ -207,6 +233,7 @@ impl Effects {
             twister_xf: NIL,
             leaves_xf: NIL,
             dust_xf: NIL,
+            fighter_anchors: [None; 4],
         };
         for i in 0..EFFECT_ALLOC_NUM {
             e.slots[i].next = if i + 1 < EFFECT_ALLOC_NUM {
@@ -318,6 +345,20 @@ impl Effects {
                         vel2,
                         lifetime: lifetime - 1,
                     };
+                }
+            }
+            Proc::KirbyInhaleWind => {
+                // The source writes `ep->xf` even after its particles died
+                // and the transform went back to the pool; here a freed or
+                // reused transform is left alone.
+                let anchor = s
+                    .fighter
+                    .and_then(|port| self.fighter_anchors[usize::from(port & 3)]);
+                let t = p.transform_mut(s.xf);
+                if let Some((pos, lr)) = anchor.filter(|_| t.users_num != 0 && t.owner == i) {
+                    t.translate = pos;
+                    t.translate.x += f32::from(lr) * KIRBY_INHALE_WIND_OFF_X;
+                    t.translate.y += KIRBY_INHALE_WIND_OFF_Y;
                 }
             }
             Proc::DustHeavyDouble { frame, lr } => {
@@ -945,6 +986,8 @@ impl HitEffectSink for EffectRuntime<'_> {
     }
 
     fn fighter(&mut self, f: &mut crate::fighter::Fighter) {
+        self.effects.fighter_anchors[usize::from(f.port & 3)] =
+            Some((f.pos, f.facing.sign() as i8));
         crate::fteffect::flush(f, self);
     }
 
@@ -1855,7 +1898,18 @@ impl Effects {
     /// `ftParamRunProcEffect(fighter, ftParamStopEffect)`: ejects every
     /// effect attached to `owner`, in `GObj` order.
     pub fn stop_attached(&mut self, owner: u8) {
-        let mut order = [(u32::MAX, 0usize); DISPLAY_MAX];
+        self.stop_attached_with(None, owner);
+    }
+
+    /// [`Self::stop_attached`] with the particle runtime, so a particle
+    /// effect's `ftParamStopEffect` also ejects its generator's structs
+    /// (`lbParticleEjectStructID(xf->generator_id, ep->bank_id >> 3)`).
+    pub fn stop_attached_particles(&mut self, p: &mut Particles, banks: &dyn Banks, owner: u8) {
+        self.stop_attached_with(Some((p, banks)), owner);
+    }
+
+    fn stop_attached_with(&mut self, mut rt: Option<(&mut Particles, &dyn Banks)>, owner: u8) {
+        let mut order = [(u32::MAX, 0usize); DISPLAY_MAX + EFFECT_ALLOC_NUM];
         let mut n = 0;
         for (i, d) in self.displays.iter().enumerate() {
             if let Some(d) = d.filter(|d| d.fighter == Some(owner)) {
@@ -1863,10 +1917,76 @@ impl Effects {
                 n += 1;
             }
         }
+        for (i, s) in self.slots.iter().enumerate() {
+            if self.live[i] && s.fighter == Some(owner) {
+                order[n] = (s.seq, 0x100 | i);
+                n += 1;
+            }
+        }
         order[..n].sort_unstable_by_key(|&(seq, _)| seq);
         for &(_, i) in &order[..n] {
-            self.eject_display(i);
+            if i & 0x100 == 0 {
+                self.eject_display(i);
+                continue;
+            }
+            let ep = (i & 0xFF) as u8;
+            let s = self.slots[usize::from(ep)];
+            if let (Some((p, banks)), true) = (rt.as_mut(), s.xf != NIL) {
+                let (generator_id, link) =
+                    (p.transform(s.xf).generator_id, usize::from(s.bank_id >> 3));
+                lb::eject_struct_id(p, *banks, self, generator_id, link);
+            }
+            self.release(ep);
         }
+    }
+
+    /// `efManagerKirbyInhaleWindMakeEffect`: a forced struct and Kirby's
+    /// script 0xC under a default transform with no `proc_dead`, processed
+    /// once, then placed at the fighter's `TopN` (`pos`) plus `lr * 800`
+    /// across and 230 up, turned a quarter about `z` away from `lr`. The
+    /// struct keeps `owner` and follows it ([`Proc::KirbyInhaleWind`]).
+    /// `false` as the source returns `NULL`; as there, a struct whose script
+    /// or transform failed stays allocated.
+    pub fn kirby_inhale_wind(
+        &mut self,
+        p: &mut Particles,
+        banks: &dyn Banks,
+        owner: u8,
+        pos: Vec3,
+        lr: i8,
+    ) -> bool {
+        let Some(ep) = self.get_force() else {
+            return false;
+        };
+        let bank_id = KIRBY_PARTICLE_BANK | lb::genlink(0);
+        let pc = lb::make_script_id(p, banks, bank_id, KIRBY_INHALE_WIND_SCRIPT);
+        if pc == NIL {
+            return false;
+        }
+        let xf = p.add_transform_for_struct(pc, TransformStatus::Default);
+        if xf == NIL {
+            lb::eject_struct(p, banks, self, pc);
+            return false;
+        }
+        lb::process_struct(p, banks, self, pc);
+        if p.transform(xf).users_num == 0 {
+            return false;
+        }
+        {
+            let t = p.transform_mut(xf);
+            t.owner = ep;
+            t.translate = pos;
+            t.translate.x += f32::from(lr) * KIRBY_INHALE_WIND_OFF_X;
+            t.translate.y += KIRBY_INHALE_WIND_OFF_Y;
+            t.scale = Vec3::splat(1.0);
+            t.rotate.z = if lr == -1 { dtor(90.0) } else { dtor(-90.0) };
+        }
+        let s = &mut self.slots[usize::from(ep)];
+        s.xf = xf;
+        s.bank_id = p.particle(pc).bank_id;
+        s.fighter = Some(owner);
+        s.proc = Proc::KirbyInhaleWind;
+        true
     }
 
     /// `ftParamRunProcEffect` with `ftParamPauseEffect` (`paused`) or

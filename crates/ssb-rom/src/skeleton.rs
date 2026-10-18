@@ -389,6 +389,16 @@ impl Skeleton {
             .then(|| &self.poses[0])
     }
 
+    /// The pose of the clip's last stream when it drives no packed node:
+    /// the runtime joint a motion's `is_use_yrotn_joint` adds as a hidden
+    /// part (`ftMainAddHiddenPartID`), which the figatree walk reaches
+    /// after the model. Yoshi's Egg Throw animates `YRotN` this way; its
+    /// scale steps match the N64 egg's `DObj` scale frame for frame.
+    pub fn trailing_runtime_pose(&self) -> Option<&JointPose> {
+        let last = self.joint_count.checked_sub(1).filter(|&i| i > 0)?;
+        (self.nodes[last] == AnimJoint::NO_NODE).then(|| &self.poses[last])
+    }
+
     /// A joint's `DObj::flags`, as its clip's `SetFlags` commands last
     /// wrote them (`gcParseDObjAnimJoint`, `ftAnimParseDObjFigatree`).
     /// `ftMainSetStatus` clears every model joint's and the interposed

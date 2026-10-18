@@ -58,6 +58,25 @@ pub fn costume_common_id(kind: FighterKind, color: usize) -> u8 {
         .unwrap_or(0)
 }
 
+/// `mnPlayersVSGetFreeCostume` in free-for-all for fighters picked in port
+/// order: each port takes the first royal costume
+/// (`mnPlayersVSGetFreeCostumeRoyal`) that no lower port of the same
+/// fighter already wears, so a second Kirby is yellow.
+pub fn vs_free_costumes(kinds: [FighterKind; 4]) -> [u8; 4] {
+    let mut costumes = [0u8; 4];
+    for port in 0..4 {
+        let kind = kinds[port];
+        let royal = (0..4)
+            .find(|&j| {
+                let costume = costume_common_id(kind, j);
+                !(0..port).any(|i| kinds[i] == kind && costumes[i] == costume)
+            })
+            .unwrap_or(0);
+        costumes[port] = costume_common_id(kind, royal);
+    }
+    costumes
+}
+
 /// The select-button index a C-button tap stands for on the character
 /// select: C-Up 0, C-Right 1, C-Down 2, C-Left 3, tested in that order.
 pub fn select_button(taps: N64Buttons) -> Option<usize> {
@@ -111,6 +130,24 @@ mod tests {
         assert_eq!(costume_common_id(FighterKind::Mario, 2), 2);
         assert_eq!(costume_common_id(FighterKind::Link, 1), 2);
         assert_eq!(costume_common_id(FighterKind::Captain, 1), 4);
+        assert_eq!(
+            vs_free_costumes([
+                FighterKind::Kirby,
+                FighterKind::Kirby,
+                FighterKind::Samus,
+                FighterKind::Kirby,
+            ]),
+            [0, 1, 0, 2]
+        );
+        assert_eq!(
+            vs_free_costumes([
+                FighterKind::Captain,
+                FighterKind::Mario,
+                FighterKind::Captain,
+                FighterKind::Fox,
+            ]),
+            [0, 0, 4, 0]
+        );
     }
 
     #[test]

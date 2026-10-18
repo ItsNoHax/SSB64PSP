@@ -223,6 +223,10 @@ pub const GBUMPER_ITEM_SOURCE: (u32, u32) = ssb_rom::ground_obj::GBUMPER_SOURCE;
 /// Ness's PK Fire spark (file 240 + 0x00): file 336's direct list at 0x168,
 /// packed as a one-node object (RE-381).
 pub const NESS_PK_FIRE_SOURCE: (u32, u32) = (336, 0x168);
+/// Link's Spin Attack weapon graphic
+/// (`llLinkMainSpinAttackWeaponAttributes`, file 225 + 0x0C): file 324's
+/// two-node tree, drawn through `wpDisplayDObjTreeDLLinks`.
+pub const LINK_SPIN_ATTACK_WEAPON_SOURCE: (u32, u32) = (324, 0x11908);
 /// The PK Thunder head (file 239 + 0x0C): file 335's two-node tree.
 pub const NESS_PK_THUNDER_SOURCE: (u32, u32) = (335, 0x7C98);
 /// The PK Thunder trail (file 239 + 0x40): file 335's `DObjDLLink` array,
@@ -2225,6 +2229,33 @@ impl FighterScene {
                 axes: [axis(0), axis(1), axis(2)],
                 origin: self.fighter.pos + world(Vec3::new(t[0] * scale, t[1] * scale, t[2] * scale)),
             });
+        } else if let Some(pose) = ssb_game::motion::uses_yrotn(self.fighter.kind, self.fighter.status.status)
+            .then(|| self.skeleton.trailing_runtime_pose())
+            .flatten()
+        {
+            // A motion with `is_use_yrotn_joint` (Yoshi's Egg Throw) drives
+            // `YRotN` from its figatree's last stream. The held egg reads
+            // its world position and copies its scale
+            // (`ftYoshiSpecialHiUpdateEggVectors`).
+            let scale = ssb_rom::pack::MODEL_SCALE;
+            let local = |p: &ssb_rom::figatree::JointPose| {
+                let t = [p.translate[0] / scale, p.translate[1] / scale, p.translate[2] / scale];
+                ssb_rom::scene::Mat4::from_trs_collision(t, p.rotate, p.scale)
+            };
+            let mut m = local(pose);
+            if let Some(lead) = self.skeleton.lead_xrotn_pose() {
+                m = local(lead).mul(&m);
+            }
+            let axis = |col: usize| {
+                world(Vec3::new(m.0[col * 4], m.0[col * 4 + 1], m.0[col * 4 + 2]))
+            };
+            let t = m.translation();
+            self.fighter.joint_transforms[3] = Some(JointTransform {
+                axes: [axis(0), axis(1), axis(2)],
+                origin: self.fighter.pos + world(Vec3::new(t[0] * scale, t[1] * scale, t[2] * scale)),
+            });
+            self.fighter.yoshi.egg_joint_scale =
+                Some(Vec3::new(pose.scale[0], pose.scale[1], pose.scale[2]));
         }
     }
 

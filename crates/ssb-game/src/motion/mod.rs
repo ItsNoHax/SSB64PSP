@@ -89,6 +89,15 @@ pub const ANIM_FLAG_TRANSN: u32 = 0x4000_0000;
 /// `FTANIM_FLAG_TRANSN_JOINT`, the names swapped).
 pub const ANIM_FLAG_XROTN: u32 = 0x8000_0000;
 
+/// `FTAnimDesc.flags.is_use_yrotn_joint`.
+pub const ANIM_FLAG_YROTN: u32 = 0x2000_0000;
+
+/// Whether the status's motion animates `YRotN` (`is_use_yrotn_joint`):
+/// `ftMainSetStatus` resets the joint and the figatree drives it.
+pub fn uses_yrotn(kind: FighterKind, status: AnyStatus) -> bool {
+    motion_desc(kind, status).is_some_and(|d| d.anim_flags & ANIM_FLAG_YROTN != 0)
+}
+
 /// Whether the status's motion interposes `XRotN` between TopN and the
 /// model and leads its figatree with it (and no detached TransN): the
 /// clip's leading joint then poses the whole model (RE-468).

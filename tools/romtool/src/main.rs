@@ -2568,6 +2568,9 @@ const DIRECT_WEAPON_GRAPHS: &[(u32, u32)] = &[(342, 0x270), (336, 0x168), (335, 
 /// swarm (+ 0x9D4) name file 86's 0xFB70, 0x131E0 and 0xE560 (RE-435).
 const WEAPON_MAT_ANIM_JOINTS: &[((u32, u32), u32)] = &[
     ((342, 0x1888), 0x1AE0),
+    // Link's Spin Attack weapon graphic (file 225 + 0x0C) names file 324's
+    // 0x11A40: node 1's three `MObj`s fade in and out.
+    ((324, 0x11908), 0x11A40),
     ((336, 0x168), 0x1E0),
     ((335, 0x7C98), 0x7D70),
     (
@@ -6222,6 +6225,18 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             ssb_rom::mmonster::SMOG_GRAPH,
             ssb_rom::mmonster::SMOG_ANIM_JOINTS,
             None,
+        ),
+        // Link's Spin Attack weapon graphic
+        // (`llLinkMainSpinAttackWeaponAttributes`, file 225 + 0x0C): node
+        // 1's spin and swell (324 + 0x11990..0x11A40). File 324 is Link's
+        // whole model, so only the table and its script are packed.
+        (
+            ssb_rom::pack::AnimDesc::WEAPON,
+            ssb_rom::pack::AnimDesc::WEAPON_ANIM_LINK_SPIN_ATTACK,
+            324,
+            0x11908,
+            0x11990,
+            Some(0x11A40),
         ),
     ];
     let mut weapon_anims = 0usize;

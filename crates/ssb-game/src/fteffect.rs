@@ -130,6 +130,10 @@ pub enum FighterEffect {
         vel: f32,
         add: f32,
     },
+    /// `efManagerKirbyInhaleWindMakeEffect(fighter_gobj)` from
+    /// `ftKirbySpecialNLoopProcUpdate`: success clears motion flag 0 and
+    /// sets `is_effect_attach`.
+    KirbyInhaleWind,
     /// `ftParamProcStopEffect`: ejects the effects attached to the fighter.
     StopAttached,
     /// `ftParamProcPauseEffect` (`true`) or `ftParamProcResumeEffect`.
@@ -217,7 +221,7 @@ pub(crate) fn on_set_status(f: &mut Fighter, to: crate::status::AnyStatus) {
     // `ftParamProcStopEffect` when `is_effect_attach`; a maker still queued
     // would have set it in the source, so its stop is queued behind it.
     let attaching = f.effects.iter().any(|e| match e {
-        FighterEffect::ThunderShock { .. } => true,
+        FighterEffect::ThunderShock { .. } | FighterEffect::KirbyInhaleWind => true,
         FighterEffect::Param(r) => r.kind == kind::FIRE_SPARK,
         _ => false,
     });
@@ -292,8 +296,19 @@ pub fn flush(f: &mut Fighter, rt: &mut EffectRuntime<'_>) {
             } => {
                 rt.effects.vulcan_jab(pos, lr, rotate, vel, add);
             }
+            FighterEffect::KirbyInhaleWind => {
+                let lr = f.facing.sign() as i8;
+                if rt
+                    .effects
+                    .kirby_inhale_wind(rt.particles, rt.banks, f.port, f.pos, lr)
+                {
+                    f.kirby.inhale_wind_flag0 = false;
+                    f.is_effect_attach = true;
+                }
+            }
             FighterEffect::StopAttached => {
-                rt.effects.stop_attached(f.port);
+                rt.effects
+                    .stop_attached_particles(rt.particles, rt.banks, f.port);
                 f.is_effect_attach = false;
             }
             FighterEffect::Pause(paused) => {

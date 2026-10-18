@@ -15,11 +15,14 @@ use crate::meshdraw::{self, DrawState, ParticleRect};
 /// Runtime bank 5 is Yoshi's Island's `gryoster` (pack bank 7), whose
 /// cloud vapor only that stage makes; runtime bank 6 Hyrule Castle's
 /// `grhyrule`, its Twister; runtime bank 7 Dream Land's `grpupupu`, Whispy's
-/// leaves and dust. The other stage banks stay unloaded.
+/// leaves and dust. Runtime bank 3 is Kirby's `particles_unk0` (pack
+/// bank 1, `gFTDataKirbyParticleBankID`), whose wind the Inhale makes.
+/// The other stage banks stay unloaded.
 pub struct PackBanks<'p, 'a> {
     pack: &'p Pack<'a>,
     common: ParticleBankDesc,
     yoshi: Option<ParticleBankDesc>,
+    kirby: Option<ParticleBankDesc>,
     items: Option<ParticleBankDesc>,
     yoster: Option<ParticleBankDesc>,
     hyrule: Option<ParticleBankDesc>,
@@ -39,6 +42,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             pack,
             common: pack.particle_bank(0)?,
             yoshi: pack.particle_bank(3),
+            kirby: pack_bank(pack, "particles_unk0"),
             items: pack.particle_bank(4),
             yoster: pack_bank(pack, "gryoster"),
             hyrule: pack_bank(pack, "grhyrule"),
@@ -53,6 +57,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             pack,
             common: pack_bank(pack, "mntitle")?,
             yoshi: None,
+            kirby: None,
             items: None,
             yoster: None,
             hyrule: None,
@@ -64,6 +69,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
         match id {
             0 => Some(self.common),
             ssb_game::effect::YOSHI_PARTICLE_BANK => self.yoshi,
+            ssb_game::effect::KIRBY_PARTICLE_BANK => self.kirby,
             2 => self.items,
             ssb_game::effect::YOSTER_PARTICLE_BANK => self.yoster,
             ssb_game::effect::HYRULE_PARTICLE_BANK => self.hyrule,

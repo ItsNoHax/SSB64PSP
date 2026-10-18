@@ -123,6 +123,11 @@ pub struct YoshiState {
     /// Motion flag 1 of Egg Throw, set by the throw. The aerial status then
     /// checks ledges as well as floors.
     pub egg_thrown: bool,
+    /// The Egg Throw joint's local `scale`, presentation only, as the
+    /// runtime last sampled it from the figatree (`None`: no sample, the
+    /// rest scale of 1). `ftYoshiSpecialHiUpdateEggVectors` copies it to
+    /// the held egg's `DObj`, which keeps it after the throw.
+    pub egg_joint_scale: Option<Vec3>,
     /// `status_vars.common.jumpaerial.turn_tics`.
     pub jumpaerial_turn_tics: u8,
 }
@@ -294,6 +299,14 @@ pub fn held_egg_position(f: &Fighter) -> Option<Vec3> {
     (is_yoshi(f.kind) && f.yoshi.egg_held).then(|| f.joint_world(EGGTHROW_JOINT, Vec3::ZERO))
 }
 
+/// The held egg's `DObj` scale, presentation only: the Egg Throw joint's
+/// own scale, which `ftYoshiSpecialHiUpdateEggVectors` copies with the
+/// position. The egg pops in with the figatree's steps (0.01, then
+/// slightly negative, then 1 x 1.5 x 0.8 at its stretch).
+pub fn egg_scale(f: &Fighter) -> Vec3 {
+    f.yoshi.egg_joint_scale.unwrap_or(Vec3::new(1.0, 1.0, 1.0))
+}
+
 /// `ftYoshiSpecialHiUpdateEggThrowForce` and `ftYoshiSpecialHiUpdateEggVars`.
 fn update_egg(f: &mut Fighter) {
     if f.input.buttons.contains(N64Buttons::B) {
@@ -305,6 +318,7 @@ fn update_egg(f: &mut Fighter) {
                 kind: WeaponKind::YoshiEgg {
                     throw_force: f.yoshi.throw_force,
                     stick_x: f.input.stick_x,
+                    scale: egg_scale(f),
                 },
                 owner_port: f.port,
                 team: f.team,
@@ -691,7 +705,8 @@ mod tests {
             spawn.kind,
             WeaponKind::YoshiEgg {
                 throw_force: 21,
-                stick_x: 70
+                stick_x: 70,
+                scale: Vec3::new(1.0, 1.0, 1.0),
             }
         );
         assert!(!f.yoshi.egg_held && f.yoshi.egg_thrown);

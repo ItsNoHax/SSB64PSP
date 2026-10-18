@@ -274,6 +274,7 @@ fn an_egg_landing_makes_its_four_effects_and_sixteen_fit() {
     let egg = WeaponKind::YoshiEgg {
         throw_force: 0,
         stick_x: 0,
+        scale: Vec3::new(1.0, 1.0, 1.0),
     };
     for i in 0..16 {
         let mut s = spawn(egg, (i % 4) as u8, i as f32 * 300.0, 1.0);

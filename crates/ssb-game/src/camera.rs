@@ -128,6 +128,46 @@ pub struct Camera {
     /// `gmCameraMakeMovieCamera` with its processes ended: an opening
     /// scene moves `eye`, `at` and the roll itself (RE-467).
     pub movie: Option<MovieView>,
+    /// The weapons with `is_camera_follow` set, as the battle last saw
+    /// them: `gmCameraUpdateInterests`' weapon loop reads their `DObj`
+    /// translations. The battle refreshes this before every camera update.
+    pub weapon_interests: WeaponInterests,
+}
+
+/// The most camera-followed weapons at once: one Boomerang, Egg Throw egg or
+/// PK Thunder head per fighter, with room for a reflected one per port.
+pub const MAX_WEAPON_INTERESTS: usize = 8;
+
+/// The `DObj` translations of the weapons with `wp->is_camera_follow`
+/// (Link's Boomerang, Yoshi's Egg Throw egg, Ness's PK Thunder head), in
+/// weapon-link order.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct WeaponInterests {
+    positions: [Vec3; MAX_WEAPON_INTERESTS],
+    count: u8,
+}
+
+impl WeaponInterests {
+    /// Collects `positions`; more than [`MAX_WEAPON_INTERESTS`] is a
+    /// capacity bug, not a rule of the original.
+    pub fn collect(positions: impl IntoIterator<Item = Vec3>) -> Self {
+        let mut out = WeaponInterests::default();
+        for p in positions {
+            debug_assert!(
+                usize::from(out.count) < MAX_WEAPON_INTERESTS,
+                "more camera-followed weapons than MAX_WEAPON_INTERESTS"
+            );
+            if let Some(slot) = out.positions.get_mut(usize::from(out.count)) {
+                *slot = p;
+                out.count += 1;
+            }
+        }
+        out
+    }
+
+    pub fn as_slice(&self) -> &[Vec3] {
+        &self.positions[..usize::from(self.count)]
+    }
 }
 
 /// The movie camera's own viewport, projection and roll
@@ -156,6 +196,7 @@ impl Default for Camera {
             viewport: BATTLE_VIEWPORT,
             is_explain: false,
             movie: None,
+            weapon_interests: WeaponInterests::default(),
         }
     }
 }
@@ -233,7 +274,12 @@ impl Camera {
         );
         let count = interests.len().min(4);
         let zoom_scale = if self.is_explain { 0.75 } else { 1.0 };
-        let (interest, hz, vt) = calculate_interest_scaled(&interests[..count], bounds, zoom_scale);
+        let (interest, hz, vt) = calculate_interest_scaled(
+            &interests[..count],
+            self.weapon_interests.as_slice(),
+            bounds,
+            zoom_scale,
+        );
 
         let vel = self.vel_at();
         self.advance(interest, hz, vt, light_angle_z_radians, viewport_aspect);
@@ -396,18 +442,24 @@ pub const BATTLE_VIEWPORT_HEIGHT: f32 = 220.0;
 /// `gmCameraUpdateInterests`: clamp and union every fighter's asymmetric box.
 #[cfg(test)]
 fn calculate_interest(interests: &[Interest], bounds: Bounds) -> (Vec3, f32, f32) {
-    calculate_interest_scaled(interests, bounds, 1.0)
+    calculate_interest_scaled(interests, &[], bounds, 1.0)
 }
 
 /// [`calculate_interest`] with `gmCameraGetPlayerNumZoomRange`'s range
-/// times `zoom_scale`.
+/// times `zoom_scale`, then the camera-followed `weapons`.
 fn calculate_interest_scaled(
     interests: &[Interest],
+    weapons: &[Vec3],
     bounds: Bounds,
     zoom_scale: f32,
 ) -> (Vec3, f32, f32) {
     let zoom = [0.0, ONE_PLAYER_ZOOM, 1.32, 1.16, 1.0][interests.len()] * zoom_scale;
     let (mut gm_left, mut gm_right, mut gm_bottom, mut gm_top) =
+        (65536.0f32, -65536.0f32, 65536.0f32, -65536.0f32);
+    // The fighters' clamped targets' extents (the decomp's `ft_right`,
+    // `ft_left`, `ft_top`, `ft_bottom` hold the minimum x, maximum x,
+    // minimum y and maximum y).
+    let (mut min_x, mut max_x, mut min_y, mut max_y) =
         (65536.0f32, -65536.0f32, 65536.0f32, -65536.0f32);
     for interest in interests {
         let target_pos = if let Some(team) = interest.team_bounds {
@@ -428,6 +480,24 @@ fn calculate_interest_scaled(
         gm_right = gm_right.max(target_pos.x + right_off);
         gm_bottom = gm_bottom.min(target_pos.y - 700.0 * adjust);
         gm_top = gm_top.max(target_pos.y + 700.0 * adjust);
+        min_x = min_x.min(target_pos.x);
+        max_x = max_x.max(target_pos.x);
+        min_y = min_y.min(target_pos.y);
+        max_y = max_y.max(target_pos.y);
+    }
+    // The weapon loop, only with a fighter in the list: each weapon is
+    // clamped to the camera bounds, then to 1000 units past the fighters'
+    // extents, and widens the box by 1000 on every side.
+    if !interests.is_empty() {
+        for &pos in weapons {
+            let p = bounds.clamp(pos);
+            let x = p.x.max(min_x - 1000.0).min(max_x + 1000.0);
+            let y = p.y.max(min_y - 1000.0).min(max_y + 1000.0);
+            gm_left = gm_left.min(x - 1000.0);
+            gm_right = gm_right.max(x + 1000.0);
+            gm_bottom = gm_bottom.min(y - 1000.0);
+            gm_top = gm_top.max(y + 1000.0);
+        }
     }
     if interests.is_empty() {
         gm_left = -2000.0;
@@ -737,6 +807,41 @@ mod tests {
         let far = Vec3::new(2600.0, 2600.0, 0.0);
         let want = calculate_interest(&[at(Vec3::new(1500.0, 1000.0, 0.0))], bounds);
         assert_eq!(calculate_interest(&[enemy(far)], bounds), want);
+    }
+
+    #[test]
+    fn a_followed_weapon_widens_the_box_within_1000_of_the_fighters() {
+        let bounds = Bounds {
+            top: 4000.0,
+            bottom: -2000.0,
+            left: -3900.0,
+            right: 3900.0,
+        };
+        let fighter = Interest {
+            target_pos: Vec3::new(0.0, 0.0, 0.0),
+            zoom_frame: 1.0,
+            zoom_range: 1.0,
+            ..Interest::default()
+        };
+        // ONE_PLAYER_ZOOM 1.5: the fighter alone spans x -1050..1500.
+        let (alone, hz, vt) = calculate_interest_scaled(&[fighter], &[], bounds, 1.0);
+        assert_eq!((alone.x, hz, vt), (225.0, 1275.0, 1050.0));
+        // A Boomerang 3000 to the right is clamped to 1000 past the
+        // fighter, then adds 1000: right edge 2000.
+        let weapon = [Vec3::new(3000.0, 500.0, 0.0)];
+        let (with, hz, vt) = calculate_interest_scaled(&[fighter], &weapon, bounds, 1.0);
+        assert_eq!((with.x, hz), (475.0, 1525.0));
+        // y 500 adds 1000: top 1500, bottom stays the fighter's -1050.
+        assert_eq!(vt, 1275.0);
+        // Above the fighters' extents y clamps to 1000: top 2000.
+        let high = [Vec3::new(0.0, 3000.0, 0.0)];
+        let (_, _, vt) = calculate_interest_scaled(&[fighter], &high, bounds, 1.0);
+        assert_eq!(vt, 1525.0);
+        // No fighters: the weapon loop never runs.
+        assert_eq!(
+            calculate_interest_scaled(&[], &weapon, bounds, 1.0),
+            calculate_interest_scaled(&[], &[], bounds, 1.0)
+        );
     }
 
     #[test]

@@ -159,6 +159,9 @@ pub struct KirbyState {
     pub stone_flag2: bool,
     /// `status_vars.kirby.specialn.release_lag`.
     pub release_lag: i32,
+    /// Inhale's motion flag 0: the Loop scripts' `SetFlag0(1)` asks
+    /// `ftKirbySpecialNLoopProcUpdate` for the wind, whose making clears it.
+    pub inhale_wind_flag0: bool,
     /// `status_vars.kirby.specialn.dist`: the swallowed fighter's offset
     /// from the capture point.
     pub inhale_dist: Vec2,
@@ -186,6 +189,7 @@ impl Default for KirbyState {
             stone_flag1: false,
             stone_flag2: false,
             release_lag: 0,
+            inhale_wind_flag0: false,
             inhale_dist: Vec2::ZERO,
             copy_pending: FighterKind::Kirby,
             victim_is_kirby: false,
@@ -805,6 +809,7 @@ pub fn set_special_n(f: &mut Fighter) {
     set_frames(f, s, 0.0, SPECIAL_N_START_LENGTH);
     f.kirby.copy_pending = FighterKind::Kirby;
     f.kirby.release_lag = VACUUM_RELEASE_LAG;
+    f.kirby.inhale_wind_flag0 = false;
     f.kirby.inhale_dist = Vec2::ZERO;
     f.kirby.victim_is_kirby = false;
     set_catch_params(f);
@@ -880,6 +885,10 @@ fn set_inhale_preserve(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming, 
 }
 
 fn after_set_inhale(f: &mut Fighter, s: K) {
+    // `InhaleGround` and its aerial twin open with `SetFlag0(1)`.
+    if matches!(s, K::SpecialNLoop | K::SpecialAirNLoop) {
+        f.kirby.inhale_wind_flag0 = true;
+    }
     f.grab.is_catchstatus = matches!(
         s,
         K::SpecialNStart | K::SpecialAirNStart | K::SpecialNLoop | K::SpecialAirNLoop
@@ -1233,7 +1242,18 @@ pub fn update(f: &mut Fighter) {
                 inhale_loop_interrupt(f, s);
             }
         }
-        K::SpecialNLoop | K::SpecialAirNLoop => inhale_loop_interrupt(f, current),
+        K::SpecialNLoop | K::SpecialAirNLoop => {
+            // `ftKirbySpecialNLoopProcUpdate`: the wind, once per inhale.
+            let queued = f
+                .effects
+                .iter()
+                .any(|e| matches!(e, crate::fteffect::FighterEffect::KirbyInhaleWind));
+            if !f.is_effect_attach && f.kirby.inhale_wind_flag0 && !queued {
+                f.effects
+                    .push(crate::fteffect::FighterEffect::KirbyInhaleWind);
+            }
+            inhale_loop_interrupt(f, current);
+        }
         K::SpecialNEnd => {
             if f.status.animation_ended() {
                 status::anim_end_set_wait(f);
@@ -1800,6 +1820,37 @@ mod tests {
         update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialNEnd));
         assert!(!f.grab.is_catchstatus);
+    }
+
+    #[test]
+    fn inhale_asks_for_its_wind_on_the_first_loop_update_until_attached() {
+        use crate::fteffect::FighterEffect;
+        let wind = |f: &Fighter| {
+            f.effects
+                .iter()
+                .filter(|e| matches!(e, FighterEffect::KirbyInhaleWind))
+                .count()
+        };
+        let mut f = kirby();
+        f.situation = Situation::Ground;
+        set_special_n(&mut f);
+        assert!(!f.kirby.inhale_wind_flag0);
+        f.status.set_time(SPECIAL_N_START_LENGTH);
+        // The Start's update sets the Loop; its own update comes next frame.
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialNLoop));
+        assert_eq!(wind(&f), 0);
+        update(&mut f);
+        assert_eq!(wind(&f), 1);
+        // Not yet made: one request stands, not one per frame.
+        update(&mut f);
+        assert_eq!(wind(&f), 1);
+        // Made (the flush): no more.
+        f.effects.clear();
+        f.kirby.inhale_wind_flag0 = false;
+        f.is_effect_attach = true;
+        update(&mut f);
+        assert_eq!(wind(&f), 0);
     }
 
     #[test]

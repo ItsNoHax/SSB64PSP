@@ -136,12 +136,13 @@ closes it.
 - [ ] Kirby's late entry poses (N64 frames 326-332) look about one frame ahead of the N64; the star phase is frame-exact. Not diagnosed.
 - [ ] No N64 focus-2 capture of Captain Falcon's car, so the battle-camera fallback before his TopN comes in bounds is unverified for that phase (`f1-vs-car`). A warp-boot capture with focus id 2 and Captain closes it (RE-523).
 - [ ] Remaining effects: Thunder Jolt ground effect, PK Thunder trail effects, the fire spark, Kirby's copy-bank scripts (0x4C, 0x4D), the results' fighter effects, stage particle banks; a magnitude-0 quake shakes one frame late (RE-413, RE-415, RE-416, RE-427).
+- [ ] Effects follow-ups (RE-538): Effects15 creation-order sort; attached particle effects ignore pause (`ftParamPauseEffect` only reaches displays); the Spin Attack band is less saturated than the N64 at el48-52; the N64 pixel captures cover cpufx-u/n/k only, so cpufx-d and the yoshi-explosion row have none.
 - [ ] N64 pixel captures of the cpufx scenes (cpufx-d/u/n/k): RE-536 compared status timelines only. Also: effect draw order is per type then per port (N64: creation order); check the second Kirby costume against the N64 HUD icons in cpufx-k; the PSP VS camera frames tighter than the N64 (makes global MAE unusable).
-- [ ] Kirby: Inhale/spit stars; Inhale's downward wiggle (RE-343, RE-348, RE-376, RE-378, RE-417). The copied Falcon Punch flame and Charge Shot are drawn (RE-536).
+- [ ] Kirby: spit stars; Inhale's downward wiggle (RE-343, RE-348, RE-376, RE-378, RE-417). The Inhale wind specks, bank 3 and the port-1 costume are done (RE-538); the copied Falcon Punch flame and Charge Shot are drawn (RE-536).
 - [ ] Pikachu: ground Thunder Jolt node 4's texture script is declined by `resolve_one_mat_anim`; Quick Attack effects (RE-345, RE-379).
 - [ ] Reach the PK Fire flame on the dummy in a capture; draw the Bomb's critical flash and held bloat (RE-352, RE-382, RE-383).
 - [ ] Battle draw order: an object's head-1 lists do not wait for the stage's head-1 lists of the same pass (RE-422).
-- [ ] Camera: weapon interests and special camera modes (RE-406).
+- [ ] Camera: special camera modes (RE-406); the PSP zooms out later than the N64 at cpufx-u el56-70 (weapon interests are ported, RE-538).
 - [ ] Hit-status preservation on the other fighters' special map switches; capture/hold intangibility starts no colour animation (RE-414).
 - [ ] Twister and Barrel Cannon clips: `nFTCommonMotionTwister` needs a shared slot; TaruCann has none (RE-356).
 - [ ] Yoshi Egg Lay victim: wall/ceiling sweep, damaging-floor escape, break effect (RE-337); re-observe the double-jump hang (RE-432, RE-466); compare the tongue, grab and Egg Lay with an N64 view (RE-417, RE-432, RE-468).

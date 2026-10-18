@@ -79,7 +79,7 @@ pub struct SurfaceTopology {
 }
 
 /// The weapon families that a fighter status can request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WeaponKind {
     /// `nWPKindFireball`, created by Mario's `SpecialN` accessory callback.
     MarioFireball,
@@ -103,6 +103,9 @@ pub enum WeaponKind {
     YoshiEgg {
         throw_force: i16,
         stick_x: i8,
+        /// The held egg's `DObj` scale at the throw, presentation only
+        /// ([`crate::yoshi::egg_scale`]).
+        scale: Vec3,
     },
     /// `wpYoshiStarMakeStars`: one `nWPKindYoshiStar` each way.
     YoshiStars,
@@ -1218,10 +1221,13 @@ pub struct YoshiEgg {
     pub rotate_z: f32,
     /// `weapon_vars.egg_throw.angle`, radians, set at the throw.
     pub spin_step: f32,
+    /// The `DObj` scale the held egg had at the throw, presentation only:
+    /// kind 46 draws X by `scale.x` and Y by `scale.y`.
+    pub scale: Vec3,
 }
 
 impl YoshiEgg {
-    fn new(spawn: WeaponSpawn, throw_force: i16, stick_x: i8) -> Self {
+    fn new(spawn: WeaponSpawn, throw_force: i16, stick_x: i8, scale: Vec3) -> Self {
         YoshiEgg {
             owner_port: spawn.owner_port,
             position: spawn.position,
@@ -1236,6 +1242,7 @@ impl YoshiEgg {
             hit_ports: 0,
             rotate_z: 0.0,
             spin_step: 0.0,
+            scale,
         }
     }
 
@@ -3082,6 +3089,20 @@ impl WeaponPool {
             self.queue_item_spawn(spawn);
         }
     }
+    /// The `DObj` translations of the weapons that set `is_camera_follow`
+    /// (`wpLinkBoomerangMakeWeapon`, `wpYoshiEggThrowMakeWeapon`,
+    /// `wpNessPKThunderHeadMakeWeapon`), which `gmCameraUpdateInterests`
+    /// frames. An egg still in Yoshi's hand is not in the pool: add
+    /// [`crate::yoshi::held_egg_position`] for it. A reflected PK Thunder
+    /// is `wpNessPKReflectHeadMakeWeapon`'s new weapon, which leaves the
+    /// flag clear.
+    pub fn camera_follow_positions(&self) -> impl Iterator<Item = Vec3> + '_ {
+        self.slots.iter().flatten().filter_map(|w| match w {
+            Weapon::Boomerang(_) | Weapon::Egg(_) => Some(w.position()),
+            Weapon::PKThunder(h) if !h.reflected => Some(h.position),
+            _ => None,
+        })
+    }
     pub fn pk_fires(&self) -> impl Iterator<Item = PKFire> + '_ {
         self.slots.iter().flatten().filter_map(|w| {
             if let Weapon::PKFire(p) = w {
@@ -3285,7 +3306,8 @@ impl WeaponPool {
             WeaponKind::YoshiEgg {
                 throw_force,
                 stick_x,
-            } => Weapon::Egg(YoshiEgg::new(spawn, throw_force, stick_x)),
+                scale,
+            } => Weapon::Egg(YoshiEgg::new(spawn, throw_force, stick_x, scale)),
             WeaponKind::YoshiStars => unreachable!("handled above"),
             WeaponKind::KirbyCutter { grounded } => {
                 Weapon::Cutter(KirbyCutter::new(spawn, grounded))
@@ -5183,6 +5205,7 @@ mod tests {
             kind: WeaponKind::YoshiEgg {
                 throw_force: 10,
                 stick_x: 0,
+                scale: Vec3::new(1.0, 1.0, 1.0),
             },
             owner_port: 0,
             team: 0,
@@ -5230,6 +5253,7 @@ mod tests {
                 kind: WeaponKind::YoshiEgg {
                     throw_force: 10,
                     stick_x: 0,
+                    scale: Vec3::new(1.0, 1.0, 1.0),
                 },
                 owner_port: 0,
                 team: 0,
@@ -5239,6 +5263,7 @@ mod tests {
             },
             10,
             0,
+            Vec3::new(1.0, 1.0, 1.0),
         );
         assert!(egg.tick(Vec::new, &mut crate::wpeffect::Emit::default()));
         assert_eq!(egg.rotate_z, 0.0);
@@ -5280,6 +5305,7 @@ mod tests {
             kind: WeaponKind::YoshiEgg {
                 throw_force: 10,
                 stick_x: 0,
+                scale: Vec3::new(1.0, 1.0, 1.0),
             },
             owner_port: 0,
             team: 0,

@@ -109,6 +109,10 @@ pub struct SpinAttack {
     /// Ports in the attack record. `can_rehit_fighter` is clear and the
     /// record is never cleared, so each target is hit at most once.
     pub hit_ports: u8,
+    /// `gcPlayAnimAll` calls so far: the frame its graphic's transform and
+    /// material scripts (file 225 + 0x0C) have reached. Like the rest of
+    /// `wpProcessProcWeaponMain`, it holds while the weapon is in hitlag.
+    pub anim_ticks: u16,
 }
 
 impl SpinAttack {
@@ -131,12 +135,14 @@ impl SpinAttack {
             radius: None,
             lifetime: WPSPINATTACK_LIFETIME,
             hit_ports: 0,
+            anim_ticks: 0,
         }
     }
 
     /// `wpLinkSpinAttackProcUpdate`, the manager's move, then
     /// `wpLinkSpinAttackProcMap`.
     fn step(&mut self) {
+        self.anim_ticks = self.anim_ticks.saturating_add(1);
         let speed =
             ssb_engine::math::sqrt(self.spread.x * self.spread.x + self.spread.y * self.spread.y);
         if speed > 0.0 {
@@ -423,6 +429,12 @@ fn is_spin_status(status: AnyStatus) -> bool {
             LinkStatus::SpecialHi | LinkStatus::SpecialHiEnd | LinkStatus::SpecialAirHi
         )
     )
+}
+
+/// The Spin Attack weapon's graphic while it lives: the weapon's
+/// `translate` and its animation plays so far.
+pub fn spin_weapon_display(f: &Fighter) -> Option<(Vec3, u16)> {
+    f.link.spin.map(|spin| (spin.position, spin.anim_ticks))
 }
 
 /// `ftLinkSpecialHiUpdateWeaponVars`: flag-2 size, position history and

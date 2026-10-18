@@ -1819,6 +1819,14 @@ fn physics_pass(
     // Master Hand's camera requests reach the camera before its process.
     campaign::take_boss_camera(s);
     let t = profile::start();
+    // `gmCameraUpdateInterests`' weapon loop: the `is_camera_follow`
+    // weapons, an egg still in Yoshi's hand included.
+    let follow = weapons.camera_follow_positions();
+    let held = s.iter().flatten().filter_map(|f| ssb_game::yoshi::held_egg_position(&f.fighter));
+    let follow = ssb_game::camera::WeaponInterests::collect(follow.chain(held));
+    if let Some(pl) = s[0].as_deref_mut() {
+        pl.camera.weapon_interests = follow;
+    }
     tick_battle_camera(stage, s);
     profile::stop(profile::Span::Camera, t);
     for f in s.iter().flatten() {
@@ -3764,8 +3772,8 @@ fn vs_roster(state: &ssb_game::players_vs::BattleState) -> Roster {
 
 /// The fighters a capture scene that skips the selects starts with:
 /// `vs4`'s Mario against a Fox, a Donkey Kong and a Kirby at level 3, each
-/// in its first royal costume (`mnPlayersVSGetFreeCostumeRoyal` with no
-/// fighter repeated); `vsteam`'s Mario and Kirby on red against Fox and
+/// in its first free royal costume (`mnPlayersVSGetFreeCostumeRoyal`, so a
+/// repeated fighter takes the next); `vsteam`'s Mario and Kirby on red against Fox and
 /// Donkey Kong on blue, in team costumes (`costume_team_id`) and team
 /// colours; and otherwise [`capture_training_scene`]'s pair.
 fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneData) -> Roster {
@@ -3800,6 +3808,7 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
     };
     let kinds: [FighterKind; 4] =
         core::array::from_fn(|port| capture::fighter_override(port).unwrap_or(kinds[port]));
+    let free = ssb_game::costume::vs_free_costumes(kinds);
     core::array::from_fn(|port| {
         let (costume, team, color) = match teams {
             Some(teams) => {
@@ -3811,7 +3820,7 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
                 )
             }
             None => (
-                ssb_game::costume::costume_common_id(kinds[port], 0),
+                free[port],
                 port as u8,
                 if port == 0 { 0 } else { ssb_game::hud::CPU_COLOR as u8 },
             ),
@@ -6147,6 +6156,8 @@ struct DrawAssets {
     boomerang: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The Spin Attack swirl and its transform animation.
     spin_effect: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// The Spin Attack weapon's graphic and its transform animation.
+    spin_weapon: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     yoshi_egg_mesh: Option<ssb_rom::pack::MeshDesc>,
     yoshi_star_mesh: Option<ssb_rom::pack::MeshDesc>,
     arwing_laser_mesh: Option<ssb_rom::pack::MeshDesc>,
@@ -6287,6 +6298,11 @@ impl DrawAssets {
                 .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_LINK_BOOMERANG)),
             spin_effect: ssb_psp_runtime::scene::link_spin_attack_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
+            spin_weapon: ssb_psp_runtime::scene::object_keyed(
+                p,
+                ssb_psp_runtime::scene::LINK_SPIN_ATTACK_WEAPON_SOURCE,
+            )
+            .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_LINK_SPIN_ATTACK)),
             yoshi_egg_mesh: ssb_psp_runtime::scene::yoshi_egg_mesh(p),
             yoshi_star_mesh: ssb_psp_runtime::scene::yoshi_star_mesh(p),
             arwing_laser_mesh: ssb_psp_runtime::scene::arwing_laser_mesh(p),
@@ -7214,6 +7230,14 @@ impl FxSlot {
             }
             if let Some(object) = object {
                 players.materials.start(p, object_mat_anims(p, object));
+                // `gcPlayAnimAll` parses each `MObj` in the same play as its
+                // `DObj`. The transform player's start already folds the
+                // creation play into its first tick, so the materials take
+                // that play here and stay in step with it (the Spin Attack
+                // weapon's fade against the N64's `MObj` trace).
+                if anim.is_some() {
+                    players.materials.tick_speed(p, speed);
+                }
             }
         }
         let script = anim.and_then(|a| p.anim_script(a));
@@ -7247,6 +7271,8 @@ struct PortFx {
     magnet: FxSlot,
     sing: FxSlot,
     spin: FxSlot,
+    /// The Spin Attack weapon's graphic.
+    spin_weapon: FxSlot,
     /// Captain Falcon's Falcon Punch flame, or a Kirby copy's: one
     /// `EFDesc`, and a fighter is one or the other.
     punch: FxSlot,
@@ -8255,6 +8281,9 @@ impl EffectVisuals {
             v.sing.sync(p, f.and_then(ssb_game::purin::sing_effect_ticks), object, anim, 1.0);
             let (object, anim) = pair(&assets.spin_effect);
             v.spin.sync(p, f.and_then(ssb_game::link::spin_effect_ticks), object, anim, 1.0);
+            let (object, anim) = pair(&assets.spin_weapon);
+            let ticks = f.and_then(ssb_game::link::spin_weapon_display).map(|(_, t)| t);
+            v.spin_weapon.sync(p, ticks, object, anim, 1.0);
             let punch = f.and_then(|f| {
                 ssb_game::captain::punch_effect_ticks(f)
                     .or_else(|| ssb_game::kirby_copy::punch_effect_ticks(f))
@@ -10508,27 +10537,28 @@ unsafe fn draw_items_weapons_effects(
     // Yoshi's egg is `TraRotRpyRSca` then kind 46. Kind 46 overwrites the
     // rotation and scale with the camera-facing spin by `rotate.z`, so only
     // the main transform's translation survives: the same billboard as the
-    // Charge Shot. In hand, `ftYoshiSpecialHiUpdateEggVectors` places it at
-    // the Egg Throw joint with that joint's scale (1 in the rest pose). The
-    // explosion clears its display list.
+    // Charge Shot, except that kind 46 still scales X by `scale.x` and Y by
+    // `scale.y`. In hand, `ftYoshiSpecialHiUpdateEggVectors` places it at
+    // the Egg Throw joint with that joint's scale, which the thrown egg
+    // keeps. The explosion clears its display list.
     if let Some(egg_mesh) = assets.yoshi_egg_mesh.as_ref() {
-        let mut draw_egg = |pos: ssb_engine::math::Vec3, spin: f32| {
+        let mut draw_egg = |pos: ssb_engine::math::Vec3, spin: f32, scale: ssb_engine::math::Vec3| {
             gpu.model_transform_billboard(
                 pos,
                 pl.camera.eye,
                 pl.camera.at,
                 spin,
-                [meshdraw::MODEL_SCALE; 2],
+                [meshdraw::MODEL_SCALE * scale.x, meshdraw::MODEL_SCALE * scale.y],
             );
             meshdraw::draw_mesh(p, egg_mesh, draw_state, None, None);
         };
         for f in scenes_ref(pl, dummies).into_iter().flatten().map(|x| &x.fighter) {
             if let Some(pos) = ssb_game::yoshi::held_egg_position(f) {
-                draw_egg(pos, 0.0);
+                draw_egg(pos, 0.0, ssb_game::yoshi::egg_scale(f));
             }
         }
         for egg in weapons.eggs().filter(|egg| !egg.exploded) {
-            draw_egg(egg.position, egg.rotate_z);
+            draw_egg(egg.position, egg.rotate_z, egg.scale);
         }
     }
 
@@ -10968,6 +10998,32 @@ unsafe fn draw_fighter_effects(
     assets: &DrawAssets,
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) {
+    // The Spin Attack weapon's graphic (`wpDisplayDObjTreeDLLinks`): the
+    // root at the weapon's `translate`, unrotated; node 1's transform and
+    // its `MObj`s' fade come from the packed scripts. Weapons are display
+    // link 14, so it draws before the link-15 effects below.
+    if let (Some(fx), Some((object, _)), Some((pos, _))) = (
+        v.spin_weapon.live(),
+        assets.spin_weapon.as_ref(),
+        ssb_game::link::spin_weapon_display(f),
+    ) {
+        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
+        let n = fx.anim.compose(p, object, &mut posed);
+        gpu.model_transform([pos.x, pos.y, pos.z], [0.0; 3], meshdraw::MODEL_SCALE);
+        let base = gpu.model_matrix();
+        meshdraw::draw_object_posed(
+            p,
+            object,
+            &base,
+            &posed[..n],
+            None,
+            draw_state,
+            material_anim,
+            Some(&fx.materials),
+            0,
+        );
+    }
+
     // Ness's PSI Magnet field. The root is battle matrix function 80, a pure
     // translation to TopN's world position; each child is `Tra` then kind
     // 46, a camera-facing quad spun by its `rotate.z` and sized by its
