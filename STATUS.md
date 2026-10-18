@@ -17,13 +17,13 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Landed: RE-544 (D-048 fighter tables): hidden parts, texture parts, hurtboxes (`DAMAGE_COLLS`) and the Falcon Dive capture offsets are now generated from the ROM by `ssb-tablegen`; no pack change (v121). The committed US Luigi hurtbox row 1 size.y was the JP value (200); the ROM says 160 and is now used. Before that: RE-540 to RE-543 (effects, Thunder Jolt, pack v121).
+Landed: RE-545 (D-048 part 2): ITAttributes (45 items, spin speeds), monster WPAttributes, `SMOG_SCALE`, `PhysicsAttributes::MARIO` and Kirby's copy table are generated from the ROM by `ssb-tablegen`; no pack change (v121). `validate_docs.py` check 10 is a ratchet that fails on a new unlisted large literal table. Fixes: monster weapons rehit only `nITTypeDamage` items (itprocess.c:578); US Mario size is 1.12.
 
-Open user question: do the decomp `d*` arrays (D-048 groups C and D, e.g. `dFTParamCostumeIDs`, `dFTCommonYoshiEggDamageCollDescs`) count as ROM tables? Until answered they stay committed.
+Open user question: do the decomp `d*` arrays (D-048 groups C and D, e.g. `dFTParamCostumeIDs`, `DAMAGE_FLOORS`) count as ROM tables? Until answered they stay committed.
 
 Uncommitted in the working tree: the perf batch (VRAM lit-expand vertex blocks, photo texture pool, 1P stage-override fix, link order s7b). It is blocked on the hung PSPLink: D-051 hardware proof of r2-stage-final-destination and r2-stage-bonus2-captain-falcon, and the s7b link-order re-check. Hardware runs need pack v121 staged.
 
-Next: remaining D-048 items in `PLAN.md` (ITAttributes statics, monster WPAttributes, `PhysicsAttributes::MARIO`, `locate_rom` helper, validate_docs ratchet), Kirby's roster-A2 entry camera (needs an N64 trace of eye and at for rec 320-340), Thunder Jolt burst spikes, effects process order (needs a warp ROM with distinct per-port inputs), then the MS8 list in `PLAN.md`.
+Next: remaining D-048 items in `PLAN.md` (`locate_rom` helper, ratchet blind spots, groups C/D once answered), Kirby's roster-A2 entry camera (needs an N64 trace of eye and at for rec 320-340), Thunder Jolt burst spikes, effects process order (needs a warp ROM with distinct per-port inputs), then the MS8 list in `PLAN.md`.
 
 ## Blockers
 
@@ -32,7 +32,7 @@ Next: remaining D-048 items in `PLAN.md` (ITAttributes statics, monster WPAttrib
 
 ## Verification
 
-Baseline after RE-544:
+Baseline after RE-545:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`, and with `SSB64_STUB_TABLES=1` and no ROM: pass. Clippy (`cargo +1.98.0`, `-D warnings`) and `cargo fmt --all --check` pass.
 - Both PSP release builds compile.
