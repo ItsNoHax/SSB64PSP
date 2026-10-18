@@ -7,7 +7,7 @@ Where the project is now. The roadmap and every open task are in
 
 | Area | State |
 |---|---|
-| Build | Tables read from the ROM are generated at build time ([D-048](docs/decisions/D-048.md)); host workspace on Rust 1.98.0; `psp-game` and `psp-asset-viewer` on the pinned nightly; pack v119 |
+| Build | Tables read from the ROM are generated at build time ([D-048](docs/decisions/D-048.md)); host workspace on Rust 1.98.0; `psp-game` and `psp-asset-viewer` on the pinned nightly; pack v120 |
 | Gameplay | All fighters, VS, Training, 1P campaign through the ending; How to Play matches the N64 on every frame |
 | Audio | N64 audio system ported whole, sample-exact against N64 captures ([D-049](docs/decisions/D-049.md), RE-479) |
 | Rendering | CRT overscan crop ([D-047](docs/decisions/D-047.md)); fighter shadow is one mirrored ellipse with team colours (RE-302); CPU guard-band clipping for movie scenes (RE-519); shade-only combiners whitened (RE-520); prim-alpha untextured surfaces (RE-521); fighter entries match the N64: effects play at make time, Samus's lit glass tube, Yoshi hidden in the egg, focus-2 camera fallback (RE-522, RE-523); opening fighter scenes: movie-camera particles and billboards, Samus grapple glow, Yoshi cloud fade (RE-525); run dust from demo-script events (RE-528); two-cycle shade x texel-lerp baked into the texture, so Yoster clouds are tinted and soft (RE-527) |
@@ -17,11 +17,11 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Landed: fx-order (RE-540): anim-joint effects play from frame 0 on the creation frame, and fighter link-15 effects draw in one creation order. fx-remaining (RE-541): Kirby Stone bank scripts, the ground Thunder Jolt burst and timing, and the other effect gaps; `f1-vs-four` was rebaselined because the Kirby Stone scripts draw from the shared RNG, and `f1-vs-four-magnifier` moved to `vs4@3000`. Pack v119 is unchanged.
+Landed: fx-order (RE-540): anim-joint effects play from frame 0 on the creation frame. fx-remaining (RE-541): Kirby Stone bank scripts, the ground Thunder Jolt burst and timing; `f1-vs-four` was rebaselined because the Kirby Stone scripts draw from the shared RNG, and `f1-vs-four-magnifier` moved to `vs4@3000`. Part 2 (RE-542): link-15 display effects, Samus's grapple glows and fighter effects share one creation order; the ground Thunder Jolt node 4 texture script attaches (pack v120). No goldens changed.
 
-Uncommitted in the working tree: the perf batch (VRAM lit-expand vertex blocks, photo texture pool, 1P stage-override fix, link order s7b). It is blocked on the hung PSPLink: D-051 hardware proof of r2-stage-final-destination and r2-stage-bonus2-captain-falcon, and the s7b link-order re-check.
+Uncommitted in the working tree: the perf batch (VRAM lit-expand vertex blocks, photo texture pool, 1P stage-override fix, link order s7b). It is blocked on the hung PSPLink: D-051 hardware proof of r2-stage-final-destination and r2-stage-bonus2-captain-falcon, and the s7b link-order re-check. Hardware runs need pack v120 staged.
 
-Next: fx-remaining's open items 4 (link-15 merge), 8 (node 4 texture, pack 120) and 9 (process order), then the MS8 list in `PLAN.md`.
+Next: the Pikachu Neutral B translucency and burst timing, effects process order (needs a warp ROM with distinct per-port inputs), then the MS8 list in `PLAN.md`.
 
 ## Blockers
 
@@ -30,11 +30,11 @@ Next: fx-remaining's open items 4 (link-15 merge), 8 (node 4 texture, pack 120) 
 
 ## Verification
 
-Baseline after RE-541:
+Baseline after RE-542:
 
 - `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`, and with `SSB64_STUB_TABLES=1` and no ROM: pass. Clippy (`cargo +1.98.0`, `-D warnings`) and `cargo fmt --all --check` pass.
 - Both PSP release builds compile.
-- Goldens: 222 of 222 match (8 rows rebaselined by RE-538).
+- Goldens: 224 of 224 match (r2-mario-entry-pipe is nondeterministic, RE-506).
 - PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` exits 0 with a screenshot.
 - Physical PSP: PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B in RE-530 and RE-532; `stack_poison` sweep in RE-531.
 - ROMs: `rom/Super Smash Bros. (USA).z64` and `refs/ssb-decomp-re/baserom.us.z64`, SHA-1 `e2929e10...`.
