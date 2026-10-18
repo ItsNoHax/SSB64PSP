@@ -7158,6 +7158,8 @@ struct EffectVisuals {
     /// every Thunder Jolt in the air play their own animations.
     weapons: alloc::vec::Vec<WeaponFx>,
     items: [ItemVisual; MAX_ITEM_VISUALS],
+    /// The counter [`PortFx::stamps`] draw from.
+    order: ssb_game::effect_order::CreationOrder,
 }
 
 impl EffectVisuals {
@@ -7177,6 +7179,7 @@ impl EffectVisuals {
             ptr::addr_of_mut!((*p).eggs).write(Default::default());
             ptr::addr_of_mut!((*p).ports).write(Default::default());
             ptr::addr_of_mut!((*p).weapons).write(Default::default());
+            ptr::addr_of_mut!((*p).order).write(Default::default());
             for i in 0..MAX_ITEM_VISUALS {
                 ptr::addr_of_mut!((*p).items[i]).write(Default::default());
             }
@@ -7207,10 +7210,26 @@ struct FxSlot {
     players: Option<alloc::boxed::Box<FxPlayers>>,
 }
 
+/// How a slot's first plays line up with the game's play count.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlayRule {
+    /// `wpManagerMakeWeapon` adds `wpProcessProcWeaponMain` as a process at
+    /// once, so a weapon made in a fighter process runs it that frame too:
+    /// the make's `gcPlayAnimAll` and one more play.
+    Weapon,
+    /// `efManagerMakeEffect` leaves `proc_update` to `efManagerFuncRun`,
+    /// which `gcRunAll`'s pre-pass first calls on the next frame, so the
+    /// creation frame shows only the make's `gcPlayAnimAll`: frame zero,
+    /// parsed without advancing (the N64 `GObj` and `MObj` frames of the
+    /// Magnet, Sing, Spin Attack and Falcon Kick effects, RE-540).
+    Effect,
+}
+
 impl FxSlot {
     /// Plays the effect up to `target` plays ([`catch_up`]): `anim`'s
     /// transform script and, given its `object`, the material scripts on
-    /// the object's own primitives. `None` hides the effect.
+    /// the object's own primitives. `None` hides the effect. Returns whether
+    /// this call (re)made the effect.
     #[inline(never)]
     fn sync(
         &mut self,
@@ -7219,23 +7238,28 @@ impl FxSlot {
         object: Option<&ssb_rom::pack::ObjectDesc>,
         anim: Option<&ssb_rom::pack::AnimDesc>,
         speed: f32,
-    ) {
+        rule: PlayRule,
+    ) -> bool {
         let Some((restart, ticks)) = catch_up(&mut self.clock, target) else {
-            return;
+            return false;
         };
         let players = self.players.get_or_insert_with(FxPlayers::new_boxed);
         if restart {
             if let Some(anim) = anim {
-                players.anim.start(p, anim);
+                match rule {
+                    PlayRule::Weapon => players.anim.start(p, anim),
+                    PlayRule::Effect => players.anim.start_changed(p, anim),
+                }
             }
             if let Some(object) = object {
                 players.materials.start(p, object_mat_anims(p, object));
                 // `gcPlayAnimAll` parses each `MObj` in the same play as its
-                // `DObj`. The transform player's start already folds the
-                // creation play into its first tick, so the materials take
-                // that play here and stay in step with it (the Spin Attack
-                // weapon's fade against the N64's `MObj` trace).
-                if anim.is_some() {
+                // `DObj`. A weapon's transform player folds the creation
+                // play into its first tick, so the materials take that play
+                // here and stay in step with it (the Spin Attack weapon's
+                // fade against the N64's `MObj` trace). An effect's first
+                // tick is the creation play for both.
+                if anim.is_some() && rule == PlayRule::Weapon {
                     players.materials.tick_speed(p, speed);
                 }
             }
@@ -7257,6 +7281,7 @@ impl FxSlot {
                 }
             }
         }
+        restart
     }
 
     /// The players while the effect lives.
@@ -7278,6 +7303,10 @@ struct PortFx {
     punch: FxSlot,
     kick: FxSlot,
     reflector: ReflectorFx,
+    /// Each display-link-15 effect's creation stamp, by
+    /// [`ssb_game::effect_order::Kind`], the shield bubble's and Yoshi's
+    /// eggs' included: link 15 draws in creation order across ports.
+    stamps: [ssb_game::effect_order::Stamp; ssb_game::effect_order::Kind::COUNT],
 }
 
 /// One weapon pool slot's players, keyed by the weapon's kind and
@@ -8275,27 +8304,50 @@ impl EffectVisuals {
             ) -> (Option<&ssb_rom::pack::ObjectDesc>, Option<&ssb_rom::pack::AnimDesc>) {
                 a.as_ref().map(|(o, a)| (o, a)).unzip()
             }
+            use PlayRule::Effect;
             let (object, anim) = pair(&assets.magnet);
-            v.magnet.sync(p, f.and_then(ssb_game::ness::magnet_effect_ticks), object, anim, 1.0);
+            let magnet = v.magnet.sync(p, f.and_then(ssb_game::ness::magnet_effect_ticks), object, anim, 1.0, Effect);
             let (object, anim) = pair(&assets.sing);
-            v.sing.sync(p, f.and_then(ssb_game::purin::sing_effect_ticks), object, anim, 1.0);
+            let sing = v.sing.sync(p, f.and_then(ssb_game::purin::sing_effect_ticks), object, anim, 1.0, Effect);
             let (object, anim) = pair(&assets.spin_effect);
-            v.spin.sync(p, f.and_then(ssb_game::link::spin_effect_ticks), object, anim, 1.0);
+            let spin = v.spin.sync(p, f.and_then(ssb_game::link::spin_effect_ticks), object, anim, 1.0, Effect);
             let (object, anim) = pair(&assets.spin_weapon);
             let ticks = f.and_then(ssb_game::link::spin_weapon_display).map(|(_, t)| t);
-            v.spin_weapon.sync(p, ticks, object, anim, 1.0);
+            v.spin_weapon.sync(p, ticks, object, anim, 1.0, PlayRule::Weapon);
             let punch = f.and_then(|f| {
                 ssb_game::captain::punch_effect_ticks(f)
                     .or_else(|| ssb_game::kirby_copy::punch_effect_ticks(f))
             });
-            v.punch.sync(p, punch, assets.falcon_punch.as_ref(), None, 1.0);
+            let punch = v.punch.sync(p, punch, assets.falcon_punch.as_ref(), None, 1.0, Effect);
             let (object, anim) = pair(&assets.falcon_kick);
-            v.kick.sync(p, f.and_then(ssb_game::captain::kick_effect_ticks), object, anim, 1.0);
+            let kick = v.kick.sync(p, f.and_then(ssb_game::captain::kick_effect_ticks), object, anim, 1.0, Effect);
             v.reflector.sync(
                 p,
                 assets.reflector.as_ref().map(|(_, anims)| anims),
                 f.and_then(ssb_game::status::fox_reflector_effect),
             );
+            // Stamp the link-15 effects in port order, each port's in kind
+            // order, with the liveness the draw tests.
+            use ssb_game::effect_order::Kind as K;
+            let egg_escape = f.is_some_and(|f| f.yoshi.egg_escape_active);
+            let lives = [
+                (K::Shield, f.is_some_and(shield_bubble_live), false),
+                (
+                    K::YoshiShield,
+                    !egg_escape && f.is_some_and(ssb_game::combat::is_yoshi_egg_shield),
+                    false,
+                ),
+                (K::YoshiEggEscape, egg_escape, false),
+                (K::Magnet, v.magnet.live().is_some(), magnet),
+                (K::Sing, v.sing.live().is_some(), sing),
+                (K::Spin, v.spin.live().is_some(), spin),
+                (K::Punch, v.punch.live().is_some(), punch),
+                (K::Kick, v.kick.live().is_some(), kick),
+                (K::Reflector, v.reflector.live().is_some(), false),
+            ];
+            for (kind, live, remade) in lives {
+                self.order.stamp(&mut v.stamps[kind as usize], live, remade);
+            }
         }
     }
 
@@ -8357,7 +8409,7 @@ impl EffectVisuals {
                 v.key = Some(key);
                 v.fx.clock = None;
             }
-            v.fx.sync(p, Some(ticks), object.as_ref(), anim.as_ref(), speed);
+            v.fx.sync(p, Some(ticks), object.as_ref(), anim.as_ref(), speed, PlayRule::Weapon);
         }
         for (v, seen) in self.weapons.iter_mut().zip(seen) {
             if !seen {
@@ -10878,130 +10930,174 @@ unsafe fn draw_items_weapons_effects(
         return;
     }
 
-    // The shield bubble (`efManagerShieldMakeEffect`, RE-384). Its root is
-    // battle matrix function 79, `YRotN`'s whole matrix, which the guard
-    // scales by the shield size; the drawn node adds kind 44, a camera-facing
-    // quad sized by that accumulated scale. `efManagerShieldProcDisplay` sets
-    // PRIM white and ENV the player's colour, both at alpha 0xC0, or the
-    // grey damage row on a set-off's frame (RE-418). Yoshi's egg shield is
-    // a different effect, drawn below.
-    if let Some(object) = assets.shield.as_ref() {
-        let fighters = scenes_ref(pl, dummies).into_iter().flatten().map(|x| &x.fighter);
-        for f in fighters.filter(|f| f.guard.is_shield && f.kind != ssb_game::fighter::FighterKind::Yoshi) {
-            // Kind 79 is `func_ovl0_800C994C`: `func_ovl2_800EDBA4` on
-            // `YRotN` marks its chain queried after the fighter has drawn
-            // (RE-511).
-            let joint = ssb_game::combat::shield_query_transform(f);
-            let size = joint.axes[0].length();
-            let (prim, env) = ssb_psp_runtime::scene::SHIELD_COLORS[ssb_game::combat::shield_color_row(f)];
-            draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
-                prim: Some([prim[0], prim[1], prim[2], 0xC0]),
-                env: Some([env[0], env[1], env[2], 0xC0]),
-                ..Default::default()
-            });
-            for n in 0..object.node_count {
-                let Some(node) = p.node(object.first_node + n) else {
-                    continue;
-                };
-                let Some(mesh) = (node.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
-                    .then(|| p.mesh(node.mesh))
-                    .flatten()
-                else {
-                    continue;
-                };
-                let offset = ssb_engine::math::Vec3::new(
-                    node.rest_translate[0],
-                    node.rest_translate[1],
-                    node.rest_translate[2],
-                );
-                gpu.model_transform_billboard(
-                    joint.point(offset),
-                    pl.camera.eye,
-                    pl.camera.at,
-                    0.0,
-                    [
-                        meshdraw::MODEL_SCALE * size * node.rest_scale[0],
-                        meshdraw::MODEL_SCALE * size * node.rest_scale[1],
-                    ],
-                );
-                meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
-            }
-            draw_state.color_override = None;
-        }
-    }
-
-    // Yoshi's egg shield (`dEFManagerYoshiShieldEffectDesc`, RE-418): file
-    // 338's direct list at 0xA860, the Egg Throw's egg, under a kind-0x50
-    // root (a translation to `YRotN`'s world position) then kind 44, a
-    // camera-facing quad scaled 1.5 in X and Y. `efManagerYoshiShieldProcDisplay`
-    // sets ENV from the shield's health; the list's `(SHADE - ENV) * TEXEL0`
-    // subtracts it, so the egg darkens (green and blue faster than red)
-    // as the shield wears.
-    if let Some(egg_mesh) = assets.yoshi_egg_mesh.as_ref() {
-        let fighters = scenes_ref(pl, dummies).into_iter().flatten();
-        for scene in fighters.filter(|s| {
-            ssb_game::combat::is_yoshi_egg_shield(&s.fighter) || s.fighter.yoshi.egg_escape_active
-        }) {
-            let f = &scene.fighter;
-            let [r, g, b] = ssb_game::combat::yoshi_shield_env(f);
-            draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
-                env: Some([r, g, b, 0]),
-                ..Default::default()
-            });
-            let scale = meshdraw::MODEL_SCALE * ssb_game::combat::YOSHI_SHIELD_SCALE;
-            // Roll egg: kind 0x50 translates to joint 5; kind 0x4A
-            // (`func_ovl0_800CB2F0`) copies signed local rotate.x into z;
-            // kind 0x2E then builds the scaled, spun billboard.
-            let (origin, spin) = if f.yoshi.egg_escape_active {
-                let angle = p.object(scene.object)
-                    .and_then(|o| scene.skeleton.node_pose(o.first_node + 1))
-                    .map_or(0.0, |p| p.rotate[0]);
-                let positive = f.joint_transforms[5].is_some_and(|j| j.axes[0].z > 0.0);
-                // Kind 0x50 is `func_ovl0_800C99CC`:
-                // `gmCollisionGetFighterPartsWorldPosition` marks the chain.
-                f.mark_joint_query(5);
-                (f.joint_world(5, ssb_engine::math::Vec3::ZERO), if positive { angle } else { -angle })
-            } else {
-                (ssb_game::combat::shield_query_transform(f).origin, 0.0)
-            };
-            gpu.model_transform_billboard(
-                origin,
-                pl.camera.eye,
-                pl.camera.at,
-                spin,
-                [scale, scale],
-            );
-            meshdraw::draw_mesh(p, egg_mesh, draw_state, None, None);
-            draw_state.color_override = None;
-        }
-    }
-
+    // The Spin Attack weapon's graphic is display link 14: before every
+    // link-15 effect.
     for (scene, v) in scenes_ref(pl, dummies).into_iter().zip(effect_visuals.ports.iter()) {
         if let Some(scene) = scene {
-            draw_fighter_effects(gpu, draw_state, p, pl, &scene.fighter, v, assets, material_anim);
+            draw_spin_weapon_graphic(gpu, draw_state, p, &scene.fighter, v, assets, material_anim);
+        }
+    }
+
+    // Link 15's priority-2 effects in the order they were made
+    // (`gcDLLinkGObjTail`, `ssb_game::effect_order`).
+    let mut stamps = [[ssb_game::effect_order::Stamp::default(); ssb_game::effect_order::Kind::COUNT]; 4];
+    for (row, v) in stamps.iter_mut().zip(effect_visuals.ports.iter()) {
+        *row = v.stamps;
+    }
+    let mut entries = [ssb_game::effect_order::Entry {
+        seq: 0,
+        port: 0,
+        kind: ssb_game::effect_order::Kind::Shield,
+    }; ssb_game::effect_order::MAX_ENTRIES];
+    let n = ssb_game::effect_order::collect(&stamps, &mut entries);
+    let scenes = scenes_ref(pl, dummies);
+    for e in &entries[..n] {
+        let port = usize::from(e.port);
+        let (Some(Some(scene)), Some(v)) = (scenes.get(port), effect_visuals.ports.get(port)) else {
+            continue;
+        };
+        use ssb_game::effect_order::Kind as K;
+        match e.kind {
+            K::Shield => {
+                if let Some(object) = assets.shield.as_ref() {
+                    draw_shield_bubble(gpu, draw_state, p, pl, &scene.fighter, object);
+                }
+            }
+            K::YoshiShield | K::YoshiEggEscape => {
+                if let Some(egg_mesh) = assets.yoshi_egg_mesh.as_ref() {
+                    draw_yoshi_egg_shield(gpu, draw_state, p, pl, scene, egg_mesh);
+                }
+            }
+            kind => draw_fighter_effect(gpu, draw_state, p, pl, &scene.fighter, v, assets, material_anim, kind),
         }
     }
 }
 
-/// One fighter's own effects, in the order their kinds were written for
-/// the player: PSI Magnet, Sing, Spin Attack, Falcon Punch, Falcon Kick,
-/// Reflector. The N64 draws link 15's effects in creation order; each
-/// fighter's effects here draw after the previous port's.
+/// Whether a fighter's shield bubble lives: Yoshi's guard is his egg.
+fn shield_bubble_live(f: &ssb_game::fighter::Fighter) -> bool {
+    f.guard.is_shield && f.kind != ssb_game::fighter::FighterKind::Yoshi
+}
+
+/// One fighter's shield bubble (`efManagerShieldMakeEffect`, RE-384). Its
+/// root is battle matrix function 79, `YRotN`'s whole matrix, which the
+/// guard scales by the shield size; the drawn node adds kind 44, a
+/// camera-facing quad sized by that accumulated scale.
+/// `efManagerShieldProcDisplay` sets PRIM white and ENV the player's colour,
+/// both at alpha 0xC0, or the grey damage row on a set-off's frame (RE-418).
+/// Yoshi's egg shield is a different effect ([`draw_yoshi_egg_shield`]).
 #[inline(never)]
-unsafe fn draw_fighter_effects(
+unsafe fn draw_shield_bubble(
     gpu: &mut Gpu,
     draw_state: &mut meshdraw::DrawState,
     p: &Pack<'_>,
     pl: &play::FighterScene,
     f: &ssb_game::fighter::Fighter,
+    object: &ssb_rom::pack::ObjectDesc,
+) {
+    // Kind 79 is `func_ovl0_800C994C`: `func_ovl2_800EDBA4` on
+    // `YRotN` marks its chain queried after the fighter has drawn
+    // (RE-511).
+    let joint = ssb_game::combat::shield_query_transform(f);
+    let size = joint.axes[0].length();
+    let (prim, env) = ssb_psp_runtime::scene::SHIELD_COLORS[ssb_game::combat::shield_color_row(f)];
+    draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
+        prim: Some([prim[0], prim[1], prim[2], 0xC0]),
+        env: Some([env[0], env[1], env[2], 0xC0]),
+        ..Default::default()
+    });
+    for n in 0..object.node_count {
+        let Some(node) = p.node(object.first_node + n) else {
+            continue;
+        };
+        let Some(mesh) = (node.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+            .then(|| p.mesh(node.mesh))
+            .flatten()
+        else {
+            continue;
+        };
+        let offset = ssb_engine::math::Vec3::new(
+            node.rest_translate[0],
+            node.rest_translate[1],
+            node.rest_translate[2],
+        );
+        gpu.model_transform_billboard(
+            joint.point(offset),
+            pl.camera.eye,
+            pl.camera.at,
+            0.0,
+            [
+                meshdraw::MODEL_SCALE * size * node.rest_scale[0],
+                meshdraw::MODEL_SCALE * size * node.rest_scale[1],
+            ],
+        );
+        meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+    }
+    draw_state.color_override = None;
+}
+
+/// Yoshi's egg shield (`dEFManagerYoshiShieldEffectDesc`, RE-418), or his
+/// roll's egg (`efManagerYoshiEggEscapeMakeEffect`): file 338's direct list
+/// at 0xA860, the Egg Throw's egg, under a kind-0x50 root (a translation to
+/// `YRotN`'s world position) then kind 44, a camera-facing quad scaled 1.5
+/// in X and Y. `efManagerYoshiShieldProcDisplay` sets ENV from the shield's
+/// health; the list's `(SHADE - ENV) * TEXEL0` subtracts it, so the egg
+/// darkens (green and blue faster than red) as the shield wears.
+#[inline(never)]
+unsafe fn draw_yoshi_egg_shield(
+    gpu: &mut Gpu,
+    draw_state: &mut meshdraw::DrawState,
+    p: &Pack<'_>,
+    pl: &play::FighterScene,
+    scene: &play::FighterScene,
+    egg_mesh: &ssb_rom::pack::MeshDesc,
+) {
+    let f = &scene.fighter;
+    let [r, g, b] = ssb_game::combat::yoshi_shield_env(f);
+    draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
+        env: Some([r, g, b, 0]),
+        ..Default::default()
+    });
+    let scale = meshdraw::MODEL_SCALE * ssb_game::combat::YOSHI_SHIELD_SCALE;
+    // Roll egg: kind 0x50 translates to joint 5; kind 0x4A
+    // (`func_ovl0_800CB2F0`) copies signed local rotate.x into z;
+    // kind 0x2E then builds the scaled, spun billboard.
+    let (origin, spin) = if f.yoshi.egg_escape_active {
+        let angle = p.object(scene.object)
+            .and_then(|o| scene.skeleton.node_pose(o.first_node + 1))
+            .map_or(0.0, |p| p.rotate[0]);
+        let positive = f.joint_transforms[5].is_some_and(|j| j.axes[0].z > 0.0);
+        // Kind 0x50 is `func_ovl0_800C99CC`:
+        // `gmCollisionGetFighterPartsWorldPosition` marks the chain.
+        f.mark_joint_query(5);
+        (f.joint_world(5, ssb_engine::math::Vec3::ZERO), if positive { angle } else { -angle })
+    } else {
+        (ssb_game::combat::shield_query_transform(f).origin, 0.0)
+    };
+    gpu.model_transform_billboard(
+        origin,
+        pl.camera.eye,
+        pl.camera.at,
+        spin,
+        [scale, scale],
+    );
+    meshdraw::draw_mesh(p, egg_mesh, draw_state, None, None);
+    draw_state.color_override = None;
+}
+
+/// The Spin Attack weapon's graphic (`wpDisplayDObjTreeDLLinks`): the root
+/// at the weapon's `translate`, unrotated; node 1's transform and its
+/// `MObj`s' fade come from the packed scripts. Weapons are display link 14,
+/// so it draws before the link-15 effects.
+#[inline(never)]
+unsafe fn draw_spin_weapon_graphic(
+    gpu: &mut Gpu,
+    draw_state: &mut meshdraw::DrawState,
+    p: &Pack<'_>,
+    f: &ssb_game::fighter::Fighter,
     v: &PortFx,
     assets: &DrawAssets,
     material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) {
-    // The Spin Attack weapon's graphic (`wpDisplayDObjTreeDLLinks`): the
-    // root at the weapon's `translate`, unrotated; node 1's transform and
-    // its `MObj`s' fade come from the packed scripts. Weapons are display
-    // link 14, so it draws before the link-15 effects below.
     if let (Some(fx), Some((object, _)), Some((pos, _))) = (
         v.spin_weapon.live(),
         assets.spin_weapon.as_ref(),
@@ -11023,13 +11119,30 @@ unsafe fn draw_fighter_effects(
             0,
         );
     }
+}
 
+/// One of a fighter's own link-15 effects: PSI Magnet, Sing, Spin Attack,
+/// Falcon Punch, Falcon Kick or Reflector. The caller draws them in
+/// creation order with the shield bubbles and Yoshi's eggs.
+#[inline(never)]
+unsafe fn draw_fighter_effect(
+    gpu: &mut Gpu,
+    draw_state: &mut meshdraw::DrawState,
+    p: &Pack<'_>,
+    pl: &play::FighterScene,
+    f: &ssb_game::fighter::Fighter,
+    v: &PortFx,
+    assets: &DrawAssets,
+    material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    kind: ssb_game::effect_order::Kind,
+) {
+    use ssb_game::effect_order::Kind as K;
     // Ness's PSI Magnet field. The root is battle matrix function 80, a pure
     // translation to TopN's world position; each child is `Tra` then kind
     // 46, a camera-facing quad spun by its `rotate.z` and sized by its
     // `scale.x`/`scale.y`. So each drawn node is a billboard at TopN plus
     // its composed offset, in world axes.
-    if let (Some(fx), Some((object, _))) = (v.magnet.live(), assets.magnet.as_ref()) {
+    if let (K::Magnet, Some(fx), Some((object, _))) = (kind, v.magnet.live(), assets.magnet.as_ref()) {
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 8];
         let n = fx.anim.compose(p, object, &mut posed);
         let top = f.joint_world(0, ssb_engine::math::Vec3::ZERO);
@@ -11079,7 +11192,7 @@ unsafe fn draw_fighter_effects(
     // each drawn node is a billboard at its composed position. Node 2's
     // `RotRpyR` swings the notes around it. `efManagerHaveStructProcUpdate`
     // ejects the effect when its animation ends.
-    if let (Some(fx), Some((object, _))) = (v.sing.live(), assets.sing.as_ref()) {
+    if let (K::Sing, Some(fx), Some((object, _))) = (kind, v.sing.live(), assets.sing.as_ref()) {
         if !fx.anim.ended() {
             let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 8];
             let n = fx.anim.compose(p, object, &mut posed);
@@ -11125,7 +11238,7 @@ unsafe fn draw_fighter_effects(
     // `func_ovl0_800C99CC`: a translation to TopN's world position. Its
     // second transform, `RotRpyR`, applies the 30- or 210-degree yaw
     // `efManagerLinkSpinAttackMakeEffect` sets.
-    if let (Some(fx), Some((object, _))) = (v.spin.live(), assets.spin_effect.as_ref()) {
+    if let (K::Spin, Some(fx), Some((object, _))) = (kind, v.spin.live(), assets.spin_effect.as_ref()) {
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
         let n = fx.anim.compose(p, object, &mut posed);
         gpu.model_transform(
@@ -11150,7 +11263,7 @@ unsafe fn draw_fighter_effects(
     // The Falcon Punch flame is one DObj: battle matrix function 80 places
     // it at joint 16's world position, and `RotRpyR` applies the
     // `lr * -90`-degree yaw `efManagerCaptainFalconPunchMakeEffect` sets.
-    if let (Some(fx), Some(object)) = (v.punch.live(), assets.falcon_punch.as_ref()) {
+    if let (K::Punch, Some(fx), Some(object)) = (kind, v.punch.live(), assets.falcon_punch.as_ref()) {
         // `fp->joints[16]` for Captain Falcon, `[30]` for a Kirby copy.
         let joint = if ssb_game::kirby::is_kirby(f.kind) {
             ssb_game::kirby_copy::PUNCH_EFFECT_JOINT
@@ -11186,7 +11299,7 @@ unsafe fn draw_fighter_effects(
     // `RotRpyR` applies the root rotation
     // `efManagerCaptainFalconKickMakeEffect` sets. `Mat4::from_trs` is that
     // x-then-y-then-z order.
-    if let (Some(fx), Some((object, _))) = (v.kick.live(), assets.falcon_kick.as_ref()) {
+    if let (K::Kick, Some(fx), Some((object, _))) = (kind, v.kick.live(), assets.falcon_kick.as_ref()) {
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
         let n = fx.anim.compose(p, object, &mut posed);
         if let Some(root) = p.node(object.first_node) {
@@ -11225,7 +11338,7 @@ unsafe fn draw_fighter_effects(
     // accumulated scale (TopN's times its own animated one) as the shield's
     // is. Start grows it, Loop pulses its scale every two frames, Hit
     // flashes and End shrinks it away.
-    if let (Some(fx), Some((object, _))) = (v.reflector.live(), assets.reflector.as_ref()) {
+    if let (K::Reflector, Some(fx), Some((object, _))) = (kind, v.reflector.live(), assets.reflector.as_ref()) {
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 4];
         let n = fx.anim.compose(p, object, &mut posed);
         let size = f.joint_transforms[0].map_or(1.0, |j| j.axes[0].length());

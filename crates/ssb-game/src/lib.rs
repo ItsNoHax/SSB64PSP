@@ -33,6 +33,7 @@ pub mod countdown;
 pub mod dead;
 pub mod dokan;
 pub mod effect;
+pub mod effect_order;
 pub mod explain;
 pub mod fighter;
 pub mod fighter_select;

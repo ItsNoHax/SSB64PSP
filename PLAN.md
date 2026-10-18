@@ -55,7 +55,6 @@ closes it.
 
 ### PSP performance and hardware (`MS8`)
 - [ ] 1P Kirby-vs-Yoshi-team intro runs at about 30 FPS on a PSP-2000; profile it.
-- [ ] Falcon Punch FxSlot creation-frame `gcPlayAnimAll` (`efmanager.c:2008-2014`, `psp-game/src/main.rs` near line 8291): the PSP flame runs about 2 frames ahead of the N64 (RE-538).
 
 - [ ] Four-player VS on a PSP-2000: `vs4@2400` 15.73 ms busy / 59.2 FPS (120-frame reports 4..19) against RE-500's 13.64 / 59.9.
   - The RE-514 CPU lighting regression (+5.2 ms) is recovered; lighting is 0.8 ms busy.
@@ -139,8 +138,8 @@ closes it.
 - [ ] Kirby's late entry poses (N64 frames 326-332) look about one frame ahead of the N64; the star phase is frame-exact. Not diagnosed.
 - [ ] No N64 focus-2 capture of Captain Falcon's car, so the battle-camera fallback before his TopN comes in bounds is unverified for that phase (`f1-vs-car`). A warp-boot capture with focus id 2 and Captain closes it (RE-523).
 - [ ] Remaining effects: Thunder Jolt ground effect, PK Thunder trail effects, the fire spark, Kirby's copy-bank scripts (0x4C, 0x4D), the results' fighter effects, stage particle banks; a magnitude-0 quake shakes one frame late (RE-413, RE-415, RE-416, RE-427).
-- [ ] Effects follow-ups (RE-538): Effects15 creation-order sort; attached particle effects ignore pause (`ftParamPauseEffect` only reaches displays); the Spin Attack band is less saturated than the N64 at el48-52; the N64 pixel captures cover cpufx-u/n/k only, so cpufx-d and the yoshi-explosion row have none.
-- [ ] N64 pixel captures of the cpufx scenes (cpufx-d/u/n/k): RE-536 compared status timelines only. Also: effect draw order is per type then per port (N64: creation order); check the second Kirby costume against the N64 HUD icons in cpufx-k; the PSP VS camera frames tighter than the N64 (makes global MAE unusable).
+- [ ] Effects follow-ups (RE-538, RE-540): fighter particles, damage-fly effects and Thunder Jolt's link-15 displays are drawn outside the creation-order sort, and same-frame makes by two fighters take port order rather than process order; cpufx-n/u map PSP tick to N64 el as 399+el but the clean trace gives 398+el (cpufx-d agrees with 399); attached particle effects ignore pause (`ftParamPauseEffect` only reaches displays); the Spin Attack band is less saturated than the N64 at el48-52; the N64 pixel captures cover cpufx-u/n/k only, so cpufx-d and the yoshi-explosion row have none.
+- [ ] N64 pixel captures of the cpufx scenes (cpufx-d/u/n/k): RE-536 compared status timelines only. Also: check the second Kirby costume against the N64 HUD icons in cpufx-k; the PSP VS camera frames tighter than the N64 (makes global MAE unusable).
 - [ ] Kirby: spit stars; Inhale's downward wiggle (RE-343, RE-348, RE-376, RE-378, RE-417). The Inhale wind specks, bank 3 and the port-1 costume are done (RE-538); the copied Falcon Punch flame and Charge Shot are drawn (RE-536).
 - [ ] Pikachu: ground Thunder Jolt node 4's texture script is declined by `resolve_one_mat_anim`; Quick Attack effects (RE-345, RE-379).
 - [ ] Reach the PK Fire flame on the dummy in a capture; draw the Bomb's critical flash and held bloat (RE-352, RE-382, RE-383).
