@@ -42,6 +42,7 @@ fn run_title(t: &mut Title, demo: &mut DemoData, n: usize) -> Option<Scene> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_title_lays_out_at_170_and_220_and_shows_press_start_at_280() {
     let mut demo = DemoData::default();
     let mut t = Title::new(0);
@@ -195,6 +196,7 @@ fn press_start_loops_every_39_plays() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_fire_brightens_toward_a_new_colour_every_260_tics() {
     let mut demo = DemoData::default();
     let mut t = Title::new(0);

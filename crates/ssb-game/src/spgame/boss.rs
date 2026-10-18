@@ -26,17 +26,6 @@
 
 use ssb_engine::math::Vec3;
 
-/// `dSC1PGameBossCometEnvColor{R,G,B}`: the shooting stars' colours.
-pub const COMET_ENV_COLORS: [[u8; 3]; 7] = [
-    [0xFF, 0x00, 0x00],
-    [0x00, 0xFF, 0x00],
-    [0x00, 0x00, 0xFF],
-    [0xFF, 0xFF, 0x00],
-    [0xFF, 0x00, 0xFF],
-    [0x00, 0xFF, 0xFF],
-    [0x78, 0x78, 0x78],
-];
-
 /// The effects' sources in file 114 (`llGRLastMapEffects*DObjDesc`,
 /// `...MObjSub`, `llGRLastMapAnims*AnimJoint`, `...MatAnimJoint`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,59 +41,6 @@ pub struct EffectAsset {
 /// File 114, `StageLastFile2`: `gMPCollisionGroundData->gr_desc[1]`'s file,
 /// whose head (`llGRLastMapFileHead`, 0x4D48) the controller subtracts.
 pub const EFFECT_FILE: u32 = 114;
-
-/// One `SC1PGameBossEffect` with its paired `SC1PGameBossAnim`, by
-/// wallpaper and effect: `[wallpaper][effect]`.
-pub const EFFECT_ASSETS: [[Option<EffectAsset>; 2]; 4] = [
-    [
-        Some(EffectAsset {
-            graph: 0x8960,
-            mobjsub: Some(0x86D8),
-            anim_joint: Some(0x8A40),
-            matanim_joint: Some(0x8C50),
-        }),
-        None,
-    ],
-    [
-        Some(EffectAsset {
-            graph: 0xA188,
-            mobjsub: Some(0x97B0),
-            anim_joint: Some(0xA340),
-            matanim_joint: Some(0xB1B0),
-        }),
-        None,
-    ],
-    [
-        Some(EffectAsset {
-            graph: 0xDD90,
-            mobjsub: Some(0xD470),
-            anim_joint: Some(0xDE70),
-            matanim_joint: Some(0xDEC0),
-        }),
-        Some(EffectAsset {
-            graph: 0x11268,
-            mobjsub: Some(0x10788),
-            anim_joint: None,
-            matanim_joint: Some(0x11420),
-        }),
-    ],
-    [
-        Some(EffectAsset {
-            graph: 0x11268,
-            mobjsub: Some(0x10788),
-            anim_joint: None,
-            matanim_joint: Some(0x115C0),
-        }),
-        // `llGRLastMapEffects3_1DObjDesc` has no `MObjSub`, so its anim's
-        // `MatAnimJoint` is never bound.
-        Some(EffectAsset {
-            graph: 0x12858,
-            mobjsub: None,
-            anim_joint: Some(0x128E0),
-            matanim_joint: None,
-        }),
-    ],
-];
 
 /// `sc1PGameBossMakeCamera`'s two cameras: eye at (0, 0, 2000) looking at
 /// the origin, priorities 40 and 60, drawing display link 5 for camera
@@ -152,6 +88,8 @@ pub enum Display {
 
 /// How an effect updates (`SC1PGameBossEffect::proc_update`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// The stub tables name no effect, so no variant is constructed.
+#[cfg_attr(ssb64_stub_tables, allow(dead_code))]
 enum Update {
     /// `SC1PGameBossWallpaper0ProcUpdate`.
     Comet,
@@ -174,97 +112,29 @@ struct WallpaperDesc {
     anim_speeds: &'static [f32],
     plans: &'static [Plan],
     /// `dobj_color_id`: the fade-in step of its effects.
+    dobj_color_id: i32,
+    /// `color_id`: the (negated) fade-out step `sc1PGameBossUpdateWallpaperColorID`
+    /// gives the outgoing wallpaper's effects.
     color_id: i32,
     change_wait_base: i32,
     change_damage_min: i32,
     is_random: bool,
 }
 
-const WALLPAPERS: [WallpaperDesc; 4] = [
-    WallpaperDesc {
-        loop_count: 24,
-        effects: &[(Update::Comet, Display::Comet)],
-        anim_speeds: &[0.5, 1.0, 0.7, 0.25],
-        plans: &[
-            Plan {
-                count: 10,
-                camera_tag: 1,
-                pos: Vec3::new(0.0, 0.0, -2000.0),
-            },
-            Plan {
-                count: 14,
-                camera_tag: 2,
-                pos: Vec3::new(0.0, 0.0, -3000.0),
-            },
-        ],
-        color_id: 1,
-        change_wait_base: -1,
-        change_damage_min: 90,
-        is_random: true,
-    },
-    WallpaperDesc {
-        loop_count: 1,
-        effects: &[(Update::Fall, Display::Fall)],
-        anim_speeds: &[0.5],
-        plans: &[Plan {
-            count: 1,
-            camera_tag: 2,
-            pos: Vec3::new(0.0, 4800.0, -10000.0),
-        }],
-        color_id: 1,
-        change_wait_base: -1,
-        change_damage_min: 180,
-        is_random: false,
-    },
-    WallpaperDesc {
-        loop_count: 2,
-        effects: &[
-            (Update::Grow, Display::Translucent),
-            (Update::Late, Display::TranslucentDirect),
-        ],
-        anim_speeds: &[1.0, 1.0],
-        plans: &[
-            Plan {
-                count: 1,
-                camera_tag: 2,
-                pos: Vec3::new(0.0, 0.0, 2000.0),
-            },
-            Plan {
-                count: 1,
-                camera_tag: 2,
-                pos: Vec3::new(0.0, 0.0, 1000.0),
-            },
-        ],
-        color_id: 3,
-        change_wait_base: -1,
-        change_damage_min: -1,
-        is_random: false,
-    },
-    WallpaperDesc {
-        loop_count: 2,
-        effects: &[
-            (Update::Plain, Display::TranslucentDirect),
-            (Update::Closing, Display::Translucent),
-        ],
-        anim_speeds: &[0.5, 1.0],
-        plans: &[
-            Plan {
-                count: 1,
-                camera_tag: 2,
-                pos: Vec3::new(0.0, 0.0, 1000.0),
-            },
-            Plan {
-                count: 1,
-                camera_tag: 1,
-                pos: Vec3::new(0.0, 0.0, -2000.0),
-            },
-        ],
-        color_id: 1,
-        change_wait_base: -1,
-        change_damage_min: -1,
-        is_random: false,
-    },
-];
+// `WALLPAPERS` (`dSC1PGameBossWallpapers` and the effect, animation and plan
+// arrays it points to), `COMET_ENV_COLORS` (`dSC1PGameBossCometEnvColor{R,G,B}`,
+// the shooting stars' colours) and `EFFECT_ASSETS` (each effect's sources in
+// file 114, one `SC1PGameBossEffect` with its paired `SC1PGameBossAnim`, by
+// wallpaper and effect: `[wallpaper][effect]`), generated at build time from
+// the user's ROM by `crates/ssb-tablegen` (never committed).
+#[allow(clippy::all)]
+mod generated {
+    use super::{Display, EffectAsset, Plan, Update, WallpaperDesc};
+    use ssb_engine::math::Vec3;
+    include!(concat!(env!("OUT_DIR"), "/sc1p_boss.rs"));
+}
+use generated::WALLPAPERS;
+pub use generated::{COMET_ENV_COLORS, EFFECT_ASSETS};
 
 /// One effect GObj (`nGCCommonKindBossWallpaper`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -473,7 +343,7 @@ impl BossWallpaper {
             update,
             display,
             alpha: 0,
-            step: desc.color_id,
+            step: desc.dobj_color_id,
             color,
             translate: Vec3::ZERO,
             rotate_z: 0.0,
@@ -661,6 +531,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn twenty_four_comets_on_two_planes_fade_in() {
         let mut w = BossWallpaper::new();
         w.update(0, EXTENTS);
@@ -683,6 +554,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn damage_calls_up_the_next_wallpapers_and_the_old_fade_out() {
         let mut w = BossWallpaper::new();
         w.update(0, EXTENTS);
@@ -722,6 +594,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_defeat_wallpaper_ends_in_white_then_black() {
         let mut w = BossWallpaper::new();
         w.update(0, EXTENTS);

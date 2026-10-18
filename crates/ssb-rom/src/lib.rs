@@ -55,6 +55,8 @@ pub mod skeleton;
 pub mod sprite;
 #[cfg(feature = "std")]
 pub mod sprite_fringe;
+#[doc(hidden)]
+pub mod sprite_offsets;
 pub mod stage;
 pub mod strict;
 pub mod texture;

@@ -9,31 +9,13 @@ pub const FILE: u32 = 136;
 pub const FIRST_ANIM: u32 = 184;
 pub const BUMPER_ANIM: u32 = 190;
 pub const FIRST_BUMPER_ASSET: u8 = 34;
-/// graph, joint table, MObj table, material table; the latter two only
-/// exist on the unboarded trees. All labels are offsets into file 136.
-pub const TREES: [[u32; 4]; 6] = [
-    [0x3da8, 0x3e60, 0x3720, 0x3f00],
-    [0x45d8, 0x4690, 0x3f70, 0x4730],
-    [0x4e08, 0x4ec0, 0x47a0, 0x4f70],
-    [0x5520, 0x55d0, 0, 0],
-    [0x5b80, 0x5c30, 0, 0],
-    [0x61e0, 0x6290, 0, 0],
-];
-/// map_nodes graph and root-script table in files 137..148.
-pub const BUMPERS: [Option<(u32, u32)>; 12] = [
-    None,
-    Some((0xe160, 0xe350)),
-    None,
-    Some((0x2910, 0x29c0)),
-    None,
-    None,
-    None,
-    None,
-    Some((0x3920, 0x3a60)),
-    None,
-    Some((0x4fe0, 0x5120)),
-    Some((0x3fe0, 0x4090)),
-];
+// `dSC1PBonusStagePlatformDescs` and `...BoardedPlatformDescs`: graph, joint
+// table, MObj table, material table (the latter two only on the unboarded
+// trees; all labels are offsets into file 136), and `dSC1PBonusStageBumperDescs`:
+// map_nodes graph and root-script table in files 137..148. Generated at build
+// time from the user's ROM by `crates/ssb-tablegen` (never committed).
+include!(concat!(env!("OUT_DIR"), "/bonus2_trees.rs"));
+include!(concat!(env!("OUT_DIR"), "/bonus2_bumpers.rs"));
 pub fn kind(file: u32) -> Option<u8> {
     (283..295).contains(&file).then(|| (file - 283) as u8)
 }

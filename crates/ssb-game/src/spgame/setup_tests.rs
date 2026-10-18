@@ -1,4 +1,5 @@
 use super::*;
+use crate::computer::attack::Trait as T;
 use crate::spgame::{manager::Manager, Backup};
 
 fn stage_setup(stage: Stage, kind: FighterKind) -> (Game, BattleState, SceneData) {
@@ -20,6 +21,7 @@ fn stage_setup(stage: Stage, kind: FighterKind) -> (Game, BattleState, SceneData
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn mario_bros_and_giant_donkey_setup_ports_traits_teams_and_handicaps() {
     let (g, s, _) = stage_setup(Stage::Mario, FighterKind::Mario);
     assert_eq!((s.pl_count, s.cp_count, s.is_team_attack), (1, 3, false));
@@ -40,6 +42,7 @@ fn mario_bros_and_giant_donkey_setup_ports_traits_teams_and_handicaps() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn team_replacements_exhaust_exactly_eighteen_yoshis_and_thirty_polygons() {
     for (stage, total, unique) in [(Stage::Yoshi, 18, 6), (Stage::Zako, 30, 12)] {
         let (mut game, mut state, scene) = stage_setup(stage, K::Yoshi);
@@ -73,6 +76,7 @@ fn team_replacements_exhaust_exactly_eighteen_yoshis_and_thirty_polygons() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn eighth_kirby_uses_managers_final_copy_and_race_has_no_replacements() {
     let (mut g, mut s, scene) = stage_setup(Stage::Kirby, K::Kirby);
     assert_eq!((s.cp_count, g.team_players_remaining), (2, 6));
@@ -91,6 +95,7 @@ fn eighth_kirby_uses_managers_final_copy_and_race_has_no_replacements() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn final_enemy_end_preserves_player_stock_and_waits_for_victory_zoom() {
     let (mut game, state, scene) = stage_setup(Stage::Link, K::Mario);
     let mut battle = Battle::new_1p(5, state.battle_players(), true, 391);
@@ -119,6 +124,7 @@ fn final_enemy_end_preserves_player_stock_and_waits_for_victory_zoom() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn team_stock_icons_omit_defeated_members_and_wrap_at_ten() {
     let (mut g, _, _) = stage_setup(Stage::Yoshi, K::Mario);
     let icons = g.team_stock_icons();

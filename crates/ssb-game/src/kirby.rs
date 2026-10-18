@@ -1742,6 +1742,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn stone_soaks_its_health_then_passes_the_overflow() {
         let mut f = kirby();
         f.situation = Situation::Ground;

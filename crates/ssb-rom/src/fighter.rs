@@ -78,43 +78,14 @@ pub struct FighterFile {
     pub offset: u32,
 }
 
-/// Every fighter's main file, in `FTKind` order.
-///
-/// All 27 `FTKind` ordinals are present, so indexing this by kind is total.
-/// The ordering is the enum's, not the file ids': Metal Mario (13) and Giant
-/// DK (26) sit far from their base characters in the roster but adjacent to
-/// them in the archive, and it is the roster ordering that indexes asset
-/// tables elsewhere.
-#[rustfmt::skip]   // a lookup table reads as a table
-pub const FIGHTER_FILES: [FighterFile; 27] = [
-    FighterFile { kind:  0, name: "Mario",    file: 203, offset: 0x0428 },
-    FighterFile { kind:  1, name: "Fox",      file: 209, offset: 0x046C },
-    FighterFile { kind:  2, name: "Donkey",   file: 213, offset: 0x04A4 },
-    FighterFile { kind:  3, name: "Samus",    file: 217, offset: 0x0610 },
-    FighterFile { kind:  4, name: "Luigi",    file: 221, offset: 0x0580 },
-    FighterFile { kind:  5, name: "Link",     file: 225, offset: 0x0708 },
-    FighterFile { kind:  6, name: "Yoshi",    file: 247, offset: 0x047C },
-    FighterFile { kind:  7, name: "Captain",  file: 236, offset: 0x0488 },
-    FighterFile { kind:  8, name: "Kirby",    file: 229, offset: 0x0808 },
-    FighterFile { kind:  9, name: "Pikachu",  file: 243, offset: 0x041C },
-    FighterFile { kind: 10, name: "Purin",    file: 233, offset: 0x0474 },
-    FighterFile { kind: 11, name: "Ness",     file: 239, offset: 0x05BC },
-    FighterFile { kind: 12, name: "Boss",     file: 250, offset: 0x00E8 },
-    FighterFile { kind: 13, name: "MMario",   file: 206, offset: 0x02A8 },
-    FighterFile { kind: 14, name: "NMario",   file: 207, offset: 0x0298 },
-    FighterFile { kind: 15, name: "NFox",     file: 211, offset: 0x02A4 },
-    FighterFile { kind: 16, name: "NDonkey",  file: 214, offset: 0x0298 },
-    FighterFile { kind: 17, name: "NSamus",   file: 219, offset: 0x03BC },
-    FighterFile { kind: 18, name: "NLuigi",   file: 223, offset: 0x0298 },
-    FighterFile { kind: 19, name: "NLink",    file: 227, offset: 0x02D8 },
-    FighterFile { kind: 20, name: "NYoshi",   file: 248, offset: 0x02B8 },
-    FighterFile { kind: 21, name: "NCaptain", file: 237, offset: 0x029C },
-    FighterFile { kind: 22, name: "NKirby",   file: 231, offset: 0x02C0 },
-    FighterFile { kind: 23, name: "NPikachu", file: 245, offset: 0x02A8 },
-    FighterFile { kind: 24, name: "NPurin",   file: 234, offset: 0x02A0 },
-    FighterFile { kind: 25, name: "NNess",    file: 241, offset: 0x02F0 },
-    FighterFile { kind: 26, name: "GDonkey",  file: 215, offset: 0x03C8 },
-];
+// `dFTManagerDataFiles`' main file and `o_attributes` for every `FTKind`,
+// generated at build time from the user's ROM by `crates/ssb-tablegen`
+// (never committed). All 27 `FTKind` ordinals are present, so indexing
+// this by kind is total. The ordering is the enum's, not the file ids':
+// Metal Mario (13) and Giant DK (26) sit far from their base characters in
+// the roster but adjacent to them in the archive, and it is the roster
+// ordering that indexes asset tables elsewhere.
+include!(concat!(env!("OUT_DIR"), "/fighter_files.rs"));
 
 /// The body a fighter collides with — `MPObjectColl`.
 ///
@@ -909,6 +880,7 @@ mod tests {
     /// `crates/ssb-tablegen` reads the combat fields of `FTAttributes` from
     /// the same files at the same offsets.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_table_generator_reads_the_same_attributes() {
         let mut generator = ssb_tablegen::fighter_main_files();
         generator.sort_by_key(|(name, _, _)| {
@@ -925,6 +897,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn every_fighter_kind_has_exactly_one_file() {
         for (i, entry) in FIGHTER_FILES.iter().enumerate() {
             assert_eq!(entry.kind as usize, i, "{} is out of order", entry.name);

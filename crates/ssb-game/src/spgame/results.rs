@@ -2,13 +2,10 @@
 //! registers these values at the original presentation deadlines.
 use super::{bonus::Bonus, BattleState, Difficulty, SceneData, Stage};
 
-/// `dSC1PStageClearBonusData`, in bonus ID order (including unused IDs).
-pub const BONUS_POINTS: [i32; 58] = [
-    -99, 10000, 1000, 8000, 5000, 18000, 12000, 28000, 30000, 20000, 0, 11000, 0, 10000, 16000, 0,
-    0, 60000, 30000, 5000, 15000, 5000, 70000, 70000, 400000, 40000, 80000, 15000, 12000, 9000,
-    17000, 2000, 3500, 5000, 5000, 8000, 11000, 12000, 100, 7000, 10000, 1500, 10000, 3000, 4000,
-    0, 0, 0, 8000, 9990, 3330, 50000, 25000, 25000, 10000, 50000, 8000, 25000,
-];
+// `BONUS_POINTS`: `dSC1PStageClearBonusData`'s points, in bonus ID order
+// (including unused IDs), generated at build time from the user's ROM by
+// `crates/ssb-tablegen` (never committed).
+include!(concat!(env!("OUT_DIR"), "/stage_clear_bonus.rs"));
 pub const NO_MISS_MULTIPLIERS: [i32; 14] = [1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9, 0, 10, 11];
 
 pub fn bonus_points(id: usize, stage: Stage, difficulty: Difficulty) -> i32 {
@@ -69,6 +66,7 @@ pub fn score(scene: &SceneData, state: &BattleState, difficulty: Difficulty) -> 
 mod tests {
     use super::*;
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn score_combines_us_timer_damage_no_miss_multiplier_and_penalty() {
         let mut scene = SceneData {
             stage: Stage::Mario as u8,

@@ -23,59 +23,18 @@ pub const ROD: Sprite = 12;
 pub const FRAME: Sprite = 13;
 pub const ROD_SHADOW: Sprite = 14;
 
-/// `dIFCommonTrafficSpriteOffsets` by colour id: red, yellow and blue dim,
-/// contour, then light.
-const TRAFFIC_SPRITES: [Sprite; 9] = [15, 16, 17, 21, 22, 23, 18, 19, 20];
-/// `dIFCommonTrafficSpriteColors{R,G,B}`.
-const TRAFFIC_R: [u8; 9] = [0xFE, 0xFF, 0x4B, 0xFF, 0xFF, 0x22, 0xFF, 0xFF, 0xFF];
-const TRAFFIC_G: [u8; 9] = [0x0C, 0xA2, 0x64, 0x38, 0xA2, 0x66, 0xFF, 0xFF, 0xFF];
-const TRAFFIC_B: [u8; 9] = [0x0C, 0x00, 0xFF, 0x38, 0x00, 0xFE, 0xFF, 0xFF, 0xFF];
-/// `dIFCommonTrafficGoBacklight{R,G,B}` and `...GoShadow{R,G,B}`: the rod
-/// shadow's primitive and environment colours before and at "Go".
-const BACKLIGHT: [[u8; 3]; 2] = [[0, 0, 0], [0x6A, 0x6A, 0x95]];
-const SHADOW: [[u8; 3]; 2] = [[0, 0, 0], [0x12, 0x12, 0x2E]];
-/// `dIFCommonTrafficSpriteData`: position and colour id.
-const TRAFFIC: [(f32, f32, u8); 15] = [
-    (123.0, -13.0, 0),
-    (140.0, -11.0, 1),
-    (153.0, -11.0, 1),
-    (166.0, -11.0, 1),
-    (180.0, -15.0, 2),
-    (107.0, -33.0, 3),
-    (119.0, 21.0, 4),
-    (132.0, 21.0, 4),
-    (145.0, 21.0, 4),
-    (162.0, 20.0, 5),
-    (115.0, -26.0, 6),
-    (131.0, 32.0, 7),
-    (144.0, 32.0, 7),
-    (157.0, 32.0, 7),
-    (167.0, 23.0, 8),
-];
-/// `dIFCommonAnnounceGoSpriteData`.
-const GO: [(f32, f32, Sprite); 3] = [
-    (82.0, 93.0, LETTER_G),
-    (144.0, 93.0, LETTER_O),
-    (214.0, 93.0, EXCLAMATION),
-];
-
-/// `dIFCommonAnnounceSuddenDeathSpriteData`: "SUDDEN DEATH!" from file 37
-/// (`ssb_rom::sprite::ANNOUNCE_COMMON`: A is 0, "!" 26), primitive white
-/// and environment black (`dIFCommonAnnounceSuddenDeathSpriteColors`).
-pub const SUDDEN_DEATH: [(f32, f32, u8); 12] = [
-    (74.0, 67.0, 18),
-    (102.0, 67.0, 20),
-    (132.0, 67.0, 3),
-    (163.0, 67.0, 3),
-    (193.0, 67.0, 4),
-    (217.0, 67.0, 13),
-    (83.0, 113.0, 3),
-    (113.0, 113.0, 4),
-    (135.0, 113.0, 0),
-    (165.0, 113.0, 19),
-    (192.0, 113.0, 7),
-    (227.0, 113.0, 26),
-];
+/// The traffic light's and announcer's sprite tables (`dIFCommonTraffic*` and
+/// `dIFCommonAnnounce{Go,SuddenDeath}SpriteData` in `if/ifcommon.c`), generated
+/// at build time from the ROM by `crates/ssb-tablegen` (`ifcommon.rs`). The
+/// sprites are `GAME_STATUS` indices, and "SUDDEN DEATH!" file 37's
+/// (`ssb_rom::sprite::ANNOUNCE_COMMON`: A is 0, "!" 26); `TRAFFIC` is each
+/// lamp's position and colour id, `BACKLIGHT` and `SHADOW` the rod shadow's
+/// primitive and environment colours before and at "Go".
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/if_countdown.rs"));
+}
+pub use generated::SUDDEN_DEATH;
+use generated::{BACKLIGHT, GO, SHADOW, TRAFFIC, TRAFFIC_B, TRAFFIC_G, TRAFFIC_R, TRAFFIC_SPRITES};
 
 /// The countdown thread's slide per tick.
 const SLIDE: f32 = 0.883_333_3;

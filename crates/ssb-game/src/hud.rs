@@ -256,50 +256,16 @@ pub fn timer_origin(x: f32, w: u16, h: u16) -> (f32, f32) {
     )
 }
 
-/// `dIFCommonAnnounceTimeUpSpriteData` and `...GameSetSpriteData`: file
-/// 82's blue letters (`ssb_rom::sprite::GAME_STATUS` indices) at their
-/// top-left corners.
-pub const TIME_UP: [(f32, f32, u8); 6] = [
-    (45.0, 95.0, 3),
-    (82.0, 95.0, 4),
-    (100.0, 95.0, 5),
-    (151.0, 95.0, 6),
-    (195.0, 95.0, 7),
-    (238.0, 95.0, 8),
-];
-
-/// `dIFCommonAnnounceCompleteSpriteData`, ANNOUNCE_COMMON's A..Z indices.
-pub const COMPLETE: [(f32, f32, u8); 9] = [
-    (46.0, 101.0, 2),
-    (71.0, 101.0, 14),
-    (104.0, 100.0, 12),
-    (143.0, 101.0, 15),
-    (168.0, 101.0, 11),
-    (189.0, 101.0, 4),
-    (212.0, 101.0, 19),
-    (237.0, 101.0, 4),
-    (267.0, 101.0, 26),
-];
-pub const GAME_SET: [(f32, f32, u8); 7] = [
-    (22.0, 95.0, 11),
-    (62.0, 95.0, 10),
-    (104.0, 95.0, 5),
-    (154.0, 95.0, 6),
-    (191.0, 95.0, 9),
-    (230.0, 95.0, 6),
-    (262.0, 95.0, 3),
-];
-
-/// `dIFCommonAnnounceFailureSpriteData`, A..Z in ANNOUNCE_COMMON.
-pub const FAILURE: [(f32, f32, u8); 7] = [
-    (77.0, 101.0, 5),
-    (97.0, 101.0, 0),
-    (130.0, 101.0, 8),
-    (145.0, 101.0, 11),
-    (167.0, 101.0, 20),
-    (197.0, 101.0, 17),
-    (225.0, 101.0, 4),
-];
+/// The announcer's letters (`dIFCommonAnnounce{TimeUp,Complete,GameSet,Failure}
+/// SpriteData` in `if/ifcommon.c`) as `(x, y, sprite)`, generated at build time
+/// from the ROM by `crates/ssb-tablegen` (`ifcommon.rs`): `TIME_UP` and
+/// `GAME_SET` are file 82's blue letters (`ssb_rom::sprite::GAME_STATUS`
+/// indices), `COMPLETE` and `FAILURE` file 37's A..Z
+/// (`ssb_rom::sprite::ANNOUNCE_COMMON`).
+pub use generated::{COMPLETE, FAILURE, GAME_SET, TIME_UP};
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/if_announce.rs"));
+}
 
 /// `IFDCharacter`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

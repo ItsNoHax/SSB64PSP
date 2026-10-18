@@ -25,13 +25,15 @@ pub const TRANSITIONS: [u32; 11] = [
 /// `dFTManagerDataFiles[kind].file_main_id`, in `FTKind` order
 /// (`src/ft/ftdata.c:127`): the twelve playable kinds, Master Hand, Metal
 /// Mario, the twelve Polygons and Giant Donkey Kong.
-pub const FIGHTER_MAIN: [u32; 27] = [
-    0xCB, 0xD1, 0xD5, 0xD9, 0xDD, 0xE1, 0xF7, 0xEC, 0xE5, 0xF3, 0xE9, 0xEF, // playable
-    0xFA, // Boss
-    0xCE, // MMario
-    0xCF, 0xD3, 0xD6, 0xDB, 0xDF, 0xE3, 0xF8, 0xED, 0xE7, 0xF5, 0xEA, 0xF1, // Polygons
-    0xD7, // GDonkey
-];
+pub const FIGHTER_MAIN: [u32; 27] = {
+    let mut main = [0; 27];
+    let mut kind = 0;
+    while kind < 27 {
+        main[kind] = crate::fighter::FIGHTER_FILES[kind].file;
+        kind += 1;
+    }
+    main
+};
 
 /// The `FTKind` whose figatrees `kind` plays: Metal Mario and the
 /// Polygons reuse their model's, Giant Donkey Kong Donkey Kong's.
@@ -177,20 +179,7 @@ pub const STAFFROLL: [u32; 1] = [0xC3];
 
 /// `dMNCongraPictures` (`mncongra.c:18`): the bottom and top pictures of
 /// each playable kind, in `FTKind` order.
-pub const CONGRA: [[u32; 2]; 12] = [
-    [0xBA, 0xBB], // Mario
-    [0xBE, 0xBF], // Fox
-    [0xB8, 0xB9], // Donkey
-    [0xB0, 0xB1], // Samus
-    [0xBC, 0xBD], // Luigi
-    [0xB2, 0xB3], // Link
-    [0xAC, 0xAD], // Yoshi
-    [0xB6, 0xB7], // Captain
-    [0xAA, 0xAB], // Kirby
-    [0xAE, 0xAF], // Pikachu
-    [0xB4, 0xB5], // Purin
-    [0xC0, 0xC1], // Ness
-];
+pub const CONGRA: [[u32; 2]; 12] = crate::ending::CONGRA_FILES;
 
 /// The opening's scenes' listed files (`mvOpening*FuncStart`), by
 /// `ssb_game::opening::Kind` name.

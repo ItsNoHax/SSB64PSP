@@ -181,6 +181,7 @@ fn facing_right_falls_through_dead_right() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_first_attack_choice_reads_before_the_group_table() {
     // `dFTBossWaitRandomArrayLookup[-3..-1]`: the tail of
     // `dFTBossWaitRandomNoGround`.

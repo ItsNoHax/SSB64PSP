@@ -283,6 +283,7 @@ fn whispy_wind_makes_and_ejects_its_leaves_and_dust_in_order() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn acid_rises_to_its_next_level_and_burns() {
     let objects = [];
     let mut i = init(StageKind::Zebes, &objects);
@@ -350,6 +351,7 @@ impl StageObjects for AcidObject {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn acid_writes_its_root_and_reads_its_animated_surface() {
     let objects = [];
     let mut i = init(StageKind::Zebes, &objects);
@@ -595,6 +597,7 @@ fn gate_opens_on_the_first_frame_and_closes_without_a_monster() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn barrel_captures_and_fires_on_a_button_press() {
     let objects = [];
     let mut i = init(StageKind::Jungle, &objects);

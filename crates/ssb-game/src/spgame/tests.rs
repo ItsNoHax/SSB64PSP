@@ -415,6 +415,7 @@ fn session_team_replacement_resets_live_match_credit_before_the_next_member() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn very_hard_samus_and_master_hand_use_the_original_extended_handicaps() {
     use crate::stale::apply_ratio_and_handicap;
     let mut backup = Backup {
@@ -594,6 +595,7 @@ fn clear_enemies(s: &mut session::Session, pattern: KoPattern) -> alloc::vec::Ve
 /// panics. Every multi-fighter stage runs to its last KO, the stage clear
 /// and the next stage, for every overlap of falls.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_multi_fighter_stage_clears_at_its_last_ko_and_hands_over() {
     for pattern in [
         KoPattern::OneAtATime,

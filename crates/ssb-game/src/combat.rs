@@ -878,6 +878,15 @@ pub fn shield_transform(f: &Fighter) -> JointTransform {
     }
 }
 
+mod shield_colors {
+    include!(concat!(env!("OUT_DIR"), "/shield_colors.rs"));
+}
+/// `dEFManagerShieldColors`: `(PRIM, ENV)` RGB per player, and the
+/// damaged-shield pair last. `efManagerShieldProcDisplay` sets both with
+/// alpha 0xC0. Generated at build time from the user's ROM by
+/// `crates/ssb-tablegen` (never committed).
+pub use shield_colors::SHIELD_COLORS;
+
 /// `dEFManagerShieldColors`' damage row: `ftCommonGuardSetOffSetStatus`'s
 /// `is_damage_shield` selects it.
 pub const SHIELD_COLOR_DAMAGE_ROW: usize = 4;

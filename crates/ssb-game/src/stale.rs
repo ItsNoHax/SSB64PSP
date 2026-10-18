@@ -121,53 +121,13 @@ pub fn damage_ratio() -> u8 {
     DAMAGE_RATIO.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-/// `dFTCommonDataHandicapTable` (US), indexed by `handicap - 1`: `[0]`
-/// scales knockback dealt, `[1]` knockback received. Written with the same
-/// float expressions as the source so the constants round identically.
-#[rustfmt::skip]
-pub const HANDICAP_TABLE: [[f32; 2]; 40] = [
-    [0.55, 1.818_181_8],
-    [0.6, 15.0 / 9.0],
-    [0.7, 10.0 / 7.0],
-    [0.75, 12.0 / 9.0],
-    [0.8, 11.25 / 9.0],
-    [0.9, 10.0 / 9.0],
-    [0.95, 10.0 / 9.5],
-    [1.0, 1.0], // `9.0F / 9.0F`
-    [1.09, 0.917_431_2],
-    [0.5, 45.0 / 9.0],
-    [0.55, 36.0 / 9.0],
-    [0.6, 30.0 / 9.0],
-    [0.65, 20.0 / 7.0],
-    [0.7, 22.5 / 9.0],
-    [0.75, 1.818_181_8],
-    [0.8, 1.694_915_3],
-    [0.85, 1.587_301_6],
-    [0.9, 1.492_537_3],
-    [0.95, 1.408_450_7],
-    [0.65, 30.0 / 9.0],
-    [0.7, 20.0 / 7.0],
-    [0.74, 22.5 / 9.0],
-    [0.77, 20.0 / 9.0],
-    [0.8, 18.0 / 9.0],
-    [1.0, 4.0 / 7.0],
-    [1.05, 0.537_634_43],
-    [1.1, 0.512_820_5],
-    [1.15, 0.476_190_5],
-    [1.23, 0.450_450_45],
-    [1.05, 0.434_782_62],
-    [1.1, 3.0 / 7.5],
-    [1.15, (10.0 / 3.0) / 9.0],
-    [1.2, 0.357_142_87],
-    [1.25, 3.0 / 9.0],
-    // Master Hand (35–39), then US Very Hard Samus (40).
-    [0.9, 1.0],
-    [1.0, 1.0],
-    [1.1, 1.0],
-    [1.22, 1.0],
-    [1.5, 1.0],
-    [1.08, (200.0 / 24.0) / 9.0],
-];
+/// `dFTCommonDataHandicapTable`, indexed by `handicap - 1`: `[0]` scales
+/// knockback dealt, `[1]` knockback received. Generated at build time from
+/// the ROM by `crates/ssb-tablegen` (`battle_data.rs`).
+pub use generated::HANDICAP_TABLE;
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/handicap.rs"));
+}
 
 /// `ftParamGetCommonKnockback`'s trailing factors:
 /// `* (damage_ratio * 0.01F) * table[attack - 1][0]`, then
@@ -704,6 +664,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn default_handicaps_are_neutral_to_float_precision() {
         let kb = apply_ratio_and_handicap(17.0, DAMAGE_RATIO_DEFAULT, 9, 9);
         assert!((kb - 17.0).abs() < 1e-4, "{kb}");

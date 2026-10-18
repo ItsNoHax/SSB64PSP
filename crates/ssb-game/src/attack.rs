@@ -829,6 +829,7 @@ mod tests {
     /// 1.0`, so `common_knockback`'s weight term drops out and the whole
     /// formula reduces to arithmetic anyone can check by hand.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn jab_knockback_at_zero_percent_matches_the_formula_by_hand() {
         // ((0*1.4)+18) * (50*0.01) + 8 == 18*0.5+8 == 17.0
         let kb = common_knockback(0, &MARIO_JAB1_HITBOX, 1.0, 8, 8);
@@ -839,6 +840,7 @@ mod tests {
     /// value exact, which is why the golden scenes whose only hit is this
     /// jab did not move when handicaps arrived (RE-341).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn jab_knockback_at_zero_percent_survives_training_handicaps() {
         let hc = crate::stale::HANDICAP_DEFAULT;
         assert_eq!(common_knockback(0, &MARIO_JAB1_HITBOX, 1.0, hc, hc), 17.0);
@@ -890,6 +892,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn resolve_hit_pushes_the_defender_away_from_the_attacker() {
         let attacker = Vec3::new(0.0, 0.0, 0.0);
         let defender = Vec3::new(10.0, 0.0, 0.0);

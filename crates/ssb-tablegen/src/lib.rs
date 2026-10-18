@@ -31,6 +31,11 @@ pub mod error;
 pub mod rom;
 #[path = "../../ssb-rom/src/vpk0.rs"]
 pub mod vpk0;
+// `ssb-rom`'s sprite manifests, for the tables that name a sprite by its
+// file offset (`ifcommon`).
+#[path = "../../ssb-rom/src/sprite_offsets.rs"]
+#[allow(dead_code)]
+pub mod sprite_offsets;
 // `ssb-rom`'s animation player, for a table gameplay keeps as the values a
 // fixed `AObjEvent32` script produces (`monster_weapons`).
 #[path = "../../ssb-rom/src/figatree.rs"]
@@ -58,21 +63,28 @@ pub use error::{Error, Result};
 
 mod anim_length;
 mod anim_table;
+mod battle_data;
 mod capture_captain;
 mod colanim;
 mod computer;
 mod emit;
+mod ending_data;
 mod fighters;
 mod ground;
 mod hurtbox;
+mod ifcommon;
 mod item_attributes;
 mod item_sounds;
 mod kirby_attack100;
 mod kirby_copy;
+mod menu_data;
 mod model_parts;
 mod monster_weapons;
 mod motion;
+mod opening_data;
 mod physics;
+mod rom_layout;
+mod sc1p_data;
 mod sin_table;
 mod source;
 mod stat_flags;
@@ -100,7 +112,10 @@ pub enum Crate {
     /// `WPAttributes` and the Smog's scale, Mario's `FTAttributes` physics
     /// and Kirby's copy table.
     Game,
-    /// `ssb-rom`: the fighter animation table.
+    /// `ssb-rom`: the fighter animation table, the offsets the stage
+    /// clear's and staff roll's data arrays hold, the stage clear's pictures,
+    /// each fighter's main file, the loading-break transitions and the
+    /// manager effects' objects and animations.
     Rom,
     /// `ssb-engine`: `gSYSinTable`.
     Engine,
@@ -116,68 +131,83 @@ pub struct Generated {
 /// `None`.
 pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
     Ok(match krate {
-        Crate::Game => vec![
-            Generated {
-                name: "motion_scripts.rs",
-                text: motion::generate(rom)?,
-            },
-            Generated {
-                name: "colanim_scripts.rs",
-                text: colanim::generate(rom)?,
-            },
-            Generated {
-                name: "computer_scripts.rs",
-                text: computer::generate(rom)?,
-            },
-            Generated {
-                name: "stat_flags.rs",
-                text: stat_flags::generate(rom)?,
-            },
-            Generated {
-                name: "ground_tables.rs",
-                text: ground::generate(rom)?,
-            },
-            Generated {
-                name: "item_sounds.rs",
-                text: item_sounds::generate(rom)?,
-            },
-            Generated {
-                name: "joint_masks.rs",
-                text: model_parts::generate(rom)?,
-            },
-            Generated {
-                name: "kirby_attack100.rs",
-                text: kirby_attack100::generate(rom)?,
-            },
-            Generated {
-                name: "hurtboxes.rs",
-                text: hurtbox::generate(rom)?,
-            },
-            Generated {
-                name: "capture_captain.rs",
-                text: capture_captain::generate(rom)?,
-            },
-            Generated {
-                name: "item_attributes.rs",
-                text: item_attributes::generate(rom)?,
-            },
-            Generated {
-                name: "monster_weapons.rs",
-                text: monster_weapons::generate(rom)?,
-            },
-            Generated {
-                name: "mario_physics.rs",
-                text: physics::generate(rom)?,
-            },
-            Generated {
-                name: "kirby_copy.rs",
-                text: kirby_copy::generate(rom)?,
-            },
-        ],
-        Crate::Rom => vec![Generated {
-            name: "anim_table.rs",
-            text: anim_table::generate(rom)?,
-        }],
+        Crate::Game => {
+            let mut files = vec![
+                Generated {
+                    name: "motion_scripts.rs",
+                    text: motion::generate(rom)?,
+                },
+                Generated {
+                    name: "colanim_scripts.rs",
+                    text: colanim::generate(rom)?,
+                },
+                Generated {
+                    name: "computer_scripts.rs",
+                    text: computer::generate(rom)?,
+                },
+                Generated {
+                    name: "stat_flags.rs",
+                    text: stat_flags::generate(rom)?,
+                },
+                Generated {
+                    name: "ground_tables.rs",
+                    text: ground::generate(rom)?,
+                },
+                Generated {
+                    name: "item_sounds.rs",
+                    text: item_sounds::generate(rom)?,
+                },
+                Generated {
+                    name: "joint_masks.rs",
+                    text: model_parts::generate(rom)?,
+                },
+                Generated {
+                    name: "kirby_attack100.rs",
+                    text: kirby_attack100::generate(rom)?,
+                },
+                Generated {
+                    name: "hurtboxes.rs",
+                    text: hurtbox::generate(rom)?,
+                },
+                Generated {
+                    name: "capture_captain.rs",
+                    text: capture_captain::generate(rom)?,
+                },
+                Generated {
+                    name: "item_attributes.rs",
+                    text: item_attributes::generate(rom)?,
+                },
+                Generated {
+                    name: "monster_weapons.rs",
+                    text: monster_weapons::generate(rom)?,
+                },
+                Generated {
+                    name: "mario_physics.rs",
+                    text: physics::generate(rom)?,
+                },
+                Generated {
+                    name: "kirby_copy.rs",
+                    text: kirby_copy::generate(rom)?,
+                },
+            ];
+            files.extend(battle_data::generate(rom)?);
+            files.extend(ifcommon::generate(rom)?);
+            files.extend(menu_data::generate(rom)?);
+            files.extend(sc1p_data::generate(rom)?);
+            files.extend(ending_data::generate(rom)?);
+            files.extend(opening_data::generate(rom)?);
+            files
+        }
+        Crate::Rom => {
+            let mut files = vec![Generated {
+                name: "anim_table.rs",
+                text: anim_table::generate(rom)?,
+            }];
+            files.extend(sc1p_data::generate_rom(rom)?);
+            files.extend(ending_data::generate_rom(rom)?);
+            files.extend(rom_layout::generate_rom(rom)?);
+            files
+        }
         Crate::Engine => vec![Generated {
             name: "sin_table.rs",
             text: sin_table::generate(rom)?,

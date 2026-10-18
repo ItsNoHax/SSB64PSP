@@ -302,6 +302,7 @@ fn piranha_plant_waits_for_a_clear_pipe_then_bites() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn piranha_plant_knocked_out_regrows_after_the_rebirth_wait() {
     let mut pool = ItemPool::default();
     let mut anims = Scripted::new(141);

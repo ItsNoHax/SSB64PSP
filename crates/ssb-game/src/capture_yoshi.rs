@@ -66,12 +66,18 @@ pub const EGG_ANIM_THROW: u8 = 2;
 /// (`crates/ssb-rom/tests/display_effects.rs`).
 pub const EGG_THROW_PLAYS: u16 = 17;
 
-/// `dFTCommonYoshiEggDamageCollDescs[fkind].effect_size`: the egg's X and Y
-/// scale, by `FTKind`.
-pub const EGG_EFFECT_SIZES: [f32; 27] = [
-    2.0, 1.9, 3.5, 2.2, 2.2, 2.0, 2.5, 2.2, 1.8, 1.8, 2.0, 1.8, 2.0, 2.0, 2.0, 1.9, 3.5, 2.2, 2.2,
-    2.0, 2.5, 2.2, 1.8, 1.8, 2.0, 1.8, 5.7,
-];
+/// `dFTCommonYoshiEggDamageCollDescs` by `FTKind`: `(effect_size, offset,
+/// size)`, generated at build time from the ROM by `crates/ssb-tablegen`
+/// (`battle_data.rs`). `effect_size` is the egg's X and Y scale.
+pub use generated::EGG_DESCS;
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/yoshi_egg.rs"));
+}
+
+/// `dFTCommonYoshiEggDamageCollDescs[fkind].effect_size`.
+pub fn egg_effect_size(kind: crate::fighter::FighterKind) -> Option<f32> {
+    EGG_DESCS.get(kind as usize).map(|d| d.0)
+}
 
 /// `efManagerYoshiEggLayMakeEffect`'s egg, as its process and the egg
 /// status's callbacks drive it (RE-417). Drawing only: the escape keeps

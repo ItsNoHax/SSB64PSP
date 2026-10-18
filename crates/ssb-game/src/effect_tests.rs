@@ -245,6 +245,7 @@ fn hit(damage: i32, element: Element, kb_base: i32, fgm_level: u8) -> (Record, F
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_weak_normal_hit_makes_a_light_spark_at_the_impact_point() {
     let (rec, victim) = hit(8, Element::Normal, 0, 0);
     assert!(victim.damage > 0);
@@ -259,6 +260,7 @@ fn a_weak_normal_hit_makes_a_light_spark_at_the_impact_point() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn knockback_of_180_or_more_makes_a_heavy_spark() {
     let (rec, _) = hit(8, Element::Normal, 200, 0);
     assert_eq!(rec.made[0].kind, HitEffectKind::NormalHeavy);
@@ -290,6 +292,7 @@ fn the_element_picks_the_spark() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_louder_normal_hit_adds_orbs_and_sparks_on_the_victims_side() {
     let (rec, victim) = hit(8, Element::Normal, 0, 1);
     let kinds: std::vec::Vec<_> = rec.made.iter().map(|e| e.kind).collect();

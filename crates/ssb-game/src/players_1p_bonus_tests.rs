@@ -116,6 +116,7 @@ fn start_proceeds_at_once_but_only_when_armed() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_c_button_places_and_arms_in_its_costume() {
     let mut s = select(BonusKind::Targets);
     hover_portrait(&mut s, FighterKind::Link);

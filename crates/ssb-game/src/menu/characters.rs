@@ -129,400 +129,278 @@ const NULL: Track = Track {
     length: 1,
 };
 
-const fn c(s: Status, length: i32) -> Track {
-    Track {
-        motion: Motion::Status(AnyStatus::Common(s)),
-        length,
-    }
-}
-
-const fn a(s: AnyStatus, length: i32) -> Track {
-    Track {
-        motion: Motion::Status(s),
-        length,
-    }
-}
-
-const fn d(s: DemoStatus) -> Track {
-    Track {
-        motion: Motion::Demo(s),
-        length: UNTIL_END,
-    }
-}
-
-const WAIT30: Track = c(Status::Wait, 30);
-
-/// Eight tracks from `tracks`, the rest [`NULL`].
-const fn row(tracks: &[Track]) -> [Track; 8] {
-    let mut r = [NULL; 8];
-    let mut i = 0;
-    while i < tracks.len() {
-        r[i] = tracks[i];
-        i += 1;
-    }
-    r
-}
-
-/// A special that plays once, then waits 30 ticks.
-const fn special(s: AnyStatus) -> [Track; 8] {
-    row(&[a(s, UNTIL_END), WAIT30])
-}
-
 use AnyStatus as S;
 
-/// `dMNCharactersSpecialMotion*`, by `FTKind`: Hi, N and Lw.
-static SPECIAL_MOTIONS: [[[Track; 8]; 3]; 12] = [
-    // Mario.
-    [
-        special(S::Mario(MarioStatus::SpecialHi)),
-        special(S::Mario(MarioStatus::SpecialN)),
-        special(S::Mario(MarioStatus::SpecialLw)),
-    ],
-    // Fox.
-    [
-        row(&[
-            a(S::Fox(FoxStatus::SpecialHiStart), UNTIL_END),
-            a(S::Fox(FoxStatus::SpecialHiHold), 35),
-            a(S::Fox(FoxStatus::SpecialHi), 30),
-            a(S::Fox(FoxStatus::SpecialHiEnd), UNTIL_END),
-            WAIT30,
-        ]),
-        special(S::Fox(FoxStatus::SpecialN)),
-        row(&[
-            a(S::Fox(FoxStatus::SpecialLwStart), UNTIL_END),
-            a(S::Fox(FoxStatus::SpecialLwLoop), 60),
-            a(S::Fox(FoxStatus::SpecialLwEnd), UNTIL_END),
-            WAIT30,
-        ]),
-    ],
-    // Donkey Kong.
-    [
-        special(S::Donkey(DonkeyStatus::SpecialHi)),
-        row(&[
-            a(S::Donkey(DonkeyStatus::SpecialNStart), UNTIL_END),
-            a(S::Donkey(DonkeyStatus::SpecialNLoop), UNTIL_END),
-            a(S::Donkey(DonkeyStatus::SpecialNEnd), UNTIL_END),
-            WAIT30,
-        ]),
-        row(&[
-            a(S::Donkey(DonkeyStatus::SpecialLwStart), UNTIL_END),
-            a(S::Donkey(DonkeyStatus::SpecialLwLoop), UNTIL_END),
-            a(S::Donkey(DonkeyStatus::SpecialLwEnd), UNTIL_END),
-            WAIT30,
-        ]),
-    ],
-    // Samus.
-    [
-        special(S::Samus(SamusStatus::SpecialHi)),
-        row(&[
-            a(S::Samus(SamusStatus::SpecialNStart), UNTIL_END),
-            a(S::Samus(SamusStatus::SpecialNLoop), 60),
-            a(S::Samus(SamusStatus::SpecialNEnd), UNTIL_END),
-            WAIT30,
-        ]),
-        special(S::Samus(SamusStatus::SpecialLw)),
-    ],
-    // Luigi: Mario's special statuses (`nFTLuigiStatus*`).
-    [
-        special(S::Mario(MarioStatus::SpecialHi)),
-        special(S::Mario(MarioStatus::SpecialN)),
-        special(S::Mario(MarioStatus::SpecialLw)),
-    ],
-    // Link.
-    [
-        row(&[
-            a(S::Link(LinkStatus::SpecialHi), UNTIL_END),
-            a(S::Link(LinkStatus::SpecialHiEnd), UNTIL_END),
-            WAIT30,
-        ]),
-        special(S::Link(LinkStatus::SpecialN)),
-        special(S::Link(LinkStatus::SpecialLw)),
-    ],
-    // Yoshi.
-    [
-        special(S::Yoshi(YoshiStatus::SpecialHi)),
-        special(S::Yoshi(YoshiStatus::SpecialN)),
-        row(&[
-            a(S::Yoshi(YoshiStatus::SpecialLwStart), UNTIL_END),
-            a(S::Yoshi(YoshiStatus::SpecialAirLwLoop), 12),
-            a(S::Yoshi(YoshiStatus::SpecialLwLanding), UNTIL_END),
-            WAIT30,
-        ]),
-    ],
-    // Captain Falcon.
-    [
-        special(S::Captain(CaptainStatus::SpecialHi)),
-        special(S::Captain(CaptainStatus::SpecialN)),
-        special(S::Captain(CaptainStatus::SpecialLw)),
-    ],
-    // Kirby.
-    [
-        row(&[
-            a(S::Kirby(KirbyStatus::SpecialHi), UNTIL_END),
-            a(S::Kirby(KirbyStatus::SpecialAirHiFall), 12),
-            a(S::Kirby(KirbyStatus::SpecialHiLanding), UNTIL_END),
-            WAIT30,
-        ]),
-        row(&[
-            a(S::Kirby(KirbyStatus::SpecialNStart), UNTIL_END),
-            a(S::Kirby(KirbyStatus::SpecialNLoop), 40),
-            a(S::Kirby(KirbyStatus::SpecialNEnd), UNTIL_END),
-            WAIT30,
-        ]),
-        row(&[
-            a(S::Kirby(KirbyStatus::SpecialLwStart), UNTIL_END),
-            a(S::Kirby(KirbyStatus::SpecialLwHold), UNTIL_END),
-            a(S::Kirby(KirbyStatus::SpecialLwEnd), UNTIL_END),
-            WAIT30,
-        ]),
-    ],
-    // Pikachu. Its Lw's last track is left zero in the source and never
-    // reached.
-    [
-        special(S::Pikachu(PikachuStatus::SpecialHiEnd)),
-        special(S::Pikachu(PikachuStatus::SpecialN)),
-        row(&[
-            a(S::Pikachu(PikachuStatus::SpecialLwStart), UNTIL_END),
-            a(S::Pikachu(PikachuStatus::SpecialLwLoop), 60),
-            a(S::Pikachu(PikachuStatus::SpecialLwHit), UNTIL_END),
-            a(S::Pikachu(PikachuStatus::SpecialLwEnd), UNTIL_END),
-            WAIT30,
-        ]),
-    ],
-    // Jigglypuff.
-    [
-        special(S::Purin(PurinStatus::SpecialHi)),
-        special(S::Purin(PurinStatus::SpecialN)),
-        special(S::Purin(PurinStatus::SpecialLw)),
-    ],
-    // Ness: Hold 120 and End 28, which the source comments as swapped.
-    [
-        row(&[
-            a(S::Ness(NessStatus::SpecialHiStart), UNTIL_END),
-            a(S::Ness(NessStatus::SpecialHiHold), 120),
-            a(S::Ness(NessStatus::SpecialHiJibaku), UNTIL_END),
-            a(S::Ness(NessStatus::SpecialHiEnd), 28),
-            WAIT30,
-        ]),
-        special(S::Ness(NessStatus::SpecialN)),
-        row(&[
-            a(S::Ness(NessStatus::SpecialLwStart), UNTIL_END),
-            a(S::Ness(NessStatus::SpecialLwHold), 60),
-            a(S::Ness(NessStatus::SpecialLwHit), UNTIL_END),
-            a(S::Ness(NessStatus::SpecialLwEnd), UNTIL_END),
-            WAIT30,
-        ]),
-    ],
-];
-
-const fn once(s: Status) -> [Track; 8] {
-    row(&[c(s, UNTIL_END), WAIT30])
+/// `MNCharactersMotion` as the ROM holds it (`s32 status_id, anim_length;
+/// u32 flags`). The `FTSTATUS_PRESERVE_*` `flags` only keep a colour
+/// animation, effect or model part across a status change, which the demo
+/// fighter's [`Track`] does not carry.
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+struct RawTrack {
+    status: u32,
+    length: i32,
+    flags: u32,
 }
 
-const fn aerial(s: Status) -> [Track; 8] {
-    row(&[
-        c(s, UNTIL_END),
-        c(Status::FallAerial, 30),
-        c(Status::LandingLight, UNTIL_END),
-        WAIT30,
-    ])
+/// The motion tables (`dMNCharactersSpecialMotion*`, `...CommonMotionDescs`,
+/// `...Kirby*`, `...Purin*` and `...Attack1MotionDescs`), generated at build
+/// time from the ROM by `crates/ssb-tablegen` (`menu_data.rs`).
+mod generated {
+    use super::RawTrack;
+    include!(concat!(env!("OUT_DIR"), "/characters_motion.rs"));
 }
 
-/// `dMNCharactersCommonMotionDescs`, by motion kind (the specials' rows
-/// are empty).
-static COMMON_MOTIONS: [[Track; 8]; MOTION_KINDS] = [
-    [NULL; 8],
-    [NULL; 8],
-    [NULL; 8],
-    row(&[c(Status::WalkSlow, 90), WAIT30]),
-    row(&[c(Status::WalkMiddle, 90), WAIT30]),
-    row(&[c(Status::WalkFast, 90), WAIT30]),
-    row(&[
-        c(Status::Dash, 18),
-        c(Status::Run, 60),
-        c(Status::RunBrake, UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::JumpF, UNTIL_END),
-        c(Status::JumpAerialF, UNTIL_END),
-        c(Status::Fall, UNTIL_END),
-        c(Status::LandingLight, UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::JumpB, UNTIL_END),
-        c(Status::JumpAerialB, UNTIL_END),
-        c(Status::Fall, UNTIL_END),
-        c(Status::LandingLight, UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::JumpAerialF, UNTIL_END),
-        c(Status::LandingLight, UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::JumpAerialB, UNTIL_END),
-        c(Status::LandingLight, UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::Squat, UNTIL_END),
-        c(Status::SquatWait, UNTIL_END),
-        c(Status::SquatRv, UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::Ottotto, UNTIL_END),
-        c(Status::OttottoWait, UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[c(Status::FuraFura, 90), WAIT30]),
-    row(&[c(Status::Wait, UNTIL_END)]),
-    row(&[c(Status::DamageE1, 60), WAIT30]),
-    once(Status::EscapeF),
-    // EscapeB: EscapeF again in the source.
-    once(Status::EscapeF),
-    row(&[
-        c(Status::Attack11, UNTIL_END),
-        c(Status::Attack12, UNTIL_END),
-        WAIT30,
-    ]),
-    once(Status::AttackDash),
-    once(Status::AttackS3),
-    once(Status::AttackHi3),
-    row(&[
-        c(Status::AttackLw3, UNTIL_END),
-        c(Status::SquatRv, UNTIL_END),
-        WAIT30,
-    ]),
-    once(Status::AttackS4),
-    once(Status::AttackHi4),
-    once(Status::AttackLw4),
-    aerial(Status::AttackAirN),
-    aerial(Status::AttackAirF),
-    aerial(Status::AttackAirB),
-    aerial(Status::AttackAirHi),
-    aerial(Status::AttackAirLw),
-    once(Status::ThrowF),
-    once(Status::ThrowB),
-    row(&[d(DemoStatus::Win1)]),
-    row(&[d(DemoStatus::Win2)]),
-    row(&[d(DemoStatus::Win3)]),
-    row(&[d(DemoStatus::Win4)]),
-    row(&[d(DemoStatus::Lose)]),
-    once(Status::Appeal),
+/// `FTSTATUS_CHARACTERS_NULL`.
+const STATUS_NULL: u32 = 0xA2C2A;
+/// `FTSTATUS_CHARACTERS_DEMO(status_id)` is `0x20000 + status_id`.
+const STATUS_DEMO: u32 = 0x20000;
+/// `nFTDemoStatusNull`: `nFTDemoStatusWin1` to `...Lose` follow.
+const DEMO_STATUS_NULL: u32 = 0x10000;
+/// `nFTCommonStatusSpecialStart`: the status IDs from here are a fighter's
+/// own.
+const SPECIAL_START: u32 = 220;
+
+/// The common statuses the Characters scene plays.
+const COMMON_STATUSES: [Status; 39] = [
+    Status::Wait,
+    Status::WalkSlow,
+    Status::WalkMiddle,
+    Status::WalkFast,
+    Status::Dash,
+    Status::Run,
+    Status::RunBrake,
+    Status::JumpF,
+    Status::JumpB,
+    Status::JumpAerialF,
+    Status::JumpAerialB,
+    Status::Fall,
+    Status::FallAerial,
+    Status::LandingLight,
+    Status::Squat,
+    Status::SquatWait,
+    Status::SquatRv,
+    Status::Ottotto,
+    Status::OttottoWait,
+    Status::FuraFura,
+    Status::DamageE1,
+    Status::EscapeF,
+    Status::Attack11,
+    Status::Attack12,
+    Status::AttackDash,
+    Status::AttackS3,
+    Status::AttackHi3,
+    Status::AttackLw3,
+    Status::AttackS4,
+    Status::AttackHi4,
+    Status::AttackLw4,
+    Status::AttackAirN,
+    Status::AttackAirF,
+    Status::AttackAirB,
+    Status::AttackAirHi,
+    Status::AttackAirLw,
+    Status::ThrowF,
+    Status::ThrowB,
+    Status::Appeal,
 ];
 
-/// `dMNCharactersAttack1MotionDescs`, by `FTKind`. Donkey Kong's last
-/// track is left zero in the source and never reached.
-static ATTACK1_MOTIONS: [[Track; 8]; 12] = [
-    row(&[
-        c(Status::Attack11, UNTIL_END),
-        c(Status::Attack12, UNTIL_END),
-        a(S::Mario(MarioStatus::Attack13), UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::Attack11, UNTIL_END),
-        c(Status::Attack12, UNTIL_END),
-        a(S::Fox(FoxStatus::Attack100Start), UNTIL_END),
-        a(S::Fox(FoxStatus::Attack100Loop), UNTIL_END),
-        a(S::Fox(FoxStatus::Attack100End), UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::Attack11, UNTIL_END),
-        c(Status::Attack12, UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::Attack11, UNTIL_END),
-        c(Status::Attack12, UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::Attack11, UNTIL_END),
-        c(Status::Attack12, UNTIL_END),
-        a(S::Mario(MarioStatus::Attack13), UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::Attack11, UNTIL_END),
-        c(Status::Attack12, UNTIL_END),
-        a(S::Link(LinkStatus::Attack100Start), UNTIL_END),
-        a(S::Link(LinkStatus::Attack100Loop), UNTIL_END),
-        a(S::Link(LinkStatus::Attack100End), UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::Attack11, UNTIL_END),
-        c(Status::Attack12, UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::Attack11, UNTIL_END),
-        c(Status::Attack12, UNTIL_END),
-        a(S::Captain(CaptainStatus::Attack13), UNTIL_END),
-        a(S::Captain(CaptainStatus::Attack100Start), UNTIL_END),
-        a(S::Captain(CaptainStatus::Attack100Loop), UNTIL_END),
-        a(S::Captain(CaptainStatus::Attack100End), UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::Attack11, UNTIL_END),
-        c(Status::Attack12, UNTIL_END),
-        a(S::Kirby(KirbyStatus::Attack100Start), UNTIL_END),
-        a(S::Kirby(KirbyStatus::Attack100Loop), UNTIL_END),
-        a(S::Kirby(KirbyStatus::Attack100End), UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[c(Status::Attack11, UNTIL_END), WAIT30]),
-    row(&[
-        c(Status::Attack11, UNTIL_END),
-        c(Status::Attack12, UNTIL_END),
-        WAIT30,
-    ]),
-    row(&[
-        c(Status::Attack11, UNTIL_END),
-        c(Status::Attack12, UNTIL_END),
-        a(S::Ness(NessStatus::Attack13), UNTIL_END),
-        WAIT30,
-    ]),
-];
+/// The fighter-specific statuses the Characters scene plays, by `FTKind`
+/// (Luigi's are Mario's: same IDs).
+fn fighter_statuses(fk: usize) -> &'static [AnyStatus] {
+    match fk {
+        0 | 4 => &[
+            S::Mario(MarioStatus::SpecialHi),
+            S::Mario(MarioStatus::SpecialN),
+            S::Mario(MarioStatus::SpecialLw),
+            S::Mario(MarioStatus::Attack13),
+        ],
+        1 => &[
+            S::Fox(FoxStatus::SpecialHiStart),
+            S::Fox(FoxStatus::SpecialHiHold),
+            S::Fox(FoxStatus::SpecialHi),
+            S::Fox(FoxStatus::SpecialHiEnd),
+            S::Fox(FoxStatus::SpecialN),
+            S::Fox(FoxStatus::SpecialLwStart),
+            S::Fox(FoxStatus::SpecialLwLoop),
+            S::Fox(FoxStatus::SpecialLwEnd),
+            S::Fox(FoxStatus::Attack100Start),
+            S::Fox(FoxStatus::Attack100Loop),
+            S::Fox(FoxStatus::Attack100End),
+        ],
+        2 => &[
+            S::Donkey(DonkeyStatus::SpecialHi),
+            S::Donkey(DonkeyStatus::SpecialNStart),
+            S::Donkey(DonkeyStatus::SpecialNLoop),
+            S::Donkey(DonkeyStatus::SpecialNEnd),
+            S::Donkey(DonkeyStatus::SpecialLwStart),
+            S::Donkey(DonkeyStatus::SpecialLwLoop),
+            S::Donkey(DonkeyStatus::SpecialLwEnd),
+        ],
+        3 => &[
+            S::Samus(SamusStatus::SpecialHi),
+            S::Samus(SamusStatus::SpecialNStart),
+            S::Samus(SamusStatus::SpecialNLoop),
+            S::Samus(SamusStatus::SpecialNEnd),
+            S::Samus(SamusStatus::SpecialLw),
+        ],
+        5 => &[
+            S::Link(LinkStatus::SpecialHi),
+            S::Link(LinkStatus::SpecialHiEnd),
+            S::Link(LinkStatus::SpecialN),
+            S::Link(LinkStatus::SpecialLw),
+            S::Link(LinkStatus::Attack100Start),
+            S::Link(LinkStatus::Attack100Loop),
+            S::Link(LinkStatus::Attack100End),
+        ],
+        6 => &[
+            S::Yoshi(YoshiStatus::SpecialHi),
+            S::Yoshi(YoshiStatus::SpecialN),
+            S::Yoshi(YoshiStatus::SpecialLwStart),
+            S::Yoshi(YoshiStatus::SpecialAirLwLoop),
+            S::Yoshi(YoshiStatus::SpecialLwLanding),
+        ],
+        7 => &[
+            S::Captain(CaptainStatus::SpecialHi),
+            S::Captain(CaptainStatus::SpecialN),
+            S::Captain(CaptainStatus::SpecialLw),
+            S::Captain(CaptainStatus::Attack13),
+            S::Captain(CaptainStatus::Attack100Start),
+            S::Captain(CaptainStatus::Attack100Loop),
+            S::Captain(CaptainStatus::Attack100End),
+        ],
+        8 => &[
+            S::Kirby(KirbyStatus::SpecialHi),
+            S::Kirby(KirbyStatus::SpecialAirHiFall),
+            S::Kirby(KirbyStatus::SpecialHiLanding),
+            S::Kirby(KirbyStatus::SpecialNStart),
+            S::Kirby(KirbyStatus::SpecialNLoop),
+            S::Kirby(KirbyStatus::SpecialNEnd),
+            S::Kirby(KirbyStatus::SpecialLwStart),
+            S::Kirby(KirbyStatus::SpecialLwHold),
+            S::Kirby(KirbyStatus::SpecialLwEnd),
+            S::Kirby(KirbyStatus::Attack100Start),
+            S::Kirby(KirbyStatus::Attack100Loop),
+            S::Kirby(KirbyStatus::Attack100End),
+            S::Kirby(KirbyStatus::JumpAerialF1),
+        ],
+        9 => &[
+            S::Pikachu(PikachuStatus::SpecialHiEnd),
+            S::Pikachu(PikachuStatus::SpecialN),
+            S::Pikachu(PikachuStatus::SpecialLwStart),
+            S::Pikachu(PikachuStatus::SpecialLwLoop),
+            S::Pikachu(PikachuStatus::SpecialLwHit),
+            S::Pikachu(PikachuStatus::SpecialLwEnd),
+        ],
+        10 => &[
+            S::Purin(PurinStatus::SpecialHi),
+            S::Purin(PurinStatus::SpecialN),
+            S::Purin(PurinStatus::SpecialLw),
+            S::Purin(PurinStatus::JumpAerialF1),
+        ],
+        _ => &[
+            S::Ness(NessStatus::SpecialHiStart),
+            S::Ness(NessStatus::SpecialHiHold),
+            S::Ness(NessStatus::SpecialHiJibaku),
+            S::Ness(NessStatus::SpecialHiEnd),
+            S::Ness(NessStatus::SpecialN),
+            S::Ness(NessStatus::SpecialLwStart),
+            S::Ness(NessStatus::SpecialLwHold),
+            S::Ness(NessStatus::SpecialLwHit),
+            S::Ness(NessStatus::SpecialLwEnd),
+            S::Ness(NessStatus::Attack13),
+        ],
+    }
+}
 
-/// `dMNCharactersKirbyJumpAerialMotionDescs` and the Purin ones.
-const KIRBY_JUMP_AERIAL: [Track; 8] =
-    row(&[a(S::Kirby(KirbyStatus::JumpAerialF1), UNTIL_END), WAIT30]);
-const PURIN_JUMP_AERIAL: [Track; 8] =
-    row(&[a(S::Purin(PurinStatus::JumpAerialF1), UNTIL_END), WAIT30]);
-/// `dMNCharactersKirbyFallMotionDesc` and `...PurinFallMotionDesc`.
-const FLOATY_FALL: Track = c(Status::Fall, 30);
+/// A ROM `MNCharactersMotion` as a [`Track`], its fighter-specific status
+/// IDs read as `fk`'s (`FTKind`).
+///
+/// An all-zero record (the source leaves Donkey Kong's last Attack1 track
+/// and Pikachu's last Lw track undefined, and never reaches them) reads as
+/// [`NULL`]. Any other status the port has no name for is a bug in the
+/// candidate lists above, except in a stub build, which has no ROM data.
+fn track_of(fk: usize, raw: RawTrack) -> Track {
+    let length = raw.length;
+    let motion = if raw.status == 0 && raw.length == 0 {
+        return NULL;
+    } else if raw.status == STATUS_NULL {
+        Motion::Null
+    } else {
+        let id = raw.status.wrapping_sub(STATUS_DEMO);
+        // The demo statuses are stored as their own IDs, not DEMO()-wrapped.
+        let demo = raw.status.wrapping_sub(DEMO_STATUS_NULL);
+        const DEMOS: [DemoStatus; 5] = [
+            DemoStatus::Win1,
+            DemoStatus::Win2,
+            DemoStatus::Win3,
+            DemoStatus::Win4,
+            DemoStatus::Lose,
+        ];
+        if (1..=DEMOS.len() as u32).contains(&demo) {
+            Motion::Demo(DEMOS[demo as usize - 1])
+        } else if id < SPECIAL_START {
+            match COMMON_STATUSES.iter().find(|s| **s as u32 == id) {
+                Some(&s) => Motion::Status(AnyStatus::Common(s)),
+                None => unknown(raw),
+            }
+        } else {
+            match fighter_statuses(fk)
+                .iter()
+                .find(|s| u32::from(s.id()) == id)
+            {
+                Some(&s) => Motion::Status(s),
+                None => unknown(raw),
+            }
+        }
+    };
+    Track { motion, length }
+}
 
-/// `mnCharactersGetMotion`.
+/// A status the candidate lists lack: an error with the ROM's tables, an
+/// empty track with the stub's zeroes.
+fn unknown(raw: RawTrack) -> Motion {
+    if cfg!(ssb64_stub_tables) {
+        return Motion::Null;
+    }
+    panic!(
+        "Characters motion status 0x{:X} has no port name",
+        raw.status
+    )
+}
+
+/// `mnCharactersGetMotion`, from the ROM's tables.
 pub fn motion(kind: FighterKind, motion_kind: usize, track: usize) -> Track {
     let fk = (kind as usize).min(11);
     let track = track.min(7);
     if motion_kind <= SPECIAL_LW {
-        return SPECIAL_MOTIONS[fk][motion_kind][track];
+        return track_of(fk, generated::SPECIAL[fk][motion_kind][track]);
     }
     if matches!(kind, FighterKind::Kirby | FighterKind::Purin) {
         if motion_kind == JUMP_AERIAL_F || motion_kind == JUMP_AERIAL_B {
             return if kind == FighterKind::Kirby {
-                KIRBY_JUMP_AERIAL[track]
+                track_of(fk, generated::KIRBY_JUMP_AERIAL[track])
             } else {
-                PURIN_JUMP_AERIAL[track]
+                track_of(fk, generated::PURIN_JUMP_AERIAL[track])
             };
         }
         if (ATTACK_AIR_START..=ATTACK_AIR_END).contains(&motion_kind) && track == 1 {
-            return FLOATY_FALL;
+            return track_of(
+                fk,
+                if kind == FighterKind::Kirby {
+                    generated::KIRBY_FALL
+                } else {
+                    generated::PURIN_FALL
+                },
+            );
         }
     }
     if motion_kind == ATTACK1 {
-        return ATTACK1_MOTIONS[fk][track];
+        return track_of(fk, generated::ATTACK1[fk][track]);
     }
-    COMMON_MOTIONS[motion_kind.min(MOTION_KINDS - 1)][track]
+    track_of(
+        fk,
+        generated::COMMON[motion_kind.min(MOTION_KINDS - 1)][track],
+    )
 }
 
 /// `mnCharactersMakeFighterCamera`: eye (0, 0, 3000) looking at

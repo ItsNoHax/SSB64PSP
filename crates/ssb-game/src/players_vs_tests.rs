@@ -215,6 +215,7 @@ fn with_handicap_off_a_humans_arrows_do_nothing() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn free_for_all_gives_a_repeated_fighter_the_next_free_costume() {
     let mut s = first_visit(BattleState::default());
     toggle_kind(&mut s, 2); // CPU Mario, costume 0.
@@ -228,6 +229,7 @@ fn free_for_all_gives_a_repeated_fighter_the_next_free_costume() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn team_battle_dresses_fighters_in_team_costumes_and_the_team_button_cycles() {
     let mut s = fox_vs_cpu_mario(BattleState::default());
     cursor_at(&mut s, 30.0, 15.0);

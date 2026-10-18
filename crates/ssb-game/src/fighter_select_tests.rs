@@ -169,6 +169,7 @@ fn the_cursor_carries_the_cpu_puck_and_it_snaps_back_down_off_the_grid() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn c_buttons_pick_a_costume_the_other_slot_is_not_wearing() {
     let mut s = first_visit(0); // CPU Mario, costume 0.
     place(&mut s, FighterKind::Mario);

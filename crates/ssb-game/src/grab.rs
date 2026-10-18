@@ -3403,6 +3403,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn mario_forward_throw_releases_on_frame_fourteen() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
@@ -3430,6 +3431,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn pikachu_throws_release_on_source_frames_without_turning() {
         for (back, release, damage) in [(false, 20.0, 12), (true, 34.0, 18)] {
             let mut pika = grounded(FighterKind::Pikachu, 0, 0.0);
@@ -3541,6 +3543,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn back_throw_turns_mario_and_launches_behind_him() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
@@ -3718,6 +3721,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn cargo_keeps_a_light_hit_and_drops_on_a_strong_hit() {
         let mut dk = grounded(FighterKind::Donkey, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
@@ -3804,6 +3808,7 @@ mod tests {
     /// halves it, and `ftCommonDamageCheckCaptureKeepHold` keeps the hold
     /// while the queued damage stays under 6.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_light_hit_on_a_held_fighter_keeps_the_hold() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
@@ -3835,6 +3840,7 @@ mod tests {
     /// status and the catcher loses its grip with
     /// `dFTCommonThrownNoDamageKnockback` (20 base knockback, no damage).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_strong_hit_on_a_held_fighter_breaks_the_hold() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
@@ -3926,6 +3932,7 @@ mod tests {
     /// on both sides, and each enters its own damage status. The result is
     /// the same whichever fighter's `ftMainProcParams` runs first.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_catcher_and_its_held_fighter_hit_together_both_fly() {
         for held_first in [false, true] {
             let mut mario = grounded(FighterKind::Mario, 0, 0.0);
@@ -3980,6 +3987,7 @@ mod tests {
     /// catcher for the hit's hitlag in the same frame
     /// (`grab_fp->hitlag_tics = ftParamGetHitLag(...)`).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_light_hit_on_the_held_fighter_freezes_its_catcher_at_once() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);

@@ -16647,6 +16647,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn manager_effect_inventory_has_46_unique_graphs() {
         let ordered_keys: Vec<_> = MANAGER_EFFECT_ASSETS
             .iter()

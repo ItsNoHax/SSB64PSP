@@ -44,29 +44,20 @@ pub mod sprite {
     pub const BROS: u32 = 0x25188;
 
     /// `dMNTitleFireSpriteOffsets`: `llMNTitleFireAnimFrame1Sprite` to
-    /// `...Frame30Sprite`.
-    pub const FIRE: [u32; 30] = [
-        0x1018, 0x2078, 0x30D8, 0x4138, 0x5198, 0x61F8, 0x7258, 0x82B8, 0x9318, 0xA378, 0xB3D8,
-        0xC438, 0xD498, 0xE4F8, 0xF558, 0x105B8, 0x11618, 0x12678, 0x136D8, 0x14738, 0x15798,
-        0x167F8, 0x17858, 0x188B8, 0x19918, 0x1A978, 0x1B9D8, 0x1CA38, 0x1DA98, 0x1EAF8,
-    ];
+    /// `...Frame30Sprite`, generated from the ROM.
+    pub use super::generated::FIRE;
 }
 
-/// `dMNTitleCommonSpriteDescs` (US): each kind's centre and sprite.
-/// `DropShadow`, `Smash`, `Super`, `Bros` and `TM` are the labels,
-/// `Footer` and `Header` the copyright and the upper border.
-pub const SPRITE_DESCS: [([f32; 2], u32); 10] = [
-    ([157.0, 94.0], sprite::CUTOUT),
-    ([161.0, 88.0], sprite::SMASH),
-    ([55.0, 96.0], sprite::SUPER),
-    ([268.0, 96.0], sprite::BROS),
-    ([270.0, 132.0], sprite::TM_UNK),
-    ([160.0, 208.0], sprite::COPYRIGHT),
-    ([160.0, 15.0], sprite::BORDER_UPPER),
-    ([162.0, 177.0], sprite::PRESS_START),
-    ([260.0, 60.0], sprite::LOGO_ANIM_FULL),
-    ([277.0, 157.0], 0xF398),
-];
+/// `dMNTitleFireSpriteOffsets`, `dMNTitleFireColorsR`, `G` and `B` and
+/// `dMNTitleCommonSpriteDescs` (US: each kind's centre and sprite;
+/// `DropShadow`, `Smash`, `Super`, `Bros` and `TM` are the labels, `Footer`
+/// and `Header` the copyright and the upper border), generated at build time
+/// from the ROM by `crates/ssb-tablegen` (`menu_data.rs`).
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/title_data.rs"));
+}
+use generated::FIRE_COLORS;
+pub use generated::SPRITE_DESCS;
 
 /// `nMNTitleSpriteKind*` (US).
 const KIND_DROP_SHADOW: usize = 0;
@@ -75,17 +66,6 @@ const KIND_FOOTER: usize = 5;
 const KIND_HEADER: usize = 6;
 const KIND_PRESS_START: usize = 7;
 const KIND_LOGO: usize = 8;
-
-/// `dMNTitleFireColorsR`, `G` and `B`.
-const FIRE_COLORS: [[u8; 3]; 7] = [
-    [0xFF, 0xFF, 0xFF],
-    [0xFF, 0xF0, 0x9B],
-    [0xFF, 0xFF, 0x64],
-    [0xFF, 0xD1, 0xD1],
-    [0xE6, 0xFF, 0xE6],
-    [0xFF, 0xE2, 0xB8],
-    [0xFF, 0xD2, 0x94],
-];
 
 /// `nMNTitleLayout*`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

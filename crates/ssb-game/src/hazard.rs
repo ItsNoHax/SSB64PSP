@@ -103,33 +103,13 @@ impl HazardThrow {
     }
 }
 
-/// `dFTMainGroundHitCollisionAttributes` @ 0x80128D30.
-const fn floor(
-    kind: i32,
-    damage: i32,
-    angle: i32,
-    kbs: i32,
-    kbw: i32,
-    element: i32,
-) -> GroundAttack {
-    GroundAttack {
-        kind,
-        damage,
-        angle,
-        kb_scale: kbs,
-        kb_weight: kbw,
-        kb_base: 0,
-        element,
-    }
+/// `dFTMainGroundHitCollisionAttributes`, generated at build time from the
+/// ROM by `crates/ssb-tablegen` (`battle_data.rs`).
+pub use generated::DAMAGE_FLOORS;
+mod generated {
+    use super::GroundAttack;
+    include!(concat!(env!("OUT_DIR"), "/ground_hit_attacks.rs"));
 }
-pub const DAMAGE_FLOORS: [GroundAttack; 6] = [
-    floor(4, 1, 361, 100, 100, 1),
-    floor(5, 10, 90, 100, 200, 1),
-    floor(6, 10, 90, 100, 100, 1),
-    floor(7, 10, 361, 100, 80, 3),
-    floor(8, 1, 90, 100, 100, 1),
-    floor(9, 1, 90, 100, 100, 1),
-];
 
 /// `nMPMaterial*` values that `ftMainGetGroundHitObstacle` tests.
 pub mod material {
@@ -563,6 +543,7 @@ mod tests {
     use crate::fighter::FighterKind;
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn damage_floors_follow_the_source_table() {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
         f.situation = crate::fighter::Situation::Ground;
@@ -577,6 +558,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn ground_knockback_skips_the_damage_ratio_and_clamps() {
         let kb = ground_hazard_knockback(0, 0, 0, 0, 100, 3000, 1.0, 9, 9);
         assert_eq!(kb, 2500.0);

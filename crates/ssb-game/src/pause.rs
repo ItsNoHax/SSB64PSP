@@ -28,36 +28,14 @@ pub struct Decal {
     pub env: [u8; 3],
 }
 
-const fn decal(sprite: u8, x: i16, y: i16, prim: [u8; 3], env: [u8; 3]) -> Decal {
-    Decal {
-        sprite,
-        pos: (x, y),
-        prim,
-        env,
-    }
+/// The pause menu's decals (`dIFCommonBattlePauseDecalsSpriteData` and
+/// `...BorderRectangle` in `if/ifcommon.c`), generated at build time from the
+/// ROM by `crates/ssb-tablegen` (`ifcommon.rs`).
+mod generated {
+    use super::Decal;
+    include!(concat!(env!("OUT_DIR"), "/if_pause.rs"));
 }
-
-const WHITE: [u8; 3] = [0xFF; 3];
-const BLACK: [u8; 3] = [0; 3];
-const GREY: [u8; 3] = [0x80; 3];
-const DARK: [u8; 3] = [0x21; 3];
-
-/// The common pause-menu decals used by the VS presentation. Bonus courses
-/// add their L: RETRY labels separately from rows 12 and 13 of source data.
-pub const DECALS: [Decal; 12] = [
-    decal(4, 232, 191, WHITE, BLACK),
-    decal(9, 99, 203, [0x00, 0x95, 0xFF], [0x00, 0x05, 0xC7]),
-    decal(10, 122, 203, [0x36, 0xBF, 0x00], [0x00, 0x30, 0x00]),
-    decal(11, 145, 202, GREY, DARK),
-    decal(12, 164, 203, GREY, DARK),
-    decal(5, 113, 206, WHITE, BLACK),
-    decal(5, 136, 206, WHITE, BLACK),
-    decal(5, 155, 206, WHITE, BLACK),
-    decal(6, 182, 205, WHITE, BLACK),
-    decal(7, 198, 191, WHITE, BLACK),
-    decal(13, 21, 19, [0xFF, 0x00, 0x00], BLACK),
-    decal(14, 31, 29, WHITE, [0x14, 0x18, 0x11]),
-];
+pub use generated::{BONUS_RETRY, BORDER, DECALS};
 
 /// `ifCommonBattlePauseMakeSObjsAll`: ten decals unless the camera zooms.
 pub fn decals(kind: PauseKind) -> &'static [Decal] {
@@ -67,25 +45,9 @@ pub fn decals(kind: PauseKind) -> &'static [Decal] {
     }
 }
 
-/// `dIFCommonBattlePauseDecalsSpriteData[12..14]`: L and RETRY on bonus courses.
-pub const BONUS_RETRY: [Decal; 2] = [
-    decal(15, 34, 203, GREY, DARK),
-    decal(8, 51, 205, WHITE, BLACK),
-];
-
 /// `ifCommonBattlePausePlayerNumMakeSObj`: "1P" to "4P" (sprites 0 to 3)
 /// at (213, 191), white.
 pub const PLAYER_NUM_POS: (i16, i16) = (213, 191);
-
-/// `dIFCommonBattlePauseBorderRectangle`: `ulx, uly, lrx, lry`, filled in
-/// white (`G_CYC_FILL`, both corners inclusive).
-pub const BORDER: [[i16; 4]; 5] = [
-    [26, 24, 294, 26],
-    [26, 24, 28, 199],
-    [26, 197, 190, 199],
-    [292, 24, 294, 199],
-    [279, 197, 294, 199],
-];
 
 /// `ifCommonBattleGoUpdateInterface`'s choice:
 /// `gmCameraCheckPausePlayerOutBounds`.

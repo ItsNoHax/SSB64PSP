@@ -25,20 +25,16 @@ use ssb_engine::math::{sin_cos, Vec3};
 /// The wing's collision group (`mpCollisionSetYakumono*ID(1)`).
 pub const WING_GROUP: u8 = 1;
 
-/// `dGRSectorArwingMapPositionsX`: where a fifth of the plane patterns
-/// pass instead of the centre.
-pub const MAP_POSITIONS_X: [i16; 3] = [-3000, 0, 9000];
-/// `dGRSectorArwingLaserCounts`: 2 for the plane patterns, 0 for the
-/// background ones.
-pub const LASER_COUNTS: [u8; 8] = [2, 2, 2, 2, 2, 0, 0, 0];
-/// `dGRSectorArwingPilotIDs`.
-pub const PILOT_IDS: [u8; 56] = [
-    1, 1, 2, 3, 4, 4, 5, 0, 0, 0, 0, 2, 3, 4, 4, 5, 0, 0, 0, 0, 1, 1, 3, 4, 4, 5, 0, 0, 0, 0, 1, 1,
-    2, 4, 4, 5, 0, 0, 0, 0, 1, 1, 2, 3, 5, 0, 0, 0, 0, 1, 1, 2, 3, 4, 4, 0,
-];
-/// `dGRSectorArwingPilotWaitTimers`: each previous pilot's
-/// `(first, count)` window into [`PILOT_IDS`].
-pub const PILOT_WINDOWS: [(u8, u8); 6] = [(0, 7), (7, 9), (16, 10), (26, 10), (36, 9), (45, 10)];
+/// The Arwing's `dGRSectorArwing*` tables, generated at build time from the
+/// ROM by `crates/ssb-tablegen` (`battle_data.rs`): `MAP_POSITIONS_X`,
+/// where a fifth of the plane patterns pass instead of the centre;
+/// `LASER_COUNTS`, 2 for the plane patterns and 0 for the background ones;
+/// `PILOT_IDS`; and `PILOT_WINDOWS` (`...PilotWaitTimers`), each previous
+/// pilot's `(first, count)` window into `PILOT_IDS`.
+pub use generated::{LASER_COUNTS, MAP_POSITIONS_X, PILOT_IDS, PILOT_WINDOWS};
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/sector_arwing.rs"));
+}
 
 /// `DOBJ_FLAG_HIDDEN`.
 pub const DOBJ_HIDDEN: u16 = 1 << 1;

@@ -73,150 +73,26 @@ pub fn congra_part(s: &Sprite, part: usize) -> Sprite {
     }
 }
 
-/// `dMNCongraPictures`' files by `FTKind` (Mario .. Ness): bottom, top
-/// (`llMNCongra*FileID`).
-pub const CONGRA_FILES: [[u32; 2]; 12] = [
-    [0xba, 0xbb], // Mario
-    [0xbe, 0xbf], // Fox
-    [0xb8, 0xb9], // Donkey
-    [0xb0, 0xb1], // Samus
-    [0xbc, 0xbd], // Luigi
-    [0xb2, 0xb3], // Link
-    [0xac, 0xad], // Yoshi
-    [0xb6, 0xb7], // Captain
-    [0xaa, 0xab], // Kirby
-    [0xae, 0xaf], // Pikachu
-    [0xb4, 0xb5], // Purin
-    [0xc0, 0xc1], // Ness
-];
-
-/// The congratulations picture files as sprite files, bottom then top.
-pub const CONGRA: [SpriteFile; 24] = [
-    SpriteFile {
-        file: 0xba,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xbb,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xbe,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xbf,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xb8,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xb9,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xb0,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xb1,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xbc,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xbd,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xb2,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xb3,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xac,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xad,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xb6,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xb7,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xaa,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xab,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xae,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xaf,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xb4,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xb5,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xc0,
-        offsets: &[CONGRA_SPRITE],
-    },
-    SpriteFile {
-        file: 0xc1,
-        offsets: &[CONGRA_SPRITE],
-    },
-];
+// `dMNCongraPictures`' files by `FTKind` (Mario .. Ness), bottom then top
+// (`CONGRA_FILES`), and as sprite files (`CONGRA`), generated at build time
+// from the user's ROM by `crates/ssb-tablegen` (never committed).
+include!(concat!(env!("OUT_DIR"), "/ending_congra.rs"));
 
 /// File 195, `SCStaffroll`.
 pub const STAFFROLL_FILE: u32 = 0xc3;
 
-/// `dSCStaffrollNameAndJobSpriteInfo`'s images by name/job font index:
-/// A-Z, a-z, period, comma, apostrophe, 4. Each is a raw I4 image whose
-/// rows are its width rounded up to 16 texels
-/// (`scStaffrollInitNameAndJobDisplayLists`'s `gDPLoadTextureBlock_4b`).
-pub const NAME_IMAGES: [u32; 56] = [
-    0x8, 0x218, 0x398, 0x4f8, 0x728, 0x888, 0xa08, 0xc38, 0xe68, 0xfe8, 0x1188, 0x13b8, 0x1538,
-    0x17d8, 0x19e8, 0x1c88, 0x1e08, 0x2038, 0x2198, 0x22f8, 0x2478, 0x25d8, 0x27e8, 0x2a88, 0x2c98,
-    0x2e18, 0x178, 0x2d8, 0x458, 0x668, 0x7e8, 0x948, 0xb78, 0xda8, 0xf28, 0x10a8, 0x12f8, 0x1478,
-    0x16a8, 0x1948, 0x1b58, 0x1d48, 0x1f78, 0x20f8, 0x2258, 0x23b8, 0x2538, 0x2748, 0x2958, 0x2bf8,
-    0x2d58, 0x2f88, 0x3078, 0x3018, 0x30b8, 0x3118,
-];
-
-/// `dSCStaffrollTextBoxSpriteInfo`'s sprites by text font index: A-Z, a-z,
-/// colon, 9 to 0, period, dash, comma, ampersand, quote, slash, apostrophe,
-/// question mark, brackets, e-acute.
-pub const TEXT_SPRITES: [u32; 74] = [
-    0x3258, 0x33e8, 0x3588, 0x3718, 0x38b8, 0x3a48, 0x3be8, 0x3d78, 0x3f18, 0x40b8, 0x4258, 0x43f8,
-    0x4598, 0x4728, 0x48b8, 0x4a48, 0x4bd8, 0x4d68, 0x4ef8, 0x5088, 0x5228, 0x53b8, 0x5548, 0x56d8,
-    0x5868, 0x59f8, 0x3310, 0x34b0, 0x3640, 0x37e0, 0x3970, 0x3b10, 0x3ca8, 0x3e40, 0x3fe0, 0x4188,
-    0x4320, 0x44c0, 0x4650, 0x47e0, 0x4970, 0x4b08, 0x4c98, 0x4e20, 0x4fb0, 0x5150, 0x52e0, 0x5470,
-    0x5600, 0x5790, 0x5928, 0x5ab0, 0x5b70, 0x6468, 0x6398, 0x62c8, 0x61f8, 0x6128, 0x6058, 0x5f88,
-    0x5eb8, 0x5de8, 0x6538, 0x5c90, 0x5d18, 0x5c00, 0x6698, 0x65c0, 0x6758, 0x67e0, 0x68b8, 0x6988,
-    0x6a58, 0x6b20,
-];
+// `NAME_IMAGES` and `TEXT_SPRITES`, generated at build time from the user's
+// ROM by `crates/ssb-tablegen` (never committed):
+//
+// `NAME_IMAGES` is `dSCStaffrollNameAndJobSpriteInfo`'s images by name/job
+// font index: A-Z, a-z, period, comma, apostrophe, 4. Each is a raw I4 image
+// whose rows are its width rounded up to 16 texels
+// (`scStaffrollInitNameAndJobDisplayLists`'s `gDPLoadTextureBlock_4b`).
+//
+// `TEXT_SPRITES` is `dSCStaffrollTextBoxSpriteInfo`'s sprites by text font
+// index: A-Z, a-z, colon, 9 to 0, period, dash, comma, ampersand, quote,
+// slash, apostrophe, question mark, brackets, e-acute.
+include!(concat!(env!("OUT_DIR"), "/ending_staffroll_offsets.rs"));
 
 /// A name/job letter image as a sprite: the `width` x `height` texels the
 /// letter's quad samples (`tc` from 0 to `width` and `height`), cut from
@@ -403,6 +279,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_staffroll_sprite_list_is_the_text_font_then_three() {
         let mut font: Vec<u32> = TEXT_SPRITES.to_vec();
         font.sort_unstable();
@@ -415,6 +292,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_congratulations_files_cover_the_twenty_four_pictures() {
         for (i, pair) in CONGRA_FILES.iter().enumerate() {
             assert_eq!([CONGRA[2 * i].file, CONGRA[2 * i + 1].file], *pair);

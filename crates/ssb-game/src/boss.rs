@@ -88,20 +88,18 @@ pub const BULLET_JOINT_FIRST: u8 = 15;
 pub const BULLET_JOINT_FOLLOW: u8 = 19;
 
 /// `ftbosswait.o`'s `.data` (0x80188DC0, 0x40 bytes) and the 16 zero
-/// bytes of `ftkirbyspecialn.o` after it, as the US ROM holds them
-/// (`crates/ssb-rom/tests/boss.rs`): `dFTBossWaitRandomStatusIDs` (+0x00),
-/// `...StatusLookup` (+0x0C), `...Ground` (+0x1C), `...NoGround` (+0x24)
-/// and `...ArrayLookup` (+0x2C). `ftBossWaitDecideStatusComputer` indexes
-/// past the tables: its first roll reads `ArrayLookup[-3..-1]` (the
-/// initial `status_id` is -1), which can pick group 10, whose rows lie in
-/// the following bytes. The port reads the same bytes.
-pub const WAIT_DATA: [u8; 0x50] = [
-    0xDF, 0xE0, 0xE4, 0xE8, 0xEC, 0xEF, 0xF0, 0xE1, 0xF4, 0xF8, 0xF1, 0x00, 0x00, 0x01, 0x02, 0x03,
-    0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x04, 0x06, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x04,
-    0x07, 0x03, 0x0A, 0x01, 0x00, 0x03, 0x0B, 0x02, 0x07, 0x03, 0x0A, 0x01, 0x01, 0x02, 0x03, 0x00,
-    0x02, 0x03, 0x00, 0x01, 0x03, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-];
+/// bytes of `ftkirbyspecialn.o` after it, as the US ROM holds them,
+/// generated at build time by `crates/ssb-tablegen` (`battle_data.rs`):
+/// `dFTBossWaitRandomStatusIDs` (+0x00), `...StatusLookup` (+0x0C),
+/// `...Ground` (+0x1C), `...NoGround` (+0x24) and `...ArrayLookup` (+0x2C).
+/// `ftBossWaitDecideStatusComputer` indexes past the tables: its first roll
+/// reads `ArrayLookup[-3..-1]` (the initial `status_id` is -1), which can
+/// pick group 10, whose rows lie in the following bytes. The port reads the
+/// same bytes.
+pub use generated::WAIT_DATA;
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/boss_wait.rs"));
+}
 const STATUS_IDS: i32 = 0x00;
 const STATUS_LOOKUP: i32 = 0x0C;
 const RANDOM_GROUND: i32 = 0x1C;

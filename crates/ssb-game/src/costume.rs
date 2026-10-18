@@ -8,40 +8,16 @@ use ssb_engine::input::N64Buttons;
 
 use crate::fighter::FighterKind;
 
-/// `FTCostume::royal` from `dFTParamCostumeIDs`, indexed by the
-/// `nFTKind` order: the costume each select button (C-Up, C-Right, C-Down,
-/// C-Left) picks in free-for-all. Kinds past Ness have one costume.
-const ROYAL: [[u8; 4]; 12] = [
-    [0, 1, 2, 3], // Mario
-    [0, 1, 2, 3], // Fox
-    [0, 1, 2, 3], // Donkey Kong
-    [0, 1, 2, 3], // Samus
-    [0, 1, 2, 3], // Luigi
-    [0, 2, 3, 1], // Link
-    [0, 1, 2, 3], // Yoshi
-    [0, 4, 1, 3], // Captain Falcon
-    [0, 1, 2, 3], // Kirby
-    [0, 1, 2, 3], // Pikachu
-    [0, 1, 2, 3], // Jigglypuff
-    [0, 1, 2, 3], // Ness
-];
-
-/// `FTCostume::team` from `dFTParamCostumeIDs`, indexed by the `nFTKind`
-/// order: the costume a fighter wears on the red, blue and green team.
-const TEAM: [[u8; 3]; 12] = [
-    [0, 3, 4], // Mario
-    [1, 2, 3], // Fox
-    [2, 3, 4], // Donkey Kong
-    [0, 4, 3], // Samus
-    [3, 2, 0], // Luigi
-    [2, 3, 0], // Link
-    [1, 2, 0], // Yoshi
-    [1, 5, 2], // Captain Falcon
-    [3, 2, 4], // Kirby
-    [1, 2, 3], // Pikachu
-    [1, 2, 3], // Jigglypuff
-    [0, 2, 3], // Ness
-];
+/// `FTCostume::royal` and `::team` from `dFTParamCostumeIDs`, indexed by
+/// the `nFTKind` order: the costume each select button (C-Up, C-Right,
+/// C-Down, C-Left) picks in free-for-all, and the one a fighter wears on
+/// the red, blue and green team. Kinds past Ness have one costume.
+/// Generated at build time from the ROM by `crates/ssb-tablegen`
+/// (`battle_data.rs`).
+use generated::{ROYAL, TEAM};
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/costume_ids.rs"));
+}
 
 /// `ftParamGetCostumeTeamID(fkind, team)`.
 pub fn costume_team_id(kind: FighterKind, team: u8) -> u8 {
@@ -124,6 +100,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn c_buttons_pick_the_royal_row() {
         assert_eq!(select_button(N64Buttons(N64Buttons::C_DOWN)), Some(2));
         assert_eq!(select_button(N64Buttons(N64Buttons::A)), None);
@@ -151,6 +128,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_costume_the_other_slot_wears_is_denied() {
         let dummy = Slot {
             kind: FighterKind::Mario,

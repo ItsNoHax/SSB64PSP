@@ -62,6 +62,7 @@ fn the_roll_reaches_its_last_name_with_the_rom_tables() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_letter_images_fit_before_the_next_and_the_camera_bakes() {
     let Some(bytes) = rom_bytes() else { return };
     let info = rom::identify(&bytes).unwrap();

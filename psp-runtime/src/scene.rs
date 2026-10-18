@@ -343,55 +343,79 @@ const fn with_anim(key: (u32, u32), slot: u32) -> EntryPart {
     }
 }
 
+/// The manager effect at `slot`'s `ssb_rom::effect::MANAGER_EFFECT_KEYS`
+/// key, read from the generated table (`ssb_rom::effect::slot`).
+const fn effect_key(slot: usize) -> (u32, u32) {
+    ssb_rom::effect::MANAGER_EFFECT_KEYS[slot]
+}
+
 /// The entry effects' parts, each on its own `ssb_rom::effect` key: Mario's
 /// and Luigi's pipe (`llMarioSpecial2EntryDokanDObjDesc`, file 356 for
 /// both: `dFTLuigiData` names `llMarioSpecial2FileID`), Donkey Kong's
 /// barrel, Samus's capsule, Link's wave and beam, Yoshi's egg, Kirby's star
 /// both ways, Fox's Arwing both ways, Captain Falcon's car, the Poké Ball
 /// both ways and its rays.
-pub const ENTRY_PARTS: [EntryPart; 14] = [
-    manager_part((356, 0x0608)),
-    manager_part((355, 0x07C8)),
-    manager_part((349, 0x0B90)),
-    manager_part((353, 0x03F8)),
-    manager_part((353, 0x07B8)),
-    manager_part((354, 0x0530)),
-    manager_part((348, 0x1DA8)),
-    with_anim((348, 0x1DA8), ssb_rom::effect::ENTRY_KIRBY_STAR_R_ANIM_SLOT),
-    EntryPart {
-        root: EntryRoot::Outer,
-        end_node: Some(0),
-        link: EntryLink::SortZNeg(0),
-        extra_billboards: &[10],
-        ..with_anim((161, 0x2C30), ssb_rom::effect::ENTRY_ARWING_R_ANIM_SLOT)
-    },
-    EntryPart {
-        root: EntryRoot::Outer,
-        end_node: Some(0),
-        link: EntryLink::SortZNeg(0),
-        extra_billboards: &[10],
-        ..with_anim((161, 0x2C30), ssb_rom::effect::ENTRY_ARWING_R_ANIM_SLOT + 1)
-    },
-    EntryPart {
-        turns_left: true,
-        end_node: Some(1),
-        link: EntryLink::SortCar(1),
-        extra_billboards: &[3, 5, 7, 9],
-        ..with_anim((350, 0x5FC0), ssb_rom::effect::ENTRY_CAR_ANIM_SLOT)
-    },
-    EntryPart {
-        link: EntryLink::Ball(1),
-        ..manager_part((86, 0x9430))
-    },
-    EntryPart {
-        link: EntryLink::Ball(1),
-        ..with_anim((86, 0x9430), ssb_rom::effect::ENTRY_BALL_R_ANIM_SLOT)
-    },
-    EntryPart {
-        clock: EntryClock::Rays,
-        ..manager_part((85, 0x0628))
-    },
-];
+pub const ENTRY_PARTS: [EntryPart; 14] = {
+    use ssb_rom::effect::slot;
+    [
+        manager_part(effect_key(slot::MARIO_ENTRY_DOKAN)),
+        manager_part(effect_key(slot::DONKEY_ENTRY_TARU)),
+        manager_part(effect_key(slot::SAMUS_ENTRY_POINT)),
+        manager_part(effect_key(slot::LINK_ENTRY_WAVE)),
+        manager_part(effect_key(slot::LINK_ENTRY_BEAM)),
+        manager_part(effect_key(slot::YOSHI_ENTRY_EGG)),
+        manager_part(effect_key(slot::KIRBY_ENTRY_STAR)),
+        with_anim(
+            effect_key(slot::KIRBY_ENTRY_STAR),
+            ssb_rom::effect::ENTRY_KIRBY_STAR_R_ANIM_SLOT,
+        ),
+        EntryPart {
+            root: EntryRoot::Outer,
+            end_node: Some(0),
+            link: EntryLink::SortZNeg(0),
+            extra_billboards: &[10],
+            ..with_anim(
+                effect_key(slot::FOX_ENTRY_ARWING),
+                ssb_rom::effect::ENTRY_ARWING_R_ANIM_SLOT,
+            )
+        },
+        EntryPart {
+            root: EntryRoot::Outer,
+            end_node: Some(0),
+            link: EntryLink::SortZNeg(0),
+            extra_billboards: &[10],
+            ..with_anim(
+                effect_key(slot::FOX_ENTRY_ARWING),
+                ssb_rom::effect::ENTRY_ARWING_R_ANIM_SLOT + 1,
+            )
+        },
+        EntryPart {
+            turns_left: true,
+            end_node: Some(1),
+            link: EntryLink::SortCar(1),
+            extra_billboards: &[3, 5, 7, 9],
+            ..with_anim(
+                effect_key(slot::CAPTAIN_ENTRY_CAR),
+                ssb_rom::effect::ENTRY_CAR_ANIM_SLOT,
+            )
+        },
+        EntryPart {
+            link: EntryLink::Ball(1),
+            ..manager_part(effect_key(slot::M_BALL_THROWN))
+        },
+        EntryPart {
+            link: EntryLink::Ball(1),
+            ..with_anim(
+                effect_key(slot::M_BALL_THROWN),
+                ssb_rom::effect::ENTRY_BALL_R_ANIM_SLOT,
+            )
+        },
+        EntryPart {
+            clock: EntryClock::Rays,
+            ..manager_part(effect_key(slot::M_BALL_RAYS))
+        },
+    ]
+};
 
 /// The [`ENTRY_PARTS`] a fighter's entry effect draws: the rightward
 /// tables for `lr == +1`, the leftward ones otherwise
@@ -484,14 +508,8 @@ pub const SHIELD_EFFECT_KEY: (u32, u32) = (163, 0x0300);
 
 /// `dEFManagerShieldColors`: `(PRIM, ENV)` RGB per player, and the
 /// damaged-shield pair last. `efManagerShieldProcDisplay` sets both with
-/// alpha 0xC0.
-pub const SHIELD_COLORS: [([u8; 3], [u8; 3]); 5] = [
-    ([0xFF, 0xFF, 0xFF], [0xFF, 0x00, 0x00]),
-    ([0xFF, 0xFF, 0xFF], [0x00, 0xFF, 0x00]),
-    ([0xFF, 0xFF, 0xFF], [0x00, 0x00, 0xFF]),
-    ([0xFF, 0xFF, 0xFF], [0x00, 0x00, 0x00]),
-    ([0xFF, 0xFF, 0xFF], [0xC0, 0xC0, 0xC0]),
-];
+/// alpha 0xC0. Generated from the ROM (`ssb_game::combat`).
+pub use ssb_game::combat::SHIELD_COLORS;
 
 /// `dEFManagerPikachuThunderShockEffectDesc`: file 347's four-node spark
 /// tree and its three animations, in `gfx_id` order: the desc's own, then

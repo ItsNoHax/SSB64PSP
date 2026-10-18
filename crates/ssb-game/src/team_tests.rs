@@ -50,6 +50,7 @@ fn fighter_lands(rules: TeamRules, attacker_team: u8, victim_team: u8) -> bool {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_teammates_attack_passes_through_only_with_team_attack_off() {
     assert!(!fighter_lands(TeamRules::TEAMS, 0, 0));
     assert!(fighter_lands(TeamRules::TEAMS, 0, 1));
@@ -127,6 +128,7 @@ fn a_teammates_weapon_passes_through_only_with_team_attack_off() {
 /// `wpProcessProcHitCollisions`: a reflected weapon takes its reflector's
 /// team, so it then spares the reflector's teammates and hits the thrower's.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_reflected_weapon_takes_the_reflectors_team() {
     let mut weapons = WeaponPool::default();
     weapons.team_rules = TeamRules::TEAMS;

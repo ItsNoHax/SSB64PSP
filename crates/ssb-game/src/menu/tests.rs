@@ -322,6 +322,7 @@ fn vs_record_digits_show_tenths_and_full_percent() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn characters_motions_follow_the_tables() {
     use crate::status::FoxStatus;
     let t = characters::motion(FighterKind::Fox, characters::SPECIAL_HI, 1);
@@ -372,6 +373,7 @@ fn characters_skip_locked_pages_and_save_the_fighter() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn characters_fighter_runs_through_its_tracks() {
     let b = Backup::default();
     let mut clock = 0u8;

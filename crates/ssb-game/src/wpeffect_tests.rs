@@ -130,6 +130,7 @@ fn owners_and_teams_spare_their_weapons() {
 /// Priority: the full charge (`dWPSamusChargeShotWeaponAttributes[7]`,
 /// priority 2) beats a Fireball (1), which alone stops.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_full_charge_shot_outranks_a_fireball() {
     let mut pool = WeaponPool::default();
     pool.spawn(spawn(WeaponKind::SamusChargeShot(7), 0, 0.0, 1.0));

@@ -777,6 +777,7 @@ mod tests {
         assert!(!j.tick(|| [wall, ceiling], &mut crate::wpeffect::Emit::default()));
     }
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn thunder_head_is_harmless_and_trails_share_one_hit_record() {
         let mut pool = WeaponPool::default();
         pool.spawn(spawn(WeaponKind::PikachuThunder, 0.0, 1500.0));
@@ -806,6 +807,7 @@ mod tests {
         assert_eq!(other.damage, 12);
     }
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn thunder_trail_scaled_offsets_and_expiration_match_source() {
         let mut t = ThunderTrail::new(ThunderHead::new(
             spawn(WeaponKind::PikachuThunder, 0.0, 0.0),

@@ -270,6 +270,7 @@ fn walk<M>(
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn front_menus_draw_only_packed_sprites() {
     use ssb_game::menu::mode_select::ModeSelect;
     use ssb_game::menu::one_p_mode::{OnePMode, OnePOption};

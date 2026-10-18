@@ -1008,6 +1008,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn spin_attack_weapon_hits_each_fighter_once() {
         let mut f = link(true);
         set_special_hi(&mut f);

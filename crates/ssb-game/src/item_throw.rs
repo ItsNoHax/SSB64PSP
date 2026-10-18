@@ -123,39 +123,13 @@ pub struct ThrowDesc {
     pub damage_scale: f32,
 }
 
-const fn desc(is_smash: bool, velocity: f32, angle: i32, damage_scale: f32) -> ThrowDesc {
-    ThrowDesc {
-        is_smash,
-        velocity,
-        angle,
-        damage_scale,
-    }
+/// `dFTCommonDataItemThrowDescs`, indexed from `LightThrowDrop`, generated
+/// at build time from the ROM by `crates/ssb-tablegen` (`battle_data.rs`).
+pub use generated::THROW_DESCS;
+mod generated {
+    use super::ThrowDesc;
+    include!(concat!(env!("OUT_DIR"), "/item_throw_descs.rs"));
 }
-
-pub const THROW_DESCS: [ThrowDesc; 22] = [
-    desc(false, 36.0, 110, 50.0),
-    desc(false, 120.0, 10, 100.0),
-    desc(false, 60.0, 15, 100.0),
-    desc(false, 60.0, 15, 100.0),
-    desc(false, 65.0, 90, 100.0),
-    desc(false, 65.0, -70, 100.0),
-    desc(true, 110.0, 8, 100.0),
-    desc(true, 110.0, 8, 100.0),
-    desc(true, 110.0, 90, 100.0),
-    desc(true, 110.0, -70, 100.0),
-    desc(false, 75.0, 8, 100.0),
-    desc(false, 75.0, 8, 100.0),
-    desc(false, 80.0, 90, 100.0),
-    desc(false, 75.0, -90, 100.0),
-    desc(true, 120.0, 7, 100.0),
-    desc(true, 120.0, 7, 100.0),
-    desc(true, 120.0, 90, 100.0),
-    desc(true, 140.0, -90, 100.0),
-    desc(false, 70.0, 60, 100.0),
-    desc(false, 70.0, 60, 100.0),
-    desc(true, 90.0, 20, 100.0),
-    desc(true, 90.0, 20, 100.0),
-];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThrowState {

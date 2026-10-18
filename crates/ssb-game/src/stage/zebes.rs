@@ -13,34 +13,13 @@ pub struct AcidStep {
     pub level: f32,
 }
 
-const fn step(wait_base: u16, random_min: u16, random_max: u16, level: f32) -> AcidStep {
-    AcidStep {
-        wait_base,
-        random_min,
-        random_max,
-        level,
-    }
+/// `dGRZebesAcidAttributes`, generated at build time from the ROM by
+/// `crates/ssb-tablegen` (`battle_data.rs`).
+pub use generated::ACID_STEPS;
+mod generated {
+    use super::AcidStep;
+    include!(concat!(env!("OUT_DIR"), "/zebes_acid.rs"));
 }
-
-/// `dGRZebesAcidAttributes` @ 0x8012EA60.
-pub const ACID_STEPS: [AcidStep; 16] = [
-    step(1200, 60, 70, -3600.0),
-    step(180, 60, 70, -1000.0),
-    step(60, 60, 70, -200.0),
-    step(60, 60, 70, 1800.0),
-    step(60, 60, 70, -3600.0),
-    step(120, 0, 0, 2600.0),
-    step(30, 0, 0, -1000.0),
-    step(1200, 60, 70, -500.0),
-    step(600, 60, 70, -400.0),
-    step(100, 60, 70, 800.0),
-    step(1200, 60, 70, 1200.0),
-    step(60, 0, 0, -1000.0),
-    step(60, 60, 70, 0.0),
-    step(60, 60, 70, -1000.0),
-    step(120, 60, 70, 500.0),
-    step(200, 60, 70, -3000.0),
-];
 
 /// `grZebesStatus`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -265,6 +265,7 @@ fn the_rule_arrows_blink_every_thirty_ticks_and_follow_the_rule() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_team_rule_gives_team_costumes() {
     let mut st = state();
     st.rule = Rule::Stock;

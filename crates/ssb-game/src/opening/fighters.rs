@@ -106,35 +106,15 @@ pub struct Params {
     pub posed_axis: Vec3,
 }
 
-/// `FTKEY_EVENT_STICK(x, y, wait)` and `FTKEY_EVENT_BUTTON(buttons, wait)`
-/// as `ft/ftkey.c` reads them.
-mod keys {
-    pub const MARIO: [u16; 15] = [
-        0x2000, 0x0000, 0x1001, 0x8000, 0x100B, 0x0000, 0x1001, 0x8000, 0x1014, 0x0000, 0x2000,
-        0x00B0, 0x1001, 0x8000, 0x0000,
-    ];
-    pub const DONKEY: [u16; 9] = [
-        0x2000, 0x00B0, 0x1001, 0x4000, 0x1001, 0x0000, 0x1001, 0x4000, 0x0000,
-    ];
-    pub const SAMUS: [u16; 5] = [0x1001, 0x2000, 0x1001, 0x8000, 0x0000];
-    pub const FOX: [u16; 11] = [
-        0x2001, 0xCE00, 0x1001, 0x4000, 0x100C, 0x0000, 0x1001, 0x4000, 0x100C, 0x0000, 0x0000,
-    ];
-    pub const LINK: [u16; 3] = [0x1001, 0x0020, 0x0000];
-    pub const YOSHI: [u16; 7] = [0x2014, 0x5000, 0x1001, 0x2000, 0x1001, 0x8000, 0x0000];
-    pub const PIKACHU: [u16; 1] = [0x0000];
-    pub const KIRBY: [u16; 5] = [0x2001, 0x2D50, 0x1001, 0x8000, 0x0000];
-    pub const JUNGLE_DONKEY: [u16; 35] = [
-        0x2000, 0x00B0, 0x1001, 0x4000, 0x1001, 0x0000, 0x2032, 0x0000, 0x201E, 0x0F50, 0x200A,
-        0x5000, 0x1001, 0x8000, 0x1001, 0x0000, 0x203C, 0x5000, 0x2003, 0xE200, 0x200A, 0x0000,
-        0x2001, 0xB000, 0x1001, 0x4000, 0x1001, 0x0000, 0x1001, 0x4000, 0x1001, 0x0000, 0x2001,
-        0x0000, 0x0000,
-    ];
-    pub const JUNGLE_SAMUS: [u16; 33] = [
-        0x2014, 0xB000, 0x204B, 0x0000, 0x1001, 0x2000, 0x203C, 0xB000, 0x2001, 0x0000, 0x2005,
-        0xB000, 0x2001, 0x0000, 0x2017, 0x0000, 0x2005, 0xB000, 0x1001, 0x0000, 0x2028, 0x0000,
-        0x2003, 0x1E00, 0x2001, 0x0000, 0x1001, 0x4000, 0x1001, 0x0000, 0x1001, 0x4000, 0x0000,
-    ];
+// Each scene's `dMVOpening*CObjDescStart`, `...End` and `...KeyEvents`
+// (`FTKEY_EVENT_STICK(x, y, wait)` and `FTKEY_EVENT_BUTTON(buttons, wait)`
+// as `ft/ftkey.c` reads them, in halfwords), and the jungle's two scripts,
+// generated at build time from the user's ROM by `crates/ssb-tablegen`
+// (never committed).
+#[allow(clippy::all)]
+mod generated {
+    use super::{desc, v, CObjDesc};
+    include!(concat!(env!("OUT_DIR"), "/opening_scenes.rs"));
 }
 
 /// Letter index from an ASCII capital.
@@ -155,9 +135,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Mario,
         fighter: FighterKind::Mario,
         gkind: gkind::CASTLE,
-        start: desc(v(300.0, 500.0, 1700.0), v(0.0, 100.0, 0.0), 0.15),
-        end: desc(v(800.0, 500.0, 1300.0), v(100.0, 100.0, 0.0), 0.15),
-        keys: &keys::MARIO,
+        start: generated::MARIO_START,
+        end: generated::MARIO_END,
+        keys: &generated::MARIO_KEYS,
         letters: &[
             (l(b'M'), 0.0, 0.0),
             (l(b'A'), 40.0, 0.0),
@@ -182,9 +162,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Donkey,
         fighter: FighterKind::Donkey,
         gkind: gkind::JUNGLE,
-        start: desc(v(-1100.0, 150.0, 400.0), v(0.0, 150.0, 0.0), 0.0),
-        end: desc(v(-900.0, 500.0, 1800.0), v(0.0, 500.0, 0.0), 0.0),
-        keys: &keys::DONKEY,
+        start: generated::DONKEY_START,
+        end: generated::DONKEY_END,
+        keys: &generated::DONKEY_KEYS,
         // The US build's "DK".
         letters: &[(l(b'D'), 0.0, 0.0), (l(b'K'), 40.0, 0.0)],
         name_at: [120.0, 100.0],
@@ -204,9 +184,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Link,
         fighter: FighterKind::Link,
         gkind: gkind::HYRULE,
-        start: desc(v(-800.0, 180.0, 800.0), v(0.0, 180.0, 0.0), 0.0),
-        end: desc(v(200.0, 0.0, 400.0), v(0.0, 240.0, 0.0), 0.4),
-        keys: &keys::LINK,
+        start: generated::LINK_START,
+        end: generated::LINK_END,
+        keys: &generated::LINK_KEYS,
         letters: &[
             (l(b'L'), 0.0, 0.0),
             (l(b'I'), 30.0, 0.0),
@@ -230,9 +210,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Samus,
         fighter: FighterKind::Samus,
         gkind: gkind::ZEBES,
-        start: desc(v(400.0, 1100.0, 0.0), v(0.0, 200.0, 0.0), 0.6),
-        end: desc(v(1600.0, 230.0, 200.0), v(0.0, 200.0, 0.0), 0.6),
-        keys: &keys::SAMUS,
+        start: generated::SAMUS_START,
+        end: generated::SAMUS_END,
+        keys: &generated::SAMUS_KEYS,
         letters: &[
             (l(b'S'), 0.0, 0.0),
             (l(b'A'), 30.0, 0.0),
@@ -257,9 +237,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Yoshi,
         fighter: FighterKind::Yoshi,
         gkind: gkind::YOSTER,
-        start: desc(v(1200.0, 150.0, 1000.0), v(100.0, 200.0, 0.0), 0.0),
-        end: desc(v(2000.0, 100.0, 600.0), v(1300.0, 100.0, -100.0), 0.0),
-        keys: &keys::YOSHI,
+        start: generated::YOSHI_START,
+        end: generated::YOSHI_END,
+        keys: &generated::YOSHI_KEYS,
         letters: &[
             (l(b'Y'), 0.0, 0.0),
             (l(b'O'), 30.0, 0.0),
@@ -284,9 +264,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Kirby,
         fighter: FighterKind::Kirby,
         gkind: gkind::PUPUPU,
-        start: desc(v(0.0, 400.0, 2000.0), v(0.0, 400.0, 0.0), 0.0),
-        end: desc(v(1100.0, 400.0, 1800.0), v(1100.0, 400.0, 0.0), 0.0),
-        keys: &keys::KIRBY,
+        start: generated::KIRBY_START,
+        end: generated::KIRBY_END,
+        keys: &generated::KIRBY_KEYS,
         letters: &[
             (l(b'K'), 0.0, 0.0),
             (l(b'I'), 35.0, 0.0),
@@ -311,9 +291,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Fox,
         fighter: FighterKind::Fox,
         gkind: gkind::SECTOR,
-        start: desc(v(-400.0, 320.0, 100.0), v(0.0, 320.0, 0.0), 0.0),
-        end: desc(v(-3000.0, 300.0, 250.0), v(0.0, 300.0, -200.0), 0.7),
-        keys: &keys::FOX,
+        start: generated::FOX_START,
+        end: generated::FOX_END,
+        keys: &generated::FOX_KEYS,
         letters: &[
             (l(b'F'), 0.0, 0.0),
             (l(b'O'), 30.0, 0.0),
@@ -336,9 +316,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Pikachu,
         fighter: FighterKind::Pikachu,
         gkind: gkind::YAMABUKI,
-        start: desc(v(0.0, 0.0, 20000.0), v(0.0, 0.0, 0.0), 0.0),
-        end: desc(v(50.0, -1640.0, 1000.0), v(50.0, -1640.0, 0.0), 0.0),
-        keys: &keys::PIKACHU,
+        start: generated::PIKACHU_START,
+        end: generated::PIKACHU_END,
+        keys: &generated::PIKACHU_KEYS,
         letters: &[
             (l(b'P'), 0.0, 0.0),
             (l(b'I'), 30.0, 0.0),
@@ -675,7 +655,7 @@ impl Jungle {
                     lr: 1,
                     damage: 200,
                     charge: Some(9),
-                    keys: &keys::JUNGLE_DONKEY,
+                    keys: &generated::JUNGLE_DONKEY_KEYS,
                 },
                 Player {
                     kind: FighterKind::Samus,
@@ -684,7 +664,7 @@ impl Jungle {
                     lr: -1,
                     damage: 40,
                     charge: Some(6),
-                    keys: &keys::JUNGLE_SAMUS,
+                    keys: &generated::JUNGLE_SAMUS_KEYS,
                 },
             ],
             screen_flash: true,
@@ -768,6 +748,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_motion_window_opens_at_15_and_the_scene_ends_at_60() {
         let mut s = FighterScene::new(params(Kind::Mario).unwrap());
         let spawn = v(10.0, 20.0, 0.0);

@@ -12,6 +12,7 @@ fn fixtures() -> Option<(Vec<u8>, Vec<u8>)> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn authored_campaign_sprites_keep_their_rom_dimensions_and_attributes() {
     let Some((rom, bytes)) = fixtures() else {
         return;

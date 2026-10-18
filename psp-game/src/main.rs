@@ -7833,10 +7833,7 @@ fn draw_egg_effects(
         let (Some(root), Some(egg)) = (pose_of(v, 0), pose_of(v, 1)) else {
             continue;
         };
-        let size = ssb_game::capture_yoshi::EGG_EFFECT_SIZES
-            .get(f.kind as usize)
-            .copied()
-            .unwrap_or(1.0);
+        let size = ssb_game::capture_yoshi::egg_effect_size(f.kind).unwrap_or(1.0);
         let top = f.joint_world(0, ssb_engine::math::Vec3::ZERO);
         let t0 = [root.translate[0] + e.wiggle[0], root.translate[1] + e.wiggle[1], root.translate[2]];
         let place = Mat4::from_trs([top.x, top.y, top.z], [0.0; 3], [size, size, 1.0])

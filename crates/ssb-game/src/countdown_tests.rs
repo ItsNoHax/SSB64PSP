@@ -35,6 +35,7 @@ fn run(c: &mut Countdown, ticks: u32) {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn it_starts_above_the_screen_with_the_red_lamp_lit() {
     let c = Countdown::new();
     let s: Vec<SObj> = c.sobjs().collect();
@@ -60,6 +61,7 @@ fn it_slides_down_53_units_in_60_ticks() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn three_pops_a_yellow_lamp_that_shrinks_back() {
     let mut c = Countdown::new();
     run(&mut c, 121);
@@ -78,6 +80,7 @@ fn three_pops_a_yellow_lamp_that_shrinks_back() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn go_turns_blue_moves_the_shadow_and_shows_the_letters() {
     let mut c = Countdown::new();
     run(&mut c, 301);
@@ -110,6 +113,7 @@ fn it_slides_away_and_ends_at_seven_seconds() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn sudden_death_shows_only_the_letters() {
     let mut c = Countdown::sudden_death();
     assert_eq!(c.sobjs().count(), 0);

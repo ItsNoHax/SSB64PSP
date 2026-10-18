@@ -84,41 +84,15 @@ pub fn damage_colls(kind: FighterKind) -> Option<&'static [DamageCollDesc]> {
 /// TopN box `ftCommonYoshiEggSetDamageCollCollisions` leaves live while the
 /// fighter is inside an egg; the rest turn intangible.
 pub fn yoshi_egg_coll(kind: FighterKind) -> Option<DamageCollDesc> {
-    let (y, size) = match kind {
-        FighterKind::Mario => (157.0, 180.0),
-        FighterKind::Fox => (155.0, 171.0),
-        FighterKind::Donkey => (230.0, 245.0),
-        FighterKind::Samus => (163.0, 198.0),
-        FighterKind::Luigi => (160.0, 188.0),
-        FighterKind::Link => (133.0, 148.0),
-        FighterKind::Yoshi => (175.0, 210.0),
-        FighterKind::Captain => (156.0, 198.0),
-        FighterKind::Kirby => (132.0, 164.0),
-        FighterKind::Pikachu => (144.0, 165.0),
-        FighterKind::Purin => (144.0, 162.0),
-        FighterKind::Ness => (160.0, 168.0),
-        FighterKind::Boss | FighterKind::MetalMario | FighterKind::PolyMario => (157.0, 180.0),
-        FighterKind::PolyFox => (155.0, 171.0),
-        FighterKind::PolyDonkey => (230.0, 245.0),
-        FighterKind::PolySamus => (163.0, 198.0),
-        FighterKind::PolyLuigi => (160.0, 188.0),
-        FighterKind::PolyLink => (133.0, 148.0),
-        FighterKind::PolyYoshi => (175.0, 210.0),
-        FighterKind::PolyCaptain => (156.0, 198.0),
-        FighterKind::PolyKirby => (132.0, 164.0),
-        FighterKind::PolyPikachu => (144.0, 165.0),
-        FighterKind::PolyPurin => (144.0, 162.0),
-        FighterKind::PolyNess => (160.0, 168.0),
-        FighterKind::GiantDonkey => (400.0, 350.0),
-    };
+    let &(_, offset, size) = crate::capture_yoshi::EGG_DESCS.get(kind as usize)?;
     // `ftCommonYoshiEggSetDamageCollCollisions` copies the egg's size
     // without halving it.
     Some(DamageCollDesc {
         joint: 0,
         placement: 1,
         is_grabbable: false,
-        offset: Vec3::new(0.0, y, 0.0),
-        size: Vec3::new(size, size, size),
+        offset: Vec3::new(offset[0], offset[1], offset[2]),
+        size: Vec3::new(size[0], size[1], size[2]),
     })
 }
 

@@ -27,85 +27,9 @@ pub struct TransitionAsset {
     pub frames: u32,
 }
 
-pub const ASSETS: [TransitionAsset; 11] = [
-    TransitionAsset {
-        name: "aeroplane",
-        file: 40,
-        graph: 0xB3F8,
-        anim_joints: 0xB710,
-        frames: 64,
-    },
-    TransitionAsset {
-        name: "check",
-        file: 41,
-        graph: 0x3E80,
-        anim_joints: 0x4038,
-        frames: 64,
-    },
-    TransitionAsset {
-        name: "gakubuthi",
-        file: 42,
-        graph: 0x0F98,
-        anim_joints: 0x101C,
-        frames: 64,
-    },
-    TransitionAsset {
-        name: "kannon",
-        file: 43,
-        graph: 0x1F00,
-        anim_joints: 0x1FB0,
-        frames: 64,
-    },
-    TransitionAsset {
-        name: "star",
-        file: 44,
-        graph: 0x2450,
-        anim_joints: 0x24D4,
-        frames: 64,
-    },
-    TransitionAsset {
-        name: "sudare1",
-        file: 45,
-        graph: 0x74A8,
-        anim_joints: 0x7660,
-        frames: 64,
-    },
-    TransitionAsset {
-        name: "sudare2",
-        file: 46,
-        graph: 0x3EA0,
-        anim_joints: 0x3F50,
-        frames: 64,
-    },
-    TransitionAsset {
-        name: "camera",
-        file: 51,
-        graph: 0x3F90,
-        anim_joints: 0x4148,
-        frames: 64,
-    },
-    TransitionAsset {
-        name: "block",
-        file: 48,
-        graph: 0x4E18,
-        anim_joints: 0x536C,
-        frames: 64,
-    },
-    TransitionAsset {
-        name: "rot_scale",
-        file: 49,
-        graph: 0x0F98,
-        anim_joints: 0x101C,
-        frames: 64,
-    },
-    TransitionAsset {
-        name: "curtain",
-        file: 50,
-        graph: 0x7AE0,
-        anim_joints: 0x7C98,
-        frames: 72,
-    },
-];
+// `dLBTransitionDescs`, generated at build time from the user's ROM by
+// `crates/ssb-tablegen` (never committed).
+include!(concat!(env!("OUT_DIR"), "/transition_assets.rs"));
 
 #[cfg(test)]
 mod tests {
@@ -118,6 +42,7 @@ mod tests {
     const EXPECTED_FILES: [u32; 11] = [40, 41, 42, 43, 44, 45, 46, 51, 48, 49, 50];
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn descriptor_order_is_the_original_file_run() {
         assert_eq!(ASSETS.len(), 11);
         for (index, asset) in ASSETS.iter().enumerate() {

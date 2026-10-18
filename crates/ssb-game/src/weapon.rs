@@ -402,22 +402,17 @@ impl BossBullet {
 /// (`crates/ssb-rom/tests/weapon_attributes.rs`).
 pub const WEAPON_PRIORITY: i32 = 1;
 
-/// `dWPSamusChargeShotWeaponAttributes[].priority` (US), which
-/// `wpSamusChargeShotLaunch` writes: only the full charge outranks.
-pub const SAMUS_CHARGE_SHOT_PRIORITIES: [i32; 8] = [1, 1, 1, 1, 1, 1, 1, 2];
+/// `dWPSamusChargeShotWeaponAttributes` (US), generated at build time from
+/// the ROM by `crates/ssb-tablegen` (`battle_data.rs`):
+/// `SAMUS_CHARGE_SHOT_PRIORITIES`, the `priority` `wpSamusChargeShotLaunch`
+/// writes (only the full charge outranks), and `SAMUS_CHARGE_SHOT_LEVELS`,
+/// `(gfx size, X velocity, damage, attack size, map-collision size)` per
+/// charge level.
+pub use charge_shot::{SAMUS_CHARGE_SHOT_LEVELS, SAMUS_CHARGE_SHOT_PRIORITIES};
+mod charge_shot {
+    include!(concat!(env!("OUT_DIR"), "/charge_shot.rs"));
+}
 
-/// `dWPSamusChargeShotWeaponAttributes` (US): `(gfx size, X velocity,
-/// damage, attack size, map-collision size)` per charge level.
-pub const SAMUS_CHARGE_SHOT_LEVELS: [(f32, f32, i32, f32, f32); 8] = [
-    (150.0, 60.0, 3, 100.0, 10.0),
-    (230.0, 62.0, 6, 120.0, 10.0),
-    (280.0, 64.0, 9, 140.0, 10.0),
-    (340.0, 66.0, 12, 160.0, 10.0),
-    (410.0, 68.0, 15, 180.0, 10.0),
-    (490.0, 70.0, 18, 200.0, 10.0),
-    (600.0, 72.0, 21, 240.0, 10.0),
-    (700.0, 74.0, 26, 260.0, 10.0),
-];
 /// `WPCHARGESHOT_GFX_SIZE_DIV`.
 pub const SAMUS_CHARGE_SHOT_GFX_SIZE_DIV: f32 = 30.0;
 
@@ -5208,6 +5203,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn yoshi_egg_explodes_on_hit_and_bomb_spawns_two_stars() {
         let mut weapons = WeaponPool::default();
         assert!(weapons.spawn(WeaponSpawn {
@@ -5299,6 +5295,7 @@ mod tests {
     /// deals `damage * stale + 0.999` and records the motion in the owner's
     /// queue (`ftMainUpdateDamageStatWeapon`).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_repeated_egg_throw_is_staled_and_recorded() {
         use crate::stale::MotionAttackId;
         let mut owner = Fighter::new(FighterKind::Yoshi, 0, 3);
@@ -5341,6 +5338,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fox_blaster_moves_straight_and_hits_once() {
         let mut weapons = WeaponPool::default();
         assert!(weapons.spawn(WeaponSpawn {
@@ -5474,6 +5472,7 @@ mod tests {
 
     /// The Blaster's `can_setoff` is clear: it passes through attacks.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_blaster_ignores_attacks_and_hits_the_body() {
         let mut f = swinging(FighterKind::Mario, 15, Vec3::ZERO);
         let mut weapons = WeaponPool::default();
@@ -5638,6 +5637,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_fireball_hits_an_opponent_once_and_never_its_owner() {
         let mut weapons = WeaponPool::default();
         assert!(weapons.spawn(WeaponSpawn {
@@ -5664,6 +5664,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn charge_shot_uses_its_level_row_and_ends_on_a_wall() {
         let mut weapons = WeaponPool::default();
         weapons.spawn(WeaponSpawn {
@@ -5686,6 +5687,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn bomb_explodes_after_its_fuse_and_hits_each_fighter_once() {
         let mut weapons = WeaponPool::default();
         weapons.spawn(WeaponSpawn {
@@ -5846,6 +5848,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn boomerang_hit_sends_it_back_without_removing_it() {
         let mut weapons = WeaponPool::default();
         weapons.spawn(boomerang_spawn(true, 0, 1.0));

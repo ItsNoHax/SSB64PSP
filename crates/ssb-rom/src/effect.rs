@@ -225,174 +225,25 @@ pub const EMBLEMS: [Emblem; 10] = [
 /// Pikachu's.
 pub const EMBLEM_BY_FIGHTER: [u8; 12] = [0, 1, 2, 3, 0, 4, 5, 6, 7, 8, 8, 9];
 
-pub const MANAGER_EFFECT_KEYS: &[(u32, u32)] = &[
-    (83, 0x7750),
-    (83, 0x7E80),
-    (83, 0x7C28),
-    (83, 0x8FA0),
-    (83, 0xCAC8),
-    (84, 0x1500),
-    (84, 0x2040),
-    (84, 0x2760),
-    (84, 0x3398),
-    (84, 0x53E8),
-    (84, 0x6D00),
-    (85, 0x0628),
-    (85, 0x2AC0),
-    (85, 0x3170),
-    (163, 0x0300),
-    (346, 0x02B0),
-    (338, 0xA860),
-    (347, 0x0800),
-    (347, 0x1640),
-    (341, 0x95B0),
-    (342, 0x2258),
-    (348, 0x0B20),
-    (348, 0x0DF8),
-    (348, 0x12E8),
-    (348, 0x1DA8),
-    (348, 0x2390),
-    (348, 0x2888),
-    (349, 0x0380),
-    (349, 0x0B90),
-    (350, 0x0B08),
-    (350, 0x5FC0),
-    (333, 0x0760),
-    (351, 0x2130),
-    (352, 0x09A8),
-    (335, 0x9050),
-    (335, 0x9A10),
-    (353, 0x03F8),
-    (353, 0x07B8),
-    (353, 0x11C0),
-    (86, 0x9430),
-    (86, 0x5458),
-    (354, 0x0530),
-    (339, 0x0960),
-    (355, 0x07C8),
-    (356, 0x0608),
-    (161, 0x2C30),
-];
-
-/// `o_anim_joint` from the source `EFDesc` corresponding to each entry in
-/// [`MANAGER_EFFECT_KEYS`]. A missing value means that descriptor has no DObj
-/// transform animation; material-only animation is tracked separately.
-///
-/// Poké Ball uses the left-facing table selected by
-/// `efManagerMBallThrownMakeEffect`; its right-facing sibling is the same
-/// effect variant and will be added when facing-dependent spawning exists.
-pub const MANAGER_EFFECT_ANIM_JOINTS: &[Option<u32>] = &[
-    Some(0x7800),
-    Some(0x7F40),
-    Some(0x7D40),
-    Some(0x9050),
-    Some(0xCAE0),
-    None,
-    Some(0x20D0),
-    Some(0x28A0),
-    Some(0x34A0),
-    Some(0x54D0),
-    Some(0x6D90),
-    Some(0x0710),
-    Some(0x2B70),
-    Some(0x32B0),
-    None,
-    Some(0x0340),
-    None,
-    Some(0x0890),
-    Some(0x1720),
-    None,
-    Some(0x22E0),
-    None,
-    Some(0x13F0),
-    Some(0x1470),
-    Some(0x1E30),
-    Some(0x24D0),
-    None,
-    Some(0x0410),
-    Some(0x0C20),
-    Some(0x0B90),
-    None,
-    None,
-    Some(0x2270),
-    Some(0x0A30),
-    None,
-    Some(0x9AC0),
-    Some(0x0840),
-    Some(0x0B60),
-    Some(0x1250),
-    Some(0x95E0),
-    None,
-    Some(0x0600),
-    Some(0x0B90),
-    Some(0x0850),
-    Some(0x06C0),
-    None,
-];
-
-/// `o_matanim_joint` from the same source descriptors, aligned with
-/// [`MANAGER_EFFECT_KEYS`]. These are `AObjEvent32 ***` tables: one outer
-/// entry per DObj and one inner script pointer per MObj in that node.
-///
-/// The manager selects player 0's `DeadExplode1` table at runtime and the
-/// left-facing Poké Ball table for the descriptor-selected audit variant.
-/// The alternate player/facing tables remain gameplay selection work, just
-/// like the transform variants documented beside
-/// [`MANAGER_EFFECT_ANIM_JOINTS`].
-pub const MANAGER_EFFECT_MAT_ANIM_JOINTS: &[Option<u32>] = &[
-    Some(0x7860),
-    None,
-    Some(0x7DA0),
-    Some(0x90C0),
-    Some(0xCB40),
-    Some(0x1570),
-    Some(0x2170),
-    Some(0x2AB0),
-    Some(0x35A0),
-    Some(0x58E0),
-    Some(0x6E20),
-    Some(0x0860),
-    None,
-    Some(0x3490),
-    None,
-    None,
-    None,
-    // PikachuUnk: RE-178 corrects a former 0x0890 here, which is actually
-    // `dPikachuSpecial2_UnkAnimJoint_AnimJoint` — the *transform* joint table
-    // `MANAGER_EFFECT_ANIM_JOINTS` already names correctly above. The real
-    // `UnkMatAnimJoint` table is 0x70 bytes further, at 0x900.
-    Some(0x0900),
-    Some(0x1A80),
-    None,
-    Some(0x2350),
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    Some(0x0480),
-    None,
-    Some(0x0C00),
-    None,
-    Some(0x0830),
-    Some(0x2D70),
-    Some(0x0AD0),
-    None,
-    Some(0x9BB0),
-    Some(0x0B90),
-    Some(0x0BF0),
-    Some(0x12F0),
-    // MBallThrown: `llITCommonDataMBallThrownLMatAnimJoint`; the rightward
-    // table (0x9810) runs a byte-identical script (RE-425).
-    Some(0x9740),
-    None,
-    Some(0x0780),
-    None,
-    None,
-    None,
-    None,
-];
+// The 46 manager effects the port draws, from `dEFManager<Name>EffectDesc`
+// (`ef/efmanager.c`), generated at build time from the user's ROM by
+// `crates/ssb-tablegen` (never committed):
+//
+// * `MANAGER_EFFECT_KEYS`: `(file, o_dobjdesc)` of each desc; the file is
+//   the one its `file_head` variable holds.
+// * `MANAGER_EFFECT_ANIM_JOINTS`: `o_anim_joint` of each desc. A missing
+//   value means that descriptor has no DObj transform animation;
+//   material-only animation is tracked separately. Poke Ball uses the
+//   left-facing table selected by `efManagerMBallThrownMakeEffect`; its
+//   right-facing sibling is in [`ENTRY_ANIMS`].
+// * `MANAGER_EFFECT_MAT_ANIM_JOINTS`: `o_matanim_joint` of each desc,
+//   aligned with the keys. These are `AObjEvent32 ***` tables: one outer
+//   entry per DObj and one inner script pointer per MObj in that node.
+//   The manager selects the player's `DeadExplode` table at runtime
+//   (`dEFManagerDeadExplodeMatAnimJoints`); player 0's is listed. The
+//   alternate player/facing tables remain gameplay selection work.
+// * `slot::NAME`: each effect's index in the three tables.
+include!(concat!(env!("OUT_DIR"), "/effect_tables.rs"));
 
 /// Effects whose authored rest pose is intentionally invisible until their
 /// AObjEvent32 runtime starts. The ROM gives Ness PK Flash scales X/Y of
@@ -430,6 +281,7 @@ mod tests {
     use alloc::collections::BTreeSet;
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn manager_effect_keys_are_46_unique_objects() {
         let unique: BTreeSet<_> = MANAGER_EFFECT_KEYS.iter().copied().collect();
         assert_eq!(MANAGER_EFFECT_KEYS.len(), 46);

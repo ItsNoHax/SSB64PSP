@@ -382,6 +382,7 @@ fn stage_clear_registers_timer_then_damage_and_opens_exit_after_input() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn stage_clear_bonus_page_reveal_registration_and_proceed_are_separate() {
     let mut data = SceneData::default();
     Bonus::NoItem.insert(&mut data.bonus_get_mask);

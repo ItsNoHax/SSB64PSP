@@ -119,6 +119,7 @@ fn jab_proc_status_and_final_status_update_both_count_initial_entry() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn damage_amounts_survive_percent_cap_and_healing_without_fabricating_credit() {
     let (mut s, _) = session(Stage::Link);
     let mut f = fighter(&mut s, 1);
@@ -170,6 +171,7 @@ fn damage_amounts_survive_percent_cap_and_healing_without_fabricating_credit() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn accepted_contacts_credit_each_attacker_beyond_the_ten_hit_log_limit() {
     let (mut s, _) = session(Stage::Yoshi);
     let mut f = fighter(&mut s, 1);
@@ -196,6 +198,7 @@ fn accepted_contacts_credit_each_attacker_beyond_the_ten_hit_log_limit() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn resistance_credits_only_overflow_and_world_or_self_hits_have_no_given_damage() {
     let (mut s, _) = session(Stage::Link);
     let mut f = fighter(&mut s, 1);
@@ -559,6 +562,7 @@ fn yoshi_attribution_and_credit_begin_at_egg_lay() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_started_battle_names_each_fighter_and_its_start() {
     let (s, _) = session(Stage::Link);
     let e = s.entrants();
