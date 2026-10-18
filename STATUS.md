@@ -17,11 +17,11 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Merged: effects batch (RE-538, pack v119): weapon camera interests, Link Spin weapon graphic, FxSlot material lockstep, Yoshi egg joint scale, Kirby costume and inhale wind. The Yoshi explosion orange matches the N64; it is script 3 frame 0 landing on N64 timing.
+Landed: fx-order (RE-540): anim-joint effects play from frame 0 on the creation frame (`FxSlot::sync` with `PlayRule`), and fighter link-15 effects draw in one creation order (`effect_order.rs`). No Falcon Punch lead exists on the N64 (the earlier offset was a trace artifact). Six effect rows were rebaselined.
 
-Uncommitted and stashed (`git stash list`, patch in the orchestrator scratchpad): the perf batch (VRAM lit-expand vertex blocks, photo texture pool, 1P stage-override fix, link order s7b). It is blocked on the hung PSPLink: asset-viewer rows r2-stage-final-destination and r2-stage-bonus2-captain-falcon need hardware frame proof (D-051).
+Uncommitted in the working tree: the perf batch (VRAM lit-expand vertex blocks, photo texture pool, 1P stage-override fix, link order s7b). It is blocked on the hung PSPLink: D-051 hardware proof of r2-stage-final-destination and r2-stage-bonus2-captain-falcon, and the s7b link-order re-check. Its record will be the next RE number.
 
-Next open `PLAN.md` items: the MS8 list, then the Falcon Punch creation-frame play.
+Next open `PLAN.md` items: the MS8 list.
 
 ## Blockers
 
