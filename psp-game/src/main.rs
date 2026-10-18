@@ -7261,6 +7261,12 @@ enum PlayRule {
     /// parsed without advancing (the N64 `GObj` and `MObj` frames of the
     /// Magnet, Sing, Spin Attack and Falcon Kick effects, RE-540).
     Effect,
+    /// The target already counts every `gcPlayAnimAll` since `gcAddAnimAll`,
+    /// the first of which only parses (`AOBJ_ANIM_CHANGED`): the Thunder
+    /// Jolts' `anim_ticks`. The N64 WP rows show frame 0 on each jolt's
+    /// creation frame (the aerial root's scale 1.15, the ground node 1's
+    /// `TraX` -390), RE-543.
+    ParsedFirst,
 }
 
 impl FxSlot {
@@ -7286,7 +7292,9 @@ impl FxSlot {
             if let Some(anim) = anim {
                 match rule {
                     PlayRule::Weapon => players.anim.start(p, anim),
-                    PlayRule::Effect => players.anim.start_changed(p, anim),
+                    PlayRule::Effect | PlayRule::ParsedFirst => {
+                        players.anim.start_changed(p, anim)
+                    }
                 }
             }
             if let Some(object) = object {
@@ -8420,6 +8428,7 @@ impl EffectVisuals {
             let anim_of = |a: &Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>| {
                 a.as_ref().map(|(_, a)| *a)
             };
+            let mut rule = PlayRule::Weapon;
             let (key, ticks, object, anim, speed) = match w {
                 W::Boomerang(b) => ((0, 0), b.anim_ticks, None, anim_of(&assets.boomerang), 1.0),
                 W::Cutter(c) => ((1, 0), c.anim_ticks, None, anim_of(&assets.cutter), 1.0),
@@ -8435,6 +8444,7 @@ impl EffectVisuals {
                     } else {
                         1.0
                     };
+                    rule = PlayRule::ParsedFirst;
                     (
                         (2, j.anim_epoch),
                         j.anim_ticks,
@@ -8456,7 +8466,7 @@ impl EffectVisuals {
                 v.key = Some(key);
                 v.fx.clock = None;
             }
-            v.fx.sync(p, Some(ticks), object.as_ref(), anim.as_ref(), speed, PlayRule::Weapon);
+            v.fx.sync(p, Some(ticks), object.as_ref(), anim.as_ref(), speed, rule);
         }
         for (v, seen) in self.weapons.iter_mut().zip(seen) {
             if !seen {

@@ -434,7 +434,7 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 120 attaches the ground Thunder Jolt's node 4 texture script (342 +
 // 0x1B68): its `MObjSub.sprites[1]` is NULL and never selected (RE-542).
 // No layout change.
-pub const VERSION: u32 = 120;
+pub const VERSION: u32 = 121;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -2141,8 +2141,11 @@ pub struct PackWriter {
     anim_joints: Vec<AnimJoint>,
     /// Animation files already in the blob, by archive file id. Kirby and
     /// Jigglypuff share three of theirs outright, and every polygon variant
-    /// shares all seven with the character it copies.
-    anim_files: alloc::collections::BTreeMap<u32, (u32, u32)>,
+    /// shares all seven with the character it copies. One file can hold
+    /// several distinct blobs: a weapon packs only its script window of a
+    /// file a manager effect packs whole (RE-543), so a blob is shared only
+    /// when its bytes are identical.
+    anim_files: alloc::collections::BTreeMap<u32, Vec<(u32, u32)>>,
     stages: Vec<StageDesc>,
     lines: Vec<LineDesc>,
     coll_vertices: Vec<CollisionVertex>,
@@ -3049,8 +3052,9 @@ impl PackWriter {
     /// `None`). Working out that pairing is the build-time job described in
     /// RE-036; by the time it reaches here it is a list.
     ///
-    /// The script bytes are deduplicated by `source_file`, so a shared
-    /// animation is stored once however many fighters point at it.
+    /// The script bytes are deduplicated by `source_file` and content, so a
+    /// shared animation is stored once however many fighters point at it,
+    /// and a script window of a file packed whole keeps its own bytes.
     pub fn add_anim(
         &mut self,
         fighter: u32,
@@ -3060,14 +3064,20 @@ impl PackWriter {
         script: &[u8],
         joints: &[(Option<u32>, Option<u32>)],
     ) -> u32 {
-        let (script_offset, script_len) = match self.anim_files.get(&source_file) {
-            Some(&at) => at,
+        let shared = self.anim_files.get(&source_file).and_then(|blobs| {
+            blobs
+                .iter()
+                .copied()
+                .find(|&(at, len)| self.blob.get(at as usize..(at + len) as usize) == Some(script))
+        });
+        let (script_offset, script_len) = match shared {
+            Some(at) => at,
             None => {
                 let at = (
                     self.push_blob(script, ChunkOwner::File(source_file)),
                     script.len() as u32,
                 );
-                self.anim_files.insert(source_file, at);
+                self.anim_files.entry(source_file).or_default().push(at);
                 at
             }
         };
@@ -3094,7 +3104,10 @@ impl PackWriter {
     /// The blob length an earlier [`Self::add_anim`] stored for
     /// `source_file`, or `None` when no animation names it yet.
     pub fn anim_file_len(&self, source_file: u32) -> Option<u32> {
-        self.anim_files.get(&source_file).map(|&(_, len)| len)
+        self.anim_files
+            .get(&source_file)
+            .and_then(|blobs| blobs.first())
+            .map(|&(_, len)| len)
     }
 
     /// Adds a stage: its four render layers, its collision lines and its map
@@ -5817,6 +5830,31 @@ mod tests {
         assert_ne!(p.flags & flags::LIGHT2_COLOR, 0);
         assert_eq!(p.light1_color, 0, "black is a real LIGHT_1 write");
         assert_eq!(p.light2_color, 0x004C_4C4C);
+    }
+
+    /// RE-543: a manager effect packs file 342 whole and the ground Thunder
+    /// Jolt only its script window. Sharing the first blob by file id gave
+    /// the jolt's window-relative offsets the whole file's bytes, and its
+    /// animation stopped on the first unknown opcode.
+    #[test]
+    fn anim_blobs_share_only_identical_bytes_of_one_file() {
+        let whole = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let window = [5u8, 6, 7, 8];
+        let mut w = PackWriter::new();
+        w.add_anim(AnimDesc::EFFECT, 20, 342, 0, &whole, &[]);
+        w.add_anim(AnimDesc::WEAPON, 3, 342, 0, &window, &[]);
+        w.add_anim(AnimDesc::WEAPON, 2, 342, 0, &window, &[]);
+        assert_eq!(w.anim_file_len(342), Some(whole.len() as u32));
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let script = |i| pack.anim_script(&pack.anim(i).unwrap()).unwrap();
+        assert_eq!(script(0), whole);
+        assert_eq!(script(1), window);
+        assert_eq!(
+            pack.anim(1).unwrap().script_offset,
+            pack.anim(2).unwrap().script_offset,
+            "identical bytes stay shared"
+        );
     }
 
     /// The serialised stride must match what `prim()` indexes with, or every
