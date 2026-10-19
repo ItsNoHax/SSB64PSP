@@ -36,7 +36,6 @@ pub mod guard_clip;
 pub mod heap;
 pub mod input;
 pub mod math;
-pub mod memops;
 pub mod memory;
 pub mod renderer;
 pub mod rsp_light;
