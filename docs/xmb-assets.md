@@ -16,14 +16,18 @@ committed exactly as delivered. `ICON0` and `PIC0` keep their alpha channel
 because the art depends on it. AngleZero strips alpha from its `ICON0`, but
 its art is fully opaque, so that is not evidence against alpha.
 
+The `pspbuild` commands below need
+[pspbuild](https://github.com/ItsNoHax/pspbuild), installed with
+`cargo install --locked pspbuild`.
+
 ## ICON1
 
 `xmb/ICON1_source.mp4` is the source. `xmb/ICON1.PMF` is generated from it and
 committed, so a build needs no encoder:
 
 ```bash
-tools/pspbuild.sh video icon1 psp-game/xmb/ICON1_source.mp4 -o psp-game/xmb/ICON1.PMF
-tools/pspbuild.sh video icon1 psp-asset-viewer/xmb/ICON1_source.mp4 -o psp-asset-viewer/xmb/ICON1.PMF
+pspbuild video icon1 psp-game/xmb/ICON1_source.mp4 -o psp-game/xmb/ICON1.PMF
+pspbuild video icon1 psp-asset-viewer/xmb/ICON1_source.mp4 -o psp-asset-viewer/xmb/ICON1.PMF
 ```
 
 This needs `ffmpeg` with `libx264`. ffmpeg can read PMF but cannot write it,
@@ -56,7 +60,7 @@ List each slot in a built `EBOOT.PBP` with its offset, size and kind, and
 check the PNG slots' sizes and alpha:
 
 ```bash
-tools/pspbuild.sh inspect psp-game/target/mipsel-sony-psp/release/EBOOT.PBP
+pspbuild inspect psp-game/target/mipsel-sony-psp/release/EBOOT.PBP
 ```
 
 A PNG of the wrong size, or one with transparency, gets a `WARNING:` line.
@@ -76,13 +80,12 @@ track.
 
 ```bash
 python3 tools/make-snd0-loop.py /tmp/snd0.wav
-tools/pspbuild.sh audio snd0 --exact /tmp/snd0.wav -o psp-game/xmb/SND0.AT3
-tools/pspbuild.sh audio inspect --strict psp-game/xmb/SND0.AT3
+pspbuild audio snd0 --exact /tmp/snd0.wav -o psp-game/xmb/SND0.AT3
+pspbuild audio inspect --strict psp-game/xmb/SND0.AT3
 ```
 
-ffmpeg has no ATRAC3 encoder. `tools/pspbuild.sh` installs
-[pspbuild](https://github.com/ItsNoHax/pspbuild) at a pinned revision into
-`target/pspbuild/` and runs it. Its native encoder low-passes the source below
+ffmpeg has no ATRAC3 encoder.
+[pspbuild](https://github.com/ItsNoHax/pspbuild)'s native encoder low-passes the source below
 the top QMF band and writes LP4 (66144 bps, joint stereo) in a RIFF container
 with every frame coding three QMF bands; the XMB plays nothing if a frame
 codes a fourth band, although ffmpeg decodes such a file without complaint. It

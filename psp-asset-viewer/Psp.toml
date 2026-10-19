@@ -8,7 +8,7 @@ memsize = 1
 
 # XMB presentation (docs/xmb-assets.md). ICON1.PMF is generated from
 # ICON1_source.mp4 and SND0.AT3 from tools/make-snd0-loop.py's output, both
-# by tools/pspbuild.sh; both are committed.
+# by pspbuild; both are committed.
 xmb_icon_png = "xmb/ICON0.PNG"
 xmb_icon_pmf = "xmb/ICON1.PMF"
 xmb_background_overlay_png = "xmb/PIC0.PNG"
