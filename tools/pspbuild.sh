@@ -11,7 +11,7 @@
 
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REV=143a6e72aab70851d500b4473bab61ce10ca48b0
+REV=4ecd6dd632883672231abb524b5f50baedbe1b25
 ROOT="$REPO/target/pspbuild/$REV"
 
 if [ ! -x "$ROOT/bin/pspbuild" ]; then

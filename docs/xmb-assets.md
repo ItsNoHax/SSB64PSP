@@ -52,18 +52,17 @@ icon. Both generated icons animate in the XMB of a PSP Slim with firmware
 
 ## Checking a built EBOOT
 
-List the size of each slot in a built `EBOOT.PBP`:
+List each slot in a built `EBOOT.PBP` with its offset, size and kind, and
+check the PNG slots' sizes and alpha:
 
 ```bash
-python3 - psp-game/target/mipsel-sony-psp/release/EBOOT.PBP <<'PY'
-import struct, sys
-d = open(sys.argv[1], 'rb').read()
-o = struct.unpack('<8I', d[8:40])
-for i, n in enumerate(['PARAM.SFO','ICON0.PNG','ICON1.PMF','PIC0.PNG','PIC1.PNG','SND0.AT3','DATA.PSP','DATA.PSAR']):
-    size = (o[i+1] if i+1 < 8 else len(d)) - o[i]
-    print(f'{n:<12}{size:>9} bytes')
-PY
+tools/pspbuild.sh inspect psp-game/target/mipsel-sony-psp/release/EBOOT.PBP
 ```
+
+A PNG of the wrong size, or one with transparency, gets a `WARNING:` line.
+The game's `ICON0.PNG` is RGBA and gets one. pspbuild's evidence is mixed:
+some firmware and packers are reported to reject alpha there, but an RGBA
+ICON0 shows on a PSP Slim (6.61).
 
 ## SND0
 
@@ -77,7 +76,7 @@ track.
 
 ```bash
 python3 tools/make-snd0-loop.py /tmp/snd0.wav
-tools/pspbuild.sh audio snd0 /tmp/snd0.wav -o psp-game/xmb/SND0.AT3
+tools/pspbuild.sh audio snd0 --exact /tmp/snd0.wav -o psp-game/xmb/SND0.AT3
 tools/pspbuild.sh audio inspect --strict psp-game/xmb/SND0.AT3
 ```
 
