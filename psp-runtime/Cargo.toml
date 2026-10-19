@@ -14,7 +14,7 @@ description = "Layer C: shared PSP platform/rendering/runtime library used by ps
 [workspace]
 
 [dependencies]
-psp = { git = "https://github.com/ItsNoHax/rust-psp", rev = "768f4679d37da597422e1f8d22a974ae52ed8c0d", features = ["external-allocator"] }
+psp = { git = "https://github.com/ItsNoHax/rust-psp", rev = "c904fd3a7d0f33788f9f7415e5f0516c668f374b", features = ["external-allocator"] }
 ssb-engine = { path = "../crates/ssb-engine", default-features = false }
 ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }

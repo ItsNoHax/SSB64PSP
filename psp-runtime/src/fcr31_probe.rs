@@ -148,7 +148,7 @@ fn load_exec(path: &'static [u8]) {
         unk5: 0,
     };
     // SAFETY: NUL-terminated static path; the param outlives the call.
-    let rc = unsafe { sctrl_load_exec_vsh_ms2(path.as_ptr(), &param) };
+    let rc = unsafe { sctrl::sctrlKernelLoadExecVSHMs2(path.as_ptr(), &param) };
     let mut line = Line::new();
     line.push(b"fcr31 vshms2 failed rc=");
     line.hex(rc as u32);
@@ -226,50 +226,16 @@ impl Line {
 
 // The import of ARK's `SystemCtrlForUser` `sctrlKernelLoadExecVSHMs2`
 // (NID 0xABA7F1B0, the SHA-1 of the name; listed by `pspsh -e modexp` on
-// the PSP-2000's SystemControl). Stub tables as in `hwcount.rs`.
+// the PSP-2000's SystemControl).
+mod sctrl {
+    use super::LoadExecVshParam;
 
-#[repr(C)]
-struct Stub {
-    lib: &'static sys::SceStubLibraryEntry,
-    nid: &'static u32,
-}
+    psp::psp_extern! {
+        #![name = "SystemCtrlForUser"]
+        #![flags = 0x4001]
+        #![version = (0x00, 0x00)]
 
-// SAFETY: read-only addresses, replaced by the loader with `jr ra; syscall`.
-unsafe impl Sync for Stub {}
-
-#[link_section = ".rodata.sceResident.SystemCtrlForUser"]
-static SCTRL_NAME: [u8; 18] = *b"SystemCtrlForUser\0";
-
-#[link_section = ".rodata.sceNid.SystemCtrlForUser"]
-static SCTRL_NID_START: () = ();
-
-#[link_section = ".sceStub.text.SystemCtrlForUser"]
-static SCTRL_STUB_START: () = ();
-
-#[link_section = ".lib.stub.entry.SystemCtrlForUser"]
-static SCTRL_STUB: sys::SceStubLibraryEntry = sys::SceStubLibraryEntry {
-    name: &SCTRL_NAME[0],
-    version: [0, 0],
-    flags: 0x4001,
-    len: 5,
-    v_stub_count: 0,
-    // Patched by cargo-psp, as for rust-psp's own imports.
-    stub_count: 0,
-    nid_table: &SCTRL_NID_START as *const () as *const _,
-    stub_table: &SCTRL_STUB_START as *const () as *const _,
-};
-
-#[link_section = ".rodata.sceNid.SystemCtrlForUser.sctrlKernelLoadExecVSHMs2"]
-static SCTRL_LOAD_EXEC_VSH_MS2_NID: u32 = 0xABA7_F1B0;
-
-#[link_section = ".sceStub.text.SystemCtrlForUser.sctrlKernelLoadExecVSHMs2"]
-#[no_mangle]
-static __ssb_sctrlKernelLoadExecVSHMs2_stub: Stub =
-    Stub { lib: &SCTRL_STUB, nid: &SCTRL_LOAD_EXEC_VSH_MS2_NID };
-
-unsafe fn sctrl_load_exec_vsh_ms2(path: *const u8, param: *const LoadExecVshParam) -> i32 {
-    extern "C" {
-        fn __ssb_sctrlKernelLoadExecVSHMs2_stub(path: *const u8, param: *const LoadExecVshParam) -> i32;
+        #[psp(0xABA7F1B0)]
+        pub fn sctrlKernelLoadExecVSHMs2(path: *const u8, param: *const LoadExecVshParam) -> i32;
     }
-    __ssb_sctrlKernelLoadExecVSHMs2_stub(path, param)
 }
