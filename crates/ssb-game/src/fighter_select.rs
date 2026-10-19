@@ -24,24 +24,40 @@ pub const MAN: usize = 0;
 /// The CPU's slot (`sMNPlayers1PTrainingComPlayer`).
 pub const COM: usize = 1;
 
-/// `mnPlayers1PTrainingGetFighterKind`: the portraits, top row then bottom.
-pub const PORTRAIT_KINDS: [FighterKind; 12] = [
-    FighterKind::Luigi,
-    FighterKind::Mario,
-    FighterKind::Donkey,
-    FighterKind::Link,
-    FighterKind::Samus,
-    FighterKind::Captain,
-    FighterKind::Ness,
-    FighterKind::Yoshi,
-    FighterKind::Kirby,
-    FighterKind::Fox,
-    FighterKind::Pikachu,
-    FighterKind::Purin,
-];
+/// `mnPlayers1PTrainingGetFighterKind`'s `fkinds`: the portraits, top row
+/// then bottom.
+pub const PORTRAIT_KINDS: [FighterKind; 12] =
+    fighter_kinds(crate::d_arrays::MN_PLAYERS_1P_TRAINING_GET_FIGHTER_KIND_FKINDS);
 
-/// `mnPlayers1PTrainingGetPortrait`, indexed by `nFTKind`.
-const KIND_PORTRAITS: [usize; 12] = [1, 9, 2, 4, 0, 3, 7, 5, 8, 10, 11, 6];
+/// `mnPlayers1PTrainingGetPortrait`'s `portraits`, indexed by `nFTKind`.
+const KIND_PORTRAITS: [usize; 12] =
+    portrait_ids(crate::d_arrays::MN_PLAYERS_1P_TRAINING_GET_PORTRAIT_PORTRAITS);
+
+/// `nFTKind` ordinals as playable [`FighterKind`]s, checked at compile time.
+const fn fighter_kinds<const N: usize>(v: [i32; N]) -> [FighterKind; N] {
+    let mut out = [FighterKind::Mario; N];
+    let mut i = 0;
+    while i < N {
+        assert!(v[i] >= 0, "a negative nFTKind");
+        let kind = FighterKind::PLAYABLE[v[i] as usize];
+        assert!(kind as i32 == v[i], "PLAYABLE is not in nFTKind order");
+        out[i] = kind;
+        i += 1;
+    }
+    out
+}
+
+/// Portrait IDs (`0..12`) as indices, checked at compile time.
+const fn portrait_ids<const N: usize>(v: [i32; N]) -> [usize; N] {
+    let mut out = [0; N];
+    let mut i = 0;
+    while i < N {
+        assert!(v[i] >= 0 && v[i] < 12, "a portrait outside the grid");
+        out[i] = v[i] as usize;
+        i += 1;
+    }
+    out
+}
 
 /// `mnPlayers1PTrainingGetPortrait`.
 pub fn portrait(kind: FighterKind) -> usize {
@@ -805,20 +821,8 @@ pub fn portrait_center(kind: FighterKind) -> (f32, f32) {
 
 /// `announce_names` in `mnPlayers*AnnounceFighter`: each playable
 /// fighter's name voice, in [`FighterKind`] order.
-pub const ANNOUNCE_NAMES: [u16; 12] = [
-    id::nSYAudioVoiceAnnounceMario,
-    id::nSYAudioVoiceAnnounceFox,
-    id::nSYAudioVoiceAnnounceDonkey,
-    id::nSYAudioVoiceAnnounceSamus,
-    id::nSYAudioVoiceAnnounceLuigi,
-    id::nSYAudioVoiceAnnounceLink,
-    id::nSYAudioVoiceAnnounceYoshi,
-    id::nSYAudioVoiceAnnounceCaptain,
-    id::nSYAudioVoiceAnnounceKirby,
-    id::nSYAudioVoiceAnnouncePikachu,
-    id::nSYAudioVoiceAnnouncePurin,
-    id::nSYAudioVoiceAnnounceNess,
-];
+pub const ANNOUNCE_NAMES: [u16; 12] =
+    crate::d_arrays::MN_PLAYERS_1P_TRAINING_ANNOUNCE_FIGHTER_ANNOUNCE_NAMES;
 
 /// `mnPlayers*AnnounceFighter`: stops the cursor's last name voice
 /// (`func_80026738_27338(p_sfx)`), plays `nSYAudioFGMMarioDash` and

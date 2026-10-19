@@ -1,7 +1,6 @@
 //! `sc1PIntroFuncRun`, announcement and fighter entrance processes.
 use super::Stage;
 use crate::fighter::FighterKind;
-use crate::fighter_select::ANNOUNCE_NAMES;
 use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
@@ -14,30 +13,32 @@ pub enum Announce {
     Bonus(Stage),
 }
 
-/// `vs_fighter_voices`, by stage; the bonus stages' and Master Hand's 0
-/// entries are never read.
-const VS_FIGHTER_VOICES: [u16; 14] = [
-    id::nSYAudioVoiceAnnounceLink,
-    id::nSYAudioVoiceAnnounceYoshiTeam,
-    id::nSYAudioVoiceAnnounceFox,
-    0,
-    id::nSYAudioVoiceAnnounceMarioBros,
-    id::nSYAudioVoiceAnnouncePikachu,
-    id::nSYAudioVoiceAnnounceGDonkey,
-    0,
-    id::nSYAudioVoiceAnnounceKirbyTeam,
-    id::nSYAudioVoiceAnnounceSamus,
-    id::nSYAudioVoiceAnnounceMMario,
-    0,
-    id::nSYAudioVoiceAnnounceZako,
-    id::nSYAudioVoiceAnnounceZako,
-];
+/// `sc1PIntroUpdateAnnounce`'s `vs_fighter_voices`, by stage; the bonus
+/// stages' and Master Hand's entries are never read.
+const VS_FIGHTER_VOICES: [u16; 14] =
+    voices(crate::d_arrays::SC_1P_INTRO_UPDATE_ANNOUNCE_VS_FIGHTER_VOICES);
+
+/// `sc1PIntroUpdateAnnounce`'s `fighter_voices`, by [`FighterKind`].
+const FIGHTER_VOICES: [u16; 12] =
+    voices(crate::d_arrays::SC_1P_INTRO_UPDATE_ANNOUNCE_FIGHTER_VOICES);
+
+/// The `u32` voice IDs as the `u16` the sound calls take.
+const fn voices<const N: usize>(ids: [u32; N]) -> [u16; N] {
+    let mut out = [0; N];
+    let mut i = 0;
+    while i < N {
+        assert!(ids[i] <= u16::MAX as u32, "voice ID out of range");
+        out[i] = ids[i] as u16;
+        i += 1;
+    }
+    out
+}
 
 impl Announce {
     /// The voice `sc1PIntroUpdateAnnounce` plays for it.
     pub fn voice(self) -> Option<u16> {
         match self {
-            Announce::Player(kind) => ANNOUNCE_NAMES.get(kind as usize).copied(),
+            Announce::Player(kind) => FIGHTER_VOICES.get(kind as usize).copied(),
             Announce::Versus => Some(id::nSYAudioVoiceAnnounceVersus),
             Announce::Opponent(stage) => VS_FIGHTER_VOICES.get(stage as usize).copied(),
             Announce::Bonus(Stage::Bonus1) => Some(id::nSYAudioVoiceAnnounceBreakTheTargets),
@@ -97,11 +98,10 @@ impl Intro {
             self.stage,
             Stage::Bonus1 | Stage::Bonus2 | Stage::Bonus3 | Stage::Boss
         ) {
-            let wait = if matches!(self.player, FighterKind::Donkey | FighterKind::Captain) {
-                70
-            } else {
-                50
-            } + 1;
+            // `announce_wait_tics`, by the player's kind.
+            let wait = crate::d_arrays::SC_1P_INTRO_UPDATE_ANNOUNCE_ANNOUNCE_WAIT_TICS
+                [self.player as usize]
+                + 1;
             for (i, (ready, announce)) in [
                 (scheduler_tic >= 2, Announce::Player(self.player)),
                 (scheduler_tic > wait, Announce::Versus),
@@ -144,9 +144,10 @@ pub struct Entrance {
 impl Entrance {
     pub fn ally(card: usize) -> Self {
         Self {
-            z: [-500.0, -600.0, -800.0, -700.0, -900.0, -1100.0][card],
+            // `sc1PIntroGetFighterPositionZ` and `...VelocityZ`.
+            z: crate::d_arrays::SC_1P_INTRO_GET_FIGHTER_POSITION_Z_POS_Z[card],
             shown: true,
-            velocity_z: [30.0, 40.0, 40.0, 50.0, 50.0, 50.0][card],
+            velocity_z: crate::d_arrays::SC_1P_INTRO_GET_FIGHTER_VELOCITY_Z_VEL_Z[card],
             delay: None,
         }
     }

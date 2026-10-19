@@ -7,8 +7,8 @@
 //! subtitle under the tabs is not drawn.
 
 use super::{
-    decals, labels, option_tab, Draw, Pad, Piece, Repeat, Scene, TabStatus, DOWN, FILE_COMMON,
-    FILE_OPTION, IDLE_RETURN, LEFT, RIGHT, UP,
+    decals, labels, option_tab, Draw, Pad, Piece, Repeat, Scene, TabColors, TabStatus, DOWN,
+    FILE_COMMON, FILE_OPTION, IDLE_RETURN, LEFT, RIGHT, UP,
 };
 use crate::backup::Backup;
 use crate::sound::{self, id};
@@ -24,6 +24,13 @@ pub mod sprite {
     pub const OPTION_TEXT: u32 = 0x9288;
     pub const SETTINGS_ICON_DARK: u32 = 0xB958;
 }
+
+/// `mnOptionSetOptionSpriteColors`'s `selcolors`, `hicolors` and `notcolors`.
+const TAB_COLORS: TabColors = TabColors {
+    sel: crate::d_arrays::MN_OPTION_SET_OPTION_SPRITE_COLORS_SELCOLORS,
+    hi: crate::d_arrays::MN_OPTION_SET_OPTION_SPRITE_COLORS_HICOLORS,
+    not: crate::d_arrays::MN_OPTION_SET_OPTION_SPRITE_COLORS_NOTCOLORS,
+};
 
 /// `nMNOptionOption*`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,7 +211,7 @@ impl OptionMenu {
             (201.0, 120.0),
         );
         // `mnOptionMakeSound`.
-        option_tab(f, 113.0, 42.0, 17, self.tab_status[0]);
+        option_tab(f, 113.0, 42.0, 17, self.tab_status[0], &TAB_COLORS);
         f(Draw::Sprite(
             Piece::clear(FILE_OPTION, sprite::SOUND_TEXT, 116.0, 46.0).prim([0; 3]),
         ));
@@ -224,18 +231,18 @@ impl OptionMenu {
             Piece::clear(FILE_COMMON, super::common::SLASH, 229.0, 48.0).prim([0x32; 3]),
         ));
         // `mnOptionMakeScreenAdjust` and `mnOptionMakeBackupClear`.
-        option_tab(f, 91.0, 89.0, 17, self.tab_status[1]);
+        option_tab(f, 91.0, 89.0, 17, self.tab_status[1], &TAB_COLORS);
         f(Draw::Sprite(
             Piece::clear(FILE_OPTION, sprite::SCREEN_ADJUST_TEXT, 103.0, 92.0).prim([0; 3]),
         ));
-        option_tab(f, 69.0, 136.0, 17, self.tab_status[2]);
+        option_tab(f, 69.0, 136.0, 17, self.tab_status[2], &TAB_COLORS);
         f(Draw::Sprite(
             Piece::clear(FILE_OPTION, sprite::BACKUP_CLEAR_TEXT, 86.0, 140.0).prim([0; 3]),
         ));
         // `mnOptionSoundUnderlineProcDisplay`.
         if self.tab == Tab::Sound {
-            let r =
-                [[233, 64, 273, 64], [179, 64, 225, 64]][usize::from(self.mono_or_stereo.min(1))];
+            let r = crate::d_arrays::MN_OPTION_SOUND_UNDERLINE_PROC_DISPLAY_RECT
+                [usize::from(self.mono_or_stereo.min(1))];
             f(super::fill(r[0], r[1], r[2], r[3], [0xFF; 3]));
         }
     }

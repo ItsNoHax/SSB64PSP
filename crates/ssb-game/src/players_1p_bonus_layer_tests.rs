@@ -76,6 +76,7 @@ fn the_title_names_the_practice() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_panel_sits_at_58_with_the_ports_lut() {
     let mut s = new(BonusKind::Targets, 2);
     let (px, py) = portrait_center(FighterKind::Fox);
@@ -112,6 +113,7 @@ fn the_panel_sits_at_58_with_the_ports_lut() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_fighter_short_of_ten_shows_its_count() {
     let mut backup = Backup::default();
     backup.spgame_records[FighterKind::Mario as usize].bonus2_task_count = 7;
@@ -153,6 +155,7 @@ fn a_fighter_short_of_ten_shows_its_count() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_finished_fighter_shows_its_best_time() {
     let mut backup = Backup::default();
     let fox = FighterKind::Fox as usize;

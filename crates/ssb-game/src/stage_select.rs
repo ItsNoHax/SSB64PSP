@@ -32,20 +32,19 @@ pub const DEFAULT_GKIND: u8 = gkind::CASTLE;
 /// The random slot.
 pub const RANDOM_SLOT: usize = 9;
 
-/// `mnMapsGetGroundKind`'s table: two rows of five slots, the random slot
-/// last.
-const SLOT_GKINDS: [u8; 10] = [
-    gkind::CASTLE,
-    gkind::JUNGLE,
-    gkind::HYRULE,
-    gkind::ZEBES,
-    gkind::INISHIE,
-    gkind::YOSTER,
-    gkind::PUPUPU,
-    gkind::SECTOR,
-    gkind::YAMABUKI,
-    gkind::RANDOM,
-];
+/// `mnMapsGetGroundKind`'s `gkinds`: two rows of five slots, the random
+/// slot (`0xDE`) last.
+const SLOT_GKINDS: [u8; 10] = {
+    let gkinds = crate::d_arrays::MN_MAPS_GET_GROUND_KIND_GKINDS;
+    let mut out = [0; 10];
+    let mut i = 0;
+    while i < 10 {
+        assert!(gkinds[i] >= 0 && gkinds[i] <= 0xFF);
+        out[i] = gkinds[i] as u8;
+        i += 1;
+    }
+    out
+};
 
 /// `I_MIN_TO_TICS(5)`: idle ticks before the screen returns to the title.
 const RETURN_TICS: u32 = 5 * 60 * 60;
@@ -259,6 +258,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn input_waits_ten_ticks_and_the_cursor_starts_on_the_remembered_stage() {
         let mut s = StageSelect::new(gkind::PUPUPU, 0);
         assert_eq!(s.cursor_slot, 6);
@@ -274,6 +274,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn locked_mushroom_kingdom_is_skipped_by_every_move() {
         let mut s = StageSelect::new(gkind::ZEBES, 0);
         settle(&mut s);
@@ -323,6 +324,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn row_ends_wrap_as_the_source_switch_does() {
         let mut s = StageSelect::new(gkind::YOSTER, 0);
         settle(&mut s);
@@ -337,6 +339,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn random_redraws_locked_and_repeat_stages_and_remembers_the_random_slot() {
         let s = StageSelect::new(gkind::RANDOM, 0);
         let mut draws = [gkind::INISHIE, gkind::PUPUPU, gkind::HYRULE].into_iter();

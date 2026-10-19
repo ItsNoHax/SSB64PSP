@@ -25,7 +25,7 @@
 use crate::fighter::FighterKind;
 use crate::players_1p::layer::{mode, number, FILE_PLAYERS_1P_MODE, GATE_LUTS, KIND_TEXT_X};
 use crate::players_vs::layer::{
-    self as vs, common, piece, Fighter, Flash, Piece, FILE_EMBLEMS, FILE_GAME_MODES,
+    self as vs, common, piece, rom, Fighter, Flash, Piece, FILE_EMBLEMS, FILE_GAME_MODES,
     FILE_PLAYERS_COMMON, FLASH_LENGTH,
 };
 use crate::results_scene::FIGHTER_SCALES;
@@ -71,10 +71,17 @@ pub const MENU_SPRITES: &[(u32, u32)] = &[
 const GATE_X: f32 = 58.0;
 /// `mnPlayers1PBonusMakeFighter`'s `translate`.
 pub const FIGHTER_POSITION: [f32; 3] = [-700.0, -850.0, 0.0];
-/// The records' label colour and the digits' environment and primitive
-/// (`colors2`).
+/// The records' label colour, a code immediate (each function's
+/// `colors1` is never read).
 const RECORD_TEXT: [u8; 3] = [0x7E, 0x7C, 0x77];
-const RECORD_DIGITS: ([u8; 3], [u8; 3]) = ([0; 3], RECORD_TEXT);
+/// `mnPlayers1PBonusMakeBestTime`'s, `...MakeBestTaskCount`'s and
+/// `...MakeTotalTime`'s `colors2`: the digits' environment, then primitive.
+const BEST_TIME_DIGITS: ([u8; 3], [u8; 3]) =
+    rom::env_prim(crate::d_arrays::MN_PLAYERS_1P_BONUS_MAKE_BEST_TIME_COLORS_2);
+const BEST_TASK_COUNT_DIGITS: ([u8; 3], [u8; 3]) =
+    rom::env_prim(crate::d_arrays::MN_PLAYERS_1P_BONUS_MAKE_BEST_TASK_COUNT_COLORS_2);
+const TOTAL_TIME_DIGITS: ([u8; 3], [u8; 3]) =
+    rom::env_prim(crate::d_arrays::MN_PLAYERS_1P_BONUS_MAKE_TOTAL_TIME_COLORS_2);
 
 /// The scene's display state.
 #[derive(Debug, Clone)]
@@ -323,10 +330,10 @@ fn label(offset: u32, x: f32, y: f32) -> Draw {
     })
 }
 
-/// Two-digit (or `max`-digit) fixed numbers in the records' colours.
-fn digits(n: i32, x: f32, y: f32, max: u32, f: &mut impl FnMut(Draw)) {
+/// Two-digit (or `max`-digit) fixed numbers in `colors`.
+fn digits(n: i32, x: f32, y: f32, max: u32, colors: ([u8; 3], [u8; 3]), f: &mut impl FnMut(Draw)) {
     // `mnPlayers1PBonusMakeNumber` draws a negative number as 0.
-    number(n.max(0) as u32, x, y, RECORD_DIGITS, max, true, &mut |p| {
+    number(n.max(0) as u32, x, y, colors, max, true, &mut |p| {
         f(Draw::Sprite(p))
     });
 }
@@ -338,11 +345,11 @@ fn visit_hiscore(bonus: BonusKind, record: FighterRecord, f: &mut impl FnMut(Dra
     match record {
         FighterRecord::Time(t) => {
             f(label(records::BEST_TIME_TEXT, 177.0, 198.0));
-            digits(t.mins, 237.0, 195.0, 2, f);
+            digits(t.mins, 237.0, 195.0, 2, BEST_TIME_DIGITS, f);
             f(label(records::SEC, 239.0, 195.0));
-            digits(t.secs, 259.0, 195.0, 2, f);
+            digits(t.secs, 259.0, 195.0, 2, BEST_TIME_DIGITS, f);
             f(label(records::CSEC, 261.0, 195.0));
-            digits(t.csecs, 283.0, 195.0, 2, f);
+            digits(t.csecs, 283.0, 195.0, 2, BEST_TIME_DIGITS, f);
         }
         FighterRecord::Tasks(count) => {
             let text = match bonus {
@@ -350,7 +357,7 @@ fn visit_hiscore(bonus: BonusKind, record: FighterRecord, f: &mut impl FnMut(Dra
                 BonusKind::Platforms => records::PLATFORMS_TEXT,
             };
             f(label(text, 235.0, 195.0));
-            digits(i32::from(count), 225.0, 194.0, 2, f);
+            digits(i32::from(count), 225.0, 194.0, 2, BEST_TASK_COUNT_DIGITS, f);
         }
     }
 }
@@ -360,11 +367,11 @@ fn visit_hiscore(bonus: BonusKind, record: FighterRecord, f: &mut impl FnMut(Dra
 /// minutes.
 fn visit_total_time(t: &Time, f: &mut impl FnMut(Draw)) {
     f(label(records::TOTAL_BEST_TIME_TEXT, 142.0, 209.0));
-    digits(t.csecs, 283.0, 206.0, 2, f);
+    digits(t.csecs, 283.0, 206.0, 2, TOTAL_TIME_DIGITS, f);
     f(label(records::CSEC, 261.0, 206.0));
-    digits(t.secs, 259.0, 206.0, 2, f);
+    digits(t.secs, 259.0, 206.0, 2, TOTAL_TIME_DIGITS, f);
     f(label(records::SEC, 239.0, 206.0));
-    digits(t.mins, 237.0, 206.0, 3, f);
+    digits(t.mins, 237.0, 206.0, 3, TOTAL_TIME_DIGITS, f);
 }
 
 /// Whether `(file, offset)` is one of the VS or 1P select's listed

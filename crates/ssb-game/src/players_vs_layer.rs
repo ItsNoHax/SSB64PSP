@@ -42,35 +42,39 @@ pub const FILE_PORTRAITS: u32 = 19;
 
 /// `llMNPlayersCommon*` offsets.
 pub(crate) mod common {
-    pub const TEXT_1P: [u32; 4] = [0x878, 0xA58, 0xC38, 0xE18];
+    use crate::d_arrays as g;
+
+    /// `mnPlayersVSMakePlayerKind`'s `offsets`: `1PText` to `4PText`.
+    pub const TEXT_1P: [u32; 4] = g::MN_PLAYERS_VS_MAKE_PLAYER_KIND_OFFSETS;
     pub const TEXT_CP: u32 = 0xFF8;
     pub const HANDICAP_TEXT: u32 = 0x1108;
     pub const CP_LEVEL_TEXT: u32 = 0x1218;
     pub const START_TEXT: u32 = 0x1378;
     pub const PRESS_TEXT: u32 = 0x14D8;
     /// `mnPlayersVSMakeNameAndEmblem`'s `name_offsets`, by fighter kind.
-    pub const NAMES: [u32; 12] = [
-        0x1838, 0x25B8, 0x1FF8, 0x2358, 0x1B18, 0x2BA0, 0x2ED8, 0x3998, 0x28E8, 0x32F8, 0x3DB8,
-        0x35B0,
-    ];
+    pub const NAMES: [u32; 12] = g::MN_PLAYERS_VS_MAKE_NAME_AND_EMBLEM_NAME_OFFSETS;
     pub const INFINITY_DARK: u32 = 0x3EF0;
     pub const TIME_SELECTOR: u32 = 0x48B0;
     pub const STOCK_SELECTOR: u32 = 0x5270;
-    /// `0DarkSprite` to `9DarkSprite`.
-    pub const DARK_DIGITS: [u32; 10] = [
-        0x5388, 0x5440, 0x5558, 0x5668, 0x5778, 0x5888, 0x5998, 0x5AA8, 0x5BB8, 0x5CC8,
-    ];
-    /// `HmnLabel`, `CPLabel`, `NALabel`, by player kind.
-    pub const KIND_LABELS: [u32; 3] = [0x6048, 0x63C8, 0x6748];
-    /// `CursorHandPoint`, `...Grab`, `...Hover`, by cursor status.
-    pub const CURSORS: [u32; 3] = [0x6F88, 0x76E8, 0x8168];
-    pub const TEXT_GRADIENT: [u32; 4] = [0x8268, 0x8368, 0x8468, 0x8568];
-    /// `1PPuck` to `4PPuck`, then `CPPuck`.
-    pub const PUCKS: [u32; 5] = [0x9048, 0x9B28, 0xA608, 0xB0E8, 0xBBC8];
+    /// `mnPlayersVSMakeGameRuleNumber`'s `offsets`: `0DarkSprite` to
+    /// `9DarkSprite`.
+    pub const DARK_DIGITS: [u32; 10] = g::MN_PLAYERS_VS_MAKE_GAME_RULE_NUMBER_OFFSETS;
+    /// `mnPlayersVSUpdatePlayerKindSelect`'s `offsets`: `HmnLabel`,
+    /// `CPLabel`, `NALabel`, by player kind.
+    pub const KIND_LABELS: [u32; 3] = g::MN_PLAYERS_VS_UPDATE_PLAYER_KIND_SELECT_OFFSETS;
+    /// `mnPlayersVSUpdateCursor`'s `cursor_offsets`: `CursorHandPoint`,
+    /// `...Grab`, `...Hover`, by cursor status.
+    pub const CURSORS: [u32; 3] = g::MN_PLAYERS_VS_UPDATE_CURSOR_CURSOR_OFFSETS;
+    /// `mnPlayersVSUpdateCursor`'s `num_offsets`, by port.
+    pub const TEXT_GRADIENT: [u32; 4] = g::MN_PLAYERS_VS_UPDATE_CURSOR_NUM_OFFSETS;
+    /// `mnPlayersVSUpdatePuck`'s `offsets`: `1PPuck` to `4PPuck`, then
+    /// `CPPuck`.
+    pub const PUCKS: [u32; 5] = g::MN_PLAYERS_VS_UPDATE_PUCK_OFFSETS;
     pub const DOOR_LEFT: u32 = 0xCDB0;
     pub const DOOR_RIGHT: u32 = 0xDFA0;
-    /// `RedLabel`, `BlueLabel`, `GreenLabel`, by team.
-    pub const TEAM_LABELS: [u32; 3] = [0xE3C8, 0xEC08, 0xE7E8];
+    /// `mnPlayersVSMakeTeamSelect`'s `offsets`: `RedLabel`, `BlueLabel`,
+    /// `GreenLabel`, by team.
+    pub const TEAM_LABELS: [u32; 3] = g::MN_PLAYERS_VS_MAKE_TEAM_SELECT_OFFSETS;
     pub const ARROW_L: u32 = 0xECE8;
     pub const ARROW_R: u32 = 0xEDC8;
     pub const READY_TEXT: u32 = 0xF448;
@@ -79,30 +83,26 @@ pub(crate) mod common {
     pub const BACK_BUTTON: u32 = 0x115C8;
 }
 
+/// `mnPlayersVSMakeHandicapLevelValue`'s `offsets`:
 /// `llMNCommonDigit0Sprite` to `...Digit9Sprite`.
-const MN_DIGITS: [u32; 10] = [
-    0xD310, 0xD3E0, 0xD4B0, 0xD580, 0xD650, 0xD720, 0xD7F0, 0xD8C0, 0xD990, 0xDA60,
-];
+const MN_DIGITS: [u32; 10] = crate::d_arrays::MN_PLAYERS_VS_MAKE_HANDICAP_LEVEL_VALUE_OFFSETS;
 const MN_COLON: u32 = 0xDCF0;
 /// `mnPlayersVSMakeNameAndEmblem`'s `emblem_offsets`, by fighter kind.
-pub(crate) const EMBLEMS: [u32; 12] = [
-    0x618, 0x1938, 0xC78, 0x12D8, 0x618, 0x25F8, 0x2C58, 0x32B8, 0x1F98, 0x3918, 0x3918, 0x3F78,
-];
+pub(crate) const EMBLEMS: [u32; 12] =
+    crate::d_arrays::MN_PLAYERS_VS_MAKE_NAME_AND_EMBLEM_EMBLEM_OFFSETS;
 pub(crate) const STONE_BACKGROUND: u32 = 0x440;
-/// `FreeForAllTextSprite`, `TeamBattleTextSprite`.
-const GAME_MODE_TEXT: [u32; 2] = [0x280, 0x4E0];
+/// `mnPlayersVSMakeLabels`' `offsets`: `FreeForAllTextSprite`,
+/// `TeamBattleTextSprite`.
+const GAME_MODE_TEXT: [u32; 2] = crate::d_arrays::MN_PLAYERS_VS_MAKE_LABELS_OFFSETS;
 /// `llMNPlayersPortraits*` offsets.
 const WHITE_SQUARE: u32 = 0x6F0;
 const QUESTION_MARK: u32 = 0xF68;
 const FIRE_BG: u32 = 0x24D0;
 /// `mnPlayersVSMakePortrait`'s `offsets`, by fighter kind.
-const PORTRAIT_SPRITES: [u32; 12] = [
-    0x4728, 0xD068, 0x8BC8, 0xAE18, 0x6978, 0x11508, 0x13758, 0x19E48, 0xF2B8, 0x159A8, 0x1C098,
-    0x17BF8,
-];
+const PORTRAIT_SPRITES: [u32; 12] = crate::d_arrays::MN_PLAYERS_VS_MAKE_PORTRAIT_OFFSETS;
 /// `mnPlayersVSMakePortraitShadow`'s `offsets`, by fighter kind (the
 /// unlocked fighters' entries are 0 and never read).
-const SHADOW_SPRITES: [u32; 12] = [0, 0, 0, 0, 0x20538, 0, 0, 0x1E2E8, 0, 0, 0x249D8, 0x22788];
+const SHADOW_SPRITES: [u32; 12] = crate::d_arrays::MN_PLAYERS_VS_MAKE_PORTRAIT_SHADOW_OFFSETS;
 
 /// Every sprite the layer names, as `(file, offset)`, for the pack's
 /// check. The gate card is packed through its LUTs.
@@ -154,35 +154,33 @@ pub const GATE_CARD: (u32, u32, u8) = (FILE_PLAYERS_COMMON, common::RED_CARD, 8)
 pub const VIEWPORT: [f32; 4] = [10.0, 10.0, 310.0, 230.0];
 
 /// `mnPlayersVSGetNextPortraitX`'s `portrait_pos_x`, by portrait.
-const PORTRAIT_X: [f32; 12] = [
-    25.0, 70.0, 115.0, 160.0, 205.0, 250.0, 25.0, 70.0, 115.0, 160.0, 205.0, 250.0,
-];
+const PORTRAIT_X: [f32; 12] = crate::d_arrays::MN_PLAYERS_VS_GET_NEXT_PORTRAIT_X_PORTRAIT_POS_X;
 /// `mnPlayersVSGetNextPortraitX`'s `portrait_vel`, by portrait.
-const PORTRAIT_VEL: [f32; 12] = [
-    1.9, 3.9, 7.8, -7.8, -3.8, -1.8, 1.8, 3.8, 7.8, -7.8, -3.8, -1.8,
-];
-/// `mnPlayersVSSetPortraitWallpaperPosition`'s start `x`, by portrait.
-pub(crate) const PORTRAIT_START_X: [f32; 12] = [
-    -35.0, -35.0, -35.0, 310.0, 310.0, 310.0, -35.0, -35.0, -35.0, 310.0, 310.0, 310.0,
-];
+const PORTRAIT_VEL: [f32; 12] = crate::d_arrays::MN_PLAYERS_VS_GET_NEXT_PORTRAIT_X_PORTRAIT_VEL;
+/// `mnPlayersVSSetPortraitWallpaperPosition`'s start `x`, by portrait
+/// (its `pos[].x`). The 1P, Training and Bonus selects' copies of the
+/// portrait tables hold the same values; their layers share these.
+pub(crate) const PORTRAIT_START_X: [f32; 12] =
+    rom::column_x(crate::d_arrays::MN_PLAYERS_VS_SET_PORTRAIT_WALLPAPER_POSITION_POS);
 
 /// `mnPlayersVSMakeLabels`' game-mode label colours.
-const GAME_MODE_COLORS: [[u8; 3]; 2] = [[0xE3, 0xAC, 0x04], [0x61, 0xAD, 0x49]];
+const GAME_MODE_COLORS: [[u8; 3]; 2] = crate::d_arrays::MN_PLAYERS_VS_MAKE_LABELS_COLORS;
 /// `mnPlayersVSMakeTimeSetting`'s `colors`: environment, then primitive.
-const RULE_DIGIT_COLORS: ([u8; 3], [u8; 3]) = ([0x32, 0x1C, 0x0E], [0xFF, 0xFF, 0xFF]);
+const TIME_DIGIT_COLORS: ([u8; 3], [u8; 3]) =
+    rom::env_prim(crate::d_arrays::MN_PLAYERS_VS_MAKE_TIME_SETTING_COLORS);
+/// `mnPlayersVSMakeStockSetting`'s `colors`.
+const STOCK_DIGIT_COLORS: ([u8; 3], [u8; 3]) =
+    rom::env_prim(crate::d_arrays::MN_PLAYERS_VS_MAKE_STOCK_SETTING_COLORS);
 /// `mnPlayersVSUpdateCursor`'s `colors`: the number's primitive, then
 /// environment, by player.
-pub(crate) const CURSOR_COLORS: [([u8; 3], [u8; 3]); 4] = [
-    ([0xE0, 0x15, 0x15], [0x5B, 0x00, 0x00]),
-    ([0x00, 0x00, 0xFB], [0x00, 0x00, 0x52]),
-    ([0xCA, 0x94, 0x08], [0x62, 0x3C, 0x00]),
-    ([0x00, 0x91, 0x00], [0x00, 0x4F, 0x00]),
-];
+pub(crate) const CURSOR_COLORS: [[[u8; 3]; 2]; 4] =
+    crate::d_arrays::MN_PLAYERS_VS_UPDATE_CURSOR_COLORS;
 /// `mnPlayersVSUpdateCursor`'s `pos`: the number's offset from the hand,
 /// by cursor status.
-pub(crate) const CURSOR_NUMBER_OFFSETS: [(f32, f32); 3] = [(7.0, 15.0), (9.0, 10.0), (9.0, 15.0)];
+pub(crate) const CURSOR_NUMBER_OFFSETS: [(f32, f32); 3] =
+    rom::xy_i(crate::d_arrays::MN_PLAYERS_VS_UPDATE_CURSOR_POS);
 /// `mnPlayersVSMakePlayerKind`'s `pos_x`.
-const KIND_TEXT_X: [f32; 4] = [8.0, 5.0, 5.0, 5.0];
+const KIND_TEXT_X: [f32; 4] = crate::d_arrays::MN_PLAYERS_VS_MAKE_PLAYER_KIND_POS_X;
 /// `mnPlayersVSShutter1PProcDisplay` to `...4P`'s scissors, `[x0, y0, x1,
 /// y1]` (`lbCommonSetSpriteScissor(ulx, lrx, uly, lry)`).
 const SHUTTER_SCISSORS: [[f32; 4]; 4] = [
@@ -198,6 +196,87 @@ pub const DOOR_CLOSED: i32 = 41;
 pub(crate) const FLASH_LENGTH: i32 = 16;
 /// `mnPlayersVSArrowThreadUpdate`'s `blink_wait`.
 const ARROW_BLINK: i32 = 10;
+
+/// The fighter selects' function-local tables come from the ROM
+/// (`crate::d_arrays`, D-048) in their C element types; these convert
+/// them at compile time, and a value that does not fit fails the build.
+pub(crate) mod rom {
+    /// A `u32` colour table `{ env r, g, b, prim r, g, b }` as the
+    /// environment and primitive colours.
+    pub(crate) const fn env_prim(c: [u32; 6]) -> ([u8; 3], [u8; 3]) {
+        let [e, p] = [rgb([c[0], c[1], c[2]]), rgb([c[3], c[4], c[5]])];
+        (e, p)
+    }
+
+    /// A `u32` colour table `{ r, g, b }`.
+    pub(crate) const fn rgb(c: [u32; 3]) -> [u8; 3] {
+        let mut out = [0; 3];
+        let mut i = 0;
+        while i < 3 {
+            assert!(c[i] <= 0xFF, "a colour channel above 0xFF");
+            out[i] = c[i] as u8;
+            i += 1;
+        }
+        out
+    }
+
+    /// A `Vec2f` table as `(x, y)` pairs.
+    pub(crate) const fn xy<const N: usize>(v: [[f32; 2]; N]) -> [(f32, f32); N] {
+        let mut out = [(0.0, 0.0); N];
+        let mut i = 0;
+        while i < N {
+            out[i] = (v[i][0], v[i][1]);
+            i += 1;
+        }
+        out
+    }
+
+    /// A `Vec2i` table as `(x, y)` pixel offsets.
+    pub(crate) const fn xy_i<const N: usize>(v: [[i32; 2]; N]) -> [(f32, f32); N] {
+        let mut out = [(0.0, 0.0); N];
+        let mut i = 0;
+        while i < N {
+            out[i] = (v[i][0] as f32, v[i][1] as f32);
+            i += 1;
+        }
+        out
+    }
+
+    /// A `Vec2f` table's `x` column.
+    pub(crate) const fn column_x<const N: usize>(v: [[f32; 2]; N]) -> [f32; N] {
+        let mut out = [0.0; N];
+        let mut i = 0;
+        while i < N {
+            out[i] = v[i][0];
+            i += 1;
+        }
+        out
+    }
+
+    /// An `s32` table of values in `0..=0xFF` as `u8`.
+    pub(crate) const fn bytes<const N: usize>(v: [i32; N]) -> [u8; N] {
+        let mut out = [0; N];
+        let mut i = 0;
+        while i < N {
+            assert!(v[i] >= 0 && v[i] <= 0xFF, "an entry outside a u8");
+            out[i] = v[i] as u8;
+            i += 1;
+        }
+        out
+    }
+
+    /// An `s32` table of non-negative values (display priorities) as `u32`.
+    pub(crate) const fn unsigned<const N: usize>(v: [i32; N]) -> [u32; N] {
+        let mut out = [0; N];
+        let mut i = 0;
+        while i < N {
+            assert!(v[i] >= 0, "a negative entry");
+            out[i] = v[i] as u32;
+            i += 1;
+        }
+        out
+    }
+}
 
 /// One sprite draw: an `SObj`'s sprite, top-left corner on the 320 x 240
 /// screen and colours.
@@ -378,17 +457,18 @@ fn digit_count(number: i32, max: i32) -> i32 {
 
 /// `mnPlayersVSMakeGameRuleNumber`, not fixed-width: digits right-aligned
 /// on `x`, from the ones leftwards, each its sprite's `width` apart.
-/// `widths` gives the dark digits' widths.
+/// `widths` gives the dark digits' widths, `(env, prim)` the caller's
+/// `colors`.
 pub fn rule_number(
     number: i32,
     x: f32,
     y: f32,
     max: i32,
     widths: &[f32; 10],
+    (env, prim): ([u8; 3], [u8; 3]),
     mut f: impl FnMut(Piece),
 ) {
     let number = number.max(0);
-    let (env, prim) = RULE_DIGIT_COLORS;
     let mut left = x;
     let mut put = |digit: i32, left: &mut f32| {
         let d = (digit % 10) as usize;
@@ -744,7 +824,7 @@ impl PlayersVs {
             ));
             // `mnPlayersVSMakeTimeSetting`.
             if self.time_value == TIMELIMIT_INFINITE {
-                let (env, prim) = RULE_DIGIT_COLORS;
+                let (env, prim) = TIME_DIGIT_COLORS;
                 let mut inf = piece(FILE_PLAYERS_COMMON, common::INFINITY_DARK, 194.0, 24.0);
                 inf.prim = Some(prim);
                 inf.env = env;
@@ -757,6 +837,7 @@ impl PlayersVs {
                     23.0,
                     2,
                     &DARK_DIGIT_WIDTHS,
+                    TIME_DIGIT_COLORS,
                     &mut put,
                 );
             }
@@ -770,7 +851,15 @@ impl PlayersVs {
             // `mnPlayersVSMakeStockSelect` shows `sMNPlayersVSStockValue + 1`.
             let n = i32::from(self.stock_value) + 1;
             let x = if n < 10 { 210.0 } else { 214.0 };
-            rule_number(n, x, 23.0, 2, &DARK_DIGIT_WIDTHS, &mut put);
+            rule_number(
+                n,
+                x,
+                23.0,
+                2,
+                &DARK_DIGIT_WIDTHS,
+                STOCK_DIGIT_COLORS,
+                &mut put,
+            );
         }
         put(piece(FILE_PLAYERS_COMMON, common::BACK_BUTTON, 244.0, 23.0));
     }
@@ -1123,7 +1212,7 @@ pub(crate) fn visit_cursor(
         y,
     )));
     let (dx, dy) = CURSOR_NUMBER_OFFSETS[status];
-    let (prim, env) = CURSOR_COLORS[p];
+    let [prim, env] = CURSOR_COLORS[p];
     f(Draw::Sprite(Piece {
         prim: Some(prim),
         env,

@@ -10,6 +10,15 @@
 //! `IF_COMMON_PLAYER_DAMAGE_DIGIT_WIDTHS`, written into `OUT_DIR` as
 //! `d_arrays.rs` for `ssb-game` ([`game_a`], [`game_b`]), `ssb-rom`
 //! ([`rom`]) and `ssb-engine` ([`engine`]).
+//!
+//! Arrays declared inside a decompiled function ([`DArray::local`]) are
+//! ROM tables too: IDO compiles each initialised local aggregate into an
+//! anonymous template in its file's `.data`, which the function copies.
+//! They have no symbol, so `tools/local_arrays.py` finds each one's address
+//! (source-order layout fitted on the ROM) and prints the list entries;
+//! [`local`] holds one list file per decomp file. Their constants are named
+//! `<FUNCTION>_<VARIABLE>` (`mnVSResultsMakeString`'s `widths` is
+//! `MN_VS_RESULTS_MAKE_STRING_WIDTHS`).
 
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -21,6 +30,7 @@ use crate::{Generated, Result, Source};
 mod engine;
 mod game_a;
 mod game_b;
+pub(crate) mod local;
 mod rom;
 
 /// An element type and how it is written.
@@ -33,6 +43,10 @@ pub enum Elem {
     /// A `u32` written in hex (file offsets, IDs read as addresses).
     X32,
     F32,
+    /// A `char *` to a NUL-terminated string in the same overlay (its
+    /// `.rodata`), written as `&'static str`; `""` for a `NULL` and in the
+    /// stub tables.
+    CStr,
 }
 
 impl Elem {
@@ -40,7 +54,7 @@ impl Elem {
         match self {
             Elem::U8 => 1,
             Elem::U16 => 2,
-            Elem::U32 | Elem::I32 | Elem::X32 | Elem::F32 => 4,
+            Elem::U32 | Elem::I32 | Elem::X32 | Elem::F32 | Elem::CStr => 4,
         }
     }
 
@@ -51,6 +65,7 @@ impl Elem {
             Elem::U32 | Elem::X32 => "u32",
             Elem::I32 => "i32",
             Elem::F32 => "f32",
+            Elem::CStr => "&str",
         }
     }
 
@@ -62,6 +77,29 @@ impl Elem {
             Elem::I32 => d.i32(vram)?.to_string(),
             Elem::X32 => format!("0x{:X}", d.u32(vram)?),
             Elem::F32 => f32_lit(d.f32(vram)?),
+            Elem::CStr => {
+                if d.rom.is_none() {
+                    return Ok("\"\"".to_string());
+                }
+                let mut at = d.u32(vram)?;
+                if at == 0 {
+                    return Ok("\"\"".to_string());
+                }
+                let mut text = String::new();
+                loop {
+                    let b = d.u8(at)?;
+                    if b == 0 {
+                        break;
+                    }
+                    assert!(
+                        b.is_ascii() && !b.is_ascii_control(),
+                        "0x{vram:08X} points at a byte 0x{b:02X} that is not printable ASCII"
+                    );
+                    text.push(b as char);
+                    at += 1;
+                }
+                format!("{text:?}")
+            }
         })
     }
 }
@@ -71,7 +109,8 @@ impl Elem {
 pub struct DArray {
     /// The generated constant.
     pub name: &'static str,
-    /// The decomp symbol (and field) it is read from, for the doc comment.
+    /// The decomp symbol (and field) it is read from, for the doc comment;
+    /// for a [`DArray::local`], the function and the variable.
     pub symbol: &'static str,
     pub overlay: Overlay,
     /// The first element's run-time address: the symbol's, plus the field's
@@ -84,6 +123,8 @@ pub struct DArray {
     /// Bytes from one outermost row to the next; 0 when the rows are packed
     /// (the record size for a field of a record array).
     pub stride: u32,
+    /// Declared inside a function (no symbol of its own).
+    pub local: bool,
 }
 
 impl DArray {
@@ -104,6 +145,24 @@ impl DArray {
             elem,
             dims,
             stride: 0,
+            local: false,
+        }
+    }
+
+    /// An array declared inside a decompiled function: `function` is
+    /// `"<function> <variable>"`, `vram` the address `tools/local_arrays.py`
+    /// prints for it.
+    pub const fn local(
+        name: &'static str,
+        function: &'static str,
+        overlay: Overlay,
+        vram: u32,
+        elem: Elem,
+        dims: &'static [usize],
+    ) -> Self {
+        Self {
+            local: true,
+            ..Self::new(name, function, overlay, vram, elem, dims)
         }
     }
 
@@ -118,6 +177,20 @@ impl DArray {
             ty = format!("[{ty}; {n}]");
         }
         ty
+    }
+
+    /// A one-dimensional array of 4-byte elements as raw words, for a
+    /// generator that indexes it; zeros for a stub.
+    pub fn words(&self, rom: Option<&Source>) -> Result<Vec<u32>> {
+        assert!(
+            self.dims.len() == 1 && self.elem.size() == 4,
+            "{} is not a 1-D word array",
+            self.name
+        );
+        let d = OverlayData::new(rom, self.overlay);
+        (0..self.dims[0] as u32)
+            .map(|i| d.u32(self.vram + i * self.row_bytes()))
+            .collect()
     }
 
     /// Bytes per outermost row.
@@ -152,10 +225,15 @@ impl DArray {
             + (self.dims[1..].iter().product::<usize>() as u32 - 1) * self.elem.size();
         d.bytes(last, self.elem.size())?;
         let value = self.value(&d, self.vram, self.dims)?;
+        let doc = match self.symbol.split_once(' ') {
+            Some((function, var)) if self.local => {
+                format!("`{function}`'s local `{var}` (at 0x{:08X}).", self.vram)
+            }
+            _ => format!("`{}`.", self.symbol),
+        };
         let _ = writeln!(
             out,
-            "/// `{}`.\npub const {}: {} = {value};",
-            self.symbol,
+            "/// {doc}\npub const {}: {} = {value};",
             self.name,
             self.rust_type()
         );
@@ -180,7 +258,7 @@ pub fn generate_game(rom: Option<&Source>) -> Result<Generated> {
         name: "d_arrays.rs",
         text: file(
             "the decomp's small `d*` arrays",
-            &[game_a::LIST, game_b::LIST],
+            &[&[game_a::LIST, game_b::LIST], local::GAME].concat(),
             rom,
         )?,
     })
@@ -190,7 +268,11 @@ pub fn generate_game(rom: Option<&Source>) -> Result<Generated> {
 pub fn generate_rom(rom: Option<&Source>) -> Result<Generated> {
     Ok(Generated {
         name: "d_arrays.rs",
-        text: file("the decomp's small `d*` arrays", &[rom::LIST], rom)?,
+        text: file(
+            "the decomp's small `d*` arrays",
+            &[&[rom::LIST], local::ROM].concat(),
+            rom,
+        )?,
     })
 }
 
@@ -223,12 +305,28 @@ mod tests {
     }
 
     #[test]
+    fn local_doc_and_string_stub() {
+        let a = DArray::local("S", "fnName names", OVL2, 0x8012_E870, Elem::CStr, &[2]);
+        let mut out = String::new();
+        a.emit(None, &mut out).unwrap();
+        assert_eq!(
+            out,
+            "/// `fnName`'s local `names` (at 0x8012E870).\n\
+             pub const S: [&str; 2] = [\"\", \"\"];\n"
+        );
+    }
+
+    #[test]
     fn every_list_emits_its_stub() {
         let game = generate_game(None).unwrap().text;
         let rom = generate_rom(None).unwrap().text;
         let n = |t: &str| t.matches("pub const ").count();
-        assert_eq!(n(&game), game_a::LIST.len() + game_b::LIST.len());
-        assert_eq!(n(&rom), rom::LIST.len());
+        let locals = |l: &[&[DArray]]| l.iter().map(|l| l.len()).sum::<usize>();
+        assert_eq!(
+            n(&game),
+            game_a::LIST.len() + game_b::LIST.len() + locals(local::GAME)
+        );
+        assert_eq!(n(&rom), rom::LIST.len() + locals(local::ROM));
         let engine = generate_engine(None).unwrap().text;
         assert_eq!(n(&engine), engine::LIST.len());
     }

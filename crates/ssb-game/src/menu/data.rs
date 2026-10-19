@@ -6,13 +6,20 @@
 //! subtitle is not drawn.
 
 use super::{
-    decals, labels, option_tab, Draw, Pad, Piece, Repeat, Scene, TabStatus, DOWN, FILE_DATA,
-    IDLE_RETURN, UP,
+    decals, labels, option_tab, Draw, Pad, Piece, Repeat, Scene, TabColors, TabStatus, DOWN,
+    FILE_DATA, IDLE_RETURN, UP,
 };
 use crate::backup::Backup;
 use crate::sound::{self, id};
 use crate::spgame::Unlock;
 use ssb_engine::input::N64Buttons;
+
+/// `mnDataSetOptionSpriteColors`'s `selcolors`, `hicolors` and `notcolors`.
+const TAB_COLORS: TabColors = TabColors {
+    sel: crate::d_arrays::MN_DATA_SET_OPTION_SPRITE_COLORS_SELCOLORS,
+    hi: crate::d_arrays::MN_DATA_SET_OPTION_SPRITE_COLORS_HICOLORS,
+    not: crate::d_arrays::MN_DATA_SET_OPTION_SPRITE_COLORS_NOTCOLORS,
+};
 
 /// `llMNData*Sprite`.
 pub mod sprite {
@@ -179,7 +186,7 @@ impl DataMenu {
         } else {
             ((113, 57), (81, 126))
         };
-        option_tab(f, cx as f32, cy as f32, 16, self.tab_status[0]);
+        option_tab(f, cx as f32, cy as f32, 16, self.tab_status[0], &TAB_COLORS);
         f(Draw::Sprite(
             Piece::clear(
                 FILE_DATA,
@@ -189,7 +196,7 @@ impl DataMenu {
             )
             .prim([0; 3]),
         ));
-        option_tab(f, vx as f32, vy as f32, 16, self.tab_status[1]);
+        option_tab(f, vx as f32, vy as f32, 16, self.tab_status[1], &TAB_COLORS);
         f(Draw::Sprite(
             Piece::clear(
                 FILE_DATA,
@@ -200,7 +207,7 @@ impl DataMenu {
             .prim([0; 3]),
         ));
         if self.is_have_sound_test {
-            option_tab(f, 69.0, 136.0, 16, self.tab_status[2]);
+            option_tab(f, 69.0, 136.0, 16, self.tab_status[2], &TAB_COLORS);
             f(Draw::Sprite(
                 Piece::clear(FILE_DATA, sprite::SOUND_TEST_TEXT, 95.0, 140.0).prim([0; 3]),
             ));

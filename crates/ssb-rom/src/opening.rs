@@ -19,7 +19,7 @@ pub const FILE_N64_LOGO: u32 = 0xC2;
 pub const N64_LOGO: u32 = 0x73C0;
 
 /// `llIFCommonAnnounceCommonFileID`: the fighter scenes' name letters
-/// (resident; [`LETTERS`]).
+/// (resident; [`crate::sprite::ANNOUNCE_COMMON`]).
 pub const FILE_ANNOUNCE: u32 = 0x25;
 
 /// The opening's relocData files (`ll*FileID`).
@@ -62,13 +62,6 @@ pub mod file {
 pub fn is_model_file(id: u32) -> bool {
     (file::PORTRAITS_SET1..=file::RUN_CRASH).contains(&id)
 }
-
-/// `llIFCommonAnnounceCommonLetter{A..Z}Sprite`.
-pub const LETTERS: [u32; 26] = [
-    0x5E0, 0x9A8, 0xD80, 0x1268, 0x1628, 0x1A00, 0x1F08, 0x2408, 0x26B8, 0x2A90, 0x2F98, 0x3358,
-    0x3980, 0x3E88, 0x44B0, 0x4890, 0x4F10, 0x5418, 0x57F0, 0x5BD0, 0x60D8, 0x65D8, 0x6C00, 0x7108,
-    0x7608, 0x7AE8,
-];
 
 /// `llMVCommon*` (file 0x34), the room's models and scripts.
 pub mod room {
@@ -121,7 +114,9 @@ pub mod room {
 /// (set 1) and Link, Kirby, Donkey Kong, Yoshi (set 2), the four rows
 /// top to bottom, then set 1's cover.
 pub mod portraits {
-    pub const ROWS: [u32; 4] = [0x9960, 0x13310, 0x1CCC0, 0x26670];
+    /// `mvOpeningPortraitsMakeSet1` and `...MakeSet2`'s `offsets`.
+    pub const SET1: [u32; 4] = crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_1_OFFSETS;
+    pub const SET2: [u32; 4] = crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_2_OFFSETS;
     pub const COVER: u32 = 0x2B2D0;
 }
 
@@ -129,7 +124,7 @@ pub mod portraits {
 pub mod run {
     /// The eight fighters' proxy `AnimJoint`s, in `mvOpeningRunMakeFighters`'
     /// order: Mario, Fox, Donkey Kong, Samus, Link, Yoshi, Kirby, Pikachu.
-    pub const FIGHTER_ANIM_JOINTS: [u32; 8] = [0x4, 0xB4, 0x124, 0x184, 0x224, 0x334, 0x3A4, 0x484];
+    pub const FIGHTER_ANIM_JOINTS: [u32; 8] = crate::d_arrays::MV_OPENING_RUN_MAKE_FIGHTERS_OFFSETS;
     pub const WALLPAPER: u32 = 0x58A0;
     pub const CRASH_MOBJSUB: u32 = 0x2AA8;
     pub const CRASH: u32 = 0x35F8;
@@ -229,7 +224,9 @@ pub mod yamabuki {
 pub mod sector {
     pub const GREAT_FOX: u32 = 0xD820;
     pub const GREAT_FOX_ANIM_JOINT: u32 = 0xDA10;
-    pub const ARWING_ANIM_JOINTS: [u32; 3] = [0xE110, 0xE910, 0xF1C0];
+    /// `mvOpeningSectorMakeArwings`' `anim_joints`.
+    pub const ARWING_ANIM_JOINTS: [u32; 3] =
+        crate::d_arrays::MV_OPENING_SECTOR_MAKE_ARWINGS_ANIM_JOINTS;
     pub const CAM_ANIM_JOINT: u32 = 0xF9A0;
     pub const COCKPIT: u32 = 0x3CC90;
     /// `llMVOpeningSectorWallpaperSprite` (file 0x4A).
@@ -499,17 +496,17 @@ pub const STARTUP_SPRITES: SpriteFile = SpriteFile {
 pub const PORTRAITS_SET1_SPRITES: SpriteFile = SpriteFile {
     file: file::PORTRAITS_SET1,
     offsets: &[
-        portraits::ROWS[0],
-        portraits::ROWS[1],
-        portraits::ROWS[2],
-        portraits::ROWS[3],
+        portraits::SET1[0],
+        portraits::SET1[1],
+        portraits::SET1[2],
+        portraits::SET1[3],
         portraits::COVER,
     ],
 };
 
 pub const PORTRAITS_SET2_SPRITES: SpriteFile = SpriteFile {
     file: file::PORTRAITS_SET2,
-    offsets: &portraits::ROWS,
+    offsets: &portraits::SET2,
 };
 
 pub const RUN_SPRITES: SpriteFile = SpriteFile {

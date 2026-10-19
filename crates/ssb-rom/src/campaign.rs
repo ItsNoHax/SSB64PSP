@@ -1,4 +1,6 @@
-//! Authored US campaign assets. Offsets from reloc_data.us.h; no ROM data. `BONUS_LABELS` is the one table read from the ROM at build time.
+//! Authored US campaign assets. Offsets from reloc_data.us.h; no ROM data. `BONUS_LABELS` and
+//! the `sc1PIntro*`/`sc1PStageClear*` function-local tables are read from the ROM at build time
+//! (`crate::d_arrays`).
 use crate::sprite::SpriteFile;
 // `BONUS_LABELS`: `dSC1PStageClearBonusData`'s label offsets in bonus ID
 // order (StageClear uses difficulty instead), generated at build time from
@@ -61,12 +63,24 @@ pub const INTRO_BONUS_MARKER: u32 = 0x7f40;
 pub const INTRO_BANNER_TOP: u32 = 0xc898;
 pub const INTRO_BANNER_BOTTOM: u32 = 0xed00;
 pub const INTRO_SKY: u32 = 0x14bf0;
+/// File 12, `SC1PIntroNames`: one name per fighter kind,
+/// `sc1PIntroMakeName`'s `name_offsets`.
 pub const NAMES: SpriteFile = SpriteFile {
     file: 12,
-    offsets: &[
-        0x138, 0x258, 0x378, 0x4f8, 0x618, 0x738, 0x858, 0xa38, 0xbb8, 0xd38, 0xf78, 0x1098,
-    ],
+    offsets: &crate::d_arrays::SC_1P_INTRO_MAKE_NAME_NAME_OFFSETS,
 };
+/// `sc1PIntroMakeLabels`' `number_offsets`: [`INTRO`]'s stage number by 1P
+/// stage; the boss stage's entry is 0 (it draws none).
+pub const INTRO_STAGE_NUMBERS: [u32; 14] = crate::d_arrays::SC_1P_INTRO_MAKE_LABELS_NUMBER_OFFSETS;
+/// `sc1PIntroMakeFigures`' `figure_offsets`: [`INTRO`]'s map marker by 1P
+/// stage.
+pub const INTRO_FIGURES: [u32; 15] = crate::d_arrays::SC_1P_INTRO_MAKE_FIGURES_FIGURE_OFFSETS;
+/// `sc1PIntroMakeFigures`' `figure_pos`: each marker's `(x, y)`.
+pub const INTRO_FIGURE_POS: [[i32; 2]; 14] = crate::d_arrays::SC_1P_INTRO_MAKE_FIGURES_FIGURE_POS;
+/// `sc1PIntroMakeVSName`'s `opponent_offsets` by 1P stage: in [`NAMES`] for
+/// the Link and Pikachu stages, in [`INTRO`] otherwise; 0 for the bonus
+/// stages.
+pub const INTRO_OPPONENTS: [u32; 15] = crate::d_arrays::SC_1P_INTRO_MAKE_VS_NAME_OPPONENT_OFFSETS;
 pub const NAMES_MARIO: u32 = 0x138;
 pub const NAMES_FOX: u32 = 0x258;
 pub const NAMES_DONKEY: u32 = 0x378;
@@ -129,6 +143,25 @@ pub const CLEAR_BONUS_BORDER: u32 = 0xa4b8;
 pub const CLEAR_RESULT_TEXT: u32 = 0xaf98;
 pub const CLEAR_TARGET_TEXT: u32 = 0xb4f8;
 pub const CLEAR_BONUS_PAGE_ARROW: u32 = 0xb6a8;
+/// `sc1PStageClearSetDigitSpriteColors`' `colors_all`: the `{prim, env}`
+/// pair of each digit kind (timer and damage, bonus stat, score).
+pub const CLEAR_DIGIT_COLORS: [[[u8; 3]; 2]; 3] =
+    crate::d_arrays::SC_1P_STAGE_CLEAR_SET_DIGIT_SPRITE_COLORS_COLORS_ALL;
+/// `sc1PStageClearGetScoreDigitSprite`'s `file_array_ids`: each digit
+/// kind's index into the scene's files (`crate::scene_roots::ONE_P_STAGE_CLEAR`).
+pub const CLEAR_DIGIT_FILES: [i32; 3] =
+    crate::d_arrays::SC_1P_STAGE_CLEAR_GET_SCORE_DIGIT_SPRITE_FILE_ARRAY_IDS;
+/// `sc1PStageClearGetScoreDigitSprite`'s `offsets`, `[digit][digit kind]`.
+pub const CLEAR_DIGIT_OFFSETS: [[u32; 3]; 10] =
+    crate::d_arrays::SC_1P_STAGE_CLEAR_GET_SCORE_DIGIT_SPRITE_OFFSETS;
+/// `sc1PStageClearGetAppendBonusStatPoints`' `offsets`: the Stage Clear
+/// bonus's text by difficulty.
+pub const CLEAR_DIFFICULTY_TEXT: [u32; 5] =
+    crate::d_arrays::SC_1P_STAGE_CLEAR_GET_APPEND_BONUS_STAT_POINTS_OFFSETS;
+/// `sc1PStageClearGetAppendBonusStatPoints`' `colors`: the No Miss
+/// multiplier digits' `{prim, env}`.
+pub const CLEAR_NO_MISS_COLORS: [[u8; 3]; 2] =
+    crate::d_arrays::SC_1P_STAGE_CLEAR_GET_APPEND_BONUS_STAT_POINTS_COLORS;
 pub const CLEAR_TIMER_DAMAGE_DIGIT0: u32 = 0xb808;
 pub const CLEAR_TIMER_DAMAGE_DIGIT1: u32 = 0xb968;
 pub const CLEAR_TIMER_DAMAGE_DIGIT2: u32 = 0xbac8;
@@ -219,10 +252,31 @@ pub const OBJECTIVES_TARGET: u32 = 0x1d0;
 // build time from the user's ROM by `crates/ssb-tablegen`.
 include!(concat!(env!("OUT_DIR"), "/campaign_ally_cameras.rs"));
 pub const CAMERA_SLOT: u32 = 0xF100;
-pub const CAMERA_OFFSETS: [u32; 23] = [
-    0x6c80, 0x6cb0, 0x6ce0, 0x6d10, 0x6d40, 0x6d70, 0x6da0, 0x6dd0, 0x6e00, 0x6e30, 0x6e60, 0x6e90,
-    0x6fe0, 0x6ef0, 0x6f80, 0x7040, 0x6fb0, 0x7010, 0x6ec0, 0x6f50, 0x7070, 0x70a0, 0x6f20,
-];
+/// The intro's camera animations in pack order: `sc1PIntroMakeFighterCamera`'s
+/// `camanim_joints` by `FTKind`, then
+/// `sc1PIntroMakeStageCamera`'s by stage without the bonus stages' null
+/// entries.
+pub const CAMERA_OFFSETS: [u32; 23] = {
+    let fighters = crate::d_arrays::SC_1P_INTRO_MAKE_FIGHTER_CAMERA_CAMANIM_JOINTS;
+    let stages = crate::d_arrays::SC_1P_INTRO_MAKE_STAGE_CAMERA_CAMANIM_JOINTS;
+    let mut out = [0; 23];
+    let mut n = 0;
+    while n < fighters.len() {
+        out[n] = fighters[n];
+        n += 1;
+    }
+    let mut i = 0;
+    while i < stages.len() {
+        if stages[i] != 0 {
+            out[n] = stages[i];
+            n += 1;
+        }
+        i += 1;
+    }
+    // Stub tables are all zeros: every stage entry is skipped.
+    assert!(n == 23 || n == fighters.len(), "intro camera count");
+    out
+};
 /// Camera scalar commands share StageJoint's encoding. These cameras have
 /// no update process: pack the one initial play, before source eye/at overrides.
 pub fn initial_camera(data: &[u8], offset: u32) -> Result<[f32; 10], crate::objanim::AnimError> {

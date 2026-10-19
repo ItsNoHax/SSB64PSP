@@ -88,6 +88,22 @@ pub const LIST: &[DArray] = &[
         Elem::X32,
         &[13],
     ),
+    DArray::new(
+        "IF_COMMON_PLAYER_STOCK_DIGIT_SPRITE_OFFSETS",
+        "dIFCommonPlayerStockDigitSpriteOffsets",
+        OVL2,
+        0x8012_EEC8,
+        Elem::X32,
+        &[11],
+    ),
+    DArray::new(
+        "IF_COMMON_PLAYER_TAG_SPRITE_OFFSETS",
+        "dIFCommonPlayerTagSpriteOffsets",
+        OVL2,
+        0x8012_EFAC,
+        Elem::X32,
+        &[6],
+    ),
     // `ef/efmanager.c`: `&ll*AnimJoint` labels.
     DArray::new(
         "EF_MANAGER_YOSHI_EGG_LAY_ANIM_JOINTS",

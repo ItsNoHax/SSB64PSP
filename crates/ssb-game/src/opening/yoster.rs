@@ -24,8 +24,23 @@ pub const WALLPAPER: u32 = 0x26C88;
 pub const CAMERA_SLOT: u32 = 0x4000_0000 | (FILE << 20) | CAM_ANIM_JOINT;
 
 /// `mvOpeningYosterMakeFighters`' `status_ids` (0x1000F to 0x10012) as
-/// submotion rows, one per Yoshi costume 0 to 3.
-pub const ROWS: [u8; 4] = [15, 16, 17, 18];
+/// submotion rows (the ID less `nFTDemoStatusNull`, 0x10000), one per
+/// Yoshi costume 0 to 3.
+pub const ROWS: [u8; 4] = {
+    let ids = crate::d_arrays::MV_OPENING_YOSTER_MAKE_FIGHTERS_STATUS_IDS;
+    let mut out = [0; 4];
+    let mut i = 0;
+    while i < 4 {
+        // The stub tables are all zeros.
+        assert!(
+            ids[i] == 0 || (ids[i] > 0x10000 && ids[i] < 0x10100),
+            "not an FTDemoStatus"
+        );
+        out[i] = (ids[i] & 0xFF) as u8;
+        i += 1;
+    }
+    out
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Yoster {

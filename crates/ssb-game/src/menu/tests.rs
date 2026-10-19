@@ -86,6 +86,7 @@ fn option_waits_ten_tics_then_moves_and_writes_on_exit() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn option_sound_toggles_and_is_saved() {
     let mut b = Backup::default();
     let mut m = OptionMenu::new(Scene::ModeSelect, 1, &b);
@@ -257,6 +258,7 @@ fn data_shows_sound_test_only_once_unlocked() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn vs_record_sorts_by_kos_and_ranks_by_win_percent() {
     let mut b = Backup::default();
     // Fox KOs Mario three times; Mario KOs Fox once.
@@ -350,6 +352,7 @@ fn characters_motions_follow_the_tables() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn characters_skip_locked_pages_and_save_the_fighter() {
     let mut b = Backup::default();
     let mut clock = 0u8;

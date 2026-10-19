@@ -19,7 +19,7 @@ use super::{
     FILE_PORTRAITS, FILE_VS_RECORD,
 };
 use crate::backup::{Backup, VsRecord};
-use crate::players_1p::layer::{character_id, character_spacing, FONT, FONT_WIDTHS};
+use crate::players_1p::layer::{character_id, character_spacing, FONT_WIDTHS};
 use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
@@ -27,9 +27,8 @@ use ssb_engine::input::N64Buttons;
 pub mod sprite {
     pub const QUESTION: u32 = 0x70;
     pub const LABEL_TOTAL: u32 = 0x258;
-    pub const DIGITS: [u32; 10] = [
-        0x2F0, 0x390, 0x430, 0x4D0, 0x570, 0x610, 0x6B0, 0x750, 0x7F0, 0x890,
-    ];
+    /// `mnVSRecordMakeDigits`'s `offsets`.
+    pub const DIGITS: [u32; 10] = crate::d_arrays::MN_VS_RECORD_MAKE_DIGITS_OFFSETS;
     pub const SYMBOL_POINT: u32 = 0x910;
     pub const LABEL_WIN_PERCENT: u32 = 0xA08;
     pub const LABEL_KOS: u32 = 0xAF8;
@@ -45,25 +44,19 @@ pub mod sprite {
     pub const BATTLE_SCORE: u32 = 0x15D0;
     pub const DOWN_ARROWS: u32 = 0x1668;
     pub const SIDE_ARROWS: u32 = 0x17A8;
-    /// `*IconBWSprite`, by `FTKind`.
-    pub const ICONS_BW: [u32; 12] = [
-        0x1918, 0x1A98, 0x1CA8, 0x1E88, 0x2008, 0x2370, 0x2178, 0x2540, 0x2930, 0x2B30, 0x27C8,
-        0x2698,
-    ];
-    /// `*IconColorSprite`, by `FTKind`.
-    pub const ICONS_COLOR: [u32; 12] = [
-        0x2D18, 0x2EF8, 0x3198, 0x3438, 0x3618, 0x3A38, 0x37F8, 0x3CD8, 0x4308, 0x45A8, 0x4098,
-        0x3EB8,
-    ];
+    /// `mnVSRecordMakeColumnIcons`'s `offsets` (`*IconBWSprite`), by
+    /// `FTKind`.
+    pub const ICONS_BW: [u32; 12] = crate::d_arrays::MN_VS_RECORD_MAKE_COLUMN_ICONS_OFFSETS;
+    /// `mnVSRecordMakeRowIcons`'s `offsets` (`*IconColorSprite`), by
+    /// `FTKind`.
+    pub const ICONS_COLOR: [u32; 12] = crate::d_arrays::MN_VS_RECORD_MAKE_ROW_ICONS_OFFSETS;
     pub const PORTRAIT_WALLPAPER: u32 = 0x4D30;
     pub const LABEL: u32 = 0x5428;
     pub const SYMBOL_COLON: u32 = 0x54C0;
 
-    /// `llMNPlayersPortraits*Sprite`, by `FTKind`.
-    pub const PORTRAITS: [u32; 12] = [
-        0x4728, 0xD068, 0x8BC8, 0xAE18, 0x6978, 0x11508, 0x13758, 0x19E48, 0xF2B8, 0x159A8,
-        0x1C098, 0x17BF8,
-    ];
+    /// `mnVSRecordMakePortraitStats`'s `offsets`
+    /// (`llMNPlayersPortraits*Sprite`), by `FTKind`.
+    pub const PORTRAITS: [u32; 12] = crate::d_arrays::MN_VS_RECORD_MAKE_PORTRAIT_STATS_OFFSETS;
 }
 
 /// `nMNVSRecordKind*`.
@@ -79,11 +72,44 @@ const COLUMN_WIDTHS: [i32; 7] = crate::d_arrays::MN_VS_RECORD_RANKING_COLUMN_WID
 /// `nMNVSRecordRankingKindEnumCount`.
 const COLUMNS: usize = 7;
 
-/// `mnVSRecordGetFighterKindByIndex`: the starting order.
-const FKINDS_BY_INDEX: [usize; 12] = [0, 2, 5, 3, 6, 8, 1, 9, 4, 7, 11, 10];
+/// `mnVSRecordGetFighterKindByIndex`'s `fkinds`: the starting order.
+const FKINDS_BY_INDEX: [usize; 12] = {
+    let fkinds = crate::d_arrays::MN_VS_RECORD_GET_FIGHTER_KIND_BY_INDEX_FKINDS;
+    let mut out = [0; 12];
+    let mut i = 0;
+    while i < 12 {
+        out[i] = fkinds[i] as usize;
+        i += 1;
+    }
+    out
+};
 
-/// The values' colours: environment black, primitive `E5D199`.
-const VALUE_COLORS: ([u8; 3], [u8; 3]) = ([0; 3], [0xE5, 0xD1, 0x99]);
+/// A `u32` colour table `{ env r, g, b, prim r, g, b }` as the
+/// environment and primitive colours.
+const fn env_prim(c: [u32; 6]) -> ([u8; 3], [u8; 3]) {
+    (
+        [c[0] as u8, c[1] as u8, c[2] as u8],
+        [c[3] as u8, c[4] as u8, c[5] as u8],
+    )
+}
+
+/// `mnVSRecordMakeBattleScoreTableValues`'s `colors`.
+const BATTLE_SCORE_COLORS: ([u8; 3], [u8; 3]) =
+    env_prim(crate::d_arrays::MN_VS_RECORD_MAKE_BATTLE_SCORE_TABLE_VALUES_COLORS);
+/// `mnVSRecordMakeRankingTableValues`'s `colors`.
+const RANKING_COLORS: ([u8; 3], [u8; 3]) =
+    env_prim(crate::d_arrays::MN_VS_RECORD_MAKE_RANKING_TABLE_VALUES_COLORS);
+/// `mnVSRecordMakeIndivTableValues`'s `colors`.
+const INDIV_COLORS: ([u8; 3], [u8; 3]) =
+    env_prim(crate::d_arrays::MN_VS_RECORD_MAKE_INDIV_TABLE_VALUES_COLORS);
+/// `mnVSRecordMakePortraitStats`'s `digit_colors`.
+const PORTRAIT_DIGIT_COLORS: ([u8; 3], [u8; 3]) =
+    env_prim(crate::d_arrays::MN_VS_RECORD_MAKE_PORTRAIT_STATS_DIGIT_COLORS);
+/// `mnVSRecordMakePortraitStats`'s `string_colors`.
+const PORTRAIT_STRING_COLOR: [u8; 3] = {
+    let c = crate::d_arrays::MN_VS_RECORD_MAKE_PORTRAIT_STATS_STRING_COLORS;
+    [c[0] as u8, c[1] as u8, c[2] as u8]
+};
 /// The labels' grey.
 const GREY: [u8; 3] = [0x8A, 0x88, 0x92];
 /// The arrows' orange.
@@ -309,7 +335,8 @@ fn string(f: &mut impl FnMut(Draw), s: &str, x: f32, y: f32, color: [u8; 3]) {
             continue;
         }
         let id = character_id(c);
-        let Some(&offset) = FONT.get(id) else {
+        // `mnVSRecordMakeString`'s `offsets`.
+        let Some(&offset) = crate::d_arrays::MN_VS_RECORD_MAKE_STRING_OFFSETS.get(id) else {
             continue;
         };
         let dy = match c {
@@ -516,11 +543,8 @@ impl VsRecordMenu {
                 .prim([0xF2, 0xC7, 0x0D]),
         ));
         // `mnVSRecordSubtitleProcUpdate`'s `offsets`.
-        let subtitle = match self.page {
-            Page::BattleScore => sprite::BATTLE_SCORE,
-            Page::Ranking => sprite::UNKNOWN2,
-            Page::Indiv => sprite::UNKNOWN1,
-        };
+        let subtitle =
+            crate::d_arrays::MN_VS_RECORD_SUBTITLE_PROC_UPDATE_OFFSETS[self.page as usize];
         f(Draw::Sprite(
             Piece::clear(FILE_VS_RECORD, subtitle, 222.0, 28.0).prim([0; 3]),
         ));
@@ -557,16 +581,10 @@ impl VsRecordMenu {
             }
             Page::Ranking => {
                 self.visit_ranking_values(&s, backup, f);
-                let labels = [
-                    sprite::LABEL_WIN_PERCENT,
-                    sprite::LABEL_KOS,
-                    sprite::LABEL_TKO,
-                    sprite::LABEL_SD_PERCENT,
-                    sprite::LABEL_TIME,
-                    sprite::LABEL_USE_PERCENT,
-                    sprite::LABEL_AVG,
-                ];
-                const PADDING: [i32; 7] = [2, 2, 2, 4, 4, 3, 1];
+                // `mnVSRecordMakeRankingTableHeaders`.
+                let labels = crate::d_arrays::MN_VS_RECORD_MAKE_RANKING_TABLE_HEADERS_OFFSETS;
+                const PADDING: [i32; 7] =
+                    crate::d_arrays::MN_VS_RECORD_MAKE_RANKING_TABLE_HEADERS_X_PADDING;
                 let mut x = 48;
                 for c in column_order(self.first_column) {
                     f(Draw::Sprite(
@@ -579,13 +597,10 @@ impl VsRecordMenu {
             }
             Page::Indiv => {
                 self.visit_indiv_values(&s, backup, f);
-                let labels = [
-                    (sprite::LABEL_WIN_PERCENT, 29.0, 159.0),
-                    (sprite::LABEL_KOS, 28.0, 171.0),
-                    (sprite::LABEL_KOD, 25.0, 183.0),
-                    (sprite::LABEL_AVG, 26.0, 195.0),
-                ];
-                for (offset, x, y) in labels {
+                // `mnVSRecordMakeIndivPortraitAll`.
+                let labels = crate::d_arrays::MN_VS_RECORD_MAKE_INDIV_PORTRAIT_ALL_OFFSETS;
+                let at = crate::d_arrays::MN_VS_RECORD_MAKE_INDIV_PORTRAIT_ALL_POSITIONS;
+                for (offset, [x, y]) in labels.into_iter().zip(at) {
                     f(Draw::Sprite(
                         Piece::clear(FILE_VS_RECORD, offset, x, y).prim(GREY),
                     ));
@@ -652,24 +667,12 @@ impl VsRecordMenu {
         (x, y): (f32, f32),
         f: &mut impl FnMut(Draw),
     ) {
-        const OFFSETS: [(f32, f32); 12] = [
-            (1.0, -5.0),
-            (1.0, -6.0),
-            (0.0, -6.0),
-            (0.0, -4.0),
-            (1.0, -6.0),
-            (0.0, -5.0),
-            (1.0, -5.0),
-            (0.0, -3.0),
-            (0.0, 1.0),
-            (0.0, -5.0),
-            (0.0, -1.0),
-            (0.0, -2.0),
-        ];
+        const OFFSETS: [[f32; 2]; 12] =
+            crate::d_arrays::MN_VS_RECORD_SET_ICON_POSITION_FOR_COLUMN_OFFSETS;
         for (column, &fkind) in order.iter().enumerate() {
             let left = x + width * column as f32;
             if s.have(fkind) {
-                let (dx, dy) = OFFSETS[fkind];
+                let [dx, dy] = OFFSETS[fkind];
                 f(Draw::Sprite(Piece::clear(
                     FILE_VS_RECORD,
                     sprite::ICONS_BW[fkind],
@@ -684,25 +687,12 @@ impl VsRecordMenu {
 
     /// `mnVSRecordMakeRowIcons` (`mnVSRecordSetRowIconPosition`).
     fn visit_row_icons(&self, s: &Stats<'_>, order: &[usize; 12], f: &mut impl FnMut(Draw)) {
-        const OFFSETS: [(f32, f32); 12] = [
-            (5.0, 0.0),
-            (5.0, 0.0),
-            (0.0, 0.0),
-            (0.0, 0.0),
-            (3.0, 0.0),
-            (5.0, 0.0),
-            (5.0, 0.0),
-            (1.0, 0.0),
-            (0.0, 1.0),
-            (0.0, 0.0),
-            (4.0, 0.0),
-            (3.0, 0.0),
-        ];
+        const OFFSETS: [[f32; 2]; 12] = crate::d_arrays::MN_VS_RECORD_SET_ROW_ICON_POSITION_OFFSETS;
         let (x, y) = (25.0, 62.0);
         for (row, &fkind) in order.iter().enumerate() {
             let top = y + (row * 13) as f32;
             if s.have(fkind) {
-                let (dx, dy) = OFFSETS[fkind];
+                let [dx, dy] = OFFSETS[fkind];
                 f(Draw::Sprite(Piece::clear(
                     FILE_VS_RECORD,
                     sprite::ICONS_COLOR[fkind],
@@ -732,7 +722,7 @@ impl VsRecordMenu {
                         kos,
                         x + (j * 18) as f32,
                         y + 65.0,
-                        VALUE_COLORS,
+                        BATTLE_SCORE_COLORS,
                         false,
                         false,
                         4,
@@ -745,7 +735,7 @@ impl VsRecordMenu {
                 s.kos(row),
                 x + 216.0 + 10.0,
                 y + 65.0,
-                VALUE_COLORS,
+                BATTLE_SCORE_COLORS,
                 false,
                 false,
                 6,
@@ -756,7 +746,7 @@ impl VsRecordMenu {
 
     /// `mnVSRecordMakeRankingTableValues`.
     fn visit_ranking_values(&self, s: &Stats<'_>, backup: &Backup, f: &mut impl FnMut(Draw)) {
-        const WIDTHS: [i32; 7] = [27, 30, 30, 23, 35, 27, 39];
+        const WIDTHS: [i32; 7] = crate::d_arrays::MN_VS_RECORD_MAKE_RANKING_TABLE_VALUES_COL_WIDTHS;
         let columns = column_order(self.first_column);
         for (i, &fkind) in self.ranking_order.iter().enumerate() {
             if !s.have(fkind) {
@@ -772,20 +762,40 @@ impl VsRecordMenu {
                         (s.win_percent(fkind) * 10.0) as i32,
                         at,
                         y,
-                        VALUE_COLORS,
+                        RANKING_COLORS,
                         true,
                         false,
                         3,
                         false,
                     ),
-                    1 => digits(f, s.kos(fkind), at, y, VALUE_COLORS, false, false, 6, false),
-                    2 => digits(f, s.tko(fkind), at, y, VALUE_COLORS, false, false, 6, false),
+                    1 => digits(
+                        f,
+                        s.kos(fkind),
+                        at,
+                        y,
+                        RANKING_COLORS,
+                        false,
+                        false,
+                        6,
+                        false,
+                    ),
+                    2 => digits(
+                        f,
+                        s.tko(fkind),
+                        at,
+                        y,
+                        RANKING_COLORS,
+                        false,
+                        false,
+                        6,
+                        false,
+                    ),
                     3 => digits(
                         f,
                         (s.sd_percent(fkind) * 10.0) as i32,
                         at,
                         y,
-                        VALUE_COLORS,
+                        RANKING_COLORS,
                         true,
                         false,
                         3,
@@ -798,7 +808,7 @@ impl VsRecordMenu {
                             ((time % 3600) / 60) as i32,
                             at,
                             y,
-                            VALUE_COLORS,
+                            RANKING_COLORS,
                             false,
                             false,
                             2,
@@ -806,15 +816,15 @@ impl VsRecordMenu {
                         );
                         f(Draw::Sprite(
                             Piece::clear(FILE_VS_RECORD, sprite::SYMBOL_COLON, at - 11.0, y)
-                                .env(VALUE_COLORS.0)
-                                .prim(VALUE_COLORS.1),
+                                .env(RANKING_COLORS.0)
+                                .prim(RANKING_COLORS.1),
                         ));
                         digits(
                             f,
                             (time / 3600) as i32,
                             at - 13.0,
                             y,
-                            VALUE_COLORS,
+                            RANKING_COLORS,
                             false,
                             false,
                             3,
@@ -826,7 +836,7 @@ impl VsRecordMenu {
                         (s.use_percent(fkind) * 10.0) as i32,
                         at,
                         y,
-                        VALUE_COLORS,
+                        RANKING_COLORS,
                         true,
                         false,
                         3,
@@ -837,7 +847,7 @@ impl VsRecordMenu {
                         (s.avg(fkind) * 10.0) as i32,
                         at - 15.0,
                         y,
-                        VALUE_COLORS,
+                        RANKING_COLORS,
                         true,
                         false,
                         1,
@@ -851,7 +861,7 @@ impl VsRecordMenu {
 
     /// `mnVSRecordMakeIndivTableValues`.
     fn visit_indiv_values(&self, s: &Stats<'_>, backup: &Backup, f: &mut impl FnMut(Draw)) {
-        const Y: [f32; 4] = [160.0, 172.0, 184.0, 196.0];
+        const Y: [f32; 4] = crate::d_arrays::MN_VS_RECORD_MAKE_INDIV_TABLE_VALUES_Y;
         let this = self.ranking_order[self.current_index];
         for i in 0..12 {
             // The source tests the ranking order here, not the column's.
@@ -866,7 +876,7 @@ impl VsRecordMenu {
                 (s.win_percent_against(this, against) * 10.0) as i32,
                 x,
                 Y[0],
-                VALUE_COLORS,
+                INDIV_COLORS,
                 true,
                 false,
                 3,
@@ -877,7 +887,7 @@ impl VsRecordMenu {
                 i32::from(r[this].ko_count[against]),
                 x,
                 Y[1],
-                VALUE_COLORS,
+                INDIV_COLORS,
                 false,
                 false,
                 4,
@@ -888,7 +898,7 @@ impl VsRecordMenu {
                 i32::from(r[against].ko_count[this]),
                 x,
                 Y[2],
-                VALUE_COLORS,
+                INDIV_COLORS,
                 false,
                 false,
                 4,
@@ -899,7 +909,7 @@ impl VsRecordMenu {
                 (s.avg_against(this, against) * 10.0) as i32,
                 x,
                 Y[3],
-                VALUE_COLORS,
+                INDIV_COLORS,
                 true,
                 false,
                 3,
@@ -916,7 +926,7 @@ impl VsRecordMenu {
         fkind: usize,
         f: &mut impl FnMut(Draw),
     ) {
-        let colors = ([0; 3], GREY);
+        let colors = PORTRAIT_DIGIT_COLORS;
         f(Draw::Sprite(Piece::clear(
             FILE_VS_RECORD,
             sprite::PORTRAIT_WALLPAPER,
@@ -929,10 +939,11 @@ impl VsRecordMenu {
             57.0,
             60.0,
         )));
-        string(f, "RANKING", 150.0, 60.0, GREY);
+        string(f, "RANKING", 150.0, 60.0, PORTRAIT_STRING_COLOR);
         digits(f, 12, 265.0, 58.0, colors, false, true, 2, false);
         f(Draw::Sprite(
-            Piece::clear(FILE_VS_RECORD, sprite::SYMBOL_SLASH, 251.0, 59.0).prim(GREY),
+            Piece::clear(FILE_VS_RECORD, sprite::SYMBOL_SLASH, 251.0, 59.0)
+                .prim(PORTRAIT_STRING_COLOR),
         ));
         digits(
             f,
@@ -945,7 +956,7 @@ impl VsRecordMenu {
             2,
             false,
         );
-        string(f, "USED %", 150.0, 68.0, GREY);
+        string(f, "USED %", 150.0, 68.0, PORTRAIT_STRING_COLOR);
         digits(
             f,
             (s.use_percent(fkind) * 10.0) as i32,
@@ -957,7 +968,7 @@ impl VsRecordMenu {
             3,
             false,
         );
-        string(f, "ATTACK 3TOTAL", 149.0, 78.0, GREY);
+        string(f, "ATTACK 3TOTAL", 149.0, 78.0, PORTRAIT_STRING_COLOR);
         let r = &backup.vs_records[fkind];
         digits(
             f,
@@ -970,7 +981,7 @@ impl VsRecordMenu {
             6,
             false,
         );
-        string(f, "DAMAGE TOTAL", 150.0, 86.0, GREY);
+        string(f, "DAMAGE TOTAL", 150.0, 86.0, PORTRAIT_STRING_COLOR);
         digits(
             f,
             r.damage_taken as i32,

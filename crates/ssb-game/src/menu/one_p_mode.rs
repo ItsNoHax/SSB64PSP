@@ -10,10 +10,18 @@
 //! nothing.
 
 use super::{
-    fill_prim, option_tab, Draw, Pad, Piece, Repeat, Scene, TabStatus, FILE_COMMON, IDLE_RETURN,
+    fill_prim, option_tab, Draw, Pad, Piece, Repeat, Scene, TabColors, TabStatus, FILE_COMMON,
+    IDLE_RETURN,
 };
 use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
+
+/// `mn1PModeSetOptionSpriteColors`'s `selcolors`, `hicolors` and `notcolors`.
+const TAB_COLORS: TabColors = TabColors {
+    sel: crate::d_arrays::MN_1P_MODE_SET_OPTION_SPRITE_COLORS_SELCOLORS,
+    hi: crate::d_arrays::MN_1P_MODE_SET_OPTION_SPRITE_COLORS_HICOLORS,
+    not: crate::d_arrays::MN_1P_MODE_SET_OPTION_SPRITE_COLORS_NOTCOLORS,
+};
 
 /// `llMN1PFileID`.
 pub const FILE_1P: u32 = 0x02;
@@ -190,11 +198,11 @@ impl OnePMode {
             f(Draw::Sprite(Piece::clear(file, s, x, y).prim([0; 3])));
         }
         // `mn1PModeMake1PGame` and `...TrainingMode`: full tabs.
-        option_tab(f, 124.0, 42.0, 16, self.tab_status[0]);
+        option_tab(f, 124.0, 42.0, 16, self.tab_status[0], &TAB_COLORS);
         f(Draw::Sprite(
             Piece::clear(FILE_1P, sprite::ONE_P_GAME_TEXT, 161.0, 46.0).prim([0; 3]),
         ));
-        option_tab(f, 99.0, 84.0, 16, self.tab_status[1]);
+        option_tab(f, 99.0, 84.0, 16, self.tab_status[1], &TAB_COLORS);
         f(Draw::Sprite(
             Piece::clear(FILE_1P, sprite::TRAINING_MODE_TEXT, 107.0, 87.0).prim([0; 3]),
         ));
@@ -207,7 +215,7 @@ impl OnePMode {
         .into_iter()
         .enumerate()
         {
-            let (env, prim) = self.tab_status[2 + i].colors();
+            let (env, prim) = self.tab_status[2 + i].colors(&TAB_COLORS);
             f(Draw::Sprite(
                 Piece::clear(FILE_1P, sprite::OPTION_TAB, tx, ty)
                     .env(env)

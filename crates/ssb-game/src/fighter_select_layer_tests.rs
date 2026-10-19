@@ -71,6 +71,7 @@ fn the_top_bar_is_the_stone_training_mode_and_back() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_portraits_slide_in_as_the_vs_selects_do() {
     let mut s = first_visit();
     assert_eq!(s.view.portrait_x[0], -35.0);
@@ -89,6 +90,7 @@ fn the_portraits_slide_in_as_the_vs_selects_do() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_two_cards_their_texts_and_the_cpus_name() {
     let s = first_visit();
     let cards = sprites_at(&s, FILE_PLAYERS_1P_MODE, RED_CARD);
@@ -140,6 +142,7 @@ fn the_pucks_show_from_tick_thirty_the_players_only_off_the_pointer() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_hovered_fighter_turns_and_plays_its_status_once_placed() {
     let mut s = first_visit();
     for _ in 0..30 {
@@ -188,6 +191,7 @@ fn a_hovered_fighter_turns_and_plays_its_status_once_placed() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn grabbing_the_cpus_puck_lifts_it_over_the_cursor_link() {
     let mut s = first_visit();
     for _ in 0..30 {
@@ -275,6 +279,7 @@ fn the_ready_banner_and_press_start_blink_on_one_counter() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_draw_order_follows_the_cameras() {
     let mut s = first_visit();
     for _ in 0..40 {

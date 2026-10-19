@@ -59,6 +59,7 @@ fn no_contest_puts_both_fighters_one_row_back_clapping_and_draws_nothing() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_two_player_winner_stands_in_front_and_the_loser_turns_to_it() {
     let r = results(Kind::StockRoyal, &[1, 0], Some(1));
     rng::set_seed(77);
@@ -82,6 +83,7 @@ fn a_two_player_winner_stands_in_front_and_the_loser_turns_to_it() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn kirby_picks_only_win1_or_win2() {
     let r = results(Kind::TimeRoyal, &[0, 1], Some(0));
     let mut seen = [false; 5];
@@ -95,6 +97,7 @@ fn kirby_picks_only_win1_or_win2() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_first_place_picks_in_port_order() {
     // A shared first: both pick, port 0 first.
     let r = results(Kind::TimeRoyal, &[0, 1, 0], Some(0));
@@ -115,6 +118,7 @@ fn every_first_place_picks_in_port_order() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn three_players_under_a_shared_first_read_below_aheads() {
     // Places 0, 0, 1: the third has two ahead, so `aheads[-1]`, which the
     // US build reads as 1: spot 2.
@@ -133,6 +137,7 @@ fn three_players_under_a_shared_first_read_below_aheads() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_sole_three_player_winner_takes_the_middle_column() {
     let r = results(Kind::StockRoyal, &[0, 2, 1], Some(0));
     let mut s = Scene::start(&r);

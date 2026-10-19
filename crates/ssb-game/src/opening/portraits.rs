@@ -12,8 +12,12 @@ use crate::menu::Piece;
 pub const FILE_SET1: u32 = 0x35;
 pub const FILE_SET2: u32 = 0x36;
 /// Each set's four rows, top to bottom (Samus, Mario, Fox, Pikachu; Link,
-/// Kirby, Donkey Kong, Yoshi), and set 1's cover.
-pub const ROWS: [u32; 4] = [0x9960, 0x13310, 0x1CCC0, 0x26670];
+/// Kirby, Donkey Kong, Yoshi): `mvOpeningPortraitsMakeSet1` and
+/// `...MakeSet2`'s `offsets` and `pos`. Then set 1's cover.
+pub const SET1: [u32; 4] = crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_1_OFFSETS;
+pub const SET2: [u32; 4] = crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_2_OFFSETS;
+const SET1_POS: [[f32; 2]; 4] = crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_1_POS;
+const SET2_POS: [[f32; 2]; 4] = crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_2_POS;
 pub const COVER: u32 = 0x2B2D0;
 
 /// The cover's display (`mvOpeningPortraitsCoverProcDisplay`), drawn by
@@ -38,11 +42,12 @@ pub struct Portraits {
     fills: Vec<Fill>,
 }
 
-fn set(file: u32) -> Vec<Piece> {
-    ROWS.iter()
-        .enumerate()
-        .map(|(i, &at)| {
-            let mut p = Piece::at(file, at, 10.0, 10.0 + 55.0 * i as f32);
+fn set(file: u32, offsets: &[u32; 4], pos: &[[f32; 2]; 4]) -> Vec<Piece> {
+    offsets
+        .iter()
+        .zip(pos)
+        .map(|(&at, &[x, y])| {
+            let mut p = Piece::at(file, at, x, y);
             p.transparent = false;
             p
         })
@@ -64,7 +69,11 @@ impl Portraits {
         );
         world.camera(80, link(27), FULL, CameraKind::Sprite);
         world.camera(60, link(28), FULL, CameraKind::Sprite);
-        let portraits = world.object(27, Head::Zero, ObjectKind::Sprites(set(FILE_SET1)));
+        let portraits = world.object(
+            27,
+            Head::Zero,
+            ObjectKind::Sprites(set(FILE_SET1, &SET1, &SET1_POS)),
+        );
         let cover = world.object(28, Head::Zero, ObjectKind::Host(HOST_COVER));
         let mut p = Portraits {
             tics: 0,
@@ -90,9 +99,11 @@ impl Portraits {
             }
             if self.tics == 75 {
                 self.world.eject(self.portraits);
-                self.portraits =
-                    self.world
-                        .object(27, Head::Zero, ObjectKind::Sprites(set(FILE_SET2)));
+                self.portraits = self.world.object(
+                    27,
+                    Head::Zero,
+                    ObjectKind::Sprites(set(FILE_SET2, &SET2, &SET2_POS)),
+                );
             }
             if self.tics == 150 {
                 exit = Some(Exit::Next(Kind::Mario));

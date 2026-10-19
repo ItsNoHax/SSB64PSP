@@ -17,15 +17,9 @@ use ssb_engine::input::N64Buttons;
 /// `llMNBackupClear*Sprite` and `*Palette`.
 pub mod sprite {
     pub const HEADER_BACKUP_CLEAR: u32 = 0xB60;
-    pub const OPTION_NEWCOMERS: u32 = 0x3A00;
-    pub const OPTION_1P_HIGH_SCORE: u32 = 0x4050;
-    pub const OPTION_VS_RECORD: u32 = 0x46A0;
-    pub const OPTION_PRIZE: u32 = 0x5340;
-    pub const OPTION_ALL_DATA_CLEAR: u32 = 0x5990;
     pub const OPTION_CIRCLE: u32 = 0x5DB8;
     pub const IS_OKAY_TEXT: u32 = 0x63C8;
     pub const ARE_YOU_SURE_TEXT: u32 = 0x69D8;
-    pub const OPTION_BONUS_STAGE_TIME: u32 = 0x7020;
     pub const OPTION_YES: u32 = 0x7580;
     pub const OPTION_NO: u32 = 0x7AB8;
     /// `llMNBackupClearHeaderOptionSprite`, in file 0x4E.
@@ -63,18 +57,6 @@ impl ClearOption {
         ClearOption::Prize,
         ClearOption::AllDataClear,
     ];
-
-    /// `mnBackupClearSetOptionSpriteColors`' `offsets`.
-    fn sprite(self) -> u32 {
-        match self {
-            ClearOption::Newcomers => sprite::OPTION_NEWCOMERS,
-            ClearOption::HighScore1P => sprite::OPTION_1P_HIGH_SCORE,
-            ClearOption::BonusStageTime => sprite::OPTION_BONUS_STAGE_TIME,
-            ClearOption::VsRecord => sprite::OPTION_VS_RECORD,
-            ClearOption::Prize => sprite::OPTION_PRIZE,
-            ClearOption::AllDataClear => sprite::OPTION_ALL_DATA_CLEAR,
-        }
-    }
 }
 
 /// `mnBackupClearMakeOptionConfirm`'s GObj.
@@ -337,16 +319,20 @@ impl BackupClear {
                 .prim([0xF2, 0xC7, 0x0D]),
         ));
         if self.options_shown {
-            for (i, o) in ClearOption::ALL.into_iter().enumerate() {
+            // `mnBackupClearSetOptionSpriteColors`' `offsets` and `pos`, in
+            // `ClearOption::ALL` order.
+            use crate::d_arrays as d;
+            for i in 0..ClearOption::ALL.len() {
                 // `mnBackupClearUpdateOptionTabColors`.
                 let prim = if self.highlighted[i] {
-                    [0xFF, 0xA8, 0x00]
+                    d::MN_BACKUP_CLEAR_UPDATE_OPTION_TAB_COLORS_HICOLORS
                 } else {
-                    [0x7D, 0x45, 0x07]
+                    d::MN_BACKUP_CLEAR_UPDATE_OPTION_TAB_COLORS_NOTCOLORS
                 };
+                let offset = d::MN_BACKUP_CLEAR_SET_OPTION_SPRITE_COLORS_OFFSETS[i];
+                let [x, y] = d::MN_BACKUP_CLEAR_SET_OPTION_SPRITE_COLORS_POS[i];
                 f(Draw::Sprite(
-                    Piece::clear(FILE_BACKUP_CLEAR, o.sprite(), 95.0, 54.0 + 27.0 * i as f32)
-                        .prim(prim),
+                    Piece::clear(FILE_BACKUP_CLEAR, offset, x, y).prim(prim),
                 ));
             }
         }

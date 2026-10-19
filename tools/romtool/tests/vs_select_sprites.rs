@@ -33,6 +33,7 @@ fn every_vs_select_sprite_is_packed() {
 /// And every sprite `ssb_game::fighter_select::layer` adds for the
 /// Training select.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_training_select_sprite_is_packed() {
     use ssb_game::fighter_select::layer as training;
     for &(file, offset) in training::SPRITES {
@@ -57,6 +58,7 @@ fn every_training_select_sprite_is_packed() {
 /// And every sprite `ssb_game::players_1p::layer` adds for the 1P select,
 /// with a card LUT for every port.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_1p_select_sprite_is_packed() {
     use ssb_game::players_1p::layer as one;
     for &(file, offset) in one::SPRITES {

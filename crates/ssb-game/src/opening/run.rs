@@ -27,16 +27,16 @@ pub const CRASH: u32 = 0x35F8;
 pub const CAMERA_SLOT: u32 = 0x4000_0000 | (FILE_MAIN << 20);
 
 /// `mvOpeningRunMakeFighters`' `fkinds`.
-pub const KINDS: [FighterKind; 8] = [
-    FighterKind::Mario,
-    FighterKind::Fox,
-    FighterKind::Donkey,
-    FighterKind::Samus,
-    FighterKind::Link,
-    FighterKind::Yoshi,
-    FighterKind::Kirby,
-    FighterKind::Pikachu,
-];
+pub const KINDS: [FighterKind; 8] = {
+    let fkinds = crate::d_arrays::MV_OPENING_RUN_MAKE_FIGHTERS_FKINDS;
+    let mut out = [FighterKind::Mario; 8];
+    let mut i = 0;
+    while i < 8 {
+        out[i] = FighterKind::playable_ordinal(fkinds[i]);
+        i += 1;
+    }
+    out
+};
 
 /// `nFTDemoStatusRun` (0x10006) and 0x10007: submotion rows 6 and 7.
 pub const ROW_RUN: u8 = 6;
@@ -207,6 +207,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn link_jumps_at_45_the_crash_lands_at_190_and_the_scene_ends_at_220() {
         let mut r = Run::new();
         let mut exit = None;

@@ -33,6 +33,7 @@ fn no_contest_makes_no_emblem_and_no_confetti() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_emblem_is_the_winners_port_colour_or_its_teams() {
     let r = results(Kind::StockRoyal, 1);
     let e = Emblem::make(&r, FighterKind::Kirby).unwrap();
@@ -82,6 +83,7 @@ fn from_tic_40_the_emblem_shrinks_and_rises_then_holds() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_confetti_falls_on_the_results_text_tic() {
     let mut r = results(Kind::StockRoyal, 1);
     r.total_tics = 119;

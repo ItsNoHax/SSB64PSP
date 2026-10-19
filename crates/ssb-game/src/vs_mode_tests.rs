@@ -307,6 +307,7 @@ fn pieces(m: &VsMode) -> Vec<Piece> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_values_draw_right_aligned_and_white() {
     let mut m = menu();
     m.time = 12;

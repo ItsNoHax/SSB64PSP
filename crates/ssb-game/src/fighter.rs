@@ -54,6 +54,13 @@ pub enum FighterKind {
 }
 
 impl FighterKind {
+    /// The playable `FTKind` with this ordinal, for a generated table
+    /// ([`crate::d_arrays`]); an entry outside the roster fails the build.
+    pub(crate) const fn playable_ordinal(ordinal: i32) -> FighterKind {
+        assert!(ordinal >= 0 && ordinal < 12, "not a playable FTKind");
+        FighterKind::PLAYABLE[ordinal as usize]
+    }
+
     /// `FTKind` from an original stage or team table.
     pub fn from_ordinal(value: u8) -> Option<Self> {
         if value < 12 {

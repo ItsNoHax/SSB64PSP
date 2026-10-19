@@ -73,6 +73,7 @@ fn a_reset_is_no_contest() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_winner_is_announced_then_the_fanfare_then_the_results_bgm() {
     use crate::sound::{id, testing::*};
     let rec = Recorder::install();

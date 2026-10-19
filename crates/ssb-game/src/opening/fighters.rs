@@ -23,13 +23,8 @@ use crate::fighter::FighterKind;
 use crate::menu::Piece;
 use ssb_engine::math::Vec3;
 
-/// `llIFCommonAnnounceCommonFileID` and its letters' sprites (A to Z).
+/// `llIFCommonAnnounceCommonFileID`, whose letters the scenes' names draw.
 pub const FILE_ANNOUNCE: u32 = 0x25;
-pub const LETTERS: [u32; 26] = [
-    0x5E0, 0x9A8, 0xD80, 0x1268, 0x1628, 0x1A00, 0x1F08, 0x2408, 0x26B8, 0x2A90, 0x2F98, 0x3358,
-    0x3980, 0x3E88, 0x44B0, 0x4890, 0x4F10, 0x5418, 0x57F0, 0x5BD0, 0x60D8, 0x65D8, 0x6C00, 0x7108,
-    0x7608, 0x7AE8,
-];
 
 /// `llMVOpeningCommonFileID`: the posed fighters' camera animations.
 pub const FILE_COMMON: u32 = 0x41;
@@ -81,8 +76,9 @@ pub struct Params {
     pub end: CObjDesc,
     /// `dMVOpening*KeyEvents` as halfwords.
     pub keys: &'static [u16],
-    /// The name's letters (0 is A) and each letter's offset.
-    pub letters: &'static [(u8, f32, f32)],
+    /// The name's letters: each one's sprite in [`FILE_ANNOUNCE`] and its
+    /// offset.
+    pub letters: &'static [(u32, f32, f32)],
     /// The name's origin, added to each letter's offset.
     pub name_at: [f32; 2],
     /// The movie camera's viewport and `persp.aspect`.
@@ -117,10 +113,91 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/opening_scenes.rs"));
 }
 
-/// Letter index from an ASCII capital.
-const fn l(c: u8) -> u8 {
-    c - b'A'
+/// `mvOpening*MakeName`'s letters: `offsets` (ending in 0) with `pos_x`,
+/// each letter on the name's row.
+const fn name_x<const N: usize, const M: usize>(
+    offsets: [u32; M],
+    pos_x: [f32; N],
+) -> [(u32, f32, f32); N] {
+    assert!(M == N + 1 && offsets[N] == 0, "name offsets end in 0");
+    let mut out = [(0, 0.0, 0.0); N];
+    let mut i = 0;
+    while i < N {
+        out[i] = (offsets[i], pos_x[i], 0.0);
+        i += 1;
+    }
+    out
 }
+
+/// `mvOpening*MakeName`'s letters: `offsets` (ending in 0) with `pos`.
+const fn name_xy<const N: usize, const M: usize>(
+    offsets: [u32; M],
+    pos: [[f32; 2]; N],
+) -> [(u32, f32, f32); N] {
+    assert!(M == N + 1 && offsets[N] == 0, "name offsets end in 0");
+    let mut out = [(0, 0.0, 0.0); N];
+    let mut i = 0;
+    while i < N {
+        out[i] = (offsets[i], pos[i][0], pos[i][1]);
+        i += 1;
+    }
+    out
+}
+
+/// `mvOpeningMarioMakeName`'s `offsets` and `pos_x`.
+const MARIO_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_MARIO_MAKE_NAME_POS_X.len()] =
+    name_x(
+        crate::d_arrays::MV_OPENING_MARIO_MAKE_NAME_OFFSETS,
+        crate::d_arrays::MV_OPENING_MARIO_MAKE_NAME_POS_X,
+    );
+
+/// `mvOpeningDonkeyMakeName`'s `offsets` and `pos`.
+const DONKEY_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_DONKEY_MAKE_NAME_POS.len()] =
+    name_xy(
+        crate::d_arrays::MV_OPENING_DONKEY_MAKE_NAME_OFFSETS,
+        crate::d_arrays::MV_OPENING_DONKEY_MAKE_NAME_POS,
+    );
+
+/// `mvOpeningLinkMakeName`'s `offsets` and `pos_x`.
+const LINK_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_LINK_MAKE_NAME_POS_X.len()] =
+    name_x(
+        crate::d_arrays::MV_OPENING_LINK_MAKE_NAME_OFFSETS,
+        crate::d_arrays::MV_OPENING_LINK_MAKE_NAME_POS_X,
+    );
+
+/// `mvOpeningSamusMakeName`'s `offsets` and `pos_x`.
+const SAMUS_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_SAMUS_MAKE_NAME_POS_X.len()] =
+    name_x(
+        crate::d_arrays::MV_OPENING_SAMUS_MAKE_NAME_OFFSETS,
+        crate::d_arrays::MV_OPENING_SAMUS_MAKE_NAME_POS_X,
+    );
+
+/// `mvOpeningYoshiMakeName`'s `offsets` and `pos_x`.
+const YOSHI_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_YOSHI_MAKE_NAME_POS_X.len()] =
+    name_x(
+        crate::d_arrays::MV_OPENING_YOSHI_MAKE_NAME_OFFSETS,
+        crate::d_arrays::MV_OPENING_YOSHI_MAKE_NAME_POS_X,
+    );
+
+/// `mvOpeningKirbyMakeName`'s `offsets` and `pos`.
+const KIRBY_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_KIRBY_MAKE_NAME_POS.len()] =
+    name_xy(
+        crate::d_arrays::MV_OPENING_KIRBY_MAKE_NAME_OFFSETS,
+        crate::d_arrays::MV_OPENING_KIRBY_MAKE_NAME_POS,
+    );
+
+/// `mvOpeningFoxMakeName`'s `offsets` and `pos`.
+const FOX_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_FOX_MAKE_NAME_POS.len()] = name_xy(
+    crate::d_arrays::MV_OPENING_FOX_MAKE_NAME_OFFSETS,
+    crate::d_arrays::MV_OPENING_FOX_MAKE_NAME_POS,
+);
+
+/// `mvOpeningPikachuMakeName`'s `offsets` and `pos_x`.
+const PIKACHU_LETTERS: [(u32, f32, f32);
+    crate::d_arrays::MV_OPENING_PIKACHU_MAKE_NAME_POS_X.len()] = name_x(
+    crate::d_arrays::MV_OPENING_PIKACHU_MAKE_NAME_OFFSETS,
+    crate::d_arrays::MV_OPENING_PIKACHU_MAKE_NAME_POS_X,
+);
 
 /// A side panel's layout (the posed fighter on the left or right of a
 /// motion window 200 wide), and a band's (above or below one 140 high).
@@ -138,13 +215,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::MARIO_START,
         end: generated::MARIO_END,
         keys: &generated::MARIO_KEYS,
-        letters: &[
-            (l(b'M'), 0.0, 0.0),
-            (l(b'A'), 40.0, 0.0),
-            (l(b'R'), 80.0, 0.0),
-            (l(b'I'), 110.0, 0.0),
-            (l(b'O'), 125.0, 0.0),
-        ],
+        letters: &MARIO_LETTERS,
         name_at: [80.0, 100.0],
         motion_viewport: RIGHT_MOTION,
         motion_aspect: 10.0 / 11.0,
@@ -166,7 +237,7 @@ pub const SCENES: [Params; 8] = [
         end: generated::DONKEY_END,
         keys: &generated::DONKEY_KEYS,
         // The US build's "DK".
-        letters: &[(l(b'D'), 0.0, 0.0), (l(b'K'), 40.0, 0.0)],
+        letters: &DONKEY_LETTERS,
         name_at: [120.0, 100.0],
         motion_viewport: LEFT_MOTION,
         motion_aspect: 10.0 / 11.0,
@@ -187,12 +258,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::LINK_START,
         end: generated::LINK_END,
         keys: &generated::LINK_KEYS,
-        letters: &[
-            (l(b'L'), 0.0, 0.0),
-            (l(b'I'), 30.0, 0.0),
-            (l(b'N'), 45.0, 0.0),
-            (l(b'K'), 80.0, 0.0),
-        ],
+        letters: &LINK_LETTERS,
         name_at: [100.0, 100.0],
         motion_viewport: [10.0, 90.0, 310.0, 230.0],
         motion_aspect: 15.0 / 7.0,
@@ -213,13 +279,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::SAMUS_START,
         end: generated::SAMUS_END,
         keys: &generated::SAMUS_KEYS,
-        letters: &[
-            (l(b'S'), 0.0, 0.0),
-            (l(b'A'), 30.0, 0.0),
-            (l(b'M'), 70.0, 0.0),
-            (l(b'U'), 110.0, 0.0),
-            (l(b'S'), 140.0, 0.0),
-        ],
+        letters: &SAMUS_LETTERS,
         name_at: [80.0, 100.0],
         motion_viewport: RIGHT_MOTION,
         motion_aspect: 10.0 / 11.0,
@@ -240,13 +300,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::YOSHI_START,
         end: generated::YOSHI_END,
         keys: &generated::YOSHI_KEYS,
-        letters: &[
-            (l(b'Y'), 0.0, 0.0),
-            (l(b'O'), 30.0, 0.0),
-            (l(b'S'), 65.0, 0.0),
-            (l(b'H'), 95.0, 0.0),
-            (l(b'I'), 128.0, 0.0),
-        ],
+        letters: &YOSHI_LETTERS,
         name_at: [80.0, 100.0],
         motion_viewport: [10.0, 10.0, 310.0, 150.0],
         motion_aspect: 15.0 / 7.0,
@@ -267,13 +321,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::KIRBY_START,
         end: generated::KIRBY_END,
         keys: &generated::KIRBY_KEYS,
-        letters: &[
-            (l(b'K'), 0.0, 0.0),
-            (l(b'I'), 35.0, 0.0),
-            (l(b'R'), 50.0, 0.0),
-            (l(b'B'), 80.0, 0.0),
-            (l(b'Y'), 110.0, 0.0),
-        ],
+        letters: &KIRBY_LETTERS,
         name_at: [90.0, 100.0],
         motion_viewport: LEFT_MOTION,
         motion_aspect: 10.0 / 11.0,
@@ -294,11 +342,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::FOX_START,
         end: generated::FOX_END,
         keys: &generated::FOX_KEYS,
-        letters: &[
-            (l(b'F'), 0.0, 0.0),
-            (l(b'O'), 30.0, 0.0),
-            (l(b'X'), 75.0, 0.0),
-        ],
+        letters: &FOX_LETTERS,
         name_at: [110.0, 100.0],
         motion_viewport: LEFT_MOTION,
         motion_aspect: 10.0 / 11.0,
@@ -319,15 +363,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::PIKACHU_START,
         end: generated::PIKACHU_END,
         keys: &generated::PIKACHU_KEYS,
-        letters: &[
-            (l(b'P'), 0.0, 0.0),
-            (l(b'I'), 30.0, 0.0),
-            (l(b'K'), 45.0, 0.0),
-            (l(b'A'), 75.0, 0.0),
-            (l(b'C'), 110.0, 0.0),
-            (l(b'H'), 140.0, 0.0),
-            (l(b'U'), 170.0, 0.0),
-        ],
+        letters: &PIKACHU_LETTERS,
         name_at: [65.0, 100.0],
         motion_viewport: RIGHT_MOTION,
         motion_aspect: 10.0 / 11.0,
@@ -472,7 +508,7 @@ impl FighterScene {
             .map(|&(c, x, y)| {
                 Piece::clear(
                     FILE_ANNOUNCE,
-                    LETTERS[usize::from(c)],
+                    c,
                     x + params.name_at[0],
                     y + params.name_at[1],
                 )

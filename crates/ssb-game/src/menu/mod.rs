@@ -81,10 +81,10 @@ pub mod common {
     pub const OFF_TEXT: u32 = 0xB958;
     pub const SLASH: u32 = 0xBA28;
     pub const GAME_MODE_TEXT: u32 = 0xD240;
-    /// `llMNCommonDigit0Sprite` to `...Digit9Sprite`.
-    pub const DIGITS: [u32; 10] = [
-        0xD310, 0xD3E0, 0xD4B0, 0xD580, 0xD650, 0xD720, 0xD7F0, 0xD8C0, 0xD990, 0xDA60,
-    ];
+    /// `llMNCommonDigit0Sprite` to `...Digit9Sprite`, as
+    /// `mnVSModeMakeNumber`'s `number_offsets` lists them.
+    #[cfg(test)]
+    pub const DIGITS: [u32; 10] = crate::d_arrays::MN_VS_MODE_MAKE_NUMBER_NUMBER_OFFSETS;
     pub const PERCENTAGE: u32 = 0xDB30;
     pub const INFINITY: u32 = 0xDC48;
     pub const ARROW_R: u32 = 0xDD90;
@@ -434,9 +434,17 @@ pub(crate) fn fill_prim(x0: i32, y0: i32, x1: i32, y1: i32, rgba: [u8; 4]) -> Dr
 
 /// `mnOptionMakeOptionTabs` and `mnDataMakeOptionTab`: a tab's left end,
 /// its middle repeated `lrs * 8` texels (`masks` 4, `lrt` 29) and its
-/// right end, coloured by `status` (`mn*SetOptionSpriteColors`).
-pub(crate) fn option_tab(f: &mut impl FnMut(Draw), x: f32, y: f32, lrs: i32, status: TabStatus) {
-    let (env, prim) = status.colors();
+/// right end, coloured by `status` from the menu's `colors`
+/// (`mn*SetOptionSpriteColors`).
+pub(crate) fn option_tab(
+    f: &mut impl FnMut(Draw),
+    x: f32,
+    y: f32,
+    lrs: i32,
+    status: TabStatus,
+    colors: &TabColors,
+) {
+    let (env, prim) = status.colors(colors);
     let tint = |p: Piece| p.env(env).prim(prim);
     f(Draw::Sprite(tint(Piece::clear(
         FILE_COMMON,
@@ -478,15 +486,25 @@ impl TabStatus {
         }
     }
 
-    /// `mnOptionSetOptionSpriteColors`' pairs: `envcolor` from `.prim`,
-    /// `sprite.red`.. from `.env`.
-    pub(crate) fn colors(self) -> ([u8; 3], [u8; 3]) {
-        match self {
-            TabStatus::Highlight => ([0x82, 0x00, 0x28], [0xFF, 0x00, 0x28]),
-            TabStatus::Not => ([0x00, 0x00, 0x00], [0x82, 0x82, 0xAA]),
-            TabStatus::Selected => ([0x00, 0x00, 0x00], [0xFF, 0xFF, 0xFF]),
-        }
+    /// The pair `status` picks from a `mn*SetOptionSpriteColors` table:
+    /// `envcolor` from `.prim`, `sprite.red`.. from `.env`.
+    pub(crate) fn colors(self, table: &TabColors) -> ([u8; 3], [u8; 3]) {
+        let [prim, env] = match self {
+            TabStatus::Selected => table.sel,
+            TabStatus::Highlight => table.hi,
+            TabStatus::Not => table.not,
+        };
+        (prim, env)
     }
+}
+
+/// A `mn*SetOptionSpriteColors`' `selcolors`, `hicolors` and `notcolors`
+/// (`SYColorRGBPair`s: `prim`, then `env`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TabColors {
+    pub sel: [[u8; 3]; 2],
+    pub hi: [[u8; 3]; 2],
+    pub not: [[u8; 3]; 2],
 }
 
 /// `mnOptionMakeDecals` and `mnDataMakeDecals`: the collage, two paper
@@ -530,15 +548,19 @@ pub(crate) fn labels(
 /// `mnVSModeMakeNumber` and `mnVSOptionsMakeDamageDigitSObjs` (unpadded):
 /// `num`'s digits right to left, each 11 pixels left of the last, the
 /// ones digit's corner at `x - 11`. Clamped below at 0; at most
-/// `max_digits`.
+/// `max_digits`. `digits` is the caller's digit sprite table, and the
+/// sprite colour is `colors[0..3]` stored into `u8`s
+/// (`mnVSModeSetTextureColors`).
 pub(crate) fn right_digits(
     f: &mut impl FnMut(Draw),
     num: i32,
     x: f32,
     y: f32,
-    rgb: [u8; 3],
+    colors: &[u32],
+    digits: &[u32; 10],
     max_digits: u32,
 ) {
+    let rgb = [colors[0] as u8, colors[1] as u8, colors[2] as u8];
     let num = num.max(0);
     // `mnVSModeGetNumberOfDigits`: the highest place with a non-zero
     // quotient.
@@ -551,7 +573,7 @@ pub(crate) fn right_digits(
         let digit = (num / 10i32.pow(place)) % 10;
         at -= 11.0;
         f(Draw::Sprite(
-            Piece::clear(FILE_COMMON, common::DIGITS[digit as usize], at, y).prim(rgb),
+            Piece::clear(FILE_COMMON, digits[digit as usize], at, y).prim(rgb),
         ));
     }
 }

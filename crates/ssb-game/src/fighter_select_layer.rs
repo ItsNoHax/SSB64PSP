@@ -23,9 +23,10 @@
 //! portraits, 50 cards, texts, names and "Press Start", 30 fighters, 25
 //! pucks, 20 cursor and held puck, 10 banner).
 
+use crate::d_arrays as d;
 use crate::fighter::FighterKind;
 use crate::players_vs::layer::{
-    self as vs, common, piece, Draw, Fighter, Flash, Piece, FILE_EMBLEMS, FILE_GAME_MODES,
+    self as vs, common, piece, rom, Draw, Fighter, Flash, Piece, FILE_EMBLEMS, FILE_GAME_MODES,
     FILE_PLAYERS_COMMON, FLASH_LENGTH,
 };
 use crate::players_vs::DrawKey;
@@ -53,9 +54,19 @@ pub const SPRITES: &[(u32, u32)] = &[(FILE_GAME_MODES, TRAINING_MODE_TEXT)];
 const DL_CURSOR: u8 = 32;
 const DL_PUCK: u8 = 33;
 /// `mnPlayers1PTrainingMakeCursor`'s `priorities`, by port.
-const CURSOR_PRIORITIES: [u32; 4] = [6, 4, 2, 0];
-/// `mnPlayers1PTrainingMakePuck`'s `dropped_priorities`, by port.
-const PUCK_DROPPED_PRIORITIES: [u32; 4] = [3, 2, 1, 0];
+const CURSOR_PRIORITIES: [u32; 4] = d::MN_PLAYERS_1P_TRAINING_MAKE_CURSOR_PRIORITIES;
+/// `mnPlayers1PTrainingMakePuck`'s `dropped_priorities` and
+/// `held_priorities`, by port.
+const PUCK_DROPPED_PRIORITIES: [u32; 4] =
+    rom::unsigned(d::MN_PLAYERS_1P_TRAINING_MAKE_PUCK_DROPPED_PRIORITIES);
+const PUCK_HELD_PRIORITIES: [u32; 4] =
+    rom::unsigned(d::MN_PLAYERS_1P_TRAINING_MAKE_PUCK_HELD_PRIORITIES);
+/// `mnPlayers1PTrainingUpdateCursorGrabPriorities`' `priorities`.
+const GRAB_PRIORITIES: [u32; 4] =
+    d::MN_PLAYERS_1P_TRAINING_UPDATE_CURSOR_GRAB_PRIORITIES_PRIORITIES;
+/// `mnPlayers1PTrainingUpdateCursorPlacementPriorities`' `unheld_priorities`.
+const PLACEMENT_PRIORITIES: [u32; 4] =
+    rom::unsigned(d::MN_PLAYERS_1P_TRAINING_UPDATE_CURSOR_PLACEMENT_PRIORITIES_UNHELD_PRIORITIES);
 
 /// `mnPlayers1PTrainingMakeGate`'s card corner, by slot.
 const CARD_POS: [(f32, f32); 2] = [(53.0, 127.0), (185.0, 127.0)];
@@ -148,7 +159,7 @@ impl FighterSelect {
             let mut key = self.draw_key(DL_PUCK, PUCK_DROPPED_PRIORITIES[slot]);
             let s = &self.slots[slot];
             if s.player_kind == PlayerKind::Man && s.held.is_some() {
-                key = self.draw_key(DL_CURSOR, CURSOR_PRIORITIES[slot] + 1);
+                key = self.draw_key(DL_CURSOR, PUCK_HELD_PRIORITIES[slot] + 1);
             }
             self.view.slots[slot].puck_draw = key;
             self.v_update_name_and_emblem(slot);
@@ -226,7 +237,7 @@ impl FighterSelect {
     /// cursor, the only one: it and the puck it grabbed go to the top of
     /// the cursor link. No other slot has a cursor or holds a puck.
     pub(super) fn v_grab_priorities(&mut self, puck: usize) {
-        let top = CURSOR_PRIORITIES[3];
+        let top = GRAB_PRIORITIES[3];
         self.view.cursor_draw = self.draw_key(DL_CURSOR, top);
         self.view.slots[puck].puck_draw = self.draw_key(DL_CURSOR, top + 1);
     }
@@ -236,7 +247,7 @@ impl FighterSelect {
     /// `unheld_priorities[3]` and the placed puck goes back to the puck
     /// link just above it.
     pub(super) fn v_placement_priorities(&mut self, puck: usize) {
-        let pr = CURSOR_PRIORITIES[3];
+        let pr = PLACEMENT_PRIORITIES[3];
         self.view.cursor_draw = self.draw_key(DL_CURSOR, pr);
         self.view.slots[puck].puck_draw = self.draw_key(DL_PUCK, pr + 1);
     }

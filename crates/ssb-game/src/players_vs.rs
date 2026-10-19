@@ -34,7 +34,7 @@
 
 use ssb_engine::input::{ControllerState, N64Buttons};
 
-use crate::battle::{Rule, TIMELIMIT_INFINITE};
+use crate::battle::Rule;
 use crate::costume::{costume_common_id, costume_team_id};
 use crate::fighter::FighterKind;
 use crate::fighter_select::{
@@ -53,8 +53,8 @@ pub const TEAM_RED: u8 = 0;
 pub const TEAM_BLUE: u8 = 1;
 pub const TEAM_GREEN: u8 = 2;
 
-/// `mnPlayersVSResetPlayer`'s `default_teams`.
-const DEFAULT_TEAMS: [u8; PLAYERS] = [TEAM_RED, TEAM_RED, TEAM_BLUE, TEAM_BLUE];
+/// `mnPlayersVSResetPlayer`'s `default_teams`: red, red, blue, blue.
+const DEFAULT_TEAMS: [u8; PLAYERS] = crate::d_arrays::MN_PLAYERS_VS_RESET_PLAYER_DEFAULT_TEAMS;
 
 /// `dIFCommonPlayerTeamColorIDs` (`if/ifcommon.c`), indexed by team.
 pub const TEAM_COLOR_IDS: [u8; 5] = crate::d_arrays::IF_COMMON_PLAYER_TEAM_COLOR_IDS;
@@ -95,30 +95,41 @@ const IDLE_BUTTONS: u16 = N64Buttons::A
     | N64Buttons::D_RIGHT
     | N64Buttons::D_DOWN;
 
-/// `mnPlayersVSGetNextTimeValue`/`GetPrevTimeValue`'s `timer_values`.
-const TIME_VALUES: [u8; 8] = [2, 3, 5, 10, 15, 30, 60, TIMELIMIT_INFINITE];
+/// `mnPlayersVSGetNextTimeValue`'s `timer_values`, minutes; the last is
+/// `TIMELIMIT_INFINITE`.
+const NEXT_TIME_VALUES: [u8; 8] =
+    layer::rom::bytes(crate::d_arrays::MN_PLAYERS_VS_GET_NEXT_TIME_VALUE_TIMER_VALUES);
+/// `mnPlayersVSGetPrevTimeValue`'s `timer_values`.
+const PREV_TIME_VALUES: [u8; 8] =
+    layer::rom::bytes(crate::d_arrays::MN_PLAYERS_VS_GET_PREV_TIME_VALUE_TIMER_VALUES);
 
 /// The select button a pick came from: `nMNPlayersSelectButton*`.
 const BUTTON_A: usize = 4;
 
-/// `mnPlayersVSMakeCursor`'s start positions.
-const CURSOR_STARTS: [(f32, f32); PLAYERS] = [
-    (40.0, 170.0),
-    (108.0, 170.0),
-    (176.0, 170.0),
-    (244.0, 170.0),
-];
+/// `mnPlayersVSMakeCursor`'s `pos`: the start positions.
+const CURSOR_STARTS: [(f32, f32); PLAYERS] =
+    layer::rom::xy(crate::d_arrays::MN_PLAYERS_VS_MAKE_CURSOR_POS);
 /// `mnPlayersVSMakePuck`: a puck with no fighter waits here.
 const PUCK_START: (f32, f32) = (51.0, 161.0);
 
 /// The display links the cursors and pucks draw in.
 const DL_CURSOR: u8 = 32;
 const DL_PUCK: u8 = 33;
-/// `mnPlayersVSMakeCursor`'s `priorities`, also the held-puck and
-/// placement tables (`held_priorities`, `unheld_priorities`).
-const CURSOR_PRIORITIES: [u32; PLAYERS] = [6, 4, 2, 0];
-/// `mnPlayersVSMakePuck`'s `dropped_priorities`.
-const PUCK_DROPPED_PRIORITIES: [u32; PLAYERS] = [3, 2, 1, 0];
+/// `mnPlayersVSMakeCursor`'s `priorities`.
+const CURSOR_PRIORITIES: [u32; PLAYERS] = crate::d_arrays::MN_PLAYERS_VS_MAKE_CURSOR_PRIORITIES;
+/// `mnPlayersVSMakePuck`'s `dropped_priorities` and `held_priorities`.
+const PUCK_DROPPED_PRIORITIES: [u32; PLAYERS] =
+    layer::rom::unsigned(crate::d_arrays::MN_PLAYERS_VS_MAKE_PUCK_DROPPED_PRIORITIES);
+const PUCK_HELD_PRIORITIES: [u32; PLAYERS] =
+    layer::rom::unsigned(crate::d_arrays::MN_PLAYERS_VS_MAKE_PUCK_HELD_PRIORITIES);
+/// `mnPlayersVSUpdateCursorGrabPriorities`' `priorities`.
+const GRAB_PRIORITIES: [u32; PLAYERS] =
+    crate::d_arrays::MN_PLAYERS_VS_UPDATE_CURSOR_GRAB_PRIORITIES_PRIORITIES;
+/// `mnPlayersVSUpdateCursorPlacementPriorities`' `unheld_priorities` (its
+/// `held_priorities` is never read).
+const PLACEMENT_PRIORITIES: [u32; PLAYERS] = layer::rom::unsigned(
+    crate::d_arrays::MN_PLAYERS_VS_UPDATE_CURSOR_PLACEMENT_PRIORITIES_UNHELD_PRIORITIES,
+);
 
 /// `nFTPlayerKind`: the kinds a VS slot takes, in the source's order
 /// (the HMN/CP/NA button cycles through them).
@@ -369,25 +380,25 @@ pub struct PlayersVs {
 
 /// `mnPlayersVSGetNextTimeValue`.
 pub fn next_time_value(current: u8) -> u8 {
-    if current == TIME_VALUES[TIME_VALUES.len() - 1] {
-        return TIME_VALUES[0];
+    const V: [u8; 8] = NEXT_TIME_VALUES;
+    if current == V[V.len() - 1] {
+        return V[0];
     }
-    TIME_VALUES
-        .into_iter()
+    V.into_iter()
         .find(|&v| current < v)
-        .unwrap_or(TIME_VALUES[TIME_VALUES.len() - 1])
+        .unwrap_or(V[V.len() - 1])
 }
 
 /// `mnPlayersVSGetPrevTimeValue`.
 pub fn prev_time_value(current: u8) -> u8 {
-    if current == TIME_VALUES[0] {
-        return TIME_VALUES[TIME_VALUES.len() - 1];
+    const V: [u8; 8] = PREV_TIME_VALUES;
+    if current == V[0] {
+        return V[V.len() - 1];
     }
-    TIME_VALUES
-        .into_iter()
+    V.into_iter()
         .rev()
         .find(|&v| current > v)
-        .unwrap_or(TIME_VALUES[TIME_VALUES.len() - 1])
+        .unwrap_or(V[V.len() - 1])
 }
 
 /// `syUtilsRandTimeUCharRange(range)` from one `osGetTime() & 0xFF`.
@@ -575,7 +586,7 @@ impl PlayersVs {
         // `mnPlayersVSMakePuck`.
         self.slots[p].puck_draw = self.draw_key(DL_PUCK, PUCK_DROPPED_PRIORITIES[p]);
         if self.slots[p].pkind == PlayerKind::Man && self.slots[p].held.is_some() {
-            self.slots[p].puck_draw = self.draw_key(DL_CURSOR, CURSOR_PRIORITIES[p] + 1);
+            self.slots[p].puck_draw = self.draw_key(DL_CURSOR, PUCK_HELD_PRIORITIES[p] + 1);
         }
         let s = &mut self.slots[p];
         s.puck = match s.fkind {
@@ -1423,16 +1434,16 @@ impl PlayersVs {
     /// `mnPlayersVSUpdateCursorGrabPriorities`: the grabbing cursor and
     /// its puck draw over the rest.
     fn update_cursor_grab_priorities(&mut self, p: usize, puck: usize) {
-        let top = CURSOR_PRIORITIES[PLAYERS - 1];
+        let top = GRAB_PRIORITIES[PLAYERS - 1];
         self.move_cursor_dl(p, top);
         self.slots[puck].puck_draw = self.move_dl(DL_CURSOR, top + 1);
         for i in 0..PLAYERS {
             let order = PLAYERS - 1 - i;
             if i != p {
-                self.move_cursor_dl(i, CURSOR_PRIORITIES[order]);
+                self.move_cursor_dl(i, GRAB_PRIORITIES[order]);
                 if let Some(held) = self.slots[i].held {
                     self.slots[held].puck_draw =
-                        self.move_dl(DL_CURSOR, CURSOR_PRIORITIES[order] + 1);
+                        self.move_dl(DL_CURSOR, GRAB_PRIORITIES[order] + 1);
                 }
             }
         }
@@ -1446,7 +1457,7 @@ impl PlayersVs {
     fn update_cursor_placement_priorities(&mut self, player: Option<usize>, puck: usize) {
         let is_held: [bool; PLAYERS] = core::array::from_fn(|i| self.slots[i].held.is_some());
         let mut id = PLAYERS as i32 - 1;
-        let priority = |id: i32| usize::try_from(id).ok().map(|i| CURSOR_PRIORITIES[i]);
+        let priority = |id: i32| usize::try_from(id).ok().map(|i| PLACEMENT_PRIORITIES[i]);
         for (i, &held) in is_held.iter().enumerate() {
             if Some(i) != player && held {
                 if let Some(pr) = priority(id) {

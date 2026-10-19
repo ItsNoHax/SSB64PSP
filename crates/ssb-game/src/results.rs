@@ -10,8 +10,8 @@
 //! `mnVSResultsAudioThreadUpdate`) run in [`Results::tick`].
 
 use crate::battle::{Battle, Rule};
+use crate::d_arrays::{self as d, MN_VS_RESULTS_ANNOUNCE_WINNER_ANNOUNCE_NAMES as ANNOUNCE_NAMES};
 use crate::fighter::FighterKind;
-use crate::fighter_select::ANNOUNCE_NAMES;
 use crate::sound::{self, id};
 
 /// `mnVSResultsAudioThreadUpdate`, the GObj thread `mnVSResultsMakeAudioThread`
@@ -335,7 +335,8 @@ impl Results {
                 81 => Some(id::nSYAudioVoiceAnnounceWinnerIs),
                 210 => self
                     .winner_kind()
-                    .and_then(|k| ANNOUNCE_NAMES.get(k as usize).copied()),
+                    .and_then(|k| ANNOUNCE_NAMES.get(k as usize))
+                    .map(|&v| v as u16),
                 270 => Some(id::nSYAudioVoicePublicExcited),
                 _ => None,
             }
@@ -343,13 +344,9 @@ impl Results {
             match t {
                 // `announcer_teams[mnVSResultsGetWinTeam()]`.
                 81 => self.winner.and_then(|w| {
-                    [
-                        id::nSYAudioVoiceAnnounceRedTeam,
-                        id::nSYAudioVoiceAnnounceBlueTeam,
-                        id::nSYAudioVoiceAnnounceGreenTeam,
-                    ]
-                    .get(usize::from(self.team[w]))
-                    .copied()
+                    d::MN_VS_RESULTS_ANNOUNCE_WINNER_ANNOUNCER_TEAMS
+                        .get(usize::from(self.team[w]))
+                        .map(|&v| v as u16)
                 }),
                 130 => Some(id::nSYAudioVoiceAnnounceWins),
                 150 => Some(id::nSYAudioVoicePublicExcited),

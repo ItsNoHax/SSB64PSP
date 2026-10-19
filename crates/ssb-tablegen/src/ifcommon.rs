@@ -4,13 +4,16 @@
 //!
 //! The ROM names a sprite by its file offset (`ll*Sprite`); the port names
 //! it by its place in the file's sprite manifest
-//! (`ssb_rom::sprite_offsets`), so each generator looks the offset up there.
+//! (`ssb_rom::sprite_offsets`; the announcer's letters are the generated
+//! `mnVSResultsMakeString` offsets, `ssb_rom::sprite::ANNOUNCE_COMMON`), so
+//! each generator looks the offset up there.
 
 use std::fmt::Write;
 
+use crate::d_arrays::local::mnvsresults;
 use crate::emit::{self, f32_lit};
 use crate::source::{OverlayData, OVL2};
-use crate::sprite_offsets::{ANNOUNCE_COMMON, BATTLE_PAUSE, GAME_STATUS};
+use crate::sprite_offsets::{BATTLE_PAUSE, GAME_STATUS};
 use crate::{Error, Generated, Result, Source};
 
 /// `dIFCommonTrafficSpriteColors{R,G,B}`: `u8[9]` each, indexed by
@@ -101,15 +104,16 @@ fn characters(
     Ok(w)
 }
 
-/// File 82's and file 37's manifests with their file ids.
+/// File 82's manifest with its file id.
 #[allow(non_snake_case)]
 fn GAME_STATUS_SPRITES() -> (&'static [u32], u32) {
     (GAME_STATUS, GAME_STATUS_FILE)
 }
 
-#[allow(non_snake_case)]
-fn ANNOUNCE_SPRITES() -> (&'static [u32], u32) {
-    (ANNOUNCE_COMMON, ANNOUNCE_COMMON_FILE)
+/// File 37's manifest: the letters `mnVSResultsMakeString` reads, which
+/// `ssb_rom::sprite::ANNOUNCE_COMMON` is generated from.
+fn announce_sprites(d: OverlayData) -> Result<Vec<u32>> {
+    mnvsresults::MAKE_STRING_OFFSETS.words(d.rom)
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
@@ -164,22 +168,25 @@ fn countdown(d: OverlayData) -> Result<String> {
     }
     w.push_str("];\n");
     w.push_str(&characters(d, ANNOUNCE_GO, "GO", GAME_STATUS_SPRITES())?);
+    let letters = announce_sprites(d)?;
     w.push_str(&characters(
         d,
         ANNOUNCE_SUDDEN_DEATH,
         "SUDDEN_DEATH",
-        ANNOUNCE_SPRITES(),
+        (&letters, ANNOUNCE_COMMON_FILE),
     )?);
     Ok(w)
 }
 
 fn announce(d: OverlayData) -> Result<String> {
     let mut w = emit::header("`dIFCommonAnnounce{TimeUp,GameSet,Complete,Failure}SpriteData`");
+    let letters = announce_sprites(d)?;
+    let letters = (letters.as_slice(), ANNOUNCE_COMMON_FILE);
     for (rows, name, sprites) in [
         (ANNOUNCE_TIME_UP, "TIME_UP", GAME_STATUS_SPRITES()),
-        (ANNOUNCE_COMPLETE, "COMPLETE", ANNOUNCE_SPRITES()),
+        (ANNOUNCE_COMPLETE, "COMPLETE", letters),
         (ANNOUNCE_GAME_SET, "GAME_SET", GAME_STATUS_SPRITES()),
-        (ANNOUNCE_FAILURE, "FAILURE", ANNOUNCE_SPRITES()),
+        (ANNOUNCE_FAILURE, "FAILURE", letters),
     ] {
         w.push_str(&characters(d, rows, name, sprites)?);
     }
@@ -253,7 +260,6 @@ mod tests {
         // `OverlayData` with a ROM needs a real ROM; the lookup itself is
         // checked here on the manifest.
         assert_eq!(GAME_STATUS.iter().position(|&o| o == 0x21A10), Some(16));
-        assert_eq!(ANNOUNCE_COMMON.iter().position(|&o| o == 0x7E50), Some(27));
         assert_eq!(BATTLE_PAUSE.iter().position(|&o| o == 0x18C8), Some(15));
         assert!(!GAME_STATUS.contains(&0x1234));
     }

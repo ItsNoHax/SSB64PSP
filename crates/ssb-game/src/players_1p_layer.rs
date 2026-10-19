@@ -23,9 +23,10 @@
 //! Start" (30, link 28), the fighter (20), the dropped puck (15, link 31),
 //! the cursor and held puck (13, link 30) and the banner (10, link 35).
 
+use crate::d_arrays as g;
 use crate::fighter::FighterKind;
 use crate::players_vs::layer::{
-    self as vs, common, piece, Fighter, Flash, Piece, FILE_EMBLEMS, FILE_PLAYERS_COMMON,
+    self as vs, common, piece, rom, Fighter, Flash, Piece, FILE_EMBLEMS, FILE_PLAYERS_COMMON,
     FLASH_LENGTH,
 };
 use crate::results_scene::FIGHTER_SCALES;
@@ -60,43 +61,30 @@ pub mod mode {
 
 /// `mnPlayers1PGameMakeLevel`'s `offsets`, by level: `VeryEasyText`,
 /// `EasyText`, `NormalText`, `HardText`, `VeryHardText`.
-pub const LEVEL_TEXT: [u32; 5] = [0x438, 0x98, 0x2D8, 0x178, 0x598];
+pub const LEVEL_TEXT: [u32; 5] = g::MN_PLAYERS_1P_GAME_MAKE_LEVEL_OFFSETS;
 /// `mnPlayers1PGameMakeLevel`'s `pos`, by level.
-const LEVEL_POS: [(f32, f32); 5] = [
-    (204.0, 159.0),
-    (219.0, 159.0),
-    (209.0, 159.0),
-    (219.0, 159.0),
-    (205.0, 159.0),
-];
-/// `mnPlayers1PGameMakeLevel`'s and `MakeHiScore`'s `colors`, by level.
-pub const LEVEL_COLORS: [[u8; 3]; 5] = [
-    [0x41, 0x6F, 0xE4],
-    [0x8D, 0xBB, 0x5A],
-    [0xE4, 0xBE, 0x41],
-    [0xE4, 0x78, 0x41],
-    [0xE4, 0x41, 0x41],
-];
+const LEVEL_POS: [(f32, f32); 5] = rom::xy(g::MN_PLAYERS_1P_GAME_MAKE_LEVEL_POS);
+/// `mnPlayers1PGameMakeLevel`'s `colors`, by level.
+pub const LEVEL_COLORS: [[u8; 3]; 5] = g::MN_PLAYERS_1P_GAME_MAKE_LEVEL_COLORS;
+/// `mnPlayers1PGameMakeHiScore`'s `difficulty_colors`, by best level.
+const BEST_LEVEL_COLORS: [[u8; 3]; 5] = g::MN_PLAYERS_1P_GAME_MAKE_HI_SCORE_DIFFICULTY_COLORS;
+/// `mnPlayers1PGameMakeTimeSetting`'s `colors`: the environment, then the
+/// primitive.
+const TIME_DIGIT_COLORS: ([u8; 3], [u8; 3]) =
+    rom::env_prim(g::MN_PLAYERS_1P_GAME_MAKE_TIME_SETTING_COLORS);
 /// `llFTStocksZakoSprite`.
 pub const ZAKO_STOCK: u32 = 0x80;
-/// `llMNCommonFontsLetterASprite` to `...LetterZSprite`, then
-/// `SymbolApostrophe`, `SymbolPercent` and `SymbolPeriod`.
-pub const FONT: [u32; 29] = [
-    0x40, 0xD0, 0x160, 0x1F0, 0x280, 0x310, 0x3A0, 0x430, 0x4C0, 0x550, 0x5E0, 0x670, 0x700, 0x790,
-    0x820, 0x8B0, 0x940, 0x9D0, 0xA60, 0xAF0, 0xB80, 0xC10, 0xCA0, 0xD30, 0xDC0, 0xE50, 0xED0,
-    0xF60, 0xFD0,
-];
+/// `mnPlayers1PGameMakeString`'s `offsets`: `llMNCommonFontsLetterASprite`
+/// to `...LetterZSprite`, then `SymbolApostrophe`, `SymbolPercent` and
+/// `SymbolPeriod`.
+pub const FONT: [u32; 29] = crate::d_arrays::MN_PLAYERS_1P_GAME_MAKE_STRING_OFFSETS;
 /// `mnPlayers1PGameMakeString`'s `widths`, by character ID.
-pub(crate) const FONT_WIDTHS: [f32; 29] = [
-    5.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 3.0, 4.0, 4.0, 4.0, 5.0, 5.0, 4.0, 4.0, 5.0, 4.0, 4.0,
-    5.0, 4.0, 5.0, 5.0, 5.0, 5.0, 4.0, 2.0, 7.0, 3.0,
-];
-/// `llIFCommonDigits0Sprite` to `...9Sprite`.
-pub(crate) const DIGITS: [u32; 10] = [
-    0x68, 0x118, 0x1C8, 0x278, 0x328, 0x3D8, 0x488, 0x538, 0x5E8, 0x698,
-];
+pub(crate) const FONT_WIDTHS: [f32; 29] = crate::d_arrays::MN_PLAYERS_1P_GAME_MAKE_STRING_WIDTHS;
+/// `mnPlayers1PGameMakeNumber`'s `offsets`: `llIFCommonDigits0Sprite` to
+/// `...9Sprite`.
+pub(crate) const DIGITS: [u32; 10] = g::MN_PLAYERS_1P_GAME_MAKE_NUMBER_OFFSETS;
 /// `mnPlayers1PGameMakeTimeNumber`'s `widths`: a table, not the sprites'.
-const TIME_DIGIT_WIDTHS: [f32; 10] = [8.0, 6.0, 9.0, 8.0, 8.0, 9.0, 8.0, 8.0, 8.0, 9.0];
+const TIME_DIGIT_WIDTHS: [f32; 10] = g::MN_PLAYERS_1P_GAME_MAKE_TIME_NUMBER_WIDTHS;
 
 /// Every sprite the layer names beyond RE-411's and the Training
 /// select's, as `(file, offset)`, for the pack's check.
@@ -125,7 +113,7 @@ pub const SPRITE_LISTS: &[(u32, &[u32])] = &[
 pub const GATE_LUTS: [u8; 4] = [0, 2, 3, 4];
 
 /// `mnPlayers1PGameMakeGate`'s "1P" text `pos_x`, by port.
-pub(crate) const KIND_TEXT_X: [f32; 4] = [8.0, 5.0, 5.0, 5.0];
+pub(crate) const KIND_TEXT_X: [f32; 4] = g::MN_PLAYERS_1P_GAME_MAKE_GATE_POS_X;
 /// `mnPlayers1PGameMakeFighter`'s `translate`.
 pub const FIGHTER_POSITION: [f32; 3] = [-1100.0, -850.0, 0.0];
 /// The level and stock threads' `blink_wait`.
@@ -409,9 +397,10 @@ impl Players1P {
             22.0,
         )));
         if self.time_setting == crate::battle::TIMELIMIT_INFINITE {
+            let (env, prim) = TIME_DIGIT_COLORS;
             put(vs::Draw::Sprite(Piece {
-                prim: Some([0xFF; 3]),
-                env: [0x32, 0x1C, 0x0E],
+                prim: Some(prim),
+                env,
                 ..piece(FILE_PLAYERS_COMMON, common::INFINITY_DARK, 194.0, 24.0)
             }));
         } else {
@@ -422,6 +411,7 @@ impl Players1P {
                 23.0,
                 2,
                 &TIME_DIGIT_WIDTHS,
+                TIME_DIGIT_COLORS,
                 |p| put(vs::Draw::Sprite(p)),
             );
         }
@@ -560,40 +550,66 @@ fn visit_arrows(a: &Arrows, y: f32, f: &mut impl FnMut(Draw)) {
 /// `mnPlayers1PGameMakeHiScore`, `...MakeBonusCount`, `...MakeTotalHiScore`
 /// and `...MakeTotalBonusCount`.
 fn visit_records(r: &Records, put: &mut impl FnMut(vs::Draw)) {
-    const TEXT: [u8; 3] = [0x7E, 0x7C, 0x77];
-    const NUMBER: ([u8; 3], [u8; 3]) = ([0; 3], [0x7E, 0x7C, 0x77]);
-    const BONUS: ([u8; 3], [u8; 3]) = ([0; 3], [0x40, 0x6F, 0xCD]);
+    // Each function's `text_colors` (`rgb`) and number `colors`: the
+    // environment, then the primitive.
+    const HI_SCORE_TEXT: [u8; 3] = rom::rgb(g::MN_PLAYERS_1P_GAME_MAKE_HI_SCORE_TEXT_COLORS);
+    const HI_SCORE_NUMBER: ([u8; 3], [u8; 3]) =
+        rom::env_prim(g::MN_PLAYERS_1P_GAME_MAKE_HI_SCORE_NUMBER_COLORS);
+    const BONUS_COUNT: ([u8; 3], [u8; 3]) =
+        rom::env_prim(g::MN_PLAYERS_1P_GAME_MAKE_BONUS_COUNT_COLORS);
+    const TOTAL_TEXT: [u8; 3] = rom::rgb(g::MN_PLAYERS_1P_GAME_MAKE_TOTAL_HI_SCORE_TEXT_COLORS);
+    const TOTAL_NUMBER: ([u8; 3], [u8; 3]) =
+        rom::env_prim(g::MN_PLAYERS_1P_GAME_MAKE_TOTAL_HI_SCORE_NUMBER_COLORS);
+    const TOTAL_BONUS_COUNT: ([u8; 3], [u8; 3]) =
+        rom::env_prim(g::MN_PLAYERS_1P_GAME_MAKE_TOTAL_BONUS_COUNT_COLORS);
     let mut sprite = |p: Piece| put(vs::Draw::Sprite(p));
+    // The parentheses' colour is a code immediate.
     let parens = |y: f32, sprite: &mut dyn FnMut(Piece)| {
         for (offset, x) in [
             (mode::OPENING_PARENTHESIS, 258.0),
             (mode::CLOSING_PARENTHESIS, 286.0),
         ] {
             sprite(Piece {
-                prim: Some(BONUS.1),
+                prim: Some([0x40, 0x6F, 0xCD]),
                 ..piece(FILE_PLAYERS_1P_MODE, offset, x, y)
             });
         }
     };
     // `mnPlayers1PGameMakeTotalRecord`.
-    string("TOTAL HIGH SCORE", 109.0, 211.0, TEXT, &mut sprite);
-    number(r.total_hiscore, 256.0, 208.0, NUMBER, 9, true, &mut sprite);
+    string("TOTAL HIGH SCORE", 109.0, 211.0, TOTAL_TEXT, &mut sprite);
+    number(
+        r.total_hiscore,
+        256.0,
+        208.0,
+        TOTAL_NUMBER,
+        9,
+        true,
+        &mut sprite,
+    );
     parens(209.0, &mut sprite);
-    number(r.total_bonuses, 285.0, 208.0, BONUS, 3, true, &mut sprite);
+    number(
+        r.total_bonuses,
+        285.0,
+        208.0,
+        TOTAL_BONUS_COUNT,
+        3,
+        true,
+        &mut sprite,
+    );
     // `mnPlayers1PGameMakeFighterRecord`.
     let Some((hiscore, bonuses, best)) = r.fighter else {
         return;
     };
-    string("HIGH SCORE", 142.0, 201.0, TEXT, &mut sprite);
-    number(hiscore, 256.0, 198.0, NUMBER, 8, true, &mut sprite);
+    string("HIGH SCORE", 142.0, 201.0, HI_SCORE_TEXT, &mut sprite);
+    number(hiscore, 256.0, 198.0, HI_SCORE_NUMBER, 8, true, &mut sprite);
     if best != 0 {
         sprite(Piece {
-            prim: Some(LEVEL_COLORS[usize::from(best - 1).min(4)]),
+            prim: Some(BEST_LEVEL_COLORS[usize::from(best - 1).min(4)]),
             ..piece(FILE_PLAYERS_1P_MODE, mode::SMASH_LOGO, 126.0, 198.0)
         });
     }
     parens(199.0, &mut sprite);
-    number(bonuses, 285.0, 198.0, BONUS, 3, true, &mut sprite);
+    number(bonuses, 285.0, 198.0, BONUS_COUNT, 3, true, &mut sprite);
 }
 
 /// `mnPlayers1PGameGetNumberDigitCount`.

@@ -114,7 +114,7 @@ const G_IM_SIZ_4C: u8 = 4;
 /// significant first, become 4-bit ones through
 /// `lbCommonGetBitmapDecodeNibble`'s levels 0, 5, 10 and 15.
 fn expand_siz_4c(packed: &[u8]) -> Vec<u8> {
-    const LEVEL: [u8; 4] = [0x0, 0x5, 0xA, 0xF];
+    const LEVEL: [u8; 4] = crate::d_arrays::LB_COMMON_GET_BITMAP_DECODE_NIBBLE_ARRAY;
     let mut out = Vec::with_capacity(packed.len() * 2);
     for &b in packed {
         let texel = |shift: u8| LEVEL[usize::from((b >> shift) & 3)];
@@ -407,10 +407,11 @@ const TIMER_OFFSETS: [u32; 15] = {
 };
 
 /// File 37, `IFCommonAnnounceCommon` (`gGMCommonFiles[7]`): `LetterA` to
-/// `LetterZ`, then `SymbolExclaim` and `SymbolPeriod`.
+/// `LetterZ`, then `SymbolExclaim` and `SymbolPeriod`, the letters
+/// `mnVSResultsMakeString` draws (its `offsets`).
 pub const ANNOUNCE_COMMON: SpriteFile = SpriteFile {
     file: 37,
-    offsets: crate::sprite_offsets::ANNOUNCE_COMMON,
+    offsets: &crate::d_arrays::MN_VS_RESULTS_MAKE_STRING_OFFSETS,
 };
 
 /// File 197, `IFCommonBattlePause` (`gGMCommonFiles[5]`): `PlayerNum1P` to
@@ -427,9 +428,17 @@ pub const BATTLE_PAUSE: SpriteFile = SpriteFile {
 /// to `4PArrowSprite`, `WallpaperSprite` and `WinnerSprite` (RE-410).
 pub const VS_RESULTS: SpriteFile = SpriteFile {
     file: 34,
-    offsets: &[
-        0x358, 0x990, 0xD38, 0x10D8, 0x49E8, 0x4B08, 0x4C28, 0x4D48, 0xD5C8, 0xE2A0,
-    ],
+    offsets: &VS_RESULTS_OFFSETS,
+};
+
+/// [`VS_RESULTS`]'s offsets: the arrows are `mnVSResultsMakeHeader`'s
+/// `offsets`; the texts, the wallpaper and the winner banner are code
+/// immediates (`llMNVSResults*Sprite`).
+const VS_RESULTS_OFFSETS: [u32; 10] = {
+    let arrows = crate::d_arrays::MN_VS_RESULTS_MAKE_HEADER_OFFSETS;
+    [
+        0x358, 0x990, 0xD38, 0x10D8, arrows[0], arrows[1], arrows[2], arrows[3], 0xD5C8, 0xE2A0,
+    ]
 };
 
 /// File 18, `MNPlayersGameModes` (`dMNVSResultsFileIDs[2]`):
@@ -437,23 +446,48 @@ pub const VS_RESULTS: SpriteFile = SpriteFile {
 /// `TrainingModeTextSprite` (`mnPlayers1PTrainingMakeLabels`).
 pub const GAME_MODES: SpriteFile = SpriteFile {
     file: 18,
-    offsets: &[0x280, 0x4E0, 0x758],
+    offsets: &GAME_MODES_OFFSETS,
+};
+
+/// [`GAME_MODES`]'s offsets: `mnVSResultsMakeLabel`'s `offsets`, then the
+/// code immediate `llMNPlayersGameModesTrainingModeTextSprite`.
+const GAME_MODES_OFFSETS: [u32; 3] = {
+    let labels = crate::d_arrays::MN_VS_RESULTS_MAKE_LABEL_OFFSETS;
+    [labels[0], labels[1], 0x758]
 };
 
 /// File 36, `IFCommonDigits` (`dMNVSResultsFileIDs[5]`): `Digits0Sprite`
-/// to `Digits9Sprite`, then `DigitsDashSprite` (RE-410).
+/// to `Digits9Sprite`, then `DigitsDashSprite`, `...CrossSprite` and
+/// `...ColonSprite` (RE-410).
 pub const DIGITS: SpriteFile = SpriteFile {
     file: 36,
-    offsets: &[
-        0x68, 0x118, 0x1C8, 0x278, 0x328, 0x3D8, 0x488, 0x538, 0x5E8, 0x698, 0x710, 0x828, 0x8D8,
-    ],
+    offsets: &DIGITS_OFFSETS,
+};
+
+/// [`DIGITS`]'s offsets: `dIFCommonPlayerStockDigitSpriteOffsets` (the
+/// digits, then the cross), with the code immediates
+/// `llIFCommonDigitsDashSprite` before the cross and
+/// `llIFCommonDigitsColonSprite` after it.
+const DIGITS_OFFSETS: [u32; 13] = {
+    let table = crate::d_arrays::IF_COMMON_PLAYER_STOCK_DIGIT_SPRITE_OFFSETS;
+    let mut offsets = [0; 13];
+    let mut i = 0;
+    while i < 10 {
+        offsets[i] = table[i];
+        i += 1;
+    }
+    offsets[10] = 0x710;
+    offsets[11] = table[10];
+    offsets[12] = 0x8D8;
+    offsets
 };
 
 /// File 38, `IFCommonPlayerTags` (`dMNVSResultsFileIDs[1]`):
-/// `PlayerTags1PSprite` to `...4PSprite`, then `...CPSprite` (RE-410).
+/// `PlayerTags1PSprite` to `...4PSprite`, `...CPSprite`, then
+/// `...AllySprite` (`dIFCommonPlayerTagSpriteOffsets`, RE-410).
 pub const PLAYER_TAGS: SpriteFile = SpriteFile {
     file: 38,
-    offsets: &[0x258, 0x4F8, 0x798, 0xA38, 0xCD8, 0xEB8],
+    offsets: &crate::d_arrays::IF_COMMON_PLAYER_TAG_SPRITE_OFFSETS,
 };
 
 /// File 87, `IFCommonItem` (`llIFCommonItemFileID`): `ArrowSprite`, the
@@ -492,9 +526,13 @@ pub const GATE_CARD: u32 = 0x104B0;
 /// The TLUTs `mnPlayersVSSetGateLUT` swaps into [`GATE_CARD`]:
 /// `man_offsets` (`GateMan1PLUT` to `...4PLUT`), then `com_offsets`
 /// (`GateCom1PLUT` to `...4PLUT`). The file stores 3P after 4P.
-pub const GATE_LUTS: [u32; 8] = [
-    0x103F8, 0x10420, 0x10470, 0x10448, 0x11378, 0x113A0, 0x113F0, 0x113C8,
-];
+pub const GATE_LUTS: [u32; 8] = {
+    let man = crate::d_arrays::MN_PLAYERS_VS_SET_GATE_LUT_MAN_OFFSETS;
+    let com = crate::d_arrays::MN_PLAYERS_VS_SET_GATE_LUT_COM_OFFSETS;
+    [
+        man[0], man[1], man[2], man[3], com[0], com[1], com[2], com[3],
+    ]
+};
 
 /// File 23, `MNPlayers1PMode` (`dMNPlayers1PTrainingFileIDs[1]`):
 /// `RedCardSprite`, the Training select's panel (`mnPlayers1PTrainingMakeGate`,
@@ -506,14 +544,19 @@ pub const TRAINING_GATE_CARD: u32 = 0x32A8;
 /// `mnPlayers1PGameSetGateLUT` swap into [`TRAINING_GATE_CARD`], as
 /// `(file, offset)`: the player's `MNPlayersCommon` `GateMan1PLUT` (the
 /// Training man is port 0), `MNPlayers1PMode`'s `GateCPLUT`, then
-/// `GateMan2PLUT` to `...4PLUT` for a 1P Game on another port.
-pub const TRAINING_GATE_LUTS: [(u32, u32); 5] = [
-    (17, 0x103F8),
-    (23, 0x3238),
-    (17, 0x10420),
-    (17, 0x10470),
-    (17, 0x10448),
-];
+/// `GateMan2PLUT` to `...4PLUT` for a 1P Game on another port. The
+/// man LUTs are the functions' `offsets`; `GateCPLUT` is a code immediate.
+pub const TRAINING_GATE_LUTS: [(u32, u32); 5] = {
+    let man = crate::d_arrays::MN_PLAYERS_1P_TRAINING_SET_GATE_LUT_OFFSETS;
+    let game = crate::d_arrays::MN_PLAYERS_1P_GAME_SET_GATE_LUT_OFFSETS;
+    [
+        (17, man[0]),
+        (23, 0x3238),
+        (17, game[1]),
+        (17, game[2]),
+        (17, game[3]),
+    ]
+};
 
 /// File 23's sprites `mnPlayers1PGame*` draws besides the card, in its
 /// sprite manifest's order: `1PlayerGameText`, `ClosingParenthesis`,
@@ -525,37 +568,55 @@ pub const PLAYERS_1P_MODE: SpriteFile = SpriteFile {
 };
 
 /// File 24, `MNPlayersDifficulty` (`dMNPlayers1PGameFileIDs[6]`):
-/// `EasyText`, `HardText`, `NormalText`, `VeryEasyText`, `VeryHardText`.
+/// `EasyText`, `HardText`, `NormalText`, `VeryEasyText`, `VeryHardText`,
+/// in the file's order.
 pub const PLAYERS_DIFFICULTY: SpriteFile = SpriteFile {
     file: 24,
-    offsets: &[0x98, 0x178, 0x2D8, 0x438, 0x598],
+    offsets: &PLAYERS_DIFFICULTY_OFFSETS,
+};
+
+/// [`PLAYERS_DIFFICULTY`]'s offsets: `mnPlayers1PGameMakeLevel`'s
+/// `offsets`, which are in level order (`VeryEasy` to `VeryHard`).
+const PLAYERS_DIFFICULTY_OFFSETS: [u32; 5] = {
+    let level = crate::d_arrays::MN_PLAYERS_1P_GAME_MAKE_LEVEL_OFFSETS;
+    [level[1], level[3], level[2], level[0], level[4]]
 };
 
 /// File 25, `FTStocksZako` (`dMNPlayers1PGameFileIDs[7]`): the Fighting
-/// Polygon's stock icon, 8 x 8 CI4.
+/// Polygon's stock icon, 8 x 8 CI4 (the code immediate
+/// `llFTStocksZakoSprite`).
 pub const STOCKS_ZAKO: SpriteFile = SpriteFile {
     file: 25,
     offsets: &[0x80],
 };
 
 /// File 33, `MNCommonFonts` (`dMNPlayers1PGameFileIDs[8]`): `LetterA` to
-/// `LetterZ`, `SymbolApostrophe`, `SymbolPercent` and `SymbolPeriod`.
+/// `LetterZ`, `SymbolApostrophe`, `SymbolPercent` and `SymbolPeriod`: the
+/// letters `mnPlayers1PGameMakeString` draws (its `offsets`).
 pub const COMMON_FONTS: SpriteFile = SpriteFile {
     file: 33,
-    offsets: &[
-        0x40, 0xD0, 0x160, 0x1F0, 0x280, 0x310, 0x3A0, 0x430, 0x4C0, 0x550, 0x5E0, 0x670, 0x700,
-        0x790, 0x820, 0x8B0, 0x940, 0x9D0, 0xA60, 0xAF0, 0xB80, 0xC10, 0xCA0, 0xD30, 0xDC0, 0xE50,
-        0xED0, 0xF60, 0xFD0,
-    ],
+    offsets: &crate::d_arrays::MN_PLAYERS_1P_GAME_MAKE_STRING_OFFSETS,
 };
 
 /// File 0, `MNCommon` (`dMNPlayersVSFileIDs[1]`): `Digit0Sprite` to
 /// `Digit9Sprite`, then `ColonSprite` (RE-411).
 pub const MN_COMMON: SpriteFile = SpriteFile {
     file: 0,
-    offsets: &[
-        0xD310, 0xD3E0, 0xD4B0, 0xD580, 0xD650, 0xD720, 0xD7F0, 0xD8C0, 0xD990, 0xDA60, 0xDCF0,
-    ],
+    offsets: &MN_COMMON_OFFSETS,
+};
+
+/// [`MN_COMMON`]'s offsets: `mnPlayersVSMakeHandicapLevelValue`'s
+/// `offsets` (the digits), then the code immediate `llMNCommonColonSprite`.
+const MN_COMMON_OFFSETS: [u32; 11] = {
+    let digits = crate::d_arrays::MN_PLAYERS_VS_MAKE_HANDICAP_LEVEL_VALUE_OFFSETS;
+    let mut offsets = [0; 11];
+    let mut i = 0;
+    while i < 10 {
+        offsets[i] = digits[i];
+        i += 1;
+    }
+    offsets[10] = 0xDCF0;
+    offsets
 };
 
 /// File 19, `MNPlayersPortraits` (`dMNPlayersVSFileIDs[5]`):
@@ -566,10 +627,22 @@ pub const MN_COMMON: SpriteFile = SpriteFile {
 /// `PurinShadow` (RE-411).
 pub const PORTRAITS: SpriteFile = SpriteFile {
     file: 19,
-    offsets: &[
-        0x6F0, 0xF68, 0x24D0, 0x4728, 0x6978, 0x8BC8, 0xAE18, 0xD068, 0xF2B8, 0x11508, 0x13758,
-        0x159A8, 0x17BF8, 0x19E48, 0x1C098, 0x1E2E8, 0x20538, 0x22788, 0x249D8,
-    ],
+    offsets: &PORTRAITS_OFFSETS,
+};
+
+/// [`PORTRAITS`]'s offsets: the code immediates `llMNPlayersPortraits{
+/// WhiteSquare,PortraitQuestionMark,PortraitFireBg}Sprite`, then
+/// `mnPlayersVSMakePortrait`'s `offsets` and `mnPlayersVSMakePortraitShadow`'s
+/// `offsets`, both in portrait order (`Mario`, `Fox`, `Donkey`, `Samus`,
+/// `Luigi`, `Link`, `Yoshi`, `Captain`, `Kirby`, `Pikachu`, `Purin`,
+/// `Ness`), taken in the file's order.
+const PORTRAITS_OFFSETS: [u32; 19] = {
+    let p = crate::d_arrays::MN_PLAYERS_VS_MAKE_PORTRAIT_OFFSETS;
+    let s = crate::d_arrays::MN_PLAYERS_VS_MAKE_PORTRAIT_SHADOW_OFFSETS;
+    [
+        0x6F0, 0xF68, 0x24D0, p[0], p[4], p[2], p[3], p[1], p[8], p[5], p[6], p[9], p[11], p[7],
+        p[10], s[7], s[4], s[11], s[10],
+    ]
 };
 
 /// File 20, `FTEmblemSprites` (`dMNPlayersVSFileIDs[2]`): `Mario`,
@@ -577,13 +650,20 @@ pub const PORTRAITS: SpriteFile = SpriteFile {
 /// `PMonsters` and `Mother` (RE-411).
 pub const EMBLEM_SPRITES: SpriteFile = SpriteFile {
     file: 20,
-    offsets: &[
-        0x618, 0xC78, 0x12D8, 0x1938, 0x1F98, 0x25F8, 0x2C58, 0x32B8, 0x3918, 0x3F78,
-    ],
+    offsets: &EMBLEM_OFFSETS,
+};
+
+/// [`EMBLEM_SPRITES`]'s offsets: `mnPlayersVSMakeNameAndEmblem`'s
+/// `emblem_offsets` (one per portrait: `Mario`, `Fox`, `Donkey`, `Samus`,
+/// `Luigi`, `Link`, `Yoshi`, `Captain`, `Kirby`, `Pikachu`, `Purin`,
+/// `Ness`), each emblem once, in the file's order.
+const EMBLEM_OFFSETS: [u32; 10] = {
+    let e = crate::d_arrays::MN_PLAYERS_VS_MAKE_NAME_AND_EMBLEM_EMBLEM_OFFSETS;
+    [e[0], e[2], e[3], e[1], e[8], e[5], e[6], e[7], e[9], e[11]]
 };
 
 /// File 21, `MNSelectCommon` (`dMNPlayersVSFileIDs[3]`):
-/// `StoneBackgroundSprite` (RE-411).
+/// `StoneBackgroundSprite`, a code immediate (RE-411).
 pub const SELECT_COMMON: SpriteFile = SpriteFile {
     file: 21,
     offsets: &[0x440],
@@ -742,6 +822,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn two_bit_texels_widen_most_significant_first() {
         // 8 texels wide, 2 rows: res = 4 * 2 = 8 bytes from 4 packed ones.
         let d = [0b00_01_10_11, 0b11_10_01_00, 0xFF, 0x00];
@@ -829,6 +910,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn siz_4c_expands_like_lb_common_decode_bitmap_siz_4b() {
         // 0b11_10_01_00: texels 15, 10, 5, 0.
         assert_eq!(expand_siz_4c(&[0xE4, 0x1B]), [0xFA, 0x50, 0x05, 0xAF]);

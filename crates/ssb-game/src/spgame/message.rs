@@ -14,16 +14,29 @@ use ssb_engine::input::N64Buttons;
 /// Ticks before A, B or START may close the message.
 pub const INPUT_WAIT: u32 = 120;
 
-/// `mnMessageMakeMessage`'s US `message_pos`, by [`Unlock`].
-pub const MESSAGE_POSITIONS: [[f32; 2]; 7] = [
-    [85.0, 114.0],
-    [35.0, 123.0],
-    [58.0, 114.0],
-    [44.0, 114.0],
-    [48.0, 123.0],
-    [56.0, 114.0],
-    [54.0, 114.0],
-];
+/// `mnMessageMakeMessage`'s US `message_pos` (`Vec2i`), by [`Unlock`].
+pub const MESSAGE_POSITIONS: [[f32; 2]; 7] = {
+    let pos = crate::d_arrays::MN_MESSAGE_MAKE_MESSAGE_MESSAGE_POS;
+    let mut out = [[0.0; 2]; 7];
+    let mut i = 0;
+    while i < 7 {
+        out[i] = [pos[i][0] as f32, pos[i][1] as f32];
+        i += 1;
+    }
+    out
+};
+
+/// `mnMessageApplyUnlock`'s `fkinds`, by the newcomers' [`Unlock`].
+const UNLOCK_FKINDS: [FighterKind; 4] = {
+    let fkinds = crate::d_arrays::MN_MESSAGE_APPLY_UNLOCK_FKINDS;
+    let mut out = [FighterKind::Mario; 4];
+    let mut i = 0;
+    while i < 4 {
+        out[i] = FighterKind::playable_ordinal(fkinds[i] as i32);
+        i += 1;
+    }
+    out
+};
 
 /// `mnMessageMakeWallpaper`'s collage position.
 pub const WALLPAPER_POSITION: [f32; 2] = [10.0, 10.0];
@@ -86,10 +99,9 @@ impl Message {
 pub fn apply_unlock(backup: &mut Backup, unlock: Unlock) {
     backup.unlock_mask |= unlock.mask();
     let fighter = match unlock {
-        Unlock::Luigi => Some(FighterKind::Luigi),
-        Unlock::Ness => Some(FighterKind::Ness),
-        Unlock::Captain => Some(FighterKind::Captain),
-        Unlock::Purin => Some(FighterKind::Purin),
+        Unlock::Luigi | Unlock::Ness | Unlock::Captain | Unlock::Purin => {
+            Some(UNLOCK_FKINDS[unlock as usize])
+        }
         _ => None,
     };
     if let Some(kind) = fighter {

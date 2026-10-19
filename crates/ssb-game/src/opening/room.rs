@@ -79,48 +79,40 @@ pub const ROW_DROPPED: u8 = 9;
 pub const ROW_STAND: u8 = 10;
 pub const ROW_BOSS: [u8; 3] = [15, 16, 17];
 
+/// The eight starters of an `FTKind` table.
+///
+/// The stub tables are all zeros, which would leave `pick_figures` no
+/// dropped figure different from the pulled one; the stub build gets the
+/// eight kinds in order instead.
+const fn figures(fkinds: [i32; 8]) -> [FighterKind; 8] {
+    let mut out = [FighterKind::Mario; 8];
+    let mut i = 0;
+    while i < 8 {
+        let id = if cfg!(ssb64_stub_tables) {
+            i as i32
+        } else {
+            fkinds[i]
+        };
+        out[i] = FighterKind::playable_ordinal(id);
+        i += 1;
+    }
+    out
+}
+
 /// `mvOpeningRoomGetPulledFighterKind`'s eight starters.
-pub const FIGURES: [FighterKind; 8] = [
-    FighterKind::Mario,
-    FighterKind::Fox,
-    FighterKind::Donkey,
-    FighterKind::Samus,
-    FighterKind::Link,
-    FighterKind::Yoshi,
-    FighterKind::Kirby,
-    FighterKind::Pikachu,
-];
+pub const PULLED_FIGURES: [FighterKind; 8] =
+    figures(crate::d_arrays::MV_OPENING_ROOM_GET_PULLED_FIGHTER_KIND_FKINDS);
+
+/// `mvOpeningRoomGetDroppedFighterKind`'s, the same eight.
+pub const DROPPED_FIGURES: [FighterKind; 8] =
+    figures(crate::d_arrays::MV_OPENING_ROOM_GET_DROPPED_FIGHTER_KIND_FKINDS);
 
 /// `mvOpeningRoomSetSpotlightPosition`'s translations (times 30) and
 /// scales by `FTKind`.
-const SPOTLIGHT_TRANSLATES: [[f32; 3]; 12] = [
-    [-38.310, 74.904, -122.733],
-    [-38.870, 74.904, -121.776],
-    [-38.870, 74.904, -119.480],
-    [-38.870, 74.904, -119.480],
-    [0.0, 0.0, 0.0],
-    [-37.040, 74.904, -119.600],
-    [-39.390, 74.904, -118.380],
-    [0.0, 0.0, 0.0],
-    [-38.310, 74.904, -122.733],
-    [-39.390, 74.904, -118.380],
-    [0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0],
-];
-const SPOTLIGHT_SCALES: [[f32; 3]; 12] = [
-    [1.00, 1.00, 1.00],
-    [1.10, 1.00, 1.10],
-    [1.30, 1.00, 1.30],
-    [1.30, 1.00, 1.30],
-    [0.00, 0.00, 0.00],
-    [1.00, 1.00, 1.00],
-    [1.20, 1.00, 1.20],
-    [0.00, 0.00, 0.00],
-    [1.17, 1.00, 1.17],
-    [1.20, 1.00, 1.20],
-    [0.00, 0.00, 0.00],
-    [0.00, 0.00, 0.00],
-];
+const SPOTLIGHT_TRANSLATES: [[f32; 3]; 12] =
+    crate::d_arrays::MV_OPENING_ROOM_SET_SPOTLIGHT_POSITION_TRANSLATES;
+const SPOTLIGHT_SCALES: [[f32; 3]; 12] =
+    crate::d_arrays::MV_OPENING_ROOM_SET_SPOTLIGHT_POSITION_SCALES;
 
 /// The host's displays.
 pub const HOST_TRANSITION_OUTLINE: u16 = 1;
@@ -190,9 +182,9 @@ impl Room {
     /// `mvOpeningRoomInitVars`' random figures: the pulled one, then a
     /// different dropped one.
     pub fn pick_figures(time: &mut impl FnMut() -> u8) -> (FighterKind, FighterKind) {
-        let pulled_kind = FIGURES[time_range(time(), 8) as usize];
+        let pulled_kind = PULLED_FIGURES[time_range(time(), 8) as usize];
         let dropped_kind = loop {
-            let k = FIGURES[time_range(time(), 8) as usize];
+            let k = DROPPED_FIGURES[time_range(time(), 8) as usize];
             if k != pulled_kind {
                 break k;
             }

@@ -766,15 +766,15 @@ unsafe fn digits(
     for i in 0..max {
         let digit = (v % 10) as usize;
         v /= 10;
-        let (file, at, color) = match kind {
-            0 => (80, 0xb808 + digit as u32 * 0x160, [200, 203, 211]),
-            1 => (36, ssb_rom::sprite::DIGITS.offsets[digit], [255; 3]),
-            3 => (36, ssb_rom::sprite::DIGITS.offsets[digit], [255, 255, 0]),
-            _ => (
-                ssb_rom::sprite::PLAYER_DAMAGE.file,
-                ssb_rom::sprite::PLAYER_DAMAGE.offsets[digit],
-                [255, 236, 0],
-            ),
+        // Kinds 0 to 2 are the decomp's digit kinds; 3 is kind 1 with the
+        // No Miss multiplier's colours.
+        let digit_kind = if kind == 3 { 1 } else { usize::from(kind) };
+        let file = ssb_rom::scene_roots::ONE_P_STAGE_CLEAR[a::CLEAR_DIGIT_FILES[digit_kind] as usize];
+        let at = a::CLEAR_DIGIT_OFFSETS[digit][digit_kind];
+        let [env, color] = if kind == 3 {
+            a::CLEAR_NO_MISS_COLORS
+        } else {
+            a::CLEAR_DIGIT_COLORS[digit_kind]
         };
         if let Some(s) = p.sprite(file, at) {
             x -= if kind == 2 {
@@ -782,7 +782,7 @@ unsafe fn digits(
             } else {
                 f32::from(s.width) + f32::from(kind == 0)
             };
-            sprite(p, st, file, at, x, y, color, [0; 3], 1.0);
+            sprite(p, st, file, at, x, y, color, env, 1.0);
         }
         if !fixed && v == 0 {
             break;
@@ -817,7 +817,6 @@ unsafe fn intro_text(
 ) {
     let data = &session.data;
     let stage = s.stage as usize;
-    let number = [1, 2, 3, 1, 4, 5, 6, 2, 7, 8, 9, 3, 10, 0][stage];
     if matches!(s.stage, Stage::Bonus1 | Stage::Bonus2 | Stage::Bonus3) {
         sprite(
             p,
@@ -855,12 +854,12 @@ unsafe fn intro_text(
         [0; 3],
         1.0,
     );
-    if number != 0 {
+    if s.stage != Stage::Boss {
         sprite(
             p,
             st,
             11,
-            a::INTRO.offsets[number],
+            a::INTRO_STAGE_NUMBERS[stage],
             80.0,
             33.0,
             [255; 3],
@@ -868,46 +867,14 @@ unsafe fn intro_text(
             1.0,
         );
     }
-    let figures = [
-        a::INTRO_LINK_MARKER,
-        a::INTRO_YOSHI_MARKER,
-        a::INTRO_FOX_MARKER,
-        a::INTRO_BONUS_MARKER,
-        a::INTRO_MARIO_BROS_MARKER,
-        a::INTRO_PIKACHU_MARKER,
-        a::INTRO_DKMARKER,
-        a::INTRO_BONUS_MARKER,
-        a::INTRO_KIRBY_MARKER,
-        a::INTRO_SAMUS_MARKER,
-        a::INTRO_MARIO_MARKER,
-        a::INTRO_BONUS_MARKER,
-        a::INTRO_EXCLAMATION_MARK,
-        a::INTRO_BOSS_MARKER,
-    ];
-    let positions = [
-        (99.0, 18.0),
-        (115.0, 26.0),
-        (131.0, 18.0),
-        (148.0, 33.0),
-        (156.0, 26.0),
-        (172.0, 18.0),
-        (189.0, 26.0),
-        (205.0, 33.0),
-        (212.0, 18.0),
-        (230.0, 26.0),
-        (246.0, 18.0),
-        (261.0, 33.0),
-        (270.0, 34.0),
-        (280.0, 23.0),
-    ];
     for i in stage..14 {
         sprite(
             p,
             st,
             11,
-            figures[i],
-            positions[i].0,
-            positions[i].1,
+            a::INTRO_FIGURES[i],
+            a::INTRO_FIGURE_POS[i][0] as f32,
+            a::INTRO_FIGURE_POS[i][1] as f32,
             [255; 3],
             [0; 3],
             1.0,
@@ -946,19 +913,12 @@ unsafe fn intro_text(
         1.0,
     );
     let name = a::NAMES.offsets[data.fkind as usize];
-    let (file, opponent) = match s.stage {
-        Stage::Link => (12, a::NAMES_LINK),
-        Stage::Yoshi => (11, a::INTRO_YOSHI_TEAM_VS18_TEXT),
-        Stage::Fox => (11, a::INTRO_FOX_MC_CLOUD_TEXT),
-        Stage::Mario => (11, a::INTRO_MARIO_BROS_TEXT),
-        Stage::Pikachu => (12, a::NAMES_PIKACHU),
-        Stage::Donkey => (11, a::INTRO_GIANT_DKTEXT),
-        Stage::Kirby => (11, a::INTRO_KIRBY_TEAM_VS8_TEXT),
-        Stage::Samus => (11, a::INTRO_SAMUS_ARAN_TEXT),
-        Stage::MMario => (11, a::INTRO_METAL_MARIO_TEXT),
-        Stage::Zako => (11, a::INTRO_FIGHTING_POLYGON_TEAM_VS30_TEXT),
-        Stage::Boss => (11, a::INTRO_MASTER_HAND_TEXT),
-        _ => return,
+    // The bonus stages returned above.
+    let opponent = a::INTRO_OPPONENTS[stage];
+    let file = if matches!(s.stage, Stage::Link | Stage::Pikachu) {
+        a::NAMES.file
+    } else {
+        a::INTRO.file
     };
     let width = |file, at| p.sprite(file, at).map_or(0, |s| i32::from(s.width));
     let allies = spgame::intro::allies_num(s.stage);
@@ -1148,7 +1108,7 @@ unsafe fn clear_text(p: &Pack<'_>, st: &mut DrawState, s: &spgame::stage_clear::
                 continue;
             };
             let at = if row.bonus_id == spgame::bonus::Bonus::StageClear as usize {
-                a::CLEAR_VERY_EASY_CLEAR_TEXT + (s.difficulty as u32) * 0x1e0
+                a::CLEAR_DIFFICULTY_TEXT[s.difficulty as usize]
             } else {
                 a::BONUS_LABELS[row.bonus_id]
             };

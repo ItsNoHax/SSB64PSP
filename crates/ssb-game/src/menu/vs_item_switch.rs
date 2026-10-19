@@ -20,8 +20,10 @@ use ssb_engine::input::N64Buttons;
 pub mod sprite {
     pub const LABEL_VS_OPTIONS: u32 = 0x9A8;
     pub const LABEL_ITEM_SWITCH: u32 = 0xB20;
-    /// `Appearance{None,VeryLow,Low,Middle,High,VeryHigh}Sprite`.
-    pub const APPEARANCE: [u32; 6] = [0xCE8, 0xEA8, 0xF98, 0x10D0, 0x11E8, 0x13A8];
+    /// `Appearance{None,VeryLow,Low,Middle,High,VeryHigh}Sprite`
+    /// (`mnVSItemSwitchMakeAppearance`'s `rate_offsets`).
+    pub const APPEARANCE: [u32; 6] =
+        crate::d_arrays::MN_VS_ITEM_SWITCH_MAKE_APPEARANCE_RATE_OFFSETS;
     pub const TOGGLE_ON: u32 = 0x1488;
     pub const TOGGLE_OFF: u32 = 0x1568;
     pub const TOGGLE_SLASH: u32 = 0x1608;
@@ -31,7 +33,7 @@ pub mod sprite {
 }
 
 /// `mnVSItemSwitchMakeAppearance`'s `pos_x`, by rate.
-const APPEARANCE_X: [f32; 6] = [242.0, 240.0, 254.0, 244.0, 252.0, 238.0];
+const APPEARANCE_X: [i32; 6] = crate::d_arrays::MN_VS_ITEM_SWITCH_MAKE_APPEARANCE_POS_X;
 
 /// `nSCBattleItemSwitch*`, in order.
 const RATES: [Appearance; 6] = [
@@ -298,7 +300,7 @@ impl VsItemSwitchMenu {
             Piece::clear(
                 FILE_VS_ITEM_SWITCH,
                 sprite::APPEARANCE[rate],
-                APPEARANCE_X[rate],
+                APPEARANCE_X[rate] as f32,
                 49.0,
             )
             .prim([0xFF, 0x00, 0x00]),

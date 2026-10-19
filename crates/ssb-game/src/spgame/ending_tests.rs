@@ -90,6 +90,7 @@ fn the_challenger_turns_two_degrees_a_tick_and_waits_two_seconds() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_message_writes_its_unlock_when_closed() {
     let mut backup = Backup::default();
     let mut m = Message::new(Unlock::Ness);
@@ -189,6 +190,7 @@ fn roll(s: &mut Staffroll, taps: u16) -> bool {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn unlocks_hide_their_names_in_the_role_texts_but_not_the_last() {
     let mut c = credits();
     c.hide_unlocks(Unlock::Ness.mask());

@@ -63,6 +63,7 @@ fn sprites_at(s: &PlayersVs, file: u32, offset: u32) -> Vec<Piece> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_portraits_slide_in_from_both_sides() {
     // `mnPlayersVSGetNextPortraitX` from the start positions.
     assert_eq!(next_portrait_x(0, -35.0), Some(-33.1));
@@ -93,6 +94,7 @@ fn the_portraits_slide_in_from_both_sides() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn locked_portraits_draw_their_shadow_and_question_mark() {
     let s = first_visit(BattleState::default());
     // No save data: Luigi, Captain Falcon, Ness and Jigglypuff are locked.
@@ -173,6 +175,7 @@ fn the_puck_glow_rises_and_falls_by_nine() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_cpu_opened_gets_its_level_arrows_and_a_flash() {
     let mut s = first_visit(BattleState::default());
     toggle_kind(&mut s, 2);
@@ -212,6 +215,7 @@ fn a_cpu_opened_gets_its_level_arrows_and_a_flash() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_level_arrows_leave_at_the_ends_and_the_value_follows() {
     let mut s = first_visit(BattleState::default());
     toggle_kind(&mut s, 2);
@@ -230,6 +234,7 @@ fn the_level_arrows_leave_at_the_ends_and_the_value_follows() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_human_placed_with_handicap_off_shows_no_level() {
     let mut s = first_visit(BattleState::default());
     hover(&mut s, FighterKind::Yoshi);
@@ -286,6 +291,7 @@ fn with_handicap_on_a_placed_human_shows_its_handicap() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_fighter_turns_until_placed_then_plays_its_selected_status() {
     let mut s = first_visit(BattleState::default());
     hover(&mut s, FighterKind::Yoshi);
@@ -356,17 +362,30 @@ fn the_ready_banner_blinks_thirty_of_forty_counts() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_rule_number_is_right_aligned_on_its_digits() {
     let mut xs = Vec::new();
-    rule_number(15, 212.0, 23.0, 2, &DARK_DIGIT_WIDTHS, |p| {
-        xs.push((p.offset, p.x))
-    });
+    rule_number(
+        15,
+        212.0,
+        23.0,
+        2,
+        &DARK_DIGIT_WIDTHS,
+        TIME_DIGIT_COLORS,
+        |p| xs.push((p.offset, p.x)),
+    );
     // The 5 (11 wide) ends at 212, the 1 (7 wide) left of it.
     assert_eq!(xs, [(0x5888, 201.0), (0x5440, 194.0)]);
     xs.clear();
-    rule_number(3, 208.0, 23.0, 2, &DARK_DIGIT_WIDTHS, |p| {
-        xs.push((p.offset, p.x))
-    });
+    rule_number(
+        3,
+        208.0,
+        23.0,
+        2,
+        &DARK_DIGIT_WIDTHS,
+        TIME_DIGIT_COLORS,
+        |p| xs.push((p.offset, p.x)),
+    );
     assert_eq!(xs, [(0x5668, 198.0)]);
     // A stock rule shows the stocks plus one.
     let state = BattleState {
@@ -391,6 +410,7 @@ fn the_rule_number_is_right_aligned_on_its_digits() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn team_battle_swaps_the_label_and_adds_team_buttons() {
     let mut s = first_visit(BattleState::default());
     let label = |s: &PlayersVs| {
@@ -417,6 +437,7 @@ fn team_battle_swaps_the_label_and_adds_team_buttons() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn pucks_draw_before_cursors_and_the_hand_follows_its_status() {
     let mut s = first_visit(BattleState::default());
     for _ in 0..30 {
@@ -453,6 +474,7 @@ fn pucks_draw_before_cursors_and_the_hand_follows_its_status() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_draw_order_follows_the_cameras() {
     let mut s = first_visit(BattleState::default());
     hover(&mut s, FighterKind::Yoshi);

@@ -171,58 +171,27 @@ pub struct Emblem {
 
 /// The ten series emblems: Mario, Fox, Donkey, Metroid, Zelda, Yoshi,
 /// FZero, Kirby, PMonsters and Mother.
-pub const EMBLEMS: [Emblem; 10] = [
-    Emblem {
-        dobjdesc: 0x0990,
-        mobjsub: 0x0000,
-        matanim_joint: 0x0A14,
-    },
-    Emblem {
-        dobjdesc: 0x21D0,
-        mobjsub: 0x1940,
-        matanim_joint: 0x2254,
-    },
-    Emblem {
-        dobjdesc: 0x1348,
-        mobjsub: 0x0B00,
-        matanim_joint: 0x13CC,
-    },
-    Emblem {
-        dobjdesc: 0x1860,
-        mobjsub: 0x1470,
-        matanim_joint: 0x18E4,
-    },
-    Emblem {
-        dobjdesc: 0x2520,
-        mobjsub: 0x22B0,
-        matanim_joint: 0x25A4,
-    },
-    Emblem {
-        dobjdesc: 0x2F10,
-        mobjsub: 0x2690,
-        matanim_joint: 0x2F94,
-    },
-    Emblem {
-        dobjdesc: 0x3828,
-        mobjsub: 0x2FF0,
-        matanim_joint: 0x38AC,
-    },
-    Emblem {
-        dobjdesc: 0x3E68,
-        mobjsub: 0x3900,
-        matanim_joint: 0x3EEC,
-    },
-    Emblem {
-        dobjdesc: 0x4710,
-        mobjsub: 0x3F40,
-        matanim_joint: 0x4794,
-    },
-    Emblem {
-        dobjdesc: 0x5A00,
-        mobjsub: 0x4840,
-        matanim_joint: 0x5A84,
-    },
-];
+pub const EMBLEMS: [Emblem; 10] = emblems();
+
+/// [`EMBLEMS`] from `mnVSResultsMakeEmblem`'s `dobjdescs`, `mobjsubs` and
+/// `matanim_joints`, by fighter kind: each series at its first fighter.
+const fn emblems() -> [Emblem; 10] {
+    let mut out = [Emblem {
+        dobjdesc: 0,
+        mobjsub: 0,
+        matanim_joint: 0,
+    }; 10];
+    let mut f = EMBLEM_BY_FIGHTER.len();
+    while f > 0 {
+        f -= 1;
+        out[EMBLEM_BY_FIGHTER[f] as usize] = Emblem {
+            dobjdesc: crate::d_arrays::MN_VS_RESULTS_MAKE_EMBLEM_DOBJDESCS[f],
+            mobjsub: crate::d_arrays::MN_VS_RESULTS_MAKE_EMBLEM_MOBJSUBS[f],
+            matanim_joint: crate::d_arrays::MN_VS_RESULTS_MAKE_EMBLEM_MATANIM_JOINTS[f],
+        };
+    }
+    out
+}
 
 /// `mnVSResultsMakeEmblem`'s `dobjdescs[fkind]`, as an [`EMBLEMS`] index,
 /// for the twelve playable kinds: Luigi shares Mario's, Jigglypuff

@@ -45,51 +45,19 @@ const TILES: u32 = 0xC728;
 const RANDOM_SMALL: u32 = 0xCB10;
 const RANDOM_BIG: u32 = 0xDE30;
 
-/// `mnMapsMakeIcons`' `offsets`, by `GRKind`.
-const ICONS: [u32; 9] = [
-    0x4D88, // PeachsCastle
-    0x5B68, // SectorZ
-    0x6948, // CongoJungle
-    0x7728, // PlanetZebes
-    0x8508, // HyruleCastle
-    0x92E8, // YoshisIsland
-    0xBC88, // DreamLand
-    0xA0C8, // SaffronCity
-    0xAEA8, // MushroomKingdom
-];
+/// `mnMapsMakeIcons`' `offsets`, by `GRKind`, then the random slot's.
+const ICONS: [u32; 10] = crate::d_arrays::MN_MAPS_MAKE_ICONS_OFFSETS;
 
 /// `mnMapsMakeName`'s `offsets`, by `GRKind`.
-const NAMES: [u32; 9] = [
-    0x1F8,  // PeachsCastleText
-    0x438,  // SectorZText
-    0x678,  // CongoJungleText
-    0x8B8,  // PlanetZebesText
-    0xB10,  // HyruleCastleText
-    0xD58,  // YoshisIslandText
-    0x1418, // DreamLandText
-    0xF98,  // SaffronCityText
-    0x11D8, // MushroomKingdomText
-];
+const NAMES: [u32; 9] = crate::d_arrays::MN_MAPS_MAKE_NAME_OFFSETS;
 
 /// `mnMapsMakeEmblem`'s `offsets` into `FTEmblemSprites`, by `GRKind`:
 /// Mario, Fox, Donkey, Metroid, Zelda, Yoshi, Kirby, PMonsters and Mario.
-const EMBLEMS: [u32; 9] = [
-    0x618, 0x1938, 0xC78, 0x12D8, 0x25F8, 0x2C58, 0x1F98, 0x3918, 0x618,
-];
+const EMBLEMS: [u32; 9] = crate::d_arrays::MN_MAPS_MAKE_EMBLEM_OFFSETS;
 
 /// `mnMapsSetLogoPosition`'s `positions`, offsets from the plaque at
-/// (189, 124).
-const LOGO_OFFSETS: [(f32, f32); 9] = [
-    (3.0, 19.0),
-    (3.0, 19.0),
-    (3.0, 20.0),
-    (2.0, 20.0),
-    (3.0, 17.0),
-    (-1.0, 19.0),
-    (1.0, 20.0),
-    (1.0, 20.0),
-    (3.0, 19.0),
-];
+/// (189, 124), by `GRKind` (a tenth entry the random slot never reads).
+const LOGO_OFFSETS: [[f32; 2]; 10] = crate::d_arrays::MN_MAPS_SET_LOGO_POSITION_POSITIONS;
 
 /// `mnMapsMakeEmblem`'s brown primitive, for the emblem and question mark.
 const EMBLEM_PRIM: [u8; 3] = [0x5C, 0x22, 0x00];
@@ -97,18 +65,8 @@ const EMBLEM_PRIM: [u8; 3] = [0x5C, 0x22, 0x00];
 /// Every camera's `syRdpSetViewport`.
 pub const VIEWPORT: [f32; 4] = [10.0, 10.0, 310.0, 230.0];
 
-/// `mnMapsSetPreviewCameraPosition`'s target per `GRKind`.
-const PREVIEW_AT: [(f32, f32); 9] = [
-    (1700.0, 1800.0),
-    (1600.0, 1600.0),
-    (1600.0, 1600.0),
-    (1600.0, 1600.0),
-    (1600.0, 1500.0),
-    (1600.0, 1600.0),
-    (1600.0, 1500.0),
-    (1600.0, 1600.0),
-    (1200.0, 1600.0),
-];
+/// `mnMapsSetPreviewCameraPosition`'s `positions`: the target per `GRKind`.
+const PREVIEW_AT: [[f32; 3]; 9] = crate::d_arrays::MN_MAPS_SET_PREVIEW_CAMERA_POSITION_POSITIONS;
 
 /// The preview camera's eye.
 pub const PREVIEW_EYE: Vec3 = Vec3 {
@@ -118,7 +76,7 @@ pub const PREVIEW_EYE: Vec3 = Vec3 {
 };
 
 /// `mnMapsMakeLayer`'s `scales`: the root `DObj`'s scale, per `GRKind`.
-const MODEL_SCALES: [f32; 9] = [0.5, 0.2, 0.6, 0.5, 0.3, 0.6, 0.5, 0.4, 0.2];
+const MODEL_SCALES: [f32; 9] = crate::d_arrays::MN_MAPS_MAKE_LAYER_SCALES;
 
 /// Where a sprite comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,8 +193,8 @@ fn preview_at(gkind: u8) -> Vec3 {
     } else {
         gkind
     };
-    let (x, y) = PREVIEW_AT[usize::from(k).min(8)];
-    Vec3::new(x, y, 0.0)
+    let [x, y, z] = PREVIEW_AT[usize::from(k).min(8)];
+    Vec3::new(x, y, z)
 }
 
 impl Layer {
@@ -434,7 +392,7 @@ impl Layer {
             ));
         } else {
             let i = usize::from(k);
-            let (dx, dy) = LOGO_OFFSETS[i];
+            let [dx, dy] = LOGO_OFFSETS[i];
             f(Draw::Sprite(
                 Piece::at(EMBLEM_SPRITES, EMBLEMS[i], dx + 189.0, dy + 124.0)
                     .transparent()
@@ -519,6 +477,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_icons_skip_the_locked_stage() {
         let select = StageSelect::new(gkind::CASTLE, 0);
         let layer = Layer::new(&select, true);
@@ -549,12 +508,15 @@ mod tests {
         let unlocked = StageSelect::new(gkind::CASTLE, crate::stage_select::UNLOCK_MASK_INISHIE);
         let n = sprites(&layer, &unlocked)
             .iter()
-            .filter(|p| matches!(p.source, Source::File { offset, .. } if ICONS.contains(&offset)))
+            .filter(
+                |p| matches!(p.source, Source::File { offset, .. } if ICONS[..9].contains(&offset)),
+            )
             .count();
         assert_eq!(n, 9);
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_cursor_name_and_emblem_follow_the_slot() {
         let (mut select, mut layer) = settled(gkind::CASTLE);
         let p = sprites(&layer, &select);
@@ -608,6 +570,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_random_slot_shows_its_picture_and_question_mark_without_a_model() {
         let (mut select, mut layer) = settled(gkind::YOSTER);
         tap(&mut select, &mut layer, N64Buttons::D_LEFT);
@@ -660,6 +623,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_draw_order_follows_the_camera_priorities() {
         let select = StageSelect::new(gkind::CASTLE, 0);
         let layer = Layer::new(&select, true);
@@ -687,6 +651,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_preview_camera_bobs_about_the_first_stages_height() {
         let select = StageSelect::new(gkind::CASTLE, 0);
         let mut layer = Layer::new(&select, true);
@@ -713,6 +678,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_model_hides_what_the_source_hides() {
         let select = StageSelect::new(gkind::YAMABUKI, 0);
         let layer = Layer::new(&select, true);

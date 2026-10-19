@@ -8,6 +8,7 @@
 //! The clips and the drawing are the PSP layer's. [`Results`] carries the
 //! rankings and the tics.
 
+use crate::d_arrays as d;
 use crate::fighter::FighterKind;
 use crate::results::{Kind, Results};
 use crate::rng;
@@ -78,6 +79,22 @@ pub enum DemoStatus {
 }
 
 impl DemoStatus {
+    /// The status with this `FTDemoStatus` ID (`nFTDemoStatusWin1` is
+    /// 0x10001), for a generated table ([`crate::d_arrays`]); any other ID
+    /// fails the build.
+    pub(crate) const fn from_id(id: i32) -> DemoStatus {
+        match id {
+            0x10001 => DemoStatus::Win1,
+            0x10002 => DemoStatus::Win2,
+            0x10003 => DemoStatus::Win3,
+            0x10004 => DemoStatus::Win4,
+            0x10005 => DemoStatus::Lose,
+            // The stub tables are all zeros.
+            0 if cfg!(ssb64_stub_tables) => DemoStatus::Win1,
+            _ => panic!("not a results FTDemoStatus"),
+        }
+    }
+
     /// The status's row from Win1: its submotion row less one, and its
     /// clip slot less `anim::SLOT_WIN1`.
     pub fn index(self) -> usize {
@@ -113,31 +130,6 @@ pub struct Fighter {
     /// has no case for the place.
     pub status: Option<DemoStatus>,
 }
-
-/// `pos_x_2p`, `pos_x_3p` and `pos_x_4p` in `mnVSResultsSetFighterPosition`,
-/// by distance ID and spot.
-const POS_X_2P: [[f32; 4]; 2] = [
-    [-150.0, -350.0, -700.0, -1000.0],
-    [100.0, 250.0, 600.0, 1000.0],
-];
-const POS_X_3P: [[f32; 4]; 3] = [
-    [-450.0, -900.0, -2000.0, -3000.0],
-    [0.0, 0.0, 0.0, 0.0],
-    [400.0, 800.0, 1800.0, 2800.0],
-];
-const POS_X_4P: [[f32; 4]; 4] = [
-    [-450.0, -900.0, -2000.0, -3000.0],
-    [-150.0, -350.0, -700.0, -1000.0],
-    [150.0, 300.0, 700.0, 1000.0],
-    [400.0, 800.0, 1800.0, 2800.0],
-];
-/// `pos_yz`, by spot.
-const POS_YZ: [[f32; 2]; 4] = [
-    [-350.0, 0.0],
-    [-450.0, -2000.0],
-    [-700.0, -5000.0],
-    [-900.0, -9000.0],
-];
 
 /// The results scene's own state.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -262,40 +254,52 @@ pub(crate) fn distance_id(r: &Results, player: usize) -> usize {
 
 /// `mnVSResultsGetSpot`: the row back from the camera, the place pushed
 /// back one more by a shared place (`places`) and by
-/// `aheads[place - ahead]` (`{ 0, 0, 1, 1 }`).
+/// `aheads[place - ahead]`.
 ///
 /// A tie above the player makes `place - ahead` negative. The source then
 /// reads below `aheads` on its stack: in the US build (`addiu t0,sp,44`,
-/// `addiu t6,sp,64`) that is the end of `places`, whose last three entries
-/// are 1. So a negative index counts as 1 here.
+/// `addiu t6,sp,64`) `places` ends where `aheads` starts, so `aheads[-n]`
+/// is `places[5 - n]`. Past either end (which no ranking reaches) it
+/// counts as 1.
 pub(crate) fn spot(r: &Results, player: usize) -> usize {
+    let aheads = d::MN_VS_RESULTS_GET_SPOT_AHEADS;
+    let places = d::MN_VS_RESULTS_GET_SPOT_PLACES;
     let place = r.places[player];
-    let ahead = match place - count_ahead(r, player) {
-        0 | 1 => 0,
-        _ => 1,
+    let i = place - count_ahead(r, player);
+    let ahead = if i < 0 {
+        usize::try_from(5 + i).ok().map(|i| places[i])
+    } else {
+        aheads.get(i as usize).copied()
     };
-    let places = [0, 0, 1, 1, 1];
     let shared = places[count_place(r, place).min(4)];
-    (place + ahead + shared).max(0) as usize
+    (place + ahead.unwrap_or(1) + shared).max(0) as usize
 }
 
 /// `mnVSResultsSetFighterPosition(fighter, player, spot)`.
 fn position(r: &Results, player: usize, spot: usize) -> Vec3 {
     // The tables have four spots; no ranking reaches a fifth.
     let spot = spot.min(3);
-    let d = distance_id(r, player);
+    let dist = distance_id(r, player);
     let x = match present_count(r) {
-        2 => POS_X_2P[d.min(1)][spot],
-        3 => POS_X_3P[d.min(2)][spot],
-        _ => POS_X_4P[d.min(3)][spot],
+        2 => d::MN_VS_RESULTS_SET_FIGHTER_POSITION_POS_X_2P[dist.min(1)][spot],
+        3 => d::MN_VS_RESULTS_SET_FIGHTER_POSITION_POS_X_3P[dist.min(2)][spot],
+        _ => d::MN_VS_RESULTS_SET_FIGHTER_POSITION_POS_X_4P[dist.min(3)][spot],
     };
-    Vec3::new(x, POS_YZ[spot][0], POS_YZ[spot][1])
+    let [y, z] = d::MN_VS_RESULTS_SET_FIGHTER_POSITION_POS_YZ[spot];
+    Vec3::new(x, y, z)
 }
 
 /// `mnVSResultsGetStatusWin`: Win1 to Win3 at random, Win1 or Win2 for
 /// Kirby (`syUtilsRandIntRange`).
 fn status_win(kind: FighterKind) -> DemoStatus {
-    const STATUS_IDS: [DemoStatus; 3] = [DemoStatus::Win1, DemoStatus::Win2, DemoStatus::Win3];
+    const STATUS_IDS: [DemoStatus; 3] = {
+        let ids = crate::d_arrays::MN_VS_RESULTS_GET_STATUS_WIN_STATUS_IDS;
+        [
+            DemoStatus::from_id(ids[0]),
+            DemoStatus::from_id(ids[1]),
+            DemoStatus::from_id(ids[2]),
+        ]
+    };
     let range = if kind == FighterKind::Kirby { 2 } else { 3 };
     STATUS_IDS[rng::rand_int_range(range) as usize]
 }

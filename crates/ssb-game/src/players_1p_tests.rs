@@ -74,6 +74,7 @@ fn a_return_visit_starts_placed_and_ready() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_held_puck_follows_the_cursor_and_skips_locked_fighters() {
     let mut s = first_visit();
     idle(&mut s);
@@ -108,6 +109,7 @@ fn a_places_in_the_first_costume_and_c_buttons_pick_others() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn start_after_sixty_ticks_proceeds_thirty_later_with_the_saved_data() {
     let mut s = first_visit();
     place(&mut s, FighterKind::Samus);
@@ -206,6 +208,7 @@ fn the_back_button_and_the_idle_timer_leave() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_placed_puck_keeps_its_edge_velocity() {
     let mut s = first_visit();
     let (px, py) = portrait_center(FighterKind::Donkey);
@@ -224,6 +227,7 @@ fn a_placed_puck_keeps_its_edge_velocity() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn saved_data_reaches_the_campaign() {
     let mut s = first_visit();
     place(&mut s, FighterKind::Pikachu);
@@ -261,6 +265,7 @@ fn records_sum_every_fighter() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_placed_puck_announces_its_fighter_and_cuts_the_last_name_short() {
     use crate::sound::{id, testing::*};
     let r = Recorder::install();

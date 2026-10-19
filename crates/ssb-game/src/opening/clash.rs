@@ -32,16 +32,16 @@ pub const WALLPAPER_CAMERA_SLOT: u32 =
     0x4000_0000 | (FILE_WALLPAPER << 20) | WALLPAPER_CAM_ANIM_JOINT;
 
 /// `mvOpeningClashMakeFighters`' `fkinds`.
-pub const KINDS: [FighterKind; 8] = [
-    FighterKind::Mario,
-    FighterKind::Kirby,
-    FighterKind::Link,
-    FighterKind::Yoshi,
-    FighterKind::Fox,
-    FighterKind::Donkey,
-    FighterKind::Samus,
-    FighterKind::Pikachu,
-];
+pub const KINDS: [FighterKind; 8] = {
+    let fkinds = crate::d_arrays::MV_OPENING_CLASH_MAKE_FIGHTERS_FKINDS;
+    let mut out = [FighterKind::Mario; 8];
+    let mut i = 0;
+    while i < 8 {
+        out[i] = FighterKind::playable_ordinal(fkinds[i]);
+        i += 1;
+    }
+    out
+};
 
 /// `nFTDemoStatusClash` (0x1000B): submotion row 11.
 pub const ROW_CLASH: u8 = 11;

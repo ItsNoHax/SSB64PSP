@@ -88,6 +88,7 @@ fn idle(n: usize, mut f: impl FnMut()) {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn option_menus_draw_only_packed_sprites() {
     let mut b = Backup::default();
     let mut drawn = BTreeSet::new();
@@ -140,6 +141,7 @@ fn option_menus_draw_only_packed_sprites() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn data_menus_draw_only_packed_sprites() {
     let mut drawn = BTreeSet::new();
     for unlock in [0, 0x7F] {
@@ -353,6 +355,7 @@ fn front_menus_draw_only_packed_sprites() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn vs_menus_draw_only_packed_sprites() {
     use ssb_game::menu::vs_item_switch::VsItemSwitchMenu;
     use ssb_game::menu::vs_options::VsOptionsMenu;

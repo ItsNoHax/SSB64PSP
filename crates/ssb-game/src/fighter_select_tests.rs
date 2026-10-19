@@ -52,6 +52,7 @@ fn a_first_visit_holds_the_players_puck_and_draws_an_unlocked_cpu() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_held_puck_follows_the_cursor_and_names_the_portrait_under_it() {
     let mut s = first_visit(0);
     idle(&mut s);
@@ -77,6 +78,7 @@ fn the_stick_moves_the_cursor_a_twentieth_of_its_deflection() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_places_the_puck_and_start_after_sixty_ticks_proceeds_thirty_later() {
     let mut s = first_visit(65); // 65 * 12 / 256 = 3, Samus.
     assert_eq!(s.slots[COM].kind, Some(FighterKind::Samus));
@@ -139,6 +141,7 @@ fn b_before_tick_ten_is_ignored() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_cursor_carries_the_cpu_puck_and_it_snaps_back_down_off_the_grid() {
     let mut s = first_visit(0); // CPU Mario.
     place(&mut s, FighterKind::Fox);
@@ -183,6 +186,7 @@ fn c_buttons_pick_a_costume_the_other_slot_is_not_wearing() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_c_button_places_the_held_puck_in_that_costume() {
     let mut s = first_visit(0);
     hover_portrait(&mut s, FighterKind::Link);
@@ -195,6 +199,7 @@ fn a_c_button_places_the_held_puck_in_that_costume() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_placed_puck_is_pushed_back_inside_its_portrait() {
     let mut s = first_visit(0);
     // The puck's centre 2 pixels inside Kirby's left edge.
@@ -231,6 +236,7 @@ fn saved_fighters_start_placed_and_ready() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn an_unshared_fighter_that_is_not_placed_returns_to_its_first_costume() {
     let mut s = first_visit(0);
     hover_portrait(&mut s, FighterKind::Yoshi);

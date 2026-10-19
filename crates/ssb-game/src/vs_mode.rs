@@ -18,12 +18,18 @@ use ssb_engine::input::N64Buttons;
 use crate::battle::{Rule, TIMELIMIT_INFINITE};
 use crate::costume::{costume_common_id, costume_team_id};
 use crate::menu::{
-    common, decals, labels, option_tab, right_digits, Draw, Pad, Piece, Repeat, Scene, TabStatus,
-    DOWN, FILE_COMMON, FILE_VS_MODE, IDLE_RETURN, LEFT, RIGHT, UP,
+    common, decals, labels, option_tab, right_digits, Draw, Pad, Piece, Repeat, Scene, TabColors,
+    TabStatus, DOWN, FILE_COMMON, FILE_VS_MODE, IDLE_RETURN, LEFT, RIGHT, UP,
 };
 use crate::players_vs::{BattleState, PLAYERS};
 use crate::sound::{self, id};
 
+/// `mnVSModeUpdateButton`'s `selcolors`, `hicolors` and `notcolors`.
+const TAB_COLORS: TabColors = TabColors {
+    sel: crate::d_arrays::MN_VS_MODE_UPDATE_BUTTON_SELCOLORS,
+    hi: crate::d_arrays::MN_VS_MODE_UPDATE_BUTTON_HICOLORS,
+    not: crate::d_arrays::MN_VS_MODE_UPDATE_BUTTON_NOTCOLORS,
+};
 /// `llMNVSMode*Sprite` (`reloc_data.us.h`).
 pub mod sprite {
     pub const VS_START_TEXT: u32 = 0x24C8;
@@ -527,13 +533,13 @@ impl VsMode {
 
     /// `mnVSModeMakeVSStartButton`.
     fn vs_start_button(&self, f: &mut impl FnMut(Draw)) {
-        option_tab(f, 120.0, 31.0, 17, self.button_status[0]);
+        option_tab(f, 120.0, 31.0, 17, self.button_status[0], &TAB_COLORS);
         Self::text(f, sprite::VS_START_TEXT, 153.0, 36.0);
     }
 
     /// `mnVSModeMakeRuleButton` and its arrows GObj.
     fn rule_button(&self, f: &mut impl FnMut(Draw)) {
-        option_tab(f, 97.0, 70.0, 17, self.button_status[1]);
+        option_tab(f, 97.0, 70.0, 17, self.button_status[1], &TAB_COLORS);
         Self::text(f, sprite::RULE_PERIOD_TEXT, 108.0, 75.0);
         if !self.rule_arrows_hidden {
             for a in self.rule_arrows.into_iter().flatten() {
@@ -545,7 +551,7 @@ impl VsMode {
 
     /// `mnVSModeMakeTimeStockButton` and `mnVSModeMakeTimeStockArrows`.
     fn time_stock_button(&self, f: &mut impl FnMut(Draw)) {
-        option_tab(f, 74.0, 109.0, 17, self.button_status[2]);
+        option_tab(f, 74.0, 109.0, 17, self.button_status[2], &TAB_COLORS);
         if self.rule.is_time() {
             Self::text(f, sprite::TIME_PERIOD_TEXT, 97.0, 113.0);
             Self::text(f, sprite::MIN_TEXT, 197.0, 120.0);
@@ -561,14 +567,18 @@ impl VsMode {
 
     /// `mnVSModeMakeVSOptionsButton`.
     fn vs_options_button(&self, f: &mut impl FnMut(Draw)) {
-        option_tab(f, 51.0, 148.0, 17, self.button_status[3]);
+        option_tab(f, 51.0, 148.0, 17, self.button_status[3], &TAB_COLORS);
         Self::text(f, sprite::VS_OPTIONS_TEXT, 71.0, 151.0);
     }
 
     /// `mnVSModeMakeRuleValue`: white.
     fn rule_value(&self, f: &mut impl FnMut(Draw)) {
-        let white =
-            |offset, x| Draw::Sprite(Piece::clear(FILE_VS_MODE, offset, x, 78.0).prim([0xFF; 3]));
+        let white = |offset, x| {
+            Draw::Sprite(
+                Piece::clear(FILE_VS_MODE, offset, x, 78.0)
+                    .prim(crate::d_arrays::MN_VS_MODE_MAKE_RULE_VALUE_COLOR),
+            )
+        };
         match self.rule {
             VsRule::Stock => f(white(sprite::STOCK_TEXT, 183.0)),
             VsRule::Time => f(white(sprite::TIME_TEXT, 187.0)),
@@ -583,8 +593,8 @@ impl VsMode {
         }
     }
 
-    /// `mnVSModeMakeTimeStockValue`. Its `colors` are `0x000000FF` words
-    /// stored into the `u8` sprite colours: white.
+    /// `mnVSModeMakeTimeStockValue`. Its `colors` are `u32` words stored
+    /// into the `u8` sprite colours (`mnVSModeSetTextureColors`).
     fn time_stock_value_sprites(&self, f: &mut impl FnMut(Draw)) {
         let value = self.time_stock_value();
         if value == i32::from(TIMELIMIT_INFINITE) {
@@ -599,7 +609,15 @@ impl VsMode {
             (false, true) => 210.0,
             (false, false) => 215.0,
         };
-        right_digits(f, value, x, 116.0, [0xFF; 3], 2);
+        right_digits(
+            f,
+            value,
+            x,
+            116.0,
+            &crate::d_arrays::MN_VS_MODE_MAKE_TIME_STOCK_VALUE_COLORS,
+            &crate::d_arrays::MN_VS_MODE_MAKE_NUMBER_NUMBER_OFFSETS,
+            2,
+        );
     }
 }
 

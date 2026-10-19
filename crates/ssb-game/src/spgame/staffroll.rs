@@ -314,30 +314,26 @@ impl Credits {
         }
     }
 
-    /// `scStaffrollTryHideUnlocks` (US).
+    /// `scStaffrollTryHideUnlocks` (US), with its font-index words.
     pub fn hide_unlocks(&mut self, unlock_mask: u8) {
         use super::Unlock;
-        let word = |s: &[u8]| -> Vec<i32> { s.iter().map(|&c| letter(c)).collect() };
+        use crate::d_arrays as d;
         if unlock_mask & Unlock::Luigi.mask() == 0 {
-            self.hide(&word(b"Luigi"));
+            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_LUIGI);
         }
         if unlock_mask & Unlock::Purin.mask() == 0 {
-            self.hide(&word(b"Jigglypuff"));
+            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_PURIN);
         }
         if unlock_mask & Unlock::Captain.mask() == 0 {
-            let mut captain = word(b"C.Falcon");
-            captain[1] = PERIOD;
-            self.hide(&captain);
-            let mut fzero = word(b"F-ZERO X");
-            fzero[1] = DASH;
-            self.hide(&fzero);
+            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_CAPTAIN);
+            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_FZERO);
         }
         if unlock_mask & Unlock::Ness.mask() == 0 {
-            self.hide(&word(b"Ness"));
-            self.hide(&word(b"EarthBound"));
+            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_NESS);
+            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_EARTHBOUND);
         }
         if unlock_mask & Unlock::Inishie.mask() == 0 {
-            self.hide(&word(b"ClassicMario"));
+            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_CLASSICMARIO);
         }
     }
 }

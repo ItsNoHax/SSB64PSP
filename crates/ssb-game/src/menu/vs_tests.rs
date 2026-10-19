@@ -118,6 +118,7 @@ fn down_wraps_and_waits_eight_more_at_the_end() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_handicap_steps_left_and_right_and_sets_every_player() {
     let st = BattleState::default();
     let mut m = options(false, &st);

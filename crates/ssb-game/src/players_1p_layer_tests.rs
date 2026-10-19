@@ -21,6 +21,7 @@ fn sprite_at(draws: &[Draw], file: u32, offset: u32) -> Vec<(f32, f32)> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn strings_kern_as_the_source() {
     let mut xs = Vec::new();
     string("HIGH SCORE", 142.0, 201.0, [0; 3], &mut |p| xs.push(p.x));
@@ -48,6 +49,7 @@ fn fixed_numbers_draw_leading_zeroes_right_to_left() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_level_text_and_stock_icons_follow_the_options() {
     let mut s = Players1P::new(SceneData::default(), &Backup::default());
     s.tick(Default::default(), Default::default());
@@ -86,6 +88,7 @@ fn the_level_text_and_stock_icons_follow_the_options() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_card_uses_the_ports_lut_and_text() {
     let scene = SceneData {
         player: 2,

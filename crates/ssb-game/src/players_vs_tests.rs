@@ -1,4 +1,5 @@
 use super::*;
+use crate::battle::TIMELIMIT_INFINITE;
 
 const ONE_CONTROLLER: [bool; PLAYERS] = [true, false, false, false];
 
@@ -65,6 +66,7 @@ fn fox_vs_cpu_mario(state: BattleState) -> PlayersVs {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_first_visit_with_one_controller_gives_port_one_a_human_holding_its_puck() {
     let s = first_visit(BattleState::default());
     let man = &s.slots[0];
@@ -136,6 +138,7 @@ fn the_kind_button_cycles_an_unplugged_slot_between_cpu_and_na() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_places_the_players_puck_on_the_portrait_under_it() {
     let mut s = first_visit(BattleState::default());
     hover_portrait(&mut s, FighterKind::Fox);
@@ -154,6 +157,7 @@ fn a_places_the_players_puck_on_the_portrait_under_it() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_cursor_grabs_the_cpu_puck_and_places_it_on_another_fighter() {
     let mut s = fox_vs_cpu_mario(BattleState::default());
     // Wait out the grab delay, then hover the CPU's puck.
@@ -281,6 +285,7 @@ fn ready_needs_two_placed_players() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn start_after_a_second_proceeds_thirty_ticks_later_with_the_battle_settings() {
     let mut s = fox_vs_cpu_mario(BattleState::default());
     while s.total_tics() < 60 {
@@ -410,6 +415,7 @@ fn b_on_a_placed_puck_recalls_it_instead_of_going_back() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_time_and_stock_arrows_step_and_wrap() {
     assert_eq!(next_time_value(3), 5);
     assert_eq!(next_time_value(60), TIMELIMIT_INFINITE);
@@ -431,6 +437,7 @@ fn the_time_and_stock_arrows_step_and_wrap() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn unplugging_a_port_makes_its_slot_na_and_replugging_brings_the_cursor_back() {
     let mut s = first_visit(BattleState::default());
     s.set_connected([false; PLAYERS]);

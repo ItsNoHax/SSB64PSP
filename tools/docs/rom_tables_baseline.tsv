@@ -11,34 +11,16 @@ crates/ssb-game/src/colanim_preserve.rs	PRESERVE_EFFECT	decomp code sites: ftMai
 crates/ssb-game/src/countdown_tests.rs	SIZES	test fixture
 crates/ssb-game/src/explain.rs	ARROWS	vertex data in archive file 0xC6 (a relocatable file, not an overlay d* array)
 crates/ssb-game/src/hud_tests.rs	SIZES	test fixture
-crates/ssb-game/src/menu/characters.rs	MOTION_NAMES	function-local array in the decomp (not a d* symbol): compiled into the function (mnCharactersUpdateMotionName's motion_names)
-crates/ssb-game/src/menu/characters.rs	NAME_AT	function-local array in the decomp (not a d* symbol): compiled into the function (the Characters name tag position)
-crates/ssb-game/src/menu/vs_record.rs	OFFSETS	function-local array in the decomp (not a d* symbol): compiled into the function (the VS Record icon offsets)
-crates/ssb-game/src/opening/fighters.rs	LETTERS	link-time labels (llIFCommonAnnounce* offsets from reloc_data.us.h) listed by the port; no d* array in the decomp holds them
-crates/ssb-game/src/opening/fighters.rs	SCENES	the scenes' function-body constants (mvOpening* scene functions: name letters, viewports, fill, posed camera and spawn); each scene's d* start/end CObjDesc and key script come from the generated opening_scenes.rs
-crates/ssb-game/src/opening/room.rs	SPOTLIGHT_TRANSLATES	function-local array in the decomp (not a d* symbol): compiled into the function (mvOpeningRoomSetSpotlightPosition's translates)
-crates/ssb-game/src/opening/room.rs	SPOTLIGHT_SCALES	function-local array in the decomp (not a d* symbol): compiled into the function (mvOpeningRoomSetSpotlightPosition's scales)
-crates/ssb-game/src/players_1p_layer.rs	FONT	function-local array in the decomp (not a d* symbol): compiled into the function (mnPlayers1PGameMakeString's offsets)
-crates/ssb-game/src/players_1p_layer.rs	FONT_WIDTHS	function-local array in the decomp (not a d* symbol): compiled into the function (mnPlayers1PGameMakeString's widths)
-crates/ssb-game/src/players_vs_layer.rs	CURSOR_COLORS	function-local array in the decomp (not a d* symbol): compiled into the function (mnPlayersVSUpdateCursor's colors)
-crates/ssb-game/src/results_layer.rs	WALLPAPER_COLORS	function-local array in the decomp (not a d* symbol): compiled into the function (mnVSResultsMakeWallpaper's colors)
-crates/ssb-game/src/results_layer.rs	STRING_COLORS	function-local array in the decomp (not a d* symbol): compiled into the function (mnVSResultsMakeString's colors)
-crates/ssb-game/src/results_layer.rs	LETTER_WIDTHS	function-local array in the decomp (not a d* symbol): compiled into the function (mnVSResultsMakeString's widths)
-crates/ssb-game/src/results_layer.rs	NAMES	function-local array in the decomp (not a d* symbol): compiled into the function (mnVSResultMakeFighterName's names)
-crates/ssb-game/src/results_layer.rs	TAG_POS_3P	function-local array in the decomp (not a d* symbol): compiled into the function (mnVSResultsSetPlayerTagPosition's pos_xy_3p)
-crates/ssb-game/src/results_layer.rs	TAG_POS_4P	function-local array in the decomp (not a d* symbol): compiled into the function (mnVSResultsSetPlayerTagPosition's pos_xy_4p)
+crates/ssb-game/src/opening/fighters.rs	SCENES	the scenes' function-body constants (mvOpening* scene functions: name origin, viewports, fill, posed camera and spawn); each scene's d* start/end CObjDesc and key script come from the generated opening_scenes.rs, its name letters from the generated mvOpening*MakeName offsets and pos
 crates/ssb-rom/src/effect.rs	ENTRY_ANIMS	link-time labels (llFoxSpecial2EntryArwing*, llCaptainSpecial2_*, llITCommonDataMBallThrown*, llKirbySpecial2EntryStar* offsets) that the efManager*Entry*MakeEffect functions pass as immediates to gcAddAnimJointAll, plus port slots; no d* array in the decomp holds them
-crates/ssb-rom/src/effect.rs	EMBLEMS	link-time labels (llFTEmblemModels*DObjDesc/MObjSub/MatAnimJoint offsets from reloc_data.us.h) in the function-local dobjdescs/mobjsubs/matanim_joints arrays of mnVSResultsMakeEmblem and mnCharactersMakeEmblem (not d* symbols); both copies in the ROM equal this table
 crates/ssb-rom/src/fighter.rs	EXPECTED	test fixture
 crates/ssb-rom/src/ground_obj.rs	OBJECTS	link-time labels (ll*DObjDesc offsets that grPupupuInitAll, grJungleMakeTaruCann, ... pass as immediates) plus port fields (display link, instance count, build kind) that no d* array holds; follow-up: derive the object list from the stage init functions
 crates/ssb-rom/src/ground_obj.rs	ANIMS	link-time labels: ll*AnimJoint offsets that the grJungle/grYamabuki/grZebes/grInishie/grCastle/itMonster/itPakkun functions pass as immediates, ordered and named by the port; the dGRPupupuWhispy* entries are indices into the generated arrays
 crates/ssb-rom/src/ground_obj.rs	MAT_ANIMS	link-time labels: ll*MatAnimJoint offsets that grZebesMakeAcid and the itPakkun functions pass as immediates; the dGRPupupuWhispy*/dGRYosterCloudMatAnimJoints entries are indices into the generated arrays
 crates/ssb-rom/src/mmonster.rs	VISUALS	link-time labels (llITCommonData*DObjDesc and *AnimJoint offsets that the itMonster*InitVars and MakeItem functions write as immediates) plus port fields (appear_node, status); no d* array holds them
-crates/ssb-rom/src/opening.rs	LETTERS	link-time labels (llIFCommonAnnounce* offsets from reloc_data.us.h) listed by the port; no d* array in the decomp holds them
 crates/ssb-rom/src/opening.rs	DL_GRAPHS	link-time labels (ll*DL and ll*MObjSub offsets that the mv*/mn* scene functions pass to gcAddDObjForGObj as immediates); no d* array in the decomp holds them
 crates/ssb-rom/src/particle.rs	BANKS	cartridge ROM ranges of each particle bank pair: the linker section symbols that efParticleSetupBankID callers pass as immediates (scripts_lo/hi, textures_lo/hi), named by the port; no d* array holds them
-crates/ssb-rom/src/sprite_offsets.rs	GAME_STATUS	layout: archive file IDs, offsets, labels or sizes (ll*Sprite file offsets; ssb-tablegen reads the same manifest)
-crates/ssb-rom/src/sprite_offsets.rs	ANNOUNCE_COMMON	layout: archive file IDs, offsets, labels or sizes (ll*Sprite file offsets; ssb-tablegen reads the same manifest)
+crates/ssb-rom/src/sprite_offsets.rs	GAME_STATUS	layout: file 82's sprite manifest (reloc_data.us.h order), which ssb-tablegen indexes the dIFCommon* sprite tables by; its letters and lamps are what those tables name, and Rod, Frame and RodShadow are code immediates
 crates/ssb-rom/tests/demo_clips.rs	FRAMES	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/explain_movement.rs	N64	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/explain_movement.rs	N64_HITS	test fixture: N64 measurements or expected ROM values
@@ -53,16 +35,8 @@ crates/ssb-rom/src/effect.rs	YOSHI_EGG_LAY_KEY	link-time labels: the egg's file 
 crates/ssb-rom/src/effect.rs	PIKACHU_THUNDER_SHOCK_KEY	link-time labels: llPikachuSpecial2 file ID and llPikachuSpecial2ThunderShockDObjDesc offset, the key the port finds the effect tree by; the EFDesc is named, not copied
 crates/ssb-rom/src/effect.rs	FOX_REFLECTOR_KEY	link-time labels: llFoxSpecial2 file ID and llFoxSpecial2ReflectorDObjDesc offset, the key the port finds the effect tree by; the d* arrays are named, not copied
 crates/ssb-rom/src/scene_roots.rs	FIGHTER_MAIN	generated: copies crate::fighter::FIGHTER_FILES (ssb-tablegen fighter_files.rs, read from dFTManagerDataFiles); its literals are the kind count
-crates/ssb-rom/src/sprite.rs	VS_RESULTS	layout: an ll*FileID label and its ll*Sprite offsets (reloc_data.us.h); the d*FileIDs array is named as the scene loader that loads the file, not copied
-crates/ssb-rom/src/sprite.rs	GAME_MODES	layout: an ll*FileID label and its ll*Sprite offsets (reloc_data.us.h); the d*FileIDs array is named as the scene loader that loads the file, not copied
-crates/ssb-rom/src/sprite.rs	DIGITS	layout: an ll*FileID label and its ll*Sprite offsets (reloc_data.us.h); the d*FileIDs array is named as the scene loader that loads the file, not copied
-crates/ssb-rom/src/sprite.rs	PLAYER_TAGS	layout: an ll*FileID label and its ll*Sprite offsets (reloc_data.us.h); the d*FileIDs array is named as the scene loader that loads the file, not copied
-crates/ssb-rom/src/sprite.rs	PLAYERS_DIFFICULTY	layout: an ll*FileID label and its ll*Sprite offsets (reloc_data.us.h); the d*FileIDs array is named as the scene loader that loads the file, not copied
-crates/ssb-rom/src/sprite.rs	STOCKS_ZAKO	layout: an ll*FileID label and its ll*Sprite offsets (reloc_data.us.h); the d*FileIDs array is named as the scene loader that loads the file, not copied
-crates/ssb-rom/src/sprite.rs	MN_COMMON	layout: an ll*FileID label and its ll*Sprite offsets (reloc_data.us.h); the d*FileIDs array is named as the scene loader that loads the file, not copied
-crates/ssb-rom/src/sprite.rs	PORTRAITS	layout: an ll*FileID label and its ll*Sprite offsets (reloc_data.us.h); the d*FileIDs array is named as the scene loader that loads the file, not copied
-crates/ssb-rom/src/sprite.rs	EMBLEM_SPRITES	layout: an ll*FileID label and its ll*Sprite offsets (reloc_data.us.h); the d*FileIDs array is named as the scene loader that loads the file, not copied
-crates/ssb-rom/src/sprite.rs	SELECT_COMMON	layout: an ll*FileID label and its ll*Sprite offsets (reloc_data.us.h); the d*FileIDs array is named as the scene loader that loads the file, not copied
+crates/ssb-rom/src/sprite.rs	STOCKS_ZAKO	link-time labels: llFTStocksZakoFileID and llFTStocksZakoSprite, which mnPlayers1PGame passes as code immediates; the d*FileIDs array is named as the scene loader that loads the file, not copied
+crates/ssb-rom/src/sprite.rs	SELECT_COMMON	link-time labels: llMNSelectCommonFileID and llMNSelectCommonStoneBackgroundSprite, which the mnPlayers* scenes pass as code immediates; the d*FileIDs array is named as the scene loader that loads the file, not copied
 crates/ssb-rom/src/transition.rs	EXPECTED_FILES	test fixture: the llLBTransition*FileID labels (reloc_data_symbols.us.txt) the generated dLBTransitionDescs is checked against
 crates/ssb-rom/tests/backup.rs	DEFAULT_BACKUP_ROM	layout: the symbol's address and its segment's ROM and VRAM start, to find the array in the ROM
 crates/ssb-rom/tests/explain_movement.rs	N64_SEEDS	test fixture: N64 measurements (RE-468, RE-472)

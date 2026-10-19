@@ -82,6 +82,7 @@ fn select_c_button_places_and_changes_costume_without_training_cpu_constraints()
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn locked_portrait_cannot_be_placed() {
     let mut s = select::Select::new(Default::default(), CHARACTER_MASK_STARTER);
     s.cursor = (15.0, 60.0); // Luigi
@@ -207,6 +208,7 @@ fn ready_gobjs_share_clock_but_have_separate_visibility() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn intro_announces_once_at_source_scheduler_boundaries() {
     let mut i = intro::Intro::new(Stage::Link, FighterKind::Donkey);
     assert_eq!(i.tick(1, N64Buttons(0)).announce, [None; 3]);
@@ -812,6 +814,7 @@ fn a_campaign_through_every_stage_raises_no_fpu_exception() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn intro_plays_its_bgm_and_the_announcers_voices() {
     use crate::sound::{id, testing::*};
     let r = Recorder::install();

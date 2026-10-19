@@ -31,62 +31,41 @@ pub mod sprite {
     pub const LABEL: u32 = 0x630;
     pub const NAME_TAG_DEFAULT: u32 = 0x1230;
     pub const NAME_TAG_TALL: u32 = 0x28F0;
-    /// `*NameSprite`, by `FTKind`.
-    pub const NAMES: [u32; 12] = [
-        0x2F98, 0x33A0, 0x4290, 0x4910, 0x4F78, 0x5398, 0x58F8, 0x6828, 0x6E48, 0x7628, 0x82E0,
-        0x8828,
-    ];
-    /// `*StorySprite`, by `FTKind`.
-    pub const STORIES: [u32; 12] = [
-        0xACA8, 0xD128, 0xF5A8, 0x11A28, 0x13EA8, 0x16328, 0x187A8, 0x1AC28, 0x1D0A8, 0x1F528,
-        0x219A8, 0x23E28,
-    ];
+    /// `mnCharactersMakeName`'s `offsets` (`*NameSprite`), by `FTKind`.
+    pub const NAMES: [u32; 12] = crate::d_arrays::MN_CHARACTERS_MAKE_NAME_OFFSETS;
+    /// `mnCharactersMakeStory`'s `offsets` (`*StorySprite`), by `FTKind`.
+    pub const STORIES: [u32; 12] = crate::d_arrays::MN_CHARACTERS_MAKE_STORY_OFFSETS;
     pub const WORKS_WALLPAPER: u32 = 0x25058;
-    /// `*WorksSprite`, by `FTKind`.
-    pub const WORKS: [u32; 12] = [
-        0x25AB8, 0x26518, 0x26F78, 0x279D8, 0x28438, 0x28E98, 0x298F8, 0x2A358, 0x2ADB8, 0x2B818,
-        0x2C278, 0x2CCD8,
-    ];
-    /// `MotionSpecial{Hi,N,Lw}InputSprite`.
-    pub const MOTION_INPUTS: [u32; 3] = [0x2CDA8, 0x2CE78, 0x2CF48];
+    /// `mnCharactersMakeWorks`'s `offsets` (`*WorksSprite`), by `FTKind`.
+    pub const WORKS: [u32; 12] = crate::d_arrays::MN_CHARACTERS_MAKE_WORKS_OFFSETS;
+    /// `mnCharactersUpdateMotionName`'s `motion_inputs`
+    /// (`MotionSpecial{Hi,N,Lw}InputSprite`).
+    pub const MOTION_INPUTS: [u32; 3] =
+        crate::d_arrays::MN_CHARACTERS_UPDATE_MOTION_NAME_MOTION_INPUTS;
     /// `mnCharactersUpdateMotionName`'s `motion_names`, by `FTKind`, then
     /// Hi, N and Lw. Luigi's up and neutral specials are Mario's names.
-    pub const MOTION_NAMES: [[u32; 3]; 12] = [
-        [0x2D088, 0x2DE48, 0x2EC48],
-        [0x2D1C8, 0x2DF88, 0x2ED88],
-        [0x2D308, 0x2E0C8, 0x2EEC8],
-        [0x2D448, 0x2E208, 0x2F008],
-        [0x2D088, 0x2DE48, 0x2F148],
-        [0x2D588, 0x2E348, 0x2F288],
-        [0x2D6C8, 0x2E488, 0x2F3C8],
-        [0x2D808, 0x2E5C8, 0x2F508],
-        [0x2D948, 0x2E740, 0x2F648],
-        [0x2DA88, 0x2E888, 0x2F788],
-        [0x2DBC8, 0x2E9C8, 0x2F8C8],
-        [0x2DD08, 0x2EB08, 0x2FA08],
-    ];
+    pub const MOTION_NAMES: [[u32; 3]; 12] =
+        crate::d_arrays::MN_CHARACTERS_UPDATE_MOTION_NAME_MOTION_NAMES;
     pub const STORY_WALLPAPER: u32 = 0x30888;
 }
 
-/// `mnCharactersGetFighterKind`: the pages' order.
-pub const PAGES: [FighterKind; 12] = [
-    FighterKind::Mario,
-    FighterKind::Luigi,
-    FighterKind::Donkey,
-    FighterKind::Link,
-    FighterKind::Samus,
-    FighterKind::Yoshi,
-    FighterKind::Kirby,
-    FighterKind::Fox,
-    FighterKind::Pikachu,
-    FighterKind::Purin,
-    FighterKind::Captain,
-    FighterKind::Ness,
-];
+/// `mnCharactersGetFighterKind`'s `fkinds`: the pages' order.
+pub const PAGES: [FighterKind; 12] = {
+    let fkinds = crate::d_arrays::MN_CHARACTERS_GET_FIGHTER_KIND_FKINDS;
+    let mut out = [FighterKind::Mario; 12];
+    let mut i = 0;
+    while i < 12 {
+        out[i] = FighterKind::playable_ordinal(fkinds[i]);
+        i += 1;
+    }
+    out
+};
 
-/// `mnCharactersGetPage`.
+/// `mnCharactersGetPage`'s `pages`, by [`FighterKind`]; 0 past the roster.
 pub fn page_of(kind: FighterKind) -> usize {
-    PAGES.iter().position(|&k| k == kind).unwrap_or(0)
+    crate::d_arrays::MN_CHARACTERS_GET_PAGE_PAGES
+        .get(kind as usize)
+        .map_or(0, |&page| page as usize)
 }
 
 /// `nMNCharactersMotionKindEnumCount`.
@@ -836,21 +815,7 @@ impl CharactersMenu {
                 Piece::clear(FILE_CHARACTERS, sprite::NAME_TAG_DEFAULT, 10.0, 45.0).prim(brown),
             ));
         }
-        const NAME_AT: [(f32, f32); 12] = [
-            (33.0, 50.0),
-            (46.0, 51.0),
-            (24.0, 51.0),
-            (24.0, 51.0),
-            (38.0, 50.0),
-            (44.0, 49.0),
-            (32.0, 49.0),
-            (24.0, 48.0),
-            (34.0, 49.0),
-            (23.0, 50.0),
-            (34.0, 49.0),
-            (42.0, 52.0),
-        ];
-        let (x, y) = NAME_AT[kind];
+        let [x, y] = crate::d_arrays::MN_CHARACTERS_MAKE_NAME_POS[kind];
         f(Draw::Sprite(
             Piece::clear(FILE_CHARACTERS, sprite::NAMES[kind], x, y).prim(brown),
         ));

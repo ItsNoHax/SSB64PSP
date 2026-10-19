@@ -350,14 +350,14 @@ impl VsOptionsMenu {
         self.stage_select_option(f, y[2]);
         self.damage_option(f, y[3]);
         if !self.damage_remade {
-            right_digits(f, self.damage, 220.0, digits_y, [0xFF, 0x00, 0x28], 3);
+            damage_digits(f, self.damage, digits_y);
         }
         if self.is_have_item_switch {
             self.bubble(f, VsOption::ItemSwitch, 82.0, 177.0);
             text(f, sprite::ITEM_SWITCH_TEXT, 128.0, 179.0);
         }
         if self.damage_remade {
-            right_digits(f, self.damage, 220.0, digits_y, [0xFF, 0x00, 0x28], 3);
+            damage_digits(f, self.damage, digits_y);
         }
         // `mnVSOptionsLabelProcDisplay`.
         f(fill_prim(79, 34, 310, 39, [0x80, 0x80, 0x80, 0xFF]));
@@ -368,12 +368,13 @@ impl VsOptionsMenu {
         self.underline(f);
     }
 
-    /// `mnVSOptionsSetOptionSpriteColors` on the option's bubble.
+    /// `mnVSOptionsSetOptionSpriteColors` on the option's bubble:
+    /// `envcolor` from the pair's `prim`, the sprite colour from its `env`.
     fn bubble(&self, f: &mut impl FnMut(Draw), option: VsOption, x: f32, y: f32) {
-        let (env, prim) = if self.option == option {
-            ([0xFA, 0x8C, 0x00], [0xF4, 0xC8, 0x0A])
+        let [env, prim] = if self.option == option {
+            crate::d_arrays::MN_VS_OPTIONS_SET_OPTION_SPRITE_COLORS_HICOLORS
         } else {
-            ([0x00; 3], [0x82, 0x82, 0xAA])
+            crate::d_arrays::MN_VS_OPTIONS_SET_OPTION_SPRITE_COLORS_NOTCOLORS
         };
         f(Draw::Sprite(
             Piece::clear(FILE_VS_OPTIONS, sprite::BUBBLE, x, y)
@@ -435,19 +436,21 @@ impl VsOptionsMenu {
     /// `mnVSOptionsUnderlineProcDisplay`: a `G_CYC_FILL` line under the
     /// highlighted toggle's setting.
     fn underline(&self, f: &mut impl FnMut(Draw)) {
+        use crate::d_arrays as d;
         let have = self.is_have_item_switch;
         let (r, off_y) = match self.option {
             VsOption::Handicap => (
-                [[255, 77, 283, 77], [190, 77, 216, 77], [219, 77, 251, 77]]
-                    [self.handicap as usize],
+                d::MN_VS_OPTIONS_UNDERLINE_PROC_DISPLAY_HANDICAP_RECT[self.handicap as usize],
                 if have { 0 } else { 4 },
             ),
             VsOption::TeamAttack => (
-                [[245, 106, 272, 106], [213, 106, 239, 106]][usize::from(self.team_attack)],
+                d::MN_VS_OPTIONS_UNDERLINE_PROC_DISPLAY_TEAM_ATTACK_RECT
+                    [usize::from(self.team_attack)],
                 if have { 0 } else { 7 },
             ),
             VsOption::StageSelect => (
-                [[241, 135, 269, 135], [208, 135, 234, 135]][usize::from(self.stage_select)],
+                d::MN_VS_OPTIONS_UNDERLINE_PROC_DISPLAY_STAGE_SELECT_RECT
+                    [usize::from(self.stage_select)],
                 if have { 0 } else { 10 },
             ),
             _ => return,
@@ -460,6 +463,20 @@ impl VsOptionsMenu {
             [0xFF, 0x00, 0x28],
         ));
     }
+}
+
+/// `mnVSOptionsMakeDamageDigits`: the ratio at (220, `y`) in its
+/// `colors`, with `mnVSOptionsMakeDamageDigitSObjs`' `digit_offsets`.
+fn damage_digits(f: &mut impl FnMut(Draw), damage: i32, y: f32) {
+    right_digits(
+        f,
+        damage,
+        220.0,
+        y,
+        &crate::d_arrays::MN_VS_OPTIONS_MAKE_DAMAGE_DIGITS_COLORS,
+        &crate::d_arrays::MN_VS_OPTIONS_MAKE_DAMAGE_DIGIT_S_OBJS_DIGIT_OFFSETS,
+        3,
+    );
 }
 
 /// A selected toggle word's colour, and the others'.

@@ -110,6 +110,7 @@ fn a_number_right_aligns_its_digits_and_leads_with_a_dash_when_negative() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_string_advances_by_letter_widths_and_digits_by_pixels() {
     let mut xs = Vec::new();
     make_string(WINS, 175.0, 180.0, 3, 1.0, &mut |d| {
@@ -153,6 +154,7 @@ fn a_string_advances_by_letter_widths_and_digits_by_pixels() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn columns_spread_by_present_count() {
     let r = results(Kind::StockRoyal, &[0, 1], Some(0));
     assert_eq!((column_x(&r, 0), column_x(&r, 1)), (135.0, 215.0));
@@ -166,6 +168,7 @@ fn columns_spread_by_present_count() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_wallpaper_fades_in_after_tic_80_in_the_winners_colour() {
     rng::set_seed(77);
     let mut r = results(Kind::StockRoyal, &[1, 0], Some(1));
@@ -203,6 +206,7 @@ fn the_wallpaper_fades_in_after_tic_80_in_the_winners_colour() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_team_wallpaper_takes_the_teams_colour() {
     let mut r = results(Kind::TimeTeam, &[1, 0], Some(1));
     r.team = [0, 2, 0, 0];
@@ -248,6 +252,7 @@ fn the_tint_rises_by_9_to_0x80_and_the_bar_grows_by_10_to_190() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_stock_battles_table_is_places_bar_then_header_and_kos() {
     let mut r = results(Kind::StockRoyal, &[1, 0], Some(1));
     r.kos = [0, 1, 0, 0];
@@ -353,6 +358,7 @@ fn the_results_text_names_the_winner_then_wins() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_team_battle_colours_its_numbers_and_plates_only_the_winner() {
     let mut r = results(Kind::TimeTeam, &[0, 0, 1], Some(1));
     r.team = [1, 1, 0, 0];
@@ -392,6 +398,7 @@ fn four_players_with_two_in_second_show_the_next_as_fourth() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_time_battles_rows_come_every_20_tics_from_210() {
     let kinds: Vec<_> = rows(Kind::TimeRoyal).iter().map(|&(t, _)| t).collect();
     assert_eq!(kinds, [180, 210, 210, 230, 250, 270, 290]);

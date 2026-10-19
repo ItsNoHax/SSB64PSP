@@ -276,6 +276,7 @@ fn the_unlock_masks_match_lbdef() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_reloaded_save_unlocks_the_newcomers_and_mushroom_kingdom_on_the_selects() {
     use crate::fighter_select::is_locked;
     use crate::stage_select::{gkind, StageSelect};

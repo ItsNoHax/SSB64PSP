@@ -48,7 +48,11 @@ impl Emblem {
         }
         let winner = r.winner.unwrap_or(0);
         let color = if r.is_team_battle {
-            crate::results_layer::team_color(r, winner)
+            crate::results_layer::team_color(
+                crate::d_arrays::MN_VS_RESULTS_MAKE_EMBLEM_COLORS,
+                r,
+                winner,
+            )
         } else {
             winner
         };
@@ -85,9 +89,19 @@ pub const CAMERA: crate::results_scene::Camera = crate::results_scene::CAMERA;
 /// contest: `pos0` with `is_genlink_mask` false (the bank ORed with
 /// `LBPARTICLE_MASK_GENLINK(3)`, list 4), then `pos1` with it true (list 0).
 pub const CONFETTI: [(Vec3, bool); 2] = [
-    (Vec3::new(0.0, 1000.0, -1000.0), false),
-    (Vec3::new(0.0, 1000.0, -400.0), true),
+    (
+        vec3(crate::d_arrays::MN_VS_RESULTS_MAKE_CONFETTI_POS_0),
+        false,
+    ),
+    (
+        vec3(crate::d_arrays::MN_VS_RESULTS_MAKE_CONFETTI_POS_1),
+        true,
+    ),
 ];
+
+const fn vec3([x, y, z]: [f32; 3]) -> Vec3 {
+    Vec3::new(x, y, z)
+}
 
 /// Whether `mnVSResultsFuncRun` makes the confetti on this tic.
 pub fn confetti_due(r: &Results) -> bool {

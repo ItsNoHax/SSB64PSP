@@ -15,6 +15,7 @@
 //! (15). The sprites name the files `dMNVSResultsFileIDs` loads; the PSP
 //! layer looks each up in the pack.
 
+use crate::d_arrays as d;
 use crate::fighter::FighterKind;
 use crate::results::{Kind, Results};
 use crate::results_scene::{count_place, distance_id, present_count, present_lower_count, spot};
@@ -115,42 +116,18 @@ pub struct Player {
 pub const VIEWPORT_RECT: [f32; 4] = [10.0, 10.0, 310.0, 230.0];
 
 /// `mnVSResultsMakeWallpaper`'s `colors`: environment, then primitive.
-const WALLPAPER_COLORS: [([u8; 3], [u8; 3]); 4] = [
-    ([0x5C, 0x2B, 0x27], [0x98, 0x6F, 0x6C]),
-    ([0x39, 0x39, 0x99], [0x86, 0x86, 0xD1]),
-    ([0x69, 0x58, 0x2B], [0x9B, 0x8E, 0x6C]),
-    ([0x2B, 0x44, 0x36], [0x71, 0x82, 0x78]),
-];
-
-/// `team_colors` and `mnVSResultsGetNumberColorID`'s `color_ids`: red,
-/// blue and green teams.
-const TEAM_COLORS: [usize; 3] = [0, 1, 3];
+const WALLPAPER_COLORS: [[[u8; 3]; 2]; 4] = d::MN_VS_RESULTS_MAKE_WALLPAPER_COLORS;
 
 /// `mnVSResultsMakeString`'s `colors`: `prim` (the environment) and `env`
 /// (the primitive).
-const STRING_COLORS: [([u8; 3], [u8; 3]); 5] = [
-    ([0xFF, 0x00, 0x00], [0xFF; 3]),
-    ([0x12, 0x00, 0xD9], [0xFF; 3]),
-    ([0x03, 0x73, 0x00], [0xFF; 3]),
-    ([0x60, 0x03, 0xD4], [0xFF; 3]),
-    ([0x00, 0x00, 0x00], [0xFF; 3]),
-];
+const STRING_COLORS: [[[u8; 3]; 2]; 5] = d::MN_VS_RESULTS_MAKE_STRING_COLORS;
 
 /// `mnVSResultsMakeString`'s `widths`, `A` to `Z`, `!` and `.`.
-const LETTER_WIDTHS: [f32; 28] = [
-    35.0, 24.0, 24.0, 28.0, 22.0, 20.0, 31.0, 27.0, 9.0, 20.0, 27.0, 20.0, 37.0, 29.0, 34.0, 24.0,
-    37.0, 27.0, 24.0, 24.0, 26.0, 28.0, 39.0, 31.0, 29.0, 30.0, 10.0, 8.0,
-];
+const LETTER_WIDTHS: [f32; 28] = d::MN_VS_RESULTS_MAKE_STRING_WIDTHS;
 
-/// `mnVSResultsSetNumberColor`'s `colors`, the primitive; the environment
-/// is black in all five.
-const NUMBER_COLORS: [[u8; 3]; 5] = [
-    [0xFF, 0x82, 0x82],
-    [0x91, 0xC0, 0xFF],
-    [0xFF, 0xDF, 0x1A],
-    [0x9F, 0xFF, 0x9F],
-    [0xFF, 0xFF, 0xFF],
-];
+/// `mnVSResultsSetNumberColor`'s `colors`: the environment (`prim`), then
+/// the primitive (`env`).
+const NUMBER_COLORS: [[[u8; 3]; 2]; 5] = d::MN_VS_RESULTS_SET_NUMBER_COLOR_COLORS;
 
 /// Colour channel tables (`dIFCommonPlayerTagPrimColors{R,G,B}`) as RGB.
 const fn rgb(r: [u8; 5], g: [u8; 5], b: [u8; 5]) -> [[u8; 3]; 5] {
@@ -171,56 +148,8 @@ const TAG_COLORS: [[u8; 3]; 5] = rgb(
     crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_B,
 );
 
-/// `mnVSResultMakeFighterName`'s `names`, `pos_x` and `scales` (US), by
-/// fighter kind.
-const NAMES: [(&str, f32, f32); 12] = [
-    ("MARIO", 30.0, 1.0),
-    ("FOX", 60.0, 1.0),
-    ("D3K", 70.0, 1.0),
-    ("SAMUS", 25.0, 1.0),
-    ("LU1I1G1I", 50.0, 1.0),
-    ("L1I1N1K", 55.0, 1.0),
-    ("YOSH3I", 30.0, 1.0),
-    ("C2.2FA1L1C1O1N", 27.0, 0.7),
-    ("K1I1RBY", 40.0, 1.0),
-    ("P4I4KAC3H3U", 30.0, 0.7),
-    ("JIGGLYPUFF", 27.0, 0.6),
-    ("N2E2S2S", 50.0, 1.0),
-];
-
-/// `mnVSResultsMakeWinnerText`'s `x_fkinds` (US), by fighter kind.
-const WINS_X: [f32; 12] = [
-    175.0, 160.0, 150.0, 176.0, 163.0, 160.0, 170.0, 178.0, 165.0, 172.0, 173.0, 160.0,
-];
-
-/// `mnVSResultMakeTeamName`'s `names` and `pos_x`, and
-/// `mnVSResultsMakeWinnerText`'s `x_teams`.
-const TEAM_NAMES: [(&str, f32, f32); 3] = [
-    ("RED", 70.0, 160.0),
-    ("BLUE", 60.0, 170.0),
-    ("GREEN", 30.0, 180.0),
-];
-
 /// `mnVSResultsMakeWinnerText`'s US string (`wins`).
 const WINS: &str = "W1I1N1S1!";
-
-/// `mnVSResultsSetPlayerTagPosition`'s `pos_xy_2p`, `_3p` and `_4p`, by
-/// distance ID and spot. `pos_y_kinds` is all zeros.
-const TAG_POS_2P: [[(f32, f32); 4]; 2] = [
-    [(115.0, 50.0), (112.0, 75.0), (115.0, 96.0), (115.0, 103.0)],
-    [(173.0, 50.0), (177.0, 75.0), (183.0, 96.0), (186.0, 103.0)],
-];
-const TAG_POS_3P: [[(f32, f32); 4]; 3] = [
-    [(38.0, 50.0), (50.0, 75.0), (38.0, 96.0), (38.0, 103.0)],
-    [(150.0, 50.0), (150.0, 75.0), (150.0, 96.0), (150.0, 103.0)],
-    [(245.0, 50.0), (237.0, 75.0), (254.0, 96.0), (258.0, 103.0)],
-];
-const TAG_POS_4P: [[(f32, f32); 4]; 4] = [
-    [(38.0, 50.0), (50.0, 75.0), (35.0, 96.0), (35.0, 103.0)],
-    [(115.0, 50.0), (112.0, 75.0), (115.0, 96.0), (115.0, 103.0)],
-    [(173.0, 50.0), (177.0, 75.0), (188.0, 96.0), (186.0, 103.0)],
-    [(245.0, 50.0), (237.0, 75.0), (258.0, 96.0), (258.0, 103.0)],
-];
 
 /// One piece of the table, made on a tic by the label's proc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -360,7 +289,7 @@ impl Layer {
     pub fn visit(&self, r: &Results, players: &[Option<Player>; 4], mut f: impl FnMut(Draw)) {
         let t = r.total_tics;
         if let Some(c) = self.wallpaper {
-            let (env, prim) = WALLPAPER_COLORS[c];
+            let [env, prim] = WALLPAPER_COLORS[c];
             f(Draw::Wallpaper { prim, env });
         }
         let tint = |alpha: i32| Draw::Fill {
@@ -465,34 +394,36 @@ fn wallpaper_color(r: &Results) -> usize {
     }
     let winner = r.winner.unwrap_or(0);
     if r.is_team_battle {
-        team_color(r, winner)
+        team_color(d::MN_VS_RESULTS_MAKE_WALLPAPER_TEAM_COLORS, r, winner)
     } else {
         winner.min(3)
     }
 }
 
-/// `team_colors[players[player].team]`.
-pub(crate) fn team_color(r: &Results, player: usize) -> usize {
-    TEAM_COLORS
+/// `colors[players[player].team]`, for one of the three `{ 0, 1, 3 }`
+/// tables that turn a team into a colour: `mnVSResultsMakeWallpaper`'s
+/// `team_colors`, `mnVSResultsGetNumberColorID`'s `color_ids` and
+/// `mnVSResultsMakeEmblem`'s `colors`.
+pub(crate) fn team_color(colors: [i32; 3], r: &Results, player: usize) -> usize {
+    colors
         .get(usize::from(r.team[player]))
-        .copied()
-        .unwrap_or(0)
+        .map_or(0, |&c| c as usize)
 }
 
 /// `mnVSResultsGetColumnX`.
 pub fn column_x(r: &Results, player: usize) -> f32 {
     let lower = present_lower_count(r, player);
     match present_count(r) {
-        2 => [135.0, 215.0][lower.min(1)],
-        3 => [125.0, 175.0, 225.0][lower.min(2)],
-        _ => [115.0, 155.0, 195.0, 235.0][lower.min(3)],
+        2 => d::MN_VS_RESULTS_GET_COLUMN_X_COLUMN_X_2P[lower.min(1)],
+        3 => d::MN_VS_RESULTS_GET_COLUMN_X_COLUMN_X_3P[lower.min(2)],
+        _ => d::MN_VS_RESULTS_GET_COLUMN_X_COLUMN_X_4P[lower.min(3)],
     }
 }
 
 /// `mnVSResultsGetNumberColorID`: white, or the team's colour.
 pub fn number_color_id(r: &Results, player: usize) -> usize {
     if r.is_team_battle {
-        team_color(r, player)
+        team_color(d::MN_VS_RESULTS_GET_NUMBER_COLOR_ID_COLOR_IDS, r, player)
     } else {
         4
     }
@@ -505,8 +436,8 @@ fn numbered(sprite: Sprite, x: f32, y: f32, color: usize) -> Piece {
         x,
         y,
         scale_x: 1.0,
-        prim: Some(NUMBER_COLORS[color]),
-        env: [0; 3],
+        prim: Some(NUMBER_COLORS[color][1]),
+        env: NUMBER_COLORS[color][0],
     }
 }
 
@@ -646,11 +577,14 @@ fn header(r: &Results, players: &[Option<Player>; 4], f: &mut impl FnMut(Draw)) 
 pub fn player_tag(r: &Results, player: usize, p: Player) -> Piece {
     let spot = spot(r, player).min(3);
     let dist = distance_id(r, player);
-    let (x, y) = match present_count(r) {
-        2 => TAG_POS_2P[dist.min(1)][spot],
-        3 => TAG_POS_3P[dist.min(2)][spot],
-        _ => TAG_POS_4P[dist.min(3)][spot],
+    let [x, y] = match present_count(r) {
+        2 => d::MN_VS_RESULTS_SET_PLAYER_TAG_POSITION_POS_XY_2P[dist.min(1)][spot],
+        3 => d::MN_VS_RESULTS_SET_PLAYER_TAG_POSITION_POS_XY_3P[dist.min(2)][spot],
+        _ => d::MN_VS_RESULTS_SET_PLAYER_TAG_POSITION_POS_XY_4P[dist.min(3)][spot],
     };
+    let y = y + d::MN_VS_RESULTS_SET_PLAYER_TAG_POSITION_POS_Y_KINDS
+        .get(p.kind as usize)
+        .map_or(0.0, |row| row[dist.min(3)]);
     let tag = if p.human { player as u8 } else { TAG_CP };
     Piece {
         sprite: Sprite::In(SpriteFile::PlayerTags, tag),
@@ -678,7 +612,7 @@ pub fn character_id(c: u8) -> i32 {
 /// scale is `sprite.scalex`: the letters narrow but keep their height.
 pub fn make_string(s: &str, x: f32, y: f32, color: usize, scale: f32, f: &mut impl FnMut(Draw)) {
     let mut cx = x;
-    let (env, prim) = STRING_COLORS[color];
+    let [env, prim] = STRING_COLORS[color];
     for c in s.bytes() {
         if c.is_ascii_digit() {
             cx += f32::from(c - b'0');
@@ -716,14 +650,43 @@ fn results_text(r: &Results, players: &[Option<Player>; 4], f: &mut impl FnMut(D
     };
     if r.is_team_battle {
         let team = usize::from(r.team[winner]).min(2);
-        let (name, x, wins_x) = TEAM_NAMES[team];
-        make_string(name, x, 180.0, team, 1.0, f);
-        make_string(WINS, wins_x, 180.0, 3, 1.0, f);
+        let name = d::MN_VS_RESULT_MAKE_TEAM_NAME_NAMES[team];
+        make_string(
+            name,
+            d::MN_VS_RESULT_MAKE_TEAM_NAME_POS_X[team],
+            180.0,
+            team,
+            1.0,
+            f,
+        );
+        make_string(
+            WINS,
+            d::MN_VS_RESULTS_MAKE_WINNER_TEXT_X_TEAMS[team],
+            180.0,
+            3,
+            1.0,
+            f,
+        );
     } else if let Some(p) = players[winner] {
         let kind = (p.kind as usize).min(11);
-        let (name, x, scale) = NAMES[kind];
-        make_string(name, x, 180.0, 0, scale, f);
-        make_string(WINS, WINS_X[kind], 180.0, 3, 1.0, f);
+        let name = d::MN_VS_RESULT_MAKE_FIGHTER_NAME_NAMES[kind];
+        let x = d::MN_VS_RESULT_MAKE_FIGHTER_NAME_POS_X[kind];
+        make_string(
+            name,
+            x,
+            180.0,
+            0,
+            d::MN_VS_RESULT_MAKE_FIGHTER_NAME_SCALES[kind],
+            f,
+        );
+        make_string(
+            WINS,
+            d::MN_VS_RESULTS_MAKE_WINNER_TEXT_X_FKINDS[kind],
+            180.0,
+            3,
+            1.0,
+            f,
+        );
     }
 }
 

@@ -42,6 +42,7 @@ fn press_at(s: &mut Players1PBonus, x: f32, y: f32) -> Option<Outcome> {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_visit_starts_holding_an_empty_puck() {
     let s = select(BonusKind::Platforms);
     assert!(s.slot.is_held);
@@ -71,6 +72,7 @@ fn every_visit_starts_holding_an_empty_puck() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn placing_arms_the_start_which_runs_out_after_140_ticks() {
     let mut s = select(BonusKind::Targets);
     assert_eq!(place(&mut s, FighterKind::Fox), None);
@@ -95,6 +97,7 @@ fn placing_arms_the_start_which_runs_out_after_140_ticks() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn start_proceeds_at_once_but_only_when_armed() {
     let mut s = select(BonusKind::Platforms);
     // Tick 1, nothing placed: START does nothing.
@@ -196,6 +199,7 @@ fn b_recalls_a_placed_puck_and_backs_out_when_idle() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn an_unplaced_puck_still_saves_its_fighter() {
     let mut s = select(BonusKind::Targets);
     hover_portrait(&mut s, FighterKind::Pikachu);

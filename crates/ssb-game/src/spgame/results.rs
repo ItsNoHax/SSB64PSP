@@ -6,7 +6,9 @@ use super::{bonus::Bonus, BattleState, Difficulty, SceneData, Stage};
 // (including unused IDs), generated at build time from the user's ROM by
 // `crates/ssb-tablegen` (never committed).
 include!(concat!(env!("OUT_DIR"), "/stage_clear_bonus.rs"));
-pub const NO_MISS_MULTIPLIERS: [i32; 14] = [1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9, 0, 10, 11];
+/// `sc1PStageClearGetNoMissMultiplier`'s `nomiss`, by [`Stage`].
+pub const NO_MISS_MULTIPLIERS: [i32; 14] =
+    crate::d_arrays::SC_1P_STAGE_CLEAR_GET_NO_MISS_MULTIPLIER_NOMISS;
 
 pub fn bonus_points(id: usize, stage: Stage, difficulty: Difficulty) -> i32 {
     let points = BONUS_POINTS[id];
