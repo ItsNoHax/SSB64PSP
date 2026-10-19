@@ -22,14 +22,15 @@ its art is fully opaque, so that is not evidence against alpha.
 committed, so a build needs no encoder:
 
 ```bash
-python3 tools/make-pmf.py psp-game/xmb/ICON1_source.mp4 psp-game/xmb/ICON1.PMF
-python3 tools/make-pmf.py psp-asset-viewer/xmb/ICON1_source.mp4 psp-asset-viewer/xmb/ICON1.PMF
+tools/pspbuild.sh video icon1 psp-game/xmb/ICON1_source.mp4 -o psp-game/xmb/ICON1.PMF
+tools/pspbuild.sh video icon1 psp-asset-viewer/xmb/ICON1_source.mp4 -o psp-asset-viewer/xmb/ICON1.PMF
 ```
 
-The script needs `ffmpeg` with `libx264`. ffmpeg can read PMF but cannot write
-it, so the script re-encodes the video and writes the container itself. Its
-docstring lists the format rules. The layout copies a Sony-authored 144 × 80
-PMF (`pspautotests/tests/video/pmf/test.pmf` in the PPSSPP repository):
+This needs `ffmpeg` with `libx264`. ffmpeg can read PMF but cannot write it,
+so pspbuild has ffmpeg encode the H.264 stream and writes the container
+itself; its `docs/VIDEO.md` lists the format rules. The layout copies a
+Sony-authored 144 × 80 PMF (`pspautotests/tests/video/pmf/test.pmf` in the
+PPSSPP repository):
 
 - H.264 Main profile, level 2.1, CABAC, I and P pictures only, one reference
   frame, 59-frame GOPs.

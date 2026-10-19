@@ -7,10 +7,11 @@
 #
 #   tools/pspbuild.sh audio snd0 loop.wav -o psp-game/xmb/SND0.AT3
 #   tools/pspbuild.sh audio inspect --strict psp-game/xmb/SND0.AT3
+#   tools/pspbuild.sh video icon1 psp-game/xmb/ICON1_source.mp4 -o psp-game/xmb/ICON1.PMF
 
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REV=4fe3c5fd597636be7f42a79ced576daae3982a51
+REV=143a6e72aab70851d500b4473bab61ce10ca48b0
 ROOT="$REPO/target/pspbuild/$REV"
 
 if [ ! -x "$ROOT/bin/pspbuild" ]; then
