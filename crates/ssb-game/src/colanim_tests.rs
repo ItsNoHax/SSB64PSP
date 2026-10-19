@@ -397,3 +397,12 @@ fn a_fast_fall_flashes_at_once() {
     assert_eq!(f.colanim.id, ColAnimId::FIGHTER_FAST_FALL);
     assert_eq!(f.colanim.color(), Some([0x00, 0x00, 0x00, 0x80]));
 }
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_com_player_tint_is_white_at_0x30() {
+    assert_eq!(
+        start_color(ColAnimId::FIGHTER_COM_PLAYER),
+        Some([0xFF, 0xFF, 0xFF, 0x30])
+    );
+}

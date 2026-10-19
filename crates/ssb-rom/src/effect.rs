@@ -194,9 +194,30 @@ const fn emblems() -> [Emblem; 10] {
 }
 
 /// `mnVSResultsMakeEmblem`'s `dobjdescs[fkind]`, as an [`EMBLEMS`] index,
-/// for the twelve playable kinds: Luigi shares Mario's, Jigglypuff
-/// Pikachu's.
-pub const EMBLEM_BY_FIGHTER: [u8; 12] = [0, 1, 2, 3, 0, 4, 5, 6, 7, 8, 8, 9];
+/// for the twelve playable kinds: each distinct `DObjDesc` in order of its
+/// first fighter (Luigi shares Mario's, Jigglypuff Pikachu's).
+pub const EMBLEM_BY_FIGHTER: [u8; 12] = emblem_by_fighter();
+
+const fn emblem_by_fighter() -> [u8; 12] {
+    let d = crate::d_arrays::MN_VS_RESULTS_MAKE_EMBLEM_DOBJDESCS;
+    let mut out = [0u8; 12];
+    let mut series = 0u8;
+    let mut f = 0;
+    while f < out.len() {
+        let mut g = 0;
+        while g < f && d[g] != d[f] {
+            g += 1;
+        }
+        out[f] = if g < f {
+            out[g]
+        } else {
+            series += 1;
+            series - 1
+        };
+        f += 1;
+    }
+    out
+}
 
 // The 46 manager effects the port draws, from `dEFManager<Name>EffectDesc`
 // (`ef/efmanager.c`), generated at build time from the user's ROM by

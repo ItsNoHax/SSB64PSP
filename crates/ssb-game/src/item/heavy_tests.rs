@@ -169,6 +169,7 @@ fn common_carry_drops_on_damage_and_floor_loss_but_donkey_air_throw_keeps_kineti
     );
 }
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn heavy_container_health_thresholds_apply_only_where_a_damage_callback_exists() {
     for (kind, health) in [(Kind::Crate, 15), (Kind::Barrel, 10)] {
         let mut pool = ItemPool::default();

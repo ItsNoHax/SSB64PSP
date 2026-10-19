@@ -268,6 +268,7 @@ fn knockback_of_180_or_more_makes_a_heavy_spark() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_element_picks_the_spark() {
     assert_eq!(
         hit(8, Element::Fire, 0, 0).0.made[0].kind,
@@ -312,6 +313,7 @@ fn a_louder_normal_hit_adds_orbs_and_sparks_on_the_victims_side() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn an_invincible_victim_takes_a_set_off_and_no_damage() {
     let mut attacker = standing(FighterKind::Mario, 0, 0.0);
     let mut victim = standing(FighterKind::Fox, 1, 50.0);
@@ -349,6 +351,7 @@ fn a_clank_sets_off_both_attacks() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_hit_spark_draws_the_common_banks_script_for_its_player() {
     let bank = bank(20);
     let (mut p, mut e) = runtime();

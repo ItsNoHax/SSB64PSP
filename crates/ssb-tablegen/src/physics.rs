@@ -43,6 +43,8 @@ pub const FIELDS: [(&str, usize); 24] = [
 ];
 /// `FTAttributes::jumps_max`, the head's one integer.
 const JUMPS_MAX: usize = 25;
+/// `FTAttributes::map_coll`: `top`, `center`, `bottom`, `width`.
+const MAP_COLL: usize = 39;
 
 pub fn generate(rom: Option<&Source>) -> Result<String> {
     let mario = &FIGHTERS[0];
@@ -65,7 +67,16 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
         };
         let _ = writeln!(w, "    {field}: {value},");
     }
-    w.push_str("};\n");
+    w.push_str("};\n\n/// Mario's `FTAttributes::map_coll`: top, center, bottom, width.\npub const MARIO_MAP_COLL: [f32; 4] = [");
+    let mut cells = Vec::new();
+    for i in 0..4 {
+        let bits = match &data {
+            Some(d) => be_u32(d, mario.attributes as usize + 4 * (MAP_COLL + i))?,
+            None => 0,
+        };
+        cells.push(emit::f32_lit(f32::from_bits(bits)));
+    }
+    let _ = writeln!(w, "{}];", cells.join(", "));
     Ok(w)
 }
 
@@ -79,5 +90,6 @@ mod tests {
         assert!(text.contains("    gravity: 0.0,\n"));
         assert!(text.contains("    jumps_max: 0,\n"));
         assert_eq!(text.matches(": 0").count(), FIELDS.len());
+        assert!(text.contains("MARIO_MAP_COLL: [f32; 4] = [0.0, 0.0, 0.0, 0.0];"));
     }
 }

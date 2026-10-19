@@ -384,28 +384,11 @@ pub fn motion(kind: FighterKind, motion_kind: usize, track: usize) -> Track {
 
 /// `mnCharactersMakeFighterCamera`: eye (0, 0, 3000) looking at
 /// (700, 370, 0), with every camera's projection.
-pub const FIGHTER_CAMERA: Camera = Camera {
-    eye: Vec3 {
-        x: 0.0,
-        y: 0.0,
-        z: 3000.0,
-    },
-    at: Vec3 {
-        x: 700.0,
-        y: 370.0,
-        z: 0.0,
-    },
-    up: Vec3 {
-        x: 0.0,
-        y: 1.0,
-        z: 0.0,
-    },
-    fovy: 30.0,
-    aspect: 4.0 / 3.0,
-    near: 100.0,
-    far: 12800.0,
-    viewport: super::VIEWPORT,
-};
+pub const FIGHTER_CAMERA: Camera = Camera::persp_default(
+    Vec3::new(0.0, 0.0, 3000.0),
+    Vec3::new(700.0, 370.0, 0.0),
+    super::VIEWPORT,
+);
 
 /// `mnCharactersMakeEmblemCamera`: eye (0, 0, 1800) on the origin.
 pub const EMBLEM_CAMERA: Camera = Camera {

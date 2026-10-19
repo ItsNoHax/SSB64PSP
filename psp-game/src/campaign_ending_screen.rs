@@ -29,7 +29,7 @@ pub(super) struct LastScenes {
 }
 
 /// `gcMakeCameraGObj`'s default projection (`dGCPerspDefault`).
-const ASPECT: f32 = 4.0 / 3.0;
+const ASPECT: f32 = ssb_game::results_scene::PERSP_ASPECT;
 const VIEWPORT: [f32; 4] = [10.0, 10.0, 310.0, 230.0];
 
 /// Makes a new scene's models and visuals. `false` for the other scenes.

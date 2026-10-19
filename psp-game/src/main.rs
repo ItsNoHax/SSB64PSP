@@ -2850,17 +2850,15 @@ struct VsRules {
 }
 
 impl VsRules {
-    /// `dSCManagerDefaultBattleState`: a three-minute free-for-all time
-    /// battle, stocks 2, Team Attack off.
+    /// `dSCManagerDefaultBattleState` (generated from the ROM in
+    /// `ssb_game`): a three-minute free-for-all time battle, stocks 2,
+    /// Team Attack off.
     pub(crate) const DEFAULT: VsRules = VsRules {
         rule: ssb_game::battle::Rule::Time,
-        time_limit: 3,
-        stocks: 2,
+        time_limit: ssb_game::players_vs::DEFAULT_TIME_LIMIT,
+        stocks: ssb_game::players_vs::DEFAULT_STOCKS as i8,
         team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL,
-        items: ssb_game::item::normal::Switches {
-            appearance: ssb_game::item::normal::Appearance::Middle,
-            toggles: !0,
-        },
+        items: ssb_game::item::normal::Switches::DEFAULT,
         damage_ratio: ssb_game::stale::DAMAGE_RATIO_DEFAULT,
         demo: false,
         skip_entry: false,

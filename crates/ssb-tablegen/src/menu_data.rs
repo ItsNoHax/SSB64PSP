@@ -10,7 +10,7 @@
 use std::fmt::Write;
 
 use crate::emit::{self, f32_lit};
-use crate::source::{OverlayData, OVL10, OVL33};
+use crate::source::{be_u16, OverlayData, OVL10, OVL26, OVL33};
 use crate::{Generated, Result, Source};
 
 /// `dMNTitleFireSpriteOffsets` (`intptr_t[30]`: `llMNTitleFireAnimFrame1Sprite`
@@ -45,6 +45,13 @@ pub const ATTACK1_MOTIONS: (u32, usize) = (0x8013_5DA8, 12);
 const MOTION_SIZE: u32 = 12;
 /// The tracks of a motion row.
 const TRACKS: u32 = 8;
+/// `mnPlayersVSMakeGameRuleNumber`'s `offsets` (`intptr_t[10]`:
+/// `llMNPlayersCommon0DarkSprite` to `...9DarkSprite`, `ovl26`).
+pub const DARK_DIGIT_OFFSETS: (u32, usize) = (0x8013_B704, 10);
+/// `llMNPlayersCommonFileID`.
+pub const PLAYERS_COMMON_FILE: u32 = 17;
+/// `Sprite.width` (`s16`) after `s16 x, y`.
+const SPRITE_WIDTH: usize = 4;
 
 pub fn generate(rom: Option<&Source>) -> Result<Vec<Generated>> {
     let ovl10 = OverlayData::new(rom, OVL10);
@@ -58,7 +65,33 @@ pub fn generate(rom: Option<&Source>) -> Result<Vec<Generated>> {
             name: "characters_motion.rs",
             text: characters(ovl33)?,
         },
+        Generated {
+            name: "players_vs_digits.rs",
+            text: dark_digit_widths(rom)?,
+        },
     ])
+}
+
+/// The `Sprite.width` of each sprite `mnPlayersVSMakeGameRuleNumber` steps
+/// by.
+fn dark_digit_widths(rom: Option<&Source>) -> Result<String> {
+    let mut w = emit::header("`llMNPlayersCommon0DarkSprite` to `...9DarkSprite`'s `width`");
+    let (at, n) = DARK_DIGIT_OFFSETS;
+    let mut widths = vec![0u16; n];
+    if let Some(rom) = rom {
+        let d = OverlayData::new(Some(rom), OVL26);
+        let data = rom.file(PLAYERS_COMMON_FILE)?.data;
+        for (i, width) in widths.iter_mut().enumerate() {
+            let offset = d.u32(at + i as u32 * 4)? as usize;
+            *width = be_u16(&data, offset + SPRITE_WIDTH)?;
+        }
+    }
+    let _ = writeln!(w, "pub const DARK_DIGIT_WIDTHS: [f32; {n}] = [");
+    for width in widths {
+        let _ = writeln!(w, "    {},", f32_lit(f32::from(width as i16)));
+    }
+    w.push_str("];\n");
+    Ok(w)
 }
 
 fn title(d: OverlayData) -> Result<String> {
@@ -163,7 +196,10 @@ mod tests {
     #[test]
     fn stubs_have_every_row() {
         let files = generate(None).unwrap();
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 3);
+        let digits = &files[2].text;
+        assert!(digits.contains("pub const DARK_DIGIT_WIDTHS: [f32; 10] = ["));
+        assert_eq!(digits.matches("    0.0,").count(), 10);
         let title = &files[0].text;
         assert_eq!(title.matches("    ([0.0, 0.0], 0x0),").count(), 10);
         assert!(title.contains("pub const FIRE: [u32; 30]"));

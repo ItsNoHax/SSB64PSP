@@ -116,6 +116,7 @@ fn the_six_kinds_are_made_by_their_item_ids_with_rom_attributes() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn motion_sensor_bomb_sticks_arms_after_100_frames_and_explodes_near_a_fighter() {
     let mut pool = ItemPool::default();
     let slot = resting(&mut pool, 14, 0.0);

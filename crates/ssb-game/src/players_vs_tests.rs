@@ -89,6 +89,7 @@ fn a_first_visit_with_one_controller_gives_port_one_a_human_holding_its_puck() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_saved_human_on_an_unplugged_port_comes_back_as_na() {
     let mut state = BattleState {
         is_reset_players: false,
@@ -115,6 +116,7 @@ fn a_saved_human_on_an_unplugged_port_comes_back_as_na() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_kind_button_cycles_an_unplugged_slot_between_cpu_and_na() {
     let mut s = first_visit(BattleState::default());
     toggle_kind(&mut s, 2);
@@ -187,6 +189,7 @@ fn the_cursor_grabs_the_cpu_puck_and_places_it_on_another_fighter() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_arrows_step_a_cpu_level_and_with_handicap_on_the_humans_handicap() {
     let mut s = fox_vs_cpu_mario(BattleState {
         handicap: Handicap::On,
@@ -211,6 +214,7 @@ fn the_arrows_step_a_cpu_level_and_with_handicap_on_the_humans_handicap() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn with_handicap_off_a_humans_arrows_do_nothing() {
     let mut s = fox_vs_cpu_mario(BattleState::default());
     cursor_at(&mut s, 5.0, 200.0);
@@ -273,6 +277,7 @@ fn team_battle_dresses_fighters_in_team_costumes_and_the_team_button_cycles() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn ready_needs_two_placed_players() {
     let mut s = first_visit(BattleState::default());
     toggle_kind(&mut s, 2);
@@ -338,6 +343,7 @@ fn start_is_refused_before_tick_sixty_one_and_when_not_ready() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn with_the_stage_select_off_start_draws_a_stage_other_than_the_last() {
     let state = BattleState {
         is_stage_select: false,
@@ -363,6 +369,7 @@ fn with_the_stage_select_off_start_draws_a_stage_other_than_the_last() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn b_held_forty_ticks_goes_back_to_vs_mode() {
     let mut s = first_visit(BattleState::default());
     let hold_b = pad(N64Buttons::B, 0);
@@ -401,6 +408,7 @@ fn a_on_the_back_button_goes_back_at_once() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn b_on_a_placed_puck_recalls_it_instead_of_going_back() {
     let mut s = first_visit(BattleState::default());
     place(&mut s, FighterKind::Fox);
@@ -489,4 +497,30 @@ fn the_select_plays_its_bgm_unless_back_from_the_stage_select() {
         ]
     );
     crate::sound::uninstall();
+}
+
+/// `dSCManagerDefaultBattleState` (`sc/scmanager.c`), decoded from the ROM.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_default_battle_state_is_the_roms() {
+    let b = BattleState::default();
+    assert_eq!((b.rule, b.time_limit, b.stocks), (Rule::Time, 3, 2));
+    assert_eq!(
+        (b.handicap, b.is_stage_select, b.damage_ratio),
+        (Handicap::Off, true, 100)
+    );
+    assert_eq!(
+        (b.item_toggles, b.item_appearance),
+        (!0, Appearance::Middle)
+    );
+    assert!(b.is_reset_players && !b.is_team_battle && !b.is_team_attack);
+    let teams: Vec<_> = b.players.iter().map(|p| (p.tag, p.team)).collect();
+    assert_eq!(teams, [(0, 0), (1, 0), (2, 1), (3, 1)]);
+    for p in b.players {
+        assert_eq!(
+            (p.level, p.handicap, p.pkind, p.fkind),
+            (3, 9, PlayerKind::Not, None)
+        );
+        assert!(p.is_single_stockicon);
+    }
 }

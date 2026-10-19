@@ -140,28 +140,11 @@ pub struct Backup {
 }
 
 impl Default for Backup {
-    /// `dSCManagerDefaultBackupData`.
+    /// `dSCManagerDefaultBackupData`, decoded from the ROM's bytes. With the
+    /// stub tables, every field is zero but the signature.
     fn default() -> Self {
-        Self {
-            vs_records: [VsRecord::default(); 12],
-            is_allow_screenflash: true,
-            sound_mono_or_stereo: 1,
-            screen_adjust_h: 0,
-            screen_adjust_v: 0,
-            characters_fkind: FighterKind::Mario,
-            unlock_mask: 0,
-            fighter_mask: 0,
-            spgame_difficulty: Difficulty::Easy,
-            spgame_stock_count: 2,
-            spgame_records: [Record::default(); 12],
-            ground_mask: 0,
-            vs_itemswitch_battles: 0,
-            vs_total_battles: 0,
-            error_flags: 0,
-            boot: 0,
-            signature: SIGNATURE,
-            writes: 0,
-        }
+        Backup::decode_fields(&crate::d_arrays::SC_MANAGER_DEFAULT_BACKUP_DATA)
+            .unwrap_or_else(Backup::blank)
     }
 }
 
@@ -348,8 +331,39 @@ impl Backup {
         if checksum(copy) != i32::from_be_bytes(sum) {
             return None;
         }
+        Backup::decode_fields(copy)
+    }
+
+    /// Every field zero but the signature: the base [`Self::decode_fields`]
+    /// fills.
+    fn blank() -> Backup {
+        Backup {
+            vs_records: [VsRecord::default(); 12],
+            is_allow_screenflash: false,
+            sound_mono_or_stereo: 0,
+            screen_adjust_h: 0,
+            screen_adjust_v: 0,
+            characters_fkind: FighterKind::Mario,
+            unlock_mask: 0,
+            fighter_mask: 0,
+            spgame_difficulty: Difficulty::Easy,
+            spgame_stock_count: 0,
+            spgame_records: [Record::default(); 12],
+            ground_mask: 0,
+            vs_itemswitch_battles: 0,
+            vs_total_battles: 0,
+            error_flags: 0,
+            boot: 0,
+            signature: SIGNATURE,
+            writes: 0,
+        }
+    }
+
+    /// Every field but the checksum, which is not checked.
+    fn decode_fields(copy: &[u8]) -> Option<Backup> {
+        let copy = copy.get(..SIZE)?;
         let mut i = In { b: copy, at: 0 };
-        let mut b = Backup::default();
+        let mut b = Backup::blank();
         for r in &mut b.vs_records {
             for k in &mut r.ko_count {
                 *k = i.u16();

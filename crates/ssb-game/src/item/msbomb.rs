@@ -30,12 +30,7 @@ pub static ATTRIBUTES: ItemAttributes = super::attributes::MSBOMB;
 
 /// File 251, `llITCommonDataMSBombAttackEvents` (0x404): timer, angle,
 /// damage, size.
-pub const ATTACK_EVENTS: [(u16, i32, i32, f32); 4] = [
-    (0, 361, 30, 360.0),
-    (4, 361, 30, 300.0),
-    (8, 361, 20, 200.0),
-    (16, 361, 1, 0.0),
-];
+pub const ATTACK_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::MSBOMB;
 
 /// `itMSBombStatus`, with the descriptor's procs as `Init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

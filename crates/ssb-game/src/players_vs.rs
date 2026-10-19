@@ -200,39 +200,67 @@ pub struct BattleState {
     pub players: [PlayerState; PLAYERS],
 }
 
+/// `dSCManagerDefaultBattleState`'s bytes (`SCBattleState`), generated from
+/// the ROM.
+const DEFAULT_STATE: [u8; 0x1F0] = crate::d_arrays::SC_MANAGER_DEFAULT_BATTLE_STATE;
+/// `sizeof(SCBattleState)` before `players`, and `sizeof(SCPlayerData)`.
+const STATE_PLAYERS: usize = 0x20;
+const PLAYER_DATA_SIZE: usize = 0x74;
+/// `SCBATTLE_GAMERULE_STOCK`.
+const GAMERULE_STOCK: u8 = 0x2;
+/// `dSCManagerDefaultBattleState.time_limit` and `.stocks`.
+pub const DEFAULT_TIME_LIMIT: u8 = DEFAULT_STATE[6];
+pub const DEFAULT_STOCKS: u8 = DEFAULT_STATE[7];
+
 impl Default for BattleState {
     /// `dSCManagerDefaultBattleState` (`sc/scmanager.c`), which
     /// `scManagerRunLoop` copies into `gSCManagerTransferBattleState` at
     /// boot.
     fn default() -> Self {
-        let player = |tag: u8, team: u8| PlayerState {
-            level: 3,
-            handicap: 9,
-            pkind: PlayerKind::Not,
-            fkind: None,
-            team,
-            player: 0,
-            costume: 0,
-            shade: 0,
-            color: 0,
-            is_single_stockicon: true,
-            tag,
+        let d = &DEFAULT_STATE;
+        let player = |i: usize| {
+            let p = &d[STATE_PLAYERS + i * PLAYER_DATA_SIZE..][..PLAYER_DATA_SIZE];
+            PlayerState {
+                level: p[0],
+                handicap: p[1],
+                pkind: match p[2] {
+                    0 => PlayerKind::Man,
+                    1 => PlayerKind::Com,
+                    _ => PlayerKind::Not,
+                },
+                fkind: FighterKind::from_ordinal(p[3]),
+                team: p[4],
+                player: p[5],
+                costume: p[6],
+                shade: p[7],
+                color: p[8],
+                is_single_stockicon: p[9] != 0,
+                tag: p[10],
+            }
         };
         BattleState {
-            is_team_battle: false,
-            is_team_attack: false,
-            rule: Rule::Time,
-            time_limit: 3,
-            stocks: 2,
-            handicap: Handicap::Off,
-            is_stage_select: true,
-            damage_ratio: 100,
-            item_toggles: !0,
-            item_appearance: Appearance::Middle,
-            is_reset_players: true,
-            pl_count: 0,
-            cp_count: 0,
-            players: [player(0, 0), player(1, 0), player(2, 1), player(3, 1)],
+            is_team_battle: d[2] != 0,
+            is_team_attack: d[9] != 0,
+            rule: if d[3] & GAMERULE_STOCK != 0 {
+                Rule::Stock
+            } else {
+                Rule::Time
+            },
+            time_limit: d[6],
+            stocks: d[7],
+            handicap: match d[8] {
+                0 => Handicap::Off,
+                1 => Handicap::On,
+                _ => Handicap::Auto,
+            },
+            is_stage_select: d[10] != 0,
+            damage_ratio: d[11],
+            item_toggles: u32::from_be_bytes([d[12], d[13], d[14], d[15]]),
+            item_appearance: Appearance::from_switch(d[0x1C]),
+            is_reset_players: d[16] != 0,
+            pl_count: d[4],
+            cp_count: d[5],
+            players: [player(0), player(1), player(2), player(3)],
         }
     }
 }

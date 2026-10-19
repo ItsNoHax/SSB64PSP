@@ -330,6 +330,16 @@ impl ColAnim {
     }
 }
 
+/// The colour `id`'s script shows on its first frame, from a fresh
+/// [`ColAnim`]: `nGMColAnimFighterComPlayer`'s `SetColor1` is the tint the
+/// Training select gives its CPU.
+pub fn start_color(id: ColAnimId) -> Option<[u8; 4]> {
+    let mut c = ColAnim::default();
+    c.check_set(id, 0);
+    c.update();
+    c.color()
+}
+
 /// `ftParamCheckSetFighterColAnimID`.
 pub fn check_set(f: &mut Fighter, id: ColAnimId, length: i32) -> bool {
     f.colanim.check_set(id, length)

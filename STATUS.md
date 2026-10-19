@@ -17,11 +17,9 @@ Where the project is now. The roadmap and every open task are in
 
 ## Current Work
 
-Landed (RE-539, MS8): VRAM lit-expand vertex blocks, a photo-region texture pool, the 1P stage-override fix and link order s7b. On a PSP-2000 output is bit-identical (14,280 frames per arm; the two viewer rows by screenshot). Opening Room 13.39 ms, Run 14.98, Yoster 15.58, Clash 13.17; `vs4@2400` 16.92 ms (BFPS 59.1); 1P intro ~34 ms (~21 FPS), 1P battle 59.7 FPS. 16 PPSSPP goldens rebaselined (D-051, 707 native pixels). RE-537's 1P numbers were default-stage numbers.
+Landed (D-048 part 6): check 10 now scans every crate, struct literals and arrays of 8+ literals (24 in tests) and `ll*`, per-fighter and `relocData` doc symbols. Item events, container velocities, weapon hitboxes, throw descriptors and `Backup`'s default are generated from the ROM. Earlier: RE-548 (function-local arrays), RE-539 (MS8 VRAM lit-expand, 1P intro ~34 ms).
 
-Landed (RE-548, D-048 part 5): function-local arrays from the ROM (results, menus, player selects, 1P intro and stage clear, sprite manifests); zero mismatches; baseline 62 to 36 rows. Earlier: RE-547 (small `d*` arrays).
-
-Next: D-048 check 10 blind spots in `PLAN.md`, Kirby's roster-A2 entry camera, Thunder Jolt burst spikes, effects process order, then the MS8 list in `PLAN.md` (1P intro at ~21 FPS first).
+Next: Kirby's roster-A2 entry camera, Thunder Jolt burst spikes, effects process order, then the MS8 list in `PLAN.md` (1P intro at ~21 FPS first), plus generating `effect.rs` `QUAKE`/`THUNDER_SHOCK` with an AnimJoint player in `ssb-tablegen`.
 
 ## Blockers
 
@@ -30,7 +28,7 @@ Next: D-048 check 10 blind spots in `PLAN.md`, Kirby's roster-A2 entry camera, T
 
 ## Verification
 
-Baseline after RE-548:
+Baseline after D-048 part 6:
 
 - `cargo test --workspace` with `SSB64_ROM`, and with `SSB64_STUB_TABLES=1` and no ROM: pass. Clippy (`cargo +1.98.0`, `-D warnings`) and `cargo fmt --all --check` pass.
 - Both PSP release builds compile.

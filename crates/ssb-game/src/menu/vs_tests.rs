@@ -153,6 +153,7 @@ fn the_handicap_steps_left_and_right_and_sets_every_player() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn team_attack_and_stage_select_toggle() {
     let st = BattleState::default();
     let mut m = options(true, &st);
@@ -286,6 +287,7 @@ fn the_item_switch_reads_and_writes_the_toggles() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn every_toggle_off_clears_the_mask_and_keeps_the_old_rate() {
     let st = BattleState::default();
     let mut m = item_switch(&st);

@@ -1,7 +1,7 @@
 //! Normal-container constants and the Egg's packed animation, from the US ROM.
 use ssb_game::item::container::{
-    BARREL_ATTRIBUTES, CAPSULE_ATTRIBUTES, CAPSULE_EVENTS, CRATE_ATTRIBUTES, EGG_ATTRIBUTES,
-    EGG_EVENTS, HEAVY_EVENTS,
+    BARREL_ATTRIBUTES, BOX_EVENTS, CAPSULE_ATTRIBUTES, CAPSULE_EVENTS, CRATE_ATTRIBUTES,
+    EGG_ATTRIBUTES, EGG_EVENTS, TARU_EVENTS,
 };
 use ssb_game::item::utility::{HEART_ATTRIBUTES, STAR_ATTRIBUTES, TOMATO_ATTRIBUTES};
 use ssb_game::item::{bombhei, mball, msbomb, nbumper, shell, ItemKind};
@@ -180,8 +180,8 @@ fn container_attributes_and_explosion_tables_match_the_rom() {
     for (offset, events) in [
         (0x98, CAPSULE_EVENTS),
         (0xB14, EGG_EVENTS),
-        (0x614, HEAVY_EVENTS),
-        (0x67C, HEAVY_EVENTS),
+        (0x614, BOX_EVENTS),
+        (0x67C, TARU_EVENTS),
     ] {
         for (i, e) in events.into_iter().enumerate() {
             let d = &file.data[offset + i * 8..];

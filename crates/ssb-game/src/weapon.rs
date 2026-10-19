@@ -162,7 +162,8 @@ pub const MARIO_FIREBALL_MIN_SPEED: f32 = FIREBALL_ATTRIBUTES[0].vel_min;
 /// `222_LuigiSpecial1.c` differ from Mario's only in damage.
 pub const LUIGI_FIREBALL_LIFETIME: u16 = FIREBALL_ATTRIBUTES[1].lifetime;
 pub const LUIGI_FIREBALL_SPEED: f32 = FIREBALL_ATTRIBUTES[1].vel_base;
-pub const LUIGI_FIREBALL_DAMAGE: i32 = 6;
+pub const LUIGI_FIREBALL_DAMAGE: i32 =
+    crate::monster_weapon::weapon_attributes::LUIGI_FIREBALL.damage;
 
 /// The per-kind values `wpMarioFireball*` read through
 /// `weapon_vars.fireball.index`. Both rows use the same angle on the ground
@@ -226,46 +227,20 @@ const fn fireball_attributes(row: usize, damage: i32) -> FireballAttributes {
 
 /// `WPAttributes.map_coll` from Mario Special1: the projectile's collision
 /// diamond is deliberately larger than its rendered sprite.
-pub const MARIO_FIREBALL_MAP_COLL: BodyColl = BodyColl {
-    top: 50.0,
-    center: 0.0,
-    bottom: -50.0,
-    width: 50.0,
-};
+pub const MARIO_FIREBALL_MAP_COLL: BodyColl =
+    crate::monster_weapon::weapon_attributes::MARIO_FIREBALL.map_coll;
 
-/// The source `WPAttributes` hitbox, stored in the Mario Special1 reloc file.
-pub const MARIO_FIREBALL_HITBOX: Hitbox = Hitbox {
-    damage: 7,
-    offset: Vec3::ZERO,
-    radius: 100.0,
-    angle: 361,
-    kb_scale: 25,
-    kb_weight: 0,
-    kb_base: 10,
-    element: crate::combat::Element::Fire,
-    shield_damage: 1,
-};
+/// The source `WPAttributes` hitbox, stored in the Mario Special1 reloc file
+/// (`llMarioSpecial1FireballWeaponAttributes`).
+pub const MARIO_FIREBALL_HITBOX: Hitbox =
+    crate::monster_weapon::weapon_attributes::MARIO_FIREBALL.hitbox();
 
 /// Fox Special1's US `WPAttributes` and `WPBLASTER_VEL_X`.
 pub const FOX_BLASTER_SPEED: f32 = 160.0;
-pub const FOX_BLASTER_HITBOX: Hitbox = Hitbox {
-    damage: 6,
-    offset: Vec3::ZERO,
-    // `wpManagerMakeWeapon` halves the attributes' size of 40.
-    radius: 20.0,
-    angle: 10,
-    kb_scale: 100,
-    kb_weight: 1,
-    kb_base: 0,
-    element: crate::combat::Element::Normal,
-    shield_damage: 1,
-};
-pub const FOX_BLASTER_MAP_COLL: BodyColl = BodyColl {
-    top: 10.0,
-    center: 0.0,
-    bottom: -10.0,
-    width: 10.0,
-};
+pub const FOX_BLASTER_HITBOX: Hitbox =
+    crate::monster_weapon::weapon_attributes::FOX_BLASTER.hitbox();
+pub const FOX_BLASTER_MAP_COLL: BodyColl =
+    crate::monster_weapon::weapon_attributes::FOX_BLASTER.map_coll;
 
 /// Source `wpFoxBlaster`: horizontal velocity and a display scale that grows
 /// by `16/3` per tick to `160/3` (the scale is presentation data only).
@@ -307,25 +282,11 @@ impl FoxBlaster {
 }
 
 /// `llBossMainMotionBulletNormalWeaponAttributes` and `...Hard...` in
-/// `249_BossMainMotion.c`, which are identical: size 40, angle 361,
-/// knockback 100/10/0, 5 damage, one shield damage.
-pub const BOSS_BULLET_HITBOX: Hitbox = Hitbox {
-    damage: 5,
-    offset: Vec3::ZERO,
-    radius: 20.0,
-    angle: 361,
-    kb_scale: 100,
-    kb_weight: 10,
-    kb_base: 0,
-    element: crate::combat::Element::Normal,
-    shield_damage: 1,
-};
-pub const BOSS_BULLET_MAP_COLL: BodyColl = BodyColl {
-    top: 10.0,
-    center: 0.0,
-    bottom: -10.0,
-    width: 10.0,
-};
+/// `249_BossMainMotion.c`, which are identical.
+pub const BOSS_BULLET_HITBOX: Hitbox =
+    crate::monster_weapon::weapon_attributes::BOSS_BULLET_NORMAL.hitbox();
+pub const BOSS_BULLET_MAP_COLL: BodyColl =
+    crate::monster_weapon::weapon_attributes::BOSS_BULLET_NORMAL.map_coll;
 /// `WPYUBIBULLET_EXPLODE_LIFETIME` and `..._SIZE` (`wpvars.h`).
 pub const BOSS_BULLET_EXPLODE_LIFETIME: u16 = 6;
 pub const BOSS_BULLET_EXPLODE_SIZE: f32 = 180.0;
@@ -433,17 +394,8 @@ pub const SAMUS_CHARGE_SHOT_GFX_SIZE_DIV: f32 = 30.0;
 
 /// `dSamusSpecial1_ChargeShot_WeaponAttributes`: the knockback that
 /// `wpSamusChargeShotLaunch` keeps while it replaces damage and size.
-pub const SAMUS_CHARGE_SHOT_HITBOX: Hitbox = Hitbox {
-    damage: 0,
-    offset: Vec3::ZERO,
-    radius: 0.0,
-    angle: 361,
-    kb_scale: 100,
-    kb_weight: 0,
-    kb_base: 0,
-    element: crate::combat::Element::Electric,
-    shield_damage: 1,
-};
+pub const SAMUS_CHARGE_SHOT_HITBOX: Hitbox =
+    crate::monster_weapon::weapon_attributes::SAMUS_CHARGE_SHOT.hitbox();
 
 /// `dWPSamusChargeShotWeaponAttributes`' sound IDs, a charge level each.
 const fn samus_charge_shot_fgms() -> [(u16, u16, u16); 8] {
@@ -554,24 +506,10 @@ pub const SAMUS_BOMB_WAIT_ROTATE_SPEED_AIR: f32 = 20.0 * core::f32::consts::PI /
 pub const SAMUS_BOMB_WAIT_ROTATE_SPEED_GROUND: f32 = 10.0 * core::f32::consts::PI / 180.0;
 
 /// `llSamusMainBombWeaponAttributes` in `217_SamusMain.c` (the words at file
-/// offset 0x0C onward): size 160, angle 361, knockback 65/0/10, 9 damage.
-pub const SAMUS_BOMB_HITBOX: Hitbox = Hitbox {
-    damage: 9,
-    offset: Vec3::ZERO,
-    radius: 80.0,
-    angle: 361,
-    kb_scale: 65,
-    kb_weight: 0,
-    kb_base: 10,
-    element: crate::combat::Element::Fire,
-    shield_damage: 1,
-};
-pub const SAMUS_BOMB_MAP_COLL: BodyColl = BodyColl {
-    top: 75.0,
-    center: 0.0,
-    bottom: -75.0,
-    width: 75.0,
-};
+/// offset 0x0C onward).
+pub const SAMUS_BOMB_HITBOX: Hitbox = crate::monster_weapon::weapon_attributes::SAMUS_BOMB.hitbox();
+pub const SAMUS_BOMB_MAP_COLL: BodyColl =
+    crate::monster_weapon::weapon_attributes::SAMUS_BOMB.map_coll;
 
 /// Source `wpSamusBomb`. It bounces, settles and explodes after 100 frames
 /// or on its first registered hit; the explosion lives six more frames and
@@ -768,25 +706,11 @@ pub const BOOMERANG_HOMING_DELAY: u8 = 130;
 /// plus 290 up.
 pub const BOOMERANG_CATCH_DIST: f32 = 180.0;
 
-/// `dLinkSpecial1_Boomerang_WeaponAttributes` (`226_LinkSpecial1.c`, US):
-/// size 200, angle 70, knockback 30/0/55, 9 damage.
-pub const LINK_BOOMERANG_HITBOX: Hitbox = Hitbox {
-    damage: 9,
-    offset: Vec3::ZERO,
-    radius: 100.0,
-    angle: 70,
-    kb_scale: 30,
-    kb_weight: 0,
-    kb_base: 55,
-    element: crate::combat::Element::Normal,
-    shield_damage: 1,
-};
-pub const LINK_BOOMERANG_MAP_COLL: BodyColl = BodyColl {
-    top: 150.0,
-    center: 0.0,
-    bottom: -150.0,
-    width: 150.0,
-};
+/// `llLinkSpecial1BoomerangWeaponAttributes` (`226_LinkSpecial1.c`, US).
+pub const LINK_BOOMERANG_HITBOX: Hitbox =
+    crate::monster_weapon::weapon_attributes::LINK_BOOMERANG.hitbox();
+pub const LINK_BOOMERANG_MAP_COLL: BodyColl =
+    crate::monster_weapon::weapon_attributes::LINK_BOOMERANG.map_coll;
 
 const DEG_30: f32 = core::f32::consts::PI / 6.0;
 const DEG_90: f32 = core::f32::consts::FRAC_PI_2;
@@ -1161,25 +1085,11 @@ pub const EGGTHROW_ANGLE_FORCE_MUL: f32 = -2.1;
 pub const EGGTHROW_ANGLE_ADD: f32 = -1.5;
 
 /// `llYoshiMainEggThrowWeaponAttributes` (the words at offset 0x0C of
-/// `247_YoshiMain.c`, US): size 200, angle 361, knockback 50/0/50, 14
-/// damage.
-pub const YOSHI_EGG_HITBOX: Hitbox = Hitbox {
-    damage: 14,
-    offset: Vec3::ZERO,
-    radius: 100.0,
-    angle: 361,
-    kb_scale: 50,
-    kb_weight: 0,
-    kb_base: 50,
-    element: crate::combat::Element::Normal,
-    shield_damage: 6,
-};
-pub const YOSHI_EGG_MAP_COLL: BodyColl = BodyColl {
-    top: 150.0,
-    center: 0.0,
-    bottom: -150.0,
-    width: 150.0,
-};
+/// `247_YoshiMain.c`, US).
+pub const YOSHI_EGG_HITBOX: Hitbox =
+    crate::monster_weapon::weapon_attributes::YOSHI_EGG_THROW.hitbox();
+pub const YOSHI_EGG_MAP_COLL: BodyColl =
+    crate::monster_weapon::weapon_attributes::YOSHI_EGG_THROW.map_coll;
 
 /// Source `wpYoshiEggThrow` from its throw. It arcs, and explodes on any map
 /// contact, on its first registered hit or after 50 frames. The explosion
@@ -1344,18 +1254,8 @@ pub const YOSHISTAR_OFF_Y: f32 = 20.0;
 pub const YOSHISTAR_ROTATE_SPEED: f32 = 0.24;
 
 /// `llYoshiMainStarWeaponAttributes` (offset 0x40 of `247_YoshiMain.c`,
-/// US): size 160, angle 361, knockback 100/30/0, 4 damage.
-pub const YOSHI_STAR_HITBOX: Hitbox = Hitbox {
-    damage: 4,
-    offset: Vec3::ZERO,
-    radius: 80.0,
-    angle: 361,
-    kb_scale: 100,
-    kb_weight: 30,
-    kb_base: 0,
-    element: crate::combat::Element::Normal,
-    shield_damage: -3,
-};
+/// US).
+pub const YOSHI_STAR_HITBOX: Hitbox = crate::monster_weapon::weapon_attributes::YOSHI_STAR.hitbox();
 
 /// Source `wpYoshiStar`: it slows down and is gone after 16 frames or on a
 /// hit. Its map callback does nothing.
@@ -1437,25 +1337,11 @@ impl YoshiStar {
 /// `WPFINALCUTTER_LIFETIME` and `WPFINALCUTTER_VEL` (`wpvars.h`).
 pub const KIRBY_CUTTER_LIFETIME: u16 = 20;
 pub const KIRBY_CUTTER_VEL: f32 = 100.0;
-/// `llKirbyMainCutterWeaponAttributes` in `229_KirbyMain.c` (US): size 250,
-/// angle 361, knockback 50/0/70, 6 damage.
-pub const KIRBY_CUTTER_HITBOX: Hitbox = Hitbox {
-    damage: 6,
-    offset: Vec3::ZERO,
-    radius: 125.0,
-    angle: 361,
-    kb_scale: 50,
-    kb_weight: 0,
-    kb_base: 70,
-    element: crate::combat::Element::Slash,
-    shield_damage: 1,
-};
-pub const KIRBY_CUTTER_MAP_COLL: BodyColl = BodyColl {
-    top: 220.0,
-    center: 0.0,
-    bottom: -220.0,
-    width: 50.0,
-};
+/// `llKirbyMainCutterWeaponAttributes` in `229_KirbyMain.c` (US).
+pub const KIRBY_CUTTER_HITBOX: Hitbox =
+    crate::monster_weapon::weapon_attributes::KIRBY_CUTTER.hitbox();
+pub const KIRBY_CUTTER_MAP_COLL: BodyColl =
+    crate::monster_weapon::weapon_attributes::KIRBY_CUTTER.map_coll;
 
 /// Source `wpKirbyCutter`: the Final Cutter wave. It rides the floor line it
 /// was made on, flies straight once off an edge, dies against a wall or
@@ -5436,6 +5322,7 @@ mod tests {
     /// and rebounds; `7 - 10 < 15`, so the Fireball loses (`proc_setoff`
     /// destroys it) and never reaches the hurtboxes.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn an_attack_clanks_with_a_fireball_and_both_recoil_by_the_ten_rule() {
         let at = Vec3::new(120.0, 100.0, 0.0);
         let mut weapons = fireball_at(at, -1.0);
@@ -5575,6 +5462,7 @@ mod tests {
     /// than its `damage_resist` of 50 breaks it (`reflect_damage`,
     /// `ftCommonShieldBreakFlyReflectorSetStatus`).
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_strong_weapon_breaks_foxs_reflector() {
         let mut fox = Fighter::new(FighterKind::Fox, 1, 3);
         fox.situation = Situation::Ground;
@@ -5717,6 +5605,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn bomb_bounces_then_settles_on_the_floor() {
         let mut weapons = WeaponPool::default();
         weapons.spawn(WeaponSpawn {
@@ -5923,6 +5812,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fireball_rebounds_from_every_authored_map_direction() {
         // Each line is positioned 50 units from the origin: exactly where the
         // sourced map-collision diamond's support point reaches it. The four

@@ -197,6 +197,7 @@ fn backup_clear_confirms_clears_and_blinks() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn all_data_clear_asks_twice_and_applies_options() {
     let mut b = Backup {
         is_allow_screenflash: false,

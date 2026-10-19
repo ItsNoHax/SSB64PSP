@@ -26,7 +26,6 @@
 use ssb_engine::input::N64Buttons;
 use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 
-use crate::attack::Hitbox;
 use crate::fighter::{Facing, Fighter, FighterKind};
 use crate::grab::GrabEvent;
 use crate::physics;
@@ -110,26 +109,6 @@ const STONE_START_FLAG1_FRAME: f32 = 6.0;
 const STONE_AIR_START_FLAG1_FRAME: f32 = 18.0;
 const INHALE_SPIT_FRAME: f32 = 7.0;
 const INHALE_COPY_FRAME: f32 = 8.0;
-
-const fn catch_box(size: f32, y: f32, z: f32) -> Hitbox {
-    Hitbox {
-        damage: 0,
-        radius: size / 2.0,
-        offset: Vec3::new(0.0, y, z),
-        angle: 361,
-        kb_scale: 100,
-        kb_weight: 0,
-        kb_base: 0,
-        element: crate::combat::Element::Normal,
-        shield_damage: 0,
-    }
-}
-
-/// `InhaleGround` (US): the two TopN boxes the Inhale loop searches with.
-pub const INHALE_CATCH: [(Hitbox, u8); 2] = [
-    (catch_box(290.0, 240.0, 200.0), 0),
-    (catch_box(360.0, 240.0, 410.0), 0),
-];
 
 /// Kirby's passive copy, status vars and motion flags.
 #[derive(Debug, Clone, Copy, PartialEq)]

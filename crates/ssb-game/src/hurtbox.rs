@@ -882,6 +882,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn without_posed_joints_the_root_sphere_stands_in() {
         let f = Fighter::new(FighterKind::Mario, 0, 3);
         assert_eq!(

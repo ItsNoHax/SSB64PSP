@@ -28,6 +28,7 @@ fn played() -> Backup {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_default_lays_out_as_the_n64_struct() {
     let copy = Backup::default().encode();
     // `is_allow_screenflash`, stereo, the screen offsets, Mario, no

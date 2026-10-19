@@ -134,6 +134,7 @@ fn the_rule_steps_through_its_four_values() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn time_wraps_through_infinite_and_stock_from_one_to_ninety_nine() {
     let mut m = menu();
     run(&mut m, tap(N64Buttons::D_DOWN));
@@ -164,6 +165,7 @@ fn time_wraps_through_infinite_and_stock_from_one_to_ninety_nine() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_held_value_doubles_its_first_wait() {
     let mut m = menu();
     m.cursor = Button::TimeStock;

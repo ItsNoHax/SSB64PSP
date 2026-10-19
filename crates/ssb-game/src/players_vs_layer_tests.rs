@@ -255,6 +255,7 @@ fn a_human_placed_with_handicap_off_shows_no_level() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn with_handicap_on_a_placed_human_shows_its_handicap() {
     let state = BattleState {
         handicap: Handicap::On,
@@ -331,6 +332,7 @@ fn the_fighter_turns_until_placed_then_plays_its_selected_status() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_ready_banner_blinks_thirty_of_forty_counts() {
     let mut s = first_visit(BattleState::default());
     hover(&mut s, FighterKind::Yoshi);

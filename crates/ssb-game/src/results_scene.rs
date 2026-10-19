@@ -40,32 +40,38 @@ pub struct Camera {
     pub viewport: [f32; 4],
 }
 
-/// `mnVSResultsMakeFighterCamera`: eye (0, 0, 1800) on the origin, and
-/// `dGCPerspDefault`'s projection (generated from the ROM,
-/// [`crate::d_arrays`]), which `gcAddCameraMatrixSets` gives every camera
-/// it makes.
-pub const CAMERA: Camera = Camera {
-    eye: Vec3 {
-        x: 0.0,
-        y: 0.0,
-        z: 1800.0,
-    },
-    at: Vec3 {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
-    },
-    up: Vec3 {
-        x: 0.0,
-        y: 1.0,
-        z: 0.0,
-    },
-    fovy: crate::d_arrays::GC_PERSP_DEFAULT_FOVY[0],
-    aspect: crate::d_arrays::GC_PERSP_DEFAULT_ASPECT[0],
-    near: crate::d_arrays::GC_PERSP_DEFAULT_NEAR[0],
-    far: crate::d_arrays::GC_PERSP_DEFAULT_FAR[0],
-    viewport: [10.0, 10.0, 310.0, 230.0],
-};
+/// `dGCPerspDefault`'s `fovy` (degrees), `aspect`, `near` and `far`,
+/// generated from the ROM: the projection `gcAddCameraMatrixSets` gives
+/// every camera it makes.
+pub const PERSP_FOVY: f32 = crate::d_arrays::GC_PERSP_DEFAULT_FOVY[0];
+pub const PERSP_ASPECT: f32 = crate::d_arrays::GC_PERSP_DEFAULT_ASPECT[0];
+pub const PERSP_NEAR: f32 = crate::d_arrays::GC_PERSP_DEFAULT_NEAR[0];
+pub const PERSP_FAR: f32 = crate::d_arrays::GC_PERSP_DEFAULT_FAR[0];
+
+impl Camera {
+    /// A camera at `eye` looking at `at`, up +y, with `dGCPerspDefault`'s
+    /// projection.
+    pub const fn persp_default(eye: Vec3, at: Vec3, viewport: [f32; 4]) -> Camera {
+        Camera {
+            eye,
+            at,
+            up: Vec3::new(0.0, 1.0, 0.0),
+            fovy: PERSP_FOVY,
+            aspect: PERSP_ASPECT,
+            near: PERSP_NEAR,
+            far: PERSP_FAR,
+            viewport,
+        }
+    }
+}
+
+/// `mnVSResultsMakeFighterCamera`: eye (0, 0, 1800) on the origin, with
+/// the default projection ([`Camera::persp_default`]).
+pub const CAMERA: Camera = Camera::persp_default(
+    Vec3::new(0.0, 0.0, 1800.0),
+    Vec3::ZERO,
+    [10.0, 10.0, 310.0, 230.0],
+);
 
 /// `nFTDemoStatusWin1` to `nFTDemoStatusLose`, the statuses the results
 /// set (`scSubsysFighterSetStatus`).

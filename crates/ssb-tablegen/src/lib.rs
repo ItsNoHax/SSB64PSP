@@ -91,6 +91,7 @@ mod sin_table;
 #[allow(dead_code)]
 mod source;
 mod stat_flags;
+mod throw_descs;
 
 pub use source::Source;
 
@@ -191,6 +192,14 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
                 Generated {
                     name: "kirby_copy.rs",
                     text: kirby_copy::generate(rom)?,
+                },
+                Generated {
+                    name: "throw_descs.rs",
+                    text: throw_descs::generate(rom)?,
+                },
+                Generated {
+                    name: "special_colls.rs",
+                    text: throw_descs::generate_special_colls(rom)?,
                 },
             ];
             files.extend(battle_data::generate(rom)?);

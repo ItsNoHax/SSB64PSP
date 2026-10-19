@@ -5122,7 +5122,7 @@ pub unsafe fn draw_stage(
 
 /// `dGRDisplayDescs[layer].dl_link`: the display link each render layer
 /// draws on.
-pub const STAGE_LAYER_LINKS: [u8; 4] = [4, 6, 13, 17];
+pub use ssb_game::stage::LAYER_DL_LINKS as STAGE_LAYER_LINKS;
 
 /// One render layer's posed node matrices and billboard scales.
 struct LayerPose {

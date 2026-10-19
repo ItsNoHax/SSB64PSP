@@ -45,6 +45,7 @@ pub const SHOTS: [&str; 13] = [
     "FFLOWER_FLAME",
 ];
 
+const ATTACK_OFFSETS: usize = 0x10;
 const MAP_COLL: usize = 0x1C;
 const SIZE_WORD: usize = 0x24;
 const ATTACK_WORD: usize = 0x28;
@@ -79,7 +80,24 @@ fn shot(data: &[u8], file: u32, base: usize) -> Result<String> {
     let a = word(ATTACK_WORD)?;
     let f = word(FLAGS_WORD)?;
     let element = name(&ELEMENTS, (a >> 10) & 0xF, file, base + ATTACK_WORD)?;
+    let offsets: Vec<String> = (0..2)
+        .map(|i| {
+            let c: Vec<String> = (0..3)
+                .map(|j| {
+                    Ok(emit::f32_lit(f32::from(
+                        be_u16(data, base + ATTACK_OFFSETS + 6 * i + 2 * j)? as i16,
+                    )))
+                })
+                .collect::<Result<_>>()?;
+            Ok(format!("[{}]", c.join(", ")))
+        })
+        .collect::<Result<_>>()?;
     let mut w = String::from("ShotAttributes {\n");
+    let _ = writeln!(
+        w,
+        "        attack_offsets: [{}, {}],",
+        offsets[0], offsets[1]
+    );
     let _ = writeln!(
         w,
         "        map_coll: BodyColl {{ top: {}, center: {}, bottom: {}, width: {} }},",
@@ -105,6 +123,7 @@ fn shot(data: &[u8], file: u32, base: usize) -> Result<String> {
 }
 
 const STUB_SHOT: &str = "ShotAttributes {\n\
+    \x20       attack_offsets: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],\n\
     \x20       map_coll: BodyColl { top: 0.0, center: 0.0, bottom: 0.0, width: 0.0 },\n\
     \x20       size: 0.0,\n\
     \x20       angle: 0,\n\
@@ -171,6 +190,20 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
         let _ = writeln!(w, "    // {shot_name}\n    {body},");
     }
     w.push_str("];\n\n");
+    w.push_str(
+        "/// Every `ll*WeaponAttributes` record (`item_sounds::WEAPONS`), the\n\
+         /// fighters', the boss's and the stages' weapons too, by its name there.\n\
+         #[rustfmt::skip]\n\
+         pub mod weapon {\n    use super::*;\n\n",
+    );
+    for &(weapon_name, file, at) in WEAPONS.iter() {
+        let body = match rom {
+            Some(rom) => shot(&rom.file(file)?.data, file, at as usize)?,
+            None => STUB_SHOT.to_string(),
+        };
+        let _ = writeln!(w, "    pub const {weapon_name}: ShotAttributes = {body};");
+    }
+    w.push_str("}\n\n");
     let scale = match rom {
         Some(rom) => smog_scale(&rom.file(SMOG_FILE)?.data)?,
         None => [0.0; SMOG_PLAYS],
@@ -195,13 +228,17 @@ mod tests {
     #[test]
     fn stub_tables_have_every_shot() {
         let text = generate(None).unwrap();
-        assert_eq!(text.matches("ShotAttributes {\n").count(), SHOTS.len());
+        assert_eq!(
+            text.matches("ShotAttributes {\n").count(),
+            SHOTS.len() + WEAPONS.len()
+        );
         assert!(text.contains("pub const SMOG_SCALE: [f32; 30]"));
     }
 
     #[test]
     fn fields_decode_msb_first() {
         let mut d = vec![0u8; 0x34];
+        d[ATTACK_OFFSETS + 2..ATTACK_OFFSETS + 4].copy_from_slice(&(-100i16).to_be_bytes());
         d[MAP_COLL..MAP_COLL + 2].copy_from_slice(&10i16.to_be_bytes());
         d[MAP_COLL + 2..MAP_COLL + 4].copy_from_slice(&(-10i16).to_be_bytes());
         // size 200, angle -5.
@@ -217,6 +254,7 @@ mod tests {
             .copy_from_slice(&(50u32 << 22).to_be_bytes());
         let text = shot(&d, 0, 0).unwrap();
         for want in [
+            "attack_offsets: [[0.0, -100.0, 0.0], [0.0, 0.0, 0.0]]",
             "top: 10.0, center: -10.0",
             "size: 200.0",
             "angle: -5",

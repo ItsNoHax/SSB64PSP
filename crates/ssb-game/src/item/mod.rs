@@ -96,7 +96,8 @@ pub mod utility;
 mod utility_tests;
 
 /// Every item's `ITAttributes` ([`attributes`]) and `spin_speed`
-/// ([`spin`]), named after its `ll*ItemAttributes` symbol: ROM data,
+/// ([`spin`]), named after its `ll*ItemAttributes` symbol, the
+/// `ll*AttackEvents` tables ([`attack_events`]) and two `f32` arrays: ROM data,
 /// generated at build time from the user's ROM by `crates/ssb-tablegen`
 /// (never committed; zeros in a stub build).
 #[allow(clippy::all)]
@@ -107,7 +108,7 @@ mod generated {
     use ssb_engine::math::Vec3;
     include!(concat!(env!("OUT_DIR"), "/item_attributes.rs"));
 }
-pub use generated::{attributes, spin};
+pub use generated::{attack_events, attributes, spin};
 
 /// `ITEM_ALLOC_MAX`.
 pub const ITEM_ALLOC_MAX: usize = 16;
@@ -2829,10 +2830,7 @@ where
 }
 
 /// `llITCommonDataContainerVelocitiesY` (file 251 + 0), by `ITKind`.
-const CONTAINER_VEL_Y: [f32; 20] = [
-    26.0, 26.0, 26.0, 26.0, 26.0, 26.0, 26.0, 40.0, 26.0, 26.0, 26.0, 26.0, 26.0, 26.0, 26.0, 26.0,
-    26.0, 26.0, 26.0, 26.0,
-];
+const CONTAINER_VEL_Y: [f32; 20] = generated::CONTAINER_VELOCITIES_Y;
 /// `dITBoxItemSpawnVelocities`: one item, two, then three.
 const BOX_SPAWN_VELOCITIES: [(f32, f32); 6] = {
     let v = crate::d_arrays::IT_BOX_ITEM_SPAWN_VELOCITIES;

@@ -24,6 +24,26 @@ use crate::fighter::Fighter;
 /// from the ROM's scripts (RE-412).
 pub const EXPLODE_TICKS: u16 = 36;
 
+/// `dEFManagerDeadExplodeEnvColorChild{R,G,B}[player]`: ENV of the blast's
+/// first drawn DObj (`dobj->child`), generated from the ROM.
+pub const DEAD_EXPLODE_ENV_CHILD: [[u8; 3]; 4] = dead_explode_env(3);
+/// `dEFManagerDeadExplodeEnvColorSibling{R,G,B}[player]`: ENV of the third
+/// (`dobj->child->sib_next->sib_next`). The second keeps its display
+/// list's own `G_SETENVCOLOR`.
+pub const DEAD_EXPLODE_ENV_SIBLING: [[u8; 3]; 4] = dead_explode_env(0);
+
+/// The `[R, G, B]` per player of the three channel arrays from `first`.
+const fn dead_explode_env(first: usize) -> [[u8; 3]; 4] {
+    let c = crate::d_arrays::EF_MANAGER_DEAD_EXPLODE_ENV_COLORS;
+    let mut out = [[0; 3]; 4];
+    let mut p = 0;
+    while p < 4 {
+        out[p] = [c[first][p], c[first + 1][p], c[first + 2][p]];
+        p += 1;
+    }
+    out
+}
+
 /// One live explosion.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Explosion {

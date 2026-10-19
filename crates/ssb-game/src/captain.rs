@@ -4,7 +4,6 @@
 use ssb_engine::input::N64Buttons;
 use ssb_engine::math::{sin_cos, Vec3};
 
-use crate::attack::Hitbox;
 use crate::fighter::Fighter;
 use crate::grab::{GrabEvent, ThrowHitDesc};
 use crate::physics;
@@ -20,59 +19,7 @@ const DIVE_TURN_STICK_MIN: i32 = 18;
 
 /// `dCaptainMainMotion_0x1C54`: the Falcon Dive victim knockback and the
 /// damage-release descriptor if Captain is hit while holding.
-pub const DIVE_THROW: [ThrowHitDesc; 2] = [
-    ThrowHitDesc {
-        status: None,
-        damage: 20,
-        angle: 361,
-        kb_scale: 82,
-        kb_weight: 0,
-        kb_base: 30,
-        element: crate::combat::Element::Fire,
-    },
-    ThrowHitDesc {
-        status: None,
-        damage: 8,
-        angle: 361,
-        kb_scale: 100,
-        kb_weight: 0,
-        kb_base: 0,
-        element: crate::combat::Element::Normal,
-    },
-];
-
-/// The two root-attached catch boxes at Falcon Dive frame 13. The second is
-/// cleared one frame later; the first remains until frame 45.
-pub const DIVE_CATCH: [(Hitbox, u8); 2] = [
-    (
-        Hitbox {
-            damage: 1,
-            radius: 100.0,
-            offset: Vec3::new(0.0, 260.0, 180.0),
-            angle: 361,
-            kb_scale: 100,
-            kb_weight: 0,
-            kb_base: 0,
-            element: crate::combat::Element::Normal,
-            shield_damage: 0,
-        },
-        0,
-    ),
-    (
-        Hitbox {
-            damage: 1,
-            radius: 150.0,
-            offset: Vec3::new(0.0, 260.0, 400.0),
-            angle: 361,
-            kb_scale: 100,
-            kb_weight: 0,
-            kb_base: 0,
-            element: crate::combat::Element::Normal,
-            shield_damage: 0,
-        },
-        0,
-    ),
-];
+pub const DIVE_THROW: [ThrowHitDesc; 2] = crate::grab::throw_descs::CAPTAIN_DIVE;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CaptainState {

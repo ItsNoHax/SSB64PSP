@@ -473,24 +473,9 @@ pub const DEAD_EXPLODE_MAT_SCRIPTS: [[u32; 3]; 4] = [
     [0x5880, 0x589C, 0x58B8],
 ];
 
-/// `dEFManagerDeadExplodeEnvColorChild*[player]`: ENV of the blast's first
-/// drawn DObj (`dobj->child`).
-pub const DEAD_EXPLODE_ENV_CHILD: [[u8; 3]; 4] = [
-    [0xA6, 0x62, 0x21],
-    [0x1F, 0xFF, 0xA1],
-    [0x3E, 0x6D, 0xFF],
-    [0xFB, 0x66, 0xC7],
-];
-
-/// `dEFManagerDeadExplodeEnvColorSibling*[player]`: ENV of the third
-/// (`dobj->child->sib_next->sib_next`). The second keeps its display
-/// list's own `G_SETENVCOLOR`.
-pub const DEAD_EXPLODE_ENV_SIBLING: [[u8; 3]; 4] = [
-    [0xFF, 0x62, 0x4B],
-    [0x00, 0x7E, 0xFF],
-    [0xFF, 0xFF, 0x00],
-    [0x00, 0xFF, 0x00],
-];
+/// `dEFManagerDeadExplodeEnvColor{Child,Sibling}*[player]`, generated from
+/// the ROM (`ssb_game::ko`).
+pub use ssb_game::ko::{DEAD_EXPLODE_ENV_CHILD, DEAD_EXPLODE_ENV_SIBLING};
 
 /// `dEFManagerRebirthHaloEffectDesc`: file 85's halo tree
 /// (`llEFCommonEffects3RebirthHaloDObjDesc`), slot 12 of

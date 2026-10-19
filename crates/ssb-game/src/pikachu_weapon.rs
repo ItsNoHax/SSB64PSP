@@ -1,51 +1,20 @@
 //! `wppikachuthunderjolt.c` / `wppikachuthunder.c` (US).
 use super::*;
 
-const JOLT_COLL: BodyColl = BodyColl {
-    top: 50.0,
-    center: 0.0,
-    bottom: -50.0,
-    width: 50.0,
-};
-const HEAD_COLL: BodyColl = BodyColl {
-    top: 100.0,
-    center: 0.0,
-    bottom: -100.0,
-    width: 50.0,
-};
-const JOLT_AIR: Hitbox = Hitbox {
-    damage: 10,
-    radius: 100.0,
-    offset: Vec3::ZERO,
-    angle: 361,
-    kb_scale: 30,
-    kb_weight: 0,
-    kb_base: 50,
-    element: crate::combat::Element::Electric,
-    shield_damage: 1,
-};
-const JOLT_GROUND: Hitbox = Hitbox {
-    damage: 7,
-    radius: 100.0,
-    offset: Vec3::ZERO,
-    angle: 361,
-    kb_scale: 20,
-    kb_weight: 0,
-    kb_base: 10,
-    element: crate::combat::Element::Electric,
-    shield_damage: 1,
-};
-pub(super) const TRAIL_HIT: Hitbox = Hitbox {
-    damage: 12,
-    radius: 200.0,
-    offset: Vec3::ZERO,
-    angle: 70,
-    kb_scale: 50,
-    kb_weight: 0,
-    kb_base: 80,
-    element: crate::combat::Element::Electric,
-    shield_damage: 1,
-};
+// `llPikachuSpecial1ThunderJolt{Air,Ground}WeaponAttributes` and
+// `llPikachuMainThunder{Head,Trail}WeaponAttributes`, generated from the ROM
+// at build time. The attacks keep no offset and the ground jolt the air
+// jolt's map collision, as the port did before (the ROM's ground record has
+// an offset and its own box).
+const JOLT_COLL: BodyColl =
+    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_AIR.map_coll;
+const HEAD_COLL: BodyColl = crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_HEAD.map_coll;
+const JOLT_AIR: Hitbox =
+    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_AIR.hitbox();
+const JOLT_GROUND: Hitbox =
+    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_GROUND.hitbox();
+pub(super) const TRAIL_HIT: Hitbox =
+    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_TRAIL.hitbox();
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThunderJolt {
@@ -651,6 +620,7 @@ mod tests {
         }
     }
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn air_jolt_converts_with_remaining_life_and_ground_damage() {
         let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 0.0, 70.0));
         let floor = [surface(
@@ -680,6 +650,7 @@ mod tests {
         assert_eq!(j.position.x - x, 55.0);
     }
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn ground_jolt_restarts_its_animation_every_push_frame() {
         let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 0.0, 70.0));
         let floor = [surface(
@@ -710,6 +681,7 @@ mod tests {
         assert_eq!((j.anim_epoch, j.anim_ticks), (3, 1));
     }
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn air_jolt_resolves_ceiling_without_converting_and_expires_on_tick_100() {
         let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 0.0, 0.0));
         j.velocity = Vec3::new(0.0, 40.0, 0.0);

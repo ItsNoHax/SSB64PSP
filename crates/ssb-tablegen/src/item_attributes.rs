@@ -27,6 +27,56 @@ use crate::item_sounds::ITEMS;
 use crate::source::{be_u16, be_u32};
 use crate::{emit, Error, Result, Source};
 
+/// `ITAttackEvent[4]` tables (`ll*AttackEvents`, `reloc_data.us.h`): the
+/// constant's name, file and offset.
+pub const ATTACK_EVENTS: [(&str, u32, u32); 8] = [
+    ("CAPSULE", 251, 0x98),
+    ("MSBOMB", 251, 0x404),
+    ("BOMBHEI", 251, 0x46C),
+    ("BOX", 251, 0x614),
+    ("TARU", 251, 0x67C),
+    ("EGG", 251, 0xB14),
+    ("LINK_BOMB", 225, 0x88),
+    ("TARUBOMB", 0x127, 0xF0),
+];
+/// Events per table.
+const ATTACK_EVENT_COUNT: usize = 4;
+/// `sizeof(ITAttackEvent)`: `timer:8`, `angle:10` (signed), `damage:8` in
+/// the first word, MSB first; `size` the next halfword.
+const ATTACK_EVENT_SIZE: usize = 8;
+/// `f32` arrays: the constant's name, its symbol, file, offset and count.
+/// `llITCommonDataContainerVelocitiesY` has one per `ITKind` up to the
+/// containers'.
+const FLOAT_TABLES: [(&str, &str, u32, usize, usize); 2] = [
+    (
+        "CONTAINER_VELOCITIES_Y",
+        "llITCommonDataContainerVelocitiesY",
+        251,
+        0x0,
+        20,
+    ),
+    (
+        "LINK_BOMB_BLOAT_SCALES",
+        "llLinkMainBombBloatScales",
+        225,
+        0xA8,
+        6,
+    ),
+];
+
+/// One `ITAttackEvent` as `(timer, angle, damage, size)`.
+fn attack_event(data: &[u8], at: usize) -> Result<String> {
+    let w = be_u32(data, at)?;
+    let size = be_u16(data, at + 4)?;
+    let angle = ((w << 8) as i32) >> 22;
+    Ok(format!(
+        "({}, {angle}, {}, {})",
+        w >> 24,
+        (w >> 6) & 0xFF,
+        emit::f32_lit(f32::from(size))
+    ))
+}
+
 /// `sizeof(ITAttributes)`.
 pub const SIZE: usize = 0x48;
 const FLAGS: usize = 0x10;
@@ -194,7 +244,45 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
     for (name, spin) in spins {
         let _ = writeln!(w, "    pub const {name}: u16 = {spin};");
     }
+    w.push_str(
+        "}\n\n/// Each `ll*AttackEvents` table: `(timer, angle, damage, size)` per\n\
+         /// `ITAttackEvent`.\n\
+         #[rustfmt::skip]\n\
+         pub mod attack_events {\n",
+    );
+    for (name, file, at) in ATTACK_EVENTS {
+        let rows: Vec<String> = match rom {
+            Some(rom) => {
+                let data = rom.file(file)?.data;
+                (0..ATTACK_EVENT_COUNT)
+                    .map(|i| attack_event(&data, at as usize + i * ATTACK_EVENT_SIZE))
+                    .collect::<Result<_>>()?
+            }
+            None => vec!["(0, 0, 0, 0.0)".to_string(); ATTACK_EVENT_COUNT],
+        };
+        let _ = writeln!(
+            w,
+            "    pub const {name}: [(u16, i32, i32, f32); {ATTACK_EVENT_COUNT}] = [{}];",
+            rows.join(", ")
+        );
+    }
     w.push_str("}\n");
+    for (name, symbol, file, at, count) in FLOAT_TABLES {
+        let cells: Vec<String> = match rom {
+            Some(rom) => {
+                let data = rom.file(file)?.data;
+                (0..count)
+                    .map(|i| Ok(emit::f32_lit(f32::from_bits(be_u32(&data, at + 4 * i)?))))
+                    .collect::<Result<_>>()?
+            }
+            None => vec!["0.0".to_string(); count],
+        };
+        let _ = writeln!(
+            w,
+            "\n/// `{symbol}`.\npub const {name}: [f32; {count}] = [{}];",
+            cells.join(", ")
+        );
+    }
     Ok(w)
 }
 
@@ -210,6 +298,23 @@ mod tests {
             ITEMS.len()
         );
         assert_eq!(text.matches(": u16 = 0;").count(), ITEMS.len());
+    }
+
+    #[test]
+    fn attack_events_decode_msb_first() {
+        // timer 4, angle -30, damage 20, size 150.
+        let w: u32 = (4 << 24) | (((-30i32 as u32) & 0x3FF) << 14) | (20 << 6);
+        let mut d = w.to_be_bytes().to_vec();
+        d.extend_from_slice(&150u16.to_be_bytes());
+        d.extend_from_slice(&[0, 0]);
+        assert_eq!(attack_event(&d, 0).unwrap(), "(4, -30, 20, 150.0)");
+        let text = generate(None).unwrap();
+        assert_eq!(
+            text.matches("; 4] = [(0, 0, 0, 0.0)").count(),
+            ATTACK_EVENTS.len()
+        );
+        assert!(text.contains("pub const CONTAINER_VELOCITIES_Y: [f32; 20]"));
+        assert!(text.contains("pub const LINK_BOMB_BLOAT_SCALES: [f32; 6]"));
     }
 
     #[test]

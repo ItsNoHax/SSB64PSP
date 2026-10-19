@@ -28,8 +28,8 @@ use ssb_engine::math::{Vec2, Vec3};
 /// A **diamond**, not a box. The four points are `(0, top)`, `(±width,
 /// center)` and `(0, bottom)`, all as offsets from the body's origin, so
 /// `center` is a *height* — the waist where the body is widest — and not a
-/// centre point. Mario's `{320, 190, 0, 150}` is a body 320 tall whose widest
-/// span is 300 across, at hip height.
+/// centre point: the widest span is `2 * width` across, at hip height for
+/// the fighters.
 ///
 /// The floor probe runs at `pos.y + bottom`; [`crate::map`] uses the top
 /// and both waist points for ceiling/wall probes and diamond correction.
@@ -47,11 +47,14 @@ pub struct BodyColl {
 impl BodyColl {
     /// Mario's, from `dMarioMain_attr.map_coll`. Used where a test wants a
     /// real body rather than a point.
-    pub const MARIO: BodyColl = BodyColl {
-        top: 320.0,
-        center: 190.0,
-        bottom: 0.0,
-        width: 150.0,
+    pub const MARIO: BodyColl = {
+        let [top, center, bottom, width] = crate::physics::MARIO_MAP_COLL;
+        BodyColl {
+            top,
+            center,
+            bottom,
+            width,
+        }
     };
 }
 

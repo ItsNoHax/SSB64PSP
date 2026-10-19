@@ -8,15 +8,14 @@ use crate::fighter::{Facing, Fighter, FighterKind};
 use crate::item::{HeldItem, ItemRequest, ItemType, ItemWeight};
 use crate::status::{self, AnyStatus, DonkeyStatus, Status, StatusTiming};
 
-/// `FTAttributes::itemlight_joint_id`, including polygon variants.
+/// `FTAttributes::itemlight_joint_id`, including polygon variants (ROM data,
+/// generated at build time into [`crate::motion::CombatAttrs`]). Master
+/// Hand has none (`-1`) and never holds an item: TopN then.
 pub fn itemlight_joint(kind: FighterKind) -> usize {
-    match crate::grab::base_kind(kind) {
-        FighterKind::Samus => 11,
-        FighterKind::Link | FighterKind::Purin => 16,
-        FighterKind::Pikachu => 12,
-        FighterKind::Yoshi => 18,
-        _ => 17,
-    }
+    crate::motion::combat_attrs(kind)
+        .map(|a| a.joint_itemlight_id)
+        .filter(|&j| j != u8::MAX)
+        .map_or(0, usize::from)
 }
 
 /// `FTItemPickup`, from each fighter's `relocData/*Main.c`.
@@ -28,33 +27,15 @@ pub struct Pickup {
     pub range_heavy: Vec2,
 }
 
+/// `attr->item_pickup` (ROM data, generated at build time into
+/// [`crate::motion::CombatAttrs`]; zeros in a stub build).
 pub fn pickup(kind: FighterKind) -> Pickup {
-    let (offset, range, range_y, heavy) = match kind {
-        FighterKind::Donkey => (163.0, 588.0, 200.0, 116.0),
-        FighterKind::Samus | FighterKind::Captain => (107.0, 386.0, 200.0, 75.0),
-        FighterKind::Kirby => (112.0, 403.0, 150.0, 80.0),
-        FighterKind::Purin => (118.0, 420.0, 200.0, 80.0),
-        FighterKind::Yoshi => (100.0, 588.0, 200.0, 0.0),
-        FighterKind::PolyDonkey | FighterKind::GiantDonkey => (163.0, 490.0, 150.0, 116.0),
-        FighterKind::PolySamus | FighterKind::PolyCaptain => (107.0, 322.0, 150.0, 75.0),
-        FighterKind::PolyKirby => (112.0, 336.0, 150.0, 80.0),
-        FighterKind::PolyPurin => (118.0, 350.0, 150.0, 80.0),
-        FighterKind::PolyYoshi => (100.0, 490.0, 150.0, 0.0),
-        FighterKind::PolyFox => (105.0, 314.0, 150.0, 75.0),
-        FighterKind::PolyPikachu => (78.0, 230.0, 150.0, 75.0),
-        FighterKind::PolyMario
-        | FighterKind::PolyLuigi
-        | FighterKind::PolyLink
-        | FighterKind::PolyNess
-        | FighterKind::MetalMario => (105.0, 315.0, 150.0, 75.0),
-        FighterKind::Boss => (0.0, 150.0, 150.0, 0.0),
-        _ => (105.0, 378.0, 200.0, 75.0),
-    };
+    let p = crate::motion::combat_attrs(kind).map_or([0.0; 8], |a| a.item_pickup);
     Pickup {
-        offset_light: Vec2::new(offset, 0.0),
-        range_light: Vec2::new(range, range_y),
-        offset_heavy: Vec2::new(heavy, 0.0),
-        range_heavy: Vec2::new(150.0, 150.0),
+        offset_light: Vec2::new(p[0], p[1]),
+        range_light: Vec2::new(p[2], p[3]),
+        offset_heavy: Vec2::new(p[4], p[5]),
+        range_heavy: Vec2::new(p[6], p[7]),
     }
 }
 

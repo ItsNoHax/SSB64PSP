@@ -67,6 +67,7 @@ fn manager_carries_stocks_and_runs_all_fourteen_common_stages() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn continues_retry_same_stage_lower_levels_every_two_losses_and_reset_on_clear() {
     let mut data = SceneData::default();
     let mut state = BattleState::default();
@@ -280,6 +281,7 @@ fn race_timer_failure_keeps_campaign_stocks_and_wins_a_finish_gate_tie() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn race_fall_consumes_a_campaign_stock_and_returns_to_results() {
     use crate::battle::{Frame, GameStatus};
     let mut backup = Backup::default();

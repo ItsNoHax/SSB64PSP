@@ -324,6 +324,7 @@ fn a_shielding_cpu_lets_go_of_the_shield() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn an_incoming_weapon_is_answered() {
     let f = standing_mario(0.0);
     let opponents = [player_at(1500.0)];
@@ -521,6 +522,7 @@ fn the_cpu_tracks_an_item_after_its_level_wait() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_tracked_item_in_reach_is_picked_up() {
     let mut f = standing_mario(0.0);
     f.facing = Facing::Right;
@@ -639,6 +641,7 @@ fn a_loaded_gun_fires_at_a_target_on_its_level() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn an_incoming_item_attack_is_answered_and_fox_reflects() {
     let mut f = standing_mario(0.0);
     f.kind = FighterKind::Fox;

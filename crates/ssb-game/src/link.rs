@@ -48,19 +48,12 @@ pub const WPSPINATTACK_OFF_X: f32 = 40.0;
 pub const WPSPINATTACK_OFF_Y: f32 = 80.0;
 pub const WPSPINATTACK_ANGLE: f32 = 0.174_532_94; // 10 degrees
 
-/// `llLinkMainSpinAttackWeaponAttributes` (the words at offset 0x0C of
-/// `225_LinkMain.c`, US): angle 30, knockback 50/0/30, 5 damage. The size
-/// word (400) is replaced by the motion script's flag-2 sizes.
+/// `llLinkMainSpinAttackWeaponAttributes` (file 225 + 0x0C, US), generated
+/// from the ROM at build time. Its size is replaced by the motion script's
+/// flag-2 sizes.
 pub const SPIN_ATTACK_HITBOX: Hitbox = Hitbox {
-    damage: 5,
-    offset: Vec3::ZERO,
     radius: 0.0,
-    angle: 30,
-    kb_scale: 50,
-    kb_weight: 0,
-    kb_base: 30,
-    element: crate::combat::Element::Normal,
-    shield_damage: 1,
+    ..crate::monster_weapon::weapon_attributes::LINK_SPIN_ATTACK.hitbox()
 };
 
 /// Figatree lengths (`ssb_rom::anim::EXPECTED_FRAMES`).

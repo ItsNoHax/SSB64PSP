@@ -79,6 +79,7 @@ fn sizes(fx: &[WeaponEffect]) -> std::vec::Vec<i32> {
 /// the searched (earlier) weapon's set-off first, each at its own staled
 /// damage; each then runs its `proc_setoff` (the Fireball's sparkle).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn two_fireballs_clash_and_both_set_off_the_earlier_first() {
     let mut pool = WeaponPool::default();
     assert!(pool.spawn(spawn(WeaponKind::MarioFireball, 0, 0.0, 1.0)));
@@ -104,6 +105,7 @@ fn two_fireballs_clash_and_both_set_off_the_earlier_first() {
 /// A weapon never clashes with its owner's, nor with its team's while team
 /// attack is off.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn owners_and_teams_spare_their_weapons() {
     let mut pool = WeaponPool::default();
     pool.spawn(spawn(WeaponKind::MarioFireball, 0, 0.0, 1.0));
@@ -158,6 +160,7 @@ fn a_full_charge_shot_outranks_a_fireball() {
 /// The clash records each side on the other: two Boomerangs that turned
 /// back on their first clash do not clash again.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_clashed_pair_is_recorded_and_passes_through_afterwards() {
     let mut pool = WeaponPool::default();
     let boomerang = WeaponKind::LinkBoomerang {
@@ -191,6 +194,7 @@ fn a_blaster_and_a_bomb_never_clash() {
 /// The Star's `proc_setoff` (`wpYoshiStarProcHit`) sparkles and, without
 /// `hit_normal_damage`, lets it fly on; the Final Cutter's destroys it.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_star_survives_its_set_off_and_a_cutter_does_not() {
     let mut pool = WeaponPool::default();
     pool.spawn(spawn(
@@ -274,6 +278,7 @@ fn effects_are_made_in_link_order() {
 /// and a dust cloud, in that order; sixteen eggs landing together fit the
 /// queue.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn an_egg_landing_makes_its_four_effects_and_sixteen_fit() {
     let mut pool = WeaponPool::default();
     let egg = WeaponKind::YoshiEgg {

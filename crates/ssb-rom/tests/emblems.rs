@@ -107,3 +107,14 @@ fn an_emblems_start_frame_is_its_players_colour() {
         }
     }
 }
+
+/// The ten series by fighter kind: Luigi shares Mario's emblem and
+/// Jigglypuff Pikachu's, so twelve kinds give ten `EMBLEMS`.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn each_series_is_numbered_at_its_first_fighter() {
+    assert_eq!(
+        ssb_rom::effect::EMBLEM_BY_FIGHTER,
+        [0, 1, 2, 3, 0, 4, 5, 6, 7, 8, 8, 9]
+    );
+}

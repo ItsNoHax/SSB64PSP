@@ -13,6 +13,7 @@ fn stick(x: i8, y: i8) -> ControllerState {
 const NONE: N64Buttons = N64Buttons(0);
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn combo_stats_count_accepted_hits_before_the_log_limit_and_reset_outside_hitlag() {
     use crate::{
         attack, combat,
@@ -20,7 +21,7 @@ fn combo_stats_count_accepted_hits_before_the_log_limit_and_reset_outside_hitlag
     };
     use ssb_engine::math::Vec3;
     let mut f = Fighter::new(FighterKind::Mario, 1, -1);
-    let hit = attack::MARIO_JAB1_HITBOX;
+    let hit = attack::mario_jab1_hitbox();
     for _ in 0..12 {
         assert!(combat::direct_hit(
             &mut f,
@@ -72,7 +73,7 @@ fn held_damage_and_throws_contribute_actual_damage_and_invincible_hits_do_not() 
     f.damage_mul = 0.5;
     let hit = attack::Hitbox {
         damage: 5,
-        ..attack::MARIO_JAB1_HITBOX
+        ..attack::mario_jab1_hitbox()
     };
     combat::direct_hit(&mut f, hit, Vec3::ZERO, 1.0, 9, combat::DamageBy::Player(0));
     assert_eq!((f.combo_damage_foe, f.combo_count_foe), (3, 1));

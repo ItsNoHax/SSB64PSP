@@ -34,12 +34,7 @@ pub static ATTRIBUTES: ItemAttributes = super::attributes::BOMBHEI;
 
 /// File 251, `llITCommonDataBombHeiAttackEvents` (0x46C): timer, angle,
 /// damage, size.
-pub const ATTACK_EVENTS: [(u16, i32, i32, f32); 4] = [
-    (0, 361, 30, 350.0),
-    (2, 361, 30, 250.0),
-    (4, 361, 20, 150.0),
-    (6, 361, 1, 0.0),
-];
+pub const ATTACK_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::BOMBHEI;
 
 /// `itBombHeiStatus`, with the descriptor's procs as `Init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

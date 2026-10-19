@@ -28,12 +28,7 @@ pub static ATTRIBUTES: ItemAttributes = super::attributes::TARUBOMB;
 
 /// `llGRBonus3MapTaruBombAttackEvents` (0xF0 of file 0x127): timer,
 /// angle, damage, size.
-pub const ATTACK_EVENTS: [(u16, i32, i32, f32); 4] = [
-    (0, 361, 16, 350.0),
-    (2, 361, 11, 250.0),
-    (4, 361, 8, 150.0),
-    (6, 361, 1, 0.0),
-];
+pub const ATTACK_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::TARUBOMB;
 
 /// `itTaruBombStatus`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -114,6 +114,18 @@ impl StageKind {
     }
 }
 
+/// `dGRDisplayDescs[layer].dl_link`: the display link each of the four
+/// render layers draws on, generated from the ROM.
+pub const LAYER_DL_LINKS: [u8; 4] = {
+    let d = crate::d_arrays::GR_DISPLAY_DESCS;
+    [
+        (d[0][2] >> 24) as u8,
+        (d[1][2] >> 24) as u8,
+        (d[2][2] >> 24) as u8,
+        (d[3][2] >> 24) as u8,
+    ]
+};
+
 /// `nMPMapObjKind*` values the controllers look up.
 pub mod mapobj {
     /// `nMPMapObjKindItem`: where the appearance actor drops items.

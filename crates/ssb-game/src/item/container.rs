@@ -50,26 +50,23 @@ pub static EGG_ATTRIBUTES: ItemAttributes = super::attributes::EGG;
 pub static CRATE_ATTRIBUTES: ItemAttributes = super::attributes::BOX;
 /// File 251, `llITCommonDataTaruItemAttributes` (0x634).
 pub static BARREL_ATTRIBUTES: ItemAttributes = super::attributes::TARU;
-pub const HEAVY_EVENTS: [(u16, i32, i32, f32); 4] = [
-    (0, 361, 20, 350.0),
-    (4, 361, 15, 250.0),
-    (6, 361, 10, 150.0),
-    (8, 361, 1, 0.0),
-];
-/// The Egg intentionally initializes from the Capsule table, then uses its
-/// own table on updates, as the source does. These are full radii.
-pub const CAPSULE_EVENTS: [(u16, i32, i32, f32); 4] = [
-    (0, 361, 30, 350.0),
-    (2, 361, 30, 250.0),
-    (4, 361, 20, 150.0),
-    (6, 361, 1, 0.0),
-];
-pub const EGG_EVENTS: [(u16, i32, i32, f32); 4] = [
-    (0, 361, 30, 350.0),
-    (4, 361, 30, 250.0),
-    (6, 361, 20, 150.0),
-    (8, 361, 1, 0.0),
-];
+/// `llITCommonDataBoxAttackEvents` (0x614) and `...TaruAttackEvents` (0x67C).
+pub const BOX_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::BOX;
+pub const TARU_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::TARU;
+/// `llITCommonDataCapsuleAttackEvents` (0x98) and `...EggAttackEvents`
+/// (0xB14). The Egg intentionally initializes from the Capsule table, then
+/// uses its own table on updates, as the source does. These are full radii.
+pub const CAPSULE_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::CAPSULE;
+pub const EGG_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::EGG;
+
+/// The Box's or the Barrel's table (`itBoxCommon*` and `itTaruCommon*`).
+fn heavy_events(kind: Kind) -> &'static [(u16, i32, i32, f32); 4] {
+    if kind == Kind::Crate {
+        &BOX_EVENTS
+    } else {
+        &TARU_EVENTS
+    }
+}
 
 pub(super) fn make(kind: Kind, pos: Vec3, vel: Vec3) -> Item {
     let attr = match kind {
@@ -216,7 +213,7 @@ fn explode(item: &mut Item, fx: &mut Emit) {
     attack_event(
         item,
         if kind(item).heavy() {
-            &HEAVY_EVENTS
+            heavy_events(kind(item))
         } else {
             &CAPSULE_EVENTS
         },
@@ -269,7 +266,7 @@ pub(super) fn update(item: &mut Item, status: Status, fx: &mut Emit) -> bool {
             attack_event(
                 item,
                 if kind(item).heavy() {
-                    &HEAVY_EVENTS
+                    heavy_events(kind(item))
                 } else if egg {
                     &EGG_EVENTS
                 } else {
@@ -459,6 +456,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn egg_and_capsule_explosions_preserve_events_owner_and_end_frame() {
         for (kind, end) in [(Kind::Egg, 8), (Kind::Capsule, 6)] {
             let mut item = make(kind, Vec3::ZERO, Vec3::new(12.0, 34.0, 0.0));

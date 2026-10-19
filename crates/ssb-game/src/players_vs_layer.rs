@@ -490,9 +490,12 @@ pub fn rule_number(
     }
 }
 
+mod digits {
+    include!(concat!(env!("OUT_DIR"), "/players_vs_digits.rs"));
+}
 /// The widths of `0DarkSprite` to `9DarkSprite` (the ROM's `Sprite.width`),
 /// which `mnPlayersVSMakeGameRuleNumber` steps by.
-pub const DARK_DIGIT_WIDTHS: [f32; 10] = [10.0, 7.0, 11.0, 10.0, 10.0, 11.0, 9.0, 10.0, 10.0, 9.0];
+pub use digits::DARK_DIGIT_WIDTHS;
 
 pub(crate) fn piece(file: u32, offset: u32, x: f32, y: f32) -> Piece {
     Piece {

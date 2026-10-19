@@ -107,100 +107,24 @@ const fn desc(
     }
 }
 
-const FLY_N: Option<Status> = Some(Status::DamageFlyN);
-
-// `ftMotionCommandSetThrow` descriptors from `202_MarioMainMotion.c`,
-// `208_FoxMainMotion.c` and `212_DonkeyMainMotion.c`. Mario's back throw is
-// the US descriptor (`#else` branch); status 55 is `DamageFlyRoll`.
-const MARIO_CATCH: [ThrowHitDesc; 2] = [desc(None, 6, 361, 100, 0, 0); 2];
-const MARIO_THROW_F: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 12, 45, 70, 0, 80),
-    desc(None, 6, 361, 100, 0, 0),
-];
-const MARIO_THROW_B: [ThrowHitDesc; 2] = [
-    desc(Some(Status::DamageFlyRoll), 16, 45, 70, 0, 70),
-    desc(None, 8, 361, 100, 0, 0),
-];
-const FOX_CATCH: [ThrowHitDesc; 2] = [desc(None, 2, 361, 100, 0, 0); 2];
-const FOX_THROW_F: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 12, 45, 60, 0, 80),
-    desc(None, 2, 361, 100, 0, 0),
-];
-const FOX_THROW_B: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 15, 45, 60, 0, 80),
-    desc(None, 9, 361, 100, 0, 0),
-];
-const DONKEY_CATCH: [ThrowHitDesc; 2] = [desc(None, 2, 361, 100, 0, 0); 2];
-const DONKEY_THROW_FF: [ThrowHitDesc; 2] =
-    [desc(FLY_N, 8, 45, 80, 0, 70), desc(None, 2, 361, 100, 0, 0)];
-const DONKEY_THROW_B: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 18, 45, 70, 0, 80),
-    desc(None, 9, 361, 100, 0, 0),
-];
-// `220_LuigiMainMotion.c` (US). The catch descriptor equals Mario's. Luigi's
-// forward throw rolls the target and his back throw does not, the reverse of
-// Mario's pair.
-const LUIGI_THROW_F: [ThrowHitDesc; 2] = [
-    desc(Some(Status::DamageFlyRoll), 16, 45, 70, 0, 70),
-    desc(None, 6, 361, 100, 0, 0),
-];
-const LUIGI_THROW_B: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 12, 45, 70, 0, 80),
-    desc(None, 8, 361, 100, 0, 0),
-];
-// `224_LinkMainMotion.c`. The catch descriptor equals Mario's.
-const LINK_THROW_F: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 14, 45, 70, 0, 80),
-    desc(None, 6, 361, 100, 0, 0),
-];
-const LINK_THROW_B: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 16, 45, 70, 0, 70),
-    desc(None, 8, 361, 100, 0, 0),
-];
-// `246_YoshiMainMotion.c`. The catch descriptor equals Mario's.
-const YOSHI_THROW_F: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 12, 45, 70, 0, 80),
-    desc(None, 6, 361, 100, 0, 0),
-];
-const YOSHI_THROW_B: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 16, 45, 70, 0, 70),
-    desc(None, 8, 361, 100, 0, 0),
-];
-const fn electric(mut d: ThrowHitDesc) -> ThrowHitDesc {
-    d.element = crate::combat::Element::Electric;
-    d
+/// Each fighter's `FTThrowHitDesc[2]` tables from its `*MainMotion` file:
+/// the catch, the forward and back throws, and the special moves that
+/// `SetThrow` (`ftMotionCommandSetThrow`).
+pub(crate) mod throw_descs {
+    use super::ThrowHitDesc;
+    #[allow(unused_imports)] // the stub tables are empty
+    use crate::combat::Element;
+    #[allow(unused_imports)]
+    use crate::status::Status;
+    include!(concat!(env!("OUT_DIR"), "/throw_descs.rs"));
 }
-
-// `216_SamusMainMotion.c`: both throws carry element 2 (electric).
-const SAMUS_CATCH: [ThrowHitDesc; 2] = [desc(None, 8, 361, 100, 0, 0); 2];
-const SAMUS_THROW_F: [ThrowHitDesc; 2] = [
-    electric(desc(FLY_N, 16, 40, 60, 0, 90)),
-    desc(None, 8, 361, 100, 0, 0),
-];
-const SAMUS_THROW_B: [ThrowHitDesc; 2] = [
-    electric(desc(FLY_N, 18, 40, 60, 0, 90)),
-    desc(None, 8, 361, 100, 0, 0),
-];
-// `235_CaptainMainMotion.c`: Falcon's standard grab and throw descriptors.
-const CAPTAIN_THROW_F: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 12, 70, 50, 0, 100),
-    desc(None, 6, 361, 100, 0, 0),
-];
-const CAPTAIN_THROW_B: [ThrowHitDesc; 2] = [
-    desc(FLY_N, 16, 361, 50, 0, 100),
-    desc(None, 8, 361, 100, 0, 0),
-];
-// `228_KirbyMainMotion.c` (US): the suplex and the back throw.
-pub(crate) const KIRBY_THROW_F: [ThrowHitDesc; 2] = [
-    desc(Some(Status::DamageFlyRoll), 13, 70, 70, 0, 100),
-    desc(None, 6, 361, 100, 0, 0),
-];
-const KIRBY_THROW_B: [ThrowHitDesc; 2] = [
-    desc(Some(Status::DamageFlyTop), 16, 115, 70, 0, 70),
-    desc(None, 8, 361, 100, 0, 0),
-];
-/// `dKirbyMainMotion_0x1C94`, the Inhale script's `SetThrow`.
-pub(crate) const KIRBY_INHALE: [ThrowHitDesc; 2] = [desc(None, 6, 361, 100, 0, 0); 2];
+use throw_descs::{
+    CAPTAIN_THROW_B, CAPTAIN_THROW_F, DONKEY_THROW_B, FOX_THROW_B, FOX_THROW_F, KIRBY_THROW_B,
+    LINK_THROW_B, LINK_THROW_F, LUIGI_THROW_B, LUIGI_THROW_F, MARIO_CATCH, MARIO_THROW_B,
+    MARIO_THROW_F, NESS_THROW_B, NESS_THROW_F, PIKACHU_THROW_B, PIKACHU_THROW_F, PURIN_THROW_B,
+    PURIN_THROW_F, SAMUS_THROW_B, SAMUS_THROW_F, YOSHI_THROW_B, YOSHI_THROW_F,
+};
+pub(crate) use throw_descs::{KIRBY_INHALE, KIRBY_THROW_F};
 
 /// `FTThrowReleaseDesc dFTCommonCaptureKnockbackCatch`: what the catcher
 /// suffers when the held fighter breaks free. `{ angle, kbs, kbw, kbb }`.
@@ -324,30 +248,20 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
         },
         // The forward throw is Kirby's own `ThrowF` statuses; the release is
         // in `ThrowFLanding` (`crate::kirby`).
-        // Status 52 in both descriptors is `DamageFlyN`.
         (FighterKind::Pikachu, false) => ThrowScript {
-            desc: Some([
-                desc(FLY_N, 12, 45, 70, 0, 80),
-                desc(None, 6, 361, 100, 0, 0),
-            ]),
+            desc: Some(PIKACHU_THROW_F),
             flag1: None,
             flag2: Some((20.0, 1)),
             length: 30.0,
         },
         (FighterKind::Pikachu, true) => ThrowScript {
-            desc: Some([
-                electric(desc(FLY_N, 18, 45, 80, 0, 60)),
-                desc(None, 8, 361, 100, 0, 0),
-            ]),
+            desc: Some(PIKACHU_THROW_B),
             flag1: None,
             flag2: Some((34.0, 2)),
             length: 43.0,
         },
         (FighterKind::Ness, back) => ThrowScript {
-            desc: Some([
-                desc(FLY_N, 16, 45, 70, 0, 90),
-                desc(None, 8, 361, 100, 0, 0),
-            ]),
+            desc: Some(if back { NESS_THROW_B } else { NESS_THROW_F }),
             flag1: None,
             flag2: Some((27.0, if back { 2 } else { 1 })),
             length: 45.0,
@@ -355,20 +269,14 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
         // `dPurinMainMotion_ThrowF`: `Wait(4)`, `WaitAsync(8)`, then
         // `SetFlag2(1)`; the forward throw launches into `DamageFlyRoll`.
         (FighterKind::Purin, false) => ThrowScript {
-            desc: Some([
-                desc(Some(Status::DamageFlyRoll), 14, 90, 50, 0, 90),
-                desc(None, 6, 361, 100, 0, 0),
-            ]),
+            desc: Some(PURIN_THROW_F),
             flag1: None,
             flag2: Some((8.0, 1)),
             length: 40.0,
         },
         // `dPurinMainMotion_ThrowB`: `SetFlag2(2)` at `WaitAsync(24)`.
         (FighterKind::Purin, true) => ThrowScript {
-            desc: Some([
-                desc(FLY_N, 16, 45, 70, 0, 80),
-                desc(None, 8, 361, 100, 0, 0),
-            ]),
+            desc: Some(PURIN_THROW_B),
             flag1: None,
             flag2: Some((24.0, 2)),
             length: 50.0,
@@ -437,64 +345,26 @@ pub fn has_catch(kind: FighterKind) -> bool {
     !kind.is_polygon()
 }
 
-/// The `Catch` script's attack collisions: `(hitbox, joint)`, active over
-/// [`catch_coll_frames`].
-fn catch_colls(kind: FighterKind) -> &'static [(Hitbox, u8)] {
-    const fn catch(size: f32, x: f32, y: f32, z: f32) -> Hitbox {
-        Hitbox {
-            damage: 0,
-            radius: size / 2.0,
-            offset: Vec3::new(x, y, z),
-            angle: 361,
-            kb_scale: 100,
-            kb_weight: 0,
-            kb_base: 0,
-            element: crate::combat::Element::Normal,
-            shield_damage: 0,
-        }
+/// The catch boxes the status's motion script makes, `(hitbox, joint)`:
+/// `Catch` (active over [`catch_coll_frames`]), Falcon Dive, Inhale and
+/// Egg Lay. Only the offset, radius and joint are read.
+fn catch_colls(
+    kind: FighterKind,
+    status: AnyStatus,
+) -> (
+    [(Hitbox, u8); crate::motion::SCRIPT_ATTACK_COLLS_MAX],
+    usize,
+) {
+    let (colls, n) = crate::motion::script_attack_colls(kind, status);
+    let mut out = [(Hitbox::NONE, 0); crate::motion::SCRIPT_ATTACK_COLLS_MAX];
+    for (o, &(_, joint, hitbox)) in out.iter_mut().zip(&colls[..n]) {
+        // `ftParamGetJointID`.
+        *o = (
+            hitbox,
+            i32::from(crate::fteffect::joint_id(kind, joint)).max(0) as u8,
+        );
     }
-    const MARIO: [(Hitbox, u8); 1] = [(catch(290.0, 0.0, 0.0, 0.0), 28)];
-    const FOX: [(Hitbox, u8); 1] = [(catch(260.0, 50.0, 0.0, 0.0), 30)];
-    const DONKEY: [(Hitbox, u8); 2] = [
-        (catch(330.0, 0.0, 0.0, 0.0), 29),
-        (catch(180.0, 0.0, 200.0, 250.0), 0),
-    ];
-    // The Grapple Beam: both boxes ride the beam joint.
-    const SAMUS: [(Hitbox, u8); 2] = [
-        (catch(210.0, 0.0, 0.0, 0.0), 36),
-        (catch(160.0, 0.0, 0.0, 200.0), 36),
-    ];
-    // The Hookshot: one box on the hook joint.
-    const LINK: [(Hitbox, u8); 1] = [(catch(180.0, 0.0, 0.0, 0.0), 35)];
-    // The tongue.
-    const YOSHI: [(Hitbox, u8); 1] = [(catch(220.0, 0.0, 0.0, 0.0), 31)];
-    const CAPTAIN: [(Hitbox, u8); 1] = [(catch(300.0, 0.0, 0.0, 0.0), 29)];
-    const PIKACHU: [(Hitbox, u8); 1] = [(catch(290.0, 0.0, 0.0, 0.0), 30)];
-    const KIRBY: [(Hitbox, u8); 2] = [
-        (catch(260.0, 0.0, 0.0, -20.0), 30),
-        (catch(160.0, 0.0, 0.0, -160.0), 30),
-    ];
-    const NESS: [(Hitbox, u8); 1] = [(catch(310.0, 0.0, 0.0, 0.0), 30)];
-    // `dPurinMainMotion_Catch`: two boxes on joint 29.
-    const PURIN: [(Hitbox, u8); 2] = [
-        (catch(240.0, 0.0, 0.0, -30.0), 29),
-        (catch(160.0, 0.0, 0.0, -160.0), 29),
-    ];
-    match base_kind(kind) {
-        FighterKind::Kirby => &KIRBY,
-        FighterKind::Ness => &NESS,
-        FighterKind::Purin => &PURIN,
-        FighterKind::Pikachu => &PIKACHU,
-        FighterKind::Yoshi => &YOSHI,
-        FighterKind::Captain => &CAPTAIN,
-        FighterKind::Link => &LINK,
-        // `dLuigiMainMotion_Catch` has Mario's box and window.
-        FighterKind::Mario | FighterKind::Luigi => &MARIO,
-        FighterKind::Fox => &FOX,
-        FighterKind::Donkey => &DONKEY,
-        FighterKind::Samus => &SAMUS,
-        _ => &[],
-    }
+    (out, n)
 }
 
 /// Frames the `Catch` script's collisions exist: `WaitAsync(6)` and a
@@ -547,8 +417,11 @@ const DONKEY_THROWF_TURN_LENGTH: f32 = 12.0;
 /// Cargo throw figatree; `SetFlag2(1)` fires at `WaitAsync(18)`.
 const DONKEY_THROWFF_LENGTH: f32 = 40.0;
 const DONKEY_THROWFF_RELEASE_FRAME: f32 = 18.0;
-/// `dDonkeyMain_attr.throw_walk*_anim_length`.
-const DONKEY_THROW_WALK_LENGTHS: [f32; 3] = [50.0, 35.0, 20.0];
+/// `FTAttributes::throw_walk*_anim_length` (`dDonkeyMain_attr`'s for Donkey
+/// Kong): slow, middle, fast.
+fn throw_walk_lengths(kind: FighterKind) -> [f32; 3] {
+    crate::motion::combat_attrs(kind).map_or([0.0; 3], |a| a.throw_walk_anim_lengths)
+}
 
 /// `thrown_status[catch_fp->fkind].ft_thrown[is_back]` from each thrower's
 /// `FTAttributes`: the status to play first (if any) and the one to settle
@@ -903,18 +776,31 @@ fn tapped(f: &Fighter) -> N64Buttons {
     f.button_tap()
 }
 
+/// The `Catch` script's `SetThrow` descriptor.
+fn catch_desc(kind: FighterKind) -> [ThrowHitDesc; 2] {
+    use throw_descs as t;
+    match base_kind(kind) {
+        FighterKind::Fox => t::FOX_CATCH,
+        FighterKind::Donkey => t::DONKEY_CATCH,
+        FighterKind::Samus => t::SAMUS_CATCH,
+        FighterKind::Luigi => t::LUIGI_CATCH,
+        FighterKind::Link => t::LINK_CATCH,
+        FighterKind::Yoshi => t::YOSHI_CATCH,
+        FighterKind::Captain => t::CAPTAIN_CATCH,
+        FighterKind::Kirby => t::KIRBY_CATCH,
+        FighterKind::Pikachu => t::PIKACHU_CATCH,
+        FighterKind::Purin => t::PURIN_CATCH,
+        FighterKind::Ness => t::NESS_CATCH,
+        _ => t::MARIO_CATCH,
+    }
+}
+
 /// `ftCommonCatchSetStatus` @ 0x80149BA8.
 pub fn set_catch(f: &mut Fighter) {
     let length = catch_length(f.kind);
     status::set_status(f, Status::Catch, 0.0, StatusTiming::frames(length));
     status::play_anim_events(f);
-    f.grab.throw_desc = Some(match base_kind(f.kind) {
-        FighterKind::Fox => FOX_CATCH,
-        FighterKind::Donkey => DONKEY_CATCH,
-        FighterKind::Samus => SAMUS_CATCH,
-        // `dLinkMainMotion_0x0E5C` equals Mario's catch descriptor.
-        _ => MARIO_CATCH,
-    });
+    f.grab.throw_desc = Some(catch_desc(f.kind));
     f.grab.catch_pull_frame_begin = 0.0;
     f.grab.catch_pull_anim_frames = 0.0;
     // `ftParamSetCatchParams(fp, FTCATCHKIND_MASK_COMMON, ...)`.
@@ -1630,11 +1516,12 @@ fn walk_status(stick_x: i8) -> DonkeyStatus {
     }
 }
 
-fn walk_length(status: AnyStatus) -> f32 {
+fn walk_length(kind: FighterKind, status: AnyStatus) -> f32 {
+    let lengths = throw_walk_lengths(kind);
     match status {
-        AnyStatus::Donkey(DonkeyStatus::ThrowFWalkSlow) => DONKEY_THROW_WALK_LENGTHS[0],
-        AnyStatus::Donkey(DonkeyStatus::ThrowFWalkMiddle) => DONKEY_THROW_WALK_LENGTHS[1],
-        _ => DONKEY_THROW_WALK_LENGTHS[2],
+        AnyStatus::Donkey(DonkeyStatus::ThrowFWalkSlow) => lengths[0],
+        AnyStatus::Donkey(DonkeyStatus::ThrowFWalkMiddle) => lengths[1],
+        _ => lengths[2],
     }
 }
 
@@ -1656,7 +1543,7 @@ fn set_donkey_throwff(f: &mut Fighter, is_turn: bool) {
     set_donkey_keep_fastfall(f, status, StatusTiming::frames(DONKEY_THROWFF_LENGTH));
     // The setter plays the first frame before the turn (RE-474).
     status::play_anim_events(f);
-    f.grab.throw_desc = Some(DONKEY_THROW_FF);
+    f.grab.throw_desc = Some(throw_descs::DONKEY_THROW_FF);
     f.grab.capture_immune_mask = catch_kind::ALL;
     f.grab.throwff_turn_tics = 0;
     if is_turn {
@@ -1998,8 +1885,8 @@ pub fn update(f: &mut Fighter) -> bool {
             }
             let next = AnyStatus::Donkey(walk_status(f.stick.x.saturating_abs()));
             if next != f.status.status {
-                let frame = (walk_length(next)
-                    * (f.status.anim_frame / walk_length(f.status.status)))
+                let frame = (walk_length(f.kind, next)
+                    * (f.status.anim_frame / walk_length(f.kind, f.status.status)))
                     as i32;
                 set_donkey_throwf_walk(f, frame as f32);
             }
@@ -2710,23 +2597,13 @@ fn catch_touches(catcher: &Fighter, other: &Fighter, rules: crate::team::TeamRul
     {
         return false;
     }
-    let colls: &[(Hitbox, u8)] = if inhale {
-        &crate::kirby::INHALE_CATCH
-    } else if egg_lay {
-        core::slice::from_ref(&crate::yoshi::EGG_LAY_CATCH)
-    } else if copy_egg_lay {
-        core::slice::from_ref(&crate::kirby_copy::EGG_LAY_CATCH)
-    } else if dive {
-        if catcher.status.clock < 14.0 {
-            &crate::captain::DIVE_CATCH
-        } else {
-            &crate::captain::DIVE_CATCH[..1]
-        }
-    } else {
-        catch_colls(catcher.kind)
-    };
+    let (colls, mut n) = catch_colls(catcher.kind, catcher.status.status);
+    // Falcon Dive clears its second box one frame after making both.
+    if dive && catcher.status.clock >= 14.0 {
+        n = n.min(1);
+    }
     // Catch boxes only find the target's grabbable hurtboxes.
-    let hit = colls.iter().any(|(hitbox, joint)| {
+    let hit = colls[..n].iter().any(|(hitbox, joint)| {
         crate::hurtbox::catch_touches(
             other,
             catcher.joint_query(*joint, hitbox.offset),
@@ -2820,6 +2697,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn kirby_inhales_swallows_and_spits_a_star() {
         use crate::status::KirbyStatus as K;
         let mut kirby = grounded(FighterKind::Kirby, 0, 0.0);
@@ -2874,6 +2752,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn kirby_with_yoshis_copy_lays_the_caught_fighter_in_an_egg() {
         use crate::status::KirbyStatus as K;
         let mut kirby = grounded(FighterKind::Kirby, 0, 0.0);
@@ -3028,6 +2907,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn z_and_a_grab_on_the_sixth_frame_and_pull() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
@@ -3040,6 +2920,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn catch_uses_animated_hand_position() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 400.0);
@@ -3066,6 +2947,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_catch_takes_the_nearest_fighter_it_touches() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let far = grounded(FighterKind::Mario, 1, 160.0);
@@ -3090,6 +2972,7 @@ mod tests {
     /// `ftMainSearchFighterCatch`: with team attack off the catch skips a
     /// teammate for the next fighter it touches.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_catch_skips_a_teammate_with_team_attack_off() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut near = grounded(FighterKind::Mario, 1, 140.0);
@@ -3124,6 +3007,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_release_still_finds_the_partner_after_the_link_drops() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 2, 150.0);
@@ -3176,6 +3060,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn samus_throws_release_on_frame_nine() {
         assert_eq!(
             throw_script(FighterKind::Samus, false).flag2,
@@ -3187,6 +3072,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn link_hookshot_reaches_late_and_starts_the_pull_part_way() {
         let mut link = grounded(FighterKind::Link, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 0.0);
@@ -3229,9 +3115,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn yoshi_tongue_and_throws_use_their_motion_frames() {
         assert_eq!(itemheavy_joint(FighterKind::Yoshi), Some(31));
-        assert_eq!(catch_colls(FighterKind::Yoshi)[0].1, 31);
+        assert_eq!(
+            catch_colls(FighterKind::Yoshi, AnyStatus::Common(Status::Catch)).0[0].1,
+            31
+        );
         assert_eq!(catch_coll_frames(FighterKind::Yoshi), 15.0..21.0);
         assert_eq!(catch_pull_flags(FighterKind::Yoshi), Some((15.0, 6.0, 2.0)));
         let forward = throw_script(FighterKind::Yoshi, false);
@@ -3243,6 +3133,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn luigi_throws_swap_marios_roll_and_keep_his_frames() {
         let forward = throw_script(FighterKind::Luigi, false);
         assert_eq!(forward.flag2, Some((14.0, 1)));
@@ -3252,7 +3143,10 @@ mod tests {
         assert_eq!(back.desc.unwrap()[0].status, Some(Status::DamageFlyN));
         assert_eq!(back.desc.unwrap()[0].damage, 12);
         assert_eq!(itemheavy_joint(FighterKind::Luigi), Some(28));
-        assert_eq!(catch_colls(FighterKind::Luigi).len(), 1);
+        assert_eq!(
+            catch_colls(FighterKind::Luigi, AnyStatus::Common(Status::Catch)).1,
+            1
+        );
         assert_eq!(
             thrown_status(FighterKind::Luigi, FighterKind::Fox, true),
             (Some(Status::ThrownMarioBStart), Status::ThrownMarioB)
@@ -3396,6 +3290,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn catch_wait_throws_forward_after_sixty_frames() {
         let mut mario = grounded(FighterKind::Mario, 0, 0.0);
         let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
@@ -4445,6 +4340,7 @@ mod tests {
     /// search. Two catchers never share one victim, and a victim never
     /// grabs on the frame it is grabbed.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn same_frame_catches_take_one_victim_once() {
         let at_catch = |kind, port, x: f32, facing| {
             let mut f = grounded(kind, port, x);

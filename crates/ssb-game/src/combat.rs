@@ -488,30 +488,17 @@ pub struct SpecialColl {
     pub damage_resist: i32,
 }
 
-/// `dFoxMainMotion_LwReflectorFTSpecialColl`.
-pub const FOX_REFLECTOR: SpecialColl = SpecialColl {
-    kind: SpecialCollKind::FoxReflector,
-    joint: 4,
-    offset: Vec3::new(0.0, 60.0, 0.0),
-    size: Vec3::new(350.0, 350.0, 350.0),
-    damage_resist: 50,
-};
-/// `dNessMainMotion_AttackS4ReflectorFTSpecialColl`.
-pub const NESS_BAT_REFLECTOR: SpecialColl = SpecialColl {
-    kind: SpecialCollKind::NessReflector,
-    joint: 0,
-    offset: Vec3::new(0.0, 150.0, 0.0),
-    size: Vec3::new(300.0, 300.0, 300.0),
-    damage_resist: 1000,
-};
-/// `dNessMainMotion_LwAbsorbFTSpecialColl` (US size 430; JP 400).
-pub const NESS_ABSORB: SpecialColl = SpecialColl {
-    kind: SpecialCollKind::NessAbsorb,
-    joint: 0,
-    offset: Vec3::new(300.0, 195.0, 0.0),
-    size: Vec3::new(430.0, 430.0, 430.0),
-    damage_resist: 0,
-};
+/// The `ll*FTSpecialColl` records, generated from the `*MainMotion` files:
+/// `FOX_REFLECTOR` (`dFoxMainMotion_LwReflectorFTSpecialColl`),
+/// `NESS_BAT_REFLECTOR` (`dNessMainMotion_AttackS4ReflectorFTSpecialColl`)
+/// and `NESS_ABSORB` (`dNessMainMotion_LwAbsorbFTSpecialColl`; the US size
+/// differs from the JP one).
+mod special_colls {
+    use super::{SpecialColl, SpecialCollKind};
+    use ssb_engine::math::Vec3;
+    include!(concat!(env!("OUT_DIR"), "/special_colls.rs"));
+}
+pub use special_colls::{FOX_REFLECTOR, NESS_ABSORB, NESS_BAT_REFLECTOR};
 
 /// `is_reflect` with its `special_coll`: Fox's reflector statuses
 /// (`ftFoxSpecialLw{Loop,Turn,Hit}` set it) and Ness's forward smash while

@@ -67,9 +67,9 @@ pub const ROLL_END_WAIT: i32 = 60;
 /// (default `dGCPerspDefault`) projection.
 pub const CAMERA_EYE: [f32; 3] = [0.0, 0.0, 580.0];
 pub const CAMERA_FOVY: f32 = 50.0;
-pub const CAMERA_ASPECT: f32 = 4.0 / 3.0;
-pub const CAMERA_NEAR: f32 = 100.0;
-pub const CAMERA_FAR: f32 = 12800.0;
+pub const CAMERA_ASPECT: f32 = crate::results_scene::PERSP_ASPECT;
+pub const CAMERA_NEAR: f32 = crate::results_scene::PERSP_NEAR;
+pub const CAMERA_FAR: f32 = crate::results_scene::PERSP_FAR;
 /// Both cameras' viewport.
 pub const VIEWPORT: [f32; 4] = [20.0, 20.0, 620.0, 460.0];
 /// `scStaffrollNameProcDisplay` and `scStaffrollJobProcDisplay`'s PRIM.

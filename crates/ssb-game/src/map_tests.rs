@@ -585,6 +585,7 @@ fn rising_fractional_floor_lands_a_stationary_body() {
 }
 
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn moving_wall_and_ceiling_use_relative_sweeps_and_world_correction() {
     let wall = moving(
         surface(Kind::LeftWall, 1, (500, -1000), (500, 1000), 0),

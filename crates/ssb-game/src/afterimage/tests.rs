@@ -54,6 +54,7 @@ fn fnv(mut h: u64, word: u32) -> u64 {
 /// parallel, opposite and under-30-degree neighbours), as the r4300
 /// interpreter runs it (`tools/r4300/afterimage_hashes.py`).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_trail_vertices_match_the_rom() {
     let mut h = FNV_OFFSET;
     let mut out = [TrailVtx::default(); TRAIL_VTX_MAX];

@@ -274,3 +274,12 @@ fn screen_flash_off_sets_no_flash_but_still_explodes() {
     assert!(!f.dead.flash);
     assert_eq!(ko.flash_color(), None);
 }
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_blast_env_colours_are_the_roms_per_player_channels() {
+    assert_eq!(DEAD_EXPLODE_ENV_CHILD[0], [0xA6, 0x62, 0x21]);
+    assert_eq!(DEAD_EXPLODE_ENV_CHILD[3], [0xFB, 0x66, 0xC7]);
+    assert_eq!(DEAD_EXPLODE_ENV_SIBLING[0], [0xFF, 0x62, 0x4B]);
+    assert_eq!(DEAD_EXPLODE_ENV_SIBLING[1], [0x00, 0x7E, 0xFF]);
+}

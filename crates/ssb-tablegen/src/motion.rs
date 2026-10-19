@@ -135,6 +135,12 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
     // `unk_0x31C` and `unk_0x320`: `func_ovl2_800DDF74`'s reach clamp and
     // slope angle.
     let (mut foot_reach, mut foot_slope_angle) = (0f32, 0f32);
+    // `item_pickup` (0xC4, after `smash_sfx`): an `FTItemPickup`'s four
+    // `Vec2f`.
+    let mut pickup = [0f32; 8];
+    // `throw_walkslow_anim_length` to `throw_walkfast_anim_length` (words 4
+    // to 6).
+    let mut throw_walk = [0f32; 3];
     if let Some(rom) = rom {
         let main = rom.file(f.main_file)?;
         let at = f.attributes as usize;
@@ -173,6 +179,12 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
             feet[i] = word(0x2FC + 8 * i)? as i32;
             foot_rotates[i] = f32::from_bits(word(0x300 + 8 * i)?);
         }
+        for (i, v) in pickup.iter_mut().enumerate() {
+            *v = f32::from_bits(word(0xC4 + 4 * i)?);
+        }
+        for (i, v) in throw_walk.iter_mut().enumerate() {
+            *v = f32::from_bits(word(0x10 + 4 * i)?);
+        }
         foot_reach = f32::from_bits(word(0x31C)?);
         foot_slope_angle = f32::from_bits(word(0x320)?);
     }
@@ -198,7 +210,9 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
          \x20   damage_sfx: {},\n    smash_sfx: [{}, {}, {}],\n\
          \x20   heavyget_sfx: {},\n    is_have_voice: {is_have_voice},\n\
          \x20   foot_joint_ids: [{}, {}],\n    foot_rotates: [{}, {}],\n\
-         \x20   foot_reach: {},\n    foot_slope_angle: {},\n}};\n\n",
+         \x20   foot_reach: {},\n    foot_slope_angle: {},\n\
+         \x20   item_pickup: [{}],\n\
+         \x20   throw_walk_anim_lengths: [{}],\n}};\n\n",
         f32_lit(floats[0]),
         f32_lit(floats[1]),
         f32_lit(floats[2]),
@@ -223,6 +237,16 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
         f32_lit(foot_rotates[1]),
         f32_lit(foot_reach),
         f32_lit(foot_slope_angle),
+        pickup
+            .iter()
+            .map(|&v| f32_lit(v))
+            .collect::<Vec<_>>()
+            .join(", "),
+        throw_walk
+            .iter()
+            .map(|&v| f32_lit(v))
+            .collect::<Vec<_>>()
+            .join(", "),
     );
     Ok(())
 }

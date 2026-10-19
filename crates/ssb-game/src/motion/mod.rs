@@ -451,6 +451,13 @@ pub struct CombatAttrs {
     /// `unk_0x320`: the steepest slope (radians) `func_ovl2_800DDF74` lets
     /// a foot target drop below TopN along.
     pub foot_slope_angle: f32,
+    /// `item_pickup` (`FTItemPickup`): `pickup_offset_light`,
+    /// `pickup_range_light`, `pickup_offset_heavy`, `pickup_range_heavy`,
+    /// `x` then `y` each.
+    pub item_pickup: [f32; 8],
+    /// `throw_walkslow_anim_length`, `throw_walkmiddle_anim_length` and
+    /// `throw_walkfast_anim_length`: Donkey Kong's cargo walks.
+    pub throw_walk_anim_lengths: [f32; 3],
 }
 
 /// `attr->is_have_voice`.
@@ -1295,6 +1302,107 @@ fn part_events(kind: FighterKind, wanted: u32) -> std::collections::BTreeSet<(i3
         }
     }
     out
+}
+
+/// A `MakeAttackColl` command's fields as `(attack id, joint id, hitbox)`,
+/// before `ftParamGetJointID` and staling: the damage is the script's.
+pub fn decode_attack_coll(w: [u32; 5]) -> (usize, i8, crate::attack::Hitbox) {
+    let hitbox = crate::attack::Hitbox {
+        damage: ((w[0] >> 5) & 0xFF) as i32,
+        offset: Vec3::new(
+            sign(w[1] & 0xFFFF, 16) as f32,
+            sign(w[2] >> 16, 16) as f32,
+            sign(w[2] & 0xFFFF, 16) as f32,
+        ),
+        radius: (w[1] >> 16) as f32 * 0.5,
+        angle: sign(w[3] >> 22, 10),
+        kb_scale: ((w[3] >> 12) & 0x3FF) as i32,
+        kb_weight: ((w[3] >> 2) & 0x3FF) as i32,
+        kb_base: ((w[4] >> 7) & 0x3FF) as i32,
+        element: Element::from_raw(w[0] & 0xF),
+        shield_damage: sign(w[4] >> 24, 8),
+    };
+    (
+        ((w[0] >> 23) & 7) as usize,
+        sign((w[0] >> 13) & 0x7F, 7) as i8,
+        hitbox,
+    )
+}
+
+/// Up to this many `MakeAttackColl` commands are read from one script.
+pub const SCRIPT_ATTACK_COLLS_MAX: usize = 4;
+
+/// The `MakeAttackColl` commands the status's motion script makes, in
+/// script order, by [`decode_attack_coll`]: the script is read once
+/// straight through, into subroutines and gotos, to its `End` (loops run
+/// once). Only for scripts whose boxes the port tests outside the
+/// attack-collision update, such as the catch boxes.
+pub fn script_attack_colls(
+    kind: FighterKind,
+    status: AnyStatus,
+) -> (
+    [(usize, i8, crate::attack::Hitbox); SCRIPT_ATTACK_COLLS_MAX],
+    usize,
+) {
+    let mut out = [(0, 0, crate::attack::Hitbox::NONE); SCRIPT_ATTACK_COLLS_MAX];
+    let mut n = 0;
+    let (Some(desc), Some(table)) = (motion_desc(kind, status), fighter_scripts(kind)) else {
+        return (out, n);
+    };
+    let mut pc = desc.script;
+    let mut stack = [0u32; STACK_MAX];
+    let mut depth = 0;
+    for _ in 0..4096 {
+        if pc == NO_SCRIPT {
+            break;
+        }
+        let (words, base) = if pc & COMMON_BIT != 0 {
+            (&scripts::COMMON_MOVESET_WORDS[..], COMMON_BIT)
+        } else {
+            (table.words, 0)
+        };
+        let at = (pc - base) as usize;
+        let Some(&w) = words.get(at) else {
+            break;
+        };
+        let opcode = w >> 26;
+        let word = |i: usize| words.get(at + i).copied().unwrap_or(0);
+        let next = pc + command_words(opcode);
+        match opcode {
+            op::END => break,
+            op::MAKE_ATTACK_COLL | op::MAKE_ATTACK_COLL_SCALED => {
+                if n < SCRIPT_ATTACK_COLLS_MAX {
+                    out[n] = decode_attack_coll([w, word(1), word(2), word(3), word(4)]);
+                    n += 1;
+                }
+            }
+            op::SUBROUTINE if depth < STACK_MAX => {
+                stack[depth] = next;
+                depth += 1;
+                pc = word(1);
+                continue;
+            }
+            op::RETURN => {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+                pc = stack[depth];
+                continue;
+            }
+            op::GOTO => {
+                // A goto back into the script would read it again.
+                if word(1) <= pc {
+                    break;
+                }
+                pc = word(1);
+                continue;
+            }
+            _ => {}
+        }
+        pc = next;
+    }
+    (out, n)
 }
 
 /// `nFTMotionEventMakeAttackColl`: a new slot, or a slot whose group

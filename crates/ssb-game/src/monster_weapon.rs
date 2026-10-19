@@ -40,6 +40,8 @@ pub enum ShotKind {
 /// The `WPAttributes` fields gameplay reads.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShotAttributes {
+    /// `attack_offsets`: one per attack (`attack_count`).
+    pub attack_offsets: [[f32; 3]; 2],
     pub map_coll: BodyColl,
     /// Diameter; the attack is half of this.
     pub size: f32,
@@ -59,6 +61,31 @@ pub struct ShotAttributes {
     pub kb_base: i32,
 }
 
+impl ShotAttributes {
+    /// The first attack `wpManagerMakeWeapon` copies from these attributes,
+    /// half the size as the radius, without its offset (callers that use
+    /// one add [`Self::attack_offset`]).
+    pub const fn hitbox(&self) -> Hitbox {
+        Hitbox {
+            damage: self.damage,
+            offset: Vec3::ZERO,
+            radius: self.size * 0.5,
+            angle: self.angle,
+            kb_scale: self.kb_scale,
+            kb_weight: self.kb_weight,
+            kb_base: self.kb_base,
+            element: self.element,
+            shield_damage: self.shield_damage,
+        }
+    }
+
+    /// `attack_offsets[i]`.
+    pub const fn attack_offset(&self, i: usize) -> Vec3 {
+        let o = self.attack_offsets[i];
+        Vec3::new(o[0], o[1], o[2])
+    }
+}
+
 #[allow(clippy::all)]
 mod generated {
     use super::ShotAttributes;
@@ -72,6 +99,12 @@ mod generated {
 /// (`reloc_data.us.h`). ROM data generated at build time by
 /// `ssb-tablegen`, never committed; zeros in stub builds.
 pub use generated::SHOT_ATTRIBUTES as ATTRIBUTES;
+
+/// Every `ll*WeaponAttributes` record, the fighters', the boss's and the
+/// stages' weapons too, named as `ssb-tablegen`'s `item_sounds::WEAPONS`
+/// lists them. ROM data generated at build time, never committed; zeros in
+/// stub builds.
+pub use generated::weapon as weapon_attributes;
 
 /// `ITKAMEX_HYDRO_LIFETIME`, `ITSTARMIE_SWIFT_LIFETIME`,
 /// `ITDOGAS_SMOG_LIFETIME`, `ITLIZARDON_FLAME_LIFETIME`,

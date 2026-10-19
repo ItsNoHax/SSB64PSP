@@ -38,15 +38,22 @@ pub struct Switches {
     pub toggles: u32,
 }
 
-impl Default for Switches {
-    /// `dSCManagerDefaultBattleState`: every item, middle appearance.
-    fn default() -> Self {
-        Self {
-            appearance: Appearance::from_switch(
-                crate::d_arrays::SC_MANAGER_DEFAULT_BATTLE_STATE_ITEM_APPEARANCE_RATE[0],
-            ),
-            toggles: crate::d_arrays::SC_MANAGER_DEFAULT_BATTLE_STATE_ITEM_TOGGLES[0],
+impl Switches {
+    /// `dSCManagerDefaultBattleState`'s `item_appearance_rate` and
+    /// `item_toggles` (generated from the ROM): every item, middle
+    /// appearance.
+    pub const DEFAULT: Switches = {
+        let d = crate::d_arrays::SC_MANAGER_DEFAULT_BATTLE_STATE;
+        Switches {
+            appearance: Appearance::from_switch(d[0x1C]),
+            toggles: u32::from_be_bytes([d[12], d[13], d[14], d[15]]),
         }
+    };
+}
+
+impl Default for Switches {
+    fn default() -> Self {
+        Self::DEFAULT
     }
 }
 impl Switches {

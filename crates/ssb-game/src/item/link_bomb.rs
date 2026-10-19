@@ -55,36 +55,31 @@ pub struct AttackEvent {
 
 /// `llLinkMainBombAttackEvents` (offset 0x88 of file 225, US). The fourth
 /// entry is never reached: the explosion ends at six frames.
-pub const ATTACK_EVENTS: [AttackEvent; 4] = [
-    AttackEvent {
+pub const ATTACK_EVENTS: [AttackEvent; 4] = {
+    let e = super::attack_events::LINK_BOMB;
+    let mut out = [AttackEvent {
         timer: 0,
-        angle: 361,
-        damage: 5,
-        size: 300,
-    },
-    AttackEvent {
-        timer: 2,
-        angle: 361,
-        damage: 5,
-        size: 230,
-    },
-    AttackEvent {
-        timer: 4,
-        angle: 361,
-        damage: 5,
-        size: 150,
-    },
-    AttackEvent {
-        timer: 6,
-        angle: 361,
-        damage: 5,
+        angle: 0,
+        damage: 0,
         size: 0,
-    },
-];
+    }; 4];
+    let mut i = 0;
+    while i < out.len() {
+        let (timer, angle, damage, size) = e[i];
+        out[i] = AttackEvent {
+            timer,
+            angle,
+            damage,
+            size: size as i32,
+        };
+        i += 1;
+    }
+    out
+};
 
 /// `llLinkMainBombBloatScales` (offset 0xA8 of file 225): the index runs up
 /// to 5 and back down.
-pub const BLOAT_SCALES: [f32; 6] = [0.8, 1.0, 1.2, 1.4, 1.6, 1.8];
+pub const BLOAT_SCALES: [f32; 6] = super::generated::LINK_BOMB_BLOAT_SCALES;
 
 /// `itLinkBombStatus`, with the descriptor's own procs as `Init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

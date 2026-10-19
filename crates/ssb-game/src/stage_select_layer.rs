@@ -248,9 +248,9 @@ impl Layer {
             eye: PREVIEW_EYE,
             at: self.at,
             up: Vec3::new(0.0, 1.0, 0.0),
-            fovy: 30.0,
-            aspect: 4.0 / 3.0,
-            near: 100.0,
+            fovy: crate::results_scene::PERSP_FOVY,
+            aspect: crate::results_scene::PERSP_ASPECT,
+            near: crate::results_scene::PERSP_NEAR,
             far: 16384.0,
             viewport: VIEWPORT,
         }

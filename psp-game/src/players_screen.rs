@@ -26,29 +26,16 @@ use ssb_rom::pack::Pack;
 use ssb_rom::skeleton::Skeleton;
 
 /// `mnPlayersVSMakeFighterCamera`: eye (0, 0, 5000) on the origin, with
-/// `dGCPerspDefault`'s projection as every camera (RE-409).
-const CAMERA: Camera = Camera {
-    eye: Vec3 {
+/// every camera's default projection (`Camera::persp_default`, RE-409).
+const CAMERA: Camera = Camera::persp_default(
+    Vec3 {
         x: 0.0,
         y: 0.0,
         z: 5000.0,
     },
-    at: Vec3 {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
-    },
-    up: Vec3 {
-        x: 0.0,
-        y: 1.0,
-        z: 0.0,
-    },
-    fovy: 30.0,
-    aspect: 4.0 / 3.0,
-    near: 100.0,
-    far: 12800.0,
-    viewport: layer::VIEWPORT,
-};
+    Vec3::ZERO,
+    layer::VIEWPORT,
+);
 
 /// `mnPlayersVSFuncStart`'s `scSubsysFighterSetLightParams(45.0F, 45.0F,
 /// ...)`.
@@ -213,7 +200,9 @@ pub unsafe fn draw_all(
 /// `dGMColScriptsFighterComPlayer`'s `SetColor1`: white at 0x30, which
 /// `ftParamCheckSetFighterColAnimID(..., nGMColAnimFighterComPlayer, 0)`
 /// gives the Training select's CPU.
-const COM_PLAYER_TINT: [u8; 4] = [0xFF, 0xFF, 0xFF, 0x30];
+fn com_player_tint() -> Option<[u8; 4]> {
+    ssb_game::colanim::start_color(ssb_game::colanim::ColAnimId::FIGHTER_COM_PLAYER)
+}
 
 /// The Training screen back to front (`FighterSelect::visit`).
 pub unsafe fn draw_training(
@@ -229,7 +218,7 @@ pub unsafe fn draw_training(
             fighter,
             position: training::fighter_position(slot),
             costume: select.slots[slot].costume,
-            tint: (slot == COM).then_some(COM_PLAYER_TINT),
+            tint: if slot == COM { com_player_tint() } else { None },
         })
     };
     let shown = [shown(MAN), shown(COM), None, None];

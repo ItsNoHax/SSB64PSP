@@ -20,7 +20,6 @@
 use ssb_engine::input::N64Buttons;
 use ssb_engine::math::Vec3;
 
-use crate::attack::Hitbox;
 use crate::fighter::{Fighter, FighterKind, Situation};
 use crate::grab::{GrabEvent, ThrowHitDesc};
 use crate::physics;
@@ -69,44 +68,9 @@ const EGG_LAY_CATCH_FLAG1_FRAME: f32 = 25.0;
 const EGG_LAY_SWALLOW_FRAME: f32 = 6.0;
 const EGG_LAY_LAY_FRAME: f32 = 20.0;
 
-/// The Egg Lay catch box: joint 31 (the tongue), size 300, 100 up.
-pub const EGG_LAY_CATCH: (Hitbox, u8) = (
-    Hitbox {
-        damage: 0,
-        radius: 150.0,
-        offset: Vec3::new(0.0, 100.0, 0.0),
-        angle: 361,
-        kb_scale: 100,
-        kb_weight: 0,
-        kb_base: 0,
-        element: crate::combat::Element::Normal,
-        shield_damage: 0,
-    },
-    31,
-);
-
 /// `dYoshiMainMotion_0x16F8`, the Egg Lay script's `SetThrow`. Only `[1]`
 /// is read: the release when Yoshi is hit while holding.
-pub const EGG_LAY_THROW_DESC: [ThrowHitDesc; 2] = [
-    ThrowHitDesc {
-        status: None,
-        damage: 20,
-        angle: 361,
-        kb_scale: 100,
-        kb_weight: 0,
-        kb_base: 0,
-        element: crate::combat::Element::Normal,
-    },
-    ThrowHitDesc {
-        status: None,
-        damage: 5,
-        angle: 361,
-        kb_scale: 100,
-        kb_weight: 0,
-        kb_base: 0,
-        element: crate::combat::Element::Normal,
-    },
-];
+pub const EGG_LAY_THROW_DESC: [ThrowHitDesc; 2] = crate::grab::throw_descs::YOSHI_EGG_LAY;
 
 /// Yoshi's status vars and the aerial jump's turn.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

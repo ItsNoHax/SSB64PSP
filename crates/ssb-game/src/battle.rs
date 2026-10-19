@@ -264,7 +264,7 @@ impl Battle {
     /// timer (`ifCommonTimerMakeInterface` is not made) and the status
     /// "Go" from the first frame.
     pub fn new_demo(players: [Player; 4]) -> Battle {
-        let stocks = crate::d_arrays::SC_MANAGER_DEFAULT_BATTLE_STATE_STOCKS[0] as i8;
+        let stocks = crate::players_vs::DEFAULT_STOCKS as i8;
         let mut b = Battle::new(Rule::Time, TIMELIMIT_INFINITE, stocks, players);
         b.status = GameStatus::Go;
         b.go_tick = 0;

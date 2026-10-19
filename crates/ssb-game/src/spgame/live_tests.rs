@@ -50,7 +50,7 @@ fn hit(f: &mut Fighter, damage: i32, player: DamageBy, stat: AttackStat) {
         f,
         attack::Hitbox {
             damage,
-            ..attack::MARIO_JAB1_HITBOX
+            ..attack::mario_jab1_hitbox()
         },
         Vec3::ZERO,
         1.0,

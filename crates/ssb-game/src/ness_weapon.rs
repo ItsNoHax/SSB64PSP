@@ -6,46 +6,17 @@ use crate::fighter::Fighter;
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
 use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 
-pub const SPARK_HIT: Hitbox = Hitbox {
-    damage: 4,
-    offset: Vec3::ZERO,
-    radius: 100.0,
-    angle: 80,
-    kb_scale: 50,
-    kb_weight: 0,
-    kb_base: 40,
-    element: crate::combat::Element::Fire,
-    shield_damage: 1,
-};
-pub const HEAD_HIT: Hitbox = Hitbox {
-    damage: 6,
-    offset: Vec3::ZERO,
-    radius: 75.0,
-    angle: 100,
-    kb_scale: 30,
-    kb_weight: 0,
-    kb_base: 50,
-    element: crate::combat::Element::Electric,
-    shield_damage: 1,
-};
+/// `llNessSpecial1PKFireWeaponAttributes`, `llNessMainPKThunderWeaponAttributes`
+/// and `llNessMainPKThunderTrailWeaponAttributes` (the trail with its first
+/// attack offset), generated from the ROM at build time.
+pub const SPARK_HIT: Hitbox = crate::monster_weapon::weapon_attributes::NESS_PK_FIRE.hitbox();
+pub const HEAD_HIT: Hitbox = crate::monster_weapon::weapon_attributes::NESS_PK_THUNDER.hitbox();
 pub const TRAIL_HIT: Hitbox = Hitbox {
-    damage: 3,
-    offset: Vec3::new(0.0, -100.0, 0.0),
-    radius: 50.0,
-    angle: 100,
-    kb_scale: 30,
-    kb_weight: 0,
-    kb_base: 50,
-    element: crate::combat::Element::Electric,
-    shield_damage: 1,
+    offset: crate::monster_weapon::weapon_attributes::NESS_PK_THUNDER_TRAIL.attack_offset(0),
+    ..crate::monster_weapon::weapon_attributes::NESS_PK_THUNDER_TRAIL.hitbox()
 };
 /// The spark's `WPAttributes` map collision box.
-const SPARK_MAP_COLL: BodyColl = BodyColl {
-    top: 10.0,
-    center: 0.0,
-    bottom: -10.0,
-    width: 10.0,
-};
+const SPARK_MAP_COLL: BodyColl = crate::monster_weapon::weapon_attributes::NESS_PK_FIRE.map_coll;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PKFire {
     pub owner_port: u8,

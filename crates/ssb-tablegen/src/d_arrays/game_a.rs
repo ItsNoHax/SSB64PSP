@@ -4,31 +4,27 @@ use super::{DArray, Elem};
 use crate::source::{OVL2, OVL3, OVL63, OVL64, SCMANAGER};
 
 pub const LIST: &[DArray] = &[
-    // `sc/scmanager.c`: the fields of `dSCManagerDefaultBattleState` the port
-    // keeps (`SCBattleState` offsets 7, 12 and 28).
+    // `sc/scmanager.c`: the save data a new or unreadable backup starts
+    // from, as `LBBackupData`'s bytes (`ssb_game::backup::SIZE`; the
+    // checksum word is 0 in the ROM).
     DArray::new(
-        "SC_MANAGER_DEFAULT_BATTLE_STATE_STOCKS",
-        "dSCManagerDefaultBattleState.stocks",
+        "SC_MANAGER_DEFAULT_BACKUP_DATA",
+        "dSCManagerDefaultBackupData",
         SCMANAGER,
-        0x800A_3FCF,
+        0x800A_3994,
         Elem::U8,
-        &[1],
+        &[0x5EC],
     ),
+    // `sc/scmanager.c`: `dSCManagerDefaultBattleState`, an `SCBattleState`
+    // (0x20 bytes, then four 0x74-byte `SCPlayerData`), which
+    // `ssb_game::players_vs` decodes.
     DArray::new(
-        "SC_MANAGER_DEFAULT_BATTLE_STATE_ITEM_TOGGLES",
-        "dSCManagerDefaultBattleState.item_toggles",
+        "SC_MANAGER_DEFAULT_BATTLE_STATE",
+        "dSCManagerDefaultBattleState",
         SCMANAGER,
-        0x800A_3FD4,
-        Elem::U32,
-        &[1],
-    ),
-    DArray::new(
-        "SC_MANAGER_DEFAULT_BATTLE_STATE_ITEM_APPEARANCE_RATE",
-        "dSCManagerDefaultBattleState.item_appearance_rate",
-        SCMANAGER,
-        0x800A_3FE4,
+        0x800A_3FC8,
         Elem::U8,
-        &[1],
+        &[0x1F0],
     ),
     // `if/ifcommon.c`.
     DArray::new(
@@ -262,6 +258,26 @@ pub const LIST: &[DArray] = &[
         Elem::U8,
         &[3],
     ),
+    // `dEFManagerDeadExplodeEnvColorSibling{R,G,B}` then `...Child{R,G,B}`,
+    // each `u8[4]` by player.
+    DArray::new(
+        "EF_MANAGER_DEAD_EXPLODE_ENV_COLORS",
+        "dEFManagerDeadExplodeEnvColorSiblingR",
+        OVL2,
+        0x8012_DEF8,
+        Elem::U8,
+        &[6, 4],
+    ),
+    // `gr/grdisplay.c`: `GRDisplayDesc[4]` (16 bytes: two procs, `u8 dl_link`
+    // in the third word's top byte, `proc_update`).
+    DArray::new(
+        "GR_DISPLAY_DESCS",
+        "dGRDisplayDescs",
+        OVL2,
+        0x8012_E800,
+        Elem::U32,
+        &[4, 4],
+    ),
     DArray::new(
         "EF_MANAGER_DAMAGE_SPAWN_SPARKS_ANGLES",
         "dEFManagerDamageSpawnSparksAngles",
@@ -418,6 +434,17 @@ pub const LIST: &[DArray] = &[
         0x8018_8580,
         Elem::F32,
         &[4],
+    ),
+    // afterimage: `dFTDisplayMainDefaultAfterImageColor1`, `...Color2`,
+    // `dFTDisplayMainItemAfterImageColor1` and `...Color2`, consecutive
+    // `SYColorRGBA`s.
+    DArray::new(
+        "FT_DISPLAY_MAIN_AFTER_IMAGE_COLORS",
+        "dFTDisplayMainDefaultAfterImageColor1",
+        OVL2,
+        0x8012_C4C8,
+        Elem::U8,
+        &[4, 4],
     ),
     // sound.
     DArray::new(

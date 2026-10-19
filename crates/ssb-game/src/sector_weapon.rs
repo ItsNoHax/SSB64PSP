@@ -27,43 +27,17 @@ pub const EXPLODE_LIFETIME: u16 = 16;
 pub const EXPLODE_RADIUS: f32 = 200.0;
 
 /// `llGRSectorMapArwingLaser2DWeaponAttributes`; `wpManagerMakeWeapon`
-/// halves the size of 300.
-pub const LASER_2D_HITBOX: Hitbox = Hitbox {
-    damage: 16,
-    offset: Vec3::ZERO,
-    radius: 150.0,
-    angle: 361,
-    kb_scale: 75,
-    kb_weight: 0,
-    kb_base: 70,
-    element: crate::combat::Element::Normal,
-    shield_damage: 5,
-};
-pub const LASER_2D_MAP_COLL: BodyColl = BodyColl {
-    top: 28.0,
-    center: 0.0,
-    bottom: -28.0,
-    width: 564.0,
-};
+/// halves the size.
+pub const LASER_2D_HITBOX: Hitbox =
+    crate::monster_weapon::weapon_attributes::ARWING_LASER_2D.hitbox();
+pub const LASER_2D_MAP_COLL: BodyColl =
+    crate::monster_weapon::weapon_attributes::ARWING_LASER_2D.map_coll;
 
 /// `llGRSectorMapArwingLaser3DWeaponAttributes`.
-pub const LASER_3D_HITBOX: Hitbox = Hitbox {
-    damage: 18,
-    offset: Vec3::ZERO,
-    radius: 150.0,
-    angle: 361,
-    kb_scale: 100,
-    kb_weight: 0,
-    kb_base: 10,
-    element: crate::combat::Element::Fire,
-    shield_damage: 2,
-};
-pub const LASER_3D_MAP_COLL: BodyColl = BodyColl {
-    top: 28.0,
-    center: 0.0,
-    bottom: -28.0,
-    width: 28.0,
-};
+pub const LASER_3D_HITBOX: Hitbox =
+    crate::monster_weapon::weapon_attributes::ARWING_LASER_3D.hitbox();
+pub const LASER_3D_MAP_COLL: BodyColl =
+    crate::monster_weapon::weapon_attributes::ARWING_LASER_3D.map_coll;
 
 /// `grSectorArwingWeaponLaser3DProcMap` tests the map only this close to
 /// the stage plane.

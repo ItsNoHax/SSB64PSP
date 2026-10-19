@@ -103,6 +103,7 @@ mod generated {
     use super::PhysicsAttributes;
     include!(concat!(env!("OUT_DIR"), "/mario_physics.rs"));
 }
+pub(crate) use generated::MARIO_MAP_COLL;
 
 /// A fighter's velocity state.
 ///

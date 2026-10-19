@@ -51,25 +51,35 @@ pub struct Hitbox {
     pub shield_damage: i32,
 }
 
-/// Mario's `Attack11` (neutral jab) primary hitbox — `dMarioMainMotion_Jab1`,
-/// `relocData/202_MarioMainMotion.c`:
-/// `ftMotionCommandMakeAttackColl(0, 0, 10, 2, 1, 0, 160, 0, 0, 0, 361, 50, 0,
-/// 3, 0, 0, 0, 8)`.
-pub const MARIO_JAB1_HITBOX: Hitbox = Hitbox {
-    damage: 2,
-    offset: Vec3::new(0.0, 0.0, 0.0),
-    radius: 160.0 / 2.0,
-    angle: 361,
-    kb_scale: 50,
-    kb_weight: 0,
-    kb_base: 8,
-    element: crate::combat::Element::Normal,
-    shield_damage: 0,
-};
+impl Hitbox {
+    /// Every field zero.
+    pub const NONE: Hitbox = Hitbox {
+        damage: 0,
+        offset: Vec3::ZERO,
+        radius: 0.0,
+        angle: 0,
+        kb_scale: 0,
+        kb_weight: 0,
+        kb_base: 0,
+        element: crate::combat::Element::Normal,
+        shield_damage: 0,
+    };
+}
+
+/// Mario's `Attack11` (neutral jab) primary hitbox, the first
+/// `MakeAttackColl` of `dMarioMainMotion_Jab1`
+/// (`relocData/202_MarioMainMotion.c`). Tests use it as a real hitbox.
+pub fn mario_jab1_hitbox() -> Hitbox {
+    let (colls, _) = crate::motion::script_attack_colls(
+        crate::fighter::FighterKind::Mario,
+        AnyStatus::Common(Status::Attack11),
+    );
+    colls[0].2
+}
 
 /// The root-sphere hurtbox used when a fighter has no posed joints — half
-/// of `dMarioMain_attr.map_coll`'s `150.0` width ([`crate::hurtbox`]).
-pub const MARIO_HURTBOX_RADIUS: f32 = 150.0 / 2.0;
+/// of `dMarioMain_attr.map_coll`'s width ([`crate::hurtbox`]).
+pub const MARIO_HURTBOX_RADIUS: f32 = crate::physics::MARIO_MAP_COLL[3] / 2.0;
 
 /// `FTCOMMON_DAMAGE_SAKURAI_*` — `ft/ftcommon.h`.
 const SAKURAI_KNOCKBACK_LOW: f32 = 32.0;
@@ -851,7 +861,7 @@ mod tests {
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn jab_knockback_at_zero_percent_matches_the_formula_by_hand() {
         // ((0*1.4)+18) * (50*0.01) + 8 == 18*0.5+8 == 17.0
-        let kb = common_knockback(0, &MARIO_JAB1_HITBOX, 1.0, 8, 8);
+        let kb = common_knockback(0, &mario_jab1_hitbox(), 1.0, 8, 8);
         assert_eq!(kb, 17.0);
     }
 
@@ -862,7 +872,7 @@ mod tests {
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn jab_knockback_at_zero_percent_survives_training_handicaps() {
         let hc = crate::stale::HANDICAP_DEFAULT;
-        assert_eq!(common_knockback(0, &MARIO_JAB1_HITBOX, 1.0, hc, hc), 17.0);
+        assert_eq!(common_knockback(0, &mario_jab1_hitbox(), 1.0, hc, hc), 17.0);
     }
 
     #[test]
@@ -915,7 +925,16 @@ mod tests {
     fn resolve_hit_pushes_the_defender_away_from_the_attacker() {
         let attacker = Vec3::new(0.0, 0.0, 0.0);
         let defender = Vec3::new(10.0, 0.0, 0.0);
-        let result = resolve_hit(&MARIO_JAB1_HITBOX, attacker, defender, 0, 1.0, false, 8, 8);
+        let result = resolve_hit(
+            &mario_jab1_hitbox(),
+            attacker,
+            defender,
+            0,
+            1.0,
+            false,
+            8,
+            8,
+        );
         assert_eq!(result.damage, 2);
         // Flat, grounded, low knockback: pure +X push away from the attacker.
         assert!(result.knockback_vel.x > 0.0);
@@ -1103,7 +1122,7 @@ mod tests {
         assert_eq!(defender.hitstun, 0);
         assert_eq!(
             defender.guard.shield_health,
-            starting_health - MARIO_JAB1_HITBOX.damage as f32
+            starting_health - mario_jab1_hitbox().damage as f32
         );
         assert_ne!(defender.physics.vel_ground.x, 0.0);
     }
@@ -1114,7 +1133,7 @@ mod tests {
         let mut defender = grounded_mario();
         status::set_guard(&mut defender);
         defender.guard.shield_health = 2.0;
-        let outcome = apply_hitbox_at(&MARIO_JAB1_HITBOX, Vec3::ZERO, 9, &mut defender);
+        let outcome = apply_hitbox_at(&mario_jab1_hitbox(), Vec3::ZERO, 9, &mut defender);
         assert_eq!(outcome, HitOutcome::Shielded);
         assert_eq!(defender.status.status, Status::ShieldBreakFly);
         assert_eq!(defender.guard.shield_health, 30.0);
@@ -1189,7 +1208,7 @@ mod tests {
     fn percent_stops_at_999() {
         let mut defender = grounded_mario();
         defender.damage = 995;
-        apply_hitbox_at(&MARIO_JAB1_HITBOX, Vec3::ZERO, 9, &mut defender);
+        apply_hitbox_at(&mario_jab1_hitbox(), Vec3::ZERO, 9, &mut defender);
         defender.invincible_frames = 0;
         defender.add_damage(50);
         assert_eq!(defender.damage, 999);

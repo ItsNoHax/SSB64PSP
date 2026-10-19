@@ -29,7 +29,6 @@
 use ssb_engine::input::N64Buttons;
 use ssb_engine::math::{sin_cos, Vec3};
 
-use crate::attack::Hitbox;
 use crate::fighter::{Fighter, FighterKind};
 use crate::grab::GrabEvent;
 use crate::physics;
@@ -113,10 +112,6 @@ const EGG_LAY_SWALLOW_FRAME: f32 = 6.0;
 const EGG_LAY_LAY_FRAME: f32 = 20.0;
 /// `ThunderJoltGround` and `ThunderJoltAir`: `WaitAsync(21)`, flag 0.
 const THUNDERJOLT_FRAME: f32 = 21.0;
-
-/// The Egg Lay catch box: joint 30 (Kirby's heavy-item joint), size 300,
-/// 100 up. Yoshi's uses joint 31 with the same box.
-pub const EGG_LAY_CATCH: (Hitbox, u8) = (crate::yoshi::EGG_LAY_CATCH.0, 30);
 
 /// `passive_vars.kirby`'s copy fields and the copy statuses' status vars
 /// and motion flags. The Boomerang's `copylink_boomerang_gobj` is
@@ -921,7 +916,7 @@ fn falcon_punch_air_physics(f: &mut Fighter) {
 /// fighter's `ftCommonCaptureYoshiProcCapture`.
 fn set_egg_lay_catch_params(f: &mut Fighter) {
     f.grab.is_catchstatus = true;
-    f.grab.throw_desc = Some(crate::yoshi::EGG_LAY_THROW_DESC);
+    f.grab.throw_desc = Some(crate::grab::throw_descs::KIRBY_EGG_LAY);
 }
 
 /// Whether Egg Lay's catch box is out.
