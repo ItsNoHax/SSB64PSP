@@ -51,6 +51,11 @@ pub fn stage_override() -> Option<u8> {
 /// line's fighter ordinals for the VS roster's four ports (the first also
 /// the 1P campaign's fighter).
 static ITEMS_OVERRIDE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// A `onepstage=N` line's 1P stage (`nSC1PGameStage*`, plus one): the
+/// stage the `onepmetal`, `onepgiant` and `onepzako` fixtures start on
+/// instead of their own, so a hardware run reaches any 1P stage.
+#[cfg_attr(not(any(feature = "headless_capture", feature = "capture_scene_file")), allow(dead_code))]
+static ONEP_STAGE_OVERRIDE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 static LEVEL_OVERRIDE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 static FIGHTERS_OVERRIDE: [core::sync::atomic::AtomicU32; 4] =
     [const { core::sync::atomic::AtomicU32::new(0) }; 4];
@@ -73,6 +78,12 @@ pub fn items_override() -> Option<ssb_game::item::normal::Appearance> {
         4 => Appearance::High,
         _ => Appearance::VeryHigh,
     })
+}
+
+/// The 1P stage a `onepstage=N` line asked for.
+#[cfg_attr(not(any(feature = "headless_capture", feature = "capture_scene_file")), allow(dead_code))]
+pub fn onep_stage_override() -> Option<u8> {
+    load_plus_one(&ONEP_STAGE_OVERRIDE)
 }
 
 /// The CPU level a `level=N` line asked for.
@@ -123,6 +134,8 @@ pub fn select() -> Option<Capture> {
                 };
                 if let Some(v) = l.strip_prefix("items=") {
                     store(&ITEMS_OVERRIDE, v);
+                } else if let Some(v) = l.strip_prefix("onepstage=") {
+                    store(&ONEP_STAGE_OVERRIDE, v);
                 } else if let Some(v) = l.strip_prefix("level=") {
                     store(&LEVEL_OVERRIDE, v);
                 } else if let Some(v) = l.strip_prefix("fighters=") {

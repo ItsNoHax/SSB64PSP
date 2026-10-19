@@ -1116,7 +1116,7 @@ pub(crate) unsafe fn draw(
 
 /// Deterministic drawing fixtures, not evidence of winning/losing a battle.
 /// Selection still runs normally; only the requested campaign overlay is seeded.
-#[cfg(feature = "headless_capture")]
+#[cfg(any(feature = "headless_capture", feature = "capture_scene_file"))]
 pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
     let Some(c) = s.campaign.as_mut() else { return };
     let sp = c.frontend.session.as_mut().expect("campaign");
@@ -1152,11 +1152,12 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
             sp.manager.scene = Scene::Intro;
         }
         GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako => {
-            sp.data.stage = match scene {
+            // A `onepstage=` line (hardware runs) picks any other stage.
+            sp.data.stage = crate::capture::onep_stage_override().unwrap_or(match scene {
                 GameScene::OnePMetal => Stage::MMario,
                 GameScene::OnePGiant => Stage::Donkey,
                 _ => Stage::Zako,
-            } as u8;
+            } as u8);
             // The stage's own setup (Giant Donkey Kong's random allies),
             // which the seeded jump would otherwise skip.
             sp.manager.prepare_stage(&sp.data, &mut sp.state, &s.backup);
@@ -1208,7 +1209,7 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
 
 /// Diagnostic placement fixtures use the real hit search and real blast
 /// check; they do not set the task counter or the results directly.
-#[cfg(feature = "headless_capture")]
+#[cfg(any(feature = "headless_capture", feature = "capture_scene_file"))]
 pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene: GameScene, tick: u64) {
     // Master Hand's hit points run out 100 ticks after "Go": the fixture
     // writes the damage, and `ftBossCommonUpdateDamageStats` runs the real

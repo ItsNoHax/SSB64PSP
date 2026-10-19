@@ -82,6 +82,35 @@ pub(crate) unsafe fn cached_vertices(bytes: usize) -> *mut u8 {
     block as *mut u8
 }
 
+/// [`cached_vertices`] from VRAM: the spare VRAM after the photo region
+/// while it lasts, then list memory.
+///
+/// The GE reads vertices from VRAM without the shared main-memory bus,
+/// whose traffic stalls the CPU (RE-486, RE-539). The CPU writes the block
+/// through the cached VRAM alias and writes it back with
+/// [`writeback_vertices`] before the draw, as for list memory; it must not
+/// read the block back (a CPU read from VRAM is slow). The block lives as
+/// long as the list: [`reset_vertex_chunk`] starts the region over at each
+/// `sceGuStart`, after `end_frame`'s `sceGuSync` has let the GE finish.
+///
+/// # Safety
+///
+/// As [`cached_vertices`].
+pub(crate) unsafe fn ge_vertices(bytes: usize) -> *mut u8 {
+    let lines = (bytes + DCACHE_LINE - 1) & !(DCACHE_LINE - 1);
+    let region = &mut *core::ptr::addr_of_mut!(VRAM_VERTICES);
+    if region.1 != 0 && lines <= region.2 - region.1 {
+        let block = region.1;
+        region.1 += lines;
+        return block as *mut u8;
+    }
+    cached_vertices(bytes)
+}
+
+/// [`ge_vertices`]' VRAM region: its first line, its next free line and its
+/// end, cached-alias VRAM addresses; all 0 until [`Gpu::init`].
+static mut VRAM_VERTICES: (usize, usize, usize) = (0, 0, 0);
+
 /// The direct list's first word, through the uncached alias `sceGuStart`
 /// writes it by: `sceGuCheckList`'s byte offsets count from here.
 ///
@@ -109,6 +138,9 @@ fn reset_vertex_chunk() {
         // `sceGuStart` enqueues the list with its stall address at its
         // first word.
         *core::ptr::addr_of_mut!(STALL_PENDING) = 0;
+        let region = &mut *core::ptr::addr_of_mut!(VRAM_VERTICES);
+        region.1 = region.0;
+        texture_pool_frame();
     }
 }
 
@@ -261,7 +293,8 @@ unsafe fn list_lines(lines: usize) -> usize {
 ///
 /// # Safety
 ///
-/// `ptr..ptr + bytes` must lie inside one [`cached_vertices`] block.
+/// `ptr..ptr + bytes` must lie inside one [`cached_vertices`] or
+/// [`ge_vertices`] block.
 pub(crate) unsafe fn writeback_vertices(ptr: *const u8, bytes: usize, keep: bool) {
     let mut line = ptr as usize & !(DCACHE_LINE - 1);
     let end = ptr as usize + bytes;
@@ -594,6 +627,8 @@ static PHOTO_REGION: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 static PHOTO_HOLDS: AtomicUsize = AtomicUsize::new(PHOTO_NONE);
 const PHOTO_NONE: usize = 0;
 const PHOTO_CAPTURE: usize = 1;
+/// [`PHOTO_HOLDS`]: [`pool_texture`]'s copies.
+const PHOTO_POOL: usize = 2;
 
 /// Bytes in a row of [`PHOTO_REGION`], the unit [`vram_resident`] copies.
 const PHOTO_ROW_BYTES: usize = WALLPAPER_PHOTO_STRIDE * 4;
@@ -606,7 +641,7 @@ fn forget_photo_capture() {
 /// The texture copied into VRAM by [`vram_resident`] may be freed: its
 /// address no longer names it. Called before the memory is released.
 pub fn forget_resident_texture() {
-    if PHOTO_HOLDS.load(Ordering::Relaxed) > PHOTO_CAPTURE {
+    if PHOTO_HOLDS.load(Ordering::Relaxed) > PHOTO_POOL {
         PHOTO_HOLDS.store(PHOTO_NONE, Ordering::Relaxed);
     }
 }
@@ -634,6 +669,7 @@ pub unsafe fn vram_resident(data: &[u8]) -> Option<*const c_void> {
         return None;
     }
     let key = data.as_ptr() as usize;
+    claim_photo_region();
     if PHOTO_HOLDS.load(Ordering::Relaxed) != key {
         // A raw copy: rows of 32-bit words, whatever the texture's format
         // or swizzling.
@@ -655,6 +691,193 @@ pub unsafe fn vram_resident(data: &[u8]) -> Option<*const c_void> {
         PHOTO_HOLDS.store(key, Ordering::Relaxed);
     }
     Some(region)
+}
+
+/// [`pool_texture`]'s copies in [`PHOTO_REGION`] while no photo or
+/// [`vram_resident`] texture needs it: a bump allocator and the main-memory
+/// address each copy was taken from.
+struct TexturePool {
+    /// Whether [`pool_texture`] may copy into the region this frame, decided
+    /// at its start ([`texture_pool_frame`]).
+    armed: bool,
+    /// The [`ssb_rom::residency::generation`] the copies belong to: a texel
+    /// address names the same bytes only while it stands.
+    generation: u32,
+    /// Bumped whenever the copies are dropped, so a recorded bind that names
+    /// one ([`texture_pool_epoch`]) is not replayed.
+    epoch: u32,
+    /// Bytes of the region in use.
+    used: usize,
+    /// Copies held.
+    count: usize,
+    /// Frames since [`PHOTO_REGION`] was last asked for by a photo or a
+    /// [`vram_resident`] texture.
+    idle: u32,
+    keys: [usize; TEXTURE_POOL_SLOTS],
+    offsets: [usize; TEXTURE_POOL_SLOTS],
+}
+
+/// Slots in [`TexturePool`]'s address table; a power of two, at most three
+/// quarters used.
+const TEXTURE_POOL_SLOTS: usize = 512;
+/// Frames [`PHOTO_REGION`] must go unasked for before the pool takes over a
+/// photo or a [`vram_resident`] texture held there, so a scene that shows
+/// one does not trade it with the pool every frame.
+const TEXTURE_POOL_IDLE_FRAMES: u32 = 60;
+
+static mut TEXTURE_POOL: TexturePool = TexturePool {
+    armed: false,
+    generation: 0,
+    epoch: 0,
+    used: 0,
+    count: 0,
+    idle: 0,
+    keys: [0; TEXTURE_POOL_SLOTS],
+    offsets: [0; TEXTURE_POOL_SLOTS],
+};
+
+/// [`TexturePool::epoch`]: a bind recorded under another epoch may name a
+/// copy that is gone.
+pub(crate) fn texture_pool_epoch() -> u32 {
+    // SAFETY: the render thread alone touches the pool.
+    unsafe { (*core::ptr::addr_of!(TEXTURE_POOL)).epoch }
+}
+
+/// Drops every pool copy.
+unsafe fn drop_texture_pool(pool: &mut TexturePool) {
+    if pool.count != 0 || pool.used != 0 {
+        pool.keys = [0; TEXTURE_POOL_SLOTS];
+        pool.count = 0;
+        pool.used = 0;
+        pool.epoch = pool.epoch.wrapping_add(1);
+    }
+}
+
+/// A photo or a [`vram_resident`] texture is about to use [`PHOTO_REGION`]:
+/// the pool gives it up. Its earlier draws in this list read their copies
+/// before the GE runs the claimant's copy, which comes after them.
+unsafe fn claim_photo_region() {
+    let pool = &mut *core::ptr::addr_of_mut!(TEXTURE_POOL);
+    pool.idle = 0;
+    pool.armed = false;
+    if PHOTO_HOLDS.load(Ordering::Relaxed) == PHOTO_POOL {
+        drop_texture_pool(pool);
+        PHOTO_HOLDS.store(PHOTO_NONE, Ordering::Relaxed);
+    }
+}
+
+/// Decides at each `sceGuStart` whether [`pool_texture`] may copy this
+/// frame: the region is the pool's, free, or long unasked for. Copies of an
+/// older residency generation are dropped first: their addresses may now
+/// name other bytes. The GE has finished the last list, so no draw still
+/// reads a copy.
+unsafe fn texture_pool_frame() {
+    let pool = &mut *core::ptr::addr_of_mut!(TEXTURE_POOL);
+    let generation = ssb_rom::residency::generation();
+    let holds = PHOTO_HOLDS.load(Ordering::Relaxed);
+    if generation != pool.generation || holds != PHOTO_POOL {
+        drop_texture_pool(pool);
+        pool.generation = generation;
+    }
+    pool.idle = pool.idle.saturating_add(1);
+    let armed = !PHOTO_REGION.load(Ordering::Relaxed).is_null()
+        && (holds == PHOTO_NONE || holds == PHOTO_POOL || pool.idle > TEXTURE_POOL_IDLE_FRAMES);
+    // Binds recorded while the pool was off name main memory: re-record
+    // them so they can take copies.
+    if armed && !pool.armed {
+        pool.epoch = pool.epoch.wrapping_add(1);
+    }
+    pool.armed = armed;
+}
+
+/// `texels`, a texture's level-0 image in main memory, sampled from a copy
+/// in [`PHOTO_REGION`] instead (RE-489, RE-539): the GE copies it there at
+/// the first bind of a frame the pool is armed for, and draws after that
+/// read the copy, the same bytes. Copies last until the residency
+/// generation changes or a photo or [`vram_resident`] texture claims the
+/// region. `None`: sample `texels` where they are (pool not armed, full,
+/// or an image the copy cannot take whole).
+///
+/// # Safety
+///
+/// Between `begin_frame` and `end_frame`, before the bind's
+/// `sceGuEnable(Texture2D)`; `texels` stay alive and unchanged while the
+/// residency generation stands.
+pub(crate) unsafe fn pool_texture(texels: &[u8]) -> Option<*const c_void> {
+    let pool = &mut *core::ptr::addr_of_mut!(TEXTURE_POOL);
+    if !pool.armed {
+        return None;
+    }
+    if ssb_rom::residency::generation() != pool.generation {
+        // Dropped at the next frame's start, once the GE is done with them.
+        pool.armed = false;
+        return None;
+    }
+    let region = PHOTO_REGION.load(Ordering::Relaxed) as usize;
+    let key = texels.as_ptr() as usize;
+    let mut slot = (key >> 4).wrapping_mul(0x9E37_79B1) & (TEXTURE_POOL_SLOTS - 1);
+    while pool.keys[slot] != 0 {
+        if pool.keys[slot] == key {
+            return Some((region + pool.offsets[slot]) as *const c_void);
+        }
+        slot = (slot + 1) & (TEXTURE_POOL_SLOTS - 1);
+    }
+    let bytes = texels.len();
+    let lines = (bytes + DCACHE_LINE - 1) & !(DCACHE_LINE - 1);
+    let capacity = WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_PADDED_HEIGHT * 4;
+    if bytes == 0
+        || key % 16 != 0
+        || bytes % 16 != 0
+        || pool.used + lines > capacity
+        || (pool.count + 1) * 4 > TEXTURE_POOL_SLOTS * 3
+    {
+        return None;
+    }
+    let at = region + pool.used;
+    // Whole rows of PHOTO_ROW_BYTES, then the rest as one short row: 32-bit
+    // words whatever the texture's format.
+    let rows = bytes / PHOTO_ROW_BYTES;
+    let stride = WALLPAPER_PHOTO_STRIDE as i32;
+    if rows != 0 {
+        sys::sceGuCopyImage(
+            DisplayPixelFormat::Psm8888,
+            0,
+            0,
+            stride,
+            rows as i32,
+            stride,
+            key as *mut c_void,
+            0,
+            0,
+            stride,
+            at as *mut c_void,
+        );
+    }
+    let rest = bytes - rows * PHOTO_ROW_BYTES;
+    if rest != 0 {
+        let done = rows * PHOTO_ROW_BYTES;
+        sys::sceGuCopyImage(
+            DisplayPixelFormat::Psm8888,
+            0,
+            0,
+            (rest / 4) as i32,
+            1,
+            stride,
+            (key + done) as *mut c_void,
+            0,
+            0,
+            stride,
+            (at + done) as *mut c_void,
+        );
+    }
+    sys::sceGuTexSync();
+    sys::sceGuTexFlush();
+    PHOTO_HOLDS.store(PHOTO_POOL, Ordering::Relaxed);
+    pool.keys[slot] = key;
+    pool.offsets[slot] = pool.used;
+    pool.used += lines;
+    pool.count += 1;
+    Some(at as *const c_void)
 }
 
 pub struct Gpu {
@@ -729,6 +952,20 @@ impl Gpu {
         );
         let photo_vram = sys::sceGeEdramGetAddr().add(photo.as_mut_ptr_from_zero() as usize) as *mut c_void;
         PHOTO_REGION.store(photo_vram, Ordering::Relaxed);
+        // The rest of VRAM (176 KiB on a PSP-2000) holds the frame's
+        // dynamic vertex blocks (`ge_vertices`). The photo region ends on a
+        // D-cache line.
+        {
+            let used = photo.as_mut_ptr_from_zero() as usize + photo.len() as usize;
+            let spare = (sys::sceGeEdramGetSize() as usize).saturating_sub(used) & !(DCACHE_LINE - 1);
+            if spare != 0 {
+                let chunk = allocator.alloc(spare as u32);
+                let start = sys::sceGeEdramGetAddr().add(chunk.as_mut_ptr_from_zero() as usize) as usize;
+                if start % DCACHE_LINE == 0 {
+                    *core::ptr::addr_of_mut!(VRAM_VERTICES) = (start, start, start + spare);
+                }
+            }
+        }
 
         // Retained past `init()` for `request_transition_capture`'s CPU-side
         // readback -- `as_mut_ptr_from_zero()` below is only meaningful as the
@@ -1089,6 +1326,7 @@ impl Gpu {
         // The whole padded buffer, padding included, so bilinear taps past
         // the content read the same zeros (RE-476). Written back by the
         // capture; the GE copies it before this draw reads it.
+        claim_photo_region();
         if PHOTO_HOLDS.load(Ordering::Relaxed) != PHOTO_CAPTURE {
             sys::sceGuCopyImage(
                 DisplayPixelFormat::Psm8888,

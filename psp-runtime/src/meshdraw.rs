@@ -838,12 +838,12 @@ impl BindBlock {
 
 /// [`bind_texture`]'s recorded binds, direct-mapped by `(texture, palette)`.
 ///
-/// Valid for one pack buffer and one [`ssb_rom::residency::generation`]:
-/// `valid_for` is `None` until the first lookup, and either changing
-/// empties every slot, since a recorded texel or CLUT address may then be
-/// stale. A miss is never mistaken for a hit on an empty slot (`len` 0).
+/// Valid for one pack buffer, one [`ssb_rom::residency::generation`] and
+/// one [`crate::gu::texture_pool_epoch`]: `valid_for` is `None` until the
+/// first lookup, and any of them changing empties every slot, since a
+/// recorded texel or CLUT address may then be stale. A miss is never mistaken for a hit on an empty slot (`len` 0).
 struct BindCache {
-    valid_for: Option<(*const u8, u32)>,
+    valid_for: Option<(*const u8, u32, u32)>,
     blocks: [BindBlock; BIND_CACHE_SLOTS],
 }
 
@@ -862,7 +862,7 @@ impl BindCache {
     /// residency registry stands now, if there is one.
     #[inline(always)]
     fn find(&mut self, pack: &Pack<'_>, texture: u32, palette: u32) -> Option<&BindBlock> {
-        let now = (pack.base(), ssb_rom::residency::generation());
+        let now = (pack.base(), ssb_rom::residency::generation(), crate::gu::texture_pool_epoch());
         if self.valid_for != Some(now) {
             self.invalidate(now);
             return None;
@@ -873,7 +873,7 @@ impl BindCache {
 
     #[cold]
     #[inline(never)]
-    fn invalidate(&mut self, now: (*const u8, u32)) {
+    fn invalidate(&mut self, now: (*const u8, u32, u32)) {
         self.valid_for = Some(now);
         for b in self.blocks.iter_mut() {
             b.len = 0;
@@ -923,6 +923,14 @@ unsafe fn bind_texture_live(pack: &Pack<'_>, t: &TextureDesc, palette: u32) -> b
         return true;
     }
 
+    // The level-0 image, from the VRAM texture pool when it holds or takes
+    // a copy (RE-539). The copy, if any, goes into the list ahead of the
+    // bind, so `BIND_CACHE` does not record this bind but the next.
+    let image = texture_image(t, data);
+    let at = image
+        .as_ref()
+        .map(|i| crate::gu::pool_texture(i.texels).unwrap_or(i.texels.as_ptr() as *const c_void));
+
     sys::sceGuEnable(GuState::Texture2D);
     let psm = psm_of(t.psm);
 
@@ -960,8 +968,8 @@ unsafe fn bind_texture_live(pack: &Pack<'_>, t: &TextureDesc, palette: u32) -> b
     // lower levels in old packs harmless, but never let GE auto-select them:
     // only level 0 is ever given to the GE.
     sys::sceGuTexMode(psm, 0, 0, t.swizzled as i32);
-    if let Some(image) = texture_image(t, data) {
-        image.bind(image.texels.as_ptr() as *const c_void);
+    if let (Some(image), Some(at)) = (image, at) {
+        image.bind(at);
     }
     // The texture function is *not* set here (it used to be, always
     // `Modulate`): `apply_material`'s per-primitive `TEXTURE_BLEND` handling
@@ -2419,7 +2427,7 @@ unsafe fn expand_float_uv_corners(
     let float_size = core::mem::size_of::<FloatUvVertex>();
     if let Some((low, high)) = vertex_range(indices, verts.len() / size) {
         let bytes = (high - low + 1) * float_size;
-        let dynamic = crate::gu::cached_vertices(bytes) as *mut FloatUvVertex;
+        let dynamic = crate::gu::ge_vertices(bytes) as *mut FloatUvVertex;
         for slot in 0..=high - low {
             let at = (low + slot) * size;
             // In range: `high` indexes a whole vertex.
@@ -2622,7 +2630,7 @@ unsafe fn expand_corners(
 
     if let Some((low, high)) = vertex_range(indices, verts.len() / size) {
         let bytes = (high - low + 1) * size;
-        let dynamic = crate::gu::cached_vertices(bytes) as *mut PackedVertex;
+        let dynamic = crate::gu::ge_vertices(bytes) as *mut PackedVertex;
         match (lit, effect_colors, texgen) {
             // A lit primitive's own loop, the common case (RE-514): the
             // shade is the only change, and the mark sits in range.
@@ -2692,7 +2700,7 @@ unsafe fn expand_sparse(
     let size = core::mem::size_of::<PackedVertex>();
     let index_at = |raw: &[u8]| usize::from(u16::from_le_bytes([raw[0], raw[1]]));
     let bytes = p.index_count as usize * size;
-    let dynamic = crate::gu::cached_vertices(bytes) as *mut PackedVertex;
+    let dynamic = crate::gu::ge_vertices(bytes) as *mut PackedVertex;
     for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
         let at = index_at(raw_index) * size;
         let v = verts

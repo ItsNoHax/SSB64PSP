@@ -5250,13 +5250,15 @@ unsafe fn run() -> ! {
             log_push_state(&s, sim_frame_index);
         }
 
-        #[cfg(feature = "headless_capture")]
+        // Also in the hardware build of a golden scene (`capture_scene_file`),
+        // so a PSP runs the scene the golden shows.
+        #[cfg(any(feature = "headless_capture", feature = "capture_scene_file"))]
         if sim_frame_index == 105 {
             if let Some(scene) = capture_scene {
                 campaign::capture_fixture(&mut s, scene);
             }
         }
-        #[cfg(feature = "headless_capture")]
+        #[cfg(any(feature = "headless_capture", feature = "capture_scene_file"))]
         if let Some(scene) = capture_scene {
             campaign::capture_objectives(&mut s, pack.as_ref(), scene, sim_frame_index);
         }
