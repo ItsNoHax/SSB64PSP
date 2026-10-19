@@ -1,14 +1,6 @@
 use super::*;
 use crate::battle::{Battle, Player, Rule};
 
-/// The seed is one global; these tests keep to themselves on it. (The
-/// workspace gate runs one test thread anyway.)
-static RNG: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-fn rng_lock() -> std::sync::MutexGuard<'static, ()> {
-    RNG.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 fn results(kind: Kind, places: &[i32], winner: Option<usize>) -> Results {
     let mut present = [false; 4];
     let mut p = [0; 4];
@@ -49,7 +41,6 @@ fn fighter(s: &Scene, i: usize) -> Fighter {
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn no_contest_puts_both_fighters_one_row_back_clapping_and_draws_nothing() {
-    let _rng = rng_lock();
     let r = results(Kind::NoContest, &[0, 0], None);
     rng::set_seed(1234);
     let mut s = Scene::start(&r);
@@ -69,7 +60,6 @@ fn no_contest_puts_both_fighters_one_row_back_clapping_and_draws_nothing() {
 
 #[test]
 fn a_two_player_winner_stands_in_front_and_the_loser_turns_to_it() {
-    let _rng = rng_lock();
     let r = results(Kind::StockRoyal, &[1, 0], Some(1));
     rng::set_seed(77);
     let mut s = Scene::start(&r);
@@ -93,7 +83,6 @@ fn a_two_player_winner_stands_in_front_and_the_loser_turns_to_it() {
 
 #[test]
 fn kirby_picks_only_win1_or_win2() {
-    let _rng = rng_lock();
     let r = results(Kind::TimeRoyal, &[0, 1], Some(0));
     let mut seen = [false; 5];
     for seed in 0..200 {
@@ -107,7 +96,6 @@ fn kirby_picks_only_win1_or_win2() {
 
 #[test]
 fn every_first_place_picks_in_port_order() {
-    let _rng = rng_lock();
     // A shared first: both pick, port 0 first.
     let r = results(Kind::TimeRoyal, &[0, 1, 0], Some(0));
     rng::set_seed(5);
@@ -128,7 +116,6 @@ fn every_first_place_picks_in_port_order() {
 
 #[test]
 fn three_players_under_a_shared_first_read_below_aheads() {
-    let _rng = rng_lock();
     // Places 0, 0, 1: the third has two ahead, so `aheads[-1]`, which the
     // US build reads as 1: spot 2.
     let r = results(Kind::TimeRoyal, &[0, 0, 1], Some(0));
@@ -147,7 +134,6 @@ fn three_players_under_a_shared_first_read_below_aheads() {
 
 #[test]
 fn a_sole_three_player_winner_takes_the_middle_column() {
-    let _rng = rng_lock();
     let r = results(Kind::StockRoyal, &[0, 2, 1], Some(0));
     let mut s = Scene::start(&r);
     s.init_fighters_all(
@@ -164,7 +150,6 @@ fn a_sole_three_player_winner_takes_the_middle_column() {
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn four_players_in_order_swap_the_winner_inward() {
-    let _rng = rng_lock();
     let r = results(Kind::StockRoyal, &[0, 1, 2, 3], Some(0));
     let mut s = Scene::start(&r);
     let kinds = [
@@ -183,7 +168,6 @@ fn four_players_in_order_swap_the_winner_inward() {
 
 #[test]
 fn only_present_players_with_fighters_are_made() {
-    let _rng = rng_lock();
     let r = results(Kind::StockRoyal, &[1, 0], Some(1));
     let mut s = Scene::start(&r);
     s.init_fighters_all(
@@ -202,7 +186,6 @@ fn only_present_players_with_fighters_are_made() {
 
 #[test]
 fn luigi_s_own_demo_rows_skip_his_translate_scales() {
-    let _rng = rng_lock();
     for st in [
         DemoStatus::Win1,
         DemoStatus::Win2,
@@ -218,7 +201,6 @@ fn luigi_s_own_demo_rows_skip_his_translate_scales() {
 
 #[test]
 fn the_fighters_come_at_tic_120_and_fade_in_by_0x16() {
-    let _rng = rng_lock();
     let mut players = [Player::default(); 4];
     for (i, p) in players.iter_mut().take(2).enumerate() {
         *p = Player {

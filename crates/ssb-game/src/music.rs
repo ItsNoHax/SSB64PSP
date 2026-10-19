@@ -14,9 +14,15 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use crate::fighter::Fighter;
 use crate::sound::{self, id::*};
 
-static BGM_DEFAULT: AtomicU32 = AtomicU32::new(0);
-static BGM_CURRENT: AtomicU32 = AtomicU32::new(0);
-static UPDATE_PENDING: AtomicBool = AtomicBool::new(false);
+game_static! {
+    static BGM_DEFAULT: AtomicU32 = AtomicU32::new(0);
+}
+game_static! {
+    static BGM_CURRENT: AtomicU32 = AtomicU32::new(0);
+}
+game_static! {
+    static UPDATE_PENDING: AtomicBool = AtomicBool::new(false);
+}
 
 /// `ITSTAR_BGM_DURATION`.
 pub const ITSTAR_BGM_DURATION: i32 = 10;
@@ -28,31 +34,31 @@ pub const ITSTAR_WARN_BEGIN_FRAME: u16 = crate::item::utility::STAR_INVINCIBLE_T
 
 /// `gMPCollisionBGMDefault`: the stage's music, or what a scene set.
 pub fn bgm_default() -> u32 {
-    BGM_DEFAULT.load(Ordering::Relaxed)
+    BGM_DEFAULT.with(|v| v.load(Ordering::Relaxed))
 }
 
 /// `gMPCollisionBGMCurrent`: what sequence player 0 plays.
 pub fn bgm_current() -> u32 {
-    BGM_CURRENT.load(Ordering::Relaxed)
+    BGM_CURRENT.with(|v| v.load(Ordering::Relaxed))
 }
 
 /// Sets `gMPCollisionBGMDefault` (Inishie's hurry music, Final
 /// Destination's, Training's).
 pub fn set_bgm_default(bgm_id: u32) {
-    BGM_DEFAULT.store(bgm_id, Ordering::Relaxed);
+    BGM_DEFAULT.with(|v| v.store(bgm_id, Ordering::Relaxed));
 }
 
 /// `mpCollisionSetPlayBGM`: plays the stage's `MPGroundData::bgm_id`.
 pub fn set_play_bgm(ground_bgm_id: u32) {
     set_bgm_default(ground_bgm_id);
     sound::play_bgm(0, ground_bgm_id);
-    BGM_CURRENT.store(ground_bgm_id, Ordering::Relaxed);
+    BGM_CURRENT.with(|v| v.store(ground_bgm_id, Ordering::Relaxed));
 }
 
 /// `mpCollisionSetBGM`: records the stage's music without playing it.
 pub fn set_bgm(ground_bgm_id: u32) {
     set_bgm_default(ground_bgm_id);
-    BGM_CURRENT.store(ground_bgm_id, Ordering::Relaxed);
+    BGM_CURRENT.with(|v| v.store(ground_bgm_id, Ordering::Relaxed));
 }
 
 /// The battle scenes' start (`scVSBattleStartBattle`,
@@ -77,7 +83,7 @@ pub fn start_battle_prologue(ground_bgm_id: u32) {
 pub fn start_training() {
     set_bgm_default(nSYAudioBGMTrainingMode);
     sound::play_bgm(0, bgm_default());
-    BGM_CURRENT.store(bgm_default(), Ordering::Relaxed);
+    BGM_CURRENT.with(|v| v.store(bgm_default(), Ordering::Relaxed));
     sound::stop_all_fgm();
     sound::play_fgm(nSYAudioVoicePublicExcited);
 }
@@ -117,19 +123,19 @@ pub fn item_music_length(bgm_id: u32) -> i32 {
 pub fn try_play_item_music(bgm_id: u32) {
     if item_music_length(bgm_id) >= item_music_length(bgm_current()) {
         sound::play_bgm(0, bgm_id);
-        BGM_CURRENT.store(bgm_id, Ordering::Relaxed);
+        BGM_CURRENT.with(|v| v.store(bgm_id, Ordering::Relaxed));
     }
 }
 
 /// A `ftParamTryUpdateItemMusic` call from a site that does not hold every
 /// fighter; [`flush_update`] runs it.
 pub fn request_update() {
-    UPDATE_PENDING.store(true, Ordering::Relaxed);
+    UPDATE_PENDING.with(|v| v.store(true, Ordering::Relaxed));
 }
 
 /// Runs a [`request_update`]ed `ftParamTryUpdateItemMusic`, if any.
 pub fn flush_update<'a>(fighters: impl IntoIterator<Item = &'a Fighter>) {
-    if UPDATE_PENDING.swap(false, Ordering::Relaxed) {
+    if UPDATE_PENDING.with(|v| v.swap(false, Ordering::Relaxed)) {
         try_update_item_music(fighters);
     }
 }
@@ -157,14 +163,14 @@ pub fn try_update_item_music<'a>(fighters: impl IntoIterator<Item = &'a Fighter>
     }
     if bgm_play != bgm_current() {
         sound::play_bgm(0, bgm_play);
-        BGM_CURRENT.store(bgm_play, Ordering::Relaxed);
+        BGM_CURRENT.with(|v| v.store(bgm_play, Ordering::Relaxed));
     }
 }
 
 /// Clears the state between tests.
 #[cfg(test)]
 pub fn reset() {
-    BGM_DEFAULT.store(0, Ordering::Relaxed);
-    BGM_CURRENT.store(0, Ordering::Relaxed);
-    UPDATE_PENDING.store(false, Ordering::Relaxed);
+    BGM_DEFAULT.with(|v| v.store(0, Ordering::Relaxed));
+    BGM_CURRENT.with(|v| v.store(0, Ordering::Relaxed));
+    UPDATE_PENDING.with(|v| v.store(false, Ordering::Relaxed));
 }

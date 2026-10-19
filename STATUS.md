@@ -34,7 +34,7 @@ Next: D-048 leftovers in `PLAN.md` (function-local arrays answer, check 10 blind
 
 Baseline after RE-539:
 
-- `cargo test --workspace -- --test-threads=1` with `SSB64_ROM`, and with `SSB64_STUB_TABLES=1` and no ROM: pass. Clippy (`cargo +1.98.0`, `-D warnings`) and `cargo fmt --all --check` pass.
+- `cargo test --workspace` with `SSB64_ROM`, and with `SSB64_STUB_TABLES=1` and no ROM: pass. Clippy (`cargo +1.98.0`, `-D warnings`) and `cargo fmt --all --check` pass.
 - Both PSP release builds compile.
 - Goldens: 225 of 225 match after the 16-row rebaseline (r2-mario-entry-pipe is nondeterministic, RE-506).
 - PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` exits 0 with a screenshot.

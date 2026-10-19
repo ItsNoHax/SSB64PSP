@@ -10,23 +10,27 @@ use crate::{
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU16, Ordering};
 
-static NEXT_COUNT: AtomicU16 = AtomicU16::new(1);
+game_static! {
+    static NEXT_COUNT: AtomicU16 = AtomicU16::new(1);
+}
 
 /// `ftManagerAllocFighter`: a new overlay starts the shared sequence at 1.
 pub fn reset_count() {
-    NEXT_COUNT.store(1, Ordering::Relaxed);
+    NEXT_COUNT.with(|v| v.store(1, Ordering::Relaxed));
 }
 
 /// `ftParamGetStatUpdateCount`: one shared nonzero u16 sequence.
 pub fn next_count() -> u16 {
-    let mut current = NEXT_COUNT.load(Ordering::Relaxed);
+    let mut current = NEXT_COUNT.with(|v| v.load(Ordering::Relaxed));
     loop {
-        match NEXT_COUNT.compare_exchange_weak(
-            current,
-            current.wrapping_add(1).max(1),
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
+        match NEXT_COUNT.with(|v| {
+            v.compare_exchange_weak(
+                current,
+                current.wrapping_add(1).max(1),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            )
+        }) {
             Ok(_) => return current,
             Err(actual) => current = actual,
         }

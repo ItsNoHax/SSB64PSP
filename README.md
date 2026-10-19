@@ -63,8 +63,8 @@ cargo run -p romtool -- verify "rom/Super Smash Bros. (USA).z64"
 cargo run --release -p romtool -- pack "rom/Super Smash Bros. (USA).z64"
 #    -> assets/generated/ssb64.pak
 
-# 3. Host tests (one thread: the game's RNG is a single global seed)
-cargo test --workspace -- --test-threads=1
+# 3. Host tests
+cargo test --workspace
 
 # 4. The PSP applications (each is its own cargo-psp crate)
 (cd psp-game && cargo psp --release)          # the game

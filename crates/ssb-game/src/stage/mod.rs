@@ -45,10 +45,11 @@ mod ground_tables {
     include!(concat!(env!("OUT_DIR"), "/ground_tables.rs"));
 }
 
-/// `gMPCollisionGroundData->alt_warning` of the loaded ground, set by
-/// [`set_ground_kind`].
-static ALT_WARNING: core::sync::atomic::AtomicI32 =
-    core::sync::atomic::AtomicI32::new(i16::MIN as i32);
+game_static! {
+    /// `gMPCollisionGroundData->alt_warning` of the loaded ground, set by
+    /// [`set_ground_kind`].
+    static ALT_WARNING: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(i16::MIN as i32);
+}
 
 /// `mpCollisionInitGroundData`'s `dMPCollisionGroundFileInfos[gkind]`: the
 /// ground data the battle's checks read. Only `alt_warning` is kept here;
@@ -58,13 +59,13 @@ pub fn set_ground_kind(gkind: u8) {
         .get(gkind as usize)
         .copied()
         .unwrap_or(i16::MIN);
-    ALT_WARNING.store(i32::from(alt), core::sync::atomic::Ordering::Relaxed);
+    ALT_WARNING.with(|v| v.store(i32::from(alt), core::sync::atomic::Ordering::Relaxed));
 }
 
 /// `MPGroundData::alt_warning`: falling below it plays
 /// `nSYAudioFGMAltitudeWarn` (`ftMainProcPhysicsMap`).
 pub fn alt_warning() -> f32 {
-    ALT_WARNING.load(core::sync::atomic::Ordering::Relaxed) as f32
+    ALT_WARNING.with(|v| v.load(core::sync::atomic::Ordering::Relaxed)) as f32
 }
 
 /// `GRKind` for the nine VS stages, in source order.

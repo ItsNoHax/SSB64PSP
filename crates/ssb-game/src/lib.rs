@@ -11,6 +11,36 @@
 
 extern crate alloc;
 
+/// A global of the original game's (a seed, a counter, a setting): one
+/// static in the game, one per thread in tests, so `cargo test` can run
+/// tests in parallel without one test's draws or settings leaking into
+/// another's (as `public` and `sound` do by hand). Read and write it
+/// through `NAME.with(|v| ...)` in both builds.
+macro_rules! game_static {
+    ($(#[$attr:meta])* static $name:ident: $ty:ty = $init:expr;) => {
+        $(#[$attr])*
+        #[cfg(not(test))]
+        static $name: $crate::GameStatic<$ty> = $crate::GameStatic($init);
+        #[cfg(test)]
+        std::thread_local! {
+            $(#[$attr])*
+            static $name: $ty = const { $init };
+        }
+    };
+}
+
+/// The game build's [`game_static!`]: `with` matches `thread_local!`'s.
+#[cfg(not(test))]
+pub(crate) struct GameStatic<T>(pub(crate) T);
+
+#[cfg(not(test))]
+impl<T> GameStatic<T> {
+    #[inline(always)]
+    pub(crate) fn with<R>(&'static self, f: impl FnOnce(&T) -> R) -> R {
+        f(&self.0)
+    }
+}
+
 pub mod afterimage;
 pub mod appear;
 pub mod attack;

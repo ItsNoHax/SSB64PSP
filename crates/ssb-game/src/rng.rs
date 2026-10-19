@@ -7,28 +7,32 @@
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
-static SEED: AtomicI32 = AtomicI32::new(1);
+game_static! {
+    static SEED: AtomicI32 = AtomicI32::new(1);
+}
 
 #[cfg_attr(feature = "rng_trace", track_caller)]
 fn step() -> i32 {
     #[cfg(feature = "rng_trace")]
     trace::record(core::panic::Location::caller());
-    let next = SEED
-        .load(Ordering::Relaxed)
-        .wrapping_mul(214013)
-        .wrapping_add(2531011);
-    SEED.store(next, Ordering::Relaxed);
-    next
+    SEED.with(|seed| {
+        let next = seed
+            .load(Ordering::Relaxed)
+            .wrapping_mul(214013)
+            .wrapping_add(2531011);
+        seed.store(next, Ordering::Relaxed);
+        next
+    })
 }
 
 /// `syUtilsSetRandomSeed`.
 pub fn set_seed(seed: i32) {
-    SEED.store(seed, Ordering::Relaxed);
+    SEED.with(|v| v.store(seed, Ordering::Relaxed));
 }
 
 /// `syUtilsRandSeed`.
 pub fn seed() -> i32 {
-    SEED.load(Ordering::Relaxed)
+    SEED.with(|v| v.load(Ordering::Relaxed))
 }
 
 /// `syUtilsRandUShort`.

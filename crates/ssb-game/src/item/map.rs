@@ -381,17 +381,19 @@ pub(crate) fn run_default_collision<I, F>(
     item.pos = result.moved.pos;
 }
 
-/// `gSCManagerBattleState->game_type == nSCBattleGameTypeExplain`: How to
-/// Play's thrown items never vanish on landing (`itMapCheckCollideAllRebound`'s
-/// despawn check).
-static IS_EXPLAIN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+game_static! {
+    /// `gSCManagerBattleState->game_type == nSCBattleGameTypeExplain`: How to
+    /// Play's thrown items never vanish on landing (`itMapCheckCollideAllRebound`'s
+    /// despawn check).
+    static IS_EXPLAIN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+}
 
 /// Sets the battle's game type for the landing check: How to Play's or any
 /// other.
 pub fn set_explain(is_explain: bool) {
-    IS_EXPLAIN.store(is_explain, core::sync::atomic::Ordering::Relaxed);
+    IS_EXPLAIN.with(|v| v.store(is_explain, core::sync::atomic::Ordering::Relaxed));
 }
 
 fn is_explain() -> bool {
-    IS_EXPLAIN.load(core::sync::atomic::Ordering::Relaxed)
+    IS_EXPLAIN.with(|v| v.load(core::sync::atomic::Ordering::Relaxed))
 }

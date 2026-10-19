@@ -1,12 +1,5 @@
 use super::*;
 
-/// The seed is one global; these tests keep to themselves on it.
-static RNG: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-fn rng_lock() -> std::sync::MutexGuard<'static, ()> {
-    RNG.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 fn results(kind: Kind, places: &[i32], winner: Option<usize>) -> Results {
     let mut present = [false; 4];
     let mut p = [0; 4];
@@ -174,7 +167,6 @@ fn columns_spread_by_present_count() {
 
 #[test]
 fn the_wallpaper_fades_in_after_tic_80_in_the_winners_colour() {
-    let _rng = rng_lock();
     rng::set_seed(77);
     let mut r = results(Kind::StockRoyal, &[1, 0], Some(1));
     let mut l = Layer::new();
@@ -221,7 +213,6 @@ fn a_team_wallpaper_takes_the_teams_colour() {
 
 #[test]
 fn no_contest_draws_its_wallpaper_colour_on_the_first_tic() {
-    let _rng = rng_lock();
     rng::set_seed(77);
     let mut r = results(Kind::NoContest, &[0, 0], None);
     let mut l = Layer::new();

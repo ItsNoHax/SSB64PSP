@@ -106,19 +106,20 @@ pub const HANDICAP_DEFAULT: u8 = 9;
 /// `dSCManagerDefaultBattleState.damage_ratio`, which Training copies.
 pub const DAMAGE_RATIO_DEFAULT: u8 = 100;
 
-/// `gSCManagerBattleState->damage_ratio` for the running battle: VS
-/// Options' setting in a VS battle, [`DAMAGE_RATIO_DEFAULT`] in every other.
-static DAMAGE_RATIO: core::sync::atomic::AtomicU8 =
-    core::sync::atomic::AtomicU8::new(DAMAGE_RATIO_DEFAULT);
+game_static! {
+    /// `gSCManagerBattleState->damage_ratio` for the running battle: VS
+    /// Options' setting in a VS battle, [`DAMAGE_RATIO_DEFAULT`] in every other.
+    static DAMAGE_RATIO: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(DAMAGE_RATIO_DEFAULT);
+}
 
 /// Sets the running battle's damage ratio (percent, 50 to 200).
 pub fn set_damage_ratio(ratio: u8) {
-    DAMAGE_RATIO.store(ratio, core::sync::atomic::Ordering::Relaxed);
+    DAMAGE_RATIO.with(|v| v.store(ratio, core::sync::atomic::Ordering::Relaxed));
 }
 
 /// The running battle's damage ratio.
 pub fn damage_ratio() -> u8 {
-    DAMAGE_RATIO.load(core::sync::atomic::Ordering::Relaxed)
+    DAMAGE_RATIO.with(|v| v.load(core::sync::atomic::Ordering::Relaxed))
 }
 
 /// `dFTCommonDataHandicapTable`, indexed by `handicap - 1`: `[0]` scales
