@@ -44,7 +44,7 @@ static mut DISPLAY_LIST: CacheLineAligned<[u32; 0x40000]> = CacheLineAligned([0;
 struct CacheLineAligned<T>(T);
 
 /// The Allegrex's D-cache line, in bytes.
-const DCACHE_LINE: usize = 64;
+const DCACHE_LINE: usize = psp::dcache::LINE_BYTES;
 
 /// List memory for vertices the CPU writes through the D-cache.
 ///
@@ -285,33 +285,21 @@ unsafe fn list_lines(lines: usize) -> usize {
 
 /// Writes a [`cached_vertices`] block's lines back to memory for the GE.
 ///
-/// `keep` leaves the lines in the D-cache (`cache 0x1a`, Hit Writeback) for
-/// a caller that reads the block back; otherwise they are written back and
-/// invalidated (`cache 0x1b`), which frees them for other data. LLVM's MIPS
-/// II assembler rejects the `cache` mnemonic, so it is emitted as a word
-/// with the address in `$a0` (RE-485).
+/// `keep` leaves the lines in the D-cache (Hit Writeback) for a caller that
+/// reads the block back; otherwise they are written back and invalidated,
+/// which frees them for other data (RE-485). Both end with a `sync`, so the
+/// lines reach memory before the stall update that lets the GE read them.
 ///
 /// # Safety
 ///
 /// `ptr..ptr + bytes` must lie inside one [`cached_vertices`] or
 /// [`ge_vertices`] block.
 pub(crate) unsafe fn writeback_vertices(ptr: *const u8, bytes: usize, keep: bool) {
-    let mut line = ptr as usize & !(DCACHE_LINE - 1);
-    let end = ptr as usize + bytes;
     if keep {
-        while line < end {
-            core::arch::asm!(".word 0xbc9a0000", in("$4") line, options(nostack, preserves_flags));
-            line += DCACHE_LINE;
-        }
+        psp::dcache::writeback_range(ptr, bytes);
     } else {
-        while line < end {
-            core::arch::asm!(".word 0xbc9b0000", in("$4") line, options(nostack, preserves_flags));
-            line += DCACHE_LINE;
-        }
+        psp::dcache::writeback_invalidate_range(ptr, bytes);
     }
-    // The lines reach memory before the stall update that lets the GE read
-    // them.
-    core::arch::asm!("sync", options(nostack, preserves_flags));
 }
 
 /// A vertex laid out the way the GE wants it.
