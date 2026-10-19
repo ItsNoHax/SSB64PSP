@@ -17,6 +17,7 @@
 use core::ffi::c_void;
 use core::fmt::Write;
 
+use psp::fpu::{fcr31, restore_fcr31, set_fcr31, ENABLES, FLAGS};
 use psp::sys;
 use ssb_engine::math::sqrt_golden;
 
@@ -32,14 +33,16 @@ pub fn run() {
         }
     }
     let before = fcr31();
-    // Enables (bits 7-11) and sticky flags (2-6) cleared.
-    set_fcr31(before & !0x0000_0ffc);
+    // SAFETY: masks every exception for the run; `restore_fcr31` below
+    // puts the thread's value back.
+    unsafe { set_fcr31(before & !(ENABLES | FLAGS)) };
     // SAFETY: plain syscall.
     let start = unsafe { sys::sceKernelGetSystemTimeWide() };
     let r = sqrt_golden::run(ssb_engine::math::sqrt);
     let end = unsafe { sys::sceKernelGetSystemTimeWide() };
-    let flags = fcr31() & 0x7c;
-    restore_fcr31(before);
+    let flags = fcr31() & FLAGS;
+    // SAFETY: `before` is the value this thread had.
+    unsafe { restore_fcr31(before) };
     let mut b = Buf([0; 256], 0);
     let _ = writeln!(
         b,
@@ -70,40 +73,4 @@ pub fn run() {
             sys::sceIoClose(fd);
         }
     }
-}
-
-fn fcr31() -> u32 {
-    let v: u32;
-    // SAFETY: reads the FPU control/status register.
-    unsafe { core::arch::asm!("cfc1 {0}, $31", out(reg) v, options(nomem, nostack)) };
-    v
-}
-
-/// Puts back `before` with no cause bits pending: the run's last
-/// operations leave cause bits (a NaN compare's invalid) that writing the
-/// enables back would otherwise raise. One `asm!` block, so the exact
-/// `add.s` that clears the cause bits cannot be scheduled away from
-/// between the two writes (a separate `pure` block was: PSPLink trapped
-/// the second `ctc1`).
-fn restore_fcr31(before: u32) {
-    // SAFETY: writes the FPU control/status register back to the value
-    // the caller read; the `add.s` only touches FPU registers.
-    unsafe {
-        core::arch::asm!(
-            "ctc1 {quiet}, $31",
-            "add.s {r}, {one}, {one}",
-            "ctc1 {before}, $31",
-            quiet = in(reg) before & !0x0003_ff80,
-            before = in(reg) before,
-            one = in(freg) 1.0f32,
-            r = out(freg) _,
-            options(nomem, nostack),
-        )
-    };
-}
-
-fn set_fcr31(v: u32) {
-    // SAFETY: writes the FPU control/status register; the caller restores
-    // the value it read.
-    unsafe { core::arch::asm!("ctc1 {0}, $31", in(reg) v, options(nomem, nostack)) };
 }

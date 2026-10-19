@@ -21,6 +21,7 @@ use core::ffi::c_void;
 use core::fmt::Write;
 use core::hint::black_box;
 
+use psp::fpu::{fcr31, restore_fcr31, set_fcr31, ENABLES, FLAGS};
 use psp::sys;
 use ssb_engine::math::{self, trig_golden};
 
@@ -29,8 +30,9 @@ const BENCH_CALLS: u32 = 100_000;
 /// Runs the self-test and writes its lines. Called once, at boot.
 pub fn run() {
     let before = fcr31();
-    // Enables (bits 7-11) and sticky flags (2-6) cleared.
-    set_fcr31(before & !0x0000_0ffc);
+    // SAFETY: masks every exception for the run; `restore_fcr31` below
+    // puts the thread's value back.
+    unsafe { set_fcr31(before & !(ENABLES | FLAGS)) };
     let start = now();
     let hashes = trig_golden::run();
     let arith = trig_golden::run_arith();
@@ -48,8 +50,9 @@ pub fn run() {
             empty,
         ),
     ];
-    let flags = fcr31() & 0x7c;
-    restore_fcr31(before);
+    let flags = fcr31() & FLAGS;
+    // SAFETY: `before` is the value this thread had.
+    unsafe { restore_fcr31(before) };
 
     let ok = hashes == trig_golden::HASHES;
     let arith_ok = arith == trig_golden::HASHES_ARITH;
@@ -131,39 +134,4 @@ fn bench(f: impl Fn(f32) -> f32) -> u64 {
 /// Nanoseconds per call of `f`, less the empty loop's `empty` microseconds.
 fn bench_ns(f: impl Fn(f32) -> f32, empty: u64) -> u64 {
     bench(f).saturating_sub(empty) * 1000 / u64::from(BENCH_CALLS)
-}
-
-fn fcr31() -> u32 {
-    let v: u32;
-    // SAFETY: reads the FPU control/status register.
-    unsafe { core::arch::asm!("cfc1 {0}, $31", out(reg) v, options(nomem, nostack)) };
-    v
-}
-
-/// Puts back `before` with no cause bits pending (see `sqrt_selftest`):
-/// writing the enables back while a cause bit is latched traps. One `asm!`
-/// block, so the exact `add.s` that clears the cause bits cannot be
-/// scheduled away from between the two writes (a separate `pure` block was:
-/// PSPLink trapped the second `ctc1`).
-fn restore_fcr31(before: u32) {
-    // SAFETY: writes the FPU control/status register back to the value
-    // the caller read; the `add.s` only touches FPU registers.
-    unsafe {
-        core::arch::asm!(
-            "ctc1 {quiet}, $31",
-            "add.s {r}, {one}, {one}",
-            "ctc1 {before}, $31",
-            quiet = in(reg) before & !0x0003_ff80,
-            before = in(reg) before,
-            one = in(freg) 1.0f32,
-            r = out(freg) _,
-            options(nomem, nostack),
-        )
-    };
-}
-
-fn set_fcr31(v: u32) {
-    // SAFETY: writes the FPU control/status register; the caller restores
-    // the value it read.
-    unsafe { core::arch::asm!("ctc1 {0}, $31", in(reg) v, options(nomem, nostack)) };
 }
