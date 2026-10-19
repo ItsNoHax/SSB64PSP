@@ -76,24 +76,23 @@ track.
 
 ```bash
 python3 tools/make-snd0-loop.py /tmp/snd0.wav
-tools/encode-snd0.sh /tmp/snd0.wav psp-game/xmb/SND0.AT3
+tools/pspbuild.sh audio snd0 /tmp/snd0.wav -o psp-game/xmb/SND0.AT3
+tools/pspbuild.sh audio inspect --strict psp-game/xmb/SND0.AT3
 ```
 
-ffmpeg has no ATRAC3 encoder. `tools/encode-snd0.sh` is AngleZero's
-`scripts/encode_music.sh`, ported. It builds libsndfile and atracdenc in a
-scratch directory and applies `tools/patches/atracdenc-psp-bands.patch`. It
-then low-passes the source at 15.5 kHz, encodes LP4 in a RIFF container and
-drops the `fact` chunk. Last, it rejects the file unless every frame codes
-exactly three QMF bands. The XMB plays nothing if a frame codes a fourth
-band, although ffmpeg decodes such a file without complaint. The script
-passes `CMAKE_POLICY_VERSION_MINIMUM=3.5`, because CMake 4 refuses
-libsndfile's and atracdenc's old minimum versions.
-
-A good encode ends like this:
+ffmpeg has no ATRAC3 encoder. `tools/pspbuild.sh` installs
+[pspbuild](https://github.com/ItsNoHax/pspbuild) at a pinned revision into
+`target/pspbuild/` and runs it. Its native encoder low-passes the source below
+the top QMF band and writes LP4 (66144 bps, joint stereo) in a RIFF container
+with every frame coding three QMF bands; the XMB plays nothing if a frame
+codes a fourth band, although ffmpeg decodes such a file without complaint. It
+also writes `fact` and `smpl` chunks, so the XMB repeats the loop instead of
+stopping after one pass. `audio inspect --strict` checks all of this; a good
+file ends with:
 
 ```
->> 1103 frames, all with bands_coded=2
->> psp-game/xmb/SND0.AT3 — atrac3, 66144bps, 25.613923s, 211836 bytes
+Loop:                samples 1024 to 1129983 (25.60 s), forever
+Verdict:             playable; matches the profile pspbuild writes
 ```
 
 The XMB limits SND0 to about 500 KB and 55 s.

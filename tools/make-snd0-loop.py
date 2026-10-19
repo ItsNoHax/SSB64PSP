@@ -12,7 +12,7 @@ The loop is seamless by construction. Notes and effect tails that run past the
 end wrap around to the start, so the last bar flows into the first with no
 gap and no click. The output is deterministic (fixed noise seed).
 
-Encode the result with tools/encode-snd0.sh. See docs/xmb-assets.md.
+Encode the result with `tools/pspbuild.sh audio snd0`. See docs/xmb-assets.md.
 """
 import sys
 import wave
