@@ -56,3 +56,6 @@ PARAM.SFO
 .idea/
 *.swp
 .DS_Store
+
+# Python bytecode from tools/
+__pycache__/
