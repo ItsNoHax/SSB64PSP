@@ -2122,14 +2122,15 @@ fn menu_stick_up_pressed(previous: ControllerState, current: ControllerState) ->
 #[cfg(feature = "golden_capture")]
 const CAPTURE_EXIT_FRAMES: u32 = 2;
 
-/// The main thread's stack (RE-469). `psp::module!` gives it a fixed
-/// 256 KiB, which the game's frame overflows on a PSP.
+/// The main thread's stack (RE-469). `psp::module!`'s default 256 KiB is
+/// less than the game's frame needs on a PSP.
 const GAME_STACK_BYTES: usize = 512 * 1024;
 
-ssb_psp_runtime::module_with_stack!("ssb64_psp_game", 1, 0, crate::GAME_STACK_BYTES);
+psp::module!("ssb64_psp_game", 1, 0, GAME_STACK_BYTES);
 
 #[cfg_attr(feature = "fcr31_probe", allow(unreachable_code))]
 fn psp_main() {
+    ssb_psp_runtime::fpu::init_thread(ssb_psp_runtime::fpu::GameThread::Main);
     #[cfg(feature = "fcr31_probe")]
     ssb_psp_runtime::fcr31_probe::run();
     boot_log::log("psp_main");
@@ -5066,8 +5067,8 @@ unsafe fn run() -> ! {
         Some(p) if ssb_rom::strict::first_issue(&p).is_some() => (None, BG_TRAINING_STRICT_FAILED),
         p => (p, no_pack_color),
     };
-    // On the heap: the main thread's stack is 256 KB (`psp::module!`), and
-    // the session alone is some 100 KB.
+    // On the heap: the main thread's stack is 512 KiB (`GAME_STACK_BYTES`),
+    // and the session alone is some 100 KB.
     let mut s = alloc::boxed::Box::new(Session {
         material_anim: ssb_rom::skeleton::MaterialAnimator::new(),
         stage_map: None,
@@ -7204,7 +7205,7 @@ struct EffectVisuals {
 
 impl EffectVisuals {
     /// The players, built in place on the heap one field at a time: the
-    /// whole is past the main thread's 256 KB stack (`psp::module!`), and
+    /// whole is past the main thread's 512 KiB stack (`GAME_STACK_BYTES`), and
     /// `Box::default` builds it on the stack first.
     #[inline(never)]
     fn new_boxed() -> alloc::boxed::Box<EffectVisuals> {
