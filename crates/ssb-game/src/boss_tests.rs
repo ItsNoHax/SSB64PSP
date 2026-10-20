@@ -52,7 +52,12 @@ fn init_takes_the_first_floor_line_and_a_level_wait() {
 
 #[test]
 fn the_entry_lasts_its_clip_then_waits_above_the_floor() {
+    // Spawned on the floor's plane, as the boss stage's spawn point is.
     let mut f = boss();
+    let target = f.boss.target;
+    f.pos = Vec3::ZERO;
+    init(&mut f, &floor, 9, false);
+    f.boss.target = target;
     let spawn = f.pos;
     appear_set_status(&mut f);
     assert_eq!(f.status.status, AnyStatus::Boss(B::Appear));
@@ -66,6 +71,32 @@ fn the_entry_lasts_its_clip_then_waits_above_the_floor() {
     assert_eq!(f.pos.x, spawn.x);
     // `ftBossWaitSetStatus` from the spawn: 400 above the floor below it.
     assert_eq!(f.boss.pos, Vec3::new(0.0, 400.0, 0.0));
+}
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn an_entry_over_the_floor_waits_above_its_own_spawn_point() {
+    // `ftManagerMakeFighter` keeps the floor line under the spawn point,
+    // so `ftBossWaitSetStatus` stays over it instead of the line's middle
+    // (the N64 boss trace: x 900 through the first Wait).
+    let mut f = Fighter::new(FighterKind::Boss, 1, 0);
+    f.coll = boss().coll;
+    f.pos = Vec3::new(900.0, 0.0, 0.0);
+    // The spawn's probe; Appear's own map proc probes from the clip's pose.
+    init(&mut f, &floor, 9, false);
+    assert_eq!(f.boss.floor_line, Some(0));
+    f.boss.target = boss().boss.target;
+    appear_set_status(&mut f);
+    for _ in 0..APPEAR_FRAMES as usize {
+        step(&mut f);
+    }
+    assert_eq!(f.status.status, AnyStatus::Boss(B::Wait));
+    assert_eq!(f.boss.pos, Vec3::new(900.0, 400.0, 0.0));
+    // Off the stage there is no line: the middle of the target's.
+    let mut f = Fighter::new(FighterKind::Boss, 1, 0);
+    f.pos = Vec3::new(5000.0, 0.0, 0.0);
+    init(&mut f, &floor, 9, false);
+    assert_eq!(f.boss.floor_line, None);
 }
 
 #[test]

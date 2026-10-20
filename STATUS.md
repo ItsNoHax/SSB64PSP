@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed: fighter effect fidelity II. PK Thunder trail frames (RE-550), Kirby star under CLD (RE-551), Samus Fire Spark and golden `f1-training-samus-spark` (RE-427). Goldens `ness-thunder` and `cpufx-up` rebaselined (not a D-051 change).
-- Open: PK Fire flame route onto the dummy platform (RE-352); Bomb fuse sparkle phase and brown tone (RE-444). Fox ledge freeze needs a playtest repro. Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
+- Landed: battle camera loose ends (RE-554). Inishie and Zebes cameras, stage-clear zoom, boss intro camera as a pre-step, boss spawn floor probe, cpufx entry focus id 2. Goldens `training-inishie` and seven `cpufx-*` rebaselined (not a D-051 change).
+- Open: Master Hand first attack differs from boss tick 643; Falcon Kick edge tick (cpufx-d); stage-clear zoom N64 trace (RE-554). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: fighter effect fidelity II (RE-550, RE-551, RE-427).
+Baseline: battle camera loose ends (RE-554).
 
 | Check | Result |
 |---|---|

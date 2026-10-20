@@ -547,15 +547,21 @@ fn set_disable_fog_color(f: &mut Fighter) {
 
 /// `ftManagerInitFighter`'s Boss case for a non-demo fighter:
 /// `ftBossCommonSetNextAttackWait` and `ftBossCommonSetDefaultLineID`
-/// (the first floor line).
+/// (the first floor line). Also `ftManagerMakeFighter`'s spawn probe
+/// (`mpCollisionCheckProjectFloor` from the spawn point): Master Hand stays
+/// airborne, but keeps the floor line below it, which
+/// `ftCommonAppearSetStatus` hands to `ftBossWaitSetStatus`.
 pub fn init<I, F>(f: &mut Fighter, surfaces: &F, level: u8, is_human: bool)
 where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
+    let below = crate::map::project_floor_line(surfaces, f.pos);
     f.boss = BossState {
         level,
         is_human,
+        floor_line: below.map(|(line, _)| line),
+        floor_dist: below.map_or(0.0, |(_, dist)| dist),
         ..BossState::default()
     };
     set_next_attack_wait(f);

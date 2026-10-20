@@ -118,8 +118,11 @@ fn final_enemy_end_preserves_player_stock_and_waits_for_victory_zoom() {
     }
     assert_eq!(battle.status, GameStatus::Set);
     assert!(battle.set_zoom);
+    // `sc1PGameSetCameraZoom` runs once, on the proc-set's tick.
+    assert!(battle.set_zoom_began);
     for _ in 0..45 {
         assert_ne!(battle.begin_frame(), crate::battle::Frame::Done);
+        assert!(battle.set_zoom && !battle.set_zoom_began);
     }
     assert_eq!(battle.begin_frame(), crate::battle::Frame::Done);
 }
@@ -135,4 +138,22 @@ fn team_stock_icons_omit_defeated_members_and_wrap_at_ten() {
     g.enemy_stocks_remaining -= 1;
     assert_eq!(g.team_stock_icons().len(), 17);
     assert_eq!(g.team_stock_icons()[0].costume, Some(g.variations[16]));
+}
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn stage_clear_zoom_draws_the_eye_x_index_then_the_eye_y_index() {
+    use crate::fighter::Facing;
+    use ssb_engine::math::f_clc_dtor32;
+    crate::rng::set_seed(77);
+    let x_index = crate::rng::rand_int_range(ZOOM_EYE_X.len() as i32) as usize;
+    let y_index = crate::rng::rand_int_range(ZOOM_EYE_Y.len() as i32) as usize;
+    let after = crate::rng::seed();
+    crate::rng::set_seed(77);
+    let (x, y) = set_camera_zoom_angles(Facing::Left);
+    assert_eq!(crate::rng::seed(), after);
+    assert_eq!(x.to_bits(), (-f_clc_dtor32(ZOOM_EYE_X[x_index])).to_bits());
+    assert_eq!(y.to_bits(), f_clc_dtor32(ZOOM_EYE_Y[y_index]).to_bits());
+    crate::rng::set_seed(77);
+    assert_eq!(set_camera_zoom_angles(Facing::Right).0, -x);
 }

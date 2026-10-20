@@ -842,17 +842,6 @@ pub(crate) fn entry_frame(
                 }
             }
             Action::Bonus3Follow => pl.bonus_follow = true,
-            // `sc1PGameWaitStageBossUpdate`: the intro camera from the
-            // origin, then Master Hand appears.
-            Action::BossCameraAnim => {
-                if let Some(boss) = boss {
-                    ssb_psp_runtime::scene::start_camera_anim(
-                        pl,
-                        &boss.intro_camera,
-                        ssb_engine::math::Vec3::ZERO,
-                    );
-                }
-            }
             Action::Go if stage.source_file == ssb_rom::ground_obj::BONUS3_FILE => {
                 let mut c = ssb_game::countdown::Countdown::sudden_death();
                 c.start_go();
@@ -866,7 +855,9 @@ pub(crate) fn entry_frame(
             Action::BossGo => ssb_game::music::boss_go(
                 crate::scenes(pl, dummies).into_iter().flatten().map(|f| &f.fighter),
             ),
-            Action::Zoom(_)
+            // Before the step: [`entry_camera_frame`].
+            Action::BossCameraAnim
+            | Action::Zoom(_)
             | Action::CameraDefault
             // "Go" itself is the battle's (`go_tick` 601), and the entry's
             // camera mode ends there (`appear::on_go`).
@@ -875,6 +866,23 @@ pub(crate) fn entry_frame(
     }
     if let Some(c) = hud.countdown.as_mut() {
         c.tick(&game_status_sizes(p));
+    }
+}
+
+/// `sc1PGameWaitStageBossUpdate`'s `gmCameraSetStatusAnim`: the wait
+/// thread (priority 5) starts the intro camera from the origin, one play
+/// at once (`gmCameraUpdateAnimVel`), before the frame's camera process
+/// (priority 3, [`boss_after_world`]) plays it again; Master Hand's Appear
+/// stays after the step ([`entry_frame`]).
+pub(crate) fn entry_camera_frame(
+    pl: &mut play::FighterScene,
+    b: &ssb_game::battle::Battle,
+    wait: &spgame::wait::Wait,
+    boss: Option<&BossScene>,
+) {
+    let Some(boss) = boss else { return };
+    if wait.at(b.clock()).any(|a| a == Action::BossCameraAnim) {
+        ssb_psp_runtime::scene::start_camera_anim(pl, &boss.intro_camera, ssb_engine::math::Vec3::ZERO);
     }
 }
 

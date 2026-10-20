@@ -698,13 +698,19 @@ pub const ZOOM_EYE_Y: [f32; 4] = crate::d_arrays::SC1P_GAME_ZOOM_EYE_Y;
 /// `sc1PGameSetCameraZoom`'s angles in radians: a random eye x turned by
 /// the player's facing, then a random eye y. The camera eases at 0.06
 /// over a 28-degree field of view to the fighter's `closeup_camera_zoom`.
+///
+/// The draws are argument expressions; the ROM's code (`sc1pgame.o`,
+/// 0x8018F3AC) draws the x index (`syUtilsRandIntRange(6)`) first, then
+/// the y index (`(4)`), and converts each as `deg * PI / 180`
+/// (`F_CLC_DTOR32`) before the `* lr`.
 pub fn set_camera_zoom_angles(facing: Facing) -> (f32, f32) {
+    use ssb_engine::math::f_clc_dtor32;
     let lr = match facing {
         Facing::Left => -1.0,
         Facing::Right => 1.0,
     };
-    let x = ZOOM_EYE_X[rand_int_range(ZOOM_EYE_X.len() as i32) as usize].to_radians() * lr;
-    let y = ZOOM_EYE_Y[rand_int_range(ZOOM_EYE_Y.len() as i32) as usize].to_radians();
+    let x = f_clc_dtor32(ZOOM_EYE_X[rand_int_range(ZOOM_EYE_X.len() as i32) as usize]) * lr;
+    let y = f_clc_dtor32(ZOOM_EYE_Y[rand_int_range(ZOOM_EYE_Y.len() as i32) as usize]);
     (x, y)
 }
 

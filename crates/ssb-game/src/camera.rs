@@ -140,6 +140,29 @@ pub struct Camera {
     /// them: `gmCameraUpdateInterests`' weapon loop reads their `DObj`
     /// translations. The battle refreshes this before every camera update.
     pub weapon_interests: WeaponInterests,
+    /// `gGMCameraStruct.status_default`: the stage's own battle camera
+    /// (`gmCameraMakeDefaultCamera`, `gm/gmcamera.c:1175`).
+    pub stage_camera: StageCamera,
+    /// `grZebesAcidGetLevelInfo`'s `(current, step)` as the acid's process
+    /// left them this tick, read only by [`StageCamera::Zebes`]. The battle
+    /// refreshes this before every camera update.
+    pub acid_level: (f32, f32),
+}
+
+/// `gGMCameraStruct.status_default` by stage kind: `nGMCameraStatusZebes`
+/// on Planet Zebes, `nGMCameraStatusInishie` on Mushroom Kingdom,
+/// `nGMCameraStatusDefault` elsewhere (`gmCameraMakeDefaultCamera`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StageCamera {
+    /// `gmCameraDefaultFuncCamera`.
+    #[default]
+    Default,
+    /// `gmCameraInishieFuncCamera`: the eye direction ignores `at`
+    /// (`gmCameraUpdateInishieFocus`).
+    Inishie,
+    /// `gmCameraZebesFuncCamera`: the eye stays above the acid
+    /// (`gmCameraUpdateAcidZoom`).
+    Zebes,
 }
 
 /// The most camera-followed weapons at once: one Boomerang, Egg Throw egg or
@@ -205,6 +228,8 @@ impl Default for Camera {
             is_explain: false,
             movie: None,
             weapon_interests: WeaponInterests::default(),
+            stage_camera: StageCamera::Default,
+            acid_level: (0.0, 0.0),
         }
     }
 }
@@ -328,13 +353,27 @@ impl Camera {
 
         // func_ovl2_8010C3C0 + gmCameraGetAdjustAtAngle: a unit
         // eye-direction vector derived from `at` and the stage's own
-        // light-angle nudge.
-        let direction = eye_direction(self.at, light_angle_z_radians, self.pause_eye);
+        // light-angle nudge. Mushroom Kingdom's
+        // gmCameraUpdateInishieFocus passes no `at` tilt at all.
+        let direction = match self.stage_camera {
+            StageCamera::Inishie => {
+                adjust_at_angle(0.0, 0.0, light_angle_z_radians, self.pause_eye)
+            }
+            StageCamera::Default | StageCamera::Zebes => {
+                eye_direction(self.at, light_angle_z_radians, self.pause_eye)
+            }
+        };
 
         // func_ovl2_8010C5C0: move the eye 10% of the way toward the ideal
         // position for the current `target_dist`/direction -- the same
         // `lerp` shape as `gmCameraPan` above.
-        let ideal_eye = self.at + direction * self.target_dist;
+        let mut ideal_eye = self.at + direction * self.target_dist;
+        // gmCameraUpdateAcidZoom: the same move, toward a position raised
+        // to `step + 3000` above the acid's current level.
+        if self.stage_camera == StageCamera::Zebes {
+            let (current, step) = self.acid_level;
+            ideal_eye.y = ideal_eye.y.max(current + (step + 3000.0));
+        }
         self.eye = self.eye.lerp(ideal_eye, 0.1);
 
         // gmCameraApplyVel: the caller adds the quake's `vel_at`.
@@ -632,7 +671,13 @@ fn eye_direction(at: Vec3, light_angle_z_radians: f32, pause_eye: (f32, f32)) ->
     let y =
         (-((at.y - 900.0) / 133.0).to_radians()).clamp((-7.0f32).to_radians(), 5.0f32.to_radians());
     let x = (-(at.x / 133.0).to_radians()).clamp((-17.5f32).to_radians(), 17.5f32.to_radians());
+    adjust_at_angle(x, y, light_angle_z_radians, pause_eye)
+}
 
+/// `gmCameraGetAdjustAtAngle` (`gm/gmcamera.c:320`): the unit eye
+/// direction for turns `x` (about Y) and `y` (pitch), after the pause turn
+/// and the stage's `light_angle.z` nudge.
+fn adjust_at_angle(x: f32, y: f32, light_angle_z_radians: f32, pause_eye: (f32, f32)) -> Vec3 {
     // `gmCameraGetAdjustAtAngle`: the pause turn, then the stage's nudge.
     let angle_x = pause_eye.1 + y + light_angle_z_radians;
     let sin_x = original_sin(angle_x);
@@ -883,6 +928,74 @@ mod tests {
             cam.at.x
         );
         assert!(cam.eye.x.is_finite() && cam.eye.y.is_finite() && cam.eye.z.is_finite());
+    }
+
+    fn settle(stage_camera: StageCamera, acid_level: (f32, f32), target: Vec3) -> Camera {
+        let bounds = Bounds {
+            top: 4000.0,
+            bottom: -2000.0,
+            left: -3900.0,
+            right: 3900.0,
+        };
+        let mut cam = Camera {
+            stage_camera,
+            acid_level,
+            ..Camera::default()
+        };
+        for _ in 0..400 {
+            cam.tick(target, false, bounds, 0.05, 15.0 / 11.0);
+        }
+        cam
+    }
+
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    #[test]
+    fn the_inishie_camera_looks_straight_down_the_z_axis_wherever_at_is() {
+        // gmCameraUpdateInishieFocus: `gmCameraGetAdjustAtAngle(at, 0, 0)`.
+        // Only the stage's light angle tilts the eye; the default camera
+        // turns it by up to 17.5 degrees for an off-centre `at`.
+        let target = Vec3::new(3000.0, 2500.0, 0.0);
+        let inishie = settle(StageCamera::Inishie, (0.0, 0.0), target);
+        let default = settle(StageCamera::Default, (0.0, 0.0), target);
+        let off = inishie.eye - inishie.at;
+        assert!(off.x.abs() < 1.0, "Inishie eye turned by {}", off.x);
+        let dir = adjust_at_angle(0.0, 0.0, 0.05, (0.0, 0.0));
+        let expected = dir.y / dir.z;
+        assert!(
+            (off.y / off.z - expected).abs() < 1e-3,
+            "pitch {} vs {expected}",
+            off.y / off.z
+        );
+        let turned = default.eye - default.at;
+        assert!(turned.x < -500.0, "default eye turn {}", turned.x);
+    }
+
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    #[test]
+    fn the_zebes_camera_keeps_its_eye_target_above_the_acid() {
+        let target = Vec3::new(0.0, 0.0, 0.0);
+        let default = settle(StageCamera::Default, (0.0, 0.0), target);
+        // A low acid leaves the default camera bit for bit.
+        let low = settle(StageCamera::Zebes, (-6000.0, 0.0), target);
+        assert_eq!(
+            low,
+            Camera {
+                stage_camera: StageCamera::Zebes,
+                acid_level: (-6000.0, 0.0),
+                ..default
+            }
+        );
+        // gmCameraUpdateAcidZoom: `current + (step + 3000)` floors the
+        // eye's target height.
+        let floor = 2000.0 + (4.0 + 3000.0);
+        assert!(default.eye.y < floor);
+        let high = settle(StageCamera::Zebes, (2000.0, 4.0), target);
+        assert!(
+            (high.eye.y - floor).abs() < 1.0,
+            "eye.y {} vs {floor}",
+            high.eye.y
+        );
+        assert_eq!(high.at, default.at);
     }
 
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]

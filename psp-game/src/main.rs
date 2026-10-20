@@ -130,9 +130,9 @@ const VS_KNOCK_CAPTURE_TICK: u64 = 750;
 /// The `cpufx-*` scenes' press: B, with the stick down (`cpufx-d`) or up
 /// (`cpufx-u`), from this tick. The N64 reference trace presses 30 frames
 /// after "Go" (its `el` 30); every animation-driven status change in it
-/// (Ness's `SpecialLwHold` at `el` 44, Fox's `SpecialLwLoop` at 33,
-/// Captain Falcon's `SpecialLwAir` at 61) lands on PSP tick `el + 399`,
-/// so the press is at `el` 30 on that clock.
+/// (Ness's `SpecialLwHold` at `el` 44, Fox's `SpecialLwLoop` at 33)
+/// lands on PSP tick `el + 399` for screenshot runs (`el + 398` for clean
+/// state rows, RE-554), so the press is at `el` 30 on that clock.
 const CPUFX_PRESS_TICK: u64 = VS_GO_TICK + 31;
 
 /// PSP tick of the N64 reference trace's frame `el`, as above.
@@ -1933,7 +1933,12 @@ fn physics_pass(
     // item link (RE-416).
     weapons.flush_effects(effects);
     profile::stop(profile::Span::Weapons, t);
-    effects_and_camera(p, stage, s, weapons, effects);
+    // `grZebesAcidGetLevelInfo` as the acid's process left it this tick.
+    let acid = match &stage_ctl.controller {
+        ssb_game::stage::Controller::Zebes(z) => z.level_info(),
+        _ => (0.0, 0.0),
+    };
+    effects_and_camera(p, stage, s, weapons, acid, effects);
 }
 
 /// Priority 3 past the weapon link (5): the effects' processes (link 6),
@@ -1947,6 +1952,7 @@ fn effects_and_camera(
     stage: &ssb_rom::pack::StageDesc,
     s: &mut [Option<&mut play::FighterScene>; 4],
     weapons: &ssb_game::weapon::WeaponPool,
+    acid: (f32, f32),
     effects: &mut dyn ssb_game::effect::HitEffectSink,
 ) {
     ssb_game::camera::effects_then_camera(
@@ -1967,11 +1973,30 @@ fn effects_and_camera(
             let follow = ssb_game::camera::WeaponInterests::collect(follow.chain(held));
             if let Some(pl) = s[0].as_deref_mut() {
                 pl.camera.weapon_interests = follow;
+                pl.camera.acid_level = acid;
             }
             tick_battle_camera(stage, s);
             profile::stop(profile::Span::Camera, t);
         },
     );
+}
+
+/// `sc1PGameSetCameraZoom`: `gmCameraSetStatusPlayerZoom` on the player
+/// at random eye angles, then `ftParamSetModelPartDetailAll(High)`.
+fn set_camera_zoom(p: &Pack<'_>, pl: &mut play::FighterScene) {
+    use ssb_game::spgame::setup::{set_camera_zoom_angles, CAMERA_ZOOM_EASE, CAMERA_ZOOM_FOV};
+    let eye = set_camera_zoom_angles(pl.fighter.facing);
+    let dist = p.fighter(pl.fighter.kind as u32).map_or(1000.0, |d| d.closeup_camera_zoom);
+    pl.demo_zoom = Some(ssb_psp_runtime::scene::DemoZoom {
+        port: pl.fighter.port,
+        eye,
+        dist,
+        pan_scale: CAMERA_ZOOM_EASE,
+        fov: CAMERA_ZOOM_FOV,
+        pos: pl.fighter.pos,
+        cam_offset_y: pl.cam_offset_y,
+    });
+    pl.fighter.model_parts.set_detail_all(ssb_game::modelpart::Detail::High);
 }
 
 /// The battle camera's process (priority 3, link 9: after every fighter's
@@ -3113,6 +3138,17 @@ unsafe fn training_frame(
         None => (true, false),
         Some((Frame::Run, status)) => (status != GameStatus::Wait, status == GameStatus::Wait),
         Some((Frame::Frozen, status)) => {
+            // `ifCommon1PGameInterfaceProcSet` (before the frame's
+            // `gcRunAll`): `sc1PGameSetCameraZoom` on the player, whose
+            // camera process alone runs on through Set.
+            if let Some(b) = battle.as_ref().filter(|b| b.set_zoom && status == GameStatus::Set) {
+                if b.set_zoom_began {
+                    set_camera_zoom(p, pl);
+                }
+                if let Some(stage) = p.stage(stage_index) {
+                    tick_battle_camera(&stage, &mut scenes(pl, dummies));
+                }
+            }
             // `ifCommonBattleInterfaceProcUpdate`: at the battle's end the
             // particles run on, lists 2 and 3 only.
             if matches!(status, GameStatus::End | GameStatus::BossDefeat | GameStatus::Set) {
@@ -3143,6 +3179,7 @@ unsafe fn training_frame(
         match (campaign.as_deref(), p.stage(stage_index)) {
             (Some(c), Some(_)) => {
                 if let (Some(b), Some(wait)) = (battle.as_ref(), c.wait.as_ref()) {
+                    campaign::entry_camera_frame(pl, b, wait, boss.as_deref());
                     campaign::entry_zoom_frame(p, pl, dummies, b, wait);
                 }
             }
@@ -3337,6 +3374,9 @@ struct Hud {
     pause: Option<PauseState>,
     /// `ifCommonEntryFocusThread`, from the countdown's frame.
     entry_focus: Option<ssb_game::appear::EntryFocus>,
+    /// A capture scene's entry focus `id`, in place of the draw (which
+    /// still runs): the N64 reference run's (RE-554).
+    entry_focus_pin: Option<u8>,
     /// `players[].color` by port, the stage emblem colour each damage
     /// display takes (`ifCommonPlayerDamageInitInterface`).
     colors: [u8; 4],
@@ -3476,6 +3516,7 @@ impl Hud {
             countdown: None,
             pause: None,
             entry_focus: None,
+            entry_focus_pin: None,
             colors: [0, 1, 2, 3],
             players: ssb_game::player_interface::Interface::default(),
             ko: ssb_game::ko::KoEffects::default(),
@@ -3526,7 +3567,10 @@ fn tick_countdown(p: &Pack<'_>, hud: &mut Hud, b: &ssb_game::battle::Battle) {
             Some(c) if b.is_sudden_death => c.start_go(),
             None => {
                 hud.entry_focus = Some(ssb_game::appear::EntryFocus {
-                    id: ssb_game::rng::rand_int_range(3) as u8,
+                    id: {
+                        let drawn = ssb_game::rng::rand_int_range(3) as u8;
+                        hud.entry_focus_pin.unwrap_or(drawn)
+                    },
                     // `pl_count + cp_count`.
                     count: b.players.iter().filter(|p| p.present).count() as u8,
                 });
@@ -4484,6 +4528,10 @@ unsafe fn session_frame(
                             for d in s.dummies.iter_mut().flatten() {
                                 d.mirror = true;
                             }
+                            // Every cpufx reference ROM's run draws focus 2,
+                            // a zoom on each fighter, so its camera is still
+                            // settling after "Go".
+                            s.damage_hud.entry_focus_pin = Some(2);
                         }
                         // `cpufx-k`'s Kirbys are made holding their copies
                         // (`FTCreateDesc::copy_kind`).

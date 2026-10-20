@@ -1890,6 +1890,13 @@ impl FighterScene {
                 return;
             }
         }
+        // `gGMCameraStruct.status_default` by `gkind`
+        // (`gmCameraMakeDefaultCamera`): the stage's own battle camera.
+        self.camera.stage_camera = match stage.source_file {
+            ssb_rom::ground_obj::ZEBES_FILE => ssb_game::camera::StageCamera::Zebes,
+            ssb_rom::ground_obj::INISHIE_FILE => ssb_game::camera::StageCamera::Inishie,
+            _ => ssb_game::camera::StageCamera::Default,
+        };
         let mut list = [ssb_game::camera::Interest::default(); 4];
         let mut count = 0;
         let all = self.camera_interest(stage).into_iter().chain(others.iter().copied());

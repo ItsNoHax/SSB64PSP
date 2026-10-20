@@ -168,6 +168,10 @@ pub struct Battle {
     /// `ifCommon1PGameInterfaceProcSet` ran: the host zooms on the player
     /// (`sc1PGameSetCameraZoom`) while the scene holds 45 ticks.
     pub set_zoom: bool,
+    /// `ifCommon1PGameInterfaceProcSet` ran this tick: the host calls
+    /// `sc1PGameSetCameraZoom` before the frame's processes
+    /// ([`crate::spgame::setup::set_camera_zoom_angles`]).
+    pub set_zoom_began: bool,
     /// Master Hand's defeat, when it is under way.
     pub boss_defeat: Option<BossDefeat>,
     /// `dIFCommonBattleBossUpdateWait`.
@@ -246,6 +250,7 @@ impl Battle {
             time_up_is_failure: false,
             set_wait: SET_RESTORE_WAIT,
             set_zoom: false,
+            set_zoom_began: false,
             boss_defeat: None,
             boss_wait: 0,
             boss_set: false,
@@ -420,6 +425,7 @@ impl Battle {
     /// `ifCommonBattleUpdateInterfaceAll`, and the interface processes the
     /// frame's `gcRunAll` runs: the countdown and the timer.
     pub fn begin_frame(&mut self) -> Frame {
+        self.set_zoom_began = false;
         if self.status != GameStatus::Go {
             self.timer_started = false;
         } else if !self.timer_started {
@@ -482,6 +488,7 @@ impl Battle {
                     self.status = GameStatus::Set;
                     self.restore_wait = self.set_wait;
                     self.set_zoom = self.set_wait != SET_RESTORE_WAIT;
+                    self.set_zoom_began = self.set_zoom;
                 }
                 Frame::Frozen
             }
