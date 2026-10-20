@@ -16,17 +16,17 @@
 
 ## Current work
 
-- Landed: Kirby roster-A2 entry camera (RE-543).
-  - Entry zoom reads the live fighter position each camera tick.
-  - 8 entry-window goldens rebaselined.
-  - N64 camera trace: PSP camera is the N64's delayed one tick (RE-543); gap open.
+- Landed: entry camera thread timing and idle zoom-out tics (RE-543).
+  - Entry zoom events run before the camera (`entry_zoom_frame`).
+  - Idle zoom-out counts only uncontrolled ticks (`total_tics`).
+  - PSP camera == N64 camera per tick, rec 90-402, within 0.001.
+  - 17 goldens rebaselined.
 
 ## Next
 
-1. Entry zoom starts one tick late vs N64 (RE-543): fix, re-trace A2 rec 299-345.
+1. Effects process order, step B (RE-542); POW Block quake life.
 2. Thunder Jolt burst spikes (RE-541).
-3. Effects process order (RE-542).
-4. MS8 list in `PLAN.md`, 1P intro first.
+3. MS8 list in `PLAN.md`, 1P intro first.
 
 ## Blockers
 
@@ -35,7 +35,7 @@
 
 ## Verification
 
-Baseline: RE-543 entry camera.
+Baseline: RE-543 entry camera thread timing.
 
 | Check | Result |
 |---|---|
@@ -43,7 +43,7 @@ Baseline: RE-543 entry camera.
 | `cargo test --workspace`, `SSB64_STUB_TABLES=1`, no ROM | pass |
 | `cargo +1.98.0 clippy -D warnings`, `cargo fmt --all --check` | pass |
 | Both PSP release builds | compile |
-| Goldens | 225/225, 8 entry-window rows rebaselined (`r2-mario-entry-pipe` nondeterministic, RE-506) |
+| Goldens | 225/225, 17 camera rows rebaselined (`r2-mario-entry-pipe` nondeterministic, RE-506) |
 | PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` | exit 0, screenshot |
 | Physical PSP | PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |
 | ROMs | `rom/Super Smash Bros. (USA).z64`, `refs/ssb-decomp-re/baserom.us.z64`; SHA-1 `e2929e10...` |

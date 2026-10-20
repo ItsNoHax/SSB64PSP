@@ -3038,6 +3038,24 @@ unsafe fn training_frame(
     // `sc1PGameBossLockPlayerControl`: Master Hand's defeat locks every
     // fighter.
     let locked = locked || menu_locked || battle.as_ref().is_some_and(|b| b.boss_defeat.is_some());
+    // The entry threads' camera events (priority 5) before the frame's
+    // camera process (priority 3); their entries stay after the step, where
+    // `settle_appear` places them (RE-543). The particles (link 0's
+    // `func_run`s) do not read it.
+    if bonus.is_none() {
+        match (campaign.as_deref(), p.stage(stage_index)) {
+            (Some(c), Some(_)) => {
+                if let (Some(b), Some(wait)) = (battle.as_ref(), c.wait.as_ref()) {
+                    campaign::entry_zoom_frame(p, pl, dummies, b, wait);
+                }
+            }
+            _ => {
+                if let Some(b) = battle.as_ref().filter(|b| !b.is_demo) {
+                    entry_zoom_frame(p, pl, dummies, damage_hud, b);
+                }
+            }
+        }
+    }
     let mut none = ssb_game::effect::NoEffects;
     let mut rt = banks.as_ref().map(|b| ssb_game::effect::EffectRuntime {
         particles: &mut damage_hud.particles,
@@ -3147,8 +3165,7 @@ fn frame_end_audio(
 }
 
 /// `ifCommonEntryFocusThread`'s slice of the frame: each fighter's entry on
-/// its tick, and for the next frame the camera's zoom on the fighter the
-/// focus holds (RE-402).
+/// its tick (RE-402). Its camera half is [`entry_zoom_frame`].
 #[inline(never)]
 fn entry_frame(
     p: &Pack<'_>,
@@ -3157,7 +3174,6 @@ fn entry_frame(
     hud: &Hud,
     b: &ssb_game::battle::Battle,
 ) {
-    pl.entry_zoom = None;
     let Some(focus) = hud.entry_focus else { return };
     let Some(t) = b.clock().checked_sub(1 + ssb_game::battle::ENTRY_WAIT) else {
         return;
@@ -3169,6 +3185,26 @@ fn entry_frame(
             f.settle_appear(p);
         }
     }
+}
+
+/// `ifCommonEntryFocusThread`'s camera events
+/// (`gmCameraSetStatusPlayerZoom`, `gmCameraSetStatusDefault`): the
+/// thread's process (priority 5) runs before the camera's (priority 3), so
+/// the caller sets the zoom before the frame's camera pass reads it
+/// (RE-543).
+#[inline(never)]
+fn entry_zoom_frame(
+    p: &Pack<'_>,
+    pl: &mut play::FighterScene,
+    dummies: &Dummies,
+    hud: &Hud,
+    b: &ssb_game::battle::Battle,
+) {
+    pl.entry_zoom = None;
+    let Some(focus) = hud.entry_focus else { return };
+    let Some(t) = b.clock().checked_sub(1 + ssb_game::battle::ENTRY_WAIT) else {
+        return;
+    };
     // The fighter and distance only: the camera pass reads its position
     // on the tick it runs (RE-543).
     let zoom = focus.zoom(t).and_then(|i| {

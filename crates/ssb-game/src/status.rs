@@ -1905,6 +1905,12 @@ pub struct StatusState {
     /// status is entered again. `ftMainSetStatus` always restarts the
     /// figatree, even for the same status.
     pub entry: u32,
+    /// `status_total_tics`: the frames in this status that ran with
+    /// control on. `ftMainSetStatus` zeroes it and
+    /// `ftMainProcUpdateInterrupt` counts it first thing, also in hitlag,
+    /// unless `is_control_disable` (the entry, a locked pause). The
+    /// camera's idle zoom-out reads it (`gmCameraCalcFighterZoomRange`).
+    pub total_tics: u32,
 }
 
 /// `ftCommonTurnStatusVars`: the pivot's state. `lr_turn` shares its word
@@ -1969,6 +1975,7 @@ impl Default for StatusState {
             squat: SquatVars::default(),
             anim_frame_begin: 0.0,
             entry: 0,
+            total_tics: 0,
         }
     }
 }
@@ -4224,6 +4231,7 @@ pub fn set_any_status_preserve(
     f.status.clock = anim_frame_begin;
     f.status.anim_frame_begin = anim_frame_begin;
     f.status.entry = f.status.entry.wrapping_add(1);
+    f.status.total_tics = 0;
     f.status.timing = timing;
     crate::thrown::on_status(f);
     crate::motion::start(f, anim_frame_begin);

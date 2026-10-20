@@ -1727,7 +1727,7 @@ impl FighterScene {
             facing_left: matches!(facing, ssb_game::fighter::Facing::Left),
             zoom_frame: self.camera_zoom_frame,
             zoom_range: 1.0,
-            idle_zoomed_out: f.status.status == Status::Wait && f.status.clock >= 120.0,
+            idle_zoomed_out: ssb_game::camera::idle_zoomed_out(f),
             dead_up,
             team_bounds,
         })

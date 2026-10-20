@@ -82,6 +82,13 @@ pub const DEFAULT_FAR: f32 = crate::d_arrays::GM_CAMERA_PERSP_DEFAULT_FAR[0];
 const DEFAULT_TARGET_DIST: f32 = 10000.0;
 
 /// One fighter entry consumed by `gmCameraUpdateInterests`.
+/// `gmCameraCalcFighterZoomRange`'s 0.75 test: in Wait for 120 of
+/// `status_total_tics`, which stand still while control is disabled (no
+/// idle zoom-out during the entry, RE-543).
+pub fn idle_zoomed_out(f: &crate::fighter::Fighter) -> bool {
+    f.status.status == crate::status::Status::Wait && f.status.total_tics >= 120
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Interest {
     /// Fighter position with `FTAttributes.cam_offset_y` already applied.
@@ -92,7 +99,8 @@ pub struct Interest {
     pub zoom_frame: f32,
     /// Per-status `FTStruct.camera_zoom_range` multiplier.
     pub zoom_range: f32,
-    /// The original applies a further 0.75 multiplier after 120 Wait ticks.
+    /// The original applies a further 0.75 multiplier after 120 Wait ticks
+    /// ([`idle_zoomed_out`]).
     pub idle_zoomed_out: bool,
     /// `nFTCameraModeDeadUp`: `target_pos` is already
     /// `gmCameraSetDeadUpStarPosition`'s, which replaces the bounds clamp.
@@ -647,6 +655,32 @@ mod tests {
         };
         assert_eq!(lb_sine_sample(216).to_bits(), rounded(216).to_bits());
         assert_ne!(lb_sine_sample(372).to_bits(), rounded(372).to_bits());
+    }
+
+    /// RE-543: `status_total_tics` stands still while control is disabled,
+    /// so a fighter waiting through the locked entry is not zoomed out
+    /// (the N64 roster-A2 trace at rec 361); unlocked, the 0.75 applies on
+    /// the 120th tick in Wait, and a new status starts the count again.
+    #[test]
+    fn idle_zoom_out_counts_only_ticks_with_control() {
+        use crate::fighter::{Fighter, FighterKind};
+        let surfaces = || core::iter::empty::<crate::weapon::MapSurface>();
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        crate::status::set_wait(&mut f);
+        f.interface.control_disable = true;
+        for _ in 0..200 {
+            f.tick_interrupt(&surfaces);
+        }
+        assert!(!idle_zoomed_out(&f));
+        f.interface.control_disable = false;
+        for _ in 0..119 {
+            f.tick_interrupt(&surfaces);
+        }
+        assert!(!idle_zoomed_out(&f));
+        f.tick_interrupt(&surfaces);
+        assert!(idle_zoomed_out(&f));
+        crate::status::set_wait(&mut f);
+        assert!(!idle_zoomed_out(&f));
     }
 
     /// RE-543: Kirby's entry star descends through the top camera bound

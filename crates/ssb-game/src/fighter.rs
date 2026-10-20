@@ -1202,6 +1202,9 @@ impl Fighter {
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
+        if !self.interface.control_disable {
+            self.status.total_tics = self.status.total_tics.wrapping_add(1);
+        }
         self.tick_timers();
         self.resolve_cliff_release(surfaces);
         // `proc_passive`: an electric hit's `DamageE` hands over to the

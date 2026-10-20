@@ -858,7 +858,8 @@ pub(crate) fn entry_frame(
                 c.start_go();
                 hud.countdown = Some(c);
             }
-            // The camera follows `zoom_port` below. Targets uses its
+            // The camera follows [`entry_zoom_frame`]'s `zoom_port`.
+            // Targets uses its separate bonus entry path.
             // separate bonus entry path.
             // `sc1PGameWaitStageBossUpdate` at Go: Final Destination's
             // music, unless an item's plays.
@@ -875,6 +876,21 @@ pub(crate) fn entry_frame(
     if let Some(c) = hud.countdown.as_mut() {
         c.tick(&game_status_sizes(p));
     }
+}
+
+/// The wait thread's zoom events (`sc1PGameWaitStageCommonUpdate`): the
+/// thread's process (priority 5) runs before the camera's (priority 3), so
+/// the caller sets the zoom before the frame's camera pass reads it
+/// (RE-543).
+#[inline(never)]
+pub(crate) fn entry_zoom_frame(
+    p: &Pack<'_>,
+    pl: &mut play::FighterScene,
+    dummies: &Dummies,
+    b: &ssb_game::battle::Battle,
+    wait: &spgame::wait::Wait,
+) {
+    let clock = b.clock();
     // `gmCameraSetStatusPlayerZoom(fighter, 0, 0, closeup_camera_zoom,
     // 0.1, 28)` until `gmCameraSetStatusDefault`: the last zoom event so far.
     let zoom_port = wait

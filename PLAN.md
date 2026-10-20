@@ -126,7 +126,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Kirby roster-A2 entry | PSP entry zoom starts one tick after the N64's (camera = N64 camera delayed 1 tick to 0.001 at rec 299-309; eye y/z up to 44 units off at rec 320, 5 at rec 340) → apply the zoom on the same camera tick (N64: Appear tick + 30), re-trace | RE-543 |
+| Boss-intro camera thread | `BossCameraAnim` is set after the fighter step; the decomp runs it as a priority-5 thread before the camera. Untraced → boss-intro N64 camera trace, compare per tick | RE-543 |
 | Captain's car | Battle-camera fallback before TopN in bounds unverified (`f1-vs-car`) → warp-boot capture, focus id 2, Captain | RE-523 |
 | PK Thunder trail, PK Wave | Needs N64 capture. Trail: `efManagerPKThunderTrailMakeEffect`, 335 + 0x9050, link 15; reflected trail link 18. PK Wave: 335 + 0x9A10, joint 5; made at `ftNessSpecialHiHold` start (ftnessspecialhi.c:318), drawn nowhere | RE-413, RE-415, RE-416, RE-427 |
 | Samus fire spark | Up smash, forward air; 84 + 0x2040. Needs matrix kind 0x49 billboard along joint 16, Samus capture | RE-427 |
