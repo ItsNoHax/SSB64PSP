@@ -110,6 +110,18 @@ fn set(f: &mut Fighter, status: YoshiStatus, frame: f32, length: f32) {
     );
 }
 
+/// `ftYoshiSpecialNSwitchStatusAir` / `...AirNSwitchStatusGround`: Egg
+/// Lay's map switches pass `FTSTATUS_PRESERVE_HIT`.
+fn set_keep_hit(f: &mut Fighter, status: YoshiStatus, frame: f32) {
+    status::set_any_status_preserve(
+        f,
+        AnyStatus::Yoshi(status),
+        frame,
+        StatusTiming::frames(SPECIAL_N_LENGTH),
+        status::Preserve::HIT,
+    );
+}
+
 /// The motion script's clock passing `at` this play: the status clock,
 /// which runs on past the figatree's end (RE-474).
 fn crossed(f: &Fighter, at: f32) -> bool {
@@ -330,7 +342,7 @@ fn set_special_air_lw_loop(f: &mut Fighter) {
     }
     let vel_y = f.physics.vel_air.y;
     let frame = f.status.anim_frame;
-    status::set_any_status(
+    status::set_any_status_preserve(
         f,
         AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop),
         frame,
@@ -339,6 +351,7 @@ fn set_special_air_lw_loop(f: &mut Fighter) {
             anim_speed: 0.0,
             looping: false,
         },
+        status::Preserve::HIT,
     );
     f.physics.vel_air.y = vel_y.min(YOSHIBOMB_VEL_Y_CLAMP);
 }
@@ -535,7 +548,7 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
         // `ftYoshiSpecialNSwitchStatusAir`: the search carries over.
         YoshiStatus::SpecialN => {
             f.become_airborne();
-            set(f, YoshiStatus::SpecialAirN, frame, SPECIAL_N_LENGTH);
+            set_keep_hit(f, YoshiStatus::SpecialAirN, frame);
             set_catch_params(f);
         }
         YoshiStatus::SpecialNCatch => {
@@ -573,7 +586,7 @@ pub fn on_landing(f: &mut Fighter, floor_y: f32) -> bool {
         // `ftYoshiSpecialAirNSwitchStatusGround`.
         YoshiStatus::SpecialAirN => {
             f.land(floor_y);
-            set(f, YoshiStatus::SpecialN, frame, SPECIAL_N_LENGTH);
+            set_keep_hit(f, YoshiStatus::SpecialN, frame);
             set_catch_params(f);
         }
         YoshiStatus::SpecialAirNCatch => {
@@ -736,6 +749,51 @@ mod tests {
             assert_eq!(f.weapon_spawn.is_some(), frame == 3);
         }
         assert_eq!(f.take_weapon_spawn().unwrap().kind, WeaponKind::YoshiStars);
+    }
+
+    /// `ftYoshiSpecialAirLwLoopSetStatus` passes `FTSTATUS_PRESERVE_HIT`
+    /// and Egg Lay's map switches (`ftYoshiSpecialNSwitchStatusAir`,
+    /// `...AirNSwitchStatusGround`) do too: each keeps the hitbox it had.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_bomb_loop_and_egg_lay_switches_keep_their_hitboxes() {
+        use crate::combat::AttackState;
+        let active = |f: &Fighter| f.attack_colls.iter().any(|c| c.state != AttackState::Off);
+        // The hop's script makes the box on the frame its figatree ends,
+        // the frame `ftYoshiSpecialLwStartProcUpdate` enters the loop.
+        let mut f = yoshi(true);
+        set_special_lw_start(&mut f);
+        while f.status.status == AnyStatus::Yoshi(YoshiStatus::SpecialLwStart) {
+            assert!(!active(&f));
+            status::update(&mut f);
+        }
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop)
+        );
+        assert!(active(&f), "the loop keeps it");
+        for ground in [true, false] {
+            let mut f = yoshi(ground);
+            if ground {
+                set_special_n(&mut f);
+            } else {
+                set_special_air_n(&mut f);
+            }
+            let mut n = 0;
+            while !active(&f) {
+                status::update(&mut f);
+                n += 1;
+                assert!(n < 40, "the tongue makes a hitbox");
+            }
+            if ground {
+                assert!(on_ground_lost(&mut f));
+                assert_eq!(f.status.status, AnyStatus::Yoshi(YoshiStatus::SpecialAirN));
+            } else {
+                assert!(on_landing(&mut f, 0.0));
+                assert_eq!(f.status.status, AnyStatus::Yoshi(YoshiStatus::SpecialN));
+            }
+            assert!(active(&f), "ground={ground}");
+        }
     }
 
     #[test]

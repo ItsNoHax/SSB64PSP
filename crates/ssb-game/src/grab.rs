@@ -1534,13 +1534,14 @@ fn set_donkey_throwf_walk(f: &mut Fighter, frame: f32) {
 
 /// `ftDonkeyThrowFFSetStatus` @ 0x8014DF14.
 fn set_donkey_throwff(f: &mut Fighter, is_turn: bool) {
-    // The aerial throw keeps `is_fastfall`; the grounded one has none.
-    let status = if f.is_grounded() {
-        DonkeyStatus::ThrowFF
+    // The aerial throw keeps `is_fastfall` (`FTSTATUS_PRESERVE_FASTFALL`);
+    // the grounded one passes `FTSTATUS_PRESERVE_NONE`.
+    let timing = StatusTiming::frames(DONKEY_THROWFF_LENGTH);
+    if f.is_grounded() {
+        set_donkey(f, DonkeyStatus::ThrowFF, 0.0, timing);
     } else {
-        DonkeyStatus::ThrowAirFF
-    };
-    set_donkey_keep_fastfall(f, status, StatusTiming::frames(DONKEY_THROWFF_LENGTH));
+        set_donkey_keep_fastfall(f, DonkeyStatus::ThrowAirFF, timing);
+    }
     // The setter plays the first frame before the turn (RE-474).
     status::play_anim_events(f);
     f.grab.throw_desc = Some(throw_descs::DONKEY_THROW_FF);
@@ -3598,6 +3599,21 @@ mod tests {
         assert_eq!(dk.status.status, AnyStatus::Donkey(DonkeyStatus::ThrowFF));
         assert_eq!(dk.status.anim_frame, 1.0, "the throw");
         assert_eq!(frames_in(&mut dk, &mut dummy), 39);
+    }
+
+    /// `ftDonkeyThrowFFSetStatus`: the grounded throw passes
+    /// `FTSTATUS_PRESERVE_NONE`, the aerial one `FTSTATUS_PRESERVE_FASTFALL`.
+    #[test]
+    fn only_the_aerial_cargo_throw_keeps_the_fast_fall() {
+        for ground in [true, false] {
+            let mut dk = grounded(FighterKind::Donkey, 0, 0.0);
+            if !ground {
+                dk.become_airborne();
+            }
+            dk.physics.is_fastfall = true;
+            set_donkey_throwff(&mut dk, false);
+            assert_eq!(dk.physics.is_fastfall, !ground, "ground={ground}");
+        }
     }
 
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]

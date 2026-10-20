@@ -151,7 +151,7 @@ fn set(f: &mut Fighter, status: Status) {
                     | Status::DownWaitD
                     | Status::DownWaitU
             ),
-            // `ftCommonDamageFallSetStatusFromDamage` and `...FromCliffWait`.
+            // `ftCommonDamageFallSetStatusFromDamage`.
             fastfall: status == Status::DamageFall,
             // `FTCOMMON_DOWNBOUNCE_STATUS_FLAGS`: the wait keeps the
             // bounce's slope contour, so a downed fighter stays tilted to
@@ -261,9 +261,11 @@ pub fn set_damage_fall(f: &mut Fighter) {
 }
 
 /// `ftCommonDamageFallSetStatusFromCliffWait`: a ledge hang that times out
-/// cannot tech with a Z tap made while hanging.
+/// cannot tech with a Z tap made while hanging. Unlike `...FromDamage` it
+/// passes `FTSTATUS_PRESERVE_FASTFALL` alone: the player tag wait resets.
 pub fn set_damage_fall_from_cliff_wait(f: &mut Fighter) {
-    set_damage_fall(f);
+    set_preserve(f, Status::DamageFall, status::Preserve::FASTFALL);
+    crate::physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
     f.tics_since_last_z = status::ZTRIGLAST_TICS_MAX;
 }
 
@@ -1039,6 +1041,31 @@ mod tests {
             step(&mut f);
         }
         assert_eq!(f.status.status, Status::DownWaitU);
+    }
+
+    /// `FTCOMMON_DOWNBOUNCE_STATUS_FLAGS` also carries
+    /// `FTSTATUS_PRESERVE_MODELPART` and `..._TEXTUREPART`: the wait keeps
+    /// the bounce's model and texture parts.
+    #[test]
+    fn the_down_wait_keeps_the_bounce_s_model_and_texture_parts() {
+        for (bounce, wait) in [
+            (Status::DownBounceD, Status::DownWaitD),
+            (Status::DownBounceU, Status::DownWaitU),
+        ] {
+            let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+            status::set_status(&mut f, bounce, 0.0, StatusTiming::unknown());
+            f.model_parts.is_modify = true;
+            f.model_parts.texture.curr[0] = f.model_parts.texture.base[0] + 1;
+            f.model_parts.texture.is_modify = true;
+            set_down_wait(&mut f);
+            assert_eq!(f.status.status, wait);
+            assert!(f.model_parts.is_modify, "{wait:?}");
+            assert!(f.model_parts.texture.is_modify, "{wait:?}");
+            assert_eq!(
+                f.model_parts.texture.curr[0],
+                f.model_parts.texture.base[0] + 1
+            );
+        }
     }
 
     /// RE-510: `FTCOMMON_DOWNBOUNCE_STATUS_FLAGS` keeps the bounce's

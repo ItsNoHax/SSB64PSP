@@ -138,7 +138,9 @@ fn set(f: &mut Fighter, s: P, frame: f32) {
 }
 /// A ground/air switch: every one of Pikachu's special switches keeps the
 /// hit status (`FTSTATUS_PRESERVE_HITSTATUS`, `ftpikachuspecial*.c`) and
-/// the colour animation ([`crate::colanim::preserved`]).
+/// the colour animation ([`crate::colanim::preserved`]); Thunder's loop and
+/// hit also keep their hitboxes (`FTPIKACHU_SPECIALLWLOOP_STATUS_FLAGS`,
+/// `..._SPECIALLWHIT_...`: `FTSTATUS_PRESERVE_HIT`).
 fn switch(f: &mut Fighter, s: P, frame: f32) {
     let mut timing = StatusTiming::frames(length(s));
     if matches!(
@@ -152,7 +154,13 @@ fn switch(f: &mut Fighter, s: P, frame: f32) {
         AnyStatus::Pikachu(s),
         frame,
         timing,
-        status::Preserve::HITSTATUS,
+        status::Preserve {
+            hit: matches!(
+                s,
+                P::SpecialLwLoop | P::SpecialAirLwLoop | P::SpecialLwHit | P::SpecialAirLwHit
+            ),
+            ..status::Preserve::HITSTATUS
+        },
     );
 }
 pub fn set_special_n(f: &mut Fighter) {
@@ -901,6 +909,42 @@ mod tests {
         steps(&mut f, 38);
         assert_eq!(f.status.status, AnyStatus::Common(Status::Fall));
         assert!(f.weapon_spawn.is_none(), "one Thunder per startup");
+    }
+
+    /// `FTPIKACHU_SPECIALLWHIT_STATUS_FLAGS` carries `FTSTATUS_PRESERVE_HIT`:
+    /// a map switch mid-burst keeps the hitbox, which the motion replay
+    /// from `anim_frame` would not remake.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn thunder_hit_map_switches_keep_the_burst_hitbox() {
+        use crate::combat::AttackState;
+        let active = |f: &Fighter| f.attack_colls.iter().any(|c| c.state != AttackState::Off);
+        for ground in [false, true] {
+            let mut f = pikachu(ground);
+            set(
+                &mut f,
+                if ground {
+                    P::SpecialLwHit
+                } else {
+                    P::SpecialAirLwHit
+                },
+                0.0,
+            );
+            let mut n = 0;
+            while !active(&f) {
+                status::update(&mut f);
+                n += 1;
+                assert!(n < 29, "the burst makes a hitbox");
+            }
+            if ground {
+                assert!(on_ground_lost(&mut f));
+                assert_eq!(f.status.status, AnyStatus::Pikachu(P::SpecialAirLwHit));
+            } else {
+                assert!(on_landing(&mut f, 0.0, Vec2::new(0.0, 1.0)));
+                assert_eq!(f.status.status, AnyStatus::Pikachu(P::SpecialLwHit));
+            }
+            assert!(active(&f), "ground={ground}");
+        }
     }
 
     #[test]

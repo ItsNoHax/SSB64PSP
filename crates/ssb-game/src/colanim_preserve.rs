@@ -11,12 +11,14 @@
 //!
 //! Each row: fighter kind (0xFF for any), the status the call is made from
 //! (0xFFFF for any; a `...SetStatus` function is called from its move's
-//! other statuses), and the status entered. Rebirth and the items are not
-//! listed.
+//! other statuses), and the status entered. A callback several statuses
+//! share (`ftkirbystatus.h`: Stone's `ftKirbySpecialLwHoldProcMap` and
+//! `...AirLwHoldProcMap`, the copied Fireball's for Mario and Luigi) gives
+//! a row for each. Rebirth and the items are not listed.
 
 /// `ftMainSetStatus` calls whose flags carry `FTSTATUS_PRESERVE_COLANIM`:
 /// columns as in the module documentation.
-pub static PRESERVE_COLANIM: [(u8, u16, u16); 130] = [
+pub static PRESERVE_COLANIM: [(u8, u16, u16); 133] = [
     (0x00, 0x00DF, 0x00E0), // nFTMarioStatusSpecialN -> nFTMarioStatusSpecialAirN
     (0x00, 0x00E0, 0x00DF), // nFTMarioStatusSpecialAirN -> nFTMarioStatusSpecialN
     (0x01, 0x00E3, 0x00E4), // nFTFoxStatusSpecialHiStart -> nFTFoxStatusSpecialAirHiStart
@@ -61,9 +63,9 @@ pub static PRESERVE_COLANIM: [(u8, u16, u16); 130] = [
     (0x07, 0x00E4, 0x00E5), // nFTCaptainStatusSpecialN -> nFTCaptainStatusSpecialAirN
     (0x07, 0x00E5, 0x00E4), // nFTCaptainStatusSpecialAirN -> nFTCaptainStatusSpecialN
     (0x08, 0x00E7, 0x00E8), // nFTKirbyStatusCopyMarioSpecialN -> nFTKirbyStatusCopyMarioSpecialAirN
-    (0x08, 0x00E7, 0x00EA), // nFTKirbyStatusCopyMarioSpecialN -> nFTKirbyStatusCopyLuigiSpecialAirN
     (0x08, 0x00E8, 0x00E7), // nFTKirbyStatusCopyMarioSpecialAirN -> nFTKirbyStatusCopyMarioSpecialN
-    (0x08, 0x00E8, 0x00E9), // nFTKirbyStatusCopyMarioSpecialAirN -> nFTKirbyStatusCopyLuigiSpecialN
+    (0x08, 0x00E9, 0x00EA), // nFTKirbyStatusCopyLuigiSpecialN -> nFTKirbyStatusCopyLuigiSpecialAirN
+    (0x08, 0x00EA, 0x00E9), // nFTKirbyStatusCopyLuigiSpecialAirN -> nFTKirbyStatusCopyLuigiSpecialN
     (0x08, 0x00ED, 0x00F0), // nFTKirbyStatusCopySamusSpecialNStart -> nFTKirbyStatusCopySamusSpecialAirNStart
     (0x08, 0x00EF, 0x00F1), // nFTKirbyStatusCopySamusSpecialNEnd -> nFTKirbyStatusCopySamusSpecialAirNEnd
     (0x08, 0x00F0, 0x00ED), // nFTKirbyStatusCopySamusSpecialAirNStart -> nFTKirbyStatusCopySamusSpecialNStart
@@ -80,9 +82,12 @@ pub static PRESERVE_COLANIM: [(u8, u16, u16); 130] = [
     (0x08, 0x00FF, 0x00FE), // nFTKirbyStatusCopyNessSpecialAirN -> nFTKirbyStatusCopyNessSpecialN
     (0x08, 0x0104, 0x0106), // nFTKirbyStatusSpecialLwStart -> nFTKirbyStatusSpecialLwHold
     (0x08, 0x0104, 0x0108), // nFTKirbyStatusSpecialLwStart -> nFTKirbyStatusSpecialAirLwStart
+    (0x08, 0x0105, 0x0106), // nFTKirbyStatusSpecialLwUnk -> nFTKirbyStatusSpecialLwHold
     (0x08, 0x0105, 0x0109), // nFTKirbyStatusSpecialLwUnk -> nFTKirbyStatusSpecialAirLwHold
     (0x08, 0x0106, 0x010B), // nFTKirbyStatusSpecialLwHold -> nFTKirbyStatusSpecialAirLwFall
     (0x08, 0x0109, 0x010A), // nFTKirbyStatusSpecialAirLwHold -> nFTKirbyStatusSpecialAirLwLanding
+    (0x08, 0x010A, 0x010B), // nFTKirbyStatusSpecialAirLwLanding -> nFTKirbyStatusSpecialAirLwFall
+    (0x08, 0x010B, 0x010A), // nFTKirbyStatusSpecialAirLwFall -> nFTKirbyStatusSpecialAirLwLanding
     (0x08, 0x0125, 0x0126), // nFTKirbyStatusCopyPurinSpecialN -> nFTKirbyStatusCopyPurinSpecialAirN
     (0x08, 0x0126, 0x0125), // nFTKirbyStatusCopyPurinSpecialAirN -> nFTKirbyStatusCopyPurinSpecialN
     (0x08, 0x0127, 0x0128), // nFTKirbyStatusCopyCaptainSpecialN -> nFTKirbyStatusCopyCaptainSpecialAirN
@@ -151,7 +156,7 @@ pub static PRESERVE_COLANIM: [(u8, u16, u16); 130] = [
 
 /// `ftMainSetStatus` calls whose flags carry `FTSTATUS_PRESERVE_MODELPART`:
 /// columns as in the module documentation.
-pub static PRESERVE_MODELPART: [(u8, u16, u16); 68] = [
+pub static PRESERVE_MODELPART: [(u8, u16, u16); 73] = [
     (0x05, 0x00E5, 0x00E8), // nFTLinkStatusSpecialN -> nFTLinkStatusSpecialAirN
     (0x05, 0x00E8, 0x00E5), // nFTLinkStatusSpecialAirN -> nFTLinkStatusSpecialN
     (0x06, 0x00E4, 0x00E7), // nFTYoshiStatusSpecialN -> nFTYoshiStatusSpecialAirN
@@ -165,8 +170,11 @@ pub static PRESERVE_MODELPART: [(u8, u16, u16); 68] = [
     (0x06, 0xFFFF, 0x00E8), // * -> nFTYoshiStatusSpecialAirNCatch
     (0x06, 0xFFFF, 0x00E9), // * -> nFTYoshiStatusSpecialAirNRelease
     (0x08, 0x0104, 0x0106), // nFTKirbyStatusSpecialLwStart -> nFTKirbyStatusSpecialLwHold
+    (0x08, 0x0105, 0x0106), // nFTKirbyStatusSpecialLwUnk -> nFTKirbyStatusSpecialLwHold
     (0x08, 0x0106, 0x010B), // nFTKirbyStatusSpecialLwHold -> nFTKirbyStatusSpecialAirLwFall
     (0x08, 0x0109, 0x010A), // nFTKirbyStatusSpecialAirLwHold -> nFTKirbyStatusSpecialAirLwLanding
+    (0x08, 0x010A, 0x010B), // nFTKirbyStatusSpecialAirLwLanding -> nFTKirbyStatusSpecialAirLwFall
+    (0x08, 0x010B, 0x010A), // nFTKirbyStatusSpecialAirLwFall -> nFTKirbyStatusSpecialAirLwLanding
     (0x08, 0x010D, 0x0116), // nFTKirbyStatusSpecialNStart -> nFTKirbyStatusSpecialAirNStart
     (0x08, 0x010E, 0x0117), // nFTKirbyStatusSpecialNLoop -> nFTKirbyStatusSpecialAirNLoop
     (0x08, 0x010F, 0x0118), // nFTKirbyStatusSpecialNEnd -> nFTKirbyStatusSpecialAirNEnd
@@ -209,6 +217,8 @@ pub static PRESERVE_MODELPART: [(u8, u16, u16); 68] = [
     (0x0B, 0xFFFF, 0x00DF), // * -> nFTNessStatusAppearWait
     (0x0B, 0xFFFF, 0x00E0), // * -> nFTNessStatusAppearREnd
     (0x0B, 0xFFFF, 0x00E1), // * -> nFTNessStatusAppearLEnd
+    (0xFF, 0x0043, 0x0045), // nFTCommonStatusDownBounceD -> nFTCommonStatusDownWaitD
+    (0xFF, 0x0044, 0x0046), // nFTCommonStatusDownBounceU -> nFTCommonStatusDownWaitU
     (0xFF, 0xFFFF, 0x0099), // * -> nFTCommonStatusGuard
     (0xFF, 0xFFFF, 0x009A), // * -> nFTCommonStatusGuardOff
     (0xFF, 0xFFFF, 0x009B), // * -> nFTCommonStatusGuardSetOff
@@ -224,7 +234,7 @@ pub static PRESERVE_MODELPART: [(u8, u16, u16); 68] = [
 
 /// `ftMainSetStatus` calls whose flags carry `FTSTATUS_PRESERVE_TEXTUREPART`:
 /// columns as in the module documentation.
-pub static PRESERVE_TEXTUREPART: [(u8, u16, u16); 62] = [
+pub static PRESERVE_TEXTUREPART: [(u8, u16, u16); 64] = [
     (0x08, 0x00FC, 0x00FD), // nFTKirbyStatusCopyPikachuSpecialN -> nFTKirbyStatusCopyPikachuSpecialAirN
     (0x08, 0x00FD, 0x00FC), // nFTKirbyStatusCopyPikachuSpecialAirN -> nFTKirbyStatusCopyPikachuSpecialN
     (0x08, 0x00FE, 0x00FF), // nFTKirbyStatusCopyNessSpecialN -> nFTKirbyStatusCopyNessSpecialAirN
@@ -279,6 +289,8 @@ pub static PRESERVE_TEXTUREPART: [(u8, u16, u16); 62] = [
     (0x0B, 0x00F2, 0x00EE), // nFTNessStatusSpecialAirLwHold -> nFTNessStatusSpecialLwHold
     (0x0B, 0x00F3, 0x00EF), // nFTNessStatusSpecialAirLwHit -> nFTNessStatusSpecialLwHit
     (0x0B, 0x00F4, 0x00F0), // nFTNessStatusSpecialAirLwEnd -> nFTNessStatusSpecialLwEnd
+    (0xFF, 0x0043, 0x0045), // nFTCommonStatusDownBounceD -> nFTCommonStatusDownWaitD
+    (0xFF, 0x0044, 0x0046), // nFTCommonStatusDownBounceU -> nFTCommonStatusDownWaitU
     (0xFF, 0xFFFF, 0x009F), // * -> nFTCommonStatusShieldBreakFall
     (0xFF, 0xFFFF, 0x00A0), // * -> nFTCommonStatusShieldBreakDownD
     (0xFF, 0xFFFF, 0x00A1), // * -> nFTCommonStatusShieldBreakDownU

@@ -94,24 +94,50 @@ fn timing(s: N) -> StatusTiming {
         _ => StatusTiming::unknown(),
     }
 }
-/// `FTSTATUS_PRESERVE_LOOPSFX`: `ftNessSpecial(Air)HiHoldSetStatus` and
-/// `ftNessSpecial(Air)LwHoldSetStatus` keep the loop sound; of the switches,
-/// Hi Hold's and Lw Hit's (`FTNESS_SPECIALHIHOLD_STATUS_FLAGS`,
-/// `FTNESS_SPECIALLWHIT_STATUS_FLAGS`).
+/// The `ftMainSetStatus` flags the port reads, for a setter (`is_switch`
+/// false) or a ground/air switch (`ftnessspecial*.c`).
+///
+/// - `FTSTATUS_PRESERVE_LOOPSFX`: `ftNessSpecial(Air)HiHoldSetStatus` and
+///   `ftNessSpecial(Air)LwHoldSetStatus`; of the switches, Hi Hold's and Lw
+///   Hit's (`FTNESS_SPECIALHIHOLD_STATUS_FLAGS`,
+///   `FTNESS_SPECIALLWHIT_STATUS_FLAGS`).
+/// - `FTSTATUS_PRESERVE_HITSTATUS`: every switch; no setter.
+/// - `FTSTATUS_PRESERVE_HIT`: the Hi Hold, Jibaku, Lw Hold and Lw Hit
+///   switches (`..._SPECIALHIHOLD_`, `..._SPECIALHI_`, `..._SPECIALLWHOLD_`,
+///   `..._SPECIALLWHIT_STATUS_FLAGS`). The switch's script replay skips the
+///   attack events (`ftMainUpdateMotionEventsForward`), so without it a
+///   landing PK Thunder blast loses its hitbox.
+///
+/// `TEXTUREPART`, `EFFECT` and `COLANIM` come from the
+/// [`crate::colanim::PRESERVE_COLANIM`] tables; `RUMBLE` has no PSP
+/// equivalent.
 fn preserve(s: N, is_switch: bool) -> status::Preserve {
-    let loop_sfx = if is_switch {
-        matches!(
+    if !is_switch {
+        return status::Preserve {
+            loop_sfx: matches!(
+                s,
+                N::SpecialHiHold | N::SpecialAirHiHold | N::SpecialLwHold | N::SpecialAirLwHold
+            ),
+            ..status::Preserve::NONE
+        };
+    }
+    status::Preserve {
+        loop_sfx: matches!(
             s,
             N::SpecialHiHold | N::SpecialAirHiHold | N::SpecialLwHit | N::SpecialAirLwHit
-        )
-    } else {
-        matches!(
+        ),
+        hitstatus: true,
+        hit: matches!(
             s,
-            N::SpecialHiHold | N::SpecialAirHiHold | N::SpecialLwHold | N::SpecialAirLwHold
-        )
-    };
-    status::Preserve {
-        loop_sfx,
+            N::SpecialHiHold
+                | N::SpecialAirHiHold
+                | N::SpecialHiJibaku
+                | N::SpecialAirHiJibaku
+                | N::SpecialLwHold
+                | N::SpecialAirLwHold
+                | N::SpecialLwHit
+                | N::SpecialAirLwHit
+        ),
         ..status::Preserve::NONE
     }
 }

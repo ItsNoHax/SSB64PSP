@@ -364,6 +364,40 @@ fn map_switches_and_a_move_s_later_statuses_keep_the_animation() {
     ));
 }
 
+/// A callback several statuses share gives a row for each status that runs
+/// it (`ftkirbystatus.h`): the copied Fireball's switches for Luigi's copy,
+/// and Stone's landing and fall procs, whose model part goes with them.
+#[test]
+fn shared_callbacks_keep_the_animation_from_each_of_their_statuses() {
+    use crate::status::{AnyStatus, KirbyStatus as K};
+    let k = |s| AnyStatus::Kirby(s);
+    let kirby = FighterKind::Kirby;
+    for (from, to) in [
+        (K::CopyLuigiSpecialN, K::CopyLuigiSpecialAirN),
+        (K::CopyLuigiSpecialAirN, K::CopyLuigiSpecialN),
+        (K::SpecialLwUnk, K::SpecialLwHold),
+        (K::SpecialAirLwLanding, K::SpecialAirLwFall),
+        (K::SpecialAirLwFall, K::SpecialAirLwLanding),
+    ] {
+        assert!(preserved(kirby, k(from), k(to)), "{from:?} -> {to:?}");
+    }
+    assert!(!preserved(
+        kirby,
+        k(K::CopyMarioSpecialN),
+        k(K::CopyLuigiSpecialAirN)
+    ));
+    for (from, to) in [
+        (K::SpecialLwUnk, K::SpecialLwHold),
+        (K::SpecialAirLwLanding, K::SpecialAirLwFall),
+        (K::SpecialAirLwFall, K::SpecialAirLwLanding),
+    ] {
+        assert!(
+            preserved_in(&PRESERVE_MODELPART, kirby, k(from), k(to)),
+            "{from:?} -> {to:?}"
+        );
+    }
+}
+
 /// A full Giant Punch flashes, and the flash comes back after another
 /// animation ends.
 #[test]

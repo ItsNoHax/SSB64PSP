@@ -3240,9 +3240,8 @@ pub fn switch_donkey_special_air(f: &mut Fighter) {
     let status = match f.status.status {
         AnyStatus::Donkey(DonkeyStatus::SpecialNStart) => DonkeyStatus::SpecialAirNStart,
         AnyStatus::Donkey(DonkeyStatus::SpecialNLoop) => DonkeyStatus::SpecialAirNLoop,
-        AnyStatus::Donkey(DonkeyStatus::SpecialNEnd) => DonkeyStatus::SpecialAirNEnd,
-        AnyStatus::Donkey(DonkeyStatus::SpecialNFull) => DonkeyStatus::SpecialAirNFull,
         AnyStatus::Donkey(DonkeyStatus::SpecialHi) => DonkeyStatus::SpecialAirHi,
+        // `SpecialNEnd`/`SpecialNFull`: `mpCommonSetFighterFallOnEdgeBreak`.
         _ => {
             f.become_airborne();
             set_fall(f);
@@ -3275,11 +3274,20 @@ pub fn switch_donkey_special_ground(f: &mut Fighter) {
         AnyStatus::Donkey(DonkeyStatus::SpecialAirHi) => DonkeyStatus::SpecialHi,
         _ => return,
     };
-    set_any_status(
+    // `ftDonkeySpecialAirNEndSwitchStatusGround`: `FTSTATUS_PRESERVE_HIT`.
+    let hit = matches!(
+        status,
+        DonkeyStatus::SpecialNEnd | DonkeyStatus::SpecialNFull
+    );
+    set_any_status_preserve(
         f,
         AnyStatus::Donkey(status),
         f.status.anim_frame,
         f.status.timing,
+        Preserve {
+            hit,
+            ..Preserve::NONE
+        },
     );
     if status == DonkeyStatus::SpecialHi {
         physics::clamp_ground_vel(&mut f.physics, 26.0);
@@ -3927,7 +3935,7 @@ fn update_cliff_wait(f: &mut Fighter) {
         if f.cliff.fall_wait <= 0 {
             f.cliffcatch_wait = CLIFF_CATCH_WAIT;
             cliff_release_position(f);
-            set_damage_fall(f);
+            crate::reaction::set_damage_fall_from_cliff_wait(f);
         }
     }
 }
@@ -9380,9 +9388,16 @@ mod tests {
             update(&mut f);
             assert_eq!(f.status.status, Status::CliffWait);
         }
+        // `ftCommonDamageFallSetStatusFromCliffWait`: `FTSTATUS_PRESERVE_FASTFALL`
+        // only, so the tag wait resets, and a Z tap made while hanging
+        // cannot tech.
+        f.interface.tag_wait = 50;
+        f.tics_since_last_z = 0;
         update(&mut f);
         assert_eq!(f.status.status, Status::DamageFall);
         assert_eq!(f.cliffcatch_wait, CLIFF_CATCH_WAIT);
+        assert_eq!(f.interface.tag_wait, 0);
+        assert_eq!(f.tics_since_last_z, ZTRIGLAST_TICS_MAX);
     }
 
     #[test]
@@ -9682,6 +9697,43 @@ mod tests {
         };
         assert_eq!(punch_damage(3) - punch_damage(0), 6);
         assert_eq!(punch_damage(9) - punch_damage(0), 18);
+    }
+
+    /// `ftDonkeySpecialAirNEndSwitchStatusGround` passes
+    /// `FTSTATUS_PRESERVE_HIT`: a landing swing keeps its hitbox. The
+    /// grounded swings' `proc_map` is `mpCommonSetFighterFallOnEdgeBreak`:
+    /// losing the floor enters Fall, not the aerial swing.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn donkey_giant_punch_keeps_its_hitbox_on_landing_and_falls_off_a_floor() {
+        let active = |f: &Fighter| {
+            f.attack_colls
+                .iter()
+                .any(|c| c.state != crate::combat::AttackState::Off)
+        };
+        for charge in [0, 10] {
+            let mut f = Fighter::new(crate::fighter::FighterKind::Donkey, 0, 3);
+            set_fall(&mut f);
+            f.donkey_special_n.charge_level = charge;
+            donkey_charge_release(&mut f);
+            let mut n = 0;
+            while !active(&f) {
+                update(&mut f);
+                n += 1;
+                assert!(n < 80, "the punch makes a hitbox");
+            }
+            f.land(0.0);
+            switch_donkey_special_ground(&mut f);
+            let ground = if charge == 10 {
+                DonkeyStatus::SpecialNFull
+            } else {
+                DonkeyStatus::SpecialNEnd
+            };
+            assert_eq!(f.status.status, AnyStatus::Donkey(ground));
+            assert!(active(&f), "charge {charge}");
+            switch_donkey_special_air(&mut f);
+            assert_eq!(f.status.status, AnyStatus::Common(Status::Fall));
+        }
     }
 
     #[test]

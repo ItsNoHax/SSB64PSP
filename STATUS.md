@@ -16,7 +16,7 @@
 
 ## Current work
 
-- Landed: demo fighters on the battle runner (results, selects, Characters, campaign, movie; RE-461, RE-528); golden `f1-vs-results-link` matches the N64 sparkle.
+- Landed: hit-status preservation (RE-414, RE-356); `f1-vs-shield-damage` rebaselined (6 native px, Mario eye part in DownWaitU).
   - Other goldens unchanged.
 
 ## Next
@@ -32,7 +32,7 @@
 
 ## Verification
 
-Baseline: demo fighter motion-script events.
+Baseline: hit-status preservation.
 
 | Check | Result |
 |---|---|
@@ -40,7 +40,7 @@ Baseline: demo fighter motion-script events.
 | `cargo test --workspace`, `SSB64_STUB_TABLES=1`, no ROM | pass |
 | `cargo +1.98.0 clippy -D warnings`, `cargo fmt --all --check` | pass |
 | Both PSP release builds | compile |
-| Goldens | full matrix verified, none rebaselined |
+| Goldens | full matrix verified, `f1-vs-shield-damage` rebaselined |
 | PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` | exit 0, screenshot |
 | Physical PSP | PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |
 | ROMs | `rom/Super Smash Bros. (USA).z64`, `refs/ssb-decomp-re/baserom.us.z64`; SHA-1 `e2929e10...` |

@@ -259,6 +259,19 @@ fn set_frames(f: &mut Fighter, s: K, frame: f32, length: f32) {
     set(f, s, frame, StatusTiming::frames(length));
 }
 
+/// Stone's `ftMainSetStatus` calls that pass `FTSTATUS_PRESERVE_HITSTATUS`
+/// (`ftkirbyspeciallw.c`; their `MODELPART` and `COLANIM` come from the
+/// [`crate::colanim`] preserve tables).
+fn set_keep_hitstatus(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming) {
+    status::set_any_status_preserve(
+        f,
+        AnyStatus::Kirby(s),
+        frame,
+        timing,
+        status::Preserve::HITSTATUS,
+    );
+}
+
 /// The motion script's clock passing `at` this play: the status clock,
 /// which runs on past the figatree's end (RE-474).
 fn crossed(f: &Fighter, at: f32) -> bool {
@@ -638,7 +651,12 @@ pub fn set_special_lw(f: &mut Fighter) {
     } else {
         // `ftKirbySpecialAirLwStartSetStatus` keeps `is_damage_resist`.
         let resist = f.kirby.is_damage_resist;
-        set_frames(f, K::SpecialAirLwStart, 0.0, SPECIAL_AIR_LW_START_LENGTH);
+        set_keep_hitstatus(
+            f,
+            K::SpecialAirLwStart,
+            0.0,
+            StatusTiming::frames(SPECIAL_AIR_LW_START_LENGTH),
+        );
         status::play_anim_events(f);
         f.kirby.is_damage_resist = resist;
         f.kirby.stone_flag2 = resist;
@@ -682,8 +700,14 @@ fn stone_update_colanim(f: &mut Fighter) {
     }
 }
 
-fn set_stone(f: &mut Fighter, s: K, frame: f32) {
-    set_frames(f, s, frame, STONE_LENGTH);
+fn set_stone(f: &mut Fighter, s: K, frame: f32, preserve: status::Preserve) {
+    status::set_any_status_preserve(
+        f,
+        AnyStatus::Kirby(s),
+        frame,
+        StatusTiming::frames(STONE_LENGTH),
+        preserve,
+    );
     // `StoneGround_0x1BB4` sets flag 1 on its first frame.
     if matches!(s, K::SpecialLwUnk | K::SpecialAirLwHold) {
         f.kirby.stone_flag1 = true;
@@ -723,7 +747,7 @@ fn set_stone_end(f: &mut Fighter, grounded: bool) {
 fn stone_unk_decide(f: &mut Fighter, grounded: bool) {
     if !f.kirby.is_damage_resist && f.kirby.stone_flag1 {
         if grounded {
-            set_frames(f, K::SpecialLwHold, 0.0, STONE_LENGTH);
+            set_keep_hitstatus(f, K::SpecialLwHold, 0.0, StatusTiming::frames(STONE_LENGTH));
         }
         set_damage_resist(f);
         f.kirby.stone_flag1 = false;
@@ -818,25 +842,27 @@ fn set_inhale(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming) {
 
 /// A ground/air switch (`ftKirbySpecialN*SwitchStatus*`): only Start and
 /// Loop keep the loop sound.
+/// `FTKIRBY_SPECIALNSTART_STATUS_FLAGS` keeps the looping sound;
+/// `FTKIRBY_SPECIALNLOOP_STATUS_FLAGS` keeps it and the box
+/// (`FTSTATUS_PRESERVE_HIT`).
 fn switch_inhale(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming) {
-    let loop_sfx = matches!(
-        s,
-        K::SpecialNStart | K::SpecialAirNStart | K::SpecialNLoop | K::SpecialAirNLoop
-    );
-    set_inhale_preserve(f, s, frame, timing, loop_sfx);
+    let looping = matches!(s, K::SpecialNLoop | K::SpecialAirNLoop);
+    let preserve = status::Preserve {
+        loop_sfx: looping || matches!(s, K::SpecialNStart | K::SpecialAirNStart),
+        hit: looping,
+        ..status::Preserve::NONE
+    };
+    set_inhale_preserve(f, s, frame, timing, preserve);
 }
 
-fn set_inhale_preserve(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming, loop_sfx: bool) {
-    status::set_any_status_preserve(
-        f,
-        AnyStatus::Kirby(s),
-        frame,
-        timing,
-        status::Preserve {
-            loop_sfx,
-            ..status::Preserve::NONE
-        },
-    );
+fn set_inhale_preserve(
+    f: &mut Fighter,
+    s: K,
+    frame: f32,
+    timing: StatusTiming,
+    preserve: status::Preserve,
+) {
+    status::set_any_status_preserve(f, AnyStatus::Kirby(s), frame, timing, preserve);
     after_set_inhale(f, s);
 }
 
@@ -1152,11 +1178,11 @@ pub fn update(f: &mut Fighter) {
         }
         K::SpecialLwStart => {
             if crossed(f, STONE_START_FLAG1_FRAME) {
-                set_frames(f, K::SpecialLwHold, 0.0, STONE_LENGTH);
+                set_keep_hitstatus(f, K::SpecialLwHold, 0.0, StatusTiming::frames(STONE_LENGTH));
                 set_damage_resist(f);
                 f.kirby.stone_flag1 = false;
             } else if f.status.animation_ended() {
-                set_stone(f, K::SpecialLwUnk, 0.0);
+                set_stone(f, K::SpecialLwUnk, 0.0, status::Preserve::NONE);
             }
         }
         K::SpecialAirLwStart => {
@@ -1167,7 +1193,7 @@ pub fn update(f: &mut Fighter) {
             if f.status.animation_ended() {
                 // `ftKirbySpecialAirLwHoldSetStatus` plays the first frame
                 // (RE-473).
-                set_stone(f, K::SpecialAirLwHold, 0.0);
+                set_stone(f, K::SpecialAirLwHold, 0.0, status::Preserve::NONE);
                 status::play_anim_events(f);
                 f.physics.vel_air.y = STONE_FALL_VEL;
             }
@@ -1497,17 +1523,22 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
         K::SpecialLwStart => {
             let frame = f.status.anim_frame;
             f.become_airborne();
-            set_frames(f, K::SpecialAirLwStart, frame, SPECIAL_AIR_LW_START_LENGTH);
+            set_keep_hitstatus(
+                f,
+                K::SpecialAirLwStart,
+                frame,
+                StatusTiming::frames(SPECIAL_AIR_LW_START_LENGTH),
+            );
             f.physics.vel_air.y = STONE_FALL_VEL;
         }
         K::SpecialLwUnk => {
             let frame = f.status.anim_frame;
             f.become_airborne();
-            set_stone(f, K::SpecialAirLwHold, frame);
+            set_stone(f, K::SpecialAirLwHold, frame, status::Preserve::HITSTATUS);
         }
         K::SpecialLwHold | K::SpecialAirLwLanding => {
             f.become_airborne();
-            set(f, K::SpecialAirLwFall, 0.0, StatusTiming::unknown());
+            set_keep_hitstatus(f, K::SpecialAirLwFall, 0.0, StatusTiming::unknown());
             f.kirby.is_damage_resist = true;
             f.physics.vel_air.y = STONE_FALL_VEL;
         }
@@ -1576,7 +1607,12 @@ pub fn on_landing(f: &mut Fighter, y: f32) -> bool {
         }
         K::SpecialAirLwHold | K::SpecialAirLwFall => {
             f.land(y);
-            set_frames(f, K::SpecialAirLwLanding, 0.0, STONE_LENGTH);
+            set_keep_hitstatus(
+                f,
+                K::SpecialAirLwLanding,
+                0.0,
+                StatusTiming::frames(STONE_LENGTH),
+            );
             f.kirby.is_damage_resist = true;
         }
         K::SpecialLwEnd | K::SpecialAirLwEnd => wait_or_landing(f, y),
@@ -1742,6 +1778,74 @@ mod tests {
         crate::attack::apply_hitbox_at(&hit, at, crate::stale::HANDICAP_DEFAULT, &mut f);
         assert_eq!(f.damage, 4);
         assert!(!f.kirby.is_damage_resist);
+    }
+
+    /// `FTKIRBY_SPECIALNLOOP_STATUS_FLAGS` carries `FTSTATUS_PRESERVE_HIT`:
+    /// the Inhale loop's map switches keep its catch box.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_inhale_loop_keeps_its_box_through_its_switches() {
+        use crate::combat::AttackState;
+        let active = |f: &Fighter| f.attack_colls.iter().any(|c| c.state != AttackState::Off);
+        let mut f = kirby();
+        f.situation = Situation::Ground;
+        set_special_n(&mut f);
+        let mut n = 0;
+        while !(active(&f) && f.status.status == AnyStatus::Kirby(K::SpecialNLoop)) {
+            press(&mut f, N64Buttons::B, 0, 0);
+            crate::status::update(&mut f);
+            n += 1;
+            assert!(n < 60, "the loop makes a box");
+        }
+        assert!(on_ground_lost(&mut f));
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialAirNLoop));
+        assert!(active(&f), "to the air");
+        assert!(on_landing(&mut f, 0.0));
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialNLoop));
+        assert!(active(&f), "to the ground");
+    }
+
+    /// Stone's aerial setter and every one of its switches pass
+    /// `FTSTATUS_PRESERVE_HITSTATUS` (`ftkirbyspeciallw.c`): an invincible
+    /// Kirby stays invincible into the stone, through the fall, the landing
+    /// and a fall from the landing (the shared `...LwHoldProcMap`s, which
+    /// also keep the stone's flash). The grounded setter drops it.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn stone_keeps_the_hit_status_through_its_switches() {
+        use crate::combat::HitStatus;
+        let mut f = kirby();
+        f.situation = Situation::Ground;
+        crate::hurtbox::set_hit_status_all(&mut f, HitStatus::Invincible);
+        set_special_lw(&mut f);
+        assert_eq!(f.hitstatus, HitStatus::Normal);
+        crate::hurtbox::set_hit_status_all(&mut f, HitStatus::Invincible);
+        f.status.set_time(6.0);
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialLwHold));
+        assert_eq!(f.hitstatus, HitStatus::Invincible);
+        let colanim = f.colanim.id;
+        for (lose_floor, next) in [
+            (true, K::SpecialAirLwFall),
+            (false, K::SpecialAirLwLanding),
+            (true, K::SpecialAirLwFall),
+            (false, K::SpecialAirLwLanding),
+        ] {
+            if lose_floor {
+                assert!(on_ground_lost(&mut f));
+            } else {
+                assert!(on_landing(&mut f, 0.0));
+            }
+            assert_eq!(f.status.status, AnyStatus::Kirby(next));
+            assert_eq!(f.hitstatus, HitStatus::Invincible, "{next:?}");
+            assert_eq!(f.colanim.id, colanim, "{next:?}");
+        }
+        let mut f = kirby();
+        f.situation = Situation::Air;
+        crate::hurtbox::set_hit_status_all(&mut f, HitStatus::Invincible);
+        set_special_lw(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialAirLwStart));
+        assert_eq!(f.hitstatus, HitStatus::Invincible);
     }
 
     #[test]

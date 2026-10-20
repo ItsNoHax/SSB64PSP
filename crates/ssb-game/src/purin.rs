@@ -98,10 +98,19 @@ fn set(f: &mut Fighter, s: P, frame: f32, length: f32) {
     status::set_any_status(f, AnyStatus::Purin(s), frame, StatusTiming::frames(length));
 }
 
-/// A switch that keeps the animation frame and clock.
+/// A switch that keeps the animation frame and clock. Every one passes
+/// `FTSTATUS_PRESERVE_HITSTATUS`; Sing's also `FTSTATUS_PRESERVE_HIT`
+/// (`FTPURIN_SPECIAL{N,HI,LW}_STATUS_FLAGS`). Their `TEXTUREPART`,
+/// `EFFECT` and `COLANIM` come from the [`crate::colanim`] preserve
+/// tables.
 fn switch(f: &mut Fighter, s: P) {
     let (frame, timing) = (f.status.anim_frame, f.status.timing);
-    status::set_any_status(f, AnyStatus::Purin(s), frame, timing);
+    let preserve = status::Preserve {
+        hitstatus: true,
+        hit: matches!(s, P::SpecialHi | P::SpecialAirHi),
+        ..status::Preserve::NONE
+    };
+    status::set_any_status_preserve(f, AnyStatus::Purin(s), frame, timing, preserve);
 }
 
 // ---------------------------------------------------------------------------
@@ -558,6 +567,57 @@ mod tests {
         assert_eq!(f.status.anim_frame, 8.0);
         steps(&mut f, 250);
         assert_eq!(f.status.status, AnyStatus::Common(Status::Wait));
+    }
+
+    /// Every special's switch passes `FTSTATUS_PRESERVE_HITSTATUS`
+    /// (`FTPURIN_SPECIAL{N,HI,LW}_STATUS_FLAGS`): an invincible Jigglypuff
+    /// stays invincible both ways; the setters drop it. (Rest's switch
+    /// replays its script's `SetHitStatusAll(Intangible)` over it.)
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn special_switches_keep_the_hit_status() {
+        use crate::combat::HitStatus;
+        type Setter = fn(&mut Fighter);
+        let specials: [(Setter, P); 2] =
+            [(set_special_n, P::SpecialN), (set_special_hi, P::SpecialHi)];
+        for (setter, s) in specials {
+            let mut f = purin(true);
+            crate::hurtbox::set_hit_status_all(&mut f, HitStatus::Invincible);
+            setter(&mut f);
+            assert_eq!(f.status.status, AnyStatus::Purin(s));
+            assert_eq!(f.hitstatus, HitStatus::Normal, "{s:?}'s setter");
+            steps(&mut f, 3);
+            crate::hurtbox::set_hit_status_all(&mut f, HitStatus::Invincible);
+            assert!(on_ground_lost(&mut f));
+            assert_eq!(f.hitstatus, HitStatus::Invincible, "{s:?} to the air");
+            assert!(on_landing(&mut f, 0.0));
+            assert_eq!(f.status.status, AnyStatus::Purin(s));
+            assert_eq!(f.hitstatus, HitStatus::Invincible, "{s:?} to the ground");
+        }
+    }
+
+    /// Sing's switches also pass `FTSTATUS_PRESERVE_HIT`
+    /// (`FTPURIN_SPECIALHI_STATUS_FLAGS`): the switch's script replay skips
+    /// the attack events, so the note's hitbox must carry over.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn sing_keeps_its_hitbox_across_the_switch() {
+        use crate::combat::AttackState;
+        let active = |f: &Fighter| f.attack_colls.iter().any(|c| c.state != AttackState::Off);
+        let mut f = purin(true);
+        set_special_hi(&mut f);
+        for _ in 0..200 {
+            if active(&f) {
+                break;
+            }
+            status::update(&mut f);
+        }
+        assert!(active(&f));
+        assert!(on_ground_lost(&mut f));
+        assert_eq!(f.status.status, AnyStatus::Purin(P::SpecialAirHi));
+        assert!(active(&f));
+        assert!(on_landing(&mut f, 0.0));
+        assert!(active(&f));
     }
 
     #[test]

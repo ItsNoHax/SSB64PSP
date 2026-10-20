@@ -1304,13 +1304,44 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
     true
 }
 
-/// A switch that keeps the animation frame and clock.
+/// A switch that keeps the animation frame and clock, with the flags of
+/// the copy's `SwitchStatus` function the port reads; none passes
+/// `FTSTATUS_PRESERVE_FASTFALL`. `MODELPART`, `TEXTUREPART`, `EFFECT` and
+/// `COLANIM` come from the [`crate::colanim`] preserve tables; `RUMBLE`
+/// has no PSP equivalent.
 fn switch(f: &mut Fighter, s: K) {
     let (frame, mut timing) = (f.status.anim_frame, f.status.timing);
     if matches!(s, K::CopyNessSpecialN | K::CopyNessSpecialAirN) {
         timing = StatusTiming::frames(if s == K::CopyNessSpecialN { 72.0 } else { 60.0 });
     }
-    set(f, s, frame, timing);
+    status::set_any_status_preserve(f, AnyStatus::Kirby(s), frame, timing, switch_preserve(s));
+}
+
+/// The `FTSTATUS_PRESERVE_HITSTATUS` and `FTSTATUS_PRESERVE_HIT` of a copy
+/// switch into `s`: PK Fire, Thunder Jolt and Pound keep the hit status
+/// (`FTKIRBY_COPY{NESS,PIKACHU,PURIN}_SPECIALN_STATUS_FLAGS`); Egg Lay
+/// (`ftKirbyCopyYoshiSpecial(Air)NSwitchStatus...`) and a landing Giant
+/// Punch (`ftKirbyCopyDonkeySpecialAirNEndProcMap`) keep the attack.
+fn switch_preserve(s: K) -> status::Preserve {
+    status::Preserve {
+        hitstatus: matches!(
+            s,
+            K::CopyNessSpecialN
+                | K::CopyNessSpecialAirN
+                | K::CopyPikachuSpecialN
+                | K::CopyPikachuSpecialAirN
+                | K::CopyPurinSpecialN
+                | K::CopyPurinSpecialAirN
+        ),
+        hit: matches!(
+            s,
+            K::CopyYoshiSpecialN
+                | K::CopyYoshiSpecialAirN
+                | K::CopyDonkeySpecialNEnd
+                | K::CopyDonkeySpecialNFull
+        ),
+        ..status::Preserve::NONE
+    }
 }
 
 /// Grounded `proc_map` of the copy statuses when the floor ran out.
@@ -1879,6 +1910,65 @@ mod tests {
             f.status.status,
             AnyStatus::Common(crate::status::Status::Fall)
         );
+    }
+
+    /// PK Fire's, Thunder Jolt's and Pound's switches pass
+    /// `FTSTATUS_PRESERVE_HITSTATUS`
+    /// (`FTKIRBY_COPY{NESS,PIKACHU,PURIN}_SPECIALN_STATUS_FLAGS`); the
+    /// Fireball's and Falcon Punch's do not.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn copy_switches_keep_the_hit_status_as_their_flags_say() {
+        use crate::combat::HitStatus;
+        for (copy, keeps) in [
+            (FighterKind::Ness, true),
+            (FighterKind::Pikachu, true),
+            (FighterKind::Purin, true),
+            (FighterKind::Mario, false),
+            (FighterKind::Captain, false),
+        ] {
+            let mut f = kirby(copy, true);
+            status::set_wait(&mut f);
+            assert!(set_special_n(&mut f));
+            step(&mut f);
+            let expected = if keeps {
+                HitStatus::Invincible
+            } else {
+                HitStatus::Normal
+            };
+            crate::hurtbox::set_hit_status_all(&mut f, HitStatus::Invincible);
+            assert!(on_ground_lost(&mut f));
+            assert_eq!(f.hitstatus, expected, "{copy:?} to the air");
+            crate::hurtbox::set_hit_status_all(&mut f, HitStatus::Invincible);
+            assert!(on_landing(&mut f, 0.0));
+            assert_eq!(f.hitstatus, expected, "{copy:?} to the ground");
+        }
+    }
+
+    /// A landing full Giant Punch passes `FTSTATUS_PRESERVE_HIT`
+    /// (`ftKirbyCopyDonkeySpecialAirNEndProcMap`): the switch's script
+    /// replay skips the attack events, so the swing's hitbox must carry
+    /// over.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_landing_giant_punch_keeps_its_hitbox() {
+        use crate::combat::AttackState;
+        let active = |f: &Fighter| f.attack_colls.iter().any(|c| c.state != AttackState::Off);
+        let mut f = kirby(FighterKind::Donkey, false);
+        f.kirby.copy.donkey_charge_level = GIANTPUNCH_CHARGE_MAX;
+        status::set_fall(&mut f);
+        assert!(set_special_n(&mut f));
+        for _ in 0..200 {
+            if status(&f) == K::CopyDonkeySpecialAirNFull && active(&f) {
+                break;
+            }
+            status::update(&mut f);
+        }
+        assert_eq!(status(&f), K::CopyDonkeySpecialAirNFull);
+        assert!(active(&f));
+        assert!(on_landing(&mut f, 0.0));
+        assert_eq!(status(&f), K::CopyDonkeySpecialNFull);
+        assert!(active(&f));
     }
 
     #[test]

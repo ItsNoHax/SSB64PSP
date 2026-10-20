@@ -732,10 +732,17 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
             f.become_airborne();
             set(f, LinkStatus::SpecialAirLw, frame, SPECIAL_LW_LENGTH);
         }
-        // `ftLinkSpecialHiProcMap`: the attack and the weapon carry over.
+        // `ftLinkSpecialHiProcMap`: the attack (`FTSTATUS_PRESERVE_HIT`)
+        // and the weapon carry over.
         LinkStatus::SpecialHi => {
             f.become_airborne();
-            set(f, LinkStatus::SpecialAirHi, frame, SPECIAL_AIR_HI_LENGTH);
+            status::set_any_status_preserve(
+                f,
+                AnyStatus::Link(LinkStatus::SpecialAirHi),
+                frame,
+                StatusTiming::frames(SPECIAL_AIR_HI_LENGTH),
+                status::Preserve::HIT,
+            );
             f.physics.jumps_used = f.attributes.jumps_max;
         }
         // `ftLinkSpecialHiEndProcMap`.
@@ -876,6 +883,28 @@ mod tests {
             ..Default::default()
         };
         f.set_input(input, false, false);
+    }
+
+    /// `ftLinkSpecialHiProcMap` passes `FTSTATUS_PRESERVE_HIT`: a Spin
+    /// Attack that runs off the floor keeps its hitbox, which the motion
+    /// replay from `anim_frame` would not remake.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_spin_attack_off_the_floor_keeps_its_hitbox() {
+        use crate::combat::AttackState;
+        let active = |f: &Fighter| f.attack_colls.iter().any(|c| c.state != AttackState::Off);
+        let mut f = link(true);
+        set_special_hi(&mut f);
+        let mut n = 0;
+        while !active(&f) {
+            status::update(&mut f);
+            n += 1;
+            assert!(n < 60, "the spin makes a hitbox");
+        }
+        assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::SpecialHi));
+        assert!(on_ground_lost(&mut f));
+        assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::SpecialAirHi));
+        assert!(active(&f));
     }
 
     #[test]

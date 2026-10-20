@@ -577,3 +577,57 @@ fn magnet_field_starts_on_hold_and_ends_with_the_end_status() {
     assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialAirLwEnd));
     assert_eq!(magnet_effect_ticks(&f), None);
 }
+/// Every Ness ground/air switch passes `FTSTATUS_PRESERVE_HITSTATUS`
+/// (`FTNESS_SPECIAL*_STATUS_FLAGS`): a fighter made invincible keeps it, and
+/// the hit-status flash, both ways. A setter (`FTSTATUS_PRESERVE_NONE`)
+/// drops it.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn ground_air_switches_keep_the_hit_status() {
+    use crate::combat::HitStatus;
+    for s in [
+        N::SpecialN,
+        N::SpecialHiStart,
+        N::SpecialHiHold,
+        N::SpecialHiEnd,
+        N::SpecialHiJibaku,
+        N::SpecialLwStart,
+        N::SpecialLwHold,
+        N::SpecialLwHit,
+        N::SpecialLwEnd,
+    ] {
+        let mut f = fighter(FighterKind::Ness, 0, true);
+        set(&mut f, s);
+        crate::hurtbox::set_hit_status_all(&mut f, HitStatus::Invincible);
+        let colanim = f.colanim.id;
+        assert!(on_ground_lost(&mut f), "{s:?}");
+        assert_eq!(f.hitstatus, HitStatus::Invincible, "{s:?} to the air");
+        assert_eq!(f.colanim.id, colanim, "{s:?}");
+        // A level blast lands rather than bouncing.
+        f.physics.vel_air = Vec3::new(50.0, 0.0, 0.0);
+        assert!(on_landing(&mut f, 0.0, Vec2::new(0.0, 1.0)));
+        assert_eq!(f.status.status, AnyStatus::Ness(s), "{s:?}");
+        assert_eq!(f.hitstatus, HitStatus::Invincible, "{s:?} to the ground");
+    }
+    let mut f = fighter(FighterKind::Ness, 0, true);
+    crate::hurtbox::set_hit_status_all(&mut f, HitStatus::Invincible);
+    set_special_n(&mut f);
+    assert_eq!(f.hitstatus, HitStatus::Normal);
+}
+/// The blast's switches pass `FTSTATUS_PRESERVE_HIT`
+/// (`FTNESS_SPECIALHI_STATUS_FLAGS`): the switch's script replay skips the
+/// attack events, so a dropped hitbox would stay gone for the slide.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_landing_blast_keeps_its_hitbox() {
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    set(&mut f, N::SpecialAirHiJibaku);
+    f.ness.blast_frames = 28;
+    f.physics.vel_air = Vec3::new(50.0, 0.0, 0.0);
+    assert!(on_landing(&mut f, 0.0, Vec2::new(0.0, 1.0)));
+    assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialHiJibaku));
+    let mut target = fighter(FighterKind::Mario, 1, true);
+    target.pos = f.pos + Vec3::new(0.0, 100.0, 0.0);
+    assert!(attack::apply_hit_from(&mut f, &mut target));
+    assert_eq!(target.damage, 30);
+}
