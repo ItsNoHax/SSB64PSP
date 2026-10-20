@@ -472,6 +472,36 @@ pub const BATTLE_VIEWPORT: [f32; 4] = [10.0, 10.0, 310.0, 230.0];
 pub const BATTLE_VIEWPORT_WIDTH: f32 = 300.0;
 pub const BATTLE_VIEWPORT_HEIGHT: f32 = 220.0;
 
+/// `gcRunAll`'s process queue from the Effect link's priority-3 processes
+/// on: the effects' (link 6), whose magnitude-0 quakes write `vel_at`
+/// before the camera; `tick_camera`, the camera's (link 9, priority 3),
+/// which applies and clears it; then the quakes of magnitude 1 to 3
+/// (priorities 2 to 0), whose write the next camera update applies unless
+/// a magnitude-0 quake overwrites it first ([`crate::effect::QuakeSlot`]).
+/// `translate` is the quake animation's `DObj` translation `(y, z)` after
+/// the given plays; `camera` finds the camera in `scene`.
+pub fn effects_then_camera<S: ?Sized>(
+    scene: &mut S,
+    effects: &mut dyn crate::effect::HitEffectSink,
+    translate: &dyn Fn(u8, u16) -> Option<(f32, f32)>,
+    camera: &dyn Fn(&mut S) -> Option<&mut Camera>,
+    tick_camera: &mut dyn FnMut(&mut S),
+) {
+    use crate::effect::QuakeSlot;
+    let set_vel_at = |scene: &mut S, effects: &mut dyn crate::effect::HitEffectSink, slot| {
+        if let Some((magnitude, ticks)) = effects.take_quake(slot) {
+            if let Some(c) = camera(scene) {
+                // `gmCameraSetVelAt` overwrites what no camera update took.
+                c.quake = translate(magnitude, ticks).or(c.quake);
+            }
+        }
+    };
+    effects.process();
+    set_vel_at(scene, effects, QuakeSlot::BeforeCamera);
+    tick_camera(scene);
+    set_vel_at(scene, effects, QuakeSlot::AfterCamera);
+}
+
 /// `gmCameraUpdateInterests`: clamp and union every fighter's asymmetric box.
 #[cfg(test)]
 fn calculate_interest(interests: &[Interest], bounds: Bounds) -> (Vec3, f32, f32) {

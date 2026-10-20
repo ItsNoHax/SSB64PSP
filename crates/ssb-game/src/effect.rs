@@ -214,9 +214,10 @@ pub struct Effects {
     /// Display effects the pool had no room for (none in any measured
     /// match; a test keeps it at zero).
     pub displays_refused: u16,
-    /// The quake whose `gmCameraSetVelAt` this frame's processes left last,
-    /// as `(magnitude, seq, gcPlayAnimAll count)` ([`Self::take_quake`]).
-    quake_write: Option<(u8, u32, u16)>,
+    /// The quakes whose `gmCameraSetVelAt` this frame's processes left
+    /// last on each side of the camera's process, by [`QuakeSlot`], as
+    /// `(magnitude, seq, gcPlayAnimAll count)` ([`Self::take_quake`]).
+    quake_write: [Option<(u8, u32, u16)>; 2],
     /// `gGRCommonStruct.hyrule.twister_xf`: the Twister effect's transform,
     /// or [`NIL`] when its make failed. Kept, as the source keeps the
     /// pointer, after the effect is ejected.
@@ -251,7 +252,7 @@ impl Effects {
             displays: [None; DISPLAY_MAX],
             seq: 0,
             displays_refused: 0,
-            quake_write: None,
+            quake_write: [None; 2],
             twister_xf: NIL,
             leaves_xf: NIL,
             dust_xf: NIL,
@@ -956,9 +957,10 @@ pub trait HitEffectSink {
     /// The effect processes (priority 3).
     fn process(&mut self) {}
 
-    /// The quake that moves the camera after this frame's processes
+    /// The quake write `slot` holds after this frame's effect processes
     /// ([`Effects::take_quake`]).
-    fn take_quake(&mut self) -> Option<(u8, u16)> {
+    fn take_quake(&mut self, slot: QuakeSlot) -> Option<(u8, u16)> {
+        let _ = slot;
         None
     }
 
@@ -1021,8 +1023,8 @@ impl HitEffectSink for EffectRuntime<'_> {
         crate::wpeffect::make(e, self.effects, self.particles, self.banks);
     }
 
-    fn take_quake(&mut self) -> Option<(u8, u16)> {
-        self.effects.take_quake()
+    fn take_quake(&mut self, slot: QuakeSlot) -> Option<(u8, u16)> {
+        self.effects.take_quake(slot)
     }
 
     fn twister_made(&mut self) -> bool {
@@ -1190,6 +1192,30 @@ pub enum DisplayKind {
     ThunderJolt,
 }
 
+/// Which side of the camera's process (priority 3, Camera link 9) a quake's
+/// `gmCameraSetVelAt` lands on (`efManagerQuakeMakeEffect` gives its process
+/// priority `3 - magnitude`; `gcRunAll` runs priority 3 by link, then 2 to 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuakeSlot {
+    /// Magnitude 0: priority 3 on the Effect link (6), before the camera,
+    /// whose update the same frame applies.
+    BeforeCamera = 0,
+    /// Magnitudes 1 to 3: priorities 2 to 0, after the camera; the next
+    /// frame's camera applies the write unless a magnitude-0 quake
+    /// overwrites it first.
+    AfterCamera = 1,
+}
+
+impl QuakeSlot {
+    pub const fn of(magnitude: u8) -> Self {
+        if magnitude == 0 {
+            Self::BeforeCamera
+        } else {
+            Self::AfterCamera
+        }
+    }
+}
+
 /// `gcPlayAnimAll` calls until each display effect's animation reaches its
 /// end and its `proc_update` ejects it (`anim_frame <= 0`), counting the
 /// one `efManagerMakeEffect` makes. Replayed from the ROM's scripts
@@ -1260,7 +1286,9 @@ impl DisplayKind {
             DisplayKind::FlySparks | DisplayKind::StarRodSpark => life::COMMON_SPARK,
             DisplayKind::FlyMDust => life::FLY_MDUST,
             DisplayKind::ImpactWave => life::IMPACT_WAVE,
-            DisplayKind::Quake { magnitude } => life::QUAKE[usize::from(magnitude.min(2))],
+            // `efManagerQuakeMakeEffect` adds no animation past magnitude
+            // 3 (its `switch` default); every maker passes 0 to 3.
+            DisplayKind::Quake { magnitude } => *life::QUAKE.get(usize::from(magnitude))?,
             DisplayKind::FireSpark => life::FIRE_SPARK,
             DisplayKind::MBallRays => life::MBALL_RAYS,
             DisplayKind::ThunderShock { gfx } => life::THUNDER_SHOCK[usize::from(gfx.min(2))],
@@ -1575,12 +1603,14 @@ impl Effects {
                 match d.kind {
                     // `efManagerQuakeProcUpdate` writes the camera's
                     // `vel_at` from its `DObj`'s translation. The processes
-                    // run at priority `3 - magnitude`, so the strongest
-                    // quake (the latest made among equals) writes last.
+                    // run at priority `3 - magnitude`, so on each side of
+                    // the camera ([`QuakeSlot`]) the strongest quake (the
+                    // latest made among equals) writes last.
                     DisplayKind::Quake { magnitude } => {
                         let key = (magnitude, d.seq);
-                        if self.quake_write.is_none_or(|(m, seq, _)| (m, seq) < key) {
-                            self.quake_write = Some((magnitude, d.seq, d.ticks));
+                        let write = &mut self.quake_write[QuakeSlot::of(magnitude) as usize];
+                        if write.is_none_or(|(m, seq, _)| (m, seq) < key) {
+                            *write = Some((magnitude, d.seq, d.ticks));
                         }
                     }
                     // `efManagerVelAddDestroyAnimEnd`.
@@ -1868,19 +1898,22 @@ impl Effects {
         true
     }
 
-    /// `efManagerQuakeMakeEffect`: a struct held for the animation; the
-    /// camera shake is not ported (RE-412).
+    /// `efManagerQuakeMakeEffect`: a struct held for the animation, whose
+    /// process writes the camera's `vel_at` ([`Self::take_quake`]).
     pub fn quake(&mut self, magnitude: u8) -> bool {
         self.make_display(DisplayKind::Quake { magnitude })
             .is_some()
     }
 
-    /// The quake that wrote the camera's `vel_at` last in this frame's
-    /// processes: its magnitude and how many times its animation has
-    /// played, whose `DObj` translation the host reads from the quake's
-    /// animation ([`crate::camera::Camera::quake`]).
-    pub fn take_quake(&mut self) -> Option<(u8, u16)> {
-        self.quake_write.take().map(|(m, _, ticks)| (m, ticks))
+    /// The quake that wrote the camera's `vel_at` last on `slot`'s side of
+    /// the camera's process in this frame's processes: its magnitude and
+    /// how many times its animation has played, whose `DObj` translation
+    /// the host reads from the quake's animation
+    /// ([`crate::camera::Camera::quake`]).
+    pub fn take_quake(&mut self, slot: QuakeSlot) -> Option<(u8, u16)> {
+        self.quake_write[slot as usize]
+            .take()
+            .map(|(m, _, ticks)| (m, ticks))
     }
 
     /// `efManagerPikachuThunderTrailMakeEffect`: a struct and a `GObj` at

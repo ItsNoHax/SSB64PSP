@@ -1617,15 +1617,6 @@ unsafe fn training_step(
         started,
         effects);
     profile::stop(profile::Span::Physics, t);
-    // Priority 3, after the fighters', weapons' and items': the effects'
-    // processes.
-    effects.process();
-    // A quake's `gmCameraSetVelAt`, which the next camera update applies.
-    if let Some((magnitude, ticks)) = effects.take_quake() {
-        if let Some(f) = s[0].as_deref_mut() {
-            f.camera.quake = quake_translate(p, magnitude, ticks).or(f.camera.quake);
-        }
-    }
     let t = profile::start();
     hit_pass(p, &stage, groups, &mut s, weapons, items, stage_objects, stage_ctl, effects,
     );
@@ -1786,8 +1777,8 @@ fn physics_pass(
 ) {
     let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, stage, groups);
     // The capture pass is priority 3 on the Fighter link (3): after the
-    // item actor (link 2), which no fighter reads, and before the camera,
-    // item and weapon processes.
+    // item actor (link 2), which no fighter reads, and before the item,
+    // weapon, effect and camera processes.
     for capture_pass in [false, true] {
         for i in 0..s.len() {
             if s[i].as_deref().is_none_or(|f| ssb_game::grab::runs_in_capture_pass(&f.fighter) != capture_pass) {
@@ -1827,19 +1818,6 @@ fn physics_pass(
             }
         }
     }
-    // Master Hand's camera requests reach the camera before its process.
-    campaign::take_boss_camera(s);
-    let t = profile::start();
-    // `gmCameraUpdateInterests`' weapon loop: the `is_camera_follow`
-    // weapons, an egg still in Yoshi's hand included.
-    let follow = weapons.camera_follow_positions();
-    let held = s.iter().flatten().filter_map(|f| ssb_game::yoshi::held_egg_position(&f.fighter));
-    let follow = ssb_game::camera::WeaponInterests::collect(follow.chain(held));
-    if let Some(pl) = s[0].as_deref_mut() {
-        pl.camera.weapon_interests = follow;
-    }
-    tick_battle_camera(stage, s);
-    profile::stop(profile::Span::Camera, t);
     for f in s.iter().flatten() {
         weapons.observe_owner(&f.fighter);
     }
@@ -1860,7 +1838,8 @@ fn physics_pass(
         top_count += 1;
     }
     // Priority 3, Item actor link (2), before the item link: the
-    // appearance actor. The Star's maker reads the camera's look-at.
+    // appearance actor. The Star's maker reads the camera's look-at, which
+    // the camera (link 9) last moved in the frame before.
     if let Some(pl) = s[0].as_deref() {
         items.camera_at_x = pl.camera.at.x;
     }
@@ -1904,10 +1883,49 @@ fn physics_pass(
     // item link (RE-416).
     weapons.flush_effects(effects);
     profile::stop(profile::Span::Weapons, t);
+    effects_and_camera(p, stage, s, weapons, effects);
 }
 
-/// The battle camera's process (priority 3, after every fighter's
-/// physics): `gmCameraUpdateInterests` over the fighters in link order,
+/// Priority 3 past the weapon link (5): the effects' processes (link 6),
+/// then the camera's (link 9), whose interests read the weapons where
+/// their processes left them (RE-542); the quakes past magnitude 0
+/// (priorities 2 to 0) write after it
+/// ([`ssb_game::camera::effects_then_camera`]).
+#[inline(never)]
+fn effects_and_camera(
+    p: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    s: &mut [Option<&mut play::FighterScene>; 4],
+    weapons: &ssb_game::weapon::WeaponPool,
+    effects: &mut dyn ssb_game::effect::HitEffectSink,
+) {
+    ssb_game::camera::effects_then_camera(
+        s,
+        effects,
+        &|magnitude, ticks| quake_translate(p, magnitude, ticks),
+        &|s| s[0].as_deref_mut().map(|f| &mut f.camera),
+        &mut |s| {
+            // Master Hand's camera requests reach the camera before its
+            // process.
+            campaign::take_boss_camera(s);
+            let t = profile::start();
+            // `gmCameraUpdateInterests`' weapon loop: the
+            // `is_camera_follow` weapons, an egg still in Yoshi's hand
+            // included.
+            let follow = weapons.camera_follow_positions();
+            let held = s.iter().flatten().filter_map(|f| ssb_game::yoshi::held_egg_position(&f.fighter));
+            let follow = ssb_game::camera::WeaponInterests::collect(follow.chain(held));
+            if let Some(pl) = s[0].as_deref_mut() {
+                pl.camera.weapon_interests = follow;
+            }
+            tick_battle_camera(stage, s);
+            profile::stop(profile::Span::Camera, t);
+        },
+    );
+}
+
+/// The battle camera's process (priority 3, link 9: after every fighter's
+/// physics and the item, weapon and effect processes): `gmCameraUpdateInterests` over the fighters in link order,
 /// through the player's camera.
 fn tick_battle_camera(stage: &ssb_rom::pack::StageDesc, s: &mut [Option<&mut play::FighterScene>; 4]) {
     let mut others = [ssb_game::camera::Interest::default(); 3];

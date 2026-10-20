@@ -10,6 +10,7 @@ use super::{
     HitProc, Item, ItemAnim, ItemAnims, ItemAttributes, ItemKind, ItemStatus, StageItemEvent,
 };
 use crate::combat::{AttackState, HitStatus};
+use crate::wpeffect::{Emit, WeaponEffect as Fx};
 
 /// `llGRInishieMapPowerBlockItemAttributes` (file 260, 0xD8).
 pub static ATTRIBUTES: ItemAttributes = super::attributes::POWER_BLOCK;
@@ -77,13 +78,14 @@ pub(super) fn proc_update(
     }
 }
 
-/// `itPowerBlockWaitProcDamage`: the hitter's handicap and port go with
-/// the quake.
+/// `itPowerBlockWaitProcDamage`: the magnitude-3 quake, then the hitter's
+/// handicap and port go with the stage's damage.
 pub(super) fn hit_proc(
     item: &mut Item,
     status: Status,
     proc: HitProc,
     anims: &mut dyn ItemAnims,
+    fx: &mut Emit,
     events: &mut dyn FnMut(StageItemEvent),
 ) -> Option<bool> {
     match (status, proc) {
@@ -93,6 +95,7 @@ pub(super) fn hit_proc(
             let write = anims.add_play(item.anim_target(), ItemAnim::PowerBlockDamage);
             item.apply_root_write(write);
             crate::sound::play_fgm(crate::sound::id::nSYAudioFGMInishiePowerBlock);
+            fx.push(Fx::Quake(3));
             events(StageItemEvent::PowerBlockDamage {
                 handicap: item.damage_handicap,
                 hitter: item.damage_by,

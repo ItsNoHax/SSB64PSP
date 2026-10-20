@@ -16,13 +16,13 @@
 
 ## Current work
 
-- Landed: gameplay trig parity chunks 1-3 (RE-503).
-  - Stick gates, `syVectorAngleDiff3D` sites, Fox up-special PASS floor and AdjustSim2D.
-  - 42 related goldens match; none rebaselined.
+- Landed: effects process order step B (RE-542).
+  - Camera after items/weapons/effects, magnitude-0 quake before it, POW Block quake.
+  - 7 goldens rebaselined (5 camera order, 2 Onix quake).
 
 ## Next
 
-1. Effects process order, step B (RE-542); POW Block quake life.
+1. Effects process order, step C: fighter link-15 make stamps (RE-542).
 2. Thunder Jolt burst spikes (RE-541).
 3. MS8 list in `PLAN.md`, 1P intro first.
 
@@ -33,7 +33,7 @@
 
 ## Verification
 
-Baseline: RE-503 trig parity chunks 1-3.
+Baseline: RE-542 step B.
 
 | Check | Result |
 |---|---|
@@ -41,7 +41,7 @@ Baseline: RE-503 trig parity chunks 1-3.
 | `cargo test --workspace`, `SSB64_STUB_TABLES=1`, no ROM | pass |
 | `cargo +1.98.0 clippy -D warnings`, `cargo fmt --all --check` | pass |
 | Both PSP release builds | compile |
-| Goldens | 42 related verified, 0 rebaselined (full 225 last run at RE-543) |
+| Goldens | full matrix verified, 7 rebaselined (RE-542) |
 | PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` | exit 0, screenshot |
 | Physical PSP | PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |
 | ROMs | `rom/Super Smash Bros. (USA).z64`, `refs/ssb-decomp-re/baserom.us.z64`; SHA-1 `e2929e10...` |

@@ -196,7 +196,7 @@ fn display_effect_lives_match_the_rom() {
     }
     // The quakes' single `DObj` (`gcAddDObjForGObj(effect_gobj, NULL)`).
     let effects1 = archive.load(83).unwrap();
-    for (m, table) in [0xCBC0u32, 0xCC20, 0xCCF0].into_iter().enumerate() {
+    for (m, table) in [0xCBC0u32, 0xCC20, 0xCCF0, 0xCDC0].into_iter().enumerate() {
         let script = joint_scripts(&effects1.data, table, 1)[0].unwrap();
         let n = dobj_life(&effects1.data, &[script]);
         let kind = DisplayKind::Quake { magnitude: m as u8 };
@@ -204,7 +204,7 @@ fn display_effect_lives_match_the_rom() {
     }
     // RE-416: the packed quakes (their node-less `AnimDesc::EFFECT` slots)
     // replay the archive's scripts.
-    for m in 0..3u32 {
+    for m in 0..4u32 {
         let anim = pack
             .effect_anim(ssb_rom::effect::QUAKE_ANIM_SLOT + m)
             .expect("packed quake");
@@ -253,7 +253,7 @@ fn display_effect_lives_match_the_rom() {
         assert_eq!(got, want, "{name}");
     }
     // The constants the module names are the ones checked.
-    assert_eq!(life::QUAKE.len(), 3);
+    assert_eq!(life::QUAKE.len(), 4);
 }
 
 /// RE-417: the Egg Lay egg's animations. The packed Throw table (the

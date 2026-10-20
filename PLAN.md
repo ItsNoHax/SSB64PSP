@@ -127,8 +127,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | PK Thunder trail, PK Wave | Needs N64 capture. Trail: `efManagerPKThunderTrailMakeEffect`, 335 + 0x9050, link 15; reflected trail link 18. PK Wave: 335 + 0x9A10, joint 5; made at `ftNessSpecialHiHold` start (ftnessspecialhi.c:318), drawn nowhere | RE-413, RE-415, RE-416, RE-427 |
 | Samus fire spark | Up smash, forward air; 84 + 0x2040. Needs matrix kind 0x49 billboard along joint 16, Samus capture | RE-427 |
 | Demo fighter effects | Results and select demo fighters; effects on joints ≠ 0 need RE-528 | RE-528 |
-| Magnitude-0 quake | Shakes one frame late: priority 3 - magnitude (efmanager.c:3857) → runs before camera (link 9); PSP runs effects after camera in `physics_pass`. Needs N64 capture | RE-427 |
-| Same-frame makes | Two fighters: port order, not process order (all priority-5 before priority-4). Needs warp ROM with distinct per-port inputs (cpufx ROMs mirror controller 0) | RE-538, RE-540, RE-542 |
+| Same-frame makes | Fighter link-15 stamps: port order, not process order (all priority-5 before priority-4); stamps move out of `EffectVisuals::sync` into the interrupt/physics/capture passes. Needs warp ROM with distinct per-port inputs (cpufx ROMs mirror controller 0) | RE-538, RE-540, RE-542 |
 | cpufx tick map | cpufx-n/u: 399+el; clean trace: 398+el; cpufx-d: 399 | RE-540 |
 | Paused particles | Attached particle effects ignore pause (`ftParamPauseEffect` reaches displays only) | RE-540 |
 | Spin Attack band | Less saturated than N64 at el48-52 | RE-540 |
@@ -137,7 +136,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Thunder Jolt spikes | Cleaner than N64's ragged ones (CI4, coverage-as-alpha render mode 0x00553048); unmeasured | RE-541 |
 | PK Fire, Bomb | PK Fire flame on dummy in a capture; Bomb critical flash, held bloat | RE-352, RE-382, RE-383 |
 | Battle draw order | Object head-1 lists don't wait for stage head-1 lists of same pass | RE-422 |
-| Camera | Special camera modes; PSP zooms out later than N64 at cpufx-u el56-70 | RE-406, RE-538 |
+| Camera | Special camera modes; cpufx-u el56-70 MAE 23.9-29.7 vs N64 after RE-542 | RE-406, RE-538, RE-542 |
 | Hit status | Preservation on other fighters' special map switches; capture/hold intangibility starts no colour animation | RE-414 |
 | Twister, Barrel Cannon | `nFTCommonMotionTwister` needs shared slot; TaruCann has none | RE-356 |
 | Yoshi | Egg Lay victim: wall/ceiling sweep, damaging-floor escape, break effect; re-observe double-jump hang; tongue, grab, Egg Lay vs N64 | RE-337, RE-417, RE-432, RE-466, RE-468 |

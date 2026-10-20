@@ -1,6 +1,6 @@
 use super::*;
 use crate::collision::Segment;
-use crate::effect::{DisplayKind, EffectRuntime, HitEffect, HitEffectSink, NoEffects};
+use crate::effect::{DisplayKind, EffectRuntime, HitEffect, HitEffectSink, NoEffects, QuakeSlot};
 use crate::fighter::{Fighter, FighterKind, Situation};
 use crate::particle::tests::TestBank;
 use crate::particle::NIL;
@@ -552,19 +552,94 @@ fn the_strongest_live_quake_moves_the_camera() {
     };
     rt.frame();
     // Made with one play; its first process plays again.
-    assert_eq!(rt.effects.take_quake(), Some((2, 2)));
-    assert_eq!(rt.effects.take_quake(), None);
+    assert_eq!(rt.effects.take_quake(QuakeSlot::AfterCamera), Some((2, 2)));
+    assert_eq!(rt.effects.take_quake(QuakeSlot::AfterCamera), None);
     let life = DisplayKind::Quake { magnitude: 2 }.life().unwrap();
     let mut last = None;
     for _ in 0..life {
         rt.frame();
-        if let Some(q) = rt.effects.take_quake() {
+        if let Some(q) = rt.effects.take_quake(QuakeSlot::AfterCamera) {
             last = Some(q);
         }
     }
     assert_eq!(last, Some((2, life - 1)));
     rt.frame();
-    assert_eq!(rt.effects.take_quake(), None);
+    assert_eq!(rt.effects.take_quake(QuakeSlot::AfterCamera), None);
+    assert_eq!(rt.effects.take_quake(QuakeSlot::BeforeCamera), None);
+}
+
+/// One battle frame from the effects' processes on
+/// ([`crate::camera::effects_then_camera`]), with each quake's translation
+/// `100 * magnitude + plays`; returns the `vel_at` the camera update took.
+fn quake_frame(
+    rt: &mut EffectRuntime<'_>,
+    camera: &mut crate::camera::Camera,
+) -> Option<(f32, f32)> {
+    rt.run();
+    let mut took = None;
+    crate::camera::effects_then_camera(
+        camera,
+        rt,
+        &|m, ticks| Some((f32::from(m) * 100.0 + f32::from(ticks), 0.0)),
+        &|c| Some(c),
+        &mut |c| took = Some(c.quake.take()),
+    );
+    took.unwrap()
+}
+
+/// A magnitude-0 quake's process (priority 3, Effect link 6) runs before
+/// the camera's (priority 3, link 9): the camera applies its write in the
+/// frame the process runs, and a magnitude-1 write (priority 2, after the
+/// camera) left from the frame before is overwritten.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_magnitude_0_quake_moves_the_camera_the_same_frame() {
+    let bank = bank(20);
+    let mut p = std::boxed::Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut camera = crate::camera::Camera::default();
+    assert!(e.quake(1));
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    // Its first process plays the animation the second time.
+    assert_eq!(quake_frame(&mut rt, &mut camera), None);
+    assert_eq!(camera.quake, Some((102.0, 0.0)));
+    assert!(rt.effects.quake(0));
+    assert_eq!(quake_frame(&mut rt, &mut camera), Some((2.0, 0.0)));
+    assert_eq!(camera.quake, Some((103.0, 0.0)));
+    assert_eq!(quake_frame(&mut rt, &mut camera), Some((3.0, 0.0)));
+}
+
+/// Magnitudes 1 to 3 run after the camera (priorities 2 to 0): the
+/// camera applies the write a frame after the process made it.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_magnitude_1_quake_moves_the_next_frames_camera() {
+    let bank = bank(20);
+    let mut p = std::boxed::Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut camera = crate::camera::Camera::default();
+    assert!(e.quake(3));
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    assert_eq!(quake_frame(&mut rt, &mut camera), None);
+    assert_eq!(quake_frame(&mut rt, &mut camera), Some((302.0, 0.0)));
+    assert_eq!(quake_frame(&mut rt, &mut camera), Some((303.0, 0.0)));
+}
+
+/// The POW Block's magnitude-3 quake lives its own animation
+/// (`llEFCommonEffects1QuakeMag3AnimJoint`), not magnitude 2's.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_magnitude_3_quake_lives_its_own_animation() {
+    assert_eq!(DisplayKind::Quake { magnitude: 3 }.life(), Some(23));
+    assert_eq!(DisplayKind::Quake { magnitude: 4 }.life(), None);
 }
 
 /// `gmCameraApplyVel` adds the quake's `(z, y)` after the camera's own

@@ -224,6 +224,22 @@ fn power_block_settles_squashes_and_leaves() {
             hitter: Some(2),
         }]
     );
+    // `efManagerQuakeMakeEffect(3)` in the damage proc.
+    {
+        use crate::effect::{HitEffect, HitEffectSink};
+        use crate::wpeffect::WeaponEffect;
+        #[derive(Default)]
+        struct Record(Vec<WeaponEffect>);
+        impl HitEffectSink for Record {
+            fn make(&mut self, _: &HitEffect) {}
+            fn weapon(&mut self, e: &WeaponEffect) {
+                self.0.push(*e);
+            }
+        }
+        let mut sink = Record::default();
+        pool.flush_effects(&mut sink);
+        assert_eq!(sink.0, [WeaponEffect::Quake(3)]);
+    }
 
     // `add_play` ran the squash's first frame. Hitlag holds the clock until
     // its last tick, which plays again; the block goes on the play that

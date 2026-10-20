@@ -29,7 +29,6 @@ use ssb_game::ground::BodyColl;
 use ssb_game::physics::PhysicsAttributes;
 use ssb_game::status::AnimLengths;
 use ssb_game::status::AnyStatus;
-use ssb_game::status::Status;
 use ssb_game::weapon::{MapSurface, MapSurfaceKind, SurfaceTopology};
 use ssb_rom::pack::ObjectDesc;
 use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, MeshDesc, Pack, StageDesc};

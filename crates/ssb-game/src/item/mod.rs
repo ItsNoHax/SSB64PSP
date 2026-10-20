@@ -2639,7 +2639,9 @@ fn run_hit_proc(
         ItemStatus::PKFire(s) => pk_fire::hit_proc(item, s, proc),
         ItemStatus::LinkBomb(s) => link_bomb::hit_proc(item, s, proc, reflector_lr),
         ItemStatus::GBumper(_) => gbumper::hit_proc(item, proc),
-        ItemStatus::PowerBlock(s) => power_block::hit_proc(item, s, proc, ctx.anims, ctx.events),
+        ItemStatus::PowerBlock(s) => {
+            power_block::hit_proc(item, s, proc, ctx.anims, ctx.fx, ctx.events)
+        }
         ItemStatus::Pakkun(s) => pakkun::hit_proc(item, s, proc, ctx.anims),
         ItemStatus::TaruBomb(s) => tarubomb::hit_proc(item, s, proc, ctx.common, ctx.fx),
         ItemStatus::Monster(s) => monsters::hit_proc(item, s, proc, ctx.anims, ctx.events),

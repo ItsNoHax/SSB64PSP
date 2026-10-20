@@ -18,9 +18,9 @@ use crate::{Error, Result, Source};
 
 /// `gEFManagerFiles[0]` (`EFCommonEffects1`).
 pub const QUAKE_FILE: u32 = 83;
-/// `llEFCommonEffects1QuakeMag{0,1,2}AnimJoint`: one script for the
-/// quake's single `DObj` (`efManagerQuakeMakeEffect`).
-pub const QUAKE_TABLES: [u32; 3] = [0xCBC0, 0xCC20, 0xCCF0];
+/// `llEFCommonEffects1QuakeMag{0,1,2,3}AnimJoint`: one script for the
+/// quake's single `DObj` (`efManagerQuakeMakeEffect`'s `switch`).
+pub const QUAKE_TABLES: [u32; 4] = [0xCBC0, 0xCC20, 0xCCF0, 0xCDC0];
 /// `gFTDataPikachuSpecial2`.
 pub const SHOCK_FILE: u32 = 347;
 /// `llPikachuSpecial2ThunderShockDObjDesc`: the spark's tree, built in
@@ -177,8 +177,8 @@ fn desc_nodes(data: &[u8], at: usize) -> Result<usize> {
     Ok(n)
 }
 
-fn lives(rom: &Source) -> Result<([u16; 3], [u16; 3])> {
-    let mut quake = [0; 3];
+fn lives(rom: &Source) -> Result<([u16; 4], [u16; 3])> {
+    let mut quake = [0; 4];
     let data = rom.file(QUAKE_FILE)?.data;
     for (life_out, &table) in quake.iter_mut().zip(&QUAKE_TABLES) {
         *life_out = life(&data, QUAKE_FILE, &scripts(&data, table, 1)?)?;
@@ -200,13 +200,13 @@ fn lives(rom: &Source) -> Result<([u16; 3], [u16; 3])> {
 pub fn generate(rom: Option<&Source>) -> Result<String> {
     let (quake, shock) = match rom {
         Some(rom) => lives(rom)?,
-        None => ([0; 3], [0; 3]),
+        None => ([0; 4], [0; 3]),
     };
     let mut w = emit::header("the quakes' and the Thunder Shock spark's animation lives");
     let _ = writeln!(
         w,
-        "/// `llEFCommonEffects1QuakeMag0AnimJoint` to `...Mag2...`.\n\
-         pub const QUAKE: [u16; 3] = {quake:?};\n\
+        "/// `llEFCommonEffects1QuakeMag0AnimJoint` to `...Mag3...`.\n\
+         pub const QUAKE: [u16; 4] = {quake:?};\n\
          /// `llPikachuSpecial2ThunderShock{{0,1,2}}AnimJoint`, each counting the\n\
          /// default animation's play at the make.\n\
          pub const THUNDER_SHOCK: [u16; 3] = {shock:?};"
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn stub_lives_are_zero() {
         let text = generate(None).unwrap();
-        assert!(text.contains("pub const QUAKE: [u16; 3] = [0, 0, 0];"));
+        assert!(text.contains("pub const QUAKE: [u16; 4] = [0, 0, 0, 0];"));
         assert!(text.contains("pub const THUNDER_SHOCK: [u16; 3] = [0, 0, 0];"));
     }
 
