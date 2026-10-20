@@ -437,7 +437,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 122 seeds the PK Thunder trail effect's list (335 + 0x9050) with
 // `efManagerNessPKThunderTrailProcDisplay`'s `G_RM_AA_XLU_SURF`: no depth
 // test. No layout change.
-pub const VERSION: u32 = 122;
+// 123 seeds the PK Thunder trail weapon's list (335 + 0x8B40) with
+// `wpDisplayPKThunderProcDisplay`'s PRIM and ENV, so its
+// `(PRIM - ENV) * TEXEL0 + ENV` resolves to `TEXTURE_BLEND`. No layout
+// change.
+pub const VERSION: u32 = 123;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

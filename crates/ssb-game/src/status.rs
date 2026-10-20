@@ -1895,6 +1895,11 @@ pub struct StatusState {
     /// `ftAnimParseDObjFigatree` poses that frame without counting, so
     /// `anim_frame` stands one more play.
     pub clip_changed: bool,
+    /// Bumped (wrapping) by the play that consumes
+    /// [`clip_changed`](Self::clip_changed): the parse that poses frame 0 of
+    /// a figatree restarted outside `ftMainSetStatus`. The drawn skeleton
+    /// restarts when it changes; [`entry`](Self::entry) covers status sets.
+    pub clip_restarts: u8,
     /// The status clock: `frame_begin` plus `anim_speed` per play, past
     /// the figatree's end (wrapped only by [`StatusTiming::looping`]). The
     /// port's [`StatusState::animation_ended`] and the drawn clip's start
@@ -1979,6 +1984,7 @@ impl Default for StatusState {
             clip: Clip::Unknown,
             clip_paused: false,
             clip_changed: false,
+            clip_restarts: 0,
             clock: 0.0,
             timing: StatusTiming::unknown(),
             jump_input: JumpInput::None,
@@ -4124,6 +4130,7 @@ pub fn play_anim(f: &mut Fighter) {
         return;
     }
     if core::mem::take(&mut s.clip_changed) {
+        s.clip_restarts = s.clip_restarts.wrapping_add(1);
         return;
     }
     if !s.clip_paused && s.clip != Clip::Stopped {

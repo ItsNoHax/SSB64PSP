@@ -902,6 +902,51 @@ fn reflected_thunder_swaps_the_trail_effect_for_the_reflect_trail() {
     assert!(made.is_some(), "the reflect trail makes its effect");
 }
 
+/// `wpDisplayPKThunderProcDisplay` (`wp/wpdisplay.c`): each trail draws
+/// under `dWPDisplayPKThunder{Prim,Env}Colors[trail_id]`, trail 0 the
+/// bluest, trail 3 the palest.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn pk_trails_take_prim_and_env_by_trail_id() {
+    use crate::weapon::{PK_THUNDER_TRAIL_ENV, PK_THUNDER_TRAIL_PRIM};
+    assert_eq!(
+        PK_THUNDER_TRAIL_PRIM,
+        [
+            [0x5E, 0xA3, 0xFF],
+            [0x98, 0xBD, 0xFF],
+            [0xC2, 0xD9, 0xFF],
+            [0xB3, 0xF1, 0xFF]
+        ]
+    );
+    assert_eq!(
+        PK_THUNDER_TRAIL_ENV,
+        [
+            [0x3A, 0x00, 0x83],
+            [0x5B, 0x00, 0xB2],
+            [0x86, 0x33, 0xD9],
+            [0xA7, 0x74, 0xF8]
+        ]
+    );
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    set_special_hi(&mut f);
+    steps(&mut f, 24);
+    let mut pool = WeaponPool::default();
+    assert!(pool.spawn(f.take_weapon_spawn().unwrap()));
+    pool.observe_owner(&f);
+    for _ in 0..12 {
+        pool.tick(core::iter::empty, None);
+    }
+    let mut seen = 0u8;
+    for t in pool.pk_trails() {
+        let i = usize::from(t.id);
+        assert_eq!(
+            t.colors(),
+            (PK_THUNDER_TRAIL_PRIM[i], PK_THUNDER_TRAIL_ENV[i])
+        );
+        seen |= 1 << t.id;
+    }
+    assert_eq!(seen, 0b1111);
+}
 /// N64 (warp ROM, grounded Up+B, trace of links 5 and 6): the head's first
 /// update is on its make's frame (t 68), and each trail runs its first
 /// update on the frame it is made, so trails 0-3 come at t 70, 72, 74 and

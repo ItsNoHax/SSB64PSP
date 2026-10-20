@@ -607,3 +607,138 @@ fn kirby_down_wiggle_drops_through_the_castle_floor_as_on_the_n64() {
     }
     assert_eq!(first_bad, None, "{log}");
 }
+
+/// `kwj`: warp ROM `warp_kirby` (Training Castle, Mario the dummy), P1 route
+/// `8:8:x=127;48:40:b`: Kirby dashes to x 498 and inhales Mario. At frame
+/// 100 the dummy's `pkind` is written to `Man`; port 2 taps the stick right
+/// (x 80) on frames 120 and 134 and left (x -80) on 126. Each wiggle
+/// (`ftCommonCaptureWaitKirbyUpdateBreakoutVars`) pushes Kirby and restarts
+/// its figatree (`lbCommonAddFighterPartsFigatree`) after Kirby's own play
+/// that frame: the frame draws the clip run on, the next parse poses frame 0
+/// without counting (`AOBJ_ANIM_CHANGED`), the one after frame 1.
+/// Per row: tick; Kirby's status, `anim_frame`, x, y; Mario's x; then the
+/// rotation words of Kirby's joints 6 and 10 (`fp->joints[]`), which the
+/// inhale clips' skeleton holds at 2 and 6.
+const KIRBY_SIDE_WIGGLE: &str = "
+116 275 28.00 498.00 1398.15 508.00 3ca24dd4 00000000 00000000 bf9503ba bf5b0e39 4028c106
+117 275 29.00 498.00 1398.15 508.00 3bf6c080 00000000 00000000 bf95bdc7 bf59df0f 402941a2
+118 275 30.00 498.00 1398.15 508.00 bba00000 00000000 00000000 bf967996 bf58a72f 4029c23e
+119 275 31.00 498.00 1398.15 508.00 bc8ce35b 00000000 00000000 bf9736ae bf57670a 402a4279
+120 275 0.00 512.40 1398.13 522.40 bcef1aa1 00000000 00000000 bf97f495 bf561f0f 402ac1f3
+121 275 0.00 521.20 1398.11 531.20 00000000 00000000 00000000 bf8b0000 bf678000 4020c000
+122 275 1.00 524.40 1398.11 534.40 3b226e98 00000000 00000000 bf8ac7b2 bf67f567 4020a578
+123 275 2.00 524.40 1398.11 534.40 3bc20c4a 00000000 00000000 bf8a9e76 bf6855e9 402095a5
+124 275 3.00 524.40 1398.11 534.40 3c2722d1 00000000 00000000 bf8a83d5 bf68a1f5 40209020
+125 275 4.00 524.40 1398.11 534.40 3c78d4fe 00000000 00000000 bf8a7751 bf68d9fc 40209489
+126 275 0.00 510.00 1398.13 520.00 3caa0000 00000000 00000000 bf8a7873 bf68fe66 4020a27e
+127 275 0.00 501.20 1398.14 511.20 00000000 00000000 00000000 bf8b0000 bf678000 4020c000
+128 275 1.00 498.00 1398.15 508.00 3b226e98 00000000 00000000 bf8ac7b2 bf67f567 4020a578
+129 275 2.00 498.00 1398.15 508.00 3bc20c4a 00000000 00000000 bf8a9e76 bf6855e9 402095a5
+130 275 3.00 498.00 1398.15 508.00 3c2722d1 00000000 00000000 bf8a83d5 bf68a1f5 40209020
+131 275 4.00 498.00 1398.15 508.00 3c78d4fe 00000000 00000000 bf8a7751 bf68d9fc 40209489
+132 275 5.00 498.00 1398.15 508.00 3caa0000 00000000 00000000 bf8a7873 bf68fe66 4020a27e
+133 275 6.00 498.00 1398.15 508.00 3cdb4396 00000000 00000000 bf8a86c2 bf690fad 4020b99f
+134 275 0.00 512.40 1398.13 522.40 3d079376 00000000 00000000 bf8aa1c4 bf690e39 4020d989
+135 275 0.00 521.20 1398.11 531.20 00000000 00000000 00000000 bf8b0000 bf678000 4020c000
+136 275 1.00 524.40 1398.11 534.40 3b226e98 00000000 00000000 bf8ac7b2 bf67f567 4020a578
+137 275 2.00 524.40 1398.11 534.40 3bc20c4a 00000000 00000000 bf8a9e76 bf6855e9 402095a5
+138 275 3.00 524.40 1398.11 534.40 3c2722d1 00000000 00000000 bf8a83d5 bf68a1f5 40209020
+139 275 4.00 524.40 1398.11 534.40 3c78d4fe 00000000 00000000 bf8a7751 bf68d9fc 40209489
+140 275 5.00 524.40 1398.11 534.40 3caa0000 00000000 00000000 bf8a7873 bf68fe66 4020a27e
+";
+
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn kirby_side_wiggles_restart_the_drawn_clip_as_on_the_n64() {
+    let Some(bytes) = open_pack() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let (stage, segments) = stage_floors(&pack, CASTLE);
+    let map = dream_land_map(&pack, &stage);
+    let mut fighters: Vec<Posed> = [(FighterKind::Kirby, 0), (FighterKind::Mario, 1)]
+        .into_iter()
+        .map(|(kind, port)| {
+            Posed::new(
+                &pack,
+                training_fighter(&pack, &stage, kind, port, &segments),
+            )
+        })
+        .collect();
+    let pad0 = |t: u64| match t {
+        8..=15 => (0, 127, 0),
+        48..=87 => (button::B, 0, 0),
+        _ => (0, 0, 0),
+    };
+    let pad1 = |t: u64| match t {
+        120 | 134 => (0, 80, 0),
+        126 => (0, -80, 0),
+        _ => (0, 0, 0),
+    };
+    let want: Vec<Vec<String>> = KIRBY_SIDE_WIGGLE
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.split_whitespace().map(str::to_owned).collect())
+        .collect();
+    let mut jump_was_held = false;
+    let mut log = Vec::new();
+    let mut first_bad = None;
+    for tick in 0..=140u64 {
+        let _ = tick_pair_pads(
+            &pack,
+            &map,
+            &mut fighters,
+            &pad0,
+            &pad1,
+            tick,
+            &mut jump_was_held,
+        );
+        // `ftKirbySpecialNCatchEatSetStatusParam` and
+        // `ftKirbySpecialNEatSetStatusParam` run `proc_slope` at once, but
+        // keep the contour SpecialNStart/Loop cleared: no leg fit (the N64's
+        // joints 19-30 equal the bare clip from 60 to 76, RE-510).
+        let k = &fighters[0].fighter;
+        if matches!(k.status.status.id(), 272 | 273) {
+            assert_eq!(k.slope_contour, 0, "tick {tick}: {:?}", k.status.status);
+        }
+        let Some(row) = want.iter().find(|r| r[0].parse::<u64>() == Ok(tick)) else {
+            continue;
+        };
+        let k = &fighters[0];
+        let f = &k.fighter;
+        let got = [
+            f32::from(f.status.status.id()),
+            f.status.anim_frame,
+            f.pos.x,
+            f.pos.y,
+            fighters[1].fighter.pos.x,
+        ];
+        let want_f: Vec<f32> = row[1..6].iter().map(|v| v.parse().unwrap()).collect();
+        let joints: Vec<u32> = [2, 6]
+            .iter()
+            .flat_map(|&i| {
+                k.skeleton
+                    .pose(i)
+                    .map_or([0; 3], |p| p.rotate.map(f32::to_bits))
+            })
+            .collect();
+        let want_j: Vec<u32> = row[6..12]
+            .iter()
+            .map(|v| u32::from_str_radix(v, 16).unwrap())
+            .collect();
+        let ok = got.iter().zip(&want_f).all(|(g, w)| near(*g, *w)) && joints == want_j;
+        log.push(format!(
+            "{tick} {} rust {got:?} {joints:08x?}\n{tick} {}  n64 {want_f:?} {want_j:08x?}",
+            if ok { " " } else { "X" },
+            if ok { " " } else { "X" },
+        ));
+        if !ok && first_bad.is_none() {
+            first_bad = Some(tick);
+        }
+    }
+    let log = log.join("\n");
+    if std::env::var_os("SCENE_TRACE").is_some() {
+        println!("kirby side wiggles on the Castle:\n{log}");
+    }
+    assert_eq!(first_bad, None, "{log}");
+}

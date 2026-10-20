@@ -314,6 +314,24 @@ pub const LIST: &[DArray] = &[
         Elem::F32,
         &[4],
     ),
+    // `wp/wpdisplay.c`: `wpDisplayPKThunderProcDisplay`'s PRIM and ENV by
+    // `pkthunder_trail.trail_id`, `SYColorRGB[4]` each.
+    DArray::new(
+        "WP_DISPLAY_PK_THUNDER_PRIM_COLORS",
+        "dWPDisplayPKThunderPrimColors",
+        OVL3,
+        0x8018_8E10,
+        Elem::U8,
+        &[4, 3],
+    ),
+    DArray::new(
+        "WP_DISPLAY_PK_THUNDER_ENV_COLORS",
+        "dWPDisplayPKThunderEnvColors",
+        OVL3,
+        0x8018_8E1C,
+        Elem::U8,
+        &[4, 3],
+    ),
     // `wp/wpmario/wpmariofireball.c`; `wpMarioFireballAttributes` is 0x30 bytes.
     DArray::new(
         "WP_MARIO_FIREBALL_WEAPON_ATTRIBUTES_LIFETIME",

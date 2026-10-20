@@ -459,6 +459,10 @@ pub enum GameScene {
     /// `kirbylose`: `kirbyhat`'s copy, then L: the taunt drops the copy
     /// and the lost star (`efManagerLoseKirbyStar*`) arcs away.
     KirbyLose,
+    /// `kirbywiggle`: `kirbyhat`'s inhale, then the dummy reads the pad and
+    /// taps the stick: its wiggle pushes Kirby and restarts Kirby's clip
+    /// (`lbCommonAddFighterPartsFigatree`), drawn on frame 0 (RE-552).
+    KirbyWiggle,
     /// `yoshiegg`: Yoshi in Training after an Egg Lay of the Mario dummy,
     /// the dummy in its egg (RE-417).
     YoshiEgg,
@@ -785,7 +789,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 195] = [
+    pub const ALL: [GameScene; 196] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -868,6 +872,7 @@ impl GameScene {
         GameScene::KirbyHat,
         GameScene::KirbySpit,
         GameScene::KirbyLose,
+        GameScene::KirbyWiggle,
         GameScene::YoshiEgg,
         GameScene::YoshiShield,
         GameScene::YoshiRollF,
@@ -1067,6 +1072,7 @@ impl GameScene {
             GameScene::KirbyHat => "kirbyhat",
             GameScene::KirbySpit => "kirbyspit",
             GameScene::KirbyLose => "kirbylose",
+            GameScene::KirbyWiggle => "kirbywiggle",
             GameScene::YoshiEgg => "yoshiegg",
             GameScene::YoshiShield => "yoshishield",
             GameScene::YoshiRollF => "yoshirollf",

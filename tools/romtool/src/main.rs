@@ -2550,6 +2550,11 @@ const SHIELD_GRAPH: (u32, u32) = (163, 0x300);
 /// Slap, landings).
 const IMPACT_WAVE_GRAPH: (u32, u32) = (83, 0x7C28);
 
+/// Ness's PK Thunder trail (`llNessMainPKThunderTrailWeaponAttributes`,
+/// file 239 + 0x40): file 335's `DObjDLLink` array at 0x8B40, drawn by
+/// `wpDisplayPKThunderProcDisplay` under PRIM and ENV by `trail_id`.
+const PK_THUNDER_TRAIL_GRAPH: (u32, u32) = (335, 0x8B40);
+
 /// `efManagerMakeEffect` effects whose own display sets head 1 to
 /// `G_RM_AA_XLU_SURF` and `G_AC_NONE` before `gcDrawDObjDLLinksForGObj`
 /// (no `Z_CMP`): the list sets no render mode of its own, so it blends with
@@ -2716,6 +2721,29 @@ fn seed_player_interface_commands(key: (u32, u32), decoded: &mut [Vec<ssb_rom::d
                         rgba: [0xFF; 4],
                     },
                     Cmd::SetEnvColor([0, 0, 0, 0xFF]),
+                ],
+            );
+        }
+        return;
+    }
+    if key == PK_THUNDER_TRAIL_GRAPH {
+        // wpDisplayPKThunderProcDisplay, before the list's own writes: the
+        // list's `(PRIM - ENV) * TEXEL0 + ENV` reads both and sets neither
+        // (its `MObj` flags are `MOBJ_FLAG_ALPHA` only). Trail 0's pair; the
+        // renderer replaces both per `trail_id`.
+        use ssb_game::weapon::{PK_THUNDER_TRAIL_ENV as ENV, PK_THUNDER_TRAIL_PRIM as PRIM};
+        if let Some(cmds) = decoded.first_mut() {
+            let [r, g, b] = PRIM[0];
+            let [er, eg, eb] = ENV[0];
+            cmds.splice(
+                0..0,
+                [
+                    Cmd::SetPrimColor {
+                        m: 0,
+                        l: 0,
+                        rgba: [r, g, b, 0xFF],
+                    },
+                    Cmd::SetEnvColor([er, eg, eb, 0xFF]),
                 ],
             );
         }

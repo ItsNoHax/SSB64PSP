@@ -1135,8 +1135,14 @@ pub fn tick_skeleton_animation(
     speed: f32,
     skeleton: &mut ssb_rom::skeleton::Skeleton,
     started: &mut Option<(AnyStatus, u32)>,
+    restarts_seen: &mut u8,
 ) -> Option<ssb_rom::figatree::JointPose> {
     let entry = status.entry;
+    // A figatree restarted outside `ftMainSetStatus` (Kirby's inhale
+    // wiggle, `lbCommonAddFighterPartsFigatree`): the play that consumed
+    // `AOBJ_ANIM_CHANGED` posed frame 0 without advancing.
+    let clip_restarted = *restarts_seen != status.clip_restarts;
+    *restarts_seen = status.clip_restarts;
     // The clip starts on the status's current frame: `ftMainSetStatus`
     // parses `frame_begin`, and a setter's `ftMainPlayAnimEventsAll` or the
     // frame's own advance has moved it on before this first parse, which
@@ -1185,6 +1191,21 @@ pub fn tick_skeleton_animation(
             }
         }
     }
+    // After the entry: a status set and a wiggle in one frame (the
+    // captive acts first) leave the wiggle's frame 0 to this parse.
+    let mut wiggle_root = None;
+    if clip_restarted && !status.keeps_motion() {
+        if let Some(anim) = pack.fighter_anim(kind, slot) {
+            // The restart keeps the current pose for the root's step; only
+            // `ftMainSetStatus` zeroes TransN.
+            wiggle_root = Some(skeleton.pose(0).map(|p| ssb_rom::figatree::JointPose {
+                translate: if restarted { [0.0; 3] } else { p.translate },
+                ..*p
+            }));
+            skeleton.start(pack, &anim, 0.0, speed);
+            held = false;
+        }
+    }
     // A rate the status changes mid-clip (`gcSetAnimSpeed`) applies from
     // the next play.
     skeleton.speed = speed;
@@ -1193,7 +1214,9 @@ pub fn tick_skeleton_animation(
     // the pose it had.
     // `ftMainSetStatus` zeroes TransN before the new clip's first parse, so
     // its first step is the clip's own first translation.
-    let root_before = if restarted && setter_played {
+    let root_before = if let Some(root) = wiggle_root {
+        root
+    } else if restarted && setter_played {
         // `ftMainSetStatus` parsed `frame_begin` (TransN zeroed first, then
         // posed); the setter's play reads that pose as `anim_vel` and
         // advances, so the first step is from the clip's own first pose
@@ -1303,6 +1326,9 @@ pub struct FighterScene {
     /// it feeds `ftShadowProcDisplay`, not a gameplay calculation.
     pub shadow_size: f32,
     started: Option<(AnyStatus, u32)>,
+    /// The [`StatusState::clip_restarts`](ssb_game::status::StatusState)
+    /// the skeleton last restarted for.
+    clip_restarts_seen: u8,
     /// `YRotN`'s local pose, the shield's joint. Only the shield poses move
     /// it (RE-367); the original keeps it between shields too.
     shield_yrotn: ssb_rom::figatree::JointPose,
@@ -1495,6 +1521,7 @@ impl FighterScene {
             camera_zoom_frame,
             shadow_size,
             started: None,
+            clip_restarts_seen: 0,
             shield_yrotn: ssb_rom::figatree::JointPose::default(),
             root_motion_before_tick: None,
             anim_ticked_early: false,
@@ -1891,6 +1918,7 @@ impl FighterScene {
             ssb_game::status::clip_speed(&self.fighter),
             &mut self.skeleton,
             &mut self.started,
+            &mut self.clip_restarts_seen,
         );
         self.apply_shield_pose(pack);
     }

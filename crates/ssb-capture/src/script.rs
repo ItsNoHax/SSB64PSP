@@ -65,6 +65,12 @@ const CUTTER_B_TICK: u64 = 95;
 /// (Mario, Kirby) or 31 (Yoshi) and swallowed its first jump (RE-516).
 const ROUTE_DELAY: u64 = 17;
 
+/// `kirbywiggle`: from this tick the captured dummy reads the pad
+/// (`SpecialNWait` from about 166).
+pub const KIRBY_WIGGLE_MIRROR_TICK: u64 = 190 + ROUTE_DELAY;
+/// `kirbywiggle`: the stick tap the dummy wiggles with, mid-clip.
+pub const KIRBY_WIGGLE_TICK: u64 = 200 + ROUTE_DELAY;
+
 /// N64 button bits, as `ssb_engine::input::N64Buttons` (a test in
 /// `ssb-rom` checks them against it).
 pub mod button {
@@ -122,6 +128,7 @@ macro_rules! scripted_scene {
             | $crate::GameScene::KirbyHat
             | $crate::GameScene::KirbySpit
             | $crate::GameScene::KirbyLose
+            | $crate::GameScene::KirbyWiggle
             | $crate::GameScene::YoshiEgg
             | $crate::GameScene::PikachuThunder
             | $crate::GameScene::PikachuAir
@@ -275,6 +282,10 @@ pub const fn capture_tick(scene: GameScene) -> Option<u64> {
         // L at 250, once the copy is over, drops it; the lost star is
         // rising on its arc.
         KirbyLose => 262 + ROUTE_DELAY,
+        // The dummy's wiggle lands on the tick after the tap (the `re552`
+        // capture log); the frame after that draws Kirby's restarted clip
+        // on frame 0.
+        KirbyWiggle => KIRBY_WIGGLE_TICK + 2,
         // The egg laid at 293 lands on the top platform 39 ticks later and
         // stops dead there (`ftCommonYoshiEggProcMap` only sets `ga`); the
         // Training CPU wiggles it open at 458 (`ftComputer`'s `YoshiEgg`
@@ -350,13 +361,16 @@ fn buttons(scene: GameScene, tick: u64) -> u16 {
         // dummy's platform, then B: Kirby inhales and, with a second B from
         // `SpecialNWait`, copies (`ftKirbySpecialNCopyCheckGotoCopy`); Yoshi's
         // tongue swallows and lays the dummy.
-        KirbyHat | KirbySpit | KirbyLose | YoshiEgg => match tick {
+        KirbyHat | KirbySpit | KirbyLose | KirbyWiggle | YoshiEgg => match tick {
             4 | 8 => button::A,
             t if scene != YoshiEgg && (t == 13 + ROUTE_DELAY || t == 30 + ROUTE_DELAY) => {
                 button::C_UP
             }
             t if scene == KirbySpit && t == 170 + ROUTE_DELAY => button::A,
-            t if scene != YoshiEgg && (t == 108 + ROUTE_DELAY || t == 170 + ROUTE_DELAY) => {
+            t if scene == KirbyWiggle && t == 108 + ROUTE_DELAY => button::B,
+            t if !matches!(scene, YoshiEgg | KirbyWiggle)
+                && (t == 108 + ROUTE_DELAY || t == 170 + ROUTE_DELAY) =>
+            {
                 button::B
             }
             t if scene == KirbyLose && t == 250 + ROUTE_DELAY => button::L,
@@ -509,9 +523,12 @@ fn stick_x(scene: GameScene, tick: u64) -> i8 {
                 0
             }
         }
-        Grab | Jab | KirbyHat | KirbySpit | KirbyLose => {
+        Grab | Jab | KirbyHat | KirbySpit | KirbyLose | KirbyWiggle => {
             if (14 + ROUTE_DELAY..52 + ROUTE_DELAY).contains(&tick) {
                 -30
+            } else if scene == KirbyWiggle && tick == KIRBY_WIGGLE_TICK {
+                // Kirby faces left: a push its way, no `SpecialNTurn`.
+                -80
             } else {
                 0
             }

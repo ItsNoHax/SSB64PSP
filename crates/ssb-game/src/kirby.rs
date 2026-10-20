@@ -2064,6 +2064,48 @@ mod tests {
         assert_eq!(f.status.anim_frame, 0.0);
     }
 
+    /// `ftParamProcPauseEffect` setters (RE-549 audit): Final Cutter's
+    /// setters install it; the inhale (`ftkirbyspecialn.c:163` attaches
+    /// effects without it) does not, and a status set clears it.
+    #[test]
+    fn final_cutter_pauses_its_effects_in_hitlag_and_the_inhale_does_not() {
+        let mut f = kirby();
+        set_special_hi(&mut f);
+        assert!(f.lag_pauses_effects, "SpecialHi");
+        set_special_n(&mut f);
+        assert!(!f.lag_pauses_effects, "SpecialNStart");
+        f.become_airborne();
+        set_special_hi(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialAirHi));
+        assert!(f.lag_pauses_effects, "SpecialAirHi");
+    }
+
+    /// `AOBJ_ANIM_CHANGED` from a wiggle: the next play stands on frame 0
+    /// and counts one restart for the drawn clip; the play after advances.
+    #[test]
+    fn a_wiggle_restart_is_counted_by_the_play_that_poses_frame_zero() {
+        let mut f = kirby();
+        set(&mut f, K::SpecialNWait, 12.0, StatusTiming::unknown());
+        let entry = f.status.entry;
+        let restarts = f.status.clip_restarts;
+        on_wiggle(&mut f, false, false, Some(8.0));
+        assert_eq!(
+            f.status.clip_restarts, restarts,
+            "the wiggle frame draws the clip run on"
+        );
+        status::play_anim(&mut f);
+        assert_eq!(f.status.anim_frame, 0.0);
+        assert_eq!(f.status.clip_restarts, restarts.wrapping_add(1));
+        assert_eq!(f.status.entry, entry, "no status set");
+        status::play_anim(&mut f);
+        assert_eq!(f.status.anim_frame, 1.0);
+        assert_eq!(f.status.clip_restarts, restarts.wrapping_add(1));
+        // A frame without a wiggle counts nothing.
+        on_wiggle(&mut f, false, false, None);
+        status::play_anim(&mut f);
+        assert_eq!(f.status.clip_restarts, restarts.wrapping_add(1));
+    }
+
     #[test]
     fn five_aerial_jumps_use_the_velocity_table() {
         let mut f = kirby();

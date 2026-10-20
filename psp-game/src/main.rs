@@ -1361,6 +1361,24 @@ fn log_capture_state(
             );
         }
     }
+    if capture_scene == Some(GameScene::KirbyWiggle) {
+        let line = alloc::format!(
+            "re552 player=({:.2},{:.2}) status={:?} anim_frame={:.1} clip_restarts={} dummy={:?}\n",
+            player.fighter.pos.x,
+            player.fighter.pos.y,
+            player.fighter.status.status,
+            player.fighter.status.anim_frame,
+            player.fighter.status.clip_restarts,
+            dummy.fighter.status.status,
+        );
+        unsafe {
+            psp::sys::sceIoWrite(
+                psp::sys::sceKernelStdout(),
+                line.as_ptr() as *const core::ffi::c_void,
+                line.len(),
+            );
+        }
+    }
     if matches!(
         capture_scene,
         Some(GameScene::PikachuThunder | GameScene::KirbyHat | GameScene::YoshiEgg)
@@ -2142,6 +2160,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
             | GameScene::KirbyHat
             | GameScene::KirbySpit
             | GameScene::KirbyLose
+            | GameScene::KirbyWiggle
             | GameScene::KirbyJab
             | GameScene::KirbyStoneSlope
             | GameScene::KirbyCutter,
@@ -5359,6 +5378,15 @@ unsafe fn run() -> ! {
         profile::stop(profile::Span::Update, update_start);
         save::persist(&mut s.save, &s.backup);
 
+        // `kirbywiggle`: the captured dummy reads the pad from here, as the
+        // N64 trace's dummy read port 2 (RE-552).
+        if capture_spec == Some(GameScene::KirbyWiggle)
+            && sim_frame_index == ssb_capture::script::KIRBY_WIGGLE_MIRROR_TICK
+        {
+            for d in s.dummies.iter_mut().flatten() {
+                d.mirror = true;
+            }
+        }
         // `vsknock`: the CPU starts the battle already damaged (RE-469).
         if capture_spec == Some(GameScene::VsKnock) && sim_frame_index == VS_GO_TICK {
             if let Some(d) = s.dummies[0].as_deref_mut() {
@@ -11075,8 +11103,17 @@ unsafe fn draw_items_weapons_effects(
                 [0.0, 0.0, trail.rotation()],
                 meshdraw::MODEL_SCALE,
             );
+            // `wpDisplayPKThunderProcDisplay`: PRIM and ENV by `trail_id`,
+            // the list's `(PRIM - ENV) * TEXEL0 + ENV` (`TEXTURE_BLEND`).
+            let ([r, g, b], [er, eg, eb]) = trail.colors();
+            draw_state.color_override = Some(ssb_rom::skeleton::EffectColors {
+                prim: Some([r, g, b, 0xFF]),
+                env: Some([er, eg, eb, 0xFF]),
+                ..Default::default()
+            });
             meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
         }
+        draw_state.color_override = None;
     }
 
     // Pikachu's Thunder head and trails (RE-417): `TraRotRpyRSca` DObjs at

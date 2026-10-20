@@ -246,6 +246,7 @@ fn every_fighter_scene_has_an_intent() {
                 GameScene::KirbyHat
                     | GameScene::KirbySpit
                     | GameScene::KirbyLose
+                    | GameScene::KirbyWiggle
                     | GameScene::YoshiEgg
             );
             assert_eq!(

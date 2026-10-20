@@ -16,6 +16,8 @@ pub struct Posed {
     pub skeleton: ssb_rom::skeleton::Skeleton,
     pub object: u32,
     pub started: Option<(ssb_game::status::AnyStatus, u32)>,
+    /// `clip_restarts` the skeleton last restarted for.
+    pub clip_restarts_seen: u8,
     pub root_before: Option<ssb_rom::figatree::JointPose>,
     /// The clip was played after the interrupt for a throw's release.
     pub anim_ticked_early: bool,
@@ -33,6 +35,7 @@ impl Posed {
             skeleton: ssb_rom::skeleton::Skeleton::new(),
             object,
             started: None,
+            clip_restarts_seen: 0,
             root_before: None,
             anim_ticked_early: false,
             shield_yrotn: ssb_rom::figatree::JointPose::default(),
@@ -195,6 +198,8 @@ impl Posed {
         let slot = status.status.anim_slot() as u32;
         let setter_played = status.clock > status.anim_frame_begin;
         let speed = ssb_game::status::clip_speed(&self.fighter);
+        let clip_restarted = self.clip_restarts_seen != status.clip_restarts;
+        self.clip_restarts_seen = status.clip_restarts;
         let mut restarted = false;
         if self.started != Some((status.status, status.entry)) {
             self.started = Some((status.status, status.entry));
@@ -212,8 +217,21 @@ impl Posed {
                     ssb_game::motion::leads_with_xrotn(self.fighter.kind, status.status);
             }
         }
+        // A wiggle's `lbCommonAddFighterPartsFigatree`, after the entry.
+        let mut wiggle_root = None;
+        if clip_restarted && !status.status.keeps_motion() {
+            if let Some(anim) = pack.fighter_anim(kind, slot) {
+                wiggle_root = Some(self.skeleton.pose(0).map(|p| ssb_rom::figatree::JointPose {
+                    translate: if restarted { [0.0; 3] } else { p.translate },
+                    ..*p
+                }));
+                self.skeleton.start(pack, &anim, 0.0, speed);
+            }
+        }
         self.skeleton.speed = speed;
-        self.root_before = if restarted && setter_played {
+        self.root_before = if let Some(root) = wiggle_root {
+            root
+        } else if restarted && setter_played {
             if let Some(anim) = pack.fighter_anim(kind, slot) {
                 if let Some(script) = pack.anim_script(&anim) {
                     let _ = self.skeleton.tick_scaled(

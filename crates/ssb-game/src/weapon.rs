@@ -19,7 +19,7 @@ use crate::wpeffect::{Emit, WeaponEffect as Fx};
 mod ness;
 #[path = "pikachu_weapon.rs"]
 mod pikachu;
-pub use ness::{PKFire, PKThunder, PKThunderTrail};
+pub use ness::{PKFire, PKThunder, PKThunderTrail, PK_THUNDER_TRAIL_ENV, PK_THUNDER_TRAIL_PRIM};
 pub use pikachu::{ThunderHead, ThunderJolt, ThunderTrail, JOLT_GROUND_ANIM_SPEED};
 #[path = "sector_weapon.rs"]
 pub mod sector;

@@ -15,6 +15,12 @@ pub const TRAIL_HIT: Hitbox = Hitbox {
     offset: crate::monster_weapon::weapon_attributes::NESS_PK_THUNDER_TRAIL.attack_offset(0),
     ..crate::monster_weapon::weapon_attributes::NESS_PK_THUNDER_TRAIL.hitbox()
 };
+/// `dWPDisplayPKThunderPrimColors`: the PRIM `wpDisplayPKThunderProcDisplay`
+/// sets for a trail by its `trail_id` (alpha 0xFF), generated from the ROM.
+pub const PK_THUNDER_TRAIL_PRIM: [[u8; 3]; 4] = crate::d_arrays::WP_DISPLAY_PK_THUNDER_PRIM_COLORS;
+/// `dWPDisplayPKThunderEnvColors`: the trail's ENV, as
+/// [`PK_THUNDER_TRAIL_PRIM`].
+pub const PK_THUNDER_TRAIL_ENV: [[u8; 3]; 4] = crate::d_arrays::WP_DISPLAY_PK_THUNDER_ENV_COLORS;
 /// The spark's `WPAttributes` map collision box.
 const SPARK_MAP_COLL: BodyColl = crate::monster_weapon::weapon_attributes::NESS_PK_FIRE.map_coll;
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -334,6 +340,13 @@ impl PKThunderTrail {
     /// 90 degrees.
     pub fn rotation(&self) -> f32 {
         self.rotation
+    }
+    /// `wpDisplayPKThunderProcDisplay`'s PRIM and ENV RGB for this trail,
+    /// indexed by `trail_id` (0 to 3, the tables' length), both at alpha
+    /// 0xFF.
+    pub fn colors(&self) -> ([u8; 3], [u8; 3]) {
+        let i = usize::from(self.id).min(PK_THUNDER_TRAIL_PRIM.len() - 1);
+        (PK_THUNDER_TRAIL_PRIM[i], PK_THUNDER_TRAIL_ENV[i])
     }
     pub(super) fn hit_position(&self) -> Vec3 {
         let (sin, cos) = sin_cos(self.rotation);
