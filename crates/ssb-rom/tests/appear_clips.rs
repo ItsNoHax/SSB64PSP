@@ -8,6 +8,7 @@ use ssb_rom::pack::{AnimJoint, Pack};
 const PLAYABLE: u32 = 12;
 const CAPTAIN: u32 = 7;
 const NESS: u32 = 11;
+const LINK: u32 = 5;
 /// `anim::SLOT_GUARD_ON`, whose joints are the model's.
 const SLOT_GUARD_ON: u32 = 600;
 
@@ -33,17 +34,28 @@ fn every_fighter_has_an_entry_clip_over_its_model_joints() {
             .fighter_anim(kind, slot as u32)
             .unwrap_or_else(|| panic!("{kind}"));
         let joint = |j: u32| pack.anim_joint(anim.first_joint + j).unwrap();
-        // One runtime joint leads and binds no model node. The model
-        // joints follow: Mario's table skips model joints 3 and 9, as his
-        // figatree clips do (checked below through the mapping).
-        assert_eq!(joint(0).node, AnimJoint::NO_NODE, "{kind}");
+        // The runtime joints lead and bind no model node: one, or Link's
+        // two (`TransN` then `XRotN`, `ftdata.c:3354`). The model joints
+        // follow: Mario's table skips model joints 3 and 9, as his figatree
+        // clips do (checked below through the mapping).
+        let leads = if kind == LINK { 2 } else { 1 };
+        for j in 0..leads {
+            assert_eq!(joint(j).node, AnimJoint::NO_NODE, "{kind}");
+        }
         // Then the model joints, the same ones a figatree clip binds.
         let model = pack.fighter_anim(kind, SLOT_GUARD_ON).unwrap();
-        let first_model = (0..model.joint_count)
+        let model_nodes: Vec<u32> = (0..model.joint_count)
             .map(|j| pack.anim_joint(model.first_joint + j).unwrap().node)
-            .find(|&n| n != AnimJoint::NO_NODE)
-            .unwrap();
-        assert_eq!(joint(1).node, first_model, "{kind}");
+            .filter(|&n| n != AnimJoint::NO_NODE)
+            .collect();
+        let first_model = model_nodes[0];
+        assert_eq!(joint(leads).node, first_model, "{kind}");
+        if kind == LINK {
+            // Every model joint is bound, the last one included.
+            assert_eq!(anim.joint_count, leads + model_nodes.len() as u32);
+            let bound: Vec<u32> = (leads..anim.joint_count).map(|j| joint(j).node).collect();
+            assert_eq!(bound, model_nodes);
+        }
         if kind == 0 {
             for (j, figatree_joint) in [(4u32, 3u32), (10, 9)] {
                 assert_eq!(joint(j).script, AnimJoint::NO_SCRIPT, "Mario {j}");
@@ -134,4 +146,33 @@ fn yoshis_entry_hides_his_model_until_he_hatches() {
     assert!(hidden[..61].iter().all(|&h| h), "{hidden:?}");
     assert!(hidden[61..].iter().all(|&h| !h), "{hidden:?}");
     assert!(!skeleton.any_flags());
+}
+
+/// Kirby's and Purin's quick cliff escapes are figatrees with both lead
+/// bits (`TransN`, then `XRotN`): their model joints start at entry 2 and
+/// run to the model's last (pack 124).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn two_lead_figatrees_bind_every_model_joint() {
+    const KIRBY: u32 = 8;
+    const PURIN: u32 = 10;
+    /// `CliffEscapeQuick1` and `2`.
+    const SLOTS: [u32; 2] = [483, 484];
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = Pack::open(&bytes).unwrap();
+    for kind in [KIRBY, PURIN] {
+        let model = pack.fighter_anim(kind, SLOT_GUARD_ON).unwrap();
+        let model_nodes: Vec<u32> = (0..model.joint_count)
+            .map(|j| pack.anim_joint(model.first_joint + j).unwrap().node)
+            .filter(|&n| n != AnimJoint::NO_NODE)
+            .collect();
+        for slot in SLOTS {
+            let anim = pack.fighter_anim(kind, slot).unwrap();
+            let nodes: Vec<u32> = (0..anim.joint_count)
+                .map(|j| pack.anim_joint(anim.first_joint + j).unwrap().node)
+                .collect();
+            assert_eq!(nodes[..2], [AnimJoint::NO_NODE; 2], "{kind}.{slot}");
+            assert_eq!(nodes[2..], model_nodes[..], "{kind}.{slot}");
+        }
+    }
 }

@@ -215,6 +215,8 @@ impl Posed {
                 self.skeleton.start(pack, &anim, frame, speed);
                 self.skeleton.lead_xrotn =
                     ssb_game::motion::leads_with_xrotn(self.fighter.kind, status.status);
+                self.skeleton.lead_transn =
+                    ssb_game::motion::uses_transn(self.fighter.kind, status.status);
             }
         }
         // A wiggle's `lbCommonAddFighterPartsFigatree`, after the entry.

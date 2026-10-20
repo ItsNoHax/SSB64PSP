@@ -84,6 +84,11 @@ pub struct Skeleton {
     /// pose parents every root node. A `TransN` leading joint (bit 30) is
     /// detached instead and only moves the fighter (RE-468).
     pub lead_xrotn: bool,
+    /// With [`Self::lead_xrotn`], a detached `TransN` (bit 30) leads
+    /// before it: a motion with both bits (Link's entry, `ftdata.c:3354`)
+    /// walks `TransN`, then `XRotN`, then the model, so `XRotN` is the
+    /// clip's second joint.
+    pub lead_transn: bool,
     /// A fighter's animation locks (RE-509). Left at their default, no
     /// node is locked and nothing changes.
     pub locks: AnimLocks,
@@ -203,6 +208,7 @@ impl Default for Skeleton {
             joint_count: 0,
             speed: 1.0,
             lead_xrotn: false,
+            lead_transn: false,
             locks: AnimLocks::default(),
         }
     }
@@ -393,8 +399,9 @@ impl Skeleton {
     /// The interposed `XRotN`'s pose, when the clip leads with it
     /// ([`Skeleton::lead_xrotn`]).
     pub fn lead_xrotn_pose(&self) -> Option<&JointPose> {
-        (self.lead_xrotn && self.joint_count > 0 && self.nodes[0] == AnimJoint::NO_NODE)
-            .then(|| &self.poses[0])
+        let at = usize::from(self.lead_transn);
+        (self.lead_xrotn && self.joint_count > at && self.nodes[at] == AnimJoint::NO_NODE)
+            .then(|| &self.poses[at])
     }
 
     /// The pose of the clip's last stream when it drives no packed node:
@@ -1992,6 +1999,27 @@ mod tests {
     use super::*;
     use crate::pack::PackWriter;
     use crate::scene::{DObjDesc, DObjNode, SceneGraph};
+
+    /// Link's entry leads with `TransN`, then `XRotN`: the interposed pose
+    /// is the second joint's.
+    #[test]
+    fn the_xrotn_pose_follows_a_leading_transn() {
+        let mut sk = Skeleton::new();
+        sk.nodes[0] = AnimJoint::NO_NODE;
+        sk.nodes[1] = AnimJoint::NO_NODE;
+        sk.nodes[2] = 7;
+        sk.poses[0].translate = [1.0, 0.0, 0.0];
+        sk.poses[1].translate = [2.0, 0.0, 0.0];
+        sk.joint_count = 3;
+        assert!(sk.lead_xrotn_pose().is_none());
+        sk.lead_xrotn = true;
+        assert_eq!(sk.lead_xrotn_pose().unwrap().translate[0], 1.0);
+        sk.lead_transn = true;
+        assert_eq!(sk.lead_xrotn_pose().unwrap().translate[0], 2.0);
+        // A model node in the slot is no lead.
+        sk.nodes[1] = 6;
+        assert!(sk.lead_xrotn_pose().is_none());
+    }
 
     #[test]
     fn effect_colors_map_onto_the_two_packed_combiner_sources() {

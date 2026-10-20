@@ -5848,8 +5848,8 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 continue;
             };
             // The battle-entry slots are 32-bit `AnimJoint` clips (RE-401):
-            // their table leads with one runtime joint, then walks the
-            // model joints (Link's has one unused entry more), and their
+            // their table leads with the runtime joints, then walks the
+            // model joints, and their
             // length is the tick every joint's stream ends on, less one.
             if ssb_rom::anim::is_anim_joint_slot(slot) {
                 let ends: Vec<u32> = table
@@ -5873,13 +5873,19 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     ));
                     continue;
                 }
+                // One leading runtime joint, or as many as the motion's
+                // descriptor names: Link's are `TransN` then `XRotN`
+                // (`ftdata.c:3354`), so his model joints start at entry 2.
+                let leads = ((ssb_rom::anim::HIDDEN_PARTS[kind][slot] & 0xE000_0000).count_ones()
+                    as usize)
+                    .max(1);
                 let joints: Vec<(Option<u32>, Option<u32>)> = table
                     .iter()
                     .enumerate()
                     .map(|(j, &at)| {
                         (
                             (at != 0).then_some(at),
-                            j.checked_sub(1).and_then(|k| nodes.get(k).copied()),
+                            j.checked_sub(leads).and_then(|k| nodes.get(k).copied()),
                         )
                     })
                     .collect();
@@ -5908,10 +5914,13 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             // cliff escape), so the descriptor remains authoritative beyond +1.
             let hidden_joint =
                 table.len() > nodes.len() && ssb_rom::anim::LEADING_RUNTIME_JOINT[kind][slot];
-            // Hidden *model* parts (bits 28..5) change the walk; the leading
-            // runtime joints alone keep the guarded shift above.
+            // Hidden *model* parts (bits 28..5) change the walk, and so do
+            // two leading runtime joints (Link's entry: `TransN` then
+            // `XRotN`, `ftdata.c:3354`), which the one-joint shift above
+            // would misplace by one. A single leading joint keeps the shift.
             let parts = ssb_rom::anim::HIDDEN_PARTS[kind][slot];
-            let order = (parts & 0x1FFF_FFE0 != 0)
+            let walked = parts & 0x1FFF_FFE0 != 0 || (parts & 0xE000_0000).count_ones() > 1;
+            let order = walked
                 .then(|| {
                     walk.as_ref().and_then(|(depths, mask, hidden, first)| {
                         let order = ssb_rom::fighter::figatree_order(depths, *mask, hidden, parts)?;
@@ -5927,7 +5936,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     })
                 })
                 .flatten();
-            if parts & 0x1FFF_FFE0 != 0 {
+            if walked {
                 match &order {
                     Some(_) => walked_anims += 1,
                     None => anims_failed.push(format!(

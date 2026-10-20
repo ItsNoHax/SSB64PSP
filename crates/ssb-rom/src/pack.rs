@@ -441,7 +441,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `wpDisplayPKThunderProcDisplay`'s PRIM and ENV, so its
 // `(PRIM - ENV) * TEXEL0 + ENV` resolves to `TEXTURE_BLEND`. No layout
 // change.
-pub const VERSION: u32 = 123;
+// 124 binds two-lead clips (`TransN` and `XRotN` both in `anim_desc`:
+// Link's entry, Kirby's and Purin's quick cliff escape) model joints from
+// the third entry, not the second. No layout change.
+pub const VERSION: u32 = 124;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

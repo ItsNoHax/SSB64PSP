@@ -283,3 +283,25 @@ fn the_blast_env_colours_are_the_roms_per_player_channels() {
     assert_eq!(DEAD_EXPLODE_ENV_SIBLING[0], [0xFF, 0x62, 0x4B]);
     assert_eq!(DEAD_EXPLODE_ENV_SIBLING[1], [0x00, 0x7E, 0xFF]);
 }
+
+/// `ftCommonDeadCheckInterruptCommon` (`ftcommondead.c:542`): the flag skips
+/// every blast zone; `ftMainSetStatus` clears it (`ftmain.c:4523`).
+#[test]
+fn ignore_dead_skips_every_blast_zone_until_the_status_changes() {
+    for pos in [
+        Vec3::new(0.0, 3001.0, 0.0),
+        Vec3::new(0.0, -2001.0, 0.0),
+        Vec3::new(4001.0, 0.0, 0.0),
+        Vec3::new(-4001.0, 0.0, 0.0),
+    ] {
+        let mut f = fighter(0);
+        f.pos = pos;
+        f.dead.is_ignore_dead = true;
+        let before = f.status.status;
+        assert!(!dead::check(&mut f));
+        assert_eq!((f.status.status, f.pos), (before, pos));
+        status::set_status(&mut f, Status::Fall, 0.0, status::StatusTiming::unknown());
+        assert!(!f.dead.is_ignore_dead);
+        assert!(dead::check(&mut f), "{pos:?}");
+    }
+}

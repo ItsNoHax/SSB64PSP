@@ -108,6 +108,9 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | vs-four golden | Optional: narrow change to catch/thrown/relz/pulled | RE-511 |
 | Trig N64 traces | N64 traces for Ness jibaku, Kirby Stone slope, Falcon Kick roll, Pikachu `SpecialAirHiStart` cliff catch; Arwing `frame_rotate` ArcSin else branch unreached (needs a scene) | RE-503 |
 | 1P goldens | 1P intro, stage clear | RE-548 |
+| Fox ledge freeze | Playtest: occasional freeze at a ledge; loop-wrap end fixed, no second cause found → reproduce | RE-553 |
+| Undrawn exit frame | Only the opening screen skips a scene's exit update; audit other scene changes (battle to results, menus, movies) | RE-553 |
+| Kirby/Purin CliffEscapeQuick | N64 check of the two-lead (`0xC0000000`) clips 483/484 | RE-553 |
 
 ### Audio and rumble (`MS7`)
 

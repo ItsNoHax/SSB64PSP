@@ -1314,7 +1314,10 @@ pub fn update(f: &mut Fighter) {
         }
         K::ThrowF => {
             if f.status.animation_ended() {
+                // `ftKirbyThrowFFallSetStatus`: the held fighter can die
+                // again; Kirby's own flag went with the status change.
                 set(f, K::ThrowFFall, 0.0, StatusTiming::unknown());
+                f.grab.send(crate::grab::GrabEvent::IgnoreDead(false));
             }
         }
         K::ThrowFFall => {}

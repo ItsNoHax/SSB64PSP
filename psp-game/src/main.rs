@@ -383,6 +383,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::VsCar => VS_CAR_CAPTURE_TICK,
         GameScene::VsBall => VS_BALL_CAPTURE_TICK,
         GameScene::VsRays => VS_RAYS_CAPTURE_TICK,
+        GameScene::VsLinkEntry => VS_LINK_ENTRY_CAPTURE_TICK,
     }
 }
 
@@ -393,6 +394,11 @@ const fn capture_ticks(scene: GameScene) -> u64 {
 const VS_ARWING_CAPTURE_TICK: u64 = 254;
 const VS_CAR_CAPTURE_TICK: u64 = 264;
 const VS_BALL_CAPTURE_TICK: u64 = 230;
+/// `vslinkentry`: this roster's capture RNG gives the entry focus id 2, so
+/// Link enters at tick 159 and Mario at 219, and the camera holds on Link
+/// from 189 to 249. Link 60 frames into his Appear, as N64 frame 256 of a
+/// focus-1 entry (RE-425).
+const VS_LINK_ENTRY_CAPTURE_TICK: u64 = 159 + 60;
 const VS_RAYS_CAPTURE_TICK: u64 = 254;
 
 /// `true` once `regression_capture`'s scripted input has run past its fixed
@@ -675,6 +681,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsCar
             | GameScene::VsBall
             | GameScene::VsRays
+            | GameScene::VsLinkEntry
             | GameScene::CpuFxD
             | GameScene::CpuFxU
             | GameScene::CpuFxN
@@ -886,6 +893,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsCar
             | GameScene::VsBall
             | GameScene::VsRays
+            | GameScene::VsLinkEntry
             | GameScene::CpuWalk
             | GameScene::CpuJump
             | GameScene::CpuFxD
@@ -1002,6 +1010,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsCar
             | GameScene::VsBall
             | GameScene::VsRays
+            | GameScene::VsLinkEntry
             | GameScene::CpuFxD
             | GameScene::CpuFxU
             | GameScene::CpuFxN
@@ -1155,7 +1164,13 @@ fn log_entry_state(
     }
     if !matches!(
         capture_scene,
-        Some(GameScene::VsArwing | GameScene::VsCar | GameScene::VsBall | GameScene::VsRays)
+        Some(
+            GameScene::VsArwing
+                | GameScene::VsCar
+                | GameScene::VsBall
+                | GameScene::VsRays
+                | GameScene::VsLinkEntry
+        )
     ) {
         return;
     }
@@ -3346,20 +3361,7 @@ struct Hud {
     movie_flat48: bool,
 }
 
-/// The pause menu's choices at the pause (`sIFCommonBattlePause*`).
-#[derive(Clone, Copy)]
-struct PauseState {
-    kind: ssb_game::pause::PauseKind,
-    /// Bonus Practice's L: RETRY (`ifCommonBattlePauseMakeSObjsAll`).
-    retry: bool,
-    /// `sIFCommonBattlePauseCameraEyeXOrigin`/`YOrigin`.
-    origin: (f32, f32),
-    /// `sIFCommonBattlePausePlayerDetail`: the zoomed player draws at high
-    /// detail until the battle resumes (RE-426).
-    detail: ssb_game::modelpart::Detail,
-    map_origin: ssb_engine::math::Vec3,
-    map_target: ssb_engine::math::Vec3,
-}
+use ssb_game::pause::PauseState;
 
 /// `ifCommonBattleGoUpdateInterface`'s START and
 /// `ifCommonBattlePauseUpdateInterface`: pause on START during Go, zooming
@@ -3415,14 +3417,8 @@ fn pause_frame(
         }
         GameStatus::Pause => {
             let Some(state) = hud.pause else { return };
-            if state.retry && pressed.contains(N64Buttons::L) {
-                // `func_800266A0_272A0` before the scene reloads.
-                ssb_game::sound::stop_all_fgm();
-                if let Some(bonus) = bonus.as_deref_mut() {
-                    bonus.retry_requested = true;
-                }
-                return;
-            }
+            // `ifCommonBattlePauseUpdateInterface`'s order: the stick, then
+            // START, the A+B+R+Z reset, and the bonus stage's L retry.
             if state.kind == PauseKind::Default {
                 pause::steer(&mut pl.camera.pause_eye, controller.stick_x, controller.stick_y);
             }
@@ -3431,10 +3427,15 @@ fn pause_frame(
                 b.unpause(state.kind != PauseKind::PlayerNA);
                 return;
             }
-            let held = controller.buttons;
-            let combo = N64Buttons::A | N64Buttons::B | N64Buttons::R | N64Buttons::Z;
-            if pressed.0 != 0 && held.contains(combo) {
-                b.reset();
+            if pause::quit(b, &mut hud.pause, pressed, controller.buttons) {
+                return;
+            }
+            if state.retry && pressed.contains(N64Buttons::L) {
+                // `func_800266A0_272A0` before the scene reloads.
+                ssb_game::sound::stop_all_fgm();
+                if let Some(bonus) = bonus.as_deref_mut() {
+                    bonus.retry_requested = true;
+                }
                 return;
             }
             if state.kind == PauseKind::Bonus {
@@ -3712,6 +3713,9 @@ fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     world.damage_hud.effects = ssb_game::effect::Effects::new(0);
     world.damage_hud.entry_focus = None;
     world.damage_hud.single_stock = None;
+    // A battle scene makes its pause menu hidden: one left from a reset
+    // must not show through the next entry.
+    world.damage_hud.pause = None;
     world.damage_hud.steals = [None; 4];
     world.damage_hud.players = ssb_game::player_interface::Interface::default();
     let mut damage = [0; 4];
@@ -3938,6 +3942,7 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
             return roster;
         }
         GameScene::VsArwing | GameScene::VsCar => return vs_pair_roster([FighterKind::Fox, FighterKind::Captain]),
+        GameScene::VsLinkEntry => return vs_pair_roster([FighterKind::Link, FighterKind::Mario]),
         GameScene::VsBall | GameScene::VsRays => return vs_pair_roster([FighterKind::Pikachu, FighterKind::Purin]),
         _ => return training_roster(training),
     };
@@ -5453,18 +5458,24 @@ unsafe fn run() -> ! {
         // finds it done (RE-500).
         #[cfg(feature = "frame_timer")]
         ssb_psp_runtime::frame_timer::vblank(|| gpu.wait_presented());
-        let draw_start = profile::start();
-        draw_frame(
-            &mut gpu,
-            &mut s,
-            &pack,
-            &mut draw_state,
-            &mut effect_visuals,
-            &draw_assets,
-            no_pack_color,
-        );
-        profile::stop(profile::Span::Draw, draw_start);
-        gpu.end_frame();
+        if s.screen == Screen::Opening && opening_screen::keeps_picture(&s.opening) {
+            // The opening scene's exit update is not drawn: its last
+            // picture stays on screen through the next scene's load.
+            gpu.repeat_frame();
+        } else {
+            let draw_start = profile::start();
+            draw_frame(
+                &mut gpu,
+                &mut s,
+                &pack,
+                &mut draw_state,
+                &mut effect_visuals,
+                &draw_assets,
+                no_pack_color,
+            );
+            profile::stop(profile::Span::Draw, draw_start);
+            gpu.end_frame();
+        }
         #[cfg(feature = "frame_hash")]
         frame_hash_log(sim_frame_index, gpu.shown_frame_hash());
         ssb_psp_runtime::scene_files::safe_point();

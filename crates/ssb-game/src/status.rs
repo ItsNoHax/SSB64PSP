@@ -2008,15 +2008,27 @@ impl StatusState {
         self.clock = t;
     }
 
-    /// Whether the animation has run out, when its length is known.
+    /// Whether the animation has run out (`ftAnimEndCheckSetStatus`'s
+    /// `anim_frame <= 0`), when its length is known.
     ///
-    /// Always `false` for a status whose length lives in unextracted animation
-    /// data — such a status ends only by being interrupted.
+    /// A status with no length of its own whose figatree loops ends each
+    /// time the loop wraps: `ftAnimParseDObjFigatree`'s `Loop` sets
+    /// `anim_frame` to the overshoot (0 at whole speeds), which the test
+    /// reads as the end (`ftanim.c:304-319`; Fox's `CliffCatch`, 4 frames).
+    /// Otherwise `false` for a status whose length lives in unextracted
+    /// animation data — such a status ends only by being interrupted.
     pub fn animation_ended(&self) -> bool {
         // The compare reads a defined length, never a `None`'s unwritten
         // payload, which LLVM may compare before the tag test (RE-531).
         let (known, len) = ssb_engine::math::defined_or(self.timing.anim_length, 0.0);
-        known && self.clock >= len
+        if known {
+            return self.clock >= len;
+        }
+        // Past the entry: the setter's own first pose (`frame_begin`) is
+        // not a wrap.
+        matches!(self.clip, Clip::Loops(n) if n > 0.0)
+            && self.anim_frame <= 0.0
+            && self.clock > self.anim_frame_begin
     }
 }
 
@@ -7050,15 +7062,35 @@ fn update_dash(f: &mut Fighter) {
 }
 
 /// `ftCommonAttackS4CheckInterruptDash`: a forward smash out of a dash's
-/// first frames needs only the stick held forward, not a fresh tap.
+/// first frames needs only the stick held forward, not a fresh tap. A held
+/// item takes it first, as in the turn form, except that the throw is
+/// always `LightThrowF4` and the facing is left alone (no
+/// `ftParamSetStickLR`; the stick already points forward here).
 fn check_fsmash_dash(f: &mut Fighter) -> bool {
-    if (f.stick.x as f32) * f.facing.sign() >= ATTACKS4_STICK_RANGE_MIN as f32
-        && f.button_tap().contains(N64Buttons::A)
+    if (f.stick.x as f32) * f.facing.sign() < ATTACKS4_STICK_RANGE_MIN as f32
+        || !f.button_tap().contains(N64Buttons::A)
     {
-        set_fsmash(f);
+        return false;
+    }
+    if crate::item_throw::check_item_type_throw(f)
+        || f.items
+            .held
+            .is_some_and(|i| i.ty == crate::item::ItemType::Shoot && f.items.held_multi == 0)
+    {
+        crate::item_throw::set_item_throw(f, Status::LightThrowF4);
         return true;
     }
-    false
+    if f.items.held.is_some_and(|i| {
+        matches!(
+            i.ty,
+            crate::item::ItemType::Swing | crate::item::ItemType::Shoot
+        )
+    }) && crate::item_use::check(f, 2, false)
+    {
+        return true;
+    }
+    set_fsmash(f);
+    true
 }
 
 /// `ftCommonTurnProcUpdate` @ 0x8013E690, then the status's interrupt.
@@ -9536,6 +9568,55 @@ mod tests {
 
         finish_cliff_clip(&mut f, Status::CliffCatch);
         assert_eq!(f.status.status, Status::CliffWait);
+    }
+
+    /// Fox's `CliffCatch` figatree loops (4 frames): `ftCommonCliffCatchProcUpdate`'s
+    /// `anim_frame <= 0` fires at the wrap, as a 4-frame `End` would; the
+    /// fighter then hangs, acts and climbs (the playtest hang).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn fox_cliff_catch_loop_ends_at_its_wrap() {
+        assert_eq!(
+            crate::motion::anim_length(FighterKind::Fox, Status::CliffCatch.into()),
+            None
+        );
+        assert_eq!(
+            crate::motion::clip_on_set_status(FighterKind::Fox, Status::CliffCatch.into()),
+            ClipStart::Restart(Clip::Loops(4.0))
+        );
+        let hang = || {
+            let mut f = Fighter::new(FighterKind::Fox, 0, 3);
+            f.situation = Situation::Air;
+            set_cliff_catch(&mut f, 3, Vec2::new(2318.0, 0.0));
+            // The setter plays frame 1; updates at 2, 3 and 4 (wrapped to
+            // 0): three, as for the finite 4-frame catches (Donkey Kong's).
+            for _ in 0..2 {
+                update(&mut f);
+                assert_eq!(f.status.status, Status::CliffCatch);
+            }
+            update(&mut f);
+            assert_eq!(f.status.status, Status::CliffWait);
+            f
+        };
+        // A: the ledge attack.
+        let mut f = hang();
+        update(&mut f);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::CliffQuick);
+        // Neutral, then up: the climb.
+        let mut f = hang();
+        hold(&mut f, 0, 0);
+        update(&mut f);
+        hold(&mut f, 0, 60);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::CliffQuick);
+        // Left alone: the timeout drops it.
+        let mut f = hang();
+        for _ in 0..CLIFF_FALL_WAIT_DAMAGE_LOW {
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, Status::DamageFall);
     }
 
     #[test]

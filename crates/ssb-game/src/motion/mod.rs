@@ -99,11 +99,11 @@ pub fn uses_yrotn(kind: FighterKind, status: AnyStatus) -> bool {
 }
 
 /// Whether the status's motion interposes `XRotN` between TopN and the
-/// model and leads its figatree with it (and no detached TransN): the
-/// clip's leading joint then poses the whole model (RE-468).
+/// model: the clip's `XRotN` joint then poses the whole model (RE-468).
+/// It leads the clip, after a detached `TransN` when the motion also has
+/// one ([`uses_transn`]; Link's entry).
 pub fn leads_with_xrotn(kind: FighterKind, status: AnyStatus) -> bool {
-    motion_desc(kind, status)
-        .is_some_and(|d| d.anim_flags & (ANIM_FLAG_XROTN | ANIM_FLAG_TRANSN) == ANIM_FLAG_XROTN)
+    motion_desc(kind, status).is_some_and(|d| d.anim_flags & ANIM_FLAG_XROTN != 0)
 }
 
 /// `FTAnimDesc::flags.is_use_animlocks`, bit 0: the motion animates the
@@ -1310,6 +1310,27 @@ mod tests {
             .iter()
             .filter(|c| c.state != AttackState::Off)
             .count()
+    }
+
+    /// `ftdata.c:3354`: Link's entry is the one with both lead joints, so
+    /// its clip leads with `TransN`, then `XRotN`; Mario's has `TransN`
+    /// alone. Kirby's quick cliff escape has both too.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn link_entry_leads_with_transn_then_xrotn() {
+        use crate::status::{LinkStatus, MarioStatus};
+        let both = |k, s| leads_with_xrotn(k, s) && uses_transn(k, s);
+        for s in [LinkStatus::AppearR, LinkStatus::AppearL] {
+            assert!(both(FighterKind::Link, AnyStatus::Link(s)));
+        }
+        let mario = AnyStatus::Mario(MarioStatus::AppearR);
+        assert!(uses_transn(FighterKind::Mario, mario));
+        assert!(!leads_with_xrotn(FighterKind::Mario, mario));
+        for s in [Status::CliffEscapeQuick1, Status::CliffEscapeQuick2] {
+            assert!(both(FighterKind::Kirby, AnyStatus::Common(s)));
+            assert!(both(FighterKind::Purin, AnyStatus::Common(s)));
+            assert!(!both(FighterKind::Mario, AnyStatus::Common(s)));
+        }
     }
 
     /// `dMarioMainMotion_Jab1`: `WaitAsync(2)`, two boxes, `Wait(2)`,

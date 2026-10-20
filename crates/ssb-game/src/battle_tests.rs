@@ -373,3 +373,70 @@ fn arrows_and_magnifiers_stay_hidden_until_go() {
     assert!(!sd.is_magnify_display());
     assert!(!Battle::new_1p(3, two_players(), false, 100).is_magnify_display());
 }
+
+/// The pause menu's A+B+R+Z reset (`ifcommon.c:3021-3044`): only with all
+/// four held, and the menu hides at the reset, so nothing of it is left
+/// for the next battle (the 1P report: the menu showed again).
+#[test]
+fn a_pause_quit_needs_the_whole_combo_and_hides_the_menu() {
+    use crate::pause::{self, PauseKind, PauseState};
+    use ssb_engine::input::N64Buttons;
+    let menu_at_pause = PauseState {
+        kind: PauseKind::Default,
+        retry: false,
+        origin: (0.0, 0.0),
+        detail: crate::modelpart::Detail::High,
+        map_origin: ssb_engine::math::Vec3::ZERO,
+        map_target: ssb_engine::math::Vec3::ZERO,
+    };
+    let mut b = go_battle();
+    b.pause();
+    let mut menu = Some(menu_at_pause);
+    let b_ = |m: u16| N64Buttons(m);
+    // One button, or three of the four: still paused, menu up.
+    assert!(!pause::quit(
+        &mut b,
+        &mut menu,
+        b_(N64Buttons::A),
+        b_(N64Buttons::A)
+    ));
+    let three = N64Buttons::A | N64Buttons::B | N64Buttons::R;
+    assert!(!pause::quit(
+        &mut b,
+        &mut menu,
+        b_(N64Buttons::R),
+        b_(three)
+    ));
+    assert_eq!((b.status, menu.is_some()), (GameStatus::Pause, true));
+    // All four: the reset, with the menu gone through the Set frames.
+    assert!(pause::quit(
+        &mut b,
+        &mut menu,
+        b_(N64Buttons::Z),
+        b_(pause::QUIT_COMBO)
+    ));
+    assert!(b.is_reset && menu.is_none());
+    for _ in 0..3 {
+        assert_eq!(b.begin_frame(), Frame::Frozen);
+        assert!(!pause::quit(
+            &mut b,
+            &mut menu,
+            b_(N64Buttons::Z),
+            b_(pause::QUIT_COMBO)
+        ));
+    }
+    assert_eq!(b.begin_frame(), Frame::Done);
+    assert!(menu.is_none());
+    // The next battle starts unpaused, and the combo does nothing outside
+    // the pause.
+    let mut next = Battle::new(Rule::Time, 3, 2, two_players());
+    assert_ne!(next.status, GameStatus::Pause);
+    assert!(!pause::quit(
+        &mut next,
+        &mut menu,
+        b_(N64Buttons::Z),
+        b_(pause::QUIT_COMBO)
+    ));
+    run_to_go(&mut next);
+    assert_eq!((next.status, next.is_reset), (GameStatus::Go, false));
+}

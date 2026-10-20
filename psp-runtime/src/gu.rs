@@ -1528,6 +1528,17 @@ impl Gpu {
         h
     }
 
+    /// A frame that draws and hands over nothing: the buffer on screen stays
+    /// there (`syTaskmanRunTask` breaking before `task_draw`). Paced as a
+    /// drawn frame: the next [`Gpu::begin_frame`] or `repeat_frame` waits
+    /// for a vblank after this one.
+    pub fn repeat_frame(&mut self) {
+        debug_assert!(!self.frame_open, "repeat_frame inside a frame");
+        self.wait_presented();
+        // SAFETY: a display query has no preconditions.
+        self.presented_vcount = Some(unsafe { sys::sceDisplayGetVcount() });
+    }
+
     /// Waits until the last frame [`Gpu::end_frame`] handed over is on
     /// screen: until a vblank after it.
     pub fn wait_presented(&mut self) {

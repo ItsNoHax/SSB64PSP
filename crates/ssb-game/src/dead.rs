@@ -156,6 +156,10 @@ pub struct DeadState {
     /// (`sc1PGameBossSetIgnorePlayerMapBounds`) keeps every fighter 500
     /// inside the blast zones instead of killing it.
     pub is_limit_map_bounds: bool,
+    /// `FTStruct::is_ignore_dead`: no blast-zone check at all. Kirby's
+    /// forward throw sets it on both fighters for its climb
+    /// (`ftCommonThrowSetStatus`); every status change clears it.
+    pub is_ignore_dead: bool,
     /// `gSCManagerBattleState->game_rules & SCBATTLE_GAMERULE_STOCK`. Off in
     /// Training, whose rules are timed.
     pub stock_rule: bool,
@@ -234,6 +238,7 @@ pub struct DeadState {
 /// camera mode survives until "Go".
 pub(crate) fn on_set_status(f: &mut Fighter) {
     f.dead.is_ghost = false;
+    f.dead.is_ignore_dead = false;
     f.dead.is_rebirth = false;
     f.dead.is_menu_ignore = false;
     if f.dead.camera_mode != CameraMode::Entry {
@@ -272,6 +277,9 @@ pub fn check(f: &mut Fighter) -> bool {
         return false;
     };
     if f.kind == FighterKind::Boss {
+        return false;
+    }
+    if f.dead.is_ignore_dead {
         return false;
     }
     if f.dead.is_limit_map_bounds {

@@ -582,6 +582,10 @@ pub enum GrabEvent {
     YoshiEggStage(u8),
     /// Inhale's `ftCommonCaptureKirbyProcCapture`.
     CaptureKirby,
+    /// `catch_fp->is_ignore_dead`: set by Kirby's forward throw
+    /// (`ftCommonThrowSetStatus`), cleared at its fall
+    /// (`ftKirbyThrowFFallSetStatus`).
+    IgnoreDead(bool),
     /// `ftKirbySpecialNCatchProcUpdate`: `is_goto_capturewait` and `is_kirby`.
     KirbyEat { is_kirby: bool },
     /// `ftKirbySpecialNApplyCaptureDamage`: spit or copy damage, staled.
@@ -995,7 +999,7 @@ fn check_throw(f: &mut Fighter) -> bool {
     true
 }
 
-/// `ftCommonThrowSetStatus` @ 0x8014A1E8, minus Kirby's branch. Samus's
+/// `ftCommonThrowSetStatus` @ 0x8014A1E8. Samus's
 /// branch only attaches the Grapple Beam glow effect.
 fn set_throw(f: &mut Fighter, is_throwf: bool) {
     let back = !(is_throwf || f.stick.forward(f.facing) >= 0);
@@ -1017,6 +1021,12 @@ fn set_throw(f: &mut Fighter, is_throwf: bool) {
     let held = f.grab.catch_kind.unwrap_or(FighterKind::Mario);
     let (first, then) = thrown_status(f.kind, held, back);
     f.grab.send(GrabEvent::Thrown { first, then });
+    // After the thrown status, whose own set clears the flag: the climb
+    // cannot top out either fighter (`ftcommonthrow.c:99-106`).
+    if !back && crate::kirby::is_kirby(f.kind) {
+        f.dead.is_ignore_dead = true;
+        f.grab.send(GrabEvent::IgnoreDead(true));
+    }
 }
 
 /// `ftCommonThrowProcUpdate` @ 0x8014A0C0.
@@ -2494,6 +2504,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             status::set_wait_or_fall(to);
         }
         GrabEvent::CaptureYoshi => crate::capture_yoshi::capture(to, from.port, holder_of(from)),
+        GrabEvent::IgnoreDead(on) => to.dead.is_ignore_dead = on,
         GrabEvent::CaptureCaptain => capture_captain(to, from.port, holder_of(from)),
         GrabEvent::YoshiEggStage(stage) => to.egg.stage = stage,
         GrabEvent::CaptureKirby => crate::capture_kirby::capture(to, from.port, holder_of(from)),
@@ -2644,10 +2655,9 @@ fn catch_touches(catcher: &Fighter, other: &Fighter, rules: crate::team::TeamRul
     } else {
         catch_kind::COMMON
     };
-    if other.grab.capture_immune_mask & catch_mask != 0
-        || !crate::combat::is_body_normal(other)
-        || other.stocks <= 0
-    {
+    // No stock test: a fighter on its last life (stocks 0, every 1P enemy)
+    // is catchable; one out of stocks is a ghost (`ftCommonSleepSetStatus`).
+    if other.grab.capture_immune_mask & catch_mask != 0 || !crate::combat::is_body_normal(other) {
         return false;
     }
     let (colls, mut n) = catch_colls(catcher.kind, catcher.status.status);
@@ -3108,6 +3118,67 @@ mod tests {
         );
     }
 
+    /// `ftMainSearchFighterCatch` has no stock test: a target on its last
+    /// life (`stocks` 0, every 1P enemy) is caught; only a ghost (a fighter
+    /// out of stocks sleeps as one) is skipped.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_catch_takes_a_fighter_on_its_last_stock() {
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let mut near = grounded(FighterKind::Mario, 2, 140.0);
+        near.stocks = 0;
+        set_catch(&mut mario);
+        mario.status.set_time(6.0);
+        let rules_1p = TeamRules {
+            is_team_battle: true,
+            is_team_attack: false,
+        };
+        near.team = 3;
+        assert_eq!(nearest_catch(&mario, [&near], rules_1p), Some(2));
+        assert!(search_catch(
+            &mut mario.clone(),
+            &mut near.clone(),
+            rules_1p
+        ));
+        near.dead.is_ghost = true;
+        assert_eq!(nearest_catch(&mario, [&near], rules_1p), None);
+    }
+
+    /// Falcon Dive goes through the same search: it catches a target on its
+    /// last stock (the 1P report).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn falcon_dive_catches_a_fighter_on_its_last_stock() {
+        let mut found = None;
+        'search: for x in (-40..=400).step_by(10) {
+            for y in (-100..=300).step_by(10) {
+                let mut captain = grounded(FighterKind::Captain, 0, 0.0);
+                crate::captain::set_special_hi(&mut captain);
+                captain.status.set_time(13.0);
+                assert!(crate::captain::dive_searching(&captain));
+                let mut victim = grounded(FighterKind::Mario, 1, x as f32);
+                victim.pos.y = y as f32;
+                if can_reach(&captain, &victim) {
+                    found = Some((captain, victim));
+                    break 'search;
+                }
+            }
+        }
+        let (captain, mut victim) = found.expect("the dive box reaches somewhere");
+        victim.stocks = 0;
+        assert!(can_reach(&captain, &victim));
+        let mut catcher = captain.clone();
+        assert!(search_catch(
+            &mut catcher,
+            &mut victim.clone(),
+            TeamRules::FREE_FOR_ALL
+        ));
+        assert!(matches!(
+            catcher.status.status,
+            AnyStatus::Captain(crate::status::CaptainStatus::SpecialHiCatch)
+        ));
+    }
+
     /// `ftMainSearchFighterCatch`: with team attack off the catch skips a
     /// teammate for the next fighter it touches.
     #[test]
@@ -3499,6 +3570,75 @@ mod tests {
         );
         assert!(dummy.physics.vel_knockback.y > 0.0);
         assert_eq!(mario.grab.catch, None);
+    }
+
+    /// `ftcommonthrow.c:99-106`, `ftkirbythrowf.c:35`: the forward throw's
+    /// climb (~7390 above the floor) passes the top blast zone unharmed;
+    /// the fall clears the flag on both.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn kirby_forward_throw_climbs_past_the_top_blast_zone() {
+        use crate::status::KirbyStatus as K;
+        let bounds = crate::dead::StageBounds {
+            map: crate::status::BlastZone {
+                top: 3000.0,
+                bottom: -2000.0,
+                left: -6000.0,
+                right: 6000.0,
+            },
+            camera: crate::status::BlastZone {
+                top: 2000.0,
+                bottom: -1000.0,
+                left: -5000.0,
+                right: 5000.0,
+            },
+            rebirth: ssb_engine::math::Vec2::new(0.0, 1200.0),
+            fog_color: [0; 3],
+        };
+        let mut kirby = grounded(FighterKind::Kirby, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+        kirby.dead.bounds = Some(bounds);
+        dummy.dead.bounds = Some(bounds);
+        grab(&mut kirby, &mut dummy);
+        to_catch_wait(&mut kirby, &mut dummy);
+        press(&mut kirby, N64Buttons::A, 0);
+        frame(&mut kirby, &mut dummy);
+        assert_eq!(kirby.status.status, AnyStatus::Kirby(K::ThrowF));
+        assert!(kirby.dead.is_ignore_dead && dummy.dead.is_ignore_dead);
+        // The unit harness has no TransN, so the climb is placed by hand:
+        // above the zone until two frames before the fall.
+        let len = kirby.status.timing.anim_length.unwrap();
+        let mut high = 0;
+        while kirby.status.status == AnyStatus::Kirby(K::ThrowF) {
+            let y = if kirby.status.clock + 2.0 < len {
+                high += 1;
+                bounds.map.top + 1000.0
+            } else {
+                1000.0
+            };
+            kirby.pos.y = y;
+            dummy.pos.y = y;
+            press(&mut kirby, 0, 0);
+            frame(&mut kirby, &mut dummy);
+            for f in [&kirby, &dummy] {
+                let dead = matches!(
+                    f.status.status,
+                    AnyStatus::Common(
+                        Status::DeadDown
+                            | Status::DeadLeftRight
+                            | Status::DeadUpStar
+                            | Status::DeadUpFall
+                    )
+                );
+                assert!(!dead, "{:?} at y {}", f.status.status, f.pos.y);
+            }
+        }
+        assert!(high > 10, "{high} frames above the zone");
+        assert_eq!(kirby.status.status, AnyStatus::Kirby(K::ThrowFFall));
+        assert!(!kirby.dead.is_ignore_dead && !dummy.dead.is_ignore_dead);
+        // Without the flag the same height is a top-out.
+        dummy.pos.y = bounds.map.top + 1.0;
+        assert!(crate::dead::check(&mut dummy));
     }
 
     #[test]

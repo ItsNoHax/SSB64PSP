@@ -5,7 +5,9 @@
 //! [`Decal::sprite`] indexes). The stick turns the view; START resumes, the
 //! camera easing back for 20 ticks; A+B+R+Z resets the battle.
 
+use crate::battle::{Battle, GameStatus};
 use crate::camera::Bounds;
+use ssb_engine::input::N64Buttons;
 use ssb_engine::math::Vec3;
 
 /// `nIFPauseKind*`.
@@ -82,6 +84,49 @@ pub fn steer(eye: &mut (f32, f32), stick_x: i8, stick_y: i8) {
     }
 }
 
+/// The pause menu's choices at the pause (`sIFCommonBattlePause*`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PauseState {
+    pub kind: PauseKind,
+    /// Bonus Practice's L: RETRY (`ifCommonBattlePauseMakeSObjsAll`).
+    pub retry: bool,
+    /// `sIFCommonBattlePauseCameraEyeXOrigin`/`YOrigin`.
+    pub origin: (f32, f32),
+    /// `sIFCommonBattlePausePlayerDetail`: the zoomed player draws at high
+    /// detail until the battle resumes (RE-426).
+    pub detail: crate::modelpart::Detail,
+    pub map_origin: Vec3,
+    pub map_target: Vec3,
+}
+
+/// A, B, R and Z: the reset combo.
+pub const QUIT_COMBO: u16 = N64Buttons::A | N64Buttons::B | N64Buttons::R | N64Buttons::Z;
+
+/// `ifCommonBattlePauseUpdateInterface`'s reset: on a frame with any tap
+/// (other than START, which resumes first), all four of A, B, R and Z held
+/// (`ifcommon.c:3021-3044`).
+pub fn quits(tapped: N64Buttons, held: N64Buttons) -> bool {
+    tapped.0 != 0 && !tapped.contains(N64Buttons::START) && held.contains_all(QUIT_COMBO)
+}
+
+/// The reset from the pause menu: [`quits`], then `is_reset` and
+/// `ifCommonBattleInterfaceProcSet` ([`Battle::reset`]), with the menu
+/// hidden at once (`ifCommonBattlePauseSetGObjFlagsAll(GOBJ_FLAG_HIDDEN)`),
+/// so it never shows again past the reset.
+pub fn quit(
+    battle: &mut Battle,
+    menu: &mut Option<PauseState>,
+    tapped: N64Buttons,
+    held: N64Buttons,
+) -> bool {
+    if battle.status != GameStatus::Pause || !quits(tapped, held) {
+        return false;
+    }
+    battle.reset();
+    *menu = None;
+    true
+}
+
 /// `ifCommonBattlePauseRestoreInterfaceAll`: each restore tick eases the
 /// turn 10% back toward where it was at the pause.
 pub fn ease_back(eye: &mut (f32, f32), origin: (f32, f32)) {
@@ -128,5 +173,20 @@ mod tests {
             ease_back(&mut eye, (0.0, 0.0));
         }
         assert!(eye.0.abs() < 0.01 && eye.1.abs() < 0.01);
+    }
+
+    #[test]
+    fn the_reset_needs_all_four_of_a_b_r_and_z() {
+        let b = |m: u16| N64Buttons(m);
+        let all = QUIT_COMBO;
+        assert!(quits(b(N64Buttons::Z), b(all)));
+        for one in [N64Buttons::A, N64Buttons::B, N64Buttons::R, N64Buttons::Z] {
+            assert!(!quits(b(one), b(one)), "{one:#x} alone");
+            assert!(!quits(b(N64Buttons::A), b(all & !one)), "all but {one:#x}");
+        }
+        // No tap this frame, or START (it resumes instead).
+        assert!(!quits(b(0), b(all)));
+        assert!(!quits(b(N64Buttons::START), b(all | N64Buttons::START)));
+        assert!(quits(b(N64Buttons::L), b(all | N64Buttons::L)));
     }
 }

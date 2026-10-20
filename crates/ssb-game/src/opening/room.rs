@@ -224,13 +224,15 @@ impl Room {
         w.camera(60, link(26), FULL, CameraKind::Sprite);
         w.camera(90, link(28), FULL, CameraKind::Sprite);
         // `mvOpeningRoomMakeLogoCamera`: the page, under scene 1's script.
+        // `argD` FALSE: no `COBJ_FLAG_ZBUFFER`, so the box drawn before it
+        // still hides Master Hand's hand behind it.
         w.camera(
             50,
             link(29),
             FULL,
             CameraKind::Persp {
                 persp: scene_persp(0, View::LookAt, 100.0, 12800.0),
-                zbuffer: true,
+                zbuffer: false,
             },
         );
         let model = |graph, head| Model::new(FILE_COMMON, graph, head);
@@ -668,6 +670,24 @@ mod tests {
         assert!(r.world.get(boss).is_none());
         let pulled = r.world.fighter_mut(r.ids.pulled).unwrap();
         assert_eq!(pulled.row, ROW_DROPPED);
+    }
+
+    /// `mvOpeningRoomMakeLogoCamera` passes `argD` FALSE to
+    /// `gcMakeCameraGObj`: unlike the scene cameras before it, the logo
+    /// camera leaves the depth buffer alone.
+    #[test]
+    fn the_logo_camera_keeps_the_depth_of_the_room() {
+        let r = Room::new(&mut counter());
+        let logo = r
+            .world
+            .cameras
+            .iter()
+            .find(|c| c.priority == 50 && c.links == link(29))
+            .expect("logo camera");
+        assert!(matches!(
+            logo.kind,
+            CameraKind::Persp { zbuffer: false, .. }
+        ));
     }
 
     #[test]

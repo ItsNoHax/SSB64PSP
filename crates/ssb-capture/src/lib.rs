@@ -609,6 +609,9 @@ pub enum GameScene {
     VsBall,
     /// `vsrays`: `vsball` later, the ball open under its rays (RE-425).
     VsRays,
+    /// `vslinkentry`: a VS battle's entries, Link against Mario, Link mid
+    /// Appear: the clip leads with `TransN` and `XRotN` (pack 124).
+    VsLinkEntry,
     /// `saveunlock`: `onepmessage` closed with A once its input wait has
     /// passed, writing Ness's unlock to the memory stick. With
     /// [`GameScene::SavePlayers`], the only scenes that load or save the
@@ -789,7 +792,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 196] = [
+    pub const ALL: [GameScene; 197] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -932,6 +935,7 @@ impl GameScene {
         GameScene::VsCar,
         GameScene::VsBall,
         GameScene::VsRays,
+        GameScene::VsLinkEntry,
         GameScene::SaveUnlock,
         GameScene::SavePlayers,
         GameScene::Option,
@@ -1133,6 +1137,7 @@ impl GameScene {
             GameScene::VsCar => "vscar",
             GameScene::VsBall => "vsball",
             GameScene::VsRays => "vsrays",
+            GameScene::VsLinkEntry => "vslinkentry",
             GameScene::SaveUnlock => "saveunlock",
             GameScene::SavePlayers => "saveplayers",
             GameScene::Option => "option",

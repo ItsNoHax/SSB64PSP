@@ -523,3 +523,58 @@ fn a_flower_switching_in_the_frames_passes_counts_its_flame_clock_twice() {
     assert!(item_use::on_landing(&mut f));
     assert_eq!(f.item_use.flame_wait, wait - 1);
 }
+
+/// `ftCommonAttackS4CheckInterruptDash` (`ftcommonattacks4.c:131-169`): an A
+/// tap with the stick forward in a dash's first frames swings a held swing
+/// item, throws it with Z (always `LightThrowF4`), and forward-smashes only
+/// with no item.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_dash_forward_smash_uses_the_held_item() {
+    use crate::fighter::{Facing, Situation};
+    use crate::status::AnyStatus;
+    use ssb_engine::input::N64Buttons;
+    fn dash_a(f: &mut Fighter, facing: Facing, z: bool) {
+        f.situation = Situation::Ground;
+        f.facing = facing;
+        let x = (80.0 * facing.sign()) as i8;
+        f.input.stick_x = x;
+        f.stick.step(x, 0, false, false);
+        status::set_dash(f);
+        f.motion_script.flags[1] = 1;
+        f.prev_input.buttons = N64Buttons(0);
+        f.input.buttons = N64Buttons(if z {
+            N64Buttons::A | N64Buttons::Z
+        } else {
+            N64Buttons::A
+        });
+        status::update(f);
+    }
+    for facing in [Facing::Left, Facing::Right] {
+        for (k, swing) in [
+            (Kind::Sword, Status::SwordSwing4),
+            (Kind::Bat, Status::BatSwing4),
+            (Kind::Fan, Status::HarisenSwing4),
+            (Kind::StarRod, Status::StarRodSwing4),
+        ] {
+            let (mut f, _, _) = held(k);
+            dash_a(&mut f, facing, false);
+            assert_eq!(
+                f.status.status,
+                AnyStatus::Common(swing),
+                "{k:?} {facing:?}"
+            );
+            assert_eq!(f.facing, facing);
+            let (mut f, _, _) = held(k);
+            dash_a(&mut f, facing, true);
+            assert_eq!(
+                f.status.status,
+                AnyStatus::Common(Status::LightThrowF4),
+                "{k:?} Z"
+            );
+        }
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        dash_a(&mut f, facing, false);
+        assert_eq!(f.status.status, AnyStatus::Common(Status::AttackS4));
+    }
+}

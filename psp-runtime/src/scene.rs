@@ -1184,6 +1184,8 @@ pub fn tick_skeleton_animation(
                 let fighter_kind = u8::try_from(kind).ok().and_then(FighterKind::from_ordinal);
                 skeleton.lead_xrotn = fighter_kind
                     .is_some_and(|k| ssb_game::motion::leads_with_xrotn(k, status));
+                skeleton.lead_transn =
+                    fighter_kind.is_some_and(|k| ssb_game::motion::uses_transn(k, status));
                 // `fp->is_use_animlocks`: only a figatree's install moves it
                 // (RE-509).
                 skeleton.locks.flagged = fighter_kind

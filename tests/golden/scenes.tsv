@@ -162,6 +162,7 @@ f1-vs-arwing	psp-game	vsarwing	pass	RE-425 RE-440
 f1-vs-car	psp-game	vscar	pass	RE-425 RE-440
 f1-vs-ball	psp-game	vsball	pass	RE-425 RE-440
 f1-vs-rays	psp-game	vsrays	pass	RE-425 RE-440
+f1-vs-link-entry	psp-game	vslinkentry	pass	RE-401 RE-402 RE-425
 f1-training-damage-face	psp-game	jab@136	pass	RE-426 RE-440
 f1-vs-four-low-detail	psp-game	vs4@390	pass	RE-426 RE-440
 f1-training-yoshi-roll-forward	psp-game	yoshirollf	pass	RE-427 RE-440
@@ -229,6 +230,8 @@ f1-opening-standoff	psp-game	op-standoff@201	pass	RE-467 RE-519
 f1-opening-title-sparks	psp-game	op-title@70	pass	RE-467
 f1-opening-title-fire	psp-game	op-title@119	pass	RE-467
 f1-opening-title-logo	psp-game	op-title@152	pass	RE-467
+f1-opening-room-hand	psp-game	op-room@262	pass	RE-467
+f1-opening-cliff-exit	psp-game	op-cliff@170	pass	RE-467
 f1-training-link-sword	psp-game	linksword	pass	RE-512
 f1-training-sword	psp-game	trainingsword	pass	RE-512
 f1-training-pikachu-smash	psp-game	pikachusmash	pass	RE-512

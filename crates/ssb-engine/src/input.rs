@@ -23,8 +23,14 @@ impl N64Buttons {
     pub const C_LEFT: u16 = 0x0002;
     pub const C_RIGHT: u16 = 0x0001;
 
+    /// Any bit of `mask` (`button & MASK`): one of several buttons.
     pub fn contains(self, mask: u16) -> bool {
         self.0 & mask != 0
+    }
+
+    /// Every bit of `mask` (`(button & A) && (button & B) && ...`): a combo.
+    pub fn contains_all(self, mask: u16) -> bool {
+        self.0 & mask == mask
     }
 
     pub fn set(&mut self, mask: u16, on: bool) {

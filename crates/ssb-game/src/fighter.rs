@@ -2032,8 +2032,12 @@ impl Fighter {
         } else {
             // `ftPhysicsSetGroundVelAbsStickRange` works on the
             // facing-relative velocity the original keeps; this port's is
-            // the world one.
-            let relative = self.status.status.is_walk();
+            // the world one. `HammerWalk` shares `ftCommonWalkProcPhysics`
+            // (`is_walk` stays the walk statuses alone: it also gates the
+            // walk update).
+            let relative = self.status.status.is_walk()
+                || self.status.status
+                    == crate::status::AnyStatus::Common(crate::status::Status::HammerWalk);
             if relative {
                 self.physics.vel_ground.x *= self.facing.sign();
             }
@@ -2946,6 +2950,38 @@ mod tests {
         assert_eq!(f.physics.vel_ground.x, 0.0);
         assert!(f.pos.x > walked_to, "momentum carries a little further");
         assert_eq!(f.pos.y, 0.0);
+    }
+
+    /// `HammerWalk` runs `ftCommonWalkProcPhysics` like a walk, on the
+    /// facing-relative velocity: after the hammer turn a left push walks
+    /// left (it walked right whatever the facing).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_hammer_walk_goes_the_way_the_stick_points() {
+        use crate::status::{AnyStatus, Status};
+        for x in [-60i8, 60] {
+            let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+            f.pos = Vec3::new(0.0, 4.0, 0.0);
+            assert!(f.place_on_stage(dream_land()));
+            crate::item_use::hammer_wait(&mut f);
+            let mut walked = 0;
+            for _ in 0..60 {
+                let before = f.pos.x;
+                step(&mut f, x, 0);
+                if f.status.status == AnyStatus::Common(Status::HammerWalk) {
+                    walked += 1;
+                    assert!(
+                        (f.pos.x - before) * f32::from(x).signum() > 0.0,
+                        "stick {x}: x {before} -> {}",
+                        f.pos.x
+                    );
+                }
+            }
+            assert!(walked > 30, "stick {x}: {walked} walk frames");
+            let facing = if x < 0 { Facing::Left } else { Facing::Right };
+            assert_eq!(f.facing, facing);
+            assert!(f.pos.x * f32::from(x).signum() > 0.0, "x {}", f.pos.x);
+        }
     }
 
     #[test]
