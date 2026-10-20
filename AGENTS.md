@@ -25,12 +25,13 @@
 | `crates/ssb-engine` | Engine systems: math, animation, collision, traits | PSP code |
 | `crates/ssb-rom` | ROM, archive, formats, asset pack | PSP code |
 | `crates/ssb-capture` | Golden-capture scene specs shared by both PSP binaries and host tests | PSP code, scene behaviour |
+| `crates/ssb-pose` | Portable fighter tick, joint sampling, spawn placement: shared by `psp-runtime` and host tests ([D-052](docs/decisions/D-052.md)) | PSP code, gameplay rules |
 | `crates/ssb-tablegen` | Build-time generation of the tables read from the ROM: their ROM layout and decoders | Data values from the ROM |
 | `psp-runtime` | All shared PSP code: GE, input, timing, audio, memory, asset loading | Gameplay logic |
 | `psp-game` | Thin game application: orchestration only | Gameplay or PSP backend code |
 | `psp-asset-viewer` | Debug and render-validation tool | Game logic, match state, player features |
 
-- `ssb-game`, `ssb-engine`, `ssb-rom` → never depend on `psp-runtime`.
+- `ssb-game`, `ssb-engine`, `ssb-rom`, `ssb-pose` → never depend on `psp-runtime`.
 
 ## Documentation
 

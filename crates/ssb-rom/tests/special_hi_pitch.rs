@@ -244,21 +244,15 @@ fn replay_pad(
             != 0;
         let (tapped, released) = (held && !jump_was_held, !held && jump_was_held);
         jump_was_held = held;
-        p.fighter.set_input(
-            ControllerState {
-                buttons: N64Buttons(buttons),
-                stick_x,
-                stick_y,
-                connected: true,
-            },
-            tapped,
-            released,
-        );
-        p.sample_held_child_offset();
-        p.set_root_motion(None);
-        p.fighter.tick_interrupt(&map_fn);
-        p.after_interrupt(pack);
-        p.physics(pack, &map_fn);
+        let input = ControllerState {
+            buttons: N64Buttons(buttons),
+            stick_x,
+            stick_y,
+            connected: true,
+        };
+        let top = posed::map_bound_top(&p);
+        p.tick_interrupt(pack, top, input, tapped, released, &map_fn);
+        p.tick_physics(pack, &map_fn);
         let _ = p.fighter.take_weapon_spawn();
         p.fighter.resolve_cliff_release(&map_fn);
         p.settle_status(pack);

@@ -16,7 +16,7 @@
 
 ## Current work
 
-- Landed: weapon spawn snap, spawn-pose phases (Update vs Accessory per maker), Thunder Jolt attributes, item/weapon `FloorState` (RE-555). Nine goldens rebaselined (not a D-051 change).
+- Landed: shared `PosedFighter` and fighter tick in `crates/ssb-pose` ([D-052](docs/decisions/D-052.md)); pure move, goldens unchanged. Divergences now live on the host are in D-052.
 - Open: stage-clear zoom N64 trace (RE-554); `proc_physics`-set status with a pending accessory maker (RE-555 deviation, no current move). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: spawn snap and spawn pose (RE-555).
+Baseline: `ssb-pose` move (D-052).
 
 | Check | Result |
 |---|---|

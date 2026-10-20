@@ -110,6 +110,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | 1P goldens | 1P intro, stage clear | RE-548 |
 | Fox ledge freeze | Host sweep green (map_tests `every_ledge_catch_leaves_its_cliff_statuses_in_time`); needs a playtest repro | RE-553 |
 | Kirby/Purin CliffEscapeQuick | Optional: N64 pose check of the two-lead (`0xC0000000`) clips 483/484; decomp and pack probe agree | RE-553 |
+| Pair-tick ordering | `tick_pair_pads` vs psp-game match-loop ordering not shared; share or prove equal | [D-052](docs/decisions/D-052.md) |
 
 ### Audio and rumble (`MS7`)
 

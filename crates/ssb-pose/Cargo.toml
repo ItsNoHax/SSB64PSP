@@ -1,0 +1,25 @@
+[package]
+name = "ssb-pose"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Portable host-side fighter tick: skeleton clip, joint sampling and spawn placement, shared by psp-runtime and the host tests."
+
+[dependencies]
+ssb-engine = { workspace = true }
+ssb-game = { workspace = true }
+ssb-rom = { workspace = true }
+
+[build-dependencies]
+# Only for the `ssb64_stub_tables` cfg (`build.rs`).
+ssb-tablegen = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["ssb-engine/std", "ssb-game/std", "ssb-rom/std"]
+
+[dev-dependencies]
+# `ssb_tablegen::test_rom` finds the ROM for the ROM-backed tests.
+ssb-tablegen = { workspace = true }

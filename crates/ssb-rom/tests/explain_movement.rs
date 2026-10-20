@@ -30,7 +30,7 @@ use ssb_rom::collision::LineKind;
 
 #[path = "common/posed.rs"]
 mod posed;
-use posed::{exchange, Posed};
+use posed::{exchange, map_bound_top, Posed};
 
 /// One fighter on one frame: status id, x, y.
 type Sample = (u16, f32, f32);
@@ -779,13 +779,9 @@ fn how_to_play_hits_as_the_n64_does() {
                     | ssb_engine::input::N64Buttons::C_RIGHT)
                 != 0;
             let p = &mut fighters[i];
-            p.fighter
-                .set_input(c, held && !jump_held[i], !held && jump_held[i]);
+            let (tapped, released) = (held && !jump_held[i], !held && jump_held[i]);
             jump_held[i] = held;
-            p.sample_held_child_offset();
-            p.set_root_motion(None);
-            p.fighter.tick_interrupt(&map_fn);
-            p.after_interrupt(&pack);
+            p.tick_interrupt(&pack, map_bound_top(p), c, tapped, released, &map_fn);
             if fighters[i].fighter.dead.rebirth_pending {
                 let other = &fighters[1 - i].fighter;
                 let halo = ssb_game::dead::halo_number(core::iter::once((
@@ -803,7 +799,7 @@ fn how_to_play_hits_as_the_n64_does() {
         // Priority 4: the clip, the physics and map, the joint samples, a
         // weapon the fighter made; then the weapon link.
         for i in 0..2 {
-            fighters[i].physics(&pack, &map_fn);
+            fighters[i].tick_physics(&pack, &map_fn);
             let spawn = fighters[i].fighter.take_weapon_spawn_with_parent();
             exchange(&mut fighters, i);
             if let Some((spawn, parent)) = spawn {
@@ -843,7 +839,7 @@ fn how_to_play_hits_as_the_n64_does() {
             }
         }
         for p in &mut fighters {
-            p.settle_catch(&pack);
+            p.settle_catch(&pack, &map_fn);
         }
         for i in 0..2 {
             exchange(&mut fighters, i);

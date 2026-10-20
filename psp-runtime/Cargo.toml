@@ -18,6 +18,8 @@ psp = { git = "https://github.com/ItsNoHax/rust-psp", rev = "fea0e1bd6c2e578375a
 ssb-engine = { path = "../crates/ssb-engine", default-features = false }
 ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }
+# The fighter tick and joint samples the host tests run too (D-052).
+ssb-pose = { path = "../crates/ssb-pose", default-features = false }
 
 [features]
 # Masks every FPU exception on the game's threads (`fpu.rs`) instead of

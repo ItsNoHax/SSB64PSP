@@ -30,5 +30,8 @@ ssb-game = { workspace = true, features = ["std"] }
 ssb-engine = { workspace = true, features = ["std"] }
 # `tests/scene_inputs.rs` replays the golden scenes' input scripts.
 ssb-capture = { workspace = true }
+# `tests/common/posed.rs`: the fighter tick the PSP runs (`ssb-pose`). A
+# dev-dependency cycle back onto this crate, which integration tests allow.
+ssb-pose = { workspace = true, features = ["std"] }
 # `fighter`'s test checks the generator's FTAttributes offsets.
 ssb-tablegen = { workspace = true }

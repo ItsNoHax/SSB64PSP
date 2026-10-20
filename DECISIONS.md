@@ -50,6 +50,7 @@
 - [D-046](docs/decisions/D-046.md): Scenes Load Their Archive Files; Only the Pack's Index Stays Resident
 - [D-049](docs/decisions/D-049.md): The N64 Audio System Is Ported Whole and Synthesized at Run Time on Its Own Thread
 - [D-050](docs/decisions/D-050.md): FPU Trap Enables Stay As the PSP Arms Them; Every Trap Is a Bug Fixed With the N64's Result
+- [D-052](docs/decisions/D-052.md): One Portable Fighter Tick in crates/ssb-pose, Run by psp-runtime and the Host Tests
 
 ## Engineering Process
 

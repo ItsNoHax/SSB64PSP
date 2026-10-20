@@ -46,6 +46,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ssb-pose"
+version = "0.1.0"
+dependencies = [
+ "ssb-engine",
+ "ssb-game",
+ "ssb-rom",
+ "ssb-tablegen",
+]
+
+[[package]]
 name = "ssb-rom"
 version = "0.1.0"
 dependencies = [
@@ -53,6 +63,7 @@ dependencies = [
  "ssb-capture",
  "ssb-engine",
  "ssb-game",
+ "ssb-pose",
  "ssb-tablegen",
 ]
 
