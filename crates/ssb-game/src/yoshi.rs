@@ -82,6 +82,11 @@ pub struct YoshiState {
     pub egg_escape_epoch: u32,
     /// `status_vars.yoshi.specialhi.egg_gobj != NULL`: the egg is in hand.
     pub egg_held: bool,
+    /// The held egg's `DObj` translate: the Egg Throw joint's world
+    /// position at the make, then as `ftYoshiSpecialHiUpdateEggVectors`
+    /// last wrote it in `proc_physics`. The throw in `proc_update` snaps
+    /// from this point, one physics step behind the joint.
+    pub egg_pos: Vec3,
     /// `status_vars.yoshi.specialhi.throw_force`: frames B was held.
     pub throw_force: i16,
     /// Motion flag 1 of Egg Throw, set by the throw. The aerial status then
@@ -272,10 +277,20 @@ pub fn on_damage(f: &mut Fighter) {
     }
 }
 
-/// Where the held egg draws, presentation only: `ftYoshiSpecialHiUpdateEggVectors`
-/// puts it at the Egg Throw joint's world position in `proc_physics`.
+/// Where the held egg draws: its `DObj` translate, which
+/// `ftYoshiSpecialHiUpdateEggVectors` sets to the Egg Throw joint's world
+/// position in `proc_physics`.
 pub fn held_egg_position(f: &Fighter) -> Option<Vec3> {
-    (is_yoshi(f.kind) && f.yoshi.egg_held).then(|| f.joint_world(EGGTHROW_JOINT, Vec3::ZERO))
+    (is_yoshi(f.kind) && f.yoshi.egg_held).then_some(f.yoshi.egg_pos)
+}
+
+/// `ftYoshiSpecialHiUpdateEggVectors`, the head of both Egg Throw
+/// statuses' `proc_physics`: the held egg follows the Egg Throw joint
+/// (`ftYoshiSpecialHiGetEggPosition`).
+pub fn update_egg_vectors(f: &mut Fighter) {
+    if is_yoshi(f.kind) && f.yoshi.egg_held {
+        f.yoshi.egg_pos = f.joint_query(EGGTHROW_JOINT, Vec3::ZERO);
+    }
 }
 
 /// The held egg's `DObj` scale, presentation only: the Egg Throw joint's
@@ -293,7 +308,7 @@ fn update_egg(f: &mut Fighter) {
     }
     if crossed(f, EGG_THROW_FRAME) {
         if core::mem::take(&mut f.yoshi.egg_held) {
-            f.weapon_spawn = Some(WeaponSpawn {
+            f.queue_weapon_spawn(WeaponSpawn {
                 kind: WeaponKind::YoshiEgg {
                     throw_force: f.yoshi.throw_force,
                     stick_x: f.input.stick_x,
@@ -302,12 +317,16 @@ fn update_egg(f: &mut Fighter) {
                 owner_port: f.port,
                 team: f.team,
                 stale: crate::stale::WeaponStale::of(f),
-                position: f.joint_query(EGGTHROW_JOINT, Vec3::ZERO),
+                // `mpCommonRunWeaponCollisionDefault` from Yoshi's
+                // translate to the egg's current one.
+                position: f.yoshi.egg_pos,
                 facing: f.facing.sign(),
             });
         }
         f.yoshi.egg_thrown = true;
     } else if crossed(f, EGG_MAKE_FRAME) {
+        // `wpYoshiEggThrowMakeWeapon` at `ftYoshiSpecialHiGetEggPosition`.
+        f.yoshi.egg_pos = f.joint_query(EGGTHROW_JOINT, Vec3::ZERO);
         f.yoshi.egg_held = true;
     }
 }
@@ -373,7 +392,7 @@ fn set_special_lw_landing(f: &mut Fighter, floor_y: f32) {
 /// `ftYoshiSpecialLwLandingProcUpdate`'s flag 0: `wpYoshiStarMakeStars`
 /// from TopN, one star each way.
 fn make_stars(f: &mut Fighter) {
-    f.weapon_spawn = Some(WeaponSpawn {
+    f.queue_weapon_spawn(WeaponSpawn {
         kind: WeaponKind::YoshiStars,
         owner_port: f.port,
         team: f.team,
@@ -697,6 +716,37 @@ mod tests {
             status::update(&mut f);
         }
         assert_eq!(f.status.anim_frame, 0.0);
+    }
+
+    /// `ftYoshiSpecialHiUpdateEggVectors` moves the held egg to the Egg
+    /// Throw joint at the head of `proc_physics`, before the fighter's move;
+    /// the throw in `proc_update` snaps from that point, one move behind the
+    /// joint, with Yoshi's translate at the event as the parent.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_thrown_egg_starts_where_the_last_physics_put_it() {
+        let mut f = yoshi(false);
+        f.pos = Vec3::new(0.0, 1000.0, 0.0);
+        set_special_hi(&mut f);
+        let mut ends = Vec::new();
+        let (spawn, parent) = loop {
+            f.tick_map(core::iter::empty::<crate::weapon::MapSurface>);
+            if let Some(made) = f.take_weapon_spawn_with_parent() {
+                break made;
+            }
+            if f.yoshi.egg_held {
+                assert_eq!(held_egg_position(&f), Some(f.yoshi.egg_pos));
+            }
+            ends.push(f.pos);
+            assert!(ends.len() < 40, "no throw");
+        };
+        let [.., before, last] = ends[..] else {
+            panic!("too few frames")
+        };
+        assert_ne!(before, last, "Yoshi moves every frame");
+        assert_eq!(spawn.position, before);
+        assert_eq!(parent.pos, last);
+        assert_ne!(f.pos, last);
     }
 
     #[test]

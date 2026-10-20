@@ -804,10 +804,12 @@ fn how_to_play_hits_as_the_n64_does() {
         // weapon the fighter made; then the weapon link.
         for i in 0..2 {
             fighters[i].physics(&pack, &map_fn);
-            let spawn = fighters[i].fighter.take_weapon_spawn();
+            let spawn = fighters[i].fighter.take_weapon_spawn_with_parent();
             exchange(&mut fighters, i);
-            if let Some(spawn) = spawn {
-                weapons.spawn(spawn);
+            if let Some((spawn, parent)) = spawn {
+                // `wpManagerMakeWeapon`'s `WEAPON_FLAG_COLLPROJECT` pass,
+                // as the game's (psp-game/src/main.rs).
+                weapons.spawn_projected(spawn, Some(parent), &map_fn);
                 weapons.flush_effects(&mut ssb_game::effect::NoEffects);
             }
         }

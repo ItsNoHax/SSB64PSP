@@ -131,9 +131,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Battle draw order | Object head-1 lists don't wait for stage head-1 lists of same pass | RE-422 |
 | Camera | Special camera modes beyond Inishie, Zebes, stage-clear zoom, boss intro (RE-554) | RE-406, RE-554 |
 | Stage-clear zoom trace | No N64 trace of the 46 zoom ticks → 1P warp ROM with forced win; compare eye, at, fovy, RNG X then Y | RE-554 |
-| Weapon spawn snap | `mpCommonRunWeaponCollisionDefault` (COLLPROJECT) at weapon spawn not ported → port; acceptance: spawn y matches decomp | RE-555 |
-| Thunder Jolt ground | Damage hard-coded 7; initial `rotate` `(0,1)` → read the jolt damage from attrs, check the initial rotate vs N64 | RE-555, D-050 |
-| Item floor Option | `mpProcessSetCollProjectFloorID` keeps `floor_angle` while clearing the line id → split line id and angle in `item.floor` | RE-555 |
 | Yoshi | Tongue and Egg Lay timeline matched (RE-552); remaining: grab vs N64, effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552 |
 | Setter first frames | No N64 trace: Barrel/Tornado captures, item throws, Final Cutter landing, Yoshi aerial release, Link aerial Boomerang return | RE-468, RE-473, RE-474 |
 | `anim_frame` | Shield pose clock; DK speed-0 cargo jump/fall; idle camera `status_total_tics` | RE-472, RE-474 |

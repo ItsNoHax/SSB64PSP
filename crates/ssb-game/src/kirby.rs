@@ -750,7 +750,7 @@ fn make_cutter(f: &mut Fighter) {
     f.kirby.cutter_spawned = true;
     let lr = f.facing.sign();
     let position = f.joint_query(0, Vec3::ZERO) + Vec3::new(FINALCUTTER_OFF_X * lr, 0.0, 0.0);
-    f.weapon_spawn = Some(WeaponSpawn {
+    f.queue_weapon_spawn(WeaponSpawn {
         kind: WeaponKind::KirbyCutter {
             floor_line: f.floor.map(|s| s.line),
         },

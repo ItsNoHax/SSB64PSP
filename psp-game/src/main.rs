@@ -1855,13 +1855,14 @@ fn physics_pass(
                 weapons.observe_camera(&f.camera);
             }
             items.take_requests(&mut f.fighter, map);
-            let spawn = f.fighter.take_weapon_spawn();
+            let spawn = f.fighter.take_weapon_spawn_with_parent();
             exchange_from(s, i);
             // The motion scripts' effects, made at the end of this fighter's
             // `ftMainProcPhysicsMap`.
             flush_fighter_effects(s, effects);
-            if let Some(spawn) = spawn {
-                weapons.spawn(spawn);
+            if let Some((spawn, parent)) = spawn {
+                // `wpManagerMakeWeapon`'s `WEAPON_FLAG_COLLPROJECT` pass.
+                weapons.spawn_projected(spawn, Some(parent), &map);
                 // A weapon's making effect (the Blaster's glow), in the
                 // fighter's process.
                 weapons.flush_effects(effects);

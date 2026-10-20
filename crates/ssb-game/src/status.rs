@@ -4176,9 +4176,12 @@ pub fn set_any_status_preserve(
                     | Status::LGunShootAir
             )
         ) {
-            crate::item_use::accessory(f);
+            crate::item_use::status_accessory(f);
         }
     }
+    // The old status's makers: an accessory one makes its weapon now, an
+    // update one has read this status's play.
+    crate::spawn_pose::on_set(f);
     // `fp->joints[nFTPartsJointTopN]->rotate.vec.f.y = fp->lr * 90°`;
     // `rotate.x = rotate.z = 0` drops a slope tilt and a floor roll.
     f.topn_lr = f.facing.sign();
@@ -4325,6 +4328,11 @@ pub fn set_any_status_preserve(
     crate::thrown::on_status(f);
     crate::motion::start(f, anim_frame_begin);
 }
+
+/// `ftMarioSpecialNProcAccessory`: the Fireball leaves joint 16 as this
+/// frame's play and map step left it (RE-472).
+pub const MARIO_FIREBALL_POSE: crate::spawn_pose::SpawnPose =
+    crate::spawn_pose::SpawnPose::accessory(16, ssb_engine::math::Vec3::ZERO);
 
 /// `ftCommonWaitSetStatus` @ 0x8013E1C8.
 pub fn set_wait(f: &mut Fighter) {
@@ -6660,16 +6668,18 @@ fn update_extended(f: &mut Fighter) {
                 } else {
                     crate::weapon::WeaponKind::MarioFireball
                 };
-                f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
-                    kind,
-                    owner_port: f.port,
-                    team: f.team,
-                    stale: crate::stale::WeaponStale::of(f),
-                    // `ftMarioSpecialNProcAccessory` places it at joint 16
-                    // (`item_use::accessory`); the root until then.
-                    position: f.pos,
-                    facing: f.facing.sign(),
-                });
+                f.queue_weapon_spawn_posed(
+                    crate::weapon::WeaponSpawn {
+                        kind,
+                        owner_port: f.port,
+                        team: f.team,
+                        stale: crate::stale::WeaponStale::of(f),
+                        // The root until the accessory places it.
+                        position: f.pos,
+                        facing: f.facing.sign(),
+                    },
+                    MARIO_FIREBALL_POSE,
+                );
             }
             if f.status.animation_ended() {
                 if f.situation == Situation::Ground {
@@ -6773,20 +6783,23 @@ fn update_extended(f: &mut Fighter) {
             };
             if f.status.clock >= spawn_frame && !f.fox_special_n.spawned {
                 f.fox_special_n.spawned = true;
-                f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
-                    kind: crate::weapon::WeaponKind::FoxBlaster,
-                    owner_port: f.port,
-                    team: f.team,
-                    stale: crate::stale::WeaponStale::of(f),
-                    // `ftFoxSpecialNProcUpdate` takes joint 17 plus 60 as
-                    // this frame's play poses it ([`fox_blaster_spawn`]).
-                    position: ssb_engine::math::Vec3::new(
-                        f.pos.x + 60.0 * f.facing.sign(),
-                        f.pos.y,
-                        f.pos.z,
-                    ),
-                    facing: f.facing.sign(),
-                });
+                // `ftFoxSpecialNProcUpdate` takes joint 17 plus 60 as
+                // this frame's play poses it ([`FOX_BLASTER_POSE`]).
+                f.queue_weapon_spawn_posed(
+                    crate::weapon::WeaponSpawn {
+                        kind: crate::weapon::WeaponKind::FoxBlaster,
+                        owner_port: f.port,
+                        team: f.team,
+                        stale: crate::stale::WeaponStale::of(f),
+                        position: ssb_engine::math::Vec3::new(
+                            f.pos.x + 60.0 * f.facing.sign(),
+                            f.pos.y,
+                            f.pos.z,
+                        ),
+                        facing: f.facing.sign(),
+                    },
+                    FOX_BLASTER_POSE,
+                );
             }
             let repeat_frame = if f.status.status == AnyStatus::Fox(FoxStatus::SpecialN) {
                 29.0
@@ -7403,35 +7416,14 @@ pub fn set_ground_vel_abs_stick(p: &mut PhysicsState, stick_x: i8, vel: f32, fri
 pub const FOX_BLASTER_HOLD_JOINT: u8 = 17;
 pub const FOX_BLASTER_SPAWN_OFF_X: f32 = 60.0;
 
-/// Whether this frame's interrupt queued a Blaster shot, which
-/// [`fox_blaster_spawn`] places once the frame's play has posed the hand.
-pub fn fox_blaster_pending(f: &Fighter) -> bool {
-    f.weapon_spawn
-        .is_some_and(|w| w.kind == crate::weapon::WeaponKind::FoxBlaster)
-}
-
-/// `ftFoxSpecialNProcUpdate`: the shot leaves joint 17 plus 60 along its x
-/// axis (`gmCollisionGetFighterPartsWorldPosition`), as this frame's
+/// `ftFoxSpecialNProcUpdate`: joint 17 plus 60 along its x axis
+/// (`gmCollisionGetFighterPartsWorldPosition`), as this frame's
 /// `ftMainPlayAnimEventsAll` posed it and before `ftMainProcPhysicsMap`
-/// moves the fighter. Call with `joint_transforms` sampled from that pose
-/// (RE-473).
-pub fn fox_blaster_spawn(f: &mut Fighter) {
-    if !fox_blaster_pending(f) {
-        return;
-    }
-    // `gmCollisionGetFighterPartsWorldPosition` (RE-511).
-    f.mark_joint_query(FOX_BLASTER_HOLD_JOINT);
-    let Some(joint) = f.joint_transforms[usize::from(FOX_BLASTER_HOLD_JOINT)] else {
-        return;
-    };
-    if let Some(spawn) = f.weapon_spawn.as_mut() {
-        spawn.position = joint.point(ssb_engine::math::Vec3::new(
-            FOX_BLASTER_SPAWN_OFF_X,
-            0.0,
-            0.0,
-        ));
-    }
-}
+/// moves the fighter (RE-473).
+pub const FOX_BLASTER_POSE: crate::spawn_pose::SpawnPose = crate::spawn_pose::SpawnPose::update(
+    FOX_BLASTER_HOLD_JOINT,
+    ssb_engine::math::Vec3::new(FOX_BLASTER_SPAWN_OFF_X, 0.0, 0.0),
+);
 
 #[cfg(test)]
 mod tests {
@@ -7455,11 +7447,11 @@ mod tests {
         );
         for _ in 0..40 {
             update(&mut f);
-            if fox_blaster_pending(&f) {
+            if crate::spawn_pose::update_pending(&f) {
                 break;
             }
         }
-        assert!(fox_blaster_pending(&f));
+        assert!(crate::spawn_pose::update_pending(&f));
         let hand = JointTransform {
             axes: [
                 Vec3::new(0.0, 0.6, 0.8),
@@ -7469,7 +7461,7 @@ mod tests {
             origin: Vec3::new(400.0, 2000.0, -40.0),
         };
         f.joint_transforms[usize::from(FOX_BLASTER_HOLD_JOINT)] = Some(hand);
-        fox_blaster_spawn(&mut f);
+        crate::spawn_pose::place_update(&mut f);
         assert_eq!(
             f.weapon_spawn.unwrap().position,
             Vec3::new(400.0, 2036.0, 8.0)

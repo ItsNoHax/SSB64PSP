@@ -290,7 +290,7 @@ fn the_finger_gun_fires_from_its_joints() {
     let mut f = boss();
     set_wait(&mut f, &floor);
     f.facing = Facing::Left;
-    set_yubideppou3(&mut f);
+    set_yubideppou3(&mut f, false);
     let spawn = f.weapon_spawn.take().expect("first shot");
     assert_eq!(spawn.kind, WeaponKind::BossBullet { hard: false });
     assert_eq!(spawn.facing, -1.0);
@@ -306,7 +306,7 @@ fn the_finger_gun_fires_from_its_joints() {
     // Enraged, the first two of three are hard.
     f.boss.wait_div = ENRAGED_WAIT_DIV;
     f.boss.bullet_count = 0;
-    set_yubideppou3(&mut f);
+    set_yubideppou3(&mut f, false);
     assert_eq!(
         f.weapon_spawn.take().map(|s| s.kind),
         Some(WeaponKind::BossBullet { hard: true })
@@ -337,4 +337,53 @@ fn dead_center_launch_uses_the_cst_angle() {
         (-(cosf(a) * 100.0)).to_bits()
     );
     assert_eq!(f.physics.vel_air.x, 0.0);
+}
+
+/// `ftBossYubideppou3ProcUpdate` re-enters the status and then queries
+/// joint 15 (ftbossyubideppou3.c:10-76): `ftMainSetStatus` plays nothing,
+/// so the query reads the play the replaced status had this frame.
+/// `ftBossYubideppou2ProcPhysics` and `ftBossYubideppou3ProcPhysics`
+/// query in `proc_physics`, from this frame's play: the host samples it
+/// before the physics step on exactly those frames.
+#[test]
+fn the_finger_gun_reads_the_play_its_maker_sees() {
+    use crate::fighter::JointTransform;
+    let at = |origin| {
+        Some(JointTransform {
+            axes: [Vec3::X, Vec3::Y, Vec3::Z],
+            origin,
+        })
+    };
+    let mut f = boss();
+    set_wait(&mut f, &floor);
+    let replaced = f.status;
+    set_yubideppou3(&mut f, true);
+    assert_eq!(crate::spawn_pose::played_status(&f), Some(replaced));
+    let queued = f.weapon_spawn.unwrap().position;
+    f.joint_transforms[usize::from(BULLET_JOINT_FIRST)] = at(Vec3::new(10.0, 20.0, 30.0));
+    crate::spawn_pose::place_update(&mut f);
+    assert_eq!(f.weapon_spawn.unwrap().position, queued);
+    crate::spawn_pose::place_played(&mut f);
+    assert_eq!(
+        f.weapon_spawn.take().unwrap().position,
+        Vec3::new(10.0, 20.0, 30.0)
+    );
+    // The follow-up shot from `proc_physics`.
+    for tick in 0..6 {
+        let queries = physics_queries_joints(&f);
+        step(&mut f);
+        assert_eq!(f.weapon_spawn.take().is_some(), queries, "tick {tick}");
+    }
+    // `ftBossYubideppou2ProcPhysics`'s set and shot, then the follow-up.
+    set_yubideppou2(&mut f);
+    f.boss.timer = 3;
+    let mut made = 0;
+    for tick in 0..10 {
+        let queries = physics_queries_joints(&f);
+        step(&mut f);
+        let shot = f.weapon_spawn.take().is_some();
+        assert_eq!(shot, queries, "tick {tick}");
+        made += usize::from(shot);
+    }
+    assert_eq!(made, 2, "the set's shot and the follow-up");
 }

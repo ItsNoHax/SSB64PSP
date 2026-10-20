@@ -25,6 +25,7 @@
 //! host: [`BossState::defeated`] and [`BossState::camera`].
 
 use crate::fighter::{Facing, Fighter};
+use crate::spawn_pose::SpawnPose;
 use crate::status::{self, AnyStatus, BossStatus as B, StatusTiming};
 use crate::weapon::{MapSurface, MapSurfaceKind, WeaponKind, WeaponSpawn};
 use ssb_engine::math::{f_cst_dtor32, sin_cos, Vec2, Vec3};
@@ -811,27 +812,62 @@ fn set_yubideppou2(f: &mut Fighter) {
     f.boss.timer = crate::rng::rand_int_range(120) + 60;
 }
 
-/// `ftBossYubideppou3SetStatus`: a shot from the fingertip.
-fn set_yubideppou3(f: &mut Fighter) {
+/// `ftBossYubideppou3SetStatus`: a shot from the fingertip. The query
+/// follows `ftMainSetStatus`, which plays nothing (no
+/// `ftMainPlayAnimEventsAll`): it reads the frame's play of the status the
+/// set replaced, with TopN before the move. From `proc_update`
+/// (`ftBossYubideppou3ProcUpdate`) the host plays that status aside
+/// ([`SpawnPose::played`]); from `proc_physics`
+/// (`ftBossYubideppou2ProcPhysics`) it sampled the play before the
+/// physics step ([`physics_queries_joints`]).
+fn set_yubideppou3(f: &mut Fighter, from_update: bool) {
+    let replaced = f.status;
     set(f, B::Yubideppou3);
     f.boss.bullet_count += 1;
-    let pos = f.joint_query(BULLET_JOINT_FIRST, Vec3::ZERO);
-    make_bullet(f, pos);
+    if from_update {
+        let pose = SpawnPose::update(BULLET_JOINT_FIRST, Vec3::ZERO).played(replaced);
+        make_bullet(f, f.pos, Some(pose));
+    } else {
+        let pos = f.joint_query(BULLET_JOINT_FIRST, Vec3::ZERO);
+        make_bullet(f, pos, None);
+    }
     f.boss.shoot_timer = 4;
+}
+
+/// Whether this frame's `proc_physics` makes a bullet
+/// (`ftBossYubideppou2ProcPhysics`'s set, `ftBossYubideppou3ProcPhysics`'s
+/// timer): its query reads the joints the frame's play posed, TopN before
+/// the move, so the host samples them before the physics step.
+pub fn physics_queries_joints(f: &Fighter) -> bool {
+    let AnyStatus::Boss(s) = f.status.status else {
+        return false;
+    };
+    if f.boss.physics != Physics::Status || f.is_in_hitlag() {
+        return false;
+    }
+    match s {
+        B::Yubideppou2 => f.boss.timer == 1,
+        B::Yubideppou3 => f.boss.shoot_timer == 1,
+        _ => false,
+    }
 }
 
 /// `wpBossBulletHardMakeWeapon` while enraged short of the third shot,
 /// otherwise `wpBossBulletNormalMakeWeapon`.
-fn make_bullet(f: &mut Fighter, pos: Vec3) {
+fn make_bullet(f: &mut Fighter, pos: Vec3, pose: Option<SpawnPose>) {
     let hard = f.boss.wait_div == ENRAGED_WAIT_DIV && f.boss.bullet_count != 3;
-    f.weapon_spawn = Some(WeaponSpawn {
+    let spawn = WeaponSpawn {
         kind: WeaponKind::BossBullet { hard },
         owner_port: f.port,
         team: f.team,
         position: pos,
         facing: lr(f),
         stale: crate::stale::WeaponStale::of(f),
-    });
+    };
+    match pose {
+        Some(pose) => f.queue_weapon_spawn_posed(spawn, pose),
+        None => f.queue_weapon_spawn(spawn),
+    }
 }
 
 /// `ftBossOkupunch1SetStatus`.
@@ -1005,7 +1041,7 @@ where
                 && f.status.anim_frame >= 20.0
                 && f.boss.bullet_count != 3
             {
-                set_yubideppou3(f);
+                set_yubideppou3(f, true);
             } else if ended {
                 set_wait(f, surfaces);
             }
@@ -1395,7 +1431,7 @@ fn physics(f: &mut Fighter, s: B) {
         B::Yubideppou2 => {
             f.boss.timer -= 1;
             if f.boss.timer == 0 {
-                set_yubideppou3(f);
+                set_yubideppou3(f, false);
             } else {
                 yubideppou2_update_position(f);
             }
@@ -1406,7 +1442,7 @@ fn physics(f: &mut Fighter, s: B) {
                 f.boss.shoot_timer -= 1;
                 if f.boss.shoot_timer == 0 {
                     let pos = f.joint_query(BULLET_JOINT_FOLLOW, Vec3::ZERO);
-                    make_bullet(f, pos);
+                    make_bullet(f, pos, None);
                 }
             }
             if f.boss.wait_div == ENRAGED_WAIT_DIV {

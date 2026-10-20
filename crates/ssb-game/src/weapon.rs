@@ -11,7 +11,7 @@ use ssb_engine::math::{sin_cos, Vec2, Vec3};
 use crate::attack::{self, Hitbox};
 use crate::collision::Segment;
 use crate::fighter::Fighter;
-use crate::ground::BodyColl;
+use crate::ground::{BodyColl, FloorState};
 use crate::map::{MASK_CEIL, MASK_FLOOR, MASK_LWALL, MASK_RWALL};
 use crate::monster_weapon::{ShotKind, ShotProc};
 use crate::status::BlastZone;
@@ -146,6 +146,38 @@ pub struct WeaponSpawn {
     pub facing: f32,
     /// The owner's staling when the weapon is made.
     pub stale: crate::stale::WeaponStale,
+}
+
+/// The parent fighter's `coll_data.p_translate` and `map_coll` as
+/// `wpManagerMakeWeapon`'s `WEAPON_FLAG_COLLPROJECT` pass reads them
+/// (`mpCommonRunWeaponCollisionDefault`, wpmanager.c:329): the sweep runs
+/// from `pos` with `coll`'s diamond to the weapon's spawn point with its own.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SpawnParent {
+    pub pos: Vec3,
+    pub coll: BodyColl,
+}
+
+impl WeaponKind {
+    /// Kinds whose make runs from the fighter's `proc_accessory`, after
+    /// `ftMainProcPhysicsMap` moved it (`ftMarioSpecialNProcAccessory`,
+    /// `ftNessSpecialNProcAccessory`, `ftPikachuSpecialNProcAccessory`,
+    /// `ftCommonFireFlowerShootProcAccessory`, `ftCommonLGunShootProcAccessory`):
+    /// their parent translate is the fighter's post-physics one. Every other
+    /// fighter maker runs in `proc_update` or `proc_physics`, before the move.
+    pub fn made_in_accessory(&self) -> bool {
+        matches!(
+            self,
+            WeaponKind::MarioFireball
+                | WeaponKind::LuigiFireball
+                | WeaponKind::NessPKFire { .. }
+                | WeaponKind::PikachuThunderJolt
+                | WeaponKind::Equipment {
+                    kind: ShotKind::FireFlower | ShotKind::RayGun,
+                    ..
+                }
+        )
+    }
 }
 
 /// Mario's row of `dWPMarioFireballWeaponAttributes` (`wpmariofireball.c`,
@@ -677,7 +709,7 @@ impl SamusBomb {
         I: IntoIterator<Item = MapSurface>,
     {
         self.position += self.velocity;
-        if let Some(floor) = self.coll.floor.filter(|_| self.grounded) {
+        if let Some(floor) = self.coll.floor.standing().filter(|_| self.grounded) {
             if crate::map::line_exists(surfaces, floor.line) {
                 self.position += crate::map::line_speed(surfaces, floor.line);
             }
@@ -1367,10 +1399,6 @@ pub struct KirbyCutter {
     pub lifetime: u16,
     pub lr: f32,
     pub damage: i32,
-    /// Kirby's `floor_line_id` at the make: the wave starts grounded on it
-    /// if it lies under the spawn (`mpCollisionGetFCCommonFloor`), resolved
-    /// on the first tick.
-    pub seek_floor: Option<u16>,
     /// `ga == nMPKineticsGround` (`wpMapSetGround`), with `vel_ground`.
     pub grounded: bool,
     pub vel_ground: f32,
@@ -1397,7 +1425,7 @@ fn model_pitch(vel_x: f32) -> f32 {
 }
 
 impl KirbyCutter {
-    fn new(spawn: WeaponSpawn, floor_line: Option<u16>) -> Self {
+    fn new(spawn: WeaponSpawn) -> Self {
         let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
         Self {
             owner_port: spawn.owner_port,
@@ -1406,7 +1434,6 @@ impl KirbyCutter {
             lifetime: KIRBY_CUTTER_LIFETIME,
             lr,
             damage: KIRBY_CUTTER_HITBOX.damage,
-            seek_floor: floor_line,
             grounded: false,
             vel_ground: 0.0,
             coll: crate::wpmap::WeaponColl::default(),
@@ -1414,6 +1441,23 @@ impl KirbyCutter {
             model_rotate_y: model_pitch(lr),
             rotate_z: 0.0,
             anim_ticks: 0,
+        }
+    }
+
+    /// `wpKirbyCutterMakeWeapon` after `wpManagerMakeWeapon`: Kirby's
+    /// `floor_line_id` grounds the wave if it lies under the maker's
+    /// unsnapped `pos` (`mpCollisionGetFCCommonFloor`), which writes the
+    /// line and `floor_angle`; `floor_flags` keeps the spawn pass's value.
+    fn make_floor<I, F>(&mut self, line: Option<u16>, pos: Vec3, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let Some(line) = line else { return };
+        if let Some((_, floor)) = crate::map::floor_point(surfaces, line, pos.x) {
+            self.coll.floor.line = Some(floor.line);
+            self.coll.floor.angle = floor.normal;
+            self.set_ground();
         }
     }
 
@@ -1430,13 +1474,6 @@ impl KirbyCutter {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        if let Some(line) = self.seek_floor.take() {
-            // `wpKirbyCutterMakeWeapon`.
-            if let Some((_, floor)) = crate::map::floor_point(&surfaces, line, self.position.x) {
-                self.coll.floor = Some(floor);
-                self.set_ground();
-            }
-        }
         // `wpProcessProcWeaponMain` plays the DObj animation before
         // `proc_update`.
         self.anim_ticks = self.anim_ticks.wrapping_add(1);
@@ -1894,6 +1931,90 @@ impl Weapon {
             Weapon::PKFire(w) => w.position,
             Weapon::PKThunder(w) => w.position,
             Weapon::PKTrail(w) => w.position,
+        }
+    }
+
+    /// `WEAPON_FLAG_COLLPROJECT` makers' own `coll_data.map_coll`, their
+    /// translate and, for the kinds that keep one, their `coll_data` floor.
+    /// `None` for kinds made without the flag (Boomerang, Pikachu Thunder,
+    /// PK Thunder trail, Sector lasers, item-made shots) and for the Star
+    /// Rod star, whose maker overwrites the translate with the unsnapped
+    /// `pos` after `wpManagerMakeWeapon` (itstarrod.c:391).
+    fn collproject(&mut self) -> Option<(BodyColl, &mut Vec3, Option<&mut FloorState>)> {
+        use crate::monster_weapon::weapon_attributes as wa;
+        Some(match self {
+            Weapon::Fireball(w) => {
+                let coll = if w.index == 0 {
+                    MARIO_FIREBALL_MAP_COLL
+                } else {
+                    wa::LUIGI_FIREBALL.map_coll
+                };
+                (coll, &mut w.position, Some(&mut w.coll.floor))
+            }
+            Weapon::Blaster(w) => (FOX_BLASTER_MAP_COLL, &mut w.position, None),
+            Weapon::ChargeShot(w) => (wa::SAMUS_CHARGE_SHOT.map_coll, &mut w.position, None),
+            Weapon::Bomb(w) => (
+                SAMUS_BOMB_MAP_COLL,
+                &mut w.position,
+                Some(&mut w.coll.floor),
+            ),
+            Weapon::Egg(w) => (YOSHI_EGG_MAP_COLL, &mut w.position, None),
+            Weapon::Star(w) => (wa::YOSHI_STAR.map_coll, &mut w.position, None),
+            Weapon::Cutter(w) => (
+                KIRBY_CUTTER_MAP_COLL,
+                &mut w.position,
+                Some(&mut w.coll.floor),
+            ),
+            Weapon::Jolt(w) => {
+                let (coll, pos, floor) = w.collproject();
+                (coll, pos, Some(floor))
+            }
+            Weapon::PKFire(w) => (wa::NESS_PK_FIRE.map_coll, &mut w.position, None),
+            Weapon::PKThunder(w) => (wa::NESS_PK_THUNDER.map_coll, &mut w.position, None),
+            Weapon::BossBullet(w) => {
+                let coll = if w.hard {
+                    wa::BOSS_BULLET_HARD.map_coll
+                } else {
+                    wa::BOSS_BULLET_NORMAL.map_coll
+                };
+                (coll, &mut w.position, None)
+            }
+            Weapon::Monster(m) if matches!(m.kind, ShotKind::FireFlower | ShotKind::RayGun) => {
+                (m.attributes().map_coll, &mut m.position, None)
+            }
+            Weapon::Monster(_)
+            | Weapon::Boomerang(_)
+            | Weapon::Thunder(_)
+            | Weapon::Trail(_)
+            | Weapon::PKTrail(_)
+            | Weapon::Laser(_) => return None,
+        })
+    }
+
+    /// `wpManagerMakeWeapon`'s `WEAPON_FLAG_COLLPROJECT` pass
+    /// (`mpCommonRunWeaponCollisionDefault`): one default-collision pass from
+    /// the parent's translate to the spawn point, which moves the weapon out
+    /// of walls, ceilings and floors its parent's body did not cross, and
+    /// projects the floor below it. `mask_curr` is reset after the pass
+    /// (`mpCommonResetCollDataStats`), so no mask survives.
+    fn snap<I, F>(&mut self, parent: &SpawnParent, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let Some((coll, pos, floor)) = self.collproject() else {
+            return;
+        };
+        let r = crate::map::run_default_collision_project(
+            &coll,
+            &parent.coll,
+            parent.pos,
+            *pos,
+            surfaces,
+        );
+        *pos = r.pos;
+        if let Some(floor) = floor {
+            floor.project(r.floor);
         }
     }
 
@@ -3118,21 +3239,39 @@ impl WeaponPool {
     /// manager's allocation-failure shape: the already-consumed script event
     /// is not retried on a later frame.
     pub fn spawn(&mut self, spawn: WeaponSpawn) -> bool {
+        self.spawn_projected(spawn, None, &core::iter::empty::<MapSurface>)
+    }
+
+    /// [`Self::spawn`] with `wpManagerMakeWeapon`'s
+    /// `WEAPON_FLAG_COLLPROJECT` pass against the map when the request names
+    /// its parent ([`Fighter::take_weapon_spawn_with_parent`]). Effects the
+    /// makers place at their `pos` argument (Fox's glow, the Fire Flower's
+    /// flame) and the Final Cutter's floor lookup keep the unsnapped point.
+    pub fn spawn_projected<I, F>(
+        &mut self,
+        spawn: WeaponSpawn,
+        parent: Option<SpawnParent>,
+        surfaces: &F,
+    ) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let snap = |w: &mut Weapon| {
+            if let Some(parent) = &parent {
+                w.snap(parent, surfaces);
+            }
+        };
         if spawn.kind == WeaponKind::YoshiStars {
-            // Two `wpManagerMakeWeapon` calls; each fails on its own.
+            // Two `wpManagerMakeWeapon` calls; each fails on its own, and
+            // each snaps from Yoshi to its own offset point.
             let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
-            let first = self.insert(
-                Weapon::Star(YoshiStar::new(spawn, lr)),
-                spawn.stale,
-                spawn.team,
-                lr,
-            );
-            let second = self.insert(
-                Weapon::Star(YoshiStar::new(spawn, -lr)),
-                spawn.stale,
-                spawn.team,
-                -lr,
-            );
+            let mut star = Weapon::Star(YoshiStar::new(spawn, lr));
+            snap(&mut star);
+            let first = self.insert(star, spawn.stale, spawn.team, lr);
+            let mut star = Weapon::Star(YoshiStar::new(spawn, -lr));
+            snap(&mut star);
+            let second = self.insert(star, spawn.stale, spawn.team, -lr);
             return first || second;
         }
         let weapon = match spawn.kind {
@@ -3163,10 +3302,15 @@ impl WeaponPool {
                     m.damage = 12;
                     m.star_smash = true;
                 }
-                let made = self.insert_at(Weapon::Monster(m), spawn.stale, spawn.team, m.lr);
+                // `itFFlowerShootFlame`'s particles go to its `pos`, not the
+                // snapped translate.
+                let mut emit = Emit::default();
+                m.make_fx(&mut emit);
+                let lr = m.lr;
+                let mut w = Weapon::Monster(m);
+                snap(&mut w);
+                let made = self.insert_at(w, spawn.stale, spawn.team, lr);
                 if let Some(i) = made {
-                    let mut emit = Emit::default();
-                    m.make_fx(&mut emit);
                     self.fx.extend(self.seq[i], &emit);
                 }
                 return made.is_some();
@@ -3189,13 +3333,15 @@ impl WeaponPool {
             WeaponKind::MarioFireball => Weapon::Fireball(MarioFireball::new(spawn, 0)),
             WeaponKind::LuigiFireball => Weapon::Fireball(MarioFireball::new(spawn, 1)),
             WeaponKind::FoxBlaster => {
+                let mut w = Weapon::Blaster(FoxBlaster::new(spawn));
+                snap(&mut w);
                 let made = self.insert_at(
-                    Weapon::Blaster(FoxBlaster::new(spawn)),
+                    w,
                     spawn.stale,
                     spawn.team,
                     if spawn.facing < 0.0 { -1.0 } else { 1.0 },
                 );
-                // `wpFoxBlasterMakeWeapon`.
+                // `wpFoxBlasterMakeWeapon`: the glow at the unsnapped `pos`.
                 if let Some(i) = made {
                     self.fx
                         .push(self.seq[i], Fx::FoxBlasterGlow(spawn.position));
@@ -3219,9 +3365,18 @@ impl WeaponPool {
             } => Weapon::Egg(YoshiEgg::new(spawn, throw_force, stick_x, scale)),
             WeaponKind::YoshiStars => unreachable!("handled above"),
             WeaponKind::KirbyCutter { floor_line } => {
-                Weapon::Cutter(KirbyCutter::new(spawn, floor_line))
+                let mut w = Weapon::Cutter(KirbyCutter::new(spawn));
+                snap(&mut w);
+                if let Weapon::Cutter(c) = &mut w {
+                    c.make_floor(floor_line, spawn.position, surfaces);
+                }
+                w
             }
         };
+        let mut weapon = weapon;
+        if !matches!(spawn.kind, WeaponKind::KirbyCutter { .. }) {
+            snap(&mut weapon);
+        }
         let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
         let made = self.insert_at(weapon, spawn.stale, spawn.team, lr);
         if let Some(i) = made {
@@ -5904,11 +6059,12 @@ mod tests {
             position: Vec3::new(0.0, 100.0, 0.0),
             facing,
         };
-        let left = KirbyCutter::new(spawn(-1.0), Some(0));
+        let left = KirbyCutter::new(spawn(-1.0));
         assert_eq!(left.model_rotate_y, -core::f32::consts::FRAC_PI_2);
         // A floor rising 100 over 1000 to the right.
         let slope = [surface(MapSurfaceKind::Floor, -1000, 0, 1000, 200)];
-        let mut c = KirbyCutter::new(spawn(1.0), Some(0));
+        let mut c = KirbyCutter::new(spawn(1.0));
+        c.make_floor(Some(0), spawn(1.0).position, &|| slope);
         assert_eq!(c.model_rotate_y, core::f32::consts::FRAC_PI_2);
         assert!(c.tick(|| slope, &mut crate::wpeffect::Emit::default()));
         assert_eq!(c.anim_ticks, 1);
@@ -5973,7 +6129,7 @@ mod tests {
         assert!(!Weapon::Jolt(jolt)
             .on_shield(shield_at(100.0, 1.0), &mut crate::wpeffect::Emit::default()));
         // The Final Cutter wave cannot hop and flies on.
-        let cutter = KirbyCutter::new(spawn(WeaponKind::KirbyCutter { floor_line: None }), None);
+        let cutter = KirbyCutter::new(spawn(WeaponKind::KirbyCutter { floor_line: None }));
         assert!(Weapon::Cutter(cutter)
             .on_shield(shield_at(100.0, 1.0), &mut crate::wpeffect::Emit::default()));
     }
@@ -6189,7 +6345,7 @@ mod map_pass_tests {
         }
     }
 
-    fn cutter_on(line: u16, x: f32, y: f32) -> KirbyCutter {
+    fn cutter_on<const N: usize>(map: [MapSurface; N], line: u16, x: f32, y: f32) -> KirbyCutter {
         let spawn = WeaponSpawn {
             kind: WeaponKind::KirbyCutter {
                 floor_line: Some(line),
@@ -6200,7 +6356,9 @@ mod map_pass_tests {
             position: Vec3::new(x, y - KIRBY_CUTTER_MAP_COLL.bottom, 0.0),
             facing: 1.0,
         };
-        KirbyCutter::new(spawn, Some(line))
+        let mut c = KirbyCutter::new(spawn);
+        c.make_floor(Some(line), spawn.position, &|| map);
+        c
     }
 
     /// W1, `wpKirbyCutterProcMap` (wpkirbycutter.c:71,85): the ground pass
@@ -6212,7 +6370,7 @@ mod map_pass_tests {
             surface(MapSurfaceKind::Floor, -2000, 0, 2000, 0),
             surface(MapSurfaceKind::LeftWall, 600, 0, 600, 1000),
         ];
-        let mut c = cutter_on(0, 0.0, 0.0);
+        let mut c = cutter_on(map, 0, 0.0, 0.0);
         for _ in 0..KIRBY_CUTTER_LIFETIME - 2 {
             let mut fx = crate::wpeffect::Emit::default();
             if !c.tick(|| map, &mut fx) {
@@ -6246,7 +6404,7 @@ mod map_pass_tests {
         });
         bomb.grounded = true;
         bomb.vel_ground = 7.0;
-        bomb.coll.floor = Some(crate::ground::Standing {
+        bomb.coll.floor.set(crate::ground::Standing {
             line: 0,
             flags: 0,
             normal: Vec2::new(0.0, 1.0),
@@ -6270,7 +6428,7 @@ mod map_pass_tests {
     fn a_grounded_cutter_leaves_a_ledge_from_its_corner() {
         // Falling 200 over 1500 to the right, ending at (500, 0).
         let map = [surface(MapSurfaceKind::Floor, -1000, 200, 500, 0)];
-        let mut c = cutter_on(0, 0.0, 200.0 / 3.0);
+        let mut c = cutter_on(map, 0, 0.0, 200.0 / 3.0);
         for _ in 0..10 {
             assert!(c.tick(|| map, &mut crate::wpeffect::Emit::default()));
             if !c.grounded {
@@ -6298,16 +6456,16 @@ mod map_pass_tests {
             // Rising 1 in 5, crossing y = 0 at x = 0.
             surface(MapSurfaceKind::Floor, -100, -20, 1000, 200),
         ];
-        let mut c = cutter_on(0, -50.0, 0.0);
+        let mut c = cutter_on(map, 0, -50.0, 0.0);
         assert!(c.tick(|| map, &mut crate::wpeffect::Emit::default()));
         assert!(c.grounded);
-        assert_eq!(c.coll.floor.unwrap().line, 1);
+        assert_eq!(c.coll.floor.line.unwrap(), 1);
         assert!(c.coll.mask_curr & MASK_FLOOR != 0);
         let y = 50.0 * 0.2 - KIRBY_CUTTER_MAP_COLL.bottom;
         assert!((c.position.y - y).abs() < 1e-3, "{}", c.position.y);
         assert!(c.tick(|| map, &mut crate::wpeffect::Emit::default()));
         assert!(c.grounded);
-        assert_eq!(c.coll.floor.unwrap().line, 1);
+        assert_eq!(c.coll.floor.line.unwrap(), 1);
         assert_eq!(c.coll.mask_curr & MASK_FLOOR, 0);
         let y = 150.0 * 0.2 - KIRBY_CUTTER_MAP_COLL.bottom;
         assert!((c.position.y - y).abs() < 1e-3, "{}", c.position.y);
@@ -6377,5 +6535,241 @@ mod map_pass_tests {
             assert_eq!(ball.velocity.y > 0.0, rebounds);
             assert_eq!(fx.iter().any(|e| matches!(e, Fx::FireGrind(_))), rebounds);
         }
+    }
+}
+
+#[cfg(test)]
+mod spawn_snap_tests {
+    //! Batch 17: `wpManagerMakeWeapon`'s `WEAPON_FLAG_COLLPROJECT` pass.
+    use super::*;
+    use crate::fighter::FighterKind;
+
+    /// A fighter-sized parent standing at the origin.
+    const PARENT: SpawnParent = SpawnParent {
+        pos: Vec3::ZERO,
+        coll: BodyColl {
+            top: 200.0,
+            center: 100.0,
+            bottom: 0.0,
+            width: 60.0,
+        },
+    };
+
+    fn line(kind: MapSurfaceKind, line: u16, x1: i16, y1: i16, x2: i16, y2: i16) -> MapSurface {
+        MapSurface {
+            motion: None,
+            kind,
+            segment: Segment {
+                x1,
+                y1,
+                x2,
+                y2,
+                flags: 0,
+            },
+            topology: Some(SurfaceTopology {
+                line,
+                point: 0,
+                segments: 1,
+                vertex1: 2 * line,
+                vertex2: 2 * line + 1,
+            }),
+        }
+    }
+
+    fn request(kind: WeaponKind, x: f32, y: f32) -> WeaponSpawn {
+        WeaponSpawn {
+            kind,
+            owner_port: 0,
+            team: 0,
+            position: Vec3::new(x, y, 0.0),
+            facing: 1.0,
+            stale: crate::stale::WeaponStale::FRESH,
+        }
+    }
+
+    /// A wall 120 to the right of the parent, which its side (x 60) has not
+    /// crossed.
+    fn wall() -> [MapSurface; 1] {
+        [line(MapSurfaceKind::LeftWall, 0, 120, 0, 120, 1000)]
+    }
+
+    /// The pass sweeps from the parent's side point to the weapon's: a
+    /// fireball made past a wall the parent stands short of comes back to
+    /// touch it with its own box (width 50). The no-map path leaves it.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_fireball_made_past_a_wall_snaps_back_to_it() {
+        let map = wall();
+        let mut pool = WeaponPool::default();
+        assert!(pool.spawn_projected(
+            request(WeaponKind::MarioFireball, 150.0, 100.0),
+            Some(PARENT),
+            &|| map,
+        ));
+        assert_eq!(pool.fireballs().next().unwrap().position.x, 120.0 - 50.0);
+        let mut pool = WeaponPool::default();
+        pool.spawn(request(WeaponKind::MarioFireball, 150.0, 100.0));
+        assert_eq!(pool.fireballs().next().unwrap().position.x, 150.0);
+    }
+
+    /// The ceiling pass moves a bomb made above a ceiling the parent's
+    /// top (200) is under down to hang its own top (75) from it.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_bomb_made_above_a_ceiling_snaps_under_it() {
+        let map = [line(MapSurfaceKind::Ceiling, 0, -1000, 250, 1000, 250)];
+        let mut pool = WeaponPool::default();
+        pool.spawn_projected(
+            request(WeaponKind::SamusBomb, 0.0, 300.0),
+            Some(PARENT),
+            &|| map,
+        );
+        assert_eq!(pool.bombs().next().unwrap().position.y, 250.0 - 75.0);
+    }
+
+    /// A floor the weapon's bottom crossed from the parent's puts it on the
+    /// line (`mpProcessSetCollideFloor`) and records it; with no crossing
+    /// the floor below is only projected (`mpProcessSetCollProjectFloorID`),
+    /// and a miss clears the line id but keeps the angle.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_floor_pass_lands_a_crossing_and_projects_otherwise() {
+        let map = [line(MapSurfaceKind::Floor, 3, -1000, 0, 1000, 0)];
+        let above = SpawnParent {
+            pos: Vec3::new(0.0, 50.0, 0.0),
+            ..PARENT
+        };
+        let mut pool = WeaponPool::default();
+        pool.spawn_projected(
+            request(WeaponKind::MarioFireball, 0.0, -30.0),
+            Some(above),
+            &|| map,
+        );
+        let f = pool.fireballs().next().unwrap();
+        assert_eq!(f.position.y, 50.0, "its bottom (-50) on the line");
+        assert_eq!(f.coll.floor.line, Some(3));
+        // Clear above the floor: only the projection.
+        let mut pool = WeaponPool::default();
+        pool.spawn_projected(
+            request(WeaponKind::MarioFireball, 0.0, 400.0),
+            Some(above),
+            &|| map,
+        );
+        let f = pool.fireballs().next().unwrap();
+        assert_eq!(f.position.y, 400.0);
+        assert_eq!(f.coll.floor.line, Some(3));
+        // Past the floor's end: no line, the angle as it was.
+        let mut pool = WeaponPool::default();
+        pool.spawn_projected(
+            request(WeaponKind::MarioFireball, 1500.0, 400.0),
+            Some(above),
+            &|| map,
+        );
+        let f = pool.fireballs().next().unwrap();
+        assert_eq!(f.coll.floor.line, None);
+        assert_eq!(f.coll.floor_angle(), Vec2::new(0.0, 1.0));
+    }
+
+    /// `wpFoxBlasterMakeWeapon` makes its glow at its `pos` argument, not
+    /// at the snapped translate.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_blaster_glow_stays_at_the_unsnapped_point() {
+        let map = wall();
+        let mut pool = WeaponPool::default();
+        pool.spawn_projected(
+            request(WeaponKind::FoxBlaster, 150.0, 100.0),
+            Some(PARENT),
+            &|| map,
+        );
+        assert_eq!(pool.blasters().next().unwrap().position.x, 120.0 - 10.0);
+        let glows: Vec<_> = pool
+            .fx
+            .drain()
+            .filter_map(|e| match e {
+                Fx::FoxBlasterGlow(pos) => Some(pos),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(glows, [Vec3::new(150.0, 100.0, 0.0)]);
+    }
+
+    /// `wpYoshiStarMakeStars` makes each star at its own offset point and
+    /// each `wpManagerMakeWeapon` snaps on its own: only the star made past
+    /// the wall moves.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn each_yoshi_star_snaps_from_its_own_point() {
+        let map = [line(MapSurfaceKind::LeftWall, 0, 200, -1000, 200, 1000)];
+        let mut pool = WeaponPool::default();
+        pool.spawn_projected(
+            request(WeaponKind::YoshiStars, 0.0, 0.0),
+            Some(PARENT),
+            &|| map,
+        );
+        let width = crate::monster_weapon::weapon_attributes::YOSHI_STAR
+            .map_coll
+            .width;
+        let mut xs: Vec<f32> = pool.stars().map(|s| s.position.x).collect();
+        xs.sort_by(f32::total_cmp);
+        assert_eq!(xs, [-YOSHISTAR_OFF_X, 200.0 - width]);
+    }
+
+    /// The Charge Shot's ROM box is a point: the pass stops its translate
+    /// on the wall itself.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_charge_shot_snaps_as_a_point() {
+        let map = wall();
+        let mut pool = WeaponPool::default();
+        pool.spawn_projected(
+            request(WeaponKind::SamusChargeShot(7), 150.0, 100.0),
+            Some(PARENT),
+            &|| map,
+        );
+        assert_eq!(pool.charge_shots().next().unwrap().position.x, 120.0);
+    }
+
+    /// `wpKirbyCutterMakeWeapon` grounds the wave on Kirby's floor only if
+    /// the line lies under its unsnapped `pos`: made past a wall at the
+    /// floor's end, the wave snaps back over the floor but stays airborne.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_cutter_finds_its_floor_at_the_unsnapped_point() {
+        let map = [
+            line(MapSurfaceKind::Floor, 0, -1000, 0, 100, 0),
+            line(MapSurfaceKind::LeftWall, 1, 100, 0, 100, 1000),
+        ];
+        let kind = WeaponKind::KirbyCutter {
+            floor_line: Some(0),
+        };
+        let mut pool = WeaponPool::default();
+        pool.spawn_projected(request(kind, 130.0, 0.0), Some(PARENT), &|| map);
+        let c = pool.cutters().next().unwrap();
+        assert_eq!(c.position.x, 100.0 - KIRBY_CUTTER_MAP_COLL.width);
+        assert!(!c.grounded);
+        let mut pool = WeaponPool::default();
+        pool.spawn_projected(request(kind, 0.0, 0.0), Some(PARENT), &|| map);
+        let c = pool.cutters().next().unwrap();
+        assert!(c.grounded);
+        assert_eq!(c.coll.floor.line, Some(0));
+    }
+
+    /// Makers in `proc_update` or `proc_physics` see the fighter before
+    /// this frame's move; the `proc_accessory` makers see it after.
+    #[test]
+    fn the_parent_is_read_when_the_maker_runs() {
+        let mut f = crate::fighter::Fighter::new(FighterKind::Fox, 0, 3);
+        f.pos = Vec3::new(10.0, 20.0, 0.0);
+        f.queue_weapon_spawn(request(WeaponKind::FoxBlaster, 0.0, 0.0));
+        f.pos = Vec3::new(30.0, 40.0, 0.0);
+        let (_, parent) = f.take_weapon_spawn_with_parent().unwrap();
+        assert_eq!(parent.pos, Vec3::new(10.0, 20.0, 0.0));
+        assert_eq!(parent.coll, f.coll);
+        f.pos = Vec3::new(10.0, 20.0, 0.0);
+        f.queue_weapon_spawn(request(WeaponKind::MarioFireball, 0.0, 0.0));
+        f.pos = Vec3::new(30.0, 40.0, 0.0);
+        let (_, parent) = f.take_weapon_spawn_with_parent().unwrap();
+        assert_eq!(parent.pos, Vec3::new(30.0, 40.0, 0.0));
     }
 }

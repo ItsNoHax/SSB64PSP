@@ -135,7 +135,7 @@ pub(super) fn dropped(item: &mut Item) {
 
 /// `itNBumperAttachedSetModelPitch`: the model lies along the floor.
 fn set_model_pitch(item: &mut Item) {
-    if let Some(f) = item.floor {
+    if let Some(f) = item.floor.standing() {
         item.attach_line = Some(f.line);
         item.rotate_z =
             ssb_engine::math::sy_arc_tan2(f.normal.y, f.normal.x) - core::f32::consts::FRAC_PI_2;

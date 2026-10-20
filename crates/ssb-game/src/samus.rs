@@ -187,6 +187,11 @@ pub fn on_damage(f: &mut Fighter) {
     }
 }
 
+/// The released shot's spawn: [`charge_shot_position`] from the pose the
+/// frame's play left, before the physics move.
+pub const CHARGE_SHOT_POSE: crate::spawn_pose::SpawnPose =
+    crate::spawn_pose::SpawnPose::update(CHARGE_JOINT, Vec3::new(CHARGE_OFF_X, 0.0, 0.0));
+
 /// `ftSamusSpecialNGetChargeShotPosition`: joint 16 plus 180 along its X.
 pub fn charge_shot_position(f: &Fighter) -> Vec3 {
     f.joint_world(CHARGE_JOINT, Vec3::new(CHARGE_OFF_X, 0.0, 0.0))
@@ -206,17 +211,21 @@ fn fire_charge_shot(f: &mut Fighter) {
     if f.samus.charge_shot {
         crate::fighter_sound::stop_loop_sfx(f);
     }
-    f.weapon_spawn = Some(WeaponSpawn {
-        kind: WeaponKind::SamusChargeShot(level),
-        owner_port: f.port,
-        team: f.team,
-        stale: crate::stale::WeaponStale::of(f),
-        position: {
-            f.mark_joint_query(CHARGE_JOINT);
-            charge_shot_position(f)
+    // `ftSamusSpecialNGetChargeShotPosition` in `proc_update`: joint 16 as
+    // this frame's play posed it ([`CHARGE_SHOT_POSE`]).
+    f.mark_joint_query(CHARGE_JOINT);
+    let position = charge_shot_position(f);
+    f.queue_weapon_spawn_posed(
+        WeaponSpawn {
+            kind: WeaponKind::SamusChargeShot(level),
+            owner_port: f.port,
+            team: f.team,
+            stale: crate::stale::WeaponStale::of(f),
+            position,
+            facing: f.facing.sign(),
         },
-        facing: f.facing.sign(),
-    });
+        CHARGE_SHOT_POSE,
+    );
     f.samus.charge_shot = false;
     let recoil_x = f32::from(level) + 1.0;
     if f.situation == Situation::Air {
@@ -304,7 +313,7 @@ fn make_bomb(f: &mut Fighter) {
         return;
     }
     f.samus.bomb_spawned = true;
-    f.weapon_spawn = Some(WeaponSpawn {
+    f.queue_weapon_spawn(WeaponSpawn {
         kind: WeaponKind::SamusBomb,
         owner_port: f.port,
         team: f.team,

@@ -19,7 +19,7 @@ fn floor() -> MapSurface {
 }
 fn grounded(kind: FighterKind) -> Fighter {
     let mut f = Fighter::new(kind, 0, 3);
-    f.floor = Some(Standing {
+    f.floor = Some(crate::ground::Standing {
         line: 0,
         normal: Vec2::new(0.0, 1.0),
         flags: 0,

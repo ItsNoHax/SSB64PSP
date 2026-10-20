@@ -578,3 +578,31 @@ fn a_dash_forward_smash_uses_the_held_item() {
         assert_eq!(f.status.status, AnyStatus::Common(Status::AttackS4));
     }
 }
+/// `ftCommonStarRodSwingProcUpdate` makes the star from the itemlight
+/// joint after the frame's play, before the physics move: the host's
+/// update hook re-places it (`spawn_pose`).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_star_rod_star_leaves_the_hand_from_this_frames_play() {
+    use crate::fighter::JointTransform;
+    let (mut f, _, _) = held(Kind::StarRod);
+    assert!(f.items.held_multi != 0);
+    let joint = usize::from(crate::item_throw::itemlight_joint(f.kind) as u8);
+    let at = |origin| JointTransform {
+        axes: [
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ],
+        origin,
+    };
+    f.joint_transforms[joint] = Some(at(Vec3::new(1.0, 2.0, 3.0)));
+    f.status.status = crate::status::AnyStatus::Common(Status::StarRodSwing1);
+    f.motion_script.flags[0] = 1;
+    assert!(item_use::update(&mut f));
+    assert!(crate::spawn_pose::update_pending(&f));
+    f.joint_transforms[joint] = Some(at(Vec3::new(100.0, 300.0, 50.0)));
+    crate::spawn_pose::place_update(&mut f);
+    let y = 300.0 + 200.0 / f.attributes.size;
+    assert_eq!(f.weapon_spawn.unwrap().position, Vec3::new(100.0, y, 50.0));
+}

@@ -700,6 +700,82 @@ where
     .pos
 }
 
+/// What [`run_default_collision_project`] left: the corrected `translate`
+/// and the `floor_line_id`, `floor_flags` and `floor_angle` it wrote.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DefaultColl {
+    pub pos: Vec3,
+    /// The floor the bottom crossed (`mpProcessRunFloorCollisionAdjNewNULL`)
+    /// or, failing that, the one projected under it
+    /// (`mpProcessSetCollProjectFloorID`); `None` for line id -1.
+    pub floor: Option<Standing>,
+}
+
+/// `mpCommonRunDefaultCollision` (mpcommon.c:904) as the item and weapon
+/// makers reach it (`mpCommonRunItemCollisionDefault`,
+/// `mpCommonRunWeaponCollisionDefault`): one left wall, right wall and
+/// ceiling pass from `from` (`pos_prev`, probed with the `previous` diamond
+/// `mpCommonCopyCollDataStats` points at) to `to` (probed with `coll`), no
+/// substeps; a floor the bottom crossed puts the body on its line
+/// (`mpProcessSetCollideFloor` and the floor edge adjust), else the floor
+/// below is only projected (`mpProcessSetCollProjectFloorID`), which moves
+/// nothing.
+pub fn run_default_collision_project<I, F>(
+    coll: &BodyColl,
+    previous: &BodyColl,
+    from: Vec3,
+    to: Vec3,
+    surfaces: F,
+) -> DefaultColl
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let prev = from;
+    let mut pos = to;
+    let mut current = Contacts::default();
+    let lwalls = walls(&surfaces, *coll, *previous, prev, pos, Kind::LeftWall, None);
+    if let Some(hit) = correct_wall(&surfaces, *coll, &mut pos, Kind::LeftWall, lwalls) {
+        current.left_wall = Some(hit);
+    }
+    let rwalls = walls(
+        &surfaces,
+        *coll,
+        *previous,
+        prev,
+        pos,
+        Kind::RightWall,
+        None,
+    );
+    if let Some(hit) = correct_wall(&surfaces, *coll, &mut pos, Kind::RightWall, rwalls) {
+        current.right_wall = Some(hit);
+    }
+    ceiling_step(&surfaces, *coll, *previous, prev, &mut pos, &current);
+    let floor = sweep(
+        &surfaces,
+        Kind::Floor,
+        point(prev, Vec2::new(0.0, previous.bottom)),
+        point(pos, Vec2::new(0.0, coll.bottom)),
+    )
+    .map(|(h, _)| h)
+    .or_else(|| adjacent_horizontal(&surfaces, &current, Kind::Floor, pos, coll.bottom));
+    if let Some(hit) = floor {
+        collide_floor(&surfaces, *coll, &mut pos, hit);
+        return DefaultColl {
+            pos,
+            floor: Some(Standing {
+                line: hit.line,
+                flags: hit.flags,
+                normal: hit.normal,
+            }),
+        };
+    }
+    DefaultColl {
+        pos,
+        floor: project_floor(&surfaces, Vec3::new(pos.x, pos.y + coll.bottom, pos.z)),
+    }
+}
+
 fn move_air_inner<I, F>(
     coll: &BodyColl,
     previous: &BodyColl,
@@ -2197,6 +2273,40 @@ where
         }
     }
     found.then_some(best)
+}
+
+/// `mpCollisionCheckProjectFloor`'s line id, flags and angle: the nearest
+/// floor at or below `pos` (see [`project_floor_line`]).
+pub fn project_floor<I, F>(surfaces: &F, pos: Vec3) -> Option<Standing>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    // A flag beside written values, as in [`edge`].
+    let mut found = false;
+    let mut best = (Standing::NONE, 0.0f32);
+    for (i, s) in surfaces().into_iter().enumerate() {
+        if s.kind != Kind::Floor {
+            continue;
+        }
+        let o = s.motion.map_or(Vec2::ZERO, |m| m.offset);
+        let local = Vec2::new(pos.x - o.x, pos.y - o.y);
+        let Some(hit) = collision::project_floor([(line_id(i, s), s.segment)], local) else {
+            continue;
+        };
+        if !found || hit.dist.abs() < best.1.abs() {
+            found = true;
+            best = (
+                Standing {
+                    line: hit.line,
+                    flags: hit.flags,
+                    normal: hit.normal,
+                },
+                hit.dist,
+            );
+        }
+    }
+    found.then_some(best.0)
 }
 
 /// `mpCollisionCheckProjectRWall`'s `ga_dist`: the signed X distance from

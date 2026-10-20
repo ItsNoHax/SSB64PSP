@@ -324,7 +324,7 @@ fn make_boomerang(f: &mut Fighter) {
         return;
     }
     f.link.flag0_done = true;
-    f.weapon_spawn = Some(WeaponSpawn {
+    f.queue_weapon_spawn(WeaponSpawn {
         kind: WeaponKind::LinkBoomerang {
             is_smash: f.link.is_smash,
             stick_x: f.input.stick_x,

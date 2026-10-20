@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed: weapon map pass and item floor bit (RE-555). Weapons use the decomp `mask_curr` pass and coll-end substeps; Thunder Jolt rewritten; approximation deleted. Five goldens rebaselined (not a D-051 change).
-- Open: stage-clear zoom N64 trace (RE-554); weapon spawn snap, jolt damage, item floor Option (`PLAN.md`). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
+- Landed: weapon spawn snap, spawn-pose phases (Update vs Accessory per maker), Thunder Jolt attributes, item/weapon `FloorState` (RE-555). Nine goldens rebaselined (not a D-051 change).
+- Open: stage-clear zoom N64 trace (RE-554); `proc_physics`-set status with a pending accessory maker (RE-555 deviation, no current move). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: weapon map pass (RE-555).
+Baseline: spawn snap and spawn pose (RE-555).
 
 | Check | Result |
 |---|---|

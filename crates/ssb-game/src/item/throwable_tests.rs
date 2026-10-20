@@ -31,7 +31,7 @@ fn short_floor() -> MapSurface {
 fn fighter(kind: FighterKind, port: u8, x: f32) -> Fighter {
     let mut f = Fighter::new(kind, port, 3);
     f.pos = Vec3::new(x, 0.0, 0.0);
-    f.floor = Some(Standing {
+    f.floor = Some(crate::ground::Standing {
         line: 0,
         normal: Vec2::new(0.0, 1.0),
         flags: 0,
@@ -770,7 +770,7 @@ fn a_standing_item_raises_no_floor_bit() {
     bob.mask_curr = 0;
     assert!(map::test_lr_wall_check_floor(bob, &|| [floor()]));
     assert_eq!(bob.mask_curr & crate::map::MASK_FLOOR, 0);
-    assert_eq!(bob.floor.unwrap().line, 0);
+    assert_eq!(bob.floor.line.unwrap(), 0);
 }
 
 /// A grounded item swept onto another floor line raises `MAP_FLAG_FLOOR`
@@ -798,7 +798,7 @@ fn a_grounded_item_onto_a_new_floor_line_raises_the_floor_bit() {
     bob.mask_curr = 0;
     assert!(map::test_lr_wall_check_floor(bob, &|| [floor(), rise]));
     assert_ne!(bob.mask_curr & crate::map::MASK_FLOOR, 0);
-    assert_eq!(bob.floor.unwrap().line, 1);
+    assert_eq!(bob.floor.line.unwrap(), 1);
 }
 
 /// The airborne pass still raises `MAP_FLAG_FLOOR` on a landing
@@ -808,7 +808,7 @@ fn an_airborne_item_landing_raises_the_floor_bit() {
     let mut pool = ItemPool::default();
     let slot = resting(&mut pool, 15, 0.0);
     let bob = pool.get_mut(slot).unwrap();
-    bob.floor = None;
+    bob.floor.clear_line();
     let y = -bob.coll.bottom;
     bob.pos_prev = Vec3::new(0.0, y + 40.0, 0.0);
     bob.pos = Vec3::new(0.0, y - 40.0, 0.0);
@@ -819,7 +819,7 @@ fn an_airborne_item_landing_raises_the_floor_bit() {
         &|| [floor()]
     ));
     assert_ne!(bob.mask_curr & crate::map::MASK_FLOOR, 0);
-    assert_eq!(bob.floor.unwrap().line, 0);
+    assert_eq!(bob.floor.line.unwrap(), 0);
 }
 
 /// `itMapTestAllCheckCollEnd` (B3): a 600 fall runs as three 200 substeps
@@ -830,7 +830,7 @@ fn coll_end_stops_an_item_at_the_substep_that_met_the_floor() {
     let mut pool = ItemPool::default();
     let slot = resting(&mut pool, 15, 0.0);
     let bob = pool.get_mut(slot).unwrap();
-    bob.floor = None;
+    bob.floor.clear_line();
     let y = -bob.coll.bottom;
     bob.pos_prev = Vec3::new(0.0, y + 300.0, 0.0);
     bob.pos = Vec3::new(0.0, y - 300.0, 0.0);
@@ -838,7 +838,7 @@ fn coll_end_stops_an_item_at_the_substep_that_met_the_floor() {
     assert!(map::test_all_check_coll_end(bob, &|| [floor()]));
     assert_eq!(bob.pos.y, y - 100.0);
     assert_eq!(bob.mask_curr, crate::map::MASK_FLOOR);
-    assert_eq!(bob.floor.unwrap().line, 0);
+    assert_eq!(bob.floor.line.unwrap(), 0);
 }
 
 /// `itBombHeiCommonCheckMakeDustEffect`: the forced callers (Walk and

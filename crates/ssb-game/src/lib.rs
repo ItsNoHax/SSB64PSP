@@ -127,6 +127,7 @@ mod setter_tests;
 pub mod shadow;
 pub mod slope_contour;
 pub mod sound;
+pub mod spawn_pose;
 mod special_fighters;
 pub mod spgame;
 pub mod stage;

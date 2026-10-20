@@ -133,7 +133,7 @@ pub(super) fn update(item: &mut Item, status: Status) -> bool {
         }
         // `itTaruBombRollProcUpdate`: unlike the Barrel's roll, no clock.
         Status::Roll => {
-            let n = item.floor.map_or(Vec2::new(0.0, 1.0), |f| f.normal);
+            let n = item.floor.normal();
             item.vel_air.x += -(ssb_engine::math::sy_arc_tan2(n.y, n.x)
                 - core::f32::consts::FRAC_PI_2)
                 * MUL_VEL_X;
@@ -188,7 +188,7 @@ where
                 } else if item.vel_air.y < 30.0 {
                     roll(item);
                 } else {
-                    let n = item.floor.map_or(Vec2::new(0.0, 1.0), |f| f.normal);
+                    let n = item.floor.normal();
                     map::reflect(&mut item.vel_air, n);
                     item.vel_air.y *= 0.2;
                     item.set_spin_vel_lr();

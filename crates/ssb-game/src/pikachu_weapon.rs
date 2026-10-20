@@ -8,11 +8,14 @@ use ssb_engine::math::{
 
 // `llPikachuSpecial1ThunderJolt{Air,Ground}WeaponAttributes` and
 // `llPikachuMainThunder{Head,Trail}WeaponAttributes`, generated from the ROM
-// at build time. The attacks keep no offset and the ground jolt the air
-// jolt's map collision, as the port did before (the ROM's ground record has
-// an offset and its own box).
+// at build time. `wpManagerMakeWeapon` copies each record's damage and map
+// collision into the weapon it makes; the ground record's offset is applied
+// by [`ThunderJolt::hit`].
 const JOLT_COLL: BodyColl =
     crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_AIR.map_coll;
+/// The ground weapon's own `coll_data.map_coll` (its ROM record's box).
+const JOLT_GROUND_COLL: BodyColl =
+    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_GROUND.map_coll;
 const HEAD_COLL: BodyColl = crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_HEAD.map_coll;
 const JOLT_AIR: Hitbox =
     crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_AIR.hitbox();
@@ -82,6 +85,12 @@ const JOLT_GRAVITY: f32 = 0.0;
 const JOLT_TVEL: f32 = 50.0;
 const DEG_180: f32 = core::f32::consts::PI;
 impl ThunderJolt {
+    /// The air weapon's `WEAPON_FLAG_COLLPROJECT` target: its own box, its
+    /// translate and its `coll_data` floor.
+    pub(super) fn collproject(&mut self) -> (BodyColl, &mut Vec3, &mut FloorState) {
+        (JOLT_COLL, &mut self.position, &mut self.coll.floor)
+    }
+
     pub(super) fn new(s: WeaponSpawn) -> Self {
         let (sin, cos) = sin_cos(-core::f32::consts::FRAC_PI_4);
         Self {
@@ -89,7 +98,7 @@ impl ThunderJolt {
             position: s.position,
             velocity: Vec3::new(cos * 40.0 * s.facing, sin * 40.0, 0.0),
             lifetime: 100,
-            damage: 10,
+            damage: JOLT_AIR.damage,
             line_type: None,
             coll: WeaponColl::default(),
             floor_line: None,
@@ -181,7 +190,7 @@ impl ThunderJolt {
         self.set_line(s.kind, s.topology.map_or(0, |t| t.line), lr);
         self.rotate = surface_normal(s.kind, s.segment);
         self.rotate_z = sy_arc_tan2(-self.rotate.x, self.rotate.y);
-        self.damage = 7;
+        self.damage = JOLT_GROUND.damage;
     }
     /// `wpPikachuThunderJoltAirProcUpdate`/`...GroundProcUpdate` and their
     /// `proc_map`. Every end makes a small dust cloud where the jolt is.
@@ -313,10 +322,10 @@ impl ThunderJolt {
     {
         let air_vel_x = self.velocity.x;
         self.line_type = Some(kind);
-        self.floor_line = self.coll.floor.map(|f| f.line);
+        self.floor_line = self.coll.floor.line;
         self.lwall_line = self.coll.lwall_line;
         self.rwall_line = self.coll.rwall_line;
-        self.damage = 7;
+        self.damage = JOLT_GROUND.damage;
         // `wpManagerMakeWeapon` zeroes `vel_air`, adds the ground animation
         // and (`WEAPON_FLAG_COLLPROJECT`) sets `pos_prev` to the aerial
         // weapon's `translate`; `lr` stays the aerial weapon's until the
@@ -327,6 +336,20 @@ impl ThunderJolt {
         self.anim_frame = 0.0;
         self.anim_fresh = true;
         self.pos_prev = self.position;
+        // The `WEAPON_FLAG_COLLPROJECT | WEAPON_FLAG_PARENT_WEAPON` pass: a
+        // zero-length sweep from the aerial translate, probed with the
+        // aerial box on the `pos_prev` side and the ground weapon's own
+        // (taller, bottom-anchored) box on the translate side. Its floor and
+        // wall ids are overwritten by the copies above, made after it in
+        // the original, so only the translate survives.
+        self.position = crate::map::run_default_collision_project(
+            &JOLT_GROUND_COLL,
+            &JOLT_COLL,
+            self.pos_prev,
+            self.position,
+            surfaces,
+        )
+        .pos;
         // `wpPikachuThunderJoltGroundProcMap(new_gobj)`: its result is
         // dropped, so an end only leaves its dust.
         if !self.ground_map(&surfaces) {
@@ -666,6 +689,46 @@ mod tests {
                 vertex2: b.2,
             }),
         }
+    }
+    /// `wpPikachuThunderJoltGroundMakeWeapon`'s `WEAPON_FLAG_COLLPROJECT`
+    /// pass (wppikachuthunderjolt.c:694) is a zero-length sweep at the
+    /// aerial translate, but its translate side probes with the ground
+    /// weapon's own box (`top 200`, `center 100`, `bottom 0`): at a floor's
+    /// corner with a wall, the taller box's side moves the new weapon out
+    /// of the wall before its first `proc_map`.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn ground_jolt_make_snaps_its_own_box_out_of_a_wall_corner() {
+        let made_at = |map: [MapSurface; 2]| {
+            // The aerial weapon resting on the floor: its bottom (-50) on y 0.
+            let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 0.0, 50.0));
+            let (_, floor) = crate::map::floor_point(|| map, 0, 0.0).expect("the floor");
+            j.coll.floor.set(floor);
+            let mut fx = crate::wpeffect::Emit::default();
+            j.make_ground(MapSurfaceKind::Floor, || map, &mut fx);
+            let made = fx.iter().find_map(|e| match e {
+                crate::wpeffect::WeaponEffect::ThunderJolt { pos, .. } => Some(pos),
+                _ => None,
+            });
+            made.expect("the ground make's burst")
+        };
+        // A wall rising straight from the floor's end 40 to the right: both
+        // boxes' right points (x + 50) are past it.
+        let upright = [
+            surface(MapSurfaceKind::Floor, 0, (-1000, 0, 0), (40, 0, 1)),
+            surface(MapSurfaceKind::LeftWall, 1, (40, 0, 1), (40, 1000, 2)),
+        ];
+        assert_eq!(made_at(upright), Vec3::new(-10.0, 0.0, 0.0));
+        // A wall leaning over the floor: x 53.3 at the aerial box's side
+        // height (y 50), x 40 at the ground box's (y 150). Only the ground
+        // box reaches it.
+        let leaning = [
+            surface(MapSurfaceKind::Floor, 0, (-1000, 0, 0), (60, 0, 1)),
+            surface(MapSurfaceKind::LeftWall, 1, (60, 0, 1), (20, 300, 2)),
+        ];
+        let made = made_at(leaning);
+        assert!((made.x + 10.0).abs() < 1e-3, "{made:?}");
+        assert_eq!(made.y, 0.0);
     }
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]

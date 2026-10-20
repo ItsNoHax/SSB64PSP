@@ -78,7 +78,7 @@ mod tests {
     fn targets_are_grounded_non_pickup_items_with_no_attack() {
         let mut item = make(Vec3::new(50.0, 100.0, 0.0), 4);
         assert_eq!(item.ga, Ga::Ground);
-        assert!(item.floor.is_none());
+        assert!(item.floor.line.is_none());
         assert_eq!(item.attack.state, AttackState::Off);
         assert_eq!(item.damage_coll.hitstatus, HitStatus::Normal);
         assert!(!item.is_allow_pickup);

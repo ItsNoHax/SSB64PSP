@@ -1,6 +1,7 @@
 //! `ftcommonitemswing.c`, `ftcommonitemshoot.c` and `fthammer.c`.
 use crate::fighter::Fighter;
 use crate::item::{equipment::Kind, ItemKind, ItemRequest};
+use crate::spawn_pose::{SpawnPhase, SpawnPose};
 use crate::status::{self, AnyStatus, JumpInput, Preserve, Status, StatusTiming};
 use ssb_engine::{input::N64Buttons, math::Vec3};
 
@@ -178,8 +179,12 @@ fn fx(
         },
     );
 }
+/// The shot leaves the itemlight joint: from `ftCommonStarRodSwingProcUpdate`
+/// ([`SpawnPhase::Update`]) or the guns' and the flower's `proc_accessory`
+/// ([`SpawnPhase::Accessory`], called from [`accessory`] itself).
 fn shoot(
     f: &mut Fighter,
+    phase: SpawnPhase,
     kind: crate::monster_weapon::ShotKind,
     offset: Vec3,
     smash: bool,
@@ -187,19 +192,28 @@ fn shoot(
     cost: u16,
 ) {
     let joint = crate::item_throw::itemlight_joint(f.kind) as u8;
-    let pos = f.joint_query(joint, offset * (1.0 / f.attributes.size));
-    f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
-        kind: crate::weapon::WeaponKind::Equipment {
-            kind,
-            smash,
-            angle_index: index,
+    // `gmCollisionGetFighterPartsWorldPosition` on the itemlight joint,
+    // the offset over `attr->size`.
+    let local = offset * (1.0 / f.attributes.size);
+    let pose = match phase {
+        SpawnPhase::Update => SpawnPose::update(joint, local),
+        SpawnPhase::Accessory | SpawnPhase::Switch => SpawnPose::accessory(joint, local),
+    };
+    f.queue_weapon_spawn_posed(
+        crate::weapon::WeaponSpawn {
+            kind: crate::weapon::WeaponKind::Equipment {
+                kind,
+                smash,
+                angle_index: index,
+            },
+            owner_port: f.port,
+            team: f.team,
+            position: f.pos,
+            facing: f.facing.sign(),
+            stale: crate::stale::WeaponStale::of(f),
         },
-        owner_port: f.port,
-        team: f.team,
-        position: pos,
-        facing: f.facing.sign(),
-        stale: crate::stale::WeaponStale::of(f),
-    });
+        pose,
+    );
     f.items.request(ItemRequest::UseAmmo(cost));
     f.items.held_multi -= cost;
 }
@@ -257,6 +271,7 @@ pub fn update(f: &mut Fighter) -> bool {
                 if f.items.held_multi != 0 {
                     shoot(
                         f,
+                        SpawnPhase::Update,
                         crate::monster_weapon::ShotKind::StarRod,
                         Vec3::new(0.0, 200.0, 0.0),
                         flag != 1,
@@ -286,27 +301,17 @@ pub fn update(f: &mut Fighter) -> bool {
 }
 /// The source's `proc_accessory`, after physics/map and forwarded effects.
 pub fn accessory(f: &mut Fighter) {
-    // `ftMarioSpecialNProcAccessory`: the Fireball leaves joint 16 as this
-    // frame's play and map step left it (RE-472).
-    if matches!(
-        f.status.status,
-        AnyStatus::Mario(
-            crate::status::MarioStatus::SpecialN | crate::status::MarioStatus::SpecialAirN
-        )
-    ) {
-        if f.weapon_spawn.is_some() && f.joint_transforms[16].is_some() {
-            // `gmCollisionGetFighterPartsWorldPosition` (RE-509).
-            f.mark_joint_query(16);
-        }
-        if let (Some(spawn), Some(joint)) = (f.weapon_spawn.as_mut(), f.joint_transforms[16]) {
-            if matches!(
-                spawn.kind,
-                crate::weapon::WeaponKind::MarioFireball | crate::weapon::WeaponKind::LuigiFireball
-            ) {
-                spawn.position = joint.origin;
-            }
-        }
-    }
+    status_accessory(f);
+    // The other `proc_accessory` makers (Mario's, Pikachu's and Kirby's
+    // Fireballs and Thunder Jolts, the PK Fires), queued by the status
+    // update, and the shots just queued, from the same samples.
+    crate::spawn_pose::place_accessory(f);
+}
+
+/// The Ray Gun's and the Fire Flower's `proc_accessory`; their shots are
+/// placed by [`accessory`], or, run from a status set
+/// (`ftMainSetStatus`), by [`crate::spawn_pose::on_set`].
+pub fn status_accessory(f: &mut Fighter) {
     if f.is_in_hitlag() {
         return;
     }
@@ -318,6 +323,7 @@ pub fn accessory(f: &mut Fighter) {
                 if f.items.held_multi != 0 {
                     shoot(
                         f,
+                        SpawnPhase::Accessory,
                         crate::monster_weapon::ShotKind::RayGun,
                         Vec3::new(0.0, 60.0, 180.0),
                         false,
@@ -411,6 +417,7 @@ fn flower(f: &mut Fighter) {
                 let i = f.item_use.flame_index;
                 shoot(
                     f,
+                    SpawnPhase::Accessory,
                     crate::monster_weapon::ShotKind::FireFlower,
                     Vec3::new(60.0, 100.0, 0.0),
                     false,

@@ -437,6 +437,18 @@ pub struct Fighter {
     /// One weapon creation requested by this fighter's current status. The
     /// match-owned weapon pool consumes it after fighter callbacks finish.
     pub weapon_spawn: Option<crate::weapon::WeaponSpawn>,
+    /// The parent `coll_data` (`p_translate`, `map_coll`) at the moment
+    /// [`Self::queue_weapon_spawn`] queued [`Self::weapon_spawn`]: the
+    /// fighter's own state when the original's maker runs, before this
+    /// frame's physics moves it (`WEAPON_FLAG_COLLPROJECT`).
+    pub weapon_spawn_parent: crate::weapon::SpawnParent,
+    /// How the host re-places [`Self::weapon_spawn`] from the pose its
+    /// maker's process reads ([`crate::spawn_pose`]); `None` once placed.
+    pub weapon_spawn_pose: Option<crate::spawn_pose::SpawnPose>,
+    /// Inside `ftMainProcPhysicsMap` up to `proc_slope`: a status set here
+    /// runs the old `proc_accessory` after the map step's move
+    /// ([`crate::spawn_pose::on_set`]).
+    pub physics_pass: bool,
     /// Current posed joints, indexed as `FTStruct::joints` (four runtime
     /// joints precede the packed model nodes).
     pub joint_transforms: [Option<JointTransform>; FIGHTER_JOINTS],
@@ -667,6 +679,9 @@ impl Fighter {
             handicap: crate::stale::HANDICAP_DEFAULT,
             costume: 0,
             weapon_spawn: None,
+            weapon_spawn_parent: crate::weapon::SpawnParent::default(),
+            weapon_spawn_pose: None,
+            physics_pass: false,
             joint_transforms: [None; FIGHTER_JOINTS],
             queried_joints: core::cell::Cell::new(0),
             world_joints: core::cell::Cell::new(0),
@@ -1185,7 +1200,62 @@ impl Fighter {
     /// Takes the one weapon creation emitted by this fighter's motion script.
     /// The request is one-shot until a later animation event queues another.
     pub fn take_weapon_spawn(&mut self) -> Option<crate::weapon::WeaponSpawn> {
+        self.weapon_spawn_pose = None;
         self.weapon_spawn.take()
+    }
+
+    /// Queues `spawn` as [`Self::weapon_spawn`], noting the fighter's
+    /// `coll_data` as its maker sees it.
+    pub fn queue_weapon_spawn(&mut self, spawn: crate::weapon::WeaponSpawn) {
+        self.weapon_spawn = Some(spawn);
+        self.weapon_spawn_pose = None;
+        self.weapon_spawn_parent = crate::weapon::SpawnParent {
+            pos: self.pos,
+            coll: self.coll,
+        };
+    }
+
+    /// [`Self::queue_weapon_spawn`] for a maker that reads a joint: `spawn`
+    /// is placed from `pose` (the host re-places it from the pose the
+    /// maker's process reads, [`crate::spawn_pose`]), falling back to the
+    /// queued position when the joint has no sample. An `Update` maker
+    /// queries now (its marks are this process's); an `Accessory` one is
+    /// queued ahead of its process and queries there.
+    pub fn queue_weapon_spawn_posed(
+        &mut self,
+        mut spawn: crate::weapon::WeaponSpawn,
+        mut pose: crate::spawn_pose::SpawnPose,
+    ) {
+        pose.entry = self.status.entry;
+        if pose.phase == crate::spawn_pose::SpawnPhase::Update {
+            if let Some(p) = pose.point(self, spawn.position, true) {
+                spawn.position = p;
+            }
+        }
+        self.queue_weapon_spawn(spawn);
+        self.weapon_spawn_pose = Some(pose);
+    }
+
+    /// [`Self::take_weapon_spawn`] with the parent `coll_data` its
+    /// `mpCommonRunWeaponCollisionDefault` starts from: the one noted at the
+    /// queue for a maker in `proc_update` or `proc_physics`, the current
+    /// one for a maker in `proc_accessory`, which runs after this frame's
+    /// physics and map ([`crate::weapon::WeaponKind::made_in_accessory`]).
+    /// Call it after the fighter's physics and map.
+    pub fn take_weapon_spawn_with_parent(
+        &mut self,
+    ) -> Option<(crate::weapon::WeaponSpawn, crate::weapon::SpawnParent)> {
+        let spawn = self.weapon_spawn.take()?;
+        self.weapon_spawn_pose = None;
+        let parent = if spawn.kind.made_in_accessory() {
+            crate::weapon::SpawnParent {
+                pos: self.pos,
+                coll: self.coll,
+            }
+        } else {
+            self.weapon_spawn_parent
+        };
+        Some((spawn, parent))
     }
 
     /// Advances one tick against a stage.
@@ -1324,6 +1394,7 @@ impl Fighter {
     /// `ftParamsUpdateFighterPartsTransformAll(TopN)`, then the motion
     /// scripts' effects.
     pub fn finish_physics_map(&mut self) {
+        self.physics_pass = false;
         self.clear_joint_query(0);
         crate::motion::end_physics(self);
     }
@@ -1510,6 +1581,7 @@ impl Fighter {
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
+        self.physics_pass = true;
         crate::appear::tick_effect_clock(self);
         let y_prev = self.pos.y;
         // `ftCommonThrownReleaseFighterLoseGrip`'s
@@ -1551,6 +1623,8 @@ impl Fighter {
         if self.status.status == crate::status::Status::YoshiEgg {
             crate::capture_yoshi::physics(self);
         }
+        // `ftYoshiSpecial{,Air}HiProcPhysics`' own half.
+        crate::yoshi::update_egg_vectors(self);
 
         // A held fighter's position is its catcher's hand, not the result
         // of its own velocity (`ftCommonCapturePulledProcPhysics`).

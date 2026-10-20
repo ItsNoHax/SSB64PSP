@@ -94,6 +94,8 @@ fn pk_fire_accessory_reads_situation_at_frame20_and_never_repeats() {
     assert!(on_ground_lost(&mut f));
     assert_eq!(f.status.anim_frame, 19.0);
     steps(&mut f, 1);
+    // `ftNessSpecialNProcAccessory` makes it after the map step.
+    crate::item_use::accessory(&mut f);
     let spawn = f.take_weapon_spawn().unwrap();
     assert_eq!(spawn.kind, WeaponKind::NessPKFire { grounded: false });
     close(spawn.position.x, f.pos.x - 100.0);
@@ -116,6 +118,7 @@ fn copied_pk_fire_uses_kirbys_offsets_slots_and_air_length() {
     assert_eq!(f.status.status.anim_slot(), 445);
     assert_eq!(f.status.timing.anim_length, Some(60.0));
     steps(&mut f, 1);
+    crate::item_use::accessory(&mut f);
     let s = f.take_weapon_spawn().unwrap();
     close(s.position.x, f.pos.x + 240.0);
     close(s.position.y, f.pos.y + 190.0);

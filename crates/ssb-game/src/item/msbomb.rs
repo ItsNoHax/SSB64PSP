@@ -114,7 +114,7 @@ fn update_surface(item: &mut Item) {
             item.attach_line = Some(item.ceil_line);
         }
         if mask & MASK_FLOOR != 0 {
-            if let Some(f) = item.floor {
+            if let Some(f) = item.floor.standing() {
                 angle = Some(f.normal);
                 item.attach_line = Some(f.line);
             }

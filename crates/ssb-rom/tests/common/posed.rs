@@ -73,12 +73,41 @@ impl Posed {
     /// The runtime's priority-5 half after `tick_interrupt`: a throw's
     /// release reads the hand this frame's play posed.
     pub fn after_interrupt(&mut self, pack: &ssb_rom::pack::Pack<'_>) {
+        self.place_played_spawn(pack);
         if ssb_game::grab::release_pending(&self.fighter) && !self.fighter.is_in_hitlag() {
             self.tick_animation(pack);
             self.anim_ticked_early = true;
             self.sample_joints(pack);
             self.sample_anchor(true);
         }
+    }
+
+    /// `place_played_spawn`: a `proc_update` maker whose status a set
+    /// replaced read that status's play this frame; play it aside.
+    fn place_played_spawn(&mut self, pack: &ssb_rom::pack::Pack<'_>) {
+        if self.fighter.is_in_hitlag() {
+            return;
+        }
+        let Some(played) = ssb_game::spawn_pose::played_status(&self.fighter) else {
+            return;
+        };
+        let skeleton = self.skeleton.clone();
+        let started = self.started;
+        let restarts = self.clip_restarts_seen;
+        let root = self.root_before;
+        let yrotn = self.shield_yrotn;
+        let joints = self.fighter.joint_transforms;
+        let current = std::mem::replace(&mut self.fighter.status, played);
+        self.tick_animation(pack);
+        self.sample_joints(pack);
+        self.fighter.status = current;
+        ssb_game::spawn_pose::place_played(&mut self.fighter);
+        self.skeleton = skeleton;
+        self.started = started;
+        self.clip_restarts_seen = restarts;
+        self.root_before = root;
+        self.shield_yrotn = yrotn;
+        self.fighter.joint_transforms = joints;
     }
 
     /// `tick_fighter_physics`.
@@ -93,10 +122,23 @@ impl Posed {
             }
             let rotate_z = self.fighter.root_motion.rotate_z;
             self.set_root_motion(Some(rotate_z));
+            // A `proc_update` maker reads this frame's play, before the
+            // physics step (`spawn_pose`); so does a `proc_physics` one.
+            if ssb_game::spawn_pose::sample_before_physics(&self.fighter) {
+                self.sample_joints(pack);
+                ssb_game::spawn_pose::place_update(&mut self.fighter);
+            }
         } else {
             self.root_before = self.skeleton.pose(0).copied();
         }
-        self.fighter.tick_physics_map_before_accessory(map);
+        self.fighter.tick_physics_map_before_slope(map);
+        // The old status's `proc_accessory` ran in the map step's set.
+        if ssb_game::spawn_pose::switch_pending(&self.fighter) {
+            self.sample_joints(pack);
+            ssb_game::spawn_pose::place_switch(&mut self.fighter);
+        }
+        self.fighter.slope_contour(map, None);
+        self.fighter.finish_physics_map();
         if !self.fighter.is_in_hitlag()
             && self.started != Some((self.fighter.status.status, self.fighter.status.entry))
         {

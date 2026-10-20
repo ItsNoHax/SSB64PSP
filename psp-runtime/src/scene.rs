@@ -1621,6 +1621,7 @@ impl FighterScene {
         }
         self.fighter
             .tick_interrupt(&|| MapSegments::with_groups(pack, stage, groups));
+        self.place_played_spawn(pack);
         // `ftCommonThrowProcUpdate` releases from the hand this frame's play
         // has posed (`ftCommonThrownProcPhysics` then the release), before
         // `ftMainProcPhysicsMap`: play the clip now and sample the hand for
@@ -1633,6 +1634,43 @@ impl FighterScene {
             self.fighter.grab.anchor = hand.map(|j| j.origin);
             self.fighter.grab.anchor_transform = hand;
         }
+    }
+
+    /// A `proc_update` maker whose status a set then replaced (Pikachu's
+    /// Thunder, the boss's finger gun) read the play `ftMainPlayAnimEventsAll`
+    /// gave that status this frame, before the update; the port plays after
+    /// it. Play the replaced status's motion aside, sample it and place the
+    /// weapon, then put the skeleton back for the new status's play.
+    fn place_played_spawn(&mut self, pack: &Pack<'_>) {
+        if self.fighter.is_in_hitlag() {
+            return;
+        }
+        let Some(played) = ssb_game::spawn_pose::played_status(&self.fighter) else {
+            return;
+        };
+        let skeleton = self.skeleton.clone();
+        let started = self.started;
+        let restarts = self.clip_restarts_seen;
+        let root = self.root_motion_before_tick;
+        let yrotn = self.shield_yrotn;
+        let joints = self.fighter.joint_transforms;
+        let parents = self.fighter.joint_parents;
+        let animlocks = self.fighter.is_use_animlocks;
+        let part4 = self.fighter.grab.thrown_part4;
+        let current = core::mem::replace(&mut self.fighter.status, played);
+        self.tick_animation(pack);
+        self.sample_gameplay_joints(pack);
+        self.fighter.status = current;
+        ssb_game::spawn_pose::place_played(&mut self.fighter);
+        self.skeleton = skeleton;
+        self.started = started;
+        self.clip_restarts_seen = restarts;
+        self.root_motion_before_tick = root;
+        self.shield_yrotn = yrotn;
+        self.fighter.joint_transforms = joints;
+        self.fighter.joint_parents = parents;
+        self.fighter.is_use_animlocks = animlocks;
+        self.fighter.grab.thrown_part4 = part4;
     }
 
     /// The priority-4 half: `ftMainProcPhysicsMap`, then the animation and
@@ -1679,16 +1717,12 @@ impl FighterScene {
             // No TransN motion accrues while frozen.
             self.root_motion_before_tick = self.skeleton.pose(0).copied();
         }
-        // `ftFoxSpecialNProcUpdate` makes the shot from the hand this
-        // frame's play posed, before the physics step (RE-473).
-        if ssb_game::status::fox_blaster_pending(&self.fighter) {
+        // A `proc_update` maker (Fox's Blaster, RE-473) reads the joints
+        // this frame's play posed, before the physics step; so does a
+        // `proc_physics` maker (the boss's finger gun).
+        if ssb_game::spawn_pose::sample_before_physics(&self.fighter) {
             self.sample_gameplay_joints(pack);
-            ssb_game::status::fox_blaster_spawn(&mut self.fighter);
-        }
-        // `ftPikachuSpecialNProcUpdate` likewise (RE-541).
-        if ssb_game::pikachu::thunder_jolt_pending(&self.fighter) {
-            self.sample_gameplay_joints(pack);
-            ssb_game::pikachu::thunder_jolt_spawn(&mut self.fighter);
+            ssb_game::spawn_pose::place_update(&mut self.fighter);
         }
         let t = crate::profile::start();
         let segments = || MapSegments::with_groups(pack, stage, groups);
@@ -1698,6 +1732,13 @@ impl FighterScene {
             self.airborne_ticks = 0;
         } else {
             self.airborne_ticks = self.airborne_ticks.saturating_add(1);
+        }
+        // A status set inside the physics and map step ran the old status's
+        // `proc_accessory` first (ftmain.c:4397-4403): its maker read the
+        // frame's play, TopN after the move, before the new motion parses.
+        if ssb_game::spawn_pose::switch_pending(&self.fighter) {
+            self.sample_gameplay_joints(pack);
+            ssb_game::spawn_pose::place_switch(&mut self.fighter);
         }
         // A status the map step set (a landing) parses its first frame at
         // once (`ftMainSetStatus`).

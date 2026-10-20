@@ -32,6 +32,7 @@ use ssb_engine::math::{sin_cos, Vec3};
 use crate::fighter::{Fighter, FighterKind};
 use crate::grab::GrabEvent;
 use crate::physics;
+use crate::spawn_pose::SpawnPose;
 use crate::stale::MotionAttackId;
 use crate::status::{self, AnyStatus, KirbyStatus as K, StatusTiming};
 use crate::weapon::{WeaponKind, WeaponSpawn};
@@ -463,14 +464,17 @@ fn make_fireball(f: &mut Fighter) {
     } else {
         WeaponKind::MarioFireball
     };
-    f.weapon_spawn = Some(WeaponSpawn {
-        kind,
-        owner_port: f.port,
-        team: f.team,
-        stale: crate::stale::WeaponStale::of(f),
-        position: f.joint_query(FIREBALL_SPAWN_JOINT, Vec3::ZERO),
-        facing: f.facing.sign(),
-    });
+    f.queue_weapon_spawn_posed(
+        WeaponSpawn {
+            kind,
+            owner_port: f.port,
+            team: f.team,
+            stale: crate::stale::WeaponStale::of(f),
+            position: f.pos,
+            facing: f.facing.sign(),
+        },
+        SpawnPose::accessory(FIREBALL_SPAWN_JOINT, Vec3::ZERO),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -510,17 +514,21 @@ fn blaster_frames(s: K) -> (f32, f32) {
 fn update_blaster(f: &mut Fighter, s: K) {
     if !f.kirby.copy.spawned && f.status.clock >= blaster_frames(s).0 {
         f.kirby.copy.spawned = true;
-        f.weapon_spawn = Some(WeaponSpawn {
-            kind: WeaponKind::FoxBlaster,
-            owner_port: f.port,
-            team: f.team,
-            stale: crate::stale::WeaponStale::of(f),
-            position: f.joint_query(
+        // Re-placed from this frame's play ([`SpawnPose::update`]).
+        f.queue_weapon_spawn_posed(
+            WeaponSpawn {
+                kind: WeaponKind::FoxBlaster,
+                owner_port: f.port,
+                team: f.team,
+                stale: crate::stale::WeaponStale::of(f),
+                position: f.pos,
+                facing: f.facing.sign(),
+            },
+            SpawnPose::update(
                 BLASTER_SPAWN_JOINT,
                 Vec3::new(BLASTER_SPAWN_OFF_X, 0.0, 0.0),
             ),
-            facing: f.facing.sign(),
-        });
+        );
     }
     if f.status.animation_ended() {
         status::anim_end_set_wait_or_fall(f);
@@ -629,7 +637,7 @@ fn fire_charge_shot(f: &mut Fighter) {
     if f.kirby.copy.samus_charge_shot {
         crate::fighter_sound::stop_loop_sfx(f);
     }
-    f.weapon_spawn = Some(WeaponSpawn {
+    f.queue_weapon_spawn(WeaponSpawn {
         kind: WeaponKind::SamusChargeShot(level),
         owner_port: f.port,
         team: f.team,
@@ -804,7 +812,7 @@ fn make_boomerang(f: &mut Fighter) {
         return;
     }
     f.kirby.copy.spawned = true;
-    f.weapon_spawn = Some(WeaponSpawn {
+    f.queue_weapon_spawn(WeaponSpawn {
         kind: WeaponKind::LinkBoomerang {
             is_smash: f.kirby.copy.link_is_smash,
             stick_x: f.input.stick_x,
@@ -999,20 +1007,23 @@ fn make_thunder_jolt(f: &mut Fighter) {
         return;
     }
     f.kirby.copy.spawned = true;
-    f.weapon_spawn = Some(WeaponSpawn {
-        kind: WeaponKind::PikachuThunderJolt,
-        owner_port: f.port,
-        team: f.team,
-        stale: crate::stale::WeaponStale::of(f),
-        position: f.joint_query(THUNDERJOLT_SPAWN_JOINT, Vec3::ZERO)
-            + Vec3::new(
-                THUNDERJOLT_SPAWN_OFF_X * f.facing.sign(),
+    f.queue_weapon_spawn_posed(
+        WeaponSpawn {
+            kind: WeaponKind::PikachuThunderJolt,
+            owner_port: f.port,
+            team: f.team,
+            stale: crate::stale::WeaponStale::of(f),
+            position: f.pos,
+            facing: f.facing.sign(),
+        },
+        SpawnPose::accessory(THUNDERJOLT_SPAWN_JOINT, Vec3::ZERO)
+            .with_world(Vec3::new(
+                THUNDERJOLT_SPAWN_OFF_X,
                 THUNDERJOLT_SPAWN_OFF_Y,
                 0.0,
-            ),
-        facing: f.facing.sign(),
-    });
-    crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_PIKACHU_SPECIAL_N, 0);
+            ))
+            .with_colanim(crate::colanim::ColAnimId::FIGHTER_PIKACHU_SPECIAL_N),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1607,6 +1618,7 @@ mod tests {
                 assert!(f.weapon_spawn.is_none());
             }
             step(&mut f);
+            crate::item_use::accessory(&mut f);
             let spawn = f.take_weapon_spawn().expect("Thunder Jolt at frame 21");
             assert_eq!(spawn.kind, WeaponKind::PikachuThunderJolt);
             assert_eq!(spawn.position, Vec3::new(-100.0, 500.0, 50.0));

@@ -94,6 +94,84 @@ impl Standing {
     }
 }
 
+/// An item's or weapon's `coll_data` floor fields: `floor_line_id`,
+/// `floor_flags` and `floor_angle`, which the original writes apart.
+/// `mpProcessSetCollProjectFloorID` (mpprocess.c:383) clears only the line
+/// id on a miss and keeps the flags and angle the last floor left, which
+/// `floor_angle` readers (rebounds, slides) then see.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FloorState {
+    /// `floor_line_id`; `None` for -1.
+    pub line: Option<u16>,
+    /// `floor_flags`.
+    pub flags: u16,
+    /// `floor_angle`. `itManagerMakeItem` and `wpManagerMakeWeapon` never
+    /// write it, so before any floor it holds the pool slot's previous
+    /// value; up is the defined stand-in (D-050).
+    pub angle: Vec2,
+}
+
+impl Default for FloorState {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
+impl FloorState {
+    /// No floor met yet: line -1, the angle up.
+    pub const NONE: FloorState = FloorState {
+        line: None,
+        flags: 0,
+        angle: Vec2 { x: 0.0, y: 1.0 },
+    };
+
+    /// The floor the line id names, with the flags and angle it left.
+    pub fn standing(&self) -> Option<Standing> {
+        self.line.map(|line| Standing {
+            line,
+            flags: self.flags,
+            normal: self.angle,
+        })
+    }
+
+    /// `floor_angle`, kept across a line id cleared to -1.
+    pub fn normal(&self) -> Vec2 {
+        self.angle
+    }
+
+    /// A floor met: every field written.
+    pub fn set(&mut self, s: Standing) {
+        self.line = Some(s.line);
+        self.flags = s.flags;
+        self.angle = s.normal;
+    }
+
+    /// `mpProcessSetCollProjectFloorID` with no floor below:
+    /// `floor_line_id = -1`, the flags and angle kept.
+    pub fn clear_line(&mut self) {
+        self.line = None;
+    }
+
+    /// `mpProcessSetCollProjectFloorID`: the floor below, or the line id
+    /// cleared.
+    pub fn project(&mut self, below: Option<Standing>) {
+        match below {
+            Some(s) => self.set(s),
+            None => self.clear_line(),
+        }
+    }
+}
+
+impl From<Option<Standing>> for FloorState {
+    fn from(s: Option<Standing>) -> Self {
+        let mut f = FloorState::NONE;
+        if let Some(s) = s {
+            f.set(s);
+        }
+        f
+    }
+}
+
 /// What a tick's movement did against the stage.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Moved {
@@ -285,6 +363,25 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `mpCollisionCheckProjectFloor` writes the line, flags and angle only
+    /// on a hit; `mpProcessSetCollProjectFloorID`'s miss writes line id -1
+    /// alone, so the last floor's flags and angle survive it.
+    #[test]
+    fn a_projection_miss_clears_only_the_line() {
+        let mut floor = FloorState::NONE;
+        let slope = Standing {
+            line: 4,
+            flags: 0x4000,
+            normal: Vec2::new(0.6, 0.8),
+        };
+        floor.project(Some(slope));
+        assert_eq!(floor.standing(), Some(slope));
+        floor.project(None);
+        assert_eq!(floor.line, None);
+        assert_eq!(floor.standing(), None);
+        assert_eq!((floor.flags, floor.normal()), (0x4000, Vec2::new(0.6, 0.8)));
+    }
 
     /// A flat platform from x -100 to 100 at y 0, as line 0.
     fn platform() -> [(u16, Segment); 1] {

@@ -34,7 +34,7 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
-    let Some(floor) = item.floor else {
+    let Some(floor) = item.floor.standing() else {
         return false;
     };
     let (moved, contacts) = crate::map::move_ground(
@@ -64,7 +64,7 @@ where
     }
     match moved.floor {
         Some(f) => {
-            item.floor = Some(f);
+            item.floor.set(f);
             true
         }
         None => false,
@@ -114,7 +114,7 @@ where
     }
     if let Some(f) = result.moved.floor {
         item.mask_curr |= MASK_FLOOR;
-        item.floor = Some(f);
+        item.floor.set(f);
         crate::sound::play_fgm(crate::sound::id::nSYAudioFGMItemMapCollide);
         // The landing stops the item's spin and squares its root.
         item.spin_step = 0.0;
@@ -138,7 +138,7 @@ where
     item.pos = end.pos;
     item.mask_curr |= end.mask;
     if let Some(hit) = end.floor {
-        item.floor = Some(Standing {
+        item.floor.set(Standing {
             line: hit.line,
             flags: hit.flags,
             normal: hit.normal,
@@ -174,7 +174,7 @@ fn scale(v: &mut Vec3, s: f32) {
 pub(crate) fn check_collide_all_rebound(item: &mut Item, check: u16, mod_vel: f32) -> bool {
     let fresh = (item.mask_prev ^ item.mask_curr) & item.mask_curr & MASK_MAIN;
     let mut hit = false;
-    let floor_normal = item.floor.map_or(Vec2::new(0.0, 1.0), |f| f.normal);
+    let floor_normal = item.floor.normal();
     for (mask, normal) in [
         (MASK_LWALL, item.lwall_normal),
         (MASK_RWALL, item.rwall_normal),
@@ -243,7 +243,7 @@ where
         item.set_spin_vel_lr();
     }
     if is_collide_floor {
-        let normal = item.floor.map_or(Vec2::new(0.0, 1.0), |f| f.normal);
+        let normal = item.floor.normal();
         set_ground_rebound(&mut item.vel_air, normal, ground_rebound);
         item.set_spin_vel_lr();
         item.times_landed = (item.times_landed + 1) & 3;
@@ -280,7 +280,7 @@ where
         item.set_spin_vel_lr();
     }
     if is_collide_floor {
-        let normal = item.floor.map_or(Vec2::new(0.0, 1.0), |f| f.normal);
+        let normal = item.floor.normal();
         reflect(&mut item.vel_air, normal);
         scale(&mut item.vel_air, ground_rebound);
         item.set_spin_vel_lr();
@@ -306,7 +306,7 @@ where
         item.set_spin_vel_lr();
     }
     if item.mask_curr & MASK_FLOOR != 0 {
-        let normal = item.floor.map_or(Vec2::new(0.0, 1.0), |f| f.normal);
+        let normal = item.floor.normal();
         reflect(&mut item.vel_air, normal);
         scale(&mut item.vel_air, ground_rebound);
         item.set_spin_vel_lr();
@@ -361,10 +361,11 @@ pub(crate) fn check_map_rebound_proc_no_floor<I, F>(
     }
 }
 
-/// `mpCommonRunItemCollisionDefault`: one sweep from the parent's position
-/// to the item's with the parent's collision box; a floor puts the item on
-/// it without landing it. The port's sweep subdivides long moves where the
-/// source takes one step.
+/// `mpCommonRunItemCollisionDefault` (mpcommon.c:970): one
+/// `mpCommonRunDefaultCollision` pass from the parent's translate, probed
+/// with the parent's box, to the item's, probed with its own. A floor the
+/// bottom crossed puts the item on it without landing it; failing that, the
+/// floor under it is only projected (`mpProcessSetCollProjectFloorID`).
 pub(crate) fn run_default_collision<I, F>(
     item: &mut Item,
     parent_pos: Vec3,
@@ -374,14 +375,15 @@ pub(crate) fn run_default_collision<I, F>(
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
-    let result = crate::map::move_air(
+    let result = crate::map::run_default_collision_project(
+        &item.coll,
         &parent_coll,
         parent_pos,
         item.pos,
-        AirOptions::default(),
         surfaces,
     );
-    item.pos = result.moved.pos;
+    item.pos = result.pos;
+    item.floor.project(result.floor);
 }
 
 game_static! {

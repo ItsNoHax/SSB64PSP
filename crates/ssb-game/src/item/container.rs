@@ -129,7 +129,7 @@ pub(super) fn dropped(item: &mut Item) {
 }
 fn wait(item: &mut Item) {
     if kind(item) == Kind::Crate {
-        let n = item.floor.map_or(Vec2::new(0.0, 1.0), |f| f.normal);
+        let n = item.floor.normal();
         item.rotate_z = ssb_engine::math::sy_arc_tan2(n.y, n.x) - core::f32::consts::FRAC_PI_2;
     }
     item.attack.state = AttackState::Off;
@@ -275,7 +275,7 @@ pub(super) fn update(item: &mut Item, status: Status, fx: &mut Emit) -> bool {
             );
         }
         Status::Roll => {
-            let n = item.floor.map_or(Vec2::new(0.0, 1.0), |f| f.normal);
+            let n = item.floor.normal();
             item.vel_air.x +=
                 -(ssb_engine::math::sy_arc_tan2(n.y, n.x) - core::f32::consts::FRAC_PI_2) * 1.4;
             item.lr = if item.vel_air.x >= 0.0 { 1.0 } else { -1.0 };
@@ -352,7 +352,7 @@ where
                     item.vel_air.y = 0.0;
                     set(item, Status::Roll);
                 } else {
-                    let n = item.floor.unwrap().normal;
+                    let n = item.floor.normal();
                     map::reflect(&mut item.vel_air, n);
                     item.vel_air.y *= 0.2;
                     item.set_spin_vel_lr();

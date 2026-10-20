@@ -5,6 +5,7 @@
 //! and effects await their shared systems.
 use crate::fighter::{Facing, Fighter, FighterKind};
 use crate::physics;
+use crate::spawn_pose::SpawnPose;
 use crate::status::{self, AnyStatus, NessStatus as N, Status, StatusTiming};
 use crate::weapon::{WeaponKind, WeaponSpawn};
 use ssb_engine::input::N64Buttons;
@@ -177,20 +178,26 @@ pub fn set_special_n(f: &mut Fighter) {
 /// Accessory flag 0 at frame 20. Kirby uses its own TopN offset.
 pub(crate) fn make_pk_fire(f: &mut Fighter, copied: bool) {
     let ground = f.is_grounded();
-    let mut pos = f.joint_query(0, Vec3::ZERO);
-    pos.x += if copied { 240.0 } else { 100.0 } * f.facing.sign();
-    pos.y += if copied { 190.0 } else { 180.0 };
-    if !copied {
-        pos.z = 0.0;
-    }
-    f.weapon_spawn = Some(WeaponSpawn {
-        kind: WeaponKind::NessPKFire { grounded: ground },
-        owner_port: f.port,
-        team: f.team,
-        position: pos,
-        facing: f.facing.sign(),
-        stale: crate::stale::WeaponStale::of(f),
-    });
+    // `ftNessSpecialNProcAccessory` / `ftKirbyCopyNessSpecialNProcAccessory`:
+    // TopN after the map step, then the world offset.
+    let pose = if copied {
+        SpawnPose::accessory(0, Vec3::ZERO).with_world(Vec3::new(240.0, 190.0, 0.0))
+    } else {
+        SpawnPose::accessory(0, Vec3::ZERO)
+            .with_world(Vec3::new(100.0, 180.0, 0.0))
+            .zero_z()
+    };
+    f.queue_weapon_spawn_posed(
+        WeaponSpawn {
+            kind: WeaponKind::NessPKFire { grounded: ground },
+            owner_port: f.port,
+            team: f.team,
+            position: f.pos,
+            facing: f.facing.sign(),
+            stale: crate::stale::WeaponStale::of(f),
+        },
+        pose,
+    );
 }
 pub fn set_special_hi(f: &mut Fighter) {
     let ground = f.is_grounded();
@@ -228,16 +235,19 @@ fn set_thunder_hold(f: &mut Fighter) {
         },
     );
     f.ness.thunder_motion = f.motion.count;
-    let mut pos = f.joint_query(12, Vec3::ZERO);
-    pos.z = 0.0;
-    f.weapon_spawn = Some(WeaponSpawn {
-        kind: WeaponKind::NessPKThunder,
-        owner_port: f.port,
-        team: f.team,
-        position: pos,
-        facing: f.facing.sign(),
-        stale: crate::stale::WeaponStale::of(f),
-    });
+    // `ftNessSpecialHiHoldInitStatusVars`, after the Hold's set and play:
+    // joint 12, `pos.z = 0`.
+    f.queue_weapon_spawn_posed(
+        WeaponSpawn {
+            kind: WeaponKind::NessPKThunder,
+            owner_port: f.port,
+            team: f.team,
+            position: f.pos,
+            facing: f.facing.sign(),
+            stale: crate::stale::WeaponStale::of(f),
+        },
+        SpawnPose::update(12, Vec3::ZERO).zero_z(),
+    );
     // `ftNessSpecialHiHoldInitStatusVars`, after `ftNessSpecialHiMakePKThunder`:
     // the setter's `FTSTATUS_PRESERVE_LOOPSFX` stopped any attached effect,
     // so the wave is made unless the first frame's events attached one.

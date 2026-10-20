@@ -8,7 +8,7 @@
 
 use ssb_engine::math::{Vec2, Vec3};
 
-use crate::ground::{BodyColl, Standing};
+use crate::ground::{BodyColl, FloorState, Standing};
 use crate::map::{AirOptions, Contacts, MASK_CEIL, MASK_FLOOR, MASK_LWALL, MASK_RWALL};
 use crate::weapon::MapSurface;
 
@@ -23,7 +23,7 @@ pub struct WeaponColl {
     pub mask_curr: u16,
     /// `floor_line_id`, `floor_flags` and `floor_angle`: the floor a
     /// grounded weapon stands on, or the last one an airborne pass met.
-    pub floor: Option<Standing>,
+    pub floor: FloorState,
     /// `lwall_line_id`/`rwall_line_id` of the last walls run.
     pub lwall_line: Option<u16>,
     pub rwall_line: Option<u16>,
@@ -65,7 +65,7 @@ impl WeaponColl {
 
     /// `floor_angle`, up when no floor was ever met.
     pub fn floor_angle(&self) -> Vec2 {
-        self.floor.map_or(Vec2::new(0.0, 1.0), |f| f.normal)
+        self.floor.normal()
     }
 
     /// `wpMapTestLRWallCheckFloor` from `pos_prev` to `pos` (`vel_air`
@@ -85,7 +85,7 @@ impl WeaponColl {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        let Some(floor) = self.floor else {
+        let Some(floor) = self.floor.standing() else {
             return false;
         };
         let (moved, contacts) =
@@ -97,7 +97,7 @@ impl WeaponColl {
         }
         match moved.floor {
             Some(f) => {
-                self.floor = Some(f);
+                self.floor.set(f);
                 true
             }
             None => false,
@@ -123,7 +123,7 @@ impl WeaponColl {
         match result.moved.floor {
             Some(f) => {
                 self.mask_curr |= MASK_FLOOR;
-                self.floor = Some(f);
+                self.floor.set(f);
                 true
             }
             None => false,
@@ -143,7 +143,7 @@ impl WeaponColl {
         self.note_walls(&contacts);
         if let Some(hit) = floor {
             self.mask_curr |= MASK_FLOOR;
-            self.floor = Some(Standing {
+            self.floor.set(Standing {
                 line: hit.line,
                 flags: hit.flags,
                 normal: hit.normal,
@@ -172,7 +172,7 @@ impl WeaponColl {
             self.ceil_angle = hit.normal;
         }
         if let Some(hit) = end.floor {
-            self.floor = Some(Standing {
+            self.floor.set(Standing {
                 line: hit.line,
                 flags: hit.flags,
                 normal: hit.normal,

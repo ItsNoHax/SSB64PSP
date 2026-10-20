@@ -149,7 +149,7 @@ fn the_roll_gathers_speed_downhill() {
         core::f32::consts::FRAC_1_SQRT_2,
         core::f32::consts::FRAC_1_SQRT_2,
     );
-    item.floor = Some(crate::ground::Standing {
+    item.floor.set(crate::ground::Standing {
         line: 0,
         flags: 0,
         normal: n,

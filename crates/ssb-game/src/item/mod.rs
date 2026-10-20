@@ -53,7 +53,7 @@ use ssb_engine::math::{Vec2, Vec3};
 use crate::colanim::{ColAnim, ColAnimId};
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::fighter::Fighter;
-use crate::ground::{BodyColl, Standing};
+use crate::ground::{BodyColl, FloorState};
 use crate::stale::MotionAttackId;
 use crate::status::BlastZone;
 use crate::weapon::MapSurface;
@@ -574,8 +574,8 @@ pub struct Item {
     pub scale: Vec3,
     pub coll: BodyColl,
     pub ga: Ga,
-    /// `coll_data.floor_line_id` and the floor's flags and angle.
-    pub floor: Option<Standing>,
+    /// `coll_data.floor_line_id`, `floor_flags` and `floor_angle`.
+    pub floor: FloorState,
     pub mask_prev: u16,
     pub mask_curr: u16,
     pub lwall_normal: Vec2,
@@ -740,7 +740,7 @@ impl Item {
             scale: Vec3::new(1.0, 1.0, 1.0),
             coll: attr.map_coll,
             ga: Ga::Air,
-            floor: None,
+            floor: FloorState::NONE,
             mask_prev: 0,
             mask_curr: 0,
             lwall_normal: Vec2::ZERO,
@@ -987,7 +987,7 @@ impl Item {
 
     /// Whether its record id names this struct.
     pub fn floor_line(&self) -> Option<u16> {
-        self.floor.map(|s| s.line)
+        self.floor.line
     }
 
     /// The tree the runtime animates for this item through [`ItemAnims`].
@@ -2454,8 +2454,8 @@ where
     if let Some(line) = attached {
         item.pos += crate::map::line_speed(surfaces, line);
     } else if item.ga == Ga::Ground {
-        if let Some(floor) = item.floor {
-            item.pos += crate::map::line_speed(surfaces, floor.line);
+        if let Some(line) = item.floor.line {
+            item.pos += crate::map::line_speed(surfaces, line);
         }
     }
     if let Some(b) = bounds {

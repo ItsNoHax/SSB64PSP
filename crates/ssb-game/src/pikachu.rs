@@ -2,6 +2,7 @@
 //! Quick Attack's wall/ceiling cancellation consumes the shared map normals.
 use crate::fighter::{Facing, Fighter, FighterKind};
 use crate::physics;
+use crate::spawn_pose::SpawnPose;
 use crate::status::{self, AnyStatus, PikachuStatus as P, StatusTiming};
 use crate::weapon::{WeaponKind, WeaponSpawn};
 use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
@@ -310,19 +311,22 @@ pub(crate) fn halts(normal: Vec2, vel_air: Vec3) -> bool {
         > QUICKATTACK_HALT_ANGLE
 }
 
+/// `ftPikachuSpecialLwMakeThunder`, from the Start status's `proc_update`
+/// or, before the Loop's `ftMainSetStatus`, `ftPikachuSpecialLwLoopSetStatus`.
 fn make_thunder(f: &mut Fighter) {
     f.pikachu.spawned = true;
     f.pikachu.thunder_motion = f.motion.count;
     if let Some(top) = f.pikachu.map_bound_top {
         let anchor = f.joint_query(11, Vec3::ZERO);
-        f.weapon_spawn = Some(WeaponSpawn {
+        let spawn = WeaponSpawn {
             kind: WeaponKind::PikachuThunder,
             owner_port: f.port,
             team: f.team,
             position: Vec3::new(anchor.x, top - 500.0, anchor.z),
             facing: f.facing.sign(),
             stale: crate::stale::WeaponStale::of(f),
-        });
+        };
+        f.queue_weapon_spawn_posed(spawn, THUNDER_POSE);
     } else {
         f.pikachu.thunder_destroyed = true;
     }
@@ -330,32 +334,17 @@ fn make_thunder(f: &mut Fighter) {
 /// `FTPIKACHU_THUNDERJOLT_SPAWN_JOINT`.
 pub const THUNDERJOLT_SPAWN_JOINT: u8 = 11;
 
-/// Whether this frame's interrupt queued Pikachu's own Thunder Jolt, which
-/// [`thunder_jolt_spawn`] places once the frame's play has posed joint 11.
-pub fn thunder_jolt_pending(f: &Fighter) -> bool {
-    f.kind == FighterKind::Pikachu
-        && f.weapon_spawn
-            .is_some_and(|w| w.kind == WeaponKind::PikachuThunderJolt)
-}
+/// `ftPikachuSpecialNProcAccessory` (ftpikachuspecialn.c:18): the jolt
+/// leaves joint 11 (`gmCollisionGetFighterPartsWorldPosition`) as the map
+/// step and the parts pass of `ftMainProcPhysicsMap` left it: this frame's
+/// pose, TopN after the physics move. The colour animation follows the
+/// make there.
+pub const THUNDER_JOLT_POSE: SpawnPose = SpawnPose::accessory(THUNDERJOLT_SPAWN_JOINT, Vec3::ZERO)
+    .with_colanim(crate::colanim::ColAnimId::FIGHTER_PIKACHU_SPECIAL_N);
 
-/// `ftPikachuSpecialNProcUpdate`: the jolt leaves joint 11
-/// (`gmCollisionGetFighterPartsWorldPosition`) as this frame's
-/// `ftMainPlayAnimEventsAll` posed it, the play whose event set flag 0.
-/// Call with `joint_transforms` sampled from that pose. The N64 cpufx-s
-/// trace's jolt is one 40-unit step from joint 11's frame-21 place, not
-/// its frame-20 one (RE-541).
-pub fn thunder_jolt_spawn(f: &mut Fighter) {
-    if !thunder_jolt_pending(f) {
-        return;
-    }
-    f.mark_joint_query(THUNDERJOLT_SPAWN_JOINT);
-    let Some(joint) = f.joint_transforms[usize::from(THUNDERJOLT_SPAWN_JOINT)] else {
-        return;
-    };
-    if let Some(spawn) = f.weapon_spawn.as_mut() {
-        spawn.position = joint.point(Vec3::ZERO);
-    }
-}
+/// `ftPikachuSpecialLwMakeThunder`, from `proc_update`: joint 11's x and z
+/// in this frame's pose, y at `map_bound_top - 500`.
+pub const THUNDER_POSE: SpawnPose = SpawnPose::update(11, Vec3::ZERO).keep_y();
 
 pub fn thunder_controlling(s: AnyStatus) -> bool {
     matches!(
@@ -376,19 +365,17 @@ pub fn update(f: &mut Fighter) {
         P::SpecialN | P::SpecialAirN => {
             if !f.pikachu.spawned && f.status.clock >= 21.0 {
                 f.pikachu.spawned = true;
-                f.weapon_spawn = Some(WeaponSpawn {
-                    kind: WeaponKind::PikachuThunderJolt,
-                    owner_port: f.port,
-                    team: f.team,
-                    // Re-placed by [`thunder_jolt_spawn`] after the play.
-                    position: f.joint_query(THUNDERJOLT_SPAWN_JOINT, Vec3::ZERO),
-                    facing: f.facing.sign(),
-                    stale: crate::stale::WeaponStale::of(f),
-                });
-                crate::colanim::check_set(
-                    f,
-                    crate::colanim::ColAnimId::FIGHTER_PIKACHU_SPECIAL_N,
-                    0,
+                // Re-placed after the map step ([`THUNDER_JOLT_POSE`]).
+                f.queue_weapon_spawn_posed(
+                    WeaponSpawn {
+                        kind: WeaponKind::PikachuThunderJolt,
+                        owner_port: f.port,
+                        team: f.team,
+                        position: f.pos,
+                        facing: f.facing.sign(),
+                        stale: crate::stale::WeaponStale::of(f),
+                    },
+                    THUNDER_JOLT_POSE,
                 );
             }
             if f.status.animation_ended() {
@@ -718,6 +705,7 @@ mod tests {
         assert!(on_ground_lost(&mut f));
         assert_eq!(f.status.anim_frame, 20.0);
         status::update(&mut f);
+        crate::item_use::accessory(&mut f);
         let spawn = f
             .take_weapon_spawn()
             .expect("flag 0 fires at WaitAsync(21)");
@@ -971,12 +959,14 @@ mod tests {
         assert!(!f.fall_special.landing_allow_interrupt);
     }
 
-    /// `ftPikachuSpecialNProcUpdate` reads joint 11 after the frame's play:
-    /// the host re-samples the joints and [`thunder_jolt_spawn`] re-places
-    /// the queued jolt from them (RE-541).
+    /// `ftPikachuSpecialNProcAccessory` (ftpikachuspecialn.c:18) reads
+    /// joint 11 after `ftMainProcPhysicsMap`'s map step and parts pass
+    /// (ftmain.c:1836-1857): not from the queue's samples, nor from the
+    /// play's before the physics move, but from the ones the accessory
+    /// samples after it.
     #[test]
-    fn the_jolt_spawn_reads_joint_11_after_the_play() {
-        let mut f = pikachu(true);
+    fn the_jolt_spawn_reads_joint_11_after_the_map_step() {
+        let mut f = pikachu(false);
         let at = |origin| JointTransform {
             axes: [
                 Vec3::new(1.0, 0.0, 0.0),
@@ -991,12 +981,27 @@ mod tests {
             assert!(f.status.anim_frame < 30.0, "flag 0 never fired");
             status::update(&mut f);
         }
-        assert!(thunder_jolt_pending(&f));
+        // Not a `proc_update` maker: neither the queue's samples nor the
+        // play's place it.
+        assert!(!crate::spawn_pose::update_pending(&f));
+        assert_eq!(f.weapon_spawn.unwrap().position, f.pos);
         f.joint_transforms[11] = Some(at(Vec3::new(-1261.542, 1008.992, 0.0)));
-        thunder_jolt_spawn(&mut f);
+        crate::spawn_pose::place_update(&mut f);
+        assert_eq!(f.weapon_spawn.unwrap().position, f.pos);
+        // The map step moved the fighter; the accessory reads the samples
+        // taken after it.
+        f.joint_transforms[11] = Some(at(Vec3::new(-1261.542, 1001.0, 0.0)));
+        crate::item_use::accessory(&mut f);
         assert_eq!(
             f.weapon_spawn.unwrap().position,
-            Vec3::new(-1261.542, 1008.992, 0.0)
+            Vec3::new(-1261.542, 1001.0, 0.0)
+        );
+        // One query per make.
+        f.joint_transforms[11] = Some(at(Vec3::ZERO));
+        crate::item_use::accessory(&mut f);
+        assert_eq!(
+            f.weapon_spawn.unwrap().position,
+            Vec3::new(-1261.542, 1001.0, 0.0)
         );
     }
 }

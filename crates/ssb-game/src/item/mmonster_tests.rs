@@ -29,7 +29,7 @@ const BOUNDS: BlastZone = BlastZone {
 fn fighter(port: u8, x: f32) -> Fighter {
     let mut f = Fighter::new(FighterKind::Mario, port, 3);
     f.pos = Vec3::new(x, 0.0, 0.0);
-    f.floor = Some(Standing {
+    f.floor = Some(crate::ground::Standing {
         line: 0,
         normal: Vec2::new(0.0, 1.0),
         flags: 0,

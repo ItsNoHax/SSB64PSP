@@ -696,7 +696,7 @@ fn ground_item_carries_during_hitlag_before_the_bounds_gate() {
     let slot = make_flame(&mut pool);
     let item = pool.slots[slot as usize].as_mut().unwrap();
     item.ga = Ga::Ground;
-    item.floor = Some(crate::ground::Standing {
+    item.floor.set(crate::ground::Standing {
         line: 0,
         flags: 0,
         normal: Vec2::new(0.0, 1.0),
@@ -903,4 +903,56 @@ fn a_fighters_attack_on_an_item_makes_its_spark() {
             damage: 10,
         })]
     );
+}
+
+/// `mpCommonRunItemCollisionDefault` (mpcommon.c:970): the parent's box on
+/// its side of the sweep, the item's own on the item's, in one pass; with
+/// no floor crossed, the floor under the item is only projected.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_made_item_snaps_with_its_own_box_and_projects_its_floor() {
+    let line = |kind, line: u16, x1, y1, x2, y2| MapSurface {
+        motion: None,
+        kind,
+        segment: crate::collision::Segment {
+            x1,
+            y1,
+            x2,
+            y2,
+            flags: 0,
+        },
+        topology: Some(crate::weapon::SurfaceTopology {
+            line,
+            point: 0,
+            segments: 1,
+            vertex1: 2 * line,
+            vertex2: 2 * line + 1,
+        }),
+    };
+    let map = [
+        line(crate::weapon::MapSurfaceKind::Floor, 2, -1000, 0, 1000, 0),
+        line(
+            crate::weapon::MapSurfaceKind::LeftWall,
+            5,
+            400,
+            0,
+            400,
+            2000,
+        ),
+    ];
+    let parent = BodyColl {
+        top: 200.0,
+        center: 100.0,
+        bottom: 0.0,
+        width: 60.0,
+    };
+    let mut egg = container::make(
+        container::Kind::Egg,
+        Vec3::new(500.0, 300.0, 0.0),
+        Vec3::ZERO,
+    );
+    assert_ne!(egg.coll.width, parent.width);
+    map::run_default_collision(&mut egg, Vec3::new(0.0, 0.0, 0.0), parent, &|| map);
+    assert_eq!(egg.pos, Vec3::new(400.0 - egg.coll.width, 300.0, 0.0));
+    assert_eq!(egg.floor.line, Some(2));
 }
