@@ -22,10 +22,9 @@ Encoding traps handled in `ssb-rom/src/dl.rs`:
 
 ## Vertex layout
 
-- `GuVertex` = `{ u, v, color, x, y, z }`: order the GE reads for the chosen `VertexType` flags.
+- `ssb_rom::pack::PackedVertex` = `{ u, v, color, normal, x, y, z }`: order the GE reads for `meshdraw::VERTEX_FORMAT`.
   - Reordering renders garbage without an error.
-- Buffers 16-byte aligned (`psp::Align16`).
-- Positions `i16`.
+- Positions `i16`, normals `i8`.
 - UVs: `GU_TEXTURE_16BIT` normally.
   - GE reads that field unsigned → primitives with negative UVs on a clamped axis are flagged, submitted with float UVs (RE-262).
 - Common path: 20 bytes per vertex.

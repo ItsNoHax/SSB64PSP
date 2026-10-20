@@ -27,7 +27,7 @@ Part of [rendering.md](../rendering.md).
   - Whispy eyes/mouth and back flowers: after layer 4.
   - Front flowers: link 16.
   - Barrel/gate: link 6.
-- Per-object Whispy and cloud material animation not applied; Whispy draws rest materials.
+- Whispy eyes/mouth and Yoster clouds play material clips: `ground_obj::MAT_ANIMS` via `play_on`, `play_cloud`; drawn with `object.materials()`.
 
 ## Billboards
 
@@ -145,8 +145,8 @@ RE-131–145.
 RE-302. `ftShadowProcDisplay` draws a floor-conforming strip, not a blob:
 
 - Projects onto the standing floor, or the nearest floor below while airborne.
-- Clips `x ± FTAttributes::shadow_size` to the floor line and follows up to
-  two bends (eight-vertex capacity).
+- Clips `x ± FTAttributes::shadow_size` to the floor line, follows up to two bends.
+  - Source `FTShadow::vtx[8]`; port keeps four-point capacity (`ssb-game/src/shadow.rs:184`).
 - Texture: file 84 `0x3A68`, 16×16 I4, mirror-repeat pre-baked.
 - Material: default `(0,0,0,0xA0)`; team battles use the team colour
   (`shadow::COLOR_TEAMS`, red/blue/green, unless `is_not_teamshadows`).

@@ -25,7 +25,7 @@ Part of [rendering.md](../rendering.md).
 - All real `MObjMaterial`s measured.
 - Implemented: default substitution, texture scale, tile-0 window state.
 - `MOBJ_FLAG_FRAC` never occurs in static content.
-- Tile-1 scroll inert: all 12 inputs equal tile 0, no `TEXEL1` consumer (RE-194).
+- Tile-1 scroll inert: every input equals tile 0, no `TEXEL1` consumer (RE-194).
 
 ## Material animation
 

@@ -6,8 +6,8 @@
 //! battle (`demo_screen`, RE-465); the N64 logo and the opening movie it
 //! starts are not ported and are skipped back to the title.
 //!
-//! Each scene's sprites come from its own pack in `ssb64-menus.pak`
-//! (`ssb_rom::menu_pack`), read when the scene starts and dropped when it
+//! Each scene's sprites come from its archive files in the pack
+//! (`ssb_rom::menu_pack`, D-046), read when the scene starts and dropped when it
 //! ends, as the original loads each scene's files with it; the fonts, the
 //! portraits, the fighters and the series emblems stay in the resident
 //! pack. Characters' fighter plays its motion's clip under the scene's

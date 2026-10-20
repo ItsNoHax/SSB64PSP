@@ -11,27 +11,23 @@
 ### Main RAM
 
 - Pack loading (`psp_runtime::scene_files`; RE-475, [D-046](decisions/D-046.md)):
-  - boot: header, tables, shared region (~5.5 MB)
+  - boot: header, tables, shared region
   - boot: audio section, never freed (audio thread reads it any time, [D-049](decisions/D-049.md))
   - scene start: each scene's files with extern closure
-- Scene peak under PPSSPP (RE-475):
-  - VS results, all twelve fighters: ~17 MB
-  - four-player battles: ~16 MB
-- PSP-2000 (6.61 ARK) (RE-475):
-  - XMB gives 47,891,712 free bytes at `psp_main`
-  - 4 MiB less than PSPLink
+- Scene peaks, boot and XMB free bytes (PSP-2000): RE-475
+  - XMB launch: 4 MiB less than PSPLink
 - Feature `memory_ballast`: reproduces any budget under PSPLink or PPSSPP
 - `MEMSIZE=1` stays set
 - PSP-1000:
   - ignores `MEMSIZE=1` (RE-288)
-  - ~18 MB free at boot
-  - VS results end on the out-of-memory screen (RE-475)
+  - VS results exceed its budget: out-of-memory screen (RE-475)
 - `scene_files::prefetch`:
   - reads the next scene's files beside the running scene (RE-476)
-  - stops queuing reads under 6 MB free
+  - stops queuing reads under `PREFETCH_MARGIN`, 6 MiB (`scene_files.rs:55`)
 - Static state (RE-534, RE-535):
-  - texture bind-block cache: ~80 KB `.bss`
-  - texture-mapping cache: 11 KB
+  - texture bind-block cache: 1024 slots (`meshdraw.rs:808`)
+  - texture-mapping cache: 256 slots (`MAP_CACHE_SLOTS`, `meshdraw.rs`)
+  - `.bss` sizes: RE-534, RE-535
 - Stage `MaterialAnimator`: heap-allocates one 448-byte joint per `MatAnimDesc` (RE-322)
 - Measured free-memory minima: RE-475, RE-479, RE-535
 - Current baseline: [STATUS.md](../STATUS.md)
@@ -39,10 +35,10 @@
 ### Allocation
 
 - Global allocator: `psp_runtime::heap` (RE-484)
-  - blocks up to 32 KiB: size-class free lists over 256 KiB chunks, taken once and kept
+  - blocks up to 32 KiB (`ssb-engine/src/heap.rs:23`): size-class free lists over 256 KiB chunks (`psp-runtime/src/heap.rs:24`), taken once and kept
   - larger blocks: `sceKernelAllocPartitionMemory`
     - evicts the caller's cache lines
-    - ~9,400 cycles per allocate-and-free on PSP-2000 (RE-483)
+    - cost per allocate-and-free: RE-483
 - rust-psp allocation-error handler spins forever (black screen, hung HOME exit)
   - large loads allocate fallibly
   - failure ends on `memory::fatal` text screen
@@ -52,7 +48,7 @@
 
 ### Stack
 
-- Main thread: 512 KiB (`psp::module!` stack-size argument, RE-469)
+- Main thread: 512 KiB (`GAME_STACK_BYTES`, `psp-game/src/main.rs:2127`; `psp::module!` argument, RE-469)
   - why: 256 KiB default overflowed; PPSSPP does not detect it
 - Largest frame: `enter_training` (builds `GroundObjects` by value)
 - Deepest measured stack: [STATUS.md](../STATUS.md)
@@ -70,12 +66,12 @@ Allocated in `Gpu::init` (`psp-runtime/src/gu.rs`), 2 MiB in total:
 |---|---:|---|
 | Framebuffer 0 and 1 | 2 × 544 KiB (512×272×4) | Draw and display buffers |
 | Depth buffer | 272 KiB (512×272×2) | 16-bit depth |
-| Photo region (`PHOTO_REGION`) | 512 KiB (512×256×4) | Copy of the wallpaper photo the frozen picture samples (RE-476); lent to a large resident texture (`vram_resident`, RE-492) or, when idle for 60 frames, to the texture pool |
+| Photo region (`PHOTO_REGION`) | 512 KiB (512×256×4) | Copy of the wallpaper photo the frozen picture samples (RE-476); lent to a large resident texture (`vram_resident`, RE-492) or, when idle for `TEXTURE_POOL_IDLE_FRAMES` (60, `gu.rs:714`), to the texture pool |
 | Vertex region (`VRAM_VERTICES`) | rest, 176 KiB on a PSP-2000 | Per-frame lit-expand vertex blocks (`ge_vertices`), falling back to list memory |
 
 - Texture pool (`TEXTURE_POOL`, RE-539):
   - `pool_texture` copies textures from main RAM into the idle photo region (`sceGuCopyImage`)
-  - up to 512 copies, keyed by main-RAM texel address
+  - up to 384 copies (3/4 of `TEXTURE_POOL_SLOTS` 512, `gu.rs:710`), keyed by main-RAM texel address
   - dropped on residency generation change, or photo or wallpaper claim
 - All other textures: sampled from the pack in main RAM
   - paletted textures stay paletted ([D-003](decisions/D-003.md))

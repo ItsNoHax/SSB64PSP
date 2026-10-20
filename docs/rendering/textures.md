@@ -50,7 +50,7 @@ Part of [rendering.md](../rendering.md).
 - Not packed (`romtool textures` reports; RE-057–060, RE-067, RE-070):
   - Runtime-framebuffer references (RE-055).
   - One missing palette (`ITCommonObject`).
-- Archive-wide texture total exceeds the ~700 KiB VRAM pool → per-scene residency required ([memory.md](../memory.md)).
+- Archive-wide texture total exceeds the VRAM texture budget → per-scene residency required ([memory.md](../memory.md)).
 
 ## Addressing
 
@@ -59,7 +59,7 @@ Part of [rendering.md](../rendering.md).
 
 | Topic | Rule | Evidence |
 |---|---|---|
-| Mirror | GE has no mirror wrap → mirrored axes pre-baked for every period the drawn rectangle spans; 0 of 810 mirror+clamp axes diverge from reference | RE-067, RE-221 |
+| Mirror | GE has no mirror wrap → mirrored axes pre-baked for every period the drawn rectangle spans | RE-067, RE-221 |
 | Tile origin | Subtract `uls`/`ult` on every axis before clamp, mask, mirror; repeating axes also use tile-relative phase (omitting it hid Mario/Luigi's overall buttons) | RE-359 |
 | Clamp | Native `sceGuTexWrap(Clamp)` after tile-origin rebasing | RE-102, RE-152, RE-359 |
 | Power-of-two padding | Repeated edge texels, not zeros → linear filtering at the logical edge matches | RE-222 |
@@ -72,8 +72,8 @@ Part of [rendering.md](../rendering.md).
 - GE addresses at most 512 texels per axis; rust-psp's `sceGuTexImage` encodes 1024 as log2 15.
 - `psp_texture::ge_texture_dims` caps the declared size at 512 (RE-314).
 - No packed texture exceeds it.
-  - `wide_tile::lower` rewrites the 88 primitives whose clamped, mask-narrowed tile would bake past 512.
-  - Replacement: equivalent repeating period plus a clamped far window; splits 34 triangles (RE-318).
+  - `wide_tile::lower` rewrites primitives whose clamped, mask-narrowed tile would bake past 512.
+  - Replacement: equivalent repeating period plus a clamped far window; splits straddling triangles (counts: RE-318).
 
 ### 16-byte row minimum
 
@@ -107,7 +107,7 @@ Measured on PPSSPP software and a PSP Slim (RE-304):
 - All `TEXTFILT` = `G_TF_BILERP`: the RDP's 3-point triangle filter (RE-124).
 - GE has only 4-tap bilinear.
 - `crates/ssb-rom/src/n64_filter.rs`: 3-point reference sampler.
-  - Uncompensated: 5.6% of samples differ by ≥ 8/255 (RE-219).
+  - Uncompensated error vs the 3-point reference: RE-219.
 - `filter_compensation` solves at build time for texels that bring GE bilinear output closer to the N64 reference on each primitive's real UV coverage.
 - Runtime still uses plain `GU_LINEAR`.
 
@@ -155,11 +155,11 @@ Measured on PPSSPP software and a PSP Slim (RE-304):
 - Candidates: `residuals::cross_phase_fit`; review set `residual_fixes::REVIEW_CASES`; packed with `romtool pack --residual-candidates`.
 - A/B-captured on PPSSPP against the shipped pack (`tools/residual-ab-capture.sh`; RE-312).
 - Shipped: Board the Platforms Mario silhouette fit (all changed pixels inside its own site).
-- Other 12: stay `ACCEPT_CURRENT`.
+- Other review cases: stay `ACCEPT_CURRENT`.
 - Why:
   - Texture-space gain does not reach the frame.
     - Textures minified or near one texel per pixel; GE bilinear and RDP 3-point nearly agree.
-    - 27–47% cross-phase gain = a few hundred pixels, mostly under 8/255.
+    - Cross-phase gain = a few hundred pixels, mostly under 8/255 (RE-312).
   - No N64 reference frame exists for those scenes.
     - No candidate can show a frame-level move toward N64; the deploy bar requires one.
 - A/B side effects came from unrelated bugs, not the candidates:

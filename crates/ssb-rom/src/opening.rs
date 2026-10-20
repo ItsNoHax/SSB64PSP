@@ -3,8 +3,8 @@
 //! `include/reloc_data.us.h`; no ROM data lives here.
 //!
 //! The scenes' models (their `DObjDesc` trees and display lists) are in the
-//! resident pack like every other graph; what each scene's pack in
-//! `ssb64-menus.pak` adds is its sprites, its camera animations baked one
+//! resident pack like every other graph; what each scene's archive
+//! files add (D-046) is its sprites, its camera animations baked one
 //! play per frame ([`crate::camanim`]) and the whole files its joint
 //! animations play from ([`blob_slot`]).
 

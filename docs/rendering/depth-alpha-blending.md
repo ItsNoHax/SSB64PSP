@@ -25,7 +25,7 @@ N64 has two independent discard gates; GE has one alpha-test unit. `pack::alpha_
 | N64 gate | Source | Evidence |
 |---|---|---|
 | Coverage cutout | `CVG_X_ALPHA \| ALPHA_CVG_SEL` → `alpha >= 32` | RE-069, RE-424 |
-| Threshold compare | `G_AC_THRESHOLD` against `G_SETBLENDCOLOR`'s alpha | RE-195 (29.8% of commands) |
+| Threshold compare | `G_AC_THRESHOLD` against `G_SETBLENDCOLOR`'s alpha | RE-195 |
 
 | Combination | GE test |
 |---|---|

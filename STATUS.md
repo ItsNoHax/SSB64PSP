@@ -21,7 +21,8 @@
     `ll*`/per-fighter/`relocData` doc symbols.
   - Generated from ROM: item events, container velocities, weapon hitboxes,
     throw descriptors, `Backup` default.
-- In progress: docs cleanup (no-prose rewrite, validator fact checks 11–15).
+- Landed: docs cleanup (no-prose rewrite, validator fact checks 11–15,
+  reference-doc figures verified against code).
 
 ## Next
 

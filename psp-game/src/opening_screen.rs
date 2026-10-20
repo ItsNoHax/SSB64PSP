@@ -2,8 +2,8 @@
 //! `ssb_game::opening`, RE-467).
 //!
 //! The scenes' logic keeps their worlds; this plays and draws them
-//! (`ssb_psp_runtime::movie`) with each scene's own pack from
-//! `ssb64-menus.pak`, read when the scene starts. A scene whose start
+//! (`ssb_psp_runtime::movie`) with each scene's archive files from the
+//! pack (D-046), read when the scene starts. A scene whose start
 //! waits for the music's tic count ([`ssb_game::opening::Kind::start_tic`])
 //! is held: the last picture stays up, drawn again unchanged, until the
 //! count reaches it.
