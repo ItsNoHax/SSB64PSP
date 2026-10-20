@@ -1438,3 +1438,287 @@ fn a_kirby_star_bounce_makes_a_quake_then_an_impact_wave() {
         [E::Quake(2), wave(Vec3::new(25.0, 70.0, 0.0), normal)]
     );
 }
+
+/// The playtest's "occasional Fox ledge freeze" sweep: every fighter,
+/// caught from every status [`allows_cliff`] lets catch, under hitlag on
+/// the catch frame and while hanging, a hogged corner, a moving line,
+/// `is_ignore_dead`, high damage and each ledge input, leaves every cliff
+/// status within its clip (CliffWait: its fall wait), counting only the
+/// frames out of hitlag. Fox's looping CliffCatch ends at its 4-frame wrap
+/// (`ftAnimEndCheckSetStatus`, RE-553).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn every_ledge_catch_leaves_its_cliff_statuses_in_time() {
+    use crate::status::{DonkeyStatus, LinkStatus, MarioStatus, YoshiStatus};
+    use ssb_engine::input::{ControllerState, N64Buttons};
+
+    #[derive(Clone, Copy, Debug)]
+    enum Mod {
+        None,
+        HitlagAtCatch(u16),
+        HitlagInWait(u16),
+        IgnoreDead,
+        Hogged,
+        Moving(i16, i16),
+        HighDamage,
+    }
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Input {
+        Neutral,
+        Up,
+        A,
+        Z,
+        Drop,
+    }
+    fn entries(kind: FighterKind) -> Vec<AnyStatus> {
+        let mut v: Vec<AnyStatus> = [
+            Status::JumpF,
+            Status::JumpB,
+            Status::JumpAerialF,
+            Status::JumpAerialB,
+            Status::Fall,
+            Status::FallAerial,
+            Status::Pass,
+            Status::FallSpecial,
+            Status::DamageFall,
+        ]
+        .into_iter()
+        .map(AnyStatus::Common)
+        .collect();
+        v.extend(match kind {
+            FighterKind::Mario | FighterKind::Luigi => {
+                vec![AnyStatus::Mario(MarioStatus::SpecialAirHi)]
+            }
+            FighterKind::Fox => vec![
+                AnyStatus::Fox(FoxStatus::SpecialAirHiEnd),
+                AnyStatus::Fox(FoxStatus::SpecialAirHiBound),
+            ],
+            FighterKind::Donkey => vec![AnyStatus::Donkey(DonkeyStatus::SpecialAirHi)],
+            FighterKind::Link => vec![AnyStatus::Link(LinkStatus::SpecialAirHi)],
+            FighterKind::Yoshi => vec![
+                AnyStatus::Yoshi(YoshiStatus::SpecialAirHi),
+                AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop),
+            ],
+            FighterKind::Captain => vec![AnyStatus::Captain(CaptainStatus::SpecialAirHi)],
+            FighterKind::Kirby => [
+                KirbyStatus::SpecialAirHi,
+                KirbyStatus::SpecialAirHiFall,
+                KirbyStatus::JumpAerialF1,
+                KirbyStatus::JumpAerialF2,
+                KirbyStatus::JumpAerialF3,
+                KirbyStatus::JumpAerialF4,
+                KirbyStatus::JumpAerialF5,
+            ]
+            .into_iter()
+            .map(AnyStatus::Kirby)
+            .collect(),
+            FighterKind::Pikachu => [
+                PikachuStatus::SpecialAirHiStart,
+                PikachuStatus::SpecialAirHi,
+                PikachuStatus::SpecialAirHiEnd,
+            ]
+            .into_iter()
+            .map(AnyStatus::Pikachu)
+            .collect(),
+            FighterKind::Purin => [
+                PurinStatus::JumpAerialF1,
+                PurinStatus::JumpAerialF2,
+                PurinStatus::JumpAerialF3,
+                PurinStatus::JumpAerialF4,
+                PurinStatus::JumpAerialF5,
+            ]
+            .into_iter()
+            .map(AnyStatus::Purin)
+            .collect(),
+            FighterKind::Ness => [
+                NessStatus::SpecialAirHiStart,
+                NessStatus::SpecialAirHiHold,
+                NessStatus::SpecialAirHiEnd,
+                NessStatus::SpecialAirHiJibaku,
+                NessStatus::SpecialAirHiBound,
+            ]
+            .into_iter()
+            .map(AnyStatus::Ness)
+            .collect(),
+            _ => vec![],
+        });
+        v
+    }
+    fn is_cliff(s: AnyStatus) -> Option<Status> {
+        match s {
+            AnyStatus::Common(c)
+                if (Status::CliffCatch as u32..=Status::CliffEscapeSlow2 as u32)
+                    .contains(&(c as u32)) =>
+            {
+                Some(c)
+            }
+            _ => None,
+        }
+    }
+
+    let kinds = [
+        FighterKind::Mario,
+        FighterKind::Fox,
+        FighterKind::Donkey,
+        FighterKind::Samus,
+        FighterKind::Luigi,
+        FighterKind::Link,
+        FighterKind::Yoshi,
+        FighterKind::Captain,
+        FighterKind::Kirby,
+        FighterKind::Pikachu,
+        FighterKind::Purin,
+        FighterKind::Ness,
+    ];
+    let mut mods = vec![Mod::None, Mod::IgnoreDead, Mod::Hogged, Mod::HighDamage];
+    for n in [1, 2, 3, 4, 5, 8, 13, 20] {
+        mods.push(Mod::HitlagAtCatch(n));
+        mods.push(Mod::HitlagInWait(n));
+    }
+    for d in [(1, 0), (-1, 0), (0, 1), (0, -1), (3, 2)] {
+        mods.push(Mod::Moving(d.0, d.1));
+    }
+    let inputs = [Input::Neutral, Input::Up, Input::A, Input::Z, Input::Drop];
+    let (mut runs, mut caught, mut episodes) = (0u32, 0u32, 0u32);
+    for kind in kinds {
+        let mut fall_caught = false;
+        for entry in entries(kind) {
+            for &m in &mods {
+                for &input in &inputs {
+                    // The fall wait's 1,080 frames: once per modifier
+                    // family keeps the sweep's time down.
+                    if input == Input::Neutral
+                        && !matches!(
+                            m,
+                            Mod::None | Mod::HighDamage | Mod::HitlagInWait(20) | Mod::Moving(3, 2)
+                        )
+                    {
+                        continue;
+                    }
+                    runs += 1;
+                    let offset = core::cell::Cell::new((0i16, 0i16));
+                    let floor = || {
+                        let (dx, dy) = offset.get();
+                        [surface(
+                            Kind::Floor,
+                            3,
+                            (-100 + dx, dy),
+                            (100 + dx, dy),
+                            collision::flags::CLIFF,
+                        )]
+                    };
+                    let mut f = fighter(kind, entry, Vec3::new(0.0, -20.0, 0.0));
+                    f.pos = Vec3::new(-150.0, -40.0, 0.0);
+                    f.cliff_reach = Vec2::new(100.0, 50.0);
+                    if let AnyStatus::Mario(_) = entry {
+                        f.motion_script.flags[1] = 1;
+                    }
+                    match m {
+                        Mod::IgnoreDead => f.dead.is_ignore_dead = true,
+                        Mod::Hogged => f.occupied_cliffs[0] = Some((3, Facing::Right)),
+                        Mod::HighDamage => f.damage = status::CLIFF_DAMAGE_HIGH,
+                        _ => {}
+                    }
+                    let label = format!("{kind:?} {entry:?} {m:?} {input:?}");
+                    let mut current: Option<(Status, u32)> = None;
+                    let mut wait_frames = 0u32;
+                    let mut hit_wait = false;
+                    let mut got = false;
+                    let mut free = 0u32;
+                    for tick in 0..1600u32 {
+                        if let Mod::Moving(dx, dy) = m {
+                            let (x, y) = offset.get();
+                            offset.set((x + dx, y + dy));
+                        }
+                        let in_wait = f.status.status == AnyStatus::Common(Status::CliffWait);
+                        if in_wait {
+                            wait_frames += 1;
+                        }
+                        let mut pad = ControllerState::default();
+                        if in_wait && wait_frames > 2 {
+                            match input {
+                                Input::Neutral => {}
+                                Input::Up => pad.stick_y = 80,
+                                Input::A if wait_frames == 3 => {
+                                    pad.buttons = N64Buttons(N64Buttons::A)
+                                }
+                                Input::Z if wait_frames == 3 => {
+                                    pad.buttons = N64Buttons(N64Buttons::Z)
+                                }
+                                Input::Drop => {
+                                    pad.stick_x = -80 * f.facing.sign() as i8;
+                                    pad.stick_y = -80;
+                                }
+                                _ => {}
+                            }
+                        }
+                        f.set_input(pad, false, false);
+                        f.tick_map(floor);
+                        let now = is_cliff(f.status.status);
+                        if now == Some(Status::CliffCatch) && !got {
+                            got = true;
+                            caught += 1;
+                            if let Mod::HitlagAtCatch(n) = m {
+                                f.hitlag = n;
+                            }
+                        }
+                        if now == Some(Status::CliffWait) && !hit_wait {
+                            if let Mod::HitlagInWait(n) = m {
+                                hit_wait = true;
+                                f.hitlag = n;
+                            }
+                        }
+                        current = match (now, current) {
+                            (Some(s), Some((c, n))) if s == c => {
+                                Some((s, n + u32::from(!f.is_in_hitlag())))
+                            }
+                            (Some(s), _) => {
+                                if s == Status::CliffCatch {
+                                    episodes += 1;
+                                }
+                                Some((s, 1))
+                            }
+                            (None, _) => None,
+                        };
+                        if let Some((s, n)) = current {
+                            let bound = if s == Status::CliffWait {
+                                (if f.damage < status::CLIFF_DAMAGE_HIGH {
+                                    status::CLIFF_FALL_WAIT_DAMAGE_LOW
+                                } else {
+                                    status::CLIFF_FALL_WAIT_DAMAGE_HIGH
+                                }) as u32
+                            } else {
+                                crate::motion::anim_length(kind, s.into()).map_or(4, |l| l as u32)
+                            };
+                            assert!(
+                                n <= bound + 2,
+                                "{label}: {s:?} for {n} frames (bound {bound}) at tick {tick}: \
+                                 clock {} anim_frame {} begin {} hitlag {} fall_wait {}",
+                                f.status.clock,
+                                f.status.anim_frame,
+                                f.status.anim_frame_begin,
+                                f.hitlag,
+                                f.cliff.fall_wait,
+                            );
+                        }
+                        // Out of reach, or off the ledge for a second.
+                        free = if now.is_none() { free + 1 } else { 0 };
+                        if (!got && tick > 150) || (got && free > 60) {
+                            break;
+                        }
+                    }
+                    if matches!(m, Mod::Hogged) {
+                        assert!(!got, "{label}: caught a hogged corner");
+                    }
+                    if entry == AnyStatus::Common(Status::Fall) && matches!(m, Mod::None) {
+                        assert!(got, "{label}: no catch");
+                        fall_caught = true;
+                    }
+                }
+            }
+        }
+        assert!(fall_caught, "{kind:?}");
+    }
+    eprintln!("ledge sweep: {runs} runs, {caught} catches, {episodes} cliff episodes");
+    assert!(caught > runs / 3, "{caught} of {runs}");
+}

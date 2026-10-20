@@ -4702,7 +4702,11 @@ unsafe fn session_frame(
         if s.screen == Screen::Training && s.demo.is_some() {
             demo_load = demo_screen::before_world(s, pack.as_ref(), demo_tapped);
         }
+        let battle_key = scene_key(s);
         if let (Screen::Training, false, Some(p), Some(pl)) = (s.screen, lag_tic, &pack, s.play_state.as_mut()) {
+            // A battle entered this frame runs its first update here
+            // ([`hold_picture`]).
+            s.updated_scene = Some(battle_key);
             let (campaign_session, bonus_stage, boss_scene) = s.campaign.as_mut().map_or((None, None, None), |c|
                 (c.frontend.session.as_deref_mut(), c.bonus.as_deref_mut(), c.boss.as_deref_mut()));
             vs_done = training_frame(
@@ -4809,6 +4813,8 @@ unsafe fn session_frame(
             });
             match entered {
                 Some(index) => {
+                    // `scVSBattleStartSuddenDeath`'s scene load.
+                    s.scene_epoch = s.scene_epoch.wrapping_add(1);
                     s.training_stage = index;
                     s.apply_backup_options();
                 }
@@ -5024,6 +5030,15 @@ struct Session {
     /// The title after the newcomers, waiting for
     /// [`ssb_game::opening::TITLE_START_TIC`].
     title_pending: bool,
+    /// This frame repeats the picture on screen (`syTaskmanCheckBreakLoop`,
+    /// [`hold_picture`]).
+    hold_picture: bool,
+    /// Bumped by every scene request that may leave [`SceneKey`]'s other
+    /// fields as they were (`syTaskmanSetLoadScene`).
+    scene_epoch: u32,
+    /// The scene whose update this frame's battle tick ran, if any
+    /// ([`hold_picture`]).
+    updated_scene: Option<SceneKey>,
 }
 
 /// Ticks the stage select's cursor rests on a stage before its battle
@@ -5036,6 +5051,9 @@ impl Session {
     /// [`enter_training`] into this session's world with `roster`,
     /// remembering it for a sudden death.
     fn enter(&mut self, pack: Option<&Pack<'_>>, gkind: u8, roster: Roster, rules: Option<VsRules>) {
+        // A battle scene's load: a Training reset or the next 1P battle
+        // keeps the screen.
+        self.scene_epoch = self.scene_epoch.wrapping_add(1);
         self.roster = roster;
         // The battle's files (RE-475): `*SetupFiles`, the map, the fighters.
         if let Some(p) = pack {
@@ -5283,6 +5301,9 @@ unsafe fn run() -> ! {
         opening: alloc::boxed::Box::new(opening_screen::Opening::new()),
         opening_pending: None,
         title_pending: false,
+        hold_picture: false,
+        scene_epoch: 0,
+        updated_scene: None,
     });
     // Stage MObj material joints are process-lifetime clocks in the original
     // layer setup. Start once with this pack and advance in the same simulation
@@ -5370,6 +5391,8 @@ unsafe fn run() -> ! {
         if !deterministic_capture_frozen(capture_spec, sim_frame_index) {
             // `gSCManagerBackupData.error_flags` as the fighters read it.
             ssb_game::backup::set_error_flags(s.backup.error_flags);
+            let before = (scene_key(&s), scene_waiting(&s));
+            s.updated_scene = None;
             session_frame(
                 &mut s,
                 &pack,
@@ -5379,6 +5402,7 @@ unsafe fn run() -> ! {
                 controller,
                 pressed,
             );
+            hold_picture(&mut s, before, sim_frame_index);
         }
         profile::stop(profile::Span::Update, update_start);
         save::persist(&mut s.save, &s.backup);
@@ -5458,9 +5482,9 @@ unsafe fn run() -> ! {
         // finds it done (RE-500).
         #[cfg(feature = "frame_timer")]
         ssb_psp_runtime::frame_timer::vblank(|| gpu.wait_presented());
-        if s.screen == Screen::Opening && opening_screen::keeps_picture(&s.opening) {
-            // The opening scene's exit update is not drawn: its last
-            // picture stays on screen through the next scene's load.
+        if s.hold_picture {
+            // A scene's exit update is not drawn: its last picture stays
+            // on screen through the next scene's load.
             gpu.repeat_frame();
         } else {
             let draw_start = profile::start();
@@ -5664,10 +5688,78 @@ fn menus_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: ControllerS
     }
 }
 
+/// What changes when a scene requests the next (`syTaskmanSetLoadScene`):
+/// a direct screen write, a menu scene, a 1P scene, a title demo or a
+/// battle's load.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SceneKey {
+    screen: Screen,
+    scene: MScene,
+    campaign: Option<(core::mem::Discriminant<ssb_game::spgame::frontend::Screen>, Option<ssb_game::spgame::manager::Scene>)>,
+    demo: Option<core::mem::Discriminant<demo_screen::Demo>>,
+    epoch: u32,
+}
+
+fn scene_key(s: &Session) -> SceneKey {
+    SceneKey {
+        screen: s.screen,
+        scene: s.menus.scene,
+        campaign: s.campaign.as_ref().map(|c| {
+            (
+                core::mem::discriminant(&c.frontend.screen),
+                c.frontend.session.as_ref().map(|sp| sp.manager.scene),
+            )
+        }),
+        demo: s.demo.as_ref().map(core::mem::discriminant),
+        epoch: s.scene_epoch,
+    }
+}
+
+/// A requested scene waiting for its start tic with nothing ticking: the
+/// opening's next scene, or the title after the newcomers.
+fn scene_waiting(s: &Session) -> bool {
+    s.opening_pending.is_some()
+        || s.title_pending
+        || (s.screen == Screen::Opening && opening_screen::waiting(&s.opening))
+}
+
+/// `syTaskmanRunTask`: an update that sets `syTaskmanSetLoadScene` breaks
+/// the loop before its `task_draw` (`syTaskmanCheckBreakLoop`), so the
+/// picture before it stays on screen through the load and any wait for
+/// the next scene's start tic; the next scene's first frame draws. Every
+/// scene's exit goes through it (RE-553).
+///
+/// A battle entered by this frame's request already ran its first update
+/// in the same frame (the port runs the exit, the start and update 1 in
+/// one tick): that update is drawn, as the N64's `task_draw` after update 1
+/// (`dSYTaskmanUpdateCount` restarts at 0, interval 1). Holding it would
+/// skip its draw-side state too: `ftDisplayMainProcDisplay`'s
+/// `is_magnify_show`, read by the next `ifCommonPlayerArrowsFuncRun`.
+fn hold_picture(s: &mut Session, (key, waiting): (SceneKey, bool), _sim_frame_index: u64) {
+    let now = scene_key(s);
+    let hold = if waiting {
+        s.hold_picture && scene_waiting(s)
+    } else {
+        now != key && s.updated_scene != Some(now)
+    };
+    // A capture's transitions: a golden captured on the tick after one
+    // shows the held picture.
+    #[cfg(feature = "headless_capture")]
+    if hold && !s.hold_picture {
+        let line = alloc::format!("scene hold tick={}\n", _sim_frame_index);
+        // SAFETY: the buffer outlives the write.
+        unsafe {
+            psp::sys::sceIoWrite(psp::sys::sceKernelStdout(), line.as_ptr() as *const core::ffi::c_void, line.len());
+        }
+    }
+    s.hold_picture = hold;
+}
+
 /// `syTaskmanSetLoadScene` from a host scene: the menus take their own
 /// scenes, the host the rest.
 #[inline(never)]
 fn go_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScene, capture: bool) {
+    s.scene_epoch = s.scene_epoch.wrapping_add(1);
     // `mnTitleFuncStart` after the newcomers waits for the music's tic
     // (RE-467).
     if scene == MScene::Title
@@ -5854,7 +5946,8 @@ fn start_opening(s: &mut Session, pack: Option<&Pack<'_>>, kind: ssb_game::openi
         }
         let movie = matches!(s.demo, Some(demo_screen::Demo::Movie(_)));
         if s.screen != Screen::Opening && !movie {
-            // Nothing of the opening's to hold: black until the start.
+            // Not the opening's screen: the last picture holds
+            // (`hold_picture`) until the start draws.
             opening_screen::clear(&mut s.opening);
             s.menus.leave();
             s.screen = Screen::Opening;

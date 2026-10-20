@@ -16,12 +16,12 @@
 
 ## Current work
 
-- Landed: playtest fixes (RE-553, RE-425, RE-401). Grab on a last stock, Fox ledge loop wrap, dash-smash item, Link entry two-lead clips (pack v124), HammerWalk, pause quit and reappearing pause menu, Kirby forward throw `is_ignore_dead`, opening room hand, cliff exit undrawn frame. 3 goldens added.
-- Open: shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Remaining gaps are in `PLAN.md`.
+- Landed: playtest fixes (RE-553, RE-425, RE-401). Grab on a last stock, Fox ledge loop wrap, dash-smash item, Link entry two-lead clips (pack v124), HammerWalk, pause quit and reappearing pause menu, Kirby forward throw `is_ignore_dead`, opening room hand, undrawn exit frame on every scene change (`hold_picture`; battle entries drawn). 3 goldens added.
+- Open: Fox ledge freeze needs a playtest repro (host sweep green). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Remaining gaps are in `PLAN.md`.
 
 ## Next
 
-1. Further playtest reports, then the open gameplay rows in `PLAN.md`, then MS8.
+1. Further playtest reports; open gameplay rows in `PLAN.md`; then MS8.
 
 ## Blockers
 

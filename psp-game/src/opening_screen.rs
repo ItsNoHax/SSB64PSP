@@ -79,11 +79,6 @@ pub(crate) struct Opening {
     runtime: Runtime,
     /// A scene whose start waits for [`Clock`].
     pending: Option<Kind>,
-    /// The running scene's last update set `syTaskmanSetLoadScene`:
-    /// `syTaskmanRunTask` breaks before that update's `task_draw`
-    /// (`syTaskmanCheckBreakLoop`), so the picture before it stays on
-    /// screen until the next scene draws.
-    exited: bool,
     /// `gSCManagerBackupData.fighter_mask`, which the newcomers read; the
     /// eight starters until the host sets the save's.
     pub fighter_mask: u16,
@@ -111,7 +106,6 @@ impl Opening {
             logic: None,
             runtime: Runtime::new(),
             pending: None,
-            exited: false,
             fighter_mask: STARTERS_MASK,
             frozen: core::cell::Cell::new(false),
             room_figures: None,
@@ -191,7 +185,6 @@ pub(crate) fn start(o: &mut Opening, kind: Option<Kind>) -> bool {
         });
     o.logic = Some(logic);
     o.pending = None;
-    o.exited = false;
     o.frozen.set(false);
     true
 }
@@ -213,10 +206,10 @@ pub(crate) fn load(o: &mut Opening, kind: Kind) {
     crate::scene_load::prefetch(crate::scene_load::name(next), crate::scene_load::scene_roots(next));
 }
 
-/// Drops the running scene: a hold then shows black.
+/// Drops the running scene: the opening screen draws black until the
+/// next starts.
 pub(crate) fn clear(o: &mut Opening) {
     o.logic = None;
-    o.exited = false;
     o.runtime = Runtime::new();
     o.effects = None;
 }
@@ -299,18 +292,15 @@ pub(crate) fn frame(
             rt.effects.process(rt.particles, rt.banks);
         }
     }
-    o.exited = exit.is_some();
     match exit? {
         Exit::Title => Some(MScene::Title),
         Exit::Next(kind) => Some(MScene::Opening(kind)),
     }
 }
 
-/// Whether this frame presents nothing new: the running scene has exited
-/// and no scene has drawn since (`syTaskmanCheckBreakLoop` after
-/// `task_update`).
-pub(crate) fn keeps_picture(o: &Opening) -> bool {
-    o.exited
+/// Whether a scene waits for its start tic ([`hold`]).
+pub(crate) fn waiting(o: &Opening) -> bool {
+    o.pending.is_some()
 }
 
 /// Holds the current picture until `kind`'s start tic, then starts it.

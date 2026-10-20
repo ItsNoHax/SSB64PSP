@@ -175,4 +175,44 @@ fn two_lead_figatrees_bind_every_model_joint() {
             assert_eq!(nodes[2..], model_nodes[..], "{kind}.{slot}");
         }
     }
+    use ssb_game::fighter::FighterKind;
+    use ssb_game::status::{AnyStatus, Status};
+    for (slot, status) in SLOTS
+        .into_iter()
+        .zip([Status::CliffEscapeQuick1, Status::CliffEscapeQuick2])
+    {
+        let kirby = pack.fighter_anim(KIRBY, slot).unwrap();
+        let purin = pack.fighter_anim(PURIN, slot).unwrap();
+        // Purin's rows name Kirby's files (`llFTKirbyAnimCliffEscapeQuick*`,
+        // `ftdata.c:5842`): one figatree and script blob, its joints'
+        // scripts in one order (each joint table binds its own model's
+        // nodes).
+        assert_eq!(
+            (
+                kirby.source_file,
+                kirby.joint_count,
+                kirby.script_offset,
+                kirby.script_len
+            ),
+            (
+                purin.source_file,
+                purin.joint_count,
+                purin.script_offset,
+                purin.script_len
+            ),
+            "{slot}"
+        );
+        let scripts = |a: &ssb_rom::pack::AnimDesc| -> Vec<u32> {
+            (0..a.joint_count)
+                .map(|j| pack.anim_joint(a.first_joint + j).unwrap().script)
+                .collect()
+        };
+        assert_eq!(scripts(&kirby), scripts(&purin), "{slot}");
+        // The figatree's decoded length is the motion table's
+        // `anim_length` (8 and 27).
+        for (kind, anim) in [(FighterKind::Kirby, kirby), (FighterKind::Purin, purin)] {
+            let length = ssb_game::motion::anim_length(kind, AnyStatus::Common(status));
+            assert_eq!(length, Some(anim.frames as f32), "{kind:?}.{slot}");
+        }
+    }
 }

@@ -43,6 +43,7 @@ Output: `target/golden-run/<timestamp>/`
 | `masks/` | Difference masks |
 | `summary.tsv` | Per-scene result |
 | `index.html` | Side-by-side golden, candidate, mask; changed scenes first |
+| `stack/<golden>-<pass>.holds` | `scene hold tick=N` lines: ticks that repeat the previous picture (scene exit); capture tick = hold tick means a held picture |
 
 - Pixel count and mask need the scene's local PNG in `tests/golden/local/`, used only if its hash still matches the manifest.
 - No local PNG → pixel count reads `?`.

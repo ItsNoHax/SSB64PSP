@@ -92,6 +92,10 @@ if [ "${1:-}" = __capture ]; then
     # Free user memory at boot and its lowest (RE-475).
     grep -a -o 'mem tick=[0-9]* boot=[0-9]* low=[0-9]*[^[:cntrl:]]*' \
       "$run/jobs/$job/ppsspp-headless.log" > "$run/stack/$golden-$pass.mem" || true
+    # The ticks whose scene exit held the picture (`hold_picture`): a
+    # capture on the tick after one shows the earlier picture.
+    grep -a -o 'scene hold tick=[0-9]*' \
+      "$run/jobs/$job/ppsspp-headless.log" > "$run/stack/$golden-$pass.holds" || true
   fi
   end=$(date +%s.%N)
   printf '%s\t%s\t%s\t%s\n' "$golden" "$pass" "$status" \
