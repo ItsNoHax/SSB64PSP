@@ -8,6 +8,12 @@ use crate::fighter::{Facing, Fighter, FighterKind};
 use crate::item::{HeldItem, ItemRequest, ItemType, ItemWeight};
 use crate::status::{self, AnyStatus, DonkeyStatus, Status, StatusTiming};
 
+/// `FTCOMMON_LIGHTTHROW_HI_OR_LW_ANGLE` and
+/// `FTCOMMON_HEAVYTHROW_HI_OR_LW_ANGLE` (`ft/ftcommon.h`):
+/// `F_CLC_DTOR32(50.0F)`, the same bits as `F_CST_DTOR32(50.0F)`.
+const LIGHTTHROW_HI_OR_LW_ANGLE: f32 = ssb_engine::math::f_clc_dtor32(50.0);
+const HEAVYTHROW_HI_OR_LW_ANGLE: f32 = ssb_engine::math::f_clc_dtor32(50.0);
+
 /// `FTAttributes::itemlight_joint_id`, including polygon variants (ROM data,
 /// generated at build time into [`crate::motion::CombatAttrs`]). Master
 /// Hand has none (`-1`) and never holds an item: TopN then.
@@ -217,7 +223,7 @@ pub fn collision_axes(f: &Fighter) -> [Vec3; 3] {
     }
     // A slope tilt (`proc_slope`'s `FULL`) turns TopN about x as well.
     if f.topn_rotate_x != 0.0 {
-        let yaw = model_yaw(f).unwrap_or(f.topn_lr * crate::slope_contour::dtor32(90.0));
+        let yaw = model_yaw(f).unwrap_or(f.topn_lr * ssb_engine::math::f_clc_dtor32(90.0));
         let m = crate::slope_contour::transform_matrix(
             Vec3::ZERO,
             [f.topn_rotate_x, yaw, 0.0],
@@ -413,7 +419,7 @@ pub fn check_heavy_throw(f: &mut Fighter) -> bool {
         return false;
     }
     let x = i32::from(f.stick.x);
-    let angle = ssb_engine::math::sy_arc_tan2(f.stick.y as f32, x.abs() as f32);
+    let angle = status::stick_angle(f);
     let forward = x as f32 * f.facing.sign() >= 0.0;
     let s = if x.abs() >= 56 && f.stick.hold_x < 8 {
         if forward {
@@ -421,7 +427,7 @@ pub fn check_heavy_throw(f: &mut Fighter) -> bool {
         } else {
             Status::HeavyThrowB4
         }
-    } else if x.abs() >= 20 && angle.abs() <= 50.0_f32.to_radians() {
+    } else if x.abs() >= 20 && angle.abs() <= HEAVYTHROW_HI_OR_LW_ANGLE {
         if forward {
             Status::HeavyThrowF
         } else {
@@ -523,7 +529,7 @@ pub fn decide_set_status(f: &mut Fighter) {
     let x = i32::from(f.stick.x);
     let y = i32::from(f.stick.y);
     let forward = x as f32 * f.facing.sign() >= 0.0;
-    let angle = ssb_engine::math::sy_arc_tan2(y as f32, (x as f32).abs());
+    let angle = status::stick_angle(f);
     let s = if x.abs() >= 56 && f.stick.hold_x < 8 {
         if forward {
             Status::LightThrowF4
@@ -534,15 +540,15 @@ pub fn decide_set_status(f: &mut Fighter) {
         Status::LightThrowHi4
     } else if y <= -53 && f.stick.hold_y < 4 {
         Status::LightThrowLw4
-    } else if x.abs() >= 20 && angle.abs() <= 50.0_f32.to_radians() {
+    } else if x.abs() >= 20 && angle.abs() <= LIGHTTHROW_HI_OR_LW_ANGLE {
         if forward {
             Status::LightThrowF
         } else {
             Status::LightThrowB
         }
-    } else if y >= 20 && angle > 50.0_f32.to_radians() {
+    } else if y >= 20 && angle > LIGHTTHROW_HI_OR_LW_ANGLE {
         Status::LightThrowHi
-    } else if y <= -20 && angle < -50.0_f32.to_radians() {
+    } else if y <= -20 && angle < -LIGHTTHROW_HI_OR_LW_ANGLE {
         Status::LightThrowLw
     } else if f.items.held.is_some_and(|i| i.ty == ItemType::Throw) {
         Status::LightThrowF
@@ -591,13 +597,13 @@ pub fn check_air(f: &mut Fighter) -> bool {
         && y.abs() < status::ATTACKAIR_DIRECTION_STICK_RANGE_MIN as f32;
     let s = if neutral {
         Status::LightThrowAirF
-    } else if y > 1.191_753_6 * x.abs() {
+    } else if status::stick_angle(f) > status::STICK_ANGLE_50 {
         if f.stick.hold_y < 8 {
             Status::LightThrowAirHi4
         } else {
             Status::LightThrowAirHi
         }
-    } else if y < -1.191_753_6 * x.abs() {
+    } else if status::stick_angle(f) < -status::STICK_ANGLE_50 {
         if f.stick.hold_y < 8 {
             Status::LightThrowAirLw4
         } else {

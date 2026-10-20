@@ -16,11 +16,9 @@
 
 ## Current work
 
-- Landed: entry camera thread timing and idle zoom-out tics (RE-543).
-  - Entry zoom events run before the camera (`entry_zoom_frame`).
-  - Idle zoom-out counts only uncontrolled ticks (`total_tics`).
-  - PSP camera == N64 camera per tick, rec 90-402, within 0.001.
-  - 17 goldens rebaselined.
+- Landed: gameplay trig parity chunks 1-3 (RE-503).
+  - Stick gates, `syVectorAngleDiff3D` sites, Fox up-special PASS floor and AdjustSim2D.
+  - 42 related goldens match; none rebaselined.
 
 ## Next
 
@@ -35,7 +33,7 @@
 
 ## Verification
 
-Baseline: RE-543 entry camera thread timing.
+Baseline: RE-503 trig parity chunks 1-3.
 
 | Check | Result |
 |---|---|
@@ -43,7 +41,7 @@ Baseline: RE-543 entry camera thread timing.
 | `cargo test --workspace`, `SSB64_STUB_TABLES=1`, no ROM | pass |
 | `cargo +1.98.0 clippy -D warnings`, `cargo fmt --all --check` | pass |
 | Both PSP release builds | compile |
-| Goldens | 225/225, 17 camera rows rebaselined (`r2-mario-entry-pipe` nondeterministic, RE-506) |
+| Goldens | 42 related verified, 0 rebaselined (full 225 last run at RE-543) |
 | PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` | exit 0, screenshot |
 | Physical PSP | PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |
 | ROMs | `rom/Super Smash Bros. (USA).z64`, `refs/ssb-decomp-re/baserom.us.z64`; SHA-1 `e2929e10...` |

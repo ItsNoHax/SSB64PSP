@@ -1156,11 +1156,6 @@ where
     set_next_attack_wait(f);
 }
 
-/// `ftParamGetStickAngleRads`.
-fn stick_angle(f: &Fighter) -> f32 {
-    ssb_engine::math::sy_arc_tan2(f32::from(f.stick.y), f32::from(f.stick.x).abs())
-}
-
 /// `ftBossWaitDecideStatusPlayer`: a human Master Hand (the debug
 /// battle's), on B and A with the stick.
 fn decide_player<I, F>(f: &mut Fighter, surfaces: &F)
@@ -1169,14 +1164,15 @@ where
     I: IntoIterator<Item = MapSurface>,
 {
     use ssb_engine::input::N64Buttons;
-    const DEG_50: f32 = 0.872_664_6;
+    // `F_CST_DTOR32(50.0F)`.
+    const DEG_50: f32 = status::STICK_ANGLE_50;
     let x = i32::from(f.stick.x);
     let y = i32::from(f.stick.y);
     // `ftCommonTurnCheckInputSuccess`.
     if (x as f32 * lr(f)) <= status::TURN_STICK_MIN as f32 {
         invert_lr(f);
     }
-    let angle = stick_angle(f);
+    let angle = status::stick_angle(f);
     let taps = f.button_tap();
     let forward = x as f32 * lr(f);
     if taps.contains(N64Buttons::B) {

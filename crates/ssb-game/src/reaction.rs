@@ -41,8 +41,6 @@ pub const FURAFURA_BREAKOUT_WAIT_DEFAULT: i32 = 400;
 pub const FURAFURA_BREAKOUT_WAIT_MIN: i32 = 90;
 /// `ftCommonFuraFura`/`ftMainProcParams`: a broken shield comes back at 30.
 pub const SHIELD_HEALTH_AFTER_BREAK: f32 = 30.0;
-/// `F_CST_DTOR32(50.0F)`.
-const STICK_ANGLE_50: f32 = 0.872_664_6;
 
 /// Per-status counters (`status_vars.common.downbounce/downwait/rebound`).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -167,11 +165,6 @@ fn set(f: &mut Fighter, status: Status) {
 fn set_preserve(f: &mut Fighter, status: Status, preserve: status::Preserve) {
     let t = timing(f, status);
     status::set_any_status_preserve(f, status.into(), 0.0, t, preserve);
-}
-
-/// `ftParamGetStickAngleRads`: the stick's angle above horizontal.
-fn stick_angle(f: &Fighter) -> f32 {
-    ssb_engine::math::sy_arc_tan2(f.stick.y as f32, (f.stick.x as f32).abs())
 }
 
 /// `mpCommonSetFighterGround` for a reaction that lands.
@@ -745,7 +738,8 @@ fn set_down_stand(f: &mut Fighter) {
 
 /// `ftCommonDownStandCheckInterruptCommon`: stick up or a Z tap.
 fn check_down_stand(f: &mut Fighter) -> bool {
-    if (i32::from(f.stick.y) >= DOWNWAIT_STAND_STICK_RANGE_MIN && stick_angle(f) >= STICK_ANGLE_50)
+    if (i32::from(f.stick.y) >= DOWNWAIT_STAND_STICK_RANGE_MIN
+        && status::stick_angle(f) >= status::STICK_ANGLE_50)
         || f.button_tap().contains(N64Buttons::Z)
     {
         set_down_stand(f);
@@ -756,7 +750,8 @@ fn check_down_stand(f: &mut Fighter) -> bool {
 
 /// `ftCommonDownForwardOrBackCheckInterruptCommon`.
 fn check_down_forward_or_back(f: &mut Fighter) -> bool {
-    if i32::from(f.stick.x).abs() < DOWN_FORWARD_BACK_RANGE_MIN || stick_angle(f) >= STICK_ANGLE_50
+    if i32::from(f.stick.x).abs() < DOWN_FORWARD_BACK_RANGE_MIN
+        || status::stick_angle(f) >= status::STICK_ANGLE_50
     {
         return false;
     }

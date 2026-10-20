@@ -191,7 +191,7 @@ impl PKThunder {
                 // `syVectorAngleDiff3D(vel_air, stick)`: `syUtilsArcCos` of
                 // the normalised dot product, unsigned.
                 let stick = Vec3::new(owner.stick.x as f32, owner.stick.y as f32, 0.0);
-                let angle_diff = crate::attack::angle_between(self.velocity, stick);
+                let angle_diff = ssb_engine::math::sy_vector_angle_diff_3d(self.velocity, stick);
                 // The side is the sign of `syVectorNormCross3D`'s z, which
                 // normalising does not change; at 180 degrees the zero cross
                 // product selects a negative step.

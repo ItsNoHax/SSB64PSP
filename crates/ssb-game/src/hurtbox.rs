@@ -594,7 +594,7 @@ pub fn test_sphere_angle(
     if ls == 0.0 {
         return Some(STILL);
     }
-    let angle = crate::attack::angle_between(sub, at);
+    let angle = ssb_engine::math::sy_vector_angle_diff_3d(sub, at);
     if angle == core::f32::consts::PI {
         return Some(STILL);
     }

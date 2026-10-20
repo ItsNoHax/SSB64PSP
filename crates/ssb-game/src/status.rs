@@ -43,7 +43,7 @@
 //! [`StatusTiming`].
 
 use ssb_engine::input::N64Buttons;
-use ssb_engine::math::{Vec2, Vec3};
+use ssb_engine::math::{f_clc_dtor32, f_cst_dtor32, Vec2, Vec3};
 
 #[cfg(test)]
 use crate::collision;
@@ -169,11 +169,18 @@ pub const MARIO_TORNADO_AIR_LENGTH_FRAMES: f32 = 83.0;
 pub const ATTACKS3_STICK_RANGE_MIN: i32 = 20;
 pub const ATTACKHI3_STICK_RANGE_MIN: i32 = 20;
 pub const ATTACKLW3_STICK_RANGE_MIN: i32 = -20;
-/// `tan(17°)`, from `ftCommonAttackS3SetStatus`'s "3ANGLE" branch real test
-/// `ftParamGetStickAngleRads(fp) > F_CST_DTOR32(17.0F)` — reframed as a slope
-/// comparison for the same reason [`CLIFF_MOTION_ANGLE_TAN_50`] is (no
-/// `atan2` in `ssb_engine::math`).
-const ATTACKS3_3ANGLE_TAN_17: f32 = 0.305_730_7;
+/// `F_CST_DTOR32(50.0F)`: the stick-angle gate ([`stick_angle`]) of the
+/// tilts, the aerials, the cliff climb, the get-ups and Master Hand.
+pub(crate) const STICK_ANGLE_50: f32 = f_cst_dtor32(50.0);
+/// `FTCOMMON_ATTACKS3_3ANGLE_{HI,LW}_MIN` = `FTCOMMON_ATTACKS4_3ANGLE_*`
+/// (`ft/ftcommon.h`): `F_CLC_DTOR32(±17.0F)`.
+const ATTACKS3_3ANGLE_HI_MIN: f32 = f_clc_dtor32(17.0);
+const ATTACKS3_3ANGLE_LW_MIN: f32 = f_clc_dtor32(-17.0);
+/// `FTCOMMON_ATTACKS3_5ANGLE_{HI,HIS,LW,LWS}_MIN`: `F_CLC_DTOR32(±30, ±10)`.
+const ATTACKS3_5ANGLE_HI_MIN: f32 = f_clc_dtor32(30.0);
+const ATTACKS3_5ANGLE_HIS_MIN: f32 = f_clc_dtor32(10.0);
+const ATTACKS3_5ANGLE_LW_MIN: f32 = f_clc_dtor32(-30.0);
+const ATTACKS3_5ANGLE_LWS_MIN: f32 = f_clc_dtor32(-10.0);
 
 /// `FTCOMMON_ATTACKAIR_DIRECTION_STICK_RANGE_MIN` — `ft/ftcommon.h`: below
 /// this on both axes, an aerial attack reads as neutral.
@@ -190,15 +197,14 @@ pub const ATTACKHI4_STICK_RANGE_MIN: i32 = 53;
 pub const ATTACKHI4_BUFFER_TICS_MAX: u8 = 4;
 pub const ATTACKLW4_STICK_RANGE_MIN: i32 = -53;
 pub const ATTACKLW4_BUFFER_TICS_MAX: u8 = 4;
-/// `tan(21°)`/`tan(7°)`, from `ftCommonAttackS4SetStatus`'s 5-way angle
-/// split (`FTCOMMON_ATTACKS4_5ANGLE_{HI,HIS,LW,LWS}_MIN`) — Mario has all
-/// five forward-smash motion files, unlike his forward tilt's three, so his
-/// forward smash really does use this branch rather than the 3-way one.
-const ATTACKS4_5ANGLE_TAN_21: f32 = 0.383_864_04;
-const ATTACKS4_5ANGLE_TAN_7: f32 = 0.122_784_56;
-/// Fox has all five forward-tilt motion files; source thresholds are ±30° and ±10°.
-const ATTACKS3_5ANGLE_TAN_30: f32 = 0.577_350_26;
-const ATTACKS3_5ANGLE_TAN_10: f32 = 0.176_326_98;
+/// `FTCOMMON_ATTACKS4_5ANGLE_{HI,HIS,LW,LWS}_MIN` (`ft/ftcommon.h`):
+/// `F_CLC_DTOR32(±21, ±7)`. Mario has all five forward-smash motion files,
+/// unlike his forward tilt's three, so his forward smash really does use
+/// this branch rather than the 3-way one.
+const ATTACKS4_5ANGLE_HI_MIN: f32 = f_clc_dtor32(21.0);
+const ATTACKS4_5ANGLE_HIS_MIN: f32 = f_clc_dtor32(7.0);
+const ATTACKS4_5ANGLE_LW_MIN: f32 = f_clc_dtor32(-21.0);
+const ATTACKS4_5ANGLE_LWS_MIN: f32 = f_clc_dtor32(-7.0);
 
 /// A fighter's status, with `FTCommonStatus` ordinals preserved exactly —
 /// the complete common table (0..=219), transcribed from
@@ -2819,18 +2825,34 @@ fn set_fox_special_hi_hold(f: &mut Fighter) {
     f.fox_special_hi.launch_delay = 35;
 }
 
+/// `FTFOX_FIREFOX_BOUND_ANGLE` (`ftfox.h`): `F_CLC_DTOR32(20.0F)`, how far
+/// past parallel a Fire Fox may meet a surface and slide along it
+/// (`lbCommonCheckAdjustSim2D`).
+pub(crate) const FIREFOX_BOUND_ANGLE: f32 = f_clc_dtor32(20.0);
+
 fn set_fox_special_hi_travel(f: &mut Fighter) {
     let x = f.stick.x as f32;
     let y = f.stick.y as f32;
     let angled = x.abs() + y.abs() >= 45.0;
-    let ground_normal = f
-        .floor
-        .map(|floor| floor.normal)
-        .unwrap_or(Vec2::new(0.0, 1.0));
-    // The ground branch is selected when the stick points into the floor.
+    // A flag and a defined floor: the gate must never read a `None`'s
+    // unwritten payload (RE-531).
+    let (on_floor, floor) = ssb_engine::math::defined_or(f.floor, crate::ground::Standing::NONE);
+    let ground_normal = if on_floor {
+        floor.normal
+    } else {
+        Vec2::new(0.0, 1.0)
+    };
+    // `ftFoxSpecialHiDecideSetStatus`: the ground branch needs a solid floor
+    // (not `MAP_VERTEX_COLL_PASS`) and the stick at least 90 degrees from
+    // its normal (`syVectorAngleDiff3D(floor_angle, stick) < F_CST_DTOR32(90)`
+    // goes to `setair`).
     let on_ground = f.situation == Situation::Ground
         && angled
-        && ground_normal.x * x + ground_normal.y * y <= 0.0;
+        && !floor.passable()
+        && ssb_engine::math::sy_vector_angle_diff_3d(
+            Vec3::new(ground_normal.x, ground_normal.y, 0.0),
+            Vec3::new(x, y, 0.0),
+        ) >= ssb_engine::math::f_cst_dtor32(90.0);
     // `ftParamSetStickLR`: unconditional on the ground path
     // (`ftFoxSpecialHiDecideSetStatus`), behind the 11-unit model threshold
     // in the air (`ftFoxSpecialAirHiSetStatusFromGround`).
@@ -2886,23 +2908,14 @@ pub fn fox_fire_fox_floor_contact(f: &mut Fighter, normal: Vec2, floor_y: f32) -
     if f.status.status != AnyStatus::Fox(FoxStatus::SpecialAirHi) {
         return false;
     }
-    let velocity = f.physics.vel_air;
-    let speed = ssb_engine::math::sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
-    if speed <= 0.0 {
-        f.land(floor_y);
-        set_fox_special_hi_end(f);
-        return true;
-    }
-    let dot = normal.x * velocity.x + normal.y * velocity.y;
-    let similarity = dot / (1.0 + speed);
-    if !f.map_contacts_prev.floor && (-0.342_020_15..=0.0).contains(&similarity) {
-        let orientation = if normal.x * velocity.y - normal.y * velocity.x < 0.0 {
-            -1.0
-        } else {
-            1.0
-        };
-        f.physics.vel_air.x = -normal.y * speed * orientation;
-        f.physics.vel_air.y = normal.x * speed * orientation;
+    let floor_angle = Vec3::new(normal.x, normal.y, 0.0);
+    if !f.map_contacts_prev.floor
+        && ssb_engine::math::lb_common_check_adjust_sim_2d(
+            &mut f.physics.vel_air,
+            floor_angle,
+            FIREFOX_BOUND_ANGLE,
+        )
+    {
         f.facing = if f.physics.vel_air.x >= 0.0 {
             Facing::Right
         } else {
@@ -2917,7 +2930,9 @@ pub fn fox_fire_fox_floor_contact(f: &mut Fighter, normal: Vec2, floor_y: f32) -
         f.pos.y = floor_y;
         return true;
     }
-    if dot / speed < -0.342_020_15 {
+    if ssb_engine::math::sy_vector_angle_diff_3d(floor_angle, f.physics.vel_air)
+        > ssb_engine::math::f_cst_dtor32(110.0)
+    {
         f.land(floor_y);
         set_any_status(
             f,
@@ -3771,11 +3786,6 @@ pub const CLIFF_DAMAGE_HIGH: u16 = 100;
 pub const CLIFF_FALL_WAIT_DAMAGE_LOW: i32 = 1080;
 pub const CLIFF_FALL_WAIT_DAMAGE_HIGH: i32 = 480;
 pub const CLIFF_MOTION_STICK_RANGE_MIN: i32 = 20;
-/// `tan(50°)`. `ftCommonCliffClimbOrFallCheckInterruptCommon`'s real test is
-/// `ftParamGetStickAngleRads(fp) > F_CST_DTOR32(50.0F)`, where the angle is
-/// `atan2(stick_y, |stick_x|)` — reframed here as the equivalent slope
-/// comparison (`stick_y > tan(50°) * |stick_x|`) so it needs no `atan2`.
-const CLIFF_MOTION_ANGLE_TAN_50: f32 = 1.191_753_6;
 
 /// `FTStruct::status_vars.common.cliffwait`/`cliffmotion`, plus which floor
 /// line's edge is held (`coll_data.cliff_id`).
@@ -3889,10 +3899,9 @@ fn check_cliff_climb_or_fall(f: &mut Fighter) -> bool {
     if !f.cliff.is_allow_interrupt {
         return false;
     }
-    let steep_up = y > CLIFF_MOTION_ANGLE_TAN_50 * x.abs();
+    let angle = stick_angle(f);
     let forward = x * f.facing.sign() >= 0.0;
-    let not_steep_down = y > -CLIFF_MOTION_ANGLE_TAN_50 * x.abs();
-    if steep_up || (not_steep_down && forward) {
+    if angle > STICK_ANGLE_50 || (angle > -STICK_ANGLE_50 && forward) {
         set_cliff_action(f, Status::CliffClimbQuick1);
     } else {
         // Holding away and down lets go outright — `ftCommonFallSetStatus`,
@@ -5259,14 +5268,14 @@ pub fn set_dash_attack(f: &mut Fighter) {
 /// the five-angle branch, then `motion_desc[...Hi]` for the three-angle one;
 /// a fighter with neither always gets the straight move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AngleVariants {
+pub(crate) enum AngleVariants {
     One,
     Three,
     Five,
 }
 
 /// Read from each fighter's `dFT<Name>MotionDescs`.
-fn ftilt_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
+pub(crate) fn ftilt_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
     use crate::fighter::FighterKind;
     match crate::grab::base_kind(kind) {
         FighterKind::Fox | FighterKind::Samus | FighterKind::Captain => AngleVariants::Five,
@@ -5275,7 +5284,7 @@ fn ftilt_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
     }
 }
 
-fn fsmash_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
+pub(crate) fn fsmash_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
     use crate::fighter::FighterKind;
     match kind.character() {
         FighterKind::Fox
@@ -5289,41 +5298,43 @@ fn fsmash_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
     }
 }
 
-/// `ftCommonAttackS3SetStatus` @ `ftcommonattacks3.c:10`.
+/// `ftParamGetStickAngleRads` (`ftparam.c:245`): the stick's angle above
+/// horizontal, `syUtilsArcTan2(stick.y, ABS(stick.x))`, in `[-π/2, π/2]`.
+/// Every stick-direction gate compares this angle, never a slope.
+pub(crate) fn stick_angle(f: &Fighter) -> f32 {
+    ssb_engine::math::sy_arc_tan2(f32::from(f.stick.y), f32::from(f.stick.x).abs())
+}
+
+/// `ftCommonAttackS3SetStatus`'s angle split, on [`stick_angle`].
+pub(crate) fn ftilt_status(variants: AngleVariants, angle: f32) -> Status {
+    match variants {
+        AngleVariants::Five if angle > ATTACKS3_5ANGLE_HI_MIN => Status::AttackS3Hi,
+        AngleVariants::Five if angle > ATTACKS3_5ANGLE_HIS_MIN => Status::AttackS3HiS,
+        AngleVariants::Five if angle < ATTACKS3_5ANGLE_LW_MIN => Status::AttackS3Lw,
+        AngleVariants::Five if angle < ATTACKS3_5ANGLE_LWS_MIN => Status::AttackS3LwS,
+        AngleVariants::Three if angle > ATTACKS3_3ANGLE_HI_MIN => Status::AttackS3Hi,
+        AngleVariants::Three if angle < ATTACKS3_3ANGLE_LW_MIN => Status::AttackS3Lw,
+        _ => Status::AttackS3,
+    }
+}
+
+/// `ftCommonAttackS3SetStatus` @ `ftcommonattacks3.c:11`.
 pub fn set_ftilt(f: &mut Fighter) {
     if crate::item_throw::check_get(f) {
         return;
     }
-    let x = f.stick.x as f32;
-    let y = f.stick.y as f32;
-    let variants = ftilt_variants(f.kind);
-    let five = variants == AngleVariants::Five;
-    let three = variants == AngleVariants::Three;
-    let status = if five && y > ATTACKS3_5ANGLE_TAN_30 * x.abs() {
-        Status::AttackS3Hi
-    } else if five && y > ATTACKS3_5ANGLE_TAN_10 * x.abs() {
-        Status::AttackS3HiS
-    } else if five && y < -ATTACKS3_5ANGLE_TAN_30 * x.abs() {
-        Status::AttackS3Lw
-    } else if five && y < -ATTACKS3_5ANGLE_TAN_10 * x.abs() {
-        Status::AttackS3LwS
-    } else if three && y > ATTACKS3_3ANGLE_TAN_17 * x.abs() {
-        Status::AttackS3Hi
-    } else if three && y < -ATTACKS3_3ANGLE_TAN_17 * x.abs() {
-        Status::AttackS3Lw
-    } else {
-        Status::AttackS3
-    };
+    let status = ftilt_status(ftilt_variants(f.kind), stick_angle(f));
     let len = attack_length(f, status);
     set_status(f, status, 0.0, StatusTiming::frames(len));
     // The setter plays the first frame (`ftMainPlayAnimEventsAll`).
     play_anim_events(f);
 }
 
-/// `ftCommonAttackHi3SetStatus` @ `ftcommonattackhi3.c:10`, reduced to the
-/// no-`Hi3F`/`Hi3B` case — Mario has no forward/backward-leaning up-tilt
-/// motion files, so (as with [`set_ftilt`]) this is exactly Mario's real
-/// behaviour, not a cut-down version of it.
+/// `ftCommonAttackHi3SetStatus` @ `ftcommonattackhi3.c:10`. Its
+/// `AttackHi3F`/`AttackHi3B` split (`syUtilsArcTan2(y, x * lr)` against
+/// `F_CLC_DTOR32(77)`/`F_CLC_DTOR32(103)`) runs only for a fighter with an
+/// `AttackHi3F` motion file, and no fighter has one
+/// (`stick_gate_tests::angled_move_variants_match_the_motion_tables`).
 pub fn set_utilt(f: &mut Fighter) {
     let len = attack_length(f, Status::AttackHi3);
     set_status(f, Status::AttackHi3, 0.0, StatusTiming::frames(len));
@@ -5371,15 +5382,7 @@ pub fn set_air_attack(f: &mut Fighter, status: Status) {
 /// branch uses the forward tilt's 17-degree split
 /// (`FTCOMMON_ATTACKS4_3ANGLE_{HI,LW}_MIN`).
 pub fn set_fsmash(f: &mut Fighter) {
-    let x = f.stick.x as f32;
-    let y = f.stick.y as f32;
-    let status = match fsmash_variants(f.kind) {
-        AngleVariants::One => Status::AttackS4,
-        AngleVariants::Three if y > ATTACKS3_3ANGLE_TAN_17 * x.abs() => Status::AttackS4Hi,
-        AngleVariants::Three if y < -ATTACKS3_3ANGLE_TAN_17 * x.abs() => Status::AttackS4Lw,
-        AngleVariants::Three => Status::AttackS4,
-        AngleVariants::Five => fsmash_five(x, y),
-    };
+    let status = fsmash_status(fsmash_variants(f.kind), stick_angle(f));
     // `ftMainSetStatus` keeps the motion flags: Pikachu's spark flags and
     // Ness's reflector flag start clear.
     let base = crate::grab::base_kind(f.kind);
@@ -5403,17 +5406,16 @@ pub fn set_fsmash(f: &mut Fighter) {
     }
 }
 
-fn fsmash_five(x: f32, y: f32) -> Status {
-    if y > ATTACKS4_5ANGLE_TAN_21 * x.abs() {
-        Status::AttackS4Hi
-    } else if y > ATTACKS4_5ANGLE_TAN_7 * x.abs() {
-        Status::AttackS4HiS
-    } else if y < -ATTACKS4_5ANGLE_TAN_21 * x.abs() {
-        Status::AttackS4Lw
-    } else if y < -ATTACKS4_5ANGLE_TAN_7 * x.abs() {
-        Status::AttackS4LwS
-    } else {
-        Status::AttackS4
+/// `ftCommonAttackS4SetStatus`'s angle split, on [`stick_angle`].
+pub(crate) fn fsmash_status(variants: AngleVariants, angle: f32) -> Status {
+    match variants {
+        AngleVariants::Five if angle > ATTACKS4_5ANGLE_HI_MIN => Status::AttackS4Hi,
+        AngleVariants::Five if angle > ATTACKS4_5ANGLE_HIS_MIN => Status::AttackS4HiS,
+        AngleVariants::Five if angle < ATTACKS4_5ANGLE_LW_MIN => Status::AttackS4Lw,
+        AngleVariants::Five if angle < ATTACKS4_5ANGLE_LWS_MIN => Status::AttackS4LwS,
+        AngleVariants::Three if angle > ATTACKS3_3ANGLE_HI_MIN => Status::AttackS4Hi,
+        AngleVariants::Three if angle < ATTACKS3_3ANGLE_LW_MIN => Status::AttackS4Lw,
+        _ => Status::AttackS4,
     }
 }
 
@@ -5621,20 +5623,17 @@ pub fn check_dsmash(f: &mut Fighter) -> bool {
     true
 }
 
-/// `ftCommonAttackS3CheckInterruptCommon` @ `ftcommonattacks3.c:39`.
-/// `ftParamGetStickAngleRads`'s `atan2(y, |x|)` gate
-/// (`|angle| <= 50°`) is reframed as `|y| <= tan(50°) * |x|`, the same
-/// slope-comparison trick [`CLIFF_MOTION_ANGLE_TAN_50`] uses.
+/// `ftCommonAttackS3CheckInterruptCommon` @ `ftcommonattacks3.c:45`.
 pub fn check_ftilt(f: &mut Fighter) -> bool {
     if !f.button_tap().contains(N64Buttons::A) {
         return false;
     }
     let x = f.stick.x as f32;
-    let y = f.stick.y as f32;
     if x * f.facing.sign() < ATTACKS3_STICK_RANGE_MIN as f32 {
         return false;
     }
-    if y.abs() > CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
+    let angle = stick_angle(f);
+    if (if angle < 0.0 { -angle } else { angle }) > STICK_ANGLE_50 {
         return false;
     }
     if crate::item_throw::check_item_type_throw(f) {
@@ -5656,9 +5655,7 @@ pub fn check_utilt(f: &mut Fighter) -> bool {
     if (f.stick.y as i32) < ATTACKHI3_STICK_RANGE_MIN {
         return false;
     }
-    let x = f.stick.x as f32;
-    let y = f.stick.y as f32;
-    if y <= CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
+    if stick_angle(f) <= STICK_ANGLE_50 {
         return false;
     }
     if crate::item_throw::check_item_type_throw(f) {
@@ -5677,9 +5674,7 @@ pub fn check_dtilt(f: &mut Fighter) -> bool {
     if (f.stick.y as i32) > ATTACKLW3_STICK_RANGE_MIN {
         return false;
     }
-    let x = f.stick.x as f32;
-    let y = f.stick.y as f32;
-    if y >= -CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
+    if stick_angle(f) >= -STICK_ANGLE_50 {
         return false;
     }
     if crate::item_throw::check_item_type_throw(f) {
@@ -5712,9 +5707,9 @@ pub fn check_attack_air(f: &mut Fighter) -> bool {
         && y.abs() < ATTACKAIR_DIRECTION_STICK_RANGE_MIN as f32
     {
         Status::AttackAirN
-    } else if y > CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
+    } else if stick_angle(f) > STICK_ANGLE_50 {
         Status::AttackAirHi
-    } else if y < -CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
+    } else if stick_angle(f) < -STICK_ANGLE_50 {
         Status::AttackAirLw
     } else if x * f.facing.sign() >= 0.0 {
         Status::AttackAirF
@@ -8345,6 +8340,34 @@ mod tests {
             let mut f = mid_aerial(FighterKind::Link, air, 12);
             set_landing_or_landing_air(&mut f);
             assert_eq!(f.status.status, landing, "{air:?}");
+        }
+    }
+
+    /// `ftFoxSpecialHiDecideSetStatus` (`ftfoxspecialhi.c:291`): a pass-through
+    /// floor (`MAP_VERTEX_COLL_PASS`) never starts the grounded Fire Fox, even
+    /// with the stick into it: Fox leaves the ground (`setair`).
+    #[test]
+    fn fire_fox_from_a_pass_through_floor_launches_into_the_air() {
+        for (flags, grounded) in [(0, true), (collision::flags::PASS, false)] {
+            let mut f = Fighter::new(FighterKind::Fox, 0, 3);
+            f.situation = Situation::Ground;
+            f.floor = Some(crate::ground::Standing {
+                line: 1,
+                flags,
+                normal: Vec2::new(0.0, 1.0),
+            });
+            f.stick.x = 0;
+            f.stick.y = -80;
+            f.status.status = AnyStatus::Fox(FoxStatus::SpecialHiHold);
+            f.fox_special_hi.launch_delay = 1;
+            update(&mut f);
+            let want = if grounded {
+                FoxStatus::SpecialHi
+            } else {
+                FoxStatus::SpecialAirHi
+            };
+            assert_eq!(f.status.status, AnyStatus::Fox(want), "flags {flags:#x}");
+            assert_eq!(f.is_grounded(), grounded, "flags {flags:#x}");
         }
     }
 

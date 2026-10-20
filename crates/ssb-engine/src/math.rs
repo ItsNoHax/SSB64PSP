@@ -998,6 +998,60 @@ pub fn lb_tan(angle: f32) -> f32 {
     lb_sin_index(index) / lb_sin_index(index.wrapping_add(0x0400))
 }
 
+// --- Degree constants and angle helpers (`macros.h`, `vector.c`, `lbcommon.c`)
+
+/// `F_CST_DTOR32(deg)` (`macros.h`): `(float)(deg * DTOR32)`, one `f32`
+/// multiply by the rounded constant. Differs from [`f_clc_dtor32`] in the
+/// last bit at some angles (7, 10, 17, 20, 75, 103 degrees); the decomp
+/// picks the macro that matches each site's ROM constant.
+pub const fn f_cst_dtor32(deg: f32) -> f32 {
+    deg * DTOR32
+}
+
+/// `F_CLC_DTOR32(deg)` (`macros.h`): `(float)((deg * PI32) / 180.0F)`, two
+/// `f32` steps.
+pub const fn f_clc_dtor32(deg: f32) -> f32 {
+    (deg * core::f32::consts::PI) / 180.0
+}
+
+/// `syVectorAngleDiff3D` (`sys/vector.c:104`): the angle between two
+/// vectors, `syUtilsArcCos` of their cosine clamped to `[-1, 1]`; 0 when
+/// either is a zero vector. Callers compare the angle, not the cosine: the
+/// arccosine's continued fraction moves a threshold by a few ULPs against a
+/// cosine literal.
+pub fn sy_vector_angle_diff_3d(a: Vec3, b: Vec3) -> f32 {
+    let mag = a.length() * b.length();
+    if mag == 0.0 {
+        return 0.0;
+    }
+    // Out of line: the division must not run before the branch (RE-469).
+    let cos_diff = div_nonzero(a.dot(b), mag);
+    sy_arc_cos(cos_diff.clamp(-1.0, 1.0))
+}
+
+/// `lbCommonCheckAdjustSim2D` (`lb/lbcommon.c:463`): when `a` points into
+/// `b` by no more than `angle` past perpendicular (`lbCommonSim2D(b, a)`,
+/// the dot product over the SUM of the lengths, in
+/// `[cosf(angle + F_CST_DTOR32(90)), 0]`), turns `a` in place to run along
+/// the surface perpendicular to `b`, keeping its 2D length, toward the side
+/// it came from, and returns `true`. `a.z` is left as it is.
+pub fn lb_common_check_adjust_sim_2d(a: &mut Vec3, b: Vec3, angle: f32) -> bool {
+    let mag_b = sqrt(b.x * b.x + b.y * b.y);
+    let mag_a = sqrt(a.x * a.x + a.y * a.y);
+    // `div_ieee`: two zero vectors give the original's NaN (every compare
+    // false) without dividing by zero on the PSP (RE-502).
+    let similarity = div_ieee(b.x * a.x + b.y * a.y, mag_a + mag_b);
+    if similarity <= 0.0 && similarity >= cosf(angle + f_cst_dtor32(90.0)) {
+        let orientation = b.x * a.y - b.y * a.x;
+        let orientation = if orientation < 0.0 { -1.0 } else { 1.0 };
+        let magnitude = mag_a * orientation;
+        a.x = -b.y * magnitude;
+        a.y = b.x * magnitude;
+        return true;
+    }
+    false
+}
+
 /// `gSYSinTable` (`sys/sintable.c`): `u16[2048]`, the sine over `[0, PI)`
 /// scaled by 32768, read from the user's ROM at build time (`build.rs`,
 /// `ssb-tablegen`). Hand-authored data, not a formula: rounding
@@ -1348,6 +1402,75 @@ mod trig_tests {
     fn the_table_sine_is_exact_at_a_quarter_turn() {
         assert_eq!(super::lb_sin(core::f32::consts::FRAC_PI_2), 1.0);
         assert_eq!(super::lb_cos(core::f32::consts::FRAC_PI_2), 0.0);
+    }
+
+    /// The two degree macros against the decomp's own comments on the
+    /// constants it matched to the ROM (`ft/ftcommon.h:330-357`,
+    /// `ftcommonattackhi3.c:20-21`, `ftkirby.h:19`, `ftcommondamage.c:537`).
+    #[test]
+    #[allow(clippy::approx_constant)] // the decomp's literals, as written
+    fn the_degree_macros_fold_to_the_roms_constants() {
+        use super::{f_clc_dtor32 as clc, f_cst_dtor32 as cst};
+        for (got, want) in [
+            (clc(30.0), 0.523_598_8),
+            (clc(10.0), 0.174_532_94),
+            (clc(17.0), 0.296_706),
+            (clc(21.0), 0.366_519_15),
+            (clc(7.0), 0.122_173_056),
+            (clc(77.0), 1.343_903_5),
+            (clc(103.0), 1.797_689_2),
+            (clc(75.0), 1.308_997),
+            (cst(50.0), 0.872_664_63),
+            (cst(100.0), 1.745_329_3),
+            (cst(90.0), core::f32::consts::FRAC_PI_2),
+            (clc(180.0), core::f32::consts::PI),
+        ] {
+            assert_eq!(got.to_bits(), f32::to_bits(want), "{got} vs {want}");
+        }
+        // The two forms differ in the last bit at these angles.
+        for deg in [7.0, 10.0, 17.0, 20.0, 75.0, 103.0] {
+            assert_ne!(cst(deg).to_bits(), clc(deg).to_bits(), "{deg}");
+        }
+    }
+
+    #[test]
+    fn the_angle_between_two_vectors_is_the_games_arc_cosine() {
+        use super::{sy_arc_cos, sy_vector_angle_diff_3d as diff, Vec3};
+        let x = Vec3::new(3.0, 0.0, 0.0);
+        assert_eq!(
+            diff(x, Vec3::new(0.0, 2.0, 0.0)),
+            core::f32::consts::FRAC_PI_2
+        );
+        assert_eq!(diff(x, Vec3::new(-1.0, 0.0, 0.0)), core::f32::consts::PI);
+        assert_eq!(diff(x, x), 0.0);
+        // A zero vector gives 0, not NaN.
+        assert_eq!(diff(Vec3::ZERO, x), 0.0);
+        let (a, b) = (Vec3::new(1.0, 2.0, 3.0), Vec3::new(-2.0, 0.5, 1.0));
+        let c = a.dot(b) / (a.length() * b.length());
+        assert_eq!(diff(a, b).to_bits(), sy_arc_cos(c).to_bits());
+    }
+
+    #[test]
+    fn adjust_sim_2d_turns_a_shallow_vector_along_the_surface() {
+        use super::{f_clc_dtor32, lb_common_check_adjust_sim_2d as adjust, Vec3};
+        let up = Vec3::new(0.0, 1.0, 0.0);
+        // 5.7 degrees into the floor: within 20 degrees past perpendicular.
+        let mut a = Vec3::new(10.0, -1.0, 7.0);
+        let len = (101.0f32).sqrt();
+        assert!(adjust(&mut a, up, f_clc_dtor32(20.0)));
+        assert_eq!((a.x, a.y, a.z), (len, 0.0, 7.0));
+        let mut a = Vec3::new(-10.0, -1.0, 0.0);
+        assert!(adjust(&mut a, up, f_clc_dtor32(20.0)));
+        assert_eq!((a.x, a.y), (-len, 0.0));
+        // Steeply into the floor, or away from it: unchanged.
+        for v in [Vec3::new(1.0, -10.0, 0.0), Vec3::new(10.0, 1.0, 0.0)] {
+            let mut a = v;
+            assert!(!adjust(&mut a, up, f_clc_dtor32(20.0)));
+            assert_eq!(a, v);
+        }
+        // The bound is the similarity, dot over the sum of the lengths.
+        let mut a = Vec3::ZERO;
+        assert!(!adjust(&mut a, Vec3::ZERO, 0.0));
     }
 }
 

@@ -246,7 +246,7 @@ pub(crate) fn map_blast_contacts(f: &mut Fighter) {
             continue;
         }
         let v = f.physics.vel_air;
-        if hit.normal.x * v.x + hit.normal.y * v.y < v.length() * -0.906_307_8 {
+        if jibaku_halts(hit.normal, v) {
             let factor = -2.0 * (hit.normal.x * v.x + hit.normal.y * v.y);
             f.physics.vel_air.x = (v.x + hit.normal.x * factor) * 0.5;
             f.physics.vel_air.y = (v.y + hit.normal.y * factor) * 0.5;
@@ -289,6 +289,16 @@ pub(crate) fn map_blast_contacts(f: &mut Fighter) {
         }
     }
 }
+/// `FTNESS_PKJIBAKU_HALT_ANGLE` (`ftness.h`): `F_CLC_DTOR32(155.0F)`.
+const PKJIBAKU_HALT_ANGLE: f32 = ssb_engine::math::f_clc_dtor32(155.0);
+
+/// `ftNessSpecialAirHiJibakuProcMap`'s halt test (`ftnessspecialhi.c:626-668`):
+/// `syVectorAngleDiff3D(surface_angle, vel_air) > FTNESS_PKJIBAKU_HALT_ANGLE`.
+pub(crate) fn jibaku_halts(normal: Vec2, vel_air: Vec3) -> bool {
+    ssb_engine::math::sy_vector_angle_diff_3d(Vec3::new(normal.x, normal.y, 0.0), vel_air)
+        > PKJIBAKU_HALT_ANGLE
+}
+
 fn set_blast(f: &mut Fighter, thunder: Vec3) {
     f.ness.thunder_collide = true;
     let dx = f.pos.x - thunder.x;
@@ -299,24 +309,21 @@ fn set_blast(f: &mut Fighter, thunder: Vec3) {
         Facing::Left
     };
     f.ness.blast_angle = sy_arc_tan2(dy, dx * f.facing.sign());
+    // `ftNessSpecialHiJibakuSetStatus` (`ftnessspecialhi.c:731`): a solid
+    // floor, and the blast at least `F_CST_DTOR32(90)` from its normal, keeps
+    // Ness grounded; past `F_CST_DTOR32(155)` he bounces down. A flag and a
+    // defined floor: the gate must never read a `None`'s payload (RE-531).
+    let (on_floor, floor) = ssb_engine::math::defined_or(f.floor, crate::ground::Standing::NONE);
+    let angle_diff = ssb_engine::math::sy_vector_angle_diff_3d(
+        Vec3::new(floor.normal.x, floor.normal.y, 0.0),
+        Vec3::new(dx, dy, 0.0),
+    );
     let ground = f.is_grounded()
-        && f.floor.is_some_and(|floor| {
-            if floor.passable() {
-                return false;
-            }
-            let dot = (floor.normal.x * dx + floor.normal.y * dy)
-                / ssb_engine::math::sqrt(dx * dx + dy * dy);
-            if dot < sin_cos(155.0 * core::f32::consts::PI / 180.0).1 {
-                return true;
-            }
-            dot <= 0.0
-        });
+        && on_floor
+        && !floor.passable()
+        && angle_diff >= ssb_engine::math::f_cst_dtor32(90.0);
     if ground {
-        let n = f.floor.unwrap().normal;
-        if (n.x * dx + n.y * dy)
-            < ssb_engine::math::sqrt(dx * dx + dy * dy)
-                * sin_cos(155.0 * core::f32::consts::PI / 180.0).1
-        {
+        if angle_diff > ssb_engine::math::f_cst_dtor32(155.0) {
             down_bounce(f);
             return;
         }
@@ -663,10 +670,7 @@ pub fn on_landing(f: &mut Fighter, y: f32, normal: Vec2) -> bool {
     };
     let velocity = f.physics.vel_air;
     f.land(y);
-    if s == N::SpecialAirHiJibaku
-        && normal.x * velocity.x + normal.y * velocity.y
-            < velocity.length() * sin_cos(155.0 * core::f32::consts::PI / 180.0).1
-    {
+    if s == N::SpecialAirHiJibaku && jibaku_halts(normal, velocity) {
         down_bounce(f);
     } else {
         switch(f, ground);

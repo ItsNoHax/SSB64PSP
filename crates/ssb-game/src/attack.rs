@@ -207,9 +207,9 @@ pub const DAMAGE_INDEX_HI: usize = 2;
 
 /// `F_CST_DTOR32(100.0F)`: a tumble whose velocity points more than 100
 /// degrees away from the floor normal bounces off it.
-const DAMAGE_BOUNCE_ANGLE: f32 = 1.745_329_3;
+const DAMAGE_BOUNCE_ANGLE: f32 = ssb_engine::math::f_cst_dtor32(100.0);
 /// `F_CST_DTOR32(90.0F)`.
-const DAMAGE_LAUNCH_ANGLE: f32 = core::f32::consts::FRAC_PI_2;
+const DAMAGE_LAUNCH_ANGLE: f32 = ssb_engine::math::f_cst_dtor32(90.0);
 /// `FTCOMMON_DAMAGE_FIGHTER_FLYROLL_*`.
 const FLYROLL_DAMAGE_MIN: u16 = 100;
 const FLYROLL_RANDOM_CHANCE: f32 = 0.5;
@@ -234,18 +234,6 @@ pub fn set_damage_status(
         crate::combat::Element::Normal,
         false,
     );
-}
-
-/// `syVectorAngleDiff3D` (`sys/vector.c:104`): the angle between two
-/// vectors, `syUtilsArcCos` of their clamped cosine; 0 when either is zero.
-pub(crate) fn angle_between(a: Vec3, b: Vec3) -> f32 {
-    let mag = a.length() * b.length();
-    if mag == 0.0 {
-        return 0.0;
-    }
-    // Out of line: the division must not run before the branch (RE-469).
-    let c = ssb_engine::math::div_nonzero(a.x * b.x + a.y * b.y + a.z * b.z, mag);
-    ssb_engine::math::sy_arc_cos(c.clamp(-1.0, 1.0))
 }
 
 /// `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:473`, without the
@@ -332,7 +320,8 @@ pub fn init_damage_vars_sfx(
             .floor
             .map(|floor| floor.normal)
             .unwrap_or(ssb_engine::math::Vec2::new(0.0, 1.0));
-        let angle_diff = angle_between(Vec3::new(normal.x, normal.y, 0.0), vel);
+        let angle_diff =
+            ssb_engine::math::sy_vector_angle_diff_3d(Vec3::new(normal.x, normal.y, 0.0), vel);
         if angle_diff < DAMAGE_LAUNCH_ANGLE {
             launch = true;
             (vel, 0.0)

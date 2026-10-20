@@ -1269,9 +1269,9 @@ pub const MASK_FLOOR: u16 = 1 << 11;
 /// `mpCommonProcFighterDamage`: a surface bounces a tumbling fighter only when
 /// the frame's movement is longer than this…
 pub const DAMAGE_COLLIDE_SPEED_MIN: f32 = 30.0;
-/// …and meets the surface's normal at more than 110° (`F_CLC_DTOR32(110)`),
-/// compared through its cosine.
-const DAMAGE_COLLIDE_COS_MAX: f32 = -0.342_020_15;
+/// …and meets the surface's normal at more than this
+/// (`syVectorAngleDiff3D`).
+const DAMAGE_COLLIDE_ANGLE_MIN: f32 = ssb_engine::math::f_clc_dtor32(110.0);
 
 /// Result of [`move_damage`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1300,13 +1300,11 @@ fn strikes(diff: Vec3, normal: Vec2) -> bool {
     faces(diff, normal)
 }
 
-fn faces(diff: Vec3, normal: Vec2) -> bool {
-    let n = normal.length();
-    let d = diff.length();
-    if n == 0.0 || d == 0.0 {
-        return false;
-    }
-    div_nonzero(diff.x * normal.x + diff.y * normal.y, n * d) < DAMAGE_COLLIDE_COS_MAX
+/// `syVectorAngleDiff3D(pos_diff, normal) > F_CLC_DTOR32(110.0F)`
+/// (`mpcommon.c:734-799`); a zero vector gives 0, which never strikes.
+pub(crate) fn faces(diff: Vec3, normal: Vec2) -> bool {
+    ssb_engine::math::sy_vector_angle_diff_3d(diff, Vec3::new(normal.x, normal.y, 0.0))
+        > DAMAGE_COLLIDE_ANGLE_MIN
 }
 
 /// `mpProcessSetCollideFloor` for an airborne body: put it on the floor line
@@ -1911,10 +1909,7 @@ pub(crate) fn air_callback(f: &mut Fighter) {
             if !found {
                 continue;
             }
-            let v = f.physics.vel_air;
-            if hit.normal.x * v.x + hit.normal.y * v.y
-                < v.length() * -core::f32::consts::FRAC_1_SQRT_2
-            {
+            if crate::pikachu::halts(hit.normal, f.physics.vel_air) {
                 crate::pikachu::map_end_zip(f);
             }
         }
@@ -1928,7 +1923,11 @@ pub(crate) fn air_callback(f: &mut Fighter) {
         ] {
             let (found, hit) = contact_or_none(hit);
             if found && prev.is_none() {
-                if adjust_velocity(&mut f.physics.vel_air, hit.normal, -0.342_020_15) {
+                if ssb_engine::math::lb_common_check_adjust_sim_2d(
+                    &mut f.physics.vel_air,
+                    Vec3::new(hit.normal.x, hit.normal.y, 0.0),
+                    crate::status::FIREFOX_BOUND_ANGLE,
+                ) {
                     f.facing = if f.physics.vel_air.x >= 0.0 {
                         Facing::Right
                     } else {
@@ -1946,25 +1945,6 @@ pub(crate) fn air_callback(f: &mut Fighter) {
         }
     } else {
         crate::captain::map_wall(f);
-    }
-}
-
-/// `lbCommonCheckAdjustSim2D`; similarity uses the sum of magnitudes.
-pub(crate) fn adjust_velocity(v: &mut Vec3, normal: Vec2, minimum: f32) -> bool {
-    let speed = ssb_engine::math::sqrt(v.x * v.x + v.y * v.y);
-    let sim = (v.x * normal.x + v.y * normal.y) / (normal.length() + speed);
-    if sim <= 0.0 && sim >= minimum {
-        let signed = speed
-            * if normal.x * v.y - normal.y * v.x < 0.0 {
-                -1.0
-            } else {
-                1.0
-            };
-        v.x = -normal.y * signed;
-        v.y = normal.x * signed;
-        true
-    } else {
-        false
     }
 }
 

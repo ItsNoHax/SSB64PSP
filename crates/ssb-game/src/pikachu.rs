@@ -231,7 +231,12 @@ fn set_zip(f: &mut Fighter) {
         && magnitude >= 60.0
         && on_floor
         && !s.passable()
-        && s.normal.x * stick.x + s.normal.y * stick.y <= 0.0;
+        // `syVectorAngleDiff3D(floor_angle, stick) < F_CST_DTOR32(90)` skips
+        // the ground zip.
+        && ssb_engine::math::sy_vector_angle_diff_3d(
+            Vec3::new(s.normal.x, s.normal.y, 0.0),
+            Vec3::new(stick.x, stick.y, 0.0),
+        ) >= ssb_engine::math::f_cst_dtor32(90.0);
     set_stick_lr(f);
     f.pikachu.zip_frames = 5;
     f.physics.jumps_used = f.attributes.jumps_max;
@@ -278,10 +283,25 @@ fn can_sub_zip(f: &Fighter) -> bool {
     let s = Vec2::new(f.stick.x as f32, f.stick.y as f32);
     !f.pikachu.subsequent_zip && s.length() >= 60.0 && {
         let prev = f.pikachu.zip_stick;
-        (prev.x * s.x + prev.y * s.y) / (prev.length() * s.length())
-            < sin_cos(42.0 * core::f32::consts::PI / 180.0).1
+        ssb_engine::math::sy_vector_angle_diff_3d(
+            Vec3::new(prev.x, prev.y, 0.0),
+            Vec3::new(s.x, s.y, 0.0),
+        ) > QUICKATTACK_ANGLE_DIFF_MIN
     }
 }
+/// `FTPIKACHU_QUICKATTACK_ANGLE_DIFF_MIN` (`ftpikachu.h`):
+/// `F_CLC_DTOR32(42.0F)`, the turn a second zip needs.
+const QUICKATTACK_ANGLE_DIFF_MIN: f32 = ssb_engine::math::f_clc_dtor32(42.0);
+/// `FTPIKACHU_QUICKATTACK_HALT_ANGLE`: `F_CLC_DTOR32(135.0F)`.
+const QUICKATTACK_HALT_ANGLE: f32 = ssb_engine::math::f_clc_dtor32(135.0);
+
+/// `ftPikachuSpecialAirHiProcMap`'s halt test (`ftpikachuspecialhi.c:225-242`):
+/// `syVectorAngleDiff3D(surface_angle, vel_air) > HALT_ANGLE`.
+pub(crate) fn halts(normal: Vec2, vel_air: Vec3) -> bool {
+    ssb_engine::math::sy_vector_angle_diff_3d(Vec3::new(normal.x, normal.y, 0.0), vel_air)
+        > QUICKATTACK_HALT_ANGLE
+}
+
 fn make_thunder(f: &mut Fighter) {
     f.pikachu.spawned = true;
     f.pikachu.thunder_motion = f.motion.count;
@@ -587,9 +607,7 @@ pub fn on_landing(f: &mut Fighter, y: f32, normal: Vec2) -> bool {
     if s == P::SpecialAirHi {
         f.physics.vel_ground.x = v.x;
         f.physics.vel_air = v;
-        if normal.x * v.x + normal.y * v.y
-            < -core::f32::consts::FRAC_1_SQRT_2 * Vec2::new(v.x, v.y).length()
-        {
+        if halts(normal, v) {
             set_zip_end(f);
         }
     }

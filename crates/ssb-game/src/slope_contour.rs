@@ -9,7 +9,10 @@
 //! `func_ovl2_800EBD08`.
 
 use crate::fighter::FIGHTER_JOINTS;
-use ssb_engine::math::{lb_cos, lb_sin, sqrt, sy_arc_cos, sy_arc_sin, sy_arc_tan2, Vec3};
+use ssb_engine::math::{
+    f_clc_dtor32, lb_cos, lb_sin, sqrt, sy_arc_cos, sy_arc_sin, sy_arc_tan2,
+    sy_vector_angle_diff_3d, Vec3,
+};
 
 /// A collision `Mtx44f` without its constant last column: rows 0 to 2 are
 /// the part's axes, row 3 its translation. A point is the row vector
@@ -20,14 +23,6 @@ pub type PartMtx = [[f32; 3]; 4];
 pub const FLAG_LFOOT: u8 = 1 << 0;
 pub const FLAG_RFOOT: u8 = 1 << 1;
 pub const FLAG_FULL: u8 = 1 << 2;
-
-/// `PI32` (`macros.h`): 3.14159265358979323846 rounded to f32.
-const PI32: f32 = core::f32::consts::PI;
-
-/// `F_CLC_DTOR32(deg)`.
-pub fn dtor32(deg: f32) -> f32 {
-    (deg * PI32) / 180.0
-}
 
 /// Every model part's collision local (`FTParts::unk_dobjtrans_0x10`) and
 /// `DObj::translate.x`, in the original's units, as the runtime's skeleton
@@ -203,7 +198,7 @@ pub fn topn_yaw(f: &crate::fighter::Fighter) -> f32 {
         .or_else(|| crate::appear::model_yaw(f))
         .or_else(|| crate::item_throw::model_yaw(f))
         .or_else(|| crate::dokan::model_yaw(f))
-        .unwrap_or(f.topn_lr * dtor32(90.0))
+        .unwrap_or(f.topn_lr * f_clc_dtor32(90.0))
 }
 
 /// TopN's `rotate`, as its display (kind `0x4B`) builds it: a held
@@ -240,10 +235,6 @@ pub(crate) fn cross(a: Vec3, b: Vec3) -> Vec3 {
     )
 }
 
-fn dot(a: Vec3, b: Vec3) -> f32 {
-    (a.x * b.x) + (a.y * b.y) + (a.z * b.z)
-}
-
 fn mag3(v: Vec3) -> f32 {
     sqrt((v.x * v.x) + (v.y * v.y) + (v.z * v.z))
 }
@@ -261,16 +252,6 @@ fn remove_component(a: &mut Vec3, b: Vec3) -> f32 {
     a.y -= n.y;
     a.z -= n.z;
     (a.x * a.x) + (a.y * a.y) + (a.z * a.z)
-}
-
-/// `syVectorAngleDiff3D` (`sys/vector.c:104`).
-pub(crate) fn angle_diff(a: Vec3, b: Vec3) -> f32 {
-    let mag = mag3(a) * mag3(b);
-    if mag != 0.0 {
-        let cos_diff = (dot(a, b) / mag).clamp(-1.0, 1.0);
-        return sy_arc_cos(cos_diff);
-    }
-    0.0
 }
 
 /// `lbCommonSim3D`: the dot product over the sum of the lengths.
@@ -291,9 +272,9 @@ fn twist_angle(a: &mut Vec3, b: &mut Vec3, axis: Vec3) -> f32 {
     }
     let c = cross(*a, *b);
     if similarity(c, axis) < 0.0 {
-        -angle_diff(*b, *a)
+        -sy_vector_angle_diff_3d(*b, *a)
     } else {
-        angle_diff(*b, *a)
+        sy_vector_angle_diff_3d(*b, *a)
     }
 }
 
@@ -354,10 +335,10 @@ pub fn leg_ik(vec: Vec3, rotate: f32, angle: f32, trax: f32) -> ([f32; 3], f32) 
         let tx = ((-sp38) * xmul) + (sp58 * normal);
         let ty = ((-sp38) * ymul) + (sp50 * normal);
         if inverse_xy_2 == -1.0 {
-            thigh[1] = dtor32(90.0);
+            thigh[1] = f_clc_dtor32(90.0);
             thigh[0] = sy_arc_tan2(tx, ty);
         } else {
-            thigh[1] = dtor32(-90.0);
+            thigh[1] = f_clc_dtor32(-90.0);
             thigh[0] = sy_arc_tan2(-tx, ty);
         }
         thigh[2] = 0.0;

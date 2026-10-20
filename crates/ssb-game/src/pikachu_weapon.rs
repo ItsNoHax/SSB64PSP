@@ -392,8 +392,12 @@ impl ThunderJolt {
             _ => return None,
         };
         let n = surface_normal(s.kind, s.segment);
-        if n.x * self.normal.x + n.y * self.normal.y
-            < sin_cos(100.0 * core::f32::consts::PI / 180.0).1
+        // `syVectorAngleDiff3D(&angle, &rotate) > WPPIKACHUJOLT_ROTATE_ANGLE_MAX`
+        // (`F_CLC_DTOR32(100.0F)`, `wppikachuthunderjolt.c:401`).
+        if ssb_engine::math::sy_vector_angle_diff_3d(
+            Vec3::new(n.x, n.y, 0.0),
+            Vec3::new(self.normal.x, self.normal.y, 0.0),
+        ) > ssb_engine::math::f_clc_dtor32(100.0)
         {
             return Some(false);
         }

@@ -152,7 +152,7 @@ pub fn trail_vertices(a: &AfterImage, out: &mut [TrailVtx; TRAIL_VTX_MAX]) -> us
         if i != 0 {
             let next = &a.desc[next_index];
             if let Some(axis) = norm_cross(d.vec, next.vec) {
-                let mut angle = crate::slope_contour::angle_diff(d.vec, next.vec);
+                let mut angle = ssb_engine::math::sy_vector_angle_diff_3d(d.vec, next.vec);
                 let mut target = (angle / TRAIL_ROTATE) as i32;
                 if target != 0 {
                     target += 1;

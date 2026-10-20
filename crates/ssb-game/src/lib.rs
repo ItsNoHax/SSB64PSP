@@ -99,6 +99,8 @@ pub mod monster_weapon;
 pub mod motion;
 pub mod music;
 
+#[cfg(test)]
+mod angle_gate_tests;
 pub mod ness;
 pub mod opening;
 pub mod particle;
@@ -130,6 +132,8 @@ pub mod stage_select;
 pub mod stage_select_layer;
 pub mod stale;
 pub mod status;
+#[cfg(test)]
+mod stick_gate_tests;
 pub mod team;
 pub mod thrown;
 pub mod training;
