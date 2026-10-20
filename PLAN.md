@@ -130,7 +130,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Kirby roster-A2 entry | Anim frame, TopN, status, joint flags match N64 (PSP tick = N64 rec + 7, rec 300-402). Residual one-frame-ahead look follows background → entry camera suspect. Needs N64 camera eye/at trace, rec 320-340 | RE-543 |
+| Kirby roster-A2 entry | N64 camera eye/at trace, rec 320-340, to confirm the PSP matches (live-position fix landed; PSP tick = rec + 7) | RE-543 |
 | Captain's car | Battle-camera fallback before TopN in bounds unverified (`f1-vs-car`) → warp-boot capture, focus id 2, Captain | RE-523 |
 | PK Thunder trail, PK Wave | Needs N64 capture. Trail: `efManagerPKThunderTrailMakeEffect`, 335 + 0x9050, link 15; reflected trail link 18. PK Wave: 335 + 0x9A10, joint 5; made at `ftNessSpecialHiHold` start (ftnessspecialhi.c:318), drawn nowhere | RE-413, RE-415, RE-416, RE-427 |
 | Samus fire spark | Up smash, forward air; 84 + 0x2040. Needs matrix kind 0x49 billboard along joint 16, Samus capture | RE-427 |

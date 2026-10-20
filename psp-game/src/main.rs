@@ -1923,12 +1923,18 @@ fn tick_battle_camera(stage: &ssb_rom::pack::StageDesc, s: &mut [Option<&mut pla
         let f = s.iter().flatten().find(|f| f.fighter.port == z.port)?;
         Some((f.fighter.pos, f.cam_offset_y))
     });
+    // So does the entry focus's zoom (`gmCameraUpdatePlayerZoom` reads the
+    // fighter's `TopN` live, RE-543).
+    let entry = s[0].as_deref().and_then(|pl| pl.entry_zoom).and_then(|z| {
+        let f = s.get(usize::from(z.slot))?.as_deref()?;
+        Some(ssb_psp_runtime::scene::EntryFocusTarget { pos: f.fighter.pos, cam_offset_y: f.cam_offset_y, dist: z.dist })
+    });
     if let Some(pl) = s[0].as_deref_mut() {
         if let (Some(z), Some((pos, cam_offset_y))) = (pl.demo_zoom.as_mut(), focus) {
             z.pos = pos;
             z.cam_offset_y = cam_offset_y;
         }
-        pl.tick_camera(stage, &others[..count]);
+        pl.tick_camera(stage, &others[..count], entry);
     }
 }
 
@@ -3163,13 +3169,17 @@ fn entry_frame(
             f.settle_appear(p);
         }
     }
-    let target = |scene: &play::FighterScene| {
+    // The fighter and distance only: the camera pass reads its position
+    // on the tick it runs (RE-543).
+    let zoom = focus.zoom(t).and_then(|i| {
+        let (slot, scene) = scenes_ref(pl, dummies)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(slot, scene)| Some((slot, scene?)))
+            .nth(i)?;
         let dist = p.fighter(scene.fighter.kind as u32).map_or(1000.0, |d| d.closeup_camera_zoom);
-        (scene.fighter.pos, scene.cam_offset_y, dist)
-    };
-    let zoom = focus
-        .zoom(t)
-        .and_then(|i| scenes_ref(pl, dummies).into_iter().flatten().nth(i).map(target));
+        Some(ssb_psp_runtime::scene::EntryZoom { slot: slot as u8, dist })
+    });
     pl.entry_zoom = zoom;
 }
 

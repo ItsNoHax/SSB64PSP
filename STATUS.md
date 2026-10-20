@@ -16,17 +16,14 @@
 
 ## Current work
 
-- Landed: D-048 part 6.
-  - Check 10 scans every crate, struct literals, arrays of 8+ literals,
-    `ll*`/per-fighter/`relocData` doc symbols.
-  - Generated from ROM: item events, container velocities, weapon hitboxes,
-    throw descriptors, `Backup` default.
-- Landed: docs cleanup (no-prose rewrite, validator fact checks 11–15,
-  reference-doc figures verified against code).
+- Landed: Kirby roster-A2 entry camera (RE-543).
+  - Entry zoom reads the live fighter position each camera tick.
+  - 8 entry-window goldens rebaselined.
+  - Open: N64 camera eye/at trace, rec 320-340.
 
 ## Next
 
-1. Kirby roster-A2 entry camera (RE-543).
+1. N64 camera eye/at trace for the A2 entry, rec 320-340 (RE-543).
 2. Thunder Jolt burst spikes (RE-541).
 3. Effects process order (RE-542).
 4. MS8 list in `PLAN.md`, 1P intro first.
@@ -39,7 +36,7 @@
 
 ## Verification
 
-Baseline: D-048 part 6.
+Baseline: RE-543 entry camera.
 
 | Check | Result |
 |---|---|
@@ -47,7 +44,7 @@ Baseline: D-048 part 6.
 | `cargo test --workspace`, `SSB64_STUB_TABLES=1`, no ROM | pass |
 | `cargo +1.98.0 clippy -D warnings`, `cargo fmt --all --check` | pass |
 | Both PSP release builds | compile |
-| Goldens | 225/225, no rebaseline (`r2-mario-entry-pipe` nondeterministic, RE-506) |
+| Goldens | 225/225, 8 entry-window rows rebaselined (`r2-mario-entry-pipe` nondeterministic, RE-506) |
 | PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` | exit 0, screenshot |
 | Physical PSP | PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |
 | ROMs | `rom/Super Smash Bros. (USA).z64`, `refs/ssb-decomp-re/baserom.us.z64`; SHA-1 `e2929e10...` |

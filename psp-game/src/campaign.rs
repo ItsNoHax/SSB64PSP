@@ -888,12 +888,14 @@ pub(crate) fn entry_frame(
         })
         .last()
         .flatten();
+    // The fighter and distance only: the camera pass reads its position
+    // on the tick it runs (RE-543).
     pl.entry_zoom = zoom_port.and_then(|port| {
         let f = scenes_ref(pl, dummies)[usize::from(port)]?;
         let dist = p
             .fighter(f.fighter.kind as u32)
             .map_or(1000.0, |d| d.closeup_camera_zoom);
-        Some((f.fighter.pos, f.cam_offset_y, dist))
+        Some(ssb_psp_runtime::scene::EntryZoom { slot: port, dist })
     });
 }
 

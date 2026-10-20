@@ -361,6 +361,31 @@ impl Camera {
         self.at += vel;
     }
 
+    /// `gmCameraPlayerZoomFuncCamera`: [`Camera::tick_player_zoom`] on the
+    /// zoomed fighter's `TopN` translate `pos` as its own process left it
+    /// this tick (fighters run before the camera), with `cam_offset_y`
+    /// added. Returns `false` without moving the camera while `pos`
+    /// (before the offset) is out of `bounds` or more than 1000 units off
+    /// the stage plane: the caller then runs the battle camera.
+    #[allow(clippy::too_many_arguments)]
+    pub fn tick_player_zoom_in_bounds(
+        &mut self,
+        pos: Vec3,
+        cam_offset_y: f32,
+        bounds: Bounds,
+        eye: (f32, f32),
+        dist: f32,
+        pan_scale: f32,
+        fov: f32,
+    ) -> bool {
+        if crate::pause::kind_for(pos, bounds) == crate::pause::PauseKind::PlayerNA {
+            return false;
+        }
+        let target = Vec3::new(pos.x, pos.y + cam_offset_y, pos.z);
+        self.tick_player_zoom(target, eye, dist, pan_scale, fov);
+        true
+    }
+
     /// `gmCameraMapZoomFuncCamera`: ease the look-at point toward the
     /// authored `zoom_start`, the eye toward `zoom_end`, and the FOV to 38.
     pub fn tick_map_zoom(&mut self, origin: Vec3, target: Vec3) {
@@ -622,6 +647,64 @@ mod tests {
         };
         assert_eq!(lb_sine_sample(216).to_bits(), rounded(216).to_bits());
         assert_ne!(lb_sine_sample(372).to_bits(), rounded(372).to_bits());
+    }
+
+    /// RE-543: Kirby's entry star descends through the top camera bound
+    /// while `ifCommonEntryFocusThread` holds the zoom on him. The zoom
+    /// takes over on the tick his position *of that tick* enters the
+    /// bounds (`gmCameraPlayerZoomFuncCamera` reads the live `TopN`), not
+    /// a tick later as it would on the previous tick's position.
+    #[test]
+    fn player_zoom_switches_on_the_tick_the_live_position_enters_the_bounds() {
+        let bounds = Bounds {
+            top: 2000.0,
+            bottom: -1000.0,
+            left: -3000.0,
+            right: 3000.0,
+        };
+        let cam_offset_y = 300.0;
+        let star = |t: u32| Vec3::new(400.0, 2300.0 - 100.0 * t as f32, 0.0);
+        let mut camera = Camera::default();
+        let mut first_zoom = None;
+        for t in 0..6 {
+            let before = (camera.eye, camera.at, camera.fovy_degrees);
+            let zoomed = camera.tick_player_zoom_in_bounds(
+                star(t),
+                cam_offset_y,
+                bounds,
+                (0.0, 0.0),
+                1000.0,
+                0.1,
+                28.0,
+            );
+            if zoomed {
+                first_zoom.get_or_insert(t);
+            } else {
+                // Out of bounds: the caller's battle camera runs instead.
+                assert_eq!(
+                    (camera.eye, camera.at, camera.fovy_degrees),
+                    before,
+                    "tick {t}"
+                );
+            }
+            assert_eq!(zoomed, star(t).y <= bounds.top, "tick {t}");
+        }
+        // y 2000 on tick 3; the previous tick's 2100 is still out.
+        assert_eq!(first_zoom, Some(3));
+        assert!(star(2).y > bounds.top);
+        // The bounds test is on the translate before `cam_offset_y`.
+        assert!(star(3).y + cam_offset_y > bounds.top);
+        // More than 1000 units off the stage plane: the battle camera.
+        let off_plane = Vec3::new(0.0, 0.0, 1000.5);
+        assert!(!camera.tick_player_zoom_in_bounds(
+            off_plane,
+            0.0,
+            bounds,
+            (0.0, 0.0),
+            1000.0,
+            0.1,
+            28.0
+        ));
     }
 
     #[test]

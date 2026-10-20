@@ -1246,9 +1246,11 @@ pub struct FighterScene {
     /// frame in [`FighterScene::tick`].
     pub camera: ssb_game::camera::Camera,
     /// The entry focus's zoom (`ifCommonEntryFocusThread`'s
-    /// `gmCameraSetStatusPlayerZoom`, RE-402): the fighter's position,
-    /// its `cam_offset_y` and a distance. `None` runs the battle camera.
-    pub entry_zoom: Option<(ssb_engine::math::Vec3, f32, f32)>,
+    /// `gmCameraSetStatusPlayerZoom`, RE-402): which fighter and how close.
+    /// The battle's camera pass resolves the fighter's live position for
+    /// [`FighterScene::tick_camera`] (RE-543). `None` runs the battle
+    /// camera.
+    pub entry_zoom: Option<EntryZoom>,
     pub bonus_follow: bool,
     /// A camera status other than the battle camera's
     /// (`gmCameraSetStatusMapZoom`, `gmCameraSetStatusAnim`): Master Hand's
@@ -1733,8 +1735,15 @@ impl FighterScene {
 
     /// Advances the battle camera one tick, framing the fighter and
     /// `others` (the other fighters' [`FighterScene::camera_interest`]s, in
-    /// link order); any past the fourth interest are ignored.
-    pub fn tick_camera(&mut self, stage: &StageDesc, others: &[ssb_game::camera::Interest]) {
+    /// link order); any past the fourth interest are ignored. `entry` is
+    /// [`FighterScene::entry_zoom`] resolved on the zoomed fighter as its
+    /// process left it this tick.
+    pub fn tick_camera(
+        &mut self,
+        stage: &StageDesc,
+        others: &[ssb_game::camera::Interest],
+        entry: Option<EntryFocusTarget>,
+    ) {
         // `gcEndProcessAll` on the movie camera: its scene moves it.
         if self.camera.movie.is_some() {
             return;
@@ -1776,41 +1785,37 @@ impl FighterScene {
         };
         // `gmCameraPlayerZoomFuncCamera`: the battle camera while the
         // zoomed fighter is out of the camera bounds or more than 1000
-        // units off the stage plane (Kirby's star, Fox's Arwing), tested
-        // on its `TopN` translate before `cam_offset_y` is added.
-        if let Some((pos, cam_offset_y, dist)) = self.entry_zoom {
-            if ssb_game::pause::kind_for(pos, bounds) != ssb_game::pause::PauseKind::PlayerNA {
-                let target = ssb_engine::math::Vec3::new(pos.x, pos.y + cam_offset_y, pos.z);
-                self.camera.tick_player_zoom(
-                    target,
-                    (0.0, 0.0),
-                    dist,
-                    ssb_game::pause::ZOOM_PAN_SCALE,
-                    ssb_game::appear::FOCUS_ZOOM_FOV,
-                );
+        // units off the stage plane (Kirby's star, Fox's Arwing).
+        if let Some(e) = entry {
+            if self.camera.tick_player_zoom_in_bounds(
+                e.pos,
+                e.cam_offset_y,
+                bounds,
+                (0.0, 0.0),
+                e.dist,
+                ssb_game::pause::ZOOM_PAN_SCALE,
+                ssb_game::appear::FOCUS_ZOOM_FOV,
+            ) {
                 return;
             }
         }
         // `gmCameraPlayerZoomFuncCamera`: the battle camera while the
         // fighter is out of the camera bounds.
         if let Some(z) = self.demo_zoom {
-            if ssb_game::pause::kind_for(z.pos, bounds) != ssb_game::pause::PauseKind::PlayerNA {
-                let target = ssb_engine::math::Vec3::new(z.pos.x, z.pos.y + z.cam_offset_y, z.pos.z);
-                self.camera.tick_player_zoom(target, z.eye, z.dist, z.pan_scale, z.fov);
+            if self.camera.tick_player_zoom_in_bounds(z.pos, z.cam_offset_y, bounds, z.eye, z.dist, z.pan_scale, z.fov) {
                 return;
             }
         }
         if let Some(dist) = self.player_zoom {
-            let pos = self.fighter.pos;
-            if ssb_game::pause::kind_for(pos, bounds) != ssb_game::pause::PauseKind::PlayerNA {
-                let target = ssb_engine::math::Vec3::new(pos.x, pos.y + self.cam_offset_y, pos.z);
-                self.camera.tick_player_zoom(
-                    target,
-                    (0.0, 0.0),
-                    dist,
-                    ssb_game::training::CLOSE_UP_PAN_SCALE,
-                    ssb_game::training::CLOSE_UP_FOV,
-                );
+            if self.camera.tick_player_zoom_in_bounds(
+                self.fighter.pos,
+                self.cam_offset_y,
+                bounds,
+                (0.0, 0.0),
+                dist,
+                ssb_game::training::CLOSE_UP_PAN_SCALE,
+                ssb_game::training::CLOSE_UP_FOV,
+            ) {
                 return;
             }
         }
@@ -1843,7 +1848,9 @@ impl FighterScene {
         additional_camera_interest: Option<ssb_game::camera::Interest>,
     ) {
         self.tick_fighter(pack, stage, input, jump_held);
-        self.tick_camera(stage, additional_camera_interest.as_slice());
+        // The entry focus only runs in the battle, whose camera pass
+        // resolves it.
+        self.tick_camera(stage, additional_camera_interest.as_slice(), None);
     }
 
     /// Starts the animation the current status calls for, then advances it.
@@ -2279,6 +2286,28 @@ pub fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
         ssb_game::fighter::Facing::Right => core::f32::consts::FRAC_PI_2,
         ssb_game::fighter::Facing::Left => -core::f32::consts::FRAC_PI_2,
     }
+}
+
+/// `gmCameraSetStatusPlayerZoom(fighter, 0, 0, closeup_camera_zoom, 0.1,
+/// 28)` as `ifCommonEntryFocusThread` sets it: the fighter and the
+/// distance only. The camera reads the fighter's position live each tick
+/// (`gmCameraUpdatePlayerZoom`), so none is held here (RE-543).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EntryZoom {
+    /// The fighter's slot in the battle's scene array (the player's scene,
+    /// then the dummies).
+    pub slot: u8,
+    /// `pzoom_dist`: the fighter's `closeup_camera_zoom`.
+    pub dist: f32,
+}
+
+/// [`EntryZoom`] resolved by the battle's camera pass: the zoomed
+/// fighter's translate this tick, its `cam_offset_y` and the distance.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EntryFocusTarget {
+    pub pos: ssb_engine::math::Vec3,
+    pub cam_offset_y: f32,
+    pub dist: f32,
 }
 
 /// `gmCameraSetStatusPlayerZoom(fighter, eye_x, eye_y, dist, pan, fov)`
