@@ -2188,8 +2188,10 @@ impl Effects {
         true
     }
 
-    /// `efManagerFireSparkMakeEffect`: the struct and `GObj`, held for the
-    /// animation; not drawn.
+    /// `efManagerFireSparkMakeEffect`: the root hangs from the owner's joint
+    /// 16 (`dobj->user_data.p = fp->joints[16]`), drawn by kind 0x50 at the
+    /// joint's world position and kind 0x49 ([`direc_x_billboard`]); the
+    /// `translate.y` the make writes is read by neither (RE-427).
     pub fn fire_spark(&mut self, owner: u8) -> bool {
         let Some(i) = self.make_display(DisplayKind::FireSpark) else {
             return false;
@@ -2740,4 +2742,42 @@ impl Effects {
         }
         gn
     }
+}
+
+/// The Fire Spark's attach joint (`fp->joints[16]`, `efManagerFireSparkMakeEffect`).
+pub const FIRE_SPARK_JOINT: u8 = 16;
+
+/// Matrix kind 0x49, `func_ovl0_800CB140` ("adfDMatrixDirecXBillboardSca",
+/// `lb/lbcommon.c`): the rotation rows of a `DObj` whose Y axis is the
+/// attach joint's world X axis (`parts->mtx_translate[0]`, normalised) and
+/// which turns about it toward the camera. `x = normalise(a × d)` and `z = a
+/// × x` with `d = eye - at`, unless `lbCommonSim3D(a, d) >= 0.999`: that
+/// quirk divides the dot product by the *sum* of the lengths, and then both
+/// rows are zero (the effect collapses to a line). Returns the rows
+/// `[x, a, z]`; the translation row is zero (kind 0x50 supplies it).
+///
+/// `None` for a zero axis, where the original prints "FPE : 0 div" in an
+/// endless loop (RE-427).
+pub fn direc_x_billboard(axis: Vec3, eye: Vec3, at: Vec3) -> Option<[Vec3; 3]> {
+    let magnitude = axis.length();
+    if magnitude == 0.0 {
+        return None;
+    }
+    let a = axis * (1.0 / magnitude);
+    let d = eye - at;
+    // `lbCommonSim3D`: `dot / (|a| + |d|)`.
+    let sim = a.dot(d) / (d.length() + a.length());
+    let (x, z) = if sim < 0.999 {
+        // `syVectorNormCross3D`: a zero cross product stays zero.
+        let mut x = a.cross(d);
+        let mag = x.length();
+        if mag != 0.0 {
+            x *= 1.0 / mag;
+        }
+        // `lbCommonCross3D(&sp50, &sp38, &dist)`.
+        (x, a.cross(x))
+    } else {
+        (Vec3::ZERO, Vec3::ZERO)
+    };
+    Some([x, a, z])
 }

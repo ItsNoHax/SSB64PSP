@@ -2158,7 +2158,12 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
             ssb_game::fighter::FighterKind::Fox
         }
         Some(GameScene::Luigi) => ssb_game::fighter::FighterKind::Luigi,
-        Some(GameScene::Samus | GameScene::SamusShot | GameScene::SamusBomb) => {
+        Some(
+            GameScene::Samus
+            | GameScene::SamusShot
+            | GameScene::SamusBomb
+            | GameScene::SamusSpark,
+        ) => {
             ssb_game::fighter::FighterKind::Samus
         }
         Some(GameScene::Link | GameScene::LinkSpin | GameScene::LinkSword | GameScene::LinkBomb) => {
@@ -6437,6 +6442,7 @@ struct DrawAssets {
     spin_weapon: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     yoshi_egg_mesh: Option<ssb_rom::pack::MeshDesc>,
     yoshi_star_mesh: Option<ssb_rom::pack::MeshDesc>,
+    kirby_star_mesh: Option<ssb_rom::pack::MeshDesc>,
     arwing_laser_mesh: Option<ssb_rom::pack::MeshDesc>,
     monster_razor: Option<ssb_rom::pack::ObjectDesc>,
     /// The Falcon Punch flame (material animation only).
@@ -6448,7 +6454,7 @@ struct DrawAssets {
     /// trail.
     pk_fire: Option<ssb_rom::pack::ObjectDesc>,
     pk_thunder: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
-    pk_trail: Option<ssb_rom::pack::ObjectDesc>,
+    pk_trail_frames: [Option<ssb_rom::pack::MeshDesc>; 3],
     /// The PK Fire flame and Link's Bomb items and their `anim_joints`.
     pk_fire_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     link_bomb_item: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
@@ -6509,7 +6515,7 @@ struct DrawAssets {
     rebirth_halo: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The display effects' objects and transform animations (RE-415), by
     /// [`display_asset`].
-    displays: [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 9],
+    displays: [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 10],
     /// Pikachu's Thunder frames by `texture_id_curr` (RE-417).
     thunder_frames: [Option<ssb_rom::pack::MeshDesc>; 4],
     /// The Egg Lay egg and its Wait, Break and Throw animations (RE-417).
@@ -6590,6 +6596,7 @@ impl DrawAssets {
             .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_LINK_SPIN_ATTACK)),
             yoshi_egg_mesh: ssb_psp_runtime::scene::yoshi_egg_mesh(p),
             yoshi_star_mesh: ssb_psp_runtime::scene::yoshi_star_mesh(p),
+            kirby_star_mesh: ssb_psp_runtime::scene::kirby_star_mesh(p),
             arwing_laser_mesh: ssb_psp_runtime::scene::arwing_laser_mesh(p),
             monster_razor: ssb_psp_runtime::scene::object_keyed(p, (159, 0x2A50)),
             falcon_punch: ssb_psp_runtime::scene::captain_falcon_punch_effect(p),
@@ -6612,10 +6619,7 @@ impl DrawAssets {
                 ssb_psp_runtime::scene::NESS_PK_THUNDER_SOURCE,
             )
             .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_NESS_PK_THUNDER)),
-            pk_trail: ssb_psp_runtime::scene::object_keyed(
-                p,
-                ssb_psp_runtime::scene::NESS_PK_TRAIL_SOURCE,
-            ),
+            pk_trail_frames: ssb_psp_runtime::scene::ness_pk_trail_meshes(p),
             pk_fire_item: ssb_psp_runtime::scene::object_keyed(
                 p,
                 ssb_psp_runtime::scene::NESS_PK_FIRE_ITEM_SOURCE,
@@ -6767,8 +6771,9 @@ unsafe fn draw_thunder_segment(
 /// the Poké Ball's rays (`llEFCommonEffects3MBallRaysDObjDesc`, RE-443) and
 /// Kirby's rapid-jab puff (`llKirbySpecial2VulcanJabDObjDesc`, RE-513) and
 /// the ground Thunder Jolt's burst (`llPikachuSpecial3ThunderJoltDObjDesc`,
-/// RE-541).
-const DISPLAY_EFFECT_KEYS: [(u32, u32); 9] = [
+/// RE-541) and the Fire Spark (`llEFCommonEffects2FireSparkDObjDesc`,
+/// RE-427).
+const DISPLAY_EFFECT_KEYS: [(u32, u32); 10] = [
     (83, 0x7750),
     (83, 0x7E80),
     (83, 0x7C28),
@@ -6778,13 +6783,14 @@ const DISPLAY_EFFECT_KEYS: [(u32, u32); 9] = [
     (85, 0x0628),
     (348, 0x0B20),
     (342, 0x2258),
+    (84, 0x2040),
 ];
 
 /// [`DISPLAY_EFFECT_KEYS`]' objects and transform animations.
 #[inline(never)]
 fn display_assets(
     p: &Pack<'_>,
-) -> [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 9] {
+) -> [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 10] {
     DISPLAY_EFFECT_KEYS.map(|key| {
         let slot = ssb_rom::effect::MANAGER_EFFECT_KEYS
             .iter()
@@ -6810,11 +6816,11 @@ fn display_asset(kind: ssb_game::effect::DisplayKind) -> Option<usize> {
         K::MBallRays => 6,
         K::VulcanJab => 7,
         K::ThunderJolt => 8,
+        K::FireSpark => 9,
         K::SpawnOrbs
         | K::SpawnSparks
         | K::SpawnMDust
         | K::Quake { .. }
-        | K::FireSpark
         | K::ThunderTrail
         | K::YoshiEggEscape
         | K::ContainerSmash
@@ -7307,7 +7313,7 @@ fn draw_one_display(
             } else {
                 d.translate
             };
-            if let Some(mesh) = assets.yoshi_star_mesh.as_ref() {
+            if let Some(mesh) = assets.kirby_star_mesh.as_ref() {
                 let pos = base + ssb_engine::math::Vec3::new(0.0, 210.0, 0.0);
                 gpu.model_transform_billboard(
                     pos,
@@ -7432,6 +7438,41 @@ fn draw_one_display(
             (
                 bill.mul(&Mat4::from_tr_display([0.0; 3], rot)).mul(&units),
                 1,
+            )
+        }
+        // `dEFManagerFireSparkEffectDesc` (RE-427): the desc's root hangs
+        // from the owner's joint 16 (`dobj->user_data.p`). Kind 0x50
+        // (`func_ovl0_800C99CC`) translates it to the joint's world
+        // position; kind 0x49 (`func_ovl0_800CB140`) builds the joint's
+        // world matrix and turns its X axis toward the camera. The root's
+        // own transform is unused; node 1 is kind 0x45 of its pose.
+        K::FireSpark => {
+            let Some(f) = fighters.iter().flatten().find(|f| f.port == d.owner) else {
+                return;
+            };
+            let joint = ssb_game::effect::FIRE_SPARK_JOINT;
+            f.mark_joint_world(joint);
+            let Some(t) = f.joint_transforms[usize::from(joint)] else {
+                return;
+            };
+            let Some([x, a, z]) = ssb_game::effect::direc_x_billboard(t.axes[0], eye, camera.at)
+            else {
+                return;
+            };
+            let o = f.joint_world(joint, ssb_engine::math::Vec3::ZERO);
+            posed[1] = stage_pose(&scratch.anim, object.first_node + 1)
+                .map_or(Mat4::IDENTITY, |q| {
+                    Mat4::from_trs_display([0.0; 3], q.rotate, q.scale)
+                });
+            (
+                Mat4([
+                    x.x, x.y, x.z, 0.0, //
+                    a.x, a.y, a.z, 0.0, //
+                    z.x, z.y, z.z, 0.0, //
+                    o.x, o.y, o.z, 1.0,
+                ])
+                .mul(&units),
+                2,
             )
         }
         _ => return,
@@ -11200,8 +11241,16 @@ unsafe fn draw_items_weapons_effects(
             }
         }
     }
-    if let Some(mesh) = assets.pk_trail.as_ref().and_then(|o| first_mesh(o, 0)) {
+    {
         for trail in weapons.pk_trails() {
+            // `mobj->sprites[texture_id_curr]` (RE-550).
+            let Some(mesh) = assets
+                .pk_trail_frames
+                .get(usize::from(trail.texture))
+                .and_then(Option::as_ref)
+            else {
+                continue;
+            };
             gpu.model_transform(
                 [trail.position.x, trail.position.y, trail.position.z],
                 [0.0, 0.0, trail.rotation()],
@@ -11215,7 +11264,7 @@ unsafe fn draw_items_weapons_effects(
                 env: Some([er, eg, eb, 0xFF]),
                 ..Default::default()
             });
-            meshdraw::draw_mesh(p, &mesh, draw_state, None, None);
+            meshdraw::draw_mesh(p, mesh, draw_state, None, None);
         }
         draw_state.color_override = None;
     }

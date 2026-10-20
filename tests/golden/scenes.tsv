@@ -94,6 +94,7 @@ f1-training-luigi	psp-game	luigi	pass	RE-372 RE-440
 f1-training-samus	psp-game	samus	pass	RE-373 RE-440
 f1-training-samus-shot	psp-game	samusshot	pass	RE-373 RE-440
 f1-training-samus-bomb	psp-game	samusbomb	pass	RE-373 RE-440
+f1-training-samus-spark	psp-game	samusspark	pass	RE-427
 f1-training-link	psp-game	link	pass	RE-374 RE-440
 f1-training-link-spin	psp-game	linkspin	pass	RE-374 RE-440
 f1-training-yoshi	psp-game	yoshi	pass	RE-375 RE-440

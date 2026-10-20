@@ -444,7 +444,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 124 binds two-lead clips (`TransN` and `XRotN` both in `anim_desc`:
 // Link's entry, Kirby's and Purin's quick cliff escape) model joints from
 // the third entry, not the second. No layout change.
-pub const VERSION: u32 = 124;
+// 125 packs the PK Thunder trail's three sprite frames (335, keyed by
+// sprite, RE-550) and converts the Kirby star list (86 + 0x5458, RE-551)
+// and the Fire Spark tree (84 + 0x2040, RE-427) under the effect CLD seed
+// on head 1. No layout change.
+pub const VERSION: u32 = 125;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

@@ -39,13 +39,27 @@ fn scale_x_effects_draw_on_head_one_under_the_effect_links_cld_state() {
         return;
     };
     let p = Pack::open(&bytes).unwrap();
-    for key in [(83, 0x7E80), (83, 0x8FA0), (84, 0x1500)] {
+    // The Fire Spark (84 + 0x2040, RE-427) is a two-node tree; the Kirby
+    // star (86 + 0x5458, RE-551) the Star Rod star's direct list.
+    for key in [
+        (83, 0x7E80),
+        (83, 0x8FA0),
+        (84, 0x1500),
+        (84, 0x2040),
+        (86, 0x5458),
+    ] {
         let o = (0..p.object_count())
             .filter_map(|i| p.object(i))
             .find(|o| (o.source_file, o.source_offset) == key)
             .unwrap();
-        let m = p.mesh(p.node(o.first_node).unwrap().mesh).unwrap();
-        for pr in (0..m.prim_count).map(|i| p.prim(m.first_prim + i).unwrap()) {
+        let meshes: Vec<_> = (o.first_node..o.first_node + o.node_count)
+            .filter_map(|n| p.mesh(p.node(n)?.mesh))
+            .collect();
+        assert!(!meshes.is_empty(), "{key:?}");
+        for pr in meshes
+            .iter()
+            .flat_map(|m| (0..m.prim_count).map(|i| p.prim(m.first_prim + i).unwrap()))
+        {
             assert_ne!(pr.flags & flags::HEAD1, 0, "{key:?}");
             assert_ne!(pr.flags & flags::ALPHA_BLEND, 0, "{key:?}");
             assert_eq!(
@@ -54,6 +68,44 @@ fn scale_x_effects_draw_on_head_one_under_the_effect_links_cld_state() {
                 "{key:?}"
             );
         }
+    }
+}
+
+/// `efManagerCaptureKirbyStarMakeEffect` and the lost star take
+/// `StarRodWeaponAttributes.data - &llITCommonDataKirbyStarDObjDesc`: the
+/// Star Rod star's list, file 86 + 0x5458, the same list Yoshi's star names
+/// (`llYoshiMainStarWeaponAttributes`, file 247 + 0x40). The effect draws it
+/// under the CLD state, the weapon under `G_RM_AA_XLU_SURF`, so the pack
+/// holds one mesh of each, keyed apart (RE-551).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_kirby_star_and_yoshi_star_are_one_list_under_two_states() {
+    use ssb_rom::pack::flags;
+    let Some(bytes) = pack_bytes() else {
+        return;
+    };
+    let p = Pack::open(&bytes).unwrap();
+    let one = |key: (u32, u32)| {
+        let found: Vec<_> = (0..p.mesh_count())
+            .filter_map(|i| p.mesh(i))
+            .filter(|m| (m.source_file, m.source_offset) == key)
+            .collect();
+        assert_eq!(found.len(), 1, "{key:?}");
+        let m = found[0];
+        (0..m.prim_count)
+            .map(|i| p.prim(m.first_prim + i).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let kirby = one((86, 0x5458));
+    let yoshi = one((247, 0x40));
+    assert_eq!(kirby.len(), yoshi.len());
+    for (k, y) in kirby.iter().zip(&yoshi) {
+        // The same source tile (the weapon's copy is packed with its own
+        // keying file, so the entries are not shared).
+        let digest = |t| p.texture(t).unwrap().source_digest;
+        assert_eq!(digest(k.texture), digest(y.texture));
+        assert_ne!(k.flags & flags::HEAD1, 0);
+        assert_eq!(y.flags & flags::HEAD1, 0);
     }
 }
 

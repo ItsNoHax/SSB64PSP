@@ -2592,7 +2592,18 @@ const EFFECT_CLD_GRAPHS: &[(u32, u32)] = &[
 
 /// Direct effects rendered by lbCommonDObjScaleXProcDisplay, whose walker
 /// uses task head 1 (not head 0). Their links 15/18 install CLD first.
-const EFFECT_SCALE_X_GRAPHS: &[(u32, u32)] = &[(83, 0x7E80), (83, 0x8FA0), (84, 0x1500)];
+/// The Kirby capture and lost stars (`efManagerCaptureKirbyStarMakeEffect`,
+/// link 15) draw file 86's list at 0x5458, the Star Rod star's `data`
+/// (RE-551). The Fire Spark (`dEFManagerFireSparkEffectDesc`, link 15) is a
+/// two-node tree whose walker puts every node's list on head 1 too
+/// (RE-427).
+const EFFECT_SCALE_X_GRAPHS: &[(u32, u32)] = &[
+    (83, 0x7E80),
+    (83, 0x8FA0),
+    (84, 0x1500),
+    (84, 0x2040),
+    (86, 0x5458),
+];
 
 /// Weapons whose `WPAttributes.data` is a direct display list with its own
 /// `anim_joints`, so they need a one-node graph for the animation to bind
@@ -4995,6 +5006,91 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     )
                     .into_iter()
                     .next() else {
+                        continue;
+                    };
+                    if frame.triangle_count() != 0 {
+                        pack_mesh(
+                            &mut writer,
+                            &mut tex_index,
+                            &mut mat_anim_index,
+                            &mat_anim_data,
+                            Texels {
+                                home: file,
+                                all: &loaded.files,
+                            },
+                            id,
+                            sprite.offset,
+                            &frame,
+                            swizzle,
+                        );
+                        meshes += 1;
+                        triangles += frame.triangle_count();
+                    }
+                }
+            }
+        }
+
+        // Ness's PK Thunder trail (RE-550). `wpNessPKThunderTrailProcUpdate`
+        // picks the frame by `mobj->texture_id_curr =
+        // syUtilsRandIntRange(WPPKTHUNDER_TEXTURES_NUM - 1)`, with no
+        // material script, so each of `MObjSub` 0x89D8's three sprites gets a
+        // mesh of the trail's one list (link 1 of the `DObjDLLink` array at
+        // 0x8B40), keyed by the sprite it binds. Same seed, head and
+        // PRIM/ENV splice as the graph's own mesh (`PK_THUNDER_TRAIL_GRAPH`).
+        if id == ssb_rom::effect::NESS_PK_TRAIL_FILE {
+            const TRAIL_MOBJ_TABLE: u32 = 0x89C8;
+            let list = ssb_rom::effect::NESS_PK_TRAIL_LIST;
+            if let (Some(materials), Some(Ok(cmds))) = (
+                ssb_rom::mobj::read_table(file, TRAIL_MOBJ_TABLE, 1),
+                file.data
+                    .get(list as usize..)
+                    .map(|data| ssb_rom::dl::decode_list_at(data, list)),
+            ) {
+                let mut decoded = [cmds];
+                seed_player_interface_commands(PK_THUNDER_TRAIL_GRAPH, &mut decoded);
+                let [cmds] = decoded;
+                let sprites = materials.nodes[0]
+                    .first()
+                    .and_then(|sub| {
+                        ssb_rom::mobj::read_sprites(
+                            file,
+                            sub.at,
+                            ssb_rom::effect::NESS_PK_TRAIL_SPRITES.len(),
+                        )
+                    })
+                    .expect("file 335 PK Thunder trail MObjSub has three sprites");
+                assert!(
+                    sprites.iter().map(|s| (s.file, s.offset)).eq(
+                        ssb_rom::effect::NESS_PK_TRAIL_SPRITES
+                            .iter()
+                            .map(|&o| (None, o))
+                    ),
+                    "file 335 PK Thunder trail sprites moved"
+                );
+                let initial = initial_material_for(
+                    &skeleton_graphs,
+                    &ground_graphs,
+                    &transition_graphs,
+                    id,
+                    PK_THUNDER_TRAIL_GRAPH.1,
+                );
+                for sprite in &sprites {
+                    let mut mobjs = materials.nodes[0].clone();
+                    mobjs[0].sprite = Some(*sprite);
+                    let item = mesh::SequenceItem {
+                        cmds: &cmds,
+                        world: ssb_rom::scene::Mat4::IDENTITY,
+                        mobjs: &mobjs,
+                        mat_anims: &[],
+                        depth_seed: None,
+                        // Link 1: head 1, as the graph's own plan converts it.
+                        stream: 1,
+                    };
+                    let Some(Ok(frame)) =
+                        mesh::convert_sequence(&[item], mesh::Source::of(file), initial)
+                            .into_iter()
+                            .next()
+                    else {
                         continue;
                     };
                     if frame.triangle_count() != 0 {
@@ -15350,7 +15446,10 @@ mod tests {
         // head 1. They inherit CLD rather than the camera's XLU state.
         // RE-467's one-node graphs add the opening room's haze, outside and
         // sunlight lists (52 + 0x98F8, 0x24200, 0x24708), drawn by link.
-        assert_eq!(total, 110);
+        // The Fire Spark tree (84 + 0x2040, RE-427) and the Kirby star list
+        // (86 + 0x5458, RE-551) join the scale-X effects; neither sets a
+        // mode.
+        assert_eq!(total, 112);
         assert_eq!(mode_writers, 3);
     }
 

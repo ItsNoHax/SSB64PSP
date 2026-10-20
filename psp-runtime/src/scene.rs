@@ -113,6 +113,15 @@ pub fn pikachu_thunder_meshes(pack: &Pack<'_>) -> [Option<MeshDesc>; 4] {
         .map(|sprite| mesh_keyed(pack, ssb_rom::effect::PIKACHU_THUNDER_FILE, sprite))
 }
 
+/// Ness's PK Thunder trail frames in `mobj->texture_id_curr` order
+/// (RE-550): the trail list (attributes at file 239 + 0x40; file 335's
+/// `DObjDLLink` array at 0x8B40) with each
+/// of its `MObjSub`'s three sprites bound.
+pub fn ness_pk_trail_meshes(pack: &Pack<'_>) -> [Option<MeshDesc>; 3] {
+    ssb_rom::effect::NESS_PK_TRAIL_SPRITES
+        .map(|sprite| mesh_keyed(pack, ssb_rom::effect::NESS_PK_TRAIL_FILE, sprite))
+}
+
 /// The Egg Lay egg's tree and its three animations by
 /// `effect_vars.yoshi_egg_lay.index`: Wait, Break and the `EFDesc`'s own
 /// Throw (RE-417).
@@ -136,6 +145,17 @@ pub fn yoshi_egg_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
 
 pub fn yoshi_star_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
     mesh_keyed(pack, YOSHI_STAR_SOURCE.0, YOSHI_STAR_SOURCE.1)
+}
+
+/// The Kirby capture and lost stars' list (`llITCommonDataKirbyStarDObjDesc`,
+/// the Star Rod star's `data`): the same file 86 list at 0x5458 as Yoshi's
+/// star, keyed by the list itself and converted under the effect link's CLD
+/// state on head 1 (`lbCommonDObjScaleXProcDisplay`, RE-551), not the
+/// weapon's `G_RM_AA_XLU_SURF`.
+pub const KIRBY_STAR_SOURCE: (u32, u32) = (86, 0x5458);
+
+pub fn kirby_star_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
+    mesh_keyed(pack, KIRBY_STAR_SOURCE.0, KIRBY_STAR_SOURCE.1)
 }
 
 /// Sector Z's Arwing lasers: file 153's list, keyed by the 2D shot's
@@ -228,9 +248,6 @@ pub const NESS_PK_FIRE_SOURCE: (u32, u32) = (336, 0x168);
 pub const LINK_SPIN_ATTACK_WEAPON_SOURCE: (u32, u32) = (324, 0x11908);
 /// The PK Thunder head (file 239 + 0x0C): file 335's two-node tree.
 pub const NESS_PK_THUNDER_SOURCE: (u32, u32) = (335, 0x7C98);
-/// The PK Thunder trail (file 239 + 0x40): file 335's `DObjDLLink` array,
-/// packed as a one-node object.
-pub const NESS_PK_TRAIL_SOURCE: (u32, u32) = (335, 0x8B40);
 /// `dEFManagerNessPKThunderTrailEffectDesc` and
 /// `dEFManagerNessPKReflectTrailEffectDesc`'s one DObj
 /// (`llNessModelPKThunderTrailDObjDesc`), no animation.

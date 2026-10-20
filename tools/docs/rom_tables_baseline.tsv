@@ -132,6 +132,7 @@ psp-runtime/src/scene.rs	DEAD_EXPLODE_MAT_SCRIPTS	layout: the blast's material s
 psp-runtime/src/scene.rs	ENTRY_PARTS	layout: (file, ll*DObjDesc offset) keys of the entry effects, through ssb_rom::effect::slot
 psp-runtime/src/scene.rs	KIRBY_CUTTER_EFFECT_KEYS	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
 psp-runtime/src/scene.rs	KIRBY_CUTTER_SOURCE	link-time labels: (file ID, ll*Attributes offset), the key the port finds the mesh by
+psp-runtime/src/scene.rs	KIRBY_STAR_SOURCE	link-time labels: (file ID, ll*Attributes offset), the key the port finds the mesh by
 psp-runtime/src/scene.rs	LINK_BOMB_ITEM_SOURCE	link-time labels: (file ID, ll*Attributes offset), the key the port finds the mesh by
 psp-runtime/src/scene.rs	LINK_SPIN_ATTACK_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
 psp-runtime/src/scene.rs	LINK_SPIN_ATTACK_WEAPON_SOURCE	link-time labels: (file ID, ll*Attributes offset), the key the port finds the mesh by
@@ -155,6 +156,7 @@ tools/romtool/src/main.rs	EFFECT_XLU_GRAPHS	link-time labels: (file ID, ll*DObjD
 tools/romtool/src/main.rs	IMPACT_WAVE_GRAPH	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	ITEM_MAT_ANIMS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	KIRBY_COPY_TABLE	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
+tools/romtool/src/main.rs	EFFECT_SCALE_X_GRAPHS	link-time labels: (file ID, ll* offset) keys of the effect graphs whose scale-X seed romtool patches
 tools/romtool/src/main.rs	SHIELD_GRAPH	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	WEAPON_MAT_ANIM_JOINTS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	WEAPON_SEEDED_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against

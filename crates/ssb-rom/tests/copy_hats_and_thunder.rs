@@ -129,3 +129,46 @@ fn the_four_thunder_frames_are_packed() {
         }
     }
 }
+
+/// Each PK Thunder trail frame is its own mesh, keyed by its sprite and
+/// binding a different texture (RE-550). Frame 0 is the graph's own mesh of
+/// the trail list with the same state: same flags, PRIM/ENV splice and
+/// texture, so only the sprite differs between frames.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_three_pk_trail_frames_are_packed() {
+    use ssb_rom::effect::{NESS_PK_TRAIL_FILE, NESS_PK_TRAIL_LIST, NESS_PK_TRAIL_SPRITES};
+    let Some(bytes) = pack_bytes() else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    let keyed = |offset: u32| {
+        let found: Vec<_> = (0..pack.mesh_count())
+            .filter_map(|i| pack.mesh(i))
+            .filter(|m| (m.source_file, m.source_offset) == (NESS_PK_TRAIL_FILE, offset))
+            .collect();
+        assert_eq!(found.len(), 1, "one mesh keyed (335, 0x{offset:X})");
+        assert_eq!(found[0].prim_count, 1);
+        pack.prim(found[0].first_prim).unwrap()
+    };
+    let list = keyed(NESS_PK_TRAIL_LIST);
+    let frames: Vec<_> = NESS_PK_TRAIL_SPRITES.iter().map(|&s| keyed(s)).collect();
+    let state = |p: &ssb_rom::pack::PrimDesc| {
+        (
+            p.flags,
+            p.prim_color,
+            p.env_color,
+            p.texture_blend_base,
+            p.texture_blend_target,
+        )
+    };
+    for frame in &frames {
+        assert_eq!(state(frame), state(&list));
+    }
+    assert_eq!(frames[0].texture, list.texture);
+    for (i, a) in frames.iter().enumerate() {
+        for b in &frames[i + 1..] {
+            assert_ne!(a.texture, b.texture);
+        }
+    }
+}

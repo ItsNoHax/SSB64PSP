@@ -804,3 +804,69 @@ fn a_lost_star_past_the_map_bounds_ejects_without_a_splash() {
     assert!(rt.effects.displays().next().is_none());
     assert_eq!(rt.particles.generators().count(), 0);
 }
+
+fn close3(a: Vec3, b: Vec3) {
+    assert!((a - b).length() < 1e-5, "{a:?} != {b:?}");
+}
+
+/// Kind 0x49 (`func_ovl0_800CB140`): the rows are `x = normalise(a × d)`,
+/// the joint's unit X axis `a`, and `z = a × x`, with `d = eye - at`.
+#[test]
+fn direc_x_billboard_turns_the_joint_axis_toward_the_camera() {
+    // The joint's X axis along world X (scaled), the camera on +Z.
+    let rows = direc_x_billboard(
+        Vec3::new(2.0, 0.0, 0.0),
+        Vec3::new(0.0, 0.0, 1000.0),
+        Vec3::ZERO,
+    )
+    .unwrap();
+    close3(rows[0], Vec3::new(0.0, -1.0, 0.0));
+    close3(rows[1], Vec3::new(1.0, 0.0, 0.0));
+    close3(rows[2], Vec3::new(0.0, 0.0, -1.0));
+    // Any non-degenerate pose gives orthonormal rows.
+    let rows = direc_x_billboard(
+        Vec3::new(0.3, -1.2, 0.7),
+        Vec3::new(400.0, 900.0, 2500.0),
+        Vec3::new(-50.0, 300.0, 0.0),
+    )
+    .unwrap();
+    for (i, r) in rows.iter().enumerate() {
+        assert!((r.length() - 1.0).abs() < 1e-5, "row {i}");
+        for s in &rows[i + 1..] {
+            assert!(r.dot(*s).abs() < 1e-5);
+        }
+    }
+}
+
+/// `lbCommonSim3D` divides by the sum of the lengths, not their product:
+/// with a unit axis the test reads `cos θ · |d| / (|d| + 1)`, so the same
+/// angle collapses the effect far from the camera and not near it.
+#[test]
+fn direc_x_billboard_collapses_near_the_view_axis_by_the_sum_quirk() {
+    // cos θ = 0.9995 between the axis and `eye - at`.
+    let s = (1.0f32 - 0.9995 * 0.9995).sqrt();
+    let dir = Vec3::new(s, 0.0, 0.9995);
+    let far = direc_x_billboard(Vec3::new(0.0, 0.0, 5.0), dir * 3000.0, Vec3::ZERO).unwrap();
+    close3(far[0], Vec3::ZERO);
+    close3(far[1], Vec3::new(0.0, 0.0, 1.0));
+    close3(far[2], Vec3::ZERO);
+    let near = direc_x_billboard(Vec3::new(0.0, 0.0, 5.0), dir * 100.0, Vec3::ZERO).unwrap();
+    assert!((near[0].length() - 1.0).abs() < 1e-5);
+    assert!((near[2].length() - 1.0).abs() < 1e-5);
+    // Anti-parallel never collapses by the test, and its zero cross product
+    // stays zero (`syVectorNormCross3D`).
+    let anti = direc_x_billboard(
+        Vec3::new(0.0, 0.0, 1.0),
+        Vec3::new(0.0, 0.0, -10.0),
+        Vec3::ZERO,
+    )
+    .unwrap();
+    close3(anti[0], Vec3::ZERO);
+    close3(anti[2], Vec3::ZERO);
+}
+
+/// A zero axis is the original's endless "FPE : 0 div" loop: no matrix.
+#[test]
+fn direc_x_billboard_has_no_matrix_for_a_zero_axis() {
+    assert!(direc_x_billboard(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), Vec3::ZERO).is_none());
+}

@@ -92,6 +92,7 @@ fn intents() -> Vec<Intent> {
             60,
             &["SpecialNEnd"],
         ),
+        intent(S::SamusSpark, K::Samus, &["AttackHi4"], 50, &["AttackHi4"]),
         intent(
             S::SamusBomb,
             K::Samus,

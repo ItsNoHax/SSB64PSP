@@ -4580,7 +4580,8 @@ impl WeaponPool {
     /// (`ftMainProcParams` of every fighter first).
     ///
     /// A trail's frame (`Fx::TextureRand`) is drawn here, in the same link
-    /// order, and kept on a Thunder trail for its draw (RE-417).
+    /// order, and kept on a Thunder or PK Thunder trail for its draw
+    /// (RE-417, RE-550).
     pub fn flush_effects(&mut self, sink: &mut dyn crate::effect::HitEffectSink) {
         let (fx, slots, seqs) = (&mut self.fx, &mut self.slots, &self.seq);
         for (seq, e) in fx.drain_sorted_tagged() {
@@ -4593,8 +4594,10 @@ impl WeaponPool {
                 .iter_mut()
                 .zip(seqs)
                 .find(|(w, &s)| s == seq && w.is_some());
-            if let Some((Some(Weapon::Trail(t)), _)) = owner {
-                t.texture = frame;
+            match owner {
+                Some((Some(Weapon::Trail(t)), _)) => t.texture = frame,
+                Some((Some(Weapon::PKTrail(t)), _)) => t.texture = frame,
+                _ => {}
             }
         }
     }

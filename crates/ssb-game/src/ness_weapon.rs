@@ -281,6 +281,10 @@ pub struct PKThunderTrail {
     pub id: u8,
     pub lifetime: u16,
     pub hit_ports: u8,
+    /// `mobj->texture_id_curr`: the sprite the list draws, drawn each
+    /// update by `syUtilsRandIntRange(WPPKTHUNDER_TEXTURES_NUM - 1)` in
+    /// `flush_effects` (RE-550).
+    pub texture: u8,
     pub(super) rotation: f32,
     pub(super) spawn_next: bool,
 }
@@ -293,6 +297,7 @@ impl PKThunderTrail {
             id,
             lifetime: 160,
             hit_ports: 0,
+            texture: 0,
             // Reflected children inherit their parent's rotation minus 90°.
             // Keep the source's cumulative turns, including its janky offsets.
             rotation: if head.reflected {

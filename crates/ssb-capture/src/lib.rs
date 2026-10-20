@@ -346,6 +346,9 @@ pub enum GameScene {
     SamusShot,
     /// `samusbomb`: Samus in Training, one Bomb on the floor.
     SamusBomb,
+    /// `samusspark`: Samus in Training, mid up smash, its Fire Sparks on
+    /// the arm cannon (RE-427).
+    SamusSpark,
     /// `link`: Link in Training, one Boomerang in flight.
     Link,
     /// `linkspin`: Link in Training, mid ground Spin Attack.
@@ -792,7 +795,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 197] = [
+    pub const ALL: [GameScene; 198] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -828,6 +831,7 @@ impl GameScene {
         GameScene::Samus,
         GameScene::SamusShot,
         GameScene::SamusBomb,
+        GameScene::SamusSpark,
         GameScene::Link,
         GameScene::LinkSpin,
         GameScene::LinkSword,
@@ -1029,6 +1033,7 @@ impl GameScene {
             GameScene::Samus => "samus",
             GameScene::SamusShot => "samusshot",
             GameScene::SamusBomb => "samusbomb",
+            GameScene::SamusSpark => "samusspark",
             GameScene::Link => "link",
             GameScene::LinkSpin => "linkspin",
             GameScene::LinkSword => "linksword",

@@ -947,6 +947,42 @@ fn pk_trails_take_prim_and_env_by_trail_id() {
     }
     assert_eq!(seen, 0b1111);
 }
+
+/// `wpNessPKThunderTrailProcUpdate` ends with `texture_id_curr =
+/// syUtilsRandIntRange(WPPKTHUNDER_TEXTURES_NUM - 1)`: each live trail
+/// draws one of three frames per update, in link order, after its trail
+/// spawn and effect (RE-550). The flush keeps the frame on the trail and
+/// draws exactly one random number per trail, so the shared sequence is the
+/// same as before the frame was kept.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn pk_trails_keep_the_frame_their_update_draws() {
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    set_special_hi(&mut f);
+    steps(&mut f, 24);
+    let mut pool = WeaponPool::default();
+    assert!(pool.spawn(f.take_weapon_spawn().unwrap()));
+    pool.observe_owner(&f);
+    // Trail 0 is made on its first update, at `gcAddMObjForDObj`'s 0.
+    let mut seen = [false; 3];
+    crate::rng::set_seed(29);
+    for _ in 0..40 {
+        let before = crate::rng::seed();
+        pool.tick(core::iter::empty, None);
+        pool.flush_effects(&mut crate::effect::NoEffects);
+        let after = crate::rng::seed();
+        let mut trails: std::vec::Vec<_> = pool.pk_trails().collect();
+        trails.sort_by_key(|t| t.id);
+        crate::rng::set_seed(before);
+        for t in &trails {
+            let want = crate::rng::rand_int_range(3) as u8;
+            assert_eq!(t.texture, want, "trail {}", t.id);
+            seen[usize::from(t.texture)] = true;
+        }
+        assert_eq!(crate::rng::seed(), after, "one draw per live trail");
+    }
+    assert_eq!(seen, [true; 3]);
+}
 /// N64 (warp ROM, grounded Up+B, trace of links 5 and 6): the head's first
 /// update is on its make's frame (t 68), and each trail runs its first
 /// update on the frame it is made, so trails 0-3 come at t 70, 72, 74 and

@@ -21,6 +21,16 @@ pub const QUAKE_ANIM_SLOT: u32 = 0x100;
 pub const PIKACHU_THUNDER_FILE: u32 = 341;
 pub const PIKACHU_THUNDER_SPRITES: [u32; 4] = [0x9020, 0x8C18, 0x8810, 0x8408];
 
+/// Ness's PK Thunder trail frames (RE-550): `wpNessPKThunderTrailProcUpdate`
+/// sets `mobj->texture_id_curr = syUtilsRandIntRange(WPPKTHUNDER_TEXTURES_NUM
+/// - 1)` (0..=2) every tick, so the trail list (file 335's `DObjDLLink` array
+/// at 0x8B40, one list at [`NESS_PK_TRAIL_LIST`]) draws one of the three
+/// sprites of `MObjSub` 0x89D8. The pack keys one mesh per sprite by its
+/// offset, in `texture_id_curr` order.
+pub const NESS_PK_TRAIL_FILE: u32 = 335;
+pub const NESS_PK_TRAIL_LIST: u32 = 0x8A98;
+pub const NESS_PK_TRAIL_SPRITES: [u32; 3] = [0x85C8, 0x81C0, 0x7DB8];
+
 /// `dEFManagerYoshiEggLayAnimJoints` (`efManagerYoshiEggLaySetAnim`'s
 /// indices 0 and 1): the Egg Lay egg's Wait and Break tables in file 339,
 /// played on its tree (RE-417). Index 2, the Throw table, is the `EFDesc`'s

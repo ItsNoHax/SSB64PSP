@@ -108,6 +108,7 @@ macro_rules! scripted_scene {
         $crate::GameScene::Samus
             | $crate::GameScene::SamusShot
             | $crate::GameScene::SamusBomb
+            | $crate::GameScene::SamusSpark
             | $crate::GameScene::Link
             | $crate::GameScene::LinkSpin
             | $crate::GameScene::LinkSword
@@ -182,6 +183,10 @@ pub const fn capture_tick(scene: GameScene) -> Option<u64> {
         // rests under Samus. She walks right from tick 105, uncovering it
         // with some 30 frames of its 100-frame fuse left.
         SamusBomb => 125,
+        // Up and A at tick 50 enter `AttackHi4`; its motion script makes a
+        // Fire Spark on the arm cannon every few frames from frame 17
+        // (`dSamusMainMotion_USmash`), several out here.
+        SamusSpark => 75,
         // B at tick 45; `SpecialN` throws the Boomerang on frame 26, and it
         // has flown some 14 frames here.
         Link => 85,
@@ -325,38 +330,43 @@ pub fn default_stick_x(tick: u64) -> i8 {
 fn buttons(scene: GameScene, tick: u64) -> u16 {
     use GameScene::*;
     match scene {
-        Samus | SamusShot | SamusBomb | Link | LinkSpin | LinkSword | Yoshi | YoshiBomb
-        | Captain | CaptainKick | Kirby | KirbyJab | Pikachu | PikachuSmash | Purin | Donkey
-        | Ness | NessThunder | NessMagnet | LinkBomb | FoxFire | PikachuQuick => match tick {
-            4 | 8 => button::A,
-            // `linksword` jabs; `pikachusmash` taps forward with A. The A at
-            // tick 8 jabs on Training's first frame; both wait it out.
-            50 if matches!(scene, LinkSword | PikachuSmash) => button::A,
-            // `kirbyjab` mashes A (no B at tick 20).
-            t if scene == KirbyJab => {
-                if t >= 50 && t % 2 == 0 {
-                    button::A
-                } else {
-                    0
+        Samus | SamusShot | SamusBomb | SamusSpark | Link | LinkSpin | LinkSword | Yoshi
+        | YoshiBomb | Captain | CaptainKick | Kirby | KirbyJab | Pikachu | PikachuSmash | Purin
+        | Donkey | Ness | NessThunder | NessMagnet | LinkBomb | FoxFire | PikachuQuick => {
+            match tick {
+                4 | 8 => button::A,
+                // `linksword` jabs; `pikachusmash` taps forward with A. The A at
+                // tick 8 jabs on Training's first frame; both wait it out.
+                50 if matches!(scene, LinkSword | PikachuSmash | SamusSpark) => button::A,
+                // `kirbyjab` mashes A (no B at tick 20).
+                t if scene == KirbyJab => {
+                    if t >= 50 && t % 2 == 0 {
+                        button::A
+                    } else {
+                        0
+                    }
                 }
+                // Samus's and Donkey Kong's jabs from the A at tick 8 are still
+                // running at tick 20 and swallow a B there; their Charge Shot and
+                // Giant Punch start at 40.
+                40 if matches!(scene, Samus | SamusShot | Donkey) => button::B,
+                80 if scene == SamusShot => button::B,
+                SPECIAL_TICK
+                    if !matches!(
+                        scene,
+                        Samus | SamusShot | SamusSpark | Donkey | LinkSword | PikachuSmash
+                    ) =>
+                {
+                    button::B
+                }
+                // Extended controls hold through the critical bloat, then throw
+                // backward. The original Link Bomb capture stays at tick 55.
+                325 if scene == LinkBomb => button::A,
+                // PSI Magnet lasts while B is held.
+                t if scene == NessMagnet && t > SPECIAL_TICK => button::B,
+                _ => 0,
             }
-            // Samus's and Donkey Kong's jabs from the A at tick 8 are still
-            // running at tick 20 and swallow a B there; their Charge Shot and
-            // Giant Punch start at 40.
-            40 if matches!(scene, Samus | SamusShot | Donkey) => button::B,
-            80 if scene == SamusShot => button::B,
-            SPECIAL_TICK
-                if !matches!(scene, Samus | SamusShot | Donkey | LinkSword | PikachuSmash) =>
-            {
-                button::B
-            }
-            // Extended controls hold through the critical bloat, then throw
-            // backward. The original Link Bomb capture stays at tick 55.
-            325 if scene == LinkBomb => button::A,
-            // PSI Magnet lasts while B is held.
-            t if scene == NessMagnet && t > SPECIAL_TICK => button::B,
-            _ => 0,
-        },
+        }
         // `kirbyhat` and `yoshiegg` take the grab scene's route onto the
         // dummy's platform, then B: Kirby inhales and, with a second B from
         // `SpecialNWait`, copies (`ftKirbySpecialNCopyCheckGotoCopy`); Yoshi's
@@ -552,9 +562,9 @@ fn stick_x(scene: GameScene, tick: u64) -> i8 {
                 0
             }
         }
-        Samus | SamusShot | Link | LinkSpin | LinkSword | Yoshi | YoshiBomb | Captain
-        | CaptainKick | Kirby | KirbyJab | Pikachu | PikachuAir | Purin | Donkey | Ness
-        | NessThunder | NessMagnet | YoshiShield | YoshiShieldBreak | Shadows => 0,
+        Samus | SamusShot | SamusSpark | Link | LinkSpin | LinkSword | Yoshi | YoshiBomb
+        | Captain | CaptainKick | Kirby | KirbyJab | Pikachu | PikachuAir | Purin | Donkey
+        | Ness | NessThunder | NessMagnet | YoshiShield | YoshiShieldBreak | Shadows => 0,
         SamusBomb => {
             if (105..125).contains(&tick) {
                 80
@@ -592,6 +602,9 @@ fn stick_y(scene: GameScene, tick: u64) -> i8 {
         80
     } else if scene == NessJibaku && (JIBAKU_STEER..JIBAKU_STEER_LEFT).contains(&tick) {
         -57
+    } else if scene == SamusSpark && tick == 50 {
+        // An up tap with the A edge: `ftCommonAttackHi4CheckInterCommon`.
+        80
     } else if (scene == Superjump && tick == 150)
         || (matches!(scene, LinkSpin | Yoshi | Kirby | Purin | NessThunder) && tick == SPECIAL_TICK)
         || (scene == KirbyCutter && tick == CUTTER_B_TICK)

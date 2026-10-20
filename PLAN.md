@@ -124,17 +124,14 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 |---|---|---|
 | Boss-intro camera thread | `BossCameraAnim` is set after the fighter step; the decomp runs it as a priority-5 thread before the camera. Untraced → boss-intro N64 camera trace, compare per tick | RE-543 |
 | Captain's car | Battle-camera fallback before TopN in bounds unverified (`f1-vs-car`) → warp-boot capture, focus id 2, Captain | RE-523 |
-| Samus fire spark | Up smash, forward air; 84 + 0x2040. Needs matrix kind 0x49 billboard along joint 16, Samus capture | RE-427 |
 | Same-frame makes | Process order modelled; N64 two-fighter confirmation needs a cpufx `mkrom.py` per-port input patch (cpufx ROMs mirror controller 0) | RE-538, RE-540, RE-542 |
 | Chunk 5 golden | Golden scene reaching wall-damage impact wave / PK Thunder bound / Kirby star bounce; unit tests only today | RE-503 |
 | cpufx tick map | cpufx-n/u: 399+el; clean trace: 398+el; cpufx-d: 399 | RE-540 |
 | Spin Attack band | Less saturated than N64 at el48-52 | RE-540 |
 | cpufx pixel captures | N64 pixels for cpufx-d and yoshi-explosion row (RE-536 compared timelines only); second Kirby costume vs N64 HUD icons in cpufx-k; PSP VS camera frames tighter (global MAE unusable) | RE-536 |
 | Kirby | PSP spit-tick capture vs N64 shots 007/008; SpecialAirNCatch af unchecked vs N64 | RE-552 |
-| PK Thunder trail texture frame | `Fx::TextureRand(3)` picks sprites 0-2 per frame; PSP always draws sprite 0 (texture 1961), bolt thicker than N64 → per-trail texture selection plus pack data for the 3 sprites | RE-550 |
-| Kirby star mesh | Capture star draws the `yoshi_star_mesh` billboard; same ROM object unproven | RE-551 |
 | Thunder Jolt burst | Area 23–36% larger than N64 on the el162 crop (~11% framing, ~20% unattributed): check filter kernel and scale at 2x; acceptance: area within 10% | RE-541 |
-| PK Fire, Bomb | PK Fire flame on dummy in a capture; Bomb critical flash, held bloat | RE-352, RE-382, RE-383 |
+| PK Fire, Bomb | PK Fire flame needs a route onto the dummy platform (PSP and N64); Bomb fuse sparkle phase (N64 big at el287, none at 322; PSP small at 295, big at 330) and brown tone slightly greyer → per-frame-aligned captures | RE-352, RE-382, RE-383, RE-444 |
 | Battle draw order | Object head-1 lists don't wait for stage head-1 lists of same pass | RE-422 |
 | Camera | Special camera modes; cpufx-u el56-70 MAE 23.9-29.7 vs N64 after RE-542 | RE-406, RE-538, RE-542 |
 | Yoshi | Tongue and Egg Lay timeline matched (RE-552); remaining: grab vs N64, effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552 |
