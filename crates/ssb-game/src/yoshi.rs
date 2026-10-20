@@ -204,6 +204,9 @@ pub fn catch(f: &mut Fighter, held: &Fighter) {
         YoshiStatus::SpecialNCatch
     };
     set(f, next, frame, SPECIAL_N_LENGTH);
+    // `ftMainPlayAnimEventsAll` before the status vars (`ftyoshispecialn.c`
+    // :223, :231), as the copy's catch the N64 traced (RE-474).
+    status::play_anim_events(f);
     f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     physics::stop_all(&mut f.physics);
     f.grab.catch = Some(held.port);
@@ -353,6 +356,7 @@ fn set_special_air_lw_loop(f: &mut Fighter) {
         },
         status::Preserve::HIT,
     );
+    status::play_anim_events(f);
     f.physics.vel_air.y = vel_y.min(YOSHIBOMB_VEL_Y_CLAMP);
 }
 
@@ -807,6 +811,27 @@ mod tests {
         assert_eq!(f.physics.vel_air.y, -200.0);
     }
 
+    /// `ftYoshiSpecialAirLwLoopSetStatus` plays after its set
+    /// (`ftyoshispeciallw.c:142`). The loop has no figatree or script
+    /// (Script ID -1, `ftyoshistatus.h`) and speed 0, so the play only
+    /// re-poses the held frame: `ftParamsUpdateFighterPartsTransform(TopN)`
+    /// drops the joint queries the start's frame left.
+    #[test]
+    fn the_bomb_loop_setter_plays_its_held_frame() {
+        let mut f = yoshi(false);
+        set_special_air_lw_start(&mut f);
+        f.queried_joints.set(1);
+        let frame = f.status.anim_frame;
+        set_special_air_lw_loop(&mut f);
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop)
+        );
+        assert_eq!(f.queried_joints.get(), 0, "the play re-poses the frame");
+        assert_eq!(f.status.anim_frame, frame, "speed 0 holds the frame");
+        assert_eq!(f.status.clock, frame, "speed 0 holds the clock");
+    }
+
     #[test]
     fn egg_lay_searches_on_frames_18_to_23_and_releases_after_the_catch() {
         let mut f = yoshi(true);
@@ -823,12 +848,9 @@ mod tests {
             f.status.status,
             AnyStatus::Yoshi(YoshiStatus::SpecialNCatch)
         );
-        assert_eq!(f.status.anim_frame, 23.0);
-        status::update(&mut f);
-        assert_eq!(
-            f.status.status,
-            AnyStatus::Yoshi(YoshiStatus::SpecialNCatch)
-        );
+        // The catch keeps the frame and plays it on (`ftyoshispecialn.c`
+        // :223), as the copy's traced catch does (RE-474).
+        assert_eq!(f.status.anim_frame, 24.0);
         status::update(&mut f);
         assert_eq!(
             f.status.status,
@@ -849,6 +871,34 @@ mod tests {
         assert!(f.grab.catch.is_none());
         while f.status.status != Status::Wait {
             status::update(&mut f);
+        }
+    }
+
+    /// `ftYoshiSpecialNCatchProcCatch` / `...AirNCatchProcCatch` pass
+    /// `FTSTATUS_PRESERVE_MODELPART | FTSTATUS_PRESERVE_EFFECT`
+    /// (`ftyoshispecialn.c:223,:231`; ROM `0x8015E83C` stores flags 0x24 for
+    /// statuses 229 and 232): the generated preserve tables carry both.
+    #[test]
+    fn the_catch_keeps_model_parts_and_attached_effects() {
+        for ground in [true, false] {
+            let mut f = yoshi(ground);
+            set_special_n(&mut f);
+            f.model_parts.is_modify = true;
+            f.is_effect_attach = true;
+            f.effects.clear();
+            let held = Fighter::new(FighterKind::Mario, 1, 3);
+            catch(&mut f, &held);
+            assert!(f.model_parts.is_modify, "ground {ground}");
+            assert!(f.is_effect_attach, "ground {ground}");
+            assert!(
+                !f.effects
+                    .iter()
+                    .any(|e| matches!(e, crate::fteffect::FighterEffect::StopAttached)),
+                "ground {ground}"
+            );
+            // Any other status change resets both.
+            status::set_status(&mut f, Status::Wait, 0.0, StatusTiming::unknown());
+            assert!(!f.model_parts.is_modify && !f.is_effect_attach);
         }
     }
 

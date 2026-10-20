@@ -733,7 +733,9 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
             set(f, LinkStatus::SpecialAirLw, frame, SPECIAL_LW_LENGTH);
         }
         // `ftLinkSpecialHiProcMap`: the attack (`FTSTATUS_PRESERVE_HIT`)
-        // and the weapon carry over.
+        // and the weapon carry over (`proc_status` already ran and was
+        // cleared, `ftmain.c:4594-4597`); its `proc_damage` is
+        // [`on_damage`]'s `SpecialAirHi` arm.
         LinkStatus::SpecialHi => {
             f.become_airborne();
             status::set_any_status_preserve(
@@ -905,6 +907,29 @@ mod tests {
         assert!(on_ground_lost(&mut f));
         assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::SpecialAirHi));
         assert!(active(&f));
+    }
+
+    /// `ftLinkSpecialHiProcMap` sets `proc_damage` again after its switch
+    /// (`ftlinkspecialhi.c:277`), and `ftMainSetStatus` ran and cleared
+    /// `ftLinkSpecialHiProcStatus` on the Spin Attack's own set
+    /// (`ftmain.c:4594-4597`), so the weapon survives the switch and a hit
+    /// in the air destroys it.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_hit_after_the_air_switch_destroys_the_spin_weapon() {
+        let mut f = link(true);
+        set_special_hi(&mut f);
+        let mut n = 0;
+        while f.link.spin.is_none() {
+            status::update(&mut f);
+            n += 1;
+            assert!(n < 60, "the spin makes its weapon");
+        }
+        assert!(on_ground_lost(&mut f));
+        assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::SpecialAirHi));
+        assert!(f.link.spin.is_some(), "the switch keeps the weapon");
+        on_damage(&mut f);
+        assert!(f.link.spin.is_none(), "proc_damage destroys it");
     }
 
     #[test]

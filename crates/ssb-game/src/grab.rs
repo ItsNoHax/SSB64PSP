@@ -1195,7 +1195,21 @@ fn update_capture_captain(f: &mut Fighter, holder: Holder) {
 /// `ftCommonCaptureWaitSetStatus` @ 0x8014AA58.
 fn set_capture_wait(f: &mut Fighter) {
     status::set_status(f, Status::CaptureWait, 0.0, StatusTiming::unknown());
+    hide_in_yoshi(f);
     f.grab.capture_immune_mask = catch_kind::ALL;
+}
+
+/// The Yoshi branch of `ftCommonCaptureWaitSetStatus` and
+/// `ftCommonThrownSetStatusQueue` / `...Immediate`: Yoshi's victim is in
+/// his mouth, unseen and `ftParamSetHitStatusAll(Intangible)`.
+fn hide_in_yoshi(f: &mut Fighter) {
+    if f.grab
+        .holder
+        .is_some_and(|h| crate::yoshi::is_yoshi(h.kind))
+    {
+        f.is_invisible = true;
+        crate::hurtbox::set_hit_status_all(f, crate::combat::HitStatus::Intangible);
+    }
 }
 
 /// `ftCommonThrownSetStatusQueue` / `ftCommonThrownSetStatusImmediate`.
@@ -1210,6 +1224,7 @@ fn set_thrown(f: &mut Fighter, status: Status, queue: Option<Status>) {
     status::set_status(f, status, 0.0, timing);
     // Both setters play the first frame (RE-468).
     status::play_anim_events(f);
+    hide_in_yoshi(f);
     f.grab.capture_immune_mask = catch_kind::ALL;
     f.grab.thrown_queue = queue;
 }
@@ -1374,13 +1389,17 @@ fn apply_catch_knockback_with(f: &mut Fighter, capture_handicap: u8, desc: (i32,
 
 /// Drops the link on the held side (`ftCommonThrownReleaseFighterLoseGrip`
 /// plus `capture_gobj = NULL`), leaving the fighter airborne where it is.
+///
+/// The source writes no hit status here: every caller sets a status next,
+/// whose `ftMainSetStatus` restores `Normal` and clears `is_invisible`
+/// (`ftmain.c:4428`, `:4462`); the throw releases set `Normal` first
+/// ([`release_with`]).
 pub(crate) fn lose_grip(f: &mut Fighter) {
     f.grab.capture = None;
     f.grab.holder = None;
     f.grab.thrown_queue = None;
     f.grab.capture_immune_mask = catch_kind::NONE;
     f.grab.captain_no_update = false;
-    f.kirby_capture.intangible = false;
     f.is_invisible = false;
     if f.is_grounded() && f.floor.is_none() {
         f.become_airborne();
@@ -1401,6 +1420,11 @@ fn release_with(
     let Some(holder) = f.grab.holder else {
         return 0;
     };
+    // `if (this_fp->hitstatus != nGMHitStatusNormal)`: a Yoshi's victim
+    // (`ftcommonthrown2.c:133`, `:216`).
+    if f.hitstatus != crate::combat::HitStatus::Normal {
+        crate::hurtbox::set_hit_status_all(f, crate::combat::HitStatus::Normal);
+    }
     // The TopN `joint 4` hangs from, before `ftCommonThrownProcPhysics`.
     let sampled = f.joint_transforms[0].zip(f.joint_transforms[4]);
     let mut topn = sampled.map(|(top, _)| top);
@@ -2317,7 +2341,7 @@ pub fn ground_physics_status(status: AnyStatus) -> Option<Status> {
 // Two-fighter phases
 // ---------------------------------------------------------------------------
 
-fn holder_of(f: &Fighter) -> Holder {
+pub(crate) fn holder_of(f: &Fighter) -> Holder {
     Holder {
         stat: f.stats.attack,
         kind: f.kind,
@@ -2783,7 +2807,8 @@ mod tests {
         assert_eq!(kirby.status.status, AnyStatus::Kirby(K::SpecialNWait));
         assert_eq!(fox.status.status, Status::CaptureWaitKirby);
         assert!(fox.is_invisible);
-        assert!(crate::capture_kirby::is_intangible(&fox));
+        assert_eq!(fox.hitstatus, crate::combat::HitStatus::Intangible);
+        assert!(crate::combat::is_body_intangible(&fox));
         press(&mut kirby, N64Buttons::A, 0);
         press(&mut fox, 0, 0);
         frame(&mut kirby, &mut fox);
@@ -2917,6 +2942,49 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// `ftCommonCaptureWaitSetStatus` and `ftCommonThrownSetStatusQueue` /
+    /// `...Immediate`: held by Yoshi, the victim is invisible and
+    /// `ftParamSetHitStatusAll(Intangible)`; any other catcher leaves both.
+    /// `ftCommonThrownSetStatusDamageRelease` restores `Normal`
+    /// (`ftcommonthrown2.c:216`).
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    #[test]
+    fn a_yoshi_hold_hides_the_victim_and_makes_it_intangible() {
+        use crate::combat::HitStatus;
+        for (kind, by_yoshi) in [(FighterKind::Yoshi, true), (FighterKind::Mario, false)] {
+            let mut catcher = grounded(kind, 0, 0.0);
+            let mut held = grounded(FighterKind::Fox, 1, 150.0);
+            catcher.grab.catch = Some(1);
+            capture_pulled(&mut held, 0, holder_of(&catcher));
+            set_capture_wait(&mut held);
+            let want = if by_yoshi {
+                HitStatus::Intangible
+            } else {
+                HitStatus::Normal
+            };
+            assert_eq!(held.hitstatus, want, "{kind:?} CaptureWait");
+            assert_eq!(held.is_invisible, by_yoshi, "{kind:?} CaptureWait");
+            assert_eq!(crate::combat::is_body_intangible(&held), by_yoshi);
+            set_thrown(&mut held, Status::ThrownCommon, None);
+            assert_eq!(held.hitstatus, want, "{kind:?} Thrown");
+            assert_eq!(held.is_invisible, by_yoshi, "{kind:?} Thrown");
+            let desc = NO_DAMAGE_KNOCKBACK;
+            let staled = StaledThrow::of(&catcher, desc.damage);
+            deliver(
+                GrabEvent::DamageRelease {
+                    desc,
+                    shield_catch: false,
+                    staled,
+                },
+                &mut catcher,
+                &mut held,
+            );
+            assert_eq!(held.hitstatus, HitStatus::Normal, "{kind:?} released");
+            assert!(!held.is_invisible, "{kind:?} released");
+            assert!(!crate::combat::is_body_intangible(&held));
         }
     }
 

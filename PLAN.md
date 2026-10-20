@@ -46,7 +46,6 @@
 
 - Row = one open task: what remains / acceptance, then refs. Closed → delete row.
 
-- `f1-vs-shield-damage` scene no longer shows RE-418's shield-off tick (player already DownWaitU at 885) → retune the capture tick (`psp-game/src/main.rs:320` comment).
 
 ### PSP performance and hardware (`MS8`)
 
@@ -139,9 +138,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | PK Fire, Bomb | PK Fire flame on dummy in a capture; Bomb critical flash, held bloat | RE-352, RE-382, RE-383 |
 | Battle draw order | Object head-1 lists don't wait for stage head-1 lists of same pass | RE-422 |
 | Camera | Special camera modes; cpufx-u el56-70 MAE 23.9-29.7 vs N64 after RE-542 | RE-406, RE-538, RE-542 |
-| Hit status | Capture intangibility via `f.hitstatus` + colanim; blocked on the `grab::lose_grip` callers audit (8 callers; Kirby, Yoshi captures and hold) | RE-414 |
-| Yoshi Bomb loop | `set_special_air_lw_loop` omits `ftMainPlayAnimEventsAll` (`ftyoshispeciallw.c:142`) | RE-414 |
-| Link Spin Attack | Air switch omits `proc_damage = ftLinkSpecialHiProcDamage` (`ftlinkspecialhi.c`) | RE-414 |
 | Yoshi | Egg Lay victim: wall/ceiling sweep, damaging-floor escape, break effect; re-observe double-jump hang; tongue, grab, Egg Lay vs N64 | RE-337, RE-417, RE-432, RE-466, RE-468 |
 | Setter first frames | No N64 trace: Barrel/Tornado captures, item throws, Final Cutter landing, Yoshi aerial release, Link aerial Boomerang return | RE-468, RE-473, RE-474 |
 | `anim_frame` | Shield pose clock; DK speed-0 cargo jump/fall; idle camera `status_total_tics` | RE-472, RE-474 |

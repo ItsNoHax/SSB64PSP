@@ -171,12 +171,7 @@ pub fn best_hit_status_all(f: &Fighter) -> HitStatus {
             }
         }
     }
-    let body = if crate::capture_kirby::is_intangible(f) {
-        HitStatus::Intangible
-    } else {
-        f.hitstatus
-    };
-    best.max(body)
+    best.max(f.hitstatus)
         .max(combat::star_hitstatus(f))
         .max(combat::special_hitstatus(f))
 }

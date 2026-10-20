@@ -90,10 +90,11 @@ const VS_RESULTS_EMBLEM_CAPTURE_TICK: u64 = 742;
 const VS_RESULTS_LINK_CAPTURE_TICK: u64 = 780;
 /// `vsshield`'s capture tick (RE-418, RE-438). A capture build's log shows
 /// the CPU's hit setting the player's shield off
-/// (`ftCommonGuardSetOffSetStatus`) in tick 884's update, the only update
+/// (`ftCommonGuardSetOffSetStatus`) in tick 2197's update, the only update
 /// that leaves the grey row selected. A scene freezes before its capture
-/// tick's update, so freezing at 885 draws that state.
-const VS_SHIELD_SET_OFF_TICK: u64 = 885;
+/// tick's update, so freezing at 2198 draws that state. The earlier hits
+/// miss the shield: a shield poke at 610, a throw at 1624.
+const VS_SHIELD_SET_OFF_TICK: u64 = 2198;
 
 /// `saveunlock`'s A: the message's two-second input wait, from its
 /// fixture at tick 105, has passed.
@@ -317,8 +318,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // The CPU Link wins; each of his Win picks' scripts sparkles his
         // sword (joint 11) 5 or 15 frames after it starts at tick 763.
         GameScene::VsResultsLink => VS_RESULTS_LINK_CAPTURE_TICK,
-        // "Go" at 398 with Z held; the CPU's first hit on the shield sets
-        // it off on this tick (the capture log's `re418` lines).
+        // "Go" at 398 with Z held; the CPU's hit on the shield sets it off
+        // on this tick (the capture log's `re418` lines).
         GameScene::VsShield => VS_SHIELD_SET_OFF_TICK,
         // The select opens at tick 8 and moves at 20 (and 24); by 60 the
         // preview camera has bobbed and the model played 36 ticks.

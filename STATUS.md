@@ -16,9 +16,9 @@
 
 ## Current work
 
-- Landed: select process order by GObj link (1P, VS, training, bonus; RE-411, RE-448, RE-450); spotlight state; `spgame::select` removed; anti-piracy consumers incl. VS Castle (RE-460); `rgb_lerp` pack audit (RE-527); DK shoulder-lift gate; Thunder Jolt burst measured (RE-541).
-- Select spotlight drawn (head 1 XLU, after fighters; RE-411); results fighters step from the creation tic (RE-528).
-- Rebaselined: `f1-vs-no-contest` 2861, `f1-vs-results` 927, `f1-vs-results-link` 16821 native px. New: `f1-vs-players-held`, `f1-training-select-held`.
+- Landed: fighter status-callback gaps (RE-414): capture/hold intangibility via `f.hitstatus`; Yoshi catch and Bomb loop play; egg escape `intangible_tics`; player-tag placement (RE-440); Link Spin Attack confirmed faithful.
+- Rebaselined: `f1-training-yoshi-egg` 563 native px (CP tag over the egg), `f1-vs-shield-damage` 99394 native px (capture tick 2198, RE-418).
+- Open: shield poke at `vsshield` t=610 (0.7-unit margin) awaits an N64 trace (RE-418).
 
 ## Next
 
@@ -31,7 +31,7 @@
 
 ## Verification
 
-Baseline: frontend and audit tidy.
+Baseline: fighter status callbacks.
 
 | Check | Result |
 |---|---|

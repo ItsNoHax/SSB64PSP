@@ -197,6 +197,7 @@ pub fn update_held(f: &mut Fighter, attachment: Vec3) {
             f.egg.stage = 2;
             f.is_invisible = true;
             f.is_shadow_hidden = true;
+            crate::hurtbox::set_hit_status_all(f, crate::combat::HitStatus::Intangible);
         }
         _ => {}
     }
@@ -240,6 +241,9 @@ fn set_egg(f: &mut Fighter) {
         holder.stat,
         crate::spgame::bonus::DamageObject::Other,
     );
+    // `ftParamSetPlayerTagWait(fighter_gobj, 1)`: the tag marks the hidden
+    // fighter for the egg's whole life.
+    f.interface.tag_wait = 1;
     let lr = holder.facing.sign();
     f.pos = holder.pos + Vec3::new(-lr * LAY_OFF_X, LAY_OFF_Y, 0.0);
     f.physics.vel_air = Vec3::new(-lr * LAY_VEL_X, LAY_VEL_Y, 0.0);
@@ -281,12 +285,9 @@ fn escape(f: &mut Fighter) {
         StatusTiming::unknown(),
         status::Preserve::DAMAGE_PLAYER,
     );
-    f.grab.capture_immune_mask = crate::grab::catch_kind::NONE;
-    // `ftParamSetTimedHitStatusIntangible`: the port's timed invincibility
-    // is the one that lets attacks pass through.
-    f.invincible_frames = f.invincible_frames.max(INTANGIBLE_TIMER);
-    f.interface.tag_wait = 1;
-    crate::colanim::check_set(f, crate::colanim::ColAnimId::FIGHTER_NO_DAMAGE, 0);
+    // `ftParamSetTimedHitStatusIntangible` (`intangible_tics`), after the
+    // Fall's `ftMainSetStatus` cleared the tag wait the egg set.
+    crate::reaction::set_timed_intangible(f, INTANGIBLE_TIMER);
 }
 
 /// The bookkeeping half of `ftCommonYoshiEggProcPhysics`, then the break
@@ -409,15 +410,24 @@ mod tests {
         f.egg.stage = 1;
         update_held(&mut f, Vec3::new(280.0, 0.0, 0.0));
         assert_eq!(f.egg.stage, 2);
-        assert!(f.is_invisible);
+        assert!(f.is_invisible && f.is_shadow_hidden);
+        // `ftParamSetHitStatusAll(Intangible)` (`ftcommoncaptureyoshi.c:77`).
+        assert_eq!(f.hitstatus, crate::combat::HitStatus::Intangible);
+        assert!(crate::combat::is_body_intangible(&f));
         f.egg.stage = 3;
         update_held(&mut f, Vec3::new(280.0, 0.0, 0.0));
         assert_eq!(f.status.status, Status::YoshiEgg);
+        // The egg's `ftMainSetStatus` restores `Normal` (`ftmain.c:4428`).
+        assert_eq!(f.hitstatus, crate::combat::HitStatus::Normal);
         assert_eq!(f.pos, Vec3::new(-100.0, 90.0, 0.0));
         assert_eq!(f.physics.vel_air, Vec3::new(-20.0, 60.0, 0.0));
         assert_eq!(f.damage, 5);
         assert!(f.is_invisible && f.grab.capture.is_none());
         assert_eq!(f.egg.escape_wait, ESCAPE_WAIT_MAX);
+        // `ftParamSetPlayerTagWait(fighter_gobj, 1)` after the egg's
+        // `ftMainSetStatus` (`ftcommoncaptureyoshi.c:368`): the tag marks
+        // the hidden fighter.
+        assert_eq!(f.interface.tag_wait, 1);
     }
 
     fn egg() -> Fighter {
@@ -450,7 +460,18 @@ mod tests {
         assert_eq!(frames_to_escape(&mut f, None), 261);
         assert_eq!(f.status.status, Status::Fall);
         assert_eq!(f.physics.vel_air, Vec3::new(0.0, ESCAPE_VEL_Y, 0.0));
-        assert_eq!(f.invincible_frames, INTANGIBLE_TIMER);
+        // `ftParamSetTimedHitStatusIntangible` writes `intangible_tics`
+        // (`ftcommoncaptureyoshi.c:195`; ROM `0x8014CB08` calls `0x800EA948`,
+        // which stores `0x5A8`), not the invincibility timer.
+        assert_eq!(f.intangible_frames, INTANGIBLE_TIMER);
+        assert_eq!(f.invincible_frames, 0);
+        assert_eq!(
+            crate::combat::special_hitstatus(&f),
+            crate::combat::HitStatus::Intangible
+        );
+        // The Fall's `ftMainSetStatus` clears the tag wait
+        // (`FTSTATUS_PRESERVE_DAMAGEPLAYER` only); the escape sets none.
+        assert_eq!(f.interface.tag_wait, 0);
         assert!(!f.is_invisible && f.grab.capture_immune_mask == 0);
     }
 

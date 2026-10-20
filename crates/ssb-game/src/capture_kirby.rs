@@ -23,8 +23,10 @@
 
 use ssb_engine::math::{sqrt, Vec2, Vec3};
 
+use crate::combat::HitStatus;
 use crate::fighter::{Facing, Fighter, FighterKind};
 use crate::grab::{self, GrabEvent, Holder};
+use crate::hurtbox;
 use crate::physics;
 use crate::status::{self, KirbyStatus, Status, StatusTiming};
 
@@ -67,8 +69,6 @@ pub struct CaptureKirbyState {
     pub flag1: i32,
     /// Motion flag 2: 1 copy star, 2 spit star, 3 releasing.
     pub flag2: u8,
-    /// `ftParamSetHitStatusAll(nGMHitStatusIntangible)`.
-    pub intangible: bool,
 }
 
 pub fn is_captured(status: crate::status::AnyStatus) -> bool {
@@ -83,11 +83,6 @@ pub fn is_star(status: crate::status::AnyStatus) -> bool {
         status,
         crate::status::AnyStatus::Common(Status::ThrownKirbyStar | Status::ThrownCopyStar)
     )
-}
-
-/// Whether a hit passes through this fighter.
-pub fn is_intangible(f: &Fighter) -> bool {
-    f.kirby_capture.intangible && (is_star(f.status.status) || is_captured(f.status.status))
 }
 
 /// `ftCommonCaptureKirbyProcCapture`, run on the victim once Kirby's
@@ -150,7 +145,7 @@ fn set_capture_wait(f: &mut Fighter) {
     status::set_status(f, Status::CaptureWaitKirby, 0.0, StatusTiming::unknown());
     f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     f.is_invisible = true;
-    f.kirby_capture.intangible = true;
+    hurtbox::set_hit_status_all(f, HitStatus::Intangible);
     grab::init_breakout(f, WAIT_BREAKOUT);
 }
 
@@ -201,9 +196,7 @@ pub fn update_captured(f: &mut Fighter) {
 /// The victim's half of a finished breakout: `ftCommonCaptureApplyCaptureKnockback`
 /// with the Kirby descriptor.
 fn escape_breakout(f: &mut Fighter, holder: Holder) {
-    f.kirby_capture.intangible = false;
     grab::apply_capture_knockback_with(f, holder, KNOCKBACK_CAPTURE);
-    f.interface.tag_wait = 1;
 }
 
 /// `ftCommonThrownKirbyStarSetStatus` / `ftCommonThrownCopyStarSetStatus`
@@ -244,6 +237,7 @@ pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, owner: crate::thrown::Th
     f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     f.is_invisible = true;
     f.is_shadow_hidden = true;
+    hurtbox::set_hit_status_all(f, HitStatus::Intangible);
     f.interface.tag_wait = 1;
     f.kirby_capture = CaptureKirbyState {
         is_goto_wait: false,
@@ -251,7 +245,6 @@ pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, owner: crate::thrown::Th
         lr: if vel.x < 0.0 { -1.0 } else { 1.0 },
         flag1: if copy { 10 } else { 30 },
         flag2: if copy { 1 } else { 2 },
-        intangible: true,
     };
     if !copy {
         grab::init_breakout(f, STAR_BREAKOUT_INPUTS_MIN);
@@ -267,11 +260,6 @@ fn escape(f: &mut Fighter) {
         StatusTiming::unknown(),
         status::Preserve::DAMAGE_PLAYER,
     );
-    f.interface.tag_wait = 1;
-    f.kirby_capture.intangible = false;
-    f.grab.capture_immune_mask = crate::grab::catch_kind::NONE;
-    f.is_invisible = false;
-    f.is_shadow_hidden = false;
 }
 
 /// `ftCommonThrownCommonStarUpdatePhysics`. Returns `true` for a star status.
@@ -314,12 +302,13 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
                     .set_default(crate::kirby_copy::COPY_MODELPARTS_JOINT, 0);
                 f.model_parts.reset_all();
             }
+            f.is_invisible = false;
+            hurtbox::set_hit_status_all(f, HitStatus::Normal);
             escape(f);
         }
         2 => {
             s.flag1 = 4;
             s.flag2 = 3;
-            s.intangible = false;
             let lr = if s.lr != 0.0 {
                 s.lr
             } else if f.physics.vel_air.x < 0.0 {
@@ -329,8 +318,10 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
             };
             f.physics.vel_air.y = STAR_RELEASE_VEL_Y;
             f.physics.vel_air.x = lr * STAR_RELEASE_VEL_X;
+            // Only `is_invisible`: the shadow stays hidden until the
+            // escape's `ftMainSetStatus`.
             f.is_invisible = false;
-            f.is_shadow_hidden = false;
+            hurtbox::set_hit_status_all(f, HitStatus::Normal);
             release_countdown(f);
         }
         3 => release_countdown(f),
@@ -422,6 +413,29 @@ mod tests {
         }
     }
 
+    /// `ftCommonCaptureWaitKirbySetStatus` (`:244`): invisible and
+    /// intangible in Kirby's mouth; the breakout's damage status restores
+    /// `Normal` (`ftMainSetStatus`, `ftmain.c:4428`).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_swallowed_fighter_is_intangible_until_it_breaks_out() {
+        let mut f = Fighter::new(FighterKind::Mario, 1, 3);
+        set_capture_wait(&mut f);
+        assert!(f.is_invisible);
+        assert_eq!(f.hitstatus, HitStatus::Intangible);
+        assert!(crate::combat::is_body_intangible(&f));
+        let kirby = Fighter::new(FighterKind::Kirby, 0, 3);
+        f.grab.capture = Some(0);
+        escape_breakout(&mut f, crate::grab::holder_of(&kirby));
+        assert_ne!(f.status.status, Status::CaptureWaitKirby);
+        assert_eq!(f.hitstatus, HitStatus::Normal);
+        assert!(!crate::combat::is_body_intangible(&f));
+        // The breakout calls no `ftParamSetPlayerTagWait` (ROM `0x8014BD04`);
+        // the damage status's `ftMainSetStatus` clears the wait, and only
+        // level-3 knockback of 130 or more sets 10.
+        assert_eq!(f.interface.tag_wait, 0);
+    }
+
     #[test]
     fn dist_decays_by_the_per_axis_step() {
         let d = decay_dist(Vec2::new(100.0, -50.0));
@@ -443,7 +457,10 @@ mod tests {
                 team: 0,
             },
         );
-        assert!(is_intangible(&f));
+        assert_eq!(f.hitstatus, HitStatus::Intangible);
+        assert!(crate::combat::is_body_intangible(&f));
+        assert!(f.is_invisible && f.is_shadow_hidden);
+        assert_eq!(f.interface.tag_wait, 1);
         apply_air_physics(&mut f);
         assert_eq!(f.physics.vel_air.x, 116.0);
         for _ in 0..29 {
@@ -452,14 +469,27 @@ mod tests {
         assert_eq!(f.kirby_capture.flag1, 0);
         apply_air_physics(&mut f);
         assert_eq!(f.kirby_capture.flag2, 3);
-        assert!(!is_intangible(&f));
+        // `ftParamSetHitStatusAll(Normal)` with the release (`:361`).
+        assert_eq!(f.hitstatus, HitStatus::Normal);
+        assert!(!crate::combat::is_body_intangible(&f));
         assert_eq!(f.physics.vel_air.y, STAR_RELEASE_VEL_Y);
+        // The release shows the fighter but keeps its shadow hidden
+        // (`:359` writes only `is_invisible`; ROM `0x8014BF04` clears bit 0
+        // of byte 397 and leaves byte 398's `is_shadow_hide`) until the
+        // Fall's `ftMainSetStatus` (`ftmain.c:4463`).
+        assert!(!f.is_invisible && f.is_shadow_hidden);
+        assert_eq!(f.interface.tag_wait, 1);
         for _ in 0..3 {
             apply_air_physics(&mut f);
             assert_eq!(f.status.status, Status::ThrownKirbyStar);
+            assert!(f.is_shadow_hidden);
         }
         apply_air_physics(&mut f);
         assert_eq!(f.status.status, Status::Fall);
+        // `ftCommonThrownKirbyEscape` is the bare Fall setter
+        // (`FTSTATUS_PRESERVE_DAMAGEPLAYER`): shadow shown, tag wait cleared.
+        assert!(!f.is_invisible && !f.is_shadow_hidden);
+        assert_eq!(f.interface.tag_wait, 0);
     }
 
     #[test]
@@ -479,12 +509,15 @@ mod tests {
                 team: 0,
             },
         );
+        assert_eq!(f.hitstatus, HitStatus::Intangible);
         for _ in 0..10 {
             apply_air_physics(&mut f);
         }
         assert_eq!(f.status.status, Status::ThrownCopyStar);
         apply_air_physics(&mut f);
         assert_eq!(f.status.status, Status::Fall);
+        // `ftParamSetHitStatusAll(Normal)` before the escape (`:329`).
+        assert_eq!(f.hitstatus, HitStatus::Normal);
         assert_eq!(f.kirby.copy_id, FighterKind::Kirby);
     }
 }

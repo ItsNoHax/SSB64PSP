@@ -722,14 +722,9 @@ pub fn star_hitstatus(f: &Fighter) -> HitStatus {
     }
 }
 
-/// `FTStruct::hitstatus`, including the `ftParamSetHitStatusAll` writes of
-/// Kirby's capture and star statuses (`crate::capture_kirby`).
+/// `FTStruct::hitstatus` (`ftParamSetHitStatusAll`).
 fn body_hitstatus(f: &Fighter) -> HitStatus {
-    if crate::capture_kirby::is_intangible(f) {
-        HitStatus::Intangible
-    } else {
-        f.hitstatus
-    }
+    f.hitstatus
 }
 
 /// `FTStruct::throw_gobj`: common throws and Kirby's spit/copy stars.
