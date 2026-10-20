@@ -12,129 +12,113 @@ Part of [rendering.md](../rendering.md).
 | RGBA32 | `Psm8888` | Direct |
 | IA4 / IA8 / IA16 | `Psm8888` (or `PsmT8`) | No PSP IA format |
 
-By `G_SETTILE` count: CI4 1,192, RGBA16 92, IA16 83, others few. TLUT loads
-are almost always 16 entries. Paletted formats stay paletted to fit VRAM
-([D-003](../decisions/D-003.md)).
+- CI4 dominates; TLUT loads almost always 16 entries.
+- Paletted formats stay paletted to fit VRAM ([D-003](../decisions/D-003.md)).
+- `ssb-rom::texture` decodes to RGBA8888.
+- `ssb-rom::psp_texture` packs to the chosen PSM, swizzles rows of at least 16 bytes (RE-022).
 
-`ssb-rom::texture` decodes to RGBA8888; `ssb-rom::psp_texture` packs to the
-chosen PSM and swizzles rows of at least 16 bytes (RE-022).
+### Lossless palettization (RE-491)
 
-The pack writer then stores any `Psm8888` or `Psm5551` texture whose level 0
-has at most 256 colours as `PsmT4`/`PsmT8` with a CLUT of exactly those
-colours, level 0 only (`psp_texture::palettize_lossless`,
-`TextureDesc::TEXELS_PALETTIZED`). The GE looks texels up before it filters,
-so the pixels do not change; most compensated and IA textures qualify, and
-the GE reads a quarter or an eighth of the bytes (RE-491).
+- Pack writer stores any `Psm8888`/`Psm5551` texture whose level 0 has at most 256 colours as `PsmT4`/`PsmT8` with a CLUT of exactly those colours.
+  - Level 0 only.
+  - Code: `psp_texture::palettize_lossless`, `TextureDesc::TEXELS_PALETTIZED`.
+- Pixels unchanged: GE looks texels up before it filters.
+- Most compensated and IA textures qualify; GE reads a quarter or an eighth of the bytes.
 
 ### TLUT mode
 
-The RDP's `G_MDSFT_TEXTLUT`, not the texture format, decides palette lookup
-(RE-313):
-
-- Any 4- or 8-bit texel drawn with the TLUT on is an index. IA16 TLUT entries
-  act as intensity/alpha.
-- CI drawn with the TLUT off reads the raw index as grey.
-- `mesh.rs` tracks RDP/RSP state per task display list and drops the palette
-  of TLUT-off draws.
-- An index beyond a short `G_LOADTLUT` reads stale TMEM; measured values are
-  in `romtool`'s `STALE_TLUT_ENTRIES`.
+- RDP's `G_MDSFT_TEXTLUT`, not the texture format, decides palette lookup (RE-313).
+- Any 4- or 8-bit texel drawn with TLUT on = index; IA16 TLUT entries act as intensity/alpha.
+- CI drawn with TLUT off: raw index read as grey.
+- `mesh.rs` tracks RDP/RSP state per task display list; drops the palette of TLUT-off draws.
+- Index beyond a short `G_LOADTLUT` reads stale TMEM; measured values: `romtool`'s `STALE_TLUT_ENTRIES`.
 - `G_SETTILE.palette` selects a 16-entry bank within a larger TLUT (RE-224).
 
 ### Tile loads
 
-A `G_LOADTILE` copies a rectangle of the `G_SETTIMG` image into TMEM. A
-texture drawn from that TMEM address reads from the rectangle's corner at
-the image's own width, not from the image's start at the tile's width
-(RE-423): Yoshi's Island's fruit panel is five such strips of one 66 × 64
-RGBA32 image.
+- `G_LOADTILE` copies a rectangle of the `G_SETTIMG` image into TMEM.
+- Texture drawn from that TMEM address reads from the rectangle's corner at the image's own width.
+  - Not from the image's start at the tile's width (RE-423).
+- Example: Yoshi's Island's fruit panel = five such strips of one 66 × 64 RGBA32 image.
 
 ### Texture references
 
-A texture is named by a file and an offset. Stage display lists often draw
-texels from another archive file through an extern relocation, so the address
-word reads zero in the list. The converter keys on the address word's own
-offset, and `TextureRef` names the texel file and palette file independently
-(RE-037).
-
-## Conversion results
-
-`romtool textures` (RE-057–060, RE-067, RE-070):
-
-| Metric | Value |
-|---|---|
-| Unique textures bound | 665 |
-| Packed | 638 (549 `PsmT4`, 22 `PsmT8`, 67 `Psm8888`) |
-| Not packed | 26 runtime-framebuffer references (RE-055), 1 missing palette (`ITCommonObject`) |
-| Packed size | 1,170.9 KiB (51.9% below all-RGBA8888) |
-
-These figures predate the per-variant filter compensation below, which adds
-texture variants. The archive-wide total exceeds the ~700 KiB VRAM pool; per-scene
-residency is required ([memory.md](../memory.md)).
+- Texture named by file + offset.
+- Stage display lists often draw texels from another archive file via an extern relocation → address word reads zero in the list.
+- Converter keys on the address word's own offset.
+- `TextureRef` names texel file and palette file independently (RE-037).
+- Not packed (`romtool textures` reports; RE-057–060, RE-067, RE-070):
+  - Runtime-framebuffer references (RE-055).
+  - One missing palette (`ITCommonObject`).
+- Archive-wide texture total exceeds the ~700 KiB VRAM pool → per-scene residency required ([memory.md](../memory.md)).
 
 ## Addressing
 
-Status: verified by host tests (RE-220–224).
+- Verified by host tests (RE-220–224).
+- `crates/ssb-rom/src/n64_addressing.rs`: reference model of RDP tile addressing, transcribed from `angrylion-rdp-plus`.
 
-`crates/ssb-rom/src/n64_addressing.rs` is a reference model of RDP tile
-addressing, transcribed from `angrylion-rdp-plus`.
+| Topic | Rule | Evidence |
+|---|---|---|
+| Mirror | GE has no mirror wrap → mirrored axes pre-baked for every period the drawn rectangle spans; 0 of 810 mirror+clamp axes diverge from reference | RE-067, RE-221 |
+| Tile origin | Subtract `uls`/`ult` on every axis before clamp, mask, mirror; repeating axes also use tile-relative phase (omitting it hid Mario/Luigi's overall buttons) | RE-359 |
+| Clamp | Native `sceGuTexWrap(Clamp)` after tile-origin rebasing | RE-102, RE-152, RE-359 |
+| Power-of-two padding | Repeated edge texels, not zeros → linear filtering at the logical edge matches | RE-222 |
+| 512 limit | See below | RE-314, RE-318 |
+| 16-byte row minimum | See below | RE-319, RE-320 |
+| Unused fields | `mask == 0`, `shift_s`/`shift_t`, `tmem` never occur; `line` unused (texels read straight from ROM) | RE-223 |
 
-- **Mirror**: the GE has no mirror wrap, so mirrored axes are pre-baked for
-  every period the drawn rectangle spans (RE-067, RE-221). 0 of 810 mirror+clamp
-  axes diverge from the reference.
-- **Tile origin**: subtract `uls`/`ult` on every axis before clamp, mask and
-  mirror. Repeating axes also use tile-relative phase; omitting the origin
-  hid Mario/Luigi's overall buttons (RE-359).
-- **Clamp**: native `sceGuTexWrap(Clamp)` after tile-origin rebasing
-  (RE-102, RE-152, RE-359).
-- **Power-of-two padding**: filled with repeated edge texels, not zeros, so
-  linear filtering at the logical edge matches (RE-222).
-- **512 limit**: the GE addresses at most 512 texels per axis, and rust-psp's
-  `sceGuTexImage` encodes 1024 as log2 15. `psp_texture::ge_texture_dims`
-  caps the declared size at 512 (RE-314). No packed texture exceeds it:
-  `wide_tile::lower` rewrites the 88 primitives whose clamped, mask-narrowed
-  tile would bake past 512 into an equivalent repeating period plus a
-  clamped far window, splitting 34 triangles (RE-318).
-- **16-byte row minimum**: the GE reads a buffer row under 16 bytes at a
-  16-byte pitch. `psp_texture::ge_buffer_stride` stores every level at least
-  16 bytes wide (32 texels for T4). The declared size stays the power of two
-  of the logical width, so UVs and wrapping are unchanged. PSP-2000 stripe
-  captures confirm the T4 pitch and repair (RE-319, RE-320).
-- `mask == 0`, `shift_s`/`shift_t` and `tmem` never occur in the archive;
-  `line` is unused because texels are read straight from ROM (RE-223).
+### 512 limit
+
+- GE addresses at most 512 texels per axis; rust-psp's `sceGuTexImage` encodes 1024 as log2 15.
+- `psp_texture::ge_texture_dims` caps the declared size at 512 (RE-314).
+- No packed texture exceeds it.
+  - `wide_tile::lower` rewrites the 88 primitives whose clamped, mask-narrowed tile would bake past 512.
+  - Replacement: equivalent repeating period plus a clamped far window; splits 34 triangles (RE-318).
+
+### 16-byte row minimum
+
+- GE reads a buffer row under 16 bytes at a 16-byte pitch.
+- `psp_texture::ge_buffer_stride` stores every level at least 16 bytes wide (32 texels for T4).
+- Declared size stays the power of two of the logical width → UVs and wrapping unchanged.
+- PSP-2000 stripe captures confirm the T4 pitch and repair (RE-319, RE-320).
 
 ## LOD and mipmaps
 
-Status: complete. SSB64 never enables RDP LOD: all `TEXTLOD` commands are
-`G_TL_TILE` and all `TEXTDETAIL` are `G_TD_CLAMP` (RE-127). The GE binds level
-0 only (`sceGuTexLevelMode(Const, 0.0)`, RE-213). Generated lower levels stay
-in the pack, unused.
+- SSB64 never enables RDP LOD: all `TEXTLOD` = `G_TL_TILE`, all `TEXTDETAIL` = `G_TD_CLAMP` (RE-127).
+- GE binds level 0 only (`sceGuTexLevelMode(Const, 0.0)`, RE-213).
+- Generated lower levels stay in the pack, unused.
 
 ## Filtering
 
-Status: sampling alignment exact; N64 3-point filtering approximated by
-build-time compensation.
+- Sampling alignment exact.
+- N64 3-point filtering approximated by build-time compensation.
 
 ### Sampling alignment
 
 Measured on PPSSPP software and a PSP Slim (RE-304):
 
-- Point: N64 texel coordinate `n` is submitted as `n`.
+- Point: N64 texel coordinate `n` submitted as `n`.
 - Linear: submit `n + 0.5` (16 S10.5 units, or `0.5 / uploaded_dim`).
-- The GE truncates bilinear weights to 4 bits (`31/32 → 15/16`) and truncates
-  the result. `n64_filter::sample_bilinear` models this.
+- GE truncates bilinear weights to 4 bits (`31/32 → 15/16`) and truncates the result.
+  - Modelled by `n64_filter::sample_bilinear`.
 
 ### 3-point compensation
 
-All `TEXTFILT` commands are `G_TF_BILERP`, the RDP's 3-point triangle filter
-(RE-124). The GE only has 4-tap bilinear. `crates/ssb-rom/src/n64_filter.rs`
-is a 3-point reference sampler; uncompensated, 5.6% of samples differ by
-≥ 8/255 (RE-219).
+- All `TEXTFILT` = `G_TF_BILERP`: the RDP's 3-point triangle filter (RE-124).
+- GE has only 4-tap bilinear.
+- `crates/ssb-rom/src/n64_filter.rs`: 3-point reference sampler.
+  - Uncompensated: 5.6% of samples differ by ≥ 8/255 (RE-219).
+- `filter_compensation` solves at build time for texels that bring GE bilinear output closer to the N64 reference on each primitive's real UV coverage.
+- Runtime still uses plain `GU_LINEAR`.
 
-`filter_compensation` solves, at build time, for texels that make GE bilinear
-output closer to the N64 reference on each primitive's real UV coverage.
-Runtime still uses plain `GU_LINEAR`.
+### 2D sprites (RE-517)
 
-2D sprites (`sprite::psp_image`): alpha-0 texels with a visible 8-neighbour take that neighbour's RGB (one ring, orthogonal highest alpha first), baked at pack time, so Linear filtering at a sprite edge no longer pulls in black. Filters stay Linear, 5551 is unchanged (RE-517).
+- `sprite::psp_image`: alpha-0 texels with a visible 8-neighbour take that neighbour's RGB.
+  - One ring; orthogonal, highest alpha first.
+  - Baked at pack time → Linear filtering at a sprite edge pulls in no black.
+- Filters stay Linear; 5551 unchanged.
+
+### Compensation stages
 
 | Stage | What it does | Evidence |
 |---|---|---|
@@ -145,45 +129,54 @@ Runtime still uses plain `GU_LINEAR`.
 | Direct colour | GE-exact integer refinement of stored values | RE-309 |
 | Texgen | Trains on real vertex normals over 360 poses inside a pose-independent S10.5 bound | RE-311 |
 | All formats | RGBA16 stays `Psm5551`, RGBA32/IA stay `Psm8888` | RE-313 |
-| UV phase | Per-primitive S10.5 phase shift stored in pack v31 | RE-312 |
-| Exact-site override | Immutable RGBA8888 cross-phase fit at listed use sites only (`residual_fixes::Kind::Direct`); v766 ships | RE-312 |
+| UV phase | Per-primitive S10.5 phase shift stored in the pack | RE-312 |
+| Exact-site override | Immutable RGBA8888 cross-phase fit at listed use sites only (`residual_fixes::Kind::Direct`) | RE-312 |
 
-Pack v37 marks each compensated texture (`TextureDesc::TEXELS_COMPENSATED`)
-and records a digest of its source tile bytes, so `romtool matcolors` pairs
-it with its ROM image without a texel comparison (RE-336).
+### Compensation bookkeeping
 
-A candidate is kept only if it does not regress SSE, maximum error, or the
-≥ 8 and ≥ 32 counts on an independent holdout. CI textures are promoted to
-RGBA8888 only for ≥ 25% SSE gain within 64 KiB of level-0 cost.
+- `TextureDesc::TEXELS_COMPENSATED` marks each compensated texture.
+- Pack records a digest of its source tile bytes → `romtool matcolors` pairs it with its ROM image without a texel comparison (RE-336).
+- Candidate kept only if it does not regress, on an independent holdout:
+  - SSE
+  - Maximum error
+  - ≥ 8 and ≥ 32 counts
+- CI textures promoted to RGBA8888 only for ≥ 25% SSE gain within 64 KiB of level-0 cost.
 
-The per-variant residual report is
-[three-point-residuals.md](three-point-residuals.md), generated by
-`romtool residuals`: 1,624 variants (pack v33), 0 suspected bugs, 0 level-0 mismatches.
-Section 11 visual-review decisions are in
-[three-point-visual-review.md](three-point-visual-review.md).
-Most remaining error is proven to be a limit of any bilinear texture
-(`BILINEAR_SURFACE_LIMIT`).
+### Residual error
 
-Remaining: the metal reflection map (file 302 `0x30`) fails the solver gate;
-material-animated texgen uses full-tile coverage; no physical-PSP check of
-compensated packs.
+- Most remaining error is a limit of any bilinear texture (`BILINEAR_SURFACE_LIMIT`).
+- Per-variant census: `romtool residuals` → `assets/generated/three-point-residuals.md` (gitignored, ROM-derived).
+- Known gaps:
+  - Metal reflection map (file 302 `0x30`) fails the solver gate.
+  - Material-animated texgen uses full-tile coverage.
+
+### Exact-site overrides: why only one ships
+
+- Candidates: `residuals::cross_phase_fit`; review set `residual_fixes::REVIEW_CASES`; packed with `romtool pack --residual-candidates`.
+- A/B-captured on PPSSPP against the shipped pack (`tools/residual-ab-capture.sh`; RE-312).
+- Shipped: Board the Platforms Mario silhouette fit (all changed pixels inside its own site).
+- Other 12: stay `ACCEPT_CURRENT`.
+- Why:
+  - Texture-space gain does not reach the frame.
+    - Textures minified or near one texel per pixel; GE bilinear and RDP 3-point nearly agree.
+    - 27–47% cross-phase gain = a few hundred pixels, mostly under 8/255.
+  - No N64 reference frame exists for those scenes.
+    - No candidate can show a frame-level move toward N64; the deploy bar requires one.
+- A/B side effects came from unrelated bugs, not the candidates:
+  - `TSIZE` stride overflow on a 576-texel texture (RE-314).
+  - Pack size shifting the animation pose at capture (RE-315).
 
 ## Texture coordinate generation
 
-Status: complete, with a measured PSP deviation (RE-214, RE-215,
-RE-225–239).
-
-Used by Meta Crystal (file 117) and the Metal Mario and Polygon models (files
-300, 301, 303): 3,012 triangles, 2,743 ordinary and 269 linear. No metal item
-exists; `MMario` is a separate `FTKind` (RE-216).
-
-- Only `G_TEXTURE_GEN` enables generation; `G_TEXTURE_GEN_LINEAR` selects the
-  `acos` curve. The walker keeps the raw geometry-mode word.
-- Coordinates are generated at `G_VTX` time. No archive triangle loads a
-  vertex under a different texgen mode or scale than it is drawn with, so
-  primitive-level state is exact ([D-039](../decisions/D-039.md)).
-- The look-at basis is the camera's world-space right (S) and up (T)
-  (`syMatrixLookAtReflectF`), quantized to signed bytes (RE-227).
+- Measured PSP deviation: no pixel-exact comparison with N64 output claimed (RE-214, RE-215, RE-225–239).
+- Users: Meta Crystal (file 117); Metal Mario and Polygon models (files 300, 301, 303).
+  - Most triangles ordinary generation, a few linear.
+  - No metal item; `MMario` is a separate `FTKind` (RE-216).
+- Only `G_TEXTURE_GEN` enables generation; `G_TEXTURE_GEN_LINEAR` selects the `acos` curve.
+  - Walker keeps the raw geometry-mode word.
+- Coordinates generated at `G_VTX` time.
+  - No archive triangle loads a vertex under a different texgen mode or scale than it is drawn with → primitive-level state exact ([D-039](../decisions/D-039.md)).
+- Look-at basis: camera's world-space right (S) and up (T) (`syMatrixLookAtReflectF`), quantized to signed bytes (RE-227).
 
 Source formula:
 
@@ -196,17 +189,15 @@ S10.5     = trunc(u * gSPTexture_scale)      texels = S10.5 / 32
 
 PSP lowering:
 
-- **Ordinary**: the GE texture-matrix generator, fed the raw unnormalized
-  normal ([D-038](../decisions/D-038.md), RE-226). The GE divides by 128, so
-  `a = scale / (128 · dim) · (128/127)` and
-  `b = scale / (128 · dim) + origin_shift` (`regular_texgen_matrix_coeffs`,
-  RE-228). The per-node transform is folded in as `normalize(Mᵀ · lookat)`.
-  `EnvironmentMap` is not used: it ignores texture scale and offset.
-- **Linear**: generated per vertex on the CPU (`linear_texgen_uv`) into the
-  authored-UV path ([D-040](../decisions/D-040.md)). Conversion truncates,
-  matching BattleShip and n64psp (RE-229).
-- `PrimDesc` carries the `gSPTexture` scale and tile origin; the origin
-  applies on every axis before wrap/mirror/clamp (RE-359).
-
-Remaining: 164 cross-node vertex reuses with differing transforms (measured,
-non-blocking). No pixel-exact comparison with N64 output is claimed.
+- **Ordinary**: GE texture-matrix generator, fed the raw unnormalized normal ([D-038](../decisions/D-038.md), RE-226).
+  - GE divides by 128:
+    - `a = scale / (128 · dim) · (128/127)`
+    - `b = scale / (128 · dim) + origin_shift`
+    - Code: `regular_texgen_matrix_coeffs` (RE-228).
+  - Per-node transform folded in as `normalize(Mᵀ · lookat)`.
+  - `EnvironmentMap` unused: ignores texture scale and offset.
+- **Linear**: generated per vertex on CPU (`linear_texgen_uv`) into the authored-UV path ([D-040](../decisions/D-040.md)).
+  - Conversion truncates, matching BattleShip and n64psp (RE-229).
+- `PrimDesc` carries the `gSPTexture` scale and tile origin.
+  - Origin applies on every axis before wrap/mirror/clamp (RE-359).
+- Cross-node vertex reuse with differing transforms exists (measured, non-blocking; RE-225).

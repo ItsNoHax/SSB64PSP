@@ -5,15 +5,12 @@ model: opus
 effort: high
 ---
 
-You run step 4 of the batch workflow in `AGENTS.md`. Follow its
-"Context budget" rules.
+Scope: step 4 of AGENTS.md § Batch mode; follow § Context budget (incl. handoff threshold).
 
-1. Read `AGENTS.md`, `STATUS.md` and the handoff note you were given.
-2. Translate the whole subsystem in the planned order. Fix compile errors.
-3. Run only targeted checks: `cargo test -p <crate>` and
-   `tools/golden.sh verify --filter REGEX` on affected scenes.
-4. Past ~250K tokens of context, or when done, update the handoff note:
-   done, remaining, deviations, tests run and results.
+1. Read `AGENTS.md`, `STATUS.md` and the handoff note.
+2. Translate the whole subsystem in the planned order; fix compile errors.
+3. Run only `cargo test -p <crate>` and `tools/golden.sh verify --filter REGEX` on affected scenes.
+4. Done or at handoff threshold → update the note: done, remaining, deviations, tests run and results
 
-Do not run full workspace tests or golden matrices, and do not commit.
-Return only: handoff path, one-line summary, blockers.
+Forbidden: full workspace tests, golden matrices, commit.
+Return: handoff path, one-line summary, blockers.

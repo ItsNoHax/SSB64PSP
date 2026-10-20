@@ -5,27 +5,19 @@ description: relocData, VPK0, texture packing, meshes, pack format, romtool, or 
 
 # Asset pipeline
 
-Routing:
+Rules: AGENTS.md § Constraints (no ROM data in Git, rebuild the pack).
 
-1. [docs/architecture.md](../../../docs/architecture.md) "Original Game
-   Reference" (relocData / VPK0, where each subsystem lands).
-2. [docs/rendering/textures.md](../../../docs/rendering/textures.md) and
-   [docs/rendering/geometry.md](../../../docs/rendering/geometry.md) for texture
-   and mesh conversion's current model.
-3. `docs/decisions/` — D-009 (VPK0), D-010/D-011 (relocData/extern
-   relocations), D-002/D-003 (preconversion, texture formats), D-028 (asset
-   pack mandatory). Read the specific `D-XXX.md`, not the whole index.
-4. `docs/evidence/INDEX.md` filtered to `pack`, `relocations`, `texture`, or
-   `archive` topic tags for prior extraction/conversion bugs.
-5. For code, prefer Serena symbol search over reading whole files
-   (`crates/ssb-rom/src/{archive,vpk0,pack,texture,psp_texture,mesh}.rs`,
-   `tools/romtool/src/main.rs`).
+Read in order:
 
-6. Tables the game code reads from the ROM's code segments (motion,
-   colour-animation and CPU scripts, status flags, the animation table) are
-   generated at build time by `crates/ssb-tablegen` into `OUT_DIR`
-   ([D-048](../../../docs/decisions/D-048.md)). Commit only their layout;
-   `cargo run -p ssb-tablegen -- DIR` dumps the generated Rust.
+1. [docs/architecture.md](../../../docs/architecture.md) "Original Game Reference": relocData, VPK0, where each subsystem lands.
+2. [docs/rendering/textures.md](../../../docs/rendering/textures.md), [geometry.md](../../../docs/rendering/geometry.md): texture and mesh conversion model.
+3. Decisions (open the single `D-XXX.md`): D-009 VPK0, D-010/D-011 relocData and extern relocations, D-002/D-003 preconversion and texture formats, D-028 mandatory pack.
+4. `docs/evidence/INDEX.md`, `rg` for topic tags `pack`, `relocations`, `texture`, `archive`.
 
-Never commit ROM-derived assets, tables or screenshots; rebuild
-`assets/generated/ssb64.pak` when pipeline code changes (`AGENTS.md`).
+Code: `crates/ssb-rom/src/{archive,vpk0,pack,texture,psp_texture,mesh}.rs`, `tools/romtool/src/main.rs`.
+
+ROM code-segment tables ([D-048](../../../docs/decisions/D-048.md)):
+
+- Tables: motion, colour-animation and CPU scripts, status flags, animation table
+- Generated at build time by `crates/ssb-tablegen` into `OUT_DIR`
+- Dump generated Rust: `cargo run -p ssb-tablegen -- DIR`

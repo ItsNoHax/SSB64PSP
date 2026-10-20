@@ -22,11 +22,24 @@ Checks:
      (psp-game/xmb/, psp-asset-viewer/xmb/; D-037, docs/xmb-assets.md),
      and no ROM-generated table (a generated header or a known generated
      path; D-048). Golden captures are committed as pixel hashes only.
- 10. No new hand-transcribed ROM table: a const/static array with 24 or more
-     numeric literals in ssb-game, ssb-rom or ssb-engine, or a const/static
+ 10. No new hand-transcribed ROM table: a const/static array with 8 or more
+     numeric literals in any crate (24 or more inside tests), or a const/static
      with 2 or more whose doc comment names a decomp `d*` symbol (and that
-     does not read the generated `d_arrays`), must be listed in tools/docs/rom_tables_baseline.tsv, and every row there must
-     still exist (tools/docs/rom_tables.py; D-048).
+     does not read the generated `d_arrays`), must be listed in
+     tools/docs/rom_tables_baseline.tsv, and every row there must still exist
+     (tools/docs/rom_tables.py; D-048).
+ 11. Pack version: `pack v<N>` / `pack version <N>` in STATUS.md, PLAN.md,
+     AGENTS.md, README.md, docs/*.md, docs/rendering/*.md,
+     docs/visual-regression/*.md and .claude/**/*.md equals VERSION in
+     crates/ssb-rom/src/pack.rs (docs/evidence and docs/decisions exempt).
+ 12. Golden count: "<N> of <M> goldens" in STATUS.md has M equal to the data
+     rows in tests/golden/hashes.tsv.
+ 13. PLAN.md has no checked `[x]` item under "## Remaining Work".
+ 14. Each docs/decisions/D-NNN.md `Category:` equals the DECISIONS.md `##`
+     section that lists it.
+ 15. Backtick repo paths (crates/, tools/, docs/, psp-*/, tests/, .claude/) in
+     AGENTS.md and .claude/skills, .claude/agents Markdown exist as a tracked
+     file or directory.
 
 Exits 1 and prints one line per problem; exits 0 with a summary otherwise.
 Run after any documentation change (see the `documentation` skill).
@@ -237,6 +250,89 @@ def main():
 
     # --- 10: ROM tables ratchet (large tables, d*-citing tables) ---
     problems.extend(rom_tables.problems())
+
+    # --- 11: pack version ---
+    pack_src = (ROOT / "crates/ssb-rom/src/pack.rs").read_text(encoding="utf-8")
+    vm = re.search(r"pub const VERSION: u32 = (\d+);", pack_src)
+    pack_version = vm.group(1) if vm else None
+    pack_re = re.compile(r"\bpack (?:v|version )(\d+)\b", re.I)
+    for f, text in texts.items():
+        rel = f.relative_to(ROOT).as_posix()
+        if f.suffix != ".md" or rel.startswith(("docs/evidence/", "docs/decisions/")):
+            continue
+        in_scope = (rel in ("STATUS.md", "PLAN.md", "AGENTS.md", "README.md")
+                    or rel.startswith(".claude/")
+                    or (rel.startswith("docs/") and rel.count("/") == 1)
+                    or rel.startswith(("docs/rendering/", "docs/visual-regression/")))
+        if not in_scope:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            for m in pack_re.finditer(line):
+                if m.group(1) != pack_version:
+                    problems.append(f"{rel}:{i}: pack version {m.group(1)}; "
+                                    f"crates/ssb-rom/src/pack.rs VERSION is {pack_version}")
+
+    # --- 12: golden count ---
+    rows = [l for l in (ROOT / "tests/golden/hashes.tsv").read_text(encoding="utf-8").splitlines()
+            if l.strip() and not l.startswith("#") and l.split("\t")[0] != "golden"]
+    golden_counts = 0
+    for i, line in enumerate(texts[ROOT / "STATUS.md"].splitlines(), 1):
+        for m in re.finditer(r"(\d+) of (\d+) goldens", line):
+            golden_counts += 1
+            if int(m.group(2)) != len(rows):
+                problems.append(f"STATUS.md:{i}: '{m.group(0)}'; tests/golden/hashes.tsv "
+                                f"has {len(rows)} goldens")
+    if not golden_counts:
+        problems.append("STATUS.md: no '<N> of <M> goldens' phrase; state the golden "
+                        "baseline in that form")
+
+    # --- 13: closed items under PLAN.md Remaining Work ---
+    in_remaining = False
+    for i, line in enumerate(texts[ROOT / "PLAN.md"].splitlines(), 1):
+        if line.startswith("## "):
+            in_remaining = line.strip() == "## Remaining Work"
+        elif in_remaining and re.match(r"\s*- \[[xX]\]", line):
+            problems.append(f"PLAN.md:{i}: checked item under '## Remaining Work'; "
+                            "delete closed items")
+
+    # --- 14: decision categories ---
+    section_of = {}
+    section = None
+    for line in decisions_index.splitlines():
+        if line.startswith("## "):
+            section = line[3:].strip()
+        else:
+            m = re.search(r"\(docs/decisions/D-(\d{3})\.md\)", line)
+            if m and section:
+                section_of[m.group(1)] = section
+    for num, f in d_defined.items():
+        cm = re.search(r"^Category:\s*(.+?)\s*$", f.read_text(encoding="utf-8"), re.M)
+        want = section_of.get(num)
+        if want is None:
+            continue
+        if not cm:
+            problems.append(f"docs/decisions/D-{num}.md: no Category: line; "
+                            f"DECISIONS.md lists it under '{want}'")
+        elif cm.group(1) != want:
+            problems.append(f"docs/decisions/D-{num}.md: Category '{cm.group(1)}'; "
+                            f"DECISIONS.md lists it under '{want}'")
+
+    # --- 15: inline repo paths in agent-facing docs ---
+    tracked = [str(p.relative_to(ROOT)) for p in tracked_files()]
+    tracked_set = set(tracked)
+    dirs = {t.rsplit("/", i)[0] for t in tracked for i in range(1, t.count("/") + 1)}
+    path_re = re.compile(r"`((?:crates|tools|docs|psp-game|psp-runtime|psp-asset-viewer|tests|\.claude)/[^`\s*?{}<>]*)`")
+    for f, text in texts.items():
+        rel = f.relative_to(ROOT).as_posix()
+        if f.suffix != ".md" or not (rel == "AGENTS.md" or rel.startswith((".claude/skills/", ".claude/agents/"))):
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            for m in path_re.finditer(line):
+                tok = re.sub(r":\d+(?:-\d+)?$", "", m.group(1)).rstrip("/")
+                if re.search(r"NNN|XXX", tok):
+                    continue  # placeholder, not a path
+                if tok not in tracked_set and tok not in dirs:
+                    problems.append(f"{rel}:{i}: path `{m.group(1)}` is not a tracked file or directory")
 
     if problems:
         print(f"{len(problems)} problem(s) found:\n")

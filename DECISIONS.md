@@ -1,8 +1,9 @@
 # Decisions
 
-Permanent architectural decisions. Each record in `docs/decisions/D-NNN.md`
-holds the decision, reasoning and any later amendments. Revisit one only when
-new evidence contradicts it.
+- Records: `docs/decisions/D-NNN.md`; `Category:` matches section below
+- Revisit only on contradicting evidence
+- Replacement: new D-NNN; mark old entry "(superseded by D-NNN)"
+- Status and progress: `PLAN.md`, `STATUS.md`
 
 ## Rendering Architecture
 
@@ -14,7 +15,7 @@ new evidence contradicts it.
 - [D-006](docs/decisions/D-006.md): Vertex Format — 16-bit Normalized Requires Model Scale
 - [D-007](docs/decisions/D-007.md): Depth Buffer — Inverted Range
 - [D-008](docs/decisions/D-008.md): Aspect Ratio — Pillarboxed 362×272 (superseded by D-047)
-- [D-047](docs/decisions/D-047.md): CRT Overscan Crop — the N64's Visible Box Fills the PSP's Height
+- [D-047](docs/decisions/D-047.md): CRT Overscan Crop — the N64's Visible Box Fills the PSP's Height (supersedes D-008)
 
 ## Asset Pipeline
 
@@ -23,24 +24,25 @@ new evidence contradicts it.
 - [D-011](docs/decisions/D-011.md): Extern Relocations — Zeroed in Pack, Patched at Runtime Load
 - [D-012](docs/decisions/D-012.md): DObjDesc Arrays — Depth-Tagged Flattened Tree
 - [D-013](docs/decisions/D-013.md): DObj Display List Field — Undiscriminated Union
-- [D-014](docs/decisions/D-014.md): Fighter Vertex Cache — Shared Across Joints
+- [D-014](docs/decisions/D-014.md): Fighter Vertex Cache — Shared Across Joints (amended by RE-358: supersedes RE-026's rest-pose limitation)
 - [D-015](docs/decisions/D-015.md): Fighter Palette — Named by FTCommonPart Parallel to DObjDesc
 - [D-016](docs/decisions/D-016.md): Stage Material Table — One Word Further in MPGroundDesc
 - [D-017](docs/decisions/D-017.md): Stage Collision — 2D Polylines, vertex2 Is Count
+- [D-020](docs/decisions/D-020.md): Animation — Figatree (AObjEvent16) for Fighters, AObjEvent32 for Stages
+- [D-028](docs/decisions/D-028.md): Asset Pack Mandatory — Built Separately by romtool
+
+## Gameplay Model
+
 - [D-018](docs/decisions/D-018.md): Surface Flags — Upper Byte State, Lower Byte Material
 - [D-019](docs/decisions/D-019.md): Collision Query — Swept Segment, Not Point Test
-- [D-020](docs/decisions/D-020.md): Animation — Figatree (AObjEvent16) for Fighters, AObjEvent32 for Stages
 - [D-021](docs/decisions/D-021.md): Physics — Float, Not Fixed Point
 - [D-022](docs/decisions/D-022.md): Fighter Constants — Data-Driven from FTAttributes
 - [D-023](docs/decisions/D-023.md): Movement Status Machine — Original Interrupt Chain + Tap Counter
-- [D-024](docs/decisions/D-024.md): Light Colors — Preserve Source State
-- [D-025](docs/decisions/D-025.md): Fog — Effectively Unused
 
 ## Platform & Toolchain
 
 - [D-026](docs/decisions/D-026.md): PSP Crate Outside Workspace — Pinned Nightly + build-std
 - [D-027](docs/decisions/D-027.md): no_std Discipline — Workspace Default-Features = false
-- [D-028](docs/decisions/D-028.md): Asset Pack Mandatory — Built Separately by romtool
 - [D-029](docs/decisions/D-029.md): Debug Overlay — Software Rasteriser Required in PPSSPP
 - [D-030](docs/decisions/D-030.md): Toolchain Pinning — Successful Compile ≠ Working
 - [D-044](docs/decisions/D-044.md): PSP Backend Split Into Shared psp-runtime + Two Applications
@@ -48,24 +50,29 @@ new evidence contradicts it.
 - [D-046](docs/decisions/D-046.md): Scenes Load Their Archive Files; Only the Pack's Index Stays Resident
 - [D-049](docs/decisions/D-049.md): The N64 Audio System Is Ported Whole and Synthesized at Run Time on Its Own Thread
 - [D-050](docs/decisions/D-050.md): FPU Trap Enables Stay As the PSP Arms Them; Every Trap Is a Bug Fixed With the N64's Result
-- [D-051](docs/decisions/D-051.md): PPSSPP Golden Hashes May Move for a Renderer-Path Change Only Under Hardware Proof
 
 ## Engineering Process
 
 - [D-031](docs/decisions/D-031.md): Unsafe Only for PSP APIs / VFPU / GPU Memory
 - [D-032](docs/decisions/D-032.md): VFPU After Profiling
-- [D-033](docs/decisions/D-033.md): ROM and Generated Assets Gitignored
+- [D-033](docs/decisions/D-033.md): ROM and Generated Assets Gitignored (extended by D-048)
+- [D-037](docs/decisions/D-037.md): Reference Ports Are Technical References, Not Authorities
+- [D-048](docs/decisions/D-048.md): Nothing Read From the ROM Is Committed — Tables Are Generated at Build Time, Goldens Are Pixel Hashes (extends D-033)
+
+## Testing & Validation
+
 - [D-034](docs/decisions/D-034.md): Two Independent Readings Must Agree
 - [D-035](docs/decisions/D-035.md): Functional Validation Required, Not Just Compile
-- [D-037](docs/decisions/D-037.md): Reference Ports Are Technical References, Not Authorities
 - [D-041](docs/decisions/D-041.md): PPSSPPHeadless Is the Automated Visual-Verification Runner
-- [D-048](docs/decisions/D-048.md): Nothing Read From the ROM Is Committed — Tables Are Generated at Build Time, Goldens Are Pixel Hashes
+- [D-051](docs/decisions/D-051.md): PPSSPP Golden Hashes May Move for a Renderer-Path Change Only Under Hardware Proof
 
 ## Rendering Fidelity
 
+- [D-024](docs/decisions/D-024.md): Light Colors — Preserve Source State
+- [D-025](docs/decisions/D-025.md): Fog — Effectively Unused
 - [D-036](docs/decisions/D-036.md): N64 Render-State Fidelity Must Precede Optimization
 - [D-038](docs/decisions/D-038.md): Generated Texture Coordinates Use the GE Texture Matrix, Not Environment Mapping
 - [D-039](docs/decisions/D-039.md): Texgen State Is Primitive-Level Because the Archive Says So
 - [D-040](docs/decisions/D-040.md): Exact Linear Texgen Is CPU-Generated into the Authored-UV Pipeline, Not a Second GE Mode or a Lookup Table
 - [D-042](docs/decisions/D-042.md): A Reopened Render State Stays Provisional Until It Is Measured
-- [D-043](docs/decisions/D-043.md): Filtering and Tile Addressing Are Measured Against an N64 Reference Model
+- [D-043](docs/decisions/D-043.md): Filtering and Tile Addressing Are Measured Against an N64 Reference Model (supersedes the unqualified equivalence claims of RE-066/102/124)

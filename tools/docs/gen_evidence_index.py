@@ -2,7 +2,7 @@
 """Regenerate docs/evidence/INDEX.md from docs/evidence/re/RE-*.md metadata.
 
 Deterministic: reads each record's heading + `Status:`/`Topics:` metadata
-lines (see docs/evidence/re/RE-001.md for the shape), plus
+lines (Status column: first word of the line, uppercased; `?` if missing) (see docs/evidence/re/RE-001.md for the shape), plus
 docs/evidence/retired.tsv for records removed from the corpus, and rebuilds
 the index. Run after adding, editing or retiring a record so the index does
 not silently drift from the corpus.
@@ -38,10 +38,11 @@ def parse_record(path: Path):
     if not m:
         raise ValueError(f"{path}: first line is not a '# RE-NNN — ...' heading")
     heading, num = m.group(1), m.group(2)
-    status, topics = "COMPLETE", ""
+    status, topics = "?", ""
     for line in lines[2:9]:
         if line.startswith("Status:"):
-            status = line.split(":", 1)[1].strip()
+            words = line.split(":", 1)[1].split()
+            status = re.sub(r"[^A-Za-z0-9]", "", words[0]).upper() if words else "?"
         elif line.startswith("Topics:"):
             topics = line.split(":", 1)[1].strip()
         elif line.strip() == "":

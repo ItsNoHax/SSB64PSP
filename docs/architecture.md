@@ -1,8 +1,7 @@
 # Architecture
 
-How SSB64PSP is built today and what it is built towards. Crate ownership
-rules are in [`AGENTS.md`](../AGENTS.md); open work is in
-[`PLAN.md`](../PLAN.md).
+Scope: current and target architecture, original-game reference.
+Crate ownership: [`AGENTS.md`](../AGENTS.md). Open work: [`PLAN.md`](../PLAN.md).
 
 ## Current Architecture
 
@@ -14,45 +13,42 @@ psp-game ─────────┐                        ▼
 psp-asset-viewer ─┘    (PSP only)    ├──> crates/ssb-engine  math, coord, timing, traits
                                      ├──> crates/ssb-rom     ROM, archive, formats, pack
                                      └──> crates/ssb-capture golden-capture scene specs
+
+crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT_DIR
 ```
 
 | Component | Role |
 |---|---|
-| `tools/romtool` | Verifies the ROM, decodes the relocData archive, converts display lists, textures, animations, sprites and tables, and writes the pack |
-| `crates/ssb-rom` | ROM and archive readers (`archive`, `vpk0`), F3DEX2 decoding (`dl`), mesh and texture conversion (`mesh`, `texture`, `psp_texture`, `filter_compensation`), pack format (`pack`), scene file closures, `reloc_link` |
-| `crates/ssb-engine` | Engine traits (renderer, input, timing), the N64 audio system (`audio`: synthesizer, sequence player, FGM engine, `syAudio`), math including the original's `lbCommonSin` table, the one N64 → PSP screen mapping (`coord`), allocators (`memory`) |
+| `tools/romtool` | Verifies the ROM, decodes the relocData archive, converts display lists, textures, animations, sprites and tables, writes the pack |
+| `crates/ssb-rom` | `archive`, `vpk0`, F3DEX2 decoding (`dl`), mesh and texture conversion (`mesh`, `texture`, `psp_texture`, `filter_compensation`), `pack`, scene file closures, `reloc_link`, `audio` data |
+| `crates/ssb-engine` | Traits (renderer, input, timing), the N64 audio system (`audio`), math incl. `lbCommonSin`, the one N64 → PSP screen mapping (`coord`), allocators (`memory`) |
 | `crates/ssb-game` | Gameplay translated from the decomp: fighters, statuses, motion scripts, combat, collision, items, weapons, effects, stages, CPU, camera, HUD, menus, 1P campaign (`spgame`), opening, save data (`backup`) |
 | `crates/ssb-capture` | Golden-capture scene specs shared by both PSP binaries and host tests |
-| `psp-runtime` | All PSP code: pack loading and per-scene files (`assets`, `scene_files`), GE setup and drawing (`gu`, `meshdraw`), input, timing, save file, profiler, the main thread, framebuffer transitions, movie and particle draws |
-| `psp-game` | The game application: scene orchestration and screens that adapt portable state to packed assets |
+| `crates/ssb-tablegen` | Build-time generation of the tables the game reads from the ROM (layout and decoders only, [D-048](decisions/D-048.md)) |
+| `psp-runtime` | All PSP code: pack and scene files (`assets`, `scene_files`), GE (`gu`, `meshdraw`), `audio`, input, timing, save file, profiler, main thread, transitions, movie and particle draws |
+| `psp-game` | Application: scene orchestration and screens adapting portable state to packed assets |
 | `psp-asset-viewer` | Asset browser and deterministic render-regression scenes |
 
-- The simulation runs at a fixed 60 Hz with a catch-up cap, decoupled from
-  rendering ([D-005](decisions/D-005.md)).
-- Display lists are converted once at build time; the RDP is not emulated
-  ([D-001](decisions/D-001.md), [D-002](decisions/D-002.md)).
-- The pack is mandatory and built separately ([D-028](decisions/D-028.md)).
-  At boot the game reads its header, tables and shared region (~5.5 MB);
-  each scene reads its archive files and their extern closure when it
-  starts, and the next scene's files are read in the background where the
-  next scene is known ([D-046](decisions/D-046.md), RE-475, RE-476).
-- Extern relocations are zeroed in the pack; the converter follows them
-  ([D-011](decisions/D-011.md)).
-- Save data is the N64 SRAM image in `ssb64.sav` beside the pack
-  ([D-045](decisions/D-045.md)).
-- The game's main thread has a 512 KiB stack (RE-469).
-- The PSP crates sit outside the Cargo workspace and build with a pinned
-  nightly and `-Z build-std` ([D-026](decisions/D-026.md)); portable crates
-  are `no_std` by default ([D-027](decisions/D-027.md)).
+- Simulation: fixed 60 Hz, catch-up cap, decoupled from rendering ([D-005](decisions/D-005.md))
+- Display lists: converted once at build time; RDP not emulated ([D-001](decisions/D-001.md), [D-002](decisions/D-002.md))
+- Pack: mandatory, built separately ([D-028](decisions/D-028.md))
+  - boot reads header, tables, shared region
+  - each scene reads its files and extern closure at start
+  - next scene's files prefetched where known ([D-046](decisions/D-046.md))
+  - sizes, budgets: [memory.md](memory.md)
+- Extern relocations: zeroed in the pack; converter follows them ([D-011](decisions/D-011.md))
+- Save data: N64 SRAM image in `ssb64.sav` beside the pack ([D-045](decisions/D-045.md))
+- PSP crates: outside the Cargo workspace; pinned nightly, `-Z build-std` ([D-026](decisions/D-026.md))
+- Portable crates: `no_std` by default ([D-027](decisions/D-027.md))
 
 ## Target Architecture
 
 | Area | Current | Target |
 |---|---|---|
-| Asset loading | Scene files read whole into heap allocations; `reloc_link` unused at runtime | A runtime loader on `ssb_rom::reloc_link`, laying out each scene's closure as `lbRelocGetAllocSize` does |
-| Memory | `psp`'s allocator over `sceKernelAllocPartitionMemory`; fallible large loads | `ssb_engine::memory` arenas (`GameArena`, `AssetArena`, `FrameArena`) and pools in `psp-runtime` ([memory](memory.md#allocators)) |
-| Textures | Sampled from the pack in main RAM | Per-scene VRAM residency where it measurably helps |
-| Audio | The N64 audio system ported whole, synthesized at run time on its own thread ([D-049](decisions/D-049.md)) | Same, within the PSP-2000's CPU budget |
+| Asset loading | Scene files read whole into heap allocations; `reloc_link` unused at runtime | Runtime loader on `ssb_rom::reloc_link`, one closure layout per scene as `lbRelocGetAllocSize` |
+| Memory | Global size-class heap over `sceKernelAllocPartitionMemory`; fallible large loads | `ssb_engine::memory` arenas and pools in `psp-runtime` ([memory](memory.md#allocators)) |
+| Textures | Sampled from the pack in main RAM; large and repeated textures copied into the idle VRAM photo region (RE-539, [memory](memory.md#vram)) | Per-scene VRAM residency where it measurably helps |
+| Audio | N64 audio system ported whole, synthesized on its own thread ([D-049](decisions/D-049.md)) | Same, within the PSP-2000's CPU budget |
 | Optimization | Scalar math, GE state cache | VFPU and state batching only where profiling shows a cost ([D-032](decisions/D-032.md), [D-036](decisions/D-036.md)) |
 | Debug HUD | `sceGuDebugFlush` (PPSSPP software renderer only) | GE geometry |
 
@@ -60,35 +56,34 @@ psp-asset-viewer ─┘    (PSP only)    ├──> crates/ssb-engine  math, coo
 
 ### Rendering
 
-`ssb-rom` turns each relocData display list into PSP vertex buffers and GE
-state; `psp-runtime::meshdraw` draws them through a GE state cache. Domain
-detail, deviations and validation are in [`rendering.md`](rendering.md).
+- `ssb-rom`: relocData display list → PSP vertex buffers and GE state
+- `psp-runtime::meshdraw`: draws them through a GE state cache
+- Domain detail, deviations, validation: [`rendering.md`](rendering.md)
 
 ### Gameplay
 
-`ssb-game` mirrors the decomp's `ft/`, `wp/`, `it/`, `ef/`, `gr/`, `gm/`,
-`if/`, `mn/` and `sc/` modules. Data the original keeps in its code segment
-(motion scripts, colour-animation scripts, CPU input scripts, status tables,
-animation file tables) is read from the user's ROM at build time by
-`crates/ssb-tablegen` and never committed ([D-048](decisions/D-048.md));
-data that lives in the ROM's archive (models, animations, `FTAttributes`,
-collision, sprites) comes from the pack. Objects use explicit state
-machines in place of the original's `GObjProcess` coroutine threads.
+- `ssb-game` mirrors decomp modules `ft/`, `wp/`, `it/`, `ef/`, `gr/`, `gm/`, `if/`, `mn/`, `sc/`
+- Code-segment data of the original, read from the user's ROM at build time by `crates/ssb-tablegen`, never committed ([D-048](decisions/D-048.md)):
+  - motion scripts, colour-animation scripts, CPU input scripts
+  - status tables, animation file tables
+- Archive data, from the pack: models, animations, `FTAttributes`, collision, sprites
+- Objects: explicit state machines, replacing the original's `GObjProcess` coroutine threads
 
 ### Asset Pipeline
 
-`romtool pack` reads the ROM, decompresses VPK0, relocates archive files and
-converts them into pack v107: one shared region and then each archive
-file's bytes. Paletted textures stay paletted ([D-003](decisions/D-003.md)).
-`romtool` also hosts the ROM-backed audits (`verify`, `scene-deps`,
-`residuals`, `matcolors`, `texgen`).
+- `romtool pack`: reads ROM, decompresses VPK0, relocates archive files, writes the pack
+- Pack contents: shared region, each archive file's bytes, audio section
+- Version: `ssb-rom/src/pack.rs`; current in [STATUS.md](../STATUS.md)
+- Paletted textures stay paletted ([D-003](decisions/D-003.md))
+- ROM-backed audits in `romtool`: `verify`, `scene-deps`, `residuals`, `matcolors`, `texgen`
 
 ### Audio
 
-[D-049](decisions/D-049.md). The original's audio is three layers, all
-ported: libultra `n_audio` (the synthesizer and the compressed-sequence
-player), the FGM sound-effect engine in `n_env.c`, and the `syAudio` layer
-of `src/sys/audio.c`.
+[D-049](decisions/D-049.md). Original has three layers, all ported:
+
+- libultra `n_audio`: synthesizer, compressed-sequence player
+- FGM sound-effect engine in `n_env.c`
+- `syAudio` layer of `src/sys/audio.c`
 
 | Original | Port |
 |---|---|
@@ -102,20 +97,17 @@ of `src/sys/audio.c`.
 | The game's calls (`syAudioPlayBGM`, `func_800269C0_275C0`, ...) | `ssb_game::sound`, through `AudioApi` |
 | `syAudioThreadMain`'s thread (priority 110 > game 50) | `psp_runtime::audio`: a thread at priority 0x1C (game 32), 32 kHz SRC channel, 512-sample blocks |
 
-The game calls the API synchronously; `SharedAudio` serialises those calls
-with the audio thread's frames under a kernel semaphore, as the N64 masks
-interrupts around the same list operations. Each frame runs the
-sequencer's and the FGM engine's handlers, then mixes 184-sample
-sub-frames. The synth runs at the N64's 32006 Hz; the PSP plays it at
-32000 Hz.
+- Game calls the API synchronously
+- `SharedAudio`: serialises those calls with audio-thread frames under a kernel semaphore
+  - why: N64 masks interrupts around the same list operations
+- Each frame: sequencer and FGM handlers, then 184-sample sub-frame mixing
+- Rates: synth at N64 32006 Hz; PSP plays 32000 Hz
 
 ### Frontend
 
-`ssb-game::menu`, `opening`, `spgame` and the select and results modules
-hold the scene logic; `psp-game`'s `*_screen.rs` modules draw it from packed
-sprites and models. The scene manager follows `scManagerRunLoop`: the N64
-logo, opening, title and attract loop, menus, selects, battles, results and
-the 1P campaign.
+- Scene logic: `ssb-game::menu`, `opening`, `spgame`, select and results modules
+- Drawing: `psp-game` `*_screen.rs` modules, from packed sprites and models
+- Scene manager follows `scManagerRunLoop`: N64 logo, opening, title and attract loop, menus, selects, battles, results, 1P campaign
 
 ### Platform (PSP)
 
@@ -128,39 +120,33 @@ the 1P campaign.
 | RCP task scheduler | dropped; `sceGuStart`/`sceGuFinish`/`sceGuSync` |
 | SRAM | `ssb64.sav` |
 
-Memory, VRAM and cache-coherency rules are in [`memory.md`](memory.md). The
-EBOOT targets PSP-2000 and later with `MEMSIZE=1`; a PSP-1000 ignores it
-(RE-288).
+Memory, VRAM, stack, `MEMSIZE`, cache-coherency rules: [`memory.md`](memory.md).
 
 ## Key Boundaries
 
-- `ssb-game`, `ssb-engine` and `ssb-rom` never depend on `psp-runtime`
-  ([D-044](decisions/D-044.md)).
-- `psp-runtime` holds no gameplay logic; `psp-game` holds no gameplay or PSP
-  backend code; `psp-asset-viewer` holds no game logic.
-- ROM-derived assets exist only in the gitignored pack
-  ([D-033](decisions/D-033.md)); the EBOOT never contains it.
-- `unsafe` only for PSP APIs, VFPU and GE memory ([D-031](decisions/D-031.md)).
+- `ssb-game`, `ssb-engine`, `ssb-rom`: never depend on `psp-runtime` ([D-044](decisions/D-044.md))
+- `psp-runtime`: no gameplay logic
+- `psp-game`: no gameplay or PSP backend code
+- `psp-asset-viewer`: no game logic
+- ROM-derived assets: only in the gitignored pack ([D-033](decisions/D-033.md)); EBOOT never contains it
+- `unsafe`: only PSP APIs, VFPU, GE memory ([D-031](decisions/D-031.md))
 
 ## Original Game Reference
 
-From [`ssb-decomp-re`](https://github.com/VetriTheRetri/ssb-decomp-re),
-100% matched (7,165/7,165 functions, US and JP).
+Source: [`ssb-decomp-re`](https://github.com/VetriTheRetri/ssb-decomp-re), 100% matched (7,165/7,165 functions, US and JP).
 
 ### ROM
 
 | | |
 |---|---|
 | Internal name | `SMASH BROTHERS` (0x20) |
-| Game code | `NALE` (0x3B) |
-| SHA-1 | `e2929e10fccc0aa84e5776227e798abc07cedabf` |
-| MD5 | `f7c52568a31aadf26e14dc2b6416b2ed` |
+| Game code | `NALE` (0x3B); SHA-1 and MD5 in [README](../README.md#requirements) |
 | Format | 16 MiB big-endian `.z64` |
 | Graphics microcode | F3DEX2 (`gspF3DEX2_fifo`) |
 | Audio microcode | `n_aspMain` |
 
-Only the US ROM is supported. JP needs its archive constants read from the
-decomp's JP linker script and checked against a real dump.
+- Supported: US ROM only
+- JP: needs archive constants from the decomp's JP linker script, checked against a real dump
 
 ### Threads
 
@@ -172,8 +158,7 @@ thread 1 idle
    └─ thread 6 (pri 115) syControllerThreadMain  controller
 ```
 
-The game thread has the lowest priority: audio and display must not starve
-behind a slow simulation frame.
+- Game thread has the lowest priority: audio and display never starve behind a slow frame
 
 ### Objects
 
@@ -194,8 +179,8 @@ behind a slow simulation frame.
 
 ### relocData archive
 
-`src/lb/lbreloc.c`; implemented in `crates/ssb-rom/src/archive.rs`. 9.07 MiB
-at ROM `0x1AC870`, 2,132 files (US).
+- Original: `src/lb/lbreloc.c`; port: `crates/ssb-rom/src/archive.rs`
+- US: 9.07 MiB at ROM `0x1AC870`, 2,132 files
 
 ```
 table_lo 0x1AC870 → [LBTableEntry; 2133]  (2132 files + sentinel)
@@ -213,24 +198,27 @@ struct LBTableEntry {           // all sizes in 32-bit words
 };
 ```
 
+Load steps:
+
 1. Read `compressed_size` words; VPK0-decode if compressed.
-2. Walk the intern chain: each slot holds `{u16 next, u16 target_word}` and
-   becomes `base + target_word * 4`.
-3. Walk the extern chain the same way; target file IDs are a `u16` array
-   after the file data, consumed in chain order.
+2. Walk the intern chain: slot `{u16 next, u16 target_word}` becomes `base + target_word * 4`.
+3. Walk the extern chain the same way.
+   - target file IDs: `u16` array after the file data
+   - consumed in chain order
 
 US archive: 61,343 intern and 3,092 extern slots ([D-010](decisions/D-010.md)).
 
 ### VPK0
 
-`syDmaDecodeVpk0` in `src/sys/dma.c`: LZ77 with two Huffman trees. 499 of
-2,132 files are compressed (9.07 → 16.29 MiB) ([D-009](decisions/D-009.md)).
-
-- Trees are postfix: `0` pushes a leaf, `1` pops two and pushes a node; `1`
-  with fewer than two nodes ends the tree.
-- A leaf value is a bit width: read that many more bits for the value.
-- `sample_method` selects the distance encoding. Two-sample form:
-  `src = dst - value*4 - correction + 8`.
+- `syDmaDecodeVpk0` in `src/sys/dma.c`: LZ77 with two Huffman trees
+- US: 499 of 2,132 files compressed (9.07 → 16.29 MiB) ([D-009](decisions/D-009.md))
+- Trees are postfix:
+  - `0` pushes a leaf
+  - `1` pops two, pushes a node
+  - `1` with fewer than two nodes ends the tree
+- Leaf value = bit width: read that many more bits for the value
+- `sample_method` selects the distance encoding
+  - two-sample form: `src = dst - value*4 - correction + 8`
 
 ### Fighters and physics
 
@@ -264,7 +252,7 @@ US archive: 61,343 intern and 3,092 extern slots ([D-010](decisions/D-010.md)).
 | `sys/matrix.c`, `vector.c` | `ssb-engine::math` |
 | `sys/dma.c` | `ssb-rom::vpk0` |
 | `sys/controller.c` | `ssb-engine::input` + `psp-runtime::input` |
-| `sys/audio.c` | `ssb-engine::audio` trait; no PSP backend |
+| `sys/audio.c` | `ssb-engine::audio` (`system::AudioSystem`), thread in `psp-runtime::audio` |
 | `sys/video.c`, `rdp.c` | `psp-runtime::gu` |
 | `lb/lbreloc.c` | `ssb-rom::archive`, `reloc_link` |
 | `lb/lbbackup.c` | `ssb-game::backup`, `psp-runtime::savedata` |

@@ -8,112 +8,109 @@
 | Video memory | shared | 2 MiB VRAM | 2 MiB VRAM |
 | Fast scratch | 4 KiB TMEM | 16 KiB scratchpad | 16 KiB scratchpad |
 
-- Scenes load their archive files (RE-475, [D-046](decisions/D-046.md)).
-  The pack (v109) holds a shared region, each ROM archive file's bytes
-  and the audio section; the game reads the header, tables and shared
-  region at boot (about 5.5 MB), and the audio section (4.4 MB, never
-  freed: the audio thread reads it at any time, [D-049](decisions/D-049.md)) and each scene's files, with their extern closure, when
-  the scene starts (`ssb_psp_runtime::scene_files`). Every scene measured
-  under PPSSPP uses at most about 17 MB in all (the VS results, which hold
-  all twelve fighters; four-player battles about 16 MB); the whole pack
-  needed 48 to 51 MB.
-  `MEMSIZE=1` stays set. The menus' and the opening's own content is in
-  the pack; `ssb64-menus.pak` and the opening models pack (RE-461, RE-467)
-  are gone.
-- From the XMB, a PSP-2000 with 6.61 ARK gives the game 47,891,712 free
-  bytes at `psp_main`, 4 MiB less than under PSPLink (RE-475). The
-  `memory_ballast` feature reproduces any such budget under PSPLink or
-  PPSSPP.
-- The global allocator (`ssb_psp_runtime::heap`, RE-484) serves blocks
-  up to 32 KiB from size-class free lists over 256 KiB chunks it takes
-  once and keeps (512–768 KiB measured); larger blocks still come from
-  `sceKernelAllocPartitionMemory`, ~9,400 cycles an allocate-and-free on a
-  PSP-2000 that evicts the caller's cache lines (RE-483). rust-psp's
-  allocation-error handler spins forever: an allocation failure is a black
-  screen and a hung HOME exit. Large loads therefore allocate fallibly and
-  end on `ssb_psp_runtime::memory::fatal`'s text screen. Keep allocation
-  out of per-frame paths: battle makes one a frame (`profile`'s
-  `allocs`), bounded lists use `ssb_engine::array_vec::ArrayVec`.
-- Static state is small: the texture bind-block cache is about 80 KB of `.bss` and the texture-mapping cache 11 KB (RE-534, RE-535), against 47,891,712 free bytes at `psp_main` from the XMB and a 20.7 MB measured peak; at the XMB budget a PSP-2000 VS run kept 29.16 MB free (RE-535).
-- While a scene runs, the next scene's files are read into memory beside
-  it (`scene_files::prefetch`, RE-476): the attract loop's lowest free
-  memory at the XMB's budget is 23.1 MB under PPSSPP with audio (24.9 MB
-  before it, RE-479). A prefetch stops
-  queuing reads with less than 6 MB free.
-- VRAM (2 MiB): two 32-bit colour buffers, the 16-bit depth buffer and
-  the 512 KiB copy of the wallpaper photo the frozen picture samples
-  (RE-476), lent to the battle wallpaper in scenes without a photo
-  (`gu::vram_resident`, RE-492); about 180 KiB free.
-- PSP-1000 ignores `MEMSIZE=1` (RE-288). With about 18 MB free at boot
-  (PPSSPP, `memory_ballast`), the heaviest scenes measured fit with
-  2–4 MB left except the VS results, which end on the out-of-memory
-  screen (RE-475).
-- The stage `MaterialAnimator` allocates one 448-byte joint per
-  `MatAnimDesc` on the heap (103, 46 KiB; RE-322).
-- The game's main thread has a 512 KiB stack (`psp::module!`'s stack-size
-  argument, RE-469); battle entry peaks at 239–294 KB. The default
-  256 KiB overflowed, which PPSSPP does not detect.
-- CPU time, not RAM, is the main constraint. Trade memory for CPU:
-  preconverted assets, cached meshes, no runtime decompression.
+### Main RAM
+
+- Pack loading (`psp_runtime::scene_files`; RE-475, [D-046](decisions/D-046.md)):
+  - boot: header, tables, shared region (~5.5 MB)
+  - boot: audio section, never freed (audio thread reads it any time, [D-049](decisions/D-049.md))
+  - scene start: each scene's files with extern closure
+- Scene peak under PPSSPP (RE-475):
+  - VS results, all twelve fighters: ~17 MB
+  - four-player battles: ~16 MB
+- PSP-2000 (6.61 ARK) (RE-475):
+  - XMB gives 47,891,712 free bytes at `psp_main`
+  - 4 MiB less than PSPLink
+- Feature `memory_ballast`: reproduces any budget under PSPLink or PPSSPP
+- `MEMSIZE=1` stays set
+- PSP-1000:
+  - ignores `MEMSIZE=1` (RE-288)
+  - ~18 MB free at boot
+  - VS results end on the out-of-memory screen (RE-475)
+- `scene_files::prefetch`:
+  - reads the next scene's files beside the running scene (RE-476)
+  - stops queuing reads under 6 MB free
+- Static state (RE-534, RE-535):
+  - texture bind-block cache: ~80 KB `.bss`
+  - texture-mapping cache: 11 KB
+- Stage `MaterialAnimator`: heap-allocates one 448-byte joint per `MatAnimDesc` (RE-322)
+- Measured free-memory minima: RE-475, RE-479, RE-535
+- Current baseline: [STATUS.md](../STATUS.md)
+
+### Allocation
+
+- Global allocator: `psp_runtime::heap` (RE-484)
+  - blocks up to 32 KiB: size-class free lists over 256 KiB chunks, taken once and kept
+  - larger blocks: `sceKernelAllocPartitionMemory`
+    - evicts the caller's cache lines
+    - ~9,400 cycles per allocate-and-free on PSP-2000 (RE-483)
+- rust-psp allocation-error handler spins forever (black screen, hung HOME exit)
+  - large loads allocate fallibly
+  - failure ends on `memory::fatal` text screen
+- No allocation in per-frame paths
+- Bounded lists: `ssb_engine::array_vec::ArrayVec`
+- `profile` `allocs`: per-frame count
+
+### Stack
+
+- Main thread: 512 KiB (`psp::module!` stack-size argument, RE-469)
+  - why: 256 KiB default overflowed; PPSSPP does not detect it
+- Largest frame: `enter_training` (builds `GroundObjects` by value)
+- Deepest measured stack: [STATUS.md](../STATUS.md)
+
+### Constraint
+
+- CPU time, not RAM, is the main constraint
+- Trade memory for CPU: preconverted assets, cached meshes, no runtime decompression
 
 ## VRAM
 
-```
-Framebuffer 0   512×272×4   544 KiB
-Framebuffer 1   512×272×4   544 KiB
-Depth buffer    512×272×2   272 KiB
-Texture pool    remainder  688 KiB (704,512 bytes)
-```
+Allocated in `Gpu::init` (`psp-runtime/src/gu.rs`), 2 MiB in total:
 
-Paletted textures keep the pool usable: a 64×64 CI4 texture is 2 KiB versus
-16 KiB as RGBA8888 ([D-003](decisions/D-003.md)).
+| Region | Size | Use |
+|---|---:|---|
+| Framebuffer 0 and 1 | 2 × 544 KiB (512×272×4) | Draw and display buffers |
+| Depth buffer | 272 KiB (512×272×2) | 16-bit depth |
+| Photo region (`PHOTO_REGION`) | 512 KiB (512×256×4) | Copy of the wallpaper photo the frozen picture samples (RE-476); lent to a large resident texture (`vram_resident`, RE-492) or, when idle for 60 frames, to the texture pool |
+| Vertex region (`VRAM_VERTICES`) | rest, 176 KiB on a PSP-2000 | Per-frame lit-expand vertex blocks (`ge_vertices`), falling back to list memory |
 
-The archive-wide texture set is larger than the pool, and so are some
-scenes. `romtool scene-deps` over pack v37 (RE-341), counting every packed
-mip level and CLUT:
+- Texture pool (`TEXTURE_POOL`, RE-539):
+  - `pool_texture` copies textures from main RAM into the idle photo region (`sceGuCopyImage`)
+  - up to 512 copies, keyed by main-RAM texel address
+  - dropped on residency generation change, or photo or wallpaper claim
+- All other textures: sampled from the pack in main RAM
+  - paletted textures stay paletted ([D-003](decisions/D-003.md))
+- Vertex region (RE-486, RE-539):
+  - GE reads it without the shared bus
+  - CPU writes through the cached alias, writes back before the draw, never reads back
+  - `reset_vertex_chunk` rewinds it at each `sceGuStart`
+- Four-player VS: texture demand exceeds VRAM (RE-341, RE-426) → residency per scene, not whole-scene
 
-| Scene | Bytes |
-|---|---:|
-| Training (Dream Land, two Marios) | 171.2 KiB |
-| Hyrule Castle alone | 915.3 KiB |
-| Donkey Kong, one costume | 531.3 KiB |
-| Worst VS scene: Hyrule Castle + four Donkey Kong costumes | 3,024.6 KiB |
+Main-RAM statics used by the GE or the frozen picture:
 
-Training fits the pool; four-player VS scenes do not, so they need
-per-scene residency (textures sampled from main RAM or streamed).
-
-RE-426 measures v78 Dream Land with Mario, Fox, DK and Kirby costume 0,
-including the VS wallpaper, all reachable model/texture parts and skeletons:
-high detail needs 1,051,532 bytes (103 textures), low 726,924 (98).
-The original three/four-fighter low-detail rule saves 324,608 bytes (30.9%),
-but the low closure still exceeds the pool by 22,412. This is packed
-residency demand, not a physical-PSP allocation measurement; the runtime
-samples textures directly from the pack in main RAM.
-
-The production game's largest frame is `enter_training`: it builds
-`GroundObjects`, including Sector Z's Arwing, by value. Preview model
-states are heap-owned. The deepest measured stack is in
-[STATUS.md](../STATUS.md); the stack is 512 KiB (RE-469).
+| Static | Size | Note |
+|---|---:|---|
+| `DISPLAY_LIST` | 1 MiB | |
+| `WALLPAPER_PHOTO` | 512 KiB | source of the photo copy |
+| `TRANSITION_PHOTO` | 256 KiB | |
 
 ## Original pattern
 
-`lbreloc.c` computes the size of a scene's whole dependency closure, makes one
-allocation, and loads everything into it:
+`lbreloc.c`: sizes a scene's whole dependency closure, one allocation, loads everything into it.
 
 ```c
 lbRelocLoadFilesExtern(file_ids, count, out_ptrs,
     syTaskmanMalloc(lbRelocGetAllocSize(file_ids, count), 0x10));
 ```
 
-Contiguous, unfragmented, one free. The port keeps the semantics, not the
-addresses: assets are position-independent through relocations.
+- Port keeps the semantics, not the addresses
+- Assets are position-independent through relocations
 
 ## Allocators
 
-`ssb_engine::memory` implements them over borrowed storage (RE-340):
-`Arena` scopes back `AssetArena`, `GameArena` and `FrameArena`, and
-`ObjectPool<T, N>` gives generation-checked handles. `psp-runtime` does not
-use them yet.
+- `ssb_engine::memory` (RE-340)
+  - `Arena` scopes back `AssetArena`, `GameArena`, `FrameArena`
+  - `ObjectPool<T, N>`: generation-checked handles
+- `psp-runtime` does not use them yet
 
 | Allocator | Lifetime |
 |---|---|
@@ -122,34 +119,26 @@ use them yet.
 | `FrameArena` | Bump allocator reset every tick; no heap allocation in per-frame paths |
 | `ObjectPool<T>` | Fixed capacity for fighters, items, particles, matching original counts |
 
-Scratchpad is reserved for VFPU staging and hot loops, after profiling.
+Scratchpad: reserved for VFPU staging and hot loops, after profiling.
 
 ## Extern relocations
 
-`romtool` leaves extern relocations zeroed in the pack and records them in the
-manifest ([D-011](decisions/D-011.md)). `ssb_rom::reloc_link` implements
-the loader's layout and patching over `Archive::load_closure` output
-(RE-340). Its layout matches `lbRelocGetAllocSize` and the original's live
-RDRAM placement, resident files included (RE-341); no runtime path calls it
-yet. It:
-
-1. Computes the scene's file closure.
-2. Assigns each file an offset in the asset arena.
-3. Applies intern relocations (rebase) and extern relocations (assigned
-   offsets).
+- `romtool`: leaves extern relocations zeroed in the pack, records them in the manifest ([D-011](decisions/D-011.md))
+- `ssb_rom::reloc_link` (RE-340, RE-341):
+  1. takes `Archive::load_closure` output
+  2. assigns each file an arena offset (layout of `lbRelocGetAllocSize`, original RDRAM placement)
+  3. applies intern (rebase) and extern (assigned offset) relocations
+- No runtime path calls it yet
 
 ## Cache coherency
 
-The PSP data cache is write-back. Anything the GE reads by DMA (vertices,
-textures, display lists) must be flushed with
-`sceKernelDcacheWritebackRange` or written through an uncached pointer.
-`psp::Align16` handles alignment, not coherency. Missing flushes cause
-intermittent corruption that looks like a race.
-
-Statics the GE reads (`DISPLAY_LIST`, `TRANSITION_PHOTO`,
-`WALLPAPER_PHOTO` in `psp-runtime/src/gu.rs`) use 64-byte
-`CacheLineAligned` storage, a whole number of lines long. A 16-byte
-aligned buffer can share a D-cache line with a cached `.bss` neighbour,
-and that line's writeback overwrites GE-visible data (RE-360). The two
-capture buffers are CPU-filled and written back after each capture
-(RE-361).
+- PSP data cache: write-back
+- GE DMA reads (vertices, textures, display lists) need one of:
+  - `sceKernelDcacheWritebackRange` flush
+  - write through an uncached pointer
+- `psp::Align16`: alignment only, not coherency
+- Missed flush → intermittent corruption that looks like a race
+- GE-visible statics (`DISPLAY_LIST`, `TRANSITION_PHOTO`, `WALLPAPER_PHOTO`):
+  - 64-byte `CacheLineAligned` storage, whole number of lines
+  - why: 16-byte-aligned buffer can share a D-cache line with a cached `.bss` neighbour; its writeback overwrites GE-visible data (RE-360)
+- Capture buffers: CPU-filled, written back after each capture (RE-361)

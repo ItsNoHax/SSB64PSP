@@ -5,26 +5,22 @@ description: Golden screenshots, PPSSPPHeadless, deterministic captures, screens
 
 # Visual regression
 
-Use this skill (PPSSPPHeadless) for visual/rendering testing — deterministic
-screenshots and golden comparisons. For real-hardware validation and crash
-capture use [psp-hardware](../psp-hardware/SKILL.md) (PSPLink) instead; for
-live original-N64 behavior use [n64-emulator](../n64-emulator/SKILL.md)
-(headless Mupen64Plus) instead.
+- Scope: PPSSPPHeadless deterministic screenshots, golden comparisons
+- Physical PSP: [psp-hardware](../psp-hardware/SKILL.md)
+- Original N64: [n64-emulator](../n64-emulator/SKILL.md)
 
-1. Read [docs/visual-regression/README.md](../../../docs/visual-regression/README.md)
-   — setup, capture commands, rules, scene table (feature → golden →
-   evidence), known failing goldens, physical-PSP staging. Load a scene's
-   `RE-XXX` record only if you need its history.
-2. If a scene's golden changes, explain the semantic delta (differing-pixel
-   count, what changed and why) before accepting the refresh — an
-   unexplained golden change is a red flag, not a pass.
-   Goldens are pixel hashes in `tests/golden/hashes.tsv`; `rebaseline`
-   writes them. Never commit a capture or golden PNG: local PNGs live in the
-   gitignored `tests/golden/local/` (`tools/golden.sh baseline` recreates
-   them from a passing commit, for difference masks).
-3. A camera photograph of a physical PSP screen is qualitative evidence only
-   and must not be passed to the exact PPSSPP pixel comparator.
-4. PPSSPP software rendering is the deterministic golden source; PPSSPP
-   hardware-backend and physical-PSP captures are separate, non-deterministic
-   evidence tiers — do not conflate a PPSSPP-software pass with physical
-   confirmation.
+1. Read [docs/visual-regression/README.md](../../../docs/visual-regression/README.md): setup, capture commands, scene table (feature, golden, evidence), known failing goldens, physical-PSP staging
+2. Changed golden → explain semantic delta before `rebaseline`: differing-pixel count, what changed, why
+   - unexplained change = failure
+   - rules: AGENTS.md § Constraints (hashes only, [D-051](../../../docs/decisions/D-051.md)), § Git (rebaselined rows in commit body)
+3. Local PNGs: gitignored directory tests/golden/local (plain text, not a tracked path)
+   - `tools/golden.sh baseline` recreates them from a passing commit, for difference masks
+
+Tiers:
+
+| Tier | Status |
+|---|---|
+| PPSSPP software rendering | deterministic golden source |
+| PPSSPP hardware backend | separate, non-deterministic |
+| Physical-PSP capture | separate, non-deterministic |
+| Camera photo of a PSP screen | qualitative; never to the exact comparator |

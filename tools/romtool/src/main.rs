@@ -3647,7 +3647,7 @@ fn resolve_layer_mat_anims(
 
 /// Builds the runtime asset pack: converted geometry and textures in the
 /// layout the PSP consumes directly.
-/// Report-only residual census (`docs/rendering/three-point-residuals.md`).
+/// Report-only residual census (markdown report: `assets/generated/three-point-residuals.md`, gitignored).
 ///
 /// Rebuilds the pack with the residual recorder enabled, requires it to be
 /// byte-identical to the reference pack, then measures every mesh texture
@@ -3655,7 +3655,7 @@ fn resolve_layer_mat_anims(
 fn residuals_cmd(path: &Path, opts: &[&str]) -> Res {
     let mut o = residuals::Options {
         json: "assets/generated/three-point-residuals.json".into(),
-        markdown: "docs/rendering/three-point-residuals.md".into(),
+        markdown: "assets/generated/three-point-residuals.md".into(),
         images: "assets/generated/three-point-residuals".into(),
         top_images: 20,
         refine: true,

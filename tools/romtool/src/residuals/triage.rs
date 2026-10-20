@@ -931,7 +931,7 @@ pub(super) fn section(m: &mut String, rows: &[Row<'_>], ranked: &[usize], names:
         .collect();
     let _ = writeln!(
         m,
-        "## Deployed exact-use-site overrides ({})\n\nSection 11 rows shipped as immutable RGBA8888 variants (`residual_fixes::Kind::Direct`): the fix class's fit made at pack time on the site's own U1 and scored here on U1 and on the disjoint U2 against the uncompensated source (what a `no-solve` conversion ships). Holdout is the variant's independent holdout. Visual review decisions for the other section 11 rows are in [three-point-visual-review.md](three-point-visual-review.md).\n",
+        "## Deployed exact-use-site overrides ({})\n\nSection 11 rows shipped as immutable RGBA8888 variants (`residual_fixes::Kind::Direct`): the fix class's fit made at pack time on the site's own U1 and scored here on U1 and on the disjoint U2 against the uncompensated source (what a `no-solve` conversion ships). Holdout is the variant's independent holdout. Visual review decisions for the other section 11 rows are in RE-312.\n",
         deployed.len()
     );
     if !deployed.is_empty() {

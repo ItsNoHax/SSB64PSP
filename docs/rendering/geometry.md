@@ -22,14 +22,13 @@ Encoding traps handled in `ssb-rom/src/dl.rs`:
 
 ## Vertex layout
 
-`GuVertex` is `{ u, v, color, x, y, z }`, the order the GE reads for the
-chosen `VertexType` flags. Reordering renders garbage without an error.
-Buffers are 16-byte aligned (`psp::Align16`).
-
-Positions are `i16`. UVs normally use `GU_TEXTURE_16BIT`, but the GE reads
-that field unsigned, so primitives with negative UVs on a clamped axis are
-flagged and submitted with float UVs (RE-262). Common path: 20 bytes per
-vertex.
+- `GuVertex` = `{ u, v, color, x, y, z }`: order the GE reads for the chosen `VertexType` flags.
+  - Reordering renders garbage without an error.
+- Buffers 16-byte aligned (`psp::Align16`).
+- Positions `i16`.
+- UVs: `GU_TEXTURE_16BIT` normally.
+  - GE reads that field unsigned → primitives with negative UVs on a clamped axis are flagged, submitted with float UVs (RE-262).
+- Common path: 20 bytes per vertex.
 
 ## Coordinates
 
@@ -37,99 +36,73 @@ vertex.
   `-Z` (RE-005).
 - No matrix transpose: N64 row-major/row-vector and PSP column-major/
   column-vector cancel; only s15.16 → `f32` widening remains (RE-004).
-- UVs are S10.5: divide by 32 for texels, then by the uploaded dimension.
-  Linear filtering adds `+0.5 / uploaded_dim` after all tile-origin and
-  material transforms; point sampling adds nothing (RE-304).
-- Screen mapping ([D-047](../decisions/D-047.md), RE-477): the N64's
-  visible (10,10)–(310,230) box fills the PSP's 272 lines at one scale,
-  272/220, centred. PSP x = 240 + (x − 160) · 272/220 and
-  PSP y = 136 + (y − 120) · 272/220. The box covers PSP columns 55–424, and
-  the 10-pixel strip around it is cropped as a CRT's overscan hid it.
-  `ssb_engine::coord` is the only place that converts. Every viewport,
-  scissor, sprite, fill, particle, mask and photo copy goes through it, and
-  every scissor is clipped to the visible area, as libgc clamps each
-  camera's scissor 10 pixels inside the frame. `Gpu::set_viewport_n64`
-  sends the viewport as floats.
-- The battle camera uses the inset (10,10)–(310,230) viewport, aspect 15/11
-  and its live FOV, and frames by that aspect as
-  `gGMCameraStruct.viewport_width / viewport_height` does. Models,
-  particles and portable projection share it, and tags use the same
-  scissor. Entry and pause zooms follow their live FOV (RE-440).
+- UVs S10.5: divide by 32 for texels, then by the uploaded dimension.
+  - Linear filtering adds `+0.5 / uploaded_dim` after all tile-origin and material transforms.
+  - Point sampling adds nothing (RE-304).
 
-## Conversion results
+### Screen mapping ([D-047](../decisions/D-047.md), RE-477)
 
-`romtool mesh` (root display lists only):
+- N64 visible box (10,10)–(310,230) fills the PSP's 272 lines at one scale, 272/220, centred.
+  - PSP x = 240 + (x − 160) · 272/220
+  - PSP y = 136 + (y − 120) · 272/220
+- Box covers PSP columns 55–424.
+- 10-pixel strip around it cropped (a CRT's overscan hid it).
+- `ssb_engine::coord` is the only converter.
+  - Every viewport, scissor, sprite, fill, particle, mask, photo copy goes through it.
+  - Every scissor clipped to the visible area (libgc clamps each camera's scissor 10 pixels inside the frame).
+- `Gpu::set_viewport_n64` sends the viewport as floats.
 
-| Metric | Value |
+### Battle camera
+
+- Inset (10,10)–(310,230) viewport, aspect 15/11, live FOV.
+- Frames by that aspect, as `gGMCameraStruct.viewport_width / viewport_height` does.
+- Shared by models, particles, portable projection; tags use the same scissor.
+- Entry and pause zooms follow their live FOV (RE-440).
+
+## Conversion
+
+- Build-time wins:
+  - Indexing undoes the RSP's 32-entry cache re-uploads.
+  - 16-bit components halve vertex size.
+  - Adjacent primitives with the same material merge into one draw, no reordering (RE-252).
+- Packer walks each scene graph through one shared vertex cache.
+  - Reaches continuation lists a standalone `romtool mesh` conversion cannot (RE-025, RE-026).
+
+### Borrowed RSP cache vertices (RE-358)
+
+- Retain loading joint and original local position.
+- Posed drawing:
+  1. Reconstruct each borrowed position under the loading joint's animated matrix.
+  2. Express it in the drawing joint's space.
+  3. Normals follow the same source matrix through the relative inverse transpose.
+- Static drawing keeps the baked rest rebase.
+- Integer positions and signed-byte normals round at the GE submission boundary.
+
+### `romtool scan`
+
+- Converts every aligned offset; keeps those that convert cleanly (a real list fills its cache before drawing).
+- Relocation targets are not list starts; most point to vertex arrays.
+- Opcode census: RE-119.
+
+### `G_MODIFYVTX`
+
+- Controller flower lists and fighter continuations use ST writes (RE-357).
+- Overwrites already-scaled cached coordinates; `G_TEXTURE` scale not applied again.
+- Other modify-vertex fields not translated.
+
+### Absent commands
+
+- Absent from the RE-119 census: `G_QUAD`, `G_CULLDL`, `G_BRANCH_Z`, `G_TEXRECT`, `G_FILLRECT`, `G_SETSCISSOR`, `G_MOVEMEM`.
+- `G_LOADTILE` occurs later: [textures.md](textures.md).
+
+### Fog
+
+- Unused: no `gSPFogPosition` exists; the one stage that sets a fog colour never references it ([D-025](../decisions/D-025.md), RE-072).
+
+## Evidence by area
+
+| Area | Evidence |
 |---|---|
-| Display lists | 1,768 (0 failures) |
-| Triangles | 25,562 |
-| Unique vertices | 36,693 (2.09× reuse) |
-| Draw calls after merge | 2,483 |
-| Indexed 16-bit geometry | 579.8 KiB (−67.7% vs float soup) |
-
-The pack is larger (2,722 meshes, 47,696 triangles) because the packer walks
-each scene graph through one shared vertex cache and reaches continuation
-lists a standalone conversion cannot (RE-025, RE-026).
-
-Borrowed RSP cache vertices retain their loading joint and original local
-position in pack v43 (RE-358). Posed drawing reconstructs each borrowed
-position under the loading joint's animated matrix, then expresses it in
-the drawing joint's space. Normals follow the same source matrix through
-the relative inverse transpose. This closes animated seams such as Mario's
-knees. Static drawing keeps the baked rest rebase. Integer positions and
-signed-byte normals round at the GE submission boundary.
-
-Build-time wins: indexing undoes the RSP's 32-entry cache re-uploads, 16-bit
-components halve vertex size, and adjacent primitives with the same material
-merge into one draw without reordering (RE-252).
-
-## Measured usage
-
-`romtool scan` finds display lists by converting every aligned offset and
-keeping those that convert cleanly (a real list fills its cache before
-drawing). Relocation targets are not usable as list starts; most point to
-vertex arrays. Result: 135 files, 1,864 lists, 0 failures.
-
-Emitted opcodes (RE-119):
-
-| Opcode | Count | Opcode | Count |
-|---|---:|---|---:|
-| `G_TRI2` | 13,523 | `G_LOADTLUT` | 1,558 |
-| `G_RDPPIPESYNC` | 9,015 | `G_NOOP` | 1,484 |
-| `G_VTX` | 4,756 | `G_SETOTHERMODE_L` | 1,444 |
-| `G_SETTILE` | 4,327 | `G_TRI1` | 1,043 |
-| `G_MOVEWORD` | 3,722 | `G_RDPTILESYNC` | 1,006 |
-| `G_RDPLOADSYNC` | 3,445 | `G_DL` | 826 |
-| `G_SETTIMG` | 3,074 | `G_SETBLENDCOLOR` | 366 |
-| `G_SETTILESIZE` | 2,218 | `G_SETPRIMCOLOR` | 246 |
-| `G_SETOTHERMODE_H` | 1,954 | `G_SETENVCOLOR` | 95 |
-| `G_GEOMETRYMODE` | 1,894 | `G_RDPFULLSYNC` | 16 |
-| `G_LOADBLOCK` | 1,886 | `G_SETFOGCOLOR` | 3 |
-| `G_ENDDL` | 1,864 | | |
-| `G_SETCOMBINE` | 1,660 | | |
-| `G_TEXTURE` | 1,596 | | |
-
-The controller flower lists and fighter continuations use `G_MODIFYVTX`
-ST writes (RE-357). These overwrite already-scaled cached coordinates;
-`G_TEXTURE` scale is not applied again. They fix Dream Land's flower beds
-and texture regions on Donkey Kong and Link. Other modify-vertex fields
-are not translated.
-
-Never emitted in the RE-119 census: `G_QUAD`, `G_CULLDL`, `G_BRANCH_Z`, `G_TEXRECT`,
-`G_FILLRECT`, `G_LOADTILE`, `G_SETSCISSOR`, `G_MOVEMEM`.
-
-Geometry-mode set counts: `G_LIGHTING` 539, `G_SHADING_SMOOTH` 449,
-`G_CULL_BACK` 399, `G_TEXTURE_GEN` 156, `G_SHADE` 60, `G_ZBUFFER` 19,
-`G_TEXTURE_GEN_LINEAR` 13, `G_CULL_FRONT` 5.
-
-Fog is unused: no `gSPFogPosition` exists and the one stage that sets a fog
-colour never references it ([D-025](../decisions/D-025.md), RE-072).
-
-## Status
-
-| Area | Status | Evidence | Remaining |
-|---|---|---|---|
-| Geometry and transforms | Complete; billboard kinds 44/46/48/50 and signed scale | RE-062, RE-063, RE-143–145 | Physical-PSP recheck |
-| Projection | Complete; battle camera matches original ROM state, inset viewport and live FOV; overscan strip cropped (D-047) | RE-034, RE-082–085, RE-131, RE-150, RE-151, RE-440, RE-477 | Special camera modes (gameplay) |
-| Culling | Complete; RDP default `CULL_BACK` | RE-068 | — |
+| Geometry and transforms, billboard kinds 44/46/48/50, signed scale | RE-062, RE-063, RE-143–145 |
+| Projection: original ROM camera state, inset viewport, live FOV, overscan crop (D-047) | RE-034, RE-082–085, RE-131, RE-150, RE-151, RE-440, RE-477 |
+| Culling: RDP default `CULL_BACK` | RE-068 |

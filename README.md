@@ -1,58 +1,49 @@
 # SSB64PSP
 
-A native Rust source port of **Super Smash Bros.** (Nintendo 64, US) to the
-**Sony PSP**. It is not an emulator. The gameplay code is Rust translated from
-the community [decompilation][decomp] of the game's program. At build time,
-the game's data and its N64 display lists are read from your own ROM and
-converted into PSP-native form.
+Native Rust source port of **Super Smash Bros.** (N64, US) to the **Sony PSP**. Not an emulator.
+
+- Gameplay: Rust translated from the community [decompilation][decomp]
+- Build time: game data and N64 display lists read from your own ROM, converted to PSP-native form
 
 ## No copyrighted assets are included in this repository
 
-None of Nintendo's assets (code, textures, audio, models, text, ROM data) are
-checked into this repo or distributed with builds. The only build the
-project publishes, CI's asset-viewer EBOOT, is compiled without a ROM and
-holds no game data.
-
-You supply your own legally obtained ROM. Assets are extracted locally from
-the ROM during the build process and generated into gitignored output. That
-output is the asset pack in `assets/generated/` and the data tables the game
-code reads, which go to Cargo's `target/` directory
-([D-048](docs/decisions/D-048.md)). A build you make therefore contains data
-from your ROM and is for your own use only.
-
-If you do not own a legal copy of Super Smash Bros. for the Nintendo 64, you
-cannot build or run this project.
-
-The repository contains only the source code, tools and documentation
-required to perform the conversion locally. No Nintendo-owned assets or
-data extracted from the ROM are included or distributed by this repository.
-The gameplay code is the project's own Rust translation of the decompiled
-game logic, not Nintendo's code; like the functions it translates, it
-carries their constants (offsets, ids, timings) as source. Golden test
-captures are stored as pixel hashes, not images. The XMB icons, backgrounds
-and music are original work ([XMB assets](docs/xmb-assets.md)).
+- No Nintendo asset checked in or distributed: code, textures, audio, models, text, ROM data
+- Only published build: CI asset-viewer EBOOT, compiled without a ROM, no game data
+- ROM: supplied by you, legally obtained
+- Build extracts from the ROM into gitignored output ([D-048](docs/decisions/D-048.md)):
+  - asset pack: `assets/generated/`
+  - data tables the game reads: Cargo `target/`
+- A build you make contains ROM data: own use only
+- No legal copy of the N64 game: cannot build or run
+- Repository holds source, tools, documentation only
+- Gameplay code: own translation of decompiled logic, constants (offsets, ids, timings) as source
+- Golden captures: pixel hashes, not images
+- XMB icons, backgrounds, music: original work ([XMB assets](docs/xmb-assets.md))
 
 ## Requirements
 
-- Your own `Super Smash Bros. (USA).z64` (big-endian):
+- ROM: your own `Super Smash Bros. (USA).z64` (big-endian)
 
 | Game code | SHA-1 | MD5 |
 |---|---|---|
 | `NALE` | `e2929e10fccc0aa84e5776227e798abc07cedabf` | `f7c52568a31aadf26e14dc2b6416b2ed` |
 
-- Rust stable for the host crates and tools (pinned by `rust-toolchain.toml`)
-- Rust nightly for the PSP crates (pinned by their own `rust-toolchain.toml`)
-- `cargo-psp` from the project's `rust-psp` fork, at the revision CI pins:
-  `cargo +nightly-2026-08-26 install --git https://github.com/ItsNoHax/rust-psp --rev a89142b237f3014fc15425d3549e44d3aa07d1c6 cargo-psp --locked`
-- A PSP-2000 or later (the game needs its 64 MiB mode), or
-  [PPSSPP](https://www.ppsspp.org/)
+| Tool | Version source |
+|---|---|
+| Rust stable (host crates, tools) | `rust-toolchain.toml` |
+| Rust nightly (PSP crates) | `rust-toolchain.toml` of `psp-game/` and `psp-asset-viewer/`; `psp-runtime` builds under them |
+| `cargo-psp` | project `rust-psp` fork, revision CI pins |
+| Hardware | PSP-2000 or later (64 MiB mode), or [PPSSPP](https://www.ppsspp.org/) |
+
+```bash
+cargo +nightly-2026-08-26 install --git https://github.com/ItsNoHax/rust-psp --rev a89142b237f3014fc15425d3549e44d3aa07d1c6 cargo-psp --locked
+```
 
 ## Build
 
-Put the ROM in `rom/`, or point `SSB64_ROM` at it. Every build reads it:
-the build scripts of `ssb-game` and `ssb-rom` verify its SHA-1 and generate
-the tables they compile from it (`crates/ssb-tablegen`). Without a ROM the
-build stops and says how to supply one.
+- ROM location: `rom/`, or `SSB64_ROM`
+- Every build reads the ROM: build scripts of `ssb-game` and `ssb-rom` verify SHA-1, generate tables (`crates/ssb-tablegen`)
+- No ROM → build stops, prints how to supply one
 
 ```bash
 # 1. The ROM
@@ -72,24 +63,24 @@ cargo test --workspace
 #    -> <crate>/target/mipsel-sony-psp/release/EBOOT.PBP
 ```
 
-`cargo run -p ssb-tablegen -- DIR` writes the generated tables into `DIR` for
-inspection. `SSB64_STUB_TABLES=1` builds empty stub tables instead; CI uses
-it to type-check and test without a ROM. A stub build cannot run the game.
+- `cargo run -p ssb-tablegen -- DIR`: writes generated tables into `DIR` for inspection
+- `SSB64_STUB_TABLES=1`: builds empty stub tables; CI type-checks and tests without a ROM
+- Stub build cannot run the game
 
 ## Run
 
-Copy `EBOOT.PBP` and `ssb64.pak` into the same `PSP/GAME/<folder>/`; the
-game saves to `ssb64.sav` beside them. The pack needs the 64 MiB mode of a
-PSP-2000 or later. Or run it under PPSSPP:
+- PSP: copy `EBOOT.PBP` and `ssb64.pak` into one `PSP/GAME/<folder>/`
+- Save: `ssb64.sav` beside them
+- Pack needs 64 MiB mode (PSP-2000 or later)
+- PPSSPP:
 
 ```bash
 tools/run-ppsspp.sh --crate psp-game                        # interactive
 tools/run-ppsspp-headless.sh --crate psp-game --feature F   # deterministic capture
 ```
 
-Both scripts default to `psp-asset-viewer`.
-[Visual regression](docs/visual-regression/README.md) covers PPSSPPHeadless
-and the golden captures.
+- Both scripts default to `psp-asset-viewer`
+- PPSSPPHeadless, golden captures: [visual regression](docs/visual-regression/README.md)
 
 ### Controls
 
@@ -102,27 +93,19 @@ and the golden captures.
 | Circle | L |
 | Start | Start |
 
-Triangle and Select are unbound. In battle any C-button jumps, and N64 R
-acts as A + Z. On the menu's Training entry, a D-pad (C-button) tap picks
-the costume, as the character select does.
+- Triangle, Select: unbound
+- Battle: any C-button jumps; N64 R acts as A + Z
+- Menu Training entry: D-pad (C-button) tap picks the costume, as character select does
 
 ## Layout
 
-| Path | Role | Target |
-|---|---|---|
-| `crates/ssb-rom` | ROM validation, relocData archive, VPK0, N64 formats, asset pack | host + PSP |
-| `crates/ssb-engine` | Engine traits, math, coordinate conversion, timing | host + PSP |
-| `crates/ssb-game` | Portable gameplay: fighters, items, stages, CPU, menus, game modes | host + PSP |
-| `crates/ssb-capture` | Golden-capture scene specs | host + PSP |
-| `crates/ssb-tablegen` | Build-time generation of the tables read from the ROM | host (build scripts) |
-| `tools/romtool` | ROM verification, extraction, conversion, pack generation | host |
-| `psp-runtime/` | Shared PSP backend: GE rendering, input, timing, asset loading | PSP |
-| `psp-game/` | The game application | PSP |
-| `psp-asset-viewer/` | Asset browser and deterministic render-regression scenes | PSP |
+| Path | Holds |
+|---|---|
+| `crates/` | Portable code: gameplay, engine, ROM and pack formats, capture specs, build-time table generation |
+| `tools/romtool` | Pack builder |
+| `psp-runtime/`, `psp-game/`, `psp-asset-viewer/` | PSP code; outside the Cargo workspace ([D-026](docs/decisions/D-026.md)) |
 
-The portable crates never depend on `psp-runtime`. The three PSP crates sit
-outside the Cargo workspace because they build with a pinned nightly and
-`-Z build-std` ([D-026](docs/decisions/D-026.md)).
+Crate roles and boundaries: [architecture](docs/architecture.md), [AGENTS.md](AGENTS.md).
 
 ## Documentation
 
@@ -141,21 +124,20 @@ outside the Cargo workspace because they build with a pinned nightly and
 
 ## References
 
-Technical references only; none is an authority over the decompilation and
-ROM ([D-037](docs/decisions/D-037.md)).
+Technical references only; none outranks decompilation and ROM ([D-037](docs/decisions/D-037.md)).
 
 - [ssb-decomp-re][decomp] — SSB64 decompilation (primary source)
 - [BattleShip](https://github.com/JRickey/BattleShip) — native PC SSB64 port
 - [sf64-psp](https://github.com/TheMrIron2/sf64-psp), [oot-PSP](https://github.com/z2442/oot-PSP), [n64psp](https://github.com/TheMrIron2/n64psp) — N64 → PSP ports
-- [rust-psp][rustpsp] — Rust PSP support
+- [rust-psp][rustpsp] — Rust PSP support (project fork)
 
-Clone them into the gitignored `refs/` directory for local use.
+Local use: clone into gitignored `refs/`.
 
 ## License
 
-MIT OR Apache-2.0, for the code in this repository only. No rights to
-Nintendo's intellectual property are granted. Super Smash Bros. is a
-trademark of Nintendo.
+- MIT OR Apache-2.0, code in this repository only
+- No rights to Nintendo intellectual property granted
+- Super Smash Bros.: trademark of Nintendo
 
 [decomp]: https://github.com/VetriTheRetri/ssb-decomp-re
-[rustpsp]: https://github.com/overdrivenpotato/rust-psp
+[rustpsp]: https://github.com/ItsNoHax/rust-psp
