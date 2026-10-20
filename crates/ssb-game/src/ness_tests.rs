@@ -577,6 +577,33 @@ fn magnet_field_starts_on_hold_and_ends_with_the_end_status() {
     assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialAirLwEnd));
     assert_eq!(magnet_effect_ticks(&f), None);
 }
+/// `dEFManagerNessPsychicMagnetEffectDesc`'s process is `gcPlayAnimAll`,
+/// which never reads `is_pause_effect`, and `ftnessspeciallw.c` sets no
+/// `proc_lagstart`: the field plays through Ness's hitlag.
+#[test]
+fn magnet_field_keeps_playing_through_hitlag() {
+    let surfaces = || core::iter::empty::<crate::weapon::MapSurface>();
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    input(&mut f, N64Buttons::B, 0, -80);
+    set_special_lw(&mut f);
+    while !absorbing(&f) {
+        status::update(&mut f);
+    }
+    steps(&mut f, 2);
+    assert_eq!(magnet_effect_ticks(&f), Some(3));
+    let frame = f.status.anim_frame;
+    f.hitlag = 5;
+    for t in 1..=4 {
+        f.tick_interrupt(&surfaces);
+        assert!(f.is_in_hitlag());
+        assert_eq!(magnet_effect_ticks(&f), Some(3 + t), "hitlag tick {t}");
+    }
+    assert_eq!(f.status.anim_frame, frame, "the fighter is held");
+    // The last hitlag tick runs the full update: one tick, not two.
+    f.tick_interrupt(&surfaces);
+    assert!(!f.is_in_hitlag());
+    assert_eq!(magnet_effect_ticks(&f), Some(8));
+}
 /// Every Ness ground/air switch passes `FTSTATUS_PRESERVE_HITSTATUS`
 /// (`FTNESS_SPECIAL*_STATUS_FLAGS`): a fighter made invincible keeps it, and
 /// the hit-status flash, both ways. A setter (`FTSTATUS_PRESERVE_NONE`)

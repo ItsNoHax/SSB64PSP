@@ -366,6 +366,11 @@ pub struct JointAnim {
     /// Byte offset of the next command.
     pc: usize,
     clock: Clock,
+    /// Whether the last parse wrote `parent_gobj->anim_frame`: the running
+    /// branch, a `Loop` and the terminator do; the `CHANGED` seed and a joint
+    /// with no script (`AOBJ_ANIM_NULL`) do not (`ftanim.c:84`, `:310`,
+    /// `:120`/`:367`).
+    frame_written: bool,
     /// Render flags the script last set (`nGCAnimEvent16SetFlags`).
     pub flags: u16,
     /// The `TraI` track's `AObj::interpolate`: the byte offset of the
@@ -383,6 +388,7 @@ impl JointAnim {
             anim_frame: 0.0,
             pc: 0,
             clock: Clock::Inert,
+            frame_written: false,
             flags: 0,
             interp: None,
         }
@@ -399,6 +405,7 @@ impl JointAnim {
             anim_frame: frame,
             pc: script,
             clock: Clock::Changed,
+            frame_written: false,
             flags: 0,
             interp: None,
         }
@@ -407,6 +414,13 @@ impl JointAnim {
     /// Frames elapsed. `<= 0` once the script has ended.
     pub fn frame(&self) -> f32 {
         self.anim_frame
+    }
+
+    /// The value the last tick wrote to the fighter `GObj::anim_frame`, if
+    /// it wrote one. After the terminator that is the end tick's `anim_wait`
+    /// (`<= 0`), and a later tick writes nothing, so the GObj keeps it.
+    pub fn gobj_frame(&self) -> Option<f32> {
+        self.frame_written.then_some(self.anim_frame)
     }
 
     /// Whether the script has run out and the joint has stopped moving.
@@ -458,6 +472,7 @@ impl JointAnim {
 
     /// `ftAnimParseDObjFigatree` for one joint: runs commands until one blocks.
     fn parse(&mut self, data: &[u8], speed: f32) -> Result<(), Desynchronised> {
+        self.frame_written = false;
         match self.clock {
             Clock::Inert => return Ok(()),
             // `play` always converts Ended to Inert, so a parse never sees it.
@@ -469,6 +484,7 @@ impl JointAnim {
             Clock::Running => {
                 self.anim_wait -= speed;
                 self.anim_frame += speed;
+                self.frame_written = true;
                 if self.anim_wait > 0.0 {
                     return Ok(());
                 }
@@ -488,6 +504,7 @@ impl JointAnim {
                 OP_LOOP => {
                     self.pc = loop_target(data, &cmd)?;
                     self.anim_frame = -self.anim_wait;
+                    self.frame_written = true;
                 }
                 OP_BLOCK => self.anim_wait += cmd.payload as f32,
                 OP_SET_FLAGS => {
@@ -601,6 +618,7 @@ impl JointAnim {
             }
         }
         self.anim_frame = self.anim_wait;
+        self.frame_written = true;
         self.clock = Clock::Ended;
     }
 
@@ -783,6 +801,51 @@ mod tests {
             anim.tick(&data, 1.0, &mut pose).unwrap();
         }
         assert_eq!(pose.translate[0], held);
+    }
+
+    #[test]
+    fn the_gobj_frame_is_written_while_running_and_kept_from_the_end_tick() {
+        // `ftAnimParseDObjFigatree`: the CHANGED seed writes nothing, the
+        // running branch writes `anim_frame` (`ftanim.c:84`), the terminator
+        // writes `anim_wait` (`:120`), and a NULL joint writes nothing.
+        let data = script(&[cmd(OP_BLOCK, 0, 1), 2, cmd(OP_END, 0, 0)]);
+        let mut anim = JointAnim::start(0, 0.0);
+        let mut pose = JointPose::default();
+        let written: alloc::vec::Vec<Option<f32>> = (0..5)
+            .map(|_| {
+                anim.tick(&data, 1.0, &mut pose).unwrap();
+                anim.gobj_frame()
+            })
+            .collect();
+        assert_eq!(written, [None, Some(1.0), Some(0.0), None, None]);
+    }
+
+    #[test]
+    fn an_end_between_ticks_writes_the_negative_wait_not_zero() {
+        // Started half a frame in, the End lands half a tick early.
+        let data = script(&[cmd(OP_BLOCK, 0, 1), 2, cmd(OP_END, 0, 0)]);
+        let mut anim = JointAnim::start(0, 0.5);
+        let mut pose = JointPose::default();
+        let written: alloc::vec::Vec<Option<f32>> = (0..4)
+            .map(|_| {
+                anim.tick(&data, 1.0, &mut pose).unwrap();
+                anim.gobj_frame()
+            })
+            .collect();
+        assert_eq!(written, [None, Some(1.5), Some(-0.5), None]);
+    }
+
+    #[test]
+    fn a_loop_writes_the_gobj_frame() {
+        let words = [cmd(OP_BLOCK, 0, 1), 3, cmd(OP_LOOP, 0, 0), (-6i16) as u16];
+        let data = script(&words);
+        let mut anim = JointAnim::start(0, 0.0);
+        let mut pose = JointPose::default();
+        for _ in 0..4 {
+            anim.tick(&data, 1.0, &mut pose).unwrap();
+        }
+        // Tick 4: wait 0, frame 3, then Loop rewinds to `-anim_wait` = 0.
+        assert_eq!(anim.gobj_frame(), Some(0.0));
     }
 
     #[test]

@@ -163,3 +163,55 @@ fn the_campaign_demo_clips_are_packed() {
     // rows for the others.
     assert_eq!(packed, 45 + 3 + 11);
 }
+
+/// `mnCharactersCheckFighterAnimEnd` ends a Characters motion on
+/// `anim_frame == 0.0` exactly, and the fighter GObj keeps the end tick's
+/// `anim_wait` after a figatree ends (`ftanim.c:120`). Played at speed 1 from
+/// frame 0, every 16-bit clip in the pack ends on a whole tick, so that test
+/// fires, and no joint ends early as the last writer of a tick (which would
+/// read 0 mid-clip). Loops rewind every joint on the same tick.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn every_figatree_clip_ends_on_a_whole_tick() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = Pack::open(&bytes).unwrap();
+    let mut clips = 0;
+    let mut ending = 0;
+    let mut bad = Vec::new();
+    for kind in 0..27u32 {
+        for slot in 0..ssb_rom::anim::SLOT_COUNT as u32 {
+            if is_anim_joint_slot(slot as usize) {
+                continue;
+            }
+            let Some(anim) = pack.fighter_anim(kind, slot) else {
+                continue;
+            };
+            let Some(script) = pack.anim_script(&anim) else {
+                continue;
+            };
+            clips += 1;
+            let mut sk = ssb_rom::skeleton::Skeleton::new();
+            sk.start(&pack, &anim, 0.0, 1.0);
+            let mut seq = vec![0.0f32];
+            while !sk.ended() && seq.len() < 400 {
+                sk.tick(script).unwrap();
+                seq.push(sk.frame());
+            }
+            let mid_clip_jump = (2..seq.len().saturating_sub(1)).find(|&t| {
+                let loop_reset = seq[t] <= 0.0 && seq[t + 1] == seq[t] + 1.0;
+                seq[t] != seq[t - 1] + 1.0 && !loop_reset
+            });
+            if sk.ended() {
+                ending += 1;
+            }
+            if (sk.ended() && sk.frame() != 0.0) || mid_clip_jump.is_some() {
+                bad.push((kind, slot, sk.frame(), mid_clip_jump));
+            }
+        }
+    }
+    assert!(
+        clips > 5000 && ending > 1000,
+        "{clips} clips, {ending} ending"
+    );
+    assert!(bad.is_empty(), "{bad:?}");
+}

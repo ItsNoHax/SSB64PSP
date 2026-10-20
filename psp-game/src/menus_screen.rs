@@ -363,7 +363,16 @@ impl Menus {
                         set_status(p, f, &m.fighter);
                     }
                 }
-                _ => self.fighter = Some(make_fighter(p, &m.fighter)),
+                _ => {
+                    // `mnCharactersChangeFighter`: `ftManagerDestroyFighter`,
+                    // then `mnCharactersMakeFighter`.
+                    if let (Some(world), Some(old)) =
+                        (self.world.as_mut(), self.fighter.as_deref_mut())
+                    {
+                        world.destroy(p, &mut old.demo);
+                    }
+                    self.fighter = Some(make_fighter(p, &m.fighter));
+                }
             }
             if let (Some(world), Some(f)) = (self.world.as_mut(), self.fighter.as_deref_mut()) {
                 make_effects(p, world, &unturned, f);
@@ -569,7 +578,9 @@ fn clip(motion: Motion) -> (Option<u32>, usize, bool) {
 /// `mnCharactersMakeFighter`: the page's fighter, muted, in its first
 /// status.
 fn make_fighter(p: &Pack<'_>, f: &characters::Fighter) -> Box<FighterModel> {
-    let mut demo = ssb_game::demo_fighter::DemoFighter::new(f.kind, 0, 0);
+    // `desc.costume = ftParamGetCostumeCommonID(fkind, 0)`.
+    let costume = ssb_game::costume::costume_common_id(f.kind, 0);
+    let mut demo = ssb_game::demo_fighter::DemoFighter::new(f.kind, 0, costume);
     // `fp->is_muted = TRUE`.
     demo.fighter.is_muted = true;
     let mut m = Box::new(FighterModel {

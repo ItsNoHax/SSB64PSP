@@ -1067,3 +1067,45 @@ fn a_surface_impact_flushes_a_wave_and_a_late_quake_in_queue_order() {
             .is_some_and(|(m, _)| m == 2));
     }
 }
+
+/// RE-540: `ftParamPauseEffect` sets only `ep->is_pause_effect`, which the
+/// display procs read (`efManagerHaveStructProcUpdate`,
+/// `efManagerNoEjectProcUpdate`), and `lbParticlePauseAllID` has no caller.
+/// Kirby's inhale wind, the one particle effect attached to a fighter,
+/// keeps ticking and following its owner through a hitlag pause.
+#[test]
+fn a_paused_fighters_attached_particle_keeps_running_and_following() {
+    use crate::particle::tests::{any_bank, live_structs};
+    let bank = any_bank();
+    let mut p = std::boxed::Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut f = Fighter::new(FighterKind::Kirby, 0, 3);
+    f.pos = Vec3::new(100.0, 0.0, 0.0);
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    f.effects.push(FighterEffect::KirbyInhaleWind);
+    flush(&mut f, &mut rt);
+    assert!(f.is_effect_attach);
+    let wind = live_structs(rt.particles);
+    assert_eq!(wind.len(), 1);
+    let lifetime = |p: &Particles| {
+        (0..crate::particle::LINKS_NUM)
+            .flat_map(|l| p.list(l).map(|(_, s)| s.lifetime))
+            .next()
+    };
+    let before = lifetime(rt.particles).unwrap();
+    f.effects.push(FighterEffect::Pause(true));
+    flush(&mut f, &mut rt);
+    rt.effects.fighter_anchors[0] = Some((Vec3::new(500.0, 0.0, 0.0), 1));
+    rt.frame();
+    assert_eq!(live_structs(rt.particles), wind, "still alive");
+    assert!(
+        lifetime(rt.particles).unwrap() < before,
+        "and still ticking"
+    );
+    let t = rt.particles.transform(wind[0]).translate;
+    assert_eq!((t.x, t.y), (500.0 + 800.0, 230.0), "following its owner");
+}

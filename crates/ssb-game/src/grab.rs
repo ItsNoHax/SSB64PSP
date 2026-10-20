@@ -829,6 +829,16 @@ pub fn grapple_glow_ticks(f: &Fighter) -> Option<u16> {
     })
 }
 
+/// The glow's `gcPlayAnimAll` process. Neither `ftCommonCatchSetStatus` nor
+/// `ftCommonThrowSetStatus` sets `proc_lagstart = ftParamProcPauseEffect`,
+/// so the glow plays through Samus's hitlag: [`Fighter`]'s update calls
+/// this in hitlag too.
+pub fn tick_grapple_glow(f: &mut Fighter) {
+    if grapple_glow_ticks(f).is_some() {
+        f.grab.grapple_glow = f.grab.grapple_glow.map(|t| t.saturating_add(1));
+    }
+}
+
 /// `efManagerSamusGrappleBeamGlowMakeEffect`'s attach joint, `fp->joints[23]`.
 pub const GRAPPLE_GLOW_JOINT: u8 = 23;
 
@@ -1844,11 +1854,7 @@ pub fn release_on_dead(f: &mut Fighter) {
 /// Runs `proc_update`/`proc_interrupt` for the grab statuses. Returns `false`
 /// when the current status is not one of them.
 pub fn update(f: &mut Fighter) -> bool {
-    // The glow's `gcPlayAnimAll` process; `ftParamProcPauseEffect` holds it
-    // through hitlag.
-    if !f.is_in_hitlag() && grapple_glow_ticks(f).is_some() {
-        f.grab.grapple_glow = f.grab.grapple_glow.map(|t| t.saturating_add(1));
-    }
+    tick_grapple_glow(f);
     match f.status.status {
         // `ftCommonCatchProcUpdate`. Only Samus's and Link's scripts set
         // flag2.
@@ -3179,6 +3185,30 @@ mod tests {
             thrown_status(FighterKind::Samus, FighterKind::Fox, true),
             (None, Status::ThrownCommon)
         );
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn samus_grapple_glow_keeps_playing_through_hitlag() {
+        // Neither `ftCommonCatchSetStatus` nor `ftCommonThrowSetStatus` sets
+        // `proc_lagstart`: the glow's `gcPlayAnimAll` never pauses.
+        let mut samus = grounded(FighterKind::Samus, 0, 0.0);
+        set_catch(&mut samus);
+        assert_eq!(grapple_glow_ticks(&samus), Some(1));
+        tick(&mut samus);
+        assert_eq!(grapple_glow_ticks(&samus), Some(2));
+        let frame = samus.status.anim_frame;
+        samus.hitlag = 4;
+        for t in 1..=3 {
+            tick(&mut samus);
+            assert!(samus.is_in_hitlag());
+            assert_eq!(grapple_glow_ticks(&samus), Some(2 + t), "hitlag tick {t}");
+        }
+        assert_eq!(samus.status.anim_frame, frame, "the fighter is held");
+        // The last hitlag tick runs the full update: one tick, not two.
+        tick(&mut samus);
+        assert!(!samus.is_in_hitlag());
+        assert_eq!(grapple_glow_ticks(&samus), Some(6));
     }
 
     #[test]

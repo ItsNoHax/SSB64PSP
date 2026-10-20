@@ -1249,6 +1249,13 @@ impl Fighter {
             // pauses.
             crate::kirby_copy::tick_punch_effect(self);
             crate::status::tick_fox_reflector_effect(self);
+            crate::purin::tick_sing_effect(self);
+            crate::grab::tick_grapple_glow(self);
+            crate::ness::tick_magnet_effect(self);
+            crate::capture_yoshi::tick_egg_effect(self);
+            // The charging shot is a weapon: only its own hitlag stops it.
+            crate::samus::tick_charge_spin(self);
+            crate::kirby_copy::tick_charge_spin(self);
             return;
         }
 

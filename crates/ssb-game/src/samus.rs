@@ -322,14 +322,22 @@ fn air_jump_max(f: &mut Fighter) {
     f.physics.jumps_used = f.attributes.jumps_max;
 }
 
+/// `wpSamusChargeShotProcUpdate` on the charging shot: one spin per
+/// update. `wpProcessProcWeaponMain` skips only a weapon in its own hitlag
+/// (`is_hitlag_weapon`), so the shot spins through Samus's hitlag:
+/// [`Fighter`]'s update calls this in hitlag too.
+pub fn tick_charge_spin(f: &mut Fighter) {
+    if f.samus.charge_shot && matches!(f.status.status, AnyStatus::Samus(_)) {
+        f.samus.charge_spin = f.samus.charge_spin.wrapping_add(1);
+    }
+}
+
 /// Samus's `proc_update` and `proc_interrupt` callbacks.
 pub fn update(f: &mut Fighter) {
     let AnyStatus::Samus(current) = f.status.status else {
         return;
     };
-    if f.samus.charge_shot {
-        f.samus.charge_spin = f.samus.charge_spin.wrapping_add(1);
-    }
+    tick_charge_spin(f);
     match current {
         // The battle entry runs in `crate::appear`.
         SamusStatus::AppearR | SamusStatus::AppearL => {}
@@ -685,6 +693,38 @@ mod tests {
         press(&mut f, 0);
         status::update(&mut f);
         assert!(f.take_weapon_spawn().is_none());
+    }
+
+    /// `wpProcessProcWeaponMain` skips only a weapon in its own hitlag
+    /// (`is_hitlag_weapon`): the charging shot keeps spinning
+    /// (`wpSamusChargeShotProcUpdate`) through Samus's hitlag, while the
+    /// charge itself (`proc_update`) holds.
+    #[test]
+    fn the_charging_shot_spins_through_samus_hitlag() {
+        let surfaces = || core::iter::empty::<crate::weapon::MapSurface>();
+        let mut f = samus(true);
+        set_special_n(&mut f);
+        while f.status.status != AnyStatus::Samus(SamusStatus::SpecialNLoop) {
+            press(&mut f, 0);
+            status::update(&mut f);
+        }
+        let spin = f.samus.charge_spin;
+        let int = f.samus.charge_int;
+        let frame = f.status.anim_frame;
+        f.hitlag = 5;
+        for t in 1..=4 {
+            press(&mut f, 0);
+            f.tick_interrupt(&surfaces);
+            assert!(f.is_in_hitlag());
+            assert_eq!(f.samus.charge_spin, spin + t, "hitlag tick {t}");
+        }
+        assert_eq!(f.samus.charge_int, int, "the charge is held");
+        assert_eq!(f.status.anim_frame, frame, "the fighter is held");
+        // The last hitlag tick runs the full update: one spin, not two.
+        press(&mut f, 0);
+        f.tick_interrupt(&surfaces);
+        assert!(!f.is_in_hitlag());
+        assert_eq!(f.samus.charge_spin, spin + 5);
     }
 
     #[test]

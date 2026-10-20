@@ -229,17 +229,7 @@ pub(crate) fn on_set_status(f: &mut Fighter, to: crate::status::AnyStatus) {
 
 /// `ftMainSetStatus` without `FTSTATUS_PRESERVE_EFFECT`.
 pub(crate) fn stop_on_set_status(f: &mut Fighter) {
-    // `ftParamProcStopEffect` when `is_effect_attach`; a maker still queued
-    // would have set it in the source, so its stop is queued behind it.
-    let attaching = f.effects.iter().any(|e| match e {
-        FighterEffect::ThunderShock { .. } | FighterEffect::KirbyInhaleWind => true,
-        FighterEffect::Param(r) => r.kind == kind::FIRE_SPARK,
-        _ => false,
-    });
-    if f.is_effect_attach || attaching {
-        f.effects.push(FighterEffect::StopAttached);
-    }
-    f.is_effect_attach = false;
+    stop_attached(f);
     let pending = f
         .effects
         .iter()
@@ -249,6 +239,23 @@ pub(crate) fn stop_on_set_status(f: &mut Fighter) {
     }
     f.yoshi.egg_escape_active = false;
     f.yoshi.egg_escape_epoch = f.yoshi.egg_escape_epoch.wrapping_add(1);
+}
+
+/// `if (fp->is_effect_attach) ftParamProcStopEffect(fighter_gobj)`, as
+/// `ftMainSetStatus` and `ftManagerDestroyFighter` run it: the fighter's
+/// attached effects are ejected at the next flush. A maker still queued
+/// would have set `is_effect_attach` in the source, so its stop is queued
+/// behind it.
+pub(crate) fn stop_attached(f: &mut Fighter) {
+    let attaching = f.effects.iter().any(|e| match e {
+        FighterEffect::ThunderShock { .. } | FighterEffect::KirbyInhaleWind => true,
+        FighterEffect::Param(r) => r.kind == kind::FIRE_SPARK,
+        _ => false,
+    });
+    if f.is_effect_attach || attaching {
+        f.effects.push(FighterEffect::StopAttached);
+    }
+    f.is_effect_attach = false;
 }
 
 /// `FTAttributes` fields the effects read, for any fighter kind (a polygon

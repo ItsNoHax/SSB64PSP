@@ -844,6 +844,15 @@ fn update_punch_effect(f: &mut Fighter) {
     }
 }
 
+/// `wpSamusChargeShotProcUpdate` on the copied charging shot, as
+/// [`crate::samus::tick_charge_spin`] counts Samus's: it spins through
+/// Kirby's hitlag too.
+pub fn tick_charge_spin(f: &mut Fighter) {
+    if f.kirby.copy.samus_charge_shot && matches!(f.status.status, AnyStatus::Kirby(_)) {
+        f.kirby.copy.samus_charge_spin = f.kirby.copy.samus_charge_spin.wrapping_add(1);
+    }
+}
+
 /// `efManagerNoEjectProcUpdate` on the copied Falcon Punch flame. Unlike
 /// Captain Falcon's statuses, `ftkirbycopycaptainspecialn.c` sets no
 /// `proc_lagstart = ftParamProcPauseEffect`, so the flame plays through
@@ -1013,11 +1022,7 @@ pub fn update(f: &mut Fighter) {
     let AnyStatus::Kirby(current) = f.status.status else {
         return;
     };
-    // `wpSamusChargeShotProcUpdate` on the charging shot, as
-    // `crate::samus::update` counts it.
-    if f.kirby.copy.samus_charge_shot {
-        f.kirby.copy.samus_charge_spin = f.kirby.copy.samus_charge_spin.wrapping_add(1);
-    }
+    tick_charge_spin(f);
     tick_punch_effect(f);
     match current {
         K::CopyMarioSpecialN
@@ -1733,6 +1738,31 @@ mod tests {
         assert_eq!(f.kirby.copy.samus_charge_spin, 8);
         let want = -crate::weapon::SAMUS_CHARGE_SHOT_ROTATE_SPEED * 8.0 * f.facing.sign();
         assert_eq!(charge_shot_rotate_z(&f), want);
+    }
+
+    /// The weapon's process skips only its own hitlag: the copied charging
+    /// shot spins through Kirby's hitlag, as Samus's does.
+    #[test]
+    fn copied_charging_shot_spins_through_kirbys_hitlag() {
+        let surfaces = || core::iter::empty::<crate::weapon::MapSurface>();
+        let mut f = kirby(FighterKind::Samus, true);
+        set_special_n(&mut f);
+        while status(&f) == K::CopySamusSpecialNStart {
+            step(&mut f);
+        }
+        assert_eq!(f.kirby.copy.samus_charge_spin, 1);
+        let frame = f.status.anim_frame;
+        f.hitlag = 5;
+        for t in 1..=4 {
+            f.tick_interrupt(&surfaces);
+            assert!(f.is_in_hitlag());
+            assert_eq!(f.kirby.copy.samus_charge_spin, 1 + t, "hitlag tick {t}");
+        }
+        assert_eq!(f.status.anim_frame, frame, "the fighter is held");
+        // The last hitlag tick runs the full update: one spin, not two.
+        f.tick_interrupt(&surfaces);
+        assert!(!f.is_in_hitlag());
+        assert_eq!(f.kirby.copy.samus_charge_spin, 6);
     }
 
     /// `ftKirbyCopyCaptainSpecialNUpdateEffect` is Captain Falcon's: the

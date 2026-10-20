@@ -78,7 +78,11 @@ pub fn start() -> Box<Fighters> {
 /// One tick of the fighters, after [`PlayersVs::tick`].
 pub fn tick(pack: Option<&Pack<'_>>, select: &PlayersVs, f: &mut Fighters) {
     let fighters: [Option<Placed>; 4] =
-        core::array::from_fn(|i| select.view.slots[i].fighter.map(|f| (f, layer::Fighter::position(i))));
+        core::array::from_fn(|i| {
+            select.view.slots[i]
+                .fighter
+                .map(|f| (f, layer::Fighter::position(i), select.slots[i].costume))
+        });
     tick_models(pack, &fighters, f);
 }
 
@@ -87,7 +91,11 @@ pub fn tick(pack: Option<&Pack<'_>>, select: &PlayersVs, f: &mut Fighters) {
 pub fn tick_training(pack: Option<&Pack<'_>>, select: &FighterSelect, f: &mut Fighters) {
     use ssb_game::fighter_select::{layer as training, COM, MAN};
     let v = &select.view.slots;
-    let placed = |slot: usize| v[slot].fighter.map(|f| (f, training::fighter_position(slot)));
+    let placed = |slot: usize| {
+        v[slot]
+            .fighter
+            .map(|f| (f, training::fighter_position(slot), select.slots[slot].costume))
+    };
     tick_models(pack, &[placed(MAN), placed(COM), None, None], f);
 }
 
@@ -96,7 +104,7 @@ pub fn tick_1p(pack: Option<&Pack<'_>>, select: &Players1P, f: &mut Fighters) {
     let placed = select
         .view
         .fighter
-        .map(|f| (f, ssb_game::players_1p::layer::FIGHTER_POSITION));
+        .map(|f| (f, ssb_game::players_1p::layer::FIGHTER_POSITION, select.slot.costume));
     tick_models(pack, &[placed, None, None, None], f);
 }
 
@@ -106,12 +114,13 @@ pub fn tick_bonus(pack: Option<&Pack<'_>>, select: &Players1PBonus, f: &mut Figh
     let placed = select
         .view
         .fighter
-        .map(|f| (f, ssb_game::players_1p_bonus::layer::FIGHTER_POSITION));
+        .map(|f| (f, ssb_game::players_1p_bonus::layer::FIGHTER_POSITION, select.slot.costume));
     tick_models(pack, &[placed, None, None, None], f);
 }
 
-/// A slot's fighter and where its TopN stands.
-type Placed = (layer::Fighter, [f32; 3]);
+/// A slot's fighter, where its TopN stands and its costume
+/// (`desc.costume`: the slot's, already a costume ID).
+type Placed = (layer::Fighter, [f32; 3], u8);
 
 /// Link 0's particle `func_run`s, then each fighter's
 /// `scSubsysFighterProcUpdate` (priority 5): a fighter made again or given
@@ -130,15 +139,22 @@ fn tick_models(pack: Option<&Pack<'_>>, fighters: &[Option<Placed>; 4], f: &mut 
     }
     f.world.run(p);
     for (port, (model, placed)) in f.models.iter_mut().zip(fighters.iter()).enumerate() {
-        let Some((fighter, pos)) = *placed else {
-            *model = None;
+        let Some((fighter, pos, costume)) = *placed else {
+            if let Some(mut m) = model.take() {
+                f.world.destroy(p, &mut m.demo);
+            }
             continue;
         };
         let fresh = model
             .as_ref()
             .is_none_or(|m| m.serial != fighter.serial || m.kind != fighter.kind);
         if fresh {
-            *model = Some(make_model(p, fighter, port as u8));
+            // `ftManagerDestroyFighter` before `ftManagerMakeFighter` (and
+            // `ftMainSetStatus`'s stop, which a status set here remakes).
+            if let Some(old) = model.as_deref_mut() {
+                f.world.destroy(p, &mut old.demo);
+            }
+            *model = Some(make_model(p, fighter, port as u8, costume));
         } else if let Some(m) = model.as_deref_mut() {
             play(p, m);
             m.demo.tick(m.skeleton.frame());
@@ -159,7 +175,7 @@ fn tick_models(pack: Option<&Pack<'_>>, fighters: &[Option<Placed>; 4], f: &mut 
 /// `nFTDemoStatusNull` (submotion row 0 is each fighter's `Wait` figatree),
 /// else the demo status's.
 #[inline(never)]
-fn make_model(p: &Pack<'_>, fighter: layer::Fighter, port: u8) -> Box<Model> {
+fn make_model(p: &Pack<'_>, fighter: layer::Fighter, port: u8, costume: u8) -> Box<Model> {
     let kind = fighter.kind as u32;
     let slot = match fighter.status {
         None => ssb_rom::anim::SLOT_WAIT,
@@ -176,8 +192,8 @@ fn make_model(p: &Pack<'_>, fighter: layer::Fighter, port: u8) -> Box<Model> {
         // The select motions are unflagged: the `animlock` parts stay
         // frozen (RE-509).
         skeleton: ssb_psp_runtime::scene::fighter_skeleton(fighter.kind, 1.0),
-        // The select's costume is the layer's; the effects need none.
-        demo: ssb_game::demo_fighter::DemoFighter::new(fighter.kind, port, 0),
+        // `desc.costume`; only the draw reads it, from the select.
+        demo: ssb_game::demo_fighter::DemoFighter::new(fighter.kind, port, costume),
     });
     if let Some(anim) = p.fighter_anim(kind, slot) {
         m.skeleton.start(p, &anim, 0.0, 1.0);

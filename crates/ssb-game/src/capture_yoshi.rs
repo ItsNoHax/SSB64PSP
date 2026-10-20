@@ -252,6 +252,17 @@ fn set_egg(f: &mut Fighter) {
     f.egg.lr = lr;
 }
 
+/// The egg effect's process in the fighter's hitlag.
+/// `efManagerYoshiEggLayProcUpdate` never reads `is_pause_effect` and the
+/// egg sets no `proc_lagstart`, so the egg plays through the hitlag of a
+/// hit on it: [`Fighter`]'s update calls this in hitlag, where
+/// [`update_egg`] does not run.
+pub fn tick_egg_effect(f: &mut Fighter) {
+    if egg_effect(f).is_some() {
+        f.egg.effect.process();
+    }
+}
+
 /// `ftCommonYoshiEggProcUpdate`: the egg ends on the frame after the break
 /// animation finishes.
 ///
@@ -435,6 +446,34 @@ mod tests {
         f.egg.stage = 3;
         update_held(&mut f, Vec3::ZERO);
         f
+    }
+
+    /// `efManagerYoshiEggLayProcUpdate` never reads `is_pause_effect` and
+    /// the egg sets no `proc_lagstart`: a hit on the egg (`damage_lag`
+    /// hitlag) holds the fighter, not the egg's animation.
+    #[test]
+    fn the_egg_effect_keeps_playing_through_hitlag() {
+        let surfaces = || core::iter::empty::<crate::weapon::MapSurface>();
+        let mut f = egg();
+        for _ in 0..3 {
+            update_egg(&mut f);
+        }
+        assert_eq!(
+            (f.egg.effect.index, f.egg.effect.plays),
+            (EGG_ANIM_THROW, 3)
+        );
+        let frame = f.status.anim_frame;
+        f.hitlag = 5;
+        for t in 1..=4 {
+            f.tick_interrupt(&surfaces);
+            assert!(f.is_in_hitlag());
+            assert_eq!(f.egg.effect.plays, 3 + t, "hitlag tick {t}");
+        }
+        assert_eq!(f.status.anim_frame, frame, "the fighter is held");
+        // The last hitlag tick runs the full update: one play, not two.
+        f.tick_interrupt(&surfaces);
+        assert!(!f.is_in_hitlag());
+        assert_eq!(f.egg.effect.plays, 8);
     }
 
     /// Frames until the egg breaks open, driving the source callback order.

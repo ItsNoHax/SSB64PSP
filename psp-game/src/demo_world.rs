@@ -105,6 +105,17 @@ impl DemoWorld {
         }
     }
 
+    /// `ftManagerDestroyFighter`'s `ftParamProcStopEffect`, before the host
+    /// drops or remakes `demo`: its attached effects are ejected now. The
+    /// hosts flush after every tick, so the stop is all the queue holds;
+    /// the effects it made unattached keep playing in this world.
+    pub fn destroy(&mut self, p: &Pack<'_>, demo: &mut DemoFighter) {
+        demo.destroy();
+        if self.with(p, |rt| demo.flush_effects(rt)).is_none() {
+            demo.fighter.effects.clear();
+        }
+    }
+
     /// The fighter camera's particle lists, after its fighters.
     ///
     /// # Safety

@@ -416,6 +416,16 @@ fn make_magnet_effect(f: &mut Fighter) {
     }
 }
 
+/// The field's own process: `dEFManagerNessPsychicMagnetEffectDesc` runs
+/// bare `gcPlayAnimAll`, which never reads `is_pause_effect`, and
+/// `ftnessspeciallw.c` sets no `proc_lagstart`. The field plays through
+/// Ness's hitlag: [`Fighter`]'s update calls this in hitlag too.
+pub fn tick_magnet_effect(f: &mut Fighter) {
+    if magnet_effect_ticks(f).is_some() {
+        f.ness.magnet_effect = f.ness.magnet_effect.map(|t| t.saturating_add(1));
+    }
+}
+
 pub fn absorbing(f: &Fighter) -> bool {
     matches!(
         f.status.status,
@@ -445,10 +455,7 @@ pub fn update(f: &mut Fighter) {
     let AnyStatus::Ness(s) = f.status.status else {
         return;
     };
-    // The field's own `gcPlayAnimAll`; nothing pauses it.
-    if magnet_effect_ticks(f).is_some() {
-        f.ness.magnet_effect = f.ness.magnet_effect.map(|t| t.saturating_add(1));
-    }
+    tick_magnet_effect(f);
     match s {
         N::SpecialHiStart | N::SpecialAirHiStart => {
             if f.status.animation_ended() {

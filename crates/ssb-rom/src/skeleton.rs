@@ -68,8 +68,11 @@ pub struct Skeleton {
     /// of `anims` while `anim_joint` is set: the battle-entry slots.
     joints32: [Option<StageJoint>; MAX_JOINTS],
     anim_joint: bool,
-    /// `GObj::anim_frame` as the 32-bit parse last wrote it.
-    frame32: f32,
+    /// The fighter `GObj::anim_frame`: seeded by `start`, then rewritten by
+    /// every joint whose parse writes it, in joint order, so the last writer
+    /// of a tick wins (`ftParamUpdateAnimKeys`). Both the 16-bit and the
+    /// 32-bit parse write it.
+    gobj_frame: f32,
     /// Current local transform per joint, seeded from the node's rest pose.
     poses: [JointPose; MAX_JOINTS],
     joint_count: usize,
@@ -195,7 +198,7 @@ impl Default for Skeleton {
             anims: core::array::from_fn(|_| JointAnim::inert()),
             joints32: [None; MAX_JOINTS],
             anim_joint: false,
-            frame32: 0.0,
+            gobj_frame: 0.0,
             poses: [JointPose::default(); MAX_JOINTS],
             joint_count: 0,
             speed: 1.0,
@@ -214,20 +217,14 @@ impl Skeleton {
         self.joint_count
     }
 
-    /// Frames elapsed in the animation, from its first joint.
+    /// The fighter `GObj::anim_frame`: frames elapsed while the clip runs.
     ///
     /// Goes `<= 0` when the script ends, which is the sentinel the status
-    /// machine tests (RE-035). Every joint of one animation runs the same
-    /// clock, so reading the first is enough.
+    /// machine tests (RE-035). After the end no joint writes it, so it keeps
+    /// the end tick's `anim_wait` (`ftanim.c:120`), which is `0.0` only when
+    /// the clip's length is a whole number of ticks.
     pub fn frame(&self) -> f32 {
-        if self.anim_joint {
-            return self.frame32;
-        }
-        self.anims
-            .iter()
-            .take(self.joint_count)
-            .find(|a| !a.ended())
-            .map_or(0.0, |a| a.frame())
+        self.gobj_frame
     }
 
     /// Whether every joint's script has run out.
@@ -265,7 +262,7 @@ impl Skeleton {
         self.joint_count = 0;
         self.speed = speed;
         self.anim_joint = anim.fighter < 27 && crate::anim::is_anim_joint_slot(anim.slot as usize);
-        self.frame32 = frame;
+        self.gobj_frame = frame;
         let count = (anim.joint_count as usize).min(MAX_JOINTS);
         for i in 0..count {
             let Some(joint) = pack.anim_joint(anim.first_joint + i as u32) else {
@@ -333,10 +330,10 @@ impl Skeleton {
                     self.joints32[i] = None;
                     continue;
                 }
-                // The first joint to write it sets the fighter's
-                // `anim_frame`, which `ftCommonAppearProcUpdate` reads.
+                // Each joint that writes it sets the fighter's `anim_frame`,
+                // which `ftCommonAppearProcUpdate` reads; the last one wins.
                 if let Some(f) = joint.gobj_frame() {
-                    self.frame32 = f;
+                    self.gobj_frame = f;
                 }
                 continue;
             }
@@ -344,6 +341,10 @@ impl Skeleton {
             {
                 self.anims[i] = JointAnim::inert();
                 failed.get_or_insert(e);
+                continue;
+            }
+            if let Some(f) = self.anims[i].gobj_frame() {
+                self.gobj_frame = f;
             }
         }
         match failed {
@@ -2189,6 +2190,61 @@ mod tests {
         }
         assert_eq!(sk.pose(0).unwrap().translate, [0.0, 7.5, 0.0]);
         assert!(sk.ended(), "a skeleton with no live script has ended");
+    }
+
+    /// Two joints on nodes 1 and 2: the first blocks `a` frames, the second
+    /// `b`, both then End.
+    fn two_joint_clip(a: u16, b: u16) -> alloc::vec::Vec<u8> {
+        const BLOCK: u16 = (1 << 11) | 1;
+        let words = [BLOCK, a, 0, BLOCK, b, 0];
+        let script: alloc::vec::Vec<u8> = words.iter().flat_map(|w| w.to_be_bytes()).collect();
+        let graph = chain();
+        let mut w = PackWriter::new();
+        w.add_object(&graph, 296, |_| None, &[]);
+        w.add_anim(
+            0,
+            0,
+            504,
+            10,
+            &script,
+            &[(Some(0), Some(1)), (Some(6), Some(2))],
+        );
+        w.finish()
+    }
+
+    fn frames(bytes: &[u8], start: f32, ticks: usize) -> alloc::vec::Vec<f32> {
+        let pack = crate::pack::Pack::open(bytes).unwrap();
+        let anim = pack.anim(0).unwrap();
+        let script = pack.anim_script(&anim).unwrap();
+        let mut sk = Skeleton::new();
+        sk.start(&pack, &anim, start, 1.0);
+        (0..ticks)
+            .map(|_| {
+                sk.tick(script).unwrap();
+                sk.frame()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_last_joint_to_write_the_frame_in_a_tick_wins() {
+        // `ftParamUpdateAnimKeys` parses joints in order and each writes the
+        // fighter GObj's `anim_frame`. A shorter last joint ends on tick 3
+        // and its End writes 0 over the first joint's 2.
+        let bytes = two_joint_clip(4, 2);
+        assert_eq!(frames(&bytes, 0.0, 7), [0.0, 1.0, 0.0, 3.0, 0.0, 0.0, 0.0]);
+        // A shorter first joint is overwritten by the still-running second.
+        let bytes = two_joint_clip(2, 4);
+        assert_eq!(frames(&bytes, 0.0, 7), [0.0, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn after_the_end_the_frame_keeps_the_end_tick_wait() {
+        // Started half a frame in, the clip ends at `anim_wait` -0.5 and the
+        // GObj keeps it: no later tick writes, and it never reads 0.
+        let bytes = two_joint_clip(2, 2);
+        let got = frames(&bytes, 0.5, 6);
+        assert_eq!(got, [0.5, 1.5, -0.5, -0.5, -0.5, -0.5]);
     }
 
     #[test]

@@ -125,6 +125,17 @@ impl DemoFighter {
         crate::colanim::run_update(f);
     }
 
+    /// `ftManagerDestroyFighter`'s effect half: `ftParamProcStopEffect`
+    /// when `is_effect_attach`, queued for the host's next
+    /// [`Self::flush_effects`], which must run before the fighter is
+    /// dropped. Effects the fighter made unattached (dust, sparkles) and
+    /// the particle pools are left alone: the select and Characters scenes
+    /// remake a fighter without touching them (`mnCharactersChangeFighter`,
+    /// `mnPlayersVSMakeFighter`).
+    pub fn destroy(&mut self) {
+        crate::fteffect::stop_attached(&mut self.fighter);
+    }
+
     /// The model and texture parts the display draws.
     pub fn parts(&self) -> &crate::modelpart::ModelParts {
         &self.fighter.model_parts
@@ -279,6 +290,104 @@ mod tests {
         assert!(take(&mut d).is_empty());
         // Mario's run row has no script.
         assert!(take(&mut DemoFighter::start(FighterKind::Mario, 0, 0, 6)).is_empty());
+    }
+
+    use crate::particle::tests::{any_bank, live_structs};
+
+    /// `mnCharactersChangeFighter` and `mnPlayersVSMakeFighter` run
+    /// `ftManagerDestroyFighter`, whose `ftParamProcStopEffect` ejects only
+    /// that fighter's attached effects: another fighter's attached effects
+    /// and loose particles keep playing.
+    #[test]
+    fn destroy_ejects_only_the_fighters_attached_effects() {
+        use crate::effect::{EffectRuntime, Effects};
+        let bank = any_bank();
+        let mut p = Box::new(crate::particle::Particles::new());
+        let mut e = Effects::new(0);
+        let mut rt = EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &bank,
+        };
+        let mut pikachu = DemoFighter::new(FighterKind::Pikachu, 0, 0);
+        let mut other = DemoFighter::new(FighterKind::Pikachu, 1, 0);
+        for (d, x) in [(&mut pikachu, 100.0), (&mut other, -100.0)] {
+            d.fighter.effects.push(FighterEffect::ThunderShock {
+                pos: Vec3::new(x, 100.0, 0.0),
+                gfx: 2,
+            });
+            d.flush_effects(&mut rt);
+            assert!(d.fighter.is_effect_attach);
+        }
+        let mut kirby = DemoFighter::new(FighterKind::Kirby, 2, 0);
+        kirby.fighter.effects.push(FighterEffect::KirbyInhaleWind);
+        kirby.flush_effects(&mut rt);
+        assert!(kirby.fighter.is_effect_attach);
+        let wind = live_structs(rt.particles);
+        assert!(!wind.is_empty(), "the wind made its particle");
+        let loose = crate::particle::make_script_id(rt.particles, rt.banks, 0, 1);
+        assert_ne!(loose, crate::particle::NIL);
+        assert_eq!(rt.effects.displays().count(), 2);
+
+        pikachu.destroy();
+        assert!(!pikachu.fighter.is_effect_attach);
+        pikachu.flush_effects(&mut rt);
+        let xs: Vec<f32> = rt.effects.displays().map(|d| d.translate.x).collect();
+        assert_eq!(xs, [-100.0], "only the other fighter's shock is left");
+        assert!(other.fighter.is_effect_attach);
+
+        kirby.destroy();
+        kirby.flush_effects(&mut rt);
+        let left = live_structs(rt.particles);
+        assert!(left.iter().all(|xf| !wind.contains(xf)), "{left:?}");
+        assert_eq!(left.len(), 1, "the loose particle keeps playing");
+    }
+
+    #[test]
+    fn destroying_a_fighter_with_nothing_attached_queues_nothing() {
+        let mut d = DemoFighter::start(FighterKind::Mario, 0, 3, 0);
+        d.fighter.effects.clear();
+        d.destroy();
+        assert!(d.fighter.effects.is_empty());
+        assert_eq!(d.fighter.costume, 3, "the select's costume is kept");
+    }
+
+    /// The 1P intro, continue and ending scenes (`campaign_screen`) run
+    /// these rows with no particle world: FigureDropped (9), FigureStand
+    /// (10), 12, IntroL (13) and IntroR (14). No fighter's script for them
+    /// makes an effect (their scripts are `0x80000000` or carry no
+    /// `nFTMotionEventEffect`), so dropping the queue there loses nothing.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_campaign_rows_make_no_effects() {
+        let mut live = 0;
+        for k in 0..12 {
+            let kind = FighterKind::from_ordinal(k).unwrap();
+            for row in [9, 10, 12, 13, 14] {
+                let mut d = DemoFighter::start(kind, 0, 0, row);
+                let rows = crate::motion::demo_scripts(kind).map(|s| s.rows);
+                live += usize::from(rows.is_some_and(|r| r[row] != crate::motion::NO_SCRIPT));
+                for t in 1..=600 {
+                    assert!(d.fighter.effects.is_empty(), "{kind:?} row {row} tick {t}");
+                    d.tick(t as f32);
+                }
+                assert!(d.fighter.effects.is_empty(), "{kind:?} row {row}");
+            }
+        }
+        // Not vacuous: some of these rows do run scripts.
+        assert!(live > 0);
+    }
+
+    /// The control: Link's Selected row (1) sparkles his sword.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_row_with_effects_fails_the_campaign_audit() {
+        let mut d = DemoFighter::start(FighterKind::Link, 0, 0, 1);
+        let made = (1..=600).any(|t| {
+            d.tick(t as f32);
+            !d.fighter.effects.is_empty()
+        });
+        assert!(made);
     }
 
     #[test]

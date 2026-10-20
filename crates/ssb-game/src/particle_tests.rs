@@ -53,6 +53,36 @@ impl Banks for TestBank {
     }
 }
 
+/// One [`TestBank`] served as every bank (Kirby's 3 included).
+pub(crate) struct AnyBank(pub TestBank);
+
+impl Banks for AnyBank {
+    fn script_count(&self, _: u8) -> u16 {
+        self.0.script_count(0)
+    }
+
+    fn script(&self, _: u8, id: u16) -> Option<Script<'_>> {
+        self.0.script(0, id)
+    }
+
+    fn texture_flags(&self, _: u8, t: u16) -> u32 {
+        self.0.texture_flags(0, t)
+    }
+}
+
+/// An [`AnyBank`] whose every script waits and lives 60 frames.
+pub(crate) fn any_bank() -> AnyBank {
+    static WAIT: &[u8] = &[0x1F, 0xFF];
+    AnyBank(TestBank::new(&[TestBank::particle(60, 10.0, WAIT); 0x80]))
+}
+
+/// Every live particle struct's transform, link by link.
+pub(crate) fn live_structs(p: &Particles) -> std::vec::Vec<u8> {
+    (0..LINKS_NUM)
+        .flat_map(|l| p.list(l).map(|(_, s)| s.xf))
+        .collect()
+}
+
 /// Counts the `proc_dead` calls by transform.
 #[derive(Default)]
 struct CountDead {

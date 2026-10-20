@@ -304,7 +304,9 @@ impl Presentation {
             if !changed && !m.frozen {
                 play(p, m);
                 m.demo.tick(m.skeleton.frame());
-                // No particle world here: the rows' effects are dropped.
+                // No particle world here. These rows make no effects
+                // (`demo_fighter::tests::the_campaign_rows_make_no_effects`),
+                // so clearing the queue drops nothing.
                 m.demo.fighter.effects.clear();
             }
             if matches!(screen, Screen::Continue(_) | Screen::Ending(_))

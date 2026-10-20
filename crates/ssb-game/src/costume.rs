@@ -127,6 +127,21 @@ mod tests {
         );
     }
 
+    /// `mnCharactersMakeFighter`'s `ftParamGetCostumeCommonID(fkind, 0)`:
+    /// `dFTParamCostumeIDs[fkind].royal[0]` is 0 for every playable kind,
+    /// and the select slots already hold costume IDs (Captain Falcon's
+    /// C-Right is 4, Link's C-Down 3).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_characters_costume_is_each_fighters_first_royal_id() {
+        for k in 0..12 {
+            let kind = FighterKind::from_ordinal(k).unwrap();
+            assert_eq!(costume_common_id(kind, 0), 0, "{kind:?}");
+        }
+        assert_eq!(costume_common_id(FighterKind::Captain, 1), 4);
+        assert_eq!(costume_common_id(FighterKind::Link, 2), 3);
+    }
+
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_costume_the_other_slot_wears_is_denied() {

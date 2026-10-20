@@ -16,9 +16,8 @@
 
 ## Current work
 
-- Landed: trig parity chunk 6 and N64 stick harness (RE-503): Fox/Pikachu up-special pitch bit-exact vs N64; Fox Bound and AirHiEnd, landing keeps `vel_air`, Pikachu ground End fixes.
-- Rebaselined: `f1-vs-four` ~99038 native px, `f1-vs-four-magnifier` ~98677, `f1-vs-team` 96399 (CPU reads landing `vel_air`, RE-503). New rows: fox-fire, pikachu-quick, ness-jibaku, vs-four-fly-roll, twister-spin, kirby-stone-slope, captain-kick-roll.
-- Open: shield poke at `vsshield` t=610 (0.7-unit margin) awaits an N64 trace (RE-418).
+- Landed: particle loose ends (RE-540, RE-528). Demo fighters destroy attached effects on change and take the slot costume; `Skeleton::frame` is the GObj `anim_frame`. Magnet, egg effect, charge-shot spin, Sing and grapple glow run through hitlag (only `proc_lagstart` users pause). No golden moved.
+- Open: shield poke at `vsshield` t=610 (0.7-unit margin) awaits an N64 trace (RE-418). Unported effects and `lag_pauses_effects` rows are in `PLAN.md`.
 
 ## Next
 
@@ -31,7 +30,7 @@
 
 ## Verification
 
-Baseline: trig parity chunk 6, N64 stick harness.
+Baseline: particle loose ends (RE-540).
 
 | Check | Result |
 |---|---|

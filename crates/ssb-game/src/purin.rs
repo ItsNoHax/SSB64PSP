@@ -251,6 +251,16 @@ pub fn sing_effect_ticks(f: &Fighter) -> Option<u16> {
     })
 }
 
+/// `efManagerHaveStructProcUpdate` on the Sing notes. `ftpurinspecialhi.c`
+/// sets no `proc_lagstart = ftParamProcPauseEffect`, so the notes play
+/// through Jigglypuff's hitlag: [`Fighter`]'s update calls this in hitlag
+/// too.
+pub fn tick_sing_effect(f: &mut Fighter) {
+    if sing_effect_ticks(f).is_some() {
+        f.purin.sing_effect = f.purin.sing_effect.map(|t| t.saturating_add(1));
+    }
+}
+
 /// `ftPurinSpecialLwSetStatus` / `ftPurinSpecialAirLwSetStatus`.
 pub fn set_special_lw(f: &mut Fighter) {
     let s = if f.is_grounded() {
@@ -327,11 +337,7 @@ pub fn update(f: &mut Fighter) {
     let AnyStatus::Purin(current) = f.status.status else {
         return;
     };
-    // `efManagerHaveStructProcUpdate`; `ftParamProcPauseEffect` holds it
-    // through hitlag.
-    if sing_effect_ticks(f).is_some() && !f.is_in_hitlag() {
-        f.purin.sing_effect = f.purin.sing_effect.map(|t| t.saturating_add(1));
-    }
+    tick_sing_effect(f);
     // `ftPurinSpecialHiProcUpdate`: both Sing scripts set flag 1 at time
     // zero. The effect plays its animation once when it is made.
     if matches!(current, P::SpecialHi | P::SpecialAirHi) && f.motion_script.flags[1] == 1 {
@@ -711,6 +717,30 @@ mod tests {
         assert_eq!(sing_effect_ticks(&f), Some(3));
         status::set_fall(&mut f);
         assert_eq!(sing_effect_ticks(&f), None);
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn sing_notes_keep_playing_through_purins_hitlag() {
+        // `ftpurinspecialhi.c` sets no `proc_lagstart`, so the notes'
+        // `efManagerHaveStructProcUpdate` never sees `is_pause_effect`.
+        let surfaces = || core::iter::empty::<crate::weapon::MapSurface>();
+        let mut f = purin(true);
+        set_special_hi(&mut f);
+        steps(&mut f, 3);
+        assert_eq!(sing_effect_ticks(&f), Some(3));
+        let frame = f.status.anim_frame;
+        f.hitlag = 5;
+        for t in 1..=4 {
+            f.tick_interrupt(&surfaces);
+            assert!(f.is_in_hitlag());
+            assert_eq!(sing_effect_ticks(&f), Some(3 + t), "hitlag tick {t}");
+        }
+        assert_eq!(f.status.anim_frame, frame, "the fighter is held");
+        // The last hitlag tick runs the full update: one tick, not two.
+        f.tick_interrupt(&surfaces);
+        assert!(!f.is_in_hitlag());
+        assert_eq!(sing_effect_ticks(&f), Some(8));
     }
 
     #[test]

@@ -123,12 +123,12 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Boss-intro camera thread | `BossCameraAnim` is set after the fighter step; the decomp runs it as a priority-5 thread before the camera. Untraced → boss-intro N64 camera trace, compare per tick | RE-543 |
 | Captain's car | Battle-camera fallback before TopN in bounds unverified (`f1-vs-car`) → warp-boot capture, focus id 2, Captain | RE-523 |
 | PK Thunder trail, PK Wave | Needs N64 capture. Trail: `efManagerPKThunderTrailMakeEffect`, 335 + 0x9050, link 15; reflected trail link 18. PK Wave: 335 + 0x9A10, joint 5; made at `ftNessSpecialHiHold` start (ftnessspecialhi.c:318), drawn nowhere | RE-413, RE-415, RE-416, RE-427 |
+| Unported fighter effects | Kirby Final Cutter Up/Down/Draw/Trail (NoEject, paused by specialhi lagstart); `CaptureKirbyStar`, `LoseKirbyStar`. PK Wave has its own row | RE-540 |
+| `lag_pauses_effects` | Set only for Pikachu (`status.rs:5459`); Link spin, Captain specialn/lw, Kirby specialhi do not. Check owned displays (`FireSpark`, `effect.rs:1971`) made in those statuses | RE-540 |
 | Samus fire spark | Up smash, forward air; 84 + 0x2040. Needs matrix kind 0x49 billboard along joint 16, Samus capture | RE-427 |
-| Demo fighter effects | Campaign rows drop effects (no particle world); Characters page change keeps old particles; Characters/select costume 0; `Skeleton::frame` 0 after a clip ends | RE-528 |
 | Same-frame makes | Process order modelled; N64 two-fighter confirmation needs a cpufx `mkrom.py` per-port input patch (cpufx ROMs mirror controller 0) | RE-538, RE-540, RE-542 |
 | Chunk 5 golden | Golden scene reaching wall-damage impact wave / PK Thunder bound / Kirby star bounce; unit tests only today | RE-503 |
 | cpufx tick map | cpufx-n/u: 399+el; clean trace: 398+el; cpufx-d: 399 | RE-540 |
-| Paused particles | Attached particle effects ignore pause (`ftParamPauseEffect` reaches displays only) | RE-540 |
 | Spin Attack band | Less saturated than N64 at el48-52 | RE-540 |
 | cpufx pixel captures | N64 pixels for cpufx-d and yoshi-explosion row (RE-536 compared timelines only); second Kirby costume vs N64 HUD icons in cpufx-k; PSP VS camera frames tighter (global MAE unusable) | RE-536 |
 | Kirby | Spit stars; Inhale downward wiggle | RE-343, RE-348, RE-376, RE-378, RE-417 |
