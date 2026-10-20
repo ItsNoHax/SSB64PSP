@@ -125,6 +125,14 @@ fn intents() -> Vec<Intent> {
         intent(S::YoshiRollF, K::Yoshi, &["EscapeF"], 55, &["EscapeF"]),
         intent(S::YoshiRollB, K::Yoshi, &["EscapeB"], 55, &["EscapeB"]),
         intent(S::YoshiShieldBreak, K::Yoshi, &["Guard"], 30, &[]),
+        intent(S::FoxFire, K::Fox, &["SpecialAirHi"], 45, &["SpecialAirHi"]),
+        intent(
+            S::PikachuQuick,
+            K::Pikachu,
+            &["SpecialAirHi"],
+            45,
+            &["SpecialAirHi"],
+        ),
     ]
 }
 

@@ -2,7 +2,7 @@
 //! `ftcommonattack100.c`). Motion-event frames are from file 235 (US).
 
 use ssb_engine::input::N64Buttons;
-use ssb_engine::math::{sin_cos, Vec3};
+use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 
 use crate::fighter::Fighter;
 use crate::grab::{GrabEvent, ThrowHitDesc};
@@ -421,7 +421,14 @@ pub fn update(f: &mut Fighter) {
         }
         CaptainStatus::SpecialLw | CaptainStatus::SpecialLwAir => {
             if current == CaptainStatus::SpecialLw && !f.is_grounded() && f.status.clock >= 32.0 {
+                // `ftCaptainSpecialLwAirSetStatus`: TopN keeps the floor's
+                // roll through `ftMainSetStatus`, and TransN takes it, so
+                // `ftPhysicsGetAirVelTransN` turns the kick's run by it.
+                let roll = f.topn_rotate_z;
                 set(f, CaptainStatus::SpecialLwAir, 0.0, 30.0);
+                f.topn_rotate_z = roll;
+                f.root_motion.rotate_z = roll;
+                f.pose_writes.transn_rotate_z = Some(roll);
             } else if f.status.animation_ended() {
                 status::set_wait_or_fall(f);
             }
@@ -462,6 +469,15 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
         ) => {
             if f.status.status == AnyStatus::Captain(CaptainStatus::SpecialN) {
                 update_punch_effect(f);
+            }
+            // `ftCaptainSpecialLwProcPhysics` (both kick statuses): on the
+            // ground, TopN takes the floor's roll first.
+            if matches!(
+                f.status.status,
+                AnyStatus::Captain(CaptainStatus::SpecialLw | CaptainStatus::SpecialLwAir)
+            ) {
+                let normal = f.floor.map_or(Vec2::new(0.0, 1.0), |s| s.normal);
+                f.topn_rotate_z = -sy_arc_tan2(normal.x, normal.y);
             }
             physics::apply_ground_vel_transn(
                 &mut f.physics,

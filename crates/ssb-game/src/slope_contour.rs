@@ -168,8 +168,8 @@ pub fn transform_matrix(t: Vec3, r: [f32; 3], s: [f32; 3]) -> PartMtx {
 }
 
 /// TopN's collision local: `translate` the fighter's position, `rotate`
-/// `(rotate.x, lr * 90°, 0)` (the slope tilt, `ftMainSetStatus`'s yaw or
-/// a turn's), `scale` `attr->size`. A held fighter's TopN turned to the
+/// `(rotate.x, lr * 90°, rotate.z)` (the slope tilt, `ftMainSetStatus`'s
+/// yaw or a turn's, a floor roll), `scale` `attr->size`. A held fighter's TopN turned to the
 /// catcher's hand takes those axes.
 pub fn topn_local(f: &crate::fighter::Fighter) -> PartMtx {
     let size = f.attributes.size;
@@ -186,7 +186,11 @@ pub fn topn_local(f: &crate::fighter::Fighter) -> PartMtx {
         };
         return [row(a[0]), row(a[1]), row(a[2]), [f.pos.x, f.pos.y, f.pos.z]];
     }
-    transform_matrix(f.pos, [f.topn_rotate_x, topn_yaw(f), 0.0], [size; 3])
+    transform_matrix(
+        f.pos,
+        [f.topn_rotate_x, topn_yaw(f), f.topn_rotate_z],
+        [size; 3],
+    )
 }
 
 /// TopN's `rotate.y`: `lr * 90°` from `ftMainSetStatus` (a status that
@@ -203,14 +207,15 @@ pub fn topn_yaw(f: &crate::fighter::Fighter) -> f32 {
 
 /// TopN's `rotate`, as its display (kind `0x4B`) builds it: a held
 /// fighter's from its catcher's hand (`ftCommonCapturePulledRotateScale`),
-/// otherwise `(rotate.x, yaw, 0)` with the slope tilt in `rotate.x`.
+/// otherwise `(rotate.x, yaw, rotate.z)` with the slope tilt in `rotate.x`
+/// and a floor roll in `rotate.z`.
 pub fn topn_rotate(f: &crate::fighter::Fighter) -> [f32; 3] {
     let hand = crate::grab::rotates_topn(f.status.status)
         .then(|| f.grab.holder.and_then(|h| h.anchor_transform))
         .flatten();
     match hand {
         Some(joint) => crate::grab::held_root_rotate(joint),
-        None => [f.topn_rotate_x, topn_yaw(f), 0.0],
+        None => [f.topn_rotate_x, topn_yaw(f), f.topn_rotate_z],
     }
 }
 

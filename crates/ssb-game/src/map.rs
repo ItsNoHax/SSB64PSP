@@ -1948,10 +1948,15 @@ pub(crate) fn air_callback_at(f: &mut Fighter, translate: Vec3) {
                     } else {
                         Facing::Left
                     };
+                    // `fp->joints[nFTPartsJointTopN]->rotate.vec.f.y = lr *
+                    // F_CST_DTOR32(90)`, the bits `F_CLC_DTOR32(90)` has.
+                    f.topn_lr = f.facing.sign();
                     f.fox_special_hi.angle = ssb_engine::math::sy_arc_tan2(
                         f.physics.vel_air.y,
                         f.physics.vel_air.x * f.facing.sign(),
                     );
+                    // `ftFoxSpecialHiUpdateModelPitch` (`ftfoxspecialhi.c:266`).
+                    crate::model_pitch::special_hi(f);
                 }
                 // Source gives ceiling, LWall, RWall priority, even when
                 // the chosen contact is too steep to redirect.

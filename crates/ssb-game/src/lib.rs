@@ -95,6 +95,7 @@ pub mod link;
 mod luigi;
 pub mod map;
 pub mod menu;
+pub mod model_pitch;
 pub mod modelpart;
 pub mod monster_weapon;
 pub mod motion;

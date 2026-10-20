@@ -31,6 +31,12 @@ const SPECIAL_TICK: u64 = 45;
 /// 33 (RE-516).
 const AIR_SPECIAL_TICK: u64 = 40;
 
+/// `foxfire` and `pikachuquick`'s stick: up past the special-high range
+/// and left, the way Training's spawn faces; `|x| + |y|` is well past
+/// Fire Fox's 45-unit angled gate.
+const DIAGONAL_X: i8 = -45;
+const DIAGONAL_Y: i8 = 70;
+
 /// The delay of the jump route the dummy scenes follow. The route was
 /// found for a fighter standing free from tick 13; the jab runs to tick 25
 /// (Mario, Kirby) or 31 (Yoshi) and swallowed its first jump (RE-516).
@@ -105,6 +111,8 @@ macro_rules! scripted_scene {
             | $crate::GameScene::YoshiRollB
             | $crate::GameScene::YoshiShieldBreak
             | $crate::GameScene::Shadows
+            | $crate::GameScene::FoxFire
+            | $crate::GameScene::PikachuQuick
     };
 }
 
@@ -150,6 +158,13 @@ pub const fn capture_tick(scene: GameScene) -> Option<u64> {
         // Forward and A at tick 50 enter `AttackS4`; a spark comes every 3
         // frames from frame 21 and lasts 7 plays: two are out here.
         PikachuSmash => 76,
+        // Up+B at tick 45 with the stick up and left; `SpecialHiHold`
+        // launches `SpecialAirHi` near tick 87, 13 of its 30 travel frames
+        // ago here.
+        FoxFire => 100,
+        // Up+B at tick 45 with the stick up and left; the zip
+        // (`SpecialAirHi`) runs ticks 65 to 69 and is 3 frames in here.
+        PikachuQuick => 68,
         // Up+B at tick 45; Egg Throw makes the egg on frame 4 and throws it
         // on frame 23, and it has flown some 16 frames here.
         Yoshi => 85,
@@ -249,7 +264,7 @@ fn buttons(scene: GameScene, tick: u64) -> u16 {
     match scene {
         Samus | SamusShot | SamusBomb | Link | LinkSpin | LinkSword | Yoshi | YoshiBomb
         | Captain | CaptainKick | Kirby | KirbyJab | Pikachu | PikachuSmash | Purin | Donkey
-        | Ness | NessThunder | NessMagnet | LinkBomb => match tick {
+        | Ness | NessThunder | NessMagnet | LinkBomb | FoxFire | PikachuQuick => match tick {
             4 | 8 => button::A,
             // `linksword` jabs; `pikachusmash` taps forward with A. The A at
             // tick 8 jabs on Training's first frame; both wait it out.
@@ -361,6 +376,15 @@ fn buttons(scene: GameScene, tick: u64) -> u16 {
 fn stick_x(scene: GameScene, tick: u64) -> i8 {
     use GameScene::*;
     match scene {
+        // Up and to the left from the B on: the special-high check, then
+        // the launch direction (RE-503).
+        FoxFire | PikachuQuick => {
+            if tick >= SPECIAL_TICK {
+                DIAGONAL_X
+            } else {
+                0
+            }
+        }
         LinkBomb => {
             if tick == 325 {
                 80
@@ -435,6 +459,8 @@ fn stick_y(scene: GameScene, tick: u64) -> i8 {
     use GameScene::*;
     if scene == Shield && (50..=60).contains(&tick) {
         40
+    } else if matches!(scene, FoxFire | PikachuQuick) && tick >= SPECIAL_TICK {
+        DIAGONAL_Y
     } else if (scene == Superjump && tick == 150)
         || (matches!(scene, LinkSpin | Yoshi | Kirby | Purin | NessThunder) && tick == SPECIAL_TICK)
     {

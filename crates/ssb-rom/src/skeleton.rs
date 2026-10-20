@@ -382,6 +382,13 @@ impl Skeleton {
         (joint < self.joint_count).then(|| &self.poses[joint])
     }
 
+    /// [`Self::pose`], to adjust in place: the next tick writes only the
+    /// tracks the clip animates (TransN's roll a status writes,
+    /// `ftCaptainSpecialLwAirSetStatus`).
+    pub fn pose_mut(&mut self, joint: usize) -> Option<&mut JointPose> {
+        (joint < self.joint_count).then(|| &mut self.poses[joint])
+    }
+
     /// The interposed `XRotN`'s pose, when the clip leads with it
     /// ([`Skeleton::lead_xrotn`]).
     pub fn lead_xrotn_pose(&self) -> Option<&JointPose> {

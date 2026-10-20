@@ -213,6 +213,10 @@ pub struct CombatAttrs {
     /// `is_have_voice`: gates `PlayVoiceStoreInfo` and
     /// `PlayLoopVoiceStoreInfo`.
     pub is_have_voice: bool,
+    /// `is_have_attacks3`, `is_have_attackhi3`, `is_have_attacklw3`: set
+    /// for every fighter in the ROM, so the tilt checks never read them
+    /// (`status::check_ftilt`).
+    pub is_have_tilts: [bool; 3],
     /// `joint_rfoot_id`, `joint_lfoot_id`: the leg roots
     /// `mpCommonUpdateFighterSlopeContour` bends.
     pub foot_joint_ids: [u8; 2],

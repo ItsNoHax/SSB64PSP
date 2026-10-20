@@ -190,6 +190,10 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
     }
     // `is_have_voice`: the 22nd one-bit field, MSB first.
     let is_have_voice = have & (1 << (31 - 21)) != 0;
+    // `is_have_attacks3`, `is_have_attackhi3`, `is_have_attacklw3`: the 4th
+    // to 6th fields.
+    let tilt = |i: u32| have & (1 << (31 - i)) != 0;
+    let tilts = format!("{}, {}, {}", tilt(3), tilt(4), tilt(5));
     // Master Hand's -1: no item-light joint.
     let light = if light < 0 {
         "u8::MAX".to_string()
@@ -209,6 +213,7 @@ fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
          \x20   dead_fgm_ids: [{}, {}],\n    deadup_sfx: {},\n\
          \x20   damage_sfx: {},\n    smash_sfx: [{}, {}, {}],\n\
          \x20   heavyget_sfx: {},\n    is_have_voice: {is_have_voice},\n\
+         \x20   is_have_tilts: [{tilts}],\n\
          \x20   foot_joint_ids: [{}, {}],\n    foot_rotates: [{}, {}],\n\
          \x20   foot_reach: {},\n    foot_slope_angle: {},\n\
          \x20   item_pickup: [{}],\n\

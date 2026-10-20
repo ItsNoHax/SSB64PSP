@@ -2108,7 +2108,13 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
     // The costume scenes use Fox so that no pick can collide with the Mario
     // dummy's costume.
     match capture_scene {
-        Some(GameScene::Fox | GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3) => {
+        Some(
+            GameScene::Fox
+            | GameScene::FoxFire
+            | GameScene::Costume1
+            | GameScene::Costume2
+            | GameScene::Costume3,
+        ) => {
             ssb_game::fighter::FighterKind::Fox
         }
         Some(GameScene::Luigi) => ssb_game::fighter::FighterKind::Luigi,
@@ -2131,7 +2137,8 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
             GameScene::Pikachu
             | GameScene::PikachuAir
             | GameScene::PikachuSmash
-            | GameScene::PikachuThunder,
+            | GameScene::PikachuThunder
+            | GameScene::PikachuQuick,
         ) => ssb_game::fighter::FighterKind::Pikachu,
         Some(GameScene::Purin | GameScene::PurinBow) => ssb_game::fighter::FighterKind::Purin,
         Some(GameScene::PikachuHat) => ssb_game::fighter::FighterKind::Pikachu,

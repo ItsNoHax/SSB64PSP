@@ -248,3 +248,22 @@ fn the_slot_order_follows_the_motion_enum() {
     assert_eq!(anim_slot(B::OkutsubushiStart), anim_slot(B::Okupunch1));
     assert_eq!(anim_slot(B::Appear), SLOT_DEFAULT + 29);
 }
+
+/// `ftBossDeadCenterSetStatus` takes `F_CST_DTOR32(45.0F)`; at 45 degrees
+/// the rounded constant and the calculated one give the same angle bits,
+/// so the launch velocity is the decomp's to the bit.
+#[test]
+fn dead_center_launch_uses_the_cst_angle() {
+    use ssb_engine::math::{cosf, f_clc_dtor32, sinf};
+    let a = f_cst_dtor32(45.0);
+    assert_eq!(a.to_bits(), f_clc_dtor32(45.0).to_bits());
+    assert_eq!(a.to_bits(), 45.0_f32.to_radians().to_bits());
+    let mut f = Fighter::new(FighterKind::Boss, 0, 1);
+    set_dead_center(&mut f);
+    assert_eq!(f.physics.vel_air.y.to_bits(), (sinf(a) * 100.0).to_bits());
+    assert_eq!(
+        f.physics.vel_air.z.to_bits(),
+        (-(cosf(a) * 100.0)).to_bits()
+    );
+    assert_eq!(f.physics.vel_air.x, 0.0);
+}

@@ -114,6 +114,7 @@ impl Posed {
             }
         }
         ssb_game::grab::refresh_held_attachment(&mut self.fighter);
+        self.apply_pose_writes(pack);
         self.sample_joints(pack);
         ssb_game::item_use::accessory(&mut self.fighter);
         self.sample_anchor(false);
@@ -146,7 +147,29 @@ impl Posed {
             return;
         }
         self.tick_animation(pack);
+        self.apply_pose_writes(pack);
         self.sample_joints(pack);
+    }
+
+    /// `apply_pose_writes`: the DObj writes a status queued.
+    pub fn apply_pose_writes(&mut self, pack: &ssb_rom::pack::Pack<'_>) {
+        let writes = core::mem::take(&mut self.fighter.pose_writes);
+        if let Some(pitch) = writes.joint4 {
+            let first = pack.object(self.object).map(|o| o.first_node);
+            if let Some(pose) = first.and_then(|n| self.skeleton.node_pose_mut(n)) {
+                pose.rotate[0] = pitch.rotate_x;
+                if let Some(scale) = pitch.scale {
+                    pose.scale = scale;
+                }
+            }
+        }
+        if let Some(z) = writes.transn_rotate_z {
+            if self.skeleton.joint_node(0).is_none() {
+                if let Some(pose) = self.skeleton.pose_mut(0) {
+                    pose.rotate[2] = z;
+                }
+            }
+        }
     }
 
     /// `tick_skeleton_animation`: a new status starts its clip on its

@@ -1352,8 +1352,11 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
                 .floor
                 .map(|s| (s.normal, s.flags))
                 .unwrap_or((Vec2::new(0.0, 1.0), 0));
-            let angle =
-                (-sy_arc_tan2(normal.x, normal.y)).clamp(-STONE_SLIDE_ANGLE, STONE_SLIDE_ANGLE);
+            // `ftKirbySpecialLwGetGroundAxisYaw`: the floor's roll, which
+            // it also gives TopN (`rotate.z`).
+            let roll = -sy_arc_tan2(normal.x, normal.y);
+            f.topn_rotate_z = roll;
+            let angle = roll.clamp(-STONE_SLIDE_ANGLE, STONE_SLIDE_ANGLE);
             let (sin, _) = sin_cos(angle);
             // `vel_ground` is facing-relative in the source.
             let lr = f.facing.sign();

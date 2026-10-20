@@ -221,12 +221,13 @@ pub fn collision_axes(f: &Fighter) -> [Vec3; 3] {
             return crate::grab::held_collision_axes(hand);
         }
     }
-    // A slope tilt (`proc_slope`'s `FULL`) turns TopN about x as well.
-    if f.topn_rotate_x != 0.0 {
+    // A slope tilt (`proc_slope`'s `FULL`) turns TopN about x as well, a
+    // floor roll (Kirby's Stone, the Falcon Kick) about z.
+    if f.topn_rotate_x != 0.0 || f.topn_rotate_z != 0.0 {
         let yaw = model_yaw(f).unwrap_or(f.topn_lr * ssb_engine::math::f_clc_dtor32(90.0));
         let m = crate::slope_contour::transform_matrix(
             Vec3::ZERO,
-            [f.topn_rotate_x, yaw, 0.0],
+            [f.topn_rotate_x, yaw, f.topn_rotate_z],
             [1.0; 3],
         );
         return [0, 1, 2].map(|r| Vec3::new(m[r][0], m[r][1], m[r][2]));

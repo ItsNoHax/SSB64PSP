@@ -27,7 +27,7 @@
 use crate::fighter::{Facing, Fighter};
 use crate::status::{self, AnyStatus, BossStatus as B, StatusTiming};
 use crate::weapon::{MapSurface, MapSurfaceKind, WeaponKind, WeaponSpawn};
-use ssb_engine::math::{sin_cos, Vec2, Vec3};
+use ssb_engine::math::{f_cst_dtor32, sin_cos, Vec2, Vec3};
 
 #[cfg(test)]
 #[path = "boss_tests.rs"]
@@ -901,7 +901,8 @@ fn set_dead_right(f: &mut Fighter) {
 /// `ftBossDeadCenterSetStatus`: up and away into the background.
 fn set_dead_center(f: &mut Fighter) {
     set(f, B::DeadCenter);
-    let (sin, cos) = sin_cos(45.0_f32.to_radians());
+    // ftbossdeadcenter.c: `__sinf`/`__cosf(F_CST_DTOR32(45.0F))`.
+    let (sin, cos) = sin_cos(f_cst_dtor32(45.0));
     f.physics.vel_air = Vec3::new(0.0, sin * 100.0, -(cos * 100.0));
     f.boss.timer = 200;
 }

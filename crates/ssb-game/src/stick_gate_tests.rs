@@ -154,3 +154,15 @@ fn angled_move_variants_match_the_motion_tables() {
         assert!(!has_motion_file(kind, Status::AttackHi3B), "{kind:?}");
     }
 }
+
+/// `attr->is_have_attacks3`, `is_have_attackhi3`, `is_have_attacklw3`
+/// (`FTAttributes` word 0x100, fields 4 to 6 MSB first) are set for every
+/// fighter, so the tilt checks' gate is a no-op (`status::check_ftilt`).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn every_fighter_has_the_three_tilts() {
+    for kind in KINDS.into_iter().chain([FighterKind::Boss]) {
+        let attrs = crate::motion::combat_attrs(kind).expect("attributes");
+        assert_eq!(attrs.is_have_tilts, [true; 3], "{kind:?}");
+    }
+}

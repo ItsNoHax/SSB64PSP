@@ -18,7 +18,7 @@
 //!   which the pause menu steers and [`Camera::tick_player_zoom`] reads
 //!   (`gmCameraPlayerZoomFuncCamera`, RE-398).
 
-use ssb_engine::math::{sy_persp_cot, Vec3};
+use ssb_engine::math::{f_clc_dtor32, sy_persp_cot, Vec3};
 
 /// The rectangle the camera's look-at target may not leave --
 /// `MPGroundData.camera_bounds` (`crates/ssb-rom/src/stage.rs`'s
@@ -311,7 +311,8 @@ impl Camera {
         // gmCameraGetClampDimensionsMax: the distance at which the
         // interest box exactly fits the viewport, clamped to the real
         // hard range.
-        let half_fovy_tan = original_tan(self.fovy_degrees.to_radians() * 0.5);
+        // gmcamera.c: `lbCommonTan(F_CLC_DTOR32(fovy * 0.5F))`.
+        let half_fovy_tan = original_tan(f_clc_dtor32(self.fovy_degrees * 0.5));
         let vt_dist = vt / half_fovy_tan;
         let hz_dist = hz / (half_fovy_tan * viewport_aspect);
         let dist = vt_dist.max(hz_dist).clamp(MIN_DIST, MAX_DIST);

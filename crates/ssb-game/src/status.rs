@@ -2882,6 +2882,9 @@ fn set_fox_special_hi_travel(f: &mut Fighter) {
         let (sin, cos) = ssb_engine::math::sin_cos(angle);
         f.physics.vel_air.x = cos * 115.0 * f.facing.sign();
         f.physics.vel_air.y = sin * 115.0;
+        // `ftFoxSpecialAirHiSetStatusFromGround` pitches the model last;
+        // the grounded `ftFoxSpecialHiDecideSetStatus` does not.
+        crate::model_pitch::special_hi(f);
         f.physics.jumps_used = f.attributes.jumps_max;
     }
 }
@@ -2927,6 +2930,8 @@ pub fn fox_fire_fox_floor_contact(f: &mut Fighter, normal: Vec2, floor_y: f32) -
             f.physics.vel_air.y,
             f.physics.vel_air.x * f.facing.sign(),
         );
+        // `coll_end`: `ftFoxSpecialHiUpdateModelPitch` (`ftfoxspecialhi.c:266`).
+        crate::model_pitch::special_hi(f);
         f.pos.y = floor_y;
         return true;
     }
@@ -4114,9 +4119,10 @@ pub fn set_any_status_preserve(
         }
     }
     // `fp->joints[nFTPartsJointTopN]->rotate.vec.f.y = fp->lr * 90°`;
-    // `rotate.x = rotate.z = 0` drops a slope tilt.
+    // `rotate.x = rotate.z = 0` drops a slope tilt and a floor roll.
     f.topn_lr = f.facing.sign();
     f.topn_rotate_x = 0.0;
+    f.topn_rotate_z = 0.0;
     if !preserve.hit {
         crate::combat::clear_attack_colls(f);
     }
@@ -4237,6 +4243,10 @@ pub fn set_any_status_preserve(
     }
     match crate::motion::clip_on_set_status(f.kind, status) {
         ClipStart::Restart(clip) => {
+            // ... and resets joint 4 on and TransN's `rotate.z` to their
+            // `DObjDesc` values (`ftmain.c:4657`): a pose write queued
+            // before this status is gone.
+            f.pose_writes = crate::model_pitch::PoseWrites::NONE;
             f.status.anim_frame = anim_frame_begin;
             f.status.clip = clip;
             f.status.clip.settle(&mut f.status.anim_frame);
@@ -5632,6 +5642,12 @@ pub fn check_dsmash(f: &mut Fighter) -> bool {
 }
 
 /// `ftCommonAttackS3CheckInterruptCommon` @ `ftcommonattacks3.c:45`.
+///
+/// The decomp's `attr->is_have_attacks3` gate (and `is_have_attackhi3`,
+/// `is_have_attacklw3` in the two below and in `AttackLw3`'s self
+/// interrupt) is set for all 27 fighters' attributes
+/// ([`CombatAttrs::is_have_tilts`](crate::motion::CombatAttrs), pinned by
+/// `every_fighter_has_the_three_tilts`), so these checks leave it out.
 pub fn check_ftilt(f: &mut Fighter) -> bool {
     if !f.button_tap().contains(N64Buttons::A) {
         return false;

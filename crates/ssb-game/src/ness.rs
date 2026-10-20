@@ -364,13 +364,19 @@ fn set_blast(f: &mut Fighter, thunder: Vec3) {
             down_bounce(f);
             return;
         }
+        // `ftNessSpecialHiJibakuInitStatusVars` pitches the model before
+        // `ftMainSetStatus`, whose figatree reset drops it again.
+        crate::model_pitch::special_hi(f);
         set(f, N::SpecialHiJibaku);
         f.physics.vel_ground.x = 200.0 * f.facing.sign();
     } else {
         f.become_airborne();
-        set(f, N::SpecialAirHiJibaku);
         let (sin, cos) = sin_cos(f.ness.blast_angle);
         f.physics.vel_air = Vec3::new(cos * 200.0 * f.facing.sign(), sin * 200.0, 0.0);
+        // Dropped the same way (`ftNessSpecialAirHiJibakuSetStatus`); the
+        // pitch drawn is `ftNessSpecialAirHiJibakuProcPhysics`'s.
+        crate::model_pitch::special_hi(f);
+        set(f, N::SpecialAirHiJibaku);
     }
     f.ness.blast_frames = 28;
     f.physics.jumps_used = f.attributes.jumps_max;

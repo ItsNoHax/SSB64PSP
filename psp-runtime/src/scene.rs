@@ -1661,6 +1661,7 @@ impl FighterScene {
         // composed give the pass its matrices when no leg moved: nothing
         // between touches the skeleton, so they are the ones a second
         // compose would build, bit for bit.
+        self.apply_pose_writes(pack);
         let mut kept = None;
         let moved = self.slope_contour(pack, &segments, false, &mut kept);
         self.fighter.finish_physics_map();
@@ -1985,7 +1986,32 @@ impl FighterScene {
             return;
         }
         self.tick_animation(pack);
+        self.apply_pose_writes(pack);
         self.sample_gameplay_joints(pack);
+    }
+
+    /// Puts the DObj writes a status queued (joint 4's pitch and scale,
+    /// TransN's roll: [`ssb_game::model_pitch`]) on the poses, where they
+    /// last until the clip's own track for that channel next plays or a
+    /// status restarts the clip from its rest pose (`ftMainSetStatus`).
+    fn apply_pose_writes(&mut self, pack: &Pack<'_>) {
+        let writes = core::mem::take(&mut self.fighter.pose_writes);
+        if let Some(pitch) = writes.joint4 {
+            let first = pack.object(self.object).map(|o| o.first_node);
+            if let Some(pose) = first.and_then(|n| self.skeleton.node_pose_mut(n)) {
+                pose.rotate[0] = pitch.rotate_x;
+                if let Some(scale) = pitch.scale {
+                    pose.scale = scale;
+                }
+            }
+        }
+        if let Some(z) = writes.transn_rotate_z {
+            if self.skeleton.joint_node(0).is_none() {
+                if let Some(pose) = self.skeleton.pose_mut(0) {
+                    pose.rotate[2] = z;
+                }
+            }
+        }
     }
 
     /// `mpCommonUpdateFighterSlopeContour` on this skeleton: hands the

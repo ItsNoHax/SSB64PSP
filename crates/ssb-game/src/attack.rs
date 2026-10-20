@@ -427,6 +427,11 @@ pub fn init_damage_vars_sfx(
     f.stick.tap_x = crate::status::STICKBUFFER_MAX;
     f.stick.tap_y = crate::status::STICKBUFFER_MAX;
     f.damage_knockback_stack = knockback;
+    // `ftCommonDamageUpdateDamageStatus` (`ftcommondamage.c:626`): a
+    // tumble pitches the model along the launch at once.
+    if f.status.status == Status::DamageFlyRoll {
+        crate::model_pitch::fly_roll(f);
+    }
     f.tics_since_last_z = crate::status::ZTRIGLAST_TICS_MAX;
     f.is_smash_di = true;
     f.reaction.coll_mask_curr = 0;
@@ -478,6 +483,10 @@ pub fn update_damage_e(f: &mut Fighter) {
     f.physics.vel_knockback = vel;
     f.physics.vel_damage_ground = ground;
     f.hitstun = hitstun;
+    // `ftcommondamage.c:150`.
+    if f.status.status == Status::DamageFlyRoll {
+        crate::model_pitch::fly_roll(f);
+    }
     if f.reaction.is_knockback_over {
         f.reaction.is_knockback_over = false;
         crate::reaction::set_timed_invincible(f, 1);

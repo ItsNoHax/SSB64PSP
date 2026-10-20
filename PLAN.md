@@ -106,9 +106,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Slope contour | Kirby Eat/CatchEat: slope step right before PlayAnimEventsAll (0x80163018, 0x801630A0); `explain_movement` parity; golden for motion_id -2 hold (Guard or Down-wait on slope) | RE-510 |
 | Thunder Shock spark | Ejection on status change unobserved on N64 → longer Pikachu trace | RE-512 |
 | vs-four golden | Optional: narrow change to catch/thrown/relz/pulled | RE-511 |
-| Dropped ArcTan2 | Chunk 6 (`scene.rs`); `boss.rs:904` CST vs CLC; `is_have_attacks3/hi3/lw3` gates | RE-503 |
-| Trig goldens | PK Thunder steering, hazard spin, ArcSin sites | RE-503 |
-| `tan` | Still differs | RE-503–RE-505 |
+| Trig goldens | Goldens for FlyRoll, Ness jibaku, Kirby Stone on slope, Falcon Kick air roll; PK Thunder steering, hazard spin, ArcSin sites. N64 pitch comparison blocked: `tools/run-n64-headless.sh` / `n64_driver.py` lack analog-stick input | RE-503 |
 | 1P goldens | 1P intro, stage clear | RE-548 |
 
 ### Audio and rumble (`MS7`)

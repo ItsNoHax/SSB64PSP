@@ -1404,6 +1404,15 @@ mod trig_tests {
         assert_eq!(super::lb_cos(core::f32::consts::FRAC_PI_2), 0.0);
     }
 
+    /// `lbtransition.c`: `eye.z = 1100.0F / syUtilsTan(F_CLC_DTOR32(45.0F * 0.5F))`.
+    /// `psp-runtime/src/transition.rs` keeps it as the literal `EYE_Z`
+    /// (2655.6348); that literal is this f32, not the f64 2655.6349186.
+    #[test]
+    fn the_transition_eye_distance_is_the_utils_tangent() {
+        let eye_z = 1100.0 / super::sy_tan(super::f_clc_dtor32(45.0 * 0.5));
+        assert_eq!(eye_z.to_bits(), 2655.6348_f32.to_bits());
+    }
+
     /// The two degree macros against the decomp's own comments on the
     /// constants it matched to the ROM (`ft/ftcommon.h:330-357`,
     /// `ftcommonattackhi3.c:20-21`, `ftkirby.h:19`, `ftcommondamage.c:537`).

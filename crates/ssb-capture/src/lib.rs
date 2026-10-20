@@ -749,10 +749,18 @@ pub enum GameScene {
     /// frames into the first sparkle his Win script makes on his sword
     /// (joint 11, RE-528).
     VsResultsLink,
+    /// `foxfire`: Fox in Training, Fire Fox launched up and to the left,
+    /// his model pitched along its travel (`ftFoxSpecialHiUpdateModelPitch`,
+    /// RE-503).
+    FoxFire,
+    /// `pikachuquick`: Pikachu in Training, Quick Attack's zip up and to
+    /// the left, his model pitched along it and stretched
+    /// (`ftPikachuSpecialHiUpdateModelPitchScale`, RE-503).
+    PikachuQuick,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 187] = [
+    pub const ALL: [GameScene; 189] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -940,6 +948,8 @@ impl GameScene {
         GameScene::OpeningNewcomers,
         GameScene::OpeningTitle,
         GameScene::VsResultsLink,
+        GameScene::FoxFire,
+        GameScene::PikachuQuick,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -1132,6 +1142,8 @@ impl GameScene {
             GameScene::OpeningNewcomers => "op-newcomers",
             GameScene::OpeningTitle => "op-title",
             GameScene::VsResultsLink => "vsresultslink",
+            GameScene::FoxFire => "foxfire",
+            GameScene::PikachuQuick => "pikachuquick",
         }
     }
 

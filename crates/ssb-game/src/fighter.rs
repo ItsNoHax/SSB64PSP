@@ -488,6 +488,14 @@ pub struct Fighter {
     /// (`syUtilsArcTan2(floor_angle) * lr`); a motion event and every
     /// status change put it back to 0.
     pub topn_rotate_x: f32,
+    /// TopN's `rotate.z`: the floor's roll Kirby's Stone and the grounded
+    /// Falcon Kick write (`-syUtilsArcTan2(floor_angle.x, floor_angle.y)`);
+    /// every status change puts it back to 0 (`ftMainSetStatus`).
+    pub topn_rotate_z: f32,
+    /// The writes a status makes to the model's joint 4 and to TransN,
+    /// which the runtime puts on the skeleton's poses
+    /// ([`crate::model_pitch`]).
+    pub pose_writes: crate::model_pitch::PoseWrites,
     /// TopN's collision local as the first query since its last reset
     /// built it (`transform_update_mode = 1` keeps that matrix): a query
     /// before the map step leaves `proc_slope` walking from the position
@@ -671,6 +679,8 @@ impl Fighter {
             is_item_show: true,
             slope_pending: false,
             topn_rotate_x: 0.0,
+            topn_rotate_z: 0.0,
+            pose_writes: crate::model_pitch::PoseWrites::NONE,
             topn_query_local: core::cell::Cell::new(None),
             root_motion: RootMotion::default(),
             transn: Vec3::ZERO,
@@ -2007,6 +2017,7 @@ impl Fighter {
             }
         }
 
+        crate::model_pitch::after_ground_status_physics(self);
         crate::thrown::damage_physics(self);
         crate::physics::update_damage_velocity(
             &mut self.physics,
@@ -2039,6 +2050,8 @@ impl Fighter {
                 ground_vel_z(self.pos.z, self.physics.vel_jostle_z, 0.0),
             );
         }
+        // The status's pitch from the `vel_air` the transfer left.
+        crate::model_pitch::after_ground_transfer(self);
         // `ftPhysicsSetGroundVelTransferAir`: the jostle adds to the step.
         let want = Vec3::new(
             // `syVectorAdd3D(translate, &vel_air)` adds the jostle already
@@ -2275,6 +2288,7 @@ impl Fighter {
             );
         }
 
+        crate::model_pitch::after_air_physics(self);
         crate::thrown::damage_physics(self);
         crate::physics::update_damage_velocity(
             &mut self.physics,
